@@ -101,7 +101,7 @@ ok(sec.redactText("call with tok-7f3a9c2e5b8d1f40aa here", ["tok-7f3a9c2e5b8d1f4
   ok(viaCli && viaFile && viaEnv, "Studio's GitHub token is registered where it is read: from `gh auth token`, from its settings file, from the environment", JSON.stringify([viaCli, viaFile, viaEnv])); }
 
 // ---------- the logins Studio hands a round (src/providers/login.ts, v1 option A) ----------
-{ const { codexLogin, claudeLogin } = await import("../src/providers/login"); const { statSync, readFileSync } = await import("node:fs");
+{ const { codexLogin, claudeLogin } = await import("../src/providers/login"); const { statSync, readFileSync, existsSync } = await import("node:fs");
   const saved = { home: process.env.CODEX_HOME, key: process.env.CODEX_API_KEY, oauth: process.env.CLAUDE_CODE_OAUTH_TOKEN, bill: process.env.CREW_CLAUDE_BILLING };
   for (const k of ["CODEX_HOME", "CODEX_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CREW_CLAUDE_BILLING"]) delete process.env[k];
   const ch = mkdtempSync(join(tmpdir(), "crew-codexhome-")); process.env.CODEX_HOME = ch;
@@ -117,6 +117,16 @@ ok(sec.redactText("call with tok-7f3a9c2e5b8d1f40aa here", ["tok-7f3a9c2e5b8d1f4
   process.env.CODEX_API_KEY = "   "; const l3 = codexLogin(join(round, ".codex3")); delete process.env.CODEX_API_KEY;
   ok(!l3.ok && /no codex login for rounds works \(CODEX_API_KEY: it is set but empty; .*auth\.json: .*still holds a refresh token/.test((l3 as any).error),
     "codex: refused only when every source fails, the refusal listing why each one did (an empty CODEX_API_KEY, a login file that keeps a refresh token)", JSON.stringify(l3));
+  // Timestamp metadata is compatibility data, never authority to refresh a token.
+  const stampDoc={auth_mode:"chatgpt",tokens:{access_token:"abcdefgh.abcdefgh.abcdefgh",refresh_token:"never-copy-refresh",id_token:"fixture-id",account_id:"fixture-account"},unknown:"never-copy-config",hooks:["never-copy-hook"]};
+  for(const [n,stamp] of ["2001-01-01T00:00:00Z","2024-02-29T23:59:59.123456789-05:30","2026-10-15T08:09:10+08:00"].entries()){
+    const source=JSON.stringify({...stampDoc,last_refresh:stamp});writeFileSync(join(ch,"auth.json"),source);const target=join(round,`valid-stamp-${n}`),login=codexLogin(target),copied=login.ok?JSON.parse(readFileSync(join(target,"auth.json"),"utf8")):null;
+    ok(login.ok&&copied.last_refresh===stamp&&copied.tokens.refresh_token===""&&Object.keys(copied).sort().join(',')==="auth_mode,last_refresh,tokens"&&!JSON.stringify(copied).includes("never-copy")&&readFileSync(join(ch,"auth.json"),"utf8")===source&&(statSync(join(target,"auth.json")).mode&0o777)===0o600,"codex timestamp: valid original calendar/offset metadata copied exactly without refresh/config or source mutation");
+  }
+  for(const [n,stamp] of ["2023-02-29T00:00:00Z","2024-04-31T00:00:00Z","2024-01-01T24:00:00Z","2024-01-01T00:00:00+24:00","2024-01-01T00:00:00+00:60","2024-01-01", "not-a-date", "2024-01-01T00:00:00Z\n", {value:"2024-01-01T00:00:00Z"},null].entries()){
+    const source=JSON.stringify({...stampDoc,last_refresh:stamp});writeFileSync(join(ch,"auth.json"),source);const target=join(round,`invalid-stamp-${n}`),login=codexLogin(target);
+    ok(!login.ok&&!existsSync(join(target,"auth.json"))&&readFileSync(join(ch,"auth.json"),"utf8")===source,"codex timestamp: malformed calendar/type/time/offset refused before disposable credential write");
+  }
   process.env.CLAUDE_CODE_OAUTH_TOKEN = "sk-ant-oat01-claude-oauth-fixture-3456-abcdefghijklmnopqrstuvwxyz"; const c = claudeLogin();
   ok(c.ok && (c as any).env.CLAUDE_CODE_OAUTH_TOKEN === "sk-ant-oat01-claude-oauth-fixture-3456-abcdefghijklmnopqrstuvwxyz" && sec.redactText("t sk-ant-oat01-claude-oauth-fixture-3456-abcdefghijklmnopqrstuvwxyz t") === `t ${M} t`, "claude: a CLAUDE_CODE_OAUTH_TOKEN Studio holds is handed as is and redacted everywhere");
   for (const [k, v] of [["CODEX_HOME", saved.home], ["CODEX_API_KEY", saved.key], ["CLAUDE_CODE_OAUTH_TOKEN", saved.oauth], ["CREW_CLAUDE_BILLING", saved.bill]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }

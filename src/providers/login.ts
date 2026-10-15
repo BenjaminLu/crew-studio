@@ -165,6 +165,14 @@ export function claudeLoginStatus(): { ok: boolean; verified?: boolean; source?:
 /** The shape of a codex credential (never printed): an OpenAI API key is sk-…; a login's access token is a JWT. */
 export const CODEX_KEY_SHAPE = /^sk-[A-Za-z0-9_-]{20,}$/;
 const JWT_SHAPE = /^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$/;
+/** Original nonsecret metadata only: validate without inventing freshness. */
+function codexTimestamp(value:unknown):value is string {
+  if(typeof value!=="string")return false;
+  const m=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|([+-])(\d{2}):(\d{2}))$/.exec(value);
+  if(!m)return false;
+  const [year,month,day,hour,minute,second]=m.slice(1,7).map(Number),leap=year%4===0&&(year%100!==0||year%400===0),days=[31,leap?29:28,31,30,31,30,31,31,30,31,30,31];
+  return month>=1&&month<=12&&day>=1&&day<=days[month-1]&&hour<24&&minute<60&&second<60&&(!m[7]||Number(m[8])<24&&Number(m[9])<60)&&Number.isFinite(Date.parse(value));
+}
 /** A copy of codex's login file for the round's CODEX_HOME, without its refresh token; or CODEX_API_KEY as is.
  *  Same rule as claude: an error at one source moves on to the next; refused only when every source fails, saying why each did. */
 export function codexLogin(codexHome: string): Login {
@@ -184,10 +192,12 @@ export function codexLogin(codexHome: string): Login {
     if (typeof ak === "string" && ak && !CODEX_KEY_SHAPE.test(ak)) return { ok: false, error: `its OPENAI_API_KEY is not an OpenAI API key (expected sk-…)` };
     if (!(typeof at === "string" && at) && !(typeof ak === "string" && ak)) return { ok: false, error: "it holds no access token and no API key" };
     for (const v of [at, doc?.tokens?.id_token, ak]) if (typeof v === "string" && v) seen(v);
+    if(typeof at==="string"&&at&&doc.last_refresh!==undefined&&!codexTimestamp(doc.last_refresh))return {ok:false,error:"its last_refresh metadata is not a supported original RFC3339 timestamp"};
     const handedDoc: any = {};
     if (["chatgpt", "api_key"].includes(doc.auth_mode)) handedDoc.auth_mode = doc.auth_mode;
     if (typeof ak === "string" && ak) handedDoc.OPENAI_API_KEY = ak;
     if (typeof at === "string" && at) { // Installed CLI requires the schema key; an empty string provides no refresh credential.
+      if(doc.last_refresh!==undefined)handedDoc.last_refresh=doc.last_refresh;
       handedDoc.tokens = { access_token: at, refresh_token: "" }; if (typeof doc.tokens.id_token === "string") handedDoc.tokens.id_token = doc.tokens.id_token; if (typeof doc.tokens.account_id === "string") handedDoc.tokens.account_id = doc.tokens.account_id; }
     mkdirSync(codexHome, { recursive: true }); writeFileSync(join(codexHome, "auth.json"), JSON.stringify(handedDoc), { mode: 0o600 });
     return { ok: true, env: { CODEX_HOME: codexHome }, source: "a copy of your codex login, without its refresh token", warn: null };
