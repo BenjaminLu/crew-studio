@@ -94,6 +94,10 @@ export function createRuntime(d: RuntimeDeps) {
   if (d.m3?.store && d.m3?.lane && d.fileorg && d.docs) installDeliver(engine, { dataDir: d.dataDir, artifacts: d.m3.store, lane: d.m3.lane, fileorg: d.fileorg, docs: d.docs, generateImage: d.generateImage });
   let coffee:ReturnType<typeof installCoffeeKit>|undefined;
   if(d.m3?.store){coffee=installCoffeeKit(engine,{artifacts:d.m3.store,choice:d.coffeeChoice,staffing:(def,params)=>{const config=staffingGuard.verified(def,params),role=config.roles['image-worker'];if(!role||role.provider!=='codex')throw new Error('The dedicated image adapter requires an explicitly approved available Codex image-worker; no vendor fallback');return {provider:'codex',model:role.model,effort:role.effort};},video:d.coffeeVideo});d.m3.useArtifactReviewPolicy?.(coffee.artifactReview);}
+  engine.deps.continuationEvidence=(r:any)=>{const refs=Object.values(r.ctx.deliver??{})as any[];if(refs.length&&!d.m3?.store)throw new Error('Artifact storage unavailable for continuation');
+    const notes=(id:string,n:number)=>{const store=d.m3!.store,file=join(store.vdir(id,n),'notes.json');try{if(existsSync(file)){const raw=JSON.parse(readFileSync(file,'utf8'));if(!Array.isArray(raw)||raw.some(v=>!v||typeof v.id!=='string'||typeof v.comment!=='string'||!['open','resolved'].includes(v.status)))throw new Error('Invalid annotations');}return store.notes(id,n);}catch{throw new Error('Artifact annotations cannot be verified; continuation is held');}};
+    const coffeePins=coffee?.continuationEvidence(r.id)??[];return{artifacts:refs.map(ref=>{const v=d.m3!.store.version(ref.id,ref.n);if(!v||v.sha256!==ref.sha256||d.m3!.store.verify(ref.id,ref.n).length)throw new Error('Pinned artifact changed; continuation is held');return{ref,version:v,notes:notes(ref.id,ref.n)};}),coffee:coffeePins.map(e=>({...e,notes:notes(e.receipt.artifact,e.receipt.n)}))};};
+
   // Base artifact providers precede domain wrappers that bind their own pinned outputs.
   for (const f of d.install ?? []) f(engine, { projects, dataDir: d.dataDir });
   const staffing=new StaffingStore(d.dataDir);
@@ -114,7 +118,9 @@ export function createRuntime(d: RuntimeDeps) {
     const r = engine.get(id); if (!r) return null;
     const ledger = engine.ledger(id);
     const t = engine.trusted(id);
-    return { ...r, nodes: readinessNodes(r, id=>engine.cards.get(id)), walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };
+    const pins=[...Object.values(r.ctx.deliver??{}).map((v:any)=>({id:v.id,n:v.n})),...t.entries.filter(e=>e.record==='coffee-output-v1'&&e.data?.part==='site').map(e=>({id:e.data.artifact,n:e.data.n}))];
+    const outputMap=new Map<string,any>();for(const pin of pins){const a=d.m3?.store.get(pin.id),v=d.m3?.store.version(pin.id,pin.n);if(a?.type==='web'&&v&&(v.primary??a.entry)==='index.html'&&!d.m3!.store.verify(pin.id,pin.n).length)outputMap.set(pin.id,{artifact:pin.id,version:pin.n,href:`/af/${encodeURIComponent(pin.id)}/${pin.n}/index.html`});}
+    return { ...r, nodes: readinessNodes(r, id=>engine.cards.get(id)), outputs:[...outputMap.values()], walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };
   };
   const checkView = (m: any) => { const p = engine.params(m, null, {}); return { ref: m.ref, id: m.id, pack: m.pack, version: m.version, title: m.title, description: m.description, applies_to: m.applies_to, kind: m.kind, blocking: m.blocking, needs: m.needs,
     params: m.params, policy_bind: m.policy_bind, effective: p.params, from: p.from, timeout_s: m.timeout_s, network: m.network, impl: m.native ? "native" : m.adapter ? "adapter" : m.kind === "judged" ? "judge" : "executable", quorum: m.judge?.quorum ?? null, hasSample: !!m.sample, at: m.at }; };
@@ -222,6 +228,8 @@ export function createRuntime(d: RuntimeDeps) {
         const r = engine.start({ workflow: wf, version: b?.version ? Number(b.version) : undefined, title: b?.title, text, params, by, classifier: cls });
         return json(runView(r.id));
       }
+      const recovery=/^\/api\/wruns\/(R-\d+)\/continuation\/(offer|confirm)$/.exec(p);
+      if(recovery&&writing){if(who.kind!=="desktop")return json({error:"Only the desktop captain can continue a closed task"},403);const id=recovery[1];return json(recovery[2]==="offer"?engine.continuationOffer(id):(engine.confirmContinuation(id,String(b?.token??""),String(b?.confirm??"")),runView(id)));}
       // an app's before / after captures (a domain check makes them): the PNGs, and the built pages ("Open the app"), served sandboxed: no script, no request out
       // the agent node runs working now, for the Crew page: run, node, role, model, round, elapsed, last activity (redacted)
       if (p === "/api/wruns/agents" && !writing) {

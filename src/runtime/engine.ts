@@ -54,6 +54,7 @@ export type Run = {
   nodes: Record<string, NodeRun>; queue: string[]; steps: Step[]; ctx: Record<string, any>; classifier: any; events: number; recovered: number;
   /** the captain's reason when the run was cancelled */
   cancelReason?: string | null;
+  continuation?:{token:string;previousCard:string;node:string;visit:number};
   /** hidden from the default lists (an ended run only); an "archived" event records each change */
   archived?: boolean;
 };
@@ -106,7 +107,7 @@ export function fill(s: string, run: Run): string {
   });
 }
 const ekey = (e: WEdge) => `${e.from}→${e.to}${e.when ? `[${e.when}]` : ""}`;
-const RUN_FIELDS = ["status", "result", "error", "endedAt", "recovered", "cancelReason"] as const;
+const RUN_FIELDS = ["status", "result", "error", "endedAt", "recovered", "cancelReason", "continuation"] as const;
 const NODE_FIELDS = ["visits", "extra", "attempt", "outcome", "cause", "error", "startedAt", "endedAt", "inbox", "agent", "swap", "job", "card", "waiting", "data", "note", "routing"] as const;
 
 /** Replay a run's events into its snapshot (the snapshot is a fold of the events). */
@@ -839,6 +840,25 @@ export class Engine {
   onDelete: (r: Run) => void = () => {};
   private ended(r: Run, what: string) { if (!TERMINAL.includes(r.status)) throw new Error(`the run is ${r.status}: only an ended run can be ${what}`);
     const b = this.busy(r.id); if (b) throw new Error(`still finishing: ${b}. The run can be ${what} once that is done`); }
+  /** A terminal captain hold can be continued, never treated as an approval or a new job. */
+  private continuationHash(value:unknown){return createHash("sha256").update(JSON.stringify(value)).digest("hex");}
+  private continuationPin(r:Run){return this.continuationHash({status:r.status,result:r.result,definition:r.def,params:r.params,ctx:r.ctx,nodes:r.nodes,continuation:r.continuation??null,evidence:this.deps.continuationEvidence?.(r)??null});}
+  private continuationTarget(r:Run){
+    this.ended(r,"reopened");if([...this.deps.agents.jobs.values()].some(j=>j.ref===r.id&&j.status==="running")||this.deps.agents.queue.snapshot().active.some(j=>j.task===r.id))throw new Error("Owned work is still finishing; continuation is held");const installed=this.defs.get(r.workflow,r.version);if(!installed||this.continuationHash(installed)!==this.continuationHash(r.def))throw new Error("Pinned workflow definition changed; cannot continue");const trust=this.trusted(r.id);if(!trust.ok||r.archived||r.ctx.merged||r.ctx.approved||r.ctx.library||trust.entries.some(e=>e.record==='coffee-approved-v1'||e.record==='native-merge')||!(r.status==='cancelled'||r.status==='succeeded'&&r.result==='closed'))throw new Error('Only an unapproved closed or cancelled captain hold can continue');
+    const candidates=this.cards.list({run:r.id}).filter(c=>{const node=r.def.nodes.find(n=>n.id===c.node),rn=r.nodes[c.node];if(!node||node.kind!=="card"||node.do||!c.captainOnly||rn?.card!==c.id||node.args?.mode&&!['coffee-capability','coffee-review','coffee-direction','deliver-accept'].includes(node.args.mode))return false;
+      if(r.status==='cancelled')return c.status==='cancelled'&&r.steps.some(s=>s.node===node.id&&s.visit===c.visit&&s.state==='skipped');
+      return c.status==='answered'&&['close','reject','rejected'].includes(c.answer?.choice??'')&&r.def.edges.some(e=>e.from===node.id&&(!e.when||e.when.split('|').includes(rn.outcome??'')||e.when.split('|').includes(c.answer!.choice))&&r.def.nodes.some(n=>n.id===e.to&&n.kind==='hook'&&!n.do&&n.args?.result==='closed'));});
+    if(candidates.length!==1)throw new Error('No single source-owned captain continuation is available');const card=candidates[0],node=r.def.nodes.find(n=>n.id===card.node)!;return{card,node,pin:this.continuationHash({run:this.continuationPin(r),card})};
+  }
+  continuationOffer(id:string){const r=this.must(id),{card,node,pin}=this.continuationTarget(r),past=this.trusted(id).entries.filter(e=>e.record==='captain-continuation-offer-v1'&&e.data?.pin===pin).at(-1);if(past)return past.data;
+    const offer={schema:1,token:randomBytes(16).toString('hex'),task:id,node:node.id,previousCard:card.id,visit:card.visit,pin,head:r.ctx.head??null,title:card.title};this.record(this.x(r,node,r.nodes[node.id]),'captain-continuation-offer-v1',{data:offer});return offer;
+  }
+  confirmContinuation(id:string,token:string,confirmation:string){const r=this.must(id);if(confirmation!==id||typeof token!=='string'||! /^[a-f0-9]{32}$/.test(token))throw new Error('Explicit captain task confirmation is required');if(r.continuation?.token===token){const trust=this.trusted(id);if(!trust.ok||!trust.entries.some(e=>e.record==='captain-continuation-confirmed-v1'&&e.data?.token===token))throw new Error('Continuation receipt cannot be authenticated');return r;}
+    const {card,node,pin}=this.continuationTarget(r),offer=this.trusted(id).entries.find(e=>e.record==='captain-continuation-offer-v1'&&e.data?.token===token)?.data;if(!offer||offer.task!==id||offer.pin!==pin||offer.previousCard!==card.id||offer.node!==node.id)throw new Error('Continuation offer is stale; read current task state');
+    const rn=r.nodes[node.id];this.record(this.x(r,node,rn),'captain-continuation-confirmed-v1',{actor:'captain (desktop)',data:{token,previousCard:card.id,pin}});
+    r.continuation={token,previousCard:card.id,node:node.id,visit:rn.visits+1};r.status='running';r.result=null;r.endedAt=null;r.error=null;r.cancelReason=null;r.queue=[node.id];rn.state='pending';rn.waiting=null;rn.card=null;rn.attempt=0;rn.routing=null;if(node.max_visits&&rn.visits>=node.max_visits+(rn.extra??0))rn.extra=(rn.extra??0)+1;
+    this.aborts.delete(id);this.commit(r,'captain continued original task');this.emit(r,'continued','Captain reopened the original unapproved task / 船長接續原本尚未核准的任務',{node:node.id,previousCard:card.id});this.tick(r);return r;
+  }
   /** Hide an ended run from the default lists, or bring it back. An event in the run and in Studio's log. */
   archive(id: string, on: boolean, by = "captain") {
     const r = this.must(id); this.ended(r, on ? "archived" : "unarchived");
@@ -961,6 +981,7 @@ export class Engine {
   }
   async card(x: X, kind: CardKind, b: Body): Promise<SCard> {
     if (!this.owns(x)) throw new Error("card owner ended before presentation");
+    if(x.run.continuation?.node===x.node.id&&x.run.continuation.visit===x.visit)b={...b,captainOnly:true};
     const sec = (p: Partial<Sections> | undefined): Sections => ({ ...emptySections(), ...(p ?? {}), scope: { in: p?.scope?.in ?? [], out: p?.scope?.out ?? [] } });
     const en = sec({ intent: x.run.text.split("\n")[0].slice(0, 300) || x.run.title, ...b.en });
     const zh = sec({ intent: en.intent, ...b.zh });

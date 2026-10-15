@@ -186,7 +186,7 @@ function mountCard(el, card, opts = {}) {
   }
   function linksView(c) {
     const ls = (Array.isArray(c.links) ? c.links : []).filter((l) => l && typeof l.href === "string" && /^(\/|https?:)/.test(l.href)); if (!ls.length) return null;
-    return h("div", { class: "cc-actions" }, ls.map((l) => h("a", { class: "btn", href: l.href, target: "_blank", rel: "noopener", "data-card-link": l.label }, l.label === "Open the app" ? T("Open the app", "打開 app") : l.label)));
+    return h("div", { class: "cc-actions" }, ls.map((l) => h("a", { class: "btn", href: l.href, target: "_blank", rel: "noopener", "data-card-link": l.label }, l.label === "Open website in new tab"?T("Open website in new tab","在新分頁開啟網站"):l.label === "Open the app" ? T("Open the app", "打開 app") : l.label)));
   }
   function plainView(c) {
     const s = c.sections?.[st.lang] || c.sections?.en; const out = [];

@@ -99,10 +99,11 @@ function newWebArtifact() {
 }
 
 // ---------- artifact detail ----------
+function openWebsiteLink(a,v){const entry=v?.primary||a.entry||'index.html';return a.type==='web'&&a.source!=='url'&&v&&!entry.startsWith('/')&&!entry.split('/').some(p=>!p||p==='.'||p==='..')?h('a',{class:'btn',href:`/af/${encodeURIComponent(a.id)}/${v.n}/${entry.split('/').map(encodeURIComponent).join('/')}`,target:'_blank',rel:'noopener','data-open-website-version':v.n},T(`Open website in new tab · v${v.n}`,`在新分頁開啟網站 · v${v.n}`)):null;}
 function nativePreview(d,v,previous) {
   const a=d.artifact,policy=d.nativeReview;
   const preview=x=>a.type==='web'?(()=>{const frame=framed(`/af/${a.id}/${x.n}/${x.primary||a.entry||'index.html'}`);frame.over.remove();const button=h('button',{class:'btn',type:'button',disabled:true,'data-native-film-toggle':'1'},T('Play / pause film','播放／暫停影片'));frame.iframe.addEventListener('load',()=>{const videos=[...frame.iframe.contentDocument.querySelectorAll('video.coffee-native-film')];button.disabled=!videos.length;if(matchMedia('(prefers-reduced-motion: reduce)').matches)for(const video of videos){video.pause();video.removeAttribute('autoplay');}button.onclick=()=>{for(const video of videos)if(video.paused)video.play().catch(()=>{});else video.pause();};});return h('div',{},frame.wrap,button);})():a.type==='image'?h('img',{src:`/af/${a.id}/${x.n}/${x.primary||a.entry}`,alt:a.title,style:'max-width:100%'}):h('video',{src:`/af/${a.id}/${x.n}/${x.primary||a.entry}`,controls:true,preload:'metadata',style:'max-width:100%'});
-  return h('div',{class:'page','data-native-preview':a.id},h('div',{class:'phead'},h('div',{},h('h1',{},`${a.title} · v${v.n}`),h('p',{},maker(v.createdBy))),policy.taskHref?h('a',{class:'btn',href:policy.taskHref},T('Return to Task','返回任務')):null),
+  return h('div',{class:'page','data-native-preview':a.id},openWebsiteLink(a,v),h('div',{class:'phead'},h('div',{},h('h1',{},`${a.title} · v${v.n}`),h('p',{},maker(v.createdBy))),policy.taskHref?h('a',{class:'btn',href:policy.taskHref},T('Return to Task','返回任務')):null),
     h('p',{},T('Read-only preview. Use the Task to request a targeted revision or approve the complete website.','此處僅供預覽。請回到任務，針對作品提出修改或驗收整個網站。')),
     h('div',{class:'card',style:'padding:16px'},previous?preview(previous):null,preview(v)),
     h('div',{class:'actions'},d.versions.map(x=>h('a',{class:'btn',href:`#/review/${a.id}/${x.n}`},`v${x.n} · ${maker(x.createdBy)}`))));
@@ -121,6 +122,7 @@ function viewArtifact(arg) {
       h("p", { class: "run-s", style: "font-size:13px" }, h("span", { class: "vbadge" }, a.type), h("span", { class: "vbadge" }, a.source === "film" ? T("HTML film", "HTML 影片") : a.source === "html" ? T("web page", "網頁") : a.source === "md" ? T("document", "文件") : a.source === "url" ? T("link", "連結") : T("file", "檔案")),
         h("span", {}, a.project), h("span", {}, T(`created ${ago(a.created)}`, `${ago(a.created)}建立`)))),
       h("div", { class: "actions" },
+        openWebsiteLink(a,last),
         reviewable && last ? h("a", { class: "btn primary", href: `#/review/${a.id}/${last.n}` }, icon(a.type === "video" ? "film" : "pin", "ic sm"), T(`Review v${last.n}`, `審查 v${last.n}`)) : null,
         a.source === "url" && last?.url ? h("a", { class: "btn", href: last.url, target: "_blank", rel: "noopener" }, icon("link", "ic sm"), T("Open link", "打開連結")) : null,
         vs.length > 1 ? h("a", { class: "btn", href: `#/compare/${a.id}/${vs.at(-2).n}/${last.n}` }, icon("copy", "ic sm"), T(`Compare v${vs.at(-2).n} ↔ v${last.n}`, `比較 v${vs.at(-2).n} ↔ v${last.n}`)) : null,

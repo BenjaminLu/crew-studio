@@ -22,7 +22,7 @@ function key(r) {
   if (s === "succeeded") { const res = r.result || "done"; if (res === "closed") return "closed"; if (FAILED_RESULTS.has(res)) return "failed"; if (r.workflow === "firstmate-proposal") return "dispatched"; return r.merged || r.ctx?.merged ? "merged" : "done"; }
   return "running";
 }
-window.runState = (r) => { const k = key(r); const [en, tw, tone] = WORDS[k]; return { key: k, en, tw, tone }; };
+window.runState = (r) => { const k = key(r); const [en, tw, tone] = WORDS[k]; const artifact=k==="closed"&&(r.def?.kind==="coffee-kit"||r.workflow==="coffee-kit"||r.ctx?.deliver||r.ctx?.coffee);return { key:k,en:artifact?"Closed without approval":en,tw:artifact?"尚未驗收就關閉":tw,tone }; };
 window.runStateBadge = (r) => {
   const s = window.runState(r); const zh = document.documentElement.lang === "zh-TW";
   const cls = s.tone === "neutral" ? "badge neutral" : `badge ${s.tone}`;
