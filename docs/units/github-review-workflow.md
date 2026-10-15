@@ -147,3 +147,14 @@ source-bound body fields and navigation to the saved graph. One owned browser,
 `tests/out/github-review-workflow/`. This mounts production guide source against
 actual native handlers in an isolated fixture shell, not a full-app/server-auth
 acceptance or external-provider quality proof. Runtime remains draft-only.
+
+Typed publication slice: `GitHubPrAdapter.open` now supports only an explicitly
+true optional Draft flag. Legacy requests omit it and retain their existing
+behavior. The strict POST allowlist admits no other boolean/extra body fields.
+Existing non-Draft PRs cannot be adopted or converted by a Draft request. Local
+bare Git plus strict REST fixtures prove the exact pushed head and actual Draft
+record. Original behavior fails that assertion; fixed focused tests pass 27
+native/API/publication plus 13 community assertions, and the existing GitHub
+foundation regression passes 72. No live publication occurred. Source-owned
+publication captain card / policy / workflow runtime integration is still pending;
+the initial template execution HOLD remains in force.

@@ -12,7 +12,7 @@ import { githubHeaders, findToken } from "../github";
 import { registerSecretValues, redactText } from "../secure";
 
 export type ReviewRequest = { id: string; adapter: "local" | "github"; repo: string; base: string; branch: string; head: string; title: string; body: string; openedAt: string; url: string | null };
-type OpenRequest = Omit<ReviewRequest, "id" | "adapter" | "openedAt" | "url">;
+type OpenRequest = Omit<ReviewRequest, "id" | "adapter" | "openedAt" | "url"> & {draft?:true};
 export interface PrAdapter {
   readonly id: "local" | "github";
   open(o: OpenRequest, runDir: string, signal?: AbortSignal, assertOwner?: () => void): Promise<ReviewRequest>;
@@ -165,7 +165,7 @@ export class GitHubPrAdapter implements PrAdapter {
     if (!allowed) throw new Error("GitHub endpoint is not allowlisted");
     if (method !== "GET") {
       const fields = method === "POST" ? ["title", "body", "head", "base"] : ["title", "body", "base"];
-      if (!body || Object.keys(body).length !== fields.length || !fields.every(k => typeof body[k] === "string") || Object.keys(body).some(k => !fields.includes(k))) throw new Error("GitHub request body is not allowlisted");
+      if (!body || Object.keys(body).length !== fields.length+Number(method==="POST"&&body.draft===true) || !fields.every(k => typeof body[k] === "string") || Object.keys(body).some(k => !fields.includes(k)&&!(method==="POST"&&k==="draft"&&body[k]===true))) throw new Error("GitHub request body is not allowlisted");
     } else if (body !== undefined) throw new Error("GitHub GET does not accept a body");
     const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     let response:Response|null=null;
@@ -331,6 +331,7 @@ export class GitHubPrAdapter implements PrAdapter {
   }
   private valid(o: OpenRequest) {
     validateGitHubGrant(this.grant);
+    if(o.draft!==undefined&&o.draft!==true)throw new Error("Draft publication flag must be explicitly true or omitted");
     if (resolve(o.repo) !== resolve(this.grant.localPath) || o.base !== this.grant.base || !sha.test(o.head) || !ref(o.branch)) throw new Error("review request does not match the approved project target");
     if (!this.branchAllowed(o.branch, o.head)) throw new Error("naming approval required for a branch outside the approved prefix");
     if (typeof o.title !== "string" || !o.title.trim() || o.title.length > 256 || typeof o.body !== "string" || o.body.length > 60_000) throw new Error("invalid pull request title or body");
@@ -339,6 +340,7 @@ export class GitHubPrAdapter implements PrAdapter {
   private response(p: any, o: OpenRequest, expectedId?: string, content = false) {
     if (!Number.isSafeInteger(p?.number) || p.number < 1 || p.state !== "open" || p.head?.ref !== o.branch || p.head?.sha !== o.head || p.head?.repo?.full_name !== this.grant.repository || p.base?.ref !== o.base || p.base?.repo?.full_name !== this.grant.repository || (expectedId && String(p.number) !== expectedId)) throw new Error("GitHub returned a mismatched pull request target or head");
     if (p.html_url !== `https://github.com/${this.grant.repository}/pull/${p.number}` || typeof p.title !== "string" || typeof p.body !== "string") throw new Error("GitHub returned an invalid pull request record");
+    if(o.draft===true&&p.draft!==true)throw new Error("Requested Draft PR is not draft; no adoption or conversion was authorized");
     if (content && (p.title !== o.title || p.body !== o.body)) throw new Error("GitHub returned mismatched PR publication content");
     return p;
   }
@@ -375,7 +377,7 @@ export class GitHubPrAdapter implements PrAdapter {
       // head is never force overwritten by a new run without its recorded lease.
       if (list.length) this.response(list[0], o);
       await this.push(o, null, signal, assertOwner);
-      const p = list.length ? this.response(await this.api("PATCH", `/pulls/${list[0].number}`, { title: o.title, body: o.body, base: o.base }, signal, assertOwner), o, String(list[0].number), true) : this.response(await this.api("POST", "/pulls", { title: o.title, body: o.body, head: o.branch, base: o.base }, signal, assertOwner), o, undefined, true);
+      const p = list.length ? this.response(await this.api("PATCH", `/pulls/${list[0].number}`, { title: o.title, body: o.body, base: o.base }, signal, assertOwner), o, String(list[0].number), true) : this.response(await this.api("POST", "/pulls", { title: o.title, body: o.body, head: o.branch, base: o.base, ...(o.draft===true?{draft:true}:{}) }, signal, assertOwner), o, undefined, true);
       const pr: ReviewRequest = { ...o, adapter: "github", id: String(p.number), url: p.html_url, openedAt: p.created_at ?? new Date().toISOString() };
       signal?.throwIfAborted(); assertOwner?.();persist(runDir, pr); return pr;
     });

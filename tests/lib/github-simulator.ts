@@ -53,9 +53,9 @@ export function githubSimulator(bare: string, repository = "fixture/project") {
       const branch = u.searchParams.get("head")!.slice(repository.split("/")[0].length + 1);
       response = json([...pulls.values()].filter((p) => p.state === "open" && p.head.ref === branch && p.base.ref === u.searchParams.get("base")).map(shaped));
     } else if (path === "/pulls" && req.method === "POST" && !u.search) {
-      if (!keys(body, ["title", "body", "head", "base"], ["title", "body", "head", "base"]) || !head(body.head) || !head(body.base) || [...pulls.values()].some((p) => p.state === "open" && p.head.ref === body.head && p.base.ref === body.base)) return bad();
+      if (!keys(body, ["title", "body", "head", "base", "draft"], ["title", "body", "head", "base"]) || (body.draft!==undefined&&body.draft!==true) || !head(body.head) || !head(body.base) || [...pulls.values()].some((p) => p.state === "open" && p.head.ref === body.head && p.base.ref === body.base)) return bad();
       const n = pulls.size + 1;
-      const p = { ...fixture.pull, draft: false, mergeable: true, mergeable_state: "clean", number: n, title: body.title, body: body.body, html_url: `https://github.com/${repository}/pull/${n}`, head: { ref: body.head }, base: { ref: body.base } };
+      const p = { ...fixture.pull, draft: body.draft===true, mergeable: true, mergeable_state: "clean", number: n, title: body.title, body: body.body, html_url: `https://github.com/${repository}/pull/${n}`, head: { ref: body.head }, base: { ref: body.base } };
       pulls.set(n, p); response = json(shaped(p), 201);
     } else if (/^\/pulls\/[1-9][0-9]*$/.test(path) && !u.search) {
       const p = pulls.get(Number(path.split("/")[2])); if (!p) return json({ message: "Not Found" }, 404);
