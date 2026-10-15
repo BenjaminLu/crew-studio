@@ -7,3 +7,8 @@
 .mate-speech button:hover { text-decoration:underline; }
 .mate-speech button:focus-visible { outline:2px solid #9f292c; outline-offset:3px; border-radius:3px; }
 @media(max-width:600px) { .mate-speech { width:180px; padding:9px 12px; font-size:12px; } }
+#crewFocus button:not(:focus) { left:0; top:0; width:1px; height:1px; min-width:0; min-height:0; padding:0; margin:-1px; border:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+#crewFocus button:focus { box-sizing:border-box; max-width:calc(100vw - 16px); max-height:calc(100vh - 16px); overflow:auto; overflow-wrap:anywhere; white-space:normal; z-index:90; }
+#crewCard { box-sizing:border-box; max-width:calc(100vw - 16px); max-height:calc(100vh - 16px); overflow:auto; overflow-wrap:anywhere; }
+#crewCard .cc-h b, #crewCard dd { min-width:0; }
+#crewCard .cc-h button { flex-shrink:0; }

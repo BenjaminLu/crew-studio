@@ -20,7 +20,9 @@ with tempfile.TemporaryDirectory(prefix='captain-build-') as tmp:
     main = main.replace('    render();', '    render();\n    LIVE?.placeInputs?.(crewAt);')
     (work / 'src/main.js').write_text(main)
     hud = work / 'src/hud.js'
-    hud.write_text(hud.read_text().replace('https://github.com/OWNER/firstmate-workflow', ''))
+    hud_text = hud.read_text().replace('https://github.com/OWNER/firstmate-workflow', '')
+    hud_text = hud_text.replace('["task",task?.boardId || ""]', '["task",task ? [task.boardId, task.title].filter(Boolean).join(" · ") : ""]')
+    hud.write_text(hud_text)
     # Remove the upstream write transport entirely before bundling.
     board = work / 'src/board-source.js'
     text = board.read_text()

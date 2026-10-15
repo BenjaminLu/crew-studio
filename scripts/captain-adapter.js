@@ -7,6 +7,11 @@ const recent = [], outcomes = [], seen = new Set();
 const stage = status => ({succeeded:'merged', done:'merged', cancelled:'closed', failed:'gate', 'needs-you':'captain', running:'working', idle:'queued'})[status] || status;
 const bubbles = new Map();
 const mateId = root => `firstmate:${root}`;
+// Canvas pennants are compact identifiers; full task titles stay in crew details.
+const crewLabel = value => {
+  const chars = Array.from(String(value || '').replace(/\s+/g, ' ').trim());
+  return chars.length > 20 ? chars.slice(0, 19).join('') + '…' : chars.join('');
+};
 const terminal = t => ['merged', 'closed', 'parked'].includes(stage(t.status));
 function update() {
   document.documentElement.lang = snapshot.lang || 'en';
@@ -22,11 +27,11 @@ function update() {
     if (!groups.has(root)) groups.set(root, {task:{id:c.task, title:c.title}, title:c.title, cards:[]});
     groups.get(root).cards.push(c);
   }
-  const mates = [...groups].map(([root, g]) => ({id:mateId(root), crew_name:g.title,
+  const mates = [...groups].map(([root, g]) => ({id:mateId(root), crew_name:crewLabel(root),
     role:'firstmate', task:g.task.id, state:g.cards.length ? 'waiting' : 'working'}));
   source.accept({ default_project: 'studio',
     tasks: snapshot.tasks.map(t => ({...t, stage:stage(t.status), actions:[]})),
-    crew: [...mates, ...snapshot.crew.filter(c => c.role !== 'firstmate').map(c => ({...c, id:c.name, crew_name:c.name, state:c.alive ? 'working' : 'idle'}))],
+    crew: [...mates, ...snapshot.crew.filter(c => c.role !== 'firstmate').map(c => ({...c, id:c.name, crew_name:crewLabel(c.name), state:c.alive ? 'working' : 'idle'}))],
     pending: snapshot.pending.map(c => ({...c, answerable:false})), recent, outcomes });
   const cards = document.getElementById('captain-cards');
   const zh = snapshot.lang?.startsWith('zh');
@@ -42,7 +47,7 @@ function update() {
     if(el.dataset.content === signature) continue; // preserve keyboard focus across snapshots
     el.dataset.content = signature;
     const label = document.createElement('strong'); label.textContent = zh ? '船長，需要你的 input' : 'Captain, your input is needed';
-    const task = document.createElement('small'); task.textContent = g.title || g.task.id;
+    const task = document.createElement('small'); task.textContent = g.title || g.task.id; task.title = task.textContent;
     el.replaceChildren(label, task, ...g.cards.map(c => {
       const button = document.createElement('button'); button.textContent = c.title || c.id;
       button.dataset.card = c.id; button.onclick = () => CrewSkin.openCard(c.id); return button;
