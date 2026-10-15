@@ -38,7 +38,8 @@ function viewDoctor() {
     ["basic","coding","optional"].map(group=>h("section", { "data-doc-group":group },
       h("h2", {}, group==="basic"?T("Basic web readiness","基本網頁功能"):group==="coding"?T("Coding and checks","程式碼與檢查"):T("Optional integrations","選用整合")),
       h("div", { class: "card", style: "padding:0" }, items.filter(it=>(it.group||"coding")===group).map((it) => {
-      const [cls, en, zh] = it.id === "codex" && it.status === "ok" ? ["", "Detected", "已偵測"] : STATUS[it.status] || STATUS.info;
+      const cliStatus = { available: ["ok", "Available", "可用"], missing: ["bad", "Not installed", "未安裝"], unusable: ["warn", "Cannot run", "無法執行"] };
+      const [cls, en, zh] = (it.availability === "available" && it.authenticated === true ? ["ok", "Logged in", "已登入"] : cliStatus[it.availability]) || STATUS[it.status] || STATUS.info;
       return h("div", { class: "doc-row", "data-item": it.id, "data-status": it.status },
         h("div", { class: "doc-main" },
           h("div", { class: "doc-t" }, h("b", {}, T(it.title,it.titleZh||it.title)), h("span", { class: `badge ${cls}` }, T(en, zh))),

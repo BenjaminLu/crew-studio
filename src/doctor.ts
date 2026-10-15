@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 export type Status = "ok" | "degraded" | "missing" | "info";
 export type Action = { kind: "install"; item: string } | { kind: "login"; item: string } | { kind: "github" } | { kind: "keys" } | { kind: "phone" } | { kind: "none" };
-export type Item = { id: string; title: string; titleZh?: string; status: Status; detail: string; detailZh?: string; adds: string; addsZh?: string; fix: string; fixZh?: string; group?: "basic" | "coding" | "optional"; action: Action; version?: string | null };
+export type Item = { id: string; title: string; titleZh?: string; status: Status; availability?: "missing" | "available" | "unusable"; authenticated?: boolean | null; detail: string; detailZh?: string; adds: string; addsZh?: string; fix: string; fixZh?: string; group?: "basic" | "coding" | "optional"; action: Action; version?: string | null };
 export type Method = { id: string; label: string; argv: string[]; source: string; location: string; needs: string[]; admin: boolean; kind?: "run" | "open"; url?: string };
 
 const which = (bin: string): string | null => {
@@ -19,10 +19,21 @@ const which = (bin: string): string | null => {
   for (const d of (process.env.PATH ?? "").split(":")) { const p = join(d, bin); try { accessSync(p, constants.X_OK); return p; } catch {} }
   return null;
 };
-const version = (bin: string): string | null => {
+const version = (bin: string, flag = "--version"): string | null => {
   if (!which(bin)) return null;
-  try { const r = Bun.spawnSync([bin, "--version"], { stdout: "pipe", stderr: "pipe", timeout: 8000 }); const v = (r.stdout.toString() || r.stderr.toString()).trim().split("\n")[0]; return r.success ? v.slice(0, 80) : null; } catch { return null; }
+  try { const r = Bun.spawnSync([bin, flag], { stdout: "pipe", stderr: "pipe", timeout: 8000 }); const v = (r.stdout.toString() || r.stderr.toString()).trim().split("\n")[0]; return r.success ? v.slice(0, 80) : null; } catch { return null; }
 };
+const present = (bin: string) => bin.includes("/") ? existsSync(bin) : (process.env.PATH ?? "").split(":").some(d => existsSync(join(d, bin)));
+/** Read the vendor's login status only: never start a conversation or login flow. */
+function authenticated(id: "claude" | "codex", bin: string): boolean | null {
+  try {
+    const r = Bun.spawnSync([bin, ...(id === "claude" ? ["auth", "status", "--json"] : ["login", "status"])], { stdout: "pipe", stderr: "pipe", timeout: 8000 });
+    if (id === "claude") { const v = JSON.parse(r.stdout.toString()); return typeof v.loggedIn === "boolean" && (r.success || v.loggedIn === false) ? v.loggedIn : null; }
+    const text = r.stdout.toString() + r.stderr.toString();
+    if (/not logged in/i.test(text)) return false;
+    return r.success && /^Logged in using /im.test(text) ? true : null;
+  } catch { return null; }
+}
 
 /** Official installers, per OS. Data only: add linux/win32 rows here. */
 export const INSTALLERS: Record<string, Record<string, Method[]>> = {
@@ -117,17 +128,28 @@ export function diagnose(i: DoctorInput): Item[] {
     ["python",process.env.CREW_PYTHON_BIN||"python3","Python 3 (wording check)","Python 3（用字檢查）","The core/ste-wording check; not needed for basic pages.","core/ste-wording 檢查；基本頁面不需要它。"],
   ]) {
     const v=version(bin);
-    items.push({id,title:en,titleZh:zh,status:v?"ok":"missing",group:"coding",version:v,detail:v||"not installed; this coding/check capability is unavailable",detailZh:v||"尚未安裝；此程式碼／檢查功能無法使用",adds:purpose,addsZh:purposeZh,fix:v?"":`Install ${id==="python"?"Python 3":en.split(" (")[0]} before using this capability.`,fixZh:v?"":"使用這項功能前，請先安裝對應工具。",action:v||id!=="node"||!methodsFor("node").length?{kind:"none"}:{kind:"install",item:"node"}});
+    const found = present(bin);
+    items.push({id,title:en,titleZh:zh,status:v?"ok":found?"degraded":"missing",availability:v?"available":found?"unusable":"missing",group:"coding",version:v,detail:v||(found?"CLI found, but --version failed.":"not installed; this coding/check capability is unavailable"),detailZh:v||(found?"找到 CLI，但 --version 執行失敗。":"尚未安裝；此程式碼／檢查功能無法使用"),adds:purpose,addsZh:purposeZh,fix:v?"":found?"Check executable permissions and dependencies.":`Install ${id==="python"?"Python 3":en.split(" (")[0]} before using this capability.`,fixZh:v?"":found?"檢查執行權限與依賴。":"使用這項功能前，請先安裝對應工具。",action:v||found||id!=="node"||!methodsFor("node").length?{kind:"none"}:{kind:"install",item:"node"}});
   }
   const hasEvents = existsSync(join(i.state, "events.jsonl"));
   items.push({ id: "state", title: "firstmate state folder", status: !legacy ? "info" : hasEvents ? "ok" : "missing", detail: !legacy ? "Legacy adapter off; no v1 state folder is read." : hasEvents ? i.state : `no events.jsonl under ${i.state}`, detailZh: !legacy ? "舊版轉接器已關閉；不會讀取 v1 state 資料夾。" : undefined,
     adds: !legacy ? "Optional legacy task history; native workflows do not use it." : "Board, Inbox, Crew, Activity, Library: everything Studio shows.", addsZh: !legacy ? "選用的舊版任務紀錄；原生工作流程不使用它。" : undefined, fix: !legacy || hasEvents ? "" : "Start Studio with CREW_FM_STATE=<firstmate>/state.", action: { kind: "none" } });
   items.push({ id: "board", title: "firstmate board (to answer cards)", status: !legacy ? "info" : i.board.writable ? "ok" : "degraded", detail: !legacy ? "Optional legacy board disabled; native cards use Studio." : i.board.writable ? "answers go through the board" : `read-only: ${i.board.readonlyReason ?? "board unavailable"}`, detailZh: !legacy ? "選用的舊版看板已停用；原生卡片由 Studio 處理。" : undefined,
     adds: "Answering cards from Studio.", fix: !legacy || i.board.writable ? "" : "Start the firstmate board; until then answer cards on the board itself.", action: { kind: "none" } });
-  items.push({ id: "claude", title: "Claude Code CLI", status: claudeV ? "ok" : "missing", version: claudeV, detail: claudeV ?? "not installed",
-    adds: "Driving the firstmate main session on Claude, and the claude chat provider.", fix: claudeV ? "" : "Install it (official installer), then log in.", action: claudeV ? { kind: "login", item: "claude" } : { kind: "install", item: "claude" } });
-  items.push({ id: "codex", title: "Codex CLI", status: codexV ? "ok" : "missing", version: codexV, detail: codexV ? "CLI detected; login and native repository tool execution are not verified." : "not installed", detailZh: codexV ? "已偵測到 CLI；登入與原生工具讀取專案的能力尚未驗證。" : "未安裝",
-    adds: "Driving the firstmate main session on Codex, and the codex chat provider.", fix: codexV ? "" : "Install it (official npm package or Homebrew), then log in.", action: codexV ? { kind: "login", item: "codex" } : { kind: "install", item: "codex" } });
+  for (const [id, title, bin, v] of [
+    ["claude", "Claude Code CLI", i.claudeBin ?? process.env.CREW_CLAUDE_BIN ?? "claude", claudeV],
+    ["codex", "Codex CLI", i.codexBin ?? process.env.CREW_CODEX_BIN ?? "codex", codexV],
+  ] as const) {
+    const found = present(bin), auth = v ? authenticated(id, bin) : null;
+    items.push({ id, title, status: v ? "ok" : found ? "degraded" : "missing", availability: v ? "available" : found ? "unusable" : "missing", authenticated: auth, version: v,
+      detail: v ? `${v}; ${auth === true ? "CLI reports logged in" : auth === false ? "not logged in" : "login status unverified"}. Workflow execution is not verified.` : found ? "CLI found, but --version could not complete successfully." : "CLI not found at the configured path or on PATH.",
+      detailZh: v ? `${v}；${auth === true ? "CLI 回報已登入" : auth === false ? "尚未登入" : "登入狀態未確認"}。工作流程執行能力尚未驗證。` : found ? "找到 CLI，但 --version 無法成功完成。" : "在指定路徑或 PATH 中找不到 CLI。",
+      adds: "CLI availability and login status only; model access, quota and workflow execution require separate checks.",
+      addsZh: "只檢查 CLI 與登入狀態；模型權限、配額與工作流程執行需另外驗證。",
+      fix: v ? "" : found ? "Check executable permissions and dependencies, then run --version again." : "Install the CLI using its official installer.",
+      fixZh: v ? "" : found ? "檢查執行權限與依賴，再執行 --version。" : "使用官方安裝方式安裝 CLI。",
+      action: v && auth !== true ? { kind: "login", item: id } : found || v ? { kind: "none" } : { kind: "install", item: id } });
+  }
   if(i.codexAccount)items.push({id:"codex-account",title:"Codex account",titleZh:"Codex 帳號",status:i.codexAccount.state==="ready"?"info":"degraded",detail:i.codexAccount.reason,detailZh:i.codexAccount.reasonZh,adds:"Sign in and start new work here; no terminal session selection is required. Account readiness does not verify repository tools.",addsZh:"在這裡登入並開始新工作，不必選擇終端機 session；帳號就緒不代表專案工具已驗證。",fix:"",action:{kind:"login",item:"codex"}});
   items.push({ id: "keys", title: "API keys for the status chat", status: anyKey ? "ok" : statusChatOk ? "info" : "degraded",
     detail: [i.keys.anthropic ? `Anthropic (${i.keys.anthropic})` : null, i.keys.openai ? `OpenAI (${i.keys.openai})` : null, i.keys.compatBaseUrl ? `endpoint ${i.keys.compatBaseUrl}` : null].filter(Boolean).join(", ") || "none set",
@@ -173,7 +195,15 @@ export function diagnose(i: DoctorInput): Item[] {
     detail: rl.ok ? `Claude rounds get ${rl.source} as their one credential (CLAUDE_CODE_OAUTH_TOKEN); no keychain, no GitHub token and no other credential reaches a round.${rl.warn ? ` Note: ${rl.warn}.` : ""}` : `Claude rounds are refused: ${rl.error}`,
     adds: "How agent rounds sign in: Studio reads the vendor's own login outside the sandbox and hands the round only its token.",
     fix: rl.ok ? (rl.warn ? "Make a crew token once: claude setup-token, then security add-generic-password -s crew-studio-claude-token -a \"$USER\" -w (or ~/.config/crew-studio/claude-token, mode 600)." : "") : "Make a crew token once: claude setup-token, then security add-generic-password -s crew-studio-claude-token -a \"$USER\" -w (or ~/.config/crew-studio/claude-token, mode 600).", action: { kind: "none" } });
-  for(const item of items) item.group ??= ["native","assets"].includes(item.id)?"basic":["state","board","github","lan","tailscale","ffmpeg","renderer"].includes(item.id)?"optional":"coding";
+  for (const item of items) {
+    if (item.id === "tailscale") { item.availability = i.tailscale.installed ? "available" : "missing"; item.authenticated = i.tailscale.running ? true : null; }
+    if (item.id === "ffmpeg") item.availability = i.render?.ffmpeg ? (version(i.render.ffmpeg, "-version") ? "available" : "unusable") : "missing";
+    // A detected Playwright module alone does not prove Chromium is installed or runnable.
+    if (item.id === "renderer" && !(i.render?.node && i.render?.playwright)) item.availability = "missing";
+    if (item.id === "lock") item.availability = lock ? "available" : "missing";
+    if (item.id === "sandbox") item.availability = sb.ok ? "available" : present("/usr/bin/sandbox-exec") ? "unusable" : "missing";
+    item.group ??= ["native","assets"].includes(item.id)?"basic":["state","board","github","lan","tailscale","ffmpeg","renderer"].includes(item.id)?"optional":"coding";
+  }
   return items;
 }
 

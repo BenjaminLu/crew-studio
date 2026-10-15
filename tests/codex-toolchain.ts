@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path"; import { tmpdir } from "node:os";
 import { diagnose } from "../src/doctor";
 import { cleanEnv } from "../src/host/types"; import { codexHost } from "../src/host/codex";
@@ -10,6 +10,16 @@ ok(!Object.keys(env).some(k=>["CODEX_SESSION_ID","CODEX_THREAD_ID","CODEX_CI","C
 const doctor=diagnose({state:root,board:{writable:false},gh:{connected:false,tokenSource:null,enabled:false},keys:{anthropic:null,openai:null,compatBaseUrl:null},chatProvider:"codex",lanIp:null,tailscale:{installed:false,running:false,dnsName:null},claudeBin:"/nonexistent/claude",codexBin:process.execPath,compiled:false});
 const cli=doctor.find(i=>i.id==="codex")!,main=doctor.find(i=>i.id==="main")!;
 ok(cli.status==="ok" && /not verified/.test(cli.detail) && /尚未驗證/.test(cli.detailZh||"") && main.status==="info" && /actual native repository read/.test(main.detail),"Doctor distinguishes detected CLI from unverified login and repository tools in both languages");
+const authBin=join(root,"auth-cli");
+const inspectCli=()=>diagnose({state:root,legacy:false,board:{writable:false},gh:{connected:false,tokenSource:null,enabled:false},keys:{anthropic:null,openai:null,compatBaseUrl:null},chatProvider:"codex",lanIp:null,tailscale:{installed:false,running:false,dnsName:null},claudeBin:authBin,codexBin:authBin,compiled:false}).filter(i=>["claude","codex"].includes(i.id));
+writeFileSync(authBin,'#!/bin/sh\nif [ "$1" = "--version" ]; then echo fixture; elif [ "$1" = "auth" ]; then echo \'{"loggedIn":true}\'; else echo "Logged in using ChatGPT" >&2; fi\n',{mode:0o700});
+ok(inspectCli().every(i=>i.availability==="available"&&i.authenticated===true&&i.action.kind==="none"),"both CLI login status commands establish logged in without a conversation");
+writeFileSync(authBin,'#!/bin/sh\nif [ "$1" = "--version" ]; then echo fixture; elif [ "$1" = "auth" ]; then echo \'{"loggedIn":false}\'; exit 1; else echo "Not logged in" >&2; exit 1; fi\n');
+ok(inspectCli().every(i=>i.availability==="available"&&i.authenticated===false&&i.action.kind==="login"),"logged-out CLIs remain available and offer login");
+writeFileSync(authBin,'#!/bin/sh\nif [ "$1" = "--version" ]; then echo fixture; else echo denied >&2; exit 1; fi\n');
+ok(inspectCli().every(i=>i.availability==="available"&&i.authenticated===null),"failed auth probes stay unknown, not logged out");
+writeFileSync(authBin,'#!/bin/sh\nexit 1\n');
+ok(inspectCli().every(i=>i.availability==="unusable"&&i.status==="degraded"&&i.action.kind==="none"),"broken installed CLIs are not reported missing or offered login");
 const log=join(root,"rpc.jsonl");process.env.STUB_CODEX_LOG=log;const events:any[]=[];let approvals=0;
 const session=await codexHost(join(import.meta.dir,"stub-host-codex.mjs")).attach("",{cwd:join(root,"project"),fresh:true,onEvent:e=>events.push(e),onPermission:async()=>{approvals++;return{allow:false};},permissionMcp:{command:[],env:{}}});
 try {

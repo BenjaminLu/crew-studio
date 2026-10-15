@@ -38,7 +38,7 @@ async function captureCodex(p, width, scheme, lang) {
   const row=p.locator('[data-item="codex"]');
   await row.evaluate(el=>el.scrollIntoView({block:"center",inline:"nearest"}));
   const badge=row.locator('.doc-t .badge');
-  ok(await badge.innerText()===(lang==="zh"?"已偵測":"Detected") && !(await badge.getAttribute('class')).split(/\s+/).includes('ok'),`Codex badge describes installation only ${width} ${scheme} ${lang}`);
+  ok(await badge.innerText()===(lang==="zh"?"可用":"Available") && (await badge.getAttribute('class')).split(/\s+/).includes('ok'),`Codex badge describes installation only ${width} ${scheme} ${lang}`);
   ok(await row.evaluate(el=>{
     const r=el.getBoundingClientRect(), main=document.querySelector('.main').getBoundingClientRect();
     const login=el.querySelector('[data-login="codex"]'), a=login.getBoundingClientRect();
