@@ -86,13 +86,13 @@ export class StaffingStore{
 }
 
 export function installStaffingGuard(engine:import('../runtime/engine').Engine,store:StaffingStore,resolveProject:(id:string)=>StaffingProject,verifyCapability?:(config:StaffingConfig)=>void){
- const applies=(def:any)=>def?.id==='code-firstmate'||def?.kind==='coffee-kit';
+ const applies=(def:any)=>def?.id==='code-firstmate'||!!def?.id&&engine.defs.previewOnly(def.id)||def?.kind==='coffee-kit';
  function verifyStored(def:any,params:Record<string,string>){
   const project=def.kind==='coffee-kit'?coffeeStaffingProject(params.project):resolveProject(params.project);const config=store.current(project);
   if(params._staffing!==config.hash||config.workflow.id!==def.id||config.workflow.version!==def.version||config.workflow.sha256!==staffingHash(def))throw new Error('Staffing approval missing or changed; confirm project role configuration / 派工配置尚未核准或已變更，請確認各角色配置');
   const required=def.roles.map((r:any)=>r.id);
   if(required.some((id:string)=>!config.roles[id]))throw new Error('Approve every workflow role before dispatch');
-  for(const[id,pick]of Object.entries(config.roles)){const role=def.roles.find((r:any)=>r.id===id);if(!role||role.skill!==nativeStaffingSkillRef(id,def.kind==='coffee-kit'?'coffee-kit':def.id)||role.skill!==pick.skill.ref)throw new Error('Approved role skill differs from workflow policy');const source=engine.deps.skillText(role.skill);if(createHash('sha256').update(source).digest('hex')!==pick.skill.sha256)throw new Error('Native role skill changed; confirm a fresh staffing plan');}
+  for(const[id,pick]of Object.entries(config.roles)){const role=def.roles.find((r:any)=>r.id===id);if(!role||role.skill!==nativeStaffingSkillRef(id,def.kind==='coffee-kit'?'coffee-kit':engine.defs.previewOnly(def.id)?'code-firstmate':def.id)||role.skill!==pick.skill.ref)throw new Error('Approved role skill differs from workflow policy');const source=engine.deps.skillText(role.skill);if(createHash('sha256').update(source).digest('hex')!==pick.skill.sha256)throw new Error('Native role skill changed; confirm a fresh staffing plan');}
   return config;
  }
  function verified(def:any,params:Record<string,string>){try{return verifyStored(def,params)}catch(error){throw new QueueRefusal('Staffing approval requires confirmation: '+String((error as any)?.message??error));}}

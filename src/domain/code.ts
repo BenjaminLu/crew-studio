@@ -141,7 +141,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     };
     return { signal, live, assert, rebind, retainPending };
   };
-  registerGitHubReviewCodeBridge(engine,{adapter:selectedAdapter,phase:remotePhase});
+  registerGitHubReviewCodeBridge(engine,{adapter:selectedAdapter,phase:remotePhase,poller:remoteWatchers.poller});
   engine.beforeStart["github-reconcile"] = async x => {
     if (x.ctx.pr?.adapter !== "github" || x.node.do === "pr.open") return null;
     const phase = remotePhase(x); phase.assert(); const a = selectedAdapter(x);

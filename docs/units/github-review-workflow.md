@@ -185,3 +185,20 @@ publish. Legacy code publication remains unchanged (72 regression assertions).
 Build passes. This new bridge has not yet completed its actual Engine acceptance;
 RUN remains held and no external publication occurred. Next step is the integrated
 role/admission + external review/fix loop and final ready verification.
+
+Engine integration WIP continues: source-lineage GitHub templates now inherit
+native code role/model/skill admission and Firstmate staffing lookup. The source
+coding bridge prepares captain Draft publication; the Engine external handler
+binds the actual newly published PR number (not the discovery PR), grant, head,
+policy and persisted absolute deadline. Required reviewer findings are recorded
+as blocking check findings for the existing same-Task refine loop. A final ready
+hook freshly rechecks required reviewer votes, authoritative CI and all six gates.
+The template removes `remote.ready` (which expects non-Draft/CLEAN merge behavior),
+contains no merge action, and has an explicit close route. Initial topology test
+caught an orphan Closed entry; the real schema validation now passes.
+
+Activation remains blocked: the complete actual Engine journey has not yet been
+validated, and real external staffing identity requires the separate verified
+project-execution authority seam currently unavailable on this baseline. Never
+replace that seam with a permissive stub. Current focused 37+13 safety regressions
+pass; this is not full-runtime acceptance. No paid or real GitHub write occurred.

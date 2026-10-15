@@ -321,14 +321,6 @@
       "y": 460
     },
     {
-      "id": "remote-ready",
-      "kind": "hook",
-      "do": "remote.ready",
-      "label": "Remote readiness",
-      "x": 1970,
-      "y": 220
-    },
-    {
       "id": "step-back",
       "kind": "card",
       "label": "Step-back card",
@@ -442,6 +434,14 @@
       "kind": "hook",
       "label": "Ready for captain",
       "x": 2750,
+      "y": 220
+    },
+    {
+      "id": "review-ready",
+      "kind": "hook",
+      "label": "Verify current reviews and CI again",
+      "do": "github.review.ready",
+      "x": 2400,
       "y": 220
     }
   ],
@@ -589,56 +589,9 @@
       "fail"
     ],
     [
-      "review",
-      "remote-ready",
-      "ok"
-    ],
-    [
-      "remote-ready",
-      "build",
-      "rebase"
-    ],
-    [
       "build",
       "build",
       "rebase-more"
-    ],
-    [
-      "remote-ready",
-      "closed",
-      "close"
-    ],
-    [
-      "remote-ready",
-      "fix",
-      "fail"
-    ],
-    [
-      "remote-ready",
-      "external-review",
-      "ok",
-      {
-        "checks": [
-          {
-            "use": "firstmate/gate-branch"
-          },
-          {
-            "use": "firstmate/gate-rebase"
-          },
-          {
-            "use": "firstmate/gate-scope"
-          },
-          {
-            "use": "firstmate/gate-failfirst"
-          },
-          {
-            "use": "firstmate/gate-ci"
-          },
-          {
-            "use": "firstmate/gate-approval"
-          }
-        ]
-      }
     ],
     [
       "review",
@@ -737,7 +690,7 @@
     ],
     [
       "external-review",
-      "captain-ready",
+      "review-ready",
       "pass"
     ],
     [
@@ -748,6 +701,48 @@
     [
       "captain-ready",
       "ready-done",
+      "close"
+    ],
+    [
+      "review",
+      "external-review",
+      "ok",
+      {
+        "checks": [
+          {
+            "use": "firstmate/gate-branch"
+          },
+          {
+            "use": "firstmate/gate-rebase"
+          },
+          {
+            "use": "firstmate/gate-scope"
+          },
+          {
+            "use": "firstmate/gate-failfirst"
+          },
+          {
+            "use": "firstmate/gate-ci"
+          },
+          {
+            "use": "firstmate/gate-approval"
+          }
+        ]
+      }
+    ],
+    [
+      "review-ready",
+      "captain-ready",
+      "pass"
+    ],
+    [
+      "review-ready",
+      "fix",
+      "fail"
+    ],
+    [
+      "external-review",
+      "closed",
       "close"
     ]
   ]
