@@ -1,0 +1,121 @@
+{
+  "id": "images",
+  "name": "Images",
+  "kind": "image",
+  "version": 1,
+  "intent": {
+    "keywords": [
+      "image",
+      "picture",
+      "圖片",
+      "氣球"
+    ]
+  },
+  "roles": [],
+  "nodes": [
+    {
+      "id": "intake",
+      "kind": "hook",
+      "label": "Capture intent",
+      "do": "deliver.intake",
+      "x": 100,
+      "y": 140
+    },
+    {
+      "id": "draft",
+      "kind": "hook",
+      "label": "Generate PNG with Codex",
+      "do": "image.generate",
+      "timeout_s": 240,
+      "x": 300,
+      "y": 140
+    },
+    {
+      "id": "checks",
+      "kind": "check",
+      "label": "PNG readiness",
+      "checks": [
+        {
+          "use": "core/artifact-ready",
+          "proves": [
+            0
+          ]
+        }
+      ],
+      "args": {
+        "producer": "all"
+      },
+      "x": 500,
+      "y": 140
+    },
+    {
+      "id": "accept",
+      "kind": "card",
+      "label": "Final acceptance",
+      "args": {
+        "mode": "deliver-accept"
+      },
+      "x": 700,
+      "y": 140
+    },
+    {
+      "id": "library",
+      "kind": "hook",
+      "label": "Publish approved image",
+      "do": "library.publish",
+      "x": 900,
+      "y": 140
+    },
+    {
+      "id": "done",
+      "kind": "hook",
+      "label": "Approved",
+      "x": 1100,
+      "y": 140
+    },
+    {
+      "id": "closed",
+      "kind": "hook",
+      "label": "Closed",
+      "args": {
+        "result": "closed"
+      },
+      "x": 900,
+      "y": 340
+    }
+  ],
+  "edges": [
+    [
+      "intake",
+      "draft"
+    ],
+    [
+      "draft",
+      "checks"
+    ],
+    [
+      "checks",
+      "accept",
+      "pass"
+    ],
+    [
+      "accept",
+      "draft",
+      "changes"
+    ],
+    [
+      "accept",
+      "closed",
+      "rejected"
+    ],
+    [
+      "accept",
+      "library",
+      "approved"
+    ],
+    [
+      "library",
+      "done"
+    ]
+  ]
+}

@@ -55,6 +55,12 @@ const fixture: any = { id: "fixture", model: "strict-local", sandboxFree: true, 
   } };
 } };
 const deps: any = { dataDir: data, agents, provider: () => fixture, defaultProvider: () => ({ provider: "fixture", model: "strict-local" }), log, send() {}, fmRoot: fm, protectedRoots: [fm], m3: { store, lane, runs: null }, fileorg, docs: {}, studioUrl: () => `http://127.0.0.1:${port}` };
+let imageCalls = 0, imageAborted = false;
+deps.generateImage = async (_prompt: string, authorize: () => void, signal: AbortSignal) => {
+  authorize(); if (signal.aborted) throw new Error("cancelled"); imageCalls++;
+  if (_prompt.includes("HOLD_IMAGE")) await new Promise<void>((_resolve, reject) => signal.addEventListener("abort", () => { imageAborted = true; reject(new Error("cancelled")); }, { once: true }));
+  return { bytes: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP437DvPwAH/AM9TriEzAAAAABJRU5ErkJggg==", "base64"), width: 1, height: 1, mime: "image/png", provider: "codex", model: "fixture-image", effort: "low", sha256: "fixture" };
+};
 let rt = createRuntime(deps), E = rt.engine;
 if (process.env.CREW_NATIVE_RESTART_PHASE === "hold") {
   hold = true; const pending = E.start({ workflow: "documents", params: {}, text: "Restart active draft fixture" });
@@ -139,6 +145,23 @@ const playback = async (r: any, label: string) => {
 };
 
 const waiting = async (id: string, node = "accept") => { await until(() => E.cards.list({ run: id, open: true }).some(c => c.node === node) || ["failed", "succeeded", "cancelled"].includes(E.get(id)!.status), 30000); return E.cards.list({ run: id, open: true }).find(c => c.node === node); };
+const imageRun = E.start({ workflow: "images", params: { provider: "codex" }, text: "Pink balloon" });
+const imageCard = await waiting(imageRun.id);
+ok(!!imageCard && imageCalls === 1 && !E.get(imageRun.id)!.ctx.library, "image generation waits for pinned captain acceptance before publication");
+await destinations(imageCard, "image");
+if (imageCard) await E.answer(imageCard.id, { choice: "changes", note: "Make the balloon pinker", by: "fixture captain", aligned: [0] });
+const revisedImageCard = await waiting(imageRun.id);
+ok(!!revisedImageCard && revisedImageCard.id !== imageCard?.id && E.get(imageRun.id)!.ctx.deliver.draft.n === 2, "image change request creates a new pinned version and acceptance card");
+if (revisedImageCard) await E.answer(revisedImageCard.id, { choice: "approve-draft", by: "fixture captain", aligned: [0] });
+await until(() => E.get(imageRun.id)!.status === "succeeded", 10000);
+ok(!!E.get(imageRun.id)!.ctx.library && store.approved(E.get(imageRun.id)!.ctx.library.artifact)?.n === 2, "approved PNG publishes its exact version to the library");
+const refusedImage = E.start({ workflow: "images", params: { provider: "claude" }, text: "Do not switch vendors" });
+await until(() => E.get(refusedImage.id)!.status === "failed", 10000);
+ok(imageCalls === 2, "explicit non-Codex image provider refuses before generation");
+const cancelledImage = E.start({ workflow: "images", params: { provider: "codex" }, text: "HOLD_IMAGE" });
+await until(() => imageCalls === 3, 5000); E.cancel(cancelledImage.id);
+await until(() => imageAborted, 5000);
+ok(!E.get(cancelledImage.id)!.ctx.deliver && !store.get(`out-${cancelledImage.id.toLowerCase()}-draft`) && !E.cards.list({ run: cancelledImage.id, open: true }).length, "cancelled image generation aborts without artifact or acceptance card");
 const doc = E.start({ workflow: "documents", params: {}, text: "Write a fixture memo" }); let card = await waiting(doc.id);
 ok(!!card && E.get(doc.id)!.nodes.draft.visits === 2, "missing document title triggers automated refinement before any human acceptance");
 ok(E.get(doc.id)!.nodes.draft.data.dir.startsWith(join(data, "work") + "/"), "deliver rounds use the sandbox-allowed work area, never the protected run store");
