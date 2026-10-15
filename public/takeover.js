@@ -337,7 +337,7 @@ function viewCrewLive(actor) {
   const ci = (c) => !c.ci ? h("span", { class: "faint" }, "—") : c.ci.fail ? h("span", { class: "badge bad" }, `✗ ${c.ci.fail}`) : c.ci.pending ? h("span", { class: "badge warn" }, `… ${c.ci.pending}`) : h("span", { class: "badge ok" }, `✓ ${c.ci.pass}`);
   return h("div", { class: "page" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Crew", "船員")),
-      h("p", {}, T(`${all.filter((c) => c.alive).length} working now · every worker and reviewer round of the last two days, live from firstmate's rounds`, `目前 ${all.filter((c) => c.alive).length} 位工作中 · 近兩天每個 worker 和 reviewer 的回合，即時讀自 firstmate 的回合`))),
+      h("p", {}, T(`${all.filter((c) => c.alive).length + (window.studioAgents?.count() || 0)} working now · Studio agents and recent Firstmate rounds`, `目前 ${all.filter((c) => c.alive).length + (window.studioAgents?.count() || 0)} 位工作中 · Studio 的 agent 與近期 Firstmate 回合`))),
       h("div", { class: "seg", role: "group" },
         h("button", { "aria-pressed": crewLiveOnly ? "false" : "true", onclick: () => { crewLiveOnly = false; store.set("crew.liveOnly", "0"); render(); } }, h("span", { class: "keep" }, T("Recent", "近期"))),
         h("button", { "aria-pressed": crewLiveOnly ? "true" : "false", onclick: () => { crewLiveOnly = true; store.set("crew.liveOnly", "1"); render(); } }, h("span", { class: "keep" }, T("Working", "工作中"))))),

@@ -492,7 +492,8 @@ details.tools[open] summary{border-bottom:1px solid var(--border)}
   body.side-collapsed .side-tog{margin:0}
   body.side-collapsed .nav{align-items:center}
   body.side-collapsed .nav-item{font-size:0;justify-content:center;padding:0;width:40px;height:40px;position:relative;gap:0}
-  body.side-collapsed .nav-item .count:not(.attn){display:none}
+  body.side-collapsed .nav-item .count:not(.attn){position:absolute;top:1px;right:-2px;font-size:10px;line-height:16px;padding:0 4px;border-radius:99px;background:var(--bg);color:var(--text)}
+  body.side-collapsed .nav-item .count:empty{display:none}
   body.side-collapsed .nav-item .count.attn{position:absolute;top:1px;right:-2px;font-size:10px;line-height:16px;padding:0 4px}
   body.side-collapsed .nav-item:hover::after,body.side-collapsed .nav-item:focus-visible::after{content:attr(data-tip);position:absolute;left:50px;top:50%;transform:translateY(-50%);background:var(--text);color:var(--bg);font:500 12px var(--f-sans);padding:4px 8px;border-radius:6px;white-space:nowrap;z-index:30;pointer-events:none}
   body.side-collapsed .new-intent{font-size:0;width:40px;height:40px;padding:0;margin:0 0 12px;justify-content:center;gap:0}
