@@ -519,6 +519,14 @@ function buildEditor(ed) {
 
 // ---------- Runs ----------
 const RN = { list: null, prefill: null, view: null };
+// The tour seeds only an untouched form; revisiting never replaces the captain's draft.
+window.crewPrefillFirstTask = () => {
+  if (RN.draft || RN.prefill || RN.provider) return;
+  RN.draft = T("Generate an image of a cute puppy.", "產生一張可愛小狗的圖片。");
+  RN.prefill = "images";
+  RN.provider = "codex";
+  rerender();
+};
 function viewRuns() {
   if (!RN.list) { RN.list = "loading"; Promise.all([api(`/api/wruns${RN.archived ? "?archived=1" : ""}`), api("/api/wf")]).then(([r, w]) => { RN.list = r.runs; RN.cards = r.cards; RN.wfs = w.workflows; rerender(); }).catch(() => { RN.list = []; rerender(); }); }
   const runs = Array.isArray(RN.list) ? RN.list.slice().reverse() : [];

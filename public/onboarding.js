@@ -7,8 +7,8 @@
   const remember = value => { remembered = true; try { store.set(KEY, value); } catch {} };
   const steps = () => [
     {route:'doctor',target:'[data-codex-account]',title:tr('Check your model','確認模型'),text:tr('Use these account controls to sign in. Refresh the capability check below to confirm Codex can accept a task. This does not start a conversation.','在反白區域登入帳號，再按下方「檢查可用性」確認 Codex 能接收任務。檢查不會啟動對話。')},
-    {route:'gates',target:'[data-onboarding-projects]',title:tr('Review your workspace','確認工作區與專案'),text:tr('Review or register your local projects here. A first document can use Studio’s managed sandbox without a repository. Registering a project does not select it for every task.','在這裡確認或新增本機專案。第一份文件可直接使用 Studio 管理的沙箱，不需要 repo；登錄專案不代表所有任務都會使用它。')},
-    {route:'runs',target:'.rt-start',title:tr('Start your first task','開始第一個任務'),text:tr('Type your intent in the highlighted form. For a small offline trial, choose Documents and Codex, then press Start. You can finish the tour without creating a task.','在反白表單輸入意圖。可先選 Documents 與 Codex，試做一份不需網路的文件，再按「開始」。也可以先完成導覽，稍後再建立任務。')}
+    {route:'gates',target:'[data-onboarding-projects]',title:tr('Review your workspace','確認工作區與專案'),text:tr('Review or register your local projects here. A first image can use Studio’s managed sandbox without a repository. Registering a project does not select it for every task.','在這裡確認或新增本機專案。第一張圖片可直接使用 Studio 管理的沙箱，不需要 repo；登錄專案不代表所有任務都會使用它。')},
+    {route:'runs',target:'.rt-start',title:tr('Start your first task','開始第一個任務'),text:tr('Try generating an image of a cute puppy. An empty form is filled with this idea, Images and Codex; an existing draft is preserved. Edit it if you like, then press Start. Finishing the tour does not submit the task.','試試「產生一張可愛小狗的圖片」。空白表單會預填此任務，並選好 Images 與 Codex；已有草稿則保留。你可以修改後按「開始」。「完成導覽」不會送出任務。')}
   ];
   function stop(result) {
     const s=active;if(!s)return;active=null;epoch++;remember(result);
@@ -64,7 +64,7 @@
     catch {s.message=tr('Unable to check. Please retry.','無法檢查，請重試。');}
     finally {if(active===s){s.checking=false;if(s.step===0){s.status.textContent=s.message;s.refresh.disabled=false;}s.schedule();}}
   }
-  function go(s,index){s.step=index;const route='#/'+steps()[index].route;s.expected=route;draw(s);if(location.hash!==route)location.hash=route;else s.schedule();}
+  function go(s,index){if(index===2&&!s.seeded){s.seeded=true;window.crewPrefillFirstTask?.();}s.step=index;const route='#/'+steps()[index].route;s.expected=route;draw(s);if(location.hash!==route)location.hash=route;else s.schedule();}
   window.crewOpenOnboarding=async function(trigger){
     const opening=epoch;let session,me;
     try{[session,me]=await Promise.all([getJ('/api/session'),getJ('/api/remote/me')]);}catch{return;}
