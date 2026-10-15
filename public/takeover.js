@@ -20,7 +20,7 @@ async function loadTakeover() {
 const ACCOUNT={view:null,url:null,busy:false,loading:false,begin:null,starting:false,revision:0,read:0};
 window.crewFirstmateWelcomeSignature=()=>[ACCOUNT.revision,TK.revision,TK.loading,MS.view?.state,MS.view?.context,MS.view?.project,MS.view?.sessionId];
 function accountChanged(v){ACCOUNT.revision++;ACCOUNT.view=v;if(["failed","hold","cancelled"].includes(v.state))ACCOUNT.begin=null;if(v.state!=="pending")ACCOUNT.url=null;dispatchEvent(new Event("crew:codex-account"));if(S.route?.name==="board")soft();else if(["firstmate","takeover","doctor"].includes(S.route?.name))render();if(v.state==="ready"&&ACCOUNT.begin)void continueNative(ACCOUNT.begin);}
-async function accountAction(action,begin=false){if(ACCOUNT.busy)return;if(begin&&MS.view?.context==="studio")ACCOUNT.begin={project:MS.view.project};if(action==="cancel")ACCOUNT.begin=null;ACCOUNT.busy=true;render();try{const r=await postJ(`/api/codex/account/${action}`,{});if(r.error)return toast(r.error);if(action==="login")ACCOUNT.url=r.authUrl||null;accountChanged(r);}finally{ACCOUNT.busy=false;render();}}
+async function accountAction(action,begin=false){if(ACCOUNT.busy)return;if(begin&&MS.view?.context==="studio")ACCOUNT.begin={project:MS.view.project};if(action==="cancel")ACCOUNT.begin=null;ACCOUNT.busy=true;render();try{const r=await postJ(`/api/codex/account/${action}`,{});if(r.error)return toast(r.error);if(action==="login")ACCOUNT.url=r.authUrl||null;accountChanged(r);}finally{ACCOUNT.busy=false;dispatchEvent(new Event("crew:codex-account"));render();}}
 // A reconnect may have missed account events; reconcile without starting auth.
 function refreshAccount(){const read=++ACCOUNT.read,revision=ACCOUNT.revision;return getJ("/api/codex/account").then(v=>{if(read===ACCOUNT.read&&revision===ACCOUNT.revision)accountChanged(v);}).catch(()=>{});}
 addEventListener("crew:live",()=>void refreshAccount());
@@ -153,7 +153,7 @@ function startCodexCard(d, phone) {
 // Only an explicit captain Connect/Continue may create the primary, never page load.
 async function continueNative(expected){
  if(ACCOUNT.starting)return;ACCOUNT.starting=true;ACCOUNT.begin=null;
- try{const d=await getJ("/api/takeover?independent=1");if(d.view?.context!=="studio"||d.project!==expected.project)return toast(T("Workspace changed; review it before continuing.","工作空間已變更，請先確認後再繼續。"));if(d.view.state!=="detached")return toast(T("Studio already owns a Firstmate. Open its conversation.","Studio 已有自己的 Firstmate，請打開現有對話。"));const r=await postJ("/api/main/start",{host:"codex",confirm:true});if(!r.ok)return toast(r.reason||r.error);chatMode="main";store.set("crew.chatMode","main");await loadMain();openChat(false);location.hash="#/workflows/coffee-kit";loadTakeover();}catch{return toast(T("Could not connect Firstmate. Check the account and try again.","無法連接 Firstmate，請確認帳號後重試。"));}finally{ACCOUNT.starting=false;}
+ try{const d=await getJ("/api/takeover?independent=1");if(d.view?.context!=="studio"||d.project!==expected.project)return toast(T("Workspace changed; review it before continuing.","工作空間已變更，請先確認後再繼續。"));if(d.view.state!=="detached")return toast(T("Studio already owns a Firstmate. Open its conversation.","Studio 已有自己的 Firstmate，請打開現有對話。"));const r=await postJ("/api/main/start",{host:"codex",confirm:true});if(!r.ok)return toast(r.reason||r.error);chatMode="main";store.set("crew.chatMode","main");await loadMain();openChat(false);location.hash="#/firstmate";loadTakeover();}catch{return toast(T("Could not connect Firstmate. Check the account and try again.","無法連接 Firstmate，請確認帳號後重試。"));}finally{ACCOUNT.starting=false;}
 }
 
 function startCodexFlow(d) {
@@ -172,7 +172,7 @@ function startCodexFlow(d) {
       toast(T("firstmate started on Codex", "firstmate 已在 Codex 啟動"));
       chatMode = "main"; store.set("crew.chatMode", "main"); openChat(true);
       await loadMain(); loadTakeover();
-      if(d.view?.context==="studio"){openChat(false);location.hash="#/workflows/coffee-kit";}
+      if(d.view?.context==="studio"){openChat(false);location.hash="#/firstmate";}
     });
   $(".modal .btn.primary").textContent = T("Start", "啟動");
 }
