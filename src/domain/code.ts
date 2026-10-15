@@ -441,7 +441,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       if (p && p.mergeable_state !== "behind") return "ok";
       const trusted = engine.trusted(x.run.id), review: any = trusted.entries.filter(e => e.check === "firstmate/review-verdict").at(-1), b = review?.data?.binding;
       if (!trusted.ok || review?.verdict !== "pass" || b?.unverified || b?.head !== x.ctx.pr.head || x.ctx.reviewUnverified || (x.ctx.reviews ?? []).at(-1)?.verdict === "REJECT") throw new Error("bound review unavailable");
-      const old = x.ctx.pr, key = wkey(x); const round = await W.startRound(key.project,key.task,`${x.run.id}/remote-ready#${x.visit}`,{write:true,install:null}); release=round.release;phase.assert();if(round.head!==old.head)throw new Error("task head moved before update");
+      const old = x.ctx.pr, key = wkey(x); const round = await W.startRound(key.project,key.task,`${x.run.id}/remote-ready#${x.visit}`,{write:true,install:x.policy("install") === false ? false : null}); release=round.release;phase.assert();if(round.head!==old.head)throw new Error("task head moved before update");
       const request=pending?pending.request:engine.record(x,"remote-update-request",{head:old.head,data:{version:1,grant:grantIdentity(a),repository:a.grant.repository,pr:structuredClone(old),base:x.ctx.baseCommit}} as any)?.seq;
       const next = pending?pending.next:await updateOnce(a, old, x.dir, phase.signal, phase.assert); phase.assert();
       await a.verifyUpdateResult(old,next,phase.signal,phase.assert);phase.assert();
@@ -507,7 +507,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (!x.ctx.wt) return;
     const k = wkey(x); const install = x.policy("install");
     let s: Awaited<ReturnType<typeof W.startRound>>;
-    try { s = await W.startRound(k.project, k.task, holder(x), { write, skipInstall, install: Array.isArray(install) ? install.map(String) : null, scripts: x.policy("install_scripts") === true,
+    try { s = await W.startRound(k.project, k.task, holder(x), { write, skipInstall, install: install === false ? false : Array.isArray(install) ? install.map(String) : null, scripts: x.policy("install_scripts") === true,
       allow: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String) }); }
     catch (e: any) { if (e instanceof RoundBlocked) { x.rn.data.report = { marker: "BLOCKED", summary: e.message, round: x.visit }; x.save(); } throw e; }
     held.set(holder(x), s.release);
@@ -546,8 +546,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   engine.modes.spec = {
     ...roundHooks(false, true), // source-only analysis needs no package installation
     sandbox: (x) => { const wt = x.ctx.worktree; return wt && existsSync(wt) ? { writes: [], reads: [wt], cwd: wt } : null; }, // reads the worktree, writes nothing of it
-    tools: (x) => [...READ_ONLY(shellOk(x)), specTool(x)], maxTools: 30,
-    system: (x, skill) => `${skill}\n\nYou write the spec for one change to a local repository. Read the code with the fs_* tools (read-only), then call spec_write once. Say WHAT and WHY; never HOW (no line numbers, no steps). Every done line names the test file that proves it and says it fails on base. Write in plain English: no will/should/could, no "ensure", "utilize", "via", "etc.". Answer in one line when done.`,
+    tools: (x) => [...READ_ONLY(shellOk(x)), specTool(x)], maxTools: 60,
+    system: (x, skill) => `${skill}\n\nYou write the spec for one change to a local repository. Read the code with the fs_* tools (read-only), then call spec_write once. Budget: use at most 40 read/search calls; reserve the remaining calls for spec_write and schema corrections. Stop exploring once the relevant callers and tests are known. Never finish without spec_write; record unverified details as explicit scope questions rather than spending the entire budget on exploration. Say WHAT and WHY; never HOW (no line numbers, no steps). Every done line names the test file that proves it and says it fails on base. Write in plain English: no will/should/could, no "ensure", "utilize", "via", "etc.". Answer in one line when done.`,
     prompt: (x) => { const b = briefFor(x, "spec"); const note = x.ctx.answers?.dispatch?.choice === "rescope" ? x.ctx.answers.dispatch.note : x.ctx.answers?.["step-back"]?.choice === "rescope" ? x.ctx.answers["step-back"].note : x.ctx.answers?.["scope-card"]?.note;
       return `SPEC DRAFT\nRun ${x.run.id} · draft ${x.visit}. Repository ${x.ctx.repo} (base ${x.ctx.base}).\nCaptain's intent:\n${x.run.text || x.run.title}\n${note ? `\nThe captain asked for changes: ${note}\n` : ""}${b && x.visit > 1 ? `\n${b.text}\nThe last draft:\n${specMd(x.ctx.spec)}\n` : ""}\nStart with fs_list.`; },
     after: (x) => { if (!x.ctx.spec || x.ctx.spec.version < x.visit) throw new Error("the spec writer did not call spec_write"); x.rn.note = `${x.ctx.spec.title}: ${x.ctx.spec.done.length} done lines, scope ${x.ctx.spec.scope.join(", ")}`; return "ok"; },
@@ -739,7 +739,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (!(await cloneDir(tree, base))) throw new Error("the head's checkout could not be copied");
     rmSync(join(base, ".git"), { recursive: true, force: true });
     const install = x.policy("install");
-    const deps = await W.installIn(base, `review-${x.run.id}`, Array.isArray(install) ? install.map(String) : null,
+    const deps = await W.installIn(base, `review-${x.run.id}`, install === false ? false : Array.isArray(install) ? install.map(String) : null,
       { scripts: x.policy("install_scripts") === true, allow: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String) });
     x.rn.data.runDeps = { ran: deps.ran, detail: deps.detail }; x.rn.data.runBase = base; x.save(); return base;
   }

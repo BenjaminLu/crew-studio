@@ -133,7 +133,7 @@ export class Worktrees {
    * Start a round: take the lock, put the worktree at the durable head (keeping what
    * it held on a kept ref, with a record), install the dependencies, open it for writing.
    */
-  async startRound(project: string, task: string, holder: string, o: { install?: string[] | null; scripts?: boolean; allow?: string[]; write?: boolean; skipInstall?: boolean } = {}): Promise<RoundStart & { release: () => void }> {
+  async startRound(project: string, task: string, holder: string, o: { install?: string[] | false | null; scripts?: boolean; allow?: string[]; write?: boolean; skipInstall?: boolean } = {}): Promise<RoundStart & { release: () => void }> {
     const r0 = this.get(project, task); if (!r0 || r0.removedAt || !existsSync(r0.path)) throw new Error(`no worktree for ${task}`);
     const release0 = this.lock(project, task, holder); this.held.add(`${project}/${task}`);
     const r = this.get(project, task)!; // read again: taking the lock may have recorded a stale holder
@@ -218,7 +218,7 @@ export class Worktrees {
    * package's lifecycle scripts, so they never run with Studio's authority, and run at
    * all only when policy grants `install_scripts`.
    */
-  async installDeps(r: WorktreeRecord, install: string[] | null, o: { scripts?: boolean; allow?: string[] } = {}): Promise<RoundStart["deps"]> {
+  async installDeps(r: WorktreeRecord, install: string[] | false | null, o: { scripts?: boolean; allow?: string[] } = {}): Promise<RoundStart["deps"]> {
     const res = await this.installIn(r.path, safe(r.task), install, o);
     if (res.ran) { this.note(r, `dependencies: ${res.ran.join(" ")} (in the round sandbox)`); this.save(r); }
     return res;
@@ -228,7 +228,8 @@ export class Worktrees {
    * the project's install policy, else bun install --frozen-lockfile, in the round sandbox writing only that folder,
    * the network only through the egress proxy to the hosts policy egress.allow grants. Throws when refused or failed.
    */
-  async installIn(path: string, label: string, install: string[] | null, o: { scripts?: boolean; allow?: string[]; timeoutS?: number } = {}): Promise<RoundStart["deps"]> {
+  async installIn(path: string, label: string, install: string[] | false | null, o: { scripts?: boolean; allow?: string[]; timeoutS?: number } = {}): Promise<RoundStart["deps"]> {
+    if (install === false) return { ran: null, ok: true, detail: "dependency installation disabled by project policy" };
     const hasPkg = existsSync(join(path, "package.json"));
     const lock = ["bun.lock", "bun.lockb"].some((f) => existsSync(join(path, f)));
     const argv = install?.length ? install : hasPkg && lock ? ["bun", "install", "--frozen-lockfile", ...(o.scripts ? [] : ["--ignore-scripts"])] : null;

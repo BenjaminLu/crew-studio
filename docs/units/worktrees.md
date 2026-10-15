@@ -17,3 +17,9 @@ Done when (each line is proved by `tests/worktrees.ts`, new and red on the base)
 9. The runtime calls an agent mode's `begin` before its agent starts and its `end` however the round ends. — "the runtime calls a mode's begin before the agent and its end however the round ends".
 
 The coding workflow's modes (`src/domain/code.ts`) use these in unit code-firstmate-smoke: `begin` = `startRound` (with the brief bound to the round and the head it starts from, recorded in the ledger), `after`/`onTimeout` = `handBack`, `end` = `endRound` and release.
+
+## Source-only and offline rounds
+
+- Spec rounds retain worktree ownership, durable-head reconciliation and read-only freezing, but skip dependency installation.
+- A project policy `install: false` explicitly disables dependency installation for build and review preparation as well. Tests/checks still execute and fail normally if dependencies are missing; disabling installation is not evidence that dependencies or tests passed.
+- Absent install policy preserves the existing lockfile default; an explicit command remains supported. Network permissions are unchanged.

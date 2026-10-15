@@ -44,6 +44,7 @@ const dispatch = await waitCard("dispatch");
 ok(!!dispatch && /percent/i.test(dispatch.title.en) && /[一-鿿]/.test(dispatch.title["zh-TW"]) && dispatch.options.map((o) => o.id).join(",") === "dispatch,rescope,drop", "the dispatch card comes after the spec, with its options and a Chinese zh-TW title", `${E.get(r.id)!.status} ${E.get(r.id)!.error}`);
 ok(installsBeforeDispatch === 0, "spec reaches dispatch without dependency installation");
 Worktrees.prototype.installDeps = originalInstall;
+E.policies.setProject("sandbox", { install: false });
 const spec = E.get(r.id)!.ctx.spec;
 ok(spec?.done?.[0]?.includes("test/percent.test.ts") && spec.door?.kind === "two-way" && JSON.stringify(spec.scope) === '["src/percent.ts","test/percent.test.ts"]', "the coordinator's spec names the test, the door and the scope", JSON.stringify(spec));
 const specChecks = E.ledger(r.id).filter((e) => e.node === "spec");
