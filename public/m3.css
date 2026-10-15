@@ -112,3 +112,12 @@
 a.btn{text-decoration:none}
 .a3-card .lbody{align-content:start}
 .a3-card .run-s{align-items:center}
+/* Managed drafts are immediately playable; controls stay within narrow cards. */
+.media-audio {display:flex;align-items:center;justify-content:center;padding:12px;min-width:0}
+.media-audio audio {width:100%;max-width:100%;min-width:0}
+.media-provenance {overflow-wrap:anywhere;font-size:12px}
+
+/* Library text filters remain named on phones; sidebar icon-only rules stay local. */
+.media-library .filters .media-filters {flex-direction:row;flex-wrap:wrap;max-width:100%;min-width:0}
+.media-library .media-filters button span {display:inline}
+.media-library .media-filters button {min-height:44px;white-space:normal}

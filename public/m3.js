@@ -14,7 +14,7 @@ const vBadge = (s) => { const [c, l] = VST[s] || VST.draft; return h("span", { c
 const RST = { running: ["run", () => T("Working", "進行中")], rendering: ["run", () => T("Rendering", "算圖中")], done: ["ok", () => T("Done", "完成")], failed: ["bad", () => T("Failed", "失敗")], cancelled: ["", () => T("Cancelled", "已取消")] };
 const rBadge = (s) => { const [c, l] = RST[s] || RST.cancelled; return h("span", { class: `badge ${c}` }, h("span", { class: "d" }), l()); };
 const maker = (m) => !m ? "—" : m.kind === "agent" ? `${m.provider} · ${m.model}` : m.kind === "captain" ? T("captain", "船長") : T("imported", "匯入");
-const typeIc = (t) => ({ web: "monitor", video: "film", image: "eye", doc: "doc" }[t] || "doc");
+const typeIc = (t) => ({ web: "monitor", video: "film", audio:"film", image: "eye", doc: "doc" }[t] || "doc");
 const LST = { ready: ["human", () => T("Ready to merge", "可合併")], fallback: ["bad", () => T("Needs the normal path", "需走一般流程")], merged: ["ok", () => T("Merged", "已合併")],
   draft: ["run", () => T("Proposed", "提議中")], closed: ["", () => T("Closed", "已關閉")], error: ["bad", () => T("Error", "錯誤")] };
 const lBadge = (s) => { const [c, l] = LST[s] || LST.closed; return h("span", { class: `badge ${c}` }, h("span", { class: "d" }), l()); };
@@ -45,19 +45,19 @@ function navCount() { const n = (A.lane?.cards || []).filter((c) => c.state === 
 
 // ---------- Library: artifacts with versions, then merged code ----------
 function viewLibrary3() {
-  if (!A.list) { loadList(); return h("div", { class: "page" }, h("div", { class: "skel", style: "height:240px" })); }
+  if (!A.list) { loadList(); return h("div", { class: "page media-library" }, h("div", { class: "skel", style: "height:240px" })); }
   if (!LB.data) loadLibrary();
   const kind = LB.kind;
   const arts = A.list.filter((a) => kind === "all" || a.type === kind || (kind === "web" && a.type === "image"));
   const code = kind === "all" || kind === "code" ? (LB.data?.code || []).filter((x) => LB.range === "all" || (x.ts || "") >= new Date(Date.now() - Number(LB.range) * 86400e3).toISOString()) : [];
-  const seg = (vals, cur, set) => h("div", { class: "seg", role: "group" }, vals.map(([v, en, tw]) => h("button", { "aria-pressed": String(cur === v), "data-filter": v, onclick: () => set(v) }, h("span", {}, T(en, tw)))));
-  return h("div", { class: "page" },
+  const seg = (vals, cur, set) => h("div", { class: "seg media-filters", role: "group" }, vals.map(([v, en, tw]) => h("button", { "aria-pressed": String(cur === v), "data-filter": v, onclick: () => set(v) }, h("span", {}, T(en, tw)))));
+  return h("div", { class: "page media-library" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Library", "成品庫")),
       h("p", {}, T("Deliverables with their versions, notes and approvals, and merged code with its lineage.", "成品和它的版本、標註與核准，以及已合併的程式碼和來歷。"))),
       h("div", { class: "actions" }, h("button", { class: "btn", onclick: newWebArtifact }, icon("plus", "ic sm"), T("New web page", "新增網頁")),
         h("button", { class: "btn ghost", onclick: () => { A.list = null; LB.data = null; render(); } }, icon("refresh", "ic sm"), T("Refresh", "重新整理")))),
     h("div", { class: "filters" },
-      seg([["all", "All", "全部"], ["code", "Code", "程式碼"], ["video", "Video", "影片"], ["web", "Web & images", "網頁與圖片"]], kind, (v) => { LB.kind = v; store.set("crew.libKind", v); render(); }),
+      seg([["all", "All", "全部"], ["code", "Code", "程式碼"], ["video", "Video", "影片"], ["audio", "Audio", "音訊"], ["web", "Web & images", "網頁與圖片"]], kind, (v) => { LB.kind = v; store.set("crew.libKind", v); render(); }),
       seg([["7", "7 days", "7 天"], ["30", "30 days", "30 天"], ["all", "All time", "全部"]], LB.range, (v) => { LB.range = v; store.set("crew.libRange", v); render(); })),
     arts.length ? h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Artifacts", "成品")), h("span", { class: "faint" }, String(arts.length))),
       h("div", { class: "libgrid" }, arts.map(artCard))) : null,
@@ -70,8 +70,8 @@ function artPreview(a, v, big) {
   if (!v) return h("div", { class: "lprev", style: st });
   if (a.source === "url") return h("div", { class: "lprev a3-ph", style: st }, icon("link", "ic lg"), h("span", {}, T("External link", "外部連結")));
   if (!v.url && (v.fileCount === 0 || (v.files && !v.files.length))) return h("div", { class: "lprev a3-ph", style: st }, icon("alert", "ic lg"), h("span", { style: "text-align:center;padding:0 12px" }, v.summary || T("No file", "沒有檔案")));
-  if (a.type === "video") { const has = v.files ? v.files.some((f) => f.path === "render.mp4") : (v.render?.state === "done"); return has ? h("video", { class: "lprev", src: `/af/${a.id}/${v.n}/render.mp4#t=0.5`, preload: "metadata", muted: true, playsinline: true, style: "width:100%;aspect-ratio:16/9;background:#000;display:block" })
-    : h("div", { class: "lprev a3-ph", style: st }, icon("film", "ic lg"), h("span", {}, v.render?.state === "running" ? T("Rendering…", "算圖中…") : T("No render yet", "尚未算圖"))); }
+  if (a.type === "audio") return h("div",{class:"lprev media-audio"},h("audio",{controls:true,preload:"metadata",src:`/af/${a.id}/${v.n}/${v.primary||a.entry||"audio.wav"}`,"aria-label":a.title}));
+  if (a.type === "video") { const path=(v.files?.some(f=>f.path==="render.mp4")||v.render?.state==="done")?"render.mp4":(/\.mp4$/i.test(v.primary||"")?v.primary:null);return path?h("video",{class:"lprev",src:`/af/${a.id}/${v.n}/${path}#t=0.5`,controls:!!big,preload:"metadata",muted:true,playsinline:true,style:"width:100%;aspect-ratio:16/9;background:#000;display:block"}):h("div",{class:"lprev a3-ph"},T("No render yet","尚未算圖")); }
   if (a.type === "image") return h("div", { class: "lprev a3-img", style: st }, h("img", { src: `/af/${a.id}/${v.n}/${a.entry || "image.png"}`, alt: "" }));
   if (a.type === "web" || a.source === "md") { const w = h("div", { class: "lprev a3-thumb", style: st }, h("iframe", { src: `/af/${a.id}/${v.n}/${a.source === "md" ? "doc.html" : a.entry || "index.html"}`, sandbox: "", tabindex: "-1", "aria-hidden": "true", loading: "lazy" }));
     new ResizeObserver(() => w.style.setProperty("--k", String((w.clientWidth || 300) / 1280))).observe(w); return w; }
@@ -79,12 +79,13 @@ function artPreview(a, v, big) {
 }
 function artCard(a) {
   const last = a.versions.at(-1);
-  return h("a", { class: "card lib a3-card", href: `#/artifact/${a.id}`, "data-artifact": a.id, "data-file": a.legacy || a.id },
+  return h(a.type==="audio"?"div":"a", { class: "card lib a3-card", href: `#/artifact/${a.id}`, "data-artifact": a.id, "data-file": a.legacy || a.id },
     artPreview(a, last),
     h("div", { class: "lbody" },
-      h("div", { class: "t" }, a.title),
+      h(a.type==="audio"?"a":"div", { class: "t",...(a.type==="audio"?{href:`#/artifact/${a.id}`}:{}) }, a.title),
       h("div", { class: "run-s" }, h("span", { class: "vbadge" }, a.type), h("span", { class: "vbadge" }, `v${a.latest}`), last ? vBadge(last.status) : null,
         a.approved ? h("span", { class: "faint" }, T(`v${a.approved} approved`, `v${a.approved} 已核准`)) : null),
+      last?.media?h("div",{class:"faint media-provenance"},`${last.media.origin} · ${last.media.provider||"import"}${last.media.model?" / "+last.media.model:""} · Task ${last.media.task} · g${last.media.generation}`):null,
       a.note ? h("div", { class: "faint", style: "font-size:13px" }, a.note) : null));
 }
 function newWebArtifact() {
@@ -116,7 +117,8 @@ function viewArtifact(arg) {
         vs.length > 1 ? h("a", { class: "btn", href: `#/compare/${a.id}/${vs.at(-2).n}/${last.n}` }, icon("copy", "ic sm"), T(`Compare v${vs.at(-2).n} ↔ v${last.n}`, `比較 v${vs.at(-2).n} ↔ v${last.n}`)) : null,
         a.type === "image" && ap ? h("button", { class: "btn", onclick: () => useInRepo(a, ap, d.repos) }, icon("github", "ic sm"), T("Use in repo", "用在 repo")) : null,
         a.source === "md" ? h("a", { class: "btn", href: `#/doc/${a.id}` }, icon("doc", "ic sm"), T("Approve and export", "核准與匯出")) : null)),
-    a.note ? h("div", { class: "card", style: "padding:12px 16px;font-size:14px" }, a.note) : null,
+    last?.media?h("div",{class:"faint media-provenance"},`${last.media.origin} · ${last.media.provider||"import"}${last.media.model?" / "+last.media.model:""} · Task ${last.media.task} · g${last.media.generation}`):null,
+      a.note ? h("div", { class: "card", style: "padding:12px 16px;font-size:14px" }, a.note) : null,
     live ? runPanel(live) : null,
     h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Versions", "版本")), h("span", { class: "faint" }, String(vs.length))),
       h("div", { class: "card a3-vtable" }, vs.slice().reverse().map((v) => verRow(a, v, d)))),
@@ -182,6 +184,7 @@ function viewReview(arg) {
   const n = Number(nStr) || d.versions.at(-1)?.n;
   const v = d.versions.find((x) => x.n === n);
   if (!v) return h("div", { class: "page" }, h("div", { class: "card" }, h("div", { class: "empty" }, h("b", {}, T("No such version", "沒有這個版本")))));
+  if(d.managedMedia||d.artifact.type==="audio")return h("div",{class:"page","data-managed-media":d.managedMedia?"1":"0"},h("h1",{},d.artifact.title),vBadge(v.status),artPreview(d.artifact,v,true),h("p",{},d.managedMedia?T("Draft visibility is not approval. Review and refine this output in its workflow Task.","草稿可見不代表已核准，請回到工作流程任務驗收或修改。"):T("Imported audio","匯入音訊")),d.managedMedia&&v.media?h("a",{class:"btn",href:`#/run/${encodeURIComponent(v.media.task)}`},T("Open source Task","開啟來源任務")):null,h("a",{class:"btn",href:`#/artifact/${d.artifact.id}`},T("Versions","版本")));
   return d.artifact.type === "video" ? videoReview(d, v) : d.artifact.type === "image" ? imageReview(d, v) : webReview(d, v);
 }
 function reviewHead(d, v, extra) {

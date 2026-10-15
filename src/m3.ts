@@ -2,8 +2,9 @@
 // renders, and the trivial lane. server.ts hands every request here first; a
 // null return means "not mine".
 //   CREW_FILM_SOURCE  folder holding firstmate-film.html and cast/ (imported once as the film's source)
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, realpathSync, statSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
+import {MediaLibrary} from "./media-library";
 import { ArtifactStore, type Note } from "./artifacts";
 import { Lane } from "./recipes";
 import { WorkRuns, filmScenes } from "./work";
@@ -17,12 +18,13 @@ export type M3Deps = { dataDir: string; fileAllow: string[]; studioUrl: () => st
 const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
   ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".mp4": "video/mp4", ".json": "application/json",
-  ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8" };
+  ".wav":"audio/wav", ".mp3":"audio/mpeg", ".m4a":"audio/mp4", ".ogg":"audio/ogg", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8" };
 // an artifact page runs with no network at all, and only inside Studio's own frame
 const CSP = "default-src 'none'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self' 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'";
 
 export function createM3(d: M3Deps) {
   const store = new ArtifactStore(d.dataDir);
+  const media=new MediaLibrary(d.dataDir,store);
   const runs = new WorkRuns(store, d.dataDir);
   const lane = new Lane(d.dataDir, store);
   // first start: the M2 Library entries become v1 artifacts (copies)
@@ -63,6 +65,8 @@ export function createM3(d: M3Deps) {
     let b: any = {};
     if (writing) { try { b = await req.json(); } catch { b = {}; } }
     try {
+      const managedTarget=/^\/api\/artifacts\/([^/]+)/.exec(p);
+      if(writing&&managedTarget&&media.owns(decodeURIComponent(managedTarget[1])))return json({error:"Workflow-owned media requires its bound Task",code:"managedMedia"},409);
       // --- version files, served with no network and Studio-only framing ---
       if (p.startsWith("/af/")) {
         const [, , id, nStr, ...rest] = p.split("/");
@@ -85,14 +89,16 @@ export function createM3(d: M3Deps) {
         // a new artifact from posted HTML (web) or a file already on this Mac under Studio's data folder
         const id = String(b?.id ?? "").trim(), title = String(b?.title ?? id).trim();
         if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(id)) return json({ error: "id: lowercase letters, digits and dashes" }, 400);
-        const type = b?.type === "image" ? "image" : b?.type === "video" ? "video" : "web";
+        const type = b?.type === "audio" ? "audio" : b?.type === "image" ? "image" : b?.type === "video" ? "video" : "web";
         const tmp = join(d.dataDir, "work", `new-${id}`); rmSync(tmp, { recursive: true, force: true }); mkdirSync(tmp, { recursive: true });
-        let entry: string;
+        let entry: string;let audioBytes:Buffer|undefined;
         if (type === "web") { const html = String(b?.html ?? ""); if (!html.includes("<")) return json({ error: "html is required" }, 400); entry = "index.html"; writeFileSync(join(tmp, entry), html); }
         else { const src = String(b?.path ?? ""); const ok = src.startsWith(d.dataDir + "/") && existsSync(src); if (!ok) return json({ error: "path must be a file under Studio's data folder" }, 400);
-          entry = `${type}${extname(src).toLowerCase()}`; writeFileSync(join(tmp, entry), readFileSync(src)); }
+          entry = `${type}${extname(src).toLowerCase()}`;
+          if(type==="audio"){const real=realpathSync(src),base=realpathSync(d.dataDir);if(!real.startsWith(base+"/")||!statSync(real).isFile()||statSync(real).size>128*1024*1024)return json({error:"Unsafe audio import"},400);const mime=({".wav":"audio/wav",".mp3":"audio/mpeg",".m4a":"audio/mp4",".ogg":"audio/ogg"}as const)[extname(real).toLowerCase()];if(!mime)return json({error:"Unsupported audio format"},400);audioBytes=readFileSync(real);await media.validate({bytes:audioBytes,mime},"audio",{signal:req.signal,authorize(){if(req.signal.aborted)throw new Error("Import cancelled");}});}
+          writeFileSync(join(tmp, entry), audioBytes??readFileSync(src)); }
         store.create({ id, title, type, source: type === "web" ? "html" : "file", entry, note: b?.note ?? null });
-        const v = store.addVersion(id, { from: tmp, primary: entry, createdBy: { kind: "captain" }, status: "in-review", summary: b?.summary ?? null });
+        const v = store.addVersion(id, { from: tmp, primary: entry, createdBy: { kind: type === "audio"?"import":"captain" }, status: "in-review", summary: b?.summary ?? null });
         rmSync(tmp, { recursive: true, force: true });
         return json({ artifact: store.get(id), version: v });
       }
@@ -102,7 +108,7 @@ export function createM3(d: M3Deps) {
         if (!a) return json({ error: "no such artifact" }, 404);
         let scenes: any[] = [];
         if (a.source === "film") { const v = store.latest(id); const f = v && store.file(id, v.n, a.entry ?? "film.html"); if (f) scenes = filmScenes(readFileSync(f, "utf8")); }
-        return json({ artifact: a, versions: store.versions(id).map((v) => ({ ...v, notes: store.notes(id, v.n), integrity: store.verify(id, v.n) })),
+        return json({ artifact: a, managedMedia:media.owns(id), versions: store.versions(id).map((v) => ({ ...v, notes: store.notes(id, v.n), integrity: store.verify(id, v.n) })),
           runs: runs.list(id).map(slim), cards: lane.cards().filter((c) => c.artifact === id), repos: lane.repos(), scenes, render: renderEnv() });
       }
       m = /^\/api\/artifacts\/([^/]+)\/versions$/.exec(p);
@@ -122,6 +128,7 @@ export function createM3(d: M3Deps) {
       if (m) {
         const id = decodeURIComponent(m[1]), n = Number(m[2]), what = m[3], sub = m[4] ? decodeURIComponent(m[4]) : null;
         if (!store.version(id, n)) return json({ error: "no such version" }, 404);
+        if(media.owns(id)&&(writing||what==="brief"))return json({error:"This media is owned by its workflow. Review or refine it from the bound Task.",code:"managedMedia"},409);
         if (what === "crops" && sub && !writing) { const f = join(store.vdir(id, n), "crops", sub.replace(/[^\w.-]/g, "")); return existsSync(f) ? new Response(Bun.file(f), { headers: { "content-type": "image/png" } }) : new Response("not found", { status: 404 }); }
         if (what === "notes" && !writing) return json(store.notes(id, n));
         if (what === "findings" && !writing) return json(store.findings(id, n, url.searchParams.get("all") !== "1"));
@@ -136,6 +143,7 @@ export function createM3(d: M3Deps) {
           return json({ artifact: id, version: n, notes, brief: text, structured: notes.map(({ crop, ...x }) => x) });
         }
         if (what === "request" && writing) {
+          if(store.get(id)?.type==="audio")return json({error:"Audio generation is not available; import another recorded audio version.",code:"audioGenerationUnavailable"},409);
           const provider = d.provider(b?.provider || undefined, b?.model || undefined);
           const r = runs.start({ artifact: id, n, noteIds: Array.isArray(b?.notes) ? b.notes.map(String) : undefined, provider, studioUrl: d.studioUrl() });
           return json(slim(r));
@@ -155,7 +163,7 @@ export function createM3(d: M3Deps) {
       // --- the trivial lane ---
       if (p === "/api/lane" && !writing) return json({ cards: lane.cards(), repos: lane.repos(), maxLines: lane.maxLines });
       if (p === "/api/lane/repos" && writing) return json(lane.addRepo(b));
-      if (p === "/api/lane/run" && writing) return json(lane.run({ artifact: String(b?.artifact ?? ""), version: b?.version ? Number(b.version) : undefined, repo: String(b?.repo ?? ""), name: b?.name }));
+      if (p === "/api/lane/run" && writing) return media.owns(String(b?.artifact??""))?json({error:"Workflow-owned media requires its bound Task",code:"managedMedia"},409):json(lane.run({ artifact: String(b?.artifact ?? ""), version: b?.version ? Number(b.version) : undefined, repo: String(b?.repo ?? ""), name: b?.name }));
       m = /^\/api\/lane\/([^/]+)\/(pr|merge|close|prepare|ci|blob|preview)$/.exec(p);
       if (m) {
         const id = decodeURIComponent(m[1]);

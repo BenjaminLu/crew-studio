@@ -14,12 +14,14 @@ import { dirname, join, normalize, relative, resolve, sep } from "node:path";
 import { withLock } from "./ids";
 import { noteFinding, noteLocator, type Finding, type Locator } from "./runtime/locator";
 
-export type ArtifactType = "web" | "video" | "image" | "doc";
+export type ArtifactType = "web" | "video" | "image" | "doc" | "audio";
 export type Status = "draft" | "in-review" | "approved" | "superseded";
 export type Maker = { kind: "captain" | "agent" | "import"; provider?: string; model?: string; run?: string };
 export type FileRec = { path: string; sha256: string; size: number };
 export type Cost = { usd: number | null; inTokens: number | null; outTokens: number | null };
+export type MediaProvenance = {schema:1;request:string;task:string;generation:number;dependencies:Record<string,string>;provider:string|null;model:string|null;origin:"generated"|"import"};
 export type Version = {
+  media?:MediaProvenance;
   artifact: string; n: number; type: ArtifactType; files: FileRec[]; primary: string | null; sha256: string | null; url: string | null;
   parent: number | null; createdBy: Maker; source: { intent?: string | null; run?: string | null }; annotations: string[];
   status: Status; approvedBy: string | null; approvedAt: string | null; createdAt: string; cost: Cost | null; summary: string | null;
@@ -106,6 +108,22 @@ export class ArtifactStore {
     return v;
   }
 
+  /** Publish validated complete bytes atomically; managed callers own approval. */
+  publishMedia(a:{id:string;title:string;type:"image"|"video"|"audio";project:string},o:{n:number;name:string;bytes:Buffer;media:MediaProvenance;createdBy:Maker}):Version {
+    if(!/^media-[a-f0-9]{40}$/.test(a.id)||!Number.isSafeInteger(o.n)||o.n<1||!/^[a-z0-9.-]+$/.test(o.name))throw new Error("Unsafe managed media identity");
+    const existing=this.get(a.id);if(existing&&(existing.type!==a.type||existing.project!==a.project))throw new Error("Managed media identity changed");
+    const stage=join(this.root,`.media-${crypto.randomUUID()}`);mkdirSync(join(stage,"files"),{recursive:true});
+    try{
+      writeFileSync(join(stage,"files",o.name),o.bytes,{flag:"wx",mode:0o600});
+      const sha=sha256File(join(stage,"files",o.name));
+      const v:Version={artifact:a.id,n:o.n,type:a.type,files:[{path:o.name,sha256:sha,size:o.bytes.length}],primary:o.name,sha256:sha,url:null,parent:o.n>1?o.n-1:null,createdBy:o.createdBy,source:{run:o.media.task},annotations:[],status:"draft",approvedBy:null,approvedAt:null,createdAt:now(),cost:null,summary:o.media.origin==="import"?"Imported media; awaiting review":"Generated media; awaiting workflow review",render:null,media:o.media};
+      writeFileSync(join(stage,"manifest.json"),JSON.stringify(v,null,2));writeFileSync(join(stage,"notes.json"),"[]");
+      if(existing){if(this.latest(a.id)?.n!==o.n-1)throw new Error("Managed media version changed");renameSync(stage,this.vdir(a.id,o.n));}
+      else{if(o.n!==1)throw new Error("Missing managed media parent");const outer=stage+"-artifact";mkdirSync(outer);try{renameSync(stage,join(outer,"v1"));writeFileSync(join(outer,"artifact.json"),JSON.stringify({...a,source:"file",entry:o.name,created:now(),note:"Workflow-owned managed media",legacy:null},null,2));renameSync(outer,this.adir(a.id));}finally{rmSync(outer,{recursive:true,force:true});}}
+      this.onChange();return v;
+    }finally{rmSync(stage,{recursive:true,force:true});}
+  }
+
   /** Add or replace one file in a version that is not approved yet (used for a film's render.mp4). */
   attach(id: string, n: number, name: string, fromFile: string) {
     const v = this.version(id, n); if (!v) throw new Error("no such version");
@@ -146,7 +164,10 @@ export class ArtifactStore {
     let fdir: string; try { fdir = this.filesDir(id, n); } catch { return null; }
     const p = normalize(resolve(fdir, rel));
     if (!p.startsWith(fdir + sep)) return null;
-    try { if (!statSync(p).isFile()) return null; } catch { return null; }
+    try {
+      if(id.startsWith("media-")){let current=this.root;for(const part of [id,`v${n}`,"files",...relative(fdir,p).split(sep)]){current=join(current,part);if(lstatSync(current).isSymbolicLink())return null;}}
+      if (!statSync(p).isFile()) return null;
+    } catch { return null; }
     return p;
   }
 
@@ -200,7 +221,7 @@ export class ArtifactStore {
       const ap = vs.filter((v) => v.status === "approved").at(-1) ?? null;
       const last = vs.at(-1) ?? null;
       return { ...a, versions: vs.map((v) => ({ n: v.n, status: v.status, createdAt: v.createdAt, createdBy: v.createdBy, approvedBy: v.approvedBy, approvedAt: v.approvedAt,
-        sha256: v.sha256, parent: v.parent, annotations: v.annotations, cost: v.cost, render: v.render, url: v.url, notes: this.notes(a.id, v.n).length, fileCount: v.files.length, summary: v.summary })),
+        primary:v.primary,media:v.media,sha256: v.sha256, parent: v.parent, annotations: v.annotations, cost: v.cost, render: v.render, url: v.url, notes: this.notes(a.id, v.n).length, fileCount: v.files.length, summary: v.summary })),
         latest: last?.n ?? null, approved: ap?.n ?? null };
     });
   }
