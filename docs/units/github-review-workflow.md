@@ -95,3 +95,11 @@ PR/issue template discovery with correct precedence and source-hash-bound body.
 Multiple source templates require explicit choice; missing required fields HOLD.
 No organization template rule or arbitrary repository instruction grants tools,
 network, secrets or publication authority. No real PR/company body is committed.
+
+Authenticated native endpoint integration now passes 23 offline assertions,
+including scan/save/no Task allocation/disabled-before-network. Reviewer-discovered
+mutable wait-node bypass is reproduced through actual edit/save/start (EXIT1),
+then blocked by a signed persistent draft capability and immutable source lineage
+across later editable versions. Existing evidence file (including malformed)
+always holds; no historical approval is fabricated. Recovery checks also refuse
+resumed draft execution. This is a safety hold, not runtime completion.

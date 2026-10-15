@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {withLock} from "../ids";
+import {Ledger} from "./checks";
 import { bundledList, bundledText, parseYaml } from "../bundled";
 
 export const NODE_KINDS = ["agent", "check", "card", "loop", "hook"] as const; // a closed set (architecture §3.1)
@@ -158,7 +159,7 @@ export class WorkflowDefs {
   readonly dir: string;
   /** the skill library's record of a pinned version (set by the runtime): saves check every pin and the per-node cap against it */
   skillInfo: SkillInfo | null = null;
-  constructor(dataDir: string, readonly bundled = defaultDefinitions, public known?: (ref: string) => boolean, public runners?: () => Set<string>) {
+  constructor(readonly dataDir: string, readonly bundled = defaultDefinitions, public known?: (ref: string) => boolean, public runners?: () => Set<string>) {
     this.dir = join(dataDir, "workflows"); mkdirSync(this.dir, { recursive: true });
     this.seed();
   }
@@ -230,6 +231,7 @@ export class WorkflowDefs {
         if(canonical.id!==template||(template==="coffee-kit"&&canonical.kind!=="coffee-kit"))throw new Error("Coffee template identity differs");
         const definition:WDef={...canonical,id,name:name.trim(),version:1,parent:null,createdAt:now(),by,note:"Source template coffee-kit SHA256 "+createHash("sha256").update(source).digest("hex"),diff:null,seed:null};
         const errors=validate(definition,this.known,this.runners?.(),this.skillInfo??undefined).filter(p=>p.level==="error");if(errors.length)throw new Error(errors[0].text);
+        if(template==='github-review'){const ledger=new Ledger(this.dataDir,'workflow-draft-'+id);ledger.add({run:'workflow-draft-'+id,node:'',edge:null,round:0,head:null,check:'draft-capability',version:'1',kind:'deterministic',record:'workflow-draft-capability',attempt:0,verdict:'warn',score:null,findings:[],evidence:[],proves:[],error:null,blocking:true,inputHash:createHash('sha256').update(source).digest('hex'),params:{},ms:0,dir:null,data:{schema:1,workflow:id,source:'github-review',capability:'preview-edit-save-only'}}as any);}
         this.write(definition);return definition;
       }
       const definition:WDef={id,name:name.trim(),version:1,description:"",roles:[],nodes:[
@@ -239,6 +241,8 @@ export class WorkflowDefs {
       this.write(definition);return definition;
     });
   }
+  /** Immutable source lineage plus a signed draft capability; editable node metadata is never authority. */
+  previewOnly(id:string):boolean {const ledger=new Ledger(this.dataDir,'workflow-draft-'+id);if(existsSync(ledger.file()))return true;return id==='github-review'||this.versions(id).some(d=>d.note?.startsWith('Source template github-review SHA256 ')||d.nodes.some(n=>n.do==='github.review.wait'));}
   /** Save an edit as a new version; refused when it has errors or changes nothing. */
   save(id: string, body: any, by: string, note?: string): WDef {
     const prev = this.get(id); if (!prev) throw new Error("no such workflow");
