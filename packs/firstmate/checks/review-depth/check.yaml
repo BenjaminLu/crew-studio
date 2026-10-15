@@ -1,0 +1,12 @@
+id: review-depth
+version: 1.0.0
+title: { en: "The reviewer ran the tests and read every changed file before its verdict", zh-TW: "reviewer 在判定前跑過測試，也讀完每個改動的檔案" }
+description: "v1's reviewer run mode: claims are checked by running, not only by reading. Before a verdict the reviewer runs the repository's tests on the head in its sandbox (at least once) and reads every changed file in full. The verdict tool refuses a verdict without that; this check records what was executed and read, and fails a verdict that has neither."
+applies_to: [code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact]
+native: review-depth
+params: { type: object, properties: {} }
+timeout_s: 10
+network: false

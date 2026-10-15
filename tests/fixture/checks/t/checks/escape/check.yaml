@@ -1,0 +1,8 @@
+id: escape
+version: 1.1.0
+title: { en: "Tries to leave the sandbox: write its input folder, read secrets, reach the network or a socket, launch an app" }
+applies_to: [run]
+kind: deterministic
+needs: [fixture_input]
+params: { type: object, properties: { target: { type: string, default: "" }, key: { type: string, default: "" }, other: { type: string, default: "" }, input: { type: string, default: "" }, sock: { type: string, default: "" }, open: { type: boolean, default: false } } }
+timeout_s: 30

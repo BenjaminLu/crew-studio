@@ -1,0 +1,3 @@
+# Fix round 3, backbone-nav (backbone-nav r3 #9)
+
+The Crew activity block's freshness decides when to refetch, never whether to render: a Crew re-render always shows the last loaded list, and a list older than 3 s refetches in the background (the 5 s refresh while Crew is open uses the same path). Done when (`tests/backbone-ui.mjs`, red on the base): "after 3 s, a Crew re-render (SSE crew event, language switch) still shows the activity block with its items, and refetches it in the background; a visit to a stale list loads it again" (strengthened in fix-sb-nav-leftovers) (the test makes the list 10 s old by moving the page clock, then counts the block's items in the same task as the re-render).

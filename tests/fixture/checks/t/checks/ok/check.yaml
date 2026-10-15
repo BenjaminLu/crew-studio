@@ -1,0 +1,10 @@
+id: ok
+version: 1.0.0
+title: { en: "Always passes; proves done line 0" }
+applies_to: [run]
+kind: deterministic
+blocking: true
+needs: []
+params: { type: object, properties: { n: { type: number, default: 1 } } }
+policy_bind: { n: test.n }
+timeout_s: 10

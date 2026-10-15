@@ -1,0 +1,129 @@
+{
+  "id": "web-prototype",
+  "name": "Web prototype",
+  "description": "Intent → two designer drafts in parallel → pin review loop → approve → Library.",
+  "roles": [
+    {
+      "id": "designer",
+      "label": "Designer",
+      "skill": "bundled:workflows/skills/v2/designer.md"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "intake",
+      "kind": "hook",
+      "label": "Capture intent",
+      "do": "intent.capture",
+      "x": 180,
+      "y": 140
+    },
+    {
+      "id": "design-a",
+      "kind": "agent",
+      "label": "Designer · A",
+      "detail": "variant A",
+      "role": "designer",
+      "mode": "design",
+      "args": {
+        "variant": "A"
+      },
+      "retries": 1,
+      "timeout_s": 900,
+      "x": 380,
+      "y": 50
+    },
+    {
+      "id": "design-b",
+      "kind": "agent",
+      "label": "Designer · B",
+      "detail": "a different direction",
+      "role": "designer",
+      "mode": "design",
+      "args": {
+        "variant": "B"
+      },
+      "retries": 1,
+      "timeout_s": 900,
+      "x": 380,
+      "y": 230
+    },
+    {
+      "id": "review",
+      "kind": "card",
+      "label": "Pin review",
+      "detail": "pins → designer revises",
+      "role": "designer",
+      "join": "all",
+      "args": {
+        "mode": "review",
+        "card_kind": "acceptance",
+        "max_rounds": 5
+      },
+      "x": 600,
+      "y": 140
+    },
+    {
+      "id": "library",
+      "kind": "hook",
+      "label": "Library",
+      "do": "library.publish",
+      "x": 800,
+      "y": 140
+    },
+    {
+      "id": "done",
+      "kind": "hook",
+      "label": "Approved",
+      "args": {
+        "summary": "{{ctx.library.artifact}} v{{ctx.library.version}} approved"
+      },
+      "x": 990,
+      "y": 140
+    },
+    {
+      "id": "rejected",
+      "kind": "hook",
+      "label": "Rejected",
+      "args": {
+        "result": "closed",
+        "summary": "rejected in review"
+      },
+      "x": 800,
+      "y": 280
+    }
+  ],
+  "edges": [
+    {
+      "from": "intake",
+      "to": "design-a"
+    },
+    {
+      "from": "intake",
+      "to": "design-b"
+    },
+    {
+      "from": "design-a",
+      "to": "review"
+    },
+    {
+      "from": "design-b",
+      "to": "review"
+    },
+    {
+      "from": "review",
+      "to": "library",
+      "when": "approved"
+    },
+    {
+      "from": "review",
+      "to": "rejected",
+      "when": "rejected|cap"
+    },
+    {
+      "from": "library",
+      "to": "done"
+    }
+  ],
+  "version": 1
+}

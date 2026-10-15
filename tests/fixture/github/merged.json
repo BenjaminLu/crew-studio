@@ -1,0 +1,6 @@
+[
+  {"number":287,"title":"T-304: Keep the work of a round refused only for its report","mergedAt":"2026-10-13T13:23:33Z","commit":"8acb63578bf78fa697fe0808308d1a65d1e09826","url":"https://github.com/captain/firstmate-workflow/pull/287","branch":"t-304-a-round-whose-only-fault-is","checks":{"pass":19,"fail":0,"other":0}},
+  {"number":286,"title":"T-303: Add separate paths for two-way and one-way changes","mergedAt":"2026-10-13T12:30:42Z","commit":"48b7f705ea14f0da510cb6e04993cf2426f22587","url":"https://github.com/captain/firstmate-workflow/pull/286","branch":"t-303-two-way","checks":{"pass":19,"fail":0,"other":0}},
+  {"number":285,"title":"Remove the committed task specs from version control","mergedAt":"2026-10-13T00:54:08Z","commit":"7b9307c8aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","url":"https://github.com/captain/firstmate-workflow/pull/285","branch":"untrack-specs","checks":{"pass":19,"fail":0,"other":0}},
+  {"number":273,"title":"T-288: Board answers the merge card","mergedAt":"2026-10-11T13:07:34Z","commit":"1111111111111111111111111111111111111111","url":"https://github.com/captain/firstmate-workflow/pull/273","branch":"t-288","checks":{"pass":17,"fail":0,"other":1}}
+]

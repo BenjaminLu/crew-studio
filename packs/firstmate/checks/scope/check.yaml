@@ -1,0 +1,11 @@
+id: scope
+version: 1.0.0
+title: { en: "The diff stays inside the spec's scope", zh-TW: "diff 不超出規格範圍" }
+applies_to: [code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact, scope, diff]
+native: scope
+params: { type: object, properties: {} }
+timeout_s: 20
+network: false

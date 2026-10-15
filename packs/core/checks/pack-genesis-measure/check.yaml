@@ -1,0 +1,11 @@
+id: pack-genesis-measure
+version: 1.0.0
+title: { en: Measure checks against human labels, zh-TW: 依人類標記實測檢查 }
+kind: deterministic
+blocking: true
+applies_to: [run]
+needs: []
+params: {type: object, properties: {}}
+native: pack-genesis-measure
+network: false
+timeout_s: 120

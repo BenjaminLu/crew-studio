@@ -1,0 +1,655 @@
+import {GitHubPoller} from './github-poller';
+import {Projects} from './doors';
+import {projectPrAdapter,GitHubPrAdapter,type GitHubProjectGrant} from './adapters/github';
+// Crew Studio: a read-only window onto a running firstmate, plus card answers
+// sent through the firstmate board's own write route.
+//   CREW_FM_STATE   optional explicit legacy read adapter; absent means native Studio only
+//   CREW_PORT       port to serve on                        (default 4210)
+//   CREW_BOARD_URL  firstmate board, for answering cards    (default http://127.0.0.1:4173)
+//   CREW_BOARD_SECRET  board secret file                    (default ~/.config/firstmate/board-<port>.secret)
+//   CREW_READONLY=1 never send an answer
+//   CREW_RECENT_DAYS  how far back the board lists tasks (default 3)
+//   CREW_GH=0       do not poll GitHub;  CREW_GH_REPO  owner/name (default: the firstmate checkout's GitHub origin)
+//   CREW_DATA       Studio's own store: intents, intent links, artifacts (default ./data)
+//   CREW_FILE_ALLOW colon-separated directories artifact files may be served from (default ~/Desktop/firstmate-film)
+//   main session (M2.5): CREW_MAIN_PROJECT  the firstmate repo whose sessions Studio may drive (default: Studio-owned workspace; an explicit legacy adapter keeps its project)
+//         CREW_HOST_CLAUDE_BIN, CREW_HOST_CODEX_BIN, CREW_HOST_CLAUDE_PROJECTS, CREW_PERMISSION_TIMEOUT_MS
+//   phone: CREW_TAILSCALE_LIVE=1 lets "Enable phone access" really run `tailscale serve` (default: a stub that only records the command)
+//         CREW_TAILNET_NAME  extra Host name to accept (tests); CREW_MEMORY_DIR  vendor-neutral memory folder
+//   LAN mode (built in, off until turned on in Studio): CREW_LAN_IP, CREW_LAN_PORT (tests)
+//   GitHub: CREW_GITHUB_TOKEN / GITHUB_TOKEN / GH_TOKEN, or a token pasted in Studio; CREW_GITHUB_API (tests)
+//   installs (Doctor): CREW_INSTALL_RUNNER=mock records instead of running; CREW_NO_REAL_INSTALL=1 refuses real installs
+//   chat: CREW_CHAT_PROVIDER=claude|codex|anthropic|openai|openai-compatible|stub (Settings in the chat header saves a choice to CREW_DATA/settings.json),
+//         CREW_CLAUDE_MODEL, CREW_CODEX_MODEL, CREW_CLAUDE_BIN, CREW_CODEX_BIN, CREW_CHAT_TIMEOUT_MS
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { homedir } from "node:os";
+import { extname, join, normalize } from "node:path";
+import { Board } from "./board";
+import { FmState, type Card, type Ev } from "./fm";
+import { GitHub } from "./github";
+import { Store } from "./store";
+import { TOOLS, toolByName, type ToolCtx } from "./tools";
+import { runChat, MAX_TOOL_CALLS, type Turn } from "./chat";
+import { makeProvider, PROVIDERS, CLI_PROVIDERS, type Provider } from "./providers";
+import { COMPILED, DEFAULT_DATA, SRC_ROOT, helperCommand } from "./self";
+import { ASSETS } from "./assets.gen";
+import { keyStatus, keys, saveKeys, setKeysDir } from "./keys";
+import { diagnose, Installs, LOGINS, methodsFor, MockRunner, RealRunner, type Item } from "./doctor";
+import { lanIp } from "./remote/lan";
+
+import { MainSession } from "./host/main";
+import type { HostEvent, HostId } from "./host/types";
+import { Remote } from "./remote/pairing";
+import { LiveRunner, StubRunner, readStatus, serveCommand, serveOffCommand, type TsRunner, type TsStatus } from "./remote/tailscale";
+import { MemoryStore } from "./memory";
+import { createM3 } from "./m3";
+import { renderEnv } from "./render";
+import { dirname } from "node:path";
+import { Agents } from "./agent";
+import { RawLog, StudioLog } from "./rawlog";
+import { Workflows } from "./workflows";
+import { createImprove } from "./improve";
+import { createChanges } from "./changes";
+import { createM7 } from "./m7";
+import { createDocs } from "./docs";
+import { Skins, snapshotFor } from "./skins";
+import { bundledText } from "./bundled";
+import { classify, orgDefaults } from "./doors";
+import { installPackGenesis } from "./pack-genesis";
+import { createRuntime, skillTextFor } from "./runtime";
+import { EXEMPT, guardWrite, hasSession, sessionCookie, sessionToken } from "./csrf";
+import { registerSecretValues } from "./secure";
+import { timingSafeEqual } from "node:crypto";
+import { git, setGitHome } from "./git";
+import { Egress } from "./egress";
+import { Worktrees } from "./worktrees";
+import { claudeLoginStatus, setBillingFile, setLoginOutcomeFile } from "./providers/login";
+import { installCode } from "./domain/code";
+import { applySandboxAddons, prepareSandbox, registerSandbox } from "./sandbox-repo";
+import { createTakeover, doorComplete, doorInput, needsDoor } from "./takeover";
+import { createTranscripts } from "./transcripts";
+import { createTasksApi, taskAlias } from "./tasks-api";
+import { createGraphMode } from "./graphmode";
+import { createSkillRoutes } from "./skill-routes";
+import { startupPaths } from "./startup";
+import { encodeCwd } from "./host/claude";
+
+import { codexProvider } from "./providers/codex";
+import { codexConfig } from "./host/codex";
+import { probeCodex } from "./providers/codex-probe";
+import { ProviderRefusal, selectNativeProvider, type ProviderSelection, type ProviderCapability } from "./providers/policy";
+
+const ROOT = SRC_ROOT;
+const DATA = process.env.CREW_DATA ?? DEFAULT_DATA;
+const startup = startupPaths(DATA);
+const STATE = startup.state;
+const PORT = Number(process.env.CREW_PORT ?? 4210);
+if (startup.legacy && !existsSync(join(STATE, "events.jsonl"))) console.warn(`crew-studio: no events.jsonl under ${STATE}`);
+
+const fm = new FmState(STATE);
+const board = Board.fromEnv(startup.legacy);
+mkdirSync(DATA, { recursive: true });
+setKeysDir(DATA);
+setGitHome(DATA);
+// Studio's own secrets, for the one redactor (secure.ts): its GitHub token file, its ledger key, its session token (the key store registers itself)
+registerSecretValues(() => { let gh: string | null = null; try { gh = readFileSync(join(DATA, "github-token"), "utf8"); } catch {}
+  let lk: string | null = null; try { lk = readFileSync(join(DATA, "ledger.key"), "utf8"); } catch {}
+  let st: string | null = null; try { st = readFileSync(join(DATA, "session-token"), "utf8"); } catch {}
+  return [gh, lk, st]; });
+// the egress proxy (architecture §10): provider API hosts plus policy egress.allow; everything else refused and logged in data/egress.log
+const egress = new Egress(join(DATA, "egress.log"));
+await egress.start().catch((e) => console.warn(`crew-studio: egress proxy: ${e?.message ?? e}`));
+const store = new Store(DATA, (process.env.CREW_FILE_ALLOW ?? startup.project).split(":").filter(Boolean));
+// the repository firstmate's PRs live in: CREW_GH_REPO, else the firstmate checkout's own GitHub origin (read-only)
+let ghRepo = process.env.CREW_GH_REPO ?? (() => {
+  if (!existsSync(join(startup.project,".git"))) return "";
+  try { const r = git(startup.project, ["remote", "get-url", "origin"]); return /github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?$/.exec(r.out)?.[1] ?? ""; } catch { return ""; }
+})();
+const githubPoller=new GitHubPoller();let dashboardGrant:GitHubProjectGrant|undefined,bindingError:string|null=null;
+const dashboardEnabled=process.env.CREW_GH?process.env.CREW_GH!=='0':!!(ghRepo||process.env.CREW_GH_PROJECT);
+if(dashboardEnabled&&process.env.CREW_GH_PROJECT){try{const project=new Projects(DATA).get(process.env.CREW_GH_PROJECT);if(!project||(project as any).enabled===false)throw new Error();const adapter=projectPrAdapter(project,DATA,githubPoller);if(!(adapter instanceof GitHubPrAdapter)||process.env.CREW_GH_REPO&&process.env.CREW_GH_REPO!==adapter.grant.repository||process.env.CREW_GITHUB_API&&process.env.CREW_GITHUB_API.replace(/\/$/,'')!==adapter.grant.apiOrigin)throw new Error();dashboardGrant=adapter.grant;ghRepo=adapter.grant.repository;}catch{bindingError='unsupported GitHub dashboard project binding';}}
+const gh=new GitHub(ghRepo||'unknown/unknown',dashboardEnabled&&!bindingError,DATA,{poller:githubPoller,grant:dashboardGrant});if(bindingError)gh.state.error=bindingError;
+const flow = (Bun as any).YAML.parse(bundledText("workflows/code.flow.yaml") ?? "");
+fm.pollEvents();
+let pending: Card[] = fm.pending();
+let crewCache = fm.crew(0);
+const alive = () => new Set(crewCache.filter(c => c.alive).map(c => c.actor));
+const RECENT_DAYS = Number(process.env.CREW_RECENT_DAYS ?? 3);
+const tasks = () => fm.taskList(alive(), pending, RECENT_DAYS);
+
+// --- live updates (server-sent events) ---
+const clients = new Set<ReadableStreamDefaultController<Uint8Array>>();
+const clientDevice = new Map<ReadableStreamDefaultController<Uint8Array>, string>(); // phone streams, cut when the device is revoked
+const enc = new TextEncoder();
+const send = (type: string, data: unknown) => {
+  const chunk = enc.encode(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+  for (const c of clients) { try { c.enqueue(chunk); } catch { clients.delete(c); } }
+};
+let pendingSig = "", crewSig = "";
+const pendingSignature = () => {
+  const dir = join(STATE, "pending");
+  if (!existsSync(dir)) return "";
+  return readdirSync(dir).filter(f => f.endsWith(".json")).sort()
+    .map(f => { try { return f + ":" + statSync(join(dir, f)).mtimeMs; } catch { return f; } }).join("|");
+};
+pendingSig = pendingSignature();
+setInterval(() => {
+  const fresh = fm.pollEvents();
+  if (fresh.length) send("events", { events: fresh.slice(-100), tasks: tasks() });
+  const sig = pendingSignature();
+  if (sig !== pendingSig) { pendingSig = sig; pending = fm.pending(); send("pending", { pending, tasks: tasks() }); }
+}, 700);
+setInterval(() => {
+  crewCache = fm.crew(8);
+  const sig = JSON.stringify(crewCache.map(c => [c.actor, c.alive, c.lastWrite, c.lines.at(-1)?.text]));
+  if (sig !== crewSig) { crewSig = sig; send("crew", { crew: crewCache.slice(0, 40), tasks: tasks() }); }
+}, 3000);
+gh.onChange = s => send("github", s);
+// Studio's own intents and firstmate's links to them
+const dataSig = () => ["intents.jsonl", "intent-links.jsonl", "artifacts.json"].map(f => { try { return statSync(join(DATA, f)).mtimeMs; } catch { return 0; } }).join("|");
+let lastData = dataSig();
+setInterval(() => { const d = dataSig(); if (d !== lastData) { lastData = d; send("intents", store.intentView(fm)); } }, 1500);
+setInterval(() => send("ping", Date.now()), 20_000);
+
+// --- the firstmate MAIN session (M2.5): Studio drives it, one input at a time ---
+const PROJECT = startup.project;
+if (!startup.legacy && !process.env.CREW_MAIN_PROJECT) mkdirSync(PROJECT, { recursive: true });
+const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STATE,
+  permissionMcp: (b) => ({ command: helperCommand("permission-mcp"), env: { CREW_PERM_SOCKET: b.socket, CREW_PERM_TOKEN: b.token } }) });
+await main.start();
+main.onView = (v) => send("main", v);
+main.onEvent = (e: HostEvent) => { if (e.type === "delta" || e.type === "toolStart" || e.type === "permissionRequest" || e.type === "turnStart") send("mainEvent", e); };
+const takeover = createTakeover({ main, fm, gh, board, stateDir: STATE, pending: () => pending, tasks, crew: () => fm.crew(8) });
+// transcripts: the session Studio drives (its copy holds the turns before the takeover), else the firstmate session
+const CLAUDE_PROJECTS = process.env.CREW_HOST_CLAUDE_PROJECTS ?? join(homedir(), ".claude/projects");
+let firstmateId: string | null = null;
+const refreshFirstmate = async () => { try { const own = takeover.copies(); firstmateId = (await main.discover("claude")).find((x) => !own.has(x.id))?.id ?? null; } catch {} };
+void refreshFirstmate(); setInterval(refreshFirstmate, 15_000);
+const graphMode = createGraphMode(DATA);
+const transcripts = createTranscripts({ stateDir: STATE, dataDir: DATA, sessionFile: () => {
+  const v = main.view(); const id = v.state !== "detached" && v.host === "claude" ? v.sessionId : firstmateId;
+  return id && /^[\w-]+$/.test(id) ? join(CLAUDE_PROJECTS, encodeCwd(PROJECT), `${id}.jsonl`) : null; } });
+const memory = MemoryStore.fromEnv(DATA);
+
+// --- phones over Tailscale: pairing, devices, the drive gate ---
+const remote = new Remote(DATA, PORT);
+remote.onRevoke = (id) => { for (const [c, d] of clientDevice) if (d === id) { try { c.close(); } catch {} clients.delete(c); clientDevice.delete(c); } };
+let ts: TsStatus = readStatus();
+const refreshTs = () => { ts = readStatus(); remote.tailnetNames.clear(); if (ts.dnsName) remote.tailnetNames.add(ts.dnsName.toLowerCase());
+  if (process.env.CREW_TAILNET_NAME) remote.tailnetNames.add(process.env.CREW_TAILNET_NAME.toLowerCase()); };
+refreshTs(); setInterval(refreshTs, 60_000);
+const tsRunner: TsRunner = process.env.CREW_TAILSCALE_LIVE === "1" ? new LiveRunner() : new StubRunner();
+let serveOn = false;
+// a phone may read and interrupt; driving firstmate (and answering cards, changing settings) needs "allow phone to drive"
+const PHONE_DRIVE = new Set(["/api/main/takeover", "/api/main/start", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door", "/api/main/attach", "/api/main/send", "/api/main/approve", "/api/main/resume", "/api/main/detach", "/api/main/queue/remove", "/api/answer", "/api/settings"]);
+const DESKTOP_ONLY = new Set(["/api/transcripts/settings", "/api/remote/pair/start", "/api/remote/revoke", "/api/remote/settings", "/api/remote/tailscale", "/api/remote/lan",
+  "/api/github/token", "/api/github/forget", "/api/keys", "/api/doctor/install", "/api/doctor/login", "/api/doctor/cancel"]);
+
+// --- LAN mode: a second listener on this Mac's LAN address, only while turned on (never at start) ---
+let lanServer: ReturnType<typeof Bun.serve> | null = null;
+const lanState = () => { const ip = lanIp(); const port = Number(process.env.CREW_LAN_PORT ?? PORT);
+  return { on: !!lanServer, ip, port, url: ip ? `http://${ip}:${port}/remote/` : null }; };
+function setLan(on: boolean): { ok: boolean; error?: string } {
+  if (!on) { lanServer?.stop(true); lanServer = null; remote.lanHost = null; return { ok: true }; }
+  if (lanServer) return { ok: true };
+  const st = lanState();
+  if (!st.ip) return { ok: false, error: "no local network address found" };
+  try { lanServer = Bun.serve({ port: st.port, hostname: st.ip, idleTimeout: 0, fetch: (req) => handle(req, "lan") }); }
+  catch (e: any) { return { ok: false, error: `could not listen on ${st.ip}:${st.port}: ${e?.message ?? e}` }; }
+  remote.lanHost = `${st.ip}:${st.port}`;
+  return { ok: true };
+}
+
+// --- Doctor: what works, what is degraded, one-click official installs (never during tests) ---
+const installs = new Installs(process.env.CREW_INSTALL_RUNNER === "mock" ? new MockRunner() : new RealRunner());
+let doctorCache: Item[] = [];
+const doctor = () => (doctorCache = diagnose({ state: STATE, legacy: startup.legacy, board: board.status(), gh: gh.state, keys: keyStatus() as any, chatProvider: chatInfo().provider, lanIp: lanIp(),
+  tailscale: ts, compiled: COMPILED, render: renderEnv(), egress: egress.status(), roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined }));
+installs.onChange = (j, line) => send("install", { id: j.id, item: j.item, state: j.state, code: j.code, line: line ?? null });
+installs.onFinished = () => { refreshTs(); send("doctor", doctor()); };
+
+// --- chat tools: callable only with a token issued for one question ---
+const ctx: ToolCtx = { fm, gh, store, tasks, pending: () => pending, crew: () => crewCache,
+  crewTail: (a, n) => fm.crew(n).find(c => c.actor === a) };
+const tokens = new Map<string, { calls: number; expires: number }>();
+// chat provider: a choice saved from Settings, else CREW_CHAT_PROVIDER, else claude
+const SETTINGS = join(DATA, "settings.json");
+const allowStub = process.env.CREW_CHAT_PROVIDER === "stub" || process.env.CREW_ALLOW_STUB === "1";
+const choices = PROVIDERS.filter(p => p !== "stub" || allowStub);
+const chatSettings = (): { provider: string; models: Record<string, string> } => {
+  let saved: any = {};
+  try { saved = JSON.parse(readFileSync(SETTINGS, "utf8")); } catch {}
+  if (saved.provider !== undefined && !(choices as readonly string[]).includes(saved.provider)) throw new Error("unknown saved provider identity");
+  if (process.env.CREW_CHAT_PROVIDER && !(choices as readonly string[]).includes(process.env.CREW_CHAT_PROVIDER)) throw new Error("unknown configured provider identity");
+  const provider = choices.includes(saved.provider) ? saved.provider : (choices as readonly string[]).includes(process.env.CREW_CHAT_PROVIDER ?? "") ? process.env.CREW_CHAT_PROVIDER! : "claude";
+  return { provider, models: typeof saved.models === "object" && saved.models ? saved.models : {} };
+};
+const provider = () => { const s = chatSettings(); return makeProvider(s.provider, s.models[s.provider] || undefined); };
+const chatInfo = () => { const p = provider(); return { provider: p.id, model: p.model, choices, cli: CLI_PROVIDERS.has(p.id), keys: keyStatus() }; };
+let chats = 0;
+const MAX_CHATS = 2;
+
+// --- M3: artifacts, review loops, agent work runs, the trivial lane ---
+const m3 = createM3({ dataDir: DATA, fileAllow: store.fileAllow, studioUrl: () => `http://127.0.0.1:${PORT}`, send,
+  provider: (id, model) => { const s = chatSettings(); if (id && !(choices as readonly string[]).includes(id)) throw new Error(`unknown provider identity: ${id}`); const pid = id || s.provider; return makeProvider(pid, model || s.models[pid] || undefined); },
+  allowDrive: () => remote.allowDrive });
+
+// --- M6+: one agent runner, the raw event logs, every workflow, self-improvement ---
+const agents = new Agents(DATA, () => `http://127.0.0.1:${PORT}`);
+// agent rounds in the OS sandbox reach the network only through this proxy, and Studio only through a tools-only
+// listener (never the main port: no page, no session, no other route); firstmate's checkout is closed to them
+const toolListener = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async (req) => {
+  const u = new URL(req.url); const t = req.headers.get("x-crew-tool-token") ?? "";
+  const reply = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+  if (!(u.pathname === "/api/tools" || u.pathname.startsWith("/api/tools/"))) return reply({ error: "this listener serves an agent round's tools only" }, 404);
+  if (!agents.hasToken(t)) return reply({ error: "no valid agent token" }, 401);
+  if (u.pathname === "/api/tools") return reply(agents.toolList(t));
+  let a: any = {}; try { a = await req.json(); } catch {}
+  return reply(await agents.callTool(t, decodeURIComponent(u.pathname.slice("/api/tools/".length)), a));
+} });
+const PROTECTED = startup.protectedRoots; // the one list of protected roots: rounds, worktrees and the runtime all read it
+// how claude rounds sign in (v1 option A): Studio reads the vendor's login outside the sandbox and hands the round only its token; checked once a minute for the Doctor
+let loginCache: { at: number; v: { ok: boolean; source?: string; warn?: string | null; error?: string } } | null = null;
+// the Doctor's status never decrypts a login: items by existence only (claudeLoginStatus); the token is read when a round starts
+const roundLogin = () => { if (!loginCache || Date.now() - loginCache.at > 60_000) loginCache = { at: Date.now(), v: claudeLoginStatus() }; return loginCache.v; };
+// a captain who chose API billing for claude rounds (the earlier keychain/API-key switch, data/round-auth.json) keeps it: moved to data/claude-billing.json, never switched silently
+setBillingFile(join(DATA, "claude-billing.json")); setLoginOutcomeFile(join(DATA, "login-outcomes.json"));
+try { const ra = join(DATA, "round-auth.json"); if (existsSync(ra)) { const j = JSON.parse(readFileSync(ra, "utf8"));
+  if (!existsSync(join(DATA, "claude-billing.json"))) writeFileSync(join(DATA, "claude-billing.json"), JSON.stringify({ billing: j.claude === "api-key" ? "api-key" : "subscription", from: "round-auth.json", at: new Date().toISOString() }));
+  rmSync(ra, { force: true }); console.log(`crew-studio: claude round billing kept from round-auth.json: ${j.claude === "api-key" ? "API key" : "subscription"}`); } } catch {}
+agents.egress = egress; agents.toolUrl = () => `http://127.0.0.1:${toolListener.port}`; agents.protect = () => PROTECTED;
+agents.onChange = (j) => send("agent", { id: j.id, kind: j.kind, status: j.status, ref: j.ref, tools: j.tools });
+const fmRaw = new RawLog(join(STATE, "events.jsonl"));
+const studioLog = new StudioLog(join(DATA, "events.jsonl"));
+const flows = new Workflows(dirname(STATE));
+const pickProvider = (id?: string, model?: string) => { const s = chatSettings(); if (id && !(choices as readonly string[]).includes(id)) throw new Error(`unknown provider identity: ${id}`); const pid = id || s.provider; return makeProvider(pid, model || s.models[pid] || undefined); };
+let nativeEngineForPolicy: any = null;
+const certified = new WeakMap<object, { input: ProviderSelection; expires: number; x?: any }>();
+async function nativeSelection(input: ProviderSelection, x?: any): Promise<Provider> {
+  const signal = x && x.engine.get(x.run.id) ? x.engine.abortOf(x.run).signal : undefined;
+  const capabilities = new Map<string, ProviderCapability>();
+  const selected = await selectNativeProvider(input, async id => {
+    const at = Date.now();
+    const cap = id === "codex" ? await probeCodex(undefined, signal) : id === "stub" && allowStub ? { provider: id, available: true, auth: "verified" as const, quota: "available" as const, models: [{ id: "no model" }], at, expires: at + 30_000 } : { provider: id, available: false, auth: "unverified" as const, quota: "unknown" as const, models: [], at, expires: at + 30_000, reason: "native auth/model/quota capability adapter is unavailable" };
+    capabilities.set(id, cap); return cap;
+  }, (id, model, effort) => id === "codex" ? codexProvider(model, undefined, { model, effort }) : makeProvider(id, model));
+  if (signal?.aborted || x && x.engine.get(x.run.id) && !x.engine.owns(x)) throw new ProviderRefusal("native round owner ended during capability verification");
+  certified.set(selected.provider, { input, expires: capabilities.get(selected.provider.id)!.expires, x });
+  if (x && x.engine.get(x.run.id)) { x.engine.record(x, "provider-selection", { data: selected.evidence }); const step = [...x.run.steps].reverse().find((s: any) => s.node === x.node.id && s.state === "running"); if (step) { step.provider = selected.provider.id; step.model = selected.provider.model; } x.save(); }
+  return selected.provider;
+}
+const nativePick = async (x: any, pick: any, context?: { role: string; explicit: boolean }): Promise<Provider> => {
+  const settings = chatSettings(), config = codexConfig(PROJECT), hostView = main.view();
+  const host = hostView.state === "attached" && hostView.driver.holder === "studio" ? hostView.host : null;
+  const role = context?.role ?? (x.node.role === "worker" || x.node.mode === "deliver" ? "worker" : x.node.role ?? "coordinator");
+  const roleDef = x.run.def.roles.find((r: any) => r.id === x.node.role);
+  const explicit = context?.explicit ?? !!(x.rn.agent || x.node.provider || roleDef?.provider || x.run.params.provider);
+  const configured: ProviderSelection["configured"] = { codex: { model: settings.models.codex || process.env.CREW_CODEX_MODEL || config.model, effort: config.effort }, claude: { model: settings.models.claude || process.env.CREW_CLAUDE_MODEL || "claude-sonnet-5-5" }, stub: { model: "no model" } };
+  for (const id of choices) if (!configured[id]) configured[id] = { model: settings.models[id] || null };
+  const fallback = x.engine.policies.get("vendor_policy.fallback", { project: x.engine.queueProject(x.run), workflow: x.run.def.policies }).value;
+  if (!Array.isArray(fallback) || fallback.some(id => typeof id !== "string")) throw new ProviderRefusal("configured fallback chain is invalid");
+  // Offline fixture provider is an explicit setting, never a real-vendor fallback.
+  const fixture = allowStub && settings.provider === "stub" && !explicit;
+  const provider = fixture ? "stub" : !explicit && role === "reviewer" ? String(x.engine.policies.get("vendor_policy.reviewer", { project: x.engine.queueProject(x.run), workflow: x.run.def.policies }).value) : !explicit && role === "coordinator" && host ? host : pick.provider;
+  return nativeSelection({ role, host, explicit: explicit || fixture || role === "reviewer", provider, model: explicit ? pick.model : configured[provider]?.model ?? null, roleModel: !explicit ? x.node.model ?? roleDef?.model ?? null : null, effort: provider === "codex" ? config.effort : null, configured, fallback, known: [...choices] }, x);
+};
+agents.providerAdmission = async (provider, o) => {
+  if (o.signal?.aborted || o.owns && !o.owns()) throw new ProviderRefusal("native round owner ended during capability admission");
+  const previous = certified.get(provider); if (previous && !previous.x.engine.owns(previous.x)) throw new ProviderRefusal("certified native owner ended");
+  if (previous && previous.expires > Date.now()) return provider;
+  if (previous) return nativeSelection(previous.input, previous.x);
+  // Only a real native Task or a certified manual judged check uses this
+  // resolver. Standalone older feature runners keep their own explicit contract.
+  const task = o.ref && nativeEngineForPolicy?.get(o.ref);
+  if (task) return nativePick(nativeEngineForPolicy.x(task, task.def.nodes.find((n: any) => n.id === o.record?.header?.node) ?? task.def.nodes[0], task.nodes[o.record?.header?.node] ?? task.nodes[task.def.nodes[0].id]), { provider: provider.id, model: provider.model }, { role: o.kind.startsWith("judge:") ? "judge" : "worker", explicit: true });
+  return provider;
+};
+const improve = createImprove({ dataDir: DATA, flows, agents, events: (src) => (src === "studio" ? studioLog.poll() : fmRaw.poll()), provider: pickProvider, send });
+const changes = createChanges({ dataDir: DATA, flows, skills: improve.skills, agents, log: studioLog, provider: pickProvider, send });
+// the trivial lane's cards carry their door too (README.md + one asset: normally trivial)
+{ const orig = m3.lane.cards.bind(m3.lane);
+  m3.lane.cards = () => orig().map((c: any) => ({ ...c, door: classify(c.kind === "update" ? [{ path: c.asset, added: 1, removed: 1 }] : [{ path: "README.md", added: 1 }, { path: c.asset, added: 1 }], { defaults: orgDefaults(DATA) }) })); }
+const m7 = createM7({ dataDir: DATA, flows, skills: improve.skills, evals: improve.evals, agents, log: studioLog, refuse: [...PROTECTED, DATA, ROOT], provider: pickProvider, send });
+const docs = createDocs({ dataDir: DATA, store: m3.store, agents, skills: improve.skills, log: studioLog, provider: pickProvider, send });
+m3.runs.docSystem = () => { try { return improve.skills.text("documents", "writer"); } catch { return ""; } };
+const skins = new Skins(DATA);
+// the sandbox repository the coding workflow runs on (data/demo-repo, project "sandbox"); CREW_SANDBOX=0 skips it
+if (process.env.CREW_SANDBOX !== "0") { try { prepareSandbox(DATA); registerSandbox(DATA); } catch (e: any) { console.warn(`crew-studio: sandbox repo: ${e?.message ?? e}`); } }
+// --- v2: Studio's native runtime (workflows that really run, checks, Studio-owned cards) ---
+const worktrees = new Worktrees(DATA, { protect: () => PROTECTED });
+let packGenesis: ReturnType<typeof installPackGenesis>;
+const runtime = createRuntime({ dataDir: DATA, agents, provider: pickProvider, defaultProvider: () => { const s = chatSettings(); return { provider: s.provider, model: s.models[s.provider] || null }; }, selectProvider: nativePick,
+  log: studioLog, send, fmRoot: dirname(STATE), protectedRoots: PROTECTED, store, m3: { store: m3.store, runs: m3.runs, lane: m3.lane }, fileorg: m7.fileorg, docs, improve, studioUrl: () => `http://127.0.0.1:${PORT}`,
+  // domain packs' runtime steps: the firstmate coding pipeline (packs/firstmate)
+  install: [(engine, c) => { installCode(engine, { dataDir: c.dataDir, projects: c.projects, improve, poller:githubPoller }); packGenesis = installPackGenesis(engine, { dataDir: c.dataDir, artifacts: m3.store }); }], skills: improve.skills });
+nativeEngineForPolicy = runtime.engine;
+gh.start();
+process.once("exit",()=>{gh.stop();githubPoller.stop();});
+const tasksApi = createTasksApi({ list: () => runtime.engine.list(), get: (id) => runtime.engine.get(id), openCards: () => runtime.engine.cards.list({ open: true }),
+  runView: async (id) => { const r = await runtime.handle(new Request(`http://127.0.0.1/api/wruns/${id}`), new URL(`http://127.0.0.1/api/wruns/${id}`), { kind: "desktop" }, false); return r && r.ok ? r.json() : null; } });
+// rounds of an earlier Studio left their throwaway homes and tmp behind (it stopped mid-round): no job is live at start, so they go
+try { const rd = join(DATA, "rounds"); if (existsSync(rd)) for (const d of readdirSync(rd)) for (const x of ["home", "tmp"]) { const p = join(rd, d, x); if (existsSync(p)) rmSync(p, { recursive: true, force: true }); }
+  if (existsSync(rd)) for (const d of readdirSync(rd)) if (d.startsWith("install-")) rmSync(join(rd, d), { recursive: true, force: true }); } catch {}
+// one worktree per task under data/work (src/worktrees.ts): at start, worktrees and locks no live run owns are swept, each with its reason
+try { worktrees.migrate(); } catch (e: any) { console.warn(`crew-studio: worktree migration: ${e?.message ?? e}`); }
+try { const sw = worktrees.sweep((run) => { const r = run ? runtime.engine.get(run) : null; return !!r && !["succeeded", "failed", "cancelled"].includes(r.status); }, Number(runtime.engine.policies.get("worktree.keep_days").value ?? 7));
+  if (sw.removed.length || sw.locks.length) studioLog.emit({ type: "worktree_sweep", workflow: "studio", summary: `startup sweep: ${sw.removed.length} worktrees, ${sw.locks.length} stale locks removed (data/work/sweep.log)`, data: sw }); } catch (e: any) { console.warn(`crew-studio: worktree sweep: ${e?.message ?? e}`); }
+// additions to the sandbox repository (a normal commit on main each), held while a run works on it: its branch fast-forwards only if main stays put
+if (process.env.CREW_SANDBOX !== "0") { try { const repo = join(DATA, "demo-repo");
+  const live = () => runtime.engine.list().filter((r) => !["succeeded", "failed", "cancelled"].includes(r.status) && (r.ctx?.repo ? r.ctx.repo === repo : !r.params?.repo)).map((r) => r.id);
+  applySandboxAddons(DATA, { live, log: (m) => studioLog.emit({ type: "sandbox_addition", workflow: "studio", summary: m }) }); } catch (e: any) { console.warn(`crew-studio: sandbox additions: ${e?.message ?? e}`); } }
+// the skill library (unit agent-skills): the v2 workflows' roles are versioned in the same store; its routes are the captain's (cookie + Origin for an import)
+improve.skills.extraSource = (wf, role) => { const r = runtime.defs.get(wf)?.roles.find((x) => x.id === role); if (!r) return null; try { return { text: skillTextFor(dirname(STATE))(r.skill), source: r.skill }; } catch { return null; } };
+const skillRoutes = createSkillRoutes({ skills: improve.skills, defs: () => runtime.defs, session: sessionToken(DATA), log: studioLog });
+m7.packs.nativePublished = () => packGenesis.pg.publishedSources();
+m7.useNativeGenesis((description, id, by) => { const task = packGenesis.pg.start(description, id, by); return { id: task.id, task, native: true, link: `#/tasks/${task.id}` }; });
+ctx.packs = { draft: (description: string) => m7.genesis(description, undefined, "captain (chat)") };
+ctx.improve = { roles: () => improve.skills.overview().map((s) => ({ workflow: s.workflow, role: s.role })), edit: (a) => improve.startChatEdit({ ...a, by: "captain (chat)" }) };
+
+// --- http ---
+const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".json": "application/json" };
+Object.assign(TYPES, { ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8", ".png": "image/png" });
+const pub = join(ROOT, "public");
+// the source checkout serves public/ from disk; the binary serves the copies embedded in it
+const serveStatic = (path: string) => {
+  const rel = path === "/" || path === "/remote" || path === "/remote/" ? "/index.html" : path;
+  if (COMPILED) {
+    const f = ASSETS[rel];
+    return f ? new Response(Bun.file(f), { headers: { "content-type": TYPES[extname(rel)] ?? "application/octet-stream", "cache-control": "no-cache" } }) : null;
+  }
+  const file = normalize(join(pub, rel));
+  if (!file.startsWith(pub) || !existsSync(file) || statSync(file).isDirectory()) return null;
+  return new Response(Bun.file(file), { headers: { "content-type": TYPES[extname(file)] ?? "application/octet-stream", "cache-control": "no-cache" } });
+};
+
+const SESSION = sessionToken(DATA);
+async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> {
+    const url = new URL(req.url);
+    // /api/tasks is the new name of /api/wruns: a path the run routes serve is handed to them under its old name
+    { const a = taskAlias(url.pathname, req.method !== "GET" && req.method !== "HEAD"); if (a) url.pathname = a; }
+    const p = url.pathname;
+    // who is asking: this Mac (loopback Host) or a paired phone (tailnet Host + token); anything else is refused
+    if (p === "/api/remote/pair" && req.method === "POST") {
+      { const o = req.headers.get("origin"); if (o && o !== url.origin) return json({ error: "a request from another site cannot pair", code: "crossSite" }, 403); }
+      const host = (req.headers.get("host") ?? "").toLowerCase().replace(/:\d+$/, "");
+      const full = (req.headers.get("host") ?? "").toLowerCase();
+      const known = via === "lan" ? remote.lanHost === full : ["127.0.0.1", "localhost", "[::1]"].includes(host) || remote.tailnetNames.has(host);
+      if (!known) return json({ error: "unknown Host" }, 421);
+      let body: any; try { body = await req.json(); } catch { return json({ error: "json only" }, 400); }
+      const r = remote.pair(String(body?.code ?? ""), String(body?.name ?? "phone"));
+      return r.ok ? json({ token: r.token, device: r.device, allowDrive: remote.allowDrive }) : json({ error: r.error }, r.status);
+    }
+    const who = remote.who(req, url, via);
+    // the page itself carries no data: an unpaired phone may load it (to pair), but only on a known Host
+    if (who.kind === "refused" && who.status === 401 && !p.startsWith("/api/") && !p.startsWith("/files/")) return serveStatic(p) ?? new Response("not found", { status: 404 });
+    if (who.kind === "refused") return json({ error: who.error, code: who.status === 401 ? "pair" : "host" }, who.status);
+    const writing = req.method !== "GET" && req.method !== "HEAD";
+    // the one guard in front of every mutating route: same site, a Studio session (or a paired phone), JSON
+    if (writing && !EXEMPT(p)) { const g = guardWrite(req, url, SESSION, who.kind === "phone"); if (g) return json({ error: g.error, code: g.code }, g.status); }
+    if (who.kind === "phone" && writing) {
+      if (DESKTOP_ONLY.has(p)) return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
+      if (PHONE_DRIVE.has(p) && !remote.allowDrive) return json({ error: "this phone may read and interrupt only; allow phone driving on the Mac first", code: "noDrive" }, 403);
+    }
+    { const rt = await takeover.handle(req, url, who as any, writing); if (rt) return rt; }
+    { const rx = await transcripts.handle(req, url, who as any, writing); if (rx) return rx; }
+    { const rg = await graphMode.handle(req, url, writing); if (rg) return rg; }
+    { const r3 = await m3.handle(req, url, who, writing); if (r3) return r3; }
+    { const rp = await packGenesis.handle(req, url, who, writing); if (rp) return rp; }
+    { const r6 = await improve.handle(req, url, who, writing); if (r6) return r6; }
+    { const rc = await changes.handle(req, url, who, writing); if (rc) return rc; }
+    { const r7 = await m7.handle(req, url, who, writing); if (r7) return r7; }
+    { const r8 = await docs.handle(req, url, who, writing); if (r8) return r8; }
+    { const rk = await tasksApi.handle(url, writing); if (rk) return rk; }
+    { const rr = await runtime.handle(req, url, who, writing); if (rr) return rr; }
+    { const rk = await skillRoutes(req, url, who, writing); if (rk) return rk; }
+    // --- skins: read-only snapshot, pinned files, no network ---
+    if (p.startsWith("/skin/") && !writing) return skins.serve(p);
+    if (p === "/api/skins" && !writing) return json({ skins: skins.list(), kit: bundledText("skins/kit/README.md") });
+    if (p === "/api/skins/install" && writing) { if (who.kind === "phone") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
+      let b: any = {}; try { b = await req.json(); } catch {} try { return json(skins.install(String(b?.path ?? ""), b?.grantNetwork === true)); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 400); } }
+    { const sm = /^\/api\/skins\/([\w-]+)\/(snapshot|check|uninstall)$/.exec(p);
+      if (sm) {
+        const sk = skins.list().find((x) => x.id === sm[1]); if (!sk) return json({ error: "no such skin" }, 404);
+        if (sm[2] === "snapshot" && !writing) return json(sk.ok ? snapshotFor(sk.manifest?.permissions ?? [], { tasks: tasks(), crew: crewCache, pending, flow }) : { error: "this skin fails its checks" }, sk.ok ? 200 : 409);
+        if (sm[2] === "check") return json(skins.check(sk.id));
+        if (sm[2] === "uninstall" && writing) { if (who.kind === "phone") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403); if (sk.kind !== "installed") return json({ error: "a built-in skin stays" }, 409); skins.uninstall(sk.id); return json({ ok: true }); }
+      } }
+    if (p === "/api/flows" && !writing) return json(flows.list());
+    if (p === "/api/agents" && !writing) return json([...agents.jobs.values()].reverse().slice(0, 50).map((j) => ({ ...j, log: j.log.slice(-20) })));
+    if (p.startsWith("/api/agents/") && !writing) { const j = agents.jobs.get(p.slice("/api/agents/".length)); return j ? json(j) : json({ error: "no such job" }, 404); }
+    if (p === "/api/remote/me") return json({ kind: who.kind, device: who.kind === "phone" ? { id: who.device.id, name: who.device.name } : null, allowDrive: remote.allowDrive });
+    if (p === "/api/remote") return json({ devices: remote.devices(), allowDrive: remote.allowDrive, tailscale: ts, serveOn, live: tsRunner.live, lan: lanState(),
+      command: serveCommand(PORT).join(" "), offCommand: serveOffCommand().join(" "), pairUrl: ts.url });
+    if (p === "/api/remote/pair/start" && writing) { const c = remote.startPairing(); const lan = lanState();
+      return json({ ...c, url: lan.on && lan.url ? `${lan.url}?pair=${c.code}` : ts.url ? `${ts.url}?pair=${c.code}` : `http://127.0.0.1:${PORT}/?pair=${c.code}` }); }
+    if (p === "/api/remote/lan" && writing) {
+      let b: any = {}; try { b = await req.json(); } catch {}
+      if (b?.enable === true && b?.confirm !== true) return json({ error: "confirm first", ...lanState() }, 400);
+      const r = setLan(b?.enable === true);
+      return json({ ...r, ...lanState() }, r.ok ? 200 : 500);
+    }
+    // --- Doctor ---
+    // which process answers (tests check they reach the server they started)
+    if (p === "/api/instance" && !writing) return json({ pid: process.pid });
+    if (p === "/api/doctor") return json({ items: doctor(), os: process.platform, compiled: COMPILED, installer: installs.runner.real ? "real" : "mock",
+      jobs: [...installs.jobs.values()].slice(-5) });
+    if (p === "/api/doctor/methods") { const item = url.searchParams.get("item") ?? ""; return json({ item, methods: methodsFor(item), login: LOGINS[item] ?? null }); }
+    if (p.startsWith("/api/doctor/job/")) { const j = installs.jobs.get(p.slice("/api/doctor/job/".length)); return j ? json(j) : json({ error: "no such job" }, 404); }
+    if (p === "/api/doctor/install" && writing) {
+      let b: any = {}; try { b = await req.json(); } catch {}
+      const m = methodsFor(String(b?.item ?? "")).find((x) => x.id === b?.method);
+      if (!m) return json({ error: "no such installer" }, 404);
+      if (m.kind === "open") return json({ open: m.url });
+      if (!m.usable) return json({ error: `this method needs ${m.needs.join(", ")}` }, 409);
+      if (b?.confirm !== true) return json({ error: "confirm first", command: m.argv.join(" "), source: m.source, location: m.location }, 400);
+      try { return json(installs.start(String(b.item), m)); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
+    }
+    if (p === "/api/doctor/login" && writing) {
+      let b: any = {}; try { b = await req.json(); } catch {}
+      const l = LOGINS[String(b?.item ?? "")];
+      if (!l) return json({ error: "no login flow for that" }, 404);
+      if (!l.argv || process.platform !== "darwin" && b?.item !== "codex") return json({ open: l.url, note: l.note });
+      try { return json({ job: installs.start(`login:${b.item}`, { id: "login", label: l.label, argv: l.argv, source: l.url ?? "", location: "", needs: [], admin: false }), note: l.note }); }
+      catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
+    }
+    // test mode only: make the mock installer fail, to show the failure display
+    if (p === "/api/doctor/mock" && writing && !installs.runner.real) { let b: any = {}; try { b = await req.json(); } catch {} process.env.CREW_MOCK_INSTALL = b?.fail ? "fail" : ""; return json({ ok: true }); }
+    if (p === "/api/doctor/cancel" && writing) { let b: any = {}; try { b = await req.json(); } catch {} return installs.cancel(String(b?.id ?? "")) ? json({ ok: true }) : json({ error: "nothing to cancel" }, 404); }
+    // --- GitHub token (no gh CLI needed) ---
+    if (p === "/api/github/token" && writing) { let b: any = {}; try { b = await req.json(); } catch {} const r = await gh.saveToken(String(b?.token ?? "")); send("github", gh.state); return json(r.ok ? { ok: true, github: gh.state } : r, r.ok ? 200 : 400); }
+    if (p === "/api/github/forget" && writing) { gh.forgetToken(); send("github", gh.state); return json({ ok: true, github: gh.state }); }
+    // --- API keys for the direct-HTTP chat providers (values never leave this server) ---
+    if (p === "/api/keys") {
+      if (writing) {
+        let b: any = {}; try { b = await req.json(); } catch {}
+        if (b?.compatBaseUrl && !/^https?:\/\/[^\s]+$/.test(String(b.compatBaseUrl))) return json({ error: "the endpoint must be an http(s) URL" }, 400);
+        saveKeys({ anthropic: b?.anthropic, openai: b?.openai, compatBaseUrl: b?.compatBaseUrl, compatKey: b?.compatKey });
+        send("chat", chatInfo());
+      }
+      return json(keyStatus());
+    }
+    if (p === "/api/remote/revoke" && writing) { let b: any = {}; try { b = await req.json(); } catch {} return remote.revoke(String(b?.id ?? "")) ? json({ ok: true, devices: remote.devices() }) : json({ error: "no such device" }, 404); }
+    if (p === "/api/remote/settings" && writing) { let b: any = {}; try { b = await req.json(); } catch {} remote.setAllowDrive(b?.allowDrive === true); return json({ allowDrive: remote.allowDrive }); }
+    if (p === "/api/remote/tailscale" && writing) {
+      let b: any = {}; try { b = await req.json(); } catch {}
+      if (b?.confirm !== true) return json({ error: "confirm first", command: serveCommand(PORT).join(" ") }, 400);
+      const argv = b?.action === "disable" ? serveOffCommand() : serveCommand(PORT);
+      const r = tsRunner.run(argv);
+      if (r.ok) serveOn = b?.action !== "disable";
+      return json({ ok: r.ok, out: r.out, live: tsRunner.live, serveOn, ran: argv.join(" ") }, r.ok ? 200 : 500);
+    }
+    // --- main session ---
+    if (p === "/api/main") return json(main.view());
+    if (p === "/api/main/sessions") {
+      const host = (url.searchParams.get("host") ?? "claude") as HostId;
+      if (!["claude", "codex"].includes(host)) return json({ error: "host must be claude or codex" }, 400);
+      try { return json({ host, project: PROJECT, sessions: await main.discover(host) }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 500); }
+    }
+    if (p.startsWith("/api/main/") && writing) {
+      let b: any = {}; try { b = await req.json(); } catch {}
+      if (p === "/api/main/attach") { const r = await main.attach(b?.host === "codex" ? "codex" : "claude", String(b?.id ?? "")); return json(r, r.ok ? 200 : 409); }
+      if (p === "/api/main/send") {
+        const text = String(b?.text ?? "").trim().slice(0, 8000);
+        if (!text) return json({ error: "empty message" }, 400);
+        if (main.view().state === "detached") return json({ error: "no main session is attached", code: "detached" }, 409);
+        return json({ queued: main.enqueue("chat", text, who.kind === "phone" ? `phone:${who.device.name}` : "desktop") });
+      }
+      if (p === "/api/main/interrupt") { await main.interrupt(); return json({ ok: true }); }
+      if (p === "/api/main/resume") { const r = main.resume(); return json(r, r.ok ? 200 : 409); }
+      if (p === "/api/main/detach") { const cmd = await main.detach(); return cmd ? json({ resume: cmd }) : json({ error: "nothing attached" }, 409); }
+      if (p === "/api/main/approve") return main.bridge.answer(String(b?.id ?? ""), b?.allow === true) ? json({ ok: true }) : json({ error: "no such pending request" }, 404);
+      if (p === "/api/main/queue/remove") return main.queue.remove(String(b?.id ?? "")) ? json({ ok: true }) : json({ error: "no such item" }, 404);
+      return json({ error: "unknown" }, 404);
+    }
+    if (p === "/api/memory") return json({ dir: memory.dir, notes: memory.list().map(({ body, ...n }) => n) });
+    if (p === "/api/summary") {
+      return json({ state: STATE, chat: chatInfo(), tasks: tasks(), pending, crew: crewCache.slice(0, 40), github: gh.state, board: board.status(), flow,
+        events: fm.events.length, now: new Date().toISOString() });
+    }
+    if (p === "/api/pending") return json(pending);
+    if (p === "/api/crew") return json(fm.crew(8).slice(0, 60));
+    if (p.startsWith("/api/crew/")) {
+      const id = decodeURIComponent(p.slice("/api/crew/".length));
+      const a = fm.crew(200).find(c => c.actor === id);
+      return a ? json(a) : json({ error: "no such crew round" }, 404);
+    }
+    if (p === "/api/activity") {
+      const q = url.searchParams;
+      return json(fm.activity({ task: q.get("task") || undefined, type: q.get("type") || undefined, actor: q.get("actor") || undefined,
+        limit: Number(q.get("limit") || 150), before: q.get("before") ? Number(q.get("before")) : undefined }));
+    }
+    if (p === "/api/tools" || p.startsWith("/api/tools/")) {
+      const wt = req.headers.get("x-crew-tool-token") ?? "";
+      if (agents.hasToken(wt)) {
+        if (p === "/api/tools") return json(agents.toolList(wt));
+        let args: any = {}; try { args = await req.json(); } catch {}
+        return json(await agents.callTool(wt, decodeURIComponent(p.slice("/api/tools/".length)), args));
+      }
+      if (m3.runs.hasToken(wt)) {
+        if (p === "/api/tools") return json(m3.runs.toolList());
+        let args: any = {}; try { args = await req.json(); } catch {}
+        return json(m3.runs.callTool(wt, decodeURIComponent(p.slice("/api/tools/".length)), args));
+      }
+      const tk = tokens.get(req.headers.get("x-crew-tool-token") ?? "");
+      if (!tk || tk.expires < Date.now()) return json({ error: "no valid tool token" }, 403);
+      if (p === "/api/tools") return json(TOOLS.map(t => ({ name: t.name, description: t.description, inputSchema: t.schema })));
+      const tool = toolByName(decodeURIComponent(p.slice("/api/tools/".length)));
+      if (!tool) return json({ error: "no such tool" }, 404);
+      if (++tk.calls > MAX_TOOL_CALLS) return json({ error: `tool limit reached (${MAX_TOOL_CALLS} per question)` });
+      let args: any = {};
+      try { args = await req.json(); } catch {}
+      try { const r = tool.run(ctx, args); if (tool.write) send("intents", store.intentView(fm)); return json(r); }
+      catch (e: any) { return json({ error: String(e?.message ?? e) }); }
+    }
+    if (p === "/api/chat" && req.method === "POST") {
+      let body: any;
+      try { body = await req.json(); } catch { return json({ error: "json only" }, 400); }
+      const message = String(body?.message ?? "").trim().slice(0, 4000);
+      if (!message) return json({ error: "empty message" }, 400);
+      if (chats >= MAX_CHATS) return json({ error: "firstmate is answering two questions already; try again in a moment", code: "busy" }, 429);
+      const history: Turn[] = (Array.isArray(body?.history) ? body.history : []).filter((t: any) => t && (t.role === "captain" || t.role === "firstmate") && typeof t.text === "string")
+        .map((t: any) => ({ role: t.role, text: String(t.text).slice(0, 2000) })).slice(-8);
+      const lang = body?.lang === "zh-TW" ? "zh-TW" : "en";
+      const token = randomBytes(24).toString("hex");
+      tokens.set(token, { calls: 0, expires: Date.now() + 10 * 60_000 });
+      chats++;
+      const abort = new AbortController();
+      let ctl: ReadableStreamDefaultController<Uint8Array>;
+      const stream = new ReadableStream<Uint8Array>({
+        start(c) {
+          ctl = c;
+          runChat({ provider: provider(), message, history, lang, studioUrl: `http://127.0.0.1:${server.port}`, token, dataDir: DATA, signal: abort.signal,
+            onEvent: e => { try { ctl.enqueue(enc.encode(`event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`)); } catch {} } })
+            .finally(() => { chats--; tokens.delete(token); try { ctl.close(); } catch {} });
+        },
+        cancel() { abort.abort(); },
+      });
+      return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } });
+    }
+    if (p === "/api/settings") {
+      if (req.method === "POST") {
+        let body: any; try { body = await req.json(); } catch { return json({ error: "json only" }, 400); }
+        const cur = chatSettings();
+        if (!choices.includes(body?.provider)) return json({ error: `provider must be one of ${choices.join(", ")}` }, 400);
+        const models = { ...cur.models };
+        if (typeof body.model === "string") { const m = body.model.trim(); if (m && !/^[\w.:\/-]{1,80}$/.test(m)) return json({ error: "bad model name" }, 400); if (m) models[body.provider] = m; else delete models[body.provider]; }
+        writeFileSync(SETTINGS, JSON.stringify({ provider: body.provider, models }, null, 2));
+        send("chat", chatInfo());
+      }
+      return json(chatInfo());
+    }
+    if (p === "/api/intents") return json(store.intentView(fm));
+    if (p === "/api/library") { const lib = store.library(fm, gh.merged); return json({ ...lib, artifacts: m3.store.view(), mergedSync: gh.mergedSync, github: { ok: gh.state.ok, error: gh.state.error, repo: gh.state.repo } }); }
+    if (p.startsWith("/api/task/")) {
+      const id = decodeURIComponent(p.slice("/api/task/".length)).toUpperCase();
+      if (!fm.known(id)) return json({ error: "not in the log" }, 404);
+      const t = tasks().find(x => x.id === id) ?? null;
+      return json({ id, title: fm.title(id), door: fm.doorOf(id), task: t, lineage: fm.lineage(id), events: fm.activity({ task: id, limit: 200 }),
+        pending: pending.filter(c => c.task === id).map(c => ({ id: c.id, title: c.title })), intent: store.links().find(l => l.task === id)?.intent ?? null });
+    }
+    if (p.startsWith("/api/event/")) {
+      const seq = Number(p.slice("/api/event/".length));
+      const e = fm.events[seq];
+      if (!Number.isInteger(seq) || !e) return json({ error: "no such event" }, 404);
+      return json({ event: e, around: fm.activity({ before: Math.min(fm.events.length, seq + 13), limit: 25 }) });
+    }
+    if (p.startsWith("/files/")) {
+      const file = store.file(decodeURIComponent(p.slice("/files/".length)));
+      if (!file) return new Response("not found", { status: 404 });
+      const f = Bun.file(file), size = f.size;
+      const type = extname(file) === ".mp4" ? "video/mp4" : extname(file) === ".webm" ? "video/webm" : "application/octet-stream";
+      const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get("range") ?? "");
+      if (m) {
+        const start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2]));
+        const end = m[1] && m[2] ? Math.min(size - 1, Number(m[2])) : size - 1;
+        if (start >= size || start > end) return new Response("", { status: 416, headers: { "content-range": `bytes */${size}` } });
+        return new Response(f.slice(start, end + 1), { status: 206, headers: { "content-type": type, "accept-ranges": "bytes",
+          "content-range": `bytes ${start}-${end}/${size}`, "content-length": String(end - start + 1), "cache-control": "no-cache" } });
+      }
+      return new Response(f, { headers: { "content-type": type, "accept-ranges": "bytes", "content-length": String(size), "cache-control": "no-cache" } });
+    }
+    if (p === "/api/types") return json([...new Set(fm.events.map(e => e.type))].sort());
+    if (p === "/api/github") return json({...gh.state,polling:githubPoller.ownership});
+    if (p === "/api/flow") return json(flow);
+    if (p === "/api/answer" && req.method === "POST") {
+      // only a card that is pending right now, and only the kinds Crew Studio can render in full
+      let body: any;
+      try { body = await req.json(); } catch { return json({ error: "json only" }, 400); }
+      const card = pending.find(c => c.id === body?.id);
+      if (!card) return json({ error: "no such pending card", code: "notPending" }, 404);
+      if (card.boardOnly) return json({ error: "answer this card on the board", code: "useBoard", board: board.url }, 409);
+      if (!["A", "B", "C", "D"].includes(body?.chosen)) return json({ error: "bad choice" }, 400);
+      const qs = card.details?.en?.questions;
+      const answers = Array.isArray(qs) ? (Array.isArray(body.answers) ? body.answers : qs.map((_: unknown, index: number) => ({ index, ok: true }))) : undefined;
+      // a one-way merge carries the same door confirmation the board asks for; the board checks it again
+      let door: ReturnType<typeof doorInput> | undefined;
+      if (needsDoor(card, body.chosen, answers)) { door = doorInput(body); if (!door || !doorComplete(card, door)) return json({ error: "review every intent and answer the check first", code: "doorUnconfirmed" }, 400); }
+      const r = await board.answer({ id: card.id, chosen: body.chosen, project: card.project, answers, door: door ?? undefined });
+      if (r.status < 300 && main.view().state !== "detached") main.enqueue("card", `card: ${card.id} answered ${body.chosen} (in Crew Studio)`, who.kind === "phone" ? "phone" : "desktop");
+      return json(r.body, r.status);
+    }
+    if (p === "/api/stream") {
+      let ctl: ReadableStreamDefaultController<Uint8Array>;
+      const stream = new ReadableStream<Uint8Array>({
+        start(c) { ctl = c; clients.add(c); if (who.kind === "phone") clientDevice.set(c, who.device.id); c.enqueue(enc.encode(`event: hello\ndata: ${JSON.stringify({ events: fm.events.length })}\n\n`)); },
+        cancel() { clients.delete(ctl); clientDevice.delete(ctl); },
+      });
+      return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" } });
+    }
+    // the session starts with an explicit step: the captain opens Studio's session link (`crew-studio open`), which
+    // carries the session token; the page itself never hands out a session
+    if (p === "/session" && req.method === "GET") {
+      const t = url.searchParams.get("t") ?? ""; const okT = t.length === SESSION.length && timingSafeEqual(Buffer.from(t), Buffer.from(SESSION));
+      if (!okT) return new Response("This session link is not valid. Open Studio with `crew-studio open` (or `bun src/main.ts open`).", { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } });
+      return new Response(null, { status: 303, headers: { location: "/", "set-cookie": sessionCookie(SESSION), "cache-control": "no-store", "referrer-policy": "no-referrer" } });
+    }
+    if (p === "/api/session") return json({ session: who.kind === "phone" || hasSession(req, SESSION) });
+    const page = serveStatic(p);
+    return page ?? new Response("not found", { status: 404 });
+}
+
+const server = Bun.serve({ port: PORT, hostname: "127.0.0.1", idleTimeout: 0, fetch: (req) => handle(req, "loopback") });
+console.log(`crew-studio: http://127.0.0.1:${server.port}  data=${DATA}  state=${STATE}  board=${board.url} (${board.status().writable ? "answers on" : "read-only"})  github=${gh.state.enabled ? gh.state.repo : "off"}`);
+console.log(`crew-studio: open Studio with its session link: \`bun src/main.ts open\` (the binary: \`crew-studio open\`)`);

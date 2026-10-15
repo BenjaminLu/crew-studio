@@ -1,0 +1,6 @@
+{
+ "test": ["bun", "scripts/test-shard.ts"],
+ "lint": ["bun", "scripts/lint.ts"],
+ "shards": 2,
+ "tests": ["test/**"]
+}

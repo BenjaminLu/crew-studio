@@ -1,0 +1,241 @@
+# code-firstmate: firstmate's coding pipeline as a Studio v2 workflow on the check
+# contract (docs/code-firstmate-pipeline.md). Checks sit on nodes (they run after
+# the node produces) and on edges (they run before the edge is taken). The refine
+# nodes (spec-fix, plan-fix, fix) compile briefs from the findings and stop on
+# the same class twice, no progress, or the round cap. Humans: dispatch, the
+# escalation cards and the merge card.
+id: code-firstmate
+name: code-firstmate
+kind: code
+version: 1
+description: "firstmate's coding pipeline: spec (refined until its checks pass) → dispatch → door → plan (one-way) → build ⇄ fix → CI, fail-first → fresh reviewer → the six gates on the edge into the merge card → local merge → after-merge hooks."
+intent:
+  keywords: [fix, bug, add, feature, refactor, code, function, test, tests, implement, change, migration, schema, endpoint, api, repo, repository, rename]
+params:
+  repo: { label: "Repository path (blank = the demo repo)", default: "" }
+  project: { label: "Project id (optional)", default: "" }
+  base: { label: "Base branch", default: "main" }
+roles:
+  - { id: coordinator, label: Coordinator (firstmate), skill: "pack:firstmate/skills/firstmate.md" }
+  - { id: worker, label: Worker, skill: "pack:firstmate/skills/worker.md" }
+  - { id: reviewer, label: Reviewer, skill: "pack:firstmate/skills/reviewer.md" }
+  - { id: designer, label: Designer reviewer, skill: "pack:firstmate/skills/designer.md" }
+nodes:
+  - { id: intake, kind: hook, label: Capture intent, do: intent.capture, x: 170, y: 220 }
+  - { id: prepare, kind: hook, label: Worktree, detail: "branch on base", do: repo.prepare, x: 340, y: 220 }
+  - id: spec
+    kind: agent
+    label: Spec
+    detail: "what · why · done · scope · door"
+    role: coordinator
+    mode: spec
+    retries: 1
+    timeout_s: 900
+    # the coordinator writes specs and cards: the built-in plain-writing skill (packs/core/skills/plain-writing), pinned by version and hash
+    skills: [{ id: plain-writing, v: 1, sha256: "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467" }]
+    checks:
+      - { use: firstmate/spec-schema }
+      - { use: firstmate/done-lines-provable }
+      - { use: firstmate/caller-coverage }
+      - { use: firstmate/overlap }
+      - { use: core/ste-wording }
+      - { use: firstmate/no-impl-detail }
+      - { use: firstmate/done-lines-observable }
+    x: 510
+    y: 220
+  - { id: spec-fix, kind: loop, label: Refine spec, detail: "brief from the findings", args: { producer: spec, coordinator: coordinator, route_classes: { door-change: door-change } }, x: 510, y: 40 }
+  - id: dispatch
+    kind: card
+    label: Dispatch card
+    args: { body_from: dispatch, card_kind: dispatch }
+    x: 680
+    y: 220
+  - { id: door, kind: check, label: Door, detail: "scope ∩ sensitive paths", checks: [{ use: firstmate/door-classify }], args: { route_from: firstmate/door-classify, store: door }, x: 850, y: 220 }
+  - id: door-pick
+    kind: card
+    label: Pick the door
+    args: { body_from: door, card_kind: question }
+    x: 850
+    y: 40
+  - id: plan
+    kind: agent
+    label: Plan round
+    detail: "one-way: no file changes"
+    role: worker
+    mode: plan
+    lane: one-way
+    retries: 1
+    timeout_s: 900
+    checks:
+      - { use: firstmate/plan-covers-done-lines }
+      - { use: firstmate/questions-listed }
+    x: 1020
+    y: 400
+  - { id: plan-fix, kind: loop, label: Refine plan, args: { producer: plan }, lane: one-way, x: 1020, y: 580 }
+  - { id: plan-accept, kind: agent, label: Accept plan, detail: "signed: round + head", role: coordinator, mode: plan-accept, lane: one-way, retries: 1, timeout_s: 600, skills: [{ id: plain-writing, v: 1, sha256: "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467" }], x: 1190, y: 400 }
+  - id: build
+    kind: agent
+    label: Build round
+    detail: "brief bound to round + head"
+    lifecycle: [after_round]
+    role: worker
+    mode: build
+    retries: 1
+    checks:
+      - { use: firstmate/scope }
+      - { use: firstmate/lints }
+      - { use: firstmate/file-size-cap }
+      - { use: firstmate/covering-suites }
+      - { use: firstmate/fixture-modules }
+      - { use: firstmate/report-schema }
+    x: 1360
+    y: 220
+  - { id: pr-open, kind: hook, do: pr.open, label: Review request, x: 1530, y: 220 }
+  - id: ci
+    kind: check
+    label: CI
+    detail: "sharded · fail-first · shard budget"
+    checks:
+      - { use: firstmate/ci }
+      - { use: firstmate/fail-first }
+      - { use: firstmate/shard-budget }
+      - { use: firstmate/ui-captures }
+    x: 1700
+    y: 220
+  - id: review
+    kind: agent
+    label: Fresh reviewer
+    detail: "runs the tests, reads every changed file"
+    role: reviewer
+    mode: review
+    retries: 1
+    timeout_s: 900
+    checks:
+      - { use: firstmate/review-depth }
+      - { use: firstmate/review-verdict }
+      - { use: firstmate/designer-compare }
+    x: 1870
+    y: 220
+  - { id: fix, kind: loop, label: Fix (refine loop), detail: "brief · step-back · budget", args: { producer: build, coordinator: coordinator, route_classes: { door-change: door-change, review-unverified: step-back }, answer_routes: { "step-back:other-model": pass }, report_checks: [firstmate/report-schema] }, x: 1700, y: 460 }
+  - { id: remote-ready, kind: hook, do: remote.ready, label: Remote readiness, x: 1970, y: 220 }
+  - id: merge-card
+    kind: card
+    label: Merge card
+    detail: "ledger · one-way: door confirmation"
+    args: { body_from: merge, card_kind: merge }
+    card: { confirm_door: true, door_from: door }
+    x: 2070
+    y: 220
+  - { id: merge, kind: hook, label: Merge, detail: "local fast-forward", do: git.merge, lifecycle: [after_merge], x: 2240, y: 220 }
+  - id: after-merge
+    kind: hook
+    label: After merge
+    detail: "self-update · main CI · follow-ups · retro"
+    checks:
+      - { use: firstmate/self-update }
+      - { use: firstmate/main-ci }
+      - { use: firstmate/follow-up-triage }
+      - { use: firstmate/retro-trigger }
+    x: 2410
+    y: 220
+  - { id: cleanup, kind: hook, label: Clean up, do: repo.cleanup, x: 2580, y: 220 }
+  - { id: done, kind: hook, label: Merged, args: { summary: "merged {{ctx.merged.head}} into {{ctx.base}}" }, x: 2750, y: 220 }
+  - id: step-back
+    kind: card
+    label: Step-back card
+    detail: "same class twice · reviewer unverified"
+    args: { body_from: step-back, card_kind: step-back }
+    x: 1870
+    y: 640
+  - id: stalled
+    kind: card
+    label: No-progress card
+    args: { body_from: stalled, card_kind: step-back }
+    x: 1700
+    y: 640
+  - id: budget
+    kind: card
+    label: Round-budget card
+    args: { body_from: budget, card_kind: round-budget }
+    card: { effects: { extend: { policy: round_cap, add: 2 } } }
+    x: 1360
+    y: 640
+  - id: scope-card
+    kind: card
+    label: Scope card
+    args: { body_from: scope, card_kind: scope }
+    x: 1190
+    y: 40
+  - { id: parked, kind: hook, label: Parked, args: { result: closed, summary: "parked by the captain" }, x: 2070, y: 640 }
+  - { id: closed, kind: hook, label: Closed, args: { result: closed, summary: "closed without merging" }, x: 2240, y: 400 }
+  - { id: dropped, kind: hook, label: Dropped, args: { result: closed, summary: "dropped at dispatch" }, x: 680, y: 400 }
+edges:
+  - [intake, prepare]
+  - [prepare, spec]
+  - [spec, dispatch, ok]
+  - [spec, spec-fix, fail]
+  - [spec-fix, spec, retry|report]
+  - [spec-fix, dispatch, pass]
+  - [spec-fix, scope-card, step-back|stalled|cap|door-change]
+  - [dispatch, door, dispatch]
+  - [dispatch, spec, rescope]
+  - [dispatch, dropped, drop]
+  - [door, plan, one-way]
+  - [door, build, two-way]
+  - [door, door-pick, undecided]
+  - [door-pick, door]
+  - [plan, plan-accept, ok]
+  - [plan, plan-fix, fail]
+  - [plan-fix, plan, retry|report]
+  - [plan-fix, plan-accept, pass]
+  - [plan-fix, scope-card, step-back|stalled|cap|door-change]
+  - [plan-accept, build, accept]
+  - [plan-accept, plan, revise]
+  - [plan-accept, scope-card, escalate]
+  - [build, pr-open, ok]
+  - [pr-open, ci, ok]
+  - [build, fix, fail]
+  - [build, scope-card, blocked]
+  - [build, door, door-change]
+  - [ci, review, pass]
+  - [ci, fix, fail]
+  - [review, remote-ready, ok]
+  - [remote-ready, build, rebase]
+  - [build, build, rebase-more]
+  - [remote-ready, closed, close]
+  - [remote-ready, fix, fail]
+  - - remote-ready
+    - merge-card
+    - ok
+    - checks:
+        - { use: firstmate/gate-branch }
+        - { use: firstmate/gate-rebase }
+        - { use: firstmate/gate-scope }
+        - { use: firstmate/gate-failfirst }
+        - { use: firstmate/gate-ci }
+        - { use: firstmate/gate-approval }
+  - [review, fix, fail]
+  - [step-back, fix, other-model]
+  - [fix, build, retry|report]
+  - [fix, ci, pass]
+  - [fix, step-back, step-back]
+  - [fix, stalled, stalled]
+  - [fix, budget, cap]
+  - [fix, door, door-change]
+  - [step-back, spec, rescope]
+  - [step-back, build, continue]
+  - [step-back, parked, park]
+  - [stalled, spec, rescope]
+  - [stalled, build, continue]
+  - [stalled, parked, park]
+  - [budget, build, extend]
+  - [budget, spec, rescope]
+  - [budget, parked, park]
+  - [scope-card, spec, rescope]
+  - [scope-card, parked, park]
+  - [merge-card, merge, merge]
+  - [merge-card, fix, changes]
+  - [merge-card, closed, close]
+  - [merge, after-merge]
+  - [after-merge, cleanup]
+  - [cleanup, done]

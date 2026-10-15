@@ -1,0 +1,16 @@
+id: file-size-cap
+version: 1.0.0
+title: { en: "No changed file over the line cap", zh-TW: "沒有改動檔案超過行數上限" }
+applies_to: [code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact, diff, repo_cfg]
+params:
+  type: object
+  properties:
+    glob_prefix: { type: string, default: "", description: "blank = the repository's test folders (.crew/gates.json tests)" }
+    max: { type: integer, default: 1200, minimum: 10 }
+policy_bind:
+  max: file_size_cap.max
+timeout_s: 30
+network: false

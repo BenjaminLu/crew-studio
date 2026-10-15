@@ -1,0 +1,729 @@
+// Studio's native runtime in the browser: Workflows (a list, and a graph editor
+// per workflow) and Runs (a list, and a live view per run). No dependency: the
+// graph is plain SVG.
+//   #/workflows                 the workflows
+//   #/workflows/<id>[/v<N>]     the editor: drag nodes (positions kept per version),
+//                               pan (drag the background) and zoom (wheel, + and −),
+//                               connect (drag from a node's port to another node),
+//                               disconnect (select an edge, Delete), add and remove
+//                               nodes (palette), drop a check on a node or an edge,
+//                               a side panel per node and edge with each check's
+//                               params form and "Try on sample", validation as you
+//                               edit, save as a new version with its diff, and a live
+//                               overlay of a run. Every action also works from the
+//                               keyboard (Tab to a node, arrows move it, Enter opens it,
+//                               Delete removes it; the panel adds edges and checks).
+//   #/runs                      the runs, and a form to start one
+//   #/run/<id>                  a run: its graph with live node states, its open cards,
+//                               its timeline and its evidence ledger
+(() => {
+const SVGNS = "http://www.w3.org/2000/svg";
+const s = (tag, attrs = {}, ...kids) => { const e = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) { if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (v != null && v !== false) e.setAttribute(k, v === true ? "" : v); } for (const c of kids.flat()) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(c)); return e; };
+const api = async (u, body, method, signal) => { const r = await fetch(u, { signal, ...(body === undefined && !method ? {} : { method: method || "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) }) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) { const e = new Error(j.error || `HTTP ${r.status}`); e.problems = j.problems; throw e; } return j; };
+const KINDS = [["agent", "Agent", "代理"], ["check", "Check", "檢查"], ["card", "Card", "卡片"], ["loop", "Refine loop", "精修迴圈"], ["hook", "Hook", "掛勾"]];
+const NW = 150, NH = 52;
+const clone = (o) => JSON.parse(JSON.stringify(o));
+const rerender = () => { if (["workflows", "runs", "run"].includes(S.route?.name)) render(); };
+
+// ---------- live updates: the page's one event stream (app.js's, through window.liveListen) ----------
+const live = { listeners: new Set() };
+for (const t of ["wrun", "scard"]) window.liveListen(t, (m) => { const d = JSON.parse(m.data); for (const f of live.listeners) f(t, d); });
+
+// ---------- the graph (shared by the editor and the run view) ----------
+const stateClass = (st) => st ? `st-${st}` : "";
+// ---------- the graph: drawn from crewLayout (public/graph-layout.js) ----------
+const BADGE = { open: new Map() }; // which badge lists are open, per graph
+const stageState = (members, states) => { const st = members.map((m) => states?.[m]).filter(Boolean);
+  if (!st.length) return null; if (st.some((x) => x === "failed" || x === "error")) return "failed"; if (st.some((x) => x === "running" || x === "waiting")) return "running";
+  return st.every((x) => x === "passed" || x === "skipped" || x === "superseded") ? "passed" : "pending"; };
+const fitText = (t, n) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
+function graph(def, o = {}) {
+  // o: { states, walked (the edge keys the run's events record as taken), editable, sel, manual, collapsed, onToggleStage, onSelect, onMove, onMoved, onDragStart, onConnect, onDropCheck, problems, view, onView }
+  const L = window.crewLayout;
+  const reached = o.states ? Object.keys(o.states).filter((k) => o.states[k] && o.states[k] !== "pending") : [];
+  const lay = o.simple ? L.layoutSimple(def, { collapsed: o.collapsed || [], wrap: o.wrap, offsets: o.offsets, reached }) : o.manual ? L.place(def, { collapsed: o.collapsed || [] }) : L.layout(def, { collapsed: o.collapsed || [] });
+  const byId = Object.fromEntries(lay.nodes.map((n) => [n.id, n]));
+  const view = o.view || { ...lay.bbox };
+  const svg = s("svg", { class: `rt-graph${o.simple ? " simple" : ""}`, "data-view": o.simple ? "simple" : "detail", viewBox: `${view.x} ${view.y} ${view.w} ${view.h}`, role: "group", "data-layout": o.manual ? "manual" : "auto",
+    "aria-label": T(`Workflow graph: ${def.nodes.length} nodes, ${def.edges.length} edges`, `流程圖：${def.nodes.length} 個節點、${def.edges.length} 條邊`), "data-graph": def.id });
+  svg.append(s("defs", {}, s("marker", { id: `arr-${def.id}`, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, s("path", { d: "M0,0 L10,5 L0,10 z", class: "rt-arrow" }))));
+  const bad = new Set((o.problems || []).filter((p) => p.level === "error" && p.node).map((p) => p.node));
+  const badE = new Set((o.problems || []).filter((p) => p.level === "error" && p.edge).map((p) => p.edge));
+  const zh = document.documentElement.lang === "zh-TW";
+  // stage boxes behind everything; the title toggles the stage
+  const sg = s("g", { class: "rt-stages" });
+  const pending = [], stageBadged = new Set(); // badges drawn once the label layer exists
+  for (const st of lay.stages) {
+    const state = stageState(st.nodes, o.states);
+    const title = s("g", { class: "rt-stage-t", tabindex: 0, role: "button", "aria-expanded": "true", "data-stage-toggle": st.id, "aria-label": T(`${st.label}: collapse`, `${st.label_tw || st.label}：收合`) },
+      s("rect", { x: st.x + 6, y: st.y + 5, width: Math.min(st.w - 12, (zh ? (st.label_tw || st.label).length * 13 : st.label.length * 7.2) + 30), height: 18, rx: 9, class: "rt-stage-pill" }),
+      s("text", { x: st.x + 14, y: st.y + 18, class: "rt-stage-label" }, `▾ ${zh ? st.label_tw || st.label : st.label}`));
+    const tog = (ev) => { if (svg.interactionActive) return; ev.stopPropagation(); o.onToggleStage?.(st.id); };
+    title.addEventListener("click", tog); title.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); tog(ev); } });
+    sg.append(s("g", { class: `rt-stage${state ? ` st-${state}` : ""}`, "data-stage": st.id }, s("rect", { x: st.x, y: st.y, width: st.w, height: st.h, rx: 14, class: "rt-stage-box" }), title));
+    for (const b of (lay.badges?.[`stage:${st.id}`] || [])) if (!stageBadged.has(st.id)) { stageBadged.add(st.id); const w = b.text.length * 6.4 + 14; pending.push(() => badge(`s:${st.id}:${b.kind}`, st.x + st.w - w - 8, st.y + 5, b.text, b.labels || [], lg, b.kind)); }
+  }
+  const eg = s("g", { class: "rt-edges" }), lg = s("g", { class: "rt-labels" });
+  const openKey = (k) => `${def.id}|${k}`;
+  const badgeList = (key, x, y, items, parent) => {
+    if (!BADGE.open.get(openKey(key))) return;
+    const w = Math.max(...items.map((t) => t.length)) * 6.6 + 20, h = items.length * 16 + 10;
+    parent.append(s("g", { class: "rt-badge-list", "data-badge-list": key }, s("rect", { x, y, width: w, height: h, rx: 8, class: "rt-badge-pop" }),
+      ...items.map((t, i) => s("text", { x: x + 10, y: y + 18 + i * 16, class: "rt-badge-item" }, t))));
+  };
+  const badge = (key, x, y, text, items, parent, kind) => {
+    const w = text.length * 6.4 + 14;
+    const b = s("g", { class: `rt-badge-g${kind ? ` b-${kind}` : ""}`, tabindex: 0, role: "button", "data-badge": key, "data-badge-kind": kind || "checks", "aria-expanded": String(!!BADGE.open.get(openKey(key))), "aria-label": `${text}: ${items.join(", ")}` },
+      s("rect", { x, y, width: w, height: 16, rx: 8, class: "rt-badge" }), s("text", { x: x + w / 2, y: y + 12, class: "rt-badge-t", "text-anchor": "middle" }, text));
+    const tog = (ev) => { if (svg.interactionActive) return; ev.stopPropagation(); BADGE.open.set(openKey(key), !BADGE.open.get(openKey(key))); o.redraw?.(); };
+    b.addEventListener("click", tog); b.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+    b.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); tog(ev); } });
+    parent.append(b); badgeList(key, x, y + 20, items, parent);
+  };
+  lay.edges.forEach((e) => {
+    const i = e.index[0], orig = def.edges[i]; if (!orig) return;
+    const key = `${orig.from}→${orig.to}${orig.when ? `[${orig.when}]` : ""}`;
+    const sel = o.sel?.edge === i;
+    const g = s("g", { class: `rt-edge${e.back ? " back" : ""}${sel ? " sel" : ""}${badE.has(key) ? " bad" : ""}${o.walked && o.walked.has(key) ? " walked" : ""}`,
+      "data-edge": key, "data-edge-i": i, "data-back": e.back ? e.side : null, tabindex: o.editable ? 0 : null, role: o.editable ? "button" : null,
+      "aria-label": `${e.from} → ${e.to}${e.when ? ` when ${e.when}` : ""}${e.back ? T(", goes back", "，往回") : ""}${e.checks ? `, ${e.checks} gates` : ""}` });
+    const d = L.pathD(e);
+    g.append(s("path", { d, class: "rt-hit" }), s("path", { d, class: "rt-line", "marker-end": `url(#arr-${def.id})` }));
+    if (e.label) { const lb = s("g", { class: `rt-elabel${e.back ? " back" : ""}`, "data-label": key }, s("rect", { x: e.label.x, y: e.label.y, width: e.label.w, height: e.label.h, rx: 4, class: "rt-when-bg" }),
+      s("text", { x: e.label.x + 4, y: e.label.y + 10.5, class: "rt-when" }, e.label.text)); if (e.label.full !== e.label.text) lb.append(s("title", {}, e.label.full)); lg.append(lb); }
+    if (e.checks) { g.setAttribute("data-edge-checks", e.checks);
+      const p = e.label ? [e.label.x, e.label.y + e.label.h + 2] : (() => { const pts = L.sample(e, 8); const m = pts[Math.floor(pts.length / 2)]; return [m[0] - 24, m[1] + 4]; })();
+      badge(`e:${key}`, p[0], p[1], T(`${e.checks} gate${e.checks > 1 ? "s" : ""}`, `${e.checks} 個關卡`), (orig.checks || []).map((c) => c.use), lg); }
+    if (o.onSelect) { g.addEventListener("click", (ev) => { if (svg.interactionActive) return; ev.stopPropagation(); o.onSelect({ edge: i }); }); g.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); o.onSelect({ edge: i }); } if (ev.key === "Delete" || ev.key === "Backspace") { ev.preventDefault(); o.onDeleteEdge?.(i); } }); }
+    if (o.onDropCheck) { g.addEventListener("dragover", (ev) => { if (ev.dataTransfer.types.includes("text/x-check")) { ev.preventDefault(); g.classList.add("drop"); } }); g.addEventListener("dragleave", () => g.classList.remove("drop"));
+      g.addEventListener("drop", (ev) => { ev.preventDefault(); g.classList.remove("drop"); const c = ev.dataTransfer.getData("text/x-check"); if (c) o.onDropCheck({ edge: i }, c); }); }
+    eg.append(g);
+  });
+  const ng = s("g", { class: "rt-nodes" });
+  for (const vn of lay.nodes) {
+    if (vn.kind === "stage") { // a collapsed stage: one box with its state
+      const st = stageState(vn.members, o.states);
+      const lab = zh ? (lay.stageList.find((x) => x.id === vn.stage)?.label_tw || vn.label) : vn.label;
+      const g = s("g", { class: `rt-node rt-stagenode${st ? ` st-${st}` : ""}`, transform: `translate(${vn.x},${vn.y})`, "data-stage-node": vn.stage, tabindex: 0, role: "button", "aria-expanded": "false",
+        "aria-label": T(`${vn.label} stage, ${vn.members.length} nodes${st ? `, ${st}` : ""}: expand`, `${lab} 階段，${vn.members.length} 個節點${st ? `，${st}` : ""}：展開`) },
+        s("rect", { width: vn.w, height: vn.h, rx: 14, class: "rt-box" }), s("text", { x: 12, y: 24, class: "rt-label" }, `▸ ${fitText(lab, 16)}`),
+        s("text", { x: 12, y: 44, class: "rt-kind" }, T(`${vn.members.length} nodes${st ? ` · ${st}` : ""}`, `${vn.members.length} 個節點${st ? ` · ${st}` : ""}`)));
+      if (st) g.setAttribute("data-state", st);
+      for (const b of (lay.badges?.[`stage:${vn.stage}`] || [])) badge(`s:${vn.stage}:${b.kind}`, vn.x, vn.y + vn.h + 4, b.text, b.labels || [], lg, b.kind);
+      const tog = (ev) => { if (svg.interactionActive) return; ev.stopPropagation(); o.onToggleStage?.(vn.stage); };
+      g.addEventListener("click", tog); g.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); tog(ev); } });
+      ng.append(g); continue;
+    }
+    const n = vn.ref;
+    const st = o.states?.[n.id]; const sel = o.sel?.node === n.id;
+    const g = s("g", { class: `rt-node k-${n.kind} ${stateClass(st)}${sel ? " sel" : ""}${bad.has(n.id) ? " bad" : ""}${vn.main ? " main" : ""}`, transform: `translate(${vn.x},${vn.y})`, "data-node": n.id, tabindex: 0, role: "button",
+      "aria-label": `${n.label} (${n.kind}${st ? `, ${st}` : ""}${n.checks?.length ? `, ${n.checks.length} checks` : ""})` });
+    g.append(s("rect", { width: vn.w, height: vn.h, rx: 10, class: "rt-box" }), s("text", { x: 12, y: 21, class: "rt-label" }, fitText(n.label, n.checks?.length ? 13 : 20)),
+      s("text", { x: 12, y: 39, class: "rt-kind" }, fitText(`${n.kind}${n.mode ? ` · ${n.mode}` : n.do ? ` · ${n.do}` : ""}`, 20)));
+    if (st) g.setAttribute("data-state", st);
+    if (o.editable && !o.simple) g.append(s("circle", { cx: vn.w, cy: vn.h / 2, r: 7, class: "rt-port", "data-port": n.id }));
+    g.addEventListener("focus", () => { const v = view; if (vn.x < v.x || vn.y < v.y || vn.x + vn.w > v.x + v.w || vn.y + vn.h > v.y + v.h) { v.x = vn.x + vn.w / 2 - v.w / 2; v.y = vn.y + vn.h / 2 - v.h / 2; svg.setAttribute("viewBox", `${v.x} ${v.y} ${v.w} ${v.h}`); o.onView?.(v); } });
+    if (o.onSelect) {
+      g.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); o.onSelect({ node: n.id }); }
+        else if (o.editable && ev.key.startsWith("Arrow")) { ev.preventDefault(); const d = ev.shiftKey ? 50 : 10; const dx = ev.key === "ArrowLeft" ? -d : ev.key === "ArrowRight" ? d : 0, dy = ev.key === "ArrowUp" ? -d : ev.key === "ArrowDown" ? d : 0;
+          if (o.simple) o.onNudge?.(n.id, dx, dy); else { o.onDragStart?.(lay); o.onMove(n.id, vn.x + dx, vn.y + dy, true); } }
+        else if (o.editable && (ev.key === "Delete" || ev.key === "Backspace")) { ev.preventDefault(); o.onDeleteNode?.(n.id); }
+      });
+      g.addEventListener("click", (ev) => { if (svg.interactionActive) return; ev.stopPropagation(); if (!g.dataset.dragged) o.onSelect({ node: n.id }); delete g.dataset.dragged; });
+    }
+    if (o.onDropCheck) { g.addEventListener("dragover", (ev) => { if (ev.dataTransfer.types.includes("text/x-check")) { ev.preventDefault(); g.classList.add("drop"); } }); g.addEventListener("dragleave", () => g.classList.remove("drop"));
+      g.addEventListener("drop", (ev) => { ev.preventDefault(); g.classList.remove("drop"); const c = ev.dataTransfer.getData("text/x-check"); if (c) o.onDropCheck({ node: n.id }, c); }); }
+    ng.append(g);
+    // the simple view: checks, loops, folded asks and escalations hang under the node as small badges, the title keeps its room
+    let bx = vn.x, by = vn.y + vn.h + 4;
+    if (n.checks?.length) { g.setAttribute("data-checks", n.checks.length); const bt = T(`${n.checks.length} check${n.checks.length > 1 ? "s" : ""}`, `${n.checks.length} 項檢查`); const bw = bt.length * 6.4 + 14;
+      if (o.simple) { badge(`n:${n.id}`, bx, by, bt, n.checks.map((c) => c.use), lg); bx += bw + 6; } else badge(`n:${n.id}`, vn.x + vn.w - bw - 6, vn.y + 6, bt, n.checks.map((c) => c.use), lg); }
+    for (const b of (lay.badges?.[`node:${n.id}`] || [])) {
+      const v = o.visits?.[n.id];
+      const text = b.kind === "loop" ? (v ? T(`${b.text} · round ${Math.min(v, b.cap)}/${b.cap}`, `${b.text} · 第 ${Math.min(v, b.cap)}/${b.cap} 回合`) : `${b.text} ≤${b.cap}`) : b.kind === "ask" ? `? ${T(b.text, b.text === "asks you if unsure" ? "不確定時問你" : b.text)}` : b.text;
+      const w = text.length * 6.4 + 14; if (bx + w > vn.x + vn.w + 8 && bx > vn.x) { bx = vn.x; by += 20; }
+      const items = b.kind === "loop" ? [T(`${b.loop}: refine until the checks pass, at most ${b.cap} rounds`, `${b.loop}：精修到檢查通過，最多 ${b.cap} 回合`)] : b.kind === "ask" ? [b.node] : b.labels || [];
+      badge(`${b.kind}:${n.id}`, bx, by, text, items, lg, b.kind); bx += w + 6;
+    }
+  }
+  for (const f of pending) f();
+  svg.append(sg, eg, ng, lg);
+  const pt = (ev) => { const p = svg.createSVGPoint(); p.x = ev.clientX; p.y = ev.clientY; return p.matrixTransform(svg.getScreenCTM().inverse()); };
+  const setView = () => { svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`); o.onView?.(view); };
+  if (o.editable) {
+    // drag a node (the first drag of an auto layout keeps its positions: the version turns manual), drag from a port to connect, drag the background to pan
+    let drag = null;
+    svg.addEventListener("pointerdown", (ev) => {
+      if (drag) return; // one owner; secondary pointers cannot overwrite its gesture
+      svg.interactionActive = true;
+      const port = ev.target.closest?.("[data-port]"); const node = ev.target.closest?.("[data-node]");
+      const p = pt(ev);
+      if (port) { drag = { kind: "wire", from: port.dataset.port, line: s("path", { class: "rt-wire", d: "" }) }; svg.append(drag.line); }
+      else if (node) { const n = byId[node.dataset.node]; drag = { kind: "node", id: n.id, g: node, dx: p.x - n.x, dy: p.y - n.y, x0: n.x, y0: n.y, moved: false }; }
+      else drag = { kind: "pan", sx: ev.clientX, sy: ev.clientY, vb: { ...view } };
+      drag.pointerId = ev.pointerId; svg.setPointerCapture(ev.pointerId);
+    });
+    svg.addEventListener("pointermove", (ev) => {
+      if (!drag || ev.pointerId !== drag.pointerId) return; const p = pt(ev);
+      if (drag.kind === "node") { if (!drag.moved && !o.simple) o.onDragStart?.(lay); const n = byId[drag.id]; n.x = Math.round(p.x - drag.dx); n.y = Math.round(p.y - drag.dy); drag.moved = true; drag.g.setAttribute("transform", `translate(${n.x},${n.y})`); o.onDragging?.(drag.id, n.x, n.y); }
+      else if (drag.kind === "wire") { const a = byId[drag.from]; drag.line.setAttribute("d", `M${a.x + a.w},${a.y + a.h / 2} L${p.x},${p.y}`); }
+      else { const r = svg.getBoundingClientRect(); const k = view.w / r.width; view.x = drag.vb.x - (ev.clientX - drag.sx) * k; view.y = drag.vb.y - (ev.clientY - drag.sy) * k * (view.h / view.w) / (r.height / r.width); setView(); }
+    });
+    svg.addEventListener("pointerup", (ev) => {
+      if (!drag || ev.pointerId !== drag.pointerId) return; const d = drag; drag = null; svg.interactionActive = false;
+      if (d.kind === "node" && d.moved) { d.g.dataset.dragged = "1"; const n = byId[d.id]; if (o.simple) o.onNudge?.(d.id, n.x - d.x0, n.y - d.y0); else { o.onMove?.(d.id, n.x, n.y, false); o.onMoved?.(d.id); } }
+      if (d.kind === "wire") { d.line.remove(); const el = document.elementFromPoint(ev.clientX, ev.clientY); const to = el?.closest?.("[data-node]")?.dataset.node; if (to && to !== d.from) o.onConnect?.(d.from, to); }
+      o.onInteractionEnd?.();
+    });
+    const cancelInteraction = (ev) => {
+      if (!drag || (ev && ev.pointerId !== drag.pointerId)) return; const d = drag; drag = null; svg.interactionActive = false;
+      if (d.kind === "wire") d.line.remove();
+      if (d.kind === "node" && d.moved) { const n = byId[d.id]; n.x = d.x0; n.y = d.y0; d.g.setAttribute("transform", `translate(${n.x},${n.y})`); }
+      try { if (svg.hasPointerCapture(d.pointerId)) svg.releasePointerCapture(d.pointerId); } catch {}
+      o.onInteractionEnd?.();
+    };
+    svg.cancelInteraction = () => cancelInteraction();
+    svg.addEventListener("pointercancel", cancelInteraction);
+    svg.addEventListener("lostpointercapture", cancelInteraction);
+    svg.addEventListener("wheel", (ev) => { ev.preventDefault(); zoom(ev.deltaY > 0 ? 1.1 : 1 / 1.1, pt(ev)); }, { passive: false });
+    svg.addEventListener("click", () => { if (!svg.interactionActive) o.onSelect?.(null); });
+  }
+  const zoom = (k, at) => { const c = at || { x: view.x + view.w / 2, y: view.y + view.h / 2 }; view.x = c.x - (c.x - view.x) * k; view.y = c.y - (c.y - view.y) * k; view.w *= k; view.h *= k; setView(); };
+  svg.zoom = zoom; svg.view = view; svg.lay = lay; svg.setView = (v) => { Object.assign(view, v); setView(); };
+  return svg;
+}
+// the minimap: every node as a dot-box and the visible part as a frame; click or drag to move there
+function minimap(svg, onView) {
+  const lay = svg.lay, b = lay.bbox, W = 220, H = Math.max(60, Math.min(140, Math.round(W * b.h / b.w)));
+  const k = Math.min(W / b.w, H / b.h);
+  const frame = s("rect", { class: "rt-mm-frame" });
+  const m = s("svg", { class: "rt-minimap", width: W, height: H, viewBox: `${b.x} ${b.y} ${W / k} ${H / k}`, "data-minimap": "1", role: "img", "aria-label": T("Minimap", "縮圖") },
+    ...lay.stages.map((st) => s("rect", { x: st.x, y: st.y, width: st.w, height: st.h, rx: 10, class: "rt-mm-stage" })),
+    ...lay.nodes.map((n) => s("rect", { x: n.x, y: n.y, width: n.w, height: n.h, rx: 6, class: `rt-mm-node${n.main ? " main" : ""}` })), frame);
+  const sync = () => { const v = svg.view; frame.setAttribute("x", v.x); frame.setAttribute("y", v.y); frame.setAttribute("width", v.w); frame.setAttribute("height", v.h); };
+  const go = (ev) => { const r = m.getBoundingClientRect(); const x = b.x + (ev.clientX - r.left) / k, y = b.y + (ev.clientY - r.top) / k; const v = svg.view; svg.setView({ x: x - v.w / 2, y: y - v.h / 2 }); sync(); onView?.(svg.view); };
+  let down = false; m.addEventListener("pointerdown", (ev) => { down = true; m.setPointerCapture(ev.pointerId); go(ev); }); m.addEventListener("pointermove", (ev) => { if (down) go(ev); }); m.addEventListener("pointerup", () => { down = false; });
+  m.sync = sync; sync(); return m;
+}
+
+// ---------- Workflows ----------
+const WF = { list: null, ed: null };
+function viewWorkflows(arg) {
+  if (arg) return viewEditor(arg);
+  WF.ed?.dispose?.(); WF.ed = null;
+  if (!WF.list) { WF.list = "loading"; api("/api/wf").then((j) => { WF.list = j.workflows; rerender(); }).catch(() => { WF.list = []; rerender(); }); }
+  const list = Array.isArray(WF.list) ? WF.list : [];
+  return h("div", { class: "page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Workflows", "流程")), h("p", {}, T("Studio's workflows. Open one to see and edit its graph; every save is a new version, and tasks keep the version they started on.", "Studio 的流程。打開一個就能看到並編輯它的流程圖；每次儲存都是新版本，進行中的任務維持它開始時的版本。")))),
+    WF.list === "loading" || WF.list === null ? h("div", { class: "skel", style: "height:160px" }) :
+    h("div", { class: "rt-cards" }, list.map((w) => h("a", { class: "card rt-wf", href: `#/workflows/${w.id}`, "data-wf": w.id }, h("div", { class: "rt-wf-h" }, h("b", {}, w.name), h("span", { class: "vbadge" }, `v${w.version}`)),
+      h("p", { class: "faint" }, (w.description || "").slice(0, 220)), h("span", { class: "faint" }, T(`${w.nodes} nodes · ${w.versions} versions`, `${w.nodes} 個節點 · ${w.versions} 個版本`))))));
+}
+
+function viewEditor(arg) {
+  const [id, vs] = arg.split("/"); const v = vs && /^v\d+$/.test(vs) ? Number(vs.slice(1)) : null;
+  const key = `${id}@${v ?? "latest"}`;
+  if (!WF.ed || WF.ed.key !== key) { WF.ed?.dispose?.(); WF.ed = { key, id, v, loading: true, el: null }; loadEditor(WF.ed); }
+  if (WF.ed.loading) return h("div", { class: "page" }, h("div", { class: "skel", style: "height:420px" }));
+  if (WF.ed.error) return h("div", { class: "page" }, h("div", { class: "card x-pad" }, WF.ed.error));
+  if (!WF.ed.el) WF.ed.el = buildEditor(WF.ed);
+  return WF.ed.el;
+}
+async function loadEditor(ed) {
+  try {
+    const [j, all, lib] = await Promise.all([api(`/api/wf/${ed.id}${ed.v ? `?v=${ed.v}` : ""}`), api("/api/wf"), api("/api/skills").catch(() => ({ skills: [], caps: {} }))]);
+    let mode = "auto"; try { mode = (await api(`/api/graph-layout/${ed.id}/v${j.def.version}`)).mode; } catch {}
+    const phone = matchMedia("(max-width: 640px)").matches;
+    Object.assign(ed, { mode, collapsed: phone ? (window.crewLayout.stagesFor(j.def) || []).map((x) => x.id) : [], loading: false, def: clone(j.def), saved: clone(j.def), versions: j.versions, runs: j.runs, problems: j.problems, checks: all.checks, lib: lib.skills || [], skillCap: lib.caps?.node || 0, sel: null, overlay: null, states: null, lastDiff: null, dirty: false });
+  } catch (e) { ed.loading = false; ed.error = e.message; }
+  if (WF.ed === ed) rerender();
+}
+function buildEditor(ed) {
+  const root = h("div", { class: "page rt-editor", "data-editor": ed.id });
+  const status = h("div", { class: "rt-status", role: "status", "aria-live": "polite" });
+  const canvas = h("div", { class: "rt-canvas" });
+  const dock = h("div", { class: "rt-mm-dock" }); // the minimap sits here, outside the canvas: it never covers the graph
+  const canvasWrap = h("div", { class: "rt-canvas-wrap" }, canvas, dock);
+  let gview = (() => { try { return localStorage.getItem("crew.graphView") === "detail" ? "detail" : "simple"; } catch { return "simple"; } })();
+  ed.offsets = ed.offsets || {};
+  // the simple view wraps the main path into bands narrow enough to read at Fit (node titles 15 units → at least 11 px)
+  const wrapFor = () => { const w = canvas.getBoundingClientRect().width || Math.min(innerWidth - 40, 1100); return Math.max(1, Math.min(8, Math.floor((w * 15 / 11 - 80) / window.crewLayout.COL))); };
+  const panel = h("aside", { class: "rt-panel card", "aria-label": T("Selection", "選取的項目") });
+  const probs = h("div", { class: "rt-problems" });
+  const say = (t) => { status.textContent = t; };
+  let view = null, vtimer = null, validationGeneration = 0, validationAbort = null, disposed = false, draftRevision = 0, savePending = false;
+  const checkMan = (ref) => ed.checks.find((c) => c.ref === ref);
+  const dirty = () => { draftRevision++; ed.dirty = true; validateSoon(); draw(); };
+  const validateSoon = () => {
+    clearTimeout(vtimer); validationAbort?.abort(); const generation = ++validationGeneration;
+    vtimer = setTimeout(async () => {
+      const controller = new AbortController(); validationAbort = controller;
+      try {
+        const r = await api("/api/wf/validate", { def: clone(ed.def) }, undefined, controller.signal);
+        if (disposed || WF.ed !== ed || generation !== validationGeneration) return;
+        ed.problems = r.problems; drawProblems(); draw();
+      } catch {} finally { if (validationAbort === controller) validationAbort = null; }
+    }, 250);
+  };
+  const drawProblems = () => { const errs = (ed.problems || []).filter((p) => p.level === "error"); const warns = (ed.problems || []).filter((p) => p.level !== "error");
+    probs.replaceChildren(h("div", { class: `rt-valid ${errs.length ? "bad" : "ok"}`, "data-valid": errs.length ? "errors" : "ok" }, errs.length ? T(`${errs.length} problem${errs.length > 1 ? "s" : ""}: it cannot be saved or run`, `${errs.length} 個問題：無法儲存或執行`) : T("Valid: every node is reachable, an end is reachable, checks are attached", "有效：每個節點都走得到、終點走得到、檢查都掛好了")),
+      ...[...errs, ...warns].slice(0, 12).map((p) => h("div", { class: `rt-prob ${p.level}`, "data-problem": p.node || p.edge || "" }, `${p.level === "error" ? "✗" : "!"} ${p.text}`))); };
+  const persistLayout = async (nid) => { // dragging keeps positions per version (no new version) for nodes the saved version has
+    await ed.manualP; // the switch from the auto layout saves every position first
+    const savedIds = new Set(ed.saved.nodes.map((n) => n.id)); if (!savedIds.has(nid)) return;
+    const n = ed.def.nodes.find((x) => x.id === nid); const sv = ed.saved.nodes.find((x) => x.id === nid); if (sv) { sv.x = n.x; sv.y = n.y; }
+    try { await api(`/api/wf/${ed.id}/layout`, { version: ed.def.version, positions: { [nid]: { x: n.x, y: n.y } } }); say(T(`${n.label} moved (position kept for v${ed.def.version})`, `${n.label} 已移動（位置保存在 v${ed.def.version}）`)); } catch (e) { say(e.message); }
+  };
+  const uniq = (base) => { let i = 1, idv = base; while (ed.def.nodes.some((n) => n.id === idv)) idv = `${base}-${++i}`; return idv; };
+  const addNode = (kind, at) => {
+    const c = at || (view ? { x: view.x + view.w / 2 - NW / 2, y: view.y + view.h / 2 - NH / 2 } : { x: 40, y: 40 });
+    const idv = uniq(kind); const n = { id: idv, kind, label: `${KINDS.find((k) => k[0] === kind)[1]} ${idv.split("-").at(-1) === kind ? "" : idv.split("-").at(-1)}`.trim(), x: Math.round(c.x), y: Math.round(c.y) };
+    if (kind === "agent") { n.role = ed.def.roles[0]?.id; n.mode = "test"; } if (kind === "hook") { n.do = "note"; n.args = { text: "" }; } if (kind === "card") n.card = { options: [{ id: "ok", label: "OK" }] }; if (kind === "loop") n.args = { producer: ed.def.nodes.find((x) => x.kind === "agent")?.id ?? "" };
+    ed.def.nodes.push(n); ed.sel = { node: idv }; dirty(); say(T(`added ${kind} node ${idv}`, `已加入 ${kind} 節點 ${idv}`)); focusNode(idv);
+  };
+  const delNode = (nid) => { ed.def.nodes = ed.def.nodes.filter((n) => n.id !== nid); ed.def.edges = ed.def.edges.filter((e) => e.from !== nid && e.to !== nid); ed.sel = null; dirty(); say(T(`removed ${nid} and its edges`, `已移除 ${nid} 與它的邊`)); };
+  const delEdge = (i) => { const e = ed.def.edges[i]; ed.def.edges.splice(i, 1); ed.sel = null; dirty(); say(T(`disconnected ${e.from} → ${e.to}`, `已斷開 ${e.from} → ${e.to}`)); };
+  const connect = (from, to, when) => { if (ed.def.edges.some((e) => e.from === from && e.to === to && (e.when || "") === (when || ""))) return; const e = { from, to }; if (when) e.when = when; ed.def.edges.push(e); ed.sel = { edge: ed.def.edges.length - 1 }; dirty(); say(T(`connected ${from} → ${to}`, `已連接 ${from} → ${to}`)); };
+  const dropCheck = (target, ref) => { const t = target.node ? ed.def.nodes.find((n) => n.id === target.node) : ed.def.edges[target.edge]; t.checks = [...(t.checks || []), { use: ref }]; ed.sel = target; dirty(); say(T(`${ref} attached to ${target.node ?? `edge ${t.from} → ${t.to}`}`, `${ref} 已掛到 ${target.node ?? `邊 ${t.from} → ${t.to}`}`)); };
+  const focusNode = (nid) => { const f = () => canvas.querySelector(`[data-node="${CSS.escape(nid)}"]`)?.focus({ preventScroll: true }); f(); setTimeout(f, 0); };
+  // the layout: auto until a node is dragged (then this version keeps its positions), "Tidy layout" goes back
+  const setMode = async (mode) => { ed.mode = mode; try { await api(`/api/graph-layout/${ed.id}/v${ed.def.version}`, { mode }); } catch (e) { say(e.message); } };
+  const toManual = async () => {
+    if (ed.mode === "manual") return;
+    const full = window.crewLayout.layout(ed.def, { collapsed: [] }); const at = Object.fromEntries(full.nodes.map((n) => [n.id, n]));
+    const positions = {}; draftRevision++;
+    for (const n of ed.def.nodes) if (at[n.id]) { n.x = at[n.id].x; n.y = at[n.id].y; positions[n.id] = { x: n.x, y: n.y }; const sv = ed.saved.nodes.find((x) => x.id === n.id); if (sv) { sv.x = n.x; sv.y = n.y; } }
+    ed.mode = "manual";
+    await setMode("manual");
+    const savedIds = new Set(ed.saved.nodes.map((n) => n.id)); const keep = Object.fromEntries(Object.entries(positions).filter(([k]) => savedIds.has(k)));
+    try { await api(`/api/wf/${ed.id}/layout`, { version: ed.def.version, positions: keep }); } catch {}
+  };
+  const setView = (k) => { gview = k; try { localStorage.setItem("crew.graphView", k); } catch {} view = null; root.querySelectorAll("[data-view-toggle]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.viewToggle === k))); draw(); drawPanel(); say(k === "simple" ? T("Simple view", "簡易檢視") : T("Detail view: every node and edge", "詳細檢視：所有節點與邊")); };
+  const toggleStage = (sid) => { const c = new Set(ed.collapsed); c.has(sid) ? c.delete(sid) : c.add(sid); ed.collapsed = [...c]; draw(); say(c.has(sid) ? T(`${sid} collapsed`, `${sid} 已收合`) : T(`${sid} expanded`, `${sid} 已展開`)); };
+  let mm = null, drawPending = false;
+  const draw = () => {
+    if (disposed) return;
+    // Validation/live updates must not replace the SVG that owns pointer
+    // capture. Keep the gesture intact, then render the newest state once.
+    if (canvas.querySelector("svg.rt-graph")?.interactionActive) { drawPending = true; return; }
+    drawPending = false;
+    const simple = gview === "simple";
+    root.dataset.view = gview; palette.hidden = simple; paletteNote.hidden = !simple;
+    const g = graph(ed.def, { editable: true, simple, wrap: wrapFor(), offsets: simple ? ed.offsets : null, sel: ed.sel, problems: ed.problems, states: ed.states, walked: ed.walked, view, manual: !simple && ed.mode === "manual", collapsed: ed.collapsed, redraw: () => draw(),
+      onNudge: (nid, dx, dy) => { const o = ed.offsets[nid] || { dx: 0, dy: 0 }; ed.offsets[nid] = { dx: o.dx + dx, dy: o.dy + dy }; draw(); say(T("Moved in the simple view (not kept; arrange in Detail view)", "在簡易檢視中移動（不保存；請在詳細檢視排版）")); },
+      onToggleStage: toggleStage, onDragStart: () => { if (ed.mode !== "manual") ed.manualP = toManual(); },
+      onInteractionEnd: () => { if (!disposed && drawPending) draw(); },
+      onSelect: (sel) => { ed.sel = sel; draw(); drawPanel(); if (sel?.node) focusNode(sel.node); },
+      onMove: (nid, x, y) => { draftRevision++; const n = ed.def.nodes.find((q) => q.id === nid); n.x = x; n.y = y; draw(); focusNode(nid); persistLayout(nid); },
+      onMoved: () => {}, onConnect: (a, b) => { connect(a, b); drawPanel(); }, onDropCheck: (t, c) => { dropCheck(t, c); drawPanel(); },
+      onDeleteNode: delNode, onDeleteEdge: delEdge, onView: (vw) => { view = vw; fitted = false; mm?.sync(); } });
+    // Fit must honor both axes: a new stage/node may add another band. Grow
+    // the scrollable page canvas instead of shrinking its titles below 11 px.
+    canvas.style.minHeight = simple ? `${Math.ceil(g.lay.bbox.h * 11.1 / 15) + 2}px` : "";
+    canvas.replaceChildren(g);
+    if (!view) { fit(g, simple ? "all" : "start"); } view = g.view;
+    // the minimap, on a desktop, docked under the canvas
+    mm = null; dock.replaceChildren();
+    // (the simple view fits whole: no minimap there)
+    if (!simple && (canvas.getBoundingClientRect().width >= 700 || (!canvas.getBoundingClientRect().width && innerWidth > 900))) { mm = minimap(g, (vw) => { view = vw; }); dock.append(mm); }
+  };
+  // the first view: the graph at a readable scale from its start; Fit to view shows all of it
+  const fit = (g, how) => { const r = canvas.getBoundingClientRect(); if (!r.width) { requestAnimationFrame(() => fit(g, how)); return; }
+    const v = g.view; const b = g.lay.bbox;
+    if (how === "all") { const k = Math.max(b.w / r.width, b.h / r.height); v.w = r.width * k; v.h = r.height * k; v.x = b.x - (v.w - b.w) / 2; v.y = b.y - (v.h - b.h) / 2; }
+    else { // readable scale (1.1 units a pixel), from the start, the main lane in the middle
+      const k = 1.0; const m = g.lay.nodes.find((n) => n.main) || g.lay.nodes[0]; v.w = r.width * k; v.h = r.height * k; v.x = b.x;
+      v.y = b.h <= v.h ? b.y - (v.h - b.h) / 2 : m.y + m.h / 2 - v.h / 2; }
+    g.setAttribute("viewBox", `${v.x} ${v.y} ${v.w} ${v.h}`); view = v; fitted = how === "all"; lastSize = [r.width, r.height]; mm?.sync(); };
+  // the canvas changes size (the chat opens or closes, the window resizes): a fitted graph fits again, any other keeps its scale
+  let fitted = false, lastSize = null;
+  new ResizeObserver(() => { const g = canvas.querySelector("svg.rt-graph"); const r = canvas.getBoundingClientRect(); if (!g || !r.width || !lastSize || (r.width === lastSize[0] && r.height === lastSize[1])) return;
+    if (fitted) fit(g, "all"); else { const v = g.view, k = v.w / lastSize[0]; v.w = r.width * k; v.h = r.height * k; g.setAttribute("viewBox", `${v.x} ${v.y} ${v.w} ${v.h}`); view = v; lastSize = [r.width, r.height]; mm?.sync(); } }).observe(canvas);
+  const field = (label, input) => h("label", { class: "rt-field" }, h("span", {}, label), input);
+  const paramsForm = (ref, holder) => {
+    const man = checkMan(ref.use); const props = man?.params?.properties || {};
+    const form = h("div", { class: "rt-params", "data-params": ref.use });
+    for (const [k, sc] of Object.entries(props)) {
+      const cur = ref.params?.[k] ?? man.effective?.[k] ?? sc.default ?? "";
+      const set = (val) => { ref.params = { ...(ref.params || {}), [k]: val }; dirty(); };
+      const inp = sc.type === "boolean" ? h("input", { type: "checkbox", checked: !!cur, onchange: (e) => set(e.target.checked) })
+        : sc.type === "number" || sc.type === "integer" ? h("input", { class: "input", type: "number", value: cur, onchange: (e) => set(Number(e.target.value)) })
+        : sc.enum ? h("select", { class: "select", onchange: (e) => set(e.target.value) }, sc.enum.map((x) => h("option", { value: x, selected: x === cur || null }, x)))
+        : h("input", { class: "input", value: typeof cur === "object" ? JSON.stringify(cur) : cur, onchange: (e) => { let val = e.target.value; if (sc.type === "array" || sc.type === "object") { try { val = JSON.parse(val); } catch {} } set(val); } });
+      form.append(field(`${k}${man.from?.[k] && man.from[k] !== "default" ? ` (${man.from[k]})` : ""}`, inp));
+    }
+    const out = h("pre", { class: "rt-try-out", "data-try-out": ref.use, hidden: true });
+    form.append(h("div", { class: "actions" }, h("button", { class: "btn sm", "data-try": ref.use, onclick: async () => { out.hidden = false; out.textContent = T("running…", "執行中…");
+      try { const r = await api("/api/checks/try", { use: ref.use, params: ref.params || {} }); out.textContent = `${r.result.verdict}${r.result.error ? ` — ${r.result.error}` : ""}\n${(r.result.findings || []).map((f) => `· ${f.message}`).join("\n")}`; out.dataset.verdict = r.result.verdict; }
+      catch (e) { out.textContent = e.message; out.dataset.verdict = "refused"; } } }, T("Try on sample", "用範例試跑")),
+      h("button", { class: "btn sm ghost", onclick: () => { holder.checks = holder.checks.filter((c) => c !== ref); if (!holder.checks.length) delete holder.checks; dirty(); drawPanel(); } }, T("Remove", "移除"))), out);
+    return form;
+  };
+  const checksBlock = (holder) => {
+    const pick = h("select", { class: "select", "aria-label": T("Check to add", "要加的檢查") }, ed.checks.map((c) => h("option", { value: c.ref }, c.ref)));
+    return h("div", { class: "rt-checks" }, h("h4", {}, T("Checks", "檢查")),
+      ...(holder.checks || []).map((c) => h("details", { class: "rt-check", "data-check": c.use, open: (holder.checks || []).length <= 2 || null }, h("summary", {}, h("b", {}, c.use), h("span", { class: "faint" }, ` ${checkMan(c.use)?.kind ?? "?"}`)), paramsForm(c, holder))),
+      h("div", { class: "rt-row" }, pick, h("button", { class: "btn sm", "data-add-check": "1", onclick: () => { holder.checks = [...(holder.checks || []), { use: pick.value }]; dirty(); drawPanel(); } }, T("Add check", "加檢查"))));
+  };
+  // an agent node's enabled skills: turn on or off, order, move to a newer version; each change is part of the next saved version
+  const skillsBlock = (n) => {
+    const lib = new Map((ed.lib || []).map((x) => [x.id, x]));
+    const list = n.skills || []; const set = (next) => { if (next.length) n.skills = next; else delete n.skills; dirty(); drawPanel(); };
+    const move = (i, d) => { const next = list.slice(); const [x] = next.splice(i, 1); next.splice(i + d, 0, x); set(next); say(T(`${x.id} moved ${d < 0 ? "up" : "down"}`, `${x.id} 已${d < 0 ? "上移" : "下移"}`)); };
+    const verOf = (p) => lib.get(p.id)?.versions?.find((v) => v.n === p.v);
+    const total = list.reduce((a, p) => a + (verOf(p)?.bytes || 0), 0);
+    const off = [...lib.values()].filter((x) => !list.some((p) => p.id === x.id));
+    const pick = h("select", { class: "select", "aria-label": T("Skill to turn on", "要開啟的技能"), "data-skill-pick": "1" }, off.map((x) => h("option", { value: x.id }, `${x.name} · v${x.current}`)));
+    // a disabled arrow keeps its place, looks disabled and says so to a screen reader
+    const arrow = (p, i, d) => { const dis = d < 0 ? i === 0 : i === list.length - 1;
+      return h("button", { class: "btn sm rt-skill-btn", type: "button", "aria-label": T(`Move ${p.id} ${d < 0 ? "up" : "down"}`, `${d < 0 ? "上移" : "下移"} ${p.id}`), [d < 0 ? "data-skill-up" : "data-skill-down"]: p.id,
+        disabled: dis || null, "aria-disabled": dis ? "true" : null, onclick: () => move(i, d) }, d < 0 ? "↑" : "↓"); };
+    return h("div", { class: "rt-skills", "data-node-skills": n.id }, h("h4", {}, T("Skills", "技能")),
+      h("p", { class: "faint sk-note" }, T("The role skill comes first, then these, in this order. A skill is text only: it never changes this node's tools, sandbox, network or credentials.", "角色技能排第一，接著依序是這些。技能只是文字，不會改變這個節點的工具、沙箱、網路或憑證。")),
+      list.length ? h("ol", { class: "rt-skill-list" }, list.map((p, i) => { const s = lib.get(p.id); const v = verOf(p); const newer = s && s.current > p.v ? s.current : null;
+        return h("li", { class: "rt-skill", "data-node-skill": p.id },
+          h("div", { class: "rt-skill-h" }, h("span", { class: "rt-skill-n", "aria-hidden": "true" }, `${i + 1}.`), h("b", {}, `${p.id}@v${p.v}`),
+            h("span", { class: "rt-skill-ctl" }, arrow(p, i, -1), arrow(p, i, 1),
+              h("button", { class: "btn sm rt-skill-btn", type: "button", "data-skill-off": p.id, onclick: () => { set(list.filter((q) => q.id !== p.id)); say(T(`${p.id} turned off`, `已關閉 ${p.id}`)); } }, T("Turn off", "關閉")))),
+          newer ? h("div", { class: "rt-skill-newer" }, h("span", { class: "badge warn", "data-skill-newer": p.id }, T(`v${newer} available`, `有 v${newer}`)),
+            h("button", { class: "btn sm rt-skill-btn", type: "button", "data-skill-upgrade": p.id, onclick: () => { const nv = s.versions.find((x) => x.n === newer); set(list.map((q) => (q.id === p.id ? { id: q.id, v: nv.n, sha256: nv.sha256 } : q))); say(T(`${p.id} moves to v${newer} when you save`, `儲存後 ${p.id} 改用 v${newer}`)); } }, T(`Use v${newer}`, `改用 v${newer}`)),
+            h("span", { class: "faint" }, T("Saving makes a new workflow version.", "儲存會產生新的流程版本。"))) : null,
+          !s ? h("p", { class: "sk-ignored" }, T("Not in this Studio's library.", "這個 Studio 的技能庫裡沒有它。")) : null,
+          v?.ignored?.length ? h("p", { class: "sk-ignored", "data-skill-ignored": p.id }, icon("shield", "ic sm"), h("span", {}, window.crewSkillsIgnored(v.ignored))) : null); })) : null,
+      off.length ? h("div", { class: "rt-row rt-skill-add" }, pick, h("button", { class: "btn sm rt-skill-btn", type: "button", "data-skill-on": "1", onclick: () => { const x = lib.get(pick.value); if (!x) return; const cur = x.versions.find((v) => v.n === x.current); set([...list, { id: x.id, v: cur.n, sha256: cur.sha256 }]); say(T(`${x.id} turned on`, `已開啟 ${x.id}`)); } }, T("Turn on", "開啟")))
+        : h("p", { class: "faint sk-note" }, lib.size ? T("Every library skill is on.", "技能庫的技能都已開啟。") : h("a", { href: "#/library/skills" }, T("Import a skill in Library → Skills", "到成品庫 → 技能匯入"))),
+      list.length ? h("div", { class: `faint rt-skill-size${ed.skillCap && total > ed.skillCap ? " over" : ""}`, "data-skill-size": "1" },
+        T(`Skill text on this node: ${window.crewSkillsSize(total)} of ${window.crewSkillsSize(ed.skillCap || 0)}`, `這個節點的技能文字：${window.crewSkillsSize(total)} / ${window.crewSkillsSize(ed.skillCap || 0)}`)) : null);
+  };
+  const drawPanel = () => {
+    const sel = ed.sel;
+    if (!sel) { panel.replaceChildren(h("h3", {}, T("Nothing selected", "未選取")), h("p", { class: "faint" }, T("Select a node or an edge (click, or Tab to it and press Enter). Drag a node to move it, drag from its right port to another node to connect them, drop a check from the palette on a node or an edge.", "選一個節點或一條邊（點它，或用 Tab 移到它再按 Enter）。拖動節點可移動；從節點右側的接點拖到另一個節點可連線；把調色盤上的檢查拖到節點或邊上即可掛上。")), probs); return; }
+    if (sel.node) {
+      const n = ed.def.nodes.find((x) => x.id === sel.node); if (!n) { ed.sel = null; return drawPanel(); }
+      const txt = (k, label) => field(label, h("input", { class: "input", value: n[k] ?? "", "data-field": k, onchange: (e) => { const val = e.target.value; if (val === "") delete n[k]; else n[k] = ["timeout_s", "retries", "max_visits"].includes(k) ? Number(val) : val; dirty(); } }));
+      const target = h("select", { class: "select", "aria-label": T("Connect to", "連到") }, ed.def.nodes.filter((x) => x.id !== n.id).map((x) => h("option", { value: x.id }, x.id)));
+      const when = h("input", { class: "input", placeholder: T("when (outcome, optional)", "條件（結果，可留空）"), "aria-label": T("Edge outcome", "邊的結果") });
+      // (fields a node kind does not have are null: left out, never shown as the text "null")
+      panel.replaceChildren(...[h("h3", {}, n.label), h("p", { class: "faint" }, `${n.id} · ${n.kind}`),
+        txt("label", T("Label", "名稱")), txt("detail", T("Detail", "說明")),
+        n.kind === "agent" ? field(T("Role", "角色"), h("select", { class: "select", onchange: (e) => { n.role = e.target.value; dirty(); } }, ed.def.roles.map((r) => h("option", { value: r.id, selected: r.id === n.role || null }, r.label)))) : null,
+        n.kind === "agent" ? txt("mode", T("Mode", "模式")) : null, n.kind === "agent" ? skillsBlock(n) : null, n.kind === "hook" ? txt("do", T("Action", "動作")) : null,
+        ["agent", "check"].includes(n.kind) ? txt("timeout_s", T("Time limit (s)", "時間上限（秒）")) : null, n.kind === "agent" ? txt("retries", T("Retries", "重試次數")) : null,
+        checksBlock(n),
+        h("h4", {}, T("Connect", "連線")), h("div", { class: "rt-row" }, target, when, h("button", { class: "btn sm", "data-connect": "1", onclick: () => { connect(n.id, target.value, when.value.trim()); drawPanel(); } }, T("Connect", "連線"))),
+        h("div", { class: "actions" }, h("button", { class: "btn sm danger", "data-del-node": n.id, onclick: () => { delNode(n.id); drawPanel(); } }, T("Remove node", "移除節點"))), probs].filter((c) => c != null));
+    } else {
+      const e = ed.def.edges[sel.edge]; if (!e) { ed.sel = null; return drawPanel(); }
+      panel.replaceChildren(h("h3", {}, `${e.from} → ${e.to}`), field(T("When (outcome)", "條件（結果）"), h("input", { class: "input", value: e.when ?? "", "data-field": "when", onchange: (ev) => { if (ev.target.value.trim()) e.when = ev.target.value.trim(); else delete e.when; dirty(); } })),
+        checksBlock(e), h("div", { class: "actions" }, h("button", { class: "btn sm danger", "data-del-edge": `${e.from}→${e.to}`, onclick: () => { delEdge(sel.edge); drawPanel(); } }, T("Disconnect", "斷開"))), probs);
+    }
+  };
+  // palette: node kinds (click or drag onto the canvas) and checks (drag onto a node or an edge)
+  const paletteNote = h("aside", { class: "rt-palette card", "data-palette-note": "1" }, h("h4", {}, T("Simple view", "簡易檢視")),
+    h("p", { class: "faint" }, T("The main path through the stages. Loops, the door question and escalations are badges on their node or stage. Add or remove nodes and edges in Detail view.", "主要路徑。迴圈、門的提問和升級處理都是節點或階段上的徽章。要新增或移除節點與邊，請到詳細檢視。")),
+    h("button", { class: "btn sm", "data-edit-detail": "1", onclick: () => setView("detail") }, T("Edit in Detail view", "到詳細檢視編輯")));
+  const palette = h("aside", { class: "rt-palette card", "aria-label": T("Palette", "調色盤") }, h("h4", {}, T("Add a node", "加節點")),
+    ...KINDS.map(([k, en, tw]) => h("button", { class: `btn sm rt-pal k-${k}`, draggable: "true", "data-add": k, onclick: () => { addNode(k); drawPanel(); }, ondragstart: (e) => { e.dataTransfer.setData("text/x-kind", k); } }, T(en, tw))),
+    h("h4", {}, T("Checks", "檢查")), h("p", { class: "faint" }, T("Drag one onto a node or an edge.", "拖到節點或邊上。")),
+    h("div", { class: "rt-pal-checks" }, ed.checks.map((c) => h("div", { class: "rt-pal-check", draggable: "true", tabindex: 0, "data-pal-check": c.ref, title: c.description || c.ref, ondragstart: (e) => { e.dataTransfer.setData("text/x-check", c.ref); e.dataTransfer.effectAllowed = "copy"; } }, c.ref))));
+  canvas.addEventListener("dragover", (e) => { if (e.dataTransfer.types.includes("text/x-kind")) e.preventDefault(); });
+  canvas.addEventListener("drop", (e) => { const k = e.dataTransfer.getData("text/x-kind"); if (!k) return; e.preventDefault(); const svg = canvas.querySelector("svg.rt-graph"); const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; const q = p.matrixTransform(svg.getScreenCTM().inverse()); addNode(k, { x: q.x - NW / 2, y: q.y - NH / 2 }); drawPanel(); });
+  // the toolbar: version, zoom, validate, save, overlay a run
+  const note = h("input", { class: "input", placeholder: T("What changed (note)", "改了什麼（備註）"), "aria-label": T("Save note", "儲存備註"), "data-save-note": "1" });
+  const diffBox = h("div", { class: "rt-diff", "data-diff": "1", hidden: true });
+  const save = async () => {
+    if (disposed || WF.ed !== ed || savePending) return;
+    const revision = draftRevision, generation = validationGeneration;
+    savePending = true; saveButton.disabled = true; saveButton.textContent = T("Saving…", "儲存中…");
+    try { const body = clone({ base: ed.saved.version, nodes: ed.def.nodes, edges: ed.def.edges, roles: ed.def.roles, note: note.value.trim() || null });
+      const r = await api(`/api/wf/${ed.id}`, body);
+      if (disposed || WF.ed !== ed) return;
+      const d = r.diff;
+      diffBox.hidden = false; diffBox.replaceChildren(h("b", {}, T(`Saved as v${r.def.version}`, `已存成 v${r.def.version}`)),
+        ...[["nodesAdded", "+ nodes"], ["nodesRemoved", "− nodes"], ["nodesChanged", "~ nodes"], ["nodesMoved", "↔ moved"], ["edgesAdded", "+ edges"], ["edgesRemoved", "− edges"], ["edgesChanged", "~ edges"]]
+          .filter(([k]) => d[k]?.length).map(([k, l]) => h("div", { class: "rt-diff-row", "data-diff-k": k }, h("span", { class: "vbadge" }, l), " ", d[k].map((x) => typeof x === "string" ? x : `${x.id} (${x.fields.join(", ")})`).join(", "))),
+          ...(d.skills || []).length ? [h("div", { class: "rt-diff-row", "data-diff-k": "skills" }, h("span", { class: "vbadge" }, "~ skills"), " ", d.skills.map((x) => `${x.node}: ${x.after.join(", ") || T("none", "無")} (${T("was", "原本")} ${x.before.join(", ") || T("none", "無")})`).join("; "))] : []);
+      say(T(`saved v${r.def.version}`, `已存成 v${r.def.version}`));
+      WF.list = null;
+      if (revision !== draftRevision || canvas.querySelector("svg.rt-graph")?.interactionActive) {
+        // The acknowledged snapshot is the new base, not the current draft.
+        // Later content/layout edits keep their object and gesture ownership.
+        ed.saved = clone(r.def); ed.def.version = r.def.version; ed.def.parent = r.def.parent;
+        ed.versions = [...ed.versions.filter(v => v.version !== r.def.version), r.def];
+        ed.dirty = true;
+        verSel.replaceChildren(...ed.versions.map(v => h("option", { value: v.version, selected: v.version === r.def.version || null }, `v${v.version}${v.note ? ` · ${v.note}` : ""}`)));
+        say(T(`Saved v${r.def.version}; later edits remain unsaved`, `已存成 v${r.def.version}；後續修改尚未儲存`));
+        return;
+      }
+      WF.lastDiff = diffBox; ed.dispose?.(); WF.ed = null;
+      if (location.hash === `#/workflows/${ed.id}`) rerender(); else location.hash = `#/workflows/${ed.id}`;
+    } catch (e) { if (disposed || WF.ed !== ed) return; if (generation === validationGeneration) { ed.problems = e.problems || ed.problems; drawProblems(); } say(e.message); }
+    finally { savePending = false; if (!disposed) { saveButton.disabled = false; saveButton.textContent = T("Save as new version", "存成新版本"); } }
+  };
+  const saveButton = h("button", { class: "btn primary sm", "data-save": "1", onclick: save }, T("Save as new version", "存成新版本"));
+  const runPick = h("select", { class: "select", "aria-label": T("Show a task on the graph", "在流程圖上顯示一個任務"), "data-overlay": "1", onchange: (e) => setOverlay(e.target.value || null) },
+    h("option", { value: "" }, T("No task overlay", "不疊加任務")), (ed.runs || []).slice().reverse().map((r) => h("option", { value: r.id, "data-overlay-run": r.id }, `${r.id} · v${r.version} · ${stateWord(r)}`)));
+  const setOverlay = async (rid) => { ed.overlay = rid; ed.states = null; ed.walked = null; if (rid) { try { const r = await api(`/api/wruns/${rid}`); ed.states = Object.fromEntries(Object.entries(r.nodes).map(([k, n]) => [k, n.state])); ed.walked = new Set(r.walked || []); } catch {} } draw(); };
+  const onLive = (t, d) => { if (t === "wrun" && ed.overlay === d.id && d.event?.type === "edge_taken") (ed.walked ||= new Set()).add(d.event.edge);
+    if (t === "wrun" && ed.overlay === d.id && d.nodes) { ed.states = Object.fromEntries(Object.entries(d.nodes).map(([k, n]) => [k, n.state ?? n])); if (WF.ed === ed) draw(); } };
+  live.listeners.add(onLive);
+  ed.dispose = () => {
+    if (disposed) return; disposed = true; drawPending = false;
+    clearTimeout(vtimer); validationGeneration++; validationAbort?.abort(); validationAbort = null;
+    canvas.querySelector("svg.rt-graph")?.cancelInteraction?.();
+    live.listeners.delete(onLive);
+  };
+  const verSel = h("select", { class: "select", "aria-label": T("Version", "版本"), onchange: (e) => { location.hash = `#/workflows/${ed.id}/v${e.target.value}`; } }, ed.versions.map((x) => h("option", { value: x.version, selected: x.version === ed.def.version || null }, `v${x.version}${x.note ? ` · ${x.note}` : ""}`)));
+  const svgZoom = (k) => canvas.querySelector("svg.rt-graph")?.zoom(k);
+  root.append(
+    h("div", { class: "phead" }, h("div", {}, h("h1", {}, ed.def.name), h("p", {}, (ed.def.description || "").slice(0, 300))),
+      h("div", { class: "actions" }, h("a", { class: "btn ghost", href: "#/workflows" }, T("All workflows", "全部流程")), h("a", { class: "btn", href: "#/runs", "data-start-run": ed.id, onclick: () => { RN.prefill = ed.id; } }, T("Start a task", "開始一個任務")))),
+    h("div", { class: "rt-toolbar" }, verSel, h("button", { class: "btn sm", "aria-label": T("Zoom in", "放大"), onclick: () => svgZoom(1 / 1.2) }, "+"), h("button", { class: "btn sm", "aria-label": T("Zoom out", "縮小"), onclick: () => svgZoom(1.2) }, "−"),
+      h("div", { class: "seg rt-viewseg", role: "group", "aria-label": T("Graph view", "流程圖檢視") }, ["simple", "detail"].map((k) => h("button", { type: "button", "data-view-toggle": k, "aria-pressed": String(gview === k), onclick: () => setView(k) },
+        h("span", { class: "keep" }, k === "simple" ? T("Simple", "簡易") : T("Detail", "詳細"))))),
+      h("button", { class: "btn sm", "data-tidy": "1", title: T("Lay the graph out again automatically", "自動重新排版"), onclick: async () => { await setMode("auto"); view = null; draw(); say(T("Tidy layout", "已自動排版")); } }, T("Tidy layout", "整理排版")),
+      h("button", { class: "btn sm", "data-fit": "1", onclick: () => { const g = canvas.querySelector("svg.rt-graph"); if (g) fit(g, "all"); } }, T("Fit to view", "全部顯示")),
+      runPick, note, saveButton, status),
+    h("div", { "data-diff-host": "1" }, WF.lastDiff || diffBox),
+    h("div", { class: "rt-work" }, palette, paletteNote, canvasWrap, panel));
+  WF.lastDiff = null;
+  drawProblems(); draw(); drawPanel();
+  return root;
+}
+
+// ---------- Runs ----------
+const RN = { list: null, prefill: null, view: null };
+function viewRuns() {
+  if (!RN.list) { RN.list = "loading"; Promise.all([api(`/api/wruns${RN.archived ? "?archived=1" : ""}`), api("/api/wf")]).then(([r, w]) => { RN.list = r.runs; RN.cards = r.cards; RN.wfs = w.workflows; rerender(); }).catch(() => { RN.list = []; rerender(); }); }
+  const runs = Array.isArray(RN.list) ? RN.list.slice().reverse() : [];
+  // the form keeps what was typed across re-renders (the list loads, a run moves)
+  const text = h("textarea", { class: "input", rows: 3, placeholder: T("Say what you want done", "說你要做什麼"), "aria-label": T("Intent", "意圖"), "data-run-text": "1", oninput: (e) => { RN.draft = e.target.value; } });
+  text.value = RN.draft || "";
+  const wf = h("select", { class: "select", "aria-label": T("Workflow", "流程"), "data-run-wf": "1", onchange: (e) => { RN.prefill = e.target.value; } }, h("option", { value: "" }, T("Let Studio pick", "讓 Studio 選")), (RN.wfs || []).map((w) => h("option", { value: w.id, selected: RN.prefill === w.id || null }, w.name)));
+  const msg = h("div", { class: "faint", role: "status" });
+  return h("div", { class: "page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Tasks", "任務")), h("p", {}, T("Studio's workflow tasks, each with its live graph.", "Studio 的流程任務，每個都有即時流程圖。")))),
+    h("div", { class: "card x-pad rt-start" }, h("h3", {}, T("Start a task", "開始一個任務")), text, h("div", { class: "rt-row" }, wf, h("button", { class: "btn primary", "data-run-start": "1", onclick: async () => {
+      try { const r = await api("/api/wruns", { text: text.value, workflow: wf.value || undefined }); RN.list = null; RN.draft = ""; location.hash = `#/run/${r.id}`; } catch (e) { msg.textContent = e.message; } } }, T("Start", "開始"))), msg),
+    // one word per state (public/runstate.js); archived runs only with "Show archived", each with Unarchive
+    h("label", { class: "rt-row rt-archived-toggle" }, h("input", { type: "checkbox", "data-show-archived": "1", checked: RN.archived || null, onchange: (e) => { RN.archived = e.target.checked; RN.list = null; rerender(); } }), T("Show archived", "顯示已封存")),
+    RN.list === "loading" || RN.list === null ? h("div", { class: "skel", style: "height:120px" }) : runs.length ? h("div", { class: "card rt-runs" }, runs.map((r) => h("a", { class: `rt-run st-${r.status}${r.archived ? " archived" : ""}`, href: `#/run/${r.id}`, "data-run": r.id },
+      h("span", { class: "mono" }, r.id), h("b", {}, r.title), h("span", { class: "vbadge" }, `${r.workflow} v${r.version}`),
+      // the state and the archived marker read together; the foot says where the run is and holds Unarchive
+      h("span", { class: "rt-state" }, window.runStateBadge(r), r.archived ? h("span", { class: "badge neutral rt-archived-tag", "data-archived": "1" }, T("Archived", "已封存")) : null,
+      r.archived ? h("button", { class: "btn rt-unarchive", type: "button", "data-run-unarchive": r.id, onclick: async (e) => { e.preventDefault(); e.stopPropagation();
+        try { await api(`/api/wruns/${r.id}/archive`, { archived: false }); } catch (err) { alert(err.message); } RN.list = null; rerender(); } }, T("Unarchive", "取消封存")) : null),
+      h("div", { class: "rt-foot" }, h("span", { class: "faint rt-where" }, r.current.map((c) => c.waiting === "card" ? T(`Waiting for you at ${c.label || c.node}`, `在「${c.label || c.node}」等你`) : T(`Now: ${c.label || c.node}`, `目前：${c.label || c.node}`)).join(" · ")))))) : h("div", { class: "card x-pad faint", id: "runsEmpty" }, T("No tasks yet.", "還沒有任務。")));
+}
+// a timeline line in the captain's words (Simple view): run states as public/runstate.js names them, node steps as plain verbs
+const stateWord = (st) => { const s = window.runState(st); return zhOn() ? s.tw : s.en; };
+const NODE_WORDS = { skipped: ["skipped", "略過"], superseded: ["replaced", "被取代"], pending: ["reset", "重設"] };
+// node transitions a display event already says (node_started, node_done, node_failed, node_waiting) are left out of the Simple view
+// and so is the run's own "failed" note when the node's failure row already says it (one failure row per node), and the
+// run's first transition (the "started" row says it)
+const simpleShows = (e, all) => !(e.type === "node" && ["running", "passed", "failed", "error", "waiting"].includes(e.to))
+  && !(e.type === "failed" && e.node && all.some((x) => x.type === "node_failed" && x.node === e.node))
+  && !(e.type === "run" && (!e.from || e.from === "queued") && all.some((x) => x.type === "started"));
+const VERDICT = { pass: ["passed", "通過"], fail: ["failed", "未通過"], warn: ["warned", "警告"], error: ["could not run", "無法執行"] };
+function timelineLine(e, r) {
+  const node = (n) => r.def?.nodes?.find((x) => x.id === n); const label = (n) => node(n)?.label || n;
+  // an outcome in words: ok is Finished; a card's choice by its option's label
+  const outcome = (n, o) => o === "ok" || o == null ? T("Finished", "完成") : o === "fail" || o === "error" ? T("Failed", "失敗") : o === "cap" ? T("Round cap reached", "達到回合上限")
+    : `${T("Finished", "完成")} (${(node(n)?.card?.options || []).find((x) => x.id === o)?.label || o})`;
+  // a message that already starts with the node's name does not say it twice
+  const strip = (t, lab) => { t = String(t ?? ""); while (lab && (t.startsWith(`${lab}: `) || t.startsWith(`${lab} `) || t === lab)) t = t.slice(lab.length).replace(/^:?\s*/, ""); return t; };
+  const said = (n, t) => { const lab = n ? label(n) : null; const rest = strip(t, lab); return [lab ? h("b", {}, lab) : null, lab && rest ? ": " : "", rest]; };
+  if (e.type === "run" && (!e.from || e.from === "queued")) return [h("b", {}, T("Task", "任務")), `: ${T("Started", "開始")}`];
+  if (e.type === "started") return [h("b", {}, T("Task", "任務")), `: ${T("Started", "開始")} (${r.def?.name || r.workflow} v${e.workflowVersion ?? r.version})`];
+  if (e.type === "failed") return [h("b", {}, T("Task", "任務")), `: ${stateWord({ status: "failed" })}`, e.summary ? ` — ${e.summary}` : ""];
+  if (e.type === "check_result") { // "card SC-001 · core/ste-wording failed (1 finding)", the edge or hook in words
+    const where = !e.edge ? "" : e.edge.startsWith("card:") ? `${T("card", "卡片")} ${e.edge.slice(5)} · ` : e.edge.startsWith("hook:") ? `${e.edge.slice(5)} ${T("hook", "hook")} · ` : `${e.edge} · `;
+    const n = /\((\d+) findings?\)/.exec(e.summary || "")?.[1]; const vw = VERDICT[e.verdict] || [e.verdict, e.verdict];
+    return [h("b", {}, e.node ? label(e.node) : T("Check", "檢查")), `: ${where}${e.check} ${T(vw[0], vw[1])}${n ? T(` (${n} finding${n === "1" ? "" : "s"})`, `（${n} 個問題）`) : ""}`]; }
+  if (e.type === "run") return [h("b", {}, T("Task", "任務")), `: ${stateWord({ status: e.from })} → ${stateWord({ status: e.to, result: e.to === "succeeded" ? e.result ?? r.result : null, merged: !!r.ctx?.merged })}`];
+  if (e.type === "node") { const w = NODE_WORDS[e.to] || [e.to, e.to]; return [h("b", {}, label(e.node)), `: ${T(w[0], w[1])}`]; }
+  if (e.type === "node_started") {
+    // Only agent/check/card launches are Rounds; a repeated hook or loop is an execution.
+    const isRound = ["agent", "check", "card"].includes(node(e.node)?.kind);
+    const count = e.visit > 1 ? isRound ? T(` (Round ${e.visit})`, `（第 ${e.visit} 回合）`) : T(` (execution ${e.visit})`, `（第 ${e.visit} 次執行）`) : "";
+    return [h("b", {}, label(e.node)), `: ${T("Started", "開始")}${count}`];
+  }
+  if (e.type === "node_done") return [h("b", {}, label(e.node)), `: ${outcome(e.node, e.outcome)}`];
+  if (e.type === "edge_taken") return [h("b", {}, label(e.from)), ` → ${label(e.to)}`];
+  if (e.type === "archived") return h("b", {}, T("Archived", "已封存"));
+  if (e.type === "unarchived") return h("b", {}, T("Unarchived", "已取消封存"));
+  if (e.type === "cancelled") return [h("b", {}, stateWord({ status: "cancelled" })), e.reason ? `: ${e.reason}` : ""];
+  if (e.type === "closed" || e.type === "done") { const w = stateWord({ status: "succeeded", result: e.result ?? (e.type === "closed" ? "closed" : "done"), merged: !!r.ctx?.merged });
+    const rest = e.summary && e.summary.trim().toLowerCase() !== w.toLowerCase() ? e.summary : ""; return [h("b", {}, w), rest ? `: ${rest}` : ""]; }
+  // every row has a bold subject: the node, else what the message names before its first ": ", else the run
+  if (!e.node) { const t = String(e.summary || String(e.type).replace(/_/g, " ")); const m = /^([^:]{1,40}): (.+)$/.exec(t); return m ? [h("b", {}, m[1]), `: ${m[2]}`] : [h("b", {}, T("Task", "任務")), `: ${t}`]; }
+  return said(e.node, e.summary || String(e.type).replace(/_/g, " "));
+}
+// Task Rounds come from /api/tasks; never infer launches from graph colours or ledger rows.
+function roundHistory(r) {
+  const outcomes = { running: ["Running", "進行中"], waiting: ["Waiting", "等待中"], passed: ["Passed", "通過"], failed: ["Failed", "未通過"], error: ["Error", "錯誤"], chosen: ["Chosen", "已選擇"], interrupted: ["Interrupted", "已中斷"], skipped: ["Skipped", "已略過"], superseded: ["Replaced", "已取代"], swapped: ["Replaced", "已取代"] };
+  const stamp = (iso) => iso ? h("time", { datetime: iso, title: iso }, new Date(iso).toLocaleString(zhOn() ? "zh-TW" : "en-US")) : T("Not yet", "尚未");
+  const field = (en, tw, value) => h("div", {}, h("dt", {}, T(en, tw)), h("dd", {}, value));
+  return h("section", { class: "card x-pad rt-rounds", "data-rounds": r.id, "aria-label": T("Rounds", "回合") },
+    h("h2", {}, T("Rounds", "回合")), !(r.rounds || []).length ? h("p", { class: "faint" }, T("No rounds yet.", "還沒有回合。")) :
+    h("ol", { class: "rt-round-list" }, r.rounds.map((rd) => {
+      const actor = rd.actor.kind === "agent" ? [r.def?.roles?.find((x) => x.id === rd.actor.role)?.label || rd.actor.role, rd.actor.provider, rd.actor.model].filter(Boolean).join(" · ") : rd.actor.kind === "check" ? rd.actor.name || T("Check", "檢查") : T("Captain", "船長");
+      const c = rd.cost; const cost = c ? [c.usd != null ? `$${c.usd.toFixed(2)}` : null, c.inTokens != null || c.outTokens != null ? T(`${c.inTokens ?? "—"} in / ${c.outTokens ?? "—"} out tokens`, `${c.inTokens ?? "—"} 輸入 / ${c.outTokens ?? "—"} 輸出 token`) : null, c.seconds != null ? `${c.seconds.toFixed(1)} s` : null].filter(Boolean).join(" · ") : T("No cost recorded", "未記錄費用");
+      return h("li", { "data-round-id": rd.id, "data-round-node": rd.node }, h("div", { class: "rt-round-head" }, h("b", {}, rd.actor.label || rd.node),
+        h("span", { class: "badge neutral" }, T(`Round ${rd.number}`, `第 ${rd.number} 回合`)), h("span", { class: "faint" }, T(`Attempt ${rd.attempt}`, `第 ${rd.attempt} 次嘗試`))),
+        h("p", { class: "rt-round-actor" }, actor), h("dl", {}, field("Started", "開始", stamp(rd.startedAt)), field("Ended", "結束", stamp(rd.endedAt)),
+          field("Outcome", "結果", [T(...(outcomes[rd.outcome] || [rd.outcome, rd.outcome])), rd.verdict ? ` · ${rd.verdict}` : ""]), field("Cost", "費用", cost)),
+        rd.reason ? h("p", { class: "bad" }, zhOn() ? rd.reason["zh-TW"] : rd.reason.en) : null,
+        rd.transcript ? h("a", { class: "btn", href: rd.transcript }, T("Transcript", "對話紀錄")) : null);
+    })));
+}
+// an inline panel under the run's header: cancel (with a reason) or delete (with the typed id)
+const endPanel = (title, text, ...kids) => h("div", { class: "card x-pad rt-endpanel", role: "group", "aria-label": title }, h("h3", {}, title), h("p", { class: "faint" }, text), ...kids);
+function viewRun(id) {
+  if (!id) return viewRuns();
+  if (!RN.view || RN.view.id !== id) { RN.view = { id, r: null }; loadRun(RN.view); }
+  const v = RN.view; if (!v.r) return h("div", { class: "page" }, h("div", { class: "skel", style: "height:420px" }));
+  const r = v.r; const states = Object.fromEntries(Object.entries(r.nodes).map(([k, n]) => [k, n.state]));
+  const act = (what) => api(`/api/wruns/${id}/${what}`, {}).then((x) => { v.r = { ...v.r, ...x }; loadRun(v); rerender(); }).catch((e) => alert(e.message));
+  const ended = ["succeeded", "failed", "cancelled"].includes(r.status);
+  const open = r.cards.filter((c) => c.status === "open");
+  if (!v.collapsed) v.collapsed = matchMedia("(max-width: 640px)").matches ? (window.crewLayout.stagesFor(r.def) || []).map((x) => x.id) : [];
+  if (!v.gview) v.gview = (() => { try { return localStorage.getItem("crew.graphView") === "detail" ? "detail" : "simple"; } catch { return "simple"; } })();
+  const visits = Object.fromEntries(Object.entries(r.nodes).map(([k, n]) => [k, n.visits || 0]));
+  const simpleRun = v.gview === "simple";
+  const g = graph(r.def, { states, walked: new Set(r.walked || []), visits, simple: simpleRun, wrap: Math.max(2, Math.min(8, Math.floor(((Math.min(innerWidth, 1200) - 60) * 15 / 11 - 80) / window.crewLayout.COL))), collapsed: v.collapsed, redraw: () => rerender(),
+    onToggleStage: (sid) => { const c = new Set(v.collapsed); c.has(sid) ? c.delete(sid) : c.add(sid); v.collapsed = [...c]; rerender(); } });
+  const viewSeg = h("div", { class: "seg rt-viewseg", role: "group", "aria-label": T("Graph view", "流程圖檢視") }, ["simple", "detail"].map((k) => h("button", { type: "button", "data-view-toggle": k, "aria-pressed": String(v.gview === k),
+    onclick: () => { v.gview = k; v.scrolledTo = null; try { localStorage.setItem("crew.graphView", k); } catch {} rerender(); } }, h("span", { class: "keep" }, k === "simple" ? T("Simple", "簡易") : T("Detail", "詳細")))));
+  { const P = 24; const pv = { x: g.view.x - P, y: g.view.y - 8, w: g.view.w + 2 * P, h: g.view.h + 16 }; g.setAttribute("viewBox", `${pv.x} ${pv.y} ${pv.w} ${pv.h}`); g.view = pv; }
+  // readable size; the card scrolls. On a phone the graph fits the card's width, so a connector that wraps to the next row stays in view inside the card's padding
+  { const fit = innerWidth <= 640 ? Math.min(0.8, (innerWidth - 34) / g.view.w) : 0.8; g.style.width = `${Math.round(g.view.w * fit)}px`; g.style.height = `${Math.round(g.view.h * fit)}px`; }
+  // the card scrolls to the node that runs now (once per node), else to the start of the main lane
+  const cur = Object.entries(states).find(([, st]) => st === "running" || st === "waiting")?.[0] ?? "start";
+  if (v.scrolledTo !== cur) requestAnimationFrame(() => { const card = document.querySelector(".rt-rungraph"); if (!card) return;
+    const el = card.querySelector(`[data-node="${CSS.escape(cur)}"]`) || card.querySelector(".rt-node.main") || card.querySelector("[data-stage-node]");
+    if (el) { const a = el.getBoundingClientRect(), c = card.getBoundingClientRect(); card.scrollLeft += a.left - c.left - Math.max(0, (c.width - a.width) / 3); card.scrollTop += a.top - c.top - c.height / 2 + a.height / 2; v.scrolledTo = cur; } });
+  return h("div", { class: "page rt-runview", "data-runview": id },
+    h("div", { class: "phead" }, h("div", {}, h("h1", {}, r.title), h("p", {}, h("span", { class: "mono" }, r.id), " · ", h("a", { href: `#/workflows/${r.workflow}/v${r.version}` }, `${r.workflow} v${r.version}`), " · ", h("span", { "data-run-status": r.status }, window.runStateBadge(r)), r.archived ? [" ", h("span", { class: "badge neutral rt-archived-tag", "data-archived": "1" }, T("Archived", "已封存"))] : null, r.error ? ` · ${r.error}` : "")),
+      h("div", { class: "actions" }, r.ctx?.captures?.app ? h("a", { class: "btn", href: r.ctx.captures.app, target: "_blank", rel: "noopener", "data-open-app": r.id }, T("Open the app", "打開 app")) : null,
+        ["running", "waiting"].includes(r.status) ? h("button", { class: "btn", onclick: () => act("pause") }, T("Pause", "暫停")) : null, r.status === "paused" ? h("button", { class: "btn", onclick: () => act("resume") }, T("Resume", "繼續")) : null,
+        !ended ? h("button", { class: "btn ghost", "data-run-cancel": id, "aria-expanded": String(v.panel === "cancel"), onclick: () => { v.panel = v.panel === "cancel" ? null : "cancel"; rerender(); } }, T("Cancel task…", "取消任務…")) : null,
+        ended ? h("button", { class: "btn", "data-run-archive": id, onclick: () => api(`/api/wruns/${id}/archive`, { archived: !r.archived }).then((x) => { v.r = { ...v.r, ...x }; loadRun(v); RN.list = null; rerender(); }).catch((e) => alert(e.message)) }, r.archived ? T("Unarchive", "取消封存") : T("Archive", "封存")) : null,
+        // Delete stands apart from the other actions (a divider), so it is never tapped by mistake
+        ended ? h("span", { class: "rt-danger", "data-danger-zone": id }, h("button", { class: "btn danger", "data-run-delete": id, "aria-expanded": String(v.panel === "delete"), onclick: () => { v.panel = v.panel === "delete" ? null : "delete"; v.delMsg = ""; v.confirm = ""; rerender(); } }, T("Delete…", "刪除…"))) : null)),
+    v.panel === "cancel" && !ended ? endPanel(T("Cancel this task", "取消這個任務"), T("Its open cards are withdrawn, its agents stop and its on_cancel hooks run. The task ends Cancelled.", "它開著的卡會撤回、agent 會停下、on_cancel hooks 會執行。任務以「已取消」結束。"),
+      h("input", { class: "input", "data-cancel-reason": id, placeholder: T("Reason (optional)", "原因（可不填）"), "aria-label": T("Reason", "原因"), value: v.reason || "", oninput: (e) => { v.reason = e.target.value; } }),
+      h("div", { class: "actions" }, h("button", { class: "btn danger", "data-cancel-confirm": id, onclick: () => api(`/api/wruns/${id}/cancel`, { reason: v.reason || null }).then((x) => { v.r = { ...v.r, ...x }; loadRun(v); v.panel = null; v.reason = ""; RN.list = null; rerender(); }).catch((e) => { v.cancelMsg = e.message; rerender(); }) }, T("Cancel the task", "取消任務")),
+        h("button", { class: "btn ghost", onclick: () => { v.panel = null; rerender(); } }, T("Keep it running", "繼續執行"))), h("div", { class: "bad", role: "status" }, v.cancelMsg || "")) : null,
+    v.panel === "delete" && ended ? endPanel(T(`Delete ${id} for good`, `永久刪除 ${id}`), T("Its folder, captures, cards, worktree and branch go. A commit already merged into main stays. The evidence ledger keeps its entries and records the deletion. Type the task id to confirm.", "它的資料夾、截圖、卡片、worktree 和 branch 都會刪除；已合併進 main 的 commit 會留著。證據帳本保留原有紀錄，並記下這次刪除。請輸入任務 id 確認。"),
+      // the field starts empty under its hint; Delete for good stays disabled until the typed id matches (the server checks it again)
+      h("label", { class: "rt-confirm", for: `del-${id}` }, h("span", { "data-delete-hint": id }, T(`Type ${id} to delete it`, `輸入 ${id} 以刪除`)),
+        h("input", { class: "input mono", id: `del-${id}`, "data-delete-confirm-id": id, autocomplete: "off", spellcheck: "false", value: v.confirm || "",
+          oninput: (e) => { v.confirm = e.target.value; const b = e.target.closest(".rt-endpanel")?.querySelector("[data-delete-confirm]"); if (b) b.disabled = v.confirm.trim() !== id; } })),
+      h("div", { class: "actions" }, h("button", { class: "btn danger-solid", "data-delete-confirm": id, disabled: (v.confirm || "").trim() !== id || null, onclick: () => api(`/api/wruns/${id}/delete`, { confirm: v.confirm || "" }).then(() => { RN.view = null; RN.list = null; location.hash = "#/runs"; }).catch((e) => { v.delMsg = e.message; rerender(); }) }, T("Delete for good", "永久刪除")),
+        h("button", { class: "btn ghost", onclick: () => { v.panel = null; rerender(); } }, T("Keep it", "保留"))), h("div", { class: "bad", role: "status", "data-delete-msg": id }, v.delMsg || "")) : null,
+    open.length ? h("div", { class: "rt-open" }, open.map(cardView)) : null,
+    h("div", { class: "rt-row" }, viewSeg), h("div", { class: "card rt-rungraph" }, g),
+    stepsCard(r),
+    roundHistory(r),
+    h("div", { class: "rt-cols" },
+      h("div", { class: "card x-pad" }, h("h3", {}, T("Done lines", "完成條件")), (r.done || []).map((d) => h("div", { class: `rt-done ${d.proved ? "ok" : ""}` }, `${d.proved ? "✓" : "·"} ${d.index + 1}. ${d.text}`)), !(r.done || []).length ? h("p", { class: "faint" }, T("No done lines.", "沒有完成條件。")) : null,
+        h("h3", {}, T("Evidence ledger", "證據帳本")), h("p", { class: r.ledgerOk ? "faint" : "bad", "data-ledger-state": id }, !r.ledger.length && r.ledgerOk ? T("No entries yet", "還沒有紀錄") : r.ledgerOk ? T(`${r.ledger.length} entries, signatures verified`, `${r.ledger.length} 筆，簽章已驗證`) : T("the ledger does not verify", "帳本驗證失敗")),
+        h("div", { class: "rt-ledger" }, r.ledger.slice(-60).reverse().map((e) => h("div", { class: `rt-le v-${e.verdict}` }, h("span", { class: "mono" }, `#${e.seq}`), ` ${e.check} `, h("b", {}, e.verdict), e.node ? h("span", { class: "faint", "data-ledger-where": e.seq }, v.gview === "detail" ? ` ${e.node}${e.round ? ` r${e.round}` : ""}` // the node id and round in short only in Detail
+          : ` · ${r.def?.nodes?.find((x) => x.id === e.node)?.label || e.node}${e.round ? T(`, round ${e.round}`, `，第 ${e.round} 回合`) : ""}`) : null)))),
+      h("div", { class: "card x-pad" }, h("h3", {}, T("Timeline", "時間軸")), h("div", { class: "rt-timeline", "data-timeline": id }, r.events.filter((e) => v.gview === "detail" || simpleShows(e, r.events)).slice(-80).reverse().map((e) => h("div", { class: "rt-ev" }, h("span", { class: "mono faint" }, (e.ts || "").slice(11, 19)), " ",
+        v.gview === "detail" ? [e.node ? h("b", {}, e.node) : null, ` ${e.type}${e.from || e.to ? ` ${e.from ?? ""}→${e.to ?? ""}` : ""}${e.cause ? ` · ${e.cause}` : ""}`] : timelineLine(e, r)))))));
+}
+// the agent steps of a run, each with the skills it loaded (name@vN, in order)
+function stepsCard(r) {
+  const steps = (r.steps || []).filter((st) => st.kind === "agent" && st.state !== "superseded").slice(-30);
+  if (!steps.length) return null;
+  return h("div", { class: "card x-pad" }, h("h3", {}, T("Agent rounds", "Agent 回合")), h("div", { class: "rt-steps" }, steps.map((st) => h("div", { class: "rt-step", "data-step": st.node },
+    h("b", {}, st.node), h("span", { class: "faint" }, T(`Round ${st.visit}`, `第 ${st.visit} 回合`)), h("span", { class: `rt-st st-${st.state}` }, st.state), st.provider ? h("span", { class: "faint" }, st.provider) : null,
+    (st.skills || []).length ? h("span", { class: "rt-step-skills", "data-step-skills": st.node, "aria-label": T("Skills loaded", "載入的技能") }, st.skills.map((x) => h("span", { class: "vbadge" }, x))) : null))));
+}
+// one Studio card: the shared component (public/scard.js), mounted once per card and kept across re-renders so the
+// captain's ticks, note and door confirmation survive live updates; the same component serves the run view and the Inbox
+const MOUNTS = new Map();
+function cardView(c, o = {}) {
+  const key = `${o.inbox ? "inbox" : "run"}:${c.id}`; let m = MOUNTS.get(key);
+  // an unchanged card is not re-rendered at all: the captain's focus, caret, note and ticks stay as they are (unit inbox-live)
+  const sig = JSON.stringify(c);
+  if (m && m.status === c.status) { if (m.sig !== sig) { m.ctl.update(c); m.sig = sig; } return m.el; }
+  const el = h("div", { class: "card x-pad rt-card", "data-scard": c.id });
+  const ctl = window.crewCard.mountCard(el, c, { inbox: !!o.inbox, onAnswered: () => { RN.view && (RN.view.stale = true); loadRun(RN.view); loadOpenCards(); } });
+  MOUNTS.set(key, { el, ctl, status: c.status, sig }); if (MOUNTS.size > 60) MOUNTS.delete(MOUNTS.keys().next().value);
+  return el;
+}
+const zhOn = () => document.documentElement.lang === "zh-TW";
+async function loadRun(v) { if (!v) return; try { v.r = await api(`/api/tasks/${v.id}`); } catch (e) { v.r = null; } if (RN.view === v && S.route?.name === "run") render(); }
+live.listeners.add((t, d) => {
+  if (t === "wrun" && d.deleted) { RN.list = null; if (S.route?.name === "run" && RN.view?.id === d.id) { RN.view = null; location.hash = "#/runs"; return; } }
+  if (S.route?.name === "run" && RN.view && (d.id === RN.view.id || d.run === RN.view.id)) { clearTimeout(RN.t); RN.t = setTimeout(() => loadRun(RN.view), 150); }
+  if (S.route?.name === "runs" && t === "wrun") { clearTimeout(RN.lt); RN.lt = setTimeout(() => { RN.list = null; render(); }, 300); }
+});
+// leaving a page drops what it loaded, so coming back shows fresh data
+addEventListener("hashchange", () => { if (!/^#\/(runs|tasks)(\/|$)/.test(location.hash)) RN.list = null; if (!/^#\/(run\/|tasks\/R-\d+)/.test(location.hash)) RN.view = null;
+  if (!location.hash.startsWith("#/workflows")) { WF.list = null; WF.ed?.dispose?.(); WF.ed = null; } });
+
+// ---------- Studio's own cards in the Inbox, beside firstmate's (labelled with run, workflow and node; answered with the same buttons) ----------
+// Live (unit inbox-live): a card raised, answered elsewhere or withdrawn reaches the Inbox, the sidebar counts and the
+// Board through the page's one stream; after the stream reconnects (a server restart, a laptop that slept) the cards
+// are read again, so an event missed meanwhile is never lost. A card that arrives while the page is open shows one
+// non-blocking cue (a status line outside the page view, never a dialog).
+const SCX = { open: [], t: null, seen: null, fresh: [], cueT: null };
+async function loadOpenCards() {
+  try { SCX.open = (await api("/api/scards?open=1")).cards || []; } catch { return; }
+  const ids = SCX.open.map((c) => c.id);
+  if (SCX.seen) { const add = ids.filter((id) => !SCX.seen.has(id)); if (add.length) cueNew(add); for (const id of add) SCX.seen.add(id); }
+  else SCX.seen = new Set(ids); // the cards already waiting when the page opened are not news
+  SCX.fresh = SCX.fresh.filter((id) => ids.includes(id)); if (!SCX.fresh.length) dropCue();
+  updateNav(); if (S.route?.name === "board") soft(); else if (S.route?.name === "inbox") render(); else updateCue();
+}
+function cueNew(ids) { SCX.fresh = [...new Set([...SCX.fresh, ...ids])]; updateCue(); clearTimeout(SCX.cueT); SCX.cueT = setTimeout(dropCue, 30000); }
+function dropCue() { SCX.fresh = []; document.querySelector("[data-new-card-cue]")?.remove(); }
+function updateCue() {
+  const n = SCX.fresh.length; let el = document.querySelector("[data-new-card-cue]");
+  if (!n) { el?.remove(); return; }
+  if (!el) { el = h("div", { class: "rt-cue", role: "status", "aria-live": "polite", "data-new-card-cue": "" }); document.body.append(el); }
+  const one = SCX.open.find((c) => c.id === SCX.fresh[0]);
+  el.replaceChildren(h("span", { class: "rt-cue-dot" }), h("span", {}, n === 1 ? T(`1 new card: ${one ? (zhOn() ? one.title["zh-TW"] : one.title.en) : SCX.fresh[0]}`, `1 張新卡片：${one ? (zhOn() ? one.title["zh-TW"] : one.title.en) : SCX.fresh[0]}`) : T(`${n} new cards`, `${n} 張新卡片`)),
+    h("a", { class: "btn", href: n === 1 ? `#/inbox/${encodeURIComponent(SCX.fresh[0])}` : "#/inbox", "data-new-card-show": "", onclick: () => setTimeout(dropCue, 0) }, T("Show", "查看")),
+    h("button", { class: "btn ghost", type: "button", "aria-label": T("Dismiss", "關閉"), "data-new-card-dismiss": "", onclick: dropCue }, "×"));
+}
+live.listeners.add((t) => { if (t === "scard") { clearTimeout(SCX.t); SCX.t = setTimeout(loadOpenCards, 150); } });
+addEventListener("crew:live", () => loadOpenCards()); // the stream (re)connected: read the cards again
+addEventListener("hashchange", () => { if (location.hash.startsWith("#/inbox")) loadOpenCards(); }); // coming to the Inbox shows fresh cards
+loadOpenCards();
+window.studioCards = { count: () => SCX.open.length,
+  needRows: () => SCX.open.map((c) => h("div", { class: "need", "data-need-scard": c.id }, h("div", { class: "need-ic", style: "background:var(--human-soft);color:var(--human)" }, c.kind === "merge" ? "⇢" : "?"),
+    h("div", {}, h("div", { class: "need-t" }, zhOn() ? c.title["zh-TW"] : c.title.en), h("div", { class: "need-d" }, [c.run, c.workflow, c.node].join(" · "))),
+    h("div", { class: "need-r" }, h("a", { class: "btn", href: `#/inbox/${encodeURIComponent(c.id)}` }, T("Open", "打開"))))),
+  // #/inbox/<id> shows that card first and every other waiting card under it: a card that arrives while the captain
+  // is on one card (the Board's Open link) is never hidden; when that card is answered or withdrawn, the rest stay
+  section: (id) => { const focus = id ? SCX.open.find((c) => c.id === id) : null; const cs = focus ? [focus, ...SCX.open.filter((c) => c.id !== id)] : SCX.open; if (!cs.length) return null;
+    return h("section", { class: "rt-inbox", "data-inbox-studio": "1" }, h("div", { class: "sec-head" }, h("h2", {}, T("Studio tasks", "Studio 的任務")), h("span", { class: "badge human" }, String(cs.length))),
+      id && !focus ? h("p", { class: "faint", "data-inbox-gone": id }, T(`${id} is no longer waiting. The cards below still are.`, `${id} 已經不在等待中。下面這些還在等。`)) : null,
+      cs.map((c) => cardView(c, { inbox: true }))); } };
+
+// ---------- Studio tasks' live agent node runs on the Crew page, beside firstmate's rounds ----------
+const SA = { list: [], t: null, tick: null };
+async function loadAgents() { try { SA.list = (await api("/api/wruns/agents")).agents || []; } catch { return; } updateNav(); if (S.route?.name === "crew" && !S.route.arg) render(); }
+for (const t of ["agent", "wrun"]) window.liveListen(t, () => { clearTimeout(SA.t); SA.t = setTimeout(loadAgents, 200); });
+addEventListener("hashchange", () => { if (location.hash.startsWith("#/crew")) loadAgents(); });
+setInterval(() => { if (S.route?.name === "crew" && !S.route.arg && SA.list.length) render(); }, 15000); // elapsed time moves on
+loadAgents();
+const elapsed = (iso) => { const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000)); return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`; };
+window.studioAgents = { count: () => SA.list.length,
+  section: () => h("section", { class: "rt-agents", "data-studio-agents": String(SA.list.length) },
+    h("div", { class: "sec-head" }, h("h2", {}, T("Studio tasks: agents working", "Studio 的任務：工作中的 agent")), h("span", { class: "faint" }, String(SA.list.length))),
+    SA.list.length ? h("div", { class: "rt-agent-grid" }, SA.list.map((a) => { const base = `#/runs/node/${encodeURIComponent(a.run)}/${encodeURIComponent(a.node)}/${a.round}`;
+      return h("article", { class: "card x-pad rt-agent", "data-agent-node": `${a.run}/${a.node}/${a.round}` },
+        h("div", { class: "rt-agent-h" }, h("b", {}, a.label), a.role ? h("span", { class: "vbadge" }, a.role) : null, h("span", { class: "st" }, h("span", { class: "d pulse" }), T("working", "工作中"))),
+        h("div", { class: "rt-agent-m" }, h("a", { href: `#/run/${encodeURIComponent(a.run)}`, class: "mono" }, a.run), h("span", {}, a.workflow), h("span", {}, T(`round ${a.round}`, `第 ${a.round} 回合`)),
+          h("span", { "data-elapsed": a.startedAt }, T(`up ${elapsed(a.startedAt)}`, `已跑 ${elapsed(a.startedAt)}`)), h("span", { class: "vbadge" }, `${a.provider}${a.model ? ` · ${a.model}` : ""}`)),
+        h("div", { class: "rt-agent-act faint" }, a.lastActivity ? `${a.lastActivity.kind}: ${a.lastActivity.text}` : T("starting…", "啟動中…")),
+        h("div", { class: "rt-row" }, [["prompt", T("Prompt", "提示詞")], ["transcript", T("Transcript", "對話紀錄")], ["report", T("Report", "報告")]].map(([k, l]) => h("a", { class: "btn ghost", href: `${base}/${k}`, "data-agent-link": k }, l)))); }))
+      : h("p", { class: "faint" }, T("No Studio agent is working right now.", "目前沒有 Studio 的 agent 在工作。"))) };
+
+Object.assign(routes, { workflows: viewWorkflows, runs: viewRuns, run: viewRun });
+})();

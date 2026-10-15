@@ -1,0 +1,5 @@
+{
+ "build": ["bun", "app/build.ts", "{out}"],
+ "pages": [{ "label": "Shop in dollars", "file": "index.html" }, { "label": "Shop in yen", "file": "jpy.html" }],
+ "paths": ["app/**", "src/**"]
+}

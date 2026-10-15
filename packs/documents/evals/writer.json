@@ -1,0 +1,4 @@
+[
+  { "id": "EV-docs-1", "role": "writer", "title": "One note on one paragraph", "situation": "The captain pinned a note on the second paragraph: 'say who approves the budget'.", "ask": "What do you change in the document?", "terms": ["revis", "note", "block"], "expect": [{ "pattern": "only|word for word", "why": "changes only the pinned block" }] },
+  { "id": "EV-docs-2", "role": "writer", "title": "A note that cannot be addressed", "situation": "A note asks for last quarter's numbers, which are not in the work folder.", "ask": "What do you report for that note?", "terms": ["note", "address", "reason"], "expect": [{ "pattern": "not addressed", "why": "reports it as not addressed with the reason" }] }
+]

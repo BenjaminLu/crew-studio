@@ -1,0 +1,5 @@
+[
+  {"id":"A-clip","type":"video","title":"Fixture clip","path":"__CLIP__","created":"2026-10-13T14:00:00Z","approvedBy":"captain","approvedAt":"2026-10-13T15:00:00Z","note":"one second of colour bars"},
+  {"id":"A-proto","type":"web","title":"Fixture prototype","url":"https://claude.ai/artifact/FPG4GZMEADzcz3ogtgBFaS","created":"2026-10-14T00:30:00Z"},
+  {"id":"A-outside","type":"video","title":"File outside the allowed folder","path":"/etc/hosts","created":"2026-10-14T00:31:00Z"}
+]

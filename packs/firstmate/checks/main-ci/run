@@ -1,0 +1,12 @@
+#!/usr/bin/env node
+const fs = require("fs"), path = require("path"), { spawn } = require("child_process");
+let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", async () => {
+  const i = JSON.parse(s); const cfg = i.repo_cfg ?? {}; const dir = i.main_tree;
+  if (!cfg.test || !dir) { process.stdout.write(JSON.stringify({ verdict: "skip", score: null, findings: [], evidence: [], proves: [] })); return; }
+  const n = cfg.shards || 1;
+  const rs = await Promise.all(Array.from({ length: n }, (_, k) => new Promise((res) => { const t0 = Date.now(); const p = spawn(cfg.test[0], cfg.test.slice(1), { cwd: dir, env: { ...process.env, CREW_SHARD: String(k), CREW_SHARDS: String(n) } });
+    let log = ""; p.stdout.on("data", (d) => (log += d)); p.stderr.on("data", (d) => (log += d)); p.on("close", (code) => res({ shard: k + 1, code, ms: Date.now() - t0, log })); })));
+  fs.writeFileSync(path.join(i.out, "main.log"), rs.map((r) => r.log).join("\n"));
+  const bad = rs.filter((r) => r.code !== 0);
+  process.stdout.write(JSON.stringify({ verdict: bad.length ? "fail" : "pass", score: (n - bad.length) / n, findings: bad.map((r) => ({ locator: { type: "file", path: ".crew/gates.json" }, message: `main shard ${r.shard}/${n} exit ${r.code}`, expected: "green main", class: "main-red", severity: "blocking" })), evidence: ["out/main.log"], proves: [], data: { shards: rs.map(({ log, ...x }) => x) } }));
+});

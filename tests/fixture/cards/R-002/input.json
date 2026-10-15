@@ -1,0 +1,993 @@
+{
+ "_source": "data/runs/R-002 (run.json ctx, spec), data/evidence/R-002/ledger.jsonl and data/demo-repo diff 95a3488..8a8f29c, copied 2026-10-14; absolute paths dropped",
+ "run": "R-002",
+ "intent": "Let format() handle currencies without cents, like JPY: format(1235, \"JPY\") should give \"¥1,235\", and existing USD output must stay the same.",
+ "title": "Format zero-decimal currencies",
+ "createdAt": "2026-10-14T09:26:26.235Z",
+ "spec": {
+  "title": "format() supports JPY, a currency without cents",
+  "what": "format() takes an optional currency code as a second argument. With \"JPY\" the amount counts whole yen, with no decimal part: the output is the ¥ sign followed by the amount with commas between thousands, and a leading minus sign for negative amounts (format(1235, \"JPY\") is \"¥1,235\", format(-1235, \"JPY\") is \"-¥1,235\", format(0, \"JPY\") is \"¥0\"). With no currency, or with \"USD\", the output stays exactly as it is on base, with no thousands separators added (format(123456) stays \"$1234.56\").",
+  "why": [
+   "Some currencies, like the Japanese yen, have no minor unit. format() assumes cents everywhere, so 1235 yen comes out as \"$12.35\": the wrong symbol and the wrong value.",
+   "Existing callers pass only an amount and depend on today's USD text, so the default output has to stay the same.",
+   "The captain's example \"¥1,235\" has a thousands separator while USD output has none today. This spec adds grouping for JPY only and leaves USD unchanged, as the intent says."
+  ],
+  "done": [
+   "test/format.test.ts: format(1235, \"JPY\") returns \"¥1,235\"; fails on base, where format ignores the currency and returns \"$12.35\".",
+   "test/format.test.ts: format(-1235, \"JPY\") returns \"-¥1,235\" and format(0, \"JPY\") returns \"¥0\"; fails on base, where the calls return \"-$12.35\" and \"$0.00\".",
+   "test/format.test.ts: in one test, format(123456, \"JPY\") returns \"¥123,456\" while format(123456) and format(123456, \"USD\") both return \"$1234.56\" (no separator added to USD); fails on base, where the JPY call returns \"$1234.56\".",
+   "test/format.test.ts: in one test, format(1999, \"JPY\") returns \"¥1,999\" while format(1999, \"USD\") returns \"$19.99\", the same text as format(1999); fails on base, where the JPY call returns \"$19.99\". The three existing USD tests in test/format.test.ts and all tests in test/money.test.ts keep passing unchanged."
+  ],
+  "scope": [
+   "src/money.ts",
+   "test/format.test.ts",
+   "test/money.test.ts",
+   "README.md"
+  ],
+  "door": {
+   "kind": "two-way",
+   "reason": "An optional parameter added to one library function; no sensitive paths (.github, CODEOWNERS, gates) are touched and the default behaviour stays the same, so it is easy to revert."
+  },
+  "explain": {
+   "en": "Today format() treats every amount as US cents, so 1235 yen comes out as \"$12.35\". After this change you can pass a currency: format(1235, \"JPY\") gives \"¥1,235\", with commas between thousands and no decimals. Calling format() without a currency, or with \"USD\", gives the same text as before.",
+   "zh-TW": "目前 format() 把每個金額都當成美分，所以 1235 日圓會顯示成「$12.35」。改動之後可以傳入幣別：format(1235, \"JPY\") 會得到「¥1,235」，千位有逗號、沒有小數。不傳幣別或傳 \"USD\" 時，輸出和以前完全一樣。"
+  },
+  "version": 2
+ },
+ "ctx": {
+  "door": {
+   "tier": "two-way",
+   "door": "two-way",
+   "reasons": [],
+   "lines": 4,
+   "paths": 4,
+   "decidedBy": "classifier",
+   "lists": {
+    "org": 18,
+    "project": 0
+   },
+   "route": "two-way"
+  },
+  "reviews": [
+   {
+    "verdict": "APPROVE",
+    "findings": [],
+    "followups": [
+     "src/money.ts:24: format(12.5, \"JPY\") returns \"¥12.5\" because nothing checks or rounds non-integer yen. Fix: reject non-integer amounts for JPY, or document that JPY amounts must be integers.",
+     "src/money.ts:20: plain-JS callers that pass an unknown code such as \"EUR\" silently get USD output. Fix: throw on any currency outside the Currency union."
+    ],
+    "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+    "by": "claude·claude-opus-5-5 (reviewer #1)",
+    "round": 1
+   }
+  ],
+  "followups": [
+   "src/money.ts:24: format(12.5, \"JPY\") returns \"¥12.5\" because nothing checks or rounds non-integer yen. Fix: reject non-integer amounts for JPY, or document that JPY amounts must be integers.",
+   "src/money.ts:20: plain-JS callers that pass an unknown code such as \"EUR\" silently get USD output. Fix: throw on any currency outside the Currency union."
+  ],
+  "rounds": [
+   {
+    "round": 1,
+    "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+    "report": {
+     "summary": "format() now takes an optional second argument, currency (\"USD\" | \"JPY\"), which defaults to \"USD\". With JPY the amount is whole yen: the ¥ sign, commas between thousands and a leading minus for negative amounts. USD and the default output use the same code as base and are unchanged. Added four JPY tests to test/format.test.ts, one per done line. The three existing USD tests and test/money.test.ts are unchanged. Added a JPY example to README.md. The test suite passed: 12 tests, 0 failed. Files changed: src/money.ts, test/format.test.ts, README.md.",
+     "marker": "WORKER_COMPLETE"
+    },
+    "at": "2026-10-14T09:31:07.800Z"
+   }
+  ],
+  "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+  "baseCommit": "95a348863bf600ba558fbef732a0336b6387e90f",
+  "base": "main"
+ },
+ "ledger": [
+  {
+   "seq": 1,
+   "at": "2026-10-14T09:26:26.316Z",
+   "run": "R-002",
+   "node": "spec",
+   "edge": null,
+   "round": 1,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "runtime/round-start",
+   "version": "1",
+   "kind": "record",
+   "record": "round-start",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": {
+    "round": 1,
+    "brief": null,
+    "ledger": [],
+    "corrected": null,
+    "deps": null
+   }
+  },
+  {
+   "seq": 2,
+   "at": "2026-10-14T09:26:59.871Z",
+   "run": "R-002",
+   "node": "spec",
+   "edge": null,
+   "round": 1,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "firstmate/overlap",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 3,
+   "at": "2026-10-14T09:27:00.783Z",
+   "run": "R-002",
+   "node": "spec",
+   "edge": null,
+   "round": 1,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "firstmate/spec-schema",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 4,
+   "at": "2026-10-14T09:27:01.064Z",
+   "run": "R-002",
+   "node": "spec",
+   "edge": null,
+   "round": 1,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "firstmate/done-lines-provable",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "fail",
+   "findings": [
+    {
+     "locator": {
+      "type": "text",
+      "section": "done[3]",
+      "start": null,
+      "end": null
+     },
+     "message": "done line 4 has no fail-first marker",
+     "expected": "say the test fails on base (fail-first)",
+     "class": "done-line-no-failfirst",
+     "severity": "blocking",
+     "source": "check",
+     "check": "firstmate/done-lines-provable"
+    },
+    {
+     "locator": {
+      "type": "text",
+      "section": "done[4]",
+      "start": null,
+      "end": null
+     },
+     "message": "done line 5 names no test: \"Gates: test and lint from .crew/gates.json pass.\"",
+     "expected": "name the test file that proves it, e.g. tests/x.test.mjs",
+     "class": "done-line-no-test",
+     "severity": "blocking",
+     "source": "check",
+     "check": "firstmate/done-lines-provable"
+    }
+   ],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 5,
+   "at": "2026-10-14T09:27:01.360Z",
+   "run": "R-002",
+   "node": "spec",
+   "edge": null,
+   "round": 1,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "firstmate/caller-coverage",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "fail",
+   "findings": [
+    {
+     "locator": {
+      "type": "file",
+      "path": "test/money.test.ts",
+      "line": 2,
+      "end_line": null
+     },
+     "message": "test/money.test.ts uses src/money.ts but is not in the scope",
+     "expected": "add test/money.test.ts (or its folder) to the scope",
+     "class": "caller-out-of-scope",
+     "severity": "blocking",
+     "source": "check",
+     "check": "firstmate/caller-coverage"
+    }
+   ],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 6,
+   "at": "2026-10-14T09:27:01.620Z",
+   "run": "R-002",
+   "node": "spec",
+   "edge": null,
+   "round": 1,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "core/ste-wording",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 7,
+   "at": "2026-10-14T09:27:06.543Z",
+   "run": "R-002",
+   "node": "spec",
+   "edge": null,
+   "round": 1,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "firstmate/no-impl-detail",
+   "version": "1.0.0",
+   "kind": "judged",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 8,
+   "at": "2026-10-14T09:27:09.215Z",
+   "run": "R-002",
+   "node": "spec",
+   "edge": null,
+   "round": 1,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "firstmate/done-lines-observable",
+   "version": "1.0.0",
+   "kind": "judged",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 9,
+   "at": "2026-10-14T09:27:17.492Z",
+   "run": "R-002",
+   "node": "spec-fix",
+   "edge": null,
+   "round": 1,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "core/brief-quality",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 10,
+   "at": "2026-10-14T09:27:17.523Z",
+   "run": "R-002",
+   "node": "spec",
+   "edge": null,
+   "round": 2,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "runtime/round-start",
+   "version": "1",
+   "kind": "record",
+   "record": "round-start",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": {
+    "round": 2,
+    "brief": "spec@1:95a348863bf6",
+    "ledger": [
+     4,
+     5
+    ],
+    "corrected": null,
+    "deps": null
+   }
+  },
+  {
+   "seq": 11,
+   "at": "2026-10-14T09:27:45.877Z",
+   "run": "R-002",
+   "node": "spec",
+   "edge": null,
+   "round": 2,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "firstmate/overlap",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 12,
+   "at": "2026-10-14T09:27:45.942Z",
+   "run": "R-002",
+   "node": "spec",
+   "edge": null,
+   "round": 2,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "firstmate/spec-schema",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 13,
+   "at": "2026-10-14T09:27:45.944Z",
+   "run": "R-002",
+   "node": "spec",
+   "edge": null,
+   "round": 2,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "firstmate/done-lines-provable",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 14,
+   "at": "2026-10-14T09:27:45.946Z",
+   "run": "R-002",
+   "node": "spec",
+   "edge": null,
+   "round": 2,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "firstmate/caller-coverage",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 15,
+   "at": "2026-10-14T09:27:45.964Z",
+   "run": "R-002",
+   "node": "spec",
+   "edge": null,
+   "round": 2,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "core/ste-wording",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 16,
+   "at": "2026-10-14T09:27:51.864Z",
+   "run": "R-002",
+   "node": "spec",
+   "edge": null,
+   "round": 2,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "firstmate/no-impl-detail",
+   "version": "1.0.0",
+   "kind": "judged",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 17,
+   "at": "2026-10-14T09:27:52.608Z",
+   "run": "R-002",
+   "node": "spec",
+   "edge": null,
+   "round": 2,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "firstmate/done-lines-observable",
+   "version": "1.0.0",
+   "kind": "judged",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 18,
+   "at": "2026-10-14T09:27:52.707Z",
+   "run": "R-002",
+   "node": "dispatch",
+   "edge": "card:SC-001",
+   "round": 1,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "core/ste-wording",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "fail",
+   "findings": [
+    {
+     "locator": {
+      "type": "text",
+      "section": "en.intent",
+      "start": null,
+      "end": null
+     },
+     "message": "R5 should: \"Let format() handle currencies without cents, like JPY: format(1235, \"JPY\") should give \"¥1,235\", an\"",
+     "expected": "plain wording without it (R5)",
+     "class": "ste-R5",
+     "severity": "blocking",
+     "source": "check",
+     "check": "core/ste-wording"
+    }
+   ],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 19,
+   "at": "2026-10-14T09:30:39.760Z",
+   "run": "R-002",
+   "node": "dispatch",
+   "edge": null,
+   "round": 1,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "runtime/card-answer",
+   "version": "1",
+   "kind": "record",
+   "record": "card-answer",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": {
+    "card": "SC-001",
+    "kind": "dispatch",
+    "choice": "dispatch",
+    "note": null,
+    "confirm": null
+   }
+  },
+  {
+   "seq": 20,
+   "at": "2026-10-14T09:30:39.773Z",
+   "run": "R-002",
+   "node": "door",
+   "edge": null,
+   "round": 1,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "firstmate/door-classify",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": {
+    "tier": "two-way",
+    "door": "two-way",
+    "reasons": [],
+    "lines": 4,
+    "paths": 4,
+    "decidedBy": "classifier",
+    "lists": {
+     "org": 18,
+     "project": 0
+    },
+    "route": "two-way"
+   }
+  },
+  {
+   "seq": 21,
+   "at": "2026-10-14T09:30:39.826Z",
+   "run": "R-002",
+   "node": "build",
+   "edge": null,
+   "round": 1,
+   "head": "95a348863bf600ba558fbef732a0336b6387e90f",
+   "check": "runtime/round-start",
+   "version": "1",
+   "kind": "record",
+   "record": "round-start",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": {
+    "round": 1,
+    "brief": null,
+    "ledger": [],
+    "corrected": null,
+    "deps": null
+   }
+  },
+  {
+   "seq": 22,
+   "at": "2026-10-14T09:31:07.871Z",
+   "run": "R-002",
+   "node": "build",
+   "edge": null,
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "firstmate/scope",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 23,
+   "at": "2026-10-14T09:31:07.943Z",
+   "run": "R-002",
+   "node": "build",
+   "edge": null,
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "firstmate/lints",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [
+    "out/log.txt"
+   ],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 24,
+   "at": "2026-10-14T09:31:08.079Z",
+   "run": "R-002",
+   "node": "build",
+   "edge": null,
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "firstmate/report-schema",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 25,
+   "at": "2026-10-14T09:31:08.173Z",
+   "run": "R-002",
+   "node": "build",
+   "edge": null,
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "firstmate/file-size-cap",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 26,
+   "at": "2026-10-14T09:31:08.314Z",
+   "run": "R-002",
+   "node": "build",
+   "edge": null,
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "firstmate/covering-suites",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [
+    "out/covering.log"
+   ],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 27,
+   "at": "2026-10-14T09:31:08.364Z",
+   "run": "R-002",
+   "node": "build",
+   "edge": null,
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "firstmate/fixture-modules",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 28,
+   "at": "2026-10-14T09:31:08.433Z",
+   "run": "R-002",
+   "node": "ci",
+   "edge": null,
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "firstmate/shard-budget",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": {
+    "shards": []
+   }
+  },
+  {
+   "seq": 29,
+   "at": "2026-10-14T09:31:08.689Z",
+   "run": "R-002",
+   "node": "ci",
+   "edge": null,
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "firstmate/ci",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [
+    "out/shard-1.log",
+    "out/shard-2.log"
+   ],
+   "proves": [
+    0,
+    1,
+    2,
+    3
+   ],
+   "data": {
+    "shards": [
+     {
+      "shard": 1,
+      "of": 2,
+      "code": 0,
+      "ms": 65
+     },
+     {
+      "shard": 2,
+      "of": 2,
+      "code": 0,
+      "ms": 64
+     }
+    ]
+   }
+  },
+  {
+   "seq": 30,
+   "at": "2026-10-14T09:31:08.809Z",
+   "run": "R-002",
+   "node": "ci",
+   "edge": null,
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "firstmate/fail-first",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [
+    "out/base.log",
+    "out/head.log"
+   ],
+   "proves": [
+    0,
+    1,
+    2,
+    3
+   ],
+   "data": {
+    "applicable": true,
+    "red": [
+     "FAIL test/format.test.ts: format with JPY > shows whole yen with a thousands separator",
+     "FAIL test/format.test.ts: format with JPY > shows a minus sign and zero",
+     "FAIL test/format.test.ts: format with JPY > groups JPY thousands but leaves USD ungrouped",
+     "FAIL test/format.test.ts: format with JPY > USD matches the default while JPY differs"
+    ]
+   }
+  },
+  {
+   "seq": 31,
+   "at": "2026-10-14T09:31:08.836Z",
+   "run": "R-002",
+   "node": "review",
+   "edge": null,
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "runtime/round-start",
+   "version": "1",
+   "kind": "record",
+   "record": "round-start",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": {
+    "round": 1,
+    "brief": null,
+    "ledger": [],
+    "corrected": null,
+    "deps": null
+   }
+  },
+  {
+   "seq": 32,
+   "at": "2026-10-14T09:31:26.727Z",
+   "run": "R-002",
+   "node": "review",
+   "edge": null,
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "firstmate/designer-compare",
+   "version": "1.0.0",
+   "kind": "judged",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 33,
+   "at": "2026-10-14T09:31:44.541Z",
+   "run": "R-002",
+   "node": "review",
+   "edge": null,
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "firstmate/review-verdict",
+   "version": "1.0.0",
+   "kind": "judged",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  },
+  {
+   "seq": 34,
+   "at": "2026-10-14T09:31:44.609Z",
+   "run": "R-002",
+   "node": "review",
+   "edge": "review→merge-card[ok]",
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "firstmate/gate-branch",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": {
+    "detail": "on feature/R-002",
+    "head": "8a8f29c77c30b64494146dbb62dc0116c0511242"
+   }
+  },
+  {
+   "seq": 35,
+   "at": "2026-10-14T09:31:44.610Z",
+   "run": "R-002",
+   "node": "review",
+   "edge": "review→merge-card[ok]",
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "firstmate/gate-rebase",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": {
+    "detail": "main is an ancestor of 8a8f29c7: it fast-forwards",
+    "head": "8a8f29c77c30b64494146dbb62dc0116c0511242"
+   }
+  },
+  {
+   "seq": 36,
+   "at": "2026-10-14T09:31:44.612Z",
+   "run": "R-002",
+   "node": "review",
+   "edge": "review→merge-card[ok]",
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "firstmate/gate-scope",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": {
+    "detail": "3 paths inside the scope; door two-way",
+    "head": "8a8f29c77c30b64494146dbb62dc0116c0511242"
+   }
+  },
+  {
+   "seq": 37,
+   "at": "2026-10-14T09:31:44.613Z",
+   "run": "R-002",
+   "node": "review",
+   "edge": "review→merge-card[ok]",
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "firstmate/gate-failfirst",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": {
+    "detail": "fail-first pass at 8a8f29c7",
+    "head": "8a8f29c77c30b64494146dbb62dc0116c0511242"
+   }
+  },
+  {
+   "seq": 38,
+   "at": "2026-10-14T09:31:44.614Z",
+   "run": "R-002",
+   "node": "review",
+   "edge": "review→merge-card[ok]",
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "firstmate/gate-ci",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": {
+    "detail": "CI pass at 8a8f29c7",
+    "head": "8a8f29c77c30b64494146dbb62dc0116c0511242"
+   }
+  },
+  {
+   "seq": 39,
+   "at": "2026-10-14T09:31:44.616Z",
+   "run": "R-002",
+   "node": "review",
+   "edge": "review→merge-card[ok]",
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "firstmate/gate-approval",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "pass",
+   "findings": [],
+   "evidence": [],
+   "proves": [],
+   "data": {
+    "detail": "review pass at 8a8f29c7 (claude·claude-opus-5-5 (reviewer #1): pass, claude·claude-opus-5-5: pass, claude·claude-opus-5-5: pass), signed in the ledger #33",
+    "head": "8a8f29c77c30b64494146dbb62dc0116c0511242"
+   }
+  },
+  {
+   "seq": 40,
+   "at": "2026-10-14T09:31:44.719Z",
+   "run": "R-002",
+   "node": "merge-card",
+   "edge": "card:SC-002",
+   "round": 1,
+   "head": "8a8f29c77c30b64494146dbb62dc0116c0511242",
+   "check": "core/ste-wording",
+   "version": "1.0.0",
+   "kind": "deterministic",
+   "record": "check",
+   "verdict": "fail",
+   "findings": [
+    {
+     "locator": {
+      "type": "text",
+      "section": "en.intent",
+      "start": null,
+      "end": null
+     },
+     "message": "R5 should: \"Let format() handle currencies without cents, like JPY: format(1235, \"JPY\") should give \"¥1,235\", an\"",
+     "expected": "plain wording without it (R5)",
+     "class": "ste-R5",
+     "severity": "blocking",
+     "source": "check",
+     "check": "core/ste-wording"
+    }
+   ],
+   "evidence": [],
+   "proves": [],
+   "data": null
+  }
+ ],
+ "stat": " README.md           |  1 +\n src/money.ts        | 10 ++++++++--\n test/format.test.ts | 18 ++++++++++++++++++\n 3 files changed, 27 insertions(+), 2 deletions(-)\n",
+ "cost": {
+  "usd": 0.3941,
+  "rounds": 1,
+  "minutes": 5
+ }
+}

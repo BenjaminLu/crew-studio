@@ -1,0 +1,11 @@
+id: retro-trigger
+version: 1.0.0
+title: { en: "Retro trigger: feeds the retro (M6)", zh-TW: "回顧觸發：餵給回顧（M6）" }
+applies_to: [run]
+kind: hook
+at: after_merge
+native: retro-trigger
+needs: []
+params: { type: object, properties: {} }
+timeout_s: 60
+network: false

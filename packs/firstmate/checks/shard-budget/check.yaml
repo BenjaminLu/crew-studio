@@ -1,0 +1,16 @@
+id: shard-budget
+version: 1.0.0
+title: { en: "No CI shard over the time budget", zh-TW: "沒有 CI 分片超過時間預算" }
+applies_to: [code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact, ci_timings]
+native: shard-budget
+params:
+  type: object
+  properties:
+    budget_s: { type: number, default: 600, minimum: 1 }
+policy_bind:
+  budget_s: shard_budget_s
+timeout_s: 10
+network: false

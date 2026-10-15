@@ -1,0 +1,20 @@
+{
+ "note": "R-002's dispatch card (SC-001), its title and the sections the STE check reads, as Studio raised it",
+ "kind": "dispatch",
+ "title": {
+  "en": "Dispatch: format() supports JPY, a currency without cents",
+  "zh-TW": "派工：format() supports JPY, a currency without cents"
+ },
+ "sections": {
+  "en": {
+   "intent": "Let format() handle currencies without cents, like JPY: format(1235, \"JPY\") should give \"¥1,235\", and existing USD output must stay the same.",
+   "why": "Some currencies, like the Japanese yen, have no minor unit. format() assumes cents everywhere, so 1235 yen comes out as \"$12.35\": the wrong symbol and the wrong value. Existing callers pass only an amount and depend on today's USD text, so the default output has to stay the same. The captain's example \"¥1,235\" has a thousands separator while USD output has none today. This spec adds grouping for JPY only and leaves USD unchanged, as the intent says.",
+   "how": "A worker builds it on its own branch. Checks and a fresh reviewer judge each round."
+  },
+  "zh-TW": {
+   "intent": "目前 format() 把每個金額都當成美分，所以 1235 日圓會顯示成「$12.35」。改動之後可以傳入幣別：format(1235, \"JPY\") 會得到「¥1,235」，千位有逗號、沒有小數。不傳幣別或傳 \"USD\" 時，輸出和以前完全一樣。",
+   "why": "船長要求的變更。",
+   "how": "worker 在自己的 branch 上做；每一輪由檢查和全新的 reviewer 判定。"
+  }
+ }
+}

@@ -1,0 +1,60 @@
+diff --git a/README.md b/README.md
+index 0c23862..7147d86 100644
+--- a/README.md
++++ b/README.md
+@@ -10,6 +10,7 @@ It is the sandbox repository Crew Studio's coding workflow runs on. To publish i
+ import { add, format, split } from "./src/money";
+ format(add(1999, 1)); // "$20.00"
+ split(1000, 3);       // [334, 333, 333]
++format(1235, "JPY");  // "¥1,235" (yen have no cents)
+ ```
+ 
+ ## Develop
+diff --git a/src/money.ts b/src/money.ts
+index cf62306..619beb4 100644
+--- a/src/money.ts
++++ b/src/money.ts
+@@ -13,9 +13,15 @@ export function split(amount: number, parts: number): number[] {
+   return Array.from({ length: parts }, (_, i) => base + (i < extra ? 1 : 0));
+ }
+ 
+-/** "$12.34" from 1234. */
+-export function format(amount: number): string {
++/** Currencies format() knows. USD amounts are in cents; JPY amounts are whole yen. */
++export type Currency = "USD" | "JPY";
++
++/** "$12.34" from 1234 (USD, the default); "¥1,234" from (1234, "JPY"). */
++export function format(amount: number, currency: Currency = "USD"): string {
+   const sign = amount < 0 ? "-" : "";
+   const abs = Math.abs(amount);
++  if (currency === "JPY") {
++    return `${sign}¥${String(abs).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
++  }
+   return `${sign}$${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, "0")}`;
+ }
+diff --git a/test/format.test.ts b/test/format.test.ts
+index cb36b38..a298a24 100644
+--- a/test/format.test.ts
++++ b/test/format.test.ts
+@@ -6,3 +6,21 @@ describe("format", () => {
+   test("pads the cents", () => expect(format(105)).toBe("$1.05"));
+   test("shows a minus sign", () => expect(format(-250)).toBe("-$2.50"));
+ });
++
++describe("format with JPY", () => {
++  test("shows whole yen with a thousands separator", () => expect(format(1235, "JPY")).toBe("¥1,235"));
++  test("shows a minus sign and zero", () => {
++    expect(format(-1235, "JPY")).toBe("-¥1,235");
++    expect(format(0, "JPY")).toBe("¥0");
++  });
++  test("groups JPY thousands but leaves USD ungrouped", () => {
++    expect(format(123456, "JPY")).toBe("¥123,456");
++    expect(format(123456)).toBe("$1234.56");
++    expect(format(123456, "USD")).toBe("$1234.56");
++  });
++  test("USD matches the default while JPY differs", () => {
++    expect(format(1999, "JPY")).toBe("¥1,999");
++    expect(format(1999, "USD")).toBe("$19.99");
++    expect(format(1999, "USD")).toBe(format(1999));
++  });
++});

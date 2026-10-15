@@ -1,0 +1,18 @@
+#!/usr/bin/env node
+// caller-coverage: grep the repo for files that import/source each scoped shared file; each must be in scope.
+const fs = require("fs"), path = require("path");
+let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+  const i = JSON.parse(s); const root = i.workdir; const scope = (i.artifact?.data?.scope ?? i.artifact?.scope ?? []).map(String);
+  const inScope = (p) => scope.some((g) => g === p || (g.endsWith("/") && p.startsWith(g)) || p.startsWith(g.replace(/\/?\*\*.*$/, "") + "/"));
+  const files = []; const walk = (d) => { for (const n of fs.readdirSync(d)) { if (n === ".git" || n === "node_modules") continue; const p = path.join(d, n); const st = fs.lstatSync(p); if (st.isDirectory()) walk(p); else if (st.isFile() && st.size < 400000) files.push(path.relative(root, p)); } };
+  if (!root || !fs.existsSync(root)) { process.stdout.write(JSON.stringify({ verdict: "error", findings: [], evidence: [], proves: [], score: null })); return; }
+  walk(root);
+  const shared = scope.filter((p) => fs.existsSync(path.join(root, p)) && fs.statSync(path.join(root, p)).isFile() && (i.params.exts ?? []).includes(path.extname(p)));
+  const f = [];
+  for (const sh of shared) {
+    const base = path.basename(sh).replace(/\.[^.]+$/, ""); const re = new RegExp(`(import|require|source|from)[^\\n]*\\b${base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\.[a-z]+)?\\b`);
+    for (const c of files) { if (c === sh || inScope(c)) continue; const lines = fs.readFileSync(path.join(root, c), "utf8").split("\n"); const k = lines.findIndex((l) => re.test(l));
+      if (k >= 0) f.push({ locator: { type: "file", path: c, line: k + 1 }, message: `${c} uses ${sh} but is not in the scope`, expected: `add ${c} (or its folder) to the scope`, class: "caller-out-of-scope", severity: "blocking" }); }
+  }
+  process.stdout.write(JSON.stringify({ verdict: f.length ? "fail" : "pass", score: f.length ? 0 : 1, findings: f.slice(0, 30), evidence: [], proves: [] }));
+});

@@ -1,0 +1,8 @@
+#!/usr/bin/env node
+let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+  const i = JSON.parse(s); const items = i.artifact?.data?.items ?? []; const f = [];
+  if (!items.length) f.push({ locator: { type: "card", field: "items" }, message: "the brief has no items", expected: "one item per failing finding", class: "brief-empty", severity: "blocking" });
+  items.forEach((it, k) => { const miss = ["locator", "expected", "class"].filter((x) => !it[x] || (typeof it[x] === "string" && !it[x].trim()));
+    if (miss.length) f.push({ locator: { type: "card", field: "items", index: k }, message: `item ${k + 1} has no ${miss.join(", ")}`, expected: "a locator, an expected change and a class", class: "brief-item", severity: "blocking" }); });
+  process.stdout.write(JSON.stringify({ verdict: f.length ? "fail" : "pass", score: items.length ? 1 - f.length / items.length : 0, findings: f, evidence: [], proves: [] }));
+});

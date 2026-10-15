@@ -1,0 +1,8 @@
+# Fix: the migration's proof and the skins' stale snapshots (sandbox-worktrees r3, one-live-stream r1)
+
+Answers sandbox-worktrees r3 #7 (must-fix), #8 and one-live-stream r1 #1, #2 (must-fix). Done when (red on the base unless noted):
+
+1. sw #7 The migration is proved through Studio's start (`tests/worktrees.ts`, the boot block): it runs before the sweep (the sweep then finds the moved worktree and its lock in the new place); the lock moves; each step is logged (work kept, worktree moved, lock moved, migrated); entries that are not old-layout worktree records (another unit's folder and JSON, a JSON that is not a record) are never touched.
+2. sw #8 A record whose folder name differs from its own ids (the old `safe()` rewrite) migrates under its own ids when they are valid; otherwise it is parked, with its lock, in `data/work/wt/.quarantine/` with a log line; never dropped. — "a record whose ids the old rewrite folded … is parked …", "… migrates under its own ids".
+3. ls #1 `tests/skins.mjs`: one `/api/stream` request with voyage showing (green on the base: a guard); a snapshot delayed past pro mode raises no page error and posts nothing.
+4. ls #2 `feed()` captures the skin and frame before its await and posts only if they are still the ones showing; a late failure changes nothing; every message to a skin's frame goes through one `post()`. — "a late snapshot for one skin is never posted into another skin's frame" (red on the base: voyage's snapshot was posted into terminal's frame). Swept the other modules' awaits: runtime.js keys its loads to the page object (`WF.ed`, `RN.view`) and renders only when still current; m8.js keys its detail cache by id; no other post-after-await into a shared target.

@@ -1,0 +1,11 @@
+id: artifact-ready
+version: 1.0.0
+title: { en: "Artifact source and required output are intact", zh-TW: "作品原始檔與必要輸出完整" }
+applies_to: [run]
+kind: deterministic
+blocking: true
+needs: [artifact]
+native: artifact-ready
+params: { type: object, properties: {} }
+timeout_s: 30
+network: false

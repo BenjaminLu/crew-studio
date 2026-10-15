@@ -1,0 +1,465 @@
+{
+ "id": "code-firstmate",
+ "version": 2,
+ "name": "code-firstmate",
+ "nodes": [
+  {
+   "id": "intake",
+   "kind": "hook",
+   "label": "Capture intent"
+  },
+  {
+   "id": "prepare",
+   "kind": "hook",
+   "label": "Worktree"
+  },
+  {
+   "id": "spec",
+   "kind": "agent",
+   "label": "Spec"
+  },
+  {
+   "id": "spec-fix",
+   "kind": "loop",
+   "label": "Refine spec",
+   "args": {
+    "producer": "spec",
+    "coordinator": "coordinator",
+    "route_classes": {
+     "door-change": "door-change"
+    }
+   }
+  },
+  {
+   "id": "dispatch",
+   "kind": "card",
+   "label": "Dispatch card",
+   "args": {
+    "body_from": "dispatch",
+    "card_kind": "dispatch"
+   }
+  },
+  {
+   "id": "door",
+   "kind": "check",
+   "label": "Door",
+   "args": {
+    "route_from": "firstmate/door-classify",
+    "store": "door"
+   }
+  },
+  {
+   "id": "door-pick",
+   "kind": "card",
+   "label": "Pick the door",
+   "args": {
+    "body_from": "door",
+    "card_kind": "question"
+   }
+  },
+  {
+   "id": "plan",
+   "kind": "agent",
+   "label": "Plan round"
+  },
+  {
+   "id": "plan-fix",
+   "kind": "loop",
+   "label": "Refine plan",
+   "args": {
+    "producer": "plan"
+   }
+  },
+  {
+   "id": "plan-accept",
+   "kind": "agent",
+   "label": "Accept plan"
+  },
+  {
+   "id": "build",
+   "kind": "agent",
+   "label": "Build round"
+  },
+  {
+   "id": "ci",
+   "kind": "check",
+   "label": "CI"
+  },
+  {
+   "id": "review",
+   "kind": "agent",
+   "label": "Fresh reviewer"
+  },
+  {
+   "id": "fix",
+   "kind": "loop",
+   "label": "Fix (refine loop)",
+   "args": {
+    "producer": "build",
+    "coordinator": "coordinator",
+    "route_classes": {
+     "door-change": "door-change"
+    },
+    "report_checks": [
+     "firstmate/report-schema"
+    ]
+   }
+  },
+  {
+   "id": "merge-card",
+   "kind": "card",
+   "label": "Merge card",
+   "args": {
+    "body_from": "merge",
+    "card_kind": "merge"
+   }
+  },
+  {
+   "id": "merge",
+   "kind": "hook",
+   "label": "Merge"
+  },
+  {
+   "id": "after-merge",
+   "kind": "hook",
+   "label": "After merge"
+  },
+  {
+   "id": "cleanup",
+   "kind": "hook",
+   "label": "Clean up"
+  },
+  {
+   "id": "done",
+   "kind": "hook",
+   "label": "Merged",
+   "args": {
+    "summary": "merged {{ctx.merged.head}} into {{ctx.base}}"
+   }
+  },
+  {
+   "id": "step-back",
+   "kind": "card",
+   "label": "Step-back card",
+   "args": {
+    "body_from": "step-back",
+    "card_kind": "step-back"
+   }
+  },
+  {
+   "id": "stalled",
+   "kind": "card",
+   "label": "No-progress card",
+   "args": {
+    "body_from": "stalled",
+    "card_kind": "step-back"
+   }
+  },
+  {
+   "id": "budget",
+   "kind": "card",
+   "label": "Round-budget card",
+   "args": {
+    "body_from": "budget",
+    "card_kind": "round-budget"
+   }
+  },
+  {
+   "id": "scope-card",
+   "kind": "card",
+   "label": "Scope card",
+   "args": {
+    "body_from": "scope",
+    "card_kind": "scope"
+   }
+  },
+  {
+   "id": "parked",
+   "kind": "hook",
+   "label": "Parked",
+   "args": {
+    "result": "closed",
+    "summary": "parked by the captain"
+   }
+  },
+  {
+   "id": "closed",
+   "kind": "hook",
+   "label": "Closed",
+   "args": {
+    "result": "closed",
+    "summary": "closed without merging"
+   }
+  },
+  {
+   "id": "dropped",
+   "kind": "hook",
+   "label": "Dropped",
+   "args": {
+    "result": "closed",
+    "summary": "dropped at dispatch"
+   }
+  }
+ ],
+ "edges": [
+  {
+   "from": "intake",
+   "to": "prepare"
+  },
+  {
+   "from": "prepare",
+   "to": "spec"
+  },
+  {
+   "from": "spec",
+   "to": "dispatch",
+   "when": "ok"
+  },
+  {
+   "from": "spec",
+   "to": "spec-fix",
+   "when": "fail"
+  },
+  {
+   "from": "spec-fix",
+   "to": "spec",
+   "when": "retry|report"
+  },
+  {
+   "from": "spec-fix",
+   "to": "dispatch",
+   "when": "pass"
+  },
+  {
+   "from": "spec-fix",
+   "to": "scope-card",
+   "when": "step-back|stalled|cap|door-change"
+  },
+  {
+   "from": "dispatch",
+   "to": "door",
+   "when": "dispatch"
+  },
+  {
+   "from": "dispatch",
+   "to": "spec",
+   "when": "rescope"
+  },
+  {
+   "from": "dispatch",
+   "to": "dropped",
+   "when": "drop"
+  },
+  {
+   "from": "door",
+   "to": "plan",
+   "when": "one-way"
+  },
+  {
+   "from": "door",
+   "to": "build",
+   "when": "two-way"
+  },
+  {
+   "from": "door",
+   "to": "door-pick",
+   "when": "undecided"
+  },
+  {
+   "from": "door-pick",
+   "to": "door"
+  },
+  {
+   "from": "plan",
+   "to": "plan-accept",
+   "when": "ok"
+  },
+  {
+   "from": "plan",
+   "to": "plan-fix",
+   "when": "fail"
+  },
+  {
+   "from": "plan-fix",
+   "to": "plan",
+   "when": "retry|report"
+  },
+  {
+   "from": "plan-fix",
+   "to": "plan-accept",
+   "when": "pass"
+  },
+  {
+   "from": "plan-fix",
+   "to": "scope-card",
+   "when": "step-back|stalled|cap|door-change"
+  },
+  {
+   "from": "plan-accept",
+   "to": "build",
+   "when": "accept"
+  },
+  {
+   "from": "plan-accept",
+   "to": "plan",
+   "when": "revise"
+  },
+  {
+   "from": "plan-accept",
+   "to": "scope-card",
+   "when": "escalate"
+  },
+  {
+   "from": "build",
+   "to": "ci",
+   "when": "ok"
+  },
+  {
+   "from": "build",
+   "to": "fix",
+   "when": "fail"
+  },
+  {
+   "from": "build",
+   "to": "scope-card",
+   "when": "blocked"
+  },
+  {
+   "from": "build",
+   "to": "door",
+   "when": "door-change"
+  },
+  {
+   "from": "ci",
+   "to": "review",
+   "when": "pass"
+  },
+  {
+   "from": "ci",
+   "to": "fix",
+   "when": "fail"
+  },
+  {
+   "from": "review",
+   "to": "merge-card",
+   "when": "ok"
+  },
+  {
+   "from": "review",
+   "to": "fix",
+   "when": "fail"
+  },
+  {
+   "from": "fix",
+   "to": "build",
+   "when": "retry|report"
+  },
+  {
+   "from": "fix",
+   "to": "ci",
+   "when": "pass"
+  },
+  {
+   "from": "fix",
+   "to": "step-back",
+   "when": "step-back"
+  },
+  {
+   "from": "fix",
+   "to": "stalled",
+   "when": "stalled"
+  },
+  {
+   "from": "fix",
+   "to": "budget",
+   "when": "cap"
+  },
+  {
+   "from": "fix",
+   "to": "door",
+   "when": "door-change"
+  },
+  {
+   "from": "step-back",
+   "to": "spec",
+   "when": "rescope"
+  },
+  {
+   "from": "step-back",
+   "to": "build",
+   "when": "continue"
+  },
+  {
+   "from": "step-back",
+   "to": "parked",
+   "when": "park"
+  },
+  {
+   "from": "stalled",
+   "to": "spec",
+   "when": "rescope"
+  },
+  {
+   "from": "stalled",
+   "to": "build",
+   "when": "continue"
+  },
+  {
+   "from": "stalled",
+   "to": "parked",
+   "when": "park"
+  },
+  {
+   "from": "budget",
+   "to": "build",
+   "when": "extend"
+  },
+  {
+   "from": "budget",
+   "to": "spec",
+   "when": "rescope"
+  },
+  {
+   "from": "budget",
+   "to": "parked",
+   "when": "park"
+  },
+  {
+   "from": "scope-card",
+   "to": "spec",
+   "when": "rescope"
+  },
+  {
+   "from": "scope-card",
+   "to": "parked",
+   "when": "park"
+  },
+  {
+   "from": "merge-card",
+   "to": "merge",
+   "when": "merge"
+  },
+  {
+   "from": "merge-card",
+   "to": "fix",
+   "when": "changes"
+  },
+  {
+   "from": "merge-card",
+   "to": "closed",
+   "when": "close"
+  },
+  {
+   "from": "merge",
+   "to": "after-merge"
+  },
+  {
+   "from": "after-merge",
+   "to": "cleanup"
+  },
+  {
+   "from": "cleanup",
+   "to": "done"
+  }
+ ]
+}

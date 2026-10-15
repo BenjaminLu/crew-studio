@@ -1,0 +1,41 @@
+# The file-organization pack as a run: a dry-run plan, the pack's gates, the
+# captain's card, then the moves with a write-ahead undo log.
+id: file-organization
+name: File organization
+kind: files
+version: 1
+description: "Tidy a folder: dry-run plan → gates → captain's card → apply (undo log)."
+intent:
+  keywords: [tidy, organize, organise, sort, folder, files, downloads, desktop, clean, cleanup]
+params:
+  folder: { label: "Folder to tidy (absolute path)" }
+roles: []
+nodes:
+  - { id: intake, kind: hook, label: Capture intent, do: deliver.intake, x: 170, y: 100 }
+  - { id: plan, kind: hook, label: Dry-run plan, do: fileorg.plan, x: 340, y: 100 }
+  - id: gates
+    kind: check
+    label: Pack gates
+    checks:
+      - { use: file-organization/plan-gates }
+    x: 510
+    y: 100
+  - id: card
+    kind: card
+    label: Approve moves
+    args: { body_from: fileorg, card_kind: acceptance }
+    x: 680
+    y: 100
+  - { id: apply, kind: hook, label: Apply, detail: "undo log first", do: fileorg.apply, x: 850, y: 100 }
+  - { id: done, kind: hook, label: Tidied, x: 1020, y: 100 }
+  - { id: discard, kind: hook, label: Discard plan, do: fileorg.discard, x: 850, y: 240 }
+  - { id: discarded, kind: hook, label: Discarded, args: { result: closed }, x: 1020, y: 240 }
+edges:
+  - [intake, plan]
+  - [plan, gates]
+  - [gates, card, pass]
+  - [gates, discard, fail]
+  - [card, apply, apply]
+  - [card, discard, discard]
+  - [apply, done]
+  - [discard, discarded]

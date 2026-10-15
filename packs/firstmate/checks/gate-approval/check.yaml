@@ -1,0 +1,11 @@
+id: gate-approval
+version: 1.0.0
+title: { en: "Gate: approval", zh-TW: "閘門：approval" }
+applies_to: [code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact, gate_state]
+native: gate-approval
+params: { type: object, properties: {} }
+timeout_s: 30
+network: false

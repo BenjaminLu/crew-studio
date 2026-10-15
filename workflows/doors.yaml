@@ -1,0 +1,39 @@
+# Door classification: the org-level defaults every project starts from.
+# A two-way change can be undone by a revert; a one-way change cannot (data
+# formats, deleted data, public interfaces, credentials and permissions, CI and
+# release configuration). Studio sorts every change into a risk tier:
+#   one-way    a changed path is on the org base list or the project's approved list
+#   undecided  a path no list can classify (a new top-level path, a rename): the captain picks
+#   trivial    every path is on the trivial list and the diff is small: two-way, light gates
+#   two-way    everything else
+# Globs: ** spans folders, * stays inside one; a glob with no "/" matches the
+# file name at any depth. The org policy and a project ADD lines through policy
+# sensitive_paths (data/policies/org.yaml, data/policies/project-<id>.yaml; a
+# proposed project list counts only after the captain approves it); no project
+# can remove an org line.
+base:
+  - { glob: ".github/**", why: "CI and workflow configuration" }
+  - { glob: ".gitlab-ci.yml", why: "CI configuration" }
+  - { glob: ".circleci/**", why: "CI configuration" }
+  - { glob: "Jenkinsfile", why: "CI configuration" }
+  - { glob: "migrations/**", why: "a data migration" }
+  - { glob: "**/migrations/**", why: "a data migration" }
+  - { glob: "*.sql", why: "an SQL file" }
+  - { glob: ".env", why: "an environment file" }
+  - { glob: ".env.*", why: "an environment file" }
+  - { glob: "**/secrets/**", why: "a secrets folder" }
+  - { glob: "*.pem", why: "a key or certificate" }
+  - { glob: "*.key", why: "a key" }
+  - { glob: "**/auth/**", why: "authentication and permissions" }
+  - { glob: "**/permissions/**", why: "permissions" }
+  - { glob: "*.proto", why: "a public interface" }
+  - { glob: "openapi.*", why: "a public interface" }
+  - { glob: "**/schema/**", why: "a data format" }
+trivial:
+  - { glob: "docs/**", why: "documentation" }
+  - { glob: "*.md", why: "a text document" }
+  - { glob: "assets/**", why: "a static asset" }
+  - { glob: "*.png", why: "an image" }
+  - { glob: "*.jpg", why: "an image" }
+  - { glob: "*.svg", why: "an image" }
+trivial_max_lines: 40

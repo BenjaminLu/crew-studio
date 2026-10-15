@@ -1,0 +1,50 @@
+# Studio's own change path for a local repository: the door picks the path,
+# script gates run per node, and a failing gate goes to a worker/reviewer
+# cycle until it passes or the round budget runs out. The captain merges.
+# Gates: builtin (deterministic checks inside Studio) or run (an argv run in
+# the change's worktree, configured here or by the project, never by an agent).
+id: change
+name: Change (Studio)
+version: 1
+description: "A change to a local repository, sorted by door, checked by script gates, fixed by a worker/reviewer cycle, merged by the captain."
+nodes:
+  - { id: intake, kind: human, label: New change, detail: "branch + project", x: 0, y: 100 }
+  - { id: door, kind: router, label: Door, detail: "paths → risk tier", x: 210, y: 100 }
+  - id: plan
+    kind: gate
+    label: Plan check
+    detail: "one-way only"
+    lane: one-way
+    x: 420
+    y: 230
+    gates:
+      - { id: rollback-note, label: "The change says how to roll back", builtin: commit-mentions, args: { pattern: "rollback|roll back|revert" }, when: { door: [one-way] } }
+  - id: checks
+    kind: gate
+    label: Script gates
+    detail: "deterministic checks"
+    x: 630
+    y: 100
+    gates:
+      - { id: no-conflict-markers, label: "No conflict markers", builtin: no-conflict-markers }
+      - { id: no-secrets, label: "No secrets in added lines", builtin: no-secrets }
+      - { id: tests-line-cap, label: "No tests file over 1200 lines", builtin: max-file-lines, args: { glob: "tests/**", max: 1200 } }
+      - { id: json-valid, label: "Changed JSON parses", builtin: json-valid }
+      - { id: diff-size, label: "Diff within 400 lines", builtin: max-diff-lines, args: { max: 400 }, when: { door: [two-way, trivial] } }
+    cycle: { worker: worker, reviewer: reviewer, max_rounds: 3 }
+  - { id: review, kind: loop, label: Review, detail: "fresh reviewer", x: 840, y: 100 }
+  - { id: merge, kind: human, label: Merge card, detail: "Captain clicks Merge", x: 1050, y: 100 }
+  - { id: done, kind: done, label: Merged, detail: "base fast-forwarded", x: 1260, y: 100 }
+edges:
+  - [intake, door]
+  - [door, checks, two-way]
+  - [door, plan, one-way]
+  - [plan, checks]
+  - [checks, review]
+  - [review, checks, REJECT]
+  - [review, merge]
+  - [merge, done]
+roles:
+  - { id: worker, label: Change worker, skill: "bundled:workflows/skills/change-worker.md" }
+  - { id: reviewer, label: Change reviewer, skill: "bundled:workflows/skills/change-reviewer.md" }
+retro: workflows/change.retro.yaml

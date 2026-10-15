@@ -1,0 +1,17 @@
+id: documents
+name: Documents
+version: 1.0.0
+description: "Draft a document, pin notes on its paragraphs, let the writer revise it (a new version each time), approve it once no note is open, and export it as Markdown, HTML, Word or PDF."
+engine: documents
+skills:
+  - { role: writer, file: skills/writer.md }
+gates:
+  - { id: has-title, builtin: doc-has-title, label: "The document starts with a title" }
+  - { id: no-open-notes, builtin: doc-no-open-notes, label: "No note is still open" }
+artifactTypes:
+  - { id: doc, label: "Document", viewer: doc }
+workflows:
+  - workflows/document.flow.yaml
+evals:
+  - evals/writer.json
+permissions: [agent]

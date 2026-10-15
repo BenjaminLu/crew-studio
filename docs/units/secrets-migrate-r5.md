@@ -1,0 +1,6 @@
+# Fix round 5, secrets and migration (secrets-migrate r4 REJECT)
+
+Done when (red on fbb56ef):
+1. #10 must-fix: a login source that fails moves on to the next; a round is refused only when every source fails, and the refusal lists why each one did (claude: crew keychain item, crew token file, own keychain login, own credentials file; codex: CODEX_API_KEY, then auth.json, same rule). `tests/secret-registry.ts`: "a denied keychain prompt on the crew keychain item moves on: the valid crew token file is used …", "an empty keychain item on the crew keychain item moves on …", "a denied keychain prompt, then an expired own login: refused only when every source fails, listing why each one failed", "an empty keychain item, then an expired own login: …".
+2. #11: the source-expression exemption is gone (`isSourceExpression` deleted); a `name = value` line under a credential name, ini or source, goes whatever its right side looks like. — "a name = value line under a credential name (ini, properties, my.cnf, or source) goes whatever its right side looks like …".
+3. #12: a quarantine folder is named `<ISO-ms>-<project>-<stem>-<random>` and made with a plain mkdir; a name already taken gets a new suffix, never a rename onto it. `tests/worktrees.ts`: "two parks of the same stem from different projects in the same millisecond each get a folder of their own …".

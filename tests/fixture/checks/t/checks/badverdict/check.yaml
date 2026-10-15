@@ -1,0 +1,8 @@
+id: badverdict
+version: 1.0.0
+title: { en: "Writes an unknown verdict" }
+applies_to: [run]
+kind: deterministic
+needs: []
+params: { type: object, properties: {} }
+timeout_s: 10

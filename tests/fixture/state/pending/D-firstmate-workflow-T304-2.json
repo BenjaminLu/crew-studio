@@ -1,0 +1,340 @@
+{
+ "id": "D-firstmate-workflow-T304-2",
+ "details": {
+  "en": {
+   "title": "MERGE CARD — merge PR #287: a round refused only for its report keeps its work",
+   "explanation": "The review approved T-304. CI and the six gates are green on this head.",
+   "intent": [
+    {
+     "kind": "fact",
+     "text": "The class line accepts detail between the numbers."
+    },
+    {
+     "kind": "fact",
+     "text": "A round refused only for its report keeps its code."
+    },
+    {
+     "kind": "fact",
+     "text": "The next round fixes only the report."
+    },
+    {
+     "kind": "fact",
+     "text": "A launch never wipes kept work, even with a pull request."
+    }
+   ],
+   "why": [
+    {
+     "kind": "fact",
+     "text": "T-303 lost a 49-minute round to one report line."
+    },
+    {
+     "kind": "fact",
+     "text": "The next launch deleted the code when the task had a pull request."
+    }
+   ],
+   "scope_in": [
+    "the worker launcher",
+    "the plan check",
+    "the evidence log",
+    "tests",
+    "docs"
+   ],
+   "scope_out": [
+    "rounds refused for their code",
+    "external projects",
+    "old rescued work"
+   ],
+   "done": [
+    {
+     "kind": "fact",
+     "text": "Intent 1: a test shows a class line with detail passes."
+    },
+    {
+     "kind": "fact",
+     "text": "Intent 2: a test shows a report-only refusal keeps the code."
+    },
+    {
+     "kind": "fact",
+     "text": "Intent 3: a test shows a code change in the report round is refused."
+    },
+    {
+     "kind": "fact",
+     "text": "Intent 4: a test shows kept work survives a launch with a pull request."
+    }
+   ],
+   "before_nodes": [
+    {
+     "state": "same",
+     "label": "Report refused"
+    },
+    {
+     "state": "gone",
+     "label": "Code deleted"
+    },
+    {
+     "state": "same",
+     "label": "Next round"
+    }
+   ],
+   "after_nodes": [
+    {
+     "state": "same",
+     "label": "Report refused"
+    },
+    {
+     "state": "new",
+     "label": "Code kept"
+    },
+    {
+     "state": "same",
+     "label": "Next round"
+    }
+   ],
+   "before": "A round refused only for its report can lose all of its code at the next launch.",
+   "after": "The code stays, and the next round fixes only the report.",
+   "outcome": "Option A merges only PR #287.",
+   "how": [
+    {
+     "kind": "fact",
+     "text": "A small record notes the refused round, and the next launch keeps that work when the pin and head match."
+    }
+   ],
+   "change_table": [
+    {
+     "text": "A report-only refusal keeps the code.",
+     "A": "✓",
+     "B": "—",
+     "C": "—"
+    }
+   ],
+   "options": {
+    "A": {
+     "description": "Merge #287",
+     "pros": "A report mistake no longer costs a full round.",
+     "cons": "A wrong record keeps old work until the pin or head changes."
+    },
+    "B": {
+     "description": "Hold the merge",
+     "pros": "The code stays the same.",
+     "cons": "A report mistake can still delete a round."
+    },
+    "C": {
+     "description": "Ask for a fix",
+     "pros": "You can change the scope.",
+     "cons": "A change needs a new review, CI and six gates."
+    }
+   },
+   "questions": [
+    {
+     "kind": "fact",
+     "text": "Do you approve the merge of #287?"
+    }
+   ],
+   "glossary": [
+    {
+     "id": "fail-first",
+     "term": "fail-first",
+     "text": "A fail-first test fails on the old code and passes on the new code."
+    },
+    {
+     "id": "gate",
+     "term": "gate",
+     "text": "A gate is one automatic check that a pull request must pass before a merge card appears."
+    },
+    {
+     "id": "pin",
+     "term": "pin",
+     "text": "A pin is a frozen copy of an approved spec that a task uses until the captain approves a change."
+    },
+    {
+     "id": "round",
+     "term": "round",
+     "text": "A round is one worker run or one reviewer run on a task."
+    },
+    {
+     "id": "scope",
+     "term": "scope",
+     "text": "The scope is the list of file patterns that a task may change."
+    },
+    {
+     "id": "six-gates",
+     "term": "six gates",
+     "text": "The six gates are branch, rebase, scope, fail-first, CI and approval."
+    }
+   ]
+  },
+  "zh-TW": {
+   "title": "【合併卡】合併 PR #287：只有報告不合格的一輪會保留工作",
+   "explanation": "審查通過 T-304。這個 head 的 CI 和六道 gate 都是綠的。",
+   "intent": [
+    {
+     "kind": "fact",
+     "text": "class 行的數字之間可以加說明。"
+    },
+    {
+     "kind": "fact",
+     "text": "只有報告不合格的一輪，code 會保留。"
+    },
+    {
+     "kind": "fact",
+     "text": "下一輪只修報告。"
+    },
+    {
+     "kind": "fact",
+     "text": "有 PR 時，啟動也不會清掉保留的工作。"
+    }
+   ],
+   "why": [
+    {
+     "kind": "fact",
+     "text": "T-303 因一行報告丟了 49 分鐘的一輪。"
+    },
+    {
+     "kind": "fact",
+     "text": "任務已有 PR 時，下次啟動會刪掉 code。"
+    }
+   ],
+   "scope_in": [
+    "worker 啟動器",
+    "計畫檢查",
+    "證據紀錄",
+    "測試",
+    "文件"
+   ],
+   "scope_out": [
+    "因 code 退件的輪",
+    "外部專案",
+    "舊的救回工作"
+   ],
+   "done": [
+    {
+     "kind": "fact",
+     "text": "意圖 1：測試證明帶說明的 class 行能通過。"
+    },
+    {
+     "kind": "fact",
+     "text": "意圖 2：測試證明只有報告不合格時 code 保留。"
+    },
+    {
+     "kind": "fact",
+     "text": "意圖 3：測試證明修報告的輪改了 code 就退回。"
+    },
+    {
+     "kind": "fact",
+     "text": "意圖 4：測試證明有 PR 時保留的工作還在。"
+    }
+   ],
+   "before_nodes": [
+    {
+     "state": "same",
+     "label": "報告退件"
+    },
+    {
+     "state": "gone",
+     "label": "code 刪除"
+    },
+    {
+     "state": "same",
+     "label": "下一輪"
+    }
+   ],
+   "after_nodes": [
+    {
+     "state": "same",
+     "label": "報告退件"
+    },
+    {
+     "state": "new",
+     "label": "code 保留"
+    },
+    {
+     "state": "same",
+     "label": "下一輪"
+    }
+   ],
+   "before": "只有報告不合格的一輪，下次啟動時會丟掉全部 code。",
+   "after": "code 保留，下一輪只修報告。",
+   "outcome": "選 A 只合併 PR #287。",
+   "how": [
+    {
+     "kind": "fact",
+     "text": "一筆小紀錄記下退件的輪；pin 和 head 相符時，下次啟動保留該工作。"
+    }
+   ],
+   "change_table": [
+    {
+     "text": "只有報告不合格時 code 保留。",
+     "A": "✓",
+     "B": "—",
+     "C": "—"
+    }
+   ],
+   "options": {
+    "A": {
+     "description": "合併 #287",
+     "pros": "報告寫錯不再浪費一整輪。",
+     "cons": "紀錄出錯時舊工作會留到 pin 或 head 改變。"
+    },
+    "B": {
+     "description": "暫緩合併",
+     "pros": "程式碼不變。",
+     "cons": "報告寫錯仍會刪掉一輪。"
+    },
+    "C": {
+     "description": "要求修改",
+     "pros": "你可以調整範圍。",
+     "cons": "修改後要重新審查、跑 CI 和六道 gate。"
+    }
+   },
+   "questions": [
+    {
+     "kind": "fact",
+     "text": "你同意合併 #287 嗎？"
+    }
+   ],
+   "glossary": [
+    {
+     "id": "fail-first",
+     "term": "先失敗測試",
+     "text": "先失敗測試在舊程式上失敗，在新程式上通過。"
+    },
+    {
+     "id": "gate",
+     "term": "關卡",
+     "text": "關卡是合併卡出現前，PR 必須通過的一項自動檢查。"
+    },
+    {
+     "id": "pin",
+     "term": "固定版本",
+     "text": "固定版本是已核准規格的凍結副本，任務用它直到船長核准修改。"
+    },
+    {
+     "id": "round",
+     "term": "輪次",
+     "text": "輪次是工人或審查者在一個任務上的一次執行。"
+    },
+    {
+     "id": "scope",
+     "term": "範圍",
+     "text": "範圍是任務可以修改的檔案模式清單。"
+    },
+    {
+     "id": "six-gates",
+     "term": "六關",
+     "text": "六關是分支、重定基底、範圍、先失敗測試、CI 和核准。"
+    }
+   ]
+  },
+  "walk": {
+   "status": "invalid",
+   "reason": "note fails STE",
+   "head": "60ec1cbe270ae90469fbe85407c36a9c2add6ab0"
+  }
+ },
+ "title": "MERGE CARD — merge PR #287: a round refused only for its report keeps its work",
+ "task": "T-304",
+ "pr": 287,
+ "kind": "merge",
+ "project": "firstmate-workflow",
+ "ts": "2026-10-13T13:22:35.646Z"
+}

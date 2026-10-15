@@ -1,0 +1,11 @@
+id: plan-covers-done-lines
+version: 1.0.0
+title: { en: "The plan has a row for every done line", zh-TW: "計畫對每條完成條件都有一列" }
+applies_to: [plan]
+kind: deterministic
+blocking: true
+needs: [artifact, spec]
+params: { type: object, properties: {} }
+timeout_s: 20
+network: false
+sample: { spec: { done: ["a", "b"] }, artifact: { type: plan, data: { rows: [{ n: 1, test: "t", where: "ci", fails_on_base: "x" }] } } }

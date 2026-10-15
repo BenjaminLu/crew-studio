@@ -1,0 +1,9 @@
+id: failer
+version: 1.0.0
+title: { en: "Fails with a file finding of class C (param cls)" }
+applies_to: [run]
+kind: deterministic
+blocking: true
+needs: []
+params: { type: object, properties: { cls: { type: string, default: "c-one" }, flagfile: { type: string, default: "" } } }
+timeout_s: 10

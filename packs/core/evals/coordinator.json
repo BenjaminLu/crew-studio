@@ -1,0 +1,1 @@
+[{ "id": "EV-core-1", "role": "coordinator", "title": "A brief", "situation": "Two checks fail.", "ask": "What goes in the brief?", "terms": ["locator", "expected"], "expect": [{ "pattern": "expected", "why": "names the expected change" }] }]

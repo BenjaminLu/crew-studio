@@ -1,0 +1,11 @@
+id: pack-genesis-preview
+version: 1.0.0
+title: {en: Measure proposed check changes, zh-TW: 實測提出的檢查變更}
+kind: deterministic
+native: pack-genesis-preview
+blocking: true
+network: false
+timeout_s: 120
+applies_to: [run]
+needs: []
+params: {type: object, properties: {}}

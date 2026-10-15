@@ -1,0 +1,8 @@
+#!/usr/bin/env node
+let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+  const i = JSON.parse(s); const done = i.spec?.done ?? []; const rows = i.artifact?.data?.rows ?? []; const f = [];
+  done.forEach((d, k) => { const r = rows.find((x) => Number(x.n) === k + 1);
+    if (!r) f.push({ locator: { type: "text", section: `rows[${k + 1}]` }, message: `no plan row for done line ${k + 1}: "${String(d).slice(0, 100)}"`, expected: "a row: test, where it runs, how it fails on base", class: "plan-row-missing", severity: "blocking" });
+    else if (!String(r.test ?? "").trim() || !String(r.fails_on_base ?? "").trim()) f.push({ locator: { type: "text", section: `rows[${k + 1}]` }, message: `row ${k + 1} has no test or no fail-on-base`, expected: "name the test and how it fails on base", class: "plan-row-empty", severity: "blocking" }); });
+  process.stdout.write(JSON.stringify({ verdict: f.length ? "fail" : "pass", score: done.length ? 1 - f.length / done.length : 1, findings: f, evidence: [], proves: [] }));
+});

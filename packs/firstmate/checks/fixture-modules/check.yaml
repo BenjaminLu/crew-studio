@@ -1,0 +1,10 @@
+id: fixture-modules
+version: 1.0.0
+title: { en: "A new shared module is in every fixture list", zh-TW: "新的共用模組列在每個 fixture 清單中" }
+applies_to: [code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact, diff, repo_cfg]
+params: { type: object, properties: {} }
+timeout_s: 30
+network: false

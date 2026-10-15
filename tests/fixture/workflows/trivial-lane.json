@@ -1,0 +1,126 @@
+{
+  "id": "trivial-lane",
+  "name": "Trivial lane (banner → README)",
+  "description": "An approved image artifact into a repository's README: recipe, checks, one card, local merge.",
+  "roles": [],
+  "nodes": [
+    {
+      "id": "intake",
+      "kind": "hook",
+      "label": "Capture intent",
+      "do": "intent.capture",
+      "x": 170,
+      "y": 120
+    },
+    {
+      "id": "approve",
+      "kind": "card",
+      "label": "Approve the image",
+      "args": {
+        "mode": "review",
+        "card_kind": "acceptance"
+      },
+      "x": 340,
+      "y": 120
+    },
+    {
+      "id": "recipe",
+      "kind": "hook",
+      "label": "README recipe",
+      "detail": "branch + commit + checks",
+      "do": "lane.recipe",
+      "x": 510,
+      "y": 120
+    },
+    {
+      "id": "merge-card",
+      "kind": "card",
+      "label": "Merge card",
+      "args": {
+        "body_from": "lane",
+        "card_kind": "merge"
+      },
+      "x": 680,
+      "y": 120
+    },
+    {
+      "id": "merge",
+      "kind": "hook",
+      "label": "Merge",
+      "detail": "local fast-forward",
+      "do": "lane.merge",
+      "x": 850,
+      "y": 120
+    },
+    {
+      "id": "done",
+      "kind": "hook",
+      "label": "Merged",
+      "x": 1020,
+      "y": 120
+    },
+    {
+      "id": "close",
+      "kind": "hook",
+      "label": "Close card",
+      "do": "lane.close",
+      "x": 850,
+      "y": 260
+    },
+    {
+      "id": "closed",
+      "kind": "hook",
+      "label": "Closed",
+      "args": {
+        "result": "closed"
+      },
+      "x": 1020,
+      "y": 260
+    }
+  ],
+  "edges": [
+    {
+      "from": "intake",
+      "to": "approve"
+    },
+    {
+      "from": "approve",
+      "to": "recipe",
+      "when": "approved"
+    },
+    {
+      "from": "approve",
+      "to": "closed",
+      "when": "rejected|cap"
+    },
+    {
+      "from": "recipe",
+      "to": "merge-card",
+      "when": "ok"
+    },
+    {
+      "from": "recipe",
+      "to": "close",
+      "when": "fallback"
+    },
+    {
+      "from": "merge-card",
+      "to": "merge",
+      "when": "merge"
+    },
+    {
+      "from": "merge-card",
+      "to": "close",
+      "when": "close"
+    },
+    {
+      "from": "merge",
+      "to": "done"
+    },
+    {
+      "from": "close",
+      "to": "closed"
+    }
+  ],
+  "version": 1
+}

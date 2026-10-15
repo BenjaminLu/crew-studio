@@ -1,0 +1,8 @@
+id: long
+version: 1.0.0
+title: { en: "Runs for a long time with a child" }
+applies_to: [run]
+kind: deterministic
+needs: []
+params: { type: object, properties: {} }
+timeout_s: 60

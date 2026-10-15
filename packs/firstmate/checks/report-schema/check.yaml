@@ -1,0 +1,11 @@
+id: report-schema
+version: 1.0.0
+title: { en: "The worker's report: marker, SWEPT block on fix rounds, the class list", zh-TW: "worker 回報：標記、修正輪的 SWEPT 區塊、類別清單" }
+applies_to: [code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact, report]
+params: { type: object, properties: {} }
+timeout_s: 20
+network: false
+sample: { round: 2, report: { marker: "WORKER_COMPLETE", summary: "fixed it", swept: null } }

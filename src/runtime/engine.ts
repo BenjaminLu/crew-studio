@@ -1,0 +1,1127 @@
+// Studio's native workflow runtime (docs/architecture.md §3). A captain's intent
+// picks a workflow (classifier + door) and becomes a run: a state machine over the
+// workflow's graph, pinned to one workflow version.
+//
+// Node kinds are a closed set: agent, check, card, loop, hook (§3.1). The entry is
+// the node with no incoming edge; a node with no outgoing edge ends the run. An
+// outcome picks the out-edges whose `when` names it, else the plain ones (a
+// failure never takes a plain edge); parallelism comes from the edges, and a node
+// with join: all waits for every input. A node's checks run after it produces
+// (a blocking fail makes it fail); an edge's checks run before the edge is taken.
+//
+// Durable and replayable (§3.2): every change is an event in data/runs/<id>/events.jsonl
+// ({ts, run, node, from, to, cause} for transitions, plus token, ctx, ndata, queue
+// and step records). run.json is only a cache: on start Studio replays the events
+// (fold), keeps finished nodes and restarts interrupted ones.
+//   run:  queued → running ⇄ waiting → succeeded | failed | cancelled, plus paused
+//   node: pending → running → passed | failed | error | skipped | superseded
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { createHash, randomBytes } from "node:crypto";
+import { allocate } from "../ids";
+import type { AgentJob, AgentTool, Agents } from "../agent";
+import type { Provider } from "../providers";
+import type { StudioLog } from "../rawlog";
+import { ProviderRefusal } from "../providers/policy";
+import { QueueRefusal, capacity, type QueueRequest } from "./queue";
+import { Grants } from "./grants";
+import { Cards, emptySections, type CardKind, type SCard, type Sections } from "./cards";
+import { CheckRegistry, Ledger, Policies, INPUT_HASH_ALGORITHM, coerce, doneMap, execAdapter, hashInput, inputPaths, jsRegex, parseOutput, sandboxed, schemaDefaults, schemaErrors,
+  type CheckInput, type CheckManifest, type CheckOutput, type CheckRef, type LedgerEntry, type Native } from "./checks";
+import { briefFor, installRefine } from "./refine";
+import { realInside } from "../secure";
+import { helperCommand, helperReads } from "../self";
+import { entryOf, validate, type WDef, type WEdge, type WNode, type WorkflowDefs } from "./defs";
+import { locatorText, parseFinding, type Finding } from "./locator";
+import { composeInstructions, Skills } from "../skills";
+
+export type NState = "pending" | "running" | "passed" | "failed" | "error" | "skipped" | "superseded";
+export type AgentPick = { provider: string; model: string | null };
+export type NodeRun = {
+  state: NState; visits: number; extra: number; attempt: number; outcome: string | null; cause: string | null; error: string | null; startedAt: string | null; endedAt: string | null;
+  inbox: string[]; agent: AgentPick | null; swap: AgentPick | null; job: string | null; card: string | null; waiting: "card" | "external" | null; data: Record<string, any>; note: string | null;
+  /** the routing decision still to be carried out (set in the same durable step as the node's result, cleared when its tokens are delivered) */
+  routing?: { outcome: string } | null;
+};
+export type Step = { seq: number; node: string; kind: string; visit: number; state: "running" | "waiting" | "passed" | "failed" | "error" | "interrupted" | "skipped" | "superseded" | "swapped";
+  outcome: string | null; startedAt: string; endedAt: string | null; error: string | null; job: string | null; provider: string | null; model: string | null; note: string | null; handoff?: string | null; checks?: { check: string; verdict: string; seq: number }[];
+  /** the enabled skills an agent step loaded, as name@vN in order (unit agent-skills) */
+  skills?: string[] };
+export type RunStatus = "queued" | "running" | "waiting" | "paused" | "succeeded" | "failed" | "cancelled";
+export type Run = {
+  id: string; workflow: string; version: number; def: WDef; title: string; text: string; params: Record<string, string>; by: string;
+  status: RunStatus; result: string | null; createdAt: string; updatedAt: string; endedAt: string | null; error: string | null;
+  nodes: Record<string, NodeRun>; queue: string[]; steps: Step[]; ctx: Record<string, any>; classifier: any; events: number; recovered: number;
+  /** the captain's reason when the run was cancelled */
+  cancelReason?: string | null;
+  /** hidden from the default lists (an ended run only); an "archived" event records each change */
+  archived?: boolean;
+};
+export type Result = { outcome: string; note?: string | null; cause?: string } | { wait: true; external?: { version: 1; handler: string; [key: string]: any }; note?: string | null };
+export type X = {
+  edgeOwner?: symbol; run: Run; node: WNode; rn: NodeRun; visit: number; engine: Engine; deps: Deps; ctx: Record<string, any>; dir: string;
+  log(text: string, data?: any): void; save(): void; cancelled(): boolean; provider(): Provider; pick(): AgentPick; skill(): string; policy(path: string, dflt?: any): any;
+};
+export type KindHandler = { start(x: X): Promise<Result>; answer?(x: X, card: SCard): Promise<Result> };
+export type AgentMode = {
+  /** Apply an already authorized role choice synchronously, before capability verification or work preparation. */
+  preparePick?(x: X): void;
+  tools(x: X): AgentTool[]; system(x: X, skill: string): string; prompt(x: X): string;
+  /** after a finished job: the node's outcome (throw to fail the attempt) */
+  after(x: X, job: AgentJob): Promise<string> | string;
+  /** a job stopped at its time limit: keep what it did; the node ends failed(cause=timeout), never report-only */
+  onTimeout?(x: X, job: AgentJob): Promise<void> | void;
+  /** extra state for a hand-off file (e.g. what the agent changed so far) */
+  handoffState?(x: X): string; /** a number, or one worked out for the round (a plan's size) */ maxTools?: number | ((x: X) => number);
+  /** a round that runs in the OS sandbox (architecture §10): the folders the runtime materialized for it */
+  sandbox?(x: X): { writes: string[]; reads?: string[]; cwd?: string } | null;
+  /** before the round's agent starts (e.g. take its working folder, put it at its durable state); a throw fails the attempt */
+  begin?(x: X): Promise<void> | void;
+  /** after the round, however it ended (done, timeout, failed, cancelled): release what begin took, keep what the round left */
+  end?(x: X, how: "done" | "timeout" | "failed" | "cancelled"): Promise<void> | void;
+};
+export type Body = { title: string; zhTitle?: string; en: Partial<Sections>; zh?: Partial<Sections>; body?: string; links?: { label: string; href: string }[]; door?: string | null; options?: SCard["options"]; ledger?: any;
+  /** optional structured detail of an intent-aligned card (cards.ts CardDetail; unit intent-merge-card) */
+  detail?: import("./cards").CardDetail | null;
+  /** an authorization window never answers this card: only the captain does */
+  captainOnly?: boolean;
+  captures?: SCard["captures"] };
+export type Deps = {
+  dataDir: string; agents: Agents; provider: (id?: string, model?: string) => Provider; log: StudioLog; send: (t: string, d: unknown) => void;
+  skillText: (ref: string) => string; defaultProvider: () => AgentPick; [k: string]: any;
+};
+
+const now = () => new Date().toISOString();
+const TERMINAL: RunStatus[] = ["succeeded", "failed", "cancelled"];
+const FAILS = ["fail", "error", "cap", "cancel", "timeout"];
+const FAILED_OUTCOMES = new Set(["fail", "timeout", "cap"]);
+const clone = <T>(v: T): T => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
+const same = (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b);
+/** {{ctx.a.b}} / {{params.x}} / {{run.title}} in card text */
+export function fill(s: string, run: Run): string {
+  return String(s ?? "").replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, p: string) => {
+    const [head, ...rest] = p.split("."); let v: any = head === "ctx" ? run.ctx : head === "params" ? run.params : head === "run" ? run : undefined;
+    for (const k of rest) v = v?.[k];
+    return v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+  });
+}
+const ekey = (e: WEdge) => `${e.from}→${e.to}${e.when ? `[${e.when}]` : ""}`;
+const RUN_FIELDS = ["status", "result", "error", "endedAt", "recovered", "cancelReason"] as const;
+const NODE_FIELDS = ["visits", "extra", "attempt", "outcome", "cause", "error", "startedAt", "endedAt", "inbox", "agent", "swap", "job", "card", "waiting", "data", "note", "routing"] as const;
+
+/** Replay a run's events into its snapshot (the snapshot is a fold of the events). */
+export function fold(events: any[]): Run | null {
+  let r: Run | null = null;
+  for (const e of events) {
+    if (e.type === "run_created") { r = clone(e.run); r!.events = e.seq; continue; }
+    if (!r) continue;
+    r.events = Math.max(r.events, e.seq ?? 0); r.updatedAt = e.ts ?? r.updatedAt;
+    if (e.type === "run") { r.status = e.to; for (const k of RUN_FIELDS) if (k in (e.set ?? {})) (r as any)[k] = e.set[k]; }
+    else if (e.type === "node") { const n = r.nodes[e.node]; if (n) { n.state = e.to; for (const k of NODE_FIELDS) if (k in (e.set ?? {})) (n as any)[k] = e.set[k]; } }
+    else if (e.type === "ndata") { const n = r.nodes[e.node]; if (n) for (const [k, v] of Object.entries(e.set ?? {})) (n as any)[k] = v; }
+    else if (e.type === "queue") r.queue = e.queue;
+    else if (e.type === "archived") r.archived = e.archived !== false;
+    else if (e.type === "unarchived") r.archived = false;
+    else if (e.type === "ctx") { for (const [k, v] of Object.entries(e.set ?? {})) r.ctx[k] = v; for (const k of e.del ?? []) delete r.ctx[k]; }
+    else if (e.type === "step") { const i = r.steps.findIndex((s) => s.seq === e.step.seq); if (i >= 0) r.steps[i] = e.step; else r.steps.push(e.step); }
+  }
+  return r;
+}
+
+/** A judged check may block only with a quorum: n ≥ 2 failing votes out of of ≥ n independent runs. */
+export const quorumOk = (q: { n: number; of: number } | null | undefined) => !!q && Number.isInteger(q.n) && Number.isInteger(q.of) && q.n >= 2 && q.of >= q.n;
+
+export class Engine {
+  runs = new Map<string, Run>();
+  private committed = new Map<string, Run>();
+  readonly root: string;
+  readonly cards: Cards;
+  readonly registry: CheckRegistry;
+  readonly policies: Policies;
+  readonly grants: Grants;
+  kinds: Record<string, KindHandler> = {};
+  actions: Record<string, (x: X) => Promise<string | Result> | string | Result> = {};
+  beforeNodeChecks: Record<string, (x: X, result: Result) => boolean> = {};
+  cardPrepared: Record<string, (x: X, card: SCard, body: Body) => void> = {};
+  beforeStart: Record<string, (x: X) => Promise<Result | null> | Result | null> = {};
+  externalValidators: Record<string, (x: X, descriptor: any) => boolean> = {};
+  externalHandlers: Record<string, (x: X, descriptor: any, wake: (result: Result) => void) => () => void> = {};
+  private externalOwners = new Map<string, { cancel: () => void }>();
+  trackExternal(x: X, work: Promise<void>) { return this.track(x.run, "external presentation", work); }
+  disposeExternal() { for (const owner of this.externalOwners.values()) owner.cancel(); this.externalOwners.clear(); }
+  private edgeOwners = new Map<symbol, { run: Run; node: WNode; rn: NodeRun; visit: number; head: string | null }>();
+  owns(x: X) {
+    const common = this.runs.get(x.run.id) === x.run && !this.gone.has(x.run.id) && !TERMINAL.includes(x.run.status) && x.run.nodes[x.node.id] === x.rn && x.rn.visits === x.visit;
+    if (!common) return false;
+    if (!x.edgeOwner) return x.rn.state === "running";
+    const owner = this.edgeOwners.get(x.edgeOwner);
+    return !!owner && owner.run === x.run && owner.node === x.node && owner.rn === x.rn && owner.visit === x.visit && owner.head === (x.ctx.head ?? null) && !!x.rn.routing;
+  }
+  private registerExternal(r: Run, node: WNode, rn: NodeRun) {
+    const key = `${r.id}/${node.id}`, descriptor = rn.data.external;
+    this.externalOwners.get(key)?.cancel();
+    const owner = { cancel: () => {}, completing: false }; this.externalOwners.set(key, owner);
+    const wake = (result: Result) => {
+      if (this.externalOwners.get(key) !== owner || this.gone.has(r.id) || TERMINAL.includes(r.status) || rn.waiting !== "external") return;
+      if (owner.completing) return; owner.completing = true; owner.cancel();
+      const step = [...r.steps].reverse().find(s => s.node === node.id && s.state === "waiting"); if (!step) return;
+      rn.note = result.note ?? rn.note; rn.data.externalCompletion = { version: 1, visit: rn.visits, result }; this.commit(r, "external completion received");
+      void this.track(r, `external completion ${node.id}`, (async () => {
+        const x = this.x(r, node, rn); let completed = result;
+        if (!("wait" in result) && node.kind === "hook") completed = await this.hookChecks(x, result.outcome, true);
+        if (this.externalOwners.get(key) !== owner || !this.owns(x)) return;
+        this.externalOwners.delete(key); rn.waiting = null;
+        this.finish(r, node, rn, step, completed, null);
+      })().catch(() => {
+        if (this.externalOwners.get(key) !== owner || TERMINAL.includes(r.status)) return;
+        this.externalOwners.delete(key); rn.waiting = null; this.finish(r, node, rn, step, null, "external completion checks failed");
+      }));
+    };
+    const handler = descriptor && this.externalHandlers[descriptor.handler];
+    if (!handler) { queueMicrotask(() => wake({ outcome: "error", note: "unsupported external wait record; verification refused" })); return; }
+    const completion = rn.data.externalCompletion;
+    let valid = true; try { const validator = this.externalValidators[descriptor.handler]; if (validator) valid = validator(this.x(r, node, rn), descriptor); } catch { valid = false; }
+    if (valid && completion?.version === 1 && completion.visit === rn.visits && completion.result && (typeof completion.result.outcome === "string" || completion.result.wait === true)) { queueMicrotask(() => wake(completion.result)); return; }
+    try { const cancel = handler(this.x(r, node, rn), descriptor, wake); if (this.externalOwners.get(key) === owner) owner.cancel = cancel; else cancel(); }
+    catch { queueMicrotask(() => wake({ outcome: "error", note: "external wait could not be registered" })); }
+  }
+  modes: Record<string, AgentMode> = {};
+  /** native checks: Studio functions behind the same JSON contract */
+  natives: Record<string, Native> = {};
+  /** what a check sees as its artifact, by type (code-diff, spec, video, card, run …) */
+  artifacts: Record<string, (x: X) => any> = {};
+  /** extra input a manifest's `needs` asks for */
+  needs: Record<string, (x: X, man: CheckManifest) => any | Promise<any>> = {};
+  /** placeholders in an exit-code adapter's command: {repo.test} → argv */
+  expand: Record<string, (x: X) => string[] | null> = {};
+  cardBodies: Record<string, (x: X) => Body | Promise<Body>> = {};
+  /** card nodes with their own behaviour (an artifact review that runs an agent on "request changes") */
+  cardModes: Record<string, KindHandler> = {};
+  private live = new Set<string>(); // "run/node" being executed in this process
+  private routing = new Map<string, number>();
+
+  constructor(readonly deps: Deps, readonly defs: WorkflowDefs) {
+    this.root = join(deps.dataDir, "runs"); mkdirSync(this.root, { recursive: true });
+    this.cards = new Cards(deps.dataDir);
+    this.registry = new CheckRegistry(deps.dataDir, deps.checkRoots ?? []);
+    this.policies = new Policies(deps.dataDir);
+    this.policies.onChange = () => this.deps.agents.queue.wake();
+    this.grants = new Grants(deps.dataDir);
+    defs.known ??= (ref) => !!this.registry.get(ref);
+    this.cards.onChange = (c) => deps.send("scard", { id: c.id, run: c.run, status: c.status });
+    deps.agents.admission = (o: any, key: string) => this.jobAdmission(o, key);
+    this.builtinKinds();
+    installRefine(this); // the loop kind
+    defs.runners ??= () => new Set(Object.keys(this.kinds));
+  }
+
+  // ---------- persistence: events first, the snapshot is their fold ----------
+  rdir(id: string) { return join(this.root, id.replace(/[^\w-]/g, "")); }
+  private append(r: Run, e: Record<string, any>) {
+    if (this.gone.has(r.id)) return { seq: r.events, ts: now(), run: r.id, ...e }; // a deleted run takes no more writes
+    const ev = { seq: ++r.events, ts: now(), run: r.id, ...e };
+    appendFileSync(join(this.rdir(r.id), "events.jsonl"), JSON.stringify(ev) + "\n");
+    return ev;
+  }
+  /** Record every change since the last commit as events, then write the snapshot cache. */
+  commit(r: Run, cause = "progress") {
+    if (this.gone.has(r.id)) return;
+    const c = this.committed.get(r.id)!;
+    r.updatedAt = now();
+    const evs: any[] = [];
+    if (r.status !== c.status || RUN_FIELDS.some((k) => !same((r as any)[k], (c as any)[k]))) {
+      const set: any = {}; for (const k of RUN_FIELDS) if (!same((r as any)[k], (c as any)[k])) set[k] = (r as any)[k];
+      evs.push(this.append(r, { type: "run", from: c.status, to: r.status, cause, set }));
+    }
+    for (const [id, n] of Object.entries(r.nodes)) {
+      const o = c.nodes[id]; const set: any = {}; for (const k of NODE_FIELDS) if (!same((n as any)[k], (o as any)?.[k])) set[k] = clone((n as any)[k]);
+      if (n.state !== o?.state) evs.push(this.append(r, { type: "node", node: id, from: o?.state ?? null, to: n.state, cause: n.cause ?? cause, visit: n.visits, outcome: n.outcome, set }));
+      else if (Object.keys(set).length) this.append(r, { type: "ndata", node: id, set });
+    }
+    if (!same(r.queue, c.queue)) this.append(r, { type: "queue", queue: r.queue });
+    const set: any = {}; const del: string[] = [];
+    for (const [k, v] of Object.entries(r.ctx)) if (!same(v, c.ctx[k])) set[k] = clone(v);
+    for (const k of Object.keys(c.ctx)) if (!(k in r.ctx)) del.push(k);
+    if (Object.keys(set).length || del.length) this.append(r, { type: "ctx", set, del });
+    for (const s of r.steps) { const o = c.steps.find((y) => y.seq === s.seq); if (!o || !same(o, s)) this.append(r, { type: "step", step: clone(s) }); }
+    this.committed.set(r.id, clone(r));
+    this.deps.agents.queue.wake();
+    const f = join(this.rdir(r.id), "run.json"); writeFileSync(f + ".tmp", JSON.stringify(r)); renameSync(f + ".tmp", f);
+    for (const e of evs) { this.deps.log.emit({ type: `run_${e.type === "run" ? "status" : "node"}`, workflow: r.workflow, task: r.id, summary: e.type === "run" ? `${e.from} → ${e.to} (${e.cause})` : `${e.node}: ${e.from} → ${e.to} (${e.cause})`, data: { version: r.version, node: e.node ?? null, from: e.from, to: e.to, cause: e.cause } });
+      this.deps.send("wrun", { id: r.id, status: r.status, event: { seq: e.seq, ts: e.ts, type: e.type, node: e.node ?? null, from: e.from, to: e.to, cause: e.cause, outcome: e.outcome ?? null }, nodes: this.nodeStates(r) }); }
+  }
+  save(r: Run) { this.commit(r); }
+  /** A display event (logs, check results, cards raised): in the run's events and Studio's log, ignored by the fold. */
+  emit(r: Run, type: string, summary: string, data: Record<string, any> = {}) {
+    if (this.gone.has(r.id)) return;
+    const ev = this.append(r, { type, summary, ...data });
+    this.deps.log.emit({ type: `run_${type}`, workflow: r.workflow, task: r.id, summary, data: { version: r.version, ...data } });
+    this.deps.send("wrun", { id: r.id, status: r.status, event: ev, nodes: this.nodeStates(r) });
+  }
+  events(id: string, after = 0): any[] {
+    const f = join(this.rdir(id), "events.jsonl"); if (!existsSync(f)) return [];
+    return readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((e) => e && e.seq > after);
+  }
+  /** What a timeline shows: transitions and display events, not the ctx/ndata payloads. */
+  timeline(id: string, after = 0) { return this.events(id, after).filter((e) => !["ctx", "ndata", "queue", "step", "run_created"].includes(e.type))
+    .map((e) => (e.type === "run" ? { ...e, set: undefined, result: e.set?.result ?? null } : e.type === "node" ? { ...e, set: undefined } : e)); } // a run transition keeps its result: the UI names the state from it
+  ledger(id: string): LedgerEntry[] { return new Ledger(this.deps.dataDir, id).all(); }
+  nodeStates(r: Run) { return Object.fromEntries(Object.entries(r.nodes).map(([k, n]) => [k, { state: n.state, visits: n.visits, outcome: n.outcome, waiting: n.waiting }])); }
+  get(id: string) { return this.runs.get(id) ?? null; }
+  list() { return [...this.runs.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)); }
+
+  /** Replay every run from its events; a run that was live when the server stopped resumes from its last durable step. */
+  load() {
+    for (const d of readdirSync(this.root).filter((x) => /^R-\d+$/.test(x))) {
+      const r = fold(this.events(d)); if (!r) continue;
+      this.runs.set(r.id, r); this.committed.set(r.id, clone(r));
+      if (TERMINAL.includes(r.status)) continue;
+      let n = 0; const reroute: string[] = []; const reanswer: string[] = [];
+      for (const [id, rn] of Object.entries(r.nodes)) {
+        if (rn.routing && rn.state !== "running") { reroute.push(id); continue; } // the result is durable, its routing was not done: do it again
+        if (rn.state !== "running") continue;
+        if (rn.waiting === "external") continue;
+        if (rn.waiting === "card") {
+          const c = rn.card ? this.cards.get(rn.card) : null;
+          if (c?.status === "open") continue;                 // still waiting for the captain
+          if (c?.status === "answered") { reanswer.push(id); continue; } // answered just before the crash: carry it on
+        }
+        rn.waiting = null;
+        const st = [...r.steps].reverse().find((s) => s.node === id && (s.state === "running" || s.state === "waiting"));
+        if (st) { st.state = "interrupted"; st.endedAt = now(); st.error = "Studio stopped during this step"; }
+        rn.visits = Math.max(0, rn.visits - 1); rn.job = null; rn.cause = "recovered: interrupted, runs again"; n++;
+        if (rn.swap) { rn.agent = rn.swap; rn.swap = null; }
+        rn.state = "pending"; if (!r.queue.includes(id)) r.queue.unshift(id);
+      }
+      // a card raised by a step that did not finish raising it: cancel the orphan (the step runs again and raises its own)
+      const waitingOn = new Set(Object.values(r.nodes).filter((x) => x.waiting === "card" && x.card).map((x) => x.card));
+      for (const c of this.cards.list({ run: r.id, open: true })) if (!waitingOn.has(c.id)) this.cards.cancel(c.id);
+      // a run whose creation was recorded but not its first step: start at the entry
+      if (r.status === "queued" && !r.steps.length && !r.queue.length) { const e = entryOf(r.def); if (e) { r.queue.push(e.id); r.status = "running"; } }
+      r.recovered = (r.recovered ?? 0) + 1;
+      this.commit(r, "recovered");
+      this.emit(r, "recovered", `resumed after a restart from ${r.events} events${n ? `: ${n} interrupted node${n > 1 ? "s" : ""} run again` : ""}${reroute.length ? `; routing replayed for ${reroute.join(", ")}` : ""}${reanswer.length ? `; answers carried on for ${reanswer.join(", ")}` : ""}`, { interrupted: n, reroute, reanswer });
+      for (const id of reroute) { const node = r.def.nodes.find((x) => x.id === id)!; if (r.def.edges.some((e) => e.from === id)) void this.track(r, `routing after ${id}`, this.route(r, node, r.nodes[id].routing!.outcome)); else this.end(r, node, r.nodes[id].outcome ?? "ok"); }
+      for (const id of reanswer) void this.track(r, `the answer at ${id}`, this.carryAnswer(r, id));
+    }
+    for (const r of this.runs.values()) if (!TERMINAL.includes(r.status)) for (const [id, rn] of Object.entries(r.nodes)) if (rn.state === "running" && rn.waiting === "external") this.registerExternal(r, r.def.nodes.find(n => n.id === id)!, rn);
+    for (const r of this.runs.values()) if (r.status === "running" || r.status === "waiting" || r.status === "queued") this.tick(r);
+  }
+
+  // ---------- starting ----------
+  start(o: { workflow: string; version?: number; title?: string; text?: string; params?: Record<string, string>; by?: string; classifier?: any }): Run {
+    const def = this.defs.get(o.workflow, o.version); if (!def) throw new Error(`no workflow ${o.workflow}${o.version ? ` v${o.version}` : ""}`);
+    const errs = validate(def, this.defs.known, this.defs.runners?.(), this.defs.skillInfo ?? undefined).filter((p) => p.level === "error"); if (errs.length) throw new Error(`${def.id} v${def.version} is not runnable: ${errs[0].text}`);
+    const id = allocate(this.root, "R");
+    mkdirSync(this.rdir(id), { recursive: true });
+    const params: Record<string, string> = {};
+    for (const [k, p] of Object.entries(def.params ?? {})) if (p.default != null) params[k] = String(p.default);
+    for (const [k, v] of Object.entries(o.params ?? {})) if (v != null && String(v) !== "") params[k] = String(v).slice(0, 4000);
+    const text = String(o.text ?? "").slice(0, 8000);
+    const r: Run = { id, workflow: def.id, version: def.version, def, title: String(o.title || text.split("\n")[0] || def.name).slice(0, 160), text, params, by: o.by ?? "captain",
+      status: "queued", result: null, createdAt: now(), updatedAt: now(), endedAt: null, error: null, nodes: {}, queue: [], steps: [], ctx: { nativeQueueVersion: 1 }, classifier: o.classifier ?? null, events: 0, recovered: 0 };
+    for (const nd of def.nodes) r.nodes[nd.id] = { state: "pending", visits: 0, extra: 0, attempt: 0, outcome: null, cause: null, error: null, startedAt: null, endedAt: null, inbox: [], agent: null, swap: null, job: null, card: null, waiting: null, data: {}, note: null };
+    this.runs.set(id, r);
+    this.append(r, { type: "run_created", run: clone(r) });
+    this.committed.set(id, clone(r));
+    const entry = entryOf(def)!;
+    r.queue.push(entry.id); r.status = "running";
+    this.commit(r, "started");
+    this.emit(r, "started", `${def.name} v${def.version}: ${r.title}`, { workflowVersion: def.version });
+    this.tick(r);
+    return r;
+  }
+
+  private async queueCapability(x: X, reason: string): Promise<Result> {
+    x.rn.data.nativeQueueCapability = { version: 1, reason, retryAction: "retry", closeAction: "close" };
+    const scope = Array.isArray(x.ctx.spec?.scope) ? x.ctx.spec.scope.map(String) : [];
+    const project = this.queueProject(x.run), repo = this.queueRepo(x.ctx.repo) || "artifact workflow"; let dependencies: string[] = []; try { dependencies = this.queueDependencies(x.run); } catch {}
+    const zhReason = /dependency (R-\d+)/.test(reason) ? `依賴 ${/dependency (R-\d+)/.exec(reason)![1]} 尚未取得可驗證的合併證據。` : /scope held by (R-\d+)/.test(reason) ? `範圍與 ${/scope held by (R-\d+)/.exec(reason)![1]} 重疊；必須等待該任務完成可驗證的合併。` : /capacity.*full/.test(reason) ? "目前的實際執行回合已達容量上限。" : /deadline/.test(reason) ? "等待時間已到，請核准重新準備或關閉任務。" : /historical|binding|scope pin|dispatch/.test(reason) ? "此回合缺少有效的核准範圍或依賴綁定；請重新確認範圍並核准準備。" : /capacity|wait_timeout/.test(reason) ? "排隊容量或等待期限設定無效；必須先修正設定。" : /model|effort/.test(reason) ? "已設定的模型或推理強度尚未驗證為可用；請保留設定並先完成驗證。" : /provider|capability|login|quota/.test(reason) ? "目前沒有登入、額度與模型皆完成驗證的可用供應商；回合尚未啟動。" : "回合的執行權或驗證資料尚未確認，不能開始工作。";
+    const c = await this.card(x, "scope", { captainOnly: true, title: "Round is not ready", zhTitle: "回合尚未就緒",
+      en: { why: reason, how: "Resolve the readiness issue, then approve fresh preparation or close this task.", scope: { in: [...scope, `Project: ${project}`, `Repository: ${repo}`, ...dependencies.map(id => `Dependency: ${id}`)], out: [] } },
+      zh: { why: zhReason, how: "先排除等待原因，再核准重新準備；也可以關閉任務。", scope: { in: [...scope, `專案：${project}`, `儲存庫：${repo === "artifact workflow" ? "產物工作流程" : repo}`, ...dependencies.map(id => `依賴：${id}`)], out: [] } },
+      options: [{ id: "retry", label: "Approve fresh preparation", labelZh: "核准重新準備" }, { id: "close", label: "Close task", labelZh: "關閉任務", hold: true }] });
+    return { wait: true, note: `readiness recovery card ${c.id}` };
+  }
+
+  private queueOwner = randomBytes(8).toString("hex");
+  queueProject(r: Run) { return String(r.ctx.project ?? r.params.project ?? "studio") || "studio"; }
+  queueRepo(repo: unknown) { try { return typeof repo === "string" && repo ? realpathSync(repo) : ""; } catch { return ""; } }
+  queueDependencies(r: Run): string[] {
+    const raw = r.params.depends_on; if (!raw) return [];
+    let ids: unknown; try { ids = JSON.parse(raw); } catch { throw new Error("depends_on must be a JSON array of native task ids"); }
+    if (!Array.isArray(ids) || ids.length > 64 || ids.some(id => typeof id !== "string" || !/^R-\d+$/.test(id) || id === r.id) || new Set(ids).size !== ids.length) throw new Error("invalid native dependency identities");
+    return ids as string[];
+  }
+  queueDomain: { worker(x: X, mode: string): boolean; ready(x: X): { ready: boolean; reason?: string }; admitted(x: X): void; answer(r: Run, node: WNode, rn: NodeRun, c: SCard): Record<string, unknown>; merged(r: Run, expected?: { project: string; repo: string }): boolean } | null = null;
+  verifiedMerge(r: Run, expected?: { project: string; repo: string }) { return this.queueDomain?.merged(r, expected) ?? false; }
+  private queueLimits(r?: Run) {
+    const options = r ? { project: this.queueProject(r), workflow: r.def.policies } : {};
+    const get = (name: string) => this.policies.get(`queue.${name}`, options).value;
+    return { global: capacity(this.policies.get("queue.global_capacity").value, "queue.global_capacity"), project: capacity(get("project_capacity"), "queue.project_capacity") };
+  }
+  private queueTimeout(r?: Run) {
+    const n = this.policies.get("queue.wait_timeout_s", r ? { project: this.queueProject(r), workflow: r.def.policies } : {}).value;
+    if (!Number.isInteger(n) || n < 1 || n > 604800) throw new Error("queue.wait_timeout_s must be an explicit integer from 1 to 604800"); return n * 1000;
+  }
+  private jobAdmission(o: any, key: string): QueueRequest {
+    const r = o.ref ? this.get(o.ref) : null;
+    return { key, task: r?.id ?? o.ref ?? key, project: r ? this.queueProject(r) : "studio", deadline: Date.now() + this.queueTimeout(r ?? undefined), signal: r ? this.abortOf(r).signal : undefined,
+      limits: () => this.queueLimits(r ?? undefined), ready: () => ({ ready: !r || !TERMINAL.includes(r.status), reason: "task ended" }), waiting() {}, admitted() {} };
+  }
+  private roundAdmission(x: X, mode: string): QueueRequest {
+    const worker = this.queueDomain?.worker(x, mode) ?? false;
+    const old = x.rn.data.nativeQueue;
+    if (old && (old.version !== 1 || !Number.isInteger(old.visit) || !Number.isFinite(old.deadline))) throw new QueueRefusal("historical queued round has no valid visit/deadline binding; fresh preparation required");
+    const deadline = old?.visit === x.visit ? old.deadline : Date.now() + this.queueTimeout(x.run);
+    const key = `${x.run.id}/${x.node.id}#${x.visit}/${this.queueOwner}`;
+    return { key, task: x.run.id, project: this.queueProject(x.run), deadline, signal: this.abortOf(x.run).signal, limits: () => this.queueLimits(x.run),
+      ready: () => {
+        if (TERMINAL.includes(x.run.status)) throw new Error("queued task ended");
+        if (this.deps.agents.queue.snapshot().active.some(a => a.key.startsWith(`${x.run.id}/${x.node.id}#${x.visit}/`))) return { ready: false, reason: "previous owned round has not completed" };
+        if (x.run.ctx.nativeQueueVersion !== 1) throw new Error("historical round has no native queue binding; fresh preparation required");
+        return worker ? this.queueDomain!.ready(x) : { ready: true };
+      },
+      waiting: reason => { if (x.rn.data.nativeQueue?.reason === reason && x.rn.data.nativeQueue?.state === "waiting") return; x.rn.data.nativeQueue = { version: 1, visit: x.visit, deadline, state: "waiting", reason }; x.rn.note = reason; this.commit(x.run, "queued"); this.settle(x.run); },
+      admitted: () => {
+        if (worker) this.queueDomain!.admitted(x);
+        x.rn.data.nativeQueue = { version: 1, visit: x.visit, deadline, state: "admitted" }; x.rn.note = "owned round admitted"; this.commit(x.run, "round admitted"); this.settle(x.run);
+      } };
+  }
+
+  // ---------- the scheduler ----------
+  tick(r: Run) {
+    if (r.status === "paused" || TERMINAL.includes(r.status)) return;
+    const q = r.queue.splice(0); if (q.length) this.commit(r, "scheduled");
+    for (const id of q) if (r.nodes[id]?.state === "pending") void this.track(r, `node ${id}`, this.runNode(r, id));
+    this.settle(r);
+  }
+  private settle(r: Run) {
+    if (TERMINAL.includes(r.status) || r.status === "paused") return;
+    if ((this.routing.get(r.id) ?? 0) > 0) return; // an edge's checks are still running
+    const ns = Object.values(r.nodes);
+    const before = r.status;
+    if (ns.some((n) => n.state === "running" && !n.waiting && n.data?.nativeQueue?.state !== "waiting") || r.queue.length) r.status = "running";
+    else if (ns.some((n) => n.state === "running" && n.waiting)) r.status = "waiting";
+    else if (ns.some((n) => n.state === "running" && n.data?.nativeQueue?.state === "waiting")) r.status = "queued";
+    else { r.status = "failed"; r.error = "stalled: no node can run (a join is still waiting for an input)"; r.endedAt = now(); this.stopAll(r, "the run stalled"); }
+    if (r.status !== before) { this.commit(r, r.status === "waiting" ? (ns.some(n => n.waiting === "external") ? "waiting(external)" : "waiting(card)") : r.status === "failed" ? "stalled" : "running"); if (r.status === "failed") this.emit(r, "failed", r.error!); }
+  }
+
+  x(r: Run, node: WNode, rn: NodeRun): X {
+    const self = this;
+    const pick = (): AgentPick => {
+      if (rn.agent) return rn.agent;
+      if (node.provider) return { provider: node.provider, model: node.model ?? null };
+      const role = r.def.roles.find((x) => x.id === node.role);
+      if (role?.provider) return { provider: role.provider, model: role.model ?? null };
+      if (r.params.provider) return { provider: r.params.provider, model: r.params.model || null };
+      return this.deps.defaultProvider();
+    };
+    return { run: r, node, rn, visit: rn.visits, engine: this, deps: this.deps, ctx: r.ctx, dir: this.rdir(r.id),
+      log: (text, data = {}) => self.emit(r, "log", `${node.id}: ${text}`, { node: node.id, ...data }),
+      save: () => self.commit(r), cancelled: () => r.status === "cancelled",
+      pick, provider: () => { const p = pick(); return self.deps.provider(p.provider, p.model ?? undefined); },
+      policy: (path, dflt) => self.policy(r, path, dflt),
+      // the agent's instructions: Studio's safety rules, the role skill, then each enabled skill (pinned by version and hash) under its heading
+      skill: () => self.instructions(r, node.role ?? node.args?.role, node.kind === "agent" && Array.isArray(node.skills) ? node.skills : []) };
+  }
+  /** The one way an agent's instructions are built (architecture §5): the safety rules, the role's skill, then each pinned skill in order. */
+  instructions(r: Run, roleId: string | undefined, pins: { id: string; v: number; sha256: string }[]): string {
+    const role = r.def.roles.find((x) => x.id === roleId); let roleText = ""; if (role?.skill) { try { roleText = this.deps.skillText(role.skill); } catch {} }
+    // the library is Studio's skill store under this data folder; an engine built without one (a test, a tool) opens the same store
+    if (pins.length && !this.deps.library) this.deps.library = new Skills(this.deps.dataDir, { list: () => [], get: () => null, sourceSkill: () => null } as any);
+    return composeInstructions(roleText, pins.map((p) => ({ id: p.id, v: p.v, body: this.deps.library.body(p.id, p.v, p.sha256) })));
+  }
+  /** Policy resolution (§6): org → project → workflow version override → run override (only set by a card answer). auth.* never resolves here: see grants. */
+  policy(r: Run, path: string, dflt?: any) {
+    if (path === "auth" || path.startsWith("auth.")) return undefined;
+    const v = this.policies.get(path, { project: r.ctx.project ?? r.params.project ?? null, workflow: r.def.policies ?? null }).value ?? dflt;
+    const add = Number(r.ctx.policyAdds?.[path] ?? 0); // a run override set by a card adds to what resolved, never replaces it
+    return add && typeof v === "number" ? v + add : v;
+  }
+
+  private async runNode(r: Run, id: string) {
+    const node = r.def.nodes.find((n) => n.id === id)!; const rn = r.nodes[id];
+    const key = `${r.id}/${id}`; if (this.live.has(key)) return;
+    const cap = node.max_visits ? node.max_visits + (rn.extra ?? 0) : Infinity;
+    if (rn.visits >= cap) {
+      r.steps.push({ seq: r.steps.length + 1, node: id, kind: node.kind, visit: rn.visits, state: "failed", outcome: "cap", startedAt: now(), endedAt: now(), error: null, job: null, provider: null, model: null, note: `round cap: ${cap} visits` });
+      rn.state = "failed"; rn.outcome = "cap"; rn.cause = "cap"; rn.routing = { outcome: "cap" }; this.commit(r, "cap"); this.emit(r, "capped", `${node.label}: round cap reached (${cap})`, { node: id });
+      return void this.track(r, `routing after ${id}`, this.route(r, node, "cap"));
+    }
+    for (const s of r.steps) if (s.node === id && (s.state === "passed" || s.state === "failed")) s.state = "superseded";
+    rn.visits++; rn.state = "running"; rn.cause = rn.visits > 1 ? `visit ${rn.visits}` : "token"; rn.startedAt = now(); rn.endedAt = null; rn.error = null; rn.outcome = null; rn.waiting = null; rn.data.externalCompletion = null; rn.data.externalHookReport = null;
+    const x = this.x(r, node, rn);
+    const pk = node.kind === "agent" ? x.pick() : null;
+    const step: Step = { seq: r.steps.length + 1, node: id, kind: node.kind, visit: rn.visits, state: "running", outcome: null, startedAt: now(), endedAt: null, error: null, job: null, provider: pk?.provider ?? null, model: pk?.model ?? null, note: null };
+    r.steps.push(step); this.commit(r, rn.cause);
+    this.emit(r, "node_started", `${node.label}${rn.visits > 1 ? ` (visit ${rn.visits})` : ""}`, { node: id, visit: rn.visits, kind: node.kind, ...(pk ? { provider: pk.provider, model: pk.model } : {}) });
+    this.live.add(key);
+    let res: Result | null = null, err: string | null = null;
+    try {
+      const h = node.kind === "card" && node.args?.mode && this.cardModes[node.args.mode] ? this.cardModes[node.args.mode] : this.kinds[node.kind];
+      if (!h) throw new Error(`no runner for node kind ${node.kind}`);
+      for (const guard of Object.values(this.beforeStart)) { res = await guard(x); if (res) break; }
+      if (!res) res = await h.start(x);
+      res = await this.afterChecks(x, step, res);
+    } catch (e: any) { err = String(e?.message ?? e).slice(0, 1200); }
+    finally { this.live.delete(key); }
+    this.finish(r, node, rn, step, res, err);
+  }
+  /** An agent or card node's own checks run once it has produced; a blocking fail makes it fail. */
+  private async afterChecks(x: X, step: Step, res: Result | null): Promise<Result | null> {
+    if (!res || "wait" in res || !x.node.checks?.length || x.node.kind === "check" || x.node.kind === "hook" || x.cancelled()) return res;
+    for (const applicable of Object.values(this.beforeNodeChecks)) { if (!this.owns(x)) return res; if (applicable(x, res)) return res; }
+    if (FAILS.includes(res.outcome) || (res as any).stopped) return res; // a round stopped before its agent produced nothing to check
+    const out = await this.runChecks(x, x.node.checks, null);
+    step.checks = out.entries.map((e) => ({ check: e.check, verdict: e.verdict, seq: e.seq }));
+    if (out.blocked.length) return { outcome: "fail", note: `${out.blocked.map((e) => `${e.check}: ${e.verdict}`).join(", ")}${res.note ? ` · ${res.note}` : ""}` };
+    return { outcome: res.outcome, note: [res.note, `${out.entries.filter((e) => e.verdict === "pass").length}/${out.entries.length} checks pass`].filter(Boolean).join(" · ") };
+  }
+
+  /** A node's attempt ended (or is now waiting on a card). */
+  private finish(r: Run, node: WNode, rn: NodeRun, step: Step, res: Result | null, err: string | null) {
+    // whatever way the node ends this step (waiting on its card, a retry, an error, a late result), its card is no longer being raised: once, here
+    if (rn.card) this.raising.get(rn.card)?.resolve();
+    // a step that failed after raising its card leaves no open card behind (a retry raises its own)
+    if (err && rn.card && this.cards.get(rn.card)?.status === "open") { this.cards.cancel(rn.card); rn.card = null; }
+    if (rn.agent && !step.provider) { step.provider = rn.agent.provider; step.model = rn.agent.model; }
+    step.job = rn.job ?? step.job;
+    // a result that arrives after the run ended is refused: the node was already stopped
+    if (TERMINAL.includes(r.status)) { if (step.state === "running" || step.state === "waiting") { step.state = "skipped"; step.endedAt = now(); step.note = `late result refused (the run is ${r.status})`; } if (rn.state === "running") { rn.state = "skipped"; rn.cause = `the run is ${r.status}`; } this.commit(r, "late result refused"); return; }
+    if (err) {
+      step.state = "error"; step.error = err; step.endedAt = now();
+      if (rn.attempt < (node.retries ?? 0)) {
+        rn.attempt++; rn.visits--; rn.state = "pending"; rn.cause = `retry ${rn.attempt + 1}: ${err.slice(0, 120)}`; r.queue.push(node.id); this.commit(r, "retry");
+        this.emit(r, "retry", `${node.label}: attempt ${rn.attempt + 1} after: ${err.slice(0, 200)}`, { node: node.id, error: err });
+        return this.tick(r);
+      }
+      rn.attempt = 0; rn.state = "error"; rn.cause = "error"; rn.error = err; rn.endedAt = now(); rn.outcome = "error"; rn.routing = { outcome: "error" }; this.commit(r, "error");
+      this.emit(r, "node_failed", `${node.label}: ${err.slice(0, 300)}`, { node: node.id, error: err });
+      return void this.track(r, `routing after ${node.id}`, this.route(r, node, "error"));
+    }
+    if (res && "wait" in res) {
+      if (res.external) {
+        rn.data.external = res.external; step.state = "waiting"; step.note = res.note ?? step.note;
+        rn.waiting = "external"; rn.cause = "waiting(external)"; this.commit(r, "waiting(external)");
+        this.emit(r, "node_waiting", `${node.label}: ${res.note ?? "waiting for external verification"}`, { node: node.id, waiting: "external" });
+        this.registerExternal(r, node, rn); return this.settle(r);
+      }
+      step.state = "waiting"; step.note = res.note ?? step.note; rn.waiting = "card"; rn.cause = "waiting(card)"; this.commit(r, "waiting(card)");
+      this.emit(r, "node_waiting", `${node.label}: ${res.note ?? "waiting for the captain"}`, { node: node.id, card: rn.card });
+      return this.settle(r);
+    }
+    const outcome = (res as any)?.outcome ?? "ok";
+    const failed = FAILED_OUTCOMES.has(outcome);
+    step.state = failed ? "failed" : "passed"; step.outcome = outcome; step.note = (res as any)?.note ?? step.note; step.endedAt = now();
+    rn.attempt = 0; rn.state = failed ? "failed" : "passed"; rn.outcome = outcome; rn.cause = failed ? ((res as any)?.cause ?? outcome) : `→ ${outcome}`; rn.waiting = null; rn.endedAt = now(); rn.note = step.note;
+    if (r.def.edges.some((e) => e.from === node.id)) rn.routing = { outcome }; // one durable step: the result and the routing still to do
+    this.commit(r, rn.cause!);
+    this.emit(r, "node_done", `${node.label} → ${outcome}${step.note ? `: ${String(step.note).slice(0, 200)}` : ""}`, { node: node.id, outcome, visit: rn.visits });
+    void this.track(r, `the after:${node.id} hooks`, this.hooksAt(r, node, `after:${node.id}`));
+    if (!r.def.edges.some((e) => e.from === node.id)) return this.end(r, node, outcome);
+    void this.track(r, `routing after ${node.id}`, this.route(r, node, outcome));
+  }
+
+  private async route(r: Run, node: WNode, outcome: string): Promise<void> {
+    if (TERMINAL.includes(r.status)) return;
+    const outs = r.def.edges.filter((e) => e.from === node.id);
+    let take = outs.filter((e) => e.when && e.when.split("|").includes(outcome));
+    if (!take.length && !FAILS.includes(outcome)) take = outs.filter((e) => !e.when);
+    // an edge's checks run before it is taken; a blocking fail re-routes the source as "fail"
+    const checked = take.filter((e) => e.checks?.length);
+    if (checked.length && r.status !== "cancelled") {
+      this.routing.set(r.id, (this.routing.get(r.id) ?? 0) + 1);
+      try {
+        const x = this.x(r, node, r.nodes[node.id]);
+        for (const e of checked) {
+          const token = Symbol(ekey(e)); x.edgeOwner = token;
+          this.edgeOwners.set(token, { run: r, node, rn: x.rn, visit: x.visit, head: x.ctx.head ?? null });
+          let out: Awaited<ReturnType<Engine["runChecks"]>>;
+          try { out = await this.runChecks(x, e.checks!, ekey(e)); if (!this.owns(x)) {
+            if (this.runs.get(r.id) === r && !TERMINAL.includes(r.status) && !this.gone.has(r.id)) { r.status = "failed"; r.endedAt = now(); r.error = "edge ownership or head changed during checks"; this.stopAll(r,r.error); this.commit(r,r.error); this.emit(r,"failed",r.error); } return;
+          } }
+          finally { this.edgeOwners.delete(token); delete x.edgeOwner; }
+          if (TERMINAL.includes(r.status) || this.gone.has(r.id)) return;
+          const st = [...r.steps].reverse().find((s) => s.node === node.id);
+          if (st) st.checks = [...(st.checks ?? []), ...out.entries.map((y) => ({ check: y.check, verdict: y.verdict, seq: y.seq }))];
+          if (out.blocked.length) {
+            this.emit(r, "edge_blocked", `${ekey(e)}: ${out.blocked.map((y) => `${y.check} ${y.verdict}`).join(", ")}`, { node: node.id, edge: ekey(e) });
+            const rn = r.nodes[node.id]; rn.state = "failed"; rn.outcome = "fail"; rn.cause = `edge ${ekey(e)} blocked`; rn.routing = { outcome: "fail" }; if (st) { st.state = "failed"; st.outcome = "fail"; }
+            this.commit(r, rn.cause);
+            return this.route(r, node, "fail");
+          }
+        }
+      } finally { this.routing.set(r.id, (this.routing.get(r.id) ?? 1) - 1); }
+      if (r.status === "cancelled") return;
+    }
+    if (!take.length) {
+      r.status = "failed"; r.endedAt = now();
+      r.error = outcome === "cap" ? `${node.label}: the round cap was reached` : outcome === "error" ? `${node.label} failed: ${r.nodes[node.id].error ?? ""}` : `${node.label} ended with "${outcome}" and no edge takes it`;
+      r.nodes[node.id].routing = null; this.stopAll(r, "the run failed");
+      this.commit(r, `no edge for ${outcome}`); this.emit(r, "failed", r.error, { node: node.id });
+      return;
+    }
+    for (const e of take) this.deliver(r, e.to, node.id);
+    // the edges the run took, by name: the graph colours an edge as walked only when the run's events record it
+    for (const e of take) this.emit(r, "edge_taken", `${node.label} → ${r.def.nodes.find((n) => n.id === e.to)?.label ?? e.to}${e.when ? ` (${outcome})` : ""}`, { node: node.id, edge: ekey(e), from: node.id, to: e.to, outcome });
+    r.nodes[node.id].routing = null; // the tokens and the cleared marker are one durable step
+    this.commit(r, `${node.id} → ${outcome}`); this.tick(r);
+  }
+  private deliver(r: Run, to: string, from: string) {
+    const tn = r.nodes[to]; const node = r.def.nodes.find((n) => n.id === to)!;
+    if (node.join === "all") {
+      if (!tn.inbox.includes(from)) tn.inbox.push(from);
+      const need = [...new Set(r.def.edges.filter((e) => e.to === to).map((e) => e.from))];
+      if (!need.every((s) => tn.inbox.includes(s))) { this.emit(r, "join_wait", `${node.label}: ${tn.inbox.length}/${need.length} inputs in`, { node: to }); return; }
+      tn.inbox = [];
+    }
+    if (tn.state === "running" || r.queue.includes(to)) return;
+    tn.state = "pending"; tn.cause = `token from ${from}`; r.queue.push(to);
+  }
+  /** A run that reached a terminal status stops everything still live: sibling agent jobs, open cards, queued nodes. Late results are refused (finish/route return early). */
+  /** A path the runtime may let a check (or a round) read: not inside a protected root, and inside Studio's data only where the runtime materializes work (worktrees, the sandbox repo, clones, artifact versions, this run's evidence). */
+  readable(p: string, run: string | null): boolean {
+    if (!existsSync(p)) return false;
+    const under = (root: string) => realInside(root, p, true); // the one real-path containment rule (secure.ts)
+    for (const root of this.deps.protectedRoots ?? []) if (under(root)) return false;
+    if (!under(this.deps.dataDir)) return true;
+    const d = this.deps.dataDir;
+    return ["work", "demo-repo", "repos", "artifacts"].some((x) => under(join(d, x))) || (!!run && under(join(d, "evidence", run)));
+  }
+  private aborts = new Map<string, AbortController>();
+  /** Every check process a run starts listens to this; ending the run kills their process groups. */
+  abortOf(r: Run) { let a = this.aborts.get(r.id); if (!a) { a = new AbortController(); this.aborts.set(r.id, a); } return a; }
+  private stopAll(r: Run, cause: string) {
+    for (const [key, owner] of this.externalOwners) if (key.startsWith(r.id + "/")) { owner.cancel(); this.externalOwners.delete(key); }
+    this.abortOf(r).abort(); this.aborts.delete(r.id);
+    for (const rn of Object.values(r.nodes)) {
+      if (rn.state !== "running" && !r.queue.length) continue;
+      if (rn.state === "running") { if (rn.job) this.deps.agents.cancel(rn.job); if (rn.card) { this.cards.cancel(rn.card); this.raising.get(rn.card)?.resolve(); } rn.state = "skipped"; rn.waiting = null; rn.cause = cause; }
+    }
+    for (const st of r.steps) if (st.state === "running" || st.state === "waiting") { st.state = "skipped"; st.endedAt = now(); st.note = cause; }
+    r.queue = [];
+    for (const c of this.cards.list({ run: r.id, open: true })) { this.cards.cancel(c.id); this.raising.get(c.id)?.resolve(); }
+  }
+  private end(r: Run, node: WNode, outcome: string) {
+    r.status = "succeeded"; r.result = node.args?.result ?? (FAILED_OUTCOMES.has(outcome) ? outcome : "done"); r.endedAt = now();
+    this.stopAll(r, "the run ended");
+    this.commit(r, `ended at ${node.id}`); this.emit(r, r.result === "done" ? "done" : "closed", node.args?.summary ? fill(node.args.summary, r) : `${node.label}`, { result: r.result });
+  }
+
+  // ---------- checks ----------
+  /** Run checks (in parallel), record each in the ledger; returns the blocking failures. */
+  async runChecks(x: X, refs: CheckRef[], edge: string | null): Promise<{ entries: LedgerEntry[]; blocked: LedgerEntry[] }> {
+    const entries = await Promise.all(refs.map((ref) => this.runCheck(x, ref, edge)));
+    return { entries, blocked: entries.filter((e) => e.blocking && (e.verdict === "fail" || e.verdict === "error")) };
+  }
+  /** Parameters: the schema's defaults, then policy (org → project → workflow → run), then the workflow's own override on the check. */
+  params(man: CheckManifest, ref: CheckRef | null, o: { project?: string | null; workflow?: Record<string, any> | null; run?: Run | null }) {
+    const p: Record<string, any> = schemaDefaults(man.params); const from: Record<string, string> = {};
+    for (const k of Object.keys(p)) from[k] = "default";
+    for (const [k, path] of Object.entries(man.policy_bind ?? {})) {
+      const v = this.policies.get(path, o);
+      // in a run, the run's own resolution: overrides and a card's additions apply on top of what resolved, never instead of it
+      const val = o.run ? this.policy(o.run, path, p[k]) : v.value;
+      if (val !== undefined) { p[k] = val; from[k] = `policy ${path} (${o.run?.ctx.policyAdds?.[path] ? `${v.from ?? "default"} + run` : v.from})`; } }
+    for (const [k, v] of Object.entries(coerce(man.params, ref?.params ?? {}))) { p[k] = v; from[k] = "workflow"; }
+    return { params: p, from, errors: schemaErrors(man.params, p) };
+  }
+  /** Record a non-check ledger entry (a review verdict, a plan acceptance, a card answer). */
+  record(x: X, record: string, e: Partial<LedgerEntry>) {
+    if (this.gone.has(x.run.id)) return null; // stale native/agent holders never append after deletion
+    const rec = new Ledger(this.deps.dataDir, x.run.id).add({ run: x.run.id, node: x.node.id, edge: null, round: x.visit, head: x.ctx.head ?? null, check: `runtime/${record}`, version: "1", kind: "record", attempt: 0,
+      verdict: "pass", score: null, findings: [], evidence: [], proves: [], blocking: false, inputHash: "", params: {}, ms: 0, dir: null, record, ...e } as any);
+    this.emit(x.run, "evidence", `${record} recorded (#${rec.seq})`, { node: x.node.id, record, seq: rec.seq, sig: rec.sig });
+    return rec;
+  }
+  /**
+   * The ledger as far as it can be trusted: every signature and chain link holds,
+   * and it is not shorter than the run's own events say (a truncated tail is caught).
+   */
+  trusted(id: string): { entries: LedgerEntry[]; prefix: LedgerEntry[]; bad: Set<number>; truncated: boolean; ok: boolean } {
+    const scan = new Ledger(this.deps.dataDir, id).authenticatedPrefix(), entries = scan.entries, bad = new Set(scan.bad);
+    let prefix = scan.prefix;
+    const seen = this.events(id).filter((e) => (e.type === "check_result" || e.type === "evidence") && Number.isSafeInteger(e.seq) && e.seq > 0);
+    const tip = seen.reduce((m, e) => Math.max(m, e.seq), 0), tail = entries.at(-1)?.seq;
+    const last = Number.isSafeInteger(tail) && tail! > 0 ? tail! : 0;
+    for (const e of seen) {
+      const x = entries.find((y) => y.seq === e.seq);
+      if (x && e.sig && x.sig !== e.sig) {
+        bad.add(e.seq);
+        const position = prefix.indexOf(x); if (position >= 0) prefix = prefix.slice(0, position);
+      }
+    }
+    const truncated = last < tip;
+    return { entries, prefix, bad, truncated, ok: !scan.malformed && !bad.size && !truncated };
+  }
+  actionAnswers: Record<string, (x: X, card: SCard) => Promise<Result>> = {};
+  checkBindings: Record<string, (x: X, input: CheckInput) => Record<string, any>> = {};
+  async runCheck(x: X, ref: CheckRef, edge: string | null, extra: Record<string, any> = {}): Promise<LedgerEntry> {
+    const L = new Ledger(this.deps.dataDir, x.run.id);
+    const man = this.registry.get(ref.use);
+    if (TERMINAL.includes(x.run.status) && !String(edge ?? "").startsWith("hook:")) return ({ run: x.run.id, node: x.node.id, edge, round: x.visit, head: x.ctx.head ?? null, check: ref.use, version: man?.version ?? "?", kind: man?.kind ?? "deterministic", attempt: 0, record: "check", verdict: "error", score: null, findings: [], evidence: [], proves: [], error: `not run: the run is ${x.run.status}`, blocking: false, inputHash: "", params: {}, ms: 0, dir: null } as any);
+    const base = { run: x.run.id, node: x.node.id, edge, round: x.visit, head: x.ctx.head ?? null, check: ref.use, version: man?.version ?? "?", kind: man?.kind ?? "deterministic", attempt: 0, record: "check", actor: null as string | null };
+    if (!man) return this.recordCheck(x, L, { ...base, verdict: "error", score: null, findings: [], evidence: [], proves: [], error: `no check ${ref.use}`, blocking: ref.blocking ?? true, inputHash: "", params: {}, ms: 0, dir: null });
+    const pr = this.params(man, ref, { project: x.ctx.project ?? x.run.params.project ?? null, workflow: x.run.def.policies ?? null, run: x.run });
+    let blocking = ref.blocking ?? man.blocking;
+    const quorum = ref.quorum ?? man.judge?.quorum ?? null;
+    if (man.kind === "judged" && blocking && !quorumOk(quorum)) blocking = false; // a judged check blocks only with a quorum of at least 2 independent votes
+    if (man.kind === "hook") blocking = false;
+    // the evidence folder's name is unique even when one node runs the same check twice at once
+    const cdir = join(L.dir, `${Date.now().toString(36)}${randomBytes(4).toString("hex")}-${man.id}`); const out = join(cdir, "out");
+    mkdirSync(out, { recursive: true });
+    let input: CheckInput;
+    try { input = { ...(await this.input(x, man, pr.params, out, Object.keys(extra))), ...extra }; }
+    catch (e: any) { return this.recordCheck(x, L, { ...base, verdict: "error", score: null, findings: [], evidence: [], proves: [], error: `could not build the input: ${e?.message ?? e}`, blocking, inputHash: "", params: pr.params, ms: 0, dir: cdir }); }
+    const binding = this.checkBindings[man.ref]?.(x, input);
+    if (pr.errors.length) return this.recordCheck(x, L, { ...base, verdict: "error", score: null, findings: [], evidence: [], proves: [], error: `params: ${pr.errors.join("; ")}`, blocking, inputHash: hashInput(input), params: pr.params, ms: 0, dir: cdir });
+    const t0 = Date.now();
+    // a lifecycle hook is reported even when the run has just ended; every other check stops with its run
+    const signal = String(edge ?? "").startsWith("hook:") ? undefined : this.abortOf(x.run).signal;
+    let res = await this.exec(x, man, ref, input, cdir, signal);
+    let retried: string | null = null;
+    // flaky policy: only a tool error is retried (once by default), logged by name; an assertion failure never is
+    const retries = Number(this.policy(x.run, "flaky.retry", 1));
+    if (res.verdict === "error" && retries > 0 && /^(tool error|spawn)/.test(res.error ?? "")) {
+      retried = res.error ?? "error"; this.emit(x.run, "check_retry", `${man.ref}: retrying once after a tool error: ${String(res.error).slice(0, 160)}`, { node: x.node.id, check: man.ref });
+      res = await this.exec(x, man, ref, input, cdir, signal);
+    }
+    if (binding) res.data = { ...res.data, binding };
+    const proves = res.verdict === "pass" ? [...new Set([...(res.proves ?? []), ...(ref.proves ?? []), ...(man.proves ?? [])])] : [];
+    return this.recordCheck(x, L, { ...base, ...res, actor: res.votes?.map((v) => v.by).join(", ") || null, proves, attempt: retried ? 1 : 0, retried, blocking, inputHash: hashInput(input), params: pr.params, ms: Date.now() - t0, dir: cdir });
+  }
+  private recordCheck(x: X, L: Ledger, e: any): LedgerEntry {
+    if ((x.edgeOwner && !this.owns(x)) || this.gone.has(x.run.id) || (TERMINAL.includes(x.run.status) && !String(e.edge ?? "").startsWith("hook:"))) return { ...e, seq: 0, sig: "", error: "late check result refused" }; // no ordinary check writes after its owner ends
+    const rec = L.add(e.inputHash ? { ...e, inputHashAlgorithm: INPUT_HASH_ALGORITHM } : e);
+    this.emit(x.run, "check_result", `${e.edge ? `${e.edge} · ` : `${x.node.label} · `}${e.check}: ${e.verdict}${e.findings.length ? ` (${e.findings.length} finding${e.findings.length > 1 ? "s" : ""})` : ""}${e.error ? ` — ${String(e.error).slice(0, 160)}` : ""}`,
+      { node: x.node.id, check: e.check, verdict: e.verdict, seq: rec.seq, sig: rec.sig, blocking: e.blocking, edge: e.edge ?? null });
+    return rec;
+  }
+  async input(x: X, man: CheckManifest, params: Record<string, any>, out: string, given: string[] = []): Promise<CheckInput> {
+    const type = man.applies_to.find((t) => this.artifacts[t]) ?? null;
+    const artifact = type ? this.artifacts[type](x) : null;
+    const prev = this.ledger(x.run.id).filter((e) => e.check === man.ref && e.node === x.node.id).at(-1) ?? null;
+    const input: CheckInput = { run: x.run.id, node: x.node.id, round: x.visit, artifact, previous: prev ? { verdict: prev.verdict, score: prev.score, findings: prev.findings, head: prev.head } : null,
+      spec: x.ctx.spec?.done ? { done: x.ctx.spec.done } : null, params, workdir: artifact?.workdir ?? null, out };
+    for (const n of man.needs) { if (n === "artifact" || n === "previous" || n === "spec" || given.includes(n)) continue; const f = this.needs[n]; if (!f) throw new Error(`nothing provides "${n}"`); input[n] = await f(x, man); }
+    return input;
+  }
+  /** Execute one check: native, exit-code adapter, executable, or a model judge. */
+  async exec(x: X, man: CheckManifest, ref: CheckRef, input: CheckInput, cdir: string, signal?: AbortSignal): Promise<CheckOutput> {
+    const E = (error: string): CheckOutput => ({ verdict: "error", score: null, findings: [], evidence: [], proves: [], error });
+    try {
+      if (man.kind === "judged") return await this.judge(x, man, ref, input);
+      if (man.native) {
+        const f = this.natives[man.native]; if (!f) return E(`no native check ${man.native}`);
+        // A timeout reports the check early, but cannot stop an in-process native.
+        // Keep its actual promise holding the run until all of its writes finish.
+        const native = Promise.resolve().then(() => f(input, { x, manifest: man }));
+        void this.track(x.run, `native check ${man.ref}`, native);
+        let timer: any; const r = await Promise.race([native, new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error(`timeout after ${man.timeout_s} s`)), man.timeout_s * 1000); })]).finally(() => clearTimeout(timer));
+        return parseOutput(JSON.stringify(r), man.ref);
+      }
+      // reads widen only to paths the runtime itself put in the input (never a check's params), real paths, never a protected root or Studio's own state
+      const reads = inputPaths({ ...input, params: undefined }).filter((p) => p !== input.out && this.readable(p, x.run?.id ?? null));
+      const sb = { out: input.out, tmp: join(cdir, "tmp"), timeoutS: man.timeout_s, network: man.network, reads, dataDir: this.deps.dataDir, signal };
+      if (man.adapter) {
+        const argv = man.adapter.command.flatMap((a) => { const m = /^\{([\w.]+)\}$/.exec(a); if (m) return this.expand[m[1]]?.(x) ?? []; return [a.replace(/\{param\.(\w+)\}/g, (_, k) => String(input.params[k] ?? "")).replace(/\{workdir\}/g, input.workdir ?? "")]; });
+        if (!argv.length) return E(`nothing to run: ${man.adapter.command.join(" ")} is not declared for this repository`);
+        const { log, ...res } = await execAdapter(argv, { ...sb, cwd: input.workdir ?? cdir, passOn: man.adapter.pass_on, regex: man.adapter.findings_from?.regex ?? null, cls: man.adapter.findings_from?.class ?? man.id, severity: man.adapter.findings_from?.severity, ref: man.ref, env: input.env ?? {} });
+        void log; return res;
+      }
+      const exe = this.registry.executable(man);
+      const embedded = man.runtime === "studio";
+      const executableHash = embedded ? createHash("sha256").update(readFileSync(exe)).digest("hex") : null;
+      if (embedded && (man as any).studioScriptHash && executableHash !== (man as any).studioScriptHash) throw new Error("validated check script hash changed during extraction");
+      const canaryDir = join(this.deps.dataDir, "check-canaries"); let guard: string | null = null;
+      if (embedded) { mkdirSync(canaryDir, { recursive: true }); guard = join(realpathSync(canaryDir), randomBytes(16).toString("hex")); writeFileSync(guard, "Studio check sandbox denial canary", { mode: 0o644, flag: "wx" }); if (readFileSync(guard, "utf8") !== "Studio check sandbox denial canary") throw new Error("sandbox canary control failed"); }
+      const argv = embedded ? helperCommand("check-script", [realpathSync(exe), (man as any).studioScriptHash ?? executableHash!, guard!]) : [exe];
+      let r; try { r = await sandboxed(argv, { ...sb, reads: embedded ? [...reads, exe, ...helperReads()] : reads, cwd: input.workdir ?? cdir, stdin: JSON.stringify(input), env: embedded ? {} : input.env ?? {} }); } finally { if (guard) rmSync(guard, { force: true }); }
+      if (r.refused) return E(`refused: ${r.refused}`);
+      if (r.aborted) return E("stopped: the run ended");
+      writeFileSync(join(cdir, "stderr.txt"), r.stderr);
+      if (r.timedOut) return E(`timeout after ${man.timeout_s} s`);
+      if (r.code !== 0) return E(`exit ${r.code}: ${r.stderr.trim().split("\n").slice(-3).join(" | ").slice(0, 400)}`);
+      return parseOutput(r.stdout, man.ref);
+    } catch (e: any) { return E(`tool error: ${String(e?.message ?? e).slice(0, 400)}`); }
+  }
+  /** A judged check: a model (or an agent node's own verdict) through the provider interface. Findings need locators; a quorum decides. */
+  async judge(x: X, man: CheckManifest, ref: CheckRef, input: CheckInput): Promise<CheckOutput> {
+    const j = man.judge ?? { prompt: "" };
+    const q = ref.quorum ?? j.quorum ?? { n: 1, of: 1 };
+    const votes: { provider?: string; model?: string; job?: string; by: string; verdict: "pass" | "fail" | "warn"; findings: Finding[]; dropped: number; score: number | null }[] = [];
+    const actual = new Set<string>();
+    if (j.distinct_providers !== undefined && typeof j.distinct_providers !== "boolean") return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "distinct_providers must be explicitly boolean" };
+    const take = (o: any, by: string, identity?: { provider: string; model?: string; job?: string }) => { const raw = Array.isArray(o?.findings) ? o.findings : []; const fs = raw.map((f: any) => parseFinding(f, "judge", man.ref)).filter((f: Finding | null) => f && f.locator) as Finding[];
+      votes.push({ by, ...identity, verdict: o?.verdict === "fail" ? "fail" : o?.verdict === "warn" ? "warn" : "pass", findings: fs, dropped: raw.length - fs.length, score: Number.isFinite(Number(o?.score)) ? Number(o.score) : null }); };
+    if (j.from_node) { const v = x.run.nodes[j.from_node]?.data?.judged; if (v) { if (j.distinct_providers && (!v.provider || actual.has(v.provider))) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "from-node vendor identity is unverified or duplicate", votes }; if (v.provider) actual.add(v.provider); take(v, v.by ?? j.from_node, v.provider ? { provider: v.provider, model: v.model, job: v.job } : undefined); } }
+    const vendors = (ref.provider ? [ref.provider] : j.vendors?.length ? j.vendors : [j.provider ?? this.deps.defaultProvider().provider]);
+    const prompt = `${ref.prompt ?? j.prompt}\n\nInput (JSON):\n${JSON.stringify({ ...input, out: undefined }, null, 1).slice(0, 30000)}`;
+    for (let i = votes.length; i < q.of; i++) {
+      const provider = vendors[i % vendors.length]; const model = ref.model ?? j.model ?? null;
+      let got: any = null;
+      const tools: AgentTool[] = [{ name: "judge_report", description: "Your judgement, once: verdict pass, warn or fail, and findings. Every finding MUST carry a locator (file {path,line}, web, image, timeline, text or card); a finding without one is dropped.",
+        schema: { type: "object", properties: { verdict: { type: "string", enum: ["pass", "warn", "fail"] }, score: { type: "number" }, findings: { type: "array", items: { type: "object", properties: { locator: { type: "object" }, message: { type: "string" }, expected: { type: "string" }, class: { type: "string" }, severity: { type: "string", enum: ["blocking", "minor"] } }, required: ["locator", "message", "class"] } } }, required: ["verdict", "findings"] },
+        run: (a) => { got = a; return { ok: true }; } }];
+      const selected = this.deps.selectProvider ? await this.deps.selectProvider(x, { provider, model }, { role: "judge", explicit: true }) : this.deps.provider(provider, model ?? undefined);
+      if (j.distinct_providers && actual.has(selected.id)) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "distinct provider agreement resolved to a duplicate actual vendor", votes };
+      const job = await this.deps.agents.run({ kind: `judge:${man.id}`, title: `${x.run?.id ?? "try"} judge ${man.id} #${i + 1}`, system: `You are a judge for the check "${man.title.en}". Judge only what the input shows. Call judge_report exactly once, then answer in one line.`,
+        text: `JUDGE ${man.id}\n${prompt}`, tools, provider: selected, ref: x.run?.id, signal: x.run && x.run.id !== "try" ? this.abortOf(x.run).signal : undefined, owns: x.run && x.run.id !== "try" ? () => this.owns(x) : undefined, maxTools: 4, timeoutMs: man.timeout_s * 1000,
+        sandbox: x.run ? this.roundSandbox(x, null) : { writes: [] } });
+      if (job.status !== "done" || !got) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: `tool error: judge ${provider} ${job.status === "done" ? "gave no judgement" : job.error}` };
+      if (j.distinct_providers && actual.has(job.provider)) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "distinct provider agreement produced duplicate actual vendor", votes };
+      actual.add(job.provider); take(got, `${job.provider}·${job.model}`, { provider: job.provider, model: job.model, job: job.id });
+    }
+    const fails = votes.filter((v) => v.verdict === "fail").length;
+    const verdict = fails >= q.n ? "fail" : fails > 0 || votes.some((v) => v.verdict === "warn") ? "warn" : "pass";
+    const scores = votes.map((v) => v.score).filter((s): s is number => s != null);
+    return { verdict, score: scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : verdict === "pass" ? 1 : verdict === "fail" ? 0 : 0.5, findings: votes.filter((v) => v.verdict !== "pass").flatMap((v) => v.findings), evidence: [], proves: [],
+      dropped: votes.reduce((n, v) => n + v.dropped, 0), votes: votes.map((v) => ({ by: v.by, verdict: v.verdict, ...(v.provider ? { provider: v.provider, model: v.model, job: v.job } : {}) })) };
+  }
+  /** Workflow hooks at a lifecycle point (after:<node>, after_round, after_merge, on_cancel): reported, never moving the run. */
+  async hooksAt(r: Run, node: WNode | null, at: string) {
+    // a node declares the lifecycle points it marks (lifecycle: [after_round], [after_merge] …); the runtime knows no domain
+    const points = new Set([at, ...(node && at === `after:${node.id}` ? node.lifecycle ?? [] : [])]);
+    const hs = (r.def.hooks ?? []).filter((h) => points.has(h.at));
+    if (!hs.length) return;
+    const n = node ?? r.def.nodes[0];
+    const x = this.x(r, n, r.nodes[n.id]);
+    for (const h of hs) await this.runCheck(x, { use: h.use, params: h.params, blocking: false }, `hook:${h.at}`);
+  }
+  /** What the done lines rest on: checks that proved them at the final head, and the lines that need the captain's eye. */
+  doneLines(r: Run) {
+    // verified first: a line resting on a tampered entry, or any line when the ledger was cut short, needs the captain's eye
+    const t = this.trusted(r.id);
+    const lines = doneMap(r.ctx.spec?.done ?? [], t.entries.filter((e) => !t.bad.has(e.seq)), r.ctx.head ?? null);
+    return t.truncated ? lines.map((l) => ({ ...l, proved: false, note: "the evidence ledger is shorter than the run's events: it was cut short" })) : lines;
+  }
+
+  // ---------- the captain's controls ----------
+  pause(id: string) { const r = this.must(id); if (TERMINAL.includes(r.status)) throw new Error(`the run is ${r.status}`); if (r.status === "paused") return r;
+    r.status = "paused"; this.commit(r, "paused by the captain"); this.emit(r, "paused", "paused: running steps finish, nothing new starts"); return r; }
+  resume(id: string) { const r = this.must(id); if (r.status !== "paused") throw new Error(`the run is ${r.status}`); r.status = "running"; this.commit(r, "resumed by the captain"); this.emit(r, "resumed", "resumed"); this.tick(r); this.settle(r); return r; }
+  cancel(id: string, by = "captain", reason: string | null = null) {
+    const r = this.must(id); if (TERMINAL.includes(r.status)) throw new Error(`the run is ${r.status}`);
+    const why = reason ? String(reason).trim().slice(0, 1000) || null : null;
+    r.status = "cancelled"; r.endedAt = now(); r.error = `cancelled by ${by}${why ? `: ${why}` : ""}`; r.cancelReason = why;
+    this.stopAll(r, "cancelled");
+    this.commit(r, `cancelled by ${by}`); this.emit(r, "cancelled", r.error, { by, reason: why }); void this.track(r, "its on_cancel hooks", this.hooksAt(r, null, "on_cancel").finally(() => this.onCancel(r))); return r;
+  }
+  // ---------- work that holds a run ----------
+  // every promise that may still write under a run's folders (a node, routing, hooks, on_cancel, an answer carried on) is tracked
+  // by run; archive and delete are refused while any is in flight ("still finishing: …"), and a deleted run takes no more writes
+  private work = new Map<string, Map<symbol, string>>();
+  private gone = new Set<string>();
+  private track(r: Run, what: string, p: Promise<unknown>): Promise<void> {
+    const k = Symbol(what); let m = this.work.get(r.id); if (!m) this.work.set(r.id, (m = new Map())); m.set(k, what);
+    return p.then(() => {}, (e) => { try { this.emit(r, "log", `${what} failed: ${String(e?.message ?? e).slice(0, 300)}`); } catch {} })
+      .finally(() => { m!.delete(k); if (!m!.size && this.work.get(r.id) === m) this.work.delete(r.id); });
+  }
+  /** What async work still holds the run (null when none): the reason archive and delete wait. */
+  busy(id: string): string | null {
+    const w = [...(this.work.get(id)?.values() ?? [])];
+    for (const k of this.live) if (k.startsWith(`${id}/`)) w.push(`node ${k.slice(id.length + 1)}`);
+    for (const c of this.raising.keys()) if (this.cards.get(c)?.run === id) w.push(`raising card ${c}`);
+    return w.length ? [...new Set(w)].join(", ") : null;
+  }
+  onCancel: (r: Run) => void = () => {};
+  /** A domain's own clean-up when a run is deleted (each pack removes what it made for the run). */
+  onDelete: (r: Run) => void = () => {};
+  private ended(r: Run, what: string) { if (!TERMINAL.includes(r.status)) throw new Error(`the run is ${r.status}: only an ended run can be ${what}`);
+    const b = this.busy(r.id); if (b) throw new Error(`still finishing: ${b}. The run can be ${what} once that is done`); }
+  /** Hide an ended run from the default lists, or bring it back. An event in the run and in Studio's log. */
+  archive(id: string, on: boolean, by = "captain") {
+    const r = this.must(id); this.ended(r, on ? "archived" : "unarchived");
+    if (!!r.archived === on) return r;
+    r.archived = on; this.append(r, on ? { type: "archived", archived: true, by } : { type: "unarchived", by }); r.updatedAt = now();
+    const c = this.committed.get(r.id); if (c) c.archived = on;
+    const f = join(this.rdir(r.id), "run.json"); writeFileSync(f + ".tmp", JSON.stringify(r)); renameSync(f + ".tmp", f);
+    this.deps.log.emit({ type: on ? "run_archived" : "run_unarchived", workflow: r.workflow, task: r.id, summary: `${r.id} ${on ? "archived" : "unarchived"} by ${by}`, data: { by } });
+    this.deps.send("wrun", { id: r.id, status: r.status, archived: on, event: { type: "archived", archived: on }, nodes: this.nodeStates(r) });
+    return r;
+  }
+  /**
+   * Delete an ended run for good: the captain types its id. Its directory (captures included), its cards and the
+   * domain's own traces (onDelete) go. The evidence ledger stays and gains one signed entry recording the deletion,
+   * so it still verifies. An event in Studio's log.
+   */
+  remove(id: string, confirm: string, by = "captain") {
+    const r = this.must(id); this.ended(r, "deleted");
+    if (String(confirm ?? "").trim() !== r.id) throw new Error(`type the run id (${r.id}) to delete it`);
+    this.onDelete(r); // a domain clean-up that throws leaves the run intact (still listed, still writable) and the error goes back
+    this.gone.add(r.id);
+    const cards = this.cards.removeRun(r.id);
+    rmSync(this.rdir(r.id), { recursive: true, force: true });
+    this.runs.delete(r.id); this.committed.delete(r.id); this.aborts.delete(r.id);
+    new Ledger(this.deps.dataDir, r.id).add({ run: r.id, node: "", edge: null, round: 0, head: null, check: "run/delete", version: "1", kind: "deterministic", attempt: 0, record: "deletion", actor: by,
+      verdict: "pass", score: null, findings: [], evidence: [], proves: [], blocking: false, inputHash: "", params: {}, ms: 0, dir: null, data: { workflow: r.workflow, title: r.title, status: r.status, result: r.result, cards } } as any);
+    this.deps.log.emit({ type: "run_deleted", workflow: r.workflow, task: r.id, summary: `${r.id} deleted by ${by}`, data: { by, cards } });
+    this.deps.send("wrun", { id: r.id, deleted: true });
+    return { id: r.id, deleted: true, cards };
+  }
+  /** Hot swap: a live agent node stops, writes data/handoff/<run>/<node>.md, and its new agent starts from it. An idle node just takes the new agent. */
+  setAgent(id: string, nodeId: string, p: AgentPick) {
+    const r = this.must(id); const node = r.def.nodes.find((n) => n.id === nodeId); if (!node) throw new Error("no such node");
+    if (node.kind !== "agent" && node.kind !== "loop" && !(node.kind === "card" && node.args?.mode)) throw new Error(`${node.label} has no agent`);
+    if (!p.provider) throw new Error("name a provider");
+    const rn = r.nodes[nodeId];
+    if (rn.state === "running" && rn.job && node.kind === "agent") { rn.swap = p; this.commit(r, "swap requested"); this.emit(r, "swap_requested", `${node.label}: switching to ${p.provider}${p.model ? ` · ${p.model}` : ""}`, { node: nodeId, ...p }); this.deps.agents.cancel(rn.job); }
+    else { rn.agent = p; this.commit(r, "agent set"); this.emit(r, "agent_set", `${node.label}: next visit runs on ${p.provider}${p.model ? ` · ${p.model}` : ""}`, { node: nodeId, ...p }); }
+    return r;
+  }
+  /** The captain answered a Studio card (exactly once). The answer is signed into the ledger. */
+  /** Cards whose node is still raising them (its STE checks): an answer waits for this, never polls. */
+  private raising = new Map<string, { done: Promise<void>; resolve: () => void }>();
+  /** How long an answer waits for a card that is still being raised. */
+  cardReadyMs = 30_000;
+  async answer(cardId: string, a: { choice: string; note?: string | null; by: string; confirm?: string | null; aligned?: number[] | null }) {
+    const c0 = this.cards.get(cardId); if (!c0) throw new Error("no such card");
+    const r = this.must(c0.run);
+    // a card is visible as soon as it is raised; its node finishes raising it (the STE check) a moment later: wait for that, not longer than cardReadyMs
+    if (TERMINAL.includes(r.status)) throw new Error(`the run is ${r.status}`);
+    const raising = this.raising.get(cardId);
+    if (raising) { let t: any; const ok = await Promise.race([raising.done.then(() => true), new Promise<boolean>((res) => { t = setTimeout(() => res(false), this.cardReadyMs); })]); clearTimeout(t);
+      if (!ok) throw new Error("this card is still being raised (its checks are running): answer it again in a moment"); }
+    if (TERMINAL.includes(r.status)) throw new Error(`the run is ${r.status}`);
+    const rn = r.nodes[c0.node]; if (rn?.state !== "running" || rn.waiting !== "card" || rn.card !== c0.id) throw new Error("this card is not the one its node waits on");
+    const c = this.cards.answer(cardId, a);
+    const node = r.def.nodes.find((n) => n.id === c.node)!;
+    const x = this.x(r, node, rn);
+    this.emit(r, "card_answered", `${c.id} ${c.title.en}: ${c.answer!.choice}${c.answer!.note ? ` — ${c.answer!.note.slice(0, 160)}` : ""}`, { node: node.id, card: c.id, choice: c.answer!.choice, by: a.by });
+    await this.carryAnswer(r, node.id);
+    return c;
+  }
+  /** Move a node on from its answered card (also after a restart that came between the answer and the move). */
+  async carryAnswer(r: Run, nodeId: string) {
+    const node = r.def.nodes.find((n) => n.id === nodeId)!; const rn = r.nodes[nodeId]; const c = this.cards.get(rn.card ?? "")!;
+    r.ctx.answers = { ...(r.ctx.answers ?? {}), [node.id]: c.answer };
+    // the answer goes into the ledger once, here, so an answer carried on after a crash is recorded too
+    if (!r.ctx.answersRecorded?.includes(c.id)) { r.ctx.answersRecorded = [...(r.ctx.answersRecorded ?? []), c.id]; this.record(this.x(r, node, rn), "card-answer", { actor: c.answer!.by, data: { card: c.id, kind: c.kind, choice: c.answer!.choice, note: c.answer!.note, confirm: c.answer!.confirm, ...(this.queueDomain?.answer(r, node, rn, c) ?? {}) } }); }
+    // the card's effects, once per card (an answer carried on after a restart does not apply them twice)
+    const eff = node.card?.effects?.[c.answer!.choice] as any;
+    if (eff && !r.ctx.effectsApplied?.includes(c.id)) {
+      r.ctx.effectsApplied = [...(r.ctx.effectsApplied ?? []), c.id];
+      if (eff.policy) { r.ctx.policyAdds = { ...(r.ctx.policyAdds ?? {}), [eff.policy]: Number(r.ctx.policyAdds?.[eff.policy] ?? 0) + Number(eff.add ?? 0) }; this.emit(r, "policy_override", `run override by card ${c.id}: ${eff.policy} +${eff.add} (now +${r.ctx.policyAdds[eff.policy]})`, { node: node.id }); }
+      else if (r.nodes[eff.node]) { r.nodes[eff.node].extra += eff.add; this.emit(r, "budget", `${eff.node}: ${eff.add} more visits`, { node: eff.node }); }
+    }
+    const step = [...r.steps].reverse().find((s) => s.node === node.id && s.state === "waiting");
+    if (node.kind === "agent" && rn.data.nativeQueueCapability && c.answer!.choice === rn.data.nativeQueueCapability.retryAction) {
+      if (!this.owns(this.x(r, node, rn))) throw new Error("readiness recovery owner ended");
+      r.ctx.nativeQueueVersion = 1; delete rn.data.nativeQueue; delete rn.data.nativeQueueCapability;
+      if (step) { step.state = "passed"; step.outcome = "retry"; step.endedAt = now(); }
+      rn.waiting = null; rn.card = null; rn.state = "pending"; rn.cause = `fresh preparation approved by ${c.id}`;
+      if (!r.queue.includes(nodeId)) r.queue.push(nodeId); this.commit(r, rn.cause);
+      // Answer settles after scheduling; the new provider round owns its own
+      // continuation. Cancellation before this microtask prevents a late start.
+      queueMicrotask(() => { if (!TERMINAL.includes(r.status) && !this.gone.has(r.id) && this.runs.get(r.id) === r) this.tick(r); });
+      return;
+    }
+    rn.waiting = null; this.commit(r, `card ${c.id} answered: ${c.answer!.choice}`);
+    const x = this.x(r, node, rn);
+    const h = node.kind === "card" && node.args?.mode && this.cardModes[node.args.mode] ? this.cardModes[node.args.mode] : this.kinds[node.kind];
+    let res: Result | null = null, err: string | null = null;
+    const key = `${r.id}/${node.id}`; this.live.add(key);
+    try { res = h.answer ? await h.answer(x, c) : { outcome: c.answer!.choice, note: c.answer!.note }; } catch (e: any) { err = String(e?.message ?? e); } finally { this.live.delete(key); }
+    this.finish(r, node, rn, step ?? { seq: r.steps.length + 1, node: node.id, kind: node.kind, visit: rn.visits, state: "waiting", outcome: null, startedAt: now(), endedAt: null, error: null, job: null, provider: null, model: null, note: null }, res, err);
+  }
+  private must(id: string) { const r = this.runs.get(id); if (!r) throw new Error("no such run"); return r; }
+
+  /**
+   * Raise a card for a waiting node: intent sections in en and zh-TW, STE-checked
+   * (recorded in the ledger). Inside an open authorization window (a signed grant the
+   * captain opened in Studio) the runtime answers the listed kinds, never a one-way door.
+   */
+  async card(x: X, kind: CardKind, b: Body): Promise<SCard> {
+    if (!this.owns(x)) throw new Error("card owner ended before presentation");
+    const sec = (p: Partial<Sections> | undefined): Sections => ({ ...emptySections(), ...(p ?? {}), scope: { in: p?.scope?.in ?? [], out: p?.scope?.out ?? [] } });
+    const en = sec({ intent: x.run.text.split("\n")[0].slice(0, 300) || x.run.title, ...b.en });
+    const zh = sec({ intent: en.intent, ...b.zh });
+    const c = this.cards.create({ run: x.run.id, node: x.node.id, visit: x.rn.visits, kind, title: { en: b.title, "zh-TW": b.zhTitle ?? b.title }, sections: { en, "zh-TW": zh }, body: b.body ?? "",
+      options: b.options ?? x.node.card?.options ?? [{ id: "approve", label: "Approve", primary: true }, { id: "reject", label: "Reject" }],
+      confirmDoor: !!x.node.card?.confirm_door, door: b.door ?? (x.node.card?.door_from ? (x.ctx[x.node.card.door_from]?.door ?? x.ctx[x.node.card.door_from] ?? null) : null), links: b.links ?? [], detail: b.detail ?? null, ...(b.captainOnly ? { captainOnly: true } : {}), workflow: x.run.workflow, runTitle: x.run.title, ledger: b.ledger ?? null, ste: null, captures: b.captures ?? null });
+    x.rn.card = c.id; this.commit(x.run, `card ${c.id} raised`);
+    { let done!: () => void; const p = new Promise<void>((res) => (done = res)); this.raising.set(c.id, { done: p, resolve: () => { this.raising.delete(c.id); done(); } }); }
+    this.emit(x.run, "card_raised", `${c.id} ${c.title.en}`, { node: x.node.id, card: c.id, kind });
+    // every card is STE-checked (en and zh-TW) by the checks the workflow names, by default the runtime's core one
+    for (const use of x.run.def.card_checks ?? ["core/ste-wording"]) {
+      const texts = (["en", "zh-TW"] as const).flatMap((l) => { const s = c.sections[l]; return [{ section: `${l}.title`, text: c.title[l] }, { section: `${l}.intent`, text: s.intent }, { section: `${l}.why`, text: s.why }, { section: `${l}.how`, text: s.how }].filter((t) => t.text); });
+      const e = await this.runCheck(x, { use, blocking: false }, `card:${c.id}`, { texts }).catch(() => null);
+      if (!this.owns(x)) throw new Error("card owner ended during presentation checks");
+      const cur = this.cards.get(c.id)!; cur.ste = e ? { verdict: e.verdict, findings: e.findings.length, seq: e.seq } : { verdict: "error", findings: 0, seq: null }; this.cards.save(cur);
+    }
+    // an authorization window: only a signed grant the captain opened in Studio; never for a one-way door
+    if (!this.owns(x)) throw new Error("card owner ended before authorization");
+    try { for (const prepared of Object.values(this.cardPrepared)) { if (!this.owns(x)) throw new Error("card owner ended during preparation"); prepared(x,c,b); if (!this.owns(x)) throw new Error("card owner ended during preparation"); } }
+    catch (error) { this.cards.cancel(c.id); throw error; }
+    const g = this.grants.open(kind, x.ctx.project ?? x.run.params.project ?? null);
+    const choice = x.node.card?.auto_option ?? c.options.find((o) => o.primary)?.id ?? null;
+    // a window never answers a card its body marks captain-only (the merge card's intent alignment is the captain's own act)
+    if (g && c.captainOnly) this.emit(x.run, "log", `${c.id}: authorization window ${g.id} lists ${kind}, but this card waits for the captain's own answer`);
+    if (g && !c.captainOnly && choice && c.options.some((o) => o.id === choice) && c.door !== "one-way") {
+      setTimeout(() => { if (!this.owns(x)) return; void this.answer(c.id, { choice, by: `auth window ${g.id} (granted by ${g.granted_by} at ${g.at}, until ${g.until})` }).catch((e) => this.emit(x.run, "log", `auth window could not answer ${c.id}: ${e?.message ?? e}`)); }, 10);
+    }
+    return this.cards.get(c.id)!;
+  }
+
+  private async hookChecks(x: X, outcome: string, external = false): Promise<Result> {
+    if (!this.owns(x)) return { outcome: "cancel" };
+    const refs = (x.node.checks ?? []).map(ref => ({ ...ref, blocking: false }));
+    const trusted = external ? this.trusted(x.run.id) : null;
+    if (trusted && !trusted.ok) throw new Error("external hook check evidence integrity failed");
+    // Keep the canonical parallel hook execution. Each external check has its
+    // own durable index so restart can reuse completed signed evidence.
+    const entries = external ? await Promise.all(refs.map(async (ref, index) => {
+      if (!this.owns(x)) throw new Error("external hook owner ended");
+      const edge = `external-hook:${index}`;
+      const kept = trusted!.entries.filter(e => e.node === x.node.id && e.round === x.visit && e.edge === edge && e.check === ref.use).at(-1);
+      return kept ?? await this.runCheck(x, ref, edge);
+    })) : (await this.runChecks(x, refs, null)).entries;
+    if (!this.owns(x)) return { outcome: "cancel" };
+    const report = x.rn.data.externalHookReport;
+    const reported = external && report?.version === 1 && report.visit === x.visit && JSON.stringify(report.seqs) === JSON.stringify(entries.map(e => e.seq));
+    const body = entries.map(e => ({ check: e.check, verdict: e.verdict, findings: e.findings, seq: e.seq, data: e.data ?? null }));
+    if (reported && JSON.stringify(x.ctx.hooks?.[x.node.id]) === JSON.stringify(body)) return { outcome, note: x.rn.note };
+    if (x.node.checks?.length && this.owns(x)) {
+      // Node and context events are separate durable writes. If the report
+      // marker reached disk before context, rebuild the context, not its checks
+      // or the already recorded note.
+      x.ctx.hooks = { ...(x.ctx.hooks ?? {}), [x.node.id]: body };
+      if (!reported) x.rn.note = [x.rn.note, entries.map(e => `${e.check.split("/").pop()}: ${e.verdict}`).join(", ")].filter(Boolean).join(" · "); if (external) x.rn.data.externalHookReport = { version: 1, visit: x.visit, seqs: entries.map(e => e.seq) }; x.save();
+    }
+    return { outcome, note: x.rn.note };
+  }
+
+  // ---------- the five node kinds ----------
+  private builtinKinds() {
+    const self = this;
+    // hook: a runtime action (do) and/or hook checks; reported, never moving the run backward
+    this.kinds.hook = { async start(x: X) {
+      let out = "ok";
+      if (x.node.do) { const f = self.actions[x.node.do]; if (!f) throw new Error(`no action ${x.node.do}`); const result = (await f(x)) || "ok"; if (typeof result !== "string") { if ("wait" in result) return result; out = result.outcome; x.rn.note = result.note ?? x.rn.note; } else out = result; }
+      return self.hookChecks(x, out);
+    }, async answer(x: X, card: SCard) { const handler = x.node.do && self.actionAnswers[x.node.do]; return handler ? handler(x, card) : { outcome: card.answer!.choice }; } };
+    // check: runs its checks; the outcome is pass/fail, or a route a check names (data.route), e.g. the door
+    this.kinds.check = { async start(x: X) {
+      const r = await self.runChecks(x, x.node.checks ?? [], null);
+      x.rn.data.results = r.entries.map((e) => ({ check: e.check, verdict: e.verdict, seq: e.seq }));
+      const routed = x.node.args?.route_from ? r.entries.find((e) => e.check === x.node.args!.route_from) as any : null;
+      if (routed?.data?.route) { x.rn.note = `${routed.check}: ${routed.data.route}`; if (x.node.args?.store) x.ctx[x.node.args.store] = routed.data; return { outcome: String(routed.data.route), note: x.rn.note }; }
+      return { outcome: r.blocked.length ? "fail" : "pass", note: r.blocked.length ? r.blocked.map((e) => `${e.check} ${e.verdict}`).join(", ") : `${r.entries.filter((e) => e.verdict === "pass").length}/${r.entries.length} pass` };
+    } };
+    // card: asks a human (or an auth window) and waits
+    this.kinds.card = {
+      async start(x: X) {
+        const from = x.node.args?.body_from ? self.cardBodies[x.node.args.body_from] : null;
+        // a workflow's card text may carry both locales: title / body as {en, zh-TW}
+        const loc = (v: any, l: "en" | "zh-TW") => (v && typeof v === "object" ? v[l] ?? v.en ?? "" : v ?? "");
+        const card = x.node.card ?? {};
+        const b: Body = from ? await from(x) : { title: fill(loc(card.title, "en") || x.node.label, x.run), zhTitle: fill(loc(card.title, "zh-TW") || x.node.label, x.run),
+          en: { why: fill(loc(card.body, "en"), x.run) }, zh: { why: fill(loc(card.body, "zh-TW"), x.run) }, body: fill(loc(card.body, "en"), x.run) };
+        const c = await self.card(x, (x.node.args?.card_kind ?? "question") as CardKind, { ...b, options: b.options ?? x.node.card?.options });
+        return { wait: true, note: `card ${c.id}` };
+      },
+      async answer(x: X, c: SCard) { return { outcome: c.answer!.choice, note: c.answer!.note }; },
+    };
+    this.kinds.agent = {
+      async start(x: X) {
+        x.rn.data.stoppedBeforeAgent = false;
+        try { const outcome = await self.runAgent(x); return { outcome, ...(x.rn.data.stoppedBeforeAgent ? { stopped: true } : {}) } as any; }
+        catch (e: any) { if (!(e instanceof QueueRefusal) && !(e instanceof ProviderRefusal) || x.cancelled()) throw e; return self.queueCapability(x, e.message); }
+      },
+      async answer(x: X, c: SCard) {
+        if (!x.rn.data.nativeQueueCapability) return { outcome: c.answer!.choice, note: c.answer!.note };
+        if (c.answer!.choice === x.rn.data.nativeQueueCapability.closeAction) { self.cancel(x.run.id, "closed after round readiness refusal"); return { outcome: "cancelled" }; }
+        if (c.answer!.choice !== x.rn.data.nativeQueueCapability.retryAction) throw new Error("unknown readiness recovery action");
+        throw new Error("readiness retry must use its owned continuation");
+      }
+    };
+    // the one built-in hook action: a step that only records a note (a hand-off point, a marker in the run)
+    this.actions.note ??= (x: X) => { x.rn.note = String(x.node.args?.text ?? x.node.label).slice(0, 300); return "ok"; };
+    // loop: installed by refine.ts
+  }
+
+  /**
+   * Every agent round runs in the round sandbox (architecture §10): the folders its mode
+   * materialized (none by default), plus the hosts policy egress.allow grants for this
+   * run. Only a signed captain grant of kind "sandbox-off" (time-boxed, per project or
+   * global) runs a round outside it, and the run's log says so.
+   */
+  roundSandbox(x: X, b: { writes: string[]; reads?: string[]; cwd?: string } | null) {
+    const off = this.grants.open("sandbox-off", x.run.ctx.project ?? x.run.params?.project ?? null);
+    if (off) { x.log(`this round runs outside the round sandbox: the captain's grant ${off.id} (until ${off.until})`); return null; }
+    return { ...(b ?? { writes: [] }), allow: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String) };
+  }
+  /** An agent node: one turn of its mode on the picked provider; a swap stops it, writes a hand-off, and starts the new agent from it. */
+  async runAgent(x: X, modeName = x.node.mode): Promise<string> {
+    const mode = this.modes[modeName ?? ""]; if (!mode) throw new Error(`no agent mode ${modeName}`);
+    // a begin that stops the round with an outcome (e.g. "blocked": the round cannot start safely) routes like any outcome; any other throw fails the attempt
+    const release = await this.deps.agents.queue.acquire(this.roundAdmission(x, modeName!));
+    let begun = false, how: "done" | "timeout" | "failed" | "cancelled" = "failed";
+    try {
+      if (!this.owns(x)) throw new QueueRefusal("round owner ended before provider choice");
+      const pickPreparation = mode.preparePick?.(x) as unknown;
+      if (pickPreparation && typeof (pickPreparation as any).then === "function") throw new QueueRefusal("provider choice preparation must be synchronous");
+      const preparedPick = hashInput(x.pick());
+      const preparedProvider: Provider | undefined = this.deps.selectProvider ? await this.deps.selectProvider(x, x.pick()) : undefined;
+      if (!this.owns(x) || hashInput(x.pick()) !== preparedPick) throw new QueueRefusal("round owner or provider choice changed before provider preparation");
+      try { await mode.begin?.(x); begun = true; } catch (e: any) { if (typeof e?.outcome === "string") { x.rn.data.stoppedBeforeAgent = true; x.rn.note = `stopped before the agent: ${e.message}`; this.emit(x.run, "round_blocked", `${x.node.label}: ${e.message}`, { node: x.node.id }); return e.outcome; } throw e; }
+      if (!this.owns(x) || hashInput(x.pick()) !== preparedPick) throw new QueueRefusal("round owner or provider choice changed before provider launch");
+      const out = await this.agentTurns(x, mode, modeName!, preparedProvider, preparedPick); how = out === "timeout" ? "timeout" : "done"; return out;
+    } catch (e: any) { how = x.cancelled() || /cancelled/.test(String(e?.message)) ? "cancelled" : "failed"; throw e; }
+    finally { if (begun) try { await mode.end?.(x, how); } catch (e: any) { x.log(`round end: ${e?.message ?? e}`); } release(); }
+  }
+  private async agentTurns(x: X, mode: AgentMode, modeName: string, initialProvider?: Provider, initialPick?: string): Promise<string> {
+    let handoff: string | null = x.rn.data.handoff ?? null;
+    for (let hop = 0; hop < 5; hop++) {
+      const pickIdentity = !hop && initialPick ? initialPick : hashInput(x.pick());
+      const prov = !hop && initialProvider ? initialProvider : this.deps.selectProvider ? await this.deps.selectProvider(x, x.pick()) : x.provider(); const skill = x.skill();
+      { const loaded = (x.node.kind === "agent" && Array.isArray(x.node.skills) ? x.node.skills : []).map((p) => `${p.id}@v${p.v}`);
+        const step = [...x.run.steps].reverse().find((s) => s.node === x.node.id && s.state === "running");
+        if (step && loaded.length) { step.skills = loaded; x.save(); if (!hop) x.log(`skills loaded: ${loaded.join(", ")}`); } }
+      const base = mode.prompt(x);
+      const text = handoff ? `${base}\n\nHANDOFF\nAnother agent started this step and was stopped. Its hand-off follows; continue from the current state instead of starting over.\n${handoff}` : base;
+      x.ctx.lastPrompt = { ...(x.ctx.lastPrompt ?? {}), [x.node.id]: base.slice(0, 6000) };
+      const tl = Number(x.node.timeout_s ?? x.policy("round_timeout_s", 900));
+      const job = await this.deps.agents.run({ kind: `run:${modeName}`, title: `${x.run.id} ${x.node.label}${x.visit > 1 ? ` (visit ${x.visit})` : ""}`, system: mode.system(x, skill), text, tools: mode.tools(x), provider: prov,
+        ref: x.run.id, queueLease: true, signal: this.abortOf(x.run).signal, owns: () => this.owns(x) && hashInput(x.pick()) === pickIdentity, maxTools: (typeof mode.maxTools === "function" ? mode.maxTools(x) : mode.maxTools) ?? 60, timeoutMs: tl * 1000,
+        // a sandboxed round reaches its provider's API, plus the hosts policy egress.allow grants (e.g. a package registry)
+        record: (() => { const b = briefFor(x); return { dir: join(this.root, x.run.id, "nodes", x.node.id, String(x.visit)), header: { run: x.run.id, node: x.node.id, round: x.visit, attempt: (x.rn.data.jobs ?? []).filter((j: any) => j.round === x.visit && !j.hop).length + (hop ? 0 : 1), head: x.ctx.head ?? null, brief: b?.id ?? null, ledger: b?.ledger ?? [], hop } }; })(),
+        sandbox: this.roundSandbox(x, mode.sandbox?.(x) ?? null), onStart: (jid: string) => { x.rn.job = jid; x.save(); this.emit(x.run, "agent_started", `${x.node.label}: ${prov.id} · ${prov.model}`, { node: x.node.id, job: jid, provider: prov.id, model: prov.model }); } } as any);
+      x.rn.data = { ...x.rn.data, jobs: [...(x.rn.data.jobs ?? []), { id: job.id, round: x.visit, hop, provider: job.provider, model: job.model, status: job.status, cost: job.cost, tools: job.tools, error: job.error }] };
+      if (x.cancelled()) throw new Error("cancelled");
+      if (job.status === "cancelled" && x.rn.swap) {
+        const to = x.rn.swap; x.rn.swap = null;
+        const hdir = join(this.deps.dataDir, "handoff", x.run.id); mkdirSync(hdir, { recursive: true });
+        const file = join(hdir, `${x.node.id}.md`);
+        const findings = this.ledger(x.run.id).filter((e) => e.verdict === "fail" && e.head === (x.ctx.head ?? null)).flatMap((e) => e.findings.map((f) => `- [${f.class}] ${locatorText(f.locator)}: ${f.message}`));
+        handoff = [`# Hand-off: ${x.run.id} · ${x.node.label} (visit ${x.visit})`, "", `From: ${job.provider} · ${job.model}  →  To: ${to.provider}${to.model ? ` · ${to.model}` : ""}`, `Stopped at: ${new Date().toISOString()} after ${job.tools} tool calls`, "",
+          "## Inputs (the brief it had)", "", base.slice(0, 6000), "", "## Progress (tool log)", "", ...job.log.filter((l) => l.kind === "tool" || l.kind === "result").slice(-40).map((l) => `- ${l.text}`), "",
+          "## What it said", "", job.said.trim().slice(0, 3000) || "(nothing yet)", "", "## Open findings", "", ...(findings.length ? findings.slice(0, 30) : ["(none)"]), "", "## State now", "", mode.handoffState?.(x) ?? "(no extra state)"].join("\n");
+        if (existsSync(file)) appendFileSync(file, `\n\n---\n\n${handoff}`); else writeFileSync(file, handoff);
+        x.rn.data = { ...x.rn.data, handoff }; x.rn.agent = to;
+        const step = [...x.run.steps].reverse().find((s) => s.node === x.node.id && s.state === "running");
+        const rel = `handoff/${x.run.id}/${x.node.id}.md`;
+        if (step) { step.handoff = rel; step.note = `swapped ${job.provider} → ${to.provider}`; }
+        x.save(); this.emit(x.run, "handoff", `${x.node.label}: ${job.provider} stopped, hand-off written, ${to.provider} starts from it`, { node: x.node.id, file: rel, from: job.provider, to: to.provider });
+        continue;
+      }
+      if (job.status === "failed" && /^no result within/.test(job.error ?? "")) {
+        // a timeout ends the node failed(cause=timeout); it is never report-only (§3.2)
+        this.emit(x.run, "timeout", `${x.node.label}: stopped at the ${tl} s round limit`, { node: x.node.id });
+        x.rn.data = { ...x.rn.data, handoff: null };
+        await mode.onTimeout?.(x, job);
+        this.record(x, "check", { check: "runtime/round-timeout", kind: "deterministic", actor: `${job.provider}·${job.model}`,
+          verdict: "fail", score: 0, findings: [{ locator: { type: "card", field: x.node.id }, message: `the round was stopped at its ${tl} s limit`, expected: "finish the round inside the time limit: smaller steps, fewer tool calls", class: "timeout", severity: "blocking", source: "check", check: "runtime/round-timeout" }],
+          evidence: [], proves: [], blocking: true, params: { round_timeout_s: tl }, ms: tl * 1000 } as any);
+        return "timeout";
+      }
+      if (job.status !== "done") throw new Error(job.error ?? `the agent run ${job.status}`);
+      x.rn.data = { ...x.rn.data, handoff: null };
+      return await mode.after(x, job);
+    }
+    throw new Error("too many hand-offs in one step");
+  }
+}
+export { locatorText };

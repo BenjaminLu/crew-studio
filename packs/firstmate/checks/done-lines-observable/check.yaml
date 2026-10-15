@@ -1,0 +1,13 @@
+id: done-lines-observable
+version: 1.0.0
+title: { en: "Each done line's test can observe the behaviour (judged)", zh-TW: "每條完成條件的測試能觀察到行為（判斷）" }
+applies_to: [spec]
+kind: judged
+blocking: false
+needs: [artifact]
+judge:
+  prompt: "The J part of done-lines-provable: for each done line, can the test it names actually observe the behaviour the line describes? Report a finding with locator {type: text, section: done[<index>]} for each line that cannot. Verdict fail if any line cannot be observed."
+  quorum: { n: 1, of: 1 }
+params: { type: object, properties: {} }
+timeout_s: 300
+network: false

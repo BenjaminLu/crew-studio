@@ -1,0 +1,50 @@
+{
+  "source": "https://docs.github.com/en/rest/pulls/pulls",
+  "apiVersion": "2022-11-28",
+  "kind": "documented response shape, synthetic values; no live traffic",
+  "pull": {
+    "number": 1,
+    "state": "open",
+    "title": "Example",
+    "body": "Example body",
+    "html_url": "https://github.com/fixture/project/pull/1",
+    "created_at": "2026-10-15T00:00:00Z",
+    "head": {
+      "ref": "crew/example",
+      "sha": "0000000000000000000000000000000000000000",
+      "repo": {
+        "full_name": "fixture/project"
+      }
+    },
+    "base": {
+      "ref": "main",
+      "repo": {
+        "full_name": "fixture/project"
+      }
+    }
+  },
+  "reads": {
+    "check-runs": {
+      "total_count": 0,
+      "check_runs": []
+    },
+    "status": {
+      "state": "pending",
+      "statuses": []
+    },
+    "reviews": [],
+    "comments": []
+  },
+  "sources": [
+    "https://docs.github.com/en/rest/pulls/pulls",
+    "https://docs.github.com/en/rest/actions/workflow-jobs#download-job-logs-for-a-workflow-run"
+  ],
+  "remoteReadSources": [
+    "https://docs.github.com/en/rest/checks/runs",
+    "https://docs.github.com/en/rest/commits/statuses",
+    "https://docs.github.com/en/rest/branches/branch-protection",
+    "https://docs.github.com/en/rest/git/refs",
+    "https://docs.github.com/en/rest/actions/workflow-jobs"
+  ],
+  "remoteReadShape": "Synthetic documented required_status_checks checks(context,app_id), check_runs(id,name,app.id,head_sha,status,conclusion), combined status(sha,total_count,statuses), git ref(ref,object.type,object.sha), 302 job-log download then 206 byte Content-Range; no live credentials"
+}

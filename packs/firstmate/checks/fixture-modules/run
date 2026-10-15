@@ -1,0 +1,10 @@
+#!/usr/bin/env node
+// fixture-modules: the repository names its fixture lists in .crew/gates.json (fixture_lists); every added module under src/ must appear in each.
+const fs = require("fs"), path = require("path");
+let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+  const i = JSON.parse(s); const lists = i.repo_cfg?.fixture_lists ?? []; const f = [];
+  const added = (i.diff?.paths ?? []).filter((c) => String(c.status).startsWith("A") && /^src\/.+\.(m?js|ts|sh|py)$/.test(c.path)).map((c) => c.path);
+  for (const l of lists) { const p = path.join(i.workdir, l); const txt = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
+    for (const a of added) if (!txt.includes(a) && !txt.includes(path.basename(a))) f.push({ locator: { type: "file", path: l, line: 1 }, message: `${a} is new but not in the fixture list ${l}`, expected: `add ${a} to ${l}`, class: "fixture-list", severity: "blocking" }); }
+  process.stdout.write(JSON.stringify({ verdict: f.length ? "fail" : "pass", score: f.length ? 0 : 1, findings: f, evidence: [], proves: [], note: lists.length ? null : "the repository declares no fixture lists" }));
+});

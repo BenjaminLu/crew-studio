@@ -1,0 +1,38 @@
+# The trivial lane as a run: an approved image goes into a repository's README by
+# a deterministic recipe (no agent), script checks gate it, one merge card, a
+# local fast-forward.
+id: trivial-lane
+name: Trivial lane (banner → README)
+kind: lane
+version: 1
+description: "An approved image artifact into a repository's README: recipe, checks, one card, local merge."
+intent:
+  keywords: [banner, readme, logo, image, picture, screenshot, badge]
+params:
+  artifact: { label: "Image artifact id", default: "crew-banner" }
+  repo: { label: "Lane repository id", default: "demo-repo" }
+roles: []
+nodes:
+  - { id: intake, kind: hook, label: Capture intent, do: deliver.intake, x: 170, y: 120 }
+  - { id: recipe, kind: hook, label: README recipe, detail: "branch + commit + checks", do: lane.recipe, x: 510, y: 120 }
+  - { id: gates, kind: check, label: Recipe readiness, checks: [{ use: core/lane-ready, proves: [0] }], x: 600, y: 120 }
+  - id: merge-card
+    kind: card
+    label: Merge card
+    args: { body_from: lane, card_kind: merge }
+    x: 680
+    y: 120
+  - { id: merge, kind: hook, label: Merge, detail: "local fast-forward", do: lane.merge, x: 850, y: 120 }
+  - { id: done, kind: hook, label: Merged, x: 1020, y: 120 }
+  - { id: close, kind: hook, label: Close card, do: lane.close, x: 850, y: 260 }
+  - { id: closed, kind: hook, label: Closed, args: { result: closed }, x: 1020, y: 260 }
+edges:
+  - [intake, recipe]
+  - [recipe, gates, ok]
+  - [gates, merge-card, pass]
+  - [gates, close, fail]
+  - [recipe, close, fallback]
+  - [merge-card, merge, merge]
+  - [merge-card, close, close]
+  - [merge, done]
+  - [close, closed]

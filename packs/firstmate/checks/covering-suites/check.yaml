@@ -1,0 +1,10 @@
+id: covering-suites
+version: 1.0.0
+title: { en: "The suites that cover the changed files pass", zh-TW: "涵蓋改動檔案的測試組通過" }
+applies_to: [code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact, diff, repo_cfg]
+params: { type: object, properties: {} }
+timeout_s: 240
+network: false

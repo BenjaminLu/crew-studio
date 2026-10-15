@@ -1,0 +1,32 @@
+# Retro for Studio's own change workflow (reads Studio's data/events.jsonl).
+workflow: change
+source: studio
+window_days: 14
+triggers:
+  - { kind: every, days: 7 }
+  - { kind: repeat, min_groups: 3 }
+metrics:
+  - { id: opened, label: "Changes opened", count: { type: change_opened } }
+  - { id: merged, label: "Merged", count: { type: change_merged } }
+  - { id: gate_failed, label: "Gate failures", count: { type: gate_failed } }
+  - { id: rounds, label: "Fix rounds", count: { type: round_started } }
+  - { id: rejects, label: "Review rejects", count: { type: review_rejected } }
+classes:
+  - id: same-gate-fails
+    title: "The same gate fails on change after change"
+    explain: "One script gate keeps failing on the first try: the worker skill does not know the rule the gate checks."
+    kind: regex
+    types: [gate_failed]
+    field: data.gate
+    pattern: ".+"
+    group: task
+    min_groups: 3
+    propose:
+      role: worker
+      section: "## Rules"
+      rule: "- Before you hand in, run through every gate of the node in your head: no conflict markers, no secrets, no tests file over 1200 lines, every changed JSON file parses."
+      target: 0
+      eval:
+        ask: "Your change adds 30 tests to a tests file of 1190 lines and a JSON fixture. What do you check before you hand in?"
+        terms: ["gate", "1200", "json"]
+        expect: [{ pattern: "1200", why: "checks the tests line cap" }, { pattern: "json", why: "checks the JSON parses" }]

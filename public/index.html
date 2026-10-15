@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crew Studio</title>
+<link rel="stylesheet" href="/fonts.css">
+<script src="/auth.js"></script>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="/m3.css">
+<link rel="stylesheet" href="/ext.css">
+<link rel="stylesheet" href="/backbone.css">
+<link rel="stylesheet" href="/takeover.css">
+<link rel="stylesheet" href="/runtime.css">
+<link rel="stylesheet" href="/transcripts.css">
+<link rel="stylesheet" href="/board.css">
+<link rel="stylesheet" href="/skills.css">
+<script>
+  // theme and sidebar before first paint
+  try {
+    const t = localStorage.getItem("crew.theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    if (localStorage.getItem("crew.side") === "collapsed" || (localStorage.getItem("crew.side") === null && innerWidth < 1280)) document.documentElement.classList.add("pre-collapsed");
+  } catch {}
+</script>
+<link rel="stylesheet" href="/pack-genesis.css">
+</head>
+<body class="chat-closed">
+<div class="shell">
+  <aside class="side" aria-label="Navigation">
+    <div class="ws">
+      <div class="ws-mark" data-ic="workflow"></div>
+      <button class="btn ghost icon side-tog" id="sideTog" aria-label="Collapse sidebar" title="Collapse sidebar (⌘\)"><span data-ic="sidebar"></span></button>
+      <div><div class="ws-name">Crew Studio</div><div class="ws-sub" id="wsSub">firstmate-workflow</div></div>
+    </div>
+    <nav class="nav" aria-label="Views">
+      <button class="nav-item" data-view="board" data-tip="Board"><span data-ic="board"></span><span class="nl">Board</span><span class="count attn" id="navNeeds" hidden></span></button>
+      <button class="nav-item" data-view="inbox" data-tip="Inbox"><span data-ic="inbox"></span><span class="nl">Inbox</span><span class="count num" id="navInbox"></span></button>
+      <button class="nav-item" data-view="crew" data-tip="Crew"><span data-ic="crew"></span><span class="nl">Crew</span><span class="count num" id="navCrew"></span></button>
+      <button class="nav-item" data-view="activity" data-tip="Activity"><span data-ic="activity"></span><span class="nl">Activity</span></button>
+      <button class="nav-item" data-view="workflow" data-tip="Workflow"><span data-ic="workflow"></span><span class="nl">Workflow</span></button>
+      <button class="nav-item" data-view="intents" data-tip="Intents"><span data-ic="target"></span><span class="nl">Intents</span><span class="count num" id="navIntents"></span></button>
+      <button class="nav-item" data-view="library" data-tip="Library"><span data-ic="library"></span><span class="nl">Library</span></button>
+    </nav>
+    <div class="side-foot">
+      <div class="conn" id="conn" title="Live connection"><i></i><span>Connecting…</span></div>
+      <div class="faint" style="font-size:12px">Language</div>
+      <div class="seg" role="group" aria-label="Language" id="langSeg">
+        <button data-lang-set="en" aria-label="English"><span class="keep">EN</span></button>
+        <button data-lang-set="zh-TW" aria-label="繁體中文"><span class="keep">中文</span></button>
+      </div>
+      <div class="faint" style="font-size:12px">Theme</div>
+      <div class="seg" role="group" aria-label="Theme" id="themeSeg">
+        <button data-theme-set="system" aria-label="Use system theme"><span data-ic="system"></span><span>Auto</span></button>
+        <button data-theme-set="light" aria-label="Light theme"><span data-ic="sun"></span><span>Light</span></button>
+        <button data-theme-set="dark" aria-label="Dark theme"><span data-ic="moon"></span><span>Dark</span></button>
+      </div>
+    </div>
+  </aside>
+  <main class="main" id="main" tabindex="-1">
+    <div id="view"><div class="skel" style="height:28px;width:220px"></div><div class="skel" style="height:180px"></div><div class="skel" style="height:260px"></div></div>
+  </main>
+  <aside class="chat" id="chat" aria-label="Chat with firstmate">
+    <div class="grip" id="chatGrip" role="separator" aria-orientation="vertical" aria-label="Resize chat" tabindex="0"></div>
+    <div class="chat-head">
+      <div class="fm-mark" data-ic="workflow"></div>
+      <div class="who"><b>firstmate</b><span id="chatSub">…</span></div>
+      <button class="btn ghost icon" id="chatProv" aria-label="Chat model settings" title="Chat model settings"><span data-ic="agent"></span></button>
+      <button class="btn ghost icon chat-expand" id="chatWide" aria-label="Widen chat" title="Widen"><span data-ic="expand"></span></button>
+      <button class="btn ghost icon" id="chatClear" aria-label="Clear conversation" title="Clear conversation"><span data-ic="refresh"></span></button>
+      <button class="btn ghost icon" id="chatClose" aria-label="Close chat" title="Close"><span data-ic="x"></span></button>
+    </div>
+    <div class="chat-log" id="chatLog" aria-live="polite"></div>
+    <div class="chat-sug" id="chatSug"></div>
+    <form class="chat-form" id="chatForm">
+      <textarea id="chatIn" rows="1" aria-label="Message firstmate" placeholder="Ask about the crew, or say what you want done"></textarea>
+      <button class="btn primary icon" id="chatSend" type="submit" aria-label="Send"><span data-ic="send"></span></button>
+    </form>
+  </aside>
+</div>
+<button class="fab" id="chatFab" aria-label="Open chat with firstmate"><span data-ic="message"></span><span>firstmate</span></button>
+<div id="modalRoot"></div>
+<script src="/kit.js"></script>
+<script src="/app.js"></script>
+<script src="/m2.js"></script>
+<script src="/vendor/qrcode-1.4.4.min.js"></script>
+<script src="/m25.js"></script>
+<script src="/takeover.js"></script>
+<script src="/transcripts.js"></script>
+<script src="/ootb.js"></script>
+<script src="/m3.js"></script>
+<script src="/ext.js"></script>
+<script src="/m6.js"></script>
+<script src="/gates.js"></script>
+<script src="/m7.js"></script>
+<script src="/m8.js"></script>
+<script src="/skins.js"></script>
+<script src="/graph-layout.js"></script>
+<script src="/runstate.js"></script>
+<script src="/scard.js"></script>
+<script src="/runtime.js"></script>
+<script src="/workflow-overview.js"></script>
+<script src="/board.js"></script>
+<script src="/skills.js"></script>
+<script src="/backbone.js"></script>
+<script src="/pack-genesis.js"></script>
+</body>
+</html>

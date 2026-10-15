@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"><title>tiny film</title>
+<style>body{margin:0;background:#000}#stage{width:640px;height:360px;position:relative;background:#123;color:#fff;font:24px sans-serif}</style></head>
+<body><div id="stage"><div id="cap">opening</div><img src="cast/dot.png" alt="" style="position:absolute;right:8px;bottom:8px;width:16px"></div><div id="poster"></div>
+<script>
+const PRE=2.0, OFF=PRE-1.0, DUR=3.0+OFF;
+const vis=(t,a,b)=>t>=a&&t<b;
+let muted=false,startAt=0,ctx=null;
+function build(){ctx=new (window.AudioContext||window.webkitAudioContext)()}
+function schedule(){}
+function sceneOpen(t){if(!vis(t,-OFF,1.0))return;document.getElementById('cap').textContent='opening'}
+function sceneMiddle(t){if(!vis(t,1.0,2.0))return;document.getElementById('cap').textContent='middle'}
+function sceneEnd(t){if(t<2.0)return;document.getElementById('cap').textContent='Every captain needs a firstmate.'}
+function renderAt(t){sceneOpen(t);sceneMiddle(t);sceneEnd(t)}
+function render(t){renderAt(t-OFF)}
+render(0);
+</script></body></html>

@@ -1,0 +1,11 @@
+id: fail-first
+version: 1.0.0
+title: { en: "Fail-first: the new tests are red on the base and green on the head", zh-TW: "Fail-first：新測試在 base 上紅、在 head 上綠" }
+description: "Runs the head's tests against the base behaviour (changed non-test files restored from the merge base, added ones removed) and against the head. Passing proves the done lines whose named test went red on the base."
+applies_to: [code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact, repo_cfg, base_tree]
+params: { type: object, properties: {} }
+timeout_s: 600
+network: false

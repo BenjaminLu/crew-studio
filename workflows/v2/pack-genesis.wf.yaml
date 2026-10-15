@@ -1,0 +1,326 @@
+{
+  "id": "pack-genesis",
+  "name": "Pack genesis",
+  "version": 1,
+  "description": "Interview, label actual samples, measure checks, refine, run advisory shadow Tasks and publish a pinned native pack.",
+  "intent": {
+    "keywords": [
+      "pack",
+      "workflow genesis",
+      "domain pack"
+    ],
+    "examples": [
+      "Create a domain pack for accessible page reviews"
+    ]
+  },
+  "roles": [
+    {
+      "id": "coordinator",
+      "label": "Pack coordinator",
+      "skill": "bundled:workflows/skills/pack-genesis-coordinator.md"
+    },
+    {
+      "id": "author",
+      "label": "Pack author",
+      "skill": "bundled:workflows/skills/pack-genesis-author.md"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "describe",
+      "kind": "hook",
+      "label": "Describe",
+      "x": 0,
+      "y": 100,
+      "do": "pack-genesis-init"
+    },
+    {
+      "id": "interview",
+      "kind": "agent",
+      "label": "Interview",
+      "x": 200,
+      "y": 100,
+      "role": "coordinator",
+      "mode": "pack-interview"
+    },
+    {
+      "id": "interview-answers",
+      "kind": "card",
+      "label": "Interview answers",
+      "x": 400,
+      "y": 100,
+      "args": {
+        "body_from": "pack-interview"
+      }
+    },
+    {
+      "id": "samples",
+      "kind": "agent",
+      "label": "Samples",
+      "x": 600,
+      "y": 100,
+      "role": "coordinator",
+      "mode": "pack-samples"
+    },
+    {
+      "id": "label",
+      "kind": "card",
+      "label": "Label",
+      "x": 800,
+      "y": 100,
+      "args": {
+        "mode": "pack-label"
+      }
+    },
+    {
+      "id": "draft",
+      "kind": "agent",
+      "label": "Draft",
+      "x": 1000,
+      "y": 100,
+      "role": "author",
+      "mode": "pack-author"
+    },
+    {
+      "id": "measure",
+      "kind": "check",
+      "label": "Measure",
+      "x": 1200,
+      "y": 100,
+      "checks": [
+        {
+          "use": "core/pack-genesis-measure"
+        }
+      ],
+      "args": {
+        "route_from": "core/pack-genesis-measure"
+      },
+      "max_visits": 8
+    },
+    {
+      "id": "proposals",
+      "kind": "card",
+      "label": "Proposals",
+      "x": 1400,
+      "y": 100,
+      "args": {
+        "mode": "pack-proposals"
+      },
+      "max_visits": 8
+    },
+    {
+      "id": "refine",
+      "kind": "agent",
+      "label": "Refine",
+      "x": 1600,
+      "y": 100,
+      "role": "author",
+      "mode": "pack-refine",
+      "max_visits": 6
+    },
+    {
+      "id": "shadow",
+      "kind": "card",
+      "label": "Shadow",
+      "x": 1800,
+      "y": 100,
+      "args": {
+        "mode": "pack-shadow"
+      },
+      "max_visits": 8
+    },
+    {
+      "id": "promote",
+      "kind": "card",
+      "label": "Promote",
+      "x": 2000,
+      "y": 100,
+      "args": {
+        "mode": "pack-promote"
+      },
+      "max_visits": 8
+    },
+    {
+      "id": "publish-decision",
+      "kind": "card",
+      "label": "Publish decision",
+      "x": 2200,
+      "y": 100,
+      "args": {
+        "body_from": "pack-publish"
+      }
+    },
+    {
+      "id": "publish",
+      "kind": "hook",
+      "label": "Publish",
+      "x": 2400,
+      "y": 100,
+      "do": "pack-genesis-publish"
+    },
+    {
+      "id": "end",
+      "kind": "hook",
+      "label": "End",
+      "x": 2600,
+      "y": 100
+    },
+    {
+      "id": "closed",
+      "kind": "hook",
+      "label": "Closed",
+      "x": 2800,
+      "y": 100,
+      "args": {
+        "result": "closed"
+      }
+    },
+    {
+      "id": "proposal-agent",
+      "kind": "agent",
+      "label": "Propose measured changes",
+      "mode": "pack-propose",
+      "role": "author",
+      "x": 1400,
+      "y": 260,
+      "max_visits": 8
+    },
+    {
+      "id": "preview",
+      "kind": "check",
+      "label": "Measure proposal previews",
+      "checks": [
+        {
+          "use": "core/pack-genesis-preview"
+        }
+      ],
+      "x": 1600,
+      "y": 260,
+      "max_visits": 8,
+      "args": {
+        "route_from": "core/pack-genesis-preview"
+      }
+    }
+  ],
+  "edges": [
+    [
+      "describe",
+      "interview",
+      "ok"
+    ],
+    [
+      "describe",
+      "measure",
+      "retro"
+    ],
+    [
+      "interview",
+      "interview-answers"
+    ],
+    [
+      "interview-answers",
+      "samples",
+      "continue"
+    ],
+    [
+      "samples",
+      "label"
+    ],
+    [
+      "label",
+      "draft",
+      "continue"
+    ],
+    [
+      "draft",
+      "measure"
+    ],
+    [
+      "measure",
+      "proposal-agent",
+      "review"
+    ],
+    [
+      "proposals",
+      "refine",
+      "refine"
+    ],
+    [
+      "refine",
+      "measure"
+    ],
+    [
+      "proposals",
+      "shadow",
+      "shadow"
+    ],
+    [
+      "shadow",
+      "measure",
+      "measure"
+    ],
+    [
+      "shadow",
+      "promote",
+      "promote"
+    ],
+    [
+      "promote",
+      "publish-decision",
+      "continue"
+    ],
+    [
+      "publish-decision",
+      "publish",
+      "publish"
+    ],
+    [
+      "publish",
+      "end"
+    ],
+    [
+      "interview-answers",
+      "closed",
+      "close"
+    ],
+    [
+      "label",
+      "closed",
+      "close"
+    ],
+    [
+      "proposals",
+      "closed",
+      "close"
+    ],
+    [
+      "shadow",
+      "closed",
+      "close"
+    ],
+    [
+      "promote",
+      "closed",
+      "close"
+    ],
+    [
+      "publish-decision",
+      "closed",
+      "close"
+    ],
+    [
+      "proposal-agent",
+      "preview"
+    ],
+    [
+      "preview",
+      "proposals",
+      "review"
+    ],
+    [
+      "promote",
+      "shadow",
+      "more-shadow"
+    ]
+  ]
+}

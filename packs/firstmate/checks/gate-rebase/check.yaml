@@ -1,0 +1,11 @@
+id: gate-rebase
+version: 1.0.0
+title: { en: "Gate: rebase", zh-TW: "閘門：rebase" }
+applies_to: [code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact, gate_state]
+native: gate-rebase
+params: { type: object, properties: {} }
+timeout_s: 30
+network: false

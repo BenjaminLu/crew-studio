@@ -1,0 +1,47 @@
+id: file-organization
+name: File organization
+version: 1
+description: "Dry-run plan, review, then apply with an undo log."
+nodes:
+  - { id: choose, kind: human, label: Choose a folder, detail: "inside your home", x: 0, y: 80 }
+  - { id: plan, kind: agent, label: Dry-run plan, detail: "moves, no change yet", x: 210, y: 80 }
+  - id: check
+    kind: gate
+    label: Gates
+    detail: "inside, no overwrite"
+    x: 420
+    y: 80
+    gates:
+      - { id: inside-root, builtin: fileorg-inside-root, label: "Every move stays inside the folder" }
+      - { id: no-overwrite, builtin: fileorg-no-overwrite, label: "No move overwrites a file" }
+      - { id: max-moves, builtin: fileorg-max-moves, label: "At most 500 moves", args: { max: 500 } }
+  - { id: review, kind: human, label: Review, detail: "untick what stays", x: 630, y: 80 }
+  - { id: apply, kind: agent, label: Apply, detail: "undo log first", x: 840, y: 80 }
+  - { id: done, kind: done, label: Tidy, detail: "undo any time", x: 1050, y: 80 }
+edges:
+  - [choose, plan]
+  - [plan, check]
+  - [check, review]
+  - [review, apply]
+  - [apply, done]
+roles:
+  - { id: organizer, label: Organizer, skill: "pack:file-organization/skills/organizer.md" }
+retro:
+  workflow: file-organization
+  source: studio
+  window_days: 30
+  triggers: [{ kind: every, days: 30 }]
+  metrics:
+    - { id: plans, label: "Plans", count: { type: fileorg_planned } }
+    - { id: applied, label: "Applied", count: { type: fileorg_applied } }
+    - { id: undone, label: "Undone", count: { type: fileorg_undone } }
+  classes:
+    - id: undo-after-apply
+      title: "A tidy-up undone after it was applied"
+      explain: "The captain undid an applied plan: the sorting rules put files where they did not belong."
+      kind: regex
+      types: [fileorg_undone]
+      field: summary.en
+      pattern: ".+"
+      group: task
+      min_groups: 2

@@ -1,0 +1,16 @@
+#!/usr/bin/env node
+// tries every way out of the sandbox and reports which worked
+const fs = require("fs"), net = require("net"), { spawnSync } = require("child_process");
+let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", async () => {
+  const i = JSON.parse(s); const p = i.params; const r = {};
+  try { fs.writeFileSync(p.target, "x"); r.wrote = true; } catch { r.wrote = false; }
+  try { fs.writeFileSync(i.out + "/ok.txt", "x"); r.out = true; } catch { r.out = false; }
+  try { r.key = fs.readFileSync(p.key, "utf8"); } catch { r.key = null; }
+  try { r.other = fs.readFileSync(p.other + ".txt", "utf8"); } catch { r.other = null; } // the input names only a prefix, not the file
+  try { r.input = fs.readFileSync(i.fixture_input, "utf8"); } catch { r.input = null; }
+  try { r.paramPath = fs.readFileSync(p.input, "utf8"); } catch { r.paramPath = null; }
+  r.net = await fetch("http://example.com", { signal: AbortSignal.timeout(3000) }).then(() => true).catch(() => false);
+  r.sock = await new Promise((res) => { if (!p.sock) return res(false); const c = net.connect(p.sock, () => { c.end(); res(true); }); c.on("error", () => res(false)); setTimeout(() => res(false), 3000); });
+  r.open = p.open ? spawnSync("/usr/bin/open", ["-g", "-j", "-n", "/System/Applications/Calculator.app"]).status === 0 : false;
+  process.stdout.write(JSON.stringify({ verdict: "pass", score: 1, findings: [], evidence: [], proves: [], data: r }));
+});

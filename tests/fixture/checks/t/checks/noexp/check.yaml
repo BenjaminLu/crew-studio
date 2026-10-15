@@ -1,0 +1,8 @@
+id: noexp
+version: 1.0.0
+title: { en: "Fails with a finding that has no expected change and no locator" }
+applies_to: [run]
+kind: deterministic
+needs: []
+params: { type: object, properties: { flagfile: { type: string, default: "" } } }
+timeout_s: 10

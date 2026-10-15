@@ -1,0 +1,15 @@
+id: review-verdict
+version: 1.0.0
+title: { en: "Reviewer verdict: APPROVE, or REJECT with numbered findings", zh-TW: "審查結論：APPROVE，或附編號問題的 REJECT" }
+description: "The fresh reviewer's verdict is one vote; two independent judges read the same diff, spec and CI; two failing votes of three block. A finding without a file locator is dropped."
+applies_to: [code-diff]
+kind: judged
+blocking: true
+needs: [artifact, diff_text]
+judge:
+  from_node: review
+  prompt: "You are a second, independent code reviewer with a fresh context. Judge only the spec, the diff and the CI results in the input. Verdict fail (REJECT) only for a must-fix problem: a done line not met, a missing test, a change outside the scope, a bug. Each finding needs a locator {type: file, path, line}. Follow-ups that do not block go in findings with severity minor."
+  quorum: { n: 2, of: 3 }
+params: { type: object, properties: {} }
+timeout_s: 600
+network: false

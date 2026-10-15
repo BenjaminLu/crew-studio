@@ -1,0 +1,21 @@
+# A domain pack: everything a new way of working needs, as data.
+id: file-organization
+name: File organization
+version: 1.0.0
+description: "Tidy a folder: a dry-run plan sorts its loose files into folders by kind, you review and untick moves, the gates check it, then it applies with an undo log."
+engine: file-organization        # Studio's built-in engine that runs this pack's steps
+skills:
+  - { role: organizer, file: skills/organizer.md }
+gates:
+  - { id: inside-root, builtin: fileorg-inside-root, label: "Every move stays inside the chosen folder" }
+  - { id: no-overwrite, builtin: fileorg-no-overwrite, label: "No move overwrites a file" }
+  - { id: max-moves, builtin: fileorg-max-moves, label: "At most 500 moves at once", args: { max: 500 } }
+artifactTypes:
+  - { id: move-plan, label: "Move plan", viewer: fileorg-plan }
+  - { id: undo-log, label: "Undo log", viewer: fileorg-undo }
+workflows:
+  - workflows/organize.flow.yaml
+evals:
+  - evals/organizer.json
+rules: rules.yaml
+permissions: [fs.read, fs.move]

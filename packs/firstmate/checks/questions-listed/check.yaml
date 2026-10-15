@@ -1,0 +1,10 @@
+id: questions-listed
+version: 1.0.0
+title: { en: "All plan questions in one block", zh-TW: "計畫的問題都集中在一處" }
+applies_to: [plan]
+kind: deterministic
+blocking: true
+needs: [artifact]
+params: { type: object, properties: {} }
+timeout_s: 20
+network: false

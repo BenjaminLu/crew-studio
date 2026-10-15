@@ -1,0 +1,13 @@
+id: no-impl-detail
+version: 1.0.0
+title: { en: "The spec says what and why, not how", zh-TW: "規格只寫 what 與 why，不寫 how" }
+applies_to: [spec]
+kind: judged
+blocking: false
+needs: [artifact]
+judge:
+  prompt: "Does this spec contain implementation detail: line numbers, function-level steps, or how to code it? Report each such spot with a locator {type: text, section: <field>[<index>]}. Verdict warn if any, else pass."
+  quorum: { n: 1, of: 1 }
+params: { type: object, properties: {} }
+timeout_s: 300
+network: false

@@ -1,0 +1,89 @@
+# Today's firstmate code flow, read-only. Crew Studio draws this graph and
+# places each task on the node its latest events point to. It does not drive
+# anything: firstmate's own scripts still decide every step.
+id: code
+name: Code (firstmate)
+version: 1
+nodes:
+  - id: dispatch
+    kind: human
+    label: Dispatch card
+    detail: Captain approves the spec
+    x: 0
+    y: 100
+  - id: door
+    kind: router
+    label: Door
+    detail: change type from the pin
+    x: 200
+    y: 100
+  - id: plan
+    kind: loop
+    label: Plan round
+    detail: worker plan + questions
+    lane: one-way
+    x: 400
+    y: 230
+  - id: failfirst
+    kind: gate
+    label: Fail-first
+    detail: tests red on base
+    lane: one-way
+    x: 600
+    y: 230
+  - id: build
+    kind: agent
+    label: Build ⇄ fix
+    detail: worker rounds
+    x: 800
+    y: 100
+  - id: ci
+    kind: gate
+    label: CI
+    detail: required checks
+    x: 1000
+    y: 100
+  - id: review
+    kind: loop
+    label: Review
+    detail: fresh reviewer
+    x: 1200
+    y: 100
+  - id: gates
+    kind: gate
+    label: Six gates
+    detail: scope, evidence, CI, approval
+    x: 1400
+    y: 100
+  - id: merge
+    kind: human
+    label: Merge card
+    detail: Captain clicks A
+    x: 1600
+    y: 100
+  - id: done
+    kind: done
+    label: Merged
+    detail: engine self-updates
+    x: 1800
+    y: 100
+edges:
+  - [dispatch, door]
+  - [door, build, two-way]
+  - [door, plan, one-way]
+  - [plan, failfirst]
+  - [failfirst, build]
+  - [build, ci]
+  - [ci, review]
+  - [review, build, REJECT]
+  - [review, gates]
+  - [gates, merge]
+  - [merge, done]
+# Roles and their skills (M6). Studio keeps its own versioned copy of each
+# skill; firstmate's files are read, never written. An adopted edit makes a new
+# Studio version plus a patch the captain can hand to firstmate.
+roles:
+  - { id: worker, label: Worker, skill: "fm:skills/worker/SKILL.md" }
+  - { id: reviewer, label: Reviewer, skill: "fm:skills/reviewer/SKILL.md" }
+  - { id: designer, label: Designer reviewer, skill: "fm:skills/designer/SKILL.md" }
+retro: workflows/code.retro.yaml

@@ -1,0 +1,34 @@
+// Process-owned read polling, isolated by exact caller-declared authority.
+import {AsyncLocalStorage} from 'node:async_hooks';
+import {createHash} from 'node:crypto';
+export type ReadAuthority={origin:string;repository:string;identity:string};
+export const authorityHash=(value:unknown)=>createHash('sha256').update(JSON.stringify(value,(_k,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b))):v)).digest('hex');
+export const readAuthority=(origin:string,repository:string,scope:unknown,credential:string):ReadAuthority=>({origin,repository,identity:authorityHash({scope,credential:authorityHash(credential)})});
+type Subscriber={run:(signal:AbortSignal)=>Promise<void>;interval:number;abort:AbortController;deadlineTimer:ReturnType<typeof setTimeout>|null};
+type Owner={authority:ReadAuthority;subscribers:Map<string,Subscriber>;abort:AbortController;timer:ReturnType<typeof setTimeout>|null;batch:Promise<void>|null;pending:boolean;failures:number;notBefore:number};
+type Generation={owner:Owner;reads:Map<string,Promise<any>>};
+export class GitHubPoller{
+ private owners=new Map<string,Owner>();private context=new AsyncLocalStorage<Generation>();private reads=0;
+ private key(a:ReadAuthority){return a.origin+'/'+a.repository;}
+ assert(a:ReadAuthority){const owner=this.owners.get(this.key(a));if(owner&&owner.authority.identity!==a.identity)throw new Error('unsupported conflicting GitHub repository authority');}
+ withoutGeneration<T>(callback:()=>T):T{return this.context.exit(callback);}
+ get ownership(){return {repositories:this.owners.size,timers:[...this.owners.values()].reduce((n,o)=>n+Number(!!o.timer)+[...o.subscribers.values()].filter(s=>s.deadlineTimer!==null).length,0),requests:this.reads,subscribers:[...this.owners.values()].reduce((n,o)=>n+o.subscribers.size,0)};}
+ subscribe(a:ReadAuthority,id:string,run:Subscriber['run'],options:{interval?:number;deadline?:number;expire?:()=>void}={}){
+  this.assert(a);if(!id||!Number.isFinite(options.interval??60000)||(options.interval??60000)<1||options.deadline!=null&&!Number.isSafeInteger(options.deadline))throw new Error('invalid GitHub polling subscription');const key=this.key(a);let owner=this.owners.get(key);if(!owner){owner={authority:{...a},subscribers:new Map(),abort:new AbortController(),timer:null,batch:null,pending:false,failures:0,notBefore:0};this.owners.set(key,owner);}if(owner.subscribers.has(id))throw new Error('duplicate GitHub polling subscription');const current=owner,sub:Subscriber={run,interval:options.interval??60000,abort:new AbortController(),deadlineTimer:null};
+  const cancel=()=>{if(current.subscribers.get(id)!==sub)return;current.subscribers.delete(id);sub.abort.abort();if(sub.deadlineTimer)clearTimeout(sub.deadlineTimer);sub.deadlineTimer=null;if(!current.subscribers.size){current.abort.abort();if(current.timer)clearTimeout(current.timer);current.timer=null;if(this.owners.get(key)===current)this.owners.delete(key);}};
+  current.subscribers.set(id,sub);if(options.deadline!=null)sub.deadlineTimer=setTimeout(()=>{if(current.subscribers.get(id)!==sub)return;cancel();options.expire?.();},Math.max(0,options.deadline-Date.now()));
+  if(options.deadline!=null&&options.deadline<=Date.now()){queueMicrotask(()=>{if(current.subscribers.get(id)===sub){cancel();options.expire?.();}});return cancel;}if(current.batch)current.pending=true;else if(current.failures&&current.notBefore>Date.now()){}else{if(current.timer)clearTimeout(current.timer);current.timer=null;queueMicrotask(()=>void this.tick(key,current));}return cancel;
+ }
+ async refresh(a:ReadAuthority){this.assert(a);const owner=this.owners.get(this.key(a));if(owner){if(owner.failures&&owner.notBefore>Date.now())return;if(owner.timer)clearTimeout(owner.timer);owner.timer=null;await this.tick(this.key(a),owner);}}
+ async read<T>(a:ReadAuthority,key:string,load:(signal?:AbortSignal)=>Promise<T>,signal?:AbortSignal,fresh=false):Promise<T>{
+  this.assert(a);signal?.throwIfAborted();const generation=this.context.getStore();if(!generation)return load(signal);const owner=generation.owner;if(owner.authority.identity!==a.identity||this.owners.get(this.key(a))!==owner||owner.abort.signal.aborted)throw new Error('obsolete GitHub polling authority');const cacheKey=fresh?key+':fresh:'+crypto.randomUUID():key;let read=generation.reads.get(cacheKey);if(!read){this.reads++;read=Promise.resolve().then(()=>load(owner.abort.signal)).finally(()=>this.reads--);generation.reads.set(cacheKey,read);}if(!signal)return structuredClone(await read);
+  return new Promise<T>((resolve,reject)=>{const abort=()=>{signal.removeEventListener('abort',abort);reject(new Error('GitHub read subscriber cancelled'));};signal.addEventListener('abort',abort,{once:true});read!.then(v=>{signal.removeEventListener('abort',abort);signal.aborted?abort():resolve(structuredClone(v));},e=>{signal.removeEventListener('abort',abort);reject(e);});if(signal.aborted)abort();});
+ }
+ private tick(key:string,owner:Owner):Promise<void>{
+  if(owner.batch)return owner.batch;if(this.owners.get(key)!==owner||!owner.subscribers.size)return Promise.resolve();if(owner.timer)clearTimeout(owner.timer);owner.timer=null;owner.pending=false;const generation:Generation={owner,reads:new Map()};
+  owner.batch=this.context.run(generation,async()=>{const results=await Promise.allSettled([...owner.subscribers].map(async([id,sub])=>{if(owner.subscribers.get(id)===sub)await sub.run(AbortSignal.any([owner.abort.signal,sub.abort.signal]));}));owner.failures=results.some(r=>r.status==='rejected')?owner.failures+1:0;}).finally(()=>{owner.batch=null;if(this.owners.get(key)!==owner||!owner.subscribers.size)return;const interval=Math.min(...[...owner.subscribers.values()].map(s=>s.interval));const delay=owner.failures?Math.min(900000,interval*2**Math.min(owner.failures,20)):owner.pending?1:interval;owner.notBefore=Date.now()+delay;owner.timer=setTimeout(()=>void this.tick(key,owner),delay);});return owner.batch;
+ }
+ stop(){for(const owner of this.owners.values()){owner.abort.abort();if(owner.timer)clearTimeout(owner.timer);for(const sub of owner.subscribers.values()){sub.abort.abort();if(sub.deadlineTimer)clearTimeout(sub.deadlineTimer);}owner.subscribers.clear();}this.owners.clear();}
+}
+
+export async function boundedGitHubJSON(response:Response){const reader=response.body?.getReader();if(!reader)throw new Error('GitHub response body missing');const chunks:Uint8Array[]=[];let size=0;try{while(true){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>1000000)throw new Error('GitHub response exceeds limit');chunks.push(part.value);}const bytes=new Uint8Array(size);let offset=0;for(const c of chunks){bytes.set(c,offset);offset+=c.length;}return JSON.parse(new TextDecoder().decode(bytes));}finally{await reader.cancel().catch(()=>{});}}

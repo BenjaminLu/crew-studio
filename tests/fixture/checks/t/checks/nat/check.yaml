@@ -1,0 +1,9 @@
+id: nat
+version: 1.0.0
+title: { en: "A native check" }
+applies_to: [run]
+kind: deterministic
+needs: []
+native: test-native
+params: { type: object, properties: { want: { type: string, default: "pass" } } }
+timeout_s: 5

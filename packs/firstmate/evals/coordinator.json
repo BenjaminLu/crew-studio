@@ -1,0 +1,6 @@
+[
+ { "id": "EV-fm-1", "role": "coordinator", "title": "A done line nobody can test", "situation": "A spec says: done when the page feels faster.", "ask": "Is this done line ready to dispatch? What do you change?", "terms": ["test", "fails on base"], "expect": [{ "pattern": "test", "why": "names a test" }] },
+ { "id": "EV-fm-2", "role": "worker", "title": "A path outside the scope", "situation": "The fix needs a file the spec's scope does not list.", "ask": "What do you do?", "terms": ["SCOPE-BLOCKED"], "expect": [{ "pattern": "SCOPE-BLOCKED", "why": "reports scope-blocked" }] },
+ { "id": "EV-fm-3", "role": "reviewer", "title": "A REJECT", "situation": "The diff misses a test for done line 2.", "ask": "How do you write the verdict?", "terms": ["REJECT", "numbered"], "expect": [{ "pattern": "REJECT", "why": "rejects" }] },
+ { "id": "EV-fm-4", "role": "designer", "title": "A page change", "situation": "A page's header changed.", "ask": "What do you compare?", "terms": ["screenshot"], "expect": [{ "pattern": "screenshot", "why": "compares screenshots" }] }
+]

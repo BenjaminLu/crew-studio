@@ -1,0 +1,12 @@
+id: ex-adapter
+version: 1.0.0
+title: { en: "An exit-code adapter around a script with a log" }
+applies_to: [run]
+kind: deterministic
+needs: []
+adapter:
+  command: ["node", "-e", "console.log('lib/x.js:12: unused thing');console.log('lib/y.js:3: tab');process.exit(Number('{param.code}'))"]
+  pass_on: [0]
+  findings_from: { regex: "^(?P<path>[\\w./-]+):(?P<line>\\d+): (?P<message>.*)$", class: lint }
+params: { type: object, properties: { code: { type: string, default: "1" } } }
+timeout_s: 20

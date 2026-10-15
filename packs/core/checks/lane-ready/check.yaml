@@ -1,0 +1,11 @@
+id: lane-ready
+version: 1.0.0
+title: { en: "The local recipe and approved image are ready", zh-TW: "本機修改與已核准圖片已備妥" }
+applies_to: [run]
+kind: deterministic
+blocking: true
+needs: [artifact]
+native: lane-ready
+params: { type: object, properties: {} }
+timeout_s: 30
+network: false

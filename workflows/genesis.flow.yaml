@@ -1,0 +1,30 @@
+# Workflow genesis: the meta-workflow that turns a described way of working
+# into a domain pack (manifest, skills, gates, artifact types, a workflow and
+# its evals). The draft is validated and its evals run before the captain sees
+# it; installing pins every file by sha256.
+id: genesis
+name: Workflow genesis
+version: 1
+description: "Describe a new way of working in chat; an author agent drafts a pack and its evals; Studio validates it and runs the evals; you install it."
+nodes:
+  - { id: describe, kind: human, label: Describe, detail: "a new way of working", x: 0, y: 80 }
+  - { id: draft, kind: agent, label: Draft pack, detail: "pack author agent", x: 210, y: 80 }
+  - id: validate
+    kind: gate
+    label: Validate
+    detail: "format + evals"
+    x: 420
+    y: 80
+    gates:
+      - { id: pack-valid, builtin: pack-valid, label: "The pack follows the format" }
+      - { id: pack-evals, builtin: pack-evals, label: "Its evals exist and run" }
+  - { id: review, kind: human, label: Review, detail: "files, gates, evals", x: 630, y: 80 }
+  - { id: install, kind: done, label: Install, detail: "hash-pinned", x: 840, y: 80 }
+edges:
+  - [describe, draft]
+  - [draft, validate]
+  - [validate, review]
+  - [validate, draft, INVALID]
+  - [review, install]
+roles:
+  - { id: author, label: Pack author, skill: "bundled:workflows/skills/pack-author.md" }

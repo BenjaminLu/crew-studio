@@ -1,0 +1,23 @@
+<!doctype html><html><head><meta charset="utf-8"><title>{{TITLE}}</title>
+<style>
+body{margin:0;background:#000}
+#stage{width:960px;height:540px;position:relative;overflow:hidden;background:#0f1726;color:#f4f6fb;font:600 44px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif}
+#cap{position:absolute;left:80px;right:80px;top:200px;text-align:left;letter-spacing:-.5px}
+#bar{position:absolute;left:80px;top:180px;height:6px;width:0;background:#7097ff;border-radius:3px}
+#sub{position:absolute;left:80px;bottom:60px;font:500 18px system-ui;color:#9fb0cc}
+</style></head>
+<body><div id="stage"><div id="bar"></div><div id="cap"></div><div id="sub">{{TITLE}}</div></div><div id="poster"></div>
+<script>
+const PRE=1.0, OFF=PRE-1.0, DUR=6.0+OFF;
+const vis=(t,a,b)=>t>=a&&t<b;
+let muted=true,startAt=0,ctx=null;
+function build(){ctx=new (window.AudioContext||window.webkitAudioContext)()}
+function schedule(){if(!ctx)return;const o=ctx.createOscillator(),g=ctx.createGain();o.frequency.value=220;g.gain.value=0.04;o.connect(g);g.connect(ctx.destination);o.start(0);o.stop(DUR)}
+const cap=()=>document.getElementById('cap'), bar=()=>document.getElementById('bar');
+function sceneOpen(t){if(!vis(t,-OFF,2.0))return;cap().textContent="{{LINE1}}";cap().style.opacity=Math.min(1,t/0.6);bar().style.width=(Math.min(1,t/1.5)*240)+'px'}
+function sceneMiddle(t){if(!vis(t,2.0,4.0))return;cap().textContent="{{LINE2}}";cap().style.opacity=Math.min(1,(t-2)/0.5);bar().style.width='240px'}
+function sceneEnd(t){if(t<4.0)return;cap().textContent="{{LINE3}}";cap().style.opacity=Math.min(1,(t-4)/0.5);bar().style.width=(240+Math.min(1,(t-4)/1.5)*400)+'px'}
+function renderAt(t){sceneOpen(t);sceneMiddle(t);sceneEnd(t)}
+function render(t){renderAt(t-OFF)}
+render(0);
+</script></body></html>

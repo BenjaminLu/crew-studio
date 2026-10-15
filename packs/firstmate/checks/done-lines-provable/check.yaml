@@ -1,0 +1,15 @@
+id: done-lines-provable
+version: 1.0.0
+title: { en: "Every done line names a test and a fail-first marker", zh-TW: "每條完成條件都指名測試與 fail-first 標記" }
+applies_to: [spec]
+kind: deterministic
+blocking: true
+needs: [artifact]
+params:
+  type: object
+  properties:
+    test_pattern: { type: string, default: "(^|[\\s`(])(tests?/[\\w./-]+|[\\w./-]+\\.test\\.\\w+)" }
+    marker_pattern: { type: string, default: "fails on base|fail-first|red on base" }
+timeout_s: 20
+network: false
+sample: { artifact: { type: spec, data: { done: ["tests/price.test.mjs: total adds tax (fails on base)", "the page feels faster"] } } }

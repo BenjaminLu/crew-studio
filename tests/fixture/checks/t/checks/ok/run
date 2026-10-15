@@ -1,0 +1,2 @@
+#!/usr/bin/env node
+let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const i=JSON.parse(s);require("fs").writeFileSync(i.out+"/seen.json",JSON.stringify(i.params));process.stdout.write(JSON.stringify({verdict:"pass",score:1,findings:[],evidence:["out/seen.json"],proves:[0],data:{n:i.params.n}}))});

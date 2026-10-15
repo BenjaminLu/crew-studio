@@ -1,0 +1,39 @@
+# Org-level policy defaults for the firstmate pack. A project overrides them in
+# data/policies/project-<id>.yaml; a workflow version overrides them in its
+# `policies:` block. Checks read them through policy_bind.
+sensitive_paths:
+  - { glob: ".github/**", why: "CI and workflow configuration" }
+  - { glob: "migrations/**", why: "a data migration" }
+  - { glob: "**/migrations/**", why: "a data migration" }
+  - { glob: "*.sql", why: "an SQL file" }
+  - { glob: ".env*", why: "an environment file" }
+  - { glob: "**/secrets/**", why: "a secrets folder" }
+  - { glob: "**/auth/**", why: "authentication and permissions" }
+  - { glob: "**/schema/**", why: "a data format" }
+round_cap: 3
+round_timeout_s: 1500
+shard_budget_s: 600
+ste:
+  rules: { fail: [R5, R6, R8] }
+branch_prefix: "crew/"
+ui_paths: ["**/*.html", "**/*.css", "public/**", "ui/**"]
+flaky:
+  retry: 1
+# the reviewer's mode (v1's config.yaml reviewer: mode): diff reads (any file type, read-only, no execution); run also runs the
+# tests or small verification commands in the sandbox (no network). read_budget: reads a review may spend before it samples.
+reviewer:
+  mode: diff
+  read_budget: 40
+file_size_cap: { glob: "tests/**", max: 1200 }
+
+# Native C2: capacity counts live owned rounds, never waiting Tasks/cards.
+queue:
+  global_capacity: 3
+  project_capacity: 3
+  wait_timeout_s: 300
+
+# Native C3: unsupported capability adapters hold, never guess a vendor/model.
+vendor_policy:
+  worker: opposite-of-host
+  reviewer: claude
+  fallback: [codex, claude]

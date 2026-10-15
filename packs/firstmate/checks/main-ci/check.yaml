@@ -1,0 +1,10 @@
+id: main-ci
+version: 1.0.0
+title: { en: "Main CI after the merge", zh-TW: "合併後的 main CI" }
+applies_to: [run]
+kind: hook
+at: after_merge
+needs: [repo_cfg, main_tree]
+params: { type: object, properties: {} }
+timeout_s: 600
+network: false

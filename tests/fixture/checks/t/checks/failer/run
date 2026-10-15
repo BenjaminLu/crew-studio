@@ -1,0 +1,4 @@
+#!/usr/bin/env node
+// passes once the flag file exists (a "fix" made by an agent)
+const fs=require("fs");let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const i=JSON.parse(s);const ok=i.params.flagfile&&fs.existsSync(i.params.flagfile);
+process.stdout.write(JSON.stringify(ok?{verdict:"pass",score:1,findings:[],evidence:[],proves:[1]}:{verdict:"fail",score:0,findings:[{locator:{type:"file",path:"src/a.js",line:3},message:"a is wrong",expected:"a is right",class:i.params.cls,severity:"blocking"}],evidence:[],proves:[]}))});

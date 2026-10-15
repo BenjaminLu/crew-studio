@@ -1,0 +1,11 @@
+id: overlap
+version: 1.0.0
+title: { en: "The scope does not overlap another in-flight run", zh-TW: "範圍不與其他進行中的 run 重疊" }
+applies_to: [spec]
+kind: deterministic
+blocking: true
+needs: [artifact, inflight]
+native: overlap
+params: { type: object, properties: {} }
+timeout_s: 10
+network: false

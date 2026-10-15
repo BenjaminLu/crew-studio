@@ -1,0 +1,15 @@
+id: lints
+version: 1.0.0
+title: { en: "The repository's own lint passes", zh-TW: "repository 自己的 lint 通過" }
+description: "An exit-code adapter around the lint command the repository declares in .crew/gates.json (lint)."
+applies_to: [code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact]
+adapter:
+  command: ["{repo.lint}"]
+  pass_on: [0]
+  findings_from: { regex: "^(?P<path>[\\w./-]+):(?P<line>\\d+): (?P<message>.*)$", class: lint }
+params: { type: object, properties: {} }
+timeout_s: 120
+network: false

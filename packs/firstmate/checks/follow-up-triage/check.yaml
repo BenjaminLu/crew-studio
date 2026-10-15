@@ -1,0 +1,13 @@
+id: follow-up-triage
+version: 1.0.0
+title: { en: "Follow-ups: each becomes a task proposal or is dropped with a reason", zh-TW: "後續事項：每項成為任務提案或附理由捨棄" }
+applies_to: [run]
+kind: judged
+blocking: false
+needs: [followups]
+judge:
+  prompt: "For each reviewer follow-up in the input, decide: propose it as a task (say what and why in one line) or drop it with a reason (a follow-up nobody actually triggers is not a task). Report one finding per follow-up with locator {type: card, field: followups, index: <i>}, class propose or drop, message the one-line decision. Verdict pass."
+  quorum: { n: 1, of: 1 }
+params: { type: object, properties: {} }
+timeout_s: 300
+network: false

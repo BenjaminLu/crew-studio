@@ -1,0 +1,12 @@
+{
+ "actor": "worker-imani-t305-r2",
+ "role": "worker",
+ "task": "T-305",
+ "name": "imani",
+ "project": "firstmate-workflow",
+ "round": 2,
+ "attempt": 1,
+ "created": 1791908533.569831,
+ "vendor": "claude",
+ "model_requested": "claude-opus-5-5"
+}

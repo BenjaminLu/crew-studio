@@ -1,0 +1,11 @@
+id: gate-scope
+version: 1.0.0
+title: { en: "Gate: scope", zh-TW: "閘門：scope" }
+applies_to: [code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact, gate_state]
+native: gate-scope
+params: { type: object, properties: {} }
+timeout_s: 30
+network: false

@@ -1,0 +1,53 @@
+// Credentials (legacy class A1; architecture §10 "no credentials in rounds"): a
+// round's environment is an allowlist (the login basics) plus only the keys its own
+// provider declares; chats, work runs, checks and child tools (git, the renderer)
+// get no credential either.     bun tests/credentials.ts
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+let pass = 0, fail = 0;
+const ok = (c: boolean, name: string, extra = "") => { if (c) { pass++; console.log(`  ok    ${name}`); } else { fail++; console.log(`  FAIL  ${name} ${extra}`); } };
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const tmp = mkdtempSync(join(tmpdir(), "crew-cred-"));
+const SECRETS = { GITHUB_TOKEN: "ghp_x", GH_TOKEN: "gho_x", CREW_GITHUB_TOKEN: "x", OPENAI_API_KEY: "sk-x", ANTHROPIC_API_KEY: "sk-ant-x", AWS_SECRET_ACCESS_KEY: "x", MY_SERVICE_PASSWORD: "x", DEPLOY_KEY: "x" };
+const leaked = (env: Record<string, string> | undefined, allow: string[] = []) => Object.keys(SECRETS).filter((k) => !allow.includes(k) && env && k in env);
+// ---------- A1: credentials ----------
+{
+  Object.assign(process.env, SECRETS);
+  const { Agents } = await import("../src/agent");
+  const seen: any[] = [];
+  const recorder = (id: string, envKeys?: string[]) => ({ id, model: "rec", envKeys, start: (_s: string, _t: any, ctx: any) => { seen.push({ id, env: ctx.env }); return { interrupt() {}, async *send() { yield { type: "turnEnd", status: "ok" } as any; } }; } });
+  const agents = new Agents(join(tmp, "a1"), () => "http://127.0.0.1:1");
+  await agents.run({ kind: "t", title: "t", system: "s", text: "x", tools: [], provider: recorder("plain") as any });
+  await agents.run({ kind: "t", title: "t", system: "s", text: "x", tools: [], provider: recorder("claude-like", ["ANTHROPIC_API_KEY"]) as any });
+  ok(leaked(seen[0].env).length === 0 && seen[0].env.PATH && seen[0].env.CREW_TOOL_TOKEN, "an agent round's environment carries no credential (only the login basics and its tool token)", leaked(seen[0].env).join(","));
+  ok(leaked(seen[1].env, ["ANTHROPIC_API_KEY"]).length === 0 && seen[1].env.ANTHROPIC_API_KEY === "sk-ant-x", "a provider gets only the key it declares for itself");
+  const { runChat } = await import("../src/chat");
+  await runChat({ provider: recorder("chat") as any, message: "hi", history: [], lang: "en", studioUrl: "http://127.0.0.1:1", token: "t", dataDir: join(tmp, "a1"), onEvent: () => {} });
+  ok(leaked(seen.at(-1).env).length === 0, "a chat turn's environment carries no credential", leaked(seen.at(-1).env).join(","));
+  const { ArtifactStore } = await import("../src/artifacts"); const { WorkRuns } = await import("../src/work");
+  const st = new ArtifactStore(join(tmp, "a1w")); const src = join(tmp, "a1src"); mkdirSync(src); writeFileSync(join(src, "index.html"), "<html><body>x</body></html>");
+  st.create({ id: "pg", title: "pg", type: "web", source: "html", entry: "index.html" }); st.addVersion("pg", { from: src, primary: "index.html", createdBy: { kind: "captain" } }); st.addNote("pg", 1, { kind: "pin", selector: "body", comment: "c" });
+  const wr = new WorkRuns(st, join(tmp, "a1w")); wr.start({ artifact: "pg", n: 1, provider: recorder("work") as any, studioUrl: "http://127.0.0.1:1" }); await sleep(200);
+  ok(seen.at(-1)?.id === "work" && leaked(seen.at(-1).env).length === 0, "a work run's environment carries no credential");
+  const { claudeProvider } = await import("../src/providers/claude"); const { codexProvider } = await import("../src/providers/codex");
+  ok((claudeProvider() as any).envKeys?.includes("ANTHROPIC_API_KEY") && !(claudeProvider() as any).envKeys?.includes("OPENAI_API_KEY") && (codexProvider() as any).envKeys?.includes("OPENAI_API_KEY"), "each CLI provider declares only its own key");
+  const { scrubEnv } = await import("../src/secure");
+  ok(leaked(scrubEnv()).length === 0 && scrubEnv().PATH, "child tools (git, the renderer) get the environment without credentials");
+  // a check sees no credential either
+  const { sandboxed } = await import("../src/runtime/checks");
+  const r = await sandboxed(["/bin/sh", "-c", "env"], { cwd: tmp, out: join(tmp, "a1c", "out"), tmp: join(tmp, "a1c", "tmp"), timeoutS: 10, network: false });
+  ok(!Object.keys(SECRETS).some((k) => r.stdout.includes(`${k}=`)) && !r.stdout.includes(`HOME=${homedir()}\n`), "a check's environment has no credential and a scrubbed HOME");
+  // the renderer is spawned with a scrubbed environment
+  const fakeNode = join(tmp, "fake-node.sh"); writeFileSync(fakeNode, `#!/bin/sh\nenv > "${join(tmp, "render-env.txt")}"\necho '{"ok":true}'\n`, { mode: 0o755 });
+  process.env.CREW_NODE_BIN = fakeNode; process.env.CREW_PLAYWRIGHT_MODULE = fakeNode;
+  const { runRender } = await import("../src/render");
+  await runRender(join(tmp, "a1r"), "crop", { html: "x", out: join(tmp, "o.png") }).done;
+  const renv = existsSync(join(tmp, "render-env.txt")) ? readFileSync(join(tmp, "render-env.txt"), "utf8") : "";
+  ok(renv.length > 0 && !Object.keys(SECRETS).some((k) => renv.includes(`${k}=`)), "the renderer runs without credentials");
+  delete process.env.CREW_NODE_BIN; delete process.env.CREW_PLAYWRIGHT_MODULE;
+  for (const k of Object.keys(SECRETS)) delete process.env[k];
+}
+
+console.log(`\ncredentials: ${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);

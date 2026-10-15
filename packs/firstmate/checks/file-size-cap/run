@@ -1,0 +1,10 @@
+#!/usr/bin/env node
+const fs = require("fs"), path = require("path");
+let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+  const i = JSON.parse(s); const f = []; const max = i.params.max;
+  const pres = i.params.glob_prefix ? [i.params.glob_prefix] : (i.repo_cfg?.tests ?? ["tests/"]).map((g) => g.replace(/\*.*$/, ""));
+  for (const c of i.diff?.paths ?? []) { if (String(c.status).startsWith("D") || !pres.some((pre) => c.path.startsWith(pre))) continue; const p = path.join(i.workdir, c.path); if (!fs.existsSync(p)) continue;
+    const t = fs.readFileSync(p, "utf8"); const n = t.split("\n").length - (t.endsWith("\n") ? 1 : 0);
+    if (n > max) f.push({ locator: { type: "file", path: c.path, line: max + 1 }, message: `${c.path} has ${n} lines (cap ${max})`, expected: `split it so each file stays within ${max} lines`, class: "file-size-cap", severity: "blocking" }); }
+  process.stdout.write(JSON.stringify({ verdict: f.length ? "fail" : "pass", score: f.length ? 0 : 1, findings: f, evidence: [], proves: [] }));
+});

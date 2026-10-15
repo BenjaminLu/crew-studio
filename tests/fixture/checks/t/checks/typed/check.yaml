@@ -1,0 +1,8 @@
+id: typed
+version: 1.0.0
+title: { en: "Typed params" }
+applies_to: [run]
+kind: deterministic
+needs: []
+params: { type: object, required: [limit], properties: { limit: { type: integer, minimum: 1 } } }
+timeout_s: 5

@@ -1,0 +1,40 @@
+# Local runtime state, managed repositories, credentials and evidence.
+/data/
+/state/
+/.crew-studio/
+/.worktrees/
+
+# Build products and installed dependencies. Generated src/*.gen.ts stay tracked.
+/dist/
+node_modules/
+*.bun-build
+/public/vendor/*.map
+
+# Test artifacts and browser reports; committed tests/fixture/ stays available.
+/tests/out/
+/test-results/
+/playwright-report/
+/coverage/
+
+# Local environment and credentials; sanitized examples may be committed.
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+
+# Local caches, logs and editor/OS files.
+/.cache/
+/.tmp/
+/tmp/
+/logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+*.swo
+*~

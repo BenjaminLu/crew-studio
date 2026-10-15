@@ -1,0 +1,8 @@
+id: pause
+version: 1.0.0
+title: { en: "Passes after 1.2 s" }
+applies_to: [run]
+kind: deterministic
+needs: []
+params: { type: object, properties: {} }
+timeout_s: 20

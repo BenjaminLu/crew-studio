@@ -1,0 +1,16 @@
+id: door-classify
+version: 1.0.0
+title: { en: "Door: scope against the sensitive paths", zh-TW: "門：範圍對照敏感路徑" }
+applies_to: [spec, code-diff]
+kind: deterministic
+blocking: false
+needs: [artifact]
+native: door-classify
+params:
+  type: object
+  properties:
+    sensitive_paths: { type: array, default: [] }
+policy_bind:
+  sensitive_paths: sensitive_paths
+timeout_s: 10
+network: false

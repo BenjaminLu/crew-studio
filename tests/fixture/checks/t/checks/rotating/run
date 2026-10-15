@@ -1,0 +1,2 @@
+#!/usr/bin/env node
+let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const i=JSON.parse(s);process.stdout.write(JSON.stringify({verdict:"fail",score:0.2,findings:[{locator:{type:"file",path:"src/r.js",line:i.round},message:"round "+i.round+" problem",expected:"no problem",class:"c-"+i.round,severity:"blocking"}],evidence:[],proves:[]}))});

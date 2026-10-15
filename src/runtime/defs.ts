@@ -1,0 +1,225 @@
+// Versioned workflow definitions for Studio's own runtime (v2).
+//   workflows/v2/<id>.wf.yaml           the built-in definitions (seeded as v1 on first start)
+//   data/workflows/<id>/v<N>.json       every saved version; a version never changes once written
+//   data/workflows/<id>/layout-v<N>.json  node positions dragged in the editor (per version, not a new version)
+// Editing a workflow writes v(N+1) with a diff against v(N). A run pins the
+// version it started on and keeps a copy of that definition in its own folder,
+// so later edits never change a running run.
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { bundledList, bundledText, parseYaml } from "../bundled";
+
+export const NODE_KINDS = ["agent", "check", "card", "loop", "hook"] as const; // a closed set (architecture §3.1)
+export type NodeKind = (typeof NODE_KINDS)[number];
+export type CheckRef = { use: string; params?: Record<string, any>; blocking?: boolean; quorum?: { n: number; of: number }; proves?: number[]; prompt?: string; model?: string; provider?: string };
+export type GateSpec = { id: string; label?: string; builtin?: string; run?: string[]; args?: Record<string, any>; when?: { door?: string[] }; timeout_s?: number };
+export type CardSpec = { title?: string | { en: string; "zh-TW"?: string }; body?: string | { en: string; "zh-TW"?: string }; auto_option?: string;
+  /** the context key a door node stored its result in; the card declares that door (one-way cards need the confirmation) */
+  door_from?: string; options?: { id: string; label: string }[]; confirm_door?: boolean; effects?: Record<string, { node: string; add: number }> };
+export type WNode = {
+  id: string; kind: NodeKind; label: string; x: number; y: number; detail?: string;
+  role?: string; mode?: string; provider?: string; model?: string; skill?: string;
+  gates?: GateSpec[]; checks?: CheckRef[]; do?: string; args?: Record<string, any>; card?: CardSpec;
+  max_visits?: number; retries?: number; timeout_s?: number; join?: "any" | "all"; lane?: string;
+  /** lifecycle points this node marks when it finishes (after_round, after_merge …): the workflow's hooks at those points run */
+  lifecycle?: string[];
+  /** an agent node's enabled skills, in order, each pinned by version and hash (unit agent-skills); text only, never tools or sandbox */
+  skills?: { id: string; v: number; sha256: string }[];
+};
+export type WEdge = { from: string; to: string; when?: string; checks?: CheckRef[] };
+export type WRole = { id: string; label: string; skill: string; provider?: string; model?: string };
+export type WDef = {
+  id: string; name: string; version: number; description?: string; kind?: string;
+  intent?: { keywords?: string[]; examples?: string[] }; params?: Record<string, { label: string; default?: string }>;
+  roles: WRole[]; nodes: WNode[]; edges: WEdge[]; policies?: Record<string, any>; card_checks?: string[]; hooks?: { at: string; use: string; params?: Record<string, any> }[];
+  parent?: number | null; createdAt?: string; by?: string; note?: string | null; diff?: DefDiff | null; seed?: string | null;
+};
+export type DefDiff = {
+  nodesAdded: string[]; nodesRemoved: string[]; nodesChanged: { id: string; fields: string[] }[]; nodesMoved: string[];
+  edgesAdded: string[]; edgesRemoved: string[]; edgesChanged: string[]; meta: string[];
+  /** agent nodes whose enabled skills changed: the list before and after, as name@vN in order */
+  skills?: { node: string; before: string[]; after: string[] }[];
+};
+/** What a skill pin is checked against: the library's record of that version (null when it has none). */
+export type SkillInfo = (id: string, v: number) => { sha256: string; bytes: number } | null;
+export const SKILL_NODE_CAP = 96 * 1024; // the enabled skills' text on one agent node (src/skills.ts SKILL_CAPS.node)
+/** The one size format for skill text, in the server's messages and in the page (public/skills.js keeps the same rule):
+ *  under 1 KB in bytes, under 10 KB with one decimal, else whole KB. "120 KB", "5.7 KB", "19 B". */
+export const fmtSize = (n: number) => (n < 1024 ? `${n} B` : n < 10 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${Math.round(n / 1024)} KB`);
+const pinName = (p: any) => `${p?.id}@v${p?.v}`;
+export type Problem = { level: "error" | "warn"; node?: string; edge?: string; text: string };
+
+const ekey = (e: WEdge) => `${e.from}→${e.to}${e.when ? `[${e.when}]` : ""}`;
+const now = () => new Date().toISOString();
+
+/** YAML edges may be [from, to, when?] or {from, to, when}; nodes get defaults. */
+export function normalize(raw: any): WDef {
+  const d: WDef = { ...raw, version: Number(raw?.version ?? 1), roles: Array.isArray(raw?.roles) ? raw.roles : [], nodes: [], edges: [] };
+  d.nodes = (Array.isArray(raw?.nodes) ? raw.nodes : []).map((n: any) => ({ ...n, id: String(n.id), kind: String(n.kind ?? "action"), label: String(n.label ?? n.id), x: Number(n.x ?? 0), y: Number(n.y ?? 0) }));
+  const refs = (v: any) => (Array.isArray(v) ? v.filter((c: any) => c && typeof c.use === "string").map((c: any) => ({ ...c })) : undefined);
+  d.edges = (Array.isArray(raw?.edges) ? raw.edges : []).map((e: any) => Array.isArray(e) ? { from: String(e[0]), to: String(e[1]), ...(e[2] ? { when: String(e[2]) } : {}), ...(e[3]?.checks ? { checks: refs(e[3].checks) } : {}) }
+    : { from: String(e.from), to: String(e.to), ...(e.when ? { when: String(e.when) } : {}), ...(e.checks?.length ? { checks: refs(e.checks) } : {}) });
+  for (const n of d.nodes) if (n.checks) n.checks = refs(n.checks);
+  return d;
+}
+
+/** The entry: the one node no edge leads to. */
+export const entryOf = (d: WDef) => { const ins = new Set(d.edges.map((e) => e.to)); const c = d.nodes.filter((n) => !ins.has(n.id)); return c.length === 1 ? c[0] : null; };
+/** Terminals: nodes no edge leaves; finishing one ends the run. */
+export const terminalsOf = (d: WDef) => { const outs = new Set(d.edges.map((e) => e.from)); return d.nodes.filter((n) => !outs.has(n.id)); };
+
+/** Problems that stop a definition from being saved (errors) or that the editor shows (warnings). */
+export function validate(d: WDef, known?: (ref: string) => boolean, runners?: Set<string>, skillInfo?: SkillInfo): Problem[] {
+  const out: Problem[] = [];
+  const ids = new Set<string>();
+  const terms = new Set(terminalsOf(d).map((n) => n.id));
+  for (const n of d.nodes) {
+    if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(n.id)) out.push({ level: "error", node: n.id, text: `node id "${n.id}": lowercase letters, digits and dashes` });
+    if (ids.has(n.id)) out.push({ level: "error", node: n.id, text: `two nodes are called ${n.id}` });
+    ids.add(n.id);
+    if (!(NODE_KINDS as readonly string[]).includes(n.kind)) out.push({ level: "error", node: n.id, text: `${n.id}: unknown kind ${n.kind} (agent, check, card, loop or hook)` });
+    else if (runners && !runners.has(n.kind)) out.push({ level: "error", node: n.id, text: `${n.label}: no runner for the ${n.kind} kind` });
+    if (n.kind === "check" && !(n.checks?.length)) out.push({ level: "error", node: n.id, text: `${n.label}: a check node needs at least one check attached` });
+    if (n.kind === "hook" && !n.do && !(n.checks?.length) && !terms.has(n.id)) out.push({ level: "error", node: n.id, text: `${n.label}: a hook names its action (do) or attaches hook checks` });
+    if (n.kind === "agent" && !n.role) out.push({ level: "error", node: n.id, text: `${n.label}: an agent node needs a role` });
+    if (n.kind === "agent" && n.role && !d.roles.some((r) => r.id === n.role)) out.push({ level: "error", node: n.id, text: `${n.label}: no role ${n.role} in this workflow` });
+    if (n.kind === "agent" && !n.mode) out.push({ level: "error", node: n.id, text: `${n.label}: an agent node names its mode` });
+    if (n.kind === "loop" && !n.args?.producer) out.push({ level: "error", node: n.id, text: `${n.label}: a loop names its producer node (args.producer)` });
+    if (n.kind === "loop" && n.args?.producer && !d.nodes.some((m) => m.id === n.args!.producer)) out.push({ level: "error", node: n.id, text: `${n.label}: no producer node ${n.args.producer}` });
+    if (n.max_visits != null && !(Number(n.max_visits) >= 1)) out.push({ level: "error", node: n.id, text: `${n.label}: max_visits must be 1 or more` });
+    for (const c of n.checks ?? []) if (known && !known(c.use)) out.push({ level: "error", node: n.id, text: `${n.label}: no check ${c.use}` });
+    if (n.skills != null) {
+      if (n.kind !== "agent") out.push({ level: "error", node: n.id, text: `${n.label}: only an agent node enables skills` });
+      else if (!Array.isArray(n.skills)) out.push({ level: "error", node: n.id, text: `${n.label}: skills is an ordered list of {id, v, sha256}` });
+      else {
+        let total = 0; const seen = new Set<string>();
+        for (const p of n.skills as any[]) {
+          if (!p || typeof p.id !== "string" || !Number.isInteger(Number(p.v)) || typeof p.sha256 !== "string") { out.push({ level: "error", node: n.id, text: `${n.label}: each skill is pinned as {id, v, sha256}` }); continue; }
+          if (seen.has(p.id)) out.push({ level: "error", node: n.id, text: `${n.label}: ${p.id} is enabled twice` }); seen.add(p.id);
+          if (!skillInfo) continue;
+          const info = skillInfo(p.id, Number(p.v));
+          if (!info) out.push({ level: "error", node: n.id, text: `${n.label}: no skill ${p.id} v${p.v} in the library` });
+          else if (info.sha256 !== p.sha256) out.push({ level: "error", node: n.id, text: `${n.label}: ${p.id} v${p.v}: the hash does not match the stored version` });
+          else total += info.bytes;
+        }
+        if (total > SKILL_NODE_CAP) out.push({ level: "error", node: n.id, text: `${n.id}: the enabled skills total ${fmtSize(total)}; the cap is ${fmtSize(SKILL_NODE_CAP)}` });
+      }
+    }
+  }
+  for (const e of d.edges) {
+    if (!ids.has(e.from) || !ids.has(e.to)) out.push({ level: "error", edge: ekey(e), text: `edge ${ekey(e)} names a node that does not exist` });
+    for (const c of e.checks ?? []) if (known && !known(c.use)) out.push({ level: "error", edge: ekey(e), text: `edge ${ekey(e)}: no check ${c.use}` });
+  }
+  const ins = new Set(d.edges.map((e) => e.to));
+  const entries = d.nodes.filter((n) => !ins.has(n.id));
+  if (entries.length !== 1) out.push({ level: "error", text: entries.length ? `a workflow has exactly one entry (a node no edge leads to); this one has ${entries.length}: ${entries.map((n) => n.label).join(", ")}` : "a workflow needs an entry: a node no edge leads to" });
+  if (!terms.size) out.push({ level: "error", text: "a workflow needs an end: a node no edge leaves" });
+  const outs = (id: string) => d.edges.filter((e) => e.from === id).map((e) => e.to);
+  if (entries.length === 1) {
+    const seen = new Set<string>([entries[0].id]); const q = [entries[0].id];
+    while (q.length) for (const t of outs(q.shift()!)) if (!seen.has(t)) { seen.add(t); q.push(t); }
+    for (const n of d.nodes) if (!seen.has(n.id)) out.push({ level: "error", node: n.id, text: `${n.label} is an orphan: no path from the entry reaches it` });
+    if (terms.size && ![...terms].some((t) => seen.has(t))) out.push({ level: "error", text: "no end is reachable from the entry" });
+  }
+  const canEnd = new Set(terms); let grew = true;
+  while (grew) { grew = false; for (const n of d.nodes) if (!canEnd.has(n.id) && outs(n.id).some((t) => canEnd.has(t))) { canEnd.add(n.id); grew = true; } }
+  for (const n of d.nodes) if (!canEnd.has(n.id) && ids.has(n.id)) out.push({ level: "error", node: n.id, text: `${n.label}: no path from here reaches an end` });
+  for (const n of d.nodes) if (n.join === "all" && d.edges.filter((e) => e.to === n.id).length < 2) out.push({ level: "warn", node: n.id, text: `${n.label} waits for all inputs but has only one` });
+  return out;
+}
+
+const FIELDS: (keyof WNode)[] = ["kind", "label", "detail", "role", "mode", "provider", "model", "skill", "skills", "gates", "checks", "lifecycle", "do", "args", "card", "max_visits", "retries", "timeout_s", "join", "lane"];
+export function diff(a: WDef, b: WDef): DefDiff {
+  const an = new Map(a.nodes.map((n) => [n.id, n])), bn = new Map(b.nodes.map((n) => [n.id, n]));
+  const ae = new Set(a.edges.map(ekey)), be = new Set(b.edges.map(ekey));
+  const changed: { id: string; fields: string[] }[] = []; const moved: string[] = [];
+  for (const [id, n] of bn) { const o = an.get(id); if (!o) continue;
+    const f = FIELDS.filter((k) => JSON.stringify(o[k] ?? null) !== JSON.stringify(n[k] ?? null)) as string[];
+    if (f.length) changed.push({ id, fields: f });
+    if (Math.round(o.x) !== Math.round(n.x) || Math.round(o.y) !== Math.round(n.y)) moved.push(id); }
+  const ac = new Map(a.edges.map((e) => [ekey(e), JSON.stringify(e.checks ?? [])]));
+  const edgesChanged = b.edges.filter((e) => ac.has(ekey(e)) && ac.get(ekey(e)) !== JSON.stringify(e.checks ?? [])).map(ekey);
+  const meta = (["name", "description", "roles", "params", "intent", "policies", "hooks", "card_checks"] as const).filter((k) => JSON.stringify((a as any)[k] ?? null) !== JSON.stringify((b as any)[k] ?? null));
+  const skills: { node: string; before: string[]; after: string[] }[] = [];
+  for (const [id, n] of bn) { const before = (an.get(id)?.skills ?? []).map(pinName), after = (n.skills ?? []).map(pinName);
+    if (JSON.stringify(before) !== JSON.stringify(after)) skills.push({ node: id, before, after }); }
+  return { nodesAdded: [...bn.keys()].filter((k) => !an.has(k)), nodesRemoved: [...an.keys()].filter((k) => !bn.has(k)), nodesChanged: changed, nodesMoved: moved,
+    edgesAdded: [...be].filter((k) => !ae.has(k)), edgesRemoved: [...ae].filter((k) => !be.has(k)), edgesChanged, meta, ...(skills.length ? { skills } : {}) };
+}
+export const diffEmpty = (d: DefDiff) => !d.nodesAdded.length && !d.nodesRemoved.length && !d.nodesChanged.length && !d.nodesMoved.length && !d.edgesAdded.length && !d.edgesRemoved.length && !(d.edgesChanged ?? []).length && !d.meta.length;
+
+export class WorkflowDefs {
+  readonly dir: string;
+  /** the skill library's record of a pinned version (set by the runtime): saves check every pin and the per-node cap against it */
+  skillInfo: SkillInfo | null = null;
+  constructor(dataDir: string, readonly bundled = () => [...bundledList("workflows/v2/"), ...bundledList("packs/")].filter((f) => f.endsWith(".wf.yaml")).map((f) => bundledText(f) ?? ""), public known?: (ref: string) => boolean, public runners?: () => Set<string>) {
+    this.dir = join(dataDir, "workflows"); mkdirSync(this.dir, { recursive: true });
+    this.seed();
+  }
+  private wdir(id: string) { if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(id)) throw new Error(`bad workflow id ${id}`); return join(this.dir, id); }
+  /** Built-ins become v1; a changed built-in becomes a new version only while nobody has edited that workflow. */
+  private seed() {
+    for (const text of this.bundled()) {
+      if (!text.trim()) continue;
+      const d = normalize(parseYaml(text)); const hash = createHash("sha256").update(text).digest("hex").slice(0, 16);
+      const vs = this.versions(d.id);
+      if (!vs.length) { this.write({ ...d, version: 1, parent: null, createdAt: now(), by: "studio (built-in)", note: "built-in", diff: null, seed: hash }); continue; }
+      const last = vs.at(-1)!;
+      if (last.seed && last.seed !== hash && last.by?.startsWith("studio (built-in")) this.write({ ...d, version: last.version + 1, parent: last.version, createdAt: now(), by: "studio (built-in update)", note: "the built-in definition changed", diff: diff(last, d), seed: hash });
+    }
+  }
+  private write(d: WDef) {
+    mkdirSync(this.wdir(d.id), { recursive: true });
+    const f = join(this.wdir(d.id), `v${d.version}.json`);
+    if (existsSync(f)) throw new Error(`${d.id} v${d.version} exists`);
+    writeFileSync(f + ".tmp", JSON.stringify(d, null, 1)); renameSync(f + ".tmp", f);
+  }
+  /** Native pack installer only: caller must verify the canonical signed file pin first.
+   *  Definitions are appended; existing pinned Tasks and built-in versions never change. */
+  importPinned(raw: any, pin: { hash: string; verify: () => boolean }): WDef {
+    if (!/^[a-f0-9]{64}$/.test(pin.hash) || !pin.verify()) throw new Error("pack provenance is not verified");
+    const d = normalize(raw); const errors = validate(d, this.known, this.runners?.(), this.skillInfo ?? undefined).filter(p => p.level === "error");
+    if (errors.length) throw new Error(errors[0].text);
+    const versions = this.versions(d.id), previous = versions.at(-1);
+    if (previous) { if ((previous as any).packPin?.hash !== pin.hash || JSON.stringify(previous.nodes) !== JSON.stringify(d.nodes) || JSON.stringify(previous.edges) !== JSON.stringify(d.edges)) throw new Error("a pinned pack definition cannot be overwritten"); return previous; }
+    const next = { ...d, version: 1, parent: null, createdAt: now(), by: "studio (verified pack)", note: pin.hash, diff: null };
+    this.write(next); return next;
+  }
+  ids(): string[] { return existsSync(this.dir) ? readdirSync(this.dir).filter((d) => /^[a-z0-9][a-z0-9-]*$/.test(d)).sort() : []; }
+  versions(id: string): WDef[] {
+    const d = this.wdir(id); if (!existsSync(d)) return [];
+    return readdirSync(d).filter((f) => /^v\d+\.json$/.test(f)).map((f) => JSON.parse(readFileSync(join(d, f), "utf8")) as WDef).sort((a, b) => a.version - b.version);
+  }
+  /** One version (latest when v is omitted), with its saved layout applied. */
+  get(id: string, v?: number): WDef | null {
+    const vs = this.versions(id); const d = v ? vs.find((x) => x.version === v) : vs.at(-1); if (!d) return null;
+    const lay = this.layout(id, d.version);
+    return { ...d, nodes: d.nodes.map((n) => (lay[n.id] ? { ...n, x: lay[n.id].x, y: lay[n.id].y } : n)) };
+  }
+  list() { return this.ids().map((id) => { const vs = this.versions(id); const l = vs.at(-1)!; return { id, name: l.name, description: l.description ?? "", kind: l.kind ?? null, version: l.version, versions: vs.length, nodes: l.nodes.length, intent: l.intent ?? null, params: l.params ?? null }; }); }
+  layout(id: string, v: number): Record<string, { x: number; y: number }> { try { return JSON.parse(readFileSync(join(this.wdir(id), `layout-v${v}.json`), "utf8")); } catch { return {}; } }
+  /** Dragging nodes: positions are kept per version without making a new one. */
+  setLayout(id: string, v: number, pos: Record<string, { x: number; y: number }>) {
+    const d = this.versions(id).find((x) => x.version === v); if (!d) throw new Error("no such version");
+    const clean: Record<string, { x: number; y: number }> = { ...this.layout(id, v) };
+    for (const [k, p] of Object.entries(pos ?? {})) if (d.nodes.some((n) => n.id === k) && Number.isFinite(Number(p?.x)) && Number.isFinite(Number(p?.y))) clean[k] = { x: Math.round(Number(p.x)), y: Math.round(Number(p.y)) };
+    const f = join(this.wdir(id), `layout-v${v}.json`); writeFileSync(f + ".tmp", JSON.stringify(clean)); renameSync(f + ".tmp", f);
+    return clean;
+  }
+  /** Save an edit as a new version; refused when it has errors or changes nothing. */
+  save(id: string, body: any, by: string, note?: string): WDef {
+    const prev = this.get(id); if (!prev) throw new Error("no such workflow");
+    if (body?.base == null) throw new Error(`say which version you edited (base); v${prev.version} is the latest`);
+    if (Number(body.base) !== prev.version) throw new Error(`v${prev.version} is the latest now (you edited v${body.base}); reload and edit again`);
+    const next = normalize({ ...prev, ...body, id, version: prev.version + 1 });
+    const errs = validate(next, this.known, this.runners?.(), this.skillInfo ?? undefined).filter((p) => p.level === "error");
+    if (errs.length) { const e: any = new Error(`the workflow has ${errs.length} problem${errs.length > 1 ? "s" : ""}: ${errs.map((p) => p.text).join("; ")}`); e.problems = errs; throw e; }
+    const dd = diff(prev, next);
+    if (diffEmpty(dd)) throw new Error("nothing changed");
+    const out: WDef = { ...next, parent: prev.version, createdAt: now(), by, note: note ? String(note).slice(0, 300) : null, diff: dd, seed: null };
+    for (const k of ["base", "problems"]) delete (out as any)[k];
+    this.write(out);
+    return out;
+  }
+}

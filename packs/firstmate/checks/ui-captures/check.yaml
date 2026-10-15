@@ -1,0 +1,12 @@
+id: ui-captures
+version: 1.0.0
+title: { en: "Before / after captures of the app", zh-TW: "App 改動前後的截圖" }
+description: "When the change touches the paths the repository's app declares (.crew/app.json), Studio builds the app on the base and on the head in the check sandbox and captures each page (scripts off, no network), with the visible text that changed. The merge card shows them; the designer reviewer reads them. A change that does not touch the app: pass, nothing captured."
+applies_to: [code-diff]
+kind: deterministic
+blocking: false
+needs: [artifact]
+native: ui-captures
+params: { type: object, properties: {} }
+timeout_s: 600
+network: false

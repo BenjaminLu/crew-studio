@@ -1,0 +1,5 @@
+# Fix round 7, login shapes (login-status r6 REJECT)
+
+Done when (`tests/secret-registry.ts`, red on 3f10ea1):
+1. #14 must-fix: under API billing, ANTHROPIC_API_KEY in Studio's environment and the key Studio keeps (keys.json, read alone through `keptKeys()`) are two sources in order; a shape failure moves on; both failing refuses with both reasons. — "shape: under API billing a wrong-shape ANTHROPIC_API_KEY moves on to the key Studio keeps", "… both keys of the wrong shape refuse the round, listing both reasons", "… a well-formed kept key alone is used".
+2. #15 must-fix: every shape branch outside the crew keychain token is tested: the crew token file, the own keychain login, the own credentials file (where there is no keychain; tests say so with CREW_KEYCHAIN_TOOL=none), CLAUDE_CODE_OAUTH_TOKEN, both API-key sources, and codex (CODEX_API_KEY must be sk-…, a login file's access token a JWT, its OPENAI_API_KEY sk-…; new in this round, same fall-through rule). — the "shape: …" lines, ending with "across every branch, no character of a wrong-shape value appears in any error or warning".

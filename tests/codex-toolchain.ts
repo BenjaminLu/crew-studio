@@ -1,0 +1,34 @@
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { join } from "node:path"; import { tmpdir } from "node:os";
+import { diagnose } from "../src/doctor";
+import { cleanEnv } from "../src/host/types"; import { codexHost } from "../src/host/codex";
+const root=mkdtempSync(join(tmpdir(),"codex-toolchain-test-"));mkdirSync(join(root,"project"));
+const env=cleanEnv({PATH:"/fixture/bin",HOME:root,CODEX_HOME:join(root,"config"),CODEX_SESSION_ID:"parent",CODEX_THREAD_ID:"parent",CODEX_CI:"1",CODEX_SANDBOX:"seatbelt",CODEX_SANDBOX_NETWORK_DISABLED:"1",CODEX_PERMISSION_PROFILE:"parent",CREW_SECRET:"private"});
+let pass=0,fail=0; const ok=(c:unknown,n:string)=>{console.log(`${c?"ok":"FAIL"} ${n}`);c?pass++:fail++;};
+ok(env.PATH==="/fixture/bin" && env.CODEX_HOME===join(root,"config") && env.HOME===root,"captain config/login location and executable discovery are preserved");
+ok(!Object.keys(env).some(k=>["CODEX_SESSION_ID","CODEX_THREAD_ID","CODEX_CI","CODEX_SANDBOX","CODEX_SANDBOX_NETWORK_DISABLED","CODEX_PERMISSION_PROFILE","CREW_SECRET"].includes(k)),"child app-server gets no parent runtime identity or sandbox flags");
+const doctor=diagnose({state:root,board:{writable:false},gh:{connected:false,tokenSource:null,enabled:false},keys:{anthropic:null,openai:null,compatBaseUrl:null},chatProvider:"codex",lanIp:null,tailscale:{installed:false,running:false,dnsName:null},claudeBin:"/nonexistent/claude",codexBin:process.execPath,compiled:false});
+const cli=doctor.find(i=>i.id==="codex")!,main=doctor.find(i=>i.id==="main")!;
+ok(cli.status==="ok" && /not verified/.test(cli.detail) && /尚未驗證/.test(cli.detailZh||"") && main.status==="info" && /actual native repository read/.test(main.detail),"Doctor distinguishes detected CLI from unverified login and repository tools in both languages");
+const log=join(root,"rpc.jsonl");process.env.STUB_CODEX_LOG=log;const events:any[]=[];let approvals=0;
+const session=await codexHost(join(import.meta.dir,"stub-host-codex.mjs")).attach("",{cwd:join(root,"project"),fresh:true,onEvent:e=>events.push(e),onPermission:async()=>{approvals++;return{allow:false};},permissionMcp:{command:[],env:{}}});
+try {
+ const result=await session.send("STUB_DYNAMIC");
+ const lines=readFileSync(log,"utf8").trim().split("\n").map(l=>JSON.parse(l));
+ const response=lines.find(x=>x.dir==="in"&&x.msg.result?.success===false)?.msg.result;
+ ok(response?.contentItems?.[0]?.type==="inputText" && !lines.some(x=>x.dir==="problem"),"unsupported dynamic request receives a schema-correct unsuccessful result");
+ ok(result.status==="failed" && events.some(e=>e.type==="toolEnd"&&!e.ok) && approvals===0,"unsupported client tools fail the turn without running code or granting permission");
+ const failed=await session.send("STUB_CODEHOST_FAILURE");
+ ok(failed.status==="failed" && /not verified/.test(failed.message||""),"code-mode handshake failure cannot be presented as a completed verified read");
+ const before = events.length;
+ const foreign = await session.send("STUB_FOREIGN_DYNAMIC");
+ ok(foreign.status === "completed" && !events.slice(before).some(e => e.type === "toolEnd" && !e.ok), "foreign-thread dynamic requests fail closed without contaminating the owned turn");
+ await session.send("STUB_DYNAMIC STUB_EXTERNAL_SUCCESS");
+ for(let i=0;i<100 && !events.some(e=>e.type==="turnEnd"&&e.external);i++) await Bun.sleep(10);
+ ok(events.some(e=>e.type==="turnEnd"&&e.external&&e.status==="completed"), "successful external turn resets prior failed tool state");
+ const late=await session.send("STUB_LATE_FAILURE");
+ ok(late.status==="completed", "late failure output from an earlier turn cannot fail a newer turn");
+ const denied=await session.send("STUB_TOOL");
+ ok(denied.status==="completed" && approvals===1 && events.some(e=>e.type==="message"&&e.text==="Not allowed."),"native command approval reaches the captain bridge and refusal is honored");
+}finally{await session.detach();}
+console.log(`codex-toolchain: ${pass} passed, ${fail} failed`);process.exit(fail?1:0);

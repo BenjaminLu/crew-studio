@@ -1,0 +1,11 @@
+id: brief-quality
+version: 1.0.0
+title: { en: "The brief: every item has a locator, an expected change and a class", zh-TW: "brief：每項都有定位、預期變更與類別" }
+applies_to: [brief]
+kind: deterministic
+blocking: true
+needs: [artifact]
+params: { type: object, properties: {} }
+timeout_s: 10
+network: false
+sample: { artifact: { type: brief, data: { items: [{ locator: { type: file, path: "src/a.js", line: 3 }, message: "m", expected: "", class: "c" }] } } }

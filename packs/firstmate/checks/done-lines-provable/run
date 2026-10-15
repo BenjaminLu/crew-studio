@@ -1,0 +1,10 @@
+#!/usr/bin/env node
+// done-lines-provable (D part): each done line names a test file and a fail-first marker CI can run.
+let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+  const i = JSON.parse(s); const done = i.artifact?.data?.done ?? []; const t = new RegExp(i.params.test_pattern, "i"), m = new RegExp(i.params.marker_pattern, "i"); const f = [];
+  done.forEach((d, n) => {
+    if (!t.test(d)) f.push({ locator: { type: "text", section: `done[${n}]` }, message: `done line ${n + 1} names no test: "${d.slice(0, 120)}"`, expected: "name the test file that proves it, e.g. tests/x.test.mjs", class: "done-line-no-test", severity: "blocking" });
+    else if (!m.test(d)) f.push({ locator: { type: "text", section: `done[${n}]` }, message: `done line ${n + 1} has no fail-first marker`, expected: "say the test fails on base (fail-first)", class: "done-line-no-failfirst", severity: "blocking" });
+  });
+  process.stdout.write(JSON.stringify({ verdict: f.length ? "fail" : "pass", score: done.length ? 1 - f.length / done.length : 0, findings: f, evidence: [], proves: [] }));
+});

@@ -1,0 +1,132 @@
+{
+  "id": "documents",
+  "name": "Documents",
+  "description": "Intent → writer drafts → block review loop → gates → approve → exports (md, html, docx, pdf) → Library.",
+  "roles": [
+    {
+      "id": "writer",
+      "label": "Writer",
+      "skill": "bundled:workflows/skills/v2/writer.md"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "intake",
+      "kind": "hook",
+      "label": "Capture intent",
+      "do": "intent.capture",
+      "x": 170,
+      "y": 120
+    },
+    {
+      "id": "draft",
+      "kind": "agent",
+      "label": "Writer draft",
+      "role": "writer",
+      "mode": "draft",
+      "retries": 1,
+      "timeout_s": 900,
+      "x": 340,
+      "y": 120
+    },
+    {
+      "id": "review",
+      "kind": "card",
+      "label": "Block review",
+      "detail": "notes → writer revises",
+      "role": "writer",
+      "args": {
+        "mode": "review",
+        "card_kind": "acceptance",
+        "max_rounds": 5
+      },
+      "x": 510,
+      "y": 120
+    },
+    {
+      "id": "gates",
+      "kind": "check",
+      "label": "Pack gates",
+      "checks": [
+        {
+          "use": "documents/doc-gates"
+        }
+      ],
+      "x": 680,
+      "y": 120
+    },
+    {
+      "id": "export",
+      "kind": "hook",
+      "label": "Export",
+      "detail": "md · html · docx · pdf",
+      "do": "doc.export",
+      "x": 850,
+      "y": 120
+    },
+    {
+      "id": "library",
+      "kind": "hook",
+      "label": "Library",
+      "do": "library.publish",
+      "x": 1020,
+      "y": 120
+    },
+    {
+      "id": "done",
+      "kind": "hook",
+      "label": "Approved",
+      "x": 1190,
+      "y": 120
+    },
+    {
+      "id": "rejected",
+      "kind": "hook",
+      "label": "Rejected",
+      "args": {
+        "result": "closed"
+      },
+      "x": 680,
+      "y": 260
+    }
+  ],
+  "edges": [
+    {
+      "from": "intake",
+      "to": "draft"
+    },
+    {
+      "from": "draft",
+      "to": "review"
+    },
+    {
+      "from": "review",
+      "to": "gates",
+      "when": "approved"
+    },
+    {
+      "from": "review",
+      "to": "rejected",
+      "when": "rejected|cap"
+    },
+    {
+      "from": "gates",
+      "to": "export",
+      "when": "pass"
+    },
+    {
+      "from": "gates",
+      "to": "rejected",
+      "when": "fail"
+    },
+    {
+      "from": "export",
+      "to": "library"
+    },
+    {
+      "from": "library",
+      "to": "done"
+    }
+  ],
+  "version": 1
+}

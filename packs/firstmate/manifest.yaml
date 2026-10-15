@@ -1,0 +1,21 @@
+# firstmate's coding pipeline as a pack on the check contract (docs/check-contract.md,
+# docs/code-firstmate-pipeline.md): its checks, judged checks, hooks and policies,
+# and the code-firstmate workflow that wires them onto nodes and edges.
+id: firstmate
+name: firstmate coding pipeline
+version: 1.0.0
+description: "firstmate's coding workflow on the check contract: spec, door, plan, build and fix rounds, CI, fail-first, a fresh reviewer, the six gates, a merge card, after-merge hooks."
+skills:
+  - { role: coordinator, file: skills/firstmate.md }
+  - { role: worker, file: skills/worker.md }
+  - { role: reviewer, file: skills/reviewer.md }
+  - { role: designer, file: skills/designer.md }
+gates: []
+artifactTypes:
+  - { id: spec, label: Spec }
+  - { id: code-diff, label: Code diff }
+workflows:
+  - workflows/code-firstmate.wf.yaml
+evals:
+  - evals/coordinator.json
+permissions: [agent]

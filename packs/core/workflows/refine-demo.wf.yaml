@@ -1,0 +1,22 @@
+# A minimal refine loop, the pattern every pack reuses: produce, check, refine, produce.
+id: refine-demo
+name: Refine loop (pattern)
+version: 1
+description: "The refine loop pattern: an agent produces, its checks judge, the loop compiles a brief and the agent produces again; a human sees only escalations."
+roles:
+  - { id: coordinator, label: Coordinator, skill: "pack:core/skills/coordinator.md" }
+nodes:
+  - { id: intake, kind: hook, label: Capture intent, do: intent.capture, x: 0, y: 100 }
+  - { id: produce, kind: agent, label: Produce, role: coordinator, mode: draft, checks: [{ use: core/brief-quality, blocking: false }], x: 180, y: 100 }
+  - { id: refine, kind: loop, label: Refine, args: { producer: produce }, x: 180, y: 260 }
+  - { id: stepback, kind: card, label: Step back, args: { card_kind: step-back }, card: { options: [{ id: park, label: Park }] }, x: 360, y: 260 }
+  - { id: done, kind: hook, label: Done, x: 360, y: 100 }
+  - { id: parked, kind: hook, label: Parked, args: { result: closed }, x: 540, y: 260 }
+edges:
+  - [intake, produce]
+  - [produce, done, ok]
+  - [produce, refine, fail|timeout]
+  - [refine, produce, retry|report]
+  - [refine, done, pass]
+  - [refine, stepback, step-back|stalled|cap]
+  - [stepback, parked, park]

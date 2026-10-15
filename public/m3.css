@@ -1,0 +1,114 @@
+/* M3: artifacts, review loops, compare, the trivial lane. Uses the shell's tokens only, so light and dark both work. */
+.page.a3-wide{max-width:1480px}
+.a3-card{text-decoration:none;color:inherit;display:grid;grid-template-rows:auto 1fr;overflow:hidden}
+.a3-card:hover{border-color:var(--border-strong);box-shadow:var(--shadow-1)}
+.a3-ph{display:grid;place-items:center;align-content:center;gap:8px;color:var(--text-3);background:var(--surface-2)}
+.a3-img{display:grid;place-items:center;background:var(--surface-2);overflow:hidden}
+.a3-img img{max-width:100%;max-height:100%;object-fit:contain;image-rendering:auto}
+.a3-thumb{position:relative;overflow:hidden;background:#fff}
+.a3-thumb iframe{position:absolute;inset:0 auto auto 0;width:1280px;height:800px;border:0;transform:scale(var(--k,.24));transform-origin:0 0;pointer-events:none}
+.a3-back{color:inherit;text-decoration:none}.a3-back:hover{text-decoration:underline}
+.a3-vchips{display:inline-flex;gap:4px;flex-wrap:wrap}
+.a3-vchips .chip{text-decoration:none;font:500 12px var(--f-mono);padding:1px 8px}
+.a3-vtable{display:grid}
+.a3-vrow{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:12px;align-items:start;padding:12px 16px;border-top:1px solid var(--border)}
+.a3-vrow:first-child{border-top:0}
+.a3-vn{font:600 15px var(--f-mono);color:var(--text-2);padding-top:2px}
+.a3-vmain{display:grid;gap:4px;min-width:0}
+.a3-vact{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.a3-sha{font:12px var(--f-mono);color:var(--text-3)}
+.a3-arrow{color:var(--text-3)}
+.lstep.ok b{color:var(--ok)}
+.btn.sm{min-height:28px;padding:3px 10px;font-size:12px}
+@container main (max-width:720px){.a3-vrow{grid-template-columns:36px minmax(0,1fr)}.a3-vact{grid-column:1/-1;justify-content:flex-start}}
+
+/* run panel */
+.a3-run{display:grid;gap:10px;padding:12px 16px}
+.a3-runh{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.a3-log{max-height:180px;overflow:auto;font-size:12px;border-radius:8px;padding:8px 10px}
+.a3-log .dim{color:var(--term-dim)}.a3-log .bad{color:var(--term-bad)}
+.a3-prog{height:6px;border-radius:99px;background:var(--surface-3);overflow:hidden}.a3-prog i{display:block;height:100%;background:var(--accent);transition:width .3s}
+.a3-done{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 16px;border-color:color-mix(in srgb,var(--ok) 40%,var(--border));background:var(--ok-soft)}
+.a3-done .ic{color:var(--ok)}
+
+/* review layout */
+.a3-review{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+@container main (max-width:1000px){.a3-review{grid-template-columns:minmax(0,1fr)}}
+.a3-stage{padding:12px;display:grid;gap:10px;min-width:0}
+.a3-hint{display:flex;gap:6px;align-items:center;font-size:12px}
+.a3-side{display:grid;gap:8px;align-content:start;min-width:0}
+.a3-notes{display:grid;gap:8px}
+.a3-note{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:grid;gap:6px;cursor:default}
+.a3-note:hover{border-color:var(--accent)}
+.a3-note.done{opacity:.72}
+.a3-noteh{display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-width:0}
+.a3-noteh code{font-size:12px;color:var(--text-2);overflow-wrap:anywhere}
+.a3-num{font:600 11px var(--f-mono);background:var(--human-soft);color:var(--human);border-radius:5px;padding:1px 6px}
+.a3-cm{font-size:14px;overflow-wrap:anywhere}
+.a3-crop{max-width:100%;max-height:120px;min-width:24px;min-height:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);justify-self:start}
+.a3-claim{font-size:12px;border-radius:6px;padding:6px 8px}
+.a3-claim.ok{background:var(--ok-soft);color:var(--ok)}.a3-claim.bad{background:var(--warn-soft);color:var(--warn)}
+.a3-noteact{display:flex;gap:8px;align-items:center;justify-content:space-between}
+.a3-chk{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--text-2)}
+.a3-provwrap{display:flex;gap:6px;align-items:center}
+.a3-prov{min-height:34px;width:auto}
+.a3-why{font-size:13px;max-width:380px}
+.a3-brief{white-space:pre-wrap;font:12px/1.55 var(--f-mono);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;max-height:50vh;overflow:auto;margin:0}
+
+/* the framed page */
+.a3-fwrap{position:relative;width:100%;overflow:hidden;border:1px solid var(--border);border-radius:8px;background:#fff}
+.a3-iframe{position:absolute;inset:0 auto auto 0;width:1280px;border:0;transform-origin:0 0;background:#fff}
+.a3-over{position:absolute;inset:0 auto auto 0;width:1280px;transform-origin:0 0;pointer-events:none}
+.a3-box{position:absolute;border:2px solid var(--human);border-radius:4px;background:color-mix(in srgb,var(--human) 10%,transparent)}
+.a3-box.hover{border:2px dashed var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.a3-box.pin.done{border-color:var(--ok);background:color-mix(in srgb,var(--ok) 8%,transparent)}
+.a3-box.hl{box-shadow:0 0 0 4px color-mix(in srgb,var(--human) 35%,transparent)}
+.a3-tag{position:absolute;left:-2px;top:-26px;font:600 14px var(--f-mono);background:var(--human);color:var(--on-human);border-radius:5px;padding:1px 7px}
+.a3-box.pin.done .a3-tag{background:var(--ok);color:var(--on-ok)}
+.a3-compose{position:absolute;z-index:3;width:280px;display:grid;gap:8px;padding:10px;box-shadow:var(--shadow-2)}
+.a3-compose textarea,.a3-composer textarea{width:100%;border:1px solid var(--border-strong);border-radius:6px;padding:6px 8px;font:13px/1.45 var(--f-sans);background:var(--surface);color:var(--text);resize:vertical}
+.a3-imgfull{max-width:100%;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);justify-self:center}
+
+/* video review */
+.a3-player{position:relative;background:#000;border-radius:8px;overflow:hidden}
+.a3-video{display:block;width:100%;aspect-ratio:16/9;background:#000}
+.a3-draw{position:absolute;inset:0;pointer-events:none}
+.a3-draw.on{pointer-events:auto;cursor:crosshair;outline:2px dashed var(--accent);outline-offset:-2px}
+.a3-fbox{position:absolute;border:2px solid #fff;box-shadow:0 0 0 2px var(--human),0 0 0 9999px rgba(0,0,0,.25);border-radius:3px}
+.a3-ctrl{display:flex;align-items:center;gap:10px}
+.a3-time{font:13px var(--f-mono);color:var(--text-2)}
+.a3-grow{flex:1}
+.a3-tl{position:relative;height:64px;border-radius:8px;background:var(--surface-2);border:1px solid var(--border);overflow:hidden;cursor:text;touch-action:none;user-select:none}
+.a3-strip{position:absolute;inset:0;display:grid;grid-template-columns:repeat(12,1fr);opacity:.85}
+.a3-strip img,.a3-strip i{width:100%;height:100%;object-fit:cover;display:block;border-right:1px solid color-mix(in srgb,var(--border) 60%,transparent)}
+.a3-marks{position:absolute;left:0;right:0;bottom:0;height:22px}
+.a3-mark{position:absolute;bottom:3px;height:16px;background:var(--human);border-radius:4px;color:var(--on-human);font:600 10px var(--f-mono);display:flex;align-items:center;padding-left:4px;cursor:pointer;min-width:18px;overflow:hidden}
+.a3-mark.done{background:var(--ok);color:var(--on-ok)}
+.a3-sel{position:absolute;top:0;bottom:0;background:color-mix(in srgb,var(--accent) 25%,transparent);border-left:2px solid var(--accent);border-right:2px solid var(--accent)}
+.a3-playhead{position:absolute;top:0;bottom:0;width:2px;background:var(--bad);left:0}
+.a3-composer{display:grid;gap:8px;border-top:1px solid var(--border);padding-top:10px}
+
+/* compare */
+.a3-cmp{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+@container main (max-width:760px){.a3-cmp{grid-template-columns:1fr}}
+.a3-cmpcol{padding:10px;display:grid;gap:8px;min-width:0}
+.a3-cmph{display:flex;align-items:center;gap:6px;font:600 14px var(--f-mono)}
+
+/* the lane */
+.a3-lane{display:grid;gap:12px}
+.a3-lcard{padding:14px 16px;display:grid;gap:10px}
+.a3-lcard.ready{border-color:color-mix(in srgb,var(--human) 45%,var(--border))}
+.a3-lch{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.a3-checks{list-style:none;margin:0;padding:0;display:grid;gap:4px;font-size:13px}
+.a3-checks li{display:grid;grid-template-columns:18px auto minmax(0,1fr);gap:8px;align-items:baseline}
+.a3-checks .faint{overflow-wrap:anywhere}
+.a3-ck{font-weight:700;text-align:center}
+.a3-checks li.ok .a3-ck{color:var(--ok)}.a3-checks li.bad .a3-ck{color:var(--bad)}.a3-checks li.na .a3-ck{color:var(--text-3)}
+.a3-md{border:1px solid var(--border);border-radius:8px;padding:12px 16px;background:var(--surface);max-height:360px;overflow:auto;font-size:14px}
+.a3-md img{max-width:100%}
+.a3-md h1{font-size:20px;margin:.4em 0}.a3-md h2{font-size:17px}.a3-md pre{background:var(--surface-2);padding:8px;border-radius:6px;overflow:auto}
+@container main (max-width:560px){.a3-checks li{grid-template-columns:18px minmax(0,1fr)}.a3-checks li .faint{grid-column:2}}
+.a3-path{overflow-wrap:anywhere;word-break:break-all;min-width:0}
+a.btn{text-decoration:none}
+.a3-card .lbody{align-content:start}
+.a3-card .run-s{align-items:center}

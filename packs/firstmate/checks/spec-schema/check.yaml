@@ -1,0 +1,15 @@
+id: spec-schema
+version: 1.0.0
+title: { en: "The spec has what, why, done, scope, door and an explain block", zh-TW: "規格有 what、why、done、範圍、門與說明區塊" }
+applies_to: [spec]
+kind: deterministic
+blocking: true
+needs: [artifact]
+params:
+  type: object
+  properties:
+    min_done: { type: integer, default: 1, minimum: 1 }
+    locales: { type: array, default: [en, zh-TW] }
+timeout_s: 20
+network: false
+sample: { artifact: { type: spec, data: { title: "Show totals", what: "Show order totals", why: ["captains asked"], done: ["tests/price.test.mjs: total adds tax (fails on base)"], scope: ["src/price.js", "tests/"], door: { kind: two-way, reason: "code only" }, explain: { en: "Totals include tax.", zh-TW: "總額含稅。" } } } }

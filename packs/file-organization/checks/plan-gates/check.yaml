@@ -1,0 +1,11 @@
+id: plan-gates
+version: 1.0.0
+title: { en: "The move plan stays inside the folder, overwrites nothing, within the move cap", zh-TW: "搬移計畫不出資料夾、不覆寫、不超過上限" }
+applies_to: [run]
+kind: deterministic
+blocking: true
+needs: []
+native: fileorg-plan
+params: { type: object, properties: {} }
+timeout_s: 30
+network: false

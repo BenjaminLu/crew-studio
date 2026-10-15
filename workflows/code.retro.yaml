@@ -1,0 +1,97 @@
+# Retro for the firstmate code workflow (read-only over firstmate's events.jsonl).
+# The retro engine is generic: triggers, metrics and repeat classes are data.
+# A class with `propose` turns into a proposal card: a skill edit, the metric
+# it is expected to move, and replay eval cases built from the recorded events.
+workflow: code
+source: firstmate          # firstmate = state/events.jsonl (read-only); studio = Studio's own data/events.jsonl
+window_days: 14
+triggers:
+  - { kind: every, days: 7 }                   # a weekly retro
+  - { kind: count, type: merged, n: 25 }       # or after 25 merges since the last one
+  - { kind: repeat, min_groups: 4 }            # or as soon as any class repeats on 4 tasks/rounds
+metrics:
+  - { id: merged, label: "Merged", count: { type: merged } }
+  - { id: rounds, label: "Rounds started (worker and reviewer)", count: { type: dispatched } }
+  - { id: rounds_per_merge, label: "Rounds per merge", ratio: [rounds, merged] }
+  - { id: review_rejects, label: "Review rejects", count: { type: review_failed } }
+  - { id: gate_failures, label: "Gate failures", count: { type: gate_failed } }
+  - { id: crashes, label: "Crashed or lost rounds", count: { types: [worker_crashed, agent_lost] } }
+  - { id: ci_failures, label: "CI failures seen by the autopilot", count: { type: autopilot_waiting, pattern: "CI failed" } }
+  - { id: round_p50, label: "Round length p50 (s)", quantile: { field: data.duration, q: 0.5, where: { data.evidence_event: brief_round_finished } } }
+  - { id: round_p90, label: "Round length p90 (s)", quantile: { field: data.duration, q: 0.9, where: { data.evidence_event: brief_round_finished } } }
+classes:
+  - id: tests-line-cap
+    title: "A tests file over the 1200-line cap, again"
+    explain: "CI's acceptance check 'every file under tests stays within 1200 lines' went red on more than one task: rounds keep appending to the same long suites."
+    kind: regex
+    types: [crew_status]
+    field: data.coverage.gaps[]
+    pattern: "every file under tests stays within (\\d+) lines"
+    group: task
+    min_groups: 2
+    propose:
+      role: worker
+      section: "## Rounds"
+      rule: "- Before you add tests, check the target file's length: no file under tests/ may pass the 1200-line cap (CI's 'every file under tests stays within 1200 lines'). If your change would push a file over it, put the new tests in a new file next to it, and say so in the report."
+      target: 0
+      eval:
+        ask: "CI is red on {task}: the failing assertion is 'every file under tests stays within 1200 lines'. Your round must add about 90 lines of tests to a suite that is already 1180 lines long. Where do the new tests go?"
+        terms: ["1200", "tests", "new file"]
+        expect: [{ pattern: "new file|split", why: "puts the tests in a new file" }, { pattern: "1200", why: "names the cap" }]
+  - id: ci-shard-budget
+    title: "CI shard runs past its time budget"
+    explain: "One bash or fail-first shard fails while the job shows no failing assertion, on PR after PR; the captain dispatched T-306 and T-307 for slow shards. The log records shard-job failures and cards naming slow shards, not shard run times, so the overrun is inferred from those two signals."
+    kind: regex
+    types: [autopilot_waiting, decision_requested]
+    field: summary.en
+    pattern: "CI failed: T-\\d+ #\\d+ .*shard \\d/\\d|slow shards?|shards? finish in about the same time"
+    group: task
+    min_groups: 2
+    propose:
+      role: worker
+      section: "## Rounds"
+      rule: "- When one CI shard fails and its log shows no failing assertion, check the shard's time budget before the code: compare the shard's run time with its budget. If your change added or slowed a suite, split that suite or move its slow part, and say so in the report; never raise the budget yourself."
+      target: 0
+      eval:
+        ask: "On {task}, CI's 'bash suites (shard 5/6)' job failed and its log has no failing assertion line. Your change added a slow suite. What do you check and do?"
+        terms: ["shard", "budget", "split"]
+        expect: [{ pattern: "budget", why: "checks the shard budget" }, { pattern: "split|move", why: "splits or moves the slow suite" }]
+  - id: round-time-cap
+    title: "A round killed at the ~3600 s cap"
+    explain: "Worker rounds pile up right at about one hour (3540-3840 s), far more than the trend of round lengths predicts: the round cap ends them, and the work after the last push is lost or redone."
+    kind: duration
+    types: [crew_status]
+    where: { data.evidence_event: brief_round_finished }
+    field: data.duration
+    center: 3600
+    below: 60
+    above: 240
+    group: actor
+    min_groups: 2
+    propose:
+      role: worker
+      section: "## Rounds"
+      rule: "- A round has about 3600 seconds. Commit and push a checkpoint by about the 45-minute mark and again before 55 minutes, and write the report before the cap, so a round that is stopped at the cap loses nothing."
+      target: 0
+      eval:
+        ask: "You are 50 minutes into round {round} of {task}; three changes are still open and nothing is pushed yet. What do you do before the round's time runs out?"
+        terms: ["3600", "checkpoint", "commit", "minute"]
+        expect: [{ pattern: "checkpoint|commit", why: "pushes a checkpoint" }, { pattern: "before", why: "does it before the cap" }]
+  - id: brief-wrong-round
+    title: "A brief bound to the wrong round"
+    explain: "The round started with a brief recorded for another round or head (\"a brief for this round exists for head X, but non-merge commits follow it\" or \"it is not an ancestor of this head\"), so the brief check went red."
+    kind: regex
+    types: [crew_status]
+    field: data.coverage.gaps[]
+    pattern: "missing authorized local brief for exact project/task/round/head"
+    group: task
+    min_groups: 2
+    propose:
+      role: worker
+      section: "## Rounds"
+      rule: "- Before you start, check that the local brief names this exact task, round and head. If it was written for another round or head (non-merge commits follow its head, or its head is not an ancestor of yours), stop and report BRIEF-MISMATCH with both heads; do not work from it."
+      target: 0
+      eval:
+        ask: "Round {round} of {task} starts. The local brief on file was written for head 1b6e8bf of an earlier round, and non-merge commits follow that head. What do you do first?"
+        terms: ["brief", "head", "mismatch"]
+        expect: [{ pattern: "stop|report", why: "stops and reports" }, { pattern: "mismatch|both heads", why: "names the mismatch" }]

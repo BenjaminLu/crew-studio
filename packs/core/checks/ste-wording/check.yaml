@@ -1,0 +1,18 @@
+id: ste-wording
+version: 1.0.0
+title: { en: "Plain wording (STE rules), and zh-TW text that is Chinese", zh-TW: "淺白用字（STE 規則），且 zh-TW 文字是中文" }
+description: "Runs firstmate's fm_ste.py read-only when the fm_lib param names its folder; otherwise the same core rules, built in. A text in a zh-TW section must be a real Chinese translation: not English (code names, paths and quotes aside), not a stock placeholder."
+applies_to: [spec, card]
+kind: deterministic
+blocking: true
+needs: [artifact, texts]
+params:
+  type: object
+  properties:
+    fail_rules: { type: array, default: [R5, R6, R8] }
+    fm_lib: { type: string, default: "" }
+policy_bind:
+  fail_rules: ste.rules.fail
+timeout_s: 30
+network: false
+sample: { texts: [{ section: "what", text: "We will utilize the cache to ensure speed." }] }

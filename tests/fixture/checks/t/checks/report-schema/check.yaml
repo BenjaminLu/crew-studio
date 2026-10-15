@@ -1,0 +1,8 @@
+id: report-schema
+version: 1.0.0
+title: { en: "Report schema (fails until the flag file exists)" }
+applies_to: [run]
+kind: deterministic
+needs: []
+params: { type: object, properties: { flagfile: { type: string, default: "" } } }
+timeout_s: 10

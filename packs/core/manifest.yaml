@@ -1,0 +1,15 @@
+# Studio's core checks: used by the runtime itself (the refine loop's brief) for every pack.
+id: core
+name: Core checks
+version: 1.0.0
+description: "Checks the runtime runs for every workflow: the quality of a compiled brief."
+skills:
+  - { role: coordinator, file: skills/coordinator.md }
+gates: []
+artifactTypes:
+  - { id: brief, label: Brief }
+workflows:
+  - workflows/refine-demo.wf.yaml
+evals:
+  - evals/coordinator.json
+permissions: []

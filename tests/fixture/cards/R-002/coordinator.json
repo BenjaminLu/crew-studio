@@ -1,0 +1,33 @@
+{
+ "_source": "the coordinator's card_detail answer for R-002's merge card, written for this fixture (the live card was raised before the detail existed)",
+ "intents": [
+  "讓 format() 能處理沒有「分」的貨幣，例如日圓（JPY）",
+  "format(1235, \"JPY\") 要得到 \"¥1,235\"",
+  "現有的美元（USD）輸出必須維持不變"
+ ],
+ "why": [
+  "有些貨幣（例如日圓）沒有比「元」更小的單位。format() 到處都假設有「分」，所以 1235 日圓會變成 \"$12.35\"：符號錯、數值也錯。",
+  "現有的呼叫端只傳金額，而且依賴今天的美元文字，所以預設輸出必須維持不變。",
+  "船長的例子 \"¥1,235\" 有千位分隔符號，但今天的美元輸出沒有。這份 spec 只替日圓加上千位分隔，美元照舊，和意圖一致。"
+ ],
+ "how": "format() 多了一個選填的第二個參數 currency（\"USD\" | \"JPY\"），預設是 \"USD\"。傳 JPY 時金額是整數日圓：¥ 符號、千位逗號，負數前面加減號。USD 和預設輸出走的程式和 base 一樣，沒有改變。test/format.test.ts 新增四個日圓測試，每條完成條件一個；原本三個美元測試和 test/money.test.ts 沒動。README.md 加了一個日圓範例。測試全過：12 個通過、0 個失敗。",
+ "done": [
+  "test/format.test.ts：format(1235, \"JPY\") 回傳 \"¥1,235\"；在 base 上會失敗，因為 format 忽略幣別、回傳 \"$12.35\"。",
+  "test/format.test.ts：format(-1235, \"JPY\") 回傳 \"-¥1,235\"，format(0, \"JPY\") 回傳 \"¥0\"；在 base 上會失敗，這兩個呼叫回傳 \"-$12.35\" 和 \"$0.00\"。",
+  "test/format.test.ts：同一個測試裡，format(123456, \"JPY\") 回傳 \"¥123,456\"，而 format(123456) 和 format(123456, \"USD\") 都回傳 \"$1234.56\"（美元不加分隔符號）；在 base 上會失敗，日圓那個呼叫回傳 \"$1234.56\"。",
+  "test/format.test.ts：同一個測試裡，format(1999, \"JPY\") 回傳 \"¥1,999\"，而 format(1999, \"USD\") 回傳 \"$19.99\"，和 format(1999) 文字相同；在 base 上會失敗，日圓那個呼叫回傳 \"$19.99\"。test/format.test.ts 原本三個美元測試和 test/money.test.ts 的所有測試照樣通過、不用改。"
+ ],
+ "followups": [
+  "src/money.ts:24：format(12.5, \"JPY\") 回傳 \"¥12.5\"，因為沒有任何地方檢查或四捨五入非整數的日圓。修法：JPY 遇到非整數金額就拒絕，或在文件寫明 JPY 金額必須是整數。",
+  "src/money.ts:20：純 JS 的呼叫端傳入未知幣別（例如 \"EUR\"）時，會默默得到美元輸出。修法：幣別不在 Currency 聯集裡就丟出錯誤。"
+ ],
+ "door_reason": "只是在一個函式庫函式上加一個選填參數；沒有碰任何敏感路徑（.github、CODEOWNERS、gates），預設行為不變，所以很容易 revert。",
+ "walk": [
+  { "id": "README.md:10", "en": "README gains a JPY example, so a reader sees the captain's \"¥1,235\" next to the USD ones.", "zh": "README 加上日圓範例，讀者會在美元範例旁看到船長要的 \"¥1,235\"。" },
+  { "id": "src/money.ts:13", "en": "The change itself: a Currency type and an optional currency argument; JPY gets its own branch (whole yen, commas), USD keeps the old line untouched.", "zh": "改動本體：新增 Currency 型別和選填的 currency 參數；JPY 走自己的分支（整數日圓、千位逗號），USD 原本那一行完全沒動。" },
+  { "id": "test/format.test.ts:10", "en": "Proves done line 1: the captain's own example, format(1235, \"JPY\") is \"¥1,235\".", "zh": "證明完成條件第 1 條：船長自己的例子，format(1235, \"JPY\") 是 \"¥1,235\"。" },
+  { "id": "test/format.test.ts:12", "en": "Proves done line 2: negative yen and zero yen.", "zh": "證明完成條件第 2 條：負數日圓和零日圓。" },
+  { "id": "test/format.test.ts:16", "en": "Proves done line 3: JPY is grouped while USD, with or without the code, stays \"$1234.56\".", "zh": "證明完成條件第 3 條：日圓有千位分隔，美元不管有沒有傳幣別都維持 \"$1234.56\"。" },
+  { "id": "test/format.test.ts:21", "en": "Proves done line 4: USD equals the default output, so existing USD text stays the same (intent line 3).", "zh": "證明完成條件第 4 條：USD 和預設輸出相同，現有的美元文字不變（意圖第 3 條）。" }
+ ]
+}

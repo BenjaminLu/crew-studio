@@ -1,0 +1,9 @@
+#!/usr/bin/env node
+// leaves a grandchild holding the pipe, and writes both pids to out/ so the test can check them
+const fs = require("fs"), { spawn } = require("child_process");
+let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+  const i = JSON.parse(s);
+  const c = spawn("/bin/sleep", ["41"], { stdio: ["ignore", "inherit", "inherit"] });
+  fs.writeFileSync(i.out + "/pids.json", JSON.stringify({ self: process.pid, child: c.pid }));
+  setInterval(() => {}, 1000);
+});

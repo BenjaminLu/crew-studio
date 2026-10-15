@@ -1,0 +1,28 @@
+id: documents
+name: Documents
+version: 1
+description: "Draft, annotate, revise, approve, export: the review loop for documents."
+nodes:
+  - { id: draft, kind: agent, label: Draft, detail: "writer or captain", x: 0, y: 80 }
+  - { id: annotate, kind: human, label: Annotate, detail: "pin notes on blocks", x: 210, y: 80 }
+  - { id: revise, kind: agent, label: Revise, detail: "writer makes v(N+1)", x: 420, y: 200 }
+  - id: check
+    kind: gate
+    label: Approval gates
+    detail: "title, no open note"
+    x: 420
+    y: 80
+    gates:
+      - { id: has-title, builtin: doc-has-title, label: "The document starts with a title" }
+      - { id: no-open-notes, builtin: doc-no-open-notes, label: "No note is still open" }
+  - { id: approve, kind: human, label: Approve, detail: "pins the version", x: 630, y: 80 }
+  - { id: export, kind: done, label: Export, detail: "md, html, docx, pdf", x: 840, y: 80 }
+edges:
+  - [draft, annotate]
+  - [annotate, revise, notes]
+  - [revise, annotate]
+  - [annotate, check]
+  - [check, approve]
+  - [approve, export]
+roles:
+  - { id: writer, label: Writer, skill: "pack:documents/skills/writer.md" }

@@ -1,0 +1,16 @@
+#!/usr/bin/env node
+let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+  const i = JSON.parse(s); const r = i.report; const f = []; const L = (field) => ({ type: "card", field });
+  const add = (field, message, expected) => f.push({ locator: L(field), message, expected, class: "report", severity: "blocking" });
+  if (!r) add("report", "the worker wrote no report", "worker_report with a marker and a summary");
+  else {
+    if (!["WORKER_COMPLETE", "SCOPE-BLOCKED", "DOOR-CHANGE", "ASK"].includes(r.marker)) add("marker", `unknown marker ${r.marker}`, "WORKER_COMPLETE, SCOPE-BLOCKED, DOOR-CHANGE or ASK");
+    if (!String(r.summary ?? "").trim()) add("summary", "the report has no summary", "one or two lines on what changed");
+    if (i.round > 1 && r.marker === "WORKER_COMPLETE") {
+      if (!r.swept) add("swept", "a fix round without a SWEPT block", "swept: what you searched, found N, fixed M");
+      else if (!(r.swept.found >= r.swept.fixed) || !String(r.swept.searched ?? "").trim()) add("swept", "the SWEPT block is incomplete (searched, found ≥ fixed)", "searched: …, found N, fixed M with M ≤ N");
+      if (i.brief_classes?.length && !(r.classes ?? []).length && !String(r.summary).match(new RegExp(i.brief_classes.join("|"), "i"))) add("classes", `the report does not list the classes it fixed (${i.brief_classes.join(", ")})`, "name each class from the brief in the report");
+    }
+  }
+  process.stdout.write(JSON.stringify({ verdict: f.length ? "fail" : "pass", score: f.length ? 0 : 1, findings: f, evidence: [], proves: [] }));
+});

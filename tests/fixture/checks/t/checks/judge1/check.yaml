@@ -1,0 +1,10 @@
+id: judge1
+version: 1.0.0
+title: { en: "A judged check without a quorum" }
+applies_to: [run]
+kind: judged
+blocking: true
+needs: []
+judge: { prompt: "Judge it. STUB_JUDGE_FAIL" }
+params: { type: object, properties: {} }
+timeout_s: 60

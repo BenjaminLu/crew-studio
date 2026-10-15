@@ -1,0 +1,9 @@
+{
+  "id": "voyage",
+  "name": "Voyage",
+  "version": "1.0.0",
+  "entry": "index.html",
+  "description": "The crew at sea: every active task is a ship sailing the workflow's route, the crew on deck, and waiting cards flown as signal flags at the harbour tower. Click a flag to open the card.",
+  "permissions": ["snapshot.tasks", "snapshot.crew", "snapshot.pending", "snapshot.flow", "events", "openCard"],
+  "network": []
+}

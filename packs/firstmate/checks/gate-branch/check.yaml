@@ -1,0 +1,11 @@
+id: gate-branch
+version: 1.0.0
+title: { en: "Gate: branch", zh-TW: "閘門：branch" }
+applies_to: [code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact, gate_state]
+native: gate-branch
+params: { type: object, properties: {} }
+timeout_s: 30
+network: false

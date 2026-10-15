@@ -1,0 +1,92 @@
+// Studio-owned cards (docs/architecture.md §3.4): the captain's inbox for Studio
+// runs. A card belongs to one node of one run, carries its intent sections in en
+// and zh-TW, is STE-checked, and is answered exactly once; the answer moves the
+// run on. Firstmate's own cards never come here: they stay on the v1 board.
+//   data/cards/<id>.json
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { allocate } from "../ids";
+
+export const CARD_KINDS = ["dispatch", "plan", "scope", "step-back", "round-budget", "merge", "promote", "acceptance", "retro", "permission", "question"] as const;
+export type CardKind = (typeof CARD_KINDS)[number];
+/** The intent sections every card carries, per locale. */
+export type Sections = { intent: string; why: string; scope: { in: string[]; out: string[] }; done: string[]; beforeAfter: string; how: string; glossary: { term: string; means: string }[] };
+export type SCard = {
+  id: string; run: string; node: string; visit: number; kind: CardKind; title: { en: string; "zh-TW": string }; sections: { en: Sections; "zh-TW": Sections }; body: string;
+  /** hold: an option that does not go through the door (close, request changes); every other option needs the door confirmation when the card's door is one-way */
+  options: { id: string; label: string; labelZh?: string; primary?: boolean; note?: boolean; hold?: boolean }[];
+  confirmDoor: boolean; door: string | null; links: { label: string; href: string }[]; ledger?: any; ste?: { verdict: string; findings: number; seq: number | null } | null;
+  /** optional structured detail (intent sections, proofs, walk, alignment lines); see CardDetail */
+  detail?: CardDetail | null;
+  /** an authorization window never answers this card (set by its body; the merge card sets it) */
+  captainOnly?: boolean;
+  status: "open" | "answered" | "cancelled"; createdAt: string;
+  answer: { choice: string; note: string | null; by: string; at: string; confirm: string | null; aligned?: number[] | null } | null;
+  workflow: string; runTitle: string;
+  /** before / after captures of an app the change touches (a domain check fills them): image URLs and the visible text that changed */
+  captures?: { label: string; before: string | null; after: string | null; changed?: { removed: string[]; added: string[] } | null }[] | null;
+};
+/**
+ * The structured detail of an intent-aligned card (additive, optional; unit intent-merge-card). Older cards have none
+ * and render from `sections` and `body`. Every text is localized; zh-TW is a real translation (the coordinator writes
+ * it) or marked `untranslated` when the coordinator could not, never a placeholder.
+ */
+export type L10n = { en: string; "zh-TW": string; untranslated?: boolean };
+export type CardDetail = {
+  /** Additive non-code acceptance metadata; old records remain unchanged. Missing pins require a fresh acceptance card. */
+  artifactAcceptance?: { kind: "artifact" | "file-plan" | "lane"; offered: { id: string; n: number; sha256: string | null; format: string; producer: string }[] };
+  /** Verified remote merge identity, copied only from the signed request target. */
+  remoteTarget?: { version: 1; repository: string; pr: string; branch: string; head: string; base: string; baseHead: string; method: string; grant: string };
+  /** the captain's own sentence (en is verbatim) and the lines the captain ticks as met before a non-hold answer */
+  intent: L10n; intents: L10n[];
+  why: L10n[]; how: L10n[]; scope: { in: string[]; out: string[] };
+  /** each done line with its proof: the checks that proved it, their ledger entries, the head they ran on */
+  done: { text: L10n; proved: boolean; proofs: { check: string; seq: number; verdict: string; head: string | null; detail: string; evidence: { label: string; href: string }[] }[] }[];
+  beforeAfter: { text: L10n; stat: string; images: { label: string; href: string }[] };
+  door: { kind: string | null; reason: L10n; rollback: L10n } | null;
+  /** mode: how the review was done (diff: read only; run: also executed); notes: what it could not cover (not read, not readable, not executed), for the captain's eye */
+  review: { verdicts: { by: string; verdict: string }[]; followups: L10n[]; mode?: string | null; notes?: string[] } | null;
+  cost: { usd: number | null; rounds: number; minutes: number | null } | null;
+  gates: { name: string; verdict: string; detail: string }[];
+  /** the walk: key hunks of the diff, each serving intents or done lines (0-based indexes) */
+  walk: { id: string; file: string; start: number; lines: string[]; note: L10n; serves: { intents: number[]; done: number[] } }[];
+  run: string; head: string | null; base: string | null;
+  /** who wrote the translations and walk notes: the coordinator agent, or the deterministic fallback (zh marked untranslated) */
+  writer: "coordinator" | "fallback";
+};
+export const emptySections = (): Sections => ({ intent: "", why: "", scope: { in: [], out: [] }, done: [], beforeAfter: "", how: "", glossary: [] });
+
+export class Cards {
+  readonly dir: string;
+  onChange: (c: SCard) => void = () => {};
+  constructor(dataDir: string) { this.dir = join(dataDir, "cards"); mkdirSync(this.dir, { recursive: true }); }
+  private file(id: string) { return join(this.dir, `${id.replace(/[^\w-]/g, "")}.json`); }
+  get(id: string): SCard | null { try { return JSON.parse(readFileSync(this.file(id), "utf8")); } catch { return null; } }
+  save(c: SCard) { const f = this.file(c.id); writeFileSync(f + ".tmp", JSON.stringify(c, null, 1)); renameSync(f + ".tmp", f); this.onChange(c); }
+  list(f: { run?: string; open?: boolean } = {}): SCard[] {
+    return readdirSync(this.dir).filter((x) => x.endsWith(".json")).map((x) => { try { return JSON.parse(readFileSync(join(this.dir, x), "utf8")) as SCard; } catch { return null; } })
+      .filter((c): c is SCard => !!c && (!f.run || c.run === f.run) && (!f.open || c.status === "open")).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  create(c: Omit<SCard, "id" | "status" | "createdAt" | "answer">): SCard {
+    if (!(CARD_KINDS as readonly string[]).includes(c.kind)) throw new Error(`unknown card kind ${c.kind}`);
+    const card: SCard = { ...c, id: allocate(this.dir, "SC"), status: "open", createdAt: new Date().toISOString(), answer: null };
+    this.save(card); return card;
+  }
+  /** Record an answer, exactly once. One-way merge cards need the door confirmation. A card with intent lines
+   *  (detail.intents) takes a non-hold answer only when every line is ticked (`aligned`), or with a note. */
+  answer(id: string, a: { choice: string; note?: string | null; by: string; confirm?: string | null; aligned?: number[] | null }): SCard {
+    const c = this.get(id); if (!c) throw new Error("no such card");
+    if (c.status !== "open") throw new Error(`this card is ${c.status}: a card is answered exactly once`);
+    const opt = c.options.find((o) => o.id === a.choice); if (!opt) throw new Error(`choose one of ${c.options.map((o) => o.id).join(", ")}`);
+    if (opt.note && !String(a.note ?? "").trim()) throw new Error("say what to change");
+    if (c.confirmDoor && c.door === "one-way" && !opt.hold && a.confirm !== "one-way") throw new Error("a one-way change cannot be undone by a revert: confirm the door first");
+    const n = c.detail?.intents?.length ?? 0;
+    const aligned = Array.isArray(a.aligned) ? [...new Set(a.aligned.filter((i) => Number.isInteger(i) && i >= 0 && i < n))].sort((x, y) => x - y) : [];
+    if (n && !opt.hold && aligned.length !== n && !String(a.note ?? "").trim()) throw new Error(`tick every intent line as met (${aligned.length} of ${n}), or write a note`);
+    c.status = "answered"; c.answer = { choice: a.choice, note: a.note ? String(a.note).slice(0, 4000) : null, by: a.by, at: new Date().toISOString(), confirm: a.confirm ?? null, ...(n ? { aligned } : {}) };
+    this.save(c); return c;
+  }
+  /** A deleted run's cards go with it; returns their ids. */
+  removeRun(run: string): string[] { const ids = this.list({ run }).map((c) => c.id); for (const id of ids) rmSync(this.file(id), { force: true }); return ids; }
+  cancel(id: string) { const c = this.get(id); if (c && c.status === "open") { c.status = "cancelled"; this.save(c); } }
+}

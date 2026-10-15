@@ -1,0 +1,8 @@
+id: slow
+version: 1.0.0
+title: { en: "Never finishes" }
+applies_to: [run]
+kind: deterministic
+needs: []
+params: { type: object, properties: {} }
+timeout_s: 1

@@ -1,0 +1,11 @@
+# How loose files are sorted (by extension, case-insensitive). Anything else goes to Other.
+skip_hidden: true
+recursive: false
+categories:
+  Images: [png, jpg, jpeg, gif, webp, heic, svg, tiff, bmp]
+  Documents: [pdf, doc, docx, txt, md, rtf, pages, odt, key, ppt, pptx, xls, xlsx, csv, numbers]
+  Archives: [zip, tar, gz, tgz, rar, 7z, dmg, pkg, iso]
+  Audio: [mp3, wav, m4a, aac, flac, ogg, aiff]
+  Video: [mp4, mov, mkv, avi, webm, m4v]
+  Code: [js, ts, py, rb, go, rs, java, c, h, cpp, sh, json, yaml, yml, html, css]
+other: Other

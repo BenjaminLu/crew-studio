@@ -1,0 +1,2 @@
+#!/usr/bin/env node
+const fs=require("fs");let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const i=JSON.parse(s);const ok=i.params.flagfile&&fs.existsSync(i.params.flagfile);process.stdout.write(JSON.stringify(ok?{verdict:"pass",score:1,findings:[],evidence:[],proves:[]}:{verdict:"fail",score:0,findings:[{locator:{type:"card",field:"report"},message:"the report has no SWEPT block",expected:"a SWEPT block",class:"report",severity:"blocking"}],evidence:[],proves:[]}))});

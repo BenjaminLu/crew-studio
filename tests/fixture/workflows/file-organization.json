@@ -1,0 +1,120 @@
+{
+  "id": "file-organization",
+  "name": "File organization",
+  "description": "Tidy a folder: dry-run plan → gates → captain's card → apply (undo log).",
+  "roles": [],
+  "nodes": [
+    {
+      "id": "intake",
+      "kind": "hook",
+      "label": "Capture intent",
+      "do": "intent.capture",
+      "x": 170,
+      "y": 100
+    },
+    {
+      "id": "plan",
+      "kind": "hook",
+      "label": "Dry-run plan",
+      "do": "fileorg.plan",
+      "x": 340,
+      "y": 100
+    },
+    {
+      "id": "gates",
+      "kind": "check",
+      "label": "Pack gates",
+      "checks": [
+        {
+          "use": "file-organization/plan-gates"
+        }
+      ],
+      "x": 510,
+      "y": 100
+    },
+    {
+      "id": "card",
+      "kind": "card",
+      "label": "Approve moves",
+      "args": {
+        "body_from": "fileorg",
+        "card_kind": "acceptance"
+      },
+      "x": 680,
+      "y": 100
+    },
+    {
+      "id": "apply",
+      "kind": "hook",
+      "label": "Apply",
+      "detail": "undo log first",
+      "do": "fileorg.apply",
+      "x": 850,
+      "y": 100
+    },
+    {
+      "id": "done",
+      "kind": "hook",
+      "label": "Tidied",
+      "x": 1020,
+      "y": 100
+    },
+    {
+      "id": "discard",
+      "kind": "hook",
+      "label": "Discard plan",
+      "do": "fileorg.discard",
+      "x": 850,
+      "y": 240
+    },
+    {
+      "id": "discarded",
+      "kind": "hook",
+      "label": "Discarded",
+      "args": {
+        "result": "closed"
+      },
+      "x": 1020,
+      "y": 240
+    }
+  ],
+  "edges": [
+    {
+      "from": "intake",
+      "to": "plan"
+    },
+    {
+      "from": "plan",
+      "to": "gates"
+    },
+    {
+      "from": "gates",
+      "to": "card",
+      "when": "pass"
+    },
+    {
+      "from": "gates",
+      "to": "discard",
+      "when": "fail"
+    },
+    {
+      "from": "card",
+      "to": "apply",
+      "when": "apply"
+    },
+    {
+      "from": "card",
+      "to": "discard",
+      "when": "discard"
+    },
+    {
+      "from": "apply",
+      "to": "done"
+    },
+    {
+      "from": "discard",
+      "to": "discarded"
+    }
+  ],
+  "version": 1
+}

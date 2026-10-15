@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminal</title>
+<style>
+:root{--bg:#0d1117;--fg:#c9d1d9;--dim:#8b949e;--ok:#56d364;--bad:#ff7b72;--cmd:#79c0ff;--warn:#e3b341}
+:root.light{--bg:#fbfbf8;--fg:#24292f;--dim:#6e7781;--ok:#1a7f37;--bad:#cf222e;--cmd:#0550ae;--warn:#9a6700}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--fg)}
+body{font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;display:grid;grid-template-rows:minmax(0,1fr) auto}
+#out{overflow:auto;padding:14px 16px;white-space:pre-wrap;overflow-wrap:anywhere}
+.p{color:var(--cmd)}.d{color:var(--dim)}.ok{color:var(--ok)}.bad{color:var(--bad)}.w{color:var(--warn)}
+button.c{all:unset;cursor:pointer;color:var(--warn);text-decoration:underline}button.c:focus-visible{outline:1px solid var(--warn)}
+form{display:flex;gap:8px;border-top:1px solid #8b949e44;padding:8px 16px}form span{color:var(--cmd)}
+input{flex:1;min-width:0;background:transparent;border:0;color:var(--fg);font:inherit;outline:none}
+</style>
+</head>
+<body>
+<div id="out" aria-live="polite"></div>
+<form id="f"><span>$</span><input id="in" aria-label="Command" autocomplete="off" placeholder="status | crew | cards | open <card id> | help"></form>
+<script src="/skin/_kit/skin-kit.js"></script>
+<script>
+const out = document.getElementById("out");
+const line = (...parts) => { const d = document.createElement("div"); for (const p of parts) d.append(typeof p === "string" ? document.createTextNode(p) : p); out.append(d); out.scrollTop = out.scrollHeight; };
+const span = (c, t) => { const s = document.createElement("span"); s.className = c; s.textContent = t; return s; };
+const pad = (s, n) => String(s ?? "").slice(0, n).padEnd(n);
+const ST = { running: "ok", failed: "bad", "needs-you": "w" };
+function status(s) {
+  line(span("p", "$ crew status"));
+  const t = (s.tasks ?? []).filter((x) => x.status !== "idle");
+  if (!t.length) line(span("d", "  no active task"));
+  for (const x of t.slice(0, 30)) line("  ", pad(x.id, 7), " ", span(ST[x.status] ?? "d", pad(x.status, 10)), " ", pad(x.node, 9), " ", span("d", (x.title ?? "").slice(0, 70)));
+}
+function crew(s) { line(span("p", "$ crew list")); const c = (s.crew ?? []).filter((x) => x.alive); if (!c.length) line(span("d", "  nobody on duty")); for (const x of c) line("  ", pad(x.name, 10), " ", pad(x.role, 9), " ", pad(x.task, 7), " ", span("d", (x.activity ?? "").slice(0, 70))); }
+function cards(s) {
+  line(span("p", "$ crew cards")); const p = s.pending ?? []; if (!p.length) line(span("d", "  nothing waits on you"));
+  for (const c of p) { const b = document.createElement("button"); b.className = "c"; b.textContent = c.id; b.onclick = () => CrewSkin.openCard(c.id); line("  ", b, " ", span("d", (c.title ?? "").slice(0, 80))); }
+}
+let first = true;
+CrewSkin.onSnapshot((s) => {
+  document.documentElement.classList.toggle("light", s.theme === "light");
+  if (first) { line(span("d", `crew studio · read-only snapshot · ${s.at}`)); status(s); crew(s); cards(s); first = false; CrewSkin.ready(); }
+});
+CrewSkin.onEvent((e) => line(span("d", e.ts.slice(11, 19)), " ", pad(e.type, 16), " ", e.task ? pad(e.task, 7) + " " : "", span("d", (e.summary ?? "").slice(0, 90))));
+document.getElementById("f").onsubmit = (ev) => {
+  ev.preventDefault(); const inp = document.getElementById("in"); const [cmd, arg] = inp.value.trim().split(/\s+/); inp.value = ""; const s = CrewSkin.snapshot ?? {};
+  if (cmd === "status") status(s); else if (cmd === "crew") crew(s); else if (cmd === "cards") cards(s);
+  else if (cmd === "open" && arg) { line(span("p", `$ open ${arg}`)); CrewSkin.openCard(arg); }
+  else if (cmd === "help" || cmd) line(span("d", "status · crew · cards · open <card id>   (this skin can open a card; answering happens in pro mode)"));
+};
+</script>
+</body>
+</html>

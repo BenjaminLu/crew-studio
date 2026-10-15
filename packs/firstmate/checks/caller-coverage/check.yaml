@@ -1,0 +1,13 @@
+id: caller-coverage
+version: 1.0.0
+title: { en: "Every caller and mirror of a changed shared file is in scope", zh-TW: "共用檔的每個呼叫者與鏡像都在範圍內" }
+applies_to: [spec, code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact]
+params:
+  type: object
+  properties:
+    exts: { type: array, default: [".js", ".mjs", ".ts", ".sh", ".py"] }
+timeout_s: 60
+network: false

@@ -1,0 +1,156 @@
+# Crew Studio v2: backbone architecture
+
+Status: binding. A change to this document goes through the same adversarial review as code (see §11). [v2-spec.md](v2-spec.md) holds the priorities. The detailed contracts are in [check-contract.md](check-contract.md), [code-firstmate-pipeline.md](code-firstmate-pipeline.md) and [pack-genesis.md](pack-genesis.md).
+
+## 1. Principles
+
+1. **Generic runtime, domain packs.** The runtime knows five node kinds and nothing about code, video or images. All domain knowledge lives in packs.
+2. **One contract per seam.** Providers, hosts, checks, hooks, locators and packs each have exactly one interface. A new vendor, domain or script plugs in through that interface; no special case goes into the runtime.
+3. **Humans decide; checks prove.** Every done line binds to a check, or appears on the human acceptance list. A human sees escalations and the final acceptance, never the inner loop.
+4. **Same feedback type for machine and human.** Check findings and human annotations share one locator schema, so an agent acts on both alike.
+5. **Vendor-neutral.** claude CLI, codex CLI, direct HTTP (Anthropic, OpenAI, compatible) and a stub sit behind one provider interface. No feature may require a particular vendor.
+6. **Out of the box.** Studio ships as one binary with no required external tools. An unavoidable dependency has a one-click installer on the Doctor page and degrades gracefully when missing.
+7. **Durable and replayable.** All state is append-only events plus snapshots on local disk. A killed server resumes every task from its last durable step.
+8. **Least authority.** Agents and checks run sandboxed. Only the runtime writes cards, evidence and merges. Skins and packs cannot answer cards.
+9. **Private by default.** Nothing that names an external repo, org, private path or person leaves Studio in shared or committed content. License attribution of public open-source works that Studio ships is required, and is not private content (for example a built-in skill's NOTICE.md).
+
+## 2. Layers
+
+```
+UI                            backbone: Board (home: every task in flight, the decisions waiting, answered in place) · Firstmate · Inbox (decisions only) · Crew · Tasks (live graph; review loops open as Rounds) · Workflows (editor, checks, gates) · Library · Settings (gear: Doctor, keys, roadmap). Labs, behind a flag: improve · retro · packs · docs · file org · skins · changes · phone pairing
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+API + SSE                     one HTTP server; every mutation is an event; SSE streams events and snapshots
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Runtime                       scheduler · task state machine · refine loop · brief compiler · card service · evidence ledger · policy resolver
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Contracts                     provider · host · check/hook · locator · pack · artifact · adapter (GitHub, firstmate)
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Packs                         firstmate (code) · video · image · web · documents · file-org · conventions (generated per external repo)
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Storage                       data/: events.jsonl · runs/ · workflows/ · artifacts/ · evidence/ · cards/ · packs/ · policies/ · handoff/
+```
+
+## 3. Runtime
+
+### 3.1 Node kinds (closed set)
+
+| kind | does | output |
+|---|---|---|
+| `agent` | runs a provider with a role, skill, brief and inputs in a sandbox or worktree | an artifact version and a report |
+| `check` | runs a check per [check-contract.md](check-contract.md) | a verdict, findings and evidence |
+| `card` | asks a human (or an auth-window policy) a question | an answer |
+| `loop` | a refine loop over a subgraph: produce → checks → brief → produce | the subgraph's last output |
+| `hook` | a lifecycle action (after_merge, after_round, on_cancel) | a report; it never moves the task backward |
+
+Branching is an edge condition over earlier outputs, for example `door == "one-way"`. Parallelism comes from the edges.
+
+### 3.2 Task state machine
+
+**Workflow** is the template. **Task** (任務) is one piece of work through that template; **Round** (回合) is one agent/check launch or answered card within it. Task ids remain R-NNN; stored `run` fields, `data/runs/`, `#/runs` and `/api/wruns` remain compatible. `#/tasks` and `#/tasks/<id>` serve the same pages as the legacy URLs. `/api/tasks/<id>` derives ordered Rounds from the stored steps; no data migration or v1 projection occurs.
+
+- Task: `queued → running ⇄ waiting(card|external) → succeeded | failed | cancelled`, plus `paused`.
+- Round: `pending → running → passed | failed | error | skipped | superseded`.
+- Every transition is an event `{ts, run, node, from, to, cause}`. The snapshot is a fold of the events. Recovery replays events, keeps finished nodes and restarts interrupted ones from their last durable output.
+- Hot swap: changing a running node's provider or model stops it, writes data/handoff/<run>/<node>.md (inputs, progress, open findings) and starts the new agent from that handoff.
+- Timeout: a Round killed at its cap ends `failed(cause=timeout)`. It is never classed as report-only.
+- How a task ends, as the captain reads it: one word per state (Running, Waiting for you, Merged, Done, Closed without merging, Cancelled, Failed). A task that ends at a "closed" end node is `succeeded` with result `closed` and reads "Closed without merging", never in the success style. Cancel works from any live state and takes an optional reason. It withdraws the task's open cards and runs `on_cancel`.
+- An ended task can be archived, which hides it from the default lists, or deleted. Delete needs the typed task id. It removes the task's folder, captures and cards, plus the domain's own traces (`onDelete`; the code pack removes the worktree and branch, never a commit in main). The evidence ledger keeps its entries and gains one signed deletion entry. Both actions are events. The server refuses them for a live task. Unit spec: [units/run-end-and-remove.md](units/run-end-and-remove.md).
+
+External hook waits persist a version-1 descriptor under NodeRun.data.external before registration. The engine owns each callback and rejects it after cancellation or deletion. Restart keeps the original visit/deadline and re-registers the known handler. Unknown handlers fail closed; a known GitHub handler raises a bilingual stop card for an unsupported/malformed descriptor. Existing local/card waits retain their prior replay contract. GitHub waits share one grant-bound repository timer/request owner; the last subscription aborts the request and clears both poll and deadline timers. Required policy content/hash, app identity and PR head are rechecked; local CI never substitutes for remote CI.
+
+### 3.3 Refine loop and brief compiler
+
+- Stop conditions:
+  - all blocking checks pass → continue;
+  - the same finding class fails twice → step-back card;
+  - no score improvement for 2 rounds → card;
+  - round cap → round-budget card.
+- Brief = a fixed template over the findings (locator, message, expected, class, "fix the whole class"), plus an optional coordinator root cause. The brief-quality check must pass before the brief is sent.
+- A brief is bound to the exact round and input head, and an agent reads only the brief bound to its round.
+
+### 3.4 Cards
+
+- Card kinds: dispatch, plan, scope, step-back, round-budget, merge, promote, acceptance, retro, permission, question.
+- Every card is STE-checked in en and zh-TW, carries its intent sections (intent, why, scope in/out, done, before/after, how, glossary) and is answered exactly once.
+- A one-way merge requires the walk and an explicit door confirmation.
+- Policy `auth.window` may answer listed kinds as A until a deadline, and records the grant.
+- Studio's own cards show in the Inbox beside firstmate's, labelled with task, workflow and node, answered there with the same buttons and door confirmation as on the task page; the sidebar Inbox count includes them.
+- One card component (public/scard.js, `crewCard.mountCard`) renders a Studio card on the task page, in the Inbox and in the Board's Needs you, where it is answered in place. The Board keeps each card's state (ticks, note, door tick, refusal, an answer in flight) until the card is answered. One answer is in flight per card, and a card already answered with the same choice shows as answered. An authorization window never answers a merge card. A merge card carries a structured detail in en and zh-TW (intent, why, scope, done lines with their proof, before/after, how, a walk of the diff mapped to done lines, door and rollback, reviewer verdict, gates, cost); the server takes a merge only when every intent line is ticked or a note is written (docs/units/intent-merge-card.md).
+- firstmate's own cards stay on the v1 board. Studio renders them and forwards the captain's answers to the board endpoint, and never answers them by itself.
+
+### 3.5 Evidence ledger
+
+Every check result, review verdict, plan acceptance and card answer is stored with the input hash, head, check or skill version and actor, and is signed with Studio's local key. The final acceptance card shows the ledger split into "proved by checks" and "needs your eye".
+
+## 4. Contracts
+
+| contract | where | essentials |
+|---|---|---|
+| provider | src/providers | `run(role, prompt, tools, sandbox) → stream of events`; claude, codex, http, stub |
+| host | src/host | attach to or fork a main session, driver lock, input queue with wakes, permission bridge (any failure denies) |
+| check / hook | check-contract.md | manifest + executable; stdin JSON → stdout JSON; sandbox; deterministic or judged (locators required, quorum to block) |
+| locator | check-contract.md | file · web · image · timeline · text · card |
+| skill | src/skills.ts, data/skills | a role skill per workflow role, plus library skills imported from a folder, a skills home or a public https git URL (or built into a pack); every version immutable, pinned by `v<N>` and sha256. A skill is text for the prompt: it never changes a node's tools, sandbox, network or credentials, and import never runs anything from it |
+| artifact | data/artifacts | immutable versions `v<N>`, type, lineage, approval state |
+| pack | data/packs | manifest, node templates, checks, policies, workflow templates, eval set; versioned and hash-pinned |
+| adapter | src/adapters | GitHub (REST + token), firstmate (read-only state + board endpoint) |
+
+## 5. Workflows
+
+- A workflow is a versioned file: nodes, edges, node config, attached checks and policy overrides.
+- Editing creates a new version with a diff. A task pins its version.
+- An agent node keeps its role skill and carries an ordered list of enabled skills, each pinned by version and hash. Turning a skill on or off, reordering, or moving to a newer version is an edit (a new version whose diff names the skills). The agent's instructions are Studio's safety rules, then the role skill, then each enabled skill under its own heading, in order, within a per-node size cap.
+- The editor is a draggable SVG graph: move, pan, zoom, connect, a palette of node kinds and checks, a params form generated from schema, try-on-sample and validation (no orphans, a reachable end, gates attached). The live task overlay uses the same graph.
+
+## 6. Policies
+
+Resolution order: org → project → workflow version override → task override (only by a card).
+
+Keys in use: `sensitive_paths`, `round_cap`, `round_timeout_s`, `shard_budget_s`, `auth.window`, `ste.rules`, `branch_prefix`, `ui_paths`, `flaky.retry`, `external.catch_up`, `privacy.denylist`, `egress.allow` (a task's extra hosts, per round), `worktree.keep_days`, `install` (a project's dependency install argv), `install_scripts` (lifecycle scripts run at install, in the round sandbox), per-check `promote.quorum`.
+
+## 7. Session takeover
+
+- Studio is the captain's single entry point.
+- Take over forks the firstmate session (`--resume <id> --fork-session`). It never resumes the live id, so the live session is never driven twice.
+- Studio then holds the driver lock and writes a handoff. Release returns a resume command.
+- firstmate's wakes are delivered into the input queue. The fork keeps firstmate's own hooks, so its Stop hook usually delivers a wake first; Studio shows every wake, drops the ones firstmate's acknowledgement record marks delivered, and sends the rest after a grace period. A rehearsal fork runs with `FM_IN_ROUND=1` and only shows wakes. Permission prompts and questions surface in Studio. Unit spec: [units/takeover.md](units/takeover.md).
+
+## 8. External repos
+
+Covered by the same graph plus a generated conventions pack: GitHub adapter, conventions detection (org first, then repo), the ci-trigger-prefix check, rebase with `--force-with-lease`, company review comments as findings, approval kept local, a privacy check, merge only by card. The sandbox is Studio's demo repo, published by the captain.
+
+## 9. Pack genesis and self-improvement
+
+- Packs are authored by the pack-genesis workflow: interview, samples, label, draft, check-the-checks, refine, shadow, promote, publish.
+- Captain overrides at acceptance become labelled samples.
+- The retro proposes measured changes, and a rejected proposal is never re-proposed.
+
+## 10. Security
+
+- Agent sandbox: worktree-only writes, no credentials in rounds, network by policy.
+- Check sandbox: read-only inputs, `out/` only, no network by default.
+- Skins are sandboxed iframes with a read-only snapshot.
+- Secrets are 0600 files.
+- Board calls carry Bearer plus Origin.
+
+## 11. How Studio itself is developed
+
+All Studio development follows firstmate's adversarial loop:
+
+1. **Spec first.** Each unit of work has what/why/done lines in docs/ or a task file. Each done line names the test that proves it, and that test must fail before the change (fail-first).
+2. **Builder.** An agent implements on a branch and runs `bun test` green before each commit.
+3. **Adversarial review.** A reviewer with a fresh context and a different session from the builder runs firstmate's reviewer protocol (skills/reviewer/SKILL.md: closed numbered list, APPROVE or REJECT, follow-ups, evidence). It reads only the spec, the diff, the test output and the fail-first report, never the builder's reasoning. It runs through `scripts/adversarial-review.sh`, and its verdict is stored in data/reviews/.
+4. **Fix rounds.** firstmate turns every finding into one brief per round, covering the whole class.
+5. **Merge.** A unit lands on main only with APPROVE on its exact head.
+6. **Dogfood.** Once code-firstmate runs end to end, Studio's own changes go through Studio's code-firstmate workflow on Studio's repo.
+
+External completion recovery uses additive version-1 NodeRun.data.externalCompletion (visit/result) and externalHookReport (visit/signed check sequence ids). A descriptor is validated before cached completion is accepted. Completed hook checks run once per indexed check and current visit; replay can reconstruct a partially persisted report context from signed ledger evidence. Cancelling owns both subscription and any pending presentation/check work, so deletion waits for quiescence rather than accepting later card or ledger writes.
+
+### Native owned-round admission and capability verification
+
+The native runtime owns an event-driven queue of actual round jobs: explicit organization global capacity and per-project capacity default to three; eligible projects fill by fewest live owned rounds, then project name. Cards and finished jobs consume no live slot. Each wait persists an absolute deadline and visit identity; replay cannot renew an expired wait. Cancellation removes only the task-owned wait, and an older still-owned process must finish before a replayed round acquires its replacement slot.
+
+Code-specific readiness belongs to the installed code domain adapter, not generic node execution. Accepted scope/spec/repository/dependency identities are signed at captain dispatch or fresh preparation; reservations persist until signed exact-head native merge evidence is still an ancestor of the authoritative local base ref. Closed/parked/cancelled status and unsigned merged flags provide no merge proof. Ordinary artifact workflows use bounded jobs and their existing acceptance contracts without requiring a Git merge.
+
+Native vendor admission preserves the captain's per-vendor model and effort, requires fresh verified auth/quota/catalog evidence and records canonical resolved provider identity. Explicit judges do not use worker fallback; an optional explicit diversity requirement distinguishes actual vendors from fresh contexts on one vendor. A disposable Codex profile contains only validated model/effort and retains existing safety flags. Copied auth contains no refresh credential, endpoint, hooks or tool configuration. Unsupported or unverified native capability produces a real captain recovery card; separate web authentication proof cannot certify a native round.
+Remote operation ownership (A3/B1/B2/B3): `remote-ready` precedes the six-gate edge. Its typed repository grant, native task lock/CAS and signed clean carry proof bind the final head. Edge checks own an explicit run/node/visit/head token while their source is passed; cancellation or head drift withdraws write/routing authority. Merge/update attempts persist before submission and remain final on the same head after failure, uncertainty or restart. Conflicted native rebases preserve versioned task-only state across worker resolution rounds; no approval carries through a conflict. See [remote-gates-merge](units/remote-gates-merge.md) for protection and upgrade limits.

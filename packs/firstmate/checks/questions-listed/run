@@ -1,0 +1,7 @@
+#!/usr/bin/env node
+let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+  const i = JSON.parse(s); const p = i.artifact?.data ?? {}; const f = [];
+  if (!Array.isArray(p.questions)) f.push({ locator: { type: "text", section: "questions" }, message: "the plan has no questions block", expected: "questions: [] (empty when there are none)", class: "questions-block", severity: "blocking" });
+  (p.rows ?? []).forEach((r, k) => { for (const [key, v] of Object.entries(r)) if (typeof v === "string" && v.includes("?")) f.push({ locator: { type: "text", section: `rows[${k + 1}].${key}` }, message: `a question hides in row ${k + 1}: "${v.slice(0, 100)}"`, expected: "move it into the questions block", class: "question-outside-block", severity: "blocking" }); });
+  process.stdout.write(JSON.stringify({ verdict: f.length ? "fail" : "pass", score: f.length ? 0 : 1, findings: f, evidence: [], proves: [] }));
+});

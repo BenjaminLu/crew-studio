@@ -1,0 +1,19 @@
+#!/usr/bin/env node
+// spec-schema: what / why / done / scope / door / explain (en + zh-TW), and zh (the title and why in zh-TW for the cards).
+let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+  const i = JSON.parse(s); const sp = i.artifact?.data ?? {}; const p = i.params ?? {}; const f = [];
+  const need = (ok, field, msg, exp) => { if (!ok) f.push({ locator: { type: "text", section: field }, message: msg, expected: exp, class: "spec-schema", severity: "blocking" }); };
+  need(typeof sp.title === "string" && sp.title.trim(), "title", "the spec has no title", "a one-line title");
+  need(typeof sp.what === "string" && sp.what.trim().length >= 10, "what", "the spec does not say what to build", "one or two sentences: what changes for the user");
+  need(Array.isArray(sp.why) && sp.why.filter(Boolean).length, "why", "the spec does not say why", "at least one reason");
+  need(Array.isArray(sp.done) && sp.done.filter(Boolean).length >= (p.min_done ?? 1), "done", `fewer than ${p.min_done ?? 1} done lines`, "checkable done lines");
+  need(Array.isArray(sp.scope) && sp.scope.filter(Boolean).length, "scope", "the spec has no scope", "the paths the change may touch");
+  need(sp.door && ["one-way", "two-way"].includes(sp.door.kind) && String(sp.door.reason ?? "").trim(), "door", "the spec has no door (kind and reason)", "door: { kind: one-way|two-way, reason }");
+  for (const l of p.locales ?? ["en", "zh-TW"]) need(sp.explain && String(sp.explain[l] ?? "").trim(), `explain.${l}`, `the explain block has no ${l} text`, `a plain ${l} explanation for the captain`);
+  // the cards' zh-TW title and why come from here: the coordinator translates them (ste-wording checks they are Chinese, not placeholders)
+  if ((p.locales ?? ["en", "zh-TW"]).includes("zh-TW")) {
+    need(sp.zh && String(sp.zh.title ?? "").trim(), "zh-TW.title", "the spec has no zh-TW title", "zh.title: the title in Traditional Chinese");
+    need(sp.zh && Array.isArray(sp.zh.why) && sp.zh.why.filter((w) => String(w).trim()).length, "zh-TW.why", "the spec has no zh-TW why", "zh.why: the reasons in Traditional Chinese");
+  }
+  process.stdout.write(JSON.stringify({ verdict: f.length ? "fail" : "pass", score: 1 - f.length / 9, findings: f, evidence: [], proves: [] }));
+});

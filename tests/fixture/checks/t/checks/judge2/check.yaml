@@ -1,0 +1,10 @@
+id: judge2
+version: 1.0.0
+title: { en: "A judged check with a quorum of 2 of 3" }
+applies_to: [run]
+kind: judged
+blocking: true
+needs: []
+judge: { prompt: "Judge it. STUB_JUDGE_FAIL", quorum: { n: 2, of: 3 } }
+params: { type: object, properties: {} }
+timeout_s: 60

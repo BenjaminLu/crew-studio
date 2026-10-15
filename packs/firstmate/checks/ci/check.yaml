@@ -1,0 +1,14 @@
+id: ci
+version: 1.0.0
+title: { en: "CI: the repository's tests, sharded", zh-TW: "CI：repository 的測試，分片執行" }
+description: "Runs the test command the repository declares (.crew/gates.json test), split across its shards in parallel. Passing proves the done lines whose named test file exists and ran."
+applies_to: [code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact, repo_cfg]
+params:
+  type: object
+  properties:
+    shards: { type: integer, default: 0, minimum: 0, maximum: 8, description: "0 = the repository's own setting" }
+timeout_s: 600
+network: false

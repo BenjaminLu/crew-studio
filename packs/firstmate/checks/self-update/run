@@ -1,0 +1,16 @@
+#!/usr/bin/env node
+// self-update (dry run): the four steps firstmate takes after a merge, checked against the run's repository and reported.
+const fs = require("fs"), path = require("path"), { spawnSync } = require("child_process");
+let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+  const i = JSON.parse(s); const m = i.merge_state ?? {}; const repo = m.repo; const f = []; const steps = [];
+  if (!repo || !fs.existsSync(path.join(repo, ".git"))) { process.stdout.write(JSON.stringify({ verdict: "skip", score: null, findings: [], evidence: [], proves: [], data: { steps: ["no repository"] } })); return; }
+  const g = (...a) => { const r = spawnSync("git", a, { cwd: repo, encoding: "utf8" }); return (r.stdout ?? "").trim(); };
+  const local = ["design/tasks", ".crew/local"].filter((d) => fs.existsSync(path.join(repo, d)));
+  steps.push(local.length ? `would back up ${local.join(", ")}` : "no local specs to back up");
+  const cur = g("symbolic-ref", "--short", "HEAD"), at = g("rev-parse", "HEAD"), base = g("rev-parse", m.base ?? "main");
+  steps.push(cur === m.base ? (at === base ? `the checkout of ${m.base} is at the merged head ${base.slice(0, 8)}` : `would fast-forward the checkout to ${base.slice(0, 8)}`) : `the checkout is on ${cur || "a detached HEAD"}; would leave it`);
+  steps.push(fs.existsSync(path.join(repo, "config.local.yaml")) ? "would reapply config.local.yaml" : "no local config to reapply");
+  steps.push("would reload the autopilot (none runs for this repository)");
+  fs.writeFileSync(path.join(i.out, "self-update.txt"), steps.join("\n") + "\n");
+  process.stdout.write(JSON.stringify({ verdict: "pass", score: 1, findings: f, evidence: ["out/self-update.txt"], proves: [], data: { dry_run: true, steps } }));
+});

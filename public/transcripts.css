@@ -1,0 +1,26 @@
+/* Transcripts: the three tabs of an agent invocation, and the session history */
+.tr-pad{padding:14px 16px;display:grid;gap:10px;min-width:0}
+.tr-h1{overflow-wrap:anywhere}
+.tr-tabs{justify-self:start}
+.tr-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;min-width:0}
+.tr-raw{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.5 var(--f-mono);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px;max-height:70vh;overflow:auto}
+.tr-secs{display:grid;gap:8px}
+.tr-sec{border:1px solid var(--border);border-radius:8px;padding:6px 10px;min-width:0}
+.tr-sec>summary{cursor:pointer;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.tr-sec .tr-raw{margin-top:8px;max-height:50vh}
+.tr-sec.k-brief,.tr-sec.k-header{border-color:var(--human);background:var(--human-soft)}
+.tr-brief{display:grid;gap:4px;font-size:13px;margin-top:8px;overflow-wrap:anywhere}
+.tr-bind{font-size:12.5px;color:var(--human)}
+.tr-list{display:grid;gap:6px;min-width:0}
+.tr-e{display:grid;grid-template-columns:64px 1fr;gap:8px;align-items:start;font-size:13.5px;min-width:0;border-left:2px solid var(--border);padding-left:8px}
+.tr-e.tool{border-color:var(--accent)}.tr-e.result{border-color:var(--ok)}.tr-e.result.err,.tr-e.error{border-color:var(--bad)}.tr-e.captain{border-color:var(--human)}
+.tr-e.fm,.tr-e.system{font-size:12px}
+.tr-t{font:11.5px var(--f-mono);color:var(--text-3);padding-top:2px}
+.tr-body{min-width:0;overflow-wrap:anywhere}
+.tr-body code{overflow-wrap:anywhere}
+.tr-res,.tr-args{min-width:0}
+.tr-res summary,.tr-args summary{cursor:pointer;font-size:12.5px}
+.tr-res pre,.tr-args pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.45 var(--f-mono);max-height:50vh;overflow:auto;background:var(--surface-2);border-radius:6px;padding:8px;margin:6px 0}
+.tr-link{text-decoration:none;color:inherit;grid-template-columns:64px 1fr auto}
+.tr-set{display:flex;gap:8px;align-items:center;font-size:12.5px}
+@media (max-width:640px){.tr-e{grid-template-columns:1fr}.tr-link{grid-template-columns:1fr}}

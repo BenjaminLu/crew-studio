@@ -1,0 +1,212 @@
+/* Studio's runtime pages: the workflow editor, runs and the live run view. Colors come from the theme tokens. */
+.rt-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.rt-wf { display: block; padding: 14px 16px; color: var(--text); text-decoration: none; }
+.rt-wf:hover, .rt-wf:focus-visible { border-color: var(--accent); }
+.rt-wf-h { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.rt-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 10px; }
+.rt-toolbar .input { min-width: 180px; flex: 1 1 180px; }
+.rt-status { color: var(--text-2); font-size: 13px; flex: 1 1 100%; }
+.rt-status:empty { display: none; }
+.rt-editor { container-type: inline-size; }
+.rt-work { display: grid; grid-template-columns: 190px minmax(0, 1fr); grid-template-areas: "canvas canvas" "pal panel"; gap: 10px; align-items: start; }
+.rt-canvas-wrap { grid-area: canvas; min-width: 0; } .rt-palette { grid-area: pal; } .rt-panel { grid-area: panel; }
+@container (min-width: 1500px) { .rt-work { grid-template-columns: 190px minmax(0, 1fr) 320px; grid-template-areas: "pal canvas panel"; } }
+.rt-diff[hidden] { display: none; }
+.rt-canvas { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; height: 620px; overflow: hidden; touch-action: none; }
+.rt-canvas svg { width: 100%; height: 100%; display: block; user-select: none; }
+.rt-rungraph { max-height: 560px; overflow: auto; padding: 0; }
+.rt-rungraph svg { display: block; max-width: none; }
+.rt-palette, .rt-panel { padding: 12px; max-height: 620px; overflow: auto; }
+.rt-palette h4, .rt-panel h4 { margin: 12px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-2); }
+.rt-palette .rt-pal { display: block; width: 100%; margin: 0 0 6px; text-align: left; cursor: grab; }
+.rt-pal-checks { display: flex; flex-direction: column; gap: 4px; }
+.rt-pal-check { font: 12px var(--f-mono); padding: 4px 6px; border: 1px dashed var(--border-strong); border-radius: 6px; cursor: grab; background: var(--surface); overflow-wrap: anywhere; }
+.rt-pal-check:focus-visible { outline: 2px solid var(--accent); }
+.rt-panel h3 { margin: 0 0 2px; }
+.rt-field { display: grid; gap: 3px; margin: 6px 0; font-size: 13px; }
+.rt-field > span { color: var(--text-2); }
+.rt-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.rt-row .select, .rt-row .input { flex: 1 1 120px; min-width: 0; }
+.rt-check { border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; margin: 6px 0; }
+.rt-check summary { cursor: pointer; overflow-wrap: anywhere; }
+.rt-try-out { white-space: pre-wrap; font-size: 12px; background: var(--surface-2); padding: 6px; border-radius: 6px; max-height: 160px; overflow: auto; }
+.rt-valid { padding: 6px 8px; border-radius: 8px; margin-top: 12px; font-size: 13px; }
+.rt-valid.ok { background: var(--ok-soft); color: var(--ok); }
+.rt-valid.bad { background: var(--bad-soft); color: var(--bad); }
+.rt-prob { font-size: 12px; margin: 4px 0; color: var(--text-2); }
+.rt-prob.error { color: var(--bad); }
+.rt-diff { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 8px 12px; margin: 0 0 10px; font-size: 13px; }
+.rt-diff-row { margin-top: 4px; overflow-wrap: anywhere; }
+/* the graph */
+.rt-graph .rt-box { fill: var(--surface); stroke: var(--border-strong); stroke-width: 1.5; }
+.rt-graph .rt-label { fill: var(--text); font: 600 13px var(--f-sans); }
+.rt-graph .rt-kind { fill: var(--text-3); font: 11px var(--f-mono); }
+.rt-graph .rt-node { cursor: grab; }
+.rt-graph .rt-node:focus { outline: none; }
+.rt-graph .rt-node:focus-visible .rt-box, .rt-graph .rt-node.sel .rt-box { stroke: var(--accent); stroke-width: 3; }
+.rt-graph .rt-node.drop .rt-box, .rt-graph .rt-edge.drop .rt-line { stroke: var(--accent); stroke-dasharray: 4 3; }
+.rt-graph .rt-node.bad .rt-box { stroke: var(--bad); stroke-width: 2.5; }
+.rt-graph .k-agent .rt-box { fill: var(--a1); } .rt-graph .k-check .rt-box { fill: var(--a2); } .rt-graph .k-card .rt-box { fill: var(--human-soft); }
+.rt-graph .k-loop .rt-box { fill: var(--a4); } .rt-graph .k-hook .rt-box { fill: var(--surface); }
+.rt-graph .st-running .rt-box, .rt-graph .st-waiting .rt-box { stroke: var(--warn); stroke-width: 3; }
+.rt-graph .st-passed .rt-box, .rt-graph .st-done .rt-box { stroke: var(--ok); stroke-width: 2.5; }
+.rt-graph .st-failed .rt-box, .rt-graph .st-error .rt-box { stroke: var(--bad); stroke-width: 3; }
+.rt-graph .st-skipped .rt-box { opacity: .55; }
+.rt-graph .rt-port { fill: var(--surface); stroke: var(--accent); stroke-width: 2; cursor: crosshair; }
+.rt-graph .rt-line { fill: none; stroke: var(--text-3); stroke-width: 1.6; }
+.rt-graph .rt-hit { fill: none; stroke: transparent; stroke-width: 12; cursor: pointer; }
+.rt-graph .rt-edge.sel .rt-line, .rt-graph .rt-edge:focus-visible .rt-line { stroke: var(--accent); stroke-width: 3; }
+.rt-graph .rt-edge.bad .rt-line { stroke: var(--bad); }
+.rt-graph .rt-edge.walked .rt-line { stroke: var(--ok); }
+.rt-graph .rt-edge:focus { outline: none; }
+.rt-graph .rt-arrow { fill: var(--text-3); }
+.rt-graph .rt-when { fill: var(--text-2); font: 11px var(--f-mono); paint-order: stroke; stroke: var(--surface-2); stroke-width: 3px; }
+.rt-graph .rt-badge { fill: var(--accent); }
+.rt-graph .rt-badge-t { fill: var(--on-accent); font: 600 10px var(--f-sans); }
+.rt-graph .rt-wire { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 5 4; }
+/* runs */
+.rt-start .input { width: 100%; box-sizing: border-box; }
+.rt-runs { display: flex; flex-direction: column; }
+.rt-run { display: grid; grid-template-columns: 70px minmax(0, 1fr) auto auto; gap: 4px 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text); text-decoration: none; align-items: center; }
+.rt-run > :last-child { grid-column: 2 / -1; font-size: 12px; }
+.rt-run:hover { background: var(--surface-2); }
+.rt-st { font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--surface-3); }
+.rt-st.st-succeeded { background: var(--ok-soft); color: var(--ok); } .rt-st.st-failed { background: var(--bad-soft); color: var(--bad); }
+.rt-st.st-running, .rt-st.st-waiting { background: var(--warn-soft); color: var(--warn); }
+.rt-open { display: grid; gap: 10px; margin-bottom: 10px; }
+.rt-card-h { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.rt-card-body { white-space: pre-wrap; font-size: 12.5px; max-height: 260px; overflow: auto; background: var(--surface-2); padding: 8px; border-radius: 8px; }
+.door-one-way { background: var(--bad-soft); color: var(--bad); }
+.rt-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.rt-ledger, .rt-timeline { max-height: 360px; overflow: auto; font-size: 12.5px; }
+.rt-le, .rt-ev { padding: 3px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.rt-le.v-fail b, .rt-le.v-error b { color: var(--bad); } .rt-le.v-pass b { color: var(--ok); }
+.rt-done.ok { color: var(--ok); }
+@container (max-width: 620px) {
+  .rt-work { grid-template-columns: minmax(0, 1fr); grid-template-areas: "canvas" "pal" "panel"; }
+}
+@media (max-width: 900px) {
+  .rt-canvas { height: 420px; }
+  .rt-palette { max-height: none; display: flex; flex-wrap: wrap; gap: 6px; }
+  .rt-palette h4, .rt-palette p { flex: 1 1 100%; margin: 4px 0; }
+  .rt-palette .rt-pal { width: auto; flex: 1 1 auto; }
+  .rt-pal-checks { flex-direction: row; flex-wrap: wrap; max-height: 120px; overflow: auto; }
+  .rt-panel { max-height: none; }
+  .rt-cols { grid-template-columns: minmax(0, 1fr); }
+  .rt-run { grid-template-columns: 60px minmax(0, 1fr); }
+  .rt-run > :nth-child(3), .rt-run > :nth-child(4) { grid-column: 2; justify-self: start; }
+}
+/* graph-tidy: stages, back edges, labels, badges, minimap */
+.rt-graph .rt-stage-box { fill: var(--surface); fill-opacity: .55; stroke: var(--border); stroke-width: 1.2; stroke-dasharray: 0; }
+.rt-graph .rt-stage.st-running .rt-stage-box { stroke: var(--warn); } .rt-graph .rt-stage.st-failed .rt-stage-box { stroke: var(--bad); } .rt-graph .rt-stage.st-passed .rt-stage-box { stroke: var(--ok); }
+.rt-graph .rt-stage-t { cursor: pointer; } .rt-graph .rt-stage-t:focus { outline: none; }
+.rt-graph .rt-stage-pill { fill: var(--surface-2); stroke: var(--border); }
+.rt-graph .rt-stage-t:focus-visible .rt-stage-pill, .rt-graph .rt-stage-t:hover .rt-stage-pill { stroke: var(--accent); }
+.rt-graph .rt-stage-label { fill: var(--text-2); font: 600 11.5px var(--f-sans); letter-spacing: .02em; }
+.rt-graph .rt-stagenode .rt-box { fill: var(--surface-2); stroke: var(--border-strong); stroke-width: 1.5; stroke-dasharray: 5 3; }
+.rt-graph .rt-node.main .rt-box { stroke-width: 2; }
+.rt-graph .rt-node.st-running .rt-box { stroke: var(--warn); stroke-width: 3.5; filter: drop-shadow(0 0 6px var(--warn)); }
+.rt-graph .rt-edge.back .rt-line { stroke-dasharray: 6 4; stroke: var(--text-3); opacity: .85; }
+.rt-graph .rt-when-bg { fill: var(--surface-2); fill-opacity: .92; }
+.rt-graph .rt-elabel.back .rt-when-bg { fill: var(--surface); }
+.rt-graph .rt-when { fill: var(--text-2); font: 10px var(--f-mono); }
+.rt-graph .rt-badge { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1; }
+.rt-graph .rt-badge-t { fill: var(--accent-text); font: 600 10px var(--f-sans); }
+.rt-graph .rt-badge-g { cursor: pointer; } .rt-graph .rt-badge-g:focus { outline: none; } .rt-graph .rt-badge-g:focus-visible .rt-badge { stroke-width: 2.5; }
+.rt-graph .rt-badge-pop { fill: var(--surface); stroke: var(--border-strong); filter: drop-shadow(0 4px 10px rgba(0,0,0,.18)); }
+.rt-graph .rt-badge-item { fill: var(--text); font: 11px var(--f-mono); }
+.rt-canvas { position: relative; }
+.rt-mm-dock { display: flex; justify-content: flex-start; margin-top: 6px; } /* left: the chat button sits bottom right */
+.rt-mm-dock:empty { display: none; }
+.rt-mm-dock .rt-minimap { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+.rt-palette[hidden] { display: none; }
+.rt-graph.simple .rt-label { font-size: 15px; }
+.rt-graph.simple .rt-kind { font-size: 11.5px; }
+.rt-graph .b-loop .rt-badge { fill: var(--a4); stroke: var(--text-3); } .rt-graph .b-loop .rt-badge-t { fill: var(--text); }
+.rt-graph .b-ask .rt-badge { fill: var(--human-soft); stroke: var(--human); } .rt-graph .b-ask .rt-badge-t { fill: var(--human); }
+.rt-graph .b-escalations .rt-badge { fill: var(--warn-soft); stroke: var(--warn); } .rt-graph .b-escalations .rt-badge-t { fill: var(--warn); }
+.rt-minimap { display: block; cursor: pointer; }
+.rt-minimap .rt-mm-node { fill: var(--border-strong); } .rt-minimap .rt-mm-node.main { fill: var(--accent); }
+.rt-minimap .rt-mm-stage { fill: none; stroke: var(--border); stroke-width: 6; }
+.rt-minimap .rt-mm-frame { fill: var(--accent-soft); fill-opacity: .35; stroke: var(--accent); stroke-width: 10; }
+.rt-graph .rt-elabel { pointer-events: none; } /* a label never takes a click or a drop meant for its edge */
+/* Studio cards in the Inbox: they take the column's width, never more (phone) */
+.rt-inbox { min-width: 0; display: grid; gap: 10px; }
+.rt-inbox .rt-card { min-width: 0; max-width: 100%; box-sizing: border-box; }
+.rt-inbox .rt-card-body { overflow-wrap: anywhere; }
+.rt-inbox .rt-card .input { width: 100%; box-sizing: border-box; }
+.rt-inbox .cardmeta { flex-wrap: wrap; }
+/* the app's before / after captures on a card */
+.rt-captures { display: grid; gap: 12px; margin: 10px 0; }
+.rt-cap { margin: 0; } .rt-cap figcaption { font-weight: 600; margin-bottom: 6px; }
+.rt-cap-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.rt-cap-img { display: grid; gap: 4px; text-decoration: none; color: inherit; } .rt-cap-img img { width: 100%; height: auto; border: 1px solid var(--line, #ddd); border-radius: 8px; background: #fff; }
+.rt-cap-diff { margin: 6px 0 0; font-size: 12.5px; overflow-wrap: anywhere; }
+@media (max-width: 560px) { .rt-cap-pair { grid-template-columns: 1fr; } }
+/* Studio's working agents on the Crew page */
+.rt-agents { margin: 18px 0 22px; display: grid; gap: 10px; }
+.rt-agent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.rt-agent { display: grid; gap: 8px; min-width: 0; }
+.rt-agent-h { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; } .rt-agent-h .st { margin-left: auto; font-size: 12px; color: var(--accent); display: inline-flex; gap: 6px; align-items: center; }
+.rt-agent-m { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-2); }
+.rt-agent-act { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* the new-card cue (unit inbox-live): one status line, bottom right, above the page, never blocking it */
+.rt-cue { position: fixed; right: 16px; bottom: 16px; z-index: 60; display: flex; align-items: center; gap: 10px; max-width: min(460px, calc(100vw - 32px));
+  padding: 10px 12px; border-radius: 12px; background: var(--surface); color: var(--text); border: 1px solid var(--border-strong, var(--border)); box-shadow: var(--shadow-1, 0 4px 18px rgba(0,0,0,.12)); font-size: 13px; }
+.rt-cue > span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Keep the shared notice outside the Firstmate launcher dock at every viewport.
+   With the drawer open, place it below its header instead of over the composer. */
+body.chat-closed .rt-cue { bottom: calc(20px + 44px + 12px + env(safe-area-inset-bottom, 0px)); }
+body:not(.chat-closed) .rt-cue { top: calc(120px + env(safe-area-inset-top, 0px)); bottom: auto; z-index: 75; }
+.rt-cue > .btn { flex-shrink: 0; }
+.rt-cue-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+
+/* how a run ends (docs/units/run-end-and-remove.md): the state word, archived runs, the cancel and delete panels */
+.badge.neutral { background: var(--surface-2); color: var(--text-2); border-color: var(--border); }
+.rt-run.archived b { color: var(--text-2); }   /* an archived row reads quieter by its title, never by fading its pills below AA */
+.rt-archived-toggle { font-size: 13px; color: var(--text-2); gap: 8px; align-items: center; }
+.rt-endpanel { display: grid; gap: 10px; border-color: color-mix(in srgb, var(--bad) 30%, var(--border)); }
+.rt-endpanel h3 { margin: 0; font-size: 15px; }
+.rt-endpanel p { margin: 0; font-size: 13px; }
+.rt-endpanel .input { max-width: 420px; width: 100%; box-sizing: border-box; }
+/* designer review r1 (run-end-and-remove) */
+.rt-runs { overflow: hidden; }                         /* the last row's divider stays inside the rounded card */
+.rt-archived-toggle { display: inline-flex; min-height: 44px; padding: 0 10px 0 4px; border-radius: 8px; cursor: pointer; justify-self: start; }
+.rt-archived-toggle:hover { background: var(--surface-2); }
+.rt-archived-toggle input { width: 18px; height: 18px; }
+.rt-runview .phead p a { color: var(--accent-text); text-decoration: none; }  /* the project's link style (styles.css .run-s a) */
+.rt-runview .phead p a:hover { text-decoration: underline; }
+.rt-danger { display: inline-flex; margin-left: 8px; padding-left: 12px; border-left: 1px solid var(--border); }
+.rt-confirm { display: grid; gap: 6px; font-size: 13px; color: var(--text-2); max-width: 420px; }
+.btn.danger-solid:disabled { background: var(--surface-3); border-color: var(--border-strong); color: var(--text-3); opacity: 1; cursor: not-allowed; }
+.rt-where { font-size: 12px; }
+/* the state's mark: Closed without merging a ring, Cancelled a cross, the rest a filled dot */
+.rs-badge[data-run-state="closed"] .d { background: transparent; box-shadow: inset 0 0 0 1.5px currentColor; width: 8px; height: 8px; }
+.rs-badge[data-run-state="cancelled"] .d { background: none; width: auto; height: auto; border-radius: 0; line-height: 1; font-size: 11px; font-weight: 700; }
+.rs-badge[data-run-state="cancelled"] .d::before { content: "×"; }
+@media (max-width: 640px) {
+  .rt-runview .phead .actions .btn, [data-run-unarchive], .rt-endpanel .btn { min-height: 44px; }
+}
+/* the floating firstmate button never covers the end of a page: room under the last card for the button (44 px, 20 px off the edge) plus a gap */
+
+.rt-state { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rt-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rt-foot:empty { display: none; }
+.rt-archived-tag { font-family: var(--f-sans); }      /* a status pill in the UI font, not a code chip */
+.rt-unarchive { min-height: 24px; padding: 1px 10px; font-size: 12px; box-shadow: none; }  /* a small secondary button beside the chips */
+/* the delete explanation stays readable: about 65 characters a line */
+.rt-endpanel p { max-width: 65ch; }
+@media (max-width: 640px) { .rt-run .rt-unarchive { min-height: 44px; padding: 0 14px; } }
+
+/* Task/Round phase B: ordered history wraps rather than requiring horizontal table scrolling. */
+.rt-rounds{display:grid;gap:16px}
+.rt-round-list{list-style:none;padding:0;margin:0;display:grid;gap:16px}
+.rt-round-list>li{padding:16px;border:1px solid var(--border);border-radius:10px;min-width:0;overflow-wrap:anywhere}
+.rt-round-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.rt-round-actor{color:var(--text-2);margin:10px 0}
+.rt-round-list dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:12px 0}
+.rt-round-list dt{font-size:12px;color:var(--text-2)}
+.rt-round-list dd{margin:4px 0 0;font-size:13px}
+.rt-round-list .btn{min-height:44px}
+@media(max-width:640px){.rt-round-list dl{grid-template-columns:1fr}}

@@ -1,0 +1,9 @@
+{
+  "id": "terminal",
+  "name": "Terminal",
+  "version": "1.0.0",
+  "entry": "index.html",
+  "description": "A minimal terminal: tasks, crew and waiting cards as text, with the event log scrolling by. Type `open <card>` or click a card to open it.",
+  "permissions": ["snapshot.tasks", "snapshot.crew", "snapshot.pending", "events", "openCard"],
+  "network": []
+}

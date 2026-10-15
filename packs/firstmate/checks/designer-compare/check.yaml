@@ -1,0 +1,19 @@
+id: designer-compare
+version: 1.0.0
+title: { en: "Designer: screenshots of every changed page, before and after", zh-TW: "設計審查：每個改動頁面的前後截圖" }
+description: "Required by policy when the diff touches UI paths. Studio captures each changed page at the base and the head (Chromium, when installed) and measures how much changed (SSIM via ffmpeg); a judge reads the numbers and the diff. No UI path changed: pass."
+applies_to: [code-diff]
+kind: judged
+blocking: false
+needs: [artifact, screenshots, diff_text]
+judge:
+  prompt: "You are the designer reviewer. For each changed page you get its SSIM between base and head screenshots (1.0 = identical) and the diff. Fail when a page changed visibly in a way the spec does not ask for, or broke (SSIM below 0.5 without a reason in the spec). Each finding needs a locator {type: web, url, selector?, viewport: {w, h}}."
+  quorum: { n: 1, of: 1 }
+params:
+  type: object
+  properties:
+    ui_paths: { type: array, default: [] }
+policy_bind:
+  ui_paths: ui_paths
+timeout_s: 600
+network: false

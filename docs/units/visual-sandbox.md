@@ -1,0 +1,33 @@
+# The visual sandbox: Corner Shop, and before / after captures
+
+The captain: "a demo repo you cannot see is a change you cannot feel". money-kit is a
+library; nothing showed a change on screen.
+
+Done when (`tests/visual-sandbox.ts`, `tests/runtime-ui.mjs`; red on 17576c4, where none of this exists):
+1. The sandbox repository gains Corner Shop (templates/sandbox-app: app/shop.ts, app/server.ts, app/build.ts, test/shop.test.ts, .crew/app.json, the `dev` and `build:app` scripts) as one normal commit on main, applied once (`.git/crew-sandbox-addons.json`), held while a run works on the repository (its branch fast-forwards only if main stays put), never over a file the captain has, never touching a package.json with uncommitted changes, committing only what it wrote. — "while a run works on the repository the addition is held …", "then it lands as one normal commit on top of main …", "it adds the app under app/ …", "a file the captain has is kept as it is …", "an addition is applied once".
+2. The app renders and `bun run dev` serves it; its tests and the library's pass; with R-002's change the yen switch shows ¥ (¥5,588), on base it shows yen as cents ($55.88). — "the app builds its pages …", "`bun run dev` serves it …", "with R-002's change applied, the yen switch shows ¥ formatting …".
+3. code-firstmate's CI node runs firstmate/ui-captures (non-blocking): a change touching the app's paths is built on base and head in the check sandbox and each page shot (scripts off, no network), with the visible text that changed; a docs change is not captured. — "a change to the library the app uses is captured …", "the visible text that changed is recorded …", "the base and the head were each built … and shot", "a docs change is not captured …".
+4. The merge card carries `captures: [{label, before, after, changed}]`, the before / after lines and "Open the app"; the run page links the head's build too; the build is served sandboxed (CSP sandbox, default-src 'none'). — "the merge card carries the captures …", "the run records the head's build link …", "Open the app serves the head's page sandboxed …", and in the browser "the merge card shows the app's before / after captures (they load), and Open the app (card and run page) serves the head's build, sandboxed".
+No headless browser: the check warns and the card shows the changed text only.
+On the live Studio the addition waits for the next start with no run on data/demo-repo (R-002 waits at its merge card now).
+
+## r2 (visual-sandbox r1 REJECT)
+Done when (`tests/visual-sandbox.ts`, red on a0d5fe4):
+1. #1 must-fix, security: the build's output is hostile. Studio copies it with `copyUntrusted` (regular files and folders only; a symlink, a hard link, a fifo refused; O_NOFOLLOW, checked on the descriptor) before anything reads it; the renderer serves the page from that copy over a local http origin and refuses every request outside it (file://, other hosts); a frame showing anything from outside the origin means no picture. — "copying a build's output keeps regular files and folders only …", "a build's symlink to a secret is refused, never followed …", "Open the app serves the head's page sandboxed …, and never the refused link", "the renderer serves the page from its copy over a local origin and refuses every other request …".
+2. #2 the no-renderer branch: "with no headless browser the capture check warns (renderer-missing), and before / after are empty", "the merge card carries the captures (label, no pictures), the changed text in its body …".
+3. #3 tests/runtime-ui.mjs hands Studio the Playwright the suite uses (PLAYWRIGHT_MODULE, else the package); Studio's renderer finds the browsers in the account's own cache (the account home from the directory service, whatever HOME the process has), so no test guesses a cache path.
+
+## r3 (visual-sandbox r2 REJECT)
+Done when (`tests/visual-sandbox.ts`, red on 690c428):
+1. #1 must-fix: on macOS copyUntrusted opens every level by descriptor (openat with O_NOFOLLOW from the root's descriptor, fstat on each, src/untrusted-copy.ts through the built-in bun:ffi), so no path is resolved twice: a link at an inner level is refused, and a folder swapped for a link while the copy runs is refused. The build's process group is killed by the sandbox runner, and its output moves out of the sandbox's writable root before it is read. — "a link at an inner level (a/b → a folder outside) is refused …", "with a folder swapped for a link during the copy (300 copies under a racing process), nothing from outside is ever copied", "a process the build left behind ran … and is gone before Studio reads the output".
+2. #4 restored: "the base and the head were each built (in the check sandbox) and shot; the refused page was not", "the merge card links each capture by its own URL (/api/wruns/<run>/captures/<head>/before|after/<page>.png)".
+3. #5: the suite's Playwright (PLAYWRIGHT_MODULE, else the package) is required: "Playwright is found …", "the renderer works with this Playwright (its browser is installed)"; without it the test fails with that message, never passes. The same class in the UI suites is the unit ui-test-waits.
+
+## r4 (visual-sandbox r3 REJECT), partial
+Done when (`tests/visual-sandbox.ts`, red on c993399):
+1. #2 the descriptor copy runs only on macOS arm64 (its stat and dirent offsets are arm64's 64-bit-inode layout); elsewhere copyUntrusted falls back to the path walk, which still refuses links; the result names the method. — "off macOS arm64 the copy never uses the arm64 struct layout …", "on macOS arm64 the copy is by descriptor". The only bun:ffi struct reads are in src/untrusted-copy.ts.
+2. The lingering-child check uses this run's own marker, so runs in other worktrees cannot cross; no other test looks processes up by a global name.
+Open: #1 (a child that leaves the build's process group, to prove the freeze) is not in this round.
+
+## r4b
+#1 closed by a test-only seam (installCode `seams.afterBuildExit(rawDir, side)`, called once the build has exited and before its output is read; production never sets it). In the test the seam plays a writer that escaped the build and still holds the path of its output folder: it writes late.html there and swaps sub/ for a link to a secret. — "output written to the build's folder after the build exits never reaches Studio (no late page, no secret, not even as a refusal)": red with the `renameSync(raw, frozen)` line removed (late.html is copied), green with it. The escaped-child threat is modelled by this seam rather than by spawning a process that leaves the process group; a manual experiment confirmed the real behaviour (with the freeze such a process can no longer write into the output; without it, it keeps writing).

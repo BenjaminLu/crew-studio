@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+# ste-wording: firstmate's STE checker (bin/lib/fm_ste.py), imported read-only when present (no bytecode
+# is written: PYTHONDONTWRITEBYTECODE), else a built-in subset of the same rules.
+import json, os, re, sys
+i = json.load(sys.stdin)
+fail_rules = set(i['params'].get('fail_rules') or ['R5', 'R6', 'R8'])
+lib = i['params'].get('fm_lib') or ''
+sys.dont_write_bytecode = True
+check = None
+source = 'built-in'
+if lib and os.path.exists(os.path.join(lib, 'fm_ste.py')):
+    try:
+        sys.path.insert(0, lib)
+        import fm_ste
+        check = fm_ste.check
+        source = 'fm_ste.py'
+    except Exception:
+        check = None
+if check is None:
+    UNAPPROVED = {'utilize': 'use', 'ensure': 'make sure', 'perform': 'do', 'approximately': 'about', 'prior to': 'before', 'in order to': 'to', 'via': 'through', 'obtain': 'get', 'facilitate': 'help', 'modify': 'change', 'initiate': 'start'}
+    def check(text, kind=None):
+        issues = []
+        for m in re.finditer(r'\b(will|would|could|should|shall|might)\b', text, re.I): issues.append(dict(rule='R5', detail=m.group(), severity='fail'))
+        for w, u in UNAPPROVED.items():
+            for m in re.finditer(r'\b' + re.escape(w) + r'\b', text, re.I): issues.append(dict(rule='R6', detail=m.group() + ' -> ' + u, severity='fail'))
+        for m in re.finditer(r"\b(etc\.?|and/or|appropriate|properly|various|relevant)\b|\b\w+'(t|re|ve|ll|d)\b", text, re.I): issues.append(dict(rule='R8', detail=m.group(), severity='fail'))
+        return dict(issues=issues)
+# a zh-TW text must be a real translation: Chinese, not English with a Chinese word in front, and not a stock placeholder.
+# Code (`x`, f(), a.b), paths, quoted strings and numbers do not count as either language; the code patterns are
+# ASCII-only, so they never eat the Chinese around them. Technical terms kept in English are allowed: the text is
+# English only when it has no Chinese, or at least 3 English words and fewer Chinese characters than English words
+# (a hyphenated term such as fast-forward is one word). A title "<Chinese prefix>：<rest>" is judged on <rest>.
+PLACEHOLDERS = ['船長要求的變更', '船長要求的改動', '待補', '待翻譯', '同上', 'the captain asked for it', 'todo', 'tbd', 'n/a']
+_punct = r'[\s。．.!！?？,，、:：;；()（）「」『』"\'\-—]+'
+_ph = set(re.sub(_punct, '', p).lower() for p in PLACEHOLDERS)
+def _placeholder(t):
+    core = re.sub(_punct, '', t).lower()
+    if core in _ph: return True
+    toks = [re.sub(_punct, '', x).lower() for x in t.split('/')]
+    toks = [x for x in toks if x]
+    return len(toks) > 1 and all(x in _ph for x in toks)
+_code = re.compile(r'`[^`]*`|"[^"]*"|「[^」]*」|[A-Za-z0-9_.\-]+/[A-Za-z0-9_./\-]+|\b[A-Za-z_][\w.]*\([^)]*\)|\b[A-Za-z_]\w*\.\w+\b|\d+', re.ASCII)
+_word = re.compile(r'\b[A-Za-z]{2,}(?:-[A-Za-z]+)*\b', re.ASCII)
+def _lang(t):
+    rest = _code.sub(' ', t)
+    cjk = len(re.findall(r'[\u4e00-\u9fff]', rest)); latin = len(_word.findall(rest))
+    if cjk == 0 and latin: return 'english'
+    if latin >= 3 and cjk < latin: return 'english'
+    return None
+def zh_problem(text):
+    t = text.strip()
+    if not t: return None
+    if _placeholder(t): return 'placeholder'
+    m = re.match(r'^[\u4e00-\u9fff]{1,12}\s*[：:]\s*(.+)$', t, re.S)
+    if m:
+        rest = m.group(1).strip()
+        if _placeholder(rest): return 'placeholder'
+        return _lang(rest)
+    return _lang(t)
+findings = []
+texts = i.get('texts') or []
+for t in texts:
+    sec = str(t.get('section', 'text'))
+    if sec.startswith('zh-TW'):
+        z = zh_problem(str(t.get('text', '')))
+        if z == 'placeholder':
+            findings.append(dict(locator=dict(type='text', section=sec), message='the zh-TW text is a placeholder, not a translation: "%s"' % str(t.get('text'))[:80], expected='a real Traditional Chinese translation of the en text', **{'class': 'ste-locale'}, severity='blocking'))
+        elif z == 'english':
+            findings.append(dict(locator=dict(type='text', section=sec), message='the zh-TW text is English, not Chinese: "%s"' % str(t.get('text'))[:80], expected='Chinese text in a zh-TW section (code names and paths may stay as they are)', **{'class': 'ste-locale'}, severity='blocking'))
+    for sentence in re.split(r'(?<=[.!?])\s+', str(t.get('text', ''))):
+        if not sentence.strip(): continue
+        try: rep = check(sentence)
+        except Exception as e: rep = dict(issues=[])
+        for iss in rep.get('issues', []):
+            if iss.get('rule') in fail_rules and iss.get('severity', 'fail') == 'fail':
+                findings.append(dict(locator=dict(type='text', section=t.get('section', 'text')), message='%s %s: "%s"' % (iss['rule'], iss.get('detail', ''), sentence[:100]), expected='plain wording without it (%s)' % iss['rule'], **{'class': 'ste-' + iss['rule']}, severity='blocking'))
+print(json.dumps(dict(verdict='fail' if findings else 'pass', score=0 if findings else 1, findings=findings[:40], evidence=[], proves=[], source=source)))

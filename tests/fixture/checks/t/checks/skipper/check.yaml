@@ -1,0 +1,8 @@
+id: skipper
+version: 1.0.0
+title: { en: "Answers skip, which the contract does not know" }
+applies_to: [run]
+kind: deterministic
+needs: []
+params: { type: object, properties: {} }
+timeout_s: 10

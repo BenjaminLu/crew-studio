@@ -1,0 +1,9 @@
+id: undeclared
+version: 1.0.0
+title: { en: "An adapter around a command this repository does not declare" }
+applies_to: [run]
+kind: deterministic
+needs: []
+adapter: { command: ["{repo.nothing}"], pass_on: [0] }
+params: { type: object, properties: {} }
+timeout_s: 10

@@ -1,0 +1,9 @@
+id: hk
+version: 1.0.0
+title: { en: "A hook that fails" }
+applies_to: [run]
+kind: hook
+at: after_merge
+needs: []
+params: { type: object, properties: {} }
+timeout_s: 10

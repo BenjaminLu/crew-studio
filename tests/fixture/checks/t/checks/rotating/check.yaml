@@ -1,0 +1,8 @@
+id: rotating
+version: 1.0.0
+title: { en: "Fails each round with a new class and the same score" }
+applies_to: [run]
+kind: deterministic
+needs: []
+params: { type: object, properties: {} }
+timeout_s: 10
