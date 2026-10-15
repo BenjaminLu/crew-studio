@@ -103,3 +103,37 @@ then blocked by a signed persistent draft capability and immutable source lineag
 across later editable versions. Existing evidence file (including malformed)
 always holds; no historical approval is fabricated. Recovery checks also refuse
 resumed draft execution. This is a safety hold, not runtime completion.
+
+## Community source slice
+
+Additional exact paths: `src/domain/github-community.ts` and
+`tests/github-community.ts`. The adapter only reads fixed contribution/template
+paths at an actual default-branch commit. Repository reads use the approved
+repository credential; account `.github` fallback is strictly public and anonymous.
+404 means absent; 403, malformed snapshots, redirects and timeouts remain errors.
+Discovery has a 20-second total deadline, 80 content requests, 128 KiB per file
+and 1 MiB total source bytes. Git blob SHA and SHA256 are verified. Symlinks,
+escaped paths, arbitrary URLs and oversized template directories fail closed.
+
+Precedence follows GitHub: `.github` before root before `docs`, per file type;
+repository issue folder/config replaces the entire account issue folder. No local
+PR template means public account defaults may supply the default plus explicit
+multiple-template choices. Every chosen source is repository/commit/path/blob
+bound. The native save endpoint freshly rediscovers sources, requires a literal
+selected template plus captain-supplied title/body and explicit required-input
+confirmation, and stores the exact publication draft/snapshot in its signed
+private policy record. It never posts that draft. The UI does not tick test,
+security, mobile or leader checkboxes. Natural-language required inputs are not
+claimed to be a machine-parsed formal schema; captain discussion remains needed.
+Contribution text/AGENTS never expands tools or authority.
+
+Primary contracts:
+- https://docs.github.com/en/communities/setting-up-your-project-for-healthy-contributions/creating-a-default-community-health-file
+- https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/creating-a-pull-request-template-for-your-repository
+- https://docs.github.com/en/rest/pulls/reviews
+- https://docs.github.com/en/rest/pulls/comments
+
+Validation checkpoint: `bun run test:github-review-workflow` passes 23 native
+scanner/API/save assertions plus 12 strict community-fixture assertions. UI source
+passes syntax validation; actual browser interaction and independent reviews are
+not yet complete. The source execution HOLD remains mandatory.

@@ -190,6 +190,20 @@ export class GitHubPrAdapter implements PrAdapter {
     return !!pr && pr.adapter === "github" && pr.repo === this.grant.localPath && pr.base === this.grant.base && typeof pr.branch === "string" && ref(pr.branch) && this.branchAllowed(pr.branch, pr.head) && typeof pr.id === "string" && /^[1-9][0-9]*$/.test(pr.id) && Number.isSafeInteger(Number(pr.id)) && sha.test(pr.head) && pr.url === `https://github.com/${this.grant.repository}/pull/${pr.id}`;
   }
   /** Typed, grant-bound read surface. No arbitrary endpoint or URL is accepted. */
+  private communityPins=new Map<string,{repository:string;head:string;source:'repository'|'owner'}>();
+  /** Fixed repository/community paths only. Public owner defaults never receive credentials. */
+  private async communityRequest(source:'repository'|'owner',suffix:string,signal?:AbortSignal){
+    const repository=source==='repository'?this.grant.repository:this.grant.repository.split('/')[0]+'/.github';
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),this.timeoutMs);let response:Response|null=null;
+    try{response=await fetch(`${this.grant.apiOrigin}/repos/${repository}${suffix}`,{headers:githubHeaders(source==='repository'?this.credential():null),redirect:'error',signal:signal?AbortSignal.any([signal,controller.signal]):controller.signal});if(response.status===404)return null;if(!response.ok)throw new Error(`GitHub ${response.status}`);return JSON.parse(await boundedResponse(response,1_000_000));}catch(e:any){throw new Error(/^GitHub \d+$/.test(e?.message)?e.message:'GitHub community read failed or timed out');}finally{await disposeOwnedResponse(response,controller);clearTimeout(timer);}
+  }
+  async communitySnapshot(source:'repository'|'owner',signal?:AbortSignal){
+    if(!['repository','owner'].includes(source))throw new Error('Invalid community source');const repository=source==='repository'?this.grant.repository:this.grant.repository.split('/')[0]+'/.github',meta=await this.communityRequest(source,'',signal);if(meta===null){if(source==='owner')return null;throw new Error('Repository unavailable');}if(meta.full_name!==repository||!ref(meta.default_branch)||source==='owner'&&(meta.private!==false||meta.visibility!=='public'))throw new Error('Community source identity/public visibility unverified');const commit=await this.communityRequest(source,`/commits/${encodeURIComponent(meta.default_branch)}`,signal);if(!sha.test(commit?.sha))throw new Error('Community default branch identity unverified');const pin={repository,head:commit.sha,source};this.communityPins.set(repository+'@'+commit.sha,pin);return structuredClone(pin);
+  }
+  async communityContent(pin:{repository:string;head:string;source:'repository'|'owner'},path:string,signal?:AbortSignal){
+    const known=this.communityPins.get(pin?.repository+'@'+pin?.head);if(!known||JSON.stringify(known)!==JSON.stringify(pin)||typeof path!=='string'||path.length>300||path.split('/').some(p=>p==='..'||p==='.'||!p)||!/^((\.github|docs)\/)?(pull_request_template\.md|PULL_REQUEST_TEMPLATE(\/[A-Za-z0-9_.-]+\.md)?|CONTRIBUTING\.md|ISSUE_TEMPLATE(\.[Mm][Dd]|\/[A-Za-z0-9_.-]+\.(md|ya?ml))?|AGENTS\.md)$/i.test(path))throw new Error('Community content target is not allowlisted');
+    return this.communityRequest(pin.source,`/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${pin.head}`,signal);
+  }
   async remoteRead(kind: "pull" | "ref" | "base" | "repository" | "protection" | "policy" | "checks" | "statuses" | "reviews" | "inline-comments" | "issue-comments", target: string, page = 1, signal?: AbortSignal, approvedHeadOrFresh?: string | boolean, fresh=false): Promise<any> {
     const approvedHead = typeof approvedHeadOrFresh === "string" ? approvedHeadOrFresh : undefined;
     if (typeof approvedHeadOrFresh === "boolean") fresh = approvedHeadOrFresh;
