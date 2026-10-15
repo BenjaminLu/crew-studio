@@ -1,3 +1,4 @@
+import {installGitHubReviewWorkflow} from '../domain/github-review-workflow';
 import {Onboarding} from '../onboarding';
 import {ArtifactStore} from '../artifacts';
 import {StaffingStore,staffingHash,installStaffingGuard,coffeeStaffingProject,type StaffingProject} from '../domain/staffing';
@@ -103,6 +104,7 @@ export function createRuntime(d: RuntimeDeps) {
   const onboarding=new Onboarding(engine,d.m3?.store??new ArtifactStore(d.dataDir));
   const originalFirstmate=installFirstmate(engine,projects,{onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending});
   const firstmate={specs:[...originalFirstmate.specs,...staffingTools.specs],call:(name:string,args:any,owner:any)=>name==='studio_change_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
+  const githubReview=installGitHubReviewWorkflow(engine,projects,d.dataDir,d.protectedRoots??[]);
   engine.load();
 
   const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
@@ -118,9 +120,10 @@ export function createRuntime(d: RuntimeDeps) {
   const grantNonces = new Map<string, number>();
   async function handle(req: Request, url: URL, who: { kind: string }, writing: boolean): Promise<Response | null> {
     const p = url.pathname;
-    if (!/^\/api\/(wf|wruns|scards|checks|policies|intake|coffee|onboarding)(\/|$)/.test(p)) return null;
+    if (!/^\/api\/(wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review)(\/|$)/.test(p)) return null;
     let b: any = {}; if (writing) { try { b = await req.json(); } catch {} }
     const by = who.kind === "phone" ? "captain (phone)" : "captain";
+    if(p==='/api/github-review/scan'||p==='/api/github-review/template'){if(req.method!=='POST'||!writing)return json({error:'Authenticated POST required'},405);if(who.kind!=='desktop')return json({error:'Confirm GitHub reviewer configuration on desktop'},403);try{return json(p.endsWith('/scan')?await githubReview.scan(b.project,b.url,req.signal):await githubReview.save(b,req.signal));}catch{return json({error:'GitHub review discovery/configuration could not be verified. Check registered project grant, PR URL and current access; no GitHub write was performed.',code:'github_review_unverified'},409);}}
     if (writing && who.kind === "phone" && !/^\/api\/scards\//.test(p)) return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
     try {
       if(p==='/api/onboarding'){

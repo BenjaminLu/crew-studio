@@ -74,3 +74,24 @@ claim. Source fixtures cite official GitHub REST reviews, review comments, issue
 comments and checks shapes. Upgrade tests retain old history and fail closed for
 missing/malformed/unbound policy descriptors. Root owns independent reviews,
 integrated full tests and any actual named-sandbox write acceptance.
+
+## Low-battery checkpoint — initial slice only
+
+Implemented: grant-bound PR scan, source account/evidence/head evaluation, registered
+project-only authenticated desktop scan/save endpoints, actual source-pinned
+coding graph template without merge edges, and an editable guide for choosing
+required/advisory account IDs and saving the policy. Saving uses actual Defs
+create/version APIs and a signed local confirmation record. No Task starts.
+The source admission guard refuses this draft template before allocation because
+coding/review wait runtime integration is NOT COMPLETE. This is not a claim that
+the full requested workflow can run. Template save/API/UI integration tests and
+independent review are still pending; scanner has 15 passing offline assertions.
+Draft template creation probe passed schema validation, 26 nodes and 57 edges.
+
+Remaining required before activation: actual captain-authorized Draft publication,
+head-bound persisted review wait/fix loop and required CI, model/skill admission,
+recovery/upgrade tests, actual UI tests, and repository/organization contribution,
+PR/issue template discovery with correct precedence and source-hash-bound body.
+Multiple source templates require explicit choice; missing required fields HOLD.
+No organization template rule or arbitrary repository instruction grants tools,
+network, secrets or publication authority. No real PR/company body is committed.

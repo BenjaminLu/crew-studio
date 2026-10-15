@@ -20,134 +20,135 @@ import b16 from "../workflows/v2/file-organization.wf.yaml" with { type: "file" 
 import b17 from "../workflows/v2/firstmate-proposal.wf.yaml" with { type: "file" };
 import b18 from "../workflows/v2/firstmate-register-project.wf.yaml" with { type: "file" };
 import b19 from "../workflows/v2/firstmate-staffing.wf.yaml" with { type: "file" };
-import b20 from "../workflows/v2/images.wf.yaml" with { type: "file" };
-import b21 from "../workflows/v2/pack-genesis.wf.yaml" with { type: "file" };
-import b22 from "../workflows/v2/templates/film.html" with { type: "file" };
-import b23 from "../workflows/v2/trivial-lane.wf.yaml" with { type: "file" };
-import b24 from "../workflows/v2/video.wf.yaml" with { type: "file" };
-import b25 from "../workflows/v2/web-prototype.wf.yaml" with { type: "file" };
-import b26 from "../packs/coffee-kit/checks/bundle-ready/check.yaml" with { type: "file" };
-import b27 from "../packs/coffee-kit/checks/designer/check.yaml" with { type: "file" };
-import b28 from "../packs/coffee-kit/checks/reviewer/check.yaml" with { type: "file" };
-import b29 from "../packs/coffee-kit/manifest.yaml" with { type: "file" };
-import b30 from "../packs/coffee-kit/skills/designer.md" with { type: "file" };
-import b31 from "../packs/coffee-kit/skills/hyperframes.md" with { type: "file" };
-import b32 from "../packs/coffee-kit/skills/image.md" with { type: "file" };
-import b33 from "../packs/coffee-kit/skills/reviewer.md" with { type: "file" };
-import b34 from "../packs/coffee-kit/skills/website.md" with { type: "file" };
-import b35 from "../packs/core/checks/artifact-ready/check.yaml" with { type: "file" };
-import b36 from "../packs/core/checks/brief-quality/check.yaml" with { type: "file" };
-import b37 from "../packs/core/checks/brief-quality/run" with { type: "file" };
-import b38 from "../packs/core/checks/lane-ready/check.yaml" with { type: "file" };
-import b39 from "../packs/core/checks/pack-genesis-measure/check.yaml" with { type: "file" };
-import b40 from "../packs/core/checks/pack-genesis-preview/check.yaml" with { type: "file" };
-import b41 from "../packs/core/checks/ste-wording/check.yaml" with { type: "file" };
-import b42 from "../packs/core/checks/ste-wording/run" with { type: "file" };
-import b43 from "../packs/core/evals/coordinator.json" with { type: "file" };
-import b44 from "../packs/core/manifest.yaml" with { type: "file" };
-import b45 from "../packs/core/skills/coordinator.md" with { type: "file" };
-import b46 from "../packs/core/skills/plain-writing/NOTICE.md" with { type: "file" };
-import b47 from "../packs/core/skills/plain-writing/SKILL.md" with { type: "file" };
-import b48 from "../packs/core/workflows/refine-demo.wf.yaml" with { type: "file" };
-import b49 from "../packs/documents/evals/writer.json" with { type: "file" };
-import b50 from "../packs/documents/manifest.yaml" with { type: "file" };
-import b51 from "../packs/documents/skills/writer.md" with { type: "file" };
-import b52 from "../packs/documents/workflows/document.flow.yaml" with { type: "file" };
-import b53 from "../packs/file-organization/checks/plan-gates/check.yaml" with { type: "file" };
-import b54 from "../packs/file-organization/evals/organizer.json" with { type: "file" };
-import b55 from "../packs/file-organization/manifest.yaml" with { type: "file" };
-import b56 from "../packs/file-organization/rules.yaml" with { type: "file" };
-import b57 from "../packs/file-organization/skills/organizer.md" with { type: "file" };
-import b58 from "../packs/file-organization/workflows/organize.flow.yaml" with { type: "file" };
-import b59 from "../packs/firstmate/checks/caller-coverage/check.yaml" with { type: "file" };
-import b60 from "../packs/firstmate/checks/caller-coverage/run" with { type: "file" };
-import b61 from "../packs/firstmate/checks/ci/check.yaml" with { type: "file" };
-import b62 from "../packs/firstmate/checks/ci/run" with { type: "file" };
-import b63 from "../packs/firstmate/checks/covering-suites/check.yaml" with { type: "file" };
-import b64 from "../packs/firstmate/checks/covering-suites/run" with { type: "file" };
-import b65 from "../packs/firstmate/checks/designer-compare/check.yaml" with { type: "file" };
-import b66 from "../packs/firstmate/checks/done-lines-observable/check.yaml" with { type: "file" };
-import b67 from "../packs/firstmate/checks/done-lines-provable/check.yaml" with { type: "file" };
-import b68 from "../packs/firstmate/checks/done-lines-provable/run" with { type: "file" };
-import b69 from "../packs/firstmate/checks/door-classify/check.yaml" with { type: "file" };
-import b70 from "../packs/firstmate/checks/fail-first/check.yaml" with { type: "file" };
-import b71 from "../packs/firstmate/checks/fail-first/run" with { type: "file" };
-import b72 from "../packs/firstmate/checks/file-size-cap/check.yaml" with { type: "file" };
-import b73 from "../packs/firstmate/checks/file-size-cap/run" with { type: "file" };
-import b74 from "../packs/firstmate/checks/fixture-modules/check.yaml" with { type: "file" };
-import b75 from "../packs/firstmate/checks/fixture-modules/run" with { type: "file" };
-import b76 from "../packs/firstmate/checks/follow-up-triage/check.yaml" with { type: "file" };
-import b77 from "../packs/firstmate/checks/gate-approval/check.yaml" with { type: "file" };
-import b78 from "../packs/firstmate/checks/gate-branch/check.yaml" with { type: "file" };
-import b79 from "../packs/firstmate/checks/gate-ci/check.yaml" with { type: "file" };
-import b80 from "../packs/firstmate/checks/gate-failfirst/check.yaml" with { type: "file" };
-import b81 from "../packs/firstmate/checks/gate-rebase/check.yaml" with { type: "file" };
-import b82 from "../packs/firstmate/checks/gate-scope/check.yaml" with { type: "file" };
-import b83 from "../packs/firstmate/checks/lints/check.yaml" with { type: "file" };
-import b84 from "../packs/firstmate/checks/main-ci/check.yaml" with { type: "file" };
-import b85 from "../packs/firstmate/checks/main-ci/run" with { type: "file" };
-import b86 from "../packs/firstmate/checks/no-impl-detail/check.yaml" with { type: "file" };
-import b87 from "../packs/firstmate/checks/overlap/check.yaml" with { type: "file" };
-import b88 from "../packs/firstmate/checks/plan-covers-done-lines/check.yaml" with { type: "file" };
-import b89 from "../packs/firstmate/checks/plan-covers-done-lines/run" with { type: "file" };
-import b90 from "../packs/firstmate/checks/questions-listed/check.yaml" with { type: "file" };
-import b91 from "../packs/firstmate/checks/questions-listed/run" with { type: "file" };
-import b92 from "../packs/firstmate/checks/report-schema/check.yaml" with { type: "file" };
-import b93 from "../packs/firstmate/checks/report-schema/run" with { type: "file" };
-import b94 from "../packs/firstmate/checks/retro-trigger/check.yaml" with { type: "file" };
-import b95 from "../packs/firstmate/checks/review-depth/check.yaml" with { type: "file" };
-import b96 from "../packs/firstmate/checks/review-verdict/check.yaml" with { type: "file" };
-import b97 from "../packs/firstmate/checks/scope/check.yaml" with { type: "file" };
-import b98 from "../packs/firstmate/checks/self-update/check.yaml" with { type: "file" };
-import b99 from "../packs/firstmate/checks/self-update/run" with { type: "file" };
-import b100 from "../packs/firstmate/checks/shard-budget/check.yaml" with { type: "file" };
-import b101 from "../packs/firstmate/checks/spec-schema/check.yaml" with { type: "file" };
-import b102 from "../packs/firstmate/checks/spec-schema/run" with { type: "file" };
-import b103 from "../packs/firstmate/checks/ui-captures/check.yaml" with { type: "file" };
-import b104 from "../packs/firstmate/evals/coordinator.json" with { type: "file" };
-import b105 from "../packs/firstmate/manifest.yaml" with { type: "file" };
-import b106 from "../packs/firstmate/policies.yaml" with { type: "file" };
-import b107 from "../packs/firstmate/skills/designer.md" with { type: "file" };
-import b108 from "../packs/firstmate/skills/firstmate.md" with { type: "file" };
-import b109 from "../packs/firstmate/skills/reviewer.md" with { type: "file" };
-import b110 from "../packs/firstmate/skills/worker.md" with { type: "file" };
-import b111 from "../packs/firstmate/workflows/code-firstmate.wf.yaml" with { type: "file" };
-import b112 from "../skins/captain/LICENSE.txt" with { type: "file" };
-import b113 from "../skins/captain/ORIGIN.txt" with { type: "file" };
-import b114 from "../skins/captain/captain.css" with { type: "file" };
-import b115 from "../skins/captain/captain.js" with { type: "file" };
-import b116 from "../skins/captain/index.html" with { type: "file" };
-import b117 from "../skins/captain/manifest.json" with { type: "file" };
-import b118 from "../skins/kit/README.md" with { type: "file" };
-import b119 from "../skins/kit/skin-kit.js" with { type: "file" };
-import b120 from "../skins/terminal/index.html" with { type: "file" };
-import b121 from "../skins/terminal/manifest.json" with { type: "file" };
-import b122 from "../skins/voyage/index.html" with { type: "file" };
-import b123 from "../skins/voyage/manifest.json" with { type: "file" };
-import b124 from "../skins/voyage/voyage.css" with { type: "file" };
-import b125 from "../skins/voyage/voyage.js" with { type: "file" };
-import b126 from "../templates/sandbox-app/.crew/app.json" with { type: "file" };
-import b127 from "../templates/sandbox-app/app/README.md" with { type: "file" };
-import b128 from "../templates/sandbox-app/app/build.ts" with { type: "file" };
-import b129 from "../templates/sandbox-app/app/server.ts" with { type: "file" };
-import b130 from "../templates/sandbox-app/app/shop.ts" with { type: "file" };
-import b131 from "../templates/sandbox-app/test/shop.test.ts" with { type: "file" };
-import b132 from "../templates/sandbox-repo/.crew/gates.json" with { type: "file" };
-import b133 from "../templates/sandbox-repo/.github/CODEOWNERS" with { type: "file" };
-import b134 from "../templates/sandbox-repo/.github/ISSUE_TEMPLATE/bug_report.md" with { type: "file" };
-import b135 from "../templates/sandbox-repo/.github/ISSUE_TEMPLATE/feature_request.md" with { type: "file" };
-import b136 from "../templates/sandbox-repo/.github/pull_request_template.md" with { type: "file" };
-import b137 from "../templates/sandbox-repo/.github/workflows/ci.yml" with { type: "file" };
-import b138 from "../templates/sandbox-repo/CONTRIBUTING.md" with { type: "file" };
-import b139 from "../templates/sandbox-repo/README.md" with { type: "file" };
-import b140 from "../templates/sandbox-repo/README_SANDBOX.md" with { type: "file" };
-import b141 from "../templates/sandbox-repo/package.json" with { type: "file" };
-import b142 from "../templates/sandbox-repo/scripts/lint.ts" with { type: "file" };
-import b143 from "../templates/sandbox-repo/scripts/test-shard.ts" with { type: "file" };
-import b144 from "../templates/sandbox-repo/src/money.ts" with { type: "file" };
-import b145 from "../templates/sandbox-repo/test/format.test.ts" with { type: "file" };
-import b146 from "../templates/sandbox-repo/test/money.test.ts" with { type: "file" };
-import b147 from "../templates/sandbox-repo/tsconfig.json" with { type: "file" };
+import b20 from "../workflows/v2/github-review.wf.yaml" with { type: "file" };
+import b21 from "../workflows/v2/images.wf.yaml" with { type: "file" };
+import b22 from "../workflows/v2/pack-genesis.wf.yaml" with { type: "file" };
+import b23 from "../workflows/v2/templates/film.html" with { type: "file" };
+import b24 from "../workflows/v2/trivial-lane.wf.yaml" with { type: "file" };
+import b25 from "../workflows/v2/video.wf.yaml" with { type: "file" };
+import b26 from "../workflows/v2/web-prototype.wf.yaml" with { type: "file" };
+import b27 from "../packs/coffee-kit/checks/bundle-ready/check.yaml" with { type: "file" };
+import b28 from "../packs/coffee-kit/checks/designer/check.yaml" with { type: "file" };
+import b29 from "../packs/coffee-kit/checks/reviewer/check.yaml" with { type: "file" };
+import b30 from "../packs/coffee-kit/manifest.yaml" with { type: "file" };
+import b31 from "../packs/coffee-kit/skills/designer.md" with { type: "file" };
+import b32 from "../packs/coffee-kit/skills/hyperframes.md" with { type: "file" };
+import b33 from "../packs/coffee-kit/skills/image.md" with { type: "file" };
+import b34 from "../packs/coffee-kit/skills/reviewer.md" with { type: "file" };
+import b35 from "../packs/coffee-kit/skills/website.md" with { type: "file" };
+import b36 from "../packs/core/checks/artifact-ready/check.yaml" with { type: "file" };
+import b37 from "../packs/core/checks/brief-quality/check.yaml" with { type: "file" };
+import b38 from "../packs/core/checks/brief-quality/run" with { type: "file" };
+import b39 from "../packs/core/checks/lane-ready/check.yaml" with { type: "file" };
+import b40 from "../packs/core/checks/pack-genesis-measure/check.yaml" with { type: "file" };
+import b41 from "../packs/core/checks/pack-genesis-preview/check.yaml" with { type: "file" };
+import b42 from "../packs/core/checks/ste-wording/check.yaml" with { type: "file" };
+import b43 from "../packs/core/checks/ste-wording/run" with { type: "file" };
+import b44 from "../packs/core/evals/coordinator.json" with { type: "file" };
+import b45 from "../packs/core/manifest.yaml" with { type: "file" };
+import b46 from "../packs/core/skills/coordinator.md" with { type: "file" };
+import b47 from "../packs/core/skills/plain-writing/NOTICE.md" with { type: "file" };
+import b48 from "../packs/core/skills/plain-writing/SKILL.md" with { type: "file" };
+import b49 from "../packs/core/workflows/refine-demo.wf.yaml" with { type: "file" };
+import b50 from "../packs/documents/evals/writer.json" with { type: "file" };
+import b51 from "../packs/documents/manifest.yaml" with { type: "file" };
+import b52 from "../packs/documents/skills/writer.md" with { type: "file" };
+import b53 from "../packs/documents/workflows/document.flow.yaml" with { type: "file" };
+import b54 from "../packs/file-organization/checks/plan-gates/check.yaml" with { type: "file" };
+import b55 from "../packs/file-organization/evals/organizer.json" with { type: "file" };
+import b56 from "../packs/file-organization/manifest.yaml" with { type: "file" };
+import b57 from "../packs/file-organization/rules.yaml" with { type: "file" };
+import b58 from "../packs/file-organization/skills/organizer.md" with { type: "file" };
+import b59 from "../packs/file-organization/workflows/organize.flow.yaml" with { type: "file" };
+import b60 from "../packs/firstmate/checks/caller-coverage/check.yaml" with { type: "file" };
+import b61 from "../packs/firstmate/checks/caller-coverage/run" with { type: "file" };
+import b62 from "../packs/firstmate/checks/ci/check.yaml" with { type: "file" };
+import b63 from "../packs/firstmate/checks/ci/run" with { type: "file" };
+import b64 from "../packs/firstmate/checks/covering-suites/check.yaml" with { type: "file" };
+import b65 from "../packs/firstmate/checks/covering-suites/run" with { type: "file" };
+import b66 from "../packs/firstmate/checks/designer-compare/check.yaml" with { type: "file" };
+import b67 from "../packs/firstmate/checks/done-lines-observable/check.yaml" with { type: "file" };
+import b68 from "../packs/firstmate/checks/done-lines-provable/check.yaml" with { type: "file" };
+import b69 from "../packs/firstmate/checks/done-lines-provable/run" with { type: "file" };
+import b70 from "../packs/firstmate/checks/door-classify/check.yaml" with { type: "file" };
+import b71 from "../packs/firstmate/checks/fail-first/check.yaml" with { type: "file" };
+import b72 from "../packs/firstmate/checks/fail-first/run" with { type: "file" };
+import b73 from "../packs/firstmate/checks/file-size-cap/check.yaml" with { type: "file" };
+import b74 from "../packs/firstmate/checks/file-size-cap/run" with { type: "file" };
+import b75 from "../packs/firstmate/checks/fixture-modules/check.yaml" with { type: "file" };
+import b76 from "../packs/firstmate/checks/fixture-modules/run" with { type: "file" };
+import b77 from "../packs/firstmate/checks/follow-up-triage/check.yaml" with { type: "file" };
+import b78 from "../packs/firstmate/checks/gate-approval/check.yaml" with { type: "file" };
+import b79 from "../packs/firstmate/checks/gate-branch/check.yaml" with { type: "file" };
+import b80 from "../packs/firstmate/checks/gate-ci/check.yaml" with { type: "file" };
+import b81 from "../packs/firstmate/checks/gate-failfirst/check.yaml" with { type: "file" };
+import b82 from "../packs/firstmate/checks/gate-rebase/check.yaml" with { type: "file" };
+import b83 from "../packs/firstmate/checks/gate-scope/check.yaml" with { type: "file" };
+import b84 from "../packs/firstmate/checks/lints/check.yaml" with { type: "file" };
+import b85 from "../packs/firstmate/checks/main-ci/check.yaml" with { type: "file" };
+import b86 from "../packs/firstmate/checks/main-ci/run" with { type: "file" };
+import b87 from "../packs/firstmate/checks/no-impl-detail/check.yaml" with { type: "file" };
+import b88 from "../packs/firstmate/checks/overlap/check.yaml" with { type: "file" };
+import b89 from "../packs/firstmate/checks/plan-covers-done-lines/check.yaml" with { type: "file" };
+import b90 from "../packs/firstmate/checks/plan-covers-done-lines/run" with { type: "file" };
+import b91 from "../packs/firstmate/checks/questions-listed/check.yaml" with { type: "file" };
+import b92 from "../packs/firstmate/checks/questions-listed/run" with { type: "file" };
+import b93 from "../packs/firstmate/checks/report-schema/check.yaml" with { type: "file" };
+import b94 from "../packs/firstmate/checks/report-schema/run" with { type: "file" };
+import b95 from "../packs/firstmate/checks/retro-trigger/check.yaml" with { type: "file" };
+import b96 from "../packs/firstmate/checks/review-depth/check.yaml" with { type: "file" };
+import b97 from "../packs/firstmate/checks/review-verdict/check.yaml" with { type: "file" };
+import b98 from "../packs/firstmate/checks/scope/check.yaml" with { type: "file" };
+import b99 from "../packs/firstmate/checks/self-update/check.yaml" with { type: "file" };
+import b100 from "../packs/firstmate/checks/self-update/run" with { type: "file" };
+import b101 from "../packs/firstmate/checks/shard-budget/check.yaml" with { type: "file" };
+import b102 from "../packs/firstmate/checks/spec-schema/check.yaml" with { type: "file" };
+import b103 from "../packs/firstmate/checks/spec-schema/run" with { type: "file" };
+import b104 from "../packs/firstmate/checks/ui-captures/check.yaml" with { type: "file" };
+import b105 from "../packs/firstmate/evals/coordinator.json" with { type: "file" };
+import b106 from "../packs/firstmate/manifest.yaml" with { type: "file" };
+import b107 from "../packs/firstmate/policies.yaml" with { type: "file" };
+import b108 from "../packs/firstmate/skills/designer.md" with { type: "file" };
+import b109 from "../packs/firstmate/skills/firstmate.md" with { type: "file" };
+import b110 from "../packs/firstmate/skills/reviewer.md" with { type: "file" };
+import b111 from "../packs/firstmate/skills/worker.md" with { type: "file" };
+import b112 from "../packs/firstmate/workflows/code-firstmate.wf.yaml" with { type: "file" };
+import b113 from "../skins/captain/LICENSE.txt" with { type: "file" };
+import b114 from "../skins/captain/ORIGIN.txt" with { type: "file" };
+import b115 from "../skins/captain/captain.css" with { type: "file" };
+import b116 from "../skins/captain/captain.js" with { type: "file" };
+import b117 from "../skins/captain/index.html" with { type: "file" };
+import b118 from "../skins/captain/manifest.json" with { type: "file" };
+import b119 from "../skins/kit/README.md" with { type: "file" };
+import b120 from "../skins/kit/skin-kit.js" with { type: "file" };
+import b121 from "../skins/terminal/index.html" with { type: "file" };
+import b122 from "../skins/terminal/manifest.json" with { type: "file" };
+import b123 from "../skins/voyage/index.html" with { type: "file" };
+import b124 from "../skins/voyage/manifest.json" with { type: "file" };
+import b125 from "../skins/voyage/voyage.css" with { type: "file" };
+import b126 from "../skins/voyage/voyage.js" with { type: "file" };
+import b127 from "../templates/sandbox-app/.crew/app.json" with { type: "file" };
+import b128 from "../templates/sandbox-app/app/README.md" with { type: "file" };
+import b129 from "../templates/sandbox-app/app/build.ts" with { type: "file" };
+import b130 from "../templates/sandbox-app/app/server.ts" with { type: "file" };
+import b131 from "../templates/sandbox-app/app/shop.ts" with { type: "file" };
+import b132 from "../templates/sandbox-app/test/shop.test.ts" with { type: "file" };
+import b133 from "../templates/sandbox-repo/.crew/gates.json" with { type: "file" };
+import b134 from "../templates/sandbox-repo/.github/CODEOWNERS" with { type: "file" };
+import b135 from "../templates/sandbox-repo/.github/ISSUE_TEMPLATE/bug_report.md" with { type: "file" };
+import b136 from "../templates/sandbox-repo/.github/ISSUE_TEMPLATE/feature_request.md" with { type: "file" };
+import b137 from "../templates/sandbox-repo/.github/pull_request_template.md" with { type: "file" };
+import b138 from "../templates/sandbox-repo/.github/workflows/ci.yml" with { type: "file" };
+import b139 from "../templates/sandbox-repo/CONTRIBUTING.md" with { type: "file" };
+import b140 from "../templates/sandbox-repo/README.md" with { type: "file" };
+import b141 from "../templates/sandbox-repo/README_SANDBOX.md" with { type: "file" };
+import b142 from "../templates/sandbox-repo/package.json" with { type: "file" };
+import b143 from "../templates/sandbox-repo/scripts/lint.ts" with { type: "file" };
+import b144 from "../templates/sandbox-repo/scripts/test-shard.ts" with { type: "file" };
+import b145 from "../templates/sandbox-repo/src/money.ts" with { type: "file" };
+import b146 from "../templates/sandbox-repo/test/format.test.ts" with { type: "file" };
+import b147 from "../templates/sandbox-repo/test/money.test.ts" with { type: "file" };
+import b148 from "../templates/sandbox-repo/tsconfig.json" with { type: "file" };
 
 export const BUNDLED: Record<string, string> = {
   "workflows/change.flow.yaml": b0,
@@ -170,132 +171,133 @@ export const BUNDLED: Record<string, string> = {
   "workflows/v2/firstmate-proposal.wf.yaml": b17,
   "workflows/v2/firstmate-register-project.wf.yaml": b18,
   "workflows/v2/firstmate-staffing.wf.yaml": b19,
-  "workflows/v2/images.wf.yaml": b20,
-  "workflows/v2/pack-genesis.wf.yaml": b21,
-  "workflows/v2/templates/film.html": b22,
-  "workflows/v2/trivial-lane.wf.yaml": b23,
-  "workflows/v2/video.wf.yaml": b24,
-  "workflows/v2/web-prototype.wf.yaml": b25,
-  "packs/coffee-kit/checks/bundle-ready/check.yaml": b26,
-  "packs/coffee-kit/checks/designer/check.yaml": b27,
-  "packs/coffee-kit/checks/reviewer/check.yaml": b28,
-  "packs/coffee-kit/manifest.yaml": b29,
-  "packs/coffee-kit/skills/designer.md": b30,
-  "packs/coffee-kit/skills/hyperframes.md": b31,
-  "packs/coffee-kit/skills/image.md": b32,
-  "packs/coffee-kit/skills/reviewer.md": b33,
-  "packs/coffee-kit/skills/website.md": b34,
-  "packs/core/checks/artifact-ready/check.yaml": b35,
-  "packs/core/checks/brief-quality/check.yaml": b36,
-  "packs/core/checks/brief-quality/run": b37,
-  "packs/core/checks/lane-ready/check.yaml": b38,
-  "packs/core/checks/pack-genesis-measure/check.yaml": b39,
-  "packs/core/checks/pack-genesis-preview/check.yaml": b40,
-  "packs/core/checks/ste-wording/check.yaml": b41,
-  "packs/core/checks/ste-wording/run": b42,
-  "packs/core/evals/coordinator.json": b43,
-  "packs/core/manifest.yaml": b44,
-  "packs/core/skills/coordinator.md": b45,
-  "packs/core/skills/plain-writing/NOTICE.md": b46,
-  "packs/core/skills/plain-writing/SKILL.md": b47,
-  "packs/core/workflows/refine-demo.wf.yaml": b48,
-  "packs/documents/evals/writer.json": b49,
-  "packs/documents/manifest.yaml": b50,
-  "packs/documents/skills/writer.md": b51,
-  "packs/documents/workflows/document.flow.yaml": b52,
-  "packs/file-organization/checks/plan-gates/check.yaml": b53,
-  "packs/file-organization/evals/organizer.json": b54,
-  "packs/file-organization/manifest.yaml": b55,
-  "packs/file-organization/rules.yaml": b56,
-  "packs/file-organization/skills/organizer.md": b57,
-  "packs/file-organization/workflows/organize.flow.yaml": b58,
-  "packs/firstmate/checks/caller-coverage/check.yaml": b59,
-  "packs/firstmate/checks/caller-coverage/run": b60,
-  "packs/firstmate/checks/ci/check.yaml": b61,
-  "packs/firstmate/checks/ci/run": b62,
-  "packs/firstmate/checks/covering-suites/check.yaml": b63,
-  "packs/firstmate/checks/covering-suites/run": b64,
-  "packs/firstmate/checks/designer-compare/check.yaml": b65,
-  "packs/firstmate/checks/done-lines-observable/check.yaml": b66,
-  "packs/firstmate/checks/done-lines-provable/check.yaml": b67,
-  "packs/firstmate/checks/done-lines-provable/run": b68,
-  "packs/firstmate/checks/door-classify/check.yaml": b69,
-  "packs/firstmate/checks/fail-first/check.yaml": b70,
-  "packs/firstmate/checks/fail-first/run": b71,
-  "packs/firstmate/checks/file-size-cap/check.yaml": b72,
-  "packs/firstmate/checks/file-size-cap/run": b73,
-  "packs/firstmate/checks/fixture-modules/check.yaml": b74,
-  "packs/firstmate/checks/fixture-modules/run": b75,
-  "packs/firstmate/checks/follow-up-triage/check.yaml": b76,
-  "packs/firstmate/checks/gate-approval/check.yaml": b77,
-  "packs/firstmate/checks/gate-branch/check.yaml": b78,
-  "packs/firstmate/checks/gate-ci/check.yaml": b79,
-  "packs/firstmate/checks/gate-failfirst/check.yaml": b80,
-  "packs/firstmate/checks/gate-rebase/check.yaml": b81,
-  "packs/firstmate/checks/gate-scope/check.yaml": b82,
-  "packs/firstmate/checks/lints/check.yaml": b83,
-  "packs/firstmate/checks/main-ci/check.yaml": b84,
-  "packs/firstmate/checks/main-ci/run": b85,
-  "packs/firstmate/checks/no-impl-detail/check.yaml": b86,
-  "packs/firstmate/checks/overlap/check.yaml": b87,
-  "packs/firstmate/checks/plan-covers-done-lines/check.yaml": b88,
-  "packs/firstmate/checks/plan-covers-done-lines/run": b89,
-  "packs/firstmate/checks/questions-listed/check.yaml": b90,
-  "packs/firstmate/checks/questions-listed/run": b91,
-  "packs/firstmate/checks/report-schema/check.yaml": b92,
-  "packs/firstmate/checks/report-schema/run": b93,
-  "packs/firstmate/checks/retro-trigger/check.yaml": b94,
-  "packs/firstmate/checks/review-depth/check.yaml": b95,
-  "packs/firstmate/checks/review-verdict/check.yaml": b96,
-  "packs/firstmate/checks/scope/check.yaml": b97,
-  "packs/firstmate/checks/self-update/check.yaml": b98,
-  "packs/firstmate/checks/self-update/run": b99,
-  "packs/firstmate/checks/shard-budget/check.yaml": b100,
-  "packs/firstmate/checks/spec-schema/check.yaml": b101,
-  "packs/firstmate/checks/spec-schema/run": b102,
-  "packs/firstmate/checks/ui-captures/check.yaml": b103,
-  "packs/firstmate/evals/coordinator.json": b104,
-  "packs/firstmate/manifest.yaml": b105,
-  "packs/firstmate/policies.yaml": b106,
-  "packs/firstmate/skills/designer.md": b107,
-  "packs/firstmate/skills/firstmate.md": b108,
-  "packs/firstmate/skills/reviewer.md": b109,
-  "packs/firstmate/skills/worker.md": b110,
-  "packs/firstmate/workflows/code-firstmate.wf.yaml": b111,
-  "skins/captain/LICENSE.txt": b112,
-  "skins/captain/ORIGIN.txt": b113,
-  "skins/captain/captain.css": b114,
-  "skins/captain/captain.js": b115,
-  "skins/captain/index.html": b116,
-  "skins/captain/manifest.json": b117,
-  "skins/kit/README.md": b118,
-  "skins/kit/skin-kit.js": b119,
-  "skins/terminal/index.html": b120,
-  "skins/terminal/manifest.json": b121,
-  "skins/voyage/index.html": b122,
-  "skins/voyage/manifest.json": b123,
-  "skins/voyage/voyage.css": b124,
-  "skins/voyage/voyage.js": b125,
-  "templates/sandbox-app/.crew/app.json": b126,
-  "templates/sandbox-app/app/README.md": b127,
-  "templates/sandbox-app/app/build.ts": b128,
-  "templates/sandbox-app/app/server.ts": b129,
-  "templates/sandbox-app/app/shop.ts": b130,
-  "templates/sandbox-app/test/shop.test.ts": b131,
-  "templates/sandbox-repo/.crew/gates.json": b132,
-  "templates/sandbox-repo/.github/CODEOWNERS": b133,
-  "templates/sandbox-repo/.github/ISSUE_TEMPLATE/bug_report.md": b134,
-  "templates/sandbox-repo/.github/ISSUE_TEMPLATE/feature_request.md": b135,
-  "templates/sandbox-repo/.github/pull_request_template.md": b136,
-  "templates/sandbox-repo/.github/workflows/ci.yml": b137,
-  "templates/sandbox-repo/CONTRIBUTING.md": b138,
-  "templates/sandbox-repo/README.md": b139,
-  "templates/sandbox-repo/README_SANDBOX.md": b140,
-  "templates/sandbox-repo/package.json": b141,
-  "templates/sandbox-repo/scripts/lint.ts": b142,
-  "templates/sandbox-repo/scripts/test-shard.ts": b143,
-  "templates/sandbox-repo/src/money.ts": b144,
-  "templates/sandbox-repo/test/format.test.ts": b145,
-  "templates/sandbox-repo/test/money.test.ts": b146,
-  "templates/sandbox-repo/tsconfig.json": b147,
+  "workflows/v2/github-review.wf.yaml": b20,
+  "workflows/v2/images.wf.yaml": b21,
+  "workflows/v2/pack-genesis.wf.yaml": b22,
+  "workflows/v2/templates/film.html": b23,
+  "workflows/v2/trivial-lane.wf.yaml": b24,
+  "workflows/v2/video.wf.yaml": b25,
+  "workflows/v2/web-prototype.wf.yaml": b26,
+  "packs/coffee-kit/checks/bundle-ready/check.yaml": b27,
+  "packs/coffee-kit/checks/designer/check.yaml": b28,
+  "packs/coffee-kit/checks/reviewer/check.yaml": b29,
+  "packs/coffee-kit/manifest.yaml": b30,
+  "packs/coffee-kit/skills/designer.md": b31,
+  "packs/coffee-kit/skills/hyperframes.md": b32,
+  "packs/coffee-kit/skills/image.md": b33,
+  "packs/coffee-kit/skills/reviewer.md": b34,
+  "packs/coffee-kit/skills/website.md": b35,
+  "packs/core/checks/artifact-ready/check.yaml": b36,
+  "packs/core/checks/brief-quality/check.yaml": b37,
+  "packs/core/checks/brief-quality/run": b38,
+  "packs/core/checks/lane-ready/check.yaml": b39,
+  "packs/core/checks/pack-genesis-measure/check.yaml": b40,
+  "packs/core/checks/pack-genesis-preview/check.yaml": b41,
+  "packs/core/checks/ste-wording/check.yaml": b42,
+  "packs/core/checks/ste-wording/run": b43,
+  "packs/core/evals/coordinator.json": b44,
+  "packs/core/manifest.yaml": b45,
+  "packs/core/skills/coordinator.md": b46,
+  "packs/core/skills/plain-writing/NOTICE.md": b47,
+  "packs/core/skills/plain-writing/SKILL.md": b48,
+  "packs/core/workflows/refine-demo.wf.yaml": b49,
+  "packs/documents/evals/writer.json": b50,
+  "packs/documents/manifest.yaml": b51,
+  "packs/documents/skills/writer.md": b52,
+  "packs/documents/workflows/document.flow.yaml": b53,
+  "packs/file-organization/checks/plan-gates/check.yaml": b54,
+  "packs/file-organization/evals/organizer.json": b55,
+  "packs/file-organization/manifest.yaml": b56,
+  "packs/file-organization/rules.yaml": b57,
+  "packs/file-organization/skills/organizer.md": b58,
+  "packs/file-organization/workflows/organize.flow.yaml": b59,
+  "packs/firstmate/checks/caller-coverage/check.yaml": b60,
+  "packs/firstmate/checks/caller-coverage/run": b61,
+  "packs/firstmate/checks/ci/check.yaml": b62,
+  "packs/firstmate/checks/ci/run": b63,
+  "packs/firstmate/checks/covering-suites/check.yaml": b64,
+  "packs/firstmate/checks/covering-suites/run": b65,
+  "packs/firstmate/checks/designer-compare/check.yaml": b66,
+  "packs/firstmate/checks/done-lines-observable/check.yaml": b67,
+  "packs/firstmate/checks/done-lines-provable/check.yaml": b68,
+  "packs/firstmate/checks/done-lines-provable/run": b69,
+  "packs/firstmate/checks/door-classify/check.yaml": b70,
+  "packs/firstmate/checks/fail-first/check.yaml": b71,
+  "packs/firstmate/checks/fail-first/run": b72,
+  "packs/firstmate/checks/file-size-cap/check.yaml": b73,
+  "packs/firstmate/checks/file-size-cap/run": b74,
+  "packs/firstmate/checks/fixture-modules/check.yaml": b75,
+  "packs/firstmate/checks/fixture-modules/run": b76,
+  "packs/firstmate/checks/follow-up-triage/check.yaml": b77,
+  "packs/firstmate/checks/gate-approval/check.yaml": b78,
+  "packs/firstmate/checks/gate-branch/check.yaml": b79,
+  "packs/firstmate/checks/gate-ci/check.yaml": b80,
+  "packs/firstmate/checks/gate-failfirst/check.yaml": b81,
+  "packs/firstmate/checks/gate-rebase/check.yaml": b82,
+  "packs/firstmate/checks/gate-scope/check.yaml": b83,
+  "packs/firstmate/checks/lints/check.yaml": b84,
+  "packs/firstmate/checks/main-ci/check.yaml": b85,
+  "packs/firstmate/checks/main-ci/run": b86,
+  "packs/firstmate/checks/no-impl-detail/check.yaml": b87,
+  "packs/firstmate/checks/overlap/check.yaml": b88,
+  "packs/firstmate/checks/plan-covers-done-lines/check.yaml": b89,
+  "packs/firstmate/checks/plan-covers-done-lines/run": b90,
+  "packs/firstmate/checks/questions-listed/check.yaml": b91,
+  "packs/firstmate/checks/questions-listed/run": b92,
+  "packs/firstmate/checks/report-schema/check.yaml": b93,
+  "packs/firstmate/checks/report-schema/run": b94,
+  "packs/firstmate/checks/retro-trigger/check.yaml": b95,
+  "packs/firstmate/checks/review-depth/check.yaml": b96,
+  "packs/firstmate/checks/review-verdict/check.yaml": b97,
+  "packs/firstmate/checks/scope/check.yaml": b98,
+  "packs/firstmate/checks/self-update/check.yaml": b99,
+  "packs/firstmate/checks/self-update/run": b100,
+  "packs/firstmate/checks/shard-budget/check.yaml": b101,
+  "packs/firstmate/checks/spec-schema/check.yaml": b102,
+  "packs/firstmate/checks/spec-schema/run": b103,
+  "packs/firstmate/checks/ui-captures/check.yaml": b104,
+  "packs/firstmate/evals/coordinator.json": b105,
+  "packs/firstmate/manifest.yaml": b106,
+  "packs/firstmate/policies.yaml": b107,
+  "packs/firstmate/skills/designer.md": b108,
+  "packs/firstmate/skills/firstmate.md": b109,
+  "packs/firstmate/skills/reviewer.md": b110,
+  "packs/firstmate/skills/worker.md": b111,
+  "packs/firstmate/workflows/code-firstmate.wf.yaml": b112,
+  "skins/captain/LICENSE.txt": b113,
+  "skins/captain/ORIGIN.txt": b114,
+  "skins/captain/captain.css": b115,
+  "skins/captain/captain.js": b116,
+  "skins/captain/index.html": b117,
+  "skins/captain/manifest.json": b118,
+  "skins/kit/README.md": b119,
+  "skins/kit/skin-kit.js": b120,
+  "skins/terminal/index.html": b121,
+  "skins/terminal/manifest.json": b122,
+  "skins/voyage/index.html": b123,
+  "skins/voyage/manifest.json": b124,
+  "skins/voyage/voyage.css": b125,
+  "skins/voyage/voyage.js": b126,
+  "templates/sandbox-app/.crew/app.json": b127,
+  "templates/sandbox-app/app/README.md": b128,
+  "templates/sandbox-app/app/build.ts": b129,
+  "templates/sandbox-app/app/server.ts": b130,
+  "templates/sandbox-app/app/shop.ts": b131,
+  "templates/sandbox-app/test/shop.test.ts": b132,
+  "templates/sandbox-repo/.crew/gates.json": b133,
+  "templates/sandbox-repo/.github/CODEOWNERS": b134,
+  "templates/sandbox-repo/.github/ISSUE_TEMPLATE/bug_report.md": b135,
+  "templates/sandbox-repo/.github/ISSUE_TEMPLATE/feature_request.md": b136,
+  "templates/sandbox-repo/.github/pull_request_template.md": b137,
+  "templates/sandbox-repo/.github/workflows/ci.yml": b138,
+  "templates/sandbox-repo/CONTRIBUTING.md": b139,
+  "templates/sandbox-repo/README.md": b140,
+  "templates/sandbox-repo/README_SANDBOX.md": b141,
+  "templates/sandbox-repo/package.json": b142,
+  "templates/sandbox-repo/scripts/lint.ts": b143,
+  "templates/sandbox-repo/scripts/test-shard.ts": b144,
+  "templates/sandbox-repo/src/money.ts": b145,
+  "templates/sandbox-repo/test/format.test.ts": b146,
+  "templates/sandbox-repo/test/money.test.ts": b147,
+  "templates/sandbox-repo/tsconfig.json": b148,
 };

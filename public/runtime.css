@@ -234,3 +234,4 @@ body:not(.chat-closed) .rt-cue { top: calc(120px + env(safe-area-inset-top, 0px)
 .rt-rungraph-panel.expanded svg{touch-action:none}
 .rt-rungraph-detail{overflow-wrap:anywhere}
 @media(max-width:640px){.rt-rungraph-panel{padding:10px}.rt-rungraph-viewport{height:360px}.rt-rungraph-panel.expanded{inset:0;border-radius:0}.rt-rungraph-tools .btn{min-height:40px}}
+.github-review-account{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}.github-review-account input{width:auto}.github-review-account select{max-width:100%}
