@@ -658,18 +658,7 @@ function viewRun(id) {
   if (!v.gview) v.gview = (() => { try { return localStorage.getItem("crew.graphView") === "detail" ? "detail" : "simple"; } catch { return "simple"; } })();
   const visits = Object.fromEntries(Object.entries(r.nodes).map(([k, n]) => [k, n.visits || 0]));
   const simpleRun = v.gview === "simple";
-  const g = graph(r.def, { states, walked: new Set(r.walked || []), visits, simple: simpleRun, wrap: Math.max(2, Math.min(8, Math.floor(((Math.min(innerWidth, 1200) - 60) * 15 / 11 - 80) / window.crewLayout.COL))), collapsed: v.collapsed, redraw: () => rerender(),
-    onToggleStage: (sid) => { const c = new Set(v.collapsed); c.has(sid) ? c.delete(sid) : c.add(sid); v.collapsed = [...c]; rerender(); } });
-  const viewSeg = h("div", { class: "seg rt-viewseg", role: "group", "aria-label": T("Graph view", "流程圖檢視") }, ["simple", "detail"].map((k) => h("button", { type: "button", "data-view-toggle": k, "aria-pressed": String(v.gview === k),
-    onclick: () => { v.gview = k; v.scrolledTo = null; try { localStorage.setItem("crew.graphView", k); } catch {} rerender(); } }, h("span", { class: "keep" }, k === "simple" ? T("Simple", "簡易") : T("Detail", "詳細")))));
-  { const P = 24; const pv = { x: g.view.x - P, y: g.view.y - 8, w: g.view.w + 2 * P, h: g.view.h + 16 }; g.setAttribute("viewBox", `${pv.x} ${pv.y} ${pv.w} ${pv.h}`); g.view = pv; }
-  // readable size; the card scrolls. On a phone the graph fits the card's width, so a connector that wraps to the next row stays in view inside the card's padding
-  { const fit = innerWidth <= 640 ? Math.min(0.8, (innerWidth - 34) / g.view.w) : 0.8; g.style.width = `${Math.round(g.view.w * fit)}px`; g.style.height = `${Math.round(g.view.h * fit)}px`; }
-  // the card scrolls to the node that runs now (once per node), else to the start of the main lane
-  const cur = Object.entries(states).find(([, st]) => st === "running" || st === "waiting")?.[0] ?? "start";
-  if (v.scrolledTo !== cur) requestAnimationFrame(() => { const card = document.querySelector(".rt-rungraph"); if (!card) return;
-    const el = card.querySelector(`[data-node="${CSS.escape(cur)}"]`) || card.querySelector(".rt-node.main") || card.querySelector("[data-stage-node]");
-    if (el) { const a = el.getBoundingClientRect(), c = card.getBoundingClientRect(); card.scrollLeft += a.left - c.left - Math.max(0, (c.width - a.width) / 3); card.scrollTop += a.top - c.top - c.height / 2 + a.height / 2; v.scrolledTo = cur; } });
+  const graphPanel=buildRunGraph(r,v);
   return h("div", { class: `page rt-runview${(r.def.kind==="coffee-kit"||coffeeProposal)?" rt-coffee-run":""}`, "data-runview": id },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, r.title), h("p", {}, h("span", { class: "mono" }, r.id), " · ", h("a", { href: `#/workflows/${r.workflow}/v${r.version}` }, `${r.workflow} v${r.version}`), " · ", h("span", { "data-run-status": r.status }, window.runStateBadge(r)), r.archived ? [" ", h("span", { class: "badge neutral rt-archived-tag", "data-archived": "1" }, T("Archived", "已封存"))] : null, r.error ? ` · ${r.error}` : "")),
       h("div", { class: "actions" }, r.ctx?.captures?.app ? h("a", { class: "btn", href: r.ctx.captures.app, target: "_blank", rel: "noopener", "data-open-app": r.id }, T("Open the app", "打開 app")) : null,
@@ -690,7 +679,7 @@ function viewRun(id) {
       h("div", { class: "actions" }, h("button", { class: "btn danger-solid", "data-delete-confirm": id, disabled: (v.confirm || "").trim() !== id || null, onclick: () => api(`/api/wruns/${id}/delete`, { confirm: v.confirm || "" }).then(() => { RN.view = null; RN.list = null; location.hash = "#/runs"; }).catch((e) => { v.delMsg = e.message; rerender(); }) }, T("Delete for good", "永久刪除")),
         h("button", { class: "btn ghost", onclick: () => { v.panel = null; rerender(); } }, T("Keep it", "保留"))), h("div", { class: "bad", role: "status", "data-delete-msg": id }, v.delMsg || "")) : null,
     open.length ? h("div", { class: "rt-open" }, open.map(cardView)) : null,
-    h("div", { class: "rt-row" }, viewSeg), h("div", { class: "card rt-rungraph" }, g),
+    graphPanel,
     stepsCard(r),
     roundHistory(r),
     h("div", { class: "rt-cols" },
@@ -700,6 +689,29 @@ function viewRun(id) {
           : ` · ${r.def?.nodes?.find((x) => x.id === e.node)?.label || e.node}${e.round ? T(`, round ${e.round}`, `，第 ${e.round} 回合`) : ""}`) : null)))),
       h("div", { class: "card x-pad" }, h("h3", {}, T("Timeline", "時間軸")), h("div", { class: "rt-timeline", "data-timeline": id }, r.events.filter((e) => v.gview === "detail" || simpleShows(e, r.events)).slice(-80).reverse().map((e) => h("div", { class: "rt-ev" }, h("span", { class: "mono faint" }, (e.ts || "").slice(11, 19)), " ",
         v.gview === "detail" ? [e.node ? h("b", {}, e.node) : null, ` ${e.type}${e.from || e.to ? ` ${e.from ?? ""}→${e.to ?? ""}` : ""}${e.cause ? ` · ${e.cause}` : ""}`] : timelineLine(e, r)))))));
+}
+// Run-only navigation: editor gestures and graph topology remain unchanged.
+function buildRunGraph(r,v){
+ const mode=v.gview||"simple",states=Object.fromEntries(Object.entries(r.nodes).map(([id,n])=>[id,n.state])),current=Object.entries(r.nodes).filter(([,n])=>n.state==="running"||n.state==="waiting"),cur=current[0]?.[0];
+ const memory=(v.graphNavigation??={}),saved=memory[mode],detail=h("div",{class:"rt-rungraph-detail", "data-graph-node-detail":"",role:"status"}),viewport=h("div",{class:"rt-rungraph rt-rungraph-viewport"}),panel=h("section",{class:"card rt-rungraph-panel", "data-run-graph-navigation":"", "aria-label":T("Task graph navigation","任務流程圖操作")});
+ const select=id=>{const n=r.def.nodes.find(n=>n.id===id),rn=r.nodes[id];if(!n)return;detail.replaceChildren(h("b",{},n.label),h("p",{},T("State: ","狀態：")+(rn?.state||"pending")),h("p",{},rn?.note||rn?.error||T("No blocking reason recorded.","沒有記錄阻塞原因。")));};
+ const g=graph(r.def,{redraw:()=>rerender(),states,walked:new Set(r.walked||[]),visits:Object.fromEntries(Object.entries(r.nodes).map(([id,n])=>[id,n.visits||0])),simple:mode==="simple",wrap:Math.max(2,Math.min(8,Math.floor((Math.min(innerWidth,1200)-80)/window.crewLayout.COL))),collapsed:v.collapsed,onToggleStage:sid=>{const c=new Set(v.collapsed);c.has(sid)?c.delete(sid):c.add(sid);v.collapsed=[...c];delete memory[mode];rerender();},onSelect:x=>{if(x?.node)select(x.node);},onView:x=>{memory[mode]={...x};}});
+ const bounds=g.lay.bbox;let expanded=false,origin=null,drag=null,suppress=false;
+ const set=next=>g.setView(next),fit=()=>{const rect=viewport.getBoundingClientRect(),ratio=Math.max(.2,rect.width/Math.max(1,rect.height)),w=Math.max(bounds.w+48,(bounds.h+48)*ratio),h=w/ratio;set({x:bounds.x+bounds.w/2-w/2,y:bounds.y+bounds.h/2-h/2,w,h});};
+ const zoom=(factor,at)=>{const old=g.view,min=(bounds.w+48)/8,max=(bounds.w+48)*4,k=Math.max(min,Math.min(max,old.w*factor))/old.w,c=at||{x:old.x+old.w/2,y:old.y+old.h/2};set({x:c.x-(c.x-old.x)*k,y:c.y-(c.y-old.y)*k,w:old.w*k,h:old.h*k});};
+ const point=e=>{const p=g.createSVGPoint();p.x=e.clientX;p.y=e.clientY;return p.matrixTransform(g.getScreenCTM().inverse());};
+ const focus=()=>{const n=g.lay.nodes.find(n=>n.id===cur||n.members?.includes(cur))||g.lay.nodes[0];if(!n)return;const rect=viewport.getBoundingClientRect(),ratio=Math.max(.2,rect.width/Math.max(1,rect.height)),w=Math.max(n.w*2,Math.min(bounds.w+48,700)),height=w/ratio;set({x:n.x+n.w/2-w/2,y:n.y+n.h/2-height/2,w,h:height});if(cur)select(cur);};
+ const toggle=(restore=false)=>{expanded=!expanded;v.graphExpanded=expanded;panel.classList.toggle("expanded",expanded);panel.setAttribute("role",expanded?"dialog":"region");panel.setAttribute("aria-modal",String(expanded));expand.setAttribute("aria-expanded",String(expanded));expand.textContent=expanded?T("Exit expanded view","退出展開"):T("Expand graph","展開流程圖");if(expanded){origin=expand;expand.focus();}else if(origin?.isConnected)origin.focus();if(!restore)requestAnimationFrame(fit);};
+ const button=(key,label,fn)=>h("button",{type:"button",class:"btn sm", "data-run-graph-action":key,onclick:fn},label),expand=button("expand",T("Expand graph","展開流程圖"),toggle);expand.setAttribute("aria-expanded","false");
+ const toolbar=h("div",{class:"rt-rungraph-tools",role:"group","aria-label":T("Graph controls","流程圖控制")},["simple","detail"].map(k=>h("button",{class:"btn sm",type:"button","data-view-toggle":k,"aria-pressed":String(mode===k),onclick:()=>{v.gview=k;try{localStorage.setItem("crew.graphView",k);}catch{}rerender();}},k==="simple"?T("Simple","簡易"):T("Detail","詳細"))),button("zoom-in",T("Zoom in +","放大 +"),()=>zoom(.8)),button("zoom-out",T("Zoom out −","縮小 −"),()=>zoom(1.25)),button("fit",T("Fit all","全部顯示"),fit),button("current",T("Focus current","聚焦目前節點"),focus),expand);
+ const status=h("div",{class:"rt-rungraph-status","data-current-graph-stage":"",role:"status"},current.length?current.map(([id,rn])=>h("p",{},h("b",{},r.def.nodes.find(n=>n.id===id)?.label||id)," · ",rn.waiting==="card"?T("Waiting for your answer","等待船長回答"):rn.data?.nativeQueue?.state==="waiting"?T("Queued","排隊中"):T("Working","工作中"),rn.note?" · "+rn.note:"")):h("p",{},T("No active node","目前沒有執行中的節點")));
+ panel.append(toolbar,status,h("p",{class:"faint"},T("Drag to pan. Wheel zoom in expanded view. Click a node for details.","拖曳平移；展開後可用滾輪縮放。點選節點查看詳細資料。")),viewport,h("div",{class:"rt-rungraph-legend"},[["running",T("Working","執行中")],["waiting",T("Waiting","等待中")],["passed",T("Complete","已完成")],["failed",T("Blocked","受阻")]].map(([state,label])=>h("span",{class:"rt-st st-"+state},label))),detail);viewport.append(g);
+ g.addEventListener("pointerdown",e=>{if(e.button!==0||drag||e.pointerType==="touch"&&!expanded)return;drag={id:e.pointerId,x:e.clientX,y:e.clientY,view:{...g.view},moved:false};});
+ g.addEventListener("pointermove",e=>{if(!drag||drag.id!==e.pointerId)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(!drag.moved&&Math.hypot(dx,dy)<6)return;drag.moved=true;suppress=true;g.interactionActive=true;g.setPointerCapture(e.pointerId);const matrix=g.getScreenCTM(),k=1/Math.max(.00001,matrix.a);set({...drag.view,x:drag.view.x-dx*k,y:drag.view.y-dy*k});e.preventDefault();});
+ const release=()=>{if(!drag)return;try{g.releasePointerCapture(drag.id);}catch{}drag=null;g.interactionActive=false;setTimeout(()=>suppress=false,0);};g.addEventListener("pointerup",release);g.addEventListener("pointercancel",release);g.addEventListener("lostpointercapture",release);g.addEventListener("click",e=>{if(suppress){e.preventDefault();e.stopImmediatePropagation();}},true);
+ g.addEventListener("wheel",e=>{if(!expanded)return;e.preventDefault();zoom(e.deltaY>0?1.12:1/1.12,point(e));},{passive:false});
+ panel.addEventListener("keydown",e=>{if(e.key==="Escape"&&expanded){e.preventDefault();toggle();}if(e.key==="Tab"&&expanded){const focusable=[...panel.querySelectorAll('button,a,[tabindex="0"]')];if(e.shiftKey&&document.activeElement===focusable[0]){e.preventDefault();focusable.at(-1)?.focus();}else if(!e.shiftKey&&document.activeElement===focusable.at(-1)){e.preventDefault();focusable[0]?.focus();}}});
+ requestAnimationFrame(()=>{if(saved)set(saved);else fit();if(v.graphExpanded)toggle(true);});return panel;
 }
 // the agent steps of a run, each with the skills it loaded (name@vN, in order)
 function stepsCard(r) {
