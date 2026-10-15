@@ -35,22 +35,30 @@ function draw(s) {
   document.documentElement.classList.toggle("night", s.theme === "dark");
   const nodes = (s.flow?.nodes ?? []).filter((n) => !n.lane);
   const ids = nodes.map((n) => n.id);
-  const W = 1200, left = 60, right = 1140, y0 = 300;
+  const tasks = (s.tasks ?? []).filter((t) => !["done", "idle", "failed", "cancelled", "succeeded"].includes(t.status));
+  const counts = new Map();
+  for (const t of tasks) { const key=ids.includes(t.node)?t.node:ids[0]; counts.set(key,(counts.get(key)||0)+1); }
+  const levels = Math.max(1,...counts.values());
+  // Preserve readable spacing instead of squeezing every workflow into 1080px.
+  const W = Math.max(1200,120+Math.max(0,ids.length-1)*160), left = 60, right = W-60;
+  const y0 = Math.max(300,160+levels*140), H = y0+260;
+  sea.setAttribute("viewBox",`0 0 ${W} ${H}`);
+  sea.style.setProperty("--chart-width",`${W}px`);sea.style.setProperty("--chart-height",`${H}px`);
   const xOf = (id) => { const i = Math.max(0, ids.indexOf(id)); return left + (i * (right - left)) / Math.max(1, ids.length - 1); };
   sea.replaceChildren();
-  sea.append(el("rect", { x: -3000, y: 250, width: 7200, height: 3000, fill: "var(--sea1)" }), el("rect", { x: -3000, y: 430, width: 7200, height: 3000, fill: "var(--sea2)" }));
-  const waves = el("g", { class: "wave" }); for (let i = -20; i < 42; i++) waves.append(el("path", { d: `M${i * 120} 270 q30 -10 60 0 t60 0`, stroke: "#ffffff55", fill: "none", "stroke-width": 2 })); sea.append(waves);
+  sea.append(el("rect", { x: -3000, y: 250, width: W+6000, height: 3000, fill: "var(--sea1)" }), el("rect", { x: -3000, y: 430, width: W+6000, height: 3000, fill: "var(--sea2)" }));
+  const waves = el("g", { class: "wave" }); for (let i = -20; i < Math.ceil(W/120)+20; i++) waves.append(el("path", { d: `M${i * 120} 270 q30 -10 60 0 t60 0`, stroke: "#ffffff55", fill: "none", "stroke-width": 2 })); sea.append(waves);
   sea.append(el("path", { d: `M${left} ${y0 + 40} L${right} ${y0 + 40}`, stroke: "#ffffff66", "stroke-dasharray": "6 10", "stroke-width": 2 }));
   nodes.forEach((n) => { const x = xOf(n.id), label = String(n.label || n.id); const g = el("g", { class: "buoy" }, el("circle", { cx: x, cy: y0 + 40, r: 7, fill: n.kind === "human" ? "#f2b631" : n.kind === "gate" ? "#e2483d" : "#fff" }), txt(label.length > 12 ? label.slice(0, 11) + "…" : label, { x, y: y0 + 70, "text-anchor": "middle" })); const title = el("title"); title.textContent = label; g.append(title); sea.append(g); });
   // the harbour: firstmate on the pier
   const pier = el("g", {}, el("rect", { x: 10, y: 200, width: 70, height: 60, fill: "#8a6a4a" }), el("rect", { x: 30, y: 150, width: 30, height: 50, fill: "#c9b18a" }), txt("harbour", { x: 45, y: 145, "text-anchor": "middle", style: "font:11px system-ui;fill:var(--mute)" }));
   pier.append(sailor(55, 198, false, "firstmate")); sea.append(pier);
-  const tasks = (s.tasks ?? []).filter((t) => !["done", "idle", "failed", "cancelled", "succeeded"].includes(t.status));
   const workers = (s.crew ?? []).filter((c) => c.role === "worker").map((c) => c.name);
   const lanes = {};
-  tasks.slice(0, 14).forEach((t) => {
-    const x = xOf(t.node), k = (lanes[t.node] = (lanes[t.node] ?? 0) + 1) - 1;
-    const y = y0 - 125 + (k % 2) * 34, dx = k ? (k % 2 ? 46 : -46) * Math.ceil(k / 2) : 0;
+  tasks.forEach((t) => {
+    const key=ids.includes(t.node)?t.node:ids[0];
+    const x = xOf(t.node), k = (lanes[key] = (lanes[key] ?? 0) + 1) - 1;
+    const y = y0 - 125 - k * 140, dx = 0;
     const g = el("g", { class: "ship", transform: `translate(${x - 50 + dx} ${y})` }); const b = el("g", { class: "bob", style: `animation-delay:${(k * 0.7) % 3}s` });
     b.append(el("path", { d: "M0 60 L100 60 L86 80 L12 80 Z", fill: "var(--hull)" }), el("line", { x1: 50, y1: 6, x2: 50, y2: 60, stroke: "#5b3a22", "stroke-width": 3 }),
       el("path", { d: "M52 10 L52 54 L88 54 Z", fill: "var(--sail)" }), el("path", { d: "M48 14 L48 54 L18 54 Z", fill: "var(--sail)", opacity: .9 }),
@@ -68,6 +76,7 @@ function draw(s) {
   }
   document.getElementById("sub").textContent = `${tasks.length} ships at sea · ${(s.crew ?? []).filter((c) => c.alive).length} hands on deck · ${(s.pending ?? []).length} flags flying`;
 }
+document.querySelector("main").addEventListener("scroll",()=>{detail.hidden=true;});
 CrewSkin.onSnapshot(draw);
 CrewSkin.onEvent((e) => { lines.push(`${e.ts.slice(11, 19)} ${e.task ?? ""} ${e.summary}`); document.getElementById("log").textContent = lines.slice(-1)[0]; });
 CrewSkin.ready();

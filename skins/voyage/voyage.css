@@ -22,3 +22,7 @@ main{position:relative;z-index:0}.top,.log{position:relative;z-index:1}.log{back
 .ship text{fill:#fff;paint-order:stroke;stroke:var(--sea2);stroke-width:3px}.ship .st{fill:#e8f2fb}
 .buoy text{fill:#fff;paint-order:stroke;stroke:var(--sea2);stroke-width:3px}
 @media (max-width:700px){main{overflow-x:auto;overflow-y:hidden;place-items:center start}svg{min-width:980px;height:min(100%,520px)}}
+
+/* Large workflows keep readable spacing in a scrollable chart. */
+main{display:block;overflow:auto;padding:0}
+#sea{display:block;width:max(100%,var(--chart-width,1200px));height:max(100%,var(--chart-height,560px));max-height:none;min-width:0;overflow:hidden}
