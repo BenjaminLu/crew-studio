@@ -225,7 +225,7 @@ export function createRuntime(d: RuntimeDeps) {
             const def = r.def.nodes.find((n: any) => n.id === nid) as any; const j = d.agents.jobs.get(rn.job); if (!j || j.status !== "running") continue; const last = j.log.at(-1);
             out.push({ run: r.id, runTitle: r.title, workflow: r.workflow, node: nid, label: def?.label ?? nid, role: def?.role ?? null, provider: j.provider, model: j.model, round: rn.visits, attempt: rn.attempt,
               startedAt: j.started, tools: j.tools, lastActivity: last ? { at: last.ts, kind: last.kind, text: redactText(last.text).slice(0, 240) } : null }); } }
-        return json({ agents: out });
+        return json({ agents: out, localJobs:coffee?.localJobs()??[] });
       }
       m = CAPTURE_PATH.exec(p);
       if (m && !writing) return engine.get(m[1]) ? captureResponse(engine.rdir(m[1]), m[2], m[3], m[4]) : json({ error: "no such run" }, 404);

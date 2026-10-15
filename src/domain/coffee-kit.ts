@@ -126,6 +126,10 @@ function coffeeConstraintContext(x:X,through?:number){
 export type CoffeeChoice = {provider:'codex';model:string;effort:string|null};
 export type CoffeeFilm = {poster?:Buffer;bytes:Buffer;codec:'h264';duration:number;width:number;height:number;renderer:string};
 export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; choice?:()=>CoffeeChoice|null; staffing?:(def:any,params:Record<string,string>)=>CoffeeChoice; video?: (o:{direction:CoffeeDirection;image:string;page:string;revision:CoffeePlan['revision'];context?:ReturnType<typeof coffeeConstraintContext>;signal:AbortSignal;authorize():void;onProgress?:(stage:'snapshot'|'check'|'render'|'verify')=>void})=>Promise<CoffeeFilm>; image?: (o:{direction:CoffeeDirection;context?:ReturnType<typeof coffeeConstraintContext>;signal:AbortSignal;authorize():void})=>Promise<CodexImage> }) {
+  type LocalJob={id:string;task:string;node:string;label:string;provider:string;phase:string;startedAt:string;lastProgressAt:string;endedAt:string|null;outcome:'running'|'succeeded'|'failed'|'cancelled';cleanup:'pending'|'verified'|'unverified'};
+  const renderJobs=new Map<string,LocalJob>();
+  const publishJob=(job:LocalJob)=>{renderJobs.set(job.id,job);engine.deps.send('coffee-local-job',{task:job.task,id:job.id});};
+  const trimJobs=()=>{const terminal=[...renderJobs.values()].filter(j=>j.outcome!=='running'&&j.cleanup==='verified');for(const j of terminal.slice(0,Math.max(0,terminal.length-32)))renderJobs.delete(j.id);};
   const media=new MediaLibrary(engine.deps.dataDir,d.artifacts),jobs=mediaJobs(media);
   const choice = () => {const pick=d.choice?.();if(!pick || pick.provider!=='codex' || typeof pick.model!=='string' || !pick.model.trim() || pick.effort!==null && !['none','minimal','low','medium','high','xhigh','max','ultra'].includes(pick.effort))throw new Error('Configured native coffee model unavailable');return structuredClone(pick);};
   const requireChoice = (x:X) => {const selected=d.staffing?d.staffing(x.run.def,x.run.params):choice();if(x.run.params.provider!==selected.provider || x.run.params.model!==selected.model || (x.run.params.effort??'')!==(selected.effort??''))throw new Error('Coffee approved image staffing changed; confirm a fresh configuration');return selected;};
@@ -267,20 +271,21 @@ export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; 
     const request=admission({ref:x.run.id},`${x.run.id}/${x.node.id}#${x.visit}/coffee-video`),ready=request.ready;
     request.ready=()=>{requireOwner(x);requireChoice(x);return ready();};
     const release=await engine.deps.agents.queue.acquire(request);let cleanupSafe=true;
+    const renderSignal=engine.abortOf(x.run).signal;const now=new Date().toISOString();const localJob:LocalJob={id:`${x.run.id}/${x.node.id}/${x.visit}/${generation}`,task:x.run.id,node:x.node.id,label:'HyperFrames film',provider:'hyperframes',phase:'starting',startedAt:now,lastProgressAt:now,endedAt:null,outcome:'running',cleanup:'pending'};publishJob(localJob);
     try {
       requireOwner(x);
       if(!engine.record(x,'coffee-operation-v1',{data:{version:1,part:'video',generation,direction:digest(JSON.stringify(p.direction)),context:coffeeConstraintContext(x)}}))throw new Error('Render intent was not persisted');
-      const owner={signal:engine.abortOf(x.run).signal,authorize:()=>{requireOwner(x);requireChoice(x);if(JSON.stringify(currentPlan(x))!==JSON.stringify(p)||receiptHash(coffeeReceipt(x,d.artifacts,'image'))!==receiptHash(image)||receiptHash(coffeeReceipt(x,d.artifacts,'page'))!==receiptHash(page))throw new Error('Film dependencies changed');}};
+      const owner={signal:renderSignal,authorize:()=>{requireOwner(x);requireChoice(x);if(JSON.stringify(currentPlan(x))!==JSON.stringify(p)||receiptHash(coffeeReceipt(x,d.artifacts,'image'))!==receiptHash(image)||receiptHash(coffeeReceipt(x,d.artifacts,'page'))!==receiptHash(page))throw new Error('Film dependencies changed');}};
       let published:Awaited<ReturnType<MediaLibrary['run']>>;
       try{published=await media.run({schema:1,task:x.run.id,project:x.run.params.project||`coffee:${x.run.workflow}`,role:'video-renderer',generation,type:'video',title:`${x.run.title} — video`,provider:'hyperframes',model:`hyperframes@${HYPERFRAMES_VERSION}`,dependencies:{design:p.direction.designHash!,image:receiptHash(image),page:receiptHash(page)},origin:'generated'},owner,async()=>{
-        const film=await d.video!({direction:structuredClone(p.direction),image:join(d.artifacts.filesDir(image.artifact,image.n),image.primary),page:d.artifacts.filesDir(page.artifact,page.n),revision:p.revision,context:coffeeConstraintContext(x),signal:owner.signal,authorize:owner.authorize,onProgress:stage=>{owner.authorize();x.rn.note=`HyperFrames: ${stage}`;x.save();engine.emit(x.run,'coffee_render_stage',`HyperFrames ${stage}`,{node:x.node.id,stage});}});
+        const film=await d.video!({direction:structuredClone(p.direction),image:join(d.artifacts.filesDir(image.artifact,image.n),image.primary),page:d.artifacts.filesDir(page.artifact,page.n),revision:p.revision,context:coffeeConstraintContext(x),signal:owner.signal,authorize:owner.authorize,onProgress:stage=>{owner.authorize();localJob.phase=stage;localJob.lastProgressAt=new Date().toISOString();publishJob(localJob);x.rn.note=`HyperFrames: ${stage}`;x.save();engine.emit(x.run,'coffee_render_stage',`HyperFrames ${stage}`,{node:x.node.id,stage});}});
         if(film.codec!=='h264'||film.duration<10||film.duration>15.1||!Number.isFinite(film.duration)||film.width<1||film.height<1||film.width>1920||film.height>1920||film.renderer!==`hyperframes@${HYPERFRAMES_VERSION}`||!film.poster)throw new Error('No verified HyperFrames film/poster');return{bytes:film.bytes,mime:'video/mp4',poster:film.poster};
       });}catch(error){cleanupSafe=error instanceof HyperframesFailure||error instanceof MediaPublicationFailure?error.cleanupSafe:false;throw error;}
       owner.authorize();const id=published.artifact,v=published.manifest,manifest=coffeeManifest(d.artifacts.filesDir(id,v.n));
-      if(!engine.record(x,outputRecord,{data:{version:1,part:'video',generation,direction:digest(JSON.stringify(p.direction)),artifact:id,n:v.n,manifest,primary:v.primary!,metadata:coffeeMetadata(d.artifacts,id,v.n),dependencies:{image:receiptHash(image),page:receiptHash(page)}}}))throw new Error('Film receipt was not persisted');return'ok';
+      if(!engine.record(x,outputRecord,{data:{version:1,part:'video',generation,direction:digest(JSON.stringify(p.direction)),artifact:id,n:v.n,manifest,primary:v.primary!,metadata:coffeeMetadata(d.artifacts,id,v.n),dependencies:{image:receiptHash(image),page:receiptHash(page)}}}))throw new Error('Film receipt was not persisted');localJob.outcome='succeeded';return'ok';
 
-    }catch(error){if(!engine.owns(x))throw error;x.rn.note=cleanupSafe?'No verified film was offered.':'Render cleanup unverified; capacity remains held.';x.save();return 'unavailable';}
-    finally{if(cleanupSafe)release();}
+    }catch(error){localJob.outcome=renderSignal.aborted?'cancelled':'failed';if(!engine.owns(x))throw error;x.rn.note=cleanupSafe?'No verified film was offered.':'Render cleanup unverified; capacity remains held.';x.save();return 'unavailable';}
+    finally{localJob.cleanup=cleanupSafe?'verified':'unverified';localJob.endedAt=new Date().toISOString();publishJob(localJob);trimJobs();if(cleanupSafe)release();}
   };
   engine.actions['coffee.assemble'] = async x => {
     requireOwner(x); const p = currentPlan(x);
@@ -394,7 +399,7 @@ export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; 
       return {verdict:'fail',score:0,proves:[],findings:[{locator:{type:'card',field:'bundle'},class:'coffee-bundle-integrity',severity:'blocking',message:error instanceof Error ? error.message : 'Coffee bundle unavailable',expected:'Produce and verify the complete current site, image and playable film'}]};
     }
   };
-  return {async refreshRecovery(id:string){
+  return {localJobs:()=>structuredClone([...renderJobs.values()]),async refreshRecovery(id:string){
     const run=engine.get(id);if(!run||run.def.kind!=='coffee-kit'||run.status!=='waiting'||engine.busy(id))throw new Error('Task must be waiting without active work');
     const node=run.def.nodes.find(n=>n.args?.mode==='coffee-capability'&&run.nodes[n.id]?.waiting==='card');
     if(!node)throw new Error('Task has no coffee capability hold');

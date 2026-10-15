@@ -29,6 +29,13 @@ const post = (p, u, b) => p.evaluate(async ([u, b]) => { const r = await fetch(u
 let runId = null;
 try {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, colorScheme: "light" }); const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
+  if(process.env.COFFEE_LOCAL_JOBS_UI){
+    let outcome='running',cleanup='pending';
+    await p.route('**/api/wruns/agents',route=>route.fulfill({json:{agents:[],localJobs:[{id:'R-014/video/6/7',task:'R-014',label:'HyperFrames film',provider:'hyperframes',phase:'render',outcome,cleanup,startedAt:'2026-10-15T14:30:00.000Z',lastProgressAt:'2026-10-15T14:30:01.000Z'}]}}));
+    for(const width of [390,1440]){await p.setViewportSize({width,height:900});await p.goto(`${base}/#/crew`);await p.waitForSelector('[data-local-render-job]');ok(await p.locator('[data-local-render-job]').innerText().then(t=>t.includes('render')&&t.includes('pending')&&t.includes('2026-10-15')),`local render source phase/timestamps visible at ${width}`);ok(await p.locator('[data-local-render-job] a').getAttribute('href')==='#/run/R-014','local render links to exact Task');ok(await p.locator('[data-agent-node]').count()===0,'renderer is not fabricated as LLM agent');await p.screenshot({path:join(tmp,`local-render-${width}.png`),fullPage:true});}
+    for(const state of [['succeeded','verified'],['failed','unverified'],['cancelled','verified']]){[outcome,cleanup]=state;await p.reload();await p.waitForSelector('[data-local-render-job]');ok(await p.locator('[data-local-render-job]').innerText().then(t=>t.includes(outcome)&&t.includes(cleanup)),`source terminal ${outcome}/${cleanup} visible`);}
+    console.log(`CAPTURES ${tmp}`);console.log(`${pass}/${fail}`);await browser.close();app.kill();process.exit(fail?1:0);
+  }
   const other = await ctx.newPage(); await other.goto(`${base}/#/runs`);
   // ---------- the Inbox updates live: a card arrives (no reload) ----------
   await p.goto(`${base}/#/inbox`); await p.waitForSelector("#navInbox", { state: "attached" }); await p.waitForTimeout(500); await p.evaluate(() => { window.__noReload = 1; });

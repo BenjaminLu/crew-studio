@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync, symlinkSync, cpSync, 
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { strict as assert } from 'node:assert';
+import {HyperframesFailure} from '../src/render/hyperframes';
 import {CodexImageFailure} from '../src/providers/codex-image';
 import { coffeeManifest, verifyCoffeeManifest, reviseCoffeeGenerations, installCoffeeKit } from '../src/domain/coffee-kit';
 const fixtureDesignPlan=JSON.parse(readFileSync(join(import.meta.dir,'fixture/coffee-design.json'),'utf8'));
@@ -63,7 +64,7 @@ try {
     const header=Buffer.alloc(13);header.writeUInt32BE(1);header.writeUInt32BE(1,4);header[8]=8;header[9]=6;
     const png=Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',header),chunk('IDAT',deflateSync(Buffer.from([0,161,90,28,255]))),chunk('IEND',Buffer.alloc(0))]);
     let pendingJudgeFinding=false;let configured='codex';const imageContexts:any[]=[],videoContexts:any[]=[],pageTexts:string[]=[];
-    installCoffeeKit(H.engine,{choice:()=>({provider:configured as any,model:'fixture-model',effort:'low'}),artifacts,image:async o=>{o.authorize();imageContexts.push(o.context);imageCalls++;assert(H.agents.queue.snapshot().active.some(a=>a.key.includes('coffee-image')));return{bytes:png,mime:'image/png',width:1,height:1,sha256:'fixture-only',provider:'codex',model:o.direction.model,effort:o.direction.effort};},video:async o=>{o.authorize();videoContexts.push(o.context);videoCalls++;assert(readFileSync(o.image).equals(png));assert(H.agents.queue.snapshot().active.some(a=>a.key.includes('coffee-video')));const bytes=Buffer.from(fixtureFilm);return{poster:fixturePoster,bytes,codec:'h264',duration:12,width:960,height:540,renderer:'hyperframes@0.8.159'};}});
+    const coffeeInstall=installCoffeeKit(H.engine,{choice:()=>({provider:configured as any,model:'fixture-model',effort:'low'}),artifacts,image:async o=>{o.authorize();imageContexts.push(o.context);imageCalls++;assert(H.agents.queue.snapshot().active.some(a=>a.key.includes('coffee-image')));return{bytes:png,mime:'image/png',width:1,height:1,sha256:'fixture-only',provider:'codex',model:o.direction.model,effort:o.direction.effort};},video:async o=>{o.authorize();videoContexts.push(o.context);videoCalls++;const live=coffeeInstall.localJobs();assert(live.some(j=>j.task===H.engine.list().find(r=>r.nodes.video?.state==='running')?.id&&j.outcome==='running'&&j.cleanup==='pending'));o.onProgress?.('check');assert(coffeeInstall.localJobs().some(j=>j.phase==='check'));if(process.env.COFFEE_LOCAL_JOB_CONTROL){if(process.env.COFFEE_LOCAL_JOB_CONTROL==='cancel')H.engine.cancel(coffeeInstall.localJobs().find(j=>j.outcome==='running')!.task);throw new HyperframesFailure('Fixture timeout',process.env.COFFEE_LOCAL_JOB_CONTROL!=='unsafe','check','timeout');}assert(readFileSync(o.image).equals(png));assert(H.agents.queue.snapshot().active.some(a=>a.key.includes('coffee-video')));const bytes=Buffer.from(fixtureFilm);return{poster:fixturePoster,bytes,codec:'h264',duration:12,width:960,height:540,renderer:'hyperframes@0.8.159'};}});
     const r = H.engine.start({workflow:'coffee-direction-fixture',text:'A quiet coffee shop introduction',title:'Coffee fixture',params:{coffeeDesignPlan:JSON.stringify(fixtureDesignPlan),provider:'codex',model:'fixture-model',effort:'low'}});
     assert(await until(() => H.engine.cards.list({run:r.id,open:true}).length === 1));
     const c = H.engine.cards.list({run:r.id,open:true})[0];
@@ -167,9 +168,18 @@ try {
     assert(await until(()=>H.engine.cards.list({run:kit.id,open:true}).length===1));
     const direction=H.engine.cards.list({run:kit.id,open:true})[0];
     await H.engine.answer(direction.id,{choice:'confirm',by:'fixture captain'});
+    if(process.env.COFFEE_LOCAL_JOB_CONTROL){
+      assert(await until(()=>coffeeInstall.localJobs().some(j=>j.task===kit.id&&j.endedAt!==null)));
+      const job=coffeeInstall.localJobs().find(j=>j.task===kit.id)!;
+      check('actual local renderer failure/cancel settles with source-owned outcome',()=>assert.equal(job.outcome,process.env.COFFEE_LOCAL_JOB_CONTROL==='cancel'?'cancelled':'failed'));
+      check('cleanup and capacity reflect actual adapter death receipt',()=>{const unsafe=process.env.COFFEE_LOCAL_JOB_CONTROL==='unsafe';assert.equal(job.cleanup,unsafe?'unverified':'verified');assert.equal(H.agents.queue.snapshot().active.some(a=>a.key.includes('coffee-video')),unsafe);});
+      check('progress timestamp and task link identity remain available after failure',()=>assert(job.startedAt<=job.lastProgressAt&&job.lastProgressAt<=job.endedAt!&&job.phase==='check'&&job.task===kit.id));
+      H.stop();console.log(`${passed}/0 local-render controls`);process.exit(0);
+    }
     assert(await until(()=>H.engine.cards.list({run:kit.id,open:true}).some(c=>c.node==='review') || H.engine.get(kit.id)?.status==='failed'),JSON.stringify({nodes:H.engine.get(kit.id)?.nodes,cards:H.engine.cards.list({run:kit.id,open:true})}));
     const review=H.engine.cards.list({run:kit.id,open:true}).find(c=>c.node==='review');
     assert(review,JSON.stringify(H.engine.get(kit.id)?.nodes));
+    check('completed local renderer remains distinct from LLM jobs',()=>{const j=coffeeInstall.localJobs().find(j=>j.task===kit.id)!;assert.equal(j.outcome,'succeeded');assert.equal(j.cleanup,'verified');assert(j.endedAt);assert(H.sent.some(([t])=>t==='coffee-local-job'));const copy=coffeeInstall.localJobs();copy[0].phase='mutated';assert.notEqual(coffeeInstall.localJobs()[0].phase,'mutated');});
     const first=H.engine.trusted(kit.id).entries.filter(e=>e.record==='coffee-output-v1');
     const site=first.find(e=>e.data.part==='site')!.data;
     check('actual native workflow integrates pinned image and locally synthesized real MP4 bytes',()=>{assert(readFileSync(join(artifacts.filesDir(site.artifact,site.n),'assets/coffee.png')).equals(png));assert(readFileSync(join(artifacts.filesDir(site.artifact,site.n),'assets/coffee.mp4')).equals(fixtureFilm));});

@@ -787,16 +787,17 @@ window.studioCards = { count: () => SCX.open.length,
       cs.map((c) => cardView(c, { inbox: true }))); } };
 
 // ---------- Studio tasks' live agent node runs on the Crew page, beside firstmate's rounds ----------
-const SA = { list: [], t: null, tick: null };
-async function loadAgents() { try { SA.list = (await api("/api/wruns/agents")).agents || []; } catch { return; } updateNav(); if (S.route?.name === "crew" && !S.route.arg) render(); }
-for (const t of ["agent", "wrun"]) window.liveListen(t, () => { clearTimeout(SA.t); SA.t = setTimeout(loadAgents, 200); });
+const SA = { local: [], list: [], t: null, tick: null };
+async function loadAgents() { try { const data=await api("/api/wruns/agents");SA.list=data.agents||[];SA.local=data.localJobs||[]; } catch { return; } updateNav(); if (S.route?.name === "crew" && !S.route.arg) render(); }
+for (const t of ["agent", "wrun", "coffee-local-job"]) window.liveListen(t, () => { clearTimeout(SA.t); SA.t = setTimeout(loadAgents, 200); });
 addEventListener("hashchange", () => { if (location.hash.startsWith("#/crew")) loadAgents(); });
 setInterval(() => { if (S.route?.name === "crew" && !S.route.arg && SA.list.length) render(); }, 15000); // elapsed time moves on
 loadAgents();
 const elapsed = (iso) => { const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000)); return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`; };
-window.studioAgents = { count: () => SA.list.length,
+window.studioAgents = { count: () => SA.list.length+SA.local.filter(j=>j.outcome==="running"||j.cleanup==="unverified").length,
   section: () => h("section", { class: "rt-agents", "data-studio-agents": String(SA.list.length) },
     h("div", { class: "sec-head" }, h("h2", {}, T("Studio tasks: agents working", "Studio 的任務：工作中的 agent")), h("span", { class: "faint" }, String(SA.list.length))),
+    SA.local.length ? h("section", {"data-local-render-jobs":"1"}, h("h3",{},T("Local render jobs (this server session)","本機渲染工作（本次伺服器執行期間）")), SA.local.map(j=>h("article",{class:"card x-pad", "data-local-render-job":j.id},h("b",{},j.label),h("p",{},h("a",{href:`#/run/${encodeURIComponent(j.task)}`},j.task),` · ${j.provider} · ${j.phase}`),h("p",{},T("Outcome","結果"),`: ${j.outcome} · `,T("Cleanup","清理"),`: ${j.cleanup}`),h("p",{class:"faint"},T("Started","開始"),`: ${j.startedAt} · `,T("Last progress","最近進度"),`: ${j.lastProgressAt}`)))):null,
     SA.list.length ? h("div", { class: "rt-agent-grid" }, SA.list.map((a) => { const base = `#/runs/node/${encodeURIComponent(a.run)}/${encodeURIComponent(a.node)}/${a.round}`;
       return h("article", { class: "card x-pad rt-agent", "data-agent-node": `${a.run}/${a.node}/${a.round}` },
         h("div", { class: "rt-agent-h" }, h("b", {}, a.label), a.role ? h("span", { class: "vbadge" }, a.role) : null, h("span", { class: "st" }, h("span", { class: "d pulse" }), T("working", "工作中"))),
