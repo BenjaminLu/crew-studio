@@ -1,18 +1,69 @@
 #!/usr/bin/env node
-// caller-coverage: grep the repo for files that import/source each scoped shared file; each must be in scope.
-const fs = require("fs"), path = require("path");
-let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
-  const i = JSON.parse(s); const root = i.workdir; const scope = (i.artifact?.data?.scope ?? i.artifact?.scope ?? []).map(String);
-  const inScope = (p) => scope.some((g) => g === p || (g.endsWith("/") && p.startsWith(g)) || p.startsWith(g.replace(/\/?\*\*.*$/, "") + "/"));
-  const files = []; const walk = (d) => { for (const n of fs.readdirSync(d)) { if (n === ".git" || n === "node_modules") continue; const p = path.join(d, n); const st = fs.lstatSync(p); if (st.isDirectory()) walk(p); else if (st.isFile() && st.size < 400000) files.push(path.relative(root, p)); } };
-  if (!root || !fs.existsSync(root)) { process.stdout.write(JSON.stringify({ verdict: "error", findings: [], evidence: [], proves: [], score: null })); return; }
+// Match static source imports to their resolved local file, never a basename in prose/logs.
+// Dynamic paths, aliases, custom module search paths and shell cwd changes need review.
+const fs = require('fs'), path = require('path');
+let input = '';
+process.stdin.on('data', d => input += d).on('end', () => {
+  const i = JSON.parse(input), root = i.workdir;
+  const scope = (i.artifact?.data?.scope ?? i.artifact?.scope ?? []).map(String);
+  const inScope = p => scope.some(g => g === p || p.startsWith(g.replace(/\/?\*\*.*$/, '').replace(/\/$/, '') + '/'));
+  if (!root || !fs.existsSync(root)) { console.log(JSON.stringify({verdict:'error',findings:[],evidence:[],proves:[],score:null})); return; }
+  const extensions = ['.js','.mjs','.cjs','.ts','.tsx','.jsx','.sh','.py'];
+  const files = [];
+  function walk(d) { for (const n of fs.readdirSync(d)) { if (['.git','node_modules'].includes(n)) continue; const p=path.join(d,n), st=fs.lstatSync(p); if(st.isDirectory())walk(p); else if(st.isFile() && st.size<400000 && (extensions.includes(path.extname(n)) || (!path.extname(n) && /^#!.*\b(?:ba|da|z)?sh\b/.test(fs.readFileSync(p,'utf8').split('\n')[0]))))files.push(path.relative(root,p)); } }
   walk(root);
-  const shared = scope.filter((p) => fs.existsSync(path.join(root, p)) && fs.statSync(path.join(root, p)).isFile() && (i.params.exts ?? []).includes(path.extname(p)));
-  const f = [];
-  for (const sh of shared) {
-    const base = path.basename(sh).replace(/\.[^.]+$/, ""); const re = new RegExp(`(import|require|source|from)[^\\n]*\\b${base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\.[a-z]+)?\\b`);
-    for (const c of files) { if (c === sh || inScope(c)) continue; const lines = fs.readFileSync(path.join(root, c), "utf8").split("\n"); const k = lines.findIndex((l) => re.test(l));
-      if (k >= 0) f.push({ locator: { type: "file", path: c, line: k + 1 }, message: `${c} uses ${sh} but is not in the scope`, expected: `add ${c} (or its folder) to the scope`, class: "caller-out-of-scope", severity: "blocking" }); }
+  const shared = new Set(scope.filter(p => (i.params?.exts ?? extensions).includes(path.extname(p)) && fs.existsSync(path.join(root,p)) && fs.statSync(path.join(root,p)).isFile()).map(p=>path.resolve(root,p)));
+  const findings=[];
+  const resolve = (caller, spec) => {
+    if (!spec.startsWith('.') && !spec.startsWith('/')) return null; // package imports are not local files
+    const base=path.resolve(root,path.dirname(caller),spec);
+    const candidates=[base,...extensions.map(ext=>base+ext),...extensions.map(ext=>path.join(base,'index'+ext)),path.join(base,'__init__.py')];
+    if(/\.[cm]?js$/.test(base))candidates.push(base.replace(/\.[cm]?js$/,'.ts'),base.replace(/\.[cm]?js$/,'.tsx'));
+    return candidates.find(p=>fs.existsSync(p) && fs.lstatSync(p).isFile()) || null;
+  };
+  for(const caller of files){
+    if(inScope(caller))continue;
+    const text=fs.readFileSync(path.join(root,caller),'utf8').replace(/\/\*[\s\S]*?\*\//g,m=>m.replace(/[^\n]/g,' ')).replace(/^\s*(?:\/\/|#).*$/gm,'');
+    const refs=[];
+    if(/\.[cm]?[jt]sx?$/.test(caller)) {
+      // Tokenize strings separately so comments and quoted example code are not callers.
+      const tokens=[];
+      const re=/\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|[A-Za-z_$][\w$]*|[^\s]/g;
+      for(const m of text.matchAll(re)) {
+        if(m[0].startsWith('//')||m[0].startsWith('/*'))continue;
+        tokens.push({v:m[0],at:m.index,string:/^["']/.test(m[0]) || (m[0].startsWith('`') && !m[0].includes('${'))});
+      }
+      for(let n=0;n<tokens.length;n++) {
+        const t=tokens[n];if(!['import','export','require'].includes(t.v))continue;
+        let next=tokens[n+1];
+        if(next?.v==='(')next=tokens[n+2];
+        else if(!next?.string) {
+          let j=n+1;
+          while(j<tokens.length && ![';','import','export'].includes(tokens[j].v) && tokens[j].v!=='from')j++;
+          next=tokens[j]?.v==='from'?tokens[j+1]:null;
+        }
+        if(next?.string)refs.push({spec:next.v.slice(1,-1),at:t.at});
+      }
+    } else if(caller.endsWith('.sh') || !path.extname(caller)) {
+      for(const m of text.matchAll(/(?:^|[;\n]|&&|\|\||\bthen\s|\bdo\s)\s*(?:source|\.)\s+["']?([\w./-]+)/g))refs.push({spec:(m[1].startsWith('.')||m[1].startsWith('/'))?m[1]:'./'+m[1],at:m.index});
+    } else if(caller.endsWith('.py')) {
+      const modulePath=(name)=>{
+        const dots=name.match(/^\.+/)?.[0].length||0;
+        return dots ? path.resolve(root,path.dirname(caller),'../'.repeat(dots-1),name.slice(dots).replaceAll('.','/')) : path.resolve(root,name.replaceAll('.','/'));
+      };
+      const python=text.replace(/#[^\n]*/g,m=>' '.repeat(m.length));
+      for(const m of python.matchAll(/^\s*from\s+([.\w]+)\s+import\s+(\([^)]*\)|[^\n]+)/gm)) {
+        const base=modulePath(m[1]);refs.push({spec:base,at:m.index});
+        for(const name of m[2].replace(/[()]/g,'').split(',')) {
+          const n=name.trim().split(/\s+as\s+/)[0];if(/^\w+$/.test(n))refs.push({spec:path.join(base,n),at:m.index});
+        }
+      }
+      for(const m of python.matchAll(/^\s*import\s+([^\n]+)/gm)) for(const name of m[1].split(',')) {
+        const n=name.trim().split(/\s+as\s+/)[0];if(/^[\w.]+$/.test(n))refs.push({spec:modulePath(n),at:m.index});
+      }
+    }
+    const seen=new Set();
+    for(const r of refs){const target=resolve(caller,r.spec);if(!target||!shared.has(target)||seen.has(target))continue;seen.add(target);const sh=path.relative(root,target);findings.push({locator:{type:'file',path:caller,line:text.slice(0,r.at).split('\n').length},message:`${caller} uses ${sh} but is not in the scope`,expected:`add ${caller} (or its folder) to the scope`,class:'caller-out-of-scope',severity:'blocking'});}
   }
-  process.stdout.write(JSON.stringify({ verdict: f.length ? "fail" : "pass", score: f.length ? 0 : 1, findings: f.slice(0, 30), evidence: [], proves: [] }));
+  console.log(JSON.stringify({verdict:findings.length?'fail':'pass',score:findings.length?0:1,findings:findings.slice(0,30),evidence:[],proves:[]}));
 });
