@@ -225,9 +225,13 @@ function mountCard(el, card, opts = {}) {
       } catch (e) {
         // answered already with this very choice: that is the answer, not a refusal
         let same = null; if (/answered exactly once/.test(e.message || "")) { try { const now = await get(`/api/scards/${encodeURIComponent(c.id)}`); if (now?.answer?.choice === o.id) same = now; } catch {} }
-        if (same) took(same); else { st.ok = false; st.msg = e.message || String(e); }
+        if (same) took(same); else { st.ok = false; const message=e.message || String(e);
+          const alignment=/tick every intent line as met \((\d+) of (\d+)\), or write a note/.exec(message);
+          st.msg=alignment?T(message,`尚未送出核准：請勾完每一條意圖（${alignment[1]}/${alignment[2]}），或填寫備註說明。`):message;
+        }
       }
       st.busy = false; st.draw();
+      if(st.msg){const feedback=el.querySelector('[data-card-msg]');feedback?.scrollIntoView({block:'nearest'});feedback?.focus({preventScroll:true});}
     };
     const lang = h("div", { class: "cc-lang", role: "group", "aria-label": "Language" }, [["en", "EN"], ["zh-TW", "繁中"]].map(([k, lab]) =>
       h("button", { type: "button", "data-card-lang": k, "aria-pressed": String(st.lang === k), onclick: () => { st.lang = k; render(); } }, lab)));
@@ -241,7 +245,7 @@ function mountCard(el, card, opts = {}) {
     if (open) {
       if (n) kids.push(h("section", { class: "cc-align", "data-align": c.id },
         h("b", {}, T("Does the change meet each intent line? Tick each one.", "改動有做到每一條意圖嗎？逐條勾選。")),
-        d.intents.map((t, i) => h("label", { class: "cc-tick" }, h("input", { type: "checkbox", "data-intent-tick": i, checked: st.ticks.has(i), onchange: (e) => { e.target.checked ? st.ticks.add(i) : st.ticks.delete(i); render(); } }), h("span", {}, `${i + 1}. `, LL(t)))),
+        d.intents.map((t, i) => h("label", { class: "cc-tick" }, h("input", { type: "checkbox", "data-intent-tick": i, checked: st.ticks.has(i), onchange: (e) => { e.target.checked ? st.ticks.add(i) : st.ticks.delete(i); st.msg=""; render(); } }), h("span", {}, `${i + 1}. `, LL(t)))),
         h("span", { class: "cc-count", "data-tick-count": "" }, d?.artifactAcceptance ? T(`${st.ticks.size} of ${n} ticked. Approval needs every line, or a note that says why not.`, `已勾 ${st.ticks.size}/${n}。核准需要每一條都勾，或寫備註說明原因。`) : T(`${st.ticks.size} of ${n} ticked. A merge needs every line, or a note that says why not.`, `已勾 ${st.ticks.size}/${n}。合併需要每一條都勾，或寫備註說明原因。`))));
       if(expectsInterview&&!draft)kids.push(h("p",{class:"cc-msg",role:"alert"},T("The current interview questions could not be verified. Reload this card before answering.","目前訪談問題尚未驗證。請重新載入這張卡片後再回答。")));
       if(draft)kids.push(h("section",{class:"cc-interview",'data-interview-batch':draft.hash},h("h3",{},T("Answer this interview batch","回答這批訪談問題")),h("p",{class:"cc-count"},T("All six answers are required. Drafts are saved on this Mac; saving a draft does not answer the card.","六題都需要回答。草稿會儲存在這台 Mac；儲存草稿不會回覆卡片。")),form.questions.map((q,i)=>{const invalid=st.interviewAttempted&&!String(draft.answers[q.key]||'').trim(),id=`interview-${c.id}-${q.key}`;return h("div",{class:"cc-interview-field"},h("label",{for:id},`${i+1}. ${T(q.en,q.zh)}`),h("textarea",{id,rows:3,maxLength:500,'data-interview':q.key,'aria-required':'true','aria-invalid':String(!!invalid),'aria-describedby':id+'-error',oninput:e=>{draft.answers[q.key]=e.target.value;draft.dirty=true;clearTimeout(draft.timer);draft.timer=setTimeout(()=>saveDraft().catch(error=>{st.msg=error.message;st.draw();}),250);if(e.target.value.trim()){e.target.setAttribute('aria-invalid','false');const error=el.querySelector('#'+id+'-error');if(error)error.textContent='';}},onblur:()=>saveDraft().catch(error=>{st.msg=error.message;st.draw();})},draft.answers[q.key]||''),h("span",{id:id+'-error',class:'cc-field-error',role:invalid?'alert':null},invalid?T("Please answer this question.","請回答這個問題。"):''));})));
@@ -257,7 +261,7 @@ function mountCard(el, card, opts = {}) {
       kids.push(h("p", { class: "cc-msg ok", "data-card-answered": c.answer.choice }, T(`Answered: ${c.answer.choice}${c.answer.by ? ` by ${c.answer.by}` : ""}${c.answer.aligned ? ` · ${c.answer.aligned.length} of ${n} intent lines ticked` : ""}${c.answer.note ? ` · note: ${c.answer.note}` : ""}`,
         `已回覆：${c.answer.choice}${c.answer.by ? `（${c.answer.by}）` : ""}${c.answer.aligned ? ` · 意圖勾了 ${c.answer.aligned.length}/${n}` : ""}${c.answer.note ? ` · 備註：${c.answer.note}` : ""}`)));
     }
-    kids.push(h("div", { class: "cc-msg", role: "status", "aria-live": "polite", "data-card-msg": "" }, st.msg));
+    kids.push(h("div", { class: "cc-msg", role: "status", "aria-live": "polite", "data-card-msg": "", tabindex: "-1" }, st.msg));
     el.replaceChildren(h("div", { class: "cc", "data-card-root": c.id }, kids));
     el.classList.add("rt-card"); el.setAttribute("data-scard", c.id); el.setAttribute("data-card-status", c.status);
   }
