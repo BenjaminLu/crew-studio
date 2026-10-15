@@ -190,7 +190,7 @@ export class GitHubPrAdapter implements PrAdapter {
     return !!pr && pr.adapter === "github" && pr.repo === this.grant.localPath && pr.base === this.grant.base && typeof pr.branch === "string" && ref(pr.branch) && this.branchAllowed(pr.branch, pr.head) && typeof pr.id === "string" && /^[1-9][0-9]*$/.test(pr.id) && Number.isSafeInteger(Number(pr.id)) && sha.test(pr.head) && pr.url === `https://github.com/${this.grant.repository}/pull/${pr.id}`;
   }
   /** Typed, grant-bound read surface. No arbitrary endpoint or URL is accepted. */
-  async remoteRead(kind: "pull" | "ref" | "base" | "repository" | "protection" | "policy" | "checks" | "statuses", target: string, page = 1, signal?: AbortSignal, approvedHeadOrFresh?: string | boolean, fresh=false): Promise<any> {
+  async remoteRead(kind: "pull" | "ref" | "base" | "repository" | "protection" | "policy" | "checks" | "statuses" | "reviews" | "inline-comments" | "issue-comments", target: string, page = 1, signal?: AbortSignal, approvedHeadOrFresh?: string | boolean, fresh=false): Promise<any> {
     const approvedHead = typeof approvedHeadOrFresh === "string" ? approvedHeadOrFresh : undefined;
     if (typeof approvedHeadOrFresh === "boolean") fresh = approvedHeadOrFresh;
     signal?.throwIfAborted();
@@ -199,6 +199,7 @@ export class GitHubPrAdapter implements PrAdapter {
     if (kind === "repository" && target === this.grant.repository && page === 1) suffix = "";
     else if (kind === "base" && target === this.grant.base && page === 1) suffix = `/git/ref/heads/${encodeURIComponent(target)}`;
     else if (kind === "pull" && /^[1-9][0-9]*$/.test(target) && page === 1) suffix = `/pulls/${target}`;
+    else if (["reviews","inline-comments","issue-comments"].includes(kind) && /^[1-9][0-9]*$/.test(target)) suffix = kind==="issue-comments"?`/issues/${target}/comments?per_page=100&page=${page}`:`/pulls/${target}/${kind==="reviews"?"reviews":"comments"}?per_page=100&page=${page}`;
     else if (kind === "ref" && ref(target) && this.branchAllowed(target, approvedHead) && page === 1) suffix = `/git/ref/heads/${encodeURIComponent(target)}`;
     else if (kind === "protection" && target === this.grant.base && page === 1) suffix = `/branches/${encodeURIComponent(target)}/protection`;
     else if (kind === "policy" && target === this.grant.base && page === 1) suffix = `/branches/${encodeURIComponent(target)}/protection/required_status_checks`;
