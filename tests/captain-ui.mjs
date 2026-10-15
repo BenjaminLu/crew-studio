@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 const {chromium} = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root=process.cwd();
 const csp="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'none'; frame-ancestors 'self'; form-action 'none'; base-uri 'none'";
-const server=createServer((q,r)=>{if(q.url==='/'){r.setHeader('Content-Type','text/html');r.end('<iframe sandbox="allow-scripts" src="/skin/captain/index.html" style="width:100%;height:850px"></iframe><script>window.messages=[];onmessage=e=>messages.push(e.data)</script>');return;}try{const file=q.url==='/skin/_kit/skin-kit.js'?'skins/kit/skin-kit.js':q.url.replace('/skin/','skins/');r.setHeader('Content-Security-Policy',csp);r.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':'text/html');r.end(readFileSync(root+'/'+file));}catch{r.statusCode=404;r.end();}});
+const server=createServer((q,r)=>{if(q.url==='/'){r.setHeader('Content-Type','text/html');r.end('<iframe sandbox="allow-scripts" src="/skin/captain/index.html" style="width:100%;height:850px"></iframe><script>window.messages=[];onmessage=e=>messages.push(e.data)</script>');return;}try{const file=q.url==='/skin/_kit/skin-kit.js'?'skins/kit/skin-kit.js':q.url.replace('/skin/','skins/');r.setHeader('Content-Security-Policy',csp);r.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');r.end(readFileSync(root+'/'+file));}catch{r.statusCode=404;r.end();}});
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const browser=await chromium.launch({headless:true,...(process.env.CHROME_BIN ? {executablePath:process.env.CHROME_BIN} : {})});
 try{
@@ -27,6 +27,30 @@ try{
 
  await page.evaluate(s=>document.querySelector('iframe').contentWindow.postMessage({type:'crew:snapshot',snapshot:s},'*'),snap);
  await frame.waitForFunction(() => window.salvos === 1);
+ const grouped = { ...snap, tasks:[
+   {id:'root', title:'Main task A', status:'done',rootTask:'root'},
+   {id:'child', title:'Implementation A', status:'needs-you',rootTask:'root'},
+   {id:'child2', title:'Review A', status:'needs-you',rootTask:'root'},
+   {id:'other', title:'Main task B', status:'needs-you',rootTask:'other'},
+   {id:'working', title:'Main task C', status:'running',rootTask:'working'}], pending:[
+   {id:'a1',task:'child',title:'Review implementation'},
+   {id:'a2',task:'child2',title:'Approve review'},
+   {id:'b1',task:'other',title:'Confirm proposal'}] };
+ await page.evaluate(s=>document.querySelector('iframe').contentWindow.postMessage({type:'crew:snapshot',snapshot:s},'*'),grouped);
+ await frame.waitForFunction(()=>document.querySelectorAll('.mate-speech').length===2);
+ const mates = await frame.evaluate(()=>__voyageLive.view.crew.filter(c=>c.role==='firstmate').map(c=>c.id));
+ if(mates.length!==3 || new Set(mates).size!==3) throw Error('firstmates must be grouped by root task, including working tasks');
+ if(await frame.locator('[data-mate="firstmate:root"] button').count()!==2) throw Error('child input cards must share their firstmate');
+ await frame.locator('[data-card="a2"]').click();
+ await page.waitForFunction(()=>messages.some(m=>m.type==='crew:openCard'&&m.id==='a2'));
+ await page.waitForTimeout(1000);
+ if(process.env.CAPTAIN_SHOTS) await page.screenshot({path:process.env.CAPTAIN_SHOTS+'-mobile.png'});
+ await page.setViewportSize({width:1440,height:1000});
+ await page.waitForTimeout(1000);
+ if(process.env.CAPTAIN_SHOTS) await page.screenshot({path:process.env.CAPTAIN_SHOTS+'-desktop.png'});
+ grouped.pending=[];
+ await page.evaluate(s=>document.querySelector('iframe').contentWindow.postMessage({type:'crew:snapshot',snapshot:s},'*'),grouped);
+ await frame.waitForFunction(()=>document.querySelectorAll('.mate-speech').length===0);
  const state=await frame.evaluate(()=>({errors:__G.errors,arms:__voyageLive.view.kraken.arms,done:__voyageLive.view.tasks[0].lane}));
  console.log(state,errors);if(errors.length||state.errors.length||state.arms.length||state.done!=='merged')throw Error('renderer failed');
 }finally{await browser.close();server.close();}

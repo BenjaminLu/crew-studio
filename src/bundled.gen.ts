@@ -102,39 +102,40 @@ import b98 from "../packs/firstmate/skills/worker.md" with { type: "file" };
 import b99 from "../packs/firstmate/workflows/code-firstmate.wf.yaml" with { type: "file" };
 import b100 from "../skins/captain/LICENSE.txt" with { type: "file" };
 import b101 from "../skins/captain/ORIGIN.txt" with { type: "file" };
-import b102 from "../skins/captain/captain.js" with { type: "file" };
-import b103 from "../skins/captain/index.html" with { type: "file" };
-import b104 from "../skins/captain/manifest.json" with { type: "file" };
-import b105 from "../skins/kit/README.md" with { type: "file" };
-import b106 from "../skins/kit/skin-kit.js" with { type: "file" };
-import b107 from "../skins/terminal/index.html" with { type: "file" };
-import b108 from "../skins/terminal/manifest.json" with { type: "file" };
-import b109 from "../skins/voyage/index.html" with { type: "file" };
-import b110 from "../skins/voyage/manifest.json" with { type: "file" };
-import b111 from "../skins/voyage/voyage.css" with { type: "file" };
-import b112 from "../skins/voyage/voyage.js" with { type: "file" };
-import b113 from "../templates/sandbox-app/.crew/app.json" with { type: "file" };
-import b114 from "../templates/sandbox-app/app/README.md" with { type: "file" };
-import b115 from "../templates/sandbox-app/app/build.ts" with { type: "file" };
-import b116 from "../templates/sandbox-app/app/server.ts" with { type: "file" };
-import b117 from "../templates/sandbox-app/app/shop.ts" with { type: "file" };
-import b118 from "../templates/sandbox-app/test/shop.test.ts" with { type: "file" };
-import b119 from "../templates/sandbox-repo/.crew/gates.json" with { type: "file" };
-import b120 from "../templates/sandbox-repo/.github/CODEOWNERS" with { type: "file" };
-import b121 from "../templates/sandbox-repo/.github/ISSUE_TEMPLATE/bug_report.md" with { type: "file" };
-import b122 from "../templates/sandbox-repo/.github/ISSUE_TEMPLATE/feature_request.md" with { type: "file" };
-import b123 from "../templates/sandbox-repo/.github/pull_request_template.md" with { type: "file" };
-import b124 from "../templates/sandbox-repo/.github/workflows/ci.yml" with { type: "file" };
-import b125 from "../templates/sandbox-repo/CONTRIBUTING.md" with { type: "file" };
-import b126 from "../templates/sandbox-repo/README.md" with { type: "file" };
-import b127 from "../templates/sandbox-repo/README_SANDBOX.md" with { type: "file" };
-import b128 from "../templates/sandbox-repo/package.json" with { type: "file" };
-import b129 from "../templates/sandbox-repo/scripts/lint.ts" with { type: "file" };
-import b130 from "../templates/sandbox-repo/scripts/test-shard.ts" with { type: "file" };
-import b131 from "../templates/sandbox-repo/src/money.ts" with { type: "file" };
-import b132 from "../templates/sandbox-repo/test/format.test.ts" with { type: "file" };
-import b133 from "../templates/sandbox-repo/test/money.test.ts" with { type: "file" };
-import b134 from "../templates/sandbox-repo/tsconfig.json" with { type: "file" };
+import b102 from "../skins/captain/captain.css" with { type: "file" };
+import b103 from "../skins/captain/captain.js" with { type: "file" };
+import b104 from "../skins/captain/index.html" with { type: "file" };
+import b105 from "../skins/captain/manifest.json" with { type: "file" };
+import b106 from "../skins/kit/README.md" with { type: "file" };
+import b107 from "../skins/kit/skin-kit.js" with { type: "file" };
+import b108 from "../skins/terminal/index.html" with { type: "file" };
+import b109 from "../skins/terminal/manifest.json" with { type: "file" };
+import b110 from "../skins/voyage/index.html" with { type: "file" };
+import b111 from "../skins/voyage/manifest.json" with { type: "file" };
+import b112 from "../skins/voyage/voyage.css" with { type: "file" };
+import b113 from "../skins/voyage/voyage.js" with { type: "file" };
+import b114 from "../templates/sandbox-app/.crew/app.json" with { type: "file" };
+import b115 from "../templates/sandbox-app/app/README.md" with { type: "file" };
+import b116 from "../templates/sandbox-app/app/build.ts" with { type: "file" };
+import b117 from "../templates/sandbox-app/app/server.ts" with { type: "file" };
+import b118 from "../templates/sandbox-app/app/shop.ts" with { type: "file" };
+import b119 from "../templates/sandbox-app/test/shop.test.ts" with { type: "file" };
+import b120 from "../templates/sandbox-repo/.crew/gates.json" with { type: "file" };
+import b121 from "../templates/sandbox-repo/.github/CODEOWNERS" with { type: "file" };
+import b122 from "../templates/sandbox-repo/.github/ISSUE_TEMPLATE/bug_report.md" with { type: "file" };
+import b123 from "../templates/sandbox-repo/.github/ISSUE_TEMPLATE/feature_request.md" with { type: "file" };
+import b124 from "../templates/sandbox-repo/.github/pull_request_template.md" with { type: "file" };
+import b125 from "../templates/sandbox-repo/.github/workflows/ci.yml" with { type: "file" };
+import b126 from "../templates/sandbox-repo/CONTRIBUTING.md" with { type: "file" };
+import b127 from "../templates/sandbox-repo/README.md" with { type: "file" };
+import b128 from "../templates/sandbox-repo/README_SANDBOX.md" with { type: "file" };
+import b129 from "../templates/sandbox-repo/package.json" with { type: "file" };
+import b130 from "../templates/sandbox-repo/scripts/lint.ts" with { type: "file" };
+import b131 from "../templates/sandbox-repo/scripts/test-shard.ts" with { type: "file" };
+import b132 from "../templates/sandbox-repo/src/money.ts" with { type: "file" };
+import b133 from "../templates/sandbox-repo/test/format.test.ts" with { type: "file" };
+import b134 from "../templates/sandbox-repo/test/money.test.ts" with { type: "file" };
+import b135 from "../templates/sandbox-repo/tsconfig.json" with { type: "file" };
 
 export const BUNDLED: Record<string, string> = {
   "workflows/change.flow.yaml": b0,
@@ -239,37 +240,38 @@ export const BUNDLED: Record<string, string> = {
   "packs/firstmate/workflows/code-firstmate.wf.yaml": b99,
   "skins/captain/LICENSE.txt": b100,
   "skins/captain/ORIGIN.txt": b101,
-  "skins/captain/captain.js": b102,
-  "skins/captain/index.html": b103,
-  "skins/captain/manifest.json": b104,
-  "skins/kit/README.md": b105,
-  "skins/kit/skin-kit.js": b106,
-  "skins/terminal/index.html": b107,
-  "skins/terminal/manifest.json": b108,
-  "skins/voyage/index.html": b109,
-  "skins/voyage/manifest.json": b110,
-  "skins/voyage/voyage.css": b111,
-  "skins/voyage/voyage.js": b112,
-  "templates/sandbox-app/.crew/app.json": b113,
-  "templates/sandbox-app/app/README.md": b114,
-  "templates/sandbox-app/app/build.ts": b115,
-  "templates/sandbox-app/app/server.ts": b116,
-  "templates/sandbox-app/app/shop.ts": b117,
-  "templates/sandbox-app/test/shop.test.ts": b118,
-  "templates/sandbox-repo/.crew/gates.json": b119,
-  "templates/sandbox-repo/.github/CODEOWNERS": b120,
-  "templates/sandbox-repo/.github/ISSUE_TEMPLATE/bug_report.md": b121,
-  "templates/sandbox-repo/.github/ISSUE_TEMPLATE/feature_request.md": b122,
-  "templates/sandbox-repo/.github/pull_request_template.md": b123,
-  "templates/sandbox-repo/.github/workflows/ci.yml": b124,
-  "templates/sandbox-repo/CONTRIBUTING.md": b125,
-  "templates/sandbox-repo/README.md": b126,
-  "templates/sandbox-repo/README_SANDBOX.md": b127,
-  "templates/sandbox-repo/package.json": b128,
-  "templates/sandbox-repo/scripts/lint.ts": b129,
-  "templates/sandbox-repo/scripts/test-shard.ts": b130,
-  "templates/sandbox-repo/src/money.ts": b131,
-  "templates/sandbox-repo/test/format.test.ts": b132,
-  "templates/sandbox-repo/test/money.test.ts": b133,
-  "templates/sandbox-repo/tsconfig.json": b134,
+  "skins/captain/captain.css": b102,
+  "skins/captain/captain.js": b103,
+  "skins/captain/index.html": b104,
+  "skins/captain/manifest.json": b105,
+  "skins/kit/README.md": b106,
+  "skins/kit/skin-kit.js": b107,
+  "skins/terminal/index.html": b108,
+  "skins/terminal/manifest.json": b109,
+  "skins/voyage/index.html": b110,
+  "skins/voyage/manifest.json": b111,
+  "skins/voyage/voyage.css": b112,
+  "skins/voyage/voyage.js": b113,
+  "templates/sandbox-app/.crew/app.json": b114,
+  "templates/sandbox-app/app/README.md": b115,
+  "templates/sandbox-app/app/build.ts": b116,
+  "templates/sandbox-app/app/server.ts": b117,
+  "templates/sandbox-app/app/shop.ts": b118,
+  "templates/sandbox-app/test/shop.test.ts": b119,
+  "templates/sandbox-repo/.crew/gates.json": b120,
+  "templates/sandbox-repo/.github/CODEOWNERS": b121,
+  "templates/sandbox-repo/.github/ISSUE_TEMPLATE/bug_report.md": b122,
+  "templates/sandbox-repo/.github/ISSUE_TEMPLATE/feature_request.md": b123,
+  "templates/sandbox-repo/.github/pull_request_template.md": b124,
+  "templates/sandbox-repo/.github/workflows/ci.yml": b125,
+  "templates/sandbox-repo/CONTRIBUTING.md": b126,
+  "templates/sandbox-repo/README.md": b127,
+  "templates/sandbox-repo/README_SANDBOX.md": b128,
+  "templates/sandbox-repo/package.json": b129,
+  "templates/sandbox-repo/scripts/lint.ts": b130,
+  "templates/sandbox-repo/scripts/test-shard.ts": b131,
+  "templates/sandbox-repo/src/money.ts": b132,
+  "templates/sandbox-repo/test/format.test.ts": b133,
+  "templates/sandbox-repo/test/money.test.ts": b134,
+  "templates/sandbox-repo/tsconfig.json": b135,
 };

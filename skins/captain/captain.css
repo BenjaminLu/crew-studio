@@ -1,0 +1,9 @@
+#captain-cards { position:fixed; inset:0; z-index:80; pointer-events:none; }
+.mate-speech { position:absolute; top:0; left:0; box-sizing:border-box; width:220px; max-width:calc(100vw - 24px); padding:12px 15px; background:#fff9e9; color:#272031; border:2px solid #292131; border-radius:19px 19px 19px 5px; box-shadow:0 4px 0 #29213140; pointer-events:auto; font:600 13px/1.4 system-ui,sans-serif; }
+.mate-speech::after { content:""; position:absolute; left:var(--tail, 30px); bottom:-12px; width:18px; height:18px; background:#fff9e9; border-right:2px solid #292131; border-bottom:2px solid #292131; transform:skewY(30deg) rotate(25deg); }
+.mate-speech strong { display:block; font-size:13px; }
+.mate-speech small { display:block; color:#75634a; margin:4px 0 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mate-speech button { display:block; width:100%; padding:6px 0; border:0; background:none; color:#9f292c; font:inherit; text-align:left; cursor:pointer; overflow-wrap:anywhere; }
+.mate-speech button:hover { text-decoration:underline; }
+.mate-speech button:focus-visible { outline:2px solid #9f292c; outline-offset:3px; border-radius:3px; }
+@media(max-width:600px) { .mate-speech { width:180px; padding:9px 12px; font-size:12px; } }

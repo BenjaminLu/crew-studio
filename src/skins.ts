@@ -15,6 +15,17 @@ import type { Run } from "./runtime/engine";
 /** Adapt native tasks to the existing read-only skin contract without exposing run context. */
 export function nativeSkinData(runs: Run[], cards: any[]) {
   const visible = runs.filter(r => !r.archived);
+  // Native dispatch records the proposal that owns its child run. Expose only
+  // the root identity, never the proposal params or private run context.
+  const byId = new Map(runs.map(r => [r.id, r]));
+  const rootTask = (r: Run) => {
+    const seen = new Set<string>();
+    while (typeof r.params?._firstmateProposal === "string" && byId.has(r.params._firstmateProposal)) {
+      if (seen.has(r.id)) return [...seen].sort()[0];
+      seen.add(r.id); r = byId.get(r.params._firstmateProposal)!;
+    }
+    return r.id;
+  };
   const key = (r: Run, node: string) => `${r.workflow}:v${r.version}:${node}`;
   const nodes = new Map<string, any>(); const edges: any[] = [];
   for (const r of visible.filter(r => !["succeeded", "cancelled", "failed"].includes(r.status))) {
@@ -24,7 +35,7 @@ export function nativeSkinData(runs: Run[], cards: any[]) {
   return {
     tasks: visible.map(r => {
       const current = r.def.nodes.find(n => r.nodes[n.id]?.state === "running" || r.nodes[n.id]?.state === "waiting");
-      return { id: r.id, title: r.title, status: r.status === "waiting" ? "needs-you" : ["succeeded", "cancelled"].includes(r.status) ? "done" : r.status,
+      return { id: r.id, rootTask: rootTask(r), title: r.title, status: r.status === "waiting" ? "needs-you" : ["succeeded", "cancelled"].includes(r.status) ? "done" : r.status,
         node: current ? key(r, current.id) : null, round: current ? r.nodes[current.id].visits : 0, lastTs: r.updatedAt };
     }),
     crew: visible.flatMap(r => r.def.nodes.filter(n => n.kind === "agent" && r.nodes[n.id]?.state === "running" && r.nodes[n.id]?.job).map(n => ({ name: `${r.id}/${n.id}`, role: n.role || "worker", task: r.id, alive: true, activity: { en: n.label } }))),
@@ -123,7 +134,7 @@ export function snapshotFor(perms: string[], d: { tasks: any[]; crew: any[]; pen
   const has = (p: string) => perms.includes(p);
   return {
     permissions: perms,
-    tasks: has("snapshot.tasks") ? d.tasks.slice(0, 80).map((t) => ({ id: t.id, title: t.title, status: t.status, node: t.node, door: t.door, round: t.round, pr: t.pr, lastTs: t.lastTs })) : [],
+    tasks: has("snapshot.tasks") ? d.tasks.slice(0, 80).map((t) => ({ id: t.id, rootTask: t.rootTask, title: t.title, status: t.status, node: t.node, door: t.door, round: t.round, pr: t.pr, lastTs: t.lastTs })) : [],
     crew: has("snapshot.crew") ? d.crew.slice(0, 60).map((c) => ({ name: c.name, role: c.role, task: c.task, alive: c.alive, activity: c.activity?.en ?? null })) : [],
     pending: has("snapshot.pending") ? d.pending.map((c) => ({ id: c.id, title: c.details?.en?.title || c.title, kind: c.kind, task: c.task })) : [],
     flow: has("snapshot.flow") ? { nodes: d.flow?.nodes?.map((n: any) => ({ id: n.id, kind: n.kind, label: n.label, lane: n.lane ?? null })) ?? [], edges: d.flow?.edges ?? [] } : null,
