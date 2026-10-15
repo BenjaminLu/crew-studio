@@ -141,6 +141,7 @@ const playback = async (r: any, label: string) => {
 const waiting = async (id: string, node = "accept") => { await until(() => E.cards.list({ run: id, open: true }).some(c => c.node === node) || ["failed", "succeeded", "cancelled"].includes(E.get(id)!.status), 30000); return E.cards.list({ run: id, open: true }).find(c => c.node === node); };
 const doc = E.start({ workflow: "documents", params: {}, text: "Write a fixture memo" }); let card = await waiting(doc.id);
 ok(!!card && E.get(doc.id)!.nodes.draft.visits === 2, "missing document title triggers automated refinement before any human acceptance");
+ok(E.get(doc.id)!.nodes.draft.data.dir.startsWith(join(data, "work") + "/"), "deliver rounds use the sandbox-allowed work area, never the protected run store");
 await capture(card, "document-acceptance"); await destinations(card, "document");
 const dr = E.get(doc.id)!.ctx.deliver?.draft;
 ok(!!dr && store.versions(dr.id).length === 2 && store.version(dr.id, 2)?.parent === 1 && /No title/.test(readFileSync(store.file(dr.id, 1, "doc.md")!, "utf8")), "agent revision creates an immutable version with parent lineage");

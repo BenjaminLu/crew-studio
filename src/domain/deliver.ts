@@ -29,7 +29,7 @@ export function installDeliver(engine: Engine, d: Deps) {
   };
   engine.modes.deliver = {
     begin(x) {
-      const dir = join(x.dir, `${x.node.id}-${x.visit}-${x.rn.attempt ?? 0}`); rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
+      const dir = join(d.dataDir, "work", "deliver", x.run.id, `${x.node.id}-${x.visit}-${x.rn.attempt ?? 0}`); rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
       const old = x.ctx.deliver?.[x.node.id]; if (old) cpSync(st.filesDir(old.id, old.n), dir, { recursive: true });
       if (kind(x) === "video" && !old) { const tpl = bundledText("workflows/v2/templates/film.html"); if (!tpl) throw new Error("film template unavailable"); writeFileSync(join(dir, "film.html"), tpl.replaceAll(/\{\{(?:TITLE|LINE[123])\}\}/g, "Crew Studio")); }
       x.rn.data.brief = briefFor(x); x.rn.data.dir = dir; x.rn.data.parent = old ?? null; x.rn.data.notes = old ? st.notes(old.id, old.n).filter(n => n.status === "open") : []; x.save();
