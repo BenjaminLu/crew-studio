@@ -17,16 +17,14 @@ No `npm install`, database, firstmate v1 checkout or manual hook setup is needed
 ## Start
 
 ```sh
-bun run start
+bun run launch
 ```
 
-Keep the server running. In another terminal, from the same directory:
+This starts Studio (or finds the verified running instance) and requests its authenticated Board in your browser. Keep this process running. No second terminal or copied session link is required. A browser accepting the request does not prove a visible window; retry with `bun run launch --browser Safari` if your default browser has no normal window.
 
-```sh
-bun src/main.ts open
-```
+On the Board, connect Codex using your ChatGPT account, then continue with Studio’s own Firstmate in its private workspace. No existing terminal session, repository, AGENTS file or handoff is required. The coffee-shop guided workflow starts with your explicit brief; Firstmate can propose native work, but only your approval of its dispatch card starts the pinned workflow. Account readiness and native worker/tool readiness remain separate.
 
-This opens your authenticated Studio session at **http://127.0.0.1:4210**.
+Source and binary default to `~/.crew-studio/data`. Existing checkout-local stores are not moved or read automatically; select one explicitly with `CREW_DATA`. `bun run start` remains a headless server command.
 
 ## Your first workflow
 
@@ -44,6 +42,6 @@ You now have a reusable workflow. Edit its graph and save to create a new versio
 
 - **AI and coding:** configure a provider in **Settings → Doctor**. Coding also needs Git, Node.js, Python 3 and a supported OS sandbox; the current check sandbox uses macOS `sandbox-exec`.
 - **Screenshots and video:** optionally install Playwright/Chromium and ffmpeg.
-- **Standalone binary:** `bun run build`, then run `./dist/crew-studio`; open its session separately with `./dist/crew-studio open`.
+- **Standalone binary:** `bun run build`, then run `./dist/crew-studio`; open its session separately with `./dist/crew-studio launch`.
 
 See [setup, dependencies, hooks and reference](docs/setup-and-reference.md) for installation commands and optional integrations, or [architecture](docs/architecture.md) for how Studio works.

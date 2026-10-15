@@ -118,8 +118,10 @@ setInterval(() => { if (document.querySelector("[data-crew-evlist]") && S.route?
 // ---------- home: the Board ----------
 // without a session the page can only read: say how to start one (Studio's page never hands one out by itself)
 fetch("/api/session").then((r) => r.json()).then((j) => { if (j.session) return;
-  document.body.prepend(h("div", { class: "bb-nosession", role: "status", "data-no-session": "1" }, T("This page has no Studio session, so it cannot change anything. Open Studio with its session link: run ", "這個頁面沒有 Studio session，所以無法做任何變更。請用 session 連結開啟 Studio：執行 "), h("code", {}, "bun src/main.ts open"), T(" (the binary: ", "（執行檔：") , h("code", {}, "crew-studio open"), ")")); }).catch(() => {});
+  document.body.prepend(h("div", { class: "bb-nosession", role: "status", "data-no-session": "1" }, T("This page has no Studio session, so it cannot change anything. Open Studio with its session link: run ", "這個頁面沒有 Studio session，所以無法做任何變更。請用 session 連結開啟 Studio：執行 "), h("code", {}, "bun run launch"), T(" (the binary: ", "（執行檔：") , h("code", {}, "./crew-studio launch"), ")")); }).catch(() => {});
 const home = () => { if (!location.hash || location.hash === "#" || location.hash === "#/") location.replace("#/board"); };
 addEventListener("hashchange", home); home();
+// Board is the first-run entry; existing workflow content remains the same.
+{const board=routes.board;routes.board=(...args)=>{const page=board(...args),welcome=window.crewFirstmateWelcome?.();if(welcome)page.prepend(welcome);return page;};}
 route(); setTimeout(mark, 0);
 })();

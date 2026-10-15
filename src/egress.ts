@@ -13,6 +13,7 @@ import { dirname } from "node:path";
 export type EgressEvent = { at: string; host: string; port: number; allowed: boolean; method: string; round: string | null; why?: string };
 export class Egress {
   private server: Server | null = null;
+  private starting: Promise<number> | null = null;
   port = 0;
   /** credential → that round's hosts */
   private rounds = new Map<string, Set<string>>();
@@ -32,6 +33,7 @@ export class Egress {
     this.onEvent(e);
   }
   async start(): Promise<number> {
+    if (this.starting) return this.starting;
     if (this.server) return this.port;
     this.server = createServer((client: Socket) => {
       let head = Buffer.alloc(0);
@@ -66,9 +68,14 @@ export class Egress {
       };
       client.on("data", onData); client.on("error", () => {});
     });
-    await new Promise<void>((res) => this.server!.listen(0, "127.0.0.1", () => res()));
-    this.port = (this.server!.address() as any).port;
-    return this.port;
+    const server = this.server;
+    this.starting = new Promise<number>((resolve, reject) => {
+      const fail = (error: Error) => { if (this.server === server) this.server = null; this.port = 0; reject(error); };
+      server.once("error", fail);
+      try { server.listen(0, "127.0.0.1", () => { server.off("error", fail); this.port = (server.address() as any).port; resolve(this.port); }); }
+      catch (error) { server.off("error", fail); fail(error as Error); }
+    });
+    try { return await this.starting; } finally { this.starting = null; }
   }
   stop() { this.server?.close(); this.server = null; }
 }

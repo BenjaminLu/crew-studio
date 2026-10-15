@@ -1,3 +1,4 @@
+import { registerInstance } from "./instance";
 import {GitHubPoller} from './github-poller';
 import {Projects} from './doors';
 import {projectPrAdapter,GitHubPrAdapter,type GitHubProjectGrant} from './adapters/github';
@@ -77,6 +78,7 @@ import { encodeCwd } from "./host/claude";
 
 import { codexProvider } from "./providers/codex";
 import { codexConfig } from "./host/codex";
+import { CodexAccount } from "./host/codex-account";
 import { probeCodex } from "./providers/codex-probe";
 import { ProviderRefusal, selectNativeProvider, type ProviderSelection, type ProviderCapability } from "./providers/policy";
 
@@ -155,12 +157,15 @@ setInterval(() => send("ping", Date.now()), 20_000);
 // --- the firstmate MAIN session (M2.5): Studio drives it, one input at a time ---
 const PROJECT = startup.project;
 if (!startup.legacy && !process.env.CREW_MAIN_PROJECT) mkdirSync(PROJECT, { recursive: true });
-const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STATE,
+const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STATE, nativeWorkspace: !startup.legacy && !process.env.CREW_MAIN_PROJECT,
+  nativeTools:()=>runtime.firstmate,
   permissionMcp: (b) => ({ command: helperCommand("permission-mcp"), env: { CREW_PERM_SOCKET: b.socket, CREW_PERM_TOKEN: b.token } }) });
 await main.start();
 main.onView = (v) => send("main", v);
 main.onEvent = (e: HostEvent) => { if (e.type === "delta" || e.type === "toolStart" || e.type === "permissionRequest" || e.type === "turnStart") send("mainEvent", e); };
-const takeover = createTakeover({ main, fm, gh, board, stateDir: STATE, pending: () => pending, tasks, crew: () => fm.crew(8) });
+const codexAccount=new CodexAccount({cwd:PROJECT,busy:()=>main.view().state!=="detached",configured:()=>{const c=codexConfig(PROJECT);return{model:c.model,effort:c.effort};},changed:()=>send("codex-account",codexAccount.view())});
+for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{void codexAccount.shutdown().then(()=>process.exit(0),()=>process.exit(1));});
+const takeover = createTakeover({ main, fm, gh, board, codexAccount, stateDir: STATE, pending: () => pending, tasks, crew: () => fm.crew(8) });
 // transcripts: the session Studio drives (its copy holds the turns before the takeover), else the firstmate session
 const CLAUDE_PROJECTS = process.env.CREW_HOST_CLAUDE_PROJECTS ?? join(homedir(), ".claude/projects");
 let firstmateId: string | null = null;
@@ -184,7 +189,7 @@ let serveOn = false;
 // a phone may read and interrupt; driving firstmate (and answering cards, changing settings) needs "allow phone to drive"
 const PHONE_DRIVE = new Set(["/api/main/takeover", "/api/main/start", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door", "/api/main/attach", "/api/main/send", "/api/main/approve", "/api/main/resume", "/api/main/detach", "/api/main/queue/remove", "/api/answer", "/api/settings"]);
 const DESKTOP_ONLY = new Set(["/api/transcripts/settings", "/api/remote/pair/start", "/api/remote/revoke", "/api/remote/settings", "/api/remote/tailscale", "/api/remote/lan",
-  "/api/github/token", "/api/github/forget", "/api/keys", "/api/doctor/install", "/api/doctor/login", "/api/doctor/cancel"]);
+  "/api/codex/account/login", "/api/codex/account/cancel", "/api/codex/account/verify", "/api/github/token", "/api/github/forget", "/api/keys", "/api/doctor/install", "/api/doctor/login", "/api/doctor/cancel"]);
 
 // --- LAN mode: a second listener on this Mac's LAN address, only while turned on (never at start) ---
 let lanServer: ReturnType<typeof Bun.serve> | null = null;
@@ -205,7 +210,7 @@ function setLan(on: boolean): { ok: boolean; error?: string } {
 const installs = new Installs(process.env.CREW_INSTALL_RUNNER === "mock" ? new MockRunner() : new RealRunner());
 let doctorCache: Item[] = [];
 const doctor = () => (doctorCache = diagnose({ state: STATE, legacy: startup.legacy, board: board.status(), gh: gh.state, keys: keyStatus() as any, chatProvider: chatInfo().provider, lanIp: lanIp(),
-  tailscale: ts, compiled: COMPILED, render: renderEnv(), egress: egress.status(), roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined }));
+  tailscale: ts, compiled: COMPILED, render: renderEnv(), egress: egress.status(), codexAccount:codexAccount.view(), roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined }));
 installs.onChange = (j, line) => send("install", { id: j.id, item: j.item, state: j.state, code: j.code, line: line ?? null });
 installs.onFinished = () => { refreshTs(); send("doctor", doctor()); };
 
@@ -370,6 +375,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     // /api/tasks is the new name of /api/wruns: a path the run routes serve is handed to them under its old name
     { const a = taskAlias(url.pathname, req.method !== "GET" && req.method !== "HEAD"); if (a) url.pathname = a; }
     const p = url.pathname;
+    if(via === "loopback" && req.method === "GET" && ["localhost","[::1]"].includes(url.hostname) && (p === "/session" || !p.startsWith("/api/"))) { const canonical=new URL(url);canonical.hostname="127.0.0.1";return new Response(null,{status:307,headers:{location:canonical.href,"cache-control":"no-store","referrer-policy":"no-referrer"}}); }
     // who is asking: this Mac (loopback Host) or a paired phone (tailnet Host + token); anything else is refused
     if (p === "/api/remote/pair" && req.method === "POST") {
       { const o = req.headers.get("origin"); if (o && o !== url.origin) return json({ error: "a request from another site cannot pair", code: "crossSite" }, 403); }
@@ -432,7 +438,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     }
     // --- Doctor ---
     // which process answers (tests check they reach the server they started)
-    if (p === "/api/instance" && !writing) return json({ pid: process.pid });
+    if (p === "/api/instance" && !writing) return json(launchAuthority.respond(url.searchParams.get("challenge")));
     if (p === "/api/doctor") return json({ items: doctor(), os: process.platform, compiled: COMPILED, installer: installs.runner.real ? "real" : "mock",
       jobs: [...installs.jobs.values()].slice(-5) });
     if (p === "/api/doctor/methods") { const item = url.searchParams.get("item") ?? ""; return json({ item, methods: methodsFor(item), login: LOGINS[item] ?? null }); }
@@ -446,8 +452,11 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       if (b?.confirm !== true) return json({ error: "confirm first", command: m.argv.join(" "), source: m.source, location: m.location }, 400);
       try { return json(installs.start(String(b.item), m)); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
     }
+    if(p==="/api/codex/account"&&!writing)return json(codexAccount.view());
+    if(["/api/codex/account/login","/api/codex/account/cancel","/api/codex/account/verify"].includes(p)&&writing){try{return json(p.endsWith("/login")?await codexAccount.start():p.endsWith("/cancel")?await codexAccount.cancel():await codexAccount.verify());}catch{return json({error:"Codex account action unavailable; complete/cancel any existing sign-in and release Studio-owned firstmate before retrying / Codex 帳號操作無法進行；請先完成或取消登入，並交還 Studio 正在操作的 firstmate"},409);}}
     if (p === "/api/doctor/login" && writing) {
       let b: any = {}; try { b = await req.json(); } catch {}
+      if(b?.item==="codex"){try{return json(await codexAccount.start());}catch{return json({error:"Codex sign-in unavailable; release Studio-owned firstmate or complete/cancel the pending sign-in / 無法登入 Codex；請先交還 Studio 正在操作的 firstmate，或完成／取消目前登入"},409);}}
       const l = LOGINS[String(b?.item ?? "")];
       if (!l) return json({ error: "no login flow for that" }, 404);
       if (!l.argv || process.platform !== "darwin" && b?.item !== "codex") return json({ open: l.url, note: l.note });
@@ -489,7 +498,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     }
     if (p.startsWith("/api/main/") && writing) {
       let b: any = {}; try { b = await req.json(); } catch {}
-      if (p === "/api/main/attach") { const r = await main.attach(b?.host === "codex" ? "codex" : "claude", String(b?.id ?? "")); return json(r, r.ok ? 200 : 409); }
+      if (p === "/api/main/attach") { if(codexAccount.blocking)return json({error:"Complete or cancel Codex account action first / 請先完成或取消 Codex 帳號操作"},409); const r = await main.attach(b?.host === "codex" ? "codex" : "claude", String(b?.id ?? "")); return json(r, r.ok ? 200 : 409); }
       if (p === "/api/main/send") {
         const text = String(b?.text ?? "").trim().slice(0, 8000);
         if (!text) return json({ error: "empty message" }, 400);
@@ -498,7 +507,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       }
       if (p === "/api/main/interrupt") { await main.interrupt(); return json({ ok: true }); }
       if (p === "/api/main/resume") { const r = main.resume(); return json(r, r.ok ? 200 : 409); }
-      if (p === "/api/main/detach") { const cmd = await main.detach(); return cmd ? json({ resume: cmd }) : json({ error: "nothing attached" }, 409); }
+      if (p === "/api/main/detach") { const before = main.view(), nativePrimary = before.context === "studio" && !before.origin && before.drive?.path === "fresh" && ["attached", "paused"].includes(before.state); const cmd = await main.detach(); if (cmd) return json({ resume: cmd }); const after = main.view(); return nativePrimary && after.state === "detached" && after.driver.holder === "none" && !after.driver.resume ? json({ stopped: true, resume: null }) : json({ error: "nothing attached" }, 409); }
       if (p === "/api/main/approve") return main.bridge.answer(String(b?.id ?? ""), b?.allow === true) ? json({ ok: true }) : json({ error: "no such pending request" }, 404);
       if (p === "/api/main/queue/remove") return main.queue.remove(String(b?.id ?? "")) ? json({ ok: true }) : json({ error: "no such item" }, 404);
       return json({ error: "unknown" }, 404);
@@ -652,4 +661,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
 
 const server = Bun.serve({ port: PORT, hostname: "127.0.0.1", idleTimeout: 0, fetch: (req) => handle(req, "loopback") });
 console.log(`crew-studio: http://127.0.0.1:${server.port}  data=${DATA}  state=${STATE}  board=${board.url} (${board.status().writable ? "answers on" : "read-only"})  github=${gh.state.enabled ? gh.state.repo : "off"}`);
-console.log(`crew-studio: open Studio with its session link: \`bun src/main.ts open\` (the binary: \`crew-studio open\`)`);
+console.log("crew-studio: use bun run launch or ./crew-studio launch to request the authenticated Board.");
+
+const launchAuthority = registerInstance(server.port, DATA, SESSION);
+export const runningInstance = { ...launchAuthority.record, token: SESSION };

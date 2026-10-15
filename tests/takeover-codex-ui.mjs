@@ -14,6 +14,19 @@ import { fileURLToPath } from "node:url";
 import { freePort, waitUp, withSession } from "./boot.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url)), root = join(here, "..");
+// Browser-free owning copy control; evaluates the actual production renderer.
+if(process.env.TAKEOVER_COPY_ONLY){
+ const {runInNewContext}=await import("node:vm");
+ const source=readFileSync(join(process.env.TAKEOVER_COPY_ROOT||root,"public/takeover.js"),"utf8");
+ const fn=source.slice(source.indexOf("function cutoverSteps("),source.indexOf("function takeoverFlow("));
+ const render=runInNewContext(`(${fn.trim()})`,{h:(tag,attrs,...children)=>({tag,attrs,children}),T:en=>en,cmdBox:text=>text,resumeCmd:(host,_project,id)=>`${host} resume ${id}`});
+ let failed=0;const check=(yes,name)=>{console.log(`${yes?"ok":"FAIL"} ${name}`);if(!yes)failed++;};
+ check(render({project:"/fixture",firstmate:null},{origin:null,drive:{path:"fresh",host:"codex"}})===null,"fresh independent Codex has no terminal cutover instructions");
+ check(render({project:"/fixture",firstmate:{id:"other",host:"claude"}},{origin:null,state:"detached"})===null,"unattached inventory cannot manufacture terminal cutover instructions");
+ const actual=render({project:"/fixture",firstmate:{id:"unrelated",host:"claude"}},{origin:{id:"owned-original",host:"codex"},drive:{path:"fork"}});
+ check(actual?.attrs?.["data-section"]==="cutover"&&JSON.stringify(actual).includes("codex resume owned-original"),"actual takeover preserves cutover with its real original identity");
+ console.log(`takeover-copy: ${3-failed} passed, ${failed} failed`);process.exit(failed?1:0);
+}
 // Playwright: PLAYWRIGHT_MODULE (a path to its index.mjs), else the "playwright" package resolvable from here
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright").catch(() => {
   console.error("takeover-ui: Playwright not found; set PLAYWRIGHT_MODULE to its index.mjs or install it"); process.exit(2); });
@@ -44,6 +57,7 @@ for(const width of [1440,390]) for(const scheme of ["light","dark"]) {
 const p=await browser.newPage({viewport:{width,height:900},colorScheme:scheme}); p.on("pageerror",e=>errors.push(String(e)));
 await p.goto(`${base}/#/firstmate`);
 ok(await seen(p,'[data-section="start-codex"]'),`fresh start card ${width} ${scheme}`);
+await p.click("[data-optional-sessions]");
 ok(await seen(p,`[data-session="${live}"][data-host="codex"]`),`Codex host-labelled discovery ${width} ${scheme}`);
 ok(/captain-model.*high/.test(await p.locator('[data-codex-config]').innerText()),`captain config shown ${width} ${scheme}`);
 ok(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),`no horizontal overflow ${width} ${scheme}`);
@@ -73,7 +87,8 @@ await p.evaluate(()=>openChat(false));
 await p.click('#releaseBtn'); await p.click('.modal .btn.primary');
 ok(await seen(p,'#resumeCmd'),"release command appears"); ok(/codex resume/.test(await p.locator('#resumeCmd').innerText()),"release uses Codex resume");
 await p.click('.modal .btn.primary');
-await p.click('#startCodexBtn'); await p.click('.modal .btn.primary'); ok(await p.locator('.modal').count()===1,"fresh start waits for no-other-firstmate confirmation");
+await p.click('[data-codex-verify]');await p.waitForSelector('[data-codex-account="ready"]');
+await p.click('#startCodexBtn'); await p.click('.modal .btn.primary'); ok(await p.locator('.modal').count()===1,"fresh start waits for project-availability confirmation");
 await p.check('#tkStartAck'); await p.click('.modal .btn.primary');
 ok(await seen(p,'[data-drive-path="fresh"]'),"fresh firstmate starts on Codex");
 for(let n=0;n<160 && !readFileSync(log,"utf8").includes("UI-HANDOFF-MARKER");n++) await p.waitForTimeout(50);

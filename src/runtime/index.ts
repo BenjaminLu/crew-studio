@@ -1,3 +1,4 @@
+import {installFirstmate} from "../firstmate";
 // Studio's native runtime, wired: versioned workflow definitions, the engine,
 // the check runtime, Studio-owned cards, and the steps each workflow uses.
 // Routes (all under /api/wf, /api/wruns, /api/scards, /api/checks, /api/policies, /api/intake):
@@ -76,6 +77,7 @@ export function createRuntime(d: RuntimeDeps) {
   if (d.m3?.store && d.m3?.lane && d.fileorg && d.docs) installDeliver(engine, { dataDir: d.dataDir, artifacts: d.m3.store, lane: d.m3.lane, fileorg: d.fileorg, docs: d.docs });
   // Base artifact providers precede domain wrappers that bind their own pinned outputs.
   for (const f of d.install ?? []) f(engine, { projects, dataDir: d.dataDir });
+  const firstmate=installFirstmate(engine,projects);
   engine.load();
 
   const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
@@ -214,6 +216,6 @@ export function createRuntime(d: RuntimeDeps) {
       return json({ error: "not found" }, 404);
     } catch (e: any) { return json({ error: String(e?.message ?? e), problems: e?.problems ?? undefined }, 400); }
   }
-  return { handle, engine, defs, projects, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
+  return { handle, engine, defs, projects, firstmate, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
 }
 export { schemaDefaults };

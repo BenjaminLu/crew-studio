@@ -33,7 +33,7 @@ Keep that terminal open. In a second terminal, in the same checkout, open Studio
 authenticated browser session:
 
 ```sh
-bun src/main.ts open
+bun run launch
 ```
 
 Studio listens on `http://127.0.0.1:4210`. The `open` command establishes the local
@@ -42,8 +42,7 @@ No firstmate v1 checkout, migrated state, `.env` file or GitHub connection is
 required. Do not set `CREW_FM_STATE` unless you explicitly want the legacy adapter.
 If port 4210 is already occupied, use the same `CREW_PORT` for **both** commands.
 
-Source runs store data in `./data`; compiled runs default to
-`~/.crew-studio/data`. To share a store, set the same absolute `CREW_DATA` on both
+Source and compiled runs default to `~/.crew-studio/data`. Existing checkout-local stores are not migrated or read automatically. To explicitly select another store, set the same absolute `CREW_DATA` on both
 server and `open` commands. Run only one server against that store.
 
 ### Dependencies by capability
@@ -126,7 +125,7 @@ Studio.
 CREW_FM_STATE=/path/to/firstmate/state ./crew-studio   # optional explicit legacy history adapter
 ```
 
-In a second terminal, run `./crew-studio open` with the same data/port settings to open the authenticated browser session at http://127.0.0.1:4210. Basic native pages, workflows, cards, skills and local storage require only the binary. Studio creates its own data and a safe workspace; it does not discover a v1 checkout. Set `CREW_MAIN_PROJECT` to explicitly select another project. `CREW_FM_STATE` enables an optional legacy read adapter; it does not migrate or project state.
+Run `./crew-studio launch`, or double-click the neighboring `Open Crew Studio.command` on macOS. The launcher finds the verified running instance or owns startup, then requests its authenticated Board. No PATH installation, second terminal or pasted session link is required. OS browser dispatch is not proof of a visible window. Basic native pages, workflows, cards, skills and local storage require only the binary. Studio creates its own data and a safe workspace; it does not discover a v1 checkout. Set `CREW_MAIN_PROJECT` to explicitly select another project. `CREW_FM_STATE` enables an optional legacy read adapter; it does not migrate or project state.
 
 Coding requires Git, the selected provider and verified login/tool execution, a supported OS sandbox, Node for built-in firstmate script checks, and Python 3 for `core/ste-wording`. The Doctor separates basic web readiness from coding/check requirements and optional integrations. It offers supported installers; Git and Python setup are manual. Source development/build requires Bun. Rendering remains optional and requires Node, Playwright/Chromium and ffmpeg for films. It discovers only managed tools, an explicit `PLAYWRIGHT_MODULE`/`CREW_PLAYWRIGHT_MODULE`, or Studio’s own package.
 
@@ -164,7 +163,7 @@ and access away from home.
 with every web asset (fonts included, OFL) embedded; `bun run build:all` also
 cross-compiles `darwin-x64`, `linux-x64` and `windows-x64`. The binary starts its
 own helpers (`crew-studio mcp`, `crew-studio permission-mcp`), so it needs nothing
-else installed. Data lives in `~/.crew-studio/data` for the binary and `./data`
+else installed. Data lives in `~/.crew-studio/data` for both the binary and source
 in a checkout (`CREW_DATA` overrides both).
 
 A window onto a running firstmate: the board, the inbox of captain cards, the
@@ -201,7 +200,7 @@ bun run test:binary  # the built binary, run with no Bun on PATH
 | `CREW_INSTALL_RUNNER` | real | `mock` records installs instead of running them (tests); `CREW_NO_REAL_INSTALL=1` refuses real installs |
 | `CREW_GH_REPO` | the firstmate checkout's GitHub origin | repository for PR and check status |
 | `CREW_RECENT_DAYS` | `3` | how far back the board lists tasks |
-| `CREW_DATA` | `./data` | Studio's own store: intents, intent links, artifacts, settings |
+| `CREW_DATA` | `~/.crew-studio/data` | Studio's own store: intents, intent links, artifacts, settings |
 | `CREW_FILE_ALLOW` | `~/Desktop/firstmate-film` | colon-separated folders artifact files may be served from |
 | `CREW_CHAT_PROVIDER` | `claude` | chat model provider: `claude`, `codex` (or `stub` for tests); the chat header's settings save a choice that wins |
 | `CREW_CLAUDE_MODEL` / `CREW_CODEX_MODEL` | `claude-sonnet-5-5` / codex's default | model per provider |
@@ -449,3 +448,9 @@ from the firstmate checkout's `node_modules`; set `PLAYWRIGHT_MODULE` to use
 another copy.
 
 Codex tool execution belongs to the CLI's native runtime and keeps its configured model, effort, approvals and sandbox. Studio removes parent Codex thread IDs and runtime sandbox/CI flags from the child environment while retaining `CODEX_HOME`. Client-owned dynamic tools from another harness are declined; Studio does not interpret their JavaScript. A code-mode host failure is reported as a failed turn when the vendor sends its error output. A completed assistant message or a passing vendor Doctor is not proof of a repository read: verify a real native tool result. No global Codex configuration or feature setting is changed.
+
+### Native Firstmate launch authority
+
+`launch` discovers private owned instance records under `~/.crew-studio/runtime` (0700; files 0600). A bounded cryptographic challenge verifies the running server before any credential reaches the OS browser opener. The opener does not create session tokens and never prints secret URLs. Explicit CREW_DATA/CREW_PORT selects an exact instance; ambiguous, stale, mismatched or insecure authority fails closed. CREW_RUNTIME_DIR is an explicit runtime-location override for isolated fixtures. Local localhost navigation canonicalizes to127.0.0.1 before session cookies are issued.
+
+Default fresh Firstmate lives in Studio’s own workspace, with installed native proposal tools. Explicit CREW_MAIN_PROJECT/CREW_FM_STATE retains labeled legacy/project behavior. No workspace changes, task execution, model overrides or terminal takeover occur merely by loading the Board. Connect/Continue is explicit; official OAuth still requires the captain’s browser action. Only a real captain answer dispatches proposed native work. The fresh-only tool bridge uses Codex0.162.1’s documented experimental dynamicTools interface; unsupported protocol holds rather than falling back to legacy scripts. Existing terminal takeover is optional.

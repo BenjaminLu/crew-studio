@@ -33,6 +33,7 @@ function viewDoctor() {
       h("div", { class: "actions" }, h("button", { class: "btn", id: "docRecheck", onclick: () => { DOC.data = null; render(); loadDoctor(); } }, icon("refresh", "ic sm"), T("Check again", "重新檢查")))),
     DOC.data.installer === "mock" ? h("div", { class: "rich", "data-installer": "mock" }, h("div", { class: "rk" }, icon("alert", "ic sm"), T("Test mode: installs are recorded, never run.", "測試模式：只記錄安裝，不會真的執行。"))) : null,
     DOC.job ? jobBox(DOC.job) : null,
+    window.crewCodexAccountPanel?.(),
     h("div", { class: "faint", style: "font-size:13px" }, bad ? T(`${bad} item(s) need attention.`, `${bad} 項需要處理。`) : T("Listed dependencies are detected. Logins and actual tool execution need separate verification.", "已偵測到列出的依賴；登入與實際工具執行仍需分別驗證。")),
     ["basic","coding","optional"].map(group=>h("section", { "data-doc-group":group },
       h("h2", {}, group==="basic"?T("Basic web readiness","基本網頁功能"):group==="coding"?T("Coding and checks","程式碼與檢查"):T("Optional integrations","選用整合")),
@@ -102,6 +103,7 @@ async function openInstall(item) {
   $(".modal .btn.primary").textContent = T("Install", "安裝");
 }
 async function startLogin(item) {
+  if(item==="codex")return window.crewConnectCodex?.();
   const res = await postJ("/api/doctor/login", { item });
   if (res.error) return toast(res.error);
   if (res.open) { window.open(res.open, "_blank", "noopener"); toast(res.note || T("Opened the sign-in page", "已打開登入頁")); return; }
@@ -215,6 +217,7 @@ Object.assign(routes, { doctor: viewDoctor });
   $(".nav").append(b); b.addEventListener("click", () => { location.hash = "#/doctor"; });
   if (location.hash.startsWith("#/doctor")) route();
 }
+addEventListener("crew:codex-account",()=>{if(S.route?.name==="doctor")loadDoctor();});
 loadDoctor();
 setInterval(loadDoctor, 60_000);
 })();

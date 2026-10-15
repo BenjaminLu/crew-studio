@@ -17,7 +17,7 @@ import { newestHandoffFile, type MainSession } from "./host/main";
 import { redactText } from "./secure";
 
 type Who = { kind: string; device?: { name: string } };
-type Deps = { main: MainSession; fm: FmState; gh: GitHub; board: Board; stateDir: string; pending: () => Card[]; tasks: () => Task[]; crew: () => Actor[] };
+type Deps = { codexAccount?:Pick<import("./host/codex-account").CodexAccount,"view"|"ensureReady"|"blocking">; main: MainSession; fm: FmState; gh: GitHub; board: Board; stateDir: string; pending: () => Card[]; tasks: () => Task[]; crew: () => Actor[] };
 
 export const DISPATCH_PREFIX = "Captain's intent for new work, sent from Crew Studio:";
 export const dispatchText = (intent: string) => `${DISPATCH_PREFIX}\n\n${intent}\n\n` +
@@ -62,12 +62,12 @@ export function createTakeover(d: Deps) {
     const p = url.pathname;
     if (p === "/api/takeover" && !writing) {
       const own = copies();
-      let sessions: any[] = [];
-      try { sessions = (await d.main.discoverAll()).slice(0, 20).map((s) => ({ ...s, studioCopy: own.has(s.id) })); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 500); }
+      let sessions: any[] = [];let discoveryUnavailable=false;
+      try { if(url.searchParams.get("independent")!=="1")sessions = (await d.main.discoverAll()).slice(0, 20).map((s) => ({ ...s, studioCopy: own.has(s.id) })); } catch { discoveryUnavailable=true; }
       const firstmate = sessions.find((s) => !s.studioCopy) ?? null;
-      const project = d.main.view().project, newest = newestHandoffFile(d.stateDir);
-      return json({ project, firstmate, sessions, view: d.main.view(), handoffs: d.main.handoffs(), board: d.board.status(),
-        codex: { config: codexConfig(project), handoffFile: newest ? `state/${newest.name}` : null } });
+      const project = d.main.view().project, newest = d.main.view().context === "studio" ? null : newestHandoffFile(d.stateDir);
+      return json({ project, firstmate, sessions, discoveryUnavailable, view: d.main.view(), handoffs: d.main.handoffs(), board: d.board.status(),
+        codex: { account:d.codexAccount?.view()??null, config: codexConfig(project), handoffFile: newest ? `state/${newest.name}` : null } });
     }
     if (p.startsWith("/api/crew/report/") && !writing) {
       const actor = decodeURIComponent(p.slice("/api/crew/report/".length));
@@ -79,6 +79,7 @@ export function createTakeover(d: Deps) {
     let b: any = {};
     if (["/api/main/takeover", "/api/main/start", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door"].includes(p)) { try { b = await req.json(); } catch {} }
     if (p === "/api/main/takeover") {
+      if(d.codexAccount?.blocking)return json({error:"Complete or cancel Codex account action first / 請先完成或取消 Codex 帳號操作"},409);
       const mode = b?.mode === "rehearsal" ? "rehearsal" : "takeover";
       if (b?.confirm !== true) return json({ error: "confirm first: the terminal session must stay idle while Studio drives", code: "confirm" }, 400);
       const r = await d.main.takeover(b?.host === "codex" ? "codex" : "claude", String(b?.id ?? ""), mode);
@@ -87,7 +88,15 @@ export function createTakeover(d: Deps) {
     if (p === "/api/main/start") {
       if (b?.host !== "codex") return json({ error: "a fresh start runs on Codex", code: "host" }, 400);
       if (b?.confirm !== true) return json({ error: "confirm first: no other firstmate may run on the same state", code: "confirm" }, 400);
-      const r = await d.main.startFresh("codex");
+      if(d.main.view().state!=="detached")return json({error:"Studio already owns firstmate; release it first / Studio 已在操作 firstmate，請先交還"},409);
+      if(!d.codexAccount)return json({error:"Codex account verification unavailable / 無法驗證 Codex 帳號"},409);
+      let verified:Awaited<ReturnType<NonNullable<Deps["codexAccount"]>["ensureReady"]>>;
+      try{verified=await d.codexAccount.ensureReady();}catch{return json({error:"Connect Codex and verify the vendor-configured model/quota before starting / 請先連接 Codex 並驗證廠商設定的模型與配額"},409);}
+      const r = await d.main.startFresh("codex",opened=>{
+        const current=codexConfig(d.main.view().project);
+        if(verified.state!=="ready"||!verified.authenticated||verified.quota!=="available"||!verified.expires||verified.expires<=Date.now()||typeof verified.model!=="string"||!verified.model||typeof verified.effort!=="string"||!verified.effort||current.model!==verified.model||current.effort!==verified.effort||opened.model!==verified.model||opened.effort!==verified.effort)throw new Error("Codex main model/effort changed or is unverified. Recheck the vendor configuration before retrying / Codex 主對話模型或推理強度已變更或尚未驗證；請重新檢查廠商設定後再試");
+        return true;
+      });
       return json(r, r.ok ? 200 : 409);
     }
     if (p === "/api/main/question") {
@@ -103,7 +112,7 @@ export function createTakeover(d: Deps) {
       const text = String(b?.text ?? "").trim().slice(0, 6000);
       if (!text) return json({ error: "say what you want done" }, 400);
       if (d.main.view().state === "detached") return json({ error: "take over the firstmate session first", code: "detached" }, 409);
-      return json({ queued: d.main.enqueue("chat", dispatchText(text), who.kind === "phone" ? `phone:${who.device?.name ?? "?"}` : "desktop") });
+      return json({ queued: d.main.enqueue("chat", (d.main.view().context === "studio" ? `Captain requests new work in Studio: ${text}\nUse studio_list_workflows and studio_propose_work to raise a native captain dispatch card. Do not execute work or use legacy firstmate scripts before the captain approves.` : dispatchText(text)), who.kind === "phone" ? `phone:${who.device?.name ?? "?"}` : "desktop") });
     }
     if (p === "/api/answer/check-door") {
       const card = d.pending().find((c) => c.id === b?.id);

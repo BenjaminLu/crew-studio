@@ -82,7 +82,7 @@ async function runTurn(turnId, text) {
   }, 20);
 }
 
-const ANSWERS = new Set(["initialize", "thread/list", "thread/fork", "thread/start", "thread/resume", "thread/turns/list", "turn/start", "turn/interrupt"]);
+const ANSWERS = new Set(["account/read", "model/list", "account/rateLimits/read","initialize", "thread/list", "thread/fork", "thread/start", "thread/resume", "thread/turns/list", "turn/start", "turn/interrupt"]);
 createInterface({ input: process.stdin }).on("line", (l) => {
   let m; try { m = JSON.parse(l); } catch { return; }
   log({ dir: "in", msg: m });
@@ -99,6 +99,9 @@ createInterface({ input: process.stdin }).on("line", (l) => {
   if (problems.length) { for (const p of problems) log({ dir: "problem", side: "client", problem: p }); return error(-32600, `Invalid request: ${problems[0]}`); }
   const p = m.params;
   switch (m.method) {
+    case "account/read":return reply({account:process.env.STUB_CODEX_NO_AUTH==="1"?null:{type:"chatgpt",email:"offline@example.invalid",planType:"plus"},requiresOpenaiAuth:true});
+    case "model/list":return reply({data:[{id:MODEL,model:MODEL,defaultReasoningEffort:EFFORT,description:"Offline fixture",displayName:MODEL,hidden:false,isDefault:true,supportedReasoningEfforts:[{reasoningEffort:EFFORT,description:"Fixture effort"}]}],nextCursor:null});
+    case "account/rateLimits/read":return reply({rateLimits:{primary:process.env.STUB_CODEX_UNKNOWN_QUOTA==="1"?null:{usedPercent:10},rateLimitReachedType:null}});
     case "initialize": if (process.env.STUB_CODEX_INIT_DELAY) return setTimeout(() => reply({ userAgent: "stub-codex/0.162.1", codexHome: "/nonexistent/codex-home", platformFamily: "unix", platformOs: "macos" }), Number(process.env.STUB_CODEX_INIT_DELAY)); return reply({ userAgent: "stub-codex/0.162.1", codexHome: "/nonexistent/codex-home", platformFamily: "unix", platformOs: "macos" });
     case "thread/list": { const cwd = Array.isArray(p.cwd) ? p.cwd : p.cwd ? [p.cwd] : null;
       if (!process.env.STUB_CODEX_THREADS && cwd) threads.get("th-stub-1").cwd = cwd[0]; // the default thread lives in the asked folder

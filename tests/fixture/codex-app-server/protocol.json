@@ -210,6 +210,18 @@
    "params": "InitializeParams",
    "result": "InitializeResponse"
   },
+  "account/read": {
+   "params": "v2/GetAccountParams",
+   "result": "v2/GetAccountResponse"
+  },
+  "model/list": {
+   "params": "v2/ModelListParams",
+   "result": "v2/ModelListResponse"
+  },
+  "account/rateLimits/read": {
+   "params": "v2/GetAccountRateLimitsParams",
+   "result": "v2/GetAccountRateLimitsResponse"
+  },
   "thread/list": {
    "params": "v2/ThreadListParams",
    "result": "v2/ThreadListResponse"
@@ -375,6 +387,737 @@
   },
   "v2": {
    "AbsolutePathBuf": {
+    "type": "string"
+   },
+   "GetAccountParams": {
+    "properties": {
+     "refreshToken": {
+      "type": "boolean"
+     }
+    },
+    "title": "GetAccountParams",
+    "type": "object"
+   },
+   "GetAccountResponse": {
+    "properties": {
+     "account": {
+      "anyOf": [
+       {
+        "$ref": "#/definitions/v2/Account"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "requiresOpenaiAuth": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "requiresOpenaiAuth"
+    ],
+    "title": "GetAccountResponse",
+    "type": "object"
+   },
+   "Account": {
+    "oneOf": [
+     {
+      "properties": {
+       "type": {
+        "enum": [
+         "apiKey"
+        ],
+        "title": "ApiKeyAccountType",
+        "type": "string"
+       }
+      },
+      "required": [
+       "type"
+      ],
+      "title": "ApiKeyAccount",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "email": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "planType": {
+        "$ref": "#/definitions/v2/PlanType"
+       },
+       "type": {
+        "enum": [
+         "chatgpt"
+        ],
+        "title": "ChatgptAccountType",
+        "type": "string"
+       }
+      },
+      "required": [
+       "email",
+       "planType",
+       "type"
+      ],
+      "title": "ChatgptAccount",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "type": {
+        "enum": [
+         "amazonBedrock"
+        ],
+        "title": "AmazonBedrockAccountType",
+        "type": "string"
+       },
+       "usesCodexManagedCredentials": {
+        "default": false,
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "type"
+      ],
+      "title": "AmazonBedrockAccount",
+      "type": "object"
+     }
+    ]
+   },
+   "PlanType": {
+    "enum": [
+     "free",
+     "go",
+     "plus",
+     "pro",
+     "prolite",
+     "promax",
+     "team",
+     "self_serve_business_prolite",
+     "self_serve_business_usage_based",
+     "business",
+     "ent26",
+     "enterprise_cbp_automation",
+     "enterprise_cbp_usage_based",
+     "enterprise",
+     "edu",
+     "edu_plus",
+     "edu_pro",
+     "unknown"
+    ],
+    "type": "string"
+   },
+   "ModelListParams": {
+    "properties": {
+     "cursor": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "includeHidden": {
+      "type": [
+       "boolean",
+       "null"
+      ]
+     },
+     "limit": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": [
+       "integer",
+       "null"
+      ]
+     }
+    },
+    "title": "ModelListParams",
+    "type": "object"
+   },
+   "ModelListResponse": {
+    "properties": {
+     "data": {
+      "items": {
+       "$ref": "#/definitions/v2/Model"
+      },
+      "type": "array"
+     },
+     "nextCursor": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "data"
+    ],
+    "title": "ModelListResponse",
+    "type": "object"
+   },
+   "Model": {
+    "properties": {
+     "additionalSpeedTiers": {
+      "default": [],
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "availabilityNux": {
+      "anyOf": [
+       {
+        "$ref": "#/definitions/v2/ModelAvailabilityNux"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "availableAccessPrograms": {
+      "anyOf": [
+       {
+        "$ref": "#/definitions/v2/ModelAccessPrograms"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "defaultReasoningEffort": {
+      "$ref": "#/definitions/v2/ReasoningEffort"
+     },
+     "defaultServiceTier": {
+      "default": null,
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "displayName": {
+      "type": "string"
+     },
+     "hidden": {
+      "type": "boolean"
+     },
+     "id": {
+      "type": "string"
+     },
+     "inputModalities": {
+      "default": [
+       "text",
+       "image"
+      ],
+      "items": {
+       "$ref": "#/definitions/v2/InputModality"
+      },
+      "type": "array"
+     },
+     "isDefault": {
+      "type": "boolean"
+     },
+     "model": {
+      "type": "string"
+     },
+     "modelSpecialty": {
+      "default": null,
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "multiAgentVersion": {
+      "anyOf": [
+       {
+        "$ref": "#/definitions/v2/MultiAgentVersion"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "serviceTiers": {
+      "default": [],
+      "items": {
+       "$ref": "#/definitions/v2/ModelServiceTier"
+      },
+      "type": "array"
+     },
+     "supportedReasoningEfforts": {
+      "items": {
+       "$ref": "#/definitions/v2/ReasoningEffortOption"
+      },
+      "type": "array"
+     },
+     "supportsPersonality": {
+      "default": false,
+      "type": "boolean"
+     },
+     "upgrade": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "upgradeInfo": {
+      "anyOf": [
+       {
+        "$ref": "#/definitions/v2/ModelUpgradeInfo"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "required": [
+     "defaultReasoningEffort",
+     "description",
+     "displayName",
+     "hidden",
+     "id",
+     "isDefault",
+     "model",
+     "supportedReasoningEfforts"
+    ],
+    "type": "object"
+   },
+   "ModelAvailabilityNux": {
+    "properties": {
+     "message": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "message"
+    ],
+    "type": "object"
+   },
+   "ModelAccessPrograms": {
+    "properties": {
+     "cyber": {
+      "items": {
+       "$ref": "#/definitions/v2/CyberAccessProgram"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "cyber"
+    ],
+    "type": "object"
+   },
+   "CyberAccessProgram": {
+    "enum": [
+     "standard",
+     "daybreakBlue",
+     "daybreakRed"
+    ],
+    "type": "string"
+   },
+   "ReasoningEffort": {
+    "minLength": 1,
+    "type": "string"
+   },
+   "InputModality": {
+    "oneOf": [
+     {
+      "enum": [
+       "text"
+      ],
+      "type": "string"
+     },
+     {
+      "enum": [
+       "image"
+      ],
+      "type": "string"
+     },
+     {
+      "enum": [
+       "audio"
+      ],
+      "type": "string"
+     }
+    ]
+   },
+   "MultiAgentVersion": {
+    "enum": [
+     "disabled",
+     "v1",
+     "v2"
+    ],
+    "type": "string"
+   },
+   "ModelServiceTier": {
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "name": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "description",
+     "id",
+     "name"
+    ],
+    "type": "object"
+   },
+   "ReasoningEffortOption": {
+    "properties": {
+     "reasoningEffort": {
+      "$ref": "#/definitions/v2/ReasoningEffort"
+     }
+    },
+    "required": [
+     "description",
+     "reasoningEffort"
+    ],
+    "type": "object"
+   },
+   "ModelUpgradeInfo": {
+    "properties": {
+     "migrationMarkdown": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "model": {
+      "type": "string"
+     },
+     "modelLink": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "retirementAt": {
+      "format": "int64",
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "upgradeCopy": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "model"
+    ],
+    "type": "object"
+   },
+   "GetAccountRateLimitsParams": {
+    "properties": {
+     "excludeResetCreditDetails": {
+      "type": "boolean"
+     },
+     "supportsLunaReserve": {
+      "type": "boolean"
+     }
+    },
+    "type": "object"
+   },
+   "GetAccountRateLimitsResponse": {
+    "properties": {
+     "accountId": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "ordinaryUsageAllowed": {
+      "type": [
+       "boolean",
+       "null"
+      ]
+     },
+     "rateLimitResetCredits": {
+      "anyOf": [
+       {
+        "$ref": "#/definitions/v2/RateLimitResetCreditsSummary"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "rateLimitUpsell": {},
+     "rateLimits": {
+      "allOf": [
+       {
+        "$ref": "#/definitions/v2/RateLimitSnapshot"
+       }
+      ]
+     },
+     "rateLimitsByLimitId": {
+      "additionalProperties": {
+       "$ref": "#/definitions/v2/RateLimitSnapshot"
+      },
+      "type": [
+       "object",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "rateLimits"
+    ],
+    "title": "GetAccountRateLimitsResponse",
+    "type": "object"
+   },
+   "RateLimitResetCreditsSummary": {
+    "properties": {
+     "availableCount": {
+      "format": "int64",
+      "type": "integer"
+     },
+     "credits": {
+      "items": {
+       "$ref": "#/definitions/v2/RateLimitResetCredit"
+      },
+      "type": [
+       "array",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "availableCount"
+    ],
+    "type": "object"
+   },
+   "RateLimitResetCredit": {
+    "properties": {
+     "expiresAt": {
+      "format": "int64",
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "grantedAt": {
+      "format": "int64",
+      "type": "integer"
+     },
+     "id": {
+      "type": "string"
+     },
+     "resetType": {
+      "$ref": "#/definitions/v2/RateLimitResetType"
+     },
+     "status": {
+      "$ref": "#/definitions/v2/RateLimitResetCreditStatus"
+     },
+     "title": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "grantedAt",
+     "id",
+     "resetType",
+     "status"
+    ],
+    "type": "object"
+   },
+   "RateLimitResetType": {
+    "enum": [
+     "codexRateLimits",
+     "unknown"
+    ],
+    "type": "string"
+   },
+   "RateLimitResetCreditStatus": {
+    "enum": [
+     "available",
+     "redeeming",
+     "redeemed",
+     "unknown"
+    ],
+    "type": "string"
+   },
+   "RateLimitSnapshot": {
+    "properties": {
+     "credits": {
+      "anyOf": [
+       {
+        "$ref": "#/definitions/v2/CreditsSnapshot"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "individualLimit": {
+      "anyOf": [
+       {
+        "$ref": "#/definitions/v2/SpendControlLimitSnapshot"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "limitId": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "limitName": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "normalModelSlug": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "planType": {
+      "anyOf": [
+       {
+        "$ref": "#/definitions/v2/PlanType"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "primary": {
+      "anyOf": [
+       {
+        "$ref": "#/definitions/v2/RateLimitWindow"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "rateLimitReachedType": {
+      "anyOf": [
+       {
+        "$ref": "#/definitions/v2/RateLimitReachedType"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "secondary": {
+      "anyOf": [
+       {
+        "$ref": "#/definitions/v2/RateLimitWindow"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "spendControlReached": {
+      "type": [
+       "boolean",
+       "null"
+      ]
+     }
+    },
+    "type": "object"
+   },
+   "CreditsSnapshot": {
+    "properties": {
+     "balance": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "hasCredits": {
+      "type": "boolean"
+     },
+     "unlimited": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "hasCredits",
+     "unlimited"
+    ],
+    "type": "object"
+   },
+   "SpendControlLimitSnapshot": {
+    "properties": {
+     "limit": {
+      "type": "string"
+     },
+     "remainingPercent": {
+      "format": "int32",
+      "type": "integer"
+     },
+     "resetsAt": {
+      "format": "int64",
+      "type": "integer"
+     },
+     "used": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "limit",
+     "remainingPercent",
+     "resetsAt",
+     "used"
+    ],
+    "type": "object"
+   },
+   "RateLimitWindow": {
+    "properties": {
+     "resetsAt": {
+      "format": "int64",
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "usedPercent": {
+      "format": "int32",
+      "type": "integer"
+     },
+     "windowDurationMins": {
+      "format": "int64",
+      "type": [
+       "integer",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "usedPercent"
+    ],
+    "type": "object"
+   },
+   "RateLimitReachedType": {
+    "enum": [
+     "rate_limit_reached",
+     "workspace_owner_credits_depleted",
+     "workspace_member_credits_depleted",
+     "workspace_owner_usage_limit_reached",
+     "workspace_member_usage_limit_reached"
+    ],
     "type": "string"
    },
    "ThreadListParams": {
@@ -765,10 +1508,6 @@
      "legacy",
      "paginated"
     ],
-    "type": "string"
-   },
-   "ReasoningEffort": {
-    "minLength": 1,
     "type": "string"
    },
    "ThreadSection": {

@@ -22,6 +22,9 @@ const clientRequests = methodsOf("ClientRequest"), serverRequests = methodsOf("S
 const v2 = (n: string) => `v2/${n}`;
 const use: Record<string, { params: string; result?: string }> = {
   initialize: { params: "InitializeParams", result: "InitializeResponse" },
+  "account/read": {params:v2("GetAccountParams"),result:v2("GetAccountResponse")},
+  "model/list": {params:v2("ModelListParams"),result:v2("ModelListResponse")},
+  "account/rateLimits/read": {params:v2("GetAccountRateLimitsParams"),result:v2("GetAccountRateLimitsResponse")},
   "thread/list": { params: v2("ThreadListParams"), result: v2("ThreadListResponse") },
   "thread/fork": { params: v2("ThreadForkParams"), result: v2("ThreadForkResponse") },
   "thread/start": { params: v2("ThreadStartParams"), result: v2("ThreadStartResponse") },

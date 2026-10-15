@@ -80,7 +80,7 @@ export const INSTALLERS: Record<string, Record<string, Method[]>> = {
 export const LOGINS: Record<string, { label: string; argv?: string[]; url?: string; note: string }> = {
   claude: { label: "Log in to Claude Code", argv: ["osascript", "-e", 'tell application "Terminal" to do script "claude"', "-e", 'tell application "Terminal" to activate'], url: "https://claude.ai/login",
     note: "Opens Terminal running `claude`; type /login there and finish in your browser. Studio never sees the credentials." },
-  codex: { label: "Log in to Codex", argv: ["codex", "login"], url: "https://chatgpt.com/auth/login", note: "Runs `codex login`, which opens your browser." },
+  codex: { label: "Log in to Codex", argv: ["codex", "login"], url: "https://chatgpt.com/auth/login", note: "Studio owns the official Codex browser sign-in; no terminal session is required." },
   tailscale: { label: "Sign in to Tailscale", argv: ["open", "-a", "Tailscale"], url: "https://login.tailscale.com", note: "Opens the Tailscale app; sign in there." },
 };
 
@@ -92,6 +92,7 @@ export function methodsFor(item: string, os = platform()): (Method & { usable: b
 }
 
 export type DoctorInput = {
+  codexAccount?:import("./host/codex-account").CodexAccountView;
   state: string; legacy?: boolean; board: { writable: boolean; readonlyReason?: string | null }; gh: { connected: boolean; tokenSource: string | null; enabled: boolean };
   keys: { anthropic: string | null; openai: string | null; compatBaseUrl: string | null }; chatProvider: string; lanIp: string | null;
   tailscale: { installed: boolean; running: boolean; dnsName: string | null }; claudeBin?: string; codexBin?: string; compiled: boolean;
@@ -127,6 +128,7 @@ export function diagnose(i: DoctorInput): Item[] {
     adds: "Driving the firstmate main session on Claude, and the claude chat provider.", fix: claudeV ? "" : "Install it (official installer), then log in.", action: claudeV ? { kind: "login", item: "claude" } : { kind: "install", item: "claude" } });
   items.push({ id: "codex", title: "Codex CLI", status: codexV ? "ok" : "missing", version: codexV, detail: codexV ? "CLI detected; login and native repository tool execution are not verified." : "not installed", detailZh: codexV ? "已偵測到 CLI；登入與原生工具讀取專案的能力尚未驗證。" : "未安裝",
     adds: "Driving the firstmate main session on Codex, and the codex chat provider.", fix: codexV ? "" : "Install it (official npm package or Homebrew), then log in.", action: codexV ? { kind: "login", item: "codex" } : { kind: "install", item: "codex" } });
+  if(i.codexAccount)items.push({id:"codex-account",title:"Codex account",titleZh:"Codex 帳號",status:i.codexAccount.state==="ready"?"info":"degraded",detail:i.codexAccount.reason,detailZh:i.codexAccount.reasonZh,adds:"Sign in and start new work here; no terminal session selection is required. Account readiness does not verify repository tools.",addsZh:"在這裡登入並開始新工作，不必選擇終端機 session；帳號就緒不代表專案工具已驗證。",fix:"",action:{kind:"login",item:"codex"}});
   items.push({ id: "keys", title: "API keys for the status chat", status: anyKey ? "ok" : statusChatOk ? "info" : "degraded",
     detail: [i.keys.anthropic ? `Anthropic (${i.keys.anthropic})` : null, i.keys.openai ? `OpenAI (${i.keys.openai})` : null, i.keys.compatBaseUrl ? `endpoint ${i.keys.compatBaseUrl}` : null].filter(Boolean).join(", ") || "none set",
     adds: "The status chat without any CLI: Anthropic API, OpenAI API, or a local OpenAI-compatible server (LM Studio, Ollama).", fix: anyKey ? "" : "Add a key or an endpoint.", action: { kind: "keys" } });

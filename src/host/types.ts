@@ -71,6 +71,7 @@ export type AttachOpts = {
   fork?: boolean;
   /** start a NEW session in cwd (the id is ignored): "Start firstmate" */
   fresh?: boolean;
+  nativeTools?: {specs:NativeMainTools["specs"];call(name:string,args:unknown,identity:{thread:string;turn:string;call:string;live:()=>boolean}):Promise<unknown>};
   /** keep the session's own settings: model and permission mode */
   model?: string | null; permissionMode?: string | null;
   /** extra environment for the CLI (after cleanEnv), e.g. FM_IN_ROUND=1 for a rehearsal */
@@ -105,3 +106,5 @@ export const shortSummary = (input: unknown, n = 160): string => {
   const s = typeof pick === "string" ? pick : JSON.stringify(input);
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
 };
+
+export type NativeMainTools={specs:{type:"function";name:string;description:string;inputSchema:unknown}[];call(name:string,args:unknown,owner:{key:string;captain:boolean;text:string;live:()=>boolean}):Promise<unknown>};

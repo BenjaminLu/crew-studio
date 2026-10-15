@@ -2,7 +2,7 @@
 // platform), with every public/ file embedded. `bun run build -- --all` also
 // cross-compiles darwin-x64, linux-x64 and windows-x64.
 import { $ } from "bun";
-import { mkdirSync, statSync } from "node:fs";
+import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 const root = join(import.meta.dir, "..");
 await $`bun ${join(root, "scripts/gen-assets.ts")}`;
@@ -16,3 +16,6 @@ for (const [target, out] of targets) {
   if (!r.success) { console.error(`build ${out} failed:\n${r.stderr}`); process.exitCode = 1; continue; }
   console.log(`built dist/${out}  ${(statSync(file).size / 1e6).toFixed(1)} MB`);
 }
+
+// A relative double-click entry; no PATH installation or second Terminal needed.
+if(process.platform === "darwin") writeFileSync(join(root,"dist","Open Crew Studio.command"),'#!/bin/sh\ncd -- "$(dirname -- "$0")" || exit 1\nexec ./crew-studio launch "$@"\n',{mode:0o755});

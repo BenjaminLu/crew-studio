@@ -31,7 +31,7 @@ export type MainState = "detached" | "attaching" | "detaching" | "attached" | "p
 export type MainView = {
   state: MainState; driver: Driver; host: HostId | null; sessionId: string | null; model: string | null; busy: boolean;
   pausedReason: string | null; queue: QItem[]; approvals: ReturnType<PermissionBridge["pending"]>; log: LogItem[]; resume: string | null; project: string;
-  origin: Origin | null; holdWakes: boolean; wakeGraceMs: number; drive: Drive | null;
+  origin: Origin | null; context?: "studio" | "explicit-project"; holdWakes: boolean; wakeGraceMs: number; drive: Drive | null;
 };
 export type LogItem = { at: number; kind: "captain" | "card" | "wake" | "firstmate" | "tool" | "status" | "system"; text: string; source?: string; status?: string };
 
@@ -39,6 +39,9 @@ export type MainOpts = {
   dataDir: string; projectDir: string; stateDir: string; probe?: ProcProbe;
   hosts?: Record<HostId, Host>; permissionMcp: (bridge: PermissionBridge) => { command: string[]; env: Record<string, string> };
   pollMs?: number;
+  /** Fresh Studio-owned workspace: no legacy repository handoff or dispatch scripts. */
+  nativeWorkspace?: boolean;
+  nativeTools?: ()=>import("./types").NativeMainTools;
   /** how long a new wake waits for firstmate's own hook to deliver it before Studio sends it itself */
   wakeGraceMs?: number;
 };
@@ -81,7 +84,7 @@ export class MainSession {
     const d = this.driver();
     // Studio restarted while it held a session: its CLI died with it; keep the way back
     if (d.holder === "studio") this.writeDriver({ holder: "none", host: d.host, sessionId: d.sessionId, pid: null, since: new Date().toISOString(),
-      resume: d.sessionId ? this.hosts[d.host ?? "claude"].resumeCommand(d.sessionId) : undefined, forkedFrom: d.forkedFrom ?? null, mode: d.mode ?? null, handoff: d.handoff ?? null, path: d.path ?? null });
+      resume: d.sessionId && !(this.o.nativeWorkspace && d.path === "fresh" && !d.forkedFrom && !d.mode) ? this.hosts[d.host ?? "claude"].resumeCommand(d.sessionId) : undefined, forkedFrom: d.forkedFrom ?? null, mode: d.mode ?? null, handoff: d.handoff ?? null, path: d.path ?? null });
   }
   stop() { if (this.timer) clearInterval(this.timer); this.bridge.close(); }
 
@@ -92,7 +95,7 @@ export class MainSession {
   view(): MainView {
     return { state: this.state, driver: this.driver(), host: this.session?.host ?? null, sessionId: this.session?.id ?? null, model: this.session?.model ?? null,
       busy: this.session?.busy ?? false, pausedReason: this.pausedReason, queue: this.queue.list(), approvals: this.bridge.pending(), log: this.log.slice(-200),
-      resume: this.lastResume, project: this.o.projectDir, origin: this.origin, holdWakes: this.origin?.mode === "rehearsal", wakeGraceMs: this.wakeGraceMs,
+      resume: this.lastResume, project: this.o.projectDir, context: this.o.nativeWorkspace ? "studio" : "explicit-project", origin: this.origin, holdWakes: this.origin?.mode === "rehearsal", wakeGraceMs: this.wakeGraceMs,
       drive: this.drive ? { ...this.drive, model: this.session?.model ?? this.drive.model, effort: this.session?.effort ?? this.drive.effort } : null };
   }
   private changed() { try { this.onView(this.view()); } catch {} }
@@ -243,28 +246,31 @@ export class MainSession {
   }
 
   /** "Start firstmate on <host>": a NEW session in the firstmate repo, following its AGENTS.md, whose first message is the newest state/HANDOFF-*.md. */
-  async startFresh(host: HostId): Promise<{ ok: true; handoff: string; id: string; seededFrom: string | null } | { ok: false; reason: string; code: string }> {
+  async startFresh(host: HostId, validate?: (identity:{model:string;effort:string|null})=>boolean): Promise<{ ok: true; handoff: string; id: string; seededFrom: string | null } | { ok: false; reason: string; code: string }> {
     if (this.state !== "detached") return { ok: false, code: "attached", reason: "Studio already holds a session; release it first" };
     if (host !== "codex") return { ok: false, code: "host", reason: "a fresh start runs on Codex" };
     const priorDriver = this.driver();
     this.state = "attaching"; this.changed();
     try {
-    const cwd = this.o.projectDir, newest = newestHandoffFile(this.o.stateDir);
+    const cwd = this.o.projectDir, newest = this.o.nativeWorkspace ? null : newestHandoffFile(this.o.stateDir);
     try {
-      this.session = await this.hosts[host].attach("", { cwd, fresh: true, onEvent: (e) => this.hostEvent(e), onPermission: (r) => this.bridge.ask(r), permissionMcp: this.o.permissionMcp(this.bridge) });
+      this.session = await this.hosts[host].attach("", { cwd, fresh: true, onEvent: (e) => this.hostEvent(e), onPermission: (r) => this.bridge.ask(r), permissionMcp: this.o.permissionMcp(this.bridge), nativeTools:this.nativeCapability() });
     } catch (e: any) {
       this.state = "detached"; this.changed();
       return { ok: false, code: "attachFailed", reason: String(e?.message ?? e) };
     }
+    // Trusted synchronous host admission: no seed, driver, handoff or pump may
+    // precede verification of the identity actually returned by thread/start.
+    if(validate&&validate({model:this.session.model,effort:this.session.effort??null})!==true)throw new Error("Fresh host identity unverified / 新主對話身分尚未驗證");
     if (this.session.pid) this.own.add(this.session.pid);
     const se = this.session, at = new Date().toISOString();
-    const statement = `Studio started a new firstmate thread on Codex in ${cwd}${newest ? `, first message: state/${newest.name}` : " (no state/HANDOFF-*.md found)"}`;
+    const statement = `Studio started a new firstmate thread on Codex in ${cwd}${newest ? `, first message: state/${newest.name}` : this.o.nativeWorkspace ? " (Studio-owned workspace)" : " (no state/HANDOFF-*.md found)"}`;
     const handoff = this.writeHandoff(`${at.replace(/[:.]/g, "-")}-fresh-${se.id.slice(0, 8)}.md`, [
-      `# Handoff: fresh firstmate on ${host}`, "", `- When: ${at}`, `- Host: ${host}`, `- The copy Studio drives is ${se.id}`, `- cwd: ${cwd} (the firstmate repo: AGENTS.md applies)`,
+      `# Handoff: fresh firstmate on ${host}`, "", `- When: ${at}`, `- Host: ${host}`, `- The copy Studio drives is ${se.id}`, `- cwd: ${cwd} (${this.o.nativeWorkspace ? "Studio-owned workspace" : "explicit project; AGENTS.md applies"})`,
       `- model: ${se.model}; reasoning effort: ${se.effort ?? "(config default)"} (from the captain's Codex config; Studio sets neither)`,
       `- approval policy: ${se.approvalPolicy ?? "(config)"}; sandbox: ${se.sandbox ?? "(config)"}; every approval request goes to Studio's permission bridge, and any failure declines`,
-      `- First message: ${newest ? `state/${newest.name}` : "no state/HANDOFF-*.md found"}`, "",
-      `## Roll back`, "", `Release in Studio, then continue the thread in a terminal: \`cd ${cwd} && ${this.hosts[host].resumeCommand(se.id)}\``, "",
+      `- First message: ${newest ? `state/${newest.name}` : this.o.nativeWorkspace ? "Studio-owned native Firstmate introduction" : "no state/HANDOFF-*.md found"}`, "",
+      `## Roll back`, "", this.o.nativeWorkspace ? "Stop Firstmate in Studio. This closes the owned primary; dispatched native Tasks keep their own lifecycle. Start a new primary explicitly when ready." : `Release in Studio, then continue the thread in a terminal: \`cd ${cwd} && ${this.hosts[host].resumeCommand(se.id)}\``, "",
     ]);
     this.origin = null;
     this.drive = { host, path: "fresh", statement, noFork: null, model: se.model, effort: se.effort ?? null, approvalPolicy: se.approvalPolicy ?? null, sandbox: se.sandbox ?? null,
@@ -275,7 +281,7 @@ export class MainSession {
     this.wakes = new WakeReader(this.o.stateDir);
     this.seenWakes.clear();
     this.note({ kind: "status", text: statement });
-    this.queue.seed(freshText(cwd, newest));
+    this.queue.seed(this.o.nativeWorkspace ? nativeFreshText(cwd) : freshText(cwd, newest));
     this.timer = setInterval(() => this.tick(), this.o.pollMs ?? 1000);
     this.changed();
     void this.pump();
@@ -314,6 +320,12 @@ export class MainSession {
     return item;
   }
 
+  private nativeCapability():import("./types").AttachOpts["nativeTools"]{
+    if(!this.o.nativeWorkspace||!this.o.nativeTools)return undefined;const tools=this.o.nativeTools();
+    return{specs:tools.specs,call:async(name,args,identity)=>{const input=this.activeInput,generation=this.nativeGeneration,session=this.session;const live=()=>!!session&&session===this.session&&session.id===identity.thread&&this.state==="attached"&&this.activeInput===input&&this.nativeGeneration===generation&&identity.live();if(!live())throw new Error("Primary tool ownership ended");const result=await tools.call(name,args,{key:`${identity.thread}:${identity.turn}`,captain:!!input&&input.kind==="chat"&&(input.source==="desktop"||input.source.startsWith("phone:")),text:input?.text??"",live});if(!live())throw new Error("Primary tool ownership ended");return result;}};
+  }
+  private activeInput:QItem|null=null;
+  private nativeGeneration=0;
   private pumping = false;
   private async pump() {
     if (this.pumping) return;
@@ -327,13 +339,15 @@ export class MainSession {
         this.reply = "";
         this.lastOwnWrite = Date.now();
         this.changed();
+        this.activeInput=item;
         const r = await this.session.send(item.text).catch((e) => ({ status: "failed" as const, message: String(e?.message ?? e) }));
+        this.activeInput=null;
         this.lastOwnWrite = Date.now();
         this.lastSeenMtime = mtimeOf(this.sessionFile);
         if (r.status !== "completed") this.note({ kind: "status", text: `Turn ${r.status}${r.message ? `: ${r.message}` : ""}`, status: r.status });
         this.changed();
       }
-    } finally { this.pumping = false; }
+    } finally { this.activeInput=null;this.pumping = false; }
   }
 
   /** A wake waits a grace period for firstmate's own hook; a rehearsal never sends one. */
@@ -412,6 +426,7 @@ export class MainSession {
 
   pause(reason: string) {
     if (this.state !== "attached") return;
+    this.nativeGeneration++;
     this.state = "paused"; this.pausedReason = reason;
     this.note({ kind: "status", text: `Paused: ${reason}. Nothing more is sent until you resume or hand back.`, status: "paused" });
     this.changed();
@@ -426,17 +441,30 @@ export class MainSession {
     return { ok: true };
   }
 
-  async interrupt() { await this.session?.interrupt(); }
+  async interrupt() { this.nativeGeneration++;await this.session?.interrupt(); }
 
   /** Hand the session back to a terminal: stop Studio's process, release the lock, show the resume command. */
   async detach(): Promise<string | null> {
     if (!this.session) return null;
     const s = this.session;
+    this.nativeGeneration++;
     this.state = "detaching"; this.changed();
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
     this.bridge.denyAll();
+    const nativePrimary = this.o.nativeWorkspace && !this.origin && this.drive?.path === "fresh";
     const raw = await s.detach();
     const o = this.origin;
+    if (nativePrimary) {
+      if (s.pid) this.own.delete(s.pid);
+      const dr = this.drive;
+      this.session = null; this.state = "detached"; this.pausedReason = null; this.wakes = null; this.lastResume = null; this.sessionFile = null;
+      this.writeDriver({ holder: "none", host: s.host, sessionId: s.id, pid: null, since: new Date().toISOString(), forkedFrom: null, mode: null, handoff: dr?.handoff ?? null, path: "fresh" });
+      if (dr?.handoff) { try { appendFileSync(join(this.handoffDir(), dr.handoff), `\n## Stopped ${new Date().toISOString()}\n\nStudio closed its own primary. No terminal owns it. Dispatched native Tasks remain independent.\n`); } catch {} }
+      this.drive = null; this.origin = null;
+      this.note({ kind: "status", text: "Firstmate stopped. Dispatched native Tasks keep their own lifecycle. / Firstmate 已停止；已派出的原生任務保持各自的生命週期。" });
+      this.changed();
+      return null;
+    }
     const cmd = o ? `cd ${o.cwd} && ${raw}` : raw;
     this.session = null; this.state = "detached"; this.pausedReason = null; this.wakes = null; this.lastResume = cmd;
     const dr = this.drive;
@@ -481,3 +509,6 @@ export function freshText(cwd: string, handoff: { name: string; text: string } |
     `## ${handoff ? `state/${handoff.name}` : "No state/HANDOFF-*.md found"}`, "", handoff?.text ?? "", "",
     `Read the state as AGENTS.md says, then reply in one line that you are ready.`].join("\n");
 }
+
+/** Native Firstmate has no dependency on a legacy repo or handoff. */
+export function nativeFreshText(cwd:string):string { return `You are Studio's own Firstmate, working in its private workspace ${cwd}. The captain talks to you through Crew Studio. This is a fresh conversation, not a terminal takeover. No repository or legacy handoff is required. Help the captain clarify their goal and prepare the coffee-shop guided workflow. You have Studio native tools: studio_list_workflows, studio_list_projects, studio_work_status and studio_propose_work. For actionable captain requests, use these tools to propose the exact native workflow and raise its real captain dispatch card. Never ask for an external firstmate engine path. Proposing is not approval; only the captain can approve the card. Do not run legacy firstmate dispatch scripts, create tasks, alter projects, or execute workflow work merely because this conversation started. Workflow execution requires the captain's explicit authenticated brief and confirmation through Studio. Respect any explicit project authority and tool permissions; unanswered permissions are denied. Reply briefly that you are ready to help.`; }

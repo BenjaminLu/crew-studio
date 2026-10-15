@@ -6,6 +6,6 @@ if (sub === "mcp") await import("./mcp");
 else if (sub === "check-script") { process.argv.splice(2, 1); await import("./check-script"); }
 else if (sub === "permission-mcp") await import("./permission-mcp");
 else if (sub === "--version" || sub === "version") console.log("crew-studio 0.4.0");
-else if (sub === "open") await import("./open"); // the captain's explicit step that starts a browser session
+else if (sub === "open" || sub === "launch") await import("./open"); // the captain's explicit step that starts a browser session
 else await import("./server");
 export {};

@@ -4,18 +4,48 @@
 // table, questions and permission prompts in the chat, and intent-alignment
 // cards with every section and the one-way door confirmation.
 (() => {
-const TK = { data: null, loading: false, crew: null, crewTimer: null };
+const TK = { data: null, loading: false, crew: null, crewTimer: null, revision: 0 };
 const fmtDur = (ms) => { const m = Math.floor(ms / 60000); return m < 1 ? `${Math.max(0, Math.round(ms / 1000))}s` : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`; };
 const copyBtn = (text) => h("button", { class: "btn ghost icon", "aria-label": T("Copy", "複製"), title: T("Copy", "複製"), onclick: () => navigator.clipboard?.writeText(text).then(() => toast(T("Copied", "已複製"))) }, icon("copy", "ic sm"));
 const cmdBox = (text, attrs = {}) => h("div", { class: "tk-cmd", ...attrs }, h("code", { class: "mono" }, text), copyBtn(text));
 
 async function loadTakeover() {
   if (TK.loading) return; TK.loading = true;
-  try { TK.data = await getJ("/api/takeover"); } catch (e) { TK.data = { error: String(e) }; }
-  TK.loading = false;
-  if (S.route?.name === "takeover" || S.route?.name === "firstmate") render();
+  try { TK.data = await getJ(TK.optional?"/api/takeover":"/api/takeover?independent=1"); } catch (e) { TK.data = { error: String(e) }; }
+  TK.loading = false; TK.revision++;
+  if(S.route?.name==="board")soft();else if (S.route?.name === "takeover" || S.route?.name === "firstmate") render();
 }
 
+// OAuth URL stays only in this browser's transient memory, never localStorage/events.
+const ACCOUNT={view:null,url:null,busy:false,loading:false,begin:null,starting:false,revision:0,read:0};
+window.crewFirstmateWelcomeSignature=()=>[ACCOUNT.revision,TK.revision,TK.loading,MS.view?.state,MS.view?.context,MS.view?.project,MS.view?.sessionId];
+function accountChanged(v){ACCOUNT.revision++;ACCOUNT.view=v;if(["failed","hold","cancelled"].includes(v.state))ACCOUNT.begin=null;if(v.state!=="pending")ACCOUNT.url=null;dispatchEvent(new Event("crew:codex-account"));if(S.route?.name==="board")soft();else if(["firstmate","takeover","doctor"].includes(S.route?.name))render();if(v.state==="ready"&&ACCOUNT.begin)void continueNative(ACCOUNT.begin);}
+async function accountAction(action,begin=false){if(ACCOUNT.busy)return;if(begin&&MS.view?.context==="studio")ACCOUNT.begin={project:MS.view.project};if(action==="cancel")ACCOUNT.begin=null;ACCOUNT.busy=true;render();try{const r=await postJ(`/api/codex/account/${action}`,{});if(r.error)return toast(r.error);if(action==="login")ACCOUNT.url=r.authUrl||null;accountChanged(r);}finally{ACCOUNT.busy=false;render();}}
+// A reconnect may have missed account events; reconcile without starting auth.
+function refreshAccount(){const read=++ACCOUNT.read,revision=ACCOUNT.revision;return getJ("/api/codex/account").then(v=>{if(read===ACCOUNT.read&&revision===ACCOUNT.revision)accountChanged(v);}).catch(()=>{});}
+addEventListener("crew:live",()=>void refreshAccount());
+function accountPanel(begin=false){
+ if(!ACCOUNT.view&&!ACCOUNT.loading){ACCOUNT.loading=true;refreshAccount().finally(()=>{ACCOUNT.loading=false;});}
+ const a=ACCOUNT.view||{state:"unknown"},phone=MS.me.kind==="phone",owned=MS.view&&MS.view.state!=="detached",pending=a.state==="pending",checking=ACCOUNT.busy||a.state==="checking";
+ return h("section",{class:"card tk-drive tk-account","data-codex-account":a.state,"data-account-busy":String(checking)},h("h2",{},T("Connect Codex","連接 Codex")),
+ h("p",{class:"muted"},T("Sign in with ChatGPT here, then start a new thread. No terminal session selection or API key is required.","在這裡使用 ChatGPT 登入，再開新 thread。不必選擇終端機 session，也不需要 API 金鑰。")),
+ h("p",{"data-account-status":"1"},T(a.reason||"Account not yet verified.",a.reasonZh||"帳號尚未驗證。")),
+ a.model?h("div",{class:"mono faint"},`${a.model} · ${a.effort||T("configured default","設定預設")}`):null,
+ h("div",{class:"faint"},T("Account readiness and repository tool health are separate; tools remain unverified here.","帳號就緒與專案工具健康是不同的檢查；這裡尚未驗證工具。")),
+ pending?(ACCOUNT.url?h("a",{class:"btn primary",href:ACCOUNT.url,target:"_blank",rel:"noopener noreferrer","data-codex-browser":"1"},T("Open official sign-in page","開啟官方登入頁")):h("p",{class:"muted"},T("Continue in the browser window you opened, or cancel and connect again.","請在已開啟的瀏覽器視窗繼續，或取消後重新連接。"))):null,
+ owned?h("p",{class:"note"},T("Studio already owns a firstmate session. Release it here before changing the account or starting another.","Studio 已在操作 firstmate session；請先在這裡交還，再變更帳號或開新工作。")):null,
+ h("div",{class:"actions"},pending||checking?h("button",{class:"btn","data-codex-cancel":"1",disabled:phone||ACCOUNT.busy||null,onclick:()=>accountAction("cancel")},T("Cancel sign-in","取消登入")):h("button",{class:"btn primary","data-codex-connect":"1",disabled:phone||owned||null,onclick:()=>accountAction("login",begin)},T("Connect Codex…","連接 Codex…")),
+ !pending&&!checking?h("button",{class:"btn","data-codex-verify":"1",disabled:phone||owned||null,onclick:()=>accountAction("verify")},T("Verify account","驗證帳號")):null));
+}
+window.crewCodexAccountPanel=accountPanel;window.crewConnectCodex=()=>accountAction("login");
+window.liveListen("codex-account",m=>accountChanged(JSON.parse(m.data)));
+
+
+window.crewFirstmateWelcome=()=>{
+ if(MS.view?.state!=="detached")return null;
+ if(!TK.data&&!TK.loading)loadTakeover();
+ return h("section",{class:"card tk-drive","data-firstmate-welcome":"1"},h("h2",{},T("Welcome. Let’s make something.","歡迎，我們來做點東西。")),h("p",{},T("Connect an agent account, then begin with Studio’s own Firstmate. No terminal session is needed.","連接 agent 帳號，再和 Studio 自己的 Firstmate 開始。不需要終端機 session。")),accountPanel(true),TK.data&&!TK.data.error?startCodexCard(TK.data,MS.me.kind==="phone"):h("p",{},T("Loading your workspace…","正在載入你的工作空間…")));
+};
 // ---------- the Take over page ----------
 function viewTakeover() {
   if (!TK.data) { loadTakeover(); return h("div", { class: "page" }, h("div", { class: "skel", style: "height:240px" })); }
@@ -24,17 +54,18 @@ function viewTakeover() {
   const v = MS.view || d.view, fm = d.firstmate, o = v?.origin;
   const driving = v && (v.state === "attached" || v.state === "paused");
   const phone = MS.me.kind === "phone" && !MS.me.allowDrive;
-  const kids = [h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Take over firstmate", "接手 firstmate")),
-    h("p", {}, T("Studio drives a copy of the firstmate session in the same folder, using your host settings. Codex uses a fork or a new thread seeded from a handoff. The original stays untouched.",
-      "Studio 在同一個資料夾、用你的主機設定操作 firstmate session 的複本。Codex 會 fork，或用交接內容開新 thread。原本的 session 不會被動到。"))))];
+  const kids = [h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Firstmate", "Firstmate")),
+    h("p", {}, T("Connect your account and start new work in the shown project. Taking over an existing session is optional.",
+      "連接帳號，在下方顯示的專案開始新工作。接手既有 session 是選用功能。"))))];
 
+  if(!driving)kids.push(accountPanel(),startCodexCard(d,phone));
   if (driving) {
     kids.push(h("section", { class: "card tk-drive", "data-takeover": o ? o.mode : "attached" },
       h("div", { class: "tk-row" }, h("span", { class: "badge run" }, h("span", { class: "d" }), o?.mode === "rehearsal" ? T("Rehearsal", "演練中") : T("Studio is driving", "Studio 駕駛中")),
         v.busy ? h("span", { class: "badge" }, T("turn running", "回合進行中")) : h("span", { class: "badge ok" }, T("idle", "閒置")),
         v.state === "paused" ? h("span", { class: "badge bad" }, T("paused", "已暫停")) : null),
       h("div", { class: "tk-kv" },
-        kvRow(T("Copy Studio drives", "Studio 操作的複本"), h("span", { class: "mono", "data-copy-id": v.sessionId }, v.sessionId === o?.id ? T("named on the first turn", "第一回合時產生") : v.sessionId)),
+        kvRow(v.context==="studio" ? T("Primary session","主要對話") : T("Copy Studio drives", "Studio 操作的複本"), h("span", { class: "mono", "data-copy-id": v.sessionId }, v.sessionId === o?.id ? T("named on the first turn", "第一回合時產生") : v.sessionId)),
         o ? kvRow(T("Original (untouched)", "原本的 session（不動）"), h("span", { class: "mono" }, o.id)) : null,
         v.host ? kvRow(T("Host", "主機"), hostBadge(v.host)) : null,
         v.drive?.host === "codex"
@@ -43,7 +74,7 @@ function viewTakeover() {
         v.drive?.host === "codex" ? kvRow(T("Approvals · sandbox", "核准 · 沙箱"), `${v.drive.approvalPolicy || "—"} · ${v.drive.sandbox || "—"} → ${T("requests come here", "核准請求送到這裡")}`) : null,
         o ? kvRow(T("Terminal", "終端機"), o.terminal ? h("span", { style: "color:var(--warn)" }, T("still open: ", "還開著："), o.terminal) : T("no sign of it", "看不到")) : null,
         o?.originWrites ? kvRow(T("Original written since", "之後原 session 又被寫入"), h("span", { style: `color:var(--${o.mode === "rehearsal" ? "text-2" : "bad"})` }, T(`${o.originWrites} time(s), last ${ago(o.lastOriginWrite)}`, `${o.originWrites} 次，最近 ${ago(o.lastOriginWrite)}`))) : null,
-        o || v.drive?.handoff ? kvRow(T("Handoff note", "交接紀錄"), h("span", { class: "mono" }, `data/handoff/${o?.handoff || v.drive.handoff}`)) : null),
+        v.context!=="studio" && (o || v.drive?.handoff) ? kvRow(T("Handoff note", "交接紀錄"), h("span", { class: "mono" }, `data/handoff/${o?.handoff || v.drive.handoff}`)) : null),
       v.drive && v.drive.host === "codex" ? pathBanner(v.drive) : null,
       !o ? null : o.mode !== "rehearsal" ? h("div", { class: "banner", "data-idle-warning": "1" }, icon("alert", "ic sm"),
         o.host === "codex" ? T("Keep the original Codex terminal idle and exit it after its background agents finish. Studio delivers firstmate wakes to the copy.", "請讓原本的 Codex 終端機保持閒置，等背景 agent 完成後退出。Studio 會把 firstmate 喚醒送到複本。") : T("The terminal session must stay idle. Exit it once its background agents finish: while it runs, its Stop hook keeps taking firstmate's wakes.",
@@ -54,11 +85,11 @@ function viewTakeover() {
         h("button", { class: "btn primary", onclick: () => { chatMode = "main"; store.set("crew.chatMode", "main"); openChat(true); renderChat(); } }, icon("message", "ic sm"), T("Open the firstmate chat", "打開 firstmate 對話")),
         v.busy ? h("button", { class: "btn", onclick: () => postJ("/api/main/interrupt") }, icon("stop", "ic sm"), T("Interrupt", "中斷")) : null,
         v.state === "paused" ? h("button", { class: "btn", onclick: () => postJ("/api/main/resume").then((r) => r.error && toast(r.error)) }, T("Resume", "繼續")) : null,
-        h("button", { class: "btn", id: "releaseBtn", disabled: phone || null, onclick: releaseFlow }, T("Release…", "交還…")))));
-    kids.push(dispatchBox(v));
+        h("button", { class: "btn", id: "releaseBtn", disabled: phone || null, onclick: releaseFlow }, v.context==="studio" ? T("Stop Firstmate…","停止 Firstmate…") : T("Release…", "交還…")))));
+    if(v.context!=="studio")kids.push(dispatchBox(v));
   } else {
     const drv = v?.driver || {};
-    if (drv.holder === "terminal" && drv.resume) kids.push(h("section", { class: "card tk-drive", "data-released": "1" },
+    if (v?.context!=="studio" && drv.holder === "terminal" && drv.resume) kids.push(h("section", { class: "card tk-drive", "data-released": "1" },
       h("b", {}, T("Released. Continue in a terminal:", "已交還。在終端機接著用：")), cmdBox(drv.resume),
       drv.forkedFrom ? h("div", { class: "faint", style: "font-size:13px" }, T("Or go back to the original, as it was before the takeover:", "或回到接手前的原本 session："), cmdBox(resumeCmd(drv.host, d.project, drv.forkedFrom))) : null));
     kids.push(fm ? h("section", { class: "card tk-session", "data-firstmate": fm.id },
@@ -76,9 +107,9 @@ function viewTakeover() {
         h("button", { class: "btn", id: "rehearseBtn", disabled: phone || null, onclick: () => takeoverFlow(fm, "rehearsal") }, T("Rehearse on a copy…", "用複本演練…"))))
       : h("div", { class: "card" }, h("div", { class: "empty" }, T("No firstmate session found for this project.", "找不到這個專案的 firstmate session。"))));
   }
-  if (!driving) kids.push(sessionList(d, fm, phone), startCodexCard(d, phone));
+  if (!driving) kids.push(h("section",{class:"card tk-notes"},h("h2",{},T("Optional: take over an existing session","選用：接手既有 session")),h("button",{class:"btn","data-optional-sessions":"1",onclick:()=>{TK.optional=true;loadTakeover();}},T("Show existing sessions","顯示既有 session"))),TK.optional?sessionList(d, fm, phone):null);
   kids.push(cutoverSteps(d, v));
-  if (d.handoffs?.length) kids.push(h("section", { class: "card tk-notes" }, h("h2", {}, T("Handoff notes", "交接紀錄")),
+  if (v?.context!=="studio" && d.handoffs?.length) kids.push(h("section", { class: "card tk-notes" }, h("h2", {}, T("Handoff notes", "交接紀錄")),
     d.handoffs.slice(0, 5).map((n, i) => h("details", { open: i === 0 && driving || null }, h("summary", { class: "mono" }, n.name), h("div", { class: "md tk-md" }, md(n.text))))));
   return h("div", { class: "page" }, ...kids);
 }
@@ -108,24 +139,30 @@ function sessionList(d, fm, phone) {
 }
 
 function startCodexCard(d, phone) {
-  const c = d.codex || {}, cfg = c.config || {};
+  const c = d.codex || {}, cfg = c.config || {};const account=ACCOUNT.view||c.account||{};const native=d.view?.context==="studio";
   return h("section", { class: "card tk-drive", "data-section": "start-codex" }, h("h2", {}, T("Start firstmate on Codex", "在 Codex 上啟動 firstmate")),
-    h("p", { class: "muted", style: "margin:0" }, T("A new Codex thread in the firstmate repo, following its AGENTS.md. Its first message is the newest handoff file.", "在 firstmate repo 開一個新的 Codex thread，照它的 AGENTS.md 做事。第一則訊息是最新的交接檔。")),
+    h("p", { class: "muted", style: "margin:0" }, native ? T("A fresh Firstmate in Studio’s own workspace. No repository, terminal session or handoff is required.","在 Studio 自己的工作空間開啟全新的 Firstmate。不需要 repo、終端機 session 或交接檔。") : T("Explicit project override: this fresh thread follows the shown project’s authority and handoff.","明確指定的專案：新對話會遵循下方專案的授權與交接內容。")),
     h("div", { class: "tk-kv" },
       kvRow(T("Folder", "資料夾"), h("span", { class: "mono" }, d.project)),
-      kvRow(T("First message", "第一則訊息"), c.handoffFile ? h("span", { class: "mono", "data-handoff-file": c.handoffFile }, c.handoffFile) : T("no state/HANDOFF-*.md found", "找不到 state/HANDOFF-*.md")),
+      kvRow(T("First message", "第一則訊息"), native ? T("Studio’s own Firstmate introduction","Studio 自己的 Firstmate 開場") : c.handoffFile ? h("span", { class: "mono", "data-handoff-file": c.handoffFile }, c.handoffFile) : T("No explicit project handoff", "沒有明確指定的專案交接檔")),
       kvRow(T("Model · effort", "模型 · 推理強度"), h("span", { "data-codex-config": "1" }, `${cfg.model || T("Codex default", "Codex 預設")} · ${cfg.effort || T("Codex default", "Codex 預設")} `,
         h("span", { class: "faint" }, cfg.from?.length ? T(`(configured in ${cfg.from.join(", ")}; effective values appear after startup)`, `（設定於 ${cfg.from.join("、")}；啟動後會顯示實際值）`) : T("(Studio never overrides it)", "（Studio 不會改）"))))),
-    h("div", { class: "actions" }, h("button", { class: "btn", id: "startCodexBtn", disabled: phone || null, onclick: () => startCodexFlow(d) }, T("Start firstmate on Codex…", "在 Codex 上啟動 firstmate…"))));
+    h("div", { class: "actions" }, h("button", { class: "btn", id: "startCodexBtn", disabled: phone || account.state!=="ready" || ACCOUNT.busy || (MS.view||d.view)?.state!=="detached" || null, onclick: () => native ? continueNative({project:d.project}) : startCodexFlow(d) }, native ? T("Continue with Firstmate","和 Firstmate 開始") : T("Start firstmate on Codex…", "在 Codex 上啟動 firstmate…"))));
+}
+
+// Only an explicit captain Connect/Continue may create the primary, never page load.
+async function continueNative(expected){
+ if(ACCOUNT.starting)return;ACCOUNT.starting=true;ACCOUNT.begin=null;
+ try{const d=await getJ("/api/takeover?independent=1");if(d.view?.context!=="studio"||d.project!==expected.project)return toast(T("Workspace changed; review it before continuing.","工作空間已變更，請先確認後再繼續。"));if(d.view.state!=="detached")return toast(T("Studio already owns a Firstmate. Open its conversation.","Studio 已有自己的 Firstmate，請打開現有對話。"));const r=await postJ("/api/main/start",{host:"codex",confirm:true});if(!r.ok)return toast(r.reason||r.error);chatMode="main";store.set("crew.chatMode","main");await loadMain();openChat(false);location.hash="#/workflows/coffee-kit";loadTakeover();}catch{return toast(T("Could not connect Firstmate. Check the account and try again.","無法連接 Firstmate，請確認帳號後重試。"));}finally{ACCOUNT.starting=false;}
 }
 
 function startCodexFlow(d) {
   const ack = h("input", { type: "checkbox", id: "tkStartAck" });
-  modal(T("Start firstmate on Codex", "在 Codex 上啟動 firstmate"), h("div", { style: "display:grid;gap:10px;max-width:560px" },
+  modal(T("Start firstmate on Codex", "在 Codex 上啟動 firstmate"), h("div", { class:"tk-start-dialog", style: "display:grid;gap:10px;max-width:560px" },
     h("p", { class: "muted", style: "margin:0" }, T(`Studio starts codex app-server in ${d.project} and starts a new thread. Approval requests come to Studio; anything unanswered is declined.`,
       `Studio 會在 ${d.project} 執行 codex app-server 並開一個新 thread。核准請求會送到 Studio；沒回答就拒絕。`)),
-    h("div", { class: "banner" }, icon("alert", "ic sm"), T("No other firstmate may run on the same state. Close the terminal session first.", "同一份狀態上不能有另一個 firstmate 在跑。請先關掉終端機的 session。")),
-    h("label", { class: "tk-row", style: "font-size:13px" }, ack, T("No other firstmate session is running.", "沒有其他 firstmate session 在跑。"))),
+    h("div", { class: "banner" }, icon("alert", "ic sm"), T("Use the shown project and its existing authority/coordination rules. This does not release another agent’s project lock.", "請使用顯示的專案並遵守既有授權與協作規則；這不會解除其他 agent 的專案鎖。")),
+    h("label", { class: "tk-row", style: "font-size:13px" }, ack, T("This project is available for the new firstmate work.", "這個專案目前可以開始新的 firstmate 工作。"))),
     async (close, btn) => {
       if (!ack.checked) return toast(T("Tick the box first.", "請先打勾。"));
       btn.disabled = true;
@@ -135,12 +172,14 @@ function startCodexFlow(d) {
       toast(T("firstmate started on Codex", "firstmate 已在 Codex 啟動"));
       chatMode = "main"; store.set("crew.chatMode", "main"); openChat(true);
       await loadMain(); loadTakeover();
+      if(d.view?.context==="studio"){openChat(false);location.hash="#/workflows/coffee-kit";}
     });
   $(".modal .btn.primary").textContent = T("Start", "啟動");
 }
 
 function cutoverSteps(d, v) {
-  const id = d.firstmate?.id || v?.origin?.id || "<id>", host = v?.origin?.host || d.firstmate?.host || "claude";
+  if (!v?.origin) return null; // Fresh Studio sessions have no terminal cutover.
+  const { id, host } = v.origin;
   return h("section", { class: "card tk-steps", "data-section": "cutover" }, h("h2", {}, T("Cutover, step by step", "切換步驟")),
     h("ol", {},
       h("li", {}, T("In the terminal, let firstmate finish its turn and its background agents. Do not type anything more there.", "在終端機讓 firstmate 把這回合和背景 agent 做完，之後別再在那邊輸入。")),
@@ -183,6 +222,7 @@ function takeoverFlow(fm, mode) {
 }
 
 async function releaseFlow() {
+  if(MS.view?.context==="studio"){modal(T("Stop Firstmate?","停止 Firstmate？"),h("p",{},T("Studio stops its own primary session. Native workflow Tasks keep their own lifecycle; this does not approve or cancel them.","Studio 會停止自己的主要對話；原生工作流程任務維持各自的生命週期，這不會核准或取消那些任務。")),async(close,btn)=>{btn.disabled=true;const r=await postJ("/api/main/detach");if(r.error){btn.disabled=false;return toast(r.error);}close();await loadMain();loadTakeover();});return;}
   modal(T("Release the session", "交還 session"), h("p", { class: "muted", style: "margin:0;max-width:520px" },
     T("Studio stops its copy and releases the lock. You get the command to continue in a terminal.", "Studio 會停止複本並放開鎖，並給你在終端機接著用的指令。")),
     async (close, btn) => {
@@ -201,7 +241,7 @@ async function releaseFlow() {
 }
 
 function dispatchBox(v) {
-  const ta = h("textarea", { class: "input", id: "dispatchIn", rows: 3, placeholder: T("What do you want done? firstmate drafts the spec and raises a dispatch card in your inbox.", "你想做什麼？firstmate 會寫 spec，並在收件匣開一張派工卡。") });
+  const ta = h("textarea", { class: "input", id: "dispatchIn", rows: 3, placeholder: v.context==="studio" ? T("Describe the work. Firstmate proposes a native workflow and asks for your approval.","描述你想做的工作。Firstmate 會提出原生流程，請你核准。") : T("What do you want done? firstmate drafts the spec and raises a dispatch card in your inbox.", "你想做什麼？firstmate 會寫 spec，並在收件匣開一張派工卡。") });
   return h("section", { class: "card tk-drive", "data-section": "dispatch" }, h("h2", {}, T("Dispatch from an intent", "從意圖派工")), ta,
     h("div", { class: "actions" }, h("button", { class: "btn primary", id: "dispatchBtn", disabled: v.origin?.mode === "rehearsal" || null, onclick: async () => {
       const text = ta.value.trim(); if (!text) return;

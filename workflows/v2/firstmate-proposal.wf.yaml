@@ -1,0 +1,11 @@
+{
+ "id":"firstmate-proposal","name":"Firstmate proposal","kind":"firstmate-proposal","version":1,
+ "description":"An owned primary proposes work; only the captain can approve the exact pinned workflow.",
+ "params":{"source":{"label":"Owned source identity"},"target":{"label":"Pinned target"},"definition":{"label":"Definition hash"},"project":{"label":"Project authority hash"}},
+ "roles":[],"nodes":[
+  {"id":"dispatch","kind":"hook","label":"Captain dispatch","do":"firstmate.dispatch","x":160,"y":140},
+  {"id":"launch","kind":"hook","label":"Start approved workflow","do":"firstmate.launch","x":400,"y":140},
+  {"id":"done","kind":"hook","label":"Dispatched","x":640,"y":140},
+  {"id":"closed","kind":"hook","label":"Closed without work","args":{"result":"closed"},"x":400,"y":280}
+ ],"edges":[["dispatch","launch","approve"],["dispatch","closed","close"],["launch","done","ok"]]
+}

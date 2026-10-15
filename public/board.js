@@ -283,7 +283,7 @@ routes.board = viewBoard;
 // re-renders from live data (app.js's stream handlers and the loaders here) go through soft(): mark them as live
 // and a live update that changes nothing the Board shows does not redraw it (the crew's log tails move every few seconds;
 // a redraw between a mouse-down and its mouse-up would swallow the captain's click)
-const boardSig = () => JSON.stringify([lang, S.tasks.filter((t) => t.status !== "done" && t.status !== "idle").map((t) => [t.id, t.status, t.node, t.round, t.title, t.door, t.pr, t.failure?.type]),
+const boardSig = () => JSON.stringify([lang, window.crewFirstmateWelcomeSignature?.(), S.tasks.filter((t) => t.status !== "done" && t.status !== "idle").map((t) => [t.id, t.status, t.node, t.round, t.title, t.door, t.pr, t.failure?.type]),
   S.pending.map((c) => [c.id, c.ts]), S.crew.filter((c) => c.alive).map((c) => [c.actor, c.task, c.vendor, c.model]), BD.list, BD.overviewIds, BD.cards, (BD.ended || []).map((r) => [r.id, r.status, r.result, r.endedAt]), [...BD.det.values()].map((r) => [r.id, r.status, r.updatedAt, r.nodes]), BD.answered.length, [...BD.open], [...BD.hidden]]);
 { const baseSoft = soft; soft = function () {
     if (S.route?.name === "board" && boardSig() === BD.sig) return updateNav();

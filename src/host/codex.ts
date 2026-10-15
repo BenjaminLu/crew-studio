@@ -82,7 +82,7 @@ export function turnsText(turns: any[], cap = 12_000): string {
 }
 const policyText = (p: unknown) => typeof p === "string" ? p : p && typeof p === "object" ? Object.keys(p as object)[0] ?? null : null;
 
-const init = async (r: Rpc) => { await r.call("initialize", { clientInfo: { name: "crew-studio", title: "Crew Studio", version: "0.3.0" } }); r.notify("initialized"); };
+const init = async (r: Rpc, native=false) => { await r.call("initialize", { ...(native?{capabilities:{experimentalApi:true}}:{}),clientInfo: { name: "crew-studio", title: "Crew Studio", version: "0.3.0" } }); r.notify("initialized"); };
 
 export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Host {
   return {
@@ -157,6 +157,11 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
           return { decision: ans.allow ? "accept" : "decline" };
         }
         if (m.method === "item/tool/call") {
+          const owned=()=>p.threadId===id&&!!turn&&p.turnId===turnId&&!interrupting;
+          if(opts.nativeTools&&owned()&&typeof p.tool==="string"&&opts.nativeTools.specs.some(t=>t.name===p.tool)&&!p.namespace&&typeof p.callId==="string"){
+            const savedTurn=turn, savedId=turnId;const live=()=>owned()&&turn===savedTurn&&turnId===savedId;
+            try{const result=await opts.nativeTools.call(p.tool,p.arguments,{thread:id,turn:p.turnId,call:p.callId,live});if(!live())throw new Error("Primary tool ownership ended");return{success:true,contentItems:[{type:"inputText",text:JSON.stringify(result)}]};}catch{return{success:false,contentItems:[{type:"inputText",text:"Studio native tool refused. No authority was granted. Check the registered workflow and captain approval."}]};}
+          }
           // Work/other clients own their dynamic tools. Studio does not execute
           // arbitrary JavaScript or translate their arguments into shell commands.
           if (p.threadId === id && turn && p.turnId === turnId) {
@@ -187,10 +192,10 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
           emit({ type: "exit", code, stderr: c.proc.stderr().slice(-600) });
         });
         try {
-        await init(c);
+        await init(c,!!opts.nativeTools);
         if (first && opts.fresh) {
           // a fresh firstmate: a new thread in the firstmate repo, with the captain's own settings
-          const res = await c.call("thread/start", { cwd: opts.cwd });
+          const res = await c.call("thread/start", { cwd: opts.cwd, ...(opts.nativeTools?{dynamicTools:opts.nativeTools.specs}:{}) });
           path = "fresh"; opened(res); id = String(res?.thread?.id ?? ""); if (!id) throw new Error("thread/start returned no thread id");
         } else if (first && opts.fork) {
           // never thread/resume the original: fork it, or start a new thread seeded from its recent turns

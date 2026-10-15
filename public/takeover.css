@@ -46,3 +46,7 @@
 .tk-srow .tk-row,.tk-srow .tk-sum{grid-column:1}
 .tk-srow .tk-take{grid-column:2;grid-row:1/span 2}
 .tk-host{font-weight:600}
+
+/* Exact project paths must wrap inside the independent fresh-start dialog. */
+.tk-start-dialog,.tk-start-dialog>*{min-width:0;overflow-wrap:anywhere}
+.modal:has(.tk-start-dialog)>*{min-width:0;overflow-wrap:anywhere}

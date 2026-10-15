@@ -4,13 +4,13 @@
 // shows who is driving, the input queue, tool permission requests and the
 // session's replies. The Phone page pairs phones and shows Tailscale.
 const MS = { view: null, live: "", liveTools: [], sessions: null, sesHost: "claude", sesErr: null, me: { kind: "desktop", allowDrive: false } };
-let chatMode = store.get("crew.chatMode", "status") === "main" ? "main" : "status";
+let chatMode = "main"; // One primary conversation; read-only context lives in Activity.
 const isMain = () => chatMode === "main";
 
 // ---------- data ----------
 const getJ = (u) => fetch(u).then((r) => r.json());
 const postJ = (u, b) => fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b || {}) }).then(async (r) => ({ status: r.status, ...(await r.json().catch(() => ({}))) }));
-async function loadMain() { try { MS.view = await getJ("/api/main"); } catch {} if (isMain()) renderChat(false); showChatInfo(); approvalsBar(); }
+async function loadMain() { try { MS.view = await getJ("/api/main"); } catch {} if (isMain()) renderChat(false); showChatInfo(); approvalsBar(); if(S.route?.name==="board")soft(); }
 getJ("/api/remote/me").then((m) => { MS.me = m; if (isMain()) renderChat(false); }).catch(() => {});
 (function stream() { // on the page's one event stream (app.js)
   const es = { addEventListener: (t, f) => window.liveListen(t, f) };
@@ -19,7 +19,7 @@ getJ("/api/remote/me").then((m) => { MS.me = m; if (isMain()) renderChat(false);
     const finished = MS.view && v.log.length !== MS.view.log.length;
     MS.view = v; if (finished && !v.busy) { MS.live = ""; MS.liveTools = []; }
     if (!v.busy && v.log.at(-1)?.kind === "firstmate") { MS.live = ""; MS.liveTools = []; }
-    if (isMain()) renderChat(false); showChatInfo(); approvalsBar(); if (S.route?.name === "remote") render();
+    if (isMain()) renderChat(false); showChatInfo(); approvalsBar(); if(S.route?.name==="board")soft(); else if (S.route?.name === "remote") render();
   });
   es.addEventListener("mainEvent", (m) => {
     const e = JSON.parse(m.data);
@@ -32,48 +32,44 @@ loadMain();
 
 // ---------- chat: mode switch, header, log ----------
 const askStatus = ask, renderStatus = renderChat, chatInfoStatus = showChatInfo;
-function modeSeg() {
-  const seg = h("div", { class: "seg", role: "group", id: "chatMode", "aria-label": T("Chat mode", "對話模式"), style: "margin:8px 12px 0" },
-    h("button", { type: "button", "aria-pressed": String(!isMain()), "data-mode": "status", title: T("Read-only status answers from the event log", "從事件紀錄回答狀態，唯讀") }, h("span", { class: "keep" }, T("Status (read-only)", "狀態（唯讀）"))),
-    h("button", { type: "button", "aria-pressed": String(isMain()), "data-mode": "main", title: T("Talk to the firstmate main session", "跟 firstmate 主 session 對話") }, h("span", { class: "keep" }, "firstmate")));
-  seg.addEventListener("click", (e) => { const b = e.target.closest("[data-mode]"); if (!b) return; chatMode = b.dataset.mode; store.set("crew.chatMode", chatMode); renderChat(); showChatInfo(); });
-  return seg;
-}
+function modeSeg() { return h("div", {id:"chatMode",class:"tk-row",style:"margin:8px 12px 0"},h("b",{},"Firstmate"),h("a",{href:"#/activity",class:"btn ghost sm",onclick:()=>openChat(false)},T("Activity & context (read-only)","事件與背景（唯讀）"))); }
 (function mountSeg() { const head = $(".chat-head"); head.after(modeSeg()); })();
 const refreshSeg = () => $$("#chatMode button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === chatMode)));
 
 showChatInfo = function () {
   refreshSeg();
+  $("#chatProv").hidden = isMain(); // This selector belongs to the old read-only status provider.
+  $("#chatClear").hidden = isMain(); // Clearing its local cache does not clear the owned primary.
   if (!isMain()) return chatInfoStatus();
   const v = MS.view, sub = $("#chatSub");
   if (!v) { sub.textContent = "…"; return; }
-  if (v.state === "detached") sub.textContent = T("main session · not attached", "主 session · 未接上");
-  else if (v.state === "attaching" || v.state === "detaching") sub.textContent = T(v.state === "attaching" ? "Connecting main session…" : "Releasing main session…", v.state === "attaching" ? "正在連接主 session…" : "正在交還主 session…");
+  if (v.state === "detached") sub.textContent = T("Connect your account to begin", "連接帳號即可開始");
+  else if (v.state === "attaching" || v.state === "detaching") { const stopping=v.context==="studio"&&!v.origin&&v.drive?.path==="fresh";sub.textContent = T(v.state === "attaching" ? "Connecting main session…" : stopping ? "Stopping Firstmate…" : "Releasing main session…", v.state === "attaching" ? "正在連接主 session…" : stopping ? "正在停止 Firstmate…" : "正在交還主 session…"); }
   else sub.textContent = `${T("main session", "主 session")} · ${v.host} · ${v.model || "…"} · ${v.state === "paused" ? T("paused", "已暫停") : T("Studio driving", "Studio 駕駛中")}`;
   sub.title = v.sessionId ? `${v.host} ${v.sessionId}` : "";
 };
 
 const KLABEL = { captain: null, card: () => T("Card notice", "卡片通知"), wake: () => T("firstmate wake", "firstmate 喚醒"), status: () => T("Studio", "Studio"), tool: null };
 function driverBanner(v) {
-  if (v?.state === "attaching" || v?.state === "detaching") return h("div", { class: "rich", "data-banner": v.state }, T(v.state === "attaching" ? "Connecting main session…" : "Releasing main session…", v.state === "attaching" ? "正在連接主 session…" : "正在交還主 session…"));
   const d = v.driver || {};
+  const nativePrimary=v.context==="studio"&&!v.origin&&(v.drive?.path==="fresh"||d.path==="fresh")&&!d.forkedFrom;
+  if (v?.state === "attaching" || v?.state === "detaching") return h("div", { class: "rich", "data-banner": v.state }, T(v.state === "attaching" ? "Connecting main session…" : nativePrimary ? "Stopping Firstmate…" : "Releasing main session…", v.state === "attaching" ? "正在連接主 session…" : nativePrimary ? "正在停止 Firstmate…" : "正在交還主 session…"));
   if (v.state === "paused") return h("div", { class: "rich chat-err", role: "alert", "data-banner": "paused" },
     h("div", { class: "rk", style: "color:var(--bad)" }, icon("alert", "ic sm"), T("Paused: a terminal may be writing this session", "已暫停：可能有終端機在寫這個 session")),
     h("div", { style: "font-size:13px;color:var(--text-2)" }, v.pausedReason),
     h("div", { class: "actions" }, h("button", { class: "btn", onclick: () => postJ("/api/main/resume").then((r) => r.error && toast(r.error)) }, T("Resume here", "在這裡繼續")),
-      h("button", { class: "btn", onclick: handBack }, T("Hand back to terminal", "交回終端機"))));
+      h("button", { class: "btn", onclick: handBack }, v.context==="studio" ? T("Stop Firstmate","停止 Firstmate") : T("Hand back to terminal", "交回終端機"))));
   if (v.state === "detached") return h("div", { class: "rich", "data-banner": "detached" },
-    h("div", { class: "rk" }, icon("lock", "ic sm"), d.holder === "terminal" ? T("The terminal is driving", "終端機駕駛中") : T("No session attached", "還沒接上 session")),
-    d.holder === "terminal" && d.resume ? h("div", { style: "font-size:13px" }, T("Handed back. In a terminal: ", "已交回。在終端機執行："), h("code", {}, d.resume),
+    h("div", { class: "rk" }, icon("lock", "ic sm"), nativePrimary ? T("Firstmate stopped", "Firstmate 已停止") : d.holder === "terminal" ? T("The terminal is driving", "終端機駕駛中") : T("No session attached", "還沒接上 session")),
+    !nativePrimary && d.holder === "terminal" && d.resume ? h("div", { style: "font-size:13px" }, T("Handed back. In a terminal: ", "已交回。在終端機執行："), h("code", {}, d.resume),
       h("button", { class: "btn ghost icon", "aria-label": T("Copy", "複製"), onclick: () => navigator.clipboard?.writeText(d.resume).then(() => toast(T("Copied", "已複製"))) }, icon("copy", "ic sm"))) : null,
-    h("div", { class: "faint", style: "font-size:13px" }, T("Attach the firstmate main session to drive it from here. Studio refuses while a terminal is driving it, so the conversation never forks.",
-      "接上 firstmate 主 session 就能在這裡操作。終端機還在用時 Studio 會拒絕接上，對話不會分岔。")),
-    h("div", { class: "actions" }, h("button", { class: "btn primary", id: "attachBtn", disabled: MS.me.kind === "phone" && !MS.me.allowDrive || null, onclick: openAttach }, icon("link", "ic sm"), T("Attach main session…", "接上主 session…"))));
+    h("div", {class:"faint"}, T("Start Studio's own Firstmate. No existing terminal session is required.","啟動 Studio 自己的 Firstmate，不需要既有終端機 session。")),
+    h("div", {class:"actions"},h("a",{class:"btn primary",href:"#/firstmate",onclick:()=>openChat(false)},T("Connect and begin…","連接並開始…"))));
   return h("div", { class: "rich", "data-banner": "attached" },
     h("div", { class: "rk", style: "color:var(--accent-text)" }, icon("agent", "ic sm"), T("Studio is driving", "Studio 駕駛中"), h("span", { class: "vbadge" }, `${v.host} · ${String(v.sessionId).slice(0, 8)}`), v.busy ? h("span", { class: "badge run" }, h("span", { class: "d" }), T("turn running", "回合進行中")) : null),
     h("div", { class: "actions" },
       v.busy ? h("button", { class: "btn", onclick: () => postJ("/api/main/interrupt") }, icon("stop", "ic sm"), T("Interrupt", "中斷")) : null,
-      h("button", { class: "btn", onclick: handBack }, T("Hand back to terminal", "交回終端機"))));
+      h("button", { class: "btn", onclick: handBack }, v.context==="studio" ? T("Stop Firstmate","停止 Firstmate") : T("Hand back to terminal", "交回終端機"))));
 }
 function queueView(v) {
   if (!v.queue.length) return null;
@@ -108,7 +104,7 @@ renderChat = function (stick = true) {
   else {
     kids.push(driverBanner(v));
     v.approvals.forEach((a) => kids.push(approvalCard(a)));
-    v.log.filter((x) => x.kind !== "status" || /Paused|Handed|Attached|re-identified|Turn (failed|interrupted)/.test(x.text)).slice(-80).forEach((x, i) => kids.push(logItem(x, i)));
+    v.log.filter((x) => !(v.context==="studio"&&x.source==="studio:handoff") && (x.kind !== "status" || /Paused|Handed|Attached|re-identified|Turn (failed|interrupted)/.test(x.text))).slice(-80).forEach((x, i) => kids.push(logItem(x, i)));
     if (v.busy) kids.push(h("div", { class: "msg fm", "data-main": "live" }, h("div", { class: "meta" }, "firstmate", h("span", { class: "faint" }, T("working…", "處理中…"))),
       MS.liveTools.length ? h("div", { class: "faint", style: "font-size:12px" }, MS.liveTools.slice(-3).join(" · ")) : null,
       MS.live ? h("div", { class: "bub", id: "mainLive" }, MS.live) : h("div", { class: "typing" }, h("i"), h("i"), h("i"))));
@@ -119,7 +115,7 @@ renderChat = function (stick = true) {
   $("#chatSug").replaceChildren();
   const attached = v && (v.state === "attached" || v.state === "paused");
   $("#chatSend").disabled = !attached;
-  $("#chatIn").placeholder = attached ? T("Tell firstmate what you want done", "告訴 firstmate 要做什麼") : T("Attach the main session first", "請先接上主 session");
+  $("#chatIn").placeholder = attached ? T("Tell firstmate what you want done", "告訴 firstmate 要做什麼") : T("Connect your account to begin", "連接帳號即可開始");
   if (stick || atBottom) log.scrollTop = log.scrollHeight;
 };
 ask = async function (text) {
@@ -130,8 +126,10 @@ ask = async function (text) {
   if (r.error) toast(r.error);
 };
 async function handBack() {
+  const native=MS.view?.context==="studio";
   const r = await postJ("/api/main/detach");
   if (r.error) return toast(r.error);
+  if(native){await loadMain();return toast(T("Firstmate stopped","Firstmate 已停止"));}
   modal(T("Handed back", "已交回"), h("div", { style: "display:grid;gap:10px" },
     h("p", { class: "muted", style: "margin:0" }, T("Studio stopped its process and released the lock. Continue in a terminal with:", "Studio 已停止它的程序並放開鎖。在終端機用這個指令接回：")),
     h("code", { class: "mono", id: "resumeCmd", style: "padding:10px;border:1px solid var(--line);border-radius:8px;word-break:break-all" }, r.resume)),

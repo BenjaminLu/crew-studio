@@ -1,42 +1,12 @@
-// `crew-studio open`: the captain's explicit step that starts a browser session.
-// It reads Studio's session token (data/session-token, 0600, or CREW_SESSION_TOKEN)
-// and opens Studio's session link, which sets the session cookie and lands on the
-// page. Studio's page never hands out a session by itself.
-// The browser: `--browser <app>` or CREW_BROWSER (e.g. "Google Chrome", passed as
-// `open -a <app>`); else the default http handler LaunchServices records, used
-// explicitly (`open -b <bundle id>`); else a plain `open`. It says which it used.
-// The link is never printed when a browser opened it (it carries the session).
-//   CREW_OPEN_TOOL / CREW_DEFAULTS_TOOL   stand-ins for open(1) / defaults(1) (tests)
-import { join } from "node:path";
-import { sessionToken } from "./csrf";
-import { DEFAULT_DATA } from "./self";
-import { defaultHttpHandler } from "./default-browser";
-
-function browserFlag(argv: string[]): string | null {
-  const i = argv.indexOf("--browser"); if (i >= 0 && argv[i + 1]) return argv[i + 1];
-  const eq = argv.find((a) => a.startsWith("--browser=")); if (eq && eq.slice("--browser=".length).trim()) return eq.slice("--browser=".length).trim(); // an empty --browser= falls through
-  return process.env.CREW_BROWSER?.trim() || null;
+// Explicit local launch authority, never obtained from an unauthenticated page.
+import {discoverInstance,type RunningInstance} from './instance';
+import {defaultHttpHandler} from './default-browser';
+function browserFlag(argv:string[]){const i=argv.indexOf('--browser');if(i>=0&&argv[i+1])return argv[i+1];return argv.find(a=>a.startsWith('--browser='))?.slice(10).trim()||process.env.CREW_BROWSER?.trim()||null;}
+export function requestBrowser(instance:RunningInstance){const url=`${instance.origin}/session?t=${encodeURIComponent(instance.token)}`,tool=process.env.CREW_OPEN_TOOL||'open';const run=(args:string[])=>{try{return Bun.spawnSync([tool,...args,url],{stdout:'ignore',stderr:'ignore',timeout:5000}).success}catch{return false}};
+ let used:string|null=null;if(process.platform==='darwin'||process.env.CREW_OPEN_TOOL){const asked=browserFlag(process.argv.slice(3));if(asked){if(run(['-a',asked]))used=asked;else console.log('Requested browser did not accept the link; trying the default browser.');}
+ if(!used){let handler:string|null=null;try{const d=Bun.spawnSync([process.env.CREW_DEFAULTS_TOOL||'defaults','read','com.apple.LaunchServices/com.apple.launchservices.secure','LSHandlers'],{stdout:'pipe',stderr:'ignore',timeout:3000});if(d.success)handler=defaultHttpHandler(d.stdout.toString())}catch{}if(handler&&run(['-b',handler]))used=`your default browser (${handler})`;else if(run([]))used="the system's default for links";}}
+ if(!used){console.error(`Could not request a browser. Studio is running at ${instance.origin}. Retry the launch command with --browser Safari (or another installed browser). Session credentials are never printed.`);return false;}
+ console.log(`Requested Studio's authenticated Board in ${used}. Browser dispatch was accepted; a visible window is not verified.`);return true;
 }
-
-const data = process.env.CREW_DATA ?? DEFAULT_DATA;
-const port = Number(process.env.CREW_PORT ?? 4210);
-const url = `http://127.0.0.1:${port}/session?t=${sessionToken(data)}`;
-const openTool = process.env.CREW_OPEN_TOOL || "open";
-const mac = process.platform === "darwin" || !!process.env.CREW_OPEN_TOOL;
-const run = (args: string[]) => { try { return Bun.spawnSync([openTool, ...args, url], { stdout: "ignore", stderr: "pipe" }).success; } catch { return false; } };
-
-let used: string | null = null;
-if (mac) {
-  const asked = browserFlag(process.argv.slice(3));
-  if (asked) { if (run(["-a", asked])) used = asked; else console.log(`Could not open ${asked}; trying your default browser.`); }
-  if (!used) {
-    let handler: string | null = null;
-    try { const d = Bun.spawnSync([process.env.CREW_DEFAULTS_TOOL || "defaults", "read", "com.apple.LaunchServices/com.apple.launchservices.secure", "LSHandlers"], { stdout: "pipe", stderr: "ignore" });
-      if (d.success) handler = defaultHttpHandler(d.stdout.toString()); } catch {}
-    if (handler && run(["-b", handler])) used = `your default browser (${handler})`;
-    else if (run([])) used = "the system's default for links";
-  }
-}
-if (!used) console.log(`Open this link in your browser (it carries Studio's session; keep it to yourself):\n${url}`);
-else console.log(`Opened Studio's session in ${used} (${join(data, "session-token")}).`);
-export {};
+export async function openStudio(start=false){let instance=await discoverInstance();if(!instance&&start){const {runningInstance}=await import('./server');instance=runningInstance;}if(!instance)throw new Error('No verified running Studio instance matches. Run the same binary with launch (or bun run launch); use CREW_DATA/CREW_PORT only to select a specific instance.');return requestBrowser(instance);}
+if(process.argv[2]==='open'||process.argv[2]==='launch'){try{if(!await openStudio(process.argv[2]==='launch'))process.exitCode=1}catch{console.error('Could not find or open a verified Studio instance. Run this binary with launch, or select the intended CREW_DATA and CREW_PORT. No session credential was created or printed.');process.exit(1)}}

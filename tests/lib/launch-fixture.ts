@@ -1,0 +1,3 @@
+// Actual loopback launch handshake with synthetic authority, for browser argv tests.
+import{registerInstance}from'../../src/instance';
+let authority:ReturnType<typeof registerInstance>;const server=Bun.serve({hostname:'127.0.0.1',port:0,fetch:req=>{const u=new URL(req.url);return u.pathname==='/api/instance'?Response.json(authority.respond(u.searchParams.get('challenge'))):new Response('not found',{status:404})}});authority=registerInstance(server.port,process.env.CREW_DATA!,process.env.CREW_SESSION_TOKEN!);console.log(server.port);process.once('SIGTERM',()=>{server.stop(true);authority.cleanup();process.exit(0)});
