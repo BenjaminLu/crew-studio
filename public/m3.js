@@ -256,7 +256,7 @@ function framed(src, o = {}) {
 const box = (b, cls, label) => h("div", { class: `a3-box ${cls || ""}`, style: `left:${b.x}px;top:${b.y}px;width:${Math.max(6, b.w)}px;height:${Math.max(6, b.h)}px` }, label ? h("span", { class: "a3-tag" }, label) : null);
 function webReview(d, v) {
   const a = d.artifact;
-  const src = `/af/${a.id}/${v.n}/${v.primary || a.entry || "index.html"}`;
+  const src = `/af/${a.id}/${v.n}/${a.source === "md" ? "doc.html" : v.primary || a.entry || "index.html"}`;
   let hover = null, hl = null;
   const pins = h("div", { class: "a3-pins" });
   const f = framed(src, { title: a.title, onLoad: (doc, over) => {
@@ -402,7 +402,7 @@ function viewCompare(arg) {
   } else if (a.type === "image") {
     body = h("div", { class: "a3-cmp" }, [va, vb].map((v) => h("div", { class: "card a3-cmpcol" }, h("div", { class: "a3-cmph" }, `v${v.n}`), h("img", { class: "a3-imgfull", src: `/af/${a.id}/${v.n}/${v.primary}`, alt: `v${v.n}` }))));
   } else {
-    const mk = (v, other) => framed(`/af/${a.id}/${v.n}/${v.primary || a.entry || "index.html"}`, { title: `v${v.n}`, onLoad: (doc, over) => {
+    const mk = (v, other) => framed(`/af/${a.id}/${v.n}/${a.source === "md" ? "doc.html" : v.primary || a.entry || "index.html"}`, { title: `v${v.n}`, onLoad: (doc, over) => {
       const layer = h("div", {}); over.append(layer);
       const draw = (hl) => layer.replaceChildren(...va.notes.map((x) => { let b = x.bbox; if (other && x.selector) { try { const el = doc.querySelector(x.selector); if (el) { const r = el.getBoundingClientRect(); b = { x: r.left, y: r.top + doc.defaultView.scrollY, w: r.width, h: r.height }; } } catch {} }
         return b ? box(b, `pin ${hl === x.id ? "hl" : ""}`, x.id) : null; }).filter(Boolean));
