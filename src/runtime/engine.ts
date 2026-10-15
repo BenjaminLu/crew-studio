@@ -888,12 +888,14 @@ export class Engine {
   async answer(cardId: string, a: { choice: string; note?: string | null; by: string; confirm?: string | null; aligned?: number[] | null }) {
     const c0 = this.cards.get(cardId); if (!c0) throw new Error("no such card");
     const r = this.must(c0.run);
+    if(this.repreparing.has(`${r.id}/${c0.node}`))throw new Error("Captain card preparation is still running; no answer was submitted");
     // a card is visible as soon as it is raised; its node finishes raising it (the STE check) a moment later: wait for that, not longer than cardReadyMs
     if (TERMINAL.includes(r.status)) throw new Error(`the run is ${r.status}`);
     const raising = this.raising.get(cardId);
     if (raising) { let t: any; const ok = await Promise.race([raising.done.then(() => true), new Promise<boolean>((res) => { t = setTimeout(() => res(false), this.cardReadyMs); })]); clearTimeout(t);
       if (!ok) throw new Error("this card is still being raised (its checks are running): answer it again in a moment"); }
     if (TERMINAL.includes(r.status)) throw new Error(`the run is ${r.status}`);
+    if(this.repreparing.has(`${r.id}/${c0.node}`))throw new Error("Captain card preparation is still running; no answer was submitted");
     const rn = r.nodes[c0.node]; if (rn?.state !== "running" || rn.waiting !== "card" || rn.card !== c0.id) throw new Error("this card is not the one its node waits on");
     this.deps.authorizeAnswer?.(r,c0,a);
     const c = this.cards.answer(cardId, a);
@@ -943,6 +945,20 @@ export class Engine {
    * (recorded in the ledger). Inside an open authorization window (a signed grant the
    * captain opened in Studio) the runtime answers the listed kinds, never a one-way door.
    */
+  private repreparing = new Map<string,{previous:string;prepared:string|null}>();
+  /** Stage a fresh captain card; the durable waiting pointer remains on the old hold until preparation succeeds. */
+  async reprepareCard(x:X,prepare:()=>Promise<unknown>):Promise<SCard>{
+    const key=`${x.run.id}/${x.node.id}`,previous=x.rn.card,old=previous&&this.cards.get(previous);
+    if(!this.owns(x)||x.run.status!=='waiting'||x.rn.waiting!=='card'||!old||old.status!=='open'||!old.captainOnly||old.run!==x.run.id||old.node!==x.node.id||old.visit!==x.visit||this.busy(x.run.id)||this.repreparing.has(key))throw new Error('Card is not quiescent');
+    const stage={previous:previous!,prepared:null as string|null};this.repreparing.set(key,stage);
+    const work=(async()=>{try{
+      await prepare();const fresh=stage.prepared&&this.cards.get(stage.prepared);
+      if(!this.owns(x)||x.run.status!=='waiting'||x.rn.waiting!=='card'||x.rn.card!==previous||this.cards.get(previous!)?.status!=='open'||!fresh||fresh.status!=='open'||!fresh.captainOnly)throw new Error('Fresh card was not prepared for its current owner');
+      x.rn.card=fresh.id;this.commit(x.run,`card ${previous} replaced by ${fresh.id}`);this.cards.cancel(previous!);return fresh;
+    }catch(error){if(stage.prepared)this.cards.cancel(stage.prepared);throw error;
+    }finally{this.repreparing.delete(key);if(stage.prepared)this.raising.get(stage.prepared)?.resolve();}})();
+    void this.track(x.run,'captain card preparation',work);return work;
+  }
   async card(x: X, kind: CardKind, b: Body): Promise<SCard> {
     if (!this.owns(x)) throw new Error("card owner ended before presentation");
     const sec = (p: Partial<Sections> | undefined): Sections => ({ ...emptySections(), ...(p ?? {}), scope: { in: p?.scope?.in ?? [], out: p?.scope?.out ?? [] } });
@@ -951,7 +967,7 @@ export class Engine {
     const c = this.cards.create({ run: x.run.id, node: x.node.id, visit: x.rn.visits, kind, title: { en: b.title, "zh-TW": b.zhTitle ?? b.title }, sections: { en, "zh-TW": zh }, body: b.body ?? "",
       options: b.options ?? x.node.card?.options ?? [{ id: "approve", label: "Approve", primary: true }, { id: "reject", label: "Reject" }],
       confirmDoor: !!x.node.card?.confirm_door, door: b.door ?? (x.node.card?.door_from ? (x.ctx[x.node.card.door_from]?.door ?? x.ctx[x.node.card.door_from] ?? null) : null), links: b.links ?? [], detail: b.detail ?? null, ...(b.captainOnly ? { captainOnly: true } : {}), workflow: x.run.workflow, runTitle: x.run.title, ledger: b.ledger ?? null, ste: null, captures: b.captures ?? null });
-    x.rn.card = c.id; this.commit(x.run, `card ${c.id} raised`);
+    const staged=this.repreparing.get(`${x.run.id}/${x.node.id}`);if(staged){if(staged.prepared){this.cards.cancel(c.id);throw new Error("One replacement card per preparation");}staged.prepared=c.id;}else{x.rn.card = c.id; this.commit(x.run, `card ${c.id} raised`);}
     { let done!: () => void; const p = new Promise<void>((res) => (done = res)); this.raising.set(c.id, { done: p, resolve: () => { this.raising.delete(c.id); done(); } }); }
     this.emit(x.run, "card_raised", `${c.id} ${c.title.en}`, { node: x.node.id, card: c.id, kind });
     // every card is STE-checked (en and zh-TW) by the checks the workflow names, by default the runtime's core one

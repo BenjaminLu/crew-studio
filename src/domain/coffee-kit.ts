@@ -328,15 +328,17 @@ export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; 
     async start(x) {
       requireOwner(x);const links:{label:string;href:string}[]=[];
       for(const part of ['page','image','video','site'] as const)try{const r=coffeeReceipt(x,d.artifacts,part);links.push({label:`${part} v${r.n}`,href:`/#/review/${r.artifact}/${r.n}`});}catch{}
-      let recovery:CoffeePlan|null=null;try{if(!x.run.def.edges.some(e=>e.from===x.node.id&&e.to==='round'&&e.when==='revise'))throw new Error('Historical workflow has no bound recovery edge');const p=currentPlan(x);if((p.pageAdmission!=='paid-intent-v1'||trustedCoffee(x).some(e=>e.record==='coffee-operation-v1'&&e.data?.part==='page'&&e.data.generation===p.generations.page))&&coffeeNeeds(x,d.artifacts,'page')==='produce')recovery=p;}catch{}
-      const card=await engine.card(x,'question',{captainOnly:true,title:'Creation needs attention',zhTitle:'製作需要處理',en:{why:'No verified complete website is available for final approval. Existing valid previews remain available below. Review the failed step; no publication has occurred.',how:'Close this Task to adjust its capability or request a fresh creation.'},zh:{why:'目前沒有可供最終驗收的完整網站。下方仍可開啟已完成且完整的預覽。請查看失敗步驟；尚未發布。',how:'關閉此任務後，調整所需能力或重新建立。'},links,options:[...(recovery?[{id:'fresh-page',label:'Authorize a fresh page attempt',labelZh:'授權重新製作網頁',note:true,hold:true}]:[]),{id:'close',label:'Close',labelZh:'關閉',hold:true}]});
-      if(recovery&&!engine.record(x,'coffee-recovery-offer-v1',{data:{version:1,card:card.id,visit:x.visit,plan:digest(JSON.stringify(recovery)),presentation:presentationHash(card)}}))throw new Error('Recovery offer was not persisted');
+      let recovery:CoffeePlan|null=null,videoRecovery:CoffeePlan|null=null;try{if(!x.run.def.edges.some(e=>e.from===x.node.id&&e.to==='round'&&e.when==='revise'))throw new Error('Historical workflow has no bound recovery edge');const p=currentPlan(x);if((p.pageAdmission!=='paid-intent-v1'||trustedCoffee(x).some(e=>e.record==='coffee-operation-v1'&&e.data?.part==='page'&&e.data.generation===p.generations.page))&&coffeeNeeds(x,d.artifacts,'page')==='produce')recovery=p;else if(d.video&&coffeeNeeds(x,d.artifacts,'page')==='current'&&coffeeNeeds(x,d.artifacts,'image')==='current'&&coffeeNeeds(x,d.artifacts,'video')==='produce')videoRecovery=p;}catch{}
+      const card=await engine.card(x,'question',{captainOnly:true,title:'Creation needs attention',zhTitle:'製作需要處理',en:{why:'No verified complete website is available for final approval. Existing valid previews remain available below. Review the failed step; no publication has occurred.',how:videoRecovery?'Approve a fresh film attempt to reuse the existing page and image. Production waits for your confirmation.':'Review the failed step and repair its capability before preparing another attempt.'},zh:{why:'目前沒有可供最終驗收的完整網站。下方仍可開啟已完成且完整的預覽。請查看失敗步驟；尚未發布。',how:videoRecovery?'核准重新製作影片，沿用既有網頁與圖片。確認後才會開始製作。':'請查看失敗步驟並修復所需能力，再準備新的嘗試。'},links,options:[...(videoRecovery?[{id:'fresh-video',label:'Authorize a fresh film attempt',labelZh:'授權重新製作影片',note:true,hold:true}]:[]),...(recovery?[{id:'fresh-page',label:'Authorize a fresh page attempt',labelZh:'授權重新製作網頁',note:true,hold:true}]:[]),{id:'close',label:'Close',labelZh:'關閉',hold:true}]});
+      if((recovery||videoRecovery)&&!engine.record(x,'coffee-recovery-offer-v1',{data:{version:1,card:card.id,visit:x.visit,plan:digest(JSON.stringify(recovery||videoRecovery)),target:videoRecovery?'video':'page',presentation:presentationHash(card)}}))throw new Error('Recovery offer was not persisted');
       return {wait:true};
     },
-    async answer(x,c){requireOwner(x);requireSignedAnswer(x,c);if(c.answer?.choice==='fresh-page'){
-      const p=currentPlan(x),offer=trustedCoffee(x).filter(e=>e.record==='coffee-recovery-offer-v1').at(-1);
+    async answer(x,c){requireOwner(x);requireSignedAnswer(x,c);if(c.answer?.choice==='fresh-page'||c.answer?.choice==='fresh-video'){
+      const p=currentPlan(x),offer=trustedCoffee(x).filter(e=>e.record==='coffee-recovery-offer-v1'&&e.data?.card===c.id).at(-1);
       if(!offer||offer.node!==x.node.id||offer.round!==x.visit||offer.data.card!==c.id||offer.data.visit!==c.visit||offer.data.plan!==digest(JSON.stringify(p))||offer.data.presentation!==presentationHash(c))throw new Error('Recovery offer is stale');
-      const note=c.answer.note?.trim();if(!note)throw new Error('Explain the fresh page attempt');
+      const target=c.answer.choice==='fresh-video'?'video':'page';if((offer.data.target??'page')!==target)throw new Error('Recovery target differs');
+      const note=c.answer.note?.trim();if(!note)throw new Error('Explain the fresh production attempt');
+      if(target==='video'){if(!d.video)throw new Error('Film renderer is unavailable');coffeeReceipt(x,d.artifacts,'page');coffeeReceipt(x,d.artifacts,'image');p.generations=reviseCoffeeGenerations(p.generations,'video');recordCoffeePlan(x,p);if(!engine.record(x,'coffee-video-recovery-v1',{data:{card:c.id,note}}))throw new Error('Film recovery authorization was not persisted');return{outcome:'revise'};}
       p.pageAdmission='paid-intent-v1';p.generations=reviseCoffeeGenerations(p.generations,'page');p.revision={target:'page',note:note.slice(0,4000)};recordCoffeePlan(x,p);return{outcome:'revise'};
     }if(c.answer?.choice!=='close')throw new Error('Unknown capability choice');return{outcome:'close'};},
   };
@@ -392,7 +394,19 @@ export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; 
       return {verdict:'fail',score:0,proves:[],findings:[{locator:{type:'card',field:'bundle'},class:'coffee-bundle-integrity',severity:'blocking',message:error instanceof Error ? error.message : 'Coffee bundle unavailable',expected:'Produce and verify the complete current site, image and playable film'}]};
     }
   };
-  return {artifactReview(id:string) {
+  return {async refreshRecovery(id:string){
+    const run=engine.get(id);if(!run||run.def.kind!=='coffee-kit'||run.status!=='waiting'||engine.busy(id))throw new Error('Task must be waiting without active work');
+    const node=run.def.nodes.find(n=>n.args?.mode==='coffee-capability'&&run.nodes[n.id]?.waiting==='card');
+    if(!node)throw new Error('Task has no coffee capability hold');
+    const rn=run.nodes[node.id],old=engine.cards.get(rn.card??'');if(!old||old.status!=='open'||old.captainOnly!==true)throw new Error('Capability card is not open');
+    const x=engine.x(run,node,rn);requireOwner(x);requireChoice(x);currentPlan(x);
+    if(!d.video)throw new Error('Install the film renderer and restart Studio first');
+    coffeeReceipt(x,d.artifacts,'page');coffeeReceipt(x,d.artifacts,'image');
+    if(coffeeNeeds(x,d.artifacts,'video')!=='produce'||!run.def.edges.some(e=>e.from===node.id&&e.to==='round'&&e.when==='revise'))throw new Error('Task has no bound film recovery path');
+    await engine.reprepareCard(x,()=>engine.cardModes['coffee-capability'].start!(x));requireOwner(x);
+    if(rn.card===old.id)throw new Error('Recovery card was not prepared');
+    engine.cards.cancel(old.id);engine.record(x,'coffee-recovery-refreshed-v1',{data:{previous:old.id,card:rn.card}});return engine.cards.get(rn.card!);
+  },artifactReview(id:string) {
     for(const run of engine.list()) {
       const authority=engine.trusted(run.id);
       if(authority.ok&&authority.entries.some(e=>e.record===outputRecord&&e.data?.artifact===id&&Number.isSafeInteger(e.data.n)&&e.data.n>0))return {readOnly:true as const,taskHref:`#/run/${encodeURIComponent(run.id)}`,reason:'Review and revise this version in its native Task.'};

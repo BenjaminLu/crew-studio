@@ -90,7 +90,8 @@ export function createRuntime(d: RuntimeDeps) {
   const engine = new Engine({ dataDir: d.dataDir, agents: d.agents, provider: d.provider, defaultProvider: d.defaultProvider, selectProvider: d.selectProvider, log: d.log, send: d.send, skillText: skillTextFor(d.fmRoot), store: d.store, protectedRoots: d.protectedRoots ?? [d.fmRoot], library: d.skills ?? null }, defs);
   const projects = new Projects(d.dataDir);
   if (d.m3?.store && d.m3?.lane && d.fileorg && d.docs) installDeliver(engine, { dataDir: d.dataDir, artifacts: d.m3.store, lane: d.m3.lane, fileorg: d.fileorg, docs: d.docs, generateImage: d.generateImage });
-  if(d.m3?.store){const coffee=installCoffeeKit(engine,{artifacts:d.m3.store,choice:d.coffeeChoice,staffing:(def,params)=>{const config=staffingGuard.verified(def,params),role=config.roles['image-worker'];if(!role||role.provider!=='codex')throw new Error('The dedicated image adapter requires an explicitly approved available Codex image-worker; no vendor fallback');return {provider:'codex',model:role.model,effort:role.effort};},video:d.coffeeVideo});d.m3.useArtifactReviewPolicy?.(coffee.artifactReview);}
+  let coffee:ReturnType<typeof installCoffeeKit>|undefined;
+  if(d.m3?.store){coffee=installCoffeeKit(engine,{artifacts:d.m3.store,choice:d.coffeeChoice,staffing:(def,params)=>{const config=staffingGuard.verified(def,params),role=config.roles['image-worker'];if(!role||role.provider!=='codex')throw new Error('The dedicated image adapter requires an explicitly approved available Codex image-worker; no vendor fallback');return {provider:'codex',model:role.model,effort:role.effort};},video:d.coffeeVideo});d.m3.useArtifactReviewPolicy?.(coffee.artifactReview);}
   // Base artifact providers precede domain wrappers that bind their own pinned outputs.
   for (const f of d.install ?? []) f(engine, { projects, dataDir: d.dataDir });
   const staffing=new StaffingStore(d.dataDir);
@@ -192,6 +193,8 @@ export function createRuntime(d: RuntimeDeps) {
         if (b?.level === "project" && b?.project) engine.policies.setProject(String(b.project), b.patch ?? {}); else engine.policies.setOrg(b?.patch ?? {}); return json({ ok: true, org: engine.policies.org() }); }
       // ---------- intake ----------
       if (p === "/api/intake" && writing) return json(classifyIntent(defs, String(b?.text ?? ""), engine.policies.get("sensitive_paths", { project: b?.project ? String(b.project) : null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []));
+      const coffeeRecovery=/^\/api\/wruns\/(R-\d+)\/coffee-recovery$/.exec(p);
+      if(coffeeRecovery&&writing){if(req.method!=='POST')return json({error:'POST required'},405);if(!b||typeof b!=='object'||Array.isArray(b)||Object.keys(b).length)return json({error:'Recovery refresh accepts no production choices'},400);if(who.kind!=='desktop')return json({error:'Refresh recovery on the Mac'},403);if(!coffee)return json({error:'Coffee workflow unavailable'},409);return json(await coffee.refreshRecovery(coffeeRecovery[1]));}
       // ---------- runs ----------
       // the default list hides archived runs; ?archived=1 lists them too
       if (p === "/api/wruns" && !writing) return json({ runs: engine.list().filter((r) => url.searchParams.get("archived") === "1" || !r.archived).map((r) => ({ id: r.id, workflow: r.workflow, version: r.version, title: r.title, status: r.status, result: r.result, createdAt: r.createdAt, updatedAt: r.updatedAt, endedAt: r.endedAt, error: r.error,

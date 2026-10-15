@@ -99,6 +99,23 @@ insufficient. For UI tests or another explicit install location, set
 `PLAYWRIGHT_MODULE` to the absolute path of `playwright/index.mjs`. See
 [Playwright's browser installation guide](https://playwright.dev/docs/browsers).
 
+The native coffee film also requires its pinned renderer packages in that same
+managed directory (separate from basic Studio startup):
+
+```sh
+npm install --prefix "$HOME/.crew-studio/tools" hyperframes@0.8.159 node@22.22.0 gsap@3.14.2
+```
+
+Restart Studio after installing optional film tools: capability admission is
+checked at startup. `CREW_HYPERFRAMES_ROOT` can select another package root;
+Studio also searches the managed tool directory before its application directory.
+A failed or waiting Task remains waiting for its captain confirmation; installing
+tools does not authorize another production attempt. For a coffee Task waiting
+on a film capability hold, open its Task page and choose **Recheck film capability**,
+then review and approve the new captain-only film attempt card. This preserves
+its Task identity and existing page/image versions; it does not create a replacement
+Task or authorize production merely by refreshing the card.
+
 ### Hooks and first-run checks
 
 **Basic Studio requires no manual hook installation.** There is no Husky/npm
@@ -454,3 +471,9 @@ Codex tool execution belongs to the CLI's native runtime and keeps its configure
 `launch` discovers private owned instance records under `~/.crew-studio/runtime` (0700; files 0600). A bounded cryptographic challenge verifies the running server before any credential reaches the OS browser opener. The opener does not create session tokens and never prints secret URLs. Explicit CREW_DATA/CREW_PORT selects an exact instance; ambiguous, stale, mismatched or insecure authority fails closed. CREW_RUNTIME_DIR is an explicit runtime-location override for isolated fixtures. Local localhost navigation canonicalizes to127.0.0.1 before session cookies are issued.
 
 Default fresh Firstmate lives in Studio’s own workspace, with installed native proposal tools. Explicit CREW_MAIN_PROJECT/CREW_FM_STATE retains labeled legacy/project behavior. No workspace changes, task execution, model overrides or terminal takeover occur merely by loading the Board. Connect/Continue is explicit; official OAuth still requires the captain’s browser action. Only a real captain answer dispatches proposed native work. The fresh-only tool bridge uses Codex0.162.1’s documented experimental dynamicTools interface; unsupported protocol holds rather than falling back to legacy scripts. Existing terminal takeover is optional.
+
+Film recovery preserves the old waiting card until a replacement captain-only
+card and its signed offer finish preparation. Concurrent refresh/answer is
+refused; interrupted preparation restores the old durable hold on restart.
+Rechecking never starts production. Only the explicit fresh-film answer advances
+film/site generations; page/image receipts and creative constraints are retained.

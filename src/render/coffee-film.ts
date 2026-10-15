@@ -27,6 +27,12 @@ export function coffeeFilmCapability(root:string,options:{browser?:string|null;p
   return{ready:true,tools,gsap};
  }catch(error){return{ready:false,reason:error instanceof Error?error.message:'Local film tools unavailable'};}
 }
+/** Ordered explicit/managed/application discovery, retaining each failure for Doctor. */
+export function discoverCoffeeFilmCapability(roots:string[],options:Parameters<typeof coffeeFilmCapability>[1]={}):CoffeeFilmCapability {
+ const failures:string[]=[];
+ for(const root of [...new Set(roots)]){const result=coffeeFilmCapability(root,options);if(result.ready)return result;failures.push(`${root}: ${result.reason}`);}
+ return{ready:false,reason:failures.join('; ')||'Pinned local HyperFrames tools are not installed'};
+}
 /** Escaped, deterministic, seekable 12-second composition from the exact shared inputs. */
 export async function renderCoffeeFilm(request:CoffeeFilmRequest,capability:Extract<CoffeeFilmCapability,{ready:true}>,render:(input:HyperframesInput)=>Promise<HyperframesOutput>=renderHyperframes):Promise<HyperframesOutput&{poster:Buffer}>{
  const guard=()=>{if(request.signal.aborted)throw new HyperframesFailure('Coffee film cancelled',true);request.authorize();};guard();
@@ -47,7 +53,7 @@ export async function renderCoffeeFilm(request:CoffeeFilmRequest,capability:Extr
   const image=read(request.image,64*1024*1024),page=read(join(request.page,'index.html'),1024*1024),gsap=read(capability.gsap,1024*1024);
   guard();writeFileSync(join(assets,'coffee.png'),image);writeFileSync(join(assets,'gsap.min.js'),gsap);
   // The page is a bound dependency, never executable code in the film composition.
-  const profile=bundledText('packs/coffee-kit/skills/hyperframes.md');if(!profile)throw new Error('Pinned HyperFrames instruction profile missing');writeFileSync(join(root,'HYPERFRAMES-PROFILE.md'),profile);
+  const profile=bundledText('packs/coffee-kit/skills/hyperframes.md');if(!profile)throw new Error('Pinned HyperFrames instruction profile missing');writeFileSync(join(assets,'hyperframes-profile.txt'),profile);
   writeFileSync(join(root,'BRIEF.md'),JSON.stringify({version:1,profileSHA256:hash(profile),direction:d,revision,context:request.context??null,imageSHA256:hash(image),pageSHA256:hash(page),gsapSHA256:hash(gsap),duration:12},null,2));
   const [cream,wood,accent]=plan.brand.palette,pad=plan.brand.spacing[3],font=plan.brand.typography==='serif-sans'?'Georgia,serif':'Arial,sans-serif';
   const scenes=plan.video.beats.map((beat,n)=>`<section id="scene${n}" class="clip" data-start="${beat.start}" data-duration="${n<2?4.35:4}"><img id="photo${n}" class="photo" src="assets/coffee.png" alt="${escape(plan.image.alt)}"><div class="shade"></div><div class="copy" id="copy${n}"><div class="rule"></div><h1>${escape(beat.title)}</h1><p>${escape(beat.caption)}</p>${n===2?`<div class="cta">${escape(plan.video.cta)} →</div>`:''}</div><div class="footer">${escape(plan.name)}</div></section>`).join('');

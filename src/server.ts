@@ -1,4 +1,4 @@
-import {coffeeFilmCapability,renderCoffeeFilm} from "./render/coffee-film";
+import {discoverCoffeeFilmCapability,renderCoffeeFilm} from "./render/coffee-film";
 import {publishGeneratedImage} from "./host/generated-media";
 import {createNativeProviderAdmission} from "./providers/native-admission";
 import { registerInstance } from "./instance";
@@ -48,7 +48,7 @@ import { Remote } from "./remote/pairing";
 import { LiveRunner, StubRunner, readStatus, serveCommand, serveOffCommand, type TsRunner, type TsStatus } from "./remote/tailscale";
 import { MemoryStore } from "./memory";
 import { createM3 } from "./m3";
-import { renderEnv } from "./render";
+import { renderEnv, TOOLS_DIR } from "./render";
 import { dirname } from "node:path";
 import { Agents } from "./agent";
 import { RawLog, StudioLog } from "./rawlog";
@@ -323,7 +323,7 @@ if (process.env.CREW_SANDBOX !== "0") { try { prepareSandbox(DATA); registerSand
 // --- v2: Studio's native runtime (workflows that really run, checks, Studio-owned cards) ---
 const worktrees = new Worktrees(DATA, { protect: () => PROTECTED });
 let packGenesis: ReturnType<typeof installPackGenesis>;
-const coffeeTools = (()=>{const rendering=renderEnv();const roots=[process.env.CREW_HYPERFRAMES_ROOT,!COMPILED?ROOT:null,join(dirname(process.execPath),"..")].filter(Boolean)as string[];let last:any={ready:false,reason:"Pinned local HyperFrames tools are not installed"};for(const root of roots){const c=coffeeFilmCapability(root,{browser:process.env.HYPERFRAMES_BROWSER_PATH,playwright:rendering.playwright,ffmpeg:process.env.CREW_FFMPEG||Bun.which("ffmpeg"),ffprobe:Bun.which("ffprobe")});if(c.ready)return c;last=c;}return last;})();
+const coffeeTools = (()=>{const rendering=renderEnv();return discoverCoffeeFilmCapability([process.env.CREW_HYPERFRAMES_ROOT,TOOLS_DIR,!COMPILED?ROOT:null,join(dirname(process.execPath),"..")].filter(Boolean)as string[],{browser:process.env.HYPERFRAMES_BROWSER_PATH,playwright:rendering.playwright,ffmpeg:process.env.CREW_FFMPEG||Bun.which("ffmpeg"),ffprobe:Bun.which("ffprobe")});})();
 let staffingClaudeCapability:ProviderCapability|null=null;
 
 const runtime = createRuntime({coffeeVideo:coffeeTools.ready?(request=>renderCoffeeFilm(request,coffeeTools)):undefined,coffeeFilmStatus:{ready:coffeeTools.ready,reason:coffeeTools.ready?null:coffeeTools.reason},coffeeChoice:()=>{const config=codexConfig(PROJECT),model=chatSettings().models.codex||process.env.CREW_CODEX_MODEL||config.model;return model?{provider:"codex",model,effort:config.effort}:null;}, staffingPending:intent=>{if(main.view().context==="studio"&&main.view().state!=="detached")main.enqueue("card",`Project registered for: ${intent.work.text}. No workflow work has started. Discuss each role’s agent account, model and reasoning effort with the captain before dispatch. Wait for the captain’s choices. / 專案已註冊，工作尚未開始。接著請和船長討論各角色使用的代理帳號、模型及推理強度，等待船長選擇後再確認派工。`,"studio-native");},staffingAdmission:role=>role.provider==='claude'&&!!staffingClaudeCapability&&isClaudeExecutionAdmission(staffingClaudeCapability,{model:role.model,effort:role.effort}),staffingFacts:async()=>{const settings=chatSettings(),model=settings.models.claude||process.env.CREW_CLAUDE_MODEL||'claude-sonnet-5-5',pair={model,effort:configuredClaudeEffort(model)};const [cap,claude]=await Promise.all([probeCodex(),probeClaudeNative(pair)]);staffingClaudeCapability=claude;return[{provider:'codex',support:'supported' as const,auth:cap.auth,quota:cap.quota,expires:cap.expires,models:cap.models.map(m=>({id:m.id,efforts:m.efforts??[]}))},{provider:'claude',support:'supported' as const,auth:claude.auth,quota:claude.quota,expires:claude.expires,models:claude.models.map(m=>({id:m.id,efforts:pair.effort===null?[]:[pair.effort]})),reason:claude.reason}];},dataDir: DATA, agents, provider: pickProvider, defaultProvider: () => { const s = chatSettings(); return { provider: s.provider, model: s.models[s.provider] || null }; }, selectProvider: nativePick,

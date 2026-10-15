@@ -1,7 +1,7 @@
 import{execFileSync}from'node:child_process';
 // Source composition/ownership fixtures. Simulated encoder output is NOT playable film proof.
-import{strict as assert}from'node:assert';import{mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync}from'node:fs';import{join}from'node:path';import{tmpdir}from'node:os';import{createHash}from'node:crypto';
-import{coffeeFilmCapability,renderCoffeeFilm,integrateCoffeeSite,COFFEE_PLAYBACK_SCRIPT,type CoffeeFilmRequest}from'../src/render/coffee-film';import{HyperframesFailure}from'../src/render/hyperframes';import{coffeeDesignHash}from'../src/domain/coffee-design';
+import{strict as assert}from'node:assert';import{mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync,symlinkSync}from'node:fs';import{join}from'node:path';import{tmpdir}from'node:os';import{createHash}from'node:crypto';
+import{coffeeFilmCapability,discoverCoffeeFilmCapability,renderCoffeeFilm,integrateCoffeeSite,COFFEE_PLAYBACK_SCRIPT,type CoffeeFilmRequest}from'../src/render/coffee-film';import{HyperframesFailure}from'../src/render/hyperframes';import{coffeeDesignHash}from'../src/domain/coffee-design';
 const root=mkdtempSync(join(tmpdir(),'coffee-film-fixture-')),page=join(root,'page');mkdirSync(page);const plan=JSON.parse(readFileSync(join(import.meta.dir,'fixture/coffee-design.json'),'utf8'));const posterSource=execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','color=c=tan:s=16x16','-frames:v','1','-vcodec','png','-f','image2pipe','pipe:1']).toString('base64');
 const image=join(root,'image.png');writeFileSync(image,'EXPLICIT-OFFLINE-IMAGE');writeFileSync(join(page,'index.html'),'<html><head></head><body><main><h1>Morrow Coffee</h1></main></body></html>');const gsap=join(root,'gsap.min.js');writeFileSync(gsap,'/* explicit offline GSAP fixture; no real render */');
 const ffmpeg=join(root,'fixture-ffmpeg');writeFileSync(ffmpeg,`#!${process.execPath}\nimport{writeFileSync}from'node:fs';writeFileSync(process.argv.at(-1),Buffer.from('${posterSource}','base64'));\n`,{mode:0o700});
@@ -29,5 +29,13 @@ try{
  const integrated=await integrateCoffeeSite('<html><head></head><body><h1>Real heading</h1><a href="#story">Our story</a><video controls src="assets/coffee.mp4"></video></body></html>',plan);ok('inline site keeps real heading CTA and accessible versioned film/poster',()=>assert(integrated.includes('poster="assets/coffee-poster.png"')&&integrated.includes('playsinline')&&integrated.includes('autoplay')&&integrated.includes('coffee-playback.js')&&integrated.includes('Real heading')&&integrated.includes('Our story')));
  ok('host playback has reduced-motion pause and explicit controls without network',()=>assert(COFFEE_PLAYBACK_SCRIPT.includes('prefers-reduced-motion')&&COFFEE_PLAYBACK_SCRIPT.includes('v.pause()')&&!/fetch\(|XMLHttpRequest|parent\./.test(COFFEE_PLAYBACK_SCRIPT)));
  ok('missing local optional tools refuse honestly',()=>assert.equal(coffeeFilmCapability(join(root,'missing')).ready,false));
+ const managed=join(root,'managed');
+ for(const [name,version]of [['hyperframes','0.8.159'],['node','22.22.0'],['gsap','3.14.2']]){const pkg=join(managed,'node_modules',name);mkdirSync(pkg,{recursive:true});writeFileSync(join(pkg,'package.json'),JSON.stringify({version}));}
+ for(const file of ['node/bin/node','hyperframes/bin/hyperframes.mjs','gsap/dist/gsap.min.js']){const at=join(managed,'node_modules',file);mkdirSync(at.slice(0,at.lastIndexOf('/')),{recursive:true});symlinkSync('/usr/bin/true',at);}
+ const discoveryOptions={browser:'/usr/bin/true',ffmpeg:'/usr/bin/true',ffprobe:'/usr/bin/true'};
+ ok('managed tools are found after a missing explicit root',()=>assert.equal(discoverCoffeeFilmCapability([join(root,'missing'),managed],discoveryOptions).ready,true));
+ writeFileSync(join(managed,'node_modules/hyperframes/package.json'),JSON.stringify({version:'0.0.0'}));
+ const unavailable=discoverCoffeeFilmCapability([managed,join(root,'missing')],discoveryOptions);
+ ok('discovery preserves pinned version failure instead of masking it with a later root',()=>assert(!unavailable.ready&&unavailable.reason.includes('Pinned hyperframes 0.8.159 is unavailable')&&unavailable.reason.includes(join(root,'missing'))));
  console.log(`coffee-film: ${passed} passed, 0 failed; encoder and poster fixtures are explicitly simulated`);
 }finally{rmSync(root,{recursive:true,force:true});}
