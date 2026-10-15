@@ -137,3 +137,13 @@ Validation checkpoint: `bun run test:github-review-workflow` passes 23 native
 scanner/API/save assertions plus 12 strict community-fixture assertions. UI source
 passes syntax validation; actual browser interaction and independent reviews are
 not yet complete. The source execution HOLD remains mandatory.
+
+Latest source checkpoint: contribution snapshot digest is required in the explicit
+publication draft request, so changed contribution guidance between display and
+save cannot be silently adopted. Actual UI fixture now exercises the native
+scan/save handlers, two anonymous reviewer identities, required-policy selection,
+source-bound body fields and navigation to the saved graph. One owned browser,
+1440/390 light/dark: 21 assertions pass; four material PNGs are under
+`tests/out/github-review-workflow/`. This mounts production guide source against
+actual native handlers in an isolated fixture shell, not a full-app/server-auth
+acceptance or external-provider quality proof. Runtime remains draft-only.
