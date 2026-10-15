@@ -2,13 +2,12 @@
 import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,readdirSync,lstatSync,realpathSync,rmSync,copyFileSync}from'node:fs';
 import{join,dirname,relative,posix}from'node:path';import{tmpdir}from'node:os';import{createServer}from'node:net';import{createHash}from'node:crypto';
 import{probeProcess}from'../providers/probe-process';
-import guardText from './hyperframes-guard.mjs' with {type:'text'};
 export const HYPERFRAMES_VERSION='0.8.159';
 export type HyperframesTools={node:string;cli:string;browser:string;ffmpeg:string;ffprobe:string};
 export type HyperframesInput={project:string;tools:HyperframesTools;authorize():void;signal?:AbortSignal;timeoutMs?:number;onProgress?:(stage:'snapshot'|'check'|'render'|'verify')=>void};
 export type HyperframesOutput={bytes:Buffer;sha256:string;codec:'h264';duration:number;width:number;height:number;renderer:string;manifest:Record<string,string>};
 export class HyperframesFailure extends Error {
- constructor(message:string,readonly cleanupSafe:boolean){super(message);this.name='HyperframesFailure';}
+ constructor(message:string,readonly cleanupSafe:boolean,readonly stage:string|null=null,readonly code:string|null=null){super(message);this.name='HyperframesFailure';}
 }
 const digest=(b:Buffer)=>createHash('sha256').update(b).digest('hex');
 /** Closed local-input dialect, checked before any upstream host-side parser runs. */
@@ -103,18 +102,18 @@ async function runHyperframes(input:HyperframesInput):Promise<HyperframesOutput>
  let process:ReturnType<typeof probeProcess>|null=null,cleanup=true;
  const stop=()=>process?.kill();o.signal?.addEventListener('abort',stop,{once:true});
  try{
-  const guardSource=join(root,'guard.mjs');writeFileSync(guardSource,guardText);
   guard();o.onProgress?.('snapshot');
   const manifest=snapshot(realpathSync(o.project),project);
   await validateHyperframesReferences(project,manifest);guard();
   const port=await freePort();guard();
-  const env={PATH:[dirname(tools.node),dirname(tools.ffmpeg),'/usr/bin','/bin'].join(':'),HOME:home,CFFIXED_USER_HOME:home,MAC_CHROMIUM_TMPDIR:temp,TMPDIR:temp,LANG:'en_US.UTF-8',NODE_OPTIONS:`--import=${guardSource}`,CREW_HF_ROOT:project,CREW_HF_PORT:String(port),CREW_HF_CLI:tools.cli,HYPERFRAMES_BROWSER_PATH:tools.browser,HYPERFRAMES_FFMPEG_PATH:tools.ffmpeg,HYPERFRAMES_FFPROBE_PATH:tools.ffprobe,HYPERFRAMES_NO_TELEMETRY:'1',DO_NOT_TRACK:'1',HYPERFRAMES_SKIP_SKILLS:'1',CI:'1',XDG_CACHE_HOME:join(home,'.cache'),XDG_CONFIG_HOME:join(home,'.config'),XDG_DATA_HOME:join(home,'.local/share'),HYPERFRAMES_EXTRACT_CACHE_DIR:join(temp,'frames'),CREW_HF_DEBUG:globalThis.process.env.CREW_HF_DEBUG??'0'};
+  const env={PATH:[dirname(tools.node),dirname(tools.ffmpeg),'/usr/bin','/bin'].join(':'),HOME:home,CFFIXED_USER_HOME:home,MAC_CHROMIUM_TMPDIR:temp,TMPDIR:temp,LANG:'en_US.UTF-8',CREW_HF_ROOT:project,CREW_HF_PORT:String(port),CREW_HF_CLI:tools.cli,HYPERFRAMES_BROWSER_PATH:tools.browser,HYPERFRAMES_FFMPEG_PATH:tools.ffmpeg,HYPERFRAMES_FFPROBE_PATH:tools.ffprobe,HYPERFRAMES_NO_TELEMETRY:'1',DO_NOT_TRACK:'1',HYPERFRAMES_SKIP_SKILLS:'1',CI:'1',XDG_CACHE_HOME:join(home,'.cache'),XDG_CONFIG_HOME:join(home,'.config'),XDG_DATA_HOME:join(home,'.local/share'),HYPERFRAMES_EXTRACT_CACHE_DIR:join(temp,'frames'),CREW_HF_DEBUG:globalThis.process.env.CREW_HF_DEBUG??'0'};
   const run=async(args:string[],ms=timeout)=>{
    guard();process=probeProcess([tools.node,tools.cli,...args],project,env,undefined,{timeoutMs:Math.min(ms,deadline-Date.now()),bytes:4*1024*1024});
-   const code=await process.exited;await process.stop();guard();const output=process.output();
+   const code=await process.exited;await process.stop();const output=process.output();
    // Logs stay inside the owned temporary folder and are never returned to a model.
    writeFileSync(join(root,`${args[0]}.log`),output.out+'\n'+output.err);
-   if(code!==0||output.failure)throw new Error(`HyperFrames ${args[0]} refused (${output.failure||'nonzero exit'})`);
+   if(code!==0||output.failure)throw new HyperframesFailure(output.failure==='probe deadline expired'?`HyperFrames ${args[0]} timed out`:`HyperFrames ${args[0]} failed`,true,args[0],output.failure==='probe deadline expired'?'timeout':'command-failed');
+   guard();
    return output;
   };
   guard();o.onProgress?.('check');await run(['check',project,'--json']);

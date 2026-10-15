@@ -1,8 +1,15 @@
-// Browser-free guard contract. Captures actual wrapped launch options, not a browser.
+// Historical preload fixtures remain isolated; the renderer now runs official CLI directly.
 import { createRequire } from 'node:module';
 import { join, relative } from 'node:path';
 import { strict as assert } from 'node:assert';
 const cli = join(import.meta.dirname,'../node_modules/hyperframes/bin/hyperframes.mjs');
+// Actual direct-CLI timeout diagnostic; no injected preload or browser.
+if(process.env.HF_DIAGNOSTIC_CONTROL==='1'){
+ const{mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync}=await import('node:fs');const{renderHyperframes,HyperframesFailure}=await import('../src/render/hyperframes');
+ const root=mkdtempSync('/private/tmp/hf-direct-diagnostic-'),project=join(root,'project'),pkg=join(root,'package'),logs=join(root,'logs');for(const d of[project,join(pkg,'bin'),logs])mkdirSync(d,{recursive:true});writeFileSync(join(project,'index.html'),'<main>Owned fixture</main>');writeFileSync(join(pkg,'package.json'),JSON.stringify({version:'0.8.159'}));const cli=join(pkg,'bin/hyperframes.mjs');
+ writeFileSync(cli,`console.log(JSON.stringify({preload:process.env.NODE_OPTIONS??null}));console.error('PRIVATE_FIXTURE_DIAGNOSTIC');setInterval(()=>{},1000);`);const prior=process.env.CREW_HF_DIAGNOSTIC_DIR;process.env.CREW_HF_DIAGNOSTIC_DIR=logs;
+ try{let error;try{await renderHyperframes({project,tools:{node:Bun.which('node')!,cli,browser:'/usr/bin/true',ffmpeg:'/usr/bin/true',ffprobe:'/usr/bin/true'},authorize(){},timeoutMs:1000});}catch(e){error=e;}assert(error instanceof HyperframesFailure&&error.cleanupSafe&&error.stage==='check'&&error.code==='timeout');const log=readFileSync(join(logs,'check.log'),'utf8');assert(log.includes('"preload":null')&&log.includes('PRIVATE_FIXTURE_DIAGNOSTIC'));assert(!error.message.includes('PRIVATE_FIXTURE_DIAGNOSTIC')&&!error.message.includes(root));console.log('hyperframes-direct-diagnostic: 3 passed, 0 failed; actual child, no browser');}finally{if(prior===undefined)delete process.env.CREW_HF_DIAGNOSTIC_DIR;else process.env.CREW_HF_DIAGNOSTIC_DIR=prior;rmSync(root,{recursive:true,force:true});}process.exit(0);
+}
 // An external watchdog bounds even the rejected old synchronous validator. The
 // child models the Board host: its own interval must survive authored input.
 if(process.env.HF_VALIDATOR_CHILD){

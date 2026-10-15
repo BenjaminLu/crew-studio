@@ -1,3 +1,10 @@
+> Current execution (captain instruction, 2026-10-15): the pinned official CLI
+> runs directly. Studio does not inject the historical Node preload, rewrite
+> process APIs or filter official browser flags. The old guard fixtures below
+> describe historical evidence, not the current process boundary. Snapshot input
+> validation, deadlines and owned process cleanup remain. Official CLI browser
+> defaults are used as shipped, including its no-sandbox flags.
+
 # Optional local HyperFrames renderer
 
 ## R3 bounded authored-text validation
