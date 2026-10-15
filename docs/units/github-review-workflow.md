@@ -158,3 +158,21 @@ native/API/publication plus 13 community assertions, and the existing GitHub
 foundation regression passes 72. No live publication occurred. Source-owned
 publication captain card / policy / workflow runtime integration is still pending;
 the initial template execution HOLD remains in force.
+
+Read-only wait foundation (not yet wired to Engine execution): versioned target,
+full grant identity, immutable policy hash and absolute original deadline validate
+before registration. Two subscribers share the existing GitHubPoller repository
+owner and coalesce actual same-target review transport. Cancellation aborts/drains
+owned client reads and removes subscribers/timers; a released late held response
+emits no approval/findings. Restart-equivalent expired descriptors stop without
+renewing their budget. Changed PR head is detected before unrelated check reads.
+Formal non-pending reviews require a valid submission timestamp. Final focused
+native/API/publication/wait tests pass 37, community tests 13, build passes.
+
+Retained failures: initial changed-head wait test exposed unavailable old-head
+checks masking head drift and is fixed by an explicit typed moved-target result.
+One earlier combined run failed the local Draft push's 1-second fixture timeout;
+its root cause was not established. The local Git proof now declares a 5-second
+budget (production defaults to 15 seconds); the original failure log is retained
+at `/tmp/github-review-wait-fixed.log`. This is not a claim that a retry diagnosed
+scheduler load. Production process timeout/cleanup behavior was not weakened.
