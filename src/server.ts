@@ -54,7 +54,7 @@ import { createImprove } from "./improve";
 import { createChanges } from "./changes";
 import { createM7 } from "./m7";
 import { createDocs } from "./docs";
-import { Skins, snapshotFor } from "./skins";
+import { Skins, snapshotFor, nativeSkinData } from "./skins";
 import { bundledText } from "./bundled";
 import { classify, orgDefaults } from "./doors";
 import { installPackGenesis } from "./pack-genesis";
@@ -427,7 +427,13 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     { const sm = /^\/api\/skins\/([\w-]+)\/(snapshot|check|uninstall)$/.exec(p);
       if (sm) {
         const sk = skins.list().find((x) => x.id === sm[1]); if (!sk) return json({ error: "no such skin" }, 404);
-        if (sm[2] === "snapshot" && !writing) return json(sk.ok ? snapshotFor(sk.manifest?.permissions ?? [], { tasks: tasks(), crew: crewCache, pending, flow }) : { error: "this skin fails its checks" }, sk.ok ? 200 : 409);
+        if (sm[2] === "snapshot" && !writing) {
+          const native = nativeSkinData(runtime.engine.list(), runtime.engine.cards.list({ open: true }));
+          return json(sk.ok ? snapshotFor(sk.manifest?.permissions ?? [], {
+            tasks: [...native.tasks, ...tasks()], crew: [...native.crew, ...crewCache], pending: [...native.pending, ...pending],
+            flow: native.flow.nodes.length ? native.flow : flow,
+          }) : { error: "this skin fails its checks" }, sk.ok ? 200 : 409);
+        }
         if (sm[2] === "check") return json(skins.check(sk.id));
         if (sm[2] === "uninstall" && writing) { if (who.kind === "phone") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403); if (sk.kind !== "installed") return json({ error: "a built-in skin stays" }, 409); skins.uninstall(sk.id); return json({ ok: true }); }
       } }

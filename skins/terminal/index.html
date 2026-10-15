@@ -37,10 +37,16 @@ function cards(s) {
   line(span("p", "$ crew cards")); const p = s.pending ?? []; if (!p.length) line(span("d", "  nothing waits on you"));
   for (const c of p) { const b = document.createElement("button"); b.className = "c"; b.textContent = c.id; b.onclick = () => CrewSkin.openCard(c.id); line("  ", b, " ", span("d", (c.title ?? "").slice(0, 80))); }
 }
-let first = true;
+let first = true, taskSig = '', crewSig = '', cardSig = '';
 CrewSkin.onSnapshot((s) => {
   document.documentElement.classList.toggle("light", s.theme === "light");
-  if (first) { line(span("d", `crew studio · read-only snapshot · ${s.at}`)); status(s); crew(s); cards(s); first = false; CrewSkin.ready(); }
+  if (first) line(span("d", `crew studio · read-only snapshot · ${s.at}`));
+  const ts = JSON.stringify((s.tasks || []).map(t => [t.id, t.status, t.node])), cs = JSON.stringify(s.crew || []), ps = JSON.stringify(s.pending || []);
+  if (first || ts !== taskSig) status(s);
+  if (first || cs !== crewSig) crew(s);
+  if (first || ps !== cardSig) cards(s);
+  taskSig = ts; crewSig = cs; cardSig = ps;
+  if (first) { first = false; CrewSkin.ready(); }
 });
 CrewSkin.onEvent((e) => line(span("d", e.ts.slice(11, 19)), " ", pad(e.type, 16), " ", e.task ? pad(e.task, 7) + " " : "", span("d", (e.summary ?? "").slice(0, 90))));
 document.getElementById("f").onsubmit = (ev) => {

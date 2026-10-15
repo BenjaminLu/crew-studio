@@ -7,6 +7,7 @@
 // fallback when a skin never says it is ready.
 (() => {
 const K = { list: null, kit: null, active: null, frame: null, ready: false, ignored: 0, es: null, timer: 0, perms: [] };
+let feedSequence = 0;
 const getSaved = () => { try { return localStorage.getItem("crew.skin"); } catch { return null; } };
 const setSaved = (v) => { try { v ? localStorage.setItem("crew.skin", v) : localStorage.removeItem("crew.skin"); } catch {} };
 const load = async () => { const r = await X.get("/api/skins"); K.list = r.skins || []; K.kit = r.kit; X.refresh(["skins"]); return K.list; };
@@ -18,10 +19,12 @@ async function feed() {
   // the skin and frame this snapshot is for: after the await, it is posted only if they are still the ones showing
   const skin = K.active, frame = K.frame;
   if (!skin || !frame?.contentWindow) return;
+  const sequence = ++feedSequence;
   const s = await X.get(`/api/skins/${skin.id}/snapshot`);
-  if (K.active !== skin || K.frame !== frame || !frame.contentWindow) return; // pro mode, or another skin, came while it loaded: drop it (a late failure changes nothing either)
+  if (sequence !== feedSequence || K.active !== skin || K.frame !== frame || !frame.contentWindow) return; // drop late snapshots and skin switches
   if (s._http !== 200) return pro(T("The skin failed its checks; back in pro mode.", "外觀沒通過檢查，已回到專業模式。"));
   delete s._http;
+  K.pending = s.pending || [];
   post(frame, skin.id, { type: "crew:snapshot", snapshot: { ...s, lang, theme: theme() } });
 }
 function onMessage(e) {
@@ -29,7 +32,7 @@ function onMessage(e) {
   const m = e.data || {};
   if (m.type === "crew:ready") { K.ready = true; clearTimeout(K.timer); bar(); return; }
   if (m.type === "crew:openCard" && K.perms.includes("openCard")) {
-    const id = String(m.id || ""); const card = S.pending.find((c) => c.id === id);
+    const id = String(m.id || ""); const card = (K.pending || []).find((c) => c.id === id);
     if (!card) { toast(T(`The skin asked for card ${id}, which is not waiting.`, `外觀要求打開 ${id}，但這張卡不在待處理中。`)); return; }
     pro(); location.hash = `#/inbox/${encodeURIComponent(id)}`; toast(T(`Opened ${id} for the ${K.lastName} skin. Answer it here.`, `替 ${K.lastName} 外觀打開了 ${id}，請在這裡回答。`)); return;
   }
@@ -59,11 +62,17 @@ function use(id, quiet) {
 // on the page's one event stream (app.js), registered once; a skin that is not showing ignores them
 window.liveListen("events", (m) => { const frame = K.frame, skin = K.active; if (!frame || !skin) return; const d = JSON.parse(m.data); if (K.perms.includes("events")) for (const e of (d.events || []).slice(-20)) post(frame, skin.id, { type: "crew:event", event: { seq: e.seq, ts: e.ts, type: e.type, task: e.task, actor: e.actor, summary: e.summary?.en || "" } }); feed(); });
 for (const t of ["pending", "crew"]) window.liveListen(t, () => { if (K.frame) feed(); });
+for (const t of ["wrun", "scard", "agent"]) window.liveListen(t, (m) => {
+  const frame = K.frame, skin = K.active; if (!frame || !skin) return;
+  const d = JSON.parse(m.data);
+  if (t === "wrun" && d.event && K.perms.includes("events")) post(frame, skin.id, { type: "crew:event", event: { seq: d.event.seq, ts: d.event.ts, type: d.event.type, task: d.id, summary: d.event.summary || d.status } });
+  feed();
+});
 /** Back to pro mode: always possible, whatever the skin does. */
 function pro(msg, keepSaved) {
   clearTimeout(K.timer);
   $("#skinLayer")?.remove(); document.body.classList.remove("skin-on");
-  K.active = null; K.frame = null; K.ready = false;
+  K.active = null; K.frame = null; K.ready = false; K.pending = []; feedSequence++;
   if (!keepSaved) setSaved(null);
   if (msg) toast(msg);
 }

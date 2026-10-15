@@ -10,6 +10,28 @@ import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { extname, join, normalize, relative, sep } from "node:path";
 import { bundledBytes, bundledList } from "./bundled";
+import type { Run } from "./runtime/engine";
+
+/** Adapt native tasks to the existing read-only skin contract without exposing run context. */
+export function nativeSkinData(runs: Run[], cards: any[]) {
+  const visible = runs.filter(r => !r.archived);
+  const key = (r: Run, node: string) => `${r.workflow}:v${r.version}:${node}`;
+  const nodes = new Map<string, any>(); const edges: any[] = [];
+  for (const r of visible.filter(r => !["succeeded", "cancelled", "failed"].includes(r.status))) {
+    for (const n of r.def.nodes) nodes.set(key(r, n.id), { id: key(r, n.id), label: n.label, kind: n.kind === "card" ? "human" : n.kind === "check" ? "gate" : n.kind });
+    for (const e of r.def.edges) edges.push({ ...e, from: key(r, e.from), to: key(r, e.to) });
+  }
+  return {
+    tasks: visible.map(r => {
+      const current = r.def.nodes.find(n => r.nodes[n.id]?.state === "running" || r.nodes[n.id]?.state === "waiting");
+      return { id: r.id, title: r.title, status: r.status === "waiting" ? "needs-you" : ["succeeded", "cancelled"].includes(r.status) ? "done" : r.status,
+        node: current ? key(r, current.id) : null, round: current ? r.nodes[current.id].visits : 0, lastTs: r.updatedAt };
+    }),
+    crew: visible.flatMap(r => r.def.nodes.filter(n => n.kind === "agent" && r.nodes[n.id]?.state === "running" && r.nodes[n.id]?.job).map(n => ({ name: `${r.id}/${n.id}`, role: n.role || "worker", task: r.id, alive: true, activity: { en: n.label } }))),
+    pending: cards.filter(c => c.status === "open" && visible.some(r => r.id === c.run)).map(c => ({ id: c.id, title: c.title?.["zh-TW"] || c.title?.en || String(c.title || c.id), kind: c.kind, task: c.run })),
+    flow: { nodes: [...nodes.values()], edges },
+  };
+}
 
 export const SKIN_PERMS = ["snapshot.tasks", "snapshot.crew", "snapshot.pending", "snapshot.flow", "events", "openCard"] as const;
 export type SkinManifest = { id: string; name: string; version: string; entry: string; description?: string; permissions: string[]; network: string[] };
