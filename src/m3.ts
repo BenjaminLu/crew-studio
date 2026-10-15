@@ -19,8 +19,10 @@ const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { sta
 const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
   ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".mp4": "video/mp4", ".json": "application/json",
   ".wav":"audio/wav", ".mp3":"audio/mpeg", ".m4a":"audio/mp4", ".ogg":"audio/ogg", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8" };
-// an artifact page runs with no network at all, and only inside Studio's own frame
+// Restrict artifact subresources and API requests to the declared sources.
+// Interactive documents have an opaque sandbox origin; CSP does not block self-navigation.
 const CSP = "default-src 'none'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self' 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'";
+const INTERACTIVE_CSP = "sandbox allow-scripts; default-src 'none'; img-src data: blob:; media-src blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'";
 
 export function createM3(d: M3Deps) {
   const store = new ArtifactStore(d.dataDir);
@@ -74,7 +76,7 @@ export function createM3(d: M3Deps) {
         if (!file) return new Response("not found", { status: 404 });
         const type = TYPES[extname(file).toLowerCase()] ?? "application/octet-stream";
         const f = Bun.file(file), size = f.size;
-        const base = { "content-type": type, "content-security-policy": CSP, "x-content-type-options": "nosniff", "cache-control": "no-cache", "accept-ranges": "bytes" };
+        const base = { "content-type": type, "content-security-policy": url.searchParams.get("interactive") === "1" ? INTERACTIVE_CSP : CSP, "x-content-type-options": "nosniff", "cache-control": "no-cache", "accept-ranges": "bytes" };
         const r = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get("range") ?? ""); // players seek with byte ranges
         if (r) {
           const start = r[1] ? Number(r[1]) : Math.max(0, size - Number(r[2])), end = r[1] && r[2] ? Math.min(size - 1, Number(r[2])) : size - 1;

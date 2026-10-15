@@ -195,6 +195,22 @@ function reviewHead(d, v, extra) {
     h("div", { class: "actions" }, extra));
 }
 const openNotes = (v) => v.notes.filter((x) => x.status === "open");
+let activePreview = null;
+addEventListener("hashchange", () => activePreview?.close());
+function interactivePreview(a, v, trigger) {
+  activePreview?.close();
+  const frame = h("iframe", { title: T("Interactive prototype", "互動原型"), sandbox: "allow-scripts", referrerpolicy: "no-referrer",
+    src: `/af/${a.id}/${v.n}/${v.primary || a.entry || "index.html"}?interactive=1`, style: "display:block;width:100%;height:72vh;border:0;background:white;margin:auto" });
+  const dialog = h("dialog", { "aria-label": T("Interactive preview", "互動預覽"), style: "width:min(1280px,96vw);max-width:96vw;border:1px solid var(--border);border-radius:12px;padding:16px;background:var(--bg);color:var(--text)" },
+    h("div", { class: "actions", style: "margin-bottom:12px" },
+      h("b", {}, T("Interactive preview", "互動預覽")),
+      h("button", { class: "btn", onclick: () => { frame.style.width = "100%"; } }, T("Desktop", "桌面")),
+      h("button", { class: "btn", onclick: () => { frame.style.width = "390px"; frame.style.maxWidth = "100%"; } }, T("Mobile 390px", "手機 390px")),
+      h("button", { class: "btn", onclick: () => dialog.close() }, T("Close preview", "關閉預覽"))),
+    h("p", { class: "faint" }, T("Try the interactions here, then return to the task to accept or request changes.", "在此測試互動，再回任務驗收或要求修改。")), frame);
+  dialog.addEventListener("close", () => { dialog.remove(); if (activePreview === dialog) activePreview = null; if (trigger?.isConnected) trigger.focus(); }, { once: true });
+  activePreview = dialog; document.body.append(dialog); dialog.showModal();
+}
 function reviewActions(d, v, canRegen, why) {
   const a = d.artifact;
   const live = (d.runs || []).find((r) => r.status === "running" || r.status === "rendering");
@@ -202,6 +218,7 @@ function reviewActions(d, v, canRegen, why) {
     (A.chat?.choices || ["claude"]).map((p) => h("option", { value: p, selected: p === A.chat?.provider }, p)));
   const n = openNotes(v).length;
   return [
+    a.type === "web" && a.source === "html" ? h("button", { class: "btn", onclick: (e) => interactivePreview(a, v, e.currentTarget) }, T("Interactive preview", "互動預覽")) : null,
     canRegen ? h("label", { class: "a3-provwrap" }, h("span", { class: "faint" }, T("Agent", "Agent")), sel) : null,
     canRegen ? h("button", { class: "btn primary", disabled: !n || !!live, title: live ? T("A run is working on this artifact", "已有一個執行在處理這個成品") : "", onclick: async (e) => {
       e.target.disabled = true; const r = await api(`/api/artifacts/${a.id}/v/${v.n}/request`, { provider: sel.value }); if (r.error) { toast(r.error); e.target.disabled = false; } else { toast(T("The agent is working on it", "Agent 開始修改")); loadArt(a.id); } } },
