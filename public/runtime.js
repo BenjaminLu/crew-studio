@@ -286,7 +286,7 @@ async function loadEditor(ed) {
     const [j, all, lib] = await Promise.all([api(`/api/wf/${ed.id}${ed.v ? `?v=${ed.v}` : ""}`), api("/api/wf"), api("/api/skills").catch(() => ({ skills: [], caps: {} }))]);
     let mode = "auto"; try { mode = (await api(`/api/graph-layout/${ed.id}/v${j.def.version}`)).mode; } catch {}
     const phone = matchMedia("(max-width: 640px)").matches;
-    Object.assign(ed, { mode, collapsed: phone ? (window.crewLayout.stagesFor(j.def) || []).map((x) => x.id) : [], loading: false, coffeeChoice:j.coffeeChoice, coffeeFilmStatus:j.coffeeFilmStatus, def: clone(j.def), saved: clone(j.def), versions: j.versions, runs: j.runs, problems: j.problems, checks: all.checks, lib: lib.skills || [], skillCap: lib.caps?.node || 0, sel: null, overlay: null, states: null, lastDiff: null, dirty: false });
+    Object.assign(ed, { mode, collapsed: phone ? (window.crewLayout.stagesFor(j.def) || []).map((x) => x.id) : [], loading: false, selectable:j.selectable!==false, coffeeChoice:j.coffeeChoice, coffeeFilmStatus:j.coffeeFilmStatus, def: clone(j.def), saved: clone(j.def), versions: j.versions, runs: j.runs, problems: j.problems, checks: all.checks, lib: lib.skills || [], skillCap: lib.caps?.node || 0, sel: null, overlay: null, states: null, lastDiff: null, dirty: false });
   } catch (e) { ed.loading = false; ed.error = e.message; }
   if (WF.ed === ed) rerender();
 }
@@ -529,7 +529,7 @@ function buildEditor(ed) {
   const svgZoom = (k) => canvas.querySelector("svg.rt-graph")?.zoom(k);
   root.append(
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, ed.def.name), h("p", {}, (ed.def.description || "").slice(0, 300))),
-      h("div", { class: "actions" }, h("a", { class: "btn ghost", href: "#/workflows" }, T("All workflows", "全部流程")), h("a", { class: "btn", href: "#/runs", "data-start-run": ed.id, onclick: () => { RN.prefill = ed.id; } }, T("Start a task", "開始一個任務")))),
+      h("div", { class: "actions" }, h("a", { class: "btn ghost", href: "#/workflows" }, T("All workflows", "全部流程")), ed.selectable===false?h("span",{class:"faint","data-workflow-unavailable":"1"},T("Historical or internal workflow · unavailable for new tasks","歷史或內部流程 · 不提供新任務使用")):h("a", { class: "btn", href: "#/runs", "data-start-run": ed.id, onclick: () => { RN.prefill = ed.id; } }, T("Start a task", "開始一個任務")))),
     h("div", { class: "rt-toolbar" }, verSel, h("button", { class: "btn sm", "aria-label": T("Zoom in", "放大"), onclick: () => svgZoom(1 / 1.2) }, "+"), h("button", { class: "btn sm", "aria-label": T("Zoom out", "縮小"), onclick: () => svgZoom(1.2) }, "−"),
       h("div", { class: "seg rt-viewseg", role: "group", "aria-label": T("Graph view", "流程圖檢視") }, ["simple", "detail"].map((k) => h("button", { type: "button", "data-view-toggle": k, "aria-pressed": String(gview === k), onclick: () => setView(k) },
         h("span", { class: "keep" }, k === "simple" ? T("Simple", "簡易") : T("Detail", "詳細"))))),

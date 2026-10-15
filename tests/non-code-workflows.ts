@@ -9,7 +9,8 @@ import { createFileOrg } from "../src/fileorg";
 import { createM3 } from "../src/m3";
 import { Lane } from "../src/recipes";
 import { createRuntime } from "../src/runtime";
-import { validate } from "../src/runtime/defs";
+import { validate,WorkflowDefs } from "../src/runtime/defs";
+import {bundledText}from "../src/bundled";
 import { StudioLog } from "../src/rawlog";
 import { suite, until } from "./rt-harness";
 const { ok, end } = suite("non-code-workflows");
@@ -61,6 +62,8 @@ deps.generateImage = async (_prompt: string, authorize: () => void, signal: Abor
   if (_prompt.includes("HOLD_IMAGE")) await new Promise<void>((_resolve, reject) => signal.addEventListener("abort", () => { imageAborted = true; reject(new Error("cancelled")); }, { once: true }));
   return { bytes: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP437DvPwAH/AM9TriEzAAAAABJRU5ErkJggg==", "base64"), width: 1, height: 1, mime: "image/png", provider: "codex", model: "fixture-image", effort: "low", sha256: "fixture" };
 };
+// Explicit compatibility fixture; the product no longer seeds this README demo.
+new WorkflowDefs(data,()=>[bundledText("workflows/v2/trivial-lane.wf.yaml")!]);
 let rt = createRuntime(deps), E = rt.engine;
 if (process.env.CREW_NATIVE_RESTART_PHASE === "hold") {
   hold = true; const pending = E.start({ workflow: "documents", params: {}, text: "Restart active draft fixture" });

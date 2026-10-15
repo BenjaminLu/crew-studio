@@ -179,8 +179,8 @@ try {
   }
   // ---------- every built-in workflow, 1440 and 390, light and dark ----------
   const wfs = (await (await fetch(`${base}/api/wf`)).json()).workflows.map((w) => w.id);
-  const expected=["code-firstmate","coffee-kit","documents","file-organization","pack-genesis","refine-demo","trivial-lane","video","web-prototype"];
-  ok(JSON.stringify([...wfs].sort())===JSON.stringify(expected), "exact nine built-in workflows in the editor including native coffee-kit", wfs.join(","));
+  const expected=["code-firstmate","coffee-kit","documents","file-organization","images","pack-genesis","trivial-lane","video","web-prototype"];
+  ok(JSON.stringify([...wfs].sort())===JSON.stringify(expected), "public native workflows plus the explicitly installed captain fixture lane", wfs.join(","));
   for (const width of [1440, 390]) for (const scheme of ["light", "dark"]) {
     const p = await page(width, scheme);
     for (const id of wfs) for (const view of ["simple", "detail"]) {

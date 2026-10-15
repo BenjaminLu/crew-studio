@@ -72,7 +72,7 @@ export function skillTextFor(fmRoot: string) {
 /** Which workflow an intent belongs to: keyword scores over each definition's intent block, and a door hint from the paths and words it names. */
 export function classifyIntent(defs: WorkflowDefs, text: string, sensitive: { glob: string; why: string }[] = [], oneWayWords: string[] = []) {
   const t = ` ${text.toLowerCase()} `;
-  const scores = defs.list().map((d) => { const kw: string[] = d.intent?.keywords ?? []; const hits = kw.filter((k) => new RegExp(`[^a-z0-9]${k.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}s?[^a-z0-9]`).test(t));
+  const scores = defs.catalog().map((d) => { const kw: string[] = d.intent?.keywords ?? []; const hits = kw.filter((k) => new RegExp(`[^a-z0-9]${k.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}s?[^a-z0-9]`).test(t));
     return { workflow: d.id, name: d.name, score: hits.length, hits }; }).sort((a, b) => b.score - a.score);
   const paths = [...text.matchAll(/(?:^|\s|`)((?:[\w.-]+\/)+[\w.-]+|[\w-]+\.(?:sql|env|pem|key|proto|ya?ml|json|js|ts|mjs|md))(?=$|\s|`|[,.;:])/g)].map((m) => ({ path: m[1], added: 1 }));
   // words that hint at a one-way change come from policy (intake.one_way_words), not from the runtime
@@ -140,7 +140,7 @@ export function createRuntime(d: RuntimeDeps) {
       }
       // ---------- definitions ----------
       if(p==="/api/coffee/design"&&writing){if(req.method!=="POST")return json({error:"POST required"},405);if(who.kind!=="desktop")return json({error:"Review coffee design on the desktop"},403);return json({plan:validateCoffeeDesign(b?.plan),canonical:coffeeDesignJSON(b?.plan)});}
-      if (p === "/api/wf" && !writing) return json({ workflows: defs.list(), checks: engine.registry.all().map(checkView) });
+      if (p === "/api/wf" && !writing) return json({ workflows: defs.catalog(), checks: engine.registry.all().map(checkView) });
       if (p === "/api/wf" && writing) {
         if(req.method!=="POST")return json({error:"use POST to create a workflow"},405);
         const def=defs.create(b?.id,b?.name,by,b?.locale??"en",b?.template);
@@ -154,7 +154,7 @@ export function createRuntime(d: RuntimeDeps) {
         if (m[2] === "layout" && writing) return json({ layout: defs.setLayout(id, Number(b?.version), b?.positions ?? {}) });
         if (!writing) {
           const v = url.searchParams.get("v"); const def = defs.get(id, v ? Number(v) : undefined); if (!def) return json({ error: "no such workflow" }, 404);
-          return json({ def, coffeeFilmStatus:def.kind==="coffee-kit"?d.coffeeFilmStatus??{ready:false,reason:"Local film capability is unavailable"}:null, coffeeDesign:def.kind==="coffee-kit"?COFFEE_DESIGN_FIELDS:null, coffeeChoice:def.kind==="coffee-kit" ? d.coffeeChoice?.() ?? null : null, problems: validate(def, defs.known, undefined, defs.skillInfo ?? undefined), versions: defs.versions(id).map((x) => ({ version: x.version, createdAt: x.createdAt, by: x.by, note: x.note, parent: x.parent, diff: x.diff })),
+          return json({ def, selectable:defs.selectable(id,def.version), coffeeFilmStatus:def.kind==="coffee-kit"?d.coffeeFilmStatus??{ready:false,reason:"Local film capability is unavailable"}:null, coffeeDesign:def.kind==="coffee-kit"?COFFEE_DESIGN_FIELDS:null, coffeeChoice:def.kind==="coffee-kit" ? d.coffeeChoice?.() ?? null : null, problems: validate(def, defs.known, undefined, defs.skillInfo ?? undefined), versions: defs.versions(id).map((x) => ({ version: x.version, createdAt: x.createdAt, by: x.by, note: x.note, parent: x.parent, diff: x.diff })),
             runs: engine.list().filter((r) => r.workflow === id).map((r) => ({ id: r.id, version: r.version, status: r.status, result: r.result, merged: !!r.ctx?.merged, title: r.title, createdAt: r.createdAt })) });
         }
         const saved = defs.save(id, b, by, b?.note);
@@ -202,6 +202,7 @@ export function createRuntime(d: RuntimeDeps) {
         const text = String(b?.text ?? "").trim(); if (!text && !b?.workflow) return json({ error: "say what you want done" }, 400);
         const cls = classifyIntent(defs, text, engine.policies.get("sensitive_paths", { project: b?.params?.project ? String(b.params.project) : b?.project ? String(b.project) : null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []);
         const wf = b?.workflow || cls.workflow; if (!wf) return json({ error: "Studio could not tell which workflow this is: pick one", classifier: cls }, 409);
+        if(!defs.selectable(wf,b?.version?Number(b.version):undefined))return json({error:"This workflow is internal or retired. Choose an available workflow. / 此流程為內部或已退役流程，請選擇可用流程。",code:"workflow_unavailable"},409);
         let params=b?.params??{};
         const chosenDef=defs.get(wf,b?.version?Number(b.version):undefined);
         if(chosenDef?.kind==="coffee-kit") {

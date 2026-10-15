@@ -150,11 +150,15 @@ export function diff(a: WDef, b: WDef): DefDiff {
 }
 export const diffEmpty = (d: DefDiff) => !d.nodesAdded.length && !d.nodesRemoved.length && !d.nodesChanged.length && !d.nodesMoved.length && !d.edgesAdded.length && !d.edgesRemoved.length && !(d.edgesChanged ?? []).length && !d.meta.length;
 
+const RETIRED_DEFAULTS=new Set(["refine-demo","trivial-lane"]);
+const INTERNAL_WORKFLOWS=new Set(["firstmate-proposal","firstmate-register-project","firstmate-staffing"]);
+function defaultDefinitions(){return [...bundledList("workflows/v2/"),...bundledList("packs/")].filter(f=>f.endsWith(".wf.yaml")).map(f=>bundledText(f)??"").filter(text=>{if(!text.trim())return false;return !RETIRED_DEFAULTS.has(normalize(parseYaml(text)).id);});}
+
 export class WorkflowDefs {
   readonly dir: string;
   /** the skill library's record of a pinned version (set by the runtime): saves check every pin and the per-node cap against it */
   skillInfo: SkillInfo | null = null;
-  constructor(dataDir: string, readonly bundled = () => [...bundledList("workflows/v2/"), ...bundledList("packs/")].filter((f) => f.endsWith(".wf.yaml")).map((f) => bundledText(f) ?? ""), public known?: (ref: string) => boolean, public runners?: () => Set<string>) {
+  constructor(dataDir: string, readonly bundled = defaultDefinitions, public known?: (ref: string) => boolean, public runners?: () => Set<string>) {
     this.dir = join(dataDir, "workflows"); mkdirSync(this.dir, { recursive: true });
     this.seed();
   }
@@ -198,6 +202,9 @@ export class WorkflowDefs {
     const lay = this.layout(id, d.version);
     return { ...d, nodes: d.nodes.map((n) => (lay[n.id] ? { ...n, x: lay[n.id].x, y: lay[n.id].y } : n)) };
   }
+  /** Exact versions remain readable for pinned Tasks; only public choices enter a new dispatch. */
+  selectable(id:string,version?:number){const d=this.get(id,version);return !!d&&!INTERNAL_WORKFLOWS.has(id)&&!(RETIRED_DEFAULTS.has(id)&&!!d.seed&&!!d.by?.startsWith("studio (built-in"));}
+  catalog(){return this.list().filter(w=>this.selectable(w.id,w.version));}
   list() { return this.ids().map((id) => { const vs = this.versions(id); const l = vs.at(-1)!; return { id, name: l.name, description: l.description ?? "", kind: l.kind ?? null, version: l.version, versions: vs.length, nodes: l.nodes.length, intent: l.intent ?? null, params: l.params ?? null }; }); }
   layout(id: string, v: number): Record<string, { x: number; y: number }> { try { return JSON.parse(readFileSync(join(this.wdir(id), `layout-v${v}.json`), "utf8")); } catch { return {}; } }
   /** Dragging nodes: positions are kept per version without making a new one. */
