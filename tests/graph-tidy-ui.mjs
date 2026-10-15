@@ -57,7 +57,7 @@ try {
   for (const width of [1440, 390]) for (const scheme of ["light", "dark"]) {
     const p = await page(width, scheme); await p.evaluate(() => localStorage.setItem("crew.graphView", "detail"));
     for (const w of wfs0) { const legacy = w.id === "video"; if (!legacy) await post(`/api/graph-layout/${w.id}/v${w.version}`, { mode: "manual" });
-      await p.goto(`${base}/#/workflows/${w.id}`); await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed")); await p.waitForSelector("svg.rt-graph [data-node]", { timeout: 15000 }).catch(() => {});
+      await p.goto(`${base}/#/workflows/${w.id}${w.id==="coffee-kit"?"/advanced":""}`); await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed")); await p.waitForSelector("svg.rt-graph [data-node]", { timeout: 15000 }).catch(() => {});
       await p.click("[data-fit]").catch(() => {}); await p.waitForTimeout(150);
       await p.screenshot({ path: join(before, `${w.id}-${width}-${scheme}.png`), fullPage: true });
       if (!legacy) await post(`/api/graph-layout/${w.id}/v${w.version}`, { mode: "auto" }); }
@@ -179,13 +179,13 @@ try {
   }
   // ---------- every built-in workflow, 1440 and 390, light and dark ----------
   const wfs = (await (await fetch(`${base}/api/wf`)).json()).workflows.map((w) => w.id);
-  const expected=["code-firstmate","documents","file-organization","pack-genesis","refine-demo","trivial-lane","video","web-prototype"];
-  ok(JSON.stringify([...wfs].sort())===JSON.stringify(expected), "exact eight built-in workflows in the editor including native pack-genesis", wfs.join(","));
+  const expected=["code-firstmate","coffee-kit","documents","file-organization","pack-genesis","refine-demo","trivial-lane","video","web-prototype"];
+  ok(JSON.stringify([...wfs].sort())===JSON.stringify(expected), "exact nine built-in workflows in the editor including native coffee-kit", wfs.join(","));
   for (const width of [1440, 390]) for (const scheme of ["light", "dark"]) {
     const p = await page(width, scheme);
     for (const id of wfs) for (const view of ["simple", "detail"]) {
       await p.evaluate((v) => localStorage.setItem("crew.graphView", v), view);
-      await p.goto(`${base}/#/workflows/${id}`); await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed"));
+      await p.goto(`${base}/#/workflows/${id}${id==="coffee-kit"?"/advanced":""}`); await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed"));
       const okSel = await p.waitForSelector(`svg.rt-graph[data-view="${view}"] [data-node], svg.rt-graph[data-view="${view}"] [data-stage-node]`, { timeout: 15000 }).then(() => true).catch(() => false);
       await p.waitForTimeout(200);
       ok(okSel && !(await through(p)).length && await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${id} renders at ${width} ${scheme} (${view})`);

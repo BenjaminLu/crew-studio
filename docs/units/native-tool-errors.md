@@ -1,0 +1,11 @@
+# Actionable native tool failures
+
+Studio native tool calls now preserve source-defined error codes, localized reasons, recovery actions and explicit retryability. Expected Firstmate proposal/staffing guards distinguish invalid parameters, missing configuration, changed targets, missing captain confirmation and lost ownership. Existing project-registration and auth/quota typed failures retain their original guidance. This does not grant authority, approve a card, retry work, or infer permission from an ordinary exception.
+
+The Codex native tool boundary returns the same safe failure to the CLI and emits it directly to MainSession. Its log preserves the structured failure so the chat can render the reason, next step and reference without relying on the model to paraphrase it. Cancellation and timeout have distinct state-read guidance; neither automatically resends a potentially completed job.
+
+Unknown native producer exceptions return internal_error with one correlation identifier shared by the RPC result, UI event and private diagnostic. The diagnostic records only timestamp, allowlisted tool/class, a SHA256 fingerprint and allowlisted source module/line frames. It records no raw exception message, arguments, captain text, account identity, absolute paths or auth secrets. New diagnostic files are private (0600), symlink targets are refused and a size cap fails recording explicitly. The public result and UI state when private recording failed. They never suggest that an unknown error means missing permission.
+
+This unit covers Studio native tool producer exceptions and expected Firstmate guards, not all application HTTP/login/media/storage catches. Those remain separately inventoried. General RPC transport numeric error/data retention and unrelated callback catches are outside this repair. A completed RPC now clears its timeout so tests and controlled CLI shutdown do not wait for obsolete request timers.
+
+Offline tests inject actual app-server native calls for auth, quota, parameters, configuration, stale frontier/target, ownership, permission denial, cancellation, timeout and unknown errors. They verify public responses, safe private correlation, actual MainSession log and the production UI renderer. No paid vendor call or live account/configuration change is required.

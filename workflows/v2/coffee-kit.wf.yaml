@@ -1,0 +1,369 @@
+{
+  "id": "coffee-kit",
+  "name": "Coffee Shop Kit",
+  "kind": "coffee-kit",
+  "version": 1,
+  "intent": {
+    "keywords": [
+      "coffee-kit"
+    ]
+  },
+  "roles": [
+    {
+      "id": "worker",
+      "label": "Website worker",
+      "skill": "pack:coffee-kit/skills/website.md"
+    },
+    {
+      "id": "image-worker",
+      "label": "Image worker",
+      "skill": "pack:coffee-kit/skills/image.md"
+    },
+    {
+      "id": "reviewer",
+      "label": "Reviewer",
+      "skill": "pack:coffee-kit/skills/reviewer.md"
+    },
+    {
+      "id": "designer",
+      "label": "Designer",
+      "skill": "pack:coffee-kit/skills/designer.md"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "direction",
+      "kind": "card",
+      "label": "Confirm direction",
+      "x": 160,
+      "y": 220,
+      "args": {
+        "mode": "coffee-direction"
+      }
+    },
+    {
+      "id": "round",
+      "kind": "hook",
+      "label": "Prepare current versions",
+      "do": "coffee.ready",
+      "x": 320,
+      "y": 220
+    },
+    {
+      "id": "page-needed",
+      "kind": "hook",
+      "label": "Page version",
+      "x": 500,
+      "y": 100,
+      "do": "coffee.page-needed"
+    },
+    {
+      "id": "page",
+      "kind": "agent",
+      "label": "Create page",
+      "x": 660,
+      "y": 100,
+      "role": "worker",
+      "mode": "coffee-page",
+      "retries": 0,
+      "timeout_s": 600
+    },
+    {
+      "id": "page-ready",
+      "kind": "hook",
+      "label": "Page ready",
+      "x": 820,
+      "y": 100,
+      "do": "coffee.ready"
+    },
+    {
+      "id": "image-needed",
+      "kind": "hook",
+      "label": "Image version",
+      "x": 500,
+      "y": 360,
+      "do": "coffee.image-needed"
+    },
+    {
+      "id": "image",
+      "kind": "hook",
+      "label": "Generate image",
+      "x": 660,
+      "y": 360,
+      "do": "coffee.image"
+    },
+    {
+      "id": "image-ready",
+      "kind": "hook",
+      "label": "Image ready",
+      "x": 820,
+      "y": 360,
+      "do": "coffee.ready"
+    },
+    {
+      "id": "video-needed",
+      "kind": "hook",
+      "label": "Film dependencies",
+      "x": 980,
+      "y": 220,
+      "do": "coffee.video-needed",
+      "join": "all"
+    },
+    {
+      "id": "video",
+      "kind": "hook",
+      "label": "Render HyperFrames film",
+      "x": 1140,
+      "y": 220,
+      "do": "coffee.video"
+    },
+    {
+      "id": "video-ready",
+      "kind": "hook",
+      "label": "Film ready",
+      "x": 1300,
+      "y": 220,
+      "do": "coffee.ready"
+    },
+    {
+      "id": "assemble",
+      "kind": "hook",
+      "label": "Integrate whole website",
+      "x": 1460,
+      "y": 220,
+      "do": "coffee.assemble"
+    },
+    {
+      "id": "checks",
+      "kind": "check",
+      "label": "Verify complete bundle",
+      "x": 1620,
+      "y": 220,
+      "checks": [
+        {
+          "use": "coffee-kit/bundle-ready",
+          "proves": [
+            0
+          ]
+        },
+        {
+          "use": "coffee-kit/reviewer",
+          "blocking": true
+        },
+        {
+          "use": "coffee-kit/designer",
+          "blocking": true
+        }
+      ]
+    },
+    {
+      "id": "review",
+      "kind": "card",
+      "label": "Preview, refine and approve",
+      "x": 1780,
+      "y": 220,
+      "args": {
+        "mode": "coffee-review"
+      }
+    },
+    {
+      "id": "library",
+      "kind": "hook",
+      "label": "Keep approved website",
+      "x": 1940,
+      "y": 220,
+      "do": "coffee.library"
+    },
+    {
+      "id": "done",
+      "kind": "hook",
+      "label": "Done",
+      "x": 2100,
+      "y": 220
+    },
+    {
+      "id": "capability",
+      "kind": "card",
+      "label": "Creation needs attention",
+      "x": 1620,
+      "y": 650,
+      "args": {
+        "mode": "coffee-capability"
+      }
+    },
+    {
+      "id": "closed",
+      "kind": "hook",
+      "label": "Closed",
+      "x": 1780,
+      "y": 650,
+      "args": {
+        "result": "closed"
+      }
+    }
+  ],
+  "edges": [
+    [
+      "direction",
+      "closed",
+      "closed"
+    ],
+    [
+      "page-needed",
+      "page",
+      "produce"
+    ],
+    [
+      "page-needed",
+      "page-ready",
+      "current"
+    ],
+    [
+      "page",
+      "page-ready",
+      "ok"
+    ],
+    [
+      "page",
+      "capability",
+      "error|fail|timeout|unavailable"
+    ],
+    [
+      "page-ready",
+      "video-needed"
+    ],
+    [
+      "image-needed",
+      "image",
+      "produce"
+    ],
+    [
+      "image-needed",
+      "image-ready",
+      "current"
+    ],
+    [
+      "image",
+      "image-ready",
+      "ok"
+    ],
+    [
+      "image",
+      "capability",
+      "unavailable|error"
+    ],
+    [
+      "image-ready",
+      "video-needed"
+    ],
+    [
+      "video-needed",
+      "video",
+      "produce"
+    ],
+    [
+      "video-needed",
+      "video-ready",
+      "current"
+    ],
+    [
+      "video",
+      "video-ready",
+      "ok"
+    ],
+    [
+      "video",
+      "capability",
+      "unavailable|error"
+    ],
+    [
+      "video-ready",
+      "assemble"
+    ],
+    [
+      "direction",
+      "round",
+      "confirmed"
+    ],
+    [
+      "assemble",
+      "capability",
+      "error"
+    ],
+    [
+      "checks",
+      "review",
+      "pass"
+    ],
+    [
+      "checks",
+      "capability",
+      "fail|error"
+    ],
+    [
+      "review",
+      "library",
+      "approved"
+    ],
+    [
+      "review",
+      "closed",
+      "closed"
+    ],
+    [
+      "library",
+      "done"
+    ],
+    [
+      "capability",
+      "closed",
+      "close"
+    ],
+    [
+      "direction",
+      "capability",
+      "error"
+    ],
+    [
+      "review",
+      "capability",
+      "error"
+    ],
+    [
+      "library",
+      "capability",
+      "error"
+    ],
+    [
+      "assemble",
+      "checks",
+      "ok"
+    ],
+    [
+      "review",
+      "round",
+      "revise"
+    ],
+    [
+      "round",
+      "page-needed"
+    ],
+    [
+      "round",
+      "image-needed"
+    ],
+    [
+      "capability",
+      "round",
+      "revise"
+    ]
+  ],
+  "params": {
+    "coffeeDesignPlan": {
+      "label": "Complete discussed coffee design plan JSON (required, version 1, max 16KB)"
+    },
+    "project": {
+      "label": "Explicit artifact project name (required; captain-approved staffing config)"
+    }
+  }
+}

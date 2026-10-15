@@ -19,7 +19,7 @@
 (() => {
 const SVGNS = "http://www.w3.org/2000/svg";
 const s = (tag, attrs = {}, ...kids) => { const e = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) { if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (v != null && v !== false) e.setAttribute(k, v === true ? "" : v); } for (const c of kids.flat()) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(c)); return e; };
-const api = async (u, body, method, signal) => { const r = await fetch(u, { signal, ...(body === undefined && !method ? {} : { method: method || "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) }) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) { const e = new Error(j.error || `HTTP ${r.status}`); e.problems = j.problems; throw e; } return j; };
+const api = async (u, body, method, signal) => { const r = await fetch(u, { signal, ...(body === undefined && !method ? {} : { method: method || "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) }) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) { const e = new Error(j.error || `HTTP ${r.status}`); e.problems = j.problems; e.code=j.code; e.status=r.status; throw e; } return j; };
 const KINDS = [["agent", "Agent", "代理"], ["check", "Check", "檢查"], ["card", "Card", "卡片"], ["loop", "Refine loop", "精修迴圈"], ["hook", "Hook", "掛勾"]];
 const NW = 150, NH = 52;
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -252,15 +252,41 @@ function viewEditor(arg) {
   if (!WF.ed || WF.ed.key !== key) { WF.ed?.dispose?.(); WF.ed = { key, id, v, loading: true, el: null }; loadEditor(WF.ed); }
   if (WF.ed.loading) return h("div", { class: "page" }, h("div", { class: "skel", style: "height:420px" }));
   if (WF.ed.error) return h("div", { class: "page" }, h("div", { class: "card x-pad" }, WF.ed.error));
+  if (WF.ed.def?.kind === "coffee-kit" && !arg.endsWith("/advanced")) { if(!WF.ed.guide)WF.ed.guide=buildCoffeeGuide(WF.ed);return WF.ed.guide; }
   if (!WF.ed.el) WF.ed.el = buildEditor(WF.ed);
   return WF.ed.el;
+}
+function buildCoffeeGuide(ed) {
+  const choice=ed.coffeeChoice,root=h("div",{class:"page rt-coffee-guide","data-coffee-guide":"1"});
+  const name=h("input",{class:"input",value:ed.def.id==="coffee-kit"?T("My coffee website","我的咖啡店網站","我的咖啡店网站"):ed.def.name,maxlength:120,required:true});
+  const brief=h("textarea",{class:"input",rows:5,required:true,placeholder:T("Tell Firstmate about your coffee shop and what visitors should feel. Leave unknown business facts out.","告訴 Firstmate 你的咖啡店特色，以及希望訪客感受到什麼。未知的營業資訊先留白。","告诉 Firstmate 你的咖啡店特色，以及希望访客感受到什么。未知的营业信息先留白。")});
+  const project=h("input",{class:"input",required:true,maxlength:200,pattern:"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,199}","data-coffee-project":"1",placeholder:"my-coffee-shop"});
+  const plan=h("textarea",{class:"input",rows:14,"data-coffee-design":"1","aria-label":T("Complete discussed design plan","完整討論後的設計計畫","完整讨论后的设计计划"),placeholder:T("A complete version-1 structured plan from your Firstmate discussion; no automatic default.","貼上與 Firstmate 討論後的完整 version-1 結構化計畫；不會自動套用預設。","粘贴与 Firstmate 讨论后的完整 version-1 结构化计划；不会自动使用默认值。")});
+  const status=h("p",{role:"status","aria-live":"polite"}),start=h("button",{class:"btn",type:"submit"},T("Review this design plan","檢視這份設計計畫","查看这份设计计划"));
+  let pending=false,created=null,uncertain=false;
+  const discuss=h("button",{class:"btn primary",type:"button","data-coffee-discuss":"1",onclick:async()=>{
+    if(pending)return;if(!brief.value.trim()){status.textContent=T("Describe your goal first.","請先描述你的目標。","请先描述你的目标。");brief.focus();return;}pending=true;discuss.disabled=true;
+    try{const main=await api("/api/main");if(main.context!=="studio"||main.state!=="attached"||main.driver?.holder!=="studio"||main.origin){status.textContent=T("Connect your account and start your own Firstmate first.","請先連接帳號並啟動你自己的 Firstmate。","请先连接账号并启动你自己的 Firstmate。");return;}
+      await api("/api/main/send",{text:`Please discuss my coffee-shop website design with me before proposing or generating anything. Artifact project: ${project.value.trim()||'ask me to choose an explicit project name'}. Native workflow: ${ed.def.id} v${ed.def.version}. Name: ${name.value.trim()}. Goal: ${brief.value.trim()}. Ask concise questions about website brand/layout/sections/CTA, image art direction/composition/placement, a three-beat twelve-second video script/storyboard/motion, and responsive integrated hero/playback. Do not invent business facts. Iterate an editable complete design proposal. After the design discussion, use studio_staffing_interview to discuss provider, exact model, effort and actual specialized skill for EVERY worker/image-worker/reviewer/designer role. Explain that video is a pinned local HyperFrames tool rather than a fictitious model role. Confirm the project-local staffing configuration with my real approval card. Never assume the primary account is the worker. Only after both shared plan and staffing are agreed, use studio_list_workflows and studio_propose_work with the required validated coffeeDesignPlan JSON; never approve cards yourself.${plan.value.trim()?" My current editable draft (not approval): "+plan.value.trim():""}`});location.hash="#/firstmate";
+    }catch(e){status.textContent=e.message;}finally{pending=false;discuss.disabled=false;}
+  }},T("Discuss the design with Firstmate","與 Firstmate 討論設計","与 Firstmate 讨论设计"));
+  const form=h("form",{class:"card x-pad",onsubmit:async event=>{
+    event.preventDefault();if(pending)return;if(!project.value.trim()||!name.value.trim()||!brief.value.trim()||!plan.value.trim()){status.textContent=T("Discuss the complete design with Firstmate first. A full plan is required before creation.","請先與 Firstmate 討論完整設計；製作前必須有完整計畫。","请先与 Firstmate 讨论完整设计；制作前必须有完整计划。");return;}
+    pending=true;start.disabled=true;status.textContent=T("Validating your editable plan…","正在驗證可編輯的計畫…","正在验证可编辑的计划…");
+    try{let input;try{input=JSON.parse(plan.value);}catch{throw new Error(T("The plan must be valid JSON.","計畫必須是有效的 JSON。","计划必须是有效的 JSON。"));}const validated=await api("/api/coffee/design",{plan:input});plan.value=JSON.stringify(validated.plan,null,2);
+      const def=ed.def;uncertain=true;
+      const r=await api("/api/wruns",{workflow:def.id,version:def.version,title:name.value.trim(),text:brief.value.trim(),params:{project:project.value.trim(),coffeeDesignPlan:validated.canonical}});if(root.isConnected)location.hash=`#/run/${r.id}`;
+    }catch(e){if(e.code==="coffee-staffing-required"){uncertain=false;status.textContent=T("Discuss and approve this project’s role models and skills with Firstmate before starting. Your plan is preserved.","請先與 Firstmate 討論並核准此專案各角色的模型與技能；計畫已保留。","请先与 Firstmate 讨论并批准此项目各角色的模型与技能；计划已保留。");}else status.textContent=uncertain?T("Could not confirm the Task result. Your draft is preserved; check Tasks before trying again.","尚無法確認任務結果；草稿已保留，請先查看任務列表。","尚无法确认任务结果；草稿已保留，请先查看任务列表。"):e.message;}finally{pending=false;if(root.isConnected)start.disabled=uncertain;}
+  }},h("label",{},T("Artifact project (confirmed staffing)","作品專案（已確認派工配置）","作品项目（已确认派工配置）"),project),h("label",{},T("Website name","網站名稱","网站名称"),name),h("label",{},T("What should visitors know and feel?","希望訪客認識什麼、感受到什麼？","希望访客了解什么、感受到什么？"),brief),discuss,h("p",{},T("First discuss the website, image, video storyboard and their integration. You can revise the proposal freely. No creation starts until you confirm the complete pinned plan.","先討論網站、圖片、影片分鏡及整合方式。計畫可以先自由修改；只有你確認完整且已鎖定的計畫後，才會開始製作。","先讨论网站、图片、影片分镜及整合方式。计划可以先自由修改；只有你确认完整且已锁定的计划后，才会开始制作。")),h("details",{"data-coffee-plan-editor":"1"},h("summary",{},T("Review or edit a structured proposal","檢視或編輯結構化提案","查看或编辑结构化提案")),h("label",{},T("Complete discussed design plan","完整討論後的設計計畫","完整讨论后的设计计划"),plan),start),status);
+  root.append(h("div",{class:"phead"},h("div",{},h("h1",{},T("Design your coffee-shop website together","一起設計你的咖啡店網站","一起设计你的咖啡店网站")),h("p",{},T("Discuss the page, image and film before creating one cohesive experience.","先一起討論網頁、圖片與短片，再製作風格一致的整體體驗。","先一起讨论网页、图片与短片，再制作风格一致的整体体验。")))),h("ol",{class:"rt-coffee-steps"},[T("Connect your account and start Firstmate","連接帳號並啟動 Firstmate","连接账号并启动 Firstmate"),T("Discuss and edit the whole design and storyboard","討論、修改整體設計與影片分鏡","讨论、修改整体设计与影片分镜"),T("Confirm the exact shared plan, then create previews","確認共同計畫後，再開始製作預覽","确认共同计划后，再开始制作预览"),T("Comment on a specific artifact; approve the complete website","針對作品回饋，最後驗收完整網站","针对作品反馈，最后验收完整网站")].map(text=>h("li",{},text))),h("button",{class:"btn",type:"button",onclick:()=>{if(window.crewConnectCodex)window.crewConnectCodex();else status.textContent=T("Open the account panel in Firstmate.","請開啟 Firstmate 的帳號面板。","请打开 Firstmate 的账号面板。");}},T("Connect Codex account","連接 Codex 帳號","连接 Codex 账号")),h("p",{},T("Every role uses your approved project staffing and skill snapshot. Your Firstmate account is separate; no worker model is chosen automatically.","各角色使用你已核准的專案派工與技能快照；Firstmate 帳號另行設定，不會自動替你挑選工作模型。","各角色使用你已批准的项目派工与技能快照；Firstmate 账号单独设置，不会自动替你选择工作模型。")),ed.coffeeFilmStatus?.ready?null:h("p",{role:"status"},T("Video tools are not ready; page/image previews can be reviewed, but complete-site approval will wait. Install the pinned local Node/HyperFrames, Chromium and ffmpeg/ffprobe tools, then restart Studio.","影片工具尚未就緒；可以檢視網頁與圖片預覽，但完整網站驗收會等待。請安裝固定版本的本機 Node／HyperFrames、Chromium 及 ffmpeg／ffprobe，然後重新啟動 Studio。","视频工具尚未就绪；可以查看网页与图片预览，但完整网站验收会等待。请安装固定版本的本机 Node／HyperFrames、Chromium 及 ffmpeg／ffprobe，然后重新启动 Studio。")),form,h("a",{class:"btn ghost",href:`#/workflows/${ed.id}${ed.v?`/v${ed.v}`:""}/advanced`},T("Advanced workflow graph","進階流程圖","高级流程图")));
+  return root;
 }
 async function loadEditor(ed) {
   try {
     const [j, all, lib] = await Promise.all([api(`/api/wf/${ed.id}${ed.v ? `?v=${ed.v}` : ""}`), api("/api/wf"), api("/api/skills").catch(() => ({ skills: [], caps: {} }))]);
     let mode = "auto"; try { mode = (await api(`/api/graph-layout/${ed.id}/v${j.def.version}`)).mode; } catch {}
     const phone = matchMedia("(max-width: 640px)").matches;
-    Object.assign(ed, { mode, collapsed: phone ? (window.crewLayout.stagesFor(j.def) || []).map((x) => x.id) : [], loading: false, def: clone(j.def), saved: clone(j.def), versions: j.versions, runs: j.runs, problems: j.problems, checks: all.checks, lib: lib.skills || [], skillCap: lib.caps?.node || 0, sel: null, overlay: null, states: null, lastDiff: null, dirty: false });
+    Object.assign(ed, { mode, collapsed: phone ? (window.crewLayout.stagesFor(j.def) || []).map((x) => x.id) : [], loading: false, coffeeChoice:j.coffeeChoice, coffeeFilmStatus:j.coffeeFilmStatus, def: clone(j.def), saved: clone(j.def), versions: j.versions, runs: j.runs, problems: j.problems, checks: all.checks, lib: lib.skills || [], skillCap: lib.caps?.node || 0, sel: null, overlay: null, states: null, lastDiff: null, dirty: false });
   } catch (e) { ed.loading = false; ed.error = e.message; }
   if (WF.ed === ed) rerender();
 }
@@ -603,12 +629,18 @@ function roundHistory(r) {
     h("h2", {}, T("Rounds", "回合")), !(r.rounds || []).length ? h("p", { class: "faint" }, T("No rounds yet.", "還沒有回合。")) :
     h("ol", { class: "rt-round-list" }, r.rounds.map((rd) => {
       const actor = rd.actor.kind === "agent" ? [r.def?.roles?.find((x) => x.id === rd.actor.role)?.label || rd.actor.role, rd.actor.provider, rd.actor.model].filter(Boolean).join(" · ") : rd.actor.kind === "check" ? rd.actor.name || T("Check", "檢查") : T("Captain", "船長");
+      const imageCards=(r.cards||[]).filter(c=>c.node===rd.node&&c.visit===rd.number&&c.detail?.artifactAcceptance?.offered?.some(o=>o.format==="image"));
+      const exact=imageCards.filter(c=>c.detail.artifactAcceptance.review?.round===rd.number&&c.detail.artifactAcceptance.review?.attempt===rd.attempt);
+      const imageEvidence=rd.actor.kind==="card"&&imageCards.length&&window.crewImageRefinementSnapshot
+        ? exact.length?exact.map(c=>h("div",{"data-round-refinement-card":c.id},h("p",{},c.id),...(c.detail.artifactAcceptance.refinements||[{snapshot:null}]).map(e=>window.crewImageRefinementSnapshot(e.snapshot,{lang:zhOn()?"zh-TW":"en",review:c.detail.artifactAcceptance.review})))):window.crewImageRefinementSnapshot(null,{lang:zhOn()?"zh-TW":"en"})
+        : null;
       const c = rd.cost; const cost = c ? [c.usd != null ? `$${c.usd.toFixed(2)}` : null, c.inTokens != null || c.outTokens != null ? T(`${c.inTokens ?? "—"} in / ${c.outTokens ?? "—"} out tokens`, `${c.inTokens ?? "—"} 輸入 / ${c.outTokens ?? "—"} 輸出 token`) : null, c.seconds != null ? `${c.seconds.toFixed(1)} s` : null].filter(Boolean).join(" · ") : T("No cost recorded", "未記錄費用");
       return h("li", { "data-round-id": rd.id, "data-round-node": rd.node }, h("div", { class: "rt-round-head" }, h("b", {}, rd.actor.label || rd.node),
         h("span", { class: "badge neutral" }, T(`Round ${rd.number}`, `第 ${rd.number} 回合`)), h("span", { class: "faint" }, T(`Attempt ${rd.attempt}`, `第 ${rd.attempt} 次嘗試`))),
         h("p", { class: "rt-round-actor" }, actor), h("dl", {}, field("Started", "開始", stamp(rd.startedAt)), field("Ended", "結束", stamp(rd.endedAt)),
           field("Outcome", "結果", [T(...(outcomes[rd.outcome] || [rd.outcome, rd.outcome])), rd.verdict ? ` · ${rd.verdict}` : ""]), field("Cost", "費用", cost)),
         rd.reason ? h("p", { class: "bad" }, zhOn() ? rd.reason["zh-TW"] : rd.reason.en) : null,
+        imageEvidence,
         rd.transcript ? h("a", { class: "btn", href: rd.transcript }, T("Transcript", "對話紀錄")) : null);
     })));
 }
@@ -618,7 +650,7 @@ function viewRun(id) {
   if (!id) return viewRuns();
   if (!RN.view || RN.view.id !== id) { RN.view = { id, r: null }; loadRun(RN.view); }
   const v = RN.view; if (!v.r) return h("div", { class: "page" }, h("div", { class: "skel", style: "height:420px" }));
-  const r = v.r; const states = Object.fromEntries(Object.entries(r.nodes).map(([k, n]) => [k, n.state]));
+  const r = v.r; let coffeeProposal=false;try{coffeeProposal=r.workflow==="firstmate-proposal"&&!!JSON.parse(r.params.target||"null")?.params?.coffeeDesignPlan;}catch{} const states = Object.fromEntries(Object.entries(r.nodes).map(([k, n]) => [k, n.state]));
   const act = (what) => api(`/api/wruns/${id}/${what}`, {}).then((x) => { v.r = { ...v.r, ...x }; loadRun(v); rerender(); }).catch((e) => alert(e.message));
   const ended = ["succeeded", "failed", "cancelled"].includes(r.status);
   const open = r.cards.filter((c) => c.status === "open");
@@ -638,7 +670,7 @@ function viewRun(id) {
   if (v.scrolledTo !== cur) requestAnimationFrame(() => { const card = document.querySelector(".rt-rungraph"); if (!card) return;
     const el = card.querySelector(`[data-node="${CSS.escape(cur)}"]`) || card.querySelector(".rt-node.main") || card.querySelector("[data-stage-node]");
     if (el) { const a = el.getBoundingClientRect(), c = card.getBoundingClientRect(); card.scrollLeft += a.left - c.left - Math.max(0, (c.width - a.width) / 3); card.scrollTop += a.top - c.top - c.height / 2 + a.height / 2; v.scrolledTo = cur; } });
-  return h("div", { class: "page rt-runview", "data-runview": id },
+  return h("div", { class: `page rt-runview${(r.def.kind==="coffee-kit"||coffeeProposal)?" rt-coffee-run":""}`, "data-runview": id },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, r.title), h("p", {}, h("span", { class: "mono" }, r.id), " · ", h("a", { href: `#/workflows/${r.workflow}/v${r.version}` }, `${r.workflow} v${r.version}`), " · ", h("span", { "data-run-status": r.status }, window.runStateBadge(r)), r.archived ? [" ", h("span", { class: "badge neutral rt-archived-tag", "data-archived": "1" }, T("Archived", "已封存"))] : null, r.error ? ` · ${r.error}` : "")),
       h("div", { class: "actions" }, r.ctx?.captures?.app ? h("a", { class: "btn", href: r.ctx.captures.app, target: "_blank", rel: "noopener", "data-open-app": r.id }, T("Open the app", "打開 app")) : null,
         ["running", "waiting"].includes(r.status) ? h("button", { class: "btn", onclick: () => act("pause") }, T("Pause", "暫停")) : null, r.status === "paused" ? h("button", { class: "btn", onclick: () => act("resume") }, T("Resume", "繼續")) : null,

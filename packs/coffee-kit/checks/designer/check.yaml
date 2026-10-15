@@ -1,0 +1,13 @@
+id: designer
+version: 1.0.0
+title: { en: "Coffee designer — text and source review", zh-TW: "咖啡店設計審查：文字與原始碼" }
+applies_to: [run]
+kind: judged
+blocking: true
+needs: [artifact, coffee_review_snapshot]
+judge:
+  prompt: "Review the declared brand tokens, HTML/CSS hierarchy, responsive behavior and storyboard integration against the approved design. This is TEXT-ONLY evidence: you have not seen rendered pages, image pixels or playback. Never certify visual quality or motion. Report grounded file/text locators. Captain visual approval remains mandatory."
+  quorum: { n: 2, of: 3 }
+params: { type: object, properties: {} }
+timeout_s: 600
+network: false

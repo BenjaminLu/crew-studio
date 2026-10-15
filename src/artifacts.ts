@@ -16,11 +16,12 @@ import { noteFinding, noteLocator, type Finding, type Locator } from "./runtime/
 
 export type ArtifactType = "web" | "video" | "image" | "doc" | "audio";
 export type Status = "draft" | "in-review" | "approved" | "superseded";
-export type Maker = { kind: "captain" | "agent" | "import"; provider?: string; model?: string; run?: string };
+export type Maker = { kind: "captain" | "agent" | "import" | "host"; provider?: string; model?: string; run?: string };
 export type FileRec = { path: string; sha256: string; size: number };
 export type Cost = { usd: number | null; inTokens: number | null; outTokens: number | null };
 export type MediaProvenance = {schema:1;request:string;task:string;generation:number;dependencies:Record<string,string>;provider:string|null;model:string|null;origin:"generated"|"import"};
 export type Version = {
+  refinement?:import("./domain/image-refinement").ImageRefinementSnapshot;
   media?:MediaProvenance;
   artifact: string; n: number; type: ArtifactType; files: FileRec[]; primary: string | null; sha256: string | null; url: string | null;
   parent: number | null; createdBy: Maker; source: { intent?: string | null; run?: string | null }; annotations: string[];
@@ -31,6 +32,7 @@ export type Version = {
  *  "file" = a plain file (MP4, image) reviewed without regeneration; "url" = an external link only. */
 export type Artifact = { id: string; title: string; type: ArtifactType; project: string; source: "html" | "film" | "file" | "url" | "md"; created: string; note: string | null; entry: string | null; legacy?: string | null };
 export type Note = {
+  supersedes?:{version:number;note:string}[];
   id: string; kind: "pin" | "range"; comment: string; createdAt: string; status: "open" | "resolved";
   selector?: string | null; bbox?: { x: number; y: number; w: number; h: number } | null; crop?: string | null;
   t0?: number | null; t1?: number | null; box?: { x: number; y: number; w: number; h: number } | null; scene?: string | null;
@@ -92,7 +94,7 @@ export class ArtifactStore {
 
   /** A new version from a directory of files (copied in). Shared asset folders are linked, not copied or hashed. */
   addVersion(id: string, o: { from?: string | null; url?: string | null; primary?: string | null; parent?: number | null; createdBy: Maker; source?: Version["source"];
-    annotations?: string[]; status?: Status; cost?: Cost | null; summary?: string | null; links?: Record<string, string> }): Version {
+    refinement?:Version["refinement"]; annotations?: string[]; status?: Status; cost?: Cost | null; summary?: string | null; links?: Record<string, string> }): Version {
     const art = this.get(id); if (!art) throw new Error(`no artifact ${id}`);
     const n = (this.latest(id)?.n ?? 0) + 1;
     const fdir = this.filesDir(id, n);
@@ -104,19 +106,21 @@ export class ArtifactStore {
     const v: Version = { artifact: id, n, type: art.type, files, primary, sha256: primary ? files.find((f) => f.path === primary)?.sha256 ?? null : null, url: o.url ?? null,
       parent: o.parent ?? (n > 1 ? n - 1 : null), createdBy: o.createdBy, source: o.source ?? {}, annotations: o.annotations ?? [], status: o.status ?? "in-review",
       approvedBy: null, approvedAt: null, createdAt: now(), cost: o.cost ?? null, summary: o.summary ?? null, render: null };
+    if(o.refinement)v.refinement=structuredClone(o.refinement);
     this.saveVersion(v);
     return v;
   }
 
   /** Publish validated complete bytes atomically; managed callers own approval. */
-  publishMedia(a:{id:string;title:string;type:"image"|"video"|"audio";project:string},o:{n:number;name:string;bytes:Buffer;media:MediaProvenance;createdBy:Maker}):Version {
+  publishMedia(a:{id:string;title:string;type:"image"|"video"|"audio";project:string},o:{n:number;name:string;bytes:Buffer;poster?:Buffer;media:MediaProvenance;createdBy:Maker}):Version {
     if(!/^media-[a-f0-9]{40}$/.test(a.id)||!Number.isSafeInteger(o.n)||o.n<1||!/^[a-z0-9.-]+$/.test(o.name))throw new Error("Unsafe managed media identity");
     const existing=this.get(a.id);if(existing&&(existing.type!==a.type||existing.project!==a.project))throw new Error("Managed media identity changed");
     const stage=join(this.root,`.media-${crypto.randomUUID()}`);mkdirSync(join(stage,"files"),{recursive:true});
     try{
       writeFileSync(join(stage,"files",o.name),o.bytes,{flag:"wx",mode:0o600});
-      const sha=sha256File(join(stage,"files",o.name));
-      const v:Version={artifact:a.id,n:o.n,type:a.type,files:[{path:o.name,sha256:sha,size:o.bytes.length}],primary:o.name,sha256:sha,url:null,parent:o.n>1?o.n-1:null,createdBy:o.createdBy,source:{run:o.media.task},annotations:[],status:"draft",approvedBy:null,approvedAt:null,createdAt:now(),cost:null,summary:o.media.origin==="import"?"Imported media; awaiting review":"Generated media; awaiting workflow review",render:null,media:o.media};
+      if(o.poster)writeFileSync(join(stage,"files","poster.png"),o.poster,{flag:"wx",mode:0o600});
+      const sha=sha256File(join(stage,"files",o.name)),files=[{path:o.name,sha256:sha,size:o.bytes.length},...(o.poster?[{path:"poster.png",sha256:sha256File(join(stage,"files","poster.png")),size:o.poster.length}]:[])].sort((a,b)=>a.path.localeCompare(b.path));
+      const v:Version={artifact:a.id,n:o.n,type:a.type,files,primary:o.name,sha256:sha,url:null,parent:o.n>1?o.n-1:null,createdBy:o.createdBy,source:{run:o.media.task},annotations:[],status:"draft",approvedBy:null,approvedAt:null,createdAt:now(),cost:null,summary:o.media.origin==="import"?"Imported media; awaiting review":"Generated media; awaiting workflow review",render:null,media:o.media};
       writeFileSync(join(stage,"manifest.json"),JSON.stringify(v,null,2));writeFileSync(join(stage,"notes.json"),"[]");
       if(existing){if(this.latest(a.id)?.n!==o.n-1)throw new Error("Managed media version changed");renameSync(stage,this.vdir(a.id,o.n));}
       else{if(o.n!==1)throw new Error("Missing managed media parent");const outer=stage+"-artifact";mkdirSync(outer);try{renameSync(stage,join(outer,"v1"));writeFileSync(join(outer,"artifact.json"),JSON.stringify({...a,source:"file",entry:o.name,created:now(),note:"Workflow-owned managed media",legacy:null},null,2));renameSync(outer,this.adir(a.id));}finally{rmSync(outer,{recursive:true,force:true});}}
@@ -165,7 +169,7 @@ export class ArtifactStore {
     const p = normalize(resolve(fdir, rel));
     if (!p.startsWith(fdir + sep)) return null;
     try {
-      if(id.startsWith("media-")){let current=this.root;for(const part of [id,`v${n}`,"files",...relative(fdir,p).split(sep)]){current=join(current,part);if(lstatSync(current).isSymbolicLink())return null;}}
+      if(id.startsWith("media-")){if(!this.version(id,n)?.files.some(f=>f.path===relative(fdir,p).split(sep).join("/")))return null;let current=this.root;for(const part of [id,`v${n}`,"files",...relative(fdir,p).split(sep)]){current=join(current,part);if(lstatSync(current).isSymbolicLink())return null;}}
       if (!statSync(p).isFile()) return null;
     } catch { return null; }
     return p;
@@ -187,6 +191,9 @@ export class ArtifactStore {
     if (!comment) throw new Error("a note needs a comment");
     return withLock(this.vdir(id, n), "notes", () => {
     const notes = this.notes(id, n);
+    const supersedes=input.supersedes;
+    if(supersedes!==undefined){if(!Array.isArray(supersedes)||supersedes.length>20)throw new Error("Invalid superseded annotations");const ancestors=new Set<number>();let parent:number|null=n;while(parent!==null){if(ancestors.has(parent)||ancestors.size>=100)throw new Error("Invalid annotation lineage");ancestors.add(parent);const version=this.version(id,parent);if(!version)throw new Error("Missing annotation ancestor");parent=version.parent;}
+      const seen=new Set<string>();for(const target of supersedes){const key=`${target?.version}:${target?.note}`;if(!target||Object.keys(target).sort().join(',')!=="note,version"||!Number.isInteger(target.version)||!ancestors.has(target.version)||typeof target.note!=="string"||seen.has(key)||!this.notes(id,target.version).some(note=>note.id===target.note))throw new Error("Superseded annotation must belong to this version's ancestry");seen.add(key);}}
     const kind = input.kind === "range" ? "range" : "pin";
     const num = (x: any) => (Number.isFinite(Number(x)) ? Math.round(Number(x) * 1000) / 1000 : null);
     const box = (b: any) => (b && [b.x, b.y, b.w, b.h].every((x: any) => Number.isFinite(Number(x))) ? { x: num(b.x)!, y: num(b.y)!, w: num(b.w)!, h: num(b.h)! } : null);
@@ -198,6 +205,7 @@ export class ArtifactStore {
     if (kind === "range" && (note.t0 == null || note.t1 == null || note.t1 < note.t0)) throw new Error("a range note needs t0 ≤ t1");
     const art = this.get(id);
     note.locator = noteLocator(note, { artifact: id, version: n, entry: v.primary ?? art?.entry ?? null, source: art?.source });
+    if(supersedes?.length)note.supersedes=structuredClone(supersedes);
     notes.push(note); this.saveNotes(id, n, notes);
     return note;
     });

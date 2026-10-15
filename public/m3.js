@@ -13,7 +13,7 @@ const VST = { "in-review": ["run", () => T("In review", "審查中")], approved:
 const vBadge = (s) => { const [c, l] = VST[s] || VST.draft; return h("span", { class: `badge ${c}` }, h("span", { class: "d" }), l()); };
 const RST = { running: ["run", () => T("Working", "進行中")], rendering: ["run", () => T("Rendering", "算圖中")], done: ["ok", () => T("Done", "完成")], failed: ["bad", () => T("Failed", "失敗")], cancelled: ["", () => T("Cancelled", "已取消")] };
 const rBadge = (s) => { const [c, l] = RST[s] || RST.cancelled; return h("span", { class: `badge ${c}` }, h("span", { class: "d" }), l()); };
-const maker = (m) => !m ? "—" : m.kind === "agent" ? `${m.provider} · ${m.model}` : m.kind === "captain" ? T("captain", "船長") : T("imported", "匯入");
+const maker = (m) => m?.kind === "host" ? `Studio · ${m.provider || "host"}${m.model ? " / " + m.model : ""}` : !m ? "—" : m.kind === "agent" ? `${m.provider} · ${m.model}` : m.kind === "captain" ? T("captain", "船長") : T("imported", "匯入");
 const typeIc = (t) => ({ web: "monitor", video: "film", audio:"film", image: "eye", doc: "doc" }[t] || "doc");
 const LST = { ready: ["human", () => T("Ready to merge", "可合併")], fallback: ["bad", () => T("Needs the normal path", "需走一般流程")], merged: ["ok", () => T("Merged", "已合併")],
   draft: ["run", () => T("Proposed", "提議中")], closed: ["", () => T("Closed", "已關閉")], error: ["bad", () => T("Error", "錯誤")] };
@@ -99,12 +99,21 @@ function newWebArtifact() {
 }
 
 // ---------- artifact detail ----------
+function nativePreview(d,v,previous) {
+  const a=d.artifact,policy=d.nativeReview;
+  const preview=x=>a.type==='web'?(()=>{const frame=framed(`/af/${a.id}/${x.n}/${x.primary||a.entry||'index.html'}`);frame.over.remove();const button=h('button',{class:'btn',type:'button',disabled:true,'data-native-film-toggle':'1'},T('Play / pause film','播放／暫停影片'));frame.iframe.addEventListener('load',()=>{const videos=[...frame.iframe.contentDocument.querySelectorAll('video.coffee-native-film')];button.disabled=!videos.length;if(matchMedia('(prefers-reduced-motion: reduce)').matches)for(const video of videos){video.pause();video.removeAttribute('autoplay');}button.onclick=()=>{for(const video of videos)if(video.paused)video.play().catch(()=>{});else video.pause();};});return h('div',{},frame.wrap,button);})():a.type==='image'?h('img',{src:`/af/${a.id}/${x.n}/${x.primary||a.entry}`,alt:a.title,style:'max-width:100%'}):h('video',{src:`/af/${a.id}/${x.n}/${x.primary||a.entry}`,controls:true,preload:'metadata',style:'max-width:100%'});
+  return h('div',{class:'page','data-native-preview':a.id},h('div',{class:'phead'},h('div',{},h('h1',{},`${a.title} · v${v.n}`),h('p',{},maker(v.createdBy))),policy.taskHref?h('a',{class:'btn',href:policy.taskHref},T('Return to Task','返回任務')):null),
+    h('p',{},T('Read-only preview. Use the Task to request a targeted revision or approve the complete website.','此處僅供預覽。請回到任務，針對作品提出修改或驗收整個網站。')),
+    h('div',{class:'card',style:'padding:16px'},previous?preview(previous):null,preview(v)),
+    h('div',{class:'actions'},d.versions.map(x=>h('a',{class:'btn',href:`#/review/${a.id}/${x.n}`},`v${x.n} · ${maker(x.createdBy)}`))));
+}
 function viewArtifact(arg) {
   const id = (arg || "").split("/")[0];
   const d = A.detail.get(id);
   if (!d) { loadArt(id); return h("div", { class: "page" }, h("div", { class: "skel", style: "height:260px" })); }
   if (d.error) return h("div", { class: "page" }, h("div", { class: "card" }, h("div", { class: "empty" }, h("b", {}, T("No such artifact", "找不到這個成品")), h("a", { href: "#/library" }, T("Library", "成品庫")))));
   const a = d.artifact, vs = d.versions, last = vs.at(-1), ap = vs.filter((v) => v.status === "approved").at(-1);
+  if(d.nativeReview)return nativePreview(d,last);
   const reviewable = a.source !== "url";
   const live = (d.runs || []).find((r) => r.status === "running" || r.status === "rendering");
   return h("div", { class: "page" },
@@ -139,6 +148,7 @@ function verRow(a, v, d) {
         v.sha256 ? h("code", { class: "a3-sha", title: v.sha256 }, `sha ${v.sha256.slice(0, 10)}`) : null,
         intact ? null : h("span", { class: "badge bad" }, T(`changed: ${v.integrity.join(", ")}`, `被改動：${v.integrity.join(", ")}`)),
         v.render && a.type === "video" ? h("span", { class: `badge ${v.render.state === "done" ? "ok" : v.render.state === "failed" ? "bad" : "run"}` }, v.render.state === "done" ? T("rendered", "已算圖") : v.render.state === "failed" ? T("render failed", "算圖失敗") : T("rendering…", "算圖中…")) : null),
+      a.type==="image"&&window.crewImageRefinementSnapshot?window.crewImageRefinementSnapshot(v.refinement,{lang:document.documentElement.lang}):null,
       v.summary ? h("div", { class: "faint", style: "font-size:13px" }, v.summary) : null,
       v.approvedBy ? h("div", { class: "faint", style: "font-size:13px" }, T(`Approved by ${v.approvedBy} ${ago(v.approvedAt)}`, `${v.approvedBy} ${ago(v.approvedAt)}核准`)) : null),
     h("div", { class: "a3-vact" },
@@ -184,6 +194,7 @@ function viewReview(arg) {
   const n = Number(nStr) || d.versions.at(-1)?.n;
   const v = d.versions.find((x) => x.n === n);
   if (!v) return h("div", { class: "page" }, h("div", { class: "card" }, h("div", { class: "empty" }, h("b", {}, T("No such version", "沒有這個版本")))));
+  if(d.nativeReview)return nativePreview(d,v);
   if(d.managedMedia||d.artifact.type==="audio")return h("div",{class:"page","data-managed-media":d.managedMedia?"1":"0"},h("h1",{},d.artifact.title),vBadge(v.status),artPreview(d.artifact,v,true),h("p",{},d.managedMedia?T("Draft visibility is not approval. Review and refine this output in its workflow Task.","草稿可見不代表已核准，請回到工作流程任務驗收或修改。"):T("Imported audio","匯入音訊")),d.managedMedia&&v.media?h("a",{class:"btn",href:`#/run/${encodeURIComponent(v.media.task)}`},T("Open source Task","開啟來源任務")):null,h("a",{class:"btn",href:`#/artifact/${d.artifact.id}`},T("Versions","版本")));
   return d.artifact.type === "video" ? videoReview(d, v) : d.artifact.type === "image" ? imageReview(d, v) : webReview(d, v);
 }
@@ -411,6 +422,7 @@ function viewCompare(arg) {
   if (d.error) return viewArtifact(id);
   const a = d.artifact, va = d.versions.find((x) => x.n === Number(aStr)), vb = d.versions.find((x) => x.n === Number(bStr));
   if (!va || !vb) return h("div", { class: "page" }, h("div", { class: "card" }, h("div", { class: "empty" }, h("b", {}, T("No such versions", "沒有這些版本")))));
+  if(d.nativeReview)return nativePreview(d,vb,va);
   const headR = h("div", { class: "phead" }, h("div", {}, h("h1", {}, h("a", { href: `#/artifact/${a.id}`, class: "a3-back" }, a.title), " · ", `v${va.n} ↔ v${vb.n}`),
     h("p", { class: "run-s", style: "font-size:13px" }, h("span", {}, T(`v${vb.n} by ${maker(vb.createdBy)}`, `v${vb.n} 由 ${maker(vb.createdBy)}`)), vb.annotations?.length ? h("span", {}, T(`for ${vb.annotations.join(", ")}`, `處理 ${vb.annotations.join(", ")}`)) : null, vb.cost ? h("span", {}, money(vb.cost)) : null)),
     h("div", { class: "actions" }, vb.status === "in-review" ? h("button", { class: "btn primary", onclick: () => approve(a, vb) }, icon("check", "ic sm"), T(`Approve v${vb.n}`, `核准 v${vb.n}`)) : vBadge(vb.status),

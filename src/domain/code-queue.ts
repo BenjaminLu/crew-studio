@@ -52,6 +52,7 @@ function scopeState(this: Engine, x: X) {
     const project = this.queueProject(x.run), repo = this.queueRepo(x.ctx.repo), trusted = this.trusted(x.run.id);
     const acceptance: any = trusted.entries.filter(e => e.record === "card-answer" && (((e.data as any)?.kind === "dispatch" && (e.data as any)?.choice === "dispatch") || ((e.data as any)?.queueRecovery === true && (e.data as any)?.choice === "retry"))).at(-1)?.data;
     const deps = this.queueDependencies(x.run), specHash = hashInput(x.ctx.spec);
+    const staffing=this.deps.staffingBinding?.(x.run);if(staffing&&acceptance?.staffing!==staffing)throw new Error("staffing approval changed; explicit fresh preparation required");
     if (!acceptance || acceptance.queueHashAlgorithm !== INPUT_HASH_ALGORITHM) throw new Error("historical or unknown scope hash algorithm; fresh preparation required");
     if (!trusted.ok || !acceptance || acceptance.queueSpec !== specHash || acceptance.repo !== repo || acceptance.project !== project || hashInput(acceptance.dependencies) !== hashInput(deps) || !Array.isArray(acceptance.scope) || !acceptance.scope.length) throw new Error("accepted dependency/scope binding is unavailable or changed; fresh dispatch required");
     const { prior, signed } = signedReservation(this, x.run, trusted);
@@ -96,7 +97,7 @@ export function installCodeQueue(engine: Engine) {
     answer(r, _node, rn, c) {
       const binding = (c.kind === "dispatch" && c.answer!.choice === "dispatch") || (c.kind === "scope" && rn.data.nativeQueueCapability && c.answer!.choice === rn.data.nativeQueueCapability.retryAction);
       if (!binding || !Array.isArray(r.ctx.spec?.scope)) return {};
-      return { queueRecovery: !!rn.data.nativeQueueCapability, queueHashAlgorithm: INPUT_HASH_ALGORITHM, queueSpec: hashInput(r.ctx.spec), scope: clone(r.ctx.spec.scope), project: engine.queueProject(r), repo: engine.queueRepo(r.ctx.repo), dependencies: engine.queueDependencies(r) };
+      return { ...(engine.deps.staffingBinding?.(r)?{staffing:engine.deps.staffingBinding(r)}:{}), queueRecovery: !!rn.data.nativeQueueCapability, queueHashAlgorithm: INPUT_HASH_ALGORITHM, queueSpec: hashInput(r.ctx.spec), scope: clone(r.ctx.spec.scope), project: engine.queueProject(r), repo: engine.queueRepo(r.ctx.repo), dependencies: engine.queueDependencies(r) };
     }
   };
 }

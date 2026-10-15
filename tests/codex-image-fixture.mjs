@@ -2,6 +2,7 @@
 import {createInterface} from 'node:readline';
 import {writeFileSync,mkdirSync,symlinkSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {createHash} from 'node:crypto';
 import {deflateSync} from 'node:zlib';
 const args=process.argv.slice(2);
 if(args[0]!=='app-server'||!args.includes('image_generation')||!args.includes('shell_tool')||!args.includes('web_search="disabled"')||!args.includes('sandbox_mode="read-only"'))process.exit(9);
@@ -21,6 +22,10 @@ createInterface({input:process.stdin}).on('line',line=>{
  if(m.method!=='turn/start')return;
  if(m.params.model!=='fixture-model'||m.params.effort!=='low'||m.params.threadId!=='thread-1')return process.exit(11);
  const prompt=m.params.input[0].text,mode=prompt.split('MODE:')[1]?.trim().split(/\s/)[0]||'success',planted=prompt.match(/PLANTED:([^\n]+)/)?.[1];
+ if(mode==='reference'){
+  const ref=m.params.input[1],expected=prompt.match(/REFERENCE_SHA:([a-f0-9]{64})/)?.[1];
+  if(m.params.input.length!==2||ref?.type!=='image'||typeof ref.url!=='string'||!ref.url.startsWith('data:image/png;base64,')||createHash('sha256').update(Buffer.from(ref.url.slice(22),'base64')).digest('hex')!==expected){event('turn/completed',{threadId:'thread-1',turn:{id:'turn-1',status:'failed'}});return;}
+ }
  rpc(m,{turn:{id:'turn-1'}});
  event('item/completed',{threadId:'thread-1',turnId:'turn-1',item:{type:'userMessage',id:'user-1'}});
  if(mode==='timeout')return;

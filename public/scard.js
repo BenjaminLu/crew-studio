@@ -87,6 +87,18 @@ async function post(u, body) {
 const short = (s) => (s ? String(s).slice(0, 8) : "—");
 const fmtUsd = (n) => (n == null ? "—" : `$${n.toFixed(n < 1 ? 3 : 2)}`);
 
+// Shared by acceptance cards and Library version history. Text is rendered as text nodes.
+window.crewImageRefinementSnapshot=(snapshot,{lang="en",review=null}={})=>{
+ const T=(en,zh)=>lang==="zh-TW"?zh:en,box=h("section",{"data-image-refinement":"1",style:"overflow-wrap:anywhere;min-width:0"},h("h4",{},T("Refinement evidence for this round","本回合修改依據")));
+ if(!snapshot||snapshot.schema!==1||!Array.isArray(snapshot.history)||!Array.isArray(snapshot.active)){box.append(h("p",{"data-refinement-not-recorded":"1"},T("Not recorded for this historical round. Current notes cannot establish the original wording.","此歷史回合未記錄快照；目前的標註無法證明當時原話。")));return box;}
+ const s=snapshot;
+ box.append(h("p",{"data-refinement-round":"1"},review?T(`Acceptance round ${review.round} · attempt ${review.attempt}; `,`驗收第 ${review.round} 回合 · 第 ${review.attempt} 次嘗試； `):"",T(`Image generation round ${s.round} · attempt ${s.attempt}`,`圖片製作第 ${s.round} 回合 · 第 ${s.attempt} 次嘗試`)),h("p",{},T("Original intent: ","原始需求："),s.intent));
+ if(s.reference)box.append(h("p",{"data-refinement-reference":s.reference.version},T(`Reference image v${s.reference.version} · SHA `,`參考圖片版本 ${s.reference.version} · SHA `),s.reference.sha256));
+ const item=(n,history)=>h("li",{"data-requirement":n.key,"data-requirement-state":n.state,style:"margin:6px 0;white-space:pre-wrap"},h("b",{},`${n.key} · `),history?(n.state==="superseded"?T("Superseded · ","已明確取代 · "):T("Active · ","有效 · ")):"",n.comment,(n.bbox||n.box)?h("div",{},T("Selected region: ","圈選區域："),JSON.stringify(n.bbox||n.box)):null,n.t0!=null?h("div",{},T(`Time ${n.t0}–${n.t1}s`,`時間 ${n.t0}–${n.t1} 秒`)):null);
+ box.append(h("h5",{},T("Cumulative active requirements (captain’s words)","累積有效修改要求（船長原話）")),s.active.length?h("ul",{"data-refinement-active":"1"},s.active.map(n=>item(n,false))):h("p",{},T("Initial version; no modification requests yet.","初始版本，尚無修改要求。")),h("details",{"data-refinement-history":"1"},h("summary",{},T("Original annotation history and target versions","原始標註歷程與指定版本")),h("ul",{},s.history.map(n=>item(n,true)))));
+ return box;
+};
+
 /**
  * Mount one card into `el` (its content is replaced). `card` is a Studio card as /api/scards returns it.
  * opts.onAnswered(card) runs after the server took the answer; opts.inbox adds the run/workflow/node line;
@@ -100,7 +112,12 @@ function mountCard(el, card, opts = {}) {
   if(form?.schema===1&&/^[a-f0-9]{64}$/.test(form.batchHash)&&/^R-\d+$/.test(card.run)&&/^SC-\d+$/.test(card.id)&&form.visit===card.visit&&Array.isArray(form.questions)&&form.questions.length===6){
     draft=interviewDrafts.get(card.id);if(!draft||draft.hash!==form.batchHash){draft={hash:form.batchHash,revision:form.revision,answers:{...form.answers},dirty:false,timer:null,saving:Promise.resolve()};interviewDrafts.set(card.id,draft);}else if(!draft.dirty&&form.revision>draft.revision){draft.revision=form.revision;draft.answers={...form.answers};}
   }
-  const saveDraft=()=>{if(!draft)return Promise.resolve();clearTimeout(draft.timer);draft.timer=null;draft.saving=draft.saving.catch(()=>{}).then(async()=>{if(!draft.dirty)return;const answers={...draft.answers};const saved=await post(`/api/pack-genesis/${encodeURIComponent(card.run)}/interview-draft`,{schema:1,card:card.id,visit:card.visit,batchHash:draft.hash,revision:draft.revision,answers});draft.revision=saved.revision;draft.dirty=JSON.stringify(draft.answers)!==JSON.stringify(answers);});return draft.saving;};
+  let composing = null, pendingRender = false, compositionTimer = null;
+  const saveDraft=()=>{if(!draft||composing)return Promise.resolve();clearTimeout(draft.timer);draft.timer=null;draft.saving=draft.saving.catch(()=>{}).then(async()=>{if(composing||!draft.dirty)return;const answers={...draft.answers};const saved=await post(`/api/pack-genesis/${encodeURIComponent(card.run)}/interview-draft`,{schema:1,card:card.id,visit:card.visit,batchHash:draft.hash,revision:draft.revision,answers});draft.revision=saved.revision;draft.dirty=JSON.stringify(draft.answers)!==JSON.stringify(answers);});return draft.saving;};
+  const composingField = e => e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement;
+  el.addEventListener('compositionstart', e => { if(composingField(e)){ clearTimeout(compositionTimer); composing=e.target; } }, true);
+  el.addEventListener('keydown', e => { if(composingField(e)&&(e.isComposing||e.keyCode===229||composing)){ if(e.key==='Enter'||e.keyCode===229)e.stopPropagation(); } }, true);
+  el.addEventListener('compositionend', e => { if(e.target!==composing)return;const field=composing;composing=null;compositionTimer=setTimeout(()=>{if(composing)return;if(field.matches('[data-card-note]'))st.note=field.value;else if(draft&&field.dataset.interview){draft.answers[field.dataset.interview]=field.value;draft.dirty=true;}if(pendingRender){pendingRender=false;render();}if(draft&&draft.dirty)saveDraft().catch(error=>{st.msg=error.message;st.draw();});},0); }, true);
   st.card = card; st.draw = () => render(); // the newest mount draws: an answer that settles after a remount shows on the card that is on screen
   const zh = () => st.lang === "zh-TW";
   const T = (en, tw) => (zh() ? tw : en);
@@ -204,17 +221,20 @@ function mountCard(el, card, opts = {}) {
       x.proofs.map(p => h("div", { class: "cc-proof" }, h("span", { class: "cc-mono" }, p.check), h("span", {}, `ledger #${p.seq}`)))));
     return [sec("intent", T("Intent (the captain's words)", "意圖（船長的原話）"), h("p", { class: "cc-quote" }, d.intent.en)),
       offered.length ? sec("artifact-versions", T("Versions to review", "待審閱版本"), offered.map(r => h("a", { href: `#/review/${encodeURIComponent(r.id)}/${r.n}`, "data-offered-version": r.n }, r.producer.startsWith("design-") ? T(`Direction ${r.producer.slice(-1).toUpperCase()} · v${r.n}`, `方向 ${r.producer.slice(-1).toUpperCase()} · 版本 ${r.n}`) : T(`Version ${r.n}`, `版本 ${r.n}`)))) : null,
+      ...(Array.isArray(m?.refinements)?m.refinements:offered.filter(r=>r.format==="image").map(r=>({snapshot:null}))).map(r=>window.crewImageRefinementSnapshot(r.snapshot,{lang:st.lang,review:m?.review})),
       sec("proved", T("Proved by checks", "由檢查證明"), lines(true).length ? lines(true) : h("p", {}, T("No check proves a condition yet.", "目前尚無完成條件通過檢查。"))),
       sec("needs-eye", T("Needs your eye", "需要你看"), lines(false)), linksView(c)];
   }
   function render() {
+    if(composing){pendingRender=true;return;}
+    const focused=document.activeElement;const keep=focused&&el.contains(focused)&&focused instanceof HTMLTextAreaElement?{key:focused.hasAttribute('data-card-note')?'data-card-note':focused.hasAttribute('data-interview')?'data-interview':null,value:focused.getAttribute('data-interview'),start:focused.selectionStart,end:focused.selectionEnd,direction:focused.selectionDirection}:null;
     const c = st.card; const d = detailOk(c.detail) ? c.detail : null; const open = c.status === "open";
     const n = d?.intents?.length || 0; const one = c.confirmDoor && c.door === "one-way";
     const hasNote = !expectsInterview && (c.options.some((o) => o.note) || n > 0);
     const missing = (o) => { if (o.hold) return null;if(expectsInterview&&!draft)return T("This interview version is unavailable. Reload the card; no answer was submitted.","這個訪談版本無法使用。請重新載入卡片；尚未送出回答。");if(draft&&form.questions.some(q=>!String(draft.answers[q.key]||" ").trim()))return T("Answer every question below", "請回答下方每個問題"); if (n && st.ticks.size < n && !st.note.trim()) return T(`Tick every intent line (${st.ticks.size} of ${n}) or write a note`, `請勾完每一條意圖（${st.ticks.size}/${n}），或寫備註`);
       if (one && !st.confirm) return T("Confirm the door first", "請先確認門"); return null; };
     const answer = async (o) => {
-      if (st.busy) return; // one answer in flight per card
+      if (st.busy || composing) return; // one answer in flight; never submit an unfinished composition
       const why=missing(o);if(expectsInterview&&why){st.msg=why;st.interviewAttempted=true;render();el.querySelector('[aria-invalid="true"]')?.focus();return;}
       st.busy = true; st.msg = ""; render();
       const took = (got) => { st.card = got && got.id ? got : { ...c, status: "answered", answer: { choice: o.id } }; st.ok = true; st.msg = ""; try { opts.onAnswered && opts.onAnswered(st.card); } catch {} };
@@ -263,6 +283,7 @@ function mountCard(el, card, opts = {}) {
     }
     kids.push(h("div", { class: "cc-msg", role: "status", "aria-live": "polite", "data-card-msg": "", tabindex: "-1" }, st.msg));
     el.replaceChildren(h("div", { class: "cc", "data-card-root": c.id }, kids));
+    if(keep?.key){const field=[...el.querySelectorAll(`[${keep.key}]`)].find(t=>keep.key!=='data-interview'||t.getAttribute(keep.key)===keep.value);if(field){field.focus({preventScroll:true});field.setSelectionRange(keep.start,keep.end,keep.direction);}}
     el.classList.add("rt-card"); el.setAttribute("data-scard", c.id); el.setAttribute("data-card-status", c.status);
   }
   render();

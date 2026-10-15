@@ -33,10 +33,10 @@ import { realInside } from "../secure";
 import { helperCommand, helperReads } from "../self";
 import { entryOf, validate, type WDef, type WEdge, type WNode, type WorkflowDefs } from "./defs";
 import { locatorText, parseFinding, type Finding } from "./locator";
-import { composeInstructions, Skills } from "../skills";
+import { composeInstructions, withSafetyRules, Skills } from "../skills";
 
 export type NState = "pending" | "running" | "passed" | "failed" | "error" | "skipped" | "superseded";
-export type AgentPick = { provider: string; model: string | null };
+export type AgentPick = { provider: string; model: string | null; effort?: string | null };
 export type NodeRun = {
   state: NState; visits: number; extra: number; attempt: number; outcome: string | null; cause: string | null; error: string | null; startedAt: string | null; endedAt: string | null;
   inbox: string[]; agent: AgentPick | null; swap: AgentPick | null; job: string | null; card: string | null; waiting: "card" | "external" | null; data: Record<string, any>; note: string | null;
@@ -312,6 +312,7 @@ export class Engine {
   start(o: { workflow: string; version?: number; title?: string; text?: string; params?: Record<string, string>; by?: string; classifier?: any }): Run {
     const def = this.defs.get(o.workflow, o.version); if (!def) throw new Error(`no workflow ${o.workflow}${o.version ? ` v${o.version}` : ""}`);
     const errs = validate(def, this.defs.known, this.defs.runners?.(), this.defs.skillInfo ?? undefined).filter((p) => p.level === "error"); if (errs.length) throw new Error(`${def.id} v${def.version} is not runnable: ${errs[0].text}`);
+    this.deps.authorizeStart?.(def, o);
     const id = allocate(this.root, "R");
     mkdirSync(this.rdir(id), { recursive: true });
     const params: Record<string, string> = {};
@@ -324,6 +325,7 @@ export class Engine {
     this.runs.set(id, r);
     this.append(r, { type: "run_created", run: clone(r) });
     this.committed.set(id, clone(r));
+    this.deps.initializeRun?.(r);
     const entry = entryOf(def)!;
     r.queue.push(entry.id); r.status = "running";
     this.commit(r, "started");
@@ -411,6 +413,7 @@ export class Engine {
   x(r: Run, node: WNode, rn: NodeRun): X {
     const self = this;
     const pick = (): AgentPick => {
+      const approved = self.deps.approvedPick?.(r, node); if (approved) return approved;
       if (rn.agent) return rn.agent;
       if (node.provider) return { provider: node.provider, model: node.model ?? null };
       const role = r.def.roles.find((x) => x.id === node.role);
@@ -428,7 +431,8 @@ export class Engine {
   }
   /** The one way an agent's instructions are built (architecture §5): the safety rules, the role's skill, then each pinned skill in order. */
   instructions(r: Run, roleId: string | undefined, pins: { id: string; v: number; sha256: string }[]): string {
-    const role = r.def.roles.find((x) => x.id === roleId); let roleText = ""; if (role?.skill) { try { roleText = this.deps.skillText(role.skill); } catch {} }
+    const approved = this.deps.approvedSkill?.(r, roleId);
+    const role = r.def.roles.find((x) => x.id === roleId); let roleText = approved === undefined ? "" : `# Approved native role snapshot\n${approved}\n# End native role snapshot`; if (approved === undefined && role?.skill) { try { roleText = this.deps.skillText(role.skill); } catch {} }
     // the library is Studio's skill store under this data folder; an engine built without one (a test, a tool) opens the same store
     if (pins.length && !this.deps.library) this.deps.library = new Skills(this.deps.dataDir, { list: () => [], get: () => null, sourceSkill: () => null } as any);
     return composeInstructions(roleText, pins.map((p) => ({ id: p.id, v: p.v, body: this.deps.library.body(p.id, p.v, p.sha256) })));
@@ -453,7 +457,8 @@ export class Engine {
     for (const s of r.steps) if (s.node === id && (s.state === "passed" || s.state === "failed")) s.state = "superseded";
     rn.visits++; rn.state = "running"; rn.cause = rn.visits > 1 ? `visit ${rn.visits}` : "token"; rn.startedAt = now(); rn.endedAt = null; rn.error = null; rn.outcome = null; rn.waiting = null; rn.data.externalCompletion = null; rn.data.externalHookReport = null;
     const x = this.x(r, node, rn);
-    const pk = node.kind === "agent" ? x.pick() : null;
+    let pk: AgentPick | null = null;
+    try { pk = node.kind === "agent" ? x.pick() : null; } catch (error) { if (!(error instanceof QueueRefusal) && !(error instanceof ProviderRefusal)) throw error; }
     const step: Step = { seq: r.steps.length + 1, node: id, kind: node.kind, visit: rn.visits, state: "running", outcome: null, startedAt: now(), endedAt: null, error: null, job: null, provider: pk?.provider ?? null, model: pk?.model ?? null, note: null };
     r.steps.push(step); this.commit(r, rn.cause);
     this.emit(r, "node_started", `${node.label}${rn.visits > 1 ? ` (visit ${rn.visits})` : ""}`, { node: id, visit: rn.visits, kind: node.kind, ...(pk ? { provider: pk.provider, model: pk.model } : {}) });
@@ -760,16 +765,19 @@ export class Engine {
     const vendors = (ref.provider ? [ref.provider] : j.vendors?.length ? j.vendors : [j.provider ?? this.deps.defaultProvider().provider]);
     const prompt = `${ref.prompt ?? j.prompt}\n\nInput (JSON):\n${JSON.stringify({ ...input, out: undefined }, null, 1).slice(0, 30000)}`;
     for (let i = votes.length; i < q.of; i++) {
-      const provider = vendors[i % vendors.length]; const model = ref.model ?? j.model ?? null;
+      const approvedJudge = this.deps.approvedPick?.(x.run, x.node, man.id.includes("designer") ? "designer" : "reviewer");
+      const provider = approvedJudge?.provider ?? vendors[i % vendors.length]; const model = approvedJudge?.model ?? ref.model ?? j.model ?? null;
       let got: any = null;
       const tools: AgentTool[] = [{ name: "judge_report", description: "Your judgement, once: verdict pass, warn or fail, and findings. Every finding MUST carry a locator (file {path,line}, web, image, timeline, text or card); a finding without one is dropped.",
         schema: { type: "object", properties: { verdict: { type: "string", enum: ["pass", "warn", "fail"] }, score: { type: "number" }, findings: { type: "array", items: { type: "object", properties: { locator: { type: "object" }, message: { type: "string" }, expected: { type: "string" }, class: { type: "string" }, severity: { type: "string", enum: ["blocking", "minor"] } }, required: ["locator", "message", "class"] } } }, required: ["verdict", "findings"] },
         run: (a) => { got = a; return { ok: true }; } }];
-      const selected = this.deps.selectProvider ? await this.deps.selectProvider(x, { provider, model }, { role: "judge", explicit: true }) : this.deps.provider(provider, model ?? undefined);
+      const selected = this.deps.selectProvider ? await this.deps.selectProvider(x, { provider, model, ...(approvedJudge ? {effort: approvedJudge.effort} : {}) }, { role: man.id.includes("designer") ? "designer" : "judge", explicit: true }) : this.deps.provider(provider, model ?? undefined);
       if (j.distinct_providers && actual.has(selected.id)) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "distinct provider agreement resolved to a duplicate actual vendor", votes };
-      const job = await this.deps.agents.run({ kind: `judge:${man.id}`, title: `${x.run?.id ?? "try"} judge ${man.id} #${i + 1}`, system: `You are a judge for the check "${man.title.en}". Judge only what the input shows. Call judge_report exactly once, then answer in one line.`,
-        text: `JUDGE ${man.id}\n${prompt}`, tools, provider: selected, ref: x.run?.id, signal: x.run && x.run.id !== "try" ? this.abortOf(x.run).signal : undefined, owns: x.run && x.run.id !== "try" ? () => this.owns(x) : undefined, maxTools: 4, timeoutMs: man.timeout_s * 1000,
-        sandbox: x.run ? this.roundSandbox(x, null) : { writes: [] } });
+      const system = `${this.deps.approvedSkill?.(x.run, man.id.includes("designer") ? "designer" : "reviewer") ?? ""}\n\nYou are a judge for the check "${man.title.en}". Judge only what the input shows. Call judge_report exactly once, then answer in one line.`;
+      const admissionReceipt=this.deps.instructionReceipt?.(x,man.id.includes("designer") ? "designer" : "reviewer",withSafetyRules(system),selected);
+      const job = await this.deps.agents.run({ kind: `judge:${man.id}`, title: `${x.run?.id ?? "try"} judge ${man.id} #${i + 1}`, system,
+        text: `JUDGE ${man.id}\n${prompt}`, tools, admissionReceipt, provider: selected, ref: x.run?.id, signal: x.run && x.run.id !== "try" ? this.abortOf(x.run).signal : undefined, owns: x.run && x.run.id !== "try" ? () => this.owns(x) : undefined, maxTools: 4, timeoutMs: man.timeout_s * 1000,
+        sandbox: x.run ? this.roundSandbox(x, null) : { writes: [] } } as any);
       if (job.status !== "done" || !got) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: `tool error: judge ${provider} ${job.status === "done" ? "gave no judgement" : job.error}` };
       if (j.distinct_providers && actual.has(job.provider)) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "distinct provider agreement produced duplicate actual vendor", votes };
       actual.add(job.provider); take(got, `${job.provider}·${job.model}`, { provider: job.provider, model: job.model, job: job.id });
@@ -866,6 +874,7 @@ export class Engine {
     const r = this.must(id); const node = r.def.nodes.find((n) => n.id === nodeId); if (!node) throw new Error("no such node");
     if (node.kind !== "agent" && node.kind !== "loop" && !(node.kind === "card" && node.args?.mode)) throw new Error(`${node.label} has no agent`);
     if (!p.provider) throw new Error("name a provider");
+    this.deps.authorizePickChange?.(r, node, p);
     const rn = r.nodes[nodeId];
     if (rn.state === "running" && rn.job && node.kind === "agent") { rn.swap = p; this.commit(r, "swap requested"); this.emit(r, "swap_requested", `${node.label}: switching to ${p.provider}${p.model ? ` · ${p.model}` : ""}`, { node: nodeId, ...p }); this.deps.agents.cancel(rn.job); }
     else { rn.agent = p; this.commit(r, "agent set"); this.emit(r, "agent_set", `${node.label}: next visit runs on ${p.provider}${p.model ? ` · ${p.model}` : ""}`, { node: nodeId, ...p }); }
@@ -886,6 +895,7 @@ export class Engine {
       if (!ok) throw new Error("this card is still being raised (its checks are running): answer it again in a moment"); }
     if (TERMINAL.includes(r.status)) throw new Error(`the run is ${r.status}`);
     const rn = r.nodes[c0.node]; if (rn?.state !== "running" || rn.waiting !== "card" || rn.card !== c0.id) throw new Error("this card is not the one its node waits on");
+    this.deps.authorizeAnswer?.(r,c0,a);
     const c = this.cards.answer(cardId, a);
     const node = r.def.nodes.find((n) => n.id === c.node)!;
     const x = this.x(r, node, rn);
@@ -1084,7 +1094,9 @@ export class Engine {
       const text = handoff ? `${base}\n\nHANDOFF\nAnother agent started this step and was stopped. Its hand-off follows; continue from the current state instead of starting over.\n${handoff}` : base;
       x.ctx.lastPrompt = { ...(x.ctx.lastPrompt ?? {}), [x.node.id]: base.slice(0, 6000) };
       const tl = Number(x.node.timeout_s ?? x.policy("round_timeout_s", 900));
-      const job = await this.deps.agents.run({ kind: `run:${modeName}`, title: `${x.run.id} ${x.node.label}${x.visit > 1 ? ` (visit ${x.visit})` : ""}`, system: mode.system(x, skill), text, tools: mode.tools(x), provider: prov,
+      const system = mode.system(x, skill);
+      const admissionReceipt=this.deps.instructionReceipt?.(x, x.node.role ?? x.node.args?.role, withSafetyRules(system), prov);
+      const job = await this.deps.agents.run({ kind: `run:${modeName}`, title: `${x.run.id} ${x.node.label}${x.visit > 1 ? ` (visit ${x.visit})` : ""}`, system, text, admissionReceipt, tools: mode.tools(x), provider: prov,
         ref: x.run.id, queueLease: true, signal: this.abortOf(x.run).signal, owns: () => this.owns(x) && hashInput(x.pick()) === pickIdentity, maxTools: (typeof mode.maxTools === "function" ? mode.maxTools(x) : mode.maxTools) ?? 60, timeoutMs: tl * 1000,
         // a sandboxed round reaches its provider's API, plus the hosts policy egress.allow grants (e.g. a package registry)
         record: (() => { const b = briefFor(x); return { dir: join(this.root, x.run.id, "nodes", x.node.id, String(x.visit)), header: { run: x.run.id, node: x.node.id, round: x.visit, attempt: (x.rn.data.jobs ?? []).filter((j: any) => j.round === x.visit && !j.hop).length + (hop ? 0 : 1), head: x.ctx.head ?? null, brief: b?.id ?? null, ledger: b?.ledger ?? [], hop } }; })(),

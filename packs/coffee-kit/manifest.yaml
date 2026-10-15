@@ -1,0 +1,15 @@
+id: coffee-kit
+name: Coffee shop kit
+version: 1.0.0
+description: "Create an integrated coffee-shop website, image and film with human direction, targeted revisions and whole-site approval."
+skills:
+  - { role: worker, file: skills/website.md }
+  - { role: image-worker, file: skills/image.md }
+  - { role: reviewer, file: skills/reviewer.md }
+  - { role: designer, file: skills/designer.md }
+  - { role: video-renderer, file: skills/hyperframes.md }
+gates: []
+artifactTypes: []
+workflows: []
+evals: []
+permissions: [agent]

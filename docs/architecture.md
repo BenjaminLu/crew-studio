@@ -172,8 +172,44 @@ A default fresh primary runs in data/workspace without a legacy handoff or first
 
 ### Native primary local-project recovery
 
-The main host exposes source-owned read-only project/workflow lookup and `studio_prepare_project_work`. Unknown local repositories produce a captain-only local registration card; its approval only registers the exact canonical Git identity and prepares an ordinary work proposal. Only a second captain approval starts that pinned workflow through normal Engine admission. Raw repo/base/branch/worktree remain forbidden in `studio_propose_work`. Versioned registration records bind local identity/head, workflow hash, source turn, actual confirmation card and project/result; restart cannot duplicate or silently repair uncertain records. This is local registration, not a GitHub grant or verified worker staffing. Structured native errors distinguish invalid parameters, absent/disabled/revoked projects, target drift and owner loss without publishing private exceptions. Private data/credential/runtime roots remain protected; source repository location alone does not make it a protected root.
+The main host exposes source-owned read-only project/workflow lookup and `studio_prepare_project_work`. Unknown local repositories produce a captain-only local registration card; its approval registers the exact canonical Git identity. Native coding without approved staffing retains a signed pending intent and returns to the Firstmate conversation for role configuration; it does not consume dispatch finality. After configuration approval, a separate ordinary dispatch card starts the pinned workflow only on captain approval through normal Engine admission. Raw repo/base/branch/worktree remain forbidden in `studio_propose_work`. Versioned registration records bind local identity/head, workflow hash, source turn, actual confirmation card and project/result; restart cannot duplicate or silently repair uncertain records. This is local registration, not a GitHub grant or verified worker staffing. Structured native errors distinguish invalid parameters, absent/disabled/revoked projects, target drift and owner loss without publishing private exceptions. Private data/credential/runtime roots remain protected; source repository location alone does not make it a protected root.
+
+### Project staffing authority
+
+The primary Firstmate account is separate from workflow role selection. The native
+staffing interview persists signed decision rounds: vendor choices unlock verified
+model choices, then explicit reasoning effort. Recommendations never activate a
+configuration. An authenticated captain-only staffing card writes immutable
+project-local configuration versions and exact native role skill snapshots, then
+atomically advances a signed activation pointer. Older pointers, altered snapshots,
+unknown fields and stale compare-and-swap proposals hold without repair or fallback.
+
+The source installs optional domain-free Engine callbacks before loading runs.
+Native coding requires a verified configuration before allocation and signed task
+staffing lineage before a paid role or fresh judge can run. Actual instruction
+receipts bind configuration, skill body, provider, model, effort, node, visit,
+attempt and head. Generic workflows retain their existing contract. Source provider
+admission independently verifies fresh capability; login, adapter support, quota
+and model availability remain separate facts.
+
+Existing readiness-held Tasks can receive a captain-approved staffing upgrade
+bound to their exact node, visit, attempt, head and prior configuration. The upgrade
+preserves the original Task and leaves its fresh-preparation card unanswered. The
+captain must approve preparation separately. No global vendor settings or account
+files are written. Canonical registered-project identity resolves root, common directory, base and grant
+from strict source-owned registry and bounded Git metadata reads. Coffee-workflow
+integration is separate; absent source authority fails closed. The Firstmate chat is the primary entry; the
+editable configuration panel is a secondary view of the same decision state.
 
 ### Claude native admission
 
 Claude metadata uses official local CLI auth status without making a model request. Authentication, quota exhaustion and unknown quota remain distinct. Only explicit desktop Verify for an exact selected model/effort may create a private, short-lived execution admission after an isolated tool-free request exits successfully with matching actual model identity and verified process-group cleanup. Quota stays unknown; this Claude-only receipt does not weaken other providers or certify remaining balance. Runtime authentication, quota, model or execution failures invalidate it. Native worker execution preserves the existing round OS sandbox and source MCP allowlist; successful stream results wait for successful exit and group cleanup. See [the unit contract](units/claude-native-capability.md) for limitations and retained offline evidence.
+
+
+Claude staffing keeps quota unknown. Only a source-owned callback holding the actual, unexpired, exact-model/effort Claude execution receipt may satisfy the unknown-quota exception during staffing confirmation and pre-allocation admission. Public copied facts cannot grant this authority; metadata lookup never performs Verify or chooses a replacement model. Codex retains its available-quota requirement.
+
+Direct owned Codex primary imageGeneration items are staged by thread/turn/item and
+verified as bounded PNGs, then published to the shared MediaLibrary before successful
+turn completion. Interrupted/failed turns, stale items and unsafe saved paths cannot
+publish. Managed drafts grant no approval; direct audio/video and historical output
+backfill are outside this host contract.

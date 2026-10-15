@@ -14,7 +14,9 @@ import type { ProviderCapability } from './policy';
 
 const MAX_IMAGE = 16 * 1024 * 1024;
 export type CodexImage = { bytes: Buffer; mime: 'image/png'; width: number; height: number; sha256: string; provider: 'codex'; model: string; effort: string | null };
+export type CodexImageReference={bytes:Buffer;sha256:string};
 export type CodexImageOptions = {
+  reference?:CodexImageReference;
   prompt: string; approved: ApprovedCodexConfig; authorize(): void; signal?: AbortSignal;
   bin?: string; timeoutMs?: number;
   /** Source-owned dependency injection; never populated from a browser request. */
@@ -57,8 +59,11 @@ function approvedCapability(c: ProviderCapability, a: ApprovedCodexConfig) {
   if (!model || a.effort && !model.efforts?.includes(a.effort)) throw new Error('Codex image configured model/effort unavailable');
 }
 
-export async function generateCodexImage(input: CodexImageOptions): Promise<CodexImage> {
+async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
   const o = { ...input, approved: input.approved && { ...input.approved } };
+  if(o.reference&&(!Buffer.isBuffer(o.reference.bytes)||o.reference.bytes.length>MAX_IMAGE||typeof o.reference.sha256!=="string"))throw new Error("Codex image reference invalid");
+  const reference=o.reference?{bytes:Buffer.from(o.reference.bytes),sha256:o.reference.sha256}:undefined;
+  if(reference){verifyImagePng(reference.bytes);if(createHash('sha256').update(reference.bytes).digest('hex')!==reference.sha256)throw new Error('Codex image reference hash differs');}
   const guard = () => { if (o.signal?.aborted) throw new Error('Codex image cancelled'); o.authorize(); };
   guard();
   if (typeof o.prompt !== 'string' || !o.prompt.trim() || Buffer.byteLength(o.prompt) > 16000 || !o.approved || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(o.approved.model) || o.approved.effort !== null && !['none','minimal','low','medium','high','xhigh','max','ultra'].includes(o.approved.effort)) throw new Error('Codex image request invalid');
@@ -112,7 +117,7 @@ export async function generateCodexImage(input: CodexImageOptions): Promise<Code
     const t=await call('thread/start',{model:o.approved.model,cwd:work,approvalPolicy:'never',sandbox:'read-only',ephemeral:true,baseInstructions:'Generate exactly one requested PNG image using image generation only. No shell, web, file reading, tools, delegated tasks or permissions. Return the generated image, not a promise or instructions.',config:{'features.shell_tool':false,'features.image_generation':true,web_search:'disabled',...(o.approved.effort?{model_reasoning_effort:o.approved.effort}:{})}});guard();
     if(t?.model!==o.approved.model)throw new Error('Codex image actual model differs from approved model');
     thread=t?.thread?.id;if(typeof thread!=='string'||!thread)throw new Error('Codex image thread identity unavailable');
-    const r=await call('turn/start',{threadId:thread,model:o.approved.model,effort:o.approved.effort,input:[{type:'text',text:`Generate exactly one PNG image. ${o.prompt}`,text_elements:[]}]});guard();
+    const r=await call('turn/start',{threadId:thread,model:o.approved.model,effort:o.approved.effort,input:[{type:'text',text:`Generate exactly one PNG image. ${o.prompt}`,text_elements:[]},...(reference?[{type:'image',url:'data:image/png;base64,'+reference.bytes.toString('base64')}]:[])]});guard();
     turn=r?.turn?.id;if(typeof turn!=='string'||!turn)throw new Error('Codex image turn identity unavailable');
     for(const m of early)event(m);
     await finished;guard();if(failure)throw failure;if(!item)throw new Error('Codex image completed without generated image');
@@ -133,6 +138,18 @@ export async function generateCodexImage(input: CodexImageOptions): Promise<Code
     for(const w of pending.values())w.reject(new Error('Codex image owner closed'));pending.clear();
     try {if(proc)await proc.stop();}catch{clean=false;}
     egress.close(token);egress.stop();
-    if(clean)rmSync(root,{recursive:true,force:true});else throw new Error('Codex image teardown unverified; private home retained');
+    if(clean)rmSync(root,{recursive:true,force:true});else throw new CodexImageFailure('Codex image teardown unverified; private home retained',false);
+  }
+}
+
+/** Verified process cleanup receipt for native queue and credential callers. */
+export class CodexImageFailure extends Error {
+  constructor(message:string,readonly cleanupSafe:boolean) { super(message); this.name='CodexImageFailure'; }
+}
+export async function generateCodexImage(options:CodexImageOptions):Promise<CodexImage> {
+  try { return await runCodexImage(options); }
+  catch(error) {
+    if (error instanceof CodexImageFailure) throw error;
+    throw new CodexImageFailure(error instanceof Error ? error.message : 'Codex image refused',true);
   }
 }

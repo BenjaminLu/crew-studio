@@ -21,6 +21,7 @@ export type PermissionRequest = { id: string; tool: string; summary: string; inp
 export type PermissionAnswer = { allow: boolean; message?: string; updatedInput?: unknown };
 
 export type HostEvent =
+  | {type:"nativeToolFailure";failure:NativeFailure}
   | { type: "delta"; text: string }
   | { type: "progress"; text: string }
   | { type: "toolStart"; id: string; name: string; summary: string }
@@ -60,7 +61,11 @@ export interface AttachedSession {
 
 export type SessionPath = "resume" | "fork" | "handoff" | "fresh";
 
+export type GeneratedImage = {thread:string;turn:string;model:string;startedAt:number;outputRoot:string;item:{type:string;id:string;status:string;result:string;savedPath?:string|null};live:()=>boolean};
+
 export type AttachOpts = {
+  /** Private source-owned completion bridge, never serialized as an event. */
+  onGeneratedImage?: (image:GeneratedImage)=>Promise<void>;
   cwd: string;
   onEvent: (e: HostEvent) => void;
   /** asked for every tool permission request; any failure or timeout must deny */
@@ -71,7 +76,7 @@ export type AttachOpts = {
   fork?: boolean;
   /** start a NEW session in cwd (the id is ignored): "Start firstmate" */
   fresh?: boolean;
-  nativeTools?: {specs:NativeMainTools["specs"];call(name:string,args:unknown,identity:{thread:string;turn:string;call:string;live:()=>boolean}):Promise<unknown>};
+  nativeTools?: {onDiagnostic?:(record:import("./native-errors").NativeDiagnostic)=>boolean;specs:NativeMainTools["specs"];call(name:string,args:unknown,identity:{thread:string;turn:string;call:string;live:()=>boolean}):Promise<unknown>};
   /** keep the session's own settings: model and permission mode */
   model?: string | null; permissionMode?: string | null;
   /** extra environment for the CLI (after cleanEnv), e.g. FM_IN_ROUND=1 for a rehearsal */
@@ -110,7 +115,8 @@ export const shortSummary = (input: unknown, n = 160): string => {
 export type NativeMainTools={specs:{type:"function";name:string;description:string;inputSchema:unknown}[];call(name:string,args:unknown,owner:{key:string;captain:boolean;text:string;live:()=>boolean;signal?:AbortSignal}):Promise<unknown>};
 
 /** Only trusted source code constructs public recovery guidance; arbitrary exceptions stay private. */
+export type NativeFailure={schema:1;code:string;reason:{en:string;'zh-TW':string};nextAction:string;retryable:boolean;correlationId?:string;diagnosticRecorded?:boolean};
 export class NativeToolFailure extends Error {
- readonly publicFailure:{schema:1;code:string;reason:{en:string;'zh-TW':string};nextAction:string};
- constructor(code:string,en:string,zh:string,nextAction='captain_review'){super(en);this.name='NativeToolFailure';this.publicFailure={schema:1,code,reason:{en,'zh-TW':zh},nextAction};}
+ readonly publicFailure:NativeFailure;
+ constructor(code:string,en:string,zh:string,nextAction='captain_review',retryable=false){super(en);this.name='NativeToolFailure';this.publicFailure={schema:1,code,reason:{en,'zh-TW':zh},nextAction,retryable};}
 }

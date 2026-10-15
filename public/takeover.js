@@ -19,8 +19,8 @@ async function loadTakeover() {
 // OAuth URL stays only in this browser's transient memory, never localStorage/events.
 const ACCOUNT={view:null,url:null,busy:false,loading:false,begin:null,starting:false,revision:0,read:0};
 window.crewFirstmateWelcomeSignature=()=>[ACCOUNT.revision,TK.revision,TK.loading,MS.view?.state,MS.view?.context,MS.view?.project,MS.view?.sessionId];
-function accountChanged(v){ACCOUNT.revision++;ACCOUNT.view=v;if(["failed","hold","cancelled"].includes(v.state))ACCOUNT.begin=null;if(v.state!=="pending")ACCOUNT.url=null;dispatchEvent(new Event("crew:codex-account"));if(S.route?.name==="board")soft();else if(["firstmate","takeover","doctor"].includes(S.route?.name))render();if(v.state==="ready"&&ACCOUNT.begin)void continueNative(ACCOUNT.begin);}
-async function accountAction(action,begin=false){if(ACCOUNT.busy)return;if(begin&&MS.view?.context==="studio")ACCOUNT.begin={project:MS.view.project};if(action==="cancel")ACCOUNT.begin=null;ACCOUNT.busy=true;render();try{const r=await postJ(`/api/codex/account/${action}`,{});if(r.error)return toast(r.error);if(action==="login")ACCOUNT.url=r.authUrl||null;accountChanged(r);}finally{ACCOUNT.busy=false;dispatchEvent(new Event("crew:codex-account"));render();}}
+function accountChanged(v,source="read"){if(source==="live"&&v.state==="pending"&&ACCOUNT.begin)ACCOUNT.begin.pending=true;ACCOUNT.revision++;ACCOUNT.view=v;if(["failed","hold","cancelled"].includes(v.state)&&(source==="action"||ACCOUNT.begin?.pending))ACCOUNT.begin=null;if(v.state!=="pending")ACCOUNT.url=null;dispatchEvent(new Event("crew:codex-account"));if(S.route?.name==="board")soft();else if(["firstmate","takeover","doctor"].includes(S.route?.name))render();if(v.state==="ready"&&ACCOUNT.begin)void continueNative(ACCOUNT.begin);}
+async function accountAction(action,begin=false){if(ACCOUNT.busy)return;if((begin||action==="login")&&MS.view?.context==="studio")ACCOUNT.begin={project:MS.view.project};if(action==="cancel")ACCOUNT.begin=null;ACCOUNT.busy=true;render();try{const r=await postJ(`/api/codex/account/${action}`,{});if(r.error){ACCOUNT.begin=null;return toast(r.error);}if(action==="login")ACCOUNT.url=r.authUrl||null;accountChanged(r,"action");}finally{ACCOUNT.busy=false;dispatchEvent(new Event("crew:codex-account"));render();}}
 // A reconnect may have missed account events; reconcile without starting auth.
 function refreshAccount(){const read=++ACCOUNT.read,revision=ACCOUNT.revision;return getJ("/api/codex/account").then(v=>{if(read===ACCOUNT.read&&revision===ACCOUNT.revision)accountChanged(v);}).catch(()=>{});}
 addEventListener("crew:live",()=>void refreshAccount());
@@ -38,7 +38,7 @@ function accountPanel(begin=false){
  !pending&&!checking?h("button",{class:"btn","data-codex-verify":"1",disabled:phone||owned||null,onclick:()=>accountAction("verify")},T("Verify account","驗證帳號")):null));
 }
 window.crewCodexAccountPanel=accountPanel;window.crewConnectCodex=()=>accountAction("login");
-window.liveListen("codex-account",m=>accountChanged(JSON.parse(m.data)));
+window.liveListen("codex-account",m=>accountChanged(JSON.parse(m.data),"live"));
 
 
 window.crewFirstmateWelcome=()=>{
@@ -46,6 +46,21 @@ window.crewFirstmateWelcome=()=>{
  if(!TK.data&&!TK.loading)loadTakeover();
  return h("section",{class:"card tk-drive","data-firstmate-welcome":"1"},h("h2",{},T("Welcome. Let’s make something.","歡迎，我們來做點東西。")),h("p",{},T("Connect an agent account, then begin with Studio’s own Firstmate. No terminal session is needed.","連接 agent 帳號，再和 Studio 自己的 Firstmate 開始。不需要終端機 session。")),accountPanel(true),TK.data&&!TK.data.error?startCodexCard(TK.data,MS.me.kind==="phone"):h("p",{},T("Loading your workspace…","正在載入你的工作空間…")));
 };
+// Project staffing is separate from the primary host. Draft answers never start work.
+const STAFF={projects:null,project:'',view:null,error:null,busy:false,open:false};
+async function staffingRequest(body){STAFF.busy=true;STAFF.error=null;render();try{const result=await postJ('/api/intake/staffing',body);if(result.error)STAFF.error=result.error;else STAFF.view=result;}catch(e){STAFF.error=String(e);}finally{STAFF.busy=false;render();}}
+function staffingPanel(){
+ if(!STAFF.projects){STAFF.projects=[];getJ('/api/doors').then(v=>{STAFF.projects=(v.projects||[]).filter(p=>p.path&&p.enabled!==false);render();}).catch(e=>{STAFF.error=String(e);render();});}
+ const base={project:STAFF.project,workflow:'code-firstmate',version:1},view=STAFF.view;
+ const project=h('select',{'aria-label':T('Staffing project','派工專案'),value:STAFF.project,disabled:STAFF.busy||null,onchange:e=>{STAFF.project=e.target.value;STAFF.view=null;render();}},h('option',{value:''},T('Choose registered project','選擇已登錄專案')),...STAFF.projects.map(p=>h('option',{value:p.id,selected:STAFF.project===p.id||null},p.name)));
+ return h('section',{class:'card tk-staffing','data-staffing':'1'},h('h2',{},T('Choose your crew together','一起決定代理配置')),h('p',{},T('The Firstmate account is separate. Discuss each role’s vendor, model and effort, review its exact skill, then approve the project configuration before dispatch.','Firstmate 帳號與工作角色分開。逐輪討論各角色供應商、模型和推理強度，查看實際技能，再核准專案配置後派工。')),project,h('button',{class:'btn',disabled:!STAFF.project||STAFF.busy||null,onclick:()=>staffingRequest(base)},T('Discuss agent choices','討論代理配置')),
+ STAFF.error?h('p',{class:'note','role':'alert'},STAFF.error):null,
+ view?.frontier?h('div',{},h('p',{},T(`Decision round ${view.round}: answer this frontier first.`,`第 ${view.round} 輪：先回答目前的問題。`)),...view.frontier.map(q=>{const selected=view.choices[q.role]||{},cap=view.capabilities.find(c=>c.provider===selected.provider),model=cap?.models.find(m=>m.id===selected.model),options=q.field==='provider'?view.capabilities.map(c=>({id:c.provider,label:c.provider+(c.support==='unsupported'?T(' — native adapter unavailable','（原生介面尚不可用）'):'' )})):q.field==='model'?(cap?.models||[]).map(m=>({id:m.id,label:m.id})):(model?.efforts||[]).map(e=>({id:e,label:e}));const input=h('select',{'aria-label':`${q.role} ${q.field}`,disabled:STAFF.busy||null},h('option',{value:''},T('Choose explicitly','請明確選擇')),...options.map(o=>h('option',{value:o.id},o.label)));return h('div',{class:'tk-staffing-question'},h('label',{},`${q.number}. ${q.role} · ${T(q.field,({provider:'供應商',model:'模型',effort:'推理強度'})[q.field])}`,input),h('p',{class:'muted'},T(q.recommendation,q.recommendationZh)),cap&&cap.auth==='verified'&&cap.quota==='exhausted'?h('p',{class:'note'},T('Signed in, but quota is exhausted. This role stays on hold; no automatic retry or provider switch.','帳號已登入，但額度已用完。此角色保持暫停，不會自動重試或切換供應商。')):null,cap&&cap.support==='unsupported'?h('p',{class:'note'},T('This native adapter is unavailable. Login retries cannot enable it; keep this plan on hold or revise the vendor choice.','此原生介面尚不可用，重新登入無法啟用；請保留暫停或重新討論供應商。')):null,h('button',{class:'btn',disabled:STAFF.busy||!options.length||null,onclick:()=>{if(input.value)staffingRequest({...base,answers:{[q.role]:{[q.field]:input.value}}});}},T('Use this choice','採用這項選擇')));}),view.complete?h('div',{},h('h3',{},T('Review the complete configuration','確認完整配置')),h('pre',{class:'tk-staffing-summary'},JSON.stringify(view.choices,null,2)),h('button',{class:'btn primary',disabled:STAFF.busy||null,onclick:()=>staffingRequest({...base,roles:view.choices,confirm:true})},T('Create captain confirmation card','建立船長確認卡'))):null,
+ h('button',{class:'btn ghost',disabled:STAFF.busy||null,onclick:()=>staffingRequest({...base,restart:true})},T('Revise choices from the start','重新討論配置')),
+ ...(view.skills||[]).map(skill=>h('details',{},h('summary',{},`${skill.role} · ${skill.ref} · v${skill.version}`),h('code',{},skill.sha256),h('pre',{class:'tk-staffing-summary'},skill.text)))):null,
+ view?.href?h('a',{class:'btn primary',href:view.href},T('Open configuration confirmation','開啟配置確認')):null);
+}
+window.crewStaffingPanel=staffingPanel;
 // ---------- the Take over page ----------
 function viewTakeover() {
   if (!TK.data) { loadTakeover(); return h("div", { class: "page" }, h("div", { class: "skel", style: "height:240px" })); }
@@ -108,6 +123,7 @@ function viewTakeover() {
       : h("div", { class: "card" }, h("div", { class: "empty" }, T("No firstmate session found for this project.", "找不到這個專案的 firstmate session。"))));
   }
   if (!driving) kids.push(h("section",{class:"card tk-notes"},h("h2",{},T("Optional: take over an existing session","選用：接手既有 session")),h("button",{class:"btn","data-optional-sessions":"1",onclick:()=>{TK.optional=true;loadTakeover();}},T("Show existing sessions","顯示既有 session"))),TK.optional?sessionList(d, fm, phone):null);
+  if(driving&&v.context==="studio")kids.push(staffingPanel());
   kids.push(cutoverSteps(d, v));
   if (v?.context!=="studio" && d.handoffs?.length) kids.push(h("section", { class: "card tk-notes" }, h("h2", {}, T("Handoff notes", "交接紀錄")),
     d.handoffs.slice(0, 5).map((n, i) => h("details", { open: i === 0 && driving || null }, h("summary", { class: "mono" }, n.name), h("div", { class: "md tk-md" }, md(n.text))))));
@@ -150,10 +166,12 @@ function startCodexCard(d, phone) {
     h("div", { class: "actions" }, h("button", { class: "btn", id: "startCodexBtn", disabled: phone || account.state!=="ready" || ACCOUNT.busy || (MS.view||d.view)?.state!=="detached" || null, onclick: () => native ? continueNative({project:d.project}) : startCodexFlow(d) }, native ? T("Continue with Firstmate","和 Firstmate 開始") : T("Start firstmate on Codex…", "在 Codex 上啟動 firstmate…"))));
 }
 
+async function openNativeConversation(){chatMode="main";store.set("crew.chatMode","main");location.hash="#/board";await loadMain();openChat(true);renderChat(false);}
+
 // Only an explicit captain Connect/Continue may create the primary, never page load.
 async function continueNative(expected){
  if(ACCOUNT.starting)return;ACCOUNT.starting=true;ACCOUNT.begin=null;
- try{const d=await getJ("/api/takeover?independent=1");if(d.view?.context!=="studio"||d.project!==expected.project)return toast(T("Workspace changed; review it before continuing.","工作空間已變更，請先確認後再繼續。"));if(d.view.state!=="detached")return toast(T("Studio already owns a Firstmate. Open its conversation.","Studio 已有自己的 Firstmate，請打開現有對話。"));const r=await postJ("/api/main/start",{host:"codex",confirm:true});if(!r.ok)return toast(r.reason||r.error);chatMode="main";store.set("crew.chatMode","main");await loadMain();openChat(false);location.hash="#/firstmate";loadTakeover();}catch{return toast(T("Could not connect Firstmate. Check the account and try again.","無法連接 Firstmate，請確認帳號後重試。"));}finally{ACCOUNT.starting=false;}
+ try{const d=await getJ("/api/takeover?independent=1");if(d.view?.context!=="studio"||d.project!==expected.project)return toast(T("Workspace changed; review it before continuing.","工作空間已變更，請先確認後再繼續。"));if(d.view.state!=="detached"){if(d.view.state==="attached"&&d.view.drive?.path==="fresh"&&!d.view.origin){await openNativeConversation();return;}return toast(T("Review the existing Firstmate before continuing.","請先確認現有 Firstmate 的狀態再繼續。"));}const r=await postJ("/api/main/start",{host:"codex",confirm:true});if(!r.ok){await loadMain();if(MS.view?.state==="attached"&&MS.view.context==="studio"&&MS.view.project===expected.project&&MS.view.drive?.path==="fresh"&&!MS.view.origin){await openNativeConversation();return;}return toast(r.reason||r.error);}await openNativeConversation();loadTakeover();}catch{return toast(T("Could not connect Firstmate. Check the account and try again.","無法連接 Firstmate，請確認帳號後重試。"));}finally{ACCOUNT.starting=false;}
 }
 
 function startCodexFlow(d) {
@@ -172,7 +190,7 @@ function startCodexFlow(d) {
       toast(T("firstmate started on Codex", "firstmate 已在 Codex 啟動"));
       chatMode = "main"; store.set("crew.chatMode", "main"); openChat(true);
       await loadMain(); loadTakeover();
-      if(d.view?.context==="studio"){openChat(false);location.hash="#/firstmate";}
+      if(d.view?.context==="studio")await openNativeConversation();
     });
   $(".modal .btn.primary").textContent = T("Start", "啟動");
 }
@@ -472,3 +490,11 @@ confirmSend = async function (c, st) {
 };
 if (location.hash.startsWith("#/crew") || location.hash.startsWith("#/inbox")) route();
 })();
+
+// Native tool failures are source-owned guidance, independent of the model's paraphrase.
+window.crewNativeToolFailureView=function(f){
+ const actions={discuss_staffing:T("Read the saved staffing questions and continue the discussion.","讀取已存的派工問題，接續討論。"),read_current_state:T("Read the current task state before continuing.","繼續前先讀取目前任務狀態。"),review_configuration:T("Review the existing project configuration.","檢查目前專案配置。"),report_reference:T("Report this reference with the action you attempted.","回報此追蹤編號與剛才嘗試的操作。"),captain_review:T("Review the request with the captain.","請船長檢視此請求。")};
+ return h("div",{class:"rich chat-err",role:"alert","data-native-failure":f.code},h("strong",{},f.reason?.[lang]||f.reason?.en||f.code),h("p",{},actions[f.nextAction]||T("Follow the stated recovery step before trying again.","請先依說明處理，再決定是否重試。")),f.correlationId?h("code",{"data-error-reference":""},f.correlationId):null,f.diagnosticRecorded===false?h("p",{},T("Private diagnostic could not be saved; include this reference and the attempted action in your report.","私有診斷無法儲存；請連同追蹤編號與嘗試操作一起回報。")):null,h("p",{},f.retryable?T("Retry only after the stated condition is resolved.","處理上述條件後才重試。 "):T("No automatic retry or approval.","不會自動重試或核准。")));
+};
+const nativeLogItemBase=logItem;
+logItem=function(it,i){return it.nativeFailure?window.crewNativeToolFailureView(it.nativeFailure):nativeLogItemBase(it,i);};

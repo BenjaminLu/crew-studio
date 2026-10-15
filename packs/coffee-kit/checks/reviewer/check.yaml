@@ -1,0 +1,13 @@
+id: reviewer
+version: 1.0.0
+title: { en: "Coffee reviewer — text and source review", zh-TW: "咖啡店程式審查：文字與原始碼" }
+applies_to: [run]
+kind: judged
+blocking: true
+needs: [artifact, coffee_review_snapshot]
+judge:
+  prompt: "Review HTML/CSS correctness, stated content, accessible controls and exact dependency bindings against the approved plan. This is TEXT-ONLY evidence: you have not seen rendered pages, image pixels or playback. Never certify visual quality or motion. Report grounded file/text locators. Captain visual approval remains mandatory."
+  quorum: { n: 2, of: 3 }
+params: { type: object, properties: {} }
+timeout_s: 600
+network: false

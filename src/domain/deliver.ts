@@ -8,12 +8,13 @@ import type { ArtifactStore } from "../artifacts";
 import { bundledText } from "../bundled";
 import { mdToDocHtml, toDocx, toPdf } from "../docrender";
 import { runRender, renderEnv } from "../render";
+import {imageRefinement} from "./image-refinement";
 import { briefFor } from "../runtime/refine";
 import { mergeDetail } from "./mergecard";
 import { verifyImagePng, type CodexImage } from "../providers/codex-image";
 import type { Engine, X } from "../runtime/engine";
 
-type Deps = { dataDir: string; artifacts: ArtifactStore; lane: any; fileorg: any; docs: any; generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal) => Promise<CodexImage> };
+type Deps = { dataDir: string; artifacts: ArtifactStore; lane: any; fileorg: any; docs: any; generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference) => Promise<CodexImage> };
 const hash = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 export function installDeliver(engine: Engine, d: Deps) {
@@ -28,18 +29,19 @@ export function installDeliver(engine: Engine, d: Deps) {
     if (x.run.params.provider && x.run.params.provider !== "codex") throw new Error("image generation requires Codex");
     const authorize = () => { if (x.cancelled() || !engine.owns(x)) throw new Error("image owner ended"); };
     authorize();
-    const controller = new AbortController();
-    const timer = setInterval(() => { if (x.cancelled() || !engine.owns(x)) controller.abort(); }, 100);
     const old = x.ctx.deliver?.draft;
+    const refinement=imageRefinement(st,{run:x.run.id,producer:x.node.id,round:x.visit,attempt:(x.rn.attempt??0)+1,intent:x.run.text,old});
     const notes = old ? st.notes(old.id, old.n).filter(n => n.status === "open") : [];
     const dir = join(d.dataDir, "work", "images", x.run.id, `${x.visit}-${x.rn.attempt ?? 0}`);
+    const controller = new AbortController();
+    const timer = setInterval(() => { if (x.cancelled() || !engine.owns(x)) controller.abort(); }, 100);
     try {
-      const image = await d.generateImage(`${x.run.text}\nRequested changes: ${JSON.stringify(notes.map(n => n.comment))}`, authorize, controller.signal);
+      const image = await d.generateImage(refinement.prompt, authorize, controller.signal, refinement.reference);
       authorize(); verifyImagePng(image.bytes);
       mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "image.png"), image.bytes);
       const id = old?.id ?? `out-${x.run.id.toLowerCase()}-draft`;
       if (!st.get(id)) st.create({ id, title: x.run.title, type: "image", source: "file", entry: "image.png" });
-      const v = st.addVersion(id, { from: dir, primary: "image.png", parent: old?.n ?? null, annotations: notes.map(n => n.id), createdBy: { kind: "agent", provider: image.provider, model: image.model, run: x.run.id }, source: { run: x.run.id }, summary: `${image.width}x${image.height} PNG` });
+      const v = st.addVersion(id, { from: dir, primary: "image.png", parent: old?.n ?? null, refinement:refinement.snapshot, annotations: notes.map(n => n.id), createdBy: { kind: "agent", provider: image.provider, model: image.model, run: x.run.id }, source: { run: x.run.id }, summary: `${image.width}x${image.height} PNG` });
       (x.ctx.deliver ??= {}).draft = { id, n: v.n, sha256: v.sha256, format: "image", producer: "draft" };
       x.ctx.head = hash(refs(x)); x.rn.note = `${id} v${v.n}`; x.save(); return "ok";
     } finally { clearInterval(timer); controller.abort(); rmSync(dir, { recursive: true, force: true }); }
@@ -104,7 +106,7 @@ export function installDeliver(engine: Engine, d: Deps) {
   };
   const acceptanceDetail = (x: X, offered: any[] = [], kind: "artifact" | "file-plan" | "lane" = "artifact") => ({
     ...mergeDetail({ run: x.run.id, intent: x.run.text, spec: x.ctx.spec, ctx: x.ctx, ledger: engine.trusted(x.run.id).entries, doneMap: engine.doneLines(x.run), diff: "", stat: "", cost: null }, { intents: [], walk: [], done: (x.ctx.spec?.done ?? []).map((_: string, i: number) => i ? "內容和呈現方式符合船長的意圖" : kind === "file-plan" ? "搬移不出資料夾且不覆寫檔案" : kind === "lane" ? "本機修改通過必要檢查" : "作品原始檔與必要輸出通過完整性檢查") }),
-    artifactAcceptance: { kind, offered },
+    artifactAcceptance: { kind, offered, review:{node:x.node.id,round:x.visit,attempt:(x.rn.attempt??0)+1}, refinements:offered.filter(r=>r.format==="image").map(r=>({artifact:r.id,version:r.n,snapshot:st.version(r.id,r.n)?.refinement??null,recorded:!!st.version(r.id,r.n)?.refinement})) },
   });
   const finalCard = async (x: X, error = "") => {
     const offered = refs(x); if (!offered.length) throw new Error("no output to accept");

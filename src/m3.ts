@@ -24,7 +24,10 @@ const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".h
 const CSP = "default-src 'none'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self' 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'";
 const INTERACTIVE_CSP = "sandbox allow-scripts; default-src 'none'; img-src data: blob:; media-src blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'";
 
+export type ArtifactReviewPolicy = {readOnly:true; taskHref:string|null; reason:string};
 export function createM3(d: M3Deps) {
+  let artifactReview: (id:string)=>ArtifactReviewPolicy|null=()=>null;
+  const useArtifactReviewPolicy=(policy:typeof artifactReview)=>{artifactReview=policy;};
   const store = new ArtifactStore(d.dataDir);
   const media=new MediaLibrary(d.dataDir,store);
   const runs = new WorkRuns(store, d.dataDir);
@@ -67,6 +70,9 @@ export function createM3(d: M3Deps) {
     let b: any = {};
     if (writing) { try { b = await req.json(); } catch { b = {}; } }
     try {
+      if(writing){const target=/^\/api\/artifacts\/([^/]+)/.exec(p)?.[1];const laneTarget=/^\/api\/lane\/([^/]+)\/(?:pr|merge|close|prepare|ci)$/.exec(p);const id=target?decodeURIComponent(target):p==='/api/artifacts'?String(b?.id??''):p==='/api/lane/run'?String(b?.artifact??''):laneTarget?lane.card(decodeURIComponent(laneTarget[1]))?.artifact??null:null;
+        if(id&&artifactReview(id))return json({error:'This artifact belongs to a native Task; review and revise its bound bundle there',code:'native-artifact-read-only'},403);
+      }
       const managedTarget=/^\/api\/artifacts\/([^/]+)/.exec(p);
       if(writing&&managedTarget&&media.owns(decodeURIComponent(managedTarget[1])))return json({error:"Workflow-owned media requires its bound Task",code:"managedMedia"},409);
       // --- version files, served with no network and Studio-only framing ---
@@ -110,7 +116,7 @@ export function createM3(d: M3Deps) {
         if (!a) return json({ error: "no such artifact" }, 404);
         let scenes: any[] = [];
         if (a.source === "film") { const v = store.latest(id); const f = v && store.file(id, v.n, a.entry ?? "film.html"); if (f) scenes = filmScenes(readFileSync(f, "utf8")); }
-        return json({ artifact: a, managedMedia:media.owns(id), versions: store.versions(id).map((v) => ({ ...v, notes: store.notes(id, v.n), integrity: store.verify(id, v.n) })),
+        return json({ artifact: a,nativeReview:artifactReview(id), managedMedia:media.owns(id), versions: store.versions(id).map((v) => ({ ...v, notes: store.notes(id, v.n), integrity: store.verify(id, v.n) })),
           runs: runs.list(id).map(slim), cards: lane.cards().filter((c) => c.artifact === id), repos: lane.repos(), scenes, render: renderEnv() });
       }
       m = /^\/api\/artifacts\/([^/]+)\/versions$/.exec(p);
@@ -186,7 +192,7 @@ export function createM3(d: M3Deps) {
       return json({ error: "not found" }, 404);
     } catch (e: any) { return json({ error: String(e?.message ?? e) }, 400); }
   }
-  return { handle, store, runs, lane };
+  return { handle, store, runs, lane, useArtifactReviewPolicy, media };
 }
 
 const slim = (r: any) => ({ ...r, log: r.log?.slice(-60) });

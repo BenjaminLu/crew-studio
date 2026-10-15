@@ -1,3 +1,4 @@
+import {nativeToolError} from './native-errors';
 import {NativeToolFailure} from './types';
 // Codex as a host, over its own `codex app-server` (JSON-RPC on stdio):
 // initialize, then a thread, then one turn/start per captain turn. Approval
@@ -39,9 +40,10 @@ function rpc(bin: string, cwd: string, onNotify: (m: any) => void, onRequest: (m
     call(method, params, ms = 30_000) {
       const id = ++n;
       return new Promise((resolve, reject) => {
-        waiting.set(id, { resolve, reject });
-        proc.write({ jsonrpc: "2.0", id, method, params: params ?? {} });
-        setTimeout(() => { if (waiting.delete(id)) reject(new Error(`${method} timed out`)); }, ms);
+        let timer:ReturnType<typeof setTimeout>;
+        waiting.set(id, { resolve:value=>{clearTimeout(timer);resolve(value);}, reject:error=>{clearTimeout(timer);reject(error);} });
+        timer=setTimeout(() => { if(waiting.delete(id)){const error=new Error("Codex RPC timed out");error.name="TimeoutError";reject(error);} },ms);
+        try{proc.write({ jsonrpc: "2.0", id, method, params: params ?? {} });}catch(error){waiting.delete(id);clearTimeout(timer);reject(error);}
       });
     },
     notify(method, params) { proc.write({ jsonrpc: "2.0", method, params: params ?? {} }); },
@@ -106,9 +108,11 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
       let id = requested, busy = false, model = "codex", turnId: string | null = null;
       let turn: { resolve: (v: { status: "completed" | "interrupted" | "failed"; message?: string }) => void; external?: boolean } | null = null;
       let interrupting = false, text = "", toolFailure: string | null = null;
+      let startedAt=Date.now(),finishing=false;const images=new Map<string,any>();
+      const outputRoot=join(opts.env?.CODEX_HOME??process.env.CODEX_HOME??join(opts.env?.HOME??homedir(),".codex"),"generated_images");
       const emit = (e: HostEvent) => { try { opts.onEvent(e); } catch {} };
       const endTurn = (status: "completed" | "interrupted" | "failed", message?: string) => {
-        if (!turn) return; const t = turn; turn = null; busy = false; turnId = null; interrupting = false; toolFailure = null;
+        if (!turn) return; images.clear();finishing=false; const t = turn; turn = null; busy = false; turnId = null; interrupting = false; toolFailure = null;
         if (text) emit({ type: "message", text }); text = "";
         emit({ type: "turnEnd", status, message, external: t.external }); t.resolve({ status, message });
       };
@@ -119,7 +123,7 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
           const incoming = typeof p.turn?.id === "string" ? p.turn.id : p.turnId;
           if (!incoming || (turn && turnId && incoming !== turnId)) return;
           if (!turn) {
-            toolFailure = null; text = ""; interrupting = false;
+            toolFailure = null; text = ""; interrupting = false;startedAt=Date.now();images.clear();
             turn = { resolve: () => {}, external: true }; busy = true;
             emit({ type: "turnStart", source: "hook" });
           }
@@ -135,16 +139,24 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
         }
         else if (m.method === "item/agentMessage/delta" && p.delta) { text += p.delta; emit({ type: "delta", text: String(p.delta) }); }
         else if (m.method === "item/started" && p.item && p.item.type !== "agentMessage" && p.item.type !== "userMessage" && p.item.type !== "reasoning")
-          emit({ type: "toolStart", id: String(p.item.id), name: String(p.item.type), summary: shortSummary(p.item.command ?? p.item.tool ?? p.item.changes ?? p.item) });
+          emit({ type: "toolStart", id: String(p.item.id), name: String(p.item.type), summary: p.item.type==="imageGeneration"?"Generating image":shortSummary(p.item.command ?? p.item.tool ?? p.item.changes ?? p.item) });
         else if (m.method === "item/completed" && p.item) {
-          if (p.item.type === "functionCallOutput" && /timed out negotiating with the code-mode host|code-mode host is disabled/.test(JSON.stringify(p.item.output ?? ""))) {
+          if(finishing)return;
+          if(p.item.type==="imageGeneration"){
+            const item=p.item;if(typeof item.id!=="string"||!item.id||item.id.length>200||typeof item.result!=="string"||item.result.length>24*1024*1024||images.size>=16&&!images.has(item.id)){toolFailure="Generated image output could not be safely saved to Library.";}else if(images.has(item.id)&&JSON.stringify(images.get(item.id))!==JSON.stringify({type:item.type,id:item.id,status:item.status,result:item.result,savedPath:item.savedPath??null})){toolFailure="Conflicting generated image output; Library import refused.";}else images.set(item.id,{type:item.type,id:item.id,status:item.status,result:item.result,savedPath:item.savedPath??null});
+            emit({type:"toolEnd",id:String(item.id),ok:item.status==="completed"});
+          }else if (p.item.type === "functionCallOutput" && /timed out negotiating with the code-mode host|code-mode host is disabled/.test(JSON.stringify(p.item.output ?? ""))) {
             toolFailure = "Codex code-mode tool execution failed. Repository reads are not verified; check the Codex runtime before continuing.";
             emit({ type: "toolEnd", id: String(p.item.id), ok: false });
           } else if (p.item.type === "agentMessage") { if (!text && p.item.text) { text = String(p.item.text); emit({ type: "delta", text }); } }
           else if (p.item.type !== "userMessage" && p.item.type !== "reasoning") emit({ type: "toolEnd", id: String(p.item.id), ok: !/fail|declin|error/i.test(String(p.item.status ?? "")) });
         } else if (m.method === "turn/completed") {
           const st = String(p.turn?.status ?? "completed");
-          endTurn(interrupting || st === "interrupted" ? "interrupted" : st === "failed" || toolFailure ? "failed" : "completed", toolFailure ?? p.turn?.error?.message);
+          if([...images.values()].some(item=>item.status!=="completed"))toolFailure="Image generation incomplete; Library import refused.";
+          const status=interrupting||st==="interrupted"?"interrupted":st!=="completed"||toolFailure?"failed":"completed";
+          if(status!=="completed"||!images.size){endTurn(status,toolFailure??p.turn?.error?.message);return;}
+          if(finishing)return;finishing=true;const saved=turn,savedId=turnId;const live=()=>turn===saved&&turnId===savedId&&!interrupting;
+          void(async()=>{try{if(!opts.onGeneratedImage)throw new Error("Library image bridge unavailable");for(const item of images.values()){if(!live())return;if(item.status!=="completed")throw new Error("Image generation incomplete");await opts.onGeneratedImage({thread:id,turn:savedId!,model,startedAt,outputRoot,item,live});}if(live())endTurn("completed");}catch{if(live())endTurn("failed","Image generation finished, but saving to Library failed. 圖片已生成，但素材庫儲存失敗。");}})();
         }
       };
       const onRequest = async (m: any) => {
@@ -161,7 +173,7 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
           const owned=()=>p.threadId===id&&!!turn&&p.turnId===turnId&&!interrupting;
           if(opts.nativeTools&&owned()&&typeof p.tool==="string"&&opts.nativeTools.specs.some(t=>t.name===p.tool)&&!p.namespace&&typeof p.callId==="string"){
             const savedTurn=turn, savedId=turnId;const live=()=>owned()&&turn===savedTurn&&turnId===savedId;
-            try{const result=await opts.nativeTools.call(p.tool,p.arguments,{thread:id,turn:p.turnId,call:p.callId,live});if(!live())throw new Error("Primary tool ownership ended");return{success:true,contentItems:[{type:"inputText",text:JSON.stringify(result)}]};}catch(error){return{success:false,contentItems:[{type:"inputText",text:JSON.stringify(error instanceof NativeToolFailure?error.publicFailure:{schema:1,code:"unavailable",reason:{en:"Studio native tool unavailable. No authority was granted.","zh-TW":"Studio 原生工具暫不可用；未授予任何權限。"},nextAction:"captain_review"})}]};}
+            try{const result=await opts.nativeTools.call(p.tool,p.arguments,{thread:id,turn:p.turnId,call:p.callId,live});if(!live())throw new NativeToolFailure("owner_ended","The request no longer owns this session. Read the current state before continuing.","此請求已不再持有 session，請先讀取目前狀態。","read_current_state");return{success:true,contentItems:[{type:"inputText",text:JSON.stringify(result)}]};}catch(error){const failure=nativeToolError(error,p.tool,opts.nativeTools.onDiagnostic);emit({type:"nativeToolFailure",failure});return{success:false,contentItems:[{type:"inputText",text:JSON.stringify(failure)}]};}
           }
           // Work/other clients own their dynamic tools. Studio does not execute
           // arbitrary JavaScript or translate their arguments into shell commands.
@@ -233,7 +245,7 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
           let c: Rpc;
           try { c = r ?? (await start()); } catch (e) { busy = false; throw e; }
           return new Promise((resolve) => {
-            const sentTurn = { resolve }; turn = sentTurn;
+            startedAt=Date.now();images.clear();const sentTurn = { resolve }; turn = sentTurn;
             c.call("turn/start", { threadId: id, input: [{ type: "text", text: t, text_elements: [] }] })
               .then((res) => { if (turn === sentTurn && !turnId) turnId = String(res?.turn?.id ?? res?.turnId ?? ""); })
               .catch((e) => { if (turn === sentTurn) endTurn("failed", String(e?.message ?? e)); });

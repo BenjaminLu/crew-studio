@@ -1,3 +1,4 @@
+import {withSafetyRules} from "../skills";
 import { installCodeQueue } from "./code-queue";
 import {GitHubPoller} from '../github-poller';
 // The coding pipeline's runtime side (packs/firstmate, docs/code-firstmate-pipeline.md):
@@ -932,13 +933,16 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     let got: unknown = null;
     try {
       const role = x.run.def.roles.find((r: any) => r.id === "coordinator");
-      const p = role?.provider ? { provider: role.provider, model: role.model ?? null } : x.run.params.provider ? { provider: x.run.params.provider, model: x.run.params.model || null } : engine.deps.defaultProvider();
+      const p = engine.deps.approvedPick?.(x.run,{...x.node,role:"coordinator"},"coordinator") ?? (role?.provider ? { provider: role.provider, model: role.model ?? null } : x.run.params.provider ? { provider: x.run.params.provider, model: x.run.params.model || null } : engine.deps.defaultProvider());
       // the coordinator's instructions, as for its agent nodes: the safety rules, its role skill, then the skills its nodes enable (in node order, once each)
       const pins = x.run.def.nodes.filter((n: any) => n.kind === "agent" && n.role === "coordinator").flatMap((n: any) => n.skills ?? []).filter((p: any, i: number, a: any[]) => a.findIndex((q: any) => q.id === p.id) === i);
       const skill = engine.instructions(x.run, role?.id, pins);
       const tools: AgentTool[] = [{ name: "card_detail", description: "The merge card's zh-TW translations and walk notes, once.", schema: COORDINATOR_TOOL_SCHEMA, run: (a) => { got = a; return { ok: true }; } }];
-      await engine.deps.agents.run({ kind: "card:merge", title: `${x.run.id} merge card detail`, system: `${skill}\n\nYou are the coordinator (firstmate). You write the merge card the captain reads: real Traditional Chinese, plain words. Call card_detail exactly once, then answer in one line.`,
-        text: coordinatorText(fallback), tools, provider: engine.deps.provider(p.provider, p.model ?? undefined), ref: x.run.id, maxTools: 3, timeoutMs: 5 * 60_000, sandbox: engine.roundSandbox(x, null) });
+      const system=`${skill}\n\nYou are the coordinator (firstmate). You write the merge card the captain reads: real Traditional Chinese, plain words. Call card_detail exactly once, then answer in one line.`;
+      const selected=engine.deps.selectProvider ? await engine.deps.selectProvider(x,p,{role:"coordinator",explicit:true}) : engine.deps.provider(p.provider,p.model??undefined);
+      const admissionReceipt=engine.deps.instructionReceipt?.(x,"coordinator",withSafetyRules(system),selected);
+      await engine.deps.agents.run({ kind: "card:merge", title: `${x.run.id} merge card detail`, system,
+        text: coordinatorText(fallback), tools, admissionReceipt, provider: selected, ref: x.run.id, maxTools: 3, timeoutMs: 5 * 60_000, sandbox: engine.roundSandbox(x, null) } as any);
       // its answer is checked against the schema here, inside the guard: a malformed one keeps the fallback
       const { rejected, ...d } = coordinatorDetail(input, got); if (rejected) x.log(`merge card: the coordinator's answer was malformed (${rejected}); zh-TW stays marked untranslated`);
       detail = d;

@@ -1,0 +1,11 @@
+id: bundle-ready
+version: 1.0.0
+title: { en: "The complete current coffee bundle is intact", zh-TW: "目前完整的咖啡店作品集保持完整" }
+applies_to: [run]
+kind: deterministic
+blocking: true
+needs: [artifact]
+native: coffee-bundle-ready
+params: { type: object, properties: {} }
+timeout_s: 30
+network: false

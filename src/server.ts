@@ -1,3 +1,6 @@
+import {coffeeFilmCapability,renderCoffeeFilm} from "./render/coffee-film";
+import {publishGeneratedImage} from "./host/generated-media";
+import {createNativeProviderAdmission} from "./providers/native-admission";
 import { registerInstance } from "./instance";
 import {GitHubPoller} from './github-poller';
 import {Projects} from './doors';
@@ -81,7 +84,7 @@ import { codexConfig } from "./host/codex";
 import { CodexAccount } from "./host/codex-account";
 import { generateCodexImage } from "./providers/codex-image";
 import { probeCodex } from "./providers/codex-probe";
-import {nativeClaude,probeClaudeNative,makeNativeClaudeProvider,validClaudePair,configuredClaudeEffort} from './providers/claude-native';
+import {nativeClaude,probeClaudeNative,makeNativeClaudeProvider,validClaudePair,configuredClaudeEffort,isClaudeExecutionAdmission} from './providers/claude-native';
 import { ProviderRefusal, selectNativeProvider, type ProviderSelection, type ProviderCapability } from "./providers/policy";
 
 const ROOT = SRC_ROOT;
@@ -161,8 +164,8 @@ const PROJECT = startup.project;
 if (!startup.legacy && !process.env.CREW_MAIN_PROJECT) mkdirSync(PROJECT, { recursive: true });
 const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STATE, nativeWorkspace: !startup.legacy && !process.env.CREW_MAIN_PROJECT,
   nativeTools:()=>runtime.firstmate,
+  onGeneratedImage:async(image,owner)=>{await publishGeneratedImage(m3.media,image,owner);},
   permissionMcp: (b) => ({ command: helperCommand("permission-mcp"), env: { CREW_PERM_SOCKET: b.socket, CREW_PERM_TOKEN: b.token } }) });
-await main.start();
 main.onView = (v) => send("main", v);
 main.onEvent = (e: HostEvent) => { if (e.type === "delta" || e.type === "toolStart" || e.type === "permissionRequest" || e.type === "turnStart") send("mainEvent", e); };
 const codexAccount=new CodexAccount({cwd:PROJECT,busy:()=>main.view().state!=="detached",configured:()=>{const c=codexConfig(PROJECT);return{model:c.model,effort:c.effort};},changed:()=>send("codex-account",codexAccount.view())});
@@ -291,8 +294,11 @@ const nativePick = async (x: any, pick: any, context?: { role: string; explicit:
   const host = hostView.state === "attached" && hostView.driver.holder === "studio" ? hostView.host : null;
   const role = context?.role ?? (x.node.role === "worker" || x.node.mode === "deliver" ? "worker" : x.node.role ?? "coordinator");
   const roleDef = x.run.def.roles.find((r: any) => r.id === x.node.role);
-  const explicit = context?.explicit ?? !!(x.rn.agent || x.node.provider || roleDef?.provider || x.run.params.provider);
+  const staffed = x.engine.deps.approvedPick?.(x.run,x.node,context?.role === "judge" ? "reviewer" : context?.role);
+  if(staffed)pick=staffed;
+  const explicit = !!staffed || (context?.explicit ?? !!(x.rn.agent || x.node.provider || roleDef?.provider || x.run.params.provider));
   const configured: ProviderSelection["configured"] = { codex: { model: settings.models.codex || process.env.CREW_CODEX_MODEL || config.model, effort: config.effort }, claude: { model: settings.models.claude || process.env.CREW_CLAUDE_MODEL || "claude-sonnet-5-5",effort:configuredClaudeEffort(settings.models.claude || process.env.CREW_CLAUDE_MODEL || "claude-sonnet-5-5") }, stub: { model: "no model" } };
+
   for (const id of choices) if (!configured[id]) configured[id] = { model: settings.models[id] || null };
   const fallback = x.engine.policies.get("vendor_policy.fallback", { project: x.engine.queueProject(x.run), workflow: x.run.def.policies }).value;
   if (!Array.isArray(fallback) || fallback.some(id => typeof id !== "string")) throw new ProviderRefusal("configured fallback chain is invalid");
@@ -300,18 +306,9 @@ const nativePick = async (x: any, pick: any, context?: { role: string; explicit:
   const fixture = allowStub && settings.provider === "stub" && !explicit;
   const provider = fixture ? "stub" : !explicit && role === "reviewer" ? String(x.engine.policies.get("vendor_policy.reviewer", { project: x.engine.queueProject(x.run), workflow: x.run.def.policies }).value) : !explicit && role === "coordinator" && host ? host : pick.provider;
   return nativeSelection({ role, host, explicit: explicit || fixture || role === "reviewer", provider, model: explicit ? pick.model : configured[provider]?.model ?? null, roleModel: !explicit ? x.node.model ?? roleDef?.model ?? null : null, effort: explicit&&Object.hasOwn(pick,"effort")?pick.effort??null:configured[provider]?.effort??null, configured, fallback, known: [...choices] }, x);
+
 };
-agents.providerAdmission = async (provider, o) => {
-  if (o.signal?.aborted || o.owns && !o.owns()) throw new ProviderRefusal("native round owner ended during capability admission");
-  const previous = certified.get(provider); if (previous && !previous.x.engine.owns(previous.x)) throw new ProviderRefusal("certified native owner ended");
-  if (previous && previous.expires > Date.now()) return provider;
-  if (previous) return nativeSelection(previous.input, previous.x);
-  // Only a real native Task or a certified manual judged check uses this
-  // resolver. Standalone older feature runners keep their own explicit contract.
-  const task = o.ref && nativeEngineForPolicy?.get(o.ref);
-  if (task) return nativePick(nativeEngineForPolicy.x(task, task.def.nodes.find((n: any) => n.id === o.record?.header?.node) ?? task.def.nodes[0], task.nodes[o.record?.header?.node] ?? task.nodes[task.def.nodes[0].id]), { provider: provider.id, model: provider.model }, { role: o.kind.startsWith("judge:") ? "judge" : "worker", explicit: true });
-  return provider;
-};
+agents.providerAdmission = createNativeProviderAdmission({certified,engine:()=>nativeEngineForPolicy,select:nativeSelection,pick:nativePick});
 const improve = createImprove({ dataDir: DATA, flows, agents, events: (src) => (src === "studio" ? studioLog.poll() : fmRaw.poll()), provider: pickProvider, send });
 const changes = createChanges({ dataDir: DATA, flows, skills: improve.skills, agents, log: studioLog, provider: pickProvider, send });
 // the trivial lane's cards carry their door too (README.md + one asset: normally trivial)
@@ -326,12 +323,15 @@ if (process.env.CREW_SANDBOX !== "0") { try { prepareSandbox(DATA); registerSand
 // --- v2: Studio's native runtime (workflows that really run, checks, Studio-owned cards) ---
 const worktrees = new Worktrees(DATA, { protect: () => PROTECTED });
 let packGenesis: ReturnType<typeof installPackGenesis>;
-const runtime = createRuntime({ dataDir: DATA, agents, provider: pickProvider, defaultProvider: () => { const s = chatSettings(); return { provider: s.provider, model: s.models[s.provider] || null }; }, selectProvider: nativePick,
-  log: studioLog, send, fmRoot: dirname(STATE), protectedRoots: PROTECTED, store, m3: { store: m3.store, runs: m3.runs, lane: m3.lane }, fileorg: m7.fileorg, docs, improve, studioUrl: () => `http://127.0.0.1:${PORT}`,
-  generateImage: (prompt, authorize, signal) => {
+const coffeeTools = (()=>{const rendering=renderEnv();const roots=[process.env.CREW_HYPERFRAMES_ROOT,!COMPILED?ROOT:null,join(dirname(process.execPath),"..")].filter(Boolean)as string[];let last:any={ready:false,reason:"Pinned local HyperFrames tools are not installed"};for(const root of roots){const c=coffeeFilmCapability(root,{browser:process.env.HYPERFRAMES_BROWSER_PATH,playwright:rendering.playwright,ffmpeg:process.env.CREW_FFMPEG||Bun.which("ffmpeg"),ffprobe:Bun.which("ffprobe")});if(c.ready)return c;last=c;}return last;})();
+let staffingClaudeCapability:ProviderCapability|null=null;
+
+const runtime = createRuntime({coffeeVideo:coffeeTools.ready?(request=>renderCoffeeFilm(request,coffeeTools)):undefined,coffeeFilmStatus:{ready:coffeeTools.ready,reason:coffeeTools.ready?null:coffeeTools.reason},coffeeChoice:()=>{const config=codexConfig(PROJECT),model=chatSettings().models.codex||process.env.CREW_CODEX_MODEL||config.model;return model?{provider:"codex",model,effort:config.effort}:null;}, staffingPending:intent=>{if(main.view().context==="studio"&&main.view().state!=="detached")main.enqueue("card",`Project registered for: ${intent.work.text}. No workflow work has started. Discuss each role’s agent account, model and reasoning effort with the captain before dispatch. Wait for the captain’s choices. / 專案已註冊，工作尚未開始。接著請和船長討論各角色使用的代理帳號、模型及推理強度，等待船長選擇後再確認派工。`,"studio-native");},staffingAdmission:role=>role.provider==='claude'&&!!staffingClaudeCapability&&isClaudeExecutionAdmission(staffingClaudeCapability,{model:role.model,effort:role.effort}),staffingFacts:async()=>{const settings=chatSettings(),model=settings.models.claude||process.env.CREW_CLAUDE_MODEL||'claude-sonnet-5-5',pair={model,effort:configuredClaudeEffort(model)};const [cap,claude]=await Promise.all([probeCodex(),probeClaudeNative(pair)]);staffingClaudeCapability=claude;return[{provider:'codex',support:'supported' as const,auth:cap.auth,quota:cap.quota,expires:cap.expires,models:cap.models.map(m=>({id:m.id,efforts:m.efforts??[]}))},{provider:'claude',support:'supported' as const,auth:claude.auth,quota:claude.quota,expires:claude.expires,models:claude.models.map(m=>({id:m.id,efforts:pair.effort===null?[]:[pair.effort]})),reason:claude.reason}];},dataDir: DATA, agents, provider: pickProvider, defaultProvider: () => { const s = chatSettings(); return { provider: s.provider, model: s.models[s.provider] || null }; }, selectProvider: nativePick,
+  log: studioLog, send, fmRoot: dirname(STATE), protectedRoots: PROTECTED, store, m3: { store: m3.store, runs: m3.runs, lane: m3.lane,useArtifactReviewPolicy:m3.useArtifactReviewPolicy }, fileorg: m7.fileorg, docs, improve, studioUrl: () => `http://127.0.0.1:${PORT}`,
+  generateImage: (prompt, authorize, signal, reference) => {
     const config = codexConfig(PROJECT), model = chatSettings().models.codex || process.env.CREW_CODEX_MODEL || config.model;
     if (!model) throw new Error("Configure a Codex model before generating images");
-    return generateCodexImage({ prompt, authorize, signal, approved: { model, effort: config.effort } });
+    return generateCodexImage({ prompt, authorize, signal, reference, approved: { model, effort: config.effort } });
   },
   // domain packs' runtime steps: the firstmate coding pipeline (packs/firstmate)
   install: [(engine, c) => { installCode(engine, { dataDir: c.dataDir, projects: c.projects, improve, poller:githubPoller }); packGenesis = installPackGenesis(engine, { dataDir: c.dataDir, artifacts: m3.store }); }], skills: improve.skills });
@@ -685,6 +685,8 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     return page ?? new Response("not found", { status: 404 });
 }
 
+// Restore/start only after private media and native runtime callbacks exist.
+await main.start();
 const server = Bun.serve({ port: PORT, hostname: "127.0.0.1", idleTimeout: 0, fetch: (req) => handle(req, "loopback") });
 console.log(`crew-studio: http://127.0.0.1:${server.port}  data=${DATA}  state=${STATE}  board=${board.url} (${board.status().writable ? "answers on" : "read-only"})  github=${gh.state.enabled ? gh.state.repo : "off"}`);
 console.log("crew-studio: use bun run launch or ./crew-studio launch to request the authenticated Board.");

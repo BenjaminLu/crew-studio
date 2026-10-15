@@ -50,3 +50,13 @@
 /* Exact project paths must wrap inside the independent fresh-start dialog. */
 .tk-start-dialog,.tk-start-dialog>*{min-width:0;overflow-wrap:anywhere}
 .modal:has(.tk-start-dialog)>*{min-width:0;overflow-wrap:anywhere}
+
+.tk-staffing { padding:20px; min-width:0; }
+.tk-staffing select { max-width:100%; min-height:44px; margin:8px 12px 8px 0; }
+.tk-staffing button,.tk-staffing .btn { min-height:44px; }
+.tk-staffing-question { padding:12px 0; border-bottom:1px solid var(--line); min-width:0; }
+.tk-staffing-question label { display:block; overflow-wrap:anywhere; }
+.tk-staffing-question select { display:block; width:100%; }
+.tk-staffing-summary { white-space:pre-wrap; overflow-wrap:anywhere; max-width:100%; font-size:13px; }
+.tk-staffing details code { display:block; overflow-wrap:anywhere; }
+@media(max-width:500px){.tk-staffing{padding:16px}.tk-staffing select{width:100%;margin-right:0}}

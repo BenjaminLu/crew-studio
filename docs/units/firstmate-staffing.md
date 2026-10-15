@@ -1,0 +1,77 @@
+# Captain-confirmed project staffing and actual role skills — implementation contract
+
+Implementation baseline 5cc113a includes approved native project registration and HyperFrames. Coffee integration is separately owned; the coding configuration slice does not claim coffee staffing. No global vendor settings, real login or real paid model jobs are changed by this unit.
+
+## Observed source facts
+
+- Native main host and native worker selection are separate. server nativePick may use defaultProvider for workers, vendor_policy.reviewer for review, and attached host only for a coordinator. Current nativeSelection implements Codex capability probes; non-Codex real native capability returns unavailable/unverified. Existing Claude CLI provider presence does not certify native Claude admission. Login retry alone cannot repair an unimplemented native capability adapter.
+- AgentPick currently carries provider/model; nativePick supplies Codex effort from main configuration, so explicit per-role effort needs a separate validated source pin.
+- code-firstmate already declares coordinator/worker/reviewer/designer pack skill refs. Engine.instructions actually calls deps.skillText and composeInstructions; worker/reviewer mode receives x.skill(). But skill loading errors are swallowed, role skill text is not captain-approved by immutable hash/snapshot, and generic fresh judges use a separate short system prompt. File presence alone is not proof of injection.
+- Existing per-node Engine.setAgent swaps an actual agent pick and existing capability cards support reprepare; a native conversation has no source-owned captain-confirmed tool for that recovery.
+- Coffee currently has a single source Codex choice. A primary Codex conversation must not imply that workers/reviewers/image generation share that choice, nor that Claude is supported.
+
+## Interview contract (grilling skill applied to product onboarding)
+
+Read the supplied grilling skill contract as the required behavior, not as an instruction to interrogate this coding chat. Maintain a persisted dependency tree/frontier. Firstmate asks the entire current numbered frontier with a recommendation for each decision, then waits; dependent questions wait for their prerequisites. Environment/provider/model/skill facts come from bounded source probes, not guesses or questions the captain cannot answer. No paid worker/model jobs run to discover those facts.
+
+First frontier: discuss which supported vendor each actual workflow role should use, clearly distinguishing Studio primary host from coordinator/worker/independent reviewer/designer roles and source image capability. Unsupported Claude is visibly unavailable, not disguised as expired login or silently changed to Codex. A captain may choose to HOLD for future support. Model/effort questions occur only after that role's vendor and verified inventory are settled. Correct role skill is mandatory source policy, not an optional permission bypass. Show its actual native text/ref/version/hash; additional skills require their own existing verified pins.
+
+Continue dependent rounds until no choice is silently assumed. Review the complete shared editable staffing/design plan with the captain and obtain explicit confirmation before writing active config or running workflow work. Recommendations never count as answers. Missing facts/choices retain a recoverable HOLD.
+
+## Project-local config and authority
+
+Use Studio PROJECT-local files, separate from global vendor homes and from the Git working checkout: DATA/projects/<source-safe-project-key>/staffing/vN.json plus immutable skills/<sha256>.md snapshots and an atomic current.json pointer. The key is derived from typed canonical project identity, not arbitrary model path; registered Git projects and Studio-owned artifact workspace are distinct namespaces. Never modify ~/.codex, ~/.claude, login credentials, global defaults or main-host settings.
+
+Config schema1 (explicit SHA256 deep canonical algorithm): project identity/hash; workflow id/version/definition hash; config version/previous hash; source-approved role mapping; per role provider/model/effort plus mandatory skill {ref,version,sha256,snapshotSha256}; relevant reviewer/designer fresh-context/job-count policy; and signed captain approval reference. Capabilities have typed adapter support/auth/quota/model/effort/tool-health distinctions and expiries; metadata availability is not proof of tool execution or model quality. No secrets or OAuth URLs belong in config.
+
+A source-owned captain-only staffing card displays every role's effective provider/model/effort and exact skill identity, source snapshot and change summary. Only its authenticated answer performs a per-project CAS/atomic immutable version write and pointer activation. A changed base config, project, definition, capability selection or skill bytes invalidates the offer. Schema/version/unknown keys/malformed references fail closed. Preserve historical config/evidence; no silent rehash, repair or old defaults adoption. UI config reads/editable drafts are authenticated; editing never activates config or starts work without confirmation.
+
+Before Engine.start allocation/admission and again before each first/resumed paid job, source resolves the approved config, checks its digest/approval/project/workflow/skill snapshots and fresh actual capability facts. Pass only an internal immutable approval ref into the run; never set picks after Engine.start begins its first job. Missing/changed/unavailable config HOLDs with actionable recovery, without defaulting to Claude or falling back silently. Existing generic checks and unrelated workflows retain their contracts. The source native staffing guard applies to all entrypoints to the selected native code/coffee workflow, not only HTTP or Firstmate tools.
+
+Actual worker/reviewer/designer rounds load the approved native skill snapshot and record the injected instruction hash, selected provider/model/effort and job/attempt identity. Compare actual provider.start payloads in tests; do not accept model stdout or a claimed skill name as delivery proof. Native equivalents derive the canonical worker/reviewer semantics already read: exact scope, plan/build separation, actual fail-first/test evidence, whole-class fixes; independent fresh review, current-head/read-plan binding and complete closed standing list. They are self-contained, with no AGENTS.md, fm scripts, external engine paths or arbitrary archived skill mapping. Primary reviewer plus two fresh judge jobs remains three contexts; same vendor remains allowed unless an explicit diversity manifest requires otherwise. Designer capabilities remain blocking and honest when image delivery is unsupported.
+
+## Existing Task recovery
+
+A source-owned change-staffing proposal names actual Task/node/visit/attempt/current head/current config hash and proposed role pick/skill snapshot. It displays changed authority and impact. Only the captain answer invokes existing setAgent/reprepare through a validated source transaction; old dispatch approval cannot authorize a changed staffing manifest. Reprepare approval is retained as an explicit human step, never autoanswered, and does not create a replacement Task. Busy owned jobs are not dual-driven; pending swaps obey existing owner cleanup. Target drift, cancellation, restart or later config edits fail closed. Completed historical jobs/ledgers remain unchanged; in-flight legacy jobs need an explicit upgrade/reprepare card before another paid launch.
+
+## Approved production paths
+
+1. NEW src/domain/staffing.ts — strict typed schema, source-safe project config store, immutable skill snapshots, signed approval/CAS, start/job verification and source-installed native workflow guard.
+2. NEW src/firstmate-staffing.ts — bounded read facts and prepare staffing/update proposals; no raw writes/card answers/secret access.
+3. src/firstmate.ts — compose source staffing tools and bind approved config to normal dispatch before Engine.start; preserve registration and coffee-specific plan validation.
+4. src/host/main.ts — native onboarding frontier/discussion guidance only; main model/config unchanged.
+5. src/server.ts — actual capability/readiness callback and verified approved role pick/effort in nativePick; no fake Claude capability adapter or fallback.
+6. src/runtime/index.ts — install staffing guards before engine.load; authenticated project config read/draft/confirmation endpoints and existing per-node effort plumbing.
+7. src/runtime/engine.ts — domain-free optional instruction/pick verification callback at existing instruction/admission boundaries; typed AgentPick effort; source snapshot injection for normal roles and fresh judged rounds; preserve generic default behavior outside opted-in native staffing.
+8. src/domain/code.ts and src/domain/code-queue.ts — exact current-head/attempt dispatch/reprepare binding before round admission; preserve source review protocol, queue, remote and project authority.
+9. packs/firstmate/skills/worker.md, packs/firstmate/skills/reviewer.md, packs/firstmate/skills/designer.md — self-contained canonical native role contracts and explicit versioned source identity, no v1 execution prerequisites.
+10. NEW workflows/v2/firstmate-staffing.wf.yaml — real captain-only config/update confirmation workflow, not autoanswered.
+11. public/takeover.js and public/takeover.css — primary onboarding's editable shared staffing/config summary and actual hold/confirm states, using current source tools.
+12. src/bundled.gen.ts — generated embedding only; package.json owning aliases; docs/architecture.md and this unit contract.
+
+Coffee integration extension, before touching it: src/domain/coffee-kit.ts and src/domain/coffee-design.ts — reference the approved staffing digest alongside its existing design approval and resolve its actual page/image worker choices through the same source guard. Do not add imagined roles, silently loosen Codex-only image capability, remove existing design/card/asset dependencies, or conflate renderer runtime with an agent provider. If the first implementation is bounded to code recovery, coffee remains explicitly held until this extension is reviewed; it cannot be claimed universally staffed.
+
+## Exact owning tests and proof
+
+NEW tests/firstmate-staffing.ts; NEW tests/lib/firstmate-staffing-fixture.ts; tests/fixture/codex-account.mjs; tests/firstmate-native.ts; tests/firstmate-project-registration.ts; tests/host.ts; tests/vendor-policy.ts; tests/codex-capability.ts; tests/native-queue.ts; tests/backbone-ui.mjs; tests/smoke-code.ts; tests/native-coffee-kit.ts; tests/native-coffee-design.ts; tests/beginner-coffee-kit-ui.mjs after exact source integration. No new generic fake-auth exemptions.
+
+Fail-first existing APIs: primary Codex plus configured unsupported Claude worker must expose that distinction before dispatch, not permanent unexplained poststart HOLD. A captain-chosen available Codex worker/reviewer effort must reach actual provider.start before first job. An altered/missing role skill must HOLD instead of silently injecting empty instructions. Wrong/missing config digest cannot allocate native paid work. Tests use strict offline metadata/provider payload receipts, not actual vendor quality claims.
+
+Controls: every role vendor→model→effort dependency frontier and no assumed answers; unsupported vs missing-login vs quota/unknown; same-vendor three fresh contexts; exact worker/reviewer/designer skill bodies/hashes in actual start payload; config version CAS and tamper/removed snapshot/newhead; one atomic approval before first start; raw tool/HTTP bypass; restart/cancel/held capability cleanup; existing-node swap/reprepare on same Task with no autoanswer; no global vendor config/auth changes. Actual 390/1440 EN/zh-TW light/dark captures must show choices, exact role skill/hash/config, holds, confirmation and recovery; final integration must preserve coffee discussion before paid parallel work.
+
+## Current coding configuration slice
+
+Backend configuration, signed interview rounds, captain-only activation, canonical project identity, signed task staffing lineage, actual role snapshots and same-Task upgrade/reprepare recovery are implemented. The actual primary conversation fixture covers clean registration, a signed pending intent, vendor/model/effort replies, configuration approval, normal dispatch and exact offline CLI payload receipts. Worker, primary reviewer, two fresh judges and designer payload controls compare actual instruction bytes and source hashes; these fixtures do not certify model quality or real visual inspection.
+
+Focused validation: staffing 65, registration 34, native main 34, native queue 143, generic 7 and vendor policy 20 passed. The secondary configuration UI and actual captain cards have 186 passing controls and 72 captures across eight viewport/theme/locale cells. The source remains subject to independent review and root release checks. Claude native admission and the coffee extension integrate separately; unsupported or unverified selections hold without fallback.
+
+Additional acknowledged paths: src/doors.ts adds only the strict synchronous staffingIdentity helper; src/firstmate-projects.ts adds the signed recoverable registration-to-staffing handoff. Generated src/assets.gen.ts is allowed alongside bundled.gen.ts and is regenerated only by the existing asset script.
+
+
+## R2 review corrections
+
+Additional acknowledged source seam: `src/providers/native-admission.ts` extracts the server's existing post-queue provider resolver into the identical injectable handler used by owning Agents fixtures. All native code jobs now carry an opaque, single-use source receipt for exact config/role/instruction bytes and task/node/visit/attempt/head. After actual queue acquisition, both cached and refreshed provider paths recheck active signed config, current canonical project authority, original source skill bytes and immutable snapshots; refresh is followed by a second check before launch. Ordinary agent jobs, fresh judges and merge-detail coordinator calls carry the receipt. Missing/copied/replayed or drifted authority cannot reach provider.start. Generic workflows retain their previous policy.
+
+Signed interviews now use `staffing/interviews/<workflow-identity-sha256>/current.json` and immutable round histories. Workflow id/version/definition hash defines the namespace. Existing signed legacy discussions remain readable and their original pointer/history bytes remain untouched; a different workflow version gets a fresh dependent frontier and its own captain approval.
+
+Fail-first: the original cached server resolver actually starts a queued job after configuration replacement; the original store throws on saved-v1 to v2 discussion. Retained old-red logs name those failures. New tests use the actual server admission factory after a real Agents queue wait, including cached/expired capability, config/source-skill/project/instruction/receipt/provider/task drift and mutation during refresh. Native tool tests discuss and approve workflow v2 after v1 while preserving signed v1 history. Offline receipts establish execution wiring only, not real model quality or vendor acceptance.

@@ -1,3 +1,7 @@
+import {Onboarding} from '../onboarding';
+import {ArtifactStore} from '../artifacts';
+import {StaffingStore,staffingHash,installStaffingGuard,coffeeStaffingProject,type StaffingProject} from '../domain/staffing';
+import {installFirstmateStaffing,staffingQuotaReady,type StaffingFacts,type StaffingAdmission} from '../firstmate-staffing';
 import {installFirstmate} from "../firstmate";
 // Studio's native runtime, wired: versioned workflow definitions, the engine,
 // the check runtime, Studio-owned cards, and the steps each workflow uses.
@@ -33,16 +37,26 @@ import type { StudioLog } from "../rawlog";
 import { schemaDefaults } from "./checks";
 import { validate, normalize as normDef, WorkflowDefs } from "./defs";
 import { Engine, type AgentPick } from "./engine";
+import {COFFEE_DESIGN_FIELDS,validateCoffeeDesign,coffeeDesignJSON} from "../domain/coffee-design";
+import { installCoffeeKit } from "../domain/coffee-kit";
 import { installDeliver } from "../domain/deliver";
 
 export type RuntimeDeps = {
   dataDir: string; agents: Agents; provider: (id?: string, model?: string) => Provider; defaultProvider: () => AgentPick; log: StudioLog; send: (t: string, d: unknown) => void;
-  fmRoot: string; /** the roots nothing may read or write (default: the firstmate checkout) */ protectedRoots?: string[]; store?: any; m3?: { store: any; runs: any; lane: any } | null; fileorg?: any; docs?: any; improve?: any; studioUrl: () => string;
+  fmRoot: string; /** the roots nothing may read or write (default: the firstmate checkout) */ protectedRoots?: string[]; store?: any; m3?: { store: any; runs: any; lane: any; useArtifactReviewPolicy?: (policy:(id:string)=>import("../m3").ArtifactReviewPolicy|null)=>void } | null; fileorg?: any; docs?: any; improve?: any; studioUrl: () => string;
   /** domain steps (packs' actions, agent modes, natives) installed onto the engine before runs load */
   install?: ((engine: Engine, ctx: { projects: Projects; dataDir: string }) => void)[];
   /** the skill library (src/skills.ts): agent nodes' enabled skills are pinned against it and read from it */
   skills?: import("../skills").Skills | null;
-  generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal) => Promise<import("../providers/codex-image").CodexImage>;
+  coffeeVideo?:Parameters<typeof installCoffeeKit>[1]["video"];
+  coffeeFilmStatus?:{ready:boolean;reason:string|null};
+  coffeeChoice?:()=>{provider:"codex";model:string;effort:string|null}|null;
+  generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference) => Promise<import("../providers/codex-image").CodexImage>;
+  staffingFacts?: () => Promise<StaffingFacts[]>;
+  staffingAdmission?: StaffingAdmission;
+  staffingProject?: (id:string) => StaffingProject;
+  staffingPending?: (intent:any) => void;
+
   selectProvider?: (x: import("./engine").X, pick: AgentPick, context?: { role: string; explicit: boolean }) => Promise<Provider>;
 };
 
@@ -76,9 +90,18 @@ export function createRuntime(d: RuntimeDeps) {
   const engine = new Engine({ dataDir: d.dataDir, agents: d.agents, provider: d.provider, defaultProvider: d.defaultProvider, selectProvider: d.selectProvider, log: d.log, send: d.send, skillText: skillTextFor(d.fmRoot), store: d.store, protectedRoots: d.protectedRoots ?? [d.fmRoot], library: d.skills ?? null }, defs);
   const projects = new Projects(d.dataDir);
   if (d.m3?.store && d.m3?.lane && d.fileorg && d.docs) installDeliver(engine, { dataDir: d.dataDir, artifacts: d.m3.store, lane: d.m3.lane, fileorg: d.fileorg, docs: d.docs, generateImage: d.generateImage });
+  if(d.m3?.store){const coffee=installCoffeeKit(engine,{artifacts:d.m3.store,choice:d.coffeeChoice,staffing:(def,params)=>{const config=staffingGuard.verified(def,params),role=config.roles['image-worker'];if(!role||role.provider!=='codex')throw new Error('The dedicated image adapter requires an explicitly approved available Codex image-worker; no vendor fallback');return {provider:'codex',model:role.model,effort:role.effort};},video:d.coffeeVideo});d.m3.useArtifactReviewPolicy?.(coffee.artifactReview);}
   // Base artifact providers precede domain wrappers that bind their own pinned outputs.
   for (const f of d.install ?? []) f(engine, { projects, dataDir: d.dataDir });
-  const firstmate=installFirstmate(engine,projects,{protectedRoots:d.protectedRoots??[]});
+  const staffing=new StaffingStore(d.dataDir);
+  const staffingProject=(id:string)=>d.staffingProject?d.staffingProject(id):projects.staffingIdentity(id,d.protectedRoots??[]);
+  let staffingCapabilities:StaffingFacts[]=[];
+  const staffingFacts=async()=>{staffingCapabilities=await(d.staffingFacts??(async()=>[]))();return staffingCapabilities;};
+  const staffingGuard=installStaffingGuard(engine,staffing,staffingProject,config=>{for(const role of Object.values(config.roles)){const cap=staffingCapabilities.find(c=>c.provider===role.provider),model=cap?.models.find(m=>m.id===role.model);if(!cap||cap.support!=='supported'||cap.auth!=='verified'||!staffingQuotaReady(role,cap,d.staffingAdmission)||cap.expires<=Date.now()||!model||role.effort!==null&&!model.efforts.includes(role.effort))throw new Error('Refresh staffing facts and confirm available role models before work / 請先更新派工能力並確認可用的角色模型');}});
+  const staffingTools=installFirstmateStaffing(engine,staffing,staffingProject,staffingFacts,d.staffingAdmission);
+  const onboarding=new Onboarding(engine,d.m3?.store??new ArtifactStore(d.dataDir));
+  const originalFirstmate=installFirstmate(engine,projects,{onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending});
+  const firstmate={specs:[...originalFirstmate.specs,...staffingTools.specs],call:(name:string,args:any,owner:any)=>name==='studio_change_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
   engine.load();
 
   const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
@@ -94,16 +117,33 @@ export function createRuntime(d: RuntimeDeps) {
   const grantNonces = new Map<string, number>();
   async function handle(req: Request, url: URL, who: { kind: string }, writing: boolean): Promise<Response | null> {
     const p = url.pathname;
-    if (!/^\/api\/(wf|wruns|scards|checks|policies|intake)(\/|$)/.test(p)) return null;
+    if (!/^\/api\/(wf|wruns|scards|checks|policies|intake|coffee|onboarding)(\/|$)/.test(p)) return null;
     let b: any = {}; if (writing) { try { b = await req.json(); } catch {} }
     const by = who.kind === "phone" ? "captain (phone)" : "captain";
     if (writing && who.kind === "phone" && !/^\/api\/scards\//.test(p)) return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
     try {
+      if(p==='/api/onboarding'){
+        if(who.kind!=='desktop')return json({error:'Use onboarding on the authenticated desktop'},403);
+        if(!writing)return json(onboarding.view());
+        if(req.method!=='POST')return json({error:'POST required'},405);
+        if(!b||typeof b!=='object'||Array.isArray(b)||Object.keys(b).some(k=>!['action','choice'].includes(k)))return json({error:'Invalid onboarding request'},400);
+        if(b.action==='choose')return json(onboarding.choose(b.choice));
+        if(b.action==='skip'&&b.choice===undefined)return json(onboarding.pause(true));
+        if(b.action==='resume'&&b.choice===undefined)return json(onboarding.pause(false));
+        return json({error:'Unknown onboarding action'},400);
+      }
+      if(p==='/api/intake/staffing'){
+        const args=writing?b:{project:url.searchParams.get('project'),workflow:url.searchParams.get('workflow'),version:Number(url.searchParams.get('version'))};
+        const operation=writing&&b?.confirm===true?'studio_propose_staffing':'studio_staffing_interview';
+        if(writing&&Object.hasOwn(args,'confirm')){delete args.confirm;}
+        return json(await staffingTools.call(operation,args,{key:`desktop:${randomBytes(16).toString('hex')}`,captain:true,text:'Captain staffing configuration request',live:()=>!req.signal.aborted}));
+      }
       // ---------- definitions ----------
+      if(p==="/api/coffee/design"&&writing){if(req.method!=="POST")return json({error:"POST required"},405);if(who.kind!=="desktop")return json({error:"Review coffee design on the desktop"},403);return json({plan:validateCoffeeDesign(b?.plan),canonical:coffeeDesignJSON(b?.plan)});}
       if (p === "/api/wf" && !writing) return json({ workflows: defs.list(), checks: engine.registry.all().map(checkView) });
       if (p === "/api/wf" && writing) {
         if(req.method!=="POST")return json({error:"use POST to create a workflow"},405);
-        const def=defs.create(b?.id,b?.name,by,b?.locale??"en");
+        const def=defs.create(b?.id,b?.name,by,b?.locale??"en",b?.template);
         d.log.emit({type:"workflow_created",workflow:def.id,summary:`${def.id} v1 created by ${by}`});
         return json({def},201);
       }
@@ -114,7 +154,7 @@ export function createRuntime(d: RuntimeDeps) {
         if (m[2] === "layout" && writing) return json({ layout: defs.setLayout(id, Number(b?.version), b?.positions ?? {}) });
         if (!writing) {
           const v = url.searchParams.get("v"); const def = defs.get(id, v ? Number(v) : undefined); if (!def) return json({ error: "no such workflow" }, 404);
-          return json({ def, problems: validate(def, defs.known, undefined, defs.skillInfo ?? undefined), versions: defs.versions(id).map((x) => ({ version: x.version, createdAt: x.createdAt, by: x.by, note: x.note, parent: x.parent, diff: x.diff })),
+          return json({ def, coffeeFilmStatus:def.kind==="coffee-kit"?d.coffeeFilmStatus??{ready:false,reason:"Local film capability is unavailable"}:null, coffeeDesign:def.kind==="coffee-kit"?COFFEE_DESIGN_FIELDS:null, coffeeChoice:def.kind==="coffee-kit" ? d.coffeeChoice?.() ?? null : null, problems: validate(def, defs.known, undefined, defs.skillInfo ?? undefined), versions: defs.versions(id).map((x) => ({ version: x.version, createdAt: x.createdAt, by: x.by, note: x.note, parent: x.parent, diff: x.diff })),
             runs: engine.list().filter((r) => r.workflow === id).map((r) => ({ id: r.id, version: r.version, status: r.status, result: r.result, merged: !!r.ctx?.merged, title: r.title, createdAt: r.createdAt })) });
         }
         const saved = defs.save(id, b, by, b?.note);
@@ -162,7 +202,14 @@ export function createRuntime(d: RuntimeDeps) {
         const text = String(b?.text ?? "").trim(); if (!text && !b?.workflow) return json({ error: "say what you want done" }, 400);
         const cls = classifyIntent(defs, text, engine.policies.get("sensitive_paths", { project: b?.params?.project ? String(b.params.project) : b?.project ? String(b.project) : null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []);
         const wf = b?.workflow || cls.workflow; if (!wf) return json({ error: "Studio could not tell which workflow this is: pick one", classifier: cls }, 409);
-        const r = engine.start({ workflow: wf, version: b?.version ? Number(b.version) : undefined, title: b?.title, text, params: b?.params ?? {}, by, classifier: cls });
+        let params=b?.params??{};
+        const chosenDef=defs.get(wf,b?.version?Number(b.version):undefined);
+        if(chosenDef?.kind==="coffee-kit") {
+          let config;try{config=staffing.current(coffeeStaffingProject(params.project));}catch{return json({error:'Discuss and approve each coffee role before starting',code:'coffee-staffing-required'},409);}const image=config.roles['image-worker'];
+          if(!image||image.provider!=='codex')return json({error:"Confirm an available dedicated Codex image role; no vendor fallback",code:"coffee-staffing-required"},409);
+          params={...params,_staffing:config.hash};
+        }
+        const r = engine.start({ workflow: wf, version: b?.version ? Number(b.version) : undefined, title: b?.title, text, params, by, classifier: cls });
         return json(runView(r.id));
       }
       // an app's before / after captures (a domain check makes them): the PNGs, and the built pages ("Open the app"), served sandboxed: no script, no request out
@@ -181,7 +228,7 @@ export function createRuntime(d: RuntimeDeps) {
       m = /^\/api\/wruns\/(R-\d+)(?:\/(pause|resume|cancel|file|events|evidence|archive|delete)|\/nodes\/([a-z0-9-]+)\/agent)?$/.exec(p);
       if (m) {
         const id = m[1]; if (!engine.get(id)) return json({ error: "no such run" }, 404);
-        if (m[3] && writing) return json(engine.setAgent(id, m[3], { provider: String(b?.provider ?? ""), model: b?.model ? String(b.model) : null }) && runView(id));
+        if (m[3] && writing) return json(engine.setAgent(id, m[3], { provider: String(b?.provider ?? ""), model: b?.model ? String(b.model) : null, ...(b?.effort!==undefined?{effort:b.effort===null?null:String(b.effort)}:{}) }) && runView(id));
         if (m[2] === "file") {
           const root = realpathSync(engine.rdir(id)); const rel = String(url.searchParams.get("path") ?? "");
           // realpath of the file itself, not only the root: a symlink inside the folder never leads out of it
@@ -217,6 +264,6 @@ export function createRuntime(d: RuntimeDeps) {
       return json({ error: "not found" }, 404);
     } catch (e: any) { return json({ error: String(e?.message ?? e), problems: e?.problems ?? undefined }, 400); }
   }
-  return { handle, engine, defs, projects, firstmate, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
+  return { handle, engine, defs, projects, firstmate, onboarding, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
 }
 export { schemaDefaults };
