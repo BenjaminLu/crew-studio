@@ -1,0 +1,15 @@
+/* Spotlight uses the application's theme and real page controls. */
+.ob-tour{position:fixed;inset:0;z-index:75;pointer-events:none;font:14px/1.5 var(--f-sans);color:var(--text)}
+.ob-tour-ring{position:fixed;border:2px solid var(--accent);border-radius:10px;box-shadow:0 0 0 9999px var(--scrim);pointer-events:none}
+.ob-tour-panel{position:fixed;box-sizing:border-box;width:340px;max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow:auto;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-2);pointer-events:auto}
+.ob-tour-head,.ob-tour-actions{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ob-tour-head{margin-bottom:8px;font-size:12px}
+.ob-tour-panel h2{margin:0 0 8px;font-size:17px;line-height:1.4}
+.ob-tour-panel p{margin:0 0 12px;color:var(--text-2)}
+.ob-tour-panel .ob-tour-status{padding:8px;border-radius:6px;background:var(--surface-2);overflow-wrap:anywhere}
+.ob-tour-actions{margin-top:16px;justify-content:flex-end}
+.ob-tour-actions [data-ob-back]{margin-right:auto}
+.ob-tour-panel :focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.ob-tour-panel [hidden],.ob-tour-ring[hidden]{display:none}
+@media(max-width:600px){.ob-tour-panel{width:calc(100vw - 24px)}.ob-tour-panel .btn{min-height:44px}}
+@media(forced-colors:active){.ob-tour-ring{border-color:Highlight}.ob-tour-panel{border-color:CanvasText}}

@@ -27,23 +27,25 @@ import a23 from "../public/m3.js" with { type: "file" };
 import a24 from "../public/m6.js" with { type: "file" };
 import a25 from "../public/m7.js" with { type: "file" };
 import a26 from "../public/m8.js" with { type: "file" };
-import a27 from "../public/ootb.js" with { type: "file" };
-import a28 from "../public/pack-genesis.css" with { type: "file" };
-import a29 from "../public/pack-genesis.js" with { type: "file" };
-import a30 from "../public/runstate.js" with { type: "file" };
-import a31 from "../public/runtime.css" with { type: "file" };
-import a32 from "../public/runtime.js" with { type: "file" };
-import a33 from "../public/scard.js" with { type: "file" };
-import a34 from "../public/skills.css" with { type: "file" };
-import a35 from "../public/skills.js" with { type: "file" };
-import a36 from "../public/skins.js" with { type: "file" };
-import a37 from "../public/styles.css" with { type: "file" };
-import a38 from "../public/takeover.css" with { type: "file" };
-import a39 from "../public/takeover.js" with { type: "file" };
-import a40 from "../public/transcripts.css" with { type: "file" };
-import a41 from "../public/transcripts.js" with { type: "file" };
-import a42 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
-import a43 from "../public/workflow-overview.js" with { type: "file" };
+import a27 from "../public/onboarding.css" with { type: "file" };
+import a28 from "../public/onboarding.js" with { type: "file" };
+import a29 from "../public/ootb.js" with { type: "file" };
+import a30 from "../public/pack-genesis.css" with { type: "file" };
+import a31 from "../public/pack-genesis.js" with { type: "file" };
+import a32 from "../public/runstate.js" with { type: "file" };
+import a33 from "../public/runtime.css" with { type: "file" };
+import a34 from "../public/runtime.js" with { type: "file" };
+import a35 from "../public/scard.js" with { type: "file" };
+import a36 from "../public/skills.css" with { type: "file" };
+import a37 from "../public/skills.js" with { type: "file" };
+import a38 from "../public/skins.js" with { type: "file" };
+import a39 from "../public/styles.css" with { type: "file" };
+import a40 from "../public/takeover.css" with { type: "file" };
+import a41 from "../public/takeover.js" with { type: "file" };
+import a42 from "../public/transcripts.css" with { type: "file" };
+import a43 from "../public/transcripts.js" with { type: "file" };
+import a44 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
+import a45 from "../public/workflow-overview.js" with { type: "file" };
 
 export const ASSETS: Record<string, string> = {
   "/app.css": a0,
@@ -73,21 +75,23 @@ export const ASSETS: Record<string, string> = {
   "/m6.js": a24,
   "/m7.js": a25,
   "/m8.js": a26,
-  "/ootb.js": a27,
-  "/pack-genesis.css": a28,
-  "/pack-genesis.js": a29,
-  "/runstate.js": a30,
-  "/runtime.css": a31,
-  "/runtime.js": a32,
-  "/scard.js": a33,
-  "/skills.css": a34,
-  "/skills.js": a35,
-  "/skins.js": a36,
-  "/styles.css": a37,
-  "/takeover.css": a38,
-  "/takeover.js": a39,
-  "/transcripts.css": a40,
-  "/transcripts.js": a41,
-  "/vendor/qrcode-1.4.4.min.js": a42,
-  "/workflow-overview.js": a43,
+  "/onboarding.css": a27,
+  "/onboarding.js": a28,
+  "/ootb.js": a29,
+  "/pack-genesis.css": a30,
+  "/pack-genesis.js": a31,
+  "/runstate.js": a32,
+  "/runtime.css": a33,
+  "/runtime.js": a34,
+  "/scard.js": a35,
+  "/skills.css": a36,
+  "/skills.js": a37,
+  "/skins.js": a38,
+  "/styles.css": a39,
+  "/takeover.css": a40,
+  "/takeover.js": a41,
+  "/transcripts.css": a42,
+  "/transcripts.js": a43,
+  "/vendor/qrcode-1.4.4.min.js": a44,
+  "/workflow-overview.js": a45,
 };

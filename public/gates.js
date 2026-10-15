@@ -92,7 +92,7 @@ function viewGates() {
       h("div", { class: "actions x-wrap" }, h("button", { class: "btn primary", onclick: newChange }, icon("plus", "ic sm"), T("Check a branch", "檢查 branch")), h("button", { class: "btn", onclick: classifyTool }, icon("door", "ic sm"), T("Classify paths", "分類路徑")))),
     h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Changes", "變更")), X.pill("human", String(open.length))),
       open.length ? h("div", { class: "x-grid" }, open.map(changeCard)) : h("div", { class: "card" }, h("div", { class: "empty" }, icon("gate"), h("b", {}, T("No change in flight", "沒有進行中的變更")), T("Check a branch of a project's repository.", "檢查某個專案 repository 的 branch。")))),
-    h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Projects", "專案")), h("span", { class: "x-grow" }), h("button", { class: "btn ghost", onclick: addProject }, icon("plus", "ic sm"), T("Add project", "新增專案"))),
+    h("section", { "data-onboarding-projects": "1" }, h("div", { class: "sec-head" }, h("h2", {}, T("Projects", "專案")), h("span", { class: "x-grow" }), h("button", { class: "btn ghost", onclick: addProject }, icon("plus", "ic sm"), T("Add project", "新增專案"))),
       o.projects.length ? h("div", { class: "x-stack" }, o.projects.map((p) => h("div", { class: "card x-pad x-stack", "data-project": p.id },
         h("div", { class: "x-row wrap" }, h("b", {}, p.name), p.path ? h("code", { class: "a3-path" }, p.path) : h("span", { class: "faint" }, T("no repository", "沒有 repository")), h("span", { class: "vbadge" }, p.base),
           p.approvedAt ? X.pill("ok", T(`list approved ${ago(p.approvedAt)}`, `清單已核准（${ago(p.approvedAt)}）`)) : X.pill("", T("org defaults only", "只用組織預設"))),

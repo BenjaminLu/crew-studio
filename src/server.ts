@@ -405,6 +405,17 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       if (DESKTOP_ONLY.has(p)) return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
       if (PHONE_DRIVE.has(p) && !remote.allowDrive) return json({ error: "this phone may read and interrupt only; allow phone driving on the Mac first", code: "noDrive" }, 403);
     }
+    if(p==='/api/codex/native/status'&&!writing){
+      if(who.kind!=='desktop')return json({error:'Desktop session required'},403);
+      if(!hasSession(req,SESSION))return json({error:'Studio session required'},401);
+      const config=codexConfig(PROJECT),model=chatSettings().models.codex||process.env.CREW_CODEX_MODEL||config.model,effort=config.effort;
+      // Read capability metadata only; never acquire or start the main session.
+      try{
+        await selectNativeProvider({role:'worker',host:null,explicit:true,provider:'codex',model,effort,configured:{codex:{model,effort}},fallback:[],known:['codex']},
+          ()=>probeCodex(undefined,req.signal),(_id,m,e)=>codexProvider(m,undefined,{model:m,effort:e}));
+        return json({state:'ready',model,effort});
+      }catch(e){return json({state:'hold',model,effort,reason:e instanceof Error?e.message:'Capability verification unavailable'});}
+    }
     if(p==='/api/claude/native/status'&&!writing){if(who.kind==='desktop'&&!hasSession(req,SESSION))return json({error:'Studio session required'},401);const s=chatSettings(),model=url.searchParams.get('model')||s.models.claude||process.env.CREW_CLAUDE_MODEL||'claude-sonnet-5-5',effort=url.searchParams.get('effort')||configuredClaudeEffort(model);return json(await probeClaudeNative({model,effort},req.signal));}
     if((p==='/api/claude/native/verify'||p==='/api/claude/native/cancel')&&writing){if(p.endsWith('/cancel')){await nativeClaude.cancel();return json({ok:true});}const b=await req.json().catch(()=>null);if(!b||Object.keys(b).some(k=>!['model','effort','confirm'].includes(k))||b.confirm!==true||!validClaudePair({model:b.model,effort:b.effort??null}))return json({error:'Confirm an exact selected Claude model/effort; this performs one bounded model request'},400);const cap=await nativeClaude.verify({model:b.model,effort:b.effort??null},{confirm:true,signal:req.signal});return json(cap,cap.admission==='verified-execution'?200:409);}
     { const rt = await takeover.handle(req, url, who as any, writing); if (rt) return rt; }
