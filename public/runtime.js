@@ -526,10 +526,12 @@ function viewRuns() {
   const text = h("textarea", { class: "input", rows: 3, placeholder: T("Say what you want done", "說你要做什麼"), "aria-label": T("Intent", "意圖"), "data-run-text": "1", oninput: (e) => { RN.draft = e.target.value; } });
   text.value = RN.draft || "";
   const wf = h("select", { class: "select", "aria-label": T("Workflow", "流程"), "data-run-wf": "1", onchange: (e) => { RN.prefill = e.target.value; } }, h("option", { value: "" }, T("Let Studio pick", "讓 Studio 選")), (RN.wfs || []).map((w) => h("option", { value: w.id, selected: RN.prefill === w.id || null }, w.name)));
+  const provider = h("select", { class: "select", "aria-label": T("Provider", "模型供應商"), "data-run-provider": "1", onchange: (e) => { RN.provider = e.target.value; } },
+    [["", T("Default provider", "預設模型供應商")], ["codex", "Codex"], ["claude", "Claude"]].map(([value, label]) => h("option", { value, selected: (RN.provider || "") === value || null }, label)));
   const msg = h("div", { class: "faint", role: "status" });
   return h("div", { class: "page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Tasks", "任務")), h("p", {}, T("Studio's workflow tasks, each with its live graph.", "Studio 的流程任務，每個都有即時流程圖。")))),
-    h("div", { class: "card x-pad rt-start" }, h("h3", {}, T("Start a task", "開始一個任務")), text, h("div", { class: "rt-row" }, wf, h("button", { class: "btn primary", "data-run-start": "1", onclick: async () => {
-      try { const r = await api("/api/wruns", { text: text.value, workflow: wf.value || undefined }); RN.list = null; RN.draft = ""; location.hash = `#/run/${r.id}`; } catch (e) { msg.textContent = e.message; } } }, T("Start", "開始"))), msg),
+    h("div", { class: "card x-pad rt-start" }, h("h3", {}, T("Start a task", "開始一個任務")), text, h("div", { class: "rt-row" }, wf, provider, h("button", { class: "btn primary", "data-run-start": "1", onclick: async () => {
+      try { const r = await api("/api/wruns", { text: text.value, workflow: wf.value || undefined, params: provider.value ? { provider: provider.value } : {} }); RN.list = null; RN.draft = ""; location.hash = `#/run/${r.id}`; } catch (e) { msg.textContent = e.message; } } }, T("Start", "開始"))), msg),
     // one word per state (public/runstate.js); archived runs only with "Show archived", each with Unarchive
     h("label", { class: "rt-row rt-archived-toggle" }, h("input", { type: "checkbox", "data-show-archived": "1", checked: RN.archived || null, onchange: (e) => { RN.archived = e.target.checked; RN.list = null; rerender(); } }), T("Show archived", "顯示已封存")),
     RN.list === "loading" || RN.list === null ? h("div", { class: "skel", style: "height:120px" }) : runs.length ? h("div", { class: "card rt-runs" }, runs.map((r) => h("a", { class: `rt-run st-${r.status}${r.archived ? " archived" : ""}`, href: `#/run/${r.id}`, "data-run": r.id },
