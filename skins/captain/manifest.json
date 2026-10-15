@@ -1,0 +1,9 @@
+{
+  "id": "captain",
+  "name": "Captain",
+  "version": "1.0.0",
+  "entry": "index.html",
+  "description": "Firstmate's pirate ship, captain, kraken and cannon animations, connected to Studio. Pending cards open in pro mode.",
+  "permissions": ["snapshot.tasks", "snapshot.crew", "snapshot.pending", "events", "openCard"],
+  "network": []
+}
