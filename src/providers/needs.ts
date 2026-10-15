@@ -28,11 +28,13 @@ const which = (bin: string): string | null => {
 };
 const installOf = (bin: string) => { const found = which(bin); if (!found) return []; let r = found; try { r = realpathSync(found); } catch {} return [dirname(r), dirname(dirname(r))]; };
 
-export function claudeNeeds(bin: string, hosts: string[]): SandboxNeeds {
+export type ApprovedClaudeConfig = { model: string; effort: string | null; login: () => Login; live: () => boolean; invalidate: (code?: string,event?: unknown) => void };
+export const claudeSettings = (approved: Pick<ApprovedClaudeConfig,'model'|'effort'>) => ({model:approved.model,...approved.effort?{effortLevel:approved.effort}:{},availableModels:[approved.model],fallbackModel:[],switchModelsOnFlag:false,disableAllHooks:true,disableAutoMemory:true,disableWorkflows:true,enabledPlugins:{}});
+export function claudeNeeds(bin: string, hosts: string[], approved?: ApprovedClaudeConfig): SandboxNeeds {
   // claude's config, sessions and caches live in the round's own home (v1 bin/adapters/claude.sh: CLAUDE_CONFIG_DIR in the round's temp directory)
   return { reads: installOf(bin), hosts, tmpEnv: ["CLAUDE_CODE_TMPDIR"],
     home(dir) { const cfg = join(dir, ".claude-config"); mkdirSync(cfg, { recursive: true }); return { HOME: dir, CLAUDE_CONFIG_DIR: cfg, DISABLE_NONESSENTIAL_TRAFFIC: "1" }; },
-    login: () => claudeLogin() };
+    login: () => approved ? approved.live() ? approved.login() : {ok:false,error:'Claude native verification expired or was revoked'} : claudeLogin() };
 }
 export type ApprovedCodexConfig = { model: string; effort: string | null };
 export function codexNeeds(bin: string, hosts: string[], approved?: ApprovedCodexConfig): SandboxNeeds {

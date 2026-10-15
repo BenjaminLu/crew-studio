@@ -3,9 +3,9 @@
 // token), API keys for the status chat without any CLI, and built-in LAN phone
 // mode. Loaded after app.js, m2.js and m25.js.
 (() => {
-const DOC = { data: null, job: null, poll: null };
+const DOC = { data: null, job: null, poll: null,claude:null };
 const STATUS = { ok: ["ok", "Works", "可用"], degraded: ["warn", "Degraded", "受限"], missing: ["bad", "Missing", "缺少"], info: ["", "Optional", "選用"] };
-async function loadDoctor() { try { DOC.data = await getJ("/api/doctor"); } catch { DOC.data = null; } if (S.route?.name === "doctor") render(); updateDocBadge(); }
+async function loadDoctor() { try { const [doctor,claude]=await Promise.all([getJ("/api/doctor"),getJ("/api/claude/native/status").catch(()=>null)]);DOC.data=doctor;DOC.claude=claude?.provider==='claude'?claude:null; } catch { DOC.data = null; } if (S.route?.name === "doctor") render(); updateDocBadge(); }
 function updateDocBadge() {
   const b = $("#navDoctor"); if (!b || !DOC.data) return;
   const n = DOC.data.items.filter((i) => i.status === "missing" && i.id === "state" || i.status === "degraded" && ["chat", "board"].includes(i.id)).length;
@@ -14,6 +14,7 @@ function updateDocBadge() {
 
 function actionButton(it) {
   const a = it.action || {};
+  if((it.id==='claude'||a.item==='claude')&&DOC.claude?.quota==='exhausted')return h('span',{'data-claude-wait-reset':true},T('Wait for quota reset; signing in again will not restore quota.','請等待額度重設；重新登入不會恢復額度。'));
   if (a.kind === "install") return h("button", { class: "btn primary", "data-install": a.item, onclick: () => openInstall(a.item) }, icon("download", "ic sm"), T("Install…", "安裝…"));
   if (a.kind === "login") return h("button", { class: "btn", "data-login": a.item, onclick: () => startLogin(a.item) }, icon("link", "ic sm"), T("Log in…", "登入…"));
   if (a.kind === "github") return h("button", { class: "btn", "data-gh": "connect", onclick: openGithub }, icon("pr", "ic sm"), S.github?.connected ? T("Change token…", "更換 token…") : T("Connect GitHub…", "連接 GitHub…"));
@@ -34,12 +35,15 @@ function viewDoctor() {
     DOC.data.installer === "mock" ? h("div", { class: "rich", "data-installer": "mock" }, h("div", { class: "rk" }, icon("alert", "ic sm"), T("Test mode: installs are recorded, never run.", "測試模式：只記錄安裝，不會真的執行。"))) : null,
     DOC.job ? jobBox(DOC.job) : null,
     window.crewCodexAccountPanel?.(),
+    h('div',{class:'rich','data-claude-native-status':DOC.claude?.quota||'unknown'},h('b',{},T('Claude account and quota','Claude 帳號與額度')),h('p',{},DOC.claude?.quota==='exhausted'?T(`Quota exhausted. ${DOC.claude.resetAt?'Reported reset: '+new Date(DOC.claude.resetAt).toLocaleString():'Reset time unknown.'} Wait for reset; do not sign in again.`,`額度已耗盡。${DOC.claude.resetAt?'回報的重設時間：'+new Date(DOC.claude.resetAt).toLocaleString():'重設時間未知。'}請等待重設，不需重新登入。`):DOC.claude?.loginState==='logged-in'?T('This Claude CLI context is signed in. Remaining quota is unknown; sign-in does not prove native worker readiness.','這個 Claude CLI 環境已登入。剩餘額度未知；登入不代表原生工作回合已就緒。'):T('Authentication in this Studio process is unverified or absent. An existing Claude session may use another context. This does not mean the machine is globally logged out.','這個 Studio 程序的登入尚未驗證或不存在；既有 Claude 對話可能使用另一個環境。這不代表整台機器都已登出。')),h('p',{class:'faint'},T('Account sign-in, quota exhaustion and verified model execution are separate states. Checking this page makes no model request.','帳號登入、額度耗盡與模型執行驗證是不同狀態。查看此頁不會發出模型請求。'))),
     h("div", { class: "faint", style: "font-size:13px" }, bad ? T(`${bad} item(s) need attention.`, `${bad} 項需要處理。`) : T("Listed dependencies are detected. Logins and actual tool execution need separate verification.", "已偵測到列出的依賴；登入與實際工具執行仍需分別驗證。")),
     ["basic","coding","optional"].map(group=>h("section", { "data-doc-group":group },
       h("h2", {}, group==="basic"?T("Basic web readiness","基本網頁功能"):group==="coding"?T("Coding and checks","程式碼與檢查"):T("Optional integrations","選用整合")),
       h("div", { class: "card", style: "padding:0" }, items.filter(it=>(it.group||"coding")===group).map((it) => {
       const cliStatus = { available: ["ok", "Available", "可用"], missing: ["bad", "Not installed", "未安裝"], unusable: ["warn", "Cannot run", "無法執行"] };
-      const [cls, en, zh] = (it.availability === "available" && it.authenticated === true ? ["ok", "Logged in", "已登入"] : cliStatus[it.availability]) || STATUS[it.status] || STATUS.info;
+      const executableStatus = it.availability === "available" && it.authenticated === true ? ["ok", "Logged in", "已登入"] : cliStatus[it.availability];
+      const detectedStatus = ["codex", "claude"].includes(it.id) && it.status === "ok" ? ["", "Detected", "已偵測"] : null;
+      const [cls, en, zh] = executableStatus || detectedStatus || STATUS[it.status] || STATUS.info;
       return h("div", { class: "doc-row", "data-item": it.id, "data-status": it.status },
         h("div", { class: "doc-main" },
           h("div", { class: "doc-t" }, h("b", {}, T(it.title,it.titleZh||it.title)), h("span", { class: `badge ${cls}` }, T(en, zh))),

@@ -81,6 +81,7 @@ import { codexConfig } from "./host/codex";
 import { CodexAccount } from "./host/codex-account";
 import { generateCodexImage } from "./providers/codex-image";
 import { probeCodex } from "./providers/codex-probe";
+import {nativeClaude,probeClaudeNative,makeNativeClaudeProvider,validClaudePair,configuredClaudeEffort} from './providers/claude-native';
 import { ProviderRefusal, selectNativeProvider, type ProviderSelection, type ProviderCapability } from "./providers/policy";
 
 const ROOT = SRC_ROOT;
@@ -165,7 +166,7 @@ await main.start();
 main.onView = (v) => send("main", v);
 main.onEvent = (e: HostEvent) => { if (e.type === "delta" || e.type === "toolStart" || e.type === "permissionRequest" || e.type === "turnStart") send("mainEvent", e); };
 const codexAccount=new CodexAccount({cwd:PROJECT,busy:()=>main.view().state!=="detached",configured:()=>{const c=codexConfig(PROJECT);return{model:c.model,effort:c.effort};},changed:()=>send("codex-account",codexAccount.view())});
-for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{void codexAccount.shutdown().then(()=>process.exit(0),()=>process.exit(1));});
+for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{void Promise.all([codexAccount.shutdown(),nativeClaude.cancel()]).then(()=>process.exit(0),()=>process.exit(1));});
 const takeover = createTakeover({ main, fm, gh, board, codexAccount, stateDir: STATE, pending: () => pending, tasks, crew: () => fm.crew(8) });
 // transcripts: the session Studio drives (its copy holds the turns before the takeover), else the firstmate session
 const CLAUDE_PROJECTS = process.env.CREW_HOST_CLAUDE_PROJECTS ?? join(homedir(), ".claude/projects");
@@ -190,7 +191,7 @@ let serveOn = false;
 // a phone may read and interrupt; driving firstmate (and answering cards, changing settings) needs "allow phone to drive"
 const PHONE_DRIVE = new Set(["/api/main/takeover", "/api/main/start", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door", "/api/main/attach", "/api/main/send", "/api/main/approve", "/api/main/resume", "/api/main/detach", "/api/main/queue/remove", "/api/answer", "/api/settings"]);
 const DESKTOP_ONLY = new Set(["/api/transcripts/settings", "/api/remote/pair/start", "/api/remote/revoke", "/api/remote/settings", "/api/remote/tailscale", "/api/remote/lan",
-  "/api/codex/account/login", "/api/codex/account/cancel", "/api/codex/account/verify", "/api/github/token", "/api/github/forget", "/api/keys", "/api/doctor/install", "/api/doctor/login", "/api/doctor/cancel"]);
+  "/api/claude/native/verify","/api/claude/native/cancel","/api/codex/account/login", "/api/codex/account/cancel", "/api/codex/account/verify", "/api/github/token", "/api/github/forget", "/api/keys", "/api/doctor/install", "/api/doctor/login", "/api/doctor/cancel"]);
 
 // --- LAN mode: a second listener on this Mac's LAN address, only while turned on (never at start) ---
 let lanServer: ReturnType<typeof Bun.serve> | null = null;
@@ -275,11 +276,11 @@ const certified = new WeakMap<object, { input: ProviderSelection; expires: numbe
 async function nativeSelection(input: ProviderSelection, x?: any): Promise<Provider> {
   const signal = x && x.engine.get(x.run.id) ? x.engine.abortOf(x.run).signal : undefined;
   const capabilities = new Map<string, ProviderCapability>();
-  const selected = await selectNativeProvider(input, async id => {
+  const selected = await selectNativeProvider(input, async (id,pair) => {
     const at = Date.now();
-    const cap = id === "codex" ? await probeCodex(undefined, signal) : id === "stub" && allowStub ? { provider: id, available: true, auth: "verified" as const, quota: "available" as const, models: [{ id: "no model" }], at, expires: at + 30_000 } : { provider: id, available: false, auth: "unverified" as const, quota: "unknown" as const, models: [], at, expires: at + 30_000, reason: "native auth/model/quota capability adapter is unavailable" };
+    const cap = id === "codex" ? await probeCodex(undefined, signal) : id==='claude'?await probeClaudeNative(pair,signal): id === "stub" && allowStub ? { provider: id, available: true, auth: "verified" as const, quota: "available" as const, models: [{ id: "no model" }], at, expires: at + 30_000 } : { provider: id, available: false, auth: "unverified" as const, quota: "unknown" as const, models: [], at, expires: at + 30_000, reason: "native auth/model/quota capability adapter is unavailable" };
     capabilities.set(id, cap); return cap;
-  }, (id, model, effort) => id === "codex" ? codexProvider(model, undefined, { model, effort }) : makeProvider(id, model));
+  }, (id, model, effort) => id === "codex" ? codexProvider(model, undefined, { model, effort }) : id==='claude'?makeNativeClaudeProvider(capabilities.get(id)!,{model,effort}):makeProvider(id, model));
   if (signal?.aborted || x && x.engine.get(x.run.id) && !x.engine.owns(x)) throw new ProviderRefusal("native round owner ended during capability verification");
   certified.set(selected.provider, { input, expires: capabilities.get(selected.provider.id)!.expires, x });
   if (x && x.engine.get(x.run.id)) { x.engine.record(x, "provider-selection", { data: selected.evidence }); const step = [...x.run.steps].reverse().find((s: any) => s.node === x.node.id && s.state === "running"); if (step) { step.provider = selected.provider.id; step.model = selected.provider.model; } x.save(); }
@@ -291,14 +292,14 @@ const nativePick = async (x: any, pick: any, context?: { role: string; explicit:
   const role = context?.role ?? (x.node.role === "worker" || x.node.mode === "deliver" ? "worker" : x.node.role ?? "coordinator");
   const roleDef = x.run.def.roles.find((r: any) => r.id === x.node.role);
   const explicit = context?.explicit ?? !!(x.rn.agent || x.node.provider || roleDef?.provider || x.run.params.provider);
-  const configured: ProviderSelection["configured"] = { codex: { model: settings.models.codex || process.env.CREW_CODEX_MODEL || config.model, effort: config.effort }, claude: { model: settings.models.claude || process.env.CREW_CLAUDE_MODEL || "claude-sonnet-5-5" }, stub: { model: "no model" } };
+  const configured: ProviderSelection["configured"] = { codex: { model: settings.models.codex || process.env.CREW_CODEX_MODEL || config.model, effort: config.effort }, claude: { model: settings.models.claude || process.env.CREW_CLAUDE_MODEL || "claude-sonnet-5-5",effort:configuredClaudeEffort(settings.models.claude || process.env.CREW_CLAUDE_MODEL || "claude-sonnet-5-5") }, stub: { model: "no model" } };
   for (const id of choices) if (!configured[id]) configured[id] = { model: settings.models[id] || null };
   const fallback = x.engine.policies.get("vendor_policy.fallback", { project: x.engine.queueProject(x.run), workflow: x.run.def.policies }).value;
   if (!Array.isArray(fallback) || fallback.some(id => typeof id !== "string")) throw new ProviderRefusal("configured fallback chain is invalid");
   // Offline fixture provider is an explicit setting, never a real-vendor fallback.
   const fixture = allowStub && settings.provider === "stub" && !explicit;
   const provider = fixture ? "stub" : !explicit && role === "reviewer" ? String(x.engine.policies.get("vendor_policy.reviewer", { project: x.engine.queueProject(x.run), workflow: x.run.def.policies }).value) : !explicit && role === "coordinator" && host ? host : pick.provider;
-  return nativeSelection({ role, host, explicit: explicit || fixture || role === "reviewer", provider, model: explicit ? pick.model : configured[provider]?.model ?? null, roleModel: !explicit ? x.node.model ?? roleDef?.model ?? null : null, effort: provider === "codex" ? config.effort : null, configured, fallback, known: [...choices] }, x);
+  return nativeSelection({ role, host, explicit: explicit || fixture || role === "reviewer", provider, model: explicit ? pick.model : configured[provider]?.model ?? null, roleModel: !explicit ? x.node.model ?? roleDef?.model ?? null : null, effort: explicit&&Object.hasOwn(pick,"effort")?pick.effort??null:configured[provider]?.effort??null, configured, fallback, known: [...choices] }, x);
 };
 agents.providerAdmission = async (provider, o) => {
   if (o.signal?.aborted || o.owns && !o.owns()) throw new ProviderRefusal("native round owner ended during capability admission");
@@ -404,6 +405,8 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       if (DESKTOP_ONLY.has(p)) return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
       if (PHONE_DRIVE.has(p) && !remote.allowDrive) return json({ error: "this phone may read and interrupt only; allow phone driving on the Mac first", code: "noDrive" }, 403);
     }
+    if(p==='/api/claude/native/status'&&!writing){if(who.kind==='desktop'&&!hasSession(req,SESSION))return json({error:'Studio session required'},401);const s=chatSettings(),model=url.searchParams.get('model')||s.models.claude||process.env.CREW_CLAUDE_MODEL||'claude-sonnet-5-5',effort=url.searchParams.get('effort')||configuredClaudeEffort(model);return json(await probeClaudeNative({model,effort},req.signal));}
+    if((p==='/api/claude/native/verify'||p==='/api/claude/native/cancel')&&writing){if(p.endsWith('/cancel')){await nativeClaude.cancel();return json({ok:true});}const b=await req.json().catch(()=>null);if(!b||Object.keys(b).some(k=>!['model','effort','confirm'].includes(k))||b.confirm!==true||!validClaudePair({model:b.model,effort:b.effort??null}))return json({error:'Confirm an exact selected Claude model/effort; this performs one bounded model request'},400);const cap=await nativeClaude.verify({model:b.model,effort:b.effort??null},{confirm:true,signal:req.signal});return json(cap,cap.admission==='verified-execution'?200:409);}
     { const rt = await takeover.handle(req, url, who as any, writing); if (rt) return rt; }
     { const rx = await transcripts.handle(req, url, who as any, writing); if (rx) return rx; }
     { const rg = await graphMode.handle(req, url, writing); if (rg) return rg; }

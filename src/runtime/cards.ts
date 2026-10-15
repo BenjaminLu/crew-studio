@@ -11,8 +11,10 @@ export const CARD_KINDS = ["dispatch", "plan", "scope", "step-back", "round-budg
 export type CardKind = (typeof CARD_KINDS)[number];
 /** The intent sections every card carries, per locale. */
 export type Sections = { intent: string; why: string; scope: { in: string[]; out: string[] }; done: string[]; beforeAfter: string; how: string; glossary: { term: string; means: string }[] };
+export type InterviewBatch = {schema:1;visit:number;batchHash:string;questions:{key:string;en:string;zh:string}[];revision:number;answers:Record<string,string>};
 export type SCard = {
   id: string; run: string; node: string; visit: number; kind: CardKind; title: { en: string; "zh-TW": string }; sections: { en: Sections; "zh-TW": Sections }; body: string;
+  interview?: InterviewBatch;
   /** hold: an option that does not go through the door (close, request changes); every other option needs the door confirmation when the card's door is one-way */
   options: { id: string; label: string; labelZh?: string; primary?: boolean; note?: boolean; hold?: boolean }[];
   confirmDoor: boolean; door: string | null; links: { label: string; href: string }[]; ledger?: any; ste?: { verdict: string; findings: number; seq: number | null } | null;
@@ -57,6 +59,8 @@ export type CardDetail = {
 export const emptySections = (): Sections => ({ intent: "", why: "", scope: { in: [], out: [] }, done: [], beforeAfter: "", how: "", glossary: [] });
 
 export class Cards {
+  /** Source-owned read-only serialization; never used by get/save/answer. */
+  view: (c:SCard)=>SCard = c=>c;
   readonly dir: string;
   onChange: (c: SCard) => void = () => {};
   constructor(dataDir: string) { this.dir = join(dataDir, "cards"); mkdirSync(this.dir, { recursive: true }); }

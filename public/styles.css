@@ -608,3 +608,5 @@ pre.code{margin:0;padding:12px 14px;font:12px/1.6 var(--f-mono);color:var(--text
 
 /* Leave room for firstmate at the end of every page. */
 body.chat-closed .main{padding-bottom:120px}
+
+.cc-interview{display:grid;gap:16px;min-width:0}.cc-interview-field{display:grid;gap:6px;min-width:0}.cc-interview-field label{font-weight:600;overflow-wrap:anywhere}.cc-interview-field textarea{box-sizing:border-box;width:100%;min-height:80px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;font:inherit;resize:vertical}.cc-interview-field textarea[aria-invalid=true]{border-color:var(--bad)}.cc-field-error{color:var(--bad);font-size:13px;min-height:1em}

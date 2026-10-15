@@ -86,7 +86,7 @@ export function createRuntime(d: RuntimeDeps) {
     const r = engine.get(id); if (!r) return null;
     const ledger = engine.ledger(id);
     const t = engine.trusted(id);
-    return { ...r, walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }) };
+    return { ...r, walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };
   };
   const checkView = (m: any) => { const p = engine.params(m, null, {}); return { ref: m.ref, id: m.id, pack: m.pack, version: m.version, title: m.title, description: m.description, applies_to: m.applies_to, kind: m.kind, blocking: m.blocking, needs: m.needs,
     params: m.params, policy_bind: m.policy_bind, effective: p.params, from: p.from, timeout_s: m.timeout_s, network: m.network, impl: m.native ? "native" : m.adapter ? "adapter" : m.kind === "judged" ? "judge" : "executable", quorum: m.judge?.quorum ?? null, hasSample: !!m.sample, at: m.at }; };
@@ -157,7 +157,7 @@ export function createRuntime(d: RuntimeDeps) {
       if (p === "/api/wruns" && !writing) return json({ runs: engine.list().filter((r) => url.searchParams.get("archived") === "1" || !r.archived).map((r) => ({ id: r.id, workflow: r.workflow, version: r.version, title: r.title, status: r.status, result: r.result, createdAt: r.createdAt, updatedAt: r.updatedAt, endedAt: r.endedAt, error: r.error,
         archived: !!r.archived, merged: !!r.ctx?.merged, cancelReason: r.cancelReason ?? null,
         current: Object.entries(r.nodes).filter(([, n]) => ["running", "waiting"].includes(n.state)).map(([k, n]) => ({ node: k, state: n.state, waiting: n.waiting ?? null, label: r.def.nodes.find((x) => x.id === k)?.label ?? k })), door: engine.cards.list({ run: r.id }).find((c) => c.door)?.door ?? null, recovered: r.recovered })),
-        cards: engine.cards.list({ open: true }) });
+        cards: engine.cards.list({ open: true }).map(c=>engine.cards.view(c)) });
       if (p === "/api/wruns" && writing) {
         const text = String(b?.text ?? "").trim(); if (!text && !b?.workflow) return json({ error: "say what you want done" }, 400);
         const cls = classifyIntent(defs, text, engine.policies.get("sensitive_paths", { project: b?.params?.project ? String(b.params.project) : b?.project ? String(b.project) : null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []);
@@ -207,10 +207,10 @@ export function createRuntime(d: RuntimeDeps) {
         }
       }
       // ---------- Studio cards ----------
-      if (p === "/api/scards" && !writing) return json({ cards: engine.cards.list({ open: url.searchParams.get("open") === "1" }) });
+      if (p === "/api/scards" && !writing) return json({ cards: engine.cards.list({ open: url.searchParams.get("open") === "1" }).map(c=>engine.cards.view(c)) });
       m = /^\/api\/scards\/(SC-\d+)(?:\/(answer))?$/.exec(p);
       if (m) {
-        if (!writing) { const c = engine.cards.get(m[1]); return c ? json(c) : json({ error: "no such card" }, 404); }
+        if (!writing) { const c = engine.cards.get(m[1]); return c ? json(engine.cards.view(c)) : json({ error: "no such card" }, 404); }
         const c = await engine.answer(m[1], { choice: String(b?.choice ?? ""), note: b?.note ?? null, by, confirm: b?.confirm ?? null, aligned: Array.isArray(b?.aligned) ? b.aligned : null });
         return json(c);
       }

@@ -48,7 +48,7 @@ const keychainOn = () => process.env.CREW_KEYCHAIN_TOOL === "none" ? false : pro
 function keychainRead(service: string, account: string): { found: string | null; error: string | null } {
   if (!keychainOn()) return { found: null, error: null };
   const tool = process.env.CREW_KEYCHAIN_TOOL || "/usr/bin/security";
-  const r = Bun.spawnSync([tool, "find-generic-password", "-s", service, "-a", account, "-w"], { stdout: "pipe", stderr: "pipe" });
+  const r = Bun.spawnSync([tool, "find-generic-password", "-s", service, "-a", account, "-w"], { stdout: "pipe", stderr: "pipe", timeout: 5000 });
   if (r.exitCode === 44) return { found: null, error: null };
   if (!r.success) return { found: null, error: `the keychain item '${service}' could not be read (${r.stderr.toString().trim().slice(0, 120) || `exit ${r.exitCode}`}); macOS may be asking to allow it` };
   const v = r.stdout.toString().replace(/\n$/, ""); return v ? { found: v, error: null } : { found: null, error: `the keychain item '${service}' is empty` };
@@ -97,7 +97,7 @@ const NOT_SETUP_TOKEN = "crew token is not a claude setup-token result (expected
 type Resolved = { ok: true; env: Record<string, string>; source: string; warn: string | null; verified?: boolean } | { ok: false; error: string };
 const CREW_HINT = "make a crew token once (claude setup-token) and keep it in the keychain (security add-generic-password -s crew-studio-claude-token -a \"$USER\" -w) or in ~/.config/crew-studio/claude-token (mode 600)";
 /** claude's login, in v1's order; `probe` reads no keychain secret (the Doctor), and its env values are empty. */
-function resolveClaude(probe: boolean): Resolved {
+function resolveClaude(probe: boolean, record = true): Resolved {
   const env = process.env; const val = (v: string) => (probe ? "" : seen(v));
   const early: string[] = [];
   if (env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) {
@@ -149,14 +149,14 @@ function resolveClaude(probe: boolean): Resolved {
   const failed: string[] = [...early];
   for (const s of sources) {
     const r = s.get(); if (!r) continue;
-    if (!probe) remember(s.name, r.ok ? { ok: true } : { ok: false, error: r.error });
+    if (!probe && record) remember(s.name, r.ok ? { ok: true } : { ok: false, error: r.error });
     if (r.ok) return failed.length ? { ...r, warn: [r.warn, `tried first and failed: ${failed.join("; ")}`].filter(Boolean).join("; ") } : r;
     failed.push(`${s.name}: ${r.error}`);
   }
   return { ok: false, error: failed.length ? `no claude login for rounds works (${failed.join("; ")}); ${CREW_HINT}` : `no claude login for rounds: ${CREW_HINT}` };
 }
 /** The login a claude round gets (read when it starts). */
-export function claudeLogin(): Login { return resolveClaude(false); }
+export function claudeLogin(options: { record?: boolean } = {}): Login { return resolveClaude(false, options.record !== false); }
 /** What the Doctor shows: the same resolver, reading no keychain secret. */
 export function claudeLoginStatus(): { ok: boolean; verified?: boolean; source?: string; warn?: string | null; error?: string } {
   const r = resolveClaude(true); return r.ok ? { ok: true, verified: r.verified !== false, source: r.source, warn: r.warn } : { ok: false, error: r.error };

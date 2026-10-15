@@ -136,5 +136,19 @@ const c = r.startPairing(); const pr2 = r.pair(c.code, "phone");
 ok(pr2.ok && r.who(req("10.0.0.5:4210", (pr2 as any).token), U, "lan").kind === "phone", "a paired phone on the LAN is a phone");
 ok((r.who(req("10.0.0.5:4210"), U, "loopback") as any).status === 421, "the LAN address is not accepted on the loopback listener");
 
+// Execute the actual Doctor renderer with source-created status facts. No browser
+// or vendor request; assert labels/actions rather than source substring matches.
+const {runInNewContext}=await import('node:vm');
+for(const locale of['en','zh-TW'])for(const state of['exhausted','signed-in','context-unknown']){
+ const calls:string[]=[],routes:any={remote:()=>({})},node=()=>({append(){},addEventListener(){},replaceChildren(){}}),cap={provider:'claude',quota:state==='exhausted'?'exhausted':'unknown',loginState:state==='context-unknown'?'unknown':'logged-in',resetAt:null};
+ const context:any={routes,S:{route:{name:'other'}},window:{},location:{hash:''},T:(en:string,zh:string)=>locale==='en'?en:zh,$:()=>node(),h:(tag:any,attrs:any,...children:any[])=>({...node(),tag,attrs,children:children.flat(Infinity)}),icon:()=>'',getJ:async(path:string)=>{calls.push(path);return path.includes('/claude/')?cap:{items:[{id:'claude',title:'Claude',status:'ok',action:{kind:'login',item:'claude'}}]};},viewRemote:()=>node(),driverBanner:()=>({}),ghBar:()=>({}),postJ:()=>{throw new Error('passive Doctor made a write');},setInterval(){},setTimeout(){},addEventListener(){},render(){}};
+ runInNewContext(readFileSync(join(import.meta.dirname,'../public/ootb.js'),'utf8'),context);await new Promise(r=>setTimeout(r,0));
+ const rendered=JSON.stringify(routes.doctor());
+ ok(calls.every(p=>p==='/api/doctor'||p==='/api/claude/native/status'),'Doctor metadata never invokes paid Verify: '+locale+'/'+state);
+ ok(rendered.includes(locale==='en'?'Detected':'已偵測')&&!rendered.includes(locale==='en'?'"Works"':'"可用"'),'Claude binary detection is separate from worker readiness: '+locale+'/'+state);
+ if(state==='exhausted')ok(rendered.includes(locale==='en'?'Reset time unknown':'重設時間未知')&&rendered.includes('data-claude-wait-reset')&&!rendered.includes('data-login'),'exhausted account waits for unknown reset instead of relogin: '+locale);
+ if(state==='signed-in')ok(rendered.includes(locale==='en'?'signed in. Remaining quota is unknown':'已登入。剩餘額度未知'),'signed-in metadata does not fabricate quota: '+locale);
+ if(state==='context-unknown')ok(rendered.includes(locale==='en'?'does not mean the machine is globally logged out':'不代表整台機器都已登出'),'unknown process context is not global logout: '+locale);
+}
 console.log(`\nootb: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

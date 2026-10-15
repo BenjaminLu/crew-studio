@@ -13,6 +13,7 @@
 // mounts the card again (the Board's Close / Answer) keeps them.
 (() => {
 "use strict";
+const interviewDrafts = new Map();
 const CSS = `
 .cc { display: grid; gap: 12px; min-width: 0; }
 .cc * { min-width: 0; }
@@ -95,6 +96,11 @@ function mountCard(el, card, opts = {}) {
   css();
   const fresh = { lang: opts.lang || (document.documentElement.lang === "zh-TW" ? "zh-TW" : "en"), ticks: new Set(), opened: new Set(), confirm: false, note: "", msg: "", ok: false, busy: false };
   const st = opts.state || {}; for (const [k, v] of Object.entries(fresh)) if (!(k in st)) st[k] = v;
+  const expectsInterview=card.workflow==='pack-genesis'&&card.node==='interview-answers';const form=card.interview;let draft=null;
+  if(form?.schema===1&&/^[a-f0-9]{64}$/.test(form.batchHash)&&/^R-\d+$/.test(card.run)&&/^SC-\d+$/.test(card.id)&&form.visit===card.visit&&Array.isArray(form.questions)&&form.questions.length===6){
+    draft=interviewDrafts.get(card.id);if(!draft||draft.hash!==form.batchHash){draft={hash:form.batchHash,revision:form.revision,answers:{...form.answers},dirty:false,timer:null,saving:Promise.resolve()};interviewDrafts.set(card.id,draft);}else if(!draft.dirty&&form.revision>draft.revision){draft.revision=form.revision;draft.answers={...form.answers};}
+  }
+  const saveDraft=()=>{if(!draft)return Promise.resolve();clearTimeout(draft.timer);draft.timer=null;draft.saving=draft.saving.catch(()=>{}).then(async()=>{if(!draft.dirty)return;const answers={...draft.answers};const saved=await post(`/api/pack-genesis/${encodeURIComponent(card.run)}/interview-draft`,{schema:1,card:card.id,visit:card.visit,batchHash:draft.hash,revision:draft.revision,answers});draft.revision=saved.revision;draft.dirty=JSON.stringify(draft.answers)!==JSON.stringify(answers);});return draft.saving;};
   st.card = card; st.draw = () => render(); // the newest mount draws: an answer that settles after a remount shows on the card that is on screen
   const zh = () => st.lang === "zh-TW";
   const T = (en, tw) => (zh() ? tw : en);
@@ -204,15 +210,18 @@ function mountCard(el, card, opts = {}) {
   function render() {
     const c = st.card; const d = detailOk(c.detail) ? c.detail : null; const open = c.status === "open";
     const n = d?.intents?.length || 0; const one = c.confirmDoor && c.door === "one-way";
-    const hasNote = c.options.some((o) => o.note) || n > 0;
-    const missing = (o) => { if (o.hold) return null; if (n && st.ticks.size < n && !st.note.trim()) return T(`Tick every intent line (${st.ticks.size} of ${n}) or write a note`, `請勾完每一條意圖（${st.ticks.size}/${n}），或寫備註`);
+    const hasNote = !expectsInterview && (c.options.some((o) => o.note) || n > 0);
+    const missing = (o) => { if (o.hold) return null;if(expectsInterview&&!draft)return T("This interview version is unavailable. Reload the card; no answer was submitted.","這個訪談版本無法使用。請重新載入卡片；尚未送出回答。");if(draft&&form.questions.some(q=>!String(draft.answers[q.key]||" ").trim()))return T("Answer every question below", "請回答下方每個問題"); if (n && st.ticks.size < n && !st.note.trim()) return T(`Tick every intent line (${st.ticks.size} of ${n}) or write a note`, `請勾完每一條意圖（${st.ticks.size}/${n}），或寫備註`);
       if (one && !st.confirm) return T("Confirm the door first", "請先確認門"); return null; };
     const answer = async (o) => {
       if (st.busy) return; // one answer in flight per card
+      const why=missing(o);if(expectsInterview&&why){st.msg=why;st.interviewAttempted=true;render();el.querySelector('[aria-invalid="true"]')?.focus();return;}
       st.busy = true; st.msg = ""; render();
       const took = (got) => { st.card = got && got.id ? got : { ...c, status: "answered", answer: { choice: o.id } }; st.ok = true; st.msg = ""; try { opts.onAnswered && opts.onAnswered(st.card); } catch {} };
       try {
-        took(await post(`/api/scards/${encodeURIComponent(c.id)}/answer`, { choice: o.id, note: st.note.trim() || null, confirm: st.confirm ? "one-way" : null, aligned: n ? [...st.ticks].sort((a, b) => a - b) : undefined }));
+        if(draft&&!o.hold)await saveDraft();else if(draft)clearTimeout(draft.timer);
+        const note=draft&&!o.hold?JSON.stringify({schema:1,card:c.id,visit:c.visit,batchHash:draft.hash,answers:draft.answers}):st.note.trim()||null;
+        took(await post(`/api/scards/${encodeURIComponent(c.id)}/answer`, { choice: o.id, note, confirm: st.confirm ? "one-way" : null, aligned: n ? [...st.ticks].sort((a, b) => a - b) : undefined }));
       } catch (e) {
         // answered already with this very choice: that is the answer, not a refusal
         let same = null; if (/answered exactly once/.test(e.message || "")) { try { const now = await get(`/api/scards/${encodeURIComponent(c.id)}`); if (now?.answer?.choice === o.id) same = now; } catch {} }
@@ -234,12 +243,14 @@ function mountCard(el, card, opts = {}) {
         h("b", {}, T("Does the change meet each intent line? Tick each one.", "改動有做到每一條意圖嗎？逐條勾選。")),
         d.intents.map((t, i) => h("label", { class: "cc-tick" }, h("input", { type: "checkbox", "data-intent-tick": i, checked: st.ticks.has(i), onchange: (e) => { e.target.checked ? st.ticks.add(i) : st.ticks.delete(i); render(); } }), h("span", {}, `${i + 1}. `, LL(t)))),
         h("span", { class: "cc-count", "data-tick-count": "" }, d?.artifactAcceptance ? T(`${st.ticks.size} of ${n} ticked. Approval needs every line, or a note that says why not.`, `已勾 ${st.ticks.size}/${n}。核准需要每一條都勾，或寫備註說明原因。`) : T(`${st.ticks.size} of ${n} ticked. A merge needs every line, or a note that says why not.`, `已勾 ${st.ticks.size}/${n}。合併需要每一條都勾，或寫備註說明原因。`))));
+      if(expectsInterview&&!draft)kids.push(h("p",{class:"cc-msg",role:"alert"},T("The current interview questions could not be verified. Reload this card before answering.","目前訪談問題尚未驗證。請重新載入這張卡片後再回答。")));
+      if(draft)kids.push(h("section",{class:"cc-interview",'data-interview-batch':draft.hash},h("h3",{},T("Answer this interview batch","回答這批訪談問題")),h("p",{class:"cc-count"},T("All six answers are required. Drafts are saved on this Mac; saving a draft does not answer the card.","六題都需要回答。草稿會儲存在這台 Mac；儲存草稿不會回覆卡片。")),form.questions.map((q,i)=>{const invalid=st.interviewAttempted&&!String(draft.answers[q.key]||'').trim(),id=`interview-${c.id}-${q.key}`;return h("div",{class:"cc-interview-field"},h("label",{for:id},`${i+1}. ${T(q.en,q.zh)}`),h("textarea",{id,rows:3,maxLength:500,'data-interview':q.key,'aria-required':'true','aria-invalid':String(!!invalid),'aria-describedby':id+'-error',oninput:e=>{draft.answers[q.key]=e.target.value;draft.dirty=true;clearTimeout(draft.timer);draft.timer=setTimeout(()=>saveDraft().catch(error=>{st.msg=error.message;st.draw();}),250);if(e.target.value.trim()){e.target.setAttribute('aria-invalid','false');const error=el.querySelector('#'+id+'-error');if(error)error.textContent='';}},onblur:()=>saveDraft().catch(error=>{st.msg=error.message;st.draw();})},draft.answers[q.key]||''),h("span",{id:id+'-error',class:'cc-field-error',role:invalid?'alert':null},invalid?T("Please answer this question.","請回答這個問題。"):''));})));
       if (hasNote) kids.push(h("textarea", { class: "input", rows: 2, "data-card-note": c.id, placeholder: T("Note (what to change, or why a line is not met)", "備註（要改什麼，或哪一條沒做到、為什麼）"), "aria-label": T("Note", "備註"),
         oninput: (e) => { const had = !!st.note.trim(); st.note = e.target.value; if (had !== !!st.note.trim()) { const pos = e.target.selectionStart; render(); const t = el.querySelector("[data-card-note]"); if (t) { t.focus(); t.setSelectionRange(pos, pos); } } } }, st.note));
       if (one) kids.push(h("label", { class: "cc-tick rt-row", for: `conf-${c.id}` }, h("input", { type: "checkbox", id: `conf-${c.id}`, "data-confirm-door": c.id, checked: st.confirm, onchange: (e) => { st.confirm = e.target.checked; render(); } }),
         h("span", {}, T("I confirm: this is one-way, a revert will not undo it", "我確認：這是單向門，revert 無法還原"))));
       kids.push(h("div", { class: "cc-actions actions" }, c.options.map((o) => { const why = missing(o);
-        return h("button", { class: `btn ${o.primary ? "primary" : ""}`, type: "button", "data-option": o.id, "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy, onclick: () => answer(o) }, T(o.label, o.labelZh || o.label)); })));
+        return h("button", { class: `btn ${o.primary ? "primary" : ""}`, type: "button", "data-option": o.id, ...(draft&&o.id==="continue"?{"data-save-interview":""}:{}), "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy, onclick: () => answer(o) }, T(o.label, o.labelZh || o.label)); })));
       const hint = c.options.map(missing).find(Boolean);
       if (hint && !st.msg) kids.push(h("p", { class: "cc-count", "data-card-hint": "" }, hint));
     } else if (c.answer) {
