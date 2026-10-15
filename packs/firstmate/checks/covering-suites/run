@@ -3,7 +3,10 @@
 const fs = require("fs"), path = require("path"), { spawnSync } = require("child_process");
 let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
   const i = JSON.parse(s); const root = i.workdir; const cfg = i.repo_cfg ?? {}; const out = (v, f = []) => process.stdout.write(JSON.stringify({ verdict: v, score: v === "pass" ? 1 : 0, findings: f, evidence: ["out/covering.log"], proves: [] }));
-  if (!cfg.test) return out("skip");
+  if (!cfg.test) {
+    process.stdout.write(JSON.stringify({ verdict: "fail", score: 0, findings: [{ locator: { type: "file", path: ".crew/gates.json" }, message: "the repository declares no test command", expected: '\"test\": [argv] in .crew/gates.json', class: "ci-config", severity: "blocking" }], evidence: [], proves: [] }));
+    return;
+  }
   const isTest = (p) => (cfg.tests ?? ["tests/**"]).some((g) => p.startsWith(g.replace(/\*\*.*$/, "")) || /\.test\./.test(p));
   const changed = (i.diff?.paths ?? []).filter((c) => !String(c.status).startsWith("D")).map((c) => c.path);
   const tests = new Set(changed.filter(isTest));
