@@ -107,7 +107,17 @@ ok(merge!.options.filter((o) => o.hold).map((o) => o.id).join(",") === "changes,
   git("remote", "remove", "origin");
   ok(!!sc && /cannot read the remote head/.test(sc.body) && E.get(b.id)!.nodes.build.outcome === "blocked" && !(E.get(b.id)!.nodes.build.data.jobs ?? []).length,
     "a remote that cannot be read stops the build round before its agent starts (blocked), and code-firstmate's [build, scope-card, blocked] edge opens the scope card", JSON.stringify([E.get(b.id)!.status, E.get(b.id)!.error, sc?.body?.slice(0, 200), E.cards.list({ run: b.id, open: true }).map((k) => k.kind + ":" + k.node), Object.entries(E.get(b.id)!.nodes).filter(([, n]: any) => n.state !== "pending").map(([k, n]: any) => `${k}:${n.state}:${n.outcome}`)]));
-  E.cancel(b.id, "captain"); }
+  await E.cancel(b.id, "captain"); }
+// A worker escalation must reach the captain before build checks can mask it.
+{ const b = E.start({ workflow: "code-firstmate", text: intent.replaceAll("percent", "blockedPercent") + "\nSTUB_BLOCKED", params: {} });
+  await until(() => E.cards.list({ run: b.id, open: true }).some(c => c.kind === "dispatch"), 120000);
+  await E.answer(E.cards.list({ run: b.id, open: true }).find(c => c.kind === "dispatch")!.id, { choice: "dispatch", by: "captain" });
+  await until(() => E.cards.list({ run: b.id, open: true }).some(c => c.kind === "scope") || ["failed", "succeeded"].includes(E.get(b.id)!.status), 60000);
+  const run = E.get(b.id)!;
+  ok(run.nodes.build.outcome === "blocked" && run.nodes.build.visits === 1 && E.cards.list({ run: b.id, open: true }).some(c => c.kind === "scope"), "worker SCOPE-BLOCKED reaches the captain once, without a retry loop");
+  ok(!E.ledger(b.id).some(e => e.node === "build" && e.check.startsWith("firstmate/")) && run.nodes.ci.state === "pending", "an incomplete build gets no check PASS or CI evidence");
+  await E.cancel(b.id, "captain");
+}
 // a cancelled run's worktree is cleaned up too
 { const c = E.start({ workflow: "code-firstmate", text: intent, params: {} });
   await until(() => E.cards.list({ run: c.id, open: true }).some((k) => k.kind === "dispatch"), 120000);

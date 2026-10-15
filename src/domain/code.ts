@@ -64,6 +64,15 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   seams?: { afterBuildExit?: (rawDir: string, side: "before" | "after") => void | Promise<void> } }) {
   installCodeQueue(engine);
   engine.beforeNodeChecks ??= {}; engine.cardPrepared ??= {}; engine.beforeStart ??= {}; engine.externalHandlers ??= {}; engine.externalValidators ??= {};
+  // A worker asking the captain for scope/door authority has not completed a build.
+  // Preserve the escalation; do not fabricate passing check entries or enter CI.
+  engine.beforeNodeChecks["worker-escalation"] = (x, result) => {
+    if (x.node.kind !== "agent" || x.node.mode !== "build" || !("outcome" in result)) return false;
+    const report = x.rn.data.report;
+    if (!report || report.round !== x.visit || !engine.owns(x)) return false;
+    return (result.outcome === "blocked" && ["SCOPE-BLOCKED", "ASK"].includes(report.marker))
+      || (result.outcome === "door-change" && report.marker === "DOOR-CHANGE");
+  };
   const pendingRebaseChecks = new WeakSet<object>();
   type RemoteMergeIntent = {version:1;grant:string;repository:string;pr:string;branch:string;base:string;baseHead:string;head:string;method:string;policyHash:string};
   const preparedRemoteCards = new WeakMap<object,{intent:RemoteMergeIntent;assert:()=>void}>();
