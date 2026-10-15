@@ -79,6 +79,7 @@ import { encodeCwd } from "./host/claude";
 import { codexProvider } from "./providers/codex";
 import { codexConfig } from "./host/codex";
 import { CodexAccount } from "./host/codex-account";
+import { generateCodexImage } from "./providers/codex-image";
 import { probeCodex } from "./providers/codex-probe";
 import { ProviderRefusal, selectNativeProvider, type ProviderSelection, type ProviderCapability } from "./providers/policy";
 
@@ -326,6 +327,11 @@ const worktrees = new Worktrees(DATA, { protect: () => PROTECTED });
 let packGenesis: ReturnType<typeof installPackGenesis>;
 const runtime = createRuntime({ dataDir: DATA, agents, provider: pickProvider, defaultProvider: () => { const s = chatSettings(); return { provider: s.provider, model: s.models[s.provider] || null }; }, selectProvider: nativePick,
   log: studioLog, send, fmRoot: dirname(STATE), protectedRoots: PROTECTED, store, m3: { store: m3.store, runs: m3.runs, lane: m3.lane }, fileorg: m7.fileorg, docs, improve, studioUrl: () => `http://127.0.0.1:${PORT}`,
+  generateImage: (prompt, authorize, signal) => {
+    const config = codexConfig(PROJECT), model = chatSettings().models.codex || process.env.CREW_CODEX_MODEL || config.model;
+    if (!model) throw new Error("Configure a Codex model before generating images");
+    return generateCodexImage({ prompt, authorize, signal, approved: { model, effort: config.effort } });
+  },
   // domain packs' runtime steps: the firstmate coding pipeline (packs/firstmate)
   install: [(engine, c) => { installCode(engine, { dataDir: c.dataDir, projects: c.projects, improve, poller:githubPoller }); packGenesis = installPackGenesis(engine, { dataDir: c.dataDir, artifacts: m3.store }); }], skills: improve.skills });
 nativeEngineForPolicy = runtime.engine;

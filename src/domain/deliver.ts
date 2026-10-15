@@ -10,9 +10,10 @@ import { mdToDocHtml, toDocx, toPdf } from "../docrender";
 import { runRender, renderEnv } from "../render";
 import { briefFor } from "../runtime/refine";
 import { mergeDetail } from "./mergecard";
+import { verifyImagePng, type CodexImage } from "../providers/codex-image";
 import type { Engine, X } from "../runtime/engine";
 
-type Deps = { dataDir: string; artifacts: ArtifactStore; lane: any; fileorg: any; docs: any };
+type Deps = { dataDir: string; artifacts: ArtifactStore; lane: any; fileorg: any; docs: any; generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal) => Promise<CodexImage> };
 const hash = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 export function installDeliver(engine: Engine, d: Deps) {
@@ -21,7 +22,28 @@ export function installDeliver(engine: Engine, d: Deps) {
   const refs = (x: X): any[] => Object.values(x.ctx.deliver ?? {}).sort((a: any, b: any) => a.producer.localeCompare(b.producer));
   const ref = (x: X) => { const p = String(x.node.args?.producer ?? "draft"); const r = x.ctx.deliver?.[p]; if (!r || !st.version(r.id, r.n)) throw new Error("no pinned artifact output"); return r; };
   const kind = (x: X) => String(x.node.args?.format ?? "web");
-  const entry = (f: string) => f === "document" ? "doc.md" : f === "video" ? "film.html" : "index.html";
+  const entry = (f: string) => f === "image" ? "image.png" : f === "document" ? "doc.md" : f === "video" ? "film.html" : "index.html";
+  engine.actions["image.generate"] = async x => {
+    if (!d.generateImage) throw new Error("sandboxed image generation unavailable");
+    if (x.run.params.provider && x.run.params.provider !== "codex") throw new Error("image generation requires Codex");
+    const authorize = () => { if (x.cancelled() || !engine.owns(x)) throw new Error("image owner ended"); };
+    authorize();
+    const controller = new AbortController();
+    const timer = setInterval(() => { if (x.cancelled() || !engine.owns(x)) controller.abort(); }, 100);
+    const old = x.ctx.deliver?.draft;
+    const notes = old ? st.notes(old.id, old.n).filter(n => n.status === "open") : [];
+    const dir = join(d.dataDir, "work", "images", x.run.id, `${x.visit}-${x.rn.attempt ?? 0}`);
+    try {
+      const image = await d.generateImage(`${x.run.text}\nRequested changes: ${JSON.stringify(notes.map(n => n.comment))}`, authorize, controller.signal);
+      authorize(); verifyImagePng(image.bytes);
+      mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "image.png"), image.bytes);
+      const id = old?.id ?? `out-${x.run.id.toLowerCase()}-draft`;
+      if (!st.get(id)) st.create({ id, title: x.run.title, type: "image", source: "file", entry: "image.png" });
+      const v = st.addVersion(id, { from: dir, primary: "image.png", parent: old?.n ?? null, annotations: notes.map(n => n.id), createdBy: { kind: "agent", provider: image.provider, model: image.model, run: x.run.id }, source: { run: x.run.id }, summary: `${image.width}x${image.height} PNG` });
+      (x.ctx.deliver ??= {}).draft = { id, n: v.n, sha256: v.sha256, format: "image", producer: "draft" };
+      x.ctx.head = hash(refs(x)); x.rn.note = `${id} v${v.n}`; x.save(); return "ok";
+    } finally { clearInterval(timer); controller.abort(); rmSync(dir, { recursive: true, force: true }); }
+  };
   engine.actions["deliver.round"] = x => {
     const producers = x.run.def.nodes.filter(n => n.mode === "deliver"), source = producers.map(n => x.ctx.briefs?.[n.id]).find(b => b && b.head === x.ctx.head);
     if (source) for (const n of producers) (x.ctx.briefs ??= {})[n.id] = { ...source, producer: n.id, round: x.run.nodes[n.id].visits };
@@ -61,8 +83,9 @@ export function installDeliver(engine: Engine, d: Deps) {
     if (!a || !v || st.latest(r.id)?.n !== r.n || v.sha256 !== r.sha256 || st.verify(r.id, r.n).length) bad("artifact source changed or disappeared", "restore the exact version source", "artifact-integrity");
     const file = a && st.file(r.id, r.n, entry(r.format)); const s = file ? readFileSync(file, "utf8") : "";
     if (r.format === "document") { if (!/^#\s+\S/m.test(s) || s.trim().split(/\s+/).length < 4) bad("document needs a title and content", "write a # title followed by document content", "document-content"); }
+    else if (r.format === "image") { try { if (!file) throw new Error("missing image"); verifyImagePng(readFileSync(file)); } catch { bad("PNG is invalid", "produce a valid bounded PNG", "image-content"); } }
     else if (!/<(?:html|body|main|div|h1|p)\b/i.test(s)) bad("page has no content element", "write a self-contained HTML page", "html-content");
-    if (r.format !== "document" && /(?:src|href)\s*=\s*["'](?:https?:|\/\/)/i.test(s)) bad("external resource URL", "embed required resources locally", "external-resource");
+    if (!["document", "image"].includes(r.format) && /(?:src|href)\s*=\s*["'](?:https?:|\/\/)/i.test(s)) bad("external resource URL", "embed required resources locally", "external-resource");
     if (st.notes(r.id, r.n).some(n => n.status === "open")) bad("artifact has unresolved notes", "produce a new version addressing the annotations", "open-note");
     if (r.format === "video" && (v?.render?.state !== "done" || !st.file(r.id, r.n, "render.mp4"))) bad("rendered MP4 is unavailable", "render this exact film version with the optional local renderer", "renderer-unavailable");
     return findings;
