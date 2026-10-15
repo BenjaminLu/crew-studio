@@ -1,3 +1,4 @@
+import {registerGitHubReviewCodeBridge,prepareGitHubReviewPublication} from './github-review-workflow';
 import {withSafetyRules} from "../skills";
 import { installCodeQueue } from "./code-queue";
 import {GitHubPoller} from '../github-poller';
@@ -140,6 +141,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     };
     return { signal, live, assert, rebind, retainPending };
   };
+  registerGitHubReviewCodeBridge(engine,{adapter:selectedAdapter,phase:remotePhase});
   engine.beforeStart["github-reconcile"] = async x => {
     if (x.ctx.pr?.adapter !== "github" || x.node.do === "pr.open") return null;
     const phase = remotePhase(x); phase.assert(); const a = selectedAdapter(x);
@@ -391,16 +393,18 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const phase = remotePhase(x); phase.assert(); const wt = shellOk(x); const h = head(wt);
     const adapter = selectedAdapter(x);
     if (adapter instanceof GitHubPrAdapter && !adapter.branchAllowed(x.ctx.branch,h)) return namingCard(x,adapter,h);
-    const title = x.ctx.spec?.title ?? x.run.title;
+    const customPublication=await prepareGitHubReviewPublication(x,adapter,h,phase.assert);phase.assert();if(customPublication?.wait)return customPublication.wait;
+    const title = customPublication?.title ?? x.ctx.spec?.title ?? x.run.title;
     const rollback = x.ctx.spec?.rollback ?? (x.ctx.door?.door === "one-way" ? "A revert does not undo this change; the approved plan must name the rollback." : "Revert the change to undo it.");
-    const body = specMd(x.ctx.spec) + `\n\n## Door\n${x.ctx.door?.door ?? "undecided"}\n\n## Rollback\n${rollback}`;
+    const body = customPublication?.body ?? specMd(x.ctx.spec) + `\n\n## Door\n${x.ctx.door?.door ?? "undecided"}\n\n## Rollback\n${rollback}`;
     if (x.ctx.pr && x.ctx.pr.adapter !== adapter.id) throw new Error("review adapter authority changed; resolve the existing review request before publishing");
-    if (x.ctx.pr) { const published = await adapter.update({ ...x.ctx.pr, title, body }, h, x.dir, phase.signal,phase.assert); phase.assert(); x.ctx.pr = published; x.rn.note = `review request at ${h.slice(0, 8)}`; return remoteWait(x, adapter); }
-    const published = await adapter.open({ repo: x.ctx.repo, base: x.ctx.base, branch: x.ctx.branch, head: h, title, body }, x.dir, phase.signal,phase.assert); phase.assert(); x.ctx.pr = published;
+    if (x.ctx.pr) { const published = await adapter.update({ ...x.ctx.pr, title, body,...(customPublication?{draft:true as const}:{}) }, h, x.dir, phase.signal,phase.assert); phase.assert(); x.ctx.pr = published; x.rn.note = `review request at ${h.slice(0, 8)}`; return remoteWait(x, adapter); }
+    const published = await adapter.open({ repo: x.ctx.repo, base: x.ctx.base, branch: x.ctx.branch, head: h, title, body,...(customPublication?{draft:true as const}:{}) }, x.dir, phase.signal,phase.assert); phase.assert(); x.ctx.pr = published;
     x.rn.note = `review request on ${x.ctx.branch} (${adapter.id})`; return remoteWait(x, adapter);
   };
   engine.actionAnswers ??= {};
   engine.actionAnswers["pr.open"] = async (x,card) => {
+    if(card.answer?.choice==="publish-draft"){const r=await engine.actions["pr.open"](x);return typeof r==="string"?{outcome:r}:r;}
     if (card.answer?.choice !== "approve-name") return { outcome: card.answer?.choice ?? "close" };
     const n = x.ctx.remoteNaming;
     if (n?.version !== 2 || n.card !== card.id || n.head !== head(shellOk(x)) || n.branch !== x.ctx.branch || !card.captainOnly) throw new Error("naming approval no longer matches publication");

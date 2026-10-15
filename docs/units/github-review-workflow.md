@@ -176,3 +176,12 @@ its root cause was not established. The local Git proof now declares a 5-second
 budget (production defaults to 15 seconds); the original failure log is retained
 at `/tmp/github-review-wait-fixed.log`. This is not a claim that a retry diagnosed
 scheduler load. Production process timeout/cleanup behavior was not weakened.
+
+Execution integration WIP checkpoint: source-private code bridge now prepares the
+literal configured title/body and raises a captain-only Draft publication card
+bound to exact repository/base/branch/head, contribution digest and reviewer
+policy. Actual signed card-answer records are required before the adapter may
+publish. Legacy code publication remains unchanged (72 regression assertions).
+Build passes. This new bridge has not yet completed its actual Engine acceptance;
+RUN remains held and no external publication occurred. Next step is the integrated
+role/admission + external review/fix loop and final ready verification.
