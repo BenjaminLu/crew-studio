@@ -31,7 +31,12 @@ async function loadChat() { try { A.chat = await get("/api/settings"); } catch {
 const routeArtifact = () => (S.route?.arg || "").split("/")[0];
 function refresh(names, id) { if (!S.route || !names.includes(S.route.name)) return; if (id && routeArtifact() !== id) return; soft(); }
 window.onM3 = (type, d) => {
-  if (type === "artifacts") { loadList(); const id = routeArtifact(); if (id && ["artifact", "review", "compare"].includes(S.route?.name)) loadArt(id); }
+  if (type === "artifacts") {
+    const id = ["artifact", "review", "compare"].includes(S.route?.name) ? routeArtifact() : null;
+    // A workflow can approve an artifact while its detail page is not open.
+    for (const cached of A.detail.keys()) if (cached !== id) { A.detail.delete(cached); sigs.delete(cached); }
+    loadList(); if (id) loadArt(id);
+  }
   if (type === "run") { const det = A.detail.get(d.artifact); if (det && !det.error) { det.runs = [d, ...(det.runs || []).filter((r) => r.id !== d.id)]; refresh(["artifact", "review"], d.artifact); }
     if (["done", "failed", "cancelled"].includes(d.status)) loadArt(d.artifact); }
   if (type === "lane") loadLane();
