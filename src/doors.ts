@@ -5,7 +5,8 @@
 // Project.sensitive is read from it. A proposed list (data/projects.json) does
 // nothing until the captain approves it, which writes it into the policy. A
 // project can add lines, never remove an org line.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, lstatSync, renameSync, unlinkSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { bundledText, parseYaml } from "./bundled";
 import { Policies } from "./runtime/checks";
@@ -80,6 +81,22 @@ export function classify(paths: ChangedPath[], o: { defaults: DoorDefaults; proj
 export class Projects {
   constructor(readonly dataDir: string) {}
   private file() { return join(this.dataDir, "projects.json"); }
+  /** Strict authority reader: never migrates, repairs or treats corruption as empty. */
+  nativeSnapshot(): {exists:boolean;digest:string;records:Project[]} {
+    let bytes:string|null=null;
+    try {const st=lstatSync(this.file());if(!st.isFile()||st.isSymbolicLink()||st.size>1024*1024)throw new Error("unsafe registry");bytes=readFileSync(this.file(),"utf8");}
+    catch(e:any){if(e?.code!=="ENOENT")throw new Error("Project registry is malformed or unavailable");}
+    const records=bytes===null?[]:JSON.parse(bytes);
+    if(!Array.isArray(records)||records.length>1000)throw new Error("Project registry is malformed");
+    const ids=new Set<string>();for(const p of records){if(!p||typeof p!=="object"||Array.isArray(p)||typeof p.id!=="string"||!p.id||ids.has(p.id)||typeof p.name!=="string"||!(p.path===null||typeof p.path==="string"&&p.path.startsWith("/"))||typeof p.base!=="string"||!p.base||p.enabled!==undefined&&typeof p.enabled!=="boolean")throw new Error("Project registry is malformed");ids.add(p.id);}
+    return {exists:bytes!==null,digest:createHash("sha256").update(bytes===null?"absent":bytes).digest("hex"),records};
+  }
+  /** Synchronous source-owned CAS; unrelated legacy callers retain their old API. */
+  nativeAddCAS(expected:{exists:boolean;digest:string},p:Project):Project {
+    const current=this.nativeSnapshot();if(current.exists!==expected.exists||current.digest!==expected.digest||current.records.some(r=>r.id===p.id))throw new Error("Project registry changed; fresh captain confirmation required");
+    const tmp=this.file()+".native-"+randomUUID();try{writeFileSync(tmp,JSON.stringify([...current.records,p],null,1),{flag:"wx",mode:0o600});const last=this.nativeSnapshot();if(last.exists!==expected.exists||last.digest!==expected.digest)throw new Error("Project registry changed");renameSync(tmp,this.file());}finally{try{unlinkSync(tmp);}catch{}}
+    return p;
+  }
   private raw(): Project[] { try { const a = JSON.parse(readFileSync(this.file(), "utf8")); return Array.isArray(a) ? a : []; } catch { return []; } }
   /** Each project, its sensitive paths read from its policy (the one home of a project's sensitive paths). */
   list(): Project[] {

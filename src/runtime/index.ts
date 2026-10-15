@@ -77,7 +77,7 @@ export function createRuntime(d: RuntimeDeps) {
   if (d.m3?.store && d.m3?.lane && d.fileorg && d.docs) installDeliver(engine, { dataDir: d.dataDir, artifacts: d.m3.store, lane: d.m3.lane, fileorg: d.fileorg, docs: d.docs });
   // Base artifact providers precede domain wrappers that bind their own pinned outputs.
   for (const f of d.install ?? []) f(engine, { projects, dataDir: d.dataDir });
-  const firstmate=installFirstmate(engine,projects);
+  const firstmate=installFirstmate(engine,projects,{protectedRoots:d.protectedRoots??[]});
   engine.load();
 
   const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });

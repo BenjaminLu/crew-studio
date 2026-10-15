@@ -1,0 +1,11 @@
+{
+ "id":"firstmate-register-project","name":"Confirm local project","kind":"firstmate-register-project","version":1,
+ "description":"The captain confirms a local repository before the same pinned work is proposed separately.",
+ "params":{"source":{"label":"Owned source identity"},"identity":{"label":"Pinned local identity"},"work":{"label":"Pinned work intent"},"definition":{"label":"Workflow hash"}},
+ "roles":[],"nodes":[
+  {"id":"register","kind":"hook","label":"Confirm local project","do":"firstmate.project-card","x":160,"y":140},
+  {"id":"continue","kind":"hook","label":"Register and propose work","do":"firstmate.project-continue","x":440,"y":140},
+  {"id":"done","kind":"hook","label":"Work awaiting separate approval","x":720,"y":140},
+  {"id":"closed","kind":"hook","label":"Closed without registration","args":{"result":"closed"},"x":440,"y":280}
+ ],"edges":[["register","continue","approve"],["register","closed","close"],["continue","done","ok"]]
+}

@@ -1,3 +1,4 @@
+import {NativeToolFailure} from './types';
 // Codex as a host, over its own `codex app-server` (JSON-RPC on stdio):
 // initialize, then a thread, then one turn/start per captain turn. Approval
 // requests from the server go to Studio; anything Studio does not understand
@@ -160,7 +161,7 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
           const owned=()=>p.threadId===id&&!!turn&&p.turnId===turnId&&!interrupting;
           if(opts.nativeTools&&owned()&&typeof p.tool==="string"&&opts.nativeTools.specs.some(t=>t.name===p.tool)&&!p.namespace&&typeof p.callId==="string"){
             const savedTurn=turn, savedId=turnId;const live=()=>owned()&&turn===savedTurn&&turnId===savedId;
-            try{const result=await opts.nativeTools.call(p.tool,p.arguments,{thread:id,turn:p.turnId,call:p.callId,live});if(!live())throw new Error("Primary tool ownership ended");return{success:true,contentItems:[{type:"inputText",text:JSON.stringify(result)}]};}catch{return{success:false,contentItems:[{type:"inputText",text:"Studio native tool refused. No authority was granted. Check the registered workflow and captain approval."}]};}
+            try{const result=await opts.nativeTools.call(p.tool,p.arguments,{thread:id,turn:p.turnId,call:p.callId,live});if(!live())throw new Error("Primary tool ownership ended");return{success:true,contentItems:[{type:"inputText",text:JSON.stringify(result)}]};}catch(error){return{success:false,contentItems:[{type:"inputText",text:JSON.stringify(error instanceof NativeToolFailure?error.publicFailure:{schema:1,code:"unavailable",reason:{en:"Studio native tool unavailable. No authority was granted.","zh-TW":"Studio 原生工具暫不可用；未授予任何權限。"},nextAction:"captain_review"})}]};}
           }
           // Work/other clients own their dynamic tools. Studio does not execute
           // arbitrary JavaScript or translate their arguments into shell commands.

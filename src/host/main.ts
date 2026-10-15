@@ -322,10 +322,12 @@ export class MainSession {
 
   private nativeCapability():import("./types").AttachOpts["nativeTools"]{
     if(!this.o.nativeWorkspace||!this.o.nativeTools)return undefined;const tools=this.o.nativeTools();
-    return{specs:tools.specs,call:async(name,args,identity)=>{const input=this.activeInput,generation=this.nativeGeneration,session=this.session;const live=()=>!!session&&session===this.session&&session.id===identity.thread&&this.state==="attached"&&this.activeInput===input&&this.nativeGeneration===generation&&identity.live();if(!live())throw new Error("Primary tool ownership ended");const result=await tools.call(name,args,{key:`${identity.thread}:${identity.turn}`,captain:!!input&&input.kind==="chat"&&(input.source==="desktop"||input.source.startsWith("phone:")),text:input?.text??"",live});if(!live())throw new Error("Primary tool ownership ended");return result;}};
+    return{specs:tools.specs,call:async(name,args,identity)=>{const input=this.activeInput,generation=this.nativeGeneration,session=this.session;const live=()=>!!session&&session===this.session&&session.id===identity.thread&&this.state==="attached"&&this.activeInput===input&&this.nativeGeneration===generation&&identity.live();if(!live())throw new Error("Primary tool ownership ended");const controller=new AbortController();this.nativeCalls.add(controller);try{const result=await tools.call(name,args,{key:`${identity.thread}:${identity.turn}`,captain:!!input&&input.kind==="chat"&&(input.source==="desktop"||input.source.startsWith("phone:")),text:input?.text??"",live,signal:controller.signal});if(!live())throw new Error("Primary tool ownership ended");return result;}finally{this.nativeCalls.delete(controller);}}};
   }
   private activeInput:QItem|null=null;
   private nativeGeneration=0;
+  private nativeCalls=new Set<AbortController>();
+  private abortNativeCalls(){for(const c of this.nativeCalls)c.abort();this.nativeCalls.clear();}
   private pumping = false;
   private async pump() {
     if (this.pumping) return;
@@ -426,7 +428,7 @@ export class MainSession {
 
   pause(reason: string) {
     if (this.state !== "attached") return;
-    this.nativeGeneration++;
+    this.nativeGeneration++;this.abortNativeCalls();
     this.state = "paused"; this.pausedReason = reason;
     this.note({ kind: "status", text: `Paused: ${reason}. Nothing more is sent until you resume or hand back.`, status: "paused" });
     this.changed();
@@ -441,13 +443,13 @@ export class MainSession {
     return { ok: true };
   }
 
-  async interrupt() { this.nativeGeneration++;await this.session?.interrupt(); }
+  async interrupt() { this.nativeGeneration++;this.abortNativeCalls();await this.session?.interrupt(); }
 
   /** Hand the session back to a terminal: stop Studio's process, release the lock, show the resume command. */
   async detach(): Promise<string | null> {
     if (!this.session) return null;
     const s = this.session;
-    this.nativeGeneration++;
+    this.nativeGeneration++;this.abortNativeCalls();
     this.state = "detaching"; this.changed();
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
     this.bridge.denyAll();
@@ -511,4 +513,4 @@ export function freshText(cwd: string, handoff: { name: string; text: string } |
 }
 
 /** Native Firstmate has no dependency on a legacy repo or handoff. */
-export function nativeFreshText(cwd:string):string { return `You are Studio's own Firstmate, working in its private workspace ${cwd}. The captain talks to you through Crew Studio. This is a fresh conversation, not a terminal takeover. No repository or legacy handoff is required. Help the captain clarify their goal and prepare the coffee-shop guided workflow. You have Studio native tools: studio_list_workflows, studio_list_projects, studio_work_status and studio_propose_work. For actionable captain requests, use these tools to propose the exact native workflow and raise its real captain dispatch card. Never ask for an external firstmate engine path. Proposing is not approval; only the captain can approve the card. Do not run legacy firstmate dispatch scripts, create tasks, alter projects, or execute workflow work merely because this conversation started. Workflow execution requires the captain's explicit authenticated brief and confirmation through Studio. Respect any explicit project authority and tool permissions; unanswered permissions are denied. Reply briefly that you are ready to help.`; }
+export function nativeFreshText(cwd:string):string { return `You are Studio's own Firstmate, working in its private workspace ${cwd}. The captain talks to you through Crew Studio. This is a fresh conversation, not a terminal takeover. No repository or legacy handoff is required. Help the captain clarify their goal and prepare the coffee-shop guided workflow. You have Studio native tools: studio_list_workflows, studio_list_projects, studio_work_status, studio_prepare_project_work and studio_propose_work. Before coding work, list registered projects and match the captain's repository to a unique enabled identity. If it is unregistered, use studio_prepare_project_work with the local path and same workflow/version/brief to raise a captain registration card; after registration an ordinary separate dispatch card still needs captain approval. Never ask the captain to manually visit Gates or invent a project ID. studio_propose_work accepts safe declared params and registered project IDs, never raw repo/base/branch/worktree. Treat structured invalid_params, project_required, project_unregistered, project_disabled or project_revoked errors distinctly and follow their safe nextAction; do not call a malformed request a permission denial. For actionable captain requests, use these tools to propose the exact native workflow and raise its real captain dispatch card. Never ask for an external firstmate engine path. Proposing is not approval; only the captain can approve the card. Do not run legacy firstmate dispatch scripts, create tasks, alter projects, or execute workflow work merely because this conversation started. Workflow execution requires the captain's explicit authenticated brief and confirmation through Studio. Respect any explicit project authority and tool permissions; unanswered permissions are denied. Reply briefly that you are ready to help.`; }

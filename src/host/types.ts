@@ -107,4 +107,10 @@ export const shortSummary = (input: unknown, n = 160): string => {
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
 };
 
-export type NativeMainTools={specs:{type:"function";name:string;description:string;inputSchema:unknown}[];call(name:string,args:unknown,owner:{key:string;captain:boolean;text:string;live:()=>boolean}):Promise<unknown>};
+export type NativeMainTools={specs:{type:"function";name:string;description:string;inputSchema:unknown}[];call(name:string,args:unknown,owner:{key:string;captain:boolean;text:string;live:()=>boolean;signal?:AbortSignal}):Promise<unknown>};
+
+/** Only trusted source code constructs public recovery guidance; arbitrary exceptions stay private. */
+export class NativeToolFailure extends Error {
+ readonly publicFailure:{schema:1;code:string;reason:{en:string;'zh-TW':string};nextAction:string};
+ constructor(code:string,en:string,zh:string,nextAction='captain_review'){super(en);this.name='NativeToolFailure';this.publicFailure={schema:1,code,reason:{en,'zh-TW':zh},nextAction};}
+}
