@@ -12,12 +12,12 @@ try{
  await page.goto('http://127.0.0.1:'+server.address().port);
  await page.waitForFunction(()=>messages.some(m=>m.type==='crew:ready'),{timeout:15000});
  const frame=page.frames()[1];
- const snap={tasks:[{id:'one',title:'Sample task',status:'failed'}],crew:[{name:'worker',role:'worker',alive:true,task:'one'}],pending:[{id:'card1',task:'one',title:'Open decision'}],lang:'zh-TW',at:new Date().toISOString()};
+ const snap={tasks:[{id:'one',title:'Sample task',status:'running'}],crew:[{name:'worker',role:'worker',alive:true,task:'one'}],pending:[{id:'card1',task:'one',title:'Open decision'}],lang:'zh-TW',at:new Date().toISOString()};
  await page.evaluate(s=>document.querySelector('iframe').contentWindow.postMessage({type:'crew:snapshot',snapshot:s},'*'),snap);
  await frame.locator('#captain-cards button').click();
  await page.waitForFunction(()=>messages.some(m=>m.type==='crew:openCard'&&m.id==='card1'));
  const initial = await frame.evaluate(()=>({ready:__G.ready,errors:__G.errors,arms:__voyageLive.view.kraken.arms,crew:__voyageLive.view.crew.map(c=>c.model)}));
- if(initial.arms.length !== 1 || !initial.crew.includes('captain')) throw Error('missing kraken or captain');
+ if(initial.arms.length !== 0 || !initial.crew.includes('captain')) throw Error('unexpected kraken or missing captain');
 
  await frame.evaluate(() => { window.salvos = 0; __voyageLive.subscribe((view, events) => { window.salvos += events.filter(e => e.type === 'merged').length; }); });
  snap.tasks[0].status='succeeded';snap.pending=[];

@@ -30,7 +30,6 @@ with tempfile.TemporaryDirectory(prefix='captain-build-') as tmp:
     text = text[:start] + text[end:]
     text = text.replace("constructor({token = () => '', fetch: request = globalThis.fetch} = {})", 'constructor()')
     text = text.replace('    this.token=token;', '').replace('    this.request=(...args)=>request(...args);', '')
-    text = text.replace('const arms=kraken.arms.filter', 'const arms=[...new Set([...kraken.arms,...tasks.filter(t=>t.status==="failed").map(t=>t.id)])].filter')
     board.write_text(text)
     shutil.copyfile(root / 'scripts/captain-adapter.js', work / 'src/captain-adapter.js')
     (work / 'src/captain-entry.js').write_text('import "./captain-adapter.js";\nimport "./main.js";\n')

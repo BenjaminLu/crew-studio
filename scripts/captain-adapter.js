@@ -4,7 +4,7 @@ const source = new BoardSource();
 window.__voyageLive = source;
 let snapshot = { tasks: [], crew: [], pending: [] };
 const recent = [], outcomes = [], seen = new Set();
-const stage = status => ({succeeded:'merged', done:'merged', cancelled:'closed', failed:'gate', 'needs-you':'captain', running:'working', idle:'queued'})[status] || status;
+const stage = status => ({succeeded:'merged', done:'merged', cancelled:'closed', failed:'closed', 'needs-you':'captain', running:'working', idle:'queued'})[status] || status;
 const bubbles = new Map();
 const mateId = root => `firstmate:${root}`;
 // Canvas pennants are compact identifiers; full task titles stay in crew details.
@@ -15,14 +15,16 @@ const crewLabel = value => {
 const terminal = t => ['merged', 'closed', 'parked'].includes(stage(t.status));
 function update() {
   document.documentElement.lang = snapshot.lang || 'en';
+  const ended = new Set(snapshot.tasks.filter(terminal).map(t => t.id));
+  const pending = snapshot.pending.filter(c => !ended.has(c.task));
   const roots = new Map(snapshot.tasks.map(t => [t.id, t.rootTask || t.id]));
   const groups = new Map();
   for (const t of snapshot.tasks) {
-    if (terminal(t) && !snapshot.pending.some(c => c.task === t.id)) continue;
+    if (terminal(t)) continue;
     const root = roots.get(t.id);
     if (!groups.has(root)) groups.set(root, { task:t, title:snapshot.tasks.find(p => p.id === root)?.title || t.title, cards:[] });
   }
-  for (const c of snapshot.pending) {
+  for (const c of pending) {
     const root = roots.get(c.task) || c.task || c.id;
     if (!groups.has(root)) groups.set(root, {task:{id:c.task, title:c.title}, title:c.title, cards:[]});
     groups.get(root).cards.push(c);
@@ -31,8 +33,8 @@ function update() {
     role:'firstmate', task:g.task.id, state:g.cards.length ? 'waiting' : 'working'}));
   source.accept({ default_project: 'studio',
     tasks: snapshot.tasks.map(t => ({...t, stage:stage(t.status), actions:[]})),
-    crew: [...mates, ...snapshot.crew.filter(c => c.role !== 'firstmate').map(c => ({...c, id:c.name, crew_name:crewLabel(c.name), state:c.alive ? 'working' : 'idle'}))],
-    pending: snapshot.pending.map(c => ({...c, answerable:false})), recent, outcomes });
+    crew: [...mates, ...snapshot.crew.filter(c => c.role !== 'firstmate' && c.alive && !ended.has(c.task)).map(c => ({...c, id:c.name, crew_name:crewLabel(c.name), state:c.alive ? 'working' : 'idle'}))],
+    pending: pending.map(c => ({...c, answerable:false})), recent, outcomes });
   const cards = document.getElementById('captain-cards');
   const zh = snapshot.lang?.startsWith('zh');
   for (const [root, el] of bubbles) if (!groups.get(root)?.cards.length) { el.remove(); bubbles.delete(root); }
