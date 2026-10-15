@@ -39,6 +39,10 @@ ok(r.path === join(data, "work", "wt", "demo", "R-001") && r.kind === "crew-work
   ok(/differs only by case/.test(e) && /differs only by case/.test(e2), "a task or project that differs only by case from one that has a worktree is refused (they would share a folder on APFS)", `${e} | ${e2}`); }
 
 // a fresh worktree gets its dependencies before the agent starts, so its tests run (not skip)
+{ const s = await W.startRound("demo", "R-001", "source-only spec", { write: false, skipInstall: true, install: ["must-not-execute"] });
+  ok(s.deps.ran === null && !existsSync(join(r.path, "node_modules")) && s.head === base, "source-only spec skips explicit and auto dependency installation while binding the durable head");
+  s.release();
+}
 { const s = await W.startRound("demo", "R-001", "build round 1");
   const t = sh(r.path, "bun", "test");
   ok(s.deps.ran?.join(" ") === "bun install --frozen-lockfile --ignore-scripts" && existsSync(join(r.path, "node_modules", "helper")) && t.ok && /1 pass/.test(t.out), "a fresh worktree gets its dependencies (bun install --frozen-lockfile --ignore-scripts) and its tests run", t.out.slice(-200));

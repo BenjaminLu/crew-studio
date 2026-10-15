@@ -133,7 +133,7 @@ export class Worktrees {
    * Start a round: take the lock, put the worktree at the durable head (keeping what
    * it held on a kept ref, with a record), install the dependencies, open it for writing.
    */
-  async startRound(project: string, task: string, holder: string, o: { install?: string[] | null; scripts?: boolean; allow?: string[]; write?: boolean } = {}): Promise<RoundStart & { release: () => void }> {
+  async startRound(project: string, task: string, holder: string, o: { install?: string[] | null; scripts?: boolean; allow?: string[]; write?: boolean; skipInstall?: boolean } = {}): Promise<RoundStart & { release: () => void }> {
     const r0 = this.get(project, task); if (!r0 || r0.removedAt || !existsSync(r0.path)) throw new Error(`no worktree for ${task}`);
     const release0 = this.lock(project, task, holder); this.held.add(`${project}/${task}`);
     const r = this.get(project, task)!; // read again: taking the lock may have recorded a stale holder
@@ -158,7 +158,7 @@ export class Worktrees {
         this.note(r, `corrected: ${why}; ${kept ? `kept on ${kept}` : "nothing to keep"}`);
       }
       r.head = durable; this.save(r);
-      const deps = await this.installDeps(r, o.install ?? null, { scripts: !!o.scripts, allow: o.allow ?? [] });
+      const deps = o.skipInstall ? { ran: null, ok: true, detail: "dependency installation skipped for source-only analysis" } : await this.installDeps(r, o.install ?? null, { scripts: !!o.scripts, allow: o.allow ?? [] });
       if (o.write === false) this.freeze(r);
       return { head: durable, corrected, deps, release };
     } catch (e) { release(); throw e; }

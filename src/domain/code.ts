@@ -502,11 +502,11 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
 
   // ---------- rounds: one at a time, at the durable head, deps installed, the brief bound to round + head ----------
   const holder = (x: X) => `${x.run.id}/${x.node.id}#${x.visit}`;
-  const beginRound = (write: boolean) => async (x: X) => {
+  const beginRound = (write: boolean, skipInstall = false) => async (x: X) => {
     if (!x.ctx.wt) return;
     const k = wkey(x); const install = x.policy("install");
     let s: Awaited<ReturnType<typeof W.startRound>>;
-    try { s = await W.startRound(k.project, k.task, holder(x), { write, install: Array.isArray(install) ? install.map(String) : null, scripts: x.policy("install_scripts") === true,
+    try { s = await W.startRound(k.project, k.task, holder(x), { write, skipInstall, install: Array.isArray(install) ? install.map(String) : null, scripts: x.policy("install_scripts") === true,
       allow: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String) }); }
     catch (e: any) { if (e instanceof RoundBlocked) { x.rn.data.report = { marker: "BLOCKED", summary: e.message, round: x.visit }; x.save(); } throw e; }
     held.set(holder(x), s.release);
@@ -527,7 +527,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     try { if (how !== "done" && how !== "timeout") { const kept = W.endRound(k.project, k.task, `${x.node.id} round ${x.visit} ${how}`); if (kept) x.log(`round ${x.visit} ${how}: its work kept on ${kept}`); } }
     finally { held.get(holder(x))?.(); held.delete(holder(x)); }
   };
-  const roundHooks = (write: boolean) => ({ begin: beginRound(write), end: endRound });
+  const roundHooks = (write: boolean, skipInstall = false) => ({ begin: beginRound(write, skipInstall), end: endRound });
 
   // ---------- agent modes ----------
   const specTool = (x: X): AgentTool => ({ name: "spec_write", description: "Write the spec, once: title, what, why, the done lines (each names the test file that proves it and says it fails on base), the scope (paths the change may touch, including every caller), the door (one-way when it touches a sensitive path), a plain explain block in en and zh-TW, and zh: the title and the why written in Traditional Chinese (a real translation, not a placeholder; code names and paths stay as they are).",
@@ -543,7 +543,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       writeFileSync(join(x.dir, "spec.json"), JSON.stringify(x.ctx.spec, null, 1)); writeFileSync(join(x.dir, "spec.md"), specMd(x.ctx.spec)); x.save(); return { ok: true };
     } });
   engine.modes.spec = {
-    ...roundHooks(false),
+    ...roundHooks(false, true), // source-only analysis needs no package installation
     sandbox: (x) => { const wt = x.ctx.worktree; return wt && existsSync(wt) ? { writes: [], reads: [wt], cwd: wt } : null; }, // reads the worktree, writes nothing of it
     tools: (x) => [...READ_ONLY(shellOk(x)), specTool(x)], maxTools: 30,
     system: (x, skill) => `${skill}\n\nYou write the spec for one change to a local repository. Read the code with the fs_* tools (read-only), then call spec_write once. Say WHAT and WHY; never HOW (no line numbers, no steps). Every done line names the test file that proves it and says it fails on base. Write in plain English: no will/should/could, no "ensure", "utilize", "via", "etc.". Answer in one line when done.`,
