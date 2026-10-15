@@ -8,6 +8,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import {withLock} from "../ids";
 import { bundledList, bundledText, parseYaml } from "../bundled";
 
 export const NODE_KINDS = ["agent", "check", "card", "loop", "hook"] as const; // a closed set (architecture §3.1)
@@ -206,6 +207,21 @@ export class WorkflowDefs {
     for (const [k, p] of Object.entries(pos ?? {})) if (d.nodes.some((n) => n.id === k) && Number.isFinite(Number(p?.x)) && Number.isFinite(Number(p?.y))) clean[k] = { x: Math.round(Number(p.x)), y: Math.round(Number(p.y)) };
     const f = join(this.wdir(id), `layout-v${v}.json`); writeFileSync(f + ".tmp", JSON.stringify(clean)); renameSync(f + ".tmp", f);
     return clean;
+  }
+  /** Explicit captain-created safe starter, never arbitrary execution/import authority. */
+  create(id:unknown,name:unknown,by:string,locale:unknown="en"):WDef {
+    if(locale!=="en"&&locale!=="zh-TW")throw new Error("Unsupported workflow language");
+    const zh=locale==="zh-TW";
+    if(typeof id!=="string"||!/^[a-z0-9][a-z0-9-]{0,40}$/.test(id))throw new Error("Use 1–41 lowercase letters, numbers or hyphens for the workflow id");
+    if(typeof name!=="string"||!name.trim()||name.trim().length>120||/[\u0000-\u001f]/.test(name))throw new Error("Workflow name must contain 1–120 characters");
+    return withLock(this.dir,"create-"+id,()=>{
+      if(existsSync(this.wdir(id)))throw new Error("A workflow with this id already exists");
+      const definition:WDef={id,name:name.trim(),version:1,description:"",roles:[],nodes:[
+        {id:"start",kind:"card",label:zh?"開始":"Start",x:80,y:100,card:{title:{en:"Ready to continue?","zh-TW":"準備好繼續了嗎？"},body:{en:"This starter waits for your confirmation.","zh-TW":"此起始流程會等待你的確認。"},options:[{id:"continue",label:zh?"繼續":"Continue"}]}},
+        {id:"done",kind:"hook",label:zh?"完成":"Done",x:340,y:100}],edges:[{from:"start",to:"done",when:"continue"}],parent:null,createdAt:now(),by,note:null,diff:null,seed:null};
+      const errors=validate(definition,this.known,this.runners?.(),this.skillInfo??undefined).filter(p=>p.level==="error");if(errors.length)throw new Error(errors[0].text);
+      this.write(definition);return definition;
+    });
   }
   /** Save an edit as a new version; refused when it has errors or changes nothing. */
   save(id: string, body: any, by: string, note?: string): WDef {

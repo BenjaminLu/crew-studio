@@ -1,0 +1,43 @@
+# Sidebar controls and workflow creation
+
+## What and why
+
+On the approved 058 baseline, the sidebar footer's theme segment has an intrinsic width wider than its expanded inner column. Collapsed language labels can wrap vertically; they must remain readable in their bounded controls. Actual screenshots confirm the SVG icons and language labels remain present; they must remain accessible after the sizing repair. Narrow mobile layouts combine the footer with the workspace heading without a bounded responsive arrangement. Keep every action accessible; do not clip overflow or hide controls as the repair.
+
+The Workflows list has no New workflow action. This is a missing native operation: the existing POST /api/wf/<id> calls save(), which rejects a new id. Introduce an explicit desktop create operation rather than implying the existing editor can already create definitions.
+
+## Approved exact scope
+
+- `public/styles.css`: constrain sidebar footer/segment children to their actual column; expanded equal flexible theme buttons; collapsed visible icon/language controls with bounded button widths; mobile footer arrangement that fits 320/390 with all actions retained.
+- `public/runtime.js`, `public/runtime.css`: visible bilingual New workflow button on Workflows and a compact name/id modal, clear validation errors, cancel preserving state, successful navigation to the actual saved v1 editor and refreshed list. Reuse existing modal and form patterns.
+- `src/runtime/defs.ts`, `src/runtime/index.ts`: explicit desktop POST /api/wf create, strict canonical id/name, atomically refuse existing/built-in id without overwriting, current authentication/CSRF and phone refusal unchanged. Create only a fixed safe starter: a captain confirmation card leading to a terminal hook. No agent, native handler, tools, capability, automatic dispatch or arbitrary JSON import. Existing save/version and pinned Task semantics remain unchanged.
+- New `tests/native-workflow-create.ts`, new `tests/sidebar-workflow-create-ui.mjs`; existing `tests/backbone-ui.mjs` only if a grounded assertion requires updating. `package.json` aliases/main membership exactly once. `docs/units/sidebar-workflow-create.md`. Regenerate tracked `src/assets.gen.ts` / `src/bundled.gen.ts` from final source only if build requires changes.
+
+## Provable done
+
+Actual isolated native server/browser, not manufactured page JSON. Capture 320/390/1440, EN/zh, light/dark, expanded/collapsed where supported. All footer buttons have usable nonempty icon/label, accessible names, visible hit targets contained within sidebar/viewport, and no document horizontal overflow. Language/theme/gear actions still work. Show the New workflow button and modal at phone/desktop sizes. Enter a captain name/id, create through real authenticated API, open the saved graph, edit/save v2, preserve v1 and a Task's pinned version. Invalid/duplicate/built-in id and unauthorized/phone creation must create zero records and preserve prior bytes. Cancel creates nothing. The fixed starter does not dispatch itself. Retain actual 058 fail-first overflow rectangles and missing-create responses; no timeout inflation or geometry threshold relaxation.
+
+The attempted live-browser bridge was unavailable; live UI was not observed. All product evidence will use the isolated actual server. The C4 self-update checkout is separately preserved and paused, with no managed restart completion claim.
+
+## Deferred intake planner
+
+The subsequent user correction requires LLM-first multi-workflow DAG planning, not a manual-only classifier repair. It is specified in the separate native-intake-planner unit. This immediate unit does not change Task intake or its provider policy.
+
+## Current evidence and remaining verification
+
+Actual isolated 058 baseline: 24 screenshots and rectangle metadata (320/390/1440 × EN/zh × light/dark × open/collapsed). Expanded desktop theme right edge 236.39 exceeds its sidebar right edge 232. An early measurement of collapsed width 78–89px was taken during the existing CSS transition; the settled original width is correctly 64px. The settled baseline also shows Chinese language text wrapped across two lines. The New workflow action is absent. The old actual native POST /api/wf returns 404 and creates no record (meaningful fail-first EXIT1).
+
+Current native suite: 17/0 EXIT0, including fixed starter, localized saved Chinese labels, strict unknown-locale refusal, built-in/duplicate identity preservation, captain card wait, no auto-start, v1 bytes preserved after v2, existing Task v1 pin, phone refusal and one winner for duplicate create. Syntax and whitespace checks pass. Existing tracked privacy scan is 4/0 but new files remain unstaged and therefore are not represented by that scan.
+
+The approval-system account failure was reported and work requiring escalation stopped. Root later supplied changed-auth evidence from a successfully reviewed worktree creation. Authorized isolated verification then resumed without changing auth/configuration or bypassing review.
+
+Final implementation evidence collected:
+
+- `/tmp/sidebar-workflow-create-ui-final.log/.exit`: actual matrix 188/0 EXIT0; 24 viewport/language/theme/sidebar cells, all footer controls contained/named/readable, settings/theme actions, actual create/editor/save-v2, cancel and pending duplicate click guards, unauthenticated HTTP refusal. Fresh 54 PNGs and `geometry.json` in `tests/out/sidebar-workflow-create/`: 24 list, 24 creation dialog, 6 saved editors.
+- `/tmp/sidebar-workflow-create-final-build.log/.exit`: build EXIT0, binary25/0, standalone24/0, compiled pack helper19/0, native creation17/0. Regenerated tracked import manifests remain byte-identical; compiled assets embed current edited source.
+- `/tmp/sidebar-workflow-create-backbone.log/.exit`: navigation/backbone51/0. `/tmp/sidebar-workflow-create-editor.log/.exit`: existing editor ownership73/0. These precede only the final footer nowrap declaration; editor/backend/event source bytes are identical, and the final 24-cell matrix plus rebuilt binary verifies the affected controls.
+- Native creation17/0 includes selected Chinese metadata, unknown-locale refusal, no automatic Task start, exact v1 bytes and Task pin after v2, duplicate/built-in id protection and concurrent no-overwrite.
+
+Preserved failed controls: old real create API404/no record EXIT1 `/tmp/sidebar-create-058-control.log/.exit`; original stable expanded footer overflow in `/tmp/sidebar-baseline-058-settled.json` with fresh 8 desktop screenshots. Original 24-cell screenshots remain separately retained. UI fixture7/1 attempts used pointer selection without the edit panel; the test now uses the editor's established documented keyboard Enter selection. UI160/4 measured the existing180ms column transition; it now awaits actual animation completion with unchanged64px threshold. No timeout inflation or geometry threshold weakening.
+
+Staged privacy includes every new file and passes 4/0 EXIT0 (`/tmp/sidebar-workflow-create-privacy-final.log/.exit`); staged whitespace checks pass. The implementation is ready for clean freeze and independent code/designer review. Root owns full suite and integration; no live deployment or user record changes occurred. LLM planning and C4 self-update remain separate unfinished work.

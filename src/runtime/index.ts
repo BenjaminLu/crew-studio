@@ -98,6 +98,12 @@ export function createRuntime(d: RuntimeDeps) {
     try {
       // ---------- definitions ----------
       if (p === "/api/wf" && !writing) return json({ workflows: defs.list(), checks: engine.registry.all().map(checkView) });
+      if (p === "/api/wf" && writing) {
+        if(req.method!=="POST")return json({error:"use POST to create a workflow"},405);
+        const def=defs.create(b?.id,b?.name,by,b?.locale??"en");
+        d.log.emit({type:"workflow_created",workflow:def.id,summary:`${def.id} v1 created by ${by}`});
+        return json({def},201);
+      }
       if (p === "/api/wf/validate" && writing) return json({ problems: validate(normDef(b?.def ?? {}), defs.known, undefined, defs.skillInfo ?? undefined) });
       let m = /^\/api\/wf\/([a-z0-9-]+)(?:\/(layout))?$/.exec(p);
       if (m) {

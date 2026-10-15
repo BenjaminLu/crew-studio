@@ -210,3 +210,9 @@ body:not(.chat-closed) .rt-cue { top: calc(120px + env(safe-area-inset-top, 0px)
 .rt-round-list dd{margin:4px 0 0;font-size:13px}
 .rt-round-list .btn{min-height:44px}
 @media(max-width:640px){.rt-round-list dl{grid-template-columns:1fr}}
+
+/* Native workflow creation keeps labels and controls within a phone dialog. */
+.rt-create-form{display:grid;gap:12px;min-width:0}
+.rt-create-form label{display:grid;gap:4px;min-width:0}
+.rt-create-form .input{width:100%;min-width:0;box-sizing:border-box}
+.rt-create-form p{margin:0;overflow-wrap:anywhere}

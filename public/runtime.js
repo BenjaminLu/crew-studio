@@ -208,13 +208,39 @@ function minimap(svg, onView) {
 }
 
 // ---------- Workflows ----------
-const WF = { list: null, ed: null };
+const WF = { list: null, ed: null, listGeneration: 0 };
+function newWorkflow() {
+  const name=h("input",{class:"input","data-wf-create-name":"1",maxlength:120,autocomplete:"off"});
+  const id=h("input",{class:"input","data-wf-create-id":"1",maxlength:41,autocomplete:"off",spellcheck:false});
+  const message=h("div",{role:"status","data-wf-create-error":"1",class:"faint"});
+  let editedId=false,pending=false;
+  name.addEventListener("input",()=>{if(!editedId)id.value=name.value.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,41);});
+  id.addEventListener("input",()=>{editedId=true;});
+  const body=h("div",{class:"rt-create-form"},
+    h("p",{class:"faint"},T("Create a starter with a confirmation card and an end. Edit its graph before starting a task.","建立含確認卡片與結束節點的起始流程。可先編輯流程圖，再開始任務。")),
+    h("label",{},T("Workflow name","流程名稱"),name),
+    h("label",{},T("Workflow id","流程代號"),id),
+    h("p",{class:"faint"},T("Use lowercase letters, numbers and hyphens. The id cannot be changed later.","使用小寫英文字母、數字與連字號。建立後無法變更代號。")),message);
+  modal(T("New workflow","新增流程"),body,async(close,button)=>{
+    if(pending)return;
+    if(!name.value.trim()||name.value.trim().length>120){message.textContent=T("Enter a workflow name (up to 120 characters).","請輸入流程名稱（最多 120 個字元）。");name.focus();return;}
+    if(!/^[a-z0-9][a-z0-9-]{0,40}$/.test(id.value)){message.textContent=T("Use 1–41 lowercase letters, numbers or hyphens for the id.","代號須為 1–41 個小寫英文字母、數字或連字號。");id.focus();return;}
+    pending=true;button.disabled=true;name.disabled=id.disabled=true;dialog?.querySelectorAll("button").forEach(b=>{b.disabled=true;});message.textContent=T("Creating…","建立中…");
+    try{const r=await api("/api/wf",{id:id.value,name:name.value.trim(),locale:lang});WF.listGeneration++;WF.list=null;if(!body.isConnected)return;close();location.hash=`#/workflows/${r.def.id}`;}
+    catch(error){message.textContent=/already exists/.test(error.message)?T("This workflow id already exists. Choose another id.","此流程代號已存在，請換一個代號。"):T("Could not create the workflow. Try again.","無法建立流程，請重試。");}
+    finally{pending=false;button.disabled=false;name.disabled=id.disabled=false;dialog?.querySelectorAll("button").forEach(b=>{b.disabled=false;});}
+  });
+  const dialog=body.closest("[role=dialog]");const submit=dialog?.querySelector(".btn.primary");if(submit){submit.textContent=T("Create workflow","建立流程");submit.dataset.wfCreateSubmit="1";}
+  const backdrop=dialog?.parentElement;
+  backdrop?.addEventListener("click",event=>{if(pending&&event.target===backdrop){event.preventDefault();event.stopImmediatePropagation();}},{capture:true});
+  backdrop?.addEventListener("keydown",event=>{if(pending&&event.key==="Escape"){event.preventDefault();event.stopImmediatePropagation();}},{capture:true});name.focus();
+}
 function viewWorkflows(arg) {
   if (arg) return viewEditor(arg);
   WF.ed?.dispose?.(); WF.ed = null;
-  if (!WF.list) { WF.list = "loading"; api("/api/wf").then((j) => { WF.list = j.workflows; rerender(); }).catch(() => { WF.list = []; rerender(); }); }
+  if (!WF.list) { const generation=++WF.listGeneration; WF.list = "loading"; api("/api/wf").then((j) => { if(generation!==WF.listGeneration)return; WF.list = j.workflows; rerender(); }).catch(() => { if(generation!==WF.listGeneration)return; WF.list = []; rerender(); }); }
   const list = Array.isArray(WF.list) ? WF.list : [];
-  return h("div", { class: "page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Workflows", "流程")), h("p", {}, T("Studio's workflows. Open one to see and edit its graph; every save is a new version, and tasks keep the version they started on.", "Studio 的流程。打開一個就能看到並編輯它的流程圖；每次儲存都是新版本，進行中的任務維持它開始時的版本。")))),
+  return h("div", { class: "page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Workflows", "流程")), h("p", {}, T("Studio's workflows. Open one to see and edit its graph; every save is a new version, and tasks keep the version they started on.", "Studio 的流程。打開一個就能看到並編輯它的流程圖；每次儲存都是新版本，進行中的任務維持它開始時的版本。"))), h("button",{class:"btn primary","data-wf-new":"1",onclick:newWorkflow},T("New workflow","新增流程"))),
     WF.list === "loading" || WF.list === null ? h("div", { class: "skel", style: "height:160px" }) :
     h("div", { class: "rt-cards" }, list.map((w) => h("a", { class: "card rt-wf", href: `#/workflows/${w.id}`, "data-wf": w.id }, h("div", { class: "rt-wf-h" }, h("b", {}, w.name), h("span", { class: "vbadge" }, `v${w.version}`)),
       h("p", { class: "faint" }, (w.description || "").slice(0, 220)), h("span", { class: "faint" }, T(`${w.nodes} nodes · ${w.versions} versions`, `${w.nodes} 個節點 · ${w.versions} 個版本`))))));
