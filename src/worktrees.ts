@@ -190,6 +190,72 @@ export class Worktrees {
    * No startRound reconciliation: dirty/drifted state is refused, never reset.
    * The exact target ref permits recovery after a crash between ref CAS and save.
    */
+  private preservingLock(project:string,task:string,holder:string){
+    const file=this.lockFile(project,task);
+    if(existsSync(file)){
+      let lock:any;try{lock=JSON.parse(readFileSync(file,'utf8'));}catch{throw new RoundBlocked('unreadable task lock');}
+      if(alive(Number(lock.pid)))throw new RoundBlocked('task is held by an active owner');
+    }
+    return this.lock(project,task,holder);
+  }
+  /** Compute a non-conflicting linear rebase without touching any branch/index.
+   * Intermediate trees/commits are objects only. The signed prepared record binds
+   * the result before apply; the old head is retained by an immutable backup ref. */
+  preparePreserving(project:string,task:string,holder:string,i:any) {
+    const release=this.preservingLock(project,task,holder);
+    try {
+      const r=this.get(project,task);if(!r)throw new RoundBlocked("task worktree missing");
+      this.assertPreserving(r,i);
+      if(r.head!==i.from||r.baseCommit!==i.originalBase||must(r.path,["status","--porcelain=v1","--untracked-files=all"]))throw new RoundBlocked("preserving rebase requires clean original task");
+      const commits=must(r.repo,["rev-list","--reverse",`${i.originalBase}..${i.from}`]).split("\n").filter(Boolean);
+      if(!commits.length||commits.length>64||must(r.repo,["rev-list","--merges",`${i.originalBase}..${i.from}`]))throw new RoundBlocked("preserving rebase requires 1..64 linear product commits");
+      let next=i.target;
+      for(const commit of commits){
+        const parent=must(r.repo,["rev-parse",`${commit}^`]);
+        const merged=git(r.repo,["merge-tree","--write-tree",`--merge-base=${parent}`,next,commit]);
+        if(!merged.ok)throw new RoundBlocked("preserving rebase conflicts; original task branch and commits are unchanged");
+        const tree=merged.out.split("\n")[0];
+        const made=git(r.repo,["commit-tree",tree,"-p",next],must(r.repo,["show","-s","--format=%B",commit])+"\n");
+        if(!made.ok)throw new RoundBlocked("preserving rebase could not prepare product commit");next=made.out;
+      }
+      return next;
+    }finally{release();}
+  }
+  private assertPreserving(r:WorktreeRecord,i:any){
+    if(r.removedAt||r.nativeRebase||realOf(r.repo)!==realOf(i.repo)||r.branch!==i.branch||r.base!==i.base||
+      ![i.from,i.originalBase,i.target].every(h=>typeof h==='string'&&/^[a-f0-9]{40}$/.test(h))||
+      !/^[A-Za-z0-9][A-Za-z0-9/_-]*$/.test(i.base)||i.from===i.originalBase||
+      must(r.path,["symbolic-ref","--short","HEAD"])!==r.branch||git(r.repo,["symbolic-ref","--short","HEAD"]).out===r.branch||
+      must(r.path,["rev-parse","--path-format=absolute","--git-common-dir"])!==must(r.repo,["rev-parse","--path-format=absolute","--git-common-dir"])||
+      !git(r.repo,["merge-base","--is-ancestor",i.originalBase,i.from]).ok||!git(r.repo,["merge-base","--is-ancestor",i.originalBase,i.target]).ok||
+      !git(r.repo,["merge-base","--is-ancestor",i.target,must(r.repo,["rev-parse",`refs/heads/${i.base}`])]).ok)
+      throw new RoundBlocked("preserving rebase identity or base changed");
+  }
+  applyPreserving(project:string,task:string,holder:string,i:any,result:string){
+    const release=this.preservingLock(project,task,holder);let thawed:WorktreeRecord|null=null;
+    try{
+      const r=this.get(project,task);if(!r)throw new RoundBlocked("task worktree missing");this.assertPreserving(r,i);
+      if(!/^[a-f0-9]{40}$/.test(result)||!git(r.repo,["merge-base","--is-ancestor",i.target,result]).ok||
+        !((r.head===i.from&&r.baseCommit===i.originalBase)||(r.head===result&&r.baseCommit===i.target)))throw new RoundBlocked("prepared rebase result changed");
+      const actual=must(r.path,["rev-parse","HEAD"]),index=must(r.path,["write-tree"]);
+      if((r.head===result&&actual!==result)||![i.from,result].includes(actual)||![must(r.repo,["rev-parse",`${actual}^{tree}`]),...(actual===result&&r.head===i.from?[must(r.repo,["rev-parse",`${i.from}^{tree}`])]:[])].includes(index)||
+        !git(r.path,["diff","--quiet"]).ok||must(r.path,["ls-files","--others","--exclude-standard"]))throw new RoundBlocked("preserving rebase refuses task drift or dirty files");
+      const observed=must(r.repo,["rev-parse",`refs/heads/${r.base}`]);
+      if(!git(r.repo,["merge-base","--is-ancestor",i.target,observed]).ok)throw new RoundBlocked("approved target is no longer on the observed base");
+      const ignored=must(r.path,["ls-files","--others","--ignored","--exclude-standard","--directory","-z"]).split("\0").filter(Boolean);
+      const tracked=must(r.repo,["ls-tree","-rz","--name-only",result]).split("\0").filter(Boolean);
+      if(ignored.some(p=>tracked.some(t=>t===p||t.startsWith(p.endsWith('/')?p:p+'/')||p.startsWith(t+'/'))))throw new RoundBlocked("preserving rebase would overwrite ignored local files");
+      const backup=`refs/crew/recovery/${project}/${task}/${i.from}`;
+      const existing=git(r.repo,["rev-parse","--verify",backup]);if(existing.ok&&existing.out!==i.from)throw new RoundBlocked("recovery backup identity changed");
+      this.thaw(r);thawed=r;
+      const txn=`start\nverify refs/heads/${r.base} ${observed}\n${existing.ok?`verify ${backup} ${i.from}`:`create ${backup} ${i.from}`}\nupdate refs/heads/${r.branch} ${result} ${actual}\nprepare\ncommit\n`;
+      if(!git(r.repo,["update-ref","--stdin"],txn).ok)throw new RoundBlocked("preserving rebase CAS failed");
+      must(r.path,["read-tree","--reset","-u",result]);r.head=result;r.baseCommit=i.target;
+      if(!r.kept.some(k=>k.ref===backup))r.kept.push({ref:backup,head:i.from,reason:'captain preserving rebase original work',at:now()});
+      this.note(r,`captain preserving rebase ${i.from} onto ${i.target} -> ${result}`);this.save(r);return r;
+    }finally{if(thawed)this.freeze(thawed);release();}
+  }
+
   refreshPristine(project: string, task: string, holder: string, intent: {repo:string;branch:string;base:string;from:string;target:string;baseRelation?:"patch-equivalent-unadmitted"}) {
     const release=this.lock(project,task,holder);let thawed:WorktreeRecord|null=null;
     try {

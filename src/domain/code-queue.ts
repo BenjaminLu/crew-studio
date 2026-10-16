@@ -74,11 +74,14 @@ function validRecoveryTransition(trusted:ReturnType<Engine["trusted"]>,prior:any
   const request=trusted.entries.find(e=>e.seq===applied?.data?.request&&e.record==="local-rescope-request"&&e.verdict==="pass"),i:any=request?.data;
   if(!request||!applied)return false;
   const answer=trusted.entries.find(e=>e.record==="card-answer"&&e.data?.card===i?.card&&e.data?.choice==="rescope"&&!String(e.actor??"").startsWith("auth window")&&e.seq>request.seq&&e.seq<applied.seq);
+  const prepared=trusted.entries.find(e=>e.record==='local-rescope-prepared'&&e.data?.request===request.seq&&e.seq>answer?.seq&&e.seq<applied.seq&&e.data?.intentHash===hashInput(i));
+  const result=i.strategy==='preserve-commits'?prepared?.head:i.target;
+  if(i.strategy!==undefined&&(i.strategy!=='preserve-commits'||!prepared||!/^[a-f0-9]{40}$/.test(i.originalBase??'')))return false;
   const dispatch=trusted.entries.find(e=>e.seq===d.dispatch&&e.record==="card-answer"&&e.data?.kind==="dispatch"&&e.data?.choice==="dispatch");
   return !!(request&&applied&&answer&&dispatch&&i?.version===1&&i.prior===prior.seq&&i.priorHash===hashInput(p)&&i.repo===p.repo&&i.project===p.project&&
-    answer.data?.localRescope&&hashInput(answer.data.localRescope)===hashInput({version:1,card:i.card,visit:i.visit,base:i.base,from:i.from,target:i.target})&&
-    i.from===request.head&&/^[a-f0-9]{40}$/.test(i.from)&&/^[a-f0-9]{40}$/.test(i.target)&&applied.head===i.target&&applied.data?.intentHash===hashInput(i)&&
-    request.seq>prior.seq&&dispatch.head===i.target&&validDispatch(trusted,d,next,applied.seq));
+    answer.data?.localRescope&&hashInput(answer.data.localRescope)===hashInput({version:1,card:i.card,visit:i.visit,base:i.base,from:i.from,target:i.target,...(i.strategy?{strategy:i.strategy,originalBase:i.originalBase}:{})})&&
+    i.from===request.head&&/^[a-f0-9]{40}$/.test(i.from)&&/^[a-f0-9]{40}$/.test(i.target)&&applied.head===result&&applied.data?.intentHash===hashInput(i)&&
+    request.seq>prior.seq&&dispatch.head===result&&validDispatch(trusted,d,next,applied.seq));
 }
 /** The fresh dispatch after the recovery binds exactly the new epoch's spec, scope and identity. */
 function validDispatch(trusted:ReturnType<Engine["trusted"]>,d:any,next:any,after:number){
