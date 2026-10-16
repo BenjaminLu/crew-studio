@@ -48,8 +48,8 @@ const prUrl = (n) => `https://github.com/${S.github?.repo || "unknown/unknown"}/
 const nodeLabel = (id) => S.flow?.nodes?.find((n) => n.id === id)?.label || id;
 const pathFor = (door) => door === "two-way" ? ["dispatch", "door", "build", "ci", "review", "gates", "merge", "done"]
   : ["dispatch", "door", "plan", "failfirst", "build", "ci", "review", "gates", "merge", "done"];
-// a server message may carry Traditional text ("… / 請先…"): in 简体中文 it converts like every other zh-TW string
-const toast = (msg) => { const t = h("div", { class: "toast", role: "status" }, typeof msg === "string" ? T(msg, msg) : msg); document.body.append(t); setTimeout(() => t.remove(), 3200); };
+// a server message may carry Traditional text ("… / 請先…"): in 简体中文 displayCN converts it, keeping any code or path in it
+const toast = (msg) => { const t = h("div", { class: "toast", role: "status" }, typeof msg === "string" ? I18N.chatText(lang, msg) : msg); document.body.append(t); setTimeout(() => t.remove(), 3200); };
 
 function ciSummary(pr) {
   const p = S.github?.prs?.find((x) => x.number === pr);

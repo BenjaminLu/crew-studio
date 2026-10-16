@@ -3,7 +3,7 @@
 // reload; the first run follows the browser language; and in zh-CN no Traditional-only
 // character is left on Firstmate (with Studio's chat notes, an earlier session's block and an external-error
 // notice), Tasks, a card list, an open card, the crew log viewer, Settings and Doctor. The captain's own chat lines
-// (kept as typed) and Firstmate's replies (checked exactly: inline code stays as written, a URL or path ends at Han)
+// (kept as typed) and Firstmate's replies (checked exactly: inline code, a URL and a path stay as written)
 // are left out of the generic check, and so are pre and code: code, raw logs and tool output are shown as written. Text an element marks as lang="zh-TW" (the 繁體中文 option) is meant to be Traditional.
 // Runs against a temporary copy of tests/fixture/state, a mock board and stub hosts.
 //   PLAYWRIGHT_MODULE=…/playwright/index.mjs node tests/zh-cn-ui.mjs
@@ -75,6 +75,7 @@ try {
     ok(JSON.stringify(opts) === JSON.stringify([["en", "English"], ["zh-TW", "繁體中文"], ["zh-CN", "简体中文"]]), "Settings offers English, 繁體中文 and 简体中文", JSON.stringify(opts));
     ok(await p.locator("#langSeg").count() === 0 && await p.locator(".side-foot [data-lang-set], .side [data-lang-set]").count() === 0, "the lower-left language switcher is gone");
     ok(await p.locator("#themeSeg").count() === 1, "the theme switch stays in the sidebar");
+    ok(await p.evaluate(async () => !!window.OpenCC?.Converter && (await fetch("/vendor/opencc-js-1.4.2-t2cn.min.js")).ok && ![...document.scripts].some((x) => /^https?:/.test(x.getAttribute("src") || ""))), "OpenCC is served by Studio itself (/vendor), no CDN");
     // ---------- zh-CN persists across a reload ----------
     await p.locator('[data-settings-lang] [data-lang-set="zh-CN"]').click(); await p.waitForTimeout(300);
     ok(await p.evaluate(() => document.documentElement.lang) === "zh-CN" && await p.evaluate(() => localStorage.getItem("crew.lang")) === "zh-CN", "choosing 简体中文 switches the page and stores crew.lang");
@@ -128,7 +129,7 @@ try {
         const log = await p.locator("#chatLog").innerText();
         ok(/已接上 claude session/.test(log), `the chat's Studio note reads in 简体中文 at ${width}`, log.slice(0, 200));
         const reply = await p.locator('#chatLog [data-main="firstmate"] .bub', { hasText: "echo:" }).last().innerText().catch(() => "");
-        ok(reply === "echo: 这个文件 程式碼.js 看 https://x.tw/设置 和 src/设置.ts 的设置", `a Firstmate reply converts for display; inline code stays as written; the URL and the path end at Han (${width})`, reply);
+        ok(reply === "echo: 这个文件 程式碼.js 看 https://x.tw/設定 和 src/設定.ts 的设置", `a Firstmate reply converts for display; inline code, the URL and the path (its Han name after /) stay as written (${width})`, reply);
         ok(await p.locator('#chatLog [data-main="captain"] .bub').last().innerText() === said, `the captain's own line stays as typed (${width})`);
         ok(await p.locator("#themeLabel").innerText() === "主题" || width < 761, `the sidebar theme title reads 主题 (${width})`, await p.locator("#themeLabel").innerText());
       }

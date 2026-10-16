@@ -1,38 +1,23 @@
 // The UI languages: English, 繁體中文 (zh-TW) and 简体中文 (zh-CN). zh-CN is never a
-// third hand-written copy: it is derived from the zh-TW text by toCN() — the reviewed
-// terms and overrides in zh-cn-terms.js, then OpenCC's character table in
-// zh-cn-chars.js. Every language branch in the UI goes through pick / loc / deep,
-// so a zh-CN field from the server, or T()'s third argument, wins where present.
-// Model inputs keep the language they had before zh-CN existed: modelLang().
+// third hand-written copy and Studio keeps no conversion table of its own: zh-CN text
+// is the zh-TW text run through OpenCC (opencc-js, served from /vendor, config
+// "twp" -> "cn": Taiwan phrases to Mainland, e.g. 軟體 -> 软件, 登入 -> 登录). Whatever
+// OpenCC outputs is what the page shows. Every language branch in the UI goes through
+// pick / loc / deep / zhField, so a zh-CN field from the server, or T()'s third
+// argument, wins where present. Model inputs keep the language they had before zh-CN
+// existed: modelLang().
 (() => {
-  const Z = window.crewZhChars || { chars: "", phrases: "" }, W = window.crewZhTerms || { terms: {}, overrides: {} };
   const LANGS = ["en", "zh-TW", "zh-CN"];
-  const chars = new Map(), words = new Map(), byFirst = new Map(); // byFirst: first character -> word lengths, longest first
-  for (const e of Z.chars.split("|")) { const [k, v] = e.split(" "); if (k && v) chars.set(k, v); }
-  // OpenCC's phrases (an identity phrase like 著名 -> 著名 shields its characters), then Studio's terms (a term replaces a phrase with the same key)
-  const word = (k, v) => { const cs = [...k]; if (cs.length < 2) { chars.set(k, v); return; } words.set(k, v);
-    const l = byFirst.get(cs[0]) || []; if (!l.includes(cs.length)) { l.push(cs.length); l.sort((a, b) => b - a); } byFirst.set(cs[0], l); };
-  for (const e of Z.phrases.split("|")) { const [k, v] = e.split(" "); if (k && v) word(k, v); }
-  for (const [k, v] of Object.entries(W.terms || {})) word(k, v);
-  const overrides = new Map(Object.entries(W.overrides || {}));
+  // without the vendored OpenCC (a page that loads this file alone) zh-CN shows the zh-TW text unchanged
+  const convert = window.OpenCC?.Converter ? window.OpenCC.Converter({ from: "twp", to: "cn" }) : (s) => s;
   const memo = new Map();
-  /** zh-TW text -> zh-CN text: an exact override, else one longest-match pass of terms and phrases, then characters. Linear in the text. */
-  function toCN(s) {
+  /** zh-TW text -> zh-CN text through OpenCC. live: true converts without remembering (a streaming reply's prefixes). */
+  function toCN(s, o) {
     if (typeof s !== "string" || !s) return s;
-    if (overrides.has(s)) return overrides.get(s);
+    if (o?.live) return memo.get(s) ?? convert(s);
     const hit = memo.get(s); if (hit !== undefined) return hit;
-    const cs = Array.from(s); let out = "";
-    for (let i = 0; i < cs.length;) {
-      const lens = byFirst.get(cs[i]); let done = false;
-      if (lens) for (const n of lens) {
-        if (i + n > cs.length) continue;
-        const v = words.get(cs.slice(i, i + n).join(""));
-        if (v !== undefined) { out += v; i += n; done = true; break; }
-      }
-      if (done) continue;
-      const c = cs[i++]; out += chars.get(c) ?? c;
-    }
-    if (memo.size > 20000) memo.clear();
+    const out = convert(s);
+    if (memo.size > 5000) memo.clear();
     memo.set(s, out); return out;
   }
   const deepMemo = new WeakMap();
@@ -58,7 +43,7 @@
   }
   /** the stored choice when it is one of the three, else the browser's language */
   const initial = (stored, list) => (LANGS.includes(stored) ? stored : browserLang(list));
-  /** T(): English, the zh-TW text, or the zh-CN text (explicit, else derived) */
+  /** T(): English, the zh-TW text, or the zh-CN text (explicit, else OpenCC's) */
   const pick = (lang, en, tw, cn) => (lang === "zh-TW" ? tw : lang === "zh-CN" ? (cn ?? toCN(tw)) : en);
   /** a bilingual field { en, "zh-TW", "zh-CN"? } (or a plain string) in this language */
   function loc(lang, t) {
@@ -80,7 +65,9 @@
   const modelLang = (lang) => (lang === "zh-CN" ? "zh-TW" : norm(lang));
   /** the per-card language toggle: English and the page's Chinese */
   const cardLangs = (lang) => [["en", "EN"], lang === "zh-CN" ? ["zh-CN", "简中"] : ["zh-TW", "繁中"]];
-  // Display-time conversion of a model reply (markdown) for 简体中文. Left exactly as written:
+
+  // Display-time conversion of a model reply, a log line or a server message (markdown) for 简体中文.
+  // OpenCC converts the prose; these stay exactly as written:
   //   - a fenced block: a line starting (after up to 3 spaces) with ``` or ~~~ opens it, a line of the same
   //     character at least as long closes it; a fence that opens and never closes runs to the end of the text;
   //     ``` in the middle of a line opens nothing;
@@ -88,41 +75,65 @@
   //     with the blank lines inside it (an indented line inside a paragraph is prose);
   //   - inline code: a run of backticks up to the next run of the same length on the same line (an unmatched
   //     backtick is plain text);
-  //   - a markdown link's target: "(…)" right after "]", up to ")" with no space; the link text converts.
-  // URLs and file paths are ASCII by definition here: they end at the first Han character, and conversion never
-  // changes ASCII, so "src/app.ts的設定" keeps the path and converts 設定. One pass, linear in the text.
-  function inlineCN(t) {
-    let out = "", last = 0, i = 0, lineEnd = -1; const n = t.length, noClose = new Map();
-    while (i < n) {
-      const c = t.charCodeAt(i);
-      if (c === 10) { noClose.clear(); i++; continue; }
-      if (c === 96) {
-        let j = i; while (j < n && t.charCodeAt(j) === 96) j++;
-        const run = j - i; if (lineEnd < j) { lineEnd = t.indexOf("\n", j); if (lineEnd < 0) lineEnd = n; }
-        let close = -1;
-        if (!(noClose.get(run) >= j)) {
-          for (let k = j; k < lineEnd;) { const b = t.indexOf("`", k); if (b < 0 || b >= lineEnd) break; let e = b; while (e < n && t.charCodeAt(e) === 96) e++; if (e - b === run) { close = b; break; } k = e; }
-          if (close < 0) noClose.set(run, lineEnd);
-        }
-        if (close >= 0) { out += toCN(t.slice(last, i)) + t.slice(i, close + run); i = last = close + run; continue; }
-        i = j; continue;
-      }
+  //   - a markdown link's target: "](" then 1-300 characters that are not ")" or whitespace, then ")" — the
+  //     same rule md() (public/m2.js) uses for an href; the link text converts;
+  //   - a bare URL or path: a run of ASCII URL/path characters that holds "/" or "\". It ends where the ASCII
+  //     ends ("src/app.ts的設定" converts 設定), unless it ends in "/" or "\": then the next segment belongs to
+  //     the path up to whitespace or closing punctuation ("src/設定.ts", "https://x/blob/main/設定.md" stay).
+  // Every step is one forward scan: linear in the text.
+  const ASCII_PATH = /[A-Za-z0-9_.~:@%+=&?#!$*\-\/\\]/;
+  const isPathChar = (c) => c < 128 && ASCII_PATH.test(String.fromCharCode(c));
+  const CLOSERS = new Set([..."，。、；：！？）」』”’》〉】,;)]}>\"'`"].map((c) => c.charCodeAt(0)));
+  const isSpace = (c) => c === 32 || c === 9 || c === 10 || c === 13 || c === 12 || c === 0x3000;
+  /** the [start, end) spans of one prose block that stay as written */
+  function keepSpans(t) {
+    const n = t.length, spans = [];
+    // inline code: every backtick run, then each run pairs with the next run of the same length on its line
+    const runs = []; let line = 0;
+    for (let i = 0; i < n;) { const c = t.charCodeAt(i); if (c === 10) { line++; i++; continue; } if (c !== 96) { i++; continue; }
+      let j = i; while (j < n && t.charCodeAt(j) === 96) j++; runs.push([i, j - i, line]); i = j; }
+    const next = new Array(runs.length).fill(-1), seen = new Map();
+    for (let r = runs.length - 1; r >= 0; r--) { const k = runs[r][1] + ":" + runs[r][2]; next[r] = seen.get(k) ?? -1; seen.set(k, r); }
+    const code = [];
+    for (let r = 0; r < runs.length;) { const m = next[r]; if (m >= 0) { code.push([runs[r][0], runs[m][0] + runs[m][1]]); r = m + 1; } else r++; }
+    // outside inline code: link targets and bare URLs / paths
+    let ci = 0;
+    for (let i = 0; i < n;) {
+      if (ci < code.length && i >= code[ci][0]) { spans.push(code[ci]); i = code[ci][1]; ci++; continue; }
+      const stop = ci < code.length ? code[ci][0] : n, c = t.charCodeAt(i);
       if (c === 93 && t.charCodeAt(i + 1) === 40) {
-        let j = i + 2; while (j < n) { const d = t.charCodeAt(j); if (d === 41 || d === 40 || d === 32 || d === 9 || d === 10 || d === 13) break; j++; }
-        if (j < n && t.charCodeAt(j) === 41) { out += toCN(t.slice(last, i + 1)) + t.slice(i + 1, j + 1); i = last = j + 1; continue; }
+        let j = i + 2; const lim = Math.min(stop, i + 2 + 300);
+        while (j < lim) { const d = t.charCodeAt(j); if (d === 41 || isSpace(d)) break; j++; }
+        if (j > i + 2 && j < stop && t.charCodeAt(j) === 41) { spans.push([i + 1, j + 1]); i = j + 1; continue; }
+        i++; continue;
+      }
+      if (isPathChar(c) && (i === 0 || !isPathChar(t.charCodeAt(i - 1)))) {
+        let j = i, slash = false; while (j < stop && isPathChar(t.charCodeAt(j))) { const d = t.charCodeAt(j); if (d === 47 || d === 92) slash = true; j++; }
+        if (slash) {
+          const last = t.charCodeAt(j - 1);
+          if (last === 47 || last === 92) while (j < stop) { const d = t.charCodeAt(j); if (isSpace(d) || CLOSERS.has(d)) break; j++; }
+          spans.push([i, j]);
+        }
         i = j; continue;
       }
       i++;
     }
-    return out + toCN(t.slice(last));
+    return spans;
+  }
+  function inlineCN(t, o) {
+    let out = "", last = 0;
+    for (const [a, b] of keepSpans(t)) { out += toCN(t.slice(last, a), o) + t.slice(a, b); last = b; }
+    return out + toCN(t.slice(last), o);
   }
   const shown = new Map();
-  /** a model reply or chat line shown in 简体中文: converted for display only (cached per text); code and link targets stay as written */
-  function displayCN(s) {
+  /** text shown in 简体中文: converted for display only; code, link targets, URLs and paths stay as written.
+   *  Cached per text, except with live: true (a streaming reply, whose prefixes must not fill the caches). */
+  function displayCN(s, o) {
     if (typeof s !== "string" || !s) return s;
+    const live = !!o?.live;
     const hit = shown.get(s); if (hit !== undefined) return hit;
     const lines = s.split("\n"), out = []; let prose = [], blank = true;
-    const flush = () => { if (prose.length) out.push(inlineCN(prose.join("\n"))); prose = []; };
+    const flush = () => { if (prose.length) out.push(inlineCN(prose.join("\n"), o)); prose = []; };
     for (let i = 0; i < lines.length;) {
       const line = lines[i], f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
       if (f) {
@@ -140,11 +151,13 @@
     }
     flush();
     const r = out.join("\n");
-    if (shown.size > 500) shown.clear();
-    shown.set(s, r); return r;
+    if (!live) { if (shown.size > 500) shown.clear(); shown.set(s, r); }
+    return r;
   }
-  const chatText = (lang, s) => (lang === "zh-CN" ? displayCN(s) : s);
+  /** a reply, log line or server message in the UI language: only 简体中文 changes it */
+  const chatText = (lang, s, o) => (lang === "zh-CN" ? displayCN(s, o) : s);
   const NAMES = { en: "English", "zh-TW": "繁體中文", "zh-CN": "简体中文" };
   const locale = (lang) => (lang === "en" ? "en-US" : lang);
-  window.crewI18n = { LANGS, NAMES, toCN, deepCN, displayCN, chatText, browserLang, initial, pick, loc, deep, zhField, modelLang, cardLangs, locale };
+  const cacheSizes = () => ({ text: memo.size, shown: shown.size });
+  window.crewI18n = { LANGS, NAMES, toCN, deepCN, displayCN, chatText, browserLang, initial, pick, loc, deep, zhField, modelLang, cardLangs, locale, cacheSizes };
 })();

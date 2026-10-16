@@ -25,7 +25,7 @@ getJ("/api/remote/me").then((m) => { MS.me = m; if (isMain()) renderChat(false);
     const e = JSON.parse(m.data);
     if (e.type === "delta") MS.live += e.text;
     else if (e.type === "toolStart") MS.liveTools.push(`${e.name} ${e.summary}`.trim());
-    if (isMain()) { const el = $("#mainLive"); if (el && e.type === "delta") { el.textContent = I18N.chatText(lang, MS.live); const log = $("#chatLog"); log.scrollTop = log.scrollHeight; } else renderChat(false); }
+    if (isMain()) { const el = $("#mainLive"); if (el && e.type === "delta") paintLive(); else renderChat(false); }
   });
 })();
 loadMain();
@@ -121,8 +121,13 @@ function sessionSep(x, prev, all, v) {
   return h("div", { class: "chat-session-sep", "data-session-block": x.session.id, "data-earlier": earlier ? "1" : "0", "data-session-model": model || null },
     h("span", {}, earlier ? T("Earlier session", "較早的 session") : T("This session", "目前的 session"), ` · ${x.session.host}${model ? ` · ${model}` : ""} · ${when}`));
 }
-// a Studio note in the UI language: its i18n pair when the server sent one, else its text (zh-CN converts any Traditional in it)
-const noteText = (it) => (it.i18n ? L(it.i18n) : T(it.text, it.text));
+// a Studio note in the UI language: its i18n pair when the server sent one, else its text; in 简体中文 the shown text is
+// converted by displayCN, so the paths, commands and code it interpolates (${terminal}, a wake line, a reason) stay as written
+const noteText = (it) => (it.i18n ? (lang === "zh-CN" ? it.i18n["zh-CN"] || I18N.displayCN(it.i18n["zh-TW"] || it.i18n.en) : L(it.i18n)) : I18N.chatText(lang, it.text));
+// the live reply while it streams: painted at most once per frame, converted without caching (its prefixes are never reused)
+let liveFrame = 0;
+const liveText = () => I18N.chatText(lang, MS.live, { live: true });
+function paintLive() { if (liveFrame) return; liveFrame = requestAnimationFrame(() => { liveFrame = 0; const el = $("#mainLive"); if (!el) return; el.textContent = liveText(); const log = $("#chatLog"); log.scrollTop = log.scrollHeight; }); }
 function logItem(it, i) {
   if(it.source === "studio:native-outcome")return h("div",{class:"card x-pad","data-native-outcome":it.id},h("p",{},it.text),...(it.links||[]).filter(l=>/^#\/(run|review)\//.test(l.href)).map(l=>h("a",{class:"btn",href:l.href},l.label)));
   if (it.kind === "captain") return h("div", { class: "msg me", "data-main": "captain" }, it.text ? h("div", { class: "bub" }, it.text) : null, it.attachments?.length ? attView(it.attachments) : null, it.source && it.source !== "desktop" ? h("div", { class: "faint", style: "font-size:11px;text-align:right" }, it.source) : null);
@@ -145,7 +150,7 @@ renderChat = function (stick = true) {
     v.log.filter((x) => !(v.context==="studio"&&x.source==="studio:handoff") && (x.kind !== "status" || x.attachmentRefusal || x.external || /Paused|Handed|Attached|re-identified|Turn (failed|interrupted)/.test(x.text))).slice(-80).forEach((x, i, all) => { const sep = sessionSep(x, all[i - 1], all, v); if (sep) kids.push(sep); kids.push(logItem(x, i)); });
     if (v.busy) kids.push(h("div", { class: "msg fm", "data-main": "live" }, h("div", { class: "meta" }, "Firstmate", h("span", { class: "faint" }, T("working…", "處理中…"))),
       MS.liveTools.length ? h("div", { class: "faint", style: "font-size:12px" }, MS.liveTools.slice(-3).join(" · ")) : null,
-      MS.live ? h("div", { class: "bub", id: "mainLive" }, I18N.chatText(lang, MS.live)) : h("div", { class: "typing" }, h("i"), h("i"), h("i"))));
+      MS.live ? h("div", { class: "bub", id: "mainLive" }, liveText()) : h("div", { class: "typing" }, h("i"), h("i"), h("i"))));
     (MS.notices || []).forEach((n) => kids.push(externalView(n)));
     const q = queueView(v); if (q) kids.push(q);
   }

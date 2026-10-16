@@ -47,11 +47,10 @@ import a43 from "../public/takeover.css" with { type: "file" };
 import a44 from "../public/takeover.js" with { type: "file" };
 import a45 from "../public/transcripts.css" with { type: "file" };
 import a46 from "../public/transcripts.js" with { type: "file" };
-import a47 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
-import a48 from "../public/workflow-overview.js" with { type: "file" };
-import a49 from "../public/zh-cn-chars-LICENSE.txt" with { type: "file" };
-import a50 from "../public/zh-cn-chars.js" with { type: "file" };
-import a51 from "../public/zh-cn-terms.js" with { type: "file" };
+import a47 from "../public/vendor/opencc-js-1.4.2-t2cn.min.js" with { type: "file" };
+import a48 from "../public/vendor/opencc-js-LICENSE.txt" with { type: "file" };
+import a49 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
+import a50 from "../public/workflow-overview.js" with { type: "file" };
 
 export const ASSETS: Record<string, string> = {
   "/app.css": a0,
@@ -101,9 +100,8 @@ export const ASSETS: Record<string, string> = {
   "/takeover.js": a44,
   "/transcripts.css": a45,
   "/transcripts.js": a46,
-  "/vendor/qrcode-1.4.4.min.js": a47,
-  "/workflow-overview.js": a48,
-  "/zh-cn-chars-LICENSE.txt": a49,
-  "/zh-cn-chars.js": a50,
-  "/zh-cn-terms.js": a51,
+  "/vendor/opencc-js-1.4.2-t2cn.min.js": a47,
+  "/vendor/opencc-js-LICENSE.txt": a48,
+  "/vendor/qrcode-1.4.4.min.js": a49,
+  "/workflow-overview.js": a50,
 };
