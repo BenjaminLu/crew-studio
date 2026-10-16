@@ -53,6 +53,10 @@ try{
   const crowd=controller('success'),results=await Promise.all(['low','medium','high','xhigh','max'].map(effort=>crowd.verify({...pair,effort},{confirm:true,timeoutMs:4000})));
   ok(results.filter(r=>r.admission==='verified-execution').length===4&&results.some(r=>/Too many Claude verifications/.test(r.reason??'')),'distinct pairs waiting at once stay bounded');
  }
+ {const multiple=controller('success'),other={model:'claude-opus-5-5',effort:'medium'};
+  await multiple.verify(pair,{confirm:true,timeoutMs:4000});await multiple.verify(other,{confirm:true,timeoutMs:4000});
+  ok(multiple.verifiedCapabilities().length===2&&multiple.verifiedCapabilities().some(c=>isClaudeExecutionAdmission(c,other)), 'inventory retains both verified model/effort pairs without replacing the first');
+  multiple.invalidate('quotaExhausted');ok(multiple.verifiedCapabilities().length===0,'quota invalidation removes all inventory receipts');}
  const missing=await controller('missing').status(pair);ok(missing.loginState==='not-logged-in'&&missing.reason?.includes('this does not describe unrelated'),'missing selected context does not claim global machine logout');
  const invalid=controller('success'),n=rows().length;await invalid.verify({...pair,effort:'invented'},{confirm:true});ok(rows().length===n,'unsupported effort holds without launching CLI');
  const hung=controller('hang');const start=Date.now();await hung.verify(pair,{confirm:true,timeoutMs:500});ok(Date.now()-start<4000,'actual hung CLI is bounded and drained');const pid=Number(readFileSync(join(root,'hang.pid'),'utf8'));let dead=false;try{process.kill(pid,0);}catch{dead=true;}ok(dead,'actual owned timed-out process is gone');
