@@ -899,16 +899,21 @@ const draftOpts=()=>DRAFT_OPTS.value?Promise.resolve(DRAFT_OPTS.value):(DRAFT_OP
 function nodeModelControls(n,roleSkill,{onChange,onSave,attr}){
   const opts=DRAFT_OPTS.value||{providers:["codex","claude"],efforts:["minimal","low","medium","high","xhigh"],skills:[]};
   const sel=(k,list,label,cur)=>h("label",{class:"rt-field"},h("span",{},label),h("select",{class:"select",[`data-node-config-${k}`]:"",onchange:e=>onChange?.(k,e.target.value)},h("option",{value:""},k==="skill"?T("Role default","角色預設"):T("Not chosen","尚未選擇")),list.map(([v,l])=>h("option",{value:v,selected:v===cur||null},l))));
-  const model=h("input",{class:"input",value:n.model||"","data-node-config-model":"",autocomplete:"off",spellcheck:"false",onkeydown:e=>{if(e.key==="Enter"&&onSave){e.preventDefault();box.querySelector("[data-node-config-save]")?.click();}},placeholder:T("model id, e.g. gpt-5.5 or claude-sonnet-5-5","模型代號"),maxlength:80,onchange:e=>onChange?.("model",e.target.value.trim())});
+  let catalog=null,chosenProvider=n.provider||"",chosenModel=n.model||"";
+  const model=h("select",{class:"select","data-node-config-model":"",onchange:e=>{const custom=e.target.value==="__custom__";customModel.hidden=!custom;if(custom){customModel.focus();return;}chosenModel=e.target.value;onChange?.("model",chosenModel);}});
+  const customModel=h("input",{class:"input",hidden:true,"data-node-config-custom-model":"",autocomplete:"off",spellcheck:"false",placeholder:T("Other model ID","其他模型代號"),maxlength:80,onchange:e=>{chosenModel=e.target.value.trim();onChange?.("model",chosenModel);}});
+  const fillModels=()=>{const list=catalog?.providers?.find(p=>p.id===chosenProvider)?.models||[];const ids=[...new Set([...list.map(m=>m.id),...(chosenModel?[chosenModel]:[])])];model.replaceChildren(h("option",{value:""},T("Choose a model","選擇模型")),...ids.map(id=>h("option",{value:id,selected:id===chosenModel||null},id)),h("option",{value:"__custom__"},T("Other model…","其他模型…")));model.value=chosenModel;};
+  fillModels();api("/api/models").then(value=>{catalog=value;if(box.isConnected&&model.value!=="__custom__")fillModels();}).catch(()=>{});
   const status=h("span",{class:"faint",role:"status","data-node-config-status":""});
   const box=h("div",{class:"fw-node-config",[attr]:n.id},
-    h("h4",{},T("Who does this node","這個節點由誰做")),
+    h("h4",{},T("Who does this node","這個節點由誰做")),h("p",{class:"faint"},T("Select a model now; availability is checked before running.","先選模型；執行前會檢查實際可用性。")),
     sel("provider",opts.providers.map(v=>[v,v==="codex"?"Codex":"Claude"]),T("Provider","供應商"),n.provider),
-    h("label",{class:"rt-field"},h("span",{},T("Model","模型")),model),
+    h("label",{class:"rt-field"},h("span",{},T("Model","模型")),model,customModel),
     sel("effort",opts.efforts.map(v=>[v,v]),T("Reasoning effort","推理強度"),n.effort),
     sel("skill",opts.skills.map(x=>[x.ref,T(x.en,x.zh)]),T("Role skill","角色技能"),n.skill),
     h("p",{class:"faint"},T(`Role default: ${roleSkill?skillName(roleSkill):"none"}. Nothing runs or is staffed here; you confirm staffing when you click Run.`,`角色預設：${roleSkill?skillName(roleSkill):"無"}。這裡不會執行或派工；按下執行時才會確認人員配置。`)),
-    onSave?h("div",{class:"rt-row"},h("button",{class:"btn sm primary",type:"button","data-node-config-save":"",onclick:async()=>{const val=k=>box.querySelector(`[data-node-config-${k}]`).value;status.textContent=T("Saving…","儲存中…");try{const r=await onSave({provider:val("provider"),model:val("model").trim(),effort:val("effort"),skill:val("skill")});status.textContent=T(`Saved · revision ${r.revision}`,`已儲存 · 第 ${r.revision} 版`);}catch(e){status.textContent=e.message;}}},T("Save node settings","儲存節點設定")),status):null);
+    onSave?h("div",{class:"rt-row"},h("button",{class:"btn sm primary",type:"button","data-node-config-save":"",onclick:async()=>{const val=k=>k==="model"?chosenModel:box.querySelector(`[data-node-config-${k}]`).value;status.textContent=T("Saving…","儲存中…");try{const r=await onSave({provider:val("provider"),model:val("model").trim(),effort:val("effort"),skill:val("skill")});status.textContent=T(`Saved · revision ${r.revision}`,`已儲存 · 第 ${r.revision} 版`);}catch(e){status.textContent=e.message;}}},T("Save node settings","儲存節點設定")),status):null);
+  box.querySelector('[data-node-config-provider]').addEventListener('change',e=>{chosenProvider=e.target.value;chosenModel="";customModel.hidden=true;customModel.value="";onChange?.("model","");fillModels();});
   // choices that arrive late fill the selects in place: never replace the box under the captain's typing or click
   if(!DRAFT_OPTS.value)draftOpts().then(o=>{const fill=(k,list)=>{const el=box.querySelector(`[data-node-config-${k}]`);if(!el)return;const cur=el.value;el.replaceChildren(el.firstChild,...list.map(([v,l])=>h("option",{value:v,selected:v===cur||null},l)));el.value=cur;};fill("provider",o.providers.map(v=>[v,v==="codex"?"Codex":"Claude"]));fill("effort",o.efforts.map(v=>[v,v]));fill("skill",o.skills.map(x=>[x.ref,T(x.en,x.zh)]));}).catch(()=>{});
   return box;

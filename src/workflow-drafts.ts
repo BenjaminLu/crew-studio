@@ -1,3 +1,5 @@
+import {workflowDraftSchema,WORKFLOW_DRAFT_EXAMPLE} from './workflow-draft-contract';
+import {bundledText} from './bundled';
 // Free first-workflow drafting. Firstmate interviews the captain in chat, then calls
 // studio_draft_workflow with the graph its model produced; the page previews it live.
 // Drafting and saving never start a Task, never write staffing and never call a paid engine:
@@ -8,7 +10,7 @@ import {join} from 'node:path';
 import {NativeToolFailure,type NativeMainTools} from './host/types';
 import {normalize,validate,type WDef,type WNode,type WorkflowDefs} from './runtime/defs';
 import {withLock} from './ids';
-import {intentStage} from './readiness/stages';
+import {intentStage,outcomesOf} from './readiness/stages';
 import {redactText} from './secure';
 import {neutralizeMarkers} from './operating-rules';
 
@@ -121,11 +123,19 @@ export class WorkflowDrafts{
  /** Only the native tool reaches this: the graph is the Firstmate model's own output for this captain turn. */
  /** The readiness gate's hooks: a repair revision that weakens the gate is refused (and the loop told why). */
  gate:{weakening?:(prev:DraftRecord,next:WDef)=>string|null;refused?:(id:string,reason:string,def:WDef)=>void}={};
- draft(args:any,turn:string,o:{repair?:boolean}={}):DraftRecord{
+ preview(args:any):WDef{
   if(!plain(args)||Object.keys(args).some(k=>!['goal','interview','workflow','draft'].includes(k)))throw new DraftError('use goal, interview, workflow and optionally draft (to revise)');
   if(!bounded(args.goal,500))throw new DraftError('goal: 1–500 characters');
   const interview=args.interview??[];if(!Array.isArray(interview)||interview.length>8||interview.some((q:any)=>!plain(q)||Object.keys(q).some(k=>!['question','answer'].includes(k))||!bounded(q.question,300)||!bounded(q.answer,500)))throw new DraftError('interview: up to 8 {question, answer} pairs');
-  const def=draftDefinition(args.workflow,this.defs),now=new Date().toISOString();
+  const def=draftDefinition(args.workflow,this.defs);
+  for(const node of def.nodes){const outcomes=outcomesOf(node),edges=def.edges.filter(e=>e.from===node.id);if(!outcomes)continue;
+   for(const edge of edges)if(edge.when&&!outcomes.includes(edge.when))throw new DraftError(`edge ${edge.from} -> ${edge.to}: ${edge.when} is not an outcome of ${node.id}; use ${outcomes.join(', ')}`);
+   if(node.kind==='card')for(const outcome of outcomes)if(!edges.some(e=>!e.when||e.when===outcome))throw new DraftError(`node ${node.id}: outcome ${outcome} has no route`);
+  }
+  return def;
+ }
+ draft(args:any,turn:string,o:{repair?:boolean}={}):DraftRecord{
+  const def=this.preview(args),interview=args.interview??[],now=new Date().toISOString();
   if(args.draft!==undefined)return this.withDraft(String(args.draft),()=>{
    const prev=this.get(String(args.draft));if(prev.saved&&!o.repair)throw new DraftError('this draft is already saved; edit the saved workflow instead',409);
    // a gate repair may not weaken the gate: the captain's intent lines, cards, round folders, checks and editor changes stay
@@ -212,20 +222,37 @@ export function ownBrief(def:any,text:string,params:Record<string,string>={}){
 export const ownWorkflow=(def:any)=>plain(def?.origin)&&['firstmate-draft','starter'].includes(def.origin.source);
 
 export type DraftGateTools={repairAuthorized(draft:string,ref:{draft?:unknown;nonce?:unknown}|null|undefined):boolean;view(args:{draft?:string;workflow?:string;version?:number}):unknown};
-export function installWorkflowDraftTools(drafts:WorkflowDrafts,gate?:DraftGateTools):NativeMainTools{
- const fail=(e:any):never=>{if(e instanceof NativeToolFailure)throw e;if(e instanceof DraftError)throw new NativeToolFailure(e.status===404?'draft_missing':'draft_invalid',`Draft refused: ${e.message}. Fix the graph and call studio_draft_workflow again.`,`草稿未通過：${e.message}。請修正流程圖後再呼叫 studio_draft_workflow。`,'read_current_state');throw new NativeToolFailure('draft_invalid','Draft refused. Read the draft and try again.','草稿未通過，請讀取草稿後再試。','read_current_state');};
+export function installWorkflowDraftTools(drafts:WorkflowDrafts,gate?:DraftGateTools,onSaved?:(def:WDef)=>void):NativeMainTools{
+ const fail=(e:any):never=>{if(e instanceof NativeToolFailure)throw e;if(e instanceof DraftError)throw new NativeToolFailure(e.status===404?'draft_missing':'draft_invalid',`Draft refused: ${e.message}. Read studio_workflow_draft_contract, validate with studio_validate_workflow_draft, then submit the corrected graph.`,`草稿未通過：${e.message}。請修正流程圖後再呼叫 studio_draft_workflow。`,'read_current_state');throw new NativeToolFailure('draft_invalid','Draft refused. Read the draft and try again.','草稿未通過，請讀取草稿後再試。','read_current_state');};
+ const schema=workflowDraftSchema(Object.keys(DRAFT_SKILLS),DRAFT_PROVIDERS,DRAFT_EFFORTS);
  return{specs:[
-  {type:'function',name:'studio_draft_workflow',description:'FREE drafting, no execution: after a short interview (goal, who does the work, who reviews, when the captain decides), submit the graph you designed for the captain\'s own workflow. Put the captain\'s goals in workflow.intents as numbered lines in the captain\'s own words, each {text, done} where done says what "done" means (add assumption when a line was ambiguous: pick the most reasonable reading, do not ask); every node lists the intent line numbers it serves in serves (a plain end hook needs none). Nodes: agent (mode deliver, args.format document|web, optional provider codex|claude, model, effort, skill), card (captain decision with options, or accept: true for the acceptance card that ticks every intent line), hook (end). Optional workflow.params (Start inputs {label, default?}) and workflow.sample ({text, params} for the dry run). Role skills: '+Object.keys(DRAFT_SKILLS).join(', ')+'. Studio runs the readiness gate on every revision and sends you a GATE-REPAIR turn when it fails: then revise with draft set, keep every intent line, and never ask the captain. The page previews it live, labeled as model output. Never starts a Task or staffing; never use studio_propose_work for drafting. Pass draft to revise an unsaved draft.',inputSchema:{type:'object',properties:{goal:{type:'string'},interview:{type:'array',items:{type:'object',properties:{question:{type:'string'},answer:{type:'string'}},required:['question','answer'],additionalProperties:false}},workflow:{type:'object'},draft:{type:'string'}},required:['goal','workflow'],additionalProperties:false}},
+  {type:'function',name:'studio_read_workflow',description:'Read a saved workflow and its exact node IDs, roles, model configuration and current version before editing. No execution.',inputSchema:{type:'object',properties:{workflow:{type:'string'}},required:['workflow'],additionalProperties:false}},
+  {type:'function',name:'studio_update_workflow_staffing',description:'After the captain explicitly chooses configuration, persist agent node provider/model/effort/skill in a saved personal workflow as a new version. Read studio_read_workflow first, pass its version as base, and include every node sharing the chosen role. Does not run work, verify a paid model, or approve staffing. Never tell the captain to re-enter choices manually.',inputSchema:{type:'object',properties:{workflow:{type:'string'},base:{type:'integer'},nodes:{type:'array',minItems:1,maxItems:18,items:{type:'object',properties:{node:{type:'string'},provider:{type:'string',enum:[...DRAFT_PROVIDERS]},model:{type:'string'},effort:{type:'string',enum:[...DRAFT_EFFORTS]},skill:{type:'string',enum:Object.keys(DRAFT_SKILLS)}},required:['node'],additionalProperties:false}}},required:['workflow','base','nodes'],additionalProperties:false}},
+  {type:'function',name:'studio_workflow_draft_contract',description:'Read the current workflow drafting skill, exact tool input schema and an executable Hello website example. Read this before designing a graph; this is read-only and starts no Task.',inputSchema:{type:'object',properties:{},additionalProperties:false}},
+  {type:'function',name:'studio_validate_workflow_draft',description:'Validate a proposed draft without saving it or starting work. Checks the same argument format and static graph rules as studio_draft_workflow; then draft and read studio_workflow_gate for readiness, dry-run and runtime evidence.',inputSchema:schema},
+  {type:'function',name:'studio_draft_workflow',description:'FREE drafting, no execution: after a short interview (goal, who does the work, who reviews, when the captain decides), submit the graph you designed for the captain\'s own workflow. Put the captain\'s goals in workflow.intents as numbered lines in the captain\'s own words, each {text, done} where done says what "done" means (add assumption when a line was ambiguous: pick the most reasonable reading, do not ask); every node lists the intent line numbers it serves in serves (a plain end hook needs none). Nodes: agent (mode deliver, args.format document|web, optional provider codex|claude, model, effort, skill), card (captain decision with options, or accept: true for the acceptance card that ticks every intent line), hook (end). Optional workflow.params (Start inputs {label, default?}) and workflow.sample ({text, params} for the dry run). Role skills: '+Object.keys(DRAFT_SKILLS).join(', ')+'. Studio runs the readiness gate on every revision and sends you a GATE-REPAIR turn when it fails: then revise with draft set, keep every intent line, and never ask the captain. The page previews it live, labeled as model output. Never starts a Task or staffing; never use studio_propose_work for drafting. Pass draft to revise an unsaved draft.',inputSchema:schema},
   {type:'function',name:'studio_workflow_gate',description:'Read the readiness gate result for a draft (draft) or a saved workflow version (workflow, version): each stage (1 intent lines, 2 static contract, 3 briefs, 4 stub dry run, 5 real run) with typed problems (stage, node, reason, fix, who can fix it), the repair rounds so far and the status line. Read-only; use it to fix the draft yourself before asking the captain.',inputSchema:{type:'object',properties:{draft:{type:'string'},workflow:{type:'string'},version:{type:'integer'}},additionalProperties:false}},
   {type:'function',name:'studio_save_workflow_draft',description:'Only when the captain asks to save: save a reviewed draft as the captain\'s own workflow version. Creates a workflow definition only: no Task, no staffing, no model call. Staffing is confirmed later, only when the captain clicks Run.',inputSchema:{type:'object',properties:{draft:{type:'string'},revision:{type:'integer'}},required:['draft'],additionalProperties:false}},
  ],
  async call(name,args:any,owner){
   if(!owner.live())throw new NativeToolFailure('owner_ended','The primary request ended.','主要對話請求已結束。');
+  if(name==='studio_workflow_draft_contract')return{schema,skill:bundledText('workflows/skills/firstmate-workflow-design/SKILL.md'),example:structuredClone(WORKFLOW_DRAFT_EXAMPLE),limits:{staticValidationIsExecutionEvidence:false}};
+  if(name==='studio_validate_workflow_draft'){try{const def=drafts.preview(args);return{valid:true,stage:'static-contract',nodes:def.nodes.length,edges:def.edges.length,next:'studio_draft_workflow',runtimeVerified:false};}catch(e:any){return{valid:false,stage:'static-contract',problems:e.problems??[{text:e.message}],next:'Correct these exact problems using studio_workflow_draft_contract, then validate again.',runtimeVerified:false};}}
+  if(name==='studio_read_workflow'){if(!plain(args)||Object.keys(args).some(k=>k!=='workflow')||typeof args.workflow!=='string')throw new NativeToolFailure('invalid_params','Pass workflow ID','請提供流程 ID。');const def=drafts.defs.get(args.workflow);if(!def)throw new NativeToolFailure('draft_missing','No such workflow','找不到這個流程。');return{workflow:def,editable:ownWorkflow(def),status:'read-only'};}
   if(name==='studio_workflow_gate'){if(!gate)throw new NativeToolFailure('invalid_params','The readiness gate is not available.','檢查閘門目前無法使用。');try{return gate.view(plain(args)?args:{});}catch(e:any){throw new NativeToolFailure('invalid_params',`Gate read refused: ${e?.message??e}`,`無法讀取檢查結果：${e?.message??e}`,'read_current_state');}}
   // a Studio gate-repair turn may revise exactly the draft it names, while its nonce is current; nothing else
   const repair=!owner.captain&&name==='studio_draft_workflow'&&plain(args)&&typeof args.draft==='string'&&!!gate?.repairAuthorized(args.draft,(owner as any).repair);
   if(!owner.captain&&!repair)throw new NativeToolFailure('owner_ended','Only a current captain message may draft or save a workflow.','只有目前的船長訊息可以起草或儲存流程。');
   try{
+   if(name==='studio_update_workflow_staffing'){
+    if(!plain(args)||Object.keys(args).some(k=>!['workflow','base','nodes'].includes(k))||typeof args.workflow!=='string'||!/^([a-z0-9][a-z0-9-]{0,80})$/.test(args.workflow)||!Number.isSafeInteger(args.base)||!Array.isArray(args.nodes)||!args.nodes.length||args.nodes.length>18)throw new DraftError('pass workflow, base and 1–18 node configuration patches');
+    return withLock(drafts.defs.dir,'staffing-'+args.workflow,()=>{
+     const def=drafts.defs.get(args.workflow);if(!def||!ownWorkflow(def))throw new DraftError('only saved personal workflows can be configured');if(def.version!==args.base)throw new DraftError('workflow changed; read the latest version before editing',409);
+     const patches=new Map<string,any>();for(const patch of args.nodes){if(!plain(patch)||Object.keys(patch).some(k=>!['node','provider','model','effort','skill'].includes(k))||typeof patch.node!=='string'||patches.has(patch.node)||Object.keys(patch).length<2)throw new DraftError('each unique node needs provider, model, effort or skill');const node=def.nodes.find(n=>n.id===patch.node);if(!node||node.kind!=='agent')throw new DraftError('configuration target must be an existing agent node');const {node:id,...fields}=patch;const next={...node,...fields};checkNodeStaffing(next,id);patches.set(id,next);}
+     const nodes=def.nodes.map(n=>patches.get(n.id)??n);if(JSON.stringify(nodes)===JSON.stringify(def.nodes))return{workflow:def.id,version:def.version,status:'unchanged-no-task'};
+     const saved=drafts.defs.save(def.id,{base:args.base,nodes},'captain via Firstmate','Update captain-selected agent configuration');onSaved?.(saved);return{workflow:saved.id,version:saved.version,status:'saved-no-task',href:`#/workflows/${saved.id}`,nodes:saved.nodes.filter(n=>patches.has(n.id))};
+    });
+   }
    if(name==='studio_draft_workflow'){const d=drafts.draft(args,sha(owner.key).slice(0,16),{repair});return{draft:d.id,revision:d.revision,source:'model',status:'draft-preview',href:`#/first-workflow/${d.id}`,nodes:d.def.nodes.length};}
    if(name==='studio_save_workflow_draft'){if(!plain(args)||Object.keys(args).some(k=>!['draft','revision'].includes(k))||typeof args.draft!=='string'||args.revision!==undefined&&!Number.isSafeInteger(args.revision))throw new DraftError('pass the draft id and optionally the revision the captain approved');return{...drafts.save(args.draft,'captain via Firstmate',args.revision),status:'saved-no-task'};}
   }catch(e){fail(e);}

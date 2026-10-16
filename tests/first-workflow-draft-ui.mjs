@@ -53,7 +53,7 @@ try{
   await p.locator('[data-draft-node="review"]').click();
   const cfg=p.locator('[data-node-config="review"]');await cfg.waitFor({timeout:5000});
   await cfg.locator('[data-node-config-provider]').selectOption('claude');
-  await cfg.locator('[data-node-config-model]').fill('claude-fixture');
+  await cfg.locator('[data-node-config-model]').selectOption('__custom__');await cfg.locator('[data-node-config-custom-model]').fill('claude-fixture');
   await cfg.locator('[data-node-config-effort]').selectOption('high');
   await cfg.locator('[data-node-config-skill]').selectOption('bundled:workflows/skills/v2/designer.md');
   await cfg.locator('[data-node-config-save]').click();
@@ -61,9 +61,9 @@ try{
   await cfg.scrollIntoViewIfNeeded().catch(()=>{});await p.screenshot({path:join(shots,`${tag}-3-node-config.png`)});
   // typing in Model then one click on Save must save (no swallowed first click)
   {const revOf=async()=>p.evaluate(async()=>{const j=await (await fetch('/api/wf/drafts')).json();return j.drafts[0].revision;});const before=await revOf();
-   const c=p.locator('[data-node-config="review"]');await c.locator('[data-node-config-model]').click();await c.locator('[data-node-config-model]').fill('');await c.locator('[data-node-config-model]').pressSequentially('claude-fixture-2',{delay:120});await c.locator('[data-node-config-save]').click();
+   const c=p.locator('[data-node-config="review"]');await c.locator('[data-node-config-model]').selectOption('__custom__');await c.locator('[data-node-config-custom-model]').fill('');await c.locator('[data-node-config-custom-model]').pressSequentially('claude-fixture-2',{delay:120});await c.locator('[data-node-config-save]').click();
    await p.waitForTimeout(1500);const after=await revOf();ok(after===before+1,`${tag} one click on Save after typing in Model saves`,`${before}->${after}`);
-   await p.locator('[data-node-config="review"] [data-node-config-model]').fill('claude-fixture');await p.locator('[data-node-config="review"] [data-node-config-save]').click();await p.waitForTimeout(1200);}
+   await p.locator('[data-node-config="review"] [data-node-config-model]').selectOption('__custom__');await p.locator('[data-node-config="review"] [data-node-config-custom-model]').fill('claude-fixture');await p.locator('[data-node-config="review"] [data-node-config-save]').click();await p.waitForTimeout(1200);}
   await p.reload();await p.waitForSelector('[data-first-workflow-source="model"]',{timeout:8000});
   ok(await p.locator('[data-draft-node="review"] [data-node-skill]').count()===1,`${tag} W7 the node chip shows the skill override`);
   await p.locator('[data-draft-node="review"]').click();const cfg2=p.locator('[data-node-config="review"]');await cfg2.waitFor();
@@ -78,11 +78,17 @@ try{
   const panel=p.locator('[data-node-model-config="review"]');await panel.waitFor({timeout:5000});
   ok(await panel.locator('[data-node-config-provider]').inputValue()==='claude'&&await panel.locator('[data-node-config-effort]').inputValue()==='high',`${tag} editor panel shows the inline node config`);
   ok(!(await p.locator('[data-staffing-confirm]').count()),`${tag} editor shows no staffing confirmation before Run`);
+  await panel.locator('[data-node-config-model] option[value="claude-opus-5-5"]').waitFor({state:'attached'});
+  await panel.locator('[data-node-config-model]').selectOption('claude-opus-5-5');await panel.locator('[data-node-config-effort]').selectOption('medium');
+  await p.locator('[data-save]').click();await p.waitForTimeout(500);
+  const stored=await p.evaluate(async()=>{const id=location.hash.split('/')[2];return(await(await fetch('/api/wf/'+id)).json()).def;});
+  ok(stored.version===2&&stored.nodes.find(n=>n.id==='review').model==='claude-opus-5-5'&&stored.nodes.find(n=>n.id==='review').effort==='medium',`${tag} editor dropdown saves selected Claude model and effort in v2`);
+
   await panel.scrollIntoViewIfNeeded().catch(()=>{});await p.screenshot({path:join(shots,`${tag}-4-editor.png`)});
   await p.evaluate(()=>scrollTo(0,0));await p.locator('[data-ed-run]').click();
   const confirm=p.locator('[data-staffing-confirm]');await confirm.waitFor({timeout:8000});
   ok(await confirm.locator('[data-staffing-row]').count()===2,`${tag} Run shows one staffing row per agent node`);
-  ok((await confirm.innerText()).includes('claude-fixture'),`${tag} confirmation lists the chosen model`);
+  ok((await confirm.innerText()).includes('claude-opus-5-5'),`${tag} confirmation lists the chosen model`);
   const broken=await confirm.evaluate(d=>{const out=[];for(const td of d.querySelectorAll('td')){const t=td.firstChild;if(!t||t.nodeType!==3)continue;let i=0;for(const tok of t.data.split(/(\s+)/)){if(tok.trim()){const r=document.createRange();r.setStart(t,i);r.setEnd(t,i+tok.length);const tops=new Set([...r.getClientRects()].map(x=>Math.round(x.top)));if(tops.size>1)out.push(tok);}i+=tok.length;}}return out;});
   ok(!broken.length,`${tag} W6 no staffing cell breaks a word or model id mid-token`,JSON.stringify(broken));
   ok(!(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)),`${tag} no horizontal page scroll with the confirmation open`);
@@ -106,7 +112,7 @@ try{
   await p.waitForFunction(()=>document.querySelector('[data-first-workflow-source="model"]')&&!document.querySelector('[data-first-workflow-open-saved]'),null,{timeout:15000});
   const before=await p.evaluate(async()=>{const j=await (await fetch('/api/wf/drafts')).json();return j.drafts.find(d=>!d.saved).revision;});
   mode='slow';await p.locator('[data-draft-node="review"]').click();const c=p.locator('[data-node-config="review"]');await c.waitFor();
-  await c.locator('[data-node-config-model]').click();await c.locator('[data-node-config-model]').pressSequentially('typed-model-x',{delay:20});await p.waitForTimeout(2500);mode='normal';
+  await c.locator('[data-node-config-model]').selectOption('__custom__');await c.locator('[data-node-config-custom-model]').pressSequentially('typed-model-x',{delay:20});await p.waitForTimeout(2500);mode='normal';
   await p.locator('[data-node-config="review"] [data-node-config-save]').click();await p.waitForTimeout(1500);
   const after=await p.evaluate(async()=>{const j=await (await fetch('/api/wf/drafts')).json();const d=j.drafts.find(d=>!d.saved);const full=await (await fetch('/api/wf/drafts/'+d.id)).json();return{rev:d.revision,model:full.draft.def.nodes.find(n=>n.id==='review').model};});
   ok(after.rev===before+1&&after.model==='typed-model-x','one click on Save saves the typed model even when the choices list arrives late',JSON.stringify({before,after}));await ctx.close();}

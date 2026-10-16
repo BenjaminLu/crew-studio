@@ -89,6 +89,7 @@ export function createTakeover(d: Deps) {
     if (!writing) return null;
     let b: any = {};
     if (["/api/main/takeover", "/api/main/start", "/api/main/switch", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door"].includes(p)) { try { b = await req.json(); } catch {} }
+    if(['/api/main/start','/api/main/switch'].includes(p)&&b?.locale!==undefined&&!['en','zh-TW','zh-CN'].includes(b.locale))return json({error:'Unsupported dashboard language',code:'locale'},400);
     if (p === "/api/main/takeover") {
       if(d.codexAccount?.blocking)return json({error:"Complete or cancel Codex account action first / 請先完成或取消 Codex 帳號操作"},409);
       const mode = b?.mode === "rehearsal" ? "rehearsal" : "takeover";
@@ -111,7 +112,7 @@ export function createTakeover(d: Deps) {
       const now = d.main.view();
       if (now.host !== "codex" || !["attached", "paused"].includes(now.state)) return json({ error: "The Firstmate changed while Claude was checked; review it first / 檢查 Claude 期間 Firstmate 已變更，請先確認", code: "changed" }, 409);
       await d.main.detach();
-      const r = await d.main.startFresh("claude", undefined, { env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode });
+      const r = await d.main.startFresh("claude", undefined, { locale:b?.locale??"en", env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode });
       return json(r, r.ok ? 200 : 409);
     }
     if (p === "/api/main/start" && b?.host === "claude") {
@@ -121,7 +122,7 @@ export function createTakeover(d: Deps) {
       if (!d.claudePrimary) return json({ ok: false, code: "claudeUnavailable", reason: "Claude is not available to Studio / Studio 無法使用 Claude" }, 409);
       const ready = await d.claudePrimary();
       if (!ready.ok) return json(ready, 409);
-      const r = await d.main.startFresh("claude", undefined, { env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode });
+      const r = await d.main.startFresh("claude", undefined, { locale:b?.locale??"en", env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode });
       return json(r, r.ok ? 200 : 409);
     }
     if (p === "/api/main/start") {
@@ -135,7 +136,7 @@ export function createTakeover(d: Deps) {
         const current=codexConfig(d.main.view().project);
         if(verified.state!=="ready"||!verified.authenticated||verified.quota!=="available"||!verified.expires||verified.expires<=Date.now()||typeof verified.model!=="string"||!verified.model||typeof verified.effort!=="string"||!verified.effort||current.model!==verified.model||current.effort!==verified.effort||opened.model!==verified.model||opened.effort!==verified.effort)throw new Error("Codex main model/effort changed or is unverified. Recheck the vendor configuration before retrying / Codex 主對話模型或推理強度已變更或尚未驗證；請重新檢查廠商設定後再試");
         return true;
-      });
+      },{locale:b?.locale??"en"});
       return json(r, r.ok ? 200 : 409);
     }
     if (p === "/api/main/question") {
