@@ -147,7 +147,7 @@ const done = (id: string, ms = 25000) => until(() => ["succeeded", "failed", "ca
   const nat = (w: string) => L.find((e) => e.check === "t/nat" && e.params.want === w)!;
   ok(nat("pass")?.verdict === "pass" && nat("fail")?.verdict === "fail" && nat("fail").findings[0].class === "nat", "a native check speaks the same contract");
   const j1 = by("t/judge1")!, j2 = by("t/judge2")!;
-  ok(j1.verdict === "fail" && j1.blocking === false && j1.findings.every((f) => f.locator) && (j1 as any).dropped === 1, "a judged finding without a locator is dropped; a judged check without a quorum never blocks", JSON.stringify({ v: j1.verdict, b: j1.blocking, d: (j1 as any).dropped }));
+  ok(j1.verdict === "fail" && j1.blocking === false && j1.findings.every((f) => f.locator) && (j1 as any).dropped === 0 && j1.findings.length === 1 && j1.findings[0].class === "review-stub" && H.agents.jobs.get((j1 as any).votes[0].job)?.tools === 2, "actual judge tool refuses malformed payload, accepts correction and retains valid finding; no quorum never blocks", JSON.stringify({ v: j1.verdict, b: j1.blocking, d: (j1 as any).dropped }));
   ok((j2 as any).votes?.length === 3 && j2.verdict === "fail", "a quorum of 2 of 3 runs three independent judges");
   const ty = L.filter((e) => e.check === "t/typed"); const tyBad = ty.find((e) => e.params.limit === undefined)!, tyOk = ty.find((e) => e.params.limit === 3)!;
   ok(tyBad?.verdict === "error" && /limit is required/.test(tyBad.error ?? "") && tyOk?.verdict === "pass", "params are checked against the schema (a form string becomes an integer)");

@@ -125,7 +125,7 @@ function coffeeConstraintContext(x:X,through?:number){
 }
 export type CoffeeChoice = {provider:'codex';model:string;effort:string|null};
 export type CoffeeFilm = {poster?:Buffer;bytes:Buffer;codec:'h264';duration:number;width:number;height:number;renderer:string};
-export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; choice?:()=>CoffeeChoice|null; staffing?:(def:any,params:Record<string,string>)=>CoffeeChoice; video?: (o:{direction:CoffeeDirection;image:string;page:string;revision:CoffeePlan['revision'];context?:ReturnType<typeof coffeeConstraintContext>;signal:AbortSignal;authorize():void;onProgress?:(stage:'snapshot'|'check'|'render'|'verify')=>void})=>Promise<CoffeeFilm>; image?: (o:{direction:CoffeeDirection;context?:ReturnType<typeof coffeeConstraintContext>;signal:AbortSignal;authorize():void})=>Promise<CodexImage> }) {
+export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; choice?:()=>CoffeeChoice|null; staffing?:(def:any,params:Record<string,string>)=>CoffeeChoice; reviewStaffing?:(def:any,params:Record<string,string>)=>unknown; video?: (o:{direction:CoffeeDirection;image:string;page:string;revision:CoffeePlan['revision'];context?:ReturnType<typeof coffeeConstraintContext>;signal:AbortSignal;authorize():void;onProgress?:(stage:'snapshot'|'check'|'render'|'verify')=>void})=>Promise<CoffeeFilm>; image?: (o:{direction:CoffeeDirection;context?:ReturnType<typeof coffeeConstraintContext>;signal:AbortSignal;authorize():void})=>Promise<CodexImage> }) {
   type LocalJob={id:string;task:string;node:string;label:string;provider:string;phase:string;startedAt:string;lastProgressAt:string;endedAt:string|null;outcome:'running'|'succeeded'|'failed'|'cancelled';cleanup:'pending'|'verified'|'unverified'};
   const renderJobs=new Map<string,LocalJob>();
   const publishJob=(job:LocalJob)=>{renderJobs.set(job.id,job);engine.deps.send('coffee-local-job',{task:job.task,id:job.id});};
@@ -314,9 +314,19 @@ export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; 
   engine.needs['coffee_review_snapshot']=x=>{
     requireOwner(x);requireChoice(x);const plan=productionPlan(x),site=coffeeReceipt(x,d.artifacts,'site');
     const receipts=Object.fromEntries((['page','image','video','site'] as CoffeePart[]).map(part=>[part,coffeeReceipt(x,d.artifacts,part)]));
-    const texts:Record<string,string>={};for(const file of site.manifest){if(/\.(html|css)$/.test(file.path)){if(file.size>18000)throw new Error('Coffee source review exceeds bounded text capacity; review remains unverified');texts[file.path]=readFileSync(join(d.artifacts.filesDir(site.artifact,site.n),file.path),'utf8');}}
-    const snapshot={schema:1,scope:'text-and-source-only',design:plan.direction.design,designHash:plan.direction.designHash,generations:plan.generations,revision:plan.revision,cumulativeCaptainConstraints:coffeeConstraintContext(x),staffing:x.run.params._staffing,receipts,texts};
-    if(JSON.stringify(snapshot).length>24000)throw new Error('Complete coffee review input exceeds bounded capacity; no truncated approval');
+    const texts:Record<string,string>={};for(const file of site.manifest){if(/\.(html|css|js)$/.test(file.path)){if(file.size>18000)throw new Error('Coffee source review exceeds bounded text capacity; review remains unverified');texts[file.path]=readFileSync(join(d.artifacts.filesDir(site.artifact,site.n),file.path),'utf8');}}
+    const entries=trustedCoffee(x);
+    if(d.reviewStaffing&&entries.filter(e=>e.record==='staffing-start'||e.record==='staffing-upgrade').at(-1)?.data?.config!==x.run.params._staffing)throw new Error('Review staffing lacks signed task binding');
+    const receiptEvidence=Object.fromEntries(Object.entries(receipts).map(([part,r])=>{const e=entries.filter(e=>e.record===outputRecord&&e.data?.part===part).at(-1)!;return[part,{sha256:receiptHash(r),source:{seq:e.seq,sig:e.sig}}];}));
+    // Current artifact producers, not six historical judge prompts per review round.
+    const pageSource=entries.filter(e=>e.record===outputRecord&&e.data?.part==='page').at(-1)!;
+    const producerInstructions=[
+      entries.filter(e=>e.record==='staffing-instructions'&&e.data?.role==='worker'&&e.node===pageSource.node&&e.round===pageSource.round&&e.seq<pageSource.seq).at(-1),
+      entries.filter(e=>e.record==='coffee-image-instructions-v1'&&e.data?.generation===receipts.image.generation&&e.data?.design===plan.direction.designHash).at(-1),
+    ].filter(Boolean);
+    const staffingEvidence=[...entries.filter(e=>e.record==='staffing-start'||e.record==='staffing-upgrade'),...producerInstructions].map(e=>({record:e!.record,source:{seq:e!.seq,sig:e!.sig},node:e!.node,round:e!.round,data:e!.data}));
+    const snapshot={schema:1,scope:'text-and-source-only',design:plan.direction.design,designHash:plan.direction.designHash,generations:plan.generations,revision:plan.revision,cumulativeCaptainConstraints:coffeeConstraintContext(x),staffing:{config:x.run.params._staffing??null,approved:d.reviewStaffing?.(x.run.def,x.run.params)??null,evidence:staffingEvidence},receiptEvidence,receipts,texts};
+    if(JSON.stringify(snapshot).length>48000)throw new Error('Complete coffee review input exceeds bounded capacity; no truncated approval');
     return snapshot;
   };
   const openBundleCard = async (x:X) => {
@@ -334,11 +344,24 @@ export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; 
       requireOwner(x);const links:{label:string;href:string}[]=[];
       for(const part of ['page','image','video','site'] as const)try{const r=coffeeReceipt(x,d.artifacts,part);links.push({label:`${part} v${r.n}`,href:`/#/review/${r.artifact}/${r.n}`});}catch{}
       let recovery:CoffeePlan|null=null,videoRecovery:CoffeePlan|null=null;try{if(!x.run.def.edges.some(e=>e.from===x.node.id&&e.to==='round'&&e.when==='revise'))throw new Error('Historical workflow has no bound recovery edge');const p=currentPlan(x);if((p.pageAdmission!=='paid-intent-v1'||trustedCoffee(x).some(e=>e.record==='coffee-operation-v1'&&e.data?.part==='page'&&e.data.generation===p.generations.page))&&coffeeNeeds(x,d.artifacts,'page')==='produce')recovery=p;else if(d.video&&coffeeNeeds(x,d.artifacts,'page')==='current'&&coffeeNeeds(x,d.artifacts,'image')==='current'&&coffeeNeeds(x,d.artifacts,'video')==='produce')videoRecovery=p;}catch{}
-      const card=await engine.card(x,'question',{captainOnly:true,title:'Creation needs attention',zhTitle:'製作需要處理',en:{why:'No verified complete website is available for final approval. Existing valid previews remain available below. Review the failed step; no publication has occurred.',how:videoRecovery?'Approve a fresh film attempt to reuse the existing page and image. Production waits for your confirmation.':'Review the failed step and repair its capability before preparing another attempt.'},zh:{why:'目前沒有可供最終驗收的完整網站。下方仍可開啟已完成且完整的預覽。請查看失敗步驟；尚未發布。',how:videoRecovery?'核准重新製作影片，沿用既有網頁與圖片。確認後才會開始製作。':'請查看失敗步驟並修復所需能力，再準備新的嘗試。'},links,options:[...(videoRecovery?[{id:'fresh-video',label:'Authorize a fresh film attempt',labelZh:'授權重新製作影片',note:true,hold:true}]:[]),...(recovery?[{id:'fresh-page',label:'Authorize a fresh page attempt',labelZh:'授權重新製作網頁',note:true,hold:true}]:[]),{id:'close',label:'Close',labelZh:'關閉',hold:true}]});
+      let reviewRecovery:CoffeeReceipt|null=null;try{if(x.run.def.edges.some(e=>e.from===x.node.id&&e.to==='round'&&e.when==='revise'))reviewRecovery=coffeeReceipt(x,d.artifacts,'site');}catch{}
+      const reviewFailures=trustedCoffee(x).filter(e=>e.node==='checks'&&e.head===(x.ctx.head??null)&&e.record==='check'&&e.verdict!=='pass').map(e=>({source:{seq:e.seq,sig:e.sig},check:e.check,verdict:e.verdict,findings:e.findings,error:e.error??null,dropped:e.dropped??0}));
+      const card=await engine.card(x,'question',{detail:{coffeeReviewFailures:reviewFailures},captainOnly:true,title:'Creation needs attention',zhTitle:'製作需要處理',en:{why:'No verified complete website is available for final approval. Existing valid previews remain available below. Review the failed step; no publication has occurred.',how:reviewRecovery?'Review the findings and source evidence, then explicitly request another review or a targeted revision. All checks and captain acceptance remain required.':videoRecovery?'Approve a fresh film attempt to reuse the existing page and image. Production waits for your confirmation.':'Review the failed step and repair its capability before preparing another attempt.'},zh:{why:'目前沒有可供最終驗收的完整網站。下方仍可開啟已完成且完整的預覽。請查看失敗步驟；尚未發布。',how:reviewRecovery?'請檢視問題與來源證據，再明確要求重新審查或修改指定作品。所有檢查與船長驗收仍須通過。':videoRecovery?'核准重新製作影片，沿用既有網頁與圖片。確認後才會開始製作。':'請查看失敗步驟並修復所需能力，再準備新的嘗試。'},links,options:[...(reviewRecovery?[{id:'retry-review',label:'Review existing bundle again',labelZh:'重新審查既有作品',note:true,hold:true},...(['page','image','video']as const).map(target=>({id:`revise-${target}`,label:`Revise ${target}`,labelZh:`修改${{page:'網頁',image:'圖片',video:'影片'}[target]}`,note:true,hold:true}))]:[]),...(videoRecovery?[{id:'fresh-video',label:'Authorize a fresh film attempt',labelZh:'授權重新製作影片',note:true,hold:true}]:[]),...(recovery?[{id:'fresh-page',label:'Authorize a fresh page attempt',labelZh:'授權重新製作網頁',note:true,hold:true}]:[]),{id:'close',label:'Close',labelZh:'關閉',hold:true}]});
+      if(reviewRecovery&&!engine.record(x,'coffee-review-recovery-offer-v1',{data:{version:1,card:card.id,visit:x.visit,plan:digest(JSON.stringify(currentPlan(x))),bundle:receiptHash(reviewRecovery),presentation:presentationHash(card)}}))throw new Error('Review recovery offer was not persisted');
       if((recovery||videoRecovery)&&!engine.record(x,'coffee-recovery-offer-v1',{data:{version:1,card:card.id,visit:x.visit,plan:digest(JSON.stringify(recovery||videoRecovery)),target:videoRecovery?'video':'page',presentation:presentationHash(card)}}))throw new Error('Recovery offer was not persisted');
       return {wait:true};
     },
-    async answer(x,c){requireOwner(x);requireSignedAnswer(x,c);if(c.answer?.choice==='fresh-page'||c.answer?.choice==='fresh-video'){
+    async answer(x,c){requireOwner(x);requireSignedAnswer(x,c);
+      if(['retry-review','revise-page','revise-image','revise-video'].includes(c.answer?.choice??'')){
+        requireChoice(x);const p=currentPlan(x),bundle=coffeeReceipt(x,d.artifacts,'site'),offer=trustedCoffee(x).filter(e=>e.record==='coffee-review-recovery-offer-v1'&&e.data?.card===c.id).at(-1);
+        if(!offer||offer.node!==x.node.id||offer.round!==x.visit||offer.data.visit!==c.visit||offer.data.plan!==digest(JSON.stringify(p))||offer.data.bundle!==receiptHash(bundle)||offer.data.presentation!==presentationHash(c))throw new Error('Review recovery offer is stale');
+        const note=c.answer!.note?.trim();if(!note)throw new Error('Explain the requested review or revision');
+        const target=c.answer!.choice==='retry-review'?'site':c.answer!.choice.slice(7)as CoffeePart;
+        p.generations=reviseCoffeeGenerations(p.generations,target);
+        if(target!=='site'){p.pageAdmission='paid-intent-v1';p.revision={target,note:note.slice(0,4000)};}
+        recordCoffeePlan(x,p);if(!engine.record(x,'coffee-review-recovery-v1',{data:{card:c.id,target,note,bundle:receiptHash(bundle)}}))throw new Error('Review recovery authorization was not persisted');return{outcome:'revise'};
+      }
+      if(c.answer?.choice==='fresh-page'||c.answer?.choice==='fresh-video'){
       const p=currentPlan(x),offer=trustedCoffee(x).filter(e=>e.record==='coffee-recovery-offer-v1'&&e.data?.card===c.id).at(-1);
       if(!offer||offer.node!==x.node.id||offer.round!==x.visit||offer.data.card!==c.id||offer.data.visit!==c.visit||offer.data.plan!==digest(JSON.stringify(p))||offer.data.presentation!==presentationHash(c))throw new Error('Recovery offer is stale');
       const target=c.answer.choice==='fresh-video'?'video':'page';if((offer.data.target??'page')!==target)throw new Error('Recovery target differs');
@@ -405,9 +428,10 @@ export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; 
     if(!node)throw new Error('Task has no coffee capability hold');
     const rn=run.nodes[node.id],old=engine.cards.get(rn.card??'');if(!old||old.status!=='open'||old.captainOnly!==true)throw new Error('Capability card is not open');
     const x=engine.x(run,node,rn);requireOwner(x);requireChoice(x);currentPlan(x);
-    if(!d.video)throw new Error('Install the film renderer and restart Studio first');
+    let complete=false;try{coffeeReceipt(x,d.artifacts,'site');complete=true;}catch{}
+    if(!complete&&!d.video)throw new Error('Install the film renderer and restart Studio first');
     coffeeReceipt(x,d.artifacts,'page');coffeeReceipt(x,d.artifacts,'image');
-    if(coffeeNeeds(x,d.artifacts,'video')!=='produce'||!run.def.edges.some(e=>e.from===node.id&&e.to==='round'&&e.when==='revise'))throw new Error('Task has no bound film recovery path');
+    if((!complete&&coffeeNeeds(x,d.artifacts,'video')!=='produce')||!run.def.edges.some(e=>e.from===node.id&&e.to==='round'&&e.when==='revise'))throw new Error('Task has no bound film recovery path');
     await engine.reprepareCard(x,()=>engine.cardModes['coffee-capability'].start!(x));requireOwner(x);
     if(rn.card===old.id)throw new Error('Recovery card was not prepared');
     engine.cards.cancel(old.id);engine.record(x,'coffee-recovery-refreshed-v1',{data:{previous:old.id,card:rn.card}});return engine.cards.get(rn.card!);

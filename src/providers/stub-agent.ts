@@ -190,7 +190,14 @@ async function* runtimeAgent(text: string, call: Call, say: Say): AsyncGenerator
   if(text.startsWith('JUDGE button-judge')){const input=JSON.parse(text.split('Input (JSON):\n')[1]),bad=/<button(?:\s[^>]*)?>\s*<\/button>/.test(input.artifact.content||'')||text.includes('STUB_PG_FALSE_HIT');yield* call('judge_report',{verdict:bad?'fail':'pass',findings:bad?[{locator:{type:'web',url:input.artifact.url,selector:'button',viewport:{w:390,h:900}},message:'The button has no label',expected:'Give every button a visible or accessible label',class:'captain-note',severity:'blocking'}]:[]});yield* done('Judged the actual HTML sample.');return;}
   if (text.startsWith("JUDGE")) {
     const fail = /STUB_JUDGE_FAIL|^\+.*STUB_REJECT/m.test(text);
-    yield* call("judge_report", fail ? { verdict: "fail", findings: [{ locator: { type: "file", path: "src/price.js", line: 1 }, message: "the judge found STUB_REJECT", expected: "remove it", class: "review-stub", severity: "blocking" }, { message: "no locator: dropped", class: "x" }] } : { verdict: "pass", findings: [] });
+    const finding={locator:{type:"file",path:"src/price.js",line:1},message:"the judge found STUB_REJECT",expected:"remove it",class:"review-stub",severity:"blocking"};
+    if(fail){
+      // Exercise the actual tool contract: malformed payload is refused, then corrected.
+      const refused=yield* call("judge_report",{verdict:"fail",findings:[finding,{message:"missing locator",class:"x"}]});
+      if(!refused?.error)throw new Error("Malformed judge fixture was not refused");
+      const corrected=yield* call("judge_report",{verdict:"fail",findings:[finding]});
+      if(corrected?.error)throw new Error("Corrected judge fixture was refused");
+    }else yield* call("judge_report",{verdict:"pass",findings:[]});
     yield* done(fail ? "fail" : "pass"); return;
   }
   if (text.startsWith("ROOT CAUSE")) {
