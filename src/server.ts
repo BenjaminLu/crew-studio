@@ -76,7 +76,7 @@ import { timingSafeEqual } from "node:crypto";
 import { git, setGitHome } from "./git";
 import { Egress } from "./egress";
 import { Worktrees } from "./worktrees";
-import { claudeLogin as claudeLogin_, claudeLoginStatus, setBillingFile, setLoginOutcomeFile } from "./providers/login";
+import { claudeLogin as claudeLogin_, claudeLoginPresence, claudeLoginStatus, setBillingFile, setLoginOutcomeFile } from "./providers/login";
 import { installCode } from "./domain/code";
 import { applySandboxAddons, prepareSandbox, registerSandbox } from "./sandbox-repo";
 import { createTakeover, doorComplete, doorInput, needsDoor } from "./takeover";
@@ -191,7 +191,7 @@ const claudePrimaryPair = () => { const model = chatSettings().models.claude || 
 // a Studio that stopped without its shutdown handler leaves private folders behind: remove those whose Studio is gone
 try { sweepPrivateDirs(); } catch {}
 const takeover = createTakeover({ claudePair: claudePrimaryPair,
-  claudePreflight: () => claudePrimaryReadiness({ dry: true, pair: claudePrimaryPair(), status: () => nativeClaude.status(claudePrimaryPair()), login: () => ({ ok: false, error: "dry" }), probe: () => claudeLoginStatus(), configDir: join(DATA, "claude-firstmate"), signInPending: claudeLogin.view().state === "pending" }),
+  claudePreflight: async () => { const pair = claudePrimaryPair(); let status: unknown = null; const ready = await claudePrimaryReadiness({ dry: true, pair, status: async () => (status = await nativeClaude.status(pair)) as any, login: () => ({ ok: false, error: "dry" }), probe: () => claudeLoginPresence(), configDir: join(DATA, "claude-firstmate"), signInPending: claudeLogin.view().state === "pending" }); if (!status) { try { status = await nativeClaude.status(pair); } catch {} } return { ready, status }; },
   claudePrimary: () => claudePrimaryReadiness({ probe: () => claudeLoginStatus(), pair: claudePrimaryPair(), status: () => nativeClaude.status(claudePrimaryPair()), login: () => claudeLogin_(), configDir: join(DATA, "claude-firstmate"), signInPending: claudeLogin.view().state === "pending" }), main, fm, gh, board, codexAccount, stateDir: STATE, pending: () => pending, tasks, crew: () => fm.crew(8) });
 // transcripts: the session Studio drives (its copy holds the turns before the takeover), else the firstmate session
 const CLAUDE_PROJECTS = process.env.CREW_HOST_CLAUDE_PROJECTS ?? join(homedir(), ".claude/projects");
@@ -214,7 +214,7 @@ refreshTs(); setInterval(refreshTs, 60_000);
 const tsRunner: TsRunner = process.env.CREW_TAILSCALE_LIVE === "1" ? new LiveRunner() : new StubRunner();
 let serveOn = false;
 // a phone may read and interrupt; driving firstmate (and answering cards, changing settings) needs "allow phone to drive"
-const PHONE_DRIVE = new Set(["/api/main/takeover", "/api/main/start", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door", "/api/main/attach", "/api/main/send", "/api/main/approve", "/api/main/resume", "/api/main/detach", "/api/main/queue/remove", "/api/answer", "/api/settings"]);
+const PHONE_DRIVE = new Set(["/api/main/takeover", "/api/main/start", "/api/main/switch", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door", "/api/main/attach", "/api/main/send", "/api/main/approve", "/api/main/resume", "/api/main/detach", "/api/main/queue/remove", "/api/answer", "/api/settings"]);
 const DESKTOP_ONLY = new Set(["/api/transcripts/settings", "/api/remote/pair/start", "/api/remote/revoke", "/api/remote/settings", "/api/remote/tailscale", "/api/remote/lan",
   "/api/claude/native/verify","/api/claude/native/cancel","/api/claude/account/login","/api/claude/account/cancel","/api/codex/account/login", "/api/codex/account/cancel", "/api/codex/account/verify", "/api/github/token", "/api/github/forget", "/api/keys", "/api/doctor/install", "/api/doctor/login", "/api/doctor/cancel"]);
 

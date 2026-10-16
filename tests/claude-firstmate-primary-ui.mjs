@@ -15,7 +15,8 @@ codexAuth(false);
 const CREW = "sk-ant-" + "oat01-" + "u".repeat(64); // fixture shape only
 const keychain = join(kc, "security");
 const kcMode = join(kc, "mode"), setKeychain = (m) => writeFileSync(kcMode, m); setKeychain("crew");
-writeFileSync(keychain, `#!/bin/sh\n[ "$(cat ${kcMode})" = crew ] || exit 44\nfor a in "$@"; do [ "$a" = crew-studio-claude-token ] && { echo ${CREW}; exit 0; }; done\nexit 44\n`, { mode: 0o755 });
+// crew: the crew item holds a token; empty: the item exists but is empty; none: no item
+writeFileSync(keychain, `#!/bin/sh\nm=$(cat ${kcMode})\nfor a in "$@"; do [ "$a" = crew-studio-claude-token ] && [ "$m" = crew ] && { echo ${CREW}; exit 0; }; [ "$a" = crew-studio-claude-token ] && [ "$m" = empty ] && exit 0; done\nexit 44\n`, { mode: 0o755 });
 writeFileSync(join(home, ".claude-login-mode"), "success");
 const port = await freePort(), base = `http://127.0.0.1:${port}`, token = "claude-primary-ui-token", shots = process.env.CLAUDE_PRIMARY_SHOTS;
 const env = { ...process.env, USER: process.env.USER || "fixture-user", LOGNAME: process.env.LOGNAME || "fixture-user", HOME: home, CODEX_HOME: join(home, ".codex"), CREW_DATA: data,
@@ -48,6 +49,7 @@ try {
   // the card's next step after sign-in, when nothing runs yet (checked without starting: the auto-continue below is the start)
   await api("/api/claude/account/login", {}); for (let i = 0; i < 100 && (await api("/api/claude/account")).state === "pending"; i++) await new Promise((r) => setTimeout(r, 50));
   await p.evaluate(() => window.dispatchEvent(new Event("crew:live")));
+  ok(await seen(p, '[data-section="start-claude"][data-claude-ready="true"]') && await p.locator("#startClaudeBtn.primary").count() === 1 && await p.locator("#startCodexBtn.primary").count() === 0, "only Claude is ready: its Start is the primary button");
   ok(await seen(p, '[data-section="start-claude"][data-claude-ready="true"]') && (await p.locator("#startClaudeBtn").innerText()).includes("Start on Claude") && await p.locator("[data-claude-start]").count() === 0, "signed in: the start card reads Start on Claude; the account card repeats no start beside it");
   // where no start card shows (Doctor), the account card carries the next step
   await p.goto(base + "/#/doctor");
@@ -100,6 +102,14 @@ try {
   const still = await api("/api/main");
   ok(still.state === "attached" && still.host === "codex" && await p.locator("[data-claude-switch-confirm]").count() === 0, "Switch with a missing crew token keeps the Codex Firstmate running");
   ok(await seen(p, '[data-claude-next="switch"] [data-claude-start-why="claudeCrewTokenMissing"]') && await p.locator("[data-claude-switch]").isDisabled(), "the card then shows the crew-token step and disables Switch");
+  // an empty crew item passes the presence preflight; the server's switch reads it in full, refuses, and keeps Codex
+  setKeychain("empty"); await p.evaluate(() => window.dispatchEvent(new Event("crew:live"))); await seen(p, "[data-claude-switch]:enabled");
+  await p.locator("[data-claude-switch]").click(); await seen(p, "[data-claude-switch-confirm]"); await p.locator("[data-claude-switch-confirm]").click();
+  await p.waitForTimeout(1200);
+  const kept = await api("/api/main");
+  ok(kept.state === "attached" && kept.host === "codex", "Switch with an empty crew keychain item keeps the Codex Firstmate running");
+  ok(await seen(p, '[data-claude-start-why="claudeCrewTokenMissing"]'), "the card then shows the crew-token step");
+  await shot(p, "claude-switch-refused");
   setKeychain("crew"); await p.evaluate(() => window.dispatchEvent(new Event("crew:live"))); await seen(p, "[data-claude-switch]:enabled");
   await p.locator("[data-claude-switch]").click(); await seen(p, "[data-claude-switch-confirm]");
   await p.locator("[data-claude-switch-confirm]").click();

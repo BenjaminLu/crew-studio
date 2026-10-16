@@ -20,8 +20,10 @@ const no = (code: HostRefusalCode, en: string, zh: string): ClaudePrimaryReady =
 /** The credentials a Claude primary may run on: the crew token, an explicit OAuth token in Studio's environment, or the captain's chosen API key. */
 const PRIMARY_KINDS: LoginKind[] = ["crew", "env-oauth", "api-key"];
 
-/** `dry`: the read-only preflight the cards use before Start or Switch: it reads the login by existence only (`probe`, no
- *  keychain decrypt), creates no folder and returns no environment. */
+/** `dry`: the preflight the cards use to enable Start and Switch. It reads the crew login by existence only (`probe`, no
+ *  keychain decrypt), creates no Claude config folder and returns no environment. Its sign-in status read (`status`) does
+ *  run `claude auth status` in a temporary folder and may record a refusal. An existing but empty or malformed crew item
+ *  passes here; Start and the server-side Switch decide with the full read. */
 export async function claudePrimaryReadiness(o: { pair: ClaudePair; status: () => Promise<ClaudeCapability>; login: () => Login; probe?: () => { ok: boolean; kind?: LoginKind }; configDir: string; signInPending: boolean; dry?: boolean }): Promise<ClaudePrimaryReady> {
   if (o.signInPending) return no("claudeSignInPending", "Finish or cancel the Claude sign-in first.", "請先完成或取消 Claude 登入。");
   if (!validClaudePair(o.pair)) return no("claudeUnavailable", `The configured Claude model ${o.pair.model} is not supported here; Studio picks no substitute.`, `設定的 Claude 模型 ${o.pair.model} 不支援；Studio 不會改用其他模型。`);

@@ -1,7 +1,7 @@
 // A fresh Firstmate primary on Claude: the actual server, a stub Claude CLI (tests/stub-host-claude.mjs),
 // the official-login fixture for `claude auth status`, a keychain stand-in and the Codex account fixture.
 // Offline: no model is called, no real credential is read.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,6 +27,8 @@ echo "$@" >> ${kcLog}
 mode=$(cat ${kcMode} 2>/dev/null)
 for a in "$@"; do
   [ "$a" = crew-studio-claude-token ] && [ "$mode" = crew ] && { echo ${CREW}; exit 0; }
+  [ "$a" = crew-studio-claude-token ] && [ "$mode" = empty ] && exit 0
+  [ "$a" = crew-studio-claude-token ] && [ "$mode" = bad ] && { echo not-a-setup-token; exit 0; }
   [ "$a" = "Claude Code-credentials" ] && [ "$mode" = own ] && { echo '{"claudeAiOauth":{"accessToken":"${CREW}","expiresAt":0}}'; exit 0; }
 done
 exit 44
@@ -154,20 +156,39 @@ try {
   ok(!existsSync(sock) && !existsSync(priv), "Stop closes the native tool socket and removes the private folder");
 
   // --- the Codex primary is unchanged ---
+  const runsBefore = claudeRuns().filter((x) => x.argv).length;
   r = await api("/api/main/start", { host: "codex", confirm: true });
   ok(r.status === 200 && (await view()).host === "codex" && codexStarts() === 1 && codexCalls().some((c) => c.method === "thread/start" && c.nativeTools?.includes("studio_propose_work")), "the Codex primary still starts with its native tools");
   await idle();
   ok((await api("/api/main/start", { host: "claude", confirm: true })).status === 409, "Claude cannot start while the Codex primary holds the lock");
+  // --- Switch from Codex to Claude, atomic on the server ---
+  const codexThread = (await view()).sessionId;
+  for (const mode of ["empty", "bad"]) {
+    setKeychain(mode);
+    const pre = await ready();
+    const sw = await api("/api/main/switch", { to: "claude", confirm: true }), after = await view();
+    // presence only, and a fixed item can always be tried again: the preflight passes; the server's full read refuses
+    ok(pre.ok === true && sw.status === 409 && sw.body.code === "claudeCrewTokenMissing" && sw.body.kept === "codex", `a ${mode} crew keychain item passes the presence preflight, but Switch refuses with claudeCrewTokenMissing`);
+    ok(after.state === "attached" && after.host === "codex" && after.sessionId === codexThread && claudeRuns().filter((x) => x.argv).length === runsBefore, `Switch with a ${mode} crew item keeps the Codex Firstmate attached and starts no Claude process`);
+  }
+  setKeychain("crew");
+  ok((await api("/api/main/switch", { to: "claude" })).body.code === "confirm", "Switch needs the captain's confirmation");
+  const sw = await api("/api/main/switch", { to: "claude", confirm: true });
+  ok(sw.status === 200 && sw.body.ok && UUID.test(sw.body.id) && (await view()).host === "claude", "with a working crew token Switch stops Codex and starts a fresh Claude Firstmate");
+  await idle();
+  ok((await api("/api/main/switch", { to: "claude", confirm: true })).body.code === "notRunning", "Switch needs a running Codex Firstmate");
   await api("/api/main/detach", {});
 
   // --- restart behaves like the Codex primary ---
   r = await api("/api/main/start", { host: "claude", confirm: true });
   ok(r.status === 200 && UUID.test(r.body.id) && r.body.id !== first, "a second fresh Claude primary gets another new UUID");
   await idle();
+  const oldPid = app.pid;
   const run2 = claudeRuns().at(-1), pid2 = run2.pid, priv2 = dirname(run2.argv[run2.argv.indexOf("--mcp-config") + 1]);
   ok(existsSync(priv2), "the running primary has its private folder");
   await stop();
   ok(!existsSync(priv2), "Studio's shutdown stops the primary and removes its private folder");
+  ok(!readdirSync(tmpdir()).some((n) => n.startsWith(`crew-native-${oldPid}-`)), "no private folder of the stopped Studio remains");
   app = start(); await waitUp(base, app);
   const rv = await view();
   ok(rv.state === "detached" && rv.driver.holder === "none" && !rv.driver.resume, "after a Studio restart the Claude primary is released with no resume, like Codex");
