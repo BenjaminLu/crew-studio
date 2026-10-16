@@ -545,7 +545,15 @@ export class Engine {
       const h = node.kind === "card" && node.args?.mode && this.cardModes[node.args.mode] ? this.cardModes[node.args.mode] : this.kinds[node.kind];
       if (!h) throw new FailureError("internal.bug", `no runner for node kind ${node.kind}`);
       for (const guard of Object.values(this.beforeStart)) { res = await guard(x); if (res) break; }
-      if (!res) res = await h.start(x);
+      if (!res) {
+        try { res = await h.start(x); }
+        catch (e) {
+          // Nested coordinator turns belong to the loop but need the same
+          // formal readiness recovery as a top-level agent turn.
+          if (node.kind !== "loop" || x.cancelled() || (!(e instanceof QueueRefusal) && !(e instanceof ProviderRefusal))) throw e;
+          res = await this.queueCapability(x, e.message, e);
+        }
+      }
       res = await this.afterChecks(x, step, res);
     } catch (e: any) { err = homeless(redactText(String(e?.message ?? e))).slice(0, 1200); blocked = e?.outcome === "blocked"; thrown = e; } // credentials and the home folder go before any cut; a RoundBlocked is never retried
     finally { this.live.delete(key); }
@@ -1041,7 +1049,7 @@ export class Engine {
       else if (r.nodes[eff.node]) { r.nodes[eff.node].extra += eff.add; this.emit(r, "budget", `${eff.node}: ${eff.add} more visits`, { node: eff.node }); }
     }
     const step = [...r.steps].reverse().find((s) => s.node === node.id && s.state === "waiting");
-    if (node.kind === "agent" && rn.data.nativeQueueCapability && c.answer!.choice === rn.data.nativeQueueCapability.retryAction) {
+    if ((node.kind === "agent" || node.kind === "loop") && rn.data.nativeQueueCapability && c.answer!.choice === rn.data.nativeQueueCapability.retryAction) {
       if (!this.owns(this.x(r, node, rn))) throw new Error("readiness recovery owner ended");
       r.ctx.nativeQueueVersion = 1; delete rn.data.nativeQueue; delete rn.data.nativeQueueCapability;
       if (step) { step.state = "passed"; step.outcome = "retry"; step.endedAt = now(); }
@@ -1057,7 +1065,7 @@ export class Engine {
     const h = node.kind === "card" && node.args?.mode && this.cardModes[node.args.mode] ? this.cardModes[node.args.mode] : this.kinds[node.kind];
     let res: Result | null = null, err: string | null = null;
     const key = `${r.id}/${node.id}`; this.live.add(key);
-    try { res = h.answer ? await h.answer(x, c) : { outcome: c.answer!.choice, note: c.answer!.note }; } catch (e: any) { err = String(e?.message ?? e); } finally { this.live.delete(key); }
+    try { res = node.kind === "loop" && rn.data.nativeQueueCapability ? await this.kinds.agent.answer!(x, c) : h.answer ? await h.answer(x, c) : { outcome: c.answer!.choice, note: c.answer!.note }; } catch (e: any) { err = String(e?.message ?? e); } finally { this.live.delete(key); }
     this.finish(r, node, rn, step ?? { seq: r.steps.length + 1, node: node.id, kind: node.kind, visit: rn.visits, state: "waiting", outcome: null, startedAt: now(), endedAt: null, error: null, job: null, provider: null, model: null, note: null }, res, err);
   }
   private must(id: string) { const r = this.runs.get(id); if (!r) throw new Error("no such run"); return r; }

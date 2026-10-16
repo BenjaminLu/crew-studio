@@ -97,6 +97,72 @@ const settle = (id: string, ms = 30000) => until(() => ["succeeded", "failed", "
 }
 H.stop();
 
+// Readiness failures in a nested coordinator must retain their actionable card.
+{
+  const { QueueRefusal } = await import("../src/runtime/queue");
+  const recovery = Y({ id: "recovery", name: "recovery", roles: [{ id: "maker", label: "Maker", skill: "x" }, { id: "coordinator", label: "Coordinator", skill: "x" }],
+    nodes: nodes([{ use: "t/noexp", params: { flagfile: flag("recovery") } }], {}, `Call: note_write {"flag":"${flag("recovery")}"}`), edges });
+  const h = await harness([recovery], { refine: true }); const e = h.engine;
+  let ready = false;
+  e.deps.approvedPick = (_r, node) => {
+    if (node.role === "coordinator" && !ready) throw new QueueRefusal("Staffing approval requires confirmation: fixture changed configuration");
+    return e.deps.defaultProvider();
+  };
+  const r = e.start({ workflow: "recovery", text: "recover staffing" });
+  await until(() => ["waiting", "failed", "succeeded"].includes(r.status));
+  const c = e.cards.get(r.nodes.fix.card ?? "");
+  ok(r.status === "waiting" && !!r.nodes.fix.data.nativeQueueCapability && c?.options.some(o => o.id === "retry"), "nested coordinator staffing refusal exposes readiness recovery, not brief-quality failure", r.error);
+  ok(!r.ctx.briefs?.make && r.nodes.make.visits === 1, "readiness refusal never releases an incomplete brief to the worker");
+  if (c && r.status === "waiting") {
+    await e.answer(c.id, { choice: "retry", by: "fixture captain" });
+    await until(() => r.status === "waiting" && r.nodes.fix.card !== c.id);
+    const retry = e.cards.get(r.nodes.fix.card!);
+    ok(!!retry && r.nodes.make.visits === 1 && !r.ctx.briefs?.make, "retry with unchanged staffing remains blocked without launching the producer");
+    ready = true;
+    await e.answer(retry!.id, { choice: "retry", by: "fixture captain" });
+    await until(() => ["waiting", "failed", "succeeded"].includes(r.status) && r.nodes.fix.visits > 1);
+    ok(r.status === "succeeded" && r.nodes.make.visits === 2, "approved readiness recovery resumes the same loop and completes its quality check", r.error);
+  } else ok(false, "approved readiness recovery resumes the same loop and completes its quality check");
+  h.stop();
+}
+
+
+// Captain-only findings survive a readiness stop and persisted reload.
+{
+  const { QueueRefusal } = await import("../src/runtime/queue");
+  const flow = Y({ id: "captain-recovery", name: "captain recovery", roles: [{ id: "maker", label: "Maker", skill: "x" }, { id: "coordinator", label: "Coordinator", skill: "x" }],
+    nodes: nodes([], { coordinator: "coordinator" }, ""),
+    edges: [["wt", "hd"], ["hd", "make"], ["make", "fix", "ok"], ["fix", "done", "retry|pass"], ["fix", "stop", "step-back|stalled|cap"]] });
+  const h = await harness([flow], { refine: true }); const e = h.engine;
+  let ready = false;
+  e.deps.approvedPick = (_r, node) => {
+    if (node.role === "coordinator" && !ready) throw new QueueRefusal("Staffing approval requires confirmation: fixture");
+    return e.deps.defaultProvider();
+  };
+  let r = e.start({ workflow: "captain-recovery", text: "retain captain change" });
+  r.ctx.answers = { acceptance: { choice: "changes", note: "Keep the requested keyboard interaction", at: "9999-01-01T00:00:00.000Z" } };
+  await until(() => ["waiting", "failed", "succeeded"].includes(r.status));
+  const card = e.cards.get(r.nodes.fix.card ?? "");
+  ok(r.status === "waiting" && !(r.nodes.fix.data.used ?? []).length, "captain-only finding is not consumed by readiness refusal");
+  if (card && r.status === "waiting") {
+    e.load(); r = e.get(r.id)!;
+    ok(r.status === "waiting" && !(r.nodes.fix.data.used ?? []).length, "reload retains the unresolved captain finding and readiness card");
+    ready = true;
+    await e.answer(card.id, { choice: "retry", by: "fixture captain" });
+    await until(() => ["failed", "succeeded"].includes(r.status));
+    ok(r.status === "succeeded" && r.ctx.briefs?.make?.items.some((i:any) => i.message === "Keep the requested keyboard interaction") && r.nodes.fix.data.used.length === 1,
+      "readiness retry publishes the original captain finding instead of taking the empty pass route", r.error);
+  } else ok(false, "captain feedback recovery requires its formal card");
+  ready = false;
+  const closed = e.start({ workflow: "captain-recovery", text: "close readiness" });
+  closed.ctx.answers = { acceptance: { choice: "changes", note: "Do not bypass this request", at: "9999-01-01T00:00:00.000Z" } };
+  await until(() => ["waiting", "failed", "succeeded"].includes(closed.status));
+  const closeCard = e.cards.get(closed.nodes.fix.card ?? "");
+  if (closeCard && closed.status === "waiting") await e.answer(closeCard.id, { choice: "close", by: "fixture captain" });
+  ok(closed.status === "cancelled" && closed.nodes.make.visits === 1 && !closed.ctx.briefs?.make, "close on nested readiness cancels without publishing a brief or restarting the worker");
+  h.stop();
+}
+
 // ---------- the code domain: build prompt and reviewer prompt on real repositories ----------
 const { prepareSandbox, registerSandbox } = await import("../src/sandbox-repo");
 const { installCode } = await import("../src/domain/code"); const { Projects } = await import("../src/doors");

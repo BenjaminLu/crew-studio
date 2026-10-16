@@ -25,6 +25,8 @@ import { isAbsolute, join, relative } from "node:path";
 import type { AgentTool } from "../agent";
 import { neutralizeMarkers } from "../operating-rules";
 import { REDACTED, realInside, redactText } from "../secure";
+import { QueueRefusal } from "./queue";
+import { ProviderRefusal } from "../providers/policy";
 import type { LedgerEntry } from "./checks";
 import type { Engine, X } from "./engine";
 import { locatorText, parseLocator, type Finding } from "./locator";
@@ -200,9 +202,10 @@ export function installRefine(engine: Engine) {
       const failing = entries.filter((e) => e.blocking && (e.verdict === "fail" || e.verdict === "error"));
       // the captain's own feedback (a merge card's "request changes", review notes) is a finding of the same type
       const human: Finding[] = [];
+      const consumedNotes: string[] = [];
       for (const [node, a] of Object.entries(x.ctx.answers ?? {}) as [string, any][]) if (a?.note && ["changes", "request"].includes(a.choice) && a.at >= since && !x.rn.data.used?.includes(`${node}@${a.at}`)) {
         human.push({ locator: { type: "card", field: node }, message: a.note, expected: "what the captain asked", class: "captain-note", severity: "blocking", source: "human", check: `card:${node}` });
-        x.rn.data.used = [...(x.rn.data.used ?? []), `${node}@${a.at}`];
+        consumedNotes.push(`${node}@${a.at}`);
       }
       for (const f of x.ctx.humanFindings?.[producer] ?? []) human.push(f);
       const st = (x.ctx.refine ??= {})[x.node.id] ??= { history: [] as any[] };
@@ -242,7 +245,7 @@ export function installRefine(engine: Engine) {
               if (!it.locator) { const l = parseLocator(e.locator); if (l) { it.locator = l; it.where = locatorText(l);
                 if (l.type === "file" && l.line) it.evidence = { ...it.evidence, source: sourceAt(x.ctx.worktree ?? null, x.ctx.head ?? null, l.path, Number(l.line)) }; } } }
             brief.rootCause = rc.cause || brief.rootCause; brief.text = renderBrief(brief); }
-        } catch (err: any) { x.log(`no root cause: ${err?.message ?? err}`); }
+        } catch (err: any) { if (err instanceof QueueRefusal || err instanceof ProviderRefusal) throw err; x.log(`no root cause: ${err?.message ?? err}`); }
       };
       if ((outcome === "retry" || outcome === "report") && coordinator) await rootCause(coordinator);
       x.rn.data.brief = brief;
@@ -259,6 +262,9 @@ export function installRefine(engine: Engine) {
         brief.quality = q.verdict;
         if (q.verdict !== "pass") throw new Error(`the brief failed brief-quality${fallback ? " after a coordinator root-cause turn" : " and the workflow has no coordinator to diagnose it"}: ${q.findings.map((f) => f.message).join("; ") || q.error}`);
       }
+      // A readiness refusal must not consume captain feedback: the next
+      // attempt still owes the same findings until this brief is published.
+      x.rn.data.used = [...(x.rn.data.used ?? []), ...consumedNotes];
       (x.ctx.briefs ??= {})[producer] = brief;
       if (outcome === "report") (x.ctx.reportOnly ??= {})[producer] = true;
       st.history.push({ round, classes: brief.classes, score, head: x.ctx.head ?? null, outcome, repeated, items: brief.items.length });
