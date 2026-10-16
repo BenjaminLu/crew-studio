@@ -69,11 +69,15 @@ Real models cost money. Run one workflow at a time unless you mean `--all`.
     other action stops the run: `pr.open`, `remote.ready`, `github.*`, `git.merge`, `firstmate.*`,
     `fileorg.apply`, `pack-genesis-publish`, the coffee kit's paid generation (`coffee.image`,
     `coffee.video`, which the captain directs), and any action not yet reviewed. No names are matched.
+  - the next card the walk reaches runs its own start code when it opens, so its card mode must be in
+    `REVIEWED_CARD_MODES` and its body builder (`body_from`) in `REVIEWED_CARD_BODIES`; `merge`, for
+    one, reads GitHub and stops the run.
 - **Enforces a budget**: a maximum wall time and a maximum number of Rounds. A run over budget is
-  cancelled, so it spends nothing more.
+  cancelled, so it spends nothing more, unless a card waits for the captain (see below).
 - **Never leaves a started Task unreported**: on a transport or script error, or a failed read of the
   Task, the report is still written (verdict ERROR) and the Task is cancelled, retrying while Studio
-  restarts. The report gives the real number of cancel attempts. When a start or answer request got
+  restarts. A Task waiting on a card for the captain is not cancelled: it is left for the captain,
+  and the report says so. The report gives the real number of cancel attempts. When a start or answer request got
   no reply, the report warns that it may have been applied on the server.
 - **Never cancels under a person**: when a card waits for a person (`action: wait`), neither budget
   nor an error cancels the Task. The run stops, and the Task is left for the captain.
@@ -124,7 +128,7 @@ The JSON file holds the same data for tools.
 | FAIL | 1 | The run ended, but not as expected: wrong status or result, a missing artifact, a Round on a non-real model, or the Task could not start. |
 | STOP | 2 | A card that is not safe to answer, a vendor that is not signed in, missing captain input (`required_params`), or a staffing or dispatch approval the scenario does not allow. |
 | BUDGET | 3 | The wall time or Round budget ran out. The Task was cancelled. |
-| ERROR | 4 | A transport or script error after the scenario loaded. The report is written and a started Task cancelled. A bad scenario file, bad arguments or no verified Studio at `--base` also exit 4, with no report. |
+| ERROR | 4 | A transport or script error after the scenario loaded. The report is written and a started Task cancelled, unless it waits on a card for the captain: then it is left for the captain. A bad scenario file, bad arguments or no verified Studio at `--base` also exit 4, with no report. |
 
 Only PASS counts as an acceptance. A PASS has a completion label:
 

@@ -166,6 +166,11 @@ try {
   const plain = { id: "pl", kind: "x", roles: [], params: {}, nodes: [N("ask", "card"), N("done", "hook")], edges: [{ from: "ask", to: "done" }] };
   ok(/card effect/.test((decide(wq(eff), qc, eff) as any).reason) && /hooks/.test((decide(wq(hk), qc, hk) as any).reason) && /card mode pack-promote/.test((decide(wq(md), qc, md) as any).reason) && decide(wq(plain), qc, plain).action === "answer",
     "F7: a card effect (round_cap +2), workflow hooks and an unreviewed card mode stop; a plain card passes");
+  // N1: the next card's own start code (its mode, its body builder) runs when the walk reaches it
+  const nx = (args: any) => ({ id: "nx", kind: "x", roles: [], params: {}, nodes: [N("ask", "card"), N("next", "card", { args })], edges: [{ from: "ask", to: "next" }] });
+  const shadow = nx({ mode: "pack-shadow" }), built = nx({ body_from: "merge" }), reviewed = nx({ mode: "deliver-accept" });
+  ok(/next \(card mode pack-shadow/.test((decide(wq(shadow), qc, shadow) as any).reason) && /next \(card body_from merge/.test((decide(wq(built), qc, built) as any).reason) && decide(wq(reviewed), qc, reviewed).action === "answer",
+    "N1: a reached card with an unreviewed mode (pack-shadow) or body builder (merge reads GitHub) stops; a reached card with a reviewed mode is the next gate", JSON.stringify([decide(wq(shadow), qc, shadow), decide(wq(built), qc, built)]));
   ok(/authorization window G-1 is open/.test((decide(wq(plain), qc, plain, ["G-1"]) as any).reason) && decideCard(wq(plain), qc, plain, undefined as any).action === "stop", "F7: an open authorization window stops (the next card is then no gate); a caller that says nothing about windows stops too");
   // F8: the coffee kit's paid generation and the unregistered note action are not local
   ok(!LOCAL_ACTIONS.has("coffee.image") && !LOCAL_ACTIONS.has("coffee.video") && !LOCAL_ACTIONS.has("note") && externalEffect({ id: "c", nodes: [N("ask", "card"), N("img", "hook", { do: "coffee.image" })], edges: [{ from: "ask", to: "img" }] }, "ask", "go")?.do === "coffee.image",

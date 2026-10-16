@@ -13,7 +13,8 @@
 //   - a captain-only card is in CAPTAIN_ONLY_ALLOW, an exact (workflow, node, kind, option) pair
 //     checked against the same pinned hash;
 //   - every node the answer can reach before the next card runs only actions in LOCAL_ACTIONS
-//     (the card's own node included when a hook or agent raised the card).
+//     (the card's own node included when a hook or agent raised the card), and the next card it
+//     reaches has a reviewed mode and body builder (its start code runs when it opens).
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -40,9 +41,16 @@ export const LOCAL_ACTIONS = new Set([
   "fileorg.plan", "fileorg.discard", "intent.capture", "pack-genesis-init",
 ]);
 
-/** Card modes whose answer code was reviewed: it only records the choice, approves an artifact
- *  into the local Library, or starts the workflow's own model rounds. Any other mode stops. */
+/** Card modes whose code was reviewed, both the start that raises the card and the answer: it only
+ *  records the choice, approves an artifact into the local Library, or starts the workflow's own
+ *  model rounds. Any other mode stops, on the answered card and on a card the walk reaches. */
 export const REVIEWED_CARD_MODES = new Set(["deliver-accept", "startup-choice", "startup-accept"]);
+
+/** Card body builders (args.body_from, engine.cardBodies) whose start code was reviewed: each only
+ *  formats the card from the Task's context or a local store (src/domain/code.ts, deliver.ts,
+ *  src/pack-genesis.ts). A card the walk reaches runs its builder when it opens, so any other
+ *  builder stops; `merge`, for one, reads the pull request and its CI from GitHub. */
+export const REVIEWED_CARD_BODIES = new Set(["dispatch", "door", "budget", "step-back", "stalled", "scope", "fileorg", "lane", "pack-interview", "pack-publish"]);
 
 /** Card `effects` (e.g. {policy: round_cap, add: 2}) the driver may set off: none yet. */
 export const ALLOWED_CARD_EFFECTS: { workflow: string; node: string; option: string }[] = [];
@@ -166,7 +174,9 @@ export function loadScenario(file: string): Scenario {
  * The walk follows EVERY out-edge, from the card node and from every node after it: an edge's
  * blocking checks re-route its source as "fail" (engine.route), and which outcome a model, a check
  * or a card mode produces is not known in advance. It stops at the next card, which is the next
- * gate (the caller refuses when an authorization window could answer that card instead).
+ * gate (the caller refuses when an authorization window could answer that card instead), but opening
+ * that card runs its start code, so its mode must be in REVIEWED_CARD_MODES and its body builder in
+ * REVIEWED_CARD_BODIES.
  * Also refused: the card's own action or unreviewed mode, card effects that are not allowlisted,
  * and workflow hooks (they run checks at lifecycle points the walk does not review).
  */
@@ -187,7 +197,13 @@ export function externalEffect(def: any, node: string, choice: string, workflow 
   while (queue.length) {
     const id = queue.shift()!; if (seen.has(id)) continue; seen.add(id);
     const n = nodes.get(id); if (!n) return { node: id, do: "(node not in the definition)" };
-    if (n.kind === "card") continue; // the next card is the next gate
+    if (n.kind === "card") { // the next card is the next gate, once its start code is reviewed
+      const m = n.args?.mode ?? n.mode ?? null;
+      if (m && !REVIEWED_CARD_MODES.has(m)) return { node: id, do: `card mode ${m} (start code not reviewed)` };
+      const b = n.args?.body_from ?? null;
+      if (b && !REVIEWED_CARD_BODIES.has(b)) return { node: id, do: `card body_from ${b} (start code not reviewed)` };
+      continue;
+    }
     if (!localDo(n)) return { node: id, do: n.do };
     for (const e of edges) if (e.from === id) queue.push(e.to);
   }
