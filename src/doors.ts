@@ -156,15 +156,19 @@ export class Projects {
     const pol = new Policies(this.dataDir); const raw = this.raw();
     // a list approved before the policy was its home moves there once, and projects.json keeps no copy
     const legacy = raw.filter((p) => Array.isArray(p.sensitive) && p.sensitive.length);
-    for (const p of legacy) if (p.approvedAt && pol.project(p.id).sensitive_paths === undefined) pol.setProject(p.id, { sensitive_paths: p.sensitive });
-    if (legacy.length) this.save(raw);
+    // a project whose policy file cannot be read keeps its legacy list here until that file is fixed: the file is never replaced
+    const kept = new Set<string>();
+    for (const p of legacy) if (p.approvedAt && pol.project(p.id).sensitive_paths === undefined) { try { pol.setProject(p.id, { sensitive_paths: p.sensitive }); } catch (e: any) { if (e?.code !== "policyUnreadable") throw e; kept.add(p.id); } }
+    if (legacy.length) writeFileSync(this.file(), JSON.stringify(raw.map((p) => kept.has(p.id) ? p : { ...p, sensitive: [] }), null, 1));
     return raw.map((p) => {
       const cur = pol.project(p.id).sensitive_paths;
       return { ...p, sensitive: Array.isArray(cur) ? cur.map((r: any) => ({ glob: String(r?.glob ?? r), why: String(r?.why ?? "project rule") })) : [] };
     });
   }
   get(id: string) { return this.list().find((p) => p.id === id) ?? null; }
-  private save(list: Project[]) { writeFileSync(this.file(), JSON.stringify(list.map((p) => ({ ...p, sensitive: [] })), null, 1)); }
+  /** projects.json keeps no copy of a policy's lists, except a legacy list whose policy file cannot be read yet (it moves once the file is fixed). */
+  private save(list: Project[]) { const raw = new Map(this.raw().map((p) => [p.id, p])), pol = new Policies(this.dataDir);
+    writeFileSync(this.file(), JSON.stringify(list.map((p) => { const old = raw.get(p.id)?.sensitive; return { ...p, sensitive: Array.isArray(old) && old.length && pol.projectUnreadable(p.id) ? old : [] }; }), null, 1)); }
   add(o: { id?: string; name?: string; path?: string | null; base?: string; propose?: Rule[] }): Project {
     const name = String(o.name ?? o.id ?? "").trim();
     const id = String(o.id ?? name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);

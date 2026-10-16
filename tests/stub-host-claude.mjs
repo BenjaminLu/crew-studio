@@ -110,6 +110,8 @@ async function turn(text, files = []) {
     slow = false;
     out({ type: "result", subtype: interrupted ? "error_during_execution" : "success", is_error: interrupted, result: interrupted ? "" : "slow done" });
   } else {
+    // a turn that opens with the captain's operating rules: the model answers the message after them, as a real one would
+    if (text.startsWith("# Operating rules (set by the captain)") && text.includes("The message follows.\n\n")) text = text.slice(text.indexOf("The message follows.\n\n") + "The message follows.\n\n".length);
     const say = `echo: ${text.split("\n")[0].slice(0, 80)}${files.length ? ` [${files.map((f) => `${f.type} ${f.media_type} ${f.bytes}B`).join(", ")}]` : ""}`;
     for (const part of say.match(/.{1,10}/gs)) { out({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: part } } }); await sleep(5); }
     out({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: say }] } });

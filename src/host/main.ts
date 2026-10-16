@@ -391,6 +391,7 @@ export class MainSession {
   private nativeCalls=new Set<AbortController>();
   private abortNativeCalls(){for(const c of this.nativeCalls)c.abort();this.nativeCalls.clear();}
   private pumping = false;
+  private compactions = 0;
   private async pump() {
     if (this.pumping) return;
     this.pumping = true;
@@ -420,10 +421,11 @@ export class MainSession {
         let sendText = item.text, sentRules: { session: string; hash: string } | null = null;
         if (this.o.operatingRules) { const section = rulesNow(this.o.operatingRules), hash = createHash("sha256").update(section).digest("hex"), sid = this.session.id, prev = this.driver().rulesSent;
           if (prev?.session !== sid || prev.hash !== hash) { if (!item.text.includes(section)) sendText = withRulesTurn(item.text, section, prev?.session === sid); sentRules = { session: sid, hash }; } }
+        const compactedBefore = this.compactions;
         const r = await this.session.send(sendText, files).catch((e) => ({ status: "failed" as const, message: String(e?.message ?? e), refusal: e?.refusal?.code as import("../attachments").AttachmentRefusalCode | undefined }));
         if ("refusal" in r && r.refusal) { this.activeInput = null; this.note({ kind: "status", text: `Not sent: ${r.message}`, status: "failed", attachmentRefusal: r.refusal, external: externalError("studio", r.message, { cls: "attachment", code: r.refusal }) }); this.changed(); continue; }
         this.activeInput=null;
-        if (sentRules && r.status === "completed") this.writeDriver({ ...this.driver(), rulesSent: sentRules });
+        if (sentRules && r.status === "completed" && this.compactions === compactedBefore) this.writeDriver({ ...this.driver(), rulesSent: sentRules });
         this.lastOwnWrite = Date.now();
         this.lastSeenMtime = mtimeOf(this.sessionFile);
         if (r.status === "failed" && !this.refusedThisTurn) this.external(this.session?.host ?? "claude", r.message || (this.lastExit ? `exited ${this.lastExit.code}: ${this.lastExit.stderr.trim().split("\n").slice(-3).join(" ")}` : ""));
@@ -448,6 +450,8 @@ export class MainSession {
 
   private hostEvent(e: HostEvent) {
     this.onEvent(e);
+    // a compacted conversation may have summarised the rules away: the next turn carries them again
+    if (e.type === "compacted") { this.compactions++; if (this.driver().rulesSent) this.writeDriver({ ...this.driver(), rulesSent: null }); }
     if(e.type==="nativeToolFailure")this.note({kind:"system",text:e.failure.reason.en,nativeFailure:e.failure});
     if (e.type === "turnStart") this.refusedThisTurn = false; // a turn Studio did not send starts clean
     if (e.type === "hostRefusal") { this.refusedThisTurn = true; this.note({ kind: "status", text: `${e.reason.en} / ${e.reason["zh-TW"]}`, status: "failed", refusal: e.code,

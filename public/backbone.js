@@ -117,7 +117,7 @@ function rulesEditor() {
   fetch("/api/operating-rules").then((r) => r.ok ? r.json() : Promise.reject(r.status)).then(fill).catch(() => { state.textContent = T("The rules could not be read.", "無法讀取規則。"); });
   return h("section", { class: "card x-pad bb-rules", "data-operating-rules": "1" },
     h("div", { class: "bb-rules-head" }, h("h2", {}, T("Operating rules", "作業規則")),
-      h("p", { class: "faint" }, T("Standing rules every worker, reviewer, judge, image job and Firstmate receives in its instructions, right after Studio's safety rules. Only you edit them, here on this Mac.", "每個 worker、reviewer、judge、圖片工作和 Firstmate 的指示裡都會帶上這些常設規則，緊接在 Studio 安全規則之後。只有你能在這台 Mac 上編輯。"))),
+      h("p", { class: "faint" }, T("Standing rules every job gets. Workers, reviewers, judges and image jobs receive them in their instructions, right after Studio's safety rules; Firstmate receives them in its first message, and again after a takeover, a resume, a compaction or an edit. Only you edit them, here on this Mac.", "每個工作都會收到的常設規則。worker、reviewer、judge 和圖片工作會在指示中收到，緊接在 Studio 安全規則之後；Firstmate 則在第一則訊息收到，接手、恢復、對話壓縮或規則修改後會再收到一次。只有你能在這台 Mac 上編輯。"))),
     h("label", { class: "field" }, h("span", { class: "lbl" }, T("Rules for", "規則適用於")), scope),
     h("label", { class: "field" }, h("span", { class: "lbl" }, T("Rules (plain text)", "規則（純文字）")), text),
     h("div", { class: "bb-rules-foot" }, count, state, h("span", { class: "x-grow" }), reset, save));

@@ -32,6 +32,8 @@ export type HostEvent =
   /** a turn Studio did not send: the session's own hook (firstmate's asyncRewake Stop hook) woke it */
   | { type: "turnStart"; source: "hook" | "task" }
   | { type: "forked"; oldId: string; newId: string; file?: string | null }
+  /** the vendor compacted the conversation (Claude compact_boundary, Codex thread/compacted or a contextCompaction item): earlier turns may be summarised away */
+  | { type: "compacted" }
   | { type: "exit"; code: number | null; stderr: string }
   /** the permission mode the CLI itself reports (stream-json init, or a later status message): the effective one */
   | { type: "permissionMode"; mode: string }

@@ -11,7 +11,7 @@ import {localUnrestricted} from "../local-execution";
 //   data/evidence/<R-id>/ledger.jsonl                  one signed line per check result, verdict, plan acceptance and card answer
 //   data/evidence/<R-id>/<seq>-<id>/out/               what a check wrote (its evidence)
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { spawn as spawnChild } from "node:child_process";
@@ -81,6 +81,11 @@ export function coerce(s: Schema, v: Record<string, any>): Record<string, any> {
 const getPath = (o: any, path: string) => path.split(".").reduce((a, k) => (a == null ? undefined : a[k]), o);
 /** Policy keys whose levels add up instead of overriding (architecture §6: a project adds sensitive paths, never removes one). */
 export const ADDITIVE = new Set(["sensitive_paths"]);
+/** A policy file that exists but cannot be read: every writer refuses (HTTP 409 "policyUnreadable") instead of replacing it. */
+export class PolicyUnreadable extends Error {
+  readonly code = "policyUnreadable"; readonly status = 409;
+  constructor(readonly file: string, why: string) { super(`policy file unreadable: ${file.split("/").slice(-2).join("/")} (${why}); fix or move it before changing policy`); this.name = "PolicyUnreadable"; }
+}
 export class Policies {
   onChange: (() => void) | null = null;
   constructor(readonly dataDir: string) { mkdirSync(join(dataDir, "policies"), { recursive: true }); }
@@ -105,8 +110,18 @@ export class Policies {
     const g = getPath(this.org(), path); if (g !== undefined) return { value: g, from: "org" };
     return { value: undefined, from: null };
   }
-  setOrg(patch: Record<string, any>) { const f = join(this.dataDir, "policies", "org.yaml"); const cur = this.yaml(f); writeFileSync(f, JSON.stringify(deepMerge(cur, patch), null, 1)); this.onChange?.(); }
-  setProject(id: string, patch: Record<string, any>) { const f = join(this.dataDir, "policies", `project-${id.replace(/[^\w-]/g, "")}.yaml`); writeFileSync(f, JSON.stringify(deepMerge(this.yaml(f), patch), null, 1)); this.onChange?.(); }
+  /** The current file for a write: absent is empty; a file that exists but cannot be read is never replaced (it may hold the captain's rules). */
+  private forWrite(f: string): Record<string, any> {
+    let st; try { st = lstatSync(f); } catch (e: any) { if (e?.code === "ENOENT") return {}; throw new PolicyUnreadable(f, "it cannot be opened"); }
+    if (!st.isFile() || st.isSymbolicLink()) throw new PolicyUnreadable(f, "it is not a plain file");
+    let v: unknown; try { v = parseYaml(readFileSync(f, "utf8")) ?? {}; } catch { throw new PolicyUnreadable(f, "it is not valid YAML or JSON"); }
+    if (!v || typeof v !== "object" || Array.isArray(v)) throw new PolicyUnreadable(f, "it is not a mapping");
+    return v as Record<string, any>;
+  }
+  /** The project's policy file exists but cannot be read (writers refuse it). */
+  projectUnreadable(id: string): boolean { try { this.forWrite(join(this.dataDir, "policies", `project-${id.replace(/[^\w-]/g, "")}.yaml`)); return false; } catch (e) { return e instanceof PolicyUnreadable; } }
+  setOrg(patch: Record<string, any>) { const f = join(this.dataDir, "policies", "org.yaml"); const cur = this.forWrite(f); writeFileSync(f, JSON.stringify(deepMerge(cur, patch), null, 1)); this.onChange?.(); }
+  setProject(id: string, patch: Record<string, any>) { const f = join(this.dataDir, "policies", `project-${id.replace(/[^\w-]/g, "")}.yaml`); writeFileSync(f, JSON.stringify(deepMerge(this.forWrite(f), patch), null, 1)); this.onChange?.(); }
 }
 /** Never follows or writes __proto__, constructor or prototype: a patch cannot reach Object.prototype. */
 const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);

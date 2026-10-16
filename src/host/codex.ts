@@ -122,6 +122,7 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
       const onNotify = (m: any) => {
         const p = m.params ?? {};
         if (p.threadId !== id) return;
+        if (m.method === "thread/compacted" || (m.method === "item/completed" && p.item?.type === "contextCompaction")) emit({ type: "compacted" });
         if (m.method === "turn/started") {
           const incoming = typeof p.turn?.id === "string" ? p.turn.id : p.turnId;
           if (!incoming || (turn && turnId && incoming !== turnId)) return;

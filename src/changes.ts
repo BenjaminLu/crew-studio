@@ -216,7 +216,7 @@ export function createChanges(o: { dataDir: string; flows: Workflows; skills: Sk
           c.rounds = []; void drive(c); return json(view(c)); }
       }
       return json({ error: "not found" }, 404);
-    } catch (e: any) { return json({ error: String(e?.message ?? e) }, 400); }
+    } catch (e: any) { return json({ error: String(e?.message ?? e), ...(e?.code === "policyUnreadable" ? { code: e.code } : {}) }, e?.code === "policyUnreadable" ? 409 : 400); }
   }
   return { handle, list, get, projects, create };
 }

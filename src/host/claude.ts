@@ -202,6 +202,7 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
         const p = spawnJsonl(binArgv(bin, args), opts.cwd, { ...cleanEnv(), ...(opts.env ?? {}) }, (m) => {
           if (m.parent_tool_use_id) return; // subagent traffic stays inside the session
           if (m.type === "system" && m.subtype === "task_notification") notified = true;
+          if (m.type === "system" && m.subtype === "compact_boundary") emit({ type: "compacted" });
           const r = claudeRefusal(m);
           if (r && !refused) { refused = r; emit({ type: "hostRefusal", code: r.code, reason: r.reason, raw: m }); }
           if (m.type === "system" && m.subtype === "init") {

@@ -1,4 +1,5 @@
 import { refusesRulesPatch } from "../operating-rules";
+import { PolicyUnreadable } from "./checks";
 import {installStartupRecursion} from '../domain/startup-recursion';
 import {installReadinessViews,readinessNodes} from './readiness-view';
 import {installGitHubReviewWorkflow} from '../domain/github-review-workflow';
@@ -233,7 +234,9 @@ export function createRuntime(d: RuntimeDeps) {
       if (p === "/api/policies/auth-window" && !writing) return json({ grants: engine.grants.all() });
       if (p === "/api/policies" && writing) { if (b?.patch && "auth" in b.patch) return json({ error: "authorization windows are opened with /api/policies/auth-window" }, 400);
         if (refusesRulesPatch(b?.patch)) return json({ error: "operating rules are edited by the captain in Settings, not through the policy API", code: "captainOnly" }, 403);
-        if (b?.level === "project" && b?.project) engine.policies.setProject(String(b.project), b.patch ?? {}); else engine.policies.setOrg(b?.patch ?? {}); return json({ ok: true, org: engine.policies.org() }); }
+        try { if (b?.level === "project" && b?.project) engine.policies.setProject(String(b.project), b.patch ?? {}); else engine.policies.setOrg(b?.patch ?? {}); }
+        catch (e: any) { if (e instanceof PolicyUnreadable) return json({ error: e.message, code: e.code }, 409); throw e; }
+        return json({ ok: true, org: engine.policies.org() }); }
       // ---------- intake ----------
       if (p === "/api/intake" && writing) return json(classifyIntent(defs, String(b?.text ?? ""), engine.policies.get("sensitive_paths", { project: b?.project ? String(b.project) : null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []));
       const coffeeRecovery=/^\/api\/wruns\/(R-\d+)\/coffee-recovery$/.exec(p);
