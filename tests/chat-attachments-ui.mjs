@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The Firstmate chat's attachments in a real browser: drop, paste and pick images and PDFs, see them as chips,
 // remove one, send, see them in the history, and still see them after a reload. A file the server refuses stays
 // as a refused chip and blocks the send (never a silent drop). Offline: stub host CLIs only.

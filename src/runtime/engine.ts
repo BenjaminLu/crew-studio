@@ -512,16 +512,16 @@ export class Engine {
     r.steps.push(step); this.commit(r, rn.cause);
     this.emit(r, "node_started", `${node.label}${rn.visits > 1 ? ` (visit ${rn.visits})` : ""}`, { node: id, visit: rn.visits, kind: node.kind, ...(pk ? { provider: pk.provider, model: pk.model } : {}) });
     this.live.add(key);
-    let res: Result | null = null, err: string | null = null;
+    let res: Result | null = null, err: string | null = null, blocked = false;
     try {
       const h = node.kind === "card" && node.args?.mode && this.cardModes[node.args.mode] ? this.cardModes[node.args.mode] : this.kinds[node.kind];
       if (!h) throw new Error(`no runner for node kind ${node.kind}`);
       for (const guard of Object.values(this.beforeStart)) { res = await guard(x); if (res) break; }
       if (!res) res = await h.start(x);
       res = await this.afterChecks(x, step, res);
-    } catch (e: any) { err = String(e?.message ?? e).slice(0, 1200); }
+    } catch (e: any) { err = String(e?.message ?? e).slice(0, 1200); blocked = e?.outcome === "blocked"; } // a RoundBlocked (e.g. a broken shared git config): never retried
     finally { this.live.delete(key); }
-    this.finish(r, node, rn, step, res, err);
+    this.finish(r, node, rn, step, res, err, blocked);
   }
   /** An agent or card node's own checks run once it has produced; a blocking fail makes it fail. */
   private async afterChecks(x: X, step: Step, res: Result | null): Promise<Result | null> {
@@ -535,7 +535,7 @@ export class Engine {
   }
 
   /** A node's attempt ended (or is now waiting on a card). */
-  private finish(r: Run, node: WNode, rn: NodeRun, step: Step, res: Result | null, err: string | null) {
+  private finish(r: Run, node: WNode, rn: NodeRun, step: Step, res: Result | null, err: string | null, blocked = false) {
     // whatever way the node ends this step (waiting on its card, a retry, an error, a late result), its card is no longer being raised: once, here
     if (rn.card) this.raising.get(rn.card)?.resolve();
     // a step that failed after raising its card leaves no open card behind (a retry raises its own)
@@ -546,14 +546,18 @@ export class Engine {
     if (TERMINAL.includes(r.status)) { if (step.state === "running" || step.state === "waiting") { step.state = "skipped"; step.endedAt = now(); step.note = `late result refused (the run is ${r.status})`; } if (rn.state === "running") { rn.state = "skipped"; rn.cause = `the run is ${r.status}`; } this.commit(r, "late result refused"); return; }
     if (err) {
       step.state = "error"; step.error = err; step.endedAt = now();
-      if (rn.attempt < (node.retries ?? 0)) {
+      // blocked: the step cannot start safely (its reason says why); a retry would hit the same wall
+      if (!blocked && rn.attempt < (node.retries ?? 0)) {
         rn.attempt++; rn.visits--; rn.state = "pending"; rn.cause = `retry ${rn.attempt + 1}: ${err.slice(0, 120)}`; r.queue.push(node.id); this.commit(r, "retry");
         this.emit(r, "retry", `${node.label}: attempt ${rn.attempt + 1} after: ${err.slice(0, 200)}`, { node: node.id, error: err });
         return this.tick(r);
       }
-      rn.attempt = 0; rn.state = "error"; rn.cause = "error"; rn.error = err; rn.endedAt = now(); rn.outcome = "error"; rn.routing = { outcome: "error" }; this.commit(r, "error");
+      // a blocked step takes a "blocked" edge when the workflow has one; otherwise it routes as an error (never retried)
+      const routeAs = blocked && r.def.edges.some((e) => e.from === node.id && e.when?.split("|").includes("blocked")) ? "blocked" : "error";
+      if (blocked) { step.outcome = "blocked"; this.emit(r, "round_blocked", `${node.label}: ${err.slice(0, 300)}`, { node: node.id }); }
+      rn.attempt = 0; rn.state = "error"; rn.cause = blocked ? "blocked" : "error"; rn.error = err; rn.endedAt = now(); rn.outcome = blocked ? "blocked" : "error"; rn.routing = { outcome: routeAs }; this.commit(r, rn.cause);
       this.emit(r, "node_failed", `${node.label}: ${err.slice(0, 300)}`, { node: node.id, error: err });
-      return void this.track(r, `routing after ${node.id}`, this.route(r, node, "error"));
+      return void this.track(r, `routing after ${node.id}`, this.route(r, node, routeAs));
     }
     if (res && "wait" in res) {
       if (res.external) {

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Chat attachments for the Firstmate chat: the captain's images and PDFs.
 //   1. the store: type by magic bytes, size and count caps, content-hash names, no traversal, no symlink write-through
 //   2. the turn payload each host really takes, through the stub CLIs: Codex localImage items (+ a PDF named by path),

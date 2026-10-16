@@ -109,7 +109,7 @@ export class Worktrees {
   }
   ensure(a: { project: string; task: string; repo: string; base: string; branchPrefix: string; run?: string | null }): WorktreeRecord {
     const path = this.pathOf(a.project, a.task); this.assertPlace(path, a.repo);
-    assertSharedGitConfig(a.repo); // a broken shared config (core.bare, core.worktree, hooksPath) refuses here, with its reason
+    assertSharedGitConfig(a.repo); // a shared config git would stop on (core.bare, a wrong core.worktree, an unreadable file) refuses here as BLOCKED; hooksPath is only reported
     this.assertNoCaseTwin(this.root, safe(a.project)); this.assertNoCaseTwin(this.dir(a.project), safe(a.task));
     let r = this.get(a.project, a.task);
     if (r && !r.removedAt && existsSync(path)) return r;

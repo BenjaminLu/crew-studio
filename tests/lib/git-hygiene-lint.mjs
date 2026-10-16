@@ -1,12 +1,13 @@
-// Static lint over the test tree (run by tests/git-config-guard.ts). The patterns read minified one-line tests too.
-// 1. A test file that spawns git, runs git config / git init / --bare or names GIT_DIR / GIT_WORK_TREE imports
-//    tests/lib/git-hygiene.mjs on its first line (after a shebang), or on its second line right after the
-//    env-isolation import (tests/lib/isolated-env.mjs), so the scrub runs before any other module.
-//    A commented-out import does not count.
-// 2. Each git init / git config call names where it runs, and that place is checked: a variable bound to
-//    checkedTempDir(...), to join(<checked>, ...), or passed to assertTempRepo(...). A call that runs in
-//    process.cwd(), "", "." or an unchecked variable fails. A call whose place cannot be read (a property, a
-//    spread of arguments) needs at least one checkedTempDir/assertTempRepo in the file.
+// Static lint over the test tree (run by tests/git-config-guard.ts): a tripwire for the usual mistakes, not a
+// security boundary. Regular expressions over source text (minified one-line tests included) can be fooled;
+// the protection is tests/lib/isolated-env.mjs, which every test entry imports on line 1 (tests/env-isolation.ts
+// enforces that) and which removes inherited GIT_* before any test code runs.
+// The rule: each git init / git config call names where it runs, and that place is checked: a variable bound to
+// checkedTempDir(...), to join(<checked>, ...), or passed to assertTempRepo(...). A call that runs in
+// process.cwd(), "", "." or an unchecked variable fails. A call whose place cannot be read (a property, a
+// spread of arguments), and any --bare, needs at least one checkedTempDir/assertTempRepo in the file.
+// A line marked `git-hygiene-lint: allow` is a deliberate unsafe sample; only the files in ALLOW may have
+// them, each with its pinned count.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
@@ -15,14 +16,12 @@ const GIT_ARG = `['"]git['"]\\s*,\\s*`;
 const INIT = `['"]init['"]\\s*(?:,\\s*(?:['"]-|[\\w.$]+\\s*[\\]),])|\\])`;
 const CONFIG = `['"]config['"]\\s*,\\s*(?:['"](?:-|[A-Za-z][\\w-]*\\.)|\`[\\w-]+\\.)`;
 const RULES = {
-  spawn: /(?:spawnSync|spawn|execFileSync|execFile|execSync)\(\s*\[?\s*['"`]git['"`\s]|\b(?:sh|run)\(\s*[\w.$]+\s*,\s*\[?\s*['"]git['"]|\[\s*['"]git['"]\s*,\s*(?:\.\.\.|['"]-C['"])/,
   config: new RegExp(`(?:\\[\\s*|['"]-C['"]\\s*,\\s*[^,\\]\\n]+,\\s*|${GIT_ARG})${CONFIG}|\\bgit\\s+(?:-C\\s+\\S+\\s+)?config\\s+(?:-|[a-z]+\\.[a-z])`),
   init: new RegExp(`\\[\\s*${INIT}|${GIT_ARG}${INIT}|\\bgit\\s+init\\b`),
   bare: /['"](?:init|clone)['"][^\n\]]{0,80}?['"]--bare['"]|\bgit\s+(?:init|clone)\b[^\n'"]*--bare/,
-  env: /\bGIT_(?:DIR|WORK_TREE|COMMON_DIR)\b/,
 };
-const FIRST_LINE_IMPORT = /^import\s[^\n;]*['"](?:\.\.?\/)+(?:lib\/)?git-hygiene\.mjs['"]/;
-const ENV_FIRST = /^import\s[^\n;]*['"](?:\.\.?\/)+(?:lib\/)?isolated-env\.mjs['"]/;
+/** files that may hold deliberate unsafe samples, and how many marked lines each has */
+export const ALLOW = { "git-config-guard.ts": 5 };
 const CHECKED = /\b(?:checkedTempDir|assertTempRepo)\(/;
 const SELF = new Set(["lib/git-hygiene.mjs", "lib/git-hygiene-lint.mjs"]);
 
@@ -54,15 +53,12 @@ function checkedVars(text) {
 }
 /** Findings for one file's text: [] when it follows the rules. */
 export function lintGitHygieneText(path, fullText) {
-  // a line marked `git-hygiene-lint: allow` is a deliberate unsafe sample (a planted test, a control run): not linted
-  const text = fullText.split("\n").filter((l, i) => i === 0 || !l.includes("git-hygiene-lint: allow")).join("\n");
+  // a line marked `git-hygiene-lint: allow` is a deliberate unsafe sample: not linted, and only where ALLOW says, as many as it says
+  const marked = fullText.split("\n").filter((l) => l.includes("git-hygiene-lint: allow")).length;
+  const text = fullText.split("\n").filter((l) => !l.includes("git-hygiene-lint: allow")).join("\n");
   const hit = Object.fromEntries(Object.entries(RULES).map(([k, re]) => [k, re.test(text)]));
   const out = [];
-  // line 1, or line 2 right after the env-isolation import (tests/lib/isolated-env.mjs stays first)
-  const [l1 = "", l2 = ""] = fullText.replace(/^#![^\n]*\n/, "").split("\n", 2);
-  const placed = FIRST_LINE_IMPORT.test(l1) || (ENV_FIRST.test(l1) && FIRST_LINE_IMPORT.test(l2));
-  if (Object.values(hit).some(Boolean) && !placed)
-    out.push({ path, rule: "imports-hygiene", why: `runs git (${Object.keys(hit).filter((k) => hit[k]).join(", ")}) without importing tests/lib/git-hygiene.mjs on its first line (or second, after isolated-env.mjs), so an inherited GIT_DIR reaches its git` });
+  if (marked && ALLOW[path] !== marked) out.push({ path, rule: "allow-marker", why: `${marked} lines marked git-hygiene-lint: allow; ${path in ALLOW ? `pinned at ${ALLOW[path]}` : "this file may have none"}` });
   if (hit.config || hit.init || hit.bare) {
     const ok = checkedVars(text), places = writePlaces(text); let unread = !places.length;
     for (const [where, call] of places) {

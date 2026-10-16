@@ -8,8 +8,8 @@
 //   core.worktree  pointing anywhere but the checkout that owns the git folder
 //   core.hooksPath pointing outside the repository
 //   (unreadable)   a config file git cannot parse
-// The shared config is read as written (no --includes); when extensions.worktreeConfig is on, the
-// checkout's own config.worktree is read too. Only what makes git itself fail blocks a worktree
+// The decision to refuse a worktree parses the file(s) in this process, as written (no include.path); when
+// extensions.worktreeConfig is on, the checkout's own config.worktree is read too. Only what makes git itself fail blocks a worktree
 // (core.bare, a wrong core.worktree, an unreadable file or a bad boolean): a hooksPath outside the
 // repository and keys that come only through include.path are reported, never refused (Studio's
 // git overrides hooksPath anyway).
@@ -46,61 +46,105 @@ export function gitLayout(repo: string): Layout | null {
   return { gitDir, commonDir, config: join(commonDir, "config"), tops };
 }
 
-/** each read is bounded: a git that hangs (a wrapper, a locked filesystem) never holds Studio's start or a round */
-export const GIT_CONFIG_READ_TIMEOUT_MS = 2000;
-class GitDidNotAnswer extends Error {}
-const cfg = (file: string, args: string[]) => { const r = Bun.spawnSync(["git", "config", "--file", file, ...args], { cwd: "/", stdout: "pipe", stderr: "pipe", env: gitEnv(), timeout: GIT_CONFIG_READ_TIMEOUT_MS });
-  if ((r as any).exitedDueToTimeout) throw new GitDidNotAnswer(`git config did not answer within ${GIT_CONFIG_READ_TIMEOUT_MS} ms`);
-  return { ok: r.success, code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString().trim() }; };
-/** the last value of each key, as git config --null --list prints it (null: a key with no "=") */
-const listOf = (out: string) => { const m = new Map<string, string | null>(); for (const e of out.split("\0").filter(Boolean)) { const i = e.indexOf("\n"); m.set((i < 0 ? e : e.slice(0, i)).toLowerCase(), i < 0 ? null : e.slice(i + 1)); } return m; };
+/**
+ * git's config file syntax, parsed in this process (no git spawn, no timeout, nothing that can hang a round):
+ * [section] and [section "subsection"] headers (a key may follow on the same line), case-insensitive names,
+ * values with "quotes", \\ \" \n \t \b escapes, # and ; comments, a trailing \ continuing the value on the
+ * next line. A key with no "=" is null (true as a boolean). Returns each key's last value, or the error git
+ * would also stop on. include.path is not followed: blocking decisions read the file as written.
+ */
+export function parseGitConfig(text: string): { ok: true; values: Map<string, string | null> } | { ok: false; error: string } {
+  const values = new Map<string, string | null>(); const lines = text.split(/\r?\n/); let section: string | null = null;
+  for (let n = 0; n < lines.length; n++) {
+    let line = lines[n].replace(/^[\s﻿]+/, "");
+    const bad = (why: string) => ({ ok: false as const, error: `bad config line ${n + 1}: ${why}` });
+    if (line.startsWith("[")) {
+      const h = /^\[\s*([A-Za-z0-9.-]+)(?:\s+"((?:[^"\\\n]|\\.)*)")?\s*\]/.exec(line);
+      if (!h) return bad("a section header git cannot read");
+      section = h[2] !== undefined ? `${h[1].toLowerCase()}.${h[2].replace(/\\(.)/g, "$1")}` : h[1].toLowerCase();
+      line = line.slice(h[0].length).replace(/^\s+/, "");
+    }
+    if (!line || line[0] === "#" || line[0] === ";") continue;
+    const k = /^([A-Za-z][A-Za-z0-9-]*)\s*/.exec(line); if (!k) return bad("a key git cannot read");
+    if (section === null) return bad("a key outside any section");
+    let rest = line.slice(k[0].length); const key = `${section}.${k[1].toLowerCase()}`;
+    if (!rest || rest[0] === "#" || rest[0] === ";") { values.set(key, null); continue; }
+    if (rest[0] !== "=") return bad("a key followed by something other than =");
+    rest = rest.slice(1);
+    let out = "", pending = "", quoted = false, started = false;
+    for (;;) {
+      let i = 0, cont = false, done = false;
+      for (; i < rest.length; i++) {
+        const c = rest[i];
+        if (!quoted && (c === "#" || c === ";")) { done = true; break; }
+        if (!quoted && (c === " " || c === "\t")) { if (started) pending += c; continue; }
+        if (c === "\\") {
+          if (i === rest.length - 1) { cont = true; break; }
+          const e = rest[++i]; const m: Record<string, string> = { n: "\n", t: "\t", b: "\b", "\\": "\\", '"': '"' };
+          if (!(e in m)) return bad(`an unknown escape \\${e}`);
+          out += pending + m[e]; pending = ""; started = true; continue;
+        }
+        if (c === '"') { quoted = !quoted; out += pending; pending = ""; started = true; continue; }
+        out += pending + c; pending = ""; started = true;
+      }
+      if (cont && n + 1 < lines.length) { rest = lines[++n]; continue; }
+      if (quoted && !done) return bad("an unterminated quote");
+      break;
+    }
+    if (quoted) return bad("an unterminated quote");
+    values.set(key, out);
+  }
+  return { ok: true, values };
+}
+/** git's boolean: null (no "=") true; true/yes/on true; false/no/off/"" false; an integer (k/m/g suffix allowed) true unless 0; anything else is not a boolean */
+export function gitBool(v: string | null): boolean | null {
+  if (v === null) return true; const t = v.trim().toLowerCase();
+  if (["true", "yes", "on"].includes(t)) return true; if (["false", "no", "off", ""].includes(t)) return false;
+  const m = /^([-+]?\d+)([kmg]?)$/.exec(t); return m ? Number(m[1]) !== 0 : null;
+}
 
-/** The problems in one checkout's shared git config ([] when it is sound or the folder is not a checkout). */
-export function sharedGitConfigProblems(repo: string, label = repo): GitConfigProblem[] {
+/** The problems git itself would stop on, plus a hooksPath outside the repository (reported only), read in this process. */
+export function gitConfigFileProblems(repo: string, label = repo): GitConfigProblem[] {
   const l = gitLayout(repo); if (!l || !existsSync(l.config)) return [];
   const out: GitConfigProblem[] = [];
-  try { return check(l, repo, label, out); }
-  catch (e) { if (!(e instanceof GitDidNotAnswer)) throw e;
-    // unknown is not broken: reported, never refused (the git that hung would fail the round on its own)
-    out.push({ label, repo, config: l.config, key: "config", value: "", why: `${e.message} while reading ${l.config}: not checked`, fix: "Check that git runs", blocking: false, unchecked: true }); return out; }
-}
-function check(l: Layout, repo: string, label: string, out: GitConfigProblem[]): GitConfigProblem[] {
-  const read = (file: string, tops: string[], scope: string) => {
+  const read = (file: string, tops: string[], scope: string): Map<string, string | null> | null => {
     const p = (key: GitConfigProblem["key"], value: string, why: string, fix: string, blocking: boolean) => out.push({ label, repo, config: file, key, value, why, fix, blocking });
-    // as written: --file reads exactly this file (no discovery, no GIT_DIR, no include.path)
-    const list = cfg(file, ["--null", "--list"]);
-    if (!list.ok) { p("config", "", `git cannot read ${file}: ${list.err.slice(0, 200)}`, `Repair ${file} by hand`, true); return null; }
-    const last = listOf(list.out);
-    if (last.has("core.bare")) {
-      const b = cfg(file, ["--type=bool", "--get", "core.bare"]);
-      if (!b.ok) p("core.bare", String(last.get("core.bare")), `core.bare in ${file} is not a boolean (${b.err.slice(0, 120)}): git refuses to start in ${repo} and its linked worktrees`, `git config --file ${file} core.bare false`, true);
-      else if (b.out.trim() === "true") p("core.bare", last.get("core.bare") ?? "true", `core.bare=true in ${file}${scope}, but ${repo} has a working tree: every git command there and in each linked worktree fails ("must be run in a work tree")`, `git config --file ${file} core.bare false`, true);
-    }
-    const wt = last.get("core.worktree");
-    if (wt !== undefined && wt !== null) {
-      const to = resolve(dirname(file), wt);
-      if (!tops.includes(real(to))) p("core.worktree", wt, `core.worktree in ${file}${scope} points to ${to}, not to the checkout that owns it${tops.length ? ` (${tops.join(", ")})` : ""}: git works on the wrong folder`, `git config --file ${file} --unset core.worktree`, true);
-    }
-    const hp = last.get("core.hookspath");
-    if (hp) {
-      const expanded = hp.startsWith("~/") ? join(homedir(), hp.slice(2)) : hp;
-      const to = isAbsolute(expanded) ? expanded : resolve(repo, expanded);
-      if (![...l.tops, real(repo)].some((t) => inside(t, to))) p("core.hooksPath", hp, `core.hooksPath in ${file}${scope} points to ${to}, outside the repository: commits made outside Studio run hooks from a folder the repository does not own (Studio's own git overrides it)`, `git config --file ${file} --unset core.hooksPath`, false);
-    }
-    return last;
+    let text: string; try { text = readFileSync(file, "utf8"); } catch (e: any) { p("config", "", `${file} cannot be read: ${e?.code ?? e}`, `Repair ${file} by hand`, true); return null; }
+    const parsed = parseGitConfig(text);
+    if (!parsed.ok) { p("config", "", `git cannot read ${file}: ${parsed.error}`, `Repair ${file} by hand`, true); return null; }
+    const v = parsed.values;
+    if (v.has("core.bare")) { const raw = v.get("core.bare")!, b = gitBool(raw);
+      if (b === null) p("core.bare", String(raw), `core.bare in ${file}${scope} is not a boolean: git refuses to start in ${repo} and its linked worktrees`, `git config --file ${file} core.bare false`, true);
+      else if (b) p("core.bare", raw ?? "true", `core.bare=true in ${file}${scope}, but ${repo} has a working tree: every git command there and in each linked worktree fails ("must be run in a work tree")`, `git config --file ${file} core.bare false`, true); }
+    const wt = v.get("core.worktree");
+    if (wt !== undefined && wt !== null) { const to = resolve(dirname(file), wt);
+      if (!tops.includes(real(to))) p("core.worktree", wt, `core.worktree in ${file}${scope} points to ${to}, not to the checkout that owns it${tops.length ? ` (${tops.join(", ")})` : ""}: git works on the wrong folder`, `git config --file ${file} --unset core.worktree`, true); }
+    const hp = v.get("core.hookspath");
+    if (hp) { const expanded = hp.startsWith("~/") ? join(homedir(), hp.slice(2)) : hp; const to = isAbsolute(expanded) ? expanded : resolve(repo, expanded);
+      if (![...l.tops, real(repo)].some((t) => inside(t, to))) p("core.hooksPath", hp, `core.hooksPath in ${file}${scope} points to ${to}, outside the repository: commits made outside Studio run hooks from a folder the repository does not own (Studio's own git overrides it)`, `git config --file ${file} --unset core.hooksPath`, false); }
+    return v;
   };
   const shared = read(l.config, l.tops, "");
-  if (!shared) return out;
-  // keys whose value comes from include.path (it differs from the file as written): reported, never refused
-  const withIncludes = cfg(l.config, ["--includes", "--null", "--list"]);
-  if (withIncludes.ok) { const inc = listOf(withIncludes.out);
-    for (const k of ["core.bare", "core.worktree", "core.hookspath"]) if (inc.has(k) && inc.get(k) !== shared.get(k)) {
-      const key = (k === "core.hookspath" ? "core.hooksPath" : k) as GitConfigProblem["key"]; const v = inc.get(k) ?? "true";
-      if (k === "core.bare" && !/^(true|yes|on|1)$/i.test(v.trim()) && inc.get(k) !== null) continue;
-      out.push({ label, repo, config: l.config, key, value: v, why: `${key}=${v} reaches ${l.config} through include.path; reported, not refused`, fix: `Check the files ${l.config} includes`, blocking: false }); } }
   // the checkout's own config.worktree, when the repository turned per-worktree config on
-  const ext = cfg(l.config, ["--type=bool", "--get", "extensions.worktreeConfig"]);
-  if (ext.ok && ext.out.trim() === "true") { const wcfg = join(l.gitDir, "config.worktree"); if (existsSync(wcfg)) read(wcfg, [real(repo)], " (per-worktree config)"); }
+  if (shared && gitBool(shared.get("extensions.worktreeconfig") ?? "false")) { const w = join(l.gitDir, "config.worktree"); if (existsSync(w)) read(w, [real(repo)], " (per-worktree config)"); }
+  return out;
+}
+
+/** report only: a git that hangs (a wrapper, a locked filesystem) never holds Studio's start */
+export const GIT_CONFIG_READ_TIMEOUT_MS = 2000;
+/** The file problems, plus the keys whose value comes through include.path (reported, never refused; read with git, bounded). */
+export function sharedGitConfigProblems(repo: string, label = repo): GitConfigProblem[] {
+  const out = gitConfigFileProblems(repo, label); const l = gitLayout(repo);
+  if (!l || !existsSync(l.config) || out.some((p) => p.key === "config")) return out;
+  const parsed = parseGitConfig(readFileSync(l.config, "utf8")); if (!parsed.ok) return out;
+  const r = Bun.spawnSync(["git", "config", "--file", l.config, "--includes", "--null", "--list"], { cwd: "/", stdout: "pipe", stderr: "pipe", env: gitEnv(), timeout: GIT_CONFIG_READ_TIMEOUT_MS });
+  if ((r as any).exitedDueToTimeout) { out.push({ label, repo, config: l.config, key: "config", value: "", why: `git did not answer within ${GIT_CONFIG_READ_TIMEOUT_MS} ms, so the files ${l.config} includes were not checked`, fix: "Check that git runs", blocking: false, unchecked: true }); return out; }
+  if (!r.success) return out;
+  const inc = new Map<string, string | null>(); for (const e of r.stdout.toString().split("\0").filter(Boolean)) { const i = e.indexOf("\n"); inc.set((i < 0 ? e : e.slice(0, i)).toLowerCase(), i < 0 ? null : e.slice(i + 1)); }
+  for (const k of ["core.bare", "core.worktree", "core.hookspath"]) if (inc.has(k) && inc.get(k) !== parsed.values.get(k)) {
+    const key = (k === "core.hookspath" ? "core.hooksPath" : k) as GitConfigProblem["key"]; const v = inc.get(k);
+    if (k === "core.bare" && gitBool(v ?? null) === false) continue;
+    out.push({ label, repo, config: l.config, key, value: v ?? "true", why: `${key}=${v ?? "true"} reaches ${l.config} through include.path; reported, not refused`, fix: `Check the files ${l.config} includes`, blocking: false }); }
   return out;
 }
 
@@ -110,8 +154,7 @@ export function gitConfigReport(targets: { label: string; path: string | null | 
   for (const t of targets) {
     if (!t.path) continue; const l = gitLayout(t.path); if (!l) continue;
     const key = real(l.commonDir); if (seen.has(key)) continue; seen.add(key);
-    checked.push({ label: t.label, path: t.path }); const found = sharedGitConfigProblems(t.path, t.label); problems.push(...found);
-    if (found.some((p) => p.unchecked)) break; // git hangs: the other repositories would only wait the same way
+    checked.push({ label: t.label, path: t.path }); problems.push(...sharedGitConfigProblems(t.path, t.label));
   }
   return { checked, problems };
 }
@@ -120,8 +163,8 @@ export function gitConfigReport(targets: { label: string; path: string | null | 
 export class SharedGitConfigBroken extends RoundBlocked {
   readonly code = "shared_git_config_broken";
   constructor(readonly problems: GitConfigProblem[]) {
-    super(`the shared git config of ${problems[0].repo} is broken (${problems.map((x) => `${x.key}=${x.value}`).join(", ")}): ${problems[0].why}. Studio does not change it; fix it by hand (${problems.map((x) => x.fix).join("; ")}) and retry`);
+    super(`BLOCKED: the shared git config of ${problems[0].repo} is broken (${problems.map((x) => `${x.key}=${x.value}`).join(", ")}): ${problems[0].why}. Studio does not change it; fix it by hand (${problems.map((x) => x.fix).join("; ")}) and retry`);
   }
 }
-/** Only what makes git itself fail refuses; report-only findings (hooksPath, include-only keys) never block. */
-export function assertSharedGitConfig(repo: string) { const p = sharedGitConfigProblems(repo).filter((x) => x.blocking); if (p.length) throw new SharedGitConfigBroken(p); }
+/** In-process only (no git spawn, no timeout): what makes git itself fail refuses; report-only findings never block. */
+export function assertSharedGitConfig(repo: string) { const p = gitConfigFileProblems(repo).filter((x) => x.blocking); if (p.length) throw new SharedGitConfigBroken(p); }

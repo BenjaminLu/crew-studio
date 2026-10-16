@@ -1,44 +1,20 @@
-// Git hygiene for tests: the one place tests scrub inherited GIT_* and check where they build repositories.
-// Importing this module removes, from this process's environment (and so from every child it spawns, a
-// Studio server included), the variables that point git at another repository or inject config. A test
-// run under `git bisect run`, a hook or `git rebase -x` inherits GIT_DIR; on 2026-10-16 a fixture's
-// `git init` then re-initialised the checkout's own git folder and wrote core.bare=true into the shared
-// .git/config, breaking the checkout and every linked worktree. src/git.ts keeps the same list for Studio.
-// A test that runs git config, git init or --bare builds its repositories under checkedTempDir() or
-// checks them with assertTempRepo(); tests/git-config-guard.ts fails a test file that does not.
+// Git hygiene for tests: where tests may build repositories, and which inherited GIT_* variables never
+// reach a test. A test run under `git bisect run`, a hook or `git rebase -x` inherits GIT_DIR; on 2026-10-16
+// a fixture's `git init` then re-initialised the checkout's own git folder and wrote core.bare=true into the
+// shared .git/config, breaking the checkout and every linked worktree.
+// The scrub itself runs in tests/lib/isolated-env.mjs (line 1 of every test entry, the one guard with the
+// one clean restart); this module only lists the variables (src/git.ts keeps the same list for Studio) and
+// checks places: a test that runs git config, git init or --bare builds its repositories under
+// checkedTempDir() or checks them with assertTempRepo() (tests/lib/git-hygiene-lint.mjs is the tripwire).
 import { mkdtempSync, realpathSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { spawn, spawnSync } from "node:child_process";
-import { constants as osConstants } from "node:os";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 export const INHERITED_GIT_VARS = /^GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|PREFIX|QUARANTINE_PATH|CONFIG|CONFIG_PARAMETERS|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+)$/;
 /** Remove inherited repository-pointing GIT_* variables from env (process.env by default); returns the names removed. */
 export function scrubGitEnv(env = process.env) { const gone = []; for (const k of Object.keys(env)) if (INHERITED_GIT_VARS.test(k)) { delete env[k]; gone.push(k); } return gone; }
-/**
- * At import: when this process inherited any of them, it runs again without them and exits with that run's
- * status. Removing them from process.env alone is not enough: Bun starts children with the environment the
- * process began with (Bun 1.3: `delete process.env.GIT_DIR` does not reach Bun.spawnSync or
- * child_process.spawnSync without an explicit env), so only a clean start keeps every child clean.
- * The run again happens once: its environment carries CREW_GIT_HYGIENE_REEXEC=done, so a variable that
- * comes back on its own (a .env file Bun loads at start that sets GIT_DIR) is scrubbed from process.env
- * and reported, never re-executed again. SIGTERM, SIGINT and SIGHUP reach the run; a run killed by a
- * signal exits 128+n, as a shell reports it.
- */
-const REEXEC = "CREW_GIT_HYGIENE_REEXEC";
-export const scrubbedAtImport = await (async () => {
-  const gone = Object.keys(process.env).filter((k) => INHERITED_GIT_VARS.test(k)); if (!gone.length) return [];
-  if (process.argv[1] && process.env[REEXEC] !== "0" && process.env[REEXEC] !== "done") {
-    const env = { ...process.env, [REEXEC]: "done" }; scrubGitEnv(env);
-    const child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], { env, stdio: "inherit" });
-    const forward = {}; for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) { forward[sig] = () => { try { child.kill(sig); } catch {} }; process.on(sig, forward[sig]); }
-    const code = await new Promise((res) => { child.on("error", () => res(127)); child.on("exit", (c, sig) => res(sig ? 128 + (osConstants.signals[sig] ?? 0) : c ?? 1)); });
-    process.exit(code);
-  }
-  if (process.env[REEXEC] === "done") process.stderr.write(`git-hygiene: ${gone.join(", ")} came back after the clean restart (a .env file?); removed from process.env only, raw git children may still see them\n`);
-  scrubGitEnv(); return gone;
-})();
 
 /** This test tree's own checkout: a temporary repository is never inside it. */
 export const STUDIO_CHECKOUT = (() => { const p = fileURLToPath(new URL("../..", import.meta.url)); try { return realpathSync(p); } catch { return resolve(p); } })();

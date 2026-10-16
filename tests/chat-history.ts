@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The Firstmate chat history across Studio restarts, and errors from outside Studio as typed notices.
 //   1. units: the class of an external message, its cleaning (credentials, control characters, length), the log file
 //   2. a server with stub CLIs: messages, files and every external error class are logged, typed, with the CLI's words;

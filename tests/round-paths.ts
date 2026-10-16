@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Round path conformance: every registered agent mode, plus the judge/designer vote path
 // and the code merge-card coordinator, builds the sandbox spec it would hand to Agents,
 // and that spec passes the real round path check (the one rule in src/agent.ts) and opens

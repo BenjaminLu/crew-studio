@@ -10,11 +10,18 @@
 //    bun src/main.ts, helpers) inherits "do not load .env" with the rest of the env.
 // 3. CREW_TEST_ENV_ISOLATED=1 tells a child test entry that its parent already did
 //    both, so a value the parent set on purpose is never mistaken for a .env value.
-// 4. Under Bun the entry then runs itself again in that clean environment (below).
+// 4. Inherited GIT_DIR, GIT_WORK_TREE and the other repository-pointing GIT_* variables are removed
+//    (tests/lib/git-hygiene.mjs lists them): a suite run under `git bisect run` or a hook never points
+//    its fixtures' git at the parent's repository (2026-10-16: core.bare=true in the shared config).
+// 5. Under Bun the entry then runs itself again in that clean environment (below), once: the restarted
+//    run is marked with its parent's pid, which it checks against process.ppid and removes at once, so
+//    the mark never reaches (or disarms) a later test this run starts.
 // Production (bun src/main.ts, bun run start) never imports this file.
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { constants as osConstants } from "node:os";
+import { scrubGitEnv } from "./git-hygiene.mjs";
 
 const MARK = "CREW_TEST_ENV_ISOLATED";
 // The shell's own basics are never dropped, even when a .env repeats them.
@@ -69,15 +76,21 @@ if (!(process.env[MARK] === "1" && !loaded)) {
 }
 if (!bunOptions.includes(NO_ENV)) process.env.BUN_OPTIONS = [...bunOptions, NO_ENV].join(" ");
 process.env[MARK] = "1";
+const gitGone = scrubGitEnv(process.env);
+const RESTART = "CREW_TEST_RESTARTED_BY";
+const restarted = process.env[RESTART] === String(process.ppid); delete process.env[RESTART];
 
 // Bun starts children with the environment it was launched with (plus its .env),
 // not with later process.env edits. So a bun entry that may have loaded a .env (one
 // exists in the working directory or the repository root), or that had
 // values to drop, runs itself again in the cleaned environment and passes on its
 // exit; nothing else in the test has run yet. Node children follow process.env.
-if (isBun && (loaded || dropped)) {
-  const child = globalThis.Bun.spawn([process.execPath, ...(process.execArgv || []), ...process.argv.slice(1)], { env: { ...process.env }, stdio: ["inherit", "inherit", "inherit"] });
+if (isBun && !restarted && (loaded || dropped || gitGone.length)) {
+  const child = globalThis.Bun.spawn([process.execPath, ...(process.execArgv || []), ...process.argv.slice(1)], { env: { ...process.env, [RESTART]: String(process.pid) }, stdio: ["inherit", "inherit", "inherit"] });
   for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, () => { try { child.kill(sig); } catch {} });
   const code = await child.exited;
-  process.exit(child.signalCode ? 128 + ({ SIGHUP: 1, SIGINT: 2, SIGKILL: 9, SIGTERM: 15 }[child.signalCode] ?? 1) : code);
+  process.exit(child.signalCode ? 128 + (osConstants.signals[child.signalCode] ?? 1) : code);
 }
+// a restarted run that still sees GIT_* (something outside this guard put them back) has them removed from
+// process.env above; it never restarts again
+if (restarted && gitGone.length) process.stderr.write(`isolated-env: ${gitGone.join(", ")} came back in the restarted run; removed from process.env\n`);

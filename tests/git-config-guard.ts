@@ -1,8 +1,10 @@
-import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // scrubs inherited GIT_* first; repositories only in checked temp folders
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // A broken shared git config (2026-10-16: core.bare=true in a checkout's .git/config) is named by the
-// Doctor and refused before Studio makes or uses a task worktree; tests cannot write a parent repository's
-// config through an inherited GIT_DIR; and a test that runs git config/init without a checked temp repo
-// fails the lint. Every repository here is a throwaway under a checked temp folder.
+// Doctor and refused (as BLOCKED, never retried) before Studio makes or uses a task worktree; tests cannot
+// write a parent repository's config through an inherited GIT_DIR (tests/lib/isolated-env.mjs, line 1 of
+// every test, removes it with one clean restart); and the lint tripwire catches a test that runs git
+// config/init outside a checked temp repo. Every repository here is a throwaway under a checked temp folder.
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -78,12 +80,24 @@ gitMod?.setGitHome?.(join(tmp, "studio-git"));
   const perWt = health?.sharedGitConfigProblems?.(c.linked, "x") ?? [];
   ok(perWt.length === 1 && perWt[0].key === "core.bare" && perWt[0].blocking && perWt[0].config.endsWith("config.worktree"), "core.bare=true in the checkout's config.worktree is named when extensions.worktreeConfig is on", JSON.stringify(perWt));
   writeFileSync(join(linkedGitDir, "config.worktree"), ""); sh(tmp, "config", "--file", c.config, "--unset", "extensions.worktreeConfig");
-  // a git that hangs (the registration test's held git) is reported as unchecked within the bound, never refused
+  // the refusal never waits on git: with a git that hangs on PATH, a bare config is still refused at once (parsed in-process);
+  // only the report-only include check waits, bounded, and says it did not check
+  breakConfig(c.config, "core.bare", "true");
   { const bin = join(tmp, "hung-bin"); mkdirSync(bin, { recursive: true }); writeFileSync(join(bin, "git"), "#!/bin/sh\nexec /bin/sleep 30\n", { mode: 0o755 });
-    const path0 = process.env.PATH; process.env.PATH = `${bin}:${path0}`; const t0 = Date.now(); let hung: any[] = [], hungThrew: any = null;
-    try { hung = health?.sharedGitConfigProblems?.(c.linked, "x") ?? []; try { health?.assertSharedGitConfig(c.linked); } catch (e) { hungThrew = e; } } finally { process.env.PATH = path0; }
-    const ms = Date.now() - t0;
-    ok(!!health && hung.length === 1 && hung[0].unchecked && !hung[0].blocking && !hungThrew && ms < 10000, "a git that hangs is reported as unchecked within the time bound and never refuses", `${ms} ms ${JSON.stringify(hung)}`); }
+    const path0 = process.env.PATH; process.env.PATH = `${bin}:${path0}`; let hung: any[] = [], hungThrew: any = null, msAssert = 0;
+    try { const t0 = Date.now(); try { health?.assertSharedGitConfig(c.linked); } catch (e) { hungThrew = e; } msAssert = Date.now() - t0; hung = health?.sharedGitConfigProblems?.(c.linked, "x") ?? []; } finally { process.env.PATH = path0; }
+    ok(!!health && hungThrew?.code === "shared_git_config_broken" && msAssert < 1000, "with a git that hangs, a bare shared config is still refused at once (no git spawn in the decision)", `${msAssert} ms ${hungThrew?.message}`);
+    ok(hung.some((p: any) => p.key === "core.bare" && p.blocking) && hung.some((p: any) => p.unchecked && !p.blocking), "the report keeps the blocking finding and marks the include check as not done", JSON.stringify(hung)); }
+  breakConfig(c.config, "core.bare", "false");
+  // the in-process parser agrees with git on core.bare, file by file
+  { const cases = ["[core]\n\tbare\n", "[core]\n\tbare = yes # c\n", "[core] bare = \"false\"\n", "[CORE]\n\tBare = 1\n", "[core]\n\tbare = tr\\\nue\n", "[core]\n\tbare = true\n\tbare = off\n", "[core \"x\"]\n\tbare = true\n", "[core]\n\tbare = 2k\n", "[core]\n\tbare = maybe\n", "[core\n\tbare = true\n", "[core]\n\tbare = \"true\n"];
+    const dir = join(tmp, "parse"); mkdirSync(dir, { recursive: true }); const disagree: string[] = [];
+    cases.forEach((text, n) => { const f = join(dir, `c${n}`); writeFileSync(f, text);
+      const g = Bun.spawnSync(["git", "config", "--file", f, "--type=bool", "--get", "core.bare"], { cwd: dir, env: clean, stdout: "pipe", stderr: "pipe" });
+      const gitSays = g.exitCode === 0 ? g.stdout.toString().trim() : g.exitCode === 1 ? "unset" : "error";
+      const parsed = health?.parseGitConfig?.(text); const v = parsed?.ok ? (parsed.values.has("core.bare") ? health.gitBool(parsed.values.get("core.bare")) : "unset") : "error";
+      const weSay = v === null ? "error" : String(v); if (weSay !== gitSays) disagree.push(`${JSON.stringify(text)}: git ${gitSays}, parser ${weSay}`); });
+    ok(!!health?.parseGitConfig && disagree.length === 0, "the in-process parser reads core.bare as git does (quotes, escapes, comments, continuations, case, last value, bad files)", disagree.join("\n")); }
   // the built-in sandbox (data/demo-repo) is a plain checkout: the same check reads it
   const data = join(tmp, "data"), demo = join(data, "demo-repo"); mkdirSync(demo, { recursive: true }); sh(demo, "init", "-q", "-b", "main"); breakConfig(join(demo, ".git", "config"), "core.bare", "true");
   const sb = health?.gitConfigReport?.([{ label: "built-in sandbox (data/demo-repo)", path: demo }]);
@@ -117,62 +131,59 @@ gitMod?.setGitHome?.(join(tmp, "studio-git"));
 }
 
 // ---------- 3. an inherited GIT_DIR never reaches a fixture repository's config ----------
+const { spawn } = await import("node:child_process");
+const guardModule = join(import.meta.dir, "lib", "isolated-env.mjs");
+/** a fresh shell: none of this run's own test-guard state (BUN_OPTIONS, the isolation mark) */
+const freshEnv = () => { const e: Record<string, string> = { ...clean }; for (const k of ["BUN_OPTIONS", "CREW_TEST_ENV_ISOLATED", "CREW_TEST_RESTARTED_BY"]) delete e[k]; return e; };
+const finish = (p: any, ms: number) => new Promise<{ code: number | null; signal: string | null; out: string; timedOut: boolean }>((res) => { let out = "", timedOut = false;
+  p.stdout.on("data", (d: any) => { out += d; }); p.stderr.on("data", (d: any) => { out += d; });
+  const t = setTimeout(() => { timedOut = true; try { process.kill(-p.pid, "SIGKILL"); } catch {} }, ms);
+  p.on("exit", (code: number | null, signal: string | null) => { clearTimeout(t); setTimeout(() => res({ code, signal, out, timedOut }), 50); }); });
 {
   const target = checkout("gitdir-target"), control = checkout("gitdir-control");
   const before = readFileSync(target.config, "utf8"), controlBefore = readFileSync(control.config, "utf8");
-  const helper = join(import.meta.dir, "lib", "git-hygiene.mjs"), studioGit = join(import.meta.dir, "..", "src", "git.ts");
+  const studioGit = join(import.meta.dir, "..", "src", "git.ts");
   // what a test fixture does: git init a fresh folder, set config there, and the same through Studio's git
-  const fixture = (withHelper: boolean, root: string) => `${withHelper ? `import ${JSON.stringify(helper)};` : ""}
+  const fixture = (guarded: boolean, root: string) => `${guarded ? `import ${JSON.stringify(guardModule)};` : ""}
     const {spawnSync}=await import("node:child_process");const {mkdirSync}=await import("node:fs");
     const repo=${JSON.stringify(root)}+"/repo",studio=${JSON.stringify(root)}+"/studio";mkdirSync(repo,{recursive:true});mkdirSync(studio,{recursive:true});
     spawnSync("git",["init","-q","-b","main"],{cwd:repo});spawnSync("git",["config","user.name","Fixture"],{cwd:repo}); // git-hygiene-lint: allow (the control run is deliberately unsafe)
-    ${withHelper ? `const g=await import(${JSON.stringify(studioGit)});g.setGitHome(${JSON.stringify(root)}+"/home");g.must(studio,["init","-q","-b","main"]);g.must(studio,["config","user.name","Fixture"]);` : ""}`; // git-hygiene-lint: allow (fixture text for a child process)
-  const run = (code: string, gitDir: string) => { const file = join(checkedTempDir("crew-gitdir-script-"), "fixture.mjs"); writeFileSync(file, code);
-    return Bun.spawnSync([process.execPath, file], { env: { ...clean, GIT_DIR: gitDir }, stdout: "pipe", stderr: "pipe" }); };
+    ${guarded ? `const g=await import(${JSON.stringify(studioGit)});g.setGitHome(${JSON.stringify(root)}+"/home");g.must(studio,["init","-q","-b","main"]);g.must(studio,["config","user.name","Fixture"]);` : ""}`; // git-hygiene-lint: allow (fixture text for a child process)
+  const run = (code: string, gitDir: string, extra: Record<string, string> = {}) => { const file = join(checkedTempDir("crew-gitdir-script-"), "fixture.mjs"); writeFileSync(file, code);
+    return Bun.spawnSync([process.execPath, file], { env: { ...clean, GIT_DIR: gitDir, ...extra }, stdout: "pipe", stderr: "pipe" }); };
   const gitDirOf = (linked: string) => readFileSync(join(linked, ".git"), "utf8").replace(/^gitdir:\s*/, "").trim();
-  const a = checkedTempDir("crew-gitdir-a-"), b = checkedTempDir("crew-gitdir-b-");
+  const a = checkedTempDir("crew-gitdir-a-"), b = checkedTempDir("crew-gitdir-b-"), c2 = checkedTempDir("crew-gitdir-c-");
   const res = run(fixture(true, a), gitDirOf(target.linked));
   ok(res.exitCode === 0 && readFileSync(target.config, "utf8") === before && existsSync(join(a, "repo", ".git")) && existsSync(join(a, "studio", ".git")),
-    "with GIT_DIR pointed at a fixture repo, the test helpers and Studio's git leave its config unchanged and init their own folders", `exit ${res.exitCode} ${res.stderr}`);
+    "with GIT_DIR pointed at a fixture repo, the test guard and Studio's git leave its config unchanged and init their own folders", `exit ${res.exitCode} ${res.stderr}`);
+  // a restart mark set by anyone but this process's own parent disarms nothing (the old CREW_GIT_HYGIENE_REEXEC=done leaked to every descendant)
+  const forged = run(fixture(true, c2), gitDirOf(target.linked), { CREW_TEST_RESTARTED_BY: "1", CREW_GIT_HYGIENE_REEXEC: "done" });
+  ok(forged.exitCode === 0 && readFileSync(target.config, "utf8") === before && existsSync(join(c2, "repo", ".git")), "a forged or inherited restart mark does not switch the protection off", `exit ${forged.exitCode} ${forged.stderr}`);
   ok(!health || health.sharedGitConfigProblems(target.linked).length === 0, "the fixture repo's shared config is still sound");
   run(fixture(false, b), gitDirOf(control.linked));
   ok(readFileSync(control.config, "utf8") !== controlBefore && /bare = true/.test(readFileSync(control.config, "utf8")),
-    "control: the same fixture without the helper rewrites the GIT_DIR repository's config (core.bare=true), as on 2026-10-16");
+    "control: the same fixture without the guard rewrites the GIT_DIR repository's config (core.bare=true), as on 2026-10-16");
   const env = gitMod?.gitEnv ? (() => { process.env.GIT_DIR = "/nonexistent/.git"; process.env.GIT_WORK_TREE = "/nonexistent"; try { return gitMod.gitEnv(); } finally { delete process.env.GIT_DIR; delete process.env.GIT_WORK_TREE; } })() : { GIT_DIR: "x" };
   ok(!("GIT_DIR" in env) && !("GIT_WORK_TREE" in env), "Studio's gitEnv never passes an inherited GIT_DIR or GIT_WORK_TREE on");
   let refused = 0; for (const p of ["", "relative/path", "/", join(import.meta.dir, "..", "tmp-repo")]) { try { assertTempRepo(p); } catch { refused++; } }
   ok(refused === 4, "assertTempRepo refuses an empty, relative, root or in-checkout path");
 }
 
-// ---------- 3b. the clean restart: runs once, keeps signals and their exit codes ----------
+// ---------- 3b. the one clean restart: once, raw git children clean, signals and their exit codes ----------
 {
-  const { spawn } = await import("node:child_process");
-  const helper = join(import.meta.dir, "lib", "git-hygiene.mjs");
-  const start = (dir: string, code: string, env: Record<string, string> = {}) => { writeFileSync(join(dir, "s.mjs"), `import ${JSON.stringify(helper)};\n${code}`);
-    return spawn(process.execPath, ["s.mjs"], { cwd: dir, env: { ...clean, GIT_DIR: "/nonexistent-gcg/.git", ...env }, stdio: ["ignore", "pipe", "pipe"], detached: true }); };
-  const finish = (p: any, ms: number) => new Promise<{ code: number | null; signal: string | null; out: string; timedOut: boolean }>((res) => { let out = "", timedOut = false;
-    p.stdout.on("data", (d: any) => { out += d; }); p.stderr.on("data", (d: any) => { out += d; });
-    const t = setTimeout(() => { timedOut = true; try { process.kill(-p.pid, "SIGKILL"); } catch {} }, ms);
-    p.on("exit", (code: number | null, signal: string | null) => { clearTimeout(t); setTimeout(() => res({ code, signal, out, timedOut }), 50); }); });
-  // a .env that Bun loads at every start puts GIT_DIR back: the restart must still happen once, never again
+  const start = (dir: string, code: string, env: Record<string, string> = {}) => { writeFileSync(join(dir, "s.mjs"), `import ${JSON.stringify(guardModule)};\n${code}`);
+    return spawn(process.execPath, ["s.mjs"], { cwd: dir, env: { ...freshEnv(), GIT_DIR: "/nonexistent-gcg/.git", ...env }, stdio: ["ignore", "pipe", "pipe"], detached: true }); };
+  const rawChild = `const {spawnSync}=await import("node:child_process");console.log("ran raw=" + JSON.stringify(spawnSync("sh",["-c","echo x$GIT_DIR"],{encoding:"utf8"}).stdout.trim()));`;
+  // a .env in the working folder that puts GIT_DIR back: one restart (with --no-env-file), and a raw child sees no GIT_DIR
   const envDir = checkedTempDir("crew-gcg-dotenv-"); writeFileSync(join(envDir, ".env"), "GIT_DIR=/nonexistent-gcg/.git\n");
-  const r1 = await finish(start(envDir, `console.log("ran " + (process.env.CREW_GIT_HYGIENE_REEXEC ?? "first"));`), 3000);
-  const runs = (r1.out.match(/^ran /gm) ?? []).length;
-  ok(!r1.timedOut && r1.code === 0 && runs === 1 && /ran done/.test(r1.out), "a .env that re-injects GIT_DIR restarts the test once, not recursively", `timedOut=${r1.timedOut} code=${r1.code} runs=${runs} ${r1.out.slice(0, 300)}`);
-  // with the env-isolation helper first (its own clean restart: BUN_OPTIONS=--no-env-file, CREW_TEST_ENV_ISOLATED),
-  // the two restarts never fight: one "ran", exit 0, GIT_DIR gone
-  const isolated = join(import.meta.dir, "lib", "isolated-env.mjs");
-  if (existsSync(isolated)) {
-    const both = checkedTempDir("crew-gcg-both-"); writeFileSync(join(both, ".env"), "GIT_DIR=/nonexistent-gcg/.git\n");
-    writeFileSync(join(both, "s.mjs"), `import ${JSON.stringify(isolated)};\nimport ${JSON.stringify(helper)};\nconsole.log("ran " + (process.env.GIT_DIR ?? "clean"));`);
-    const rb = await finish(spawn(process.execPath, ["s.mjs"], { cwd: both, env: { ...clean, GIT_DIR: "/nonexistent-gcg/.git" }, stdio: ["ignore", "pipe", "pipe"], detached: true }), 5000);
-    const n = (rb.out.match(/^ran /gm) ?? []).length;
-    ok(!rb.timedOut && rb.code === 0 && n === 1 && /ran clean/.test(rb.out), "with isolated-env.mjs first, the two clean restarts run once each and the test sees no GIT_DIR", `timedOut=${rb.timedOut} code=${rb.code} runs=${n} ${rb.out.slice(0, 300)}`);
-  } else console.log("SKIP isolated-env.mjs is not on this branch: the combined restart is checked once it lands");
-  // a run killed by a signal exits 128+n
+  const r1 = await finish(start(envDir, rawChild), 5000); const runs = (r1.out.match(/^ran /gm) ?? []).length;
+  ok(!r1.timedOut && r1.code === 0 && runs === 1 && /ran raw="x"/.test(r1.out), "a .env that re-injects GIT_DIR: one restart, and a raw git child sees no GIT_DIR", `timedOut=${r1.timedOut} code=${r1.code} runs=${runs} ${r1.out.slice(0, 300)}`);
   const plain = checkedTempDir("crew-gcg-signal-");
+  const r0 = await finish(start(plain, rawChild, { CREW_TEST_RESTARTED_BY: "1" }), 5000);
+  ok(r0.code === 0 && /ran raw="x"/.test(r0.out), "an inherited restart mark naming another process is ignored: raw children still see no GIT_DIR", r0.out.slice(0, 300));
+  // a run killed by a signal exits 128+n
   const r2 = await finish(start(plain, `process.kill(process.pid, "SIGKILL");`), 8000);
-  ok(r2.code === 137, "a restarted run killed by SIGKILL makes the test exit 137 (128+9), not 1", `code=${r2.code} signal=${r2.signal}`);
+  ok(r2.code === 137, "a restarted run killed by SIGKILL makes the test exit 137 (128+9)", `code=${r2.code} signal=${r2.signal}`);
   // SIGTERM to the test reaches the restarted run
   const pidFile = join(plain, "child.pid");
   const p3 = start(plain, `import {writeFileSync} from "node:fs";writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));setTimeout(() => {}, 30000);`);
@@ -183,12 +194,38 @@ gitMod?.setGitHome?.(join(tmp, "studio-git"));
   const r3 = await done3; await Bun.sleep(100);
   const alive = (pid: number) => { if (!pid) return false; try { process.kill(pid, 0); return true; } catch { return false; } };
   const childAlive = alive(childPid); if (childAlive) try { process.kill(childPid, "SIGKILL"); } catch {}
-  ok(childPid > 0 && !childAlive && r3.code === 143, "SIGTERM to the test is forwarded to the restarted run, and the test exits 143", `child=${childPid} alive=${childAlive} code=${r3.code} signal=${r3.signal}`);
+  ok(childPid > 0 && childPid !== p3.pid && !childAlive && r3.code === 143, "SIGTERM to the test is forwarded to the restarted run, and the test exits 143", `child=${childPid} alive=${childAlive} code=${r3.code} signal=${r3.signal}`);
+}
+
+// ---------- 3c. this whole suite under an outer GIT_DIR (as under `git bisect run`) ----------
+if (process.env.GCG_INNER !== "1") {
+  const outer = checkout("outer"); const gitDir = readFileSync(join(outer.linked, ".git"), "utf8").replace(/^gitdir:\s*/, "").trim(); const before = readFileSync(outer.config, "utf8");
+  const inner = await finish(spawn(process.execPath, [join(import.meta.dir, "git-config-guard.ts")], { cwd: join(import.meta.dir, ".."), env: { ...clean, GIT_DIR: gitDir, GCG_INNER: "1" }, stdio: ["ignore", "pipe", "pipe"], detached: true }), 240000);
+  ok(!inner.timedOut && inner.code === 0 && readFileSync(outer.config, "utf8") === before && health?.sharedGitConfigProblems(outer.linked).length === 0,
+    "the whole suite run with an outer GIT_DIR passes and leaves that repository's config as it was", `code=${inner.code} ${inner.out.split("\n").filter((l) => /FAIL|passed/.test(l)).join(" | ").slice(0, 600)}`);
+}
+
+// ---------- 3d. a code workflow on a broken shared config: BLOCKED, never retried ----------
+{
+  const { harness, until, Y } = await import("./rt-harness"); const { Projects } = await import("../src/doors"); const { installCode } = await import("../src/domain/code");
+  const flow = { id: "gcg-blocked", name: "Blocked", version: 1, roles: [], params: { project: { label: "Project" } }, nodes: [
+    { id: "prepare", kind: "hook", do: "repo.prepare", label: "Prepare", retries: 2, x: 0, y: 0 },
+    { id: "hold", kind: "card", label: "Hold", card: { title: "Hold", options: [{ id: "close", label: "Close" }] }, x: 1, y: 0 }], edges: [["prepare", "hold"]] };
+  const H = await harness([Y(flow)]); const c = checkout("code-flow");
+  try {
+    const projects = new Projects(H.data); projects.add({ id: "fixture", path: c.main } as any); installCode(H.engine, { dataDir: H.data, projects } as any);
+    breakConfig(c.config, "core.bare", "true");
+    const r = H.engine.start({ workflow: flow.id, params: { project: "fixture" } });
+    await until(() => { const n = H.engine.get(r.id)?.nodes?.prepare; return !!n && ["error", "failed", "passed"].includes(n.state); }, 20000); await Bun.sleep(200);
+    const run = H.engine.get(r.id)!; const steps = run.steps.filter((s: any) => s.node === "prepare");
+    ok(run.nodes.prepare.outcome === "blocked" && steps.length === 1 && steps[0].outcome === "blocked" && /BLOCKED: the shared git config/.test(run.nodes.prepare.error ?? "") && !run.nodes.hold?.visits,
+      "repo.prepare on a bare shared config ends BLOCKED after one attempt (retries: 2 not used), and the run goes no further", JSON.stringify({ state: run.nodes.prepare.state, outcome: run.nodes.prepare.outcome, steps: steps.length, err: run.nodes.prepare.error?.slice(0, 160), hold: run.nodes.hold }));
+  } finally { breakConfig(c.config, "core.bare", "false"); H.stop(); }
 }
 
 // ---------- 2b. Studio's startup output warns, names the repository and changes nothing ----------
 {
-  const { spawn } = await import("node:child_process"); const { freePort, waitUp } = await import("./boot.mjs");
+  const { freePort, waitUp } = await import("./boot.mjs");
   const root = checkedTempDir("crew-gcg-boot-"), data = join(root, "data"), demo = join(data, "demo-repo");
   for (const x of ["state", "home", "proj"]) mkdirSync(join(root, x), { recursive: true }); mkdirSync(demo, { recursive: true });
   sh(demo, "init", "-q", "-b", "main"); breakConfig(join(demo, ".git", "config"), "core.bare", "true"); const before = readFileSync(join(demo, ".git", "config"), "utf8");
@@ -202,35 +239,32 @@ gitMod?.setGitHome?.(join(tmp, "studio-git"));
   ok(readFileSync(join(demo, ".git", "config"), "utf8") === before, "startup only reports: the broken config is left as it was");
 }
 
-// ---------- 4. the lint: no test runs git config without a checked temp repo ----------
+// ---------- 4. the lint tripwire: git init/config only in a checked temp repo ----------
 {
   const lint = await load("./lib/git-hygiene-lint.mjs");
-  const planted = `import {spawnSync} from "node:child_process";const dir=process.env.FIXTURE_DIR||"";spawnSync("git",["-C",dir,"config","core.bare","true"]);`; // git-hygiene-lint: allow (planted sample)
-  const plantedFindings = lint?.lintGitHygieneText?.("planted-unsafe.ts", planted) ?? [];
-  ok(plantedFindings.some((f: any) => f.rule === "checked-temp-repo") && plantedFindings.some((f: any) => f.rule === "imports-hygiene"), "the lint catches a planted test that runs git config without a checked temp repo", JSON.stringify(plantedFindings));
-  const shell = lint?.lintGitHygieneText?.("planted.mjs", `execSync("cd $T && git config core.bare true")`) ?? [];
-  ok(shell.some((f: any) => f.rule === "checked-temp-repo"), "the lint reads git config in a shell string too", JSON.stringify(shell));
-  const safe = lint?.lintGitHygieneText?.("safe.ts", `import {checkedTempDir} from "./lib/git-hygiene.mjs";const d=checkedTempDir("x-");must(d,["init","-q"]);must(d,["config","user.name","x"]);`) ?? [null];
-  ok(safe.length === 0, "a test that builds its repo in a checked temp folder passes", JSON.stringify(safe));
   const L = (name: string, text: string) => lint?.lintGitHygieneText?.(name, text) ?? [{ rule: "missing" }];
-  const commented = L("c.ts", `// import "./lib/git-hygiene.mjs";\nimport {checkedTempDir} from "./x";const d=checkedTempDir("x-");must(d,["init","-q"]);`); // git-hygiene-lint: allow
-  ok(commented.some((f: any) => f.rule === "imports-hygiene"), "a commented-out hygiene import does not count", JSON.stringify(commented));
-  const late = L("l.ts", `import {x} from "./x";\nimport {checkedTempDir} from "./lib/git-hygiene.mjs";const d=checkedTempDir("x-");must(d,["init","-q"]);`); // git-hygiene-lint: allow
-  ok(late.some((f: any) => f.rule === "imports-hygiene"), "the hygiene import must be the first line", JSON.stringify(late));
-  const afterEnv = L("e.ts", `import "./lib/isolated-env.mjs"; // first\nimport {checkedTempDir} from "./lib/git-hygiene.mjs";const d=checkedTempDir("x-");must(d,["init","-q"]);`);
-  ok(afterEnv.length === 0, "the hygiene import may be line 2, right after the env-isolation import", JSON.stringify(afterEnv));
-  const line2 = L("e2.ts", `import {x} from "./x";\nimport {checkedTempDir} from "./lib/git-hygiene.mjs";const d=checkedTempDir("x-");must(d,["init","-q"]);`); // git-hygiene-lint: allow
-  ok(line2.some((f: any) => f.rule === "imports-hygiene"), "line 2 only counts after the env-isolation import", JSON.stringify(line2));
-  const cwd = L("w.ts", `import {checkedTempDir} from "./lib/git-hygiene.mjs";const d=checkedTempDir("x-");must(process.cwd(),["init","-q"]);`); // git-hygiene-lint: allow
+  const planted = L("planted-unsafe.ts", `import {spawnSync} from "node:child_process";const dir=process.env.FIXTURE_DIR||"";spawnSync("git",["-C",dir,"config","core.bare","true"]);`); // git-hygiene-lint: allow (planted sample)
+  ok(planted.some((f: any) => f.rule === "checked-temp-repo"), "the lint catches a planted test that runs git config without a checked temp repo", JSON.stringify(planted));
+  const shell = L("planted.mjs", `execSync("cd $T && git config core.bare true")`);
+  ok(shell.some((f: any) => f.rule === "checked-temp-repo"), "the lint reads git config in a shell string too", JSON.stringify(shell));
+  const safe = L("safe.ts", `import {checkedTempDir} from "./lib/git-hygiene.mjs";const d=checkedTempDir("x-");must(d,["init","-q"]);must(d,["config","user.name","x"]);`);
+  ok(safe.length === 0, "a test that builds its repo in a checked temp folder passes", JSON.stringify(safe));
+  const cwd = L("w.ts", `import {checkedTempDir} from "./lib/git-hygiene.mjs";const d=checkedTempDir("x-");must(process.cwd(),["init","-q"]);`); // git-hygiene-lint: allow (planted sample)
   ok(cwd.some((f: any) => f.rule === "checked-temp-repo" && /current folder/.test(f.why)), "git init in process.cwd() fails even when the file has a checked temp dir", JSON.stringify(cwd));
-  const unchecked = L("u.ts", `import {checkedTempDir} from "./lib/git-hygiene.mjs";const d=checkedTempDir("x-"),other=process.env.REPO;must(other,["config","user.name","x"]);`); // git-hygiene-lint: allow
+  const unchecked = L("u.ts", `import {checkedTempDir} from "./lib/git-hygiene.mjs";const d=checkedTempDir("x-"),other=process.env.REPO;must(other,["config","user.name","x"]);`); // git-hygiene-lint: allow (planted sample)
   ok(unchecked.some((f: any) => f.rule === "checked-temp-repo" && /other/.test(f.why)), "git config in an unchecked variable fails even when the file has a checked temp dir", JSON.stringify(unchecked));
   const viaJoin = L("j.ts", `import {checkedTempDir} from "./lib/git-hygiene.mjs";const d=checkedTempDir("x-"),repo=join(d,"repo");const r2=repo;sh(r2,"git","init","-q");`);
   ok(viaJoin.length === 0, "a repo joined under a checked temp dir (or an alias of one) passes", JSON.stringify(viaJoin));
   const prose = L("p.ts", `const steps=["init","config","start"];const words=["config","init"];console.log(steps,words);`);
   ok(prose.length === 0, "a prose array of words is not a git call", JSON.stringify(prose));
+  const marker = "git-hygiene-lint: " + "allow";
+  const elsewhere = L("other.ts", `console.log("sample"); // ${marker}`);
+  ok(elsewhere.some((f: any) => f.rule === "allow-marker"), "the allow marker only works in the allowlisted file", JSON.stringify(elsewhere));
+  const self = readFileSync(join(import.meta.dir, "git-config-guard.ts"), "utf8"); const pinned = lint?.ALLOW?.["git-config-guard.ts"];
+  const extra = L("git-config-guard.ts", `${self}\nconsole.log("sample"); // ${marker}`);
+  ok(typeof pinned === "number" && pinned > 0 && extra.some((f: any) => f.rule === "allow-marker"), "the allowlisted file's marker count is pinned: one more marked line fails", JSON.stringify(extra.slice(0, 2)));
   const all = lint?.lintGitHygiene?.(import.meta.dir) ?? [null];
-  ok(all.length === 0, "every test under tests/ follows the git hygiene rules", JSON.stringify(all.slice(0, 5)));
+  ok(all.length === 0, "every test under tests/ passes the tripwire", JSON.stringify(all.slice(0, 5)));
 }
 
 console.log(`git-config-guard: ${passed} passed, ${failed} failed`);

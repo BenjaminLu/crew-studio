@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The restored Firstmate chat history and typed external errors in a real browser: after a Studio restart the
 // earlier session is its own labelled block with its files and its vendor error; a new primary follows it; an
 // upload that never reached Studio, a send Studio refused, and a PDF whose pages cannot be read each say so.
