@@ -401,3 +401,28 @@ Coffee-kit 主案例沿用「慢日咖啡 Slow Day Coffee」：繁體中文單�
 - `recordVideo` 正常收尾驗證：83.68 秒、1440x810、完整解碼無錯；啟動後再設定 page viewport 可消除灰邊。正式錄影用 stop-file 正常關閉 context，不能 Ctrl-C。
 - 正式 take：`.tmp/showcase/2026-10-16-take02`，instance 4213，全新 studio-data 與 chrome-testing-profile；未複製預檢任務或成品。原 dogfood 4210 保留。
 - 多船員重疊工作、正式 Coffee-kit 媒體與兩版成片仍待驗證，不將上述準備視為交付完成。
+
+## 16. 新版 onboarding 正式錄製結果（take02，2026-10-16）
+
+- 最新交付要求取代前述雙配樂版本：只交付 Tech House 全片版，目標 1:40–1:50、不得超過 2 分鐘；編號簡體中文 title，不加副標。
+- 正式環境：獨立 `4213`，全新 `.tmp/showcase/2026-10-16-take02/studio-data` 與 Chrome profile。原 dogfood `4210` 與既有任務保留，沒有重派。
+- 錄製起始版本 `071fdd26`；途中為修正 Captain 漏顯示審查員，整合 origin `32422199` 並提交 `6c8e5b3a`。僅在 Coffee-kit 等待船長卡片時重啟；未中斷執行中的 worker。
+- 使用者已明確允許 Playwright 操作網頁。正式核准、修改及驗收均點擊真實 UI 按鈕；沒有直接寫卡片答案、ledger 或任務成功狀態。
+- 新手流程：R-001 Hello Crew Studio（內建範例，非 AI 生成）完成；Firstmate 訪談、流程圖、節點模型、配置 Run、三份文件驗收為 R-002，已完成。
+- Coffee-kit：R-003 配置、R-004 派工、R-005 實作均 succeeded。R-005 於 12:16:27Z 建立、12:28:22Z 完成；site v3 已由 SC-012 核准並入庫。
+- 真實迭代：初版 reduced-motion CSS 被審查擋下；SC-010 要求修復。v2 通過後，SC-011 要求將網站 CTA 改為「探索三杯慢日提案」；v3 通過並核准。網頁變更會觸發相依影片重建，圖片沿用 v1；不能宣稱影片完全未重製。
+- 每輪 reviewer／designer 各三票的規則是既有設定，不是此次新增 gate。三輪審查耗時約 93、98、94 秒。
+- Captain 補錄兩名實際同時執行的 reviewer／designer；沒有假造船員。圖片 adapter 仍不投影為 Captain 船員，列為後續可改善項，不用假活動補畫面。
+- 證據根目錄：`.tmp/showcase/2026-10-16-take02/evidence/`。保留原片、`shot-log.jsonl`、截圖、`site-v2-playback.json`、`site-v3-playback.json`、剪輯計畫與輸出。
+- v3 實測：12 秒、靜音自動播放、播放時間前進；reduced-motion 停在首幀 poster，手動播放後影片可見且時間前進。網站 CTA 指向 `#menu`。
+- 剪輯保留實際 onboarding、Firstmate 對話、正式卡片點擊、Captain 工作、修改、雙審查、核准入庫及整站捲動／影片播放。長等待與操作失誤不放入成片；原片保留。
+
+### 最後檢查
+
+- [x] 新 data／profile；原 dogfood 保留。
+- [x] R-001～R-005 均 succeeded，Coffee-kit site v3 已核准入庫。
+- [x] 真實圖片與 12 秒影片；精確 v3 播放及 reduced-motion 驗證。
+- [x] 正式收件匣核准與修改；Captain 同時兩位實際審查員。
+- [x] 船員投影修正測試 13/13；commit／push 並讀回 origin SHA。
+- [x] 最終 MP4：ffmpeg 完整解碼、macOS AVFoundation 解碼 2,550 影格與音訊均成功；macOS Chromium 正常速度播至 102 秒 ended，無錯誤、掉幀 0。
+- [x] 交付 1:42 Tech House 單一版本，1080p H.264／AAC；原片與 31 張關鍵截圖保留。Downloads：`~/Downloads/crew-studio-showcase-2026-10-16/crew-studio-showcase-tech-house.mp4`。
