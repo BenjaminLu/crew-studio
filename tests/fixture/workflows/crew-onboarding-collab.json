@@ -1,0 +1,315 @@
+{
+  "id": "crew-onboarding-collab",
+  "name": "Crew Studio Onboarding Collaboration",
+  "kind": "doc",
+  "version": 1,
+  "intent": {
+    "keywords": [
+      "crew-onboarding-collab"
+    ]
+  },
+  "roles": [
+    {
+      "id": "writer",
+      "label": "Writer",
+      "skill": "bundled:workflows/skills/v2/writer.md",
+      "provider": "codex"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "intake",
+      "kind": "hook",
+      "label": "Capture intent",
+      "do": "deliver.intake",
+      "x": 160,
+      "y": 140
+    },
+    {
+      "id": "produce",
+      "kind": "hook",
+      "label": "Begin artifact round",
+      "do": "deliver.round",
+      "x": 300,
+      "y": 140
+    },
+    {
+      "id": "design-a",
+      "kind": "agent",
+      "label": "Implement onboarding UI",
+      "role": "writer",
+      "mode": "deliver",
+      "args": {
+        "format": "document",
+        "variant": "A"
+      },
+      "retries": 1,
+      "timeout_s": 900,
+      "x": 460,
+      "y": 140,
+      "provider": "codex"
+    },
+    {
+      "id": "design-b",
+      "kind": "agent",
+      "label": "Design responsive onboarding styles",
+      "role": "writer",
+      "mode": "deliver",
+      "args": {
+        "format": "document",
+        "variant": "B"
+      },
+      "retries": 1,
+      "timeout_s": 900,
+      "x": 460,
+      "y": 280,
+      "provider": "codex"
+    },
+    {
+      "id": "design-c",
+      "kind": "agent",
+      "label": "Write onboarding browser tests",
+      "role": "writer",
+      "mode": "deliver",
+      "args": {
+        "format": "document",
+        "variant": "C"
+      },
+      "retries": 1,
+      "timeout_s": 900,
+      "x": 460,
+      "y": 420,
+      "provider": "codex"
+    },
+    {
+      "id": "design-d",
+      "kind": "agent",
+      "label": "Review onboarding integration",
+      "role": "writer",
+      "mode": "deliver",
+      "args": {
+        "format": "document",
+        "variant": "D"
+      },
+      "retries": 1,
+      "timeout_s": 900,
+      "x": 460,
+      "y": 560,
+      "provider": "codex"
+    },
+    {
+      "id": "checks",
+      "kind": "check",
+      "label": "Artifact readiness",
+      "join": "all",
+      "checks": [
+        {
+          "use": "core/artifact-ready",
+          "proves": [
+            0
+          ]
+        }
+      ],
+      "args": {
+        "producer": "all"
+      },
+      "x": 800,
+      "y": 140
+    },
+    {
+      "id": "refine",
+      "kind": "loop",
+      "label": "Refine artifact",
+      "args": {
+        "producer": "design-a",
+        "round_cap": 5,
+        "route_classes": {
+          "renderer-unavailable": "unavailable"
+        }
+      },
+      "x": 960,
+      "y": 140
+    },
+    {
+      "id": "accept",
+      "kind": "card",
+      "label": "Final acceptance",
+      "args": {
+        "mode": "deliver-accept"
+      },
+      "x": 1120,
+      "y": 140
+    },
+    {
+      "id": "capability",
+      "kind": "card",
+      "label": "Render unavailable",
+      "card": {
+        "title": {
+          "en": "MP4 not verified",
+          "zh-TW": "MP4 \u5c1a\u672a\u9a57\u8b49"
+        },
+        "body": {
+          "en": "Install the optional local renderer in Doctor, then start a new video task. HTML source remains available; no MP4 approval is recorded.",
+          "zh-TW": "\u53ef\u5728 Doctor \u5b89\u88dd\u672c\u6a5f\u8f49\u6a94\u5de5\u5177\u5f8c\u518d\u958b\u59cb\u5f71\u7247\u4efb\u52d9\u3002HTML \u539f\u59cb\u6a94\u4ecd\u5728\uff1b\u76ee\u524d\u672a\u6838\u51c6 MP4\u3002"
+        },
+        "options": [
+          {
+            "id": "close",
+            "label": "Close",
+            "labelZh": "\u95dc\u9589"
+          }
+        ]
+      },
+      "x": 1120,
+      "y": 440
+    },
+    {
+      "id": "escalation",
+      "kind": "card",
+      "label": "Artifact needs attention",
+      "card": {
+        "title": {
+          "en": "Artifact needs attention",
+          "zh-TW": "\u7522\u7269\u9700\u8981\u8655\u7406"
+        },
+        "body": {
+          "en": "Checks did not converge. Close this task and adjust its intent before trying again.",
+          "zh-TW": "\u6aa2\u67e5\u4ecd\u672a\u901a\u904e\u3002\u8acb\u95dc\u9589\u6b64\u4efb\u52d9\uff0c\u8abf\u6574\u4efb\u52d9\u610f\u5716\u5f8c\u518d\u8a66\u4e00\u6b21\u3002"
+        },
+        "options": [
+          {
+            "id": "close",
+            "label": "Close",
+            "labelZh": "\u95dc\u9589"
+          }
+        ]
+      },
+      "x": 1120,
+      "y": 600
+    },
+    {
+      "id": "library",
+      "kind": "hook",
+      "label": "Publish approved artifact",
+      "do": "library.publish",
+      "x": 1440,
+      "y": 140
+    },
+    {
+      "id": "done",
+      "kind": "hook",
+      "label": "Approved",
+      "x": 1600,
+      "y": 140
+    },
+    {
+      "id": "closed",
+      "kind": "hook",
+      "label": "Closed",
+      "args": {
+        "result": "closed"
+      },
+      "x": 1440,
+      "y": 440
+    }
+  ],
+  "edges": [
+    [
+      "intake",
+      "produce"
+    ],
+    [
+      "checks",
+      "refine",
+      "pass|fail"
+    ],
+    [
+      "refine",
+      "accept",
+      "pass"
+    ],
+    [
+      "refine",
+      "produce",
+      "retry"
+    ],
+    [
+      "refine",
+      "capability",
+      "unavailable"
+    ],
+    [
+      "refine",
+      "escalation",
+      "cap|stalled|step-back"
+    ],
+    [
+      "capability",
+      "closed",
+      "close"
+    ],
+    [
+      "escalation",
+      "closed",
+      "close"
+    ],
+    [
+      "accept",
+      "produce",
+      "changes"
+    ],
+    [
+      "accept",
+      "closed",
+      "rejected"
+    ],
+    [
+      "accept",
+      "library",
+      "approved"
+    ],
+    [
+      "library",
+      "done"
+    ],
+    [
+      "produce",
+      "design-a"
+    ],
+    [
+      "design-a",
+      "checks"
+    ],
+    [
+      "produce",
+      "design-b"
+    ],
+    [
+      "design-b",
+      "checks"
+    ],
+    [
+      "produce",
+      "design-c"
+    ],
+    [
+      "design-c",
+      "checks"
+    ],
+    [
+      "produce",
+      "design-d"
+    ],
+    [
+      "design-d",
+      "checks"
+    ]
+  ],
+  "description": "Four parallel Codex workers prepare UI, styles, tests and review for real Studio onboarding.",
+  "policies": {
+    "queue": {
+      "project_capacity": 4
+    }
+  }
+}

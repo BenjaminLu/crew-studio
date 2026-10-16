@@ -1,0 +1,315 @@
+{
+  "id": "four-agent-proposals",
+  "name": "Four Agent Proposals",
+  "kind": "doc",
+  "version": 1,
+  "intent": {
+    "keywords": [
+      "four-agent-proposals"
+    ]
+  },
+  "roles": [
+    {
+      "id": "writer",
+      "label": "Writer",
+      "skill": "bundled:workflows/skills/v2/writer.md",
+      "provider": "codex"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "intake",
+      "kind": "hook",
+      "label": "Capture intent",
+      "do": "deliver.intake",
+      "x": 160,
+      "y": 140
+    },
+    {
+      "id": "produce",
+      "kind": "hook",
+      "label": "Begin artifact round",
+      "do": "deliver.round",
+      "x": 300,
+      "y": 140
+    },
+    {
+      "id": "design-a",
+      "kind": "agent",
+      "label": "Proposal A",
+      "role": "writer",
+      "mode": "deliver",
+      "args": {
+        "format": "document",
+        "variant": "A"
+      },
+      "retries": 1,
+      "timeout_s": 900,
+      "x": 460,
+      "y": 140,
+      "provider": "codex"
+    },
+    {
+      "id": "design-b",
+      "kind": "agent",
+      "label": "Proposal B",
+      "role": "writer",
+      "mode": "deliver",
+      "args": {
+        "format": "document",
+        "variant": "B"
+      },
+      "retries": 1,
+      "timeout_s": 900,
+      "x": 460,
+      "y": 280,
+      "provider": "codex"
+    },
+    {
+      "id": "design-c",
+      "kind": "agent",
+      "label": "Proposal C",
+      "role": "writer",
+      "mode": "deliver",
+      "args": {
+        "format": "document",
+        "variant": "C"
+      },
+      "retries": 1,
+      "timeout_s": 900,
+      "x": 460,
+      "y": 420,
+      "provider": "codex"
+    },
+    {
+      "id": "design-d",
+      "kind": "agent",
+      "label": "Proposal D",
+      "role": "writer",
+      "mode": "deliver",
+      "args": {
+        "format": "document",
+        "variant": "D"
+      },
+      "retries": 1,
+      "timeout_s": 900,
+      "x": 460,
+      "y": 560,
+      "provider": "codex"
+    },
+    {
+      "id": "checks",
+      "kind": "check",
+      "label": "Artifact readiness",
+      "join": "all",
+      "checks": [
+        {
+          "use": "core/artifact-ready",
+          "proves": [
+            0
+          ]
+        }
+      ],
+      "args": {
+        "producer": "all"
+      },
+      "x": 800,
+      "y": 140
+    },
+    {
+      "id": "refine",
+      "kind": "loop",
+      "label": "Refine artifact",
+      "args": {
+        "producer": "design-a",
+        "round_cap": 5,
+        "route_classes": {
+          "renderer-unavailable": "unavailable"
+        }
+      },
+      "x": 960,
+      "y": 140
+    },
+    {
+      "id": "accept",
+      "kind": "card",
+      "label": "Final acceptance",
+      "args": {
+        "mode": "deliver-accept"
+      },
+      "x": 1120,
+      "y": 140
+    },
+    {
+      "id": "capability",
+      "kind": "card",
+      "label": "Render unavailable",
+      "card": {
+        "title": {
+          "en": "MP4 not verified",
+          "zh-TW": "MP4 尚未驗證"
+        },
+        "body": {
+          "en": "Install the optional local renderer in Doctor, then start a new video task. HTML source remains available; no MP4 approval is recorded.",
+          "zh-TW": "可在 Doctor 安裝本機轉檔工具後再開始影片任務。HTML 原始檔仍在；目前未核准 MP4。"
+        },
+        "options": [
+          {
+            "id": "close",
+            "label": "Close",
+            "labelZh": "關閉"
+          }
+        ]
+      },
+      "x": 1120,
+      "y": 440
+    },
+    {
+      "id": "escalation",
+      "kind": "card",
+      "label": "Artifact needs attention",
+      "card": {
+        "title": {
+          "en": "Artifact needs attention",
+          "zh-TW": "產物需要處理"
+        },
+        "body": {
+          "en": "Checks did not converge. Close this task and adjust its intent before trying again.",
+          "zh-TW": "檢查仍未通過。請關閉此任務，調整任務意圖後再試一次。"
+        },
+        "options": [
+          {
+            "id": "close",
+            "label": "Close",
+            "labelZh": "關閉"
+          }
+        ]
+      },
+      "x": 1120,
+      "y": 600
+    },
+    {
+      "id": "library",
+      "kind": "hook",
+      "label": "Publish approved artifact",
+      "do": "library.publish",
+      "x": 1440,
+      "y": 140
+    },
+    {
+      "id": "done",
+      "kind": "hook",
+      "label": "Approved",
+      "x": 1600,
+      "y": 140
+    },
+    {
+      "id": "closed",
+      "kind": "hook",
+      "label": "Closed",
+      "args": {
+        "result": "closed"
+      },
+      "x": 1440,
+      "y": 440
+    }
+  ],
+  "edges": [
+    [
+      "intake",
+      "produce"
+    ],
+    [
+      "checks",
+      "refine",
+      "pass|fail"
+    ],
+    [
+      "refine",
+      "accept",
+      "pass"
+    ],
+    [
+      "refine",
+      "produce",
+      "retry"
+    ],
+    [
+      "refine",
+      "capability",
+      "unavailable"
+    ],
+    [
+      "refine",
+      "escalation",
+      "cap|stalled|step-back"
+    ],
+    [
+      "capability",
+      "closed",
+      "close"
+    ],
+    [
+      "escalation",
+      "closed",
+      "close"
+    ],
+    [
+      "accept",
+      "produce",
+      "changes"
+    ],
+    [
+      "accept",
+      "closed",
+      "rejected"
+    ],
+    [
+      "accept",
+      "library",
+      "approved"
+    ],
+    [
+      "library",
+      "done"
+    ],
+    [
+      "produce",
+      "design-a"
+    ],
+    [
+      "design-a",
+      "checks"
+    ],
+    [
+      "produce",
+      "design-b"
+    ],
+    [
+      "design-b",
+      "checks"
+    ],
+    [
+      "produce",
+      "design-c"
+    ],
+    [
+      "design-c",
+      "checks"
+    ],
+    [
+      "produce",
+      "design-d"
+    ],
+    [
+      "design-d",
+      "checks"
+    ]
+  ],
+  "description": "Local parallel-worker acceptance fixture: four offline proposals join at one acceptance card.",
+  "policies": {
+    "queue": {
+      "project_capacity": 4
+    }
+  }
+}
