@@ -89,6 +89,7 @@ function approvalCard(a) {
       h("button", { class: "btn", onclick: () => postJ("/api/main/approve", { id: a.id, allow: false }).then((r) => r.error && toast(r.error)) }, T("Deny", "拒絕"))));
 }
 function logItem(it, i) {
+  if(it.source === "studio:native-outcome")return h("div",{class:"card x-pad","data-native-outcome":it.id},h("p",{},it.text),...(it.links||[]).filter(l=>/^#\/(run|review)\//.test(l.href)).map(l=>h("a",{class:"btn",href:l.href},l.label)));
   if (it.kind === "captain") return h("div", { class: "msg me", "data-main": "captain" }, h("div", { class: "bub" }, it.text), it.source && it.source !== "desktop" ? h("div", { class: "faint", style: "font-size:11px;text-align:right" }, it.source) : null);
   if (it.kind === "firstmate") return h("div", { class: "msg fm", "data-main": "firstmate" }, h("div", { class: "meta" }, "firstmate", MS.view?.host ? h("span", { class: "vbadge" }, MS.view.host) : null), h("div", { class: "bub" }, md(it.text)));
   if (it.kind === "tool") return h("div", { class: "toolrow", "data-main": "tool", style: "padding:2px 6px" }, h("code", { style: "font-size:12px" }, it.text.slice(0, 160)));
@@ -250,3 +251,6 @@ addEventListener("crew-pair-needed", (e) => {
 const prevOnLang = window.onLang;
 window.onLang = () => { prevOnLang?.(); showChatInfo(); if (isMain()) renderChat(false); };
 setInterval(() => { if (MS.view?.approvals?.length && isMain()) renderChat(false); }, 5000);
+
+// Refresh source-bound durable receipts when native Tasks change. No model wake.
+let outcomeRefresh; window.liveListen("wrun",()=>{clearTimeout(outcomeRefresh);outcomeRefresh=setTimeout(()=>loadMain(),100);});

@@ -1,3 +1,5 @@
+import {NativeOutcomes} from "./host/native-outcomes";
+import {coffeeJourneyProof} from "./domain/coffee-kit";
 import {discoverCoffeeFilmCapability,renderCoffeeFilm} from "./render/coffee-film";
 import {publishGeneratedImage} from "./host/generated-media";
 import {createNativeProviderAdmission} from "./providers/native-admission";
@@ -162,8 +164,11 @@ setInterval(() => send("ping", Date.now()), 20_000);
 // --- the firstmate MAIN session (M2.5): Studio drives it, one input at a time ---
 const PROJECT = startup.project;
 if (!startup.legacy && !process.env.CREW_MAIN_PROJECT) mkdirSync(PROJECT, { recursive: true });
+const nativeOutcomes = new NativeOutcomes(DATA,()=>runtime.engine,id=>coffeeJourneyProof(runtime.engine,m3.store,id));
 const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STATE, nativeWorkspace: !startup.legacy && !process.env.CREW_MAIN_PROJECT,
   nativeTools:()=>runtime.firstmate,
+  onNativeProposal:(origin,result)=>nativeOutcomes.bind(origin,result),
+  nativeOutcomes:(host,thread)=>{try{return nativeOutcomes.list(host,thread);}catch{return[];}},
   onGeneratedImage:async(image,owner)=>{await publishGeneratedImage(m3.media,image,owner);},
   permissionMcp: (b) => ({ command: helperCommand("permission-mcp"), env: { CREW_PERM_SOCKET: b.socket, CREW_PERM_TOKEN: b.token } }) });
 main.onView = (v) => send("main", v);

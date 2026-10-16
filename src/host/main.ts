@@ -35,7 +35,7 @@ export type MainView = {
   pausedReason: string | null; queue: QItem[]; approvals: ReturnType<PermissionBridge["pending"]>; log: LogItem[]; resume: string | null; project: string;
   origin: Origin | null; context?: "studio" | "explicit-project"; holdWakes: boolean; wakeGraceMs: number; drive: Drive | null;
 };
-export type LogItem = { at: number; kind: "captain" | "card" | "wake" | "firstmate" | "tool" | "status" | "system"; text: string; source?: string; status?: string; nativeFailure?:NativeFailure };
+export type LogItem = { at: number; kind: "captain" | "card" | "wake" | "firstmate" | "tool" | "status" | "system"; text: string; source?: string; status?: string; nativeFailure?:NativeFailure; links?:{label:string;href:string}[] };
 
 export type MainOpts = {
   dataDir: string; projectDir: string; stateDir: string; probe?: ProcProbe;
@@ -45,6 +45,8 @@ export type MainOpts = {
   nativeWorkspace?: boolean;
   onGeneratedImage?: (image:import("./types").GeneratedImage,owner:import("../media-library").MediaOwner)=>Promise<void>;
   nativeTools?: ()=>import("./types").NativeMainTools;
+  onNativeProposal?: (origin:import("./native-outcomes").NativeOrigin,result:unknown)=>void;
+  nativeOutcomes?: (host:string|null,thread:string|null)=>LogItem[];
   /** how long a new wake waits for firstmate's own hook to deliver it before Studio sends it itself */
   wakeGraceMs?: number;
 };
@@ -97,7 +99,7 @@ export class MainSession {
 
   view(): MainView {
     return { state: this.state, driver: this.driver(), host: this.session?.host ?? null, sessionId: this.session?.id ?? null, model: this.session?.model ?? null,
-      busy: this.session?.busy ?? false, pausedReason: this.pausedReason, queue: this.queue.list(), approvals: this.bridge.pending(), log: this.log.slice(-200),
+      busy: this.session?.busy ?? false, pausedReason: this.pausedReason, queue: this.queue.list(), approvals: this.bridge.pending(), log: [...this.log, ...(this.o.nativeOutcomes?.(this.session?.host ?? this.driver().host,this.session?.id ?? this.driver().sessionId) ?? [])].sort((a,b)=>a.at-b.at).slice(-200),
       resume: this.lastResume, project: this.o.projectDir, context: this.o.nativeWorkspace ? "studio" : "explicit-project", origin: this.origin, holdWakes: this.origin?.mode === "rehearsal", wakeGraceMs: this.wakeGraceMs,
       drive: this.drive ? { ...this.drive, model: this.session?.model ?? this.drive.model, effort: this.session?.effort ?? this.drive.effort } : null };
   }
@@ -326,7 +328,7 @@ export class MainSession {
   private generatedImageCapability():import("./types").AttachOpts["onGeneratedImage"]{return async image=>{const generation=this.nativeGeneration,session=this.session;const live=()=>!!session&&session===this.session&&session.id===image.thread&&this.state==="attached"&&this.nativeGeneration===generation&&image.live();const controller=new AbortController();this.nativeCalls.add(controller);try{if(!live()||!this.o.onGeneratedImage)throw new Error("Library image ownership unavailable");await this.o.onGeneratedImage(image,{signal:controller.signal,authorize:()=>{if(!live())throw new Error("Library image ownership ended");}});if(!live())throw new Error("Library image ownership ended");}finally{this.nativeCalls.delete(controller);}};}
   private nativeCapability():import("./types").AttachOpts["nativeTools"]{
     if(!this.o.nativeWorkspace||!this.o.nativeTools)return undefined;const tools=this.o.nativeTools();
-    return{onDiagnostic:record=>writeNativeDiagnostic(this.o.dataDir,record),specs:tools.specs,call:async(name,args,identity)=>{const input=this.activeInput,generation=this.nativeGeneration,session=this.session;const live=()=>!!session&&session===this.session&&session.id===identity.thread&&this.state==="attached"&&this.activeInput===input&&this.nativeGeneration===generation&&identity.live();if(!live())throw new NativeToolFailure("owner_ended","The request no longer owns this session. Read the current state before continuing.","此請求已不再持有 session，請先讀取目前狀態。","read_current_state");const controller=new AbortController();this.nativeCalls.add(controller);try{const result=await tools.call(name,args,{key:`${identity.thread}:${identity.turn}`,captain:!!input&&input.kind==="chat"&&(input.source==="desktop"||input.source.startsWith("phone:")),text:input?.text??"",live,signal:controller.signal});if(!live())throw new NativeToolFailure("owner_ended","The request no longer owns this session. Read the current state before continuing.","此請求已不再持有 session，請先讀取目前狀態。","read_current_state");return result;}finally{this.nativeCalls.delete(controller);}}};
+    return{onDiagnostic:record=>writeNativeDiagnostic(this.o.dataDir,record),specs:tools.specs,call:async(name,args,identity)=>{const input=this.activeInput,generation=this.nativeGeneration,session=this.session;const live=()=>!!session&&session===this.session&&session.id===identity.thread&&this.state==="attached"&&this.activeInput===input&&this.nativeGeneration===generation&&identity.live();if(!live())throw new NativeToolFailure("owner_ended","The request no longer owns this session. Read the current state before continuing.","此請求已不再持有 session，請先讀取目前狀態。","read_current_state");const controller=new AbortController();this.nativeCalls.add(controller);try{const result=await tools.call(name,args,{key:`${identity.thread}:${identity.turn}`,captain:!!input&&input.kind==="chat"&&(input.source==="desktop"||input.source.startsWith("phone:")),text:input?.text??"",live,signal:controller.signal});if(!live())throw new NativeToolFailure("owner_ended","The request no longer owns this session. Read the current state before continuing.","此請求已不再持有 session，請先讀取目前狀態。","read_current_state");if(name==="studio_propose_work"&&input?.kind==="chat"&&(input.source==="desktop"||input.source.startsWith("phone:")))this.o.onNativeProposal?.({host:session!.host,thread:identity.thread,turn:identity.turn},result);return result;}finally{this.nativeCalls.delete(controller);}}};
   }
   private activeInput:QItem|null=null;
   private nativeGeneration=0;
