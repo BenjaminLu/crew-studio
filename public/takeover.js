@@ -24,18 +24,25 @@ async function accountAction(action,begin=false){if(ACCOUNT.busy)return;if((begi
 // A reconnect may have missed account events; reconcile without starting auth.
 function refreshAccount(){const read=++ACCOUNT.read,revision=ACCOUNT.revision;return getJ("/api/codex/account").then(v=>{if(read===ACCOUNT.read&&revision===ACCOUNT.revision)accountChanged(v);}).catch(()=>{});}
 addEventListener("crew:live",()=>void refreshAccount());
-function accountPanel(begin=false){
+/** The Codex account's state, message and actions: one source for the Firstmate page's Codex card and Doctor's account card. */
+function codexAccountParts(begin=false){
  if(!ACCOUNT.view&&!ACCOUNT.loading){ACCOUNT.loading=true;refreshAccount().finally(()=>{ACCOUNT.loading=false;});}
  const a=ACCOUNT.view||{state:"unknown"},phone=MS.me.kind==="phone",owned=MS.view&&MS.view.state!=="detached",pending=a.state==="pending",checking=ACCOUNT.busy||a.state==="checking";
- return h("section",{class:"card tk-drive tk-account","data-codex-account":a.state,"data-account-busy":String(checking)},h("h2",{},T("Connect Codex","連接 Codex")),
+ return {a,attrs:{"data-codex-account":a.state,"data-account-busy":String(checking)},
+  status:h("p",{"data-account-status":"1",style:"margin:0"},T(a.reason||"Account not yet verified.",a.reasonZh||"帳號尚未驗證。")),
+  pending:pending?(ACCOUNT.url?h("a",{class:"btn primary",href:ACCOUNT.url,target:"_blank",rel:"noopener noreferrer","data-codex-browser":"1"},T("Open official sign-in page","開啟官方登入頁")):h("p",{class:"muted"},T("Continue in the browser window you opened, or cancel and connect again.","請在已開啟的瀏覽器視窗繼續，或取消後重新連接。"))):null,
+  owned:owned?h("p",{class:"note"},T("Studio already owns a firstmate session. Release it here before changing the account or starting another.","Studio 已在操作 firstmate session；請先在這裡交還，再變更帳號或開新工作。")):null,
+  // signed in (ready): the card's main action is Start, so connecting again is a quiet button
+  buttons:[pending||checking?h("button",{class:"btn","data-codex-cancel":"1",disabled:phone||ACCOUNT.busy||null,onclick:()=>accountAction("cancel")},T("Cancel sign-in","取消登入")):h("button",{class:a.state==="ready"?"btn":"btn primary","data-codex-connect":"1",disabled:phone||owned||null,onclick:()=>accountAction("login",begin)},a.state==="ready"?T("Connect again…","重新連接…"):T("Connect Codex…","連接 Codex…")),
+   !pending&&!checking?h("button",{class:"btn","data-codex-verify":"1",disabled:phone||owned||null,onclick:()=>accountAction("verify")},T("Verify account","驗證帳號")):null]};
+}
+function accountPanel(begin=false){
+ const x=codexAccountParts(begin),a=x.a;
+ return h("section",{class:"card tk-drive tk-account",...x.attrs},h("h2",{},T("Connect Codex","連接 Codex")),
  h("p",{class:"muted"},T("Sign in with ChatGPT here, then start a new thread. No terminal session selection or API key is required.","在這裡使用 ChatGPT 登入，再開新 thread。不必選擇終端機 session，也不需要 API 金鑰。")),
- h("p",{"data-account-status":"1"},T(a.reason||"Account not yet verified.",a.reasonZh||"帳號尚未驗證。")),
- a.model?h("div",{class:"mono faint"},`${a.model} · ${a.effort||T("configured default","設定預設")}`):null,
+ x.status,a.model?h("div",{class:"mono faint"},`${a.model} · ${a.effort||T("configured default","設定預設")}`):null,
  h("div",{class:"faint"},T("Account readiness and repository tool health are separate; tools remain unverified here.","帳號就緒與專案工具健康是不同的檢查；這裡尚未驗證工具。")),
- pending?(ACCOUNT.url?h("a",{class:"btn primary",href:ACCOUNT.url,target:"_blank",rel:"noopener noreferrer","data-codex-browser":"1"},T("Open official sign-in page","開啟官方登入頁")):h("p",{class:"muted"},T("Continue in the browser window you opened, or cancel and connect again.","請在已開啟的瀏覽器視窗繼續，或取消後重新連接。"))):null,
- owned?h("p",{class:"note"},T("Studio already owns a firstmate session. Release it here before changing the account or starting another.","Studio 已在操作 firstmate session；請先在這裡交還，再變更帳號或開新工作。")):null,
- h("div",{class:"actions"},pending||checking?h("button",{class:"btn","data-codex-cancel":"1",disabled:phone||ACCOUNT.busy||null,onclick:()=>accountAction("cancel")},T("Cancel sign-in","取消登入")):h("button",{class:"btn primary","data-codex-connect":"1",disabled:phone||owned||null,onclick:()=>accountAction("login",begin)},T("Connect Codex…","連接 Codex…")),
- !pending&&!checking?h("button",{class:"btn","data-codex-verify":"1",disabled:phone||owned||null,onclick:()=>accountAction("verify")},T("Verify account","驗證帳號")):null));
+ x.pending,x.owned,h("div",{class:"actions"},...x.buttons));
 }
 // Claude: status from the official read-only `claude auth status`; sign-in runs the official `claude auth login`
 // (the CLI opens the browser itself). Neither makes a model request.
@@ -43,7 +50,12 @@ const CLAUDE={login:null,status:null,ready:null,loading:false,loaded:false,busy:
 const claudeReady=()=>CLAUDE.ready?.ok===true&&CLAUDE.login?.state!=="pending";
 /** Why Claude cannot start now, from the preflight: a typed reason, with the crew-token step when that is what is missing. */
 /** "Claude permission mode: auto|default", the operator's CREW_CLAUDE_PERMISSION_MODE (auto when unset), with what it means. */
-function claudeModeText(mode){return h("span",{"data-claude-permission-mode":mode},`Claude permission mode: ${mode} `,h("span",{class:"faint"},mode==="auto"?T("(Claude’s classifier approves or denies tool calls; what it escalates asks you here)","（由 Claude 的分類器核准或拒絕工具呼叫；它升級的請求會在這裡問你）"):T("(every tool outside Studio’s own asks you here)","（Studio 以外的工具都會在這裡問你）")));}
+/** "Claude permission mode: …". Before a Claude Firstmate runs: the configured mode (the operator's CREW_CLAUDE_PERMISSION_MODE, auto when
+ *  unset). While one runs: the mode Claude itself reported (`effective`), saying so when Claude did not enable the requested one. */
+function claudeModeText(mode,effective,running){const shown=running?(effective||mode):mode,line=!running?`Claude permission mode: ${mode}`:!effective?`Claude permission mode: ${mode} (requested, waiting for Claude to confirm)`:effective!==mode?`Claude permission mode: ${effective} (${mode} was requested; Claude did not enable it)`:`Claude permission mode: ${effective}`;
+  return h("span",{"data-claude-permission-mode":shown,...(running&&effective&&effective!==mode?{"data-claude-mode-fallback":"1"}:{})},`${line} `,h("span",{class:"faint"},shown==="auto"?T("(Claude’s classifier approves or denies tool calls; what it escalates asks you here)","（由 Claude 的分類器核准或拒絕工具呼叫；它升級的請求會在這裡問你）"):T("(every tool outside Studio’s own asks you here)","（Studio 以外的工具都會在這裡問你）")));}
+/** The captain's auto-mode rules as Studio found them, and local unrestricted execution, for the Claude Firstmate cards. */
+function claudeAutoRules(am){return am?h("span",{"data-claude-automode":am.state},`Captain auto-mode rules: ${am.summary}`):null;}
 function claudeWhy(){const r=CLAUDE.ready?.ok===false?CLAUDE.ready:CLAUDE.refused;if(!r||r.ok)return null;return h("p",{class:"note","data-claude-start-why":r.code},T(r.en||r.reason,r.zh||r.reason));}
 // `ready`: the preflight (signed in, quota, crew token present) that enables Claude Start and Switch; the server decides with
 // the full read. In Studio's workspace it also carries the sign-in status, so one `claude auth status` serves both.
@@ -51,19 +63,27 @@ function claudeRefresh(force){const read=++CLAUDE.read,before=JSON.stringify([CL
 // Like Codex: a sign-in the captain starts in Studio's own workspace continues into a fresh Claude Firstmate, which greets in the chat.
 function claudeChanged(v){const was=CLAUDE.login?.state;CLAUDE.login=v;if(was==="pending"&&v.state!=="pending"){const begin=v.state==="done"?CLAUDE.begin:null;CLAUDE.begin=null;void claudeRefresh().then(()=>{if(begin&&claudeReady()&&MS.view?.state==="detached"&&MS.view?.context==="studio")void continueNative(begin,"claude");});dispatchEvent(new Event("crew:claude-account"));}render();}
 async function claudeAction(action){if(CLAUDE.busy)return;if(action==="login"&&MS.view?.context==="studio"&&MS.view?.state==="detached")CLAUDE.begin={project:MS.view.project};if(action==="cancel")CLAUDE.begin=null;CLAUDE.busy=true;render();try{const r=await postJ(`/api/claude/account/${action}`,{});if(r.error){CLAUDE.begin=null;return toast(r.error);}claudeChanged(r);}finally{CLAUDE.busy=false;render();}}
-function claudeAccountPanel(o={}){
+/** The Claude account's state, message and actions: one source for the Firstmate page's Claude card and Doctor's account card. */
+function claudeAccountParts(){
  if(!CLAUDE.loaded&&!CLAUDE.loading)void claudeRefresh();
  const l=CLAUDE.login||{state:"idle"},st=CLAUDE.status,phone=MS.me.kind==="phone",pending=l.state==="pending";
  const state=st?.quota==="exhausted"?"exhausted":st?.loginState==="logged-in"?"signed-in":st?.loginState==="not-logged-in"?"signed-out":"unknown";
  const label={"exhausted":T(`Signed in, but quota is exhausted. ${st?.resetAt?"Reported reset: "+new Date(st.resetAt).toLocaleString()+".":"Reset time unknown."} Wait for reset; signing in again will not help.`,`已登入，但額度已耗盡。${st?.resetAt?"回報的重設時間："+new Date(st.resetAt).toLocaleString()+"。":"重設時間未知。"}請等待重設，重新登入沒有幫助。`),"signed-in":T("This Claude CLI context is signed in. Remaining quota is unknown.","這個 Claude CLI 環境已登入。剩餘額度未知。"),"signed-out":T("Not signed in to Claude in this Studio context. An existing Claude session may use another context; this does not mean the machine is globally logged out.","這個 Studio 環境尚未登入 Claude。既有 Claude 對話可能使用另一個環境；這不代表整台機器都已登出。"),"unknown":T("Claude sign-in in this Studio process is unverified. This does not mean the machine is globally logged out.","這個 Studio 程序的 Claude 登入尚未驗證；這不代表整台機器都已登出。")}[state];
- return h("section",{class:"card tk-drive tk-account","data-claude-account":state,"data-claude-login":l.state},h("h2",{},T("Claude account","Claude 帳號")),
-  h("p",{"data-claude-status":"1"},label),
-  l.state!=="idle"?h("p",{class:"muted","data-claude-login-reason":"1"},T(l.reason,l.reasonZh)):null,
+ return {state,pending,phone,attrs:{"data-claude-account":state,"data-claude-login":l.state},
+  status:h("p",{"data-claude-status":"1",style:"margin:0"},label),
+  reason:l.state!=="idle"?h("p",{class:"muted","data-claude-login-reason":"1"},T(l.reason,l.reasonZh)):null,
+  buttons:[state==="exhausted"&&!pending?null:pending?h("button",{class:"btn","data-claude-cancel":"1",disabled:phone||CLAUDE.busy||null,onclick:()=>claudeAction("cancel")},T("Cancel sign-in","取消登入")):h("button",{class:state==="signed-in"?"btn":"btn primary","data-claude-signin":"1",disabled:phone||CLAUDE.busy||null,onclick:()=>claudeAction("login")},state==="signed-in"?T("Sign in again…","重新登入…"):T("Sign in to Claude…","登入 Claude…")),
+   h("button",{class:"btn ghost","data-claude-refresh":"1",onclick:()=>void claudeRefresh()},T("Check again","重新檢查"))],
+  phoneNote:phone?h("p",{class:"note"},T("Sign in on the Mac.","請在 Mac 上登入。")):null};
+}
+function claudeAccountPanel(o={}){
+ const x=claudeAccountParts();
+ return h("section",{class:"card tk-drive tk-account",...x.attrs},h("h2",{},T("Claude account","Claude 帳號")),
+  x.status,x.reason,
   h("div",{class:"faint"},T("Signing in makes no model request.","登入不會呼叫模型。")),
-  h("div",{class:"actions"},state==="exhausted"&&!pending?null:pending?h("button",{class:"btn","data-claude-cancel":"1",disabled:phone||CLAUDE.busy||null,onclick:()=>claudeAction("cancel")},T("Cancel sign-in","取消登入")):h("button",{class:state==="signed-in"?"btn":"btn primary","data-claude-signin":"1",disabled:phone||CLAUDE.busy||null,onclick:()=>claudeAction("login")},state==="signed-in"?T("Sign in again…","重新登入…"):T("Sign in to Claude…","登入 Claude…")),
-   h("button",{class:"btn ghost","data-claude-refresh":"1",onclick:()=>void claudeRefresh()},T("Check again","重新檢查"))),
-  o.next!==false&&state==="signed-in"&&!pending?claudeNextStep(phone):null,
-  phone?h("p",{class:"note"},T("Sign in on the Mac.","請在 Mac 上登入。")):null);
+  h("div",{class:"actions"},...x.buttons),
+  o.next!==false&&x.state==="signed-in"&&!x.pending?claudeNextStep(x.phone):null,
+  x.phoneNote);
 }
 // Signed in: the card's next step. Nothing runs: start Claude. Codex runs: say so and offer an explicit switch, never a silent replace.
 function claudeNextStep(phone){
@@ -98,7 +118,7 @@ window.liveListen("codex-account",m=>accountChanged(JSON.parse(m.data),"live"));
 window.crewFirstmateWelcome=()=>{
  if(MS.view?.state!=="detached")return null;
  if(!TK.data&&!TK.loading)loadTakeover();
- return h("section",{class:"card tk-drive","data-firstmate-welcome":"1"},h("h2",{},T("Welcome. Let’s make something.","歡迎，我們來做點東西。")),h("p",{},T("Connect an agent account, then begin with Studio’s own Firstmate. No terminal session is needed.","連接 agent 帳號，再和 Studio 自己的 Firstmate 開始。不需要終端機 session。")),TK.data&&!TK.data.error?startCards(TK.data,MS.me.kind==="phone"):h("p",{},T("Loading your workspace…","正在載入你的工作空間…")),accountPanel(true),claudeAccountPanel({next:false}));
+ return h("section",{class:"card tk-drive","data-firstmate-welcome":"1"},h("h2",{},T("Welcome. Let’s make something.","歡迎，我們來做點東西。")),h("p",{},T("Connect an agent account, then begin with Studio’s own Firstmate. No terminal session is needed.","連接 agent 帳號，再和 Studio 自己的 Firstmate 開始。不需要終端機 session。")),TK.data&&!TK.data.error?startCards(TK.data,MS.me.kind==="phone",true):h("p",{},T("Loading your workspace…","正在載入你的工作空間…")));
 };
 // Project staffing is separate from the primary host. Draft answers never start work.
 const STAFF={projects:null,project:'',view:null,error:null,busy:false,open:false};
@@ -127,7 +147,7 @@ function viewTakeover() {
     h("p", {}, T("Connect your account and start new work in the shown project. Taking over an existing session is optional.",
       "連接帳號，在下方顯示的專案開始新工作。接手既有 session 是選用功能。"))))];
 
-  if(!driving)kids.push(startCards(d,phone),accountPanel(),claudeAccountPanel({next:false}));
+  if(!driving)kids.push(startCards(d,phone)); // one card per host: account state and Start together
   if (driving) {
     kids.push(h("section", { class: "card tk-drive", "data-takeover": o ? o.mode : "attached" },
       h("div", { class: "tk-row" }, h("span", { class: "badge run" }, h("span", { class: "d" }), o?.mode === "rehearsal" ? T("Rehearsal", "演練中") : T("Studio is driving", "Studio 駕駛中")),
@@ -139,8 +159,10 @@ function viewTakeover() {
         v.host ? kvRow(T("Host", "主機"), hostBadge(v.host)) : null,
         v.drive?.host === "codex"
           ? kvRow(T("Model · effort", "模型 · 推理強度"), h("span", { "data-model-effort": "1" }, `${v.drive.model || v.model || "—"} · ${v.drive.effort || T("config default", "設定預設")} `, h("span", { class: "faint" }, T("(from your Codex config)", "（來自你的 Codex 設定）"))))
-          : kvRow(T("Model · mode", "模型 · 模式"), h("span", { "data-claude-model": "1" }, `${v.drive?.model || (v.model !== "claude" ? v.model : "") || o?.model || "—"}${v.drive?.effort ? ` · ${v.drive.effort}` : ""} · ${o?.permissionMode || v.drive?.permissionMode || "default"} → ${T("prompts come here", "權限詢問送到這裡")}`)),
-        v.host === "claude" && v.drive?.path === "fresh" && v.drive?.permissionMode ? kvRow(T("Permissions", "權限"), claudeModeText(v.drive.permissionMode)) : null,
+          : kvRow(T("Model · mode", "模型 · 模式"), h("span", { "data-claude-model": "1" }, `${v.drive?.model || (v.model !== "claude" ? v.model : "") || o?.model || "—"}${v.drive?.effort ? ` · ${v.drive.effort}` : ""} · ${v.drive?.effectivePermissionMode || o?.permissionMode || v.drive?.permissionMode || "default"} → ${T("prompts come here", "權限詢問送到這裡")}`)),
+        v.host === "claude" && v.drive?.path === "fresh" && v.drive?.permissionMode ? kvRow(T("Permissions", "權限"), claudeModeText(v.drive.permissionMode, v.drive.effectivePermissionMode, true)) : null,
+        v.host === "claude" && v.drive?.path === "fresh" && v.drive?.autoMode ? kvRow(T("Auto-mode rules", "Auto mode 規則"), claudeAutoRules(v.drive.autoMode)) : null,
+        v.host === "claude" && v.drive?.path === "fresh" && v.drive?.executionMode === "local-unrestricted" ? kvRow(T("Execution", "執行"), h("span", { "data-claude-execution": "local-unrestricted", style: "color:var(--warn)" }, T("unrestricted: runs as you with no OS sandbox or egress limits (operator .env CREW_LOCAL_UNRESTRICTED=1)", "unrestricted：以你的身分執行，沒有 OS 沙箱或對外網路限制（operator .env CREW_LOCAL_UNRESTRICTED=1）"))) : null,
         v.host === "claude" && v.drive?.path === "fresh" && v.context === "studio" ? kvRow(T("Sign-in", "登入"), T("the crew token, in Studio's own Claude settings", "crew token，使用 Studio 自己的 Claude 設定")) : null,
         v.drive?.host === "codex" ? kvRow(T("Approvals · sandbox", "核准 · 沙箱"), `${v.drive.approvalPolicy || "—"} · ${v.drive.sandbox || "—"} → ${T("requests come here", "核准請求送到這裡")}`) : null,
         o ? kvRow(T("Terminal", "終端機"), o.terminal ? h("span", { style: "color:var(--warn)" }, T("still open: ", "還開著："), o.terminal) : T("no sign of it", "看不到")) : null,
@@ -211,38 +233,46 @@ function sessionList(d, fm, phone) {
       : h("div", { class: "empty" }, T("No Claude Code or Codex session found for this project.", "找不到這個專案的 Claude Code 或 Codex session。")));
 }
 
-function startCodexCard(d, phone) {
+function startCodexCard(d, phone, begin = false) {
   const c = d.codex || {}, cfg = c.config || {};const account=ACCOUNT.view||c.account||{};const native=d.view?.context==="studio";
-  return h("section", { class: "card tk-drive", "data-section": "start-codex" }, h("h2", {}, T("Firstmate on Codex", "Codex 上的 Firstmate")),
+  const acc = codexAccountParts(begin); // the account lives on this card: status, sign-in, verify, then Start
+  return h("section", { class: "card tk-drive", "data-section": "start-codex", ...acc.attrs }, h("h2", {}, T("Firstmate on Codex", "Codex 上的 Firstmate")),
     h("p", { class: "muted", style: "margin:0" }, native ? T("A fresh Firstmate in Studio’s own workspace. No repository, terminal session or handoff is required.","在 Studio 自己的工作空間開啟全新的 Firstmate。不需要 repo、終端機 session 或交接檔。") : T("Explicit project override: this fresh thread follows the shown project’s authority and handoff.","明確指定的專案：新對話會遵循下方專案的授權與交接內容。")),
     h("div", { class: "tk-kv" },
       kvRow(T("Folder", "資料夾"), h("span", { class: "mono" }, d.project)),
       kvRow(T("First message", "第一則訊息"), native ? T("Studio’s own Firstmate introduction","Studio 自己的 Firstmate 開場") : c.handoffFile ? h("span", { class: "mono", "data-handoff-file": c.handoffFile }, c.handoffFile) : T("No explicit project handoff", "沒有明確指定的專案交接檔")),
       kvRow(T("Model · effort", "模型 · 推理強度"), h("span", { "data-codex-config": "1" }, `${cfg.model || T("Codex default", "Codex 預設")} · ${cfg.effort || T("Codex default", "Codex 預設")} `,
-        h("span", { class: "faint" }, cfg.from?.length ? T(`(configured in ${cfg.from.join(", ")}; effective values appear after startup)`, `（設定於 ${cfg.from.join("、")}；啟動後會顯示實際值）`) : T("(Studio never overrides it)", "（Studio 不會改）"))))),
-    h("div", { class: "actions" }, h("button", { class: native && account.state==="ready" && !claudeReady() ? "btn primary" : "btn", id: "startCodexBtn", disabled: phone || account.state!=="ready" || ACCOUNT.busy || (MS.view||d.view)?.state!=="detached" || null, onclick: () => native ? continueNative({project:d.project}) : startCodexFlow(d) }, native ? T("Start on Codex","在 Codex 上開始") : T("Start Firstmate on Codex…", "在 Codex 上啟動 Firstmate…"))));
+        h("span", { class: "faint" }, cfg.from?.length ? T(`(configured in ${cfg.from.join(", ")}; effective values appear after startup)`, `（設定於 ${cfg.from.join("、")}；啟動後會顯示實際值）`) : T("(Studio never overrides it)", "（Studio 不會改）")))),
+      kvRow(T("Account", "帳號"), acc.status)), acc.pending, acc.owned,
+    h("div", { class: "actions" }, ...(account.state === "ready" ? [] : acc.buttons), h("button", { class: native && account.state==="ready" && !claudeReady() ? "btn primary" : "btn", id: "startCodexBtn", disabled: phone || account.state!=="ready" || ACCOUNT.busy || (MS.view||d.view)?.state!=="detached" || null, onclick: () => native ? continueNative({project:d.project}) : startCodexFlow(d) }, native ? T("Start on Codex","在 Codex 上開始") : T("Start Firstmate on Codex…", "在 Codex 上啟動 Firstmate…")), ...(account.state === "ready" ? acc.buttons : [])));
 }
 
 // Studio's own workspace: Codex and Claude side by side; each starts only from its own button, never the other.
-function startCards(d, phone) {
-  if (d.view?.context !== "studio") return startCodexCard(d, phone);
-  return h("div", { class: "tk-hosts", "data-section": "start-firstmate" }, startCodexCard(d, phone), startClaudeCard(d, phone));
+function startCards(d, phone, begin = false) {
+  // an explicit project starts only on Codex: Claude keeps its own account card there, still one card per host
+  if (d.view?.context !== "studio") return h("div", { class: "tk-hosts" }, startCodexCard(d, phone, begin), claudeAccountPanel({ next: false }));
+  return h("div", { class: "tk-hosts", "data-section": "start-firstmate" }, startCodexCard(d, phone, begin), startClaudeCard(d, phone));
 }
 function startClaudeCard(d, phone) {
   // this card is Studio's workspace: read the preflight even when the first read ran before the workspace was known
   if (!CLAUDE.loading && (!CLAUDE.loaded || (CLAUDE.ready === null && !CLAUDE.readyAsked))) { CLAUDE.readyAsked = true; void claudeRefresh(true); }
   const c = d.claude || {}, ready = claudeReady(), codexReady = (ACCOUNT.view || d.codex?.account || {}).state === "ready";
   // the same body as the Codex card: what it is, folder, first message, model · effort; then how it signs in
-  return h("section", { class: "card tk-drive", "data-section": "start-claude", "data-claude-ready": String(ready) }, h("h2", {}, T("Firstmate on Claude", "Claude 上的 Firstmate")),
+  const acc = claudeAccountParts(); // the account lives on this card: status, sign-in, check again, then Start
+  return h("section", { class: "card tk-drive", "data-section": "start-claude", "data-claude-ready": String(ready), ...acc.attrs }, h("h2", {}, T("Firstmate on Claude", "Claude 上的 Firstmate")),
     h("p", { class: "muted", style: "margin:0" }, T("A fresh Firstmate in Studio’s own workspace. No repository, terminal session or handoff is required.", "在 Studio 自己的工作空間開啟全新的 Firstmate。不需要 repo、終端機 session 或交接檔。")),
     h("div", { class: "tk-kv" },
       kvRow(T("Folder", "資料夾"), h("span", { class: "mono" }, d.project)),
       kvRow(T("First message", "第一則訊息"), T("Studio’s own Firstmate introduction", "Studio 自己的 Firstmate 開場")),
       kvRow(T("Model · effort", "模型 · 推理強度"), h("span", { "data-claude-config": "1" }, `${c.model || T("Claude default", "Claude 預設")} · ${c.effort || T("Claude default", "Claude 預設")} `,
         h("span", { class: "faint" }, T("(signs in with the crew token; Studio’s own tools are allowed)", "（用 crew token 登入；Studio 自己的工具可直接用）")))),
-      ready && CLAUDE.ready?.permissionMode ? kvRow(T("Permissions", "權限"), claudeModeText(CLAUDE.ready.permissionMode)) : null),
+      ready && CLAUDE.ready?.permissionMode ? kvRow(T("Permissions", "權限"), claudeModeText(CLAUDE.ready.permissionMode)) : null,
+      ready && CLAUDE.ready?.autoMode ? kvRow(T("Auto-mode rules", "Auto mode 規則"), claudeAutoRules(CLAUDE.ready.autoMode)) : null,
+      kvRow(T("Account", "帳號"), acc.status)),
+    acc.reason,
     CLAUDE.ready || CLAUDE.refused ? claudeWhy() : ready ? null : h("p", { class: "faint", "data-claude-start-why": "checking" }, T("Checking Claude…", "正在確認 Claude…")),
-    h("div", { class: "actions" }, h("button", { class: ready && !codexReady ? "btn primary" : "btn", id: "startClaudeBtn", disabled: phone || !ready || ACCOUNT.starting || (MS.view || d.view)?.state !== "detached" || null, onclick: () => continueNative({ project: d.project }, "claude") }, T("Start on Claude", "在 Claude 上開始"))));
+    h("div", { class: "actions" }, ...(acc.state === "signed-in" ? [] : acc.buttons), h("button", { class: ready && !codexReady ? "btn primary" : "btn", id: "startClaudeBtn", disabled: phone || !ready || ACCOUNT.starting || (MS.view || d.view)?.state !== "detached" || null, onclick: () => continueNative({ project: d.project }, "claude") }, T("Start on Claude", "在 Claude 上開始")), ...(acc.state === "signed-in" ? acc.buttons : [])),
+    acc.phoneNote);
 }
 
 async function openNativeConversation(){chatMode="main";store.set("crew.chatMode","main");location.hash="#/board";await loadMain();openChat(true);renderChat(false);}

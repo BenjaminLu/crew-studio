@@ -84,7 +84,7 @@ export function createTakeover(d: Deps) {
     if (p === "/api/main/start/claude-ready" && !writing) {
       if (!d.claudePreflight) return json({ ok: false, code: "claudeUnavailable", reason: "Claude is not available to Studio / Studio 無法使用 Claude" });
       const { ready: r, status } = await d.claudePreflight();
-      return json({ ...(r.ok ? { ok: true, model: r.model, effort: r.effort, permissionMode: r.permissionMode } : r), status });
+      return json({ ...(r.ok ? { ok: true, model: r.model, effort: r.effort, permissionMode: r.permissionMode, autoMode: r.autoMode } : r), status });
     }
     if (!writing) return null;
     let b: any = {};
@@ -111,7 +111,7 @@ export function createTakeover(d: Deps) {
       const now = d.main.view();
       if (now.host !== "codex" || !["attached", "paused"].includes(now.state)) return json({ error: "The Firstmate changed while Claude was checked; review it first / 檢查 Claude 期間 Firstmate 已變更，請先確認", code: "changed" }, 409);
       await d.main.detach();
-      const r = await d.main.startFresh("claude", undefined, { env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode });
+      const r = await d.main.startFresh("claude", undefined, { env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode });
       return json(r, r.ok ? 200 : 409);
     }
     if (p === "/api/main/start" && b?.host === "claude") {
@@ -121,7 +121,7 @@ export function createTakeover(d: Deps) {
       if (!d.claudePrimary) return json({ ok: false, code: "claudeUnavailable", reason: "Claude is not available to Studio / Studio 無法使用 Claude" }, 409);
       const ready = await d.claudePrimary();
       if (!ready.ok) return json(ready, 409);
-      const r = await d.main.startFresh("claude", undefined, { env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode });
+      const r = await d.main.startFresh("claude", undefined, { env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode });
       return json(r, r.ok ? 200 : 409);
     }
     if (p === "/api/main/start") {

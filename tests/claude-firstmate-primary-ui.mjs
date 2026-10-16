@@ -21,8 +21,8 @@ writeFileSync(join(home, ".claude-login-mode"), "success");
 const port = await freePort(), base = `http://127.0.0.1:${port}`, token = "claude-primary-ui-token", shots = process.env.CLAUDE_PRIMARY_SHOTS;
 const env = { ...process.env, USER: process.env.USER || "fixture-user", LOGNAME: process.env.LOGNAME || "fixture-user", HOME: home, CODEX_HOME: join(home, ".codex"), CREW_DATA: data,
   CREW_RUNTIME_DIR: join(tmp, "runtime"), CREW_SESSION_TOKEN: token, CREW_PORT: String(port), CREW_GH: "0", CREW_CHAT_PROVIDER: "stub", CREW_INSTALL_RUNNER: "mock",
-  CREW_CLAUDE_BIN: join(here, "fixture/claude-login.mjs"), CREW_HOST_CLAUDE_BIN: join(here, "stub-host-claude.mjs"), CREW_KEYCHAIN_TOOL: keychain, CREW_HOST_CODEX_BIN: join(here, "fixture/codex-account.mjs") };
-for (const k of ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "CREW_FM_STATE", "CREW_MAIN_PROJECT"]) delete env[k];
+  CREW_CLAUDE_BIN: join(here, "fixture/claude-login.mjs"), CREW_HOST_CLAUDE_BIN: join(here, "stub-host-claude.mjs"), CREW_KEYCHAIN_TOOL: keychain, CREW_HOST_CODEX_BIN: join(here, "fixture/codex-account.mjs"), STUB_EFFECTIVE_MODE_FILE: join(tmp, "effective-mode") };
+for (const k of ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "CREW_FM_STATE", "CREW_MAIN_PROJECT", "CREW_CLAUDE_PERMISSION_MODE", "CREW_LOCAL_UNRESTRICTED", "STUB_EFFECTIVE_MODE"]) delete env[k];
 const app = spawn("bun", ["src/server.ts"], { cwd: join(here, ".."), env, stdio: ["ignore", "pipe", "pipe"] }); app.stdout.resume(); app.stderr.resume();
 let browser, pass = 0, fail = 0; const errors = [];
 const ok = (v, n) => { if (v) { console.log("ok " + n); pass++; } else { console.log("FAIL " + n); fail++; } };
@@ -41,6 +41,10 @@ try {
   await p.goto(base + "/#/firstmate");
   ok(await seen(p, '[data-section="start-firstmate"] [data-section="start-codex"]') && await seen(p, '[data-section="start-firstmate"] [data-section="start-claude"]'), "the Firstmate page offers Codex and Claude together");
   ok(await seen(p, '[data-claude-start-why="claudeNotSignedIn"]', 20000) && await p.locator("#startClaudeBtn").isDisabled(), "Claude cannot start before the Claude account card shows signed in");
+  ok(await p.locator('.tk-account').count() === 0 && await p.locator('[data-section="start-codex"][data-codex-account] [data-codex-connect]').count() === 1 && await p.locator('[data-section="start-claude"][data-claude-account="signed-out"] [data-claude-signin]').count() === 1, "one card per host: each host card carries its account state and sign-in, and no separate account card sits beside it");
+  await p.goto(base + "/#/board");
+  ok(await seen(p, "[data-firstmate-welcome] [data-section=\"start-claude\"][data-claude-account]") && await p.locator("[data-firstmate-welcome] .tk-account").count() === 0, "the board welcome follows the same rule: one card per host");
+  await p.goto(base + "/#/firstmate"); await seen(p, '[data-section="start-claude"]');
   const fold = await p.locator("#startClaudeBtn").boundingBox(), fold2 = await p.locator("#startCodexBtn").boundingBox();
   ok(fold && fold2 && fold.y + fold.height <= 900 && fold2.y + fold2.height <= 900, "both start buttons are above the fold at 1280×900");
   const [bc, bl] = [await p.locator('[data-section="start-codex"]').boundingBox(), await p.locator('[data-section="start-claude"]').boundingBox()];
@@ -72,6 +76,7 @@ try {
   await shot(p, "chat-claude-greeting");
   await p.goto(base + "/#/firstmate"); await seen(p, "[data-claude-model]");
   ok(/Claude permission mode: auto/.test(await p.locator('.tk-drive [data-claude-permission-mode]').first().innerText().catch(() => "")), "the running Firstmate card shows Claude permission mode: auto");
+  ok(/Captain auto-mode rules: none/.test(await p.locator('.tk-drive [data-claude-automode]').first().innerText().catch(() => "")), "the running card says whether the captain's auto-mode rules are applied (none here: built-in defaults)");
   await shot(p, "firstmate-claude-running");
 
   // after Stop, the chat itself offers Start on Claude (Codex is not signed in, so it offers no Codex)
@@ -121,6 +126,14 @@ try {
   ok(await seen(p, '#chatLog :text("echo: Coffee onboarding")', 15000), "after the switch the right-side chat shows the Claude greeting");
   await shot(p, "chat-after-switch");
   await api("/api/main/detach", {});
+  // Claude did not enable auto: the card shows the effective mode and says so
+  writeFileSync(join(tmp, "effective-mode"), "default");
+  const fb = await api("/api/main/start", { host: "claude", confirm: true });
+  for (let i = 0; i < 200 && !(await api("/api/main")).drive?.effectivePermissionMode; i++) await new Promise((r) => setTimeout(r, 50));
+  await p.goto(base + "/#/firstmate"); await seen(p, ".tk-drive [data-claude-permission-mode]");
+  ok(fb.ok && (await p.locator(".tk-drive [data-claude-permission-mode]").first().innerText()).includes("Claude permission mode: default (auto was requested; Claude did not enable it)"), "when Claude falls back, the card shows the effective mode and that auto was requested");
+  await shot(p, "claude-mode-fallback");
+  await api("/api/main/detach", {}); rmSync(join(tmp, "effective-mode"), { force: true });
   if (shots) { // the review set: the choice, the Claude card, the chat greeting; 1280 light English and 390 dark Traditional Chinese
     codexAuth(false); await api("/api/codex/account/verify", {}).catch(() => null);
     for (const o of [{ w: 1280, h: 900, theme: "light", lang: "en" }, { w: 390, h: 844, theme: "dark", lang: "zh-TW" }]) {

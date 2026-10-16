@@ -33,6 +33,8 @@ export type HostEvent =
   | { type: "turnStart"; source: "hook" | "task" }
   | { type: "forked"; oldId: string; newId: string; file?: string | null }
   | { type: "exit"; code: number | null; stderr: string }
+  /** the permission mode the CLI itself reports (stream-json init, or a later status message): the effective one */
+  | { type: "permissionMode"; mode: string }
   /** the vendor refused the turn for a typed reason (no fallback to another host); `raw` is the vendor's own event, kept in-process */
   | { type: "hostRefusal"; code: HostRefusalCode; reason: { en: string; "zh-TW": string }; raw?: unknown };
 
@@ -88,6 +90,8 @@ export type AttachOpts = {
   studioMcp?: { command: string[] };
   /** extra environment for the CLI (after cleanEnv), e.g. FM_IN_ROUND=1 for a rehearsal */
   env?: Record<string, string>;
+  /** claude fresh primary: absolute paths (globs allowed) the model's edit tools may never write, passed as Edit(//path) deny rules */
+  denyEdits?: string[];
 };
 
 export interface Host {

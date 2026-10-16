@@ -5,7 +5,7 @@
 // behaviour: STUB_TOOL (asks permission through the real permission MCP server
 // from --mcp-config), STUB_SLOW (streams until interrupted), otherwise an echo.
 // A session id starting with "fork-" is re-identified as "<id>-new" on init.
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
@@ -56,9 +56,15 @@ async function askPermission(name, input) {
   return JSON.parse(r.result.content[0].text);
 }
 
+// the CLI reports the mode it actually runs in at init: the requested --permission-mode, unless a knob says Claude fell back
+// (STUB_EFFECTIVE_MODE, or the file named by STUB_EFFECTIVE_MODE_FILE, read when the session starts)
+const requestedMode = argv.includes("--permission-mode") ? argv[argv.indexOf("--permission-mode") + 1] : "default";
+const knobMode = (() => { try { const f = process.env.STUB_EFFECTIVE_MODE_FILE; if (f && existsSync(f)) return readFileSync(f, "utf8").trim(); } catch {} return process.env.STUB_EFFECTIVE_MODE || ""; })();
+const effectiveMode = () => knobMode || requestedMode;
+
 async function turn(text) {
   if (!inited && process.env.STUB_SEED_FILE) appendFileSync(process.env.STUB_SEED_FILE, JSON.stringify({ seed: text, pid: process.pid }) + "\n");
-  if (!inited) { inited = true; out({ type: "system", subtype: "init", session_id: id, model: "stub-opus", tools: [] }); }
+  if (!inited) { inited = true; out({ type: "system", subtype: "init", session_id: id, model: "stub-opus", tools: [], permissionMode: effectiveMode() }); }
   touch({ type: "user", message: { role: "user", content: text } });
   if (text.includes("STUB_NATIVE ")) {
     // STUB_NATIVE <tool> <json args>: list Studio's tools over its MCP helper, then call one, as the CLI would for mcp__studio__<tool>
@@ -106,7 +112,7 @@ async function turn(text) {
   }
   touch({ type: "assistant", message: { role: "assistant", content: "done" } });
   if (text.includes("STUB_LATER")) setTimeout(() => { // as an asyncRewake Stop hook does: a turn nobody sent
-    out({ type: "system", subtype: "init", session_id: id, model: "stub-opus", tools: [] });
+    out({ type: "system", subtype: "init", session_id: id, model: "stub-opus", tools: [], permissionMode: effectiveMode() });
     out({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "woken by the hook" }] } });
     out({ type: "result", subtype: "success", is_error: false, result: "woken by the hook" });
   }, 300);

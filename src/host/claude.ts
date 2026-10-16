@@ -9,7 +9,10 @@
 // in opts.env), and hands it Studio's native tools through Studio's own MCP helper
 // (src/mcp.ts) over owned stdio. That helper reaches back to this session over a
 // private unix socket (0700 dir, random token); only the native tool names are
-// pre-allowed, every other tool still asks the permission bridge.
+// pre-allowed. In the default (manual) mode every other tool asks the permission bridge;
+// in auto mode Claude's classifier approves or denies the rest, and only what it escalates
+// (ask rules, paths outside the workspace, repeated blocks) reaches the bridge. Deny rules
+// (opts.denyEdits) hold in every mode.
 //   CREW_HOST_CLAUDE_BIN       executable (default "claude"; a .mjs path runs under bun: test stub)
 //   CREW_HOST_CLAUDE_PROJECTS  where session files live (default ~/.claude/projects)
 import { chmodSync, closeSync, existsSync, mkdtempSync, openSync, readSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -193,6 +196,8 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
         if (fresh) args.push("--setting-sources", "user");
         // Studio's own native tools carry their own captain authority (cards, staffing, ledger): pre-allowed by exact name only
         if (native) args.push("--allowedTools", native.specs.map((t) => `mcp__${studioName}__${t.name}`).join(","));
+        // edit-tool deny rules hold even in auto mode: Edit(//abs/path) covers every built-in file-editing tool and shell redirects
+        if (fresh && opts.denyEdits?.length) args.push("--disallowedTools", opts.denyEdits.filter((x) => x.startsWith("/") && !x.includes(",")).map((x) => `Edit(/${x})`).join(","));
         const p = spawnJsonl(binArgv(bin, args), opts.cwd, { ...cleanEnv(), ...(opts.env ?? {}) }, (m) => {
           if (m.parent_tool_use_id) return; // subagent traffic stays inside the session
           if (m.type === "system" && m.subtype === "task_notification") notified = true;
@@ -201,9 +206,12 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
           if (m.type === "system" && m.subtype === "init") {
             external();
             if (m.model) model = String(m.model);
+            if (m.permissionMode) emit({ type: "permissionMode", mode: String(m.permissionMode) });
             if (!named && m.session_id === id) named = true;
             if (m.session_id && m.session_id !== id && fresh && !named) { emit({ type: "exit", code: null, stderr: "claude did not start the requested new session id" }); endTurn("failed", "Claude did not start the requested new session id"); p.kill(15); return; }
             if (m.session_id && m.session_id !== id) { const old = id; id = String(m.session_id); forkPending = false; emit({ type: "forked", oldId: old, newId: id }); }
+          } else if (m.type === "system" && m.subtype === "status" && m.permissionMode) {
+            emit({ type: "permissionMode", mode: String(m.permissionMode) }); // the mode changed during the session
           } else if (m.type === "stream_event") {
             external();
             const ev = m.event;

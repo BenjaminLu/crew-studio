@@ -8,7 +8,7 @@ CREW_LOCAL_DEPENDENCY_ROOT=/absolute/path/to/crew-studio
 ```
 
 - Restart Studio after changing these values. Existing running jobs retain their previous execution mode.
-- This disables Studio's OS sandbox wrappers and model-only egress proxy restrictions for worker, image, and check processes. Codex Firstmate uses `danger-full-access` for fresh, resumed, and forked threads and each turn.
+- This disables Studio's OS sandbox wrappers and model-only egress proxy restrictions for worker, image, and check processes. Codex Firstmate uses `danger-full-access` for fresh, resumed, and forked threads and each turn. Claude Firstmate was never wrapped in Studio's OS sandbox or egress proxy; in this mode its first message carries the same local execution notice, and its permission bridge, deny rules, `--strict-mcp-config` and user-only settings stay.
 - Dependency installation is instructed to remain within the configured repository, never globally. With OS isolation disabled, this is an agent instruction, not a filesystem enforcement boundary.
 - Task scope, registered project identity, captain approvals, signed staffing/ledger checks, private worker login handling, tool authority, and artifact validation remain in effect.
 - Job records report `executionMode`; Doctor and startup output explicitly report disabled isolation. This mode does not imply that a workflow passed acceptance.

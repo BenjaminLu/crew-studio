@@ -9,6 +9,7 @@ import {NativeToolFailure,type NativeFailure} from './types';
 // pauses and alerts the captain instead of forking the conversation.
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { localExecutionNotice } from "../local-execution";
 import { claudeHost } from "./claude";
 import { codexHost } from "./codex";
 import { PermissionBridge } from "./permission";
@@ -28,7 +29,9 @@ export type Origin = { id: string; host: HostId; file: string | null; cwd: strin
   at: string; handoff: string; terminal: string | null; originWrites: number; lastOriginWrite: string | null };
 /** How the session Studio drives came to be, and the settings its vendor reports (Studio never overrides them). */
 export type Drive = { host: HostId; path: SessionPath; statement: string; noFork: string | null; model: string | null; effort: string | null;
-  approvalPolicy: string | null; sandbox: string | null; seededFrom: string | null; handoff: string | null; permissionMode?: string | null };
+  approvalPolicy: string | null; sandbox: string | null; seededFrom: string | null; handoff: string | null; permissionMode?: string | null;
+  /** claude: the mode the CLI reported (null until it does); the captain's autoMode rules; local unrestricted execution */
+  effectivePermissionMode?: string | null; autoMode?: { state: string; summary: string } | null; executionMode?: "default" | "local-unrestricted" | null };
 export type MainState = "detached" | "attaching" | "detaching" | "attached" | "paused";
 export type MainView = {
   state: MainState; driver: Driver; host: HostId | null; sessionId: string | null; model: string | null; busy: boolean;
@@ -253,7 +256,7 @@ export class MainSession {
   }
 
   /** "Start firstmate on <host>": a NEW session in the firstmate repo, following its AGENTS.md, whose first message is the newest state/HANDOFF-*.md. */
-  async startFresh(host: HostId, validate?: (identity:{model:string;effort:string|null})=>boolean, extra?: { env?: Record<string, string>; model?: string | null; effort?: string | null; permissionMode?: "auto" | "default" }): Promise<{ ok: true; handoff: string; id: string; seededFrom: string | null } | { ok: false; reason: string; code: string }> {
+  async startFresh(host: HostId, validate?: (identity:{model:string;effort:string|null})=>boolean, extra?: { env?: Record<string, string>; model?: string | null; effort?: string | null; permissionMode?: "auto" | "default"; autoMode?: { state: string; summary: string } }): Promise<{ ok: true; handoff: string; id: string; seededFrom: string | null } | { ok: false; reason: string; code: string }> {
     if (this.state !== "detached") return { ok: false, code: "attached", reason: "Studio already holds a session; release it first" };
     if (host !== "codex" && !(host === "claude" && this.o.nativeWorkspace)) return { ok: false, code: "host", reason: "a fresh start runs on Codex, or on Claude in Studio's own workspace" };
     const priorDriver = this.driver();
@@ -262,7 +265,7 @@ export class MainSession {
     const cwd = this.o.projectDir, newest = this.o.nativeWorkspace ? null : newestHandoffFile(this.o.stateDir);
     try {
       this.session = await this.hosts[host].attach("", { cwd, fresh: true, onGeneratedImage:this.generatedImageCapability(), onEvent: (e) => this.hostEvent(e), onPermission: (r) => this.bridge.ask(r), permissionMcp: this.o.permissionMcp(this.bridge), nativeTools:this.nativeCapability(),
-        ...(host === "claude" ? { env: extra?.env, model: extra?.model ?? null, permissionMode: extra?.permissionMode ?? "default", studioMcp: this.o.studioMcp ? { command: this.o.studioMcp() } : undefined } : {}) });
+        ...(host === "claude" ? { env: extra?.env, model: extra?.model ?? null, permissionMode: extra?.permissionMode ?? "default", denyEdits: claudeDenyEdits(extra?.env?.CLAUDE_CONFIG_DIR), studioMcp: this.o.studioMcp ? { command: this.o.studioMcp() } : undefined } : {}) });
     } catch (e: any) {
       this.state = "detached"; this.changed();
       return { ok: false, code: "attachFailed", reason: String(e?.message ?? e) };
@@ -287,7 +290,7 @@ export class MainSession {
       `## Roll back`, "", this.o.nativeWorkspace ? "Stop Firstmate in Studio. This closes the owned primary; dispatched native Tasks keep their own lifecycle. Start a new primary explicitly when ready." : `Release in Studio, then continue the thread in a terminal: \`cd ${cwd} && ${this.hosts[host].resumeCommand(se.id)}\``, "",
     ]);
     this.origin = null;
-    this.drive = { host, path: "fresh", statement, noFork: null, model: host === "claude" ? extra?.model ?? null : se.model, effort: host === "claude" ? extra?.effort ?? null : se.effort ?? null, approvalPolicy: se.approvalPolicy ?? null, sandbox: se.sandbox ?? null, permissionMode: host === "claude" ? extra?.permissionMode ?? "default" : null,
+    this.drive = { host, path: "fresh", statement, noFork: null, model: host === "claude" ? extra?.model ?? null : se.model, effort: host === "claude" ? extra?.effort ?? null : se.effort ?? null, approvalPolicy: se.approvalPolicy ?? null, sandbox: se.sandbox ?? null, permissionMode: host === "claude" ? extra?.permissionMode ?? "default" : null, effectivePermissionMode: null, autoMode: host === "claude" ? extra?.autoMode ?? null : null, executionMode: host === "claude" ? (localExecutionNotice() ? "local-unrestricted" : "default") : null,
       seededFrom: newest ? `state/${newest.name}` : null, handoff };
     this.sessionFile = se.file ?? null; this.lastSeenMtime = mtimeOf(this.sessionFile);
     this.writeDriver({ holder: "studio", host, sessionId: se.id, pid: process.pid, since: at, forkedFrom: null, mode: null, handoff, path: "fresh" });
@@ -295,7 +298,10 @@ export class MainSession {
     this.wakes = new WakeReader(this.o.stateDir);
     this.seenWakes.clear();
     this.note({ kind: "status", text: statement });
-    this.queue.seed(this.o.nativeWorkspace ? nativeFreshText(cwd, (() => { try { const n = this.o.nativeTools?.().specs.map((t) => t.name) ?? []; return n.length ? n : undefined; } catch { return undefined; } })()) : freshText(cwd, newest));
+    if (host === "claude" && extra?.autoMode) this.note({ kind: "status", text: `The captain's auto-mode rules are ${extra.autoMode.summary}` });
+    const freshSeed = this.o.nativeWorkspace ? nativeFreshText(cwd, (() => { try { const n = this.o.nativeTools?.().specs.map((t) => t.name) ?? []; return n.length ? n : undefined; } catch { return undefined; } })()) : freshText(cwd, newest);
+    // local unrestricted mode (operator .env): a Claude primary is told so in its first message, as Codex is on every turn
+    this.queue.seed(host === "claude" && localExecutionNotice() ? `${localExecutionNotice()}\n\n${freshSeed}` : freshSeed);
     this.timer = setInterval(() => this.tick(), this.o.pollMs ?? 1000);
     this.changed();
     void this.pump();
@@ -384,6 +390,11 @@ export class MainSession {
     if (e.type === "hostRefusal") this.note({ kind: "status", text: `${e.reason.en} / ${e.reason["zh-TW"]}`, status: "failed", refusal: e.code });
     if (e.type === "turnStart") this.note({ kind: "system", text: e.source === "task" ? "a background task's notice started a turn; following it" : "a turn Studio did not send started (firstmate's wake hook, or a background task); following it" });
     if (e.type === "turnEnd" && e.external) { this.lastSeenMtime = mtimeOf(this.sessionFile); setTimeout(() => void this.pump(), 0); }
+    if (e.type === "permissionMode" && this.drive && this.drive.host === "claude" && e.mode !== this.drive.effectivePermissionMode) {
+      this.drive.effectivePermissionMode = e.mode;
+      this.note({ kind: "system", text: claudeModeLine(this.drive.permissionMode ?? null, e.mode) });
+      this.changed();
+    }
     if (e.type === "delta") this.reply += e.text;
     else if (e.type === "toolStart") this.note({ kind: "tool", text: `${e.name} ${e.summary}`.trim() });
     else if (e.type === "message") { this.note({ kind: "firstmate", text: e.text || this.reply }); this.reply = ""; }
@@ -533,4 +544,15 @@ export function freshText(cwd: string, handoff: { name: string; text: string } |
 /** The names a fresh primary is told about: every tool actually registered, else the known default set. */
 const DEFAULT_NATIVE_TOOLS=["studio_list_workflows","studio_list_projects","studio_work_status","studio_prepare_project_work","studio_staffing_facts","studio_staffing_interview","studio_propose_staffing","studio_change_staffing","studio_propose_work","studio_draft_workflow","studio_save_workflow_draft","studio_startup_workflow_contract"];
 const toolList=(names:string[])=>names.length>1?`${names.slice(0,-1).join(", ")} and ${names.at(-1)}`:names.join("");
+/** "Claude permission mode: <effective>", saying so when Claude did not enable the requested mode. */
+export function claudeModeLine(requested: string | null, effective: string | null): string {
+  if (!effective) return `Claude permission mode: ${requested ?? "default"} (requested, waiting for Claude to confirm)`;
+  return requested && requested !== effective ? `Claude permission mode: ${effective} (${requested} was requested; Claude did not enable it)` : `Claude permission mode: ${effective}`;
+}
+/** What the fresh Claude primary's edit tools may never write: Studio's settings for it (where hooks, allow rules or the mode would go)
+ *  and Studio's .env (the operator settings). Its auto memory under projects/ stays writable. */
+export function claudeDenyEdits(configDir: string | undefined): string[] {
+  const cfg = configDir ? ["settings*.json", ".claude.json", "CLAUDE.md", "hooks/**", "skills/**", "agents/**", "commands/**", "plugins/**", "output-styles/**"].map((x) => join(configDir, x)) : [];
+  return [...cfg, join(process.cwd(), ".env")];
+}
 export function nativeFreshText(cwd:string,tools:string[]=DEFAULT_NATIVE_TOOLS):string { return `Coffee onboarding: discuss the full website design, image art direction and video storyboard/integration; use a complete editable coffeeDesignPlan and explicit captain confirmation. Discuss staffing and corresponding skills before jobs. No fabricated defaults or business facts. You are Studio's own Firstmate, working in its private workspace ${cwd}. The captain talks to you through Crew Studio. This is a fresh conversation, not a terminal takeover. No repository or legacy handoff is required. Help with the captain's actual request; offer the coffee-shop guided workflow when relevant, without forcing unrelated work into it. General CLI requests: this is a normal configured vendor CLI conversation with Studio tools added. For explicit requests to read or edit project files, run commands or Git, or apply available skills, use the vendor tools actually available in this session under their existing sandbox and approval policy. The following Studio tools are additional capabilities, not an exhaustive tool inventory. Do not claim that you can only query or propose work when normal CLI tools are available. Explain the actual working directory and any real tool or permission limitation; ask the captain to select the intended repository when unclear. Do not invent tools or request unrestricted permissions. Managed Studio workflows: you have Studio native tools: ${toolList(tools)}. Own workflow drafting is free and separate from execution: when the captain wants to design their own workflow, interview them briefly (two or three short questions, one at a time: who does the work, who reviews it, when the captain decides), then call studio_draft_workflow with the graph you designed so their page previews it; pass the draft id to revise it, and keep the captain's node choices. Call studio_save_workflow_draft only when the captain asks to save. Never use studio_propose_work, staffing tools or any Task for drafting; the captain confirms staffing only when they click Run. Before managed coding-workflow dispatch, list registered projects and match the captain's repository to a unique enabled identity. If it is unregistered, use studio_prepare_project_work with the local path and same workflow/version/brief to raise a captain registration card; after registration an ordinary separate dispatch card still needs captain approval. Never ask the captain to manually visit Gates or invent a project ID. studio_propose_work accepts safe declared params and registered project IDs, never raw repo/base/branch/worktree. Treat structured invalid_params, project_required, project_unregistered, project_disabled or project_revoked errors distinctly and follow their safe nextAction; do not call a malformed request a permission denial. Before dispatch, read native staffing facts; the main conversation account does not select worker accounts. Use studio_staffing_interview to persist each decision frontier and captain answers. Record only current-frontier answers from one captain message; wait for another reply before dependent choices. Discuss every actual workflow role vendor (Claude or Codex), then its verified model, then reasoning effort, in dependent numbered rounds. Explain recommendations and wait for captain answers; never assume recommendations were accepted. Native Claude requires an actual exact-model/effort execution verification; login and unknown quota are separate facts. Missing or unverified native capabilities are not repaired by changing the main conversation account. Show each mandatory native role skill and the complete shared editable configuration, then create a staffing confirmation card. Its approval writes project-local versioned configuration; only then propose workflow execution. Missing facts or unanswered choices HOLD without model fallback. If an existing Task is on a readiness hold, propose studio_change_staffing for that exact task and node after discussing its complete role configuration. The captain must approve that configuration and then separately approve its existing fresh-preparation card; never replace the Task or answer either card yourself. When the captain asks to delegate or run a managed Studio workflow, use these tools to propose its exact pinned work and raise its real captain dispatch card. General CLI file/command requests do not require a workflow merely because they are actionable. Never ask for an external firstmate engine path. Proposing is not approval; only the captain can approve the card. Opening this conversation authorizes no automatic file edits, commands, task creation, project changes or paid work. Do not use legacy firstmate scripts or general CLI tools to bypass Studio project, staffing, card or ledger authority. General CLI editing does not authorize mutating managed workflow state or answering captain cards. Workflow execution requires the captain's explicit authenticated brief and confirmation through Studio. Respect any explicit project authority and tool permissions; unanswered permissions are denied. Greet the captain briefly, introduce yourself as their Studio Firstmate, and ask what they would like to make. Offer the coffee-shop example as an option; wait for their answer before proposing or starting any work.`; }

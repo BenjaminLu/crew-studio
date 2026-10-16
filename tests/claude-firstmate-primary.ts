@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { freePort, waitUp } from "./boot.mjs";
-for (const k of ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "CREW_CLAUDE_BILLING", "CREW_MAIN_PROJECT", "CREW_FM_STATE", "CREW_CLAUDE_PERMISSION_MODE"]) delete process.env[k];
+import { captainAutoMode } from "../src/host/claude-primary";
+for (const k of ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "CREW_CLAUDE_BILLING", "CREW_MAIN_PROJECT", "CREW_FM_STATE", "CREW_CLAUDE_PERMISSION_MODE", "CREW_LOCAL_UNRESTRICTED", "CREW_LOCAL_DEPENDENCY_ROOT", "STUB_EFFECTIVE_MODE"]) delete process.env[k];
 let pass = 0, fail = 0;
 const ok = (v: any, n: string) => { console.log(`${v ? "ok" : "FAIL"} ${n}`); v ? pass++ : fail++; };
 const until = async (f: () => Promise<boolean> | boolean, n = 200) => { for (let i = 0; i < n; i++) { if (await f()) return true; await Bun.sleep(30); } return false; };
@@ -15,7 +16,22 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catc
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 const root = mkdtempSync(join(tmpdir(), "crew-claude-primary-")), home = join(root, "home"), data = join(root, "data"), kc = join(root, "kc");
-for (const d of [join(home, ".codex"), kc]) mkdirSync(d, { recursive: true });
+for (const d of [join(home, ".codex"), join(home, ".claude"), kc]) mkdirSync(d, { recursive: true });
+// the captain's own Claude settings: Studio copies the autoMode block and nothing else
+const AUTO = { environment: ["$defaults", "Source control: github.com/fixture-org"], soft_deny: ["$defaults", "Never push to main in fixture-org/app"], allow: ["$defaults"], classifyAllShell: true };
+const captainSettings = join(home, ".claude", "settings.json");
+const writeCaptain = (autoMode: unknown) => writeFileSync(captainSettings, JSON.stringify({ autoMode, hooks: { Stop: [{ hooks: [{ type: "command", command: "echo hook" }] }] }, permissions: { allow: ["Bash(*)"], defaultMode: "bypassPermissions" }, env: { FIXTURE_ENV: "1" }, mcpServers: { x: { command: "x" } }, apiKeyHelper: "echo key" }));
+writeCaptain(AUTO);
+{ // shape checks on the captain's block, read by path only
+  const f = join(root, "unit-settings.json"), at = (t: string) => { writeFileSync(f, t); return captainAutoMode(f); };
+  ok(captainAutoMode(join(root, "absent.json")).state === "none", "no captain settings file: built-in defaults, said so");
+  ok(at("{not json").state === "malformed", "captain settings that are not JSON: malformed, built-in defaults");
+  ok(at('{"model":"x"}').state === "none", "captain settings without autoMode: built-in defaults");
+  ok(at('{"autoMode":{"soft_deny":"x"}}').state === "malformed" && at('{"autoMode":{"allow":[1]}}').state === "malformed" && at('{"autoMode":[]}').state === "malformed", "autoMode lists must be arrays of strings in an object");
+  ok(at('{"autoMode":{"hooks":[]}}').state === "malformed" && at('{"autoMode":{"classifyAllShell":"yes"}}').state === "malformed", "an unknown autoMode key or a non-boolean classifyAllShell is malformed, never copied");
+  const good = at(JSON.stringify({ autoMode: AUTO, hooks: {} }));
+  ok(good.state === "applied" && JSON.stringify((good as any).block) === JSON.stringify(AUTO), "a well-formed autoMode block is taken as is");
+}
 writeFileSync(join(home, ".codex", "config.toml"), 'model="fixture-model"\nmodel_reasoning_effort="low"\n');
 writeFileSync(join(home, ".codex", ".fixture-account.json"), '{"authenticated":true}');
 const CREW = "sk-ant-" + "oat01-" + "f".repeat(64); // fixture shape only
@@ -102,7 +118,16 @@ try {
   ok(v1.log.some((l: any) => l.kind === "firstmate" && /echo: Coffee onboarding/.test(l.text)), "the native Firstmate introduction is its first message");
   ok(!a.includes("--dangerously-skip-permissions") && !a.includes("bypassPermissions") && a[a.indexOf("--permission-mode") + 1] === "auto" && a[a.indexOf("--permission-prompt-tool") + 1] === "mcp__studio_permission__approve" && !a.includes("--permission-prompts") && a.includes("--strict-mcp-config"), "auto permission mode by default; the permission bridge still answers whatever auto mode escalates; no bypass, only Studio's MCP servers");
   ok(v1.drive?.permissionMode === "auto" && okPre.permissionMode === "auto", "the view and the preflight both say the permission mode is auto");
+  ok(v1.drive?.effectivePermissionMode === "auto", "the view records the mode Claude itself reported at init (effective), next to the requested one");
+  const studioSettings = JSON.parse(readFileSync(join(data, "claude-firstmate", "settings.json"), "utf8"));
+  ok(JSON.stringify(studioSettings) === JSON.stringify({ autoMode: AUTO }) && (statSync(join(data, "claude-firstmate", "settings.json")).mode & 0o777) === 0o600, "Studio's primary settings hold exactly the captain's autoMode block (0600): no hooks, permissions, env, mcpServers or apiKeyHelper");
+  ok(v1.drive?.autoMode?.state === "applied", "the view says the captain's auto-mode rules are applied");
+  const denied = (a[a.indexOf("--disallowedTools") + 1] ?? "").split(",");
+  const cfgDir = join(data, "claude-firstmate");
+  ok(denied.includes(`Edit(/${cfgDir}/settings*.json)`) && denied.includes(`Edit(/${cfgDir}/.claude.json)`) && denied.includes(`Edit(/${join(import.meta.dir, "..", ".env")})`) && denied.every((d) => d.startsWith("Edit(//")), "deny rules keep the model's edit tools off Studio's primary settings and Studio's .env, whatever the classifier says");
+  ok(!(existsSync(seedFile) ? readFileSync(seedFile, "utf8") : "").includes("local unrestricted execution") && v1.drive?.executionMode === "default", "by default the primary is told nothing about unrestricted execution");
   const doc1 = ((await api("/api/doctor")).body.items ?? []).find((i: any) => i.id === "claude-permission-mode");
+  ok(/Captain auto-mode rules: applied/.test(doc1?.detail ?? "") && /Configured Claude permission mode: auto/.test(doc1?.detail ?? ""), "Doctor labels the mode as configured and says the captain's auto-mode rules are applied");
   ok(doc1?.status === "ok" && /Claude permission mode: auto/.test(doc1.detail) && /CREW_CLAUDE_PERMISSION_MODE/.test(doc1.fix + doc1.adds + doc1.detail), "Doctor shows Claude permission mode: auto and names the operator override");
   const allowed = (a[a.indexOf("--allowedTools") + 1] ?? "").split(",");
   ok(allowed.length >= 5 && allowed.every((t) => /^mcp__studio__studio_[a-z_]+$/.test(t)) && allowed.includes("mcp__studio__studio_propose_work"), "only Studio's native tools are pre-allowed, by exact name");
@@ -202,6 +227,36 @@ try {
   await idle();
   const ab: string[] = claudeRuns().at(-1)?.argv ?? [];
   ok(r.status === 200 && ab[ab.indexOf("--permission-mode") + 1] === "default", "a permissionMode in the API body is ignored; only the operator setting counts");
+  await api("/api/main/detach", {});
+  // --- the effective mode: Claude did not enable auto ---
+  await stop(); app = start({ STUB_EFFECTIVE_MODE: "default" }); await waitUp(base, app);
+  writeCaptain({ soft_deny: "not a list" });
+  r = await api("/api/main/start", { host: "claude", confirm: true });
+  ok(r.status === 200 && r.body.ok, "a malformed captain autoMode block does not block the start");
+  await idle();
+  const vf = await view();
+  ok(vf.drive?.permissionMode === "auto" && vf.drive?.effectivePermissionMode === "default", "auto requested, Claude reported default: the view keeps both");
+  ok(vf.log.some((l: any) => /Claude permission mode: default \(auto was requested; Claude did not enable it\)/.test(l.text)), "the log says Claude did not enable auto");
+  ok(JSON.stringify(JSON.parse(readFileSync(join(data, "claude-firstmate", "settings.json"), "utf8"))) === "{}" && vf.drive?.autoMode?.state === "malformed", "a malformed block is not copied; the stale one is removed");
+  ok(vf.log.some((l: any) => /captain's auto-mode rules are malformed.*built-in defaults/i.test(l.text)), "the log says the malformed rules were skipped for Claude's built-in defaults");
+  const docM = ((await api("/api/doctor")).body.items ?? []).find((i: any) => i.id === "claude-permission-mode");
+  ok(/Captain auto-mode rules: malformed/.test(docM?.detail ?? "") && /built-in defaults/.test(docM?.detail ?? ""), "Doctor says the captain's rules are malformed and built-in defaults are used");
+  await api("/api/main/detach", {});
+  writeCaptain(AUTO);
+
+  // --- local unrestricted mode (operator .env): the primary is told, the hardening stays ---
+  await stop(); app = start({ CREW_LOCAL_UNRESTRICTED: "1", CREW_LOCAL_DEPENDENCY_ROOT: root }); await waitUp(base, app);
+  r = await api("/api/main/start", { host: "claude", confirm: true });
+  ok(r.status === 200 && r.body.ok, "a fresh Claude primary starts in local unrestricted mode");
+  await idle();
+  const ur = claudeRuns().at(-1), au: string[] = ur?.argv ?? [];
+  const seeds = readFileSync(seedFile, "utf8").trim().split("\n").map((l) => JSON.parse(l)), useed = seeds.find((x: any) => x.pid === ur.pid)?.seed ?? "";
+  ok(useed.startsWith("The operator explicitly enabled local unrestricted execution") && useed.includes(root) && /Coffee onboarding/.test(useed), "its first message starts with the local unrestricted execution notice");
+  ok(au[au.indexOf("--permission-prompt-tool") + 1] === "mcp__studio_permission__approve" && au.includes("--strict-mcp-config") && au[au.indexOf("--setting-sources") + 1] === "user" && au.includes("--disallowedTools"), "the bridge, strict MCP config, user-only settings and deny rules stay");
+  const ucfg = JSON.parse(readFileSync(au[au.indexOf("--mcp-config") + 1], "utf8"));
+  ok((statSync(ucfg.mcpServers.studio.env.CREW_TOOL_TOKEN_FILE).mode & 0o777) === 0o600 && !JSON.stringify(au).includes(readFileSync(ucfg.mcpServers.studio.env.CREW_TOOL_TOKEN_FILE, "utf8").trim()), "token files stay 0600 and off the command line");
+  ok((await view()).drive?.executionMode === "local-unrestricted", "the view says the primary runs unrestricted");
+  ok(/Local unrestricted mode: on/.test(((await api("/api/doctor")).body.items ?? []).find((i: any) => i.id === "claude-permission-mode")?.detail ?? ""), "Doctor says the Claude primary runs unrestricted");
   await api("/api/main/detach", {});
   await stop(); app = start(); await waitUp(base, app);
 
