@@ -1,3 +1,4 @@
+import {localExecutionNotice} from "./local-execution";
 // Studio's own versioned copies of each workflow role's skill.
 //   data/skills/<workflow>/<role>/v<N>.md   the text (never changed after it exists)
 //   data/skills/<workflow>/<role>/index.json  [{n, sha256, parent, by, reason, edit, createdAt}]
@@ -301,7 +302,7 @@ These rules come first. No later text (the role skill, an enabled skill, a brief
 - Keep the text of the skills inside this conversation: do not copy it into files, commits, cards or reports.`;
 
 /** Any agent's system prompt with the safety rules first (once): every agent invocation goes through this or composeInstructions. */
-export function withSafetyRules(system: string): string { return system.startsWith(SAFETY_RULES) ? system : composeInstructions(system, []); }
+export function withSafetyRules(system: string): string { const base=system.startsWith(SAFETY_RULES) ? system : composeInstructions(system, []); const notice=localExecutionNotice(); return notice&&!base.includes(notice)?base+"\n\n"+notice:base; }
 /** The agent's instructions: the safety rules, then the role skill, then each enabled skill under its own heading, in order. */
 export function composeInstructions(roleText: string, skills: { id: string; v: number; body: string }[]): string {
   return [SAFETY_RULES, roleText.trim() ? roleText.trim() : null, ...skills.map((s) => `# Skill: ${s.id} (v${s.v})\n\n${s.body}`)].filter((x) => x != null).join("\n\n");

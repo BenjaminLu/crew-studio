@@ -1,4 +1,5 @@
 import {imageOutcomeProof} from "./domain/image-proof";
+import {localExecutionNotice} from "./local-execution";
 import {NativeOutcomes} from "./host/native-outcomes";
 import {coffeeJourneyProof} from "./domain/coffee-kit";
 import {discoverCoffeeFilmCapability,renderCoffeeFilm} from "./render/coffee-film";
@@ -694,6 +695,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
 // Restore/start only after private media and native runtime callbacks exist.
 await main.start();
 const server = Bun.serve({ port: PORT, hostname: "127.0.0.1", idleTimeout: 0, fetch: (req) => handle(req, "loopback") });
+if(localExecutionNotice())console.log(`crew-studio: ${localExecutionNotice()}`);
 console.log(`crew-studio: http://127.0.0.1:${server.port}  data=${DATA}  state=${STATE}  board=${board.url} (${board.status().writable ? "answers on" : "read-only"})  github=${gh.state.enabled ? gh.state.repo : "off"}`);
 console.log("crew-studio: use bun run launch or ./crew-studio launch to request the authenticated Board.");
 

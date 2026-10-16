@@ -1,3 +1,4 @@
+import {localUnrestricted,localExecutionNotice} from "../local-execution";
 import {nativeToolError} from './native-errors';
 import {NativeToolFailure} from './types';
 // Codex as a host, over its own `codex app-server` (JSON-RPC on stdio):
@@ -7,8 +8,9 @@ import {NativeToolFailure} from './types';
 // The thread: a takeover forks (thread/fork, in codex-cli 0.162.1's stable protocol)
 // and never resumes the original; if the fork is refused, a NEW thread (thread/start)
 // that Studio seeds with the original's recent turns (thread/turns/list, read only).
-// A fresh start is thread/start. Studio passes no model, effort, approval or sandbox
-// setting: the captain's Codex config decides them, and Studio shows what the server reports.
+// A fresh start is thread/start. The captain's Codex config supplies model, effort
+// and approval policy. Sandbox is overridden only by explicit local unrestricted mode.
+// Studio shows the settings reported by the server.
 // Only Studio's own thread is ever resumed (after its app-server exits).
 //   CREW_HOST_CODEX_BIN  executable (default "codex"; a .mjs path runs under bun: test stub)
 //   CODEX_HOME           the captain's Codex config folder (default ~/.codex), read for model and effort only
@@ -23,7 +25,7 @@ type Rpc = { proc: JsonProc; call(method: string, params?: unknown, ms?: number)
 function rpc(bin: string, cwd: string, onNotify: (m: any) => void, onRequest: (m: any) => Promise<unknown>, env: Record<string, string> = {}): Rpc {
   let n = 0;
   const waiting = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
-  const proc = spawnJsonl(binArgv(bin, ["app-server"]), cwd, { ...cleanEnv(), ...env }, async (m) => {
+  const proc = spawnJsonl(binArgv(bin, ["app-server", ...(localUnrestricted()?["-c",'sandbox_mode="danger-full-access"']:[])]), cwd, { ...cleanEnv(), ...env }, async (m) => {
     if (m.id !== undefined && m.method === undefined) {
       const w = waiting.get(m.id); if (!w) return; waiting.delete(m.id);
       m.error ? w.reject(new Error(m.error.message ?? "rpc error")) : w.resolve(m.result);
@@ -208,24 +210,24 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
         await init(c,!!opts.nativeTools);
         if (first && opts.fresh) {
           // a fresh firstmate: a new thread in the firstmate repo, with the captain's own settings
-          const res = await c.call("thread/start", { cwd: opts.cwd, ...(opts.nativeTools?{dynamicTools:opts.nativeTools.specs}:{}) });
+          const res = await c.call("thread/start", { cwd: opts.cwd, ...(localUnrestricted()?{sandbox:"danger-full-access"}:{}), ...(opts.nativeTools?{dynamicTools:opts.nativeTools.specs}:{}) });
           path = "fresh"; opened(res); id = String(res?.thread?.id ?? ""); if (!id) throw new Error("thread/start returned no thread id");
         } else if (first && opts.fork) {
           // never thread/resume the original: fork it, or start a new thread seeded from its recent turns
           try {
-            const res = await c.call("thread/fork", { threadId: requested, cwd: opts.cwd, excludeTurns: true });
+            const res = await c.call("thread/fork", { threadId: requested, cwd: opts.cwd, excludeTurns: true, ...(localUnrestricted()?{sandbox:"danger-full-access"}:{}) });
             if (!res?.thread?.id || res.thread.id === requested) throw new Error("thread/fork returned no distinct thread id");
             path = "fork"; opened(res); follow(res.thread.id);
           } catch (e: any) {
             noFork = String(e?.message ?? e).slice(0, 300);
             try { recentTurns = turnsText((await c.call("thread/turns/list", { threadId: requested, limit: 6, sortDirection: "desc", itemsView: "summary" }, 15_000))?.data ?? []) || null; } catch { recentTurns = null; }
-            const res = await c.call("thread/start", { cwd: opts.cwd });
+            const res = await c.call("thread/start", { cwd: opts.cwd, ...(localUnrestricted()?{sandbox:"danger-full-access"}:{}) });
             if (!res?.thread?.id) throw new Error("thread/start returned no thread id");
             path = "handoff"; opened(res); follow(res.thread.id);
           }
         } else {
           // a plain attach, or Studio's own thread again after its app-server exited
-          const res = await c.call("thread/resume", { threadId: id, excludeTurns: true });
+          const res = await c.call("thread/resume", { threadId: id, excludeTurns: true, ...(localUnrestricted()?{sandbox:"danger-full-access"}:{}) });
           opened(res); follow(res?.thread?.id ?? res?.threadId);
         }
         first = false;
@@ -246,7 +248,7 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
           try { c = r ?? (await start()); } catch (e) { busy = false; throw e; }
           return new Promise((resolve) => {
             startedAt=Date.now();images.clear();const sentTurn = { resolve }; turn = sentTurn;
-            c.call("turn/start", { threadId: id, input: [{ type: "text", text: t, text_elements: [] }] })
+            c.call("turn/start", { threadId: id, ...(localUnrestricted()?{sandboxPolicy:{type:"dangerFullAccess"}}:{}), input: [{ type: "text", text:localUnrestricted()?localExecutionNotice()+"\n\n"+t:t, text_elements: [] }] })
               .then((res) => { if (turn === sentTurn && !turnId) turnId = String(res?.turn?.id ?? res?.turnId ?? ""); })
               .catch((e) => { if (turn === sentTurn) endTurn("failed", String(e?.message ?? e)); });
           });

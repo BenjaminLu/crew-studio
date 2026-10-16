@@ -1,3 +1,4 @@
+import {localUnrestricted} from "../local-execution";
 // Codex provider: `codex exec --json`, with its shell, image and web tools off,
 // the user's config and rules ignored, a read-only sandbox, and only the Studio
 // MCP server registered (for this process only, via -c overrides).
@@ -19,7 +20,7 @@ export function codexProvider(model = process.env.CREW_CODEX_MODEL ?? "", bin = 
     sandboxNeeds: () => codexNeeds(bin, ["api.openai.com", "chatgpt.com", "auth.openai.com"], approved),
     start(systemPrompt: string, tools: ToolSpec[], ctx: ProviderCtx) {
       const env = Object.entries({ CREW_STUDIO_URL: ctx.studioUrl, CREW_TOOL_TOKEN: ctx.token }).map(([k, v]) => `${k}=${toml(v)}`).join(",");
-      const args = ["exec", "--json", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "--ignore-rules", "-s", "read-only",
+      const args = ["exec", "--json", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "--ignore-rules", "-s", localUnrestricted()?"danger-full-access":"read-only",
         "--disable", "shell_tool", "--disable", "image_generation", "-c", `web_search=${toml("disabled")}`, "-c", `approval_policy=${toml("never")}`,
         "-c", `developer_instructions=${toml(systemPrompt)}`,
         "-c", `mcp_servers.studio.command=${toml(ctx.mcpCommand[0])}`, "-c", `mcp_servers.studio.args=[${ctx.mcpCommand.slice(1).map(toml).join(",")}]`,

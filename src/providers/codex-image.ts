@@ -1,3 +1,4 @@
+import {localUnrestricted} from "../local-execution";
 // Dedicated source-owned image job. The ordinary Codex provider remains tool-restricted.
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, realpathSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -69,7 +70,7 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
   if (typeof o.prompt !== 'string' || !o.prompt.trim() || Buffer.byteLength(o.prompt) > 16000 || !o.approved || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(o.approved.model) || o.approved.effort !== null && !['none','minimal','low','medium','high','xhigh','max','ultra'].includes(o.approved.effort)) throw new Error('Codex image request invalid');
   const timeout = o.timeoutMs ?? 180000;
   if (!Number.isInteger(timeout) || timeout < 100 || timeout > 240000) throw new Error('Codex image deadline invalid');
-  if (!sandboxInfo().ok) throw new Error('Codex image needs the OS sandbox');
+  if (!sandboxInfo().ok && !localUnrestricted()) throw new Error('Codex image needs the OS sandbox');
   const bin = o.bin ?? process.env.CREW_CODEX_BIN ?? 'codex';
   const cap = await (o.probe ?? probeCodex)(bin, o.signal); guard(); approvedCapability(cap, o.approved);
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'crew-codex-image-'))), home = join(root,'home'), work = join(root,'work'), temp = join(root,'tmp');
@@ -83,10 +84,11 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
   const abort = () => stop(new Error('Codex image cancelled'));
   try {
     const login = needs.login(home); if (!login.ok) throw new Error('Codex image login unavailable'); guard();
-    await egress.start(); guard(); egress.open(token, needs.hosts);
+    if(!localUnrestricted()){await egress.start(); guard(); egress.open(token, needs.hosts);}
     const profile = join(root,'image.sb'); writeFileSync(profile, roundProfile({ cwd:work,tmp:temp,writes:[home,work],reads:needs.reads,proxyPort:egress.port,toolPort:egress.port }));
     const proxy = `http://round:${token}@127.0.0.1:${egress.port}`;
-    const env = { PATH:process.env.PATH ?? '/usr/bin:/bin', HOME:home,TMPDIR:temp,LANG:'en_US.UTF-8',...login.env,CODEX_HOME:join(home,'.codex'),HTTPS_PROXY:proxy,HTTP_PROXY:proxy,https_proxy:proxy,http_proxy:proxy,ALL_PROXY:proxy,all_proxy:proxy,NO_PROXY:'',no_proxy:'',XDG_CACHE_HOME:join(home,'.cache'),XDG_CONFIG_HOME:join(home,'.config'),XDG_DATA_HOME:join(home,'.local/share') };
+    const env:Record<string,string> = { PATH:process.env.PATH ?? '/usr/bin:/bin', HOME:home,TMPDIR:temp,LANG:'en_US.UTF-8',...login.env,CODEX_HOME:join(home,'.codex'),HTTPS_PROXY:proxy,HTTP_PROXY:proxy,https_proxy:proxy,http_proxy:proxy,ALL_PROXY:proxy,all_proxy:proxy,NO_PROXY:'',no_proxy:'',XDG_CACHE_HOME:join(home,'.cache'),XDG_CONFIG_HOME:join(home,'.config'),XDG_DATA_HOME:join(home,'.local/share') };
+    if(localUnrestricted())for(const key of ['HTTPS_PROXY','HTTP_PROXY','https_proxy','http_proxy','ALL_PROXY','all_proxy'])delete env[key];
     let id = 0, thread = '', turn = '', item: any = null, terminal = false;
     const early: any[] = [];
     let complete:()=>void = ()=>{};
@@ -103,8 +105,8 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
       } else if (m.method === 'error') stop(new Error('Codex image server refused'));
     };
     // Private HOME has no original config or hooks; explicit source policy allows only image generation.
-    const args=['app-server','--listen','stdio://','--disable','shell_tool','--enable','image_generation','-c','web_search="disabled"','-c','approval_policy="never"','-c','sandbox_mode="read-only"','-c','analytics.enabled=false'];
-    proc=probeProcess(['/usr/bin/sandbox-exec','-f',profile,...binArgv(bin,args)],work,env,m=>{
+    const args=['app-server','--listen','stdio://','--disable','shell_tool','--enable','image_generation','-c','web_search="disabled"','-c','approval_policy="never"','-c',localUnrestricted()?'sandbox_mode="danger-full-access"':'sandbox_mode="read-only"','-c','analytics.enabled=false'];
+    proc=probeProcess(localUnrestricted()?binArgv(bin,args):['/usr/bin/sandbox-exec','-f',profile,...binArgv(bin,args)],work,env,m=>{
       if (m.id !== undefined && !m.method) { const w=pending.get(m.id);if(w){pending.delete(m.id);m.error?w.reject(new Error('Codex image RPC refused')):w.resolve(m.result);} }
       else if(m.id !== undefined && m.method) { proc?.write({jsonrpc:'2.0',id:m.id,error:{code:-32601,message:'image owner refuses tool or permission requests'}});stop(new Error('Codex image unexpected permission or tool request')); }
       else if(m.method) { if (!turn && ['item/completed','turn/completed'].includes(m.method)) { if(early.length>=32)stop(new Error('Codex image early events exceeded'));else early.push(m); } else event(m); }
@@ -114,7 +116,7 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
     timer=setTimeout(()=>stop(new Error('Codex image deadline expired')),timeout);
     const call=(method:string,params:any)=>new Promise<any>((resolve,reject)=>{guard();const n=++id;pending.set(n,{resolve,reject});proc!.write({jsonrpc:'2.0',id:n,method,params});});
     await call('initialize',{clientInfo:{name:'crew-studio-image',version:'1.0.0'}});proc.write({jsonrpc:'2.0',method:'initialized'});guard();
-    const t=await call('thread/start',{model:o.approved.model,cwd:work,approvalPolicy:'never',sandbox:'read-only',ephemeral:true,baseInstructions:'Generate exactly one requested PNG image using image generation only. No shell, web, file reading, tools, delegated tasks or permissions. Return the generated image, not a promise or instructions.',config:{'features.shell_tool':false,'features.image_generation':true,web_search:'disabled',...(o.approved.effort?{model_reasoning_effort:o.approved.effort}:{})}});guard();
+    const t=await call('thread/start',{model:o.approved.model,cwd:work,approvalPolicy:'never',sandbox:localUnrestricted()?'danger-full-access':'read-only',ephemeral:true,baseInstructions:'Generate exactly one requested PNG image using image generation only. No shell, web, file reading, tools, delegated tasks or permissions. Return the generated image, not a promise or instructions.',config:{'features.shell_tool':false,'features.image_generation':true,web_search:'disabled',...(o.approved.effort?{model_reasoning_effort:o.approved.effort}:{})}});guard();
     if(t?.model!==o.approved.model)throw new Error('Codex image actual model differs from approved model');
     thread=t?.thread?.id;if(typeof thread!=='string'||!thread)throw new Error('Codex image thread identity unavailable');
     const r=await call('turn/start',{threadId:thread,model:o.approved.model,effort:o.approved.effort,input:[{type:'text',text:`Generate exactly one PNG image. ${o.prompt}`,text_elements:[]},...(reference?[{type:'image',url:'data:image/png;base64,'+reference.bytes.toString('base64')}]:[])]});guard();

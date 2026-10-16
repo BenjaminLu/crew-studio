@@ -1,3 +1,4 @@
+import {localUnrestricted} from "./local-execution";
 // One agent job runner for every M6+ feature: skill edits, replay evals, pack
 // genesis, gate fix/review cycles and document drafting. A job runs one turn on
 // any vendor-neutral provider with ONLY the tools the caller hands it; the tools
@@ -19,7 +20,7 @@ export type AgentTool = { name: string; description: string; schema: unknown; ru
 export type AgentLog = { ts: string; kind: "start" | "tool" | "result" | "text" | "end" | "error"; text: string };
 export type AgentJob = {
   id: string; kind: string; title: string; provider: string; model: string; status: "running" | "done" | "failed" | "cancelled";
-  started: string; ended: string | null; tools: number; cost: Cost | null; said: string; error: string | null; log: AgentLog[]; ref: string | null; reasoningEffort?: string | null;
+  started: string; ended: string | null; tools: number; cost: Cost | null; said: string; error: string | null; log: AgentLog[]; ref: string | null; reasoningEffort?: string | null; executionMode?: string;
 };
 const now = () => new Date().toISOString();
 
@@ -73,7 +74,7 @@ export class Agents {
     if (o.signal?.aborted || o.owns && !o.owns()) throw new QueueRefusal("round owner ended before job creation");
     const id = `J${Date.now().toString(36)}${randomBytes(2).toString("hex")}`;
     const job: AgentJob = { id, kind: o.kind, title: o.title, provider: o.provider.id, model: o.provider.model, status: "running", started: now(), ended: null, tools: 0,
-      cost: null, said: "", error: null, log: [], ref: o.ref ?? null, reasoningEffort: o.provider.reasoningEffort ?? null };
+      cost: null, said: "", error: null, log: [], ref: o.ref ?? null, reasoningEffort: o.provider.reasoningEffort ?? null, executionMode:localUnrestricted()?"local-unrestricted":"default" };
     this.jobs.set(id, job);
     if (this.jobs.size > 400) this.jobs.delete(this.jobs.keys().next().value!);
     const refuse = (why: string) => { job.status = "failed"; job.error = `refused: ${why}`; job.ended = now(); this.log(job, "error", job.error); return job; };
@@ -82,14 +83,15 @@ export class Agents {
     let studioUrl = this.studioUrl();
     let cwd = join(this.dataDir, "work-cwd"); mkdirSync(cwd, { recursive: true });
     this.log(job, "start", `${o.provider.id} · ${o.provider.model}: ${o.title}`);
+    if(localUnrestricted())this.log(job,"start","Local unrestricted execution: OS sandbox and outbound restrictions disabled; dependencies repository-local only");
     // a sandboxed round: a profile of its own, a throwaway home, its own proxy credential; refused (never run bare) when any of it is missing
     let sandbox: { profile: string } | null = null; let roundEnvAdd: Record<string, string> = {}; let cleanup = () => {}; let proxyUrl: string | null = null;
     let envKeys = o.provider.envKeys ?? []; // a sandboxed CLI round gets no key from Studio's environment: only the login handed to it
     if (o.sandbox && !o.provider.sandboxFree) {
       if (!o.provider.sandboxNeeds) return refuse(`the provider ${o.provider.id} cannot run in the round sandbox (it declares no sandbox needs)`);
       const sb = sandboxInfo();
-      if (!sb.ok) return refuse(`a sandboxed round needs an OS sandbox (${sb.detail})`);
-      if (!this.egress) return refuse("a sandboxed round needs Studio's egress proxy");
+      if (!sb.ok && !localUnrestricted()) return refuse(`a sandboxed round needs an OS sandbox (${sb.detail})`);
+      if (!this.egress && !localUnrestricted()) return refuse("a sandboxed round needs Studio's egress proxy");
       if (!this.toolUrl) return refuse("a sandboxed round needs Studio's tool listener");
       // a round's own paths are what the runtime materialized: a worktree under data/work, or a folder outside Studio's data and every protected root
       const bad = [...o.sandbox.writes, ...(o.sandbox.reads ?? []), ...(o.sandbox.cwd ? [o.sandbox.cwd] : [])].find((p) =>
@@ -98,8 +100,8 @@ export class Agents {
       const needs = o.provider.sandboxNeeds();
       if (needs.inProcess) {
         // a provider in Studio's own process (direct HTTP): nothing to spawn; its requests go through the proxy with this round's credential, to its API host (and what policy grants) only
-        const ptok = randomBytes(18).toString("hex"); const eg = this.egress; eg.open(ptok, [...needs.hosts, ...(o.sandbox.allow ?? [])]); cleanup = () => eg.close(ptok);
-        proxyUrl = `http://round:${ptok}@127.0.0.1:${eg.port}`; studioUrl = this.toolUrl();
+        studioUrl = this.toolUrl();
+        if(!localUnrestricted()){const ptok = randomBytes(18).toString("hex"); const eg = this.egress; eg.open(ptok, [...needs.hosts, ...(o.sandbox.allow ?? [])]); cleanup = () => eg.close(ptok); proxyUrl = `http://round:${ptok}@127.0.0.1:${eg.port}`;}
       } else {
       const box = join(this.dataDir, "rounds", id); const tmp = join(box, "tmp"), home = join(box, "home");
       cleanup = () => { try { rmSync(home, { recursive: true, force: true }); rmSync(tmp, { recursive: true, force: true }); } catch {} };
@@ -115,14 +117,15 @@ export class Agents {
       studioUrl = this.toolUrl();
       cwd = o.sandbox.cwd ?? tmp;
       const prof = join(box, "round.sb");
-      writeFileSync(prof, roundProfile({ cwd, tmp, writes: [...o.sandbox.writes, home], reads: [...needs.reads, ...helperReads(), ...(o.sandbox.reads ?? [])], proxyPort: this.egress.port, toolPort: Number(new URL(studioUrl).port),
+      writeFileSync(prof, roundProfile({ cwd, tmp, writes: [...o.sandbox.writes, home], reads: [...needs.reads, ...helperReads(), ...(o.sandbox.reads ?? [])], proxyPort: this.egress?.port??1, toolPort: Number(new URL(studioUrl).port),
         dataDir: this.dataDir, protect: this.protect() }));
-      const proxy = `http://round:${ptok}@127.0.0.1:${this.egress.port}`;
-      Object.assign(roundEnvAdd, { HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy, ALL_PROXY: proxy, all_proxy: proxy, NO_PROXY: "localhost,127.0.0.1,::1", no_proxy: "localhost,127.0.0.1,::1", NODE_USE_ENV_PROXY: "1", TMPDIR: tmp });
+      const proxy = `http://round:${ptok}@127.0.0.1:${this.egress?.port??1}`;
+      if(!localUnrestricted())Object.assign(roundEnvAdd, { HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy, ALL_PROXY: proxy, all_proxy: proxy, NO_PROXY: "localhost,127.0.0.1,::1", no_proxy: "localhost,127.0.0.1,::1", NODE_USE_ENV_PROXY: "1", TMPDIR: tmp });
+      roundEnvAdd.TMPDIR=tmp;
       for (const k of needs.tmpEnv) roundEnvAdd[k] = tmp; // the CLI's own temporary folder is the round's tmp, never a shared one
-      sandbox = { profile: prof };
+      sandbox = localUnrestricted()?null:{ profile: prof };
       // the credential opens last, and closes with everything else, however the round ends
-      const eg = this.egress; eg.open(ptok, [...needs.hosts, ...(o.sandbox.allow ?? [])]); const rmBox = cleanup; cleanup = () => { eg.close(ptok); rmBox(); };
+      if(!localUnrestricted()){const eg = this.egress!; eg.open(ptok, [...needs.hosts, ...(o.sandbox.allow ?? [])]); const rmBox = cleanup; cleanup = () => { eg.close(ptok); rmBox(); };}
       } catch (e: any) { cleanup(); return refuse(`the round's sandbox could not be set up: ${e?.message ?? e}`); }
       }
     }
@@ -133,7 +136,7 @@ export class Agents {
       // a credential never goes into a prompt (so it is never written into a round's record either)
       const text = keepCredentialsOut(o.text, [token]), system = keepCredentialsOut(withSafetyRules(o.system), [token]); // the safety rules lead every agent's instructions
       let rec: ReturnType<typeof roundRecord> | null = null;
-      try { rec = o.record ? roundRecord(o.record.dir, { ...o.record.header, job: id, provider: o.provider.id, model: o.provider.model, reasoningEffort: o.provider.reasoningEffort ?? null }, text, system) : null; }
+      try { rec = o.record ? roundRecord(o.record.dir, { ...o.record.header, job: id, provider: o.provider.id, model: o.provider.model, reasoningEffort: o.provider.reasoningEffort ?? null, executionMode:job.executionMode }, text, system) : null; }
       catch (e: any) { return refuse(`the round's record could not be written: ${e?.message ?? e}`); }
       let session: ReturnType<Provider["start"]>;
       try { session = o.provider.start(system, o.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.schema })), { studioUrl, token, cwd, env, mcpCommand: helperCommand("mcp"), sandbox, proxy: proxyUrl }); }

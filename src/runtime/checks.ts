@@ -1,3 +1,4 @@
+import {localUnrestricted} from "../local-execution";
 // The check runtime (docs/check-contract.md). Every script that judges a step's
 // output is a check: a manifest (check.yaml) plus an executable, a native
 // Studio function, an exit-code adapter around an existing script, or a model
@@ -267,13 +268,13 @@ export async function sandboxed(argv: string[], o: { cwd: string; out: string; t
   argvRead?: boolean }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; ms: number; refused?: string; aborted?: boolean }> {
   const t0 = Date.now();
   const info = sandboxInfo();
-  if (!info.ok) return { code: null, stdout: "", stderr: "", timedOut: false, ms: 0, refused: info.detail };
+  if (!info.ok && !localUnrestricted()) return { code: null, stdout: "", stderr: "", timedOut: false, ms: 0, refused: info.detail };
   mkdirSync(o.out, { recursive: true }); mkdirSync(o.tmp, { recursive: true });
   const out = realpathSync(o.out), tmp = realpathSync(o.tmp);
   const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: tmp, TMPDIR: tmp, LANG: "C.UTF-8", CI: "1", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", PYTHONDONTWRITEBYTECODE: "1", ...(o.env ?? {}) };
   const prof = join(tmp, "..", "profile.sb");
   writeFileSync(prof, profileFor({ out, tmp, reads: [o.cwd, ...(o.reads ?? []), ...(o.argvRead !== false && argv[0]?.startsWith("/") ? [dirname(argv[0])] : [])], network: o.network, dataDir: o.dataDir ?? null, cwd: o.cwd }));
-  const full = ["/usr/bin/sandbox-exec", "-f", prof, ...argv];
+  const full = localUnrestricted()?argv:["/usr/bin/sandbox-exec", "-f", prof, ...argv];
   return await new Promise((resolveP) => {
     let stdout = "", stderr = "", done = false, timedOut = false, aborted = false;
     const p = spawnChild(full[0], full.slice(1), { cwd: o.cwd, env, detached: true, stdio: [o.stdin != null ? "pipe" : "ignore", "pipe", "pipe"] });
@@ -299,9 +300,9 @@ export async function sandboxed(argv: string[], o: { cwd: string; out: string; t
  */
 export async function roundExec(argv: string[], o: { cwd: string; writes: string[]; tmp: string; dataDir?: string | null; protect?: string[]; timeoutS: number;
   egress?: { port: number; open(t: string, h: string[]): void; close(t: string): void } | null; hosts?: string[]; env?: Record<string, string> }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; refused?: string }> {
-  const info = sandboxInfo(); if (!info.ok) return { code: null, stdout: "", stderr: "", timedOut: false, refused: info.detail };
+  const info = sandboxInfo(); if (!info.ok && !localUnrestricted()) return { code: null, stdout: "", stderr: "", timedOut: false, refused: info.detail };
   mkdirSync(join(o.tmp, "home"), { recursive: true }); const tmp = realpathSync(o.tmp);
-  const net = !!o.egress && !!o.hosts?.length; const token = net ? randomBytes(18).toString("hex") : null;
+  const net = !localUnrestricted() && !!o.egress && !!o.hosts?.length; const token = net ? randomBytes(18).toString("hex") : null;
   if (net) o.egress!.open(token!, o.hosts!);
   const proxy = net ? `http://round:${token}@127.0.0.1:${o.egress!.port}` : null;
   const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: join(tmp, "home"), TMPDIR: tmp, LANG: "C.UTF-8", CI: "1", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null",
@@ -311,7 +312,8 @@ export async function roundExec(argv: string[], o: { cwd: string; writes: string
   try {
     return await new Promise((resolveP) => {
       let stdout = "", stderr = "", done = false, timedOut = false;
-      const p = spawnChild("/usr/bin/sandbox-exec", ["-f", prof, ...argv], { cwd: o.cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+      const full=localUnrestricted()?argv:["/usr/bin/sandbox-exec","-f",prof,...argv];
+      const p = spawnChild(full[0],full.slice(1), { cwd: o.cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
       const finish = (code: number | null) => { if (done) return; done = true; clearTimeout(timer); try { if (p.pid) process.kill(-p.pid, "SIGKILL"); } catch {} resolveP({ code: timedOut ? null : code, stdout, stderr, timedOut }); };
       const timer = setTimeout(() => { timedOut = true; finish(null); }, o.timeoutS * 1000);
       p.stdout?.on("data", (d) => { if (stdout.length < 1_000_000) stdout += d; }); p.stderr?.on("data", (d) => { if (stderr.length < 1_000_000) stderr += d; });
