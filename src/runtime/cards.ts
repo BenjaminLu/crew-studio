@@ -30,8 +30,8 @@ export type SCard = {
   workflow: string; runTitle: string;
   /** before / after captures of an app the change touches (a domain check fills them): image URLs and the visible text that changed */
   captures?: { label: string; before: string | null; after: string | null; changed?: { removed: string[]; added: string[] } | null }[] | null;
-  /** a startup competition acceptance card: every signed round and the pinned artifact (added on read from the signed ledger) */
-  competition?: import("../domain/startup-recursion").StartupCompetition;
+  /** a startup competition acceptance card: every signed round and the pinned artifact (added on read from the signed ledger), or `{untrusted:true}` when that ledger does not verify */
+  competition?: import("../domain/startup-recursion").StartupCompetition | { untrusted: true };
 };
 /**
  * The structured detail of an intent-aligned card (additive, optional; unit intent-merge-card). Older cards have none

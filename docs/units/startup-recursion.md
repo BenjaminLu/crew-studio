@@ -4,7 +4,7 @@
 - Claude is the founder: complete proposal, then explicit responses to previous feedback.
 - Codex is the judge: constructive critique, score 0–100, `ready` or `revise`.
 - At most three proposal/critique rounds. `ready` can reach captain acceptance earlier. At round three, unresolved critique remains visible to the captain; it never becomes an automatic pass.
-- Outputs: a pinned Markdown artifact retaining every proposal, critique and revision response, with actual job/provider/model provenance in the signed ledger.
+- Outputs: a pinned document artifact (doc.md + doc.html) retaining every proposal, critique and revision response, with actual job/provider/model provenance in the signed ledger. It is review-only outside the accept card: its review page has no Approve / Request changes, the artifact and docs approve routes refuse it (403 / 409, en/zh-TW reason), export stays open. Early versions hold only competition.md; their page is rendered on the fly, never rewritten.
 - The captain must select execution, then separately accept or reject the exact artifact. Rejection closes without approval; modification after presentation blocks approval.
 
 ## Firstmate demo
@@ -31,4 +31,6 @@
 
 - `CREW_TEST_IN_PROCESS=1 bun tests/startup-recursion.ts` uses controlled providers through real Engine, native Firstmate proposal/dispatch, captain cards, tool authorization and signed ledger. It makes no vendor request.
 - Covers board start without model params (configured models bound, shown, approved and run end to end), explicit override, unconfigured-model refusal, model change after approval, three rounds, early readiness, explicit fallback, retained critique/revision context, wrong-provider refusal, artifact tamper refusal before answer, cancellation, rejection, duplicate captain answer, restart without new model jobs, complete generated candidate retention and long-proposal transport.
+- Also covers an incomplete transcript at acceptance (typed `startup_incomplete_transcript`, no card) and a card whose ledger no longer verifies (`competition: {untrusted:true}`; the card says the rounds cannot be shown, the run page lists no output).
+- `node tests/startup-accept-card-ui.mjs` and `bun tests/startup-run-output-ui.mjs` mount the card and the run page: rounds, proposals and critiques fold (last round and its proposal open), model markdown renders as text-node DOM with no model-authored link and no inner scroll box, one button to the artifact, and the run output reads "Competition write-up".
 - Live acceptance still requires actual CLI provider-selection evidence, real transcript review and captain acceptance. Fixture pass is not live E2E proof.

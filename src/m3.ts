@@ -7,6 +7,7 @@ import { extname, join } from "node:path";
 import {MediaLibrary} from "./media-library";
 import { ArtifactStore, websiteHref, type Note } from "./artifacts";
 import { Lane } from "./recipes";
+import { mdToDocHtml } from "./docrender";
 import { WorkRuns, filmScenes } from "./work";
 import { renderEnv, runRender } from "./render";
 import type { Provider } from "./providers";
@@ -31,7 +32,7 @@ const TAB_CSP = `sandbox allow-scripts; ${CSP}`;
 const framedByStudio = (req: Request) => ["iframe", "frame"].includes(req.headers.get("sec-fetch-dest") ?? "");
 const INTERACTIVE_CSP = "sandbox allow-scripts; default-src 'none'; img-src data: blob:; media-src blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'";
 
-export type ArtifactReviewPolicy = {readOnly:true; taskHref:string|null; reason:string};
+export type ArtifactReviewPolicy = {readOnly:true; taskHref:string|null; reason:string; reasonZh?:string};
 export function createM3(d: M3Deps) {
   let artifactReview: (id:string)=>ArtifactReviewPolicy|null=()=>null;
   const useArtifactReviewPolicy=(policy:typeof artifactReview)=>{artifactReview=policy;};
@@ -78,7 +79,7 @@ export function createM3(d: M3Deps) {
     if (writing) { try { b = await req.json(); } catch { b = {}; } }
     try {
       if(writing){const target=/^\/api\/artifacts\/([^/]+)/.exec(p)?.[1];const laneTarget=/^\/api\/lane\/([^/]+)\/(?:pr|merge|close|prepare|ci)$/.exec(p);const id=target?decodeURIComponent(target):p==='/api/artifacts'?String(b?.id??''):p==='/api/lane/run'?String(b?.artifact??''):laneTarget?lane.card(decodeURIComponent(laneTarget[1]))?.artifact??null:null;
-        if(id&&artifactReview(id))return json({error:'This artifact belongs to a native Task; review and revise its bound bundle there',code:'native-artifact-read-only'},403);
+        const policy=id?artifactReview(id):null;if(policy)return json({error:policy.reasonZh?policy.reason:'This artifact belongs to a native Task; review and revise its bound bundle there',errorZh:policy.reasonZh??null,code:'native-artifact-read-only'},403);
       }
       const managedTarget=/^\/api\/artifacts\/([^/]+)/.exec(p);
       if(writing&&managedTarget&&media.owns(decodeURIComponent(managedTarget[1])))return json({error:"Workflow-owned media requires its bound Task",code:"managedMedia"},409);
@@ -86,6 +87,12 @@ export function createM3(d: M3Deps) {
       if (p.startsWith("/af/")) {
         const [, , id, nStr, ...rest] = p.split("/");
         const file = store.file(decodeURIComponent(id), Number(nStr), decodeURIComponent(rest.join("/")));
+        // a document version written without its rendered page (the startup competition's first versions hold only
+        // competition.md, sha-pinned): render doc.html from its Markdown on the fly, read only, never stored
+        if (!file && decodeURIComponent(rest.join("/")) === "doc.html") {
+          const src = store.mdSource(decodeURIComponent(id), Number(nStr));
+          if (src) return new Response(mdToDocHtml(readFileSync(src, "utf8"), store.get(decodeURIComponent(id))?.title), { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": framedByStudio(req) ? CSP : TAB_CSP, "x-content-type-options": "nosniff", "cache-control": "no-cache" } });
+        }
         if (!file) return new Response("not found", { status: 404 });
         const type = TYPES[extname(file).toLowerCase()] ?? "application/octet-stream";
         const f = Bun.file(file), size = f.size;

@@ -176,6 +176,13 @@ export class ArtifactStore {
     return v;
   }
 
+  /** The Markdown source of a document version (source md): doc.md, or for a version written before doc.md was the
+   *  convention (the startup competition's competition.md) its own .md primary or entry. Read only. */
+  mdSource(id: string, n: number): string | null {
+    const a = this.get(id), v = this.version(id, n); if (a?.source !== "md" || !v) return null;
+    for (const rel of ["doc.md", v.primary, a.entry]) if (typeof rel === "string" && rel.endsWith(".md")) { const f = this.file(id, n, rel); if (f) return f; }
+    return null;
+  }
   /** Absolute path of a version file, only inside that version's files/ (shared links resolved and checked). */
   file(id: string, n: number, rel: string): string | null {
     let fdir: string; try { fdir = this.filesDir(id, n); } catch { return null; }

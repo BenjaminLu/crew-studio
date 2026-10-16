@@ -13,6 +13,7 @@ import { mdToDocHtml, parseBlocks, toDocx, toPdf } from "./docrender";
 import type { StudioLog } from "./rawlog";
 import type { Skills } from "./skills";
 import type { Provider } from "./providers";
+import { STARTUP_ACCEPT_ONLY, isStartupArtifact } from "./domain/startup-recursion";
 
 const DRAFT_TAIL = `\n\nYou write ONE new document in doc.md with the doc_* tools only (no shell, no web): a # title, a short summary, then the sections the prompt needs. Answer in 2 short lines when done.`;
 
@@ -52,7 +53,7 @@ export function createDocs(o: { dataDir: string; store: ArtifactStore; agents: A
   }
   /** The pack's approval gates for one version. */
   function gates(id: string, n: number) {
-    const md = readFileSync(o.store.file(id, n, "doc.md")!, "utf8");
+    const md = readFileSync(o.store.mdSource(id, n)!, "utf8");
     const first = parseBlocks(md)[0];
     const open = o.store.notes(id, n).filter((x) => x.status === "open");
     return [{ id: "has-title", label: "The document starts with a title", state: first?.kind === "h" && first.level === 1 ? "pass" : "fail", detail: first?.kind === "h" ? first.text : "no # title first" },
@@ -60,7 +61,7 @@ export function createDocs(o: { dataDir: string; store: ArtifactStore; agents: A
   }
   function exportDoc(id: string, n: number, format: string): Response {
     const a = o.store.get(id); const v = o.store.version(id, n); if (!a || !v || a.source !== "md") return new Response("not found", { status: 404 });
-    const md = readFileSync(o.store.file(id, n, "doc.md")!, "utf8");
+    const md = readFileSync(o.store.mdSource(id, n)!, "utf8");
     const name = `${id}-v${n}`;
     const send = (body: BodyInit, type: string, ext: string, extra: Record<string, string> = {}) => new Response(body, { headers: { "content-type": type, "content-disposition": `attachment; filename="${name}.${ext}"`, "cache-control": "no-store", ...extra } });
     o.log.emit({ type: "doc_exported", workflow: "documents", task: id, summary: `v${n} as ${format}` });
@@ -80,7 +81,7 @@ export function createDocs(o: { dataDir: string; store: ArtifactStore; agents: A
     try {
       if (p === "/api/docs" && !writing) {
         const docs = o.store.view().filter((a: any) => a.source === "md").map((a: any) => { const last = a.versions.at(-1); let words = 0, lossy = false;
-          try { const md = readFileSync(o.store.file(a.id, last.n, "doc.md")!, "utf8"); words = md.split(/\s+/).filter(Boolean).length; lossy = /[^\u0000-ÿ“”‘’–—…•]/.test(md); } catch {}
+          try { const md = readFileSync(o.store.mdSource(a.id, last.n)!, "utf8"); words = md.split(/\s+/).filter(Boolean).length; lossy = /[^\u0000-ÿ“”‘’–—…•]/.test(md); } catch {}
           return { ...a, words, pdfLatinOnly: lossy, openNotes: o.store.notes(a.id, last.n).filter((x) => x.status === "open").length }; });
         return json({ docs, drafts: [...drafts.values()].filter((d) => d.status !== "done") });
       }
@@ -94,8 +95,10 @@ export function createDocs(o: { dataDir: string; store: ArtifactStore; agents: A
       if (m) {
         const id = m[1], n = Number(m[2]); const a = o.store.get(id); if (!a || a.source !== "md" || !o.store.version(id, n)) return json({ error: "no such document version" }, 404);
         if (m[3] === "gates") return json(gates(id, n));
-        if (m[3] === "source") return json({ md: readFileSync(o.store.file(id, n, "doc.md")!, "utf8") });
+        if (m[3] === "source") return json({ md: readFileSync(o.store.mdSource(id, n)!, "utf8") });
         if (m[3] === "export") return exportDoc(id, n, url.searchParams.get("format") ?? "md");
+        // a startup competition write-up is accepted only on its Task's accept card (export and source stay open)
+        if (m[3] === "approve" && writing && isStartupArtifact(id, a)) return json({ error: STARTUP_ACCEPT_ONLY.en, errorZh: STARTUP_ACCEPT_ONLY.zh, code: "startup-accept-card-only" }, 409);
         if (m[3] === "approve" && writing) {
           const g = gates(id, n); const bad = g.filter((x) => x.state === "fail");
           if (bad.length) return json({ error: `a gate failed: ${bad.map((x) => `${x.label} (${x.detail})`).join("; ")}`, gates: g }, 409);

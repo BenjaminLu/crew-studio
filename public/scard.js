@@ -40,6 +40,27 @@ const CSS = `
 .cc .rt-card-body { min-width: 0; max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
 .cc-pre { white-space: pre-wrap; background: var(--surface-2); padding: 8px; border-radius: 8px; margin: 0; max-height: 260px; overflow: auto; }
 .cc-walk { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.cc-part { border-top: 1px solid var(--border); }
+.cc-part:first-child { border-top: 0; }
+.cc-part > summary { cursor: pointer; padding: 8px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-weight: 600; }
+.cc-part > div { display: grid; gap: 8px; padding: 0 0 8px; }
+.cc-md { display: grid; gap: 8px; font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
+.cc-md p { margin: 0; white-space: pre-wrap; }
+.cc-md ul, .cc-md ol { margin: 0; padding-left: 22px; display: grid; gap: 3px; }
+.cc-md li { white-space: pre-wrap; }
+.cc-md li.cc-md-sub { margin-left: 18px; list-style-type: circle; }
+.cc-md .cc-md-h { margin: 6px 0 0; font-weight: 650; font-size: 15px; line-height: 1.35; }
+.cc-md .cc-md-h[aria-level="5"], .cc-md .cc-md-h[aria-level="6"] { font-size: 14px; }
+.cc-md .cc-md-h[aria-level="7"], .cc-md .cc-md-h[aria-level="8"], .cc-md .cc-md-h[aria-level="9"] { font-size: 13.5px; color: var(--text-2); }
+.cc-md code { font-family: var(--f-mono, ui-monospace, monospace); font-size: 12.5px; background: var(--surface-2); padding: 0 4px; border-radius: 4px; }
+.cc-md blockquote { margin: 0; padding-left: 10px; border-left: 3px solid var(--border); color: var(--text-2); }
+.cc-md hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
+.cc-md .cc-pre { max-height: none; }
+.cc-md-tw { overflow-x: auto; }
+.cc-md table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.cc-md th, .cc-md td { border: 1px solid var(--border); padding: 4px 6px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.cc-md th { background: var(--surface-2); }
+.cc-reply { border-left: 3px solid var(--accent, var(--border)); padding-left: 10px; }
 .cc-walk > summary { cursor: pointer; padding: 8px; display: grid; gap: 4px; list-style: none; }
 .cc-walk > summary::-webkit-details-marker { display: none; }
 .cc-walk[open] > summary { border-bottom: 1px solid var(--border); }
@@ -79,6 +100,38 @@ function h(tag, attrs, ...kids) {
   for (const c of kids.flat(Infinity)) if (c != null && c !== false) e.append(c instanceof Node ? c : String(c));
   return e;
 }
+// Model-written markdown read as text: headings, bold, inline code, lists, simple tables, quotes and
+// paragraphs become elements whose content is text nodes only. No HTML is parsed and no link is made:
+// "[x](url)" and bare URLs stay plain text.
+function mdInline(s) {
+  const out = [], re = /\*\*([^*\n]+?)\*\*|__([^_\n]+?)__|`([^`\n]+)`/g; let i = 0, m;
+  while ((m = re.exec(s))) { if (m.index > i) out.push(s.slice(i, m.index)); out.push(m[3] != null ? h("code", {}, m[3]) : h("strong", {}, m[1] ?? m[2])); i = re.lastIndex; }
+  if (i < s.length) out.push(s.slice(i)); return out;
+}
+function mdView(text, attrs = {}) {
+  const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n"), out = []; let para = [], list = null;
+  const flush = () => { if (para.length) out.push(h("p", {}, mdInline(para.join("\n")))); para = []; if (list) out.push(list); list = null; };
+  const row = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  const sep = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l || "");
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i]; let m;
+    if (!l.trim()) { flush(); continue; }
+    if (/^\s*```/.test(l)) { flush(); const code = []; for (i++; i < lines.length && !/^\s*```/.test(lines[i]); i++) code.push(lines[i]); out.push(h("pre", { class: "cc-pre" }, code.join("\n"))); continue; }
+    if ((m = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/.exec(l))) { flush(); out.push(h("p", { class: "cc-md-h", role: "heading", "aria-level": String(m[1].length + 3) }, mdInline(m[2]))); continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(l)) { flush(); out.push(h("hr", {})); continue; }
+    if (l.includes("|") && sep(lines[i + 1])) { flush(); const head = row(l), body = []; for (i += 2; i < lines.length && lines[i].includes("|") && lines[i].trim(); i++) body.push(row(lines[i])); i--;
+      out.push(h("div", { class: "cc-md-tw" }, h("table", {}, h("thead", {}, h("tr", {}, head.map((c) => h("th", {}, mdInline(c))))), h("tbody", {}, body.map((r) => h("tr", {}, head.map((_, k) => h("td", {}, mdInline(r[k] ?? "")))))))));
+      continue; }
+    if ((m = /^\s*>\s?(.*)$/.exec(l))) { flush(); const q = [m[1]]; while (i + 1 < lines.length && (m = /^\s*>\s?(.*)$/.exec(lines[i + 1]))) { q.push(m[1]); i++; } out.push(h("blockquote", {}, mdView(q.join("\n")))); continue; }
+    const li = /^\s*(?:([-*+])|(\d+)[.)])\s+(.*)$/.exec(l);
+    if (li) { const tag = li[1] ? "ul" : "ol"; if (para.length || (list && list.tagName.toLowerCase() !== tag)) flush(); if (!list) list = h(tag, li[2] && li[2] !== "1" ? { start: li[2] } : {}); list.append(h("li", /^\s{2,}/.test(l) ? { class: "cc-md-sub" } : {}, mdInline(li[3]))); continue; }
+    if (list && /^\s{2,}\S/.test(l)) { list.lastChild.append("\n", ...mdInline(l.trim())); continue; }
+    if (list) flush();
+    para.push(l);
+  }
+  flush();
+  return h("div", { class: "cc-md", ...attrs }, out);
+}
 async function get(u) { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; }
 async function post(u, body) {
   const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
@@ -112,7 +165,7 @@ window.crewImageRefinementSnapshot=(snapshot,{lang="en",review=null}={})=>{
  */
 function mountCard(el, card, opts = {}) {
   css();
-  const fresh = { lang: opts.lang || pageLang(), ticks: new Set(), opened: new Set(), confirm: false, note: "", msg: "", ok: false, busy: false };
+  const fresh = { lang: opts.lang || pageLang(), ticks: new Set(), opened: new Set(), folds: new Map(), confirm: false, note: "", msg: "", ok: false, busy: false };
   const st = opts.state || {}; for (const [k, v] of Object.entries(fresh)) if (!(k in st)) st[k] = v;
   const expectsInterview=card.workflow==='pack-genesis'&&card.node==='interview-answers';const form=card.interview;let draft=null;
   if(form?.schema===1&&/^[a-f0-9]{64}$/.test(form.batchHash)&&/^R-\d+$/.test(card.run)&&/^SC-\d+$/.test(card.id)&&form.visit===card.visit&&Array.isArray(form.questions)&&form.questions.length===6){
@@ -192,9 +245,10 @@ function mountCard(el, card, opts = {}) {
         : h("p", { class: "cc-count" }, T("No visible text changed.", "畫面上的文字沒有改變。")))));
   }
   function linksView(c) {
-    const ls = (Array.isArray(c.links) ? c.links : []).filter((l) => l && typeof l.href === "string" && /^(\/|https?:|#\/)/.test(l.href)); if (!ls.length) return null;
+    const same = (a, b) => { try { return decodeURIComponent(a) === decodeURIComponent(b); } catch { return a === b; } }, pinned = c.competition?.artifact?.href;
+    const ls = (Array.isArray(c.links) ? c.links : []).filter((l) => l && typeof l.href === "string" && /^(\/|https?:|#\/)/.test(l.href) && !(pinned && same(l.href, pinned))); if (!ls.length) return null;
     const inApp = (href) => href.startsWith("#/");
-    return h("div", { class: "cc-actions" }, ls.map((l) => h("a", { class: "btn", href: l.href, target: inApp(l.href) ? null : "_blank", rel: inApp(l.href) ? null : "noopener", "data-card-link": l.label }, l.label === "Open website in new tab"?T("Open website in new tab","在新分頁開啟網站"):l.label === "Open the app" ? T("Open the app", "打開 app") : l.label)));
+    return h("div", { class: "cc-actions" }, ls.map((l) => h("a", { class: "btn", href: l.href, target: inApp(l.href) ? null : "_blank", rel: inApp(l.href) ? null : "noopener", "data-card-link": l.label }, l.label === "Open website in new tab"?T("Open website in new tab","在新分頁開啟網站"):l.label === "Open the full text" || l.label === "檢視完整文字紀錄" ? T("Open the full text", "檢視完整文字") : l.label === "Open the app" ? T("Open the app", "打開 app") : l.label)));
   }
   function plainView(c) {
     const s = cardI18n().deep(st.lang, c.sections); const out = [];
@@ -206,15 +260,26 @@ function mountCard(el, card, opts = {}) {
     return out;
   }
 
+  // the startup competition: a notice when its signed ledger does not verify; otherwise one collapsible
+  // round each (the last one open), and inside it the proposal and the critique each collapsible
+  // (the last round's proposal open), model text rendered as markdown made of text nodes only
   function competitionView(c) {
-    const m = c.competition; if (!m || m.schema !== 1 || !Array.isArray(m.rounds)) return null;
-    const who = (x) => h("span", { class: "cc-chip" }, `${x.provider} · ${x.model}`);
+    const m = c.competition; if (!m) return null;
+    if (m.untrusted) return sec("competition", T("The competition, round by round", "比賽全文（逐輪）"),
+      h("p", { class: "cc-msg", role: "alert", "data-competition-untrusted": "" }, T("Ledger did not verify — the rounds cannot be shown.", "帳本驗證失敗——無法顯示各輪內容。")));
+    if (m.schema !== 1 || !Array.isArray(m.rounds)) return null;
+    const who = (x) => h("span", { class: "cc-chip", style: "font-weight:400" }, `${x.provider} · ${x.model}`);
+    const last = m.rounds.at(-1)?.round;
+    const fold = (key, dflt, attrs, summary, ...kids) => h("details", { ...attrs, open: st.folds.has(key) ? st.folds.get(key) : dflt, ontoggle: (e) => { st.folds.set(key, e.target.open); } }, h("summary", {}, summary), ...kids);
+    const verdict = (j, mark) => h("span", { class: `cc-chip ${j.verdict === "ready" ? "ok" : "warn"}`, "data-round-verdict": mark ? j.verdict ?? "" : null, style: "font-weight:400" }, T(`score ${j.score ?? "—"} · ${j.verdict ?? "—"}`, `評分 ${j.score ?? "—"} · 判定 ${j.verdict ?? "—"}`));
     return sec("competition", T("The competition, round by round", "比賽全文（逐輪）"),
-      m.rounds.length ? m.rounds.map((r) => h("details", { class: "cc-walk", "data-competition-round": r.round, open: st.opened.has(`round-${r.round}`) || r.round === m.rounds.at(-1).round, ontoggle: (e) => { e.target.open ? st.opened.add(`round-${r.round}`) : st.opened.delete(`round-${r.round}`); } },
-        h("summary", {}, h("b", {}, T(`Round ${r.round}`, `第 ${r.round} 輪`)), r.judge ? h("span", {}, h("span", { class: `cc-chip ${r.judge.verdict === "ready" ? "ok" : "warn"}`, "data-round-verdict": r.judge.verdict ?? "" }, T(`score ${r.judge.score ?? "—"} · ${r.judge.verdict ?? "—"}`, `評分 ${r.judge.score ?? "—"} · 判定 ${r.judge.verdict ?? "—"}`))) : h("span", { class: "cc-chip bad" }, T("no critique", "沒有評審"))),
-        h("div", { style: "padding:8px;display:grid;gap:8px" },
-          r.founder ? h("div", { "data-round-founder": r.round }, h("h5", { style: "margin:0" }, T("Proposal", "提案"), " ", who(r.founder)), r.founder.revision ? h("p", { "data-round-revision": r.round }, h("b", {}, T("Response to the critique: ", "回應上輪銳評：")), r.founder.revision) : null, h("pre", { class: "cc-pre", style: "max-height:420px" }, r.founder.text)) : h("p", { class: "cc-count" }, T("No proposal recorded.", "沒有提案紀錄。")),
-          r.judge ? h("div", { "data-round-judge": r.round }, h("h5", { style: "margin:0" }, T("Critique", "銳評"), " ", who(r.judge)), h("pre", { class: "cc-pre", style: "max-height:420px" }, r.judge.text)) : null)))
+      m.rounds.length ? m.rounds.map((r) => fold(`round-${r.round}`, r.round === last, { class: "cc-walk", "data-competition-round": r.round },
+        [h("b", {}, T(`Round ${r.round}`, `第 ${r.round} 輪`)), r.judge ? h("span", {}, verdict(r.judge, true)) : h("span", { class: "cc-chip bad" }, T("no critique", "沒有評審"))],
+        h("div", { style: "padding:0 10px" },
+          r.founder ? fold(`founder-${r.round}`, r.round === last, { class: "cc-part", "data-round-founder": r.round }, [T("Proposal", "提案"), who(r.founder)],
+            h("div", {}, r.founder.revision ? h("div", { class: "cc-reply", "data-round-revision": r.round }, h("b", {}, T("Response to the critique", "回應上輪銳評")), mdView(r.founder.revision)) : null, mdView(r.founder.text, { "data-round-proposal": r.round })))
+            : h("p", { class: "cc-count" }, T("No proposal recorded.", "沒有提案紀錄。")),
+          r.judge ? fold(`judge-${r.round}`, false, { class: "cc-part", "data-round-judge": r.round }, [T("Critique", "銳評"), who(r.judge), verdict(r.judge)], h("div", {}, mdView(r.judge.text, { "data-round-critique": r.round }))) : null)))
         : h("p", { class: "cc-msg" }, T("No signed round was recorded.", "沒有已簽署的回合紀錄。")),
       m.artifact ? h("p", { "data-competition-artifact": m.artifact.id }, h("a", { class: "btn", href: m.artifact.href }, T(`Open the full text · ${m.artifact.id} v${m.artifact.version}`, `檢視完整文字 · ${m.artifact.id} v${m.artifact.version}`)), " ", h("span", { class: `cc-chip ${m.artifact.intact ? "ok" : "bad"}` }, m.artifact.intact ? T("pinned, bytes match", "已釘選，內容相符") : T("pinned file changed or missing", "釘選的檔案已變更或遺失"))) : h("p", { class: "cc-msg" }, T("No artifact was pinned.", "沒有釘選產物。")));
   }
@@ -282,7 +347,8 @@ function mountCard(el, card, opts = {}) {
       opts.inbox ? h("div", { class: "cardmeta cc-meta", "data-scard-meta": c.id }, h("span", { class: "mono" }, c.id), h("a", { href: `#/run/${encodeURIComponent(c.run)}` }, c.run), h("span", {}, c.workflow), h("span", { class: "badge" }, c.node)) : null,
       ...(d ? (d.artifactAcceptance ? artifactDetailView(d, c) : detailView(d, c)) : plainView(c)),
       competitionView(c),
-      body ? (d || c.competition ? h("details", { class: "cc-sec", open: st.opened.has("#body"), ontoggle: (e) => { e.target.open ? st.opened.add("#body") : st.opened.delete("#body"); } }, h("summary", { class: "cc-count" }, T("Card text", "卡片全文")), h("pre", { class: "cc-pre rt-card-body" }, body)) : h("pre", { class: "cc-pre rt-card-body" }, body)) : null,
+      // the competition already shows every round; its card text would repeat them, so it is not shown again
+      body && !c.competition ? (d ? h("details", { class: "cc-sec", open: st.opened.has("#body"), ontoggle: (e) => { e.target.open ? st.opened.add("#body") : st.opened.delete("#body"); } }, h("summary", { class: "cc-count" }, T("Card text", "卡片全文")), h("pre", { class: "cc-pre rt-card-body" }, body)) : h("pre", { class: "cc-pre rt-card-body" }, body)) : null,
     ];
     if (open) {
       if (n) kids.push(h("section", { class: "cc-align", "data-align": c.id },
