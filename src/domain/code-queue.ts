@@ -59,13 +59,18 @@ export function signedReservation(engine: Engine, run: Run, trusted: ReturnType<
 }
 
 const reservedScope=(pin:any):string[]=>pin.version===3?pin.heldScope:pin.scope;
-/** A v3 epoch adds scope only after signed rescope -> base refresh -> fresh dispatch.
+/** A v3 epoch replaces the pin only after a signed captain rescope, then a fresh
+ * signed dispatch of the rewritten spec. The rescope is either a base refresh
+ * (`local-rescope-applied`) or an ordinary captain "rescope" card answer.
  * The old reservation remains held, even when the new scope is narrower.
  */
+const captainRescope=(e:any)=>e?.record==="card-answer"&&e.verdict==="pass"&&e.data?.choice==="rescope"&&!String(e.actor??"").startsWith("auth window");
 function validRecoveryTransition(trusted:ReturnType<Engine["trusted"]>,prior:any,next:any){
   const p=prior.data,d=next.data;
   if(!trusted.ok||d.predecessor!==prior.seq||d.repo!==p.repo||d.project!==p.project||hashInput(d.dependencies)!==hashInput(p.dependencies)||
     hashInput(d.heldScope)!==hashInput([...new Set([...reservedScope(p),...d.scope])]))return false;
+  const rescope=trusted.entries.find(e=>e.seq===d.recovery&&captainRescope(e));
+  if(rescope)return rescope.seq>prior.seq&&validDispatch(trusted,d,next,rescope.seq);
   const applied=trusted.entries.find(e=>e.seq===d.recovery&&e.record==="local-rescope-applied"&&e.verdict==="pass");
   const request=trusted.entries.find(e=>e.seq===applied?.data?.request&&e.record==="local-rescope-request"&&e.verdict==="pass"),i:any=request?.data;
   if(!request||!applied)return false;
@@ -74,18 +79,27 @@ function validRecoveryTransition(trusted:ReturnType<Engine["trusted"]>,prior:any
   return !!(request&&applied&&answer&&dispatch&&i?.version===1&&i.prior===prior.seq&&i.priorHash===hashInput(p)&&i.repo===p.repo&&i.project===p.project&&
     answer.data?.localRescope&&hashInput(answer.data.localRescope)===hashInput({version:1,card:i.card,visit:i.visit,base:i.base,from:i.from,target:i.target})&&
     i.from===request.head&&/^[a-f0-9]{40}$/.test(i.from)&&/^[a-f0-9]{40}$/.test(i.target)&&applied.head===i.target&&applied.data?.intentHash===hashInput(i)&&
-    request.seq>prior.seq&&dispatch.seq>applied.seq&&next.seq>dispatch.seq&&dispatch.head===i.target&&
+    request.seq>prior.seq&&dispatch.head===i.target&&validDispatch(trusted,d,next,applied.seq));
+}
+/** The fresh dispatch after the recovery binds exactly the new epoch's spec, scope and identity. */
+function validDispatch(trusted:ReturnType<Engine["trusted"]>,d:any,next:any,after:number){
+  const dispatch=trusted.entries.find(e=>e.seq===d.dispatch&&e.record==="card-answer"&&e.data?.kind==="dispatch"&&e.data?.choice==="dispatch");
+  return !!(dispatch&&dispatch.seq>after&&next.seq>dispatch.seq&&
     dispatch.data?.queueHashAlgorithm===INPUT_HASH_ALGORITHM&&dispatch.data?.queueSpec===d.specHash&&dispatch.data?.repo===d.repo&&dispatch.data?.project===d.project&&
     hashInput(dispatch.data?.scope)===hashInput(d.scope)&&hashInput(dispatch.data?.dependencies)===hashInput(d.dependencies));
 }
-function recoveryReplacement(trusted:ReturnType<Engine["trusted"]>,prior:any,acceptance:any){
-  if(!prior||!acceptance||acceptance.data?.kind!=="dispatch"||acceptance.data?.choice!=="dispatch")return null;
-  const a=acceptance.data,p=prior.data;
+/** The replacement pin for the latest signed dispatch, when a captain rescope came between the prior admission and it. */
+function recoveryReplacement(trusted:ReturnType<Engine["trusted"]>,prior:any){
+  const acceptance=trusted.entries.filter(e=>e.record==="card-answer"&&e.data?.kind==="dispatch"&&e.data?.choice==="dispatch").at(-1);
+  if(!prior||!acceptance||acceptance.seq<prior.seq)return null;
+  const a:any=acceptance.data,p=prior.data;
   if(p.specHash===a.queueSpec&&hashInput(p.scope)===hashInput(a.scope))return null;
-  const applied=trusted.entries.filter(e=>e.record==="local-rescope-applied"&&e.seq>prior.seq&&e.seq<acceptance.seq).at(-1);
-  if(!applied)return null;
+  // A base refresh keeps its stricter evidence; otherwise the latest captain rescope answer is the authority.
+  const between=(e:any)=>e.seq>prior.seq&&e.seq<acceptance.seq;
+  const recovery=trusted.entries.filter(e=>e.record==="local-rescope-applied"&&between(e)).at(-1)??trusted.entries.filter(e=>captainRescope(e)&&between(e)).at(-1);
+  if(!recovery)return null;
   const data={version:3,hashAlgorithm:INPUT_HASH_ALGORITHM,repo:a.repo,project:a.project,specHash:a.queueSpec,scope:clone(a.scope),dependencies:clone(a.dependencies),
-    predecessor:prior.seq,recovery:applied.seq,dispatch:acceptance.seq,heldScope:[...new Set([...reservedScope(p),...a.scope])]};
+    predecessor:prior.seq,recovery:recovery.seq,dispatch:acceptance.seq,heldScope:[...new Set([...reservedScope(p),...a.scope])]};
   return validRecoveryTransition(trusted,prior,{data,seq:Infinity})?data:null;
 }
 
@@ -157,7 +171,10 @@ function scopeState(this: Engine, x: X) {
     const pin = x.ctx.nativeAdmission ?? signed;
     const sameReservation = pin && pin.repo === repo && pin.project === project && hashInput(pin.dependencies) === hashInput(deps) && hashInput(pin.scope) === hashInput(acceptance.scope);
     const upgradingLegacy = pin?.version === 1 && pin.hashAlgorithm === undefined && acceptance.queueRecovery === true && sameReservation;
-    const replacement=recoveryReplacement(trusted,prior,acceptanceRecord);
+    // A captain rescope + fresh dispatch (or the retry after it) re-pins; the
+    // scope it adds still meets every other Task in the overlap check below.
+    const replacement=recoveryReplacement(trusted,prior);
+    if (replacement && replacement.specHash !== specHash) throw new Error("accepted dependency/scope binding is unavailable or changed; fresh dispatch required");
     if (pin && !replacement && (!sameReservation || !upgradingLegacy && (![2,3].includes(pin.version) || pin.hashAlgorithm !== INPUT_HASH_ALGORITHM || pin.specHash !== specHash))) throw new Error("native scope pin changed or uses unknown hash algorithm; fresh preparation required");
     for (const id of deps) { const parent = this.get(id); if (!parent || !this.verifiedMerge(parent, { project, repo })) return { ready: false, reason: `dependency ${id} has no verified authoritative merge` }; }
     for (const blocker of scopeBlockers(this, x.run)) {
@@ -174,8 +191,7 @@ export function installCodeQueue(engine: Engine) {
     merged: (r, expected) => verifiedMerge.call(engine, r, expected),
     admitted(x) {
         const trusted=engine.trusted(x.run.id),{prior}=signedReservation(engine,x.run,trusted);
-        const acceptance=trusted.entries.filter(e=>e.record==="card-answer"&&e.data?.kind==="dispatch"&&e.data?.choice==="dispatch").at(-1);
-        const replacement=recoveryReplacement(trusted,prior,acceptance);
+        const replacement=recoveryReplacement(trusted,prior);
         if(replacement){x.ctx.nativeAdmission=replacement;engine.record(x,"scope-admission",{data:clone(replacement)});return;}
         if (!x.ctx.nativeAdmission || x.ctx.nativeAdmission.version === 1 && x.ctx.nativeAdmission.hashAlgorithm === undefined) {
           const data: any = engine.trusted(x.run.id).entries.filter(e => e.record === "card-answer" && (((e.data as any)?.kind === "dispatch" && (e.data as any)?.choice === "dispatch") || ((e.data as any)?.queueRecovery === true && (e.data as any)?.choice === "retry"))).at(-1)!.data;
