@@ -1,5 +1,6 @@
 // Code admission is a domain adapter; the generic runtime owns job lifetimes.
 import { hashInput, INPUT_HASH_ALGORITHM } from "../runtime/checks";
+import { git } from "../git";
 import { scopesOverlap } from "../runtime/queue";
 import type { Engine, Run, X } from "../runtime/engine";
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));
@@ -92,9 +93,9 @@ function verifiedMerge(this: Engine, r: Run, expected?: { project: string; repo:
     const rec = trusted.entries.filter(e => e.record === "native-merge" && e.verdict === "pass").at(-1), d: any = rec?.data;
     if (!d || d.version !== 1 || !/^[0-9a-f]{40}$/.test(d.head) || !/^[A-Za-z0-9][A-Za-z0-9/_-]*$/.test(d.base) || this.queueRepo(d.repo) !== d.repo || d.project !== this.queueProject(r)) return false;
     if (expected && (d.repo !== expected.repo || d.project !== expected.project)) return false;
-    const current = Bun.spawnSync(["git", "rev-parse", "--verify", `refs/heads/${d.base}`], { cwd: d.repo, stdout: "pipe", stderr: "pipe" });
-    const h = current.stdout.toString().trim(); if (current.exitCode !== 0 || !/^[0-9a-f]{40}$/.test(h)) return false;
-    return Bun.spawnSync(["git", "merge-base", "--is-ancestor", d.head, h], { cwd: d.repo, stdout: "pipe", stderr: "pipe" }).exitCode === 0;
+    const current = git(d.repo, ["rev-parse", "--verify", `refs/heads/${d.base}`]);
+    const h = current.out.trim(); if (!current.ok || !/^[0-9a-f]{40}$/.test(h)) return false;
+    return git(d.repo, ["merge-base", "--is-ancestor", d.head, h]).ok;
   }
 function scopeState(this: Engine, x: X) {
     if (x.run.ctx.nativeQueueVersion !== 1) throw new Error("historical round has no native queue binding; fresh preparation required");

@@ -207,7 +207,7 @@ export function diagnose(i: DoctorInput): Item[] {
   if (i.gitConfig) { const g = i.gitConfig, bad = g.problems;
     // only reported: Studio never rewrites a repository's config (a broken one refuses task worktrees with the same reason)
     items.push({ id: "git-config", title: "Shared git config of Studio's repositories", titleZh: "儲存庫共用的 git 設定", status: bad.length ? "degraded" : "ok",
-      detail: bad.length ? bad.map((p) => `${p.label} (${p.repo}): ${p.key}=${p.value}. ${p.why}`).join("\n") : `${g.checked.length} checked: ${g.checked.map((c) => c.label).join(", ") || "none"}`,
+      detail: bad.length ? bad.map((p) => `${p.label} (${p.repo}): ${p.key}=${p.value}. ${p.why}${p.blocking ? "; task worktrees on it are refused" : "; reported only"}`).join("\n") : `${g.checked.length} checked: ${g.checked.map((c) => c.label).join(", ") || "none"}`,
       detailZh: bad.length ? bad.map((p) => `${p.label}（${p.repo}）：${p.key}=${p.value}，${p.config} 的共用設定壞了，這個儲存庫與它的連結 worktree 的 git 指令都會失敗`).join("\n") : `已檢查 ${g.checked.length} 個儲存庫`,
       adds: "Every linked worktree, Studio's task worktrees included, reads its checkout's shared .git/config: one bad key there breaks them all at once.",
       addsZh: "每個連結 worktree（包括 Studio 的任務 worktree）都讀同一份 .git/config，一個壞掉的設定會讓它們全部失敗。",

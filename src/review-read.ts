@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { inflateSync } from "node:zlib";
 import { insideDir } from "./agent";
+import { gitArgv, gitEnv } from "./git";
 
 export const READ_CAP_BYTES = 20_000_000, IMAGE_CAP_BYTES = 5_000_000, PDF_PAGE_CAP = 5, LINES_PER_READ = 800;
 /** a PDF's streams are untrusted: each inflates to at most this, and all of them together to at most twice it (a Flate bomb stops there) */
@@ -21,9 +22,9 @@ export const INFLATE_CAP_BYTES = 4_000_000;
 /** the helpers a read starts (Quick Look, git show) run off the event loop and are killed at this */
 export const HELPER_TIMEOUT_MS = 15_000;
 /** run a helper without blocking Studio's event loop, killed at the timeout; its stdout as bytes, or null */
-export async function helper(argv: string[], o: { cwd?: string; timeoutMs?: number; maxBytes?: number } = {}): Promise<Buffer | null> {
+export async function helper(argv: string[], o: { cwd?: string; timeoutMs?: number; maxBytes?: number; env?: Record<string, string> } = {}): Promise<Buffer | null> {
   try {
-    const p = Bun.spawn(argv, { cwd: o.cwd, stdout: "pipe", stderr: "ignore" }); const timer = setTimeout(() => { try { p.kill(9); } catch {} }, o.timeoutMs ?? HELPER_TIMEOUT_MS);
+    const p = Bun.spawn(argv, { cwd: o.cwd, stdout: "pipe", stderr: "ignore", ...(o.env ? { env: o.env } : {}) }); const timer = setTimeout(() => { try { p.kill(9); } catch {} }, o.timeoutMs ?? HELPER_TIMEOUT_MS);
     const chunks: Buffer[] = []; let n = 0; const cap = o.maxBytes ?? READ_CAP_BYTES + 1;
     for await (const c of p.stdout as any) { n += c.length; if (n > cap) { try { p.kill(9); } catch {} break; } chunks.push(Buffer.from(c)); }
     const code = await p.exited; clearTimeout(timer); return code === 0 && n <= cap ? Buffer.concat(chunks) : null;
@@ -128,7 +129,7 @@ export async function typedRead(dir: string, rel: string, o: { start?: number; l
   }
   // any other binary: what it is, and how it differs from the base version
   let before: Buffer | null = null;
-  if (o.base) before = await helper(["git", "show", `${o.base}:${path}`], { cwd: dir });
+  if (o.base) before = await helper(gitArgv(["show", `${o.base}:${path}`]), { cwd: dir, env: gitEnv() }); // Studio's git: its config, no inherited GIT_DIR
   const now = meta(b)!, was = meta(before);
   return { path, view: "metadata", kind, ...now, base: was, changed: was ? { type: was.type !== now.type, size: now.size - was.size, sha256: was.sha256 !== now.sha256 } : "new file" };
 }

@@ -9,7 +9,8 @@
 import { mkdtempSync, realpathSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { constants as osConstants } from "node:os";
 import { fileURLToPath } from "node:url";
 
 export const INHERITED_GIT_VARS = /^GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|PREFIX|QUARANTINE_PATH|CONFIG|CONFIG_PARAMETERS|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+)$/;
@@ -20,14 +21,22 @@ export function scrubGitEnv(env = process.env) { const gone = []; for (const k o
  * status. Removing them from process.env alone is not enough: Bun starts children with the environment the
  * process began with (Bun 1.3: `delete process.env.GIT_DIR` does not reach Bun.spawnSync or
  * child_process.spawnSync without an explicit env), so only a clean start keeps every child clean.
+ * The run again happens once: its environment carries CREW_GIT_HYGIENE_REEXEC=done, so a variable that
+ * comes back on its own (a .env file Bun loads at start that sets GIT_DIR) is scrubbed from process.env
+ * and reported, never re-executed again. SIGTERM, SIGINT and SIGHUP reach the run; a run killed by a
+ * signal exits 128+n, as a shell reports it.
  */
-export const scrubbedAtImport = (() => {
+const REEXEC = "CREW_GIT_HYGIENE_REEXEC";
+export const scrubbedAtImport = await (async () => {
   const gone = Object.keys(process.env).filter((k) => INHERITED_GIT_VARS.test(k)); if (!gone.length) return [];
-  if (process.argv[1] && process.env.CREW_GIT_HYGIENE_REEXEC !== "0") {
-    const env = { ...process.env }; scrubGitEnv(env);
-    const r = spawnSync(process.execPath, [...process.execArgv, ...process.argv.slice(1)], { env, stdio: "inherit" });
-    process.exit(r.status ?? 1);
+  if (process.argv[1] && process.env[REEXEC] !== "0" && process.env[REEXEC] !== "done") {
+    const env = { ...process.env, [REEXEC]: "done" }; scrubGitEnv(env);
+    const child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], { env, stdio: "inherit" });
+    const forward = {}; for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) { forward[sig] = () => { try { child.kill(sig); } catch {} }; process.on(sig, forward[sig]); }
+    const code = await new Promise((res) => { child.on("error", () => res(127)); child.on("exit", (c, sig) => res(sig ? 128 + (osConstants.signals[sig] ?? 0) : c ?? 1)); });
+    process.exit(code);
   }
+  if (process.env[REEXEC] === "done") process.stderr.write(`git-hygiene: ${gone.join(", ")} came back after the clean restart (a .env file?); removed from process.env only, raw git children may still see them\n`);
   scrubGitEnv(); return gone;
 })();
 

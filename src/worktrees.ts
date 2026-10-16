@@ -50,8 +50,8 @@ const now = () => new Date().toISOString();
 /** An id that names a folder or a branch: refused, never rewritten, unless it is one safe segment (no ".", "..", "/", no collisions). */
 export function idOk(s: string) { return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/.test(s) && !s.includes(".."); }
 const safe = (s: string) => { const v = String(s); if (!idOk(v)) throw new Error(`"${v}" cannot name a worktree folder or branch: use letters, digits, ".", "_" and "-" (one segment, no "..")`); return v; };
-/** A round is stopped before its agent starts, with a reason the workflow can route (e.g. to a card). */
-export class RoundBlocked extends Error { outcome = "blocked"; constructor(m: string) { super(m); } }
+import { RoundBlocked } from "./round-blocked";
+export { RoundBlocked };
 const alive = (pid: number) => { if (!pid) return false; try { process.kill(pid, 0); return true; } catch (e: any) { return e?.code === "EPERM"; } };
 
 /** Bounded detection of an abandoned base whose entire non-merge patch series
