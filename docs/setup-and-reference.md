@@ -248,17 +248,26 @@ bun scripts/live-release.ts stop                   # stop the live release only
   0600, stops the live Studio, starts the release detached (log under
   `<data>/logs/live-<sha>-<time>.log`), waits for HTTP 200 on `/api/instance` from
   the new pid, then runs `open` for the captain's browser session. If the new
-  release does not come up, the previous release is started again.
+  release exits or does not come up (or Ctrl-C lands between stop and start), what
+  was serving before is started again: the previous release, or on a first deploy
+  the dev-checkout instance with its own command and folder. When that is not
+  possible it prints `nothing serves port N; previous was …; restart with: …`.
+- **Tasks in flight.** Deploy, rollback and stop refuse while a Task has a step in
+  flight (from `<data>/runs/*/run.json`; a Task waiting for a card does not count)
+  and name those Tasks. `--force` restarts anyway; `status` lists them.
 - **Settings.** `CREW_DATA` and `CREW_PORT` are written as absolute values, so the
   data dir stays where it is. `CREW_LOCAL_DEPENDENCY_ROOT` keeps the operator's
   value (normally the dev checkout): agents install dependencies where development
   happens, never into a release. The env file's contents are never printed.
 - **Stopping** only touches the process listening on the live port that this script
-  started, or a Studio process (`bun src/main.ts` or the `crew-studio` binary) whose
-  launch record names the live data dir and whose `/api/instance` answers with that
-  pid. Anything else on the port makes deploy refuse without stopping anything.
+  started, or a Studio process (`bun src/main.ts` or the `crew-studio` binary) that
+  Studio's own instance discovery (private launch record plus a proof from
+  `/api/instance`) ties to the live data dir and port. Anything else on the port
+  makes deploy refuse without stopping anything.
 - **Pruning.** Deploy keeps the last 3 releases (`--keep N`) plus the live one and
-  removes the rest as git worktrees.
+  removes the rest as git worktrees. A `releases/<sha>` entry is only used, written
+  to or removed when it is a real folder that `git worktree list` registers at
+  exactly that path; a symlink or a stray folder is left alone.
 - **"Merge and restart"** now means: merge the PR on GitHub, then
   `bun scripts/live-release.ts deploy`. It deploys exactly the merged `origin/main`
   commit, whatever the dev checkout holds.
