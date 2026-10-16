@@ -27,4 +27,18 @@ const sibling: any = { ...child, id:'independent', params:{} };
 const grouped = snapshotFor(['snapshot.tasks'], nativeSkinData([parent,child,grandchild,sibling],[]));
 ok(grouped.tasks.find(t=>t.id==='child')?.rootTask === 'proposal' && grouped.tasks.find(t=>t.id==='grandchild')?.rootTask === 'proposal', 'spawned descendants retain one root task identity in skin snapshots');
 ok(grouped.tasks.find(t=>t.id==='independent')?.rootTask === 'independent' && !JSON.stringify(grouped).includes('DO_NOT_EXPOSE'), 'independent tasks stay separate and lineage exposes no private params');
+const reviewing:any = {...child, id:'R-review', nodes:{draft:{state:'passed'},accept:{state:'running'}}};
+const jobs:any[] = [
+  {id:'judge-a',ref:'R-review',kind:'judge:reviewer',status:'running'},
+  {id:'judge-b',ref:'R-review',kind:'judge:designer',status:'running'},
+  {id:'old',ref:'R-review',kind:'judge:reviewer',status:'done'},
+  {id:'unrelated',ref:'other',kind:'judge:reviewer',status:'running'},
+];
+const reviewCrew=nativeSkinData([reviewing],[],jobs).crew;
+ok(reviewCrew.length===2 && reviewCrew.every(c=>c.task==='R-review'), 'both live judges are visible without stale or unrelated jobs');
+ok(new Set(reviewCrew.map(c=>c.name)).size===2, 'parallel judges have distinct crew identities');
+reviewing.status='succeeded';
+ok(!nativeSkinData([reviewing],[],jobs).crew.length,'terminal tasks hide even lingering registry jobs');
+run.archived=false;run.status='running';run.nodes.draft.state='running';
+ok(!nativeSkinData([run],[],[]).crew.length,'live registry prevents stale node job from appearing active');
 end();

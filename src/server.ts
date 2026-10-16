@@ -518,7 +518,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       if (sm) {
         const sk = skins.list().find((x) => x.id === sm[1]); if (!sk) return json({ error: "no such skin" }, 404);
         if (sm[2] === "snapshot" && !writing) {
-          const native = nativeSkinData(runtime.engine.list(), runtime.engine.cards.list({ open: true }));
+          const native = nativeSkinData(runtime.engine.list(), runtime.engine.cards.list({ open: true }), [...agents.jobs.values()]);
           return json(sk.ok ? snapshotFor(sk.manifest?.permissions ?? [], {
             tasks: [...native.tasks, ...tasks()], crew: [...native.crew, ...crewCache], pending: [...native.pending, ...pending],
             flow: native.flow.nodes.length ? native.flow : flow,

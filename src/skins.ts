@@ -11,9 +11,10 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statS
 import { extname, join, normalize, relative, sep } from "node:path";
 import { bundledBytes, bundledList } from "./bundled";
 import type { Run } from "./runtime/engine";
+import type { AgentJob } from "./agent";
 
 /** Adapt native tasks to the existing read-only skin contract without exposing run context. */
-export function nativeSkinData(runs: Run[], cards: any[]) {
+export function nativeSkinData(runs: Run[], cards: any[], jobs?: Pick<AgentJob, "id" | "ref" | "kind" | "status">[]) {
   const visible = runs.filter(r => !r.archived);
   // Native dispatch records the proposal that owns its child run. Expose only
   // the root identity, never the proposal params or private run context.
@@ -38,7 +39,13 @@ export function nativeSkinData(runs: Run[], cards: any[]) {
       return { id: r.id, rootTask: rootTask(r), title: r.title, status: r.status === "waiting" ? "needs-you" : ["succeeded", "cancelled"].includes(r.status) ? "done" : r.status,
         node: current ? key(r, current.id) : null, round: current ? r.nodes[current.id].visits : 0, lastTs: r.updatedAt };
     }),
-    crew: visible.flatMap(r => r.def.nodes.filter(n => n.kind === "agent" && r.nodes[n.id]?.state === "running" && r.nodes[n.id]?.job).map(n => ({ name: `${r.id}/${n.id}`, role: n.role || "worker", task: r.id, alive: true, activity: { en: n.label } }))),
+    crew: visible.filter(r => !["succeeded", "cancelled", "failed"].includes(r.status)).flatMap(r => {
+      const workers = r.def.nodes.filter(n => n.kind === "agent" && r.nodes[n.id]?.state === "running" && r.nodes[n.id]?.job && (!jobs || jobs.some(j => j.id === r.nodes[n.id].job && j.ref === r.id && j.status === "running"))).map(n => ({ name: `${r.id}/${n.id}`, role: n.role || "worker", task: r.id, alive: true, activity: { en: n.label } }));
+      // Checks launch independent judge jobs without assigning rn.job. Use the
+      // live job registry so parallel judges appear and completed votes vanish.
+      const judges = (jobs ?? []).filter(j => j.ref === r.id && j.status === "running" && j.kind.startsWith("judge:")).map(j => ({ name: `${r.id}/${j.id}`, role: j.kind.slice(6), task: r.id, alive: true, activity: { en: `Review: ${j.kind.slice(6)}` } }));
+      return [...workers, ...judges];
+    }),
     pending: cards.filter(c => c.status === "open" && visible.some(r => r.id === c.run)).map(c => ({ id: c.id, title: c.title?.["zh-TW"] || c.title?.en || String(c.title || c.id), kind: c.kind, task: c.run })),
     flow: { nodes: [...nodes.values()], edges },
   };
