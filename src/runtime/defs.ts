@@ -221,14 +221,34 @@ export class WorkflowDefs {
     const lay = this.layout(id, d.version);
     return { ...d, nodes: d.nodes.map((n) => (lay[n.id] ? { ...n, x: lay[n.id].x, y: lay[n.id].y } : n)) };
   }
+  /** Recoverable catalog state. Version files and pinned Task definitions stay intact. */
+  trashState(id:string):{schema:1;workflow:string;version:number;revision:number;deleted:boolean;by:string;at:string}|null {
+    const file=join(this.wdir(id),'trash.json');if(!existsSync(file))return null;
+    const state=JSON.parse(readFileSync(file,'utf8'));
+    if(state.schema!==1||state.workflow!==id||!Number.isSafeInteger(state.revision)||state.revision<1||!Number.isSafeInteger(state.version)||typeof state.deleted!=='boolean')throw new Error('Workflow trash state is invalid');
+    return state;
+  }
+  personal(id:string){const d=this.get(id);return !!d&&!INTERNAL_WORKFLOWS.has(id)&&!!d.origin&&['starter','firstmate-draft'].includes(d.origin.source);}
+  trashed(id:string){return this.trashState(id)?.deleted===true;}
+  setTrash(id:string,base:unknown,revision:unknown,deleted:boolean,by:string){
+    return withLock(this.dir,'create-'+id,()=>{
+      const def=this.get(id),state=this.trashState(id);
+      if(!def||!this.personal(id))throw new Error('Only personal workflows can move to or from Trash');
+      if(!Number.isSafeInteger(base)||base!==def.version||!Number.isSafeInteger(revision)||revision!==(state?.revision??0))throw new Error('Workflow changed; reload before changing Trash');
+      if((state?.deleted??false)===deleted)throw new Error(deleted?'Workflow is already in Trash':'Workflow is not in Trash');
+      const next={schema:1 as const,workflow:id,version:def.version,revision:(state?.revision??0)+1,deleted,by,at:now()};
+      const file=join(this.wdir(id),'trash.json');writeFileSync(file+'.tmp',JSON.stringify(next));renameSync(file+'.tmp',file);return next;
+    });
+  }
+  trashCatalog(){return this.list().filter(w=>this.trashed(w.id));}
   /** Exact versions remain readable for pinned Tasks; only public choices enter a new dispatch. */
-  selectable(id:string,version?:number){const d=this.get(id,version);return !!d&&!INTERNAL_WORKFLOWS.has(id)&&!(RETIRED_DEFAULTS.has(id)&&!!d.seed&&!!d.by?.startsWith("studio (built-in"))&&!this.held(id);}
+  selectable(id:string,version?:number){const d=this.get(id,version);return !!d&&!this.trashed(id)&&!INTERNAL_WORKFLOWS.has(id)&&!(RETIRED_DEFAULTS.has(id)&&!!d.seed&&!!d.by?.startsWith("studio (built-in"))&&!this.held(id);}
   /** Why a kept workflow cannot start a Task yet (the GitHub review template and copies of it), or null. */
   held(id:string):{en:string;zh:string}|null{return this.versions(id).length&&this.previewOnly(id)?HELD_REASON:null;}
   catalog(){return this.list().filter(w=>this.selectable(w.id,w.version));}
   /** Workflows kept in the catalog for editing that the Start form and start routes do not offer. */
-  heldCatalog(){return this.list().filter(w=>!INTERNAL_WORKFLOWS.has(w.id)&&!!this.held(w.id)).map(w=>({...w,held:this.held(w.id)!}));}
-  list() { return this.ids().map((id) => { const vs = this.versions(id); const l = vs.at(-1)!; return { id, name: l.name, description: l.description ?? "", kind: l.kind ?? null, isTemplate: l.isTemplate === true, version: l.version, versions: vs.length, nodes: l.nodes.length, intent: l.intent ?? null, params: l.params ?? null }; }); }
+  heldCatalog(){return this.list().filter(w=>!INTERNAL_WORKFLOWS.has(w.id)&&!this.trashed(w.id)&&!!this.held(w.id)).map(w=>({...w,held:this.held(w.id)!}));}
+  list() { return this.ids().map((id) => { const vs = this.versions(id); const l = vs.at(-1)!; return { id, name: l.name, description: l.description ?? "", kind: l.kind ?? null, isTemplate: l.isTemplate === true, version: l.version, versions: vs.length, nodes: l.nodes.length, intent: l.intent ?? null, params: l.params ?? null, personal:this.personal(id), trashRevision:this.trashState(id)?.revision??0 }; }); }
   layout(id: string, v: number): Record<string, { x: number; y: number }> { try { return JSON.parse(readFileSync(join(this.wdir(id), `layout-v${v}.json`), "utf8")); } catch { return {}; } }
   /** Dragging nodes: positions are kept per version without making a new one. */
   setLayout(id: string, v: number, pos: Record<string, { x: number; y: number }>) {
@@ -290,6 +310,10 @@ export class WorkflowDefs {
   previewOnly(id:string):boolean {const ledger=new Ledger(this.dataDir,'workflow-draft-'+id);if(existsSync(ledger.file()))return true;return id==='github-review'||this.versions(id).some(d=>d.note?.startsWith('Source template github-review SHA256 ')||d.nodes.some(n=>n.do==='github.review.wait'));}
   /** Save an edit as a new version; refused when it has errors or changes nothing. */
   save(id: string, body: any, by: string, note?: string): WDef {
+    return withLock(this.dir,"create-"+id,()=>this.saveActive(id,body,by,note));
+  }
+  private saveActive(id: string, body: any, by: string, note?: string): WDef {
+    if(this.trashed(id))throw new Error("Restore this workflow from Trash before editing");
     const prev = this.get(id); if (!prev) throw new Error("no such workflow");
     if (body?.base == null) throw new Error(`say which version you edited (base); v${prev.version} is the latest`);
     if (Number(body.base) !== prev.version) throw new Error(`v${prev.version} is the latest now (you edited v${body.base}); reload and edit again`);

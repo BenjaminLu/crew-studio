@@ -18,6 +18,7 @@ import {installReadiness} from "../readiness";
 //   GET  /api/wf                         every workflow (latest version) and the check catalogue
 //   GET  /api/wf/<id>[?v=N]              one version, its problems, every version's meta and diff
 //   POST /api/wf/<id>                    save an edit as a new version (refused with errors or no change)
+//   POST /api/wf/<id>/trash|restore     recoverable personal catalog state (desktop, base + revision CAS)
 //   POST /api/wf/<id>/layout             node positions for one version (no new version)
 //   POST /api/wf/validate                problems of an unsaved definition
 //   GET  /api/checks                     every check manifest with its effective parameters
@@ -207,7 +208,7 @@ export function createRuntime(d: RuntimeDeps) {
       }
       // ---------- definitions ----------
       if(p==="/api/coffee/design"&&writing){if(req.method!=="POST")return json({error:"POST required"},405);if(who.kind!=="desktop")return json({error:"Review coffee design on the desktop"},403);return json({plan:validateCoffeeDesign(b?.plan),canonical:coffeeDesignJSON(b?.plan)});}
-      if (p === "/api/wf" && !writing) return json({ workflows: defs.catalog(), held: defs.heldCatalog(), checks: engine.registry.all().map(checkView) });
+      if (p === "/api/wf" && !writing) return json({ workflows: defs.catalog(), held: defs.heldCatalog(), trash:defs.trashCatalog(), checks: engine.registry.all().map(checkView) });
       if(readiness){const gated=await readiness.route(p,url,req.method,writing,b,by,who);if(gated)return gated;}
       const drafted=await draftRoute(drafts,p,req.method,writing,b,by);if(drafted)return drafted;
       if (p === "/api/wf" && writing) {
@@ -221,6 +222,12 @@ export function createRuntime(d: RuntimeDeps) {
         const def=defs.copyTemplate(copy[1],b?.version,b?.id,b?.name,b?.asTemplate,by);
         d.log.emit({type:'workflow_created',workflow:def.id,summary:`${def.id} copied from ${copy[1]} v${b.version}`});return json({def},201);
       }}
+      {const trash=/^\/api\/wf\/([a-z0-9-]+)\/(trash|restore)$/.exec(p);if(trash){
+        if(req.method!=='POST'||!writing)return json({error:'Authenticated POST required'},405);
+        if(who.kind!=='desktop')return json({error:'Manage workflow Trash on the desktop'},403);
+        if(!b||typeof b!=='object'||Array.isArray(b)||Object.keys(b).some(k=>!['base','revision'].includes(k)))return json({error:'Pass the saved base version and Trash revision'},400);
+        try{const state=defs.setTrash(trash[1],b.base,b.revision,trash[2]==='trash',by);d.log.emit({type:'workflow_trash_changed',workflow:trash[1],summary:`${trash[1]} ${state.deleted?'moved to Trash':'restored'} by ${by}`});return json({state});}catch(e:any){return json({error:e.message},409);}
+      }}
       if (p === "/api/wf/validate" && writing) return json({ problems: validate(normDef(b?.def ?? {}), defs.known, undefined, defs.skillInfo ?? undefined) });
       let m = /^\/api\/wf\/([a-z0-9-]+)(?:\/(layout))?$/.exec(p);
       if (m) {
@@ -228,7 +235,7 @@ export function createRuntime(d: RuntimeDeps) {
         if (m[2] === "layout" && writing) return json({ layout: defs.setLayout(id, Number(b?.version), b?.positions ?? {}) });
         if (!writing) {
           const v = url.searchParams.get("v"); const def = defs.get(id, v ? Number(v) : undefined); if (!def) return json({ error: "no such workflow" }, 404);
-          return json({ def, selectable:defs.selectable(id,def.version), held:defs.held(id), coffeeFilmStatus:def.kind==="coffee-kit"?d.coffeeFilmStatus??{ready:false,reason:"Local film capability is unavailable"}:null, coffeeDesign:def.kind==="coffee-kit"?COFFEE_DESIGN_FIELDS:null, coffeeChoice:def.kind==="coffee-kit" ? d.coffeeChoice?.() ?? null : null, problems: validate(def, defs.known, undefined, defs.skillInfo ?? undefined), versions: defs.versions(id).map((x) => ({ version: x.version, createdAt: x.createdAt, by: x.by, note: x.note, parent: x.parent, diff: x.diff })),
+          return json({ def, personal:defs.personal(id), trash:defs.trashState(id), selectable:defs.selectable(id,def.version), held:defs.held(id), coffeeFilmStatus:def.kind==="coffee-kit"?d.coffeeFilmStatus??{ready:false,reason:"Local film capability is unavailable"}:null, coffeeDesign:def.kind==="coffee-kit"?COFFEE_DESIGN_FIELDS:null, coffeeChoice:def.kind==="coffee-kit" ? d.coffeeChoice?.() ?? null : null, problems: validate(def, defs.known, undefined, defs.skillInfo ?? undefined), versions: defs.versions(id).map((x) => ({ version: x.version, createdAt: x.createdAt, by: x.by, note: x.note, parent: x.parent, diff: x.diff })),
             runs: engine.list().filter((r) => r.workflow === id).map((r) => ({ id: r.id, version: r.version, status: r.status, result: r.result, merged: !!r.ctx?.merged, title: r.title, createdAt: r.createdAt })) });
         }
         {const own=ownWorkflow(defs.get(id));for(const n of Array.isArray(b?.nodes)?b.nodes:[]){try{if(own)checkNodeStaffing(n);else checkEffort(n);}catch(e:any){return json({error:e.message},400);}}}

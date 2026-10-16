@@ -1,6 +1,7 @@
 /* Studio's runtime pages: the workflow editor, runs and the live run view. Colors come from the theme tokens. */
 .rt-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
 .rt-wf { display: block; padding: 14px 16px; color: var(--text); text-decoration: none; }
+.rt-wf-link { display: block; color: inherit; text-decoration: none; margin-bottom: 8px; }
 .rt-wf:hover, .rt-wf:focus-visible { border-color: var(--accent); }
 .rt-wf-h { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
 .rt-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 10px; }

@@ -369,6 +369,7 @@ export class Engine {
   // ---------- starting ----------
   start(o: { workflow: string; version?: number; title?: string; text?: string; params?: Record<string, string>; by?: string; classifier?: any }): Run {
     const def = this.defs.get(o.workflow, o.version); if (!def) throw new Error(`no workflow ${o.workflow}${o.version ? ` v${o.version}` : ""}`);
+    if(this.defs.trashed(def.id))throw new Error("Restore this workflow from Trash before starting a new Task");
     const errs = validate(def, this.defs.known, this.defs.runners?.(), this.defs.skillInfo ?? undefined).filter((p) => p.level === "error"); if (errs.length) throw new Error(`${def.id} v${def.version} is not runnable: ${errs[0].text}`);
     this.deps.authorizeStart?.(def, o);
     const id = allocate(this.root, "R");
