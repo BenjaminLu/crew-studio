@@ -85,6 +85,20 @@ export class StaffingStore{
  }
 }
 
+/** Runtime staffing follows signed task authority; mutable params are only a creation input.
+ * Engine event replay intentionally does not persist later params assignments. */
+export function signedStaffingBinding(engine:import('../runtime/engine').Engine,run:any):string|null {
+ const trusted=engine.trusted(run.id);
+ if(!trusted.ok)throw new QueueRefusal('Staffing task history is untrusted');
+ let current:string|null=null;
+ for(const entry of trusted.entries.filter(e=>e.record==='staffing-start'||e.record==='staffing-upgrade')){
+  const data=entry.data;
+  if(data?.schema!==1||typeof data.config!=='string'||!/^[a-f0-9]{64}$/.test(data.config)||
+    (entry.record==='staffing-upgrade'&&data.previous!==current))throw new QueueRefusal('Staffing task binding chain changed');
+  current=data.config;
+ }
+ return current;
+}
 export function installStaffingGuard(engine:import('../runtime/engine').Engine,store:StaffingStore,resolveProject:(id:string)=>StaffingProject,verifyCapability?:(config:StaffingConfig)=>void){
  const applies=(def:any)=>def?.id==='code-firstmate'||def?.kind==='coffee-kit';
  function verifyStored(def:any,params:Record<string,string>){
@@ -100,7 +114,7 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
  engine.deps.authorizeStart=(def:any,o:any)=>{previousStart?.(def,o);if(applies(def)){const config=verified(def,o.params??{});verifyCapability?.(config);}};
  const previousInitialize=engine.deps.initializeRun;
  engine.deps.initializeRun=(run:any)=>{previousInitialize?.(run);if(applies(run.def)){const c=verified(run.def,run.params),node=run.def.nodes[0];engine.record(engine.x(run,node,run.nodes[node.id]),'staffing-start',{data:{schema:1,config:c.hash,project:staffingHash(c.project),definition:c.workflow.sha256}});}};
- function verifyRun(run:any){const c=verified(run.def,run.params),trusted=engine.trusted(run.id);const binding=trusted.entries.filter(e=>e.record==='staffing-start'||e.record==='staffing-upgrade').at(-1);if(!trusted.ok||binding?.data?.schema!==1||binding.data.config!==c.hash)throw new QueueRefusal('Historical or changed staffing lacks task approval; propose an explicit configuration upgrade / 舊任務或已變更配置缺少任務核准，請提出配置升級');return c;}
+ function verifyRun(run:any){const binding=signedStaffingBinding(engine,run);if(!binding)throw new QueueRefusal('Historical or changed staffing lacks task approval; propose an explicit configuration upgrade / 舊任務或已變更配置缺少任務核准，請提出配置升級');return verified(run.def,{...run.params,_staffing:binding});}
  const previousAnswer=engine.deps.authorizeAnswer;engine.deps.authorizeAnswer=(run:any,card:any,answer:any)=>{previousAnswer?.(run,card,answer);if(applies(run?.def)&&((card.kind==='scope'&&answer.choice==='retry')||(card.kind==='dispatch'&&answer.choice==='dispatch')))verifyRun(run);};
  const previousBinding=engine.deps.staffingBinding;engine.deps.staffingBinding=(run:any)=>applies(run?.def)?verifyRun(run).hash:previousBinding?.(run);
  const previousPick=engine.deps.approvedPick;

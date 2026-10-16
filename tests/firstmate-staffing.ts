@@ -104,7 +104,7 @@ if(process.env.STAFFING_BASE_ENGINE){
   ok(receipts[0]?.system.includes(store.skill(config.roles.worker.skill,project)),'actual provider.start receives exact approved skill body');
   const instructionRecord=e.ledger(task.id).find(r=>r.record==='staffing-instructions');ok(instructionRecord?.data?.config===config.hash&&instructionRecord.data.skill===config.roles.worker.skill.sha256,'actual instruction receipt binds signed config and skill');
   const allowedProvider=e.deps.selectProvider;const {ProviderRefusal}=await import('../src/providers/policy');e.deps.selectProvider=async()=>{throw new ProviderRefusal('offline capability hold')};
-  const held=e.start({workflow:flow.id,params:{project:project.id,_staffing:config.hash}});await until(()=>held.nodes.work.waiting==='card'&&!e.busy(held.id));
+  let held=e.start({workflow:flow.id,params:{project:project.id,_staffing:config.hash}});await until(()=>held.nodes.work.waiting==='card'&&!e.busy(held.id));
   const recoveryCard=e.cards.get(held.nodes.work.card!);ok(recoveryCard?.status==='open'&&held.status==='waiting','existing task exposes genuine readiness recovery hold');
   const recovery=await tools.call('studio_change_staffing',{task:held.id,node:'work',roles:{worker:{provider:'codex',model:'explicit-model',effort:'high'}}},{...owner,key:'captain-recovery'}) as any;
   await until(()=>e.get(recovery.proposal)?.nodes.confirm.waiting==='card');const staffingCard=e.cards.list({run:recovery.proposal})[0];
@@ -112,8 +112,39 @@ if(process.env.STAFFING_BASE_ENGINE){
   await e.answer(staffingCard.id,{choice:'approve',by:'captain'});await until(()=>e.get(recovery.proposal)?.status==='succeeded');
   ok(held.params._staffing===store.current(project).hash&&e.cards.get(recoveryCard!.id)?.status==='open','configuration upgrade preserves explicit preparation approval');
   ok(receipts.length===1&&e.list().filter(r=>r.workflow===flow.id).length===2,'staffing recovery neither launches paid work nor creates replacement task');
+  const upgraded=store.current(project);e.load();held=e.get(held.id)!;
+  ok(held.params._staffing===config.hash&&held.params._staffing!==upgraded.hash,'restart reproduces old creation params rather than persisting upgrade cache');
+  ok(e.deps.staffingBinding!(held)===upgraded.hash,'restart derives approved staffing from signed upgrade');
+  const historicalParams=JSON.stringify(held.params);held.params._staffing='f'.repeat(64);
+  ok(e.deps.staffingBinding!(held)===upgraded.hash,'unsigned parameter cache cannot select another configuration');held.params=JSON.parse(historicalParams);
+  const trusted=e.trusted.bind(e);e.trusted=(id:string)=>id===held.id?{...trusted(id),ok:false}:trusted(id);
+  rejects(()=>e.deps.staffingBinding!(held),'untrusted ledger cannot restore staffing');e.trusted=trusted;
+  // A later valid project config alone cannot silently upgrade this task.
+  const pointer=join(h.data,'projects',store.key(project),'staffing','current.json'),savedPointer=readFileSync(pointer,'utf8');
+  const {hash,signature,version,previous,approval,...nextDraft}=upgraded;
+  store.approve(nextDraft,upgraded.hash,{run:'R-999',card:'SC-999',answerSeq:1});
+  rejects(()=>e.deps.staffingBinding!(held),'changed project current still requires explicit task upgrade');writeFileSync(pointer,savedPointer);rmSync(join(h.data,'projects',store.key(project),'staffing',`v${upgraded.version+1}.json`));
+  const replayed=await tools.call('studio_change_staffing',{task:held.id,node:'work',roles:{worker:{provider:'codex',model:'explicit-model',effort:'high'}}},{...owner,key:'captain-recovery-after-restart'}) as any;
+  await until(()=>e.get(replayed.proposal)?.nodes.confirm.waiting==='card');
+  const replayPin=JSON.parse(e.get(replayed.proposal)!.params.recovery);
+  ok(replayPin.config===upgraded.hash,'next recovery after restart pins signed predecessor instead of stale params');
+  await e.cancel(replayed.proposal,'fixture no second upgrade required');
   e.deps.selectProvider=allowedProvider;await e.answer(recoveryCard!.id,{choice:'retry',by:'captain'});await until(()=>held.status==='succeeded');
   ok(held.status==='succeeded'&&receipts.length===2,'separate captain reprepare resumes same task on approved staffing');
+  // Historical tasks predate staffing-start and have no creation _staffing param.
+  const authorizeStart=e.deps.authorizeStart,initializeRun=e.deps.initializeRun;e.deps.authorizeStart=undefined;e.deps.initializeRun=undefined;
+  let legacy=e.start({workflow:flow.id,params:{project:project.id}});e.deps.authorizeStart=authorizeStart;e.deps.initializeRun=initializeRun;
+  await until(()=>legacy.nodes.work.waiting==='card'&&!e.busy(legacy.id));
+  const legacyCard=e.cards.get(legacy.nodes.work.card!)!;
+  legacy.params._staffing=store.current(project).hash;
+  rejects(()=>e.deps.staffingBinding!(legacy),'historical task cannot gain authority from cache alone');delete legacy.params._staffing;
+  const legacyRecovery=await tools.call('studio_change_staffing',{task:legacy.id,node:'work',roles:{worker:{provider:'codex',model:'explicit-model',effort:'high'}}},{...owner,key:'legacy-recovery'}) as any;
+  await until(()=>e.get(legacyRecovery.proposal)?.nodes.confirm.waiting==='card');
+  const legacyApproval=e.cards.list({run:legacyRecovery.proposal})[0];await e.answer(legacyApproval.id,{choice:'approve',by:'captain'});await until(()=>e.get(legacyRecovery.proposal)?.status==='succeeded');
+  e.load();legacy=e.get(legacy.id)!;
+  ok(!legacy.params._staffing&&e.deps.staffingBinding!(legacy)===store.current(project).hash,'historical task with no original staffing restores signed upgrade after restart');
+  await e.answer(legacyCard.id,{choice:'retry',by:'captain'});await until(()=>legacy.status==='succeeded');
+  ok(legacy.status==='succeeded'&&receipts.length===3,'historical task resumes only after separate captain retry');
   const v2=e.defs.save(flow.id,{base:1,nodes:[{...flow.nodes[0],label:'Updated work'}]},'captain');const oldChoices=store.interview(project,{id:flow.id,version:1,sha256:staffingHash(e.defs.get(flow.id,1))},['worker']);
   const upgradeBase={project:project.id,workflow:flow.id,version:v2.version};const fresh=await tools.call('studio_staffing_interview',upgradeBase,{...owner,key:'upgrade-read'})as any;ok(fresh.frontier[0].field==='provider'&&Object.keys(fresh.choices).length===0,'actual native tool starts fresh v2 grilling after completed v1');
   let choices:any;for(const[field,value]of [['provider','codex'],['model','explicit-model'],['effort','high']])choices=await tools.call('studio_staffing_interview',{...upgradeBase,answers:{worker:{[field]:value}}},{...owner,key:'upgrade-'+field});
