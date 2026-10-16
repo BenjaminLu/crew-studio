@@ -3,7 +3,7 @@
 # The captain names a throwaway folder: --params '{"folder": "<path>"}' in a JSON file.
 schema: 2
 workflow: file-organization
-pin: { version: 1, sha256: "b10c52ada65891c8b1982f1b12783e48f51cfd345e4d66da2a2174415b8c8f3b" }   # bun scripts/acceptance/pin.ts file-organization
+pin: { version: 1, sha256: "2eff14faccf7066e236581263d6dc2f02294da0d96e60ede51b33c579cb2b1a5" }   # bun scripts/acceptance/pin.ts file-organization
 topic: "Sort the files in the acceptance folder by type."
 start: { provider: null, params: {}, required_params: [folder] }
 providers: []
@@ -15,14 +15,11 @@ expect:
 budget: { wall_minutes: 10, max_rounds: 4 }
 stub:
   - name: board
-    covers: "the board's Start form (it sends no folder) → plan → gates → captain applies the moves"
+    covers: "the board's Start form supplies the declared folder → plan → gates → captain applies the moves"
     setup: [folder]
+    params: { folder: "{folder}" }
+    cards: [{ node: card, answer: apply }]
     expect: { status: succeeded, result: done, visited: [intake, plan, gates, card, apply, done] }
-    known_failure:
-      observed: "plan fails: give the folder's absolute path (the Task starts with no folder)"
-      match: "node plan: give the folder's absolute path"
-      root_cause: "public/runtime.js:578 the board's Start form sends only {provider}; POST /api/wruns (src/runtime/index.ts:251-269) starts the Task without checking the workflow's declared params (workflows/v2/file-organization.wf.yaml:11 params.folder), so fileorg.plan refuses at src/fileorg.ts:30"
-      covered_by: "single-source-contracts-20261016 (Board Start form: declared params from the same schema)"
   - name: firstmate-apply
     covers: "Firstmate proposes with the folder → captain approves dispatch → dry-run plan → gates → captain applies"
     how: firstmate

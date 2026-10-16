@@ -620,8 +620,8 @@ function viewRuns() {
   const msg = h("div", { class: "faint", role: "status" }, RN.startError || "");
   return h("div", { class: "page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Tasks", "任務")), h("p", {}, T("Studio's workflow tasks, each with its live graph.", "Studio 的流程任務，每個都有即時流程圖。")))),
     h("div", { class: "card x-pad rt-start" }, h("h3", {}, T("Start a task", "開始一個任務")), text, h("div", { class: "rt-row" }, wf, provider, h("button", { class: "btn primary", "data-run-start": "1", disabled: startBlocked(wf.value) || null, onclick: async () => {
-      try { const r = await startOwnRun({ text: text.value, workflow: wf.value || undefined, params: { ...(provider.value ? { provider: provider.value } : {}), ...startProjectValue(wf.value) }, ...startStaffingExpected(wf.value) }); if (!r) return; RN.list = null; RN.draft = ""; RN.startError = ""; location.hash = `#/run/${r.id}`; }
-      catch (e) { msg.textContent = RN.startError = e.message; if (/^(staffing_|project_)/.test(e.code || "") && RN.startOptions) { delete RN.startOptions[wf.value]; rerender(); } } } }, T("Start", "開始"))), startProjectPicker(wf.value), msg),
+      try { const r = await startOwnRun({ text: text.value, workflow: wf.value || undefined, params: { ...(provider.value ? { provider: provider.value } : {}), ...startParamValues(wf.value), ...startProjectValue(wf.value) }, ...startStaffingExpected(wf.value) }); if (!r) return; RN.list = null; RN.draft = ""; RN.startError = ""; location.hash = `#/run/${r.id}`; }
+      catch (e) { msg.textContent = RN.startError = e.message; if (/^(staffing_|project_)/.test(e.code || "") && RN.startOptions) { delete RN.startOptions[wf.value]; rerender(); } } } }, T("Start", "開始"))), startProjectPicker(wf.value), startParamInputs(wf.value), msg),
     // one word per state (public/runstate.js); archived runs only with "Show archived", each with Unarchive
     h("label", { class: "rt-row rt-archived-toggle" }, h("input", { type: "checkbox", "data-show-archived": "1", checked: RN.archived || null, onchange: (e) => { RN.archived = e.target.checked; RN.list = null; rerender(); } }), T("Show archived", "顯示已封存")),
     pf ? h("div", { class: "rt-row", "data-project-filter": pf }, h("span", { class: "badge neutral" }, pf === "studio" ? T("Project: none (Studio)", "專案：無（Studio）") : T(`Project: ${pf}`, `專案：${pf}`)),
@@ -956,6 +956,22 @@ function startProjectValue(id) { const v = ((RN.params || {})[id] || {}).project
 // the approved crew the form showed: the server refuses the start if it was approved again since (staffing_changed)
 function startStaffingExpected(id) { const o = (RN.startOptions || {})[id], chosen = o && o !== "loading" && o.staffing ? o.projects.find((p) => p.id === ((RN.params || {})[id] || {}).project) : null; return chosen?.staffing?.state === "approved" ? { staffingExpected: chosen.staffing.hash } : {}; }
 function startBlocked(id) { const o = (RN.startOptions || {})[id]; if (!o || o === "loading" || !o.projectScoped) return false; const chosen = o.projects.find((p) => p.id === ((RN.params || {})[id] || {}).project); return !chosen || (o.staffing && chosen.staffing?.state !== "approved"); }
+// Adapted from single-source-contracts: Start inputs come from the selected workflow declaration.
+function startParamSchema(id){return (RN.wfs||[]).find(w=>w.id===id)?.params||{};}
+function startParamOwned(id,key){return key==="provider"||(key==="project"&&RN.startOptions?.[id]?.projectScoped);}
+function startParamInputs(id){
+  const values=((RN.params||={})[id]||={});
+  return h("div",{"data-run-params":id},Object.entries(startParamSchema(id)).filter(([key])=>!startParamOwned(id,key)).map(([key,p])=>{
+    const input=h("input",{class:"input","data-run-param":key,"aria-label":T(p.label,p.labelZh||p.label),required:p.required||null,placeholder:p.default??"",oninput:e=>{values[key]=e.target.value;RN.startError="";}});input.value=values[key]??"";
+    return h("label",{class:"rt-field"},h("span",{},T(p.label,p.labelZh||p.label),p.required?" *":""),input);
+  }));
+}
+function startParamValues(id){
+  const schema=startParamSchema(id),values=RN.params?.[id]||{};
+  const missing=Object.entries(schema).filter(([key,p])=>!startParamOwned(id,key)&&p.required&&!String(values[key]??p.default??"").trim()).map(([key])=>key);
+  if(missing.length)throw Error(T("Required workflow inputs: ","必須提供流程輸入：")+missing.join(", "));
+  return Object.fromEntries(Object.keys(schema).filter(key=>!startParamOwned(id,key)&&String(values[key]??"").trim()).map(key=>[key,values[key]]));
+}
 async function startOwnRun(body){
   try{return await api("/api/wruns",body);}
   catch(e){const j=e.staffing;if(e.code==="staffing_incomplete"){await staffingConfirm(j,true);return null;}if(e.code!=="staffing_confirmation_required")throw e;if(!await staffingConfirm(j,false))return null;return api("/api/wruns",{...body,staffingConfirm:j.hash});}

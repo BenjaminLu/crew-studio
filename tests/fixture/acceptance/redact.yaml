@@ -2,7 +2,7 @@
 # error repeats it. Reports and output must show it removed.
 schema: 2
 workflow: file-organization
-pin: { sha256: "b10c52ada65891c8b1982f1b12783e48f51cfd345e4d66da2a2174415b8c8f3b" }
+pin: { sha256: "2eff14faccf7066e236581263d6dc2f02294da0d96e60ede51b33c579cb2b1a5" }
 topic: "fixture redaction"
 start: { provider: null, params: {}, required_params: [folder] }
 providers: []

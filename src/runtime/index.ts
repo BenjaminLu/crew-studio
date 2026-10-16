@@ -298,6 +298,13 @@ export function createRuntime(d: RuntimeDeps) {
         if(!defs.selectable(wf,b?.version?Number(b.version):undefined))return refuse({error:"This workflow is internal or retired. Choose an available workflow. / 此流程為內部或已退役流程，請選擇可用流程。",code:"workflow_unavailable"},409,"invalid-input.config");
         let params={...(b?.params??{})};delete params._ownStaffing;
         const chosenDef=defs.get(wf,b?.version?Number(b.version):undefined);
+        // Validate the selected version's declared inputs before allocating a Task or checking staffing.
+        const missing=Object.entries(chosenDef?.params??{}).filter(([key,spec])=>spec.required&&!(String(params[key]??spec.default??'').trim())).map(([key])=>key);
+        if(missing.length)return refuse({error:`Required workflow inputs / 必須提供流程輸入: ${missing.join(', ')}`,code:'param_required',params:missing},400,'invalid-input.params');
+        for(const [key,spec] of Object.entries(chosenDef?.params??{})){
+          if(params[key]===undefined||String(params[key]).trim()==='')continue;
+          if(typeof params[key]!=='string'||spec.pattern&&!new RegExp(spec.pattern).test(params[key]))return refuse({error:`Invalid workflow input / 流程輸入格式不正確: ${key}`,code:'param_invalid',params:[key]},400,'invalid-input.params');
+        }
         if(ownWorkflow(chosenDef)&&ownStaffingPlan(chosenDef!).plan.length){ // nothing to staff: a card-only workflow just starts
           const staffing=ownStaffingPlan(chosenDef!);
           if(staffing.missing.length)return refuse({error:'Choose a provider, model and (for Codex) effort for every agent node before Run / 執行前請為每個代理節點選擇供應商、模型與（Codex）推理強度',code:'staffing_incomplete',staffing},409,"env.staffing");

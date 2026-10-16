@@ -1,8 +1,9 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
-// A known failure covers only the failure it names. tests/acceptance.ts runs on a copy of the
-// scenario list where file-organization:board (a known failure: "give the folder's absolute path")
-// names a setup step that does not exist: that other failure must be a FAIL and fail the suite,
-// not hide under the known one. The unchanged copy stays KNOWN-FAIL with exit 0.
+// A known failure covers only the failure it names. tests/acceptance.ts runs on copies of the
+// scenario list where file-organization:board is made a known failure of its own (it starts without
+// the required folder, so the board refuses it at start). In one copy the run also names a setup step
+// that does not exist: that other failure must be a FAIL and fail the suite, not hide under the known
+// one. The copy with only the known failure stays KNOWN-FAIL with exit 0.
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,10 +19,12 @@ const root = mkdtempSync(join(tmpdir(), "acceptance-known-"));
 try {
   const same = join(root, "same"), broken = join(root, "broken");
   cpSync(SCENARIO_DIR, same, { recursive: true }); cpSync(SCENARIO_DIR, broken, { recursive: true });
-  const f = join(broken, "file-organization.yaml"), text = readFileSync(f, "utf8");
-  const changed = text.replace("    setup: [folder]\n    expect: { status: succeeded, result: done, visited: [intake, plan, gates, card, apply, done] }", "    setup: [folder, no-such-step]\n    expect: { status: succeeded, result: done, visited: [intake, plan, gates, card, apply, done] }");
-  ok(changed !== text, "the board run of file-organization.yaml is where this test expects it");
-  writeFileSync(f, changed);
+  const board = '    setup: [folder]\n    params: { folder: "{folder}" }\n    cards: [{ node: card, answer: apply }]\n';
+  const known = (setup: string) => `    setup: [${setup}]\n    known_failure:\n      observed: "the board refuses a start without the folder"\n      match: "^the board start route refused: 400 Required workflow inputs / 必須提供流程輸入: folder"\n      root_cause: "fixture: the board run sends no folder"\n      covered_by: "tests/acceptance-known.ts"\n    cards: [{ node: card, answer: apply }]\n`;
+  const text = readFileSync(join(same, "file-organization.yaml"), "utf8");
+  ok(text.includes(board), "the board run of file-organization.yaml is where this test expects it");
+  writeFileSync(join(same, "file-organization.yaml"), text.replace(board, known("folder")));
+  writeFileSync(join(broken, "file-organization.yaml"), text.replace(board, known("folder, no-such-step")));
 
   const a = run(same);
   ok(a.code === 0 && /KNOWN-FAIL\s+file-organization:board/.test(a.out), "the matching failure stays a known failure (exit 0)", a.out);

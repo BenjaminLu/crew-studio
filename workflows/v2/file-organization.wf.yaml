@@ -8,7 +8,7 @@ description: "Tidy a folder: dry-run plan → gates → captain's card → apply
 intent:
   keywords: [tidy, organize, organise, sort, folder, files, downloads, desktop, clean, cleanup]
 params:
-  folder: { label: "Folder to tidy (absolute path)" }
+  folder: { label: "Folder to tidy (absolute path)", labelZh: "要整理的資料夾（絕對路徑）", required: true, pattern: '^/' }
 roles: []
 nodes:
   - { id: intake, kind: hook, label: Capture intent, do: deliver.intake, x: 170, y: 100 }

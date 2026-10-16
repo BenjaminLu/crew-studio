@@ -65,7 +65,6 @@ setup step, a new bug on the same path) is a `FAIL`, not a known failure (`tests
 | Workflow · run | Node | Error | Root cause | Fix that should cover it |
 |---|---|---|---|---|
 | code-firstmate · firstmate-ask | build (2nd visit) | the worker's ASK reaches the scope card (rescope or park, no way to answer); after the captain rescopes with the answer and dispatches again, the next build runs without the answer in its brief, asks again, and the scripted park closes the Task | `src/domain/code.ts:666` maps ASK to `blocked` (and `:78`); `packs/firstmate/workflows/code-firstmate.wf.yaml:198` routes `blocked` to `scope-card`; the rescope note reaches only the spec writer, not the build brief (the stale scope pin after a rescope is fixed by `rescope-repin-20261016`) | `code-ask-loop-r4-20261016` |
-| file-organization · board | plan | `give the folder's absolute path` | the Start form sends only `{provider}` (`public/runtime.js:578`); `POST /api/wruns` (`src/runtime/index.ts:251-269`) starts a Task without its declared params (`params.folder`), and `src/fileorg.ts:30` refuses later | `single-source-contracts-20261016` |
 
 Fixed on main since the harness was written: the startup founder and judge rounds ran in
 `data/runs/<run>`, which the agent path check refuses (round cwd under `data/work` now), and the

@@ -108,7 +108,7 @@
     "test:operating-rules": "bun tests/operating-rules.ts && node tests/operating-rules-ui.mjs",
     "test:zh-cn": "bun tests/zh-cn.ts && node tests/zh-cn-ui.mjs",
     "test:startup-run-output-ui": "bun tests/startup-run-output-ui.mjs",
-    "test:board-start": "bun tests/board-start.ts && node tests/board-start-ui.mjs",
+    "test:board-start": "bun tests/board-start.ts && node tests/board-start-ui.mjs && node tests/board-folder-ui.mjs",
     "test:hello-web": "bun tests/hello-web.ts && node tests/hello-web-ui.mjs",
     "test:workflow-complete": "bun tests/workflow-templates.ts && node tests/workflow-complete-ui.mjs",
     "test:workflow-config": "bun tests/workflow-saved-staffing.ts && bun tests/staffing-candidate-models.ts && bun tests/workflow-design-skill.ts",
