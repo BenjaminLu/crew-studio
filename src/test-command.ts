@@ -1,3 +1,5 @@
+import {homedir} from 'node:os';
+import {localUnrestricted} from './local-execution';
 import {cpSync,existsSync,lstatSync,mkdirSync,rmSync,writeFileSync,symlinkSync} from 'node:fs';
 import {join,dirname} from 'node:path';
 import {must,gitArgv} from './git';
@@ -8,12 +10,28 @@ import {normPath} from './review-read';
 export function selectTestCommand(cfg:{test:string[]|null;testSource:string|null},files?:string[]):string[]|null {
  if(!cfg.test)return null;
  if(!files?.length)return cfg.test;
- const direct=cfg.test[0].split('/').at(-1)==='node'&&cfg.test[1]==='--test';
+ const node=cfg.test[0].split('/').at(-1)==='node'&&cfg.test[1]==='--test';
+ const direct=node&&cfg.test.slice(2).every(p=>/^[\w./-]+$/.test(p)&&!p.startsWith('-'));
+ if(node&&!direct)throw new Error('This Node test runner cannot select files without losing options; configure a runner adapter. No tests ran.');
  const script=cfg.testSource?.startsWith('package.json')?cfg.test.at(-1):null;
  if(direct)return [cfg.test[0],'--test',...files];
  if(script&&/^node\s+--test(?:\s+[\w./-]+)*\s*$/.test(script))return ['node','--test',...files];
  if(script)throw new Error('This package test runner cannot select files yet; Firstmate must configure a runner adapter. No tests ran.');
  return cfg.test; // .crew/gates.json explicitly owns CREW_TEST_FILES support.
+}
+
+/** Only operator-configured local browser capabilities, never credentials. */
+export function testEnvironment():Record<string,string>{
+ const env:Record<string,string>={};if(!localUnrestricted())return env;
+ const root=process.env.CREW_LOCAL_DEPENDENCY_ROOT!,module=join(root,'node_modules','playwright');if(existsSync(join(module,'package.json')))env.PLAYWRIGHT_MODULE=module;
+ const browsers=process.env.PLAYWRIGHT_BROWSERS_PATH??join(homedir(),process.platform==='darwin'?'Library/Caches/ms-playwright':'.cache/ms-playwright');if(existsSync(browsers))env.PLAYWRIGHT_BROWSERS_PATH=browsers;
+ for(const [target,source] of [['PLAYWRIGHT_MODULE','CREW_PLAYWRIGHT_MODULE'],['PLAYWRIGHT_BROWSERS_PATH','CREW_PLAYWRIGHT_BROWSERS_PATH'],['PLAYWRIGHT_EXECUTABLE_PATH','CREW_PLAYWRIGHT_EXECUTABLE_PATH']])if(process.env[source])env[target]=process.env[source]!;
+ return env;
+}
+/** Check scripts receive the same host-resolved adapter as role tools. */
+export function testRunner(cfg:{test:string[]|null;testSource:string|null}){
+ try{const c=selectTestCommand(cfg,['__crew_selected_test__.mjs']);return c?.[1]==='--test'&&c[2]==='__crew_selected_test__.mjs'?{node:c[0]}:{custom:true};}
+ catch(e:any){return{error:e.message};}
 }
 
 /** Keep candidate tests, restore base source/config bytes; never checkout/reset the real worktree. */

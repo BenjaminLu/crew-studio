@@ -25,7 +25,7 @@ stub:
     how: firstmate
     setup: [staffing-code]
     params: { project: sandbox }
-    topic: "Add a 10% discount helper\nSTUB_FILE src/discount.ts :: export const discount = (p: number) => Math.round(p * 90) / 100;\\n\nSTUB_FILE test/discount.test.ts :: import { test, expect } from 'bun:test';\\nimport { discount } from '../src/discount';\\ntest('ten percent off', () => expect(discount(100)).toBe(90));\\n"
+    topic: "Add a 10% discount helper\nSTUB_FILE src/discount.ts :: export const discount = (p: number) => Math.round(p * 90) / 100;\\n\nSTUB_FILE test/discount.test.ts :: import { test, expect } from 'bun:test';\\ntest('ten percent off', async () => { expect(await Bun.file(new URL('../src/discount.ts', import.meta.url)).exists()).toBe(true); const { discount } = await import('../src/discount'); expect(discount(100)).toBe(90); });\\n"
     cards: [{ node: dispatch, answer: dispatch }, { node: merge-card, answer: merge }]
     timeout_s: 240
     expect: { status: succeeded, result: done, visited: [intake, prepare, spec, dispatch, door, build, pr-open, ci, review, remote-ready, merge-card, merge, after-merge, cleanup, done] }
@@ -43,7 +43,7 @@ stub:
     how: firstmate
     setup: [staffing-code]
     params: { project: sandbox }
-    topic: "Add a percentage discount helper ACCEPT_ASK\nSTUB_FILE src/percent.ts :: export const percent = (p: number) => Math.round(p * 90) / 100;\\n\nSTUB_FILE test/percent.test.ts :: import { test, expect } from 'bun:test';\\nimport { percent } from '../src/percent';\\ntest('percent', () => expect(percent(100)).toBe(90));\\n"
+    topic: "Add a percentage discount helper ACCEPT_ASK\nSTUB_FILE src/percent.ts :: export const percent = (p: number) => Math.round(p * 90) / 100;\\n\nSTUB_FILE test/percent.test.ts :: import { test, expect } from 'bun:test';\\ntest('percent', async () => { expect(await Bun.file(new URL('../src/percent.ts', import.meta.url)).exists()).toBe(true); const { percent } = await import('../src/percent'); expect(percent(100)).toBe(90); });\\n"
     cards:
       - { node: dispatch, answer: dispatch }
       - { node: scope-card, answers: [rescope, park], note: "ACCEPT_ANSWERED: 10%." }

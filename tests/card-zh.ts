@@ -81,7 +81,7 @@ const H = await harness([readFileSync(join(root, "packs/firstmate/workflows/code
 const E = H.engine; installCode(E, { dataDir: data, projects: new Projects(data) });
 const r = E.start({ workflow: "code-firstmate", params: {}, text: ["Add a percent function to money-kit", "STUB_ZH_ENGLISH",
   "STUB_FILE src/percent.ts :: export function percent(amount: number, pct: number): number {\\n  return Math.round((amount * pct) / 100);\\n}\\n",
-  'STUB_FILE test/percent.test.ts :: import { expect, test } from "bun:test";\\nimport { percent } from "../src/percent";\\n\\ntest("percent rounds to the cent", () => expect(percent(1999, 15)).toBe(300));\\n'].join("\n") });
+  'STUB_FILE test/percent.test.ts :: import { expect, test } from "bun:test";\\ntest("percent rounds to the cent", async () => { expect(await Bun.file(new URL("../src/percent.ts", import.meta.url)).exists()).toBe(true); const { percent } = await import("../src/percent"); expect(percent(1999, 15)).toBe(300); });\\n'].join("\n") });
 await until(() => E.cards.list({ run: r.id, open: true }).some((c) => c.kind === "dispatch") || ["succeeded", "failed"].includes(E.get(r.id)!.status), 120000);
 const d = E.cards.list({ run: r.id, open: true }).find((c) => c.kind === "dispatch");
 const steSpec = E.ledger(r.id).filter((e) => e.check === "core/ste-wording" && e.node === "spec");

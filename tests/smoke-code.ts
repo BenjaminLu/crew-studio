@@ -35,7 +35,7 @@ const mainBefore = git("rev-parse", "main");
 const intent = [
   "Add a percent function to money-kit",
   "STUB_FILE src/percent.ts :: // A percent of an amount in cents, rounded to the cent.\\nexport function percent(amount: number, pct: number): number {\\n  return Math.round((amount * pct) / 100); \\n}\\n",
-  'STUB_FILE test/percent.test.ts :: import { expect, test } from "bun:test";\\nimport { percent } from "../src/percent";\\n\\ntest("percent rounds to the cent", () => expect(percent(1999, 15)).toBe(300));\\n',
+  'STUB_FILE test/percent.test.ts :: import { expect, test } from "bun:test";\\ntest("percent rounds to the cent", async () => { expect(await Bun.file(new URL("../src/percent.ts", import.meta.url)).exists()).toBe(true); const { percent } = await import("../src/percent"); expect(percent(1999, 15)).toBe(300); });\\n',
   "STUB_FIX src/percent.ts :: / 100);  => / 100);",
 ].join("\n");
 const r = E.start({ workflow: "code-firstmate", text: intent, params: {} });

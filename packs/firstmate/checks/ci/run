@@ -4,15 +4,17 @@ const fs = require("fs"), path = require("path"), { spawn } = require("child_pro
 let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", async () => {
   const i = JSON.parse(s); const cfg = i.repo_cfg ?? {};
   if (!cfg.test) { process.stdout.write(JSON.stringify({ verdict: "fail", score: 0, findings: [{ locator: { type: "file", path: ".crew/gates.json" }, message: "the repository declares no test command", expected: "\"test\": [argv] in .crew/gates.json", class: "ci-config", severity: "blocking" }], evidence: [], proves: [] })); return; }
+  if(cfg.runner?.error&&cfg.selectedTests?.length){process.stdout.write(JSON.stringify({verdict:'fail',score:0,findings:[{locator:{type:'file',path:cfg.selectedTests[0]},message:cfg.runner.error,expected:'supported runner adapter',class:'runner-adapter',severity:'blocking'}],evidence:[],proves:[]}));return;}
+  const commands=[cfg.test];if(cfg.runner?.node&&cfg.selectedTests?.length)commands.push([cfg.runner.node,'--test',...cfg.selectedTests]);
   const n = i.params.shards || cfg.shards || 1;
-  const run = (k) => new Promise((res) => { const t0 = Date.now(); const p = spawn(cfg.test[0], cfg.test.slice(1), { cwd: i.workdir, env: { ...process.env, CREW_SHARD: String(k), CREW_SHARDS: String(n) } });
-    let log = ""; p.stdout.on("data", (d) => (log += d)); p.stderr.on("data", (d) => (log += d)); p.on("close", (code) => res({ shard: k + 1, of: n, code, ms: Date.now() - t0, log })); p.on("error", (e) => res({ shard: k + 1, of: n, code: 127, ms: 0, log: String(e) })); });
-  const rs = await Promise.all(Array.from({ length: n }, (_, k) => run(k)));
+  const run = (k) => new Promise((res) => { const t0 = Date.now(); const command=commands[k % commands.length];const shard=Math.floor(k/commands.length);const p = spawn(command[0], command.slice(1), { cwd: i.workdir, env: { ...process.env, ...(cfg.testEnv||{}), CREW_TEST_OUTPUT_DIR:i.out, CREW_SHARD: String(shard), CREW_SHARDS: String(n) } });
+    let log = ""; p.stdout.on("data", (d) => (log += d)); p.stderr.on("data", (d) => (log += d)); p.on("close", (code) => res({ shard: k + 1, of: n, code, ms: Date.now() - t0, log,command })); p.on("error", (e) => res({ shard: k + 1, of: n, code: 127, ms: 0, log: String(e) })); });
+  const rs = await Promise.all(Array.from({ length: n*commands.length }, (_, k) => run(k)));
   rs.forEach((r) => fs.writeFileSync(path.join(i.out, `shard-${r.shard}.log`), r.log));
   const f = [];
   for (const r of rs) for (const l of r.log.split("\n")) { const m = /^FAIL\s+([^:\s]+):\s*(.*)$/.exec(l); if (m) f.push({ locator: { type: "file", path: m[1].includes("/") ? m[1] : `tests/${m[1]}` }, message: `${m[1]}: ${m[2]}`.slice(0, 400), expected: "the test passes", class: "test-failure", severity: "blocking" }); }
   const bad = rs.filter((r) => r.code !== 0);
   if (bad.length && !f.length) for (const r of bad) f.push({ locator: { type: "file", path: ".crew/gates.json" }, message: `shard ${r.shard}/${n} exit ${r.code}: ${r.log.trim().split("\n").slice(-3).join(" | ").slice(0, 300)}`, expected: "exit 0", class: "ci-crash", severity: "blocking" });
   const proves = []; if (!bad.length) (i.spec?.done ?? []).forEach((d, k) => { const m = /(tests?\/[\w./-]+|[\w./-]+\.test\.\w+)/.exec(d); if (m && fs.existsSync(path.join(i.workdir, m[1]))) proves.push(k); });
-  process.stdout.write(JSON.stringify({ verdict: bad.length ? "fail" : "pass", score: (n - bad.length) / n, findings: f.slice(0, 30), evidence: rs.map((r) => `out/shard-${r.shard}.log`), proves, data: { shards: rs.map(({ log, ...x }) => x) } }));
+  process.stdout.write(JSON.stringify({ verdict: bad.length ? "fail" : "pass", score: (rs.length - bad.length) / rs.length, findings: f.slice(0, 30), evidence: rs.map((r) => `out/shard-${r.shard}.log`), proves, data: { shards: rs.map(({ log, ...x }) => x) } }));
 });

@@ -87,7 +87,7 @@ try {
     await p.goto(`${base}/#/runs`);
     const INTENT = ["Add a percent function to money-kit, and keep the existing money functions unchanged",
       "STUB_FILE src/percent.ts :: // A percent of an amount in cents, rounded to the cent.\\nexport function percent(amount: number, pct: number): number {\\n  return Math.round((amount * pct) / 100);\\n}\\n",
-      'STUB_FILE test/percent.test.ts :: import { expect, test } from "bun:test";\\nimport { percent } from "../src/percent";\\n\\ntest("percent rounds to the cent", () => expect(percent(1999, 15)).toBe(300));\\n'].join("\n");
+      'STUB_FILE test/percent.test.ts :: import { expect, test } from "bun:test";\\ntest("percent rounds to the cent", async () => { expect(await Bun.file(new URL("../src/percent.ts", import.meta.url)).exists()).toBe(true); const { percent } = await import("../src/percent"); expect(percent(1999, 15)).toBe(300); });\\n'].join("\n");
     const call = (u, b) => p.evaluate(async ([u, b]) => { const r = await fetch(u, b === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) }); return { status: r.status, j: await r.json().catch(() => ({})) }; }, [u, b]);
     // code-firstmate itself only starts for a registered project with an approved staffing configuration
     // (src/domain/staffing.ts installStaffingGuard, tests/firstmate-staffing.ts); the merge card under test comes

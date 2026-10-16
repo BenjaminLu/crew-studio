@@ -1,6 +1,5 @@
-import {homedir} from "node:os";
 import {OperatingRules,jobInstructions} from "../operating-rules";
-import {selectTestCommand,prepareTestBase} from "../test-command";
+import {selectTestCommand,prepareTestBase,testEnvironment,testRunner} from "../test-command";
 import {localUnrestricted} from "../local-execution";
 import { codeHandoffView } from "./code-handoff";
 import { installCodeRecovery } from "./code-recovery";
@@ -247,7 +246,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   engine.needs.diff = (x) => ({ paths: changedOf(shellOk(x), x.ctx.baseCommit) });
   engine.needs.diff_text = (x) => git(shellOk(x), ["diff", "--no-color", `${x.ctx.baseCommit}..HEAD`]).out.slice(0, 24000);
   engine.needs.scope = (x) => x.ctx.spec?.scope ?? [];
-  engine.needs.repo_cfg = (x) => cfgOf(x);
+  engine.needs.repo_cfg = (x) => {const cfg=cfgOf(x),wt=shellOk(x);return{...cfg,runner:testRunner(cfg),testEnv:testEnvironment(),selectedTests:changedOf(wt,x.ctx.baseCommit).filter(p=>isTest(cfg,p.path)&&!p.status?.startsWith('D')).map(p=>p.path)};};
   engine.needs.report = (x) => x.run.nodes.build?.data?.report ?? null;
   engine.needs.brief_classes = (x) => (x.ctx.briefs?.build?.items ?? []).map((i: any) => i.class);
   engine.needs.ci_timings = (x) => { const e = engine.ledger(x.run.id).filter((y) => y.check === "firstmate/ci").at(-1) as any; return e?.data?.shards ?? null; };
@@ -738,9 +737,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
               outputDir=join(wt,p);mkdirSync(outputDir,{recursive:true});
             }
             const env:Record<string,string>={...(files?{CREW_TEST_FILES:files.join(',')}:{}) , CREW_TEST_OUTPUT_DIR:outputDir};
-            if(localUnrestricted()&&!process.env.CREW_PLAYWRIGHT_MODULE&&process.env.CREW_LOCAL_DEPENDENCY_ROOT){const module=join(process.env.CREW_LOCAL_DEPENDENCY_ROOT,'node_modules','playwright');if(existsSync(join(module,'package.json')))env.PLAYWRIGHT_MODULE=module;}
-            if(localUnrestricted()){const browsers=process.env.PLAYWRIGHT_BROWSERS_PATH??join(homedir(),process.platform==='darwin'?'Library/Caches/ms-playwright':'.cache/ms-playwright');if(existsSync(browsers))env.PLAYWRIGHT_BROWSERS_PATH=browsers;}
-            if(localUnrestricted())for(const [target,source] of [['PLAYWRIGHT_MODULE','CREW_PLAYWRIGHT_MODULE'],['PLAYWRIGHT_BROWSERS_PATH','CREW_PLAYWRIGHT_BROWSERS_PATH'],['PLAYWRIGHT_EXECUTABLE_PATH','CREW_PLAYWRIGHT_EXECUTABLE_PATH']])if(process.env[source])env[target]=process.env[source]!;
+            Object.assign(env,testEnvironment());
             const r = await sandboxed(command, { cwd, out: outputDir, tmp: join(box, "tmp"), timeoutS: cfg.timeout_s, network: false, dataDir: o.dataDir,env });
             if (r.refused) return { error: `refused: ${r.refused}` };
             if(!engine.owns(x))return{error:'round owner ended during tests'};
@@ -936,7 +933,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
           const exe = resolveCmd(copy, argv[0]); if (!exe) return { error: `refused: ${argv[0]} is not a program on the fixed PATH (${fixedPath("<copy>").join(":")}) or a file inside the copy` };
           const cmd = [exe, ...argv.slice(1)]; mkdirSync(join(box, "tmp"), { recursive: true });
           const r = process.env.CREW_TEST_REVIEW_SANDBOX_REFUSE === "1" ? { refused: "the round sandbox is not available (test)" } as any
-            : await sandboxed(cmd, { cwd: copy, out: copy, tmp: join(box, "tmp"), timeoutS, network: false, dataDir: o.dataDir, argvRead: false, env: { PATH: fixedPath(copy).join(":") } });
+            : await sandboxed(cmd, { cwd: copy, out: copy, tmp: join(box, "tmp"), timeoutS, network: false, dataDir: o.dataDir, argvRead: false, env: { PATH: fixedPath(copy).join(":"), ...testEnvironment(), CREW_TEST_OUTPUT_DIR:copy } });
           if (r.refused) { d.executed.push({ command: argv.join(" "), refused: r.refused, at: new Date().toISOString() }); x.save(); return { error: `refused: ${r.refused} (recorded: the merge card flags that it could not run)` }; }
           d.executed.push({ command: argv.join(" "), exit: r.timedOut ? null : r.code, at: new Date().toISOString() }); x.save();
           return { exit: r.timedOut ? null : r.code, timedOut: r.timedOut, tail: (r.stdout + r.stderr).trim().split("\n").slice(-25).join("\n") };

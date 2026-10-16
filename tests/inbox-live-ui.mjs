@@ -33,7 +33,7 @@ const errors = [];
 const shots = join(root, "tests/out"); mkdirSync(shots, { recursive: true });
 const INTENT = (what) => [what,
   "STUB_FILE src/percent.ts :: export function percent(amount: number, pct: number): number {\\n  return Math.round((amount * pct) / 100);\\n}\\n",
-  'STUB_FILE test/percent.test.ts :: import { expect, test } from "bun:test";\\nimport { percent } from "../src/percent";\\n\\ntest("percent rounds to the cent", () => expect(percent(1999, 15)).toBe(300));\\n'].join("\n");
+  'STUB_FILE test/percent.test.ts :: import { expect, test } from "bun:test";\\ntest("percent rounds to the cent", async () => { expect(await Bun.file(new URL("../src/percent.ts", import.meta.url)).exists()).toBe(true); const { percent } = await import("../src/percent"); expect(percent(1999, 15)).toBe(300); });\\n'].join("\n");
 const dom = (p) => p.evaluate(() => ({ inbox: [...document.querySelectorAll("[data-inbox-studio] [data-scard]")].map((e) => e.dataset.scard), needs: [...document.querySelectorAll("[data-need-scard]")].map((e) => e.dataset.needScard), nav: document.querySelector("#navInbox")?.textContent, needsCount: document.querySelector("#needsCount")?.textContent }));
 const waitFor = async (p, fn, arg, ms = 30000) => p.waitForFunction(fn, arg, { timeout: ms }).then(() => true, () => false);
 try {

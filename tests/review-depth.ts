@@ -20,7 +20,7 @@ const boot = async (policies?: string) => { const data = checkedTempDir("crew-re
   const H = await harness([WF], { data, checkRoots: [], policies }); installCode(H.engine, { dataDir: data, projects: new Projects(data) }); return H; };
 const intent = (extra: string) => ["Add a percent function to money-kit",
   `STUB_FILE src/percent.ts :: ${extra ? `// ${extra}\\n` : ""}export function percent(amount: number, pct: number): number {\\n  return Math.round((amount * pct) / 100);\\n}\\n`,
-  'STUB_FILE test/percent.test.ts :: import { expect, test } from "bun:test";\\nimport { percent } from "../src/percent";\\n\\ntest("percent rounds to the cent", () => expect(percent(1999, 15)).toBe(300));\\n'].join("\n");
+  'STUB_FILE test/percent.test.ts :: import { expect, test } from "bun:test";\\ntest("percent rounds to the cent", async () => { expect(await Bun.file(new URL("../src/percent.ts", import.meta.url)).exists()).toBe(true); const { percent } = await import("../src/percent"); expect(percent(1999, 15)).toBe(300); });\\n'].join("\n");
 const flow = (E: any) => {
   const until2 = (id: string, f: () => boolean) => until(() => f() || ["succeeded", "failed", "cancelled"].includes(E.get(id)!.status), 180000);
   const dispatch = async (id: string) => { await until2(id, () => E.cards.list({ run: id, open: true }).some((c: any) => c.kind === "dispatch")); const d = E.cards.list({ run: id, open: true }).find((c: any) => c.kind === "dispatch"); if (d) await E.answer(d.id, { choice: "dispatch", by: "captain" }); };
