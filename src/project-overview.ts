@@ -136,7 +136,8 @@ export function createProjectOverview(d: OverviewDeps) {
   function refusalText(a: { reason: StaffingRefusal; record: string; aliases: string[] }): { en: string; tw: string } {
     const id = a.record || "?", al = a.aliases.join(", ");
     switch (a.reason) {
-      case "folder_missing": return { en: `Registration ${id}: its folder is missing.`, tw: `登錄的專案 ${id}：資料夾不見了。` };
+      case "folder_missing": return { en: `Registration ${id}: its folder does not exist.`, tw: `登錄的專案 ${id}：資料夾不存在。` };
+      case "folder_unusable": return { en: `Registration ${id}: its folder cannot be used (not a folder, or not readable).`, tw: `登錄的專案 ${id}：資料夾無法使用（不是資料夾，或無法讀取）。` };
       case "git_invalid": return { en: `Registration ${id}: its Git data is missing or malformed.`, tw: `登錄的專案 ${id}：Git 資料不見了或格式不正確。` };
       case "git_escapes_container": return { en: `Registration ${id}: its Git data points outside its folder.`, tw: `登錄的專案 ${id}：Git 資料指向資料夾以外。` };
       case "private_overlap": return { en: `Registration ${id}: its folder is inside, or holds, Studio's private data.`, tw: `登錄的專案 ${id}：資料夾位於 Studio 的私有資料裡，或包含它。` };
@@ -151,7 +152,7 @@ export function createProjectOverview(d: OverviewDeps) {
   function statusLine(kind: string, enabled: boolean, c: ReturnType<typeof counts>, folderMissing = false, canStart = true): Line {
     if (!enabled) return { tone: "", en: "Disabled", tw: "已停用" };
     if (kind === "external") return { tone: "warn", en: "External: cannot dispatch yet", tw: "外部專案：暫無法派工" };
-    if (folderMissing) return { tone: "warn", en: "Folder missing", tw: "資料夾不見了" };
+    if (folderMissing) return { tone: "warn", en: "Folder missing", tw: "資料夾不存在" };
     if (!canStart && kind !== STUDIO) return { tone: "warn", en: "No task can start", tw: "無法開始任何任務" };
     if (c.failed24h) return { tone: "bad", en: `${c.failed24h} failed in the last 24 h`, tw: `近 24 小時 ${c.failed24h} 個失敗` };
     const en: string[] = [], tw: string[] = [];
@@ -228,7 +229,8 @@ export function createProjectOverview(d: OverviewDeps) {
   function health(p: Project, crew: ReturnType<typeof crewOf> | { error: string }, st: ReturnType<typeof startState>) {
     const kind = kindOf(p), enabled = enabledOf(p);
     const out = [];
-    out.push(enabled && st.canStart ? tile("enabled", "ok", "Enabled", "已啟用", { en: "New tasks can start", tw: "可以開始新任務" })
+    out.push(enabled && st.folderMissing ? tile("enabled", "warn", "Folder missing", "資料夾不存在", { en: "The registered folder does not exist. Studio skips this registration; no task can start here.", tw: "登錄的資料夾不存在。Studio 會略過這個登錄；這裡無法開始任何任務。" })
+      : enabled && st.canStart ? tile("enabled", "ok", "Enabled", "已啟用", { en: "New tasks can start", tw: "可以開始新任務" })
       : enabled ? tile("enabled", "warn", "Enabled", "已啟用", kind === "external" ? { en: "No task can start (see Registered)", tw: "無法開始任何任務（見「已註冊」）" } : { en: "No task can start (see Crew)", tw: "無法開始任何任務（見「船員」）" })
       : tile("enabled", "bad", "Disabled", "已停用", { en: "New tasks and rounds will not start.", tw: "不會開始新任務或新的一輪。" }));
     out.push(kind === "external" ? tile("registered", "warn", "External project: cannot dispatch yet", "外部專案：暫時無法派工", { en: "Its GitHub grant cannot be verified on this build.", tw: "目前版本無法驗證它的 GitHub 授權。" })
@@ -236,7 +238,7 @@ export function createProjectOverview(d: OverviewDeps) {
       : tile("registered", "ok", "Registered", "已註冊", { en: "Local repository", tw: "本機儲存庫" }));
     const b = readBaseRef(p.path, p.base);
     out.push(!p.path ? tile("base", "bad", "No repository path", "沒有儲存庫路徑", null)
-      : st.folderMissing ? tile("base", "bad", "Repository folder missing", "找不到儲存庫資料夾", { en: "The registered folder is gone or is not a Git repository.", tw: "登錄的資料夾不見了，或不是 Git 儲存庫。" })
+      : st.folderMissing ? tile("base", "bad", "Repository folder missing", "儲存庫資料夾不存在", { en: "The registered folder does not exist.", tw: "登錄的資料夾不存在。" })
       : b.found ? tile("base", "ok", "Base branch found", "找到主 branch", { en: `${p.base} · ${short(b.sha)}`, tw: `${p.base} · ${short(b.sha)}` })
       : tile("base", "bad", "Base branch missing", "找不到主 branch", { en: p.base, tw: p.base }));
     if (kind === "external") out.push(tile("crew", "idle", "Crew not checked", "未檢查船員", { en: "External project", tw: "外部專案" }));

@@ -180,9 +180,14 @@ const healthy = readFileSync(join(DATA, "projects.json"), "utf8");
 const withBroken = (list: any[]) => writeFileSync(join(DATA, "projects.json"), JSON.stringify([...JSON.parse(healthy), ...list]));
 const crewTile = async (id: string) => (await get(`/api/projects/${id}/overview`))!.body.health.find((t: any) => t.key === "crew");
 const leak = (v: any) => /ENOENT|EACCES|no such file|stat '|Error:|gitdir/i.test(JSON.stringify(v));
+const filed = join(repos, "filed"); writeFileSync(filed, "x");
+// the captain's rule: another registration whose root does not exist is skipped (harbor-api can start)
+withBroken([rec("gone-off", gone, { enabled: false }), rec("lost", lost)]);
+{ const page = (await get("/api/projects/harbor-api/overview"))!.body, t = page.health.find((x: any) => x.key === "crew"), e0 = page.health.find((x: any) => x.key === "enabled");
+  ok(t.tone === "ok" && t.en === "Crew approved" && e0.tone === "ok" && page.project.canStart === true, "registrations whose roots do not exist are skipped: harbor-api's crew reads approved", JSON.stringify(t)); }
 const wtAlias = join(repos, "harbor-wt"); git(harbor, "worktree", "add", "-q", "-b", "side", wtAlias);
 for (const [label, list, en, tw] of [
-  ["a disabled registration whose folder is gone", [rec("gone-off", gone, { enabled: false })], "Registration gone-off: its folder is missing.", "登錄的專案 gone-off：資料夾不見了。"],
+  ["a registration whose root became a file", [rec("filed", filed)], "Registration filed: its folder cannot be used (not a folder, or not readable).", "登錄的專案 filed：資料夾無法使用（不是資料夾，或無法讀取）。"],
   ["a registration whose .git points at a gone gitdir", [rec("ghost-wt", ghost)], "Registration ghost-wt: its Git data is missing or malformed.", "登錄的專案 ghost-wt：Git 資料不見了或格式不正確。"],
   ["a registration with a garbage .git file", [rec("junk", junk)], "Registration junk: its Git data is missing or malformed.", "登錄的專案 junk：Git 資料不見了或格式不正確。"],
   ["a worktree of harbor-api registered under another id", [rec("harbor-wt", wtAlias)], "Registrations harbor-api and harbor-wt point to the same repository.", "登錄的專案 harbor-api 與 harbor-wt 指向同一個儲存庫。"]] as any[]) {
@@ -198,14 +203,14 @@ for (const [label, list, en, tw] of [
   rmSync(inData, { recursive: true, force: true }); }
 withBroken([rec("gone-off", gone, { enabled: false }), rec("lost", lost), rec("junk", junk)]);
 { const t = await crewTile("harbor-api");
-  ok(t.tone === "warn" && t.detail.en === "Registration gone-off: its folder is missing.", "several broken registrations: the one the check stops at is named", JSON.stringify(t)); }
+  ok(t.tone === "warn" && t.detail.en === "Registration junk: its Git data is missing or malformed.", "missing roots are skipped; the broken registration beside them is named", JSON.stringify(t)); }
 const side2 = (await get("/api/projects/overview"))!.body, lrow = side2.projects.find((p: any) => p.id === "lost");
-ok(lrow.status.en === "Folder missing" && lrow.status.tw === "資料夾不見了" && lrow.status.tone === "warn" && lrow.folderMissing === true, "F3: a project whose own folder is missing reads Folder missing in the sidebar", JSON.stringify(lrow));
+ok(lrow.status.en === "Folder missing" && lrow.status.tw === "資料夾不存在" && lrow.status.tone === "warn" && lrow.folderMissing === true, "F3: a project whose own folder is missing reads Folder missing in the sidebar", JSON.stringify(lrow));
 ok(side2.projects.find((p: any) => p.id === "gone-off").status.en === "Disabled", "a disabled project still reads Disabled first");
 const lostPg = (await get("/api/projects/lost/overview"))!.body;
 const lk = Object.fromEntries(lostPg.health.map((t: any) => [t.key, t]));
-ok(lostPg.project.folderMissing === true && lk.crew.tone === "warn" && lk.crew.en === "No task can start" && lk.crew.detail.en === "Registration lost: its folder is missing." && lk.crew.detail.tw === "登錄的專案 lost：資料夾不見了。", "a project whose own folder is missing: no task can start, in plain words", JSON.stringify(lk.crew));
-ok(lk.enabled.tone === "warn" && lk.enabled.detail.en === "No task can start (see Crew)", "its Enabled tile does not pass either");
+ok(lostPg.project.folderMissing === true && lk.crew.tone === "warn" && lk.crew.en === "No task can start" && lk.crew.detail.en === "Registration lost: its folder does not exist." && lk.crew.detail.tw === "登錄的專案 lost：資料夾不存在。", "a project whose own folder is missing: no task can start, in plain words", JSON.stringify(lk.crew));
+ok(lk.enabled.tone === "warn" && lk.enabled.en === "Folder missing" && lk.enabled.tw === "資料夾不存在" && lostPg.project.canStart === false, "its Enabled tile reads Folder missing, not Enabled", JSON.stringify(lk.enabled));
 ok(side2.projects.find((p: any) => p.id === "harbor-api").status.en === "No task can start" && side2.projects.find((p: any) => p.id === "harbor-api").canStart === false, "the sidebar says no task can start for a project the check refuses");
 const goneOff = (await get("/api/projects/gone-off/overview"))!.body;
 ok(!leak(lostPg) && !leak(goneOff) && !leak(side2), "no reply carries exception text");

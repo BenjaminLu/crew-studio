@@ -101,7 +101,7 @@ export function classify(paths: ChangedPath[], o: { defaults: DoorDefaults; proj
 }
 
 /** Why the staffing check refuses a project (bookkeeping beside the error it throws; see Projects.staffingAssess). */
-export type StaffingRefusal='invalid_id'|'registry_unreadable'|'missing_or_disabled'|'folder_missing'|'git_invalid'|'git_escapes_container'|'private_overlap'|'ambiguous_alias'|'base_invalid'|'base_missing'|'external_unverified'|'unsupported_value';
+export type StaffingRefusal='invalid_id'|'registry_unreadable'|'missing_or_disabled'|'folder_missing'|'folder_unusable'|'git_invalid'|'git_escapes_container'|'private_overlap'|'ambiguous_alias'|'base_invalid'|'base_missing'|'external_unverified'|'unsupported_value';
 /** `record` is the registration the failing step was reading (another one while checking aliases); `aliases` the other ids on the same repository. */
 export type StaffingAssessment={ok:true;identity:{namespace:'git';id:string;identity:string}}|{ok:false;reason:StaffingRefusal;record:string;aliases:string[];error:unknown};
 // ---------- projects ----------
@@ -160,7 +160,11 @@ export class Projects {
       return{root,git,common};
     };
     const repository=gitIdentity(project.path);let matches=0;
-    for(const other of snapshot.records){if(!other.path)continue;record=other.id;const identity=gitIdentity(other.path,false);if(identity.common===repository.common){matches++;if(other.id!==id)aliases.push(other.id);}}
+    // Captain decision (2026-10-16): another registration whose root folder does not exist at all (ENOENT on the root
+    // itself) is skipped: it cannot alias this repository, so it neither refuses staffing here nor counts. Anything else
+    // about it (not a directory, unreadable, EACCES, no Git data, a link out) still refuses, as before.
+    const rootAbsent=(path:string)=>{try{lstatSync(path);return false;}catch(e:any){return e?.code==='ENOENT';}};
+    for(const other of snapshot.records){if(!other.path)continue;if(other.id!==id&&rootAbsent(other.path))continue;record=other.id;const identity=gitIdentity(other.path,false);if(identity.common===repository.common){matches++;if(other.id!==id)aliases.push(other.id);}}
     record=id;stage='ambiguous_alias';
     if(matches!==1)throw new Error("Repository has ambiguous registered aliases");
     stage='base_invalid';
@@ -175,7 +179,10 @@ export class Projects {
     stage='unsupported_value';
     const canonical=(v:any):string=>v===null||typeof v==='string'||typeof v==='boolean'?JSON.stringify(v):typeof v==='number'&&Number.isFinite(v)?JSON.stringify(v):Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&Object.getPrototypeOf(v)===Object.prototype?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':(()=>{throw new Error("Unsupported project authority value")})();
     return{ok:true,identity:{namespace:'git',id,identity:createHash('sha256').update(canonical({schema:1,id,root:repository.root,common:repository.common,base:project.base,enabled:project.enabled??true,grant:project.github??null})).digest('hex')}};
-    }catch(error){return{ok:false,reason:stage,record,aliases:stage==='ambiguous_alias'?aliases:[],error};}
+    }catch(error:any){
+      // a root that exists but is not a usable folder (a file, EACCES) is told apart from one that is not there at all
+      const reason:StaffingRefusal=stage==='folder_missing'&&error?.code!=='ENOENT'?'folder_unusable':stage;
+      return{ok:false,reason,record,aliases:stage==='ambiguous_alias'?aliases:[],error};}
   }
   private raw(): Project[] { try { const a = JSON.parse(readFileSync(this.file(), "utf8")); return Array.isArray(a) ? a : []; } catch { return []; } }
   /** Each project, its sensitive paths read from its policy (the one home of a project's sensitive paths). */

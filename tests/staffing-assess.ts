@@ -1,9 +1,11 @@
-// Projects.staffingAssess is a pure extraction of the checks staffingIdentity has always run (src/doors.ts): the
+// Projects.staffingAssess is an extraction of the checks staffingIdentity has always run (src/doors.ts): the
 // refactored staffingIdentity must return the same identity or throw the same error as the verbatim pre-refactor copy
 // (tests/fixtures/staffing-identity-reference.ts) for every registration shape below, including the reviewer's attack
-// cases; and staffingAssess must name the reason and the registration at fault.          bun tests/staffing-assess.ts
+// cases, with one change the captain decided (2026-10-16): another registration whose root folder does not exist is
+// skipped instead of refusing. staffingAssess must name the reason and the registration at fault.
+//   bun tests/staffing-assess.ts
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Projects } from "../src/doors";
@@ -39,7 +41,8 @@ const wt = join(repos, "harbor-wt"); git(harbor, "worktree", "add", "-q", "-b", 
 const g10 = mkRepo("g10"); writeFileSync(join(g10, ".git", "commondir"), "\n");
 const inData = mkRepo("inside", DATA);
 const nb = mkRepo("nb");
-const cases: [string, any[], string[]][] = [
+// [label, extra registrations, targets, targets whose outcome changes by the captain's skip rule]
+const cases: [string, any[], string[], string[]?][] = [
   ["healthy", [], ["harbor", "sandbox"]],
   ["other: gitdir -> existing non-repo dir", [rec("g1", g1)], ["harbor", "g1"]],
   ["other: commondir -> existing outside dir", [rec("g2", g2)], ["harbor", "g2"]],
@@ -47,11 +50,11 @@ const cases: [string, any[], string[]][] = [
   ["other: .git is a symlinked file pointing outside its root", [rec("g3", g3)], ["harbor", "g3"]],
   ["other: commondir file is a symlink outside .git", [rec("g4", g4)], ["harbor", "g4"]],
   ["other: symlinked root to a healthy repo", [rec("g5", ln)], ["harbor", "g5"]],
-  ["other: folder missing", [rec("gone", join(repos, "missing"))], ["harbor", "gone"]],
-  ["other: disabled, folder missing", [rec("gone-off", join(repos, "missing2"), { enabled: false })], ["harbor", "gone-off"]],
+  ["other: folder missing", [rec("gone", join(repos, "missing"))], ["harbor", "gone"], ["harbor"]],
+  ["other: disabled, folder missing", [rec("gone-off", join(repos, "missing2"), { enabled: false })], ["harbor", "gone-off"], ["harbor"]],
   ["other: garbage .git file", [rec("junk", junk)], ["harbor", "junk"]],
   ["other: gitdir gone", [rec("ghost", ghost)], ["harbor", "ghost"]],
-  ["two broken", [rec("bA", join(repos, "missA")), rec("bB", g1 + "nope")], ["harbor", "bA", "bB"]],
+  ["two missing roots", [rec("bA", join(repos, "missA")), rec("bB", g1 + "nope")], ["harbor", "bA", "bB"], ["harbor"]],
   ["self broken + other missing", [rec("self7", s7), rec("m7", join(repos, "miss7"))], ["self7", "harbor"]],
   ["alias: a worktree of harbor", [rec("harbor-wt", wt)], ["harbor", "harbor-wt"]],
   ["alias: same path twice", [rec("harbor2", harbor)], ["harbor", "harbor2"]],
@@ -63,11 +66,14 @@ const cases: [string, any[], string[]][] = [
   ["no path", [rec("nopath", null)], ["nopath", "harbor"]],
   ["unknown id", [], ["nope", ""]],
 ];
-for (const [label, extra, targets] of cases) {
+writeFileSync(join(DATA, "projects.json"), JSON.stringify(healthy));
+const healthyHarbor = JSON.stringify(projects.staffingIdentity("harbor"));
+for (const [label, extra, targets, changed = []] of cases) {
   writeFileSync(join(DATA, "projects.json"), JSON.stringify([...healthy, ...extra]));
   for (const id of targets) {
     const ref = outcome(() => referenceStaffingIdentity.call(projects, id)), now = outcome(() => projects.staffingIdentity(id));
     const a = projects.staffingAssess(id);
+    if (changed.includes(id)) { ok(!ref.ok && now.ok && now.v === healthyHarbor && a.ok, `${label} · ${id}: the missing root is now skipped (was refused), same identity as with a healthy registry`, `${ref.v} | ${now.v}`); continue; }
     ok(ref.ok === now.ok && ref.v === now.v && a.ok === now.ok && (a.ok ? JSON.stringify(a.identity) === now.v : `${(a.error as any)?.constructor?.name}:${(a.error as any)?.code ?? ""}:${(a.error as any)?.message}` === now.v),
       `${label} · ${id || "(empty)"}: same outcome as before the extraction`, `${ref.v} | ${now.v}`);
   }
@@ -76,7 +82,8 @@ for (const [label, extra, targets] of cases) {
 const reason = (extra: any[], id: string) => { writeFileSync(join(DATA, "projects.json"), JSON.stringify([...healthy, ...extra])); const a = projects.staffingAssess(id); return a.ok ? { reason: "ok", record: id, aliases: [] as string[] } : { reason: a.reason, record: a.record, aliases: a.aliases }; };
 const want = (got: any, r: string, rec: string, label: string) => ok(got.reason === r && got.record === rec, label, JSON.stringify(got));
 want(reason([], "harbor"), "ok", "harbor", "healthy: ok");
-want(reason([rec("gone", join(repos, "missing"))], "harbor"), "folder_missing", "gone", "another registration's folder is missing: named");
+want(reason([rec("gone", join(repos, "missing"))], "harbor"), "ok", "harbor", "another registration's root is missing: skipped, harbor can start");
+want(reason([rec("gone", join(repos, "missing"))], "gone"), "folder_missing", "gone", "a registration whose own root is missing is refused itself");
 want(reason([rec("ghost", ghost)], "harbor"), "git_invalid", "ghost", "a gone gitdir: git_invalid, named");
 want(reason([rec("junk", junk)], "harbor"), "git_invalid", "junk", "a garbage .git file: git_invalid, named");
 want(reason([rec("g1", g1)], "harbor"), "ok", "harbor", "a gitdir that is a plain directory passes the check (as it always has)");
@@ -92,5 +99,18 @@ want(reason([rec("ext", nb, { github: { repository: "a/b" } })], "ext"), "extern
 want(reason([rec("off", nb, { enabled: false })], "off"), "missing_or_disabled", "off", "a disabled project: missing_or_disabled");
 { writeFileSync(join(DATA, "projects.json"), JSON.stringify([...healthy, rec("off2", join(repos, "missing3"), { enabled: false })])); const a = projects.staffingAssess("off2", [], { includeDisabled: true });
   ok(!a.ok && a.reason === "folder_missing" && a.record === "off2", "includeDisabled (display only) checks a disabled registration's own folder", JSON.stringify(a)); }
+// ---- the captain's skip rule, edge by edge ----
+{ const f = join(repos, "now-a-file"); writeFileSync(f, "x");
+  want(reason([rec("filed", f)], "harbor"), "folder_unusable", "filed", "a root replaced by a file still refuses (it exists)"); }
+want(reason([rec("bA", join(repos, "missA")), rec("junk", junk)], "harbor"), "git_invalid", "junk", "a missing root is skipped, the garbage .git beside it still refuses and is named");
+{ const locked = join(repos, "locked"); mkdirSync(locked); const inner = mkRepo("inner", locked); chmodSync(locked, 0o000);
+  try { const g = reason([rec("noaccess", inner)], "harbor"); ok(g.reason === "folder_unusable" && g.record === "noaccess" && !(() => { try { projects.staffingIdentity("harbor"); return true; } catch { return false; } })(), "a root behind EACCES still refuses", JSON.stringify(g)); }
+  finally { chmodSync(locked, 0o755); } }
+{ const back = join(repos, "comes-back");
+  want(reason([rec("back", back)], "harbor"), "ok", "harbor", "a missing root is skipped");
+  git(harbor, "worktree", "add", "-q", "-b", "back-branch", back);
+  const g = reason([rec("back", back)], "harbor"); ok(g.reason === "ambiguous_alias" && g.aliases.join() === "back", "the same root reappearing (a worktree of harbor) is counted again", JSON.stringify(g)); }
+{ const dangling = join(repos, "dangling"); symlinkSync(join(repos, "nowhere"), dangling);
+  ok(reason([rec("dl", dangling)], "harbor").reason !== "ok", "a dangling symlink root exists, so it still refuses"); }
 { writeFileSync(join(DATA, "projects.json"), "{bad"); const a = projects.staffingAssess("harbor"); ok(!a.ok && a.reason === "registry_unreadable", "a malformed registry: registry_unreadable"); }
 end();

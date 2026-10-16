@@ -76,7 +76,7 @@ function viewIndex() {
   const cardOf = (p) => {
     const badge = p.kind === "external" ? h("span", { class: "badge warn" }, h("span", { class: "d" }), T("External", "外部"))
       : p.enabled === false ? h("span", { class: "badge" }, T("Disabled", "已停用"))
-      : p.folderMissing ? h("span", { class: "badge warn" }, h("span", { class: "d" }), T("Folder missing", "資料夾不見了"))
+      : p.folderMissing ? h("span", { class: "badge warn" }, h("span", { class: "d" }), T("Folder missing", "資料夾不存在"))
       : p.attention ? h("span", { class: "badge human" }, h("span", { class: "d" }), String(p.attention))
       : p.running ? h("span", { class: "badge run" }, h("span", { class: "d pulse" }), String(p.running))
       : p.kind === "builtin" ? h("span", { class: "badge" }, T("Built-in", "內建")) : null;
@@ -88,7 +88,7 @@ function viewIndex() {
     const counts = en.length ? { en: en.join(" · "), tw: tw.join(" · ") } : null;
     const line = p.kind === "external" ? T("External project: cannot dispatch yet. Its GitHub grant cannot be verified on this build.", "外部專案：暫時無法派工。目前版本無法驗證它的 GitHub 授權。")
       : p.enabled === false ? T("Disabled. New tasks and rounds will not start.", "已停用。不會開始新任務或新的一輪。")
-      : p.folderMissing ? T("Folder missing. The registered folder is gone or is not a Git repository.", "資料夾不見了。登錄的資料夾不見了，或不是 Git 儲存庫。")
+      : p.folderMissing ? T("Folder missing. The registered folder does not exist; Studio skips this registration.", "資料夾不存在。登錄的資料夾不存在；Studio 會略過這個登錄。")
       : p.kind !== "studio" && p.kind !== "external" && p.canStart === false ? T("No task can start. The project page says why.", "無法開始任何任務。專案頁會說明原因。")
       : p.kind === "studio" ? T(`Tasks that belong to no project (artifact work, proposals).${counts ? ` ${counts.en}.` : ""}`, `不屬於任何專案的任務（成品工作、提案）。${counts ? `${counts.tw}。` : ""}`)
       : p.kind === "builtin" && !counts ? T("No tasks yet. Studio's own practice repository.", "還沒有任務。Studio 內建的練習用儲存庫。")
@@ -119,7 +119,7 @@ const shortPath = (path) => { const s = String(path || ""), i = s.indexOf("/work
 const failed = (x) => x && typeof x === "object" && !Array.isArray(x) && typeof x.error === "string";
 const sectionErr = (en, tw) => h("div", { class: "err", role: "status", "data-section-error": "1" }, icon("alert", "ic sm"), h("span", {}, T(`${en} could not be read. Nothing was changed.`, `無法讀取${tw}。沒有任何變更。`)));
 const scrollTo = (id) => (e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" }); };
-const HEALTH_IC = { enabled: "check", "enabled-bad": "x", registered: "shield", base: "branch", crew: "crew", test: "tool", rules: "clock", gitconfig: "clock" };
+const HEALTH_IC = { enabled: "check", "enabled-bad": "x", "enabled-warn": "alert", registered: "shield", base: "branch", crew: "crew", test: "tool", rules: "clock", gitconfig: "clock" };
 
 function waitBadge(t) {
   const w = t.waitsOn || {};
@@ -225,8 +225,8 @@ function viewPage(id) {
   const idLine = [kindWord, p.repository ? p.repository : null, reg ? T(`registered ${dateOf(reg)}`, `${dateOf(reg)}註冊`) : null, `id ${p.id}`].filter(Boolean).join(" · ");
   const header = h("header", { class: "pj-head" }, h("span", { class: `pmark lg ${MARK_CLASS[p.kind] ?? ""}`.trim() }, p.kind === "studio" ? "·" : nameOf(p).slice(0, 1).toUpperCase()),
     h("div", { class: "pj-title" },
-      h("h1", {}, nameOf(p), p.kind === "studio" ? null : p.enabled ? h("span", { class: "badge ok", "data-project-enabled": "1" }, h("span", { class: "d" }), T("Enabled", "已啟用")) : h("span", { class: "badge bad", "data-project-enabled": "0" }, h("span", { class: "d" }), T("Disabled", "已停用")),
-        p.kind === "studio" ? null : p.folderMissing ? h("span", { class: "badge warn", "data-project-folder": "missing" }, icon("alert", "ic sm"), T("Folder missing", "資料夾不見了"))
+      h("h1", {}, nameOf(p), p.kind === "studio" || (p.enabled && p.folderMissing) ? null : p.enabled ? h("span", { class: "badge ok", "data-project-enabled": "1" }, h("span", { class: "d" }), T("Enabled", "已啟用")) : h("span", { class: "badge bad", "data-project-enabled": "0" }, h("span", { class: "d" }), T("Disabled", "已停用")),
+        p.kind === "studio" ? null : p.folderMissing ? h("span", { class: "badge warn", "data-project-folder": "missing" }, icon("alert", "ic sm"), T("Folder missing", "資料夾不存在"))
           : p.kind === "builtin" ? h("span", { class: "badge", "data-project-registered": "builtin" }, T("Built-in", "內建"))
           : p.kind === "external" ? h("span", { class: "badge warn", "data-project-registered": "external" }, icon("alert", "ic sm"), T("External", "外部"))
           : h("span", { class: "badge", "data-project-registered": "registered" }, icon("check", "ic sm"), T("Registered", "已註冊"))),
@@ -235,7 +235,7 @@ function viewPage(id) {
         p.base ? h("span", {}, icon("branch", "ic sm"), h("span", { class: "vbadge" }, p.base)) : null,
         h("span", { class: "faint" }, idLine))));
   const notice = p.kind === "external" ? h("div", { class: "note pj-notice", "data-project-notice": "external" }, h("b", {}, T("External project: cannot dispatch yet.", "外部專案：暫時無法派工。")), " ", T("Its GitHub grant cannot be verified on this build.", "目前版本無法驗證它的 GitHub 授權。"))
-    : p.enabled !== false && p.folderMissing ? h("div", { class: "note pj-notice", "data-project-notice": "folder" }, h("b", {}, T("Folder missing.", "資料夾不見了。")), " ", T("The registered folder is gone or is not a Git repository. No task can start here.", "登錄的資料夾不見了，或不是 Git 儲存庫。這裡無法開始任何任務。"))
+    : p.enabled !== false && p.folderMissing ? h("div", { class: "note pj-notice", "data-project-notice": "folder" }, h("b", {}, T("Folder missing.", "資料夾不存在。")), " ", T("The registered folder does not exist. Studio skips this registration; no task can start here.", "登錄的資料夾不存在。Studio 會略過這個登錄；這裡無法開始任何任務。"))
     : p.enabled === false ? h("div", { class: "note pj-notice", "data-project-notice": "disabled" }, h("b", {}, T("Disabled.", "已停用。")), " ", T("New tasks and rounds will not start.", "不會開始新任務或新的一輪。")) : null;
   const studio = p.kind === "studio";
   const chips = h("nav", { class: "pj-jump chips", "aria-label": T("Sections", "區段") },
@@ -254,7 +254,7 @@ function viewPage(id) {
     health = h("section", { "aria-labelledby": "hHealth", "data-project-health": "1" }, h("div", { class: "sec-head" }, h("h2", { id: "hHealth" }, T("Health", "健康狀態")), h("span", { class: "faint" }, readAgo(st.at))),
       !hs ? h("div", { class: "card x-pad" }, sectionErr("Health", "健康狀態")) : h("div", { class: "card pj-health" },
         pass.length ? h("div", { class: "pj-h pj-h-sum" }, icon("check"), h("b", {}, pass.length === 1 ? T("1 check passes", "1 項檢查通過") : T(`${pass.length} checks pass`, `${pass.length} 項檢查通過`)), h("span", {}, pass.map((x) => T(x.en, x.tw).toLowerCase()).join(T(", ", "、")))) : null,
-        hs.map((x) => h("div", { class: `pj-h ${x.tone}`, "data-health": x.key }, icon(HEALTH_IC[x.tone === "bad" && HEALTH_IC[`${x.key}-bad`] ? `${x.key}-bad` : x.key] || "check"), h("b", {}, T(x.en, x.tw)),
+        hs.map((x) => h("div", { class: `pj-h ${x.tone}`, "data-health": x.key }, icon(HEALTH_IC[`${x.key}-${x.tone}`] || HEALTH_IC[x.key] || "check"), h("b", {}, T(x.en, x.tw)),
           x.code ? h("span", {}, h("code", { class: "mono" }, x.code), x.detail ? [" · ", h("span", {}, LX(x.detail))] : null) : x.detail ? h("span", {}, LX(x.detail)) : null))));
   }
   const tasksSec = h("section", { id: "s-tasks", "aria-labelledby": "hTasks" },

@@ -26,6 +26,9 @@ Read only. It adds no new authority.
   "No task can start (see Crew)", the Crew tile says "No task can start" and names the registration at fault and the
   reason in fixed words (folder missing, Git data missing or malformed, Git data outside its folder, inside Studio's
   private data, two registrations on one repository, base branch invalid or missing), and the crew link is hidden.
+- Captain decision (2026-10-16): another registration whose root folder does not exist at all is skipped by the staffing
+  check (it neither refuses nor counts as an alias). A root that exists but is unusable (a file, EACCES, no Git data, a
+  link out) still refuses. The skipped project itself shows "Folder missing" / 「資料夾不存在」, never "Enabled".
 - No cost fields.
 
 ## Writes

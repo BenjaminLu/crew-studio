@@ -6,6 +6,8 @@
 // and, returned but not registered (the UI test registers them for its broken-registration pass):
 //   kelp-notes     an old registration, disabled, whose folder is gone
 //   reef-log       an enabled registration whose folder is gone
+//   drift-log      a registration whose folder exists but whose .git file is garbage (it makes every staffing check refuse;
+//                  the two above are skipped by the captain's rule because their roots do not exist)
 //   Studio         one Task with no project, waiting at its card
 // Every Task here waits at a card or has ended, so the server started on this data never launches an agent.
 import { execFileSync } from "node:child_process";
@@ -44,7 +46,9 @@ export async function seedProjects() {
   writeFileSync(join(DATA, "projects.json"), JSON.stringify(reg, null, 1));
   mkdirSync(join(DATA, "policies"), { recursive: true });
   const broken = [{ id: "kelp-notes", name: "kelp-notes", path: join(repos, "kelp-notes-gone"), base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: false },
-    { id: "reef-log", name: "reef-log", path: join(repos, "reef-log-gone"), base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null }];
+    { id: "reef-log", name: "reef-log", path: join(repos, "reef-log-gone"), base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null },
+    { id: "drift-log", name: "drift-log", path: join(repos, "drift-log"), base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null }];
+  mkdirSync(join(repos, "drift-log")); writeFileSync(join(repos, "drift-log", ".git"), "not a git pointer\n");
   writeFileSync(join(DATA, "policies", "project-harbor-api.yaml"), "sensitive_paths:\n  - glob: migrations/**\n    why: schema changes\n  - glob: src/billing/**\n    why: money moves\n");
   // an approved crew for harbor-api, signed by the real store
   const projects = new Projects(DATA), store = new StaffingStore(DATA), identity = projects.staffingIdentity("harbor-api");

@@ -36,10 +36,10 @@ try {
     const { ctx, p } = await open(1280, 'light');
     await p.goto(`${base}/#/project/harbor-api`); await p.waitForSelector('[data-project-page="harbor-api"]:not([data-loading])');
     const crewTile = await p.locator('[data-health="crew"]').innerText(), crewSec = await p.locator('#s-crew').innerText(), txt = await p.locator('[data-project-page]').innerText();
-    ok(/No task can start/.test(crewTile) && crewTile.includes('Registration kelp-notes: its folder is missing.') && !/Crew approved/.test(txt), 'harbor-api: the crew tile says no task can start and names the registration and why', crewTile);
-    ok(crewSec.includes('No task can start: Registration kelp-notes: its folder is missing.') && !txt.includes('-gone') && !/ENOENT|no such file|stat '/.test(txt), 'the crew section says the same, with no path and no exception text', crewSec);
+    ok(/No task can start/.test(crewTile) && crewTile.includes('Registration drift-log: its Git data is missing or malformed.') && !/Crew approved/.test(txt), 'harbor-api: the crew tile says no task can start and names the registration and why', crewTile);
+    ok(crewSec.includes('No task can start: Registration drift-log: its Git data is missing or malformed.') && !txt.includes('-gone') && !/ENOENT|no such file|stat '/.test(txt), 'the crew section says the same, with no path and no exception text', crewSec);
     const enabledTile = await p.locator('[data-health="enabled"]').innerText();
-    ok(enabledTile.includes('No task can start (see Crew)') && !enabledTile.includes('New tasks can start') && (await p.locator('[data-health="enabled"]').getAttribute('class')).includes(' warn'), 'the Enabled tile does not say tasks can start', enabledTile);
+    ok(enabledTile.includes('No task can start (see Crew)') && !enabledTile.includes('New tasks can start') && (await p.locator('[data-health="enabled"]').getAttribute('class')).includes(' warn') && (await p.locator('[data-health="enabled"] svg path').first().getAttribute('d')) !== 'M20 6 9 17l-5-5', 'the Enabled tile does not say tasks can start, and shows no check mark', enabledTile);
     ok(await p.locator('[data-crew-link]').count() === 0, 'no Choose your crew together link while no task can start');
     ok(!(await p.locator('[data-health="crew"]').getAttribute('class')).includes(' ok'), 'the warning does not count as a passing check');
     const rows = Object.fromEntries(await p.locator('[data-projects-nav] [data-project-row]').evaluateAll((es) => es.map((e) => [e.dataset.projectRow, e.querySelector('[data-project-status]').textContent])));
@@ -50,7 +50,9 @@ try {
       ok(!/enabled/i.test(sum) && await ph.p.locator('[data-health="enabled"]').isVisible(), 'on a phone the passing-checks summary does not list Enabled, and the Enabled warning stays visible', sum);
       await ph.ctx.close(); }
     await p.goto(`${base}/#/project/reef-log`); await p.waitForSelector('[data-project-page="reef-log"]:not([data-loading])');
-    ok(await p.locator('[data-project-folder="missing"]').count() === 1 && await p.locator('[data-project-registered]').count() === 0 && await p.locator('[data-crew-link]').count() === 0, 'reef-log: a Folder missing badge, and no Choose your crew together link');
+    ok(await p.locator('[data-project-folder="missing"]').count() === 1 && await p.locator('[data-project-registered]').count() === 0 && await p.locator('[data-project-enabled]').count() === 0 && await p.locator('[data-crew-link]').count() === 0, 'reef-log: a Folder missing badge (no Enabled badge), and no Choose your crew together link');
+    const reefEnabled = await p.locator('[data-health="enabled"]').innerText();
+    ok(reefEnabled.includes('Folder missing') && !reefEnabled.includes('New tasks can start'), 'reef-log: the Enabled tile reads Folder missing', reefEnabled);
     await p.screenshot({ path: join(shots, 'project-reef-log-1280-light.png'), fullPage: false });
     await p.goto(`${base}/#/project/kelp-notes`); await p.waitForSelector('[data-project-page="kelp-notes"]:not([data-loading])');
     const kp = await p.locator('[data-project-page="kelp-notes"]').innerText();
