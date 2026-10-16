@@ -41,9 +41,11 @@ nodes:
       - { use: core/ste-wording }
       - { use: firstmate/no-impl-detail }
       - { use: firstmate/done-lines-observable }
+      # the round contract's environment preflight: a gap goes to Firstmate (spec-fix), never to a HOLD inside the build round
+      - { use: firstmate/env-preflight }
     x: 510
     y: 220
-  - { id: spec-fix, kind: loop, label: Refine spec, detail: "brief from the findings", args: { producer: spec, coordinator: coordinator, route_classes: { door-change: door-change } }, x: 510, y: 40 }
+  - { id: spec-fix, kind: loop, label: Refine spec, detail: "brief from the findings", args: { producer: spec, coordinator: coordinator, route_classes: { door-change: door-change, env.permission: env-permission } }, x: 510, y: 40 }
   - id: dispatch
     kind: card
     label: Dispatch card
@@ -176,7 +178,7 @@ edges:
   - [spec, spec-fix, fail]
   - [spec-fix, spec, retry|report]
   - [spec-fix, dispatch, pass]
-  - [spec-fix, scope-card, step-back|stalled|cap|door-change]
+  - [spec-fix, scope-card, step-back|stalled|cap|door-change|env-permission]
   - [dispatch, door, dispatch]
   - [dispatch, spec, rescope]
   - [dispatch, dropped, drop]

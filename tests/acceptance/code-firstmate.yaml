@@ -2,7 +2,7 @@
 # point before work that opens a pull request, so the run stops there. The driver never answers dispatch cards.
 schema: 2
 workflow: code-firstmate
-pin: { version: 1, sha256: "aa573d6c0f9a1c5063971c0a24383b2ce43107d861dbeafd95373a56ab72c087" }   # bun scripts/acceptance/pin.ts code-firstmate
+pin: { version: 1, sha256: "f7aa045c2d0cad14be863d011ae85b47bc4d0da519cf183183db484d41da1f82" }   # bun scripts/acceptance/pin.ts code-firstmate
 topic: "Add one sentence to the README that says how to run the offline tests."
 start: { provider: null, params: {}, required_params: [project] }
 providers: []
@@ -17,6 +17,8 @@ stub:
     covers: "board start on the sandbox project after the captain approved its staffing → spec round → dispatch card"
     setup: [staffing-code]
     params: { project: sandbox }
+    # the stub names this test file in its done line: the sandbox counts test/** as tests (env-preflight)
+    topic: "Add one sentence to the README that says how to run the offline tests.\nSTUB_FILE test/readme.test.ts :: import { test } from 'bun:test';\\n"
     expect: { waiting_on: dispatch, visited: [intake, prepare, spec] }
   - name: firstmate-merge
     covers: "Firstmate proposes on the sandbox project → dispatch → spec → build (worker writes the change and its test) → CI → review → local merge"
@@ -32,7 +34,7 @@ stub:
     how: firstmate
     setup: [staffing-code]
     params: { project: sandbox }
-    topic: "Rename the shop greeting STUB_BLOCKED\nSTUB_FILE src/greeting.ts :: export const greeting = 'hi';\\n"
+    topic: "Rename the shop greeting STUB_BLOCKED\nSTUB_FILE src/greeting.ts :: export const greeting = 'hi';\\n\nSTUB_FILE test/greeting.test.ts :: import { test, expect } from 'bun:test';\\n"
     cards: [{ node: dispatch, answer: dispatch }, { node: scope-card, answer: park }]
     timeout_s: 240
     expect: { status: succeeded, visited: [spec, dispatch, build, scope-card, parked], not_visited: [merge] }

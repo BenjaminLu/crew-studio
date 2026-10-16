@@ -25,7 +25,8 @@ import { LocalPrAdapter, GitHubPrAdapter, projectPrAdapter, type PrAdapter } fro
 import { locatorText } from "../runtime/locator";
 import { briefSection, briefState, type BriefState, type CarryCheck } from "../runtime/refine";
 import { sandboxed } from "../runtime/checks";
-import { RoundBlocked, Worktrees } from "../worktrees";
+import { EnvGapError, RoundBlocked, Worktrees } from "../worktrees";
+import { envPreflight, type EnvGap } from "../env-preflight";
 import { runRender } from "../render";
 import { copyUntrusted } from "../secure";
 import { helper, kindOf, LINES_PER_READ, LIST_CAP, listTree, normPath, READ_CAP_BYTES, searchTree, typedRead } from "../review-read";
@@ -36,13 +37,36 @@ import type { CardDetail } from "../runtime/cards";
 
 export { git, must };
 
-export type RepoCfg = { test: string[] | null; lint: string[] | null; shards: number; tests: string[]; timeout_s: number; fixture_lists: string[] };
-export function repoCfg(dir: string): RepoCfg {
-  let c: any = {}; try { c = JSON.parse(readFileSync(join(dir, ".crew", "gates.json"), "utf8")); } catch {}
+export type RepoCfg = { test: string[] | null; lint: string[] | null; shards: number; tests: string[]; timeout_s: number; fixture_lists: string[]; testSource: string | null;
+  /** npm lifecycle hooks (pretest, posttest) the package declares around its test script: Studio runs the script text alone, never these */
+  skippedHooks: string[] };
+/**
+ * The repository's declared commands, from one reader of its files. The test command is .crew/gates.json `test`; with no
+ * `test` field there, the package.json test script (explicit null or an invalid value never falls back). The script text
+ * itself becomes the argv (run like npm runs it: a shell, the package's own bins first on PATH), so a later edit of
+ * package.json in the head never changes the command resolved from the base. The wrapper runs the script with the absolute
+ * /bin/sh, never a `sh` found on the PATH it puts the worktree's node_modules/.bin in front of.
+ */
+export function repoCfgFrom(read: (path: string) => string | null): RepoCfg {
+  let c: any = {}; try { c = JSON.parse(read(".crew/gates.json") ?? "{}") ?? {}; } catch {}
+  if (!c || typeof c !== "object" || Array.isArray(c)) c = {};
   const argv = (v: any) => (Array.isArray(v) && v.length && v.every((s: any) => typeof s === "string") ? v : null);
-  return { test: argv(c.test), lint: argv(c.lint), shards: Math.max(1, Math.min(8, Number(c.shards) || 1)), tests: Array.isArray(c.tests) && c.tests.length ? c.tests.map(String) : ["tests/**", "**/*.test.*", "test/**"],
-    timeout_s: Number(c.timeout_s) || 180, fixture_lists: Array.isArray(c.fixture_lists) ? c.fixture_lists.map(String) : [] };
+  let packageTest: string[] | null = null, testSource: string | null = argv(c.test) ? ".crew/gates.json test" : null, skippedHooks: string[] = [];
+  if (!Object.prototype.hasOwnProperty.call(c, "test")) {
+    try {
+      const pkg = JSON.parse(read("package.json") ?? "");
+      const script = pkg?.scripts?.test;
+      if (typeof script === "string" && script.trim()) { packageTest = ["/bin/sh", "-c", 'PATH="$PWD/node_modules/.bin:$PATH"; export PATH; exec /bin/sh -c "$1"', "crew-test", script]; testSource = `package.json scripts.test: ${script}`;
+        skippedHooks = ["pretest", "posttest"].filter((k) => typeof pkg.scripts[k] === "string" && pkg.scripts[k].trim()); }
+    } catch {}
+  }
+  return { test: argv(c.test) ?? packageTest, lint: argv(c.lint), shards: Math.max(1, Math.min(8, Number(c.shards) || 1)), tests: Array.isArray(c.tests) && c.tests.length ? c.tests.map(String) : ["tests/**", "**/*.test.*", "test/**"],
+    timeout_s: Number(c.timeout_s) || 180, fixture_lists: Array.isArray(c.fixture_lists) ? c.fixture_lists.map(String) : [], testSource, skippedHooks };
 }
+export function repoCfg(dir: string): RepoCfg { return repoCfgFrom((p) => { try { return readFileSync(join(dir, p), "utf8"); } catch { return null; } }); }
+const showAt = (repo: string, commit: string, path: string) => { const r = git(repo, ["show", `${commit}:${path}`]); return r.ok ? r.out : null; };
+/** The declared commands as the base commit has them: a round cannot change the command its own checks run. */
+export function repoCfgAt(repo: string, commit: string): RepoCfg { return repoCfgFrom((p) => showAt(repo, commit, p)); }
 
 const READ_ONLY = (dir: string): AgentTool[] => folderTools(dir, () => {}, "fs").filter((t) => /_(list|read|search)$/.test(t.name));
 export const changedOf = (wt: string, base: string): ChangedPath[] => {
@@ -198,7 +222,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   /** a run's temporary worktree, added only on a repository whose shared git config is sound (a typed refusal otherwise) */
   const addTree = (repo: string, rest: string[]) => { W.guard(repo); return must(repo, ["worktree", "add", ...rest]); };
   const held = new Map<string, () => void>();
-  const cfgOf = (x: X) => repoCfg(x.ctx.worktree ?? x.ctx.repo);
+  const cfgOf = (x: X) => x.ctx.repo && x.ctx.baseCommit ? repoCfgAt(x.ctx.repo, x.ctx.baseCommit) : repoCfg(x.ctx.worktree ?? x.ctx.repo);
   const shellOk = (x: X) => { if (!x.ctx.worktree || !existsSync(x.ctx.worktree)) throw new Error("the run's worktree is gone"); return x.ctx.worktree as string; };
   const sensitive = (x: X) => (x.policy("sensitive_paths") ?? []) as { glob: string; why: string }[];
 
@@ -254,6 +278,32 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
 
   // ---------- natives (checks over Studio's own state) ----------
   const F = (locator: any, message: string, expected: string, cls: string) => ({ locator, message, expected, class: cls, severity: "blocking" as const });
+  /**
+   * The round contract's environment preflight (P2, P3), at the spec, before the dispatch card: the dependencies the base's
+   * lockfile needs and their package manager, the test command resolved from the base, and every done line's test path
+   * against the repository's test globs. A gap is a typed record (ctx.envGaps, an env_gap event) and a blocking finding
+   * whose class is its code: the refine loop sends it to Firstmate's spec repair turn, and only env.permission (a host
+   * the round sandbox must be allowed to reach) is routed to a captain card (code-firstmate.wf.yaml spec-fix route_classes).
+   */
+  const envGapsOf = (x: X): EnvGap[] => {
+    if (!x.ctx.repo || !x.ctx.baseCommit) return [];
+    const top = new Set(git(x.ctx.repo, ["ls-tree", "--name-only", x.ctx.baseCommit]).out.split("\n").filter(Boolean));
+    const install = x.policy("install");
+    return envPreflight({ cfg: repoCfgAt(x.ctx.repo, x.ctx.baseCommit), done: x.ctx.spec?.done ?? [], has: (p) => top.has(p), read: (p) => showAt(x.ctx.repo, x.ctx.baseCommit, p),
+      install: install === false ? false : Array.isArray(install) ? install.map(String) : null, scripts: x.policy("install_scripts") === true,
+      egressHosts: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String).filter(Boolean), unrestricted: localUnrestricted() });
+  };
+  const recordEnvGaps = (x: X, gaps: EnvGap[], at: "dispatch" | "round") => {
+    x.ctx.envGaps = gaps.map((g) => ({ ...g, at, spec: x.ctx.spec?.version ?? null })); x.save();
+    for (const g of gaps) engine.emit(x.run, "env_gap", `${g.code} → ${g.route === "captain" ? "the captain (a permission)" : "Firstmate"}: ${g.message}`, { node: x.node.id, code: g.code, route: g.route, at });
+  };
+  engine.natives["env-preflight"] = (_i, h) => {
+    const x = h.x as X | undefined; if (!x) return { verdict: "pass", score: 1, findings: [] };
+    const gaps = envGapsOf(x); recordEnvGaps(x, gaps, "dispatch");
+    const findings = gaps.map((g) => ({ locator: g.done != null ? { type: "text", section: `done[${g.done}]` } : g.code === "env.test-command" ? { type: "file", path: ".crew/gates.json" } : { type: "text", section: "env" },
+      message: g.message, expected: g.expected, class: g.code, severity: "blocking" as const }));
+    return { verdict: gaps.length ? "fail" : "pass", score: gaps.length ? 0 : 1, findings, data: { gaps } } as any;
+  };
   engine.natives.overlap = (i) => {
     const mine: string[] = i.artifact?.data?.scope ?? []; const f: any[] = [];
     for (const r of i.inflight ?? []) {
@@ -560,7 +610,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     let s: Awaited<ReturnType<typeof W.startRound>>;
     try { s = await W.startRound(k.project, k.task, holder(x), { write, skipInstall, install: install === false ? false : Array.isArray(install) ? install.map(String) : null, scripts: x.policy("install_scripts") === true,
       allow: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String) }); }
-    catch (e: any) { if (e instanceof RoundBlocked) { x.rn.data.report = { marker: "BLOCKED", summary: e.message, round: x.visit }; x.save(); } throw e; }
+    catch (e: any) { if (e instanceof RoundBlocked) { x.rn.data.report = { marker: "BLOCKED", summary: e.message, round: x.visit }; x.save(); } if (e instanceof EnvGapError) recordEnvGaps(x, [e.gap], "round"); throw e; }
     held.set(holder(x), s.release);
     try { x.ctx.head = s.head;
     const rebase=x.ctx.remoteRebaseApproved;
@@ -805,7 +855,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   }
   /**
    * run mode's place to run: the fresh checkout of the head, copied (no .git) and given its dependencies the way a round
-   * gets them (the project's install policy, else bun install --frozen-lockfile, in the round sandbox, the network only to
+   * gets them (the project's install policy, else the lockfile's frozen install, in the round sandbox, the network only to
    * the hosts egress.allow grants). Installed once per review attempt; every run then works on its own clone of that.
    */
   const runsDir = (x: X) => join(x.dir, "review-runs", `round-${x.visit}`);
@@ -818,6 +868,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const install = x.policy("install");
     const deps = await W.installIn(base, `review-${x.run.id}`, install === false ? false : Array.isArray(install) ? install.map(String) : null,
       { scripts: x.policy("install_scripts") === true, allow: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String) });
+    if (!deps.ok && deps.gap) throw new EnvGapError(deps.gap);
     x.rn.data.runDeps = { ran: deps.ran, detail: deps.detail }; x.rn.data.runBase = base; x.save(); return base;
   }
   /** a clonefile copy (APFS) or a plain one, off the event loop with a time limit */
@@ -960,9 +1011,14 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   engine.cardBodies.stalled = (x) => ({ title: `No progress for 2 rounds: ${T(x)}`, zhTitle: `兩輪沒有進展：${ZT(x)}`, ...base(x, "The checks' score did not rise for two rounds.", "Rescope, allow one more round, or park.", "檢查分數兩輪沒有上升。", "調整範圍、再給一輪，或暫停。"),
     body: `The checks' score did not improve for two rounds.\n\n${x.ctx.briefs?.build?.text ?? ""}`,
     options: [{ id: "rescope", label: "Rescope the spec", note: true, primary: true }, { id: "continue", label: "One more round" }, { id: "park", label: "Park the run" }] });
-  engine.cardBodies.scope = (x) => ({ title: `Scope question: ${T(x)}`, zhTitle: `範圍問題：${ZT(x)}`, ...base(x, "The work needs a decision on the scope.", "Rescope the spec, or park the run.", "工作需要決定範圍。", "調整規格範圍，或暫停這個 run。"),
+  engine.cardBodies.scope = (x) => { const perm = x.node.id === "scope-card" && !x.run.nodes.build?.data?.report ? (x.ctx.envGaps ?? []).filter((g: any) => g.route === "captain") : [];
+    // an environment gap only the captain can close: a permission (a host the round sandbox may reach), never an error
+    if (perm.length) return { title: `Permission needed: ${T(x)}`, zhTitle: `需要授權：${ZT(x)}`, ...base(x, "The build needs a permission only you can grant before it starts.", "Grant it in the project's policy, then rescope to check again; or park the run.", "開工前需要只有你能給的授權。", "在專案 policy 裡授權後選「調整範圍」重新檢查；或暫停這個 run。"),
+      body: perm.map((g: any) => `${g.code}: ${g.message}\n→ ${g.expected}`).join("\n\n"),
+      options: [{ id: "rescope", label: "Rescope the spec", note: true, primary: true }, { id: "park", label: "Park the run" }] };
+    return ({ title: `Scope question: ${T(x)}`, zhTitle: `範圍問題：${ZT(x)}`, ...base(x, "The work needs a decision on the scope.", "Rescope the spec, or park the run.", "工作需要決定範圍。", "調整規格範圍，或暫停這個 run。"),
     body: `${x.run.nodes.build?.data?.report?.marker ?? x.ctx.planDecision?.decision ?? ""}: ${x.run.nodes.build?.data?.report?.summary ?? x.ctx.planDecision?.note ?? (x.ctx.briefs?.spec?.text ?? x.ctx.briefs?.plan?.text ?? "")}`,
-    options: [{ id: "rescope", label: "Rescope the spec", note: true, primary: true }, { id: "park", label: "Park the run" }] });
+    options: [{ id: "rescope", label: "Rescope the spec", note: true, primary: true }, { id: "park", label: "Park the run" }] }); };
   engine.cardBodies.merge = async (x) => {
     let remoteIntent: RemoteMergeIntent | undefined;
     let assertRemoteCard: (() => void) | undefined;

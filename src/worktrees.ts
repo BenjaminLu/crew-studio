@@ -32,6 +32,7 @@ import { realInside, realOf } from "./secure";
 import { roundExec } from "./runtime/checks";
 import { assertSharedGitConfig } from "./git-config-health";
 export { SharedGitConfigBroken, assertSharedGitConfig } from "./git-config-health";
+import { installPlan, onPath, toolMissing, type EnvGap } from "./env-preflight";
 
 export type Egress = { port: number; open(t: string, h: string[]): void; close(t: string): void };
 
@@ -44,7 +45,7 @@ export type WorktreeRecord = {
   history: { at: string; what: string }[];
   createdAt: string; removedAt: string | null;
 };
-export type RoundStart = { head: string; corrected: { from: string; kept: string | null; reason: string } | null; deps: { ran: string[] | null; ok: boolean; detail: string } };
+export type RoundStart = { head: string; corrected: { from: string; kept: string | null; reason: string } | null; deps: { ran: string[] | null; ok: boolean; detail: string; gap?: EnvGap } };
 
 const now = () => new Date().toISOString();
 /** An id that names a folder or a branch: refused, never rewritten, unless it is one safe segment (no ".", "..", "/", no collisions). */
@@ -52,6 +53,8 @@ export function idOk(s: string) { return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/.tes
 const safe = (s: string) => { const v = String(s); if (!idOk(v)) throw new Error(`"${v}" cannot name a worktree folder or branch: use letters, digits, ".", "_" and "-" (one segment, no "..")`); return v; };
 import { RoundBlocked } from "./round-blocked";
 export { RoundBlocked };
+/** A round's environment has a gap Studio cannot fill (e.g. the lockfile's package manager is missing): the round does not start. Dispatch's env preflight finds these first. */
+export class EnvGapError extends Error { constructor(readonly gap: EnvGap) { super(`${gap.code}: ${gap.message}`); } }
 const alive = (pid: number) => { if (!pid) return false; try { process.kill(pid, 0); return true; } catch (e: any) { return e?.code === "EPERM"; } };
 
 /** Bounded detection of an abandoned base whose entire non-merge patch series
@@ -263,8 +266,8 @@ export class Worktrees {
   }
 
   /**
-   * Dependencies before the agent starts: the project's install policy, else bun install
-   * --frozen-lockfile --ignore-scripts when the repo has a bun lockfile. It runs in the
+   * Dependencies before the agent starts: the project's install policy, else the frozen install of the
+   * lockfile the repo has (bun, npm ci, pnpm or yarn; src/env-preflight.ts installPlan), lifecycle scripts off. It runs in the
    * round sandbox (it writes only the worktree; the network only through the egress
    * proxy, to the hosts policy egress.allow grants): a round may have written the
    * package's lifecycle scripts, so they never run with Studio's authority, and run at
@@ -272,20 +275,26 @@ export class Worktrees {
    */
   async installDeps(r: WorktreeRecord, install: string[] | false | null, o: { scripts?: boolean; allow?: string[] } = {}): Promise<RoundStart["deps"]> {
     const res = await this.installIn(r.path, safe(r.task), install, o);
+    if (!res.ok && res.gap) { this.note(r, `dependencies not installed: ${res.gap.code}: ${res.gap.message}`); this.save(r); throw new EnvGapError(res.gap); }
     if (res.ran) { this.note(r, `dependencies: ${res.ran.join(" ")} (in the round sandbox)`); this.save(r); }
     return res;
   }
   /**
    * The same install in any folder the runtime materialized (a round's worktree, the reviewer's fresh copy of a head):
-   * the project's install policy, else bun install --frozen-lockfile, in the round sandbox writing only that folder,
-   * the network only through the egress proxy to the hosts policy egress.allow grants. Throws when refused or failed.
+   * the project's install policy, else the lockfile's frozen install (bun, npm, pnpm or yarn), in the round sandbox writing only that folder,
+   * the network only through the egress proxy to the hosts policy egress.allow grants. Throws when refused or failed;
+   * a missing package manager comes back as a typed gap (ok: false, gap env.tool-missing), never as nothing to install.
    */
   async installIn(path: string, label: string, install: string[] | false | null, o: { scripts?: boolean; allow?: string[]; timeoutS?: number } = {}): Promise<RoundStart["deps"]> {
     if (install === false) return { ran: null, ok: true, detail: "dependency installation disabled by project policy" };
     const hasPkg = existsSync(join(path, "package.json"));
-    const lock = ["bun.lock", "bun.lockb"].some((f) => existsSync(join(path, f)));
-    const argv = install?.length ? install : hasPkg && lock ? ["bun", "install", "--frozen-lockfile", ...(o.scripts ? [] : ["--ignore-scripts"])] : null;
+    const plan = install?.length ? null : installPlan((f) => existsSync(join(path, f)), (f) => { try { return readFileSync(join(path, f), "utf8"); } catch { return null; } }, { scripts: o.scripts });
+    const argv = install?.length ? install : plan?.argv ?? null;
+    // Yarn Berry: --mode=skip-build stops package build scripts, but the repository's yarnPath release and its .yarnrc.yml plugins
+    // always run (yarn itself is that code). They are contained like any install: the round sandbox, the worktree only, egress.allow hosts only.
     if (!argv) return { ran: null, ok: true, detail: hasPkg ? "no lockfile and no install policy: nothing to install" : "no package manifest" };
+    // the lockfile's package manager is not installed: a typed gap, never "nothing to install"
+    if (!onPath(argv[0])) { const gap = toolMissing(argv[0], `${plan ? `the repository's ${plan.lockfile}` : "the project's install policy"} needs it to install the dependencies`); return { ran: null, ok: false, detail: gap.message, gap }; }
     const tmp = join(this.dataDir, "rounds", `install-${label.replace(/[^\w.-]/g, "_")}-${Date.now().toString(36)}`); mkdirSync(tmp, { recursive: true });
     const res = await roundExec(argv, { cwd: path, writes: [path], tmp, dataDir: this.dataDir, protect: this.o.protect?.() ?? [], timeoutS: o.timeoutS ?? 300, egress: this.o.egress?.() ?? null, hosts: o.allow ?? [] });
     try { rmSync(tmp, { recursive: true, force: true }); } catch {}

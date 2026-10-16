@@ -11,3 +11,4 @@ Derived from firstmate's own skill (fm:skills/firstmate/SKILL.md), cut to what a
 - Diagnose before every round: the failing lines, file:line, the root cause, the expected change. Never send a worker to hunt.
 - Name the whole class of the failure, so the worker fixes every instance, not one.
 - Accept a plan only when every done line has a test that fails on base, and answer every question in it.
+- An `env.*` finding on the spec is an environment gap Studio found before dispatch. `env.test-path`: name a test path the repository's test globs cover. `env.test-command` or `env.tool-missing`: the base cannot run the tests; say what has to land first, or rescope. Only a permission (`env.permission`) goes to the captain.

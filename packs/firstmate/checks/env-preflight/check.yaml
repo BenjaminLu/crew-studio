@@ -1,0 +1,11 @@
+id: env-preflight
+version: 1.0.0
+title: { en: "The environment a build needs is there before dispatch: dependencies, test command, test paths", zh-TW: "派工前環境齊全：相依套件、測試指令、測試路徑" }
+applies_to: [spec]
+kind: deterministic
+blocking: true
+needs: [artifact]
+native: env-preflight
+params: { type: object, properties: {} }
+timeout_s: 20
+network: false

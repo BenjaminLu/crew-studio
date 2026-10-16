@@ -34,6 +34,7 @@ intent ─▶ spec ─▶ dispatch(H) ─▶ door ─┬─ one-way ─▶ plan 
 | overlap | D | yes | the scope does not overlap a pinned in-flight scope | "check overlap before dispatch" |
 | ste-wording | D | yes | plain-English rules (banned words, sentence length); a zh-TW text (zh title, zh why, zh explain) is a real Chinese translation, not English behind a Chinese word, not a stock placeholder | fm_ste |
 | no-impl-detail | J | warn | no line numbers or implementation steps in the spec | "specs: what, why, done" |
+| env-preflight | D | yes | the environment the build needs, read from the base: the lockfile's package manager is installed, the test command resolves (`.crew/gates.json` `test`, else package.json `scripts.test`), and every done-line test path matches the repository's test globs. A gap is a typed record (`env.test-command`, `env.test-path`, `env.tool-missing`) sent to Firstmate's spec repair turn; only `env.permission` (dependencies that need a registry host the round sandbox may not reach) raises a captain card. Never a HOLD inside the build round (R-028) | "local deps and fresh worktrees", "done lines must be provable" |
 
 The refine loop runs on the coordinator until the blocking checks pass, and only then is the dispatch card raised.
 
