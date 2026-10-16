@@ -96,7 +96,10 @@ ok(prepareSandbox(data).committed === null && run(repo, ["git", "rev-parse", "HE
   const r = await ask("sandbox"), r0 = await ask();
   // a run started for a project reads the project's resolved sensitive paths too
   const H2 = { "content-type": "application/json", "x-crew-session": "sbx" };
-  const wf = (await fetch(`http://127.0.0.1:${s1.port}/api/wf`).then((x) => x.json())).workflows?.[0]?.id;
+  // code-firstmate and coffee-kit refuse to start without an approved staffing configuration
+  // (src/domain/staffing.ts installStaffingGuard); the classifier under test runs before any
+  // workflow starts, so this uses the first catalog workflow that needs no staffing approval
+  const wf = (await fetch(`http://127.0.0.1:${s1.port}/api/wf`).then((x) => x.json())).workflows?.find((w: any) => w.id !== "code-firstmate" && w.kind !== "coffee-kit")?.id;
   const run1 = await fetch(`http://127.0.0.1:${s1.port}/api/wruns`, { method: "POST", headers: H2, body: JSON.stringify({ text: "round the totals in src/money.ts", workflow: wf, params: { project: "sandbox" } }) }).then((x) => x.json()).catch(() => null);
   if (run1?.id) await fetch(`http://127.0.0.1:${s1.port}/api/wruns/${run1.id}/cancel`, { method: "POST", headers: H2, body: "{}" });
   await s1.stop();
