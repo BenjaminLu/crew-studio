@@ -118,7 +118,10 @@ export function installDeliver(engine: Engine, d: Deps) {
     if (result.ok && existsSync(out)) st.attach(r.id, r.n, "render.mp4", out);
     return result.ok ? "ok" : "unavailable";
   };
-  const acceptanceDetail = (x: X, offered: any[] = [], kind: "artifact" | "file-plan" | "lane" = "artifact") => ({
+  // a drafted workflow's intent lines (the captain's words, with what done means) are the lines its acceptance card ticks
+  const ownIntents = (x: X) => { const ls: any[] = Array.isArray((x.run.def as any).intents) ? (x.run.def as any).intents : []; return ls.length ? ls.map((l) => { const t = `${l.n}. ${l.text} — done means: ${l.done}`; return { en: t, "zh-TW": t }; }) : null; };
+  const withIntents = <T extends { intents: any[] }>(x: X, d: T): T => { const own = ownIntents(x); return own ? { ...d, intents: own } : d; };
+  const acceptanceDetail = (x: X, offered: any[] = [], kind: "artifact" | "file-plan" | "lane" = "artifact") => withIntents(x, {
     ...mergeDetail({ run: x.run.id, intent: x.run.text, spec: x.ctx.spec, ctx: x.ctx, ledger: engine.trusted(x.run.id).entries, doneMap: engine.doneLines(x.run), diff: "", stat: "", cost: null }, { intents: [], walk: [], done: (x.ctx.spec?.done ?? []).map((_: string, i: number) => i ? "內容和呈現方式符合船長的意圖" : kind === "file-plan" ? "搬移不出資料夾且不覆寫檔案" : kind === "lane" ? "本機修改通過必要檢查" : "作品原始檔與必要輸出通過完整性檢查") }),
     artifactAcceptance: { kind, offered, review:{node:x.node.id,round:x.visit,attempt:(x.rn.attempt??0)+1}, refinements:offered.filter(r=>r.format==="image").map(r=>({artifact:r.id,version:r.n,snapshot:st.version(r.id,r.n)?.refinement??null,recorded:!!st.version(r.id,r.n)?.refinement})) },
   });

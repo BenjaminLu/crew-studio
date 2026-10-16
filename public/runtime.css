@@ -272,3 +272,35 @@ body:not(.chat-closed) .rt-cue { top: calc(120px + env(safe-area-inset-top, 0px)
 .fw-skill { font-size: 12px; color: var(--accent, #4b7bec); }
 .fw-roadmap { opacity: .75; } .fw-roadmap .badge { font-size: 11px; }
 .fw-staffing tr.missing td { color: var(--danger, #c0392b); }
+/* readiness gate: stages 1-5, each problem with its step, reason and fix */
+.gate { display: grid; gap: 10px; min-width: 0; }
+.gate h3 { margin: 4px 0 0; font-size: 15px; }
+.gate-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.gate-badge { font-weight: 600; }
+.gate-badge.ok { background: var(--ok-soft); color: var(--ok); }
+.gate-badge.wait { background: var(--warn-soft); color: var(--warn); }
+.gate-line { overflow-wrap: anywhere; }
+.gate-notice { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); border-left: 4px solid var(--warn); overflow-wrap: anywhere; }
+.gate-intents { margin: 0; padding-left: 22px; display: grid; gap: 6px; }
+.gate-intents li { overflow-wrap: anywhere; }
+.gate-serves { font-size: 13px; color: var(--text-2); }
+.gate-node { font-weight: 600; color: var(--text); }
+.gate-assume { color: var(--text-2); font-style: italic; }
+.gate-bad { color: var(--bad); font-weight: 600; }
+.gate-stages { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.gate-stage { border: 1px solid var(--border); border-left-width: 4px; border-radius: 8px; padding: 8px 10px; background: var(--surface); min-width: 0; }
+.gate-stage.s-pass { border-left-color: var(--ok); } .gate-stage.s-fail { border-left-color: var(--bad); } .gate-stage.s-running { border-left-color: var(--accent); } .gate-stage.s-skipped, .gate-stage.s-pending { border-left-color: var(--border-strong); }
+.gate-stage-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.gate-stage.s-pass .gate-state { color: var(--ok); } .gate-stage.s-fail .gate-state { color: var(--bad); } .gate-state { font-size: 13px; color: var(--text-2); font-weight: 600; }
+.gate-problems { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 6px; font-size: 13px; }
+.gate-problems li { overflow-wrap: anywhere; }
+.gate-problems li.notice { color: var(--text-2); }
+.gate-problems code { font-family: var(--f-mono); font-size: 12px; }
+.gate-you { margin-left: 6px; background: var(--human-soft); color: var(--human); font-size: 11px; }
+.gate-rounds ol { margin: 6px 0 0; padding-left: 22px; display: grid; gap: 6px; font-size: 13px; overflow-wrap: anywhere; }
+.gate-brief { margin: 6px 0 0 8px; }
+.gate-brief code { font-family: var(--f-mono); font-size: 12px; overflow-wrap: anywhere; }
+.gate-host { border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; margin: 8px 0; background: var(--surface); min-width: 0; }
+.gate-host > summary { cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
+.gate-host > .gate { margin-top: 8px; }
+.gate-run-tag { align-self: center; font-size: 13px; }

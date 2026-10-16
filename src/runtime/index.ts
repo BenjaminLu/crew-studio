@@ -9,6 +9,7 @@ import {StaffingStore,staffingHash,installStaffingGuard,coffeeStaffingProject,ty
 import {installFirstmateStaffing,staffingQuotaReady,type StaffingFacts,type StaffingAdmission} from '../firstmate-staffing';
 import {installFirstmate} from "../firstmate";
 import {WorkflowDrafts,installWorkflowDraftTools,draftRoute,ownStaffingPlan,ownWorkflow,checkNodeStaffing,checkEffort,ownBrief} from "../workflow-drafts";
+import {installReadiness} from "../readiness";
 // Studio's native runtime, wired: versioned workflow definitions, the engine,
 // the check runtime, Studio-owned cards, and the steps each workflow uses.
 // Routes (all under /api/wf, /api/wruns, /api/scards, /api/checks, /api/policies, /api/intake):
@@ -66,6 +67,9 @@ export type RuntimeDeps = {
   staffingPending?: (intent:any) => void;
 
   selectProvider?: (x: import("./engine").X, pick: AgentPick, context?: { role: string; explicit: boolean }) => Promise<Provider>;
+  /** the readiness gate (src/readiness): false inside the gate's own dry run */
+  readiness?: false | { login?: (provider: string) => import("../readiness/stages").LoginState; knownProviders?: () => string[]; repoRoot?: string | null;
+    /** send Firstmate a gate-repair turn; false when Firstmate is not running */ ask?: (text: string) => boolean; dryTimeoutMs?: number; smokePollMs?: number };
 };
 
 export function skillTextFor(fmRoot: string) {
@@ -117,8 +121,9 @@ export function createRuntime(d: RuntimeDeps) {
   const originalFirstmate=installFirstmate(engine,projects,{prepareDispatch:async(workflow,version)=>{const def=engine.defs.get(workflow,version);if(def?.id==='code-firstmate'||def?.kind==='coffee-kit')await staffingFacts();},onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending});
   // free drafting: its own store and tools, separate from proposals, staffing and execution
   const drafts=new WorkflowDrafts(d.dataDir,defs,(id,revision)=>{try{d.send('wfdraft',{id,revision});}catch{}});
-  const draftTools=installWorkflowDraftTools(drafts);
-  const firstmate={specs:[...originalFirstmate.specs,...staffingTools.specs,...draftTools.specs],call:(name:string,args:any,owner:any)=>name==='studio_draft_workflow'||name==='studio_save_workflow_draft'?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
+  const readiness=d.readiness===false?null:installReadiness({engine,defs,drafts,dataDir:d.dataDir,protectedRoots:d.protectedRoots??[d.fmRoot],send:d.send,...(d.readiness??{}),createRuntime:(d.readiness as any)?.createRuntimeOverride??createRuntime});
+  const draftTools=installWorkflowDraftTools(drafts,readiness?.tools);
+  const firstmate={specs:[...originalFirstmate.specs,...staffingTools.specs,...draftTools.specs],call:(name:string,args:any,owner:any)=>name==='studio_draft_workflow'||name==='studio_save_workflow_draft'||name==='studio_workflow_gate'?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
   // the captain's own workflows start only with the staffing the captain confirmed at Run (never at drafting)
   const previousOwnStart=engine.deps.authorizeStart;
   engine.deps.authorizeStart=(def:any,o:any)=>{previousOwnStart?.(def,o);if(ownWorkflow(def)){const s=ownStaffingPlan(def);if(s.plan.length&&(s.missing.length||o.params?._ownStaffing!==s.hash))throw new Error('Confirm staffing for every agent node when you click Run / 請在按下執行時確認每個代理節點的配置');}};
@@ -183,6 +188,7 @@ export function createRuntime(d: RuntimeDeps) {
       // ---------- definitions ----------
       if(p==="/api/coffee/design"&&writing){if(req.method!=="POST")return json({error:"POST required"},405);if(who.kind!=="desktop")return json({error:"Review coffee design on the desktop"},403);return json({plan:validateCoffeeDesign(b?.plan),canonical:coffeeDesignJSON(b?.plan)});}
       if (p === "/api/wf" && !writing) return json({ workflows: defs.catalog(), checks: engine.registry.all().map(checkView) });
+      if(readiness){const gated=await readiness.route(p,url,req.method,writing,b,by,who);if(gated)return gated;}
       const drafted=await draftRoute(drafts,p,req.method,writing,b,by);if(drafted)return drafted;
       if (p === "/api/wf" && writing) {
         if(req.method!=="POST")return json({error:"use POST to create a workflow"},405);
@@ -201,7 +207,9 @@ export function createRuntime(d: RuntimeDeps) {
             runs: engine.list().filter((r) => r.workflow === id).map((r) => ({ id: r.id, version: r.version, status: r.status, result: r.result, merged: !!r.ctx?.merged, title: r.title, createdAt: r.createdAt })) });
         }
         {const own=ownWorkflow(defs.get(id));for(const n of Array.isArray(b?.nodes)?b.nodes:[]){try{if(own)checkNodeStaffing(n);else checkEffort(n);}catch(e:any){return json({error:e.message},400);}}}
+        if(readiness){const refusal=readiness.editRefusal(id,b);if(refusal)return json(refusal,400);}
         const saved = defs.save(id, b, by, b?.note);
+        readiness?.versionSaved(saved);
         d.log.emit({ type: "workflow_saved", workflow: id, summary: `${id} v${saved.version} saved by ${by}`, data: { diff: saved.diff } });
         return json({ def: saved, diff: saved.diff });
       }
@@ -266,7 +274,7 @@ export function createRuntime(d: RuntimeDeps) {
           if(!image||image.provider!=='codex')return json({error:"Confirm an available dedicated Codex image role; no vendor fallback",code:"coffee-staffing-required"},409);
           params={...params,_staffing:config.hash};
         }
-        const r = engine.start({ workflow: wf, version: b?.version ? Number(b.version) : undefined, title: b?.title, text: ownWorkflow(chosenDef) ? ownBrief(chosenDef, text) : text, params, by, classifier: cls });
+        const r = engine.start({ workflow: wf, version: b?.version ? Number(b.version) : undefined, title: b?.title, text: ownWorkflow(chosenDef) ? ownBrief(chosenDef, text, params) : text, params, by, classifier: cls });
         return json(runView(r.id, who));
       }
       const recovery=/^\/api\/wruns\/(R-\d+)\/continuation\/(offer|confirm)$/.exec(p);
@@ -323,6 +331,6 @@ export function createRuntime(d: RuntimeDeps) {
       return json({ error: "not found" }, 404);
     } catch (e: any) { return json({ error: String(e?.message ?? e), problems: e?.problems ?? undefined }, 400); }
   }
-  return { handle, engine, defs, projects, firstmate, onboarding, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
+  return { handle, engine, defs, projects, firstmate, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
 }
 export { schemaDefaults };

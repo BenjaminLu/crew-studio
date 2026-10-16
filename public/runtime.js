@@ -538,15 +538,25 @@ function buildEditor(ed) {
   };
   const verSel = h("select", { class: "select", "aria-label": T("Version", "版本"), onchange: (e) => { location.hash = `#/workflows/${ed.id}/v${e.target.value}`; } }, ed.versions.map((x) => h("option", { value: x.version, selected: x.version === ed.def.version || null }, `v${x.version}${x.note ? ` · ${/^Saved from Firstmate draft /.test(x.note) ? T("Saved from a Firstmate draft", "由 Firstmate 草稿儲存") : x.note}` : ""}`)));
   const svgZoom = (k) => canvas.querySelector("svg.rt-graph")?.zoom(k);
+  // the readiness gate for this exact version: Run stays the captain's choice, verified or not
+  const gateHost = h("details", { class: "gate-host", "data-gate-host": ed.id, open: true, onclick: (e) => { if (e.target.closest("summary")?.parentElement === gateHost) gateHost.dataset.toggled = "1"; } }, h("summary", {}, T("Readiness", "就緒檢查"), " ", h("span", { class: "faint", "data-gate-summary": "" }, T("checking…", "檢查中…"))));
+  const loadGate = async () => { if (!ed.def.origin || !root.isConnected && gateHost.dataset.loaded) return; try { const v = await api(`/api/wf/${ed.id}/gate?v=${ed.def.version}`); gateHost.dataset.loaded = "1";
+    gateHost.querySelector("[data-gate-summary]").textContent = gateL(v.status?.text);
+    const runBtn = root.querySelector("[data-ed-run]"); if (runBtn) { runBtn.dataset.verified = v.status?.verified ? "1" : "0"; let tag = root.querySelector("[data-run-verified]"); if (!tag) { tag = h("span", { class: "faint gate-run-tag", "data-run-verified": "" }); runBtn.before(tag); } const sn = GATE_STAGES.findIndex(s => s[0] === v.status?.stage) + 1; tag.textContent = v.status?.verified ? gateL(v.status.text) : v.status?.stage === "smoke" ? T("Not verified yet · stages 1–4 pass", "尚未驗證・前四關已通過") : sn ? T(`Not verified yet · stage ${sn} ${v.gate?.stages?.find(s => s.id === v.status.stage)?.status === "running" ? "checking" : "failing"}`, `尚未驗證・第 ${sn} 關${v.gate?.stages?.find(s => s.id === v.status.stage)?.status === "running" ? "檢查中" : "未通過"}`) : T("Not verified yet", "尚未驗證"); }
+    if (!gateHost.dataset.toggled) gateHost.open = !v.passed;
+    const verify = async (e) => { e.target.disabled = true; try { let r; try { r = await api(`/api/wf/${ed.id}/gate/smoke`, { version: ed.def.version }); } catch (err) { if (err.code === "staffing_incomplete") { await staffingConfirm(err.staffing, true); return; } if (err.code !== "staffing_confirmation_required") throw err; if (!await staffingConfirm(err.staffing, false)) return; r = await api(`/api/wf/${ed.id}/gate/smoke`, { version: ed.def.version, staffingConfirm: err.staffing.hash }); } RN.list = null; location.hash = r.href; } catch (err) { say(err.message); } finally { e.target.disabled = false; } };
+    [...gateHost.children].slice(1).forEach(c => c.remove()); gateHost.append(gatePanel(v, { verify })); } catch {} };
+  if (ed.def.origin) { void loadGate(); const onGate = (d) => { if (!root.isConnected) { GATE_LIVE.delete(onGate); return; } if (!d?.key || d.key === `wf-${ed.id}-v${ed.def.version}`) loadGate(); }; GATE_LIVE.add(onGate); }
   root.append(
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, ed.def.name), h("p", {}, (ed.def.description || "").slice(0, 300))),
-      h("div", { class: "actions" }, h("a", { class: "btn ghost", href: "#/workflows" }, T("All workflows", "全部流程")), ed.selectable===false?h("span",{class:"faint","data-workflow-unavailable":"1"},T("Historical or internal workflow · unavailable for new tasks","歷史或內部流程 · 不提供新任務使用")):ed.def.origin?h("button",{class:"btn primary","data-ed-run":ed.id,onclick:async(e)=>{if(ed.dirty){say(T("Save your edits as a new version before Run.","執行前請先把修改存成新版本。"));return;}e.target.disabled=true;try{const r=await startOwnRun({workflow:ed.id,version:ed.saved.version,title:ed.def.name,text:ed.def.name});if(r){RN.list=null;location.hash=`#/run/${r.id}`;}}catch(err){say(err.message);}finally{e.target.disabled=false;}}},T("Run…","執行…")):h("a", { class: "btn", href: "#/runs", "data-start-run": ed.id, onclick: () => { RN.prefill = ed.id; } }, T("Start a task", "開始一個任務")))),
+      h("div", { class: "actions" }, h("a", { class: "btn ghost", href: "#/workflows" }, T("All workflows", "全部流程")), ed.selectable===false?h("span",{class:"faint","data-workflow-unavailable":"1"},T("Historical or internal workflow · unavailable for new tasks","歷史或內部流程 · 不提供新任務使用")):ed.def.origin?h("button",{class:"btn primary","data-ed-run":ed.id,onclick:async(e)=>{if(ed.dirty){say(T("Save your edits as a new version before Run.","執行前請先把修改存成新版本。"));return;}e.target.disabled=true;try{const params=await startInputs(ed.def);if(params===null)return;const r=await startOwnRun({workflow:ed.id,version:ed.saved.version,title:ed.def.name,text:ed.def.name,params});if(r){RN.list=null;location.hash=`#/run/${r.id}`;}}catch(err){say(err.message);}finally{e.target.disabled=false;}}},T("Run…","執行…")):h("a", { class: "btn", href: "#/runs", "data-start-run": ed.id, onclick: () => { RN.prefill = ed.id; } }, T("Start a task", "開始一個任務")))),
     h("div", { class: "rt-toolbar" }, verSel, h("button", { class: "btn sm", "aria-label": T("Zoom in", "放大"), onclick: () => svgZoom(1 / 1.2) }, "+"), h("button", { class: "btn sm", "aria-label": T("Zoom out", "縮小"), onclick: () => svgZoom(1.2) }, "−"),
       h("div", { class: "seg rt-viewseg", role: "group", "aria-label": T("Graph view", "流程圖檢視") }, ["simple", "detail"].map((k) => h("button", { type: "button", "data-view-toggle": k, "aria-pressed": String(gview === k), onclick: () => setView(k) },
         h("span", { class: "keep" }, k === "simple" ? T("Simple", "簡易") : T("Detail", "詳細"))))),
       h("button", { class: "btn sm", "data-tidy": "1", title: T("Lay the graph out again automatically", "自動重新排版"), onclick: async () => { await setMode("auto"); view = null; draw(); say(T("Tidy layout", "已自動排版")); } }, T("Tidy layout", "整理排版")),
       h("button", { class: "btn sm", "data-fit": "1", onclick: () => { const g = canvas.querySelector("svg.rt-graph"); if (g) fit(g, "all"); } }, T("Fit to view", "全部顯示")),
       runPick, note, saveButton, status),
+    ed.def.origin ? gateHost : null,
     h("div", { "data-diff-host": "1" }, WF.lastDiff || diffBox),
     h("div", { class: "rt-work" }, palette, paletteNote, canvasWrap, panel));
   WF.lastDiff = null;
@@ -893,6 +903,42 @@ async function startOwnRun(body){
   catch(e){const j=e.staffing;if(e.code==="staffing_incomplete"){await staffingConfirm(j,true);return null;}if(e.code!=="staffing_confirmation_required")throw e;if(!await staffingConfirm(j,false))return null;return api("/api/wruns",{...body,staffingConfirm:j.hash});}
 }
 const DRAFT_LIVE={fn:null};window.liveListen?.("wfdraft",()=>DRAFT_LIVE.fn?.());
+// ---------- readiness gate (src/readiness): stages 1-5, problems with step / reason / fix, briefs, repair rounds ----------
+const GATE_LIVE=new Set();window.liveListen?.("wfgate",e=>{let d=null;try{d=JSON.parse(e?.data??"null");}catch{}for(const f of GATE_LIVE)f(d);});
+const GATE_STAGES=[["intent","Intent lines","意圖條目"],["contract","Static contract","靜態契約"],["brief","Briefs","簡報"],["dryrun","Stub dry run","替身試跑"],["smoke","Real run","真實試跑"]];
+const gateStateText=s=>({pass:T("passed","通過"),fail:T("failed","未通過"),running:T("running","進行中"),skipped:T("waits for 1-3","等前三關"),pending:T("optional","可選")}[s]||s);
+const gateL=x=>x?(lang==="en"?x.en:(x.zh||x["zh-TW"]||x.en)):"";
+/** Who serves each intent line: the captain's words, what done means, and the nodes that serve it. */
+function gateIntents(v){if(!v?.intents?.length)return h("p",{class:"faint","data-gate-intents":"0"},T("No intent lines yet: Firstmate adds them in your words.","尚無意圖條目：Firstmate 會用你的話寫上。"));
+  return h("ol",{class:"gate-intents","data-gate-intents":String(v.intents.length)},v.intents.map(l=>h("li",{"data-intent-line":l.n},h("b",{},l.text),h("span",{class:"faint"},T(" — done means: "," — 完成的意思："),l.done),l.assumption?h("span",{class:"gate-assume"},T(` (assumed: ${l.assumption})`,`（假設：${l.assumption}）`)):null,
+    h("div",{class:"gate-serves"},l.nodes.length?[T("Served by ","服務節點："),...l.nodes.flatMap((n,i)=>[i?", ":"",h("span",{class:"gate-node","data-serves-node":n.id},n.label)])]:h("span",{class:"gate-bad"},T("served by no node","沒有節點服務"))))));}
+function gatePanel(v,o={}){
+  const g=v?.gate,st=v?.status,box=h("section",{class:"gate","data-gate":v?.key||"","data-gate-verified":st?.verified?"1":"0"});
+  box.append(h("div",{class:"gate-head"},h("span",{class:`badge gate-badge ${st?.verified?"ok":"wait"}`,"data-gate-badge":""},st?.verified?T("Verified","已驗證"):T("Not verified yet","尚未驗證")),h("span",{"data-gate-status":st?.stage||"",class:"gate-line"},gateL(st?.text)||T("Checking…","檢查中…"))));
+  const notice=v?.repair?.notice;if(notice)box.append(h("p",{class:"gate-notice","data-gate-notice":v.repair.status},gateL(notice)));
+  if(v?.repair?.status==="repairing")box.append(h("p",{class:"faint","data-gate-repairing":""},T(`Firstmate is repairing the draft (round ${v.repair.rounds.length}${v.repair.strategy==="redraft"?", redrafting":""}).`,`Firstmate 正在修正草稿（第 ${v.repair.rounds.length} 輪${v.repair.strategy==="redraft"?"，重新起草":""}）。`)));
+  if(o.intents!==false)box.append(h("h3",{},T("Intent lines","意圖條目")),gateIntents(v));
+  box.append(h("ol",{class:"gate-stages"},GATE_STAGES.map(([id,en,zh],i)=>{const s=g?.stages.find(x=>x.id===id),status=s?.status||(g?"pending":"running"),errs=(s?.problems||[]);
+    return h("li",{"data-gate-stage":id,"data-gate-state":status,class:`gate-stage s-${status}`},h("div",{class:"gate-stage-head"},h("b",{},`${i+1} · ${T(en,zh)}`),h("span",{class:"gate-state"},gateStateText(status))),
+      s?.note?h("p",{class:"faint"},gateL(s.note)):null,
+      errs.length?h("ul",{class:"gate-problems"},errs.map(p=>h("li",{"data-gate-problem":p.code,"data-gate-owner":p.owner,class:p.level==="notice"?"notice":p.owner==="captain"?"captain":""},
+        h("div",{},h("span",{class:"faint"},T("Step: ","步驟：")),p.node?h("code",{},p.node):T("whole workflow","整個流程"),p.owner==="captain"?h("span",{class:"badge gate-you"},T("only you","只有你能處理")):null),
+        h("div",{},h("span",{class:"faint"},T("Reason: ","原因：")),gateL(p.reason)),h("div",{},h("span",{class:"faint"},T("How to fix: ","修正方式：")),gateL(p.fix))))):null);})));
+  if(v?.repair?.rounds?.length)box.append(h("details",{class:"gate-rounds","data-gate-rounds":String(v.repair.rounds.length)},h("summary",{},T(`Repair rounds (${v.repair.rounds.length})`,`修正輪次（${v.repair.rounds.length}）`)),
+    h("ol",{},v.repair.rounds.map(r=>h("li",{"data-gate-round":r.n},h("b",{},T(`Round ${r.n}${r.strategy==="redraft"?" · redraft":""}: `,`第 ${r.n} 輪${r.strategy==="redraft"?"・重新起草":""}：`)),r.problems.map(p=>`${p.node?p.node+": ":""}${gateL(p.reason)}`).join(" · "),
+      h("div",{class:"faint"},"→ ",r.refused?T(`refused: ${r.refused}`,`被拒絕：${r.refused}`):r.changes?r.changes.join(", "):T("waiting for Firstmate","等待 Firstmate")))))));
+  if(g?.briefs?.length)box.append(h("details",{class:"gate-briefs","data-gate-briefs":String(g.briefs.length)},h("summary",{},T(`Rendered briefs (${g.briefs.length} agent node${g.briefs.length>1?"s":""})`,`產生的簡報（${g.briefs.length} 個代理節點）`)),
+    ...g.briefs.map(b=>h("details",{class:"gate-brief","data-gate-brief":b.node},h("summary",{},b.label),h("p",{class:"faint"},T("Round folder: ","回合資料夾："),h("code",{},b.roundDir)),h("pre",{class:"fw-json"},b.system+"\n\n---\n\n"+b.prompt)))));
+  if(o.verify&&v?.own&&v.passed&&!st?.verified&&g?.smoke?.status!=="running")box.append(h("div",{class:"actions"},h("button",{class:"btn","data-gate-verify":v.workflow,onclick:o.verify},T("Verify with a real run","以真實任務驗證")),h("span",{class:"faint"},T("Starts one real Task on your subscription with a small sample input; you answer its cards.","以小型樣本在你的訂閱上開始一個真實任務；卡片由你回答。"))));
+  if(g?.smoke?.status==="running")box.append(h("p",{"data-gate-smoke":"running"},T("Verification run: ","驗證試跑："),h("a",{href:`#/run/${g.smoke.task}`},g.smoke.task)));
+  return box;
+}
+/** Start inputs a workflow declares (params): asked when Run is clicked. Resolves the values, or null when cancelled. */
+function startInputs(def){const ps=Object.entries(def?.params||{});if(!ps.length)return Promise.resolve({});
+  return new Promise(resolve=>{const dlg=h("dialog",{class:"fw-dialog","data-start-inputs":""}),fields={};const close=v=>{dlg.close();dlg.remove();resolve(v);};
+    dlg.append(h("h2",{},T("Start inputs","開始輸入")),...ps.map(([k,p])=>h("label",{class:"rt-field"},h("span",{},p.label||k),fields[k]=h("input",{class:"input",value:p.default??def.sample?.params?.[k]??"","data-start-input":k}))),
+      h("div",{class:"actions"},h("button",{class:"btn",type:"button",onclick:()=>close(null)},T("Cancel","取消")),h("button",{class:"btn primary",type:"button","data-start-inputs-ok":"",onclick:()=>{const out={};for(const[k,el]of Object.entries(fields)){if(!el.value.trim()){el.focus();return;}out[k]=el.value.trim();}close(out);}},T("Continue","繼續"))));
+    dlg.addEventListener("cancel",e=>{e.preventDefault();close(null);});document.body.append(dlg);dlg.showModal();});}
 const skillName=ref=>{const x=(DRAFT_OPTS.value?.skills||[]).find(s=>s.ref===ref);return x?T(x.en,x.zh):String(ref).replace(/^.*\//,"").replace(/\.md$/,"");};
 function firstWorkflow(arg){
   // local tutorial state is scoped to the server's data folder: a fresh folder never shows a stale draft or starter
@@ -907,8 +953,11 @@ function firstWorkflow(arg){
   const graph=(def,onNode)=>{const byId=Object.fromEntries(def.nodes.map(n=>[n.id,n]));const ins=new Set(def.edges.map(e=>e.to));const order=[];const q=def.nodes.filter(n=>!ins.has(n.id)).map(n=>n.id);const seenN=new Set();while(q.length){const id=q.shift();if(seenN.has(id))continue;seenN.add(id);order.push(id);for(const e of def.edges)if(e.from===id)q.push(e.to);}for(const n of def.nodes)if(!seenN.has(n.id))order.push(n.id);
     return h("div",{class:"fw-graph"},h("ol",{class:"fw-nodes"},order.map(id=>{const n=byId[id],role=def.roles.find(r=>r.id===n.role);return h("li",{},h("button",{type:"button",class:`fw-node k-${n.kind}${openNode===n.id?" open":""}`,"data-draft-node":n.id,"aria-expanded":n.kind==="agent"?String(openNode===n.id):null,onclick:()=>onNode?.(n)},h("b",{},n.label),h("span",{class:"faint"},n.kind==="agent"?[role?.label||n.role,n.provider?`${n.provider}${n.model?" · "+n.model:""}${n.effort?" · "+n.effort:""}`:T("not staffed yet","尚未配置")].filter(Boolean).join(" · "):n.kind==="card"?T("your decision","你的決定"):T("end","結束")),n.kind==="agent"&&n.skill&&n.skill!==role?.skill?h("span",{class:"fw-skill","data-node-skill":n.skill},T(`skill: ${skillName(n.skill)}`,`技能：${skillName(n.skill)}`)):null));})),
       h("ul",{class:"fw-edges faint"},def.edges.map(e=>h("li",{},`${byId[e.from]?.label||e.from} → ${byId[e.to]?.label||e.to}${e.when?` (${e.when})`:""}`))));};
+  const gateBox=h("div",{"data-draft-gate":""});let gateFor="";
+  const loadDraftGate=async()=>{if(!model)return;const id=model.id;try{const v=await api(`/api/wf/drafts/${id}/gate`);if(model?.id!==id)return;gateBox.replaceChildren(h("h3",{},T("Readiness gate","就緒檢查")),gatePanel(v));}catch{}};
+  const onDraftGate=d=>{if(!root.isConnected){GATE_LIVE.delete(onDraftGate);return;}if(model&&(!d?.key||d.key===`draft-${model.id}`))loadDraftGate();};GATE_LIVE.add(onDraftGate);
   const draw=()=>{
-    if(model&&!showStarter){const d=model,def=d.def;preview.hidden=false;preview.dataset.firstWorkflowSource="model";
+    if(model&&!showStarter){const d=model,def=d.def;if(gateFor!==`${d.id}@${d.revision}`){gateFor=`${d.id}@${d.revision}`;void loadDraftGate();}preview.hidden=false;preview.dataset.firstWorkflowSource="model";
       const roleOf=n=>def.roles.find(r=>r.id===n.role)?.skill;
       const onNode=n=>{openNode=n.kind==="agent"&&openNode!==n.id?n.id:null;draw();};
       const openN=openNode&&def.nodes.find(n=>n.id===openNode&&n.kind==="agent");
@@ -918,6 +967,7 @@ function firstWorkflow(arg){
         d.interview?.length?h("details",{},h("summary",{},T(`Interview (${d.interview.length} answers)`,`訪談（${d.interview.length} 則回答）`)),h("dl",{class:"fw-interview"},d.interview.flatMap(q=>[h("dt",{},q.question),h("dd",{},q.answer)]))):null,
         h("p",{class:"faint"},T("Click an agent node to choose its provider, model, effort and skill.","點代理節點可選擇供應商、模型、推理強度與技能。")),
         graph(def,onNode),
+        gateBox,
         openN?nodeModelControls(openN,roleOf(openN),{attr:"data-node-config",onSave:async body=>{const r=await api(`/api/wf/drafts/${d.id}/nodes/${openN.id}`,{revision:d.revision,...body});model=r.draft;seen=`${model.id}@${model.revision}`;const keep=openNode;draw();openNode=keep;const st=preview.querySelector("[data-node-config-status]");if(st)st.textContent=T(`Saved · revision ${model.revision}`,`已儲存 · 第 ${model.revision} 版`);return model;}}):null,
         h("details",{"data-graph-json":""},h("summary",{},T("Graph JSON (what Firstmate generated)","流程圖 JSON（Firstmate 生成的內容）")),h("pre",{class:"fw-json","data-first-workflow-json":""},JSON.stringify({name:def.name,roles:def.roles,nodes:def.nodes.map(({x,y,...n})=>n),edges:def.edges},null,2))),
         d.saved?h("a",{class:"btn primary",href:`#/workflows/${d.saved.workflow}`,"data-first-workflow-open-saved":""},T("Open the saved workflow","打開已儲存的流程")):

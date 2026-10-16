@@ -27,6 +27,8 @@ export type WNode = {
   max_visits?: number; retries?: number; timeout_s?: number; join?: "any" | "all"; lane?: string;
   /** lifecycle points this node marks when it finishes (after_round, after_merge …): the workflow's hooks at those points run */
   lifecycle?: string[];
+  /** the captain's intent lines (numbers) this node serves (readiness gate stage 1) */
+  serves?: number[];
   /** an agent node's enabled skills, in order, each pinned by version and hash (unit agent-skills); text only, never tools or sandbox */
   skills?: { id: string; v: number; sha256: string }[];
 };
@@ -34,7 +36,12 @@ export type WEdge = { from: string; to: string; when?: string; checks?: CheckRef
 export type WRole = { id: string; label: string; skill: string; provider?: string; model?: string };
 export type WDef = {
   id: string; name: string; version: number; description?: string; kind?: string;
-  intent?: { keywords?: string[]; examples?: string[] }; params?: Record<string, { label: string; default?: string }>;
+  intent?: { keywords?: string[]; examples?: string[] };
+  /** the captain's own goals as numbered lines, each with what "done" means (a drafted workflow; readiness gate stage 1) */
+  intents?: { n: number; text: string; done: string; assumption?: string }[];
+  /** the small sample input the readiness gate's dry run and verification run use */
+  sample?: { text?: string; params?: Record<string, string> };
+  params?: Record<string, { label: string; default?: string }>;
   roles: WRole[]; nodes: WNode[]; edges: WEdge[];
   /** role pairs whose rounds the Task page compares side by side, k-th round with k-th round (src/compare.ts) */
   compare?: [string, string][];
@@ -138,7 +145,7 @@ export function validate(d: WDef, known?: (ref: string) => boolean, runners?: Se
   return out;
 }
 
-const FIELDS: (keyof WNode)[] = ["kind", "label", "detail", "role", "mode", "provider", "model", "effort", "skill", "skills", "gates", "checks", "lifecycle", "do", "args", "card", "max_visits", "retries", "timeout_s", "join", "lane"];
+const FIELDS: (keyof WNode)[] = ["kind", "label", "detail", "role", "mode", "provider", "model", "effort", "skill", "skills", "gates", "checks", "lifecycle", "do", "args", "card", "max_visits", "retries", "timeout_s", "join", "lane", "serves"];
 export function diff(a: WDef, b: WDef): DefDiff {
   const an = new Map(a.nodes.map((n) => [n.id, n])), bn = new Map(b.nodes.map((n) => [n.id, n]));
   const ae = new Set(a.edges.map(ekey)), be = new Set(b.edges.map(ekey));
@@ -149,7 +156,7 @@ export function diff(a: WDef, b: WDef): DefDiff {
     if (Math.round(o.x) !== Math.round(n.x) || Math.round(o.y) !== Math.round(n.y)) moved.push(id); }
   const ac = new Map(a.edges.map((e) => [ekey(e), JSON.stringify(e.checks ?? [])]));
   const edgesChanged = b.edges.filter((e) => ac.has(ekey(e)) && ac.get(ekey(e)) !== JSON.stringify(e.checks ?? [])).map(ekey);
-  const meta = (["name", "description", "roles", "params", "intent", "policies", "hooks", "card_checks"] as const).filter((k) => JSON.stringify((a as any)[k] ?? null) !== JSON.stringify((b as any)[k] ?? null));
+  const meta = (["name", "description", "roles", "params", "intent", "intents", "sample", "policies", "hooks", "card_checks"] as const).filter((k) => JSON.stringify((a as any)[k] ?? null) !== JSON.stringify((b as any)[k] ?? null));
   const skills: { node: string; before: string[]; after: string[] }[] = [];
   for (const [id, n] of bn) { const before = (an.get(id)?.skills ?? []).map(pinName), after = (n.skills ?? []).map(pinName);
     if (JSON.stringify(before) !== JSON.stringify(after)) skills.push({ node: id, before, after }); }
