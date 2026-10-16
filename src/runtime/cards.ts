@@ -12,7 +12,7 @@ export type CardKind = (typeof CARD_KINDS)[number];
 /** The intent sections every card carries, per locale. */
 export type Sections = { intent: string; why: string; scope: { in: string[]; out: string[] }; done: string[]; beforeAfter: string; how: string; glossary: { term: string; means: string }[] };
 export type InterviewBatch = {schema:1;visit:number;batchHash:string;questions:{key:string;en:string;zh:string}[];revision:number;answers:Record<string,string>};
-export type LocalRescope = {version:1;card:string;visit:number;base:string;from:string;target:string};
+export type LocalRescope = {version:1;card:string;visit:number;base:string;from:string;target:string;baseRelation?:"patch-equivalent-unadmitted"};
 export type SCard = {
   /** Read-only code recovery preview; execution requires the same descriptor in the answer. */
   localRescope?: LocalRescope;
@@ -90,7 +90,7 @@ export class Cards {
     const n = c.detail?.intents?.length ?? 0;
     const aligned = Array.isArray(a.aligned) ? [...new Set(a.aligned.filter((i) => Number.isInteger(i) && i >= 0 && i < n))].sort((x, y) => x - y) : [];
     if (n && !opt.hold && aligned.length !== n && !String(a.note ?? "").trim()) throw new Error(`tick every intent line as met (${aligned.length} of ${n}), or write a note`);
-    if(a.localRescope!=null){const p=a.localRescope;if(a.choice!=="rescope"||p.version!==1||p.card!==c.id||p.visit!==c.visit||typeof p.base!=="string"||!/^[A-Za-z0-9][A-Za-z0-9/_-]*$/.test(p.base)||![p.from,p.target].every(h=>typeof h==="string"&&/^[a-f0-9]{40}$/.test(h))||Object.keys(p).sort().join()!=="base,card,from,target,version,visit")throw new Error("invalid local rescope preview");}
+    if(a.localRescope!=null){const p=a.localRescope;if(a.choice!=="rescope"||p.version!==1||p.card!==c.id||p.visit!==c.visit||typeof p.base!=="string"||!/^[A-Za-z0-9][A-Za-z0-9/_-]*$/.test(p.base)||![p.from,p.target].every(h=>typeof h==="string"&&/^[a-f0-9]{40}$/.test(h))||(p.baseRelation!==undefined&&p.baseRelation!=="patch-equivalent-unadmitted")||Object.keys(p).sort().join()!==(p.baseRelation?"base,baseRelation,card,from,target,version,visit":"base,card,from,target,version,visit"))throw new Error("invalid local rescope preview");}
     c.status = "answered"; c.answer = { choice: a.choice, note: a.note ? String(a.note).slice(0, 4000) : null, by: a.by, at: new Date().toISOString(), confirm: a.confirm ?? null, ...(n ? { aligned } : {}), ...(a.localRescope ? {localRescope: structuredClone(a.localRescope)} : {}) };
     this.save(c); return c;
   }

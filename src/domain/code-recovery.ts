@@ -3,12 +3,17 @@
 import { hashInput } from '../runtime/checks';
 import type { Engine, X } from '../runtime/engine';
 import { git, must } from '../git';
-import { RoundBlocked, type Worktrees } from '../worktrees';
+import { RoundBlocked, patchEquivalentBase, type Worktrees } from '../worktrees';
 import { signedReservation } from './code-queue';
 
 export function installCodeRecovery(engine:Engine,W:Worktrees){
   const key=(r:any)=>({project:r.ctx.wt?.project,task:r.ctx.wt?.task});
-  const descriptor=(c:any,rec:any,target:string)=>({version:1 as const,card:c.id,visit:c.visit,base:rec.base,from:rec.head,target});
+  const relation=(repo:string,from:string,target:string,admitted:boolean)=>{
+    if(git(repo,['merge-base','--is-ancestor',from,target]).ok)return {};
+    if(!admitted&&patchEquivalentBase(repo,from,target))return {baseRelation:'patch-equivalent-unadmitted' as const};
+    throw new Error('rescope base is neither an ancestor nor an explicitly recoverable unadmitted patch series');
+  };
+  const descriptor=(c:any,rec:any,target:string,extra:ReturnType<typeof relation>)=>({version:1 as const,card:c.id,visit:c.visit,base:rec.base,from:rec.head,target,...extra});
   const priorView=engine.cards.view;
   engine.cards.view=c=>{
     const view=priorView(c),r=engine.get(c.run);
@@ -20,10 +25,10 @@ export function installCodeRecovery(engine:Engine,W:Worktrees){
         engine.queueRepo(rec.repo)!==engine.queueRepo(r.ctx.repo)||rec.project!==engine.queueProject(r)||
         (prior?hashInput(signed)!==hashInput(r.ctx.nativeAdmission):!!r.ctx.nativeAdmission)||
         must(rec.path,['rev-parse','HEAD'])!==rec.head||must(rec.path,['status','--porcelain=v1','--untracked-files=all']))return view;
-      const target=must(rec.repo,['rev-parse',`refs/heads/${rec.base}`]);if(!git(rec.repo,['merge-base','--is-ancestor',rec.head,target]).ok)return view;
-      const localRescope=descriptor(c,rec,target);
-      const en=`This task has no changes. Rescope refreshes base ${rec.base} from ${rec.head} to ${target}, rewrites the spec, and waits for a new dispatch approval. Checks and review run again.`;
-      const zh=`此任務尚未修改檔案。重新界定範圍會將基底 ${rec.base} 從 ${rec.head} 更新至 ${target}，重寫規格後再次等待派工核准；檢查與審查必須重跑。`;
+      const target=must(rec.repo,['rev-parse',`refs/heads/${rec.base}`]);
+      const localRescope=descriptor(c,rec,target,relation(rec.repo,rec.head,target,!!prior));
+      const en=(localRescope.baseRelation?'This unadmitted task uses rewritten base history. Every old-side patch has a patch-id match on the selected target; this is not a semantic guarantee. Approval abandons the old base lineage. ':'')+`This task has no changes. Rescope refreshes base ${rec.base} from ${rec.head} to ${target}, rewrites the spec, and waits for a new dispatch approval. Checks and review run again.`;
+      const zh=(localRescope.baseRelation?'此任務尚未派工，基底歷史已改寫。舊側所有 patch 在目標都有 patch-id 對應，但不保證語義等價。核准會放棄舊基底的歷史連接。':'')+`此任務尚未修改檔案。重新界定範圍會將基底 ${rec.base} 從 ${rec.head} 更新至 ${target}，重寫規格後再次等待派工核准；檢查與審查必須重跑。`;
       return {...view,localRescope,...(view.detail?{detail:{...view.detail,how:[...view.detail.how,{en,'zh-TW':zh}]}}:{}),sections:{...view.sections,en:{...view.sections.en,how:view.sections.en.how+'\n'+en},'zh-TW':{...view.sections['zh-TW'],how:view.sections['zh-TW'].how+'\n'+zh}}};
     }catch{return view;}
   };
@@ -47,10 +52,9 @@ export function installCodeRecovery(engine:Engine,W:Worktrees){
       if(prior&&(signed.repo!==engine.queueRepo(rec.repo)||signed.project!==rec.project||hashInput(signed.dependencies)!==hashInput(engine.queueDependencies(r))))throw new Error('rescope cannot change repository, project or dependencies');
       if(!/^[A-Za-z0-9][A-Za-z0-9/_-]*$/.test(rec.base))throw new Error('rescope base branch is invalid');
       const target=must(rec.repo,['rev-parse',`refs/heads/${rec.base}`]);
-      if(!git(rec.repo,['merge-base','--is-ancestor',rec.head,target]).ok)throw new Error('rescope base must descend from the current pristine task');
-      const shown=a.localRescope!,expected=descriptor(c,rec,target);
+      const shown=a.localRescope!,expected=descriptor(c,rec,target,relation(rec.repo,rec.head,target,!!prior));
       if(Object.keys(shown).length!==Object.keys(expected).length||Object.entries(expected).some(([k,v])=>(shown as any)[k]!==v))throw new Error('local rescope target changed; reload the current card before approving');
-      const intent={version:1,card:c.id,node:c.node,visit:c.visit,project:rec.project,repo:engine.queueRepo(rec.repo),branch:rec.branch,base:rec.base,from:rec.head,target,
+      const intent={version:1,card:c.id,node:c.node,visit:c.visit,project:rec.project,repo:engine.queueRepo(rec.repo),branch:rec.branch,base:rec.base,from:rec.head,target,...(expected.baseRelation?{baseRelation:expected.baseRelation}:{}),
         prior:prior?.seq??null,priorHash:prior?hashInput(signed):null,dependencies:engine.queueDependencies(r)};
       const earlier=trusted.entries.filter(e=>e.record==='local-rescope-request'&&e.data?.card===c.id).at(-1);
       if(!earlier||hashInput(earlier.data)!==hashInput(intent))engine.record(engine.x(r,node,rn),'local-rescope-request',{head:rec.head,data:intent});
@@ -66,11 +70,12 @@ export function installCodeRecovery(engine:Engine,W:Worktrees){
     const latestRescope=trusted.entries.filter(e=>e.record==='card-answer'&&e.data?.choice==='rescope').at(-1);
     if(latestRescope?.data?.card!==i.card)return; // ordinary rescope cannot reuse an old refresh
     const answer=trusted.entries.find(e=>e.record==='card-answer'&&e.seq>request.seq&&e.data?.card===i.card&&e.data?.choice==='rescope'&&!String(e.actor??'').startsWith('auth window'));
-    if(!answer?.data?.localRescope||hashInput(answer.data.localRescope)!==hashInput({version:1,card:i.card,visit:i.visit,base:i.base,from:i.from,target:i.target}))return; // an orphan request or ordinary rescope grants no refresh
+    if(!answer?.data?.localRescope||hashInput(answer.data.localRescope)!==hashInput({version:1,card:i.card,visit:i.visit,base:i.base,from:i.from,target:i.target,...(i.baseRelation?{baseRelation:i.baseRelation}:{})}))return; // an orphan request or ordinary rescope grants no refresh
     const later=trusted.entries.some(e=>e.record==='scope-admission'&&e.seq>answer.seq);
     if(later)return; // the new epoch already owns its normal build/spec lifecycle
     const done=trusted.entries.find(e=>e.record==='local-rescope-applied'&&e.data?.request===request.seq);
     const k=key(x.run),rec=W.get(k.project,k.task),{prior,signed}=signedReservation(engine,x.run,trusted);
+    if(i.baseRelation!==undefined&&(i.baseRelation!=='patch-equivalent-unadmitted'||prior||x.ctx.nativeAdmission))throw new RoundBlocked('patch-equivalent recovery requires an unadmitted task');
     if(i.version!==1||i.project!==engine.queueProject(x.run)||i.repo!==engine.queueRepo(x.ctx.repo)||i.branch!==x.ctx.branch||i.base!==x.ctx.base||
       i.prior!==(prior?.seq??null)||i.priorHash!==(prior?hashInput(signed):null)||hashInput(i.dependencies)!==hashInput(engine.queueDependencies(x.run))||
       (prior?hashInput(x.ctx.nativeAdmission)!==hashInput(signed):!!x.ctx.nativeAdmission)||x.ctx.pr||!rec||rec.path!==x.ctx.worktree||!engine.owns(x))

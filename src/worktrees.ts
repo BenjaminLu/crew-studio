@@ -52,6 +52,21 @@ const safe = (s: string) => { const v = String(s); if (!idOk(v)) throw new Error
 export class RoundBlocked extends Error { outcome = "blocked"; constructor(m: string) { super(m); } }
 const alive = (pid: number) => { if (!pid) return false; try { process.kill(pid, 0); return true; } catch (e: any) { return e?.code === "EPERM"; } };
 
+/** Bounded detection of an abandoned base whose entire non-merge patch series
+ * already exists on the selected target. This is not semantic equivalence or
+ * authorization: the caller still needs a signed, explicit unadmitted refresh. */
+export function patchEquivalentBase(repo:string,from:string,target:string):boolean {
+  if(![from,target].every(h=>/^[a-f0-9]{40}$/.test(h)))return false;
+  const common=git(repo,['merge-base','--all',from,target]);
+  if(!common.ok||!common.out.trim()||common.out.trim().split('\n').length!==1)return false;
+  const old=git(repo,['rev-list','--max-count=65',`${target}..${from}`]),next=git(repo,['rev-list','--max-count=65',`${from}..${target}`]);
+  const ids=old.out.trim().split('\n').filter(Boolean),newIds=next.out.trim().split('\n').filter(Boolean);
+  if(!old.ok||!next.ok||!ids.length||ids.length>64||!newIds.length||newIds.length>64)return false;
+  const merges=git(repo,['rev-list','--merges',`${target}...${from}`]);if(!merges.ok||merges.out.trim())return false;
+  const cherry=git(repo,['cherry',target,from]);if(!cherry.ok)return false;
+  const matches=cherry.out.trim().split('\n').filter(Boolean);
+  return matches.length===ids.length&&matches.every(line=>/^- [a-f0-9]{40}$/.test(line)&&ids.includes(line.slice(2)));
+}
 export class Worktrees {
   readonly root: string;
   constructor(readonly dataDir: string, readonly o: { protect?: () => string[]; egress?: () => Egress | null } = {}) { this.root = join(dataDir, "work", "wt"); mkdirSync(this.root, { recursive: true }); }
@@ -168,7 +183,7 @@ export class Worktrees {
    * No startRound reconciliation: dirty/drifted state is refused, never reset.
    * The exact target ref permits recovery after a crash between ref CAS and save.
    */
-  refreshPristine(project: string, task: string, holder: string, intent: {repo:string;branch:string;base:string;from:string;target:string}) {
+  refreshPristine(project: string, task: string, holder: string, intent: {repo:string;branch:string;base:string;from:string;target:string;baseRelation?:"patch-equivalent-unadmitted"}) {
     const release=this.lock(project,task,holder);let thawed:WorktreeRecord|null=null;
     try {
       const r=this.get(project,task);
@@ -185,7 +200,7 @@ export class Worktrees {
       const expectedTrees=[must(r.repo,["rev-parse",`${actual}^{tree}`]),...(actual===intent.target&&r.head===intent.from?[must(r.repo,["rev-parse",`${intent.from}^{tree}`])]:[])];
       if(![intent.from,intent.target].includes(actual)||!git(r.repo,["merge-base","--is-ancestor",intent.target,observedBase]).ok||
         !expectedTrees.includes(index)||!git(r.path,["diff","--quiet"]).ok||must(r.path,["ls-files","--others","--exclude-standard"])||
-        !git(r.repo,["merge-base","--is-ancestor",intent.from,intent.target]).ok)
+        !(intent.baseRelation===undefined?git(r.repo,["merge-base","--is-ancestor",intent.from,intent.target]).ok:intent.baseRelation==="patch-equivalent-unadmitted"&&patchEquivalentBase(r.repo,intent.from,intent.target)))
         throw new RoundBlocked("local rescope requires a clean base-only task and the approved base target");
       this.thaw(r);thawed=r;
       // Main may advance during captain/staffing handoff. Refresh only to the signed

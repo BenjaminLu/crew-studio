@@ -8,7 +8,7 @@ import {Projects} from '../src/doors';
 import {installCode} from '../src/domain/code';
 import {signedReservation} from '../src/domain/code-queue';
 import {Engine} from '../src/runtime/engine';
-import {Worktrees} from '../src/worktrees';
+import {Worktrees,patchEquivalentBase} from '../src/worktrees';
 import {must} from '../src/git';
 const {ok,end}=suite('code-rescope-recovery');
 const rejects=(fn:()=>unknown)=>{try{fn();return false;}catch{return true;}};
@@ -154,5 +154,45 @@ for(const mode of ['stale-preview','orphan-request','ordinary-clean']){
   const response=await rt.handle(new Request(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({choice:'rescope',note:'Refresh',localRescope})}),url,{kind:'desktop'},true);
   ok(response?.status===200&&submitted.by==='captain'&&JSON.stringify(submitted.localRescope)===JSON.stringify(localRescope),'actual card API forwards the exact displayed descriptor to the captain answer');
  }catch(e){ok(false,'card API descriptor',String(e));}finally{H.stop();}
+}
+// Rebased pristine bases: explicit signed exception only before first admission.
+for(const mode of ['success','admitted','dirty','task-commit','unmatched','missing-variant','tampered-variant','stale-target','execution-diverged']){
+ const F=await fixture();try{
+  const root=must(F.repo,['rev-parse','HEAD']),old=F.advance(),r=await F.start(mode==='admitted');
+  must(F.repo,['reset','--hard',root]);writeFileSync(join(F.repo,'upstream.txt'),'new upstream\n');must(F.repo,['add','upstream.txt']);must(F.repo,['commit','-qm','Upstream']);
+  if(mode!=='unmatched')must(F.repo,['cherry-pick',old]);const target=must(F.repo,['rev-parse','HEAD']);
+  const c=await F.card(r.id,mode==='admitted'?'scope-card':'dispatch');
+  if(mode==='dirty'||mode==='task-commit'){const W=new Worktrees(F.H.data);W.thaw(W.get('fixture',r.id)!);writeFileSync(join(r.ctx.worktree,'owned.txt'),'task work');if(mode==='task-commit'){must(r.ctx.worktree,['add','owned.txt']);must(r.ctx.worktree,['commit','-qm','Task work']);}}
+  const preview=F.E.cards.view(c).localRescope;
+  if(['admitted','dirty','task-commit','unmatched'].includes(mode))ok(!preview,mode+' never offers patch-equivalent refresh');
+  else {
+   ok(preview?.baseRelation==='patch-equivalent-unadmitted'&&F.E.cards.view(c).sections.en.how.includes('abandons the old base lineage'),'explicit rewritten-history preview for '+mode);
+   if(mode==='missing-variant'||mode==='tampered-variant'||mode==='stale-target'){
+    const submitted:any={...preview};if(mode==='missing-variant')delete submitted.baseRelation;if(mode==='tampered-variant')submitted.baseRelation='any-rewind';
+    if(mode==='stale-target'){writeFileSync(join(F.repo,'later.txt'),'new');must(F.repo,['add','later.txt']);must(F.repo,['commit','-qm','Moved after preview']);}
+    let refused=false;try{await F.E.answer(c.id,{choice:'rescope',note:'Approve exact rewritten base',by:'captain',localRescope:submitted});}catch{refused=true;}
+    ok(refused&&F.E.cards.get(c.id)?.status==='open'&&must(r.ctx.worktree,['rev-parse','HEAD'])===old,mode+' rejects without consuming card or moving task');
+   }else{
+    const record=F.E.record.bind(F.E);
+    F.E.record=(x,name,e)=>{const value=record(x,name,e);if(name==='local-rescope-request'){
+      if(mode==='execution-diverged')must(F.repo,['update-ref','refs/heads/main',root,target]);
+      else {writeFileSync(join(F.repo,'later.txt'),'new');must(F.repo,['add','later.txt']);must(F.repo,['commit','-qm','Main advances during handoff']);}
+    }return value;};
+    await F.E.answer(c.id,{choice:'rescope',note:'Approve exact rewritten base',by:'captain',localRescope:preview});
+    if(mode==='execution-diverged'){await until(()=>r.status==='waiting'||r.status==='failed');ok(must(r.ctx.worktree,['rev-parse','HEAD'])===old&&!F.E.trusted(r.id).entries.some(e=>e.record==='local-rescope-applied'),'execution main divergence rejects before replacing base');}
+    else {await F.card(r.id,'dispatch');const ledger=F.E.trusted(r.id).entries,request=ledger.find(e=>e.record==='local-rescope-request'),answer=ledger.find(e=>e.record==='card-answer'&&e.data.card===c.id);ok(r.ctx.head===target&&r.ctx.baseCommit===target&&!r.ctx.nativeAdmission&&!F.starts.get(r.id)&&request?.data.baseRelation===preview!.baseRelation&&answer?.data.localRescope.baseRelation===preview!.baseRelation,'signed exception refreshes only approved target and still waits for first dispatch');}
+   }
+  }
+ }catch(e){ok(false,'rebased '+mode,String(e));}finally{await F.stop();}
+}
+// Bound both sides; no merges, empty old-side series or unrelated histories.
+{
+ const F=await fixture();try{
+  const root=must(F.repo,['rev-parse','HEAD']),old=F.advance();
+  ok(!patchEquivalentBase(F.repo,root,old),'empty old-side series is not a rewritten-history exception');
+  const unrelated=must(F.repo,['commit-tree',`${old}^{tree}`,'-m','Unrelated']);ok(!patchEquivalentBase(F.repo,old,unrelated),'unrelated histories cannot refresh');
+  const sibling=must(F.repo,['commit-tree',`${root}^{tree}`,'-p',root,'-m','Sibling']),merge=must(F.repo,['commit-tree',`${old}^{tree}`,'-p',old,'-p',sibling,'-m','Old merge']);ok(!patchEquivalentBase(F.repo,merge,sibling)&&!patchEquivalentBase(F.repo,sibling,merge),'merges on either side cannot refresh');
+  let deep=sibling;for(let i=0;i<65;i++)deep=must(F.repo,['commit-tree',`${root}^{tree}`,'-p',deep,'-m','Bound '+i]);ok(!patchEquivalentBase(F.repo,old,deep)&&!patchEquivalentBase(F.repo,deep,old),'either side over 64 commits refuses bounded matching');
+ }finally{await F.stop();}
 }
 end();
