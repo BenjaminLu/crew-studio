@@ -48,7 +48,10 @@ export type MainView = {
   pausedReason: string | null; queue: QItem[]; approvals: ReturnType<PermissionBridge["pending"]>; log: LogItem[]; resume: string | null; project: string;
   origin: Origin | null; context?: "studio" | "explicit-project"; holdWakes: boolean; wakeGraceMs: number; drive: Drive | null;
 };
-export type LogItem = { at: number; kind: "captain" | "card" | "wake" | "firstmate" | "tool" | "status" | "system"; text: string; source?: string; status?: string; refusal?: import("./types").HostRefusalCode; nativeFailure?:NativeFailure; links?:{label:string;href:string}[];
+/** a chat note in both UI languages: text keeps the English line (filters and older readers use it), i18n carries both */
+const bi = (en: string, tw: string): { text: string; i18n: { en: string; "zh-TW": string } } => ({ text: en, i18n: { en, "zh-TW": tw } });
+const TURN_ZH: Record<string, string> = { failed: "失敗", interrupted: "已中斷", cancelled: "已取消", timeout: "逾時" };
+export type LogItem = { at: number; kind: "captain" | "card" | "wake" | "firstmate" | "tool" | "status" | "system"; text: string; /** the same note for the UI in each language; text stays the English line */ i18n?: { en: string; "zh-TW": string }; source?: string; status?: string; refusal?: import("./types").HostRefusalCode; nativeFailure?:NativeFailure; links?:{label:string;href:string}[];
   /** a captain message's attachments (ids and labels; served from /api/main/attachments/<id>) */
   attachments?: import("../attachments").AttachmentRef[];
   /** why the attachments of a captain message could not be sent: typed, never a silent drop */
@@ -197,7 +200,7 @@ export class MainSession {
     this.drive = null; this.origin = null;
     this.state = "attached"; this.pausedReason = null; this.lastResume = null;
     this.wakes = new WakeReader(this.o.stateDir);
-    this.note({ kind: "status", text: `Attached to ${host} session ${this.session.id}` });
+    this.note({ kind: "status", ...bi(`Attached to ${host} session ${this.session.id}`, `已接上 ${host} session ${this.session.id}`) });
     this.timer = setInterval(() => this.tick(), this.o.pollMs ?? 1000);
     this.changed();
     void this.pump();
@@ -277,9 +280,9 @@ export class MainSession {
     this.state = "attached"; this.pausedReason = null; this.lastResume = null;
     this.wakes = new WakeReader(this.o.stateDir);
     this.seenWakes.clear();
-    this.note({ kind: "status", text: `${mode === "rehearsal" ? "Rehearsal" : "Took over"}: Studio drives a copy of ${id}. The terminal session must stay idle.` });
+    this.note({ kind: "status", ...bi(`${mode === "rehearsal" ? "Rehearsal" : "Took over"}: Studio drives a copy of ${id}. The terminal session must stay idle.`, `${mode === "rehearsal" ? "演練" : "已接手"}：Studio 駕駛 ${id} 的複本；終端機 session 必須保持閒置。`) });
     if (host === "codex") this.note({ kind: "status", text: statement });
-    if (terminal) this.note({ kind: "system", text: host === "codex" ? `The original Codex terminal still looks open (${terminal}). Keep it idle and exit it after its background agents finish. Studio delivers wakes to the copy.` : `The terminal still looks open (${terminal}). Keep it idle; exit it after its background agents finish, or its Stop hook keeps taking firstmate's wakes.` });
+    if (terminal) this.note({ kind: "system", ...(host === "codex" ? bi(`The original Codex terminal still looks open (${terminal}). Keep it idle and exit it after its background agents finish. Studio delivers wakes to the copy.`, `原本的 Codex 終端機看起來還開著（${terminal}）。請保持閒置，等它的背景 agent 結束後再退出；Studio 會把喚醒送到複本。`) : bi(`The terminal still looks open (${terminal}). Keep it idle; exit it after its background agents finish, or its Stop hook keeps taking firstmate's wakes.`, `終端機看起來還開著（${terminal}）。請保持閒置；等它的背景 agent 結束後再退出，否則它的 Stop hook 會繼續攔下 firstmate 的喚醒。`)) });
     if (path === "handoff") this.queue.seed(withRulesSeed(seedText({ host, original: id, cwd: s.cwd, turns: se.recentTurns ?? null, handoff: newest }), this.o.operatingRules));
     this.timer = setInterval(() => this.tick(), this.o.pollMs ?? 1000);
     this.changed();
@@ -340,7 +343,7 @@ export class MainSession {
     this.wakes = new WakeReader(this.o.stateDir);
     this.seenWakes.clear();
     this.note({ kind: "status", text: statement });
-    if (host === "claude" && extra?.autoMode) this.note({ kind: "status", text: `The captain's auto-mode rules are ${extra.autoMode.summary}` });
+    if (host === "claude" && extra?.autoMode) this.note({ kind: "status", ...bi(`The captain's auto-mode rules are ${extra.autoMode.summary}`, `船長的 auto mode 規則：${extra.autoMode.summaryZh || extra.autoMode.summary}`) });
     // local unrestricted mode (operator .env): a Claude primary is told so in its first message, as Codex is on every turn (after the rules, before the body)
     const body = this.o.nativeWorkspace ? nativeFreshText(cwd, (() => { try { const n = this.o.nativeTools?.().specs.map((t) => t.name) ?? []; return n.length ? n : undefined; } catch { return undefined; } })()) : freshText(cwd, newest);
     this.queue.seed(withRulesSeed(body, this.o.operatingRules, !!this.o.nativeWorkspace, host === "claude" ? localExecutionNotice() : ""));
@@ -431,7 +434,7 @@ export class MainSession {
         this.lastSeenMtime = mtimeOf(this.sessionFile);
         if (r.status === "failed" && !this.refusedThisTurn) this.external(this.session?.host ?? "claude", r.message || (this.lastExit ? `exited ${this.lastExit.code}: ${this.lastExit.stderr.trim().split("\n").slice(-3).join(" ")}` : ""));
         // a refusal already showed as a typed notice for this turn: no second, grey "Turn failed" line
-        else if (r.status !== "completed" && !(r.status === "failed" && this.refusedThisTurn)) this.note({ kind: "status", text: `Turn ${r.status}${r.message ? `: ${r.message}` : ""}`, status: r.status });
+        else if (r.status !== "completed" && !(r.status === "failed" && this.refusedThisTurn)) this.note({ kind: "status", ...bi(`Turn ${r.status}${r.message ? `: ${r.message}` : ""}`, `回合${TURN_ZH[r.status] ?? `：${r.status}`}${r.message ? `：${r.message}` : ""}`), status: r.status });
         this.refusedThisTurn = false; this.lastExit = null;
         this.changed();
       }
@@ -446,7 +449,7 @@ export class MainSession {
   }
   private pruneWakes() {
     for (const w of this.queue.prune((w) => !!w.id && acknowledged(this.o.stateDir, w.id, w.woken)))
-      this.note({ kind: "system", text: `wake delivered by firstmate's own hook: ${w.line}` });
+      this.note({ kind: "system", ...bi(`wake delivered by firstmate's own hook: ${w.line}`, `喚醒已由 firstmate 自己的 hook 送達：${w.line}`) });
   }
 
   private hostEvent(e: HostEvent) {
@@ -455,7 +458,7 @@ export class MainSession {
     if (e.type === "compacted") { this.compactions++; if (this.driver().rulesSent) this.writeDriver({ ...this.driver(), rulesSent: null }); }
     if(e.type==="nativeToolFailure")this.note({kind:"system",text:e.failure.reason.en,nativeFailure:e.failure});
     if (e.type === "turnStart") this.refusedThisTurn = false; // a turn Studio did not send starts clean
-    if (e.type === "hostRefusal") { this.refusedThisTurn = true; this.note({ kind: "status", text: `${e.reason.en} / ${e.reason["zh-TW"]}`, status: "failed", refusal: e.code,
+    if (e.type === "hostRefusal") { this.refusedThisTurn = true; this.note({ kind: "status", text: `${e.reason.en} / ${e.reason["zh-TW"]}`, i18n: e.reason, status: "failed", refusal: e.code,
       external: { ...externalError("claude", claudeVendorMessage(e.raw) || e.reason.en, { cls: e.code === "claudeQuotaExhausted" ? "quota" : e.code === "claudeNotSignedIn" ? "auth" : undefined, code: e.code }), reason: e.reason } }); }
     if (e.type === "exit") {
       this.lastExit = { code: e.code, stderr: e.stderr ?? "" };
@@ -464,18 +467,18 @@ export class MainSession {
         this.external(this.session?.host ?? "claude", `exited ${e.code}${e.stderr?.trim() ? `: ${e.stderr.trim().split("\n").slice(-3).join(" ")}` : ""}`, { cls: "exit" });
     }
     if (e.type === "turnEnd" && e.external) { if (e.status === "failed" && !this.refusedThisTurn) this.external(this.session?.host ?? "claude", e.message ?? ""); this.refusedThisTurn = false; }
-    if (e.type === "turnStart") this.note({ kind: "system", text: e.source === "task" ? "a background task's notice started a turn; following it" : "a turn Studio did not send started (firstmate's wake hook, or a background task); following it" });
+    if (e.type === "turnStart") this.note({ kind: "system", ...(e.source === "task" ? bi("a background task's notice started a turn; following it", "背景任務的通知開始了一個回合；跟著它") : bi("a turn Studio did not send started (firstmate's wake hook, or a background task); following it", "開始了一個不是 Studio 送出的回合（firstmate 的喚醒 hook 或背景任務）；跟著它")) });
     if (e.type === "turnEnd" && e.external) { this.lastSeenMtime = mtimeOf(this.sessionFile); setTimeout(() => void this.pump(), 0); }
     if (e.type === "permissionMode" && this.drive && this.drive.host === "claude" && e.mode !== this.drive.effectivePermissionMode) {
       this.drive.effectivePermissionMode = e.mode;
-      this.note({ kind: "system", text: claudeModeLine(this.drive.permissionMode ?? null, e.mode) });
+      this.note({ kind: "system", ...bi(claudeModeLine(this.drive.permissionMode ?? null, e.mode), claudeModeLineZh(this.drive.permissionMode ?? null, e.mode)) });
       this.changed();
     }
     if (e.type === "delta") this.reply += e.text;
     else if (e.type === "toolStart") this.note({ kind: "tool", text: `${e.name} ${e.summary}`.trim() });
     else if (e.type === "message") { this.note({ kind: "firstmate", text: e.text || this.reply }); this.reply = ""; }
     else if (e.type === "forked") {
-      this.note({ kind: "status", text: `The session was re-identified: ${e.oldId} → ${e.newId}; Studio follows the new id` });
+      this.note({ kind: "status", ...bi(`The session was re-identified: ${e.oldId} → ${e.newId}; Studio follows the new id`, `session 換了 id：${e.oldId} → ${e.newId}；Studio 跟著新的 id`) });
       if (this.state !== "attaching") this.followCopy(e.oldId, e.newId, e.file ?? null); // while attaching, takeover() follows it once the note exists
     }
     if (e.type !== "delta") this.changed();
@@ -489,7 +492,7 @@ export class MainSession {
     for (const w of this.wakes?.readItems() ?? []) {
       if (this.seenWakes.has(w.key)) continue; // the same item read twice is one wake
       this.seenWakes.add(w.key); fresh = true;
-      this.note({ kind: "system", text: `wake: ${w.line}`, source: "firstmate" });
+      this.note({ kind: "system", ...bi(`wake: ${w.line}`, `喚醒：${w.line}`), source: "firstmate" });
       this.queue.push("wake", w.line, "firstmate", w);
     }
     if (this.seenWakes.size > 5000) this.seenWakes = new Set([...this.seenWakes].slice(-2000));
@@ -520,9 +523,9 @@ export class MainSession {
     const m = mtimeOf(o.file);
     if (m > this.originMtime) {
       this.originMtime = m; o.originWrites++; o.lastOriginWrite = new Date(m).toISOString();
-      if (o.originWrites === 1 || o.originWrites % 20 === 0) this.note({ kind: "system", text: o.mode === "rehearsal"
-        ? `The original session ${o.id.slice(0, 8)} is still being written (expected in a rehearsal: the terminal keeps working).`
-        : `Warning: the original session ${o.id.slice(0, 8)} was written at ${o.lastOriginWrite}: the terminal is not idle, and two firstmates may act on the same state.` });
+      if (o.originWrites === 1 || o.originWrites % 20 === 0) this.note({ kind: "system", ...(o.mode === "rehearsal"
+        ? bi(`The original session ${o.id.slice(0, 8)} is still being written (expected in a rehearsal: the terminal keeps working).`, `原本的 session ${o.id.slice(0, 8)} 仍在寫入（演練時是正常的：終端機繼續工作）。`)
+        : bi(`Warning: the original session ${o.id.slice(0, 8)} was written at ${o.lastOriginWrite}: the terminal is not idle, and two firstmates may act on the same state.`, `警告：原本的 session ${o.id.slice(0, 8)} 在 ${o.lastOriginWrite} 被寫入：終端機不是閒置的，可能有兩個 firstmate 同時操作同一份狀態。`)) });
     }
     if (Date.now() - this.lastTerminalCheck > 15_000) {
       this.lastTerminalCheck = Date.now();
@@ -534,7 +537,7 @@ export class MainSession {
     if (this.state !== "attached") return;
     this.nativeGeneration++;this.abortNativeCalls();
     this.state = "paused"; this.pausedReason = reason;
-    this.note({ kind: "status", text: `Paused: ${reason}. Nothing more is sent until you resume or hand back.`, status: "paused" });
+    this.note({ kind: "status", ...bi(`Paused: ${reason}. Nothing more is sent until you resume or hand back.`, `已暫停：${reason}。在你繼續或交還之前，不會再送出任何內容。`), status: "paused" });
     this.changed();
   }
 
@@ -542,7 +545,7 @@ export class MainSession {
     if (this.state !== "paused" || !this.session) return { ok: false, reason: "not paused" };
     this.lastSeenMtime = mtimeOf(this.sessionFile);
     this.state = "attached"; this.pausedReason = null;
-    this.note({ kind: "status", text: "Resumed by the captain" });
+    this.note({ kind: "status", ...bi("Resumed by the captain", "船長已繼續") });
     this.changed(); void this.pump();
     return { ok: true };
   }
@@ -567,7 +570,7 @@ export class MainSession {
       this.writeDriver({ holder: "none", host: s.host, sessionId: s.id, pid: null, since: new Date().toISOString(), forkedFrom: null, mode: null, handoff: dr?.handoff ?? null, path: "fresh" });
       if (dr?.handoff) { try { appendFileSync(join(this.handoffDir(), dr.handoff), `\n## Stopped ${new Date().toISOString()}\n\nStudio closed its own primary. No terminal owns it. Dispatched native Tasks remain independent.\n`); } catch {} }
       this.drive = null; this.origin = null;
-      this.note({ kind: "status", text: "Firstmate stopped. Dispatched native Tasks keep their own lifecycle. / Firstmate 已停止；已派出的原生任務保持各自的生命週期。" });
+      this.note({ kind: "status", text: "Firstmate stopped. Dispatched native Tasks keep their own lifecycle. / Firstmate 已停止；已派出的原生任務保持各自的生命週期。", i18n: { en: "Firstmate stopped. Dispatched native Tasks keep their own lifecycle.", "zh-TW": "Firstmate 已停止；已派出的原生任務保持各自的生命週期。" } });
       this.changed();
       return null;
     }
@@ -583,7 +586,7 @@ export class MainSession {
       this.origin = null;
     } else if (dr) { try { appendFileSync(join(this.handoffDir(), dr.handoff!), `\n## Released ${new Date().toISOString()}\n\n- Continue the thread in a terminal: \`${cmd2}\`\n`); } catch {} }
     this.drive = null;
-    this.note({ kind: "status", text: `Handed back. Run in a terminal: ${cmd2}` });
+    this.note({ kind: "status", ...bi(`Handed back. Run in a terminal: ${cmd2}`, `已交回。在終端機執行：${cmd2}`) });
     this.changed();
     return cmd2;
   }
@@ -637,6 +640,11 @@ export function freshText(cwd: string, handoff: { name: string; text: string } |
 /** The names a fresh primary is told about: every tool actually registered, else the known default set. */
 const DEFAULT_NATIVE_TOOLS=["studio_list_workflows","studio_list_projects","studio_operating_rules","studio_work_status","studio_prepare_project_work","studio_staffing_facts","studio_staffing_interview","studio_propose_staffing","studio_change_staffing","studio_propose_work","studio_draft_workflow","studio_save_workflow_draft","studio_startup_workflow_contract"];
 const toolList=(names:string[])=>names.length>1?`${names.slice(0,-1).join(", ")} and ${names.at(-1)}`:names.join("");
+/** claudeModeLine in zh-TW (the 简体中文 UI derives from it), worded as the Firstmate card words it */
+export function claudeModeLineZh(requested: string | null, effective: string | null): string {
+  if (!effective) return `Claude 權限模式：${requested ?? "default"}（已要求，等待 Claude 確認）`;
+  return requested && requested !== effective ? `Claude 權限模式：${effective}（要求的是 ${requested}；Claude 沒有啟用）` : `Claude 權限模式：${effective}`;
+}
 /** "Claude permission mode: <effective>", saying so when Claude did not enable the requested mode. */
 export function claudeModeLine(requested: string | null, effective: string | null): string {
   if (!effective) return `Claude permission mode: ${requested ?? "default"} (requested, waiting for Claude to confirm)`;

@@ -13,8 +13,8 @@ const api = async (u, signal) => { const r = await fetch(u, { signal }); let j =
 const DAY = 86400000;
 const ranToday = (r) => today(r.updatedAt) || today(r.endedAt);
 const inFlight = (r) => ["queued", "running", "waiting", "paused"].includes(r.status) || (r.status === "failed" && clock() - Date.parse(r.endedAt || r.updatedAt) < DAY);
-const zhOn = () => document.documentElement.lang === "zh-TW";
-const loc = (x) => (x && typeof x === "object" ? (zhOn() ? x["zh-TW"] : x.en) || x.en || "" : x || "");
+const zhOn = () => zh();
+const loc = (x) => L(x);
 const oneLine = (t) => { const s = String(t || "").replace(/\s+/g, " ").trim(); const m = /^(.{20,}?[.!?。])(\s|$)/.exec(s); const one = m ? m[1] : s; return one.length > 160 ? one.slice(0, 157) + "…" : one; };
 const fmtEl = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); const m = Math.floor(s / 60), hh = Math.floor(m / 60); return hh ? `${hh}h ${String(m % 60).padStart(2, "0")}m` : `${m}m ${String(s % 60).padStart(2, "0")}s`; };
 const usd = (n) => `$${n.toFixed(2)}`;
@@ -95,7 +95,7 @@ const FM_NODE = { dispatch: "dispatch", door: "door", plan: "plan", failfirst: "
 const FM_DEF = { id: "code-firstmate", nodes: [...new Set([...Object.values(FM_NODE), "merge"])].map((id) => ({ id })) };
 const stagesFor = (def) => { const st = window.crewLayout?.stagesFor(def) || [];
   return st.length ? st : def.nodes.filter((n) => n.kind !== "card").map((n) => ({ id: n.id, label: n.label || n.id, nodes: [n.id] })); };
-const stageLabel = (st) => (zhOn() ? st.label_tw || st.label : st.label);
+const stageLabel = (st) => window.crewI18n.zhField(lang, st.label, st.label_tw);
 const SEGN = { done: () => T("done", "完成"), running: () => T("running", "進行中"), human: () => T("waiting on you", "等你"), failed: () => T("failed", "失敗"), "": () => T("not started", "未開始") };
 function studioStages(r) {
   if (!r.def) return { stages: [], segs: [], cur: -1 };
@@ -191,7 +191,7 @@ function patchRow(id) {
 // ---------- decisions ----------
 function decisions() {
   const studio = (BD.cards || []).filter((c) => c.status === "open" && !BD.hidden.has(c.id)).map((c) => ({ source: "studio", id: c.id, data: c, ts: c.createdAt, run: c.run, kind: c.kind, title: loc(c.title), why: oneLine(loc(c.sections)?.why || c.body) }));
-  const fm = S.pending.filter((c) => !BD.hidden.has(c.id)).map((c) => { const d = c.details?.[lang] || c.details?.en || {};
+  const fm = S.pending.filter((c) => !BD.hidden.has(c.id)).map((c) => { const d = LD(c.details) || {};
     return { source: "firstmate", id: c.id, data: c, ts: c.ts, run: c.task, kind: c.purpose || c.kind || T("decision", "決定"), title: d.title || c.title, why: oneLine(d.explanation || (Array.isArray(d.why) ? (typeof d.why[0] === "string" ? d.why[0] : d.why[0]?.text) : d.why)) }; });
   return [...studio, ...fm].sort((a, b) => String(b.ts || "").localeCompare(String(a.ts || "")));
 }

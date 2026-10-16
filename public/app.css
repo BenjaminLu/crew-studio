@@ -70,7 +70,6 @@
 @container main (max-width:560px){.placed .prow{grid-template-columns:minmax(0,1fr)}}
 
 .seg button span.keep{display:inline!important}
-@media (min-width:761px){body.side-collapsed #langSeg{flex-direction:column}}
 
 /* M2: chat, intents, library */
 .chat-log .empty{color:var(--text-2)}

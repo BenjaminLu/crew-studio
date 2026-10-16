@@ -87,9 +87,15 @@ async function post(u, body) {
 const short = (s) => (s ? String(s).slice(0, 8) : "—");
 const fmtUsd = (n) => (n == null ? "—" : `$${n.toFixed(n < 1 ? 3 : 2)}`);
 
+// Language helpers from i18n.js. A page that loads this file on its own (no i18n.js) still gets English and zh-TW.
+const cardI18n = () => window.crewI18n || { pick: (l, en, tw) => (l === "zh-TW" ? tw : en), deep: (l, o) => o?.[l] || o?.en,
+  loc: (l, t) => (t == null ? "" : typeof t !== "object" ? String(t) : (l === "zh-TW" ? t["zh-TW"] || t.en : t.en) || ""), cardLangs: () => [["en", "EN"], ["zh-TW", "繁中"]] };
+const pageLang = () => (["zh-TW", "zh-CN"].includes(document.documentElement.lang) ? document.documentElement.lang : "en");
+let lastCardZh = "zh-TW";
+
 // Shared by acceptance cards and Library version history. Text is rendered as text nodes.
 window.crewImageRefinementSnapshot=(snapshot,{lang="en",review=null}={})=>{
- const T=(en,zh)=>lang==="zh-TW"?zh:en,box=h("section",{"data-image-refinement":"1",style:"overflow-wrap:anywhere;min-width:0"},h("h4",{},T("Refinement evidence for this round","本回合修改依據")));
+ const T=(en,zh,cn)=>cardI18n().pick(lang,en,zh,cn),box=h("section",{"data-image-refinement":"1",style:"overflow-wrap:anywhere;min-width:0"},h("h4",{},T("Refinement evidence for this round","本回合修改依據")));
  if(!snapshot||snapshot.schema!==1||!Array.isArray(snapshot.history)||!Array.isArray(snapshot.active)){box.append(h("p",{"data-refinement-not-recorded":"1"},T("Not recorded for this historical round. Current notes cannot establish the original wording.","此歷史回合未記錄快照；目前的標註無法證明當時原話。")));return box;}
  const s=snapshot;
  box.append(h("p",{"data-refinement-round":"1"},review?T(`Acceptance round ${review.round} · attempt ${review.attempt}; `,`驗收第 ${review.round} 回合 · 第 ${review.attempt} 次嘗試； `):"",T(`Image generation round ${s.round} · attempt ${s.attempt}`,`圖片製作第 ${s.round} 回合 · 第 ${s.attempt} 次嘗試`)),h("p",{},T("Original intent: ","原始需求："),s.intent));
@@ -102,11 +108,11 @@ window.crewImageRefinementSnapshot=(snapshot,{lang="en",review=null}={})=>{
 /**
  * Mount one card into `el` (its content is replaced). `card` is a Studio card as /api/scards returns it.
  * opts.onAnswered(card) runs after the server took the answer; opts.inbox adds the run/workflow/node line;
- * opts.lang ("en" | "zh-TW") picks the first language (default: the page's). Returns { el, update(card) }.
+ * opts.lang ("en" | "zh-TW" | "zh-CN") picks the first language (default: the page's). Returns { el, update(card) }.
  */
 function mountCard(el, card, opts = {}) {
   css();
-  const fresh = { lang: opts.lang || (document.documentElement.lang === "zh-TW" ? "zh-TW" : "en"), ticks: new Set(), opened: new Set(), confirm: false, note: "", msg: "", ok: false, busy: false };
+  const fresh = { lang: opts.lang || pageLang(), ticks: new Set(), opened: new Set(), confirm: false, note: "", msg: "", ok: false, busy: false };
   const st = opts.state || {}; for (const [k, v] of Object.entries(fresh)) if (!(k in st)) st[k] = v;
   const expectsInterview=card.workflow==='pack-genesis'&&card.node==='interview-answers';const form=card.interview;let draft=null;
   if(form?.schema===1&&/^[a-f0-9]{64}$/.test(form.batchHash)&&/^R-\d+$/.test(card.run)&&/^SC-\d+$/.test(card.id)&&form.visit===card.visit&&Array.isArray(form.questions)&&form.questions.length===6){
@@ -119,11 +125,12 @@ function mountCard(el, card, opts = {}) {
   el.addEventListener('keydown', e => { if(composingField(e)&&(e.isComposing||e.keyCode===229||composing)){ if(e.key==='Enter'||e.keyCode===229)e.stopPropagation(); } }, true);
   el.addEventListener('compositionend', e => { if(e.target!==composing)return;const field=composing;composing=null;compositionTimer=setTimeout(()=>{if(composing)return;if(field.matches('[data-card-note]'))st.note=field.value;else if(draft&&field.dataset.interview){draft.answers[field.dataset.interview]=field.value;draft.dirty=true;}if(pendingRender){pendingRender=false;render();}if(draft&&draft.dirty)saveDraft().catch(error=>{st.msg=error.message;st.draw();});},0); }, true);
   st.card = card; st.draw = () => render(); // the newest mount draws: an answer that settles after a remount shows on the card that is on screen
-  const zh = () => st.lang === "zh-TW";
-  const T = (en, tw) => (zh() ? tw : en);
-  const L = (l) => { if (l == null) return ""; if (typeof l === "string") return l; return zh() ? l["zh-TW"] || l.en || "" : l.en || ""; };
-  // a localized line: the zh-TW text, or the English with a mark when the coordinator could not translate it
-  const LL = (l) => (zh() && l && l.untranslated ? [l.en, h("span", { class: "cc-untr", "data-untranslated": "" }, "未翻譯")] : L(l));
+  const zh = () => st.lang !== "en";
+  // the card's own language: zh-CN derives from the zh-TW text (i18n.js) unless the card or call carries zh-CN
+  const T = (en, tw, cn) => cardI18n().pick(st.lang, en, tw, cn);
+  const L = (l) => cardI18n().loc(st.lang, l);
+  // a localized line: the Chinese text, or the English with a mark when the coordinator could not translate it
+  const LL = (l) => (zh() && l && l.untranslated ? [l.en, h("span", { class: "cc-untr", "data-untranslated": "" }, T("untranslated", "未翻譯"))] : L(l));
   const sec = (key, title, ...kids) => h("section", { class: "cc-sec", "data-sec": key }, h("h4", {}, title), ...kids);
 
   function detailView(d, c) {
@@ -133,7 +140,7 @@ function mountCard(el, card, opts = {}) {
       h("p",{class:"cc-count"},T("This fingerprint identifies the captain-approved repository permissions; it is not a credential.","此指紋識別船長核准的儲存庫權限，不是憑證。"))));}
     out.push(sec("intent", T("Intent (the captain's words)", "意圖（船長的原話）"),
       h("p", { class: "cc-quote", "data-intent-text": "" }, d.intent.en),
-      zh() && !d.intent.untranslated && d.intent["zh-TW"] !== d.intent.en ? h("p", { class: "cc-count" }, d.intent["zh-TW"]) : null));
+      zh() && !d.intent.untranslated && d.intent["zh-TW"] !== d.intent.en ? h("p", { class: "cc-count" }, L(d.intent)) : null));
     out.push(sec("why", T("Why", "為什麼"), d.why.length ? h("ul", {}, d.why.map((w) => h("li", {}, LL(w)))) : h("p", { class: "cc-count" }, T("The spec gives no reason.", "spec 沒有寫原因。"))));
     out.push(sec("scope", T("Scope", "範圍"), h("dl", { class: "cc-kv" },
       h("dt", {}, T("In", "範圍內")), h("dd", { class: "cc-mono" }, d.scope.in.join(", ") || "—"),
@@ -190,7 +197,7 @@ function mountCard(el, card, opts = {}) {
     return h("div", { class: "cc-actions" }, ls.map((l) => h("a", { class: "btn", href: l.href, target: inApp(l.href) ? null : "_blank", rel: inApp(l.href) ? null : "noopener", "data-card-link": l.label }, l.label === "Open website in new tab"?T("Open website in new tab","在新分頁開啟網站"):l.label === "Open the app" ? T("Open the app", "打開 app") : l.label)));
   }
   function plainView(c) {
-    const s = c.sections?.[st.lang] || c.sections?.en; const out = [];
+    const s = cardI18n().deep(st.lang, c.sections); const out = [];
     if (s?.intent) out.push(sec("intent", T("Intent", "意圖"), h("p", { class: "cc-quote" }, s.intent)));
     if (s?.why) out.push(sec("why", T("Why", "為什麼"), h("p", {}, s.why)));
     if (s?.how) out.push(sec("how", T("How", "怎麼做"), h("p", {}, s.how)));
@@ -266,9 +273,10 @@ function mountCard(el, card, opts = {}) {
       st.busy = false; st.draw();
       if(st.msg){const feedback=el.querySelector('[data-card-msg]');feedback?.scrollIntoView({block:'nearest'});feedback?.focus({preventScroll:true});}
     };
-    const lang = h("div", { class: "cc-lang", role: "group", "aria-label": "Language" }, [["en", "EN"], ["zh-TW", "繁中"]].map(([k, lab]) =>
-      h("button", { type: "button", "data-card-lang": k, "aria-pressed": String(st.lang === k), onclick: () => { st.lang = k; render(); } }, lab)));
-    const body = !d && zh() && c.body === c.sections?.en?.why && c.sections?.["zh-TW"]?.why ? c.sections["zh-TW"].why : c.body;
+    const lang = h("div", { class: "cc-lang", role: "group", "aria-label": "Language" }, cardI18n().cardLangs(st.lang !== "en" ? st.lang : pageLang() !== "en" ? pageLang() : lastCardZh).map(([k, lab]) =>
+      h("button", { type: "button", "data-card-lang": k, "aria-pressed": String(st.lang === k), onclick: () => { st.lang = k; if (k !== "en") lastCardZh = k; render(); } }, lab)));
+    const zhWhy = zh() && c.sections?.["zh-TW"]?.why ? cardI18n().deep(st.lang, c.sections)?.why : null;
+    const body = !d && zhWhy && c.body === c.sections?.en?.why ? zhWhy : c.body;
     const kids = [
       h("div", { class: "cc-h rt-card-h" }, h("span", { class: "vbadge" }, c.kind), h("b", {}, L(c.title)), c.door ? h("span", { class: `vbadge door-${c.door}` }, c.door) : null, lang),
       opts.inbox ? h("div", { class: "cardmeta cc-meta", "data-scard-meta": c.id }, h("span", { class: "mono" }, c.id), h("a", { href: `#/run/${encodeURIComponent(c.run)}` }, c.run), h("span", {}, c.workflow), h("span", { class: "badge" }, c.node)) : null,

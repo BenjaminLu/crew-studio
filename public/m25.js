@@ -105,7 +105,7 @@ function externalView(x) {
   const who = { claude: "Claude", codex: "Codex", studio: "Studio" }[x.source] || x.source, cls = EXT_CLASS[x.class] || EXT_CLASS.api;
   return h("div", { class: "rich chat-err ext-err", role: "alert", "data-external-error": x.code, "data-error-class": x.class, "data-error-source": x.source },
     h("div", { class: "rk", style: "color:var(--bad)" }, icon("alert", "ic sm"), `${who} · ${T(cls[0], cls[1])}`, h("span", { class: "vbadge" }, x.code)),
-    h("div", { style: "font-size:13px" }, x.reason?.[lang] || x.reason?.en || ""),
+    h("div", { style: "font-size:13px" }, L(x.reason)),
     x.message ? h("code", { class: "ext-msg", "data-external-message": "" }, x.message) : null);
 }
 /** Earlier primary sessions keep their lines as their own block, labelled with host and model. */
@@ -117,10 +117,12 @@ function sessionSep(x, prev, all, v) {
   if (!many && !earlier) return null;
   // the model once known: any later line of the block names it, or the running session reports it
   const model = all.filter((y) => y.session?.id === x.session.id && y.session.model).map((y) => y.session.model).at(-1) || (!earlier && v.model && v.model !== v.host ? v.model : null);
-  const when = new Date(x.at).toLocaleString(lang === "zh-TW" ? "zh-TW" : "en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const when = new Date(x.at).toLocaleString(I18N.locale(lang), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   return h("div", { class: "chat-session-sep", "data-session-block": x.session.id, "data-earlier": earlier ? "1" : "0", "data-session-model": model || null },
     h("span", {}, earlier ? T("Earlier session", "較早的 session") : T("This session", "目前的 session"), ` · ${x.session.host}${model ? ` · ${model}` : ""} · ${when}`));
 }
+// a Studio note in the UI language: its i18n pair when the server sent one, else its text (zh-CN converts any Traditional in it)
+const noteText = (it) => (it.i18n ? L(it.i18n) : T(it.text, it.text));
 function logItem(it, i) {
   if(it.source === "studio:native-outcome")return h("div",{class:"card x-pad","data-native-outcome":it.id},h("p",{},it.text),...(it.links||[]).filter(l=>/^#\/(run|review)\//.test(l.href)).map(l=>h("a",{class:"btn",href:l.href},l.label)));
   if (it.kind === "captain") return h("div", { class: "msg me", "data-main": "captain" }, it.text ? h("div", { class: "bub" }, it.text) : null, it.attachments?.length ? attView(it.attachments) : null, it.source && it.source !== "desktop" ? h("div", { class: "faint", style: "font-size:11px;text-align:right" }, it.source) : null);
@@ -129,7 +131,7 @@ function logItem(it, i) {
   if (it.kind === "firstmate") return h("div", { class: "msg fm", "data-main": "firstmate" }, h("div", { class: "meta" }, "Firstmate", (it.session?.host || MS.view?.host) ? h("span", { class: "vbadge" }, it.session?.host || MS.view.host) : null), h("div", { class: "bub" }, md(it.text)));
   if (it.kind === "tool") return h("div", { class: "toolrow", "data-main": "tool", style: "padding:2px 6px" }, h("code", { style: "font-size:12px" }, it.text.slice(0, 160)));
   const lab = KLABEL[it.kind]?.();
-  return h("div", { class: "faint", "data-main": it.kind, style: "font-size:12.5px;padding:4px 8px;border-left:2px solid var(--line);white-space:pre-wrap" }, lab ? h("b", {}, lab + " · ") : null, it.kind === "wake" ? it.text.split("\n").slice(1, -1).join("\n") : it.text);
+  return h("div", { class: "faint", "data-main": it.kind, style: "font-size:12.5px;padding:4px 8px;border-left:2px solid var(--line);white-space:pre-wrap" }, lab ? h("b", {}, lab + " · ") : null, it.kind === "wake" ? it.text.split("\n").slice(1, -1).join("\n") : noteText(it));
 }
 renderChat = function (stick = true) {
   if (!isMain()) return renderStatus(stick);
@@ -214,7 +216,7 @@ async function upload(a, f) {
     const r = await postJ("/api/main/attachments", { name: a.name, data });
     if (!MS.att.includes(a)) return;
     if (r.ok && r.attachment) { a.state = "ready"; a.ref = r.attachment; a.name = r.attachment.name; a.pdf = r.attachment.kind === "pdf"; if (a.pdf && a.url) { URL.revokeObjectURL(a.url); a.url = null; } }
-    else { a.state = "refused"; a.code = r.code || `http_${r.status}`; a.error = r.reason ? r.reason[lang] || r.reason.en : r.error ? `${T("Upload failed", "上傳失敗")} (${a.code}): ${r.error}` : `${T("Upload failed", "上傳失敗")} (HTTP ${r.status})`; }
+    else { a.state = "refused"; a.code = r.code || `http_${r.status}`; a.error = r.reason ? L(r.reason) : r.error ? `${T("Upload failed", "上傳失敗")} (${a.code}): ${r.error}` : `${T("Upload failed", "上傳失敗")} (HTTP ${r.status})`; }
   } catch (e) { a.state = "refused"; a.code = "upload_network"; a.error = `${T("Upload failed", "上傳失敗")}: ${String(e?.message || e).slice(0, 300)}`; localNotice({ source: "studio", class: "upload", code: "upload_network", message: String(e?.message || e).slice(0, 300), reason: { en: `${a.name} was not uploaded.`, "zh-TW": `${a.name} 沒有上傳。` } }); }
   renderAtt();
 }

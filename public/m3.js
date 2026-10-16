@@ -151,7 +151,7 @@ function verRow(a, v, d) {
         v.sha256 ? h("code", { class: "a3-sha", title: v.sha256 }, `sha ${v.sha256.slice(0, 10)}`) : null,
         intact ? null : h("span", { class: "badge bad" }, T(`changed: ${v.integrity.join(", ")}`, `被改動：${v.integrity.join(", ")}`)),
         v.render && a.type === "video" ? h("span", { class: `badge ${v.render.state === "done" ? "ok" : v.render.state === "failed" ? "bad" : "run"}` }, v.render.state === "done" ? T("rendered", "已算圖") : v.render.state === "failed" ? T("render failed", "算圖失敗") : T("rendering…", "算圖中…")) : null),
-      a.type==="image"&&window.crewImageRefinementSnapshot?window.crewImageRefinementSnapshot(v.refinement,{lang:document.documentElement.lang}):null,
+      a.type==="image"&&window.crewImageRefinementSnapshot?window.crewImageRefinementSnapshot(v.refinement,{lang}):null,
       v.summary ? h("div", { class: "faint", style: "font-size:13px" }, v.summary) : null,
       v.approvedBy ? h("div", { class: "faint", style: "font-size:13px" }, T(`Approved by ${v.approvedBy} ${ago(v.approvedAt)}`, `${v.approvedBy} ${ago(v.approvedAt)}核准`)) : null),
     h("div", { class: "a3-vact" },

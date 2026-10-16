@@ -92,7 +92,7 @@ async function ask(text) {
   CH.busy = true; renderChat(); saveChat();
   const ctrl = new AbortController(); CH.abort = ctrl;
   try {
-    const r = await fetch("/api/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: text, history, lang }), signal: ctrl.signal });
+    const r = await fetch("/api/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: text, history, lang: I18N.modelLang(lang) }), signal: ctrl.signal });
     if (!r.ok || !r.body) { const e = await r.json().catch(() => ({})); reply.error = { code: e.code || "cliError", message: e.error || `HTTP ${r.status}` }; }
     else {
       const reader = r.body.getReader(), dec = new TextDecoder();

@@ -49,15 +49,16 @@ function graph(def, o = {}) {
   svg.append(s("defs", {}, s("marker", { id: `arr-${def.id}`, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, s("path", { d: "M0,0 L10,5 L0,10 z", class: "rt-arrow" }))));
   const bad = new Set((o.problems || []).filter((p) => p.level === "error" && p.node).map((p) => p.node));
   const badE = new Set((o.problems || []).filter((p) => p.level === "error" && p.edge).map((p) => p.edge));
-  const zh = document.documentElement.lang === "zh-TW";
+  // T() picks the language (zh-CN derives from the zh-TW label), so this also runs where a harness supplies only T
+  const zh = T(false, true), stageTw = (st) => T(st.label, st.label_tw || st.label);
   // stage boxes behind everything; the title toggles the stage
   const sg = s("g", { class: "rt-stages" });
   const pending = [], stageBadged = new Set(); // badges drawn once the label layer exists
   for (const st of lay.stages) {
     const state = stageState(st.nodes, o.states);
     const title = s("g", { class: "rt-stage-t", tabindex: 0, role: "button", "aria-expanded": "true", "data-stage-toggle": st.id, "aria-label": T(`${st.label}: collapse`, `${st.label_tw || st.label}：收合`) },
-      s("rect", { x: st.x + 6, y: st.y + 5, width: Math.min(st.w - 12, (zh ? (st.label_tw || st.label).length * 13 : st.label.length * 7.2) + 30), height: 18, rx: 9, class: "rt-stage-pill" }),
-      s("text", { x: st.x + 14, y: st.y + 18, class: "rt-stage-label" }, `▾ ${zh ? st.label_tw || st.label : st.label}`));
+      s("rect", { x: st.x + 6, y: st.y + 5, width: Math.min(st.w - 12, (zh ? stageTw(st).length * 13 : st.label.length * 7.2) + 30), height: 18, rx: 9, class: "rt-stage-pill" }),
+      s("text", { x: st.x + 14, y: st.y + 18, class: "rt-stage-label" }, `▾ ${stageTw(st)}`));
     const tog = (ev) => { if (svg.interactionActive) return; ev.stopPropagation(); o.onToggleStage?.(st.id); };
     title.addEventListener("click", tog); title.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); tog(ev); } });
     sg.append(s("g", { class: `rt-stage${state ? ` st-${state}` : ""}`, "data-stage": st.id }, s("rect", { x: st.x, y: st.y, width: st.w, height: st.h, rx: 14, class: "rt-stage-box" }), title));
@@ -103,7 +104,7 @@ function graph(def, o = {}) {
   for (const vn of lay.nodes) {
     if (vn.kind === "stage") { // a collapsed stage: one box with its state
       const st = stageState(vn.members, o.states);
-      const lab = zh ? (lay.stageList.find((x) => x.id === vn.stage)?.label_tw || vn.label) : vn.label;
+      const lab = T(vn.label, lay.stageList.find((x) => x.id === vn.stage)?.label_tw || vn.label);
       const g = s("g", { class: `rt-node rt-stagenode${st ? ` st-${st}` : ""}`, transform: `translate(${vn.x},${vn.y})`, "data-stage-node": vn.stage, tabindex: 0, role: "button", "aria-expanded": "false",
         "aria-label": T(`${vn.label} stage, ${vn.members.length} nodes${st ? `, ${st}` : ""}: expand`, `${lab} 階段，${vn.members.length} 個節點${st ? `，${st}` : ""}：展開`) },
         s("rect", { width: vn.w, height: vn.h, rx: 14, class: "rt-box" }), s("text", { x: 12, y: 24, class: "rt-label" }, `▸ ${fitText(lab, 16)}`),
@@ -226,7 +227,7 @@ function newWorkflow() {
     if(!name.value.trim()||name.value.trim().length>120){message.textContent=T("Enter a workflow name (up to 120 characters).","請輸入流程名稱（最多 120 個字元）。");name.focus();return;}
     if(!/^[a-z0-9][a-z0-9-]{0,40}$/.test(id.value)){message.textContent=T("Use 1–41 lowercase letters, numbers or hyphens for the id.","代號須為 1–41 個小寫英文字母、數字或連字號。");id.focus();return;}
     pending=true;button.disabled=true;name.disabled=id.disabled=true;dialog?.querySelectorAll("button").forEach(b=>{b.disabled=true;});message.textContent=T("Creating…","建立中…");
-    try{const r=await api("/api/wf",{id:id.value,name:name.value.trim(),locale:lang});WF.listGeneration++;WF.list=null;if(!body.isConnected)return;close();location.hash=`#/workflows/${r.def.id}`;}
+    try{const r=await api("/api/wf",{id:id.value,name:name.value.trim(),locale:window.crewI18n.modelLang(lang)});WF.listGeneration++;WF.list=null;if(!body.isConnected)return;close();location.hash=`#/workflows/${r.def.id}`;}
     catch(error){message.textContent=/already exists/.test(error.message)?T("This workflow id already exists. Choose another id.","此流程代號已存在，請換一個代號。"):T("Could not create the workflow. Try again.","無法建立流程，請重試。");}
     finally{pending=false;button.disabled=false;name.disabled=id.disabled=false;dialog?.querySelectorAll("button").forEach(b=>{b.disabled=false;});}
   });
@@ -588,7 +589,7 @@ function viewRuns() {
 }
 // a timeline line in the captain's words (Simple view): run states as public/runstate.js names them, node steps as plain verbs
 // with the run, a timeline line names a state exactly as the run's own status pill does (an artifact task "Closed without approval")
-const stateWord = (st, r) => { const s = window.runState(r ? { def: r.def, workflow: r.workflow, ctx: r.ctx, ...st } : st); return zhOn() ? s.tw : s.en; };
+const stateWord = (st, r) => { const s = window.runState(r ? { def: r.def, workflow: r.workflow, ctx: r.ctx, ...st } : st); return T(s.en, s.tw); };
 const NODE_WORDS = { skipped: ["skipped", "略過"], superseded: ["replaced", "被取代"], pending: ["reset", "重設"] };
 // node transitions a display event already says (node_started, node_done, node_failed, node_waiting) are left out of the Simple view
 // and so is the run's own "failed" note when the node's failure row already says it (one failure row per node), and the
@@ -634,7 +635,7 @@ function timelineLine(e, r) {
 // Task Rounds come from /api/tasks; never infer launches from graph colours or ledger rows.
 function roundHistory(r) {
   const outcomes = { running: ["Running", "進行中"], waiting: ["Waiting", "等待中"], passed: ["Passed", "通過"], failed: ["Failed", "未通過"], error: ["Error", "錯誤"], chosen: ["Chosen", "已選擇"], interrupted: ["Interrupted", "已中斷"], skipped: ["Skipped", "已略過"], superseded: ["Replaced", "已取代"], swapped: ["Replaced", "已取代"] };
-  const stamp = (iso) => iso ? h("time", { datetime: iso, title: iso }, new Date(iso).toLocaleString(zhOn() ? "zh-TW" : "en-US")) : T("Not yet", "尚未");
+  const stamp = (iso) => iso ? h("time", { datetime: iso, title: iso }, new Date(iso).toLocaleString(T("en-US", "zh-TW", "zh-CN"))) : T("Not yet", "尚未");
   const field = (en, tw, value) => h("div", {}, h("dt", {}, T(en, tw)), h("dd", {}, value));
   return h("section", { class: "card x-pad rt-rounds", "data-rounds": r.id, "aria-label": T("Rounds", "回合") },
     h("div", { class: "rt-rounds-head" }, h("h2", {}, T("Rounds", "回合")), (r.rounds || []).filter((x) => x.actor.kind === "agent").length > 1 ? h("a", { class: "btn", href: `#/tasks/${r.id}/compare`, "data-compare-link": r.id }, T("Compare transcripts", "並排比較紀錄")) : null),
@@ -644,14 +645,14 @@ function roundHistory(r) {
       const imageCards=(r.cards||[]).filter(c=>c.node===rd.node&&c.visit===rd.number&&c.detail?.artifactAcceptance?.offered?.some(o=>o.format==="image"));
       const exact=imageCards.filter(c=>c.detail.artifactAcceptance.review?.round===rd.number&&c.detail.artifactAcceptance.review?.attempt===rd.attempt);
       const imageEvidence=rd.actor.kind==="card"&&imageCards.length&&window.crewImageRefinementSnapshot
-        ? exact.length?exact.map(c=>h("div",{"data-round-refinement-card":c.id},h("p",{},c.id),...(c.detail.artifactAcceptance.refinements||[{snapshot:null}]).map(e=>window.crewImageRefinementSnapshot(e.snapshot,{lang:zhOn()?"zh-TW":"en",review:c.detail.artifactAcceptance.review})))):window.crewImageRefinementSnapshot(null,{lang:zhOn()?"zh-TW":"en"})
+        ? exact.length?exact.map(c=>h("div",{"data-round-refinement-card":c.id},h("p",{},c.id),...(c.detail.artifactAcceptance.refinements||[{snapshot:null}]).map(e=>window.crewImageRefinementSnapshot(e.snapshot,{lang:T("en","zh-TW","zh-CN"),review:c.detail.artifactAcceptance.review})))):window.crewImageRefinementSnapshot(null,{lang:T("en","zh-TW","zh-CN")})
         : null;
       const c = rd.cost; const cost = c ? [c.usd != null ? `$${c.usd.toFixed(2)}` : null, c.inTokens != null || c.outTokens != null ? T(`${c.inTokens ?? "—"} in / ${c.outTokens ?? "—"} out tokens`, `${c.inTokens ?? "—"} 輸入 / ${c.outTokens ?? "—"} 輸出 token`) : null, c.seconds != null ? `${c.seconds.toFixed(1)} s` : null].filter(Boolean).join(" · ") : T("No cost recorded", "未記錄費用");
       return h("li", { "data-round-id": rd.id, "data-round-node": rd.node }, h("div", { class: "rt-round-head" }, h("b", {}, rd.actor.label || rd.node),
         h("span", { class: "badge neutral" }, T(`Round ${rd.number}`, `第 ${rd.number} 回合`)), h("span", { class: "faint" }, T(`Attempt ${rd.attempt}`, `第 ${rd.attempt} 次嘗試`))),
         h("p", { class: "rt-round-actor" }, actor), h("dl", {}, field("Started", "開始", stamp(rd.startedAt)), field("Ended", "結束", stamp(rd.endedAt)),
           field("Outcome", "結果", [T(...(outcomes[rd.outcome] || [rd.outcome, rd.outcome])), rd.verdict ? ` · ${rd.verdict}` : ""]), field("Cost", "費用", cost)),
-        rd.reason ? h("p", { class: "bad" }, zhOn() ? rd.reason["zh-TW"] : rd.reason.en) : null,
+        rd.reason ? h("p", { class: "bad" }, T(rd.reason.en, rd.reason["zh-TW"] || rd.reason.en, rd.reason["zh-CN"])) : null,
         imageEvidence,
         rd.transcript ? h("a", { class: "btn", href: rd.transcript }, T("Transcript", "對話紀錄")) : null);
     })));
@@ -764,7 +765,7 @@ function cardView(c, o = {}) {
   MOUNTS.set(key, { el, ctl, status: c.status, sig }); if (MOUNTS.size > 60) MOUNTS.delete(MOUNTS.keys().next().value);
   return el;
 }
-const zhOn = () => document.documentElement.lang === "zh-TW";
+const zhOn = () => zh();
 async function loadRun(v) { if (!v) return; try { v.r = await api(`/api/tasks/${v.id}`); } catch (e) { v.r = null; } if (RN.view === v && S.route?.name === "run") render(); }
 live.listeners.add((t, d) => {
   if (t === "wrun" && d.deleted) { RN.list = null; if (S.route?.name === "run" && RN.view?.id === d.id) { RN.view = null; location.hash = "#/runs"; return; } }
@@ -796,7 +797,7 @@ function updateCue() {
   if (!n) { el?.remove(); return; }
   if (!el) { el = h("div", { class: "rt-cue", role: "status", "aria-live": "polite", "data-new-card-cue": "" }); document.body.append(el); }
   const one = SCX.open.find((c) => c.id === SCX.fresh[0]);
-  el.replaceChildren(h("span", { class: "rt-cue-dot" }), h("span", {}, n === 1 ? T(`1 new card: ${one ? (zhOn() ? one.title["zh-TW"] : one.title.en) : SCX.fresh[0]}`, `1 張新卡片：${one ? (zhOn() ? one.title["zh-TW"] : one.title.en) : SCX.fresh[0]}`) : T(`${n} new cards`, `${n} 張新卡片`)),
+  el.replaceChildren(h("span", { class: "rt-cue-dot" }), h("span", {}, n === 1 ? T(`1 new card: ${one ? L(one.title) : SCX.fresh[0]}`, `1 張新卡片：${one ? L(one.title) : SCX.fresh[0]}`) : T(`${n} new cards`, `${n} 張新卡片`)),
     h("a", { class: "btn", href: n === 1 ? `#/inbox/${encodeURIComponent(SCX.fresh[0])}` : "#/inbox", "data-new-card-show": "", onclick: () => setTimeout(dropCue, 0) }, T("Show", "查看")),
     h("button", { class: "btn ghost", type: "button", "aria-label": T("Dismiss", "關閉"), "data-new-card-dismiss": "", onclick: dropCue }, "×"));
 }
@@ -806,7 +807,7 @@ addEventListener("hashchange", () => { if (location.hash.startsWith("#/inbox")) 
 loadOpenCards();
 window.studioCards = { count: () => SCX.open.length,
   needRows: () => SCX.open.map((c) => h("div", { class: "need", "data-need-scard": c.id }, h("div", { class: "need-ic", style: "background:var(--human-soft);color:var(--human)" }, c.kind === "merge" ? "⇢" : "?"),
-    h("div", {}, h("div", { class: "need-t" }, zhOn() ? c.title["zh-TW"] : c.title.en), h("div", { class: "need-d" }, [c.run, c.workflow, c.node].join(" · "))),
+    h("div", {}, h("div", { class: "need-t" }, L(c.title)), h("div", { class: "need-d" }, [c.run, c.workflow, c.node].join(" · "))),
     h("div", { class: "need-r" }, h("a", { class: "btn", href: `#/inbox/${encodeURIComponent(c.id)}` }, T("Open", "打開"))))),
   // #/inbox/<id> shows that card first and every other waiting card under it: a card that arrives while the captain
   // is on one card (the Board's Open link) is never hidden; when that card is answered or withdrawn, the rest stay
@@ -913,7 +914,7 @@ function firstWorkflow(arg){
     preview.replaceChildren(h("div",{class:"fw-head"},h("span",{class:"badge fw-badge starter","data-first-workflow-badge":"starter"},T("Free starter · not AI generated","免費起始範本 · 並非 AI 生成"))),h("h2",{},T("Free starter preview · not AI generated","免費起始範本預覽 · 並非 AI 生成")),h("p",{},draft.goal),h("p",{},T("Captain confirmation → Done","船長確認 → 完成")),h("pre",{class:"fw-json"},JSON.stringify({nodes:[{id:"start",kind:"card"},{id:"done",kind:"hook"}],edges:[{from:"start",to:"done",when:"continue"}]},null,2)),create);
   };
   const refresh=async()=>{if(!root.isConnected&&seen)return;try{const j=await api("/api/wf/drafts");if(j.scope&&j.scope!==scope){const first=!scope;scope=j.scope;store.set(SCOPE_KEY,scope);draft=first?{...load(scope),...load("pending"),...draft}:load(scope);if(first)try{localStorage.removeItem(keyOf("pending"));}catch{}if(!first){goal.value=draft.goal||"";model=null;seen="";showStarter=false;openNode=null;draw();}save();}if(root.dataset.ready!=="1")root.dataset.ready="1";const want=arg||draft.draftId;let d=null;if(want){try{d=(await api(`/api/wf/drafts/${want}`)).draft;}catch{}}const list=j.drafts||[];const newest=list.find(x=>!x.saved&&(!draft.askedAt||x.updatedAt>=draft.askedAt));if(!arg&&newest&&(!d||d.saved||newest.updatedAt>d.updatedAt))d=(await api(`/api/wf/drafts/${newest.id}`)).draft;if(!d)return;const sig=`${d.id}@${d.revision}`;if(sig===seen)return;seen=sig;model=d;showStarter=false;if(!arg){draft.draftId=d.id;save();}draw();}catch{}};
-  let pending=false;const create=h("button",{class:"btn","data-first-workflow-create":"",onclick:async()=>{if(pending)return;remember();if(!draft.goal?.trim()){status.textContent=T("Describe your goal first.","請先寫下目標。");return;}if(draft.workflow){location.hash="#/workflows/"+draft.workflow;return;}if(draft.uncertain){status.textContent=T("Creation is uncertain. Check Workflows for the saved ID before retrying: ","建立結果尚未確認。請先到流程列表查找代號，避免重複建立：")+draft.id;return;}draft.id||="my-workflow-"+crypto.randomUUID().slice(0,8);draft.uncertain=true;save();pending=true;create.disabled=true;try{const result=await api("/api/wf",{id:draft.id,name:draft.goal.trim().slice(0,120),locale:lang==="en"?"en":"zh-TW",origin:"starter"});draft.workflow=result.def.id;draft.uncertain=false;save();WF.list=null;WF.listGeneration++;location.hash="#/workflows/"+draft.workflow;}catch(e){status.textContent=T("Could not confirm creation. Inspect Workflows for ","無法確認建立結果，請到流程列表查看 ")+draft.id;}finally{pending=false;create.disabled=false;}}},T("Save starter and edit nodes","儲存起始範本並編輯節點"));
+  let pending=false;const create=h("button",{class:"btn","data-first-workflow-create":"",onclick:async()=>{if(pending)return;remember();if(!draft.goal?.trim()){status.textContent=T("Describe your goal first.","請先寫下目標。");return;}if(draft.workflow){location.hash="#/workflows/"+draft.workflow;return;}if(draft.uncertain){status.textContent=T("Creation is uncertain. Check Workflows for the saved ID before retrying: ","建立結果尚未確認。請先到流程列表查找代號，避免重複建立：")+draft.id;return;}draft.id||="my-workflow-"+crypto.randomUUID().slice(0,8);draft.uncertain=true;save();pending=true;create.disabled=true;try{const result=await api("/api/wf",{id:draft.id,name:draft.goal.trim().slice(0,120),locale:window.crewI18n.modelLang(lang),origin:"starter"});draft.workflow=result.def.id;draft.uncertain=false;save();WF.list=null;WF.listGeneration++;location.hash="#/workflows/"+draft.workflow;}catch(e){status.textContent=T("Could not confirm creation. Inspect Workflows for ","無法確認建立結果，請到流程列表查看 ")+draft.id;}finally{pending=false;create.disabled=false;}}},T("Save starter and edit nodes","儲存起始範本並編輯節點"));
   const ask=()=>{remember();draft.askedAt=new Date(Date.now()-5000).toISOString();save();chatMode="main";store.set("crew.chatMode","main");openChat(true);const input=document.querySelector("#chatIn");if(input){if(!input.value)input.value=T("Help me design my own workflow. Interview me briefly (two or three short questions, one at a time: who does the work, who reviews it, when I decide), then draft the graph so this page previews it. This is free drafting: nothing runs and no Task starts. My goal: ","請幫我設計我自己的流程。先簡短訪談我（兩三個問題，一次一題：誰做、誰審、我何時決定），再起草流程圖讓這個頁面預覽。這是免費起草：不會執行，也不會開始任何任務。我的目標：")+draft.goal;input.dispatchEvent(new Event("input",{bubbles:true}));input.focus();}};
   const root=h("div",{class:"page fw-page","data-first-workflow":""},h("h1",{},T("Your first workflow","建立你的第一個流程")),
     h("ol",{class:"fw-steps"},[[T("Interview","訪談"),T("free","免費")],[T("Generated graph and preview","生成流程圖與預覽"),T("free","免費")],[T("Edit each node's model","設定節點模型"),T("free","免費")],[T("Confirm staffing at Run","執行時確認配置"),T("starts the Task","開始任務")],[T("Compare and refine","比較與修改"),null],[T("Save as template","存成範本"),null]].map(([a,b])=>b?h("li",{},h("b",{},a),h("span",{class:"faint"},b)):h("li",{class:"fw-roadmap","data-roadmap":""},h("b",{},a),h("span",{class:"badge"},T("Roadmap · coming later","規劃中 · 尚未提供"))))),

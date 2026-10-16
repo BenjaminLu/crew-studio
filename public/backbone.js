@@ -79,8 +79,15 @@ const page = (title, sub, ...kids) => h("div", { class: "page" }, h("div", { cla
 routes.firstmate = routes.firstmate || (() => page(T("Firstmate", "Firstmate"), T("Chat with firstmate and take over its session.", "和 firstmate 對話，接手它的 session。"),
   h("div", { class: "card x-pad" }, h("p", {}, T("The chat drives firstmate's main session: ask how things stand, say what you want done, approve its permission prompts.", "對話會驅動 firstmate 的主 session：問進度、交代要做的事、核准它的權限請求。")),
     h("div", { class: "actions" }, h("button", { class: "btn primary", id: "openChat", onclick: () => { document.body.classList.remove("chat-closed"); $("#chatIn")?.focus(); } }, icon("message", "ic sm"), T("Open the chat", "開啟對話"))))));
-routes.settings = () => page(T("Settings", "設定"), T("Doctor, keys and phone pairing, the labs switch, and the operating rules every job gets.", "健康檢查、金鑰、手機配對、實驗功能開關，以及每個工作都會收到的作業規則。"),
-  h("div", { class: "card x-pad bb-settings" },
+// the UI language: English, 繁體中文 or 简体中文, each named in its own script. setLang (app.js)
+// stores the choice the same way it always has (localStorage crew.lang) and re-renders this page.
+const langPicker = () => h("div", { class: "bb-set bb-lang", "data-settings-lang": "1" }, icon("doc"),
+  h("span", {}, h("b", { id: "settingsLangH" }, T("Language", "語言")), h("span", { class: "faint" }, T("Studio's own words, on this device. What models read does not change.", "Studio 介面上的文字，只在這台裝置。模型讀到的內容不變。")),
+    h("div", { class: "seg", role: "radiogroup", "aria-labelledby": "settingsLangH", id: "settingsLang" }, window.crewI18n.LANGS.map((l) =>
+      h("button", { type: "button", role: "radio", "data-lang-set": l, lang: l, "aria-checked": String(lang === l), "aria-pressed": String(lang === l), onclick: () => setLang(l) },
+        h("span", { class: "keep" }, window.crewI18n.NAMES[l]))))));
+routes.settings = () => page(T("Settings", "設定"), T("Language, Doctor, keys and phone pairing, the labs switch, and the operating rules every job gets.", "語言、健康檢查、金鑰、手機配對、實驗功能開關，以及每個工作都會收到的作業規則。"),
+  h("div", { class: "card x-pad bb-settings" }, langPicker(),
     h("a", { class: "bb-set", href: "#/doctor" }, icon("tool"), h("span", {}, h("b", {}, T("Doctor", "健康檢查")), h("span", { class: "faint" }, T("What works, what is missing, one-click installs, API keys.", "哪些可用、缺什麼、一鍵安裝、API 金鑰。")))),
     h("a", { class: "bb-set", href: "#/remote" }, icon("monitor"), h("span", {}, h("b", {}, T("Phone pairing", "手機配對")), h("span", { class: "faint" }, T("Planned (labs).", "規劃中（實驗功能）。")))),
     h("a", { class: "bb-set", href: "#/roadmap" }, icon("target"), h("span", {}, h("b", {}, T("Roadmap", "路線圖")), h("span", { class: "faint" }, T("What is planned next, by milestone.", "接下來的規劃，依里程碑。")))),

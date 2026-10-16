@@ -6,12 +6,20 @@ const store = {
   get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch {} },
 };
-let lang = store.get("crew.lang", "en") === "zh-TW" ? "zh-TW" : "en";
-const L = (t) => (t && typeof t === "object" ? t[lang] || t.en || "" : t || "");
+// the UI language (i18n.js): the stored choice, else the browser's language on first run
+const I18N = window.crewI18n;
+let lang = I18N.initial(store.get("crew.lang", null), navigator.languages?.length ? navigator.languages : [navigator.language]);
+const L = (t) => I18N.loc(lang, t);
+// an object keyed by language holding structures (card details, sections)
+const LD = (o) => I18N.deep(lang, o);
 // firstmate's placeholder when a round has not described its work yet
 const act = (t) => { const s = L(t); return /^Work description unavailable|^尚無工作說明/.test(s) ? "" : s; };
-const zh = () => lang === "zh-TW";
-const T = (en, tw) => (zh() ? tw : en);
+const zh = () => lang !== "en";
+// the Chinese a two-way EN / 中文 toggle switches to: the current one, else the last one used
+let lastZh = lang !== "en" ? lang : I18N.browserLang(navigator.languages || []) === "zh-CN" ? "zh-CN" : "zh-TW";
+const zhLang = () => (lang !== "en" ? lang : lastZh);
+// English, the zh-TW text, or zh-CN: the optional third argument, else derived from zh-TW
+const T = (en, tw, cn) => I18N.pick(lang, en, tw, cn);
 
 // ---------- time ----------
 const ago = (iso) => {
@@ -40,7 +48,8 @@ const prUrl = (n) => `https://github.com/${S.github?.repo || "unknown/unknown"}/
 const nodeLabel = (id) => S.flow?.nodes?.find((n) => n.id === id)?.label || id;
 const pathFor = (door) => door === "two-way" ? ["dispatch", "door", "build", "ci", "review", "gates", "merge", "done"]
   : ["dispatch", "door", "plan", "failfirst", "build", "ci", "review", "gates", "merge", "done"];
-const toast = (msg) => { const t = h("div", { class: "toast", role: "status" }, msg); document.body.append(t); setTimeout(() => t.remove(), 3200); };
+// a server message may carry Traditional text ("… / 請先…"): in 简体中文 it converts like every other zh-TW string
+const toast = (msg) => { const t = h("div", { class: "toast", role: "status" }, typeof msg === "string" ? T(msg, msg) : msg); document.body.append(t); setTimeout(() => t.remove(), 3200); };
 
 function ciSummary(pr) {
   const p = S.github?.prs?.find((x) => x.number === pr);
@@ -134,7 +143,7 @@ function ghBar() {
       : T(`GitHub unavailable, backing off until ${clock(g.backoffUntil)}`, `GitHub 連不上，退避到 ${clock(g.backoffUntil)}`));
 }
 function needRow(c) {
-  const d = c.details?.[lang] || c.details?.en || {};
+  const d = LD(c.details) || {};
   const merge = c.kind === "merge" || /^MERGE CARD/i.test(c.title);
   return h("div", { class: "need" },
     h("div", { class: "need-ic", style: `background:var(--${merge ? "ok" : "human"}-soft);color:var(--${merge ? "ok" : "human"})` }, icon(merge ? "pr" : "human")),
@@ -175,7 +184,7 @@ function viewInbox(id) {
 }
 const sel = new Map(); // card id -> { chosen, answers: Map(index -> {ok,text}) }
 function cardView(c) {
-  const d = c.details?.[lang] || c.details?.en || {};
+  const d = LD(c.details) || {};
   const en = c.details?.en || {};
   const st = sel.get(c.id) || { chosen: null, answers: new Map() }; sel.set(c.id, st);
   const facts = (xs) => (Array.isArray(xs) ? xs : []).map((x) => (typeof x === "string" ? x : x?.text)).filter(Boolean);
@@ -211,7 +220,7 @@ function cardView(c) {
 function confirmSend(c, st) {
   const answers = [...st.answers.entries()].sort((a, b) => a[0] - b[0]).map(([index, a]) => a.ok ? { index, ok: true } : { index, ok: false, text: a.text || "" });
   if (answers.some((a) => !a.ok && !a.text.trim())) { toast(T("Every unchecked question needs a note.", "每個沒打勾的問題都要寫原因。")); return; }
-  const o = (c.details?.[lang] || c.details?.en || {}).options?.[st.chosen];
+  const o = (LD(c.details) || {}).options?.[st.chosen];
   modal(T(`Send ${st.chosen} on ${c.id}?`, `在 ${c.id} 送出 ${st.chosen}？`),
     h("p", { class: "muted", style: "margin:0" }, o?.description || st.chosen, " — ", T("the board records it and runs its effect.", "看板會記錄並執行它。")),
     async (close, btn) => {
@@ -419,7 +428,9 @@ function connect() {
 // ---------- shell: theme, language, sidebar ----------
 function setTheme(t) { if (t === "system") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t; store.set("crew.theme", t);
   $$("#themeSeg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.themeSet === t))); }
-function setLang(l) { lang = l; store.set("crew.lang", l); document.documentElement.lang = l; $$("#langSeg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.langSet === l)));
+// persist = false keeps a first-run (browser) language unstored until the captain picks one in Settings
+function setLang(l, persist = true) { l = I18N.LANGS.includes(l) ? l : "en"; lang = l; if (l !== "en") lastZh = l; if (persist) store.set("crew.lang", l); document.documentElement.lang = l;
+  $$("[data-lang-set]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.langSet === l)));
   const names = { board: ["Board", "看板"], inbox: ["Inbox", "收件匣"], crew: ["Crew", "船員"], activity: ["Activity", "事件"], workflow: ["Workflow", "流程"], intents: ["Intents", "意圖"], library: ["Library", "成品庫"], remote: ["Phone", "手機"], doctor: ["Doctor", "健康檢查"], changes: ["Changes", "變更"] };
   $$(".nav-item").forEach((b) => { const n = names[b.dataset.view]; if (!n) return; b.querySelector(".nl").textContent = T(...n); b.dataset.tip = T(...n); });
   window.onLang?.();
@@ -431,11 +442,10 @@ hydrateIcons(document);
 setTheme(store.get("crew.theme", "system"));
 if (document.documentElement.classList.contains("pre-collapsed")) document.body.classList.add("side-collapsed");
 $$("#themeSeg button").forEach((b) => b.addEventListener("click", () => setTheme(b.dataset.themeSet)));
-$$("#langSeg button").forEach((b) => b.addEventListener("click", () => setLang(b.dataset.langSet)));
 $$(".nav-item").forEach((b) => b.addEventListener("click", () => { location.hash = `#/${b.dataset.view}`; }));
 $("#sideTog").addEventListener("click", () => setSide(!document.body.classList.contains("side-collapsed")));
 addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); setSide(!document.body.classList.contains("side-collapsed")); } });
 addEventListener("hashchange", route);
 setInterval(() => { if (S.route?.name === "board") render(); }, 30_000); // keep "ago" fresh
-setLang(lang);
+setLang(lang, false);
 load().then(connect).catch((e) => { $("#view").replaceChildren(h("div", { class: "card" }, h("div", { class: "empty" }, icon("alert"), h("b", {}, "Crew Studio could not load"), String(e)))); });

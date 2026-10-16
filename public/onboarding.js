@@ -86,7 +86,7 @@
   };
   const JOURNEY_KEY='crew.onboarding.journey.dismissed.v1';
   let journey=null,openingJourney=false,refreshing=false,refreshAgain=false;
-  const jt=(en,tw,cn)=>store.get('crew.lang','en')==='zh-CN'?(cn??tw):T(en,tw);
+  const jt=(en,tw,cn)=>T(en,tw,cn);
   function closeJourney(){const s=journey;if(!s)return;journey=null;document.documentElement.style.removeProperty('--ob-journey-reserve');s.observer.disconnect();cancelAnimationFrame(s.frame);s.root.remove();removeEventListener('resize',s.schedule);document.removeEventListener('scroll',s.schedule,true);document.removeEventListener('keydown',s.key);s.main.style.maxHeight=s.oldMaxHeight;s.main.style.overflow=s.oldOverflow;if(s.trigger?.isConnected)s.trigger.focus();}
   async function refreshJourney(){
     if(!journey)return;if(refreshing){refreshAgain=true;return;}refreshing=true;const s=journey;

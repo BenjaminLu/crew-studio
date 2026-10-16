@@ -97,8 +97,8 @@ try {
         const afterSse = await p.evaluate(() => { window.__es?.dispatchEvent(new MessageEvent("crew", { data: JSON.stringify({ crew: [], tasks: [] }) })); return document.querySelectorAll("[data-crew-activity] .ev").length; });
         await p.waitForTimeout(300); const n1 = fetches; // the stale re-render refetched in the background
         await p.evaluate(() => { const real = Date.now; Date.now = () => real() + 10_000; });
-        const afterLang = await p.evaluate(() => { document.querySelector('#langSeg [data-lang-set="zh-TW"]').click(); return document.querySelectorAll("[data-crew-activity] .ev").length; });
-        await p.click('#langSeg [data-lang-set="en"]');
+        const afterLang = await p.evaluate(() => { setLang("zh-TW"); return document.querySelectorAll("[data-crew-activity] .ev").length; });
+        await p.evaluate(() => setLang("en"));
         // a visit to a stale list loads it again
         await p.goto(`${base}/#/activity`); await p.waitForTimeout(200); await p.evaluate(() => { const real = Date.now; Date.now = () => real() + 10_000; });
         const n2 = fetches; await p.goto(`${base}/#/crew`); await p.waitForTimeout(300); const n3 = fetches;
@@ -108,10 +108,10 @@ try {
           JSON.stringify({ afterSse, afterLang, n0, n1, n2, n3, stillThere })); }
       await p.evaluate(() => { const b = document.createElement("button"); b.className = "nav-item"; b.dataset.view = "late"; b.textContent = "Late"; document.querySelector(".nav").append(b); });
       ok(await Promise.race([p.evaluate(() => new Promise((r) => setTimeout(() => r(!!document.querySelector('.nav-labs .nav-item[data-view="late"]')), 50))), new Promise((r) => setTimeout(() => r(false), 2000))]), "an item added later lands in labs and the page stays responsive");
-      await p.click('#langSeg [data-lang-set="zh-TW"]'); await p.waitForTimeout(200);
+      await p.evaluate(() => setLang("zh-TW")); await p.waitForTimeout(200);
       const zh = await p.$$eval(".nav > .nav-item[data-backbone] .nl", (ns) => ns.map((n) => n.textContent));
       ok(JSON.stringify(zh) === JSON.stringify(["看板", "Firstmate", "收件匣", "船員", "任務", "流程", "成品庫"]) && (await p.getAttribute("#navSettings", "aria-label")) === "設定", "switching to zh-TW relabels the backbone items and the gear", JSON.stringify(zh));
-      await p.click('#langSeg [data-lang-set="en"]');
+      await p.evaluate(() => setLang("en"));
     }
     if (width === 390 && scheme === "dark") {
       // wait for what the assertion reads (the page and the sidebar's labs group), not a fixed time

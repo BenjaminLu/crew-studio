@@ -13,7 +13,7 @@ function geometry(def, options) {
 }
 
 const active = r => !r.archived && !['closed','cancelled','succeeded'].includes(r.status);
-const loc = x => typeof x === 'object' && x ? x[document.documentElement.lang] || x.en || '' : x || '';
+const loc = x => L(x);
 function frontiers(r, cards) {
   const failureNode = r.status === 'failed' ? [...(r.events || [])].reverse().find(e=>e.type==='failed')?.node : null;
   return Object.entries(r.nodes || {}).filter(([id,n]) => n.state === 'running' || n.waiting || (r.queue || []).includes(id) || (r.status === 'failed' && id === failureNode) || n.state === 'blocked').map(([id,n]) => {
@@ -42,7 +42,7 @@ function workflow(id,rs,cards) {
  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox',`${box.x-16} ${box.y-16} ${w} ${height}`);svg.setAttribute('aria-hidden','true');svg.classList.add('wo-lines');
  const marker=document.createElementNS(svg.namespaceURI,'marker');marker.id='wo-arrow-'+id.replace(/[^a-z0-9_-]/gi,'_');marker.setAttribute('viewBox','0 0 10 10');marker.setAttribute('refX','9');marker.setAttribute('refY','5');marker.setAttribute('markerWidth','6');marker.setAttribute('markerHeight','6');marker.setAttribute('orient','auto');const tip=document.createElementNS(svg.namespaceURI,'path');tip.setAttribute('d','M 0 0 L 10 5 L 0 10 z');tip.style.fill='var(--text-3)';marker.append(tip);const defs=document.createElementNS(svg.namespaceURI,'defs');defs.append(marker);svg.append(defs);
  for(const e of g.edges){const p=document.createElementNS(svg.namespaceURI,'path');p.setAttribute('d',crewLayout.pathD(e));p.setAttribute('marker-end',`url(#${marker.id})`);svg.append(p);}
- const canvas=h('div',{class:'wo-canvas',style:`width:${w}px;height:${height}px`},g.stages.map(st=>h('div',{class:'wo-stage',style:`left:${st.x-box.x+16}px;top:${st.y-box.y+16}px;width:${st.w}px;height:${st.h}px`},h('span',{},document.documentElement.lang==='zh-TW'?st.label_tw||st.label:st.label))),svg,g.edges.filter(e=>e.label).map(e=>h('span',{class:'wo-edge-label',style:`left:${e.label.x-box.x+16}px;top:${e.label.y-box.y+16}px;max-width:${e.label.w}px`,title:e.label.full},e.label.text)),...g.nodes.map(n=>{
+ const canvas=h('div',{class:'wo-canvas',style:`width:${w}px;height:${height}px`},g.stages.map(st=>h('div',{class:'wo-stage',style:`left:${st.x-box.x+16}px;top:${st.y-box.y+16}px;width:${st.w}px;height:${st.h}px`},h('span',{},T(st.label,st.label_tw||st.label)))),svg,g.edges.filter(e=>e.label).map(e=>h('span',{class:'wo-edge-label',style:`left:${e.label.x-box.x+16}px;top:${e.label.y-box.y+16}px;max-width:${e.label.w}px`,title:e.label.full},e.label.text)),...g.nodes.map(n=>{
  const nt=by.get(n.id)||[],waits=nt.filter(t=>t.since).map(t=>t.since).sort();
  return h('div',{class:'wo-node',style:`left:${n.x-box.x+16}px;top:${n.y-box.y+16}px;width:${n.w}px`,'data-wo-group':n.id},h('div',{class:'wo-node-label'},h('b',{},loc(nodes.get(n.id)?.label)||n.id),h('small',{},nodes.get(n.id)?.kind||'')),nt.length?h('div',{class:'wo-stack'},h('div',{class:'wo-stack-meta'},T(`${nt.length} tasks`,`${nt.length} 個任務`),waits.length?h('span',{'data-oldest-wait':waits[0]},T('Oldest wait ','最久等待 '),ago(waits[0])):null),nt.map(token)):null);
  }));

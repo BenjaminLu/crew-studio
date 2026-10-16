@@ -499,7 +499,7 @@ function nodesRow(nodes) {
 function walkBlock(c, d) {
   const w = c.details?.walk, scene = d.scene;
   if (!w && !scene) return null;
-  const loc = (v) => (v && typeof v === "object" ? v[lang] || v.en || "" : v || "");
+  const loc = (v) => L(v);
   const body = [];
   if (scene) body.push(h("div", { class: "faint", style: "font-size:13px" }, T("This card has a scene: the board animates it.", "這張卡有動畫場景，在看板上播放。")));
   if (w?.status === "valid") body.push(...(w.intents || []).map((it) => h("details", { open: (it.key || []).length ? true : null }, h("summary", {}, T(`Intent ${it.intent}`, `意圖 ${it.intent}`), " · ", T(`${(it.key || []).length} key change(s)`, `${(it.key || []).length} 個關鍵改動`)),
@@ -537,7 +537,7 @@ function doorBlock(c, d, st) {
         ds.ok ? T("Confirmed by the board: the merge is unlocked.", "看板已確認：合併已解鎖。") : ds.why || T(`${ds.reviewed.size} of ${intents.length} intents checked`, `已確認 ${ds.reviewed.size}/${intents.length} 條意圖`))) : null);
 }
 cardView = function (c) {
-  const d = c.details?.[lang] || c.details?.en || {};
+  const d = LD(c.details) || {};
   const en = c.details?.en || {};
   const st = sel.get(c.id) || { chosen: null, answers: new Map() }; sel.set(c.id, st);
   const opts = Object.entries(d.options || en.options || {});
@@ -552,7 +552,7 @@ cardView = function (c) {
     h("div", { class: "cardmeta" }, h("span", { class: "mono" }, c.id), c.task ? h("a", { href: `#/activity/${c.task}` }, c.task) : null,
       c.pr ? h("a", { href: prUrl(c.pr), target: "_blank", rel: "noopener" }, `#${c.pr}`) : null, c.kind ? h("span", { class: "badge" }, c.kind) : null,
       c.purpose ? h("span", { class: "badge" }, c.purpose) : null, h("span", {}, ago(c.ts)),
-      h("span", { class: "seg tk-lang", role: "group", "aria-label": T("Card language", "卡片語言") }, ["en", "zh-TW"].map((l) => h("button", { type: "button", "aria-pressed": String(lang === l), onclick: () => setLang(l) }, h("span", { class: "keep" }, l === "en" ? "EN" : "中文"))))),
+      h("span", { class: "seg tk-lang", role: "group", "aria-label": T("Card language", "卡片語言") }, ["en", zhLang()].map((l) => h("button", { type: "button", "aria-pressed": String(lang === l), onclick: () => setLang(l) }, h("span", { class: "keep" }, l === "en" ? "EN" : "中文"))))),
     h("h3", {}, d.title || c.title),
     d.explanation ? h("p", { class: "lead" }, d.explanation) : null,
     c.boardOnly ? h("div", { class: "banner" }, icon("alert", "ic sm"), T("A retrospective card takes one answer per item.", "回顧卡要逐項回答。"),
@@ -606,7 +606,7 @@ if (location.hash.startsWith("#/crew") || location.hash.startsWith("#/inbox")) r
 // Native tool failures are source-owned guidance, independent of the model's paraphrase.
 window.crewNativeToolFailureView=function(f){
  const actions={discuss_staffing:T("Read the saved staffing questions and continue the discussion.","讀取已存的派工問題，接續討論。"),read_current_state:T("Read the current task state before continuing.","繼續前先讀取目前任務狀態。"),review_configuration:T("Review the existing project configuration.","檢查目前專案配置。"),report_reference:T("Report this reference with the action you attempted.","回報此追蹤編號與剛才嘗試的操作。"),captain_review:T("Review the request with the captain.","請船長檢視此請求。")};
- return h("div",{class:"rich chat-err",role:"alert","data-native-failure":f.code},h("strong",{},f.reason?.[lang]||f.reason?.en||f.code),h("p",{},actions[f.nextAction]||T("Follow the stated recovery step before trying again.","請先依說明處理，再決定是否重試。")),f.correlationId?h("code",{"data-error-reference":""},f.correlationId):null,f.diagnosticRecorded===false?h("p",{},T("Private diagnostic could not be saved; include this reference and the attempted action in your report.","私有診斷無法儲存；請連同追蹤編號與嘗試操作一起回報。")):null,h("p",{},f.retryable?T("Retry only after the stated condition is resolved.","處理上述條件後才重試。 "):T("No automatic retry or approval.","不會自動重試或核准。")));
+ return h("div",{class:"rich chat-err",role:"alert","data-native-failure":f.code},h("strong",{},L(f.reason)||f.code),h("p",{},actions[f.nextAction]||T("Follow the stated recovery step before trying again.","請先依說明處理，再決定是否重試。")),f.correlationId?h("code",{"data-error-reference":""},f.correlationId):null,f.diagnosticRecorded===false?h("p",{},T("Private diagnostic could not be saved; include this reference and the attempted action in your report.","私有診斷無法儲存；請連同追蹤編號與嘗試操作一起回報。")):null,h("p",{},f.retryable?T("Retry only after the stated condition is resolved.","處理上述條件後才重試。 "):T("No automatic retry or approval.","不會自動重試或核准。")));
 };
 const nativeLogItemBase=logItem;
 logItem=function(it,i){return it.nativeFailure?window.crewNativeToolFailureView(it.nativeFailure):nativeLogItemBase(it,i);};
