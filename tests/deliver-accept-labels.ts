@@ -1,4 +1,4 @@
-import './lib/isolated-env.mjs';
+import "./lib/isolated-env.mjs";
 import {harness,suite,until,Y} from './rt-harness';
 import {installDeliver} from '../src/domain/deliver';
 import {ArtifactStore} from '../src/artifacts';
