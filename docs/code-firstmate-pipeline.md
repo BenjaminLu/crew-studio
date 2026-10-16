@@ -97,7 +97,7 @@ Round-local checks, run before a push:
 ### 8. fix (the refine loop over build → ci → review)
 
 - Brief = compiled findings from ci, fail-first and review, plus the coordinator's root cause. A docker repro is required for a Linux-only red.
-- brief-quality (D): each item has a locator, an expected change and a class.
+- brief-quality (D): each item has a locator, a concrete expected change (never only "<check> passes") and a class. A failing brief goes to a coordinator root-cause turn, never to a placeholder.
 - Stop conditions:
   - all blocking checks pass → go to gates;
   - the same class fails twice → step-back card (H): question the design;

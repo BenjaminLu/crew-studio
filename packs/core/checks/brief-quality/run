@@ -1,8 +1,12 @@
 #!/usr/bin/env node
+// Every item needs a locator, a concrete expected change and a class. "<check> passes" only restates
+// the failing check: it is a placeholder, not an expected change, and fails the item.
+const placeholder = (it) => { const e = String(it.expected ?? "").trim().replace(/\.$/, ""); return !!e && (e === `${it.check} passes` || /^[\w@./:-]+ passes$/.test(e)); };
 let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
   const i = JSON.parse(s); const items = i.artifact?.data?.items ?? []; const f = [];
   if (!items.length) f.push({ locator: { type: "card", field: "items" }, message: "the brief has no items", expected: "one item per failing finding", class: "brief-empty", severity: "blocking" });
   items.forEach((it, k) => { const miss = ["locator", "expected", "class"].filter((x) => !it[x] || (typeof it[x] === "string" && !it[x].trim()));
-    if (miss.length) f.push({ locator: { type: "card", field: "items", index: k }, message: `item ${k + 1} has no ${miss.join(", ")}`, expected: "a locator, an expected change and a class", class: "brief-item", severity: "blocking" }); });
+    if (miss.length) f.push({ locator: { type: "card", field: "items", index: k }, message: `item ${k + 1} has no ${miss.join(", ")}`, expected: "a locator, an expected change and a class", class: "brief-item", severity: "blocking" });
+    else if (placeholder(it)) f.push({ locator: { type: "card", field: "items", index: k }, message: `item ${k + 1} has only a placeholder expected change ("${String(it.expected).trim()}")`, expected: "the concrete change that makes the finding go away", class: "brief-placeholder", severity: "blocking" }); });
   process.stdout.write(JSON.stringify({ verdict: f.length ? "fail" : "pass", score: items.length ? 1 - f.length / items.length : 0, findings: f, evidence: [], proves: [] }));
 });

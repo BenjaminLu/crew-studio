@@ -1,6 +1,6 @@
 id: brief-quality
-version: 1.0.0
-title: { en: "The brief: every item has a locator, an expected change and a class", zh-TW: "brief：每項都有定位、預期變更與類別" }
+version: 1.1.0
+title: { en: "The brief: every item has a locator, a concrete expected change and a class", zh-TW: "brief：每項都有定位、具體的預期變更與類別" }
 applies_to: [brief]
 kind: deterministic
 blocking: true

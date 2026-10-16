@@ -33,7 +33,7 @@ loop("stall", [{ use: "t/rotating" }], { cap: 9 });
 loop("cap", [{ use: "t/rotating" }], { cap: 2 });
 loop("report", [{ use: "t/report-schema", params: { flagfile: flag("r") } }], { onBrief: `Call: note_write {"flag":"${flag("r")}"}` });
 loop("timeout", [{ use: "t/ok" }], { say: "STUB_HANG", timeout: 1, cap: 1 });
-loop("vague", [{ use: "t/noexp", params: { flagfile: flag("v") } }], { onBrief: `Call: note_write {"flag":"${flag("v")}"}` });
+loop("vague", [{ use: "t/noexp", params: { flagfile: flag("v") } }], { onBrief: `Call: note_write {"flag":"${flag("v")}"}`, coordinator: true });
 
 const H = await harness(flows, { refine: true });
 const E = H.engine;
@@ -104,11 +104,11 @@ const settle = (id: string, ms = 30000) => until(() => ["succeeded", "failed", "
   ok(g.ctx.refine.fix.history[0].outcome !== "report" && g.ctx.briefs?.make?.classes.includes("timeout"), "the loop never classes a timeout as report-only", JSON.stringify(g.ctx.refine?.fix?.history));
 }
 
-// ---------- brief-quality: a finding with no expected change and no locator is filled, then checked again ----------
+// ---------- brief-quality: a finding with no expected change and no locator gets them from the coordinator, never from a placeholder ----------
 {
   const r = E.start({ workflow: "vague", text: "vague" }); await settle(r.id);
-  const g = E.get(r.id)!; const q = E.ledger(r.id).filter((e) => e.check === "core/brief-quality");
-  ok(q.length === 2 && q[0].verdict === "fail" && q[1].verdict === "pass" && g.status === "succeeded", "a brief that fails brief-quality is filled from the template and must pass before it is sent", JSON.stringify(q.map((e) => e.verdict)));
+  const g = E.get(r.id)!; const q = E.ledger(r.id).filter((e) => e.check === "core/brief-quality"); const it = g.ctx.briefs?.make?.items?.[0];
+  ok(q.length >= 1 && q.at(-1)!.verdict === "pass" && g.status === "succeeded" && !!it?.locator && !/ passes$/.test(it.expected), "a brief must pass brief-quality before it is sent; the coordinator, not a template, gives the missing expected change and locator", JSON.stringify([q.map((e) => e.verdict), it]));
 }
 
 // ---------- a brief is bound to its round and head ----------

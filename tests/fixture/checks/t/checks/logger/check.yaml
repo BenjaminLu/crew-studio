@@ -1,0 +1,9 @@
+id: logger
+version: 1.0.0
+title: { en: "Fails with a file finding and writes a log (out/log.txt) that names it" }
+applies_to: [run]
+kind: deterministic
+blocking: true
+needs: []
+params: { type: object, properties: { flagfile: { type: string, default: "" }, token: { type: string, default: "" } } }
+timeout_s: 10

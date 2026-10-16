@@ -65,7 +65,7 @@ External hook waits persist a version-1 descriptor under NodeRun.data.external b
   - the same finding class fails twice → step-back card;
   - no score improvement for 2 rounds → card;
   - round cap → round-budget card.
-- Brief = a fixed template over the findings (locator, message, expected, class, "fix the whole class"), plus an optional coordinator root cause. The brief-quality check must pass before the brief is sent.
+- Brief = a fixed template over the findings (locator, message, expected, class, "fix the whole class"), plus an optional coordinator root cause. Each item carries its evidence: the ±10 source lines around a file:line locator from the exact round head, and the relevant lines of the check's log with a pointer (file, lines, bytes), redacted. The brief-quality check must pass before the brief is sent; a failing brief goes to a coordinator root-cause turn, never to a placeholder. A round that needs a brief and has none bound to its round and head says so in its prompt; a brief carries across a base-only head change only with a recorded proof (brief-carry ledger entry: base, stable patch id, files).
 - A brief is bound to the exact round and input head, and an agent reads only the brief bound to its round.
 
 ### 3.4 Cards

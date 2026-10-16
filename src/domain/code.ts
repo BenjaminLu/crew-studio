@@ -23,7 +23,7 @@ import { classify, loadDefaults, matches, Projects, type ChangedPath } from "../
 import type { Engine, X, Body } from "../runtime/engine";
 import { LocalPrAdapter, GitHubPrAdapter, projectPrAdapter, type PrAdapter } from "../adapters/github";
 import { locatorText } from "../runtime/locator";
-import { briefFor } from "../runtime/refine";
+import { briefSection, briefState, type BriefState, type CarryCheck } from "../runtime/refine";
 import { sandboxed } from "../runtime/checks";
 import { RoundBlocked, Worktrees } from "../worktrees";
 import { runRender } from "../render";
@@ -51,6 +51,22 @@ export const changedOf = (wt: string, base: string): ChangedPath[] => {
   return ns.map((l, i) => { const p = l.split("\t"); const n = num[i]?.split("\t") ?? []; return { path: p.at(-1)!, status: p[0], from: p[0].startsWith("R") ? p[1] : null, added: Number(n[0]) || 0, removed: Number(n[1]) || 0 }; });
 };
 const head = (wt: string) => must(wt, ["rev-parse", "HEAD"]);
+/** A brief written for one head carries to the round's head only when the base alone moved (a merge of the base, or a rebase onto it):
+ * the old base is an ancestor of the new one, and the task's own change (its stable patch id and its files) is the same. The proof is recorded. */
+export const briefCarryCheck: CarryCheck = (b, x) => {
+  const wt = x.ctx.worktree as string | undefined, from = String(b.head ?? ""), to = String(x.ctx.head ?? ""), base = String(x.ctx.baseCommit ?? "");
+  if (!wt || !existsSync(wt)) return { ok: false, reason: "the worktree is gone" };
+  if (![from, to, base].every((h) => /^[a-f0-9]{40}$/.test(h))) return { ok: false, reason: "a head or the base is not a full commit id, so it could not be checked" };
+  if (!git(wt, ["cat-file", "-e", `${from}^{commit}`]).ok) return { ok: false, reason: "the brief's head is no longer in the repository" };
+  const fromBase = git(wt, ["merge-base", base, from]).out.trim(), toBase = git(wt, ["merge-base", base, to]).out.trim();
+  if (!/^[a-f0-9]{40}$/.test(fromBase) || !/^[a-f0-9]{40}$/.test(toBase)) return { ok: false, reason: "the heads share no history with the base" };
+  if (!git(wt, ["merge-base", "--is-ancestor", fromBase, toBase]).ok) return { ok: false, reason: "the base did not move forward between the two heads" };
+  const files = (h: string, bb: string) => must(wt, ["diff", "--name-only", bb, h]).split("\n").filter(Boolean).sort();
+  let p1: string, p2: string; try { p1 = stablePatch(wt, fromBase, from); p2 = stablePatch(wt, toBase, to); } catch (e: any) { return { ok: false, reason: `the task's change could not be compared (${e?.message ?? e})` }; }
+  const f1 = files(from, fromBase), f2 = files(to, toBase);
+  if (p1 !== p2 || f1.join("\n") !== f2.join("\n")) return { ok: false, reason: "the task's change differs between the two heads" };
+  return { ok: true, proof: { base: toBase, patch: p2, files: f2 } };
+};
 const isTest = (cfg: RepoCfg, p: string) => cfg.tests.some((g) => matches(g, p));
 const isDoc = (p: string) => /\.md$/i.test(p) || p.startsWith("docs/");
 export const inScope = (scope: string[], p: string) => scope.some((s) => { const g = String(s).trim().replace(/^\.\//, ""); return !!g && (g === p || (g.endsWith("/") && p.startsWith(g)) || (/[*?]/.test(g) ? matches(g, p) : p.startsWith(g + "/"))); });
@@ -520,6 +536,17 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
 
   // ---------- rounds: one at a time, at the durable head, deps installed, the brief bound to round + head ----------
   const holder = (x: X) => `${x.run.id}/${x.node.id}#${x.visit}`;
+  /** The round's brief: bound, carried across a base-only head change (the proof goes in the ledger once), or missing and why. */
+  const roundBrief = (x: X, node = x.node.id) => {
+    // only a node a refine loop feeds ever gets a brief (build, spec, plan); any other node's later visit needs none
+    if (!(x.run.def.nodes ?? []).some((n) => n.kind === "loop" && n.args?.producer === node)) return { round: x.visit, head: x.ctx.head ?? null, brief: null, carried: null, missing: null } as BriefState;
+    const had = x.ctx.briefCarry?.[node];
+    const bs = briefState(x, node, briefCarryCheck);
+    if (bs.carried && bs.carried !== had) { x.log(`round ${x.visit}: brief carried from ${bs.carried.from.slice(0, 8)} to ${bs.carried.to.slice(0, 8)} (base-only change, patch ${bs.carried.patch.slice(0, 12)})`);
+      try { engine.record(x, "brief-carry", { head: bs.carried.to, data: { ...bs.carried, brief: bs.brief?.id ?? null } } as any); } catch {} }
+    if (bs.missing) x.log(`round ${x.visit}: no brief: ${bs.missing}`);
+    return bs;
+  };
   const beginRound = (write: boolean, skipInstall = false) => async (x: X) => {
     if (!x.ctx.wt) return;
     if(x.node.mode==="spec")recoverLocalRescope(x);
@@ -536,8 +563,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       if(s.head!==rebase.head||x.ctx.pr?.head!==rebase.head)throw new Error("approved rebase head changed");
       const result=W.startNativeRebase(k.project,k.task,rebase.head,rebase.fromBase,rebase.base);rebase.started=true;x.ctx.head=result.head;x.ctx.baseCommit=rebase.base;x.save();
     }
-    const b = briefFor(x);
-    engine.record(x, "round-start", { head: s.head, data: { round: x.visit, brief: b?.id ?? null, ledger: b?.ledger ?? [], corrected: s.corrected, deps: s.deps.ran?.join(" ") ?? null } } as any);
+    const bs = roundBrief(x);
+    engine.record(x, "round-start", { head: s.head, data: { round: x.visit, brief: bs.brief?.id ?? null, ledger: bs.brief?.ledger ?? [], carried: bs.carried, briefMissing: bs.missing, corrected: s.corrected, deps: s.deps.ran?.join(" ") ?? null } } as any);
     if (s.corrected) x.log(`round ${x.visit}: ${s.corrected.reason}; ${s.corrected.kept ? `kept on ${s.corrected.kept}` : "nothing to keep"}`);
     } catch (e) { held.delete(holder(x)); s.release(); throw e; }
   };
@@ -566,8 +593,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     sandbox: (x) => { const wt = x.ctx.worktree; return wt && existsSync(wt) ? { writes: [], reads: [wt], cwd: wt } : null; }, // reads the worktree, writes nothing of it
     tools: (x) => [...READ_ONLY(shellOk(x)), specTool(x)], maxTools: 60,
     system: (x, skill) => `${skill}\n\nYou write the spec for one change to a local repository. Read the code with the fs_* tools (read-only), then call spec_write once. Budget: use at most 40 read/search calls; reserve the remaining calls for spec_write and schema corrections. Stop exploring once the relevant callers and tests are known. Never finish without spec_write; record unverified details as explicit scope questions rather than spending the entire budget on exploration. Say WHAT and WHY; never HOW (no line numbers, no steps). Every done line names the test file that proves it and says it fails on base. Write in plain English: no will/should/could, no "ensure", "utilize", "via", "etc.". Answer in one line when done.`,
-    prompt: (x) => { const b = briefFor(x, "spec"); const note = x.ctx.answers?.dispatch?.choice === "rescope" ? x.ctx.answers.dispatch.note : x.ctx.answers?.["step-back"]?.choice === "rescope" ? x.ctx.answers["step-back"].note : x.ctx.answers?.["scope-card"]?.note;
-      return `SPEC DRAFT\nRun ${x.run.id} · draft ${x.visit}. Repository ${x.ctx.repo} (base ${x.ctx.base}).\nCaptain's intent:\n${x.run.text || x.run.title}\n${note ? `\nThe captain asked for changes: ${note}\n` : ""}${b && x.visit > 1 ? `\n${b.text}\nThe last draft:\n${specMd(x.ctx.spec)}\n` : ""}\nStart with fs_list.`; },
+    prompt: (x) => { const b = roundBrief(x, "spec"); const note = x.ctx.answers?.dispatch?.choice === "rescope" ? x.ctx.answers.dispatch.note : x.ctx.answers?.["step-back"]?.choice === "rescope" ? x.ctx.answers["step-back"].note : x.ctx.answers?.["scope-card"]?.note;
+      return `SPEC DRAFT\nRun ${x.run.id} · draft ${x.visit}. Repository ${x.ctx.repo} (base ${x.ctx.base}).\nCaptain's intent:\n${x.run.text || x.run.title}\n${note ? `\nThe captain asked for changes: ${note}\n` : ""}${x.visit > 1 ? `${briefSection(b)}${b.brief ? `The last draft:\n${specMd(x.ctx.spec)}\n` : ""}` : ""}\nStart with fs_list.`; },
     after: (x) => { if (!x.ctx.spec || x.ctx.spec.version < x.visit) throw new Error("the spec writer did not call spec_write"); x.rn.note = `${x.ctx.spec.title}: ${x.ctx.spec.done.length} done lines, scope ${x.ctx.spec.scope.join(", ")}`; return "ok"; },
   };
   engine.modes.plan = {
@@ -578,7 +605,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       run: (a) => { x.ctx.plan = { questions: (a.questions ?? []).map(String).slice(0, 12), files: (a.files ?? []).map(String).slice(0, 30), rows: (Array.isArray(a.rows) ? a.rows : []).slice(0, 20), round: x.visit, head: x.ctx.head };
         writeFileSync(join(x.dir, `plan-${x.visit}.json`), JSON.stringify(x.ctx.plan, null, 1)); x.save(); return { ok: true }; } }], maxTools: 30,
     system: (x, skill) => `${skill}\n\nThis is a PLAN round for a one-way change: you change no file. Read the code, then call plan_write once with every question in the questions block, the files you will change, and a row per done line. Answer in one line.`,
-    prompt: (x) => { const b = briefFor(x, "plan"); return `PLAN ROUND\nRun ${x.run.id} · round ${x.visit} · head ${x.ctx.head}\n${specMd(x.ctx.spec)}\n${x.ctx.planDecision?.accept === false ? `\nFirstmate sent the last plan back: ${x.ctx.planDecision.note}\n` : ""}${b && x.visit > 1 ? `\n${b.text}\n` : ""}\nStart with fs_list.`; },
+    prompt: (x) => { const b = roundBrief(x, "plan"); return `PLAN ROUND\nRun ${x.run.id} · round ${x.visit} · head ${x.ctx.head}\n${specMd(x.ctx.spec)}\n${x.ctx.planDecision?.accept === false ? `\nFirstmate sent the last plan back: ${x.ctx.planDecision.note}\n` : ""}${briefSection(b)}\nStart with fs_list.`; },
     after: (x) => { if (!x.ctx.plan || x.ctx.plan.round !== x.visit) throw new Error("the worker did not write a plan"); if (git(shellOk(x), ["status", "--porcelain"]).out) throw new Error("a plan round must not change files"); x.rn.note = `${x.ctx.plan.rows.length} rows, ${x.ctx.plan.questions.length} questions`; return "ok"; },
   };
   engine.modes["plan-accept"] = {
@@ -595,6 +622,13 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       x.rn.note = d.accept ? `accepted (round ${d.round}, head ${String(d.head).slice(0, 8)}), ${d.answers.length} answers` : `${d.decision}: ${d.note}`; return d.decision; },
   };
   const briefFile = (x: X) => join(x.dir, "briefs", `round-${x.visit}.json`);
+  /** The previous REJECT's full list, as the reviewer wrote it (its numbering kept), and the convergence rule for this review. */
+  const standingList = (last: any) => {
+    if (last?.verdict !== "REJECT" || !Array.isArray(last.findings) || !last.findings.length) return "";
+    const items = last.findings.map((f: any) => `${f.n}. [${f.tag}] ${f.path ? `${f.path}${f.line ? `:${f.line}` : ""} — ` : ""}${f.text}${f.fix ? `\n   Fix asked: ${f.fix}` : ""}`).join("\n");
+    const must = last.findings.filter((f: any) => f.tag === "must-fix").map((f: any) => f.n);
+    return `\nPREVIOUS REJECT (review ${last.round ?? "?"} at head ${String(last.head ?? "").slice(0, 8)}), its list as written:\n${items}\n\nCONVERGENCE RULE: verify only this list. For each must-fix item (${must.join(", ")}), say by its number whether it is fixed at this head. A new issue blocks (must-fix) only if this round's fix introduced it; anything else is a follow-up. Keep the numbering above. A REJECT gives, for every must-fix, its file:line and the exact diff that fixes it.\n`;
+  };
   /** Hand the round back: a commit as the agent with run, node and round trailers; the checks then run on it. */
   const commitRound = (x: X, rep: any, agent = "agent") => {
     shellOk(x); const k = wkey(x);
@@ -641,9 +675,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     prompt: (x) => {
       const wt = shellOk(x); const h = head(wt); x.ctx.head = h;
       mkdirSync(join(x.dir, "briefs"), { recursive: true });
-      const b = briefFor(x, "build");
+      const b = roundBrief(x, "build");
       const rebaseNote = W.get(wkey(x).project,wkey(x).task)?.nativeRebase ? "\nNATIVE REBASE RESOLUTION: read conflict files, resolve within scope using fs tools, then worker_report. Studio continues the rebase; another round resolves any next conflict. Fresh CI and review follow.\n" : "";
-      const fix = x.visit > 1 && b ? `\n${b.text}\n` : "";
+      const fix = briefSection(b);
       const plan = x.ctx.door?.door === "one-way" ? (() => { if (!existsSync(join(x.dir, "plan-accept.json"))) throw new Error("a one-way change needs an accepted plan before it builds"); return `\nAccepted plan:\n${JSON.stringify(x.ctx.plan?.rows ?? [])}\nAnswers:\n${(x.ctx.planDecision?.answers ?? []).map((q: any) => `- ${q.q}: ${q.a}`).join("\n")}\n`; })() : "";
       const ro = x.ctx.reportOnly?.build ? "\nREPORT ONLY: the code stays as it is; write the report the checks asked for.\n" : "";
       const text = `BUILD ROUND\nRun ${x.run.id} · round ${x.visit} · head ${h} · branch ${x.ctx.branch}\n${specMd(x.ctx.spec)}${plan}${fix}${ro}${rebaseNote}\nStart with fs_list.${x.run.text.includes("STUB_") ? `\n\nIntent notes:\n${x.run.text}` : ""}`;
@@ -837,7 +871,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
             if (argv[0].startsWith("/")) return { error: `refused: ${argv[0]} is an absolute path; name a program on the fixed PATH or a path inside the copy` };
             return inCopy(`cmd-${cmds}`, argv, 120); } }];
       return [...others, read, ...runTool,
-        { name: "review_verdict", description: "Your verdict, once. REJECT carries a numbered list: each finding with a file locator (path and line), a tag (must-fix or follow-up) and one concrete fix. APPROVE may carry follow-ups.",
+        { name: "review_verdict", description: "Your verdict, once. REJECT carries a numbered list: each finding with a file locator (path and line), a tag (must-fix or follow-up) and one concrete fix (for a must-fix, the exact diff). After an earlier REJECT, keep its numbering. APPROVE may carry follow-ups.",
       schema: { type: "object", properties: { verdict: { type: "string", enum: ["APPROVE", "REJECT"] }, findings: { type: "array", items: { type: "object", properties: { path: { type: "string" }, line: { type: "number" }, text: { type: "string" }, tag: { type: "string", enum: ["must-fix", "follow-up"] }, fix: { type: "string" }, class: { type: "string" } }, required: ["text", "tag"] } }, followups: { type: "array", items: { type: "string" } } }, required: ["verdict"] },
       run: (a) => { const f = (Array.isArray(a.findings) ? a.findings : []).slice(0, 12).map((y: any, i: number) => ({ n: i + 1, path: y?.path ? String(y.path) : null, line: Number(y?.line) || null, text: String(y?.text ?? y).slice(0, 600), tag: y?.tag === "follow-up" ? "follow-up" : "must-fix", fix: String(y?.fix ?? "").slice(0, 600), class: String(y?.class ?? "review").slice(0, 40) }));
         if (a.verdict === "REJECT" && !f.some((y: any) => y.tag === "must-fix")) return { error: "a REJECT needs at least one must-fix finding" };
@@ -854,7 +888,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       const diff = git(wt, ["diff", "--no-color", `${x.ctx.baseCommit}..HEAD`]).out.slice(0, 24000);
       const L = engine.ledger(x.run.id).filter((e) => e.head === h && (e.check === "firstmate/ci" || e.check === "firstmate/fail-first"));
       const refusedBefore = x.ctx.reviewBrief ? `BRIEF (your last attempt): ${x.ctx.reviewBrief}\n` : "";
-      const prior = (x.ctx.reviews ?? []).length ? `Earlier verdicts: ${(x.ctx.reviews ?? []).map((r: any) => `${r.verdict} (${r.findings.length})`).join(", ")}\n` : "";
+      const prior = (x.ctx.reviews ?? []).length ? `Earlier verdicts: ${(x.ctx.reviews ?? []).map((r: any) => `${r.verdict} (${r.findings.length})`).join(", ")}\n${standingList(x.ctx.reviews.at(-1))}` : "";
       const planText = `Read plan (${reviewMode(x)} mode, budget ${plan.budget} reads): read ${plan.required.join(", ") || "(nothing)"}${plan.notRead.length ? `\nNot read (over the budget; say so in your verdict): ${plan.notRead.map((n: any) => n.path).join(", ")}` : ""}${plan.unreadable.length ? `\nNot readable: ${plan.unreadable.map((n: any) => `${n.path} (${n.reason})`).join(", ")}` : ""}\n`;
       return `CODE REVIEW\nRun ${x.run.id} · review ${x.visit} · head ${h} · door ${x.ctx.door?.door} · mode ${reviewMode(x)}\n${specMd(x.ctx.spec)}\n${L.map((e) => `${e.check}: ${e.verdict}${e.findings.length ? ` — ${e.findings.map((f) => f.message).join("; ").slice(0, 400)}` : ""}`).join("\n")}\n${prior}${refusedBefore}${planText}\nDiff (base..head):\n${diff || "(no diff)"}`;
     },

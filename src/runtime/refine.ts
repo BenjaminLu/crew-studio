@@ -10,17 +10,34 @@
 //   only the report failed         → "report" (args.report_checks; re-run the report only, the code is kept)
 //   otherwise                      → "retry", with a compiled brief for the producer.
 // The brief is a fixed template: each item has its locator, message, expected
-// result and class, plus "fix the whole class". A coordinator agent can add a
-// root cause; the brief is then checked by brief-quality (a check like any other).
+// result and class, plus "fix the whole class". Each item carries its evidence:
+// the source around a file:line locator, read from the exact round head, and the
+// relevant lines of the check's log with a pointer to them (both redacted). A
+// coordinator agent can add a root cause; the brief is then checked by
+// brief-quality (a check like any other). A brief that fails it goes to a
+// coordinator root-cause turn, never to a placeholder.
+// A round that needs a brief (visit > 1) and has none bound to its round and head
+// is told so in its prompt (briefState / briefSection); a brief is carried across
+// a head change only with a recorded proof that the base alone moved.
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute, join, relative } from "node:path";
 import type { AgentTool } from "../agent";
+import { realInside, redactText } from "../secure";
 import type { LedgerEntry } from "./checks";
 import type { Engine, X } from "./engine";
-import { locatorText, type Finding } from "./locator";
+import { locatorText, parseLocator, type Finding } from "./locator";
 
-export type BriefItem = { n: number; check: string; class: string; locator: Finding["locator"]; where: string; message: string; expected: string; source: string };
+export type BriefEvidence = { source?: string; log?: { pointer: string; lines: string } };
+export type BriefItem = { n: number; check: string; class: string; locator: Finding["locator"]; where: string; message: string; expected: string; source: string;
+  /** the ledger entry the item came from, and its evidence */
+  seq?: number | null; evidence?: BriefEvidence };
 export type Brief = { producer: string; round: number; head: string | null; items: BriefItem[]; classes: string[]; rootCause: string | null; text: string; quality: string | null;
   /** the brief's id, and the evidence ledger entries (seq) it was compiled from */
   id?: string; ledger?: number[] };
+/** An expected change that only restates the check ("<check> passes") tells the worker nothing. */
+export const placeholderExpected = (it: { check?: string; expected?: string | null }) => { const e = String(it.expected ?? "").trim().replace(/\.$/, "");
+  return !e || e === `${it.check} passes` || /^[\w@./:-]+ passes$/.test(e); };
 
 /** The fixed brief template. */
 export function compileBrief(producer: string, round: number, head: string | null, failing: LedgerEntry[], human: Finding[] = [], rootCause: string | null = null): Brief {
@@ -28,8 +45,8 @@ export function compileBrief(producer: string, round: number, head: string | nul
   for (const e of failing) {
     const fs = e.findings.filter((f) => f.severity !== "minor");
     if (!fs.length) items.push({ n: 0, check: e.check, class: e.verdict === "error" ? (/timeout/.test(e.error ?? "") ? "timeout" : "check-error") : e.check.split("/").pop()!, locator: null, where: e.edge ? `edge ${e.edge}` : `node ${e.node}`,
-      message: e.error ?? `${e.check} ${e.verdict}`, expected: e.verdict === "error" ? "the check runs and returns a verdict" : `${e.check} passes`, source: "check" });
-    for (const f of fs) items.push({ n: 0, check: e.check, class: f.class, locator: f.locator, where: locatorText(f.locator), message: f.message, expected: f.expected || `${e.check} passes`, source: f.source ?? "check" });
+      message: e.error ?? `${e.check} ${e.verdict}`, expected: e.verdict === "error" ? "the check runs and returns a verdict" : `${e.check} passes`, source: "check", seq: e.seq ?? null });
+    for (const f of fs) items.push({ n: 0, check: e.check, class: f.class, locator: f.locator, where: locatorText(f.locator), message: f.message, expected: f.expected || `${e.check} passes`, source: f.source ?? "check", seq: e.seq ?? null });
   }
   for (const f of human) items.push({ n: 0, check: f.check ?? "captain", class: f.class, locator: f.locator, where: locatorText(f.locator), message: f.message, expected: f.expected || "what the captain asked", source: "human" });
   items.forEach((it, i) => (it.n = i + 1));
@@ -41,28 +58,111 @@ export function compileBrief(producer: string, round: number, head: string | nul
 export function renderBrief(b: Brief): string {
   return [`BRIEF for round ${b.round + 1} (from round ${b.round}${b.head ? ` at ${b.head.slice(0, 8)}` : ""})`,
     `Fix every item below. Fix the whole class each item belongs to, not only the named spot: search for every other instance of the same class and fix those too.`, "",
-    ...b.items.map((it) => `${it.n}. [${it.class}] ${it.check} — ${locatorText(it.locator) === "(no locator)" ? it.where : locatorText(it.locator)}\n   Found: ${it.message}\n   Expected: ${it.expected}`),
+    ...b.items.map((it) => `${it.n}. [${it.class}] ${it.check} — ${locatorText(it.locator) === "(no locator)" ? it.where : locatorText(it.locator)}\n   Found: ${it.message}\n   Expected: ${it.expected}${evidenceText(it.evidence)}`),
     ...(b.rootCause ? ["", `Root cause (coordinator): ${b.rootCause}`] : []), "", `Classes: ${b.classes.join(", ")}`].join("\n");
 }
 
-/** The brief an agent may read: only the one bound to its round (the round before this visit) and to its current input head. */
+const indent = (t: string) => t.split("\n").map((l) => `      ${l}`).join("\n");
+function evidenceText(e: BriefEvidence | undefined): string {
+  if (!e) return "";
+  return `${e.source ? `\n   Source:\n${indent(e.source)}` : ""}${e.log ? `\n   Log: ${e.log.pointer}\n${indent(e.log.lines)}` : ""}`;
+}
+const clip = (l: string) => (l.length > 240 ? `${l.slice(0, 240)}…` : l);
+
+/** The source around a file:line locator, from the exact head (git show <head>:<path>), ±10 lines, redacted. */
+export function sourceAt(repo: string | null, head: string | null, path: string, line: number): string {
+  if (isAbsolute(path) || path.split(/[\\/]/).includes("..")) return `Source refused: ${path} is outside the repository`;
+  if (!repo || !head || !existsSync(repo)) return `Source unavailable: ${path}:${line} (this round has no repository head to read it from)`;
+  const r = spawnSync("git", ["-C", repo, "show", `${head}:${path.replace(/^\.\//, "")}`], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, timeout: 20000 });
+  if (r.status !== 0) return `Source unavailable: ${path}:${line} at ${head.slice(0, 8)} (${String(r.stderr || r.error?.message || "git show failed").trim().split("\n")[0].slice(0, 200)})`;
+  const lines = String(r.stdout).split("\n"); if (lines.at(-1) === "") lines.pop();
+  if (line > lines.length) return `Source unavailable: ${path} has ${lines.length} lines at ${head.slice(0, 8)}, the finding names line ${line}`;
+  const from = Math.max(1, line - 10), to = Math.min(lines.length, line + 10);
+  return redactText([`${path} lines ${from}-${to} at ${head.slice(0, 8)}:`, ...lines.slice(from - 1, to).map((l, i) => clip(`${from + i}${from + i === line ? ">" : ":"} ${l}`))].join("\n"));
+}
+
+const FAILURE_LINE = /\b(fail(ed|ure|s)?|error|assert(ion)?|expected|not ok|panic|exception|traceback)\b|✗|✖|×/i;
+/** The relevant lines of a check's log (the lines that name the finding or a failure), with a pointer: the file, its line and byte range. Redacted. */
+export function logExcerpt(file: string, dataDir: string, hint: { message?: string; path?: string | null; line?: number | null } = {}): { pointer: string; lines: string } | null {
+  let buf: Buffer; try { buf = readFileSync(file); } catch { return null; }
+  if (!buf.length) return null;
+  if (buf.length > 8 * 1024 * 1024) buf = buf.subarray(buf.length - 8 * 1024 * 1024);
+  const rows: { n: number; a: number; b: number; t: string }[] = []; let off = 0; let n = 0;
+  for (const raw of buf.toString("utf8").split(/(?<=\n)/)) { const len = Buffer.byteLength(raw); n++; rows.push({ n, a: off, b: off + len, t: raw.replace(/\x1b\[[0-9;]*m/g, "").replace(/\r?\n$/, "") }); off += len; }
+  const msg = (hint.message ?? "").trim().split("\n")[0].slice(0, 60);
+  const loc = hint.path ? `${hint.path.split("/").pop()}${hint.line ? `:${hint.line}` : ""}` : null;
+  let pick = rows.filter((r) => r.t.trim() && ((msg.length >= 8 && r.t.includes(msg)) || (loc && r.t.includes(loc)) || FAILURE_LINE.test(r.t)));
+  if (!pick.length) pick = rows.filter((r) => r.t.trim()).slice(-8);
+  pick = pick.slice(0, 20);
+  if (!pick.length) return null;
+  const rel = relative(dataDir, file); const where = rel && !rel.startsWith("..") ? rel : file;
+  return { pointer: `${where} lines ${pick[0].n}-${pick.at(-1)!.n} (bytes ${pick[0].a}-${pick.at(-1)!.b})`, lines: redactText(pick.map((r) => clip(`line ${r.n} (bytes ${r.a}-${r.b}): ${r.t}`)).join("\n")) };
+}
+
+/** Give every item its evidence: the source at the round head for a file:line locator, and the log lines of the check it came from. */
+export function attachEvidence(b: Brief, o: { repo: string | null; head: string | null; dataDir: string; entries: LedgerEntry[] }): Brief {
+  for (const it of b.items) {
+    const ev: BriefEvidence = {};
+    const l = it.locator;
+    if (l?.type === "file" && l.line) ev.source = sourceAt(o.repo, o.head ?? b.head, l.path, Number(l.line));
+    const e = it.seq != null ? o.entries.find((y) => y.seq === it.seq) : null;
+    if (e?.dir) for (const rel of e.evidence ?? []) {
+      if (!/\.(txt|log)$/.test(rel)) continue;
+      const f = join(e.dir, rel); if (!existsSync(f) || !realInside(e.dir, f)) continue;
+      const x = logExcerpt(f, o.dataDir, { message: it.message, path: l?.type === "file" ? l.path : null, line: l?.type === "file" ? l.line ?? null : null });
+      if (x) { ev.log = x; break; }
+    }
+    if (ev.source || ev.log) it.evidence = ev;
+  }
+  b.text = renderBrief(b); return b;
+}
+
+/** A brief carried to a new head: the base moved, the task's own change did not. */
+export type BriefCarry = { round: number; from: string; to: string; base: string; patch: string; files: string[]; at: string };
+export type CarryCheck = (b: Brief, x: X) => { ok: true; proof: { base: string; patch: string; files: string[] } } | { ok: false; reason: string };
+
+/** The brief an agent may read: only the one bound to its round (the round before this visit) and to its current input head, or carried to that head with a recorded proof. */
 export function briefFor(x: X, node = x.node.id): Brief | null {
   const b: Brief | undefined = x.ctx.briefs?.[node];
   if (!b || b.round !== x.visit - 1) return null;
-  if (b.head && x.ctx.head && b.head !== x.ctx.head) return null;
+  if (b.head && x.ctx.head && b.head !== x.ctx.head) { const c: BriefCarry | undefined = x.ctx.briefCarry?.[node]; return c && c.round === b.round && c.from === b.head && c.to === x.ctx.head ? b : null; }
   return b;
+}
+export type BriefState = { round: number; head: string | null; brief: Brief | null; carried: BriefCarry | null; missing: string | null };
+/** What a round knows about its brief: bound, carried (with its proof), or missing and why. A first round needs none. */
+export function briefState(x: X, node = x.node.id, carry?: CarryCheck): BriefState {
+  const st = (o: Partial<BriefState>): BriefState => ({ round: x.visit, head: x.ctx.head ?? null, brief: null, carried: null, missing: null, ...o });
+  if (x.visit <= 1) return st({});
+  const b: Brief | undefined = x.ctx.briefs?.[node];
+  const exact = briefFor(x, node);
+  if (exact) { const c: BriefCarry | undefined = x.ctx.briefCarry?.[node]; return st({ brief: exact, carried: c && c.round === exact.round && c.from === exact.head && c.to === x.ctx.head ? c : null }); }
+  if (!b) return st({ missing: `no brief was compiled after round ${x.visit - 1}` });
+  if (b.round !== x.visit - 1) return st({ missing: `the latest brief (${b.id ?? node}) was compiled after round ${b.round}, not after round ${x.visit - 1}` });
+  const at = `this round is at head ${String(x.ctx.head).slice(0, 8)}`;
+  if (!carry) return st({ missing: `a brief for this round exists for head ${String(b.head).slice(0, 8)}, but ${at} and nothing here can prove that only the base moved` });
+  let r: ReturnType<CarryCheck>; try { r = carry(b, x); } catch (e: any) { r = { ok: false, reason: `the carry check failed: ${e?.message ?? e}` }; }
+  if (!r.ok) return st({ missing: `a brief for this round exists for head ${String(b.head).slice(0, 8)}, but ${at} and ${r.reason}` });
+  const c: BriefCarry = { round: b.round, from: b.head!, to: x.ctx.head, ...r.proof, at: new Date().toISOString() };
+  (x.ctx.briefCarry ??= {})[node] = c; x.save?.();
+  return st({ brief: b, carried: c });
+}
+/** The brief part of a prompt: the brief (with its carry notice), or, when a round needs one and has none, a plain statement of that. Never silent. */
+export function briefSection(s: BriefState): string {
+  if (s.brief) return `\n${s.carried ? `This brief was written for head ${s.carried.from.slice(0, 8)} and carried to ${s.carried.to.slice(0, 8)}: only the base moved (now ${s.carried.base.slice(0, 8)}); the task's change is the same (patch ${s.carried.patch.slice(0, 12)}, files ${s.carried.files.join(", ") || "none"}).\n` : ""}${s.brief.text}\n`;
+  if (s.missing) return `\nNO BRIEF FOR THIS ROUND: round ${s.round} needs the brief compiled after round ${s.round - 1}, and none is bound to this round${s.head ? ` at head ${String(s.head).slice(0, 8)}` : ""}: ${s.missing}. Studio sends no brief, so do not guess what failed: read the latest check results you can reach, fix only what you can verify, and name this gap in your report.\n`;
+  return "";
 }
 
 export function installRefine(engine: Engine) {
   // what brief-quality sees: the brief the loop node is about to send
   engine.artifacts.brief ??= (x) => ({ type: "brief", data: x.rn.data.brief ?? null });
   engine.modes.rootcause = {
-    tools: (x) => [{ name: "root_cause", description: "Once: the root cause behind the failures (one or two sentences, verified against the findings), and for any item without a clear expected change, the expected change.",
-      schema: { type: "object", properties: { cause: { type: "string" }, expected: { type: "array", items: { type: "object", properties: { n: { type: "number" }, expected: { type: "string" } }, required: ["n", "expected"] } } }, required: ["cause"] },
+    tools: (x) => [{ name: "root_cause", description: "Once: the root cause behind the failures (one or two sentences, verified against the findings), and for any item without a concrete expected change (empty, or only \"<check> passes\"), the expected change; for an item with no locator, its locator.",
+      schema: { type: "object", properties: { cause: { type: "string" }, expected: { type: "array", items: { type: "object", properties: { n: { type: "number" }, expected: { type: "string" }, locator: { type: "object" } }, required: ["n", "expected"] } } }, required: ["cause"] },
       run: (a) => { x.rn.data.rootcause = { cause: String(a.cause ?? "").slice(0, 1200), expected: Array.isArray(a.expected) ? a.expected : [] }; x.save(); return { ok: true }; } } as AgentTool],
     maxTools: 4,
-    system: (x, skill) => `${skill}\n\nYou are the coordinator. Diagnose before the next round: read the compiled brief and name the root cause behind its items, and the expected change where an item lacks one. Never send the worker to hunt. Call root_cause once, then one line.`,
-    prompt: (x) => `ROOT CAUSE\nRun ${x.run.id}\n${x.rn.data.brief?.text ?? ""}`,
+    system: (x, skill) => `${skill}\n\nYou are the coordinator. Diagnose before the next round: read the compiled brief and name the root cause behind its items, and the concrete expected change where an item lacks one ("<check> passes" is not an expected change). Never send the worker to hunt. Call root_cause once, then one line.`,
+    prompt: (x) => `ROOT CAUSE\nRun ${x.run.id}\n${x.rn.data.qualityFindings?.length ? `brief-quality refused this brief; give every item it names a concrete expected change (and a locator where it has none):\n${x.rn.data.qualityFindings.map((m: string) => `- ${m}`).join("\n")}\n\n` : ""}${x.rn.data.brief?.text ?? ""}`,
     after: (x) => { if (!x.rn.data.rootcause) throw new Error("the coordinator gave no root cause"); return "ok"; },
   };
   engine.kinds.loop = {
@@ -88,7 +188,7 @@ export function installRefine(engine: Engine) {
       const blockingEntries = entries.filter((e) => e.blocking);
       const score = blockingEntries.length ? blockingEntries.reduce((s, e) => s + (e.score != null && Number.isFinite(e.score) ? Math.max(0, Math.min(1, e.score)) : e.verdict === "pass" ? 1 : 0), 0) / blockingEntries.length : 1;
       if (!failing.length && !human.length) { st.history.push({ round, classes: [], score, head: x.ctx.head ?? null, outcome: "pass" }); x.save(); return { outcome: "pass", note: `round ${round}: every blocking check passes (score ${score.toFixed(2)})` }; }
-      const brief = compileBrief(producer, round, x.ctx.head ?? null, failing, human);
+      const brief = attachEvidence(compileBrief(producer, round, x.ctx.head ?? null, failing, human), { repo: x.ctx.worktree ?? null, head: x.ctx.head ?? null, dataDir: x.deps.dataDir, entries: failing });
       const prev = st.history.at(-1);
       const repeated = prev && prev.round === round - 1 ? brief.classes.filter((c) => prev.classes.includes(c) && c !== "captain-note") : [];
       let outcome = "retry";
@@ -108,28 +208,35 @@ export function installRefine(engine: Engine) {
       else if (round >= cap) outcome = "cap";
       else if (failing.length && (x.node.args?.report_checks ?? []).length && failing.every((e) => x.node.args!.report_checks.includes(e.check)) && !human.length) outcome = "report";
       // the coordinator adds a root cause, then the brief is checked like any output
-      if ((outcome === "retry" || outcome === "report") && x.node.args?.coordinator && x.run.def.roles.some((r) => r.id === x.node.args!.coordinator)) {
+      const hasRole = (r: unknown) => !!r && x.run.def.roles.some((y) => y.id === r);
+      const coordinator = hasRole(x.node.args?.coordinator) ? String(x.node.args!.coordinator) : null;
+      const rootCause = async (role: string) => {
         x.rn.data.brief = brief; x.rn.data.rootcause = null;
         try {
-          const sub: X = { ...x, node: { ...x.node, role: x.node.args.coordinator } };
+          const sub: X = { ...x, node: { ...x.node, role } };
           await engine.runAgent(sub, "rootcause");
           const rc = x.rn.data.rootcause;
-          if (rc) { for (const e of rc.expected ?? []) { const it = brief.items.find((i) => i.n === Number(e.n)); if (it && (!it.expected || /passes$/.test(it.expected))) it.expected = String(e.expected).slice(0, 600); }
-            brief.rootCause = rc.cause || null; brief.text = renderBrief(brief); }
+          if (rc) { for (const e of rc.expected ?? []) { const it = brief.items.find((i) => i.n === Number(e.n)); if (!it) continue;
+              if (placeholderExpected(it) && String(e.expected ?? "").trim()) it.expected = String(e.expected).slice(0, 600);
+              if (!it.locator) { const l = parseLocator(e.locator); if (l) { it.locator = l; it.where = locatorText(l);
+                if (l.type === "file" && l.line) it.evidence = { ...it.evidence, source: sourceAt(x.ctx.worktree ?? null, x.ctx.head ?? null, l.path, Number(l.line)) }; } } }
+            brief.rootCause = rc.cause || brief.rootCause; brief.text = renderBrief(brief); }
         } catch (err: any) { x.log(`no root cause: ${err?.message ?? err}`); }
-      }
+      };
+      if ((outcome === "retry" || outcome === "report") && coordinator) await rootCause(coordinator);
       x.rn.data.brief = brief;
       if (outcome === "retry" || outcome === "report") {
-        // the brief-quality check must pass before the brief is sent: fill what the template can, check again, else stop with an error
+        // the brief-quality check must pass before the brief is sent; a failing brief goes to a coordinator root-cause turn (the loop's, else the workflow's coordinator role), never to a placeholder
         let q = await engine.runCheck(x, { use: "core/brief-quality" }, null);
-        if (q.verdict !== "pass") {
-          for (const it of brief.items) { it.expected ||= `${it.check} passes`; if (!it.locator) it.locator = { type: "card", field: it.check }; }
-          brief.text = renderBrief(brief);
-          x.rn.data.brief = brief;
+        const fallback = coordinator ?? (hasRole("coordinator") ? "coordinator" : null);
+        if (q.verdict !== "pass" && fallback) {
+          x.rn.data.qualityFindings = q.findings.map((f) => f.message);
+          await rootCause(fallback);
+          x.rn.data.qualityFindings = null; x.rn.data.brief = brief;
           q = await engine.runCheck(x, { use: "core/brief-quality" }, null);
         }
         brief.quality = q.verdict;
-        if (q.verdict !== "pass") throw new Error(`the brief failed brief-quality: ${q.findings.map((f) => f.message).join("; ") || q.error}`);
+        if (q.verdict !== "pass") throw new Error(`the brief failed brief-quality${fallback ? " after a coordinator root-cause turn" : " and the workflow has no coordinator to diagnose it"}: ${q.findings.map((f) => f.message).join("; ") || q.error}`);
       }
       (x.ctx.briefs ??= {})[producer] = brief;
       if (outcome === "report") (x.ctx.reportOnly ??= {})[producer] = true;

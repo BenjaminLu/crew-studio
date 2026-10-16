@@ -201,7 +201,11 @@ async function* runtimeAgent(text: string, call: Call, say: Say): AsyncGenerator
     yield* done(fail ? "fail" : "pass"); return;
   }
   if (text.startsWith("ROOT CAUSE")) {
-    yield* call("root_cause", { cause: "the last round left the named class unfixed", expected: [] });
+    // like a model: a concrete expected change for each item that has none (or only "<check> passes"), and a locator where it has none
+    const items = [...text.matchAll(/^(\d+)\. \[([^\]]+)\] (\S+) — (.*)\n   Found: (.*)\n   Expected: (.*)$/gm)];
+    const expected = items.filter((m) => { const e = m[6].trim().replace(/\.$/, ""); return !e || /^[\w@./:-]+ passes$/.test(e) || m[4] === "(no locator)" || /^node |^edge /.test(m[4]); })
+      .map((m) => ({ n: Number(m[1]), expected: `the ${m[2]} finding "${m[5].slice(0, 80)}" no longer occurs`, ...(m[4] === "(no locator)" || /^node |^edge /.test(m[4]) ? { locator: { type: "card", field: m[3] } } : {}) }));
+    yield* call("root_cause", { cause: "the last round left the named class unfixed", expected });
     yield* done("Root cause given."); return;
   }
   if (text.startsWith("DESIGN DRAFT")) {
