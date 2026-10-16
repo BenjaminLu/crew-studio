@@ -31,9 +31,22 @@ export function installCodeRecovery(engine:Engine,W:Worktrees){
     const typed=rep.marker==='ASK'?failure('ask.escalated',msg,{source:'agent',run:x.run.id,node:'build',escalation:x.run.nodes.build?.data?.escalation?.reason??null}):rep.marker==='BLOCKED'?fromError(Object.assign(new Error(msg),{outcome:'blocked'}),{source:'agent',run:x.run.id,node:'build'}):failure('scope.blocked',msg,{source:'agent',run:x.run.id,node:'build'});
     const cur=engine.cards.get(card.id);if(!cur)return;cur.failure=typed;card.failure=typed;engine.cards.save(cur); // the stored card keeps its STE result
   };
+  // Retry completed build work without changing the selected workflow/spec or admission.
+  const canRetryBuild=(c:any,r:any)=>{
+    if(!r||r.workflow!=='code-firstmate'||c.node!=='scope-card'||c.kind!=='scope'||!r.ctx.spec||!r.nodes.build||!['ASK','SCOPE-BLOCKED','BLOCKED'].includes(r.nodes.build.data?.report?.marker))return false;
+    const trusted=engine.trusted(r.id);return trusted.ok&&trusted.entries.some(e=>e.record==='card-answer'&&e.data?.choice==='dispatch'&&e.data?.queueSpec===hashInput(r.ctx.spec));
+  };
+  const offerRetry=(c:any,r:any)=>{if(c.status==='open'&&canRetryBuild(c,r)&&!c.options.some((o:any)=>o.id==='retry-build')){c.options.unshift({id:'retry-build',label:'Continue build with the approved spec',labelZh:'沿用核准規格繼續工作',primary:true});engine.cards.save(c);}};
+  engine.continuationEdges['code-build-retry']=(r,node,outcome)=>{
+    if(node.id!=='scope-card'||outcome!=='retry-build')return [];
+    const answer=engine.trusted(r.id).entries.filter(e=>e.record==='card-answer'&&e.data?.choice==='retry-build'&&e.node==='scope-card').at(-1);
+    const card=answer&&engine.cards.get(answer.data.card);if(!card||card.status!=='answered'||card.visit!==r.nodes[node.id].visits||!canRetryBuild(card,r))return [];
+    return [{from:node.id,to:'build',when:'retry-build'}];
+  };
+  const retryPrepared=engine.cardPrepared['build-retry'];engine.cardPrepared['build-retry']=(x,c,b)=>{retryPrepared?.(x,c,b);offerRetry(c,x.run);};
   const priorView=engine.cards.view;
   engine.cards.view=c=>{
-    const view=priorView(c),r=engine.get(c.run);
+    const r=engine.get(c.run);offerRetry(c,r);const view=priorView(c);
     if(c.kind==='failure'||c.status!=='open'||!c.options.some(o=>o.id==='rescope')||!r?.ctx.wt||!r.def.nodes.some(n=>n.do==='git.merge'))return view;
     try{
       const k=key(r),rec=W.get(k.project,k.task),trusted=engine.trusted(r.id),{prior,signed}=signedReservation(engine,r,trusted);
@@ -54,7 +67,8 @@ export function installCodeRecovery(engine:Engine,W:Worktrees){
   };
   const original=engine.answer.bind(engine);
   engine.answer=async(id,a)=>{
-    const c=engine.cards.get(id),r=c&&engine.get(c.run);
+    const c=engine.cards.get(id),r=c&&engine.get(c.run);if(c)offerRetry(c,r);
+    if(a.choice==='retry-build'&&(!c||!canRetryBuild(c,r)||String(a.by).startsWith('auth window')))throw new Error('build retry requires the current approved spec and captain decision');
     if(c?.status==='open'&&a.choice==='rescope'&&(a as any).localRescope!=null&&r?.ctx.wt&&r.def.nodes.some(n=>n.do==='git.merge')){
       const rn=r.nodes[c.node],node=r.def.nodes.find(n=>n.id===c.node)!;
       if(String(a.by).startsWith('auth window')||!c.options.some(o=>o.id==='rescope')||rn.state!=='running'||rn.waiting!=='card'||rn.card!==c.id||rn.visits!==c.visit)

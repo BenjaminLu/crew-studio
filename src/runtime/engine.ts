@@ -187,6 +187,7 @@ export class Engine {
   kinds: Record<string, KindHandler> = {};
   actions: Record<string, (x: X) => Promise<string | Result> | string | Result> = {};
   beforeNodeChecks: Record<string, (x: X, result: Result) => boolean> = {};
+  continuationEdges: Record<string,(run:Run,node:WNode,outcome:string)=>WEdge[]> = {};
   cardPrepared: Record<string, (x: X, card: SCard, body: Body) => void> = {};
   beforeStart: Record<string, (x: X) => Promise<Result | null> | Result | null> = {};
   externalValidators: Record<string, (x: X, descriptor: any) => boolean> = {};
@@ -624,7 +625,7 @@ export class Engine {
 
   private async route(r: Run, node: WNode, outcome: string): Promise<void> {
     if (TERMINAL.includes(r.status)) return;
-    const outs = r.def.edges.filter((e) => e.from === node.id);
+    const outs = [...r.def.edges.filter((e) => e.from === node.id), ...Object.values(this.continuationEdges).flatMap(f=>f(r,node,outcome))];
     let take = outs.filter((e) => e.when && e.when.split("|").includes(outcome));
     if (!take.length && !FAILS.includes(outcome)) take = outs.filter((e) => !e.when);
     // an edge's checks run before it is taken; a blocking fail re-routes the source as "fail"

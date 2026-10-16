@@ -1,4 +1,5 @@
 import {OperatingRules,jobInstructions} from "../operating-rules";
+import {selectTestCommand,prepareTestBase} from "../test-command";
 import {localUnrestricted} from "../local-execution";
 import { codeHandoffView } from "./code-handoff";
 import { installCodeRecovery } from "./code-recovery";
@@ -715,23 +716,31 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       }};
       if (reportOnly) return [...READ_ONLY(wt), context, report];
       return [...folderTools(wt, () => {}, "fs"), context, report,
-        { name: "run_tests", description: "Run the repository's declared test command (at most 6 times per round). Optional files selects tests in the approved write or read-only verification scope through CREW_TEST_FILES; the repository test runner must support it. Returns actual exit, output tail and signed execution evidence.", schema: { type: "object", properties: {files:{type:'array',items:{type:'string'},maxItems:12}} },
+        { name: "run_tests", description: "Run the repository's declared test command (at most 6 times per round). Optional files selects scoped tests with the runner adapter. target=base runs candidate tests against base source in an isolated copy, preserving the base package.json. Browser tests may write scoped evidence in the head checkout. Returns actual exit, output tail and signed execution evidence.", schema: { type: "object", properties: {files:{type:'array',items:{type:'string'},maxItems:12},target:{type:'string',enum:['head','base']}} },
           // the repository's tests run in the check sandbox: they read the worktree, write only their own out/ and tmp, no network
-          run: async (a) => { if (!engine.owns(x))return{error:'round owner ended'};if (!cfg.test) return { error: "the repository declares no test command" };
+          run: async (a) => { if (!engine.owns(x))return{error:'round owner ended'};if (!cfg.test) return { status:'not-run',reason:'The repository has no test command; continue with review and record the testing gap.',exit:null };
             const files=a?.files;if(files!==undefined&&(!Array.isArray(files)||!files.length||files.length>12||files.some((p:any)=>typeof p!=='string'||normPath(p)!==p||p.includes(',')||(!((x.ctx.spec?.scope??[]).some((g:string)=>matches(g,p))||(x.ctx.spec?.verificationScope??[]).includes(p)))||!cfg.tests.some(g=>matches(g,p)))))return{error:'files must name tests inside the approved write or verification scope'};
             if (++runs > 6) return { error: "test run limit reached" };
             const box = join(x.dir, "tests", `round-${x.visit}-${runs}`); mkdirSync(join(box, "out"), { recursive: true }); mkdirSync(join(box, "tmp"), { recursive: true });
+            let command:string[]|null;try{command=selectTestCommand(cfg,files);}catch(e:any){return{error:e.message};}
+            if(!command)return{status:'not-run',exit:null};
+            const target=a?.target??'head';if(!['head','base'].includes(target))return{error:'target must be head or base'};
+            let cwd=wt;
+            if(target==='base'){
+              if(!files?.length)return{error:'base comparison requires explicit candidate test files'};
+              cwd=prepareTestBase(wt,join(box,'base'),x.ctx.baseCommit,cfg.tests);
+            }
             const env:Record<string,string>={...(files?{CREW_TEST_FILES:files.join(',')}:{})};
             if(localUnrestricted())for(const [target,source] of [['PLAYWRIGHT_MODULE','CREW_PLAYWRIGHT_MODULE'],['PLAYWRIGHT_BROWSERS_PATH','CREW_PLAYWRIGHT_BROWSERS_PATH'],['PLAYWRIGHT_EXECUTABLE_PATH','CREW_PLAYWRIGHT_EXECUTABLE_PATH']])if(process.env[source])env[target]=process.env[source]!;
-            const r = await sandboxed(cfg.test, { cwd: wt, out: join(box, "out"), tmp: join(box, "tmp"), timeoutS: cfg.timeout_s, network: false, dataDir: o.dataDir,env });
+            const r = await sandboxed(command, { cwd, out: target==='head'?wt:join(box, "out"), tmp: join(box, "tmp"), timeoutS: cfg.timeout_s, network: false, dataDir: o.dataDir,env });
             if (r.refused) return { error: `refused: ${r.refused}` };
             if(!engine.owns(x))return{error:'round owner ended during tests'};
             const output=r.stdout+r.stderr;writeFileSync(join(box,'output.log'),output);
-            const evidence=engine.record(x,'worker-test-execution',{head:head(wt),data:{command:cfg.test,files:files??null,exit:r.timedOut?null:r.code,timedOut:r.timedOut,executionMode:localUnrestricted()?'local-unrestricted':'default',outputSha256:createHash('sha256').update(output).digest('hex')}});
-            return { exit: r.timedOut ? null : r.code, timedOut: r.timedOut, evidence:evidence?{seq:evidence.seq,sig:evidence.sig}:null,tail: output.trim().split("\n").slice(-25).join("\n") }; } }];
+            const evidence=engine.record(x,'worker-test-execution',{head:head(wt),data:{command,target,base:x.ctx.baseCommit,files:files??null,exit:r.timedOut?null:r.code,timedOut:r.timedOut,executionMode:localUnrestricted()?'local-unrestricted':'default',outputSha256:createHash('sha256').update(output).digest('hex')}});
+            return { status:'executed',target,command,base:x.ctx.baseCommit,head:head(wt),exit: r.timedOut ? null : r.code, timedOut: r.timedOut, evidence:evidence?{seq:evidence.seq,sig:evidence.sig}:null,tail: output.trim().split("\n").slice(-25).join("\n") }; } }];
     },
     system: (x, skill) => x.ctx.reportOnly?.build ? `${skill}\n\nREPORT ONLY: your code from the last round is kept. Do not change any file. Read what you need and call worker_report once with a complete report, then one line.`
-      : `${skill}\n\nYou build ONE change in the run's worktree with the fs_* tools (no shell; run_tests runs the repository's tests). Stay inside the spec's scope. Each done line needs a test that fails without your change. Studio commits your work; you never commit. Tool budget: 180 calls. Use at most 60 read/search calls before implementation; reserve calls for edits, verification and worker_report. Prefer targeted reads over whole files. Do not spend the full budget exploring. End with worker_report, then one line.`,
+      : `${skill}\n\nYou build ONE change in the run's worktree with the fs_* tools (no shell; run_tests runs the repository's tests). Stay inside the spec's scope. Each done line needs a test that fails without your change. Use run_tests({files:[testPath],target:"base"}) for candidate fail-first tests on base source and target:"head" on the implementation. Browser tests can create screenshots in approved validation paths. No test command means not-run, not a reason to HOLD. Studio commits your work; you never commit. Tool budget: 180 calls. Use at most 60 read/search calls before implementation; reserve calls for edits, verification and worker_report. Prefer targeted reads over whole files. Do not spend the full budget exploring. End with worker_report, then one line.`,
     prompt: (x) => {
       const wt = shellOk(x); const h = head(wt); x.ctx.head = h;
       mkdirSync(join(x.dir, "briefs"), { recursive: true });
@@ -925,9 +934,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
         } catch (e: any) { return { error: String(e?.message ?? e) }; }
         finally { rmSync(box, { recursive: true, force: true }); } };
       const runTool: AgentTool[] = mode !== "run" ? [] : [
-        { name: "run_tests", description: "Run the repository's own test command on the head, in a throwaway copy of the head with its dependencies installed, in your sandbox (no network, at most 3 times). Returns the exit code and the last lines.", schema: { type: "object", properties: {} },
-          run: async () => { if (!cfg.test) return { error: "the repository declares no test command (recorded: the merge card flags that nothing ran); run_command can still check a claim" }; if (++runs > 3) return { error: "test run limit reached" };
-            return inCopy(`tests-${runs}`, cfg.test, cfg.timeout_s); } },
+        { name: "run_tests", description: "Run the repository's own test command on the head, in a throwaway copy of the head with its dependencies installed, in your sandbox (no network, at most 3 times). Returns the exit code and the last lines.", schema: { type: "object", properties: {files:{type:"array",items:{type:"string"},maxItems:12}} },
+          run: async (a) => { const files=a?.files;if(files!==undefined&&(!Array.isArray(files)||!files.length||files.length>12||files.some((p:any)=>typeof p!=="string"||normPath(p)!==p||!cfg.tests.some(g=>matches(g,p)))))return{error:"files must name repository tests"};if (!cfg.test) return { error: "the repository declares no test command (recorded: the merge card flags that nothing ran); run_command can still check a claim" }; if (++runs > 3) return { error: "test run limit reached" };
+            let command;try{command=selectTestCommand(cfg,files);}catch(e:any){return{error:e.message};}return inCopy(`tests-${runs}`, command!, cfg.timeout_s); } },
         { name: "run_command", description: "Run one small verification command (argv, no shell; a program from the system PATH, bun, or a path inside the copy) on a throwaway copy of the head in your sandbox: no network, no credentials, nothing written back. At most 4 times.",
           schema: { type: "object", properties: { argv: { type: "array", items: { type: "string" } } }, required: ["argv"] },
           run: async (a) => { const argv = (Array.isArray(a.argv) ? a.argv : []).map(String).slice(0, 40); if (!argv.length) return { error: "argv is required" }; if (++cmds > 4) return { error: "command limit reached" };
