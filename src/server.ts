@@ -418,7 +418,7 @@ try { const rd = join(DATA, "rounds"); if (existsSync(rd)) for (const d of readd
   if (existsSync(rd)) for (const d of readdirSync(rd)) if (d.startsWith("install-")) rmSync(join(rd, d), { recursive: true, force: true }); } catch {}
 // one worktree per task under data/work (src/worktrees.ts): at start, worktrees and locks no live run owns are swept, each with its reason
 try { worktrees.migrate(); } catch (e: any) { console.warn(`crew-studio: worktree migration: ${e?.message ?? e}`); }
-try { const sw = worktrees.sweep((run) => { const r = run ? runtime.engine.get(run) : null; return !!r && !["succeeded", "failed", "cancelled"].includes(r.status); }, Number(runtime.engine.policies.get("worktree.keep_days").value ?? 7));
+try { const sw = worktrees.sweep((run) => { const r = run ? runtime.engine.get(run) : null; return !!r && (!["succeeded", "failed", "cancelled"].includes(r.status) || r.status === "failed" && !r.archived && !r.parked); }, Number(runtime.engine.policies.get("worktree.keep_days").value ?? 7));
   if (sw.removed.length || sw.locks.length) studioLog.emit({ type: "worktree_sweep", workflow: "studio", summary: `startup sweep: ${sw.removed.length} worktrees, ${sw.locks.length} stale locks removed (data/work/sweep.log)`, data: sw }); } catch (e: any) { console.warn(`crew-studio: worktree sweep: ${e?.message ?? e}`); }
 // additions to the sandbox repository (a normal commit on main each), held while a run works on it: its branch fast-forwards only if main stays put
 if (process.env.CREW_SANDBOX !== "0") { try { const repo = join(DATA, "demo-repo");
