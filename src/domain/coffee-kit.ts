@@ -119,8 +119,9 @@ function coffeeConstraintContext(x:X,through?:number){
  const entries=trustedCoffee(x).filter(e=>through===undefined||e.seq<=through),requests=entries.filter(e=>e.record===planRecord&&e.data?.revision?.note).map(e=>({source:{seq:e.seq,sig:e.sig},target:e.data.revision.target,originalCaptainComment:e.data.revision.note,targetVersion:entries.filter(r=>r.seq<e.seq&&r.record===outputRecord&&r.data?.part===e.data.revision.target).map(r=>({artifact:r.data.artifact,n:r.data.n,manifest:r.data.manifest,metadata:r.data.metadata,generation:r.data.generation,dependencies:r.data.dependencies})).at(-1)??null,generations:e.data.generations,designHash:e.data.direction?.designHash??null}));
  // Artifact findings are distinct from presentation-copy lint on captain cards. Both remain in the signed ledger.
  const machineFindings=entries.filter(e=>e.record==='check'&&e.check?.startsWith('coffee-kit/')&&['fail','warn','error'].includes(e.verdict)&&((e.findings??[]).length||e.error)).map(e=>({source:{seq:e.seq,sig:e.sig},check:e.check,head:e.head,verdict:e.verdict,findings:e.findings,error:e.error??null}));
- const context={schema:1,machineFindings,rule:'Preserve earlier captain constraints unless a later request explicitly replaces them. Do not infer resolution or rely on model memory.',requests};
- if(JSON.stringify(context).length>48000)throw new Error('Cumulative captain constraints exceed bounded context; discuss a new explicit plan without discarding history');
+ const reviewRequests=entries.filter(e=>e.record==='coffee-review-recovery-v1').map(e=>({source:{seq:e.seq,sig:e.sig},card:e.data.card,target:e.data.target,note:e.data.note,bundle:e.data.bundle}));
+ const context={schema:1,machineFindings,reviewRequests,rule:'Preserve earlier captain constraints unless a later request explicitly replaces them. Do not infer resolution or rely on model memory.',requests};
+ if(JSON.stringify(context).length>96000)throw new Error('Cumulative captain constraints exceed bounded context; discuss a new explicit plan without discarding history');
  return context;
 }
 /** Captain-facing film failure summary: what failed, why, and what changed since the previous failed attempt. */
@@ -343,8 +344,8 @@ export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; 
       entries.filter(e=>e.record==='coffee-image-instructions-v1'&&e.data?.generation===receipts.image.generation&&e.data?.design===plan.direction.designHash).at(-1),
     ].filter(Boolean);
     const staffingEvidence=[...entries.filter(e=>e.record==='staffing-start'||e.record==='staffing-upgrade'),...producerInstructions].map(e=>({record:e!.record,source:{seq:e!.seq,sig:e!.sig},node:e!.node,round:e!.round,data:e!.data}));
-    const snapshot={schema:1,scope:'text-and-source-only',design:plan.direction.design,designHash:plan.direction.designHash,generations:plan.generations,revision:plan.revision,cumulativeCaptainConstraints:coffeeConstraintContext(x),staffing:{config:x.run.params._staffing??null,approved:d.reviewStaffing?.(x.run.def,x.run.params)??null,evidence:staffingEvidence},receiptEvidence,receipts,texts};
-    if(JSON.stringify(snapshot).length>96000)throw new Error('Complete coffee review input exceeds bounded capacity; no truncated approval');
+    const snapshot={schema:1,scope:'text-and-source-only',reviewBoundary:{decision:'source-correctness-before-captain-acceptance',visualEvidence:'not-supplied-not-certified',missingVisualEvidenceBlocksSourceReview:false,captainWholeSiteApprovalRequired:true},design:plan.direction.design,designHash:plan.direction.designHash,generations:plan.generations,revision:plan.revision,cumulativeCaptainConstraints:coffeeConstraintContext(x),staffing:{config:x.run.params._staffing??null,approved:d.reviewStaffing?.(x.run.def,x.run.params)??null,evidence:staffingEvidence},receiptEvidence,receipts,texts};
+    if(JSON.stringify(snapshot).length>160000)throw new Error('Complete coffee review input exceeds bounded capacity; no truncated approval');
     return snapshot;
   };
   const openBundleCard = async (x:X) => {
