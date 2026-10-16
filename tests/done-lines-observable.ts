@@ -1,9 +1,10 @@
-import './lib/isolated-env.mjs';
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Plan-vs-execution contract. No model call or production ledger mutation.
 import assert from 'node:assert/strict';
 import {existsSync,mkdirSync,readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {harness} from './rt-harness';
+import {assertTempRepo} from './lib/git-hygiene.mjs';
 import {Projects} from '../src/doors';
 import {installCode} from '../src/domain/code';
 import {Ledger,doneMap} from '../src/runtime/checks';
@@ -29,7 +30,7 @@ try {
  assert.equal(check([planned]).verdict,'pass','new planned test need not exist or have run at spec time');
  assert.equal(check(['The feature works well']).verdict,'fail','missing concrete test remains rejected');
  assert.equal(check(['tests/new-feature.test.ts observes saved ID']).verdict,'fail','expected base failure remains required');
- const repo=join(H.data,'repo');mkdirSync(repo);setGitHome(H.data);must(repo,['init','-q']);writeFileSync(join(repo,'value.txt'),'base');must(repo,['add','value.txt']);must(repo,['commit','-qm','base']);const head=must(repo,['rev-parse','HEAD']);
+ const repo=join(H.data,'repo');mkdirSync(repo);assertTempRepo(repo);setGitHome(H.data);must(repo,['init','-q']);writeFileSync(join(repo,'value.txt'),'base');must(repo,['add','value.txt']);must(repo,['commit','-qm','base']);const head=must(repo,['rev-parse','HEAD']);
  installCode(H.engine,{dataDir:H.data,projects:new Projects(H.data)});
  const id='R-plan-fixture',ledger=new Ledger(H.data,id),x:any={run:{id},ctx:{worktree:repo,head,spec:{done:[planned]}}};
  const gate=()=>H.engine.natives['gate-failfirst']({} as any,{x} as any) as any;
