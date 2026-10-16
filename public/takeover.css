@@ -91,3 +91,8 @@
 .att-sent-img img{display:block;width:120px;height:90px;object-fit:cover}
 .att-sent-doc{max-width:220px}
 @media (max-width:640px){.att-tray{flex-wrap:wrap;overflow-x:visible}.att-tray .att-chip{flex:1 1 150px;max-width:100%}.att-sent-img img{width:96px;height:72px}}
+/* typed errors from outside Studio, and earlier primary sessions in the restored history */
+.ext-err .ext-msg{display:block;white-space:pre-wrap;word-break:break-word;font-size:12px;padding:6px 8px;border-radius:6px;background:var(--surface-2);color:var(--text);max-height:9em;overflow:auto}
+.chat-session-sep{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text-3);margin:4px 0}
+.chat-session-sep::before,.chat-session-sep::after{content:"";flex:1;border-top:1px solid var(--border)}
+.att-chip [data-att-note="warn"]{color:var(--warn)}

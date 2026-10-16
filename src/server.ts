@@ -72,6 +72,7 @@ import { installPackGenesis } from "./pack-genesis";
 import { createRuntime, skillTextFor } from "./runtime";
 import { EXEMPT, guardWrite, hasSession, sessionCookie, sessionToken } from "./csrf";
 import { AttachmentStore, deliveryFor, uploadAttachment } from "./attachments";
+import { ChatLog } from "./host/chat-log";
 import { registerSecretValues } from "./secure";
 import { timingSafeEqual } from "node:crypto";
 import { git, setGitHome } from "./git";
@@ -175,7 +176,9 @@ const nativeOutcomes = new NativeOutcomes(DATA,()=>runtime.engine,id=>runtime.en
 // the captain's chat attachments: content-hash names in Studio's data folder (src/attachments.ts)
 const chatFiles = new AttachmentStore(DATA);
 // retention (src/attachments.ts): uploads never sent go after a day, stray temporary files after an hour; sent files stay with the history
-try { chatFiles.sweep(); } catch {} setInterval(() => { try { chatFiles.sweep(); } catch {} }, 3600_000).unref?.();
+const chatLog = new ChatLog(DATA);
+/** Retention runs at start and every hour: what the kept history or the queue references stays (src/attachments.ts sweep). */
+const sweepChatFiles = () => { try { const referenced = chatLog.referencedIds(); for (const q of main.queue.list()) for (const a of q.attachments ?? []) referenced.add(a.id); return chatFiles.sweep({ referenced }); } catch { return 0; } };
 const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STATE, nativeWorkspace: !startup.legacy && !process.env.CREW_MAIN_PROJECT,
   nativeTools:()=>runtime.firstmate,
   onNativeProposal:(origin,result)=>nativeOutcomes.bind(origin,result),
@@ -183,7 +186,9 @@ const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STA
   onGeneratedImage:async(image,owner)=>{await publishGeneratedImage(m3.media,image,owner);},
   permissionMcp: (b) => ({ command: helperCommand("permission-mcp"), env: { CREW_PERM_SOCKET: b.socket, CREW_PERM_TOKEN: b.token } }),
   attachmentFiles: (ids) => chatFiles.resolve(ids),
+  chatLog,
   studioMcp: () => helperCommand("mcp") });
+sweepChatFiles(); setInterval(sweepChatFiles, 3600_000).unref?.();
 main.onView = (v) => send("main", v);
 main.onEvent = (e: HostEvent) => {
   // a Claude primary's own quota or sign-in refusal is the Claude account card's fact too (no fallback anywhere)

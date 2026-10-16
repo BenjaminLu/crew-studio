@@ -18,6 +18,9 @@ import { InputQueue, lastArrival, type QItem, type QKind } from "./queue";
 import type { AttachedSession, Host, HostEvent, HostId, SessionInfo, SessionPath } from "./types";
 import { WakeReader, acknowledged } from "./wakes";
 import { deliveryFor, filesLine } from "../attachments";
+import { ChatLog } from "./chat-log";
+import { claudeVendorMessage, externalError, type ExternalError } from "./external-errors";
+import { redactText } from "../secure";
 /** What captain-only native tools see as the captain's words: the text, or for a files-only message the files line. */
 const captainText = (input: QItem | null) => input ? (input.text.trim() ? input.text : input.attachments?.length ? filesLine(input.attachments) : input.text) : "";
 
@@ -45,7 +48,12 @@ export type LogItem = { at: number; kind: "captain" | "card" | "wake" | "firstma
   /** a captain message's attachments (ids and labels; served from /api/main/attachments/<id>) */
   attachments?: import("../attachments").AttachmentRef[];
   /** why the attachments of a captain message could not be sent: typed, never a silent drop */
-  attachmentRefusal?: import("../attachments").AttachmentRefusalCode };
+  attachmentRefusal?: import("../attachments").AttachmentRefusalCode;
+  /** the primary session this line belongs to (kept on disk, so earlier sessions show as their own blocks) */
+  session?: SessionLabel | null;
+  /** an error from outside Studio (vendor, CLI, network, process, attachment), typed, with the exact external message */
+  external?: ExternalError };
+export type SessionLabel = { host: HostId; id: string; model: string | null };
 
 export type MainOpts = {
   dataDir: string; projectDir: string; stateDir: string; probe?: ProcProbe;
@@ -59,6 +67,8 @@ export type MainOpts = {
   studioMcp?: () => string[];
   onNativeProposal?: (origin:import("./native-outcomes").NativeOrigin,result:unknown)=>void;
   nativeOutcomes?: (host:string|null,thread:string|null)=>LogItem[];
+  /** where the chat log is kept across restarts (data/chat-log); none: memory only */
+  chatLog?: ChatLog;
   /** the stored files behind a captain message's attachment ids (src/attachments.ts AttachmentStore.resolve) */
   attachmentFiles?: (ids: string[]) => ReturnType<import("../attachments").AttachmentStore["resolve"]>;
   /** how long a new wake waits for firstmate's own hook to deliver it before Studio sends it itself */
@@ -91,6 +101,7 @@ export class MainSession {
   onEvent: (e: HostEvent) => void = () => {};
 
   constructor(readonly o: MainOpts) {
+    if (o.chatLog) { this.log = o.chatLog.load(400); this.lastLabel = [...this.log].reverse().find((x) => x.session)?.session ?? null; }
     this.probe = o.probe ?? systemProbe;
     this.hosts = o.hosts ?? { claude: claudeHost(), codex: codexHost() };
     this.queue.onChange = () => this.changed();
@@ -118,7 +129,23 @@ export class MainSession {
       drive: this.drive ? { ...this.drive, model: (this.session && this.session.model !== this.session.host ? this.session.model : null) ?? this.drive.model, effort: this.session?.effort ?? this.drive.effort } : null };
   }
   private changed() { try { this.onView(this.view()); } catch {} }
-  note(i: Omit<LogItem, "at">) { this.log.push({ at: Date.now(), ...i }); if (this.log.length > 400) this.log.splice(0, this.log.length - 400); }
+  private lastLabel: SessionLabel | null = null;
+  private sessionLabel(): SessionLabel | null {
+    if (this.session) this.lastLabel = { host: this.session.host, id: this.session.id, model: this.session.model && this.session.model !== this.session.host ? this.session.model : this.lastLabel?.id === this.session.id ? this.lastLabel.model : null };
+    return this.lastLabel;
+  }
+  note(i: Omit<LogItem, "at">) {
+    const item: LogItem = { at: Date.now(), ...i, text: redactText(i.text), session: this.sessionLabel() };
+    this.log.push(item); if (this.log.length > 400) this.log.splice(0, this.log.length - 400);
+    this.o.chatLog?.append(item);
+  }
+  /** A failed turn or a vendor refusal, as a typed notice with the CLI's own words. */
+  private external(source: HostId, raw: unknown, o: Parameters<typeof externalError>[2] = {}, extra: Partial<LogItem> = {}) {
+    const ext = externalError(source, raw, o);
+    this.note({ kind: "status", text: `${ext.reason.en} ${ext.message}`, status: "failed", external: ext, ...extra });
+  }
+  private refusedThisTurn = false;
+  private lastExit: { code: number | null; stderr: string } | null = null;
 
   /** Sessions of the project for one host, each marked if a terminal may be driving it. */
   async discover(host: HostId): Promise<SessionInfo[]> {
@@ -375,7 +402,7 @@ export class MainSession {
           const fit = got?.ok ? deliveryFor(this.session.host, got.files) : got;
           if (!got || !got.ok || !fit || !fit.ok) {
             const why = fit && !fit.ok ? fit : { code: "attachmentMissing" as const, reason: { en: "Studio cannot read the attached files.", "zh-TW": "Studio 讀不到附件。" } };
-            this.note({ kind: "status", text: `Not sent: ${why.reason.en} / ${why.reason["zh-TW"]}`, status: "failed", attachmentRefusal: why.code });
+            this.note({ kind: "status", text: `Not sent: ${why.reason.en} / ${why.reason["zh-TW"]}`, status: "failed", attachmentRefusal: why.code, external: { ...externalError("studio", why.reason.en, { cls: "attachment", code: why.code }), reason: why.reason } });
             this.changed(); continue;
           }
           files = got.files;
@@ -383,13 +410,15 @@ export class MainSession {
         this.reply = "";
         this.lastOwnWrite = Date.now();
         this.changed();
-        this.activeInput=item;
+        this.activeInput=item; this.refusedThisTurn = false; this.lastExit = null;
         const r = await this.session.send(item.text, files).catch((e) => ({ status: "failed" as const, message: String(e?.message ?? e), refusal: e?.refusal?.code as import("../attachments").AttachmentRefusalCode | undefined }));
-        if ("refusal" in r && r.refusal) { this.activeInput = null; this.note({ kind: "status", text: `Not sent: ${r.message}`, status: "failed", attachmentRefusal: r.refusal }); this.changed(); continue; }
+        if ("refusal" in r && r.refusal) { this.activeInput = null; this.note({ kind: "status", text: `Not sent: ${r.message}`, status: "failed", attachmentRefusal: r.refusal, external: externalError("studio", r.message, { cls: "attachment", code: r.refusal }) }); this.changed(); continue; }
         this.activeInput=null;
         this.lastOwnWrite = Date.now();
         this.lastSeenMtime = mtimeOf(this.sessionFile);
-        if (r.status !== "completed") this.note({ kind: "status", text: `Turn ${r.status}${r.message ? `: ${r.message}` : ""}`, status: r.status });
+        if (r.status === "failed" && !this.refusedThisTurn) this.external(this.session?.host ?? "claude", r.message || (this.lastExit ? `exited ${this.lastExit.code}: ${this.lastExit.stderr.trim().split("\n").slice(-3).join(" ")}` : ""));
+        else if (r.status !== "completed") this.note({ kind: "status", text: `Turn ${r.status}${r.message ? `: ${r.message}` : ""}`, status: r.status });
+        this.refusedThisTurn = false; this.lastExit = null;
         this.changed();
       }
     } finally { this.activeInput=null;this.pumping = false; }
@@ -409,7 +438,15 @@ export class MainSession {
   private hostEvent(e: HostEvent) {
     this.onEvent(e);
     if(e.type==="nativeToolFailure")this.note({kind:"system",text:e.failure.reason.en,nativeFailure:e.failure});
-    if (e.type === "hostRefusal") this.note({ kind: "status", text: `${e.reason.en} / ${e.reason["zh-TW"]}`, status: "failed", refusal: e.code });
+    if (e.type === "hostRefusal") { this.refusedThisTurn = true; this.note({ kind: "status", text: `${e.reason.en} / ${e.reason["zh-TW"]}`, status: "failed", refusal: e.code,
+      external: { ...externalError("claude", claudeVendorMessage(e.raw) || e.reason.en, { cls: e.code === "claudeQuotaExhausted" ? "quota" : e.code === "claudeNotSignedIn" ? "auth" : undefined, code: e.code }), reason: e.reason } }); }
+    if (e.type === "exit") {
+      this.lastExit = { code: e.code, stderr: e.stderr ?? "" };
+      // a CLI that stops while nothing runs and Studio did not stop it: say so, with its own last words
+      if (this.state === "attached" && !this.activeInput && !this.session?.busy && e.code !== 0 && e.code !== null)
+        this.external(this.session?.host ?? "claude", `exited ${e.code}${e.stderr?.trim() ? `: ${e.stderr.trim().split("\n").slice(-3).join(" ")}` : ""}`, { cls: "exit" });
+    }
+    if (e.type === "turnEnd" && e.external && e.status === "failed" && !this.refusedThisTurn) this.external(this.session?.host ?? "claude", e.message ?? "");
     if (e.type === "turnStart") this.note({ kind: "system", text: e.source === "task" ? "a background task's notice started a turn; following it" : "a turn Studio did not send started (firstmate's wake hook, or a background task); following it" });
     if (e.type === "turnEnd" && e.external) { this.lastSeenMtime = mtimeOf(this.sessionFile); setTimeout(() => void this.pump(), 0); }
     if (e.type === "permissionMode" && this.drive && this.drive.host === "claude" && e.mode !== this.drive.effectivePermissionMode) {

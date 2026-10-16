@@ -99,11 +99,32 @@ function approvalCard(a) {
       h("button", { class: "btn primary", onclick: () => postJ("/api/main/approve", { id: a.id, allow: true }).then((r) => r.error && toast(r.error)) }, T("Allow", "允許")),
       h("button", { class: "btn", onclick: () => postJ("/api/main/approve", { id: a.id, allow: false }).then((r) => r.error && toast(r.error)) }, T("Deny", "拒絕"))));
 }
+/** A typed error from outside Studio: its class, its code, Studio's reason, and the exact external message. */
+const EXT_CLASS = { quota: ["Quota or rate limit", "額度或頻率限制"], auth: ["Sign-in refused", "登入被拒"], timeout: ["Timed out", "逾時"], network: ["Network", "網路"], exit: ["Process stopped", "程序停止"], attachment: ["Attachment not sent", "附件沒有送出"], upload: ["Upload failed", "上傳失敗"], api: ["Vendor error", "供應商錯誤"] };
+function externalView(x) {
+  const who = { claude: "Claude", codex: "Codex", studio: "Studio" }[x.source] || x.source, cls = EXT_CLASS[x.class] || EXT_CLASS.api;
+  return h("div", { class: "rich chat-err ext-err", role: "alert", "data-external-error": x.code, "data-error-class": x.class, "data-error-source": x.source },
+    h("div", { class: "rk", style: "color:var(--bad)" }, icon("alert", "ic sm"), `${who} · ${T(cls[0], cls[1])}`, h("span", { class: "vbadge" }, x.code)),
+    h("div", { style: "font-size:13px" }, x.reason?.[lang] || x.reason?.en || ""),
+    x.message ? h("code", { class: "ext-msg", "data-external-message": "" }, x.message) : null);
+}
+/** Earlier primary sessions keep their lines as their own block, labelled with host and model. */
+function sessionSep(x, prev, all, v) {
+  if (!x.session) return null;
+  const prevId = (() => { for (let k = all.indexOf(x) - 1; k >= 0; k--) if (all[k].session) return all[k].session.id; return null; })();
+  if (prevId === x.session.id) return null;
+  const many = all.some((y) => y.session && y.session.id !== x.session.id), earlier = x.session.id !== v.sessionId;
+  if (!many && !earlier) return null;
+  const when = new Date(x.at).toLocaleString(lang === "zh-TW" ? "zh-TW" : "en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return h("div", { class: "chat-session-sep", "data-session-block": x.session.id, "data-earlier": earlier ? "1" : "0" },
+    h("span", {}, earlier ? T("Earlier session", "較早的 session") : T("This session", "目前的 session"), ` · ${x.session.host}${x.session.model ? ` · ${x.session.model}` : ""} · ${when}`));
+}
 function logItem(it, i) {
   if(it.source === "studio:native-outcome")return h("div",{class:"card x-pad","data-native-outcome":it.id},h("p",{},it.text),...(it.links||[]).filter(l=>/^#\/(run|review)\//.test(l.href)).map(l=>h("a",{class:"btn",href:l.href},l.label)));
   if (it.kind === "captain") return h("div", { class: "msg me", "data-main": "captain" }, it.text ? h("div", { class: "bub" }, it.text) : null, it.attachments?.length ? attView(it.attachments) : null, it.source && it.source !== "desktop" ? h("div", { class: "faint", style: "font-size:11px;text-align:right" }, it.source) : null);
-  if (it.attachmentRefusal) return h("div", { class: "rich chat-err", role: "alert", "data-attachment-refusal": it.attachmentRefusal }, h("div", { class: "rk", style: "color:var(--bad)" }, icon("alert", "ic sm"), T("Not sent", "沒有送出")), h("div", { style: "font-size:13px" }, it.text.replace(/^Not sent: /, "")));
-  if (it.kind === "firstmate") return h("div", { class: "msg fm", "data-main": "firstmate" }, h("div", { class: "meta" }, "Firstmate", MS.view?.host ? h("span", { class: "vbadge" }, MS.view.host) : null), h("div", { class: "bub" }, md(it.text)));
+  if (it.external) return externalView(it.external);
+  if (it.attachmentRefusal) return externalView({ source: "studio", class: "attachment", code: it.attachmentRefusal, message: it.text.replace(/^Not sent: /, ""), reason: { en: "An attachment could not be sent.", "zh-TW": "附件無法送出。" } });
+  if (it.kind === "firstmate") return h("div", { class: "msg fm", "data-main": "firstmate" }, h("div", { class: "meta" }, "Firstmate", (it.session?.host || MS.view?.host) ? h("span", { class: "vbadge" }, it.session?.host || MS.view.host) : null), h("div", { class: "bub" }, md(it.text)));
   if (it.kind === "tool") return h("div", { class: "toolrow", "data-main": "tool", style: "padding:2px 6px" }, h("code", { style: "font-size:12px" }, it.text.slice(0, 160)));
   const lab = KLABEL[it.kind]?.();
   return h("div", { class: "faint", "data-main": it.kind, style: "font-size:12.5px;padding:4px 8px;border-left:2px solid var(--line);white-space:pre-wrap" }, lab ? h("b", {}, lab + " · ") : null, it.kind === "wake" ? it.text.split("\n").slice(1, -1).join("\n") : it.text);
@@ -117,10 +138,11 @@ renderChat = function (stick = true) {
   else {
     kids.push(driverBanner(v));
     v.approvals.forEach((a) => kids.push(approvalCard(a)));
-    v.log.filter((x) => !(v.context==="studio"&&x.source==="studio:handoff") && (x.kind !== "status" || x.attachmentRefusal || /Paused|Handed|Attached|re-identified|Turn (failed|interrupted)/.test(x.text))).slice(-80).forEach((x, i) => kids.push(logItem(x, i)));
+    v.log.filter((x) => !(v.context==="studio"&&x.source==="studio:handoff") && (x.kind !== "status" || x.attachmentRefusal || x.external || /Paused|Handed|Attached|re-identified|Turn (failed|interrupted)/.test(x.text))).slice(-80).forEach((x, i, all) => { const sep = sessionSep(x, all[i - 1], all, v); if (sep) kids.push(sep); kids.push(logItem(x, i)); });
     if (v.busy) kids.push(h("div", { class: "msg fm", "data-main": "live" }, h("div", { class: "meta" }, "Firstmate", h("span", { class: "faint" }, T("working…", "處理中…"))),
       MS.liveTools.length ? h("div", { class: "faint", style: "font-size:12px" }, MS.liveTools.slice(-3).join(" · ")) : null,
       MS.live ? h("div", { class: "bub", id: "mainLive" }, MS.live) : h("div", { class: "typing" }, h("i"), h("i"), h("i"))));
+    (MS.notices || []).forEach((n) => kids.push(externalView(n)));
     const q = queueView(v); if (q) kids.push(q);
   }
   log.replaceChildren(...kids);
@@ -142,10 +164,14 @@ ask = async function (text) {
   const bad = att.find((a) => a.state === "refused" || attNote(a)?.refused);
   if (bad) { restoreDraft(text); return toast(T(`Remove ${bad.name} first: it cannot be sent.`, `請先移除 ${bad.name}：它無法送出。`)); }
   openChat(true);
-  const r = await postJ("/api/main/send", { text, ...(att.length ? { attachments: att.map((a) => ({ id: a.ref.id, name: a.ref.name })) } : {}) });
-  if (r.error) { restoreDraft(text); return toast(r.reason ? r.reason[lang] || r.reason.en : r.error); }
+  let r; try { r = await postJ("/api/main/send", { text, ...(att.length ? { attachments: att.map((a) => ({ id: a.ref.id, name: a.ref.name })) } : {}) }); }
+  catch (e) { r = { status: 0, error: String(e?.message || e), code: "studio_network" }; }
+  if (r.error) { restoreDraft(text); localNotice({ source: "studio", class: r.status === 0 ? "network" : /^(attachment|claude)/.test(r.code || "") ? "attachment" : "api", code: r.code || `http_${r.status}`, message: r.reason ? `${r.reason.en}${r.reason["zh-TW"] ? ` / ${r.reason["zh-TW"]}` : ""}` : r.error, reason: { en: "The message was not sent.", "zh-TW": "訊息沒有送出。" } }); return; }
+  MS.notices = [];
   if (att.length) clearAtt();
 };
+/** An error this page met itself (the send or an upload did not reach Studio, or Studio refused it): shown in the chat until the next send. */
+function localNotice(n) { MS.notices = [...(MS.notices || []).slice(-4), { schema: 1, ...n }]; renderChat(); }
 const restoreDraft = (text) => { const el = $("#chatIn"); if (el && text && !el.value) el.value = text; };
 
 // ---------- chat attachments: drop, paste or pick images and PDFs; they go with the next message ----------
@@ -162,6 +188,8 @@ function attNote(a) {
   if (host === "claude" && ref.kind === "image" && ref.size > ATT.claudeImage) return { refused: true, text: T("Claude takes images up to 3.75 MB. Remove it or send a smaller one.", "Claude 只收 3.75 MB 以內的圖片，請移除或換小一點的。") };
   if (host === "claude" && ref.kind === "image" && Math.max(ref.width || 0, ref.height || 0) > ATT.claudeSide) return { refused: true, text: T(`Claude takes images up to ${ATT.claudeSide} px on a side (this one is ${ref.width}×${ref.height}).`, `Claude 只收每邊 ${ATT.claudeSide} px 以內的圖片（這張 ${ref.width}×${ref.height}）。`) };
   if (host === "claude" && ref.kind === "pdf" && (ref.pages || 0) > ATT.claudePages) return { refused: true, text: T(`Claude takes PDFs up to ${ATT.claudePages} pages (this one has ${ref.pages}).`, `Claude 只收 ${ATT.claudePages} 頁以內的 PDF（這份 ${ref.pages} 頁）。`) };
+  if (host !== "codex" && ref.kind === "pdf" && ref.pages == null) return { refused: false, warn: true, text: T(`Page count unknown — Claude refuses PDFs over ${ATT.claudePages} pages.`, `讀不出頁數——Claude 會拒收超過 ${ATT.claudePages} 頁的 PDF。`) };
+  if (host !== "codex" && ref.kind === "image" && (ref.width == null || ref.height == null)) return { refused: false, warn: true, text: T(`Image size unknown — Claude refuses images over ${ATT.claudeSide} px on a side.`, `讀不出圖片尺寸——Claude 會拒收每邊超過 ${ATT.claudeSide} px 的圖片。`) };
   return null;
 }
 function addFiles(list) {
@@ -184,8 +212,8 @@ async function upload(a, f) {
     const r = await postJ("/api/main/attachments", { name: a.name, data });
     if (!MS.att.includes(a)) return;
     if (r.ok && r.attachment) { a.state = "ready"; a.ref = r.attachment; a.name = r.attachment.name; a.pdf = r.attachment.kind === "pdf"; if (a.pdf && a.url) { URL.revokeObjectURL(a.url); a.url = null; } }
-    else { a.state = "refused"; a.error = r.reason ? r.reason[lang] || r.reason.en : r.error || T("Upload failed.", "上傳失敗。"); a.code = r.code || null; }
-  } catch (e) { a.state = "refused"; a.error = T("Upload failed.", "上傳失敗。"); }
+    else { a.state = "refused"; a.code = r.code || `http_${r.status}`; a.error = r.reason ? r.reason[lang] || r.reason.en : r.error ? `${T("Upload failed", "上傳失敗")} (${a.code}): ${r.error}` : `${T("Upload failed", "上傳失敗")} (HTTP ${r.status})`; }
+  } catch (e) { a.state = "refused"; a.code = "upload_network"; a.error = `${T("Upload failed", "上傳失敗")}: ${String(e?.message || e).slice(0, 300)}`; localNotice({ source: "studio", class: "upload", code: "upload_network", message: String(e?.message || e).slice(0, 300), reason: { en: `${a.name} was not uploaded.`, "zh-TW": `${a.name} 沒有上傳。` } }); }
   renderAtt();
 }
 function removeAtt(key) { const k = MS.att.findIndex((a) => a.key === key); if (k < 0) return; const [a] = MS.att.splice(k, 1); if (a.url) URL.revokeObjectURL(a.url); renderAtt(); $("#chatIn")?.focus(); }
@@ -201,7 +229,7 @@ function renderAtt() {
       a.url ? h("img", { class: "att-thumb", src: a.url, alt: "" }) : h("span", { class: "att-thumb att-doc" }, icon("doc", "ic sm")),
       h("span", { class: "att-meta" }, h("span", { class: "att-name" }, a.name),
         h("span", { class: "att-sub" }, a.state === "uploading" ? T("Uploading…", "上傳中…") : fmtSize(a.ref?.size ?? a.size)),
-        note ? h("span", { class: "att-note", role: note.refused ? "alert" : null, "data-att-note": note.refused ? "refused" : "info" }, note.text) : null),
+        note ? h("span", { class: "att-note", role: note.refused ? "alert" : null, "data-att-note": note.refused ? "refused" : note.warn ? "warn" : "info", "data-att-code": a.code || null }, note.text) : null),
       h("button", { type: "button", class: "btn ghost icon att-x", "aria-label": T(`Remove ${a.name}`, `移除 ${a.name}`), onclick: () => removeAtt(a.key) }, icon("x", "ic sm")));
   }));
 }

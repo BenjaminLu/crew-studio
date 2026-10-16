@@ -83,6 +83,11 @@ async function turn(text, files = []) {
       say = `native tools: ${names.join(",")} | ${tool} ${called.result?.isError ? "error" : "ok"}: ${(called.result?.content ?? []).map((c) => c.text ?? "").join("").slice(0, 3000)}`;
     }
     out({ type: "result", subtype: "success", is_error: false, result: say });
+  } else if (text.includes("STUB_API_ERROR ")) {
+    // an API error the CLI reports as a failed result, in its own words
+    out({ type: "result", subtype: "success", is_error: true, api_error_status: 500, result: text.slice(text.indexOf("STUB_API_ERROR ") + 15).split("\n")[0] });
+  } else if (text.includes("STUB_EXIT")) {
+    process.stderr.write("stub claude: fatal: connection to the API was closed unexpectedly\n"); process.exit(3);
   } else if (text.includes("STUB_QUOTA")) {
     out({ type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: Math.floor(Date.now() / 1000) + 3600 } });
     out({ type: "result", subtype: "error_during_execution", is_error: true, result: "Claude usage limit reached" });

@@ -110,12 +110,12 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
     async attach(requested, opts: AttachOpts) {
       let id = requested, busy = false, model = "codex", turnId: string | null = null;
       let turn: { resolve: (v: { status: "completed" | "interrupted" | "failed"; message?: string }) => void; external?: boolean } | null = null;
-      let interrupting = false, text = "", toolFailure: string | null = null;
+      let interrupting = false, text = "", toolFailure: string | null = null, vendorError: string | null = null;
       let startedAt=Date.now(),finishing=false;const images=new Map<string,any>();
       const outputRoot=join(opts.env?.CODEX_HOME??process.env.CODEX_HOME??join(opts.env?.HOME??homedir(),".codex"),"generated_images");
       const emit = (e: HostEvent) => { try { opts.onEvent(e); } catch {} };
       const endTurn = (status: "completed" | "interrupted" | "failed", message?: string) => {
-        if (!turn) return; images.clear();finishing=false; const t = turn; turn = null; busy = false; turnId = null; interrupting = false; toolFailure = null;
+        if (!turn) return; images.clear();finishing=false;vendorError=null; const t = turn; turn = null; busy = false; turnId = null; interrupting = false; toolFailure = null;
         if (text) emit({ type: "message", text }); text = "";
         emit({ type: "turnEnd", status, message, external: t.external }); t.resolve({ status, message });
       };
@@ -137,6 +137,7 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
         // change the owned turn's text, tools, failure state or completion.
         const incoming = p.turnId ?? p.turn?.id;
         if (!turn || !turnId || incoming !== turnId) return;
+        if (m.method === "error" && typeof p.error?.message === "string") vendorError = p.error.message + (p.error.additionalDetails ? ` (${p.error.additionalDetails})` : ""); // the vendor's own words, for a failed turn
         if (m.method === "error" && /timed out negotiating with the code-mode host|code-mode host is disabled/.test(String(p.error?.message ?? ""))) {
           toolFailure = "Codex code-mode tool execution failed. Repository reads are not verified; check the Codex runtime before continuing.";
         }
@@ -157,7 +158,7 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
           const st = String(p.turn?.status ?? "completed");
           if([...images.values()].some(item=>item.status!=="completed"))toolFailure="Image generation incomplete; Library import refused.";
           const status=interrupting||st==="interrupted"?"interrupted":st!=="completed"||toolFailure?"failed":"completed";
-          if(status!=="completed"||!images.size){endTurn(status,toolFailure??p.turn?.error?.message);return;}
+          if(status!=="completed"||!images.size){endTurn(status,toolFailure??p.turn?.error?.message??(status==="failed"?vendorError??undefined:undefined));return;}
           if(finishing)return;finishing=true;const saved=turn,savedId=turnId;const live=()=>turn===saved&&turnId===savedId&&!interrupting;
           void(async()=>{try{if(!opts.onGeneratedImage)throw new Error("Library image bridge unavailable");for(const item of images.values()){if(!live())return;if(item.status!=="completed")throw new Error("Image generation incomplete");await opts.onGeneratedImage({thread:id,turn:savedId!,model,startedAt,outputRoot,item,live});}if(live())endTurn("completed");}catch{if(live())endTurn("failed","Image generation finished, but saving to Library failed. 圖片已生成，但素材庫儲存失敗。");}})();
         }

@@ -69,6 +69,14 @@ async function runTurn(turnId, text, input = []) {
     note("item/completed", { turnId, item: { ...item, status: okd ? "completed" : "declined" }, completedAtMs: Date.now() });
     say = okd ? "Ran ls." : "Not allowed.";
   }
+  // STUB_FAIL <message>: the vendor's error notification, then the turn fails with the same TurnError, as codex does
+  if (text.includes("STUB_FAIL ")) {
+    const message = text.slice(text.indexOf("STUB_FAIL ") + 10).split("\n")[0];
+    const error = { message, codexErrorInfo: null, additionalDetails: null, misalignment: null };
+    note("error", { error, willRetry: false, turnId });
+    const t = turnObj(turnId, "failed"); t.error = error;
+    return note("turn/completed", { turn: t });
+  }
   if (text.includes("STUB_SLOW")) {
     interrupted = false;
     for (let i = 0; i < 300 && !interrupted; i++) { note("item/agentMessage/delta", { turnId, itemId: "m1", delta: "." }); await sleep(50); }

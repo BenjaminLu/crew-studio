@@ -79,7 +79,23 @@ try {
   ok(A?.imageSize(pngHead(9000, 40), "image/png")?.width === 9000 && A?.imageSize(heads.gif, "image/gif")?.width === 1 && A?.imageSize(PNG, "image/png")?.height === 48 && A?.pdfPages(PDF) === 1, "image size and PDF pages are read from the bytes");
   const wide = s?.put(pngHead(8001, 10), "wide.png");
   ok(wide?.ok && wide.ref.width === 8001 && d("claude", [wide.ref])?.code === "claudeImageDimensions" && d("claude", [{ ...wide.ref, width: 8000 }])?.ok === true && d("codex", [wide.ref])?.ok === true, "Claude: an image over 8000 px on a side is claudeImageDimensions (Codex resizes and takes it)");
-  const longPdf = Buffer.from(PDF.toString("latin1").replace("/Count 1", "/Count 120"), "latin1");
+  // page counts come from the catalog's root /Pages only: outline (bookmark) counts and incremental revisions never inflate them
+  const multi = (pages: number, o: { bookmarks?: number; revise?: boolean } = {}) => {
+    const objs: string[] = [], kids = Array.from({ length: pages }, (_, i) => `${4 + i} 0 R`).join(" ");
+    objs[1] = `<< /Type /Catalog /Pages 2 0 R${o.bookmarks ? " /Outlines 3 0 R" : ""} >>`;
+    objs[2] = `<< /Type /Pages /Kids [${kids}] /Count ${pages} >>`;
+    objs[3] = `<< /Type /Outlines /Count ${o.bookmarks ?? 0} >>`;
+    for (let i = 0; i < pages; i++) objs[4 + i] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>";
+    let out = "%PDF-1.6\n"; for (let i = 1; i < objs.length; i++) out += `${i} 0 obj\n${objs[i]}\nendobj\n`;
+    out += "trailer\n<< /Root 1 0 R >>\n%%EOF\n";
+    if (o.revise) { for (let i = 2; i < objs.length; i++) if (i !== 3) out += `${i} 0 obj\n${objs[i].replace("612 792", "595 842")}\nendobj\n`; out += "trailer\n<< /Root 1 0 R /Prev 9 >>\n%%EOF\n"; }
+    return Buffer.from(out, "latin1");
+  };
+  ok(A?.pdfPages(multi(10, { bookmarks: 150 })) === 10, "10 pages with 150 bookmarks count 10 (the outline /Count is not a page count)", String(A?.pdfPages(multi(10, { bookmarks: 150 }))));
+  ok(A?.pdfPages(multi(60, { revise: true })) === 60, "60 pages after an incremental update count 60 (rewritten pages are not counted twice)", String(A?.pdfPages(multi(60, { revise: true }))));
+  ok(A?.pdfPages(Buffer.from("%PDF-1.7\n1 0 obj\n<< /Type /ObjStm /N 3 >>\nstream\nxx\nendstream\nendobj\n")) === null && A?.pdfPages(Buffer.from("%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Count 12 0 R >>\nendobj\n")) === null, "a page tree Studio cannot read is unknown (null), never guessed");
+  ok(d("claude", [{ ...ref("pdf", 1000), pages: null }])?.ok === true && /Page count unknown — Claude refuses PDFs over 100 pages/.test(d("claude", [{ ...ref("pdf", 1000), pages: null }])?.deliveries?.[0]?.note?.en ?? ""), "an unknown page count is not refused; the captain is told Claude refuses over 100 pages");
+  const longPdf = multi(120);
   const lp = s?.put(longPdf, "long.pdf");
   ok(lp?.ok && lp.ref.pages === 120 && d("claude", [lp.ref])?.code === "claudePdfPages" && d("claude", [{ ...lp.ref, pages: 100 }])?.ok === true, "Claude: a PDF over 100 pages is claudePdfPages");
   const cx = d("codex", [ref("image", 9e6), ref("pdf", 1000)]);
@@ -204,6 +220,9 @@ try {
   for (const f of readdirSync(rdir)) if (!f.startsWith(young?.id ?? "-")) utimesSync(join(rdir, f), old, old);
   const gone = rs?.sweep() ?? 0;
   ok(gone === 3 && rs?.get(keep!.id) && !rs?.get(drop!.id) && rs?.get(young!.id) && !existsSync(join(rdir, ".tmp-deadbeef")), "retention: an unsent upload older than a day and a stray .tmp go; sent and recent files stay", `${gone} ${readdirSync(rdir).join(",")}`);
+  // tied to the history: a sent file stays while the kept history references it, and goes once it rotated out
+  ok(rs?.sweep({ referenced: new Set([keep!.id]) }) === 0 && rs?.get(keep!.id), "retention: a sent file the history references stays, however old");
+  ok(rs?.sweep({ referenced: new Set() }) === 3 && !rs?.get(keep!.id) && rs?.get(young!.id), "retention: a sent file the history no longer references goes (file, record and sent mark); a recent unsent upload stays");
 } catch (e: any) { ok(false, "the queue section ran", String(e?.message ?? e).slice(0, 300)); }
 
 // ---------- 3. the server ----------

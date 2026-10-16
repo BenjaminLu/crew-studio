@@ -97,14 +97,20 @@ export function imageSize(b: Uint8Array, mime: AttachmentMime): { width: number;
   } catch {}
   return null;
 }
-/** A PDF's page count from its page tree (the largest /Count, or the /Type /Page objects), or null when not readable (compressed object streams). */
+/** A PDF's page count: the /Count of the root /Type /Pages dictionary the catalog names (the newest revision of each
+ *  object, so an incremental save is not counted twice; outline /Count values are never read). null when that dictionary
+ *  cannot be read (compressed object streams, an indirect /Count): Studio then does not check the page count. */
 export function pdfPages(b: Uint8Array): number | null {
   const t = Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString("latin1");
-  let count = 0;
-  for (const m of t.matchAll(/\/Count\s+(\d{1,7})/g)) count = Math.max(count, Number(m[1]));
-  const pages = (t.match(/\/Type\s*\/Page(?![a-zA-Z])/g) ?? []).length;
-  const n = Math.max(count, pages);
-  return n > 0 ? n : null;
+  const objs = new Map<string, string>();
+  for (const m of t.matchAll(/(\d+)\s+(\d+)\s+obj\b([\s\S]*?)\bendobj\b/g)) objs.set(`${m[1]} ${m[2]}`, m[3]); // the last revision wins
+  let catalog: string | undefined;
+  for (const body of objs.values()) if (/\/Type\s*\/Catalog\b/.test(body)) catalog = body;
+  const ref = catalog && /\/Pages\s+(\d+)\s+(\d+)\s+R\b/.exec(catalog);
+  const root = ref ? objs.get(`${ref[1]} ${ref[2]}`) : undefined;
+  if (!root || !/\/Type\s*\/Pages\b/.test(root)) return null;
+  const count = /\/Count\s+(\d{1,7})\b(?!\s+\d+\s+R)/.exec(root);
+  return count ? Number(count[1]) : null;
 }
 
 export const kindOf = (mime: AttachmentMime): AttachmentKind => mime === "application/pdf" ? "pdf" : "image";
@@ -157,16 +163,20 @@ export class AttachmentStore {
     for (const id of ids) if (/^[a-f0-9]{64}$/.test(id)) { try { this.folder(); const f = join(this.dir, `${id}.sent`); if (!this.regular(f)) writeNew(this.dir, f, Buffer.alloc(0)); } catch {} }
   }
 
-  /** Remove uploads never sent within ATTACH_UNSENT_TTL_MS and temporary files older than ATTACH_TMP_TTL_MS. Returns how many files went. */
-  sweep(now = Date.now(), unsentMs = ATTACH_UNSENT_TTL_MS, tmpMs = ATTACH_TMP_TTL_MS): number {
+  /** Retention. A file the retained chat history (or a queued message) references stays. A sent file the history no longer
+   *  references (it rotated out) goes. An upload never sent goes after ATTACH_UNSENT_TTL_MS; a .tmp-* file after ATTACH_TMP_TTL_MS.
+   *  Without `referenced` (no history known) sent files stay. Returns how many files went. */
+  sweep(o: { referenced?: Set<string> | null; now?: number; unsentMs?: number; tmpMs?: number } = {}): number {
+    const now = o.now ?? Date.now(), unsentMs = o.unsentMs ?? ATTACH_UNSENT_TTL_MS, tmpMs = o.tmpMs ?? ATTACH_TMP_TTL_MS, referenced = o.referenced ?? null;
     let names: string[]; try { this.folder(); names = readdirSync(this.dir); } catch { return 0; }
     const age = (f: string) => { try { return now - lstatSync(join(this.dir, f)).mtimeMs; } catch { return 0; } };
-    const sent = new Set(names.filter((f) => f.endsWith(".sent")).map((f) => f.slice(0, 64)));
+    const sent = new Set(names.filter((f) => /^[a-f0-9]{64}\.sent$/.test(f)).map((f) => f.slice(0, 64)));
     const fresh = new Set(names.filter((f) => /^[a-f0-9]{64}\.json$/.test(f) && age(f) <= unsentMs).map((f) => f.slice(0, 64)));
+    const keep = (id: string) => referenced ? referenced.has(id) || (!sent.has(id) && fresh.has(id)) : sent.has(id) || fresh.has(id);
     let n = 0;
     for (const f of names) {
-      const id = /^[a-f0-9]{64}/.exec(f)?.[0];
-      const drop = f.startsWith(".tmp-") ? age(f) > tmpMs : id ? !sent.has(id) && !fresh.has(id) && age(f) > unsentMs : false;
+      const id = /^[a-f0-9]{64}(?=\.)/.exec(f)?.[0];
+      const drop = f.startsWith(".tmp-") ? age(f) > tmpMs : id ? !keep(id) && (sent.has(id) || age(f) > unsentMs || !fresh.has(id)) : false;
       if (drop) { try { rmSync(join(this.dir, f), { force: true }); n++; } catch {} }
     }
     return n;
@@ -223,8 +233,14 @@ export function readAttachment(f: AttachmentFile): Buffer {
 /** Re-check a stored file against its id before a host is handed its path (Codex reads the file itself). */
 export function verifyAttachment(f: AttachmentFile): void { readAttachment(f); }
 
+/** A warning when Studio could not read what the Claude API checks: the captain hears it before Claude refuses. */
+export function unknownNote(f: AttachmentRef): { en: string; "zh-TW": string; warn: true } | null {
+  if (f.kind === "pdf" && (f.pages ?? null) === null) return { en: `Page count unknown — Claude refuses PDFs over ${CLAUDE_MAX_PDF_PAGES} pages.`, "zh-TW": `讀不出頁數——Claude 會拒收超過 ${CLAUDE_MAX_PDF_PAGES} 頁的 PDF。`, warn: true };
+  if (f.kind === "image" && ((f.width ?? null) === null || (f.height ?? null) === null)) return { en: `Image size unknown — Claude refuses images over ${CLAUDE_MAX_IMAGE_SIDE} px on a side.`, "zh-TW": `讀不出圖片尺寸——Claude 會拒收每邊超過 ${CLAUDE_MAX_IMAGE_SIDE} px 的圖片。`, warn: true };
+  return null;
+}
 /** How a host gets each file, or the typed reason it cannot. Never a silent drop. */
-export type Delivery = { id: string; mode: "native" | "file"; note: { en: string; "zh-TW": string } | null };
+export type Delivery = { id: string; mode: "native" | "file"; note: { en: string; "zh-TW": string; warn?: true } | null };
 export function deliveryFor(host: "claude" | "codex" | null, files: AttachmentRef[]): { ok: true; deliveries: Delivery[] } | AttachmentRefusal {
   if (!files.length) return { ok: true, deliveries: [] };
   if (files.length > ATTACH_MAX_PER_MESSAGE) return no("attachmentCount", `At most ${ATTACH_MAX_PER_MESSAGE} files per message.`, `每則訊息最多 ${ATTACH_MAX_PER_MESSAGE} 個檔案。`);
@@ -236,7 +252,7 @@ export function deliveryFor(host: "claude" | "codex" | null, files: AttachmentRe
     const long = files.find((f) => f.kind === "pdf" && (f.pages ?? 0) > CLAUDE_MAX_PDF_PAGES);
     if (long) return no("claudePdfPages", `Claude takes PDFs up to ${CLAUDE_MAX_PDF_PAGES} pages; ${long.name} has ${long.pages}.`, `Claude 只收 ${CLAUDE_MAX_PDF_PAGES} 頁以內的 PDF；${long.name} 有 ${long.pages} 頁。`);
     if (files.reduce((n, f) => n + f.size, 0) > CLAUDE_MAX_MESSAGE_BYTES) return no("claudeMessageTooLarge", `Claude takes at most ${MB(CLAUDE_MAX_MESSAGE_BYTES)} of files in one message. Send fewer files at a time.`, `Claude 一則訊息的附件總共最多 ${MB(CLAUDE_MAX_MESSAGE_BYTES)}，請分次傳送。`);
-    return { ok: true, deliveries: files.map((f) => ({ id: f.id, mode: "native" as const, note: null })) };
+    return { ok: true, deliveries: files.map((f) => ({ id: f.id, mode: "native" as const, note: unknownNote(f) })) };
   }
   if (host === "codex") return { ok: true, deliveries: files.map((f) => f.kind === "image" ? { id: f.id, mode: "native" as const, note: null }
     : { id: f.id, mode: "file" as const, note: { en: "Codex cannot read PDFs directly; it opens the file itself.", "zh-TW": "Codex 不能直接讀 PDF，會自己開檔。" } }) };
