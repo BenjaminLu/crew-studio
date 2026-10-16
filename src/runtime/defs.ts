@@ -37,7 +37,7 @@ export type WDef = {
   roles: WRole[]; nodes: WNode[]; edges: WEdge[]; policies?: Record<string, any>; card_checks?: string[]; hooks?: { at: string; use: string; params?: Record<string, any> }[];
   parent?: number | null; createdAt?: string; by?: string; note?: string | null; diff?: DefDiff | null; seed?: string | null;
   /** the captain's own workflow: where v1 came from (a Firstmate draft or the free starter); kept by every later version, never set by an edit */
-  origin?: { schema: 1; source: "firstmate-draft" | "starter"; draft?: string; revision?: number; definition?: string };
+  origin?: { schema: 1; source: "firstmate-draft" | "starter"; draft?: string; revision?: number; definition?: string; brief?: { goal: string; interview: { question: string; answer: string }[] } };
 };
 export type DefDiff = {
   nodesAdded: string[]; nodesRemoved: string[]; nodesChanged: { id: string; fields: string[] }[]; nodesMoved: string[];

@@ -265,5 +265,9 @@ body:not(.chat-closed) .rt-cue { top: calc(120px + env(safe-area-inset-top, 0px)
 .fw-interview { display: grid; gap: 2px 0; margin: 6px 0; } .fw-interview dt { font-weight: 600; } .fw-interview dd { margin: 0 0 6px; }
 .fw-dialog { width: min(720px, calc(100vw - 32px)); max-width: calc(100vw - 32px); border: 1px solid var(--border, #ccc); border-radius: 12px; padding: 18px; background: var(--bg, #fff); color: var(--text, inherit); }
 .fw-staffing { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0; display: block; overflow-x: auto; }
-.fw-staffing th, .fw-staffing td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border, #ddd); overflow-wrap: anywhere; }
+.fw-staffing th, .fw-staffing td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border, #ddd); overflow-wrap: normal; word-break: keep-all; white-space: nowrap; }
+.fw-staffing td:first-child { white-space: normal; min-width: 7em; } /* node names wrap between words; model ids and skills never break */
+.fw-staffing { -webkit-overflow-scrolling: touch; }
+.fw-skill { font-size: 12px; color: var(--accent, #4b7bec); }
+.fw-roadmap { opacity: .75; } .fw-roadmap .badge { font-size: 11px; }
 .fw-staffing tr.missing td { color: var(--danger, #c0392b); }

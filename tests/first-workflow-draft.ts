@@ -29,9 +29,11 @@ try{
  const started=await api('/api/main/start',{host:'codex',confirm:true});ok(started.status===200,'offline fixture primary starts');await until(async()=>!(await api('/api/main')).body.busy);
  const threadTools=rows().find(r=>r.method==='thread/start'&&Array.isArray(r.nativeTools))?.nativeTools??[];
  ok(threadTools.includes('studio_draft_workflow')&&threadTools.includes('studio_save_workflow_draft'),'Firstmate registers native free draft and save tools',JSON.stringify(threadTools));
+ const {nativeFreshText}=await import(join(cwd,'src/host/main.ts'));const seed=nativeFreshText(join(data,'workspace'));
+ ok(threadTools.length>0&&threadTools.every((t:string)=>seed.includes(t)),'W8 Firstmate seed text names every registered native tool',JSON.stringify(threadTools.filter((t:string)=>!seed.includes(t))));
 
  // 1. interview answered -> the model call produces a graph (fixture) -> stored as a model draft
- const drafted=await send('Interview done. Please call studio_draft_workflow for my goal: a weekly newsletter about local coffee events');
+ const drafted=await send('Help me design my own workflow. My goal: a weekly newsletter about local coffee events');
  ok(typeof drafted.draft==='string'&&drafted.source==='model','draft tool returns a model-generated draft id',JSON.stringify(drafted));
  const view=await api(`/api/wf/drafts/${drafted.draft}`);
  ok(view.status===200&&view.body.draft?.provenance?.source==='model'&&view.body.draft.def.nodes.length===5,'draft preview is readable and labeled as model output',JSON.stringify(view.body).slice(0,300));
@@ -64,11 +66,24 @@ try{
  ok(reviewNode?.provider==='claude'&&reviewNode?.model==='claude-fixture'&&reviewNode?.effort==='high'&&reviewNode?.skill==='bundled:workflows/skills/v2/designer.md','inline node config survives a server restart');
  ok(reread?.provenance?.source==='model'&&reread?.provenance?.edited===true,'provenance stays model and records captain edits');
 
- // 3. save as the captain's own workflow (no Task, no staffing)
+ // B1 a model revision keeps the captain's inline node choices
  const started2=await api('/api/main/start',{host:'codex',confirm:true});await until(async()=>!(await api('/api/main')).body.busy);void started2;
- const saved=await api(`/api/wf/drafts/${drafted.draft}/save`,{});
+ const revise=JSON.parse(readFileSync(draftFixture,'utf8'));revise.draft=drafted.draft;revise.workflow.nodes[2].label='Review the draft for tone';revise.workflow.nodes[2].provider='codex';
+ const revised=await send('NATIVE-TOOL '+JSON.stringify({name:'studio_draft_workflow',args:revise}));
+ const afterModel=(await api(`/api/wf/drafts/${drafted.draft}`)).body.draft;const rn=afterModel?.def.nodes.find((n:any)=>n.id==='review');
+ ok(revised.revision===reread.revision+1&&rn?.label==='Review the draft for tone','B1 model revision applies the model change',JSON.stringify(revised).slice(0,200));
+ ok(rn?.provider==='claude'&&rn?.model==='claude-fixture'&&rn?.effort==='high'&&rn?.skill==='bundled:workflows/skills/v2/designer.md','B1 model revision keeps captain-set provider/model/effort/skill',JSON.stringify(rn));
+ ok(afterModel?.provenance?.edited===true,'B1 model revision keeps edited=true');
+
+ // W2 page save names the revision the captain saw
+ const noRev=await api(`/api/wf/drafts/${drafted.draft}/save`,{});ok(noRev.status===400,'W2 page save without a revision is refused',String(noRev.status));
+ const staleSave=await api(`/api/wf/drafts/${drafted.draft}/save`,{revision:reread.revision});ok(staleSave.status===409&&/reload|refresh/i.test(staleSave.body.error||''),'W2 page save of an older revision is refused with a refresh prompt',JSON.stringify(staleSave.body));
+ ok(!(await api('/api/wf')).body.workflows.some((w:any)=>w.name==='Weekly coffee newsletter'),'W2 refused saves create no workflow');
+
+ // 3. save as the captain's own workflow (no Task, no staffing)
+ const saved=await api(`/api/wf/drafts/${drafted.draft}/save`,{revision:afterModel.revision});
  ok(saved.status===200&&typeof saved.body.workflow==='string','save creates the captain workflow',JSON.stringify(saved.body).slice(0,200));
- const again=await api(`/api/wf/drafts/${drafted.draft}/save`,{});ok(again.body.workflow===saved.body.workflow,'repeat save returns the same workflow, never a duplicate');
+ const again=await api(`/api/wf/drafts/${drafted.draft}/save`,{revision:afterModel.revision});ok(again.body.workflow===saved.body.workflow,'repeat save returns the same workflow, never a duplicate');
  const viaTool=await send('NATIVE-TOOL '+JSON.stringify({name:'studio_save_workflow_draft',args:{draft:drafted.draft}}));ok(viaTool.workflow===saved.body.workflow,'native save tool is idempotent with the page save',JSON.stringify(viaTool).slice(0,200));
  const wf=(await api(`/api/wf/${saved.body.workflow}`)).body.def;
  ok(wf?.origin?.source==='firstmate-draft'&&wf.origin.draft===drafted.draft,'saved workflow records its draft origin');
@@ -97,7 +112,11 @@ try{
  const go=await api('/api/wruns',{workflow:wf.id,text:'This week',staffingConfirm:ask.body.staffing.hash});
  ok(go.status===200&&typeof go.body.id==='string','confirmed staffing starts exactly one Task',JSON.stringify(go.body).slice(0,200));
  ok((await runs()).length===1,'one Task after confirmation');
+ const task=go.body.id?(await api(`/api/wruns/${go.body.id}`)).body:null;
+ ok(task?.text?.includes('A weekly newsletter about local coffee events')&&task?.text?.includes('Regulars who visit on weekends'),'W1 the Task brief carries the captain goal and interview answers',String(task?.text).slice(0,300));
  if(go.body.id)await api(`/api/wruns/${go.body.id}/cancel`,{});
+ // B3 any saved node effort is validated, bundled workflows included
+ const docs=(await api('/api/wf/documents')).body.def;const badEffort=await api('/api/wf/documents',{base:docs.version,nodes:docs.nodes.map((n:any)=>n.kind==='agent'?{...n,effort:'turbo'}:n),edges:docs.edges,roles:docs.roles});ok(badEffort.status===400,'B3 an unknown node effort is refused on a bundled workflow',String(badEffort.status));
  // the free starter has no agent node: nothing to staff, so Run starts without a confirmation
  const starter=await api('/api/wf',{id:'my-starter-check',name:'Starter check',origin:'starter'});ok(starter.status===201&&starter.body.def.origin?.source==='starter','free starter records its origin');
  const forgedOrigin=await api('/api/wf',{id:'my-forged-origin',name:'Forged',origin:'firstmate-draft'});ok(forgedOrigin.status>=400,'a page cannot claim a Firstmate draft origin');

@@ -25,11 +25,15 @@ const stable=(v:any):string=>v&&typeof v==='object'?Array.isArray(v)?'['+v.map(s
 const sha=(v:unknown)=>createHash('sha256').update(stable(v)).digest('hex');
 
 export type DraftRecord={schema:1;id:string;revision:number;goal:string;interview:{question:string;answer:string}[];def:WDef;
- provenance:{source:'model';via:'studio_draft_workflow';turn:string;edited:boolean};createdAt:string;updatedAt:string;saved:{workflow:string;version:number}|null};
+ provenance:{source:'model';via:'studio_draft_workflow';turn:string;edited:boolean};createdAt:string;updatedAt:string;saved:{workflow:string;version:number;revision?:number}|null;
+ /** the captain's inline choices per node (null = cleared); a model revision never overrides them */
+ captain?:Record<string,Partial<Record<'provider'|'model'|'effort'|'skill',string|null>>>};
 
 class DraftError extends Error{constructor(msg:string,readonly status=400,readonly problems?:unknown){super(msg);}}
 
 /** A node's model choices: provider, model, effort and role skill. Throws on anything outside the closed sets. */
+/** A node effort, wherever it is saved (bundled workflows included). */
+export function checkEffort(n:any,label=n?.id){if(n?.effort!==undefined&&!(DRAFT_EFFORTS as readonly string[]).includes(n.effort))throw new DraftError(`${label}: effort must be one of ${DRAFT_EFFORTS.join(', ')}`);}
 export function checkNodeStaffing(n:any,label=n?.id){
  if(n.provider!==undefined&&!(DRAFT_PROVIDERS as readonly string[]).includes(n.provider))throw new DraftError(`${label}: provider must be codex or claude`);
  if(n.model!==undefined&&!(typeof n.model==='string'&&MODEL.test(n.model)))throw new DraftError(`${label}: model must be a short model id`);
@@ -90,6 +94,11 @@ export class WorkflowDrafts{
  private file(id:string){if(!/^d-[a-f0-9]{12}$/.test(id))throw new DraftError('no such draft',404);return join(this.dir,id+'.json');}
  get(id:string):DraftRecord{const f=this.file(id);if(!existsSync(f))throw new DraftError('no such draft',404);return JSON.parse(readFileSync(f,'utf8'));}
  list(){return readdirSync(this.dir).filter(f=>/^d-[a-f0-9]{12}\.json$/.test(f)).map(f=>{try{return JSON.parse(readFileSync(join(this.dir,f),'utf8')) as DraftRecord;}catch{return null;}}).filter(Boolean).sort((a:any,b:any)=>b.updatedAt.localeCompare(a.updatedAt)).slice(0,50).map((d:any)=>({id:d.id,revision:d.revision,goal:d.goal,name:d.def.name,nodes:d.def.nodes.length,source:d.provenance.source,saved:d.saved,updatedAt:d.updatedAt}));}
+ /** One lock per draft id: model revisions, inline edits and saves never interleave. */
+ /** This data folder's identity for the page's local state: a new folder never shows another folder's tutorial state. */
+ scope():string{const f=join(this.dir,'scope.json');try{const v=JSON.parse(readFileSync(f,'utf8')).scope;if(/^[a-f0-9]{16}$/.test(v))return v;}catch{}const v=randomBytes(8).toString('hex');try{writeFileSync(f,JSON.stringify({scope:v}),{flag:'wx'});return v;}catch{return JSON.parse(readFileSync(f,'utf8')).scope;}}
+ lockName(id:string){this.file(id);return 'draft-'+id;}
+ private withDraft<T>(id:string,fn:()=>T):T{return withLock(this.dir,this.lockName(id),fn);}
  private write(d:DraftRecord){const f=this.file(d.id);writeFileSync(f+'.tmp',JSON.stringify(d,null,1));renameSync(f+'.tmp',f);this.notify(d.id,d.revision);return d;}
  /** Only the native tool reaches this: the graph is the Firstmate model's own output for this captain turn. */
  draft(args:any,turn:string):DraftRecord{
@@ -97,33 +106,38 @@ export class WorkflowDrafts{
   if(!bounded(args.goal,500))throw new DraftError('goal: 1–500 characters');
   const interview=args.interview??[];if(!Array.isArray(interview)||interview.length>8||interview.some((q:any)=>!plain(q)||Object.keys(q).some(k=>!['question','answer'].includes(k))||!bounded(q.question,300)||!bounded(q.answer,500)))throw new DraftError('interview: up to 8 {question, answer} pairs');
   const def=draftDefinition(args.workflow,this.defs),now=new Date().toISOString();
-  return withLock(this.dir,'draft',()=>{
-   if(args.draft!==undefined){const prev=this.get(String(args.draft));if(prev.saved)throw new DraftError('this draft is already saved; edit the saved workflow instead',409);return this.write({...prev,revision:prev.revision+1,goal:args.goal,interview,def,provenance:{source:'model',via:'studio_draft_workflow',turn,edited:false},updatedAt:now});}
-   const id='d-'+randomBytes(6).toString('hex');
-   return this.write({schema:1,id,revision:1,goal:args.goal,interview,def,provenance:{source:'model',via:'studio_draft_workflow',turn,edited:false},createdAt:now,updatedAt:now,saved:null});
+  if(args.draft!==undefined)return this.withDraft(String(args.draft),()=>{
+   const prev=this.get(String(args.draft));if(prev.saved)throw new DraftError('this draft is already saved; edit the saved workflow instead',409);
+   // the captain's inline choices win over the model's on the same node id
+   const captain=prev.captain??{};
+   const nodes=def.nodes.map(n=>{const c=captain[n.id];if(!c||n.kind!=='agent')return n;const next:any={...n};for(const[k,v]of Object.entries(c)){if(v===null)delete next[k];else next[k]=v;}checkNodeStaffing(next,n.id);return next;});
+   return this.write({...prev,revision:prev.revision+1,goal:args.goal,interview,def:{...def,nodes},provenance:{source:'model',via:'studio_draft_workflow',turn,edited:prev.provenance.edited||Object.keys(captain).length>0},updatedAt:now});
   });
+  const id='d-'+randomBytes(6).toString('hex');
+  return this.withDraft(id,()=>this.write({schema:1,id,revision:1,goal:args.goal,interview,def,provenance:{source:'model',via:'studio_draft_workflow',turn,edited:false},createdAt:now,updatedAt:now,saved:null,captain:{}}));
  }
  /** The captain's inline choice for one agent node: provider, model, effort, skill. Empty string clears a field. */
  editNode(id:string,node:string,body:any):DraftRecord{
   if(!plain(body)||Object.keys(body).some(k=>!['revision','provider','model','effort','skill'].includes(k))||!Number.isSafeInteger(body.revision))throw new DraftError('send revision plus provider, model, effort or skill');
-  return withLock(this.dir,'draft',()=>{
+  return this.withDraft(id,()=>{
    const d=this.get(id);if(d.saved)throw new DraftError('this draft is saved; edit the workflow in the editor',409);if(d.revision!==body.revision)throw new DraftError(`the draft is at revision ${d.revision}; reload before editing`,409);
    const n=d.def.nodes.find(x=>x.id===node);if(!n)throw new DraftError('no such node',404);
-   const next:any={...n};for(const k of ['provider','model','effort','skill'])if(body[k]!==undefined){if(body[k]==='')delete next[k];else next[k]=body[k];}
+   const next:any={...n},mine:any={...(d.captain?.[node]??{})};for(const k of ['provider','model','effort','skill'])if(body[k]!==undefined){if(body[k]===''){delete next[k];mine[k]=null;}else{next[k]=body[k];mine[k]=body[k];}}
    if(n.kind!=='agent')throw new DraftError('only agent nodes have model settings');checkNodeStaffing(next,node);
-   return this.write({...d,revision:d.revision+1,def:{...d.def,nodes:d.def.nodes.map(x=>x.id===node?next:x)},provenance:{...d.provenance,edited:true},updatedAt:new Date().toISOString()});
+   return this.write({...d,revision:d.revision+1,def:{...d.def,nodes:d.def.nodes.map(x=>x.id===node?next:x)},provenance:{...d.provenance,edited:true},captain:{...(d.captain??{}),[node]:mine},updatedAt:new Date().toISOString()});
   });
  }
  /** Save as the captain's own workflow v1. Idempotent per draft: a retry after a lost response finds the same workflow. */
- save(id:string,by:string){
-  return withLock(this.dir,'save-'+id,()=>{
+ save(id:string,by:string,revision?:number){
+  return this.withDraft(id,()=>{
    const d=this.get(id);
    const existing=d.saved?.workflow??this.defs.ids().find(w=>(this.defs.versions(w)[0] as any)?.origin?.draft===id);
-   if(existing){const def=this.defs.get(existing)!;if(!d.saved)this.write({...d,saved:{workflow:existing,version:1}});return{workflow:existing,version:def.version,href:`#/workflows/${existing}`,created:false};}
+   if(existing){const def=this.defs.get(existing)!;if(!d.saved)this.write({...d,saved:{workflow:existing,version:1,revision:d.revision}});return{workflow:existing,version:def.version,href:`#/workflows/${existing}`,created:false};}
+   if(revision!==undefined&&revision!==d.revision)throw new DraftError(`the draft changed to revision ${d.revision} after you looked; reload to see it before saving`,409);
    const slug=d.def.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,28)||'my-workflow';
    const wid=(/^[a-z0-9]/.test(slug)?slug:'my-'+slug)+'-'+id.slice(2,8);
-   const def=this.defs.createDrafted(wid,d.def,by,{schema:1,source:'firstmate-draft',draft:id,revision:d.revision,definition:sha(d.def)});
-   this.write({...d,saved:{workflow:def.id,version:def.version}});
+   const def=this.defs.createDrafted(wid,d.def,by,{schema:1,source:'firstmate-draft',draft:id,revision:d.revision,definition:sha(d.def),brief:{goal:d.goal,interview:d.interview}});
+   this.write({...d,saved:{workflow:def.id,version:def.version,revision:d.revision}});
    return{workflow:def.id,version:def.version,href:`#/workflows/${def.id}`,created:true};
   });
  }
@@ -135,6 +149,8 @@ export function ownStaffingPlan(def:WDef){
  const missing=plan.filter(p=>!p.provider||!p.model||p.provider==='codex'&&!p.effort).map(p=>p.node);
  return{plan,missing,hash:sha({workflow:def.id,version:def.version,plan})};
 }
+/** The Task brief for the captain's own workflow: what they asked for, plus the drafted goal and interview answers. */
+export function ownBrief(def:any,text:string){const b=def?.origin?.brief;if(!plain(b)||typeof b.goal!=='string')return text;const lines=[text.trim(),`Captain goal: ${b.goal}`,...(Array.isArray(b.interview)&&b.interview.length?['Interview:',...b.interview.map((q:any)=>`- ${q.question} — ${q.answer}`)]:[])].filter(Boolean);return lines.join('\n').slice(0,3800);}
 /** Only the captain's own workflows (a draft or the free starter) take the Run-time staffing gate. */
 export const ownWorkflow=(def:any)=>plain(def?.origin)&&['firstmate-draft','starter'].includes(def.origin.source);
 
@@ -142,14 +158,14 @@ export function installWorkflowDraftTools(drafts:WorkflowDrafts):NativeMainTools
  const fail=(e:any):never=>{if(e instanceof NativeToolFailure)throw e;if(e instanceof DraftError)throw new NativeToolFailure(e.status===404?'draft_missing':'draft_invalid',`Draft refused: ${e.message}. Fix the graph and call studio_draft_workflow again.`,`草稿未通過：${e.message}。請修正流程圖後再呼叫 studio_draft_workflow。`,'read_current_state');throw new NativeToolFailure('draft_invalid','Draft refused. Read the draft and try again.','草稿未通過，請讀取草稿後再試。','read_current_state');};
  return{specs:[
   {type:'function',name:'studio_draft_workflow',description:'FREE drafting, no execution: after a short interview (goal, who does the work, who reviews, when the captain decides), submit the graph you designed for the captain\'s own workflow. Nodes: agent (mode deliver, args.format document|web, optional provider codex|claude, model, effort, skill), card (captain decision with options), hook (end). Role skills: '+Object.keys(DRAFT_SKILLS).join(', ')+'. The page previews it live, labeled as model output. Never starts a Task or staffing; never use studio_propose_work for drafting. Pass draft to revise an unsaved draft.',inputSchema:{type:'object',properties:{goal:{type:'string'},interview:{type:'array',items:{type:'object',properties:{question:{type:'string'},answer:{type:'string'}},required:['question','answer'],additionalProperties:false}},workflow:{type:'object'},draft:{type:'string'}},required:['goal','workflow'],additionalProperties:false}},
-  {type:'function',name:'studio_save_workflow_draft',description:'Save a reviewed draft as the captain\'s own workflow version. Creates a workflow definition only: no Task, no staffing, no model call. Staffing is confirmed later, only when the captain clicks Run.',inputSchema:{type:'object',properties:{draft:{type:'string'}},required:['draft'],additionalProperties:false}},
+  {type:'function',name:'studio_save_workflow_draft',description:'Only when the captain asks to save: save a reviewed draft as the captain\'s own workflow version. Creates a workflow definition only: no Task, no staffing, no model call. Staffing is confirmed later, only when the captain clicks Run.',inputSchema:{type:'object',properties:{draft:{type:'string'},revision:{type:'integer'}},required:['draft'],additionalProperties:false}},
  ],
  async call(name,args:any,owner){
   if(!owner.live())throw new NativeToolFailure('owner_ended','The primary request ended.','主要對話請求已結束。');
   if(!owner.captain)throw new NativeToolFailure('owner_ended','Only a current captain message may draft or save a workflow.','只有目前的船長訊息可以起草或儲存流程。');
   try{
    if(name==='studio_draft_workflow'){const d=drafts.draft(args,sha(owner.key).slice(0,16));return{draft:d.id,revision:d.revision,source:'model',status:'draft-preview',href:`#/first-workflow/${d.id}`,nodes:d.def.nodes.length};}
-   if(name==='studio_save_workflow_draft'){if(!plain(args)||Object.keys(args).some(k=>k!=='draft')||typeof args.draft!=='string')throw new DraftError('pass the draft id only');return{...drafts.save(args.draft,'captain via Firstmate'),status:'saved-no-task'};}
+   if(name==='studio_save_workflow_draft'){if(!plain(args)||Object.keys(args).some(k=>!['draft','revision'].includes(k))||typeof args.draft!=='string'||args.revision!==undefined&&!Number.isSafeInteger(args.revision))throw new DraftError('pass the draft id and optionally the revision the captain approved');return{...drafts.save(args.draft,'captain via Firstmate',args.revision),status:'saved-no-task'};}
   }catch(e){fail(e);}
   throw new NativeToolFailure('invalid_params','Unknown native tool','未知的工具。','read_current_state');
  }};
@@ -160,11 +176,11 @@ export async function draftRoute(drafts:WorkflowDrafts,p:string,method:string,wr
  const json=(v:unknown,status=200)=>new Response(JSON.stringify(v),{status,headers:{'content-type':'application/json','cache-control':'no-store'}});
  if(!/^\/api\/wf\/drafts(\/|$)/.test(p))return null;
  try{
-  if(p==='/api/wf/drafts'&&!writing)return json({drafts:drafts.list(),skills:Object.entries(DRAFT_SKILLS).map(([ref,l])=>({ref,...l})),providers:DRAFT_PROVIDERS,efforts:DRAFT_EFFORTS});
+  if(p==='/api/wf/drafts'&&!writing)return json({scope:drafts.scope(),drafts:drafts.list(),skills:Object.entries(DRAFT_SKILLS).map(([ref,l])=>({ref,...l})),providers:DRAFT_PROVIDERS,efforts:DRAFT_EFFORTS});
   let m=/^\/api\/wf\/drafts\/(d-[a-f0-9]{12})$/.exec(p);if(m&&!writing)return json({draft:drafts.get(m[1])});
   if(writing&&method!=='POST')return json({error:'POST required'},405);
   m=/^\/api\/wf\/drafts\/(d-[a-f0-9]{12})\/nodes\/([a-z0-9][a-z0-9-]{0,40})$/.exec(p);if(m&&writing)return json({draft:drafts.editNode(m[1],m[2],b)});
-  m=/^\/api\/wf\/drafts\/(d-[a-f0-9]{12})\/save$/.exec(p);if(m&&writing)return json(drafts.save(m[1],by));
+  m=/^\/api\/wf\/drafts\/(d-[a-f0-9]{12})\/save$/.exec(p);if(m&&writing){if(!plain(b)||Object.keys(b).some(k=>k!=='revision')||!Number.isSafeInteger(b.revision))return json({error:'send the draft revision you are saving; reload the page if you do not see one'},400);return json(drafts.save(m[1],by,b.revision));}
   return json({error:'no such draft route'},404);
  }catch(e:any){return json({error:e?.message??'draft request failed',...(e?.problems?{problems:e.problems}:{})},e instanceof DraftError?e.status:400);}
 }

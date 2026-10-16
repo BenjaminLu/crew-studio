@@ -102,7 +102,7 @@
     s.panel.replaceChildren(h('div',{class:'ob-tour-head'},h('span',{class:'faint'},jt('First project','第一個作品','第一个作品')),h('button',{class:'btn ghost','data-ob-journey-skip':'',onclick:async()=>{try{await postJ('/api/onboarding',{action:'skip'});}finally{store.set(JOURNEY_KEY,'dismissed');closeJourney();}}},jt('Hide guide','收起導覽','收起导览'))),h('h2',{id:'ob-journey-title'},text[0]),h('p',{},text[1]));
     s.status=h('p',{role:'status'});s.panel.append(s.status);
     const actions=h('div',{class:'ob-tour-actions'});
-    if(phase==='choose'||phase==='own-goal')actions.append(h('a',{class:'btn primary',href:'#/first-workflow','data-ob-own-workflow':''},jt('Build my first workflow','建立我的第一個流程','建立我的第一个流程')));
+    if(phase==='choose'||phase==='own-goal')actions.append(h('a',{class:'btn primary',href:'#/first-workflow','data-ob-own-workflow':'',onclick:()=>closeJourney()},jt('Build my first workflow','建立我的第一個流程','建立我的第一个流程')));
     if(phase==='choose')for(const[choice,label]of[['coffee',jt('Coffee-shop example','咖啡店範例','咖啡店示例')],['own',jt('My own goal','自己的目標','自己的目标')]])actions.append(h('button',{class:'btn', 'data-ob-choice':choice,onclick:async()=>{if(s.pending)return;s.pending=true;try{const result=await postJ('/api/onboarding',{action:'choose',choice});if(result?.error)throw new Error(result.error);if(journey!==s)return;if(choice==='coffee')location.hash='#/workflows/coffee-kit';else location.hash='#/firstmate';await refreshJourney();}catch(error){if(journey===s)s.status.textContent=error.message;}finally{s.pending=false;}}},label));
     if(['connect','choose','discuss','own-goal'].includes(phase))actions.append(h('button',{class:'btn','data-ob-chat':'',onclick:()=>{chatMode='main';store.set('crew.chatMode','main');openChat(true);}},jt('Open Firstmate chat','打開 Firstmate 對話','打开 Firstmate 对话')));
     if(state.href)actions.append(h('a',{class:'btn primary',href:state.href,'data-ob-task':''},jt('Open existing Task','打開現有 Task','打开现有 Task')));
@@ -121,9 +121,11 @@
   const original=routes.settings;
   // Legacy quick tour stays manual in Settings. Only the native journey may auto-open; it never redirects Board.
   routes.settings=function(){const node=original.apply(this,arguments);const button=h('button',{class:'btn','data-ob-open':'',onclick:()=>window.crewOpenOnboarding(button)},tr('Open getting started guide','開啟入門導覽'));node.append(button,h('button',{class:'btn','data-ob-resume':'',onclick:async()=>{await postJ('/api/onboarding',{action:'resume'});store.set(JOURNEY_KEY,'');window.crewOpenFirstUse();}},tr('Resume first project guide','繼續第一個作品導覽')));return node;};
-  async function auto(){if(!active&&!journey&&!checked&&!store.get(JOURNEY_KEY,'')&&S.route?.name){checked=true;try{const state=await getJ('/api/onboarding');if(state.paused||state.complete)return;if(state.started||S.route?.name==='board')window.crewOpenFirstUse?.();}catch{}}}
+  async function auto(){if(location.hash.startsWith('#/first-workflow'))return;if(!active&&!journey&&!checked&&!store.get(JOURNEY_KEY,'')&&S.route?.name){checked=true;try{const state=await getJ('/api/onboarding');if(state.paused||state.complete)return;if(state.started||S.route?.name==='board')window.crewOpenFirstUse?.();}catch{}}}
   addEventListener('hashchange',()=>{
     epoch++;
+    // the first-workflow tutorial is its own guide: the journey panel would cover its goal input
+    if(journey&&location.hash.startsWith('#/first-workflow'))closeJourney();
     if(journey){journey.schedule();void refreshJourney();}
     if(active){
       if(location.hash===active.expected){active.schedule();return;}

@@ -5,7 +5,7 @@ import {ArtifactStore,websiteHref} from '../artifacts';
 import {StaffingStore,staffingHash,installStaffingGuard,coffeeStaffingProject,type StaffingProject} from '../domain/staffing';
 import {installFirstmateStaffing,staffingQuotaReady,type StaffingFacts,type StaffingAdmission} from '../firstmate-staffing';
 import {installFirstmate} from "../firstmate";
-import {WorkflowDrafts,installWorkflowDraftTools,draftRoute,ownStaffingPlan,ownWorkflow,checkNodeStaffing} from "../workflow-drafts";
+import {WorkflowDrafts,installWorkflowDraftTools,draftRoute,ownStaffingPlan,ownWorkflow,checkNodeStaffing,checkEffort,ownBrief} from "../workflow-drafts";
 // Studio's native runtime, wired: versioned workflow definitions, the engine,
 // the check runtime, Studio-owned cards, and the steps each workflow uses.
 // Routes (all under /api/wf, /api/wruns, /api/scards, /api/checks, /api/policies, /api/intake):
@@ -192,7 +192,7 @@ export function createRuntime(d: RuntimeDeps) {
           return json({ def, selectable:defs.selectable(id,def.version), coffeeFilmStatus:def.kind==="coffee-kit"?d.coffeeFilmStatus??{ready:false,reason:"Local film capability is unavailable"}:null, coffeeDesign:def.kind==="coffee-kit"?COFFEE_DESIGN_FIELDS:null, coffeeChoice:def.kind==="coffee-kit" ? d.coffeeChoice?.() ?? null : null, problems: validate(def, defs.known, undefined, defs.skillInfo ?? undefined), versions: defs.versions(id).map((x) => ({ version: x.version, createdAt: x.createdAt, by: x.by, note: x.note, parent: x.parent, diff: x.diff })),
             runs: engine.list().filter((r) => r.workflow === id).map((r) => ({ id: r.id, version: r.version, status: r.status, result: r.result, merged: !!r.ctx?.merged, title: r.title, createdAt: r.createdAt })) });
         }
-        if(ownWorkflow(defs.get(id)))for(const n of Array.isArray(b?.nodes)?b.nodes:[]){try{checkNodeStaffing(n);}catch(e:any){return json({error:e.message},400);}}
+        {const own=ownWorkflow(defs.get(id));for(const n of Array.isArray(b?.nodes)?b.nodes:[]){try{if(own)checkNodeStaffing(n);else checkEffort(n);}catch(e:any){return json({error:e.message},400);}}}
         const saved = defs.save(id, b, by, b?.note);
         d.log.emit({ type: "workflow_saved", workflow: id, summary: `${id} v${saved.version} saved by ${by}`, data: { diff: saved.diff } });
         return json({ def: saved, diff: saved.diff });
@@ -255,7 +255,7 @@ export function createRuntime(d: RuntimeDeps) {
           if(!image||image.provider!=='codex')return json({error:"Confirm an available dedicated Codex image role; no vendor fallback",code:"coffee-staffing-required"},409);
           params={...params,_staffing:config.hash};
         }
-        const r = engine.start({ workflow: wf, version: b?.version ? Number(b.version) : undefined, title: b?.title, text, params, by, classifier: cls });
+        const r = engine.start({ workflow: wf, version: b?.version ? Number(b.version) : undefined, title: b?.title, text: ownWorkflow(chosenDef) ? ownBrief(chosenDef, text) : text, params, by, classifier: cls });
         return json(runView(r.id, who));
       }
       const recovery=/^\/api\/wruns\/(R-\d+)\/continuation\/(offer|confirm)$/.exec(p);
