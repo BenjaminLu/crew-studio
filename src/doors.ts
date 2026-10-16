@@ -12,6 +12,27 @@ import {homedir} from "node:os";
 import { bundledText, parseYaml } from "./bundled";
 import { Policies } from "./runtime/checks";
 
+/**
+ * The one exception to Studio's private data root: the source-owned sandbox repository,
+ * registered as project "sandbox" at exactly <data>/demo-repo (sandbox-repo.ts). It holds only when
+ * the id is exactly "sandbox", the registered path is that literal path, the path and its .git are
+ * real directories (no links anywhere on the way), and .git is a standalone Git directory (no
+ * gitdir file, no commondir). Returns the repository's real root, or null. Every other path below
+ * the data root, and every other protected root, stays refused.
+ */
+export function builtInSandboxRoot(dataDir: string, id: string, path: unknown): string | null {
+  if (id !== "sandbox" || typeof path !== "string" || !isAbsolute(path)) return null;
+  try {
+    const data = realpathSync(dataDir), literal = join(resolve(dataDir), "demo-repo"), real = join(data, "demo-repo");
+    if (path !== literal && path !== real) return null;
+    const root = lstatSync(path), git = lstatSync(join(path, ".git"));
+    if (root.isSymbolicLink() || !root.isDirectory() || git.isSymbolicLink() || !git.isDirectory()) return null;
+    if (realpathSync(path) !== real || realpathSync(join(path, ".git")) !== join(real, ".git")) return null;
+    if (existsSync(join(real, ".git", "commondir"))) return null;
+    return real;
+  } catch { return null; }
+}
+
 export type Rule = { glob: string; why: string };
 export type DoorDefaults = { base: Rule[]; trivial: Rule[]; trivial_max_lines: number };
 export type Tier = "one-way" | "undecided" | "trivial" | "two-way";
@@ -105,7 +126,10 @@ export class Projects {
     if(!project?.path||(project.enabled!==undefined&&project.enabled!==true))throw new Error("Registered project is missing or disabled");
     const inside=(a:string,b:string)=>{const r=relative(a,b);return !r||r!=='..'&&!r.startsWith('../')&&!isAbsolute(r);};
     const privateRoots=[this.dataDir,...protectedRoots,process.env.CODEX_HOME||join(homedir(),'.codex'),join(homedir(),'.claude'),process.env.CREW_RUNTIME_DIR||join(homedir(),'.crew-studio/runtime')].map(p=>{try{return realpathSync(p)}catch{return resolve(p)}});
-    const allowed=(path:string)=>{if(privateRoots.some(root=>inside(root,path)||inside(path,root)))throw new Error("Registered repository overlaps private or protected data");};
+    // The built-in sandbox is the only repository allowed below the data root; other protected roots still apply to it.
+    // Index 0 is the data root itself: an explicit protected root that equals it still refuses.
+    const sandbox=builtInSandboxRoot(this.dataDir,id,project.path);
+    const allowed=(path:string)=>{if(privateRoots.some((root,i)=>!(sandbox&&i===0&&inside(sandbox,path))&&(inside(root,path)||inside(path,root))))throw new Error("Registered repository overlaps private or protected data");};
     const small=(path:string,max:number,container:string,checkPrivate=true)=>{const actual=realpathSync(path);if(!inside(container,actual))throw new Error("Repository identity file escaped its container");if(checkPrivate)allowed(actual);const st=statSync(actual);if(!st.isFile()||st.size>max)throw new Error("Repository identity file is unavailable or oversized");return readFileSync(actual,'utf8').trim();};
     const gitIdentity=(path:string,checkPrivate=true)=>{
       const root=realpathSync(path);if(!statSync(root).isDirectory())throw new Error("Repository root missing");if(checkPrivate)allowed(root);

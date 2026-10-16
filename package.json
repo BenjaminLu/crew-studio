@@ -66,7 +66,7 @@
     "test:staffing-ui": "STAFFING_UI=1 node tests/backbone-ui.mjs",
     "test:codex-login-welcome": "node tests/codex-login-welcome-ui.mjs",
     "test:native-coffee-kit": "bun tests/native-coffee-kit.ts && bun tests/native-coffee-preview.ts && node tests/beginner-coffee-kit-ui.mjs",
-    "test:coffee-film": "bun tests/coffee-film.ts && bun tests/coffee-video-recovery.ts",
+    "test:coffee-film": "bun tests/coffee-film.ts && bun tests/coffee-video-recovery.ts && bun tests/coffee-film-failure.ts && bun tests/hyperframes-check-diagnostic.ts",
     "test:coffee-film-local": "bun tests/coffee-film-local.ts",
     "test:native-coffee-design": "bun tests/native-coffee-design.ts",
     "test:native-coffee-staffing": "bun tests/native-coffee-staffing.ts",

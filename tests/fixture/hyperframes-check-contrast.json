@@ -1,0 +1,484 @@
+{
+ "ok": false,
+ "strict": false,
+ "browserSkipped": false,
+ "lint": {
+  "ok": true,
+  "errorCount": 0,
+  "warningCount": 4,
+  "infoCount": 0,
+  "findings": [
+   {
+    "code": "duplicate_media_discovery_risk",
+    "severity": "warning",
+    "message": "Detected 3 matching img entries with the same source/start/duration.",
+    "selector": "[data-composition-id]",
+    "dataAttributes": {},
+    "sourceFile": "/private/var/folders/zz/fixture/T/crew-hyperframes-FIXTURE/project/index.html",
+    "bbox": {
+     "x": 0,
+     "y": 0,
+     "width": 0,
+     "height": 0
+    },
+    "time": 0,
+    "fixHint": "Avoid duplicated media nodes that can be discovered twice during compilation."
+   },
+   {
+    "code": "nested_structure_needs_subcomposition",
+    "severity": "warning",
+    "message": "<section id=\"scene0\"> is a timeline element that contains nested <img id=\"photo0\">. The timeline shows one row per top-level element, and the root composition is built only from sub-compositions.",
+    "selector": "#scene0",
+    "dataAttributes": {},
+    "sourceFile": "/private/var/folders/zz/fixture/T/crew-hyperframes-FIXTURE/project/index.html",
+    "bbox": {
+     "x": 0,
+     "y": 0,
+     "width": 0,
+     "height": 0
+    },
+    "time": 0,
+    "fixHint": "Move <section id=\"scene0\"> and its contents into a sub-composition file and mount it with data-composition-src."
+   },
+   {
+    "code": "nested_structure_needs_subcomposition",
+    "severity": "warning",
+    "message": "<section id=\"scene1\"> is a timeline element that contains nested <img id=\"photo1\">. The timeline shows one row per top-level element, and the root composition is built only from sub-compositions.",
+    "selector": "#scene1",
+    "dataAttributes": {},
+    "sourceFile": "/private/var/folders/zz/fixture/T/crew-hyperframes-FIXTURE/project/index.html",
+    "bbox": {
+     "x": 0,
+     "y": 0,
+     "width": 0,
+     "height": 0
+    },
+    "time": 0,
+    "fixHint": "Move <section id=\"scene1\"> and its contents into a sub-composition file and mount it with data-composition-src."
+   },
+   {
+    "code": "nested_structure_needs_subcomposition",
+    "severity": "warning",
+    "message": "<section id=\"scene2\"> is a timeline element that contains nested <img id=\"photo2\">. The timeline shows one row per top-level element, and the root composition is built only from sub-compositions.",
+    "selector": "#scene2",
+    "dataAttributes": {},
+    "sourceFile": "/private/var/folders/zz/fixture/T/crew-hyperframes-FIXTURE/project/index.html",
+    "bbox": {
+     "x": 0,
+     "y": 0,
+     "width": 0,
+     "height": 0
+    },
+    "time": 0,
+    "fixHint": "Move <section id=\"scene2\"> and its contents into a sub-composition file and mount it with data-composition-src."
+   }
+  ],
+  "filesScanned": 1
+ },
+ "runtime": {
+  "ok": true,
+  "errorCount": 0,
+  "warningCount": 0,
+  "infoCount": 0,
+  "findings": []
+ },
+ "layout": {
+  "ok": true,
+  "errorCount": 0,
+  "warningCount": 2,
+  "infoCount": 2,
+  "findings": [
+   {
+    "code": "content_overlap",
+    "severity": "warning",
+    "time": 4.125,
+    "selector": "#scene0 > div:nth-of-type(3)",
+    "message": "Two text blocks overlap and may render unreadable.",
+    "rect": {
+     "left": 40,
+     "top": 500,
+     "right": 88,
+     "bottom": 515,
+     "width": 48,
+     "height": 15
+    },
+    "containerSelector": "#scene1 > div:nth-of-type(3)",
+    "text": "活力咖啡",
+    "fixHint": "Give each block its own zone, or put data-layout-allow-overlap on the text or on a container inside the scene. A marker on the scene root does not apply.",
+    "dataAttributes": {},
+    "sourceFile": "index.html",
+    "bbox": {
+     "x": 40,
+     "y": 500,
+     "width": 48,
+     "height": 15
+    },
+    "firstSeen": 4.125,
+    "lastSeen": 4.25,
+    "occurrences": 2,
+    "heldMs": 125,
+    "times": [
+     4.125,
+     4.25
+    ]
+   },
+   {
+    "code": "content_overlap",
+    "severity": "warning",
+    "time": 8.125,
+    "selector": "#scene1 > div:nth-of-type(3)",
+    "message": "Two text blocks overlap and may render unreadable.",
+    "rect": {
+     "left": 40,
+     "top": 500,
+     "right": 88,
+     "bottom": 515,
+     "width": 48,
+     "height": 15
+    },
+    "containerSelector": "#scene2 > div:nth-of-type(3)",
+    "text": "活力咖啡",
+    "fixHint": "Give each block its own zone, or put data-layout-allow-overlap on the text or on a container inside the scene. A marker on the scene root does not apply.",
+    "dataAttributes": {},
+    "sourceFile": "index.html",
+    "bbox": {
+     "x": 40,
+     "y": 500,
+     "width": 48,
+     "height": 15
+    },
+    "firstSeen": 8.125,
+    "lastSeen": 8.25,
+    "occurrences": 2,
+    "heldMs": 125,
+    "times": [
+     8.125,
+     8.25
+    ]
+   },
+   {
+    "code": "container_overflow",
+    "severity": "info",
+    "time": 0.667,
+    "selector": "#photo0",
+    "message": "Element extends outside a clipping layout container.",
+    "rect": {
+     "left": 277.08,
+     "top": -24.92,
+     "right": 990.13,
+     "bottom": 564.92,
+     "width": 713.05,
+     "height": 589.84
+    },
+    "containerSelector": "#scene0",
+    "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+    "containerRect": {
+     "left": 0,
+     "top": 0,
+     "right": 960,
+     "bottom": 540,
+     "width": 960,
+     "height": 540
+    },
+    "overflow": {
+     "right": 30.13,
+     "top": 24.92,
+     "bottom": 24.92
+    },
+    "dataAttributes": {
+     "data-hf-authored-opacity": ""
+    },
+    "sourceFile": "index.html",
+    "bbox": {
+     "x": 277.08,
+     "y": -24.92,
+     "width": 713.05,
+     "height": 589.84
+    },
+    "firstSeen": 0.667,
+    "lastSeen": 3.333,
+    "occurrences": 3,
+    "heldMs": 0,
+    "times": [
+     0.667,
+     2,
+     3.333
+    ]
+   },
+   {
+    "code": "container_overflow",
+    "severity": "info",
+    "time": 4.667,
+    "selector": "#photo1",
+    "message": "Element extends outside a clipping layout container.",
+    "rect": {
+     "left": 268.61,
+     "top": -21.6,
+     "right": 973.63,
+     "bottom": 561.6,
+     "width": 705.02,
+     "height": 583.2
+    },
+    "containerSelector": "#scene1",
+    "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+    "containerRect": {
+     "left": 0,
+     "top": 0,
+     "right": 960,
+     "bottom": 540,
+     "width": 960,
+     "height": 540
+    },
+    "overflow": {
+     "right": 13.63,
+     "top": 21.6,
+     "bottom": 21.6
+    },
+    "dataAttributes": {
+     "data-hf-authored-opacity": ""
+    },
+    "sourceFile": "index.html",
+    "bbox": {
+     "x": 268.61,
+     "y": -21.6,
+     "width": 705.02,
+     "height": 583.2
+    },
+    "firstSeen": 4.667,
+    "lastSeen": 7.333,
+    "occurrences": 3,
+    "heldMs": 0,
+    "times": [
+     4.667,
+     6,
+     7.333
+    ]
+   }
+  ],
+  "duration": 12,
+  "transitionSamples": [],
+  "transitionSamplesDropped": 0,
+  "tolerance": 2,
+  "totalIssueCount": 4,
+  "truncated": false
+ },
+ "motion": {
+  "ok": true,
+  "errorCount": 0,
+  "warningCount": 0,
+  "infoCount": 0,
+  "findings": [],
+  "enabled": false
+ },
+ "contrast": {
+  "ok": false,
+  "errorCount": 5,
+  "warningCount": 2,
+  "infoCount": 0,
+  "findings": [
+   {
+    "code": "contrast_aa_failure",
+    "severity": "error",
+    "message": "Contrast is 3.01:1; WCAG AA requires 4.5:1.",
+    "text": "杯子與色塊依序登場。",
+    "fg": "rgb(240,100,69)",
+    "bg": "rgb(255,248,235)",
+    "ratio": 3.01,
+    "requiredRatio": 4.5,
+    "suggestedColor": "rgb(190,79,55)",
+    "large": false,
+    "selector": "div > section:nth-of-type(1) > div:nth-of-type(2) > p",
+    "dataAttributes": {},
+    "sourceFile": "index.html",
+    "bbox": {
+     "x": 40,
+     "y": 306.8846130371094,
+     "width": 371.1875,
+     "height": 28.046875
+    },
+    "time": 0.667,
+    "times": [
+     0.667,
+     3.333
+    ]
+   },
+   {
+    "code": "contrast_aa_failure",
+    "severity": "error",
+    "message": "Contrast is 3.01:1; WCAG AA requires 4.5:1.",
+    "text": "活力咖啡",
+    "fg": "rgb(240,100,69)",
+    "bg": "rgb(255,248,235)",
+    "ratio": 3.01,
+    "requiredRatio": 4.5,
+    "suggestedColor": "rgb(190,79,55)",
+    "large": false,
+    "selector": "div > section:nth-of-type(1) > div:nth-of-type(3)",
+    "dataAttributes": {},
+    "sourceFile": "index.html",
+    "bbox": {
+     "x": 40,
+     "y": 499,
+     "width": 48,
+     "height": 17
+    },
+    "time": 0.667,
+    "times": [
+     0.667,
+     3.333
+    ]
+   },
+   {
+    "code": "contrast_aa_failure",
+    "severity": "warning",
+    "message": "Contrast is 3.01:1; WCAG AA requires 4.5:1.",
+    "text": "咖啡豆與司康加入桌面。",
+    "fg": "rgb(240,100,69)",
+    "bg": "rgb(255,248,235)",
+    "ratio": 3.01,
+    "requiredRatio": 4.5,
+    "suggestedColor": "rgb(190,79,55)",
+    "large": false,
+    "selector": "div > section:nth-of-type(2) > div:nth-of-type(2) > p",
+    "dataAttributes": {},
+    "sourceFile": "index.html",
+    "bbox": {
+     "x": 40,
+     "y": 304.3125,
+     "width": 371.1875,
+     "height": 28.046875
+    },
+    "time": 6,
+    "times": [
+     6
+    ]
+   },
+   {
+    "code": "contrast_aa_failure",
+    "severity": "warning",
+    "message": "Contrast is 3.01:1; WCAG AA requires 4.5:1.",
+    "text": "活力咖啡",
+    "fg": "rgb(240,100,69)",
+    "bg": "rgb(255,248,235)",
+    "ratio": 3.01,
+    "requiredRatio": 4.5,
+    "suggestedColor": "rgb(190,79,55)",
+    "large": false,
+    "selector": "div > section:nth-of-type(2) > div:nth-of-type(3)",
+    "dataAttributes": {},
+    "sourceFile": "index.html",
+    "bbox": {
+     "x": 40,
+     "y": 499,
+     "width": 48,
+     "height": 17
+    },
+    "time": 6,
+    "times": [
+     6
+    ]
+   },
+   {
+    "code": "contrast_aa_failure",
+    "severity": "error",
+    "message": "Contrast is 3.01:1; WCAG AA requires 4.5:1.",
+    "text": "全景定格；今天，來點活力。看看菜單。",
+    "fg": "rgb(240,100,69)",
+    "bg": "rgb(255,248,235)",
+    "ratio": 3.01,
+    "requiredRatio": 4.5,
+    "suggestedColor": "rgb(190,79,55)",
+    "large": false,
+    "selector": "div > section:nth-of-type(3) > div:nth-of-type(2) > p",
+    "dataAttributes": {},
+    "sourceFile": "index.html",
+    "bbox": {
+     "x": 40,
+     "y": 283.3846130371094,
+     "width": 371.1875,
+     "height": 28.046875
+    },
+    "time": 8.667,
+    "times": [
+     8.667,
+     11.333
+    ]
+   },
+   {
+    "code": "contrast_aa_failure",
+    "severity": "error",
+    "message": "Contrast is 3.01:1; WCAG AA requires 4.5:1.",
+    "text": "看看菜單 →",
+    "fg": "rgb(240,100,69)",
+    "bg": "rgb(255,248,235)",
+    "ratio": 3.01,
+    "requiredRatio": 4.5,
+    "suggestedColor": "rgb(190,79,55)",
+    "large": false,
+    "selector": "div > section:nth-of-type(3) > div:nth-of-type(2) > div:nth-of-type(2)",
+    "dataAttributes": {},
+    "sourceFile": "index.html",
+    "bbox": {
+     "x": 40,
+     "y": 349.2917785644531,
+     "width": 73.9375,
+     "height": 29
+    },
+    "time": 8.667,
+    "times": [
+     8.667,
+     11.333
+    ]
+   },
+   {
+    "code": "contrast_aa_failure",
+    "severity": "error",
+    "message": "Contrast is 3.01:1; WCAG AA requires 4.5:1.",
+    "text": "活力咖啡",
+    "fg": "rgb(240,100,69)",
+    "bg": "rgb(255,248,235)",
+    "ratio": 3.01,
+    "requiredRatio": 4.5,
+    "suggestedColor": "rgb(190,79,55)",
+    "large": false,
+    "selector": "div > section:nth-of-type(3) > div:nth-of-type(3)",
+    "dataAttributes": {},
+    "sourceFile": "index.html",
+    "bbox": {
+     "x": 40,
+     "y": 499,
+     "width": 48,
+     "height": 17
+    },
+    "time": 8.667,
+    "times": [
+     8.667,
+     11.333
+    ]
+   }
+  ],
+  "enabled": true,
+  "checked": 17,
+  "passed": 5
+ },
+ "hdr": {
+  "autoPromotion": null,
+  "inspection": "available"
+ },
+ "snapshots": {
+  "enabled": false,
+  "files": [],
+  "times": [],
+  "findingFiles": []
+ },
+ "saved": {
+  "id": "d3a2b39e-8753-4d01-907f-5bf57a58b72f",
+  "revision": null,
+  "report": "/private/var/folders/zz/fixture/T/crew-hyperframes-FIXTURE/project/.hyperframes/artifacts/checks/d3a2b39e-8753-4d01-907f-5bf57a58b72f.json",
+  "attribution": "unversioned"
+ },
+ "_meta": {
+  "version": "0.8.159",
+  "updateAvailable": false
+ }
+}

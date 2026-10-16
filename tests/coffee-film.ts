@@ -1,7 +1,7 @@
 import{execFileSync}from'node:child_process';
 // Source composition/ownership fixtures. Simulated encoder output is NOT playable film proof.
 import{strict as assert}from'node:assert';import{mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync,symlinkSync}from'node:fs';import{join}from'node:path';import{tmpdir}from'node:os';import{createHash}from'node:crypto';
-import{coffeeFilmCapability,discoverCoffeeFilmCapability,renderCoffeeFilm,integrateCoffeeSite,COFFEE_PLAYBACK_SCRIPT,type CoffeeFilmRequest}from'../src/render/coffee-film';import{HyperframesFailure}from'../src/render/hyperframes';import{coffeeDesignHash}from'../src/domain/coffee-design';
+import{coffeeTextColor,coffeeFilmCapability,discoverCoffeeFilmCapability,renderCoffeeFilm,integrateCoffeeSite,COFFEE_PLAYBACK_SCRIPT,type CoffeeFilmRequest}from'../src/render/coffee-film';import{HyperframesFailure}from'../src/render/hyperframes';import{coffeeDesignHash}from'../src/domain/coffee-design';
 const root=mkdtempSync(join(tmpdir(),'coffee-film-fixture-')),page=join(root,'page');mkdirSync(page);const plan=JSON.parse(readFileSync(join(import.meta.dir,'fixture/coffee-design.json'),'utf8'));const posterSource=execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','color=c=tan:s=16x16','-frames:v','1','-vcodec','png','-f','image2pipe','pipe:1']).toString('base64');
 const image=join(root,'image.png');writeFileSync(image,'EXPLICIT-OFFLINE-IMAGE');writeFileSync(join(page,'index.html'),'<html><head></head><body><main><h1>Morrow Coffee</h1></main></body></html>');const gsap=join(root,'gsap.min.js');writeFileSync(gsap,'/* explicit offline GSAP fixture; no real render */');
 const ffmpeg=join(root,'fixture-ffmpeg');writeFileSync(ffmpeg,`#!${process.execPath}\nimport{writeFileSync}from'node:fs';writeFileSync(process.argv.at(-1),Buffer.from('${posterSource}','base64'));\n`,{mode:0o700});
@@ -10,6 +10,15 @@ const direction={version:1 as const,design:plan,designHash:coffeeDesignHash(plan
 const sha=(b:string|Buffer)=>createHash('sha256').update(b).digest('hex');const request:CoffeeFilmRequest={direction,image,page,revision:null,signal:new AbortController().signal,authorize(){}};
 const render=async(input:any)=>{renderCalls++;captured=input.project;lastHTML=readFileSync(join(captured,'index.html'),'utf8');lastBrief=JSON.parse(readFileSync(join(captured,'BRIEF.md'),'utf8'));input.authorize();input.onProgress?.('render');return{bytes:Buffer.from('SIMULATED-ENCODE-OUTPUT-NOT-PLAYBACK'),sha256:'fixture',codec:'h264' as const,duration:12,width:960,height:540,renderer:'hyperframes@fixture',manifest:{}};};
 try{
+ // R-017: the approved palette's second color (coral) is 3.01:1 on cream; HyperFrames check refuses it.
+ ok('R-017 palette text uses the approved green, not the 3.01:1 coral',()=>assert.equal(coffeeTextColor('#fff8eb',['#f06445','#28754b']),'#28754b'));
+ ok('already readable brand text stays the first brand color',()=>assert.equal(coffeeTextColor('#ffffff',['#222222','#28754b']),'#222222'));
+ ok('an unreadable palette falls back to the readable neutral',()=>{assert.equal(coffeeTextColor('#ffffff',['#ffffee','#ffffff']),'#000000');assert.equal(coffeeTextColor('#101010',['#202020','#303030']),'#ffffff');});
+ {const vital=structuredClone(plan);vital.brand.palette=['#fff8eb','#f06445','#28754b'];const failed='f'.repeat(64);let seen:any=null;
+  await renderCoffeeFilm({...request,direction:{...direction,design:vital,designHash:coffeeDesignHash(vital),palette:vital.brand.palette},failedInputDigest:failed},capability,async(input:any)=>{seen=input;return render(input);});
+  ok('R-017 film composition sets readable body text and keeps coral off text',()=>{assert(lastHTML.includes('color:#28754b;font-family'));assert(!lastHTML.includes('color:#f06445'));});
+  ok('the prior failed inputs digest reaches the renderer',()=>assert.equal(seen.failedInputDigest,failed));
+  renderCalls=0;}
  const output=await renderCoffeeFilm(request,capability,render);
  ok('same exported renderer receives exact source-owned snapshot',()=>assert.equal(renderCalls,1));
  ok('image page and shared plan remain bound in renderer brief',()=>{assert.equal(lastBrief.imageSHA256,sha(readFileSync(image)));assert.equal(lastBrief.pageSHA256,sha(readFileSync(join(page,'index.html'))));assert.equal(lastBrief.direction.designHash,coffeeDesignHash(plan));});
@@ -27,6 +36,8 @@ try{
  const changed=structuredClone(direction);changed.design.video.beats[0].caption='Changed without approval';await assert.rejects(renderCoffeeFilm({...request,direction:changed},capability,render));ok('changed unsigned design cannot reach renderer',()=>assert.equal(renderCalls,before+1));
  const escaped=structuredClone(plan);escaped.video.beats[0].title='<img src=x onerror=alert(1)>';await renderCoffeeFilm({...request,direction:{...direction,design:escaped,designHash:coffeeDesignHash(escaped)}},capability,render);ok('storyboard copy is escaped rather than active HTML',()=>assert(lastHTML.includes('&lt;img src=x onerror=alert(1)&gt;')&&!lastHTML.includes('<img src=x')));
  const integrated=await integrateCoffeeSite('<html><head></head><body><h1>Real heading</h1><a href="#story">Our story</a><video controls src="assets/coffee.mp4"></video></body></html>',plan);ok('inline site keeps real heading CTA and accessible versioned film/poster',()=>assert(integrated.includes('poster="assets/coffee-poster.png"')&&integrated.includes('playsinline')&&integrated.includes('autoplay')&&integrated.includes('coffee-playback.js')&&integrated.includes('Real heading')&&integrated.includes('Our story')));
+ {const vital=structuredClone(plan);vital.brand.palette=['#fff8eb','#f06445','#28754b'];const site=await integrateCoffeeSite('<html><head></head><body><video controls src="assets/coffee.mp4"></video></body></html>',vital);
+  ok('the site film toggle text is readable on the R-017 palette',()=>{assert(site.includes('background:#fff8eb;color:#28754b;'));assert(!site.includes('background:#fff8eb;color:#f06445;'));});}
  ok('host playback has reduced-motion pause and explicit controls without network',()=>assert(COFFEE_PLAYBACK_SCRIPT.includes('prefers-reduced-motion')&&COFFEE_PLAYBACK_SCRIPT.includes('v.pause()')&&!/fetch\(|XMLHttpRequest|parent\./.test(COFFEE_PLAYBACK_SCRIPT)));
  ok('missing local optional tools refuse honestly',()=>assert.equal(coffeeFilmCapability(join(root,'missing')).ready,false));
  const managed=join(root,'managed');

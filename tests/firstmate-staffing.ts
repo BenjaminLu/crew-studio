@@ -174,6 +174,20 @@ if(process.env.STAFFING_BASE_ENGINE){
   writeFileSync(registry,JSON.stringify([{...project,base:'missing'}]));rejects(()=>projects.staffingIdentity(project.id),'missing confirmed base refuses identity');
   writeFileSync(registry,JSON.stringify([{...project,github:{repository:'synthetic/unverified'}}]));rejects(()=>projects.staffingIdentity(project.id),'external grant cannot become local staffing authority without source verifier');
   writeFileSync(registry,JSON.stringify([project]));rmSync(join(repo,'.git','refs','heads','main'));writeFileSync(join(data,'private-ref'),'a'.repeat(40)+' refs/heads/main\n');symlinkSync(join(data,'private-ref'),join(repo,'.git','packed-refs'));rejects(()=>projects.staffingIdentity(project.id),'packed reference symlink cannot read private data outside Git container');
+  // The built-in sandbox at exactly <data>/demo-repo is the one repository below the data root with staffing identity.
+  {const sandbox=join(data,'demo-repo'),sgit=(cwd:string,args:string[])=>{const r=Bun.spawnSync(['git',...args],{cwd,env:{PATH:process.env.PATH!,HOME:base,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_TERMINAL_PROMPT:'0'},stdout:'pipe',stderr:'pipe'});if(r.exitCode)throw new Error(r.stderr.toString());};
+   const init=(p:string)=>{mkdirSync(p,{recursive:true});sgit(p,['init','-b','main']);sgit(p,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture sandbox']);};init(sandbox);
+   const demo={...project,id:'sandbox',path:sandbox},use=(...records:any[])=>writeFileSync(registry,JSON.stringify(records));
+   use(demo);ok(projects.staffingIdentity('sandbox').namespace==='git','built-in sandbox at data/demo-repo has staffing identity');
+   rejects(()=>projects.staffingIdentity('sandbox',[sandbox]),'an explicit protected root still refuses the sandbox');
+   rejects(()=>projects.staffingIdentity('sandbox',[data]),'a protected root equal to the data root still refuses the sandbox');
+   use({...demo,id:'other'});rejects(()=>projects.staffingIdentity('other'),'another id at data/demo-repo cannot claim the sandbox exception');
+   const elsewhere=join(data,'other-repo');init(elsewhere);use({...demo,path:elsewhere});rejects(()=>projects.staffingIdentity('sandbox'),'the sandbox id at another data path stays refused');
+   use({...demo,path:data+'/x/../demo-repo'});rejects(()=>projects.staffingIdentity('sandbox'),'a non-literal spelling of the sandbox path is refused');
+   symlinkSync(elsewhere,join(data,'demo-link'));use({...demo,path:join(data,'demo-link')});rejects(()=>projects.staffingIdentity('sandbox'),'a link inside data cannot borrow the sandbox exception');
+   writeFileSync(join(sandbox,'.git','commondir'),'../../other-repo/.git\n');use(demo);rejects(()=>projects.staffingIdentity('sandbox'),'a sandbox commondir redirect into private data is refused');rmSync(join(sandbox,'.git','commondir'));
+   const real=join(data,'demo-repo-real');sgit(data,['clone','-q',sandbox,real]);rmSync(sandbox,{recursive:true,force:true});symlinkSync(real,sandbox);rejects(()=>projects.staffingIdentity('sandbox'),'a demo-repo symlink to other private data is refused');
+   rmSync(sandbox);mkdirSync(sandbox);writeFileSync(join(sandbox,'.git'),`gitdir: ${join(real,'.git')}\n`);rejects(()=>projects.staffingIdentity('sandbox'),'a sandbox .git file pointing at other private data is refused');}
   writeFileSync(registry,'{malformed');rejects(()=>projects.staffingIdentity(project.id),'corrupt registry is never treated as empty or repaired');
  }finally{rmSync(base,{recursive:true,force:true})}
  console.log(`staffing total: ${n} passed`);
@@ -198,6 +212,31 @@ if(process.env.STAFFING_CONVERSATION==='1'){
   const task=(await f.api('/api/wruns')).body.runs.find((r:any)=>r.workflow==='code-firstmate'),detail=await f.api(`/api/wruns/${task.id}`),instruction=detail.body.ledger.find((e:any)=>e.record==='staffing-instructions');const job=(await f.api('/api/agents')).body.find((j:any)=>j.log.some((l:any)=>l.text.includes('NATIVE_STAFFING_RECEIPT ')));const receipt=job?.log.find((l:any)=>l.text.includes('NATIVE_STAFFING_RECEIPT '))?.text;const actual=receipt?JSON.parse(receipt.slice(receipt.indexOf('NATIVE_STAFFING_RECEIPT ')+'NATIVE_STAFFING_RECEIPT '.length)):null;ok(actual?.model==='fixture-model'&&actual?.effort==='low'&&actual?.instructionsSha256===instruction?.data.instructionsSha256,'actual CLI instruction hash/model/effort match signed source staffing receipt');
  }finally{await f.close();}
  console.log(`staffing conversation total: ${n} passed`);
+}
+
+// The built-in sandbox (money-kit at data/demo-repo) through the real server: staffing identity,
+// captain approval, dispatch and the first agent launch all pass; no GitHub, no real model.
+if(process.env.STAFFING_CONVERSATION==='1'){
+ const {staffingConversationFixture}=await import('./lib/firstmate-staffing-fixture');const {existsSync,readdirSync}=await import('node:fs');const f=await staffingConversationFixture();
+ try{
+  const registered=JSON.parse(readFileSync(join(f.data,'projects.json'),'utf8')).find((p:any)=>p.id==='sandbox');ok(registered?.path===join(f.data,'demo-repo'),'the server registers money-kit as project sandbox at data/demo-repo');
+  const started=await f.api('/api/main/start',{host:'codex',confirm:true});ok(started.status===200,'sandbox conversation primary starts');await f.until(async()=>!(await f.api('/api/main')).body.busy);
+  const tool=async(name:string,args:any)=>{const count=f.rows().filter(r=>r.toolResult).length;await f.api('/api/main/send',{text:'NATIVE-STAFFING '+JSON.stringify({name,args})});if(!await f.until(async()=>f.rows().filter(r=>r.toolResult).length>count&&!(await f.api('/api/main')).body.busy))throw new Error('Owned primary tool request did not finish');return JSON.parse(f.rows().filter(r=>r.toolResult).at(-1)?.toolResult.contentItems[0].text);};
+  const base={project:'sandbox',workflow:'code-firstmate',version:1},ids=['coordinator','worker','reviewer','designer'];
+  let round=await tool('studio_staffing_interview',base);ok(!round.error&&round.frontier?.length===4,'staffing interview accepts the built-in sandbox identity '+(round.error?JSON.stringify(round):''));
+  for(const answer of [{provider:'codex'},{model:'fixture-model'},{effort:'low'}])round=await tool('studio_staffing_interview',{...base,answers:Object.fromEntries(ids.map(id=>[id,answer]))});ok(round.complete,'sandbox role configuration completes');
+  const proposal=await tool('studio_propose_staffing',{...base,roles:round.choices});if(proposal.error)throw new Error(JSON.stringify(proposal));await f.until(async()=>(await f.api(`/api/wruns/${proposal.proposal}`)).body.nodes.confirm.waiting==='card');
+  const card=(await f.api('/api/scards')).body.cards.find((c:any)=>c.run===proposal.proposal);await f.api(`/api/scards/${card.id}/answer`,{choice:'approve'});ok(await f.until(async()=>(await f.api(`/api/wruns/${proposal.proposal}`)).body.status==='succeeded'),'captain approval writes sandbox staffing');
+  const before=f.rows().filter(r=>r.toolResult).length;await f.api('/api/main/send',{text:'NATIVE-PROPOSE '+JSON.stringify({workflow:'code-firstmate',version:1,text:'Round the totals in src/money.ts',params:{project:'sandbox'}})});await f.until(async()=>f.rows().filter(r=>r.toolResult).length>before&&!(await f.api('/api/main')).body.busy);
+  const dispatchResult=JSON.parse(f.rows().filter(r=>r.toolResult).at(-1).toolResult.contentItems[0].text);ok(!dispatchResult.error&&!!dispatchResult.proposal,'the sandbox coding proposal is captured, not refused as private data '+(dispatchResult.error?JSON.stringify(dispatchResult):''));
+  await f.until(async()=>(await f.api(`/api/wruns/${dispatchResult.proposal}`)).body.nodes.dispatch.waiting==='card');const dispatch=(await f.api('/api/scards')).body.cards.find((c:any)=>c.run===dispatchResult.proposal);await f.api(`/api/scards/${dispatch.id}/answer`,{choice:'approve'});
+  const launched=await f.until(async()=>(await f.api('/api/agents')).body.some((job:any)=>job.log.some((line:any)=>line.text.includes('NATIVE_STAFFING_RECEIPT '))));
+  const task=(await f.api('/api/wruns')).body.runs.find((r:any)=>r.workflow==='code-firstmate');if(!launched)console.log('sandbox diagnostics',JSON.stringify(task),f.output().slice(-1500));
+  ok(launched&&task?.status!=='failed'&&!/overlaps private|outside Studio private data/.test(JSON.stringify(task)),'the sandbox code-firstmate Task passes staffing admission and launches its first agent');
+  const wt=join(f.data,'work','wt','sandbox'),worktree=await f.until(async()=>existsSync(wt)&&readdirSync(wt).some(e=>e.endsWith('.json')));
+  ok(worktree,'the sandbox Task is admitted to a Studio worktree under data/work/wt/sandbox '+(worktree?'':JSON.stringify((await f.api(`/api/wruns/${task?.id}`)).body?.nodes)));
+ }finally{await f.close();}
+ console.log(`staffing sandbox total: ${n} passed`);
 }
 
 {

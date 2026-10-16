@@ -99,6 +99,7 @@ ok(prepareSandbox(data).committed === null && run(repo, ["git", "rev-parse", "HE
   if (run1?.id) await fetch(`http://127.0.0.1:${s1.port}/api/wruns/${run1.id}/cancel`, { method: "POST", headers: H2, body: "{}" });
   await s1.stop();
   ok(!!wf && run1?.classifier?.door?.tier === "one-way", "a run started for a project (/api/wruns) reads the project's resolved sensitive paths", JSON.stringify([wf, run1?.classifier?.door, run1?.error]));
+  ok(!/overlaps private or protected data|outside Studio private data/.test(String(run1?.error ?? "")), "the built-in sandbox at data/demo-repo is never refused as private Studio data when its run starts", String(run1?.error ?? ""));
   ok(run(rp, ["git", "rev-parse", "HEAD"]).out.trim() === h && /@captain/.test(readFileSync(join(rp, ".github/CODEOWNERS"), "utf8")), "a commit on main survives a restart of Studio");
   ok(r?.door?.tier === "one-way" && r.door.reasons.some((x: any) => x.glob === "src/money.ts") && r0?.door?.tier === "two-way", "intake reads the project's resolved sensitive paths (org, then the project's own lines)", JSON.stringify([r?.door, r0?.door]));
   const d3 = mkdtempSync(join(tmpdir(), "crew-sbxdata-")); const s3 = await boot(d3, { CREW_SANDBOX: "0" }); await s3.stop();

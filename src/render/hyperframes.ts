@@ -4,12 +4,41 @@ import{join,dirname,relative,posix}from'node:path';import{tmpdir}from'node:os';i
 import{probeProcess}from'../providers/probe-process';
 export const HYPERFRAMES_VERSION='0.8.159';
 export type HyperframesTools={node:string;cli:string;browser:string;ffmpeg:string;ffprobe:string};
-export type HyperframesInput={project:string;tools:HyperframesTools;authorize():void;signal?:AbortSignal;timeoutMs?:number;onProgress?:(stage:'snapshot'|'check'|'render'|'verify')=>void};
-export type HyperframesOutput={bytes:Buffer;sha256:string;codec:'h264';duration:number;width:number;height:number;renderer:string;manifest:Record<string,string>};
+export type HyperframesInput={project:string;tools:HyperframesTools;authorize():void;signal?:AbortSignal;timeoutMs?:number;/** Inputs digest of a prior deterministic check failure: identical inputs are refused before any browser starts. */failedInputDigest?:string|null;onProgress?:(stage:'snapshot'|'check'|'render'|'verify')=>void};
+export type HyperframesOutput={bytes:Buffer;sha256:string;codec:'h264';duration:number;width:number;height:number;renderer:string;manifest:Record<string,string>;inputDigest:string};
+/** Typed, path-free summary of a failed HyperFrames command, safe to show the captain and keep as Task evidence. */
+export type HyperframesFinding={gate:string;code:string;severity:string;message:string;text?:string;ratio?:number;requiredRatio?:number;fg?:string;bg?:string;suggestedColor?:string;time?:number};
+export type HyperframesDiagnostic={schema:1;stage:'snapshot'|'check'|'render'|'verify';code:string;inputDigest:string|null;deterministic:boolean;gates:{gate:string;ok:boolean;errors:number;warnings:number}[];findings:HyperframesFinding[];detail:string|null};
 export class HyperframesFailure extends Error {
- constructor(message:string,readonly cleanupSafe:boolean,readonly stage:string|null=null,readonly code:string|null=null){super(message);this.name='HyperframesFailure';}
+ constructor(message:string,readonly cleanupSafe:boolean,readonly stage:string|null=null,readonly code:string|null=null,readonly diagnostic:HyperframesDiagnostic|null=null){super(message);this.name='HyperframesFailure';}
 }
-const digest=(b:Buffer)=>createHash('sha256').update(b).digest('hex');
+const digest=(b:Buffer|string)=>createHash('sha256').update(b).digest('hex');
+/** Inputs digest over the pinned snapshot manifest: identical film inputs produce the same value. */
+export const hyperframesInputDigest=(manifest:Record<string,string>)=>digest(JSON.stringify(Object.keys(manifest).sort().map(k=>[k,manifest[k]])));
+// Never echo host paths, control characters or unbounded text from the tool.
+const clean=(value:unknown,max:number)=>typeof value==='string'?value.replace(/[\x00-\x08\x0b-\x1f\x7f]/g,' ').replace(/(?:file:\/\/)?(?:~|\/)(?:[^\s"'`<>()\[\]{},;]+\/)*[^\s"'`<>()\[\]{},;]*/g,m=>m.split('/').length>2||m.startsWith('~')||m.startsWith('file:')?'<path>':m).slice(0,max):undefined;
+const count=(value:unknown)=>Number.isSafeInteger(value)&&(value as number)>=0?value as number:0;
+const num=(value:unknown)=>typeof value==='number'&&Number.isFinite(value)?Math.round(value*1000)/1000:undefined;
+/** Parse the official `check --json` report (or a failed command's stderr) into a bounded typed diagnostic. */
+export function hyperframesDiagnostic(stage:HyperframesDiagnostic['stage'],code:string,output:{out:string;err:string},inputDigest:string|null):HyperframesDiagnostic {
+ let report:any=null;if(stage==='check')try{report=JSON.parse(output.out);}catch{}
+ const gates:HyperframesDiagnostic['gates']=[],findings:HyperframesFinding[]=[];
+ if(report&&typeof report==='object')for(const gate of['lint','runtime','layout','motion','contrast']){
+  const g=report[gate];if(!g||typeof g!=='object'||typeof g.ok!=='boolean')continue;
+  gates.push({gate,ok:g.ok,errors:count(g.errorCount),warnings:count(g.warningCount)});
+  if(g.ok||!Array.isArray(g.findings))continue;
+  for(const f of [...g.findings].sort((a:any,b:any)=>(a?.severity==='error'?0:1)-(b?.severity==='error'?0:1))){
+   if(findings.length>=8||!f||typeof f!=='object')break;
+   const item:HyperframesFinding={gate,code:clean(f.code,60)??'unknown',severity:clean(f.severity,20)??'unknown',message:clean(f.message,240)??''};
+   for(const [k,v] of [['text',clean(f.text,120)],['fg',clean(f.fg,40)],['bg',clean(f.bg,40)],['suggestedColor',clean(f.suggestedColor,40)],['ratio',num(f.ratio)],['requiredRatio',num(f.requiredRatio)],['time',num(f.time)]] as const)if(v!==undefined)(item as any)[k]=v;
+   findings.push(item);
+  }
+ }
+ // Only content gates are a pure function of the inputs; a runtime (browser) failure may be environmental and may be retried.
+ const deterministic=!!report&&report.ok===false&&gates.some(g=>!g.ok)&&gates.every(g=>g.ok||['lint','layout','motion','contrast'].includes(g.gate));
+ const tail=output.err.split('\n').map(l=>l.trim()).filter(Boolean).slice(-3).join(' | ');
+ return{schema:1,stage,code,inputDigest,deterministic,gates,findings,detail:deterministic?null:clean(tail,500)||null};
+}
 /** Closed local-input dialect, checked before any upstream host-side parser runs. */
 export async function validateHyperframesReferences(project:string,manifest:Record<string,string>){
  const attribute=(raw:string)=>{
@@ -103,16 +132,18 @@ async function runHyperframes(input:HyperframesInput):Promise<HyperframesOutput>
  const stop=()=>process?.kill();o.signal?.addEventListener('abort',stop,{once:true});
  try{
   guard();o.onProgress?.('snapshot');
-  const manifest=snapshot(realpathSync(o.project),project);
+  const manifest=snapshot(realpathSync(o.project),project),inputDigest=hyperframesInputDigest(manifest);
+  if(o.failedInputDigest&&o.failedInputDigest===inputDigest)throw new HyperframesFailure('HyperFrames inputs are unchanged since the failed check',true,'snapshot','unchanged-inputs',{schema:1,stage:'snapshot',code:'unchanged-inputs',inputDigest,deterministic:true,gates:[],findings:[],detail:'The film inputs and renderer composition are identical to the attempt whose check failed.'});
   await validateHyperframesReferences(project,manifest);guard();
   const port=await freePort();guard();
   const env={PATH:[dirname(tools.node),dirname(tools.ffmpeg),'/usr/bin','/bin'].join(':'),HOME:home,CFFIXED_USER_HOME:home,MAC_CHROMIUM_TMPDIR:temp,TMPDIR:temp,LANG:'en_US.UTF-8',CREW_HF_ROOT:project,CREW_HF_PORT:String(port),CREW_HF_CLI:tools.cli,HYPERFRAMES_BROWSER_PATH:tools.browser,HYPERFRAMES_FFMPEG_PATH:tools.ffmpeg,HYPERFRAMES_FFPROBE_PATH:tools.ffprobe,HYPERFRAMES_NO_TELEMETRY:'1',DO_NOT_TRACK:'1',HYPERFRAMES_SKIP_SKILLS:'1',CI:'1',XDG_CACHE_HOME:join(home,'.cache'),XDG_CONFIG_HOME:join(home,'.config'),XDG_DATA_HOME:join(home,'.local/share'),HYPERFRAMES_EXTRACT_CACHE_DIR:join(temp,'frames'),CREW_HF_DEBUG:globalThis.process.env.CREW_HF_DEBUG??'0'};
   const run=async(args:string[],ms=timeout)=>{
    guard();process=probeProcess([tools.node,tools.cli,...args],project,env,undefined,{timeoutMs:Math.min(ms,deadline-Date.now()),bytes:4*1024*1024});
    const code=await process.exited;await process.stop();const output=process.output();
-   // Logs stay inside the owned temporary folder and are never returned to a model.
+   // Raw logs stay inside the owned temporary folder and are never returned to a model;
+   // only the typed, path-free diagnostic leaves it.
    writeFileSync(join(root,`${args[0]}.log`),output.out+'\n'+output.err);
-   if(code!==0||output.failure)throw new HyperframesFailure(output.failure==='probe deadline expired'?`HyperFrames ${args[0]} timed out`:`HyperFrames ${args[0]} failed`,true,args[0],output.failure==='probe deadline expired'?'timeout':'command-failed');
+   if(code!==0||output.failure){const failure=output.failure==='probe deadline expired'?'timeout':'command-failed';throw new HyperframesFailure(failure==='timeout'?`HyperFrames ${args[0]} timed out`:`HyperFrames ${args[0]} failed`,true,args[0],failure,hyperframesDiagnostic(args[0]as'check'|'render',failure,output,inputDigest));}
    guard();
    return output;
   };
@@ -126,7 +157,7 @@ async function runHyperframes(input:HyperframesInput):Promise<HyperframesOutput>
   const video=meta.streams?.find((s:any)=>s.codec_type==='video'),duration=Number(meta.format?.duration);
   if(!video||video.codec_name!=='h264'||!Number.isFinite(duration)||duration<10||duration>15.1||!Number.isInteger(video.width)||!Number.isInteger(video.height)||video.width>1920||video.height>1920)throw new Error('HyperFrames MP4 contract failed');
   const st=lstatSync(join(project,'coffee.mp4'));if(!st.isFile()||st.isSymbolicLink()||st.size<1000||st.size>64*1024*1024)throw new Error('HyperFrames MP4 output invalid');
-  const bytes=readFileSync(join(project,'coffee.mp4'));guard();return{bytes,sha256:digest(bytes),codec:'h264',duration,width:video.width,height:video.height,renderer:`hyperframes@${HYPERFRAMES_VERSION}`,manifest};
+  const bytes=readFileSync(join(project,'coffee.mp4'));guard();return{bytes,sha256:digest(bytes),codec:'h264',duration,width:video.width,height:video.height,renderer:`hyperframes@${HYPERFRAMES_VERSION}`,manifest,inputDigest};
  }catch(e){
   // Only explicit diagnostics opt-in source callers retain sanitized tool logs.
   if(globalThis.process.env.CREW_HF_DIAGNOSTIC_DIR){const dest=globalThis.process.env.CREW_HF_DIAGNOSTIC_DIR;for(const f of['check.log','render.log'])try{copyFileSync(join(root,f),join(dest,f));}catch{}}

@@ -47,6 +47,29 @@ try{
  const restored=join(root,'recovered');cpSync(h.data,restored,{recursive:true});recovered=await harness(flows,{data:restored});installFirstmate(recovered.engine,new Projects(restored));recovered.engine.load();await until(()=>recovered.engine.get(r.proposal)?.status==='failed');ok(recovered.engine.get(r.proposal)?.status==='failed'&&!recovered.engine.list().some((r:any)=>r.workflow==='firstmate-proposal'),'actual Engine restart preserves consumed continuation finality without replacement');const originalRun=E.get(r.proposal)!,oldIdentity=JSON.parse(originalRun.params.identity);delete oldIdentity.registry;oldIdentity.schema=1;const legacy=E.start({workflow:'firstmate-register-project',version:1,text:originalRun.text,params:{...originalRun.params,source:'legacy-upgrade-control',identity:JSON.stringify(oldIdentity)}});await until(()=>E.get(legacy.id)?.status==='failed',3000);ok(E.get(legacy.id)?.status==='failed'&&!E.cards.list({run:legacy.id}).length,'legacy registration identity without strict registry snapshot cannot silently upgrade into new authority');
  }finally{release();for(const e of [E,recovered?.engine])if(e)for(const r of e.list())if(!['succeeded','failed','cancelled'].includes(r.status))await e.cancel(r.id,'owned cleanup');h.stop();recovered?.stop();rmSync(root,{recursive:true,force:true});}
 }
+// The built-in sandbox (project "sandbox" at exactly <data>/demo-repo) is the one repository
+// below Studio's data that a coding proposal may capture; every other data path stays refused.
+{
+ const {harness,Y}=await import('./rt-harness');const {bundledText}=await import('../src/bundled');const {installFirstmate}=await import('../src/firstmate');
+ const root=mkdtempSync(join(tmpdir(),'crew-sandbox-capture-')),data=join(root,'data'),gitInit=(p:string)=>{mkdirSync(p,{recursive:true});for(const a of [['init','-b','main'],['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture']])if(Bun.spawnSync(['git',...a],{cwd:p,stdout:'pipe',stderr:'pipe'}).exitCode)throw new Error('sandbox capture repo setup');};
+ const flows=[bundledText('workflows/v2/firstmate-proposal.wf.yaml')!,bundledText('workflows/v2/firstmate-register-project.wf.yaml')!,Y({id:'local-code',kind:'code',name:'Local code',version:1,params:{project:{},base:{}},roles:[],nodes:[{id:'wait',kind:'card',label:'Wait',card:{options:[{id:'close',label:'Close'}]}}],edges:[]})];
+ const h=await harness(flows,{data}),E=h.engine;
+ try{
+  const sandbox=join(h.data,'demo-repo'),other=join(h.data,'other-repo');gitInit(sandbox);gitInit(other);
+  const record=(id:string,path:string)=>({id,name:id,path,base:'main',sensitive:[],proposed:null,proposedAt:null,approvedAt:null,enabled:true});
+  const registry=join(h.data,'projects.json');const tools=installFirstmate(E,new Projects(h.data));E.load();
+  const owner=(key:string)=>({key,captain:true,text:'Explicit captain intent',live:()=>true});
+  const propose=async(project:string,key:string)=>{try{return await tools.call('studio_propose_work',{workflow:'local-code',version:1,text:'Round the totals in src/money.ts',params:{project}},owner(key))as any;}catch(e:any){return{refused:/outside Studio private data/.test(String(e?.message??e)),message:String(e?.message??e)};}};
+  writeFileSync(registry,JSON.stringify([record('sandbox',sandbox)]));
+  const allowed=await propose('sandbox','sandbox-capture');ok(!!allowed?.proposal&&!allowed.code,'the registered built-in sandbox under data/ is captured for a coding proposal'+(!!allowed?.proposal&&!allowed.code?'':' '+JSON.stringify(allowed)));
+  writeFileSync(registry,JSON.stringify([record('other',other)]));
+  const refused=await propose('other','other-capture');ok(refused?.refused===true,'another repository under data/ stays refused'+(refused?.refused===true?'':' '+JSON.stringify(refused)));
+  writeFileSync(registry,JSON.stringify([record('sandbox',other)]));
+  const renamed=await propose('sandbox','sandbox-other-path');ok(renamed?.refused===true,'the sandbox id at any other data path stays refused'+(renamed?.refused===true?'':' '+JSON.stringify(renamed)));
+  const denied=await tools.call('studio_prepare_project_work',{path:sandbox,workflow:'local-code',version:1,text:'Register the sandbox again'},owner('sandbox-register')).catch((e:any)=>({refused:/outside Studio private data/.test(String(e?.message??e)),message:String(e?.message??e)}))as any;
+  ok(denied?.refused===true,'a new registration of data/demo-repo stays refused'+(denied?.refused===true?'':' '+JSON.stringify(denied)));
+ }finally{for(const r of E.list())if(!['succeeded','failed','cancelled'].includes(r.status))await E.cancel(r.id,'owned cleanup');h.stop();rmSync(root,{recursive:true,force:true});}
+}
 console.log(`firstmate-project-registration: ${pass} passed, ${fail} failed`);process.exitCode=fail?1:0;
 
 if(originalCodexBin===undefined)delete process.env.CREW_CODEX_BIN;else process.env.CREW_CODEX_BIN=originalCodexBin;
