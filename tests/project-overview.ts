@@ -226,7 +226,22 @@ ok(goneOff.health[0].en === "Disabled" && goneOff.crew === null && goneOff.healt
     ok(own.project.folderMissing === false && !/Studio skips|Folder missing|資料夾不存在/.test(ownText) && row.status.en === "No task can start", `${rid}: its own page and row never say Folder missing or that Studio skips it`, JSON.stringify(row.status));
     ok(own.health.find((t: any) => t.key === "crew").detail.en === `Registration ${rid}: its folder cannot be used (not a folder, or not readable).`, `${rid}: its own crew tile says the folder cannot be used`);
     ok(hb.health.find((t: any) => t.key === "crew").detail.en === `Registration ${rid}: its folder cannot be used (not a folder, or not readable).` && hb.project.canStart === false, `${rid}: it blocks harbor-api, named as unusable, not as missing`);
+    const bt = own.health.find((t: any) => t.key === "base");
+    ok(bt.en === "Repository folder cannot be used" && bt.tw === "儲存庫資料夾無法使用" && !/Base branch missing/.test(JSON.stringify(bt)), `${rid}: the base tile says the folder cannot be used (the base was never checked)`, JSON.stringify(bt));
   } }
 writeFileSync(join(DATA, "projects.json"), healthy);
+// ---- an unreadable policy file: every path is one-way (the classifier fails closed); the page says so and offers no edits ----
+{ const pf = join(DATA, "policies", "project-harbor-api.yaml"), keep = readFileSync(pf, "utf8");
+  writeFileSync(pf, "sensitive_paths: [unclosed\n  - : :");
+  const sp = (await get("/api/projects/harbor-api/overview"))!.body.sensitive;
+  ok(sp.unreadable === "project" && sp.message.en === "Policy file cannot be read: every path is one-way until it is fixed" && sp.message.tw === "政策檔讀不到：修好之前每條路徑都是單向", "an unreadable project policy: the section says every path is one-way", JSON.stringify(sp).slice(0, 300));
+  ok(sp.canPropose === false && sp.project.length === 0, "an unreadable project policy: no proposing or approving");
+  writeFileSync(pf, keep);
+  const of = join(DATA, "policies", "org.yaml"); writeFileSync(of, "::: [");
+  const so = (await get("/api/projects/harbor-api/overview"))!.body.sensitive;
+  ok(so.unreadable === "org" && so.canPropose === false && !so.org.some((r: any) => r.glob === "**" && /unreadable/.test(r.why)), "an unreadable org policy: the same message, and the fail-closed line is not shown as an org default", JSON.stringify(so).slice(0, 300));
+  rmSync(of, { force: true });
+  const ok2 = (await get("/api/projects/harbor-api/overview"))!.body.sensitive;
+  ok(ok2.unreadable === null && ok2.canPropose === true && ok2.project[0]?.glob === "migrations/**", "readable again: lines and proposing come back"); }
 H.stop();
 end();

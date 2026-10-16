@@ -124,13 +124,14 @@ export function createProjectOverview(d: OverviewDeps) {
   function startState(p: Project) {
     const roots = d.protectedRoots ?? [];
     // an external project is never put through the staffing check here (it cannot dispatch on this build)
-    if (kindOf(p) === "external") return { real: null, folderMissing: false, canStart: false };
+    if (kindOf(p) === "external") return { real: null, folderMissing: false, folderUnusable: false, canStart: false };
     let real: ReturnType<Projects["staffingAssess"]> | null = null, own: ReturnType<Projects["staffingAssess"]> | null = null;
     try { real = d.projects.staffingAssess(p.id, roots); } catch {}
     try { own = d.projects.staffingAssess(p.id, roots, { includeDisabled: true }); } catch {}
-    const folderMissing = !!own && !own.ok && own.record === p.id && own.reason === "folder_missing";
+    const ownReason = own && !own.ok && own.record === p.id ? own.reason : null;
+    const folderMissing = ownReason === "folder_missing", folderUnusable = ownReason === "folder_unusable";
     const canStart = enabledOf(p) && kindOf(p) !== "external" && !!real?.ok;
-    return { real, folderMissing, canStart };
+    return { real, folderMissing, folderUnusable, canStart };
   }
   /** fixed words per refusal reason, naming the registration (never a path, never exception text) */
   function refusalText(a: { reason: StaffingRefusal; record: string; aliases: string[] }): { en: string; tw: string } {
@@ -239,6 +240,7 @@ export function createProjectOverview(d: OverviewDeps) {
     const b = readBaseRef(p.path, p.base);
     out.push(!p.path ? tile("base", "bad", "No repository path", "沒有儲存庫路徑", null)
       : st.folderMissing ? tile("base", "bad", "Repository folder missing", "儲存庫資料夾不存在", { en: "The registered folder does not exist.", tw: "登錄的資料夾不存在。" })
+      : st.folderUnusable ? tile("base", "bad", "Repository folder cannot be used", "儲存庫資料夾無法使用", { en: "The registered folder is not a usable folder, or cannot be read; the base branch was not checked.", tw: "登錄的資料夾不是可用的資料夾，或無法讀取；未檢查主 branch。" })
       : b.found ? tile("base", "ok", "Base branch found", "找到主 branch", { en: `${p.base} · ${short(b.sha)}`, tw: `${p.base} · ${short(b.sha)}` })
       : tile("base", "bad", "Base branch missing", "找不到主 branch", { en: p.base, tw: p.base }));
     if (kind === "external") out.push(tile("crew", "idle", "Crew not checked", "未檢查船員", { en: "External project", tw: "外部專案" }));
@@ -257,13 +259,18 @@ export function createProjectOverview(d: OverviewDeps) {
     return out;
   }
   function sensitive(p: Project) {
+    // what the classifier uses (Policies.get): an unreadable org or project policy file fails closed, every path one-way
+    const unreadable = E.policies.orgUnreadable() ? "org" : E.policies.projectUnreadable(p.id) ? "project" : null;
+    const isFailClosed = (r: any) => r?.glob === "**" && /^policy file unreadable/.test(String(r?.why ?? ""));
     // the engine's own policy reader: no Policies is constructed here (its constructor creates the policies folder)
-    const cur = E.policies.project(p.id).sensitive_paths;
+    const cur = unreadable === "project" ? [] : E.policies.project(p.id).sensitive_paths;
     const rules = (Array.isArray(cur) ? cur : []).map((r: any) => ({ glob: String(r?.glob ?? r), why: String(r?.why ?? "") }));
     const base = loadDefaults().base, orgPol = E.policies.get("sensitive_paths").value;
-    const extra = (Array.isArray(orgPol) ? orgPol : []).map((r: any) => ({ glob: String(r?.glob ?? r), why: String(r?.why ?? "org policy") })).filter((r: any) => !base.some((b) => b.glob === r.glob));
+    const extra = (Array.isArray(orgPol) ? orgPol : []).filter((r: any) => !isFailClosed(r)).map((r: any) => ({ glob: String(r?.glob ?? r), why: String(r?.why ?? "org policy") })).filter((r: any) => !base.some((b) => b.glob === r.glob));
     const org = [...base, ...extra].map((r) => ({ glob: r.glob, why: r.why }));
-    return { project: rules, proposed: Array.isArray(p.proposed) && p.proposed.length ? p.proposed.map((r) => ({ glob: r.glob, why: r.why })) : null, org, orgCount: org.length };
+    return { project: rules, proposed: Array.isArray(p.proposed) && p.proposed.length ? p.proposed.map((r) => ({ glob: r.glob, why: r.why })) : null, org, orgCount: org.length,
+      unreadable, canPropose: !unreadable,
+      message: unreadable ? { en: "Policy file cannot be read: every path is one-way until it is fixed", tw: "政策檔讀不到：修好之前每條路徑都是單向" } : null };
   }
   function outputs(id: string, runs: Run[]) {
     const out: any[] = [];

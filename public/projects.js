@@ -46,12 +46,16 @@ function drawSide() {
     body = [PJ.side.error ? h("div", { class: "pj-side-msg bad", role: "status" }, LX(PJ.side.error)) : !real.length ? h("div", { class: "pj-side-msg", "data-projects-empty": "1" }, T("No project yet", "還沒有專案")) : null, ...list.map(sideRow)];
   }
   sec.replaceChildren(head, ...body.filter(Boolean));
+  markMore(sec);
+  if (!sec.dataset.moreWatch) { sec.dataset.moreWatch = "1"; sec.addEventListener("scroll", () => markMore(sec), { passive: true }); addEventListener("resize", () => markMore(sec)); }
   hydrateIcons(sec);
   // the phone's top-bar item carries the open-card count
   const n = (PJ.side?.projects || []).reduce((a, p) => a + (p.attention || 0), 0);
   const ph = document.querySelector('.nav-item[data-view="projects"]');
   if (ph) { let c = ph.querySelector(".count"); if (!c) { c = h("span", { class: "count attn" }); ph.append(c); } c.hidden = !n; c.textContent = n ? String(n) : ""; }
 }
+/** the list runs on below its visible part (it scrolls above the sidebar footer): data-more="1" draws a fade at its foot */
+function markMore(sec) { sec.dataset.more = sec.scrollHeight - sec.clientHeight - sec.scrollTop > 2 ? "1" : "0"; }
 async function loadSide(force = false) {
   const wait = 2000 - (Date.now() - PJ.sideAt);
   if (!force && wait > 0) { if (!PJ.sideNext) PJ.sideNext = setTimeout(() => { PJ.sideNext = null; loadSide(true); }, wait); return; }
@@ -171,11 +175,15 @@ function sensitiveSection(d, id) {
   const s = d.sensitive;
   const act = async (what, body) => { try { await postJ(`/api/projects/${encodeURIComponent(id)}/${what}`, body); PJ.proposing = null; toast(what === "approve" ? T("Approved: the lines are in force.", "已核准：這些規則已生效。") : what === "decline" ? T("Declined.", "已拒絕。") : T("Proposed. Approve it to put it in force.", "已提議。核准後才生效。")); } catch (e) { toast(e.message); } loadPage(id); loadSide(true); };
   const head = h("div", { class: "sec-head" }, h("h2", { id: "hSens" }, T("Sensitive paths", "敏感路徑")), h("span", { class: "faint" }, T("one-way door", "單向門")), h("span", { class: "x-grow" }),
-    failed(s) ? null : h("button", { class: "btn ghost", type: "button", "data-propose-open": "1", onclick: () => { PJ.proposing = PJ.proposing === null ? "" : null; soft(); } }, T("Propose", "提議")));
+    failed(s) || s.canPropose === false ? null : h("button", { class: "btn ghost", type: "button", "data-propose-open": "1", onclick: () => { PJ.proposing = PJ.proposing === null ? "" : null; soft(); } }, T("Propose", "提議")));
   if (failed(s)) return h("section", { id: "s-paths", "aria-labelledby": "hSens" }, head, h("div", { class: "card x-pad" }, sectionErr("Sensitive paths", "敏感路徑")));
   const lines = (rules) => h("ul", { class: "x-reasons pj-sens" }, rules.map((r) => h("li", {}, h("code", {}, r.glob), r.why ? [" — ", h("span", {}, r.why)] : null)));
   const ta = PJ.proposing !== null ? h("textarea", { class: "input", "data-propose-text": "1", "aria-label": T("Proposed lines", "提議的規則"), placeholder: T("One per line: glob — why\nmigrations/** — schema changes", "每行一條：glob — 原因\nmigrations/** — schema 變更"), oninput: (e) => { PJ.proposing = e.target.value; } }) : null;
   if (ta) ta.value = PJ.proposing;
+  // an unreadable policy file: the classifier treats every path as one-way; nothing here can be proposed or approved
+  if (s.unreadable) return h("section", { id: "s-paths", "aria-labelledby": "hSens" }, head, h("div", { class: "card x-pad x-stack" },
+    h("div", { class: "err", role: "status", "data-policy-unreadable": s.unreadable }, icon("alert", "ic sm"), h("span", {}, LX(s.message))),
+    s.proposed ? h("div", { class: "faint", style: "font-size:13px" }, T("A proposed list waits; it can be approved once the policy file is fixed.", "有一份提議中的清單；政策檔修好後才能核准。")) : null));
   return h("section", { id: "s-paths", "aria-labelledby": "hSens" }, head, h("div", { class: "card x-pad x-stack" },
     s.project.length ? lines(s.project) : h("div", { class: "faint", style: "font-size:13px" }, T("No project lines yet.", "還沒有專案自己的規則。")),
     ta ? h("div", { class: "pj-propose" }, ta, h("div", { class: "actions" },
