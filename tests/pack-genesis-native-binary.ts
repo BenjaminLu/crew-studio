@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Actual compiled helper, empty tool PATH, OS sandbox and non-sensitive canary controls.
 import {createHash} from 'node:crypto';import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,realpathSync,statSync,symlinkSync,linkSync,unlinkSync,rmSync} from 'node:fs';import {tmpdir} from 'node:os';import {join,resolve} from 'node:path';
 import {sandboxed,parseOutput} from '../src/runtime/checks';import {suite} from './rt-harness';

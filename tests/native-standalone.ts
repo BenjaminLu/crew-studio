@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import {mkdirSync,mkdtempSync,writeFileSync,existsSync,readFileSync} from "node:fs";import {join,dirname} from "node:path";import {tmpdir} from "node:os";
 const temp=mkdtempSync(join(tmpdir(),"native-standalone-"));process.env.HOME=temp;
 const {startupPaths}=await import("../src/startup");const {diagnose}=await import("../src/doctor");const {renderEnv}=await import("../src/render");

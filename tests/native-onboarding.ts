@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Real source APIs/Engine/captain cards. All provider callbacks are offline fixtures.
 import {strict as assert} from 'node:assert';
 import {readFileSync,rmSync} from 'node:fs';import {join} from 'node:path';

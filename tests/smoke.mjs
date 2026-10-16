@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Smoke tests for Crew Studio. They run against a temporary COPY of
 // tests/fixture/state and a mock board, so no live state is read or written
 // and no real card is ever answered.   node tests/smoke.mjs

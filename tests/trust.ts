@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Follow-ups of the check-runtime review (#13, #14): the ledger is verified before
 // any read that decides something — a tampered entry proves nothing, a ledger cut
 // short proves nothing and stops the refine loop — and an edit of a workflow must

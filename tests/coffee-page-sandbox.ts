@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Actual OS-sandbox provider process, no vendor call or sandboxFree shortcut.
 import {strict as assert} from 'node:assert';
 import {readFileSync,writeFileSync,existsSync,mkdirSync,rmSync} from 'node:fs';

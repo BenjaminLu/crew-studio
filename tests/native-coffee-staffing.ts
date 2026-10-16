@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import {strict as assert} from 'node:assert';
 import {mkdtempSync,rmSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';

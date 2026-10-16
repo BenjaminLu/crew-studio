@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Takeover tests: fork-only takeover of the firstmate session (the original id is
 // never resumed), same model and permission mode, rehearsal env, handoff notes,
 // release commands, turns started by the session's own hook, wakes (shown, held

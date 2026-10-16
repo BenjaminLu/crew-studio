@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // M7 checks: the domain-pack format and its validator, the built-in file
 // organization pack (dry-run plan, gates, review, apply with an undo log, undo),
 // workflow genesis (a described way of working → a drafted pack + evals, stub

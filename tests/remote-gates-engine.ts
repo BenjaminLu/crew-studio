@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import { harness, Y, until, sleep, suite } from "./rt-harness";
 const {ok,end}=suite("remote-gates-engine");
 for(const scenario of ["success","cancel","head-change","replace-owner"]){

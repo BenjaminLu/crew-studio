@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Actual sandbox-denied bind must reject normally, not emit an uncaught event.
 import{mkdtempSync,writeFileSync,rmSync}from'node:fs';import{tmpdir}from'node:os';import{join,dirname}from'node:path';
 import{sandboxed}from'../src/runtime/checks';import{Egress}from'../src/egress';

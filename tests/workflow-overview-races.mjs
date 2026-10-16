@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Real native engine/server Board frontier regression; no projected state.
 import {spawn} from 'node:child_process';
 import {mkdirSync} from 'node:fs';

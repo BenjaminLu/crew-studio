@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // W3: page save, inline edits and model revisions of one draft share one lock.
 // Another process holds the draft's lock while it writes a newer revision; save must wait for it
 // and save that newer revision, never the stale one it would have read without the lock.

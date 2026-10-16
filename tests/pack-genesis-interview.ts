@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Standalone interview contract: native engine and temporary data, with stub agents.
 // No check authoring, publication, browser, or real-model coverage is claimed.
 import {mkdtempSync,readFileSync,writeFileSync} from 'node:fs';

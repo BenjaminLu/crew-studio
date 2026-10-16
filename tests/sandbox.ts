@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The check sandbox is an allow-list (fix round 1: runtime class "sandbox" and
 // legacy class A2; docs/architecture.md §10, docs/check-contract.md "Sandbox").
 // A check reads only the system, the interpreters, its own directory and its

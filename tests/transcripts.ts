@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Transcripts: what every agent was asked (prompt and bound brief), what it did
 // (transcript) and what it reported, for firstmate's crew rounds, the main
 // session and Studio's own agent nodes. Redaction, phones, paging, path safety.

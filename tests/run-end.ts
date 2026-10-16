@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // How a run ends, and removing runs (docs/units/run-end-and-remove.md), at the engine and
 // through the real server's routes:
 //   the engine: a close answer ends "closed"; cancel at a card withdraws it, keeps the reason,

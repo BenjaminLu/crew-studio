@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Adversarial Git helpers remain local, own a bounded lifetime, and report only
 // fixture PIDs/PGIDs. No real credentials, repositories or remote are used.
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync } from "node:fs";

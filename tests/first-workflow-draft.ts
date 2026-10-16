@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Free first-workflow drafting: actual server + owned offline Codex app-server fixture as the model.
 // The fixture "model" answers the captain's interview message by calling studio_draft_workflow with
 // tests/fixture/first-workflow-draft.json. No vendor call, no Task, no staffing record until Run.

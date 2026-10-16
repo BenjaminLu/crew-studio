@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Signed local recovery: real cards, native queue admissions and temporary git
 // worktrees. Stub agents call the same token-authorized tools in process.
 import {mkdirSync,mkdtempSync,readFileSync,writeFileSync} from 'node:fs';

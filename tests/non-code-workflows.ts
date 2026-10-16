@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Native workflows through createRuntime, persisted engine and actual tool routes.
 // All sources, artifacts, repositories and provider messages are throwaway fixtures.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";

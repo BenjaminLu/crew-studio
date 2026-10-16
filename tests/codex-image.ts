@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Strict actual image subprocess tests. No actual account or vendor request.
 import{mkdtempSync,mkdirSync,writeFileSync,rmSync}from'node:fs';import{join}from'node:path';import{tmpdir}from'node:os';
 import{generateCodexImage,verifyImagePng,CodexImageFailure}from'../src/providers/codex-image';

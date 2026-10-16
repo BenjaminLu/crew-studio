@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import{execFileSync}from'node:child_process';
 // Source composition/ownership fixtures. Simulated encoder output is NOT playable film proof.
 import{strict as assert}from'node:assert';import{mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync,symlinkSync}from'node:fs';import{join}from'node:path';import{tmpdir}from'node:os';import{createHash}from'node:crypto';

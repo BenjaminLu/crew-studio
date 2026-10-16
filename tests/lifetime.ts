@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Process lifetime (fix round 1, runtime class "lifetime", check-runtime#3, #8):
 // when a run ends — a terminal reached on one branch, or no edge for an outcome —
 // every sibling still running stops: its agent job is cancelled, its check's

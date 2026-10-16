@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import assert from 'node:assert/strict';import{mkdtempSync,readFileSync,statSync,writeFileSync}from'node:fs';import{join}from'node:path';
 import{NativeToolFailure}from'../src/host/types';import{nativeToolError,writeNativeDiagnostic}from'../src/host/native-errors';const {codexHost}=await import(process.env.NATIVE_ERROR_BASE?process.env.NATIVE_ERROR_BASE+'/src/host/codex.ts':'../src/host/codex.ts');
 const data=mkdtempSync('/tmp/native-errors-'),responses=join(data,'responses.jsonl'),events:any[]=[];writeFileSync(join(data,'.fixture-account.json'),JSON.stringify({authenticated:true}));let count=0;const ok=(v:unknown,n:string)=>{assert.ok(v,n);count++;console.log('ok '+n);};

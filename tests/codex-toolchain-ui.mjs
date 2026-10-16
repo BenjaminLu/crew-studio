@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Doctor does not infer login or tool readiness from CLI installation.
 // Isolated stub server; captures both languages, viewport sizes and themes.
 import { spawn } from "node:child_process";

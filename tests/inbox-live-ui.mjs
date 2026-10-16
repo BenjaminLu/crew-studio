@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The Inbox, the sidebar counts and the Board's Needs you follow the live stream (unit inbox-live):
 // a card raised while the page is open appears without a reload, with one non-blocking "new card" cue;
 // a card the captain has open keeps its note and ticks across live updates; a card answered on another

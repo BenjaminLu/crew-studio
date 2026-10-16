@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The single binary works on its own: run dist/crew-studio from another folder
 // with no Bun on PATH, against a copy of the fixture state, and check every page
 // and asset is served, the API answers, and its helper subcommands start.

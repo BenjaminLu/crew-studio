@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Signed card target/method cannot be reinterpreted by changed project metadata.
 import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from "node:fs";import {join} from "node:path";import {tmpdir} from "node:os";
 import {harness,Y,until,suite} from "./rt-harness";import {installCode} from "../src/domain/code";import {Projects} from "../src/doors";import {GitHubPrAdapter} from "../src/adapters/github";import {must,setGitHome} from "../src/git";import {grantIdentity} from "../src/domain/remote-ci";import {githubSimulator} from "./lib/github-simulator";

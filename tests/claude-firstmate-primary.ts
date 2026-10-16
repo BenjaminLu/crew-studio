@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // A fresh Firstmate primary on Claude: the actual server, a stub Claude CLI (tests/stub-host-claude.mjs),
 // the official-login fixture for `claude auth status`, a keychain stand-in and the Codex account fixture.
 // Offline: no model is called, no real credential is read.

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The reviewer's modes (unit review-modes; v1's config.yaml `reviewer: mode: diff|run`, bin/fm-review.sh and
 // skills/reviewer/SKILL.md). Diff mode (the default): read-only, type-aware reads of a fresh checkout of the head,
 // no execution; review-depth asks that every changed file be read (any type, within the read budget). Run mode

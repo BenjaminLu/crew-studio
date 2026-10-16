@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // M7 in the browser: the Packs page (built-in pack, workflow genesis from a
 // description, the draft with its gates, evals and files, install), and the
 // file-organization pack (dry run, untick a move, apply, undo). 1440 and 390,

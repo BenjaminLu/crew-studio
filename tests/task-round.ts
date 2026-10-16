@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Task and Round (docs/units/task-round.md): a Task is one piece of work going through a workflow
 // (stored as a run); a Round is one launch of an agent or a check inside it, or a card answered on
 // the way. Rounds come from the run's steps (no stored-data migration). /api/tasks serves Tasks and

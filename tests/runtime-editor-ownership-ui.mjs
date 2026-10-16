@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Genuine local save responses held after commit, and native Chrome pointer
 // input. Never synthesize a drop, verdict or successful server response.
 import { spawn } from "node:child_process";

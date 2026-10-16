@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from "node:fs";import {join} from "node:path";import {tmpdir} from "node:os";
 import {Worktrees} from "../src/worktrees";import {must,setGitHome} from "../src/git";import {suite} from "./rt-harness";
 const {ok,end}=suite("remote-gates-worktree");const temp=mkdtempSync(join(tmpdir(),"gates-wt-")),repo=join(temp,"repo"),data=join(temp,"data");mkdirSync(repo);setGitHome(data);must(repo,["init","-qb","main"]);writeFileSync(join(repo,"file"),"base\n");must(repo,["add","."]);must(repo,["commit","-qm","base"]);const base=must(repo,["rev-parse","HEAD"]),W=new Worktrees(data),rec=W.ensure({project:"fixture",task:"task",repo,base:"main",branchPrefix:"crew/",run:"fixture"});

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The redaction rules (src/secure.ts; units fix-record-smoke-r2, redaction-rules), table-driven:
 // 1. known values, always: credential-named env variables, every registered file-held
 //    secret (key store, GitHub token from env, file or `gh auth token`, ledger key,

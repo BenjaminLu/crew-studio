@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // One website link for every place that opens a site in a new tab (acceptance card, Task outputs, Library),
 // the /af/ sandbox header by request kind, and a bound site's bytes hashed once per version, not on every read.
 // Real M3 + runtime handlers in process; no vendor, model or network call.

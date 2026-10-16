@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Privacy (legacy class C1; architecture §1.9): no committed file names a private
 // absolute path (a user's home), the person running Studio, or anything on the
 // local denylist (data/privacy-denylist.txt, one name per line, never committed).

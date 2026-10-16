@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Skins (M4/M5): the built-in voyage and terminal skins, the compatibility
 // kit's checks, hash-pinned installs (a changed file is refused), no network by
 // default (CSP, and installs that reach the network are refused unless granted),

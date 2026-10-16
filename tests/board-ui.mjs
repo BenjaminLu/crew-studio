@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The Board (docs/units/board.md): every run in flight in parallel with its stage
 // pipeline, the decisions waiting on the captain answered in place, the crew on duty;
 // the Inbox decisions only. Studio runs and cards come from tests/fixture/board (three

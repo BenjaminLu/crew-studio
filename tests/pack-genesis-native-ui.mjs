@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Real native pack authoring and M3 captain labels; no mocked engine or cards.
 import {spawn} from 'node:child_process';
 import {mkdirSync,mkdtempSync,writeFileSync,readFileSync} from 'node:fs';

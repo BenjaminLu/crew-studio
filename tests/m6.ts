@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // M6 checks: the generalized retro over a recorded firstmate log (the four repeat
 // classes), proposal cards with their expected metric and replay evals (stub
 // provider), never re-proposing a rejected one, adoption and before/after

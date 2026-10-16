@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import{spawn}from'node:child_process';import{readFileSync,mkdirSync,writeFileSync}from'node:fs';import assert from'node:assert/strict';
 const{chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright'),app=spawn('bun',['tests/github-review-workflow.ts'],{env:{...process.env,GITHUB_REVIEW_UI:'1'},stdio:['ignore','pipe','pipe']});let output='',browser,passed=0;app.stdout.on('data',b=>output+=b);app.stderr.on('data',b=>output+=b);const ok=(v,n)=>{assert.ok(v,n);console.log('PASS '+n);passed++;};
 try{const deadline=Date.now()+15000;while(!/GITHUB_REVIEW_READY:(\d+)/.test(output)){if(Date.now()>deadline||app.exitCode!==null)throw new Error(output);await new Promise(r=>setTimeout(r,25));}const base='http://127.0.0.1:'+ /GITHUB_REVIEW_READY:(\d+)/.exec(output)[1];browser=await chromium.launch();mkdirSync('tests/out/github-review-workflow',{recursive:true});

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Closed-review regression controls exercise native callers and proof inputs.
 import { scopesOverlap } from '../src/runtime/queue';
 import { selectNativeProvider } from '../src/providers/policy';

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Durability (fix round 1, runtime class "durability", check-runtime#11): every
 // change that takes two writes is one durable step, or recovers from a crash
 // between them. Each case replays a run's events cut at the crash point into a

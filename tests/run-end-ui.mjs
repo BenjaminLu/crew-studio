@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // How a run ends, and removing runs, in the pages (docs/units/run-end-and-remove.md):
 // one word per run state on Runs, the Board and the run page (en and zh-TW), "Closed without
 // merging" never in the success style; Cancel with a reason from a run waiting at its card

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Website new tab and same-Task continuation through the real src/server.ts (no fixture router):
 // the opened site runs in an opaque-origin sandbox (no Studio storage, no same-origin window, no /api),
 // its CSS, image, poster and MP4 still load and play, and the continuation routes keep CSRF, session

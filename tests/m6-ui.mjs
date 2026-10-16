@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // M6 in the browser: the Improve page (proposals with before/after evals and the
 // expected metric), a retro report, a proposal (diff, replay cases, adopt), and
 // a skill page (edit with chat). Every page at 1440 and 390, light and dark: no

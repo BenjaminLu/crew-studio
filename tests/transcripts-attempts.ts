@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // A node round retried and handed off: every attempt and hop is listed in order,
 // each with its own prompt, system prompt, transcript and report, and the live
 // view follows the newest one.   bun tests/transcripts-attempts.ts

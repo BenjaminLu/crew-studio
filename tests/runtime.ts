@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The v2 runtime backbone (docs/architecture.md §3–§6, docs/check-contract.md):
 // versioned definitions and validation, the five node kinds, the run state
 // machine as a fold of its events, restart recovery, hot swap with a hand-off,

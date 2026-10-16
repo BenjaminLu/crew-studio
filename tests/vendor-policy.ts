@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Typed capability facts are strict fake-provider evidence; native callers below
 // prove the policy is actually used before any session starts.
 import { makeProvider } from "../src/providers";

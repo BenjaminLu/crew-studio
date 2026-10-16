@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Real native page production + actual M3 mutation routes. No account/model/network vendor.
 import {strict as assert} from 'node:assert';
 import {join} from 'node:path';

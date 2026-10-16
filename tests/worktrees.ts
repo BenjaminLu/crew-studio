@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Worktrees (units worktrees, fix-worktrees-r1; architecture §10): one worktree per
 // task in Studio's own marked namespace data/work/wt/<project>/<task>, one round at a time, each round at the branch's
 // durable head with its dependencies installed, hand-back by a commit as the agent,

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Real Chromium page-guard controls. No outer OS file/network containment claim.
 // Planted local HTTP/WS/file targets only; no vendor request.
 import{createServer}from'node:http';import{spawn}from'node:child_process';import{mkdtempSync,writeFileSync,rmSync}from'node:fs';import{tmpdir}from'node:os';import{join}from'node:path';import{createRequire}from'node:module';import{createHash}from'node:crypto';

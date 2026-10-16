@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import {existsSync,readFileSync,writeFileSync,mkdirSync,symlinkSync,realpathSync,rmSync,mkdtempSync,cpSync} from 'node:fs';
 // Actual primary tool bridge, real local Git repository, cards, registry and Engine.
 import {join} from 'node:path';

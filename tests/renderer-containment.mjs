@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Renderer containment uses planted outside fixtures only: no real private reads.
 // Native web crops and film/stills share the same canonical input-root origin.
 import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';

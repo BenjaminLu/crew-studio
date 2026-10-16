@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Doors and gates in the browser: the Gates page (door chips, gate summaries, a
 // project's proposed list), a change's page (gates by node, worker/reviewer
 // rounds), picking a door, a one-way merge with its confirm, and the workflow

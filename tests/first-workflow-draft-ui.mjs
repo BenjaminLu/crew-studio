@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Free first workflow, in a real browser against the actual server. The owned offline Codex
 // app-server fixture plays the model: the captain sends the prefilled interview message and the
 // fixture answers by calling studio_draft_workflow with tests/fixture/first-workflow-draft.json.

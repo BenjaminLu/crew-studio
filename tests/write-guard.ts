@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The one write guard (fix-runtime-r2, check-runtime#16, legacy A5): every mutating
 // route Studio's router knows refuses a request from another site, a request with
 // no Studio session, and a body that is not JSON. The routes are read from the

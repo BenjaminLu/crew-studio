@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Claude account card in a real browser: Welcome + Doctor, offline CLI stub only.
 import{spawn}from'node:child_process';import{mkdtempSync,mkdirSync,writeFileSync,existsSync,rmSync}from'node:fs';import{tmpdir}from'node:os';import{join,dirname}from'node:path';import{fileURLToPath}from'node:url';import{freePort,waitUp,withSession}from'./boot.mjs';
 const here=dirname(fileURLToPath(import.meta.url)),tmp=mkdtempSync(join(tmpdir(),'crew-claude-login-ui-')),home=join(tmp,'home'),data=join(tmp,'data'),repo=join(tmp,'repo');for(const d of[home,data,repo])mkdirSync(d,{recursive:true});writeFileSync(join(home,'.claude-login-mode'),'hang');

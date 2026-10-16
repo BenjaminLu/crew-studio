@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Native pack-genesis contract; actual native agents, checks, artifacts and captain cards.
 import {mkdtempSync,readFileSync,writeFileSync,symlinkSync,unlinkSync,linkSync} from 'node:fs';
 import {tmpdir} from 'node:os';

@@ -14,4 +14,5 @@ CREW_LOCAL_DEPENDENCY_ROOT=/absolute/path/to/crew-studio
 - Job records report `executionMode`; Doctor and startup output explicitly report disabled isolation. This mode does not imply that a workflow passed acceptance.
 - Same-user isolation of Studio's tool tokens is void in this mode: unsandboxed processes run as the captain and can read the 0600 token and MCP config files of a Studio-owned Firstmate (Claude) and call its pre-allowed Studio tools.
 - Remove `CREW_LOCAL_UNRESTRICTED` (or set it to `0`) and restart to restore default isolation for new jobs.
+- Test suites never read this `.env`: every test entry imports `tests/lib/isolated-env.mjs` first, which drops values that came from a `.env` and gives every bun child `--no-env-file`. A test that needs unrestricted mode sets the variables itself. `bun tests/env-isolation.ts` fails if a `.env` leaks into a test.
 - Regression checks: `bun tests/local-execution.ts` and `bun tests/local-host-execution.ts`.

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The visual sandbox (unit visual-sandbox): the sandbox repository gains Corner Shop, a
 // shop page built on money-kit (a normal commit on main, held while a run works on the
 // repository, never over the captain's files), and code-firstmate captures the app on

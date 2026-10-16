@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // M8 checks: the documents pack. Markdown blocks and stable block ids (pins
 // follow unchanged blocks), the M3 review loop on a document (pin a block →
 // the writer revises doc.md → v2 with doc.html re-rendered), drafting from a

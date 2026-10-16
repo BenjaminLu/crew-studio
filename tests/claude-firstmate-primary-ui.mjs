@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Firstmate on Claude in a real browser: the side-by-side host choice, Claude sign-in continuing into a fresh
 // Claude Firstmate that greets in the right-side chat, and the chat's own Start on Claude. Offline: stub CLIs only.
 //   CLAUDE_PRIMARY_SHOTS=<dir>  also write screenshots there

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Historical preload fixtures remain isolated; the renderer now runs official CLI directly.
 import { createRequire } from 'node:module';
 import { join, relative } from 'node:path';

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // M8 in the browser: Documents (a draft by the writer, a pasted one), the
 // document page (gates, export buttons, the rendered version), annotate with the
 // M3 pin review, the writer's revision, approve. 1440 and 390, light and dark.   node tests/m8-ui.mjs

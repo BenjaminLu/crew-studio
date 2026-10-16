@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';import {join} from 'node:path';import {tmpdir} from 'node:os';
 import {harness,Y,until,suite} from './rt-harness';import {installCode} from '../src/domain/code';import {Projects} from '../src/doors';import {Worktrees} from '../src/worktrees';import {must,git,setGitHome} from '../src/git';import {GitHubPrAdapter} from '../src/adapters/github';import {githubSimulator} from './lib/github-simulator';
 const {ok,end}=suite('remote-gates-pending-naming');

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The first smoke test of v2's coding workflow (unit code-firstmate-smoke): the
 // code-firstmate definition from packs/firstmate runs a two-way change on the
 // sandbox repository end to end with the stub provider:

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import { nativeSkinData, snapshotFor } from '../src/skins';
 import { suite } from './rt-harness';
 const { ok, end } = suite('skins-native');

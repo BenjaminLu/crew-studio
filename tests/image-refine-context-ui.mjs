@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Shared acceptance renderer fed snapshots produced by the real Engine refinement fixture.
 import{spawnSync}from'node:child_process';import{mkdtempSync,mkdirSync,readFileSync,rmSync}from'node:fs';import{tmpdir}from'node:os';import{join,dirname}from'node:path';import{fileURLToPath}from'node:url';
 const here=dirname(fileURLToPath(import.meta.url)),root=join(here,'..'),tmp=mkdtempSync(join(tmpdir(),'image-refine-ui-')),file=join(tmp,'rounds.json'),shots=join(here,'out/image-refine-context');mkdirSync(shots,{recursive:true});let browser,pass=0;const ok=(v,n)=>{if(!v)throw new Error(n);pass++;console.log('ok '+n);};

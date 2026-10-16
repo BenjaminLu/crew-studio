@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Execute the real tour controller with a minimal DOM boundary. Chrome covers layout.
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';

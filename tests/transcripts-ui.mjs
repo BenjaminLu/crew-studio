@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Transcripts UI: a crew round's Prompt, Transcript and Report tabs (exact
 // prompt bytes, the bound brief's round and head, redaction, collapsed tool
 // results, live appends), the Firstmate page's session history with older

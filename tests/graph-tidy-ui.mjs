@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The tidy workflow graph in the pages: the auto layout on a newly loaded built-in
 // workflow, no drawn edge through a node (sampled on the drawn paths), dashed arcs,
 // stages that collapse and expand (collapsed on a phone, with their state in the

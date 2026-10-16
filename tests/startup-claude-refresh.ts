@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import {harness,Y,until,suite} from './rt-harness';
 import {hashInput} from '../src/runtime/checks';
 import {fold} from '../src/runtime/engine';

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import {NativeOutcomes} from '../src/host/native-outcomes';
 import {mkdtempSync,rmSync,readdirSync,writeFileSync,readFileSync,symlinkSync,unlinkSync} from 'node:fs';import {tmpdir} from 'node:os';import {join} from 'node:path';import {createHash} from 'node:crypto';import assert from 'node:assert/strict';
 const dir=mkdtempSync(join(tmpdir(),'outcome-contract-'));

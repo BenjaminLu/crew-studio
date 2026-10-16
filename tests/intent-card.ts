@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The intent-aligned merge card (unit intent-merge-card), module side: the detail built
 // from a fixture of R-002's real records (tests/fixture/cards/R-002), the walk that maps
 // each hunk to the done lines it serves, the zh-TW translations, and the server rule

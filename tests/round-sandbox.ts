@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The round sandbox (units round-sandbox, fix-round-sandbox-r1; architecture §10):
 // every agent round runs under the OS sandbox with a round profile. It writes only
 // its worktree, its tmp and a throwaway home (never the provider's real config, never

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // A generic runtime (fix round 1, runtime class "generic", check-runtime#7; arch §1.1, §1.2):
 // the runtime knows no domain. Hooks fire on the lifecycle points a node declares
 // (not on mode === "build" or do === "git.merge"); the loop's routed classes and

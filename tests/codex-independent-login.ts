@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Actual production APIs first: baseline control is behavioral, not missing imports.
 import{mkdtempSync,mkdirSync,readFileSync,writeFileSync,existsSync}from'node:fs';import{join}from'node:path';import{tmpdir}from'node:os';import{spawn}from'node:child_process';import{suite,until}from'./rt-harness';import{freePort,waitUp}from'./boot.mjs';
 // Never inherit a real legacy project, vendor credential, or integration source.

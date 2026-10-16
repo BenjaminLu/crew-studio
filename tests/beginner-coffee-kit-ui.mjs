@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import {execFileSync} from 'node:child_process';
 // Actual native runtime + authenticated UI; source-owned offline provider/media fixtures.
 // Simulated film bytes are NOT real encoding/playback/quality evidence.
@@ -65,7 +66,7 @@ if(process.argv.includes('--fixture-server')){
 }else{
  const {chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright');
  const tmp=mkdtempSync(join(tmpdir(),'crew-coffee-ui-')),data=join(tmp,'data'),home=join(tmp,'home'),shots=join(root,'tests/out/beginner-coffee-kit');for(const p of[data,home,shots])mkdirSync(p,{recursive:true});
- const port=await freePort(),base=`http://127.0.0.1:${port}`,env={PATH:process.env.PATH,HOME:home,TMPDIR:tmp,CREW_DATA:data,CREW_PORT:String(port)};
+ const port=await freePort(),base=`http://127.0.0.1:${port}`,env={PATH:process.env.PATH,BUN_OPTIONS:process.env.BUN_OPTIONS,CREW_TEST_ENV_ISOLATED:process.env.CREW_TEST_ENV_ISOLATED,HOME:home,TMPDIR:tmp,CREW_DATA:data,CREW_PORT:String(port)};
  const app=spawn('bun',[fileURLToPath(import.meta.url),'--fixture-server'],{cwd:root,env,stdio:['ignore','pipe','pipe']});let logs='';app.stdout.on('data',b=>logs+=b);app.stderr.on('data',b=>logs+=b);
  let persistent,browser,passed=0;const checks=[],errors=[];const ok=(value,name)=>{if(!value)throw new Error(name);passed++;checks.push(name);console.log('PASS '+name);};
  try{

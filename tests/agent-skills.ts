@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Agent skills (docs/units/agent-skills.md): a skill library in Studio's versioned
 // skill store, imports from a folder, a skills home or a public https git URL, an
 // ordered list of enabled skills per agent node, pinned by version and hash, and

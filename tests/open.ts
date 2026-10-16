@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // `crew-studio open` picks the browser: --browser / CREW_BROWSER (open -a), else LaunchServices' default http handler (open -b), else a plain open
 import { mkdtempSync, readFileSync, writeFileSync, chmodSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

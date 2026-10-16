@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Contract fidelity (fix round 1, runtime class "contract", check-runtime#1, #2, #9):
 // the verdict set is exactly pass|fail|warn|error; an adapter whose command is not
 // declared is an error, never a silent pass; a judged check blocks only with a

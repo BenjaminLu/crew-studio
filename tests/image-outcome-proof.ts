@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import{mkdtempSync,rmSync,readFileSync,writeFileSync}from'node:fs';import{join}from'node:path';import{tmpdir}from'node:os';import{createHash}from'node:crypto';import assert from'node:assert/strict';
 import{createRuntime}from'../src/runtime';import{Agents}from'../src/agent';import{ArtifactStore}from'../src/artifacts';import{StudioLog}from'../src/rawlog';import{imageOutcomeProof}from'../src/domain/image-proof';
 const data=mkdtempSync(join(tmpdir(),'image-proof-')),store=new ArtifactStore(data);

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Takeover UI: the Take over page (fork, rehearsal warning, release), a wake from
 // a synthetic event in a temp state copy reaching the chat queue, a question
 // from the session answered in the chat, the live crew rows with a final report,

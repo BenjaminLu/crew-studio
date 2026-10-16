@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Authority (fix round 1, runtime class "authority", check-runtime#6; arch §1.8, §3.4):
 // only a signed grant the captain opened in Studio may answer cards. A workflow
 // definition, a pack, a bundled or hand-written policy file can never open an

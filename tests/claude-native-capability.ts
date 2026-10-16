@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Actual owned CLI subprocesses, all offline. No real account/model calls.
 import{mkdtempSync,readFileSync,writeFileSync,copyFileSync,existsSync,rmSync}from'node:fs';import{join}from'node:path';import{strict as assert}from'node:assert';
 import{ClaudeNative,isClaudeExecutionAdmission,makeNativeClaudeProvider,claudeFailureCode}from'../src/providers/claude-native';const{selectNativeProvider,ProviderRefusal}=await import(process.env.CLAUDE_POLICY_SOURCE||'../src/providers/policy');

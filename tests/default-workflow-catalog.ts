@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import{mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync}from'node:fs';import{join}from'node:path';import{tmpdir}from'node:os';
 import{WorkflowDefs}from'../src/runtime/defs';import{bundledText}from'../src/bundled';import{createRuntime}from'../src/runtime';import{Agents}from'../src/agent';import{StudioLog}from'../src/rawlog';
 const root=mkdtempSync(join(tmpdir(),'default-catalog-'));let pass=0;const ok=(v:unknown,n:string)=>{if(!v)throw new Error(n);pass++;console.log('ok '+n);};

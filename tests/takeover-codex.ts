@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Codex as Studio's firstmate (docs/units/takeover-codex.md): discovery of both hosts,
 // a Codex takeover that forks (thread/fork) or, where the app-server refuses a fork,
 // starts a NEW thread seeded from a handoff, and never resumes or sends a turn to the

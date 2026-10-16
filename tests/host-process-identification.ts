@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import assert from 'node:assert/strict';
 import {isVendorProcess} from '../src/host/probe';
 for(const command of ['codex resume session-id','/opt/homebrew/bin/codex resume session-id','claude --resume session-id','node /usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js --resume session-id','/usr/bin/node /opt/node_modules/@openai/codex/bin/codex.js resume session-id'])assert(isVendorProcess(command),command);

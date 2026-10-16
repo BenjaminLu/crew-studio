@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // M3 checks: artifact versions and manifest integrity, the web and video review
 // loops with a stub agent and a stub renderer, the work tools' path guard, and
 // the trivial lane against a local bare repo plus a mock GitHub REST server.

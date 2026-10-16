@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Claude sign-in from the board: official `claude auth login` in the ordinary account context, offline fixture only.
 import{mkdtempSync,mkdirSync,readFileSync,writeFileSync,existsSync,rmSync}from'node:fs';import{join}from'node:path';import{tmpdir}from'node:os';import{spawn}from'node:child_process';import{request as httpRequest}from'node:http';
 import{suite,until}from'./rt-harness';import{freePort,waitUp}from'./boot.mjs';

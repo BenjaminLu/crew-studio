@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Agent skills in the page (docs/units/agent-skills.md): Library → Skills (the built-in
 // skill, imports from a folder and a skills home, a refusal the captain sees), the
 // workflow editor's node panel (turn two skills on, order them, save: the diff names

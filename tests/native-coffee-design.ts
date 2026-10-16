@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import {strict as assert}from'node:assert';import{readFileSync,mkdtempSync,rmSync,writeFileSync,unlinkSync,symlinkSync,linkSync}from'node:fs';import{join}from'node:path';import{tmpdir}from'node:os';
 import{validateCoffeeDesign,storeCoffeeDesign,loadCoffeeDesign,coffeeContent,coffeeDesignJSON,coffeeDesignHash,coffeeDesignSummary}from'../src/domain/coffee-design';
 const p=JSON.parse(readFileSync(join(import.meta.dir,'fixture/coffee-design.json'),'utf8'));let pass=0;

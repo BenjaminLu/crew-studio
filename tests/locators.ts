@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // One locator schema for machine findings and human annotations
 // (docs/check-contract.md "Locator"): M3's web pins, timeline ranges (with a box)
 // and document blocks are stored with a locator, older notes get one on read,

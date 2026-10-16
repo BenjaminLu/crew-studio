@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Native compiled binary web readiness with empty HOME/data and no dependency binaries.
 import { spawn } from "node:child_process";
 import { appendFileSync, cpSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";

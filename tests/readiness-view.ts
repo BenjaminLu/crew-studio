@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import { strict as assert } from 'node:assert';
 import { installReadinessViews, readinessNodes } from '../src/runtime/readiness-view';
 import { emptySections } from '../src/runtime/cards';

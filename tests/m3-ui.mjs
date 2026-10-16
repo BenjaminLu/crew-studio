@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // M3 in the browser: the Library's artifacts, the artifact page, the web pin
 // review (click to pin, request changes with the stub agent, compare), the video
 // timeline review (drag a range, draw a box, add a note), and the Changes page

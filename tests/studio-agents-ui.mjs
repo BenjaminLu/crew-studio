@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Studio runs on the Crew page and the Inbox, live (unit crew-studio-agents): an agent node that is working
 // shows on #/crew beside firstmate's rounds (run, node, role, model, round, elapsed, last activity) with its
 // Prompt, Transcript and Report; a Studio card arriving or answered elsewhere updates the Inbox without a

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Out-of-the-box checks: the GitHub REST client (no gh CLI) against a mock API,
 // the Doctor with each dependency missing, the installer runner (mocked: nothing
 // is ever installed), and the LAN listener's Host rules.   bun tests/ootb.ts

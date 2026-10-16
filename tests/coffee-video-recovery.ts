@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Offline providers and encoder fixture: tests authority and reuse, not visual quality.
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The runtime pages (unit code-firstmate-smoke): the code-firstmate workflow in the
 // graph editor, edited and saved as v2 with its diff, then run end to end on the
 // sandbox repository from the Runs page with the stub provider (dispatch card →

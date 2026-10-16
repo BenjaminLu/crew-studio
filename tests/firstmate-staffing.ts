@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import {mkdtempSync,rmSync,writeFileSync,readFileSync} from 'node:fs';
 import{OperatingRules,jobInstructions}from'../src/operating-rules';
 import {join} from 'node:path';

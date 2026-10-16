@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The refine loop node and the brief compiler (docs/architecture.md §3.3,
 // docs/check-contract.md "Runtime duties"): produce → checks → brief → produce,
 // stopping when every blocking check passes, on the same class twice (step-back),

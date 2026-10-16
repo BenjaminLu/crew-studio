@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Unique identifiers (fix round 1, runtime class "ids", check-runtime#5): an id
 // or a ledger seq comes from a counter under a lock, never from count + 1, so two
 // writers at once (two checks of one node, two processes) never share one.

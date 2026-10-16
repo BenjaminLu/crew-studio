@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The intent-aligned merge card on the page (unit intent-merge-card): R-002's merge
 // card, rebuilt from the fixture of its real records, renders every section, the done
 // lines with their proof, the walk of the diff mapped to done lines, and zh-TW; the

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Independent engine-only fail-first: no GitHub adapter or vendor dependency.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

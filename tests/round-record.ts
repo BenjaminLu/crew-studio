@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The record of every agent round (units round-record, fix-round-record-r1): the
 // captain sees the exact prompt of every agent invocation.
 // data/runs/<run>/nodes/<node>/<round>/ holds prompt.md (a header naming the run,

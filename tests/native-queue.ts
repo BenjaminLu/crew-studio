@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Real native callers, signed captain answers, temporary repositories and owned
 // provider sessions. No projection, vendor call or hand-written merge evidence.
 import { cpSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";

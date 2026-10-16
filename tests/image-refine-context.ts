@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import{mkdtempSync,mkdirSync,readFileSync,rmSync,writeFileSync}from'node:fs';import{join}from'node:path';import{tmpdir}from'node:os';import{createHash}from'node:crypto';
 import{roundsOf}from'../src/task-round';
 import{generateCodexImage}from'../src/providers/codex-image';

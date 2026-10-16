@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import {mkdirSync,mkdtempSync,existsSync} from "node:fs";import {join} from "node:path";import {tmpdir} from "node:os";import {freePort,waitUp} from "./boot.mjs";
 const root=join(import.meta.dir,".."),bin=process.argv[2]||join(root,"dist/crew-studio"),temp=mkdtempSync(join(tmpdir(),"native-binary-")),path=join(temp,"no-tools"),data=join(temp,"data");mkdirSync(path);
 let pass=0,fail=0;const ok=(c:unknown,n:string)=>{console.log(`${c?"ok":"FAIL"} ${n}`);c?pass++:fail++;};

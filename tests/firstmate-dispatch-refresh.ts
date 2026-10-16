@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import {readFileSync} from 'node:fs';import {harness,until} from './rt-harness';import {installFirstmate} from '../src/firstmate';import {Projects} from '../src/doors';import assert from 'node:assert/strict';
 process.env.CREW_TEST_IN_PROCESS='1';
 const H=await harness([readFileSync(new URL('../workflows/v2/firstmate-proposal.wf.yaml',import.meta.url),'utf8'),JSON.stringify({id:'refresh-fixture',name:'Refresh fixture',version:1,roles:[],nodes:[{id:'done',kind:'hook',label:'Done'}],edges:[]})]);const E=H.engine;

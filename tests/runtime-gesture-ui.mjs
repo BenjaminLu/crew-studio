@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Real browser pointer gestures while genuine local validation responses are
 // delayed. No synthetic drop or verdict; route.fetch uses the actual validator.
 import { spawn } from "node:child_process";

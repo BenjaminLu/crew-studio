@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The backbone sidebar (docs/architecture.md §2): exactly Board, Firstmate, Inbox, Crew,
 // Runs, Workflows, Library and a gear; labs routes show a roadmap panel without the
 // flag and work with it (Settings toggle or ?labs=1); home is the Board; the

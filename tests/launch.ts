@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync,readdirSync,chmodSync} from 'node:fs';
 import {tmpdir} from 'node:os';import {join} from 'node:path';import {spawn} from 'node:child_process';
 import {freePort,waitUp} from './boot.mjs';

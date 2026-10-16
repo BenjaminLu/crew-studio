@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The tidy workflow graph, computed geometrically on every built-in workflow:
 // no node overlaps, no edge through a node, crossings under a measured
 // threshold, back edges as arcs outside the node band, no label overlaps, and

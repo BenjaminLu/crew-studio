@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Offline fixture: real signed workflow/receipts, local media bytes, no visual-quality claim.
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';

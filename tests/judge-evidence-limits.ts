@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import assert from 'node:assert/strict';
 import {harness,Y,until} from './rt-harness';
 process.env.CREW_TEST_IN_PROCESS='1';

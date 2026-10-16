@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Real owned dummy descendants inherit pipes and ignore TERM; no vendor call.
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync} from 'node:fs';import{join}from'node:path';import{tmpdir}from'node:os';import{probeCodex}from'../src/providers/codex-probe';import{suite}from'./rt-harness';
 const{ok,end}=suite('probe-process');const dir=mkdtempSync(join(tmpdir(),'crew-probe-descendants-')),auth=join(dir,'source'),bin=join(dir,'cli.mjs'),child=join(dir,'child.mjs'),pidfile=join(dir,'pids');mkdirSync(auth);writeFileSync(join(auth,'auth.json'),JSON.stringify({auth_mode:'chatgpt',tokens:{access_token:'abcdefgh.abcdefgh.abcdefgh',id_token:'fixture',account_id:'fixture',refresh_token:'NEVER-HAND'}}),{mode:0o600});

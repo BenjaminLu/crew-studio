@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import assert from 'node:assert/strict';
 import {codeHandoffView} from '../src/domain/code-handoff';
 import {emptySections,type SCard} from '../src/runtime/cards';

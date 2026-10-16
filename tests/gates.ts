@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Doors and gates: the classifier (org defaults, a project's approved list,
 // trivial and undecided), the builtin gates, and Studio's change workflow on a
 // local repository: gates per node, the worker/reviewer cycle (stub agents),

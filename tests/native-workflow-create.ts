@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import{mkdtempSync,readFileSync,existsSync,rmSync}from'node:fs';import{tmpdir}from'node:os';import{join}from'node:path';
 import{WorkflowDefs,validate}from'../src/runtime/defs';import{createRuntime}from'../src/runtime';import{Agents}from'../src/agent';import{StudioLog}from'../src/rawlog';import{stubProvider}from'../src/providers/stub';import{suite,until}from'./rt-harness';
 const{ok,end}=suite('native-workflow-create'),data=mkdtempSync(join(tmpdir(),'crew-wf-create-'));const agents=new Agents(data,()=>''),runtime=createRuntime({dataDir:data,agents,provider:()=>stubProvider(),defaultProvider:()=>({provider:'stub',model:null}),log:new StudioLog(join(data,'events.jsonl')),send(){},fmRoot:data,studioUrl:()=>''});

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Credentials (legacy class A1; architecture §10 "no credentials in rounds"): a
 // round's environment is an allowlist (the login basics) plus only the keys its own
 // provider declares; chats, work runs, checks and child tools (git, the renderer)

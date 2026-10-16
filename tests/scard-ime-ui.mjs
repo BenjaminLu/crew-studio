@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Synthetic browser IME events exercise the actual shared component. This does
 // not claim a manually operated operating-system Zhuyin keyboard test.
 import {readFileSync} from 'node:fs';

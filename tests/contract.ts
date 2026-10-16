@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The provider contract: every chat provider passes the same checks, so Studio
 // does not depend on any one vendor. Claude and Codex run against stub CLIs that
 // print each vendor's real output format and call a tool server for real; the

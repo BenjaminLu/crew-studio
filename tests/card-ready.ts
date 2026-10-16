@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // A card is answered once it is ready (fix-smoke-r1 #3): a card shows as soon as it is
 // raised, and its node finishes raising it (its STE checks) a moment later. An answer
 // that arrives in between waits for that, through a readiness promise (no polling),

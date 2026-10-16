@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // M2.5 tests: the host contract for both vendors (through stub CLIs), the
 // driver lock, the input queue and wakes, the permission bridge, and phone
 // pairing. No real claude, codex or tailscale state is touched: HOME points at

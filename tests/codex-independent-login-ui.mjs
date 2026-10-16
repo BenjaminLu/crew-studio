@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Actual authenticated Studio UI and strict offline account callback fixture.
 import{spawn}from'node:child_process';import{mkdtempSync,mkdirSync,writeFileSync,readFileSync}from'node:fs';import{tmpdir}from'node:os';import{dirname,join}from'node:path';import{fileURLToPath}from'node:url';import{freePort,waitUp,withSession}from'./boot.mjs';
 // Never inherit a real legacy project, vendor credential, or integration source.

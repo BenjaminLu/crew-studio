@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The sandbox repository (unit sandbox-repo): data/demo-repo becomes money-kit, a
 // small Bun + TypeScript library with bun test, GitHub templates, CONTRIBUTING
 // (feature/ branches, Conventional Commits), CODEOWNERS, a CI workflow that runs on

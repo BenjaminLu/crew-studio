@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // R-017: a film whose HyperFrames check fails shows the real cause on the captain card, keeps it as
 // Task evidence, and a "continue" does not blindly rerun identical inputs. Offline providers; the
 // renderer is a fixture that throws the typed diagnostic the real check produced.

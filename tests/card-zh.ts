@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Card zh-TW quality (unit card-zh-quality): a card's zh-TW title and why are real translations the
 // coordinator writes in the spec (spec.zh), never the English title behind a Chinese word or a stock
 // placeholder. The STE check (core/ste-wording) refuses both; R-002's dispatch card is the fixture.

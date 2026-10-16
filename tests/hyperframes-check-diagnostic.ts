@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // A failed official `check` keeps a typed, path-free diagnostic, and identical inputs are
 // refused before the CLI runs again. The fake CLI replays the real R-017 check report
 // (contrast 3.01:1, coral text on cream) captured from HyperFrames 0.8.159; no browser.

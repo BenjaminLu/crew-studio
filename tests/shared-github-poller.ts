@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';import {tmpdir} from 'node:os';import {join} from 'node:path';
 import {must,setGitHome} from '../src/git';import {githubSimulator} from './lib/github-simulator';import {GitHubPrAdapter} from '../src/adapters/github';import {GitHub} from '../src/github';import {RemoteWatchers,requiredPolicy,grantIdentity} from '../src/domain/remote-ci';
 let passed=0,failed=0;const ok=(v:any,n:string)=>{console.log(`${v?'PASS':'FAIL'} ${n}`);v?passed++:failed++;};const until=async(f:()=>boolean,ms=3000)=>{const end=Date.now()+ms;while(!f()&&Date.now()<end)await Bun.sleep(5);return f();};
