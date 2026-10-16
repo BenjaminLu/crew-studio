@@ -426,3 +426,11 @@ Coffee-kit 主案例沿用「慢日咖啡 Slow Day Coffee」：繁體中文單�
 - [x] 船員投影修正測試 13/13；commit／push 並讀回 origin SHA。
 - [x] 最終 MP4：ffmpeg 完整解碼、macOS AVFoundation 解碼 2,550 影格與音訊均成功；macOS Chromium 正常速度播至 102 秒 ended，無錯誤、掉幀 0。
 - [x] 交付 1:42 Tech House 單一版本，1080p H.264／AAC；原片與 31 張關鍵截圖保留。Downloads：`~/Downloads/crew-studio-showcase-2026-10-16/crew-studio-showcase-tech-house.mp4`。
+
+### take02 剪輯 v2 回饋
+
+- 補回開啟 Hello Crew Studio 預覽的操作銜接，順序為產生、開啟預覽、返回確認。
+- 縮短收件匣卡片提交後的空畫面，包含原 0:47–0:49、0:58–0:59、1:07–1:09；核准動作保留。
+- 網站展示約在 1:34 結束，最後以 Hello Crew Studio 畫面及「17 轮到你了」收尾，全長約 1:38。此最新回饋取代先前 1:40–1:50 的長度目標。
+- 成品庫標題改為「14 网页、图片、影片，一次任务全部保存」，表達同一任務交付三種內容，不暗示一次生成即成功。
+- 保留全程 Tech House 與簡體中文編號 title；原版和原始錄影保留。
