@@ -22,7 +22,7 @@ try{
  assertTempRepo(repo);must(repo,['init','-q','-b','main']);must(repo,['add','.']);must(repo,['commit','-qm','Fixture']);
  const projects=new Projects(H.data);projects.add({id:'fixture',path:repo});installCode(E,{dataDir:H.data,projects});E.policies.setProject('fixture',{install:false});
  process.env.CREW_LOCAL_UNRESTRICTED='1';process.env.CREW_LOCAL_DEPENDENCY_ROOT='/Users/you/Desktop/crew-studio';
- let context:any,result:any,verification:any,baseResult:any,rejected=0;
+ let context:any,result:any,verification:any,baseResult:any,packageResult:any,rejected=0;
  E.deps.provider=()=>({id:'fixture',model:'offline',sandboxFree:true,start(_s:any,tools:any[],ctx:any){return{interrupt(){},async *send(){
   const call=(name:string,args:any)=>H.agents.callTool(ctx.token,name,args);
   if(tools.some(t=>t.name==='spec_write'))await call('spec_write',{title:'Verify fixture',what:'Verify scoped test',why:['Evidence'],done:['site.test.mjs proves fixture'],scope:['site.test.mjs','value.mjs','docs/validation/**'],verificationScope:['server.test.mjs'],door:{kind:'two-way',reason:'Fixture'},explain:{en:'Evidence','zh-TW':'證據'},zh:{title:'驗證',why:['證據']}});
@@ -33,7 +33,7 @@ try{
    for(const path of ['../outside','tests/../test.mjs','tests/not-scoped.ts','site.test.mjs,other'])if((await call('run_tests',{files:[path]}) as any).error)rejected++;
    baseResult=await call('run_tests',{files:['site.test.mjs'],target:'base'});
    result=await call('run_tests',{files:['site.test.mjs'],target:'head',evidenceDir:'docs/validation/R-041'});
-   verification=await call('run_tests',{});
+   verification=await call('run_tests',{});packageResult=await call('run_tests',{runner:'npm-test'});
    await call('worker_report',{marker:'SCOPE-BLOCKED',summary:'Fixture verification complete; no change needed'});
   }
   yield{type:'turnEnd',status:'ok'};
@@ -42,6 +42,7 @@ try{
  assert(await until(()=>E.cards.list({run:r.id,open:true}).some(c=>c.node==='dispatch')&&!E.busy(r.id)));
  const card=E.cards.list({run:r.id,open:true})[0];await E.answer(card.id,{choice:'dispatch',by:'fixture captain',note:'Verify scoped test'});
  assert(await until(()=>E.cards.list({run:r.id,open:true}).some(c=>c.node==='hold')&&!E.busy(r.id)),JSON.stringify(r.nodes));
+ assert.equal(packageResult.exit,0,JSON.stringify(packageResult));assert.deepEqual(packageResult.command,['npm','--ignore-scripts','test']);
  assert.equal(verification.exit,0,JSON.stringify(verification));assert.match(verification.tail,/unchanged backend/);
  assert.equal(baseResult.exit,1,JSON.stringify(baseResult));assert.match(baseResult.tail,/semantic changed page/);
  assert.equal(rejected,4);assert.equal(result.exit,0,JSON.stringify(result));assert.match(result.tail,/BROWSER_OK/);

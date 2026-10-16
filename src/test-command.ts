@@ -1,6 +1,6 @@
 import {homedir} from 'node:os';
 import {localUnrestricted} from './local-execution';
-import {cpSync,existsSync,lstatSync,mkdirSync,rmSync,writeFileSync,symlinkSync} from 'node:fs';
+import {cpSync,readFileSync,existsSync,lstatSync,mkdirSync,rmSync,writeFileSync,symlinkSync} from 'node:fs';
 import {join,dirname} from 'node:path';
 import {must,gitArgv} from './git';
 import {matches} from './doors';
@@ -18,6 +18,12 @@ export function selectTestCommand(cfg:{test:string[]|null;testSource:string|null
  if(script&&/^node\s+--test(?:\s+[\w./-]+)*\s*$/.test(script))return ['node','--test',...files];
  if(script)throw new Error('This package test runner cannot select files yet; Firstmate must configure a runner adapter. No tests ran.');
  return cfg.test; // .crew/gates.json explicitly owns CREW_TEST_FILES support.
+}
+
+export function packageTestCommand(cfg:{test:string[]|null;testSource:string|null},cwd:string){
+ if(!cfg.testSource?.startsWith('package.json')||!cfg.test)throw Error('npm-test requires the test script resolved from the base package.json');
+ const pkg=JSON.parse(readFileSync(join(cwd,'package.json'),'utf8'));if(pkg?.scripts?.test!==cfg.test.at(-1))throw Error('package.json test script differs from the approved base command');
+ return ['npm','--ignore-scripts','test']; // run the actual test lifecycle, deliberately skip pretest/posttest hooks.
 }
 
 /** Only operator-configured local browser capabilities, never credentials. */
