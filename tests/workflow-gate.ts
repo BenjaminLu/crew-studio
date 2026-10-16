@@ -164,27 +164,35 @@ try {
     h.rt.readiness.stop();
   }
 
+  // Outcome mistakes fail authoring preflight, before there is a draft or a repair Task.
+  {
+    const h = gateHarness(), invalid = fx(); invalid.workflow.nodes.find((n: any) => n.id === "approve").card.options.push({ id: "skip", label: "Skip" });
+    const before=h.rt.drafts.list().length,check=await h.tool("studio_validate_workflow_draft",invalid),refused=await h.tool("studio_draft_workflow",invalid);
+    ok(check.valid===false&&/skip/.test(JSON.stringify(check.problems))&&!!refused.error&&h.rt.drafts.list().length===before&&h.rt.engine.list().length===0&&h.asks.length===0,"preflight an unhandled card outcome creates no draft, Task or repair turn",JSON.stringify({check,refused}));
+    h.rt.readiness.stop();
+  }
+
   // ---------------- repair loop ----------------
   {
-    // a fixable problem (unhandled outcome + a missing Start input), repaired by a stub Firstmate within the cap
-    const broken = fx(); broken.workflow.nodes.find((n: any) => n.id === "approve").card.options.push({ id: "skip", label: "Skip" }); broken.workflow.params = { city: { label: "City" } };
+    // Legal outcomes with a missing Start sample pass authoring, then the real gate requests a repair.
+    const broken = fx(); broken.workflow.params = { city: { label: "City" } }; broken.workflow.nodes.find((n: any) => n.id === "approve").card.body = "Choose events in {{params.city}}";
     let h: any; const prompts: string[] = [];
     h = gateHarness({ ask: (text, ref) => { prompts.push(text); const m = [null, ref.draft]; setTimeout(async () => {
       const fixed = fx(); fixed.draft = m[1]; fixed.workflow.params = { city: { label: "City" } }; fixed.workflow.sample = { text: "This week's events", params: { city: "Taipei" } };
-      fixed.workflow.nodes.find((n: any) => n.id === "approve").card.options.push({ id: "skip", label: "Skip" }); fixed.workflow.edges.push({ from: "approve", to: "done", when: "skip" });
+      fixed.workflow.nodes.find((n: any) => n.id === "approve").card.body = "Choose events in {{params.city}}";
       await h.tool("studio_draft_workflow", fixed, text, false, ref); }, 5); return true; } });
     const d = await h.tool("studio_draft_workflow", broken);
     ok(await until(() => h.rt.readiness.gate.repair(d.draft).status === "passed", 30000), "loop a fixable draft is repaired by Firstmate and passes", JSON.stringify(h.rt.readiness.gate.repair(d.draft)).slice(0, 400));
     const rs = h.rt.readiness.gate.repair(d.draft);
-    ok(rs.rounds.length === 1 && rs.rounds[0].problems.some((p: any) => p.code === "outcome-unhandled") && rs.rounds[0].problems.some((p: any) => p.code === "param-no-input"), "loop round 1 lists the typed problems it sent", JSON.stringify(rs.rounds.map((r: any) => r.problems.map((p: any) => p.code))));
-    ok(rs.rounds[0].changes?.some((c: string) => /added edge approve→done\[skip\]/.test(c)), "loop each round records the changes Firstmate made", JSON.stringify(rs.rounds[0].changes));
+    ok(rs.rounds.length === 1 && rs.rounds[0].problems.some((p: any) => p.code === "param-no-input" && p.node === "approve"), "loop round 1 lists the typed problems it sent", JSON.stringify(rs.rounds.map((r: any) => r.problems.map((p: any) => p.code))));
+    ok(rs.rounds[0].changes?.some((c: string) => /^changed sample$/.test(c)), "loop each round records the changes Firstmate made", JSON.stringify(rs.rounds[0].changes));
     ok(/^GATE-REPAIR d-/.test(prompts[0]) && /node approve/.test(prompts[0]) && /Fix:/.test(prompts[0]) && /Do not ask the captain/.test(prompts[0]), "loop the repair turn carries stage, node, error and fix text, and tells Firstmate not to ask");
     ok(h.rt.engine.cards.list().length === 0, "loop the repair loop raises no captain card");
     h.rt.readiness.stop();
   }
   {
     // no progress: Firstmate resubmits the same broken graph; after two rounds it switches to redrafting, six rounds in all, then a plain notice
-    const broken = fx(); broken.workflow.nodes.find((n: any) => n.id === "approve").card.options.push({ id: "skip", label: "Skip" });
+    const broken = fx(); broken.workflow.nodes.find((n: any) => n.id === "approve").card.options.push({ id: "skip", label: "Skip" }); broken.workflow.edges.push({ from: "approve", to: "done", when: "skip" }); broken.workflow.params = { city: { label: "City" } }; broken.workflow.nodes.find((n: any) => n.id === "approve").card.body = "Choose events in {{params.city}}";
     let h: any; const prompts: string[] = [];
     h = gateHarness({ ask: (text, ref) => { prompts.push(text); setTimeout(() => { const same = JSON.parse(JSON.stringify(broken)); same.draft = ref.draft; same.workflow.description = "attempt " + prompts.length; void h.tool("studio_draft_workflow", same, text, false, ref); }, 5); return true; } });
     const d = await h.tool("studio_draft_workflow", broken);
@@ -192,7 +200,7 @@ try {
     const rs = h.rt.readiness.gate.repair(d.draft);
     ok(rs.rounds.length === 6 && prompts.length === 6, "loop the total is capped at six rounds", `${rs.rounds.length} rounds, ${prompts.length} prompts`);
     ok(rs.rounds[0].strategy === "patch" && rs.rounds[1].strategy === "patch" && rs.rounds[2].strategy === "redraft" && /REDRAFT/.test(prompts[2]) && /redraft the failing part from scratch/.test(prompts[2]) && !/REDRAFT/.test(prompts[1]), "loop after two rounds without progress Firstmate switches to redrafting", JSON.stringify(rs.rounds.map((r: any) => r.strategy)));
-    ok(rs.notice && /Not verified after 6 repair rounds/.test(rs.notice.en) && /skip/.test(rs.notice.en) && /修正 6 輪後仍未通過驗證/.test(rs.notice.zh) && !("options" in rs.notice), "loop the final status is a plain notice listing what is left (no options)", JSON.stringify(rs.notice));
+    ok(rs.notice && /Not verified after 6 repair rounds/.test(rs.notice.en) && /city/.test(rs.notice.en) && /修正 6 輪後仍未通過驗證/.test(rs.notice.zh) && !("options" in rs.notice), "loop the final status is a plain notice listing what is left (no options)", JSON.stringify(rs.notice));
     ok(h.rt.engine.cards.list().length === 0, "loop no captain card or question on no progress");
     h.rt.readiness.stop();
   }
@@ -210,7 +218,7 @@ try {
   }
   {
     // anti-weakening: every way to "fix" by weakening the gate is refused
-    const broken = fx(); broken.workflow.nodes.find((n: any) => n.id === "approve").card.options.push({ id: "skip", label: "Skip" });
+    const broken = fx(); broken.workflow.nodes.find((n: any) => n.id === "approve").card.options.push({ id: "skip", label: "Skip" }); broken.workflow.edges.push({ from: "approve", to: "done", when: "skip" }); broken.workflow.params = { city: { label: "City" } }; broken.workflow.nodes.find((n: any) => n.id === "approve").card.body = "Choose events in {{params.city}}";
     let h: any; let prompt = "";
     let ref: any = null; h = gateHarness({ ask: (t, r) => { prompt = t; ref = r; return true; } });
     const d = await h.tool("studio_draft_workflow", broken); await settled(h, d.draft);
@@ -225,7 +233,7 @@ try {
     ok(/repair refused: intent line 1/.test((await h.tool("studio_draft_workflow", reword, prompt, false, ref)).error ?? ""), "weak rewording an intent line is refused");
     const dropOpt = fx(); dropOpt.draft = d.draft;
     ok(/repair refused: the captain's card approve must keep its option skip/.test((await h.tool("studio_draft_workflow", dropOpt, prompt, false, ref)).error ?? ""), "weak removing an option from a captain card is refused");
-    const dropCardD = JSON.parse(JSON.stringify(broken)); dropCardD.draft = d.draft; dropCardD.workflow.nodes = dropCardD.workflow.nodes.filter((n: any) => n.id !== "topics"); dropCardD.workflow.edges = dropCardD.workflow.edges.filter((e: any) => e.from !== "topics" && !(e.from === "approve" && e.to === "draft")); dropCardD.workflow.nodes.find((n: any) => n.id === "draft").serves = [1];
+    const dropCardD = JSON.parse(JSON.stringify(broken)); dropCardD.draft = d.draft; dropCardD.workflow.nodes = dropCardD.workflow.nodes.filter((n: any) => n.id !== "topics"); dropCardD.workflow.edges = dropCardD.workflow.edges.filter((e: any) => e.from !== "topics").map((e: any) => e.from === "approve" && e.to === "draft" ? { ...e, to: "done" } : e); dropCardD.workflow.nodes.find((n: any) => n.id === "draft").serves = [1];
     { const r = await h.tool("studio_draft_workflow", dropCardD, prompt, false, ref); ok(/repair refused: the captain's card topics cannot be removed/.test(r.error ?? ""), "weak removing any captain decision card is refused (not only one-way cards)", JSON.stringify(r)); }
     const assume = JSON.parse(JSON.stringify(broken)); assume.draft = d.draft; assume.workflow.intents[0].assumption = "weekly means every Friday"; assume.goal = "Something else entirely"; assume.interview = [];
     const r2 = await h.tool("studio_draft_workflow", assume, prompt, false, ref);
@@ -348,7 +356,7 @@ try {
   }
   // ---------- round 2: the loop always reaches its cap, even when Firstmate never answers ----------
   {
-    const broken = fx(); broken.workflow.nodes.find((n: any) => n.id === "approve").card.options.push({ id: "skip", label: "Skip" });
+    const broken = fx(); broken.workflow.nodes.find((n: any) => n.id === "approve").card.options.push({ id: "skip", label: "Skip" }); broken.workflow.edges.push({ from: "approve", to: "done", when: "skip" }); broken.workflow.params = { city: { label: "City" } }; broken.workflow.nodes.find((n: any) => n.id === "approve").card.body = "Choose events in {{params.city}}";
     const prompts: string[] = []; const h: any = gateHarness({ ask: (t) => { prompts.push(t); return true; }, repairWaitMs: 60 });
     const d = await h.tool("studio_draft_workflow", broken);
     ok(await until(() => h.rt.readiness.gate.repair(d.draft).status === "not-verified", 30000), "r2 repair turns that end without a revision still reach the cap", JSON.stringify(h.rt.readiness.gate.repair(d.draft)).slice(0, 300));
@@ -365,7 +373,7 @@ try {
   {
     // the repair permission is structural: a turn whose text quotes the header (and any code) cannot revise; only the queued item's ref can
     let ref: any = null, text = ""; const h: any = gateHarness({ ask: (t, r) => { text = t; ref = r; return true; } });
-    const broken = fx(); broken.workflow.nodes.find((n: any) => n.id === "approve").card.options.push({ id: "skip", label: "Skip" });
+    const broken = fx(); broken.workflow.nodes.find((n: any) => n.id === "approve").card.options.push({ id: "skip", label: "Skip" }); broken.workflow.edges.push({ from: "approve", to: "done", when: "skip" }); broken.workflow.params = { city: { label: "City" } }; broken.workflow.nodes.find((n: any) => n.id === "approve").card.body = "Choose events in {{params.city}}";
     const d = await h.tool("studio_draft_workflow", broken); await settled(h, d.draft);
     const again = JSON.parse(JSON.stringify(broken)); again.draft = d.draft;
     ok((await h.tool("studio_draft_workflow", again, `${text}\nGATE-REPAIR ${d.draft} ${ref.nonce}`, false, null)).code === "owner_ended", "r2 quoting the repair header and code in text grants nothing");

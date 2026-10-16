@@ -25,8 +25,8 @@ try{
  ok((await api('/api/main/start',{host:'codex',confirm:true})).status===200,'offline Firstmate primary starts');
  await until(async()=>!(await api('/api/main')).body.busy);
  const send=async(args)=>{const before=(await api('/api/wf/drafts')).body.drafts?.length??0;await api('/api/main/send',{text:'NATIVE-TOOL '+JSON.stringify({name:'studio_draft_workflow',args})});await until(async()=>((await api('/api/wf/drafts')).body.drafts?.length??0)>before&&!(await api('/api/main')).body.busy);return (await api('/api/wf/drafts')).body.drafts[0].id;};
- // a draft with a fixable problem: the captain's card has a "skip" option no edge takes
- const broken=JSON.parse(JSON.stringify(FX));broken.workflow.nodes.find(n=>n.id==='approve').card.options.push({id:'skip',label:'Skip'});
+ // A structurally valid draft reaches readiness with a required Start input missing.
+ const broken=JSON.parse(JSON.stringify(FX));broken.workflow.params={city:{label:'City'}};broken.workflow.nodes.find(n=>n.id==='approve').card.body='Choose events in {{params.city}}';
  const bad=await send(broken);
  ok(await until(async()=>{const v=(await api(`/api/wf/drafts/${bad}/gate`)).body;return v.gate&&v.gate.stages.every(s=>s.status!=='running')&&v.repair?.rounds?.length>0;}),'the gate fails the draft and starts a repair round');
  const bv=(await api(`/api/wf/drafts/${bad}/gate`)).body;
@@ -34,7 +34,7 @@ try{
  ok(await until(async()=>(await api(`/api/wf/drafts/${bad}/gate`)).body.repair?.status==='not-verified',60000),'the loop reaches its cap when Firstmate brings no revision',JSON.stringify((await api(`/api/wf/drafts/${bad}/gate`)).body.repair).slice(0,300));
  ok(!JSON.stringify((await api(`/api/wf/drafts/${bad}/gate`)).body).includes('"nonce"'),'the gate view never carries the repair one-time code');
  ok(await until(async()=>JSON.stringify((await api('/api/main')).body.log??[]).includes(`GATE-REPAIR ${bad}`)),'the repair round is visible in the Firstmate chat',JSON.stringify((await api('/api/main')).body.log?.slice(-3)).slice(0,400));
- ok(bv.gate.stages.find(s=>s.id==='contract').problems.some(p=>p.code==='outcome-unhandled'&&p.node==='approve'),'stage 2 names the unhandled outcome and its node');
+ ok(bv.gate.stages.find(s=>s.id==='contract').problems.some(p=>p.code==='param-no-input'&&p.node==='approve'),'stage 2 names the missing Start input and its node');
  ok(!bv.gate.stages.find(s=>s.id==='contract').problems.some(p=>p.code==='provider-not-logged-in'),'codex reads as logged in from its login file on disk (read only, no sign-in)');
  // a passing draft, saved as the captain's workflow
  const good=JSON.parse(JSON.stringify(FX));Object.assign(good.workflow.nodes.find(n=>n.id==='review'),{provider:'codex',model:'fixture-model',effort:'low'});
@@ -57,8 +57,8 @@ try{
   // draft preview
   await p.goto(base+`/#/first-workflow/${bad}`);await p.waitForSelector('[data-draft-gate] [data-gate]',{timeout:15000});await p.evaluate(()=>window.openChat?.(false));await p.waitForTimeout(300);
   ok(await p.locator('[data-gate-stage]').count()===5,`${tag} draft preview shows all five stages`);
-  ok(await p.locator('[data-gate-stage="contract"][data-gate-state="fail"] [data-gate-problem="outcome-unhandled"]').count()===1,`${tag} the failing stage lists the problem`);
-  const prob=await p.locator('[data-gate-problem="outcome-unhandled"]').innerText();
+  ok(await p.locator('[data-gate-stage="contract"][data-gate-state="fail"] [data-gate-problem="param-no-input"]').count()===1,`${tag} the failing stage lists the problem`);
+  const prob=await p.locator('[data-gate-problem="param-no-input"]').innerText();
   ok(lang==='en'?/Step: ?approve/.test(prob)&&/Reason:/.test(prob)&&/How to fix:/.test(prob):/步驟：\s*approve/.test(prob)&&/原因：/.test(prob)&&/修正方式：/.test(prob),`${tag} each problem shows step, reason and how to fix`,prob);
   const nProb=await p.locator('[data-gate-stage="contract"] [data-gate-problem]').count(),line=await p.locator('[data-gate-status]').first().innerText();
   ok(new RegExp(`\\(${nProb} (problem|個問題)`).test(line)||new RegExp(`（${nProb} 個問題`).test(line),`${tag} the failing stage count matches its list`,`${nProb} vs ${line}`);
