@@ -1,4 +1,4 @@
-// Acceptance scenarios: one reviewed file per bundled workflow (workflows/acceptance/<id>.yaml).
+// Acceptance scenarios: one reviewed file per bundled workflow (tests/acceptance/<id>.yaml).
 // They say which captain cards are safe to answer and how, what the run must end as, and which
 // artifacts it must leave. The live acceptance driver (scripts/live-acceptance.ts) reads them;
 // the stub-CLI acceptance harness is meant to read the same list (see docs/live-acceptance.md).

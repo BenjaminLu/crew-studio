@@ -68,10 +68,10 @@ try {
   await waitUp(base, app);
 
   // --- scenario format (the reviewed list the stub harness shares) ---
-  const bundled = readdirSync(join(repo, "workflows/acceptance")).filter((f) => f.endsWith(".yaml"));
+  const bundled = readdirSync(join(repo, "tests/acceptance")).filter((f) => f.endsWith(".yaml"));
   const catalog = (await api("/api/wf")).workflows.map((w: any) => w.id).filter((id: string) => !id.startsWith("accept-")).sort();
   ok(JSON.stringify(bundled.map((f) => f.replace(/\.yaml$/, "")).sort()) === JSON.stringify(catalog), "one reviewed scenario per bundled workflow on the Start form", `${bundled} vs ${catalog}`);
-  const problems = bundled.flatMap((f) => { try { loadScenario(join(repo, "workflows/acceptance", f)); return []; } catch (e: any) { return [`${f}: ${e.message}`]; } });
+  const problems = bundled.flatMap((f) => { try { loadScenario(join(repo, "tests/acceptance", f)); return []; } catch (e: any) { return [`${f}: ${e.message}`]; } });
   ok(problems.length === 0, "every bundled scenario file passes validation", problems.join("; "));
   let refused = ""; try { validateScenario({ schema: 1, workflow: "x", topic: "t", start: { provider: null, params: {} }, providers: [], approvals: { staffing: false, dispatch: false }, cards: [{ node: "merge-card", answer: "merge" }], expect: { status: "succeeded", result: null, artifacts: [] }, budget: { wall_minutes: 1, max_rounds: 1 } }, "inline"); } catch (e: any) { refused = e.message; }
   ok(/irreversible|external/i.test(refused), "a scenario that lists a merge answer is refused when it loads", refused);
@@ -94,6 +94,13 @@ try {
     "per node: status, outcome class, duration and log link; the safe card's answer is recorded", JSON.stringify(askNode));
   ok(a.report?.sse?.events > 0, "the run is followed over the server's event stream", JSON.stringify(a.report?.sse));
   ok(/OFFLINE FIXTURE/.test(a.mdText) && a.report?.offlineFixture === true, "an offline fixture run says so: it is never a live acceptance");
+
+  ok(a.report?.completion === "complete" && !/stopped by design/.test(a.mdText), "a run that ends as expected is labelled complete");
+
+  // --- a stop_at point: reached, stopped by design, not complete ---
+  const sa = await accept(fx("stop-at"));
+  ok(sa.code === 0 && sa.report?.verdict === "PASS" && sa.report?.completion === "reached hold, stopped by design" && /reached hold, stopped by design; not complete/.test(sa.mdText) && /stopped by design/.test(sa.out),
+    "an expected stop_at is labelled 'reached <card>, stopped by design' and not complete", `${sa.code} ${JSON.stringify(sa.report?.completion)} ${sa.out}`);
 
   // --- a failing workflow: exact error text and log link ---
   const f = await accept(fx("documents-fail"));
@@ -118,6 +125,9 @@ try {
   const n = await accept(fx("needs-claude"));
   ok(n.code === 2 && n.report?.verdict === "STOP" && /claude/i.test(n.report?.stop?.reason ?? "") && /not signed in/i.test(n.out + n.err), "a provider that is not signed in stops before anything starts, with a clear message", `${n.code} ${n.out} ${n.err}`);
   ok((await api("/api/tasks")).tasks.length === tasksBefore && n.report?.task === null, "no Task is started when a provider is not signed in");
+  const claudeRow = n.report?.providers?.find((p: any) => p.provider === "claude");
+  ok(claudeRow?.state === "not signed in" && /Doctor item claude: authenticated=false/.test(claudeRow?.doctor ?? "") && /Doctor item claude: authenticated=false/.test(n.err + n.mdText),
+    "the report and the message say exactly which provider and what the Doctor reported", JSON.stringify(claudeRow));
   const trace = existsSync(join(home, ".claude-login-trace.jsonl")) ? readFileSync(join(home, ".claude-login-trace.jsonl"), "utf8") : "";
   const codexTrace = existsSync(codexLog) ? readFileSync(codexLog, "utf8") : "";
   ok(trace.includes('"status"') && !trace.includes('"login"') && !codexTrace.includes("account/login/start"), "login state is only read: no Claude or Codex sign-in was started", trace.slice(-400));

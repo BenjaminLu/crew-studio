@@ -27,7 +27,7 @@ const REAL = new Set(["claude", "codex"]);
 // ---------- arguments ----------
 type Args = { workflows: string[]; all: boolean; base: string; topic: string | null; params: string | null; maxMinutes: number | null; maxRounds: number | null; scenario: string | null; scenarios: string; offline: boolean };
 function parseArgs(argv: string[]): Args {
-  const a: Args = { workflows: [], all: false, base: "http://127.0.0.1:4210", topic: null, params: null, maxMinutes: null, maxRounds: null, scenario: null, scenarios: join(REPO, "workflows", "acceptance"), offline: false };
+  const a: Args = { workflows: [], all: false, base: "http://127.0.0.1:4210", topic: null, params: null, maxMinutes: null, maxRounds: null, scenario: null, scenarios: join(REPO, "tests", "acceptance"), offline: false };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i], v = () => { const x = argv[++i]; if (x === undefined) throw new Error(`${k} needs a value`); return x; };
     if (k === "--workflow") a.workflows.push(v());
@@ -127,8 +127,13 @@ async function providersReady(st: Studio, s: Scenario, def: any, offline: boolea
     items ??= (await st.get("/api/doctor")).body?.items ?? [];
     const it = items!.find((x: any) => x.id === p);
     const state = !it ? "not reported" : it.authenticated === true ? "signed in" : it.authenticated === false ? "not signed in" : !it.version ? "CLI unavailable" : "login status unverified";
-    checked.push({ provider: p, state });
-    if (state !== "signed in") missing.push(`${p === "claude" ? "Claude" : "Codex"} is not signed in (${state}). Sign in from Studio's Doctor yourself, then run this again; this script never starts a sign-in`);
+    const name = p === "claude" ? "Claude" : "Codex";
+    // what the Doctor reported, verbatim: an unreadable login is treated as not signed in, and says exactly why
+    const doctor = it ? `Doctor item ${p}: authenticated=${JSON.stringify(it.authenticated ?? null)}, version=${JSON.stringify(it.version ?? null)}, detail=${JSON.stringify(String(it.detail ?? "").slice(0, 300))}` : `Doctor reported no ${p} item`;
+    checked.push({ provider: p, state, ...(state !== "signed in" ? { doctor } : {}) });
+    if (state === "signed in") continue;
+    if (state === "not signed in") missing.push(`${name} is not signed in (${doctor}). Sign in from Studio's Doctor yourself, then run this again; this script never starts a sign-in`);
+    else missing.push(`${name} login status could not be read (${state}; ${doctor}); treated as not signed in. Fix the ${p} CLI or sign in from Studio's Doctor, then run this again; this script never starts a sign-in`);
   }
   return { checked, stop: missing.length ? missing.join("; ") : null };
 }
@@ -142,7 +147,7 @@ async function runOne(st: Studio, s: Scenario, a: Args, date: string) {
   const body: any = { text, workflow: s.workflow, params };
   const report: any = { schema: 1, verdict: null, offlineFixture: a.offline, workflow: s.workflow, version: null, scenario: s.file ? s.file.replace(REPO + "/", "") : null, base: st.base, date, startedAt, endedAt: null, wallSeconds: null,
     topic, start: body, staffing: null, providers: [], task: null, run: null, nodes: [], cards: [] as CardRecord[], stop: null, budget: { wall_minutes: wallMinutes, max_rounds: maxRounds, rounds: 0, exceeded: null, cancelled: false },
-    expect: s.expect, problems: [] as string[], sse: { events: 0, reconnects: 0 } };
+    expect: s.expect, completion: null as string | null, library: [] as any[], problems: [] as string[], sse: { events: 0, reconnects: 0 } };
   const finish = (v: Verdict) => { report.verdict = v; report.endedAt = new Date().toISOString(); report.wallSeconds = Math.round((Date.now() - t0) / 100) / 10; return report; };
   const stopWith = (reason: string, card: string | null = null) => { report.stop = { reason, card }; return finish("STOP"); };
 
@@ -211,6 +216,8 @@ async function runOne(st: Studio, s: Scenario, a: Args, date: string) {
     report.task = { ...report.task, status: view.status, result: view.result ?? null, rounds: (view.rounds ?? []).length };
     report.run = { status: view.status, result: view.result ?? null, error: view.error ?? null, endedAt: view.endedAt ?? null, outputs: (view.outputs ?? []).map((o: any) => o.href) };
     report.nodes = nodeRecords(st, view);
+    // an ACCEPT Task's approved artifact lands in Studio's own local Library: the report marks it as an acceptance-run item
+    const lib = view.ctx?.library; if (lib?.artifact) report.library.push({ artifact: lib.artifact, version: lib.version ?? null, href: lib.href ? `${st.base}/${lib.href}` : null, label: "acceptance run", task: id });
     if (!a.offline) for (const n of report.nodes) if (n.kind === "agent" && n.rounds && n.provider && !REAL.has(n.provider)) report.problems.push(`${n.node} ran on ${n.provider}, not a real model`);
   }
   if (report.stop) return finish("STOP");
@@ -227,18 +234,20 @@ async function runOne(st: Studio, s: Scenario, a: Args, date: string) {
     if (art.outputs !== undefined) { const n = (view?.outputs ?? []).length; if (n < art.outputs) report.problems.push(`outputs: ${n} output(s), expected at least ${art.outputs}`); }
     if (art.file !== undefined) { const f = await st.get(`/api/wruns/${id}/file?path=${encodeURIComponent(art.file)}`); if (f.status !== 200) report.problems.push(`file: ${art.file} is not in the run folder`); }
   }
+  if (!report.problems.length) report.completion = e.stop_at ? `reached ${e.stop_at}, stopped by design` : "complete";
   return finish(report.problems.length ? "FAIL" : "PASS");
 }
 
 // ---------- the report ----------
 function markdown(r: any): string {
   const L: string[] = [];
-  L.push(`# Live acceptance: ${r.workflow} — ${r.verdict}`, "");
+  L.push(`# Live acceptance: ${r.workflow} — ${r.verdict}${r.completion && r.completion !== "complete" ? ` (${r.completion}; not complete)` : ""}`, "");
   if (r.offlineFixture) L.push("> OFFLINE FIXTURE run (stub providers). It never counts as a live acceptance.", "");
   L.push(`- Studio: ${r.base}`, `- Scenario: ${r.scenario ?? "inline"}`, `- Workflow version: ${r.version ?? "unknown"}`, `- Started: ${r.startedAt}  Ended: ${r.endedAt}  Wall: ${r.wallSeconds} s`,
     `- Task: ${r.task ? `[${r.task.id}](${r.task.href}) — ${r.task.status ?? "not read"}${r.task.result ? ` (${r.task.result})` : ""}, ${r.task.rounds ?? 0} rounds` : "none started"}`,
     `- Brief: ${r.start.text}`, `- Start body: \`${JSON.stringify(r.start)}\``,
-    `- Providers: ${r.providers.map((p: any) => `${p.provider} ${p.state}`).join(", ") || "none needed"}`,
+    `- Providers: ${r.providers.map((p: any) => `${p.provider} ${p.state}${p.doctor ? ` (${p.doctor})` : ""}`).join(", ") || "none needed"}`,
+    `- Completion: ${r.completion ?? "—"}`,
     `- Budget: ${r.budget.rounds}/${r.budget.max_rounds} rounds, ${r.budget.wall_minutes} min${r.budget.exceeded ? ` — EXCEEDED (${r.budget.exceeded})${r.budget.cancelled ? ", Task cancelled" : ""}` : ""}`,
     `- Event stream: ${r.sse.events} events, ${r.sse.reconnects} reconnects`, "");
   if (r.stop) L.push("## STOP", "", r.stop.reason, "", `Card: ${r.stop.card ?? "none"}`, "");
@@ -253,6 +262,7 @@ function markdown(r: any): string {
   }
   const not = r.nodes.filter((n: any) => n.outcome === "not-reached").map((n: any) => n.node);
   if (not.length) L.push(`Not reached: ${not.join(", ")}`, "");
+  if (r.library.length) { L.push("## Library items (acceptance run)", "", ...r.library.map((x: any) => `- ${x.artifact} v${x.version ?? "?"} — acceptance run, Task ${x.task}${x.href ? ` — ${x.href}` : ""}`), ""); }
   if (r.cards.length) { L.push("## Captain cards", ""); for (const c of r.cards) L.push(`- ${c.id} (${c.kind} on \`${c.node}\`): ${c.decision}${c.answered ? ` → ${c.answered}` : ""}${c.reason ? ` — ${c.reason}` : ""}`); L.push(""); }
   const fails = r.nodes.filter((n: any) => n.firstError);
   if (fails.length) { L.push("## First errors (exact text)", ""); for (const n of fails) L.push(`### ${n.node}`, "", "```", n.firstError, "```", `Log: ${n.log}`, ""); }
@@ -288,7 +298,7 @@ async function main() {
     try { r = await runOne(st, s, a, date); }
     catch (e: any) { console.error(st.scrub(`live-acceptance: ${s.workflow}: ${String(e?.message ?? e)}`)); worst = Math.max(worst, EXIT.ERROR); continue; }
     const { md, js } = writeReport(st, r);
-    console.log(st.scrub(`${s.workflow}: ${r.verdict}${r.stop ? ` — ${r.stop.reason}` : r.budget.exceeded ? ` — budget exceeded (${r.budget.exceeded})` : r.problems.length ? ` — ${r.problems[0]}` : ""}`));
+    console.log(st.scrub(`${s.workflow}: ${r.verdict}${r.completion && r.completion !== "complete" ? ` (${r.completion})` : ""}${r.stop ? ` — ${r.stop.reason}` : r.budget.exceeded ? ` — budget exceeded (${r.budget.exceeded})` : r.problems.length ? ` — ${r.problems[0]}` : ""}`));
     if (r.stop) console.error(st.scrub(`STOP ${s.workflow}: ${r.stop.reason}`));
     console.log(`report: ${md}`); console.log(`json: ${js}`);
     worst = Math.max(worst, EXIT[r.verdict as Verdict]);

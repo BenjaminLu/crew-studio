@@ -14,7 +14,7 @@ makes that run repeatable and its report honest.
 
 ```sh
 bun scripts/live-acceptance.ts --workflow documents
-bun scripts/live-acceptance.ts --all                  # every scenario in workflows/acceptance/
+bun scripts/live-acceptance.ts --all                  # every scenario in tests/acceptance/
 bun scripts/live-acceptance.ts --workflow file-organization --params params.json   # captain input
 ```
 
@@ -31,7 +31,9 @@ Real models cost money. Run one workflow at a time unless you mean `--all`.
   `x-crew-session` header. It is never printed or written.
 - **Checks login state** (GET `/api/doctor`) for every vendor the scenario lists. When the workflow
   has agent nodes, it also checks the provider the Task will use. A vendor that does not report
-  signed in stops the run before any Task starts. The Studio stub provider is refused: live
+  signed in stops the run before any Task starts. When the login cannot be read (the CLI fails, or
+  reports neither state), the run also stops, and the message and report say exactly which provider
+  and what the Doctor reported. The Studio stub provider is refused: live
   acceptance needs real models.
 - **Starts a Task** with exactly the body the board's Start form sends: `{text, workflow, params}`.
   The brief starts with `ACCEPT <date>`. If Studio asks for a staffing confirmation, the script
@@ -50,6 +52,13 @@ Real models cost money. Run one workflow at a time unless you mean `--all`.
 
 A STOP leaves the Task as it is (waiting on its card), so the captain can look at it and answer it on
 the board.
+
+## Library items from acceptance runs
+
+The scenarios for Documents, Images, Video and Web prototype approve their acceptance card. The
+approved artifact goes into Studio's own local Library, never out of the machine. The Task's brief
+starts with `ACCEPT <date>`, and the report lists each such Library item under "Library items
+(acceptance run)", so it is never mistaken for real work.
 
 ## Reading the report
 
@@ -78,14 +87,17 @@ The JSON file holds the same data for tools.
 | BUDGET | 3 | The wall time or Round budget ran out. The Task was cancelled. |
 | (setup) | 4 | No verified Studio at `--base`, a bad scenario file, or bad arguments. No report is written. |
 
-Only PASS counts as an acceptance. A STOP at an expected point counts only when the scenario says
-`stop_at`, because the steps after that card belong to the captain (merge, pull requests, paid
-generation the captain must confirm). A report marked **OFFLINE FIXTURE** comes from the offline test
+Only PASS counts as an acceptance. A PASS has a completion label:
+
+- `complete`: the run ended as the scenario expects.
+- `reached <card>, stopped by design`: the scenario says `stop_at`, and the run reached that card.
+  The steps after it belong to the captain (merge, pull requests, paid generation the captain must
+  confirm), so the workflow was checked up to that card only. It is not a complete pass. A report marked **OFFLINE FIXTURE** comes from the offline test
 (`--offline-fixture`, stub providers) and never counts.
 
 ## Scenario files
 
-There is one reviewed file per bundled workflow on the Start form: `workflows/acceptance/<id>.yaml`.
+There is one reviewed file per bundled workflow on the Start form: `tests/acceptance/<id>.yaml`.
 `scripts/acceptance/scenarios.ts` validates them and makes the card decisions.
 
 ```yaml
