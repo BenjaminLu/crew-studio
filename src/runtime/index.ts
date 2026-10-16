@@ -1,3 +1,4 @@
+import {installHelloWeb} from "../domain/hello-web";
 import { refusesRulesPatch } from "../operating-rules";
 import { PolicyUnreadable } from "./checks";
 import { failure, fromError, type FailureCode } from "./failures";
@@ -102,6 +103,7 @@ export function createRuntime(d: RuntimeDeps) {
   if (d.skills) defs.skillInfo = (id, v) => d.skills!.pinInfo(id, v);
   const engine = new Engine({ dataDir: d.dataDir, agents: d.agents, provider: d.provider, defaultProvider: d.defaultProvider, selectProvider: d.selectProvider, log: d.log, send: d.send, skillText: skillTextFor(d.fmRoot), store: d.store, protectedRoots: d.protectedRoots ?? [d.fmRoot], library: d.skills ?? null }, defs);
   const projects = new Projects(d.dataDir);
+  installHelloWeb(engine,d.m3?.store??new ArtifactStore(d.dataDir));
   if (d.m3?.store && d.m3?.lane && d.fileorg && d.docs) installDeliver(engine, { dataDir: d.dataDir, artifacts: d.m3.store, lane: d.m3.lane, fileorg: d.fileorg, docs: d.docs, generateImage: d.generateImage });
   const startup=d.m3?.store?installStartupRecursion(engine,{artifacts:d.m3.store,configuredModel:d.startupModel}):undefined;
   let coffee:ReturnType<typeof installCoffeeKit>|undefined;

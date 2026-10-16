@@ -238,19 +238,19 @@ export class WorkflowDefs {
   }
   /** Explicit captain-created safe starter, never arbitrary execution/import authority. */
   create(id:unknown,name:unknown,by:string,locale:unknown="en",template:unknown=undefined,origin:unknown=undefined):WDef {
-    if(origin!==undefined&&(origin!=="starter"||template!==undefined))throw new Error("Unsupported workflow origin");
-    if(template!==undefined&&!["coffee-kit","github-review"].includes(String(template)))throw new Error("Unsupported workflow template");
+    if(origin!==undefined&&(origin!=="starter"||(template!==undefined&&template!=="hello-crew-studio")))throw new Error("Unsupported workflow origin");
+    if(template!==undefined&&!["coffee-kit","github-review","hello-crew-studio"].includes(String(template)))throw new Error("Unsupported workflow template");
     if(locale!=="en"&&locale!=="zh-TW"&&!(locale==="zh-CN"&&template==="coffee-kit"))throw new Error("Unsupported workflow language");
     const zh=locale==="zh-TW";
     if(typeof id!=="string"||!/^[a-z0-9][a-z0-9-]{0,40}$/.test(id))throw new Error("Use 1–41 lowercase letters, numbers or hyphens for the workflow id");
     if(typeof name!=="string"||!name.trim()||name.trim().length>120||/[\u0000-\u001f]/.test(name))throw new Error("Workflow name must contain 1–120 characters");
     return withLock(this.dir,"create-"+id,()=>{
       if(existsSync(this.wdir(id)))throw new Error("A workflow with this id already exists");
-      if(template==="coffee-kit"||template==="github-review") {
+      if(template==="coffee-kit"||template==="github-review"||template==="hello-crew-studio") {
         const source=bundledText(`workflows/v2/${template}.wf.yaml`);if(!source)throw new Error("Coffee template unavailable");
         const canonical=normalize(parseYaml(source));
         if(canonical.id!==template||(template==="coffee-kit"&&canonical.kind!=="coffee-kit"))throw new Error("Coffee template identity differs");
-        const definition:WDef={...canonical,id,name:name.trim(),version:1,parent:null,createdAt:now(),by,note:"Source template coffee-kit SHA256 "+createHash("sha256").update(source).digest("hex"),diff:null,seed:null};
+        const definition:WDef={...canonical,id,name:name.trim(),version:1,parent:null,createdAt:now(),by,note:"Source template "+template+" SHA256 "+createHash("sha256").update(source).digest("hex"),diff:null,seed:null,...(origin==="starter"?{origin:{schema:1 as const,source:"starter" as const}}:{})};
         const errors=validate(definition,this.known,this.runners?.(),this.skillInfo??undefined).filter(p=>p.level==="error");if(errors.length)throw new Error(errors[0].text);
         if(template==='github-review'){const ledger=new Ledger(this.dataDir,'workflow-draft-'+id);ledger.add({run:'workflow-draft-'+id,node:'',edge:null,round:0,head:null,check:'draft-capability',version:'1',kind:'deterministic',record:'workflow-draft-capability',attempt:0,verdict:'warn',score:null,findings:[],evidence:[],proves:[],error:null,blocking:true,inputHash:createHash('sha256').update(source).digest('hex'),params:{},ms:0,dir:null,data:{schema:1,workflow:id,source:'github-review',capability:'preview-edit-save-only'}}as any);}
         this.write(definition);return definition;

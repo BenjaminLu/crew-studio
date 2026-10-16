@@ -1,0 +1,16 @@
+schema: 2
+workflow: hello-crew-studio
+pin: { version: 1, sha256: "fcf95337d11ee946dddb701c9a375250d25944c236e24d346473d4a0d81b4ae1" }
+topic: "Build my first Hello Crew Studio website."
+start: { provider: null, params: { heading: "Hello Crew Studio" } }
+providers: []
+approvals: { staffing: false }
+cards: []
+expect:
+  stop_at: preview
+  artifacts: [{ deliver: 1 }]
+budget: { wall_minutes: 2, max_rounds: 1 }
+stub:
+  - name: preview
+    covers: "built-in source generates a real website without models, then waits for the captain to preview and approve"
+    expect: { status: waiting, visited: [build, preview], not_visited: [done], waiting_on: preview }

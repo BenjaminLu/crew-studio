@@ -28,15 +28,14 @@ Source and binary default to `~/.crew-studio/data`. Existing checkout-local stor
 
 ## Your first workflow
 
-Create a simple confirmation workflow—no model account needed:
+Create your first website—no model account needed:
 
-1. Open **Workflows → New workflow**.
-2. Enter **My first workflow**, keep the generated id `my-first-workflow`, and click **Create workflow**.
-3. The editor shows **Start → Done**. Click **Start a task**.
-4. Enter a short task description, keep your new workflow selected, and click **Start**.
-5. Open its confirmation card in **Board** or **Inbox**, then click **Continue**. The Task completes.
+1. Open **Workflows → First workflow tutorial**.
+2. Click **Create my first website** under **Hello Crew Studio**.
+3. Studio saves a reusable workflow and starts its website example.
+4. Open the website preview, then click **Looks good — finish**.
 
-You now have a reusable workflow. Edit its graph and save to create a new version; existing Tasks keep their original version.
+The example generates a real responsive HTML page from a built-in template, not an AI model. The workflow is **Create website → Preview website → Website complete**. Open the saved workflow to edit it; edit its `heading` parameter for a different title on the next run. Advanced Firstmate drafting remains under **Design a custom workflow with Firstmate**.
 
 ## Next steps
 

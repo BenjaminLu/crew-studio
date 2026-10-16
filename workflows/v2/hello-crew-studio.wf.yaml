@@ -1,0 +1,11 @@
+{
+ "id":"hello-crew-studio","name":"Hello Crew Studio","version":1,"kind":"web",
+ "description":"Build your first website: generate a local sample, open the preview, and approve the result. No model account needed.",
+ "roles":[],"params":{"heading":{"label":"Website heading","default":"Hello Crew Studio"}},
+ "nodes":[
+  {"id":"build","kind":"hook","do":"hello.web","label":"Create website","x":160,"y":160},
+  {"id":"preview","kind":"card","label":"Preview website","args":{"mode":"hello-preview"},"x":440,"y":160},
+  {"id":"done","kind":"hook","label":"Website complete","x":720,"y":160}
+ ],
+ "edges":[["build","preview"],["preview","done","approve"]]
+}

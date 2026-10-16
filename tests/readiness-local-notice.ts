@@ -1,4 +1,4 @@
-import './lib/isolated-env.mjs';
+import "./lib/isolated-env.mjs";
 import { gateHarness } from './gate-harness';
 import { normalize } from '../src/runtime/defs';
 import { engineEnv } from '../src/readiness/engine-env';
