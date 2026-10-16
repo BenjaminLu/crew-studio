@@ -197,4 +197,13 @@ for(const mode of ['success','admitted','dirty','task-commit','unmatched','missi
   let deep=sibling;for(let i=0;i<65;i++)deep=must(F.repo,['commit-tree',`${root}^{tree}`,'-p',deep,'-m','Bound '+i]);ok(!patchEquivalentBase(F.repo,old,deep)&&!patchEquivalentBase(F.repo,deep,old),'either side over 64 commits refuses bounded matching');
  }finally{await F.stop();}
 }
+// A base refresh from X to X changes nothing: the card offers no refresh and says why, and a forged one is refused (runtime/failures.ts).
+{
+ const F=await fixture();try{
+  const r=await F.start(),sc=await F.card(r.id,'scope-card'),view=F.E.cards.view(sc),head=r.ctx.head,s12=String(head).slice(0,12);
+  ok(!view.localRescope&&view.sections.en.how.includes(`refreshes base main from ${s12} to ${s12}, which changes nothing`)&&view.sections['zh-TW'].how.includes('沒有任何改變'),'scope card with an unchanged base offers no refresh and explains the no-op in en and zh-TW',view.sections.en.how);
+  let msg='';try{await F.E.answer(sc.id,{choice:'rescope',note:'Refresh',by:'fixture captain',localRescope:{version:1,card:sc.id,visit:sc.visit,base:'main',from:head,target:head}});}catch(e:any){msg=e.message;}
+  ok(/refreshes base main from \w{12} to \w{12}, which changes nothing/.test(msg)&&F.E.cards.get(sc.id)!.status==='open','a rescope that refreshes base from X to X is refused with its explanation and the card stays open',msg);
+ }finally{await F.stop();}
+}
 end();

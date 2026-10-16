@@ -2,6 +2,7 @@ import { neutralizeMarkers } from "../operating-rules";
 import { createHash } from "node:crypto";
 import {writeNativeDiagnostic} from './native-errors';
 import {NativeToolFailure,type NativeFailure} from './types';
+import { fromError, fromExternal } from '../runtime/failures';
 // The main-session controller: Studio as the single entry point to firstmate.
 // It discovers sessions, holds the DRIVER LOCK (data/driver.json) so Studio
 // and a terminal never write the same session at once, feeds one FIFO of
@@ -51,7 +52,7 @@ export type MainView = {
 /** a chat note in both UI languages: text keeps the English line (filters and older readers use it), i18n carries both */
 const bi = (en: string, tw: string): { text: string; i18n: { en: string; "zh-TW": string } } => ({ text: en, i18n: { en, "zh-TW": tw } });
 const TURN_ZH: Record<string, string> = { failed: "失敗", interrupted: "已中斷", cancelled: "已取消", timeout: "逾時" };
-export type LogItem = { at: number; kind: "captain" | "card" | "wake" | "firstmate" | "tool" | "status" | "system"; text: string; /** the same note for the UI in each language; text stays the English line */ i18n?: { en: string; "zh-TW": string }; source?: string; status?: string; refusal?: import("./types").HostRefusalCode; nativeFailure?:NativeFailure; links?:{label:string;href:string}[];
+export type LogItem = { at: number; kind: "captain" | "card" | "wake" | "firstmate" | "tool" | "status" | "system"; text: string; /** the same note for the UI in each language; text stays the English line */ i18n?: { en: string; "zh-TW": string }; source?: string; status?: string; refusal?: import("./types").HostRefusalCode; nativeFailure?:NativeFailure; /** the failure's class and code (runtime/failures.ts) */ failure?: import("../runtime/failures").Failure; links?:{label:string;href:string}[];
   /** a captain message's attachments (ids and labels; served from /api/main/attachments/<id>) */
   attachments?: import("../attachments").AttachmentRef[];
   /** why the attachments of a captain message could not be sent: typed, never a silent drop */
@@ -145,6 +146,7 @@ export class MainSession {
   }
   note(i: Omit<LogItem, "at">) {
     const item: LogItem = { at: Date.now(), ...i, text: redactText(i.text), session: this.sessionLabel() };
+    if (item.external && !item.failure) item.failure = fromExternal(item.external); // every failed notice carries its class and code
     this.log.push(item); if (this.log.length > 400) this.log.splice(0, this.log.length - 400);
     this.o.chatLog?.append(item);
   }
@@ -456,7 +458,7 @@ export class MainSession {
     this.onEvent(e);
     // a compacted conversation may have summarised the rules away: the next turn carries them again
     if (e.type === "compacted") { this.compactions++; if (this.driver().rulesSent) this.writeDriver({ ...this.driver(), rulesSent: null }); }
-    if(e.type==="nativeToolFailure")this.note({kind:"system",text:e.failure.reason.en,nativeFailure:e.failure});
+    if(e.type==="nativeToolFailure")this.note({kind:"system",text:e.failure.reason.en,nativeFailure:e.failure,failure:fromError(Object.assign(new Error(e.failure.reason.en),{publicFailure:e.failure}),{source:"host"})});
     if (e.type === "turnStart") this.refusedThisTurn = false; // a turn Studio did not send starts clean
     if (e.type === "hostRefusal") { this.refusedThisTurn = true; this.note({ kind: "status", text: `${e.reason.en} / ${e.reason["zh-TW"]}`, i18n: e.reason, status: "failed", refusal: e.code,
       external: { ...externalError("claude", claudeVendorMessage(e.raw) || e.reason.en, { cls: e.code === "claudeQuotaExhausted" ? "quota" : e.code === "claudeNotSignedIn" ? "auth" : undefined, code: e.code }), reason: e.reason } }); }

@@ -40,6 +40,8 @@ try{
  const card=H.engine.cards.get(r.nodes.capability.card!)!;
  assert(card.options.some(o=>o.id==='fresh-video'));assert.equal(card.body,note);assert.equal((card as any).detail?.coffeeFilmFailure?.findings?.[0]?.code,'contrast_aa_failure');
  ok('the captain card shows the cause next to the fresh-film choice');
+ assert.equal((card as any).failure?.class,'deterministic');assert.equal((card as any).failure?.code,'deterministic.film');assert.match((card as any).failure?.message??'',/HyperFrames check failed/);
+ ok('the card carries the typed failure (deterministic · deterministic.film) with the exact message');
  await H.engine.answer(card.id,{choice:'fresh-video',note:'繼續',by:'fixture captain'});
  assert(await until(()=>seen.length===2&&r.nodes.capability.waiting==='card'&&r.nodes.capability.card!==card.id&&!H.engine.busy(r.id)));
  assert.equal(seen[0],null);assert.equal(seen[1],'a'.repeat(64));

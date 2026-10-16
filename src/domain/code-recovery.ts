@@ -1,6 +1,7 @@
 // Recovery changes authority only through signed captain decisions. Context is
 // a cache: the ledger and locked, pristine task branch establish every effect.
 import { hashInput } from '../runtime/checks';
+import { FailureRefusal, failure, fromError, rescopeRefusal } from '../runtime/failures';
 import type { Engine, X } from '../runtime/engine';
 import { git, must } from '../git';
 import { RoundBlocked, patchEquivalentBase, type Worktrees } from '../worktrees';
@@ -14,6 +15,14 @@ export function installCodeRecovery(engine:Engine,W:Worktrees){
     throw new Error('rescope base is neither an ancestor nor an explicitly recoverable unadmitted patch series');
   };
   const descriptor=(c:any,rec:any,target:string,extra:ReturnType<typeof relation>)=>({version:1 as const,card:c.id,visit:c.visit,base:rec.base,from:rec.head,target,...extra});
+  // the scope card a worker's report raises carries the report's class: a question (ASK) is never a scope conflict
+  engine.cardPrepared['failure-class']=(x,card)=>{
+    if(card.kind!=='scope'||x.run.workflow!=='code-firstmate'&&!x.run.def.nodes.some(n=>n.do==='git.merge'))return;
+    const rep=x.run.nodes.build?.data?.report;if(!rep?.marker||!['ASK','SCOPE-BLOCKED','DOOR-CHANGE','BLOCKED'].includes(rep.marker))return;
+    const msg=String(rep.summary??rep.marker);
+    const typed=rep.marker==='ASK'?failure('ask.agent-question',msg,{source:'agent',run:x.run.id,node:'build'}):rep.marker==='BLOCKED'?fromError(Object.assign(new Error(msg),{outcome:'blocked'}),{source:'agent',run:x.run.id,node:'build'}):failure('scope.blocked',msg,{source:'agent',run:x.run.id,node:'build'});
+    const cur=engine.cards.get(card.id);if(!cur)return;cur.failure=typed;card.failure=typed;engine.cards.save(cur); // the stored card keeps its STE result
+  };
   const priorView=engine.cards.view;
   engine.cards.view=c=>{
     const view=priorView(c),r=engine.get(c.run);
@@ -26,6 +35,9 @@ export function installCodeRecovery(engine:Engine,W:Worktrees){
         (prior?hashInput(signed)!==hashInput(r.ctx.nativeAdmission):!!r.ctx.nativeAdmission)||
         must(rec.path,['rev-parse','HEAD'])!==rec.head||must(rec.path,['status','--porcelain=v1','--untracked-files=all']))return view;
       const target=must(rec.repo,['rev-parse',`refs/heads/${rec.base}`]);
+      // a refresh from X to X changes nothing: no refresh is offered, and the card says why (runtime/failures.ts)
+      const same=rescopeRefusal({note:null,from:rec.head,target,base:rec.base});
+      if(same)return {...view,...(view.detail?{detail:{...view.detail,how:[...view.detail.how,{en:same.en,'zh-TW':same['zh-TW']}]}}:{}),sections:{...view.sections,en:{...view.sections.en,how:view.sections.en.how+'\n'+same.en.replace('Rescope refused: it refreshes','A base refresh is not offered: it refreshes')},'zh-TW':{...view.sections['zh-TW'],how:view.sections['zh-TW'].how+'\n'+same['zh-TW'].replace('已拒絕重新界定範圍：','不提供基底更新：')}}};
       const localRescope=descriptor(c,rec,target,relation(rec.repo,rec.head,target,!!prior));
       const en=(localRescope.baseRelation?'This unadmitted task uses rewritten base history. Every old-side patch has a patch-id match on the selected target; this is not a semantic guarantee. Approval abandons the old base lineage. ':'')+`This task has no changes. Rescope refreshes base ${rec.base} from ${rec.head} to ${target}, rewrites the spec, and waits for a new dispatch approval. Checks and review run again.`;
       const zh=(localRescope.baseRelation?'此任務尚未派工，基底歷史已改寫。舊側所有 patch 在目標都有 patch-id 對應，但不保證語義等價。核准會放棄舊基底的歷史連接。':'')+`此任務尚未修改檔案。重新界定範圍會將基底 ${rec.base} 從 ${rec.head} 更新至 ${target}，重寫規格後再次等待派工核准；檢查與審查必須重跑。`;
@@ -52,6 +64,7 @@ export function installCodeRecovery(engine:Engine,W:Worktrees){
       if(prior&&(signed.repo!==engine.queueRepo(rec.repo)||signed.project!==rec.project||hashInput(signed.dependencies)!==hashInput(engine.queueDependencies(r))))throw new Error('rescope cannot change repository, project or dependencies');
       if(!/^[A-Za-z0-9][A-Za-z0-9/_-]*$/.test(rec.base))throw new Error('rescope base branch is invalid');
       const target=must(rec.repo,['rev-parse',`refs/heads/${rec.base}`]);
+      const same=rescopeRefusal({note:a.note,from:rec.head,target,base:rec.base});if(same)throw new FailureRefusal(same);
       const shown=a.localRescope!,expected=descriptor(c,rec,target,relation(rec.repo,rec.head,target,!!prior));
       if(Object.keys(shown).length!==Object.keys(expected).length||Object.entries(expected).some(([k,v])=>(shown as any)[k]!==v))throw new Error('local rescope target changed; reload the current card before approving');
       const intent={version:1,card:c.id,node:c.node,visit:c.visit,project:rec.project,repo:engine.queueRepo(rec.repo),branch:rec.branch,base:rec.base,from:rec.head,target,...(expected.baseRelation?{baseRelation:expected.baseRelation}:{}),

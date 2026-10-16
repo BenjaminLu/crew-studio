@@ -1,5 +1,6 @@
 import { refusesRulesPatch } from "../operating-rules";
 import { PolicyUnreadable } from "./checks";
+import { failure, fromError, type FailureCode } from "./failures";
 import {installStartupRecursion} from '../domain/startup-recursion';
 import {installReadinessViews,readinessNodes} from './readiness-view';
 import {installGitHubReviewWorkflow} from '../domain/github-review-workflow';
@@ -281,17 +282,19 @@ export function createRuntime(d: RuntimeDeps) {
         current: Object.entries(r.nodes).filter(([, n]) => ["running", "waiting"].includes(n.state)).map(([k, n]) => ({ node: k, state: n.state, waiting: n.waiting ?? null, label: r.def.nodes.find((x) => x.id === k)?.label ?? k })), door: engine.cards.list({ run: r.id }).find((c) => c.door)?.door ?? null, recovered: r.recovered })),
         cards: engine.cards.list({ open: true }).map(c=>engine.cards.view(c)) });
       if (p === "/api/wruns" && writing) {
-        const text = String(b?.text ?? "").trim(); if (!text && !b?.workflow) return json({ error: "say what you want done" }, 400);
+        // every start refusal carries its typed failure (runtime/failures.ts), never only a string
+        const refuse = (o: Record<string, unknown>, st: number, code: FailureCode) => json({ ...o, failure: failure(code, String(o.error ?? ""), { source: "params" }) }, st);
+        const text = String(b?.text ?? "").trim(); if (!text && !b?.workflow) return refuse({ error: "say what you want done" }, 400, "invalid-input.params");
         const cls = classifyIntent(defs, text, engine.policies.get("sensitive_paths", { project: b?.params?.project ? String(b.params.project) : b?.project ? String(b.project) : null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []);
-        const wf = b?.workflow || cls.workflow; if (!wf) return json({ error: "Studio could not tell which workflow this is: pick one", classifier: cls }, 409);
-        {const held=defs.held(wf);if(held)return json({error:`This workflow is ${held.en}. It stays in the catalog for editing. / 此流程${held.zh}，仍可在流程目錄中編輯。`,code:"workflow_held",held},409);}
-        if(!defs.selectable(wf,b?.version?Number(b.version):undefined))return json({error:"This workflow is internal or retired. Choose an available workflow. / 此流程為內部或已退役流程，請選擇可用流程。",code:"workflow_unavailable"},409);
+        const wf = b?.workflow || cls.workflow; if (!wf) return refuse({ error: "Studio could not tell which workflow this is: pick one", classifier: cls }, 409, "ask.captain-decision");
+        {const held=defs.held(wf);if(held)return refuse({error:`This workflow is ${held.en}. It stays in the catalog for editing. / 此流程${held.zh}，仍可在流程目錄中編輯。`,code:"workflow_held",held},409,"invalid-input.config");}
+        if(!defs.selectable(wf,b?.version?Number(b.version):undefined))return refuse({error:"This workflow is internal or retired. Choose an available workflow. / 此流程為內部或已退役流程，請選擇可用流程。",code:"workflow_unavailable"},409,"invalid-input.config");
         let params={...(b?.params??{})};delete params._ownStaffing;
         const chosenDef=defs.get(wf,b?.version?Number(b.version):undefined);
         if(ownWorkflow(chosenDef)&&ownStaffingPlan(chosenDef!).plan.length){ // nothing to staff: a card-only workflow just starts
           const staffing=ownStaffingPlan(chosenDef!);
-          if(staffing.missing.length)return json({error:'Choose a provider, model and (for Codex) effort for every agent node before Run / 執行前請為每個代理節點選擇供應商、模型與（Codex）推理強度',code:'staffing_incomplete',staffing},409);
-          if(b?.staffingConfirm!==staffing.hash)return json({error:'Confirm who works on each node before this Task starts / 開始任務前請確認每個節點的人員配置',code:'staffing_confirmation_required',staffing},409);
+          if(staffing.missing.length)return refuse({error:'Choose a provider, model and (for Codex) effort for every agent node before Run / 執行前請為每個代理節點選擇供應商、模型與（Codex）推理強度',code:'staffing_incomplete',staffing},409,"env.staffing");
+          if(b?.staffingConfirm!==staffing.hash)return refuse({error:'Confirm who works on each node before this Task starts / 開始任務前請確認每個節點的人員配置',code:'staffing_confirmation_required',staffing},409,"ask.captain-decision");
           params._ownStaffing=staffing.hash;
         }
         if(boardStaffed(chosenDef)){
@@ -304,8 +307,8 @@ export function createRuntime(d: RuntimeDeps) {
           params={...params,base:projects.get(pid)!.base,_staffing:crew.hash};
         }
         if(chosenDef?.kind==="coffee-kit") {
-          let config;try{config=staffing.current(coffeeStaffingProject(params.project));}catch{return json({error:'Discuss and approve each coffee role before starting',code:'coffee-staffing-required'},409);}const image=config.roles['image-worker'];
-          if(!image||image.provider!=='codex')return json({error:"Confirm an available dedicated Codex image role; no vendor fallback",code:"coffee-staffing-required"},409);
+          let config;try{config=staffing.current(coffeeStaffingProject(params.project));}catch{return refuse({error:'Discuss and approve each coffee role before starting',code:'coffee-staffing-required'},409,"env.staffing");}const image=config.roles['image-worker'];
+          if(!image||image.provider!=='codex')return refuse({error:"Confirm an available dedicated Codex image role; no vendor fallback",code:"coffee-staffing-required"},409,"env.staffing");
           params={...params,_staffing:config.hash};
         }
         let r;try{r = engine.start({ workflow: wf, version: b?.version ? Number(b.version) : undefined, title: b?.title, text: ownWorkflow(chosenDef) ? ownBrief(chosenDef, text, params) : text, params, by, classifier: cls });}
@@ -364,7 +367,7 @@ export function createRuntime(d: RuntimeDeps) {
         return json(c);
       }
       return json({ error: "not found" }, 404);
-    } catch (e: any) { return json({ error: String(e?.message ?? e), problems: e?.problems ?? undefined }, 400); }
+    } catch (e: any) { return json({ error: String(e?.message ?? e), problems: e?.problems ?? undefined, refusal: e?.refusal ?? undefined, failure: e?.refusal ? undefined : fromError(e, { source: "params" }) }, 400); }
   }
   return { handle, engine, defs, projects, firstmate, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
 }

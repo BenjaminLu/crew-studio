@@ -90,6 +90,11 @@ const CSS = `
 .cc-msg.ok { border-color: var(--ok); color: var(--ok); }
 .cc-kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: 13px; }
 .cc-kv dt { color: var(--text-3); }
+.cc-fail { border: 1px solid var(--bad); border-radius: 10px; padding: 10px; display: grid; gap: 8px; background: color-mix(in srgb, var(--bad) 6%, transparent); }
+.cc-fail[data-failure-class="ask"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.cc-fail[data-failure-class="transient"], .cc-fail[data-failure-class="environment"] { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 6%, transparent); }
+.cc-fail h4 { margin: 0; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); }
+.cc-fail .cc-pre { max-height: 180px; }
 .cc-kv dd { margin: 0; overflow-wrap: anywhere; }
 .cc-meta { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--text-2); }
 `;
@@ -135,7 +140,7 @@ function mdView(text, attrs = {}, depth = 0) {
 async function get(u) { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; }
 async function post(u, body) {
   const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
-  let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j;
+  let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { refusal: j.refusal || null }); return j;
 }
 const short = (s) => (s ? String(s).slice(0, 8) : "—");
 const fmtUsd = (n) => (n == null ? "—" : `$${n.toFixed(n < 1 ? 3 : 2)}`);
@@ -250,6 +255,25 @@ function mountCard(el, card, opts = {}) {
     const inApp = (href) => href.startsWith("#/");
     return h("div", { class: "cc-actions" }, ls.map((l) => h("a", { class: "btn", href: l.href, target: inApp(l.href) ? null : "_blank", rel: inApp(l.href) ? null : "noopener", "data-card-link": l.label }, l.label === "Open website in new tab"?T("Open website in new tab","在新分頁開啟網站"):l.label === "Open the full text" || l.label === "檢視完整文字紀錄" ? T("Open the full text", "檢視完整文字") : l.label === "Open the app" ? T("Open the app", "打開 app") : l.label)));
   }
+  // a typed failure (src/runtime/failures.ts): its class, code, meaning, the exact message, what to fix and where,
+  // what changed since it failed, the log link (or why there is none) and, for a Studio bug, the kept diagnostics
+  const FCLASS = { ask: ["Question", "提問"], environment: ["Environment", "環境"], scope: ["Scope", "範圍"], transient: ["Transient", "暫時性"], deterministic: ["Deterministic", "確定性"], "invalid-input": ["Invalid input", "輸入無效"], internal: ["Studio bug", "Studio bug"] };
+  function failureView(c) {
+    const f = c.failure; if (!f || typeof f.class !== "string" || typeof f.message !== "string" || !FCLASS[f.class]) return null;
+    const kv = (k, label, v) => v ? [h("dt", {}, label), h("dd", { "data-failure-field": k }, v)] : [];
+    const changed = Array.isArray(c.failureChanged) ? c.failureChanged : null;
+    const log = f.log || {};
+    return h("section", { class: "cc-fail", "data-failure-class": f.class, "data-failure-code": f.code },
+      h("div", { class: "cc-h" }, h("span", { class: `cc-chip ${f.class === "ask" ? "" : f.class === "transient" || f.class === "environment" ? "warn" : "bad"}`, "data-failure-chip": f.class }, T(FCLASS[f.class][0], FCLASS[f.class][1])), h("span", { class: "cc-mono" }, f.code)),
+      h("p", {}, L(f.meaning)),
+      h("h4", {}, f.class === "ask" ? T("The question", "問題") : T("Exact message", "原始訊息")), h("pre", { class: "cc-pre", "data-failure-message": "" }, f.message),
+      (f.fix || f.where) ? h("dl", { class: "cc-kv" }, ...kv("fix", T("Fix", "要修什麼"), f.fix && L(f.fix)), ...kv("where", T("Where", "在哪裡"), f.where && L(f.where))) : null,
+      f.retry ? h("p", { class: "cc-count", "data-failure-backoff": f.retry.backoffMs }, T(`Retry ${f.retry.attempt}: waits ${Math.round(f.retry.backoffMs / 1000)} s before it runs.`, `第 ${f.retry.attempt} 次重試：執行前先等 ${Math.round(f.retry.backoffMs / 1000)} 秒。`)) : null,
+      f.class === "deterministic" && changed ? h("div", { "data-failure-changed": String(changed.length) }, h("h4", {}, T("Changed since the failure", "失敗後改變的輸入")),
+        changed.length ? h("ul", {}, changed.map((x) => h("li", { class: "cc-mono" }, `${x.key}: ${x.before ?? "—"} → ${x.now ?? "—"}`))) : h("p", { class: "cc-count" }, T("Nothing changed yet: Retry is refused until an input changes.", "目前沒有任何輸入改變：輸入改變前，重試會被拒絕。"))) : null,
+      h("p", { class: "cc-count", "data-failure-log": log.href ? "link" : "none" }, log.href ? h("a", { href: log.href }, T("Open the log", "打開日誌")) : [T("No log link: ", "沒有日誌連結："), L(log.reason) || "—"]),
+      f.diagnostics ? h("details", { "data-failure-diagnostics": "" }, h("summary", { class: "cc-count" }, T("Diagnostics (kept with the task)", "診斷資料（和任務一起保留）")), h("pre", { class: "cc-pre" }, JSON.stringify(f.diagnostics, null, 1))) : null);
+  }
   function plainView(c) {
     const s = cardI18n().deep(st.lang, c.sections); const out = [];
     if (s?.intent) out.push(sec("intent", T("Intent", "意圖"), h("p", { class: "cc-quote" }, s.intent)));
@@ -332,7 +356,7 @@ function mountCard(el, card, opts = {}) {
         let same = null; if (/answered exactly once/.test(e.message || "")) { try { const now = await get(`/api/scards/${encodeURIComponent(c.id)}`); if (now?.answer?.choice === o.id) same = now; } catch {} }
         if (same) took(same); else { st.ok = false; const message=e.message || String(e);
           const alignment=/tick every intent line as met \((\d+) of (\d+)\), or write a note/.exec(message);
-          st.msg=alignment?T(message,`尚未送出核准：請勾完每一條意圖（${alignment[1]}/${alignment[2]}），或填寫備註說明。`):message;
+          st.msg=alignment?T(message,`尚未送出核准：請勾完每一條意圖（${alignment[1]}/${alignment[2]}），或填寫備註說明。`):e.refusal&&e.refusal["zh-TW"]?T(e.refusal.en||message,e.refusal["zh-TW"]):message;
         }
       }
       st.busy = false; st.draw();
@@ -345,6 +369,7 @@ function mountCard(el, card, opts = {}) {
     const kids = [
       h("div", { class: "cc-h rt-card-h" }, h("span", { class: "vbadge" }, c.kind), h("b", {}, L(c.title)), c.door ? h("span", { class: `vbadge door-${c.door}` }, c.door) : null, lang),
       opts.inbox ? h("div", { class: "cardmeta cc-meta", "data-scard-meta": c.id }, h("span", { class: "mono" }, c.id), h("a", { href: `#/run/${encodeURIComponent(c.run)}` }, c.run), h("span", {}, c.workflow), h("span", { class: "badge" }, c.node)) : null,
+      failureView(c),
       ...(d ? (d.artifactAcceptance ? artifactDetailView(d, c) : detailView(d, c)) : plainView(c)),
       competitionView(c),
       // the competition already shows every round; its card text would repeat them, so it is not shown again

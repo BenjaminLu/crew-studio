@@ -6,8 +6,9 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { allocate } from "../ids";
+import type { Failure } from "./failures";
 
-export const CARD_KINDS = ["dispatch", "plan", "scope", "step-back", "round-budget", "merge", "promote", "acceptance", "retro", "permission", "question"] as const;
+export const CARD_KINDS = ["dispatch", "plan", "scope", "step-back", "round-budget", "merge", "promote", "acceptance", "retro", "permission", "question", "failure"] as const;
 export type CardKind = (typeof CARD_KINDS)[number];
 /** The intent sections every card carries, per locale. */
 export type Sections = { intent: string; why: string; scope: { in: string[]; out: string[] }; done: string[]; beforeAfter: string; how: string; glossary: { term: string; means: string }[] };
@@ -16,6 +17,8 @@ export type LocalRescope = {version:1;card:string;visit:number;base:string;from:
 export type SCard = {
   /** Read-only code recovery preview; execution requires the same descriptor in the answer. */
   localRescope?: LocalRescope;
+  /** the typed failure this card is about (src/runtime/failures.ts): its class decides the options */
+  failure?: Failure | null;
   id: string; run: string; node: string; visit: number; kind: CardKind; title: { en: string; "zh-TW": string }; sections: { en: Sections; "zh-TW": Sections }; body: string;
   interview?: InterviewBatch;
   /** hold: an option that does not go through the door (close, request changes); every other option needs the door confirmation when the card's door is one-way */

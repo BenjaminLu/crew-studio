@@ -301,7 +301,7 @@ for (const changed of ["source", "destination"]) {
 
 const outside = join(data, "outside"), linked = join(data, "linked"); mkdirSync(outside); mkdirSync(linked); writeFileSync(join(linked, "b.txt"), "safe"); symlinkSync(outside, join(linked, "Text"));
 const escape = E.start({ workflow: "file-organization", params: { folder: linked }, text: "Tidy fixture with unsafe destination" }); await until(() => E.get(escape.id)!.status === "failed", 10000);
-ok(existsSync(join(linked, "b.txt")) && !existsSync(join(outside, "b.txt")) && !E.cards.list({ run: escape.id, open: true }).length, "unsafe symlink plan fails without touching files outside the chosen folder");
+ok(existsSync(join(linked, "b.txt")) && !existsSync(join(outside, "b.txt")) && E.cards.list({ run: escape.id, open: true }).every(c => c.kind === "failure" && c.id === E.get(escape.id)!.failureCard) && E.get(escape.id)!.failure?.code === "invalid-input.params", "unsafe symlink plan fails without touching files outside the chosen folder; its only open card is the typed failure card (invalid-input)", JSON.stringify(E.get(escape.id)!.failure && [E.get(escape.id)!.failure!.code, E.get(escape.id)!.failure!.message]));
 // An edited native workflow that never produces an artifact must not get fake readiness.
 const emptyDef = rt.defs.get("documents")!; rt.defs.save("documents", { ...emptyDef, base: emptyDef.version, nodes: emptyDef.nodes.map(n => n.id === "draft" ? { id: n.id, kind: "hook", label: "No-output fixture", do: "note" } : n) }, "fixture captain");
 const empty = E.start({ workflow: "documents", params: {}, text: "Missing output fixture" }); const emptyCard = await waiting(empty.id, "escalation");

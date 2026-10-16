@@ -36,6 +36,7 @@ import { locatorText, parseFinding, type Finding } from "./locator";
 import { materializeRoundDir, roundWorkPath } from "./round-paths";
 import { composeInstructions, Skills } from "../skills";
 import { OperatingRules, jobInstructions } from "../operating-rules";
+import { ACT, FailureError, FailureRefusal, changedInputs, codeOf, failure, failureActions, failureCardBody, fromError, inputsHash, parseParamEdit, rescopeRefusal, retryRefusal, type Failure, type FailureCode, type InputSnapshot } from "./failures";
 
 export type NState = "pending" | "running" | "passed" | "failed" | "error" | "skipped" | "superseded";
 export type AgentPick = { provider: string; model: string | null; effort?: string | null };
@@ -57,10 +58,14 @@ export type Run = {
   /** the captain's reason when the run was cancelled */
   cancelReason?: string | null;
   continuation?:{token:string;previousCard:string;node:string;visit:number};
+  /** the typed failure that ended the run (src/runtime/failures.ts), its card, and every earlier one */
+  failure?: Failure | null; failureCard?: string | null; failures?: Failure[];
+  /** the captain parked the failed run: it stays failed, nothing retries it */
+  parked?: { by: string; at: string; note: string | null } | null;
   /** hidden from the default lists (an ended run only); an "archived" event records each change */
   archived?: boolean;
 };
-export type Result = { outcome: string; note?: string | null; cause?: string } | { wait: true; external?: { version: 1; handler: string; [key: string]: any }; note?: string | null };
+export type Result = { outcome: string; note?: string | null; cause?: string; failure?: Failure | null } | { wait: true; external?: { version: 1; handler: string; [key: string]: any }; note?: string | null };
 export type X = {
   edgeOwner?: symbol; run: Run; node: WNode; rn: NodeRun; visit: number; engine: Engine; deps: Deps; ctx: Record<string, any>; dir: string;
   log(text: string, data?: any): void; save(): void; cancelled(): boolean; provider(): Provider; pick(): AgentPick; skill(): string; policy(path: string, dflt?: any): any;
@@ -88,7 +93,9 @@ export type Body = { title: string; zhTitle?: string; en: Partial<Sections>; zh?
   detail?: import("./cards").CardDetail | null;
   /** an authorization window never answers this card: only the captain does */
   captainOnly?: boolean;
-  captures?: SCard["captures"] };
+  captures?: SCard["captures"];
+  /** the typed failure the card is about (a domain's own recovery card shows its class, message and log) */
+  failure?: Failure | null };
 export type Deps = {
   dataDir: string; agents: Agents; provider: (id?: string, model?: string) => Provider; log: StudioLog; send: (t: string, d: unknown) => void;
   skillText: (ref: string) => string; defaultProvider: () => AgentPick; [k: string]: any;
@@ -98,6 +105,8 @@ const now = () => new Date().toISOString();
 const TERMINAL: RunStatus[] = ["succeeded", "failed", "cancelled"];
 const FAILS = ["fail", "error", "cap", "cancel", "timeout"];
 const FAILED_OUTCOMES = new Set(["fail", "timeout", "cap"]);
+/** A provider's own end code (providers/*: turnEnd.code) → the failure code, so the class is never guessed from the words. */
+const JOB_CODES: Record<string, FailureCode> = { notLoggedIn: "env.login", quotaExhausted: "env.quota", cliUnavailable: "env.tool-missing", modelMismatch: "invalid-input.config", cleanupUnverified: "internal.bug" };
 const clone = <T>(v: T): T => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
 const same = (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b);
 /** {{ctx.a.b}} / {{params.x}} / {{run.title}} in card text */
@@ -109,7 +118,7 @@ export function fill(s: string, run: Run): string {
   });
 }
 const ekey = (e: WEdge) => `${e.from}→${e.to}${e.when ? `[${e.when}]` : ""}`;
-const RUN_FIELDS = ["status", "result", "error", "endedAt", "recovered", "cancelReason", "continuation"] as const;
+const RUN_FIELDS = ["status", "result", "error", "endedAt", "recovered", "cancelReason", "continuation", "params", "failure", "failureCard", "failures", "parked"] as const;
 const NODE_FIELDS = ["visits", "extra", "attempt", "outcome", "cause", "error", "startedAt", "endedAt", "inbox", "agent", "swap", "job", "card", "waiting", "data", "note", "routing"] as const;
 
 /** Replay a run's events into its snapshot (the snapshot is a fold of the events). */
@@ -237,6 +246,9 @@ export class Engine {
     this.cards = new Cards(deps.dataDir);
     this.registry = new CheckRegistry(deps.dataDir, deps.checkRoots ?? []);
     this.policies = new Policies(deps.dataDir);
+    // a failure card shows, live, which inputs changed since it failed (a deterministic retry needs one)
+    { const prior = this.cards.view; this.cards.view = (c) => { const v = prior(c); if (c.kind !== "failure" || c.status !== "open" || !c.failure?.inputs) return v;
+      try { const r = this.runs.get(c.run); const node = r?.def.nodes.find((n) => n.id === c.node) ?? null; return r ? { ...v, failureChanged: changedInputs(c.failure.inputs.snapshot, this.failureInputs(r, node)) } as SCard : v; } catch { return v; } }; }
     this.policies.onChange = () => this.deps.agents.queue.wake();
     this.grants = new Grants(deps.dataDir);
     defs.known ??= (ref) => !!this.registry.get(ref);
@@ -313,6 +325,8 @@ export class Engine {
         if (rn.routing && rn.state !== "running") { reroute.push(id); continue; } // the result is durable, its routing was not done: do it again
         if (rn.state !== "running") continue;
         if (rn.waiting === "external") continue;
+        // a retry that was waiting out its backoff (failure card): it never started, so it runs now with no visit taken back
+        if ((rn as any).waiting === "backoff") { rn.waiting = null; rn.state = "pending"; delete rn.data.backoffUntil; rn.cause = "recovered: retry after backoff"; if (!r.queue.includes(id)) r.queue.unshift(id); continue; }
         if (rn.waiting === "card") {
           const c = rn.card ? this.cards.get(rn.card) : null;
           if (c?.status === "open") continue;                 // still waiting for the captain
@@ -366,7 +380,9 @@ export class Engine {
     return r;
   }
 
-  private async queueCapability(x: X, reason: string): Promise<Result> {
+  private async queueCapability(x: X, reason: string, cause: unknown = null): Promise<Result> {
+    // the readiness card keeps its retry / close actions; the typed failure says which class stopped the round (login, quota, overlap, staffing …)
+    const typed = fromError(cause ?? new Error(reason), { source: "queue", run: x.run.id, node: x.node.id, visit: x.visit });
     x.rn.data.nativeQueueCapability = { version: 1, reason, retryAction: "retry", closeAction: "close" };
     const scope = Array.isArray(x.ctx.spec?.scope) ? x.ctx.spec.scope.map(String) : [];
     const project = this.queueProject(x.run), repo = this.queueRepo(x.ctx.repo) || "artifact workflow"; let dependencies: string[] = []; try { dependencies = this.queueDependencies(x.run); } catch {}
@@ -374,7 +390,7 @@ export class Engine {
     const c = await this.card(x, "scope", { captainOnly: true, title: "Round is not ready", zhTitle: "回合尚未就緒",
       en: { why: reason, how: "Resolve the readiness issue, then approve fresh preparation or close this task.", scope: { in: [...scope, `Project: ${project}`, `Repository: ${repo}`, ...dependencies.map(id => `Dependency: ${id}`)], out: [] } },
       zh: { why: zhReason, how: "先排除等待原因，再核准重新準備；也可以關閉任務。", scope: { in: [...scope, `專案：${project}`, `儲存庫：${repo === "artifact workflow" ? "產物工作流程" : repo}`, ...dependencies.map(id => `依賴：${id}`)], out: [] } },
-      options: [{ id: "retry", label: "Approve fresh preparation", labelZh: "核准重新準備" }, { id: "close", label: "Close task", labelZh: "關閉任務", hold: true }] });
+      options: [{ id: "retry", label: "Approve fresh preparation", labelZh: "核准重新準備" }, { id: "close", label: "Close task", labelZh: "關閉任務", hold: true }], failure: typed });
     return { wait: true, note: `readiness recovery card ${c.id}` };
   }
 
@@ -454,7 +470,8 @@ export class Engine {
     else if (ns.some((n) => n.state === "running" && n.waiting)) r.status = "waiting";
     else if (ns.some((n) => n.state === "running" && n.data?.nativeQueue?.state === "waiting")) r.status = "queued";
     else { r.status = "failed"; r.error = "stalled: no node can run (a join is still waiting for an input)"; r.endedAt = now(); this.stopAll(r, "the run stalled"); }
-    if (r.status !== before) { this.commit(r, r.status === "waiting" ? (ns.some(n => n.waiting === "external") ? "waiting(external)" : "waiting(card)") : r.status === "failed" ? "stalled" : "running"); if (r.status === "failed") this.emit(r, "failed", r.error!); }
+    if (r.status !== before) { this.commit(r, r.status === "waiting" ? (ns.some(n => n.waiting === "external") ? "waiting(external)" : "waiting(card)") : r.status === "failed" ? "stalled" : "running"); if (r.status === "failed") { this.emit(r, "failed", r.error!);
+      this.raiseFailure(r, null, failure("internal.bug", r.error!, { source: "engine", run: r.id, diagnostics: { nodes: JSON.stringify(this.nodeStates(r)) } })); } }
   }
 
   x(r: Run, node: WNode, rn: NodeRun): X {
@@ -512,16 +529,16 @@ export class Engine {
     r.steps.push(step); this.commit(r, rn.cause);
     this.emit(r, "node_started", `${node.label}${rn.visits > 1 ? ` (visit ${rn.visits})` : ""}`, { node: id, visit: rn.visits, kind: node.kind, ...(pk ? { provider: pk.provider, model: pk.model } : {}) });
     this.live.add(key);
-    let res: Result | null = null, err: string | null = null, blocked = false;
+    let res: Result | null = null, err: string | null = null, blocked = false, thrown: unknown = null;
     try {
       const h = node.kind === "card" && node.args?.mode && this.cardModes[node.args.mode] ? this.cardModes[node.args.mode] : this.kinds[node.kind];
-      if (!h) throw new Error(`no runner for node kind ${node.kind}`);
+      if (!h) throw new FailureError("internal.bug", `no runner for node kind ${node.kind}`);
       for (const guard of Object.values(this.beforeStart)) { res = await guard(x); if (res) break; }
       if (!res) res = await h.start(x);
       res = await this.afterChecks(x, step, res);
-    } catch (e: any) { err = String(e?.message ?? e).slice(0, 1200); blocked = e?.outcome === "blocked"; } // a RoundBlocked (e.g. a broken shared git config): never retried
+    } catch (e: any) { err = String(e?.message ?? e).slice(0, 1200); blocked = e?.outcome === "blocked"; thrown = e; } // a RoundBlocked (e.g. a broken shared git config): never retried
     finally { this.live.delete(key); }
-    this.finish(r, node, rn, step, res, err, blocked);
+    this.finish(r, node, rn, step, res, err, blocked, thrown);
   }
   /** An agent or card node's own checks run once it has produced; a blocking fail makes it fail. */
   private async afterChecks(x: X, step: Step, res: Result | null): Promise<Result | null> {
@@ -530,12 +547,13 @@ export class Engine {
     if (FAILS.includes(res.outcome) || (res as any).stopped) return res; // a round stopped before its agent produced nothing to check
     const out = await this.runChecks(x, x.node.checks, null);
     step.checks = out.entries.map((e) => ({ check: e.check, verdict: e.verdict, seq: e.seq }));
-    if (out.blocked.length) return { outcome: "fail", note: `${out.blocked.map((e) => `${e.check}: ${e.verdict}`).join(", ")}${res.note ? ` · ${res.note}` : ""}` };
+    if (out.blocked.length) { const note = `${out.blocked.map((e) => `${e.check}: ${e.verdict}`).join(", ")}${res.note ? ` · ${res.note}` : ""}`;
+      return { outcome: "fail", note, failure: this.checkFailure(x, out.blocked, "deterministic.check") }; }
     return { outcome: res.outcome, note: [res.note, `${out.entries.filter((e) => e.verdict === "pass").length}/${out.entries.length} checks pass`].filter(Boolean).join(" · ") };
   }
 
   /** A node's attempt ended (or is now waiting on a card). */
-  private finish(r: Run, node: WNode, rn: NodeRun, step: Step, res: Result | null, err: string | null, blocked = false) {
+  private finish(r: Run, node: WNode, rn: NodeRun, step: Step, res: Result | null, err: string | null, blocked = false, thrown: unknown = null) {
     // whatever way the node ends this step (waiting on its card, a retry, an error, a late result), its card is no longer being raised: once, here
     if (rn.card) this.raising.get(rn.card)?.resolve();
     // a step that failed after raising its card leaves no open card behind (a retry raises its own)
@@ -546,6 +564,8 @@ export class Engine {
     if (TERMINAL.includes(r.status)) { if (step.state === "running" || step.state === "waiting") { step.state = "skipped"; step.endedAt = now(); step.note = `late result refused (the run is ${r.status})`; } if (rn.state === "running") { rn.state = "skipped"; rn.cause = `the run is ${r.status}`; } this.commit(r, "late result refused"); return; }
     if (err) {
       step.state = "error"; step.error = err; step.endedAt = now();
+      // classified at the source when it threw a typed failure; otherwise by its words (no rule: internal, with diagnostics)
+      rn.data.failure = fromError(thrown ?? err, { source: node.kind === "agent" ? "agent" : node.kind === "check" ? "check" : "engine", run: r.id, node: node.id, visit: rn.visits, inputs: this.failureInputs(r, node), log: rn.job ? { k: "job", job: rn.job, run: r.id, node: node.id, round: String(rn.visits) } : null });
       // blocked: the step cannot start safely (its reason says why); a retry would hit the same wall
       if (!blocked && rn.attempt < (node.retries ?? 0)) {
         rn.attempt++; rn.visits--; rn.state = "pending"; rn.cause = `retry ${rn.attempt + 1}: ${err.slice(0, 120)}`; r.queue.push(node.id); this.commit(r, "retry");
@@ -572,6 +592,7 @@ export class Engine {
     }
     const outcome = (res as any)?.outcome ?? "ok";
     const failed = FAILED_OUTCOMES.has(outcome);
+    rn.data.failure = (res as any)?.failure ?? null; // a source that knows its failure's class says so with its result
     step.state = failed ? "failed" : "passed"; step.outcome = outcome; step.note = (res as any)?.note ?? step.note; step.endedAt = now();
     rn.attempt = 0; rn.state = failed ? "failed" : "passed"; rn.outcome = outcome; rn.cause = failed ? ((res as any)?.cause ?? outcome) : `→ ${outcome}`; rn.waiting = null; rn.endedAt = now(); rn.note = step.note;
     if (r.def.edges.some((e) => e.from === node.id)) rn.routing = { outcome }; // one durable step: the result and the routing still to do
@@ -598,7 +619,8 @@ export class Engine {
           this.edgeOwners.set(token, { run: r, node, rn: x.rn, visit: x.visit, head: x.ctx.head ?? null });
           let out: Awaited<ReturnType<Engine["runChecks"]>>;
           try { out = await this.runChecks(x, e.checks!, ekey(e)); if (!this.owns(x)) {
-            if (this.runs.get(r.id) === r && !TERMINAL.includes(r.status) && !this.gone.has(r.id)) { r.status = "failed"; r.endedAt = now(); r.error = "edge ownership or head changed during checks"; this.stopAll(r,r.error); this.commit(r,r.error); this.emit(r,"failed",r.error); } return;
+            if (this.runs.get(r.id) === r && !TERMINAL.includes(r.status) && !this.gone.has(r.id)) { r.status = "failed"; r.endedAt = now(); r.error = "edge ownership or head changed during checks"; this.stopAll(r,r.error); this.commit(r,r.error); this.emit(r,"failed",r.error);
+            this.raiseFailure(r, node, failure("internal.bug", r.error, { source: "engine", run: r.id, node: node.id, visit: x.visit, diagnostics: { edge: ekey(e), head: String(x.ctx.head ?? "") } })); } return;
           } }
           finally { this.edgeOwners.delete(token); delete x.edgeOwner; }
           if (TERMINAL.includes(r.status) || this.gone.has(r.id)) return;
@@ -607,6 +629,7 @@ export class Engine {
           if (out.blocked.length) {
             this.emit(r, "edge_blocked", `${ekey(e)}: ${out.blocked.map((y) => `${y.check} ${y.verdict}`).join(", ")}`, { node: node.id, edge: ekey(e) });
             const rn = r.nodes[node.id]; rn.state = "failed"; rn.outcome = "fail"; rn.cause = `edge ${ekey(e)} blocked`; rn.routing = { outcome: "fail" }; if (st) { st.state = "failed"; st.outcome = "fail"; }
+            rn.data.failure = this.checkFailure(x, out.blocked, "deterministic.gate", ekey(e));
             this.commit(r, rn.cause);
             return this.route(r, node, "fail");
           }
@@ -619,6 +642,7 @@ export class Engine {
       r.error = outcome === "cap" ? `${node.label}: the round cap was reached` : outcome === "error" ? `${node.label} failed: ${r.nodes[node.id].error ?? ""}` : `${node.label} ended with "${outcome}" and no edge takes it`;
       r.nodes[node.id].routing = null; this.stopAll(r, "the run failed");
       this.commit(r, `no edge for ${outcome}`); this.emit(r, "failed", r.error, { node: node.id });
+      this.raiseFailure(r, node, this.failureOf(r, node, outcome));
       return;
     }
     for (const e of take) this.deliver(r, e.to, node.id);
@@ -666,6 +690,7 @@ export class Engine {
     r.status = "succeeded"; r.result = node.args?.result ?? (FAILED_OUTCOMES.has(outcome) ? outcome : "done"); r.endedAt = now();
     this.stopAll(r, "the run ended");
     this.commit(r, `ended at ${node.id}`); this.emit(r, r.result === "done" ? "done" : "closed", node.args?.summary ? fill(node.args.summary, r) : `${node.label}`, { result: r.result });
+    if (FAILED_OUTCOMES.has(outcome) && !node.args?.result) this.raiseFailure(r, node, this.failureOf(r, node, outcome)); // a run that ends on a failed outcome is a failure too, never only a word in its result
   }
 
   // ---------- checks ----------
@@ -965,6 +990,7 @@ export class Engine {
   cardReadyMs = 30_000;
   async answer(cardId: string, a: { choice: string; note?: string | null; by: string; confirm?: string | null; aligned?: number[] | null; localRescope?: LocalRescope | null }) {
     const c0 = this.cards.get(cardId); if (!c0) throw new Error("no such card");
+    if (c0.kind === "failure") return this.answerFailure(c0, a);
     const r = this.must(c0.run);
     if(this.repreparing.has(`${r.id}/${c0.node}`))throw new Error("Captain card preparation is still running; no answer was submitted");
     // a card is visible as soon as it is raised; its node finishes raising it (the STE check) a moment later: wait for that, not longer than cardReadyMs
@@ -976,6 +1002,11 @@ export class Engine {
     if(this.repreparing.has(`${r.id}/${c0.node}`))throw new Error("Captain card preparation is still running; no answer was submitted");
     const rn = r.nodes[c0.node]; if (rn?.state !== "running" || rn.waiting !== "card" || rn.card !== c0.id) throw new Error("this card is not the one its node waits on");
     this.deps.authorizeAnswer?.(r,c0,a);
+    // a rescope with the very note of the last rescope on this run changes nothing: refused, with why (runtime/failures.ts)
+    if (a.choice === ACT.rescope && c0.status === "open" && c0.options.some((o) => o.id === ACT.rescope)) {
+      const last = Object.values(r.ctx.answers ?? {}).filter((x: any) => x?.choice === ACT.rescope && x.note).sort((x: any, y: any) => String(x.at).localeCompare(String(y.at))).at(-1) as any;
+      const no = rescopeRefusal({ note: a.note, previous: last?.note ?? null }); if (no) throw new FailureRefusal(no);
+    }
     const c = this.cards.answer(cardId, a);
     const node = r.def.nodes.find((n) => n.id === c.node)!;
     const x = this.x(r, node, rn);
@@ -1037,6 +1068,120 @@ export class Engine {
     }finally{this.repreparing.delete(key);if(stage.prepared)this.raising.get(stage.prepared)?.resolve();}})();
     void this.track(x.run,'captain card preparation',work);return work;
   }
+  // ---------- failures (src/runtime/failures.ts): one class, one card, one next action ----------
+  /** What a failed attempt ran on. A deterministic failure is retried only when one of these changes. */
+  failureInputs(r: Run, node: WNode | null): InputSnapshot {
+    const rn = node ? r.nodes[node.id] : null; const short = (v: unknown) => { const j = typeof v === "string" ? v : JSON.stringify(v ?? null); return j.length > 160 ? `sha256:${inputsHash({ v: j }).slice(0, 16)}` : j; };
+    let pick = "default"; try { if (node && (node.kind === "agent" || node.kind === "loop")) { const p = this.x(r, node, rn!).pick(); pick = `${p.provider}·${p.model ?? "default"}${p.effort ? `·${p.effort}` : ""}`; } } catch {}
+    let policy = ""; try { policy = inputsHash({ org: JSON.stringify(this.policies.org()), project: JSON.stringify(this.policies.project(r.ctx.project ?? r.params.project ?? null)), adds: JSON.stringify(r.ctx.policyAdds ?? {}) }).slice(0, 16); } catch {}
+    return { workflow: `${r.workflow}@v${r.version}`, params: short(r.params), agent: pick, head: String(r.ctx.head ?? ""), base: String(r.ctx.baseCommit ?? r.ctx.base ?? ""), spec: String(r.ctx.spec?.version ?? ""),
+      policy, budget: String(rn?.extra ?? 0), ...this.failureInputExtra(r, node) };
+  }
+  /** A domain adds what else its node reads (a coffee film adds its input digest). */
+  failureInputExtra: (r: Run, node: WNode | null) => InputSnapshot = () => ({});
+  /** environment probes by code: a string says what is still broken (Fix and retry is refused), null says fixed or unknown */
+  failureProbes: Partial<Record<FailureCode, (r: Run) => string | null>> = {};
+  /** transient retries wait this long (failures.ts backoffMs); a test may shorten it */
+  failureBackoff: (attempt: number) => number = (a) => [5_000, 30_000, 120_000, 600_000][Math.min(3, Math.max(0, a - 1))];
+  /** A failure from blocking check entries, with the check's evidence as the log reference. */
+  checkFailure(x: X, blocked: LedgerEntry[], code: "deterministic.check" | "deterministic.gate", edge: string | null = null): Failure {
+    const toolErr = blocked.every((e) => e.verdict === "error");
+    const message = blocked.map((e) => `${e.check}: ${e.verdict}${(e as any).error ? ` (${(e as any).error})` : ""}${e.findings?.length ? ` — ${e.findings.slice(0, 3).map((f) => f.message).join("; ")}` : ""}`).join("\n");
+    // a check that could not run (verdict error) is not a verdict on the inputs: its words decide (sandbox, timeout, tool), else a Studio bug
+    const c: FailureCode = toolErr ? (codeOf(message) === "internal.unmapped" ? "internal.bug" : codeOf(message)) : code;
+    const first = blocked[0] as any;
+    return failure(c, message, { source: edge ? "gate" : "check", run: x.run.id, node: x.node.id, visit: x.visit, inputs: this.failureInputs(x.run, x.node),
+      log: first?.dir ? { k: "evidence", run: x.run.id, dir: String(first.dir), file: "output.txt" } : null, diagnostics: c.startsWith("internal") ? { checks: blocked.map((e) => `${e.check}#${e.seq}`).join(", "), edge: edge ?? "" } : null });
+  }
+  /** The failure that ended a run at this node: what the source said, else the outcome's own class, else its words. */
+  failureOf(r: Run, node: WNode, outcome: string): Failure {
+    const rn = r.nodes[node.id]; const o = { source: "engine" as const, run: r.id, node: node.id, visit: rn.visits, inputs: this.failureInputs(r, node), log: rn.job ? { k: "job" as const, job: rn.job, run: r.id, node: node.id, round: String(rn.visits) } : null };
+    const known = rn.data.failure as Failure | null;
+    if (known && known.node === node.id) return { ...known, inputs: known.inputs ?? { hash: inputsHash(o.inputs), snapshot: o.inputs } };
+    const note = String(rn.note ?? rn.error ?? "");
+    if (outcome === "cap") return failure("deterministic.round-cap", `${node.label}: the round cap was reached${note ? ` (${note})` : ""}`, o);
+    if (outcome === "timeout") return failure("transient.timeout", note || `${node.label} stopped at its time limit`, o);
+    if (outcome === "ask") return failure("ask.agent-question", note || rn.data.report?.summary || `${node.label} asks a question`, { ...o, source: "agent" });
+    if (outcome === "error") return fromError(rn.error ?? "", o);
+    const byWords = note ? codeOf(note) : "internal.unmapped";
+    if (byWords !== "internal.unmapped") return failure(byWords, note, o);
+    if (outcome === "fail") return failure("deterministic.agent-result", note || `${node.label} ended with "fail"`, o);
+    return failure("internal.unmapped", `${node.label} ended with "${outcome}" and no edge takes it${note ? `: ${note}` : ""}`, { ...o, diagnostics: { outcome, note, cause: String(rn.cause ?? ""), state: rn.state } });
+  }
+  /** The run failed: keep the typed failure on it and raise its card (captain only: no grant answers it). */
+  raiseFailure(r: Run, node: WNode | null, f: Failure) {
+    if (this.gone.has(r.id)) return null;
+    if (f.class === "transient" && node) { const attempt = (r.nodes[node.id].data.failureRetries ?? 0) + 1; f = { ...f, retry: { attempt, backoffMs: this.failureBackoff(attempt) } }; }
+    r.failure = f; r.failures = [...(r.failures ?? []), f].slice(-20);
+    const b = failureCardBody(f, { label: node?.label });
+    const sec = (p: { why: string; how: string }) => ({ ...emptySections(), intent: r.text.split("\n")[0].slice(0, 300) || r.title, ...p });
+    let c: SCard | null = null;
+    try { c = this.cards.create({ run: r.id, node: node?.id ?? "", visit: node ? r.nodes[node.id].visits : 0, kind: "failure", title: { en: b.title, "zh-TW": b.zhTitle }, sections: { en: sec(b.en), "zh-TW": sec(b.zh) }, body: b.body,
+      options: b.options, confirmDoor: false, door: null, links: f.log.href ? [{ label: "Open the log", href: f.log.href }] : [], detail: null, captainOnly: true, workflow: r.workflow, runTitle: r.title, ledger: null, ste: null, failure: f }); }
+    catch (e: any) { this.emit(r, "log", `failure card could not be raised: ${String(e?.message ?? e).slice(0, 200)}`); }
+    r.failureCard = c?.id ?? null; this.commit(r, `failure ${f.class}: ${f.code}`);
+    this.emit(r, "failure", `${f.class} · ${f.code}: ${f.message.slice(0, 200)}`, { node: node?.id ?? null, card: c?.id ?? null, class: f.class, code: f.code });
+    return c;
+  }
+  /** The brief an agent gets on the visit after a failure card: the captain's answer, or the rescope note. */
+  private failureBrief(x: X): string {
+    const fa = x.rn.data.failureAnswer as { kind: string; question: string; note: string } | undefined; if (!fa) return "";
+    return fa.kind === "answer" ? `\n\nCAPTAIN'S ANSWER\nYou asked: ${fa.question}\nThe captain answered: ${fa.note}\nContinue the same step with this answer.`
+      : fa.kind === "rescope" ? `\n\nCAPTAIN'S RESCOPE\nThe last attempt failed: ${fa.question}\nThe captain changed the scope: ${fa.note}` : `\n\nCAPTAIN'S NOTE\n${fa.note}`;
+  }
+  /** The captain answered a failure card. Refusals (no change, not fixed, vague note) leave the card open and say why. */
+  async answerFailure(c: SCard, a: { choice: string; note?: string | null; by: string; confirm?: string | null }) {
+    const r = this.must(c.run); const f = c.failure;
+    if (!f || c.status !== "open" || r.failureCard !== c.id || !TERMINAL.includes(r.status) || r.parked) throw new Error(c.status !== "open" ? `this card is ${c.status}: a card is answered exactly once` : "this failure card is no longer the run's current failure");
+    if (!c.options.some((o) => o.id === a.choice)) throw new Error(`choose one of ${c.options.map((o) => o.id).join(", ")}`);
+    if (String(a.by).startsWith("auth window")) throw new Error("a failure card is answered by the captain only");
+    const b = this.busy(r.id); if (b) throw new Error(`still finishing: ${b}. Answer again once that is done`);
+    const node = r.def.nodes.find((n) => n.id === c.node) ?? null; const note = String(a.note ?? "").trim();
+    const refuse = (x: { en: string }) => { throw new FailureRefusal(x as any); };
+    let delay = 0, params: Record<string, string> | null = null;
+    if (a.choice === ACT.park) { const ans = this.cards.answer(c.id, a); r.parked = { by: a.by, at: now(), note: note || null }; this.recordFailure(r, c, "park"); this.commit(r, "parked"); this.emit(r, "parked", `parked after ${f.class} · ${f.code}`, { card: c.id }); return ans; }
+    if (a.choice === ACT.report) {
+      const dir = join(this.deps.dataDir, "failures"); mkdirSync(dir, { recursive: true });
+      const file = join(dir, `${r.id}-${c.id}.json`);
+      writeFileSync(file, JSON.stringify({ schema: 1, failure: f, run: { id: r.id, workflow: r.workflow, version: r.version, status: r.status, error: r.error, steps: r.steps.slice(-20), nodes: this.nodeStates(r) }, note: note || null, by: a.by, at: now() }, null, 1));
+      const ans = this.cards.answer(c.id, a); this.recordFailure(r, c, "report", { file: `failures/${r.id}-${c.id}.json` }); this.emit(r, "failure_reported", `${f.code}: diagnostics kept in failures/${r.id}-${c.id}.json`, { card: c.id }); return ans;
+    }
+    if (!node) throw new Error("this failure has no step to run again: report it or park it");
+    if (a.choice === ACT.retry || a.choice === ACT.fixRetry) {
+      if (f.class === "deterministic") { const no = retryRefusal(f, this.failureInputs(r, node)); if (no) refuse(no); }
+      if (f.class === "environment") { const still = this.failureProbes[f.code]?.(r); if (still) refuse({ en: `Fix and retry refused: it is still not fixed: ${still}`, "zh-TW": `已拒絕重試：問題仍未修好：${still}` } as any); }
+      if (f.class === "transient") delay = this.failureBackoff(f.retry?.attempt ?? 1);
+    } else if (a.choice === ACT.rescope) {
+      const no = rescopeRefusal({ note, previous: r.ctx.failureRescope?.note ?? null, requireConcrete: true }); if (no) refuse(no);
+    } else if (a.choice === ACT.editParams) {
+      const known = [...new Set([...Object.keys(r.def.params ?? {}), ...Object.keys(r.params)])];
+      const got = parseParamEdit(note, r.params, Object.keys(r.def.params ?? {}).length ? Object.keys(r.def.params ?? {}) : known.length ? known : null);
+      if ("code" in got) refuse(got); else params = got.params;
+    } else if (a.choice !== "answer") throw new Error(`choose one of ${c.options.map((o) => o.id).join(", ")}`);
+    const ans = this.cards.answer(c.id, a);
+    const rn = r.nodes[node.id];
+    if (params) { r.params = { ...r.params, ...params }; }
+    if (a.choice === ACT.answer) { rn.data.failureAnswer = { kind: "answer", question: f.message, note }; r.ctx.answers = { ...(r.ctx.answers ?? {}), [node.id]: ans.answer }; }
+    else if (a.choice === ACT.rescope) { rn.data.failureAnswer = { kind: "rescope", question: f.message, note }; r.ctx.failureRescope = { node: node.id, note, at: now() }; }
+    else delete rn.data.failureAnswer;
+    this.recordFailure(r, c, a.choice, params ? { params } : {});
+    // the run goes on from the same step: nothing else is reset, every earlier step and record stays
+    r.status = "running"; r.result = null; r.endedAt = null; r.error = null; r.failureCard = null; r.queue = [];
+    rn.state = "pending"; rn.waiting = null; rn.card = null; rn.attempt = 0; rn.routing = null; rn.data.failure = null;
+    if (node.max_visits && rn.visits >= node.max_visits + (rn.extra ?? 0)) rn.extra = (rn.extra ?? 0) + 1;
+    rn.data.failureRetries = (rn.data.failureRetries ?? 0) + 1; this.aborts.delete(r.id);
+    rn.cause = delay ? `retry after ${Math.round(delay / 1000)} s (backoff)` : `${a.choice} on ${c.id}`;
+    this.commit(r, rn.cause); this.emit(r, "failure_retry", `${node.label}: ${a.choice} after ${f.class} · ${f.code}${delay ? ` (waits ${Math.round(delay / 1000)} s)` : ""}`, { node: node.id, card: c.id, choice: a.choice, delayMs: delay });
+    const go = () => { if (this.runs.get(r.id) !== r || this.gone.has(r.id) || TERMINAL.includes(r.status) || rn.state !== "pending") return; if (!r.queue.includes(node.id)) r.queue.push(node.id); this.tick(r); };
+    if (delay) { rn.state = "running"; (rn as any).waiting = "backoff"; rn.data.backoffUntil = new Date(Date.now() + delay).toISOString(); r.status = "waiting"; this.commit(r, "backoff");
+      setTimeout(() => { if (rn.state === "running" && (rn as any).waiting === "backoff") { rn.state = "pending"; rn.waiting = null; delete rn.data.backoffUntil; go(); } }, delay); }
+    else go();
+    return ans;
+  }
+  private recordFailure(r: Run, c: SCard, choice: string, extra: Record<string, unknown> = {}) {
+    const node = r.def.nodes.find((n) => n.id === c.node) ?? r.def.nodes[0]; if (!node) return;
+    this.record(this.x(r, node, r.nodes[node.id]), "failure-answer", { actor: c.answer?.by ?? "captain", data: { card: c.id, class: c.failure?.class, code: c.failure?.code, choice, note: c.answer?.note ?? null, ...extra } });
+  }
   async card(x: X, kind: CardKind, b: Body): Promise<SCard> {
     if (!this.owns(x)) throw new Error("card owner ended before presentation");
     if(x.run.continuation?.node===x.node.id&&x.run.continuation.visit===x.visit)b={...b,captainOnly:true};
@@ -1045,7 +1190,7 @@ export class Engine {
     const zh = sec({ intent: en.intent, ...b.zh });
     const c = this.cards.create({ run: x.run.id, node: x.node.id, visit: x.rn.visits, kind, title: { en: b.title, "zh-TW": b.zhTitle ?? b.title }, sections: { en, "zh-TW": zh }, body: b.body ?? "",
       options: b.options ?? x.node.card?.options ?? [{ id: "approve", label: "Approve", primary: true }, { id: "reject", label: "Reject" }],
-      confirmDoor: !!x.node.card?.confirm_door, door: b.door ?? (x.node.card?.door_from ? (x.ctx[x.node.card.door_from]?.door ?? x.ctx[x.node.card.door_from] ?? null) : null), links: b.links ?? [], detail: b.detail ?? null, ...(b.captainOnly ? { captainOnly: true } : {}), workflow: x.run.workflow, runTitle: x.run.title, ledger: b.ledger ?? null, ste: null, captures: b.captures ?? null });
+      confirmDoor: !!x.node.card?.confirm_door, door: b.door ?? (x.node.card?.door_from ? (x.ctx[x.node.card.door_from]?.door ?? x.ctx[x.node.card.door_from] ?? null) : null), links: b.links ?? [], detail: b.detail ?? null, ...(b.captainOnly ? { captainOnly: true } : {}), workflow: x.run.workflow, runTitle: x.run.title, ledger: b.ledger ?? null, ste: null, captures: b.captures ?? null, ...(b.failure ? { failure: b.failure } : {}) });
     const staged=this.repreparing.get(`${x.run.id}/${x.node.id}`);if(staged){if(staged.prepared){this.cards.cancel(c.id);throw new Error("One replacement card per preparation");}staged.prepared=c.id;}else{x.rn.card = c.id; this.commit(x.run, `card ${c.id} raised`);}
     { let done!: () => void; const p = new Promise<void>((res) => (done = res)); this.raising.set(c.id, { done: p, resolve: () => { this.raising.delete(c.id); done(); } }); }
     this.emit(x.run, "card_raised", `${c.id} ${c.title.en}`, { node: x.node.id, card: c.id, kind });
@@ -1133,7 +1278,7 @@ export class Engine {
       async start(x: X) {
         x.rn.data.stoppedBeforeAgent = false;
         try { const outcome = await self.runAgent(x); return { outcome, ...(x.rn.data.stoppedBeforeAgent ? { stopped: true } : {}) } as any; }
-        catch (e: any) { if (!(e instanceof QueueRefusal) && !(e instanceof ProviderRefusal) || x.cancelled()) throw e; return self.queueCapability(x, e.message); }
+        catch (e: any) { if (!(e instanceof QueueRefusal) && !(e instanceof ProviderRefusal) || x.cancelled()) throw e; return self.queueCapability(x, e.message, e); }
       },
       async answer(x: X, c: SCard) {
         if (!x.rn.data.nativeQueueCapability) return { outcome: c.answer!.choice, note: c.answer!.note };
@@ -1200,7 +1345,7 @@ export class Engine {
       { const loaded = (x.node.kind === "agent" && Array.isArray(x.node.skills) ? x.node.skills : []).map((p) => `${p.id}@v${p.v}`);
         const step = [...x.run.steps].reverse().find((s) => s.node === x.node.id && s.state === "running");
         if (step && loaded.length) { step.skills = loaded; x.save(); if (!hop) x.log(`skills loaded: ${loaded.join(", ")}`); } }
-      const base = mode.prompt(x);
+      const base = mode.prompt(x) + this.failureBrief(x);
       const text = handoff ? `${base}\n\nHANDOFF\nAnother agent started this step and was stopped. Its hand-off follows; continue from the current state instead of starting over.\n${handoff}` : base;
       x.ctx.lastPrompt = { ...(x.ctx.lastPrompt ?? {}), [x.node.id]: base.slice(0, 6000) };
       const tl = Number(x.node.timeout_s ?? x.policy("round_timeout_s", 900));
@@ -1240,7 +1385,9 @@ export class Engine {
           evidence: [], proves: [], blocking: true, params: { round_timeout_s: tl }, ms: tl * 1000 } as any);
         return "timeout";
       }
-      if (job.status !== "done") throw new Error(job.error ?? `the agent run ${job.status}`);
+      if (job.status !== "done") { const m = job.error ?? `the agent run ${job.status}`; const code = JOB_CODES[(job as any).errorCode ?? ""] ?? null;
+        const f = fromError(code ? new FailureError(code, m) : new Error(m), { source: "agent", run: x.run.id, node: x.node.id, visit: x.visit, log: { k: "job", job: job.id, run: x.run.id, node: x.node.id, round: String(x.visit) } });
+        throw Object.assign(new Error(m), { failure: f }); }
       x.rn.data = { ...x.rn.data, handoff: null };
       return await mode.after(x, job);
     }

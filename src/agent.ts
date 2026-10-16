@@ -21,7 +21,7 @@ export type AgentTool = { name: string; description: string; schema: unknown; ru
 export type AgentLog = { ts: string; kind: "start" | "tool" | "result" | "text" | "end" | "error"; text: string };
 export type AgentJob = {
   id: string; kind: string; title: string; provider: string; model: string; status: "running" | "done" | "failed" | "cancelled";
-  started: string; ended: string | null; tools: number; cost: Cost | null; said: string; error: string | null; log: AgentLog[]; ref: string | null; reasoningEffort?: string | null; executionMode?: string;
+  started: string; ended: string | null; tools: number; cost: Cost | null; said: string; error: string | null; /** the provider's end code (notLoggedIn, quotaExhausted, …) when it gave one */ errorCode?: string | null; log: AgentLog[]; ref: string | null; reasoningEffort?: string | null; executionMode?: string;
   /** the captain's operating rules this job received: the hash of the exact section text and the project it was read for */
   operatingRules?: { hash: string; project: string | null };
 };
@@ -172,7 +172,7 @@ export class Agents {
             const u = (e as any).usage; if (u) job.cost = { usd: u.usd ?? null, inTokens: u.inTokens ?? null, outTokens: u.outTokens ?? null };
             if (why === "cancelled") { job.status = "cancelled"; job.error = "cancelled"; }
             else if (why === "timeout") { job.status = "failed"; job.error = `no result within ${Math.round(timeoutMs / 1000)} s`; }
-            else if (e.status !== "ok") { job.status = "failed"; job.error = e.message ?? e.code ?? "the agent run failed"; }
+            else if (e.status !== "ok") { job.status = "failed"; job.error = e.message ?? e.code ?? "the agent run failed"; if ((e as any).code) job.errorCode = String((e as any).code); } // the provider's own code keeps the failure's class (runtime/failures.ts)
             else job.status = "done";
             break;
           }
