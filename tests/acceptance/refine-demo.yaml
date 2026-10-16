@@ -1,0 +1,17 @@
+# Retired built-in: not seeded for new Tasks (src/runtime/defs.ts RETIRED_DEFAULTS). The live driver skips it.
+schema: 2
+workflow: refine-demo
+pin: { version: 1, sha256: "3ebf0e347452c9f598732f834169104128d76a8e7dd52f43392391074030d959" }   # bun scripts/acceptance/pin.ts refine-demo
+topic: "Acceptance: internal workflow"
+start: { provider: null, params: {} }
+providers: []
+approvals: { staffing: false }
+cards: []
+budget: { wall_minutes: 5, max_rounds: 1 }
+live: false
+expect: { status: succeeded, artifacts: [] }
+stub:
+  - name: retired
+    covers: "the board's workflow list does not offer it and the start route refuses it"
+    how: retired
+    board_refusal: { status: 409, error: "internal or retired" }

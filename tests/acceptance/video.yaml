@@ -16,3 +16,8 @@ expect:
   result: done
   artifacts: [{ deliver: 1 }]
 budget: { wall_minutes: 40, max_rounds: 18 }
+stub:
+  - name: approve
+    covers: "editor round on the film template → render (the renderer's own stub) → checks → approve → Library"
+    provider: codex
+    expect: { status: succeeded, visited: [intake, produce, draft, render, checks, refine, accept, library, done], library: true }

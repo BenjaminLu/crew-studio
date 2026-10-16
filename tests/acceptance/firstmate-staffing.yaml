@@ -1,0 +1,21 @@
+# Staffing confirmation: started by the captain's staffing interview (/api/intake/staffing, internal).
+schema: 2
+workflow: firstmate-staffing
+pin: { version: 1, sha256: "0fd2ee8dfbb81ab2093170f0e49eb070284f273331587e8c7220323fde823a10" }   # bun scripts/acceptance/pin.ts firstmate-staffing
+topic: "Acceptance: internal workflow"
+start: { provider: null, params: {} }
+providers: []
+approvals: { staffing: false }
+cards: []
+budget: { wall_minutes: 5, max_rounds: 1 }
+live: false
+expect: { status: succeeded, artifacts: [] }
+stub:
+  - name: approve
+    covers: "a project Firstmate registered → the captain's staffing interview for code-firstmate → confirmation card → active; the board cannot start it"
+    how: staffing
+    setup: [register]
+    target: { workflow: code-firstmate, params: { project: "{project}" } }
+    board_refusal: { status: 409, error: "internal or retired" }
+    cards: [{ node: confirm, answer: approve }]
+    expect: { status: succeeded, visited: [confirm, activate, done], not_visited: [closed] }

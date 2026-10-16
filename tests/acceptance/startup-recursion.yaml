@@ -16,3 +16,15 @@ expect:
   # the signed competition text the accept node writes into the run folder (startup-output-fix, 269c9c0)
   artifacts: [{ file: startup-output/competition.md }]
 budget: { wall_minutes: 40, max_rounds: 10 }
+stub:
+  - name: template-accept
+    covers: "board start with Default provider → captain picks the template → Claude founder (verified receipt) → Codex judge says ready → captain accepts the transcript"
+    expect: { status: succeeded, result: done, visited: [choose, pitch1, judge1, accept, done], not_visited: [pitch2], approved: "startup-{task}" }
+  - name: revise
+    covers: "the judge asks for a revision (ACCEPT_REVISE) → a second founder and judge round → accept"
+    topic: "A service that turns a team's meeting notes into a weekly risk list. ACCEPT_REVISE"
+    expect: { status: succeeded, visited: [pitch1, judge1, pitch2, judge2, accept, done], approved: "startup-{task}" }
+  - name: close
+    covers: "captain closes the choice card: no paid round runs"
+    cards: [{ node: choose, answer: close }]
+    expect: { status: succeeded, result: closed, visited: [choose, closed], not_visited: [pitch1] }

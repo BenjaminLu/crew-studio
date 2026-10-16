@@ -95,7 +95,8 @@ try {
   await waitUp(base, app);
 
   // --- scenario format (the reviewed list the stub harness shares) ---
-  const bundled = readdirSync(join(repo, "tests/acceptance")).filter((f) => f.endsWith(".yaml"));
+  // internal and retired workflows have a scenario too (live: false, for the offline stub harness); the Start form offers the rest
+  const bundled = readdirSync(join(repo, "tests/acceptance")).filter((f) => f.endsWith(".yaml") && loadScenario(join(repo, "tests/acceptance", f)).live !== false);
   const catalog = (await api("/api/wf")).workflows.map((w: any) => w.id).filter((id: string) => !id.startsWith("accept-")).sort();
   ok(JSON.stringify(bundled.map((f) => f.replace(/\.yaml$/, "")).sort()) === JSON.stringify(catalog), "one reviewed scenario per bundled workflow on the Start form", `${bundled} vs ${catalog}`);
   const problems = bundled.flatMap((f) => { try { loadScenario(join(repo, "tests/acceptance", f)); return []; } catch (e: any) { return [`${f}: ${e.message}`]; } });

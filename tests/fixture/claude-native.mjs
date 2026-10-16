@@ -2,7 +2,9 @@
 import{appendFileSync,readFileSync,writeFileSync}from'node:fs';import{dirname,join,basename}from'node:path';
 const root=dirname(process.argv[1]),mode=basename(process.argv[1]).replace('.mjs',''),args=process.argv.slice(2),trace=join(root,'trace.jsonl');
 const put=x=>process.stdout.write(JSON.stringify(x)+'\n');
-appendFileSync(trace,JSON.stringify({mode,phase:args[0]==='auth'?'auth':'model',home:process.env.HOME,config:process.env.CLAUDE_CONFIG_DIR,credentialKeys:['CLAUDE_CODE_OAUTH_TOKEN','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN'].filter(k=>process.env[k]),effort:args[args.indexOf('--effort')+1],settings:args.includes('--settings')?JSON.parse(args[args.indexOf('--settings')+1]):null})+'\n');
+// the acceptance harness's login (tests/acceptance.ts) leaves no trace next to this file: its rounds cannot write here
+const acceptance=/^sk-ant-oat01-acceptance/.test(process.env.CLAUDE_CODE_OAUTH_TOKEN??'');
+if(!acceptance)appendFileSync(trace,JSON.stringify({mode,phase:args[0]==='auth'?'auth':'model',home:process.env.HOME,config:process.env.CLAUDE_CONFIG_DIR,credentialKeys:['CLAUDE_CODE_OAUTH_TOKEN','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN'].filter(k=>process.env[k]),effort:args[args.indexOf('--effort')+1],settings:args.includes('--settings')?JSON.parse(args[args.indexOf('--settings')+1]):null})+'\n');
 if(JSON.stringify(args)==='["auth","status","--json"]'){
  if(mode==='auth-unknown'){put({loggedIn:'true',authMethod:'oauth_token',apiProvider:'firstParty'});process.exit(0);}
  // macOS Keychain lookup needs the login user: without USER/LOGNAME the real CLI reports no login
@@ -16,6 +18,7 @@ const canary=args.includes('--max-turns');
 if(canary&&(get('--max-turns')!=='1'||get('--tools')!==''||get('--permission-prompts')!=='none'||get('--setting-sources')!==''||JSON.parse(get('--mcp-config')).mcpServers&&Object.keys(JSON.parse(get('--mcp-config')).mcpServers).length))throw Error('canary authority widened');
 if(mode==='unsupported')process.exit(2);
 if(mode==='hang'){writeFileSync(join(root,'hang.pid'),String(process.pid));setInterval(()=>{},1000);await new Promise(()=>{});}
+if(acceptance&&!canary){const{claudePrint}=await import('../acceptance/agent.mjs');await claudePrint(args);process.exit(process.exitCode??0);}
 const actual=mode==='mismatch'?'claude-opus-5-5':model;
 put({type:'system',subtype:'init',model:actual,tools:mode==='tool'?['Bash']:[]});
 if(!canary&&mode==='worker-tool'){

@@ -13,10 +13,10 @@
 // Exit codes: 0 PASS, 1 FAIL, 2 STOP, 3 BUDGET, 4 setup error (no Studio, bad scenario, bad arguments).
 // --offline-fixture is for the offline test only: it lets the stub provider stand in and stamps the
 // report OFFLINE FIXTURE, which never counts as a live acceptance.
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { discoverInstance } from "../src/instance";
-import { decideCard, defHash, loadScenario, type Scenario } from "./acceptance/scenarios";
+import { decideCard, defHash, loadScenario, openWindowIds, scenarioFiles, SCENARIO_DIR, type Scenario } from "./acceptance/scenarios";
 import { modelCalls, modelProblems, nodeRecords, providersToCheck, REAL } from "./acceptance/report";
 import { redactJSON, redactText } from "../src/secure";
 
@@ -28,7 +28,7 @@ const TERMINAL = new Set(["succeeded", "failed", "cancelled"]);
 // ---------- arguments ----------
 type Args = { workflows: string[]; all: boolean; base: string; topic: string | null; params: string | null; maxMinutes: number | null; maxRounds: number | null; scenario: string | null; scenarios: string; offline: boolean };
 function parseArgs(argv: string[]): Args {
-  const a: Args = { workflows: [], all: false, base: "http://127.0.0.1:4210", topic: null, params: null, maxMinutes: null, maxRounds: null, scenario: null, scenarios: join(REPO, "tests", "acceptance"), offline: false };
+  const a: Args = { workflows: [], all: false, base: "http://127.0.0.1:4210", topic: null, params: null, maxMinutes: null, maxRounds: null, scenario: null, scenarios: SCENARIO_DIR, offline: false };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i], v = () => { const x = argv[++i]; if (x === undefined) throw new Error(`${k} needs a value`); return x; };
     if (k === "--workflow") a.workflows.push(v());
@@ -263,8 +263,7 @@ async function runOne(st: Studio, s: Scenario, a: Args, date: string) {
 async function openWindows(st: Studio, view: any): Promise<string[]> {
   const r = await st.get("/api/policies/auth-window");
   if (r.status !== 200 || !Array.isArray(r.body?.grants)) throw new Error(`could not read the authorization windows: HTTP ${r.status}`);
-  const all: any[] = r.body.grants, revoked = new Set(all.filter((g) => g.revoked).map((g) => g.id)), project = view.ctx?.project ?? view.params?.project ?? null;
-  return all.filter((g) => !g.revoked && !revoked.has(g.id) && Date.parse(g.until) > Date.now() && (!g.project || g.project === project)).map((g) => g.id);
+  return openWindowIds(r.body.grants, view.ctx?.project ?? view.params?.project ?? null);
 }
 
 /** Cancel a Task, retrying for a while: the error that led here may be a Studio restart. */
@@ -333,7 +332,7 @@ async function main() {
   const files: string[] = [];
   if (a.scenario) files.push(resolve(a.scenario));
   for (const w of a.workflows) files.push(join(a.scenarios, `${w}.yaml`));
-  if (a.all) files.push(...readdirSync(a.scenarios).filter((f) => f.endsWith(".yaml")).sort().map((f) => join(a.scenarios, f)));
+  if (a.all) files.push(...scenarioFiles(a.scenarios).filter((f) => loadScenario(f).live !== false)); // internal and retired workflows: the board cannot start them
   const scenarios: Scenario[] = [];
   for (const f of files) { if (!existsSync(f)) { console.error(`live-acceptance: no scenario file ${f}`); return EXIT.ERROR; } try { scenarios.push(loadScenario(f)); } catch (e: any) { console.error(`live-acceptance: ${e.message}`); return EXIT.ERROR; } }
   // find the instance exactly as `open` does; --base selects it by port

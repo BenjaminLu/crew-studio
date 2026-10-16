@@ -13,3 +13,13 @@ expect:
   result: done
   artifacts: [{ deliver: 1 }]
 budget: { wall_minutes: 20, max_rounds: 8 }
+stub:
+  - name: approve
+    covers: "the sandboxed Codex image app-server (stub) → PNG checks → approve → Library"
+    provider: codex
+    expect: { status: succeeded, visited: [intake, draft, checks, accept, library, done], library: true }
+  - name: changes-then-approve
+    covers: "captain asks for changes → the image is redrawn with the previous one as reference → approve"
+    provider: codex
+    cards: [{ node: accept, answers: [changes, approve-draft], note: "Warmer light." }]
+    expect: { status: succeeded, visited: [draft, accept, library, done], library: true, min_visits: { draft: 2 } }

@@ -12,3 +12,13 @@ expect:
   stop_at: dispatch
   artifacts: []
 budget: { wall_minutes: 30, max_rounds: 8 }
+stub:
+  - name: board
+    covers: "board start on the sandbox project with approved staffing → spec round → dispatch card"
+    setup: [staffing-code]
+    params: { project: sandbox }
+    expect: { waiting_on: dispatch, visited: [intake, prepare, spec] }
+    known_failure:
+      observed: "the board start route refuses 400: GitHub review template is saved for editing only. Runtime coding/review activation is not available in this initial slice"
+      root_cause: "src/domain/github-review-workflow.ts:31 authorizeStart refuses every github-review start, while src/runtime/defs.ts:214 selectable() (only internal and retired ids are excluded) lists it, so the board's Start form offers a workflow that can never start"
+      covered_by: "board-start-fixes-20261016 (held GitHub review: not offered on the Start form)"

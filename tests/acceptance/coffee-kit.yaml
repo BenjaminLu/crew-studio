@@ -13,3 +13,16 @@ expect:
   stop_at: direction
   artifacts: []
 budget: { wall_minutes: 10, max_rounds: 4 }
+stub:
+  - name: board
+    covers: "the coffee form after staffing and a validated design plan → direction card"
+    setup: [coffee]
+    params: { project: "{project}", coffeeDesignPlan: "{coffeeDesignPlan}" }
+    expect: { waiting_on: direction, visited: [direction] }
+  - name: confirm-film-unavailable
+    covers: "the coffee form → captain confirms the direction → page round (sandboxed worker) → image (Codex image stub) → no HyperFrames toolchain offline, so the film goes to the capability card → captain closes"
+    setup: [coffee]
+    params: { project: "{project}", coffeeDesignPlan: "{coffeeDesignPlan}" }
+    timeout_s: 180
+    cards: [{ node: direction, answer: confirm }, { node: capability, answer: close }]
+    expect: { status: succeeded, visited: [direction, round, page, image, video, capability, closed], not_visited: [library] }

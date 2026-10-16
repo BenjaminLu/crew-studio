@@ -12,3 +12,21 @@ expect:
   stop_at: interview-answers
   artifacts: []
 budget: { wall_minutes: 15, max_rounds: 4 }
+stub:
+  - name: publish
+    covers: "interview round → captain answers → samples round → captain labels → author round → measure → proposals → one shadow Task → promote → publish"
+    provider: codex
+    timeout_s: 300
+    cards:
+      - { node: interview-answers, answer: continue, before: pack-interview }
+      - { node: label, answer: continue, before: pack-label }
+      - { node: proposals, answer: continue, before: pack-proposals }
+      - { node: shadow, answer: continue, before: pack-shadow }
+      - { node: promote, answer: continue }
+      - { node: publish-decision, answer: publish }
+    expect: { status: succeeded, visited: [describe, interview, interview-answers, samples, label, draft, measure, proposal-agent, preview, proposals, shadow, promote, publish-decision, publish, end] }
+  - name: close-at-interview
+    covers: "captain closes the interview card: the Task ends closed"
+    provider: codex
+    cards: [{ node: interview-answers, answer: close }]
+    expect: { status: succeeded, visited: [interview, interview-answers, closed], not_visited: [samples] }

@@ -12,3 +12,47 @@ expect:
   stop_at: dispatch
   artifacts: []
 budget: { wall_minutes: 30, max_rounds: 8 }
+stub:
+  - name: board
+    covers: "board start on the sandbox project after the captain approved its staffing → spec round → dispatch card"
+    setup: [staffing-code]
+    params: { project: sandbox }
+    expect: { waiting_on: dispatch, visited: [intake, prepare, spec] }
+    known_failure:
+      observed: "the board start route refuses 400: Staffing approval requires confirmation: Staffing approval missing or changed; confirm project role configuration"
+      root_cause: "src/runtime/index.ts:264-268 (POST /api/wruns) binds params._staffing only for coffee-kit; the staffing guard (src/domain/staffing.ts:114 authorizeStart → :106) requires params._staffing to equal the approved config hash, so a board start of code-firstmate is always refused, even with staffing approved and a project"
+      covered_by: "board-start-fixes-20261016 (Board start: code-firstmate on an approved project)"
+  - name: firstmate-merge
+    covers: "Firstmate proposes on the sandbox project → dispatch → spec → build (worker writes the change and its test) → CI → review → local merge"
+    how: firstmate
+    setup: [staffing-code]
+    params: { project: sandbox }
+    topic: "Add a 10% discount helper\nSTUB_FILE src/discount.ts :: export const discount = (p: number) => Math.round(p * 90) / 100;\\n\nSTUB_FILE test/discount.test.ts :: import { test, expect } from 'bun:test';\\nimport { discount } from '../src/discount';\\ntest('ten percent off', () => expect(discount(100)).toBe(90));\\n"
+    cards: [{ node: dispatch, answer: dispatch }, { node: merge-card, answer: merge }]
+    timeout_s: 240
+    expect: { status: succeeded, result: done, visited: [intake, prepare, spec, dispatch, door, build, pr-open, ci, review, remote-ready, merge-card, merge, after-merge, cleanup, done] }
+  - name: firstmate-blocked
+    covers: "the worker reports SCOPE-BLOCKED → scope card → captain parks the Task"
+    how: firstmate
+    setup: [staffing-code]
+    params: { project: sandbox }
+    topic: "Rename the shop greeting STUB_BLOCKED\nSTUB_FILE src/greeting.ts :: export const greeting = 'hi';\\n"
+    cards: [{ node: dispatch, answer: dispatch }, { node: scope-card, answer: park }]
+    timeout_s: 240
+    expect: { status: succeeded, visited: [spec, dispatch, build, scope-card, parked], not_visited: [merge] }
+  - name: firstmate-ask
+    covers: "the worker asks the captain a question (ASK) → the captain answers it → the worker builds with the answer → merge"
+    how: firstmate
+    setup: [staffing-code]
+    params: { project: sandbox }
+    topic: "Add a percentage discount helper ACCEPT_ASK\nSTUB_FILE src/percent.ts :: export const percent = (p: number) => Math.round(p * 90) / 100;\\n\nSTUB_FILE test/percent.test.ts :: import { test, expect } from 'bun:test';\\nimport { percent } from '../src/percent';\\ntest('percent', () => expect(percent(100)).toBe(90));\\n"
+    cards:
+      - { node: dispatch, answer: dispatch }
+      - { node: scope-card, answers: [rescope, park], note: "ACCEPT_ANSWERED: 10%." }
+      - { node: merge-card, answer: merge }
+    timeout_s: 240
+    expect: { status: succeeded, result: done, visited: [spec, dispatch, build, merge, done], not_visited: [parked] }
+    known_failure:
+      observed: "the worker's ASK goes to the scope card (rescope | park: no way to answer the question); after the captain rescopes with the answer, build raises a scope card 'Round is not ready' (retry | close): Round not ready: native scope pin changed or uses unknown hash algorithm; fresh preparation required"
+      root_cause: "src/domain/code.ts:666 maps worker_report ASK to outcome blocked (also :78), and packs/firstmate/workflows/code-firstmate.wf.yaml:198 routes blocked to scope-card; the rescoped spec then changes specHash, and src/domain/code-queue.ts:115 refuses the existing scope pin (pin.specHash !== specHash), so the Task cannot continue"
+      covered_by: "code-ask-loop-r4-20261016 (code-firstmate: answer worker questions without a rescope loop)"

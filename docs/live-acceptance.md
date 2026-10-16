@@ -166,16 +166,15 @@ Whether an answer is safe is decided against the run's definition: see the allow
 
 ### Shared with the stub-CLI harness
 
-The stub-CLI acceptance harness (branch `workflow-acceptance-20261016`) is meant to read this same
-list. When this was written, that branch had not landed, so this format is the first definition.
-The coupling is:
+The stub-CLI acceptance harness (`bun run test:acceptance`, docs/acceptance.md) reads this same
+list through `scenarioFiles`, `loadScenario` and `decideCard(scenario, card, def, { openAuthWindows })` in
+`scripts/acceptance/scenarios.ts`:
 
-- the harness imports `loadScenario`, `decideCard(scenario, card, def, { openAuthWindows })` and `defHash` from
-  `scripts/acceptance/scenarios.ts`;
-- it answers cards with the same rules;
-- it checks the same `expect`.
-
-If that harness lands with its own list, merge the two into this format rather than keeping two.
+- each file may carry a `stub:` list of offline runs (validated in `tests/acceptance/stub.ts`); a
+  run's own card answers win, any other card goes through `decideCard`, and a run without its own
+  `expect` checks this file's `expect`;
+- internal and retired workflows have a file too, with `live: false`: `--all` skips them, and the
+  harness fails when a bundled workflow has no file or no stub run.
 
 ## Offline test
 

@@ -15,7 +15,12 @@
 //   - every node the answer can reach before the next card runs only actions in LOCAL_ACTIONS
 //     (the card's own node included when a hook or agent raised the card).
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
+/** The one scenario list: the live driver and the stub-CLI harness (tests/acceptance.ts) both read it. */
+export const SCENARIO_DIR = join(import.meta.dir, "../../tests/acceptance");
+export const scenarioFiles = (dir = SCENARIO_DIR) => readdirSync(dir).filter((f) => f.endsWith(".yaml")).sort().map((f) => join(dir, f));
 
 /** The card kinds a rule may answer. Dispatch, scope, step-back, round-budget, merge, promote,
  *  permission, retro and any future kind are left to the captain. */
@@ -80,6 +85,10 @@ export type Scenario = {
    *  this card and the driver stops there */
   expect: { status?: "succeeded" | "failed" | "cancelled"; result?: string | null; stop_at?: string; artifacts: ArtifactExpectation[] };
   budget: { wall_minutes: number; max_rounds: number };
+  /** false: the board cannot start this workflow (internal to Firstmate, or retired); the live driver skips it */
+  live?: boolean;
+  /** the offline stub-CLI harness's runs of this workflow (tests/acceptance/stub.ts validates them) */
+  stub?: unknown[];
   file?: string;
 };
 
@@ -99,7 +108,7 @@ const PROVIDERS = new Set(["claude", "codex", "stub"]);
 export function validateScenario(raw: unknown, where = "scenario"): Scenario {
   if (!isObj(raw)) fail(where, "not a mapping");
   const s = raw as any;
-  const known = ["schema", "workflow", "pin", "topic", "start", "providers", "approvals", "cards", "expect", "budget"];
+  const known = ["schema", "workflow", "pin", "topic", "start", "providers", "approvals", "cards", "expect", "budget", "live", "stub"];
   for (const k of Object.keys(s)) if (!known.includes(k)) fail(where, `unknown field ${k}`);
   if (s.schema !== 2) fail(where, "schema must be 2");
   if (typeof s.workflow !== "string" || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(s.workflow)) fail(where, "workflow must be a workflow id");
@@ -135,12 +144,15 @@ export function validateScenario(raw: unknown, where = "scenario"): Scenario {
   if (e.result !== undefined && e.result !== null && typeof e.result !== "string") fail(where, "expect.result must be text or null");
   if (!Array.isArray(e.artifacts)) fail(where, "expect.artifacts must be a list (may be empty)");
   for (const a of e.artifacts) if (!isObj(a) || Object.keys(a).length !== 1 || !(Number.isInteger(a.deliver) || Number.isInteger(a.outputs) || typeof a.file === "string")) fail(where, "each artifact is one of {deliver: n}, {outputs: n}, {file: path}");
+  if (s.live !== undefined && typeof s.live !== "boolean") fail(where, "live must be true or false");
+  if (s.stub !== undefined && (!Array.isArray(s.stub) || s.stub.some((r: unknown) => !isObj(r)))) fail(where, "stub must be a list of offline runs");
   if (!isObj(s.budget) || !(s.budget.wall_minutes > 0) || !(Number.isInteger(s.budget.max_rounds) && s.budget.max_rounds > 0)) fail(where, "budget needs wall_minutes > 0 and max_rounds > 0");
   return { schema: 2, workflow: s.workflow, pin: { sha256: s.pin.sha256, ...(s.pin.version !== undefined ? { version: s.pin.version } : {}) }, topic: s.topic.trim(),
     start: { provider: s.start.provider, params: { ...s.start.params }, ...(s.start.required_params ? { required_params: [...s.start.required_params] } : {}) },
     providers: [...s.providers], approvals: { staffing: s.approvals.staffing }, cards,
     expect: { ...(e.stop_at !== undefined ? { stop_at: e.stop_at } : { status: e.status, ...(e.result !== undefined ? { result: e.result } : {}) }), artifacts: e.artifacts.map((a: any) => ({ ...a })) },
-    budget: { wall_minutes: Number(s.budget.wall_minutes), max_rounds: s.budget.max_rounds } };
+    budget: { wall_minutes: Number(s.budget.wall_minutes), max_rounds: s.budget.max_rounds },
+    ...(s.live !== undefined ? { live: s.live } : {}), ...(s.stub ? { stub: structuredClone(s.stub) } : {}) };
 }
 
 export function loadScenario(file: string): Scenario {
@@ -190,6 +202,11 @@ export type Decision = { action: "answer"; choice: string; note: string | null }
 /** What the driver knows about the run besides its definition. openAuthWindows: the ids of the
  *  captain's authorization windows open for this run's project (GET /api/policies/auth-window). */
 export type RunContext = { openAuthWindows: string[] };
+/** The ids of the authorization windows (GET /api/policies/auth-window grants) open now for a run on `project`. */
+export function openWindowIds(grants: any[], project: string | null, now = Date.now()): string[] {
+  const revoked = new Set(grants.filter((g) => g.revoked).map((g) => g.id));
+  return grants.filter((g) => !g.revoked && !revoked.has(g.id) && Date.parse(g.until) > now && (!g.project || g.project === project)).map((g) => g.id);
+}
 export function decideCard(s: Scenario, c: CardView, def: any, run: RunContext): Decision {
   const stop = (reason: string): Decision => ({ action: "stop", reason: `${c.id} (${c.kind} on node ${c.node}): ${reason}` });
   if (!run || !Array.isArray(run.openAuthWindows)) return stop("the caller did not say which authorization windows are open");

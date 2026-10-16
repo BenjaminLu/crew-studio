@@ -16,3 +16,23 @@ expect:
   result: done
   artifacts: [{ deliver: 1 }]
 budget: { wall_minutes: 30, max_rounds: 14 }
+stub:
+  - name: approve
+    covers: "codex writer round in the OS sandbox → checks → captain approves → export → Library"
+    provider: codex
+    expect: { status: succeeded, result: done, visited: [intake, produce, draft, checks, refine, accept, export, library, done], not_visited: [closed], library: true, outputs: 1 }
+  - name: changes-then-approve
+    covers: "captain asks for changes with a note → a second draft round → approve"
+    provider: codex
+    cards: [{ node: accept, answers: [changes, approve-draft], note: "Make the title shorter." }]
+    expect: { status: succeeded, visited: [draft, accept, export, library, done], library: true, min_visits: { draft: 2, accept: 2 } }
+  - name: claude
+    covers: "the same Task on the board's Claude provider: claude stream-json through the verified native receipt"
+    provider: claude
+    setup: [verify-claude]
+    expect: { status: succeeded, visited: [draft, checks, accept, export, library, done], library: true }
+  - name: local-unrestricted
+    covers: "the same Task with Studio in local-unrestricted mode (no OS sandbox, no egress proxy)"
+    server: local-unrestricted
+    provider: codex
+    expect: { status: succeeded, visited: [draft, checks, accept, export, library, done], library: true }

@@ -1,0 +1,27 @@
+# Firstmate's proposal: started only by Firstmate's studio_propose_work tool (internal; the board refuses it).
+# The live driver skips it (live: false). Every stub run with how: firstmate goes through it too.
+schema: 2
+workflow: firstmate-proposal
+pin: { version: 1, sha256: "ccdbb2f52fca2bdedfaf1084159b96fc00936fc5dadb2f346b3d8a94025dd149" }   # bun scripts/acceptance/pin.ts firstmate-proposal
+topic: "Acceptance: internal workflow"
+start: { provider: null, params: {} }
+providers: []
+approvals: { staffing: false }
+cards: []
+budget: { wall_minutes: 5, max_rounds: 1 }
+live: false
+expect: { status: succeeded, artifacts: [] }
+stub:
+  - name: approve
+    covers: "Firstmate proposes a documents Task → captain approves the dispatch card → the Task launches; the board cannot start a proposal"
+    how: proposal
+    target: { workflow: documents }
+    board_refusal: { status: 409, error: "internal or retired" }
+    cards: [{ node: dispatch, answer: approve }]
+    expect: { status: succeeded, visited: [dispatch, launch, done], not_visited: [closed] }
+  - name: close
+    covers: "captain closes the dispatch card: nothing launches"
+    how: proposal
+    target: { workflow: documents }
+    cards: [{ node: dispatch, answer: close }]
+    expect: { status: succeeded, visited: [dispatch, closed], not_visited: [launch] }

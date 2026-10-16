@@ -16,3 +16,13 @@ expect:
   result: done
   artifacts: [{ deliver: 1 }]
 budget: { wall_minutes: 40, max_rounds: 18 }
+stub:
+  - name: approve-a
+    covers: "two designer rounds → checks → captain approves direction A → Library"
+    provider: codex
+    expect: { status: succeeded, visited: [intake, produce, design-a, design-b, checks, refine, accept, library, done], library: true, outputs: 2 }
+  - name: reject
+    covers: "captain rejects both directions → closed, nothing in the Library"
+    provider: codex
+    cards: [{ node: accept, answer: reject }]
+    expect: { status: succeeded, result: closed, visited: [design-a, design-b, accept, closed], not_visited: [library] }

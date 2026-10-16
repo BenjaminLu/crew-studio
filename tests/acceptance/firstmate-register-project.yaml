@@ -1,0 +1,20 @@
+# Project registration: started only by Firstmate's studio_prepare_project_work tool (internal).
+schema: 2
+workflow: firstmate-register-project
+pin: { version: 1, sha256: "2712e35a24d8ae62b768555109dfc021a5727feb6e1e4a1b4f571f04bad1f454" }   # bun scripts/acceptance/pin.ts firstmate-register-project
+topic: "Acceptance: internal workflow"
+start: { provider: null, params: {} }
+providers: []
+approvals: { staffing: false }
+cards: []
+budget: { wall_minutes: 5, max_rounds: 1 }
+live: false
+expect: { status: succeeded, artifacts: [] }
+stub:
+  - name: approve
+    covers: "Firstmate prepares a local repository's registration → captain approves → registered, staffing handoff pending; the board cannot start it"
+    how: register
+    target: { workflow: code-firstmate }
+    board_refusal: { status: 409, error: "internal or retired" }
+    cards: [{ node: register, answer: approve }]
+    expect: { status: succeeded, visited: [register, continue, done], not_visited: [closed] }
