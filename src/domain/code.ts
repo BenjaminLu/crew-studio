@@ -715,10 +715,10 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       }};
       if (reportOnly) return [...READ_ONLY(wt), context, report];
       return [...folderTools(wt, () => {}, "fs"), context, report,
-        { name: "run_tests", description: "Run the repository's declared test command (at most 6 times per round). Optional files selects scoped test paths through CREW_TEST_FILES; the repository test runner must support it. Returns actual exit, output tail and signed execution evidence.", schema: { type: "object", properties: {files:{type:'array',items:{type:'string'},maxItems:12}} },
+        { name: "run_tests", description: "Run the repository's declared test command (at most 6 times per round). Optional files selects tests in the approved write or read-only verification scope through CREW_TEST_FILES; the repository test runner must support it. Returns actual exit, output tail and signed execution evidence.", schema: { type: "object", properties: {files:{type:'array',items:{type:'string'},maxItems:12}} },
           // the repository's tests run in the check sandbox: they read the worktree, write only their own out/ and tmp, no network
           run: async (a) => { if (!engine.owns(x))return{error:'round owner ended'};if (!cfg.test) return { error: "the repository declares no test command" };
-            const files=a?.files;if(files!==undefined&&(!Array.isArray(files)||!files.length||files.length>12||files.some((p:any)=>typeof p!=='string'||normPath(p)!==p||p.includes(',')||!(x.ctx.spec?.scope??[]).some((g:string)=>matches(g,p))||!cfg.tests.some(g=>matches(g,p)))))return{error:'files must name tests inside the approved scope'};
+            const files=a?.files;if(files!==undefined&&(!Array.isArray(files)||!files.length||files.length>12||files.some((p:any)=>typeof p!=='string'||normPath(p)!==p||p.includes(',')||(!((x.ctx.spec?.scope??[]).some((g:string)=>matches(g,p))||(x.ctx.spec?.verificationScope??[]).includes(p)))||!cfg.tests.some(g=>matches(g,p)))))return{error:'files must name tests inside the approved write or verification scope'};
             if (++runs > 6) return { error: "test run limit reached" };
             const box = join(x.dir, "tests", `round-${x.visit}-${runs}`); mkdirSync(join(box, "out"), { recursive: true }); mkdirSync(join(box, "tmp"), { recursive: true });
             const env:Record<string,string>={...(files?{CREW_TEST_FILES:files.join(',')}:{})};
