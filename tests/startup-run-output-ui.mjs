@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The startup competition on the real run page (public/runtime.js + public/scard.js through createRuntime's
 // /api/wruns routes): the run's output is the signed competition write-up (kind 'doc', opened in the review page,
 // never "Website output" / a new tab) whose review page shows the text (doc.md + doc.html; a legacy md-only version is
