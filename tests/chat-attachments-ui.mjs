@@ -86,7 +86,7 @@ async function run(width, theme, lang, tag) {
   await p.reload();
   if (width < 500 && await p.locator("#chatFab").isVisible().catch(() => false)) await p.locator("#chatFab").click();
   ok(await seen(p, `${sent} [data-att-sent="image"] img`, 15000) && await p.locator(`${sent} [data-att-sent="pdf"]`).count() === 1, `${tag}: after a reload the message still shows its files`);
-  ok(await p.locator(`${sent} [data-att-sent="image"] img`).evaluate((i) => i.complete && i.naturalWidth === 96), `${tag}: the history thumbnail loads Studio's stored image`);
+  ok(await p.locator(`${sent} [data-att-sent="image"] img`).evaluate((i) => new Promise((done) => { const check = () => i.complete && i.naturalWidth === 96; if (check()) return done(true); i.addEventListener("load", () => done(check())); i.addEventListener("error", () => done(false)); setTimeout(() => done(check()), 8000); })), `${tag}: the history thumbnail loads Studio's stored image`);
   const href = await p.locator(`${sent} [data-att-sent="pdf"]`).getAttribute("href");
   ok(/^\/api\/main\/attachments\/[a-f0-9]{64}$/.test(href ?? ""), `${tag}: the PDF links to Studio's stored copy`);
   // a blue image with no text still goes

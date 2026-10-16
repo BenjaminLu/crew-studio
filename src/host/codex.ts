@@ -246,12 +246,13 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
           if (busy) throw new Error("BUSY");
           // attachments: images as localImage items (the app-server reads the file); a PDF is named by path in the text (no PDF input item exists)
           const delivered = deliveryFor("codex", files); if (!delivered.ok) throw Object.assign(new Error(delivered.reason.en), { refusal: delivered });
+          const input = codexInput(t, files, localUnrestricted() ? localExecutionNotice() : ""); // re-checks each file's hash before Codex is given its path
           busy = true; toolFailure = null;
           let c: Rpc;
           try { c = r ?? (await start()); } catch (e) { busy = false; throw e; }
           return new Promise((resolve) => {
             startedAt=Date.now();images.clear();const sentTurn = { resolve }; turn = sentTurn;
-            c.call("turn/start", { threadId: id, ...(localUnrestricted()?{sandboxPolicy:{type:"dangerFullAccess"}}:{}), input: codexInput(localUnrestricted()?localExecutionNotice()+"\n\n"+t:t, files) })
+            c.call("turn/start", { threadId: id, ...(localUnrestricted()?{sandboxPolicy:{type:"dangerFullAccess"}}:{}), input })
               .then((res) => { if (turn === sentTurn && !turnId) turnId = String(res?.turn?.id ?? res?.turnId ?? ""); })
               .catch((e) => { if (turn === sentTurn) endTurn("failed", String(e?.message ?? e)); });
           });

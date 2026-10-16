@@ -174,6 +174,8 @@ if (!startup.legacy && !process.env.CREW_MAIN_PROJECT) mkdirSync(PROJECT, { recu
 const nativeOutcomes = new NativeOutcomes(DATA,()=>runtime.engine,id=>runtime.engine.get(id)?.def.kind==='image'?imageOutcomeProof(runtime.engine,m3.store,id):coffeeJourneyProof(runtime.engine,m3.store,id));
 // the captain's chat attachments: content-hash names in Studio's data folder (src/attachments.ts)
 const chatFiles = new AttachmentStore(DATA);
+// retention (src/attachments.ts): uploads never sent go after a day, stray temporary files after an hour; sent files stay with the history
+try { chatFiles.sweep(); } catch {} setInterval(() => { try { chatFiles.sweep(); } catch {} }, 3600_000).unref?.();
 const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STATE, nativeWorkspace: !startup.legacy && !process.env.CREW_MAIN_PROJECT,
   nativeTools:()=>runtime.firstmate,
   onNativeProposal:(origin,result)=>nativeOutcomes.bind(origin,result),
@@ -558,7 +560,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       if (am && !writing) {
         if (who.kind === "desktop" && !hasSession(req, SESSION)) return json({ error: "Studio session required" }, 401);
         const f = chatFiles.get(am[1]); if (!f) return json({ error: "no such attachment" }, 404);
-        return new Response(Bun.file(f.path), { headers: { "content-type": f.mime, "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff",
+        return new Response(Bun.file(f.path), { headers: { "content-type": f.mime, "cache-control": "private, no-store", "x-content-type-options": "nosniff",
           "content-security-policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox", "content-disposition": `inline; filename="${f.id.slice(0, 12)}.${f.mime === "application/pdf" ? "pdf" : f.mime.split("/")[1]}"` } });
       } }
     if (p.startsWith("/api/main/") && writing) {
@@ -574,6 +576,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
         // the host that runs the turn must take every file, or nothing is queued: a typed refusal the chat shows
         const fit = deliveryFor(v.host, files.files);
         if (!fit.ok) return json({ ...fit, error: `${fit.reason.en} / ${fit.reason["zh-TW"]}` }, 409);
+        chatFiles.markSent(files.files.map((f) => f.id));
         return json({ queued: main.enqueue("chat", text, who.kind === "phone" ? `phone:${who.device.name}` : "desktop", files.files.map(({ path, ...ref }) => ref)), deliveries: fit.deliveries });
       }
       if (p === "/api/main/interrupt") { await main.interrupt(); return json({ ok: true }); }

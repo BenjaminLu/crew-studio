@@ -7,28 +7,39 @@
 //   codex   images as localImage turn input (the app-server reads the file); a PDF has no
 //           input item in the app-server protocol, so Codex gets the stored file's path in the
 //           turn text and is told it has not seen the contents unless it reads the file itself
+// Retention: a file that was never sent goes after ATTACH_UNSENT_TTL_MS (an upload that was removed,
+// refused by the host, or abandoned); a sent file stays, because the chat history shows it. Stray
+// temporary files go after ATTACH_TMP_TTL_MS. Studio sweeps at start and every hour (sweep()).
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export const ATTACH_MAX_PER_MESSAGE = 5;
 export const ATTACH_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 export const ATTACH_MAX_PDF_BYTES = 20 * 1024 * 1024;
-/** The Claude API refuses a base64 image over 5 MB. */
-export const CLAUDE_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-/** The Claude API takes at most 32 MB per request; base64 adds a third, so one message's files stay under 24 MB. */
-export const CLAUDE_MAX_MESSAGE_BYTES = 24 * 1024 * 1024;
+/** Claude CLI 2.1.301 refuses an image whose base64 is over 5,242,880 characters (its maxBase64Size; targetRawSize 3,932,160). */
+export const CLAUDE_MAX_IMAGE_BYTES = 3_932_160;
+/** The Claude request cap is 32 MiB; one message's files stay at 18 MiB raw (24 MiB base64), leaving room for the conversation. */
+export const CLAUDE_MAX_MESSAGE_BYTES = 18 * 1024 * 1024;
+/** The Claude API refuses an image over 8000 px on a side and a PDF over 100 pages. */
+export const CLAUDE_MAX_IMAGE_SIDE = 8000;
+export const CLAUDE_MAX_PDF_PAGES = 100;
+/** Retention of uploads that were never sent, and of stray temporary files. */
+export const ATTACH_UNSENT_TTL_MS = 24 * 3600_000;
+export const ATTACH_TMP_TTL_MS = 3600_000;
 /** An upload body (base64 in JSON) may be at most this long before Studio reads it. */
 export const ATTACH_MAX_BODY = Math.ceil(ATTACH_MAX_PDF_BYTES / 3) * 4 + 4096;
 
 export type AttachmentMime = "image/png" | "image/jpeg" | "image/webp" | "image/gif" | "application/pdf";
 export type AttachmentKind = "image" | "pdf";
-export type AttachmentRef = { id: string; mime: AttachmentMime; kind: AttachmentKind; size: number; name: string };
+export type AttachmentRef = { id: string; mime: AttachmentMime; kind: AttachmentKind; size: number; name: string;
+  /** read from the bytes when Studio can: image size in pixels, PDF page count (null when unknown) */
+  width?: number | null; height?: number | null; pages?: number | null };
 /** A stored attachment with the path a host may read it from. */
 export type AttachmentFile = AttachmentRef & { path: string };
 
 export type AttachmentRefusalCode = "attachmentType" | "attachmentEmpty" | "attachmentTooLarge" | "attachmentCount" | "attachmentMissing"
-  | "attachmentNoHost" | "claudeImageTooLarge" | "claudeMessageTooLarge";
+  | "attachmentNoHost" | "attachmentChanged" | "claudeImageTooLarge" | "claudeMessageTooLarge" | "claudeImageDimensions" | "claudePdfPages";
 export type AttachmentRefusal = { ok: false; code: AttachmentRefusalCode; reason: { en: string; "zh-TW": string } };
 /** A new file through a fresh temporary one (O_EXCL, no symlink followed), renamed into place: rename replaces a link, never writes through it. */
 function writeNew(dir: string, file: string, bytes: Uint8Array) {
@@ -58,6 +69,42 @@ export function displayName(raw: unknown, mime: AttachmentMime): string {
   const base = String(raw ?? "").split(/[\\/]/).pop() ?? "";
   const clean = base.replace(/[\u0000-\u001f\u007f‪-‮⁦-⁩]/g, "").trim().slice(0, 120);
   return clean && clean !== "." && clean !== ".." ? clean : `attachment.${EXT[mime]}`;
+}
+
+/** An image's size in pixels from its header (PNG, GIF, WebP, JPEG), or null. */
+export function imageSize(b: Uint8Array, mime: AttachmentMime): { width: number; height: number } | null {
+  const buf = Buffer.from(b.buffer, b.byteOffset, b.byteLength);
+  try {
+    if (mime === "image/png" && buf.length >= 24) return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+    if (mime === "image/gif" && buf.length >= 10) return { width: buf.readUInt16LE(6), height: buf.readUInt16LE(8) };
+    if (mime === "image/webp" && buf.length >= 30) {
+      const kind = buf.toString("ascii", 12, 16);
+      if (kind === "VP8 ") return { width: buf.readUInt16LE(26) & 0x3fff, height: buf.readUInt16LE(28) & 0x3fff };
+      if (kind === "VP8L") return { width: 1 + (((buf[22] & 0x3f) << 8) | buf[21]), height: 1 + (((buf[24] & 0x0f) << 10) | (buf[23] << 2) | ((buf[22] & 0xc0) >> 6)) };
+      if (kind === "VP8X") return { width: 1 + buf.readUIntLE(24, 3), height: 1 + buf.readUIntLE(27, 3) };
+      return null;
+    }
+    if (mime === "image/jpeg") {
+      let i = 2;
+      while (i + 9 < buf.length) {
+        if (buf[i] !== 0xff) { i++; continue; }
+        const m = buf[i + 1];
+        if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7) || m === 0xff) { i += m === 0xff ? 1 : 2; continue; }
+        if (m >= 0xc0 && m <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(m)) return { width: buf.readUInt16BE(i + 7), height: buf.readUInt16BE(i + 5) };
+        i += 2 + buf.readUInt16BE(i + 2);
+      }
+    }
+  } catch {}
+  return null;
+}
+/** A PDF's page count from its page tree (the largest /Count, or the /Type /Page objects), or null when not readable (compressed object streams). */
+export function pdfPages(b: Uint8Array): number | null {
+  const t = Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString("latin1");
+  let count = 0;
+  for (const m of t.matchAll(/\/Count\s+(\d{1,7})/g)) count = Math.max(count, Number(m[1]));
+  const pages = (t.match(/\/Type\s*\/Page(?![a-zA-Z])/g) ?? []).length;
+  const n = Math.max(count, pages);
+  return n > 0 ? n : null;
 }
 
 export const kindOf = (mime: AttachmentMime): AttachmentKind => mime === "application/pdf" ? "pdf" : "image";
@@ -96,9 +143,33 @@ export class AttachmentStore {
       rmSync(file, { force: true }); // a leftover that is not our plain file (a symlink, a partial write) goes
       writeNew(dir, file, bytes);
     }
-    const ref: AttachmentRef = { id, mime: c.mime, kind: kindOf(c.mime), size: bytes.length, name };
-    writeNew(dir, join(dir, `${id}.json`), Buffer.from(JSON.stringify(ref)));
+    const dims = c.mime === "application/pdf" ? { pages: pdfPages(bytes) } : { ...(imageSize(bytes, c.mime) ?? { width: null, height: null }) };
+    const ref: AttachmentRef = { id, mime: c.mime, kind: kindOf(c.mime), size: bytes.length, name, ...dims };
+    // the record is per content and written once; the label belongs to each upload and each message, never overwritten here
+    const mf = join(dir, `${id}.json`);
+    if (!this.regular(mf)) writeNew(dir, mf, Buffer.from(JSON.stringify(ref))); // the first label is only a fallback
+    else { const now = new Date(); try { utimesSync(mf, now, now); } catch {} } // a fresh upload restarts the unsent clock
     return { ok: true, ref };
+  }
+
+  /** The files of a queued message: kept by retention from now on. */
+  markSent(ids: string[]) {
+    for (const id of ids) if (/^[a-f0-9]{64}$/.test(id)) { try { this.folder(); const f = join(this.dir, `${id}.sent`); if (!this.regular(f)) writeNew(this.dir, f, Buffer.alloc(0)); } catch {} }
+  }
+
+  /** Remove uploads never sent within ATTACH_UNSENT_TTL_MS and temporary files older than ATTACH_TMP_TTL_MS. Returns how many files went. */
+  sweep(now = Date.now(), unsentMs = ATTACH_UNSENT_TTL_MS, tmpMs = ATTACH_TMP_TTL_MS): number {
+    let names: string[]; try { this.folder(); names = readdirSync(this.dir); } catch { return 0; }
+    const age = (f: string) => { try { return now - lstatSync(join(this.dir, f)).mtimeMs; } catch { return 0; } };
+    const sent = new Set(names.filter((f) => f.endsWith(".sent")).map((f) => f.slice(0, 64)));
+    const fresh = new Set(names.filter((f) => /^[a-f0-9]{64}\.json$/.test(f) && age(f) <= unsentMs).map((f) => f.slice(0, 64)));
+    let n = 0;
+    for (const f of names) {
+      const id = /^[a-f0-9]{64}/.exec(f)?.[0];
+      const drop = f.startsWith(".tmp-") ? age(f) > tmpMs : id ? !sent.has(id) && !fresh.has(id) && age(f) > unsentMs : false;
+      if (drop) { try { rmSync(join(this.dir, f), { force: true }); n++; } catch {} }
+    }
+    return n;
   }
 
   private regular(file: string, size?: number) {
@@ -111,6 +182,7 @@ export class AttachmentStore {
     let meta: AttachmentRef;
     try { this.folder(); const mf = join(this.dir, `${id}.json`); if (!this.regular(mf)) return null; meta = JSON.parse(readFileSync(mf, "utf8")); } catch { return null; }
     if (!meta || !(meta.mime in EXT)) return null;
+    const extra = { width: meta.width ?? null, height: meta.height ?? null, pages: meta.pages ?? null };
     const path = join(this.dir, `${id}.${EXT[meta.mime]}`);
     if (!this.regular(path)) return null;
     // the bytes still are what they claim: type by magic bytes, size from the file itself
@@ -120,29 +192,36 @@ export class AttachmentStore {
       try { size = fstatSync(fd).size; head = Buffer.alloc(16); readSync(fd, head, 0, 16, 0); } finally { closeSync(fd); }
     } catch { return null; }
     if (sniff(head) !== meta.mime || size !== meta.size) return null;
-    return { id, mime: meta.mime, kind: kindOf(meta.mime), size, name: displayName(meta.name, meta.mime), path };
+    return { id, mime: meta.mime, kind: kindOf(meta.mime), size, name: displayName(meta.name, meta.mime), path, ...(meta.mime === "application/pdf" ? { pages: extra.pages } : { width: extra.width, height: extra.height }) };
   }
 
 
-  /** Resolve the ids a message names: every one must exist; at most ATTACH_MAX_PER_MESSAGE. */
-  resolve(ids: unknown): { ok: true; files: AttachmentFile[] } | AttachmentRefusal {
-    if (ids === undefined || ids === null) return { ok: true, files: [] };
-    if (!Array.isArray(ids)) return no("attachmentMissing", "The attachments are not a list.", "附件格式不對。");
-    const uniq = [...new Set(ids)];
-    if (uniq.length > ATTACH_MAX_PER_MESSAGE) return no("attachmentCount", `At most ${ATTACH_MAX_PER_MESSAGE} files per message.`, `每則訊息最多 ${ATTACH_MAX_PER_MESSAGE} 個檔案。`);
+  /** Resolve the files a message names (an id, or {id, name} with the label of that upload): every one must exist; at most ATTACH_MAX_PER_MESSAGE. */
+  resolve(list: unknown): { ok: true; files: AttachmentFile[] } | AttachmentRefusal {
+    if (list === undefined || list === null) return { ok: true, files: [] };
+    if (!Array.isArray(list)) return no("attachmentMissing", "The attachments are not a list.", "附件格式不對。");
+    const seen = new Map<string, unknown>();
+    for (const x of list) { const id = typeof x === "string" ? x : (x as any)?.id; if (!seen.has(id)) seen.set(id, typeof x === "object" && x ? (x as any).name : undefined); }
+    if (seen.size > ATTACH_MAX_PER_MESSAGE) return no("attachmentCount", `At most ${ATTACH_MAX_PER_MESSAGE} files per message.`, `每則訊息最多 ${ATTACH_MAX_PER_MESSAGE} 個檔案。`);
     const files: AttachmentFile[] = [];
-    for (const id of uniq) { const f = this.get(id); if (!f) return no("attachmentMissing", "An attached file is no longer available; attach it again.", "有附件已不存在，請重新附加。"); files.push(f); }
+    for (const [id, name] of seen) {
+      const f = this.get(id); if (!f) return no("attachmentMissing", "An attached file is no longer available; attach it again.", "有附件已不存在，請重新附加。");
+      files.push(typeof name === "string" && name.trim() ? { ...f, name: displayName(name, f.mime) } : f);
+    }
     return { ok: true, files };
   }
 }
 
-/** The bytes of a stored attachment, read without following a symlink, re-checked against its id. */
+const changed = () => Object.assign(new Error("an attached file changed after it was stored"), { refusal: no("attachmentChanged", "An attached file changed after it was stored; attach it again.", "附件在儲存後被改動，請重新附加。") });
+/** The bytes of a stored attachment, read without following a symlink, re-checked against its id (sha256 and type). */
 export function readAttachment(f: AttachmentFile): Buffer {
-  const fd = openSync(f.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-  let b: Buffer; try { b = readFileSync(fd); } finally { closeSync(fd); }
-  if (createHash("sha256").update(b).digest("hex") !== f.id || sniff(b) !== f.mime) throw new Error("an attached file changed after it was stored");
+  let b: Buffer;
+  try { const fd = openSync(f.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); try { b = readFileSync(fd); } finally { closeSync(fd); } } catch { throw changed(); }
+  if (createHash("sha256").update(b).digest("hex") !== f.id || sniff(b) !== f.mime) throw changed();
   return b;
 }
+/** Re-check a stored file against its id before a host is handed its path (Codex reads the file itself). */
+export function verifyAttachment(f: AttachmentFile): void { readAttachment(f); }
 
 /** How a host gets each file, or the typed reason it cannot. Never a silent drop. */
 export type Delivery = { id: string; mode: "native" | "file"; note: { en: string; "zh-TW": string } | null };
@@ -151,12 +230,16 @@ export function deliveryFor(host: "claude" | "codex" | null, files: AttachmentRe
   if (files.length > ATTACH_MAX_PER_MESSAGE) return no("attachmentCount", `At most ${ATTACH_MAX_PER_MESSAGE} files per message.`, `每則訊息最多 ${ATTACH_MAX_PER_MESSAGE} 個檔案。`);
   if (host === "claude") {
     const big = files.find((f) => f.kind === "image" && f.size > CLAUDE_MAX_IMAGE_BYTES);
-    if (big) return no("claudeImageTooLarge", `Claude takes images up to ${MB(CLAUDE_MAX_IMAGE_BYTES)}; ${big.name} is larger. Studio does not shrink or drop it.`, `Claude 只收 ${MB(CLAUDE_MAX_IMAGE_BYTES)} 以內的圖片；${big.name} 太大。Studio 不會縮小或略過它。`);
+    if (big) return no("claudeImageTooLarge", `Claude takes images up to 3.75 MB; ${big.name} is larger. Studio does not shrink or drop it.`, `Claude 只收 3.75 MB 以內的圖片；${big.name} 太大。Studio 不會縮小或略過它。`);
+    const wide = files.find((f) => f.kind === "image" && Math.max(f.width ?? 0, f.height ?? 0) > CLAUDE_MAX_IMAGE_SIDE);
+    if (wide) return no("claudeImageDimensions", `Claude takes images up to ${CLAUDE_MAX_IMAGE_SIDE} px on a side; ${wide.name} is ${wide.width}×${wide.height}.`, `Claude 只收每邊 ${CLAUDE_MAX_IMAGE_SIDE} px 以內的圖片；${wide.name} 是 ${wide.width}×${wide.height}。`);
+    const long = files.find((f) => f.kind === "pdf" && (f.pages ?? 0) > CLAUDE_MAX_PDF_PAGES);
+    if (long) return no("claudePdfPages", `Claude takes PDFs up to ${CLAUDE_MAX_PDF_PAGES} pages; ${long.name} has ${long.pages}.`, `Claude 只收 ${CLAUDE_MAX_PDF_PAGES} 頁以內的 PDF；${long.name} 有 ${long.pages} 頁。`);
     if (files.reduce((n, f) => n + f.size, 0) > CLAUDE_MAX_MESSAGE_BYTES) return no("claudeMessageTooLarge", `Claude takes at most ${MB(CLAUDE_MAX_MESSAGE_BYTES)} of files in one message. Send fewer files at a time.`, `Claude 一則訊息的附件總共最多 ${MB(CLAUDE_MAX_MESSAGE_BYTES)}，請分次傳送。`);
     return { ok: true, deliveries: files.map((f) => ({ id: f.id, mode: "native" as const, note: null })) };
   }
   if (host === "codex") return { ok: true, deliveries: files.map((f) => f.kind === "image" ? { id: f.id, mode: "native" as const, note: null }
-    : { id: f.id, mode: "file" as const, note: { en: "Codex cannot take a PDF as input. It gets the file's path and must open the file itself to read it.", "zh-TW": "Codex 無法直接讀 PDF；它只會拿到檔案路徑，要自己打開檔案才讀得到內容。" } }) };
+    : { id: f.id, mode: "file" as const, note: { en: "Codex cannot read PDFs directly; it opens the file itself.", "zh-TW": "Codex 不能直接讀 PDF，會自己開檔。" } }) };
   return no("attachmentNoHost", "Start Firstmate before sending files.", "請先啟動 Firstmate 再傳檔案。");
 }
 
@@ -173,15 +256,17 @@ export function claudeContent(text: string, files: AttachmentFile[], read: (f: A
   return [{ type: "text", text: text || filesLine(files) }, ...blocks];
 }
 
-/** Codex turn input for one captain message: the text (with a line per PDF), then each image as localImage. */
-export function codexInput(text: string, files: AttachmentFile[]): any[] {
+/** Codex turn input for one captain message: any Studio notice, the text (or the files line when there is none), a line per PDF, then each image as localImage. */
+export function codexInput(text: string, files: AttachmentFile[], prefix = ""): any[] {
+  for (const f of files) verifyAttachment(f); // Codex reads the files itself: they must still be what was stored
   const pdfs = files.filter((f) => f.kind === "pdf"), images = files.filter((f) => f.kind === "image");
-  const notes = pdfs.map((f) => `[Attached PDF "${f.name}" (${f.size} bytes): Codex cannot take a PDF as input, so you have NOT seen its contents. The file is at ${f.path} (read-only, Studio's copy). Open it with your own tools if you need its contents, and say so if you cannot.]`);
-  const body = [text || (images.length && !pdfs.length ? filesLine(files) : ""), ...notes].filter(Boolean).join("\n\n");
+  const notes = pdfs.map((f) => `[Attached PDF "${f.name}" (${f.size} bytes): Codex cannot take a PDF as input, so you have NOT seen its contents. The file is at ${f.path} (Studio's copy). Open it with your own tools if you need its contents, and say so if you cannot.]`);
+  const body = [prefix, text || (files.length ? filesLine(files) : ""), ...notes].filter(Boolean).join("\n\n");
   return [{ type: "text", text: body, text_elements: [] }, ...images.map((f) => ({ type: "localImage", path: f.path }))];
 }
 
-const filesLine = (files: AttachmentRef[]) => `(The captain sent ${files.length === 1 ? "a file" : `${files.length} files`} without text.)`;
+/** What a message with files but no text says, to the model and to captain-only tools. */
+export const filesLine = (files: AttachmentRef[]) => `(The captain sent ${files.length === 1 ? "a file" : `${files.length} files`} without text.)`;
 
 /** A request body read up to `max` bytes: a longer one is refused before it is all read. */
 export async function readCapped(req: Request, max: number): Promise<{ ok: true; text: string } | { ok: false }> {

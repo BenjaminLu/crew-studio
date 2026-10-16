@@ -48,7 +48,10 @@ try {
   ok(r?.ok && r.ref.id === sha(PNG) && existsSync(join(dir, `${sha(PNG)}.png`)) && readFileSync(join(dir, `${sha(PNG)}.png`)).equals(PNG), "a file is stored under its SHA-256 with the extension of its real type");
   ok(r?.ok && r.ref.name === "passwd.png" && !existsSync(join(TMP, "etc")) && readdirSync(dir).every((f: string) => /^[a-f0-9]{64}\.(png|jpg|gif|webp|pdf|json)$/.test(f)), "the captain's file name is only a label: no directories, no control characters, never part of a path", JSON.stringify(r?.ref?.name));
   ok(existsSync(dir) && (statSync(dir).mode & 0o777) === 0o700 && (statSync(join(dir, `${sha(PNG)}.png`)).mode & 0o777) === 0o600, "the folder is 0700 and each file 0600");
-  ok(s?.put(PNG, "again.png")?.ok && readdirSync(dir).filter((f: string) => f.startsWith(sha(PNG))).length === 2, "the same bytes are stored once (one file, one label record)");
+  const again = s?.put(PNG, "again.png");
+  ok(again?.ok && again.ref.name === "again.png" && readdirSync(dir).filter((f: string) => f.startsWith(sha(PNG))).length === 2, "the same bytes are stored once (one file, one record); each upload keeps its own label");
+  const r5 = s?.resolve([{ id: sha(PNG), name: "first.png" }]), r6 = s?.resolve([{ id: sha(PNG), name: "../second\u0007.png" }]);
+  ok(r5?.ok && r5.files[0].name === "first.png" && r6?.ok && r6.files[0].name === "second.png" && s?.get(sha(PNG))?.name !== "again.png", "a message keeps the label it was sent with; a later upload of the same bytes does not rename it");
   ok(s && s.get("../session-token") === null && s.get(sha(PNG).toUpperCase()) === null && s.get(`${sha(PNG)}/../x`) === null && s.get(sha(PNG))?.path === join(dir, `${sha(PNG)}.png`), "only a 64-hex id resolves; traversal and odd ids resolve to nothing");
   // a symlink planted where a stored file goes is replaced, never written through
   const outside = join(TMP, "outside.txt"); writeFileSync(outside, "keep me");
@@ -67,10 +70,20 @@ try {
   // what each host can take
   const ref = (kind: string, size: number) => ({ id: "0".repeat(64), mime: kind === "pdf" ? "application/pdf" : "image/png", kind, size, name: `x.${kind}` });
   const d = (h: any, files: any[]) => A?.deliveryFor(h, files);
-  ok(d("claude", [ref("image", 5 * 1024 * 1024 + 1)])?.code === "claudeImageTooLarge" && d("claude", [ref("image", 5 * 1024 * 1024)])?.ok === true, "Claude: an image over 5 MB is a typed refusal (claudeImageTooLarge)");
-  ok(d("claude", [ref("pdf", 13e6), ref("pdf", 13e6)])?.code === "claudeMessageTooLarge" && d("claude", [ref("pdf", 20e6)])?.deliveries?.[0]?.mode === "native", "Claude: PDFs go natively, at most 24 MB of files per message (claudeMessageTooLarge)");
+  const MiB = 1024 * 1024;
+  ok(d("claude", [ref("image", 3_932_160)])?.ok === true && d("claude", [ref("image", 3_932_161)])?.code === "claudeImageTooLarge", "Claude: the image cap is the CLI's 3,932,160 raw bytes (5,242,880 base64); one byte more is claudeImageTooLarge");
+  ok([3.75 * MiB + 1, 4 * MiB, 4.5 * MiB, 5 * MiB].every((n) => d("claude", [ref("image", Math.round(n))])?.code === "claudeImageTooLarge"), "Claude: images between 3.75 and 5 MiB are refused (the CLI would throw on them)");
+  ok(d("claude", [ref("pdf", 10 * MiB), ref("pdf", 8 * MiB)])?.ok === true && d("claude", [ref("pdf", 10 * MiB), ref("pdf", 8 * MiB + 1)])?.code === "claudeMessageTooLarge" && A?.CLAUDE_MAX_MESSAGE_BYTES === 18 * MiB, "Claude: at most 18 MiB of files per message (24 MiB base64, under the 32 MiB request cap)");
+  // 6: what the Claude API refuses besides bytes, read from the files themselves
+  const pngHead = (w: number, h: number) => { const b = Buffer.from(PNG.subarray(0, 33)); b.writeUInt32BE(w, 16); b.writeUInt32BE(h, 20); return b; };
+  ok(A?.imageSize(pngHead(9000, 40), "image/png")?.width === 9000 && A?.imageSize(heads.gif, "image/gif")?.width === 1 && A?.imageSize(PNG, "image/png")?.height === 48 && A?.pdfPages(PDF) === 1, "image size and PDF pages are read from the bytes");
+  const wide = s?.put(pngHead(8001, 10), "wide.png");
+  ok(wide?.ok && wide.ref.width === 8001 && d("claude", [wide.ref])?.code === "claudeImageDimensions" && d("claude", [{ ...wide.ref, width: 8000 }])?.ok === true && d("codex", [wide.ref])?.ok === true, "Claude: an image over 8000 px on a side is claudeImageDimensions (Codex resizes and takes it)");
+  const longPdf = Buffer.from(PDF.toString("latin1").replace("/Count 1", "/Count 120"), "latin1");
+  const lp = s?.put(longPdf, "long.pdf");
+  ok(lp?.ok && lp.ref.pages === 120 && d("claude", [lp.ref])?.code === "claudePdfPages" && d("claude", [{ ...lp.ref, pages: 100 }])?.ok === true, "Claude: a PDF over 100 pages is claudePdfPages");
   const cx = d("codex", [ref("image", 9e6), ref("pdf", 1000)]);
-  ok(cx?.ok && cx.deliveries[0].mode === "native" && cx.deliveries[1].mode === "file" && /cannot take a PDF/.test(cx.deliveries[1].note.en), "Codex: images natively; a PDF as a file path, said so");
+  ok(cx?.ok && cx.deliveries[0].mode === "native" && cx.deliveries[1].mode === "file" && /cannot read PDFs directly/.test(cx.deliveries[1].note.en), "Codex: images natively; a PDF as a file path, said so");
   ok(d(null, [ref("image", 10)])?.code === "attachmentNoHost", "no Firstmate running: a typed refusal");
 } catch (e: any) { ok(false, "the store section ran", String(e?.message ?? e).slice(0, 300)); }
 
@@ -96,12 +109,12 @@ try {
   ok(last?.files?.[0]?.type === "image" && last.files[0].source === "base64" && last.files[0].media_type === "image/png" && last.files[0].bytes === PNG.length, "Claude: the image is an image block, base64, image/png, every byte", JSON.stringify(last?.files));
   ok(last?.files?.[1]?.type === "document" && last.files[1].source === "base64" && last.files[1].media_type === "application/pdf" && last.files[1].bytes === PDF.length && last.files[1].title === "brief.pdf", "Claude: the PDF is a document block, base64, application/pdf, titled with its label");
   ok(ev.filter((e) => e.type === "delta").map((e) => e.text).join("").includes("[image image/png") , "Claude: the stub CLI answers about both blocks");
-  const bigPng = store ? store.get(store.put(Buffer.concat([PNG, Buffer.alloc(6 * 1024 * 1024)]), "huge.png").ref.id) : null;
+  const bigPng = store ? store.get(store.put(Buffer.concat([PNG, Buffer.alloc(4 * 1024 * 1024)]), "huge.png").ref.id) : null;
   const before = got.length; let refusal: any = null;
   try { await (cs.send as any)("too big", [bigPng]); } catch (e: any) { refusal = e?.refusal; }
   await Bun.sleep(300);
   const after = existsSync(inputFile) ? readFileSync(inputFile, "utf8").trim().split("\n").length : 0;
-  ok(refusal?.code === "claudeImageTooLarge" && after === before && !cs.busy, "Claude: an image over 5 MB is refused with a typed reason before anything reaches the CLI", JSON.stringify(refusal));
+  ok(refusal?.code === "claudeImageTooLarge" && after === before && !cs.busy, "Claude: a 4 MiB image (over the CLI's 3.75 MiB) is refused with a typed reason before anything reaches the CLI", JSON.stringify(refusal));
   await cs.detach();
 
   const log = join(H, "codex.log"); process.env.STUB_CODEX_LOG = log;
@@ -117,6 +130,18 @@ try {
   ok(input.length === 2 && /Codex cannot take a PDF as input/.test(input[0]?.text ?? "") && input[0].text.includes(files[1]?.path ?? "\0") && /NOT seen its contents/.test(input[0].text), "Codex: the PDF has no input item; the text names its path and says Codex has not seen it");
   ok(!msgs.some((m) => m.dir === "problem"), "Codex: every message matches the installed app-server protocol (0.162.1 fixture)", JSON.stringify(msgs.filter((m) => m.dir === "problem").slice(0, 2)));
   ok(ev.filter((e) => e.type === "delta").map((e) => e.text).join("").includes(`[images: ${PNG.length}B]`), "Codex: the app-server could read the image file it was given");
+  ok(!/read-only/.test(input[0]?.text ?? "x"), "Codex: the PDF note does not claim the path is read-only");
+  // 8: a files-only message says so even when Studio prefixes a notice (local unrestricted mode)
+  const only = A?.codexInput("", [files[0]], "LOCAL-NOTICE");
+  ok(only?.[0]?.text.startsWith("LOCAL-NOTICE") && /The captain sent a file without text/.test(only[0].text) && only[1]?.type === "localImage", "Codex: a files-only message carries the files line after a Studio notice");
+  // 4: a stored file changed on disk is not handed to Codex
+  const blue = store?.get(store.put(png(48, 48, [0, 0, 255]), "blue.png").ref.id);
+  if (blue) writeFileSync(blue.path, png(48, 48, [0, 255, 0])); // same type, different bytes
+  const starts = () => readFileSync(log, "utf8").split("\n").filter((l) => l.includes('"turn/start"') && l.includes('"dir":"in"')).length;
+  const n0 = starts(); let changed: any = null;
+  try { await (xs.send as any)("tampered", [blue]); } catch (e: any) { changed = e?.refusal; }
+  await Bun.sleep(300);
+  ok(changed?.code === "attachmentChanged" && starts() === n0 && !xs.busy, "Codex: a file whose bytes no longer match its hash is refused (attachmentChanged) before turn/start", JSON.stringify(changed));
   await xs.detach();
   process.env.HOME = prevHome; delete process.env.STUB_INPUT_FILE; delete process.env.STUB_CODEX_LOG;
 } catch (e: any) { ok(false, "the host section ran", String(e?.message ?? e).slice(0, 300)); }
@@ -150,6 +175,35 @@ try {
   await until(() => sent.length === 2);
   ok(sent[1]?.text === "plain text" && sent[1].files.length === 0, "the queue goes on: a plain message after a refusal is sent as before");
   m.stop();
+
+  // 2: a files-only captain message is captain input for captain-only native tools
+  const N = join(TMP, "native"); mkdirSync(join(N, "data"), { recursive: true });
+  const owners: any[] = [];
+  const nativeFake = { id: "codex", resumeCommand: (x: string) => `codex ${x}`, discover: async () => [],
+    attach: async (_: string, opts: any) => ({ host: "codex", id: "n1", model: "fake", busy: false, pid: null, interrupt: async () => {}, detach: async () => "codex n1",
+      send: async (text: string, files: any[] = []) => { if (files.length || text === "") await opts.nativeTools?.call("captain_probe", {}, { thread: "n1", turn: "t1", call: "c1", live: () => true }); return { status: "completed" as const }; } }) };
+  const n = new MainSession({ dataDir: join(N, "data"), projectDir: join(N, "ws"), stateDir: join(N, "state"), probe: { list: () => [] }, hosts: { claude: nativeFake, codex: nativeFake } as any, pollMs: 200, nativeWorkspace: true,
+    nativeTools: () => ({ specs: [{ type: "function", name: "captain_probe", description: "probe", inputSchema: { type: "object" } }], call: async (_name: string, _args: unknown, owner: any) => {
+      owners.push({ captain: owner.captain, text: owner.text }); if (!owner.captain || !owner.text.trim()) throw new Error("captain_confirmation_required"); return { ok: true }; } }),
+    permissionMcp: () => ({ command: ["true"], env: {} }), attachmentFiles: (ids: string[]) => store!.resolve(ids) } as any);
+  await n.start();
+  const fs = await n.startFresh("codex");
+  ok(fs.ok, "a fresh native Firstmate on a fake Codex host", JSON.stringify(fs));
+  await until(() => !n.view().busy && !n.view().queue.length);
+  (n as any).enqueue("chat", "", "desktop", small ? [small] : undefined);
+  await until(() => owners.length >= 1);
+  ok(owners.at(-1)?.captain === true && /The captain sent a file without text/.test(owners.at(-1)?.text ?? ""), "a files-only captain message passes captain-only tools: captain, with the files line as its words", JSON.stringify(owners.at(-1)));
+  n.stop();
+
+  // 7: retention: unsent uploads and stray temporary files go after their age; sent files stay
+  const R = join(TMP, "retention"); const rs = A ? new A.AttachmentStore(R) : null;
+  const keep = rs?.put(png(4, 4, [9, 9, 9]), "sent.png").ref, drop = rs?.put(png(5, 5, [8, 8, 8]), "unsent.png").ref, young = rs?.put(png(6, 6, [7, 7, 7]), "young.png").ref;
+  rs?.markSent([keep!.id]);
+  const rdir = join(R, "chat-attachments"); writeFileSync(join(rdir, ".tmp-deadbeef"), "x");
+  const old = (Date.now() - 2 * 24 * 3600_000) / 1000;
+  for (const f of readdirSync(rdir)) if (!f.startsWith(young?.id ?? "-")) utimesSync(join(rdir, f), old, old);
+  const gone = rs?.sweep() ?? 0;
+  ok(gone === 3 && rs?.get(keep!.id) && !rs?.get(drop!.id) && rs?.get(young!.id) && !existsSync(join(rdir, ".tmp-deadbeef")), "retention: an unsent upload older than a day and a stray .tmp go; sent and recent files stay", `${gone} ${readdirSync(rdir).join(",")}`);
 } catch (e: any) { ok(false, "the queue section ran", String(e?.message ?? e).slice(0, 300)); }
 
 // ---------- 3. the server ----------
@@ -197,6 +251,7 @@ try {
     // serving: only to this Mac's session (or a paired phone), as the stored type, never sniffed
     const g = await raw("GET", `/api/main/attachments/${sha(PNG)}`);
     ok(g.status === 200 && g.buf.equals(PNG) && g.headers["content-type"] === "image/png" && g.headers["x-content-type-options"] === "nosniff" && /sandbox/.test(g.headers["content-security-policy"] ?? ""), "the stored file is served back as its own type, nosniff, sandboxed");
+    ok(g.headers["cache-control"] === "private, no-store", "the read-back is never cached (a revoked phone keeps no copy)", String(g.headers["cache-control"]));
     ok((await raw("GET", `/api/main/attachments/${sha(PNG)}`, { session: false })).status === 401, "serving needs Studio's session");
     const trav = await raw("GET", "/api/main/attachments/..%2F..%2Fsession-token");
     const trav2 = await raw("GET", `/api/main/attachments/${sha(PNG)}.png`);
@@ -233,11 +288,14 @@ try {
 
     // Claude: the same files as image and document blocks; a too-large image is a typed refusal, not a drop
     ok((await raw("POST", "/api/main/attach", { body: { host: "claude", id: "sess-srv" } })).body?.ok === true, "Claude session attached");
-    const s2 = await raw("POST", "/api/main/send", { body: { text: "Read these", attachments: [sha(PNG), sha(PDF)] } });
+    const s2 = await raw("POST", "/api/main/send", { body: { text: "Read these", attachments: [{ id: sha(PNG), name: "label-one.png" }, sha(PDF)] } });
     ok(s2.status === 200 && await until(() => existsSync(claudeInput) && readFileSync(claudeInput, "utf8").includes("Read these")), "the Claude send is queued and reaches the CLI");
     const cin = readFileSync(claudeInput, "utf8").trim().split("\n").map((l) => JSON.parse(l)).find((x) => x.text === "Read these");
     ok(cin?.files?.map((f: any) => `${f.type}:${f.media_type}:${f.bytes}`).join() === `image:image/png:${PNG.length},document:application/pdf:${PDF.length}`, "through the server, Claude gets an image block and a document block", JSON.stringify(cin?.files));
     await until(async () => !(await raw("GET", "/api/main")).body?.busy);
+    await up(PNG, "renamed-later.png");
+    const lab = (await raw("GET", "/api/main")).body.log.find((x: any) => x.kind === "captain" && x.text === "Read these");
+    ok(lab?.attachments?.[0]?.name === "label-one.png", "the history keeps the label the message was sent with, after a later upload of the same bytes", JSON.stringify(lab?.attachments?.[0]));
     const bigId = (await up(Buffer.concat([PNG, Buffer.alloc(6 * 1024 * 1024)]), "big.png")).body;
     ok(bigId?.ok && bigId.hostRefusal?.code === "claudeImageTooLarge", "an upload Claude cannot take is stored but flagged for the running host (claudeImageTooLarge)");
     const linesBefore = readFileSync(claudeInput, "utf8").trim().split("\n").length;

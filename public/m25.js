@@ -142,7 +142,7 @@ ask = async function (text) {
   const bad = att.find((a) => a.state === "refused" || attNote(a)?.refused);
   if (bad) { restoreDraft(text); return toast(T(`Remove ${bad.name} first: it cannot be sent.`, `請先移除 ${bad.name}：它無法送出。`)); }
   openChat(true);
-  const r = await postJ("/api/main/send", { text, ...(att.length ? { attachments: att.map((a) => a.ref.id) } : {}) });
+  const r = await postJ("/api/main/send", { text, ...(att.length ? { attachments: att.map((a) => ({ id: a.ref.id, name: a.ref.name })) } : {}) });
   if (r.error) { restoreDraft(text); return toast(r.reason ? r.reason[lang] || r.reason.en : r.error); }
   if (att.length) clearAtt();
 };
@@ -150,7 +150,7 @@ const restoreDraft = (text) => { const el = $("#chatIn"); if (el && text && !el.
 
 // ---------- chat attachments: drop, paste or pick images and PDFs; they go with the next message ----------
 // The limits mirror src/attachments.ts; the server checks the real type by the file's first bytes and decides.
-const ATT = { max: 5, image: 10 * 1024 * 1024, pdf: 20 * 1024 * 1024, claudeImage: 5 * 1024 * 1024, accept: "image/png,image/jpeg,image/webp,image/gif,application/pdf" };
+const ATT = { max: 5, image: 10 * 1024 * 1024, pdf: 20 * 1024 * 1024, claudeImage: 3932160, claudeSide: 8000, claudePages: 100, claudeMessage: 18 * 1024 * 1024, accept: "image/png,image/jpeg,image/webp,image/gif,application/pdf" };
 MS.att = [];
 let attSeq = 0;
 const fmtSize = (n) => n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
@@ -158,8 +158,10 @@ const fmtSize = (n) => n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` :
 function attNote(a) {
   const host = MS.view?.state !== "detached" ? MS.view?.host : null, ref = a.ref;
   if (!ref) return null;
-  if (host === "codex" && ref.kind === "pdf") return { refused: false, text: T("Codex cannot read PDFs directly: it gets the file path and opens it itself.", "Codex 無法直接讀 PDF：它會拿到檔案路徑，自己打開來讀。") };
-  if (host === "claude" && ref.kind === "image" && ref.size > ATT.claudeImage) return { refused: true, text: T("Claude takes images up to 5 MB. Remove it or send a smaller one.", "Claude 只收 5 MB 以內的圖片，請移除或換小一點的。") };
+  if (host === "codex" && ref.kind === "pdf") return { refused: false, text: T("Codex cannot read PDFs directly; it opens the file itself.", "Codex 不能直接讀 PDF，會自己開檔。") };
+  if (host === "claude" && ref.kind === "image" && ref.size > ATT.claudeImage) return { refused: true, text: T("Claude takes images up to 3.75 MB. Remove it or send a smaller one.", "Claude 只收 3.75 MB 以內的圖片，請移除或換小一點的。") };
+  if (host === "claude" && ref.kind === "image" && Math.max(ref.width || 0, ref.height || 0) > ATT.claudeSide) return { refused: true, text: T(`Claude takes images up to ${ATT.claudeSide} px on a side (this one is ${ref.width}×${ref.height}).`, `Claude 只收每邊 ${ATT.claudeSide} px 以內的圖片（這張 ${ref.width}×${ref.height}）。`) };
+  if (host === "claude" && ref.kind === "pdf" && (ref.pages || 0) > ATT.claudePages) return { refused: true, text: T(`Claude takes PDFs up to ${ATT.claudePages} pages (this one has ${ref.pages}).`, `Claude 只收 ${ATT.claudePages} 頁以內的 PDF（這份 ${ref.pages} 頁）。`) };
   return null;
 }
 function addFiles(list) {
