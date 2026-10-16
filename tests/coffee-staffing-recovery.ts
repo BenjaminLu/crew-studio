@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {harness} from './rt-harness';
+import {harness,until} from './rt-harness';
 import {bundledText} from '../src/bundled';
 import {skillTextFor} from '../src/runtime';
 import {StaffingStore,coffeeStaffingProject} from '../src/domain/staffing';
@@ -18,5 +18,13 @@ let invalid:any;try{await tools.call('studio_staffing_interview',{...target,answ
 const after:any=await tools.call('studio_staffing_interview',target,owner('read-after-error'));ok(JSON.stringify(after.choices)===JSON.stringify(selected.choices)&&after.round===selected.round,'rejected input preserves previously confirmed providers');
 const models:any=await tools.call('studio_staffing_interview',{...target,answers:Object.fromEntries(first.frontier.map((q:any)=>[q.role,{model:'fixture-model'}]))},owner('model-turn'));ok(models.frontier.every((q:any)=>q.field==='effort'),'documented nested model answers still work');
 const efforts:any=await tools.call('studio_staffing_interview',{...target,answers:Object.fromEntries(first.frontier.map((q:any)=>[q.role+'.effort','low']))},owner('effort-turn'));ok(efforts.complete&&h.engine.list().length===0,'effort completion never creates work or autoapproves configuration');
+const choices=Object.fromEntries(first.frontier.map((q:any)=>[q.role,{provider:'codex',model:'fixture-model',effort:'low'}]));
+let approvedHash='';for(const turn of ['approve-first','approve-identical']){
+ const proposal:any=await tools.call('studio_propose_staffing',{...target,roles:choices},owner(turn));
+ ok(await until(()=>h.engine.cards.list({run:proposal.proposal,open:true}).length===1&&!h.engine.busy(proposal.proposal)),'configuration awaits actual captain card');
+ const card=h.engine.cards.list({run:proposal.proposal,open:true})[0];await h.engine.answer(card.id,{choice:'approve',by:'fixture captain'});
+ ok(await until(()=>h.engine.get(proposal.proposal)?.status==='succeeded'),'captain approval completes configuration');
+ const current=store.current(coffeeStaffingProject(target.project));if(!approvedHash)approvedHash=current.hash;else ok(current.hash===approvedHash&&current.version===1,'identical reapproval preserves existing tasks configuration binding');
+}
 console.log(`coffee-staffing-recovery: ${passed} passed, 0 failed`);
 }finally{h.stop();}

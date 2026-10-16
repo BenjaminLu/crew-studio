@@ -106,6 +106,9 @@ if(process.env.STAFFING_BASE_ENGINE){
   const allowedProvider=e.deps.selectProvider;const {ProviderRefusal}=await import('../src/providers/policy');e.deps.selectProvider=async()=>{throw new ProviderRefusal('offline capability hold')};
   let held=e.start({workflow:flow.id,params:{project:project.id,_staffing:config.hash}});await until(()=>held.nodes.work.waiting==='card'&&!e.busy(held.id));
   const recoveryCard=e.cards.get(held.nodes.work.card!);ok(recoveryCard?.status==='open'&&held.status==='waiting','existing task exposes genuine readiness recovery hold');
+  // Simulate a pre-existing newer signed configuration; recovery must bind it without another identical activation.
+  const {hash:oldHash,signature:oldSignature,version:oldVersion,previous:oldPrevious,approval:oldApproval,...recoveryDraft}=config;
+  store.approve(recoveryDraft,config.hash,{run:'R-existing-config',card:'SC-existing-config',answerSeq:1});
   const recovery=await tools.call('studio_change_staffing',{task:held.id,node:'work',roles:{worker:{provider:'codex',model:'explicit-model',effort:'high'}}},{...owner,key:'captain-recovery'}) as any;
   await until(()=>e.get(recovery.proposal)?.nodes.confirm.waiting==='card');const staffingCard=e.cards.list({run:recovery.proposal})[0];
   ok(staffingCard.body.includes(held.id)&&staffingCard.body.includes(recoveryCard!.id),'recovery approval shows exact existing task and separate preparation card');
