@@ -161,6 +161,83 @@ if(process.env.STAFFING_BASE_ENGINE){
  console.log(`staffing total: ${n} passed`);
 }
 
+// Native recovery upgrades the coordinator of the original loop without changing
+// its definition or answering the separate readiness card. All providers are stubs.
+for(const scenario of ['explicit','fallback','invalid-explicit-fallback','missing'] as const){
+ const {harness,Y,until}=await import('./rt-harness');
+ const {installStaffingGuard,nativeStaffingSkillRef}=await import('../src/domain/staffing');
+ const {installFirstmateStaffing}=await import('../src/firstmate-staffing');
+ const {bundledText}=await import('../src/bundled');
+ const {ProviderRefusal}=await import('../src/providers/policy');
+ const {QueueRefusal}=await import('../src/runtime/queue');
+ const ids=scenario==='missing'?['worker']:['worker','coordinator','reviewer'];
+ const target=scenario==='explicit'?'reviewer':'coordinator';
+ const loopArgs={producer:'make',...(scenario==='explicit'?{coordinator:'reviewer'}:scenario==='fallback'?{}:{coordinator:'not-a-workflow-role'})};
+ const data=checkedTempDir('staffing-loop-'),flag=join(data,'fixed');
+ const flow={id:'code-firstmate',name:'Loop staffing recovery',kind:'code',version:1,
+  roles:ids.map(id=>({id,label:id,skill:nativeStaffingSkillRef(id)})),
+  nodes:[{id:'start',kind:'hook',label:'Start',do:'set',args:{key:'fixture',value:true},x:-1,y:0},{id:'make',kind:'agent',label:'Make',role:'worker',mode:'test',args:{onBrief:`Call: note_write {"flag":"${flag}"}`},checks:[{use:'t/noexp',params:{flagfile:flag}}],x:0,y:0},
+   {id:'fix',kind:'loop',label:'Fix',args:loopArgs,x:1,y:0},{id:'done',kind:'hook',label:'Done',do:'set',args:{key:'finished',value:true},x:2,y:0}],
+  edges:[['start','make'],['make','done','ok'],['make','fix','fail'],['fix','make','retry|report'],['fix','done','pass']]};
+ const h=await harness([Y(flow),bundledText('workflows/v2/firstmate-staffing.wf.yaml')!],{data,refine:true});
+ const e=h.engine,store=new StaffingStore(data),project={namespace:'git' as const,id:'p',identity:'isolated-loop-'+scenario};
+ const starts:{role:string|undefined;model:string|null|undefined}[]=[];
+ try{
+  installStaffingGuard(e,store,()=>project);
+  const facts=async()=>[{provider:'codex',support:'supported' as const,auth:'verified',quota:'available',expires:Date.now()+30000,models:['initial-model','recovered-model'].map(id=>({id,efforts:['high']}))}];
+  const tools=installFirstmateStaffing(e,store,()=>project,facts),base={project:project.id,workflow:flow.id,version:1};
+  const owner=(key:string)=>({key:scenario+'-'+key,captain:true,text:'Approve the exact loop role configuration',live:()=>true});
+  const discuss=async(recovery:boolean)=>{
+   await tools.call('studio_staffing_interview',{...base,...(recovery?{restart:true}:{})},owner(recovery?'restart':'read'));
+   let result:any;
+   for(const field of ['provider','model','effort'])result=await tools.call('studio_staffing_interview',{...base,answers:Object.fromEntries(ids.map(id=>[id,{[field]:field==='provider'?'codex':field==='effort'?'high':recovery&&id===target?'recovered-model':'initial-model'}]))},owner(`${recovery}-${field}`));
+   return result.choices;
+  };
+  const roles=await discuss(false);
+  const initial:any=await tools.call('studio_propose_staffing',{...base,roles},owner('initial'));
+  ok(await until(()=>e.get(initial.proposal)?.nodes.confirm.waiting==='card'),scenario+': native initial confirmation appears');
+  await e.answer(e.get(initial.proposal)!.nodes.confirm.card!,{choice:'approve',by:'captain'});
+  ok(await until(()=>e.get(initial.proposal)?.status==='succeeded'),scenario+': native initial configuration approved');
+  const initialConfig=store.current(project);
+  e.modes.test.system=(_x,skill)=>skill;
+  e.deps.selectProvider=async(x,p)=>{
+   if(x.node.id==='fix'&&p.model!=='recovered-model')throw new ProviderRefusal('offline loop coordinator capability hold');
+   starts.push({role:x.node.role,model:p.model});return {...e.deps.provider(p.provider,p.model),reasoningEffort:p.effort};
+  };
+  // A malformed historical loop can still have an existing readiness hold; it
+  // must not borrow an arbitrary staffed worker when no coordinator exists.
+  if(scenario==='missing')e.kinds.loop={async start(){throw new QueueRefusal('Historical coordinator readiness hold')}};
+  let task=e.start({workflow:flow.id,params:{project:project.id,_staffing:initialConfig.hash}});
+  ok(await until(()=>task.nodes.fix.waiting==='card'&&!e.busy(task.id)),scenario+': actual loop reaches readiness hold '+JSON.stringify({status:task.status,error:task.error,nodes:task.nodes}));
+  const held=task.nodes.fix,card=held.card!,definition=staffingHash(task.def),visit=held.visits,attempt=held.attempt,startsBefore=starts.length;
+  const recoveredRoles=await discuss(true);
+  const recovery:any=await tools.call('studio_change_staffing',{task:task.id,node:'fix',roles:recoveredRoles},owner('recovery'));
+  ok(await until(()=>e.get(recovery.proposal)?.nodes.confirm.waiting==='card'),scenario+': native recovery confirmation appears');
+  const approval=e.get(recovery.proposal)!.nodes.confirm.card!;
+  ok(e.cards.get(approval)!.body.includes(card),scenario+': confirmation pins original readiness card');
+  await e.answer(approval,{choice:'approve',by:'captain'});
+  ok(await until(()=>['succeeded','failed'].includes(e.get(recovery.proposal)!.status)),scenario+': native recovery settles');
+  if(scenario==='missing'){
+   ok(e.get(recovery.proposal)!.status==='failed'&&/Recovered node role is not configured/.test(e.get(recovery.proposal)!.error??''),'missing coordinator fails closed');
+   ok(!e.ledger(task.id).some(v=>v.record==='staffing-upgrade')&&e.deps.staffingBinding!(task)===initialConfig.hash,'missing coordinator creates no task authority');
+  }else{
+   ok(e.get(recovery.proposal)!.status==='succeeded',scenario+': native loop upgrade succeeds');
+   const upgrade=e.ledger(task.id).filter(v=>v.record==='staffing-upgrade');
+   ok(upgrade.length===1&&upgrade[0].data?.node==='fix'&&upgrade[0].data?.visit===visit&&upgrade[0].data?.attempt===attempt&&upgrade[0].data?.reprepareCard===card,scenario+': signed upgrade retains exact loop/card pin');
+  }
+  ok(staffingHash(task.def)===definition&&!task.nodes.fix.agent&&task.nodes.fix.visits===visit&&task.nodes.fix.attempt===attempt,scenario+': approval does not rewrite the loop or its attempt');
+  ok(task.status==='waiting'&&task.nodes.fix.card===card&&e.cards.get(card)!.status==='open'&&starts.length===startsBefore&&e.list().filter(r=>r.workflow===flow.id).length===1,scenario+': approval does not dispatch, replace task or answer readiness');
+  if(scenario!=='missing'){
+   e.load();task=e.get(task.id)!;
+   ok(e.deps.staffingBinding!(task)===store.current(project).hash,scenario+': signed loop upgrade survives reload');
+   await e.answer(card,{choice:'retry',by:'captain'});
+   ok(await until(()=>['succeeded','failed','waiting'].includes(task.status)&&!e.busy(task.id))&&task.status==='succeeded',scenario+': separate retry completes the real refine loop');
+   ok(starts.some(p=>p.role===target&&p.model==='recovered-model')&&task.nodes.make.visits===2&&task.ctx.briefs?.make?.quality==='pass',scenario+': exact approved coordinator produces checked brief before worker retry');
+  }
+ }finally{for(const r of e.list())if(!['succeeded','failed','cancelled'].includes(r.status))await e.cancel(r.id,'fixture cleanup');h.stop();rmSync(data,{recursive:true,force:true})}
+}
+console.log(`staffing loop total: ${n} passed`);
+
 // Canonical project identity uses actual local Git metadata, never a model path.
 {
  const {mkdirSync,symlinkSync}=await import('node:fs');const {Projects}=await import('../src/doors');
