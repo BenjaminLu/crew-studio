@@ -1,3 +1,5 @@
+import {hashInput} from './checks';
+import {installOwnClaudeGrants,ownClaudePlan} from '../providers/own-workflow-claude-refresh';
 import {installHelloWeb} from "../domain/hello-web";
 import { refusesRulesPatch } from "../operating-rules";
 import { PolicyUnreadable } from "./checks";
@@ -148,6 +150,7 @@ export function createRuntime(d: RuntimeDeps) {
   // the captain's own workflows start only with the staffing the captain confirmed at Run (never at drafting)
   const previousOwnStart=engine.deps.authorizeStart;
   engine.deps.authorizeStart=(def:any,o:any)=>{previousOwnStart?.(def,o);if(ownWorkflow(def)){const s=ownStaffingPlan(def);if(s.plan.length&&(s.missing.length||o.params?._ownStaffing!==s.hash))throw new Error('Confirm staffing for every agent node when you click Run / 請在按下執行時確認每個代理節點的配置');}};
+  const ownClaude=installOwnClaudeGrants(engine);
   const githubReview=installGitHubReviewWorkflow(engine,projects,d.dataDir,d.protectedRoots??[]);
   installReadinessViews(engine);
   engine.load();
@@ -176,7 +179,7 @@ export function createRuntime(d: RuntimeDeps) {
     if(t.ok)for(const e of t.entries.filter(e=>e.record==='startup-artifact')){const p=e.data,v=d.m3?.store.version(p?.artifact,p?.version);if(v&&v.sha256===p.sha256&&siteIntact(p.artifact,p.version,v))outputMap.set(p.artifact,{artifact:p.artifact,version:p.version,href:`#/review/${encodeURIComponent(p.artifact)}/${p.version}`,kind:'doc',label:'competition'});}
     // the run page offers "Continue original task…" only to the desktop captain, and only when the engine would make an offer
     const continuable = who?.kind === "desktop" && engine.continuable(id);
-    return { ...r, nodes: readinessNodes(r, id=>engine.cards.get(id)), outputs:[...outputMap.values()], continuable, walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };
+    return { ...r, claudeVerificationAvailable:ownClaude.available(id), nodes: readinessNodes(r, id=>engine.cards.get(id)), outputs:[...outputMap.values()], continuable, walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };
   };
   const checkView = (m: any) => { const p = engine.params(m, null, {}); return { ref: m.ref, id: m.id, pack: m.pack, version: m.version, title: m.title, description: m.description, applies_to: m.applies_to, kind: m.kind, blocking: m.blocking, needs: m.needs,
     params: m.params, policy_bind: m.policy_bind, effective: p.params, from: p.from, timeout_s: m.timeout_s, network: m.network, impl: m.native ? "native" : m.adapter ? "adapter" : m.kind === "judged" ? "judge" : "executable", quorum: m.judge?.quorum ?? null, hasSample: !!m.sample, at: m.at }; };
@@ -313,9 +316,9 @@ export function createRuntime(d: RuntimeDeps) {
           if(typeof params[key]!=='string'||spec.pattern&&!new RegExp(spec.pattern).test(params[key]))return refuse({error:`Invalid workflow input / 流程輸入格式不正確: ${key}`,code:'param_invalid',params:[key]},400,'invalid-input.params');
         }
         if(ownWorkflow(chosenDef)&&ownStaffingPlan(chosenDef!).plan.length){ // nothing to staff: a card-only workflow just starts
-          const staffing=ownStaffingPlan(chosenDef!);
+          const staffing={...ownStaffingPlan(chosenDef!),claudeVerification:ownClaudePlan(chosenDef)};
           if(staffing.missing.length)return refuse({error:'Choose a provider, model and (for Codex) effort for every agent node before Run / 執行前請為每個代理節點選擇供應商、模型與（Codex）推理強度',code:'staffing_incomplete',staffing},409,"env.staffing");
-          if(b?.staffingConfirm!==staffing.hash)return refuse({error:'Confirm who works on each node before this Task starts / 開始任務前請確認每個節點的人員配置',code:'staffing_confirmation_required',staffing},409,"env.staffing");
+          if(b?.staffingConfirm!==staffing.hash||(staffing.claudeVerification&&hashInput({value:b?.claudeVerification??null})!==hashInput({value:staffing.claudeVerification})))return refuse({error:'Confirm who works on each node before this Task starts / 開始任務前請確認每個節點的人員配置',code:'staffing_confirmation_required',staffing},409,"env.staffing");
           params._ownStaffing=staffing.hash;
         }
         if(boardStaffed(chosenDef)){
@@ -332,11 +335,13 @@ export function createRuntime(d: RuntimeDeps) {
           if(!image||image.provider!=='codex')return refuse({error:"Confirm an available dedicated Codex image role; no vendor fallback",code:"coffee-staffing-required"},409,"env.staffing");
           params={...params,_staffing:config.hash};
         }
-        let r;try{r = engine.start({ workflow: wf, version: b?.version ? Number(b.version) : undefined, title: b?.title, text: ownWorkflow(chosenDef) ? ownBrief(chosenDef, text, params) : text, params, by, classifier: cls });}
+        let r;try{r = ownClaude.start({ workflow: wf, version: b?.version ? Number(b.version) : undefined, title: b?.title, text: ownWorkflow(chosenDef) ? ownBrief(chosenDef, text, params) : text, params, by, classifier: cls },b?.claudeVerification);}
         catch(e:any){if(!boardStaffed(chosenDef))throw e;const message=String(e?.message??e).replace(/^Staffing approval requires confirmation: /,'');return json({error:message,code:'staffing_not_ready',staffing:{state:'blocked',code:'staffing_not_ready',reason:{en:message,zh:'已核准的代理目前無法開始；請更新代理能力狀態後再試。'}}},409);}
         return json(runView(r.id, who));
       }
       const recovery=/^\/api\/wruns\/(R-\d+)\/continuation\/(offer|confirm)$/.exec(p);
+      const claudeVerification=/^\/api\/wruns\/(R-\d+)\/claude-verification\/(offer|confirm)$/.exec(p);
+      if(claudeVerification&&writing){if(req.method!=="POST")return json({error:"POST required"},405);if(who.kind!=="desktop")return json({error:"Only the desktop captain can authorize paid verification"},403);const id=claudeVerification[1];if(claudeVerification[2]==="offer")return json(ownClaude.offer(id));await ownClaude.confirm(id,b,by);return json(runView(id,who));}
       const failureRefresh=/^\/api\/wruns\/(R-\d+)\/failure-refresh$/.exec(p);
       if(failureRefresh&&writing){if(req.method!=="POST")return json({error:"POST required"},405);if(who.kind!=="desktop")return json({error:"Only the desktop captain can refresh failure diagnostics"},403);if(!b||typeof b!=="object"||Array.isArray(b)||Object.keys(b).length)return json({error:"Failure refresh accepts no execution choices"},400);engine.refreshFailure(failureRefresh[1]);return json(runView(failureRefresh[1],who));}
       if(recovery&&writing){if(who.kind!=="desktop")return json({error:"Only the desktop captain can continue a closed task"},403);const id=recovery[1];return json(recovery[2]==="offer"?engine.continuationOffer(id):(engine.confirmContinuation(id,String(b?.token??""),String(b?.confirm??"")),runView(id, who)));}

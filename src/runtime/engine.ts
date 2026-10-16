@@ -384,7 +384,7 @@ export class Engine {
     this.runs.set(id, r);
     this.append(r, { type: "run_created", run: clone(r) });
     this.committed.set(id, clone(r));
-    this.deps.initializeRun?.(r);
+    this.deps.initializeRun?.(r, o);
     const entry = entryOf(def)!;
     r.queue.push(entry.id); r.status = "running";
     this.commit(r, "started");

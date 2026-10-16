@@ -1,3 +1,4 @@
+import {refreshOwnWorkflowClaude} from './providers/own-workflow-claude-refresh';
 import {refreshStartupClaude} from './providers/startup-claude-refresh';
 import {imageOutcomeProof} from "./domain/image-proof";
 import {localExecutionNotice} from "./local-execution";
@@ -321,7 +322,7 @@ async function nativeSelection(input: ProviderSelection, x?: any): Promise<Provi
   const selected = await selectNativeProvider(input, async (id,pair) => {
     const at = Date.now();
     let cap = id === "codex" ? await probeCodex(undefined, signal) : id==='claude'?await probeClaudeNative(pair,signal): id === "stub" && allowStub ? { provider: id, available: true, auth: "verified" as const, quota: "available" as const, models: [{ id: "no model" }], at, expires: at + 30_000 } : { provider: id, available: false, auth: "unverified" as const, quota: "unknown" as const, models: [], at, expires: at + 30_000, reason: "native auth/model/quota capability adapter is unavailable" };
-    if(id==='claude')cap=await refreshStartupClaude(x,input,pair,cap);
+    if(id==='claude')cap=await refreshStartupClaude(x,input,pair,cap);if(id==='claude')cap=await refreshOwnWorkflowClaude(x,input,pair,cap);
     capabilities.set(id, cap); return cap;
   }, (id, model, effort) => id === "codex" ? codexProvider(model, undefined, { model, effort }) : id==='claude'?makeNativeClaudeProvider(capabilities.get(id)!,{model,effort}):makeProvider(id, model));
   if (signal?.aborted || x && x.engine.get(x.run.id) && !x.engine.owns(x)) throw new ProviderRefusal("native round owner ended during capability verification");

@@ -33,7 +33,7 @@ export const filmSample: { path: string | null; reason: string | null } = (() =>
   return r.exitCode === 0 ? { path: f, reason: null } : { path: null, reason: `ffmpeg could not make the sample film: ${r.stderr.toString().trim().slice(0, 300)}` };
 })();
 
-export async function bootStudio(name: string, o: { localUnrestricted?: boolean } = {}): Promise<Studio> {
+export async function bootStudio(name: string, o: { localUnrestricted?: boolean; beforeStart?: (data:string)=>Promise<void> } = {}): Promise<Studio> {
   const root = mkdtempSync(join(tmpdir(), `crew-acceptance-${name}-`)), home = join(root, "home"), data = join(root, "data"), deps = join(root, "deps");
   for (const d of [join(home, ".codex"), data, deps]) mkdirSync(d, { recursive: true });
   writeFileSync(join(home, ".codex", "config.toml"), 'model="fixture-model"\nmodel_reasoning_effort="low"\n');
@@ -50,6 +50,7 @@ export async function bootStudio(name: string, o: { localUnrestricted?: boolean 
     CREW_LOCAL_UNRESTRICTED: o.localUnrestricted ? "1" : "0", ...(o.localUnrestricted ? { CREW_LOCAL_DEPENDENCY_ROOT: deps } : {}) };
   for (const k of [...(filmSample.path ? [] : ["CREW_RENDER_STUB_MP4"]), "CREW_MAIN_PROJECT", "CREW_FM_STATE", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CODEX_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "CREW_CHAT_PROVIDER", "CLAUDE_CONFIG_DIR", "CREW_CODEX_MODEL", "CREW_CLAUDE_MODEL", "CREW_CLAUDE_BILLING", "CREW_TEST_IN_PROCESS"]) delete env[k];
   if (!o.localUnrestricted) delete env.CREW_LOCAL_DEPENDENCY_ROOT;
+  await o.beforeStart?.(data);
   let out = "";
   const app: ChildProcess = spawn("bun", ["src/server.ts"], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
   app.stdout!.on("data", (b) => { if (out.length < 400_000) out += b; }); app.stderr!.on("data", (b) => { if (out.length < 400_000) out += b; });

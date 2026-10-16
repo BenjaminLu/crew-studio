@@ -1,5 +1,5 @@
 // Claude CLI capability: passive auth metadata is separate from actual execution.
-// No metadata read makes a model request. Only explicit desktop Verify can do so.
+// No metadata read makes a model request. A desktop Verify or signed bounded Task grant authorizes it.
 import {existsSync,mkdtempSync,mkdirSync,readFileSync,rmSync,realpathSync,statSync} from 'node:fs';
 import {join,dirname} from 'node:path';import{tmpdir,homedir}from'node:os';
 import {probeProcess} from './probe-process';import{claudeLogin,claudeBilling,CLAUDE_OAUTH_SHAPE,CLAUDE_API_KEY_SHAPE,type Login}from'./login';

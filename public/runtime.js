@@ -758,6 +758,7 @@ function viewRun(id) {
         r.status === "waiting" && r.def.kind === "coffee-kit" && open.some(c => c.node === "capability") ? h("button", { class: "btn", "data-coffee-recovery": id, onclick: () => api(`/api/wruns/${id}/coffee-recovery`, {}).then(() => loadRun(v)).catch(e => alert(e.message)) }, T("Recheck film capability", "重新檢查影片能力")) : null,
         !ended ? h("button", { class: "btn ghost", "data-run-cancel": id, "aria-expanded": String(v.panel === "cancel"), onclick: () => { v.panel = v.panel === "cancel" ? null : "cancel"; rerender(); } }, T("Cancel task…", "取消任務…")) : null,
         ended ? h("button", { class: "btn", "data-run-archive": id, onclick: () => api(`/api/wruns/${id}/archive`, { archived: !r.archived }).then((x) => { v.r = { ...v.r, ...x }; loadRun(v); RN.list = null; rerender(); }).catch((e) => alert(e.message)) }, r.archived ? T("Unarchive", "取消封存") : T("Archive", "封存")) : null,
+        r.claudeVerificationAvailable && !window.crewRemote?.token?.() ? h("button",{class:"btn",type:"button","data-task-claude-verification-open":id,onclick:()=>confirmTaskClaudeVerification(id).then(()=>loadRun(v)).catch(e=>alert(e.message))},T("Authorize Claude verification and continue","授權 Claude 驗證並繼續")) : null,
         r.status === "failed" && !window.crewRemote?.token?.() && (!r.failureCard || r.failure?.code === "internal.unmapped") && !r.archived && !r.parked && !r.ctx?.firstmateQuestion ? h("button", {class:"btn",type:"button","data-failure-refresh":id,onclick:()=>api(`/api/wruns/${id}/failure-refresh`,{}).then(()=>loadRun(v)).catch(e=>alert(e.message))}, T("Refresh failure diagnostics", "重新診斷失敗")) : null,
         // only the desktop captain sees it, and only when the server says an offer can be made (it re-checks every pinned byte on the offer)
         canContinue?h("button",{class:"btn",type:"button",'data-continue-task':r.id,"aria-expanded":String(v.panel==="continue"),onclick:async()=>{if(v.panel==="continue"){v.panel=null;rerender();return;}v.panel='continue';v.continuationMessage='';v.continuationConfirm='';v.continuationOffer=null;v.continuationUncertain=false;rerender();try{v.continuationOffer=await api(`/api/wruns/${r.id}/continuation/offer`,{});}catch(e){v.continuationMessage=e.message;}rerender();}},T("Continue original task…","接續原任務…")):null,
@@ -943,6 +944,15 @@ function nodeModelControls(n,roleSkill,{onChange,onSave,attr}){
   return box;
 }
 /** Run of the captain's own workflow: the staffing confirmation appears only now. Resolves true when confirmed. */
+function claudeVerificationDisclosure(plan){
+  if(!plan?.nodes?.length)return null;
+  return h("div",{"data-claude-verification-disclosure":""},h("p",{},T("This confirmation authorizes one bounded Claude verification request for each node below when execution readiness has expired. Each request uses at most 1 turn and USD 0.05. This is separate from the node's work, does not verify quota, and never changes providers. No automatic paid retry after its allowance is consumed.","此確認授權以下每個節點在執行就緒驗證失效時進行一次有上限的 Claude 驗證：每次最多 1 回合、USD 0.05。這與節點本身的工作分開、不代表額度已驗證，也不會切換供應商。用完後不會自動付費重試。")),plan.nodes.map(n=>h("p",{"data-claude-verification-node":n.node},`${n.node}: Claude / ${n.model} / ${n.effort||"—"} · 1 × USD 0.05`)));
+}
+async function confirmTaskClaudeVerification(id){
+ const offer=await api(`/api/wruns/${id}/claude-verification/offer`,{});
+ const accepted=await new Promise(resolve=>{const dlg=h("dialog",{class:"fw-dialog","data-task-claude-verification":""});const close=v=>{dlg.close();dlg.remove();resolve(v);};dlg.append(h("h2",{},T("Authorize verification and continue this Task","授權驗證並繼續原任務")),claudeVerificationDisclosure({...offer.plan,nodes:offer.plan.nodes.filter(n=>n.node===offer.node)}),h("button",{class:"btn",onclick:()=>close(false)},T("Cancel","取消")),h("button",{class:"btn primary","data-claude-verification-confirm":"",onclick:()=>close(true)},T("Authorize and continue","授權並繼續")));dlg.addEventListener("cancel",e=>{e.preventDefault();close(false);});document.body.append(dlg);dlg.showModal();});
+ if(accepted)await api(`/api/wruns/${id}/claude-verification/confirm`,{...offer,confirm:"authorize-bounded-verification"});
+}
 function staffingConfirm(staffing,missing){
   return new Promise(resolve=>{
     const dlg=h("dialog",{class:"fw-dialog","data-staffing-confirm":"","aria-label":T("Confirm staffing","確認人員配置")});
@@ -951,6 +961,7 @@ function staffingConfirm(staffing,missing){
       h("p",{},missing?T("These agent nodes still need a provider, model and (for Codex) effort. Select the node in the editor to choose.","這些代理節點還需要供應商、模型與（Codex）推理強度；請在編輯器選取節點設定。"):T("Only your confirmation starts the Task. Each node below runs with exactly this provider, model, effort and skill.","只有你的確認會開始任務；以下每個節點將完全依照這些供應商、模型、推理強度與技能執行。")),
       h("table",{class:"fw-staffing"},h("thead",{},h("tr",{},[T("Node","節點"),T("Provider","供應商"),T("Model","模型"),T("Effort","推理強度"),T("Skill","技能")].map(x=>h("th",{},x)))),
         h("tbody",{},staffing.plan.map(r=>h("tr",{"data-staffing-row":r.node,class:staffing.missing.includes(r.node)?"missing":null},h("td",{},r.label),h("td",{},r.provider||"—"),h("td",{},r.model||"—"),h("td",{},r.effort||"—"),h("td",{},r.skill?skillName(r.skill):"—"))))),
+      claudeVerificationDisclosure(staffing.claudeVerification),
       h("div",{class:"actions"},h("button",{class:"btn",type:"button","data-staffing-cancel":"",onclick:()=>close(false)},missing?T("Close","關閉"):T("Cancel, no Task","取消，不開始")),missing?null:h("button",{class:"btn primary",type:"button","data-staffing-approve":"",onclick:()=>close(true)},T("Confirm staffing and start","確認配置並開始"))));
     dlg.addEventListener("cancel",e=>{e.preventDefault();close(false);});
     document.body.append(dlg);dlg.showModal();
@@ -998,7 +1009,7 @@ function startParamValues(id){
 }
 async function startOwnRun(body){
   try{return await api("/api/wruns",body);}
-  catch(e){const j=e.staffing;if(e.code==="staffing_incomplete"){await staffingConfirm(j,true);return null;}if(e.code!=="staffing_confirmation_required")throw e;if(!await staffingConfirm(j,false))return null;return api("/api/wruns",{...body,staffingConfirm:j.hash});}
+  catch(e){const j=e.staffing;if(e.code==="staffing_incomplete"){await staffingConfirm(j,true);return null;}if(e.code!=="staffing_confirmation_required")throw e;if(!await staffingConfirm(j,false))return null;return api("/api/wruns",{...body,staffingConfirm:j.hash,claudeVerification:j.claudeVerification});}
 }
 const DRAFT_LIVE={fn:null};window.liveListen?.("wfdraft",()=>DRAFT_LIVE.fn?.());
 // ---------- readiness gate (src/readiness): stages 1-5, problems with step / reason / fix, briefs, repair rounds ----------
