@@ -32,6 +32,13 @@ try{const p=await browser.newPage();await p.setContent('<main id="cards"></main>
   ok(await p.locator('[data-competition-artifact] a').getAttribute('href')==='#/review/startup-r-900/1',`${width}: the pinned artifact is linked`);
   ok(await p.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),`${width}: no horizontal overflow`);
  }
+ // hostile model text cannot stall or break the card: a heading padded with whitespace renders fast, and deeply
+ // nested blockquotes neither overflow the stack nor drop the card
+ {const hostile=(text)=>({...base,body:'',competition:{schema:1,rounds:rounds.map((r,i)=>i===2?{...r,judge:{...r.judge,text}}:r),artifact:null}});
+  const t0=Date.now();let err=null;try{await mount(hostile('# a'+' '.repeat(15000)+'x'));}catch(e){err=e;}const took=Date.now()-t0;
+  ok(!err&&took<1000,`a heading padded with 15000 spaces mounts in under 1 s (${took} ms)`);
+  err=null;try{await mount(hostile('>'.repeat(15000)+' x'));}catch(e){err=e;}
+  ok(!err&&await p.locator('[data-competition-round]').count()===3&&await p.locator('[data-option="accept"]').count()===1,'15000 nested blockquote markers neither throw nor drop the card: three rounds and Accept render',String(err?.message??'').slice(0,160));}
  // a ledger that does not verify: a clear notice, no rounds, no repeated body (en and zh-TW)
  await mount({...base,body:'## Round 1: founder FOUNDER-1 proposal text',competition:{untrusted:true}});
  ok((await p.locator('[data-competition-untrusted]').innerText()).includes('Ledger did not verify — the rounds cannot be shown')&&await p.locator('[data-competition-round]').count()===0&&!(await p.locator('[data-card-root]').innerText()).includes('FOUNDER-1'),'untrusted ledger: the card says the rounds cannot be shown, and shows none');

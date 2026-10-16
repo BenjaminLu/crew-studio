@@ -108,7 +108,7 @@ function mdInline(s) {
   while ((m = re.exec(s))) { if (m.index > i) out.push(s.slice(i, m.index)); out.push(m[3] != null ? h("code", {}, m[3]) : h("strong", {}, m[1] ?? m[2])); i = re.lastIndex; }
   if (i < s.length) out.push(s.slice(i)); return out;
 }
-function mdView(text, attrs = {}) {
+function mdView(text, attrs = {}, depth = 0) {
   const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n"), out = []; let para = [], list = null;
   const flush = () => { if (para.length) out.push(h("p", {}, mdInline(para.join("\n")))); para = []; if (list) out.push(list); list = null; };
   const row = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
@@ -117,12 +117,12 @@ function mdView(text, attrs = {}) {
     const l = lines[i]; let m;
     if (!l.trim()) { flush(); continue; }
     if (/^\s*```/.test(l)) { flush(); const code = []; for (i++; i < lines.length && !/^\s*```/.test(lines[i]); i++) code.push(lines[i]); out.push(h("pre", { class: "cc-pre" }, code.join("\n"))); continue; }
-    if ((m = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/.exec(l))) { flush(); out.push(h("p", { class: "cc-md-h", role: "heading", "aria-level": String(m[1].length + 3) }, mdInline(m[2]))); continue; }
+    if ((m = /^\s{0,3}(#{1,6})\s+(.*)$/.exec(l))) { flush(); let ht = m[2].trimEnd(); const hk = ht.replace(/#+$/, ""); if (hk === "" || /\s$/.test(hk)) ht = hk.trimEnd(); out.push(h("p", { class: "cc-md-h", role: "heading", "aria-level": String(m[1].length + 3) }, mdInline(ht))); continue; }
     if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(l)) { flush(); out.push(h("hr", {})); continue; }
     if (l.includes("|") && sep(lines[i + 1])) { flush(); const head = row(l), body = []; for (i += 2; i < lines.length && lines[i].includes("|") && lines[i].trim(); i++) body.push(row(lines[i])); i--;
       out.push(h("div", { class: "cc-md-tw" }, h("table", {}, h("thead", {}, h("tr", {}, head.map((c) => h("th", {}, mdInline(c))))), h("tbody", {}, body.map((r) => h("tr", {}, head.map((_, k) => h("td", {}, mdInline(r[k] ?? "")))))))));
       continue; }
-    if ((m = /^\s*>\s?(.*)$/.exec(l))) { flush(); const q = [m[1]]; while (i + 1 < lines.length && (m = /^\s*>\s?(.*)$/.exec(lines[i + 1]))) { q.push(m[1]); i++; } out.push(h("blockquote", {}, mdView(q.join("\n")))); continue; }
+    if ((m = /^\s*>\s?(.*)$/.exec(l))) { flush(); const q = [m[1]]; while (i + 1 < lines.length && (m = /^\s*>\s?(.*)$/.exec(lines[i + 1]))) { q.push(m[1]); i++; } out.push(h("blockquote", {}, depth < 3 ? mdView(q.join("\n"), {}, depth + 1) : h("p", {}, q.join("\n")))); continue; }
     const li = /^\s*(?:([-*+])|(\d+)[.)])\s+(.*)$/.exec(l);
     if (li) { const tag = li[1] ? "ul" : "ol"; if (para.length || (list && list.tagName.toLowerCase() !== tag)) flush(); if (!list) list = h(tag, li[2] && li[2] !== "1" ? { start: li[2] } : {}); list.append(h("li", /^\s{2,}/.test(l) ? { class: "cc-md-sub" } : {}, mdInline(li[3]))); continue; }
     if (list && /^\s{2,}\S/.test(l)) { list.lastChild.append("\n", ...mdInline(l.trim())); continue; }
