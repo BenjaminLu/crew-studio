@@ -44,6 +44,8 @@ try {
     const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: scheme });
     // keep the page's event source reachable, so a test can deliver an SSE event
     await ctx.addInitScript(() => { const ES = window.EventSource; window.EventSource = class extends ES { constructor(...a) { super(...a); window.__es = this; } }; });
+    // the first-project guide (public/onboarding.js, covered by the onboarding suites) overlays the page; the backbone checks run without it
+    await ctx.addInitScript(() => { try { localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} });
     await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
     const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width}/${scheme}: ${e}`));
     await p.goto(`${base}/`); await p.waitForTimeout(600);
@@ -63,7 +65,7 @@ try {
         ok(streams === 1 && n <= 1, "the page opens one event stream, with several views and modules open", JSON.stringify({ streams, n })); await q.close(); }
       await p.click("#navSettings"); await p.waitForTimeout(200);
       ok(p.url().endsWith("#/settings") && await p.locator("#labsToggle").isVisible(), "clicking the gear opens Settings");
-      ok(await p.locator('a[href="#/doctor"]', { hasText: "Doctor" }).isVisible() && await p.locator('a[href="#/remote"]', { hasText: "Phone pairing" }).isVisible() && await p.locator('a[href="#/roadmap"]', { hasText: "Roadmap" }).isVisible() && await p.locator("label", { hasText: "Show labs" }).isVisible(), "settings holds Doctor, phone pairing, the roadmap and the Show labs switch");
+      ok(await p.locator('a.bb-set[href="#/doctor"]', { hasText: "Doctor" }).isVisible() && await p.locator('a[href="#/remote"]', { hasText: "Phone pairing" }).isVisible() && await p.locator('a[href="#/roadmap"]', { hasText: "Roadmap" }).isVisible() && await p.locator("label", { hasText: "Show labs" }).isVisible(), "settings holds Doctor, phone pairing, the roadmap and the Show labs switch");
       for (const r of LABS) { await p.goto(`${base}/#/${r}`); await p.waitForTimeout(150);
         const panel = p.locator("[data-roadmap-panel]");
         ok(await panel.isVisible() && /This is on the roadmap/.test(await panel.textContent()) && await panel.locator("button", { hasText: "Show labs" }).isVisible() && /M\d/.test(await panel.textContent()), `#/${r} without labs shows the roadmap panel (text, milestone, Show labs), not a 404`); }
