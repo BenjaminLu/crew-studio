@@ -196,7 +196,7 @@ and records the answer exactly as when you click it there.
 ## Run
 
 ```sh
-bun run dev        # from a checkout: http://127.0.0.1:4210, live reload of the server
+bun run dev        # from a checkout: http://127.0.0.1:4210, live reload of the server (development only; the live board runs a release, see Live release)
 bun run start      # same, without watch
 bun run build      # dist/crew-studio, the single binary
 bun run test       # contract, host, out-of-the-box and smoke suites (installs mocked)
@@ -224,6 +224,49 @@ bun run test:binary  # the built binary, run with no Bun on PATH
 | `CREW_CLAUDE_BIN` / `CREW_CODEX_BIN` | `claude` / `codex` | CLI per provider (tests point these at stubs) |
 | `CREW_CHAT_TIMEOUT_MS` | `120000` | time limit per question |
 | `CREW_CLAUDE_PERMISSION_MODE` | `auto` | the fresh Claude Firstmate's permission mode: `auto` or `default` (manual); any other value refuses the start. Operator-only (env or `.env`); worker rounds are not affected |
+
+## Live release
+
+The captain's live board runs from a fixed release, never from the development
+checkout. A release is a detached, locked git worktree of one exact commit at
+`~/.crew-studio/releases/<sha>`, with its own `node_modules` and its own `.env`.
+It runs `bun src/main.ts` from that folder with watch mode off, so uncommitted
+work, reloads and test runs in the dev checkout never reach it.
+
+```sh
+# from the dev checkout
+bun scripts/live-release.ts deploy                 # fetch, resolve origin/main to a SHA, build, verify, switch, open the browser
+bun scripts/live-release.ts deploy --ref <sha>     # any exact commit (--no-fetch skips the fetch)
+bun scripts/live-release.ts status                 # live SHA, pid, port, data dir, and whether it matches origin/main (--fetch first)
+bun scripts/live-release.ts rollback               # back to the previous release
+bun scripts/live-release.ts stop                   # stop the live release only
+```
+
+- **Deploy** checks out the commit (`git worktree add --detach`), runs
+  `bun install --frozen-lockfile`, checks the release is clean at that SHA and
+  starts (`--version`), copies the operator's `.env` to `<release>/.env` with mode
+  0600, stops the live Studio, starts the release detached (log under
+  `<data>/logs/live-<sha>-<time>.log`), waits for HTTP 200 on `/api/instance` from
+  the new pid, then runs `open` for the captain's browser session. If the new
+  release does not come up, the previous release is started again.
+- **Settings.** `CREW_DATA` and `CREW_PORT` are written as absolute values, so the
+  data dir stays where it is. `CREW_LOCAL_DEPENDENCY_ROOT` keeps the operator's
+  value (normally the dev checkout): agents install dependencies where development
+  happens, never into a release. The env file's contents are never printed.
+- **Stopping** only touches the process listening on the live port that this script
+  started, or a Studio process (`bun src/main.ts` or the `crew-studio` binary) whose
+  launch record names the live data dir and whose `/api/instance` answers with that
+  pid. Anything else on the port makes deploy refuse without stopping anything.
+- **Pruning.** Deploy keeps the last 3 releases (`--keep N`) plus the live one and
+  removes the rest as git worktrees.
+- **"Merge and restart"** now means: merge the PR on GitHub, then
+  `bun scripts/live-release.ts deploy`. It deploys exactly the merged `origin/main`
+  commit, whatever the dev checkout holds.
+- **Development instance.** The dev checkout can still run its own Studio, on another
+  port and another data dir. Environment variables win over `.env`, so:
+  `CREW_PORT=4211 CREW_DATA="$HOME/.crew-studio/dev-data" bun run dev`. Never start
+  the dev checkout on the live port or with the live data dir.
+- Regression check: `bun run test:live-release`.
 
 Cards that need the board's own confirmation steps (a merge card with a door
 check, a retrospective card) show a link to the board instead of options.
