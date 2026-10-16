@@ -225,7 +225,7 @@ function viewPage(id) {
   const idLine = [kindWord, p.repository ? p.repository : null, reg ? T(`registered ${dateOf(reg)}`, `${dateOf(reg)}註冊`) : null, `id ${p.id}`].filter(Boolean).join(" · ");
   const header = h("header", { class: "pj-head" }, h("span", { class: `pmark lg ${MARK_CLASS[p.kind] ?? ""}`.trim() }, p.kind === "studio" ? "·" : nameOf(p).slice(0, 1).toUpperCase()),
     h("div", { class: "pj-title" },
-      h("h1", {}, nameOf(p), p.kind === "studio" || (p.enabled && p.folderMissing) ? null : p.enabled ? h("span", { class: "badge ok", "data-project-enabled": "1" }, h("span", { class: "d" }), T("Enabled", "已啟用")) : h("span", { class: "badge bad", "data-project-enabled": "0" }, h("span", { class: "d" }), T("Disabled", "已停用")),
+      h("h1", {}, nameOf(p), p.kind === "studio" || (p.enabled && p.folderMissing) ? null : p.enabled ? h("span", { class: `badge ${p.canStart === false ? "warn" : "ok"}`, "data-project-enabled": "1", "data-can-start": p.canStart === false ? "0" : "1", title: p.canStart === false ? T("No task can start (see Crew)", "無法開始任何任務（見「船員」）") : null }, h("span", { class: "d" }), T("Enabled", "已啟用")) : h("span", { class: "badge bad", "data-project-enabled": "0" }, h("span", { class: "d" }), T("Disabled", "已停用")),
         p.kind === "studio" ? null : p.folderMissing ? h("span", { class: "badge warn", "data-project-folder": "missing" }, icon("alert", "ic sm"), T("Folder missing", "資料夾不存在"))
           : p.kind === "builtin" ? h("span", { class: "badge", "data-project-registered": "builtin" }, T("Built-in", "內建"))
           : p.kind === "external" ? h("span", { class: "badge warn", "data-project-registered": "external" }, icon("alert", "ic sm"), T("External", "外部"))

@@ -41,6 +41,7 @@ try {
     const enabledTile = await p.locator('[data-health="enabled"]').innerText();
     ok(enabledTile.includes('No task can start (see Crew)') && !enabledTile.includes('New tasks can start') && (await p.locator('[data-health="enabled"]').getAttribute('class')).includes(' warn') && (await p.locator('[data-health="enabled"] svg path').first().getAttribute('d')) !== 'M20 6 9 17l-5-5', 'the Enabled tile does not say tasks can start, and shows no check mark', enabledTile);
     ok(await p.locator('[data-crew-link]').count() === 0, 'no Choose your crew together link while no task can start');
+    ok((await p.locator('[data-project-enabled="1"]').getAttribute('class')).includes('warn') && (await p.locator('[data-project-enabled="1"]').getAttribute('data-can-start')) === '0', 'the header Enabled badge warns too, matching the tile');
     ok(!(await p.locator('[data-health="crew"]').getAttribute('class')).includes(' ok'), 'the warning does not count as a passing check');
     const rows = Object.fromEntries(await p.locator('[data-projects-nav] [data-project-row]').evaluateAll((es) => es.map((e) => [e.dataset.projectRow, e.querySelector('[data-project-status]').textContent])));
     ok(rows['reef-log'] === 'Folder missing' && rows['kelp-notes'] === 'Disabled' && rows['harbor-api'] === 'No task can start', 'the sidebar: Folder missing for an enabled project whose folder is gone, Disabled first', JSON.stringify(rows));
@@ -67,6 +68,7 @@ try {
     const { ctx, p } = await open(1280, 'light', { dock: true });
     await p.goto(`${base}/#/project/harbor-api`); await p.waitForSelector('[data-project-page="harbor-api"]:not([data-loading])');
     ok(await p.evaluate(() => !document.body.classList.contains('chat-closed')), 'the dock is open');
+    ok((await p.locator('[data-project-enabled="1"]').getAttribute('class')).includes('ok'), 'with a healthy registry the header Enabled badge is green');
     const lay = await p.evaluate(() => ({ main: document.querySelector('#main').clientWidth, cols: getComputedStyle(document.querySelector('.pj-cols')).gridTemplateColumns.split(' ').length,
       wrapped: [...document.querySelectorAll('[data-project-page] .sec-head h2, [data-project-page] .pj-title h1')].filter((e) => { const r = e.getClientRects(); const lh = parseFloat(getComputedStyle(e).lineHeight) || 20; return e.getBoundingClientRect().height > lh * 1.6; }).map((e) => e.textContent),
       over: document.documentElement.scrollWidth - innerWidth, overMain: document.querySelector('#main').scrollWidth - document.querySelector('#main').clientWidth }));

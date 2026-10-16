@@ -35,22 +35,24 @@ import a31 from "../public/onboarding.js" with { type: "file" };
 import a32 from "../public/ootb.js" with { type: "file" };
 import a33 from "../public/pack-genesis.css" with { type: "file" };
 import a34 from "../public/pack-genesis.js" with { type: "file" };
-import a35 from "../public/runstate.js" with { type: "file" };
-import a36 from "../public/runtime.css" with { type: "file" };
-import a37 from "../public/runtime.js" with { type: "file" };
-import a38 from "../public/scard.js" with { type: "file" };
-import a39 from "../public/skills.css" with { type: "file" };
-import a40 from "../public/skills.js" with { type: "file" };
-import a41 from "../public/skins.js" with { type: "file" };
-import a42 from "../public/styles.css" with { type: "file" };
-import a43 from "../public/takeover.css" with { type: "file" };
-import a44 from "../public/takeover.js" with { type: "file" };
-import a45 from "../public/transcripts.css" with { type: "file" };
-import a46 from "../public/transcripts.js" with { type: "file" };
-import a47 from "../public/vendor/opencc-js-1.4.2-t2cn.min.js" with { type: "file" };
-import a48 from "../public/vendor/opencc-js-LICENSE.txt" with { type: "file" };
-import a49 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
-import a50 from "../public/workflow-overview.js" with { type: "file" };
+import a35 from "../public/projects.css" with { type: "file" };
+import a36 from "../public/projects.js" with { type: "file" };
+import a37 from "../public/runstate.js" with { type: "file" };
+import a38 from "../public/runtime.css" with { type: "file" };
+import a39 from "../public/runtime.js" with { type: "file" };
+import a40 from "../public/scard.js" with { type: "file" };
+import a41 from "../public/skills.css" with { type: "file" };
+import a42 from "../public/skills.js" with { type: "file" };
+import a43 from "../public/skins.js" with { type: "file" };
+import a44 from "../public/styles.css" with { type: "file" };
+import a45 from "../public/takeover.css" with { type: "file" };
+import a46 from "../public/takeover.js" with { type: "file" };
+import a47 from "../public/transcripts.css" with { type: "file" };
+import a48 from "../public/transcripts.js" with { type: "file" };
+import a49 from "../public/vendor/opencc-js-1.4.2-t2cn.min.js" with { type: "file" };
+import a50 from "../public/vendor/opencc-js-LICENSE.txt" with { type: "file" };
+import a51 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
+import a52 from "../public/workflow-overview.js" with { type: "file" };
 
 export const ASSETS: Record<string, string> = {
   "/app.css": a0,
@@ -88,20 +90,22 @@ export const ASSETS: Record<string, string> = {
   "/ootb.js": a32,
   "/pack-genesis.css": a33,
   "/pack-genesis.js": a34,
-  "/runstate.js": a35,
-  "/runtime.css": a36,
-  "/runtime.js": a37,
-  "/scard.js": a38,
-  "/skills.css": a39,
-  "/skills.js": a40,
-  "/skins.js": a41,
-  "/styles.css": a42,
-  "/takeover.css": a43,
-  "/takeover.js": a44,
-  "/transcripts.css": a45,
-  "/transcripts.js": a46,
-  "/vendor/opencc-js-1.4.2-t2cn.min.js": a47,
-  "/vendor/opencc-js-LICENSE.txt": a48,
-  "/vendor/qrcode-1.4.4.min.js": a49,
-  "/workflow-overview.js": a50,
+  "/projects.css": a35,
+  "/projects.js": a36,
+  "/runstate.js": a37,
+  "/runtime.css": a38,
+  "/runtime.js": a39,
+  "/scard.js": a40,
+  "/skills.css": a41,
+  "/skills.js": a42,
+  "/skins.js": a43,
+  "/styles.css": a44,
+  "/takeover.css": a45,
+  "/takeover.js": a46,
+  "/transcripts.css": a47,
+  "/transcripts.js": a48,
+  "/vendor/opencc-js-1.4.2-t2cn.min.js": a49,
+  "/vendor/opencc-js-LICENSE.txt": a50,
+  "/vendor/qrcode-1.4.4.min.js": a51,
+  "/workflow-overview.js": a52,
 };

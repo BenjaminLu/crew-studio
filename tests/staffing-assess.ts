@@ -111,6 +111,11 @@ want(reason([rec("bA", join(repos, "missA")), rec("junk", junk)], "harbor"), "gi
   git(harbor, "worktree", "add", "-q", "-b", "back-branch", back);
   const g = reason([rec("back", back)], "harbor"); ok(g.reason === "ambiguous_alias" && g.aliases.join() === "back", "the same root reappearing (a worktree of harbor) is counted again", JSON.stringify(g)); }
 { const dangling = join(repos, "dangling"); symlinkSync(join(repos, "nowhere"), dangling);
-  ok(reason([rec("dl", dangling)], "harbor").reason !== "ok", "a dangling symlink root exists, so it still refuses"); }
+  want(reason([rec("dl", dangling)], "harbor"), "folder_unusable", "dl", "a dangling symlink root exists (lstat finds it): not skipped, refuses others as folder_unusable");
+  want(reason([rec("dl", dangling)], "dl"), "folder_unusable", "dl", "a dangling symlink root refuses itself as folder_unusable, not folder_missing"); }
+{ const f = join(repos, "a-file"); writeFileSync(f, "x"); const under = join(f, "sub");
+  want(reason([rec("nd", under)], "harbor"), "folder_unusable", "nd", "a root below a file (ENOTDIR) is not skipped: refuses others as folder_unusable");
+  want(reason([rec("nd", under)], "nd"), "folder_unusable", "nd", "a root below a file refuses itself as folder_unusable"); }
+want(reason([rec("gone", join(repos, "missing"))], "gone"), "folder_missing", "gone", "only a root that lstat cannot find is folder_missing");
 { writeFileSync(join(DATA, "projects.json"), "{bad"); const a = projects.staffingAssess("harbor"); ok(!a.ok && a.reason === "registry_unreadable", "a malformed registry: registry_unreadable"); }
 end();

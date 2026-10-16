@@ -215,6 +215,18 @@ ok(side2.projects.find((p: any) => p.id === "harbor-api").status.en === "No task
 const goneOff = (await get("/api/projects/gone-off/overview"))!.body;
 ok(!leak(lostPg) && !leak(goneOff) && !leak(side2), "no reply carries exception text");
 ok(goneOff.health[0].en === "Disabled" && goneOff.crew === null && goneOff.health.find((t: any) => t.key === "base").en === "Repository folder missing" && lk.base.en === "Repository folder missing", "a missing folder reads as such on the base tile");
+// a dangling-symlink root and a root below a file: they exist for lstat, so they are not skipped; they block the others,
+// and their own pages and rows never say "Folder missing" or that Studio skips them
+{ const dangling = join(repos, "dang-link"); symlinkSync(join(repos, "dang-nowhere"), dangling);
+  const aFile = join(repos, "a-plain-file"); writeFileSync(aFile, "x");
+  for (const [rid, path] of [["dang", dangling], ["under-file", join(aFile, "sub")]] as [string, string][]) {
+    withBroken([rec(rid, path)]);
+    const own = (await get(`/api/projects/${rid}/overview`))!.body, hb = (await get("/api/projects/harbor-api/overview"))!.body, sideX = (await get("/api/projects/overview"))!.body;
+    const row = sideX.projects.find((p: any) => p.id === rid), ownText = JSON.stringify(own);
+    ok(own.project.folderMissing === false && !/Studio skips|Folder missing|資料夾不存在/.test(ownText) && row.status.en === "No task can start", `${rid}: its own page and row never say Folder missing or that Studio skips it`, JSON.stringify(row.status));
+    ok(own.health.find((t: any) => t.key === "crew").detail.en === `Registration ${rid}: its folder cannot be used (not a folder, or not readable).`, `${rid}: its own crew tile says the folder cannot be used`);
+    ok(hb.health.find((t: any) => t.key === "crew").detail.en === `Registration ${rid}: its folder cannot be used (not a folder, or not readable).` && hb.project.canStart === false, `${rid}: it blocks harbor-api, named as unusable, not as missing`);
+  } }
 writeFileSync(join(DATA, "projects.json"), healthy);
 H.stop();
 end();

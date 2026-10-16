@@ -136,7 +136,7 @@ export class Projects {
    * disabled registration be checked too.
    */
   staffingAssess(id:string,protectedRoots:string[]=[],o:{includeDisabled?:boolean}={}):StaffingAssessment{
-    let stage:StaffingRefusal='invalid_id',record:string=typeof id==='string'?id:'',aliases:string[]=[];
+    let stage:StaffingRefusal='invalid_id',record:string=typeof id==='string'?id:'',aliases:string[]=[],rootPath:string|null=null;
     try{
     if(typeof id!=='string'||!id||id.length>200)throw new Error("Choose an exact registered project");
     stage='registry_unreadable';
@@ -151,7 +151,7 @@ export class Projects {
     const allowed=(path:string)=>{if(privateRoots.some((root,i)=>!(sandbox&&i===0&&inside(sandbox,path))&&(inside(root,path)||inside(path,root)))){stage='private_overlap';throw new Error("Registered repository overlaps private or protected data");}};
     const small=(path:string,max:number,container:string,checkPrivate=true)=>{const actual=realpathSync(path);if(!inside(container,actual)){stage='git_escapes_container';throw new Error("Repository identity file escaped its container");}if(checkPrivate)allowed(actual);const st=statSync(actual);if(!st.isFile()||st.size>max)throw new Error("Repository identity file is unavailable or oversized");return readFileSync(actual,'utf8').trim();};
     const gitIdentity=(path:string,checkPrivate=true)=>{
-      stage='folder_missing';
+      stage='folder_missing';rootPath=path;
       const root=realpathSync(path);if(!statSync(root).isDirectory())throw new Error("Repository root missing");if(checkPrivate)allowed(root);
       stage='git_invalid';
       let git=join(root,'.git');if(statSync(git).isFile()){const text=small(git,4096,root,checkPrivate);if(!text.startsWith('gitdir: ')||text.includes('\n'))throw new Error("Malformed Git directory reference");git=resolve(root,text.slice(8));}
@@ -180,8 +180,10 @@ export class Projects {
     const canonical=(v:any):string=>v===null||typeof v==='string'||typeof v==='boolean'?JSON.stringify(v):typeof v==='number'&&Number.isFinite(v)?JSON.stringify(v):Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&Object.getPrototypeOf(v)===Object.prototype?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':(()=>{throw new Error("Unsupported project authority value")})();
     return{ok:true,identity:{namespace:'git',id,identity:createHash('sha256').update(canonical({schema:1,id,root:repository.root,common:repository.common,base:project.base,enabled:project.enabled??true,grant:project.github??null})).digest('hex')}};
     }catch(error:any){
-      // a root that exists but is not a usable folder (a file, EACCES) is told apart from one that is not there at all
-      const reason:StaffingRefusal=stage==='folder_missing'&&error?.code!=='ENOENT'?'folder_unusable':stage;
+      // folder_missing only when the root itself is not there (lstat ENOENT, the same test as the skip rule); a root that
+      // exists but cannot be used (a file, a dangling link, EACCES, a file on the way: ENOTDIR) is folder_unusable
+      let reason:StaffingRefusal=stage;
+      if(stage==='folder_missing'){let absent=false;try{if(rootPath)lstatSync(rootPath);}catch(e:any){absent=e?.code==='ENOENT';}reason=absent?'folder_missing':'folder_unusable';}
       return{ok:false,reason,record,aliases:stage==='ambiguous_alias'?aliases:[],error};}
   }
   private raw(): Project[] { try { const a = JSON.parse(readFileSync(this.file(), "utf8")); return Array.isArray(a) ? a : []; } catch { return []; } }
