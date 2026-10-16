@@ -598,8 +598,8 @@ function buildEditor(ed) {
       h("button", { class: "btn sm", "data-tidy": "1", title: T("Lay the graph out again automatically", "自動重新排版"), onclick: async () => { await setMode("auto"); view = null; draw(); say(T("Tidy layout", "已自動排版")); } }, T("Tidy layout", "整理排版")),
       h("button", { class: "btn sm", "data-fit": "1", onclick: () => { const g = canvas.querySelector("svg.rt-graph"); if (g) fit(g, "all"); } }, T("Fit to view", "全部顯示")),
       runPick, note, saveButton, status),
-    ed.trash?.deleted?h("p",{class:"card x-pad","data-workflow-in-trash":""},T("This workflow is in Trash. Restore it before editing or starting a Task.","此流程在垃圾桶中。請先復原，再編輯或開始任務。")):null,
-    ed.def.origin && !ed.trash?.deleted ? gateHost : null,
+    ...(ed.trash?.deleted?[h("p",{class:"card x-pad","data-workflow-in-trash":""},T("This workflow is in Trash. Restore it before editing or starting a Task.","此流程在垃圾桶中。請先復原，再編輯或開始任務。"))]:[]),
+    ...(ed.def.origin && !ed.trash?.deleted ? [gateHost] : []),
     h("div", { "data-diff-host": "1" }, WF.lastDiff || diffBox),
     h("div", { class: "rt-work" }, palette, paletteNote, canvasWrap, panel));
   if(ed.def.origin)root.querySelector(".rt-toolbar").after(briefPanel,stepList,compareVersions,...(ed.trash?.deleted?[]:[reuse]));
