@@ -3,6 +3,8 @@
 //   POST /api/main/takeover {host, id, mode} fork the session and drive the copy; mode "takeover" | "rehearsal";
 //                                     claude: --fork-session; codex: thread/fork, else a new thread seeded from a handoff
 //   POST /api/main/start {host: "codex", confirm}  start a fresh firstmate on Codex in the firstmate repo, the newest state/HANDOFF-*.md first
+//   POST /api/main/start {host: "claude", confirm} Studio's own workspace only: a fresh Firstmate on Claude; a typed refusal
+//                                     (claudeNotSignedIn, claudeQuotaExhausted, claudeCrewTokenMissing, ...) never falls back to Codex
 //   POST /api/main/question {id, answers}  answer a question the session asked (AskUserQuestion) through the permission bridge
 //   POST /api/main/dispatch {text}    the captain's intent, sent to firstmate to draft a spec and raise the dispatch card
 //   GET  /api/crew/live               every worker and reviewer round: task, title, role, vendor/model, round, phase, elapsed, activity, PR, CI, report
@@ -17,7 +19,7 @@ import { newestHandoffFile, type MainSession } from "./host/main";
 import { redactText } from "./secure";
 
 type Who = { kind: string; device?: { name: string } };
-type Deps = { codexAccount?:Pick<import("./host/codex-account").CodexAccount,"view"|"ensureReady"|"blocking">; main: MainSession; fm: FmState; gh: GitHub; board: Board; stateDir: string; pending: () => Card[]; tasks: () => Task[]; crew: () => Actor[] };
+type Deps = { claudePair?: () => { model: string; effort: string | null }; claudePrimary?: () => Promise<import("./host/claude-primary").ClaudePrimaryReady>; codexAccount?:Pick<import("./host/codex-account").CodexAccount,"view"|"ensureReady"|"blocking">; main: MainSession; fm: FmState; gh: GitHub; board: Board; stateDir: string; pending: () => Card[]; tasks: () => Task[]; crew: () => Actor[] };
 
 export const DISPATCH_PREFIX = "Captain's intent for new work, sent from Crew Studio:";
 export const dispatchText = (intent: string) => `${DISPATCH_PREFIX}\n\n${intent}\n\n` +
@@ -67,7 +69,8 @@ export function createTakeover(d: Deps) {
       const firstmate = sessions.find((s) => !s.studioCopy) ?? null;
       const project = d.main.view().project, newest = d.main.view().context === "studio" ? null : newestHandoffFile(d.stateDir);
       return json({ project, firstmate, sessions, discoveryUnavailable, view: d.main.view(), handoffs: d.main.handoffs(), board: d.board.status(),
-        codex: { account:d.codexAccount?.view()??null, config: codexConfig(project), handoffFile: newest ? `state/${newest.name}` : null } });
+        codex: { account:d.codexAccount?.view()??null, config: codexConfig(project), handoffFile: newest ? `state/${newest.name}` : null },
+        claude: d.claudePair?.() ?? null });
     }
     if (p.startsWith("/api/crew/report/") && !writing) {
       const actor = decodeURIComponent(p.slice("/api/crew/report/".length));
@@ -85,8 +88,18 @@ export function createTakeover(d: Deps) {
       const r = await d.main.takeover(b?.host === "codex" ? "codex" : "claude", String(b?.id ?? ""), mode);
       return json(r, r.ok ? 200 : 409);
     }
+    if (p === "/api/main/start" && b?.host === "claude") {
+      if (b?.confirm !== true) return json({ error: "confirm first: no other firstmate may run on the same state", code: "confirm" }, 400);
+      if (d.main.view().context !== "studio") return json({ error: "Claude starts a fresh Firstmate only in Studio's own workspace / Claude 只能在 Studio 自己的工作空間開新的 Firstmate", code: "host" }, 400);
+      if (d.main.view().state !== "detached") return json({ error: "Studio already owns firstmate; release it first / Studio 已在操作 firstmate，請先交還" }, 409);
+      if (!d.claudePrimary) return json({ ok: false, code: "claudeUnavailable", reason: "Claude is not available to Studio / Studio 無法使用 Claude" }, 409);
+      const ready = await d.claudePrimary();
+      if (!ready.ok) return json(ready, 409);
+      const r = await d.main.startFresh("claude", undefined, { env: ready.env, model: ready.model, effort: ready.effort });
+      return json(r, r.ok ? 200 : 409);
+    }
     if (p === "/api/main/start") {
-      if (b?.host !== "codex") return json({ error: "a fresh start runs on Codex", code: "host" }, 400);
+      if (b?.host !== "codex") return json({ error: "a fresh start runs on Codex or Claude", code: "host" }, 400);
       if (b?.confirm !== true) return json({ error: "confirm first: no other firstmate may run on the same state", code: "confirm" }, 400);
       if(d.main.view().state!=="detached")return json({error:"Studio already owns firstmate; release it first / Studio 已在操作 firstmate，請先交還"},409);
       if(!d.codexAccount)return json({error:"Codex account verification unavailable / 無法驗證 Codex 帳號"},409);

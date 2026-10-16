@@ -4,6 +4,7 @@ import {localExecutionNotice} from "./local-execution";
 import {NativeOutcomes} from "./host/native-outcomes";
 import {coffeeJourneyProof} from "./domain/coffee-kit";
 import {ClaudeLogin} from './host/claude-login';
+import {claudePrimaryReadiness} from './host/claude-primary';
 import {discoverCoffeeFilmCapability,renderCoffeeFilm} from "./render/coffee-film";
 import {publishGeneratedImage} from "./host/generated-media";
 import {createNativeProviderAdmission} from "./providers/native-admission";
@@ -74,7 +75,7 @@ import { timingSafeEqual } from "node:crypto";
 import { git, setGitHome } from "./git";
 import { Egress } from "./egress";
 import { Worktrees } from "./worktrees";
-import { claudeLoginStatus, setBillingFile, setLoginOutcomeFile } from "./providers/login";
+import { claudeLogin as claudeLogin_, claudeLoginStatus, setBillingFile, setLoginOutcomeFile } from "./providers/login";
 import { installCode } from "./domain/code";
 import { applySandboxAddons, prepareSandbox, registerSandbox } from "./sandbox-repo";
 import { createTakeover, doorComplete, doorInput, needsDoor } from "./takeover";
@@ -174,13 +175,18 @@ const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STA
   onNativeProposal:(origin,result)=>nativeOutcomes.bind(origin,result),
   nativeOutcomes:(host,thread)=>{try{return nativeOutcomes.list(host,thread);}catch{return[];}},
   onGeneratedImage:async(image,owner)=>{await publishGeneratedImage(m3.media,image,owner);},
-  permissionMcp: (b) => ({ command: helperCommand("permission-mcp"), env: { CREW_PERM_SOCKET: b.socket, CREW_PERM_TOKEN: b.token } }) });
+  permissionMcp: (b) => ({ command: helperCommand("permission-mcp"), env: { CREW_PERM_SOCKET: b.socket, CREW_PERM_TOKEN: b.token } }),
+  studioMcp: () => helperCommand("mcp") });
 main.onView = (v) => send("main", v);
-main.onEvent = (e: HostEvent) => { if (e.type === "delta" || e.type === "toolStart" || e.type === "permissionRequest" || e.type === "turnStart") send("mainEvent", e); };
+main.onEvent = (e: HostEvent) => {
+  // a Claude primary's own quota or sign-in refusal is the Claude account card's fact too (no fallback anywhere)
+  if (e.type === "hostRefusal" && main.view().host === "claude") { try { nativeClaude.observe(e.raw); } catch {} } if (e.type === "delta" || e.type === "toolStart" || e.type === "permissionRequest" || e.type === "turnStart") send("mainEvent", e); };
 const codexAccount=new CodexAccount({cwd:PROJECT,busy:()=>main.view().state!=="detached",configured:()=>{const c=codexConfig(PROJECT);return{model:c.model,effort:c.effort};},changed:()=>send("codex-account",codexAccount.view())});
 const claudeLogin=new ClaudeLogin({loginMs:Number(process.env.CREW_CLAUDE_LOGIN_MS)||undefined,signedIn:()=>nativeClaude.signedIn(),changed:()=>send("claude-account",claudeLogin.view())});
 for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{void Promise.all([codexAccount.shutdown(),nativeClaude.cancel(),claudeLogin.shutdown()]).then(()=>process.exit(0),()=>process.exit(1));});
-const takeover = createTakeover({ main, fm, gh, board, codexAccount, stateDir: STATE, pending: () => pending, tasks, crew: () => fm.crew(8) });
+// a fresh Claude primary: the model the Claude account card checks, Studio's own config folder, the crew token
+const claudePrimaryPair = () => { const model = chatSettings().models.claude || process.env.CREW_CLAUDE_MODEL || "claude-sonnet-5-5"; let effort: string | null = null; try { effort = configuredClaudeEffort(model); } catch {} return { model, effort }; };
+const takeover = createTakeover({ claudePair: claudePrimaryPair, claudePrimary: () => claudePrimaryReadiness({ pair: claudePrimaryPair(), status: () => nativeClaude.status(claudePrimaryPair()), login: () => claudeLogin_(), configDir: join(DATA, "claude-firstmate"), signInPending: claudeLogin.view().state === "pending" }), main, fm, gh, board, codexAccount, stateDir: STATE, pending: () => pending, tasks, crew: () => fm.crew(8) });
 // transcripts: the session Studio drives (its copy holds the turns before the takeover), else the firstmate session
 const CLAUDE_PROJECTS = process.env.CREW_HOST_CLAUDE_PROJECTS ?? join(homedir(), ".claude/projects");
 let firstmateId: string | null = null;

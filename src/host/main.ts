@@ -35,7 +35,7 @@ export type MainView = {
   pausedReason: string | null; queue: QItem[]; approvals: ReturnType<PermissionBridge["pending"]>; log: LogItem[]; resume: string | null; project: string;
   origin: Origin | null; context?: "studio" | "explicit-project"; holdWakes: boolean; wakeGraceMs: number; drive: Drive | null;
 };
-export type LogItem = { at: number; kind: "captain" | "card" | "wake" | "firstmate" | "tool" | "status" | "system"; text: string; source?: string; status?: string; nativeFailure?:NativeFailure; links?:{label:string;href:string}[] };
+export type LogItem = { at: number; kind: "captain" | "card" | "wake" | "firstmate" | "tool" | "status" | "system"; text: string; source?: string; status?: string; refusal?: import("./types").HostRefusalCode; nativeFailure?:NativeFailure; links?:{label:string;href:string}[] };
 
 export type MainOpts = {
   dataDir: string; projectDir: string; stateDir: string; probe?: ProcProbe;
@@ -45,6 +45,8 @@ export type MainOpts = {
   nativeWorkspace?: boolean;
   onGeneratedImage?: (image:import("./types").GeneratedImage,owner:import("../media-library").MediaOwner)=>Promise<void>;
   nativeTools?: ()=>import("./types").NativeMainTools;
+  /** argv of Studio's MCP helper (src/mcp.ts): how a fresh Claude primary reaches nativeTools over owned stdio */
+  studioMcp?: () => string[];
   onNativeProposal?: (origin:import("./native-outcomes").NativeOrigin,result:unknown)=>void;
   nativeOutcomes?: (host:string|null,thread:string|null)=>LogItem[];
   /** how long a new wake waits for firstmate's own hook to deliver it before Studio sends it itself */
@@ -101,7 +103,7 @@ export class MainSession {
     return { state: this.state, driver: this.driver(), host: this.session?.host ?? null, sessionId: this.session?.id ?? null, model: this.session?.model ?? null,
       busy: this.session?.busy ?? false, pausedReason: this.pausedReason, queue: this.queue.list(), approvals: this.bridge.pending(), log: [...this.log, ...(this.o.nativeOutcomes?.(this.session?.host ?? this.driver().host,this.session?.id ?? this.driver().sessionId) ?? [])].sort((a,b)=>a.at-b.at).slice(-200),
       resume: this.lastResume, project: this.o.projectDir, context: this.o.nativeWorkspace ? "studio" : "explicit-project", origin: this.origin, holdWakes: this.origin?.mode === "rehearsal", wakeGraceMs: this.wakeGraceMs,
-      drive: this.drive ? { ...this.drive, model: this.session?.model ?? this.drive.model, effort: this.session?.effort ?? this.drive.effort } : null };
+      drive: this.drive ? { ...this.drive, model: (this.session && this.session.model !== this.session.host ? this.session.model : null) ?? this.drive.model, effort: this.session?.effort ?? this.drive.effort } : null };
   }
   private changed() { try { this.onView(this.view()); } catch {} }
   note(i: Omit<LogItem, "at">) { this.log.push({ at: Date.now(), ...i }); if (this.log.length > 400) this.log.splice(0, this.log.length - 400); }
@@ -251,15 +253,16 @@ export class MainSession {
   }
 
   /** "Start firstmate on <host>": a NEW session in the firstmate repo, following its AGENTS.md, whose first message is the newest state/HANDOFF-*.md. */
-  async startFresh(host: HostId, validate?: (identity:{model:string;effort:string|null})=>boolean): Promise<{ ok: true; handoff: string; id: string; seededFrom: string | null } | { ok: false; reason: string; code: string }> {
+  async startFresh(host: HostId, validate?: (identity:{model:string;effort:string|null})=>boolean, extra?: { env?: Record<string, string>; model?: string | null; effort?: string | null }): Promise<{ ok: true; handoff: string; id: string; seededFrom: string | null } | { ok: false; reason: string; code: string }> {
     if (this.state !== "detached") return { ok: false, code: "attached", reason: "Studio already holds a session; release it first" };
-    if (host !== "codex") return { ok: false, code: "host", reason: "a fresh start runs on Codex" };
+    if (host !== "codex" && !(host === "claude" && this.o.nativeWorkspace)) return { ok: false, code: "host", reason: "a fresh start runs on Codex, or on Claude in Studio's own workspace" };
     const priorDriver = this.driver();
     this.state = "attaching"; this.changed();
     try {
     const cwd = this.o.projectDir, newest = this.o.nativeWorkspace ? null : newestHandoffFile(this.o.stateDir);
     try {
-      this.session = await this.hosts[host].attach("", { cwd, fresh: true, onGeneratedImage:this.generatedImageCapability(), onEvent: (e) => this.hostEvent(e), onPermission: (r) => this.bridge.ask(r), permissionMcp: this.o.permissionMcp(this.bridge), nativeTools:this.nativeCapability() });
+      this.session = await this.hosts[host].attach("", { cwd, fresh: true, onGeneratedImage:this.generatedImageCapability(), onEvent: (e) => this.hostEvent(e), onPermission: (r) => this.bridge.ask(r), permissionMcp: this.o.permissionMcp(this.bridge), nativeTools:this.nativeCapability(),
+        ...(host === "claude" ? { env: extra?.env, model: extra?.model ?? null, studioMcp: this.o.studioMcp ? { command: this.o.studioMcp() } : undefined } : {}) });
     } catch (e: any) {
       this.state = "detached"; this.changed();
       return { ok: false, code: "attachFailed", reason: String(e?.message ?? e) };
@@ -269,16 +272,22 @@ export class MainSession {
     if(validate&&validate({model:this.session.model,effort:this.session.effort??null})!==true)throw new Error("Fresh host identity unverified / 新主對話身分尚未驗證");
     if (this.session.pid) this.own.add(this.session.pid);
     const se = this.session, at = new Date().toISOString();
-    const statement = `Studio started a new firstmate thread on Codex in ${cwd}${newest ? `, first message: state/${newest.name}` : this.o.nativeWorkspace ? " (Studio-owned workspace)" : " (no state/HANDOFF-*.md found)"}`;
+    const vendor = host === "claude" ? "Claude Code" : "Codex";
+    const statement = `Studio started a new firstmate ${host === "claude" ? "session" : "thread"} on ${vendor} in ${cwd}${newest ? `, first message: state/${newest.name}` : this.o.nativeWorkspace ? " (Studio-owned workspace)" : " (no state/HANDOFF-*.md found)"}`;
     const handoff = this.writeHandoff(`${at.replace(/[:.]/g, "-")}-fresh-${se.id.slice(0, 8)}.md`, [
       `# Handoff: fresh firstmate on ${host}`, "", `- When: ${at}`, `- Host: ${host}`, `- The copy Studio drives is ${se.id}`, `- cwd: ${cwd} (${this.o.nativeWorkspace ? "Studio-owned workspace" : "explicit project; AGENTS.md applies"})`,
+      ...(host === "claude" ? [
+        `- model: ${extra?.model ?? "(the CLI default)"}; effort: ${extra?.effort ?? "(the CLI default)"} (the pair the Claude account card checks)`,
+        `- config: Studio's own Claude config folder; signs in with the crew token, never the captain's interactive login`,
+        `- permission mode: default; Studio's native tools are allowed by name, every other prompt goes to Studio's permission bridge, and any failure denies`,
+      ] : [
       `- model: ${se.model}; reasoning effort: ${se.effort ?? "(config default)"} (from the captain's Codex config; Studio sets neither)`,
-      `- approval policy: ${se.approvalPolicy ?? "(config)"}; sandbox: ${se.sandbox ?? "(config)"}; every approval request goes to Studio's permission bridge, and any failure declines`,
+      `- approval policy: ${se.approvalPolicy ?? "(config)"}; sandbox: ${se.sandbox ?? "(config)"}; every approval request goes to Studio's permission bridge, and any failure declines`]),
       `- First message: ${newest ? `state/${newest.name}` : this.o.nativeWorkspace ? "Studio-owned native Firstmate introduction" : "no state/HANDOFF-*.md found"}`, "",
       `## Roll back`, "", this.o.nativeWorkspace ? "Stop Firstmate in Studio. This closes the owned primary; dispatched native Tasks keep their own lifecycle. Start a new primary explicitly when ready." : `Release in Studio, then continue the thread in a terminal: \`cd ${cwd} && ${this.hosts[host].resumeCommand(se.id)}\``, "",
     ]);
     this.origin = null;
-    this.drive = { host, path: "fresh", statement, noFork: null, model: se.model, effort: se.effort ?? null, approvalPolicy: se.approvalPolicy ?? null, sandbox: se.sandbox ?? null,
+    this.drive = { host, path: "fresh", statement, noFork: null, model: host === "claude" ? extra?.model ?? null : se.model, effort: host === "claude" ? extra?.effort ?? null : se.effort ?? null, approvalPolicy: se.approvalPolicy ?? null, sandbox: se.sandbox ?? null,
       seededFrom: newest ? `state/${newest.name}` : null, handoff };
     this.sessionFile = se.file ?? null; this.lastSeenMtime = mtimeOf(this.sessionFile);
     this.writeDriver({ holder: "studio", host, sessionId: se.id, pid: process.pid, since: at, forkedFrom: null, mode: null, handoff, path: "fresh" });
@@ -372,6 +381,7 @@ export class MainSession {
   private hostEvent(e: HostEvent) {
     this.onEvent(e);
     if(e.type==="nativeToolFailure")this.note({kind:"system",text:e.failure.reason.en,nativeFailure:e.failure});
+    if (e.type === "hostRefusal") this.note({ kind: "status", text: `${e.reason.en} / ${e.reason["zh-TW"]}`, status: "failed", refusal: e.code });
     if (e.type === "turnStart") this.note({ kind: "system", text: e.source === "task" ? "a background task's notice started a turn; following it" : "a turn Studio did not send started (firstmate's wake hook, or a background task); following it" });
     if (e.type === "turnEnd" && e.external) { this.lastSeenMtime = mtimeOf(this.sessionFile); setTimeout(() => void this.pump(), 0); }
     if (e.type === "delta") this.reply += e.text;

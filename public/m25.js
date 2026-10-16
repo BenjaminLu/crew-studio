@@ -64,12 +64,22 @@ function driverBanner(v) {
     !nativePrimary && d.holder === "terminal" && d.resume ? h("div", { style: "font-size:13px" }, T("Handed back. In a terminal: ", "已交回。在終端機執行："), h("code", {}, d.resume),
       h("button", { class: "btn ghost icon", "aria-label": T("Copy", "複製"), onclick: () => navigator.clipboard?.writeText(d.resume).then(() => toast(T("Copied", "已複製"))) }, icon("copy", "ic sm"))) : null,
     h("div", {class:"faint"}, T("Start Studio's own Firstmate. No existing terminal session is required.","啟動 Studio 自己的 Firstmate，不需要既有終端機 session。")),
-    h("div", {class:"actions"},h("a",{class:"btn primary",href:"#/firstmate",onclick:()=>openChat(false)},T("Connect and begin…","連接並開始…"))));
+    v.context === "studio" ? startChoices() : h("div", {class:"actions"},h("a",{class:"btn primary",href:"#/firstmate",onclick:()=>openChat(false)},T("Connect and begin…","連接並開始…"))));
   return h("div", { class: "rich", "data-banner": "attached" },
     h("div", { class: "rk", style: "color:var(--accent-text)" }, icon("agent", "ic sm"), T("Studio is driving", "Studio 駕駛中"), h("span", { class: "vbadge" }, `${v.host} · ${String(v.sessionId).slice(0, 8)}`), v.busy ? h("span", { class: "badge run" }, h("span", { class: "d" }), T("turn running", "回合進行中")) : null),
     h("div", { class: "actions" },
       v.busy ? h("button", { class: "btn", onclick: () => postJ("/api/main/interrupt") }, icon("stop", "ic sm"), T("Interrupt", "中斷")) : null,
       h("button", { class: "btn", onclick: handBack }, v.context==="studio" ? T("Stop Firstmate","停止 Firstmate") : T("Hand back to terminal", "交回終端機"))));
+}
+for (const ev of ["crew:claude-status", "crew:codex-account"]) addEventListener(ev, () => { if (isMain() && MS.view?.state === "detached") try { renderChat(); } catch {} });
+/** Studio's own workspace: start Firstmate on whichever signed-in host the captain picks, here in the chat. */
+function startChoices() {
+  const r = window.crewHostReady?.() || {}, phone = MS.me?.kind === "phone" && !MS.me?.allowDrive;
+  const start = (host) => (e) => { e.target.disabled = true; Promise.resolve(window.crewStartFirstmate?.(host)).finally(() => renderChat()); };
+  return h("div", { class: "actions", "data-chat-start": "1" },
+    r.codex ? h("button", { class: "btn primary", "data-chat-start-host": "codex", disabled: phone || r.starting || null, onclick: start("codex") }, T("Start on Codex", "在 Codex 上開始")) : null,
+    r.claude ? h("button", { class: r.codex ? "btn" : "btn primary", "data-chat-start-host": "claude", disabled: phone || r.starting || null, onclick: start("claude") }, T("Start on Claude", "在 Claude 上開始")) : null,
+    h("a", { class: r.codex || r.claude ? "btn ghost" : "btn primary", href: "#/firstmate", onclick: () => openChat(false) }, r.codex || r.claude ? T("Accounts…", "帳號…") : T("Connect and begin…", "連接並開始…")));
 }
 function queueView(v) {
   if (!v.queue.length) return null;

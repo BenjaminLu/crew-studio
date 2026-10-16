@@ -12,20 +12,36 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const argv = process.argv.slice(2);
-const want = argv[argv.indexOf("--resume") + 1];
+// a fresh session names its own id (--session-id); otherwise the one to resume
+const want = argv.includes("--session-id") ? argv[argv.indexOf("--session-id") + 1] : argv[argv.indexOf("--resume") + 1];
 if (argv.includes("--dangerously-skip-permissions") || argv.includes("bypassPermissions")) { console.error("stub: refuses bypass"); process.exit(9); }
 const id = argv.includes("--fork-session") ? `${want}-copy` : want.startsWith("fork-") ? `${want}-new` : want;
-if (process.env.STUB_ARGV_FILE) appendFileSync(process.env.STUB_ARGV_FILE, JSON.stringify({ argv, FM_IN_ROUND: process.env.FM_IN_ROUND ?? null }) + "\n");
+if (process.env.STUB_ARGV_FILE) appendFileSync(process.env.STUB_ARGV_FILE, JSON.stringify({ argv, FM_IN_ROUND: process.env.FM_IN_ROUND ?? null, pid: process.pid,
+  CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR ?? null, oauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN ? (process.env.CLAUDE_CODE_OAUTH_TOKEN === process.env.STUB_EXPECT_CREW ? "expected" : "other") : null }) + "\n");
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const dir = join(homedir(), ".claude/projects", process.cwd().replace(/[^a-zA-Z0-9]/g, "-"));
+const dir = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "projects", process.cwd().replace(/[^a-zA-Z0-9]/g, "-"));
 mkdirSync(dir, { recursive: true });
 const touch = (o) => appendFileSync(join(dir, `${id}.jsonl`), JSON.stringify({ ...o, sessionId: id, cwd: process.cwd(), isSidechain: false }) + "\n");
 const mcpCfg = argv.includes("--mcp-config") ? JSON.parse(argv[argv.indexOf("--mcp-config") + 1]) : null;
 let inited = false, interrupted = false, slow = false;
 
+/** One stdio MCP server from --mcp-config, as the CLI runs it: initialize, then the given calls in order. */
+async function mcpSession(server, calls) {
+  const p = spawn(server.command, server.args, { env: { ...process.env, ...server.env }, stdio: ["pipe", "pipe", "inherit"] });
+  const rl = createInterface({ input: p.stdout });
+  const replies = new Map();
+  rl.on("line", (l) => { try { const m = JSON.parse(l); replies.get(m.id)?.(m); } catch {} });
+  const call = (id, method, params) => new Promise((r) => { replies.set(id, r); p.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n"); });
+  await call(1, "initialize", { protocolVersion: "2025-06-18" });
+  const out = [];
+  for (let i = 0; i < calls.length; i++) out.push(await call(i + 2, calls[i].method, calls[i].params));
+  p.kill();
+  return out;
+}
+
 async function askPermission(name, input) {
-  const s = Object.values(mcpCfg?.mcpServers ?? {})[0];
+  const s = mcpCfg?.mcpServers?.studio_permission ?? Object.values(mcpCfg?.mcpServers ?? {})[0];
   if (!s) return { behavior: "deny", message: "no permission tool" };
   const p = spawn(s.command, s.args, { env: { ...process.env, ...s.env }, stdio: ["pipe", "pipe", "inherit"] });
   const rl = createInterface({ input: p.stdout });
@@ -41,7 +57,27 @@ async function askPermission(name, input) {
 async function turn(text) {
   if (!inited) { inited = true; out({ type: "system", subtype: "init", session_id: id, model: "stub-opus", tools: [] }); }
   touch({ type: "user", message: { role: "user", content: text } });
-  if (text.includes("STUB_TOOL")) {
+  if (text.includes("STUB_NATIVE ")) {
+    // STUB_NATIVE <tool> <json args>: list Studio's tools over its MCP helper, then call one, as the CLI would for mcp__studio__<tool>
+    const rest = text.slice(text.indexOf("STUB_NATIVE ") + 12), sp = rest.indexOf(" "), tool = sp < 0 ? rest : rest.slice(0, sp);
+    let args = {}; try { args = JSON.parse(sp < 0 ? "{}" : rest.slice(sp + 1)); } catch {}
+    const server = mcpCfg?.mcpServers?.studio;
+    const allowed = argv.includes("--allowedTools") ? argv[argv.indexOf("--allowedTools") + 1].split(",") : [];
+    let say;
+    if (!server) say = "no studio MCP server";
+    else if (!allowed.includes(`mcp__studio__${tool}`)) { const a = await askPermission(`mcp__studio__${tool}`, args); say = a.behavior === "allow" ? "permitted by the bridge" : `Not allowed: ${a.message}`; }
+    else {
+      out({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_native", name: `mcp__studio__${tool}`, input: args }] } });
+      const [list, called] = await mcpSession(server, [{ method: "tools/list", params: {} }, { method: "tools/call", params: { name: tool, arguments: args } }]);
+      const names = (list.result?.tools ?? []).map((t) => t.name);
+      out({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_native", content: called.result?.content ?? [], is_error: !!called.result?.isError }] } });
+      say = `native tools: ${names.join(",")} | ${tool} ${called.result?.isError ? "error" : "ok"}: ${(called.result?.content ?? []).map((c) => c.text ?? "").join("").slice(0, 3000)}`;
+    }
+    out({ type: "result", subtype: "success", is_error: false, result: say });
+  } else if (text.includes("STUB_QUOTA")) {
+    out({ type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: Math.floor(Date.now() / 1000) + 3600 } });
+    out({ type: "result", subtype: "error_during_execution", is_error: true, result: "Claude usage limit reached" });
+  } else if (text.includes("STUB_TOOL")) {
     out({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "ls -la" } }] } });
     const a = await askPermission("Bash", { command: "ls -la" });
     out({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: a.behavior === "allow" ? "ok" : a.message, is_error: a.behavior !== "allow" }] } });

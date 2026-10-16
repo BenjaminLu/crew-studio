@@ -4,13 +4,52 @@
 // on. Tool permissions go to Studio through --permission-prompt-tool (a stdio
 // MCP server that asks Studio over a private socket; any failure denies).
 // Never --dangerously-skip-permissions, never a bypass mode.
+// A FRESH primary (opts.fresh) is a new session: Studio picks its UUID (--session-id),
+// runs it in the config identity the caller passes (CLAUDE_CONFIG_DIR + the crew token
+// in opts.env), and hands it Studio's native tools through Studio's own MCP helper
+// (src/mcp.ts) over owned stdio. That helper reaches back to this session over a
+// private unix socket (0700 dir, random token); only the native tool names are
+// pre-allowed, every other tool still asks the permission bridge.
 //   CREW_HOST_CLAUDE_BIN       executable (default "claude"; a .mjs path runs under bun: test stub)
 //   CREW_HOST_CLAUDE_PROJECTS  where session files live (default ~/.claude/projects)
-import { closeSync, existsSync, openSync, readSync, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { chmodSync, closeSync, existsSync, mkdtempSync, openSync, readSync, readdirSync, rmSync, statSync } from "node:fs";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { binArgv, spawnJsonl, type JsonProc } from "./jsonl";
-import { cleanEnv, shortSummary, type AttachOpts, type AttachedSession, type Host, type HostEvent, type SessionInfo } from "./types";
+import { nativeToolError } from "./native-errors";
+import { NativeToolFailure, cleanEnv, shortSummary, type AttachOpts, type AttachedSession, type Host, type HostEvent, type HostRefusalCode, type SessionInfo } from "./types";
+
+const QUOTA = /rate.?limit|usage.?limit|quota|insufficient_quota|credit balance|spend.?limit|billing|payment/i;
+const AUTH = /not logged in|please run \/login|authentication|invalid.*(?:token|key)|unauthori[sz]ed|oauth token|credential/i;
+/** A typed vendor refusal in claude's stream-json, or null: quota and sign-in are never retried on another host. */
+export function claudeRefusal(m: any): { code: HostRefusalCode; reason: { en: string; "zh-TW": string } } | null {
+  const status = m?.api_error_status ?? m?.error?.status;
+  const text = [m?.error?.type, m?.error?.message, m?.error, m?.result, ...(Array.isArray(m?.errors) ? m.errors : [])].filter((x) => typeof x === "string").join(" ");
+  const errorContext = !!m?.error || m?.is_error === true || (m?.type === "result" && m.subtype !== "success");
+  if ((m?.type === "rate_limit_event" && m.rate_limit_info?.status === "rejected") || status === 429 || status === 402 || (errorContext && QUOTA.test(text)))
+    return { code: "claudeQuotaExhausted", reason: { en: "Claude quota is exhausted. Wait for the reset; signing in again will not help. Studio does not switch to Codex.", "zh-TW": "Claude 額度已耗盡；請等待重設，重新登入沒有幫助。Studio 不會改用 Codex。" } };
+  if (status === 401 || status === 403 || (errorContext && AUTH.test(text)))
+    return { code: "claudeNotSignedIn", reason: { en: "Claude refused the sign-in for this Firstmate. Sign in to Claude again, then start a new Firstmate. Studio does not switch to Codex.", "zh-TW": "Claude 拒絕了這個 Firstmate 的登入；請重新登入 Claude，再開新的 Firstmate。Studio 不會改用 Codex。" } };
+  return null;
+}
+
+/** The private endpoint the studio MCP helper calls for one session's native tools: a 0700 dir, a 0600 unix socket, a random token. */
+function nativeEndpoint(handle: (name: string | null, args: unknown) => Promise<unknown>) {
+  const dir = mkdtempSync(join(tmpdir(), "crew-native-")); chmodSync(dir, 0o700);
+  const socket = join(dir, "tools.sock"), token = randomBytes(32).toString("hex"), tok = Buffer.from(token);
+  const reply = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json" } });
+  const server = Bun.serve({ unix: socket, fetch: async (req) => {
+    const given = Buffer.from(req.headers.get("x-crew-tool-token") ?? "");
+    if (given.length !== tok.length || !timingSafeEqual(given, tok)) return reply({ error: "no valid tool token" }, 403);
+    const path = new URL(req.url).pathname;
+    if (path === "/api/tools" && req.method === "GET") return reply(await handle(null, null));
+    if (path.startsWith("/api/tools/") && req.method === "POST") { let a: unknown = {}; try { a = await req.json(); } catch {} return reply(await handle(decodeURIComponent(path.slice("/api/tools/".length)), a)); }
+    return reply({ error: "unknown" }, 404);
+  } });
+  try { chmodSync(socket, 0o600); } catch {}
+  return { socket, token, close() { try { server.stop(true); } catch {} try { rmSync(dir, { recursive: true, force: true }); } catch {} } };
+}
 
 export const encodeCwd = (cwd: string) => cwd.replace(/[^a-zA-Z0-9]/g, "-");
 const SAFE_MODES = ["default", "acceptEdits", "plan", "auto", "manual", "dontAsk"];
@@ -61,7 +100,11 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
       return out.sort((a, b) => b.updated - a.updated);
     },
     async attach(requested, opts) {
-      let id = requested;
+      const fresh = !!opts.fresh;
+      // a fresh primary: a real new session, its UUID chosen here and checked against the CLI's init
+      let id = fresh ? randomUUID() : requested;
+      let named = !fresh; // false until the CLI has created the fresh session; until then a respawn starts it again by --session-id
+      let turnSeq = 0;
       let proc: JsonProc | null = null;
       let busy = false, model = "claude";
       let turn: { resolve: (r: { status: "completed" | "interrupted" | "failed"; message?: string }) => void; external?: boolean } | null = null;
@@ -79,27 +122,54 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
       let notified = false; // a background task's notification came first: the CLI runs a turn for it
       const external = () => {
         if (turn || !proc) return;
-        turn = { resolve: () => {}, external: true }; busy = true;
+        turn = { resolve: () => {}, external: true }; busy = true; turnSeq++; refused = null;
         emit({ type: "turnStart", source: notified ? "task" : "hook" }); notified = false;
       };
-      const mcpName = "studio_permission";
+      const mcpName = "studio_permission", studioName = "studio";
+      let refused: { code: HostRefusalCode; reason: { en: string; "zh-TW": string } } | null = null;
+      // native tools: only a fresh primary with Studio's MCP helper; calls run inside the turn that asked
+      const native = fresh && opts.nativeTools && opts.studioMcp ? opts.nativeTools : null;
+      const endpoint = native ? nativeEndpoint(async (name, args) => {
+        if (name === null) return native.specs.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
+        const t = turn, seq = turnSeq, p = proc;
+        const live = () => !!t && turn === t && turnSeq === seq && !interrupting && !!p && proc === p;
+        try {
+          if (!native.specs.some((x) => x.name === name)) throw new NativeToolFailure("unknown_tool", "This Studio tool does not exist. List the Studio tools before continuing.", "這個 Studio 工具不存在；請先列出 Studio 工具。", "read_current_state");
+          if (!live()) throw new NativeToolFailure("owner_ended", "The request no longer owns this session. Read the current state before continuing.", "此請求已不再持有 session，請先讀取目前狀態。", "read_current_state");
+          const result = await native.call(name, args, { thread: id, turn: String(seq), call: randomUUID(), live });
+          if (!live()) throw new NativeToolFailure("owner_ended", "The request no longer owns this session. Read the current state before continuing.", "此請求已不再持有 session，請先讀取目前狀態。", "read_current_state");
+          return result;
+        } catch (error) {
+          const failure = nativeToolError(error, name, native.onDiagnostic);
+          emit({ type: "nativeToolFailure", failure });
+          return { error: failure.reason.en, failure };
+        }
+      }) : null;
       const spawn = () => {
-        const args = ["-p", "--resume", id, "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"];
+        const args = ["-p", ...(named ? ["--resume", id] : ["--session-id", id]), "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"];
         if (forkPending) args.push("--fork-session");
         if (opts.model && /^[\w.:\[\]-]{1,80}$/.test(opts.model)) args.push("--model", opts.model);
         if (opts.permissionMode && SAFE_MODES.includes(opts.permissionMode)) args.push("--permission-mode", opts.permissionMode);
-        if (opts.permissionMcp) {
-          const mcp = { mcpServers: { [mcpName]: { type: "stdio", command: opts.permissionMcp.command[0], args: opts.permissionMcp.command.slice(1), env: opts.permissionMcp.env } } };
-          args.push("--permission-prompt-tool", `mcp__${mcpName}__approve`, "--mcp-config", JSON.stringify(mcp));
-        } else {
-          args.push("--permission-prompts", "none"); // nobody to ask: anything that would prompt is denied
-        }
+        else if (fresh) args.push("--permission-mode", "default");
+        const servers: Record<string, unknown> = {};
+        if (opts.permissionMcp) servers[mcpName] = { type: "stdio", command: opts.permissionMcp.command[0], args: opts.permissionMcp.command.slice(1), env: opts.permissionMcp.env };
+        if (endpoint && opts.studioMcp) servers[studioName] = { type: "stdio", command: opts.studioMcp.command[0], args: opts.studioMcp.command.slice(1), env: { CREW_STUDIO_SOCKET: endpoint.socket, CREW_TOOL_TOKEN: endpoint.token } };
+        if (opts.permissionMcp) args.push("--permission-prompt-tool", `mcp__${mcpName}__approve`);
+        else args.push("--permission-prompts", "none"); // nobody to ask: anything that would prompt is denied
+        if (Object.keys(servers).length) args.push("--mcp-config", JSON.stringify({ mcpServers: servers }));
+        if (fresh) args.push("--strict-mcp-config"); // Studio's servers only, never ones from a config the primary did not choose
+        // Studio's own native tools carry their own captain authority (cards, staffing, ledger): pre-allowed by exact name only
+        if (native) args.push("--allowedTools", native.specs.map((t) => `mcp__${studioName}__${t.name}`).join(","));
         const p = spawnJsonl(binArgv(bin, args), opts.cwd, { ...cleanEnv(), ...(opts.env ?? {}) }, (m) => {
           if (m.parent_tool_use_id) return; // subagent traffic stays inside the session
           if (m.type === "system" && m.subtype === "task_notification") notified = true;
+          const r = claudeRefusal(m);
+          if (r && !refused) { refused = r; emit({ type: "hostRefusal", code: r.code, reason: r.reason, raw: m }); }
           if (m.type === "system" && m.subtype === "init") {
             external();
             if (m.model) model = String(m.model);
+            if (!named && m.session_id === id) named = true;
+            if (m.session_id && m.session_id !== id && fresh && !named) { emit({ type: "exit", code: null, stderr: "claude did not start the requested new session id" }); endTurn("failed", "Claude did not start the requested new session id"); p.kill(15); return; }
             if (m.session_id && m.session_id !== id) { const old = id; id = String(m.session_id); forkPending = false; emit({ type: "forked", oldId: old, newId: id }); }
           } else if (m.type === "stream_event") {
             external();
@@ -116,14 +186,15 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
           } else if (m.type === "result") {
             const text = String(m.result ?? "");
             if (text) emit({ type: "message", text });
-            const status = interrupting || m.subtype === "error_during_execution" && interrupting ? "interrupted" : m.is_error ? "failed" : "completed";
-            endTurn(status, m.is_error ? text.slice(0, 400) : undefined);
+            const status = interrupting || m.subtype === "error_during_execution" && interrupting ? "interrupted" : m.is_error || refused ? "failed" : "completed";
+            endTurn(status, refused ? `${refused.reason.en} / ${refused.reason["zh-TW"]}` : m.is_error ? text.slice(0, 400) : undefined);
           }
         });
         p.exited.then((code) => {
-          if (proc === p) proc = null;
+          const mine = proc === p; // false after detach(): Studio stopped it on purpose, which detach reports itself
+          if (mine) proc = null;
           emit({ type: "exit", code, stderr: p.stderr().slice(-600) });
-          endTurn(interrupting ? "interrupted" : "failed", interrupting ? undefined : (p.stderr().trim().split("\n").slice(-2).join(" ") || `claude exited ${code}`));
+          if (mine) endTurn(interrupting ? "interrupted" : "failed", interrupting ? undefined : (p.stderr().trim().split("\n").slice(-2).join(" ") || `claude exited ${code}`));
         });
         return p;
       };
@@ -133,12 +204,14 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
         get model() { return model; },
         get busy() { return busy; },
         get pid() { return proc?.pid ?? null; },
+        get path() { return fresh ? "fresh" as const : opts.fork ? "fork" as const : "resume" as const; },
+        get file() { return fresh ? join(opts.env?.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects", encodeCwd(opts.cwd), `${id}.jsonl`) : null; },
         send(text) {
           if (busy) return Promise.reject(new Error("BUSY"));
           busy = true;
           if (!proc) proc = spawn();
           return new Promise((resolve) => {
-            turn = { resolve };
+            turn = { resolve }; turnSeq++; refused = null;
             proc!.write({ type: "user", session_id: id, parent_tool_use_id: null, message: { role: "user", content: [{ type: "text", text }] } });
           });
         },
@@ -152,12 +225,14 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
         },
         async detach() {
           if (proc) { const p = proc; proc = null; p.kill(15); await Promise.race([p.exited, Bun.sleep(3000)]); p.kill(9); }
+          endpoint?.close();
           endTurn("interrupted");
           return `claude --resume ${id}`;
         },
       };
-      // a takeover starts the CLI at once, so its hooks (firstmate's watch) are armed before the first message
-      if (opts.fork) { proc = spawn(); }
+      // a takeover starts the CLI at once, so its hooks (firstmate's watch) are armed before the first message;
+      // a fresh primary too, so Studio owns (and Stop kills) a real process from the start
+      if (opts.fork || fresh) { try { proc = spawn(); } catch (e) { endpoint?.close(); throw e; } }
       return session;
     },
   };

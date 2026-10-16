@@ -3,14 +3,17 @@
 // with a per-question token, so only that question's tools run.
 //   CREW_STUDIO_URL   e.g. http://127.0.0.1:4210
 //   CREW_TOOL_TOKEN   token the Studio server issued for this question
+//   CREW_STUDIO_SOCKET  instead of the URL: a private unix socket a Studio-owned session listens on
+//                       (a fresh Claude Firstmate's native tools), same token header
 import { mcpContent } from "./tool-content";
 import { createInterface } from "node:readline";
 
 const URL_ = process.env.CREW_STUDIO_URL ?? "http://127.0.0.1:4210";
 const TOKEN = process.env.CREW_TOOL_TOKEN ?? "";
+const SOCKET = process.env.CREW_STUDIO_SOCKET ?? "";
 const out = (o: unknown) => process.stdout.write(JSON.stringify(o) + "\n");
 const call = async (path: string, body?: unknown) => {
-  const r = await fetch(URL_ + path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", "x-crew-tool-token": TOKEN },
+  const r = await fetch((SOCKET ? "http://localhost" : URL_) + path, { ...(SOCKET ? { unix: SOCKET } : {}), method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", "x-crew-tool-token": TOKEN },
     body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await r.text();
   if (!r.ok) throw new Error(text.slice(0, 500) || `HTTP ${r.status}`);

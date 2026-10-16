@@ -22,7 +22,7 @@ bun run launch
 
 This starts Studio (or finds the verified running instance) and requests its authenticated Board in your browser. Keep this process running. No second terminal or copied session link is required. A browser accepting the request does not prove a visible window; retry with `bun run launch --browser Safari` if your default browser has no normal window.
 
-On the Board, connect Codex using your ChatGPT account, then continue with Studio’s own Firstmate in its private workspace. No existing terminal session, repository, AGENTS file or handoff is required. The coffee-shop guided workflow starts with your explicit brief; Firstmate can propose native work, but only your approval of its dispatch card starts the pinned workflow. Account readiness and native worker/tool readiness remain separate.
+On the Board, connect Codex using your ChatGPT account, or sign in to Claude, then continue with Studio’s own Firstmate in its private workspace on the host you pick (Codex and Claude sit side by side; a Claude Firstmate signs in with the crew token and never falls back to Codex). No existing terminal session, repository, AGENTS file or handoff is required. The coffee-shop guided workflow starts with your explicit brief; Firstmate can propose native work, but only your approval of its dispatch card starts the pinned workflow. Account readiness and native worker/tool readiness remain separate.
 
 Source and binary default to `~/.crew-studio/data`. Existing checkout-local stores are not moved or read automatically; select one explicitly with `CREW_DATA`. `bun run start` remains a headless server command.
 

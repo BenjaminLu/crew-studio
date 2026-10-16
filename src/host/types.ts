@@ -32,7 +32,12 @@ export type HostEvent =
   /** a turn Studio did not send: the session's own hook (firstmate's asyncRewake Stop hook) woke it */
   | { type: "turnStart"; source: "hook" | "task" }
   | { type: "forked"; oldId: string; newId: string; file?: string | null }
-  | { type: "exit"; code: number | null; stderr: string };
+  | { type: "exit"; code: number | null; stderr: string }
+  /** the vendor refused the turn for a typed reason (no fallback to another host); `raw` is the vendor's own event, kept in-process */
+  | { type: "hostRefusal"; code: HostRefusalCode; reason: { en: string; "zh-TW": string }; raw?: unknown };
+
+/** Typed reasons a host refuses to start or run: never a silent switch to another vendor. */
+export type HostRefusalCode = "claudeNotSignedIn" | "claudeQuotaExhausted" | "claudeCrewTokenMissing" | "claudeSignInPending" | "claudeUnavailable";
 
 export interface AttachedSession {
   readonly host: HostId;
@@ -79,6 +84,8 @@ export type AttachOpts = {
   nativeTools?: {onDiagnostic?:(record:import("./native-errors").NativeDiagnostic)=>boolean;specs:NativeMainTools["specs"];call(name:string,args:unknown,identity:{thread:string;turn:string;call:string;live:()=>boolean}):Promise<unknown>};
   /** keep the session's own settings: model and permission mode */
   model?: string | null; permissionMode?: string | null;
+  /** claude fresh primary: Studio's own MCP helper (src/mcp.ts) that carries nativeTools over owned stdio */
+  studioMcp?: { command: string[] };
   /** extra environment for the CLI (after cleanEnv), e.g. FM_IN_ROUND=1 for a rehearsal */
   env?: Record<string, string>;
 };
