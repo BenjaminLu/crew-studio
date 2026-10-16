@@ -97,7 +97,10 @@ try {
 
   // --- scenario format (the reviewed list the stub harness shares) ---
   // internal and retired workflows have a scenario too (live: false, for the offline stub harness); the Start form offers the rest
-  const bundled = readdirSync(join(repo, "tests/acceptance")).filter((f) => f.endsWith(".yaml") && loadScenario(join(repo, "tests/acceptance", f)).live !== false);
+  // a held workflow (kept for editing, not offered for a new Task, e.g. github-review) keeps its scenario but is not on the Start form
+  const held = new Set(((await api("/api/wf")).held ?? []).map((w: any) => w.id));
+  const bundled = readdirSync(join(repo, "tests/acceptance")).filter((f) => f.endsWith(".yaml") && !held.has(f.replace(/\.yaml$/, "")) && loadScenario(join(repo, "tests/acceptance", f)).live !== false);
+  ok(held.size > 0 && [...held].every((id) => existsSync(join(repo, "tests/acceptance", `${id}.yaml`))), "every held workflow still has its reviewed scenario", [...held].join(", "));
   const catalog = (await api("/api/wf")).workflows.map((w: any) => w.id).filter((id: string) => !id.startsWith("accept-")).sort();
   ok(JSON.stringify(bundled.map((f) => f.replace(/\.yaml$/, "")).sort()) === JSON.stringify(catalog), "one reviewed scenario per bundled workflow on the Start form", `${bundled} vs ${catalog}`);
   const problems = bundled.flatMap((f) => { try { loadScenario(join(repo, "tests/acceptance", f)); return []; } catch (e: any) { return [`${f}: ${e.message}`]; } });
@@ -223,6 +226,11 @@ try {
   ok(/OFFLINE FIXTURE/.test(a.mdText) && a.report?.offlineFixture === true, "an offline fixture run says so: it is never a live acceptance");
 
   ok(a.report?.completion === "complete" && !/stopped by design/.test(a.mdText), "a run that ends as expected is labelled complete");
+
+  // --- a held workflow: the driver stops before any start with the held reason, never reaching the start route's refusal ---
+  const hd = await accept(["--scenario", join(repo, "tests/acceptance/github-review.yaml")]);
+  ok(/workflow github-review is held \(held: GitHub review runtime not activated yet\)/.test(hd.out + hd.mdText) && !/409/.test(hd.out + hd.mdText) && !hd.report?.start?.id,
+    "a held workflow's scenario stops with an explicit held message and starts nothing", `${hd.code} ${hd.out.slice(-400)}`);
 
   // --- a stop_at point: reached, stopped by design, not complete ---
   const sa = await accept(fx("stop-at"));

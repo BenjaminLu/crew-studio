@@ -82,6 +82,12 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
     if (st.status === 200) failures.push(`the board started ${st.body.id}; expected a refusal ${r.board_refusal.status}`);
     else if (st.status !== r.board_refusal.status || !r.board_refusal.error.test(String(st.body?.error ?? ""))) failures.push(`board start refused ${st.status}: ${String(st.body?.error ?? "").slice(0, 300)}; expected ${r.board_refusal.status} ${r.board_refusal.error}`);
   }
+  if (r.how === "held") { // kept for editing, not offered for a new Task: absent from the Start form, listed as held with its reason
+    const wf = (await s.api("/api/wf")).body; if ((wf.workflows ?? []).some((w: any) => w.id === r.workflow)) failures.push(`the board's workflow list offers held ${r.workflow}`);
+    if (!(wf.held ?? []).some((w: any) => w.id === r.workflow && /^held: /.test(w.held?.en ?? ""))) failures.push(`the catalog does not list ${r.workflow} as held with its reason`);
+    if (!r.board_refusal) failures.push(`a held run needs board_refusal`);
+    return { failures };
+  }
   if (r.how === "retired") {
     const wf = (await s.api("/api/wf")).body.workflows ?? []; if (wf.some((w: any) => w.id === r.workflow)) failures.push(`the board's workflow list offers retired ${r.workflow}`);
     return { failures };
@@ -119,6 +125,9 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
   const exp = expectFor(r);
   const d = await drive(s, task, decide, { timeoutMs: r.timeout_s * 1000, until: exp.status === "waiting" ? (v) => (v.cards ?? []).some((c: any) => c.status === "open" && c.node === exp.waitingOn) : undefined });
   failures.push(...await verify(s, d, exp));
+  // a run checked while it waits on a card (stopped by design) is cancelled afterwards: left open, it would still hold its
+  // project, and a later run on the same project would meet it as overlapping work (a scope card) instead of its own path
+  if (exp.status === "waiting") { const c = await s.api(`/api/wruns/${task}/cancel`, {}); if (c.status !== 200) failures.push(`could not cancel the waiting Task ${task} after its check: ${c.status} ${JSON.stringify(c.body).slice(0, 200)}`); }
   return { failures, task };
 }
 

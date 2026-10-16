@@ -65,9 +65,7 @@ setup step, a new bug on the same path) is a `FAIL`, not a known failure (`tests
 | Workflow · run | Node | Error | Root cause | Fix that should cover it |
 |---|---|---|---|---|
 | code-firstmate · firstmate-ask | build (2nd visit) | the worker's ASK reaches the scope card (rescope or park, no way to answer); after the captain rescopes with the answer, build raises "Round is not ready": `native scope pin changed or uses unknown hash algorithm; fresh preparation required` | `src/domain/code.ts:666` maps ASK to `blocked` (and `:78`); `packs/firstmate/workflows/code-firstmate.wf.yaml:198` routes `blocked` to `scope-card`; the rescoped spec changes its hash and `src/domain/code-queue.ts:115` refuses the existing scope pin | `code-ask-loop-r4-20261016` |
-| code-firstmate · board | start | `400 Staffing approval requires confirmation: Staffing approval missing or changed` (staffing approved, project given) | `src/runtime/index.ts:264-268` binds `params._staffing` only for coffee-kit; the staffing guard (`src/domain/staffing.ts:114` → `:106`) needs it, so a board start of code-firstmate is always refused | `board-start-fixes-20261016` |
 | file-organization · board | plan | `give the folder's absolute path` | the Start form sends only `{provider}` (`public/runtime.js:578`); `POST /api/wruns` (`src/runtime/index.ts:251-269`) starts a Task without its declared params (`params.folder`), and `src/fileorg.ts:30` refuses later | `single-source-contracts-20261016` |
-| github-review · board | start | `400 GitHub review template is saved for editing only …` | `src/domain/github-review-workflow.ts:31` refuses every start, while `selectable()` (`src/runtime/defs.ts:214`) lists it, so the Start form offers it | `board-start-fixes-20261016` (held: not offered) |
 
 Fixed on main since the harness was written: the startup founder and judge rounds ran in
 `data/runs/<run>`, which the agent path check refuses (round cwd under `data/work` now), and the

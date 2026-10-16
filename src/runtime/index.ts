@@ -117,11 +117,12 @@ export function createRuntime(d: RuntimeDeps) {
   const staffingFacts=async()=>{staffingCapabilities=await(d.staffingFacts??(async()=>[]))();return staffingCapabilities;};
   const roleReady=(role:{provider:string;model:string;effort:string|null})=>{const cap=staffingCapabilities.find(c=>c.provider===role.provider),model=cap?.models.find(m=>m.id===role.model);return !(!cap||cap.support!=='supported'||cap.auth!=='verified'||!staffingQuotaReady(role as any,cap,d.staffingAdmission)||cap.expires<=Date.now()||!model||role.effort!==null&&!model.efforts.includes(role.effort));};
   const staffingGuard=installStaffingGuard(engine,staffing,staffingProject,config=>{for(const role of Object.values(config.roles))if(!roleReady(role))throw new Error('Refresh staffing facts and confirm available role models before work / 請先更新派工能力並確認可用的角色模型');});
-  /** The Start form's readiness of an approved crew, from free probes only. A signed-in Claude role whose exact model has not
-   *  been verified by a bounded request is "check on Start": the form never pays for a verification. */
-  const crewReadiness=(roles:Record<string,{provider:string;model:string;effort:string|null}>)=>{let check=false;for(const[id,role]of Object.entries(roles)){if(roleReady(role))continue;const cap=staffingCapabilities.find(c=>c.provider===role.provider);if(role.provider==='claude'&&cap?.support==='supported'&&cap.auth==='verified'&&cap.quota==='unknown'&&cap.expires>Date.now()){check=true;continue;}
+  /** The Start form's readiness of an approved crew, from free probes only (the Codex probe, Claude auth status).
+   *  A Claude role that is signed in but not verified by a bounded request cannot start: the form never pays for it. */
+  const crewReadiness=(roles:Record<string,{provider:string;model:string;effort:string|null}>)=>{for(const[id,role]of Object.entries(roles)){if(roleReady(role))continue;const cap=staffingCapabilities.find(c=>c.provider===role.provider);
+    if(role.provider==='claude'&&cap?.support==='supported'&&cap.auth==='verified'&&cap.expires>Date.now())return{state:'blocked' as const,role:id,reason:{en:`The ${id} role's Claude ${role.model} is signed in but not verified by a bounded request. Verify it with Firstmate, then Start.`,zh:`${id} 角色的 Claude ${role.model} 已登入，但尚未經有限請求驗證；請先和 Firstmate 驗證，再按開始。`}};
     return{state:'blocked' as const,role:id,reason:{en:`The ${id} role's ${role.provider} ${role.model} is not available now${cap?.reason?` (${cap.reason})`:''}. Check the account, then refresh.`,zh:`${id} 角色的 ${role.provider} ${role.model} 目前不可用；請確認帳號後重新整理。`}};}
-   return check?{state:'check-on-start' as const,reason:{en:'Claude is signed in; its exact model is checked when you press Start.',zh:'Claude 已登入；確切模型會在按下開始時確認。'}}:{state:'ready' as const};};
+   return{state:'ready' as const};};
   const staffingTools=installFirstmateStaffing(engine,staffing,staffingProject,staffingFacts,d.staffingAdmission);
   // Board start of a project-staffed workflow (code-firstmate): the approved configuration of the chosen registered
   // project, the same one Firstmate's dispatch binds. Never a bypass: the staffing guard still verifies it at start.
@@ -296,9 +297,11 @@ export function createRuntime(d: RuntimeDeps) {
         if(boardStaffed(chosenDef)){
           if(params.repo)return json({error:'Choose a registered project; a repository path cannot carry approved staffing / 請選擇已登錄專案；直接指定儲存庫路徑無法帶入已核准的代理配置',code:'project_required'},400);
           const pid=String(params.project??'');if(!pid)return json({error:'Choose a registered project for this workflow / 請為此流程選擇已登錄專案',code:'project_required'},400);
-          const crew=boardStaffing(chosenDef,pid);if(crew.state!=='approved')return json({error:`${crew.reason.en} / ${crew.reason.zh}`,code:crew.code,staffing:crew},409);
-          params={...params,base:projects.get(pid)!.base,_staffing:crew.hash};
           await staffingFacts();
+          const crew=boardStaffing(chosenDef,pid);if(crew.state!=='approved')return json({error:`${crew.reason.en} / ${crew.reason.zh}`,code:crew.code,staffing:crew},409);
+          // the crew the captain saw when the form loaded: a crew approved again since then is reviewed again, never started blind
+          if(b?.staffingExpected!==undefined&&b.staffingExpected!==crew.hash)return json({error:'The approved crew changed since this form loaded; review it again / 已核准的代理配置在表單載入後已變更，請重新確認',code:'staffing_changed',staffing:{state:'blocked',code:'staffing_changed',reason:{en:'The approved crew changed since this form loaded; review it again',zh:'已核准的代理配置在表單載入後已變更，請重新確認'}}},409);
+          params={...params,base:projects.get(pid)!.base,_staffing:crew.hash};
         }
         if(chosenDef?.kind==="coffee-kit") {
           let config;try{config=staffing.current(coffeeStaffingProject(params.project));}catch{return json({error:'Discuss and approve each coffee role before starting',code:'coffee-staffing-required'},409);}const image=config.roles['image-worker'];

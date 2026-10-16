@@ -18,11 +18,6 @@ stub:
     setup: [staffing-code]
     params: { project: sandbox }
     expect: { waiting_on: dispatch, visited: [intake, prepare, spec] }
-    known_failure:
-      observed: "the board start route refuses 400: Staffing approval requires confirmation: Staffing approval missing or changed; confirm project role configuration"
-      match: '^the board start route refused: 400 Staffing approval requires confirmation: Staffing approval missing or changed'
-      root_cause: "src/runtime/index.ts:264-268 (POST /api/wruns) binds params._staffing only for coffee-kit; the staffing guard (src/domain/staffing.ts:114 authorizeStart → :106) requires params._staffing to equal the approved config hash, so a board start of code-firstmate is always refused, even with staffing approved and a project"
-      covered_by: "board-start-fixes-20261016 (Board start: code-firstmate on an approved project)"
   - name: firstmate-merge
     covers: "Firstmate proposes on the sandbox project → dispatch → spec → build (worker writes the change and its test) → CI → review → local merge"
     how: firstmate

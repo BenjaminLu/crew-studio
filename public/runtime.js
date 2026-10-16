@@ -596,7 +596,7 @@ function viewRuns() {
   const msg = h("div", { class: "faint", role: "status" }, RN.startError || "");
   return h("div", { class: "page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Tasks", "任務")), h("p", {}, T("Studio's workflow tasks, each with its live graph.", "Studio 的流程任務，每個都有即時流程圖。")))),
     h("div", { class: "card x-pad rt-start" }, h("h3", {}, T("Start a task", "開始一個任務")), text, h("div", { class: "rt-row" }, wf, provider, h("button", { class: "btn primary", "data-run-start": "1", disabled: startBlocked(wf.value) || null, onclick: async () => {
-      try { const r = await startOwnRun({ text: text.value, workflow: wf.value || undefined, params: { ...(provider.value ? { provider: provider.value } : {}), ...startProjectValue(wf.value) } }); if (!r) return; RN.list = null; RN.draft = ""; RN.startError = ""; location.hash = `#/run/${r.id}`; }
+      try { const r = await startOwnRun({ text: text.value, workflow: wf.value || undefined, params: { ...(provider.value ? { provider: provider.value } : {}), ...startProjectValue(wf.value) }, ...startStaffingExpected(wf.value) }); if (!r) return; RN.list = null; RN.draft = ""; RN.startError = ""; location.hash = `#/run/${r.id}`; }
       catch (e) { msg.textContent = RN.startError = e.message; if (/^(staffing_|project_)/.test(e.code || "") && RN.startOptions) { delete RN.startOptions[wf.value]; rerender(); } } } }, T("Start", "開始"))), startProjectPicker(wf.value), msg),
     // one word per state (public/runstate.js); archived runs only with "Show archived", each with Unarchive
     h("label", { class: "rt-row rt-archived-toggle" }, h("input", { type: "checkbox", "data-show-archived": "1", checked: RN.archived || null, onchange: (e) => { RN.archived = e.target.checked; RN.list = null; rerender(); } }), T("Show archived", "顯示已封存")),
@@ -917,12 +917,14 @@ function startProjectPicker(id) {
   const s = o.staffing && chosen ? chosen.staffing : null;
   const crew = !o.projects.length ? h("span", { class: "faint", "data-run-crew": "no-project" }, T("No registered project yet. Ask Firstmate to register one.", "尚無已登錄專案；請請 Firstmate 登錄專案。"))
     : !s ? null
-    : s.state === "approved" ? h("span", { class: "rt-crew", "data-run-crew": "approved", "data-run-crew-ready": s.readiness?.state || "ready" }, h("span", { class: "badge ok" }, T(`Crew approved · v${s.version}`, `代理配置已核准 · v${s.version}`)), s.readiness?.state === "check-on-start" ? h("span", { class: "faint", "data-run-crew-check": "1" }, " ", T("Check on Start: ", "按下開始時確認："), T(s.readiness.reason.en, s.readiness.reason.zh)) : null)
+    : s.state === "approved" ? h("span", { class: "badge ok", "data-run-crew": "approved" }, T(`Crew approved · v${s.version}`, `代理配置已核准 · v${s.version}`))
     : s.state === "missing" ? h("span", { class: "rt-crew", "data-run-crew": "missing" }, T("No crew approved for this project. ", "此專案尚未核准代理配置。"), h("a", { href: o.crewHref, "data-run-crew-link": "1" }, T("Choose your crew together", "一起決定代理配置")))
     : h("span", { class: "rt-crew", role: "alert", "data-run-crew": "blocked", "data-run-crew-code": s.code }, h("b", {}, T("Cannot start", "無法開始")), ` · ${s.code} · `, T(s.reason.en, s.reason.zh), s.code === "staffing_changed" ? h("a", { href: o.crewHref, "data-run-crew-link": "1" }, " ", T("Choose your crew again", "重新決定代理配置")) : null);
   return h("div", { class: "rt-row rt-start-project", "data-run-project-row": id }, h("span", { class: "lbl" }, T("Project", "專案")), sel, crew);
 }
 function startProjectValue(id) { const v = ((RN.params || {})[id] || {}).project; return v ? { project: v } : {}; }
+// the approved crew the form showed: the server refuses the start if it was approved again since (staffing_changed)
+function startStaffingExpected(id) { const o = (RN.startOptions || {})[id], chosen = o && o !== "loading" && o.staffing ? o.projects.find((p) => p.id === ((RN.params || {})[id] || {}).project) : null; return chosen?.staffing?.state === "approved" ? { staffingExpected: chosen.staffing.hash } : {}; }
 function startBlocked(id) { const o = (RN.startOptions || {})[id]; if (!o || o === "loading" || !o.projectScoped) return false; const chosen = o.projects.find((p) => p.id === ((RN.params || {})[id] || {}).project); return !chosen || (o.staffing && chosen.staffing?.state !== "approved"); }
 async function startOwnRun(body){
   try{return await api("/api/wruns",body);}

@@ -16,7 +16,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { discoverInstance } from "../src/instance";
-import { decideCard, defHash, loadScenario, openWindowIds, scenarioFiles, SCENARIO_DIR, type Scenario } from "./acceptance/scenarios";
+import { decideCard, defHash, heldStop, loadScenario, openWindowIds, scenarioFiles, SCENARIO_DIR, type Scenario } from "./acceptance/scenarios";
 import { modelCalls, modelProblems, nodeRecords, providersToCheck, REAL } from "./acceptance/report";
 import { redactJSON, redactText } from "../src/secure";
 
@@ -133,6 +133,7 @@ async function runOne(st: Studio, s: Scenario, a: Args, date: string) {
   report.start = body;
   const wf = await st.get(`/api/wf/${s.workflow}`);
   if (wf.status !== 200 || !wf.body?.def) return stopWith(`workflow ${s.workflow} is not on this Studio (${wf.status})`);
+  const heldReason = heldStop(s.workflow, wf.body); if (heldReason) return stopWith(heldReason);
   if (wf.body.selectable === false) return stopWith(`workflow ${s.workflow} is internal or retired: the board cannot start it`);
   report.version = wf.body.def.version; report.pin.seen = defHash(wf.body.def);
   if (report.pin.seen !== s.pin.sha256) return stopWith(`${s.workflow} v${wf.body.def.version} on this Studio has definition sha256 ${report.pin.seen}, not the ${s.pin.sha256} this scenario was reviewed against; re-review the scenario (bun scripts/acceptance/pin.ts ${s.workflow})`);

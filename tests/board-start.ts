@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The board's Start form path (POST /api/wruns) for workflows that need more than a provider:
 // code-firstmate on a registered project with its approved crew, and the held GitHub review template.
 // Offline: the real runtime routes, staffing store and guard, with a fixture provider in place of a vendor CLI.
@@ -14,8 +15,8 @@ const git=(cwd:string,args:string[])=>{const r=spawnSync('git',args,{cwd,encodin
 const root=join(import.meta.dir,'..'),repoHome=process.env.BOARD_START_FIXTURE_REPOS||mkdtempSync(join(tmpdir(),'board-start-repo-')),repo=join(repoHome,'repo'),other=join(repoHome,'other');
 const claudeRepo=join(repoHome,'claude');
 for(const dir of [repo,other,claudeRepo]){spawnSync('mkdir',['-p',dir]);git(dir,['init','-q','-b','main']);writeFileSync(join(dir,'README.md'),'fixture\n');git(dir,['add','README.md']);git(dir,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Initial']);}
-// BOARD_START_FIXTURE_DATA: prepare a Studio data folder for tests/board-start-ui.mjs and stop: three registered
-// projects (approved crew, no crew, a crew approved for another definition) and nothing else.
+// BOARD_START_FIXTURE_DATA: prepare a Studio data folder for tests/board-start-ui.mjs and stop: four registered projects
+// (a ready Codex crew, a signed-in but unverified Claude crew, no crew, a crew approved for another definition).
 if(process.env.BOARD_START_FIXTURE_DATA){
  const data=process.env.BOARD_START_FIXTURE_DATA,{WorkflowDefs}=await import('../src/runtime/defs'),{Projects}=await import('../src/doors'),{skillTextFor}=await import('../src/runtime/index');
  const defs=new WorkflowDefs(data),list=new Projects(data),store=new StaffingStore(data),def=defs.get('code-firstmate')!,skill=skillTextFor(root),stale=join(repoHome,'stale');
@@ -23,6 +24,9 @@ if(process.env.BOARD_START_FIXTURE_DATA){
  list.add({id:'fixture',name:'Fixture repo',path:repo,base:'main'} as any);list.add({id:'unstaffed',name:'Unstaffed repo',path:other,base:'main'} as any);list.add({id:'stale',name:'Stale crew repo',path:stale,base:'main'} as any);
  const approve=(id:string,sha256:string)=>store.approve({schema:1,algorithm:'sha256-canonical-v1',project:list.staffingIdentity(id,[root]),workflow:{id:def.id,version:def.version,sha256},roles:Object.fromEntries(def.roles.map((r:any)=>[r.id,{provider:'claude' as const,model:'claude-sonnet-5-5',effort:'low',skill:store.remember({ref:r.skill,version:1,text:skill(r.skill)})}])),review:{freshContexts:3,distinctProviders:false}},null,{run:'R-staffing',card:'SC-staffing',answerSeq:1});
  approve('fixture',staffingHash(def));approve('stale',staffingHash({...def,description:'an older definition'}));
+ const codexRepo=join(repoHome,'codex');spawnSync('mkdir',['-p',codexRepo]);git(codexRepo,['init','-q','-b','main']);writeFileSync(join(codexRepo,'README.md'),'fixture\n');git(codexRepo,['add','README.md']);git(codexRepo,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Initial']);
+ list.add({id:'codex',name:'Codex crew repo',path:codexRepo,base:'main'} as any);
+ store.approve({schema:1,algorithm:'sha256-canonical-v1',project:list.staffingIdentity('codex',[root]),workflow:{id:def.id,version:def.version,sha256:staffingHash(def)},roles:Object.fromEntries(def.roles.map((r:any)=>[r.id,{provider:'codex' as const,model:'fixture-model',effort:'low',skill:store.remember({ref:r.skill,version:1,text:skill(r.skill)})}])),review:{freshContexts:3,distinctProviders:false}},null,{run:'R-staffing',card:'SC-staffing',answerSeq:1});
  console.log('board-start fixture ready');process.exit(0);
 }
 const H=await harness([]);
@@ -60,7 +64,9 @@ try{
  projects.add({id:'claude-crew',name:'Claude crew repo',path:claudeRepo,base:'main'});
  store.approve({schema:1,algorithm:'sha256-canonical-v1',project:projects.staffingIdentity('claude-crew',[root]),workflow:{id:def.id,version:def.version,sha256:staffingHash(def)},roles:Object.fromEntries(def.roles.map((r:any)=>[r.id,{provider:'claude' as const,model:'claude-sonnet-5-5',effort:'low',skill:store.remember({ref:r.skill,version:1,text:E.deps.skillText(r.skill)})}])),review:{freshContexts:3,distinctProviders:false}},null,{run:'R-staffing',card:'SC-staffing',answerSeq:2});
  const claudeCrew=(await call('/api/wruns/start-options?workflow=code-firstmate')).body.projects.find((p:any)=>p.id==='claude-crew');
- ok(claudeCrew?.staffing?.state==='approved'&&claudeCrew.staffing.readiness?.state==='check-on-start','a signed-in Claude crew is "check on Start": the form never pays for a verification',JSON.stringify(claudeCrew?.staffing));
+ ok(claudeCrew?.staffing?.state==='blocked'&&claudeCrew.staffing.code==='staffing_not_ready'&&/signed in but not verified by a bounded request/.test(claudeCrew.staffing.reason?.en??''),'a signed-in but unverified Claude crew cannot start: the form never pays for a verification',JSON.stringify(claudeCrew?.staffing));
+ {const runs=E.list().length,r=await call('/api/wruns',{workflow:'code-firstmate',text:'Add one README line',params:{project:'claude-crew'}});
+  ok(r.status===409&&r.body.code==='staffing_not_ready'&&E.list().length===runs,'starting the unverified Claude crew anyway is a typed refusal and creates no Task',JSON.stringify(r.body).slice(0,300));}
 
  const before=E.list().length;
  const noProject=await call('/api/wruns',{workflow:'code-firstmate',text:'Add one README line',params:{provider:'codex'}});
@@ -74,8 +80,10 @@ try{
  const forged=await call('/api/wruns',{workflow:'code-firstmate',text:'Add one README line',params:{project:'unstaffed',_staffing:approved.hash}});
  ok(forged.status===409&&E.list().length===before,'another project\'s approval hash in the body never bypasses the guard');
 
+ {const runs=E.list().length,r=await call('/api/wruns',{workflow:'code-firstmate',text:'Add one README line',params:{project:'fixture'},staffingExpected:'0'.repeat(64)});
+  ok(r.status===409&&r.body.code==='staffing_changed'&&E.list().length===runs,'a crew approved again since the form loaded is reviewed again, not started blind',JSON.stringify(r.body).slice(0,300));}
  // the real thing: approved crew, registered project, board body → the Task reaches spec on the approved role
- const started=await call('/api/wruns',{workflow:'code-firstmate',text:'Add one README line',params:{project:'fixture'}});
+ const started=await call('/api/wruns',{workflow:'code-firstmate',text:'Add one README line',params:{project:'fixture'},staffingExpected:approved.hash});
  ok(started.status===200&&!!started.body.id,'a board start of code-firstmate with an approved crew is accepted',JSON.stringify(started.body).slice(0,400));
  const id=started.body.id;
  if(id){

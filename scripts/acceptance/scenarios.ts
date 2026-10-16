@@ -103,6 +103,12 @@ export type Scenario = {
 // ---------- the definition pin ----------
 const canon = (v: any): any => Array.isArray(v) ? v.map(canon) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v;
 /** sha256 of what a workflow does: id, kind, roles, params, policies, hooks, nodes (without layout) and edges. */
+/** A held workflow (GET /api/wf/:id "held"): kept and editable, but no Task starts until its runtime is activated.
+ *  The driver stops before any start with this reason instead of reaching the start route's refusal. */
+export function heldStop(workflow: string, view: any): string | null {
+  const held = view?.held;
+  return held && typeof held.en === "string" ? `workflow ${workflow} is held (${held.en}): the board does not offer it for a new Task` : null;
+}
 export function defHash(def: any): string {
   const nodes = (def?.nodes ?? []).map(({ x, y, ...n }: any) => n);
   const body = { id: def?.id, kind: def?.kind ?? null, roles: def?.roles ?? [], params: def?.params ?? {}, policies: def?.policies ?? null, hooks: def?.hooks ?? null, card_checks: def?.card_checks ?? null, nodes, edges: def?.edges ?? [] };
