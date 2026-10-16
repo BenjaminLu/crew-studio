@@ -1,5 +1,6 @@
 import "./lib/isolated-env.mjs";
 import assert from 'node:assert/strict';
+import {failure,FailureError} from '../src/runtime/failures';
 import {harness,until,Y} from './rt-harness';
 const h=await harness([Y({id:'legacy-failure',name:'Legacy failure',nodes:[{id:'spec',kind:'hook',label:'Spec',do:'spec',x:0,y:0},{id:'end',kind:'hook',label:'End',x:1,y:0}],edges:[['spec','end','ok']]})]);
 const e=h.engine;
@@ -32,5 +33,51 @@ try {
  const question=e.refreshFailure(r.id)!;
  assert.equal(question.failure?.code,'ask.escalated');assert.equal(wakes,0);
  assert.equal(r.status,'failed');assert.equal(calls,count);
+ // An old unclassified refine failure can gain a typed recovery card, never auto-execution.
+ e.cards.cancel(question.id);r.failureCard=null;
+ const node=r.def.nodes.find(n=>n.id==='spec')!;node.kind='loop';
+ const msg='the brief failed brief-quality after a coordinator root-cause turn: item 1 has only a placeholder expected change';
+ r.nodes.spec.error=msg;
+ const legacy=failure('internal.unmapped',msg,{source:'engine',run:r.id,node:'spec',visit:r.nodes.spec.visits});
+ r.nodes.spec.data.failure=legacy;
+ const old=e.raiseFailure(r,node,legacy)!;
+ const recovered=e.refreshFailure(r.id)!;
+ assert.notEqual(recovered.id,old.id);
+ assert.equal(e.cards.get(old.id)!.status,'cancelled');
+ assert.equal(e.cards.get(old.id)!.failure!.code,'internal.unmapped');
+ assert.equal(recovered.failure!.code,'deterministic.brief-quality');
+ assert.ok(recovered.options.some(o=>o.id==='rescope'&&o.note));
+ assert.equal(e.refreshFailure(r.id)!.id,recovered.id);
+ assert.equal(calls,count);assert.equal(r.status,'failed');
+ assert.equal(e.trusted(r.id).entries.filter(x=>x.record==='failure-reclassified').length,1);
+ await assert.rejects(e.answer(recovered.id,{choice:'rescope',by:'captain',note:''}));
+ assert.equal(e.cards.get(recovered.id)!.status,'open');
  console.log('PASS historical failure refresh is idempotent, preserves failed state and history, and rejects unsafe recovery');
 } finally {h.stop();}
+
+// Simulate process death at each cross-file persistence boundary, then replay events.
+const crash=await harness([Y({id:'refine-crash',name:'Refine crash',nodes:[
+ {id:'source',kind:'hook',label:'Source',do:'set',args:{key:'fixture',value:true},x:0,y:0},
+ {id:'fix',kind:'loop',label:'Fix',args:{producer:'source'},x:1,y:0},
+ {id:'end',kind:'hook',label:'End',x:2,y:0}],edges:[['source','fix'],['fix','end','pass']]})]);
+try {
+ const e=crash.engine;
+ e.kinds.loop={start:()=>{throw new FailureError('internal.unmapped','the brief failed brief-quality: item 1 has only a placeholder expected change');}};
+ for(const boundary of ['create','cancel'] as const){
+  const r=e.start({workflow:'refine-crash'});await until(()=>!!r.failureCard&&!e.busy(r.id));
+  const old=r.failureCard!;
+  const original=e.cards[boundary].bind(e.cards);
+  (e.cards as any)[boundary]=(...args:any[])=>{const result=(original as any)(...args);throw new Error('simulated crash');};
+  assert.throws(()=>e.refreshFailure(r.id),/simulated crash/);
+  (e.cards as any)[boundary]=original;
+  e.load();
+  const card=e.refreshFailure(r.id)!;
+  assert.equal(card.failure!.code,'deterministic.brief-quality');
+  assert.equal(e.cards.get(old)!.status,'cancelled');
+  assert.equal(e.cards.list({run:r.id,open:true}).length,1);
+  assert.equal(e.must(r.id).failureCard,card.id);
+  assert.equal(e.trusted(r.id).entries.filter(x=>x.record==='failure-reclassified').length,1);
+  assert.equal(e.refreshFailure(r.id)!.id,card.id);
+ }
+ console.log('PASS failure reclassification survives card-create and card-cancel crashes after event replay');
+} finally {crash.stop();}

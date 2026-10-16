@@ -1114,13 +1114,42 @@ export class Engine {
     const r = this.must(id);
     this.ended(r, "diagnosed");
     if (r.status !== "failed" || r.archived || r.parked || r.ctx.firstmateQuestion || !this.trusted(id).ok) throw new Error("Only a trusted, unarchived failed task without a pending Firstmate question can be diagnosed");
-    if (r.failureCard) return this.cards.get(r.failureCard);
-    if (this.cards.list({run:id,open:true}).length) throw new Error("Resolve the existing card first");
+    const old = r.failureCard ? this.cards.get(r.failureCard) : null;
+    const intent = old && this.trusted(id).entries.find(e => e.record === "failure-reclassified" && e.data?.card === old.id);
+    const reclassify = !!old && (old.status === "open" || (old.status === "cancelled" && !!intent)) && old.failure?.code === "internal.unmapped" && codeOf(old.failure.message) === "deterministic.brief-quality";
+    if (r.failureCard && !reclassify) return old;
+    if (!reclassify && this.cards.list({run:id,open:true}).some(c => c.id !== old?.id)) throw new Error("Resolve the existing card first");
     const terminal = this.events(id).filter(e => e.type === "failed").at(-1);
     const node = r.def.nodes.find(n => n.id === terminal?.node), last = r.steps.at(-1);
     const rn = node && r.nodes[node.id];
     if (!node || !rn || !last || last.node !== node.id || last.visit !== rn.visits || !rn.outcome || ["running", "pending", "waiting", "skipped"].includes(rn.state)) throw new Error("The failed source node is ambiguous; no recovery card was created");
-    const f = this.failureOf(r, node, rn.outcome);
+    if (reclassify && (node.kind !== "loop" || old!.node !== node.id || old!.visit !== rn.visits || codeOf(String(rn.error ?? "")) !== "deterministic.brief-quality")) throw new Error("The failed source node is ambiguous; no recovery card was created");
+    const f = reclassify ? failure("deterministic.brief-quality", rn.error, {source:"engine",run:id,node:node.id,visit:rn.visits,inputs:this.failureInputs(r,node),diagnostics:old!.failure!.diagnostics}) : this.failureOf(r, node, rn.outcome);
+    if (reclassify) {
+      const b = failureCardBody(f, {label:node.label});
+      const replacement = intent?.data?.replacement ?? {
+        run:id,node:node.id,visit:rn.visits,kind:"failure",title:{en:b.title,"zh-TW":b.zhTitle},
+        sections:{en:{...old!.sections.en,why:b.en.why,how:b.en.how},"zh-TW":{...old!.sections["zh-TW"],why:b.zh.why,how:b.zh.how}},
+        body:b.body,options:b.options,confirmDoor:false,door:null,links:old!.links,detail:null,captainOnly:true,workflow:r.workflow,runTitle:r.title,ste:null,failure:f,
+      };
+      if (replacement.run!==id || replacement.node!==node.id || replacement.visit!==rn.visits || replacement.failure?.code!==f.code || replacement.failure?.message!==f.message) throw new Error("Recovery intent differs from the failed node");
+      const matching = (c:SCard) => {
+        const {id:_id,status:_status,createdAt:_at,answer:_answer,ledger,...body}=c;
+        return !!intent && ledger?.reclassifiedFrom===old!.id && ledger?.request===intent.seq && hashInput(body)===hashInput(replacement);
+      };
+      const open=this.cards.list({run:id,open:true}).filter(c=>c.id!==old!.id);
+      if(open.length>1 || open.some(c=>!matching(c)))throw new Error("Resolve the existing card first");
+      // Persist the exact replacement before either card mutation; retries can finish both crash windows.
+      const request=intent ?? this.record(this.x(r,node,rn),"failure-reclassified",{data:{card:old!.id,from:old!.failure!.code,to:f.code,replacement}});
+      if(!request)throw new Error("Recovery intent was not recorded");
+      const card=open[0] ?? this.cards.create({...replacement,ledger:{reclassifiedFrom:old!.id,request:request.seq}});
+      this.cards.cancel(old!.id);
+      r.failure=card.failure!;rn.data.failure=card.failure;r.failureCard=card.id;
+      r.failures=[...(r.failures??[]),card.failure!].slice(-20);
+      this.commit(r,"failure diagnostics reclassified");
+      this.emit(r,"failure",`${f.class} · ${f.code}`,{node:node.id,card:card.id,class:f.class,code:f.code});
+      return card;
+    }
     // Diagnosis only creates a captain card; it must never wake Firstmate.
     return this.raiseFailure(r, node, f.code === "ask.escalated" ? { ...f, escalation: { by: "firstmate", reason: "A historical failure was recovered for captain review; no agent was started." } } : f);
   }

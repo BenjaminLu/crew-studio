@@ -59,6 +59,7 @@ export const FAILURE_CODES = {
   "deterministic.check": { class: "deterministic", title: t("A check failed", "檢查沒有通過"), meaning: t("A blocking check failed on these exact inputs. The same inputs give the same result.", "阻擋型檢查在這組輸入上沒有通過；相同輸入會得到相同結果。") },
   "deterministic.gate": { class: "deterministic", title: t("A gate failed", "gate 沒有通過"), meaning: t("A gate on the way to the next step failed on these exact inputs.", "通往下一步的 gate 在這組輸入上沒有通過。") },
   "deterministic.round-cap": { class: "deterministic", title: t("The round cap is reached", "已達回合上限"), meaning: t("The step used all of its rounds and still did not pass.", "這一步用完所有回合，仍然沒有通過。") },
+  "deterministic.brief-quality": { class: "deterministic", title: t("The repair brief is incomplete", "修復說明不完整"), meaning: t("The coordinator did not produce an actionable repair brief. Supply concrete findings or a verified runtime repair before regenerating it.", "coordinator 未產生可執行的修復說明。請提供具體診斷或已驗證的 runtime 修正，再重新產生說明。") },
   "deterministic.spec-missing": { class: "deterministic", title: t("The spec was not submitted", "規格尚未提交"), meaning: t("The agent ended without a complete spec. Give a concrete draft correction before continuing.", "agent 結束時沒有提交完整規格。請提供具體草稿修訂後繼續。") },
   "deterministic.agent-result": { class: "deterministic", title: t("The agent's result was refused", "agent 的結果被拒絕"), meaning: t("The agent finished, but its result did not meet the step's rule.", "agent 做完了，但結果不符合這一步的規則。") },
   "deterministic.film": { class: "deterministic", title: t("The film did not pass its checks", "影片沒有通過檢查"), meaning: t("The film was made, but its checks failed on these inputs. No verified film was offered.", "影片做出來了，但在這組輸入上沒有通過檢查，所以沒有提供已驗證的影片。") },
@@ -169,6 +170,7 @@ export const TEXT_RULES: { re: RegExp; code: FailureCode }[] = [
   { re: /No verified (HyperFrames )?film|HyperFrames \S+ failed|MP4 output invalid/i, code: "deterministic.film" },
   { re: /\bgate\b.*\bfail|six signed exact-head gates|fail-first never ran|CI never ran|base moved|no longer fast-forwards/i, code: "deterministic.gate" },
   { re: /\bcheck\b.*\b(fail|error)\b|: fail(,|$| ·)|checks? (failed|blocked)|edge \S+ blocked/i, code: "deterministic.check" },
+  { re: /^the brief failed brief-quality/i, code: "deterministic.brief-quality" },
   { re: /the spec writer did not call spec_write/i, code: "deterministic.spec-missing" },
   { re: /did not call|did not write|changed nothing|wrote nothing|must not change files|gave no verdict|verdict was refused/i, code: "deterministic.agent-result" },
   { re: /^params:|must be a JSON array|invalid native dependency|is not runnable|invalid_params|parameter|unknown param/i, code: "invalid-input.params" },
@@ -255,6 +257,7 @@ export function failureActions(cls: FailureClass, code?: FailureCode, o: { ended
   if ((o.ended || code === "deterministic.new-task") && o.newTaskAllowed === false) return [PARK];
   // a run that ended (succeeded) on a failed outcome is not revived: a new task is the way on
   if (o.ended) return [{ id: ACT.newTask, label: "Start a new task", labelZh: "開始新任務", primary: true }, PARK];
+  if (code === "deterministic.brief-quality") return [{ id: ACT.rescope, label: "Correct brief and continue", labelZh: "修正說明並繼續", primary: true, note: true }, PARK];
   if (code === "deterministic.spec-missing") return [{ id: ACT.rescope, label: "Revise draft and continue", labelZh: "修訂草稿並繼續", primary: true, note: true }, PARK];
   if (code === "deterministic.prepare-again") return [{ id: ACT.prepareAgain, label: "Prepare again", labelZh: "重新準備", primary: true }, PARK];
   if (code === "deterministic.new-task") return [{ id: ACT.newTask, label: "Start a new task", labelZh: "開始新任務", primary: true }, PARK];
@@ -274,6 +277,7 @@ export function failureActions(cls: FailureClass, code?: FailureCode, o: { ended
 export function failureHow(f: Failure, o: { ended?: boolean; newTaskAllowed?: boolean } = {}): FText {
   if ((o.ended || f.code === "deterministic.new-task") && o.newTaskAllowed === false) return t("This workflow is internal or retired, so a new task cannot start from this card. Ask Firstmate to prepare the work again; Park closes this card.", "這個流程是內部或已退役的流程，無法從這張卡開始新任務。請 Firstmate 重新準備這項工作；Park 會關閉這張卡。");
   if (o.ended) return t("This run ended on this result, so it does not run again. Start a new task: it gets the same request and params and runs from the start.", "這個 run 已經以這個結果結束，不會再跑。請開始新任務：它會用同樣的需求和參數從頭執行。");
+  if (f.code === "deterministic.brief-quality") return t("Describe the concrete missing correction or verified runtime fix. The same refinement step regenerates and checks the brief; this does not approve implementation, tests or merge.", "請描述缺少的具體修訂或已驗證的 runtime 修正。同一個修復步驟會重新產生並檢查說明；此操作不代表核准實作、測試或合併。");
   if (f.code === "deterministic.spec-missing") return t("Write the concrete draft correction or source file in the note, then choose Revise draft and continue. The same spec step runs again; dispatch still needs its own approval.", "請在備註寫出具體草稿修訂或來源檔，再選「修訂草稿並繼續」。原規格步驟會重新執行；派工仍須另外核准。");
   if (f.code === "deterministic.prepare-again") return t("Prepare again: Studio goes back to the step before the card, runs the gates again and raises a new card. Nothing is merged before that card is answered.", "重新準備：Studio 回到卡片前一步，重跑 gate，再發一張新卡。新卡回答前不會合併任何東西。");
   if (f.code === "deterministic.new-task") return t("Start a new task: it gets the same request and declared params and prepares everything again. This task stays as it is.", "開始新任務：它會用同樣的需求和已宣告的參數，重新準備一切。這個任務維持原狀。");
