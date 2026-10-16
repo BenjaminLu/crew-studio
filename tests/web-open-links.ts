@@ -2,7 +2,7 @@
 // the /af/ sandbox header by request kind, and a bound site's bytes hashed once per version, not on every read.
 // Real M3 + runtime handlers in process; no vendor, model or network call.
 //   bun tests/web-open-links.ts
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createM3 } from "../src/m3";
@@ -66,6 +66,19 @@ try {
   ok(hashed <= 1, "reading the Task five times hashes the bound site's files at most once", `verify ran ${hashed} times`);
   const lib = await (await get("/api/artifacts/nested-site"))!.json();
   ok(lib.versions?.[0]?.openHref === expected, "the Library version carries the same link", String(lib.versions?.[0]?.openHref));
+
+  // a site file changed on disk after the version was cached: the link goes without a restart, and comes back once restored
+  const plainFile = join(m3.store.filesDir("plain-site", pv.n), "index.html"); const original = readFileSync(plainFile);
+  writeFileSync(plainFile, '<!doctype html><h1>tampered</h1>');
+  const tampered = await (await get(`/api/wruns/${plain.id}`))!.json();
+  ok(!tampered.outputs?.length, "tampering a bound site's file on disk drops the Task's website link on the next read", JSON.stringify(tampered.outputs));
+  const again = await (await get(`/api/wruns/${plain.id}`))!.json();
+  ok(!again.outputs?.length, "a damaged site stays hidden on later reads", JSON.stringify(again.outputs));
+  const plainLib = await (await get("/api/artifacts/plain-site"))!.json();
+  ok(plainLib.versions?.[0]?.integrity?.length && plainLib.versions?.[0]?.openHref == null, "the Library hides openHref for a changed version", JSON.stringify({ integrity: plainLib.versions?.[0]?.integrity, openHref: plainLib.versions?.[0]?.openHref }));
+  writeFileSync(plainFile, original);
+  const restored = await (await get(`/api/wruns/${plain.id}`))!.json();
+  ok(restored.outputs?.[0]?.href === "/af/plain-site/1/index.html", "a false result is not cached: the restored site's link returns without a restart", JSON.stringify(restored.outputs));
 
   // /af/: a page opened as its own tab is sandboxed; Studio's own frame is not
   const csp = async (dest: string | null) => (await get(`/af/nested-site/1/pages/home%20page.html`, desktop, dest ? { "sec-fetch-dest": dest } : {}))!.headers.get("content-security-policy") ?? "";

@@ -123,7 +123,7 @@ export function createM3(d: M3Deps) {
         if (!a) return json({ error: "no such artifact" }, 404);
         let scenes: any[] = [];
         if (a.source === "film") { const v = store.latest(id); const f = v && store.file(id, v.n, a.entry ?? "film.html"); if (f) scenes = filmScenes(readFileSync(f, "utf8")); }
-        return json({ artifact: a,nativeReview:artifactReview(id), managedMedia:media.owns(id), versions: store.versions(id).map((v) => ({ ...v, openHref: websiteHref(a, v), notes: store.notes(id, v.n), integrity: store.verify(id, v.n) })),
+        return json({ artifact: a,nativeReview:artifactReview(id), managedMedia:media.owns(id), versions: store.versions(id).map((v) => { const integrity = store.verify(id, v.n); return { ...v, openHref: integrity.length ? null : websiteHref(a, v), notes: store.notes(id, v.n), integrity }; }),
           runs: runs.list(id).map(slim), cards: lane.cards().filter((c) => c.artifact === id), repos: lane.repos(), scenes, render: renderEnv() });
       }
       m = /^\/api\/artifacts\/([^/]+)\/versions$/.exec(p);

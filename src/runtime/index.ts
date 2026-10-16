@@ -114,16 +114,25 @@ export function createRuntime(d: RuntimeDeps) {
   engine.load();
 
   const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
-  // A version's files never change, so whether a bound site is intact is decided once per version
-  // (keyed by its id, number and manifest hash) instead of re-hashing every file, MP4 included, on each read.
-  const intactSites = new Map<string, boolean>();
-  const siteIntact = (id: string, n: number, sha: string | null) => { const k = `${id}\u0000${n}\u0000${sha}`; let ok = intactSites.get(k); if (ok === undefined) { ok = !d.m3!.store.verify(id, n).length; intactSites.set(k, ok); } return ok; };
+  // Whether a bound site is intact is cached per version under a fingerprint of its manifest files
+  // (path + sha256) and a cheap stat of each file on disk (size, mtime, ctime). Any edit, removal or
+  // replacement of a file changes the stat, so the next read re-hashes; only an intact result is kept,
+  // so a damaged site is re-checked on every read rather than remembered until restart.
+  const intactSites = new Map<string, string>();
+  const siteIntact = (id: string, n: number, v: { files: { path: string; sha256: string }[] }) => {
+    const dir = d.m3!.store.filesDir(id, n); let fp = "";
+    for (const f of v.files) { let st = "-"; try { const s = statSync(join(dir, f.path)); st = `${s.size}:${s.mtimeMs}:${s.ctimeMs}:${s.ino}`; } catch {} fp += `${f.path}\u0000${f.sha256}\u0000${st}\u0001`; }
+    const k = `${id}\u0000${n}`; if (intactSites.get(k) === fp) return true;
+    const ok = !d.m3!.store.verify(id, n).length;
+    if (ok) intactSites.set(k, fp); else intactSites.delete(k);
+    return ok;
+  };
   const runView = (id: string, who?: { kind: string }) => {
     const r = engine.get(id); if (!r) return null;
     const ledger = engine.ledger(id);
     const t = engine.trusted(id);
     const pins=[...Object.values(r.ctx.deliver??{}).map((v:any)=>({id:v.id,n:v.n})),...t.entries.filter(e=>e.record==='coffee-output-v1'&&e.data?.part==='site').map(e=>({id:e.data.artifact,n:e.data.n}))];
-    const outputMap=new Map<string,any>();for(const pin of pins){const a=d.m3?.store.get(pin.id),v=d.m3?.store.version(pin.id,pin.n),href=websiteHref(a,v);if(href&&v&&siteIntact(pin.id,pin.n,v.sha256))outputMap.set(pin.id,{artifact:pin.id,version:pin.n,href});}
+    const outputMap=new Map<string,any>();for(const pin of pins){const a=d.m3?.store.get(pin.id),v=d.m3?.store.version(pin.id,pin.n),href=websiteHref(a,v);if(href&&v&&siteIntact(pin.id,pin.n,v))outputMap.set(pin.id,{artifact:pin.id,version:pin.n,href});}
     // the run page offers "Continue original task…" only to the desktop captain, and only when the engine would make an offer
     const continuable = who?.kind === "desktop" && engine.continuable(id);
     return { ...r, nodes: readinessNodes(r, id=>engine.cards.get(id)), outputs:[...outputMap.values()], continuable, walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };

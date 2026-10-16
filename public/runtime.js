@@ -653,8 +653,10 @@ function roundHistory(r) {
         rd.transcript ? h("a", { class: "btn", href: rd.transcript }, T("Transcript", "對話紀錄")) : null);
     })));
 }
-// an inline panel under the run's header: cancel (with a reason) or delete (with the typed id)
+// an inline panel under the run's header: cancel (with a reason) or delete (with the typed id) read red;
+// calmPanel is the same layout with a neutral border for a non-destructive step (continue on the same task)
 const endPanel = (title, text, ...kids) => h("div", { class: "card x-pad rt-endpanel", role: "group", "aria-label": title }, h("h3", {}, title), h("p", { class: "faint" }, text), ...kids);
+const calmPanel = (title, text, ...kids) => { const el = endPanel(title, text, ...kids); el.classList.add("calm"); return el; };
 function viewRun(id) {
   if (!id) return viewRuns();
   if (!RN.view || RN.view.id !== id) { RN.view = { id, r: null }; loadRun(RN.view); }
@@ -692,7 +694,7 @@ function viewRun(id) {
       h("div", { class: "actions" }, h("button", { class: "btn danger-solid", "data-delete-confirm": id, disabled: (v.confirm || "").trim() !== id || null, onclick: () => api(`/api/wruns/${id}/delete`, { confirm: v.confirm || "" }).then(() => { RN.view = null; RN.list = null; location.hash = "#/runs"; }).catch((e) => { v.delMsg = e.message; rerender(); }) }, T("Delete for good", "永久刪除")),
         h("button", { class: "btn ghost", onclick: () => { v.panel = null; rerender(); } }, T("Keep it", "保留"))), h("div", { class: "bad", role: "status", "data-delete-msg": id }, v.delMsg || "")) : null,
     // laid out like Delete below: titled group, "Type <id> to continue it", the primary disabled until the id matches, both buttons on one row
-    v.panel==='continue'&&canContinue?endPanel(T(`Continue ${id} on the same task`,`在原任務上接續 ${id}`),T("A fresh captain card resumes the same task with its outputs, history and requirements. No completed work reruns, and nothing is approved, merged or retried for pay.","會保留原任務的產物、歷史與要求，重新提出船長確認卡。不會重跑已完成的工作，也不會自動核准、合併或付費重試。"),
+    v.panel==='continue'&&canContinue?calmPanel(T(`Continue ${id} on the same task`,`在原任務上接續 ${id}`),T("A fresh captain card resumes the same task with its outputs, history and requirements. No completed work reruns, and nothing is approved, merged or retried for pay.","會保留原任務的產物、歷史與要求，重新提出船長確認卡。不會重跑已完成的工作，也不會自動核准、合併或付費重試。"),
       v.continuationOffer?h("p",{"data-continuation-card":id},T("Card to reopen: ","要重開的卡片："),h("b",{},L(v.continuationOffer.title))):null,
       v.continuationOffer?h("label",{class:"rt-confirm",for:`cont-${id}`},h("span",{"data-continuation-hint":id},T(`Type ${id} to continue it`,`輸入 ${id} 以接續`)),
         h("input",{class:"input mono",id:`cont-${id}`,'data-continuation-confirm':id,autocomplete:"off",spellcheck:"false",value:v.continuationConfirm||'',

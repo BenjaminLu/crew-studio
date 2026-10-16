@@ -167,6 +167,7 @@ body:not(.chat-closed) .rt-cue { top: calc(120px + env(safe-area-inset-top, 0px)
 .rt-run.archived b { color: var(--text-2); }   /* an archived row reads quieter by its title, never by fading its pills below AA */
 .rt-archived-toggle { font-size: 13px; color: var(--text-2); gap: 8px; align-items: center; }
 .rt-endpanel { display: grid; gap: 10px; border-color: color-mix(in srgb, var(--bad) 30%, var(--border)); }
+.rt-endpanel.calm { border-color: var(--border); }   /* continue is not destructive: neutral, red stays for cancel and delete */
 .rt-endpanel h3 { margin: 0; font-size: 15px; }
 .rt-endpanel p { margin: 0; font-size: 13px; }
 .rt-endpanel .input { max-width: 420px; width: 100%; box-sizing: border-box; }

@@ -153,18 +153,19 @@ try {
 
   // ---- the continuation panel laid out like Delete ----
   await section("panel", async () => {
-  await page.locator("[data-run-delete]").click(); const del = await page.locator(".rt-endpanel").boundingBox(); await page.locator("[data-run-delete]").click();
+  await page.locator("[data-run-delete]").click(); const del = await page.locator(".rt-endpanel").boundingBox(); const delBorder = await page.locator(".rt-endpanel").evaluate((e) => getComputedStyle(e).borderTopColor); await page.locator("[data-run-delete]").click();
   await page.locator("[data-continue-task]").click(); await seen(page, "[data-continuation-confirm]");
   // read the panel in one pass (no waiting), so each design assertion reports on its own on any build
   const facts = () => page.evaluate(() => {
     const input = document.querySelector("[data-continuation-confirm]"); if (!input) return {};
     const panel = input.closest(".rt-endpanel, section, .card"), primary = panel.querySelector("[data-confirm-continuation]");
     const keep = [...panel.querySelectorAll("button")].find((b) => /Keep closed|保持關閉/.test(b.textContent)), box = (el) => { const r = el?.getBoundingClientRect(); return r ? { x: r.x, y: r.y } : null; };
-    return { role: panel.getAttribute("role"), label: panel.getAttribute("aria-label"), hint: input.closest("label")?.innerText.trim() ?? "", disabled: primary ? primary.disabled : null, keepClass: keep?.className ?? "", pb: box(primary), kb: box(keep), px: box(panel)?.x };
+    return { role: panel.getAttribute("role"), label: panel.getAttribute("aria-label"), hint: input.closest("label")?.innerText.trim() ?? "", disabled: primary ? primary.disabled : null, keepClass: keep?.className ?? "", border: getComputedStyle(panel).borderTopColor, calm: panel.classList.contains("calm"), pb: box(primary), kb: box(keep), px: box(panel)?.x };
   });
   const f0 = await facts();
   ok(f0.role === "group" && !!f0.label && f0.label.includes(closed), "the continuation card has a title and is labelled by it", JSON.stringify(f0));
   ok(f0.hint === `Type ${closed} to continue it`, "the label names the Task ID", f0.hint);
+  ok(f0.calm && !!delBorder && f0.border !== delBorder, "the Continue panel uses the neutral endPanel border; red stays for Delete", JSON.stringify({ continue: f0.border, delete: delBorder }));
   ok(f0.disabled === true, "Continue is disabled while the field is empty");
   await page.fill("[data-continuation-confirm]", "R-999"); ok((await facts()).disabled === true, "Continue stays disabled for a different ID");
   await page.fill("[data-continuation-confirm]", closed); const f1 = await facts(); ok(f1.disabled === false, "Continue enables once the ID matches");
