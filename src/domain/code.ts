@@ -582,6 +582,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const roundHooks = (write: boolean, skipInstall = false) => ({ begin: beginRound(write, skipInstall), end: endRound });
 
   // ---------- agent modes ----------
+  // Submission belongs to this agent invocation, not the cumulative visit/version counters.
+  const submittedSpecs = new WeakSet<X>();
   const specTool = (x: X): AgentTool => ({ name: "spec_write", description: "Write the spec, once: title, what, why, the done lines (each names a planned acceptance test, observable scenario/assertion and expected semantic failure on base; do not claim execution), the scope (only paths the change may modify), optional verificationScope (exact existing repo-relative caller files to read and verify, never write authority), the door (one-way when it touches a sensitive path), a plain explain block in en and zh-TW, and zh: the title and the why written in Traditional Chinese (a real translation, not a placeholder; code names and paths stay as they are).",
     schema: { type: "object", properties: { title: { type: "string" }, what: { type: "string" }, why: { type: "array", items: { type: "string" } }, done: { type: "array", items: { type: "string" } }, scope: { type: "array", items: { type: "string" } }, verificationScope: { type: "array", maxItems: 200, items: { type: "string" } },
       door: { type: "object", properties: { kind: { type: "string", enum: ["one-way", "two-way"] }, reason: { type: "string" } }, required: ["kind", "reason"] }, explain: { type: "object", properties: { en: { type: "string" }, "zh-TW": { type: "string" } } },
@@ -593,16 +595,16 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
         door: a.door && typeof a.door === "object" ? { kind: String(a.door.kind ?? ""), reason: String(a.door.reason ?? "").slice(0, 400) } : null,
         explain: a.explain && typeof a.explain === "object" ? { en: String(a.explain.en ?? "").slice(0, 2000), "zh-TW": String(a.explain["zh-TW"] ?? "").slice(0, 2000) } : null,
         zh: a.zh && typeof a.zh === "object" ? { title: String(a.zh.title ?? "").slice(0, 160), why: arr(a.zh.why).slice(0, 8) } : null, version: (x.ctx.spec?.version ?? 0) + 1 };
-      writeFileSync(join(x.dir, "spec.json"), JSON.stringify(x.ctx.spec, null, 1)); writeFileSync(join(x.dir, "spec.md"), specMd(x.ctx.spec)); x.save(); return { ok: true };
+      writeFileSync(join(x.dir, "spec.json"), JSON.stringify(x.ctx.spec, null, 1)); writeFileSync(join(x.dir, "spec.md"), specMd(x.ctx.spec)); x.save(); submittedSpecs.add(x); return { ok: true };
     } });
   engine.modes.spec = {
     ...roundHooks(false, true), // source-only analysis needs no package installation
     sandbox: (x) => { const wt = x.ctx.worktree; return wt && existsSync(wt) ? { writes: [], reads: [wt], cwd: wt } : null; }, // reads the worktree, writes nothing of it
-    tools: (x) => [...READ_ONLY(shellOk(x)), specTool(x)], maxTools: 60,
+    tools: (x) => { submittedSpecs.delete(x); return [...READ_ONLY(shellOk(x)), specTool(x)]; }, maxTools: 60,
     system: (x, skill) => `${skill}\n\nYou write the spec for one change to a local repository. Read the code with the fs_* tools (read-only), then call spec_write once. Budget: use at most 40 read/search calls; reserve the remaining calls for spec_write and schema corrections. Stop exploring once the relevant callers and tests are known. Never finish without spec_write; record unverified details as explicit scope questions rather than spending the entire budget on exploration. Say WHAT and WHY; never HOW (no line numbers, no steps). Every done line names a concrete test file and scenario, with the literal marker "planned fail-first" followed by its expected semantic failure on base; planned tests are not executed evidence. Keep manual reviewer and captain release obligations in explain, not as testless done lines. Describe the final specification, not the revision conversation; never quote rejected wording merely to describe its removal. Keep write scope limited to intended edits. List exact existing read-only callers in verificationScope; these never grant write permission or become additional changed roots. Explain the verification obligation for those callers. Write in plain English: no will/should/could, no "ensure", "utilize", "via", "etc.". Answer in one line when done.`,
     prompt: (x) => { const b = roundBrief(x, "spec"); const note = x.ctx.answers?.dispatch?.choice === "rescope" ? x.ctx.answers.dispatch.note : x.ctx.answers?.["step-back"]?.choice === "rescope" ? x.ctx.answers["step-back"].note : x.ctx.answers?.["scope-card"]?.note;
       return `SPEC DRAFT\nRun ${x.run.id} · draft ${x.visit}. Repository ${x.ctx.repo} (base ${x.ctx.base}).\nCaptain's intent:\n${x.run.text || x.run.title}\n${note ? `\nThe captain asked for changes: ${note}\n` : ""}${x.visit > 1 ? `${briefSection(b)}${x.ctx.spec ? `Previous draft for revision only; not approval or current-head verification evidence. Revalidate it against the current source and captain changes:\n${specMd(x.ctx.spec)}\n` : ""}` : ""}\nStart with fs_list.`; },
-    after: (x) => { if (!x.ctx.spec || x.ctx.spec.version < x.visit) throw new Error("the spec writer did not call spec_write"); x.rn.note = `${x.ctx.spec.title}: ${x.ctx.spec.done.length} done lines, scope ${x.ctx.spec.scope.join(", ")}`; return "ok"; },
+    after: (x) => { if (!x.ctx.spec || !submittedSpecs.has(x)) throw new Error("the spec writer did not call spec_write"); x.rn.note = `${x.ctx.spec.title}: ${x.ctx.spec.done.length} done lines, scope ${x.ctx.spec.scope.join(", ")}`; return "ok"; },
   };
   engine.modes.plan = {
     ...roundHooks(false),
