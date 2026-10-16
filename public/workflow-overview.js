@@ -6,17 +6,22 @@ const modeKey = 'crew.workflowOverview.modes';
 try { for (const [id,m] of Object.entries(JSON.parse(localStorage.getItem(modeKey) || '{}'))) if (m === 'graph' || m === 'list') modes.set(id,m); } catch {}
 function saveMode(id,m) { modes.set(id,m); try { localStorage.setItem(modeKey,JSON.stringify(Object.fromEntries(modes))); } catch {} }
 // A large workflow's canvas is far bigger than its frame and its top-left corner is often empty space,
-// so a frame first opened at 0,0 can show no node at all. Until the viewer scrolls, open on the current
-// node (topmost, then leftmost), or on the first node when no Task has one: centred across, near the top.
-// A node in the canvas's last rows cannot scroll to the top, so the canvas gets just enough room below it.
-// A re-render keeps that room, so a kept position lands where it was.
+// so a frame opened at 0,0 can show no node at all. Until the viewer scrolls the frame, it follows the
+// current node (topmost, then leftmost; the first node when no Task has one) on every render: it stays
+// at 0,0 when that node and its Task stack are already in view there, and otherwise scrolls the least
+// needed (centred across, the node near the top), clamped to the canvas. Once the viewer scrolls,
+// their position is kept. The frame's own scrollTo is never taken for a viewer scroll.
+const programmatic = new WeakMap();
 function scrollFrame(frame,left,top) {
- const canvas=frame.firstElementChild, short=top+frame.clientHeight-frame.scrollHeight;
- if (canvas && short>0) canvas.style.marginBottom=`${Math.ceil(short)}px`;
  frame.scrollTo(left,top);
+ programmatic.set(frame,{left:frame.scrollLeft,top:frame.scrollTop});
 }
-function focus(frame,spot) {
- if (spot) scrollFrame(frame,Math.max(0,spot.x+spot.w/2-frame.clientWidth/2),Math.max(0,spot.y-24));
+function follow(frame,target) {
+ const el=target&&frame.querySelector(`[data-wo-group="${CSS.escape(target)}"]`);
+ if (!el) return scrollFrame(frame,0,0);
+ const x=el.offsetLeft,y=el.offsetTop,w=el.offsetWidth,hgt=el.offsetHeight,cw=frame.clientWidth,ch=frame.clientHeight;
+ const left=x+w<=cw?0:Math.max(0,x+w/2-cw/2), top=y+hgt<=ch?0:Math.max(0,y-24);
+ scrollFrame(frame,left,top);
 }
 // Only immutable layout geometry is reusable. Current Tasks/cards/frontiers are
 // rendered below on every event; cloned inputs/outputs keep the cache private.
@@ -61,12 +66,11 @@ function workflow(id,rs,cards) {
  for(const e of g.edges){const p=document.createElementNS(svg.namespaceURI,'path');p.setAttribute('d',crewLayout.pathD(e));p.setAttribute('marker-end',`url(#${marker.id})`);svg.append(p);}
  const canvas=h('div',{class:'wo-canvas',style:`width:${w}px;height:${height}px`},g.stages.map(st=>h('div',{class:'wo-stage',style:`left:${st.x-box.x+16}px;top:${st.y-box.y+16}px;width:${st.w}px;height:${st.h}px`},h('span',{},T(st.label,st.label_tw||st.label)))),svg,g.edges.filter(e=>e.label).map(e=>h('span',{class:'wo-edge-label',style:`left:${e.label.x-box.x+16}px;top:${e.label.y-box.y+16}px;max-width:${e.label.w}px`,title:e.label.full},e.label.text)),...g.nodes.map(n=>{
  const nt=by.get(n.id)||[],waits=nt.filter(t=>t.since).map(t=>t.since).sort();
- return h('div',{class:'wo-node',style:`left:${n.x-box.x+16}px;top:${n.y-box.y+16}px;width:${n.w}px`,'data-wo-group':n.id},h('div',{class:'wo-node-label'},h('b',{},loc(nodes.get(n.id)?.label)||n.id),h('small',{},nodes.get(n.id)?.kind||'')),nt.length?h('div',{class:'wo-stack'},h('div',{class:'wo-stack-meta'},T(`${nt.length} tasks`,`${nt.length} 個任務`),waits.length?h('span',{'data-oldest-wait':waits[0]},T('Oldest wait ','最久等待 '),ago(waits[0])):null),nt.map(token)):null);
+ return h('div',{class:'wo-node',style:`left:${n.x-box.x+16}px;top:${n.y-box.y+16}px;width:${n.w}px`,'data-wo-group':n.id},h('div',{class:'wo-node-label'},h('b',{},loc(nodes.get(n.id)?.label)||n.id),h('small',{},nodes.get(n.id)?.kind||'')),nt.length?h('div',{class:'wo-stack'},h('div',{class:'wo-stack-meta'},T(nt.length===1?'1 task':`${nt.length} tasks`,`${nt.length} 個任務`),waits.length?h('span',{'data-oldest-wait':waits[0]},T('Oldest wait ','最久等待 '),ago(waits[0])):null),nt.map(token)):null);
  }));
  const pick=(a,b)=>a.y-b.y||a.x-b.x, current=g.nodes.filter(n=>by.has(n.id)).sort(pick)[0]||[...g.nodes].sort((a,b)=>a.x-b.x||a.y-b.y)[0];
- const spot=current?{x:current.x-box.x+16,y:current.y-box.y+16,w:current.w}:null;
- const place=()=>{const pos=scrolls.get(id);if(!graph.isConnected||graph.hidden)return;if(pos)scrollFrame(graph,pos.left,pos.top);else focus(graph,spot);};
- const graph=h('div',{class:'wo-frame',tabindex:0,onscroll:e=>{if(e.target.isConnected)scrolls.set(id,{left:e.target.scrollLeft,top:e.target.scrollTop});},'aria-label':T(`${id} workflow graph; scroll to explore`,`${id} 工作流程圖；可捲動查看`)},canvas);
+ const place=()=>{const pos=scrolls.get(id);if(!graph.isConnected||graph.hidden)return;if(pos)scrollFrame(graph,pos.left,pos.top);else follow(graph,current?.id);};
+ const graph=h('div',{class:'wo-frame',tabindex:0,onscroll:e=>{const f=e.target,own=programmatic.get(f);if(!f.isConnected||own&&Math.abs(f.scrollLeft-own.left)<=1&&Math.abs(f.scrollTop-own.top)<=1)return;programmatic.delete(f);scrolls.set(id,{left:f.scrollLeft,top:f.scrollTop});},'aria-label':T(`${id} workflow graph; scroll to explore`,`${id} 工作流程圖；可捲動查看`)},canvas);
  requestAnimationFrame(place);
  const list=h('div',{class:'wo-list'},[...by].map(([node,nt])=>h('div',{class:'wo-list-node'},h('b',{},loc(nodes.get(node)?.label)||node),nt.map(token))),rs.filter(r=>!ts.some(t=>t.r.id===r.id)).map(r=>h('a',{class:'wo-unplaced',href:`#/tasks/${encodeURIComponent(r.id)}`},`${r.id} · ${r.title} · `,r.status==='failed'?T('Failed · no recorded current node','失敗 · 沒有記錄目前節點'):T('Awaiting a current node','等待目前節點'))));
  const mode=modes.get(id)||'graph';graph.hidden=mode!=='graph';list.hidden=mode!=='list';
