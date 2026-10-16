@@ -439,6 +439,7 @@ export class MainSession {
   private hostEvent(e: HostEvent) {
     this.onEvent(e);
     if(e.type==="nativeToolFailure")this.note({kind:"system",text:e.failure.reason.en,nativeFailure:e.failure});
+    if (e.type === "turnStart") this.refusedThisTurn = false; // a turn Studio did not send starts clean
     if (e.type === "hostRefusal") { this.refusedThisTurn = true; this.note({ kind: "status", text: `${e.reason.en} / ${e.reason["zh-TW"]}`, status: "failed", refusal: e.code,
       external: { ...externalError("claude", claudeVendorMessage(e.raw) || e.reason.en, { cls: e.code === "claudeQuotaExhausted" ? "quota" : e.code === "claudeNotSignedIn" ? "auth" : undefined, code: e.code }), reason: e.reason } }); }
     if (e.type === "exit") {
@@ -447,7 +448,7 @@ export class MainSession {
       if (this.state === "attached" && !this.activeInput && !this.session?.busy && e.code !== 0 && e.code !== null)
         this.external(this.session?.host ?? "claude", `exited ${e.code}${e.stderr?.trim() ? `: ${e.stderr.trim().split("\n").slice(-3).join(" ")}` : ""}`, { cls: "exit" });
     }
-    if (e.type === "turnEnd" && e.external && e.status === "failed" && !this.refusedThisTurn) this.external(this.session?.host ?? "claude", e.message ?? "");
+    if (e.type === "turnEnd" && e.external) { if (e.status === "failed" && !this.refusedThisTurn) this.external(this.session?.host ?? "claude", e.message ?? ""); this.refusedThisTurn = false; }
     if (e.type === "turnStart") this.note({ kind: "system", text: e.source === "task" ? "a background task's notice started a turn; following it" : "a turn Studio did not send started (firstmate's wake hook, or a background task); following it" });
     if (e.type === "turnEnd" && e.external) { this.lastSeenMtime = mtimeOf(this.sessionFile); setTimeout(() => void this.pump(), 0); }
     if (e.type === "permissionMode" && this.drive && this.drive.host === "claude" && e.mode !== this.drive.effectivePermissionMode) {

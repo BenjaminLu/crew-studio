@@ -115,9 +115,11 @@ function sessionSep(x, prev, all, v) {
   if (prevId === x.session.id) return null;
   const many = all.some((y) => y.session && y.session.id !== x.session.id), earlier = x.session.id !== v.sessionId;
   if (!many && !earlier) return null;
+  // the model once known: any later line of the block names it, or the running session reports it
+  const model = all.filter((y) => y.session?.id === x.session.id && y.session.model).map((y) => y.session.model).at(-1) || (!earlier && v.model && v.model !== v.host ? v.model : null);
   const when = new Date(x.at).toLocaleString(lang === "zh-TW" ? "zh-TW" : "en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  return h("div", { class: "chat-session-sep", "data-session-block": x.session.id, "data-earlier": earlier ? "1" : "0" },
-    h("span", {}, earlier ? T("Earlier session", "較早的 session") : T("This session", "目前的 session"), ` · ${x.session.host}${x.session.model ? ` · ${x.session.model}` : ""} · ${when}`));
+  return h("div", { class: "chat-session-sep", "data-session-block": x.session.id, "data-earlier": earlier ? "1" : "0", "data-session-model": model || null },
+    h("span", {}, earlier ? T("Earlier session", "較早的 session") : T("This session", "目前的 session"), ` · ${x.session.host}${model ? ` · ${model}` : ""} · ${when}`));
 }
 function logItem(it, i) {
   if(it.source === "studio:native-outcome")return h("div",{class:"card x-pad","data-native-outcome":it.id},h("p",{},it.text),...(it.links||[]).filter(l=>/^#\/(run|review)\//.test(l.href)).map(l=>h("a",{class:"btn",href:l.href},l.label)));
@@ -220,8 +222,10 @@ function removeAtt(key) { const k = MS.att.findIndex((a) => a.key === key); if (
 function clearAtt() { for (const a of MS.att) if (a.url) URL.revokeObjectURL(a.url); MS.att = []; renderAtt(); }
 function renderAtt() {
   const tray = $("#chatAtt"); if (!tray) return;
-  const show = isMain() && MS.att.length;
+  const show = isMain() && MS.att.length, appearing = show && tray.hidden;
   tray.hidden = !show;
+  // the tray takes room under the log: keep the newest line in view when it appears
+  if (appearing) requestAnimationFrame(() => { const log = $("#chatLog"); if (log) log.scrollTop = log.scrollHeight; });
   if (!show) return tray.replaceChildren();
   tray.replaceChildren(...MS.att.map((a) => {
     const note = a.state === "refused" ? { refused: true, text: a.error } : attNote(a);

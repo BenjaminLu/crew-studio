@@ -188,7 +188,7 @@ const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STA
   attachmentFiles: (ids) => chatFiles.resolve(ids),
   chatLog,
   studioMcp: () => helperCommand("mcp") });
-sweepChatFiles(); setInterval(sweepChatFiles, 3600_000).unref?.();
+sweepChatFiles(); setInterval(sweepChatFiles, Number(process.env.CREW_ATTACH_SWEEP_MS) || 3600_000).unref?.(); // CREW_ATTACH_SWEEP_MS: tests only
 main.onView = (v) => send("main", v);
 main.onEvent = (e: HostEvent) => {
   // a Claude primary's own quota or sign-in refusal is the Claude account card's fact too (no fallback anywhere)

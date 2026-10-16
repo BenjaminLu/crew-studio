@@ -104,9 +104,13 @@ export function pdfPages(b: Uint8Array): number | null {
   const t = Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString("latin1");
   const objs = new Map<string, string>();
   for (const m of t.matchAll(/(\d+)\s+(\d+)\s+obj\b([\s\S]*?)\bendobj\b/g)) objs.set(`${m[1]} ${m[2]}`, m[3]); // the last revision wins
-  let catalog: string | undefined;
-  for (const body of objs.values()) if (/\/Type\s*\/Catalog\b/.test(body)) catalog = body;
-  const ref = catalog && /\/Pages\s+(\d+)\s+(\d+)\s+R\b/.exec(catalog);
+  // the catalog the (last) trailer or cross-reference stream names as /Root; null when it cannot be resolved
+  let rootRef: RegExpExecArray | null = null;
+  for (const m of t.matchAll(/trailer\s*<<([\s\S]*?)>>\s*startxref/g)) rootRef = /\/Root\s+(\d+)\s+(\d+)\s+R\b/.exec(m[1]) ?? rootRef;
+  if (!rootRef) for (const body of objs.values()) if (/\/Type\s*\/XRef\b/.test(body)) rootRef = /\/Root\s+(\d+)\s+(\d+)\s+R\b/.exec(body) ?? rootRef;
+  const catalog = rootRef ? objs.get(`${rootRef[1]} ${rootRef[2]}`) : undefined;
+  if (!catalog || !/\/Type\s*\/Catalog\b/.test(catalog)) return null;
+  const ref = /\/Pages\s+(\d+)\s+(\d+)\s+R\b/.exec(catalog);
   const root = ref ? objs.get(`${ref[1]} ${ref[2]}`) : undefined;
   if (!root || !/\/Type\s*\/Pages\b/.test(root)) return null;
   const count = /\/Count\s+(\d{1,7})\b(?!\s+\d+\s+R)/.exec(root);
@@ -155,6 +159,7 @@ export class AttachmentStore {
     const mf = join(dir, `${id}.json`);
     if (!this.regular(mf)) writeNew(dir, mf, Buffer.from(JSON.stringify(ref))); // the first label is only a fallback
     else { const now = new Date(); try { utimesSync(mf, now, now); } catch {} } // a fresh upload restarts the unsent clock
+    rmSync(join(dir, `${id}.sent`), { force: true }); // a new upload is unsent until a message sends it (a stale mark would let the sweep take it)
     return { ok: true, ref };
   }
 

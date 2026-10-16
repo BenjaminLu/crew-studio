@@ -47,6 +47,37 @@ try {
   ok(!all.includes(SECRET) && (statSync(join(dir, "chat-log")).mode & 0o777) === 0o700 && (statSync(join(dir, "chat-log", "log.jsonl")).mode & 0o777) === 0o600, "the log on disk holds no credential; folder 0700, files 0600");
   const back = log?.load(400) ?? [];
   ok(back.length > 0 && back.at(-1)?.text === "line 11 " && back.every((x: any, i: number, a: any[]) => !i || a[i - 1].at < x.at), "loading returns the newest lines, oldest first");
+  // a credential split by an escape sequence or a control character is removed after the split is undone
+  const ant = ["sk-ant-", "oat01-", "Z".repeat(40)], gh = ["ghp", "_", "R".repeat(36)];
+  const split = X?.cleanExternal(`auth failed ${ant[0]}\u001b[0m${ant[1]}${ant[2]} and ${gh[0]}${gh[1]}\u0000${gh[2]}`) ?? "";
+  ok(!split.includes(ant.join("")) && !split.includes(gh.join("")) && (split.match(/\[credential removed\]/g) ?? []).length === 2, "tokens split by ANSI or NUL are redacted once rejoined", split);
+  const bidi = X?.cleanExternal("a\u202eb\u2066c\u0085d\u009be") ?? "";
+  ok(bidi === "abcde", "bidi overrides and C1 control characters are stripped", JSON.stringify(bidi));
+  // a torn last line does not swallow the next entry; rotation counts bytes, not characters
+  const tdir = join(TMP, "torn"); const tl = L ? new L.ChatLog(tdir, 300, 2) : null;
+  tl?.append({ at: 1, kind: "captain", text: "first" });
+  if (tl) writeFileSync(join(tdir, "chat-log", "log.jsonl"), readFileSync(join(tdir, "chat-log", "log.jsonl"), "utf8") + '{"at":2,"kind":"captain","text":"cut sho', { flag: "w" });
+  tl?.append({ at: 3, kind: "captain", text: "after the torn line" });
+  ok(tl?.load(10).some((x: any) => x.text === "after the torn line"), "an entry appended after a torn line is kept");
+  const mdir = join(TMP, "multibyte"); const ml = L ? new L.ChatLog(mdir, 550, 2) : null;
+  for (let i = 0; i < 6; i++) ml?.append({ at: i, kind: "captain", text: "船".repeat(85) }); // ~295 bytes, ~125 UTF-16 units per line
+  const mfiles = existsSync(join(mdir, "chat-log")) ? readdirSync(join(mdir, "chat-log")) : [];
+  ok(mfiles.length === 3 && mfiles.every((f) => statSync(join(mdir, "chat-log", f)).size <= 550), "rotation measures bytes: multibyte lines never push a file past its bound", mfiles.map((f) => statSync(join(mdir, "chat-log", f)).size).join(","));
+  // a refusal in one turn Studio did not send must not hide a failure in a later one
+  const { MainSession } = await import("../src/host/main");
+  const M = join(TMP, "m2"); mkdirSync(join(M, "data"), { recursive: true });
+  let emit: (e: any) => void = () => {};
+  const fake = { id: "claude", resumeCommand: (x: string) => x, discover: async () => [{ host: "claude", id: "s1", title: "t", cwd: M, updated: 0, possiblyOpen: false, openReason: null, file: null }],
+    attach: async (_: string, o: any) => { emit = o.onEvent; return { host: "claude", id: "s1", model: "fake", busy: false, pid: null, send: async () => ({ status: "completed" }), interrupt: async () => {}, detach: async () => "x" }; } };
+  const m = new MainSession({ dataDir: join(M, "data"), projectDir: M, stateDir: join(M, "state"), probe: { list: () => [] }, hosts: { claude: fake, codex: fake } as any, pollMs: 200, permissionMcp: () => ({ command: ["true"], env: {} }) } as any);
+  await m.start(); await m.attach("claude", "s1");
+  emit({ type: "turnStart", source: "hook" }); emit({ type: "hostRefusal", code: "claudeQuotaExhausted", reason: { en: "quota", "zh-TW": "額度" }, raw: { error: { message: "usage limit reached" } } }); emit({ type: "turnEnd", status: "failed", message: "quota", external: true });
+  emit({ type: "turnStart", source: "hook" }); emit({ type: "turnEnd", status: "failed", message: "API Error: 529 overloaded_error", external: true });
+  ok(m.view().log.some((x: any) => x.external?.message === "API Error: 529 overloaded_error"), "after a refused hook turn, a later hook turn's failure is still a typed notice");
+  emit({ type: "hostRefusal", code: "claudeQuotaExhausted", reason: { en: "quota", "zh-TW": "額度" }, raw: { error: { message: "usage limit reached again" } } }); emit({ type: "turnEnd", status: "failed", message: "quota", external: true });
+  emit({ type: "turnEnd", status: "failed", message: "second failure without a turnStart", external: true });
+  ok(m.view().log.some((x: any) => x.external?.message === "second failure without a turnStart"), "the refusal mark is cleared once its turn ends, even without a turnStart");
+  m.stop();
 } catch (e: any) { ok(false, "the unit section ran", String(e?.message ?? e).slice(0, 300)); }
 
 // ---------- 2. the server ----------
@@ -62,7 +93,7 @@ try {
     port = await freePort();
     const app = spawn("bun", ["src/server.ts"], { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...env, HOME: home, CODEX_HOME: join(home, ".codex"), CREW_SESSION_TOKEN: TOKEN, CREW_PORT: String(port), CREW_DATA: data,
       CREW_FM_STATE: state, CREW_MAIN_PROJECT: proj, CREW_GH: "0", CREW_GH_NO_CLI: "1", CREW_CHAT_PROVIDER: "stub", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_SANDBOX: "0", CREW_LOCAL_UNRESTRICTED: "0",
-      CREW_WAKE_GRACE_MS: "600000", CREW_HOST_CODEX_BIN: join(here, "stub-host-codex.mjs"), CREW_HOST_CLAUDE_BIN: join(here, "stub-host-claude.mjs"), CREW_HOST_CLAUDE_PROJECTS: projects,
+      CREW_WAKE_GRACE_MS: "600000", CREW_ATTACH_SWEEP_MS: "300", CREW_HOST_CODEX_BIN: join(here, "stub-host-codex.mjs"), CREW_HOST_CLAUDE_BIN: join(here, "stub-host-claude.mjs"), CREW_HOST_CLAUDE_PROJECTS: projects,
       STUB_CODEX_THREADS: JSON.stringify([{ id: "th-a", cwd: proj, preview: "firstmate", updatedAt: Math.floor(Date.now() / 1000) - 3600 }]) } });
     await waitUp(`http://127.0.0.1:${port}`, app);
     return app;
@@ -97,6 +128,17 @@ try {
     await say("STUB_FAIL You've hit your usage limit. Upgrade to Pro or try again at 3:05 PM.");
     await say("STUB_FAIL unexpected status 401 Unauthorized: Your authentication token has expired. Please try signing in again.");
     await say("STUB_FAIL Request timed out after 300s");
+    // the periodic sweep: it runs, and a file a queued (not yet sent) message carries survives it
+    const slow = raw("POST", "/api/main/send", { text: "STUB_SLOW" }); await slow; await until(async () => (await view()).busy);
+    const qf = (await raw("POST", "/api/main/attachments", { name: "queued.png", data: png(9, 9, [3, 3, 3]).toString("base64") })).body?.attachment?.id;
+    const uf = (await raw("POST", "/api/main/attachments", { name: "dropped.png", data: png(11, 11, [4, 4, 4]).toString("base64") })).body?.attachment?.id;
+    await raw("POST", "/api/main/send", { text: "queued with a file", attachments: [{ id: qf, name: "queued.png" }] });
+    { const t = (Date.now() - 2 * 24 * 3600_000) / 1000; for (const f of readdirSync(att)) if (f.startsWith(qf) || f.startsWith(uf)) utimesSync(join(att, f), t, t); }
+    await Bun.sleep(1200);
+    const qv = await view();
+    ok(qv.queue.some((q: any) => q.attachments?.[0]?.id === qf) && existsSync(join(att, `${qf}.png`)) && !existsSync(join(att, `${uf}.png`)), "the periodic sweep runs (an old unsent upload goes) and keeps the file of a queued message");
+    await raw("POST", "/api/main/interrupt"); await idle();
+    ok((await view()).log.some((x: any) => x.kind === "captain" && x.text === "queued with a file" && x.attachments?.[0]?.id === qf) && existsSync(join(att, `${qf}.png`)), "the queued message then goes with its file");
     let v = await view();
     ok(ext(v, "network", /stream disconnected before completion/), "Codex network failure: a typed notice with Codex's own message", JSON.stringify(v.log.filter((x: any) => x.kind === "status").slice(-6).map((x: any) => x.text)));
     ok(ext(v, "quota", /hit your usage limit/), "Codex usage limit: a quota notice with Codex's own message");

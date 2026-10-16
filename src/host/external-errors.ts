@@ -12,7 +12,9 @@ export type ExternalError = { schema: 1; source: ExternalSource; class: External
 export const EXTERNAL_MESSAGE_MAX = 600;
 /** The external message as it may be shown and kept: no credentials, no control characters, at most EXTERNAL_MESSAGE_MAX characters. */
 export function cleanExternal(raw: unknown): string {
-  const s = redactText(String(raw ?? "")).replace(/\u001b\[[0-9;]*[A-Za-z]/g, "").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trim();
+  // strip first, then redact: a credential split by an escape sequence or a control character must not re-join after redaction
+  const stripped = String(raw ?? "").replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, "").replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, "");
+  const s = redactText(stripped).trim();
   return s.length > EXTERNAL_MESSAGE_MAX ? s.slice(0, EXTERNAL_MESSAGE_MAX - 1) + "…" : s;
 }
 

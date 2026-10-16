@@ -87,14 +87,19 @@ try {
     objs[3] = `<< /Type /Outlines /Count ${o.bookmarks ?? 0} >>`;
     for (let i = 0; i < pages; i++) objs[4 + i] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>";
     let out = "%PDF-1.6\n"; for (let i = 1; i < objs.length; i++) out += `${i} 0 obj\n${objs[i]}\nendobj\n`;
-    out += "trailer\n<< /Root 1 0 R >>\n%%EOF\n";
-    if (o.revise) { for (let i = 2; i < objs.length; i++) if (i !== 3) out += `${i} 0 obj\n${objs[i].replace("612 792", "595 842")}\nendobj\n`; out += "trailer\n<< /Root 1 0 R /Prev 9 >>\n%%EOF\n"; }
+    out += "trailer\n<< /Root 1 0 R >>\nstartxref\n0\n%%EOF\n";
+    if (o.revise) { for (let i = 2; i < objs.length; i++) if (i !== 3) out += `${i} 0 obj\n${objs[i].replace("612 792", "595 842")}\nendobj\n`; out += "trailer\n<< /Root 1 0 R /Prev 9 >>\nstartxref\n0\n%%EOF\n"; }
     return Buffer.from(out, "latin1");
   };
   ok(A?.pdfPages(multi(10, { bookmarks: 150 })) === 10, "10 pages with 150 bookmarks count 10 (the outline /Count is not a page count)", String(A?.pdfPages(multi(10, { bookmarks: 150 }))));
   ok(A?.pdfPages(multi(60, { revise: true })) === 60, "60 pages after an incremental update count 60 (rewritten pages are not counted twice)", String(A?.pdfPages(multi(60, { revise: true }))));
   ok(A?.pdfPages(Buffer.from("%PDF-1.7\n1 0 obj\n<< /Type /ObjStm /N 3 >>\nstream\nxx\nendstream\nendobj\n")) === null && A?.pdfPages(Buffer.from("%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Count 12 0 R >>\nendobj\n")) === null, "a page tree Studio cannot read is unknown (null), never guessed");
   ok(d("claude", [{ ...ref("pdf", 1000), pages: null }])?.ok === true && /Page count unknown — Claude refuses PDFs over 100 pages/.test(d("claude", [{ ...ref("pdf", 1000), pages: null }])?.deliveries?.[0]?.note?.en ?? ""), "an unknown page count is not refused; the captain is told Claude refuses over 100 pages");
+  // the catalog is the one the trailer names as /Root, not the last /Catalog in the file
+  const decoy = Buffer.concat([multi(3), Buffer.from("90 0 obj\n<< /Type /Catalog /Pages 91 0 R >>\nendobj\n91 0 obj\n<< /Type /Pages /Kids [] /Count 999 >>\nendobj\n", "latin1")]);
+  ok(A?.pdfPages(decoy) === 3, "a decoy /Catalog the trailer does not name is ignored (3, not 999)", String(A?.pdfPages(decoy)));
+  const noTrailer = Buffer.from(multi(3).toString("latin1").replace(/trailer[\s\S]*$/, ""), "latin1");
+  ok(A?.pdfPages(noTrailer) === null, "without a resolvable trailer /Root the page count is unknown (null)", String(A?.pdfPages(noTrailer)));
   const longPdf = multi(120);
   const lp = s?.put(longPdf, "long.pdf");
   ok(lp?.ok && lp.ref.pages === 120 && d("claude", [lp.ref])?.code === "claudePdfPages" && d("claude", [{ ...lp.ref, pages: 100 }])?.ok === true, "Claude: a PDF over 100 pages is claudePdfPages");
@@ -220,6 +225,11 @@ try {
   for (const f of readdirSync(rdir)) if (!f.startsWith(young?.id ?? "-")) utimesSync(join(rdir, f), old, old);
   const gone = rs?.sweep() ?? 0;
   ok(gone === 3 && rs?.get(keep!.id) && !rs?.get(drop!.id) && rs?.get(young!.id) && !existsSync(join(rdir, ".tmp-deadbeef")), "retention: an unsent upload older than a day and a stray .tmp go; sent and recent files stay", `${gone} ${readdirSync(rdir).join(",")}`);
+  // a fresh upload of bytes sent before is unsent again: a stale sent mark must not let the sweep take it
+  const again2 = rs?.put(png(4, 4, [9, 9, 9]), "sent-again.png");
+  ok(again2?.ok && !existsSync(join(rdir, `${keep!.id}.sent`)), "re-uploading a sent file clears its sent mark");
+  rs?.markSent([keep!.id]);
+  const t2 = (Date.now() - 2 * 24 * 3600_000) / 1000; for (const f of readdirSync(rdir)) if (f.startsWith(keep!.id)) utimesSync(join(rdir, f), t2, t2);
   // tied to the history: a sent file stays while the kept history references it, and goes once it rotated out
   ok(rs?.sweep({ referenced: new Set([keep!.id]) }) === 0 && rs?.get(keep!.id), "retention: a sent file the history references stays, however old");
   ok(rs?.sweep({ referenced: new Set() }) === 3 && !rs?.get(keep!.id) && rs?.get(young!.id), "retention: a sent file the history no longer references goes (file, record and sent mark); a recent unsent upload stays");

@@ -3,7 +3,7 @@
 //   data/chat-log/log.<n>.jsonl rotated when the current file passes maxBytes; the oldest beyond `keep` goes
 // Every line is redacted before it is written (credentials never reach the disk). Each item carries the
 // primary session it belongs to (host, id, model), so the panel shows earlier sessions as their own blocks.
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { redactJSON } from "../secure";
 
@@ -20,10 +20,16 @@ export class ChatLog {
   append(item: unknown): boolean {
     try {
       this.folder();
-      const line = JSON.stringify(redactJSON(item)) + "\n", f = this.file();
+      const line = Buffer.from(JSON.stringify(redactJSON(item)) + "\n"), f = this.file();
       if (existsSync(f) && !this.plain(f)) return false;
       if (existsSync(f) && statSync(f).size + line.length > this.maxBytes) this.rotate();
-      appendFileSync(f, line, { mode: 0o600, flag: "a" });
+      const fd = openSync(f, constants.O_RDWR | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0), 0o600);
+      try {
+        // a partial last line (a write cut short) must not swallow this entry
+        const size = fstatSync(fd).size, last = Buffer.alloc(1);
+        const torn = size > 0 && (readSync(fd, last, 0, 1, size - 1), last[0] !== 0x0a);
+        writeSync(fd, torn ? Buffer.concat([Buffer.from("\n"), line]) : line);
+      } finally { closeSync(fd); }
       return true;
     } catch { return false; }
   }
