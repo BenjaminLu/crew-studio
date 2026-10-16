@@ -2,29 +2,30 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The board's Start form path (POST /api/wruns) for workflows that need more than a provider:
 // code-firstmate on a registered project with its approved crew, and the held GitHub review template.
 // Offline: the real runtime routes, staffing store and guard, with a fixture provider in place of a vendor CLI.
-import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
+import {writeFileSync,rmSync} from 'node:fs';
+import {checkedTempDir,assertTempRepo,scrubGitEnv} from './lib/git-hygiene.mjs'; // repositories only in checked temp folders
 import {join} from 'node:path';
-import {tmpdir} from 'node:os';
 import {spawnSync} from 'node:child_process';
 import {harness,until,suite} from './rt-harness';
 import {createRuntime} from '../src/runtime/index';
 import {installCode} from '../src/domain/code';
 import {StaffingStore,staffingHash} from '../src/domain/staffing';
 const {ok,end}=suite('board-start');
-const git=(cwd:string,args:string[])=>{const r=spawnSync('git',args,{cwd,encoding:'utf8'});if(r.status!==0)throw new Error(r.stderr);return r.stdout.trim();};
-const root=join(import.meta.dir,'..'),repoHome=process.env.BOARD_START_FIXTURE_REPOS||mkdtempSync(join(tmpdir(),'board-start-repo-')),repo=join(repoHome,'repo'),other=join(repoHome,'other');
+// every repository here is built in a checked temporary folder, never with an inherited GIT_DIR or config
+const git=(cwd:string,args:string[])=>{assertTempRepo(cwd,'board-start fixture repository');const env={...process.env};scrubGitEnv(env);const r=spawnSync('git',args,{cwd,env,encoding:'utf8'});if(r.status!==0)throw new Error(r.stderr);return r.stdout.trim();};
+const root=join(import.meta.dir,'..'),repoHome=process.env.BOARD_START_FIXTURE_REPOS?assertTempRepo(process.env.BOARD_START_FIXTURE_REPOS,'board-start fixture repositories'):checkedTempDir('board-start-repo-'),repo=join(repoHome,'repo'),other=join(repoHome,'other');
 const claudeRepo=join(repoHome,'claude');
-for(const dir of [repo,other,claudeRepo]){spawnSync('mkdir',['-p',dir]);git(dir,['init','-q','-b','main']);writeFileSync(join(dir,'README.md'),'fixture\n');git(dir,['add','README.md']);git(dir,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Initial']);}
+for(const dir of [repo,other,claudeRepo]){spawnSync('mkdir',['-p',dir]);assertTempRepo(dir);git(dir,['init','-q','-b','main']);writeFileSync(join(dir,'README.md'),'fixture\n');git(dir,['add','README.md']);git(dir,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Initial']);}
 // BOARD_START_FIXTURE_DATA: prepare a Studio data folder for tests/board-start-ui.mjs and stop: four registered projects
 // (a ready Codex crew, a signed-in but unverified Claude crew, no crew, a crew approved for another definition).
 if(process.env.BOARD_START_FIXTURE_DATA){
  const data=process.env.BOARD_START_FIXTURE_DATA,{WorkflowDefs}=await import('../src/runtime/defs'),{Projects}=await import('../src/doors'),{skillTextFor}=await import('../src/runtime/index');
  const defs=new WorkflowDefs(data),list=new Projects(data),store=new StaffingStore(data),def=defs.get('code-firstmate')!,skill=skillTextFor(root),stale=join(repoHome,'stale');
- spawnSync('mkdir',['-p',stale]);git(stale,['init','-q','-b','main']);writeFileSync(join(stale,'README.md'),'fixture\n');git(stale,['add','README.md']);git(stale,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Initial']);
+ spawnSync('mkdir',['-p',stale]);assertTempRepo(stale);git(stale,['init','-q','-b','main']);writeFileSync(join(stale,'README.md'),'fixture\n');git(stale,['add','README.md']);git(stale,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Initial']);
  list.add({id:'fixture',name:'Fixture repo',path:repo,base:'main'} as any);list.add({id:'unstaffed',name:'Unstaffed repo',path:other,base:'main'} as any);list.add({id:'stale',name:'Stale crew repo',path:stale,base:'main'} as any);
  const approve=(id:string,sha256:string)=>store.approve({schema:1,algorithm:'sha256-canonical-v1',project:list.staffingIdentity(id,[root]),workflow:{id:def.id,version:def.version,sha256},roles:Object.fromEntries(def.roles.map((r:any)=>[r.id,{provider:'claude' as const,model:'claude-sonnet-5-5',effort:'low',skill:store.remember({ref:r.skill,version:1,text:skill(r.skill)})}])),review:{freshContexts:3,distinctProviders:false}},null,{run:'R-staffing',card:'SC-staffing',answerSeq:1});
  approve('fixture',staffingHash(def));approve('stale',staffingHash({...def,description:'an older definition'}));
- const codexRepo=join(repoHome,'codex');spawnSync('mkdir',['-p',codexRepo]);git(codexRepo,['init','-q','-b','main']);writeFileSync(join(codexRepo,'README.md'),'fixture\n');git(codexRepo,['add','README.md']);git(codexRepo,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Initial']);
+ const codexRepo=join(repoHome,'codex');spawnSync('mkdir',['-p',codexRepo]);assertTempRepo(codexRepo);git(codexRepo,['init','-q','-b','main']);writeFileSync(join(codexRepo,'README.md'),'fixture\n');git(codexRepo,['add','README.md']);git(codexRepo,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Initial']);
  list.add({id:'codex',name:'Codex crew repo',path:codexRepo,base:'main'} as any);
  store.approve({schema:1,algorithm:'sha256-canonical-v1',project:list.staffingIdentity('codex',[root]),workflow:{id:def.id,version:def.version,sha256:staffingHash(def)},roles:Object.fromEntries(def.roles.map((r:any)=>[r.id,{provider:'codex' as const,model:'fixture-model',effort:'low',skill:store.remember({ref:r.skill,version:1,text:skill(r.skill)})}])),review:{freshContexts:3,distinctProviders:false}},null,{run:'R-staffing',card:'SC-staffing',answerSeq:1});
  console.log('board-start fixture ready');process.exit(0);

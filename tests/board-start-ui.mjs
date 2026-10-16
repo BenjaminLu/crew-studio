@@ -1,8 +1,8 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The board's Start form in a real Studio: the project picker for code-firstmate and each project's crew state,
 // and the held GitHub review template in the catalog. No model account or vendor calls.
-import{spawn,spawnSync}from'node:child_process';import{mkdtempSync,mkdirSync,rmSync,copyFileSync,readFileSync,existsSync,writeFileSync,lstatSync,chmodSync,readdirSync}from'node:fs';import{tmpdir}from'node:os';import{join,dirname}from'node:path';import{fileURLToPath}from'node:url';import{freePort,waitUp,withSession}from'./boot.mjs';
-const here=dirname(fileURLToPath(import.meta.url)),root=join(here,'..'),tmp=mkdtempSync(join(tmpdir(),'board-start-ui-')),data=join(tmp,'data'),home=join(tmp,'home'),repos=join(tmp,'repos'),shots=join(here,'out/board-start');
+import{spawn,spawnSync}from'node:child_process';import{mkdtempSync,mkdirSync,rmSync,copyFileSync,readFileSync,existsSync,writeFileSync,lstatSync,chmodSync,readdirSync}from'node:fs';import{tmpdir}from'node:os';import{join,dirname}from'node:path';import{fileURLToPath}from'node:url';import{freePort,waitUp,withSession}from'./boot.mjs';import{checkedTempDir}from'./lib/git-hygiene.mjs';
+const here=dirname(fileURLToPath(import.meta.url)),root=join(here,'..'),tmp=checkedTempDir('board-start-ui-'),data=join(tmp,'data'),home=join(tmp,'home'),repos=join(tmp,'repos'),shots=join(here,'out/board-start');
 mkdirSync(home);mkdirSync(repos);mkdirSync(shots,{recursive:true});
 // a Codex login the stub CLI (tests/fixture/codex-account.mjs) hands to the scripted agent, and
 // the signed-in Claude CLI stand-in (auth status only; the form never runs a paid verification)
