@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Which project a run is in (projects design §3.2) and the `project` a wrun live event carries.
 //   bun tests/project-of.ts
 import { mkdirSync, writeFileSync } from "node:fs";

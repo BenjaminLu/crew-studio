@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Workflow acceptance harness (offline): every bundled workflow, end to end, through the production path.
 //
 // The scenario list is the shared one (tests/acceptance/<id>.yaml, read with

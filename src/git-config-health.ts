@@ -103,7 +103,7 @@ export function parseGitConfig(text: string): { ok: true; values: Map<string, st
 }
 /** git's boolean: null (no "=") true; true/yes/on true; false/no/off/"" false; an integer (k/m/g suffix allowed) true unless 0; anything else is not a boolean */
 export function gitBool(v: string | null): boolean | null {
-  if (v === null) return true; const t = v.trim().toLowerCase();
+  if (v === null) return true; const t = v.toLowerCase();
   if (["true", "yes", "on"].includes(t)) return true; if (["false", "no", "off", ""].includes(t)) return false;
   const m = /^([-+]?\d+)([kmg]?)$/.exec(t); return m ? Number(m[1]) !== 0 : null;
 }

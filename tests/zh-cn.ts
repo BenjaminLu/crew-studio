@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // 简体中文 UI (unit zh-cn): zh-CN text is the zh-TW text run through opencc-js (pinned,
 // vendored to public/vendor, config twp -> cn); Studio keeps no conversion table of its
 // own. displayCN keeps only code and link targets as written, in linear time,

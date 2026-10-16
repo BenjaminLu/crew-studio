@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Board "Live workflows": the graph must show real graph content on first open, without scrolling.
 // The fixture has the built-in code-firstmate topology (28 nodes, its stage boxes, its back edges):
 // its canvas is several times the frame in both directions and its top-left corner is empty, so a

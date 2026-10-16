@@ -1,7 +1,10 @@
-// git config files compared with git itself by tests/git-config-guard.ts: the reviewer case set of 2026-10-16 (92 files).
+// git config files compared with git itself by tests/git-config-guard.ts: the reviewer case set of 2026-10-16 (92 files) plus 3 quoted-whitespace core.bare cases.
 // Not a test entry.
 export const cases: Record<string, string> = {
   plain_true: "[core]\n\tbare = true\n",
+  quoted_space: '[core]\n\tbare = " "\n',
+  quoted_false_pad: '[core]\n\tbare = " false "\n',
+  quoted_false_trail: '[core]\n\tbare = "false "\n',
   novalue: "[core]\n\tbare\n",
   quoted: '[core]\n\tbare = "true"\n',
   cont: "[core]\n\tbare = tr\\\nue\n",

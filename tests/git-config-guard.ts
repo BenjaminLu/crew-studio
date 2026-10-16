@@ -113,8 +113,8 @@ gitMod?.setGitHome?.(join(tmp, "studio-git"));
       if (gitBlocks && !weBlock) missed.push(`${name}: git blocks, parser allows`);
       if (!gitBlocks && weBlock && !accepted.has(name)) missed.push(`${name}: parser blocks, git does not`);
       if (!!p?.ok !== list && !accepted.has(name)) listDiff.push(`${name}: git --list ${list ? "reads" : "refuses"} it, parser ${p?.ok ? "reads" : "refuses"} it`); }
-    ok(!!health?.parseGitConfig && Object.keys(all).length === 92 && missed.length === 0, "over 92 config files, the parser blocks every file git fails on (no false negative)", missed.join("\n"));
-    ok(!!health?.parseGitConfig && listDiff.length === 0, "over 92 config files, the parser reads exactly the files `git config --list` reads", listDiff.join("\n")); }
+    ok(!!health?.parseGitConfig && Object.keys(all).length === 95 && missed.length === 0, "over 95 config files, the parser blocks every file git fails on (no false negative)", missed.join("\n"));
+    ok(!!health?.parseGitConfig && listDiff.length === 0, "over 95 config files, the parser reads exactly the files `git config --list` reads", listDiff.join("\n")); }
   // the built-in sandbox (data/demo-repo) is a plain checkout: the same check reads it
   const data = join(tmp, "data"), demo = join(data, "demo-repo"); mkdirSync(demo, { recursive: true }); sh(demo, "init", "-q", "-b", "main"); breakConfig(join(demo, ".git", "config"), "core.bare", "true");
   const sb = health?.gitConfigReport?.([{ label: "built-in sandbox (data/demo-repo)", path: demo }]);

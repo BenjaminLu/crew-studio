@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Who a Task waits on (projects design §3.3): card, readiness hold, staffing hold, queue, CI, agent, none.
 //   bun tests/waits-on.ts
 import { waitsOn } from "../src/task-round";

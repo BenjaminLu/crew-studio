@@ -29,7 +29,7 @@ const OPERATOR = ["CREW_LOCAL_UNRESTRICTED", "CREW_LOCAL_DEPENDENCY_ROOT", "CREW
 // ---------- every test entry imports the guard first ----------
 {
   // Modules other tests import or start as fake tools: not entries, so no guard.
-  const HELPERS = new Set(["boot.mjs", "codex-image-fixture.mjs", "codex-protocol.mjs", "compare-fixture.ts", "intent-card-fixture.ts", "remote-gates-card-fixture.ts", "rt-harness.ts", "transcripts-fixture.mjs"]);
+  const HELPERS = new Set(["boot.mjs", "codex-image-fixture.mjs", "codex-protocol.mjs", "compare-fixture.ts", "projects-fixture.ts", "intent-card-fixture.ts", "remote-gates-card-fixture.ts", "rt-harness.ts", "transcripts-fixture.mjs"]);
   const isHelper = (n: string) => HELPERS.has(n) || /^stub-.*\.mjs$/.test(n);
   const top = readdirSync(import.meta.dir).filter((n) => /\.(ts|mjs)$/.test(n) && !isHelper(n));
   const scripts = Object.values(JSON.parse(readFileSync(join(root, "package.json"), "utf8")).scripts as Record<string, string>).join(" ");

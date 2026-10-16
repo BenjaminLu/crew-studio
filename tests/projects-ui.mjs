@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Projects in the sidebar, phase 1 (projects design §2, §3.4): the real server on temporary data with three projects in
 // different states and a Task in no project (tests/projects-fixture.ts), driven in a browser.
 //   bun tests/projects-ui.mjs          (PLAYWRIGHT_MODULE may point at a playwright install)

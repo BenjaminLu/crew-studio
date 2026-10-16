@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // 简体中文 in the browser (unit zh-cn-ui): the language picker lives in Settings with
 // English, 繁體中文 and 简体中文; the lower-left switcher is gone; the choice survives a
 // reload; the first run follows the browser language; and in zh-CN no Traditional-only

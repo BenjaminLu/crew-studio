@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The read-only projects overview (projects design §3.1, phase 1): GET /api/projects/overview (the sidebar) and
 // GET /api/projects/<id>/overview (one page), on temporary data: a busy local project, an external project, the
 // built-in sandbox and a run with no project.          bun tests/project-overview.ts

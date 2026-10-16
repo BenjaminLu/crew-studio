@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Projects.staffingAssess is an extraction of the checks staffingIdentity has always run (src/doors.ts): the
 // refactored staffingIdentity must return the same identity or throw the same error as the verbatim pre-refactor copy
 // (tests/fixtures/staffing-identity-reference.ts) for every registration shape below, including the reviewer's attack

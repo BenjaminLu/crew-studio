@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // A known failure covers only the failure it names. tests/acceptance.ts runs on a copy of the
 // scenario list where file-organization:board (a known failure: "give the folder's absolute path")
 // names a setup step that does not exist: that other failure must be a FAIL and fail the suite,
