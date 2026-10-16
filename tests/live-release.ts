@@ -22,9 +22,9 @@ const instance = async (port: number) => { try { const r = await fetch(`http://1
 // The stub stands in for src/main.ts: `open` leaves a marker, `--version` prints,
 // otherwise it serves like Studio (GET /api/instance -> {pid, boot}) and writes a
 // private launch record {schema, boot, pid, origin, data} into CREW_RUNTIME_DIR.
-const stub = (version: string) => `import {createHash,createHmac,randomBytes} from "node:crypto";import {existsSync,mkdirSync,writeFileSync,unlinkSync,chmodSync} from "node:fs";import {join,resolve} from "node:path";
+const stub = (version: string, onVersion = "") => `import {createHash,createHmac,randomBytes} from "node:crypto";import {existsSync,mkdirSync,writeFileSync,unlinkSync,chmodSync} from "node:fs";import {join,resolve} from "node:path";
 const VERSION=${JSON.stringify(version)};const sub=process.argv[2];const data=resolve(process.env.CREW_DATA||"data");
-if(sub==="--version"){console.log("stub "+VERSION);process.exit(0);}
+if(sub==="--version"){${onVersion}console.log("stub "+VERSION);process.exit(0);}
 if(sub==="open"){mkdirSync(data,{recursive:true});writeFileSync(join(data,"opened-"+VERSION),String(Date.now()));console.log("open requested");process.exit(0);}
 mkdirSync(data,{recursive:true});
 if(existsSync(join(data,"fail-start-"+VERSION))){console.error("stub "+VERSION+" refuses to start");process.exit(3);}
@@ -116,8 +116,15 @@ try {
   symlinkSync(otherWt, join(root, X));
   r = run("prune", "--keep", "1");
   ok(existsSync(join(otherWt, "precious.txt")) && readFileSync(join(otherWt, "src", "main.ts"), "utf8").includes("OTHER-WT-DIRTY") && sh(dev, "git", "worktree", "list", "--porcelain").includes("locked someone else's"), "prune never follows a releases/<sha> symlink into another worktree", r.out.slice(-300));
+  unlinkSync(join(root, X));
+  // the deploy target is a CLEAN worktree at exactly X, so verifyRelease (HEAD + clean + --version)
+  // would pass: only the release checks in buildRelease/writeReleaseEnv stand between it and a .env write
+  const cleanWt = join(tmp, "clean-worktree");
+  sh(dev, "git", "worktree", "add", "-q", "--detach", cleanWt, X);
+  ok(sh(cleanWt, "git", "status", "--porcelain", "--untracked-files=all") === "" && sh(cleanWt, "git", "rev-parse", "HEAD") === X, "the symlink target for the deploy case is a clean worktree at exactly X");
+  symlinkSync(cleanWt, join(root, X));
   r = run("deploy", "--ref", X, "--no-fetch");
-  ok(r.code !== 0 && !existsSync(join(otherWt, ".env")) && !existsSync(join(otherWt, "node_modules")) && live()?.live?.sha === A && (await instance(port))?.version === "A", "deploy refuses a releases/<sha> symlink and writes no .env into its target", r.out.slice(-300));
+  ok(r.code !== 0 && !existsSync(join(cleanWt, ".env")) && !existsSync(join(cleanWt, "node_modules")) && live()?.live?.sha === A && (await instance(port))?.version === "A", "deploy refuses a releases/<sha> symlink to a clean worktree and writes no .env into its target", r.out.slice(-300));
   unlinkSync(join(root, X));
   mkdirSync(join(root, X)); writeFileSync(join(root, X, "keep.txt"), "not a worktree");
   r = run("prune", "--keep", "1");
@@ -136,6 +143,15 @@ try {
     ok(r.code !== 0 && r.out.includes("R-901") && r.out.includes("Ship the onboarding page") && !r.out.includes("R-902") && live()?.live?.sha === A && (await instance(port))?.version === "A", `${verb} refuses while a Task is running and names it`, r.out.slice(-300));
   }
   writeFileSync(join(runDir, "run.json"), JSON.stringify({ id: "R-901", workflow: "code-firstmate", title: "Ship the onboarding page", status: "succeeded", nodes: {} }));
+
+  // 2d. a Task queued after deploy's first check (while the release builds) still blocks the switch:
+  //     release E's `--version` (run by verifyRelease, after the first check) queues one
+  const queued = join(data, "runs", "R-903", "run.json");
+  const E = (() => { writeFileSync(join(cleanWt, "src", "main.ts"), stub("E", `require("node:fs").mkdirSync(${JSON.stringify(join(data, "runs", "R-903"))},{recursive:true});require("node:fs").writeFileSync(${JSON.stringify(queued)},JSON.stringify({id:"R-903",workflow:"code-firstmate",title:"Queued during the build",status:"queued",nodes:{}}));`)); sh(cleanWt, "git", "commit", "-q", "-am", "stub E"); return sh(cleanWt, "git", "rev-parse", "HEAD"); })();
+  const pidA = (await instance(port))?.pid;
+  r = run("deploy", "--ref", E, "--no-fetch");
+  ok(r.code !== 0 && existsSync(queued) && r.out.includes("R-903") && !r.out.includes("stopping pid") && live()?.live?.sha === A && (await instance(port))?.pid === pidA, "deploy refuses at the switch when a Task was queued during the build, and A keeps serving", r.out.slice(-400));
+  rmSync(join(data, "runs", "R-903"), { recursive: true, force: true });
 
   // 3. deploy origin/main resolves to B; status matches origin/main
   r = run("deploy", "--ref", "origin/main");
@@ -190,6 +206,21 @@ try {
   // 6. stop: only the owned live process
   r = run("stop");
   ok(r.code === 0 && !(await instance(port)) && otherP.exitCode === null && await serving(otherPort), "stop ends only the live release", r.out.slice(-300));
+
+  // 6b. a `bun src/main.ts` on the live port is stopped only with Studio's own proof (launch
+  //     record + HMAC) for the live data dir: none at all, or a record for another data dir, is refused
+  for (const [label, env] of [
+    ["with no launch record in the live runtime dir", { CREW_PORT: String(port), CREW_DATA: data, CREW_RUNTIME_DIR: join(tmp, "rogue-runtime") }],
+    ["whose launch record is for another data dir", { CREW_PORT: String(port), CREW_DATA: join(tmp, "rogue-data"), CREW_RUNTIME_DIR: runtime }],
+  ] as const) {
+    const rogueDir = join(tmp, "rogue"); mkdirSync(join(rogueDir, "src"), { recursive: true }); writeFileSync(join(rogueDir, "src", "main.ts"), stub("ROGUE"));
+    const rogue = spawnStub(rogueDir, env);
+    await wait(() => serving(port));
+    const rd = run("deploy", "--ref", C, "--no-fetch");
+    const rs = run("stop");
+    ok(rd.code !== 0 && rs.code !== 0 && rd.out.includes("not the live Studio") && rs.out.includes("not the live Studio") && rogue.exitCode === null && (await instance(port))?.pid === rogue.pid, `deploy and stop refuse a bun src/main.ts listener ${label}`, (rd.out + rs.out).slice(-500));
+    rogue.kill(); await ended(rogue);
+  }
 
   // 7. first deploy (no previous release) that fails: the stopped dev instance is started again
   const legacy2 = spawnStub(dev, { CREW_PORT: String(port), CREW_DATA: data, CREW_RUNTIME_DIR: runtime });

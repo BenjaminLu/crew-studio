@@ -26,7 +26,7 @@
 // `git worktree list` at exactly that path. Deploy, rollback and stop refuse while
 // a Task has a step in flight (<data>/runs/*/run.json) unless --force.
 // No command prints the env file's contents.
-import { closeSync, chmodSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, chmodSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { discoverInstance } from "../src/instance";
@@ -101,17 +101,30 @@ type Live = { sha: string; pid: number; port: number; data: string; command: str
 type State = { schema: 1; live: Live | null; history: string[] };
 const readState = (s: Settings): State => { try { const v = JSON.parse(readFileSync(s.state, "utf8")); if (v.schema === 1) return v; } catch {} return { schema: 1, live: null, history: [] }; };
 const writeState = (s: Settings, st: State) => { const t = s.state + ".tmp"; writeFileSync(t, JSON.stringify(st, null, 2) + "\n", { mode: 0o600 }); renameSync(t, s.state); };
+/** "<pid> <start time>": a lock whose pid now belongs to another process (pid reuse) is stale too. */
+const startedOf = (pid: number) => run(["ps", "-o", "lstart=", "-p", String(pid)], "/").out.replace(/\s+/g, " ");
+const lockToken = (pid: number) => `${pid} ${startedOf(pid)}`;
+const lockHeld = (token: string) => { const pid = Number(token.split(" ")[0]); return Number.isSafeInteger(pid) && pid > 1 && alive(pid) && lockToken(pid) === token; };
 function lock(s: Settings) {
   mkdirSync(s.root, { recursive: true, mode: 0o700 });
-  const l = join(s.root, ".lock");
-  const take = () => { try { writeFileSync(l, String(process.pid), { flag: "wx", mode: 0o600 }); return true; } catch { return false; } };
+  const l = join(s.root, ".lock"), guard = l + ".retake", mine = lockToken(process.pid);
+  const take = () => { try { writeFileSync(l, mine, { flag: "wx", mode: 0o600 }); return true; } catch { return false; } };
+  const holder = () => { try { return readFileSync(l, "utf8"); } catch { return null; } };
   if (!take()) {
-    let pid = 0; try { pid = Number(readFileSync(l, "utf8")); } catch {}
-    if (pid && alive(pid)) throw new Refusal(`another live-release (pid ${pid}) is running`);
-    try { unlinkSync(l); } catch {}
-    if (!take()) throw new Refusal("another live-release took the lock first");
+    const seen = holder();
+    if (seen !== null && lockHeld(seen)) throw new Refusal(`another live-release (pid ${seen.split(" ")[0]}) is running`);
+    // Retake a stale lock under an exclusive guard (mkdir is atomic): only the guard holder may
+    // unlink, and only the exact stale lock it inspected, so two processes that both saw the
+    // stale lock can never unlink each other's fresh one.
+    try { mkdirSync(guard, { mode: 0o700 }); } catch { throw new Refusal(`another live-release is taking the lock (remove ${guard} if no live-release is running)`); }
+    try {
+      const now = holder();
+      if (now !== null && (now !== seen || lockHeld(now))) throw new Refusal("another live-release took the lock first");
+      if (now !== null) unlinkSync(l);
+      if (!take()) throw new Refusal("another live-release took the lock first");
+    } finally { try { rmdirSync(guard); } catch {} }
   }
-  process.once("exit", () => { try { if (readFileSync(l, "utf8") === String(process.pid)) unlinkSync(l); } catch {} });
+  process.once("exit", () => { try { if (readFileSync(l, "utf8") === mine) unlinkSync(l); } catch {} });
 }
 
 // ---- Tasks in flight -----------------------------------------------------------------
@@ -224,7 +237,9 @@ async function start(sha: string, s: Settings): Promise<Live> {
 /** Start a stopped non-release Studio again with its own command and folder (its .env loads from there), on the live port and data dir. */
 async function relaunch(o: Stopped, s: Settings) {
   const t = o.command.trim().split(/\s+/);
-  const exe = basename(t[0]) === "bun" ? (isAbsolute(t[0]) ? t[0] : process.execPath) : resolve(o.cwd, t[0]);
+  // A bare argv0 (no slash) was found on PATH by whoever started it, not in its cwd.
+  const exe = basename(t[0]) === "bun" ? (isAbsolute(t[0]) ? t[0] : process.execPath) : t[0].includes("/") ? resolve(o.cwd, t[0]) : Bun.which(t[0]);
+  if (!exe) throw new Refusal(`${t[0]} is not on PATH; cannot start the previous instance again`);
   await launch([exe, ...t.slice(1)], o.cwd, { ...baseEnv(s), CREW_DATA: s.data, CREW_PORT: String(s.port), CREW_RUNTIME_DIR: s.runtimeDir }, s, "restored");
 }
 function openBrowser(sha: string, s: Settings) {
@@ -249,6 +264,15 @@ function checkRelease(sha: string, s: Settings): string {
   if (!listed.includes(want)) throw new Refusal(`${rel} is not a registered worktree of ${s.repo}; it is not a release and is left alone`);
   return rel;
 }
+/** checkRelease plus the folder's identity, so a later write or removal can prove rel was not swapped (say, for a symlink) in between. */
+function pinRelease(sha: string, s: Settings) {
+  const rel = checkRelease(sha, s), st = lstatSync(rel), real = realpathSync(rel);
+  const still = (when: string) => {
+    let now; try { now = lstatSync(rel); } catch { now = null; }
+    if (!now || now.isSymbolicLink() || !now.isDirectory() || now.dev !== st.dev || now.ino !== st.ino || realOr(rel) !== real) throw new Refusal(`${rel} changed ${when}; it is left alone`);
+  };
+  return { rel, still };
+}
 function verifyRelease(rel: string, sha: string) {
   if (must(git(rel, "rev-parse", "HEAD"), "reading the release HEAD") !== sha) throw new Refusal(`${rel} is not at ${sha}`);
   const dirty = must(git(rel, "status", "--porcelain", "--untracked-files=all"), "checking the release is clean");
@@ -270,15 +294,19 @@ function buildRelease(sha: string, s: Settings): string {
 }
 /** <release>/.env, 0600: the operator's .env with CREW_DATA, CREW_PORT and CREW_LOCAL_DEPENDENCY_ROOT made absolute. Never printed. */
 function writeReleaseEnv(sha: string, s: Settings) {
-  const rel = checkRelease(sha, s);
+  const { rel, still } = pinRelease(sha, s);
   const managed = new Set(["CREW_DATA", "CREW_PORT", "CREW_LOCAL_DEPENDENCY_ROOT"]);
   const kept = s.envText.split(/\r?\n/).filter((l) => { const k = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(l); return !k || !managed.has(k[1]); });
   const q = (v: string) => /^[A-Za-z0-9_./:@+-]*$/.test(v) ? v : JSON.stringify(v);
   const lines = [...kept, `# written by scripts/live-release.ts for ${sha} from ${basename(s.envFrom)}`, `CREW_DATA=${q(s.data)}`, `CREW_PORT=${s.port}`, ...(s.depRoot ? [`CREW_LOCAL_DEPENDENCY_ROOT=${q(s.depRoot)}`] : [])];
   const file = join(rel, ".env"), tmp = file + ".tmp";
   try { unlinkSync(tmp); } catch {}
+  still("before its .env was written");
   writeFileSync(tmp, lines.join("\n").replace(/\n*$/, "\n"), { mode: 0o600, flag: "wx" });
-  chmodSync(tmp, 0o600); renameSync(tmp, file);
+  chmodSync(tmp, 0o600);
+  still("while its .env was written");
+  renameSync(tmp, file);
+  still("while its .env was written; check where the .env went");
   if (!existsSync(s.envFrom)) say(`no ${s.envFrom}; the release env holds only CREW_DATA and CREW_PORT`);
   const relativeKeys = [...s.operator].filter(([k, v]) => !managed.has(k) && /^\.\.?\//.test(v)).map(([k]) => k);
   if (relativeKeys.length) say(`relative paths now resolve inside the release, not the dev checkout: ${relativeKeys.join(", ")} (make them absolute in ${basename(s.envFrom)})`);
@@ -289,15 +317,18 @@ function prune(s: Settings, st: State, keep: number) {
   if (st.live) keepSet.add(st.live.sha);
   for (const d of existsSync(s.root) ? readdirSync(s.root) : []) {
     if (!SHA.test(d) || keepSet.has(d)) continue;
-    let rel: string;
-    try { rel = checkRelease(d, s); } catch (e) { say(`not pruning ${d.slice(0, 12)}: ${(e as Error).message}`); continue; }
+    let rel: string, still: (when: string) => void;
+    try { ({ rel, still } = pinRelease(d, s)); } catch (e) { say(`not pruning ${d.slice(0, 12)}: ${(e as Error).message}`); continue; }
     git(s.repo, "worktree", "unlock", rel);
+    try { still("before it was pruned"); } catch (e) { say(`not pruning ${d.slice(0, 12)}: ${(e as Error).message}`); continue; }
     const r = git(s.repo, "worktree", "remove", "--force", rel);
     say(r.ok ? `pruned release ${d.slice(0, 12)}` : `could not prune ${d.slice(0, 12)}: ${r.err.split("\n").at(-1)}`);
   }
   st.history = st.history.filter((h) => keepSet.has(h));
 }
 
+/** One shell word: plain when safe, single-quoted otherwise. */
+const shq = (v: string) => /^[A-Za-z0-9_./:@%+=,-]+$/.test(v) ? v : `'${v.replace(/'/g, "'\\''")}'`;
 /** Stop the owned live process and start sha. If sha does not come up (or Ctrl-C lands in between), start what was serving before; if that is impossible, say so with the exact command. */
 async function switchTo(sha: string, s: Settings, st: State) {
   const before = await identify(s, st);
@@ -307,7 +338,7 @@ async function switchTo(sha: string, s: Settings, st: State) {
       if (before && !before.release) { await relaunch(before, s); say(`started the previous instance again: ${before.command} in ${before.cwd}`); return; }
     } catch (e2) { say((e2 as Error).message); }
     const prev = !before ? "nothing" : before.release ? `release ${before.release}` : `${before.command} in ${before.cwd}`;
-    const how = !before ? "bun scripts/live-release.ts deploy" : before.release ? `cd ${join(s.root, before.release)} && ${process.execPath} src/main.ts` : `cd ${before.cwd} && ${before.command}`;
+    const how = !before ? "bun scripts/live-release.ts deploy" : before.release ? `cd ${shq(join(s.root, before.release))} && ${shq(process.execPath)} src/main.ts` : `cd ${shq(before.cwd)} && ${before.command.trim().split(/\s+/).map(shq).join(" ")}`;
     say(`nothing serves port ${s.port}; previous was ${prev}; restart with: ${how}`);
   };
   // Ctrl-C (or SIGTERM) between stop and start: stop launching, then restore below instead of leaving the port empty.
@@ -315,6 +346,9 @@ async function switchTo(sha: string, s: Settings, st: State) {
   const onSignal = () => { if (interrupted) return; interrupted = true; say("interrupted; will restore what was serving before"); const p = launching; if (p) try { process.kill(p.pid, "SIGTERM"); } catch {} };
   process.on("SIGINT", onSignal); process.on("SIGTERM", onSignal);
   try {
+    // deploy checked for running Tasks before fetch, worktree add, bun install and verify, which
+    // can take minutes; a Task queued meanwhile would have its step interrupted by the stop below.
+    refuseWhileTasksRun(s);
     if (before) await terminate(before, s);
     st.live = null; writeState(s, st);
     try {
