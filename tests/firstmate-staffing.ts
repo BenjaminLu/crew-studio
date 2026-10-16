@@ -26,7 +26,7 @@ try{
  ok(next.version===2&&next.previous===config.hash,'append only version');
  const latestPointer=readFileSync(pointerPath,'utf8');writeFileSync(pointerPath,firstPointer);rejects(()=>store.current(project),'old correctly signed pointer cannot rollback current version');writeFileSync(pointerPath,latestPointer);
  writeFileSync(store.snapshotPath(project,skill.sha256),'tampered');
- rejects(()=>store.current(project),'snapshot tamper holds current');
+ ok(store.current(project).hash===next.hash,'historical skill archive is not staffing execution authority');
  rejects(()=>staffingHash({bad:undefined}),'undefined canonical identity rejected');
  console.log(`staffing: ${n} passed`);
 }finally{rmSync(root,{recursive:true,force:true})}
@@ -58,11 +58,11 @@ if(process.env.STAFFING_BASE_ENGINE){
   delete node.role;
   const picked=e.deps.approvedPick(run,{...node,role:'worker'});
   ok(picked.provider==='codex'&&picked.model==='chosen-model'&&picked.effort==='high','approved explicit role pick wins over default');
-  ok(e.instructions(run,'worker',[]).includes('# Test skill'),'actual instruction composer receives exact approved snapshot');
+  ok(e.instructions(run,'worker',[]).includes('# Test skill'),'actual instruction composer receives current workflow skill');e.deps.skillText=()=> '# Updated current skill';ok(e.instructions(run,'worker',[]).includes('# Updated current skill'),'installed skill update is used without staffing reapproval');
   const nodeRun=run.nodes[node.id];nodeRun.agent={provider:'claude',model:'different'};
   ok(e.x(run,{...node,role:'worker'},nodeRun).pick().provider==='codex','raw node agent mutation cannot bypass approved role');
   writeFileSync(s.snapshotPath(p,skill.sha256),'altered');
-  rejects(()=>e.instructions(run,'worker',[]),'actual instruction boundary refuses missing/tampered skill');
+  ok(e.instructions(run,'worker',[]).includes('# Updated current skill'),'historical skill archive does not override current instructions');e.deps.skillText=()=> '';rejects(()=>e.instructions(run,'worker',[]),'missing current workflow skill refuses execution');
   await e.cancel(run.id,'fixture complete');
  }finally{h.stop();rmSync(h.data,{recursive:true,force:true})}
  console.log(`staffing total: ${n} passed`);
@@ -264,8 +264,8 @@ if(process.env.STAFFING_CONVERSATION==='1'){
 // Actual server resolver, after a real Agents queue wait, must recheck staffing.
 {
  const {harness,Y,until}=await import('./rt-harness');const{installStaffingGuard}=await import('../src/domain/staffing');const{createNativeProviderAdmission}=await import('../src/providers/native-admission');const{withSafetyRules}=await import('../src/skills');
- for(const kind of ['run:receipt','judge:review-verdict','card:merge'])for(const mode of ['cached','refreshed'])for(const drift of ['none','config','skill','project','instructions','forged','missing','provider','task','during-refresh','refresh-provider']){
-  if(mode==='cached'&&['during-refresh','refresh-provider'].includes(drift))continue;
+ for(const kind of ['run:receipt','judge:review-verdict','card:merge'])for(const mode of ['cached','refreshed'])for(const drift of ['none','config','skill','snapshot','project','instructions','forged','missing','provider','task','during-refresh','refresh-provider','missing-source']){
+  if(mode==='cached'&&['during-refresh','refresh-provider','missing-source'].includes(drift))continue;
   const role=kind==='card:merge'?'coordinator':kind.startsWith('judge:')?'reviewer':'worker',ref=`pack:firstmate/skills/${role==='coordinator'?'firstmate':role}.md`,flow={id:'code-firstmate',name:'Queued staffing',kind:'code',version:1,roles:[{id:role,label:role,skill:ref}],nodes:[{id:'hold',kind:'hook',do:'hold',label:'Hold source owner',x:1,y:1}],edges:[]};
   const h=await harness([Y(flow)],{policies:'queue:\n  global_capacity: 1\n  project_capacity: 1\n'}),e=h.engine,store=new StaffingStore(h.data),project={namespace:'git' as const,id:'p',identity:'source-authorized-project'};let releaseOwner=()=>{},x:any,validProject=true,starts=0,refreshes=0;
   try{
@@ -277,10 +277,10 @@ if(process.env.STAFFING_CONVERSATION==='1'){
    const unblock=await h.agents.queue.acquire({key:'blocker',task:'other-task',project:'other-project',deadline:Date.now()+10000,limits:()=>({global:1,project:1}),ready:()=>({ready:true}),waiting(){},admitted(){}});
    const pending=h.agents.run({kind,title:'Strict queued staffing fixture',system:drift==='instructions'?system+' unauthorized changed instructions':system,text:'Offline only',tools:[],provider,rules,ref:drift==='task'?'unrelated-task':run.id,admissionReceipt:drift==='forged'?{}:drift==='missing'?undefined:admissionReceipt,owns:()=>e.owns(x)}as any).then(job=>({job}),error=>({error}));
    await until(()=>h.agents.queue.snapshot().pending.length===1);ok(starts===0,`${kind}/${mode}/${drift}: queue blocks provider.start`);
-   if(drift==='config')store.approve(draft,config.hash,{run:'source',card:'captain-new',answerSeq:2});if(drift==='skill')e.deps.skillText=()=> 'Changed native skill';if(drift==='project')validProject=false;if(drift==='provider')provider.model='wrong-model';
+   if(drift==='config')store.approve(draft,config.hash,{run:'source',card:'captain-new',answerSeq:2});if(drift==='skill')e.deps.skillText=()=> 'Changed native skill';if(drift==='snapshot')writeFileSync(store.snapshotPath(project,config.roles[role].skill.sha256),'Tampered approved snapshot');if(drift==='missing-source')e.deps.skillText=()=> '';if(drift==='project')validProject=false;if(drift==='provider')provider.model='wrong-model';
    unblock();const result=await pending;
-   if(drift==='none')ok(starts===1&&'job'in result&&result.job.status==='done'&&payloads[0]===jobInstructions(system,rules),`${kind}/${mode}: unchanged authority reaches actual start payload`);else ok(starts===0&&'error'in result,`${kind}/${mode}/${drift}: drift after queue produces zero provider.start`);
-   if(mode==='refreshed'&&(drift==='none'||drift==='during-refresh'))ok(refreshes===1,`${kind}/${drift}: actual expired certificate refresh path exercised`);
+   if(drift==='none'||drift==='skill'||drift==='snapshot')ok(starts===1&&'job'in result&&result.job.status==='done'&&payloads[0]===jobInstructions(system,rules),`${kind}/${mode}: ${drift}: prepared invocation reaches actual start payload without historical skill pinning`);else ok(starts===0&&'error'in result,`${kind}/${mode}/${drift}: drift after queue produces zero provider.start`);
+   if(mode==='refreshed'&&(drift==='none'||drift==='skill'||drift==='during-refresh'))ok(refreshes===1,`${kind}/${drift}: actual expired certificate refresh path exercised`);
    releaseOwner();await until(()=>run.status==='succeeded');
   }finally{releaseOwner();for(const run of e.list())if(!['succeeded','failed','cancelled'].includes(run.status))await e.cancel(run.id,'cleanup');h.stop();rmSync(h.data,{recursive:true,force:true});}
  }
