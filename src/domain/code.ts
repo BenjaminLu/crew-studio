@@ -697,6 +697,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     x.ctx.rounds = [...(x.ctx.rounds ?? []), { round: x.visit, head: x.ctx.head, report: rep, at: new Date().toISOString() }];
   };
   engine.modes.build = {
+    maxTools: 180, // multi-file implementation needs room beyond discovery, tests and the final report
     ...roundHooks(true),
     sandbox: (x) => { const wt = x.ctx.worktree; return wt && existsSync(wt) ? { writes: [wt], cwd: wt } : null; }, // writes only its worktree
     tools: (x) => {
@@ -730,7 +731,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
             return { exit: r.timedOut ? null : r.code, timedOut: r.timedOut, evidence:evidence?{seq:evidence.seq,sig:evidence.sig}:null,tail: output.trim().split("\n").slice(-25).join("\n") }; } }];
     },
     system: (x, skill) => x.ctx.reportOnly?.build ? `${skill}\n\nREPORT ONLY: your code from the last round is kept. Do not change any file. Read what you need and call worker_report once with a complete report, then one line.`
-      : `${skill}\n\nYou build ONE change in the run's worktree with the fs_* tools (no shell; run_tests runs the repository's tests). Stay inside the spec's scope. Each done line needs a test that fails without your change. Studio commits your work; you never commit. End with worker_report, then one line.`,
+      : `${skill}\n\nYou build ONE change in the run's worktree with the fs_* tools (no shell; run_tests runs the repository's tests). Stay inside the spec's scope. Each done line needs a test that fails without your change. Studio commits your work; you never commit. Tool budget: 180 calls. Use at most 60 read/search calls before implementation; reserve calls for edits, verification and worker_report. Prefer targeted reads over whole files. Do not spend the full budget exploring. End with worker_report, then one line.`,
     prompt: (x) => {
       const wt = shellOk(x); const h = head(wt); x.ctx.head = h;
       mkdirSync(join(x.dir, "briefs"), { recursive: true });
