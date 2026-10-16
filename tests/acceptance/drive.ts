@@ -44,7 +44,7 @@ export async function drive(s: Studio, rid: string, decide: Decide, o: { timeout
   while (Date.now() - t0 < timeout) {
     const r = await s.api(`/api/wruns/${rid}`); if (r.status !== 200) { problems.push(`GET /api/wruns/${rid}: ${r.status} ${JSON.stringify(r.body).slice(0, 300)}`); return { view, answered, problems }; }
     view = r.body;
-    if (TERMINAL.includes(view.status) || o.until?.(view)) return { view, answered, problems };
+    if ((TERMINAL.includes(view.status) && !view.ctx?.firstmateQuestion && !(view.cards ?? []).some((c: any) => c.status === "open" && c.failure?.code === "ask.escalated")) || o.until?.(view)) return { view, answered, problems };
     for (const c of (view.cards ?? []).filter((c: any) => c.status === "open" && !seen.has(c.id))) {
       seen.add(c.id); const i = visits.get(c.node) ?? 0; visits.set(c.node, i + 1);
       const a = await decide(c, view, i);

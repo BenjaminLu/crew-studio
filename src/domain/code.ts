@@ -116,7 +116,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (x.node.kind !== "agent" || x.node.mode !== "build" || !("outcome" in result)) return false;
     const report = x.rn.data.report;
     if (!report || report.round !== x.visit || !engine.owns(x)) return false;
-    return (result.outcome === "blocked" && ["SCOPE-BLOCKED", "ASK"].includes(report.marker))
+    return (result.outcome === "blocked" && report.marker === "SCOPE-BLOCKED")
+      || (["ask", "cap"].includes(result.outcome) && report.marker === "ASK")
       || (result.outcome === "door-change" && report.marker === "DOOR-CHANGE");
   };
   const pendingRebaseChecks = new WeakSet<object>();
@@ -695,7 +696,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const hb = W.handBack(k.project, k.task, { run: x.run.id, node: x.node.id, round: x.visit, agent,
       message: `${x.ctx.spec?.type ?? "feat"}: ${(x.ctx.spec?.title ?? x.run.title).replace(/^\w+(\([^)]*\))?:\s*/, "").replace(/^./, (c: string) => c.toLowerCase()).slice(0, 64)}${x.visit > 1 ? ` (round ${x.visit})` : ""}\n\n${rep?.summary ?? ""}` });
     x.ctx.head = hb.head;
-    x.ctx.rounds = [...(x.ctx.rounds ?? []), { round: x.visit, head: x.ctx.head, report: rep, at: new Date().toISOString() }];
+    x.ctx.rounds = [...(x.ctx.rounds ?? []), { round: x.visit, head: x.ctx.head, report: rep, ...(x.rn.data.failureAnswer ? { answer: { ...x.rn.data.failureAnswer } } : {}), at: new Date().toISOString() }];
   };
   engine.modes.build = {
     maxTools: 180, // multi-file implementation needs room beyond discovery, tests and the final report
@@ -705,7 +706,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       const wt = shellOk(x); const cfg = cfgOf(x); let runs = 0; const reportOnly = !!x.ctx.reportOnly?.build;
       const report: AgentTool = { name: "worker_report", description: "Your report, once at the end: marker WORKER_COMPLETE, SCOPE-BLOCKED, DOOR-CHANGE or ASK; a summary; on a fix round the SWEPT block (searched, found N, fixed M) and the classes you fixed; the test that fails on base (file:line).",
         schema: { type: "object", properties: { marker: { type: "string", enum: ["WORKER_COMPLETE", "SCOPE-BLOCKED", "DOOR-CHANGE", "ASK"] }, summary: { type: "string" }, swept: { type: "object", properties: { searched: { type: "string" }, found: { type: "number" }, fixed: { type: "number" } } }, classes: { type: "array", items: { type: "string" } }, failfirst: { type: "string" } }, required: ["marker", "summary"] },
-        run: (a) => { const sw = a.swept && typeof a.swept === "object" ? { searched: String(a.swept.searched ?? ""), found: Number(a.swept.found) || 0, fixed: Number(a.swept.fixed) || 0 } : null;
+        run: (a) => { if (!engine.owns(x)) return {error:"round owner ended"}; if (x.rn.data.report?.round === x.visit) return {error:"worker_report is submitted exactly once per round"}; const sw = a.swept && typeof a.swept === "object" ? { searched: String(a.swept.searched ?? ""), found: Number(a.swept.found) || 0, fixed: Number(a.swept.fixed) || 0 } : null;
           x.rn.data.report = { marker: String(a.marker), summary: String(a.summary ?? "").slice(0, 1500), swept: sw, classes: (a.classes ?? []).map(String).slice(0, 20), failfirst: a.failfirst ? String(a.failfirst).slice(0, 300) : null, round: x.visit }; x.save(); return { ok: true }; } };
       const context:AgentTool={name:'run_context',description:'Read host-verified current task, checkout, approved dispatch, project install policy and actual job execution mode. No credentials or mutable runtime files.',schema:{type:'object',properties:{}},run:()=>{
         if(!engine.owns(x))return{error:'round owner ended'};
@@ -759,7 +760,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       const ro = x.ctx.reportOnly?.build ? "\nREPORT ONLY: the code stays as it is; write the report the checks asked for.\n" : "";
       // Round facts override the role skill's general wording (the skill text is pinned in approved staffing, so it is not edited here).
       const facts = plan || x.ctx.reportOnly?.build ? "" : "\nROUND FACTS: this is two-way work with no plan round, so the approved spec above is the plan. Staffing, rosters and role skills are Studio's job, not inputs you need. Hold only for an input this brief names that you cannot read. Where the spec is unclear, choose the reading that best fits it, implement it, and list the assumption in worker_report instead of asking.\n";
-      const text = `BUILD ROUND\nRun ${x.run.id} · round ${x.visit} · head ${h} · branch ${x.ctx.branch}\n${specMd(x.ctx.spec)}${plan}${facts}${fix}${ro}${rebaseNote}\nStart with fs_list.${x.run.text.includes("STUB_") ? `\n\nIntent notes:\n${x.run.text}` : ""}`;
+      const text = `BUILD ROUND\nRun ${x.run.id} · round ${x.visit} · head ${h} · branch ${x.ctx.branch}\n${specMd(x.ctx.spec)}${plan}${facts}${fix}${ro}${rebaseNote}\nStart with fs_list.${x.run.text.includes("STUB_") ? `\n\nIntent notes:\n${x.run.text}` : ""}` + engine.failureBrief(x);
       let prev: any = null; try { prev = JSON.parse(readFileSync(briefFile(x), "utf8")); } catch {}
       if (prev && prev.head !== h) x.log(`round ${x.visit} brief rebound from ${String(prev.head).slice(0, 8)} to ${h.slice(0, 8)}`);
       writeFileSync(briefFile(x), JSON.stringify({ run: x.run.id, round: x.visit, head: h, branch: x.ctx.branch, brief: text }, null, 1));
@@ -778,7 +779,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       if(x.ctx.remoteRebaseApproved){x.ctx.remoteRebaseApproved=null;x.ctx.remoteRebaseRequired=null;x.ctx.remoteCI=null;x.ctx.reviewUnverified="native rebase requires fresh review";}
       commitRound(x, rep, `${job.provider}·${job.model}`);
       x.rn.note = `${rep?.marker ?? "no report"} · ${x.ctx.head.slice(0, 8)}${rep?.summary ? ` · ${rep.summary.slice(0, 160)}` : ""}${ro ? " · report only" : ""}`;
-      return rep?.marker === "SCOPE-BLOCKED" ? "blocked" : rep?.marker === "DOOR-CHANGE" ? "door-change" : rep?.marker === "ASK" ? "blocked" : "ok";
+      if (rep?.marker === "ASK" && (x.ctx.rounds ?? []).filter((r: any) => r.report?.marker === "ASK").length >= Number(x.policy("round_cap", 3))) return "cap";
+      return rep?.marker === "SCOPE-BLOCKED" ? "blocked" : rep?.marker === "DOOR-CHANGE" ? "door-change" : rep?.marker === "ASK" ? "ask" : "ok";
     },
     /** A round killed at round_timeout_s is classed timeout: its code is kept and committed, the next round can still change code. */
     onTimeout: (x, job) => { commitRound(x, { marker: "TIMEOUT", summary: "stopped at the round time limit", round: x.visit }, `${job.provider}·${job.model}`); x.rn.data.report = null; x.ctx.timeouts = [...(x.ctx.timeouts ?? []), { round: x.visit, head: x.ctx.head }]; x.rn.note = `timeout · ${x.ctx.head.slice(0, 8)} (work kept)`; return "fail"; },

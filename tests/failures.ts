@@ -288,13 +288,15 @@ const keep = (c: any) => { shown.push(c); shownViews.push(E.cards.view(E.cards.g
 { const asked: any[] = []; E.askFirstmate = (r, node, q) => { asked.push([r.id, node.id, q]); return true; };
   const r = start("ask0"); await until(() => !!E.get(r.id)!.ctx.firstmateQuestion); await until(() => !E.busy(r.id));
   ok(!E.get(r.id)!.failureCard && !E.cards.list({ run: r.id, open: true }).length && asked.at(-1)?.[2] === "Round totals up or down?" && E.get(r.id)!.ctx.firstmateQuestion.node === "act", "firstmate: an agent question goes to Firstmate; no captain card", JSON.stringify(asked.at(-1)));
+  // Historical persisted questions predate visit binding.
+  delete E.get(r.id)!.ctx.firstmateQuestion.visit;
   E.answerFromFirstmate(r.id, "act", { answer: "Round half up" }); await until(() => E.get(r.id)!.status === "succeeded");
   ok(E.get(r.id)!.status === "succeeded" && E.get(r.id)!.nodes.act.data.failureAnswer?.by === "firstmate" && E.trusted(r.id).entries.some((e: any) => e.record === "failure-answer" && e.actor === "firstmate"), "firstmate: its answer runs the same step again and the run succeeds; the ledger records Firstmate as the answerer");
   const a = E.start({ workflow: "ag", text: "agent ask to firstmate" }); await until(() => !!E.get(a.id)!.ctx.firstmateQuestion); await until(() => !E.busy(a.id));
-  E.answerFromFirstmate(a.id, "build", { answer: "Two decimals except JPY" }); await until(() => E.get(a.id)!.status === "succeeded");
+  E.answerFromFirstmate(a.id, "build", { answer: "Two decimals except JPY", visit: E.get(a.id)!.ctx.firstmateQuestion?.visit }); await until(() => E.get(a.id)!.status === "succeeded");
   ok(/FIRSTMATE'S ANSWER[\s\S]*Should JPY have decimals\?[\s\S]*Firstmate answered: Two decimals except JPY/.test(E.get(a.id)!.ctx.lastPrompt?.build ?? "") && !/CAPTAIN'S ANSWER/.test(E.get(a.id)!.ctx.lastPrompt?.build ?? ""), "firstmate: the agent's next prompt carries FIRSTMATE'S ANSWER", E.get(a.id)!.ctx.lastPrompt?.build);
   const e = E.start({ workflow: "ag", text: "agent ask escalated" }); await until(() => !!E.get(e.id)!.ctx.firstmateQuestion); await until(() => !E.busy(e.id));
-  E.answerFromFirstmate(e.id, "build", { escalate: "Deleting the remote branch is a one-way decision." }); const c = cardOf(e.id);
+  E.answerFromFirstmate(e.id, "build", { escalate: "Deleting the remote branch is a one-way decision.", visit: E.get(e.id)!.ctx.firstmateQuestion?.visit }); const c = cardOf(e.id);
   ok(c?.failure?.code === "ask.escalated" && c.failure.escalation?.reason === "Deleting the remote branch is a one-way decision." && c.sections.en.why.includes("Firstmate's reason: Deleting the remote branch") && ids(c) === "answer,park", "firstmate: an escalation raises the captain card with Firstmate's reason", JSON.stringify([c?.failure?.code, c?.sections.en.why]));
   let twice = ""; try { E.answerFromFirstmate(e.id, "build", { answer: "x" }); } catch (err: any) { twice = err.message; }
   ok(/not waiting|no question/.test(twice), "firstmate: a question is answered once", twice);

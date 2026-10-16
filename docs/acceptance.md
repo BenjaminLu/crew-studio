@@ -62,9 +62,8 @@ passing, the suite fails with `UNEXPECTED PASS` until its `known_failure` and it
 `match` is a regular expression for the run's failure text: a run that fails some other way (a broken
 setup step, a new bug on the same path) is a `FAIL`, not a known failure (`tests/acceptance-known.ts`).
 
-| Workflow · run | Node | Error | Root cause | Fix that should cover it |
-|---|---|---|---|---|
-| code-firstmate · firstmate-ask | build (2nd visit) | the worker's ASK reaches the scope card (rescope or park, no way to answer); after the captain rescopes with the answer and dispatches again, the next build runs without the answer in its brief, asks again, and the scripted park closes the Task | `src/domain/code.ts:666` maps ASK to `blocked` (and `:78`); `packs/firstmate/workflows/code-firstmate.wf.yaml:198` routes `blocked` to `scope-card`; the rescope note reaches only the spec writer, not the build brief (the stale scope pin after a rescope is fixed by `rescope-repin-20261016`) | `code-ask-loop-r4-20261016` |
+No bundled scenario is currently marked `known_failure`. The synthetic fixture in
+`tests/acceptance-known.ts` still verifies that unrelated failures cannot hide under that label.
 
 Fixed on main since the harness was written: the startup founder and judge rounds ran in
 `data/runs/<run>`, which the agent path check refuses (round cwd under `data/work` now), and the

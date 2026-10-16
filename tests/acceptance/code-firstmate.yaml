@@ -46,12 +46,7 @@ stub:
     topic: "Add a percentage discount helper ACCEPT_ASK\nSTUB_FILE src/percent.ts :: export const percent = (p: number) => Math.round(p * 90) / 100;\\n\nSTUB_FILE test/percent.test.ts :: import { test, expect } from 'bun:test';\\ntest('percent', async () => { expect(await Bun.file(new URL('../src/percent.ts', import.meta.url)).exists()).toBe(true); const { percent } = await import('../src/percent'); expect(percent(100)).toBe(90); });\\n"
     cards:
       - { node: dispatch, answer: dispatch }
-      - { node: scope-card, answers: [rescope, park], note: "ACCEPT_ANSWERED: 10%." }
+      - { node: build, answer: answer, note: "ACCEPT_ANSWERED: 10%." }
       - { node: merge-card, answer: merge }
     timeout_s: 240
-    expect: { status: succeeded, result: done, visited: [spec, dispatch, build, merge, done], not_visited: [parked] }
-    known_failure:
-      observed: "the worker's ASK goes to the scope card (rescope | park: no way to answer the question); after the captain rescopes with the answer and dispatches again, the next build runs but its brief never carries the captain's answer, so the worker asks again and the scripted park closes the Task"
-      match: '^never visited: merge, done \| visited the other branch: parked \| result closed, expected done'
-      root_cause: "src/domain/code.ts:666 maps worker_report ASK to outcome blocked (also :78), and packs/firstmate/workflows/code-firstmate.wf.yaml:198 routes blocked to scope-card; the captain's rescope note reaches only the spec writer, not the next build brief (the stale scope pin after a rescope is fixed by rescope-repin-20261016)"
-      covered_by: "code-ask-loop-r4-20261016 (code-firstmate: answer worker questions without a rescope loop)"
+    expect: { status: succeeded, result: done, visited: [spec, dispatch, build, merge, done], not_visited: [scope-card, parked], min_visits: { build: 2 } }
