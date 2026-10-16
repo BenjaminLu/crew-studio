@@ -79,7 +79,7 @@ const page = (title, sub, ...kids) => h("div", { class: "page" }, h("div", { cla
 routes.firstmate = routes.firstmate || (() => page(T("Firstmate", "Firstmate"), T("Chat with firstmate and take over its session.", "和 firstmate 對話，接手它的 session。"),
   h("div", { class: "card x-pad" }, h("p", {}, T("The chat drives firstmate's main session: ask how things stand, say what you want done, approve its permission prompts.", "對話會驅動 firstmate 的主 session：問進度、交代要做的事、核准它的權限請求。")),
     h("div", { class: "actions" }, h("button", { class: "btn primary", id: "openChat", onclick: () => { document.body.classList.remove("chat-closed"); $("#chatIn")?.focus(); } }, icon("message", "ic sm"), T("Open the chat", "開啟對話"))))));
-routes.settings = () => page(T("Settings", "設定"), T("Doctor, keys and phone pairing, and the labs switch.", "健康檢查、金鑰、手機配對，以及實驗功能開關。"),
+routes.settings = () => page(T("Settings", "設定"), T("Doctor, keys and phone pairing, the labs switch, and the operating rules every job gets.", "健康檢查、金鑰、手機配對、實驗功能開關，以及每個工作都會收到的作業規則。"),
   h("div", { class: "card x-pad bb-settings" },
     h("a", { class: "bb-set", href: "#/doctor" }, icon("tool"), h("span", {}, h("b", {}, T("Doctor", "健康檢查")), h("span", { class: "faint" }, T("What works, what is missing, one-click installs, API keys.", "哪些可用、缺什麼、一鍵安裝、API 金鑰。")))),
     h("a", { class: "bb-set", href: "#/remote" }, icon("monitor"), h("span", {}, h("b", {}, T("Phone pairing", "手機配對")), h("span", { class: "faint" }, T("Planned (labs).", "規劃中（實驗功能）。")))),
@@ -91,18 +91,22 @@ routes.settings = () => page(T("Settings", "設定"), T("Doctor, keys and phone 
 // worker, reviewer, judge, media job and Firstmate. Edited here only (this Mac's page session).
 function rulesEditor() {
   const scope = h("select", { id: "rulesScope", "aria-label": T("Rules for", "規則適用於") }, h("option", { value: "" }, T("Studio-wide (every job)", "Studio 全域（所有工作）")));
-  const text = h("textarea", { id: "rulesText", rows: 9, spellcheck: "false", "aria-label": T("Operating rules", "作業規則"), placeholder: T("One rule per line, plain text.", "一行一條規則，純文字。") });
+  const text = h("textarea", { id: "rulesText", rows: 9, spellcheck: "false", maxlength: "8000", "aria-label": T("Operating rules", "作業規則"), placeholder: T("One rule per line, plain text.", "一行一條規則，純文字。") });
   const count = h("span", { class: "faint bb-rules-count" }), state = h("span", { class: "faint", id: "rulesState", role: "status" });
   const save = h("button", { class: "btn primary", id: "rulesSave", disabled: true }, T("Save rules", "儲存規則"));
   const reset = h("button", { class: "btn ghost", id: "rulesDefault", disabled: true }, T("Use the default text", "改用預設內容"));
   let data = null, loaded = "";
   const entry = () => !data ? null : scope.value ? data.projects.find((p) => p.id === scope.value) : data.studio;
-  const meta = (e) => !e ? "" : !e.text ? T("None set: prompts say so explicitly.", "未設定：提示中會明確寫出「未設定」。") : e.updatedAt ? T(`Saved ${new Date(e.updatedAt).toLocaleString(document.documentElement.lang || undefined)}${e.by === "studio-default" ? " (first-run default)" : ""}`, `已儲存於 ${new Date(e.updatedAt).toLocaleString(document.documentElement.lang || undefined)}${e.by === "studio-default" ? "（首次啟動預設）" : ""}`) : "";
-  const sync = () => { count.textContent = `${text.value.length} / ${data?.max ?? 8000}`; save.disabled = !data || text.value === loaded; reset.hidden = !!scope.value; reset.disabled = !data || text.value === data.defaults; };
-  const show = () => { const e = entry(); loaded = e?.text ?? ""; text.value = loaded; state.textContent = meta(e); sync(); };
+  const meta = (e) => !e ? "" : e.unreadable ? T(`Could not read the stored rules (${e.unreadable}). Every prompt says the rules are unreadable until the file is fixed.`, `無法讀取已儲存的規則（${e.unreadable}）。修好檔案前，每個提示都會寫明規則無法讀取。`) : !e.text ? T("None set: prompts say so explicitly.", "未設定：提示中會明確寫出「未設定」。") : e.updatedAt ? T(`Saved ${new Date(e.updatedAt).toLocaleString(document.documentElement.lang || undefined)}${e.by === "studio-default" ? " (first-run default)" : ""}`, `已儲存於 ${new Date(e.updatedAt).toLocaleString(document.documentElement.lang || undefined)}${e.by === "studio-default" ? "（首次啟動預設）" : ""}`) : "";
+  const def = () => !data ? "" : document.documentElement.lang === "zh-TW" && data.defaultsZhTW ? data.defaultsZhTW : data.defaults;
+  const sync = () => { count.textContent = `${text.value.length} / ${data?.max ?? 8000}`; save.disabled = !data || text.value === loaded || !!entry()?.unreadable; reset.hidden = !!scope.value; reset.disabled = !data || text.value === def(); };
+  let shown = "";
+  const show = () => { const e = entry(); shown = scope.value; loaded = e?.text ?? ""; text.value = loaded; state.textContent = meta(e); state.classList.toggle("bb-rules-bad", !!e?.unreadable); sync(); };
   const fill = (d) => { data = d; const keep = scope.value; scope.replaceChildren(scope.firstChild, ...d.projects.map((p) => h("option", { value: p.id }, T(`Project: ${p.name}`, `專案：${p.name}`)))); scope.value = d.projects.some((p) => p.id === keep) ? keep : ""; show(); };
-  scope.onchange = show; text.oninput = sync;
-  reset.onclick = () => { text.value = data.defaults; sync(); };
+  // switching scope never drops an unsaved edit silently
+  scope.onchange = () => { if (text.value !== loaded && !confirm(T("Discard your unsaved changes to these rules?", "要捨棄這份規則尚未儲存的修改嗎？"))) { scope.value = shown; return; } show(); };
+  text.oninput = sync;
+  reset.onclick = () => { text.value = def(); sync(); };
   save.onclick = async () => {
     save.disabled = true; state.textContent = T("Saving…", "儲存中…");
     try { const r = await fetch("/api/operating-rules", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ project: scope.value || null, text: text.value }) });
@@ -113,7 +117,7 @@ function rulesEditor() {
   fetch("/api/operating-rules").then((r) => r.ok ? r.json() : Promise.reject(r.status)).then(fill).catch(() => { state.textContent = T("The rules could not be read.", "無法讀取規則。"); });
   return h("section", { class: "card x-pad bb-rules", "data-operating-rules": "1" },
     h("div", { class: "bb-rules-head" }, h("h2", {}, T("Operating rules", "作業規則")),
-      h("p", { class: "faint" }, T("Standing rules every worker, reviewer, judge, image job and Firstmate gets at the top of its prompt. Only you edit them, here on this Mac.", "每個 worker、reviewer、judge、圖片工作和 Firstmate 的提示開頭都會帶上這些常設規則。只有你能在這台 Mac 上編輯。"))),
+      h("p", { class: "faint" }, T("Standing rules every worker, reviewer, judge, image job and Firstmate receives in its instructions, right after Studio's safety rules. Only you edit them, here on this Mac.", "每個 worker、reviewer、judge、圖片工作和 Firstmate 的指示裡都會帶上這些常設規則，緊接在 Studio 安全規則之後。只有你能在這台 Mac 上編輯。"))),
     h("label", { class: "field" }, h("span", { class: "lbl" }, T("Rules for", "規則適用於")), scope),
     h("label", { class: "field" }, h("span", { class: "lbl" }, T("Rules (plain text)", "規則（純文字）")), text),
     h("div", { class: "bb-rules-foot" }, count, state, h("span", { class: "x-grow" }), reset, save));

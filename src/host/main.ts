@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {writeNativeDiagnostic} from './native-errors';
 import {NativeToolFailure,type NativeFailure} from './types';
 // The main-session controller: Studio as the single entry point to firstmate.
@@ -28,7 +29,9 @@ export type Driver = { holder: "studio" | "terminal" | "none"; host: HostId | nu
   /** a takeover: the session Studio forked, which stays untouched */
   forkedFrom?: string | null; mode?: TakeoverMode | null; handoff?: string | null;
   /** how Studio's session was made: a vendor fork, a new thread from a handoff (codex without a fork), or a fresh start */
-  path?: SessionPath | null };
+  path?: SessionPath | null;
+  /** the operating-rules section the live session last received (by session id): a takeover, a resume or an edit sends it again */
+  rulesSent?: { session: string; hash: string } | null };
 export type TakeoverMode = "takeover" | "rehearsal";
 /** What a takeover started from and how the original terminal session looks now. */
 export type Origin = { id: string; host: HostId; file: string | null; cwd: string; mode: TakeoverMode; model: string | null; permissionMode: string | null;
@@ -122,7 +125,7 @@ export class MainSession {
 
   private get driverFile() { return join(this.o.dataDir, "driver.json"); }
   driver(): Driver { try { return JSON.parse(readFileSync(this.driverFile, "utf8")); } catch { return { holder: "none", host: null, sessionId: null, pid: null, since: null }; } }
-  private writeDriver(d: Driver) { const tmp = this.driverFile + ".tmp"; writeFileSync(tmp, JSON.stringify(d, null, 2), { mode: 0o600 }); renameSync(tmp, this.driverFile); }
+  private writeDriver(d: Driver) { if (d.rulesSent === undefined) { const prev = this.driver().rulesSent; if (prev) d = { ...d, rulesSent: prev }; } const tmp = this.driverFile + ".tmp"; writeFileSync(tmp, JSON.stringify(d, null, 2), { mode: 0o600 }); renameSync(tmp, this.driverFile); }
 
   view(): MainView {
     return { state: this.state, driver: this.driver(), host: this.session?.host ?? null, sessionId: this.session?.id ?? null, model: this.session?.model ?? null,
@@ -413,9 +416,14 @@ export class MainSession {
         this.lastOwnWrite = Date.now();
         this.changed();
         this.activeInput=item; this.refusedThisTurn = false; this.lastExit = null;
-        const r = await this.session.send(item.text, files).catch((e) => ({ status: "failed" as const, message: String(e?.message ?? e), refusal: e?.refusal?.code as import("../attachments").AttachmentRefusalCode | undefined }));
+        // the operating rules reach every session once and again after each edit: a takeover, a resume or a restart has no seed
+        let sendText = item.text, sentRules: { session: string; hash: string } | null = null;
+        if (this.o.operatingRules) { const section = rulesNow(this.o.operatingRules), hash = createHash("sha256").update(section).digest("hex"), sid = this.session.id, prev = this.driver().rulesSent;
+          if (prev?.session !== sid || prev.hash !== hash) { if (!item.text.includes(section)) sendText = withRulesTurn(item.text, section, prev?.session === sid); sentRules = { session: sid, hash }; } }
+        const r = await this.session.send(sendText, files).catch((e) => ({ status: "failed" as const, message: String(e?.message ?? e), refusal: e?.refusal?.code as import("../attachments").AttachmentRefusalCode | undefined }));
         if ("refusal" in r && r.refusal) { this.activeInput = null; this.note({ kind: "status", text: `Not sent: ${r.message}`, status: "failed", attachmentRefusal: r.refusal, external: externalError("studio", r.message, { cls: "attachment", code: r.refusal }) }); this.changed(); continue; }
         this.activeInput=null;
+        if (sentRules && r.status === "completed") this.writeDriver({ ...this.driver(), rulesSent: sentRules });
         this.lastOwnWrite = Date.now();
         this.lastSeenMtime = mtimeOf(this.sessionFile);
         if (r.status === "failed" && !this.refusedThisTurn) this.external(this.session?.host ?? "claude", r.message || (this.lastExit ? `exited ${this.lastExit.code}: ${this.lastExit.stderr.trim().split("\n").slice(-3).join(" ")}` : ""));
@@ -590,8 +598,13 @@ export function newestHandoffFile(stateDir: string, cap = 60_000): { name: strin
 /** A first message with the captain's operating rules after it: the same section every worker and reviewer gets. */
 export function withRulesSeed(text: string, rules?: () => string, tool = false): string {
   if (!rules) return text;
-  let section: string; try { section = rules(); } catch { section = "# Operating rules (set by the captain)\n\nStudio could not read the operating rules; ask the captain before any action they might cover."; }
-  return `${text}\n\n${section}\n\nThese rules bind you and every job you propose.${tool ? " Read them again any time with studio_operating_rules." : ""} Only the captain edits them, in Studio's settings.`;
+  return `${text}\n\n${rulesNow(rules)}\n\nThese rules bind you and every job you propose.${tool ? " Project rules are not included here: call studio_operating_rules before you propose work for a project, and read them again any time." : ""} Only the captain edits them, in Studio's settings.`;
+}
+const RULES_UNREADABLE_SECTION = "# Operating rules (set by the captain)\n\nRULES UNREADABLE: Studio could not read the operating rules. Treat every action they usually cover (sign-in flows, live services, shared git config, accounts and billing) as forbidden and ask the captain.";
+function rulesNow(rules: () => string): string { try { return rules(); } catch { return RULES_UNREADABLE_SECTION; } }
+/** A turn for a session that has not seen the current rules (a takeover, a resume, a restart, or an edit since): the section first. */
+export function withRulesTurn(text: string, section: string, changed: boolean): string {
+  return `${section}\n\n${changed ? "The captain changed the operating rules above since you last saw them; they replace the earlier text." : "These are the captain's standing operating rules for this session."} The message follows.\n\n${text}`;
 }
 
 /** The first message of a new thread that stands in for a fork: the original's recent turns (read only) and firstmate's handoff file. */

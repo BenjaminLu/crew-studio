@@ -108,7 +108,9 @@ export class Policies {
   setOrg(patch: Record<string, any>) { const f = join(this.dataDir, "policies", "org.yaml"); const cur = this.yaml(f); writeFileSync(f, JSON.stringify(deepMerge(cur, patch), null, 1)); this.onChange?.(); }
   setProject(id: string, patch: Record<string, any>) { const f = join(this.dataDir, "policies", `project-${id.replace(/[^\w-]/g, "")}.yaml`); writeFileSync(f, JSON.stringify(deepMerge(this.yaml(f), patch), null, 1)); this.onChange?.(); }
 }
-function deepMerge(a: any, b: any) { for (const [k, v] of Object.entries(b ?? {})) { if (v && typeof v === "object" && !Array.isArray(v) && a[k] && typeof a[k] === "object" && !Array.isArray(a[k])) deepMerge(a[k], v); else a[k] = v; } return a; }
+/** Never follows or writes __proto__, constructor or prototype: a patch cannot reach Object.prototype. */
+const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+function deepMerge(a: any, b: any) { for (const [k, v] of Object.entries(b ?? {})) { if (UNSAFE_KEYS.has(k)) continue; if (v && typeof v === "object" && !Array.isArray(v) && a[k] && typeof a[k] === "object" && !Array.isArray(a[k])) deepMerge(a[k], v); else a[k] = v; } return a; }
 
 // ---------- the manifests ----------
 export class CheckRegistry {

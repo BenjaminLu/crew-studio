@@ -61,7 +61,9 @@ export class Agents {
   /** Run one turn. Resolves when the provider ends the turn (or the time limit stops it). */
   async run(o: Parameters<Agents["execute"]>[0]): Promise<AgentJob> {
     const ensureOwner = (signal = o.signal) => { if (signal?.aborted || o.owns && !o.owns()) throw new QueueRefusal("round owner ended before provider launch"); };
-    const admit = async (signal = o.signal) => { ensureOwner(signal); const provider = this.providerAdmission ? await this.providerAdmission(o.provider, o) : o.provider; ensureOwner(signal); return this.execute({ ...o, signal, provider }); };
+    // the job really starts here (its queue slot is held): the operating rules are read again now, and a receipt
+    // pinned to an older text before the queue is issued again for the current one (receiptFor), else left to refuse
+    const admit = async (signal = o.signal) => { ensureOwner(signal); const job = this.currentRules(o); const provider = this.providerAdmission ? await this.providerAdmission(job.provider, job) : job.provider; ensureOwner(signal); return this.execute({ ...job, signal, provider }); };
     if (o.queueLease) return admit();
     const key = `job-${randomBytes(12).toString("hex")}`;
     const request = this.admission?.(o, key) ?? { key, task: o.ref ?? key, project: "studio", deadline: Date.now() + 300_000, signal: o.signal, limits: () => ({ global: 3, project: 3 }), ready: () => ({ ready: true }), waiting() {}, admitted() {} };
@@ -69,11 +71,18 @@ export class Agents {
     try { return await admit(request.signal ?? o.signal); } finally { release(); }
   }
 
+  private currentRules<T extends { project?: string | null; rules?: RulesSection; admissionReceipt?: unknown; receiptFor?: (rules: RulesSection) => unknown }>(o: T): T {
+    const rules = new OperatingRules(this.dataDir).section(o.rules ? o.rules.project : o.project ?? null);
+    if (o.rules?.hash === rules.hash) return o;
+    return { ...o, rules, ...(o.receiptFor ? { admissionReceipt: o.receiptFor(rules) } : {}) };
+  }
   private async execute(o: { signal?: AbortSignal; owns?: () => boolean; queueLease?: boolean; kind: string; title: string; system: string; text: string; tools: AgentTool[]; provider: Provider; timeoutMs?: number; maxTools?: number; ref?: string; onStart?: (id: string) => void;
     /** the registered project the job works for: its operating rules join the Studio-wide ones in the prompt */
     project?: string | null;
     /** the operating-rules section read when the job was admitted (its instruction receipt covers it); else read now */
     rules?: RulesSection;
+    /** issue the job's instruction receipt again when the rules changed while it waited in the queue */
+    receiptFor?: (rules: RulesSection) => unknown; admissionReceipt?: unknown;
     /** run the round in the OS sandbox: it writes only to these folders (and its tmp and throwaway home), reaches the network only through the egress proxy */
     sandbox?: { writes: string[]; reads?: string[]; cwd?: string; allow?: string[] } | null;
     /** the round's record (data/runs/<run>/nodes/<node>/<round>/): prompt.md written before the provider starts, stream.jsonl, report.json */
@@ -141,7 +150,7 @@ export class Agents {
       const env = { ...roundEnv(envKeys, { CREW_STUDIO_URL: studioUrl, CREW_TOOL_TOKEN: token, CREW_HTTP_MAX_ROUNDS: "40" }), ...roundEnvAdd };
       // a credential never goes into a prompt (so it is never written into a round's record either)
       // the captain's operating rules, read now (an edit between two rounds reaches the next one), right after the safety rules
-      const rules = o.rules ?? new OperatingRules(this.dataDir).section(o.project ?? null); job.operatingRules = { hash: rules.hash, project: rules.project };
+      const rules = o.rules!; job.operatingRules = { hash: rules.hash, project: rules.project }; // read in admit(), once the queue slot is held
       const text = keepCredentialsOut(o.text, [token]), system = keepCredentialsOut(jobInstructions(o.system, rules), [token]); // the safety rules lead every agent's instructions
       let rec: ReturnType<typeof roundRecord> | null = null;
       try { rec = o.record ? roundRecord(o.record.dir, { ...o.record.header, job: id, operatingRules: rules.hash, provider: o.provider.id, model: o.provider.model, reasoningEffort: o.provider.reasoningEffort ?? null, executionMode:job.executionMode }, text, system) : null; }

@@ -37,7 +37,21 @@ try {
     ok(opts[0] === "" && opts.includes("sandbox"), `${key}: the scope picker lists Studio-wide and the built-in sandbox project`, JSON.stringify(opts));
     const over = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     ok(over <= 0, `${key}: no horizontal overflow`, String(over));
-    if (language === "zh-TW") ok(await p.locator("[data-operating-rules] h2", { hasText: "作業規則" }).isVisible(), `${key}: zh-TW labels`);
+    if (language === "zh-TW") ok(await p.locator("[data-operating-rules] h2", { hasText: "作業規則" }).isVisible() && /作業規則/.test(await p.textContent(".phead p")), `${key}: zh-TW labels and the Settings subtitle names the rules`);
+    ok((await p.getAttribute("#rulesText", "maxlength")) === "8000", `${key}: the text box stops at 8000 characters`);
+    // nothing floats over the controls: scrolled to the end, Save and the scope picker are what a click hits
+    await p.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await p.locator("#rulesSave").scrollIntoViewIfNeeded();
+    const hit = async (sel) => p.evaluate((sel) => { const b = document.querySelector(sel).getBoundingClientRect(); const e = document.elementFromPoint(b.left + b.width - 4, b.top + b.height / 2); return !!e && (e === document.querySelector(sel) || document.querySelector(sel).contains(e)); }, sel);
+    await p.evaluate(() => { const m = document.scrollingElement; m.scrollTop = m.scrollHeight; document.querySelectorAll(".main, main, .content").forEach((x) => { x.scrollTop = x.scrollHeight; }); });
+    ok(await hit("#rulesSave") && await hit("#rulesDefault"), `${key}: the floating Firstmate button does not cover Save or Use the default`);
+    if (theme === "dark") { const c = await p.evaluate(() => { const b = getComputedStyle(document.querySelector("#rulesSave")); return { o: b.opacity, bg: b.backgroundColor }; });
+      ok(c.o === "1" && !/rgb\(7[0-9], 9[0-9], 1[5-9][0-9]\)/.test(c.bg), `${key}: a disabled Save reads as disabled in dark mode (no dimmed accent)`, JSON.stringify(c)); }
+    if (language === "zh-TW") { await p.fill("#rulesText", ""); await p.click("#rulesDefault"); ok(/不要啟動任何登入/.test(await p.inputValue("#rulesText")), `${key}: Use the default text offers the zh-TW default`);
+      p.once("dialog", (d) => d.dismiss()); await p.selectOption("#rulesScope", "sandbox");
+      ok((await p.inputValue("#rulesScope")) === "" && /不要啟動任何登入/.test(await p.inputValue("#rulesText")), `${key}: switching scope with unsaved edits asks first and keeps them when declined`);
+      p.once("dialog", (d) => d.accept()); await p.selectOption("#rulesScope", "sandbox");
+      ok((await p.inputValue("#rulesScope")) === "sandbox", `${key}: accepting the warning discards and switches`);
+      await p.selectOption("#rulesScope", ""); }
     if (key === "1280-light-en") {
       await p.selectOption("#rulesScope", "sandbox");
       ok((await p.inputValue("#rulesText")) === "" && /None set/.test(await p.textContent("#rulesState")), `${key}: a project with no rules says None set`);

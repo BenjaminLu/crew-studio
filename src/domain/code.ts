@@ -973,7 +973,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       const rules=new OperatingRules(engine.deps.dataDir).section(x.run.params?.project||null);
       const admissionReceipt=engine.deps.instructionReceipt?.(x,"coordinator",jobInstructions(system,rules),selected);
       await engine.deps.agents.run({ kind: "card:merge", title: `${x.run.id} merge card detail`, system,
-        text: coordinatorText(fallback), tools, admissionReceipt, provider: selected, ref: x.run.id, project: x.run.params?.project || null, rules, maxTools: 3, timeoutMs: 5 * 60_000, sandbox: engine.roundSandbox(x, null, "merge-card") } as any);
+        text: coordinatorText(fallback), tools, admissionReceipt, provider: selected, ref: x.run.id, project: x.run.params?.project || null, rules, receiptFor: (r: any) => engine.deps.instructionReceipt?.(x,"coordinator",jobInstructions(system,r),selected), maxTools: 3, timeoutMs: 5 * 60_000, sandbox: engine.roundSandbox(x, null, "merge-card") } as any);
       // its answer is checked against the schema here, inside the guard: a malformed one keeps the fallback
       const { rejected, ...d } = coordinatorDetail(input, got); if (rejected) x.log(`merge card: the coordinator's answer was malformed (${rejected}); zh-TW stays marked untranslated`);
       detail = d;

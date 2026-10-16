@@ -73,7 +73,7 @@ import { createRuntime, skillTextFor } from "./runtime";
 import { EXEMPT, guardWrite, hasSession, hasSessionCookie, sessionCookie, sessionToken } from "./csrf";
 import { AttachmentStore, deliveryFor, uploadAttachment } from "./attachments";
 import { ChatLog } from "./host/chat-log";
-import { OperatingRules, DEFAULT_OPERATING_RULES } from "./operating-rules";
+import { OperatingRules, DEFAULT_OPERATING_RULES, DEFAULT_OPERATING_RULES_ZH_TW } from "./operating-rules";
 import { registerSecretValues } from "./secure";
 import { timingSafeEqual } from "node:crypto";
 import { git, setGitHome } from "./git";
@@ -252,7 +252,7 @@ function setLan(on: boolean): { ok: boolean; error?: string } {
 const installs = new Installs(process.env.CREW_INSTALL_RUNNER === "mock" ? new MockRunner() : new RealRunner());
 let doctorCache: Item[] = [];
 const doctor = () => (doctorCache = diagnose({ state: STATE, legacy: startup.legacy, board: board.status(), gh: gh.state, keys: keyStatus() as any, chatProvider: chatInfo().provider, lanIp: lanIp(),
-  tailscale: ts, compiled: COMPILED, render: renderEnv(), egress: egress.status(), codexAccount:codexAccount.view(), roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined }));
+  tailscale: ts, compiled: COMPILED, render: renderEnv(), egress: egress.status(), codexAccount:codexAccount.view(), operatingRules: (() => { const r = new OperatingRules(DATA); return { studio: r.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, ...r.project(x.id) })) }; })(), roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined }));
 installs.onChange = (j, line) => send("install", { id: j.id, item: j.item, state: j.state, code: j.code, line: line ?? null });
 installs.onFinished = () => { refreshTs(); send("doctor", doctor()); };
 
@@ -500,7 +500,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
       if (!hasSession(req, SESSION)) return json({ error: "Studio session required" }, 401);
       const rules = new OperatingRules(DATA);
-      const view = () => ({ studio: rules.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, name: x.name, ...rules.project(x.id) })), defaults: DEFAULT_OPERATING_RULES, max: 8000 });
+      const view = () => ({ studio: rules.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, name: x.name, ...rules.project(x.id) })), defaults: DEFAULT_OPERATING_RULES, defaultsZhTW: DEFAULT_OPERATING_RULES_ZH_TW, max: 8000 });
       if (!writing) return json(view());
       // a captain edit: the page's own session cookie (never a script's x-crew-session header) on a same-origin request from this Mac
       if (!hasSessionCookie(req, SESSION) || req.headers.get("origin") !== url.origin || req.headers.get("sec-fetch-site") !== "same-origin")
@@ -509,7 +509,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       if (!b || typeof b !== "object" || Array.isArray(b) || Object.keys(b).some((k) => k !== "project" && k !== "text")) return json({ error: "send {project?, text}" }, 400);
       const project = b.project == null || b.project === "" ? null : String(b.project);
       if (project && !runtime.projects.get(project)) return json({ error: "no such project" }, 404);
-      try { rules.set({ project }, b.text, "captain"); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 400); }
+      try { rules.set({ project }, b.text, "captain"); } catch (e: any) { const m = String(e?.message ?? e); return json({ error: m, ...(/cannot be read/.test(m) ? { code: "rulesUnreadable" } : {}) }, /cannot be read/.test(m) ? 409 : 400); }
       studioLog.emit({ type: "operating_rules_changed", workflow: "studio", actor: "captain", summary: project ? `operating rules changed for ${project}` : "Studio-wide operating rules changed", data: { project } });
       return json(view());
     }

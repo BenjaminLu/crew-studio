@@ -108,6 +108,14 @@ Resolution order: org → project → workflow version override → task overrid
 
 Keys in use: `sensitive_paths`, `round_cap`, `round_timeout_s`, `shard_budget_s`, `auth.window`, `ste.rules`, `branch_prefix`, `ui_paths`, `flaky.retry`, `external.catch_up`, `privacy.denylist`, `egress.allow` (a task's extra hosts, per round), `worktree.keep_days`, `install` (a project's dependency install argv), `install_scripts` (lifecycle scripts run at install, in the round sandbox), per-check `promote.quorum`.
 
+### Operating rules
+
+`operating_rules` is the captain's standing text: one Studio-wide (`data/policies/org.yaml`) and one per registered project (`data/policies/project-<id>.yaml`). It never resolves through packs or workflows, and the generic policy route refuses it at any depth. Only the captain edits it, in Settings (the page's own session on a same-origin request from this Mac); scripts, phones, the policy API and model tools cannot. First run seeds a short generic Studio-wide default; a cleared text stays cleared and an unreadable file is never overwritten.
+
+Every model job gets both texts in one labelled section with BEGIN/END lines: agent rounds, judges and designers, the merge-card coordinator, gate fix and review, evals, docs, skill edits, pack genesis, the status chat, artifact work runs and Codex image jobs. An empty level says `None set.`; an unreadable one says `RULES UNREADABLE` (Doctor shows it too). Rules are read when a job really starts (after its queue slot), and each job, round record and task job entry keeps the section's hash. Firstmate's seed carries them; a takeover, a restart or resume and any later edit send the section again with the next turn (the driver remembers the hash the live session last got).
+
+Exempt: the Claude and Codex capability probes (a fixed one-line "reply OK" verification with no tools and no work) and sign-in flows.
+
 ## 7. Session takeover
 
 - Studio is the captain's single entry point.

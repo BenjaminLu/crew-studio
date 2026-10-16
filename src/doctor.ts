@@ -114,6 +114,8 @@ export type DoctorInput = {
   egress?: { running: boolean; port: number; rounds: number };
   /** how claude rounds sign in: the login Studio hands them (v1 option A) */
   roundLogin?: { ok: boolean; verified?: boolean; source?: string; warn?: string | null; error?: string };
+  /** the captain's operating rules: an unreadable text is a visible problem, never a silent "none" */
+  operatingRules?: { studio: { text: string; unreadable?: string }; projects: { id: string; text: string; unreadable?: string }[] };
 };
 
 export function diagnose(i: DoctorInput): Item[] {
@@ -123,6 +125,11 @@ export function diagnose(i: DoctorInput): Item[] {
   const statusChatOk = !!claudeV || !!codexV || anyKey;
   const items: Item[] = [];
   const legacy=i.legacy !== false;
+  if (i.operatingRules) { const bad = [...(i.operatingRules.studio.unreadable ? [`Studio-wide: ${i.operatingRules.studio.unreadable}`] : []), ...i.operatingRules.projects.filter((p) => p.unreadable).map((p) => `${p.id}: ${p.unreadable}`)];
+    items.push({ id: "operating-rules", title: "Operating rules", titleZh: "作業規則", status: bad.length ? "degraded" : "ok",
+      detail: bad.length ? `could not read: ${bad.join("; ")}. Every prompt says the rules are unreadable until the file is fixed.` : i.operatingRules.studio.text ? "Studio-wide rules set; every job gets them" : "no Studio-wide rules set (prompts say None set)",
+      detailZh: bad.length ? `無法讀取：${bad.join("；")}。修好檔案前，每個提示都會寫明規則無法讀取。` : i.operatingRules.studio.text ? "已設定 Studio 全域規則，每個工作都會收到" : "尚未設定 Studio 全域規則（提示會寫明未設定）",
+      group: "basic" } as any); }
   items.push({id:"native",title:"Native Studio web",titleZh:"原生 Studio 網頁",status:"ok",group:"basic",detail:"Local pages, native workflows, cards and storage need no v1 folder or external runtime.",detailZh:"本機頁面、原生工作流程、卡片與儲存不需要 v1 資料夾或外部執行環境。",adds:"Basic Studio works before coding tools are installed.",addsZh:"尚未安裝寫程式工具，也能使用 Studio 基本功能。",fix:"",action:{kind:"none"}});
   for (const [id, bin, en, zh, purpose, purposeZh] of [
     ["git","git","Git (coding repositories)","Git（程式碼儲存庫）","Coding worktrees and local commits.","程式碼 worktree 與本機提交。"],

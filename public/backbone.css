@@ -9,6 +9,9 @@
 .bb-set:hover{background:var(--surface-2)}
 .bb-set > span{display:grid;gap:2px;min-width:0}
 .bb-rules{display:grid;gap:12px}
+.page:has([data-operating-rules]){padding-bottom:88px}
+.bb-rules .btn.primary:disabled{opacity:1;background:var(--surface-3);border-color:var(--border-strong);color:var(--text-3)}
+.bb-rules-bad{color:var(--bad)}
 .bb-rules-head h2{margin:0 0 4px;font-size:15px}
 .bb-rules-head p{margin:0;font-size:12.5px}
 .bb-rules textarea{min-height:180px}
