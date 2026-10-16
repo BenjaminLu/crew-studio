@@ -585,7 +585,8 @@ function viewRuns() {
       h("div", { class: "rt-foot" }, h("span", { class: "faint rt-where" }, r.current.map((c) => c.waiting === "card" ? T(`Waiting for you at ${c.label || c.node}`, `在「${c.label || c.node}」等你`) : T(`Now: ${c.label || c.node}`, `目前：${c.label || c.node}`)).join(" · ")))))) : h("div", { class: "card x-pad faint", id: "runsEmpty" }, T("No tasks yet.", "還沒有任務。")));
 }
 // a timeline line in the captain's words (Simple view): run states as public/runstate.js names them, node steps as plain verbs
-const stateWord = (st) => { const s = window.runState(st); return zhOn() ? s.tw : s.en; };
+// with the run, a timeline line names a state exactly as the run's own status pill does (an artifact task "Closed without approval")
+const stateWord = (st, r) => { const s = window.runState(r ? { def: r.def, workflow: r.workflow, ctx: r.ctx, ...st } : st); return zhOn() ? s.tw : s.en; };
 const NODE_WORDS = { skipped: ["skipped", "略過"], superseded: ["replaced", "被取代"], pending: ["reset", "重設"] };
 // node transitions a display event already says (node_started, node_done, node_failed, node_waiting) are left out of the Simple view
 // and so is the run's own "failed" note when the node's failure row already says it (one failure row per node), and the
@@ -604,12 +605,12 @@ function timelineLine(e, r) {
   const said = (n, t) => { const lab = n ? label(n) : null; const rest = strip(t, lab); return [lab ? h("b", {}, lab) : null, lab && rest ? ": " : "", rest]; };
   if (e.type === "run" && (!e.from || e.from === "queued")) return [h("b", {}, T("Task", "任務")), `: ${T("Started", "開始")}`];
   if (e.type === "started") return [h("b", {}, T("Task", "任務")), `: ${T("Started", "開始")} (${r.def?.name || r.workflow} v${e.workflowVersion ?? r.version})`];
-  if (e.type === "failed") return [h("b", {}, T("Task", "任務")), `: ${stateWord({ status: "failed" })}`, e.summary ? ` — ${e.summary}` : ""];
+  if (e.type === "failed") return [h("b", {}, T("Task", "任務")), `: ${stateWord({ status: "failed" }, r)}`, e.summary ? ` — ${e.summary}` : ""];
   if (e.type === "check_result") { // "card SC-001 · core/ste-wording failed (1 finding)", the edge or hook in words
     const where = !e.edge ? "" : e.edge.startsWith("card:") ? `${T("card", "卡片")} ${e.edge.slice(5)} · ` : e.edge.startsWith("hook:") ? `${e.edge.slice(5)} ${T("hook", "hook")} · ` : `${e.edge} · `;
     const n = /\((\d+) findings?\)/.exec(e.summary || "")?.[1]; const vw = VERDICT[e.verdict] || [e.verdict, e.verdict];
     return [h("b", {}, e.node ? label(e.node) : T("Check", "檢查")), `: ${where}${e.check} ${T(vw[0], vw[1])}${n ? T(` (${n} finding${n === "1" ? "" : "s"})`, `（${n} 個問題）`) : ""}`]; }
-  if (e.type === "run") return [h("b", {}, T("Task", "任務")), `: ${stateWord({ status: e.from })} → ${stateWord({ status: e.to, result: e.to === "succeeded" ? e.result ?? r.result : null, merged: !!r.ctx?.merged })}`];
+  if (e.type === "run") return [h("b", {}, T("Task", "任務")), `: ${stateWord({ status: e.from }, r)} → ${stateWord({ status: e.to, result: e.to === "succeeded" ? e.result ?? r.result : null, merged: !!r.ctx?.merged }, r)}`];
   if (e.type === "node") { const w = NODE_WORDS[e.to] || [e.to, e.to]; return [h("b", {}, label(e.node)), `: ${T(w[0], w[1])}`]; }
   if (e.type === "node_started") {
     // Only agent/check/card launches are Rounds; a repeated hook or loop is an execution.
@@ -621,8 +622,8 @@ function timelineLine(e, r) {
   if (e.type === "edge_taken") return [h("b", {}, label(e.from)), ` → ${label(e.to)}`];
   if (e.type === "archived") return h("b", {}, T("Archived", "已封存"));
   if (e.type === "unarchived") return h("b", {}, T("Unarchived", "已取消封存"));
-  if (e.type === "cancelled") return [h("b", {}, stateWord({ status: "cancelled" })), e.reason ? `: ${e.reason}` : ""];
-  if (e.type === "closed" || e.type === "done") { const w = stateWord({ status: "succeeded", result: e.result ?? (e.type === "closed" ? "closed" : "done"), merged: !!r.ctx?.merged });
+  if (e.type === "cancelled") return [h("b", {}, stateWord({ status: "cancelled" }, r)), e.reason ? `: ${e.reason}` : ""];
+  if (e.type === "closed" || e.type === "done") { const w = stateWord({ status: "succeeded", result: e.result ?? (e.type === "closed" ? "closed" : "done"), merged: !!r.ctx?.merged }, r);
     const rest = e.summary && e.summary.trim().toLowerCase() !== w.toLowerCase() ? e.summary : ""; return [h("b", {}, w), rest ? `: ${rest}` : ""]; }
   // every row has a bold subject: the node, else what the message names before its first ": ", else the run
   if (!e.node) { const t = String(e.summary || String(e.type).replace(/_/g, " ")); const m = /^([^:]{1,40}): (.+)$/.exec(t); return m ? [h("b", {}, m[1]), `: ${m[2]}`] : [h("b", {}, T("Task", "任務")), `: ${t}`]; }
@@ -661,6 +662,7 @@ function viewRun(id) {
   const r = v.r; let coffeeProposal=false;try{coffeeProposal=r.workflow==="firstmate-proposal"&&!!JSON.parse(r.params.target||"null")?.params?.coffeeDesignPlan;}catch{} const states = Object.fromEntries(Object.entries(r.nodes).map(([k, n]) => [k, n.state]));
   const act = (what) => api(`/api/wruns/${id}/${what}`, {}).then((x) => { v.r = { ...v.r, ...x }; loadRun(v); rerender(); }).catch((e) => alert(e.message));
   const ended = ["succeeded", "failed", "cancelled"].includes(r.status);
+  const canContinue = ended && r.continuable === true && !window.crewRemote?.token?.();
   const open = r.cards.filter((c) => c.status === "open");
   if (!v.collapsed) v.collapsed = matchMedia("(max-width: 640px)").matches ? (window.crewLayout.stagesFor(r.def) || []).map((x) => x.id) : [];
   if (!v.gview) v.gview = (() => { try { return localStorage.getItem("crew.graphView") === "detail" ? "detail" : "simple"; } catch { return "simple"; } })();
@@ -674,7 +676,8 @@ function viewRun(id) {
         r.status === "waiting" && r.def.kind === "coffee-kit" && open.some(c => c.node === "capability") ? h("button", { class: "btn", "data-coffee-recovery": id, onclick: () => api(`/api/wruns/${id}/coffee-recovery`, {}).then(() => loadRun(v)).catch(e => alert(e.message)) }, T("Recheck film capability", "重新檢查影片能力")) : null,
         !ended ? h("button", { class: "btn ghost", "data-run-cancel": id, "aria-expanded": String(v.panel === "cancel"), onclick: () => { v.panel = v.panel === "cancel" ? null : "cancel"; rerender(); } }, T("Cancel task…", "取消任務…")) : null,
         ended ? h("button", { class: "btn", "data-run-archive": id, onclick: () => api(`/api/wruns/${id}/archive`, { archived: !r.archived }).then((x) => { v.r = { ...v.r, ...x }; loadRun(v); RN.list = null; rerender(); }).catch((e) => alert(e.message)) }, r.archived ? T("Unarchive", "取消封存") : T("Archive", "封存")) : null,
-        ended&&(r.result==='closed'||r.status==='cancelled')?h("button",{class:"btn",type:"button",'data-continue-task':r.id,onclick:async()=>{v.panel='continue';v.continuationMessage='';try{v.continuationOffer=await api(`/api/wruns/${r.id}/continuation/offer`,{});}catch(e){v.continuationMessage=e.message;}rerender();}},T("Continue original task…","接續原任務…")):null,
+        // only the desktop captain sees it, and only when the server says an offer can be made (it re-checks every pinned byte on the offer)
+        canContinue?h("button",{class:"btn",type:"button",'data-continue-task':r.id,"aria-expanded":String(v.panel==="continue"),onclick:async()=>{if(v.panel==="continue"){v.panel=null;rerender();return;}v.panel='continue';v.continuationMessage='';v.continuationConfirm='';v.continuationOffer=null;v.continuationUncertain=false;rerender();try{v.continuationOffer=await api(`/api/wruns/${r.id}/continuation/offer`,{});}catch(e){v.continuationMessage=e.message;}rerender();}},T("Continue original task…","接續原任務…")):null,
         // Delete stands apart from the other actions (a divider), so it is never tapped by mistake
         ended ? h("span", { class: "rt-danger", "data-danger-zone": id }, h("button", { class: "btn danger", "data-run-delete": id, "aria-expanded": String(v.panel === "delete"), onclick: () => { v.panel = v.panel === "delete" ? null : "delete"; v.delMsg = ""; v.confirm = ""; rerender(); } }, T("Delete…", "刪除…"))) : null)),
     v.panel === "cancel" && !ended ? endPanel(T("Cancel this task", "取消這個任務"), T("Its open cards are withdrawn, its agents stop and its on_cancel hooks run. The task ends Cancelled.", "它開著的卡會撤回、agent 會停下、on_cancel hooks 會執行。任務以「已取消」結束。"),
@@ -688,7 +691,17 @@ function viewRun(id) {
           oninput: (e) => { v.confirm = e.target.value; const b = e.target.closest(".rt-endpanel")?.querySelector("[data-delete-confirm]"); if (b) b.disabled = v.confirm.trim() !== id; } })),
       h("div", { class: "actions" }, h("button", { class: "btn danger-solid", "data-delete-confirm": id, disabled: (v.confirm || "").trim() !== id || null, onclick: () => api(`/api/wruns/${id}/delete`, { confirm: v.confirm || "" }).then(() => { RN.view = null; RN.list = null; location.hash = "#/runs"; }).catch((e) => { v.delMsg = e.message; rerender(); }) }, T("Delete for good", "永久刪除")),
         h("button", { class: "btn ghost", onclick: () => { v.panel = null; rerender(); } }, T("Keep it", "保留"))), h("div", { class: "bad", role: "status", "data-delete-msg": id }, v.delMsg || "")) : null,
-    v.panel==='continue'?h("section",{class:"card x-pad",'data-continuation-panel':r.id},h("h3",{},T("Continue the original unapproved task","接續原本尚未驗收的任務")),h("p",{},T("A fresh captain card resumes the same task with its outputs, history and requirements. No completed work reruns, approval or paid retry happens automatically.","會保留原任務的產物、歷史與要求，重新提出船長確認卡。不會自動重跑已完成工作、核准或付費重試。")),v.continuationOffer?h("div",{},h("p",{},L(v.continuationOffer.title)),h("label",{},T("Type the task ID to confirm","輸入任務 ID 確認"),h("input",{class:"input",value:v.continuationConfirm||'', 'data-continuation-confirm':r.id,oninput:e=>{v.continuationConfirm=e.target.value;}})),h("button",{class:"btn primary",type:"button",disabled:v.continuationBusy||v.continuationUncertain,'data-confirm-continuation':r.id,onclick:async()=>{if(v.continuationBusy||v.continuationUncertain)return;if(v.continuationConfirm!==r.id){v.continuationMessage=T('Type the exact task ID first.','請先輸入正確的任務 ID。');rerender();return;}v.continuationBusy=true;try{const next=await api(`/api/wruns/${r.id}/continuation/confirm`,{token:v.continuationOffer.token,confirm:v.continuationConfirm});v.r={...v.r,...next};v.panel=null;loadRun(v);}catch(e){v.continuationMessage=T("Could not confirm continuation. Read current state before retrying: ","尚無法確認接續結果；重試前請先讀取目前狀態：")+e.message;v.continuationUncertain=true;}finally{v.continuationBusy=false;rerender();}}},T("Confirm continuation","確認接續")),v.continuationUncertain?h("button",{class:"btn",type:"button",onclick:async()=>{try{const next=await api(`/api/wruns/${r.id}`);v.r=next;if(next.continuation?.token===v.continuationOffer.token){v.panel=null;loadRun(v);}else{v.continuationUncertain=false;v.continuationMessage=T("Current state loaded; review before retrying.","已讀取目前狀態，請檢視後再重試。");}rerender();}catch(e){v.continuationMessage=e.message;rerender();}}},T("Read current state","讀取目前狀態")):null):null,h("p",{role:"status"},v.continuationMessage||''),h("button",{class:"btn",type:"button",onclick:()=>{v.panel=null;rerender();}},T("Keep closed","保持關閉"))):null,
+    // laid out like Delete below: titled group, "Type <id> to continue it", the primary disabled until the id matches, both buttons on one row
+    v.panel==='continue'&&canContinue?endPanel(T(`Continue ${id} on the same task`,`在原任務上接續 ${id}`),T("A fresh captain card resumes the same task with its outputs, history and requirements. No completed work reruns, and nothing is approved, merged or retried for pay.","會保留原任務的產物、歷史與要求，重新提出船長確認卡。不會重跑已完成的工作，也不會自動核准、合併或付費重試。"),
+      v.continuationOffer?h("p",{"data-continuation-card":id},T("Card to reopen: ","要重開的卡片："),h("b",{},L(v.continuationOffer.title))):null,
+      v.continuationOffer?h("label",{class:"rt-confirm",for:`cont-${id}`},h("span",{"data-continuation-hint":id},T(`Type ${id} to continue it`,`輸入 ${id} 以接續`)),
+        h("input",{class:"input mono",id:`cont-${id}`,'data-continuation-confirm':id,autocomplete:"off",spellcheck:"false",value:v.continuationConfirm||'',
+          oninput:e=>{v.continuationConfirm=e.target.value;const b=e.target.closest(".rt-endpanel")?.querySelector("[data-confirm-continuation]");if(b)b.disabled=v.continuationConfirm.trim()!==id||!!v.continuationBusy||!!v.continuationUncertain;}})):null,
+      h("div",{class:"actions"},
+        v.continuationOffer?h("button",{class:"btn primary",type:"button",'data-confirm-continuation':id,disabled:(v.continuationConfirm||'').trim()!==id||v.continuationBusy||v.continuationUncertain||null,onclick:async()=>{if(v.continuationBusy||v.continuationUncertain||(v.continuationConfirm||'').trim()!==id)return;v.continuationBusy=true;rerender();try{const next=await api(`/api/wruns/${id}/continuation/confirm`,{token:v.continuationOffer.token,confirm:(v.continuationConfirm||'').trim()});v.r={...v.r,...next};v.panel=null;RN.list=null;loadRun(v);}catch(e){v.continuationMessage=T("Could not confirm continuation. Read current state before retrying: ","尚無法確認接續結果；重試前請先讀取目前狀態：")+e.message;v.continuationUncertain=true;}finally{v.continuationBusy=false;rerender();}}},T("Continue the task","接續任務")):null,
+        v.continuationUncertain?h("button",{class:"btn",type:"button",'data-continuation-read':id,onclick:async()=>{try{const next=await api(`/api/wruns/${id}`);v.r=next;if(next.continuation?.token===v.continuationOffer?.token){v.panel=null;loadRun(v);}else{v.continuationUncertain=false;v.continuationMessage=T("Current state loaded; review before retrying.","已讀取目前狀態，請檢視後再重試。");}rerender();}catch(e){v.continuationMessage=e.message;rerender();}}},T("Read current state","讀取目前狀態")):null,
+        h("button",{class:"btn ghost",type:"button",'data-continuation-keep':id,onclick:()=>{v.panel=null;rerender();}},T("Keep closed","保持關閉"))),
+      h("div",{class:"bad",role:"status","data-continuation-msg":id},v.continuationMessage||'')):null,
     r.outputs?.length?h("section",{class:"card x-pad",'data-task-outputs':r.id},h("h3",{},T("Website output","網站產物")),r.outputs.map(o=>h("a",{class:"btn",href:o.href,target:"_blank",rel:"noopener",'data-open-task-website':o.version},T(`Open website in new tab · v${o.version}`,`在新分頁開啟網站 · v${o.version}`)))):null,
     open.length ? h("div", { class: "rt-open" }, open.map(cardView)) : null,
     graphPanel,

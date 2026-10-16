@@ -1,7 +1,7 @@
 import {installReadinessViews,readinessNodes} from './readiness-view';
 import {installGitHubReviewWorkflow} from '../domain/github-review-workflow';
 import {Onboarding} from '../onboarding';
-import {ArtifactStore} from '../artifacts';
+import {ArtifactStore,websiteHref} from '../artifacts';
 import {StaffingStore,staffingHash,installStaffingGuard,coffeeStaffingProject,type StaffingProject} from '../domain/staffing';
 import {installFirstmateStaffing,staffingQuotaReady,type StaffingFacts,type StaffingAdmission} from '../firstmate-staffing';
 import {installFirstmate} from "../firstmate";
@@ -114,13 +114,19 @@ export function createRuntime(d: RuntimeDeps) {
   engine.load();
 
   const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
-  const runView = (id: string) => {
+  // A version's files never change, so whether a bound site is intact is decided once per version
+  // (keyed by its id, number and manifest hash) instead of re-hashing every file, MP4 included, on each read.
+  const intactSites = new Map<string, boolean>();
+  const siteIntact = (id: string, n: number, sha: string | null) => { const k = `${id}\u0000${n}\u0000${sha}`; let ok = intactSites.get(k); if (ok === undefined) { ok = !d.m3!.store.verify(id, n).length; intactSites.set(k, ok); } return ok; };
+  const runView = (id: string, who?: { kind: string }) => {
     const r = engine.get(id); if (!r) return null;
     const ledger = engine.ledger(id);
     const t = engine.trusted(id);
     const pins=[...Object.values(r.ctx.deliver??{}).map((v:any)=>({id:v.id,n:v.n})),...t.entries.filter(e=>e.record==='coffee-output-v1'&&e.data?.part==='site').map(e=>({id:e.data.artifact,n:e.data.n}))];
-    const outputMap=new Map<string,any>();for(const pin of pins){const a=d.m3?.store.get(pin.id),v=d.m3?.store.version(pin.id,pin.n);if(a?.type==='web'&&v&&(v.primary??a.entry)==='index.html'&&!d.m3!.store.verify(pin.id,pin.n).length)outputMap.set(pin.id,{artifact:pin.id,version:pin.n,href:`/af/${encodeURIComponent(pin.id)}/${pin.n}/index.html`});}
-    return { ...r, nodes: readinessNodes(r, id=>engine.cards.get(id)), outputs:[...outputMap.values()], walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };
+    const outputMap=new Map<string,any>();for(const pin of pins){const a=d.m3?.store.get(pin.id),v=d.m3?.store.version(pin.id,pin.n),href=websiteHref(a,v);if(href&&v&&siteIntact(pin.id,pin.n,v.sha256))outputMap.set(pin.id,{artifact:pin.id,version:pin.n,href});}
+    // the run page offers "Continue original task…" only to the desktop captain, and only when the engine would make an offer
+    const continuable = who?.kind === "desktop" && engine.continuable(id);
+    return { ...r, nodes: readinessNodes(r, id=>engine.cards.get(id)), outputs:[...outputMap.values()], continuable, walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };
   };
   const checkView = (m: any) => { const p = engine.params(m, null, {}); return { ref: m.ref, id: m.id, pack: m.pack, version: m.version, title: m.title, description: m.description, applies_to: m.applies_to, kind: m.kind, blocking: m.blocking, needs: m.needs,
     params: m.params, policy_bind: m.policy_bind, effective: p.params, from: p.from, timeout_s: m.timeout_s, network: m.network, impl: m.native ? "native" : m.adapter ? "adapter" : m.kind === "judged" ? "judge" : "executable", quorum: m.judge?.quorum ?? null, hasSample: !!m.sample, at: m.at }; };
@@ -226,10 +232,10 @@ export function createRuntime(d: RuntimeDeps) {
           params={...params,_staffing:config.hash};
         }
         const r = engine.start({ workflow: wf, version: b?.version ? Number(b.version) : undefined, title: b?.title, text, params, by, classifier: cls });
-        return json(runView(r.id));
+        return json(runView(r.id, who));
       }
       const recovery=/^\/api\/wruns\/(R-\d+)\/continuation\/(offer|confirm)$/.exec(p);
-      if(recovery&&writing){if(who.kind!=="desktop")return json({error:"Only the desktop captain can continue a closed task"},403);const id=recovery[1];return json(recovery[2]==="offer"?engine.continuationOffer(id):(engine.confirmContinuation(id,String(b?.token??""),String(b?.confirm??"")),runView(id)));}
+      if(recovery&&writing){if(who.kind!=="desktop")return json({error:"Only the desktop captain can continue a closed task"},403);const id=recovery[1];return json(recovery[2]==="offer"?engine.continuationOffer(id):(engine.confirmContinuation(id,String(b?.token??""),String(b?.confirm??"")),runView(id, who)));}
       // an app's before / after captures (a domain check makes them): the PNGs, and the built pages ("Open the app"), served sandboxed: no script, no request out
       // the agent node runs working now, for the Crew page: run, node, role, model, round, elapsed, last activity (redacted)
       if (p === "/api/wruns/agents" && !writing) {
@@ -246,7 +252,7 @@ export function createRuntime(d: RuntimeDeps) {
       m = /^\/api\/wruns\/(R-\d+)(?:\/(pause|resume|cancel|file|events|evidence|archive|delete)|\/nodes\/([a-z0-9-]+)\/agent)?$/.exec(p);
       if (m) {
         const id = m[1]; if (!engine.get(id)) return json({ error: "no such run" }, 404);
-        if (m[3] && writing) return json(engine.setAgent(id, m[3], { provider: String(b?.provider ?? ""), model: b?.model ? String(b.model) : null, ...(b?.effort!==undefined?{effort:b.effort===null?null:String(b.effort)}:{}) }) && runView(id));
+        if (m[3] && writing) return json(engine.setAgent(id, m[3], { provider: String(b?.provider ?? ""), model: b?.model ? String(b.model) : null, ...(b?.effort!==undefined?{effort:b.effort===null?null:String(b.effort)}:{}) }) && runView(id, who));
         if (m[2] === "file") {
           const root = realpathSync(engine.rdir(id)); const rel = String(url.searchParams.get("path") ?? "");
           // realpath of the file itself, not only the root: a symlink inside the folder never leads out of it
@@ -261,13 +267,13 @@ export function createRuntime(d: RuntimeDeps) {
           return new Response(Bun.file(f), { headers: { "content-type": /\.png$/.test(f) ? "image/png" : /\.jpe?g$/.test(f) ? "image/jpeg" : /\.webp$/.test(f) ? "image/webp" : "text/plain; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'none'; img-src 'self'", "x-content-type-options": "nosniff" } });
         }
         if (m[2] === "events") return json(engine.timeline(id, Number(url.searchParams.get("after") ?? 0)));
-        if (!writing) return json(runView(id));
-        if (m[2] === "pause") return json(engine.pause(id) && runView(id));
-        if (m[2] === "resume") return json(engine.resume(id) && runView(id));
-        if (m[2] === "cancel") return json(engine.cancel(id, by, b?.reason ? String(b.reason) : null) && runView(id));
+        if (!writing) return json(runView(id, who));
+        if (m[2] === "pause") return json(engine.pause(id) && runView(id, who));
+        if (m[2] === "resume") return json(engine.resume(id) && runView(id, who));
+        if (m[2] === "cancel") return json(engine.cancel(id, by, b?.reason ? String(b.reason) : null) && runView(id, who));
         // archive and delete: an ended run only (409 for a live one); delete needs the typed id (400)
         if (m[2] === "archive" || m[2] === "delete") {
-          try { if (m[2] === "archive") return json(engine.archive(id, b?.archived !== false, by) && runView(id)); return json(engine.remove(id, String(b?.confirm ?? ""), by)); }
+          try { if (m[2] === "archive") return json(engine.archive(id, b?.archived !== false, by) && runView(id, who)); return json(engine.remove(id, String(b?.confirm ?? ""), by)); }
           catch (e: any) { const msg = String(e?.message ?? e); return json({ error: msg }, /only an ended run|still finishing/.test(msg) ? 409 : 400); }
         }
       }

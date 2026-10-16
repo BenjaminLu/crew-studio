@@ -5,7 +5,7 @@
 import { existsSync, realpathSync, statSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import {MediaLibrary} from "./media-library";
-import { ArtifactStore, type Note } from "./artifacts";
+import { ArtifactStore, websiteHref, type Note } from "./artifacts";
 import { Lane } from "./recipes";
 import { WorkRuns, filmScenes } from "./work";
 import { renderEnv, runRender } from "./render";
@@ -22,6 +22,13 @@ const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".h
 // Restrict artifact subresources and API requests to the declared sources.
 // Interactive documents have an opaque sandbox origin; CSP does not block self-navigation.
 const CSP = "default-src 'none'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self' 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'";
+// A page the browser opens as its own tab (or any document that is not one of Studio's own
+// frames) runs in an opaque-origin sandbox: its scripts still run and its CSS, images, poster and
+// MP4 still load, but it cannot read Studio's storage, script a Studio window, open one, or call
+// /api as Studio. Studio's own previews are frames (Sec-Fetch-Dest: iframe) and keep CSP, whose
+// frame-ancestors 'self' also refuses a frame inside such a sandboxed page.
+const TAB_CSP = `sandbox allow-scripts; ${CSP}`;
+const framedByStudio = (req: Request) => ["iframe", "frame"].includes(req.headers.get("sec-fetch-dest") ?? "");
 const INTERACTIVE_CSP = "sandbox allow-scripts; default-src 'none'; img-src data: blob:; media-src blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'";
 
 export type ArtifactReviewPolicy = {readOnly:true; taskHref:string|null; reason:string};
@@ -82,7 +89,7 @@ export function createM3(d: M3Deps) {
         if (!file) return new Response("not found", { status: 404 });
         const type = TYPES[extname(file).toLowerCase()] ?? "application/octet-stream";
         const f = Bun.file(file), size = f.size;
-        const base = { "content-type": type, "content-security-policy": url.searchParams.get("interactive") === "1" ? INTERACTIVE_CSP : CSP, "x-content-type-options": "nosniff", "cache-control": "no-cache", "accept-ranges": "bytes" };
+        const base = { "content-type": type, "content-security-policy": url.searchParams.get("interactive") === "1" ? INTERACTIVE_CSP : framedByStudio(req) ? CSP : TAB_CSP, "x-content-type-options": "nosniff", "cache-control": "no-cache", "accept-ranges": "bytes" };
         const r = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get("range") ?? ""); // players seek with byte ranges
         if (r) {
           const start = r[1] ? Number(r[1]) : Math.max(0, size - Number(r[2])), end = r[1] && r[2] ? Math.min(size - 1, Number(r[2])) : size - 1;
@@ -116,7 +123,7 @@ export function createM3(d: M3Deps) {
         if (!a) return json({ error: "no such artifact" }, 404);
         let scenes: any[] = [];
         if (a.source === "film") { const v = store.latest(id); const f = v && store.file(id, v.n, a.entry ?? "film.html"); if (f) scenes = filmScenes(readFileSync(f, "utf8")); }
-        return json({ artifact: a,nativeReview:artifactReview(id), managedMedia:media.owns(id), versions: store.versions(id).map((v) => ({ ...v, notes: store.notes(id, v.n), integrity: store.verify(id, v.n) })),
+        return json({ artifact: a,nativeReview:artifactReview(id), managedMedia:media.owns(id), versions: store.versions(id).map((v) => ({ ...v, openHref: websiteHref(a, v), notes: store.notes(id, v.n), integrity: store.verify(id, v.n) })),
           runs: runs.list(id).map(slim), cards: lane.cards().filter((c) => c.artifact === id), repos: lane.repos(), scenes, render: renderEnv() });
       }
       m = /^\/api\/artifacts\/([^/]+)\/versions$/.exec(p);

@@ -43,7 +43,20 @@ export type Note = {
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 export const sha256File = (p: string) => createHash("sha256").update(readFileSync(p)).digest("hex");
-const expand = (p: string) => (p.startsWith("~/") ? join(homedir(), p.slice(2)) : p);
+/**
+ * The one link that opens a web version's whole site in a new tab: its own
+ * entry file (the version's primary, else the artifact's entry), every path
+ * segment encoded. /af/ serves a top-level page like this in an opaque-origin
+ * sandbox, so the site's scripts cannot reach Studio. Null when the version is
+ * not a local web site or its entry is not a plain relative path.
+ */
+export function websiteHref(a: Pick<Artifact, "id" | "type" | "source" | "entry"> | null | undefined, v: Pick<Version, "n" | "primary"> | null | undefined): string | null {
+  if (!a || !v || a.type !== "web" || a.source === "url" || !Number.isInteger(v.n) || v.n < 1) return null;
+  const entry = v.primary || a.entry || "index.html";
+  if (entry.startsWith("/") || entry.includes("\\") || entry.split("/").some((p) => !p || p === "." || p === "..")) return null;
+  return `/af/${encodeURIComponent(a.id)}/${v.n}/${entry.split("/").map(encodeURIComponent).join("/")}`;
+}
+const expand = (p: string) =>(p.startsWith("~/") ? join(homedir(), p.slice(2)) : p);
 const now = () => new Date().toISOString();
 
 /** Every regular file under dir (symlinked directories are followed only for listing shared assets; not hashed). */

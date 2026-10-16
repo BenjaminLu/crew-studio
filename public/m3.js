@@ -99,7 +99,8 @@ function newWebArtifact() {
 }
 
 // ---------- artifact detail ----------
-function openWebsiteLink(a,v){const entry=v?.primary||a.entry||'index.html';return a.type==='web'&&a.source!=='url'&&v&&!entry.startsWith('/')&&!entry.split('/').some(p=>!p||p==='.'||p==='..')?h('a',{class:'btn',href:`/af/${encodeURIComponent(a.id)}/${v.n}/${entry.split('/').map(encodeURIComponent).join('/')}`,target:'_blank',rel:'noopener','data-open-website-version':v.n},T(`Open website in new tab · v${v.n}`,`在新分頁開啟網站 · v${v.n}`)):null;}
+// the server builds the link (websiteHref in src/artifacts.ts, the same one cards and Task outputs use); /af/ serves it sandboxed
+function openWebsiteLink(a,v){return v?.openHref?h('a',{class:'btn',href:v.openHref,target:'_blank',rel:'noopener','data-open-website-version':v.n},T(`Open website in new tab · v${v.n}`,`在新分頁開啟網站 · v${v.n}`)):null;}
 function nativePreview(d,v,previous) {
   const a=d.artifact,policy=d.nativeReview;
   const preview=x=>a.type==='web'?(()=>{const frame=framed(`/af/${a.id}/${x.n}/${x.primary||a.entry||'index.html'}`);frame.over.remove();const button=h('button',{class:'btn',type:'button',disabled:true,'data-native-film-toggle':'1'},T('Play / pause film','播放／暫停影片'));frame.iframe.addEventListener('load',()=>{const videos=[...frame.iframe.contentDocument.querySelectorAll('video.coffee-native-film')];button.disabled=!videos.length;if(matchMedia('(prefers-reduced-motion: reduce)').matches)for(const video of videos){video.pause();video.removeAttribute('autoplay');}button.onclick=()=>{for(const video of videos)if(video.paused)video.play().catch(()=>{});else video.pause();};});return h('div',{},frame.wrap,button);})():a.type==='image'?h('img',{src:`/af/${a.id}/${x.n}/${x.primary||a.entry}`,alt:a.title,style:'max-width:100%'}):h('video',{src:`/af/${a.id}/${x.n}/${x.primary||a.entry}`,controls:true,preload:'metadata',style:'max-width:100%'});
