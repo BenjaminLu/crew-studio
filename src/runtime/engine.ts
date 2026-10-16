@@ -60,6 +60,8 @@ export type Run = {
   continuation?:{token:string;previousCard:string;node:string;visit:number};
   /** the typed failure that ended the run (src/runtime/failures.ts), its card, and every earlier one */
   failure?: Failure | null; failureCard?: string | null; failures?: Failure[];
+  /** the captain's Edit params answers on failure cards, the only params change that persists (replayed over the creation params) */
+  paramEdits?: Record<string, string>;
   /** the captain parked the failed run: it stays failed, nothing retries it */
   parked?: { by: string; at: string; note: string | null } | null;
   /** hidden from the default lists (an ended run only); an "archived" event records each change */
@@ -118,7 +120,9 @@ export function fill(s: string, run: Run): string {
   });
 }
 const ekey = (e: WEdge) => `${e.from}→${e.to}${e.when ? `[${e.when}]` : ""}`;
-const RUN_FIELDS = ["status", "result", "error", "endedAt", "recovered", "cancelReason", "continuation", "params", "failure", "failureCard", "failures", "parked"] as const;
+// params are not a run field: the creation params are replayed from run_created, and a domain may keep an in-memory cache in them
+// (staffing upgrades) that must never become durable. Only the captain's Edit params on a failure card persists, as paramEdits.
+const RUN_FIELDS = ["status", "result", "error", "endedAt", "recovered", "cancelReason", "continuation", "paramEdits", "failure", "failureCard", "failures", "parked"] as const;
 const NODE_FIELDS = ["visits", "extra", "attempt", "outcome", "cause", "error", "startedAt", "endedAt", "inbox", "agent", "swap", "job", "card", "waiting", "data", "note", "routing"] as const;
 
 /** Replay a run's events into its snapshot (the snapshot is a fold of the events). */
@@ -128,7 +132,7 @@ export function fold(events: any[]): Run | null {
     if (e.type === "run_created") { r = clone(e.run); r!.events = e.seq; continue; }
     if (!r) continue;
     r.events = Math.max(r.events, e.seq ?? 0); r.updatedAt = e.ts ?? r.updatedAt;
-    if (e.type === "run") { r.status = e.to; for (const k of RUN_FIELDS) if (k in (e.set ?? {})) (r as any)[k] = e.set[k]; }
+    if (e.type === "run") { r.status = e.to; for (const k of RUN_FIELDS) if (k in (e.set ?? {})) (r as any)[k] = e.set[k]; if (e.set?.paramEdits) r.params = { ...r.params, ...e.set.paramEdits }; }
     else if (e.type === "node") { const n = r.nodes[e.node]; if (n) { n.state = e.to; for (const k of NODE_FIELDS) if (k in (e.set ?? {})) (n as any)[k] = e.set[k]; } }
     else if (e.type === "ndata") { const n = r.nodes[e.node]; if (n) for (const [k, v] of Object.entries(e.set ?? {})) (n as any)[k] = v; }
     else if (e.type === "queue") r.queue = e.queue;
@@ -1212,7 +1216,7 @@ export class Engine {
     const ans = this.cards.answer(c.id, a);
     if (a.choice === ACT.prepareAgain) { const from = this.preparationNode(r, node); this.recordFailure(r, c, a.choice, { from: from.id }); r.nodes[node.id].state = "pending"; r.nodes[node.id].routing = null; r.nodes[node.id].data.failure = null; return this.reopenAt(r, c, f, from, a, 0); }
     const rn = r.nodes[node.id];
-    if (params) { r.params = { ...r.params, ...params }; }
+    if (params) { r.params = { ...r.params, ...params }; r.paramEdits = { ...(r.paramEdits ?? {}), ...params }; } // durable: replayed on top of the creation params
     if (a.choice === ACT.answer) { delete rn.data.escalation; rn.data.failureAnswer = { kind: "answer", question: f.message, note, by: "captain" }; r.ctx.answers = { ...(r.ctx.answers ?? {}), [node.id]: ans.answer }; }
     else if (a.choice === ACT.rescope) { rn.data.failureAnswer = { kind: "rescope", question: f.message, note }; r.ctx.failureRescope = { node: node.id, note, at: now() }; }
     else delete rn.data.failureAnswer;

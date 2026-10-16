@@ -325,7 +325,9 @@ const keep = (c: any) => { shown.push(c); shownViews.push(E.cards.view(E.cards.g
   const back = E2.get(r.id)!;
   ok(back.failure?.code === "invalid-input.params" && back.failureCard === c.id && E2.cards.get(c.id)?.failure?.class === "invalid-input", "restart: the run keeps its typed failure and its open failure card", JSON.stringify([back.failure?.code, back.failureCard]));
   await E2.answer(c.id, { choice: "edit-params", note: "want=pass", by: "captain" }); await until(() => E2.get(r.id)!.status === "succeeded");
+  E2.get(r.id)!.params.cache = "in memory only"; E2.commit(E2.get(r.id)!); // a domain's params cache (staffing upgrades) never becomes durable
   const H3 = await harness(flows, { data: H.data }); H3.engine.load();
+  ok(H3.engine.get(r.id)!.params.cache === undefined && H3.engine.get(r.id)!.paramEdits?.want === "pass", "restart: only the captain's param edits persist; an in-memory params cache does not", JSON.stringify(H3.engine.get(r.id)!.params));
   ok(E2.get(r.id)!.status === "succeeded" && H3.engine.get(r.id)!.params.want === "pass" && H3.engine.get(r.id)!.failureCard === null, "restart: the answer after a restart runs the step, and the edited param is durable");
   H2.stop(); H3.stop();
 }
