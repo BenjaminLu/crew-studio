@@ -63,6 +63,8 @@ export type MainOpts = {
   nativeWorkspace?: boolean;
   onGeneratedImage?: (image:import("./types").GeneratedImage,owner:import("../media-library").MediaOwner)=>Promise<void>;
   nativeTools?: ()=>import("./types").NativeMainTools;
+  /** the captain's operating rules for the active project (Studio-wide and project), read when a seed is written */
+  operatingRules?: () => string;
   /** argv of Studio's MCP helper (src/mcp.ts): how a fresh Claude primary reaches nativeTools over owned stdio */
   studioMcp?: () => string[];
   onNativeProposal?: (origin:import("./native-outcomes").NativeOrigin,result:unknown)=>void;
@@ -274,7 +276,7 @@ export class MainSession {
     this.note({ kind: "status", text: `${mode === "rehearsal" ? "Rehearsal" : "Took over"}: Studio drives a copy of ${id}. The terminal session must stay idle.` });
     if (host === "codex") this.note({ kind: "status", text: statement });
     if (terminal) this.note({ kind: "system", text: host === "codex" ? `The original Codex terminal still looks open (${terminal}). Keep it idle and exit it after its background agents finish. Studio delivers wakes to the copy.` : `The terminal still looks open (${terminal}). Keep it idle; exit it after its background agents finish, or its Stop hook keeps taking firstmate's wakes.` });
-    if (path === "handoff") this.queue.seed(seedText({ host, original: id, cwd: s.cwd, turns: se.recentTurns ?? null, handoff: newest }));
+    if (path === "handoff") this.queue.seed(withRulesSeed(seedText({ host, original: id, cwd: s.cwd, turns: se.recentTurns ?? null, handoff: newest }), this.o.operatingRules));
     this.timer = setInterval(() => this.tick(), this.o.pollMs ?? 1000);
     this.changed();
     if (path === "handoff") void this.pump();
@@ -335,7 +337,7 @@ export class MainSession {
     this.seenWakes.clear();
     this.note({ kind: "status", text: statement });
     if (host === "claude" && extra?.autoMode) this.note({ kind: "status", text: `The captain's auto-mode rules are ${extra.autoMode.summary}` });
-    const freshSeed = this.o.nativeWorkspace ? nativeFreshText(cwd, (() => { try { const n = this.o.nativeTools?.().specs.map((t) => t.name) ?? []; return n.length ? n : undefined; } catch { return undefined; } })()) : freshText(cwd, newest);
+    const freshSeed = withRulesSeed(this.o.nativeWorkspace ? nativeFreshText(cwd, (() => { try { const n = this.o.nativeTools?.().specs.map((t) => t.name) ?? []; return n.length ? n : undefined; } catch { return undefined; } })()) : freshText(cwd, newest), this.o.operatingRules, !!this.o.nativeWorkspace);
     // local unrestricted mode (operator .env): a Claude primary is told so in its first message, as Codex is on every turn
     this.queue.seed(host === "claude" && localExecutionNotice() ? `${localExecutionNotice()}\n\n${freshSeed}` : freshSeed);
     this.timer = setInterval(() => this.tick(), this.o.pollMs ?? 1000);
@@ -585,6 +587,13 @@ export function newestHandoffFile(stateDir: string, cap = 60_000): { name: strin
   try { const t = readFileSync(join(stateDir, best.name), "utf8"); return { name: best.name, text: t.length > cap ? t.slice(0, cap) + "\n…(cut)" : t }; } catch { return null; }
 }
 
+/** A first message with the captain's operating rules after it: the same section every worker and reviewer gets. */
+export function withRulesSeed(text: string, rules?: () => string, tool = false): string {
+  if (!rules) return text;
+  let section: string; try { section = rules(); } catch { section = "# Operating rules (set by the captain)\n\nStudio could not read the operating rules; ask the captain before any action they might cover."; }
+  return `${text}\n\n${section}\n\nThese rules bind you and every job you propose.${tool ? " Read them again any time with studio_operating_rules." : ""} Only the captain edits them, in Studio's settings.`;
+}
+
 /** The first message of a new thread that stands in for a fork: the original's recent turns (read only) and firstmate's handoff file. */
 export function seedText(o: { host: HostId; original: string; cwd: string; turns: string | null; handoff: { name: string; text: string } | null }): string {
   return [`Crew Studio is handing the firstmate session over to you. ${o.host === "codex" ? "Codex has no fork, so this is a new thread" : "This is a new session"}; the original ${o.host} thread ${o.original} stays untouched in ${o.cwd} and must not be resumed.`,
@@ -603,7 +612,7 @@ export function freshText(cwd: string, handoff: { name: string; text: string } |
 
 /** Native Firstmate has no dependency on a legacy repo or handoff. */
 /** The names a fresh primary is told about: every tool actually registered, else the known default set. */
-const DEFAULT_NATIVE_TOOLS=["studio_list_workflows","studio_list_projects","studio_work_status","studio_prepare_project_work","studio_staffing_facts","studio_staffing_interview","studio_propose_staffing","studio_change_staffing","studio_propose_work","studio_draft_workflow","studio_save_workflow_draft","studio_startup_workflow_contract"];
+const DEFAULT_NATIVE_TOOLS=["studio_list_workflows","studio_list_projects","studio_operating_rules","studio_work_status","studio_prepare_project_work","studio_staffing_facts","studio_staffing_interview","studio_propose_staffing","studio_change_staffing","studio_propose_work","studio_draft_workflow","studio_save_workflow_draft","studio_startup_workflow_contract"];
 const toolList=(names:string[])=>names.length>1?`${names.slice(0,-1).join(", ")} and ${names.at(-1)}`:names.join("");
 /** "Claude permission mode: <effective>", saying so when Claude did not enable the requested mode. */
 export function claudeModeLine(requested: string | null, effective: string | null): string {

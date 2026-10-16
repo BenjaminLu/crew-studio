@@ -4,6 +4,7 @@
 // is missing or logged out. Provider events become the chat events the browser
 // renders.   CREW_CHAT_TIMEOUT_MS  per-question limit (default 120000)
 import { withSafetyRules } from "./skills";
+import { OperatingRules, withOperatingRules, type RulesSection } from "./operating-rules";
 import { roundEnv } from "./secure";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -13,7 +14,7 @@ import { helperCommand } from "./self";
 
 export const MAX_TOOL_CALLS = 8;
 export type ChatEvent =
-  | { type: "start"; provider: string; model: string }
+  | { type: "start"; provider: string; model: string; operatingRules?: string }
   | { type: "tool"; id: string; name: string; args: unknown }
   | { type: "toolResult"; id: string; rows: number | null; error: string | null }
   | { type: "text"; delta: string }
@@ -44,8 +45,8 @@ export function buildPrompt(history: Turn[], message: string, lang: string, now 
 
 /** One provider turn under the guardrails, as normalized events. Used by the chat and by the contract test. */
 export async function* guardedTurn(provider: Provider, text: string, ctx: Parameters<Provider["start"]>[2],
-  o: { timeoutMs: number; maxTools?: number; signal?: AbortSignal; system?: string }): AsyncGenerator<NEvent & { guard?: string }> {
-  const session = provider.start(withSafetyRules(o.system ?? SYSTEM), TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.schema })), ctx);
+  o: { timeoutMs: number; maxTools?: number; signal?: AbortSignal; system?: string; rules?: RulesSection }): AsyncGenerator<NEvent & { guard?: string }> {
+  const session = provider.start(o.rules ? withOperatingRules(withSafetyRules(o.system ?? SYSTEM), o.rules) : withSafetyRules(o.system ?? SYSTEM), TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.schema })), ctx);
   let why: string | null = null;
   const stop = (reason: string) => { if (!why) { why = reason; session.interrupt(); } };
   const timer = setTimeout(() => stop("timeout"), o.timeoutMs);
@@ -69,9 +70,10 @@ export async function runChat(o: { provider: Provider; message: string; history:
   const timeoutMs = Number(process.env.CREW_CHAT_TIMEOUT_MS ?? 120_000);
   const started = Date.now();
   let text = "", tools = 0;
-  o.onEvent({ type: "start", provider: o.provider.id, model: o.provider.model });
+  const rules = new OperatingRules(o.dataDir).section(null); // the status chat belongs to no project: the Studio-wide rules
+  o.onEvent({ type: "start", provider: o.provider.id, model: o.provider.model, operatingRules: rules.hash });
   try {
-    for await (const e of guardedTurn(o.provider, buildPrompt(o.history, o.message, o.lang), ctx, { timeoutMs, signal: o.signal })) {
+    for await (const e of guardedTurn(o.provider, buildPrompt(o.history, o.message, o.lang), ctx, { timeoutMs, signal: o.signal, rules })) {
       if (e.type === "delta") { text += e.text; o.onEvent({ type: "text", delta: e.text }); }
       else if (e.type === "toolStart") { tools++; o.onEvent({ type: "tool", id: e.id, name: label(e.name), args: e.args }); }
       else if (e.type === "toolEnd") {

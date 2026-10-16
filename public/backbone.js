@@ -85,7 +85,39 @@ routes.settings = () => page(T("Settings", "設定"), T("Doctor, keys and phone 
     h("a", { class: "bb-set", href: "#/remote" }, icon("monitor"), h("span", {}, h("b", {}, T("Phone pairing", "手機配對")), h("span", { class: "faint" }, T("Planned (labs).", "規劃中（實驗功能）。")))),
     h("a", { class: "bb-set", href: "#/roadmap" }, icon("target"), h("span", {}, h("b", {}, T("Roadmap", "路線圖")), h("span", { class: "faint" }, T("What is planned next, by milestone.", "接下來的規劃，依里程碑。")))),
     h("label", { class: "bb-set" }, h("input", { type: "checkbox", id: "labsToggle", checked: labsOn(), onchange: (e) => { store.set("crew.labs", e.target.checked ? "1" : null); labsGroup.hidden = !e.target.checked; } }),
-      h("span", {}, h("b", {}, T("Show labs", "顯示實驗功能")), h("span", { class: "faint" }, T("Adds the planned pages to the sidebar. They work, but they are not the backbone.", "把規劃中的頁面加回側邊欄；可以用，但不是主幹功能。"))))));
+      h("span", {}, h("b", {}, T("Show labs", "顯示實驗功能")), h("span", { class: "faint" }, T("Adds the planned pages to the sidebar. They work, but they are not the backbone.", "把規劃中的頁面加回側邊欄；可以用，但不是主幹功能。"))))),
+  rulesEditor());
+// The captain's operating rules: one Studio-wide text and one per project, sent to every
+// worker, reviewer, judge, media job and Firstmate. Edited here only (this Mac's page session).
+function rulesEditor() {
+  const scope = h("select", { id: "rulesScope", "aria-label": T("Rules for", "規則適用於") }, h("option", { value: "" }, T("Studio-wide (every job)", "Studio 全域（所有工作）")));
+  const text = h("textarea", { id: "rulesText", rows: 9, spellcheck: "false", "aria-label": T("Operating rules", "作業規則"), placeholder: T("One rule per line, plain text.", "一行一條規則，純文字。") });
+  const count = h("span", { class: "faint bb-rules-count" }), state = h("span", { class: "faint", id: "rulesState", role: "status" });
+  const save = h("button", { class: "btn primary", id: "rulesSave", disabled: true }, T("Save rules", "儲存規則"));
+  const reset = h("button", { class: "btn ghost", id: "rulesDefault", disabled: true }, T("Use the default text", "改用預設內容"));
+  let data = null, loaded = "";
+  const entry = () => !data ? null : scope.value ? data.projects.find((p) => p.id === scope.value) : data.studio;
+  const meta = (e) => !e ? "" : !e.text ? T("None set: prompts say so explicitly.", "未設定：提示中會明確寫出「未設定」。") : e.updatedAt ? T(`Saved ${new Date(e.updatedAt).toLocaleString(document.documentElement.lang || undefined)}${e.by === "studio-default" ? " (first-run default)" : ""}`, `已儲存於 ${new Date(e.updatedAt).toLocaleString(document.documentElement.lang || undefined)}${e.by === "studio-default" ? "（首次啟動預設）" : ""}`) : "";
+  const sync = () => { count.textContent = `${text.value.length} / ${data?.max ?? 8000}`; save.disabled = !data || text.value === loaded; reset.hidden = !!scope.value; reset.disabled = !data || text.value === data.defaults; };
+  const show = () => { const e = entry(); loaded = e?.text ?? ""; text.value = loaded; state.textContent = meta(e); sync(); };
+  const fill = (d) => { data = d; const keep = scope.value; scope.replaceChildren(scope.firstChild, ...d.projects.map((p) => h("option", { value: p.id }, T(`Project: ${p.name}`, `專案：${p.name}`)))); scope.value = d.projects.some((p) => p.id === keep) ? keep : ""; show(); };
+  scope.onchange = show; text.oninput = sync;
+  reset.onclick = () => { text.value = data.defaults; sync(); };
+  save.onclick = async () => {
+    save.disabled = true; state.textContent = T("Saving…", "儲存中…");
+    try { const r = await fetch("/api/operating-rules", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ project: scope.value || null, text: text.value }) });
+      const d = await r.json().catch(() => ({})); if (!r.ok) { state.textContent = d.error || T("Not saved", "未儲存"); sync(); return; }
+      fill(d); state.textContent = T("Saved. The next job and the next round get this text.", "已儲存。下一個工作和下一回合會收到這份內容。"); }
+    catch { state.textContent = T("Not saved", "未儲存"); sync(); }
+  };
+  fetch("/api/operating-rules").then((r) => r.ok ? r.json() : Promise.reject(r.status)).then(fill).catch(() => { state.textContent = T("The rules could not be read.", "無法讀取規則。"); });
+  return h("section", { class: "card x-pad bb-rules", "data-operating-rules": "1" },
+    h("div", { class: "bb-rules-head" }, h("h2", {}, T("Operating rules", "作業規則")),
+      h("p", { class: "faint" }, T("Standing rules every worker, reviewer, judge, image job and Firstmate gets at the top of its prompt. Only you edit them, here on this Mac.", "每個 worker、reviewer、judge、圖片工作和 Firstmate 的提示開頭都會帶上這些常設規則。只有你能在這台 Mac 上編輯。"))),
+    h("label", { class: "field" }, h("span", { class: "lbl" }, T("Rules for", "規則適用於")), scope),
+    h("label", { class: "field" }, h("span", { class: "lbl" }, T("Rules (plain text)", "規則（純文字）")), text),
+    h("div", { class: "bb-rules-foot" }, count, state, h("span", { class: "x-grow" }), reset, save));
+}
 routes.roadmap = () => page(T("Roadmap", "路線圖"), T("Planned work outside the backbone. Each item is reachable with labs on.", "主幹之外的規劃。開啟實驗功能就能使用。"),
   h("div", { class: "card bb-roadmap-list" }, ROADMAP.map((r) => h("div", { class: "bb-rm", "data-roadmap": r.id }, h("span", { class: "badge" }, h("span", { class: "d" }), T("planned", "規劃中")), h("span", { class: "tid" }, r.m),
     h("span", { class: "bb-rm-t" }, T(r.en, r.tw)), h("a", { href: `#/${r.routes[0]}` }, `#/${r.routes[0]}`)))));

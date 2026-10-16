@@ -70,9 +70,10 @@ import { bundledText } from "./bundled";
 import { classify, orgDefaults } from "./doors";
 import { installPackGenesis } from "./pack-genesis";
 import { createRuntime, skillTextFor } from "./runtime";
-import { EXEMPT, guardWrite, hasSession, sessionCookie, sessionToken } from "./csrf";
+import { EXEMPT, guardWrite, hasSession, hasSessionCookie, sessionCookie, sessionToken } from "./csrf";
 import { AttachmentStore, deliveryFor, uploadAttachment } from "./attachments";
 import { ChatLog } from "./host/chat-log";
+import { OperatingRules, DEFAULT_OPERATING_RULES } from "./operating-rules";
 import { registerSecretValues } from "./secure";
 import { timingSafeEqual } from "node:crypto";
 import { git, setGitHome } from "./git";
@@ -182,6 +183,8 @@ const chatLog = new ChatLog(DATA);
 const sweepChatFiles = () => { try { const referenced = chatLog.referencedIds(); for (const q of main.queue.list()) for (const a of q.attachments ?? []) referenced.add(a.id); return chatFiles.sweep({ referenced }); } catch { return 0; } };
 const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STATE, nativeWorkspace: !startup.legacy && !process.env.CREW_MAIN_PROJECT,
   nativeTools:()=>runtime.firstmate,
+  // the active project's rules: the registered project at this checkout (explicit project), else the Studio-wide ones only
+  operatingRules:()=>new OperatingRules(DATA).section(runtime.projects.list().find(p=>p.path===PROJECT)?.id ?? null).text,
   onNativeProposal:(origin,result)=>nativeOutcomes.bind(origin,result),
   nativeOutcomes:(host,thread)=>{try{return nativeOutcomes.list(host,thread);}catch{return[];}},
   onGeneratedImage:async(image,owner)=>{await publishGeneratedImage(m3.media,image,owner);},
@@ -353,6 +356,8 @@ const m7 = createM7({ dataDir: DATA, flows, skills: improve.skills, evals: impro
 const docs = createDocs({ dataDir: DATA, store: m3.store, agents, skills: improve.skills, log: studioLog, provider: pickProvider, send });
 m3.runs.docSystem = () => { try { return improve.skills.text("documents", "writer"); } catch { return ""; } };
 const skins = new Skins(DATA);
+// first run: the Studio-wide operating rules start from a short generic default the captain edits in Settings
+try { new OperatingRules(DATA).seed(); } catch (e: any) { console.warn(`crew-studio: operating rules: ${e?.message ?? e}`); }
 // the sandbox repository the coding workflow runs on (data/demo-repo, project "sandbox"); CREW_SANDBOX=0 skips it
 if (process.env.CREW_SANDBOX !== "0") { try { prepareSandbox(DATA); registerSandbox(DATA); } catch (e: any) { console.warn(`crew-studio: sandbox repo: ${e?.message ?? e}`); } }
 // --- v2: Studio's native runtime (workflows that really run, checks, Studio-owned cards) ---
@@ -363,10 +368,10 @@ let staffingClaudeCapability:ProviderCapability|null=null;
 
 const runtime = createRuntime({coffeeVideo:coffeeTools.ready?(request=>renderCoffeeFilm(request,coffeeTools)):undefined,coffeeFilmStatus:{ready:coffeeTools.ready,reason:coffeeTools.ready?null:coffeeTools.reason},startupModel:provider=>{const settings=chatSettings();return provider==="claude"?claudePrimaryPair().model:settings.models.codex||process.env.CREW_CODEX_MODEL||codexConfig(PROJECT).model;},coffeeChoice:()=>{const config=codexConfig(PROJECT),model=chatSettings().models.codex||process.env.CREW_CODEX_MODEL||config.model;return model?{provider:"codex",model,effort:config.effort}:null;}, staffingPending:intent=>{if(main.view().context==="studio"&&main.view().state!=="detached")main.enqueue("card",`Project registered for: ${intent.work.text}. No workflow work has started. Discuss each role’s agent account, model and reasoning effort with the captain before dispatch. Wait for the captain’s choices. / 專案已註冊，工作尚未開始。接著請和船長討論各角色使用的代理帳號、模型及推理強度，等待船長選擇後再確認派工。`,"studio-native");},staffingAdmission:role=>role.provider==='claude'&&!!staffingClaudeCapability&&isClaudeExecutionAdmission(staffingClaudeCapability,{model:role.model,effort:role.effort}),staffingFacts:async()=>{const settings=chatSettings(),model=settings.models.claude||process.env.CREW_CLAUDE_MODEL||'claude-sonnet-5-5',pair={model,effort:configuredClaudeEffort(model)};const [cap,claude]=await Promise.all([probeCodex(),probeClaudeNative(pair)]);staffingClaudeCapability=claude;return[{provider:'codex',support:'supported' as const,auth:cap.auth,quota:cap.quota,expires:cap.expires,models:cap.models.map(m=>({id:m.id,efforts:m.efforts??[]}))},{provider:'claude',support:'supported' as const,auth:claude.auth,quota:claude.quota,expires:claude.expires,models:claude.models.map(m=>({id:m.id,efforts:pair.effort===null?[]:[pair.effort]})),reason:claude.reason}];},dataDir: DATA, agents, provider: pickProvider, defaultProvider: () => { const s = chatSettings(); return { provider: s.provider, model: s.models[s.provider] || null }; }, selectProvider: nativePick,
   log: studioLog, send, fmRoot: dirname(STATE), protectedRoots: PROTECTED, store, m3: { store: m3.store, runs: m3.runs, lane: m3.lane,useArtifactReviewPolicy:m3.useArtifactReviewPolicy }, fileorg: m7.fileorg, docs, improve, studioUrl: () => `http://127.0.0.1:${PORT}`,
-  generateImage: (prompt, authorize, signal, reference) => {
+  generateImage: (prompt, authorize, signal, reference, rules) => {
     const config = codexConfig(PROJECT), model = chatSettings().models.codex || process.env.CREW_CODEX_MODEL || config.model;
     if (!model) throw new Error("Configure a Codex model before generating images");
-    return generateCodexImage({ prompt, authorize, signal, reference, approved: { model, effort: config.effort } });
+    return generateCodexImage({ prompt, authorize, signal, reference, rules: rules ?? new OperatingRules(DATA).section(null), approved: { model, effort: config.effort } });
   },
   // domain packs' runtime steps: the firstmate coding pipeline (packs/firstmate)
   install: [(engine, c) => { installCode(engine, { dataDir: c.dataDir, projects: c.projects, improve, poller:githubPoller }); packGenesis = installPackGenesis(engine, { dataDir: c.dataDir, artifacts: m3.store }); }], skills: improve.skills });
@@ -490,6 +495,24 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     if (p === "/api/flows" && !writing) return json(flows.list());
     if (p === "/api/agents" && !writing) return json([...agents.jobs.values()].reverse().slice(0, 50).map((j) => ({ ...j, log: j.log.slice(-20) })));
     if (p.startsWith("/api/agents/") && !writing) { const j = agents.jobs.get(p.slice("/api/agents/".length)); return j ? json(j) : json({ error: "no such job" }, 404); }
+    // the captain's operating rules: anyone on this Mac with Studio's session reads them; only the captain's own page writes them
+    if (p === "/api/operating-rules") {
+      if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
+      if (!hasSession(req, SESSION)) return json({ error: "Studio session required" }, 401);
+      const rules = new OperatingRules(DATA);
+      const view = () => ({ studio: rules.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, name: x.name, ...rules.project(x.id) })), defaults: DEFAULT_OPERATING_RULES, max: 8000 });
+      if (!writing) return json(view());
+      // a captain edit: the page's own session cookie (never a script's x-crew-session header) on a same-origin request from this Mac
+      if (!hasSessionCookie(req, SESSION) || req.headers.get("origin") !== url.origin || req.headers.get("sec-fetch-site") !== "same-origin")
+        return json({ error: "Only the captain edits operating rules, from Studio's page on this Mac / 只有船長能在這台 Mac 的 Studio 頁面編輯作業規則", code: "captainOnly" }, 403);
+      let b: any; try { b = await req.json(); } catch { return json({ error: "json only" }, 400); }
+      if (!b || typeof b !== "object" || Array.isArray(b) || Object.keys(b).some((k) => k !== "project" && k !== "text")) return json({ error: "send {project?, text}" }, 400);
+      const project = b.project == null || b.project === "" ? null : String(b.project);
+      if (project && !runtime.projects.get(project)) return json({ error: "no such project" }, 404);
+      try { rules.set({ project }, b.text, "captain"); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 400); }
+      studioLog.emit({ type: "operating_rules_changed", workflow: "studio", actor: "captain", summary: project ? `operating rules changed for ${project}` : "Studio-wide operating rules changed", data: { project } });
+      return json(view());
+    }
     if (p === "/api/remote/me") return json({ kind: who.kind, device: who.kind === "phone" ? { id: who.device.id, name: who.device.name } : null, allowDrive: remote.allowDrive });
     if (p === "/api/remote") return json({ devices: remote.devices(), allowDrive: remote.allowDrive, tailscale: ts, serveOn, live: tsRunner.live, lan: lanState(),
       command: serveCommand(PORT).join(" "), offCommand: serveOffCommand().join(" "), pairUrl: ts.url });

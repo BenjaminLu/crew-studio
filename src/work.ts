@@ -7,6 +7,7 @@
 // allowlist, and the spend the provider reports.
 //   CREW_WORK_TIMEOUT_MS (default 15 min)   CREW_WORK_MAX_TOOLS (default 80)
 import { withSafetyRules } from "./skills";
+import { OperatingRules, withOperatingRules } from "./operating-rules";
 import { roundEnv } from "./secure";
 import { randomBytes } from "node:crypto";
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -24,6 +25,8 @@ export type WorkRun = {
   status: "running" | "done" | "failed" | "cancelled" | "rendering"; started: string; ended: string | null; tools: number;
   cost: Cost | null; claims: { id: string; addressed: boolean; how: string }[]; summary: string | null; version: number | null; error: string | null;
   log: WorkEvent[]; changed: string[]; renderProgress: number | null;
+  /** the hash of the operating-rules section the agent received */
+  operatingRules?: string;
 };
 
 const EDITABLE = new Set([".html", ".htm", ".css", ".js", ".mjs", ".svg", ".md", ".txt", ".json"]);
@@ -236,7 +239,8 @@ export class WorkRuns {
   private async drive(run: WorkRun, token: string, dir: string, text: string, system: string, provider: Provider, timeoutMs: number, studioUrl: string) {
     const env = roundEnv(provider.envKeys ?? [], { CREW_STUDIO_URL: studioUrl, CREW_TOOL_TOKEN: token, CREW_HTTP_MAX_ROUNDS: "40" });
     const cwd = join(this.dataDir, "work-cwd"); mkdirSync(cwd, { recursive: true }); // empty: the agent reaches files only through the work tools
-    const session = provider.start(withSafetyRules(system), WORK_TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.schema })), { studioUrl, token, cwd, env, mcpCommand: helperCommand("mcp") });
+    const rules = new OperatingRules(this.dataDir).section(null); run.operatingRules = rules.hash; // a library artifact belongs to no project: the Studio-wide rules
+    const session = provider.start(withOperatingRules(withSafetyRules(system), rules), WORK_TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.schema })), { studioUrl, token, cwd, env, mcpCommand: helperCommand("mcp") });
     let why: string | null = null;
     const stop = (reason: string) => { if (!why) { why = reason; session.interrupt(); } };
     this.live.set(run.id, () => stop("cancelled"));

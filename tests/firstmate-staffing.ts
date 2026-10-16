@@ -1,4 +1,5 @@
 import {mkdtempSync,rmSync,writeFileSync,readFileSync} from 'node:fs';
+import{OperatingRules,jobInstructions}from'../src/operating-rules';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {StaffingStore,staffingHash} from '../src/domain/staffing';
@@ -269,14 +270,14 @@ if(process.env.STAFFING_CONVERSATION==='1'){
    installStaffingGuard(e,store,()=>{if(!validProject)throw new Error('source project grant revoked');return project;});const def=e.defs.get(flow.id)!,draft={schema:1 as const,algorithm:'sha256-canonical-v1' as const,project,workflow:{id:def.id,version:1,sha256:staffingHash(def)},roles:{[role]:{provider:'codex' as const,model:'selected-model',effort:'high',skill:store.remember({ref,version:1,text:e.deps.skillText(ref)})}},review:{freshContexts:3,distinctProviders:false}},config=store.approve(draft,null,{run:'source',card:'captain',answerSeq:1});
    e.actions.hold=async owner=>{x=owner;await new Promise<void>(r=>releaseOwner=r);return'ok';};const run=e.start({workflow:flow.id,params:{project:'p',_staffing:config.hash}});await until(()=>!!x);
    const payloads:string[]=[],provider:any={id:'codex',model:'selected-model',reasoningEffort:'high',sandboxFree:true,start(system:string){starts++;payloads.push(system);return{interrupt(){},async *send(){yield{type:'turnEnd',status:'ok'}}}}},certified=new WeakMap<object,any>();certified.set(provider,{input:{},expires:mode==='cached'?Date.now()+30000:0,x});
-   const system=e.instructions(run,role,[]),admissionReceipt=e.deps.instructionReceipt(x,role,withSafetyRules(system),provider);
+   const system=e.instructions(run,role,[]),rules=new OperatingRules(h.data).section('p'),admissionReceipt=e.deps.instructionReceipt(x,role,jobInstructions(system,rules),provider);
    h.agents.providerAdmission=createNativeProviderAdmission({certified,engine:()=>e,select:async()=>{refreshes++;if(drift==='during-refresh')validProject=false;return{...provider,...drift==='refresh-provider'?{reasoningEffort:'low'}:{}};},pick:async()=>{throw new Error('unexpected uncertified selection');}});
    const unblock=await h.agents.queue.acquire({key:'blocker',task:'other-task',project:'other-project',deadline:Date.now()+10000,limits:()=>({global:1,project:1}),ready:()=>({ready:true}),waiting(){},admitted(){}});
-   const pending=h.agents.run({kind,title:'Strict queued staffing fixture',system:drift==='instructions'?system+' unauthorized changed instructions':system,text:'Offline only',tools:[],provider,ref:drift==='task'?'unrelated-task':run.id,admissionReceipt:drift==='forged'?{}:drift==='missing'?undefined:admissionReceipt,owns:()=>e.owns(x)}as any).then(job=>({job}),error=>({error}));
+   const pending=h.agents.run({kind,title:'Strict queued staffing fixture',system:drift==='instructions'?system+' unauthorized changed instructions':system,text:'Offline only',tools:[],provider,rules,ref:drift==='task'?'unrelated-task':run.id,admissionReceipt:drift==='forged'?{}:drift==='missing'?undefined:admissionReceipt,owns:()=>e.owns(x)}as any).then(job=>({job}),error=>({error}));
    await until(()=>h.agents.queue.snapshot().pending.length===1);ok(starts===0,`${kind}/${mode}/${drift}: queue blocks provider.start`);
    if(drift==='config')store.approve(draft,config.hash,{run:'source',card:'captain-new',answerSeq:2});if(drift==='skill')e.deps.skillText=()=> 'Changed native skill';if(drift==='project')validProject=false;if(drift==='provider')provider.model='wrong-model';
    unblock();const result=await pending;
-   if(drift==='none')ok(starts===1&&'job'in result&&result.job.status==='done'&&payloads[0]===withSafetyRules(system),`${kind}/${mode}: unchanged authority reaches actual start payload`);else ok(starts===0&&'error'in result,`${kind}/${mode}/${drift}: drift after queue produces zero provider.start`);
+   if(drift==='none')ok(starts===1&&'job'in result&&result.job.status==='done'&&payloads[0]===jobInstructions(system,rules),`${kind}/${mode}: unchanged authority reaches actual start payload`);else ok(starts===0&&'error'in result,`${kind}/${mode}/${drift}: drift after queue produces zero provider.start`);
    if(mode==='refreshed'&&(drift==='none'||drift==='during-refresh'))ok(refreshes===1,`${kind}/${drift}: actual expired certificate refresh path exercised`);
    releaseOwner();await until(()=>run.status==='succeeded');
   }finally{releaseOwner();for(const run of e.list())if(!['succeeded','failed','cancelled'].includes(run.status))await e.cancel(run.id,'cleanup');h.stop();rmSync(h.data,{recursive:true,force:true});}

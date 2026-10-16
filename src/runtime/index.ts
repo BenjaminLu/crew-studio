@@ -1,3 +1,4 @@
+import { refusesRulesPatch } from "../operating-rules";
 import {installStartupRecursion} from '../domain/startup-recursion';
 import {installReadinessViews,readinessNodes} from './readiness-view';
 import {installGitHubReviewWorkflow} from '../domain/github-review-workflow';
@@ -57,7 +58,7 @@ export type RuntimeDeps = {
   coffeeChoice?:()=>{provider:"codex";model:string;effort:string|null}|null;
   /** Studio's configured model per provider (chat settings, env, Codex config): the startup workflow's default when no exact model param was given. */
   startupModel?:(provider:"claude"|"codex")=>string|null|undefined;
-  generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference) => Promise<import("../providers/codex-image").CodexImage>;
+  generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference, rules?: import("../operating-rules").RulesSection) => Promise<import("../providers/codex-image").CodexImage>;
   staffingFacts?: () => Promise<StaffingFacts[]>;
   staffingAdmission?: StaffingAdmission;
   staffingProject?: (id:string) => StaffingProject;
@@ -231,6 +232,7 @@ export function createRuntime(d: RuntimeDeps) {
       }
       if (p === "/api/policies/auth-window" && !writing) return json({ grants: engine.grants.all() });
       if (p === "/api/policies" && writing) { if (b?.patch && "auth" in b.patch) return json({ error: "authorization windows are opened with /api/policies/auth-window" }, 400);
+        if (refusesRulesPatch(b?.patch)) return json({ error: "operating rules are edited by the captain in Settings, not through the policy API", code: "captainOnly" }, 403);
         if (b?.level === "project" && b?.project) engine.policies.setProject(String(b.project), b.patch ?? {}); else engine.policies.setOrg(b?.patch ?? {}); return json({ ok: true, org: engine.policies.org() }); }
       // ---------- intake ----------
       if (p === "/api/intake" && writing) return json(classifyIntent(defs, String(b?.text ?? ""), engine.policies.get("sensitive_paths", { project: b?.project ? String(b.project) : null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []));

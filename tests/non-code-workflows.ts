@@ -56,9 +56,9 @@ const fixture: any = { id: "fixture", model: "strict-local", sandboxFree: true, 
   } };
 } };
 const deps: any = { dataDir: data, agents, provider: () => fixture, defaultProvider: () => ({ provider: "fixture", model: "strict-local" }), log, send() {}, fmRoot: fm, protectedRoots: [fm], m3: { store, lane, runs: null }, fileorg, docs: {}, studioUrl: () => `http://127.0.0.1:${port}` };
-let imageCalls = 0, imageAborted = false;
-deps.generateImage = async (_prompt: string, authorize: () => void, signal: AbortSignal) => {
-  authorize(); if (signal.aborted) throw new Error("cancelled"); imageCalls++;
+let imageCalls = 0, imageAborted = false, imageRules: any[] = [];
+deps.generateImage = async (_prompt: string, authorize: () => void, signal: AbortSignal, _reference?: unknown, rules?: any) => {
+  authorize(); if (signal.aborted) throw new Error("cancelled"); imageCalls++; imageRules.push(rules);
   if (_prompt.includes("HOLD_IMAGE")) await new Promise<void>((_resolve, reject) => signal.addEventListener("abort", () => { imageAborted = true; reject(new Error("cancelled")); }, { once: true }));
   return { bytes: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP437DvPwAH/AM9TriEzAAAAABJRU5ErkJggg==", "base64"), width: 1, height: 1, mime: "image/png", provider: "codex", model: "fixture-image", effort: "low", sha256: "fixture" };
 };
@@ -151,6 +151,7 @@ const waiting = async (id: string, node = "accept") => { await until(() => E.car
 const imageRun = E.start({ workflow: "images", params: { provider: "codex" }, text: "Pink balloon" });
 const imageCard = await waiting(imageRun.id);
 ok(!!imageCard && imageCalls === 1 && !E.get(imageRun.id)!.ctx.library, "image generation waits for pinned captain acceptance before publication");
+ok(typeof imageRules[0]?.text === "string" && imageRules[0].text.startsWith("# Operating rules (set by the captain)") && /## Studio-wide rules/.test(imageRules[0].text) && /^[0-9a-f]{64}$/.test(imageRules[0].hash ?? ""), "the deliver image step hands the operating rules (with their hash) to the image job");
 await destinations(imageCard, "image");
 if (imageCard) await E.answer(imageCard.id, { choice: "changes", note: "Make the balloon pinker", by: "fixture captain", aligned: [0] });
 const revisedImageCard = await waiting(imageRun.id);

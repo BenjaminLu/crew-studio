@@ -34,7 +34,8 @@ import { helperCommand, helperReads } from "../self";
 import { entryOf, validate, type WDef, type WEdge, type WNode, type WorkflowDefs } from "./defs";
 import { locatorText, parseFinding, type Finding } from "./locator";
 import { materializeRoundDir, roundWorkPath } from "./round-paths";
-import { composeInstructions, withSafetyRules, Skills } from "../skills";
+import { composeInstructions, Skills } from "../skills";
+import { OperatingRules, jobInstructions } from "../operating-rules";
 
 export type NState = "pending" | "running" | "passed" | "failed" | "error" | "skipped" | "superseded";
 export type AgentPick = { provider: string; model: string | null; effort?: string | null };
@@ -780,9 +781,10 @@ export class Engine {
       const selected = this.deps.selectProvider ? await this.deps.selectProvider(x, { provider, model, ...(approvedJudge ? {effort: approvedJudge.effort} : {}) }, { role: man.id.includes("designer") ? "designer" : "judge", explicit: true }) : this.deps.provider(provider, model ?? undefined);
       if (j.distinct_providers && actual.has(selected.id)) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "distinct provider agreement resolved to a duplicate actual vendor", votes };
       const system = `${this.deps.approvedSkill?.(x.run, man.id.includes("designer") ? "designer" : "reviewer") ?? ""}\n\nYou are a judge for the check "${man.title.en}". Judge only what the input shows. Submit one valid judge_report; if its payload is rejected, correct it before ending. Then answer in one line.`;
-      const admissionReceipt=this.deps.instructionReceipt?.(x,man.id.includes("designer") ? "designer" : "reviewer",withSafetyRules(system),selected);
+      const rules = new OperatingRules(this.deps.dataDir).section(x.run?.params?.project || null);
+      const admissionReceipt=this.deps.instructionReceipt?.(x,man.id.includes("designer") ? "designer" : "reviewer",jobInstructions(system, rules),selected);
       const job = await this.deps.agents.run({ kind: `judge:${man.id}`, title: `${x.run?.id ?? "try"} judge ${man.id} #${i + 1}`, system,
-        text: `JUDGE ${man.id}\n${prompt}`, tools, admissionReceipt, provider: selected, ref: x.run?.id, signal: x.run && x.run.id !== "try" ? this.abortOf(x.run).signal : undefined, owns: x.run && x.run.id !== "try" ? () => this.owns(x) : undefined, maxTools: 4, timeoutMs: man.timeout_s * 1000,
+        text: `JUDGE ${man.id}\n${prompt}`, tools, admissionReceipt, provider: selected, ref: x.run?.id, project: x.run?.params?.project || null, rules, signal: x.run && x.run.id !== "try" ? this.abortOf(x.run).signal : undefined, owns: x.run && x.run.id !== "try" ? () => this.owns(x) : undefined, maxTools: 4, timeoutMs: man.timeout_s * 1000,
         sandbox: x.run ? this.roundSandbox(x, null, `judge-${man.id}-${i + 1}`) : { writes: [] } } as any);
       if (job.status !== "done" || !got) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: `tool error: judge ${provider} ${job.status === "done" ? "gave no judgement" : job.error}` };
       if (j.distinct_providers && actual.has(job.provider)) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "distinct provider agreement produced duplicate actual vendor", votes };
@@ -1155,13 +1157,14 @@ export class Engine {
       x.ctx.lastPrompt = { ...(x.ctx.lastPrompt ?? {}), [x.node.id]: base.slice(0, 6000) };
       const tl = Number(x.node.timeout_s ?? x.policy("round_timeout_s", 900));
       const system = mode.system(x, skill);
-      const admissionReceipt=this.deps.instructionReceipt?.(x, x.node.role ?? x.node.args?.role, withSafetyRules(system), prov);
+      const rules = new OperatingRules(this.deps.dataDir).section(x.run.params?.project || null); // read per round: an edit reaches the next round
+      const admissionReceipt=this.deps.instructionReceipt?.(x, x.node.role ?? x.node.args?.role, jobInstructions(system, rules), prov);
       const job = await this.deps.agents.run({ kind: `run:${modeName}`, title: `${x.run.id} ${x.node.label}${x.visit > 1 ? ` (visit ${x.visit})` : ""}`, system, text, admissionReceipt, tools: mode.tools(x), provider: prov,
-        ref: x.run.id, queueLease: true, signal: this.abortOf(x.run).signal, owns: () => this.owns(x) && hashInput(x.pick()) === pickIdentity, maxTools: (typeof mode.maxTools === "function" ? mode.maxTools(x) : mode.maxTools) ?? 60, timeoutMs: tl * 1000,
+        ref: x.run.id, project: x.run.params?.project || null, rules, queueLease: true, signal: this.abortOf(x.run).signal, owns: () => this.owns(x) && hashInput(x.pick()) === pickIdentity, maxTools: (typeof mode.maxTools === "function" ? mode.maxTools(x) : mode.maxTools) ?? 60, timeoutMs: tl * 1000,
         // a sandboxed round reaches its provider's API, plus the hosts policy egress.allow grants (e.g. a package registry)
         record: (() => { const b = briefFor(x); return { dir: join(this.root, x.run.id, "nodes", x.node.id, String(x.visit)), header: { run: x.run.id, node: x.node.id, round: x.visit, attempt: (x.rn.data.jobs ?? []).filter((j: any) => j.round === x.visit && !j.hop).length + (hop ? 0 : 1), head: x.ctx.head ?? null, brief: b?.id ?? null, ledger: b?.ledger ?? [], hop } }; })(),
         sandbox: this.roundSandbox(x, mode.sandbox?.(x) ?? null), onStart: (jid: string) => { x.rn.job = jid; x.save(); this.emit(x.run, "agent_started", `${x.node.label}: ${prov.id} · ${prov.model}`, { node: x.node.id, job: jid, provider: prov.id, model: prov.model }); } } as any);
-      x.rn.data = { ...x.rn.data, jobs: [...(x.rn.data.jobs ?? []), { id: job.id, round: x.visit, hop, provider: job.provider, model: job.model, status: job.status, cost: job.cost, tools: job.tools, error: job.error }] };
+      x.rn.data = { ...x.rn.data, jobs: [...(x.rn.data.jobs ?? []), { id: job.id, round: x.visit, hop, provider: job.provider, model: job.model, status: job.status, cost: job.cost, tools: job.tools, error: job.error, operatingRules: job.operatingRules?.hash ?? null }] };
       if (x.cancelled()) throw new Error("cancelled");
       if (job.status === "cancelled" && x.rn.swap) {
         const to = x.rn.swap; x.rn.swap = null;

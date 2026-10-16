@@ -83,7 +83,7 @@ export function createChanges(o: { dataDir: string; flows: Workflows; skills: Sk
       (c.hint ? `Fix hint: ${c.hint}\n` : "") + `\nStart with fs_list, read what you need, fix it, then answer.`;
     c.status = "fixing"; round.worker = { job: null, status: "running", said: null, commit: null }; save(c);
     emit(c, "round_started", `round ${round.n}: ${round.why.join("; ").slice(0, 200)}`, { round: round.n });
-    const j = await o.agents.run({ kind: "gate-fix", title: `${c.id} round ${round.n}`, system: WORKER(skill), text, tools, provider: o.provider(), ref: c.id, maxTools: 60 });
+    const j = await o.agents.run({ kind: "gate-fix", title: `${c.id} round ${round.n}`, system: WORKER(skill), text, tools, provider: o.provider(), ref: c.id, maxTools: 60, project: c.project });
     round.worker = { job: j.id, status: j.status, said: j.said.trim().slice(0, 600) || null, commit: null };
     if (git(wt(c), ["status", "--porcelain"]).out) {
       addPaths(wt(c), changedPaths(wt(c))); must(wt(c), ["commit", "-q", "-m", `crew: ${c.id} round ${round.n} fixes\n\n${round.why.join("\n")}`]);
@@ -100,7 +100,7 @@ export function createChanges(o: { dataDir: string; flows: Workflows; skills: Sk
     const diff = git(wt(c), ["diff", "--no-color", `${prev}..HEAD`]).out.slice(0, 20000);
     const text = `GATE REVIEW\nChange ${c.id}: ${c.title}\nDoor: ${c.door?.tier}. Round ${round.n}.\nGates now:\n${c.gates.map((g) => `- ${g.state.toUpperCase()} ${g.label}: ${g.detail.split("\n")[0]}`).join("\n")}\n\nDiff of this change${prev === c.baseCommit ? "" : " (this round)"}:\n${diff || "(no diff)"}`;
     c.status = "reviewing"; save(c);
-    const j = await o.agents.run({ kind: "gate-review", title: `${c.id} review ${round.n}`, system: REVIEWER(skill), text, tools, provider: o.provider(), ref: c.id, maxTools: 4 });
+    const j = await o.agents.run({ kind: "gate-review", title: `${c.id} review ${round.n}`, system: REVIEWER(skill), text, tools, provider: o.provider(), ref: c.id, maxTools: 4, project: c.project });
     const v = verdict as { verdict: "APPROVE" | "REJECT"; findings: string[] } | null;
     round.review = { verdict: v?.verdict ?? null, findings: v?.findings ?? (j.status === "done" ? ["the reviewer gave no verdict"] : [`the review failed: ${j.error}`]), job: j.id };
     emit(c, v?.verdict === "APPROVE" ? "review_approved" : "review_rejected", `review ${round.n}: ${v?.verdict ?? "no verdict"}`, { round: round.n, findings: round.review.findings.length });

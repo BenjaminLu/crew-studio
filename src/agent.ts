@@ -5,7 +5,7 @@ import {localUnrestricted} from "./local-execution";
 // are reached through Studio's /api/tools route with a token issued for that job.
 // Guardrails: a time limit, a tool-call limit, no environment secrets, an empty cwd.
 import { QueueRefusal, NativeQueue, type QueueRequest } from "./runtime/queue";
-import { withSafetyRules } from "./skills";
+import { OperatingRules, jobInstructions, type RulesSection } from "./operating-rules";
 import { redactJSON, redactText, roundEnv } from "./secure";
 import { roundProfile, sandboxInfo } from "./runtime/checks";
 import { roundPathRefusal } from "./runtime/round-paths";
@@ -22,6 +22,8 @@ export type AgentLog = { ts: string; kind: "start" | "tool" | "result" | "text" 
 export type AgentJob = {
   id: string; kind: string; title: string; provider: string; model: string; status: "running" | "done" | "failed" | "cancelled";
   started: string; ended: string | null; tools: number; cost: Cost | null; said: string; error: string | null; log: AgentLog[]; ref: string | null; reasoningEffort?: string | null; executionMode?: string;
+  /** the captain's operating rules this job received: the hash of the exact section text and the project it was read for */
+  operatingRules?: { hash: string; project: string | null };
 };
 const now = () => new Date().toISOString();
 
@@ -68,6 +70,10 @@ export class Agents {
   }
 
   private async execute(o: { signal?: AbortSignal; owns?: () => boolean; queueLease?: boolean; kind: string; title: string; system: string; text: string; tools: AgentTool[]; provider: Provider; timeoutMs?: number; maxTools?: number; ref?: string; onStart?: (id: string) => void;
+    /** the registered project the job works for: its operating rules join the Studio-wide ones in the prompt */
+    project?: string | null;
+    /** the operating-rules section read when the job was admitted (its instruction receipt covers it); else read now */
+    rules?: RulesSection;
     /** run the round in the OS sandbox: it writes only to these folders (and its tmp and throwaway home), reaches the network only through the egress proxy */
     sandbox?: { writes: string[]; reads?: string[]; cwd?: string; allow?: string[] } | null;
     /** the round's record (data/runs/<run>/nodes/<node>/<round>/): prompt.md written before the provider starts, stream.jsonl, report.json */
@@ -134,9 +140,11 @@ export class Agents {
       // the login basics and the provider's own declared key only: no other credential reaches a round
       const env = { ...roundEnv(envKeys, { CREW_STUDIO_URL: studioUrl, CREW_TOOL_TOKEN: token, CREW_HTTP_MAX_ROUNDS: "40" }), ...roundEnvAdd };
       // a credential never goes into a prompt (so it is never written into a round's record either)
-      const text = keepCredentialsOut(o.text, [token]), system = keepCredentialsOut(withSafetyRules(o.system), [token]); // the safety rules lead every agent's instructions
+      // the captain's operating rules, read now (an edit between two rounds reaches the next one), right after the safety rules
+      const rules = o.rules ?? new OperatingRules(this.dataDir).section(o.project ?? null); job.operatingRules = { hash: rules.hash, project: rules.project };
+      const text = keepCredentialsOut(o.text, [token]), system = keepCredentialsOut(jobInstructions(o.system, rules), [token]); // the safety rules lead every agent's instructions
       let rec: ReturnType<typeof roundRecord> | null = null;
-      try { rec = o.record ? roundRecord(o.record.dir, { ...o.record.header, job: id, provider: o.provider.id, model: o.provider.model, reasoningEffort: o.provider.reasoningEffort ?? null, executionMode:job.executionMode }, text, system) : null; }
+      try { rec = o.record ? roundRecord(o.record.dir, { ...o.record.header, job: id, operatingRules: rules.hash, provider: o.provider.id, model: o.provider.model, reasoningEffort: o.provider.reasoningEffort ?? null, executionMode:job.executionMode }, text, system) : null; }
       catch (e: any) { return refuse(`the round's record could not be written: ${e?.message ?? e}`); }
       let session: ReturnType<Provider["start"]>;
       try { session = o.provider.start(system, o.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.schema })), { studioUrl, token, cwd, env, mcpCommand: helperCommand("mcp"), sandbox, proxy: proxyUrl }); }
@@ -211,7 +219,7 @@ export function roundRecord(dir: string, header: Record<string, unknown>, text: 
     end(job: AgentJob) {
       flush(); put({ type: "status", status: job.status, error: job.error });
       const fd = openSync(join(dir, "report.json"), "w");
-      writeSync(fd, JSON.stringify({ job: job.id, status: job.status, error: job.error ? redactText(job.error) : null, said: redactText(job.said), tools: job.tools, cost: job.cost, started: job.started, ended: job.ended, prompt: name }, null, 1)); fsyncSync(fd); closeSync(fd);
+      writeSync(fd, JSON.stringify({ job: job.id, operatingRules: job.operatingRules ?? null, status: job.status, error: job.error ? redactText(job.error) : null, said: redactText(job.said), tools: job.tools, cost: job.cost, started: job.started, ended: job.ended, prompt: name }, null, 1)); fsyncSync(fd); closeSync(fd);
     },
   };
 }

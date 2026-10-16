@@ -12,15 +12,20 @@ import { codexNeeds, type ApprovedCodexConfig } from './needs';
 import { probeCodex } from './codex-probe';
 import { probeProcess } from './probe-process';
 import type { ProviderCapability } from './policy';
+import { OPERATING_RULES_HEADING, rulesHash, type RulesSection } from '../operating-rules';
 
 const MAX_IMAGE = 16 * 1024 * 1024;
-export type CodexImage = { bytes: Buffer; mime: 'image/png'; width: number; height: number; sha256: string; provider: 'codex'; model: string; effort: string | null };
+export type CodexImage = { bytes: Buffer; mime: 'image/png'; width: number; height: number; sha256: string; provider: 'codex'; model: string; effort: string | null;
+  /** hash of the operating-rules section the image job received */
+  operatingRules: string };
 export type CodexImageReference={bytes:Buffer;sha256:string};
 export type CodexImageOptions = {
   /** Host-owned complete coffee evidence; not accepted from HTTP/tool arguments. */
   contextProfile?: "coffee-kit";
   reference?:CodexImageReference;
   prompt: string; approved: ApprovedCodexConfig; authorize(): void; signal?: AbortSignal;
+  /** the captain's operating rules (Studio-wide and project), read by the caller at job start; required, never omitted */
+  rules: RulesSection;
   bin?: string; timeoutMs?: number;
   /** Source-owned dependency injection; never populated from a browser request. */
   probe?: (bin: string, signal?: AbortSignal) => Promise<ProviderCapability>;
@@ -69,6 +74,7 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
   if(reference){verifyImagePng(reference.bytes);if(createHash('sha256').update(reference.bytes).digest('hex')!==reference.sha256)throw new Error('Codex image reference hash differs');}
   const guard = () => { if (o.signal?.aborted) throw new Error('Codex image cancelled'); o.authorize(); };
   guard();
+  if (!o.rules || typeof o.rules.text !== 'string' || !o.rules.text.startsWith(OPERATING_RULES_HEADING) || rulesHash(o.rules.text) !== o.rules.hash) throw new Error('Codex image operating rules missing');
   if (typeof o.prompt !== 'string' || !o.prompt.trim() || Buffer.byteLength(o.prompt) > (o.contextProfile === "coffee-kit" ? 262144 : 16000) || !o.approved || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(o.approved.model) || o.approved.effort !== null && !['none','minimal','low','medium','high','xhigh','max','ultra'].includes(o.approved.effort)) throw new Error('Codex image request invalid');
   const timeout = o.timeoutMs ?? 180000;
   if (!Number.isInteger(timeout) || timeout < 100 || timeout > 240000) throw new Error('Codex image deadline invalid');
@@ -118,7 +124,7 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
     timer=setTimeout(()=>stop(new Error('Codex image deadline expired')),timeout);
     const call=(method:string,params:any)=>new Promise<any>((resolve,reject)=>{guard();const n=++id;pending.set(n,{resolve,reject});proc!.write({jsonrpc:'2.0',id:n,method,params});});
     await call('initialize',{clientInfo:{name:'crew-studio-image',version:'1.0.0'}});proc.write({jsonrpc:'2.0',method:'initialized'});guard();
-    const t=await call('thread/start',{model:o.approved.model,cwd:work,approvalPolicy:'never',sandbox:localUnrestricted()?'danger-full-access':'read-only',ephemeral:true,baseInstructions:'Generate exactly one requested PNG image using image generation only. No shell, web, file reading, tools, delegated tasks or permissions. Return the generated image, not a promise or instructions.',config:{'features.shell_tool':false,'features.image_generation':true,web_search:'disabled',...(o.approved.effort?{model_reasoning_effort:o.approved.effort}:{})}});guard();
+    const t=await call('thread/start',{model:o.approved.model,cwd:work,approvalPolicy:'never',sandbox:localUnrestricted()?'danger-full-access':'read-only',ephemeral:true,baseInstructions:'Generate exactly one requested PNG image using image generation only. No shell, web, file reading, tools, delegated tasks or permissions. Return the generated image, not a promise or instructions.\n\n'+o.rules.text,config:{'features.shell_tool':false,'features.image_generation':true,web_search:'disabled',...(o.approved.effort?{model_reasoning_effort:o.approved.effort}:{})}});guard();
     if(t?.model!==o.approved.model)throw new Error('Codex image actual model differs from approved model');
     thread=t?.thread?.id;if(typeof thread!=='string'||!thread)throw new Error('Codex image thread identity unavailable');
     const r=await call('turn/start',{threadId:thread,model:o.approved.model,effort:o.approved.effort,input:[{type:'text',text:`Generate exactly one PNG image. ${o.prompt}`,text_elements:[]},...(reference?[{type:'image',url:'data:image/png;base64,'+reference.bytes.toString('base64')}]:[])]});guard();
@@ -136,7 +142,7 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
       if(typeof item.result!=='string'||item.result.length>Math.ceil(MAX_IMAGE*4/3)+4||!item.result.length||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(item.result))throw new Error('Codex image bytes unavailable');bytes=Buffer.from(item.result,'base64');
     }
     const size=verifyImagePng(bytes);guard();
-    return {bytes,...size,mime:'image/png',sha256:createHash('sha256').update(bytes).digest('hex'),provider:'codex',model:o.approved.model,effort:o.approved.effort};
+    return {bytes,...size,mime:'image/png',sha256:createHash('sha256').update(bytes).digest('hex'),provider:'codex',model:o.approved.model,effort:o.approved.effort,operatingRules:o.rules.hash};
   } finally {
     clearTimeout(timer);o.signal?.removeEventListener('abort',abort);
     for(const w of pending.values())w.reject(new Error('Codex image owner closed'));pending.clear();

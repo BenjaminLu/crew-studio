@@ -1,5 +1,6 @@
 // Native non-code workflows share the persisted scheduler, sandboxed agent rounds,
 // check ledger and refine loop. No domain agent owns a human decision or a merge.
+import { OperatingRules, type RulesSection } from "../operating-rules";
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join, relative } from "node:path";
@@ -14,7 +15,7 @@ import { mergeDetail } from "./mergecard";
 import { verifyImagePng, type CodexImage } from "../providers/codex-image";
 import type { Engine, X } from "../runtime/engine";
 
-type Deps = { dataDir: string; artifacts: ArtifactStore; lane: any; fileorg: any; docs: any; generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference) => Promise<CodexImage> };
+type Deps = { dataDir: string; artifacts: ArtifactStore; lane: any; fileorg: any; docs: any; generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference, rules?: RulesSection) => Promise<CodexImage> };
 const hash = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 export function installDeliver(engine: Engine, d: Deps) {
@@ -36,7 +37,8 @@ export function installDeliver(engine: Engine, d: Deps) {
     const controller = new AbortController();
     const timer = setInterval(() => { if (x.cancelled() || !engine.owns(x)) controller.abort(); }, 100);
     try {
-      const image = await d.generateImage(refinement.prompt, authorize, controller.signal, refinement.reference);
+      const rules = new OperatingRules(d.dataDir).section(x.run.params.project || null); x.rn.data = { ...x.rn.data, operatingRules: rules.hash };
+      const image = await d.generateImage(refinement.prompt, authorize, controller.signal, refinement.reference, rules);
       authorize(); verifyImagePng(image.bytes);
       mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "image.png"), image.bytes);
       const id = old?.id ?? `out-${x.run.id.toLowerCase()}-draft`;

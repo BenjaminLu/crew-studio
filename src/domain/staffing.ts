@@ -4,7 +4,7 @@ import {existsSync,mkdirSync,readFileSync,writeFileSync,renameSync,lstatSync,rmS
 import {join,resolve,relative,sep} from 'node:path';
 import {ledgerKey} from '../runtime/checks';
 import {QueueRefusal} from '../runtime/queue';
-import {withSafetyRules} from '../skills';
+import {jobInstructions} from '../operating-rules';
 export function nativeStaffingSkillRef(role:string,workflow='code-firstmate'):string{
  const names:Record<string,string>=workflow==='coffee-kit'?{worker:'website','image-worker':'image',reviewer:'reviewer',designer:'designer'}:workflow==='code-firstmate'?{coordinator:'firstmate',worker:'worker',reviewer:'reviewer',designer:'designer'}:{};
  if(!Object.hasOwn(names,role))throw new Error('Unknown native staffing workflow or role');
@@ -130,7 +130,7 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
  const previousJob=engine.deps.authorizeProviderJob;
  engine.deps.authorizeProviderJob=(run:any,provider:any,o:any,phase:'before'|'launch')=>{previousJob?.(run,provider,o,phase);if(!applies(run?.def))return;
   const pin=o.admissionReceipt&&jobReceipts.get(o.admissionReceipt);if(!pin||pin.used||o.ref!==run.id||pin.x.run!==run||!engine.owns(pin.x)||pin.node!==pin.x.node.id||pin.visit!==pin.x.rn.visits||pin.attempt!==pin.x.rn.attempt||pin.head!==(run.ctx.head??null))throw new QueueRefusal('Native job staffing/owner receipt is missing, changed or consumed');
-  const c=verifyRun(run),role=c.roles[pin.role];if(c.hash!==pin.config||!role||provider.id!==role.provider||provider.model!==role.model||(provider.reasoningEffort??null)!==role.effort||createHash('sha256').update(withSafetyRules(o.system)).digest('hex')!==pin.hash)throw new QueueRefusal('Queued job configuration, role or actual instructions changed; confirm fresh staffing');
+  const c=verifyRun(run),role=c.roles[pin.role];if(c.hash!==pin.config||!role||provider.id!==role.provider||provider.model!==role.model||(provider.reasoningEffort??null)!==role.effort||!o.rules||createHash('sha256').update(jobInstructions(o.system,o.rules)).digest('hex')!==pin.hash)throw new QueueRefusal('Queued job configuration, role or actual instructions changed; confirm fresh staffing');
   if(phase==='launch')pin.used=true;
  };
 

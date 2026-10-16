@@ -2,15 +2,19 @@
 import{mkdtempSync,mkdirSync,writeFileSync,rmSync}from'node:fs';import{join}from'node:path';import{tmpdir}from'node:os';
 import{generateCodexImage,verifyImagePng,CodexImageFailure}from'../src/providers/codex-image';
 import type{ProviderCapability}from'../src/providers/policy';
+import{rulesSection}from'../src/operating-rules';
 let passed=0,failed=0;function ok(v:unknown,n:string){console.log(`${v?'ok':'FAIL'} ${n}`);v?passed++:failed++;}
 const root=mkdtempSync(join(tmpdir(),'crew-image-fixture-')),source=join(root,'source');mkdirSync(source);writeFileSync(join(source,'auth.json'),JSON.stringify({auth_mode:'chatgpt',last_refresh:'2026-10-15T00:00:00Z',tokens:{access_token:'abcdefgh.abcdefgh.abcdefgh',id_token:'fixture',account_id:'fixture',refresh_token:'ORIGINAL-NEVER-COPY'}}),{mode:0o600});
 const old=process.env.CODEX_HOME,oldKey=process.env.CODEX_API_KEY;process.env.CODEX_HOME=source;delete process.env.CODEX_API_KEY;
 const cap=():ProviderCapability=>({provider:'codex',available:true,auth:'verified',quota:'available',at:Date.now(),expires:Date.now()+30000,models:[{id:'fixture-model',efforts:['low']}]});
 const planted=join(root,'planted-outside.txt');writeFileSync(planted,'PLANTED_ONLY');
-const base={approved:{model:'fixture-model',effort:'low'},bin:join(import.meta.dir,'codex-image-fixture.mjs'),authorize(){},probe:async()=>cap(),timeoutMs:3000};
+const base={rules:rulesSection('IMAGE-RULE-7: never start a sign-in flow','',null),approved:{model:'fixture-model',effort:'low'},bin:join(import.meta.dir,'codex-image-fixture.mjs'),authorize(){},probe:async()=>cap(),timeoutMs:3000};
 async function refuses(mode:string,extra:Record<string,unknown>={}){let error='';try{await generateCodexImage({...base,prompt:`coffee MODE:${mode} PLANTED:${planted}`,...extra});}catch(e){error=(e as Error).message;ok(e instanceof CodexImageFailure && e.cleanupSafe===true,`${mode} rejection carries verified process cleanup receipt`);}ok(!!error,`${mode} refuses without image success`);return error;}
 try{
- let image=await generateCodexImage({...base,prompt:'coffee MODE:success'});ok(image.mime==='image/png'&&image.width===1&&image.height===1&&image.sha256.length===64&&image.provider==='codex'&&image.model==='fixture-model','actual sandboxed image completion validates PNG and exact provider/model');
+ let image=await generateCodexImage({...base,prompt:'coffee MODE:success'});
+ {const ruled=await generateCodexImage({...base,prompt:'coffee MODE:success RULES_MUST:IMAGE-RULE-7'});ok(ruled.operatingRules===base.rules.hash,'the image job sends the operating rules in its base instructions and returns their hash');}
+ await refuses('success',{prompt:'coffee MODE:success RULES_MUST:NOT-IN-THE-RULES'});
+ await refuses('success',{rules:undefined});await refuses('success',{rules:{...base.rules,text:'forged'}});ok(image.mime==='image/png'&&image.width===1&&image.height===1&&image.sha256.length===64&&image.provider==='codex'&&image.model==='fixture-model','actual sandboxed image completion validates PNG and exact provider/model');
  const longPrompt='coffee MODE:success '+ 'preserved context '.repeat(1200);
  await refuses('success',{prompt:longPrompt});
  const longImage=await generateCodexImage({...base,prompt:longPrompt,contextProfile:'coffee-kit'});ok(longImage.sha256===image.sha256,'host coffee profile accepts complete evidence beyond generic 16KB cap');

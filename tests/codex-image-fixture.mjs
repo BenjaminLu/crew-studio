@@ -12,20 +12,24 @@ const header=Buffer.alloc(13);header.writeUInt32BE(1);header.writeUInt32BE(1,4);
 const png=Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',header),chunk('IDAT',deflateSync(Buffer.from([0,161,90,28,255]))),chunk('IEND',Buffer.alloc(0))]);
 const out=x=>console.log(JSON.stringify(x));const rpc=(m,result)=>out({jsonrpc:'2.0',id:m.id,result});
 const event=(method,params)=>out({jsonrpc:'2.0',method,params});
+let base='';
 createInterface({input:process.stdin}).on('line',line=>{
  let m;try{m=JSON.parse(line);}catch{return;}if(!m.method)return;
  if(m.method==='initialize')return rpc(m,{});
  if(m.method==='thread/start'){
   if(m.params.approvalPolicy!=='never'||m.params.sandbox!=='read-only'||m.params.model!=='fixture-model'||m.params.config['features.shell_tool']!==false||m.params.config['features.image_generation']!==true)return process.exit(10);
+  // the captain's operating rules always lead the image job's base instructions
+  if(typeof m.params.baseInstructions!=='string'||!m.params.baseInstructions.includes('# Operating rules (set by the captain)'))return process.exit(12);base=m.params.baseInstructions;
   return rpc(m,{thread:{id:'thread-1'},model:'fixture-model'});
  }
  if(m.method!=='turn/start')return;
  if(m.params.model!=='fixture-model'||m.params.effort!=='low'||m.params.threadId!=='thread-1')return process.exit(11);
- const prompt=m.params.input[0].text,mode=prompt.split('MODE:')[1]?.trim().split(/\s/)[0]||'success',planted=prompt.match(/PLANTED:([^\n]+)/)?.[1];
+ const prompt=m.params.input[0].text,mustRule=prompt.match(/RULES_MUST:(\S+)/)?.[1],mode=prompt.split('MODE:')[1]?.trim().split(/\s/)[0]||'success',planted=prompt.match(/PLANTED:([^\n]+)/)?.[1];
  if(mode==='reference'){
   const ref=m.params.input[1],expected=prompt.match(/REFERENCE_SHA:([a-f0-9]{64})/)?.[1];
   if(m.params.input.length!==2||ref?.type!=='image'||typeof ref.url!=='string'||!ref.url.startsWith('data:image/png;base64,')||createHash('sha256').update(Buffer.from(ref.url.slice(22),'base64')).digest('hex')!==expected){event('turn/completed',{threadId:'thread-1',turn:{id:'turn-1',status:'failed'}});return;}
  }
+ if(mustRule&&!base.includes(mustRule))return process.exit(13);
  rpc(m,{turn:{id:'turn-1'}});
  event('item/completed',{threadId:'thread-1',turnId:'turn-1',item:{type:'userMessage',id:'user-1'}});
  if(mode==='timeout')return;
