@@ -5,6 +5,8 @@ const put=x=>process.stdout.write(JSON.stringify(x)+'\n');
 appendFileSync(trace,JSON.stringify({mode,phase:args[0]==='auth'?'auth':'model',home:process.env.HOME,config:process.env.CLAUDE_CONFIG_DIR,credentialKeys:['CLAUDE_CODE_OAUTH_TOKEN','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN'].filter(k=>process.env[k]),effort:args[args.indexOf('--effort')+1],settings:args.includes('--settings')?JSON.parse(args[args.indexOf('--settings')+1]):null})+'\n');
 if(JSON.stringify(args)==='["auth","status","--json"]'){
  if(mode==='auth-unknown'){put({loggedIn:'true',authMethod:'oauth_token',apiProvider:'firstParty'});process.exit(0);}
+ // macOS Keychain lookup needs the login user: without USER/LOGNAME the real CLI reports no login
+ if(mode==='keychain-user'&&!(process.env.USER&&process.env.LOGNAME)){put({loggedIn:false,authMethod:'none',apiProvider:'firstParty',configDirectory:root});process.exit(1);}
  if(mode==='missing'){put({loggedIn:false,authMethod:'none',apiProvider:'firstParty',configDirectory:root});process.exit(1);}
  put({loggedIn:true,authMethod:'claude.ai',apiProvider:mode==='third-party'?'bedrock':'firstParty',configDirectory:root,email:'PRIVATE_ACCOUNT_DO_NOT_RETURN'});process.exit(0);
 }

@@ -34,6 +34,8 @@ export function claudeFailureCode(m:any):'quotaExhausted'|'notLoggedIn'|'modelMi
  if(status!==undefined&&status!==null||m?.error||Array.isArray(m?.errors)&&m.errors.length||m?.is_error||m?.type==='result'&&m.subtype!=='success')return'cliError';return null;
 }
 const resolveBin=(bin:string)=>{for(const p of bin.includes('/')?[bin]:(process.env.PATH||'/usr/bin:/bin').split(':').map(d=>join(d,bin)))try{if(statSync(p).isFile())return realpathSync(p);}catch{}return null;};
+// macOS: the CLI finds its login-Keychain credential by the login user; without USER/LOGNAME it reports no login.
+const loginUser=()=>{const e:Record<string,string>={};for(const k of['USER','LOGNAME'])if(process.env[k])e[k]=process.env[k]!;return e;};
 const argv=(bin:string,args:string[])=>/\.(?:mjs|js|ts)$/.test(bin)?[process.execPath,bin,...args]:[bin,...args];
 export class ClaudeNative{
  private admitted=new Map<string,ClaudeCapability>();private authDenied=false;private cleanupBlocked=false;private denial:{code:string;resetAt:number|null;at:number}|null=null;
@@ -52,7 +54,7 @@ export class ClaudeNative{
    if(signal?.aborted)return this.base(p,{reason:'Claude status owner ended'});
    // Official read-only command in the selected ordinary account/config context.
    // Output is parsed privately; email/account details never leave this method.
-   const env={PATH:process.env.PATH||'/usr/bin:/bin',HOME:process.env.HOME||homedir(),LANG:'en_US.UTF-8',...(process.env.CLAUDE_CODE_OAUTH_TOKEN?{CLAUDE_CODE_OAUTH_TOKEN:process.env.CLAUDE_CODE_OAUTH_TOKEN}:{}),...(claudeBilling()==='api-key'&&process.env.ANTHROPIC_API_KEY?{ANTHROPIC_API_KEY:process.env.ANTHROPIC_API_KEY}:{}),...this.options.authEnv?.(),...process.env.CLAUDE_CONFIG_DIR?{CLAUDE_CONFIG_DIR:process.env.CLAUDE_CONFIG_DIR}:{}};
+   const env={PATH:process.env.PATH||'/usr/bin:/bin',HOME:process.env.HOME||homedir(),LANG:'en_US.UTF-8',...loginUser(),...(process.env.CLAUDE_CODE_OAUTH_TOKEN?{CLAUDE_CODE_OAUTH_TOKEN:process.env.CLAUDE_CODE_OAUTH_TOKEN}:{}),...(claudeBilling()==='api-key'&&process.env.ANTHROPIC_API_KEY?{ANTHROPIC_API_KEY:process.env.ANTHROPIC_API_KEY}:{}),...this.options.authEnv?.(),...process.env.CLAUDE_CONFIG_DIR?{CLAUDE_CONFIG_DIR:process.env.CLAUDE_CONFIG_DIR}:{}};
    proc=probeProcess(argv(binary,['auth','status','--json']),root,env,undefined,{timeoutMs:8000,bytes:32768});const abort=()=>proc?.kill();signal?.addEventListener('abort',abort,{once:true});let code;try{code=await proc.exited;await proc.stop();}finally{signal?.removeEventListener('abort',abort);}
    if(signal?.aborted||proc.output().failure)return this.base(p,{reason:'Claude auth metadata is unavailable in this context'});
    let j:any;try{j=JSON.parse(proc.output().out);}catch{return this.base(p,{reason:'Claude auth metadata schema is unsupported'});}
@@ -81,7 +83,7 @@ export class ClaudeNative{
   let proc:ReturnType<typeof probeProcess>|null=null,clean=true;const deadline=Date.now()+timeoutMs;const abort=()=>proc?.kill();signal.addEventListener('abort',abort,{once:true});
   try{
    if(signal.aborted)throw 0;const binary=this.currentBinary();if(!binary)throw 0;
-   const env={PATH:process.env.PATH||'/usr/bin:/bin',HOME:home,CLAUDE_CONFIG_DIR:config,TMPDIR:temp,CLAUDE_CODE_TMPDIR:temp,LANG:'en_US.UTF-8',DISABLE_NONESSENTIAL_TRAFFIC:'1',DISABLE_AUTOUPDATER:'1',...login.env,...p.effort?{CLAUDE_CODE_EFFORT_LEVEL:p.effort}:{}};
+   const env={PATH:process.env.PATH||'/usr/bin:/bin',HOME:home,...loginUser(),CLAUDE_CONFIG_DIR:config,TMPDIR:temp,CLAUDE_CODE_TMPDIR:temp,LANG:'en_US.UTF-8',DISABLE_NONESSENTIAL_TRAFFIC:'1',DISABLE_AUTOUPDATER:'1',...login.env,...p.effort?{CLAUDE_CODE_EFFORT_LEVEL:p.effort}:{}};
    let init=false,result=false,assistant=false,invalid=false;
    const args=['-p','Reply with OK only. Do not use any tools.','--output-format','stream-json','--verbose','--include-partial-messages','--model',p.model,...p.effort?['--effort',p.effort]:[],'--tools','','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--permission-mode','dontAsk','--permission-prompts','none','--setting-sources','','--settings',JSON.stringify(claudeSettings(p)),'--safe-mode','--no-chrome','--disable-slash-commands','--no-session-persistence','--restricted','--max-turns','1','--max-budget-usd','0.05'];
    proc=probeProcess(argv(binary,args),work,env,m=>{
