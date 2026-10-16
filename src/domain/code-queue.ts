@@ -2,6 +2,8 @@
 import { hashInput, INPUT_HASH_ALGORITHM } from "../runtime/checks";
 import { git } from "../git";
 import { scopesOverlap } from "../runtime/queue";
+import { git } from "../git";
+import { existsSync } from "node:fs";
 import type { Engine, Run, X } from "../runtime/engine";
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));
 // Both recovery and competing Tasks read the same signed reservation authority.
@@ -97,6 +99,49 @@ function verifiedMerge(this: Engine, r: Run, expected?: { project: string; repo:
     const h = current.out.trim(); if (!current.ok || !/^[0-9a-f]{40}$/.test(h)) return false;
     return git(d.repo, ["merge-base", "--is-ancestor", d.head, h]).ok;
   }
+export type ScopeBlocker = { run: string; title: string; scope: string[]; identityUnavailable?: boolean };
+/** Read-only reservation projection shared by spec checks and build admission.
+ * A spec is not a reservation. Terminal status is not proof of release either.
+ * Unknown identity fails closed; only an authenticated prefix can narrow it.
+ */
+export function scopeBlockers(engine: Engine, run: Run): ScopeBlocker[] {
+  const repo = engine.queueRepo(run.ctx.repo), project = engine.queueProject(run);
+  const blockers: ScopeBlocker[] = [];
+  for (const other of engine.list()) {
+    if (other.id === run.id) continue;
+    const records = engine.trusted(other.id), rec = records.entries.filter(e => e.record === "scope-admission").at(-1);
+    if (records.ok && !rec && !other.ctx.nativeAdmission) {
+      // A clean, never-admitted spec may coexist. Unexpected worktree edits
+      // cannot silently acquire or release write authority through this path.
+      // Normal terminal cleanup removes a never-admitted worktree but keeps
+      // its context for history. No signed reservation exists to retain here.
+      if (["succeeded", "failed", "cancelled"].includes(other.status) && other.ctx.worktree && !existsSync(other.ctx.worktree)) continue;
+      if (other.ctx.worktree && engine.queueRepo(other.ctx.repo) === repo && engine.queueProject(other) === project) {
+        let pristine = false;
+        try {
+          const head = git(other.ctx.worktree, ["rev-parse", "HEAD"]);
+          const status = git(other.ctx.worktree, ["--no-optional-locks", "status", "--porcelain=v1", "--untracked-files=all"]);
+          pristine = head.ok && status.ok && !status.out && head.out === other.ctx.baseCommit && head.out === other.ctx.head;
+        } catch {}
+        if (!pristine) blockers.push({ run: other.id, title: other.title, scope: [], identityUnavailable: true });
+      }
+      continue;
+    }
+    let held: any;
+    try { held = signedReservation(engine, other, records).signed; if (!held) throw new Error("no signed reservation"); }
+    catch (error) {
+      const first = error instanceof ReservationUnavailable ? error.first : null;
+      if (first && (first.repo !== repo || first.project !== project)) continue;
+      // An authenticated prefix bounds unknown authority to its held paths.
+      // Preserve those paths rather than trusting a later mutable cache.
+      blockers.push({ run: other.id, title: other.title, scope: first?.scope ?? [], identityUnavailable: true });
+      continue;
+    }
+    if (held.repo !== repo || held.project !== project || engine.verifiedMerge(other)) continue;
+    blockers.push({ run: other.id, title: other.title, scope: reservedScope(held) });
+  }
+  return blockers;
+}
 function scopeState(this: Engine, x: X) {
     if (x.run.ctx.nativeQueueVersion !== 1) throw new Error("historical round has no native queue binding; fresh preparation required");
     const project = this.queueProject(x.run), repo = this.queueRepo(x.ctx.repo), trusted = this.trusted(x.run.id);
@@ -115,21 +160,9 @@ function scopeState(this: Engine, x: X) {
     const replacement=recoveryReplacement(trusted,prior,acceptanceRecord);
     if (pin && !replacement && (!sameReservation || !upgradingLegacy && (![2,3].includes(pin.version) || pin.hashAlgorithm !== INPUT_HASH_ALGORITHM || pin.specHash !== specHash))) throw new Error("native scope pin changed or uses unknown hash algorithm; fresh preparation required");
     for (const id of deps) { const parent = this.get(id); if (!parent || !this.verifiedMerge(parent, { project, repo })) return { ready: false, reason: `dependency ${id} has no verified authoritative merge` }; }
-    for (const other of this.list()) {
-      if (other.id === x.run.id) continue;
-      const records = this.trusted(other.id), rec = records.entries.filter(e => e.record === "scope-admission").at(-1);
-      if (records.ok && !rec && !other.ctx.nativeAdmission) continue;
-      let held: any;
-      try { held = signedReservation(this, other, records).signed; if (!held) throw new Error("no signed reservation"); }
-      catch (error) {
-        // Only the fully verified first reservation can establish a different
-        // target. Rejected later fields and mutable context carry no authority.
-        const first = error instanceof ReservationUnavailable ? error.first : null;
-        if (first && (first.repo !== repo || first.project !== project || !scopesOverlap(acceptance.scope, first.scope))) continue;
-        return { ready: false, reason: `scope identity unavailable for ${other.id}` };
-      }
-      if (held.repo !== repo || held.project !== project) continue;
-      if (!this.verifiedMerge(other) && scopesOverlap(acceptance.scope, reservedScope(held))) return { ready: false, reason: `scope held by ${other.id} until verified merge` };
+    for (const blocker of scopeBlockers(this, x.run)) {
+      if (blocker.identityUnavailable && (!blocker.scope.length || scopesOverlap(acceptance.scope, blocker.scope))) return { ready: false, reason: `scope identity unavailable for ${blocker.run}` };
+      if (scopesOverlap(acceptance.scope, blocker.scope)) return { ready: false, reason: `scope held by ${blocker.run} until verified merge` };
     }
     return { ready: true };
   }

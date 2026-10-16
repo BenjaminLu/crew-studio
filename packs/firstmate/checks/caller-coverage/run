@@ -8,6 +8,30 @@ process.stdin.on('data', d => input += d).on('end', () => {
   const scope = (i.artifact?.data?.scope ?? i.artifact?.scope ?? []).map(String);
   const inScope = p => scope.some(g => g === p || p.startsWith(g.replace(/\/?\*\*.*$/, '').replace(/\/$/, '') + '/'));
   if (!root || !fs.existsSync(root)) { console.log(JSON.stringify({verdict:'error',findings:[],evidence:[],proves:[],score:null})); return; }
+  // Verification impact is read-only and never seeds new shared write roots.
+  const artifact = i.artifact?.data ?? i.artifact ?? {};
+  const verificationScope = Object.hasOwn(artifact, 'verificationScope') ? artifact.verificationScope : [];
+  const verificationFiles = new Set(), invalidVerification = [];
+  const realRoot = fs.realpathSync(root);
+  for (const entry of Array.isArray(verificationScope) ? verificationScope : [verificationScope]) {
+    let valid = typeof entry === 'string' && entry.length > 0 && !path.isAbsolute(entry)
+      && !/[\\*?{}\[\]:]/.test(entry) && entry.split('/').every(part => part && part !== '.' && part !== '..');
+    if (valid) {
+      try {
+        const full = path.join(root, entry), real = fs.realpathSync(full);
+        valid = fs.statSync(full).isFile() && real.startsWith(realRoot + path.sep);
+      } catch { valid = false; }
+    }
+    if (!valid || !Array.isArray(verificationScope)) invalidVerification.push({
+      locator: {type:'file',path:'spec.json'}, message:'verificationScope must contain explicit existing repository file paths',
+      expected:'use a repository-relative file path without globs, directories, traversal or external symlink targets',
+      class:'invalid-verification-scope', severity:'blocking'
+    });
+    else verificationFiles.add(entry);
+  }
+  if (invalidVerification.length) {
+    console.log(JSON.stringify({verdict:'fail',score:0,findings:invalidVerification.slice(0,30),evidence:[],proves:[]})); return;
+  }
   const extensions = ['.js','.mjs','.cjs','.ts','.tsx','.jsx','.sh','.py'];
   const files = [];
   function walk(d) { for (const n of fs.readdirSync(d)) { if (['.git','node_modules'].includes(n)) continue; const p=path.join(d,n), st=fs.lstatSync(p); if(st.isDirectory())walk(p); else if(st.isFile() && st.size<400000 && (extensions.includes(path.extname(n)) || (!path.extname(n) && /^#!.*\b(?:ba|da|z)?sh\b/.test(fs.readFileSync(p,'utf8').split('\n')[0]))))files.push(path.relative(root,p)); } }
@@ -22,7 +46,7 @@ process.stdin.on('data', d => input += d).on('end', () => {
     return candidates.find(p=>fs.existsSync(p) && fs.lstatSync(p).isFile()) || null;
   };
   for(const caller of files){
-    if(inScope(caller))continue;
+    if(inScope(caller) || verificationFiles.has(caller))continue;
     const text=fs.readFileSync(path.join(root,caller),'utf8').replace(/\/\*[\s\S]*?\*\//g,m=>m.replace(/[^\n]/g,' ')).replace(/^\s*(?:\/\/|#).*$/gm,'');
     const refs=[];
     if(/\.[cm]?[jt]sx?$/.test(caller)) {
@@ -69,7 +93,7 @@ process.stdin.on('data', d => input += d).on('end', () => {
       }
     }
     const seen=new Set();
-    for(const r of refs){const target=resolve(caller,r.spec);if(!target||!shared.has(target)||seen.has(target))continue;seen.add(target);const sh=path.relative(root,target);findings.push({locator:{type:'file',path:caller,line:text.slice(0,r.at).split('\n').length},message:`${caller} uses ${sh} but is not in the scope`,expected:`add ${caller} (or its folder) to the scope`,class:'caller-out-of-scope',severity:'blocking'});}
+    for(const r of refs){const target=resolve(caller,r.spec);if(!target||!shared.has(target)||seen.has(target))continue;seen.add(target);const sh=path.relative(root,target);findings.push({locator:{type:'file',path:caller,line:text.slice(0,r.at).split('\n').length},message:`${caller} uses ${sh} but is not in scope or verificationScope`,expected:`add ${caller} to read-only verificationScope, or to scope only when modification is necessary`,class:'caller-out-of-scope',severity:'blocking'});}
   }
   console.log(JSON.stringify({verdict:findings.length?'fail':'pass',score:findings.length?0:1,findings:findings.slice(0,30),evidence:[],proves:[]}));
 });

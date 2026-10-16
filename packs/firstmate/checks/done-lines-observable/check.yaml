@@ -6,7 +6,26 @@ kind: judged
 blocking: false
 needs: [artifact]
 judge:
-  prompt: "The J part of done-lines-provable: for each done line, can the test it names actually observe the behaviour the line describes? Report a finding with locator {type: text, section: done[<index>]} for each line that cannot. Verdict fail if any line cannot be observed."
+  prompt: >-
+    Review SPECIFICATION-STAGE acceptance plans, not executed test results.
+    A named test may be new, not yet implemented and not present on disk.
+    Never require an existing test file, an executed PASS, a base failure log or
+    build evidence at this stage. Do not infer failure merely from their absence.
+    Judge whether each done line defines an observable behavior, a concrete
+    input/action or scenario, an expected assertion or outcome, and a proposed
+    named test capable of observing it. An explicit human acceptance gate may
+    describe its evidence and decision instead of an automated assertion.
+    Naming a test alone is insufficient: vague claims or a test with no plausible
+    observation of the behavior still fail. For each defective line report locator
+    {type: text, section: done[<index>]}, quote the actual supplied line, identify
+    the missing observable/scenario/oracle, and provide an actionable replacement
+    acceptance plan in expected. Do not invent repository or execution facts;
+    only the supplied specification is available to this review.
+    A pass means the acceptance plan is observable, NOT that the feature or tests
+    passed. Proposed fail-first means an expected semantic failure on base after
+    implementing the test, not a claim of an already executed failure.
+    Build-stage firstmate/fail-first and gate-failfirst remain responsible for
+    real current-head execution evidence; this spec verdict cannot replace them.
   quorum: { n: 1, of: 1 }
 params: { type: object, properties: {} }
 timeout_s: 300

@@ -1,6 +1,6 @@
 id: caller-coverage
 version: 1.0.0
-title: { en: "Every caller and mirror of a changed shared file is in scope", zh-TW: "共用檔的每個呼叫者與鏡像都在範圍內" }
+title: { en: "Every caller of a changed shared file has write or verification coverage", zh-TW: "變更共用檔的引用者都有修改或唯讀驗證範圍" }
 applies_to: [spec, code-diff]
 kind: deterministic
 blocking: true

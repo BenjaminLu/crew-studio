@@ -2,7 +2,7 @@ import {OperatingRules,jobInstructions} from "../operating-rules";
 import {localUnrestricted} from "../local-execution";
 import { codeHandoffView } from "./code-handoff";
 import { installCodeRecovery } from "./code-recovery";
-import { installCodeQueue } from "./code-queue";
+import { installCodeQueue, scopeBlockers } from "./code-queue";
 import {GitHubPoller} from '../github-poller';
 // The coding pipeline's runtime side (packs/firstmate, docs/code-firstmate-pipeline.md):
 // a local git repository, a worktree on <branch_prefix><run>, the spec (what, why,
@@ -214,7 +214,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   engine.artifacts.spec = (x) => ({ type: "spec", workdir: x.ctx.worktree ?? null, data: x.ctx.spec ?? null, version: x.ctx.spec?.version ?? 0 });
   engine.artifacts.plan = (x) => ({ type: "plan", workdir: x.ctx.worktree ?? null, data: x.ctx.plan ?? null });
   engine.artifacts.run = (x) => ({ type: "run", workdir: x.ctx.repo ?? null, id: x.run.id, workflow: x.run.workflow });
-  engine.needs.inflight = (x) => engine.list().filter((r) => r.id !== x.run.id && ["running", "waiting", "paused"].includes(r.status) && r.ctx.repo && r.ctx.repo === x.ctx.repo && r.ctx.spec?.scope).map((r) => ({ run: r.id, title: r.title, scope: r.ctx.spec.scope }));
+  engine.needs.inflight = (x) => scopeBlockers(engine, x.run);
   engine.needs.texts = (x) => { const s = x.ctx.spec; if (!s) return []; return [{ section: "title", text: s.title }, { section: "what", text: s.what }, ...s.why.map((t: string, i: number) => ({ section: `why[${i}]`, text: t })), ...s.done.map((t: string, i: number) => ({ section: `done[${i}]`, text: t.replace(/(tests?\/[\w./-]+|[\w./-]+\.test\.\w+)/g, "") })), ...(s.explain?.en ? [{ section: "explain.en", text: s.explain.en }] : []),
     // the zh-TW the cards show: checked here, at the spec, so an English or placeholder translation goes back to the coordinator before any card
     ...(s.zh?.title ? [{ section: "zh-TW.title", text: s.zh.title }] : []), ...(s.zh?.why ?? []).map((t: string, i: number) => ({ section: `zh-TW.why[${i}]`, text: t })), ...(s.explain?.["zh-TW"] ? [{ section: "zh-TW.explain", text: s.explain["zh-TW"] }] : [])]; };
@@ -256,7 +256,13 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const F = (locator: any, message: string, expected: string, cls: string) => ({ locator, message, expected, class: cls, severity: "blocking" as const });
   engine.natives.overlap = (i) => {
     const mine: string[] = i.artifact?.data?.scope ?? []; const f: any[] = [];
-    for (const r of i.inflight ?? []) for (const p of mine) if (r.scope.some((q: string) => inScope([q], p.replace(/\/$/, "/x")) || inScope([p], q.replace(/\/$/, "/x")))) f.push(F({ type: "text", section: "scope" }, `${p} overlaps ${r.run} (${r.title})`, `wait for ${r.run} or narrow the scope`, "scope-overlap"));
+    for (const r of i.inflight ?? []) {
+      if (r.identityUnavailable && !r.scope.length) {
+        f.push(F({ type: "text", section: "scope" }, `scope identity for ${r.run} (${r.title}) is unavailable`, `inspect ${r.run}'s signed reservation and worktree; do not take its scope`, "scope-identity-unavailable"));
+        continue;
+      }
+      for (const p of mine) if (r.scope.some((q: string) => inScope([q], p.replace(/\/$/, "/x")) || inScope([p], q.replace(/\/$/, "/x")))) f.push(F({ type: "text", section: "scope" }, `${p} overlaps ${r.run} (${r.title})${r.identityUnavailable ? " (reservation history unavailable)" : ""}`, `wait for ${r.run} or narrow the write scope; read-only callers belong in verificationScope`, "scope-overlap"));
+    }
     return { verdict: f.length ? "fail" : "pass", score: f.length ? 0 : 1, findings: f };
   };
   /** The door: the spec's scope (and, once code exists, the diff) against the sensitive paths; a captain's pick on the door card wins. data.route picks the edge. */
@@ -576,13 +582,14 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const roundHooks = (write: boolean, skipInstall = false) => ({ begin: beginRound(write, skipInstall), end: endRound });
 
   // ---------- agent modes ----------
-  const specTool = (x: X): AgentTool => ({ name: "spec_write", description: "Write the spec, once: title, what, why, the done lines (each names the test file that proves it and says it fails on base), the scope (paths the change may touch, including every caller), the door (one-way when it touches a sensitive path), a plain explain block in en and zh-TW, and zh: the title and the why written in Traditional Chinese (a real translation, not a placeholder; code names and paths stay as they are).",
-    schema: { type: "object", properties: { title: { type: "string" }, what: { type: "string" }, why: { type: "array", items: { type: "string" } }, done: { type: "array", items: { type: "string" } }, scope: { type: "array", items: { type: "string" } },
+  const specTool = (x: X): AgentTool => ({ name: "spec_write", description: "Write the spec, once: title, what, why, the done lines (each names a planned acceptance test, observable scenario/assertion and expected semantic failure on base; do not claim execution), the scope (only paths the change may modify), optional verificationScope (exact existing repo-relative caller files to read and verify, never write authority), the door (one-way when it touches a sensitive path), a plain explain block in en and zh-TW, and zh: the title and the why written in Traditional Chinese (a real translation, not a placeholder; code names and paths stay as they are).",
+    schema: { type: "object", properties: { title: { type: "string" }, what: { type: "string" }, why: { type: "array", items: { type: "string" } }, done: { type: "array", items: { type: "string" } }, scope: { type: "array", items: { type: "string" } }, verificationScope: { type: "array", maxItems: 200, items: { type: "string" } },
       door: { type: "object", properties: { kind: { type: "string", enum: ["one-way", "two-way"] }, reason: { type: "string" } }, required: ["kind", "reason"] }, explain: { type: "object", properties: { en: { type: "string" }, "zh-TW": { type: "string" } } },
       zh: { type: "object", properties: { title: { type: "string" }, why: { type: "array", items: { type: "string" } } }, required: ["title", "why"] } }, required: ["title", "what", "why", "done", "scope", "door", "explain", "zh"] },
     run: (a) => {
       const arr = (v: any) => (Array.isArray(v) ? v : v ? [v] : []).map(String).filter(Boolean);
       x.ctx.spec = { title: String(a.title ?? x.run.title).slice(0, 160), what: String(a.what ?? "").slice(0, 2000), why: arr(a.why).slice(0, 8), done: arr(a.done).slice(0, 12), scope: arr(a.scope).slice(0, 40),
+        ...(a.verificationScope !== undefined ? { verificationScope: a.verificationScope } : {}),
         door: a.door && typeof a.door === "object" ? { kind: String(a.door.kind ?? ""), reason: String(a.door.reason ?? "").slice(0, 400) } : null,
         explain: a.explain && typeof a.explain === "object" ? { en: String(a.explain.en ?? "").slice(0, 2000), "zh-TW": String(a.explain["zh-TW"] ?? "").slice(0, 2000) } : null,
         zh: a.zh && typeof a.zh === "object" ? { title: String(a.zh.title ?? "").slice(0, 160), why: arr(a.zh.why).slice(0, 8) } : null, version: (x.ctx.spec?.version ?? 0) + 1 };
@@ -592,7 +599,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     ...roundHooks(false, true), // source-only analysis needs no package installation
     sandbox: (x) => { const wt = x.ctx.worktree; return wt && existsSync(wt) ? { writes: [], reads: [wt], cwd: wt } : null; }, // reads the worktree, writes nothing of it
     tools: (x) => [...READ_ONLY(shellOk(x)), specTool(x)], maxTools: 60,
-    system: (x, skill) => `${skill}\n\nYou write the spec for one change to a local repository. Read the code with the fs_* tools (read-only), then call spec_write once. Budget: use at most 40 read/search calls; reserve the remaining calls for spec_write and schema corrections. Stop exploring once the relevant callers and tests are known. Never finish without spec_write; record unverified details as explicit scope questions rather than spending the entire budget on exploration. Say WHAT and WHY; never HOW (no line numbers, no steps). Every done line names the test file that proves it and says it fails on base. Write in plain English: no will/should/could, no "ensure", "utilize", "via", "etc.". Answer in one line when done.`,
+    system: (x, skill) => `${skill}\n\nYou write the spec for one change to a local repository. Read the code with the fs_* tools (read-only), then call spec_write once. Budget: use at most 40 read/search calls; reserve the remaining calls for spec_write and schema corrections. Stop exploring once the relevant callers and tests are known. Never finish without spec_write; record unverified details as explicit scope questions rather than spending the entire budget on exploration. Say WHAT and WHY; never HOW (no line numbers, no steps). Every done line names the proposed acceptance test and its expected base failure; planned tests are not executed fail-first evidence. Keep write scope limited to intended edits. List exact existing read-only callers in verificationScope; these never grant write permission or become additional changed roots. Explain the verification obligation for those callers. Write in plain English: no will/should/could, no "ensure", "utilize", "via", "etc.". Answer in one line when done.`,
     prompt: (x) => { const b = roundBrief(x, "spec"); const note = x.ctx.answers?.dispatch?.choice === "rescope" ? x.ctx.answers.dispatch.note : x.ctx.answers?.["step-back"]?.choice === "rescope" ? x.ctx.answers["step-back"].note : x.ctx.answers?.["scope-card"]?.note;
       return `SPEC DRAFT\nRun ${x.run.id} · draft ${x.visit}. Repository ${x.ctx.repo} (base ${x.ctx.base}).\nCaptain's intent:\n${x.run.text || x.run.title}\n${note ? `\nThe captain asked for changes: ${note}\n` : ""}${x.visit > 1 ? `${briefSection(b)}${b.brief ? `The last draft:\n${specMd(x.ctx.spec)}\n` : ""}` : ""}\nStart with fs_list.`; },
     after: (x) => { if (!x.ctx.spec || x.ctx.spec.version < x.visit) throw new Error("the spec writer did not call spec_write"); x.rn.note = `${x.ctx.spec.title}: ${x.ctx.spec.done.length} done lines, scope ${x.ctx.spec.scope.join(", ")}`; return "ok"; },
@@ -1021,6 +1028,6 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
 
 export function specMd(s: any): string {
   if (!s) return "(no spec yet)\n";
-  return `# ${s.title}\n\nWhat: ${s.what}\n\nWhy:\n${(s.why ?? []).map((w: string) => `- ${w}`).join("\n")}\n\nDone when:\n${(s.done ?? []).map((d: string, i: number) => `${i + 1}. ${d}`).join("\n")}\n\nScope: ${(s.scope ?? []).join(", ")}\nDoor: ${s.door?.kind ?? "?"}${s.door?.reason ? ` (${s.door.reason})` : ""}\n${s.explain?.en ? `\nExplain: ${s.explain.en}\n` : ""}`;
+  return `# ${s.title}\n\nWhat: ${s.what}\n\nWhy:\n${(s.why ?? []).map((w: string) => `- ${w}`).join("\n")}\n\nDone when:\n${(s.done ?? []).map((d: string, i: number) => `${i + 1}. ${d}`).join("\n")}\n\nScope: ${(s.scope ?? []).join(", ")}\nRead/verification only (no write authority): ${(s.verificationScope ?? []).join(", ")}\nDoor: ${s.door?.kind ?? "?"}${s.door?.reason ? ` (${s.door.reason})` : ""}\n${s.explain?.en ? `\nExplain: ${s.explain.en}\n` : ""}`;
 }
 export { locatorText };
