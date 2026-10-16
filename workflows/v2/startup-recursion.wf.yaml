@@ -1,0 +1,220 @@
+{
+  "id": "startup-recursion",
+  "name": "創業 recursion",
+  "kind": "startup-recursion",
+  "version": 1,
+  "description": "Claude pitches and revises; Codex critiques. Up to three rounds, then captain acceptance. Text only.",
+  "intent": {
+    "keywords": [
+      "創業",
+      "startup recursion",
+      "創業比賽"
+    ]
+  },
+  "params": {
+    "generatedWorkflow": {
+      "label": "Optional Firstmate generated candidate manifest JSON"
+    },
+    "founderModel": {
+      "label": "Exact Claude model (optional, otherwise configured model)"
+    },
+    "judgeModel": {
+      "label": "Exact Codex model (optional, otherwise configured model)"
+    }
+  },
+  "roles": [
+    {
+      "id": "founder",
+      "label": "Claude 創業者",
+      "provider": "claude",
+      "skill": "bundled:workflows/skills/startup-founder.md"
+    },
+    {
+      "id": "judge",
+      "label": "Codex 評審",
+      "provider": "codex",
+      "skill": "bundled:workflows/skills/startup-judge.md"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "choose",
+      "kind": "card",
+      "label": "選擇執行流程",
+      "x": 0,
+      "y": 0,
+      "args": {
+        "mode": "startup-choice"
+      }
+    },
+    {
+      "id": "pitch1",
+      "kind": "agent",
+      "label": "Claude 提案",
+      "x": 0,
+      "y": 0,
+      "role": "founder",
+      "mode": "startup-pitch",
+      "args": {
+        "round": 1
+      },
+      "timeout_s": 900
+    },
+    {
+      "id": "judge1",
+      "kind": "agent",
+      "label": "Codex 銳評 1",
+      "x": 0,
+      "y": 0,
+      "role": "judge",
+      "mode": "startup-judge",
+      "args": {
+        "round": 1
+      },
+      "timeout_s": 900
+    },
+    {
+      "id": "pitch2",
+      "kind": "agent",
+      "label": "Claude 修訂 2",
+      "x": 0,
+      "y": 0,
+      "role": "founder",
+      "mode": "startup-pitch",
+      "args": {
+        "round": 2
+      },
+      "timeout_s": 900
+    },
+    {
+      "id": "judge2",
+      "kind": "agent",
+      "label": "Codex 銳評 2",
+      "x": 0,
+      "y": 0,
+      "role": "judge",
+      "mode": "startup-judge",
+      "args": {
+        "round": 2
+      },
+      "timeout_s": 900
+    },
+    {
+      "id": "pitch3",
+      "kind": "agent",
+      "label": "Claude 修訂 3",
+      "x": 0,
+      "y": 0,
+      "role": "founder",
+      "mode": "startup-pitch",
+      "args": {
+        "round": 3
+      },
+      "timeout_s": 900
+    },
+    {
+      "id": "judge3",
+      "kind": "agent",
+      "label": "Codex 銳評 3",
+      "x": 0,
+      "y": 0,
+      "role": "judge",
+      "mode": "startup-judge",
+      "args": {
+        "round": 3
+      },
+      "timeout_s": 900
+    },
+    {
+      "id": "accept",
+      "kind": "card",
+      "label": "船長驗收",
+      "x": 0,
+      "y": 0,
+      "args": {
+        "mode": "startup-accept"
+      }
+    },
+    {
+      "id": "done",
+      "kind": "hook",
+      "label": "已驗收",
+      "x": 0,
+      "y": 0
+    },
+    {
+      "id": "closed",
+      "kind": "hook",
+      "label": "已關閉",
+      "x": 0,
+      "y": 0,
+      "args": {
+        "result": "closed"
+      }
+    }
+  ],
+  "edges": [
+    [
+      "choose",
+      "pitch1",
+      "template"
+    ],
+    [
+      "pitch1",
+      "judge1"
+    ],
+    [
+      "judge1",
+      "accept",
+      "ready"
+    ],
+    [
+      "judge1",
+      "pitch2",
+      "revise"
+    ],
+    [
+      "pitch2",
+      "judge2"
+    ],
+    [
+      "judge2",
+      "accept",
+      "ready"
+    ],
+    [
+      "judge2",
+      "pitch3",
+      "revise"
+    ],
+    [
+      "pitch3",
+      "judge3"
+    ],
+    [
+      "judge3",
+      "accept",
+      "ready"
+    ],
+    [
+      "judge3",
+      "accept",
+      "revise"
+    ],
+    [
+      "choose",
+      "closed",
+      "close"
+    ],
+    [
+      "accept",
+      "done",
+      "accept"
+    ],
+    [
+      "accept",
+      "closed",
+      "reject"
+    ]
+  ]
+}
