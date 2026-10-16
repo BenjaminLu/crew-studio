@@ -14,6 +14,16 @@
 (() => {
 "use strict";
 const interviewDrafts = new Map();
+// Labels are a read-only projection of the pinned offer, including old open cards.
+// Never infer producer binding from the acceptance node's name.
+function artifactVersionLabel(r, multi, T) {
+  return /^design-[a-z]$/.test(r.producer) ? T(`Direction ${r.producer.slice(-1).toUpperCase()} · v${r.n}`, `方向 ${r.producer.slice(-1).toUpperCase()} · 版本 ${r.n}`) : multi ? T(`${r.producer} · v${r.n}`, `${r.producer} · 版本 ${r.n}`) : T(`Version ${r.n}`, `版本 ${r.n}`);
+}
+function artifactOptionLabel(c, o, T) {
+  const offers=c.detail?.artifactAcceptance?.offered;
+  const r=Array.isArray(offers)&&offers.length>1&&offers.find(r=>r&&typeof r.producer==="string"&&o.id===`approve-${r.producer}`&&Number.isInteger(r.n)&&r.n>0);
+  return r&&!/^design-[a-z]$/.test(r.producer) ? T(`Approve ${r.producer} v${r.n}`, `核准${r.producer} 版本 ${r.n}`) : T(o.label,o.labelZh||o.label);
+}
 const CSS = `
 .cc { display: grid; gap: 12px; min-width: 0; }
 .cc * { min-width: 0; }
@@ -331,7 +341,7 @@ function mountCard(el, card, opts = {}) {
       h("p", {}, h("span", { class: `cc-chip ${proved ? "ok" : "warn"}` }, proved ? T("proved", "已證明") : T("needs your eye", "需要你看")), LL(x.text)),
       x.proofs.map(p => h("div", { class: "cc-proof" }, h("span", { class: "cc-mono" }, p.check), h("span", {}, `ledger #${p.seq}`)))));
     return [sec("intent", T("Intent (the captain's words)", "意圖（船長的原話）"), h("p", { class: "cc-quote" }, d.intent.en)),
-      offered.length ? sec("artifact-versions", T("Versions to review", "待審閱版本"), offered.map(r => h("a", { href: `#/review/${encodeURIComponent(r.id)}/${r.n}`, "data-offered-version": r.n }, r.producer.startsWith("design-") ? T(`Direction ${r.producer.slice(-1).toUpperCase()} · v${r.n}`, `方向 ${r.producer.slice(-1).toUpperCase()} · 版本 ${r.n}`) : T(`Version ${r.n}`, `版本 ${r.n}`)))) : null,
+      offered.length ? sec("artifact-versions", T("Versions to review", "待審閱版本"), offered.map(r => h("a", { href: `#/review/${encodeURIComponent(r.id)}/${r.n}`, "data-offered-version": r.n }, artifactVersionLabel(r, offered.length > 1, T)))) : null,
       ...(Array.isArray(m?.refinements)?m.refinements:offered.filter(r=>r.format==="image").map(r=>({snapshot:null}))).map(r=>window.crewImageRefinementSnapshot(r.snapshot,{lang:st.lang,review:m?.review})),
       sec("proved", T("Proved by checks", "由檢查證明"), lines(true).length ? lines(true) : h("p", {}, T("No check proves a condition yet.", "目前尚無完成條件通過檢查。"))),
       sec("needs-eye", T("Needs your eye", "需要你看"), lines(false)), linksView(c)];
@@ -389,7 +399,7 @@ function mountCard(el, card, opts = {}) {
       if (one) kids.push(h("label", { class: "cc-tick rt-row", for: `conf-${c.id}` }, h("input", { type: "checkbox", id: `conf-${c.id}`, "data-confirm-door": c.id, checked: st.confirm, onchange: (e) => { st.confirm = e.target.checked; render(); } }),
         h("span", {}, T("I confirm: this is one-way, a revert will not undo it", "我確認：這是單向門，revert 無法還原"))));
       kids.push(h("div", { class: "cc-actions actions" }, c.options.map((o) => { const why = missing(o);
-        return h("button", { class: `btn ${o.primary ? "primary" : ""}`, type: "button", "data-option": o.id, ...(draft&&o.id==="continue"?{"data-save-interview":""}:{}), "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy, onclick: () => answer(o) }, T(o.label, o.labelZh || o.label)); })));
+        return h("button", { class: `btn ${o.primary ? "primary" : ""}`, type: "button", "data-option": o.id, ...(draft&&o.id==="continue"?{"data-save-interview":""}:{}), "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy, onclick: () => answer(o) }, artifactOptionLabel(c, o, T)); })));
       const hint = c.options.map(missing).find(Boolean);
       if (hint && !st.msg) kids.push(h("p", { class: "cc-count", "data-card-hint": "" }, hint));
     } else if (c.answer) {
