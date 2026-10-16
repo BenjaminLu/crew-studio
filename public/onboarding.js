@@ -1,3 +1,5 @@
+// a Task page, also when opened through a card deep link (#/run/R-1?card=SC-2)
+window.crewIsTaskHash=(hash)=>/^#\/run\/R-\d+(?:\?[^/]*)?$/.test(String(hash||''));
 /* Guided tour of the real Studio controls. No duplicate form or task submission. */
 (() => {
   const KEY = 'crew.onboarding.spotlight.v1';
@@ -130,7 +132,7 @@
     if(active){
       if(location.hash===active.expected){active.schedule();return;}
       // A real task navigation is the only automatic completion signal.
-      stop(active.step===2&&/^#\/run\/R-\d+$/.test(location.hash)?'completed':'skipped');
+      stop(active.step===2&&window.crewIsTaskHash(location.hash)?'completed':'skipped');
     }
     setTimeout(auto,0);
   });

@@ -24,7 +24,7 @@ try {
   ok((await fetch(`${base}/api/projects/overview`)).status === 401, 'GET /api/projects/overview without a session: 401');
   ok((await fetch(`${base}/api/projects/harbor-api/overview`)).status === 401, 'GET /api/projects/<id>/overview without a session: 401');
   const side = await (await fetch(`${base}/api/projects/overview`, { headers: { 'x-crew-session': 'test-session' } })).json();
-  ok(side.projects?.map((p) => p.id).join() === 'harbor-api,tidepool-docs,sandbox,studio', 'the sidebar payload lists the three projects and the Studio row', JSON.stringify(side.projects?.map((p) => p.id)));
+  ok(side.projects?.map((p) => p.id).join() === 'harbor-api,kelp-notes,tidepool-docs,sandbox,studio', 'the sidebar payload lists the three projects and the Studio row', JSON.stringify(side.projects?.map((p) => p.id)));
   browser = withSession(await chromium.launch({ headless: true }), base);
 
   // the light pass writes (a live Task, a card answered by link), so it goes last
@@ -42,10 +42,14 @@ try {
     if (width > 760) {
       await p.waitForSelector('[data-projects-nav] [data-project-row="studio"]');
       const rows = await p.locator('[data-projects-nav] [data-project-row]').evaluateAll((es) => es.map((e) => ({ id: e.dataset.projectRow, href: e.getAttribute('href'), status: e.querySelector('[data-project-status]')?.textContent, count: e.querySelector('.count')?.textContent })));
-      ok(rows.map((r) => r.id).join() === 'harbor-api,tidepool-docs,sandbox,studio', `sidebar renders the projects and the Studio row last (${tag})`, JSON.stringify(rows));
-      ok(rows[0].status === L('Waiting for you', '等你處理') && rows[0].count === '2' && rows[1].status === L('External: cannot dispatch yet', '外部專案：暫無法派工') && rows[2].status === L('Built-in · idle', '內建 · 閒置'), `each row has its status line and card count (${tag})`, JSON.stringify(rows));
-      ok(rows[3].href === '#/runs?project=studio' && rows[3].status === L('No project · Waiting for you', '無專案 · 等你處理'), `the Studio row links to Tasks with no project (${tag})`, JSON.stringify(rows[3]));
+      ok(rows.map((r) => r.id).join() === 'harbor-api,kelp-notes,tidepool-docs,sandbox,studio', `sidebar renders the projects and the Studio row last (${tag})`, JSON.stringify(rows));
+      ok(rows[0].status === L('Waiting for you', '等你處理') && rows[0].count === '2' && rows[1].status === L('Disabled', '已停用') && rows[2].status === L('External: cannot dispatch yet', '外部專案：暫無法派工') && rows[3].status === L('Built-in · idle', '內建 · 閒置'), `each row has its status line and card count (${tag})`, JSON.stringify(rows));
+      ok(rows[4].href === '#/runs?project=studio' && rows[4].status === L('No project · Waiting for you', '無專案 · 等你處理'), `the Studio row links to Tasks with no project (${tag})`, JSON.stringify(rows[4]));
       ok(await p.locator('[data-projects-nav] [data-project-row="harbor-api"][aria-current="page"]').count() === 1, `the open project is marked current (${tag})`);
+      const ratio = await p.evaluate(() => { const lum = (c) => { const [r, g, b] = c.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+        let worst = 99; for (const row of document.querySelectorAll('[data-projects-nav] .pj-item')) { const fg = getComputedStyle(row.querySelector('.ps')).color; let el = row, bg = 'rgba(0, 0, 0, 0)'; while (el && /rgba\(0, 0, 0, 0\)|transparent/.test(bg)) { bg = getComputedStyle(el).backgroundColor; el = el.parentElement; }
+          const a = lum(fg), b = lum(bg); worst = Math.min(worst, (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)); } return worst; });
+      ok(ratio >= 4.5, `sidebar status text contrast is at least 4.5:1 (${tag})`, String(ratio));
       ok(await p.locator('.nav-item[data-view="projects"]').isHidden(), `no Projects nav item on a desktop (${tag})`);
     } else {
       ok(await p.locator('[data-projects-nav]').isHidden(), `the sidebar section folds away on a phone (${tag})`);
@@ -63,6 +67,8 @@ try {
     ok(tiles.map((t) => t[0]).join() === 'enabled,registered,base,crew,test,rules,gitconfig', `7 health tiles (${tag})`, JSON.stringify(tiles));
     ok(tiles.filter((t) => ['rules', 'gitconfig'].includes(t[0])).every((t) => t[1].includes(L('Not checked yet', '尚未檢查'))), `operating rules and git config: not checked yet (${tag})`);
     ok(tiles.find((t) => t[0] === 'test')[1].includes('bun test'), `the test command shows (${tag})`);
+    ok(tiles.find((t) => t[0] === 'crew')[1].includes(L('Crew approved', '船員已核准')) && !/ENOENT|no such file|stat '/.test(await pg.innerText()), `a broken registration elsewhere does not break this crew read, and no exception text shows (${tag})`);
+    ok((await pg.locator(`[data-worktree="${seed.runs.rate}"] small`).textContent()).startsWith(`…/work/wt/harbor-api/${seed.runs.rate}`) && (await pg.locator(`[data-worktree="${seed.runs.rate}"] small`).getAttribute('title')).startsWith('/'), `a worktree path is shortened at its start, keeping the task folder (${tag})`);
     if (width <= 760) ok(await pg.locator('.pj-h-sum').isVisible() && (await pg.locator('.pj-h-sum b').textContent()).includes('4') && await pg.locator('.pj-h.ok[data-health="enabled"]').isHidden(), `on a phone passing tiles fold into one row (${tag})`);
     const tasks = await pg.locator('[data-project-task]').evaluateAll((es) => es.map((e) => [e.dataset.projectTask, e.querySelector('[data-waits-on]').dataset.waitsOn, e.querySelector('[data-waits-on]').textContent]));
     ok(tasks.length === 2 && tasks.every((t) => t[1] === 'captain') && tasks.some((t) => t[2].includes(L('at Merge', '在「Merge」'))), `active tasks with who each waits on (${tag})`, JSON.stringify(tasks));
@@ -93,6 +99,15 @@ try {
       await p.click('[data-lang-set="zh-TW"]');
       ok((await p.locator('#projH').textContent()) === '專案' && (await pg.locator('#hHealth').textContent()) === '健康狀態' && (await pg.locator('[data-health="rules"]').textContent()).includes('尚未檢查'), 'switching to zh-TW relabels the section and the page');
       await p.click('[data-lang-set="en"]');
+      // the Studio page refetches on a wrun of a run that counts under Studio (a coffee run's own namespace, not a registered id)
+      await p.goto(`${base}/#/project/studio`); await p.waitForSelector('[data-project-page="studio"]:not([data-loading])');
+      const hits = await p.evaluate(async () => { let hit = 0; const f = window.fetch; window.fetch = (u, ...a) => { if (String(u).includes('/api/projects/studio/overview')) hit++; return f(u, ...a); };
+        LIVE.es.dispatchEvent(new MessageEvent('wrun', { data: JSON.stringify({ id: 'R-999', project: 'coffee:shop', status: 'running' }) }));
+        await new Promise((r) => setTimeout(r, 900)); window.fetch = f; return hit; });
+      ok(hits > 0, 'a coffee run\'s wrun event refreshes the Studio page', String(hits));
+      // the onboarding tour counts a Task opened through a card deep link as opening the Task
+      ok(await p.evaluate(() => typeof window.crewIsTaskHash === 'function' && window.crewIsTaskHash('#/run/R-12?card=SC-3') && window.crewIsTaskHash('#/run/R-12') && !window.crewIsTaskHash('#/runs') && !window.crewIsTaskHash('#/run/R-12/x')), 'the onboarding Task check accepts a ?card= deep link');
+      await p.goto(`${base}/#/project/harbor-api`); await p.waitForSelector('[data-project-page="harbor-api"]:not([data-loading])');
       // a pending card deep link opens the card
       const cardId = await pg.locator('[data-card-link]').first().getAttribute('data-card-link');
       const href = await pg.locator('[data-card-link]').first().getAttribute('href');
@@ -106,6 +121,9 @@ try {
       await p.waitForFunction(() => document.querySelectorAll('[data-run]').length > 0, null, { timeout: 8000 }).catch(() => {});
       const runs = await p.locator('[data-run]').evaluateAll((es) => es.map((e) => e.dataset.run));
       ok(runs.join() === seed.runs.loose, 'the Studio row opens Tasks filtered to the Tasks in no project', JSON.stringify(runs));
+      await p.waitForSelector('[data-section="node-runs"] h2');
+      const rounds = await p.locator('[data-node-run]').evaluateAll((es) => es.map((e) => e.dataset.nodeRun));
+      ok(!rounds.some((r) => r.startsWith(`${seed.runs.rate}/`) || r.startsWith(`${seed.runs.merged}/`)), 'the Agent rounds panel follows the project filter', JSON.stringify(rounds));
       // the crew link preselects the project in the staffing panel
       await p.goto(`${base}/#/firstmate?staffing=harbor-api`); await p.waitForTimeout(400);
       ok(await p.evaluate(() => { const el = window.crewStaffingPanel?.(); return el?.querySelector('select')?.getAttribute('value') === 'harbor-api'; }), 'the Choose your crew together link preselects the project');
@@ -113,10 +131,18 @@ try {
       await p.goto(`${base}/#/project/tidepool-docs`); await p.waitForSelector('[data-project-page="tidepool-docs"]:not([data-loading])');
       ok((await p.locator('[data-project-notice="external"]').textContent()).includes('External project: cannot dispatch yet') && await p.locator('[data-crew-link]').count() === 0, 'an external project: cannot dispatch yet, and no crew link');
       await p.screenshot({ path: join(shots, 'project-external-1280-light.png'), fullPage: false });
+      // the broken, disabled registration renders in plain words
+      await p.goto(`${base}/#/project/kelp-notes`); await p.waitForSelector('[data-project-page="kelp-notes"]:not([data-loading])');
+      const kp = await p.locator('[data-project-page="kelp-notes"]').innerText();
+      ok((await p.locator('[data-project-notice="disabled"]').count()) === 1 && (await p.locator('[data-crew-state="disabled"]').count()) === 1 && (await p.locator('[data-health="enabled"] svg').count()) === 1 && !/ENOENT|no such file|stat '/.test(kp), 'a disabled project with a missing folder: plain words, a non-check icon, the crew text matching its tile');
+      ok(kp.includes('Repository folder missing') && kp.includes('Crew not checked'), 'its tiles: folder missing, crew not checked');
+      await p.screenshot({ path: join(shots, 'project-broken-1280-light.png'), fullPage: false });
       await p.goto(`${base}/#/project/sandbox`); await p.waitForSelector('[data-project-page="sandbox"]:not([data-loading])');
       ok((await p.locator('[data-project-registered="builtin"]').textContent()).includes('Built-in'), 'the sandbox page: Built-in');
       await p.goto(`${base}/#/projects`); await p.waitForSelector('[data-projects-index] [data-project-card="studio"]');
-      ok(await p.locator('[data-projects-index] [data-project-card]').count() === 4, 'the projects index: one card per project and Studio');
+      ok(await p.locator('[data-projects-index] [data-project-card]').count() === 5, 'the projects index: one card per project and Studio');
+      const lines = Object.fromEntries(await p.locator('[data-project-card]').evaluateAll((es) => es.map((e) => [e.dataset.projectCard, e.querySelector('.faint').textContent])));
+      ok(lines['harbor-api'] === '3 wait for you' && lines.sandbox === "No tasks yet. Studio's own practice repository." && lines.studio.startsWith('Tasks that belong to no project (artifact work, proposals). 1 wait for you'), 'index card lines follow the prototype', JSON.stringify(lines));
       await p.screenshot({ path: join(shots, 'index-1280-light.png'), fullPage: false });
       await p.goto(`${base}/#/project/nope`); await p.waitForSelector('[data-project-missing]');
       ok((await p.locator('[data-project-missing]').textContent()).includes('No such project'), 'an unknown project: No such project');

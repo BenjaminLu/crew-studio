@@ -11,10 +11,9 @@
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, join, relative, isAbsolute, resolve } from "node:path";
 import { hasSession } from "./csrf";
-import { orgDefaults, type Project, type Projects } from "./doors";
+import { loadDefaults, type Project, type Projects } from "./doors";
 import { websiteHref } from "./artifacts";
 import { StaffingStore } from "./domain/staffing";
-import { Policies } from "./runtime/checks";
 import { roundsOf, waitsOn, type WaitsOn } from "./task-round";
 import type { Engine, Run } from "./runtime/engine";
 import type { WorktreeRecord } from "./worktrees";
@@ -151,7 +150,10 @@ export function createProjectOverview(d: OverviewDeps) {
   }
 
   // ---------- one project's page ----------
-  const section = <T>(f: () => T): T | { error: string } => { try { return f(); } catch (e: any) { return { error: String(e?.message ?? e).slice(0, 300) }; } };
+  // a section that cannot be read says so in fixed words: no exception text and no path ever reaches a reply (or a phone)
+  const section = <T>(f: () => T): T | { error: "unreadable" } => { try { return f(); } catch { return { error: "unreadable" }; } };
+  /** a folder that a registration names and that is still a git repository (a directory with a .git entry) */
+  const repoOk = (path: string | null) => { if (!path) return false; try { return statSync(realpathSync(path)).isDirectory() && existsSync(join(realpathSync(path), ".git")); } catch { return false; } };
   function pipeOf(r: Run): string[] {
     const out: string[] = [];
     for (const n of r.def?.nodes ?? []) {
@@ -182,8 +184,13 @@ export function createProjectOverview(d: OverviewDeps) {
   }
   function crewOf(p: Project) {
     if (kindOf(p) === "external" || !enabledOf(p) || !p.path) return null;
+    if (!repoOk(p.path)) return { error: "folder-missing" as const };
     const store = new StaffingStore(d.dataDir);
-    const identity = d.projects.staffingIdentity(p.id, d.protectedRoots ?? []);
+    // staffingIdentity checks this repository against every registered record (aliases); a record whose folder is gone
+    // cannot alias anything, so this read leaves it out: another project's broken registration never hides this crew
+    const snap = d.projects.nativeSnapshot();
+    const view = Object.create(d.projects, { nativeSnapshot: { value: () => ({ ...snap, records: snap.records.filter((r) => r.id === p.id || repoOk(r.path)) }) } }) as Projects;
+    let identity; try { identity = view.staffingIdentity(p.id, d.protectedRoots ?? []); } catch { return { error: "identity" as const }; }
     if (!existsSync(join(d.dataDir, "projects", store.key(identity), "staffing", "current.json"))) return null;
     const c = store.current(identity);
     const card = E.cards.get(c.approval.card);
@@ -200,11 +207,15 @@ export function createProjectOverview(d: OverviewDeps) {
       : tile("registered", "ok", "Registered", "已註冊", { en: "Local repository", tw: "本機儲存庫" }));
     const b = readBaseRef(p.path, p.base);
     out.push(!p.path ? tile("base", "bad", "No repository path", "沒有儲存庫路徑", null)
+      : !repoOk(p.path) ? tile("base", "bad", "Repository folder missing", "找不到儲存庫資料夾", { en: "The registered folder is gone or is not a Git repository.", tw: "登錄的資料夾不見了，或不是 Git 儲存庫。" })
       : b.found ? tile("base", "ok", "Base branch found", "找到主 branch", { en: `${p.base} · ${short(b.sha)}`, tw: `${p.base} · ${short(b.sha)}` })
       : tile("base", "bad", "Base branch missing", "找不到主 branch", { en: p.base, tw: p.base }));
     if (kind === "external") out.push(tile("crew", "idle", "Crew not checked", "未檢查船員", { en: "External project", tw: "外部專案" }));
     else if (!enabled) out.push(tile("crew", "idle", "Crew not checked", "未檢查船員", { en: "Project disabled", tw: "專案已停用" }));
-    else if (crew && "error" in crew) out.push(tile("crew", "warn", "Crew cannot be read", "無法讀取船員配置", { en: crew.error, tw: crew.error }));
+    else if (crew && "error" in crew) out.push(tile("crew", "warn", "Crew cannot be read", "無法讀取船員配置",
+      crew.error === "folder-missing" ? { en: "This project's folder is missing.", tw: "這個專案的資料夾不見了。" }
+      : crew.error === "identity" ? { en: "The repository could not be confirmed (folder, Git data or base branch).", tw: "無法確認儲存庫（資料夾、Git 資料或主 branch）。" }
+      : { en: "The approved crew could not be read. Nothing was changed.", tw: "無法讀取已核准的船員配置。沒有任何變更。" }));
     else if (crew) out.push(tile("crew", "ok", "Crew approved", "船員已核准", { en: `${crew.workflow} v${crew.version} · config v${crew.config}`, tw: `${crew.workflow} v${crew.version} · 配置 v${crew.config}` }));
     else out.push(tile("crew", "warn", "Crew not approved", "船員未核准", { en: "Tasks here will wait at their first round.", tw: "這裡的任務會停在第一輪。" }));
     const g = readGatesTest(p.path);
@@ -217,9 +228,12 @@ export function createProjectOverview(d: OverviewDeps) {
     return out;
   }
   function sensitive(p: Project) {
-    const cur = new Policies(d.dataDir).project(p.id).sensitive_paths;
+    // the engine's own policy reader: no Policies is constructed here (its constructor creates the policies folder)
+    const cur = E.policies.project(p.id).sensitive_paths;
     const rules = (Array.isArray(cur) ? cur : []).map((r: any) => ({ glob: String(r?.glob ?? r), why: String(r?.why ?? "") }));
-    const org = orgDefaults(d.dataDir).base.map((r) => ({ glob: r.glob, why: r.why }));
+    const base = loadDefaults().base, orgPol = E.policies.get("sensitive_paths").value;
+    const extra = (Array.isArray(orgPol) ? orgPol : []).map((r: any) => ({ glob: String(r?.glob ?? r), why: String(r?.why ?? "org policy") })).filter((r: any) => !base.some((b) => b.glob === r.glob));
+    const org = [...base, ...extra].map((r) => ({ glob: r.glob, why: r.why }));
     return { project: rules, proposed: Array.isArray(p.proposed) && p.proposed.length ? p.proposed.map((r) => ({ glob: r.glob, why: r.why })) : null, org, orgCount: org.length };
   }
   function outputs(id: string, runs: Run[]) {
@@ -234,8 +248,11 @@ export function createProjectOverview(d: OverviewDeps) {
         sub: { en: [m.adapter === "github" ? "GitHub" : "local", short(m.head ?? m.sha)].filter(Boolean).join(" · "), tw: [m.adapter === "github" ? "GitHub" : "本機", short(m.head ?? m.sha)].filter(Boolean).join(" · ") },
         href: `#/run/${r.id}`, at: m.at ?? null });
     }
-    if (d.artifacts) for (const a of d.artifacts.list().filter((x) => x.project === id).slice(0, 30)) {
+    if (d.artifacts) for (const a of d.artifacts.list().filter((x) => x.project === id).slice(0, 60)) {
       const vs = d.artifacts.versions(a.id), v = vs.filter((x: any) => x.status === "approved").at(-1) ?? vs.at(-1) ?? null;
+      // an output counts where its Task counts: a coffee artifact named like a registered project stays with Studio
+      const from = v?.source?.run ? E.get(v.source.run) : null;
+      if (from && E.projectRow(from) !== id) continue;
       const type = a.type === "web" ? "web" : a.type === "image" ? "image" : a.type === "video" || a.type === "film" ? "video" : a.type === "audio" ? "audio" : "doc";
       const web = type === "web" ? websiteHref(a, v) : null;
       const names: Record<string, [string, string]> = { web: ["website", "網站"], image: ["image", "圖片"], video: ["video", "影片"], audio: ["audio", "音訊"], doc: ["document", "文件"] };

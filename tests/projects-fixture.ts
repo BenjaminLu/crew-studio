@@ -3,6 +3,7 @@
 //                  sensitive-path list, .crew/gates.json, a worktree, a website output
 //   tidepool-docs  an external (GitHub) project: cannot dispatch yet
 //   sandbox        the built-in sandbox (registered by the server itself at start), idle
+//   kelp-notes     an old registration, disabled, whose folder is gone (it must not break harbor-api's crew read)
 //   Studio         one Task with no project, waiting at its card
 // Every Task here waits at a card or has ended, so the server started on this data never launches an agent.
 import { execFileSync } from "node:child_process";
@@ -40,6 +41,7 @@ export async function seedProjects() {
     github: { mode: "github", repository: "acme/tidepool-docs", localPath: tide, pushUrl: "https://github.com/acme/tidepool-docs.git", apiOrigin: "https://api.github.com", base: "main", branchPrefix: "crew/", approvedAt: new Date().toISOString(), approvalId: "fixture" } });
   writeFileSync(join(DATA, "projects.json"), JSON.stringify(reg, null, 1));
   mkdirSync(join(DATA, "policies"), { recursive: true });
+  const brokenRecord = { id: "kelp-notes", name: "kelp-notes", path: join(repos, "kelp-notes-gone"), base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: false };
   writeFileSync(join(DATA, "policies", "project-harbor-api.yaml"), "sensitive_paths:\n  - glob: migrations/**\n    why: schema changes\n  - glob: src/billing/**\n    why: money moves\n");
   // an approved crew for harbor-api, signed by the real store
   const projects = new Projects(DATA), store = new StaffingStore(DATA), identity = projects.staffingIdentity("harbor-api");
@@ -50,6 +52,8 @@ export async function seedProjects() {
   }
   store.approve({ schema: 1, algorithm: "sha256-canonical-v1", project: identity, workflow: { id: "code-firstmate", version: 1, sha256: createHash("sha256").update("code-firstmate").digest("hex") }, roles, review: { freshContexts: 3, distinctProviders: true } } as any,
     null, { run: "R-0", card: "SC-0", answerSeq: 1 }, sources);
+  // the broken registration lands after the crew was approved (staffingIdentity itself would refuse it)
+  writeFileSync(join(DATA, "projects.json"), JSON.stringify([...JSON.parse(readFileSync(join(DATA, "projects.json"), "utf8")), brokenRecord], null, 1));
   // Tasks
   const merged = E.start({ workflow: "ship", title: "Export job runbook", text: "Write the export job runbook", params: { project: "harbor-api" } });
   await until(() => E.get(merged.id)?.status === "waiting", 15000);

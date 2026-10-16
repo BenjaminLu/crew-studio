@@ -10,7 +10,7 @@
 .pj-item[aria-current="page"]{background:var(--surface-3);color:var(--text)}
 .pj-item .pmark{grid-row:1/3}
 .pj-item .pn{font-size:13px;font-weight:500;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pj-item .ps{grid-column:2/4;font-size:11.5px;color:var(--text-3);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;gap:6px;align-items:center}
+.pj-item .ps{grid-column:2/4;font-size:11.5px;color:var(--text-2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;gap:6px;align-items:center}
 .pj-item .ps > span{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .pj-item .count{font-size:12px}
 .pj-item .count.attn{background:var(--human-soft);color:var(--human);border-radius:99px;padding:0 7px;font-weight:600}

@@ -79,9 +79,18 @@ function viewIndex() {
       : p.attention ? h("span", { class: "badge human" }, h("span", { class: "d" }), String(p.attention))
       : p.running ? h("span", { class: "badge run" }, h("span", { class: "d pulse" }), String(p.running))
       : p.kind === "builtin" ? h("span", { class: "badge" }, T("Built-in", "內建")) : null;
+    // the prototype's line: "2 wait for you · 2 running · 1 held"; the sandbox and Studio say what they are
+    const en = [], tw = [];
+    if (p.attention) { en.push(`${p.attention} wait for you`); tw.push(`${p.attention} 等你處理`); }
+    if (p.running) { en.push(`${p.running} running`); tw.push(`${p.running} 進行中`); }
+    if (p.held) { en.push(`${p.held} held`); tw.push(`${p.held} 暫緩`); }
+    const counts = en.length ? { en: en.join(" · "), tw: tw.join(" · ") } : null;
     const line = p.kind === "external" ? T("External project: cannot dispatch yet. Its GitHub grant cannot be verified on this build.", "外部專案：暫時無法派工。目前版本無法驗證它的 GitHub 授權。")
-      : p.kind === "studio" ? ((st) => T(`Tasks that belong to no project (artifact work, proposals). ${st.en}.`, `不屬於任何專案的任務（成品工作、提案）。${st.tw}。`))({ en: String(p.status?.en || "").replace(/^No project · /, ""), tw: String(p.status?.tw || "").replace(/^無專案 · /, "") })
-      : LX(p.status);
+      : p.enabled === false ? T("Disabled. New tasks and rounds will not start.", "已停用。不會開始新任務或新的一輪。")
+      : p.kind === "studio" ? T(`Tasks that belong to no project (artifact work, proposals).${counts ? ` ${counts.en}.` : ""}`, `不屬於任何專案的任務（成品工作、提案）。${counts ? `${counts.tw}。` : ""}`)
+      : p.kind === "builtin" && !counts ? T("No tasks yet. Studio's own practice repository.", "還沒有任務。Studio 內建的練習用儲存庫。")
+      : counts ? T(counts.en, counts.tw) + (p.failed24h ? T(` · ${p.failed24h} failed in the last 24 h`, ` · 近 24 小時 ${p.failed24h} 個失敗`) : "")
+      : p.failed24h ? LX(p.status) : T("No tasks running.", "目前沒有進行中的任務。");
     return h("a", { class: "card x-pad x-stack", href: hrefOf(p), "data-project-card": p.id },
       h("div", { class: "x-row" }, markOf(p), h("b", {}, nameOf(p)), h("span", { class: "x-grow" }), badge),
       h("div", { class: "faint", style: "font-size:13px" }, line), (p.mini || []).length ? pipe(p.mini) : null);
@@ -102,10 +111,12 @@ async function loadPage(id) {
   if (cur.again) { cur.again = false; loadPage(id); }
 }
 function pageSoon(id, ms = 300) { clearTimeout(PJ.pageTimer); PJ.pageTimer = setTimeout(() => loadPage(id), ms); }
+/** a worktree path shortened at its start, keeping the task folder: …/work/wt/<project>/<task> (Copy takes the whole path) */
+const shortPath = (path) => { const s = String(path || ""), i = s.indexOf("/work/wt/"); if (i > 0) return `…${s.slice(i)}`; const parts = s.split("/"); return parts.length > 4 ? `…/${parts.slice(-3).join("/")}` : s; };
 const failed = (x) => x && typeof x === "object" && !Array.isArray(x) && typeof x.error === "string";
 const sectionErr = (en, tw) => h("div", { class: "err", role: "status", "data-section-error": "1" }, icon("alert", "ic sm"), h("span", {}, T(`${en} could not be read. Nothing was changed.`, `無法讀取${tw}。沒有任何變更。`)));
 const scrollTo = (id) => (e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" }); };
-const HEALTH_IC = { enabled: "check", registered: "shield", base: "branch", crew: "crew", test: "tool", rules: "clock", gitconfig: "clock" };
+const HEALTH_IC = { enabled: "check", "enabled-bad": "x", registered: "shield", base: "branch", crew: "crew", test: "tool", rules: "clock", gitconfig: "clock" };
 
 function waitBadge(t) {
   const w = t.waitsOn || {};
@@ -138,7 +149,11 @@ function crewSection(d) {
   const head = h("div", { class: "sec-head" }, h("h2", { id: "hCrew" }, T("Crew", "船員")), h("span", { class: "faint" }, T("read only", "唯讀")), h("span", { class: "x-grow" }),
     canLink ? h("a", { class: "btn", href: `#/firstmate?staffing=${encodeURIComponent(p.id)}`, "data-crew-link": p.id }, icon("message", "ic sm"), h("span", {}, T("Choose your crew together", "一起決定代理配置"))) : null);
   let body;
-  if (failed(crew)) body = sectionErr("The crew", "船員配置");
+  const plain = (en, tw, attr) => h("div", { class: "pj-empty-row", "data-crew-state": attr }, T(en, tw));
+  if (p.enabled === false) body = plain("Crew not checked: the project is disabled.", "未檢查船員：專案已停用。", "disabled");
+  else if (failed(crew)) body = crew.error === "folder-missing" ? plain("Crew cannot be read: this project's folder is missing.", "無法讀取船員配置：這個專案的資料夾不見了。", "folder-missing")
+    : crew.error === "identity" ? plain("Crew cannot be read: the repository could not be confirmed (folder, Git data or base branch).", "無法讀取船員配置：無法確認儲存庫（資料夾、Git 資料或主 branch）。", "identity")
+    : sectionErr("The crew", "船員配置");
   else if (p.kind === "external") body = h("div", { class: "pj-empty-row" }, T("External project: cannot dispatch yet. Its GitHub grant cannot be verified on this build.", "外部專案：暫時無法派工。目前版本無法驗證它的 GitHub 授權。"));
   else if (!crew) body = h("div", { class: "pj-empty-row", "data-crew-empty": "1" }, T("No crew approved yet. Tasks here will wait at their first round.", "還沒有核准的船員。這裡的任務會停在第一輪。"));
   else body = h("div", { class: "pj-crew-wf", "data-crew": crew.workflow },
@@ -185,7 +200,7 @@ function worktreesSection(d) {
   const w = d.worktrees;
   const body = failed(w) ? h("div", { class: "x-pad" }, sectionErr("Worktrees", " Worktree")) : !w.length ? h("div", { class: "pj-empty-row" }, T("No worktrees.", "沒有 worktree。"))
     : w.map((x) => h("div", { class: "pj-li", "data-worktree": x.task }, icon("branch"), h("span", { class: "t" }, h("code", {}, x.branch),
-      h("small", { title: x.path }, x.busy ? T(`${x.path} · an agent is working here`, `${x.path} · 代理正在這裡工作`) : x.path)), copyBtn(x.path)));
+      h("small", { title: x.path, "data-worktree-path": x.path }, x.busy ? T(`${shortPath(x.path)} · an agent is working here`, `${shortPath(x.path)} · 代理正在這裡工作`) : shortPath(x.path))), copyBtn(x.path)));
   return h("section", { id: "s-wt", "aria-labelledby": "hWt" }, h("div", { class: "sec-head" }, h("h2", { id: "hWt" }, T("Worktrees", "Worktree")), failed(w) ? null : h("span", { class: "badge" }, String(w.length))), h("div", { class: "card pj-list" }, body));
 }
 function viewPage(id) {
@@ -234,7 +249,7 @@ function viewPage(id) {
     health = h("section", { "aria-labelledby": "hHealth", "data-project-health": "1" }, h("div", { class: "sec-head" }, h("h2", { id: "hHealth" }, T("Health", "健康狀態")), h("span", { class: "faint" }, readAgo(st.at))),
       !hs ? h("div", { class: "card x-pad" }, sectionErr("Health", "健康狀態")) : h("div", { class: "card pj-health" },
         pass.length ? h("div", { class: "pj-h pj-h-sum" }, icon("check"), h("b", {}, pass.length === 1 ? T("1 check passes", "1 項檢查通過") : T(`${pass.length} checks pass`, `${pass.length} 項檢查通過`)), h("span", {}, pass.map((x) => T(x.en, x.tw).toLowerCase()).join(T(", ", "、")))) : null,
-        hs.map((x) => h("div", { class: `pj-h ${x.tone}`, "data-health": x.key }, icon(HEALTH_IC[x.key] || "check"), h("b", {}, T(x.en, x.tw)),
+        hs.map((x) => h("div", { class: `pj-h ${x.tone}`, "data-health": x.key }, icon(HEALTH_IC[x.tone === "bad" && HEALTH_IC[`${x.key}-bad`] ? `${x.key}-bad` : x.key] || "check"), h("b", {}, T(x.en, x.tw)),
           x.code ? h("span", {}, h("code", { class: "mono" }, x.code), x.detail ? [" · ", h("span", {}, LX(x.detail))] : null) : x.detail ? h("span", {}, LX(x.detail)) : null))));
   }
   const tasksSec = h("section", { id: "s-tasks", "aria-labelledby": "hTasks" },
@@ -252,7 +267,9 @@ routes.projects = viewIndex;
 routes.project = (arg) => (arg ? viewPage(arg) : viewIndex());
 
 // ---------- freshness ----------
-window.liveListen?.("wrun", (m) => { let d = {}; try { d = JSON.parse(m.data); } catch {} loadSide(); const id = curId(); if (id && (d.project === id || d.deleted || !d.project)) pageSoon(id); });
+// a wrun carries the run's project (projectOf); one that is not a registered project counts under the Studio row
+const rowOf = (project) => (project && (PJ.side?.projects || []).some((p) => p.id === project && p.kind !== "studio") ? project : "studio");
+window.liveListen?.("wrun", (m) => { let d = {}; try { d = JSON.parse(m.data); } catch {} loadSide(); const id = curId(); if (id && (d.deleted || !d.project || rowOf(d.project) === id)) pageSoon(id); });
 window.liveListen?.("scard", () => { loadSide(); const id = curId(); if (id) pageSoon(id); });
 for (const t of ["artifacts", "changes", "agent"]) window.liveListen?.(t, () => { const id = curId(); if (id) pageSoon(id, 600); });
 addEventListener("crew:live", () => { loadSide(true); const id = curId(); if (id) loadPage(id); });

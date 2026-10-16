@@ -239,10 +239,12 @@ async function loadNodes() { const seq = TR.nodesSeq = (TR.nodesSeq || 0) + 1; l
 function nodesCard() {
   if (!TR.nodes) { loadNodes(); return h("section", { class: "card tr-pad", "data-section": "node-runs" }, h("div", { class: "skel", style: "height:60px" })); }
   return h("section", { class: "card tr-pad", "data-section": "node-runs" }, h("h2", { style: "margin:0;font-size:16px" }, T("Agent rounds", "Agent 回合")),
-    TR.nodes.length ? h("div", { class: "tr-list" }, TR.nodes.map((n) => h("a", { class: "tr-e tr-link", href: `#/runs/node/${n.run}/${n.node}/${n.round}`, "data-node-run": `${n.run}/${n.node}/${n.round}` },
+    // #/runs?project=<id>: only that project's Tasks' rounds (public/runtime.js keeps the filter)
+    ...((nodes) => [nodes.length ? h("div", { class: "tr-list" }, nodes.map((n) => h("a", { class: "tr-e tr-link", href: `#/runs/node/${n.run}/${n.node}/${n.round}`, "data-node-run": `${n.run}/${n.node}/${n.round}` },
       h("span", { class: "tr-t" }, fmtT(n.updated)), h("span", {}, h("b", {}, n.node), ` · ${n.run} · ${T(`Round ${n.round}`, `第 ${n.round} 回合`)}`),
       h("span", { class: "faint" }, [n.prompt && "prompt", n.stream && "stream", n.report && "report"].filter(Boolean).join(" · ")))))
-      : h("div", { class: "faint" }, T("No agent rounds yet. Each one keeps its prompt, stream and report.", "還沒有 agent 回合。每個回合都會保留提示詞、串流和報告。")));
+      : h("div", { class: "faint" }, T("No agent rounds yet. Each one keeps its prompt, stream and report.", "還沒有 agent 回合。每個回合都會保留提示詞、串流和報告。"))])(
+      ((f) => (f ? TR.nodes.filter((n) => f.has(n.run)) : TR.nodes))(S.route?.query?.get("project") ? window.crewTaskFilter?.() ?? new Set() : null)));
 }
 const wrapRuns = () => {
   const base = routes.runs; if (!base || base.__tr) return;

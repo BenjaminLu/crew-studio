@@ -571,6 +571,8 @@ function viewRuns() {
   if (pf && (RN.pf !== pf || RN.pfArchived !== !!RN.archived || RN.pIds === undefined)) { RN.pf = pf; RN.pfArchived = !!RN.archived; RN.pIds = null;
     api(`/api/tasks?project=${encodeURIComponent(pf)}${RN.archived ? "&archived=1" : ""}`).then((x) => { if (RN.pf === pf) { RN.pIds = new Set((x.tasks || []).map((t) => t.id)); rerender(); } }).catch(() => { RN.pIds = new Set(); rerender(); }); }
   if (!pf) { RN.pf = null; RN.pIds = undefined; }
+  // the Agent rounds panel below (public/transcripts.js) follows the same filter
+  window.crewTaskFilter = () => (RN.pf ? RN.pIds || new Set() : null);
   const runs = (Array.isArray(RN.list) ? RN.list.slice().reverse() : []).filter((r) => !pf || (RN.pIds && RN.pIds.has(r.id)));
   // the form keeps what was typed across re-renders (the list loads, a run moves)
   const text = h("textarea", { class: "input", rows: 3, placeholder: T("Say what you want done", "說你要做什麼"), "aria-label": T("Intent", "意圖"), "data-run-text": "1", oninput: (e) => { RN.draft = e.target.value; } });
@@ -685,7 +687,7 @@ function viewRun(id) {
   // #/run/<id>?card=<cardId> (a deep link, e.g. from a project page): bring that card into view once
   const want = S.route?.query?.get("card");
   if (want && v.cardShown !== want) { v.cardShown = want; requestAnimationFrame(() => { const el = document.querySelector(`[data-scard="${CSS.escape(want)}"]`);
-    if (el) { el.classList.add("rt-card-linked"); el.setAttribute("data-card-linked", "1"); el.scrollIntoView({ block: "start" }); el.querySelector("button, textarea")?.focus({ preventScroll: true }); }
+    if (el) { el.classList.add("rt-card-linked"); el.setAttribute("data-card-linked", "1"); el.scrollIntoView({ block: "start" }); el.querySelector("[data-option]:not([disabled])")?.focus({ preventScroll: true }); }
     else toast(T("That card is no longer waiting: it was answered or withdrawn.", "這張卡片已不在等待：已回答或撤回。")); }); }
   return h("div", { class: `page rt-runview${(r.def.kind==="coffee-kit"||coffeeProposal)?" rt-coffee-run":""}`, "data-runview": id },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, r.title), h("p", {}, h("span", { class: "mono" }, r.id), " · ", h("a", { href: `#/workflows/${r.workflow}/v${r.version}` }, `${r.workflow} v${r.version}`), " · ", h("span", { "data-run-status": r.status }, window.runStateBadge(r)), r.ctx?.childRun ? [" · ", h("a", {href:`#/run/${r.ctx.childRun}`},T(`Execution: ${r.ctx.childRun}`,`執行任務：${r.ctx.childRun}`))] : null, r.archived ? [" ", h("span", { class: "badge neutral rt-archived-tag", "data-archived": "1" }, T("Archived", "已封存"))] : null, r.error ? ` · ${r.error}` : "")),
