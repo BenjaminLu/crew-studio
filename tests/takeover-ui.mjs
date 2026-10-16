@@ -92,6 +92,9 @@ try {
   // ---- takeover flow at 1440 light ----
   const p = await page(1440, "light");
   await p.goto(`${base}/#/takeover`);
+  // since acc5b89 the page leads with starting Studio's own Firstmate; taking over an existing session is
+  // opt-in behind "Show existing sessions" (public/takeover.js, TK.optional)
+  await p.click("[data-optional-sessions]");
   ok(await seen(p, `[data-firstmate="${SID}"]`), "the Take over page lists the firstmate session", (await p.locator("#view").innerText()).slice(0, 400) + " " + errors.join("|") + (await (await fetch(base + "/api/takeover")).text()).slice(0, 300));
   await p.screenshot({ path: join(shots, "takeover-before-1440-light.png"), fullPage: true });
   await p.click("#takeoverBtn");
@@ -102,6 +105,7 @@ try {
   await p.check("#tkAck"); await p.click(".modal .btn.primary");
   ok(await seen(p, '[data-takeover="takeover"]'), "after takeover the page shows Studio driving the copy");
   ok(await seen(p, "[data-idle-warning]"), "the page keeps the terminal-idle warning in view");
+  ok(await seen(p, "[data-section=cutover]"), "while Studio drives a taken-over copy, the page shows the cutover steps");
   ok(await p.waitForFunction(() => document.querySelector("[data-copy-id]")?.dataset.copyId?.endsWith("-copy"), null, { timeout: 8000 }).then(() => true).catch(() => false), "the copy's new id is shown once the CLI names it");
   const drv = JSON.parse(readFileSync(join(tmp, "data/driver.json"), "utf8"));
   ok(drv.holder === "studio" && drv.forkedFrom === SID && readdirSync(join(tmp, "data/handoff")).length === 1, "Studio holds the driver lock and wrote a handoff note");
@@ -132,7 +136,9 @@ try {
   // ---- every view at both widths, both themes ----
   for (const width of [1440, 390]) for (const scheme of ["light", "dark"]) {
     const q = await page(width, scheme);
-    for (const [view, sel] of [["takeover", "[data-section=cutover]"], ["crew", `[data-actor="${worker}"]`], ["inbox", '[data-card="D-ui-oneway"]']]) {
+    // after the release above Studio drives nothing, so the page shows the released card with the
+    // resume command (cutover steps only show while a taken-over copy is driven, checked above)
+    for (const [view, sel] of [["takeover", "[data-released]"], ["crew", `[data-actor="${worker}"]`], ["inbox", '[data-card="D-ui-oneway"]']]) {
       await q.goto(`${base}/#/${view}`);
       ok(await seen(q, sel), `${view} renders at ${width} ${scheme}`);
       ok(await noHScroll(q), `${view} has no sideways scroll at ${width} ${scheme}`);
