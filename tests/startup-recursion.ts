@@ -1,6 +1,6 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import {strict as a} from 'node:assert';
-import {readFileSync,writeFileSync} from 'node:fs';
+import {existsSync,readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {harness,until} from './rt-harness';
 import {ArtifactStore} from '../src/artifacts';
@@ -26,7 +26,7 @@ for(const scenario of ['three-rounds','early-ready','fallback','reject','tamper'
  const accept=H.engine.cards.list({run:r.id,open:true}).find(c=>c.node==='accept')!;const trust=H.engine.trusted(r.id);a(trust.ok);const rounds=trust.entries.filter(e=>e.record==='startup-round');const expected=scenario==='early-ready'?2:6;
  check(`${scenario}: signed exact-provider rounds stop within cap`,()=>{a.equal(rounds.length,expected);a.equal(calls,expected);a(rounds.every((e,i)=>e.data.provider===(i%2?'codex':'claude')));});
  if(expected===6)check(`${scenario}: revisions consume previous critiques`,()=>a(prompts[2].includes('Critique round 1')));
- const pin=trust.entries.find(e=>e.record==='startup-artifact')!.data;const manifest=store.version(pin.artifact,pin.version)!;const output=store.file(pin.artifact,pin.version,'doc.md');a(output);a(readFileSync(output!,'utf8').includes('Critique round 1'));
+ const pin=trust.entries.find(e=>e.record==='startup-artifact')!.data;const manifest=store.version(pin.artifact,pin.version)!;const output=store.file(pin.artifact,pin.version,'doc.md');a(output);check(`${scenario}: the run folder keeps startup-output/competition.md (the acceptance scenario contract) beside the version's doc.md and doc.html`,()=>{const f=join(H.data,'runs',r.id,'startup-output','competition.md');a(existsSync(f),f);a.equal(readFileSync(f,'utf8'),readFileSync(output!,'utf8'));a(store.file(pin.artifact,pin.version,'doc.html'));a(store.file(pin.artifact,pin.version,'competition.md'));});a(readFileSync(output!,'utf8').includes('Critique round 1'));
  if(scenario==='tamper'){writeFileSync(output!,'tampered');await a.rejects(H.engine.answer(accept.id,{choice:'accept',by:'fixture captain'}));check('artifact tamper cannot become approved',()=>a.notEqual(store.version(pin.artifact,pin.version)?.status,'approved'));continue;}
  await H.engine.answer(accept.id,{choice:scenario==='reject'?'reject':'accept',note:scenario==='reject'?'Fixture rejection':undefined,by:'fixture captain'});
  a(await until(()=>H.engine.get(r.id)?.status==='succeeded'));
