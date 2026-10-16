@@ -42,7 +42,13 @@ process.stdin.on('data', d => input += d).on('end', () => {
           while(j<tokens.length && ![';','import','export'].includes(tokens[j].v) && tokens[j].v!=='from')j++;
           next=tokens[j]?.v==='from'?tokens[j+1]:null;
         }
-        if(next?.string)refs.push({spec:next.v.slice(1,-1),at:t.at});
+        if(next?.string){
+          // Bun file imports embed an asset path, not its JavaScript exports.
+          // Content-only asset edits do not change this generated registry's interface.
+          const at=tokens.indexOf(next),attrs=tokens.slice(at+1,at+7).map(x=>x.v);
+          const fileImport=t.v==='import'&&attrs[0]==='with'&&attrs[1]==='{'&&['type','"type"',"'type'"].includes(attrs[2])&&attrs[3]===':'&&['"file"',"'file'"].includes(attrs[4])&&attrs[5]==='}';
+          if(!fileImport)refs.push({spec:next.v.slice(1,-1),at:t.at});
+        }
       }
     } else if(caller.endsWith('.sh') || !path.extname(caller)) {
       for(const m of text.matchAll(/(?:^|[;\n]|&&|\|\||\bthen\s|\bdo\s)\s*(?:source|\.)\s+["']?([\w./-]+)/g))refs.push({spec:(m[1].startsWith('.')||m[1].startsWith('/'))?m[1]:'./'+m[1],at:m.index});

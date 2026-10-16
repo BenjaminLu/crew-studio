@@ -23,6 +23,9 @@ try {
  put('pkg/helper.py','x=1');put('pkg/relative.py','from . import helper');put('pkg/absolute.py','import pkg.helper');put('pkg/from.py','from pkg.helper import x');
  put('pkg/comment.py','import pkg.helper # needed');put('pkg/multi.py','from . import (\n helper,\n)');
  put('conditional.sh','if true; then source ./lib.sh; fi');put('absolute.sh',`source "${root}/lib.sh"`);
+ put('src/assets.gen.ts',`import asset from './runtime/index.ts' with { type: 'file' }; export const ASSETS={asset};`);
+ put('src/json-asset.ts',`import asset from './other/index.ts' with { type: 'json' };`);
+ assert.equal(run(['src/other/index.ts']).verdict,'fail','non-file imports remain covered');
  const r=run(['src/runtime/index.ts']);assert.equal(r.verdict,'fail');assert.deepEqual(r.findings.map(f=>f.locator.path).sort(),['src/dynamic.ts','src/multiline.ts','src/real.ts','src/reexport.ts','src/require.cjs','src/template.ts']);
  assert.equal(run(['src/runtime/index.ts','src/dynamic.ts','src/multiline.ts','src/real.ts','src/reexport.ts','src/require.cjs','src/template.ts']).verdict,'pass');
  assert.deepEqual(run(['lib.sh']).findings.map(f=>f.locator.path),['absolute.sh','caller','conditional.sh']);
