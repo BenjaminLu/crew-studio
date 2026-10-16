@@ -12,7 +12,7 @@
 // pre-allowed, every other tool still asks the permission bridge.
 //   CREW_HOST_CLAUDE_BIN       executable (default "claude"; a .mjs path runs under bun: test stub)
 //   CREW_HOST_CLAUDE_PROJECTS  where session files live (default ~/.claude/projects)
-import { chmodSync, closeSync, existsSync, mkdtempSync, openSync, readSync, readdirSync, rmSync, statSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdtempSync, openSync, readSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,10 +34,27 @@ export function claudeRefusal(m: any): { code: HostRefusalCode; reason: { en: st
   return null;
 }
 
-/** The private endpoint the studio MCP helper calls for one session's native tools: a 0700 dir, a 0600 unix socket, a random token. */
-function nativeEndpoint(handle: (name: string | null, args: unknown) => Promise<unknown>) {
-  const dir = mkdtempSync(join(tmpdir(), "crew-native-")); chmodSync(dir, 0o700);
+/** One session's private folder: 0700, named with Studio's pid so a later Studio can sweep it once that pid is gone.
+ *  It holds the MCP config file and the token files, so no token or socket path ever appears on a command line. */
+export const PRIVATE_PREFIX = "crew-native-";
+function privateDir() { const dir = mkdtempSync(join(tmpdir(), `${PRIVATE_PREFIX}${process.pid}-`)); chmodSync(dir, 0o700); return dir; }
+const secretFile = (dir: string, name: string, text: string) => { const f = join(dir, name); writeFileSync(f, text, { mode: 0o600 }); chmodSync(f, 0o600); return f; };
+/** Remove private folders a Studio that is no longer running left behind (its pid is gone). */
+export function sweepPrivateDirs(root = tmpdir()) {
+  let n = 0;
+  for (const name of (() => { try { return readdirSync(root); } catch { return [] as string[]; } })()) {
+    const m = new RegExp(`^${PRIVATE_PREFIX}(\\d+)-`).exec(name); if (!m) continue;
+    const pid = Number(m[1]); if (pid === process.pid) continue;
+    let alive = true; try { process.kill(pid, 0); } catch (e: any) { alive = e?.code === "EPERM"; }
+    if (!alive) { try { rmSync(join(root, name), { recursive: true, force: true }); n++; } catch {} }
+  }
+  return n;
+}
+
+/** The private endpoint the studio MCP helper calls for one session's native tools: a 0600 unix socket in the private folder, a random token in a 0600 file. */
+function nativeEndpoint(dir: string, handle: (name: string | null, args: unknown) => Promise<unknown>) {
   const socket = join(dir, "tools.sock"), token = randomBytes(32).toString("hex"), tok = Buffer.from(token);
+  const tokenFile = secretFile(dir, "tool.token", token);
   const reply = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json" } });
   const server = Bun.serve({ unix: socket, fetch: async (req) => {
     const given = Buffer.from(req.headers.get("x-crew-tool-token") ?? "");
@@ -48,7 +65,7 @@ function nativeEndpoint(handle: (name: string | null, args: unknown) => Promise<
     return reply({ error: "unknown" }, 404);
   } });
   try { chmodSync(socket, 0o600); } catch {}
-  return { socket, token, close() { try { server.stop(true); } catch {} try { rmSync(dir, { recursive: true, force: true }); } catch {} } };
+  return { socket, tokenFile, close() { try { server.stop(true); } catch {} } };
 }
 
 export const encodeCwd = (cwd: string) => cwd.replace(/[^a-zA-Z0-9]/g, "-");
@@ -129,7 +146,9 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
       let refused: { code: HostRefusalCode; reason: { en: string; "zh-TW": string } } | null = null;
       // native tools: only a fresh primary with Studio's MCP helper; calls run inside the turn that asked
       const native = fresh && opts.nativeTools && opts.studioMcp ? opts.nativeTools : null;
-      const endpoint = native ? nativeEndpoint(async (name, args) => {
+      const priv = privateDir();
+      const dropPrivate = () => { endpoint?.close(); try { rmSync(priv, { recursive: true, force: true }); } catch {} };
+      const endpoint = native ? nativeEndpoint(priv, async (name, args) => {
         if (name === null) return native.specs.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
         const t = turn, seq = turnSeq, p = proc;
         const live = () => !!t && turn === t && turnSeq === seq && !interrupting && !!p && proc === p;
@@ -152,12 +171,19 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
         if (opts.permissionMode && SAFE_MODES.includes(opts.permissionMode)) args.push("--permission-mode", opts.permissionMode);
         else if (fresh) args.push("--permission-mode", "default");
         const servers: Record<string, unknown> = {};
-        if (opts.permissionMcp) servers[mcpName] = { type: "stdio", command: opts.permissionMcp.command[0], args: opts.permissionMcp.command.slice(1), env: opts.permissionMcp.env };
-        if (endpoint && opts.studioMcp) servers[studioName] = { type: "stdio", command: opts.studioMcp.command[0], args: opts.studioMcp.command.slice(1), env: { CREW_STUDIO_SOCKET: endpoint.socket, CREW_TOOL_TOKEN: endpoint.token } };
+        if (opts.permissionMcp) {
+          // the bridge token goes in a 0600 file; the helper reads it by path (CREW_PERM_TOKEN_FILE)
+          const { CREW_PERM_TOKEN, ...rest } = opts.permissionMcp.env;
+          servers[mcpName] = { type: "stdio", command: opts.permissionMcp.command[0], args: opts.permissionMcp.command.slice(1), env: { ...rest, ...(CREW_PERM_TOKEN ? { CREW_PERM_TOKEN_FILE: secretFile(priv, "perm.token", CREW_PERM_TOKEN) } : {}) } };
+        }
+        if (endpoint && opts.studioMcp) servers[studioName] = { type: "stdio", command: opts.studioMcp.command[0], args: opts.studioMcp.command.slice(1), env: { CREW_STUDIO_SOCKET: endpoint.socket, CREW_TOOL_TOKEN_FILE: endpoint.tokenFile } };
         if (opts.permissionMcp) args.push("--permission-prompt-tool", `mcp__${mcpName}__approve`);
         else args.push("--permission-prompts", "none"); // nobody to ask: anything that would prompt is denied
-        if (Object.keys(servers).length) args.push("--mcp-config", JSON.stringify({ mcpServers: servers }));
+        // the config lives in the private folder: argv names a file, never a token or the socket
+        if (Object.keys(servers).length) args.push("--mcp-config", secretFile(priv, "mcp.json", JSON.stringify({ mcpServers: servers })));
         if (fresh) args.push("--strict-mcp-config"); // Studio's servers only, never ones from a config the primary did not choose
+        // user scope is Studio's own config folder (CLAUDE_CONFIG_DIR): the workspace's .claude/settings*.json and hooks never load
+        if (fresh) args.push("--setting-sources", "user");
         // Studio's own native tools carry their own captain authority (cards, staffing, ledger): pre-allowed by exact name only
         if (native) args.push("--allowedTools", native.specs.map((t) => `mcp__${studioName}__${t.name}`).join(","));
         const p = spawnJsonl(binArgv(bin, args), opts.cwd, { ...cleanEnv(), ...(opts.env ?? {}) }, (m) => {
@@ -225,14 +251,14 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
         },
         async detach() {
           if (proc) { const p = proc; proc = null; p.kill(15); await Promise.race([p.exited, Bun.sleep(3000)]); p.kill(9); }
-          endpoint?.close();
+          dropPrivate();
           endTurn("interrupted");
           return `claude --resume ${id}`;
         },
       };
       // a takeover starts the CLI at once, so its hooks (firstmate's watch) are armed before the first message;
       // a fresh primary too, so Studio owns (and Stop kills) a real process from the start
-      if (opts.fork || fresh) { try { proc = spawn(); } catch (e) { endpoint?.close(); throw e; } }
+      if (opts.fork || fresh) { try { proc = spawn(); } catch (e) { dropPrivate(); throw e; } }
       return session;
     },
   };

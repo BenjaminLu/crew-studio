@@ -5,7 +5,7 @@
 // behaviour: STUB_TOOL (asks permission through the real permission MCP server
 // from --mcp-config), STUB_SLOW (streams until interrupted), otherwise an echo.
 // A session id starting with "fork-" is re-identified as "<id>-new" on init.
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
@@ -23,7 +23,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const dir = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "projects", process.cwd().replace(/[^a-zA-Z0-9]/g, "-"));
 mkdirSync(dir, { recursive: true });
 const touch = (o) => appendFileSync(join(dir, `${id}.jsonl`), JSON.stringify({ ...o, sessionId: id, cwd: process.cwd(), isSidechain: false }) + "\n");
-const mcpCfg = argv.includes("--mcp-config") ? JSON.parse(argv[argv.indexOf("--mcp-config") + 1]) : null;
+// like the CLI: --mcp-config takes inline JSON or a file path
+const mcpArg = argv.includes("--mcp-config") ? argv[argv.indexOf("--mcp-config") + 1] : null;
+const mcpCfg = mcpArg ? JSON.parse(mcpArg.trim().startsWith("{") ? mcpArg : readFileSync(mcpArg, "utf8")) : null;
 let inited = false, interrupted = false, slow = false;
 
 /** One stdio MCP server from --mcp-config, as the CLI runs it: initialize, then the given calls in order. */
@@ -55,6 +57,7 @@ async function askPermission(name, input) {
 }
 
 async function turn(text) {
+  if (!inited && process.env.STUB_SEED_FILE) appendFileSync(process.env.STUB_SEED_FILE, JSON.stringify({ seed: text, pid: process.pid }) + "\n");
   if (!inited) { inited = true; out({ type: "system", subtype: "init", session_id: id, model: "stub-opus", tools: [] }); }
   touch({ type: "user", message: { role: "user", content: text } });
   if (text.includes("STUB_NATIVE ")) {

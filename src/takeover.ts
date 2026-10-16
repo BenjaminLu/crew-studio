@@ -19,7 +19,7 @@ import { newestHandoffFile, type MainSession } from "./host/main";
 import { redactText } from "./secure";
 
 type Who = { kind: string; device?: { name: string } };
-type Deps = { claudePair?: () => { model: string; effort: string | null }; claudePrimary?: () => Promise<import("./host/claude-primary").ClaudePrimaryReady>; codexAccount?:Pick<import("./host/codex-account").CodexAccount,"view"|"ensureReady"|"blocking">; main: MainSession; fm: FmState; gh: GitHub; board: Board; stateDir: string; pending: () => Card[]; tasks: () => Task[]; crew: () => Actor[] };
+type Deps = { claudePreflight?: () => Promise<import("./host/claude-primary").ClaudePrimaryReady>; claudePair?: () => { model: string; effort: string | null }; claudePrimary?: () => Promise<import("./host/claude-primary").ClaudePrimaryReady>; codexAccount?:Pick<import("./host/codex-account").CodexAccount,"view"|"ensureReady"|"blocking">; main: MainSession; fm: FmState; gh: GitHub; board: Board; stateDir: string; pending: () => Card[]; tasks: () => Task[]; crew: () => Actor[] };
 
 export const DISPATCH_PREFIX = "Captain's intent for new work, sent from Crew Studio:";
 export const dispatchText = (intent: string) => `${DISPATCH_PREFIX}\n\n${intent}\n\n` +
@@ -78,6 +78,12 @@ export function createTakeover(d: Deps) {
       return text == null ? json({ error: "no final report for that round" }, 404) : json({ actor, text: redactText(text) });
     }
     if (p === "/api/crew/live" && !writing) return json(crewLive());
+    // read-only: may a fresh Claude Firstmate start now? No folder, no keychain decrypt, no model call; the cards ask before Start or Switch
+    if (p === "/api/main/start/claude-ready" && !writing) {
+      if (!d.claudePreflight) return json({ ok: false, code: "claudeUnavailable", reason: "Claude is not available to Studio / Studio 無法使用 Claude" });
+      const r = await d.claudePreflight();
+      return json(r.ok ? { ok: true, model: r.model, effort: r.effort } : r);
+    }
     if (!writing) return null;
     let b: any = {};
     if (["/api/main/takeover", "/api/main/start", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door"].includes(p)) { try { b = await req.json(); } catch {} }

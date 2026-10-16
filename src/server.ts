@@ -5,6 +5,7 @@ import {NativeOutcomes} from "./host/native-outcomes";
 import {coffeeJourneyProof} from "./domain/coffee-kit";
 import {ClaudeLogin} from './host/claude-login';
 import {claudePrimaryReadiness} from './host/claude-primary';
+import {sweepPrivateDirs} from './host/claude';
 import {discoverCoffeeFilmCapability,renderCoffeeFilm} from "./render/coffee-film";
 import {publishGeneratedImage} from "./host/generated-media";
 import {createNativeProviderAdmission} from "./providers/native-admission";
@@ -183,10 +184,15 @@ main.onEvent = (e: HostEvent) => {
   if (e.type === "hostRefusal" && main.view().host === "claude") { try { nativeClaude.observe(e.raw); } catch {} } if (e.type === "delta" || e.type === "toolStart" || e.type === "permissionRequest" || e.type === "turnStart") send("mainEvent", e); };
 const codexAccount=new CodexAccount({cwd:PROJECT,busy:()=>main.view().state!=="detached",configured:()=>{const c=codexConfig(PROJECT);return{model:c.model,effort:c.effort};},changed:()=>send("codex-account",codexAccount.view())});
 const claudeLogin=new ClaudeLogin({loginMs:Number(process.env.CREW_CLAUDE_LOGIN_MS)||undefined,signedIn:()=>nativeClaude.signedIn(),changed:()=>send("claude-account",claudeLogin.view())});
-for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{void Promise.all([codexAccount.shutdown(),nativeClaude.cancel(),claudeLogin.shutdown()]).then(()=>process.exit(0),()=>process.exit(1));});
+// Studio's own primary is stopped with Studio: its process ends and its private folder (tokens, socket) goes
+for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{void Promise.all([codexAccount.shutdown(),nativeClaude.cancel(),claudeLogin.shutdown(),(()=>{const v=main.view();return v.context==="studio"&&!v.origin&&v.drive?.path==="fresh"&&["attached","paused"].includes(v.state)?main.detach().catch(()=>null):null;})()]).then(()=>process.exit(0),()=>process.exit(1));});
 // a fresh Claude primary: the model the Claude account card checks, Studio's own config folder, the crew token
 const claudePrimaryPair = () => { const model = chatSettings().models.claude || process.env.CREW_CLAUDE_MODEL || "claude-sonnet-5-5"; let effort: string | null = null; try { effort = configuredClaudeEffort(model); } catch {} return { model, effort }; };
-const takeover = createTakeover({ claudePair: claudePrimaryPair, claudePrimary: () => claudePrimaryReadiness({ pair: claudePrimaryPair(), status: () => nativeClaude.status(claudePrimaryPair()), login: () => claudeLogin_(), configDir: join(DATA, "claude-firstmate"), signInPending: claudeLogin.view().state === "pending" }), main, fm, gh, board, codexAccount, stateDir: STATE, pending: () => pending, tasks, crew: () => fm.crew(8) });
+// a Studio that stopped without its shutdown handler leaves private folders behind: remove those whose Studio is gone
+try { sweepPrivateDirs(); } catch {}
+const takeover = createTakeover({ claudePair: claudePrimaryPair,
+  claudePreflight: () => claudePrimaryReadiness({ dry: true, pair: claudePrimaryPair(), status: () => nativeClaude.status(claudePrimaryPair()), login: () => ({ ok: false, error: "dry" }), probe: () => claudeLoginStatus(), configDir: join(DATA, "claude-firstmate"), signInPending: claudeLogin.view().state === "pending" }),
+  claudePrimary: () => claudePrimaryReadiness({ probe: () => claudeLoginStatus(), pair: claudePrimaryPair(), status: () => nativeClaude.status(claudePrimaryPair()), login: () => claudeLogin_(), configDir: join(DATA, "claude-firstmate"), signInPending: claudeLogin.view().state === "pending" }), main, fm, gh, board, codexAccount, stateDir: STATE, pending: () => pending, tasks, crew: () => fm.crew(8) });
 // transcripts: the session Studio drives (its copy holds the turns before the takeover), else the firstmate session
 const CLAUDE_PROJECTS = process.env.CREW_HOST_CLAUDE_PROJECTS ?? join(homedir(), ".claude/projects");
 let firstmateId: string | null = null;

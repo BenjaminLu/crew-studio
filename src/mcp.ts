@@ -7,9 +7,11 @@
 //                       (a fresh Claude Firstmate's native tools), same token header
 import { mcpContent } from "./tool-content";
 import { createInterface } from "node:readline";
+import { readFileSync } from "node:fs";
 
 const URL_ = process.env.CREW_STUDIO_URL ?? "http://127.0.0.1:4210";
-const TOKEN = process.env.CREW_TOOL_TOKEN ?? "";
+// a Studio-owned session hands the token as a 0600 file (CREW_TOOL_TOKEN_FILE), so it is never on a command line
+const TOKEN = process.env.CREW_TOOL_TOKEN_FILE ? (() => { try { return readFileSync(process.env.CREW_TOOL_TOKEN_FILE!, "utf8").trim(); } catch { return ""; } })() : process.env.CREW_TOOL_TOKEN ?? "";
 const SOCKET = process.env.CREW_STUDIO_SOCKET ?? "";
 const out = (o: unknown) => process.stdout.write(JSON.stringify(o) + "\n");
 const call = async (path: string, body?: unknown) => {

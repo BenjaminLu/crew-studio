@@ -36,7 +36,9 @@ import { join } from "node:path";
 import { registerSecretValues } from "../secure";
 import { keptKeys } from "../keys";
 
-export type Login = { ok: true; env: Record<string, string>; source: string; warn: string | null } | { ok: false; error: string };
+/** Which kind of credential a login is, for code to decide on (the source text is for people). */
+export type LoginKind = "env-oauth" | "api-key" | "crew" | "own-login" | "codex";
+export type Login = { ok: true; env: Record<string, string>; source: string; warn: string | null; kind?: LoginKind } | { ok: false; error: string };
 const handed = new Set<string>();
 // every login value Studio hands a round is a known secret for the one redactor, from the moment it is read
 registerSecretValues(() => [...handed]);
@@ -94,14 +96,14 @@ export const CLAUDE_OAUTH_SHAPE = /^sk-ant-oat\d{2}-[A-Za-z0-9_-]{40,}$/;
 export const CLAUDE_API_KEY_SHAPE = /^sk-ant-api\d{2}-[A-Za-z0-9_-]{20,}$/;
 const NOT_SETUP_TOKEN = "crew token is not a claude setup-token result (expected sk-ant-oat01-…)";
 // verified: false only for a keychain item the Doctor saw by existence and no round has signed in with yet
-type Resolved = { ok: true; env: Record<string, string>; source: string; warn: string | null; verified?: boolean } | { ok: false; error: string };
+type Resolved = { ok: true; env: Record<string, string>; source: string; warn: string | null; verified?: boolean; kind: LoginKind } | { ok: false; error: string };
 const CREW_HINT = "make a crew token once (claude setup-token) and keep it in the keychain (security add-generic-password -s crew-studio-claude-token -a \"$USER\" -w) or in ~/.config/crew-studio/claude-token (mode 600)";
 /** claude's login, in v1's order; `probe` reads no keychain secret (the Doctor), and its env values are empty. */
 function resolveClaude(probe: boolean, record = true): Resolved {
   const env = process.env; const val = (v: string) => (probe ? "" : seen(v));
   const early: string[] = [];
   if (env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) {
-    if (CLAUDE_OAUTH_SHAPE.test(env.CLAUDE_CODE_OAUTH_TOKEN.trim())) return { ok: true, env: { CLAUDE_CODE_OAUTH_TOKEN: val(env.CLAUDE_CODE_OAUTH_TOKEN.trim()) }, source: "CLAUDE_CODE_OAUTH_TOKEN in Studio's environment", warn: null };
+    if (CLAUDE_OAUTH_SHAPE.test(env.CLAUDE_CODE_OAUTH_TOKEN.trim())) return { ok: true, env: { CLAUDE_CODE_OAUTH_TOKEN: val(env.CLAUDE_CODE_OAUTH_TOKEN.trim()) }, source: "CLAUDE_CODE_OAUTH_TOKEN in Studio's environment", warn: null, kind: "env-oauth" };
     early.push("CLAUDE_CODE_OAUTH_TOKEN in Studio's environment: it is not a claude OAuth token (expected sk-ant-oat01-…)");
   }
   if (claudeBilling() === "api-key") {
@@ -109,7 +111,7 @@ function resolveClaude(probe: boolean, record = true): Resolved {
     const why: string[] = [];
     for (const [name, k] of [["ANTHROPIC_API_KEY in Studio's environment", env.ANTHROPIC_API_KEY?.trim()], ["the Anthropic key Studio keeps (Doctor → API keys)", keptKeys().anthropic?.trim()]] as const) {
       if (!k) continue;
-      if (CLAUDE_API_KEY_SHAPE.test(k)) return { ok: true, env: { ANTHROPIC_API_KEY: val(k) }, source: "an Anthropic API key (API billing)", warn: why.length ? `tried first and failed: ${why.join("; ")}` : null };
+      if (CLAUDE_API_KEY_SHAPE.test(k)) return { ok: true, env: { ANTHROPIC_API_KEY: val(k) }, source: "an Anthropic API key (API billing)", warn: why.length ? `tried first and failed: ${why.join("; ")}` : null, kind: "api-key" };
       why.push(`${name}: it is not an Anthropic API key (expected sk-ant-api03-…)`);
     }
     return { ok: false, error: why.length ? `API billing is chosen and no Anthropic API key works (${why.join("; ")})` : "API billing is chosen and Studio has no Anthropic API key (ANTHROPIC_API_KEY, or Doctor → API keys)" };
@@ -117,14 +119,14 @@ function resolveClaude(probe: boolean, record = true): Resolved {
   // each source in order; an error at one (a keychain prompt denied, an empty item, an unreadable file, an expired login) moves on
   // to the next, and only when every source fails is the round refused, with why each one failed (v1's fm_sandbox_policy order)
   type Src = { name: string; get: () => Resolved | { ok: false; error: string } | null };
-  const ok = (v: string, source: string, warn: string | null = null): Resolved => ({ ok: true, env: { CLAUDE_CODE_OAUTH_TOKEN: val(v) }, source, warn });
+  const ok = (v: string, source: string, warn: string | null = null, kind: LoginKind = "crew"): Resolved => ({ ok: true, env: { CLAUDE_CODE_OAUTH_TOKEN: val(v) }, source, warn, kind });
   const WARN = "it stops working when your own login refreshes; a crew token (claude setup-token) does not";
   const fromJSON = (raw: string, name: string): Resolved => {
     let tok = "", exp = 0; try { const j = JSON.parse(raw); tok = String(j?.claudeAiOauth?.accessToken ?? ""); exp = Number(j?.claudeAiOauth?.expiresAt ?? 0); } catch {}
     if (!tok) return { ok: false, error: `${name} holds no access token` };
     if (exp && exp < Date.now()) return { ok: false, error: `${name}'s access token has expired; start claude once outside a round to refresh it` };
     if (!CLAUDE_OAUTH_SHAPE.test(tok)) return { ok: false, error: `${name}'s access token is not a claude OAuth token (expected sk-ant-oat01-…)` };
-    return ok(tok, "your own claude login's access token", WARN); };
+    return ok(tok, "your own claude login's access token", WARN, "own-login"); };
   const crewTok = (v: string, source: string): Resolved => (CLAUDE_OAUTH_SHAPE.test(v) ? ok(v, source) : { ok: false, error: NOT_SETUP_TOKEN });
   const keychain = keychainOn();
   const sources: Src[] = [
@@ -140,7 +142,7 @@ function resolveClaude(probe: boolean, record = true): Resolved {
       if (!keychain) return null;
       if (probe) { if (!keychainHas("Claude Code-credentials", user())) return null; const last = outcomes()["your own claude login (keychain item Claude Code-credentials)"];
         if (last && !last.ok) return { ok: false, error: `${last.error} (the last round, ${last.at})` };
-        return { ...ok("", "your own claude login's access token", last?.ok ? WARN : `${WARN}; its expiry is checked when a round starts (the Doctor does not decrypt it)`), verified: !!last?.ok }; }
+        return { ...ok("", "your own claude login's access token", last?.ok ? WARN : `${WARN}; its expiry is checked when a round starts (the Doctor does not decrypt it)`, "own-login"), verified: !!last?.ok }; }
       const r = keychainRead("Claude Code-credentials", user()); return r.found ? fromJSON(r.found, "your claude login") : r.error ? { ok: false, error: r.error } : null; } },
     { name: "your own claude login (~/.claude/.credentials.json)", get: () => {
       if (keychain) return null; // where there is a keychain, the login lives there
@@ -158,8 +160,8 @@ function resolveClaude(probe: boolean, record = true): Resolved {
 /** The login a claude round gets (read when it starts). */
 export function claudeLogin(options: { record?: boolean } = {}): Login { return resolveClaude(false, options.record !== false); }
 /** What the Doctor shows: the same resolver, reading no keychain secret. */
-export function claudeLoginStatus(): { ok: boolean; verified?: boolean; source?: string; warn?: string | null; error?: string } {
-  const r = resolveClaude(true); return r.ok ? { ok: true, verified: r.verified !== false, source: r.source, warn: r.warn } : { ok: false, error: r.error };
+export function claudeLoginStatus(): { ok: boolean; verified?: boolean; source?: string; warn?: string | null; error?: string; kind?: LoginKind } {
+  const r = resolveClaude(true); return r.ok ? { ok: true, verified: r.verified !== false, source: r.source, warn: r.warn, kind: r.kind } : { ok: false, error: r.error };
 }
 
 /** The shape of a codex credential (never printed): an OpenAI API key is sk-…; a login's access token is a JWT. */

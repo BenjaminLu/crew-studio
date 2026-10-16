@@ -1,7 +1,8 @@
 // A fresh Firstmate primary on Claude: the actual server, a stub Claude CLI (tests/stub-host-claude.mjs),
 // the official-login fixture for `claude auth status`, a keychain stand-in and the Codex account fixture.
 // Offline: no model is called, no real credential is read.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -32,6 +33,7 @@ exit 44
 `, { mode: 0o755 });
 const setKeychain = (m: string) => writeFileSync(kcMode, m);
 const signedIn = (yes: boolean) => yes ? writeFileSync(join(home, ".claude-login-marker"), "1") : rmSync(join(home, ".claude-login-marker"), { force: true });
+const seedFile = join(root, "claude-seed.jsonl");
 const claudeRuns = () => existsSync(argvFile) ? readFileSync(argvFile, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
 const codexCalls = () => existsSync(codexLog) ? readFileSync(codexLog, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
 const codexStarts = () => codexCalls().filter((r) => r.method === "thread/start").length;
@@ -41,10 +43,13 @@ const start = () => {
   const env: any = { ...process.env, USER: process.env.USER || "fixture-user", LOGNAME: process.env.LOGNAME || "fixture-user", HOME: home, CODEX_HOME: join(home, ".codex"),
     CREW_DATA: data, CREW_RUNTIME_DIR: join(root, "runtime"), CREW_PORT: String(port), CREW_SESSION_TOKEN: token, CREW_GH: "0", CREW_CHAT_PROVIDER: "stub", CREW_INSTALL_RUNNER: "mock",
     CREW_CLAUDE_BIN: join(import.meta.dir, "fixture/claude-login.mjs"), CREW_HOST_CLAUDE_BIN: join(import.meta.dir, "stub-host-claude.mjs"), CREW_KEYCHAIN_TOOL: keychain,
-    CREW_HOST_CODEX_BIN: join(import.meta.dir, "fixture/codex-account.mjs"), ACCOUNT_FIXTURE_LOG: codexLog, STUB_ARGV_FILE: argvFile, STUB_EXPECT_CREW: CREW, CREW_WAKE_GRACE_MS: "60000" };
+    CREW_HOST_CODEX_BIN: join(import.meta.dir, "fixture/codex-account.mjs"), ACCOUNT_FIXTURE_LOG: codexLog, STUB_ARGV_FILE: argvFile, STUB_SEED_FILE: seedFile, STUB_EXPECT_CREW: CREW, CREW_WAKE_GRACE_MS: "60000" };
   const p = spawn("bun", ["src/server.ts"], { cwd: join(import.meta.dir, ".."), env, stdio: ["ignore", "pipe", "pipe"] });
   p.stdout.resume(); p.stderr.resume(); return p;
 };
+// a private folder a Studio that is gone left behind: the next Studio sweeps it at boot
+const deadPid = await new Promise<number>((r) => { const c = spawn("true"); c.once("exit", () => r(c.pid!)); });
+const stale = join(tmpdir(), `crew-native-${deadPid}-staletest`); mkdirSync(stale, { recursive: true }); writeFileSync(join(stale, "mcp.json"), "{}");
 let app = start();
 const stop = async () => { if (app.exitCode === null && app.signalCode === null) { const done = new Promise((r) => app.once("exit", r)); app.kill("SIGTERM"); await done; } };
 const api = async (path: string, body?: any) => { const r = await fetch(base + path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", "x-crew-session": token }, body: body === undefined ? undefined : JSON.stringify(body) }); return { status: r.status, body: await r.json() as any }; };
@@ -55,23 +60,33 @@ const say = async (text: string) => { const before = (await view()).log.length; 
 try {
   await waitUp(base, app);
   ok((await view()).context === "studio", "the server runs Studio's own workspace");
+  ok(await until(() => !existsSync(stale)), "boot sweeps a private folder whose Studio is gone");
+  const ready = async () => { try { return (await api("/api/main/start/claude-ready")).body; } catch { return {}; } };
 
   // --- typed refusals, never Codex ---
   signedIn(false); setKeychain("crew");
   let r = await api("/api/main/start", { host: "claude", confirm: true });
   ok(r.status === 409 && r.body.code === "claudeNotSignedIn" && /Sign in to Claude/.test(r.body.reason), "not signed in: typed claudeNotSignedIn refusal");
   ok(codexStarts() === 0 && claudeRuns().length === 0 && (await view()).state === "detached", "not signed in: no Codex thread, no Claude process, nothing attached");
+  ok((await ready()).code === "claudeNotSignedIn", "the read-only preflight says not signed in");
   signedIn(true); setKeychain("none");
   r = await api("/api/main/start", { host: "claude", confirm: true });
   ok(r.status === 409 && r.body.code === "claudeCrewTokenMissing" && /claude setup-token/.test(r.body.reason) && !r.body.reason.includes(CREW), "no crew token: typed claudeCrewTokenMissing refusal, no secret in it");
+  const pre = await ready();
+  ok(pre.code === "claudeCrewTokenMissing" && /claude setup-token/.test(pre.en) && /claude setup-token/.test(pre.zh), "the preflight gives the crew-token step, in English and Chinese");
   setKeychain("own");
   r = await api("/api/main/start", { host: "claude", confirm: true });
   ok(r.status === 409 && r.body.code === "claudeCrewTokenMissing", "the captain's own interactive login is not used in place of the crew token");
+  ok((await ready()).code === "claudeCrewTokenMissing", "the preflight also refuses the captain's own login (typed login kind)");
   ok(codexStarts() === 0 && claudeRuns().length === 0 && (await view()).state === "detached", "crew token missing: no Codex thread, no Claude process");
   ok((await api("/api/main/start", { host: "claude" })).body.code === "confirm", "a start needs the captain's confirmation");
 
   // --- a fresh Claude primary ---
   setKeychain("crew");
+  const kcBefore = readFileSync(kcLog, "utf8");
+  const okPre = await ready();
+  ok(okPre.ok === true && okPre.model === "claude-sonnet-5-5" && !existsSync(join(data, "claude-firstmate")), "the preflight passes without creating the config folder");
+  ok(!readFileSync(kcLog, "utf8").slice(kcBefore.length).includes(" -w"), "the preflight never decrypts a keychain item");
   r = await api("/api/main/start", { host: "claude", confirm: true });
   ok(r.status === 200 && r.body.ok && UUID.test(r.body.id), "signed in with a crew token: a fresh Claude primary starts with a new UUID");
   const first = r.body.id;
@@ -86,14 +101,23 @@ try {
   ok(!a.includes("--dangerously-skip-permissions") && !a.includes("bypassPermissions") && a[a.indexOf("--permission-mode") + 1] === "default" && a[a.indexOf("--permission-prompt-tool") + 1] === "mcp__studio_permission__approve" && a.includes("--strict-mcp-config"), "permission bridge wired, default mode, no bypass, only Studio's MCP servers");
   const allowed = (a[a.indexOf("--allowedTools") + 1] ?? "").split(",");
   ok(allowed.length >= 5 && allowed.every((t) => /^mcp__studio__studio_[a-z_]+$/.test(t)) && allowed.includes("mcp__studio__studio_propose_work"), "only Studio's native tools are pre-allowed, by exact name");
-  const cfg = JSON.parse(a[a.indexOf("--mcp-config") + 1]), studio = cfg.mcpServers.studio;
-  ok(studio && studio.command && studio.args.some((x: string) => x.endsWith("src/mcp.ts")) && studio.env.CREW_STUDIO_SOCKET && studio.env.CREW_TOOL_TOKEN && !studio.env.CREW_STUDIO_URL, "native tools come from Studio's MCP helper over owned stdio and a private socket");
+  const cfgFile = a[a.indexOf("--mcp-config") + 1] ?? "", priv = dirname(cfgFile);
+  const cfg = JSON.parse(readFileSync(cfgFile, "utf8")), studio = cfg.mcpServers.studio, perm = cfg.mcpServers.studio_permission;
+  const toolToken = readFileSync(studio.env.CREW_TOOL_TOKEN_FILE, "utf8").trim(), permToken = readFileSync(perm.env.CREW_PERM_TOKEN_FILE, "utf8").trim();
+  const line = JSON.stringify(a);
+  ok(!cfgFile.startsWith("{") && toolToken.length >= 32 && permToken.length >= 32 && !line.includes(toolToken) && !line.includes(permToken) && !line.includes(studio.env.CREW_STUDIO_SOCKET) && !/CREW_(TOOL|PERM)_TOKEN|tools\.sock/.test(line), "the spawned argv holds neither token nor the socket path: --mcp-config names a file");
+  ok((statSync(priv).mode & 0o777) === 0o700 && [cfgFile, studio.env.CREW_TOOL_TOKEN_FILE, perm.env.CREW_PERM_TOKEN_FILE].every((f) => (statSync(f).mode & 0o777) === 0o600) && !perm.env.CREW_PERM_TOKEN && !studio.env.CREW_TOOL_TOKEN, "the config and token files are 0600 in a 0700 folder; no token in the config");
+  ok(a[a.indexOf("--setting-sources") + 1] === "user", "only user settings load, and user scope is Studio's own config folder (no workspace .claude settings or hooks)");
+  ok(studio && studio.command && studio.args.some((x: string) => x.endsWith("src/mcp.ts")) && studio.env.CREW_STUDIO_SOCKET && !studio.env.CREW_STUDIO_URL, "native tools come from Studio's MCP helper over owned stdio and a private socket");
 
   // --- native tools through MCP ---
   let out = await say("STUB_NATIVE studio_list_workflows {}");
   const reply = out.find((l: any) => l.kind === "firstmate")?.text ?? "";
   ok(/native tools: .*studio_list_workflows/.test(reply) && reply.includes("studio_propose_work") && reply.includes("studio_staffing_facts"), "tools/list over MCP lists Studio's native tools");
   ok(/studio_list_workflows ok: \{"workflows":\[/.test(reply), "tools/call runs a native tool and returns its result");
+  const listed = (/native tools: ([^|]*) \|/.exec(reply)?.[1] ?? "").split(",").filter(Boolean);
+  const seed = existsSync(seedFile) ? JSON.parse(readFileSync(seedFile, "utf8").trim().split("\n")[0]).seed as string : "";
+  ok(listed.length >= 12 && listed.includes("studio_startup_workflow_contract") && listed.every((n) => seed.includes(n)), "the first message names every registered native tool (" + listed.length + ")");
   const draftArgs = JSON.stringify(JSON.parse(readFileSync(join(import.meta.dir, "fixture/first-workflow-draft.json"), "utf8")));
   out = await say(`STUB_NATIVE studio_draft_workflow ${draftArgs}`);
   const drafted = out.find((l: any) => l.kind === "firstmate")?.text ?? "";
@@ -103,7 +127,7 @@ try {
   ok((await api("/api/wruns")).body.runs.length === 0, "the refused proposal allocated no work");
   const sock = studio.env.CREW_STUDIO_SOCKET;
   ok((await fetch("http://localhost/api/tools", { unix: sock, headers: { "x-crew-tool-token": "wrong" } } as any)).status === 403, "the native socket refuses a wrong token");
-  const outside = await (await fetch("http://localhost/api/tools/studio_list_workflows", { unix: sock, method: "POST", body: "{}", headers: { "x-crew-tool-token": studio.env.CREW_TOOL_TOKEN } } as any)).json() as any;
+  const outside = await (await fetch("http://localhost/api/tools/studio_list_workflows", { unix: sock, method: "POST", body: "{}", headers: { "x-crew-tool-token": toolToken } } as any)).json() as any;
   ok(outside?.failure?.code === "owner_ended", "a native call outside a running turn is refused (owner_ended)");
 
   // --- the permission bridge ---
@@ -127,7 +151,7 @@ try {
   ok(await until(() => !alive(pid)), "Stop kills the owned Claude process");
   ok(sv.state === "detached" && sv.driver.holder === "none" && !sv.driver.resume && sv.driver.host === "claude" && /Firstmate stopped/.test(sv.log.at(-1)?.text ?? ""), "Stop releases the lock like the Codex primary");
   ok(existsSync(join(data, "claude-firstmate")) && !readFileSync(kcLog, "utf8").includes("delete"), "Stop keeps credentials and the config folder");
-  ok(!existsSync(sock), "Stop closes the native tool socket");
+  ok(!existsSync(sock) && !existsSync(priv), "Stop closes the native tool socket and removes the private folder");
 
   // --- the Codex primary is unchanged ---
   r = await api("/api/main/start", { host: "codex", confirm: true });
@@ -140,8 +164,11 @@ try {
   r = await api("/api/main/start", { host: "claude", confirm: true });
   ok(r.status === 200 && UUID.test(r.body.id) && r.body.id !== first, "a second fresh Claude primary gets another new UUID");
   await idle();
-  const pid2 = claudeRuns().at(-1).pid;
-  await stop(); app = start(); await waitUp(base, app);
+  const run2 = claudeRuns().at(-1), pid2 = run2.pid, priv2 = dirname(run2.argv[run2.argv.indexOf("--mcp-config") + 1]);
+  ok(existsSync(priv2), "the running primary has its private folder");
+  await stop();
+  ok(!existsSync(priv2), "Studio's shutdown stops the primary and removes its private folder");
+  app = start(); await waitUp(base, app);
   const rv = await view();
   ok(rv.state === "detached" && rv.driver.holder === "none" && !rv.driver.resume, "after a Studio restart the Claude primary is released with no resume, like Codex");
   ok(await until(() => !alive(pid2)), "the Studio restart leaves no Claude process behind");

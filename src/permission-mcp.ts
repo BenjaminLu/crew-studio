@@ -5,8 +5,10 @@
 //   CREW_PERM_SOCKET  socket path;  CREW_PERM_TOKEN  token
 import { connect } from "node:net";
 import { createInterface } from "node:readline";
+import { readFileSync } from "node:fs";
 
-const SOCKET = process.env.CREW_PERM_SOCKET ?? "", TOKEN = process.env.CREW_PERM_TOKEN ?? "";
+// CREW_PERM_TOKEN_FILE: the token in a 0600 file (how the claude host hands it, off the command line)
+const SOCKET = process.env.CREW_PERM_SOCKET ?? "", TOKEN = process.env.CREW_PERM_TOKEN_FILE ? (() => { try { return readFileSync(process.env.CREW_PERM_TOKEN_FILE!, "utf8").trim(); } catch { return ""; } })() : process.env.CREW_PERM_TOKEN ?? "";
 const TIMEOUT = Number(process.env.CREW_PERM_TIMEOUT_MS ?? 125_000);
 const out = (o: unknown) => process.stdout.write(JSON.stringify(o) + "\n");
 const summarize = (input: any) => { const v = input?.command ?? input?.file_path ?? input?.path ?? input?.pattern ?? input?.url ?? JSON.stringify(input ?? ""); return String(v).slice(0, 200); };

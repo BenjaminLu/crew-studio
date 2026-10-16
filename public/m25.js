@@ -77,7 +77,8 @@ function startChoices() {
   const r = window.crewHostReady?.() || {}, phone = MS.me?.kind === "phone" && !MS.me?.allowDrive;
   const start = (host) => (e) => { e.target.disabled = true; Promise.resolve(window.crewStartFirstmate?.(host)).finally(() => renderChat()); };
   return h("div", { class: "actions", "data-chat-start": "1" },
-    r.codex ? h("button", { class: "btn primary", "data-chat-start-host": "codex", disabled: phone || r.starting || null, onclick: start("codex") }, T("Start on Codex", "在 Codex 上開始")) : null,
+    // both ready: a neutral choice, neither host is the default
+    r.codex ? h("button", { class: r.claude ? "btn" : "btn primary", "data-chat-start-host": "codex", disabled: phone || r.starting || null, onclick: start("codex") }, T("Start on Codex", "在 Codex 上開始")) : null,
     r.claude ? h("button", { class: r.codex ? "btn" : "btn primary", "data-chat-start-host": "claude", disabled: phone || r.starting || null, onclick: start("claude") }, T("Start on Claude", "在 Claude 上開始")) : null,
     h("a", { class: r.codex || r.claude ? "btn ghost" : "btn primary", href: "#/firstmate", onclick: () => openChat(false) }, r.codex || r.claude ? T("Accounts…", "帳號…") : T("Connect and begin…", "連接並開始…")));
 }
@@ -91,7 +92,7 @@ function queueView(v) {
 }
 function approvalCard(a) {
   return h("div", { class: "rich", "data-approval": a.id, role: "group", "aria-label": T("Permission request", "權限請求") },
-    h("div", { class: "rk", style: "color:var(--human-text, var(--accent-text))" }, icon("shield", "ic sm"), T("firstmate asks to run a tool", "firstmate 請求使用工具"), h("span", { class: "vbadge" }, a.tool)),
+    h("div", { class: "rk", style: "color:var(--human-text, var(--accent-text))" }, icon("shield", "ic sm"), T("Firstmate asks to run a tool", "Firstmate 請求使用工具"), h("span", { class: "vbadge" }, a.tool)),
     h("code", { style: "white-space:pre-wrap;word-break:break-word;font-size:12.5px" }, a.summary || JSON.stringify(a.input).slice(0, 300)),
     h("div", { class: "faint", style: "font-size:12px" }, T(`Denied automatically if not answered in ${Math.max(0, Math.round((a.expires - Date.now()) / 1000))}s.`, `${Math.max(0, Math.round((a.expires - Date.now()) / 1000))} 秒內沒回答就自動拒絕。`)),
     h("div", { class: "actions" },
@@ -101,7 +102,7 @@ function approvalCard(a) {
 function logItem(it, i) {
   if(it.source === "studio:native-outcome")return h("div",{class:"card x-pad","data-native-outcome":it.id},h("p",{},it.text),...(it.links||[]).filter(l=>/^#\/(run|review)\//.test(l.href)).map(l=>h("a",{class:"btn",href:l.href},l.label)));
   if (it.kind === "captain") return h("div", { class: "msg me", "data-main": "captain" }, h("div", { class: "bub" }, it.text), it.source && it.source !== "desktop" ? h("div", { class: "faint", style: "font-size:11px;text-align:right" }, it.source) : null);
-  if (it.kind === "firstmate") return h("div", { class: "msg fm", "data-main": "firstmate" }, h("div", { class: "meta" }, "firstmate", MS.view?.host ? h("span", { class: "vbadge" }, MS.view.host) : null), h("div", { class: "bub" }, md(it.text)));
+  if (it.kind === "firstmate") return h("div", { class: "msg fm", "data-main": "firstmate" }, h("div", { class: "meta" }, "Firstmate", MS.view?.host ? h("span", { class: "vbadge" }, MS.view.host) : null), h("div", { class: "bub" }, md(it.text)));
   if (it.kind === "tool") return h("div", { class: "toolrow", "data-main": "tool", style: "padding:2px 6px" }, h("code", { style: "font-size:12px" }, it.text.slice(0, 160)));
   const lab = KLABEL[it.kind]?.();
   return h("div", { class: "faint", "data-main": it.kind, style: "font-size:12.5px;padding:4px 8px;border-left:2px solid var(--line);white-space:pre-wrap" }, lab ? h("b", {}, lab + " · ") : null, it.kind === "wake" ? it.text.split("\n").slice(1, -1).join("\n") : it.text);
@@ -116,7 +117,7 @@ renderChat = function (stick = true) {
     kids.push(driverBanner(v));
     v.approvals.forEach((a) => kids.push(approvalCard(a)));
     v.log.filter((x) => !(v.context==="studio"&&x.source==="studio:handoff") && (x.kind !== "status" || /Paused|Handed|Attached|re-identified|Turn (failed|interrupted)/.test(x.text))).slice(-80).forEach((x, i) => kids.push(logItem(x, i)));
-    if (v.busy) kids.push(h("div", { class: "msg fm", "data-main": "live" }, h("div", { class: "meta" }, "firstmate", h("span", { class: "faint" }, T("working…", "處理中…"))),
+    if (v.busy) kids.push(h("div", { class: "msg fm", "data-main": "live" }, h("div", { class: "meta" }, "Firstmate", h("span", { class: "faint" }, T("working…", "處理中…"))),
       MS.liveTools.length ? h("div", { class: "faint", style: "font-size:12px" }, MS.liveTools.slice(-3).join(" · ")) : null,
       MS.live ? h("div", { class: "bub", id: "mainLive" }, MS.live) : h("div", { class: "typing" }, h("i"), h("i"), h("i"))));
     const q = queueView(v); if (q) kids.push(q);
@@ -126,7 +127,7 @@ renderChat = function (stick = true) {
   $("#chatSug").replaceChildren();
   const attached = v && (v.state === "attached" || v.state === "paused");
   $("#chatSend").disabled = !attached;
-  $("#chatIn").placeholder = attached ? T("Tell firstmate what you want done", "告訴 firstmate 要做什麼") : T("Connect your account to begin", "連接帳號即可開始");
+  $("#chatIn").placeholder = attached ? T("Tell Firstmate what you want done", "告訴 Firstmate 要做什麼") : T("Connect your account to begin", "連接帳號即可開始");
   if (stick || atBottom) log.scrollTop = log.scrollHeight;
 };
 ask = async function (text) {
