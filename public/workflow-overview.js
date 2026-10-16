@@ -1,6 +1,23 @@
 // Board overview: native persisted Tasks and their actual current frontiers only.
 (() => {
 const modes = new Map(), scrolls = new Map();
+// The graph/list choice is a per-viewer convenience: kept in this browser only, and the page works without it.
+const modeKey = 'crew.workflowOverview.modes';
+try { for (const [id,m] of Object.entries(JSON.parse(localStorage.getItem(modeKey) || '{}'))) if (m === 'graph' || m === 'list') modes.set(id,m); } catch {}
+function saveMode(id,m) { modes.set(id,m); try { localStorage.setItem(modeKey,JSON.stringify(Object.fromEntries(modes))); } catch {} }
+// A large workflow's canvas is far bigger than its frame and its top-left corner is often empty space,
+// so a frame first opened at 0,0 can show no node at all. Until the viewer scrolls, open on the current
+// node (topmost, then leftmost), or on the first node when no Task has one: centred across, near the top.
+// A node in the canvas's last rows cannot scroll to the top, so the canvas gets just enough room below it.
+// A re-render keeps that room, so a kept position lands where it was.
+function scrollFrame(frame,left,top) {
+ const canvas=frame.firstElementChild, short=top+frame.clientHeight-frame.scrollHeight;
+ if (canvas && short>0) canvas.style.marginBottom=`${Math.ceil(short)}px`;
+ frame.scrollTo(left,top);
+}
+function focus(frame,spot) {
+ if (spot) scrollFrame(frame,Math.max(0,spot.x+spot.w/2-frame.clientWidth/2),Math.max(0,spot.y-24));
+}
 // Only immutable layout geometry is reusable. Current Tasks/cards/frontiers are
 // rendered below on every event; cloned inputs/outputs keep the cache private.
 const geometries = new Map(), geometryLimit = 32;
@@ -46,11 +63,14 @@ function workflow(id,rs,cards) {
  const nt=by.get(n.id)||[],waits=nt.filter(t=>t.since).map(t=>t.since).sort();
  return h('div',{class:'wo-node',style:`left:${n.x-box.x+16}px;top:${n.y-box.y+16}px;width:${n.w}px`,'data-wo-group':n.id},h('div',{class:'wo-node-label'},h('b',{},loc(nodes.get(n.id)?.label)||n.id),h('small',{},nodes.get(n.id)?.kind||'')),nt.length?h('div',{class:'wo-stack'},h('div',{class:'wo-stack-meta'},T(`${nt.length} tasks`,`${nt.length} 個任務`),waits.length?h('span',{'data-oldest-wait':waits[0]},T('Oldest wait ','最久等待 '),ago(waits[0])):null),nt.map(token)):null);
  }));
+ const pick=(a,b)=>a.y-b.y||a.x-b.x, current=g.nodes.filter(n=>by.has(n.id)).sort(pick)[0]||[...g.nodes].sort((a,b)=>a.x-b.x||a.y-b.y)[0];
+ const spot=current?{x:current.x-box.x+16,y:current.y-box.y+16,w:current.w}:null;
+ const place=()=>{const pos=scrolls.get(id);if(!graph.isConnected||graph.hidden)return;if(pos)scrollFrame(graph,pos.left,pos.top);else focus(graph,spot);};
  const graph=h('div',{class:'wo-frame',tabindex:0,onscroll:e=>{if(e.target.isConnected)scrolls.set(id,{left:e.target.scrollLeft,top:e.target.scrollTop});},'aria-label':T(`${id} workflow graph; scroll to explore`,`${id} 工作流程圖；可捲動查看`)},canvas);
- requestAnimationFrame(()=>{const pos=scrolls.get(id);if(pos&&graph.isConnected)graph.scrollTo(pos.left,pos.top);});
+ requestAnimationFrame(place);
  const list=h('div',{class:'wo-list'},[...by].map(([node,nt])=>h('div',{class:'wo-list-node'},h('b',{},loc(nodes.get(node)?.label)||node),nt.map(token))),rs.filter(r=>!ts.some(t=>t.r.id===r.id)).map(r=>h('a',{class:'wo-unplaced',href:`#/tasks/${encodeURIComponent(r.id)}`},`${r.id} · ${r.title} · `,r.status==='failed'?T('Failed · no recorded current node','失敗 · 沒有記錄目前節點'):T('Awaiting a current node','等待目前節點'))));
  const mode=modes.get(id)||'graph';graph.hidden=mode!=='graph';list.hidden=mode!=='list';
- const toggle=h('button',{class:'btn',type:'button','data-wo-toggle':id,'aria-pressed':String(mode==='list'),onclick:()=>{const m=graph.hidden?'graph':'list';modes.set(id,m);graph.hidden=m!=='graph';list.hidden=m!=='list';toggle.textContent=m==='graph'?T('Show list','顯示清單'):T('Show graph','顯示流程圖');toggle.setAttribute('aria-pressed',String(m==='list'));}},mode==='graph'?T('Show list','顯示清單'):T('Show graph','顯示流程圖'));
+ const toggle=h('button',{class:'btn',type:'button','data-wo-toggle':id,'aria-pressed':String(mode==='list'),onclick:()=>{const m=graph.hidden?'graph':'list';saveMode(id,m);graph.hidden=m!=='graph';list.hidden=m!=='list';if(m==='graph')place();toggle.textContent=m==='graph'?T('Show list','顯示清單'):T('Show graph','顯示流程圖');toggle.setAttribute('aria-pressed',String(m==='list'));}},mode==='graph'?T('Show list','顯示清單'):T('Show graph','顯示流程圖'));
  const versions=[...new Set(rs.map(r=>r.version))];
  return h('article',{class:'card wo-workflow','data-wo-workflow':id},h('div',{class:'wo-head'},h('div',{},h('h3',{},loc(def.name)||id),h('p',{class:'faint'},`${id} · ${rs.length} `,T('unresolved Tasks','個尚未解決任務'),versions.length>1?T(' · combined pinned versions',' · 合併顯示固定版本'):'')),toggle),graph,list,rs.some(r=>!ts.some(t=>t.r.id===r.id))?h('p',{class:'wo-note'},T('Some Tasks have no recorded current node; open the list for their details.','部分任務沒有記錄目前節點；請開清單查看。')):null);
 }
