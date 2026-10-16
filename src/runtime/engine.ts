@@ -767,7 +767,7 @@ export class Engine {
     if (j.from_node) { const v = x.run.nodes[j.from_node]?.data?.judged; if (v) { if (j.distinct_providers && (!v.provider || actual.has(v.provider))) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "from-node vendor identity is unverified or duplicate", votes }; if (v.provider) actual.add(v.provider); take(v, v.by ?? j.from_node, v.provider ? { provider: v.provider, model: v.model, job: v.job } : undefined); } }
     const vendors = (ref.provider ? [ref.provider] : j.vendors?.length ? j.vendors : [j.provider ?? this.deps.defaultProvider().provider]);
     const evidenceJSON=JSON.stringify({ ...input, out: undefined });
-    if(evidenceJSON.length>64000)return {verdict:'error',score:null,findings:[],evidence:[],proves:[],error:'Complete judge evidence exceeds bounded capacity; refusing truncated review'};
+    if(evidenceJSON.length>(x.run.def.kind==='coffee-kit'?128000:64000))return {verdict:'error',score:null,findings:[],evidence:[],proves:[],error:'Complete judge evidence exceeds bounded capacity; refusing truncated review'};
     const prompt = `${ref.prompt ?? j.prompt}\n\nInput (JSON):\n${evidenceJSON}`;
     for (let i = votes.length; i < q.of; i++) {
       const approvedJudge = this.deps.approvedPick?.(x.run, x.node, man.id.includes("designer") ? "designer" : "reviewer");
