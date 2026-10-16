@@ -1088,6 +1088,8 @@ export class Engine {
   }
   /** A domain adds what else its node reads (a coffee film adds its input digest). */
   failureInputExtra: (r: Run, node: WNode | null) => InputSnapshot = () => ({});
+  /** An agent's question goes to Firstmate first (server.ts wakes it): true when it was sent. Firstmate answers or escalates through answerFromFirstmate. */
+  askFirstmate: ((r: Run, node: WNode, question: string) => boolean) | null = null;
   private changedCache = new Map<string, { key: string; at: number; value: ReturnType<typeof changedInputs> }>();
   /** environment probes by code: a string says what is still broken (Fix and retry is refused), null says fixed or unknown */
   failureProbes: Partial<Record<FailureCode, (r: Run) => string | null>> = {};
@@ -1122,10 +1124,17 @@ export class Engine {
   /** The run failed: keep the typed failure on it and raise its card (captain only: no grant answers it). */
   raiseFailure(r: Run, node: WNode | null, f: Failure) {
     if (this.gone.has(r.id)) return null;
+    // an agent's question: Firstmate answers it; only an escalation (with Firstmate's reason) reaches the captain
+    if (f.code === "ask.escalated" && node && !f.escalation?.reason) {
+      let sent = false; try { sent = !!this.askFirstmate?.(r, node, f.message); } catch { sent = false; }
+      if (sent) { r.failure = f; r.failures = [...(r.failures ?? []), f].slice(-20); r.failureCard = null; r.ctx.firstmateQuestion = { node: node.id, question: f.message, at: now() };
+        this.commit(r, "question to Firstmate"); this.emit(r, "question_to_firstmate", `${node.label}: ${f.message.slice(0, 200)}`, { node: node.id }); return null; }
+      f = { ...f, escalation: { by: "firstmate", reason: "Firstmate is not running, so it could not answer this question." } };
+    }
     if (f.class === "transient" && node) { const attempt = (r.nodes[node.id].data.failureRetries ?? 0) + 1; f = { ...f, retry: { attempt, backoffMs: this.failureBackoff(attempt) } }; }
     r.failure = f; r.failures = [...(r.failures ?? []), f].slice(-20);
     const ended = r.status === "succeeded"; // a run that ended on a failed outcome: its card offers a new task, it is never revived
-    const b = failureCardBody(f, { label: node?.label, ended });
+    const b = failureCardBody(f, { label: node?.label, ended, newTaskAllowed: this.defs.selectable(r.workflow, r.version) });
     const sec = (p: { why: string; how: string }) => ({ ...emptySections(), intent: r.text.split("\n")[0].slice(0, 300) || r.title, ...p });
     let c: SCard | null = null;
     try { c = this.cards.create({ run: r.id, node: node?.id ?? "", visit: node ? r.nodes[node.id].visits : 0, kind: "failure", title: { en: b.title, "zh-TW": b.zhTitle }, sections: { en: sec(b.en), "zh-TW": sec(b.zh) }, body: b.body,
@@ -1137,8 +1146,9 @@ export class Engine {
   }
   /** The brief an agent gets on the visit after a failure card: the captain's answer, or the rescope note. */
   private failureBrief(x: X): string {
-    const fa = x.rn.data.failureAnswer as { kind: string; question: string; note: string } | undefined; if (!fa) return "";
-    return fa.kind === "answer" ? `\n\nCAPTAIN'S ANSWER\nYou asked: ${fa.question}\nThe captain answered: ${fa.note}\nContinue the same step with this answer.`
+    const fa = x.rn.data.failureAnswer as { kind: string; question: string; note: string; by?: string } | undefined; if (!fa) return "";
+    const who = fa.by === "firstmate" ? ["FIRSTMATE'S ANSWER", "Firstmate"] : ["CAPTAIN'S ANSWER", "The captain"];
+    return fa.kind === "answer" ? `\n\n${who[0]}\nYou asked: ${fa.question}\n${who[1]} answered: ${fa.note}\nContinue the same step with this answer.`
       : fa.kind === "rescope" ? `\n\nCAPTAIN'S RESCOPE\nThe last attempt failed: ${fa.question}\nThe captain changed the scope: ${fa.note}` : `\n\nCAPTAIN'S NOTE\n${fa.note}`;
   }
   /** The captain answered a failure card. Refusals (no change, not fixed, vague note) leave the card open and say why. */
@@ -1166,8 +1176,11 @@ export class Engine {
       const ans = this.cards.answer(c.id, a); this.recordFailure(r, c, "report", { file: `failures/${r.id}-${c.id}.json` }); this.emit(r, "failure_reported", `${f.code}: diagnostics kept in failures/${r.id}-${c.id}.json`, { card: c.id }); return ans;
     }
     if (a.choice === ACT.newTask) {
-      const params = Object.fromEntries(Object.entries(r.params).filter(([k]) => !k.startsWith("_")));
-      const next = this.start({ workflow: r.workflow, version: r.version, title: r.title, text: r.text, params, by: a.by }); // staffing and start checks apply as for any new task
+      if (!this.defs.selectable(r.workflow, r.version)) refuse({ en: "New task refused: this workflow is internal or retired. Ask Firstmate to prepare the work again.", "zh-TW": "已拒絕開始新任務：此流程為內部或已退役流程。請 Firstmate 重新準備這項工作。" });
+      // the staffing pins travel with the task: start() checks them against the current staffing like any new task
+      const params = Object.fromEntries(Object.entries(r.params).filter(([k]) => !k.startsWith("_") || k === "_staffing" || k === "_ownStaffing"));
+      let next: Run; try { next = this.start({ workflow: r.workflow, version: r.version, title: r.title, text: r.text, params, by: a.by }); }
+      catch (e: any) { refuse({ en: `New task refused: ${e?.message ?? e}`, "zh-TW": `已拒絕開始新任務：${e?.message ?? e}` }); throw e; }
       const ans = this.cards.answer(c.id, a); r.parked = { by: a.by, at: now(), note: `followed by ${next.id}` }; r.ctx.followedBy = next.id;
       this.recordFailure(r, c, ACT.newTask, { task: next.id }); this.commit(r, `followed by ${next.id}`); this.emit(r, "failure_new_task", `${f.code}: a new task ${next.id} starts from the same request`, { card: c.id, task: next.id }); return ans;
     }
@@ -1186,11 +1199,27 @@ export class Engine {
     if (a.choice === ACT.prepareAgain) { const from = this.preparationNode(r, node); this.recordFailure(r, c, a.choice, { from: from.id }); r.nodes[node.id].state = "pending"; r.nodes[node.id].routing = null; r.nodes[node.id].data.failure = null; return this.reopenAt(r, c, f, from, a, 0); }
     const rn = r.nodes[node.id];
     if (params) { r.params = { ...r.params, ...params }; }
-    if (a.choice === ACT.answer) { rn.data.failureAnswer = { kind: "answer", question: f.message, note }; r.ctx.answers = { ...(r.ctx.answers ?? {}), [node.id]: ans.answer }; }
+    if (a.choice === ACT.answer) { delete rn.data.escalation; rn.data.failureAnswer = { kind: "answer", question: f.message, note, by: "captain" }; r.ctx.answers = { ...(r.ctx.answers ?? {}), [node.id]: ans.answer }; }
     else if (a.choice === ACT.rescope) { rn.data.failureAnswer = { kind: "rescope", question: f.message, note }; r.ctx.failureRescope = { node: node.id, note, at: now() }; }
     else delete rn.data.failureAnswer;
     this.recordFailure(r, c, a.choice, params ? { params } : {});
     return this.reopenAt(r, c, f, node, a, delay);
+  }
+  /** Firstmate answered an agent's question (studio_answer_agent_question), or escalated it to the captain with its reason. */
+  answerFromFirstmate(runId: string, nodeId: string, o: { answer?: string | null; escalate?: string | null }) {
+    const r = this.must(runId); const q = r.ctx.firstmateQuestion; const node = r.def.nodes.find((n) => n.id === nodeId);
+    if (!node || !q || q.node !== nodeId) throw new Error("no question from this step waits for Firstmate");
+    if (!this.trusted(r.id).ok) throw new Error("this run's evidence ledger does not verify: it cannot run again");
+    if (r.archived || r.parked || r.status !== "failed" || r.failureCard) throw new Error("this run is not waiting for Firstmate's answer");
+    const b = this.busy(r.id); if (b) throw new Error(`still finishing: ${b}. Answer again once that is done`);
+    const answer = String(o.answer ?? "").trim(), escalate = String(o.escalate ?? "").trim();
+    if (!!answer === !!escalate) throw new Error("give either an answer or a reason to escalate");
+    const f = r.failure!; delete r.ctx.firstmateQuestion;
+    if (escalate) { const c = this.raiseFailure(r, node, failure("ask.escalated", q.question, { source: "agent", run: r.id, node: node.id, visit: r.nodes[node.id].visits, escalation: escalate.slice(0, 2000) })); return { escalated: true, card: c?.id ?? null }; }
+    const rn = r.nodes[node.id]; rn.data.failureAnswer = { kind: "answer", question: q.question, note: answer.slice(0, 4000), by: "firstmate" };
+    this.record(this.x(r, node, rn), "failure-answer", { actor: "firstmate", data: { class: f.class, code: f.code, choice: ACT.answer, note: answer.slice(0, 4000), by: "firstmate" } });
+    this.reopenAt(r, { id: `firstmate:${r.id}:${node.id}` } as SCard, f, node, { choice: ACT.answer }, 0);
+    return { answered: true };
   }
   /** The node a fresh preparation goes back to: the step before the card that led here, so that card's edge checks (gates) run again and a new card is raised. */
   preparationNode(r: Run, node: WNode): WNode {
@@ -1202,7 +1231,7 @@ export class Engine {
   }
   /** The run goes on from `node`: nothing else is reset, every earlier step and record stays. Siblings the failure stopped run again too. */
   private reopenAt(r: Run, c: SCard, f: Failure, node: WNode, a: { choice: string }, delay: number) {
-    const rn = r.nodes[node.id]; const ans = this.cards.get(c.id)!;
+    const rn = r.nodes[node.id]; const ans = this.cards.get(c.id) ?? null;
     r.status = "running"; r.result = null; r.endedAt = null; r.error = null; r.failureCard = null; r.queue = [];
     rn.state = "pending"; rn.waiting = null; rn.card = null; rn.attempt = 0; rn.routing = null; rn.data.failure = null;
     // the failure stopped the run's other live work (parallel siblings, queued nodes): it runs again, so joins downstream get every input

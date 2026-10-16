@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // One failure taxonomy across every workflow (captain decision 2026-10-16): each class has its card, its actions,
 // and its next action; Retry or Rescope with no change is refused with an explanation; nothing is a generic error.
 //   bun tests/failures.ts
@@ -25,6 +26,8 @@ W({ id: "pg", name: "prepare again", nodes: [{ id: "p", kind: "hook", label: "Pr
   { id: "k", kind: "card", label: "Merge card", card: { title: "Merge?", body: "merge", options: [{ id: "merge", label: "Merge", primary: true }] }, x: 1, y: 0 },
   { id: "m", kind: "hook", label: "Merge", do: "merge-once", x: 2, y: 0 }, { id: "end", kind: "hook", label: "End", x: 3, y: 0 }], edges: [["p", "k"], ["k", "m", "merge"], ["m", "end", "ok"]] });
 // a run whose last step fails ends "succeeded · fail": it is never revived
+// an internal workflow (its id is on the internal list): no new task from its card
+W({ id: "firstmate-proposal", name: "internal fixture", params: { mode: { default: "stale" } }, nodes: [{ id: "act", kind: "hook", label: "Act", do: "act", x: 0, y: 0 }, { id: "end", kind: "hook", label: "End", x: 1, y: 0 }], edges: [["act", "end", "ok"]] });
 W({ id: "endfail", name: "ends on fail", nodes: [{ id: "only", kind: "hook", label: "Only", do: "act", x: 0, y: 0 }], edges: [] });
 const H = await harness(flows);
 const E = H.engine;
@@ -42,6 +45,7 @@ E.actions.act = (x) => {
   if (m === "det") return x.run.params.want === "pass" ? "ok" : { outcome: "fail", note: "totals.check: fail — 1235 JPY shows as $12.35" };
   if (m === "scope") { if (fa?.kind === "rescope" && /src\/fx\.ts/.test(fa.note)) return "ok"; throw new Error("src/fx.ts is outside the spec's scope"); }
   if (m === "params") { if (x.run.params.want === "pass") return "ok"; throw new Error("params: want must be pass or fail, not " + x.run.params.want); }
+  if (m === "ask0") return fa?.kind === "answer" ? "ok" : { outcome: "ask", note: "Round totals up or down?" };
   if (m === "stale") throw new Error("approved lane image changed");
   if (m === "secret") throw new Error(`boom at ${homedir()}/work/x.ts ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij12`);
   if (m === "internal") throw new Error("kaboom: the act step met a state nobody planned for sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
@@ -74,7 +78,7 @@ const keep = (c: any) => { shown.push(c); shownViews.push(E.cards.view(E.cards.g
 }
 // an agent's question reaches its next prompt
 { const r = E.start({ workflow: "ag", text: "agent ask" }); await failed(r.id); const c = cardOf(r.id);
-  ok(c.failure?.code === "ask.escalated" && c.failure.message === "Should JPY have decimals?" && c.failure.escalation?.reason === null && /Firstmate gave no reason/.test(c.sections.en.why), "ask: an agent node's ASK report is the question on the card; with no Firstmate reason the card says so", JSON.stringify(c.failure));
+  ok(c.failure?.code === "ask.escalated" && c.failure.message === "Should JPY have decimals?" && /Firstmate is not running, so it could not answer this question\./.test(c.sections.en.why), "ask: with no Firstmate running, the question reaches the captain and the card says why Firstmate did not answer", JSON.stringify(c.failure));
   await E.answer(c.id, { choice: "answer", note: "No decimals for JPY", by: "captain" }); await until(() => E.get(r.id)!.status === "succeeded");
   ok(E.get(r.id)!.status === "succeeded" && /CAPTAIN'S ANSWER[\s\S]*Should JPY have decimals\?[\s\S]*No decimals for JPY/.test(E.get(r.id)!.ctx.lastPrompt?.build ?? ""), "ask: the same agent node runs again with the captain's answer in its prompt", E.get(r.id)!.ctx.lastPrompt?.build);
 }
@@ -278,6 +282,41 @@ const keep = (c: any) => { shown.push(c); shownViews.push(E.cards.view(E.cards.g
 // (10) the card body does not repeat the failure box; zh cards carry no English body or stack
 { const internal = shown.find((c: any) => c.failure.class === "internal");
   ok(shown.every((c: any) => c.body === "") && !!internal.failure.diagnostics.stack, "card: no duplicate body; the stack lives only in the diagnostics");
+}
+
+// ---------- round 3: agent questions go to Firstmate first ----------
+{ const asked: any[] = []; E.askFirstmate = (r, node, q) => { asked.push([r.id, node.id, q]); return true; };
+  const r = start("ask0"); await until(() => !!E.get(r.id)!.ctx.firstmateQuestion); await until(() => !E.busy(r.id));
+  ok(!E.get(r.id)!.failureCard && !E.cards.list({ run: r.id, open: true }).length && asked.at(-1)?.[2] === "Round totals up or down?" && E.get(r.id)!.ctx.firstmateQuestion.node === "act", "firstmate: an agent question goes to Firstmate; no captain card", JSON.stringify(asked.at(-1)));
+  E.answerFromFirstmate(r.id, "act", { answer: "Round half up" }); await until(() => E.get(r.id)!.status === "succeeded");
+  ok(E.get(r.id)!.status === "succeeded" && E.get(r.id)!.nodes.act.data.failureAnswer?.by === "firstmate" && E.trusted(r.id).entries.some((e: any) => e.record === "failure-answer" && e.actor === "firstmate"), "firstmate: its answer runs the same step again and the run succeeds; the ledger records Firstmate as the answerer");
+  const a = E.start({ workflow: "ag", text: "agent ask to firstmate" }); await until(() => !!E.get(a.id)!.ctx.firstmateQuestion); await until(() => !E.busy(a.id));
+  E.answerFromFirstmate(a.id, "build", { answer: "Two decimals except JPY" }); await until(() => E.get(a.id)!.status === "succeeded");
+  ok(/FIRSTMATE'S ANSWER[\s\S]*Should JPY have decimals\?[\s\S]*Firstmate answered: Two decimals except JPY/.test(E.get(a.id)!.ctx.lastPrompt?.build ?? "") && !/CAPTAIN'S ANSWER/.test(E.get(a.id)!.ctx.lastPrompt?.build ?? ""), "firstmate: the agent's next prompt carries FIRSTMATE'S ANSWER", E.get(a.id)!.ctx.lastPrompt?.build);
+  const e = E.start({ workflow: "ag", text: "agent ask escalated" }); await until(() => !!E.get(e.id)!.ctx.firstmateQuestion); await until(() => !E.busy(e.id));
+  E.answerFromFirstmate(e.id, "build", { escalate: "Deleting the remote branch is a one-way decision." }); const c = cardOf(e.id);
+  ok(c?.failure?.code === "ask.escalated" && c.failure.escalation?.reason === "Deleting the remote branch is a one-way decision." && c.sections.en.why.includes("Firstmate's reason: Deleting the remote branch") && ids(c) === "answer,park", "firstmate: an escalation raises the captain card with Firstmate's reason", JSON.stringify([c?.failure?.code, c?.sections.en.why]));
+  let twice = ""; try { E.answerFromFirstmate(e.id, "build", { answer: "x" }); } catch (err: any) { twice = err.message; }
+  ok(/not waiting|no question/.test(twice), "firstmate: a question is answered once", twice);
+  await E.answer(c.id, { choice: "answer", note: "Keep the remote branch", by: "captain" }); await until(() => E.get(e.id)!.status === "succeeded");
+  ok(/CAPTAIN'S ANSWER[\s\S]*Keep the remote branch/.test(E.get(e.id)!.ctx.lastPrompt?.build ?? "") && !E.get(e.id)!.nodes.build.data.escalation, "firstmate: the captain's answer to an escalation reaches the step as CAPTAIN'S ANSWER");
+  E.askFirstmate = () => false; const d = start("ask0"); await failed(d.id); const dc = cardOf(d.id);
+  ok(/Firstmate is not running/.test(dc.failure!.escalation!.reason!) && !E.get(d.id)!.ctx.firstmateQuestion, "firstmate: when Firstmate is detached the card says it is not running");
+  E.askFirstmate = null;
+}
+// ---------- round 3: a new task keeps the staffing pins and refuses what start refuses ----------
+{ let current = "h2"; const r = start("stale", { _staffing: "h1" }); await failed(r.id); const c = cardOf(r.id);
+  E.deps.authorizeStart = (_def: any, o: any) => { if (o.params?._staffing !== current) throw new Error("Staffing changed; confirm a fresh proposal"); };
+  const e = await refusal(c.id, { choice: "new-task" });
+  ok(!!e && /^New task refused: Staffing changed/.test(e.message) && e.refusal?.["zh-TW"]?.startsWith("已拒絕開始新任務") && E.cards.get(c.id)!.status === "open" && !E.get(r.id)!.ctx.followedBy, "new task: changed staffing is refused and the card stays open", e?.message);
+  current = "h1"; await E.answer(c.id, { choice: "new-task", by: "captain" });
+  const next = E.get(E.get(r.id)!.ctx.followedBy)!;
+  ok(!!next && next.params._staffing === "h1", "new task: a valid _staffing pin travels with the new task and it starts", JSON.stringify(next?.params));
+  delete E.deps.authorizeStart;
+  const p = E.start({ workflow: "firstmate-proposal", text: "internal" }); await failed(p.id); const pc = cardOf(p.id);
+  ok(ids(pc) === "park" && /internal or retired/.test(pc.sections.en.how), "new task: an internal workflow's card offers Park only", ids(pc));
+  const pe = await refusal(pc.id, { choice: "new-task" });
+  ok(!!pe && E.cards.get(pc.id)!.status === "open", "new task: a forced new-task on firstmate-proposal is refused", pe?.message);
 }
 
 // ---------- a restart keeps the typed failure, its card and an edited param ----------

@@ -640,7 +640,7 @@ export function freshText(cwd: string, handoff: { name: string; text: string } |
 
 /** Native Firstmate has no dependency on a legacy repo or handoff. */
 /** The names a fresh primary is told about: every tool actually registered, else the known default set. */
-const DEFAULT_NATIVE_TOOLS=["studio_list_workflows","studio_list_projects","studio_operating_rules","studio_work_status","studio_prepare_project_work","studio_staffing_facts","studio_staffing_interview","studio_propose_staffing","studio_change_staffing","studio_propose_work","studio_draft_workflow","studio_save_workflow_draft","studio_workflow_gate","studio_startup_workflow_contract"];
+const DEFAULT_NATIVE_TOOLS=["studio_list_workflows","studio_list_projects","studio_operating_rules","studio_work_status","studio_prepare_project_work","studio_staffing_facts","studio_staffing_interview","studio_propose_staffing","studio_change_staffing","studio_propose_work","studio_draft_workflow","studio_save_workflow_draft","studio_workflow_gate","studio_startup_workflow_contract","studio_answer_agent_question"];
 const toolList=(names:string[])=>names.length>1?`${names.slice(0,-1).join(", ")} and ${names.at(-1)}`:names.join("");
 /** claudeModeLine in zh-TW (the 简体中文 UI derives from it), worded as the Firstmate card words it */
 export function claudeModeLineZh(requested: string | null, effective: string | null): string {

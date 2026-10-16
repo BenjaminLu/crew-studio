@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The failure card of every class, rendered by the shared card component (public/scard.js) from real engine cards
 // served by the real card API (tests/failures-ui-server.ts → runtime/index.ts /api/scards), in en and zh-TW: its class, code, exact message, what to fix and where, backoff,
 // what changed, log link or why there is none, diagnostics, and exactly the class's actions. A refused Retry shows

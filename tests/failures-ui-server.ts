@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // A Studio runtime with one real failure card per class, served with the real card API (/api/scards, runtime/index.ts)
 // and the shared card component, for tests/failures-ui.mjs. Prints "READY <port> <json cards>" once the cards exist.
 //   bun tests/failures-ui-server.ts

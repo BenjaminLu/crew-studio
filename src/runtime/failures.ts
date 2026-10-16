@@ -248,7 +248,9 @@ export const ACT = { answer: "answer", fixRetry: "fix-retry", retry: "retry", re
 export type FailureOption = { id: string; label: string; labelZh: string; primary?: boolean; note?: boolean; hold?: boolean };
 export const PARK: FailureOption = { id: "park", label: "Park", labelZh: "暫停（Park）", hold: true };
 /** The actions each class offers. Park is always there. */
-export function failureActions(cls: FailureClass, code?: FailureCode, o: { ended?: boolean } = {}): FailureOption[] {
+export function failureActions(cls: FailureClass, code?: FailureCode, o: { ended?: boolean; newTaskAllowed?: boolean } = {}): FailureOption[] {
+  // an internal or retired workflow cannot start a new task from its card: Park only
+  if ((o.ended || code === "deterministic.new-task") && o.newTaskAllowed === false) return [PARK];
   // a run that ended (succeeded) on a failed outcome is not revived: a new task is the way on
   if (o.ended) return [{ id: ACT.newTask, label: "Start a new task", labelZh: "開始新任務", primary: true }, PARK];
   if (code === "deterministic.prepare-again") return [{ id: ACT.prepareAgain, label: "Prepare again", labelZh: "重新準備", primary: true }, PARK];
@@ -266,7 +268,8 @@ export function failureActions(cls: FailureClass, code?: FailureCode, o: { ended
 }
 
 /** What the card says to do, per class. */
-export function failureHow(f: Failure, o: { ended?: boolean } = {}): FText {
+export function failureHow(f: Failure, o: { ended?: boolean; newTaskAllowed?: boolean } = {}): FText {
+  if ((o.ended || f.code === "deterministic.new-task") && o.newTaskAllowed === false) return t("This workflow is internal or retired, so a new task cannot start from this card. Ask Firstmate to prepare the work again; Park closes this card.", "這個流程是內部或已退役的流程，無法從這張卡開始新任務。請 Firstmate 重新準備這項工作；Park 會關閉這張卡。");
   if (o.ended) return t("This run ended on this result, so it does not run again. Start a new task: it gets the same request and params and runs from the start.", "這個 run 已經以這個結果結束，不會再跑。請開始新任務：它會用同樣的需求和參數從頭執行。");
   if (f.code === "deterministic.prepare-again") return t("Prepare again: Studio goes back to the step before the card, runs the gates again and raises a new card. Nothing is merged before that card is answered.", "重新準備：Studio 回到卡片前一步，重跑 gate，再發一張新卡。新卡回答前不會合併任何東西。");
   if (f.code === "deterministic.new-task") return t("Start a new task: it gets the same request and declared params and prepares everything again. This task stays as it is.", "開始新任務：它會用同樣的需求和已宣告的參數，重新準備一切。這個任務維持原狀。");
@@ -285,7 +288,7 @@ const CLASS_NAME: Record<FailureClass, FText> = { ask: t("Question", "提問"), 
 export const className = (c: FailureClass) => CLASS_NAME[c];
 
 /** A card body for one failure: title, why (what failed), how (what to do), the exact message, and the class's actions. */
-export function failureCardBody(f: Failure, o: { label?: string; ended?: boolean } = {}) {
+export function failureCardBody(f: Failure, o: { label?: string; ended?: boolean; newTaskAllowed?: boolean } = {}) {
   const how = failureHow(f, o);
   const where = o.label ? ` (${o.label})` : "";
   // the card's failure box (card.failure) shows the message, fix, where, log and diagnostics in the card's language: no second copy in the body
