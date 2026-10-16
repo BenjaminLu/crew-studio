@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { freePort, waitUp } from "./boot.mjs";
-for (const k of ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "CREW_CLAUDE_BILLING", "CREW_MAIN_PROJECT", "CREW_FM_STATE"]) delete process.env[k];
+for (const k of ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "CREW_CLAUDE_BILLING", "CREW_MAIN_PROJECT", "CREW_FM_STATE", "CREW_CLAUDE_PERMISSION_MODE"]) delete process.env[k];
 let pass = 0, fail = 0;
 const ok = (v: any, n: string) => { console.log(`${v ? "ok" : "FAIL"} ${n}`); v ? pass++ : fail++; };
 const until = async (f: () => Promise<boolean> | boolean, n = 200) => { for (let i = 0; i < n; i++) { if (await f()) return true; await Bun.sleep(30); } return false; };
@@ -41,8 +41,8 @@ const codexCalls = () => existsSync(codexLog) ? readFileSync(codexLog, "utf8").t
 const codexStarts = () => codexCalls().filter((r) => r.method === "thread/start").length;
 
 const port = await freePort(), base = `http://127.0.0.1:${port}`, token = "claude-primary-fixture-session";
-const start = () => {
-  const env: any = { ...process.env, USER: process.env.USER || "fixture-user", LOGNAME: process.env.LOGNAME || "fixture-user", HOME: home, CODEX_HOME: join(home, ".codex"),
+const start = (extra: Record<string, string> = {}) => {
+  const env: any = { ...process.env, ...extra, USER: process.env.USER || "fixture-user", LOGNAME: process.env.LOGNAME || "fixture-user", HOME: home, CODEX_HOME: join(home, ".codex"),
     CREW_DATA: data, CREW_RUNTIME_DIR: join(root, "runtime"), CREW_PORT: String(port), CREW_SESSION_TOKEN: token, CREW_GH: "0", CREW_CHAT_PROVIDER: "stub", CREW_INSTALL_RUNNER: "mock",
     CREW_CLAUDE_BIN: join(import.meta.dir, "fixture/claude-login.mjs"), CREW_HOST_CLAUDE_BIN: join(import.meta.dir, "stub-host-claude.mjs"), CREW_KEYCHAIN_TOOL: keychain,
     CREW_HOST_CODEX_BIN: join(import.meta.dir, "fixture/codex-account.mjs"), ACCOUNT_FIXTURE_LOG: codexLog, STUB_ARGV_FILE: argvFile, STUB_SEED_FILE: seedFile, STUB_EXPECT_CREW: CREW, CREW_WAKE_GRACE_MS: "60000" };
@@ -100,7 +100,10 @@ try {
   const v1 = await view();
   ok(v1.host === "claude" && v1.sessionId === first && v1.drive?.path === "fresh" && v1.driver.holder === "studio" && v1.driver.sessionId === first && v1.driver.host === "claude", "the driver lock and view name the Claude primary and its id");
   ok(v1.log.some((l: any) => l.kind === "firstmate" && /echo: Coffee onboarding/.test(l.text)), "the native Firstmate introduction is its first message");
-  ok(!a.includes("--dangerously-skip-permissions") && !a.includes("bypassPermissions") && a[a.indexOf("--permission-mode") + 1] === "default" && a[a.indexOf("--permission-prompt-tool") + 1] === "mcp__studio_permission__approve" && a.includes("--strict-mcp-config"), "permission bridge wired, default mode, no bypass, only Studio's MCP servers");
+  ok(!a.includes("--dangerously-skip-permissions") && !a.includes("bypassPermissions") && a[a.indexOf("--permission-mode") + 1] === "auto" && a[a.indexOf("--permission-prompt-tool") + 1] === "mcp__studio_permission__approve" && !a.includes("--permission-prompts") && a.includes("--strict-mcp-config"), "auto permission mode by default; the permission bridge still answers whatever auto mode escalates; no bypass, only Studio's MCP servers");
+  ok(v1.drive?.permissionMode === "auto" && okPre.permissionMode === "auto", "the view and the preflight both say the permission mode is auto");
+  const doc1 = ((await api("/api/doctor")).body.items ?? []).find((i: any) => i.id === "claude-permission-mode");
+  ok(doc1?.status === "ok" && /Claude permission mode: auto/.test(doc1.detail) && /CREW_CLAUDE_PERMISSION_MODE/.test(doc1.fix + doc1.adds + doc1.detail), "Doctor shows Claude permission mode: auto and names the operator override");
   const allowed = (a[a.indexOf("--allowedTools") + 1] ?? "").split(",");
   ok(allowed.length >= 5 && allowed.every((t) => /^mcp__studio__studio_[a-z_]+$/.test(t)) && allowed.includes("mcp__studio__studio_propose_work"), "only Studio's native tools are pre-allowed, by exact name");
   const cfgFile = a[a.indexOf("--mcp-config") + 1] ?? "", priv = dirname(cfgFile);
@@ -178,6 +181,29 @@ try {
   await idle();
   ok((await api("/api/main/switch", { to: "claude", confirm: true })).body.code === "notRunning", "Switch needs a running Codex Firstmate");
   await api("/api/main/detach", {});
+
+  // --- the operator override: env or .env only, default|auto, anything else refused ---
+  await stop(); app = start({ CREW_CLAUDE_PERMISSION_MODE: "bypassPermissions" }); await waitUp(base, app);
+  const runsBad = claudeRuns().filter((x) => x.argv).length;
+  r = await api("/api/main/start", { host: "claude", confirm: true });
+  ok(r.status === 409 && r.body.code === "claudeUnavailable" && /CREW_CLAUDE_PERMISSION_MODE/.test(r.body.en) && /default or auto/.test(r.body.en) && r.body.zh, "an invalid override refuses the start, typed, naming the variable and the allowed values");
+  ok((await ready()).code === "claudeUnavailable" && claudeRuns().filter((x) => x.argv).length === runsBad && (await view()).state === "detached", "the preflight refuses it too; no Claude process starts");
+  const docBad = ((await api("/api/doctor")).body.items ?? []).find((i: any) => i.id === "claude-permission-mode");
+  ok(docBad?.status === "missing" && /not a Claude Firstmate permission mode/.test(docBad.detail), "Doctor flags the invalid override");
+  await stop(); app = start({ CREW_CLAUDE_PERMISSION_MODE: "default" }); await waitUp(base, app);
+  r = await api("/api/main/start", { host: "claude", confirm: true });
+  ok(r.status === 200 && r.body.ok, "with the override set to default the primary starts");
+  await idle();
+  const ad: string[] = claudeRuns().at(-1)?.argv ?? [];
+  ok(ad[ad.indexOf("--permission-mode") + 1] === "default" && ad[ad.indexOf("--permission-prompt-tool") + 1] === "mcp__studio_permission__approve" && (await view()).drive?.permissionMode === "default", "the override sets --permission-mode default, the bridge stays, the view says default");
+  ok(/Claude permission mode: default/.test(((await api("/api/doctor")).body.items ?? []).find((i: any) => i.id === "claude-permission-mode")?.detail ?? ""), "Doctor shows the overridden mode");
+  await api("/api/main/detach", {});
+  r = await api("/api/main/start", { host: "claude", confirm: true, permissionMode: "acceptEdits" });
+  await idle();
+  const ab: string[] = claudeRuns().at(-1)?.argv ?? [];
+  ok(r.status === 200 && ab[ab.indexOf("--permission-mode") + 1] === "default", "a permissionMode in the API body is ignored; only the operator setting counts");
+  await api("/api/main/detach", {});
+  await stop(); app = start(); await waitUp(base, app);
 
   // --- restart behaves like the Codex primary ---
   r = await api("/api/main/start", { host: "claude", confirm: true });

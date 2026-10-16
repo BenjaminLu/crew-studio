@@ -51,8 +51,10 @@ try {
   await p.evaluate(() => window.dispatchEvent(new Event("crew:live")));
   ok(await seen(p, '[data-section="start-claude"][data-claude-ready="true"]') && await p.locator("#startClaudeBtn.primary").count() === 1 && await p.locator("#startCodexBtn.primary").count() === 0, "only Claude is ready: its Start is the primary button");
   ok(await seen(p, '[data-section="start-claude"][data-claude-ready="true"]') && (await p.locator("#startClaudeBtn").innerText()).includes("Start on Claude") && await p.locator("[data-claude-start]").count() === 0, "signed in: the start card reads Start on Claude; the account card repeats no start beside it");
+  ok(/Claude permission mode: auto/.test(await p.locator('[data-section="start-claude"] [data-claude-permission-mode]').first().innerText().catch(() => "")), "the Claude start card shows Claude permission mode: auto");
   // where no start card shows (Doctor), the account card carries the next step
   await p.goto(base + "/#/doctor");
+  ok(await seen(p, ':text("Claude permission mode: auto")'), "Doctor shows Claude permission mode: auto");
   ok(await seen(p, '[data-claude-account="signed-in"] [data-claude-start]') && (await p.locator("[data-claude-start]").first().innerText()).includes("Start on Claude") && (await api("/api/main")).state === "detached", "on Doctor the signed-in Claude card offers Start on Claude, and starts nothing by itself");
   await p.locator("[data-claude-account] [data-claude-start]").first().scrollIntoViewIfNeeded(); await shot(p, "claude-card-next-step");
   // missing crew token: no Claude start anywhere, the crew-token step instead
@@ -69,6 +71,7 @@ try {
   ok(/claude/.test(await p.locator("#chatSub").innerText()), "the chat header names the Claude host");
   await shot(p, "chat-claude-greeting");
   await p.goto(base + "/#/firstmate"); await seen(p, "[data-claude-model]");
+  ok(/Claude permission mode: auto/.test(await p.locator('.tk-drive [data-claude-permission-mode]').first().innerText().catch(() => "")), "the running Firstmate card shows Claude permission mode: auto");
   await shot(p, "firstmate-claude-running");
 
   // after Stop, the chat itself offers Start on Claude (Codex is not signed in, so it offers no Codex)

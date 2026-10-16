@@ -6,6 +6,7 @@ import {localUnrestricted} from "./local-execution";
 // clean environment, never without the captain's click, and never during tests
 // (CREW_INSTALL_RUNNER=mock records instead of running; CREW_NO_REAL_INSTALL=1 refuses).
 import { sandboxInfo } from "./runtime/checks";
+import { claudePermissionMode } from "./host/claude-primary";
 import { accessSync, constants, existsSync } from "node:fs";
 import { homedir, platform, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -196,6 +197,13 @@ export function diagnose(i: DoctorInput): Item[] {
     detail: rl.ok ? `Claude rounds get ${rl.source} as their one credential (CLAUDE_CODE_OAUTH_TOKEN); no keychain, no GitHub token and no other credential reaches a round.${rl.warn ? ` Note: ${rl.warn}.` : ""}` : `Claude rounds are refused: ${rl.error}`,
     adds: "How agent rounds sign in: Studio reads the vendor's own login outside the sandbox and hands the round only its token.",
     fix: rl.ok ? (rl.warn ? "Make a crew token once: claude setup-token, then security add-generic-password -s crew-studio-claude-token -a \"$USER\" -w (or ~/.config/crew-studio/claude-token, mode 600)." : "") : "Make a crew token once: claude setup-token, then security add-generic-password -s crew-studio-claude-token -a \"$USER\" -w (or ~/.config/crew-studio/claude-token, mode 600).", action: { kind: "none" } });
+  // the fresh Claude Firstmate's permission mode: auto unless the operator sets CREW_CLAUDE_PERMISSION_MODE (env or .env)
+  const pm = claudePermissionMode(process.env.CREW_CLAUDE_PERMISSION_MODE);
+  items.push({ id: "claude-permission-mode", title: "Claude Firstmate permission mode", titleZh: "Claude Firstmate 權限模式", status: pm.ok ? "ok" : "missing",
+    detail: pm.ok ? `Claude permission mode: ${pm.mode}${pm.mode === "auto" ? " (Claude's classifier approves or denies tool calls; whatever it escalates asks you through Studio's permission bridge)" : " (every tool outside Studio's own asks you through Studio's permission bridge)"}` : pm.en,
+    detailZh: pm.ok ? `Claude permission mode: ${pm.mode}${pm.mode === "auto" ? "（由 Claude 的分類器核准或拒絕工具呼叫；它升級的請求會透過 Studio 的權限橋問你）" : "（Studio 以外的工具都會透過 Studio 的權限橋問你）"}` : pm.zh,
+    adds: "How a fresh Claude Firstmate approves tool calls. Worker rounds are not affected. The operator sets CREW_CLAUDE_PERMISSION_MODE=default|auto in the environment or .env; no model or API request can change it.",
+    fix: pm.ok ? "" : "Set CREW_CLAUDE_PERMISSION_MODE to default or auto (or unset it for auto), then restart Studio.", action: { kind: "none" } });
   for (const item of items) {
     if (item.id === "tailscale") { item.availability = i.tailscale.installed ? "available" : "missing"; item.authenticated = i.tailscale.running ? true : null; }
     if (item.id === "ffmpeg") item.availability = i.render?.ffmpeg ? (version(i.render.ffmpeg, "-version") ? "available" : "unusable") : "missing";

@@ -28,7 +28,7 @@ export type Origin = { id: string; host: HostId; file: string | null; cwd: strin
   at: string; handoff: string; terminal: string | null; originWrites: number; lastOriginWrite: string | null };
 /** How the session Studio drives came to be, and the settings its vendor reports (Studio never overrides them). */
 export type Drive = { host: HostId; path: SessionPath; statement: string; noFork: string | null; model: string | null; effort: string | null;
-  approvalPolicy: string | null; sandbox: string | null; seededFrom: string | null; handoff: string | null };
+  approvalPolicy: string | null; sandbox: string | null; seededFrom: string | null; handoff: string | null; permissionMode?: string | null };
 export type MainState = "detached" | "attaching" | "detaching" | "attached" | "paused";
 export type MainView = {
   state: MainState; driver: Driver; host: HostId | null; sessionId: string | null; model: string | null; busy: boolean;
@@ -253,7 +253,7 @@ export class MainSession {
   }
 
   /** "Start firstmate on <host>": a NEW session in the firstmate repo, following its AGENTS.md, whose first message is the newest state/HANDOFF-*.md. */
-  async startFresh(host: HostId, validate?: (identity:{model:string;effort:string|null})=>boolean, extra?: { env?: Record<string, string>; model?: string | null; effort?: string | null }): Promise<{ ok: true; handoff: string; id: string; seededFrom: string | null } | { ok: false; reason: string; code: string }> {
+  async startFresh(host: HostId, validate?: (identity:{model:string;effort:string|null})=>boolean, extra?: { env?: Record<string, string>; model?: string | null; effort?: string | null; permissionMode?: "auto" | "default" }): Promise<{ ok: true; handoff: string; id: string; seededFrom: string | null } | { ok: false; reason: string; code: string }> {
     if (this.state !== "detached") return { ok: false, code: "attached", reason: "Studio already holds a session; release it first" };
     if (host !== "codex" && !(host === "claude" && this.o.nativeWorkspace)) return { ok: false, code: "host", reason: "a fresh start runs on Codex, or on Claude in Studio's own workspace" };
     const priorDriver = this.driver();
@@ -262,7 +262,7 @@ export class MainSession {
     const cwd = this.o.projectDir, newest = this.o.nativeWorkspace ? null : newestHandoffFile(this.o.stateDir);
     try {
       this.session = await this.hosts[host].attach("", { cwd, fresh: true, onGeneratedImage:this.generatedImageCapability(), onEvent: (e) => this.hostEvent(e), onPermission: (r) => this.bridge.ask(r), permissionMcp: this.o.permissionMcp(this.bridge), nativeTools:this.nativeCapability(),
-        ...(host === "claude" ? { env: extra?.env, model: extra?.model ?? null, studioMcp: this.o.studioMcp ? { command: this.o.studioMcp() } : undefined } : {}) });
+        ...(host === "claude" ? { env: extra?.env, model: extra?.model ?? null, permissionMode: extra?.permissionMode ?? "default", studioMcp: this.o.studioMcp ? { command: this.o.studioMcp() } : undefined } : {}) });
     } catch (e: any) {
       this.state = "detached"; this.changed();
       return { ok: false, code: "attachFailed", reason: String(e?.message ?? e) };
@@ -279,7 +279,7 @@ export class MainSession {
       ...(host === "claude" ? [
         `- model: ${extra?.model ?? "(the CLI default)"}; effort: ${extra?.effort ?? "(the CLI default)"} (the pair the Claude account card checks)`,
         `- config: Studio's own Claude config folder; signs in with the crew token, never the captain's interactive login`,
-        `- permission mode: default; Studio's native tools are allowed by name, every other prompt goes to Studio's permission bridge, and any failure denies`,
+        `- permission mode: ${extra?.permissionMode ?? "default"}; Studio's native tools are allowed by name, ${extra?.permissionMode === "auto" ? "Claude's auto-mode classifier decides the rest and whatever it escalates goes" : "every other prompt goes"} to Studio's permission bridge, and any failure denies`,
       ] : [
       `- model: ${se.model}; reasoning effort: ${se.effort ?? "(config default)"} (from the captain's Codex config; Studio sets neither)`,
       `- approval policy: ${se.approvalPolicy ?? "(config)"}; sandbox: ${se.sandbox ?? "(config)"}; every approval request goes to Studio's permission bridge, and any failure declines`]),
@@ -287,7 +287,7 @@ export class MainSession {
       `## Roll back`, "", this.o.nativeWorkspace ? "Stop Firstmate in Studio. This closes the owned primary; dispatched native Tasks keep their own lifecycle. Start a new primary explicitly when ready." : `Release in Studio, then continue the thread in a terminal: \`cd ${cwd} && ${this.hosts[host].resumeCommand(se.id)}\``, "",
     ]);
     this.origin = null;
-    this.drive = { host, path: "fresh", statement, noFork: null, model: host === "claude" ? extra?.model ?? null : se.model, effort: host === "claude" ? extra?.effort ?? null : se.effort ?? null, approvalPolicy: se.approvalPolicy ?? null, sandbox: se.sandbox ?? null,
+    this.drive = { host, path: "fresh", statement, noFork: null, model: host === "claude" ? extra?.model ?? null : se.model, effort: host === "claude" ? extra?.effort ?? null : se.effort ?? null, approvalPolicy: se.approvalPolicy ?? null, sandbox: se.sandbox ?? null, permissionMode: host === "claude" ? extra?.permissionMode ?? "default" : null,
       seededFrom: newest ? `state/${newest.name}` : null, handoff };
     this.sessionFile = se.file ?? null; this.lastSeenMtime = mtimeOf(this.sessionFile);
     this.writeDriver({ holder: "studio", host, sessionId: se.id, pid: process.pid, since: at, forkedFrom: null, mode: null, handoff, path: "fresh" });

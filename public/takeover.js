@@ -42,6 +42,8 @@ function accountPanel(begin=false){
 const CLAUDE={login:null,status:null,ready:null,loading:false,loaded:false,busy:false,read:0,begin:null};
 const claudeReady=()=>CLAUDE.ready?.ok===true&&CLAUDE.login?.state!=="pending";
 /** Why Claude cannot start now, from the preflight: a typed reason, with the crew-token step when that is what is missing. */
+/** "Claude permission mode: auto|default", the operator's CREW_CLAUDE_PERMISSION_MODE (auto when unset), with what it means. */
+function claudeModeText(mode){return h("span",{"data-claude-permission-mode":mode},`Claude permission mode: ${mode} `,h("span",{class:"faint"},mode==="auto"?T("(Claude’s classifier approves or denies tool calls; what it escalates asks you here)","（由 Claude 的分類器核准或拒絕工具呼叫；它升級的請求會在這裡問你）"):T("(every tool outside Studio’s own asks you here)","（Studio 以外的工具都會在這裡問你）")));}
 function claudeWhy(){const r=CLAUDE.ready?.ok===false?CLAUDE.ready:CLAUDE.refused;if(!r||r.ok)return null;return h("p",{class:"note","data-claude-start-why":r.code},T(r.en||r.reason,r.zh||r.reason));}
 // `ready`: the preflight (signed in, quota, crew token present) that enables Claude Start and Switch; the server decides with
 // the full read. In Studio's workspace it also carries the sign-in status, so one `claude auth status` serves both.
@@ -137,7 +139,8 @@ function viewTakeover() {
         v.host ? kvRow(T("Host", "主機"), hostBadge(v.host)) : null,
         v.drive?.host === "codex"
           ? kvRow(T("Model · effort", "模型 · 推理強度"), h("span", { "data-model-effort": "1" }, `${v.drive.model || v.model || "—"} · ${v.drive.effort || T("config default", "設定預設")} `, h("span", { class: "faint" }, T("(from your Codex config)", "（來自你的 Codex 設定）"))))
-          : kvRow(T("Model · mode", "模型 · 模式"), h("span", { "data-claude-model": "1" }, `${v.drive?.model || (v.model !== "claude" ? v.model : "") || o?.model || "—"}${v.drive?.effort ? ` · ${v.drive.effort}` : ""} · ${o?.permissionMode || "default"} → ${T("prompts come here", "權限詢問送到這裡")}`)),
+          : kvRow(T("Model · mode", "模型 · 模式"), h("span", { "data-claude-model": "1" }, `${v.drive?.model || (v.model !== "claude" ? v.model : "") || o?.model || "—"}${v.drive?.effort ? ` · ${v.drive.effort}` : ""} · ${o?.permissionMode || v.drive?.permissionMode || "default"} → ${T("prompts come here", "權限詢問送到這裡")}`)),
+        v.host === "claude" && v.drive?.path === "fresh" && v.drive?.permissionMode ? kvRow(T("Permissions", "權限"), claudeModeText(v.drive.permissionMode)) : null,
         v.host === "claude" && v.drive?.path === "fresh" && v.context === "studio" ? kvRow(T("Sign-in", "登入"), T("the crew token, in Studio's own Claude settings", "crew token，使用 Studio 自己的 Claude 設定")) : null,
         v.drive?.host === "codex" ? kvRow(T("Approvals · sandbox", "核准 · 沙箱"), `${v.drive.approvalPolicy || "—"} · ${v.drive.sandbox || "—"} → ${T("requests come here", "核准請求送到這裡")}`) : null,
         o ? kvRow(T("Terminal", "終端機"), o.terminal ? h("span", { style: "color:var(--warn)" }, T("still open: ", "還開著："), o.terminal) : T("no sign of it", "看不到")) : null,
@@ -236,7 +239,8 @@ function startClaudeCard(d, phone) {
       kvRow(T("Folder", "資料夾"), h("span", { class: "mono" }, d.project)),
       kvRow(T("First message", "第一則訊息"), T("Studio’s own Firstmate introduction", "Studio 自己的 Firstmate 開場")),
       kvRow(T("Model · effort", "模型 · 推理強度"), h("span", { "data-claude-config": "1" }, `${c.model || T("Claude default", "Claude 預設")} · ${c.effort || T("Claude default", "Claude 預設")} `,
-        h("span", { class: "faint" }, T("(signs in with the crew token; Studio’s tools are allowed, every other tool asks you here)", "（用 crew token 登入；Studio 的工具可直接用，其他工具都會在這裡問你）"))))),
+        h("span", { class: "faint" }, T("(signs in with the crew token; Studio’s own tools are allowed)", "（用 crew token 登入；Studio 自己的工具可直接用）")))),
+      ready && CLAUDE.ready?.permissionMode ? kvRow(T("Permissions", "權限"), claudeModeText(CLAUDE.ready.permissionMode)) : null),
     CLAUDE.ready || CLAUDE.refused ? claudeWhy() : ready ? null : h("p", { class: "faint", "data-claude-start-why": "checking" }, T("Checking Claude…", "正在確認 Claude…")),
     h("div", { class: "actions" }, h("button", { class: ready && !codexReady ? "btn primary" : "btn", id: "startClaudeBtn", disabled: phone || !ready || ACCOUNT.starting || (MS.view || d.view)?.state !== "detached" || null, onclick: () => continueNative({ project: d.project }, "claude") }, T("Start on Claude", "在 Claude 上開始"))));
 }

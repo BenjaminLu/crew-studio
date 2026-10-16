@@ -32,7 +32,7 @@ import {projectPrAdapter,GitHubPrAdapter,type GitHubProjectGrant} from './adapte
 //   GitHub: CREW_GITHUB_TOKEN / GITHUB_TOKEN / GH_TOKEN, or a token pasted in Studio; CREW_GITHUB_API (tests)
 //   installs (Doctor): CREW_INSTALL_RUNNER=mock records instead of running; CREW_NO_REAL_INSTALL=1 refuses real installs
 //   chat: CREW_CHAT_PROVIDER=claude|codex|anthropic|openai|openai-compatible|stub (Settings in the chat header saves a choice to CREW_DATA/settings.json),
-//         CREW_CLAUDE_MODEL, CREW_CODEX_MODEL, CREW_CLAUDE_BIN, CREW_CODEX_BIN, CREW_CHAT_TIMEOUT_MS
+//         CREW_CLAUDE_MODEL, CREW_CLAUDE_PERMISSION_MODE (fresh Claude Firstmate: auto|default, default auto), CREW_CODEX_MODEL, CREW_CLAUDE_BIN, CREW_CODEX_BIN, CREW_CHAT_TIMEOUT_MS
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
@@ -191,8 +191,8 @@ const claudePrimaryPair = () => { const model = chatSettings().models.claude || 
 // a Studio that stopped without its shutdown handler leaves private folders behind: remove those whose Studio is gone
 try { sweepPrivateDirs(); } catch {}
 const takeover = createTakeover({ claudePair: claudePrimaryPair,
-  claudePreflight: async () => { const pair = claudePrimaryPair(); let status: unknown = null; const ready = await claudePrimaryReadiness({ dry: true, pair, status: async () => (status = await nativeClaude.status(pair)) as any, login: () => ({ ok: false, error: "dry" }), probe: () => claudeLoginPresence(), configDir: join(DATA, "claude-firstmate"), signInPending: claudeLogin.view().state === "pending" }); if (!status) { try { status = await nativeClaude.status(pair); } catch {} } return { ready, status }; },
-  claudePrimary: () => claudePrimaryReadiness({ probe: () => claudeLoginStatus(), pair: claudePrimaryPair(), status: () => nativeClaude.status(claudePrimaryPair()), login: () => claudeLogin_(), configDir: join(DATA, "claude-firstmate"), signInPending: claudeLogin.view().state === "pending" }), main, fm, gh, board, codexAccount, stateDir: STATE, pending: () => pending, tasks, crew: () => fm.crew(8) });
+  claudePreflight: async () => { const pair = claudePrimaryPair(); let status: unknown = null; const ready = await claudePrimaryReadiness({ dry: true, pair, status: async () => (status = await nativeClaude.status(pair)) as any, login: () => ({ ok: false, error: "dry" }), probe: () => claudeLoginPresence(), configDir: join(DATA, "claude-firstmate"), signInPending: claudeLogin.view().state === "pending", permissionMode: process.env.CREW_CLAUDE_PERMISSION_MODE }); if (!status) { try { status = await nativeClaude.status(pair); } catch {} } return { ready, status }; },
+  claudePrimary: () => claudePrimaryReadiness({ probe: () => claudeLoginStatus(), pair: claudePrimaryPair(), status: () => nativeClaude.status(claudePrimaryPair()), login: () => claudeLogin_(), configDir: join(DATA, "claude-firstmate"), signInPending: claudeLogin.view().state === "pending", permissionMode: process.env.CREW_CLAUDE_PERMISSION_MODE }), main, fm, gh, board, codexAccount, stateDir: STATE, pending: () => pending, tasks, crew: () => fm.crew(8) });
 // transcripts: the session Studio drives (its copy holds the turns before the takeover), else the firstmate session
 const CLAUDE_PROJECTS = process.env.CREW_HOST_CLAUDE_PROJECTS ?? join(homedir(), ".claude/projects");
 let firstmateId: string | null = null;

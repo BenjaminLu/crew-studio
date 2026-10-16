@@ -12,19 +12,33 @@ import type { ClaudeCapability, ClaudePair } from "../providers/claude-native";
 import { validClaudePair } from "../providers/claude-native";
 import type { HostRefusalCode } from "./types";
 
+export type ClaudePermissionMode = "auto" | "default";
 export type ClaudePrimaryReady =
-  | { ok: true; env: Record<string, string>; model: string; effort: string | null; source: string }
+  | { ok: true; env: Record<string, string>; model: string; effort: string | null; source: string; permissionMode: ClaudePermissionMode }
   | { ok: false; code: HostRefusalCode; reason: string; en: string; zh: string };
 
 const no = (code: HostRefusalCode, en: string, zh: string): ClaudePrimaryReady => ({ ok: false, code, reason: `${en} / ${zh}`, en, zh });
 /** The credentials a Claude primary may run on: the crew token, an explicit OAuth token in Studio's environment, or the captain's chosen API key. */
 const PRIMARY_KINDS: LoginKind[] = ["crew", "env-oauth", "api-key"];
 
+/** The fresh primary's Claude permission mode. Auto by default: Claude's classifier approves or denies tool calls, and whatever
+ *  it escalates still goes to Studio's permission bridge. Only the operator picks another, through CREW_CLAUDE_PERMISSION_MODE
+ *  in the environment or .env (never a model or an API body): "default" or "auto"; anything else is refused, never guessed. */
+export function claudePermissionMode(raw: string | undefined): { ok: true; mode: ClaudePermissionMode } | { ok: false; en: string; zh: string } {
+  const v = (raw ?? "").trim();
+  if (v === "") return { ok: true, mode: "auto" };
+  if (v === "auto" || v === "default") return { ok: true, mode: v };
+  const shown = JSON.stringify(v.slice(0, 40));
+  return { ok: false, en: `CREW_CLAUDE_PERMISSION_MODE=${shown} is not a Claude Firstmate permission mode; use default or auto, then restart Studio.`, zh: `CREW_CLAUDE_PERMISSION_MODE=${shown} 不是 Claude Firstmate 的權限模式；請改成 default 或 auto，再重新啟動 Studio。` };
+}
+
 /** `dry`: the preflight the cards use to enable Start and Switch. It reads the crew login by existence only (`probe`, no
  *  keychain decrypt), creates no Claude config folder and returns no environment. Its sign-in status read (`status`) does
  *  run `claude auth status` in a temporary folder and may record a refusal. An existing but empty or malformed crew item
  *  passes here; Start and the server-side Switch decide with the full read. */
-export async function claudePrimaryReadiness(o: { pair: ClaudePair; status: () => Promise<ClaudeCapability>; login: () => Login; probe?: () => { ok: boolean; kind?: LoginKind }; configDir: string; signInPending: boolean; dry?: boolean }): Promise<ClaudePrimaryReady> {
+export async function claudePrimaryReadiness(o: { pair: ClaudePair; status: () => Promise<ClaudeCapability>; login: () => Login; probe?: () => { ok: boolean; kind?: LoginKind }; configDir: string; signInPending: boolean; dry?: boolean; permissionMode?: string }): Promise<ClaudePrimaryReady> {
+  const pm = claudePermissionMode(o.permissionMode);
+  if (!pm.ok) return no("claudeUnavailable", pm.en, pm.zh);
   if (o.signInPending) return no("claudeSignInPending", "Finish or cancel the Claude sign-in first.", "請先完成或取消 Claude 登入。");
   if (!validClaudePair(o.pair)) return no("claudeUnavailable", `The configured Claude model ${o.pair.model} is not supported here; Studio picks no substitute.`, `設定的 Claude 模型 ${o.pair.model} 不支援；Studio 不會改用其他模型。`);
   let st: ClaudeCapability;
@@ -38,12 +52,12 @@ export async function claudePrimaryReadiness(o: { pair: ClaudePair; status: () =
   if (o.dry) {
     let p: { ok: boolean; kind?: LoginKind } = { ok: false };
     try { p = o.probe ? o.probe() : { ok: false }; } catch {}
-    return p.ok && p.kind && PRIMARY_KINDS.includes(p.kind) ? { ok: true, model: o.pair.model, effort: o.pair.effort, source: "", env: {} } : crewMissing();
+    return p.ok && p.kind && PRIMARY_KINDS.includes(p.kind) ? { ok: true, model: o.pair.model, effort: o.pair.effort, source: "", env: {}, permissionMode: pm.mode } : crewMissing();
   }
   let login: Login;
   try { login = o.login(); } catch { login = { ok: false, error: "unreadable" }; }
   if (!login.ok || !login.kind || !PRIMARY_KINDS.includes(login.kind)) return crewMissing();
   mkdirSync(o.configDir, { recursive: true, mode: 0o700 }); try { chmodSync(o.configDir, 0o700); } catch {}
-  return { ok: true, model: o.pair.model, effort: o.pair.effort, source: login.source,
+  return { ok: true, model: o.pair.model, effort: o.pair.effort, source: login.source, permissionMode: pm.mode,
     env: { CLAUDE_CONFIG_DIR: o.configDir, DISABLE_AUTOUPDATER: "1", ...(o.pair.effort ? { CLAUDE_CODE_EFFORT_LEVEL: o.pair.effort } : {}), ...login.env } };
 }
