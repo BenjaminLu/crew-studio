@@ -18,6 +18,12 @@ try {
  assert.deepEqual(ctx.spec.scope,['src/changed.ts']);assert.deepEqual(ctx.spec.verificationScope,['src/caller.ts']);
  assert.deepEqual(JSON.parse(readFileSync(join(dir,'spec.json'),'utf8')).verificationScope,['src/caller.ts']);
  assert.match(specMd(ctx.spec),/Read\/verification only \(no write authority\): src\/caller.ts/);
+ // Losing a head-bound brief must not erase the editable draft during rescope.
+ const promptX:any={...x,visit:2,run:{...x.run,def:{nodes:[]}},node:{id:'spec'},log(){}};
+ const prompt=await h.engine.modes.spec.prompt!(promptX);
+ assert.match(prompt,/src\/changed.ts/);
+ assert.match(prompt,/src\/caller.ts/);
+ assert.match(prompt,/not approval or current-head verification evidence/);
  const native=h.engine.natives.overlap;
  const mine={artifact:{data:{scope:['src/changed.ts']}}};
  assert.equal((await native({...mine,inflight:[]},{} as any)).verdict,'pass');
