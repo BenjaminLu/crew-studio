@@ -304,3 +304,7 @@ body:not(.chat-closed) .rt-cue { top: calc(120px + env(safe-area-inset-top, 0px)
 .gate-host > summary { cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
 .gate-host > .gate { margin-top: 8px; }
 .gate-run-tag { align-self: center; font-size: 13px; }
+.gate-yours { padding: 8px 10px; border-radius: 8px; background: var(--human-soft); color: var(--text); overflow-wrap: anywhere; }
+.gate-yours ul { margin: 4px 0 0; padding-left: 18px; }
+/* the floating Firstmate button never covers the draft's last action */
+.fw-page { padding-bottom: 96px; }

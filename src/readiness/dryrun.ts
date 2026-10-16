@@ -1,8 +1,8 @@
 // Stage 4: the draft, end to end, on the real engine and board path (createRuntime and its
 // HTTP routes) in a throwaway data folder, with a stub provider. No model is called, no
 // network is used, nothing touches the live Studio's data. The stub answers only the cards
-// the scenario allows (plain question cards and the acceptance card); it never answers a
-// one-way card. A refusal, a sandbox/path/cwd problem, a stall or an outcome no edge takes
+// the scenario allows (plain question cards); it never answers a card the gate counts as a
+// one-way guard (acceptance, merge, door or one_way cards). A refusal, a sandbox/path/cwd problem, a stall or an outcome no edge takes
 // fails the stage with the step and the exact error.
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -87,7 +87,7 @@ export async function dryRun(def: WDef, o: DryRunOptions): Promise<DryRunResult>
       const open = rt.engine.cards.list({ run: id, open: true });
       if (r.status === "waiting" && open.length) {
         const c = open[0]; const node = r.def.nodes.find((n: any) => n.id === c.node);
-        if (node && isOneWayCard(node) && node.args?.mode !== "deliver-accept") { stoppedAt = node.id; break; } // a one-way decision is the captain's alone
+        if (node && isOneWayCard(node)) { stoppedAt = node.id; break; } // every card the gate counts as a one-way guard is the captain's alone
         if (answered >= (o.maxCards ?? 12)) { fail("dryrun-loop", node?.id ?? null, `The run kept asking for decisions (${answered} cards) without ending.`, `任務一直要求決定（${answered} 張卡）而沒有結束。`, "Make sure each card has an option that moves toward the end.", "確認每張卡都有往結束前進的選項。"); break; }
         const opts = c.options.filter((x: any) => !x.hold && !x.note);
         const rank = (x: any) => { if (/^approve-/.test(x.id)) return -1; const e = r.def.edges.find((e: any) => e.from === c.node && e.when?.split("|").includes(x.id)) ?? r.def.edges.find((e: any) => e.from === c.node && !e.when); return e ? dist.get(e.to) ?? 99 : 999; };

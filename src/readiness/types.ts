@@ -14,6 +14,8 @@ export type GateProblem = {
   /** who can fix it: Firstmate in the repair loop, or only the captain (never looped) */
   owner: "firstmate" | "captain"; need?: CaptainNeed | null;
   reason: L2; fix: L2;
+  /** for a captain-owned problem: the one plain line the captain reads (what to do and why), shown as a notice */
+  note?: L2 | null;
 };
 export type StageResult = { id: StageId; status: "pass" | "fail" | "skipped" | "running" | "pending"; problems: GateProblem[]; note?: L2 | null; ms?: number };
 export type RenderedBrief = { node: string; label: string; system: string; prompt: string; roundDir: string };
@@ -27,8 +29,8 @@ export type GateResult = {
   smoke?: { task: string; status: "running" | "succeeded" | "failed"; startedAt: string; endedAt?: string | null; error?: string | null } | null;
   verified?: { at: string; task: string } | null;
 };
-export const P = (stage: StageId, code: string, node: string | null, reason: L2, fix: L2, o: { owner?: "firstmate" | "captain"; need?: CaptainNeed | null; level?: "error" | "notice" } = {}): GateProblem =>
-  ({ stage, code, node, level: o.level ?? "error", owner: o.owner ?? "firstmate", need: o.need ?? null, reason, fix });
+export const P = (stage: StageId, code: string, node: string | null, reason: L2, fix: L2, o: { owner?: "firstmate" | "captain"; need?: CaptainNeed | null; level?: "error" | "notice"; note?: L2 | null } = {}): GateProblem =>
+  ({ stage, code, node, level: o.level ?? "error", owner: o.owner ?? "firstmate", need: o.need ?? null, reason, fix, ...(o.note ? { note: o.note } : {}) });
 /** The stable identity of a problem: what the repair loop compares between rounds. */
 export const problemKey = (p: GateProblem) => `${p.stage}|${p.code}|${p.node ?? ""}|${p.reason.en}`;
 /** Passed means stages 1-4 passed on this hash (stage 5 is the captain's optional real run). */

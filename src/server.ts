@@ -81,7 +81,7 @@ import { timingSafeEqual } from "node:crypto";
 import { git, setGitHome } from "./git";
 import { Egress } from "./egress";
 import { Worktrees } from "./worktrees";
-import { claudeLogin as claudeLogin_, claudeLoginPresence, claudeLoginStatus, setBillingFile, setLoginOutcomeFile } from "./providers/login";
+import { claudeLogin as claudeLogin_, claudeLoginPresence, claudeLoginPresenceAsync, claudeLoginStatus, setBillingFile, setLoginOutcomeFile } from "./providers/login";
 import { installCode } from "./domain/code";
 import { applySandboxAddons, prepareSandbox, registerSandbox } from "./sandbox-repo";
 import { createTakeover, doorComplete, doorInput, needsDoor } from "./takeover";
@@ -373,19 +373,26 @@ const worktrees = new Worktrees(DATA, { protect: () => PROTECTED });
 let packGenesis: ReturnType<typeof installPackGenesis>;
 const coffeeTools = (()=>{const rendering=renderEnv();return discoverCoffeeFilmCapability([process.env.CREW_HYPERFRAMES_ROOT,TOOLS_DIR,!COMPILED?ROOT:null,join(dirname(process.execPath),"..")].filter(Boolean)as string[],{browser:process.env.HYPERFRAMES_BROWSER_PATH,playwright:rendering.playwright,ffmpeg:process.env.CREW_FFMPEG||Bun.which("ffmpeg"),ffprobe:Bun.which("ffprobe")});})();
 let staffingClaudeCapability:ProviderCapability|null=null;
-/** Read-only login presence per provider for the readiness gate: files and environment only, nothing spawned, nothing written. */
-const gateLogin = (id: string): "logged-in" | "not-logged-in" | "unknown" => {
-  try {
-    if (id === "claude") return claudeLoginPresence().ok ? "logged-in" : "not-logged-in";
-    if (id === "codex") { const k = process.env.CODEX_API_KEY?.trim(); if (k && /^sk-[A-Za-z0-9_-]{20,}$/.test(k)) return "logged-in"; const f = join(process.env.CODEX_HOME || join(homedir(), ".codex"), "auth.json"); if (!existsSync(f)) return "not-logged-in"; const j = JSON.parse(readFileSync(f, "utf8")); return j?.tokens?.access_token || j?.OPENAI_API_KEY ? "logged-in" : "not-logged-in"; }
-    if (id === "stub") return allowStub ? "logged-in" : "not-logged-in";
-  } catch {}
-  return "unknown";
+/** Login presence per provider for the readiness gate, read once per gate run and kept 30 s: environment and files are read
+ *  directly; Claude's keychain items are asked about with an async `security find-generic-password` (existence only, no secret
+ *  read), so the event loop never waits on it. Nothing is written and no sign-in is ever started. */
+let gateLoginCache: { at: number; v: Promise<Record<string, "logged-in" | "not-logged-in" | "unknown">> } | null = null;
+const gateLogins = () => {
+  if (gateLoginCache && Date.now() - gateLoginCache.at < 30_000) return gateLoginCache.v;
+  const v = (async () => {
+    const out: Record<string, "logged-in" | "not-logged-in" | "unknown"> = {};
+    try { out.claude = (await claudeLoginPresenceAsync()).ok ? "logged-in" : "not-logged-in"; } catch { out.claude = "unknown"; }
+    try { const k = process.env.CODEX_API_KEY?.trim(); if (k && /^sk-[A-Za-z0-9_-]{20,}$/.test(k)) out.codex = "logged-in"; else { const f = join(process.env.CODEX_HOME || join(homedir(), ".codex"), "auth.json"); if (!existsSync(f)) out.codex = "not-logged-in"; else { const j = JSON.parse(await Bun.file(f).text()); out.codex = j?.tokens?.access_token || j?.OPENAI_API_KEY ? "logged-in" : "not-logged-in"; } } } catch { out.codex = "unknown"; }
+    out.stub = allowStub ? "logged-in" : "not-logged-in";
+    return out;
+  })();
+  gateLoginCache = { at: Date.now(), v }; return v;
 };
 
 const runtime = createRuntime({coffeeVideo:coffeeTools.ready?(request=>renderCoffeeFilm(request,coffeeTools)):undefined,coffeeFilmStatus:{ready:coffeeTools.ready,reason:coffeeTools.ready?null:coffeeTools.reason},startupModel:provider=>{const settings=chatSettings();return provider==="claude"?claudePrimaryPair().model:settings.models.codex||process.env.CREW_CODEX_MODEL||codexConfig(PROJECT).model;},coffeeChoice:()=>{const config=codexConfig(PROJECT),model=chatSettings().models.codex||process.env.CREW_CODEX_MODEL||config.model;return model?{provider:"codex",model,effort:config.effort}:null;}, staffingPending:intent=>{if(main.view().context==="studio"&&main.view().state!=="detached")main.enqueue("card",`Project registered for: ${intent.work.text}. No workflow work has started. Discuss each role’s agent account, model and reasoning effort with the captain before dispatch. Wait for the captain’s choices. / 專案已註冊，工作尚未開始。接著請和船長討論各角色使用的代理帳號、模型及推理強度，等待船長選擇後再確認派工。`,"studio-native");},staffingAdmission:role=>role.provider==='claude'&&!!staffingClaudeCapability&&isClaudeExecutionAdmission(staffingClaudeCapability,{model:role.model,effort:role.effort}),staffingFacts:async()=>{const settings=chatSettings(),model=settings.models.claude||process.env.CREW_CLAUDE_MODEL||'claude-sonnet-5-5',pair={model,effort:configuredClaudeEffort(model)};const [cap,claude]=await Promise.all([probeCodex(),probeClaudeNative(pair)]);staffingClaudeCapability=claude;return[{provider:'codex',support:'supported' as const,auth:cap.auth,quota:cap.quota,expires:cap.expires,models:cap.models.map(m=>({id:m.id,efforts:m.efforts??[]}))},{provider:'claude',support:'supported' as const,auth:claude.auth,quota:claude.quota,expires:claude.expires,models:claude.models.map(m=>({id:m.id,efforts:pair.effort===null?[]:[pair.effort]})),reason:claude.reason}];},dataDir: DATA, agents, provider: pickProvider, defaultProvider: () => { const s = chatSettings(); return { provider: s.provider, model: s.models[s.provider] || null }; }, selectProvider: nativePick,
   // the readiness gate: login state is read from what is on disk (never a probe that could start a sign-in); repair turns go to Firstmate's queue
-  readiness: { login: gateLogin, knownProviders: () => [...choices], repoRoot: ROOT, ask: (text: string) => { if (main.view().state === "detached") return false; main.enqueue("card", text, "studio-gate"); return true; } },
+  // repair turns go only to Studio's own Firstmate conversation (like staffingPending), never a takeover terminal session
+  readiness: { logins: gateLogins, knownProviders: () => [...choices], repoRoot: ROOT, ...(Number(process.env.CREW_GATE_REPAIR_WAIT_MS) > 0 ? { repairWaitMs: Number(process.env.CREW_GATE_REPAIR_WAIT_MS) } : {}), ask: (text: string, repair: { draft: string; nonce: string }) => { const v = main.view(); if (v.context !== "studio" || v.state === "detached") return false; main.enqueue("card", text, "studio-gate", undefined, repair); return true; } },
   log: studioLog, send, fmRoot: dirname(STATE), protectedRoots: PROTECTED, store, m3: { store: m3.store, runs: m3.runs, lane: m3.lane,useArtifactReviewPolicy:m3.useArtifactReviewPolicy }, fileorg: m7.fileorg, docs, improve, studioUrl: () => `http://127.0.0.1:${PORT}`,
   generateImage: (prompt, authorize, signal, reference, rules) => {
     const config = codexConfig(PROJECT), model = chatSettings().models.codex || process.env.CREW_CODEX_MODEL || config.model;

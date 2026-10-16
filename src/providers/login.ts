@@ -99,7 +99,7 @@ const NOT_SETUP_TOKEN = "crew token is not a claude setup-token result (expected
 type Resolved = { ok: true; env: Record<string, string>; source: string; warn: string | null; verified?: boolean; kind: LoginKind } | { ok: false; error: string };
 const CREW_HINT = "make a crew token once (claude setup-token) and keep it in the keychain (security add-generic-password -s crew-studio-claude-token -a \"$USER\" -w) or in ~/.config/crew-studio/claude-token (mode 600)";
 /** claude's login, in v1's order; `probe` reads no keychain secret (the Doctor), and its env values are empty. */
-function resolveClaude(probe: boolean, record = true, remembered = true): Resolved {
+function resolveClaude(probe: boolean, record = true, remembered = true, has: (service: string, account: string) => boolean = keychainHas): Resolved {
   const env = process.env; const val = (v: string) => (probe ? "" : seen(v));
   const early: string[] = [];
   if (env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) {
@@ -132,7 +132,7 @@ function resolveClaude(probe: boolean, record = true, remembered = true): Resolv
   const sources: Src[] = [
     { name: "keychain item crew-studio-claude-token", get: () => {
       if (!keychain) return null;
-      if (probe) { if (!keychainHas("crew-studio-claude-token", user())) return null; const last = remembered ? outcomes()["keychain item crew-studio-claude-token"] : undefined;
+      if (probe) { if (!has("crew-studio-claude-token", user())) return null; const last = remembered ? outcomes()["keychain item crew-studio-claude-token"] : undefined;
         if (last && !last.ok) return { ok: false, error: `${last.error} (the last round, ${last.at})` };
         return { ...ok("", "the crew's token (keychain item crew-studio-claude-token)", last?.ok ? null : "crew keychain item present, but its content is checked when a round starts (the Doctor does not decrypt it)"), verified: !!last?.ok }; }
       const r = keychainRead("crew-studio-claude-token", user()); return r.found ? crewTok(r.found, "the crew's token (keychain item crew-studio-claude-token)") : r.error ? { ok: false, error: r.error } : null; } },
@@ -140,7 +140,7 @@ function resolveClaude(probe: boolean, record = true, remembered = true): Resolv
       const r = privateFile(join(home(), ".config", "crew-studio", "claude-token")); return r.found ? crewTok(r.found, "the crew's token (~/.config/crew-studio/claude-token)") : r.error ? { ok: false, error: r.error } : null; } },
     { name: "your own claude login (keychain item Claude Code-credentials)", get: () => {
       if (!keychain) return null;
-      if (probe) { if (!keychainHas("Claude Code-credentials", user())) return null; const last = remembered ? outcomes()["your own claude login (keychain item Claude Code-credentials)"] : undefined;
+      if (probe) { if (!has("Claude Code-credentials", user())) return null; const last = remembered ? outcomes()["your own claude login (keychain item Claude Code-credentials)"] : undefined;
         if (last && !last.ok) return { ok: false, error: `${last.error} (the last round, ${last.at})` };
         return { ...ok("", "your own claude login's access token", last?.ok ? WARN : `${WARN}; its expiry is checked when a round starts (the Doctor does not decrypt it)`, "own-login"), verified: !!last?.ok }; }
       const r = keychainRead("Claude Code-credentials", user()); return r.found ? fromJSON(r.found, "your claude login") : r.error ? { ok: false, error: r.error } : null; } },
@@ -161,6 +161,14 @@ function resolveClaude(probe: boolean, record = true, remembered = true): Resolv
 export function claudeLogin(options: { record?: boolean } = {}): Login { return resolveClaude(false, options.record !== false); }
 /** Which login a start would try first, by presence only (no decrypt) and ignoring earlier outcomes: a fixed item can be tried again. */
 export function claudeLoginPresence(): { ok: boolean; kind?: LoginKind } { const r = resolveClaude(true, false, false); return r.ok ? { ok: true, kind: r.kind } : { ok: false }; }
+/** The same presence check without blocking: the keychain items' existence is asked with an async `security find-generic-password`
+ *  (no -w: no secret is read), then the same resolver runs on those answers. Used by the readiness gate. */
+export async function claudeLoginPresenceAsync(): Promise<{ ok: boolean; kind?: LoginKind }> {
+  const found = new Map<string, boolean>();
+  if (keychainOn()) { const tool = process.env.CREW_KEYCHAIN_TOOL || "/usr/bin/security";
+    await Promise.all(["crew-studio-claude-token", "Claude Code-credentials"].map(async (service) => { try { const p = Bun.spawn([tool, "find-generic-password", "-s", service, "-a", user()], { stdout: "ignore", stderr: "ignore" }); found.set(service, (await p.exited) === 0); } catch { found.set(service, false); } })); }
+  const r = resolveClaude(true, false, false, (service) => found.get(service) ?? false); return r.ok ? { ok: true, kind: r.kind } : { ok: false };
+}
 /** What the Doctor shows: the same resolver, reading no keychain secret. */
 export function claudeLoginStatus(): { ok: boolean; verified?: boolean; source?: string; warn?: string | null; error?: string; kind?: LoginKind } {
   const r = resolveClaude(true); return r.ok ? { ok: true, verified: r.verified !== false, source: r.source, warn: r.warn, kind: r.kind } : { ok: false, error: r.error };

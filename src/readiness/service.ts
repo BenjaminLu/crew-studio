@@ -11,17 +11,19 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { WDef } from "../runtime/defs";
-import { briefStage, contractStage, gateHash, intentStage, isExternalEffect, isOneWayCard, type ContractEnv, type IntentLine, type Sample } from "./stages";
+import { briefStage, contractStage, gateHash, intentStage, type ContractEnv, type IntentLine, type LoginState, type Sample } from "./stages";
 import { firstFailing, gatePassed, problemKey, P, type GateProblem, type GateResult, type L2, type RenderedBrief, type StageResult } from "./types";
 import type { DryRunResult } from "./dryrun";
 
 export type GateDeps = {
   dataDir: string;
-  contract: (def: WDef, sample: Sample) => ContractEnv;
+  contract: (def: WDef, sample: Sample, logins?: Record<string, LoginState>) => ContractEnv;
+  /** login state per provider, read once per gate run (never per node, never a sign-in) */
+  logins?: () => Promise<Record<string, LoginState>> | Record<string, LoginState>;
   briefs: (def: WDef, sample: Sample) => (RenderedBrief & { roleText: string; skills: { id: string; body: string }[]; error: string | null })[];
   dry: (def: WDef, sample: Sample) => Promise<DryRunResult>;
-  /** send Firstmate a turn (the repair prompt); false when Firstmate is not running */
-  ask?: (text: string) => boolean;
+  /** send Firstmate a turn (the repair prompt) carrying the repair ref as a field of the queued item; false when Firstmate is not in Studio */
+  ask?: (text: string, repair: { draft: string; nonce: string }) => boolean;
   /** the repair round cap (setting readiness.repair_rounds, default 6) */
   maxRounds?: () => number;
   notify?: (key: string) => void;
@@ -51,11 +53,14 @@ export class Gate {
     try { const r = JSON.parse(readFileSync(this.file(key), "utf8")) as GateResult; if (def && r.hash !== gateHash(def)) return null; return r; } catch { return null; }
   }
   /** Stages 1-3 (cheap, synchronous) for any definition. */
-  static(def: WDef, sample: Sample) {
-    const intent = intentStage(def); const contract = contractStage(def, this.d.contract(def, sample));
+  static(def: WDef, sample: Sample, logins: Record<string, LoginState> = {}) {
+    // stage 1 checks a drafted workflow's intent lines; a starter or built-in workflow has none to check
+    const drafted = def.origin?.source === "firstmate-draft" || !!(def as any).intents?.length;
+    const intent = drafted ? intentStage(def) : []; const contract = contractStage(def, this.d.contract(def, sample, logins));
     const rendered = this.d.briefs(def, sample); const brief = briefStage(def, rendered, sample);
     const st = (id: StageResult["id"], ps: GateProblem[]): StageResult => ({ id, status: ps.some((p) => p.level === "error") ? "fail" : "pass", problems: ps });
-    return { stages: [st("intent", intent), st("contract", contract), st("brief", brief)], briefs: rendered.map(({ node, label, system, prompt, roundDir }) => ({ node, label, system: system.slice(0, 24000), prompt: prompt.slice(0, 12000), roundDir })) };
+    const first = drafted ? st("intent", intent) : { id: "intent" as const, status: "skipped" as const, problems: [], note: { en: "Not a drafted workflow: it has no intent lines to check.", zh: "不是起草的流程：沒有意圖條目要檢查。" } };
+    return { stages: [first, st("contract", contract), st("brief", brief)], briefs: rendered.map(({ node, label, system, prompt, roundDir }) => ({ node, label, system: system.slice(0, 24000), prompt: prompt.slice(0, 12000), roundDir })) };
   }
   /** Run stages 1-4 for a definition under a key; one run per key at a time, the newest definition wins. */
   run(key: string, def: WDef, goal: string | null = null, force = false): Promise<GateResult> {
@@ -65,13 +70,14 @@ export class Gate {
       const w = this.want.get(key)!; const cur = this.read(key, w.def); if (!force && cur && cur.stages.every((s) => s.status !== "running")) return cur;
       return this.exec(key, w.def, w.goal);
     });
-    this.queue.set(key, next); next.finally(() => { if (this.queue.get(key) === next) this.queue.delete(key); });
+    this.queue.set(key, next); next.finally(() => { if (this.queue.get(key) === next) this.queue.delete(key); }).catch(() => {});
     return next;
   }
   private async exec(key: string, def: WDef, goal: string | null): Promise<GateResult> {
     const sample = sampleOf(def, goal); const t0 = Date.now(); const hash = gateHash(def);
     const prior = this.read(key);
-    const s = this.static(def, sample);
+    let logins: Record<string, LoginState> = {}; try { logins = await (this.d.logins?.() ?? {}); } catch {}
+    const s = this.static(def, sample, logins);
     const firstmateBlocked = s.stages.some((x) => x.problems.some((p) => p.level === "error" && p.owner === "firstmate")) || s.stages.find((x) => x.id === "intent")!.status === "fail" || s.stages.find((x) => x.id === "brief")!.status === "fail";
     const r: GateResult = { schema: 1, key, hash, at: new Date().toISOString(), stages: [...s.stages, { id: "dryrun", status: firstmateBlocked ? "skipped" : "running", problems: [], note: firstmateBlocked ? { en: "Runs after stages 1-3 pass.", zh: "前三關通過後才試跑。" } : null }, { id: "smoke", status: "pending", problems: [] }], briefs: s.briefs, dry: null,
       smoke: prior?.hash === hash ? prior.smoke ?? null : null, verified: prior?.hash === hash ? prior.verified ?? null : null };
@@ -119,8 +125,11 @@ export class Gate {
   private rfile(draft: string) { if (!/^d-[a-f0-9]{12}$/.test(draft)) throw new Error("bad draft id"); return join(this.dir, `repair-${draft}.json`); }
   repair(draft: string): RepairState { try { return JSON.parse(readFileSync(this.rfile(draft), "utf8")); } catch { return { schema: 1, draft, status: "idle", strategy: "patch", rounds: [], nonce: null, pendingSince: null, notice: null, captain: [], smokeFed: [] }; } }
   private saveRepair(s: RepairState) { this.writeJSON(this.rfile(s.draft), s); this.d.notify?.("draft-" + s.draft); return s; }
-  /** A repair turn may revise this draft only while it carries the current nonce. */
-  repairAuthorized(draft: string, text: string) { const s = this.repair(draft); return !!s.nonce && text.includes(`GATE-REPAIR ${draft} ${s.nonce}`); }
+  /** What pages and Firstmate read: the loop's state without its one-time code. */
+  repairView(draft: string) { const { nonce, ...rest } = this.repair(draft); void nonce; return rest; }
+  /** A repair turn may revise this draft only while the queued Studio item it came from carries the current one-time code. */
+  repairAuthorized(draft: string, ref: { draft?: unknown; nonce?: unknown } | null | undefined) { const s = this.repair(draft); return !!s.nonce && !!ref && ref.draft === draft && ref.nonce === s.nonce; }
+  repairing(): string[] { return readdirSync(this.dir).map((f) => /^repair-(d-[a-f0-9]{12})\.json$/.exec(f)?.[1]).filter((id): id is string => !!id && this.repair(id).status === "repairing"); }
   /** After a gate result on a draft revision: decide the next loop step. via: who wrote the revision. */
   afterGate(draft: string, revision: number, def: WDef, r: GateResult, via: "model" | "repair" | "captain-edit", prevDef: WDef | null = null): RepairState {
     let s = this.repair(draft);
@@ -149,7 +158,7 @@ export class Gate {
     s.rounds.push({ n: s.rounds.length + 1, revision, hash, strategy: s.strategy, problems: fixable, changes: null, at: new Date().toISOString() });
     s.status = "repairing"; s.nonce = nonce; s.pendingSince = this.d.now?.() ?? Date.now(); s.notice = captainLine;
     this.saveRepair(s);
-    const sent = this.d.ask?.(repairPrompt(draft, nonce, s, fixable, (def as any).intents ?? [])) ?? false;
+    const sent = this.d.ask?.(repairPrompt(draft, s, fixable, (def as any).intents ?? []), { draft, nonce }) ?? false;
     if (!sent) { s.status = "idle"; s.nonce = null; s.notice = { en: `Firstmate is not running, so the draft was not repaired yet. Open: ${fixable.length} problem(s).`, zh: `Firstmate 未在執行，草稿尚未修正。待處理：${fixable.length} 個問題。` }; this.saveRepair(s); }
     return s;
   }
@@ -163,18 +172,19 @@ export class Gate {
   /** A repair turn that never brought a revision (Firstmate's turn ended without one): count it as a round without progress. */
   tick(draft: string, def: WDef, waitMs = 10 * 60_000) { const s = this.repair(draft); const now = this.d.now?.() ?? Date.now(); if (s.status === "repairing" && s.pendingSince && now - s.pendingSince > waitMs) return this.refused(draft, "no revision arrived", def); return s; }
   /** A real run failed: feed it back once per definition hash. */
-  feedSmoke(draft: string, def: WDef, r: GateResult) {
-    const s = this.repair(draft); const h = gateHash(def); if ((s.smokeFed ?? []).includes(h)) return null;
-    s.smokeFed = [...(s.smokeFed ?? []), h]; s.rounds = []; this.saveRepair(s);
-    return this.afterGate(draft, 0, def, r, "repair", null);
+  feedSmoke(draft: string, def: WDef, r: GateResult, revision = 0) {
+    const s = this.repair(draft); const h = r.hash; if ((s.smokeFed ?? []).includes(h)) return null;
+    s.smokeFed = [...(s.smokeFed ?? []), h]; s.rounds = []; s.strategy = "patch"; this.saveRepair(s);
+    return this.afterGate(draft, revision, def, r, "repair", null);
   }
 }
 const STAGE_EN: Record<string, string> = { intent: "stage 1 (intent lines)", contract: "stage 2 (static contract)", brief: "stage 3 (briefs)", dryrun: "stage 4 (stub dry run)", smoke: "stage 5 (real run)" };
 const STAGE_ZH: Record<string, string> = { intent: "第 1 關（意圖）", contract: "第 2 關（靜態契約）", brief: "第 3 關（簡報）", dryrun: "第 4 關（替身試跑）", smoke: "第 5 關（真實試跑）" };
-const NEED: Record<string, L2> = { "sign-in": { en: "a provider sign-in", zh: "供應商登入" }, egress: { en: "an egress grant", zh: "對外連線授權" }, staffing: { en: "staffing confirmed at Run", zh: "執行時確認配置" }, "one-way": { en: "a one-way decision", zh: "單向決定" } };
+const NEED: Record<string, L2> = { "sign-in": { en: "Sign in to the provider", zh: "登入供應商" }, egress: { en: "Allow network access", zh: "允許網路連線" }, staffing: { en: "Choose who works on it at Run", zh: "執行時選擇負責的人" }, "one-way": { en: "Make the one-way decision", zh: "做出單向決定" } };
+/** The captain's part, in plain lines: what to do and why. Firstmate never does these itself. */
 function captainNotice(ps: GateProblem[]): L2 {
-  const en = ps.map((p) => `${p.node ? p.node + ": " : ""}${NEED[p.need ?? ""]?.en ?? "captain"} (${p.reason.en})`), zh = ps.map((p) => `${p.node ? p.node + "：" : ""}${NEED[p.need ?? ""]?.zh ?? "船長"}（${p.reason.zh}）`);
-  return { en: `Only you can do: ${en.join(" · ")}. Firstmate never does these itself.`, zh: `只有你能處理：${zh.join("・")}。Firstmate 不會自行處理。` };
+  const en = [...new Set(ps.map((p) => p.note?.en ?? `${NEED[p.need ?? ""]?.en ?? "Your decision"}: ${p.reason.en}`))], zh = [...new Set(ps.map((p) => p.note?.zh ?? `${NEED[p.need ?? ""]?.zh ?? "你的決定"}：${p.reason.zh}`))];
+  return { en: en.join(" "), zh: zh.join("") };
 }
 export function describeChanges(a: WDef, b: WDef): string[] {
   const out: string[] = []; const an = new Map(a.nodes.map((n) => [n.id, n])), bn = new Map(b.nodes.map((n) => [n.id, n]));
@@ -186,31 +196,56 @@ export function describeChanges(a: WDef, b: WDef): string[] {
   for (const k of ["params", "sample", "intents", "roles"]) if (JSON.stringify((a as any)[k] ?? null) !== JSON.stringify((b as any)[k] ?? null)) out.push(`changed ${k}`);
   return out.length ? out : ["no change"];
 }
-export function repairPrompt(draft: string, nonce: string, s: RepairState, ps: GateProblem[], intents: IntentLine[]): string {
+export function repairPrompt(draft: string, s: RepairState, ps: GateProblem[], intents: IntentLine[]): string {
   const lines = ps.map((p, i) => `${i + 1}. [stage ${p.stage}${p.node ? `, node ${p.node}` : ""}] ${p.reason.en}\n   Fix: ${p.fix.en}`);
-  return [`GATE-REPAIR ${draft} ${nonce}`,
+  return [`GATE-REPAIR ${draft}`,
     `The readiness gate failed on your workflow draft ${draft} (repair round ${s.rounds.length}${s.strategy === "redraft" ? ", strategy: REDRAFT" : ""}). Revise it now with studio_draft_workflow, passing draft: "${draft}" and the full revised workflow. Do not ask the captain anything.`,
     s.strategy === "redraft" ? "Two rounds made no progress. Do not patch again: redraft the failing part from scratch (or the whole workflow if the failures spread), using the problem list below." : "Fix every problem below in one revision.",
     "Problems:", ...lines,
+    "Keep the goal, the interview answers and every captain card (each decision card and its options) as they are.",
     `Keep every intent line the captain gave, word for word (${intents.map((l) => l.n).join(", ") || "none yet"}). If a line is ambiguous, pick the most reasonable reading and write it as that line's "assumption"; do not ask. Never drop a one-way captain card before an external effect, never widen a node's folders outside its round folder, never remove or weaken checks: the gate refuses such revisions.`,
     "Problems only the captain can resolve (a sign-in, an egress grant, staffing approval, a one-way decision) are not yours to fix; never start a sign-in or grant a permission.",
     "Studio re-runs the gate on your revision and tells you the result. / 閘門會重新檢查你的修改。"].join("\n");
 }
 
-/** A repair revision that weakens the gate is refused. Returns the reason, or null when the revision is fair. */
-export function weakening(prev: WDef, next: WDef, contract?: (def: WDef) => GateProblem[]): string | null {
-  const pi: IntentLine[] = (prev as any).intents ?? [], ni: IntentLine[] = (next as any).intents ?? [];
-  for (const l of pi) { const m = ni.find((x) => x.n === l.n); if (!m || m.text.trim() !== l.text.trim() || m.done.trim() !== l.done.trim()) return `intent line ${l.n} must stay as the captain gave it ("${l.text}"); a repair may only add an assumption`; }
-  const effects = next.nodes.filter(isExternalEffect).map((n) => n.id);
-  if (effects.length) for (const c of prev.nodes.filter(isOneWayCard)) if (!next.nodes.some((n) => n.id === c.id && isOneWayCard(n))) return `the one-way captain card ${c.id} before an external effect cannot be removed`;
-  for (const n of prev.nodes) {
-    const m = next.nodes.find((x) => x.id === n.id);
-    const prevChecks = (n.checks ?? []).map((c) => c.use), nextChecks = (m?.checks ?? []).map((c) => c.use);
-    if (prevChecks.some((c) => !nextChecks.includes(c)) || (n.checks ?? []).some((c) => c.blocking !== false && m?.checks?.find((x) => x.use === c.use)?.blocking === false)) return `the checks on ${n.id} cannot be removed or made non-blocking`;
-    if (n.kind === "check" && !m) return `the check node ${n.id} cannot be removed`;
+/** A repair revision that weakens the gate is refused. Returns the reason, or null when the revision is fair.
+ *  saved: when the draft is already a saved workflow, its latest version (with the captain's editor changes) and its
+ *  first version; nodes the captain added or changed in the editor may not be removed or rewritten by a repair. */
+export function weakening(prev: WDef, next: WDef, contract?: (def: WDef) => GateProblem[], saved?: { latest: WDef; first: WDef | null } | null): string | null {
+  const bases = [prev, ...(saved ? [saved.latest] : [])];
+  for (const base of bases) {
+    const pi: IntentLine[] = (base as any).intents ?? [], ni: IntentLine[] = (next as any).intents ?? [];
+    for (const l of pi) { const m = ni.find((x) => x.n === l.n); if (!m || m.text.trim() !== l.text.trim() || m.done.trim() !== l.done.trim()) return `intent line ${l.n} must stay as the captain gave it ("${l.text}"); a repair may only add an assumption`; }
+    // every captain card stays, with every option it offers: a repair never removes a decision the captain makes
+    for (const c of base.nodes.filter((n) => n.kind === "card")) {
+      const m = next.nodes.find((n) => n.id === c.id);
+      if (!m || m.kind !== "card") return `the captain's card ${c.id} cannot be removed`;
+      if (JSON.stringify(c.args ?? null) !== JSON.stringify(m.args ?? null) || !!c.card?.confirm_door !== !!m.card?.confirm_door) return `the captain's card ${c.id} cannot change what kind of decision it is`;
+      const missing = (c.card?.options ?? []).filter((o) => !(m.card?.options ?? []).some((x) => x.id === o.id));
+      if (missing.length) return `the captain's card ${c.id} must keep its option${missing.length > 1 ? "s" : ""} ${missing.map((o) => o.id).join(", ")}`;
+    }
+    for (const n of base.nodes) {
+      const m = next.nodes.find((x) => x.id === n.id);
+      const prevChecks = (n.checks ?? []).map((c) => c.use), nextChecks = (m?.checks ?? []).map((c) => c.use);
+      if (prevChecks.some((c) => !nextChecks.includes(c)) || (n.checks ?? []).some((c) => c.blocking !== false && m?.checks?.find((x) => x.use === c.use)?.blocking === false)) return `the checks on ${n.id} cannot be removed or made non-blocking`;
+      if (n.kind === "check" && !m) return `the check node ${n.id} cannot be removed`;
+    }
+    for (const e of base.edges) if (e.checks?.length) { const m = next.edges.find((x) => x.from === e.from && x.to === e.to && x.when === e.when); if (!m || e.checks.some((c) => !(m.checks ?? []).some((x) => x.use === c.use))) return `the checks on edge ${e.from}→${e.to} cannot be removed`; }
+    if (JSON.stringify(base.policies ?? null) !== JSON.stringify(next.policies ?? null)) return "a repair cannot change the workflow's policies";
   }
-  for (const e of prev.edges) if (e.checks?.length) { const m = next.edges.find((x) => x.from === e.from && x.to === e.to && x.when === e.when); if (!m || e.checks.some((c) => !(m.checks ?? []).some((x) => x.use === c.use))) return `the checks on edge ${e.from}→${e.to} cannot be removed`; }
-  if (JSON.stringify(prev.policies ?? null) !== JSON.stringify(next.policies ?? null)) return "a repair cannot change the workflow's policies";
+  if (saved) {
+    // what the captain changed in the editor after the first save stays: their added or edited nodes keep their label, kind, role and checks
+    const first = new Map((saved.first?.nodes ?? []).map((n) => [n.id, n]));
+    const FIELDS = ["kind", "label", "detail", "role", "mode", "provider", "model", "effort", "skill", "skills", "checks", "card", "args", "do"] as const;
+    for (const n of saved.latest.nodes) {
+      const o = first.get(n.id); const edited = !o || FIELDS.some((k) => JSON.stringify((o as any)[k] ?? null) !== JSON.stringify((n as any)[k] ?? null));
+      if (!edited) continue;
+      const m = next.nodes.find((x) => x.id === n.id);
+      if (!m) return `${n.id} was added or edited by the captain in v${saved.latest.version} and cannot be removed by a repair`;
+      const changed = FIELDS.filter((k) => !["provider", "model", "effort"].includes(k) && JSON.stringify((n as any)[k] ?? null) !== JSON.stringify((m as any)[k] ?? null));
+      if (changed.length) return `${n.id} was edited by the captain in v${saved.latest.version}; a repair cannot change its ${changed.join(", ")}`;
+    }
+  }
   if (contract) { const before = new Set(contract(prev).filter((p) => p.code === "sandbox-path").map((p) => p.node)); const after = contract(next).filter((p) => p.code === "sandbox-path" && !before.has(p.node));
     if (after.length) return `node ${after[0].node} would work outside its round folder; a repair cannot widen a node's folders`; }
   return null;

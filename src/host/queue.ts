@@ -6,7 +6,9 @@ export type QKind = "chat" | "card" | "wake";
 export type WakeRef = { id: string; woken: number; key: string; line: string; queuedAt?: number };
 export type QItem = { id: string; kind: QKind; text: string; lines?: string[]; wakes?: WakeRef[]; source: string; at: number;
   /** the captain's chat attachments, sent with this item's turn (ids and labels only; the bytes stay in Studio's store) */
-  attachments?: import("../attachments").AttachmentRef[] };
+  attachments?: import("../attachments").AttachmentRef[];
+  /** a readiness-gate repair turn (source studio-gate): which draft it may revise, with the loop's one-time code */
+  repair?: { draft: string; nonce: string } };
 
 export const WAKE_TAIL = "Handle each event, then advance already authorized actionable follow-ups: verification, review/gates, " +
   "concrete board merge within current authorization, self-update and authorized next dispatch. End or park only when no runnable " +
@@ -24,7 +26,7 @@ export class InputQueue {
   list(): QItem[] { return this.items.slice(); }
   get length() { return this.items.length; }
 
-  push(kind: QKind, text: string, source: string, ref?: WakeRef, attachments?: import("../attachments").AttachmentRef[]): QItem {
+  push(kind: QKind, text: string, source: string, ref?: WakeRef, attachments?: import("../attachments").AttachmentRef[], repair?: { draft: string; nonce: string }): QItem {
     const at = Date.now();
     if (ref) ref = { ...ref, queuedAt: at }; // each wake keeps its own arrival: a grace is measured per wake, never on the folded item
     if (kind === "wake") {
@@ -39,7 +41,7 @@ export class InputQueue {
       const item: QItem = { id: `q${++this.n}`, kind, lines: [text], wakes: ref ? [ref] : [], text: wakeText([text]), source, at };
       this.items.push(item); this.onChange(this.list()); return item;
     }
-    const item: QItem = { id: `q${++this.n}`, kind, text, source, at, ...(kind === "chat" && attachments?.length ? { attachments } : {}) };
+    const item: QItem = { id: `q${++this.n}`, kind, text, source, at, ...(kind === "chat" && attachments?.length ? { attachments } : {}), ...(kind === "card" && source === "studio-gate" && repair ? { repair: { draft: repair.draft, nonce: repair.nonce } } : {}) };
     this.items.push(item); this.onChange(this.list()); return item;
   }
 

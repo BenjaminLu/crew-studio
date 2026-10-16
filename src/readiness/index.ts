@@ -17,21 +17,25 @@ import { Gate, gateKeyForDraft, gateKeyForWorkflow, sampleOf, weakening } from "
 import { gatePassed } from "./types";
 
 export type ReadinessDeps = { engine: Engine; defs: WorkflowDefs; drafts: WorkflowDrafts; dataDir: string; protectedRoots: string[]; createRuntime: (d: any) => any; send: (t: string, d: unknown) => void;
-  login?: (provider: string) => LoginState; knownProviders?: () => string[]; repoRoot?: string | null; ask?: (text: string) => boolean; dryTimeoutMs?: number; smokePollMs?: number };
+  /** login state per provider, read once per gate run (see Gate) */ logins?: () => Promise<Record<string, LoginState>> | Record<string, LoginState>;
+  knownProviders?: () => string[]; repoRoot?: string | null; ask?: (text: string, repair: { draft: string; nonce: string }) => boolean; dryTimeoutMs?: number; smokePollMs?: number;
+  /** how long a repair turn may go without a revision before it counts as a round without progress (default 10 min) */ repairWaitMs?: number };
 
 /** A draft as the workflow it would be saved as (its goal and interview are part of every brief). */
 export const draftDef = (d: DraftRecord): WDef => ({ ...d.def, origin: { schema: 1, source: "firstmate-draft", draft: d.id, brief: { goal: d.goal, interview: d.interview } } } as WDef);
 
 export function installReadiness(d: ReadinessDeps) {
   const env = engineEnv({ engine: d.engine, dataDir: d.dataDir, protectedRoots: d.protectedRoots, repoRoot: d.repoRoot ?? null,
-    knownProviders: d.knownProviders ?? (() => ["claude", "codex"]), login: d.login ?? (() => "unknown") });
-  const gate = new Gate({ dataDir: d.dataDir, contract: env.contract, briefs: env.briefs,
+    knownProviders: d.knownProviders ?? (() => ["claude", "codex"]) });
+  const gate = new Gate({ dataDir: d.dataDir, contract: env.contract, briefs: env.briefs, logins: d.logins,
     dry: (def, sample) => dryRun(def, { sample, protectedRoots: d.protectedRoots, createRuntime: d.createRuntime, timeoutMs: d.dryTimeoutMs }),
-    ask: d.ask, maxRounds: () => { const v = Number(d.engine.policies.get("readiness.repair_rounds").value ?? 6); return Number.isInteger(v) && v >= 1 && v <= 12 ? v : 6; },
+    ask: d.ask, maxRounds: () => { const v = Number(d.engine.policies.get("readiness.repair_rounds").value ?? 6); return Number.isInteger(v) ? Math.min(6, Math.max(1, v)) : 6; },
     notify: (key) => { try { d.send("wfgate", { key }); } catch {} } });
   const lastDef = new Map<string, WDef>();
   const contractOf = (def: WDef) => contractStage(def, env.contract(def, sampleOf(def)));
-  d.drafts.gate.weakening = (prev, next) => weakening(prev, next, contractOf);
+  // a repair is compared with the draft it revises and, for a saved workflow, with its latest saved version (the captain's editor changes)
+  d.drafts.gate.weakening = (prev, next) => { const latest = prev.saved ? d.defs.get(prev.saved.workflow) : null;
+    return weakening(prev.def, next, contractOf, latest ? { latest, first: d.defs.get(latest.id, 1) } : null); };
   d.drafts.gate.refused = (id, reason) => { try { const rec = d.drafts.get(id); gate.refused(id, reason, draftDef(rec)); } catch {} };
   /** Gate one draft revision, then let the repair loop decide the next step. */
   const gateDraft = async (id: string, force = false) => {
@@ -39,6 +43,7 @@ export function installReadiness(d: ReadinessDeps) {
     const r = await gate.run(key, def, rec.goal, force);
     const now = d.drafts.get(id); if (now.revision !== rec.revision) return r; // a newer revision is gated next
     const prev = lastDef.get(id) ?? null; lastDef.set(id, def);
+    if (rec.provenance.last === "repair-base") return r; // Studio re-based the draft on the saved version for a repair: the loop is already running
     gate.afterGate(id, rec.revision, def, r, rec.provenance.last ?? "model", prev);
     return r;
   };
@@ -48,32 +53,37 @@ export function installReadiness(d: ReadinessDeps) {
   // a saved draft's result carries to the workflow version when the definition is the same
   const save0 = d.drafts.save.bind(d.drafts);
   (d.drafts as any).save = (id: string, by: string, revision?: number) => { const out = save0(id, by, revision);
-    try { const def = d.defs.get(out.workflow, out.version)!; if (!gate.carry(gateKeyForDraft(id), gateKeyForWorkflow(out.workflow, out.version), def)) void gate.run(gateKeyForWorkflow(out.workflow, out.version), def); } catch {}
+    try { const def = d.defs.get(out.workflow, out.version)!; if (!gate.carry(gateKeyForDraft(id), gateKeyForWorkflow(out.workflow, out.version), def)) gate.run(gateKeyForWorkflow(out.workflow, out.version), def).catch(() => {}); } catch {}
     return out; };
   const wfView = (id: string, v?: number, start = true) => {
     const def = d.defs.get(id, v); if (!def) return null; const key = gateKeyForWorkflow(id, def.version);
     const own = ownWorkflow(def);
     // the gate runs by itself on the captain's own workflows; any other workflow is checked on request (POST)
-    const r = gate.read(key, def); if (!r && start && own) void gate.run(key, def);
-    return { workflow: id, version: def.version, own, key, gate: r, status: gate.status(r), intents: intentMap(def), passed: gatePassed(r), repair: def.origin?.draft ? gate.repair(def.origin.draft) : null };
+    const r = gate.read(key, def); if (!r && start && own) gate.run(key, def).catch(() => {});
+    return { workflow: id, version: def.version, own, key, gate: r, status: gate.status(r), intents: intentMap(def), passed: gatePassed(r), repair: def.origin?.draft ? gate.repairView(def.origin.draft) : null };
   };
   const draftView = (id: string, start = true) => {
     const rec = d.drafts.get(id); const def = draftDef(rec); const key = gateKeyForDraft(id);
     const r = gate.read(key, def); if (!r && start) void schedule(id);
-    return { draft: id, revision: rec.revision, key, gate: r, status: gate.status(r), intents: intentMap(def), passed: gatePassed(r), repair: gate.repair(id) };
+    return { draft: id, revision: rec.revision, key, gate: r, status: gate.status(r), intents: intentMap(def), passed: gatePassed(r), repair: gate.repairView(id) };
   };
   /** Stage 5 watcher: a real run ended → verified, or fed back to Firstmate once. */
   const checkSmokes = () => {
     for (const r of gate.runningSmokes()) {
-      const m = /^wf-([a-z0-9][a-z0-9-]*)-v(\d+)$/.exec(r.key); if (!m) continue; const def = d.defs.get(m[1], Number(m[2])); const run = r.smoke && d.engine.get(r.smoke.task); if (!def || !run) continue;
+      const m = /^wf-([a-z0-9][a-z0-9-]*)-v(\d+)$/.exec(r.key); if (!m) continue; const def = d.defs.get(m[1], Number(m[2])); if (!def || !r.smoke) continue;
+      const run = d.engine.get(r.smoke.task);
+      if (!run) { gate.smokeEnded(r.key, def, r.smoke.task, false, "the verification Task was deleted"); continue; } // ends the smoke run; not Firstmate's to repair
       if (!["succeeded", "failed", "cancelled"].includes(run.status)) continue;
       const ok = run.status === "succeeded";
       const step = [...run.steps].reverse().find((s) => s.state === "failed" || s.state === "error");
       const res = gate.smokeEnded(r.key, def, run.id, ok, ok ? null : `${run.status}${step ? ` at ${step.node}` : ""}: ${run.error ?? step?.error ?? "no reason recorded"}`);
-      if (res && !ok && run.status !== "cancelled" && def.origin?.draft) { try { const rec = d.drafts.get(def.origin.draft); gate.feedSmoke(rec.id, draftDef(rec), res); } catch {} }
+      // the repair starts from the latest saved version, so the captain's editor changes are what Firstmate revises
+      if (res && !ok && run.status !== "cancelled" && def.origin?.draft) { try { const rec = d.drafts.rebaseOnSaved(def.origin.draft) ?? d.drafts.get(def.origin.draft); gate.feedSmoke(rec.id, draftDef(rec), res, rec.revision); } catch {} }
     }
   };
-  const timer = setInterval(() => { try { checkSmokes(); } catch {} }, d.smokePollMs ?? 3000); (timer as any).unref?.();
+  /** A repair turn that ended without a revision counts as a round without progress, so the loop always reaches its cap and the final notice. */
+  const checkRepairs = () => { for (const id of gate.repairing()) { try { gate.tick(id, draftDef(d.drafts.get(id)), d.repairWaitMs ?? 10 * 60_000); } catch {} } };
+  const timer = setInterval(() => { try { checkSmokes(); } catch {} try { checkRepairs(); } catch {} }, d.smokePollMs ?? 3000); (timer as any).unref?.();
   const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
   async function route(p: string, url: URL, method: string, writing: boolean, b: any, by: string, who: { kind: string }): Promise<Response | null> {
     let m = /^\/api\/wf\/drafts\/(d-[a-f0-9]{12})\/gate$/.exec(p);
@@ -106,13 +116,17 @@ export function installReadiness(d: ReadinessDeps) {
   /** An editor save of a drafted workflow keeps every intent line served (en / zh-TW). */
   const editRefusal = (id: string, body: any) => {
     const cur = d.defs.get(id); if (!cur || cur.origin?.source !== "firstmate-draft" || !(cur as any).intents?.length) return null;
-    const next = normalize({ ...cur, ...body, intents: (cur as any).intents });
+    // the captain edits their own intent lines here (only repair turns are frozen); a malformed list is refused
+    const lines = body?.intents === undefined ? (cur as any).intents : body.intents;
+    if (!Array.isArray(lines) || lines.length > 8 || lines.some((l: any) => !l || typeof l !== "object" || typeof l.text !== "string" || !l.text.trim() || l.text.length > 300 || typeof l.done !== "string" || !l.done.trim() || l.done.length > 300 || l.assumption !== undefined && (typeof l.assumption !== "string" || l.assumption.length > 300)))
+      return { error: "Intent lines are up to 8 {text, done, assumption?} / 意圖條目最多 8 條，每條含內容與完成的意思" };
+    const next = normalize({ ...cur, ...body, intents: lines.map((l: any, i: number) => ({ n: i + 1, text: l.text.trim(), done: l.done.trim(), ...(l.assumption?.trim() ? { assumption: l.assumption.trim() } : {}) })) });
     const ps = intentStage(next); if (!ps.length) return null;
     return { error: `Cannot save yet: ${ps.map((x) => x.reason.en).join(" ")} / 還不能儲存：${ps.map((x) => x.reason.zh).join("")}`, problems: ps.map((x) => ({ level: "error", node: x.node ?? undefined, text: x.reason.en, zh: x.reason.zh, fix: x.fix })) };
   };
-  const versionSaved = (def: WDef) => { try { if (ownWorkflow(def)) void gate.run(gateKeyForWorkflow(def.id, def.version), d.defs.get(def.id, def.version)!); } catch {} };
+  const versionSaved = (def: WDef) => { try { if (ownWorkflow(def)) gate.run(gateKeyForWorkflow(def.id, def.version), d.defs.get(def.id, def.version)!).catch(() => {}); } catch {} };
   const tools = {
-    repairAuthorized: (draft: string, text: string) => { try { return gate.repairAuthorized(draft, text); } catch { return false; } },
+    repairAuthorized: (draft: string, ref: any) => { try { return gate.repairAuthorized(draft, ref); } catch { return false; } },
     view: (a: { draft?: string; workflow?: string; version?: number }) => {
       const slim = (v: any) => v && ({ ...v, gate: v.gate && { ...v.gate, briefs: v.gate.briefs.map((x: any) => ({ node: x.node, label: x.label, chars: x.system.length + x.prompt.length })) } });
       if (typeof a.draft === "string") return slim(draftView(a.draft));
@@ -120,5 +134,5 @@ export function installReadiness(d: ReadinessDeps) {
       throw new Error("pass draft, or workflow and version");
     },
   };
-  return { gate, route, tools, editRefusal, versionSaved, checkSmokes, gateDraft, schedule, draftView, wfView, stop: () => clearInterval(timer) };
+  return { gate, route, tools, editRefusal, versionSaved, checkSmokes, checkRepairs, gateDraft, schedule, draftView, wfView, stop: () => clearInterval(timer) };
 }

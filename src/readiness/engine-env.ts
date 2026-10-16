@@ -3,7 +3,7 @@
 // uses (engine.x → instructions → mode.system / mode.prompt). Nothing here materializes a
 // folder, starts a job or reads a credential.
 import { join } from "node:path";
-import { withSafetyRules } from "../skills";
+import { OperatingRules, jobInstructions } from "../operating-rules";
 import { roundPathRefusal, roundWorkPath } from "../runtime/round-paths";
 import { briefFor } from "../runtime/refine";
 import type { Engine, Run } from "../runtime/engine";
@@ -13,7 +13,7 @@ import type { RenderedBrief } from "./types";
 import { ownBrief } from "../workflow-drafts";
 
 export type EngineEnvDeps = { engine: Engine; dataDir: string; protectedRoots: string[]; repoRoot?: string | null;
-  knownProviders: () => string[]; login: (provider: string) => LoginState };
+  knownProviders: () => string[] };
 
 /** A run that exists only to render a sample round: never registered, never written. */
 export function sampleRun(def: WDef, sample: Sample): Run {
@@ -31,13 +31,14 @@ export function engineEnv(d: EngineEnvDeps) {
     // a mode with no folder of its own opens in a scratch folder (engine.roundScratch); its path, without making it
     return mode?.sandbox?.(x) ?? { writes: [engine.roundDirPath(x, "round-scratch", { label: "agent" })], cwd: engine.roundDirPath(x, "round-scratch", { label: "agent" }) };
   };
-  const contract = (def: WDef, sample: Sample): ContractEnv => ({
+  /** logins: one snapshot per gate run (read once, never per node) */
+  const contract = (def: WDef, sample: Sample, logins: Record<string, LoginState> = {}): ContractEnv => ({
     actions: (n) => !!engine.actions[n], modes: (n) => !!engine.modes[n], cardModes: (n) => !!engine.cardModes[n], cardBodies: (n) => !!engine.cardBodies[n],
     check: (ref) => engine.registry.get(ref) ?? null,
     skillText: (ref) => { try { return engine.deps.skillText(ref); } catch { return null; } },
     skillInfo: engine.defs?.skillInfo ?? null,
     knownProviders: d.knownProviders(), defaultPick: () => { const p = engine.deps.defaultProvider(); return { provider: p.provider, model: p.model ?? null }; },
-    login: d.login,
+    login: (p) => logins[p] ?? "unknown",
     sandbox: (df, n) => sandboxOf(df, n, sample),
     pathRefusal: (spec) => roundPathRefusal(d.dataDir, d.protectedRoots, spec),
     roundRoot: join(d.dataDir, "work"),
@@ -51,14 +52,16 @@ export function engineEnv(d: EngineEnvDeps) {
       const x = xFor(def, n, sample); const mode = engine.modes[n.mode ?? ""]; if (!mode) throw new Error(`no agent mode ${n.mode}`);
       const role = def.roles.find((r) => r.id === n.role); const roleRef = typeof n.skill === "string" && n.skill.startsWith("bundled:workflows/skills/v2/") ? n.skill : role?.skill;
       let roleText = ""; try { roleText = roleRef ? engine.deps.skillText(roleRef) : ""; } catch {}
-      const system = withSafetyRules(mode.system(x, x.skill()));
+      // the exact system text a round sends (engine agentTurns → agents.run): safety rules, the captain's operating rules, then the role
+      const rules = new OperatingRules(d.dataDir).section(sample.params?.project || null);
+      const system = jobInstructions(mode.system(x, x.skill()), rules);
       x.rn.data.brief = briefFor(x); x.rn.data.notes = [];
       const prompt = mode.prompt(x);
       const sb = sandboxOf(def, n, sample);
       const skills = (Array.isArray(n.skills) ? n.skills : []).map((p) => { try { return { id: p.id, body: engine.deps.library?.body(p.id, p.v, p.sha256) ?? "" }; } catch { return { id: p.id, body: "\u0000missing" }; } });
-      return { node: n.id, label: n.label, system, prompt, roundDir: sb.cwd ?? sb.writes[0] ?? roundWorkPath(d.dataDir, "round-scratch", "R-GATE", n.id), roleText, skills, error: null };
-    } catch (e: any) { return { node: n.id, label: n.label, system: "", prompt: "", roundDir: "", roleText: "", skills: [], error: String(e?.message ?? e) }; }
+      return { node: n.id, label: n.label, system, prompt, roundDir: sb.cwd ?? sb.writes[0] ?? roundWorkPath(d.dataDir, "round-scratch", "R-GATE", n.id), roleText, skills, rules: rules.text, error: null };
+    } catch (e: any) { return { node: n.id, label: n.label, system: "", prompt: "", roundDir: "", roleText: "", skills: [], rules: "", error: String(e?.message ?? e) }; }
   });
   return { contract, briefs, sandboxOf };
 }
-export type BriefWithParts = RenderedBrief & { roleText: string; skills: { id: string; body: string }[]; error: string | null };
+export type BriefWithParts = RenderedBrief & { roleText: string; skills: { id: string; body: string }[]; rules: string; error: string | null };

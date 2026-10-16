@@ -126,7 +126,8 @@ export const shortSummary = (input: unknown, n = 160): string => {
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
 };
 
-export type NativeMainTools={specs:{type:"function";name:string;description:string;inputSchema:unknown}[];call(name:string,args:unknown,owner:{key:string;captain:boolean;text:string;live:()=>boolean;signal?:AbortSignal}):Promise<unknown>};
+export type NativeMainTools={specs:{type:"function";name:string;description:string;inputSchema:unknown}[];call(name:string,args:unknown,owner:{key:string;captain:boolean;text:string;live:()=>boolean;signal?:AbortSignal;
+ /** a Studio gate-repair turn: the ref its queued item carried (never parsed from text) */ repair?:{draft:string;nonce:string}|null}):Promise<unknown>};
 
 /** Only trusted source code constructs public recovery guidance; arbitrary exceptions stay private. */
 export type NativeFailure={schema:1;code:string;reason:{en:string;'zh-TW':string};nextAction:string;retryable:boolean;correlationId?:string;diagnosticRecorded?:boolean};

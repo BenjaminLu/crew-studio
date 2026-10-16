@@ -9,6 +9,8 @@ import {NativeToolFailure,type NativeMainTools} from './host/types';
 import {normalize,validate,type WDef,type WNode,type WorkflowDefs} from './runtime/defs';
 import {withLock} from './ids';
 import {intentStage} from './readiness/stages';
+import {redactText} from './secure';
+import {neutralizeMarkers} from './operating-rules';
 
 /** Role skills a drafted or inline-edited node may use: bundled text only, never a file path. */
 export const DRAFT_SKILLS:Record<string,{en:string;zh:string}>={
@@ -27,8 +29,10 @@ const sha=(v:unknown)=>createHash('sha256').update(stable(v)).digest('hex');
 
 export type DraftRecord={schema:1;id:string;revision:number;goal:string;interview:{question:string;answer:string}[];def:WDef;
  provenance:{source:'model';via:'studio_draft_workflow';turn:string;edited:boolean;
- /** who wrote the latest revision: a captain-driven model turn, a gate repair turn, or the captain's inline edit */
- last?:'model'|'repair'|'captain-edit'};createdAt:string;updatedAt:string;saved:{workflow:string;version:number;revision?:number}|null;
+ /** who wrote the latest revision: a captain-driven model turn, a gate repair turn, the captain's inline edit, or Studio re-basing a repair on the latest saved version */
+ last?:'model'|'repair'|'captain-edit'|'repair-base'};
+ /** set by rebaseOnSaved: the saved version a repair started from */
+ base?:{workflow:string;version:number};createdAt:string;updatedAt:string;saved:{workflow:string;version:number;revision?:number}|null;
  /** the captain's inline choices per node (null = cleared); a model revision never overrides them */
  captain?:Record<string,Partial<Record<'provider'|'model'|'effort'|'skill',string|null>>>};
 
@@ -116,7 +120,7 @@ export class WorkflowDrafts{
  private write(d:DraftRecord){const f=this.file(d.id);writeFileSync(f+'.tmp',JSON.stringify(d,null,1));renameSync(f+'.tmp',f);this.notify(d.id,d.revision);return d;}
  /** Only the native tool reaches this: the graph is the Firstmate model's own output for this captain turn. */
  /** The readiness gate's hooks: a repair revision that weakens the gate is refused (and the loop told why). */
- gate:{weakening?:(prev:WDef,next:WDef)=>string|null;refused?:(id:string,reason:string,def:WDef)=>void}={};
+ gate:{weakening?:(prev:DraftRecord,next:WDef)=>string|null;refused?:(id:string,reason:string,def:WDef)=>void}={};
  draft(args:any,turn:string,o:{repair?:boolean}={}):DraftRecord{
   if(!plain(args)||Object.keys(args).some(k=>!['goal','interview','workflow','draft'].includes(k)))throw new DraftError('use goal, interview, workflow and optionally draft (to revise)');
   if(!bounded(args.goal,500))throw new DraftError('goal: 1–500 characters');
@@ -124,12 +128,13 @@ export class WorkflowDrafts{
   const def=draftDefinition(args.workflow,this.defs),now=new Date().toISOString();
   if(args.draft!==undefined)return this.withDraft(String(args.draft),()=>{
    const prev=this.get(String(args.draft));if(prev.saved&&!o.repair)throw new DraftError('this draft is already saved; edit the saved workflow instead',409);
-   // a gate repair may not weaken the gate: the captain's intent lines, one-way cards, round folders and checks stay
-   if(o.repair){const why=this.gate.weakening?.(prev.def,def);if(why){this.gate.refused?.(prev.id,why,prev.def);throw new DraftError(`repair refused: ${why}`,409);}}
+   // a gate repair may not weaken the gate: the captain's intent lines, cards, round folders, checks and editor changes stay
+   if(o.repair){const why=this.gate.weakening?.(prev,def);if(why){this.gate.refused?.(prev.id,why,prev.def);throw new DraftError(`repair refused: ${why}`,409);}}
    // the captain's inline choices win over the model's on the same node id
    const captain=prev.captain??{};
    const nodes=def.nodes.map(n=>{const c=captain[n.id];if(!c||n.kind!=='agent')return n;const next:any={...n};for(const[k,v]of Object.entries(c)){if(v===null)delete next[k];else next[k]=v;}checkNodeStaffing(next,n.id);return next;});
-   return this.write({...prev,revision:prev.revision+1,goal:args.goal,interview,def:{...def,nodes},provenance:{source:'model',via:'studio_draft_workflow',turn,edited:prev.provenance.edited||Object.keys(captain).length>0,last:o.repair?'repair':'model'},updatedAt:now});
+   // a repair never rewrites what the captain said: the goal and the interview answers stay as they are
+   return this.write({...prev,revision:prev.revision+1,goal:o.repair?prev.goal:args.goal,interview:o.repair?prev.interview:interview,def:{...def,nodes},provenance:{source:'model',via:'studio_draft_workflow',turn,edited:prev.provenance.edited||Object.keys(captain).length>0,last:o.repair?'repair':'model'},updatedAt:now});
   });
   if(o.repair)throw new DraftError('a repair revises an existing draft: pass draft',400);
   const id='d-'+randomBytes(6).toString('hex');
@@ -146,6 +151,12 @@ export class WorkflowDrafts{
    return this.write({...d,revision:d.revision+1,def:{...d.def,nodes:d.def.nodes.map(x=>x.id===node?next:x)},provenance:{...d.provenance,edited:true,last:'captain-edit'},captain:{...(d.captain??{}),[node]:mine},updatedAt:new Date().toISOString()});
   });
  }
+ /** A real-run failure on a saved workflow: the repair starts from the latest saved version (with the captain's editor changes), not from the old draft. */
+ rebaseOnSaved(id:string):DraftRecord|null{
+  return this.withDraft(id,()=>{const d=this.get(id);if(!d.saved)return null;const cur=this.defs.get(d.saved.workflow);if(!cur)return null;
+   const {origin,parent,createdAt,by,note,diff,seed,...rest}=cur as any;void origin;void parent;void createdAt;void by;void note;void diff;void seed;
+   return this.write({...d,revision:d.revision+1,def:{...rest,id:'draft',version:1} as WDef,base:{workflow:cur.id,version:cur.version},provenance:{...d.provenance,last:'repair-base'},updatedAt:new Date().toISOString()} as any);});
+ }
  /** Save as the captain's own workflow v1. Idempotent per draft: a retry after a lost response finds the same workflow. */
  save(id:string,by:string,revision?:number){
   return this.withDraft(id,()=>{
@@ -157,7 +168,11 @@ export class WorkflowDrafts{
     // a gate repair revised the saved draft: saving again writes the next version of the same workflow
     if(revision!==undefined&&revision!==d.revision)throw new DraftError(`the draft changed to revision ${d.revision} after you looked; reload to see it before saving`,409);
     if(intent.length)throw intentRefusal(intent);
-    const cur=this.defs.get(existing)!;const next=this.defs.save(existing,{...cur,...d.def,id:existing,base:cur.version},by,`Firstmate draft ${id} revision ${d.revision}`);
+    // the repair started from a saved version: if the captain saved another version since, nothing is overwritten
+    const cur=this.defs.get(existing)!;const base=(d as any).base;
+    if(!base||base.workflow!==existing||base.version!==cur.version)throw new DraftError(`v${cur.version} of this workflow was saved after the repair started from ${base?`v${base.version}`:'an older draft'}; ask Firstmate to repair again from v${cur.version} / 修正開始後已存了 v${cur.version}，請讓 Firstmate 從 v${cur.version} 重新修正`,409);
+    const {intents,sample,params,roles,nodes,edges,name,description}=d.def as any;
+    const next=this.defs.save(existing,{...cur,intents,sample,params,roles,nodes,edges,name,description,base:cur.version},by,`Firstmate repair ${id} revision ${d.revision}`);
     this.write({...d,saved:{workflow:existing,version:next.version,revision:d.revision}});
     return{workflow:existing,version:next.version,href:`#/workflows/${existing}`,created:false};
    }
@@ -181,19 +196,22 @@ export function ownStaffingPlan(def:WDef){
  return{plan,missing,hash:sha({workflow:def.id,version:def.version,plan})};
 }
 /** The Task brief for the captain's own workflow: what they asked for, plus the drafted goal and interview answers. */
+/** One line of the captain's input in a brief: no newline, no rules marker, no secret. */
+const briefLine=(v:unknown,max=300)=>redactText(neutralizeMarkers(String(v??'').replace(/[\r\n\u2028\u2029]+/g,' ').replace(/\s{2,}/g,' ').trim())).slice(0,max);
 export function ownBrief(def:any,text:string,params:Record<string,string>={}){
  const b=def?.origin?.brief,intents=Array.isArray(def?.intents)?def.intents:[];
- const inputs=Object.entries(def?.params??{}).filter(([k])=>typeof params[k]==='string'&&params[k].trim()).map(([k,v]:any)=>`- ${v?.label??k}: ${params[k]}`);
+ const inputs=Object.entries(def?.params??{}).filter(([k])=>typeof params[k]==='string'&&params[k].trim()).map(([k,v]:any)=>`- ${briefLine(v?.label??k,80)}: ${briefLine(params[k])}`);
  if((!plain(b)||typeof b.goal!=='string')&&!intents.length&&!inputs.length)return text;
- const lines=[text.trim(),...(plain(b)&&typeof b.goal==='string'?[`Captain goal: ${b.goal}`,...(Array.isArray(b.interview)&&b.interview.length?['Interview:',...b.interview.map((q:any)=>`- ${q.question} — ${q.answer}`)]:[])]:[]),
-  // the captain's intent lines, the same lines the acceptance card asks the captain to tick
-  ...(intents.length?['Intent lines (the captain\'s words):',...intents.map((l:any)=>`${l.n}. ${l.text} — done means: ${l.done}${l.assumption?` (assumed: ${l.assumption})`:''}`)]:[]),
-  ...(inputs.length?['Start inputs:',...inputs]:[])].filter(Boolean);
- return lines.join('\n').slice(0,3800);}
+ // the intent lines and Start inputs always fit: the free text (the Task text, goal, interview) is what gets cut
+ const fixed=[...(intents.length?['Intent lines (the captain\'s words):',...intents.map((l:any)=>`${l.n}. ${briefLine(l.text)} — done means: ${briefLine(l.done)}${l.assumption?` (assumed: ${briefLine(l.assumption)})`:''}`)]:[]),
+  ...(inputs.length?['Start inputs:',...inputs]:[])].join('\n');
+ const free=[text.trim(),...(plain(b)&&typeof b.goal==='string'?[`Captain goal: ${b.goal}`,...(Array.isArray(b.interview)&&b.interview.length?['Interview:',...b.interview.map((q:any)=>`- ${q.question} — ${q.answer}`)]:[])]:[])].filter(Boolean).join('\n');
+ const room=Math.max(0,3800-fixed.length-(fixed&&free?1:0));
+ return [free.length>room?free.slice(0,Math.max(0,room-1))+'…':free,fixed].filter(Boolean).join('\n');}
 /** Only the captain's own workflows (a draft or the free starter) take the Run-time staffing gate. */
 export const ownWorkflow=(def:any)=>plain(def?.origin)&&['firstmate-draft','starter'].includes(def.origin.source);
 
-export type DraftGateTools={repairAuthorized(draft:string,text:string):boolean;view(args:{draft?:string;workflow?:string;version?:number}):unknown};
+export type DraftGateTools={repairAuthorized(draft:string,ref:{draft?:unknown;nonce?:unknown}|null|undefined):boolean;view(args:{draft?:string;workflow?:string;version?:number}):unknown};
 export function installWorkflowDraftTools(drafts:WorkflowDrafts,gate?:DraftGateTools):NativeMainTools{
  const fail=(e:any):never=>{if(e instanceof NativeToolFailure)throw e;if(e instanceof DraftError)throw new NativeToolFailure(e.status===404?'draft_missing':'draft_invalid',`Draft refused: ${e.message}. Fix the graph and call studio_draft_workflow again.`,`草稿未通過：${e.message}。請修正流程圖後再呼叫 studio_draft_workflow。`,'read_current_state');throw new NativeToolFailure('draft_invalid','Draft refused. Read the draft and try again.','草稿未通過，請讀取草稿後再試。','read_current_state');};
  return{specs:[
@@ -205,7 +223,7 @@ export function installWorkflowDraftTools(drafts:WorkflowDrafts,gate?:DraftGateT
   if(!owner.live())throw new NativeToolFailure('owner_ended','The primary request ended.','主要對話請求已結束。');
   if(name==='studio_workflow_gate'){if(!gate)throw new NativeToolFailure('invalid_params','The readiness gate is not available.','檢查閘門目前無法使用。');try{return gate.view(plain(args)?args:{});}catch(e:any){throw new NativeToolFailure('invalid_params',`Gate read refused: ${e?.message??e}`,`無法讀取檢查結果：${e?.message??e}`,'read_current_state');}}
   // a Studio gate-repair turn may revise exactly the draft it names, while its nonce is current; nothing else
-  const repair=!owner.captain&&name==='studio_draft_workflow'&&plain(args)&&typeof args.draft==='string'&&!!gate?.repairAuthorized(args.draft,owner.text??'');
+  const repair=!owner.captain&&name==='studio_draft_workflow'&&plain(args)&&typeof args.draft==='string'&&!!gate?.repairAuthorized(args.draft,(owner as any).repair);
   if(!owner.captain&&!repair)throw new NativeToolFailure('owner_ended','Only a current captain message may draft or save a workflow.','只有目前的船長訊息可以起草或儲存流程。');
   try{
    if(name==='studio_draft_workflow'){const d=drafts.draft(args,sha(owner.key).slice(0,16),{repair});return{draft:d.id,revision:d.revision,source:'model',status:'draft-preview',href:`#/first-workflow/${d.id}`,nodes:d.def.nodes.length};}

@@ -541,11 +541,11 @@ function buildEditor(ed) {
   // the readiness gate for this exact version: Run stays the captain's choice, verified or not
   const gateHost = h("details", { class: "gate-host", "data-gate-host": ed.id, open: true, onclick: (e) => { if (e.target.closest("summary")?.parentElement === gateHost) gateHost.dataset.toggled = "1"; } }, h("summary", {}, T("Readiness", "就緒檢查"), " ", h("span", { class: "faint", "data-gate-summary": "" }, T("checking…", "檢查中…"))));
   const loadGate = async () => { if (!ed.def.origin || !root.isConnected && gateHost.dataset.loaded) return; try { const v = await api(`/api/wf/${ed.id}/gate?v=${ed.def.version}`); gateHost.dataset.loaded = "1";
-    gateHost.querySelector("[data-gate-summary]").textContent = gateL(v.status?.text);
+    const sum = gateHost.querySelector("[data-gate-summary]"); sum.textContent = v.status?.verified ? T("Verified", "已驗證") : T("Not verified yet", "尚未驗證"); sum.className = `badge gate-badge ${v.status?.verified ? "ok" : "wait"}`;
     const runBtn = root.querySelector("[data-ed-run]"); if (runBtn) { runBtn.dataset.verified = v.status?.verified ? "1" : "0"; let tag = root.querySelector("[data-run-verified]"); if (!tag) { tag = h("span", { class: "faint gate-run-tag", "data-run-verified": "" }); runBtn.before(tag); } const sn = GATE_STAGES.findIndex(s => s[0] === v.status?.stage) + 1; tag.textContent = v.status?.verified ? gateL(v.status.text) : v.status?.stage === "smoke" ? T("Not verified yet · stages 1–4 pass", "尚未驗證・前四關已通過") : sn ? T(`Not verified yet · stage ${sn} ${v.gate?.stages?.find(s => s.id === v.status.stage)?.status === "running" ? "checking" : "failing"}`, `尚未驗證・第 ${sn} 關${v.gate?.stages?.find(s => s.id === v.status.stage)?.status === "running" ? "檢查中" : "未通過"}`) : T("Not verified yet", "尚未驗證"); }
     if (!gateHost.dataset.toggled) gateHost.open = !v.passed;
     const verify = async (e) => { e.target.disabled = true; try { let r; try { r = await api(`/api/wf/${ed.id}/gate/smoke`, { version: ed.def.version }); } catch (err) { if (err.code === "staffing_incomplete") { await staffingConfirm(err.staffing, true); return; } if (err.code !== "staffing_confirmation_required") throw err; if (!await staffingConfirm(err.staffing, false)) return; r = await api(`/api/wf/${ed.id}/gate/smoke`, { version: ed.def.version, staffingConfirm: err.staffing.hash }); } RN.list = null; location.hash = r.href; } catch (err) { say(err.message); } finally { e.target.disabled = false; } };
-    [...gateHost.children].slice(1).forEach(c => c.remove()); gateHost.append(gatePanel(v, { verify })); } catch {} };
+    [...gateHost.children].slice(1).forEach(c => c.remove()); gateHost.append(gatePanel(v, { verify, badge: false })); } catch {} };
   if (ed.def.origin) { void loadGate(); const onGate = (d) => { if (!root.isConnected) { GATE_LIVE.delete(onGate); return; } if (!d?.key || d.key === `wf-${ed.id}-v${ed.def.version}`) loadGate(); }; GATE_LIVE.add(onGate); }
   root.append(
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, ed.def.name), h("p", {}, (ed.def.description || "").slice(0, 300))),
@@ -914,13 +914,18 @@ function gateIntents(v){if(!v?.intents?.length)return h("p",{class:"faint","data
     h("div",{class:"gate-serves"},l.nodes.length?[T("Served by ","服務節點："),...l.nodes.flatMap((n,i)=>[i?", ":"",h("span",{class:"gate-node","data-serves-node":n.id},n.label)])]:h("span",{class:"gate-bad"},T("served by no node","沒有節點服務"))))));}
 function gatePanel(v,o={}){
   const g=v?.gate,st=v?.status,box=h("section",{class:"gate","data-gate":v?.key||"","data-gate-verified":st?.verified?"1":"0"});
-  box.append(h("div",{class:"gate-head"},h("span",{class:`badge gate-badge ${st?.verified?"ok":"wait"}`,"data-gate-badge":""},st?.verified?T("Verified","已驗證"):T("Not verified yet","尚未驗證")),h("span",{"data-gate-status":st?.stage||"",class:"gate-line"},gateL(st?.text)||T("Checking…","檢查中…"))));
+  // the badge says verified or not; the line after it says why, once (no "Not verified yet" twice)
+  const why=(gateL(st?.text)||T("Checking…","檢查中…")).replace(/^Not verified yet: (.)/,(_,c)=>c.toUpperCase()).replace(/^尚未驗證：/,"");
+  box.append(h("div",{class:"gate-head"},o.badge===false?null:h("span",{class:`badge gate-badge ${st?.verified?"ok":"wait"}`,"data-gate-badge":""},st?.verified?T("Verified","已驗證"):T("Not verified yet","尚未驗證")),h("span",{"data-gate-status":st?.stage||"",class:"gate-line"},why)));
   const notice=v?.repair?.notice;if(notice)box.append(h("p",{class:"gate-notice","data-gate-notice":v.repair.status},gateL(notice)));
+  // the captain's part (staffing at Run, a sign-in, a network grant): plain lines, apart from the problems, never counted as one
+  const yours=[...new Set((g?.stages||[]).flatMap(s=>s.problems).filter(p=>p.owner==="captain"&&p.note).map(p=>gateL(p.note)))];
+  if(yours.length&&!notice)box.append(h("div",{class:"gate-yours","data-gate-yours":String(yours.length)},h("b",{},T("Your part","你要做的")),h("ul",{},yours.map(t=>h("li",{},t)))));
   if(v?.repair?.status==="repairing")box.append(h("p",{class:"faint","data-gate-repairing":""},T(`Firstmate is repairing the draft (round ${v.repair.rounds.length}${v.repair.strategy==="redraft"?", redrafting":""}).`,`Firstmate 正在修正草稿（第 ${v.repair.rounds.length} 輪${v.repair.strategy==="redraft"?"，重新起草":""}）。`)));
   if(o.intents!==false)box.append(h("h3",{},T("Intent lines","意圖條目")),gateIntents(v));
-  box.append(h("ol",{class:"gate-stages"},GATE_STAGES.map(([id,en,zh],i)=>{const s=g?.stages.find(x=>x.id===id),status=s?.status||(g?"pending":"running"),errs=(s?.problems||[]);
+  box.append(h("ol",{class:"gate-stages"},GATE_STAGES.map(([id,en,zh],i)=>{const s=g?.stages.find(x=>x.id===id),status=s?.status||(g?"pending":"running"),errs=(s?.problems||[]).filter(p=>p.level!=="notice");
     return h("li",{"data-gate-stage":id,"data-gate-state":status,class:`gate-stage s-${status}`},h("div",{class:"gate-stage-head"},h("b",{},`${i+1} · ${T(en,zh)}`),h("span",{class:"gate-state"},gateStateText(status))),
-      s?.note?h("p",{class:"faint"},gateL(s.note)):null,
+      s?.note&&status!=="skipped"?h("p",{class:"faint"},gateL(s.note)):null,
       errs.length?h("ul",{class:"gate-problems"},errs.map(p=>h("li",{"data-gate-problem":p.code,"data-gate-owner":p.owner,class:p.level==="notice"?"notice":p.owner==="captain"?"captain":""},
         h("div",{},h("span",{class:"faint"},T("Step: ","步驟：")),p.node?h("code",{},p.node):T("whole workflow","整個流程"),p.owner==="captain"?h("span",{class:"badge gate-you"},T("only you","只有你能處理")):null),
         h("div",{},h("span",{class:"faint"},T("Reason: ","原因：")),gateL(p.reason)),h("div",{},h("span",{class:"faint"},T("How to fix: ","修正方式：")),gateL(p.fix))))):null);})));
