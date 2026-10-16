@@ -97,7 +97,18 @@ a.btn,a.chip,.sec-head a{text-decoration:none}
 /* the phone's Projects item: shown only in the phone top bar (the desktop has the section) */
 .nav-item.nav-proj-phone{display:none}
 
-@media (max-width:1100px){.pj-cols{grid-template-columns:minmax(0,1fr)}}
+/* the page lays out by its own width (the Firstmate dock takes part of the window): #main is the "main" container */
+@container main (max-width: 900px){.pj-cols{grid-template-columns:minmax(0,1fr)}}
+@container main (max-width: 640px){
+  .pj-task{grid-template-columns:minmax(0,1fr)}
+  .pj-wait{justify-content:flex-start}
+  .pj-attn,.pj-card{grid-template-columns:auto minmax(0,1fr)}
+  .pj-attn > :last-child,.pj-card > :last-child{grid-column:1/-1}
+  .pj-role{grid-template-columns:80px minmax(0,1fr)}
+  .pj-role > :last-child{grid-column:2}
+}
+[data-project-page] .sec-head h2{white-space:nowrap}
+[data-project-page] .sec-head{flex-wrap:wrap;row-gap:6px}
 @media (max-width:760px){
   .nav-proj{display:none}
   .nav-item.nav-proj-phone{display:flex}

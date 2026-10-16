@@ -572,7 +572,7 @@ function viewRuns() {
     api(`/api/tasks?project=${encodeURIComponent(pf)}${RN.archived ? "&archived=1" : ""}`).then((x) => { if (RN.pf === pf) { RN.pIds = new Set((x.tasks || []).map((t) => t.id)); rerender(); } }).catch(() => { RN.pIds = new Set(); rerender(); }); }
   if (!pf) { RN.pf = null; RN.pIds = undefined; }
   // the Agent rounds panel below (public/transcripts.js) follows the same filter
-  window.crewTaskFilter = () => (RN.pf ? RN.pIds || new Set() : null);
+  window.crewTaskFilter = () => (RN.pf ? RN.pIds || null : null); // null while the project's Task ids load
   const runs = (Array.isArray(RN.list) ? RN.list.slice().reverse() : []).filter((r) => !pf || (RN.pIds && RN.pIds.has(r.id)));
   // the form keeps what was typed across re-renders (the list loads, a run moves)
   const text = h("textarea", { class: "input", rows: 3, placeholder: T("Say what you want done", "說你要做什麼"), "aria-label": T("Intent", "意圖"), "data-run-text": "1", oninput: (e) => { RN.draft = e.target.value; } });

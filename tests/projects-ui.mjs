@@ -2,7 +2,7 @@
 // different states and a Task in no project (tests/projects-fixture.ts), driven in a browser.
 //   bun tests/projects-ui.mjs          (PLAYWRIGHT_MODULE may point at a playwright install)
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { seedProjects } from './projects-fixture.ts';
 import { freePort, waitUp, withSession } from './boot.mjs';
@@ -24,9 +24,49 @@ try {
   ok((await fetch(`${base}/api/projects/overview`)).status === 401, 'GET /api/projects/overview without a session: 401');
   ok((await fetch(`${base}/api/projects/harbor-api/overview`)).status === 401, 'GET /api/projects/<id>/overview without a session: 401');
   const side = await (await fetch(`${base}/api/projects/overview`, { headers: { 'x-crew-session': 'test-session' } })).json();
-  ok(side.projects?.map((p) => p.id).join() === 'harbor-api,kelp-notes,tidepool-docs,sandbox,studio', 'the sidebar payload lists the three projects and the Studio row', JSON.stringify(side.projects?.map((p) => p.id)));
+  ok(side.projects?.map((p) => p.id).join() === 'harbor-api,tidepool-docs,sandbox,studio', 'the sidebar payload lists the three projects and the Studio row', JSON.stringify(side.projects?.map((p) => p.id)));
   browser = withSession(await chromium.launch({ headless: true }), base);
 
+  const regFile = join(seed.data, 'projects.json'), healthy = readFileSync(regFile, 'utf8');
+  const open = async (width, theme, o = {}) => { const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme }); const p = await ctx.newPage();
+    await p.addInitScript(([t, dock]) => { try { localStorage.setItem('crew.theme', t); localStorage.setItem('crew.lang', 'en'); localStorage.setItem('crew.side', 'open'); localStorage.setItem('crew.chatOpen', dock ? '1' : '0'); } catch {} }, [theme, !!o.dock]); return { ctx, p }; };
+  const full = (p) => p.evaluate(() => { const f = document.querySelector('#chatFab'); if (f) f.style.visibility = 'hidden'; document.body.style.overflow = 'visible'; const s = document.querySelector('.shell'); if (s) s.style.height = 'auto'; const m = document.querySelector('#main'); if (m) m.style.overflow = 'visible'; });
+  { // ---- broken registrations: kelp-notes (disabled, folder gone) and reef-log (enabled, folder gone) ----
+    writeFileSync(regFile, JSON.stringify([...JSON.parse(healthy), ...seed.broken], null, 1));
+    const { ctx, p } = await open(1280, 'light');
+    await p.goto(`${base}/#/project/harbor-api`); await p.waitForSelector('[data-project-page="harbor-api"]:not([data-loading])');
+    const crewTile = await p.locator('[data-health="crew"]').innerText(), crewSec = await p.locator('#s-crew').innerText(), txt = await p.locator('[data-project-page]').innerText();
+    ok(/No task can start/.test(crewTile) && /Registration (kelp-notes|reef-log) points to a missing or broken folder\. \(\+1 more\)/.test(crewTile) && !/Crew approved/.test(txt), 'harbor-api: the crew tile says no task can start and names the broken registration', crewTile);
+    ok(/No task can start/.test(crewSec) && /(kelp-notes|reef-log)/.test(crewSec) && !txt.includes('-gone') && !/ENOENT|no such file|stat '/.test(txt), 'the crew section says the same, with no path and no exception text', crewSec);
+    ok(!(await p.locator('[data-health="crew"]').getAttribute('class')).includes(' ok'), 'the warning does not count as a passing check');
+    const rows = Object.fromEntries(await p.locator('[data-projects-nav] [data-project-row]').evaluateAll((es) => es.map((e) => [e.dataset.projectRow, e.querySelector('[data-project-status]').textContent])));
+    ok(rows['reef-log'] === 'Folder missing' && rows['kelp-notes'] === 'Disabled', 'the sidebar: Folder missing for an enabled project whose folder is gone, Disabled first', JSON.stringify(rows));
+    await full(p); await p.screenshot({ path: join(shots, 'project-harbor-broken-registry-1280-light.png'), fullPage: true });
+    await p.goto(`${base}/#/project/reef-log`); await p.waitForSelector('[data-project-page="reef-log"]:not([data-loading])');
+    ok(await p.locator('[data-project-folder="missing"]').count() === 1 && await p.locator('[data-project-registered]').count() === 0 && await p.locator('[data-crew-link]').count() === 0, 'reef-log: a Folder missing badge, and no Choose your crew together link');
+    await p.screenshot({ path: join(shots, 'project-reef-log-1280-light.png'), fullPage: false });
+    await p.goto(`${base}/#/project/kelp-notes`); await p.waitForSelector('[data-project-page="kelp-notes"]:not([data-loading])');
+    const kp = await p.locator('[data-project-page="kelp-notes"]').innerText();
+    ok((await p.locator('[data-project-notice="disabled"]').count()) === 1 && (await p.locator('[data-crew-state="disabled"]').count()) === 1 && (await p.locator('[data-health="enabled"] svg').count()) === 1 && !/ENOENT|no such file|stat '/.test(kp), 'kelp-notes: plain words, a non-check icon, the crew text matching its tile');
+    ok(kp.includes('Repository folder missing') && kp.includes('Crew not checked'), 'kelp-notes tiles: folder missing, crew not checked');
+    await p.screenshot({ path: join(shots, 'project-kelp-notes-1280-light.png'), fullPage: false });
+    await p.goto(`${base}/#/projects`); await p.waitForSelector('[data-projects-index] [data-project-card="reef-log"]');
+    ok((await p.locator('[data-project-card="reef-log"] .faint').textContent()).startsWith('Folder missing'), 'the index card of reef-log says Folder missing');
+    await ctx.close(); writeFileSync(regFile, healthy);
+  }
+  { // ---- 1280 with the Firstmate dock open (the default): the page lays out by its own width ----
+    const { ctx, p } = await open(1280, 'light', { dock: true });
+    await p.goto(`${base}/#/project/harbor-api`); await p.waitForSelector('[data-project-page="harbor-api"]:not([data-loading])');
+    ok(await p.evaluate(() => !document.body.classList.contains('chat-closed')), 'the dock is open');
+    const lay = await p.evaluate(() => ({ main: document.querySelector('#main').clientWidth, cols: getComputedStyle(document.querySelector('.pj-cols')).gridTemplateColumns.split(' ').length,
+      wrapped: [...document.querySelectorAll('[data-project-page] .sec-head h2, [data-project-page] .pj-title h1')].filter((e) => { const r = e.getClientRects(); const lh = parseFloat(getComputedStyle(e).lineHeight) || 20; return e.getBoundingClientRect().height > lh * 1.6; }).map((e) => e.textContent),
+      over: document.documentElement.scrollWidth - innerWidth, overMain: document.querySelector('#main').scrollWidth - document.querySelector('#main').clientWidth }));
+    ok(lay.main < 900 && lay.cols === 1, 'with the dock open the page is one column', JSON.stringify(lay));
+    ok(!lay.wrapped.length, 'no heading wraps', JSON.stringify(lay.wrapped));
+    ok(lay.over <= 1 && lay.overMain <= 1, 'no sideways scroll', JSON.stringify(lay));
+    await full(p); await p.screenshot({ path: join(shots, 'project-1280-light-dock.png'), fullPage: true });
+    await ctx.close();
+  }
   // the light pass writes (a live Task, a card answered by link), so it goes last
   for (const [width, theme, lang] of [[1280, 'dark', 'en'], [390, 'dark', 'zh-TW'], [1280, 'light', 'en']]) {
     const tag = `${width} ${theme} ${lang}`;
@@ -42,9 +82,9 @@ try {
     if (width > 760) {
       await p.waitForSelector('[data-projects-nav] [data-project-row="studio"]');
       const rows = await p.locator('[data-projects-nav] [data-project-row]').evaluateAll((es) => es.map((e) => ({ id: e.dataset.projectRow, href: e.getAttribute('href'), status: e.querySelector('[data-project-status]')?.textContent, count: e.querySelector('.count')?.textContent })));
-      ok(rows.map((r) => r.id).join() === 'harbor-api,kelp-notes,tidepool-docs,sandbox,studio', `sidebar renders the projects and the Studio row last (${tag})`, JSON.stringify(rows));
-      ok(rows[0].status === L('Waiting for you', '等你處理') && rows[0].count === '2' && rows[1].status === L('Disabled', '已停用') && rows[2].status === L('External: cannot dispatch yet', '外部專案：暫無法派工') && rows[3].status === L('Built-in · idle', '內建 · 閒置'), `each row has its status line and card count (${tag})`, JSON.stringify(rows));
-      ok(rows[4].href === '#/runs?project=studio' && rows[4].status === L('No project · Waiting for you', '無專案 · 等你處理'), `the Studio row links to Tasks with no project (${tag})`, JSON.stringify(rows[4]));
+      ok(rows.map((r) => r.id).join() === 'harbor-api,tidepool-docs,sandbox,studio', `sidebar renders the projects and the Studio row last (${tag})`, JSON.stringify(rows));
+      ok(rows[0].status === L('Waiting for you', '等你處理') && rows[0].count === '2' && rows[1].status === L('External: cannot dispatch yet', '外部專案：暫無法派工') && rows[2].status === L('Built-in · idle', '內建 · 閒置'), `each row has its status line and card count (${tag})`, JSON.stringify(rows));
+      ok(rows[3].href === '#/runs?project=studio' && rows[3].status === L('No project · Waiting for you', '無專案 · 等你處理'), `the Studio row links to Tasks with no project (${tag})`, JSON.stringify(rows[3]));
       ok(await p.locator('[data-projects-nav] [data-project-row="harbor-api"][aria-current="page"]').count() === 1, `the open project is marked current (${tag})`);
       const ratio = await p.evaluate(() => { const lum = (c) => { const [r, g, b] = c.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
         let worst = 99; for (const row of document.querySelectorAll('[data-projects-nav] .pj-item')) { const fg = getComputedStyle(row.querySelector('.ps')).color; let el = row, bg = 'rgba(0, 0, 0, 0)'; while (el && /rgba\(0, 0, 0, 0\)|transparent/.test(bg)) { bg = getComputedStyle(el).backgroundColor; el = el.parentElement; }
@@ -67,7 +107,7 @@ try {
     ok(tiles.map((t) => t[0]).join() === 'enabled,registered,base,crew,test,rules,gitconfig', `7 health tiles (${tag})`, JSON.stringify(tiles));
     ok(tiles.filter((t) => ['rules', 'gitconfig'].includes(t[0])).every((t) => t[1].includes(L('Not checked yet', '尚未檢查'))), `operating rules and git config: not checked yet (${tag})`);
     ok(tiles.find((t) => t[0] === 'test')[1].includes('bun test'), `the test command shows (${tag})`);
-    ok(tiles.find((t) => t[0] === 'crew')[1].includes(L('Crew approved', '船員已核准')) && !/ENOENT|no such file|stat '/.test(await pg.innerText()), `a broken registration elsewhere does not break this crew read, and no exception text shows (${tag})`);
+    ok(tiles.find((t) => t[0] === 'crew')[1].includes(L('Crew approved', '船員已核准')) && !/ENOENT|no such file|stat '/.test(await pg.innerText()), `with a healthy registry the crew reads approved, and no exception text shows (${tag})`);
     ok((await pg.locator(`[data-worktree="${seed.runs.rate}"] small`).textContent()).startsWith(`…/work/wt/harbor-api/${seed.runs.rate}`) && (await pg.locator(`[data-worktree="${seed.runs.rate}"] small`).getAttribute('title')).startsWith('/'), `a worktree path is shortened at its start, keeping the task folder (${tag})`);
     if (width <= 760) ok(await pg.locator('.pj-h-sum').isVisible() && (await pg.locator('.pj-h-sum b').textContent()).includes('4') && await pg.locator('.pj-h.ok[data-health="enabled"]').isHidden(), `on a phone passing tiles fold into one row (${tag})`);
     const tasks = await pg.locator('[data-project-task]').evaluateAll((es) => es.map((e) => [e.dataset.projectTask, e.querySelector('[data-waits-on]').dataset.waitsOn, e.querySelector('[data-waits-on]').textContent]));
@@ -115,9 +155,14 @@ try {
       const linked = await p.waitForSelector(`[data-scard="${cardId}"][data-card-linked]`, { timeout: 8000 }).then(() => true).catch(() => false);
       ok(/^#\/run\/R-\d+\?card=SC-/.test(href) && linked && (await p.evaluate(() => location.hash)) === href, 'a pending card deep link opens the Task with that card', href);
       ok(await p.evaluate((id) => { const r = document.querySelector(`[data-scard="${id}"]`).getBoundingClientRect(); return r.top < innerHeight && r.bottom > 0; }, cardId), 'the linked card is in view');
+      ok(await p.evaluate((id) => { const a = document.activeElement; return !!a?.dataset?.option && !!a.closest(`[data-scard="${id}"]`) && a === document.querySelector(`[data-scard="${id}"] [data-option]:not([disabled])`); }, cardId), 'the deep link focuses the card\'s first answer option', await p.evaluate(() => document.activeElement?.outerHTML?.slice(0, 120)));
       // the Studio row: Tasks filtered to no project
+      await p.route('**/api/tasks?project=*', async (r) => { await new Promise((x) => setTimeout(x, 1500)); await r.continue(); });
       await p.click('[data-projects-nav] [data-project-row="studio"]');
       await p.waitForSelector('[data-project-filter="studio"]');
+      const loadingPanel = await p.waitForSelector('[data-section="node-runs"][data-loading]', { timeout: 1200 }).then(() => true).catch(() => false);
+      ok(loadingPanel && !(await p.locator('[data-section="node-runs"]').innerText()).includes('No agent rounds yet'), 'while the project\'s Task ids load, the Agent rounds panel shows loading');
+      await p.unroute('**/api/tasks?project=*');
       await p.waitForFunction(() => document.querySelectorAll('[data-run]').length > 0, null, { timeout: 8000 }).catch(() => {});
       const runs = await p.locator('[data-run]').evaluateAll((es) => es.map((e) => e.dataset.run));
       ok(runs.join() === seed.runs.loose, 'the Studio row opens Tasks filtered to the Tasks in no project', JSON.stringify(runs));
@@ -131,16 +176,10 @@ try {
       await p.goto(`${base}/#/project/tidepool-docs`); await p.waitForSelector('[data-project-page="tidepool-docs"]:not([data-loading])');
       ok((await p.locator('[data-project-notice="external"]').textContent()).includes('External project: cannot dispatch yet') && await p.locator('[data-crew-link]').count() === 0, 'an external project: cannot dispatch yet, and no crew link');
       await p.screenshot({ path: join(shots, 'project-external-1280-light.png'), fullPage: false });
-      // the broken, disabled registration renders in plain words
-      await p.goto(`${base}/#/project/kelp-notes`); await p.waitForSelector('[data-project-page="kelp-notes"]:not([data-loading])');
-      const kp = await p.locator('[data-project-page="kelp-notes"]').innerText();
-      ok((await p.locator('[data-project-notice="disabled"]').count()) === 1 && (await p.locator('[data-crew-state="disabled"]').count()) === 1 && (await p.locator('[data-health="enabled"] svg').count()) === 1 && !/ENOENT|no such file|stat '/.test(kp), 'a disabled project with a missing folder: plain words, a non-check icon, the crew text matching its tile');
-      ok(kp.includes('Repository folder missing') && kp.includes('Crew not checked'), 'its tiles: folder missing, crew not checked');
-      await p.screenshot({ path: join(shots, 'project-broken-1280-light.png'), fullPage: false });
       await p.goto(`${base}/#/project/sandbox`); await p.waitForSelector('[data-project-page="sandbox"]:not([data-loading])');
       ok((await p.locator('[data-project-registered="builtin"]').textContent()).includes('Built-in'), 'the sandbox page: Built-in');
       await p.goto(`${base}/#/projects`); await p.waitForSelector('[data-projects-index] [data-project-card="studio"]');
-      ok(await p.locator('[data-projects-index] [data-project-card]').count() === 5, 'the projects index: one card per project and Studio');
+      ok(await p.locator('[data-projects-index] [data-project-card]').count() === 4, 'the projects index: one card per project and Studio');
       const lines = Object.fromEntries(await p.locator('[data-project-card]').evaluateAll((es) => es.map((e) => [e.dataset.projectCard, e.querySelector('.faint').textContent])));
       ok(lines['harbor-api'] === '3 wait for you' && lines.sandbox === "No tasks yet. Studio's own practice repository." && lines.studio.startsWith('Tasks that belong to no project (artifact work, proposals). 1 wait for you'), 'index card lines follow the prototype', JSON.stringify(lines));
       await p.screenshot({ path: join(shots, 'index-1280-light.png'), fullPage: false });

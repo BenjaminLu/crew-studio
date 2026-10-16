@@ -76,6 +76,7 @@ function viewIndex() {
   const cardOf = (p) => {
     const badge = p.kind === "external" ? h("span", { class: "badge warn" }, h("span", { class: "d" }), T("External", "外部"))
       : p.enabled === false ? h("span", { class: "badge" }, T("Disabled", "已停用"))
+      : p.folderMissing ? h("span", { class: "badge warn" }, h("span", { class: "d" }), T("Folder missing", "資料夾不見了"))
       : p.attention ? h("span", { class: "badge human" }, h("span", { class: "d" }), String(p.attention))
       : p.running ? h("span", { class: "badge run" }, h("span", { class: "d pulse" }), String(p.running))
       : p.kind === "builtin" ? h("span", { class: "badge" }, T("Built-in", "內建")) : null;
@@ -87,6 +88,7 @@ function viewIndex() {
     const counts = en.length ? { en: en.join(" · "), tw: tw.join(" · ") } : null;
     const line = p.kind === "external" ? T("External project: cannot dispatch yet. Its GitHub grant cannot be verified on this build.", "外部專案：暫時無法派工。目前版本無法驗證它的 GitHub 授權。")
       : p.enabled === false ? T("Disabled. New tasks and rounds will not start.", "已停用。不會開始新任務或新的一輪。")
+      : p.folderMissing ? T("Folder missing. The registered folder is gone or is not a Git repository.", "資料夾不見了。登錄的資料夾不見了，或不是 Git 儲存庫。")
       : p.kind === "studio" ? T(`Tasks that belong to no project (artifact work, proposals).${counts ? ` ${counts.en}.` : ""}`, `不屬於任何專案的任務（成品工作、提案）。${counts ? `${counts.tw}。` : ""}`)
       : p.kind === "builtin" && !counts ? T("No tasks yet. Studio's own practice repository.", "還沒有任務。Studio 內建的練習用儲存庫。")
       : counts ? T(counts.en, counts.tw) + (p.failed24h ? T(` · ${p.failed24h} failed in the last 24 h`, ` · 近 24 小時 ${p.failed24h} 個失敗`) : "")
@@ -145,13 +147,15 @@ function cardRow(c) {
 }
 function crewSection(d) {
   const p = d.project, crew = d.crew;
-  const canLink = p.kind !== "external" && p.enabled !== false && p.kind !== "studio";
+  const canLink = p.kind !== "external" && p.enabled !== false && p.kind !== "studio" && !p.folderMissing;
   const head = h("div", { class: "sec-head" }, h("h2", { id: "hCrew" }, T("Crew", "船員")), h("span", { class: "faint" }, T("read only", "唯讀")), h("span", { class: "x-grow" }),
     canLink ? h("a", { class: "btn", href: `#/firstmate?staffing=${encodeURIComponent(p.id)}`, "data-crew-link": p.id }, icon("message", "ic sm"), h("span", {}, T("Choose your crew together", "一起決定代理配置"))) : null);
   let body;
   const plain = (en, tw, attr) => h("div", { class: "pj-empty-row", "data-crew-state": attr }, T(en, tw));
   if (p.enabled === false) body = plain("Crew not checked: the project is disabled.", "未檢查船員：專案已停用。", "disabled");
   else if (failed(crew)) body = crew.error === "folder-missing" ? plain("Crew cannot be read: this project's folder is missing.", "無法讀取船員配置：這個專案的資料夾不見了。", "folder-missing")
+    : crew.error === "other-broken" ? plain(`No task can start: registration ${crew.others[0]} points to a missing or broken folder.${crew.others.length > 1 ? ` (+${crew.others.length - 1} more)` : ""}`,
+      `無法開始任何任務：登錄的專案 ${crew.others[0]} 指向不見或損壞的資料夾。${crew.others.length > 1 ? `（另有 ${crew.others.length - 1} 個）` : ""}`, "other-broken")
     : crew.error === "identity" ? plain("Crew cannot be read: the repository could not be confirmed (folder, Git data or base branch).", "無法讀取船員配置：無法確認儲存庫（資料夾、Git 資料或主 branch）。", "identity")
     : sectionErr("The crew", "船員配置");
   else if (p.kind === "external") body = h("div", { class: "pj-empty-row" }, T("External project: cannot dispatch yet. Its GitHub grant cannot be verified on this build.", "外部專案：暫時無法派工。目前版本無法驗證它的 GitHub 授權。"));
@@ -223,7 +227,8 @@ function viewPage(id) {
   const header = h("header", { class: "pj-head" }, h("span", { class: `pmark lg ${MARK_CLASS[p.kind] ?? ""}`.trim() }, p.kind === "studio" ? "·" : nameOf(p).slice(0, 1).toUpperCase()),
     h("div", { class: "pj-title" },
       h("h1", {}, nameOf(p), p.kind === "studio" ? null : p.enabled ? h("span", { class: "badge ok", "data-project-enabled": "1" }, h("span", { class: "d" }), T("Enabled", "已啟用")) : h("span", { class: "badge bad", "data-project-enabled": "0" }, h("span", { class: "d" }), T("Disabled", "已停用")),
-        p.kind === "studio" ? null : p.kind === "builtin" ? h("span", { class: "badge", "data-project-registered": "builtin" }, T("Built-in", "內建"))
+        p.kind === "studio" ? null : p.folderMissing ? h("span", { class: "badge warn", "data-project-folder": "missing" }, icon("alert", "ic sm"), T("Folder missing", "資料夾不見了"))
+          : p.kind === "builtin" ? h("span", { class: "badge", "data-project-registered": "builtin" }, T("Built-in", "內建"))
           : p.kind === "external" ? h("span", { class: "badge warn", "data-project-registered": "external" }, icon("alert", "ic sm"), T("External", "外部"))
           : h("span", { class: "badge", "data-project-registered": "registered" }, icon("check", "ic sm"), T("Registered", "已註冊"))),
       p.kind === "studio" ? h("div", { class: "pj-id" }, h("span", { class: "faint" }, T("Tasks that belong to no project.", "不屬於任何專案的任務。"))) : h("div", { class: "pj-id" },
@@ -231,6 +236,7 @@ function viewPage(id) {
         p.base ? h("span", {}, icon("branch", "ic sm"), h("span", { class: "vbadge" }, p.base)) : null,
         h("span", { class: "faint" }, idLine))));
   const notice = p.kind === "external" ? h("div", { class: "note pj-notice", "data-project-notice": "external" }, h("b", {}, T("External project: cannot dispatch yet.", "外部專案：暫時無法派工。")), " ", T("Its GitHub grant cannot be verified on this build.", "目前版本無法驗證它的 GitHub 授權。"))
+    : p.enabled !== false && p.folderMissing ? h("div", { class: "note pj-notice", "data-project-notice": "folder" }, h("b", {}, T("Folder missing.", "資料夾不見了。")), " ", T("The registered folder is gone or is not a Git repository. No task can start here.", "登錄的資料夾不見了，或不是 Git 儲存庫。這裡無法開始任何任務。"))
     : p.enabled === false ? h("div", { class: "note pj-notice", "data-project-notice": "disabled" }, h("b", {}, T("Disabled.", "已停用。")), " ", T("New tasks and rounds will not start.", "不會開始新任務或新的一輪。")) : null;
   const studio = p.kind === "studio";
   const chips = h("nav", { class: "pj-jump chips", "aria-label": T("Sections", "區段") },

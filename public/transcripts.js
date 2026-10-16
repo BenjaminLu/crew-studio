@@ -238,13 +238,16 @@ for (const name of ["firstmate", "takeover"]) { const base = routes[name]; if (b
 async function loadNodes() { const seq = TR.nodesSeq = (TR.nodesSeq || 0) + 1; let r = []; try { r = await getJ("/api/node-runs"); } catch {} if (seq !== TR.nodesSeq) return; TR.nodes = r; if (S.route?.name === "runs") render(); }
 function nodesCard() {
   if (!TR.nodes) { loadNodes(); return h("section", { class: "card tr-pad", "data-section": "node-runs" }, h("div", { class: "skel", style: "height:60px" })); }
+  // #/runs?project=<id>: while that project's Task ids load, the panel shows it is loading (never "No agent rounds yet")
+  const projectFilter = S.route?.query?.get("project") ? window.crewTaskFilter?.() : null;
+  if (S.route?.query?.get("project") && !projectFilter) return h("section", { class: "card tr-pad", "data-section": "node-runs", "data-loading": "1" }, h("h2", { style: "margin:0;font-size:16px" }, T("Agent rounds", "Agent 回合")), h("div", { class: "skel", style: "height:60px" }));
   return h("section", { class: "card tr-pad", "data-section": "node-runs" }, h("h2", { style: "margin:0;font-size:16px" }, T("Agent rounds", "Agent 回合")),
     // #/runs?project=<id>: only that project's Tasks' rounds (public/runtime.js keeps the filter)
     ...((nodes) => [nodes.length ? h("div", { class: "tr-list" }, nodes.map((n) => h("a", { class: "tr-e tr-link", href: `#/runs/node/${n.run}/${n.node}/${n.round}`, "data-node-run": `${n.run}/${n.node}/${n.round}` },
       h("span", { class: "tr-t" }, fmtT(n.updated)), h("span", {}, h("b", {}, n.node), ` · ${n.run} · ${T(`Round ${n.round}`, `第 ${n.round} 回合`)}`),
       h("span", { class: "faint" }, [n.prompt && "prompt", n.stream && "stream", n.report && "report"].filter(Boolean).join(" · ")))))
       : h("div", { class: "faint" }, T("No agent rounds yet. Each one keeps its prompt, stream and report.", "還沒有 agent 回合。每個回合都會保留提示詞、串流和報告。"))])(
-      ((f) => (f ? TR.nodes.filter((n) => f.has(n.run)) : TR.nodes))(S.route?.query?.get("project") ? window.crewTaskFilter?.() ?? new Set() : null)));
+      projectFilter ? TR.nodes.filter((n) => projectFilter.has(n.run)) : TR.nodes));
 }
 const wrapRuns = () => {
   const base = routes.runs; if (!base || base.__tr) return;
