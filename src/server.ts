@@ -1,3 +1,4 @@
+import {imageOutcomeProof} from "./domain/image-proof";
 import {NativeOutcomes} from "./host/native-outcomes";
 import {coffeeJourneyProof} from "./domain/coffee-kit";
 import {discoverCoffeeFilmCapability,renderCoffeeFilm} from "./render/coffee-film";
@@ -164,7 +165,7 @@ setInterval(() => send("ping", Date.now()), 20_000);
 // --- the firstmate MAIN session (M2.5): Studio drives it, one input at a time ---
 const PROJECT = startup.project;
 if (!startup.legacy && !process.env.CREW_MAIN_PROJECT) mkdirSync(PROJECT, { recursive: true });
-const nativeOutcomes = new NativeOutcomes(DATA,()=>runtime.engine,id=>coffeeJourneyProof(runtime.engine,m3.store,id));
+const nativeOutcomes = new NativeOutcomes(DATA,()=>runtime.engine,id=>runtime.engine.get(id)?.def.kind==='image'?imageOutcomeProof(runtime.engine,m3.store,id):coffeeJourneyProof(runtime.engine,m3.store,id));
 const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STATE, nativeWorkspace: !startup.legacy && !process.env.CREW_MAIN_PROJECT,
   nativeTools:()=>runtime.firstmate,
   onNativeProposal:(origin,result)=>nativeOutcomes.bind(origin,result),

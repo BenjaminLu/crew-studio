@@ -45,14 +45,14 @@ export class NativeOutcomes {
    if(!dispatch||dispatch.schema!==1||dispatch.proposal!==proposal.id||dispatch.definition!==proposal.params.definition)continue;
    const card=e.cards.get(dispatch.card),child=e.get(dispatch.child);
    if(!card||card.run!==proposal.id||card.node!=='dispatch'||!card.captainOnly||card.status!=='answered'||card.answer?.choice!=='approve'||!trust.entries.some(v=>v.record==='card-answer'&&v.data?.card===card.id&&v.data?.choice==='approve'))continue;
-   if(!child||child.params._firstmateProposal!==proposal.id||child.params._firstmateDefinition!==dispatch.definition||child.workflow!==dispatch.workflow||child.version!==dispatch.version||child.def.kind!=='coffee-kit')continue;
+   if(!child||child.params._firstmateProposal!==proposal.id||child.params._firstmateDefinition!==dispatch.definition||child.workflow!==dispatch.workflow||child.version!==dispatch.version||!['coffee-kit','image'].includes(child.def.kind))continue;
    if(!['succeeded','failed','cancelled'].includes(child.status)||!child.endedAt)continue;
    const childTrust=e.trusted(child.id);if(!childTrust.ok)continue;
    const proof=this.proof(child.id),approved=child.status==='succeeded'&&proof.complete;
    const state=approved?'approved':child.status==='succeeded'?'ended-unapproved':child.status;
    const links=[{label:`Task ${child.id}`,href:`#/run/${child.id}`}];
-   if(approved&&proof.artifact&&Number.isSafeInteger(proof.version)&&proof.version!>0)links.push({label:`Approved website v${proof.version}`,href:`#/review/${encodeURIComponent(proof.artifact)}/${proof.version}`});
-   const receipt={id:`native-outcome:${proposal.id}:${child.id}`,at:Date.parse(child.endedAt),kind:'system' as const,source:'studio:native-outcome',text:`${child.id}: ${state==='approved'?'網站已完成並通過船長驗收':state==='failed'?'任務失敗':state==='cancelled'?'任務已取消':'流程已結束，未確認作品通過驗收'}。`,links};
+   if(approved&&proof.artifact&&Number.isSafeInteger(proof.version)&&proof.version!>0)links.push({label:`Approved ${child.def.kind==='image'?'image':'website'} v${proof.version}`,href:`#/review/${encodeURIComponent(proof.artifact)}/${proof.version}`});
+   const receipt={id:`native-outcome:${proposal.id}:${child.id}`,at:Date.parse(child.endedAt),kind:'system' as const,source:'studio:native-outcome',text:`${child.id}: ${state==='approved'?(child.def.kind==='image'?'圖片已完成並通過船長驗收':'網站已完成並通過船長驗收'):state==='failed'?'任務失敗':state==='cancelled'?'任務已取消':'流程已結束，未確認作品通過驗收'}。`,links};
    // Stable identity + persisted terminal evidence: replay/restart projects one entry.
    const receiptFile=join(this.dir,`${proposal.id}-${child.id}.receipt.json`);
    if(!existsSync(receiptFile))createOwned(receiptFile,{schema:1,binding:b,child:child.id,status:child.status,result:child.result,endedAt:child.endedAt,receipt});

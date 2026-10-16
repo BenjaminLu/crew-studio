@@ -15,6 +15,15 @@ try{
  store.bind(origin,{proposal:proposal.id});store.bind(origin,{proposal:proposal.id});
  let receipts=store.list(origin.host,origin.thread);assert.equal(receipts.length,1);assert.equal(receipts[0].links.length,2);assert.match(receipts[0].text,/已完成/);
  assert.deepEqual(store.list(origin.host,origin.thread),receipts,'repeat projection exactly once');store=make();assert.deepEqual(store.list(origin.host,origin.thread),receipts,'restart preserves receipt');
+ // Images use the same source-bound dispatch contract, with no unapproved artifact links.
+ const receiptPath=join(dir,'native-outcomes','R-001-R-002.receipt.json');
+ child.workflow='images';child.def.kind='image';entries[1].data.workflow='images';
+ rmSync(receiptPath);const imageReceipt=store.list(origin.host,origin.thread);
+ assert.match(imageReceipt[0].text,/圖片已完成/);assert.match(imageReceipt[0].links[1].label,/Approved image/);
+ assert.deepEqual(make().list(origin.host,origin.thread),imageReceipt,'image replay and restart exactly once');
+ assert.equal(store.list(origin.host,'other-thread').length,0);
+ for(const [status,approved,text] of [['succeeded',false,'未確認'],['failed',false,'失敗'],['cancelled',false,'取消']]as const){rmSync(receiptPath);child.status=status;complete=approved;const r=store.list(origin.host,origin.thread)[0];assert.ok(r.text.includes(text));assert.equal(r.links.length,1,'only task diagnostic link without image approval');}
+ rmSync(receiptPath);child.status='succeeded';complete=true;child.workflow='coffee-kit';child.def.kind='coffee-kit';entries[1].data.workflow='coffee-kit';store.list(origin.host,origin.thread);
  assert.equal(store.list('claude',origin.thread).length,0);assert.equal(store.list(origin.host,'new-session').length,0);assert.equal(store.list(null,null).length,0);
  assert.throws(()=>store.bind({...origin,turn:'wrong-turn'},{proposal:proposal.id}));
  for(const mutate of [()=>{trusted=false;return()=>trusted=true},()=>{child.params._firstmateProposal='forged';return()=>child.params._firstmateProposal='R-001'},()=>{child.params._firstmateDefinition='other';return()=>child.params._firstmateDefinition='definition-hash'},()=>{card.answer.choice='close';return()=>card.answer.choice='approve'},()=>{const item=entries.pop();return()=>entries.push(item)},()=>{child.version=2;return()=>child.version=1}]){const restore=mutate();assert.equal(store.list(origin.host,origin.thread).length,0,'invalid authority cannot replay persisted receipt');restore();}
