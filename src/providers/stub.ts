@@ -8,12 +8,14 @@ import { errorOf, rowsOf, type NEvent, type Provider, type ProviderCtx, type Ses
 import { staticAnswer } from "../evals";
 import { stubAgent } from "./stub-agent";
 
-export function stubProvider(): Provider {
+export type StubRequest = (url: string, init: RequestInit) => Promise<Response>;
+/** Test-only transport injection; production defaults to the authenticated HTTP tool route. */
+export function stubProvider(request: StubRequest = fetch): Provider {
   // runs in Studio's own process and spawns nothing: the one provider declared sandbox-free
-  return { id: "stub", model: "no model", sandboxFree: true, start: (sys: string, _tools: ToolSpec[], ctx: ProviderCtx) => stubSession(ctx, sys) };
+  return { id: "stub", model: "no model", sandboxFree: true, start: (sys: string, _tools: ToolSpec[], ctx: ProviderCtx) => stubSession(ctx, sys, request) };
 }
 
-function stubSession(ctx: ProviderCtx, sys = ""): Session {
+function stubSession(ctx: ProviderCtx, sys = "", request: StubRequest = fetch): Session {
   let stop: (() => void) | null = null, interrupted = false;
   return {
     interrupt() { interrupted = true; stop?.(); },
@@ -24,7 +26,7 @@ function stubSession(ctx: ProviderCtx, sys = ""): Session {
       const call = async function* (name: string, args: any): AsyncGenerator<NEvent, any> {
         const id = `stub_${++n}`;
         yield { type: "toolStart", id, name, args };
-        const r = await fetch(`${ctx.studioUrl}/api/tools/${name}`, { method: "POST", headers: { "content-type": "application/json", "x-crew-tool-token": ctx.token }, body: JSON.stringify(args) });
+        const r = await request(`${ctx.studioUrl}/api/tools/${name}`, { method: "POST", headers: { "content-type": "application/json", "x-crew-tool-token": ctx.token }, body: JSON.stringify(args) });
         const raw = await r.text(); const body = toolParts(raw).text; // the stub takes no image input: the text with a note
         const err = errorOf(body) ?? (r.ok ? null : body.slice(0, 200));
         yield { type: "toolEnd", id, rows: err ? null : rowsOf(body), error: err, result: body };

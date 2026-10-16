@@ -26,15 +26,18 @@ export async function harness(flows: string[], o: { policies?: string; data?: st
   if (o.policies) { mkdirSync(join(data, "policies"), { recursive: true }); writeFileSync(join(data, "policies", "org.yaml"), o.policies); }
   let port = 0;
   const agents = new Agents(data, () => `http://127.0.0.1:${port}`);
-  const srv = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: async (req) => {
+  const handle = async (req: Request) => {
     const u = new URL(req.url); const t = req.headers.get("x-crew-tool-token") ?? "";
     if (u.pathname === "/api/tools") return Response.json(agents.toolList(t));
     let a: any = {}; try { a = await req.json(); } catch {}
     return Response.json(await agents.callTool(t, decodeURIComponent(u.pathname.slice("/api/tools/".length)), a));
-  } });
-  port = srv.port;
+  };
+  // Offline checks still exercise the real token/call-budget authority, without a socket.
+  const inProcess = process.env.CREW_TEST_IN_PROCESS === "1";
+  const srv = inProcess ? null : Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: handle });
+  port = srv?.port ?? 0;
   const sent: any[] = [];
-  const provider = (id?: string, model?: string) => { const p = stubProvider(); return { ...p, id: id || "stub", model: model || "no model", start: p.start }; };
+  const provider = (id?: string, model?: string) => { const p = stubProvider(inProcess ? async (url, init) => handle(new Request(url, init)) : undefined); return { ...p, id: id || "stub", model: model || "no model", start: p.start }; };
   const defs = new WorkflowDefs(data, () => flows);
   const engine = new Engine({ dataDir: data, agents, provider, defaultProvider: () => ({ provider: "stub", model: null }), log: new StudioLog(join(data, "events.jsonl")), send: (t: string, d: unknown) => sent.push([t, d]),
     skillText: () => "# Test skill\n", checkRoots: o.checkRoots ?? [join(import.meta.dir, "fixture/checks")] } as any, defs);
@@ -49,5 +52,5 @@ export async function harness(flows: string[], o: { policies?: string; data?: st
   engine.actions["set"] = (x) => { x.ctx[x.node.args!.key] = x.node.args!.value; return x.node.args?.out ?? "ok"; };
   engine.actions["merge-sim"] = (x) => { x.ctx.merged = { at: new Date().toISOString() }; return "ok"; };
   // the harness server serves agent tools only: it is also the tools-only listener a sandboxed round reaches
-  return { data, engine, defs, agents, sent, toolUrl: `http://127.0.0.1:${port}`, stop: () => srv.stop(true) };
+  return { data, engine, defs, agents, sent, toolUrl: `http://127.0.0.1:${port}`, stop: () => srv?.stop(true) };
 }

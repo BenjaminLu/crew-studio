@@ -1,0 +1,7 @@
+{
+  "lint": ["bun", "scripts/lint-source.ts"],
+  "test": ["bun", "scripts/test-offline.ts"],
+  "tests": ["tests/**"],
+  "shards": 1,
+  "timeout_s": 180
+}
