@@ -33,6 +33,7 @@ import { realInside } from "../secure";
 import { helperCommand, helperReads } from "../self";
 import { entryOf, validate, type WDef, type WEdge, type WNode, type WorkflowDefs } from "./defs";
 import { locatorText, parseFinding, type Finding } from "./locator";
+import { materializeRoundDir, roundWorkPath } from "./round-paths";
 import { composeInstructions, withSafetyRules, Skills } from "../skills";
 
 export type NState = "pending" | "running" | "passed" | "failed" | "error" | "skipped" | "superseded";
@@ -782,7 +783,7 @@ export class Engine {
       const admissionReceipt=this.deps.instructionReceipt?.(x,man.id.includes("designer") ? "designer" : "reviewer",withSafetyRules(system),selected);
       const job = await this.deps.agents.run({ kind: `judge:${man.id}`, title: `${x.run?.id ?? "try"} judge ${man.id} #${i + 1}`, system,
         text: `JUDGE ${man.id}\n${prompt}`, tools, admissionReceipt, provider: selected, ref: x.run?.id, signal: x.run && x.run.id !== "try" ? this.abortOf(x.run).signal : undefined, owns: x.run && x.run.id !== "try" ? () => this.owns(x) : undefined, maxTools: 4, timeoutMs: man.timeout_s * 1000,
-        sandbox: x.run ? this.roundSandbox(x, null) : { writes: [] } } as any);
+        sandbox: x.run ? this.roundSandbox(x, null, `judge-${man.id}-${i + 1}`) : { writes: [] } } as any);
       if (job.status !== "done" || !got) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: `tool error: judge ${provider} ${job.status === "done" ? "gave no judgement" : job.error}` };
       if (j.distinct_providers && actual.has(job.provider)) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "distinct provider agreement produced duplicate actual vendor", votes };
       actual.add(job.provider); take(got, `${job.provider}·${job.model}`, { provider: job.provider, model: job.model, job: job.id });
@@ -1102,11 +1103,26 @@ export class Engine {
    * run. Only a signed captain grant of kind "sandbox-off" (time-boxed, per project or
    * global) runs a round outside it, and the run's log says so.
    */
-  roundSandbox(x: X, b: { writes: string[]; reads?: string[]; cwd?: string } | null) {
+  roundSandbox(x: X, b: { writes: string[]; reads?: string[]; cwd?: string } | null, label = "agent") {
     const off = this.grants.open("sandbox-off", x.run.ctx.project ?? x.run.params?.project ?? null);
     if (off) { x.log(`this round runs outside the round sandbox: the captain's grant ${off.id} (until ${off.until})`); return null; }
-    return { ...(b ?? { writes: [] }), allow: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String) };
+    // a round with no folder of its own (judges, designers, coordinators) still opens in a scratch folder of its own under data/work
+    const own = b ?? this.roundScratch(x, label);
+    return { ...own, allow: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String) };
   }
+  /** The one place a round's working folder is made: <data>/work/<area>/<run>/<node>-<visit>-<attempt>[-label] (fresh unless kept). */
+  roundDir(x: X, area: string, o: { prefix?: string; label?: string; fresh?: boolean } = {}) {
+    return materializeRoundDir(this.deps.dataDir, this.roundDirParts(x, area, o), { fresh: o.fresh });
+  }
+  /** The same folder's path, without touching it (a mode's sandbox spec names it; its begin made it). */
+  roundDirPath(x: X, area: string, o: { prefix?: string; label?: string } = {}) { return roundWorkPath(this.deps.dataDir, ...this.roundDirParts(x, area, o)); }
+  private roundDirParts(x: X, area: string, o: { prefix?: string; label?: string }) {
+    const clean = (v: unknown) => String(v).replace(/[^A-Za-z0-9._-]/g, "_");
+    const leaf = [o.prefix, x.node.id, x.visit, x.rn?.attempt ?? 0, o.label].filter((v) => v !== undefined && v !== "").map(clean).join("-");
+    return [clean(area), clean(x.run.id), leaf];
+  }
+  /** A text-only round's scratch folder: its cwd and the only place it may write. */
+  roundScratch(x: X, label = "agent") { const d = this.roundDir(x, "round-scratch", { label }); return { writes: [d], cwd: d }; }
   /** An agent node: one turn of its mode on the picked provider; a swap stops it, writes a hand-off, and starts the new agent from it. */
   async runAgent(x: X, modeName = x.node.mode): Promise<string> {
     const mode = this.modes[modeName ?? ""]; if (!mode) throw new Error(`no agent mode ${modeName}`);

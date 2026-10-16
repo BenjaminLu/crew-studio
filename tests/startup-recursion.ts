@@ -102,4 +102,19 @@ for(const [name,cfg,params,provider] of [['no configured codex model',(p:string)
   check('Firstmate proposal refuses before any card when the codex model is not configured',()=>{a.equal(error?.publicFailure?.code,'startup_model_unconfigured');a.equal(H.engine.list().length,0);});
  }finally{H.stop();}
 }
+// The real round path check: a sandboxed provider (not sandboxFree) goes through Agents' sandbox refusal, as the live server does.
+{
+ const H=await harness([flow]);const store=new ArtifactStore(H.data);installStartupRecursion(H.engine,{artifacts:store});const specs:any[]=[];
+ H.agents.toolUrl=()=>H.toolUrl;(H.agents as any).egress={port:1,open(){},close(){}};
+ const run0=H.agents.run.bind(H.agents);(H.agents as any).run=(o:any)=>{if(o.kind?.startsWith('run:startup-'))specs.push(o.sandbox);return run0(o);};
+ H.engine.deps.provider=(id='codex',model='fixture-model')=>({id,model,sandboxNeeds:()=>({inProcess:true,hosts:[],reads:[],tmpEnv:[]}),start(_sys:any,_tools:any,ctx:any){return{interrupt(){},async *send(text:string){const judge=text.includes('Role: judge'),round=Number(/round: (\d)/.exec(text)![1]);const payload=judge?{text:`Critique round ${round}: willingness to pay is untested; run five paid pilots before growth spending.`,score:80,verdict:'ready'}:{text:`Proposal round ${round}: research service for independent coffee shops with paid pilot validation and explicit revenue assumptions.`,revision:''};yield{type:'toolStart',id:'submit',name:'startup_submit',args:payload};const result=await H.agents.callTool(ctx.token,'startup_submit',payload);yield{type:'toolEnd',id:'submit',result:JSON.stringify(result)};yield{type:'turnEnd',status:'ok'};}};} } as any);
+ try{
+  const r=H.engine.start({workflow:'startup-recursion',text:'Fixture only: sandboxed startup competition.',params:{founderModel:'fixture-claude',judgeModel:'fixture-codex'}});
+  a(await until(()=>H.engine.cards.list({run:r.id,open:true}).length===1));await H.engine.answer(H.engine.cards.list({run:r.id,open:true})[0].id,{choice:'template',by:'fixture captain'});
+  await until(()=>H.engine.cards.list({run:r.id,open:true}).some(c=>c.node==='accept')||H.engine.get(r.id)?.status==='failed');
+  const errors=[...H.agents.jobs.values()].map(j=>j.error).filter(Boolean);
+  check('sandboxed founder and judge rounds pass the real round path check (never refused for reaching data/runs)',()=>{a(!errors.some(e=>/a round may not reach/.test(String(e))),JSON.stringify(errors));a(H.engine.cards.list({run:r.id,open:true}).some(c=>c.node==='accept'),JSON.stringify(errors));});
+  check('each startup round opens in its own scratch folder under data/work, not under data/runs',()=>{a.equal(specs.length,2);for(const s of specs){a(s.cwd.startsWith(join(H.data,'work')+'/'),s.cwd);a(!s.cwd.includes('/runs/'),s.cwd);a.deepEqual(s.writes,[s.cwd]);}a.notEqual(specs[0].cwd,specs[1].cwd);});
+ }finally{H.stop();}
+}
 console.log(`${passed}/0 startup assertions (controlled providers; no live model proof)`);

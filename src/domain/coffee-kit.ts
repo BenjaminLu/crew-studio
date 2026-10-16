@@ -242,13 +242,12 @@ export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; 
       if(plan.pageAdmission!=='paid-intent-v1')throw Object.assign(new Error('Historical page admission is unbound; explicit fresh preparation is required'),{outcome:'unavailable'});
       if(trustedCoffee(x).some(e=>e.record==='coffee-operation-v1'&&e.data?.part==='page'&&e.data?.generation===generation))throw Object.assign(new Error('A prior paid page operation may have run; explicit fresh generation is required'),{outcome:'unavailable'});
       if(!engine.record(x,'coffee-operation-v1',{data:{version:1,part:'page',generation,direction:digest(JSON.stringify(plan.direction)),context:coffeeConstraintContext(x)}}))throw new Error('Page operation intent was not persisted');
-      const dir = join(engine.deps.dataDir,"work","coffee",x.run.id,`page-${x.node.id}-${x.visit}-${x.rn.attempt ?? 0}`);
-      rmSync(dir,{recursive:true,force:true}); mkdirSync(dir,{recursive:true});
+      const dir = engine.roundDir(x,"coffee",{prefix:"page"});
       const old = trustedCoffee(x).filter(e => e.record === outputRecord && e.data?.part === 'page').at(-1)?.data as CoffeeReceipt | undefined;
       if (old && verifyCoffeeManifest(d.artifacts.filesDir(old.artifact,old.n),old.manifest)) cpSync(d.artifacts.filesDir(old.artifact,old.n),dir,{recursive:true});
       x.rn.data.coffeeWork = dir; x.rn.data.coffeePlan = plan; x.save();
     },
-    sandbox:x => ({writes:[x.rn.data.coffeeWork],cwd:x.rn.data.coffeeWork}),
+    sandbox:x => { const dir = engine.roundDirPath(x,"coffee",{prefix:"page"}); return {writes:[dir],cwd:dir}; },
     tools:x => folderTools(x.rn.data.coffeeWork,()=>{},'work').filter(t => t.name !== 'work_search'),
     maxTools:30,
     system:(_x,skill) => `${skill}\nWrite a complete index.html document with head and body, and optional local CSS only using work_* tools. No network, shell, external resources, tracking, scripts, forms or publication. Use the exact approved design plan sections, brand tokens, layout and CTA. Create a polished cinematic inline hero or wide feature with readable HTML heading and CTA outside the video, stable 16:9 aspect ratio and a responsive phone crop. The host integrates assets/coffee.png, assets/coffee.mp4 and its real first-frame poster. Do not embed any custom player, external fonts or script. Include an img with src="assets/coffee.png" and a video controls with src="assets/coffee.mp4". These files arrive later; do not invent media bytes. Use real brief content; do not invent an address, price or opening hours.`,

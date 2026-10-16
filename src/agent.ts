@@ -6,8 +6,9 @@ import {localUnrestricted} from "./local-execution";
 // Guardrails: a time limit, a tool-call limit, no environment secrets, an empty cwd.
 import { QueueRefusal, NativeQueue, type QueueRequest } from "./runtime/queue";
 import { withSafetyRules } from "./skills";
-import { realInside, redactJSON, redactText, roundEnv } from "./secure";
+import { redactJSON, redactText, roundEnv } from "./secure";
 import { roundProfile, sandboxInfo } from "./runtime/checks";
+import { roundPathRefusal } from "./runtime/round-paths";
 import { randomBytes } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { extname, join, normalize, relative, resolve, sep } from "node:path";
@@ -94,8 +95,7 @@ export class Agents {
       if (!this.egress && !localUnrestricted()) return refuse("a sandboxed round needs Studio's egress proxy");
       if (!this.toolUrl) return refuse("a sandboxed round needs Studio's tool listener");
       // a round's own paths are what the runtime materialized: a worktree under data/work, or a folder outside Studio's data and every protected root
-      const bad = [...o.sandbox.writes, ...(o.sandbox.reads ?? []), ...(o.sandbox.cwd ? [o.sandbox.cwd] : [])].find((p) =>
-        this.protect().some((r) => realInside(r, p, true) || realInside(p, r, true)) || (realInside(this.dataDir, p, true) && !realInside(join(this.dataDir, "work"), p)) || realInside(p, this.dataDir, true));
+      const bad = roundPathRefusal(this.dataDir, this.protect(), o.sandbox);
       if (bad) return refuse(`a round may not reach ${bad} (only its worktree, never Studio's data or a protected root)`);
       const needs = o.provider.sandboxNeeds();
       if (needs.inProcess) {

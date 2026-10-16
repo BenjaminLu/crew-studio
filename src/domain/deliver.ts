@@ -53,12 +53,12 @@ export function installDeliver(engine: Engine, d: Deps) {
   };
   engine.modes.deliver = {
     begin(x) {
-      const dir = join(d.dataDir, "work", "deliver", x.run.id, `${x.node.id}-${x.visit}-${x.rn.attempt ?? 0}`); rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
+      const dir = engine.roundDir(x, "deliver");
       const old = x.ctx.deliver?.[x.node.id]; if (old) cpSync(st.filesDir(old.id, old.n), dir, { recursive: true });
       if (kind(x) === "video" && !old) { const tpl = bundledText("workflows/v2/templates/film.html"); if (!tpl) throw new Error("film template unavailable"); writeFileSync(join(dir, "film.html"), tpl.replaceAll(/\{\{(?:TITLE|LINE[123])\}\}/g, "Crew Studio")); }
       x.rn.data.brief = briefFor(x); x.rn.data.dir = dir; x.rn.data.parent = old ?? null; x.rn.data.notes = old ? st.notes(old.id, old.n).filter(n => n.status === "open") : []; x.save();
     },
-    sandbox: x => ({ writes: [x.rn.data.dir], cwd: x.rn.data.dir }),
+    sandbox: x => { const dir = engine.roundDirPath(x, "deliver"); return { writes: [dir], cwd: dir }; },
     tools: x => folderTools(x.rn.data.dir, () => {}, "work").filter(t => t.name !== "work_search"), maxTools: 30,
     system: (x, skill) => `${skill}\nProduce ${entry(kind(x))} in the isolated work folder using work_* tools only. No shell, network or external assets. Preserve existing content unless the brief changes it.${kind(x) === "video" ? " Keep the renderer contract: #stage, DUR, render(t), build() and schedule()." : ""}`,
     prompt: x => `DELIVER ${kind(x)}\nVariant: ${x.node.args?.variant ?? "A"}\nIntent: ${x.run.text || x.run.title}\n${x.rn.data.brief?.text ?? ""}\nOpen annotations: ${JSON.stringify(x.rn.data.notes ?? [])}\nWrite ${entry(kind(x))}.`,
