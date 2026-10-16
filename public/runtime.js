@@ -917,7 +917,7 @@ function startProjectPicker(id) {
   const s = o.staffing && chosen ? chosen.staffing : null;
   const crew = !o.projects.length ? h("span", { class: "faint", "data-run-crew": "no-project" }, T("No registered project yet. Ask Firstmate to register one.", "尚無已登錄專案；請請 Firstmate 登錄專案。"))
     : !s ? null
-    : s.state === "approved" ? h("span", { class: "badge ok", "data-run-crew": "approved" }, T(`Crew approved · v${s.version}`, `代理配置已核准 · v${s.version}`))
+    : s.state === "approved" ? h("span", { class: "rt-crew", "data-run-crew": "approved", "data-run-crew-ready": s.readiness?.state || "ready" }, h("span", { class: "badge ok" }, T(`Crew approved · v${s.version}`, `代理配置已核准 · v${s.version}`)), s.readiness?.state === "check-on-start" ? h("span", { class: "faint", "data-run-crew-check": "1" }, " ", T("Check on Start: ", "按下開始時確認："), T(s.readiness.reason.en, s.readiness.reason.zh)) : null)
     : s.state === "missing" ? h("span", { class: "rt-crew", "data-run-crew": "missing" }, T("No crew approved for this project. ", "此專案尚未核准代理配置。"), h("a", { href: o.crewHref, "data-run-crew-link": "1" }, T("Choose your crew together", "一起決定代理配置")))
     : h("span", { class: "rt-crew", role: "alert", "data-run-crew": "blocked", "data-run-crew-code": s.code }, h("b", {}, T("Cannot start", "無法開始")), ` · ${s.code} · `, T(s.reason.en, s.reason.zh), s.code === "staffing_changed" ? h("a", { href: o.crewHref, "data-run-crew-link": "1" }, " ", T("Choose your crew again", "重新決定代理配置")) : null);
   return h("div", { class: "rt-row rt-start-project", "data-run-project-row": id }, h("span", { class: "lbl" }, T("Project", "專案")), sel, crew);

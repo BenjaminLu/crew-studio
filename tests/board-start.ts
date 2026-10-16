@@ -12,7 +12,8 @@ import {StaffingStore,staffingHash} from '../src/domain/staffing';
 const {ok,end}=suite('board-start');
 const git=(cwd:string,args:string[])=>{const r=spawnSync('git',args,{cwd,encoding:'utf8'});if(r.status!==0)throw new Error(r.stderr);return r.stdout.trim();};
 const root=join(import.meta.dir,'..'),repoHome=process.env.BOARD_START_FIXTURE_REPOS||mkdtempSync(join(tmpdir(),'board-start-repo-')),repo=join(repoHome,'repo'),other=join(repoHome,'other');
-for(const dir of [repo,other]){spawnSync('mkdir',['-p',dir]);git(dir,['init','-q','-b','main']);writeFileSync(join(dir,'README.md'),'fixture\n');git(dir,['add','README.md']);git(dir,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Initial']);}
+const claudeRepo=join(repoHome,'claude');
+for(const dir of [repo,other,claudeRepo]){spawnSync('mkdir',['-p',dir]);git(dir,['init','-q','-b','main']);writeFileSync(join(dir,'README.md'),'fixture\n');git(dir,['add','README.md']);git(dir,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Initial']);}
 // BOARD_START_FIXTURE_DATA: prepare a Studio data folder for tests/board-start-ui.mjs and stop: three registered
 // projects (approved crew, no crew, a crew approved for another definition) and nothing else.
 if(process.env.BOARD_START_FIXTURE_DATA){
@@ -20,12 +21,13 @@ if(process.env.BOARD_START_FIXTURE_DATA){
  const defs=new WorkflowDefs(data),list=new Projects(data),store=new StaffingStore(data),def=defs.get('code-firstmate')!,skill=skillTextFor(root),stale=join(repoHome,'stale');
  spawnSync('mkdir',['-p',stale]);git(stale,['init','-q','-b','main']);writeFileSync(join(stale,'README.md'),'fixture\n');git(stale,['add','README.md']);git(stale,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Initial']);
  list.add({id:'fixture',name:'Fixture repo',path:repo,base:'main'} as any);list.add({id:'unstaffed',name:'Unstaffed repo',path:other,base:'main'} as any);list.add({id:'stale',name:'Stale crew repo',path:stale,base:'main'} as any);
- const approve=(id:string,sha256:string)=>store.approve({schema:1,algorithm:'sha256-canonical-v1',project:list.staffingIdentity(id,[root]),workflow:{id:def.id,version:def.version,sha256},roles:Object.fromEntries(def.roles.map((r:any)=>[r.id,{provider:'codex' as const,model:'fixture-model',effort:'low',skill:store.remember({ref:r.skill,version:1,text:skill(r.skill)})}])),review:{freshContexts:3,distinctProviders:false}},null,{run:'R-staffing',card:'SC-staffing',answerSeq:1});
+ const approve=(id:string,sha256:string)=>store.approve({schema:1,algorithm:'sha256-canonical-v1',project:list.staffingIdentity(id,[root]),workflow:{id:def.id,version:def.version,sha256},roles:Object.fromEntries(def.roles.map((r:any)=>[r.id,{provider:'claude' as const,model:'claude-sonnet-5-5',effort:'low',skill:store.remember({ref:r.skill,version:1,text:skill(r.skill)})}])),review:{freshContexts:3,distinctProviders:false}},null,{run:'R-staffing',card:'SC-staffing',answerSeq:1});
  approve('fixture',staffingHash(def));approve('stale',staffingHash({...def,description:'an older definition'}));
  console.log('board-start fixture ready');process.exit(0);
 }
 const H=await harness([]);
-const facts=async()=>[{provider:'codex',support:'supported' as const,auth:'verified',quota:'available',expires:Date.now()+60000,models:[{id:'fixture-model',efforts:['low']}]}];
+let codexAuth='verified',factsCalls=0;
+const facts=async()=>{factsCalls++;return[{provider:'codex',support:'supported' as const,auth:codexAuth,quota:'available',expires:Date.now()+60000,models:[{id:'fixture-model',efforts:['low']}]},{provider:'claude',support:'supported' as const,auth:'verified',quota:'unknown',expires:Date.now()+60000,models:[]}];};
 let projects:any;
 const rt=createRuntime({dataDir:H.data,agents:H.agents,provider:H.engine.deps.provider,defaultProvider:()=>({provider:'claude',model:'studio-default'}),log:H.engine.deps.log,send(){},fmRoot:root,protectedRoots:[root],studioUrl:()=>H.toolUrl,staffingFacts:facts,
  install:[(engine:any,c:any)=>{projects=c.projects;installCode(engine,{dataDir:c.dataDir,projects:c.projects});}]} as any);
@@ -50,6 +52,15 @@ try{
  ok(options.status===200&&options.body.projectScoped===true&&options.body.staffing===true&&options.body.crewHref==='#/firstmate','start options mark code-firstmate as project-scoped and staffed',JSON.stringify(options.body));
  ok(byId.fixture?.staffing?.state==='approved'&&byId.fixture.staffing.hash===approved.hash&&byId.fixture.staffing.roles.worker.model==='fixture-model','an approved project shows its approved crew');
  ok(byId.unstaffed?.staffing?.state==='missing'&&byId.unstaffed.staffing.code==='staffing_missing','a project without a crew shows missing');
+
+ ok(factsCalls>=1&&byId.fixture.staffing.readiness?.state==='ready','start options refresh the free capability probes and show a ready crew');
+ codexAuth='missing';const down=(await call('/api/wruns/start-options?workflow=code-firstmate')).body.projects.find((p:any)=>p.id==='fixture');
+ ok(down?.staffing?.state==='blocked'&&down.staffing.code==='staffing_not_ready'&&!!down.staffing.role,'an approved crew whose vendor is unavailable now shows cannot start with the role',JSON.stringify(down?.staffing));
+ codexAuth='verified';
+ projects.add({id:'claude-crew',name:'Claude crew repo',path:claudeRepo,base:'main'});
+ store.approve({schema:1,algorithm:'sha256-canonical-v1',project:projects.staffingIdentity('claude-crew',[root]),workflow:{id:def.id,version:def.version,sha256:staffingHash(def)},roles:Object.fromEntries(def.roles.map((r:any)=>[r.id,{provider:'claude' as const,model:'claude-sonnet-5-5',effort:'low',skill:store.remember({ref:r.skill,version:1,text:E.deps.skillText(r.skill)})}])),review:{freshContexts:3,distinctProviders:false}},null,{run:'R-staffing',card:'SC-staffing',answerSeq:2});
+ const claudeCrew=(await call('/api/wruns/start-options?workflow=code-firstmate')).body.projects.find((p:any)=>p.id==='claude-crew');
+ ok(claudeCrew?.staffing?.state==='approved'&&claudeCrew.staffing.readiness?.state==='check-on-start','a signed-in Claude crew is "check on Start": the form never pays for a verification',JSON.stringify(claudeCrew?.staffing));
 
  const before=E.list().length;
  const noProject=await call('/api/wruns',{workflow:'code-firstmate',text:'Add one README line',params:{provider:'codex'}});

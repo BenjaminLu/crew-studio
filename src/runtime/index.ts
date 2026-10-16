@@ -115,7 +115,13 @@ export function createRuntime(d: RuntimeDeps) {
   const staffingProject=(id:string)=>d.staffingProject?d.staffingProject(id):projects.staffingIdentity(id,d.protectedRoots??[]);
   let staffingCapabilities:StaffingFacts[]=[];
   const staffingFacts=async()=>{staffingCapabilities=await(d.staffingFacts??(async()=>[]))();return staffingCapabilities;};
-  const staffingGuard=installStaffingGuard(engine,staffing,staffingProject,config=>{for(const role of Object.values(config.roles)){const cap=staffingCapabilities.find(c=>c.provider===role.provider),model=cap?.models.find(m=>m.id===role.model);if(!cap||cap.support!=='supported'||cap.auth!=='verified'||!staffingQuotaReady(role,cap,d.staffingAdmission)||cap.expires<=Date.now()||!model||role.effort!==null&&!model.efforts.includes(role.effort))throw new Error('Refresh staffing facts and confirm available role models before work / 請先更新派工能力並確認可用的角色模型');}});
+  const roleReady=(role:{provider:string;model:string;effort:string|null})=>{const cap=staffingCapabilities.find(c=>c.provider===role.provider),model=cap?.models.find(m=>m.id===role.model);return !(!cap||cap.support!=='supported'||cap.auth!=='verified'||!staffingQuotaReady(role as any,cap,d.staffingAdmission)||cap.expires<=Date.now()||!model||role.effort!==null&&!model.efforts.includes(role.effort));};
+  const staffingGuard=installStaffingGuard(engine,staffing,staffingProject,config=>{for(const role of Object.values(config.roles))if(!roleReady(role))throw new Error('Refresh staffing facts and confirm available role models before work / 請先更新派工能力並確認可用的角色模型');});
+  /** The Start form's readiness of an approved crew, from free probes only. A signed-in Claude role whose exact model has not
+   *  been verified by a bounded request is "check on Start": the form never pays for a verification. */
+  const crewReadiness=(roles:Record<string,{provider:string;model:string;effort:string|null}>)=>{let check=false;for(const[id,role]of Object.entries(roles)){if(roleReady(role))continue;const cap=staffingCapabilities.find(c=>c.provider===role.provider);if(role.provider==='claude'&&cap?.support==='supported'&&cap.auth==='verified'&&cap.quota==='unknown'&&cap.expires>Date.now()){check=true;continue;}
+    return{state:'blocked' as const,role:id,reason:{en:`The ${id} role's ${role.provider} ${role.model} is not available now${cap?.reason?` (${cap.reason})`:''}. Check the account, then refresh.`,zh:`${id} 角色的 ${role.provider} ${role.model} 目前不可用；請確認帳號後重新整理。`}};}
+   return check?{state:'check-on-start' as const,reason:{en:'Claude is signed in; its exact model is checked when you press Start.',zh:'Claude 已登入；確切模型會在按下開始時確認。'}}:{state:'ready' as const};};
   const staffingTools=installFirstmateStaffing(engine,staffing,staffingProject,staffingFacts,d.staffingAdmission);
   // Board start of a project-staffed workflow (code-firstmate): the approved configuration of the chosen registered
   // project, the same one Firstmate's dispatch binds. Never a bypass: the staffing guard still verifies it at start.
@@ -264,8 +270,9 @@ export function createRuntime(d: RuntimeDeps) {
       // what the Start form needs for one workflow: whether it runs on a registered project, and each project's crew state
       if (p === "/api/wruns/start-options" && !writing) {
         const wf=String(url.searchParams.get("workflow")??""),def=defs.get(wf);if(!def||!defs.selectable(wf))return json({error:"This workflow is not available for new tasks",code:"workflow_unavailable"},409);
-        const projectScoped=def.kind==="code",staffed=boardStaffed(def);
-        return json({workflow:wf,version:def.version,projectScoped,staffing:staffed,crewHref:staffed?"#/firstmate":null,projects:projectScoped?projects.list().filter(x=>!!x.path).map(x=>({id:x.id,name:x.name,base:x.base,staffing:staffed?boardStaffing(def,x.id):null})):[]});
+        const projectScoped=def.kind==="code",staffed=boardStaffed(def);if(staffed)try{await staffingFacts();}catch{staffingCapabilities=[];} // free probes only (Codex probe, Claude auth status)
+        const crewOf=(id:string)=>{const crew=boardStaffing(def,id);if(crew.state!=='approved')return crew;const ready=crewReadiness(crew.roles);return ready.state==='blocked'?{state:'blocked' as const,code:'staffing_not_ready',role:ready.role,reason:ready.reason}:{...crew,readiness:ready};};
+        return json({workflow:wf,version:def.version,projectScoped,staffing:staffed,crewHref:staffed?"#/firstmate":null,projects:projectScoped?projects.list().filter(x=>!!x.path).map(x=>({id:x.id,name:x.name,base:x.base,staffing:staffed?crewOf(x.id):null})):[]});
       }
       if (p === "/api/wruns" && !writing) return json({ runs: engine.list().filter((r) => url.searchParams.get("archived") === "1" || !r.archived).map((r) => ({ id: r.id, workflow: r.workflow, version: r.version, title: r.title, status: r.status, result: r.result, createdAt: r.createdAt, updatedAt: r.updatedAt, endedAt: r.endedAt, error: r.error,
         childRun: (() => { const child = engine.get(r.ctx?.childRun); return child?.params?._firstmateProposal === r.id ? child.id : null; })(),
