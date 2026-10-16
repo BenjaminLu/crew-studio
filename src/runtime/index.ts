@@ -144,6 +144,8 @@ export function createRuntime(d: RuntimeDeps) {
     const t = engine.trusted(id);
     const pins=[...Object.values(r.ctx.deliver??{}).map((v:any)=>({id:v.id,n:v.n})),...t.entries.filter(e=>e.record==='coffee-output-v1'&&e.data?.part==='site').map(e=>({id:e.data.artifact,n:e.data.n}))];
     const outputMap=new Map<string,any>();for(const pin of pins){const a=d.m3?.store.get(pin.id),v=d.m3?.store.version(pin.id,pin.n),href=websiteHref(a,v);if(href&&v&&siteIntact(pin.id,pin.n,v))outputMap.set(pin.id,{artifact:pin.id,version:pin.n,href});}
+    // a text output (the startup competition transcript): its signed pin, opened in the review page, only while its bytes still match
+    for(const e of t.entries.filter(e=>e.record==='startup-artifact')){const p=e.data,v=d.m3?.store.version(p?.artifact,p?.version);if(v&&v.sha256===p.sha256&&siteIntact(p.artifact,p.version,v))outputMap.set(p.artifact,{artifact:p.artifact,version:p.version,href:`#/review/${encodeURIComponent(p.artifact)}/${p.version}`,kind:'doc'});}
     // the run page offers "Continue original task…" only to the desktop captain, and only when the engine would make an offer
     const continuable = who?.kind === "desktop" && engine.continuable(id);
     return { ...r, nodes: readinessNodes(r, id=>engine.cards.get(id)), outputs:[...outputMap.values()], continuable, walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };

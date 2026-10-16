@@ -185,19 +185,32 @@ function mountCard(el, card, opts = {}) {
         : h("p", { class: "cc-count" }, T("No visible text changed.", "畫面上的文字沒有改變。")))));
   }
   function linksView(c) {
-    const ls = (Array.isArray(c.links) ? c.links : []).filter((l) => l && typeof l.href === "string" && /^(\/|https?:)/.test(l.href)); if (!ls.length) return null;
-    return h("div", { class: "cc-actions" }, ls.map((l) => h("a", { class: "btn", href: l.href, target: "_blank", rel: "noopener", "data-card-link": l.label }, l.label === "Open website in new tab"?T("Open website in new tab","在新分頁開啟網站"):l.label === "Open the app" ? T("Open the app", "打開 app") : l.label)));
+    const ls = (Array.isArray(c.links) ? c.links : []).filter((l) => l && typeof l.href === "string" && /^(\/|https?:|#\/)/.test(l.href)); if (!ls.length) return null;
+    const inApp = (href) => href.startsWith("#/");
+    return h("div", { class: "cc-actions" }, ls.map((l) => h("a", { class: "btn", href: l.href, target: inApp(l.href) ? null : "_blank", rel: inApp(l.href) ? null : "noopener", "data-card-link": l.label }, l.label === "Open website in new tab"?T("Open website in new tab","在新分頁開啟網站"):l.label === "Open the app" ? T("Open the app", "打開 app") : l.label)));
   }
   function plainView(c) {
     const s = c.sections?.[st.lang] || c.sections?.en; const out = [];
     if (s?.intent) out.push(sec("intent", T("Intent", "意圖"), h("p", { class: "cc-quote" }, s.intent)));
     if (s?.why) out.push(sec("why", T("Why", "為什麼"), h("p", {}, s.why)));
     if (s?.how) out.push(sec("how", T("How", "怎麼做"), h("p", {}, s.how)));
-    const caps = capturesView(c), links = linksView(c);
-    if (caps || links) out.push(sec("before-after", T("Before and after", "改動前後"), caps, links));
+    const caps = capturesView(c), links = linksView(c), ba = typeof s?.beforeAfter === "string" && s.beforeAfter.trim() ? h("p", { "data-before-after": "" }, s.beforeAfter) : null;
+    if (caps || links || ba) out.push(sec("before-after", T("Before and after", "改動前後"), ba, caps, links));
     return out;
   }
 
+  function competitionView(c) {
+    const m = c.competition; if (!m || m.schema !== 1 || !Array.isArray(m.rounds)) return null;
+    const who = (x) => h("span", { class: "cc-chip" }, `${x.provider} · ${x.model}`);
+    return sec("competition", T("The competition, round by round", "比賽全文（逐輪）"),
+      m.rounds.length ? m.rounds.map((r) => h("details", { class: "cc-walk", "data-competition-round": r.round, open: st.opened.has(`round-${r.round}`) || r.round === m.rounds.at(-1).round, ontoggle: (e) => { e.target.open ? st.opened.add(`round-${r.round}`) : st.opened.delete(`round-${r.round}`); } },
+        h("summary", {}, h("b", {}, T(`Round ${r.round}`, `第 ${r.round} 輪`)), r.judge ? h("span", {}, h("span", { class: `cc-chip ${r.judge.verdict === "ready" ? "ok" : "warn"}`, "data-round-verdict": r.judge.verdict ?? "" }, T(`score ${r.judge.score ?? "—"} · ${r.judge.verdict ?? "—"}`, `評分 ${r.judge.score ?? "—"} · 判定 ${r.judge.verdict ?? "—"}`))) : h("span", { class: "cc-chip bad" }, T("no critique", "沒有評審"))),
+        h("div", { style: "padding:8px;display:grid;gap:8px" },
+          r.founder ? h("div", { "data-round-founder": r.round }, h("h5", { style: "margin:0" }, T("Proposal", "提案"), " ", who(r.founder)), r.founder.revision ? h("p", { "data-round-revision": r.round }, h("b", {}, T("Response to the critique: ", "回應上輪銳評：")), r.founder.revision) : null, h("pre", { class: "cc-pre", style: "max-height:420px" }, r.founder.text)) : h("p", { class: "cc-count" }, T("No proposal recorded.", "沒有提案紀錄。")),
+          r.judge ? h("div", { "data-round-judge": r.round }, h("h5", { style: "margin:0" }, T("Critique", "銳評"), " ", who(r.judge)), h("pre", { class: "cc-pre", style: "max-height:420px" }, r.judge.text)) : null)))
+        : h("p", { class: "cc-msg" }, T("No signed round was recorded.", "沒有已簽署的回合紀錄。")),
+      m.artifact ? h("p", { "data-competition-artifact": m.artifact.id }, h("a", { class: "btn", href: m.artifact.href }, T(`Open the full text · ${m.artifact.id} v${m.artifact.version}`, `檢視完整文字 · ${m.artifact.id} v${m.artifact.version}`)), " ", h("span", { class: `cc-chip ${m.artifact.intact ? "ok" : "bad"}` }, m.artifact.intact ? T("pinned, bytes match", "已釘選，內容相符") : T("pinned file changed or missing", "釘選的檔案已變更或遺失"))) : h("p", { class: "cc-msg" }, T("No artifact was pinned.", "沒有釘選產物。")));
+  }
   // Only a complete structured detail uses the merge renderer. Unknown legacy
   // metadata remains plain text; reading history must never require a migration.
   const locOk = x => typeof x === "string" || (!!x && typeof x.en === "string");
@@ -260,7 +273,8 @@ function mountCard(el, card, opts = {}) {
       h("div", { class: "cc-h rt-card-h" }, h("span", { class: "vbadge" }, c.kind), h("b", {}, L(c.title)), c.door ? h("span", { class: `vbadge door-${c.door}` }, c.door) : null, lang),
       opts.inbox ? h("div", { class: "cardmeta cc-meta", "data-scard-meta": c.id }, h("span", { class: "mono" }, c.id), h("a", { href: `#/run/${encodeURIComponent(c.run)}` }, c.run), h("span", {}, c.workflow), h("span", { class: "badge" }, c.node)) : null,
       ...(d ? (d.artifactAcceptance ? artifactDetailView(d, c) : detailView(d, c)) : plainView(c)),
-      body ? (d ? h("details", { class: "cc-sec", open: st.opened.has("#body"), ontoggle: (e) => { e.target.open ? st.opened.add("#body") : st.opened.delete("#body"); } }, h("summary", { class: "cc-count" }, T("Card text", "卡片全文")), h("pre", { class: "cc-pre rt-card-body" }, body)) : h("pre", { class: "cc-pre rt-card-body" }, body)) : null,
+      competitionView(c),
+      body ? (d || c.competition ? h("details", { class: "cc-sec", open: st.opened.has("#body"), ontoggle: (e) => { e.target.open ? st.opened.add("#body") : st.opened.delete("#body"); } }, h("summary", { class: "cc-count" }, T("Card text", "卡片全文")), h("pre", { class: "cc-pre rt-card-body" }, body)) : h("pre", { class: "cc-pre rt-card-body" }, body)) : null,
     ];
     if (open) {
       if (n) kids.push(h("section", { class: "cc-align", "data-align": c.id },

@@ -117,4 +117,40 @@ for(const [name,cfg,params,provider] of [['no configured codex model',(p:string)
   check('each startup round opens in its own scratch folder under data/work, not under data/runs',()=>{a.equal(specs.length,2);for(const s of specs){a(s.cwd.startsWith(join(H.data,'work')+'/'),s.cwd);a(!s.cwd.includes('/runs/'),s.cwd);a.deepEqual(s.writes,[s.cwd]);}a.notEqual(specs[0].cwd,specs[1].cwd);});
  }finally{H.stop();}
 }
+// The live shape end to end: Agents' real run (sandboxed, not sandboxFree) and a stub that calls startup_submit over
+// Studio's tool listener with its round token, as the CLI's MCP bridge (src/mcp.ts) does. The acceptance card must carry
+// the whole competition, the artifact must exist and be pinned, and a round with no submission must fail the run, typed.
+for(const scenario of ['sandboxed-three-rounds','sandboxed-no-submission']){
+ const H=await harness([flow]);const store=new ArtifactStore(H.data);installStartupRecursion(H.engine,{artifacts:store});
+ const listener=Bun.serve({port:0,hostname:'127.0.0.1',async fetch(req){const u=new URL(req.url),t=req.headers.get('x-crew-tool-token')??'';if(u.pathname==='/api/tools')return Response.json(H.agents.toolList(t));let b:any={};try{b=await req.json();}catch{}return Response.json(await H.agents.callTool(t,decodeURIComponent(u.pathname.slice('/api/tools/'.length)),b));}});
+ H.agents.toolUrl=()=>`http://127.0.0.1:${listener.port}`;(H.agents as any).egress={port:1,open(){},close(){}};
+ const said:Record<string,string>={};
+ H.engine.deps.provider=(id='codex',model='fixture-model')=>({id,model,sandboxNeeds:()=>({inProcess:true,hosts:[],reads:[],tmpEnv:[]}),start(_sys:any,tools:any[],ctx:any){a(tools.some(t=>t.name==='startup_submit'));return{interrupt(){},async *send(text:string){
+  const judge=text.includes('Role: judge'),round=Number(/round: (\d)/.exec(text)![1]);
+  if(scenario==='sandboxed-no-submission'&&judge&&round===2){yield{type:'text',text:'I reviewed it but forgot to submit.'};yield{type:'turnEnd',status:'ok'};return;}
+  const payload=judge?{text:`JUDGE-${round}: willingness to pay is still untested; run five paid pilots before any growth spending.`,score:60+round,verdict:'revise'}:{text:`FOUNDER-${round}: research service for independent coffee shops with paid pilot validation and explicit revenue assumptions.`,revision:round===1?'':`REVISION-${round}: answered critique ${round-1} with five paid pilots.`};
+  said[`${judge?'judge':'founder'}-${round}`]=payload.text;
+  yield{type:'toolStart',id:'submit',name:'startup_submit',args:payload};
+  const r=await fetch(`${ctx.studioUrl}/api/tools/startup_submit`,{method:'POST',headers:{'content-type':'application/json','x-crew-tool-token':ctx.token},body:JSON.stringify(payload)});const result=await r.json();a(!result.error,JSON.stringify(result));
+  yield{type:'toolEnd',id:'submit',result:JSON.stringify(result)};yield{type:'turnEnd',status:'ok'};}};} } as any);
+ try{
+  const r=H.engine.start({workflow:'startup-recursion',text:'Fixture only: sandboxed startup competition, live tool path.',params:{founderModel:'fixture-claude',judgeModel:'fixture-codex'}});
+  a(await until(()=>H.engine.cards.list({run:r.id,open:true}).length===1));await H.engine.answer(H.engine.cards.list({run:r.id,open:true})[0].id,{choice:'template',by:'fixture captain'});
+  a(await until(()=>H.engine.cards.list({run:r.id,open:true}).some(c=>c.node==='accept')||['failed','succeeded'].includes(String(H.engine.get(r.id)?.status))),JSON.stringify(H.engine.get(r.id)?.nodes));
+  const jobErrors=[...H.agents.jobs.values()].map(j=>j.error).filter(Boolean);
+  if(scenario==='sandboxed-no-submission'){
+   check('a round that never calls startup_submit fails the run with a typed reason, before any acceptance card',()=>{const run=H.engine.get(r.id)!;a.equal(run.status,'failed',run.status);a(String(run.error).includes('startup_no_submission'),String(run.error));a(!H.engine.cards.list({run:r.id}).some(c=>c.node==='accept'));const f=H.engine.trusted(r.id).entries.filter(e=>e.record==='startup-round-failed');a.equal(f.length,1);a.equal(f[0].data.code,'startup_no_submission');a.equal(f[0].data.role,'judge');a.equal(f[0].data.round,2);a(!H.engine.trusted(r.id).entries.some(e=>e.record==='startup-artifact'));});
+   continue;
+  }
+  const accept=H.engine.cards.list({run:r.id,open:true}).find(c=>c.node==='accept')!;a(accept,JSON.stringify({status:H.engine.get(r.id)?.status,error:H.engine.get(r.id)?.error,jobErrors}));
+  const trust=H.engine.trusted(r.id);a(trust.ok);
+  check('sandboxed live-path rounds all submit through the tool listener and are signed',()=>{a.deepEqual(jobErrors,[]);a.equal(trust.entries.filter(e=>e.record==='startup-round').length,6);a.equal(Object.keys(said).length,6);});
+  check('acceptance card body carries every round: founder proposal, revision and judge critique with score and verdict',()=>{for(const n of [1,2,3]){a(accept.body.includes(said[`founder-${n}`]),`founder ${n} missing: ${accept.body.slice(0,300)}`);a(accept.body.includes(said[`judge-${n}`]),`judge ${n} missing`);a(accept.body.includes(`Score: ${60+n}; verdict: revise`),`score ${n} missing`);}a(accept.body.includes('REVISION-2')&&accept.body.includes('REVISION-3'));});
+  const pin=trust.entries.find(e=>e.record==='startup-artifact')?.data;
+  check('the competition artifact exists, its bytes match the signed pin, and the card links to it',()=>{a(pin,'no startup-artifact pin');const v=store.version(pin.artifact,pin.version)!;a(v);a.equal(v.sha256,pin.sha256);a.deepEqual(store.verify(pin.artifact,pin.version),[]);const text=readFileSync(store.file(pin.artifact,pin.version,'competition.md')!,'utf8');for(const k of Object.keys(said))a(text.includes(said[k]),k);a(accept.links.some(l=>l.href===`#/review/${pin.artifact}/${pin.version}`));});
+  check('the card as the board reads it lists each round with proposal, critique, score and verdict and the pinned artifact',()=>{const v=H.engine.cards.view(accept) as any;const m=v.competition;a(m,'no competition on the card view');a.equal(m.rounds.length,3);for(const x of m.rounds){a.equal(x.founder.text,said[`founder-${x.round}`]);a.equal(x.judge.text,said[`judge-${x.round}`]);a.equal(x.judge.score,60+x.round);a.equal(x.judge.verdict,'revise');}a.equal(m.artifact.id,pin.artifact);a(m.artifact.intact);a.equal(m.artifact.href,`#/review/${pin.artifact}/${pin.version}`);});
+  await H.engine.answer(accept.id,{choice:'accept',by:'fixture captain'});a(await until(()=>H.engine.get(r.id)?.status==='succeeded'));
+  check('captain acceptance approves the exact pinned artifact',()=>a.equal(store.version(pin.artifact,pin.version)?.status,'approved'));
+ }finally{listener.stop(true);H.stop();}
+}
 console.log(`${passed}/0 startup assertions (controlled providers; no live model proof)`);

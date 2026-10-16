@@ -706,7 +706,7 @@ function viewRun(id) {
         v.continuationUncertain?h("button",{class:"btn",type:"button",'data-continuation-read':id,onclick:async()=>{try{const next=await api(`/api/wruns/${id}`);v.r=next;if(next.continuation?.token===v.continuationOffer?.token){v.panel=null;loadRun(v);}else{v.continuationUncertain=false;v.continuationMessage=T("Current state loaded; review before retrying.","已讀取目前狀態，請檢視後再重試。");}rerender();}catch(e){v.continuationMessage=e.message;rerender();}}},T("Read current state","讀取目前狀態")):null,
         h("button",{class:"btn ghost",type:"button",'data-continuation-keep':id,onclick:()=>{v.panel=null;rerender();}},T("Keep closed","保持關閉"))),
       h("div",{class:"bad",role:"status","data-continuation-msg":id},v.continuationMessage||'')):null,
-    r.outputs?.length?h("section",{class:"card x-pad",'data-task-outputs':r.id},h("h3",{},T("Website output","網站產物")),r.outputs.map(o=>h("a",{class:"btn",href:o.href,target:"_blank",rel:"noopener",'data-open-task-website':o.version},T(`Open website in new tab · v${o.version}`,`在新分頁開啟網站 · v${o.version}`)))):null,
+    r.outputs?.length?h("section",{class:"card x-pad",'data-task-outputs':r.id},h("h3",{},r.outputs.every(o=>o.kind==='doc')?T("Output","產物"):T("Website output","網站產物")),r.outputs.map(o=>o.kind==='doc'?h("a",{class:"btn",href:o.href,'data-open-task-doc':o.version},T(`Open the full text · v${o.version}`,`檢視完整文字 · v${o.version}`)):h("a",{class:"btn",href:o.href,target:"_blank",rel:"noopener",'data-open-task-website':o.version},T(`Open website in new tab · v${o.version}`,`在新分頁開啟網站 · v${o.version}`)))):null,
     open.length ? h("div", { class: "rt-open" }, open.map(cardView)) : null,
     graphPanel,
     stepsCard(r),
