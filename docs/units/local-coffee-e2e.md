@@ -57,3 +57,19 @@
 - R-033 was a staffing-recovery task for R-023, not the startup debate. Its activation failed because the pinned readiness recovery was no longer current. Captain explicitly requested deletion; the official API deleted R-033 and SC-057. A subsequent R-023 read also returned 404; its deletion cause is unconfirmed.
 - Startup-recursion template and bounded Claude verification support are pushed (`4bc5390e`, `63486941`); real debate completion remains unverified.
 - Next showcase rehearsal uses a separate empty data directory, preserving existing artifacts as backup. Required evidence: screen recording, screenshots at key transitions, actual revision, final captain acceptance and visible library entry. No fresh-data rehearsal has completed yet.
+
+## R-031 completed after source review and autoplay recovery (2026-10-16)
+
+- User retained the 12-second film and explicitly waived human visual-quality verification. Technical integrity, source checks and final captain approval remain required.
+- Source-review loop fixed: source-only judges no longer demand visual evidence as a prerequisite for reaching the captain card. Signed recovery comments now reach subsequent reviews; full historical evidence remains bounded and retained.
+- Image recovery fixed: complete coffee context has an explicit host-owned image budget; a native fresh-image card recovers the same Task while retaining the current page. Generic image prompt limits remain unchanged.
+- User requested muted autoplay. Native shared-design revision SC-063 -> SC-064 recorded the new plan. Image retry SC-066 recovered production. SC-067 requested the final playback integration correction.
+- Host delays autoplay until reduced-motion preference is checked. Initial HTML has no native autoplay attribute; normal playback is muted, controllable and inline, while reduced-motion uses the poster and explicit opt-in.
+- Final artifact: `coffee-r-031-site` v10. Preview: `http://127.0.0.1:4211/af/coffee-r-031-site/10/index.html`; library: `http://127.0.0.1:4211/#/artifact/coffee-r-031-site`.
+- Current bundle `4ea0383e74fceaea9cdc017877a462213f5d632ccdab956221ddd2a6a1106a09`: bundle-ready, reviewer and designer PASS. SC-068 recorded captain approval with the visual waiver and actual playback evidence.
+- Runtime readback: R-031 succeeded; library and done passed; ledgerOk=true; no open cards. This is a completed historical-task recovery, NOT a fresh-data showcase completion.
+- Real Chrome v10 verification: duration=12, muted=true, autoplay=true, paused=false after entry/visibility, no media error; pause works; reduced-motion resets to paused time=0 with poster and autoplay disabled. Human visual quality remains unverified.
+- Regression evidence: coffee review/recovery (including failed-image recovery and final approval/library), video recovery, image adapter 58/0, film adapter 24/0, film failure 5/0, bounded judge evidence, 390/1440 playback and autoplay browser checks, server build all passed. Image fixture requires CREW_LOCAL_UNRESTRICTED=0; real local jobs remain unrestricted.
+- Rebased onto upstream f1b3c8f6, preserving its readable film text and typed failure diagnostics.
+- Private local evidence: `.tmp/showcase/2026-10-16-preflight/evidence/r031-complete.json`, `r031-autoplay-live.json`, and screenshots.
+- 4210 remains a separate fresh preflight data set; original-source-chat success projection and full fresh-data recording still need verification in the next showcase run.
