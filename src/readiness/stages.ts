@@ -209,6 +209,13 @@ export function contractStage(def: WDef, env: ContractEnv): GateProblem[] {
 }
 
 // ---------- stage 3: briefs ----------
+// Only the in-process renderer can establish source provenance. The displayed
+// brief stays byte-identical to the real job. JSON metadata or a copied notice
+// cannot exempt text, and mutation of the rendered system invalidates the proof.
+const briefSources=new WeakMap<RenderedBrief,{system:string;source:string}>();
+export function sourceBoundBrief<T extends RenderedBrief>(brief:T,source:string):T {
+  briefSources.set(brief,{system:brief.system,source});return brief;
+}
 export const SAFETY_HEAD = "# Studio safety rules";
 const ABS_PATH = /(?<![\w:/.~-])(\/(?:[A-Za-z0-9._@-]+\/)*[A-Za-z0-9._@-]+)/g;
 export function briefStage(def: WDef, briefs: (RenderedBrief & { roleText?: string; skills?: { id: string; body: string }[]; rules?: string; error?: string | null })[], sample: Sample): GateProblem[] {
@@ -226,8 +233,10 @@ export function briefStage(def: WDef, briefs: (RenderedBrief & { roleText?: stri
     const inputs = [sample.text.trim(), ...(((def as any).intents ?? []) as IntentLine[]).filter((l) => ((n as any).serves ?? []).includes(l.n)).map((l) => l.text.trim())].filter(Boolean);
     const missing = inputs.filter((t) => !b.prompt.includes(t));
     if (missing.length) add("brief-no-input", b, `${n.label}: the brief is missing its inputs: ${missing.map((t) => `"${t.slice(0, 60)}"`).join(", ")}.`, `「${n.label}」：簡報缺少輸入：${missing.map((t) => `「${t.slice(0, 60)}」`).join("、")}。`, "The brief must carry the Task input and the intent lines this node serves.", "簡報必須帶有任務輸入與此節點服務的意圖條目。");
-    const paths = [...all.matchAll(ABS_PATH)].map((m) => m[1]).filter((p) => !inside(b.roundDir, p));
-    const rel = /(^|[\s"'`(])data\/runs\//.test(all) ? ["data/runs/"] : [];
+    const bound=briefSources.get(b);
+    const pathText=bound?.system===b.system?`${bound.source}\n${b.prompt}`:all;
+    const paths = [...pathText.matchAll(ABS_PATH)].map((m) => m[1]).filter((p) => !inside(b.roundDir, p));
+    const rel = /(^|[\s"'`(])data\/runs\//.test(pathText) ? ["data/runs/"] : [];
     const bad = [...new Set([...paths, ...rel])];
     if (bad.length) add("brief-path", b, `${n.label}: the brief points outside the round folder: ${bad.slice(0, 4).join(", ")}.`, `「${n.label}」：簡報指向回合資料夾以外的路徑：${bad.slice(0, 4).join("、")}。`, "Refer only to files in the round folder; remove other paths from the role, skills and input.", "只引用回合資料夾內的檔案；從角色、技能與輸入中移除其他路徑。");
   }

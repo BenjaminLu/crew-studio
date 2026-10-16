@@ -3,12 +3,13 @@
 // uses (engine.x → instructions → mode.system / mode.prompt). Nothing here materializes a
 // folder, starts a job or reads a credential.
 import { join } from "node:path";
+import { localExecutionNotice } from "../local-execution";
 import { OperatingRules, jobInstructions } from "../operating-rules";
 import { roundPathRefusal, roundWorkPath } from "../runtime/round-paths";
 import { briefFor } from "../runtime/refine";
 import type { Engine, Run } from "../runtime/engine";
 import type { WDef, WNode } from "../runtime/defs";
-import type { ContractEnv, LoginState, Sample } from "./stages";
+import { sourceBoundBrief, type ContractEnv, type LoginState, type Sample } from "./stages";
 import type { RenderedBrief } from "./types";
 import { ownBrief } from "../workflow-drafts";
 
@@ -54,12 +55,18 @@ export function engineEnv(d: EngineEnvDeps) {
       let roleText = ""; try { roleText = roleRef ? engine.deps.skillText(roleRef) : ""; } catch {}
       // the exact system text a round sends (engine agentTurns → agents.run): safety rules, the captain's operating rules, then the role
       const rules = new OperatingRules(d.dataDir).section(sample.params?.project || null);
-      const system = jobInstructions(mode.system(x, x.skill()), rules);
+      const sourceSystem = mode.system(x, x.skill());
+      const system = jobInstructions(sourceSystem, rules);
       x.rn.data.brief = briefFor(x); x.rn.data.notes = [];
       const prompt = mode.prompt(x);
       const sb = sandboxOf(def, n, sample);
       const skills = (Array.isArray(n.skills) ? n.skills : []).map((p) => { try { return { id: p.id, body: engine.deps.library?.body(p.id, p.v, p.sha256) ?? "" }; } catch { return { id: p.id, body: "\u0000missing" }; } });
-      return { node: n.id, label: n.label, system, prompt, roundDir: sb.cwd ?? sb.writes[0] ?? roundWorkPath(d.dataDir, "round-scratch", "R-GATE", n.id), roleText, skills, rules: rules.text, error: null };
+      // Exempt only the exact suffix jobInstructions appended, never a copied
+      // notice in author text. Keep the rest of the rendered system too: marker
+      // neutralization can normalize Unicode text into a new absolute path.
+      const notice=localExecutionNotice();
+      const pathSystem=notice&&!sourceSystem.includes(notice)&&system.endsWith("\n\n"+notice)?system.slice(0,-notice.length):system;
+      return sourceBoundBrief({ node: n.id, label: n.label, system, prompt, roundDir: sb.cwd ?? sb.writes[0] ?? roundWorkPath(d.dataDir, "round-scratch", "R-GATE", n.id), roleText, skills, rules: rules.text, error: null }, [pathSystem, sourceSystem, rules.text, roleText, ...skills.map(s=>s.body)].join("\n"));
     } catch (e: any) { return { node: n.id, label: n.label, system: "", prompt: "", roundDir: "", roleText: "", skills: [], rules: "", error: String(e?.message ?? e) }; }
   });
   return { contract, briefs, sandboxOf };

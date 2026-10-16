@@ -2,6 +2,7 @@
 // Unsupported covering suites fail explicitly; they are never silently called proved.
 import { basename } from 'node:path';
 const suites: Record<string, { argv: string[]; env?: Record<string,string>; explicitOnly?:boolean }> = {
+  'tests/readiness-local-notice.ts': {argv:['bun','tests/readiness-local-notice.ts'],explicitOnly:true,env:{CREW_TEST_IN_PROCESS:'1'}},
   'tests/code-rescope-preserve.ts': {argv:['bun','tests/code-rescope-preserve.ts'],explicitOnly:true,env:{CREW_TEST_IN_PROCESS:'1'}},
   'tests/pack-genesis-interview.ts': {argv:['bun','tests/pack-genesis-interview.ts'],env:{CREW_TEST_IN_PROCESS:'1'}},
   'tests/pack-genesis-native-ui.mjs': {argv:['bun','tests/pack-genesis-native-ui.mjs'],env:{PG_INTERVIEW_ONLY:'1'},explicitOnly:true},
