@@ -1,6 +1,6 @@
 // 简体中文 UI (unit zh-cn): zh-CN text is the zh-TW text run through opencc-js (pinned,
 // vendored to public/vendor, config twp -> cn); Studio keeps no conversion table of its
-// own. displayCN keeps code, link targets, URLs and paths as written, in linear time,
+// own. displayCN keeps only code and link targets as written, in linear time,
 // without caching a streaming reply's prefixes. The browser language picks the first-run
 // language, server-provided bilingual fields convert, and model inputs keep the language
 // they had.   bun tests/zh-cn.ts
@@ -67,20 +67,14 @@ if (w?.crewI18n) {
   // ---------- display: what stays as written (expected = kept parts + opencc-js on the prose parts) ----------
   // each case: [input, [[piece, prose?]...], name]; the pieces concatenate to the input
   const shown: [string, [string, number][], string][] = [
-    ["我改了src/app.ts的設定，", [["我改了", 1], ["src/app.ts", 0], ["的設定，", 1]], "a path ends at the Han text after it"],
     ["[這份說明](docs/a.md)", [["[這份說明]", 1], ["(docs/a.md)", 0]], "link text converts, its target does not"],
     ["見[設定](docs/設定.md)。", [["見[設定]", 1], ["(docs/設定.md)", 0], ["。", 1]], "a link target with Han stays as written (md()'s href rule)"],
-    ["T-305/T-306兩個任務", [["T-305/T-306", 0], ["兩個任務", 1]], "a slash between task ids does not swallow the Han after it"],
-    ["HTTP/2連線逾時", [["HTTP/2", 0], ["連線逾時", 1]], "HTTP/2 does not swallow the Han after it"],
-    ["看 https://x.tw/a?b=1的設定", [["看 ", 1], ["https://x.tw/a?b=1", 0], ["的設定", 1]], "a URL ends at Han that does not continue it"],
-    ["見 https://github.com/o/r/blob/main/設定.md 的說明", [["見 ", 1], ["https://github.com/o/r/blob/main/設定.md", 0], [" 的說明", 1]], "a URL whose path continues in Han after / stays as written"],
-    ["改 src/設定.ts，然後登入", [["改 ", 1], ["src/設定.ts", 0], ["，然後登入", 1]], "a path whose name is Han stays as written, up to closing punctuation"],
-    ["前端/後端的設定檔案都要改，好嗎", [["前端/後端的設定檔案都要改，好嗎", 1]], "a lone / between Han words is prose: no path, everything converts"],
-    ["開發/測試環境", [["開發/測試環境", 1]], "開發/測試環境 converts on both sides of the slash"],
-    ["讀/寫權限", [["讀/寫權限", 1]], "讀/寫權限 converts on both sides of the slash"],
-    ["見 /設定頁面說明", [["見 /設定頁面說明", 1]], "a slash with no ASCII letter or digit before it protects nothing"],
-    ["改 docs\\設定\\說明.md，然後", [["改 ", 1], ["docs\\設定\\說明.md", 0], ["，然後", 1]], "a Windows-style relative path with Han names stays as written"],
-    ["路徑 C:\\Users\\me\\設定.txt 的設定", [["路徑 ", 1], ["C:\\Users\\me\\設定.txt", 0], [" 的設定", 1]], "a Windows path stays as written"],
+    // bare URLs and paths are prose: only backticks, fences, indented code and link targets are kept
+    ...["我改了src/app.ts的設定，", "T-305/T-306兩個任務", "HTTP/2連線逾時", "看 https://x.tw/a?b=1的設定", "見 https://github.com/o/r/blob/main/設定.md 的說明",
+      "改 src/設定.ts，然後登入", "前端/後端的設定檔案都要改，好嗎", "開發/測試環境", "讀/寫權限", "見 /設定頁面說明", "API/後端的設定要改", "iOS/安卓的設定", "React/後端用 Go 寫",
+      "50%/年的設定", "看 ./設定.md 的說明", "看 ~/設定/a.md 的說明", "路徑 C:\\Users\\me\\設定.txt 的設定", "改 docs\\設定\\說明.md，然後"].map((s): [string, [string, number][], string] => [s, [[s, 1]], `bare text is prose: ${s}`]),
+    // the same paths inside backticks stay byte for byte
+    ...["src/設定.ts", "https://github.com/o/r/blob/main/設定.md", "./設定.md", "~/設定/a.md", "C:\\Users\\me\\設定.txt", "docs\\設定\\說明.md", "前端/後端"].map((p): [string, [string, number][], string] => [`改 \`${p}\` 的設定`, [["改 ", 1], [`\`${p}\``, 0], [" 的設定", 1]], `in backticks it stays as written: ${p}`]),
     ["用 `設定.js` 檔案", [["用 ", 1], ["`設定.js`", 0], [" 檔案", 1]], "inline code stays as written"],
     ["說明：\n```js\n設定 = 1\n```\n然後登入", [["說明：", 1], ["\n```js\n設定 = 1\n```\n", 0], ["然後登入", 1]], "a ``` fence stays as written"],
     ["說明：\n~~~\n設定 = 1\n~~~\n然後登入", [["說明：", 1], ["\n~~~\n設定 = 1\n~~~\n", 0], ["然後登入", 1]], "a ~~~ fence stays as written"],

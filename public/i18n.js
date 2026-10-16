@@ -67,7 +67,7 @@
   const cardLangs = (lang) => [["en", "EN"], lang === "zh-CN" ? ["zh-CN", "简中"] : ["zh-TW", "繁中"]];
 
   // Display-time conversion of a model reply, a log line or a server message (markdown) for 简体中文.
-  // OpenCC converts the prose; these stay exactly as written:
+  // OpenCC converts the prose; only what is explicitly code or a link target stays exactly as written:
   //   - a fenced block: a line starting (after up to 3 spaces) with ``` or ~~~ opens it, a line of the same
   //     character at least as long closes it; a fence that opens and never closes runs to the end of the text;
   //     ``` in the middle of a line opens nothing;
@@ -77,14 +77,9 @@
   //     backtick is plain text);
   //   - a markdown link's target: "](" then 1-300 characters that are not ")" or whitespace, then ")" — the
   //     same rule md() (public/m2.js) uses for an href; the link text converts;
-  //   - a bare URL or path: a run of ASCII URL/path characters that holds "/" or "\". It ends where the ASCII
-  //     ends ("src/app.ts的設定" converts 設定), unless it ends in "/" or "\" with an ASCII letter or digit before
-  //     that slash: then the next segment belongs to the path up to whitespace or closing punctuation
-  //     ("src/設定.ts", "https://x/blob/main/設定.md" stay). A lone "/" or "\" is prose, so 開發/測試 and 見 /設定頁面 convert.
+  // Everything else is prose and goes through OpenCC, bare URLs and paths included: a model puts a path in
+  // backticks, and a Han name in a bare path converting is an accepted display trade-off.
   // Every step is one forward scan: linear in the text.
-  const ASCII_PATH = /[A-Za-z0-9_.~:@%+=&?#!$*\-\/\\]/;
-  const isPathChar = (c) => c < 128 && ASCII_PATH.test(String.fromCharCode(c));
-  const CLOSERS = new Set([..."，。、；：！？）」』”’》〉】,;)]}>\"'`"].map((c) => c.charCodeAt(0)));
   const isSpace = (c) => c === 32 || c === 9 || c === 10 || c === 13 || c === 12 || c === 0x3000;
   /** the [start, end) spans of one prose block that stay as written */
   function keepSpans(t) {
@@ -97,7 +92,7 @@
     for (let r = runs.length - 1; r >= 0; r--) { const k = runs[r][1] + ":" + runs[r][2]; next[r] = seen.get(k) ?? -1; seen.set(k, r); }
     const code = [];
     for (let r = 0; r < runs.length;) { const m = next[r]; if (m >= 0) { code.push([runs[r][0], runs[m][0] + runs[m][1]]); r = m + 1; } else r++; }
-    // outside inline code: link targets and bare URLs / paths
+    // outside inline code: link targets
     let ci = 0;
     for (let i = 0; i < n;) {
       if (ci < code.length && i >= code[ci][0]) { spans.push(code[ci]); i = code[ci][1]; ci++; continue; }
@@ -107,17 +102,6 @@
         while (j < lim) { const d = t.charCodeAt(j); if (d === 41 || isSpace(d)) break; j++; }
         if (j > i + 2 && j < stop && t.charCodeAt(j) === 41) { spans.push([i + 1, j + 1]); i = j + 1; continue; }
         i++; continue;
-      }
-      if (isPathChar(c) && (i === 0 || !isPathChar(t.charCodeAt(i - 1)))) {
-        // named: an ASCII letter or digit comes before the run's last slash ("docs/", "x.tw/", "C:\\a\\"); a lone "/" is not
-        let j = i, slash = false, alnum = false, named = false;
-        while (j < stop && isPathChar(t.charCodeAt(j))) { const d = t.charCodeAt(j); if (d === 47 || d === 92) { slash = true; named = alnum; } else if ((d >= 48 && d <= 57) || ((d | 32) >= 97 && (d | 32) <= 122)) alnum = true; j++; }
-        if (slash) {
-          const last = t.charCodeAt(j - 1);
-          if ((last === 47 || last === 92) && named) while (j < stop) { const d = t.charCodeAt(j); if (isSpace(d) || CLOSERS.has(d)) break; j++; }
-          spans.push([i, j]);
-        }
-        i = j; continue;
       }
       i++;
     }
@@ -129,7 +113,7 @@
     return out + toCN(t.slice(last), o);
   }
   const shown = new Map();
-  /** text shown in 简体中文: converted for display only; code, link targets, URLs and paths stay as written.
+  /** text shown in 简体中文: converted for display only; code and link targets stay as written.
    *  Cached per text, except with live: true (a streaming reply, whose prefixes must not fill the caches). */
   function displayCN(s, o) {
     if (typeof s !== "string" || !s) return s;
