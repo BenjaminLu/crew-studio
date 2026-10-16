@@ -1,13 +1,14 @@
 # Live acceptance: Video. An editor agent drafts film.html, the local renderer makes the MP4,
 # checks and refine run, the captain's acceptance card approves. A missing renderer stops the run.
-schema: 1
+schema: 2
 workflow: video
+pin: { version: 1, sha256: "db7af80433b67b2769d5ceab8fbac05775e7be29ea763fe6ad6853e1613f711f" }   # bun scripts/acceptance/pin.ts video
 topic: "A ten-second title card that says Live acceptance passed, with a short fade in and out."
 start: { provider: null, params: {} }
 providers: []
-approvals: { staffing: false, dispatch: false }
+approvals: { staffing: false }
 cards:
-  - { node: accept, answer: approved, note: "live acceptance: approved to finish the run; quality is judged from the report" }
+  - { node: accept, kind: acceptance, answer: approve-draft, note: "live acceptance: approved to finish the run; quality is judged from the report" }
   - { node: capability, action: stop }
   - { node: escalation, action: stop }
 expect:

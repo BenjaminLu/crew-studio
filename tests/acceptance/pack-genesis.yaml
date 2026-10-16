@@ -1,11 +1,12 @@
 # Live acceptance: Pack genesis. The coordinator interviews in one batch; answering the interview
 # needs the captain's own words, so the run is accepted when it reaches that card.
-schema: 1
+schema: 2
 workflow: pack-genesis
+pin: { version: 1, sha256: "4b19c9fb23bf9127337b7eae4580e5c7b0905bd215346ca5050fc1b1c326f2c9" }   # bun scripts/acceptance/pin.ts pack-genesis
 topic: "A pack that checks every button on a web page has a visible or accessible label."
 start: { provider: null, params: {} }
 providers: []
-approvals: { staffing: false, dispatch: false }
+approvals: { staffing: false }
 cards: []
 expect:
   stop_at: interview-answers

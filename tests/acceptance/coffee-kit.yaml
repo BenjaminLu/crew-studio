@@ -1,12 +1,13 @@
 # Live acceptance: Coffee kit. Starting it needs the captain's discussed design plan and an approved
 # coffee staffing, so it starts only with --params carrying project and coffeeDesignPlan. The
 # direction card confirms paid generation: the run is accepted when it reaches that card.
-schema: 1
+schema: 2
 workflow: coffee-kit
+pin: { version: 1, sha256: "8b5b6d241e0b1553f89fdf14d37e7307d1f1e76e597563ecc737ea76f2f1a2b2" }   # bun scripts/acceptance/pin.ts coffee-kit
 topic: "A small coffee shop's opening week kit."
 start: { provider: null, params: {}, required_params: [project, coffeeDesignPlan] }
 providers: [codex]
-approvals: { staffing: false, dispatch: false }
+approvals: { staffing: false }
 cards: []
 expect:
   stop_at: direction

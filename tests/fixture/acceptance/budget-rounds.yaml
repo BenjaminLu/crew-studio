@@ -1,10 +1,11 @@
 # Offline fixture: documents makes two draft rounds; the budget allows one.
-schema: 1
+schema: 2
 workflow: documents
+pin: { sha256: "63af62fcec510e63d89ab2dc3e746d2485b3e27c96982d6451627ac4bc455bbf" }
 topic: "fixture round budget"
 start: { provider: null, params: {} }
 providers: [stub]
-approvals: { staffing: false, dispatch: false }
+approvals: { staffing: false }
 cards: []
 expect: { status: succeeded, artifacts: [] }
 budget: { wall_minutes: 2, max_rounds: 1 }

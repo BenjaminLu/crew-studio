@@ -1,10 +1,11 @@
 # Offline fixture: the run is accepted when it reaches the hold card; the driver stops there by design.
-schema: 1
+schema: 2
 workflow: accept-wait
+pin: { sha256: "5c176af4bcd70bfbc6773febfe8ce569ce62a2c640ecb89a5a8388fc15d01748" }
 topic: "fixture stop at"
 start: { provider: null, params: {} }
 providers: []
-approvals: { staffing: false, dispatch: false }
+approvals: { staffing: false }
 cards: []
 expect: { stop_at: hold, artifacts: [] }
 budget: { wall_minutes: 2, max_rounds: 5 }

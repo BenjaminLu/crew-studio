@@ -29,8 +29,13 @@ Real models cost money. Run one workflow at a time unless you mean `--all`.
 - **Finds Studio** the way `bun src/main.ts open` does: the registered instance record and its
   session (`src/instance.ts`), matched to `--base` by port. The session goes only into the
   `x-crew-session` header. It is never printed or written.
+- **Checks the definition pin**: the workflow Studio serves must have the sha256 the scenario was
+  reviewed against (`bun scripts/acceptance/pin.ts <id>` prints it). A different definition stops the
+  run before it starts; the run's own definition is checked again before every card.
 - **Checks login state** (GET `/api/doctor`) for every vendor the scenario lists. When the workflow
-  has agent nodes, it also checks the provider the Task will use. A vendor that does not report
+  has agent nodes and the Start form names no provider, Studio picks the vendor at run time (the
+  opposite of the host, then a fallback), so every vendor it may pick, Claude and Codex, must be
+  signed in. A vendor that does not report
   signed in stops the run before any Task starts. When the login cannot be read (the CLI fails, or
   reports neither state), the run also stops, and the message and report say exactly which provider
   and what the Doctor reported. The Studio stub provider is refused: live
@@ -40,13 +45,30 @@ Real models cost money. Run one workflow at a time unless you mean `--all`.
   confirms it only when the scenario allows staffing approvals.
 - **Follows the run** over Studio's event stream (`/api/stream`) and reads the Task
   (`/api/tasks/<id>`) on every change.
-- **Answers captain cards** only when the scenario lists them as safe. Any other card stops the run.
-  Some cards are never answered, whatever the scenario says: merge and promote cards, cards with a
-  remote GitHub target, one-way door confirmations, and nodes named for merge, publish, push, PR,
-  GitHub, deploy or release. Dispatch and staffing approvals are answered only when the scenario
-  allows them. A captain-only card is answered only when its rule says `captain_only: true`.
+- **Answers captain cards from an allowlist** (`scripts/acceptance/scenarios.ts`). A card is
+  answered only when all of these hold; otherwise the run stops:
+  - the run's definition has the scenario's pinned sha256;
+  - a rule names the card's node, its kind and an option the card really offers. Only the kinds
+    `acceptance`, `question` and `plan` can be answered. Dispatch, scope, step-back, round-budget,
+    merge, promote, permission and any new kind are the captain's;
+  - the card has options, and no one-way door on `door`, `detail.door.kind` or `confirmDoor`;
+  - a captain-only card is an exact (workflow, node, kind, option) entry in `CAPTAIN_ONLY_ALLOW`,
+    bound to the same definition hash. Today that is the deliver acceptance cards'
+    `approve-<producer>` options (their artifact goes to the local Library) and the startup
+    competition's two cards;
+  - every node the answer can reach before the next card runs only actions in `LOCAL_ACTIONS`.
+    This includes the card's own node when a hook raised the card. Any other action stops the run:
+    `pr.open`, `remote.ready`, `github.*`, `git.merge`, `firstmate.*`, `fileorg.apply`,
+    `pack-genesis-publish`, and any action not yet reviewed. No names are matched.
 - **Enforces a budget**: a maximum wall time and a maximum number of Rounds. A run over budget is
-  cancelled, so it spends nothing more.
+  cancelled, so it spends nothing more. When the wall time runs out while a card waits for a person
+  (`action: wait`), the run stops instead and the Task is left for the captain.
+- **Never leaves a started Task unreported**: on a transport or script error, the report is still
+  written (verdict ERROR) and the Task is cancelled, retrying while Studio restarts. When a start or
+  answer request got no reply, the report warns that it may have been applied on the server.
+- **Records what really ran**: each node's provider and model come from its Rounds. A hook node that
+  calls a model itself (`image.generate`, `coffee.image`) gets them from the provenance of the
+  artifact it made. A model hook with no such record fails the real-model check.
 - **Writes a report** to `data/acceptance/<date>/<workflow>.md` and `.json` in the target Studio's
   data folder, and prints both paths. A second run on the same day gets `<workflow>-2`.
 
@@ -85,7 +107,7 @@ The JSON file holds the same data for tools.
 | FAIL | 1 | The run ended, but not as expected: wrong status or result, a missing artifact, a Round on a non-real model, or the Task could not start. |
 | STOP | 2 | A card that is not safe to answer, a vendor that is not signed in, missing captain input (`required_params`), or a staffing or dispatch approval the scenario does not allow. |
 | BUDGET | 3 | The wall time or Round budget ran out. The Task was cancelled. |
-| (setup) | 4 | No verified Studio at `--base`, a bad scenario file, or bad arguments. No report is written. |
+| ERROR | 4 | A transport or script error after the scenario loaded. The report is written and a started Task cancelled. A bad scenario file, bad arguments or no verified Studio at `--base` also exit 4, with no report. |
 
 Only PASS counts as an acceptance. A PASS has a completion label:
 
@@ -101,20 +123,20 @@ There is one reviewed file per bundled workflow on the Start form: `tests/accept
 `scripts/acceptance/scenarios.ts` validates them and makes the card decisions.
 
 ```yaml
-schema: 1
+schema: 2
 workflow: documents
+pin: { version: 1, sha256: "<64 hex>" }  # bun scripts/acceptance/pin.ts documents
 topic: "..."                       # the brief after "ACCEPT <date>"
 start:
   provider: null                   # the board's provider select: null (Studio's default), claude, codex
   params: {}                       # only params the board's form for this workflow sends
   required_params: [folder]        # captain input; missing ones STOP before start (pass --params)
 providers: [codex]                 # vendors that must report signed in
-approvals: { staffing: false, dispatch: false }
+approvals: { staffing: false }      # the Start form's staffing table; nothing else
 cards:                             # safe cards; anything else STOPs
-  - { node: accept, answer: approved, note: "..." }
+  - { node: accept, kind: acceptance, answer: approve-draft, note: "..." }
   - { node: hold, action: wait }   # leave it for a person on the board; the run keeps following
   - { node: escalation, action: stop }
-  - { node: choose, answer: template, captain_only: true }
 expect:
   status: succeeded                # or failed / cancelled; or instead: stop_at: <card node>
   result: done                     # optional; a run that ends on a plain hook reports done
@@ -122,7 +144,8 @@ expect:
 budget: { wall_minutes: 30, max_rounds: 14 }
 ```
 
-A file that tries to answer an irreversible or external card is refused when it loads.
+A rule that answers a kind other than acceptance, question or plan is refused when the file loads.
+Whether an answer is safe is decided against the run's definition: see the allowlist above.
 
 ### Shared with the stub-CLI harness
 
@@ -130,7 +153,8 @@ The stub-CLI acceptance harness (branch `workflow-acceptance-20261016`) is meant
 list. When this was written, that branch had not landed, so this format is the first definition.
 The coupling is:
 
-- the harness imports `loadScenario` and `decideCard` from `scripts/acceptance/scenarios.ts`;
+- the harness imports `loadScenario`, `decideCard(scenario, card, def)` and `defHash` from
+  `scripts/acceptance/scenarios.ts`;
 - it answers cards with the same rules;
 - it checks the same `expect`.
 

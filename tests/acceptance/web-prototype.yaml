@@ -1,13 +1,14 @@
 # Live acceptance: Web prototype. Two designer agents draft variants A and B, checks and refine run,
 # the captain's acceptance card approves one, it goes to Studio's own library.
-schema: 1
+schema: 2
 workflow: web-prototype
+pin: { version: 1, sha256: "c3a939ff48c283bc43aff1bede54ff4915758902a9d4587f84651494351ec46c" }   # bun scripts/acceptance/pin.ts web-prototype
 topic: "A single-page status board that lists three tasks with their state and a last-updated time."
 start: { provider: null, params: {} }
 providers: []
-approvals: { staffing: false, dispatch: false }
+approvals: { staffing: false }
 cards:
-  - { node: accept, answer: approved, note: "live acceptance: approved to finish the run; quality is judged from the report" }
+  - { node: accept, kind: acceptance, answer: approve-design-a, note: "live acceptance: approved to finish the run; quality is judged from the report" }
   - { node: capability, action: stop }
   - { node: escalation, action: stop }
 expect:

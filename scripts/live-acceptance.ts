@@ -16,13 +16,13 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { discoverInstance } from "../src/instance";
-import { decideCard, loadScenario, type Scenario } from "./acceptance/scenarios";
+import { decideCard, defHash, loadScenario, type Scenario } from "./acceptance/scenarios";
+import { modelProblems, nodeRecords, REAL } from "./acceptance/report";
 
 const REPO = resolve(import.meta.dir, "..");
 const EXIT = { PASS: 0, FAIL: 1, STOP: 2, BUDGET: 3, ERROR: 4 } as const;
 type Verdict = keyof typeof EXIT;
 const TERMINAL = new Set(["succeeded", "failed", "cancelled"]);
-const REAL = new Set(["claude", "codex"]);
 
 // ---------- arguments ----------
 type Args = { workflows: string[]; all: boolean; base: string; topic: string | null; params: string | null; maxMinutes: number | null; maxRounds: number | null; scenario: string | null; scenarios: string; offline: boolean };
@@ -82,42 +82,20 @@ class Studio {
 }
 
 // ---------- one workflow ----------
-type NodeRecord = { node: string; label: string; kind: string; status: string; outcome: string; provider: string | null; model: string | null; rounds: number; durationSeconds: number | null; log: string; firstError: string | null };
 type CardRecord = { id: string; node: string; kind: string; decision: string; answered: string | null; reason: string | null; at: string };
 
-function outcomeClass(roundOutcome: string | null, nodeState: string): string {
-  const o = nodeState === "error" ? "error" : roundOutcome ?? nodeState;
-  if (o === "passed" || o === "chosen") return "pass";
-  if (o === "failed") return "fail";
-  if (o === "error") return "error";
-  if (["interrupted", "superseded", "swapped"].includes(o)) return "interrupted";
-  if (o === "skipped") return "skipped";
-  if (o === "running" || o === "waiting") return "incomplete";
-  return "not-reached";
-}
-const seconds = (a: string | null, b: string | null) => a ? Math.max(0, ((b ? Date.parse(b) : Date.now()) - Date.parse(a)) / 1000) : null;
-
-function nodeRecords(st: Studio, view: any): NodeRecord[] {
-  const runLink = `${st.base}/#/run/${view.id}`;
-  return (view.def?.nodes ?? []).map((n: any) => {
-    const rn = view.nodes?.[n.id] ?? {}; const rounds = (view.rounds ?? []).filter((r: any) => r.node === n.id);
-    const last = rounds.at(-1) ?? null; const errored = rounds.find((r: any) => r.reason) ?? null; const agent = [...rounds].reverse().find((r: any) => r.actor?.kind === "agent") ?? null;
-    let duration: number | null = null;
-    if (rounds.length) duration = rounds.reduce((s: number, r: any) => s + (seconds(r.startedAt, r.endedAt) ?? 0), 0);
-    else if (rn.startedAt) duration = seconds(rn.startedAt, rn.endedAt);
-    const transcript = errored?.transcript ?? agent?.transcript ?? null;
-    return { node: n.id, label: n.label ?? n.id, kind: n.kind, status: rn.state ?? "pending", outcome: outcomeClass(last?.outcome ?? null, rn.state ?? "pending"),
-      provider: agent?.actor?.provider ?? rn.agent?.provider ?? null, model: agent?.actor?.model ?? rn.agent?.model ?? null, rounds: rounds.length,
-      durationSeconds: duration === null ? null : Math.round(duration * 10) / 10, log: transcript ? `${st.base}/${transcript}` : runLink,
-      firstError: errored?.reason?.en ?? rn.error ?? null };
-  });
-}
-
 async function providersReady(st: Studio, s: Scenario, def: any, offline: boolean): Promise<{ checked: { provider: string; state: string }[]; stop: string | null }> {
+  // Which vendor runs an agent round is Studio's choice at run time (src/providers/policy.ts: the
+  // opposite of the host, then a configured fallback), not the chat setting. Unless the Start form
+  // names a provider, every vendor the workflow can use must be signed in; the report then records
+  // the provider/model each round really used.
   const required = new Set(s.providers);
-  if ((def?.nodes ?? []).some((n: any) => n.kind === "agent")) {
-    const settings = await st.get("/api/settings"); const p = s.start.provider ?? settings.body?.provider;
-    if (typeof p === "string") required.add(p);
+  const agents = (def?.nodes ?? []).filter((n: any) => n.kind === "agent");
+  for (const n of agents) if (typeof n.provider === "string") required.add(n.provider);
+  if (agents.some((n: any) => typeof n.provider !== "string")) {
+    if (s.start.provider) required.add(s.start.provider);
+    else if (offline && (await st.get("/api/settings")).body?.provider === "stub") required.add("stub");
+    else { required.add("claude"); required.add("codex"); }
   }
   const checked: { provider: string; state: string }[] = []; const missing: string[] = [];
   let items: any[] | null = null;
@@ -142,25 +120,31 @@ async function runOne(st: Studio, s: Scenario, a: Args, date: string) {
   const t0 = Date.now(), startedAt = new Date().toISOString();
   const wallMinutes = a.maxMinutes ?? s.budget.wall_minutes, maxRounds = a.maxRounds ?? s.budget.max_rounds;
   const topic = a.topic ?? s.topic, text = `ACCEPT ${date} ${topic}`;
+  const report: any = { schema: 1, verdict: null, offlineFixture: a.offline, workflow: s.workflow, version: null, scenario: s.file ? s.file.replace(REPO + "/", "") : null, base: st.base, date, startedAt, endedAt: null, wallSeconds: null,
+    topic, start: null as any, staffing: null, providers: [], task: null, run: null, nodes: [], cards: [] as CardRecord[], stop: null, budget: { wall_minutes: wallMinutes, max_rounds: maxRounds, rounds: 0, exceeded: null, cancelled: false },
+    usedProviders: [] as string[], expect: s.expect, pin: { sha256: s.pin.sha256, seen: null as string | null }, error: null as string | null, cancel: null as any, completion: null as string | null, library: [] as any[], problems: [] as string[], sse: { events: 0, reconnects: 0 } };
+  const finish = (v: Verdict) => { report.verdict = v; report.endedAt = new Date().toISOString(); report.wallSeconds = Math.round((Date.now() - t0) / 100) / 10; return report; };
+  const stopWith = (reason: string, card: string | null = null) => { report.stop = { reason, card }; return finish("STOP"); };
+  // what the error path needs to know: a started Task, a request whose reply never came
+  const live = { id: null as string | null, starting: false, answering: null as string | null, terminal: false };
+
+  const steps = async () => {
   const extra: Record<string, string> = a.params ? JSON.parse(readFileSync(a.params, "utf8")) : {};
   const params: Record<string, string> = { ...(s.start.provider ? { provider: s.start.provider } : {}), ...s.start.params, ...extra };
   const body: any = { text, workflow: s.workflow, params };
-  const report: any = { schema: 1, verdict: null, offlineFixture: a.offline, workflow: s.workflow, version: null, scenario: s.file ? s.file.replace(REPO + "/", "") : null, base: st.base, date, startedAt, endedAt: null, wallSeconds: null,
-    topic, start: body, staffing: null, providers: [], task: null, run: null, nodes: [], cards: [] as CardRecord[], stop: null, budget: { wall_minutes: wallMinutes, max_rounds: maxRounds, rounds: 0, exceeded: null, cancelled: false },
-    expect: s.expect, completion: null as string | null, library: [] as any[], problems: [] as string[], sse: { events: 0, reconnects: 0 } };
-  const finish = (v: Verdict) => { report.verdict = v; report.endedAt = new Date().toISOString(); report.wallSeconds = Math.round((Date.now() - t0) / 100) / 10; return report; };
-  const stopWith = (reason: string, card: string | null = null) => { report.stop = { reason, card }; return finish("STOP"); };
-
+  report.start = body;
   const wf = await st.get(`/api/wf/${s.workflow}`);
   if (wf.status !== 200 || !wf.body?.def) return stopWith(`workflow ${s.workflow} is not on this Studio (${wf.status})`);
   if (wf.body.selectable === false) return stopWith(`workflow ${s.workflow} is internal or retired: the board cannot start it`);
-  report.version = wf.body.def.version;
+  report.version = wf.body.def.version; report.pin.seen = defHash(wf.body.def);
+  if (report.pin.seen !== s.pin.sha256) return stopWith(`${s.workflow} v${wf.body.def.version} on this Studio has definition sha256 ${report.pin.seen}, not the ${s.pin.sha256} this scenario was reviewed against; re-review the scenario (bun scripts/acceptance/pin.ts ${s.workflow})`);
   const missingParams = (s.start.required_params ?? []).filter((p) => !params[p]);
   if (missingParams.length) return stopWith(`this workflow needs captain input before it can start: ${missingParams.join(", ")}. Pass them with --params <file.json>`);
   const ready = await providersReady(st, s, wf.body.def, a.offline); report.providers = ready.checked;
   if (ready.stop) return stopWith(ready.stop);
 
   // start the Task exactly as the board's Start form does (public/runtime.js startOwnRun)
+  live.starting = true;
   let started = await st.post("/api/wruns", body);
   if (started.status === 409 && started.body?.code === "staffing_confirmation_required") {
     const plan = started.body.staffing;
@@ -168,12 +152,13 @@ async function runOne(st: Studio, s: Scenario, a: Args, date: string) {
     report.staffing = { approved: plan.hash, plan: plan.plan };
     started = await st.post("/api/wruns", { ...body, staffingConfirm: plan.hash });
   }
+  live.starting = false;
   if (started.status !== 200 || !started.body?.id) {
     const code = started.body?.code ?? null, err = String(started.body?.error ?? started.body).slice(0, 500);
     if (["staffing_incomplete", "coffee-staffing-required", "staffing_confirmation_required"].includes(code)) return stopWith(`the Task cannot start until the captain confirms staffing: ${err}`);
     report.problems.push(`start refused (${started.status}${code ? ` ${code}` : ""}): ${err}`); return finish("FAIL");
   }
-  const id: string = started.body.id;
+  const id: string = started.body.id; live.id = id;
   report.task = { id, href: `${st.base}/#/run/${id}` };
   console.log(st.scrub(`${s.workflow}: started ${id} (${report.task.href})`));
 
@@ -184,18 +169,26 @@ async function runOne(st: Studio, s: Scenario, a: Args, date: string) {
   try {
     for (;;) {
       const r = await st.get(`/api/tasks/${id}`); if (r.status !== 200) { report.problems.push(`could not read ${id}: ${r.status}`); break; }
-      view = r.body; report.budget.rounds = (view.rounds ?? []).length;
+      view = r.body; live.terminal = TERMINAL.has(view.status); report.budget.rounds = (view.rounds ?? []).length;
       if (report.budget.rounds > maxRounds) { report.budget.exceeded = `rounds: ${report.budget.rounds} > ${maxRounds}`; break; }
-      if (Date.now() - t0 > wallMinutes * 60_000) { report.budget.exceeded = `wall time: over ${wallMinutes} min`; break; }
+      if (Date.now() - t0 > wallMinutes * 60_000) {
+        // a card left for a person is never cancelled under them: the Task stays for the captain
+        const waiting = (view.cards ?? []).find((c: any) => c.status === "open" && handled.get(c.id)?.decision === "wait");
+        if (waiting) report.stop = { reason: `the wall budget (${wallMinutes} min) ran out while ${waiting.id} (${waiting.node}) waits for a person; the Task is left for the captain, not cancelled`, card: waiting.id };
+        else report.budget.exceeded = `wall time: over ${wallMinutes} min`;
+        break;
+      }
       if (TERMINAL.has(view.status)) break;
       for (const c of (view.cards ?? []).filter((c: any) => c.status === "open")) {
         if (handled.has(c.id)) continue; // answered or left for a person: never answered twice
         if (s.expect.stop_at && c.node === s.expect.stop_at) { stoppedAt = c.node; handled.set(c.id, { id: c.id, node: c.node, kind: c.kind, decision: "expected stop", answered: null, reason: `reached ${c.node} as expected`, at: new Date().toISOString() }); break; }
-        const d = decideCard(s, c);
+        const d = decideCard(s, c, view.def);
         if (d.action === "stop") { handled.set(c.id, { id: c.id, node: c.node, kind: c.kind, decision: "stop", answered: null, reason: d.reason, at: new Date().toISOString() }); report.stop = { reason: d.reason, card: c.id }; break; }
         if (d.action === "wait") { handled.set(c.id, { id: c.id, node: c.node, kind: c.kind, decision: "wait", answered: null, reason: "left for a person on the board", at: new Date().toISOString() }); continue; }
+        live.answering = c.id;
         const ans = await st.post(`/api/scards/${c.id}/answer`, { choice: d.choice, note: d.note });
-        if (ans.status === 200) { handled.set(c.id, { id: c.id, node: c.node, kind: c.kind, decision: "answered", answered: d.choice, reason: null, at: new Date().toISOString() }); console.log(`${s.workflow}: answered ${c.id} (${c.node}) with ${d.choice}`); continue; }
+        live.answering = null;
+        if (ans.status === 200) { handled.set(c.id, { id: c.id, node: c.node, kind: c.kind, decision: "answered", answered: d.choice, reason: null, at: new Date().toISOString() }); console.log(st.scrub(`${s.workflow}: answered ${c.id} (${c.node}) with ${d.choice}`)); continue; }
         const err = String(ans.body?.error ?? ans.body).slice(0, 300);
         if (/still being raised|preparation is still running/.test(err)) continue; // the card is not ready yet: try again on the next pass
         report.stop = { reason: `answering ${c.id} with ${d.choice} was refused: ${err}`, card: c.id }; handled.set(c.id, { id: c.id, node: c.node, kind: c.kind, decision: "refused", answered: null, reason: err, at: new Date().toISOString() }); break;
@@ -207,18 +200,25 @@ async function runOne(st: Studio, s: Scenario, a: Args, date: string) {
   } finally { stream.stop(); report.sse = { ...stream.stats }; }
 
   if (report.budget.exceeded && view && !TERMINAL.has(view.status)) {
-    const c = await st.post(`/api/wruns/${id}/cancel`, { reason: `live acceptance budget exceeded: ${report.budget.exceeded}` });
-    report.budget.cancelled = c.status === 200;
+    report.cancel = await cancelTask(st, id, `live acceptance budget exceeded: ${report.budget.exceeded}`);
+    report.budget.cancelled = report.cancel.cancelled;
   }
   const final = await st.get(`/api/tasks/${id}`); if (final.status === 200) view = final.body;
   report.cards = [...handled.values()];
   if (view) {
     report.task = { ...report.task, status: view.status, result: view.result ?? null, rounds: (view.rounds ?? []).length };
     report.run = { status: view.status, result: view.result ?? null, error: view.error ?? null, endedAt: view.endedAt ?? null, outputs: (view.outputs ?? []).map((o: any) => o.href) };
-    report.nodes = nodeRecords(st, view);
+    // the provenance of each delivered artifact version: who made it, for hook nodes that call a model themselves
+    const artifacts = new Map<string, any[]>();
+    for (const pin of Object.values<any>(view.ctx?.deliver ?? {})) if (pin?.id && !artifacts.has(pin.id)) { const g = await st.get(`/api/artifacts/${encodeURIComponent(pin.id)}`); if (g.status === 200) artifacts.set(pin.id, g.body?.versions ?? []); }
+    report.nodes = nodeRecords(st.base, view, artifacts);
     // an ACCEPT Task's approved artifact lands in Studio's own local Library: the report marks it as an acceptance-run item
     const lib = view.ctx?.library; if (lib?.artifact) report.library.push({ artifact: lib.artifact, version: lib.version ?? null, href: lib.href ? `${st.base}/${lib.href}` : null, label: "acceptance run", task: id });
-    if (!a.offline) for (const n of report.nodes) if (n.kind === "agent" && n.rounds && n.provider && !REAL.has(n.provider)) report.problems.push(`${n.node} ran on ${n.provider}, not a real model`);
+    report.problems.push(...modelProblems(report.nodes, a.offline));
+    // what really ran, from the run's own rounds, next to what was checked before the start
+    report.usedProviders = [...new Set([...(view.rounds ?? []).filter((r: any) => r.actor?.kind === "agent" && r.actor.provider).map((r: any) => `${r.actor.provider}/${r.actor.model ?? "?"}`),
+      ...report.nodes.filter((n: any) => n.source === "artifact" && n.provider).map((n: any) => `${n.provider}/${n.model ?? "?"}`)])];
+    for (const u of report.usedProviders) if (!report.providers.some((p: any) => p.provider === u.split("/")[0])) report.problems.push(`a round ran on ${u}, whose login was not checked before the start`);
   }
   if (report.stop) return finish("STOP");
   if (report.budget.exceeded) return finish("BUDGET");
@@ -236,6 +236,34 @@ async function runOne(st: Studio, s: Scenario, a: Args, date: string) {
   }
   if (!report.problems.length) report.completion = e.stop_at ? `reached ${e.stop_at}, stopped by design` : "complete";
   return finish(report.problems.length ? "FAIL" : "PASS");
+  };
+
+  try { return await steps(); }
+  catch (err: any) {
+    // a transport or script error: never leave a started Task running unreported
+    const msg = st.scrub(String(err?.message ?? err)).slice(0, 1000);
+    report.error = msg; report.problems.push(`error: ${msg}`);
+    if (live.starting && !live.id) report.problems.push("the start request got no reply: a Task may have been created anyway; check the board for one with this ACCEPT brief");
+    if (live.answering) report.problems.push(`the answer to ${live.answering} got no reply: it may have been applied on the server; check the card on the board`);
+    if (live.id && !live.terminal) report.cancel = await cancelTask(st, live.id, `live acceptance stopped on an error: ${msg.slice(0, 200)}`);
+    if (live.id) report.task = { ...(report.task ?? { id: live.id, href: `${st.base}/#/run/${live.id}` }) };
+    return finish("ERROR");
+  }
+}
+
+/** Cancel a Task, retrying for a while: the error that led here may be a Studio restart. */
+async function cancelTask(st: Studio, id: string, reason: string, tries = 15) {
+  let last = "";
+  for (let i = 0; i < tries; i++) {
+    try {
+      const c = await st.post(`/api/wruns/${id}/cancel`, { reason });
+      if (c.status === 200) return { cancelled: true, attempts: i + 1, error: null };
+      last = `${c.status} ${st.scrub(String(c.body?.error ?? c.body)).slice(0, 300)}`;
+      if (c.status !== 404 && c.status < 500) break; // refused for a reason (already ended): retrying will not help
+    } catch (e: any) { last = st.scrub(String(e?.message ?? e)).slice(0, 300); }
+    await sleep(2000);
+  }
+  return { cancelled: false, attempts: tries, error: last };
 }
 
 // ---------- the report ----------
@@ -243,21 +271,24 @@ function markdown(r: any): string {
   const L: string[] = [];
   L.push(`# Live acceptance: ${r.workflow} — ${r.verdict}${r.completion && r.completion !== "complete" ? ` (${r.completion}; not complete)` : ""}`, "");
   if (r.offlineFixture) L.push("> OFFLINE FIXTURE run (stub providers). It never counts as a live acceptance.", "");
-  L.push(`- Studio: ${r.base}`, `- Scenario: ${r.scenario ?? "inline"}`, `- Workflow version: ${r.version ?? "unknown"}`, `- Started: ${r.startedAt}  Ended: ${r.endedAt}  Wall: ${r.wallSeconds} s`,
+  L.push(`- Studio: ${r.base}`, `- Scenario: ${r.scenario ?? "inline"}`, `- Workflow version: ${r.version ?? "unknown"}, definition sha256 ${r.pin?.seen ?? "not read"} (scenario pins ${r.pin?.sha256})`, `- Started: ${r.startedAt}  Ended: ${r.endedAt}  Wall: ${r.wallSeconds} s`,
     `- Task: ${r.task ? `[${r.task.id}](${r.task.href}) — ${r.task.status ?? "not read"}${r.task.result ? ` (${r.task.result})` : ""}, ${r.task.rounds ?? 0} rounds` : "none started"}`,
-    `- Brief: ${r.start.text}`, `- Start body: \`${JSON.stringify(r.start)}\``,
-    `- Providers: ${r.providers.map((p: any) => `${p.provider} ${p.state}${p.doctor ? ` (${p.doctor})` : ""}`).join(", ") || "none needed"}`,
+    `- Brief: ${r.start?.text ?? "not sent"}`, `- Start body: \`${JSON.stringify(r.start)}\``,
+    `- Used by the run (per round): ${(r.usedProviders ?? []).join(", ") || "no agent round"}`,
+    `- Login checked before start: ${r.providers.map((p: any) => `${p.provider} ${p.state}${p.doctor ? ` (${p.doctor})` : ""}`).join(", ") || "none needed"}`,
     `- Completion: ${r.completion ?? "—"}`,
     `- Budget: ${r.budget.rounds}/${r.budget.max_rounds} rounds, ${r.budget.wall_minutes} min${r.budget.exceeded ? ` — EXCEEDED (${r.budget.exceeded})${r.budget.cancelled ? ", Task cancelled" : ""}` : ""}`,
     `- Event stream: ${r.sse.events} events, ${r.sse.reconnects} reconnects`, "");
   if (r.stop) L.push("## STOP", "", r.stop.reason, "", `Card: ${r.stop.card ?? "none"}`, "");
+  if (r.error) L.push("## Error", "", "```", r.error, "```", "");
+  if (r.cancel) L.push(`Cancel: ${r.cancel.cancelled ? `Task cancelled (attempt ${r.cancel.attempts})` : `NOT cancelled: ${r.cancel.error}`}`, "");
   if (r.run?.error) L.push("## Run error", "", "```", r.run.error, "```", "");
   if (r.problems.length) L.push("## Unmet expectations", "", ...r.problems.map((p: string) => `- ${p}`), "");
   if (r.staffing) L.push("## Staffing approved by the scenario", "", ...r.staffing.plan.map((p: any) => `- ${p.node}: ${p.provider} ${p.model ?? ""} ${p.effort ?? ""}`), "");
   const reached = r.nodes.filter((n: any) => n.outcome !== "not-reached");
   if (reached.length) {
     L.push("## Nodes", "", "| Node | Status | Outcome | Provider / model | Rounds | Duration | Log | First error |", "|---|---|---|---|---|---|---|---|");
-    for (const n of reached) L.push(`| ${n.label} (\`${n.node}\`) | ${n.status} | ${n.outcome} | ${n.provider ? `${n.provider} / ${n.model ?? "?"}` : "—"} | ${n.rounds} | ${n.durationSeconds ?? "—"} s | [log](${n.log}) | ${n.firstError ? "`" + n.firstError.replace(/\|/g, "\\|").replace(/\n/g, " ") + "`" : "—"} |`);
+    for (const n of reached) L.push(`| ${n.label} (\`${n.node}\`) | ${n.status} | ${n.outcome} | ${n.provider ? `${n.provider} / ${n.model ?? "?"}${n.source === "artifact" ? " (artifact record)" : ""}` : "—"} | ${n.rounds} | ${n.durationSeconds ?? "—"} s | [log](${n.log}) | ${n.firstError ? "`" + n.firstError.replace(/\|/g, "\\|").replace(/\n/g, " ") + "`" : "—"} |`);
     L.push("");
   }
   const not = r.nodes.filter((n: any) => n.outcome === "not-reached").map((n: any) => n.node);
@@ -279,6 +310,7 @@ function writeReport(st: Studio, r: any) {
 }
 
 // ---------- main ----------
+let scrubOut = (t: string) => t;
 async function main() {
   let a: Args; try { a = parseArgs(process.argv.slice(2)); } catch (e: any) { console.error(`live-acceptance: ${e.message}`); return EXIT.ERROR; }
   const files: string[] = [];
@@ -291,7 +323,7 @@ async function main() {
   process.env.CREW_PORT = new URL(a.base).port;
   let inst; try { inst = await discoverInstance(); } catch (e: any) { console.error(`live-acceptance: ${String(e?.message ?? e)}`); return EXIT.ERROR; }
   if (!inst || inst.origin !== a.base) { console.error(`live-acceptance: No verified running Studio at ${a.base}. Start it (bun run launch), or pass --base for the instance you mean. No session was created or printed.`); return EXIT.ERROR; }
-  const st = new Studio(inst.origin, inst.token, inst.data); inst = null;
+  const st = new Studio(inst.origin, inst.token, inst.data); scrubOut = (t) => st.scrub(t); inst = null;
   const date = localDate(); let worst = 0;
   for (const s of scenarios) {
     let r: any;
@@ -305,4 +337,5 @@ async function main() {
   }
   return worst;
 }
-process.exit(await main());
+// the last guard: whatever escapes is printed scrubbed, never with the session
+main().then((code) => process.exit(code), (e) => { console.error(scrubOut(`live-acceptance: ${String(e?.stack ?? e?.message ?? e)}`)); process.exit(EXIT.ERROR); });

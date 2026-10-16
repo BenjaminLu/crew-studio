@@ -1,12 +1,13 @@
 # Offline fixture: a card-only workflow the test seeds; one safe card, ends succeeded.
-schema: 1
+schema: 2
 workflow: accept-pass
+pin: { sha256: "00a9d42aadc0878faa08944a556ff0c872b3fe63de1dab6dd052cee88c0609a3" }
 topic: "fixture pass"
 start: { provider: null, params: {} }
 providers: [codex]
-approvals: { staffing: false, dispatch: false }
+approvals: { staffing: false }
 cards:
-  - { node: ask, answer: continue, note: "acceptance fixture answer" }
+  - { node: ask, kind: question, answer: continue, note: "acceptance fixture answer" }
 expect:
   status: succeeded
   result: done

@@ -1,16 +1,19 @@
 # Live acceptance: Startup competition. Claude founder and Codex judge, up to three rounds each.
-# Both cards are captain-only; this scenario allows the driver to answer them.
-schema: 1
+# Both cards are captain-only; CAPTAIN_ONLY_ALLOW in scripts/acceptance/scenarios.ts lists them at this pin.
+schema: 2
 workflow: startup-recursion
+pin: { version: 1, sha256: "901c2e519c16c49348945b0283c3c7236c11f2c7079d3e5f01be8f1e3e694a29" }   # bun scripts/acceptance/pin.ts startup-recursion
 topic: "A service that turns a team's meeting notes into a weekly risk list."
 start: { provider: null, params: {} }
 providers: [claude, codex]
-approvals: { staffing: false, dispatch: false }
+approvals: { staffing: false }
 cards:
-  - { node: choose, answer: template, captain_only: true, note: "live acceptance: run the bundled template" }
-  - { node: accept, answer: accept, captain_only: true, note: "live acceptance: accepted to finish the run; quality is judged from the report" }
+  - { node: choose, kind: question, answer: template, note: "live acceptance: run the bundled template" }
+  - { node: accept, kind: acceptance, answer: accept, note: "live acceptance: accepted to finish the run; quality is judged from the report" }
 expect:
   status: succeeded
   result: done
+  # PENDING(startup-output-fix-20261016): once that fix is on main, assert the competition text:
+  # artifacts: [{ file: startup-output/competition.md }]
   artifacts: []
 budget: { wall_minutes: 40, max_rounds: 10 }

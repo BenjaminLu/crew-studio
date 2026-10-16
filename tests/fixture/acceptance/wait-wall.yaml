@@ -1,0 +1,13 @@
+# Offline fixture: the card is left for a person; when the wall budget runs out the driver stops and
+# leaves the Task for the captain instead of cancelling it.
+schema: 2
+workflow: accept-wait
+pin: { sha256: "5c176af4bcd70bfbc6773febfe8ce569ce62a2c640ecb89a5a8388fc15d01748" }
+topic: "fixture wait wall"
+start: { provider: null, params: {} }
+providers: []
+approvals: { staffing: false }
+cards:
+  - { node: hold, action: wait }
+expect: { status: succeeded, artifacts: [] }
+budget: { wall_minutes: 0.05, max_rounds: 5 }

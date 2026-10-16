@@ -1,11 +1,12 @@
-# Offline fixture: the card is left for a person; the wall budget runs out first.
-schema: 1
-workflow: accept-wait
-topic: "fixture wall budget"
+# Offline fixture: the stub provider never answers a brief with STUB_TIMEOUT, so the draft round runs
+# on; the wall budget runs out and the Task is cancelled.
+schema: 2
+workflow: documents
+pin: { sha256: "63af62fcec510e63d89ab2dc3e746d2485b3e27c96982d6451627ac4bc455bbf" }
+topic: "fixture wall budget STUB_TIMEOUT"
 start: { provider: null, params: {} }
-providers: []
-approvals: { staffing: false, dispatch: false }
-cards:
-  - { node: hold, action: wait }
+providers: [stub]
+approvals: { staffing: false }
+cards: []
 expect: { status: succeeded, artifacts: [] }
 budget: { wall_minutes: 0.05, max_rounds: 5 }

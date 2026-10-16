@@ -1,12 +1,13 @@
 # Live acceptance: Images. One Codex image generation, checks, the captain's acceptance card, library.
-schema: 1
+schema: 2
 workflow: images
+pin: { version: 1, sha256: "1105379109c7470bf5f9d194f32b3d3c34c5e6379cdeb8f0784f4d3b388e47bb" }   # bun scripts/acceptance/pin.ts images
 topic: "A flat, friendly illustration of a small crew of robots reviewing a checklist, square, light background."
 start: { provider: null, params: {} }
 providers: [codex]                      # image.generate always uses the configured Codex image model
-approvals: { staffing: false, dispatch: false }
+approvals: { staffing: false }
 cards:
-  - { node: accept, answer: approved, note: "live acceptance: approved to finish the run; quality is judged from the report" }
+  - { node: accept, kind: acceptance, answer: approve-draft, note: "live acceptance: approved to finish the run; quality is judged from the report" }
 expect:
   status: succeeded
   result: done
