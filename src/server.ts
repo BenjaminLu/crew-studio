@@ -2,6 +2,7 @@ import {imageOutcomeProof} from "./domain/image-proof";
 import {localExecutionNotice} from "./local-execution";
 import {NativeOutcomes} from "./host/native-outcomes";
 import {coffeeJourneyProof} from "./domain/coffee-kit";
+import {ClaudeLogin} from './host/claude-login';
 import {discoverCoffeeFilmCapability,renderCoffeeFilm} from "./render/coffee-film";
 import {publishGeneratedImage} from "./host/generated-media";
 import {createNativeProviderAdmission} from "./providers/native-admission";
@@ -176,7 +177,8 @@ const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STA
 main.onView = (v) => send("main", v);
 main.onEvent = (e: HostEvent) => { if (e.type === "delta" || e.type === "toolStart" || e.type === "permissionRequest" || e.type === "turnStart") send("mainEvent", e); };
 const codexAccount=new CodexAccount({cwd:PROJECT,busy:()=>main.view().state!=="detached",configured:()=>{const c=codexConfig(PROJECT);return{model:c.model,effort:c.effort};},changed:()=>send("codex-account",codexAccount.view())});
-for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{void Promise.all([codexAccount.shutdown(),nativeClaude.cancel()]).then(()=>process.exit(0),()=>process.exit(1));});
+const claudeLogin=new ClaudeLogin({loginMs:Number(process.env.CREW_CLAUDE_LOGIN_MS)||undefined,signedIn:()=>nativeClaude.signedIn(),changed:()=>send("claude-account",claudeLogin.view())});
+for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{void Promise.all([codexAccount.shutdown(),nativeClaude.cancel(),claudeLogin.shutdown()]).then(()=>process.exit(0),()=>process.exit(1));});
 const takeover = createTakeover({ main, fm, gh, board, codexAccount, stateDir: STATE, pending: () => pending, tasks, crew: () => fm.crew(8) });
 // transcripts: the session Studio drives (its copy holds the turns before the takeover), else the firstmate session
 const CLAUDE_PROJECTS = process.env.CREW_HOST_CLAUDE_PROJECTS ?? join(homedir(), ".claude/projects");
@@ -201,7 +203,7 @@ let serveOn = false;
 // a phone may read and interrupt; driving firstmate (and answering cards, changing settings) needs "allow phone to drive"
 const PHONE_DRIVE = new Set(["/api/main/takeover", "/api/main/start", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door", "/api/main/attach", "/api/main/send", "/api/main/approve", "/api/main/resume", "/api/main/detach", "/api/main/queue/remove", "/api/answer", "/api/settings"]);
 const DESKTOP_ONLY = new Set(["/api/transcripts/settings", "/api/remote/pair/start", "/api/remote/revoke", "/api/remote/settings", "/api/remote/tailscale", "/api/remote/lan",
-  "/api/claude/native/verify","/api/claude/native/cancel","/api/codex/account/login", "/api/codex/account/cancel", "/api/codex/account/verify", "/api/github/token", "/api/github/forget", "/api/keys", "/api/doctor/install", "/api/doctor/login", "/api/doctor/cancel"]);
+  "/api/claude/native/verify","/api/claude/native/cancel","/api/claude/account/login","/api/claude/account/cancel","/api/codex/account/login", "/api/codex/account/cancel", "/api/codex/account/verify", "/api/github/token", "/api/github/forget", "/api/keys", "/api/doctor/install", "/api/doctor/login", "/api/doctor/cancel"]);
 
 // --- LAN mode: a second listener on this Mac's LAN address, only while turned on (never at start) ---
 let lanServer: ReturnType<typeof Bun.serve> | null = null;
@@ -424,6 +426,8 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       }catch(e){return json({state:'hold',model,effort,reason:e instanceof Error?e.message:'Capability verification unavailable'});}
     }
     if(p==='/api/claude/native/status'&&!writing){if(who.kind==='desktop'&&!hasSession(req,SESSION))return json({error:'Studio session required'},401);const s=chatSettings(),model=url.searchParams.get('model')||s.models.claude||process.env.CREW_CLAUDE_MODEL||'claude-sonnet-5-5',effort=url.searchParams.get('effort')||configuredClaudeEffort(model);return json(await probeClaudeNative({model,effort},req.signal));}
+    if(p==='/api/claude/account'&&!writing){if(who.kind==='desktop'&&!hasSession(req,SESSION))return json({error:'Studio session required'},401);return json(claudeLogin.view());}
+    if((p==='/api/claude/account/login'||p==='/api/claude/account/cancel')&&writing){if(who.kind!=='desktop')return json({error:'do this on the Mac',code:'desktopOnly'},403);if(p.endsWith('/cancel'))return json(await claudeLogin.cancel());try{return json(claudeLogin.start());}catch(e:any){return json({error:String(e?.message??e)},409);}}
     if((p==='/api/claude/native/verify'||p==='/api/claude/native/cancel')&&writing){if(p.endsWith('/cancel')){await nativeClaude.cancel();return json({ok:true});}const b=await req.json().catch(()=>null);if(!b||Object.keys(b).some(k=>!['model','effort','confirm'].includes(k))||b.confirm!==true||!validClaudePair({model:b.model,effort:b.effort??null}))return json({error:'Confirm an exact selected Claude model/effort; this performs one bounded model request'},400);const cap=await nativeClaude.verify({model:b.model,effort:b.effort??null},{confirm:true,signal:req.signal});return json(cap,cap.admission==='verified-execution'?200:409);}
     { const rt = await takeover.handle(req, url, who as any, writing); if (rt) return rt; }
     { const rx = await transcripts.handle(req, url, who as any, writing); if (rx) return rx; }

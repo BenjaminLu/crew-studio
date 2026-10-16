@@ -37,6 +37,26 @@ function accountPanel(begin=false){
  h("div",{class:"actions"},pending||checking?h("button",{class:"btn","data-codex-cancel":"1",disabled:phone||ACCOUNT.busy||null,onclick:()=>accountAction("cancel")},T("Cancel sign-in","取消登入")):h("button",{class:"btn primary","data-codex-connect":"1",disabled:phone||owned||null,onclick:()=>accountAction("login",begin)},T("Connect Codex…","連接 Codex…")),
  !pending&&!checking?h("button",{class:"btn","data-codex-verify":"1",disabled:phone||owned||null,onclick:()=>accountAction("verify")},T("Verify account","驗證帳號")):null));
 }
+// Claude: status from the official read-only `claude auth status`; sign-in runs the official `claude auth login`
+// (the CLI opens the browser itself). Neither makes a model request; the paid Verify stays on the Doctor page.
+const CLAUDE={login:null,status:null,loading:false,busy:false,read:0};
+function claudeRefresh(){const read=++CLAUDE.read;CLAUDE.loading=true;return Promise.all([getJ("/api/claude/account").catch(()=>null),getJ("/api/claude/native/status").catch(()=>null)]).then(([l,st])=>{if(read!==CLAUDE.read)return;if(l&&!l.error)CLAUDE.login=l;CLAUDE.status=st?.provider==="claude"?st:null;}).finally(()=>{if(read===CLAUDE.read){CLAUDE.loading=false;render();}});}
+function claudeChanged(v){const was=CLAUDE.login?.state;CLAUDE.login=v;if(was==="pending"&&v.state!=="pending"){void claudeRefresh();dispatchEvent(new Event("crew:claude-account"));}render();}
+async function claudeAction(action){if(CLAUDE.busy)return;CLAUDE.busy=true;render();try{const r=await postJ(`/api/claude/account/${action}`,{});if(r.error)return toast(r.error);claudeChanged(r);}finally{CLAUDE.busy=false;render();}}
+function claudeAccountPanel(){
+ if(!CLAUDE.login&&!CLAUDE.loading)void claudeRefresh();
+ const l=CLAUDE.login||{state:"idle"},st=CLAUDE.status,phone=MS.me.kind==="phone",pending=l.state==="pending";
+ const state=st?.quota==="exhausted"?"exhausted":st?.loginState==="logged-in"?"signed-in":st?.loginState==="not-logged-in"?"signed-out":"unknown";
+ const label={"exhausted":T("Signed in, but quota is exhausted. Wait for reset; signing in again will not help.","已登入，但額度已耗盡。請等待重設，重新登入沒有幫助。"),"signed-in":T("Signed in to Claude.","已登入 Claude。"),"signed-out":T("Not signed in to Claude.","尚未登入 Claude。"),"unknown":T("Claude sign-in status is unknown.","Claude 登入狀態未知。")}[state];
+ return h("section",{class:"card tk-drive tk-account","data-claude-account":state,"data-claude-login":l.state},h("h2",{},T("Claude account","Claude 帳號")),
+  h("p",{"data-claude-status":"1"},label),
+  l.state!=="idle"?h("p",{class:"muted","data-claude-login-reason":"1"},T(l.reason,l.reasonZh)):null,
+  h("div",{class:"faint"},T("Signing in makes no model request. Verifying the model is a separate, paid check on the Doctor page.","登入不會呼叫模型。驗證模型是 Doctor 頁上另外的付費檢查。")),
+  h("div",{class:"actions"},pending?h("button",{class:"btn","data-claude-cancel":"1",disabled:phone||CLAUDE.busy||null,onclick:()=>claudeAction("cancel")},T("Cancel sign-in","取消登入")):h("button",{class:state==="signed-in"?"btn":"btn primary","data-claude-signin":"1",disabled:phone||CLAUDE.busy||null,onclick:()=>claudeAction("login")},state==="signed-in"?T("Sign in again…","重新登入…"):T("Sign in to Claude…","登入 Claude…")),
+   h("button",{class:"btn ghost","data-claude-refresh":"1",disabled:CLAUDE.loading||null,onclick:()=>void claudeRefresh()},T("Check again","重新檢查"))),
+  phone?h("p",{class:"note"},T("Sign in on the Mac.","請在 Mac 上登入。")):null);
+}
+window.crewClaudeAccountPanel=claudeAccountPanel;window.liveListen("claude-account",m=>claudeChanged(JSON.parse(m.data)));
 window.crewCodexAccountPanel=accountPanel;window.crewConnectCodex=()=>accountAction("login");
 window.liveListen("codex-account",m=>accountChanged(JSON.parse(m.data),"live"));
 
@@ -44,7 +64,7 @@ window.liveListen("codex-account",m=>accountChanged(JSON.parse(m.data),"live"));
 window.crewFirstmateWelcome=()=>{
  if(MS.view?.state!=="detached")return null;
  if(!TK.data&&!TK.loading)loadTakeover();
- return h("section",{class:"card tk-drive","data-firstmate-welcome":"1"},h("h2",{},T("Welcome. Let’s make something.","歡迎，我們來做點東西。")),h("p",{},T("Connect an agent account, then begin with Studio’s own Firstmate. No terminal session is needed.","連接 agent 帳號，再和 Studio 自己的 Firstmate 開始。不需要終端機 session。")),accountPanel(true),TK.data&&!TK.data.error?startCodexCard(TK.data,MS.me.kind==="phone"):h("p",{},T("Loading your workspace…","正在載入你的工作空間…")));
+ return h("section",{class:"card tk-drive","data-firstmate-welcome":"1"},h("h2",{},T("Welcome. Let’s make something.","歡迎，我們來做點東西。")),h("p",{},T("Connect an agent account, then begin with Studio’s own Firstmate. No terminal session is needed.","連接 agent 帳號，再和 Studio 自己的 Firstmate 開始。不需要終端機 session。")),accountPanel(true),claudeAccountPanel(),TK.data&&!TK.data.error?startCodexCard(TK.data,MS.me.kind==="phone"):h("p",{},T("Loading your workspace…","正在載入你的工作空間…")));
 };
 // Project staffing is separate from the primary host. Draft answers never start work.
 const STAFF={projects:null,project:'',view:null,error:null,busy:false,open:false};
@@ -73,7 +93,7 @@ function viewTakeover() {
     h("p", {}, T("Connect your account and start new work in the shown project. Taking over an existing session is optional.",
       "連接帳號，在下方顯示的專案開始新工作。接手既有 session 是選用功能。"))))];
 
-  if(!driving)kids.push(accountPanel(),startCodexCard(d,phone));
+  if(!driving)kids.push(accountPanel(),claudeAccountPanel(),startCodexCard(d,phone));
   if (driving) {
     kids.push(h("section", { class: "card tk-drive", "data-takeover": o ? o.mode : "attached" },
       h("div", { class: "tk-row" }, h("span", { class: "badge run" }, h("span", { class: "d" }), o?.mode === "rehearsal" ? T("Rehearsal", "演練中") : T("Studio is driving", "Studio 駕駛中")),
