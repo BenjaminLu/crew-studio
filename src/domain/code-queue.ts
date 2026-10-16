@@ -2,7 +2,6 @@
 import { hashInput, INPUT_HASH_ALGORITHM } from "../runtime/checks";
 import { git } from "../git";
 import { scopesOverlap } from "../runtime/queue";
-import { git } from "../git";
 import { existsSync } from "node:fs";
 import type { Engine, Run, X } from "../runtime/engine";
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));
