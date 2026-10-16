@@ -90,7 +90,8 @@ gitMod?.setGitHome?.(join(tmp, "studio-git"));
     ok(hung.some((p: any) => p.key === "core.bare" && p.blocking) && hung.some((p: any) => p.unchecked && !p.blocking), "the report keeps the blocking finding and marks the include check as not done", JSON.stringify(hung)); }
   breakConfig(c.config, "core.bare", "false");
   // the in-process parser agrees with git on core.bare, file by file
-  { const cases = ["[core]\n\tbare\n", "[core]\n\tbare = yes # c\n", "[core] bare = \"false\"\n", "[CORE]\n\tBare = 1\n", "[core]\n\tbare = tr\\\nue\n", "[core]\n\tbare = true\n\tbare = off\n", "[core \"x\"]\n\tbare = true\n", "[core]\n\tbare = 2k\n", "[core]\n\tbare = maybe\n", "[core\n\tbare = true\n", "[core]\n\tbare = \"true\n"];
+  { const cases = ["[core]\n\tbare\n", "[core]\n\tbare = yes # c\n", "[core] bare = \"false\"\n", "[CORE]\n\tBare = 1\n", "[core]\n\tbare = tr\\\nue\n", "[core]\n\tbare = true\n\tbare = off\n", "[core \"x\"]\n\tbare = true\n", "[core]\n\tbare = 2k\n", "[core]\n\tbare = maybe\n", "[core\n\tbare = true\n", "[core]\n\tbare = \"true\n",
+      "[ core ]\n\tbare = false\n", "[core ]\n\tbare = false\n", "[core\t]\n\tbare = false\n", "[core \"x\" ]\n\tbare = false\n", "[core]\n\f\tbare = false\n", "[core]\n\u00a0bare = false\n"];
     const dir = join(tmp, "parse"); mkdirSync(dir, { recursive: true }); const disagree: string[] = [];
     cases.forEach((text, n) => { const f = join(dir, `c${n}`); writeFileSync(f, text);
       const g = Bun.spawnSync(["git", "config", "--file", f, "--type=bool", "--get", "core.bare"], { cwd: dir, env: clean, stdout: "pipe", stderr: "pipe" });
@@ -98,6 +99,22 @@ gitMod?.setGitHome?.(join(tmp, "studio-git"));
       const parsed = health?.parseGitConfig?.(text); const v = parsed?.ok ? (parsed.values.has("core.bare") ? health.gitBool(parsed.values.get("core.bare")) : "unset") : "error";
       const weSay = v === null ? "error" : String(v); if (weSay !== gitSays) disagree.push(`${JSON.stringify(text)}: git ${gitSays}, parser ${weSay}`); });
     ok(!!health?.parseGitConfig && disagree.length === 0, "the in-process parser reads core.bare as git does (quotes, escapes, comments, continuations, case, last value, bad files)", disagree.join("\n")); }
+  // the whole reviewer case set (92 files): where git refuses the file, or reads core.bare as true or not a boolean,
+  // the parser blocks too (no false negative), and the parser reads a file git reads and refuses a file git refuses.
+  // Accepted false positives (blocking where git does not): core.bare=0x0, a NUL in a value, a key before any section.
+  { const { cases: all } = await import("./lib/git-config-cases.ts"); const dir = join(tmp, "parse-all"); mkdirSync(dir, { recursive: true });
+    const accepted = new Set(["hex0", "nul", "key_no_section_comment"]); const missed: string[] = [], listDiff: string[] = [];
+    for (const [name, text] of Object.entries(all as Record<string, string>)) { const f = join(dir, name); writeFileSync(f, text);
+      const list = Bun.spawnSync(["git", "config", "--file", f, "--list"], { cwd: dir, env: clean, stdout: "pipe", stderr: "pipe" }).exitCode === 0;
+      const g = Bun.spawnSync(["git", "config", "--file", f, "--type=bool", "--get", "core.bare"], { cwd: dir, env: clean, stdout: "pipe", stderr: "pipe" });
+      const gitBlocks = !list || (g.exitCode !== 0 && g.exitCode !== 1) || (g.exitCode === 0 && g.stdout.toString().trim() === "true");
+      const p = health?.parseGitConfig?.(text); const b = p?.ok && p.values.has("core.bare") ? health.gitBool(p.values.get("core.bare")) : false;
+      const weBlock = !p?.ok || b === null || b === true;
+      if (gitBlocks && !weBlock) missed.push(`${name}: git blocks, parser allows`);
+      if (!gitBlocks && weBlock && !accepted.has(name)) missed.push(`${name}: parser blocks, git does not`);
+      if (!!p?.ok !== list && !accepted.has(name)) listDiff.push(`${name}: git --list ${list ? "reads" : "refuses"} it, parser ${p?.ok ? "reads" : "refuses"} it`); }
+    ok(!!health?.parseGitConfig && Object.keys(all).length === 92 && missed.length === 0, "over 92 config files, the parser blocks every file git fails on (no false negative)", missed.join("\n"));
+    ok(!!health?.parseGitConfig && listDiff.length === 0, "over 92 config files, the parser reads exactly the files `git config --list` reads", listDiff.join("\n")); }
   // the built-in sandbox (data/demo-repo) is a plain checkout: the same check reads it
   const data = join(tmp, "data"), demo = join(data, "demo-repo"); mkdirSync(demo, { recursive: true }); sh(demo, "init", "-q", "-b", "main"); breakConfig(join(demo, ".git", "config"), "core.bare", "true");
   const sb = health?.gitConfigReport?.([{ label: "built-in sandbox (data/demo-repo)", path: demo }]);

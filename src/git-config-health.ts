@@ -47,45 +47,50 @@ export function gitLayout(repo: string): Layout | null {
 }
 
 /**
- * git's config file syntax, parsed in this process (no git spawn, no timeout, nothing that can hang a round):
- * [section] and [section "subsection"] headers (a key may follow on the same line), case-insensitive names,
- * values with "quotes", \\ \" \n \t \b escapes, # and ; comments, a trailing \ continuing the value on the
- * next line. A key with no "=" is null (true as a boolean). Returns each key's last value, or the error git
- * would also stop on. include.path is not followed: blocking decisions read the file as written.
+ * git's config file syntax (config.c), parsed in this process (no git spawn, no timeout, nothing that can hang
+ * a round): a UTF-8 BOM only at the very start of the file; space, tab and CR as the only whitespace before a
+ * line's content; [section] and [section "subsection"] headers with no other padding (a key may follow on the
+ * same line), case-insensitive names, values with "quotes", \\ \" \n \t \b escapes, # and ; comments, a
+ * trailing \ continuing the value on the next line. A key with no "=" is null (true as a boolean). Returns each
+ * key's last value, or the error git would also stop on. Fails closed: a line it cannot classify (a form feed,
+ * a no-break space, anything not a comment, header or key) makes the whole file unreadable, as git reports it.
+ * include.path is not followed: blocking decisions read the file as written.
  */
 export function parseGitConfig(text: string): { ok: true; values: Map<string, string | null> } | { ok: false; error: string } {
-  const values = new Map<string, string | null>(); const lines = text.split(/\r?\n/); let section: string | null = null;
+  const values = new Map<string, string | null>(); const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/); let section: string | null = null;
+  const lead = /^[ \t\r]*/; // git's isspace: space, tab, CR (LF ends the line); never \f, \v or U+00A0
   for (let n = 0; n < lines.length; n++) {
-    let line = lines[n].replace(/^[\s﻿]+/, "");
+    let line = lines[n].replace(lead, "");
     const bad = (why: string) => ({ ok: false as const, error: `bad config line ${n + 1}: ${why}` });
     if (line.startsWith("[")) {
-      const h = /^\[\s*([A-Za-z0-9.-]+)(?:\s+"((?:[^"\\\n]|\\.)*)")?\s*\]/.exec(line);
+      // [name] or [name<space/tab/CR...>"sub"], nothing inside the brackets around them
+      const h = /^\[([A-Za-z0-9.-]+)(?:[ \t\r]+"((?:[^"\\]|\\.)*)")?\]/.exec(line);
       if (!h) return bad("a section header git cannot read");
       section = h[2] !== undefined ? `${h[1].toLowerCase()}.${h[2].replace(/\\(.)/g, "$1")}` : h[1].toLowerCase();
-      line = line.slice(h[0].length).replace(/^\s+/, "");
+      line = line.slice(h[0].length).replace(lead, "");
     }
     if (!line || line[0] === "#" || line[0] === ";") continue;
-    const k = /^([A-Za-z][A-Za-z0-9-]*)\s*/.exec(line); if (!k) return bad("a key git cannot read");
+    const k = /^([A-Za-z][A-Za-z0-9-]*)[ \t]*/.exec(line); if (!k) return bad("a line that is not a comment, a section header or a key");
     if (section === null) return bad("a key outside any section");
     let rest = line.slice(k[0].length); const key = `${section}.${k[1].toLowerCase()}`;
-    if (!rest || rest[0] === "#" || rest[0] === ";") { values.set(key, null); continue; }
+    if (!rest) { values.set(key, null); continue; }
     if (rest[0] !== "=") return bad("a key followed by something other than =");
     rest = rest.slice(1);
-    let out = "", pending = "", quoted = false, started = false;
+    let out = "", pending = "", quoted = false;
     for (;;) {
       let i = 0, cont = false, done = false;
       for (; i < rest.length; i++) {
         const c = rest[i];
         if (!quoted && (c === "#" || c === ";")) { done = true; break; }
-        if (!quoted && (c === " " || c === "\t")) { if (started) pending += c; continue; }
+        if (!quoted && (c === " " || c === "\t" || c === "\r")) { if (out) pending += c; continue; }
         if (c === "\\") {
           if (i === rest.length - 1) { cont = true; break; }
           const e = rest[++i]; const m: Record<string, string> = { n: "\n", t: "\t", b: "\b", "\\": "\\", '"': '"' };
           if (!(e in m)) return bad(`an unknown escape \\${e}`);
-          out += pending + m[e]; pending = ""; started = true; continue;
+          out += pending + m[e]; pending = ""; continue;
         }
-        if (c === '"') { quoted = !quoted; out += pending; pending = ""; started = true; continue; }
-        out += pending + c; pending = ""; started = true;
+        if (c === '"') { quoted = !quoted; continue; }
+        out += pending + c; pending = "";
       }
       if (cont && n + 1 < lines.length) { rest = lines[++n]; continue; }
       if (quoted && !done) return bad("an unterminated quote");

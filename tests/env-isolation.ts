@@ -19,15 +19,17 @@ const OPERATOR = ["CREW_LOCAL_UNRESTRICTED", "CREW_LOCAL_DEPENDENCY_ROOT", "CREW
 // ---------- this suite itself ----------
 {
   const { dotenvValues } = await import(guard);
-  const leaked = [...dotenvValues()].filter(([k, vs]: [string, Set<string>]) => !["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP", "LANG", "TERM", "PWD"].includes(k) && process.env[k] !== undefined && vs.has(process.env[k]!)).map(([k]) => k);
+  // the guard's own mark and the BUN_OPTIONS it rewrote may equal a .env line; neither came from the .env
+  const leaked = [...dotenvValues()].filter(([k, vs]: [string, Set<string>]) => !["CREW_TEST_ENV_ISOLATED", "BUN_OPTIONS", "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP", "LANG", "TERM", "PWD"].includes(k) && process.env[k] !== undefined && vs.has(process.env[k]!)).map(([k]) => k);
   ok(leaked.length === 0, "this suite holds no value from a .env in its working directory or the repository root", leaked.join(","));
-  ok((process.env.BUN_OPTIONS || "").split(/\s+/).includes("--no-env-file"), "the bun children this suite starts inherit --no-env-file");
+  const opts = (process.env.BUN_OPTIONS || "").split(/\s+/);
+  ok(opts.includes("--no-env-file") && !opts.some((f) => f.startsWith("--env-file")), "the bun children this suite starts inherit --no-env-file and no --env-file", process.env.BUN_OPTIONS);
 }
 
 // ---------- every test entry imports the guard first ----------
 {
   // Modules other tests import or start as fake tools: not entries, so no guard.
-  const HELPERS = new Set(["boot.mjs", "codex-image-fixture.mjs", "codex-protocol.mjs", "intent-card-fixture.ts", "remote-gates-card-fixture.ts", "rt-harness.ts", "transcripts-fixture.mjs"]);
+  const HELPERS = new Set(["boot.mjs", "codex-image-fixture.mjs", "codex-protocol.mjs", "compare-fixture.ts", "intent-card-fixture.ts", "remote-gates-card-fixture.ts", "rt-harness.ts", "transcripts-fixture.mjs"]);
   const isHelper = (n: string) => HELPERS.has(n) || /^stub-.*\.mjs$/.test(n);
   const top = readdirSync(import.meta.dir).filter((n) => /\.(ts|mjs)$/.test(n) && !isHelper(n));
   const scripts = Object.values(JSON.parse(readFileSync(join(root, "package.json"), "utf8")).scripts as Record<string, string>).join(" ");
@@ -72,10 +74,48 @@ const OPERATOR = ["CREW_LOCAL_UNRESTRICTED", "CREW_LOCAL_DEPENDENCY_ROOT", "CREW
   const polluted = run("node", "guarded.mjs", hostile);
   ok(clean(polluted.self) && clean(polluted.child), "values already exported from the .env (as a runner that loaded it would) are dropped", JSON.stringify(polluted));
   const own = { CREW_DATA: join(dir, "test-data"), CREW_LOCAL_UNRESTRICTED: "0" };
-  const set = run("bun", "guarded.ts", own);
-  ok(set.self?.CREW_DATA === own.CREW_DATA && set.child?.CREW_DATA === own.CREW_DATA && set.child?.CREW_LOCAL_UNRESTRICTED === "0" && set.child?.CREW_PORT === null, "a value a test sets itself is kept and reaches its children; the .env still fills nothing in", JSON.stringify(set));
-  const nested = run("bun", "guarded.ts", { CREW_TEST_ENV_ISOLATED: "1", BUN_OPTIONS: "--no-env-file", ...hostile });
+  const exported = run("bun", "guarded.ts", own);
+  ok(clean(exported.self) && clean(exported.child), "a top-level test entry clears the operator keys even when the shell exported them", JSON.stringify(exported));
+  writeFileSync(join(dir, "sets.ts"), `import ${JSON.stringify(guard)};\nimport { spawnSync } from "node:child_process";\nconst child = spawnSync("bun", ["child.ts"], { cwd: ${JSON.stringify(dir)}, encoding: "utf8", env: { ...process.env, ...${JSON.stringify(own)} } });\nconsole.log(JSON.stringify({ self: JSON.parse(${show}), child: JSON.parse(child.stdout || "null") }));\n`);
+  const set = run("bun", "sets.ts");
+  ok(set.child?.CREW_DATA === own.CREW_DATA && set.child?.CREW_LOCAL_UNRESTRICTED === "0" && set.child?.CREW_PORT === null, "a value a test sets itself after the import reaches its children; the .env still fills nothing in", JSON.stringify(set));
+  const nested = run("bun", "guarded.ts", { CREW_TEST_ENV_ISOLATED: process.env.CREW_TEST_ENV_ISOLATED!, BUN_OPTIONS: process.env.BUN_OPTIONS!, ...hostile });
   ok(nested.self?.CREW_LOCAL_UNRESTRICTED === "1" && nested.child?.CREW_LOCAL_UNRESTRICTED === "1", "a test that deliberately opts a child test into unrestricted mode keeps it (tests/local-execution.ts style)", JSON.stringify(nested));
+}
+
+// ---------- a hostile .env that also sets BUN_OPTIONS, the mark or GIT_* ----------
+{
+  const KEYS = [...OPERATOR, "GIT_DIR", "GIT_WORK_TREE"];
+  const show = `JSON.stringify(Object.fromEntries(${JSON.stringify(KEYS)}.map(k=>[k,process.env[k]??null])))`;
+  const fresh: Record<string, string> = { ...(process.env as any) };
+  for (const k of [...KEYS, "BUN_OPTIONS", "CREW_TEST_ENV_ISOLATED", "CREW_TEST_RESTARTED_BY"]) delete fresh[k];
+  const clean = (o: any) => o && KEYS.every((k) => o[k] === null);
+  const setup = (files: Record<string, string>) => {
+    const dir = mkdtempSync(join(tmpdir(), "crew-env-isolation-bunopts-"));
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text.replaceAll("$DIR", dir));
+    writeFileSync(join(dir, "child.ts"), `console.log(${show});\n`);
+    writeFileSync(join(dir, "guarded.ts"), `import ${JSON.stringify(guard)};\nimport { spawnSync } from "node:child_process";\nconst child = spawnSync("bun", ["child.ts"], { cwd: ${JSON.stringify(dir)}, encoding: "utf8" });\nconsole.log(JSON.stringify({ self: JSON.parse(${show}), child: JSON.parse(child.stdout || "null"), opts: process.env.BUN_OPTIONS }));\n`);
+    return dir;
+  };
+  const run = (dir: string, argv: string[]) => { const r = Bun.spawnSync(argv, { cwd: dir, env: fresh, stdout: "pipe", stderr: "pipe" });
+    let out: any; try { out = JSON.parse(r.stdout.toString().trim().split("\n").at(-1)!); } catch { out = {}; } return { ...out, code: r.exitCode, err: r.stderr.toString().slice(-400) }; };
+  const ops = "CREW_LOCAL_UNRESTRICTED=1\nCREW_DATA=$DIR/live-data\nCREW_PORT=1\nCREW_GH=1\n";
+  const cases: [string, Record<string, string>][] = [
+    [".env sets BUN_OPTIONS=--no-env-file", { ".env": `BUN_OPTIONS=--no-env-file\n${ops}` }],
+    [".env sets BUN_OPTIONS=--env-file=.env and GIT_DIR=decoy", { ".env": `BUN_OPTIONS=--env-file=.env\nGIT_DIR=$DIR/decoy/.git\nGIT_WORK_TREE=$DIR/decoy\n${ops}` }],
+    [".env sets BUN_OPTIONS=--no-env-file and CREW_TEST_ENV_ISOLATED=1", { ".env": `BUN_OPTIONS=--no-env-file\nCREW_TEST_ENV_ISOLATED=1\n${ops}` }],
+    [".env sets BUN_OPTIONS=--env-file=.env.local, .env.local sets CREW_LOCAL_UNRESTRICTED=1", { ".env": "BUN_OPTIONS=--env-file=.env.local\n", ".env.local": `${ops}GIT_DIR=$DIR/decoy/.git\n` }],
+  ];
+  for (const [name, files] of cases) {
+    const r = run(setup(files), ["bun", "guarded.ts"]);
+    ok(r.code === 0 && clean(r.self) && clean(r.child) && !/--env-file/.test(r.opts ?? "--env-file"), `${name}: the test and its bun child see none of it`, JSON.stringify(r));
+  }
+  // a forged restart mark naming the real parent (a shell that forks bun): the run refuses instead of trusting it
+  const forgedDir = setup({ ".env": ops });
+  const forged = run(forgedDir, ["sh", "-c", "CREW_TEST_RESTARTED_BY=$$ bun guarded.ts; exit $?"]);
+  ok(forged.code !== 0 && /restarted test run still has/.test(forged.err) && !forged.self, "a forged restart mark with the .env loaded stops the run with a clear message (exit 1)", JSON.stringify(forged));
+  const forgedGit = run(setup({}), ["sh", "-c", "CREW_TEST_RESTARTED_BY=$$ GIT_DIR=/nonexistent/.git BUN_OPTIONS=--no-env-file bun guarded.ts; exit $?"]);
+  ok(forgedGit.code !== 0 && /GIT_DIR/.test(forgedGit.err), "a forged restart mark with GIT_DIR set stops the run too", JSON.stringify(forgedGit));
 }
 
 console.log(`\nenv-isolation: ${pass} passed, ${fail} failed`);

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Compare transcripts, the API (docs/units/compare-transcripts.md): a seeded startup Task pairs founder and judge
 // round by round from the workflow's `compare` hint; a workflow without one offers every agent Round to pick two;
 // every text is redacted; names, traversal and symlinks are refused.        bun tests/compare.ts

@@ -476,9 +476,9 @@ export class Worktrees {
     for (const e of readdirSync(dir, { withFileTypes: true })) { if (e.name === ".git") continue; const p = join(dir, e.name);
       if (e.isSymbolicLink()) continue; if (e.isDirectory()) { f(p, true); this.walk(p, f); } else f(p, false); }
   }
-  /** Where a run's temporary trees go (fail-first's base tree, main's tree): removed with the worktree, swept when the run is not live. */
   /** Before a run adds a temporary worktree on a repository: its shared config must be sound. */
   guard(repo: string) { assertSharedGitConfig(repo); }
+  /** Where a run's temporary trees go (fail-first's base tree, main's tree): removed with the worktree, swept when the run is not live. */
   tmpOf(run: string, what: string) { const d = join(this.root, ".tmp"); mkdirSync(d, { recursive: true }); const name = `${safe(run)}-${safe(what)}`; writeFileSync(join(d, `${name}.marker`), JSON.stringify({ kind: "crew-tmp", run, at: now() })); return join(d, name); }
   freeze(r: WorktreeRecord) { if (!existsSync(r.path)) return; this.walk(r.path, (p, d) => { try { const m = statSync(p).mode & 0o777; chmodSync(p, d ? m & ~0o222 : m & ~0o222); } catch {} }); try { chmodSync(r.path, statSync(r.path).mode & ~0o222); } catch {} }
   thaw(r: WorktreeRecord) { this.thawPath(r.path); }

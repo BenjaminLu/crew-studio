@@ -1,4 +1,4 @@
-import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // scrubs inherited GIT_* first; repositories only in checked temp folders
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders (the entry's tests/lib/isolated-env.mjs removes inherited GIT_*)
 // Render a naming card through the actual publication action. No publication occurs.
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from "node:fs";
 import {join} from "node:path";import {tmpdir} from "node:os";

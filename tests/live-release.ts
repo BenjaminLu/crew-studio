@@ -1,17 +1,18 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Live release: scripts/live-release.ts deploys an exact commit into its own
 // worktree, starts it detached with a release-local env file, and stops only the
 // Studio process it owns. Offline: a temp bare "origin", a temp dev checkout with
 // dirty files, a temp data dir and a stub server (src/main.ts in the temp repo)
 // that answers /api/instance like Studio does.      bun tests/live-release.ts
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { checkedTempDir } from "./lib/git-hygiene.mjs";
 import { join } from "node:path";
 
 let pass = 0, fail = 0;
 const ok = (c: boolean, name: string, extra = "") => { if (c) { pass++; console.log(`  ok    ${name}`); } else { fail++; console.log(`  FAIL  ${name} ${extra}`); } };
 const SCRIPT = join(import.meta.dir, "..", "scripts", "live-release.ts");
-const tmp = mkdtempSync(join(tmpdir(), "crew-live-release-"));
+const tmp = checkedTempDir("crew-live-release-"); // repositories only in checked temp folders
 const SECRET = "sentinel-" + createHash("sha256").update(tmp).digest("hex").slice(0, 24);
 const sh = (cwd: string, ...cmd: string[]) => { const r = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid" } }); if (!r.success) throw new Error(`${cmd.join(" ")}: ${r.stderr}`); return r.stdout.toString().trim(); };
 const freePort = () => { const s = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") }); const p = s.port; s.stop(true); return p; };

@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The captain's operating-rules editor (Settings): the page shows the seeded Studio-wide text and
 // every registered project (the built-in sandbox included), saves a project's text through the
 // captain's own page session, and lays out at 1280 light and 390 dark (zh-TW) without overflow.

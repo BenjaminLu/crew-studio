@@ -1,4 +1,4 @@
-import { checkedTempDir, assertTempRepo } from "./git-hygiene.mjs"; // scrubs inherited GIT_* first; repositories only in checked temp folders
+import { checkedTempDir, assertTempRepo } from "./git-hygiene.mjs"; // repositories only in checked temp folders (the entry's tests/lib/isolated-env.mjs removes inherited GIT_*)
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,readdirSync,lstatSync,chmodSync} from 'node:fs';
 import {tmpdir} from 'node:os';import {join} from 'node:path';import {spawn} from 'node:child_process';import {freePort,waitUp} from '../boot.mjs';
 export async function projectFixture(options:{holdGit?:boolean}={}){

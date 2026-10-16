@@ -1,4 +1,4 @@
-import { checkedTempDir, assertTempRepo } from "./git-hygiene.mjs"; // scrubs inherited GIT_* first; repositories only in checked temp folders
+import { checkedTempDir, assertTempRepo } from "./git-hygiene.mjs"; // repositories only in checked temp folders (the entry's tests/lib/isolated-env.mjs removes inherited GIT_*)
 // Offline visual fixture: actual staffing source/tools/cards, synthetic project authority.
 // This does not certify a real account, repository, model quality or coffee workflow.
 import {harness,Y} from '../rt-harness';

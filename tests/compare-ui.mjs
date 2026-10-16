@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Compare transcripts, the page (docs/units/compare-transcripts.md): from a seeded startup Task's page, two
 // columns side by side at 1280 (founder left, judge right, synchronized headers, each column scrolls by itself),
 // the round selector switching the content, stacked with a role toggle at 390 in dark zh-TW, a workflow without

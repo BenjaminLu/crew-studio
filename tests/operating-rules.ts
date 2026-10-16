@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The captain's operating rules reach every model job Studio starts (captain request 2026-10-16).
 // One Studio-wide text and one per registered project, kept in Studio's policy store
 // (data/policies/org.yaml, data/policies/project-<id>.yaml), set only by the captain's page.

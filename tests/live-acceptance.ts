@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // scripts/live-acceptance.ts against a real Studio (src/server.ts) on a free port with throwaway data,
 // stub CLI vendors (tests/stub-host-claude.mjs, tests/fixture/codex-account.mjs, tests/fixture/claude-login.mjs)
 // and Studio's stub provider. No model, no sign-in, no network beyond 127.0.0.1.

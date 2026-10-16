@@ -93,6 +93,10 @@ function baseEnv(s?: Settings): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith("CREW_") || s?.operator.has(k)) delete env[k];
   delete env.GIT_DIR; delete env.GIT_WORK_TREE; delete env.GIT_INDEX_FILE;
+  // an inherited --no-env-file or --env-file (a test run, an operator's BUN_OPTIONS) would stop Bun loading <release>/.env
+  const opts: string[] = []; const given = (env.BUN_OPTIONS ?? "").split(/\s+/).filter(Boolean);
+  for (let i = 0; i < given.length; i++) { if (given[i] === "--env-file") { i++; continue; } if (given[i] === "--no-env-file" || given[i].startsWith("--env-file=")) continue; opts.push(given[i]); }
+  if (opts.length) env.BUN_OPTIONS = opts.join(" "); else delete env.BUN_OPTIONS;
   return env;
 }
 

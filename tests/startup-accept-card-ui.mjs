@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The startup competition acceptance card in the real shared card component (public/scard.js):
 // every round's proposal, critique, score and verdict, and the link to the pinned artifact.
 // A card raised before the fix (empty body, in-app #/review link only) still shows its link and summary.
