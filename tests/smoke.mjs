@@ -293,6 +293,8 @@ try {
     ok(/Connect your account to begin/.test(await q.locator("#chatSub").textContent()) && await q.locator("#chatSend").isDisabled(), "the header says to connect first and sending is off");
     const sessions = (await raw("GET", "/api/main/sessions?host=claude")).body?.sessions ?? [];
     ok(sessions.some((x) => x.id === "sess-ui"), "the project's terminal session is listed for attaching");
+    // the attach happens outside this page: it shows only through the live stream, so the page must be on it first
+    await q.waitForFunction(() => S.conn === "live", null, { timeout: 8000 });
     const att = await raw("POST", "/api/main/attach", { body: { host: "claude", id: "sess-ui" } });
     ok(att.body?.ok === true, "attaching the session succeeds", JSON.stringify(att.body));
     ok(await q.waitForSelector('[data-banner="attached"]', { timeout: 8000 }).then(() => true).catch(() => false), "attaching shows Studio as the driver");
