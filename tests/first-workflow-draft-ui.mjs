@@ -28,12 +28,12 @@ try{
   // B2 the first-use journey's "Build my first workflow" closes the journey (without skipping onboarding)
   const entry=p.locator('[data-ob-own-workflow]');let viaJourney=false;try{await entry.waitFor({timeout:8000});viaJourney=true;}catch{}
   if(viaJourney)await entry.click();else await p.goto(base+'/#/first-workflow');
-  await p.waitForSelector('[data-first-workflow]',{timeout:8000});await p.waitForTimeout(400);
+  await p.waitForSelector('[data-first-workflow]',{timeout:8000});await p.locator('[data-custom-workflow]').evaluate(e=>e.open=true);await p.waitForTimeout(400);
   if(tag==='desktop'){ok(viaJourney,'B2 the first-use journey offers Build my first workflow');
-   const covered=await p.evaluate(()=>{const ids=['[data-first-workflow-goal]','[data-first-workflow-preview-button]'];return ids.filter(sel=>{const e=document.querySelector(sel);const r=e.getBoundingClientRect();const top=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return !(top===e||e.contains(top));});});
+   const covered=await p.evaluate(()=>{const ids=['[data-first-workflow-goal]','[data-first-workflow-preview-button]'];return ids.filter(sel=>{const e=document.querySelector(sel);e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();const top=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return !(top===e||e.contains(top));});});
    ok(!covered.length,'B2 nothing covers the goal input or the starter button after the journey link',JSON.stringify(covered));
    const ob=await p.evaluate(async()=>(await (await fetch('/api/onboarding')).json()));ok(!ob.paused,'B2 the link closes the journey without skipping onboarding',JSON.stringify(ob).slice(0,200));}
-  ok(await p.locator('[data-roadmap]').count()===2,`${tag} W7 steps 5 and 6 are marked as roadmap`);
+  ok(await p.locator('[data-roadmap]').count()===0,`${tag} all six journey steps are available`);
   await p.locator('[data-first-workflow-goal]').fill('A weekly newsletter about local coffee events');
   ok(!(await p.locator('[data-staffing-confirm]').count()),`${tag} no staffing confirmation while drafting`);
   await p.locator('[data-first-workflow-chat]').click();
@@ -101,7 +101,7 @@ try{
  await flow(390,'dark','zh-TW','phone-zh');
  // the node choices list arrives late (the first load fails, the retry is slow): typing, a pause, then ONE click on Save must save what was typed
  {const ctx=await browser.newContext({viewport:{width:1280,height:900}});let mode='abort';await ctx.route(/\/api\/wf\/drafts$/,async r=>{if(mode==='abort')return r.abort();if(mode==='slow')await new Promise(x=>setTimeout(x,1200));return r.continue();});const p=await ctx.newPage();
-  await p.goto(base+'/#/first-workflow');await p.waitForSelector('[data-first-workflow]');await p.waitForTimeout(1000);mode='normal';
+  await p.goto(base+'/#/first-workflow');await p.waitForSelector('[data-first-workflow]');await p.locator('[data-custom-workflow]').evaluate(e=>e.open=true);await p.waitForTimeout(1000);mode='normal';
   await p.locator('[data-first-workflow-goal]').fill('Late options check');await p.locator('[data-first-workflow-chat]').click();await p.locator('#chatSend').click();await p.evaluate(()=>window.openChat?.(false));
   await p.waitForFunction(()=>document.querySelector('[data-first-workflow-source="model"]')&&!document.querySelector('[data-first-workflow-open-saved]'),null,{timeout:15000});
   const before=await p.evaluate(async()=>{const j=await (await fetch('/api/wf/drafts')).json();return j.drafts.find(d=>!d.saved).revision;});

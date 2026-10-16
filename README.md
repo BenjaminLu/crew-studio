@@ -31,11 +31,14 @@ Source and binary default to `~/.crew-studio/data`. Existing checkout-local stor
 Create your first website—no model account needed:
 
 1. Open **Workflows → First workflow tutorial**.
-2. Click **Create my first website** under **Hello Crew Studio**.
-3. Studio saves a reusable workflow and starts its website example.
-4. Open the website preview, then click **Looks good — finish**.
+2. Choose **Discuss my first workflow** under **Hello Crew Studio**, then send the prepared message to Firstmate.
+3. Discuss the website goal, heading and style. Firstmate previews its generated workflow; no Task starts while drafting.
+4. Review the graph and node model/skill choices, then save your workflow. Use the step and connection buttons to edit without dragging the graph.
+5. Click **Run…**, confirm inputs and agent staffing, then review the actual output.
+6. Open **Compare and refine workflow versions** to compare saved versions with current edits, or compare a Task's execution rounds. Save changes as a new version; existing Tasks keep their original version.
+7. Open **Reuse this workflow → Save as template**. The named template appears in Workflows. Open it and choose **Create workflow from this template** for an independent copy.
 
-The example generates a real responsive HTML page from a built-in template, not an AI model. The workflow is **Create website → Preview website → Website complete**. Open the saved workflow to edit it; edit its `heading` parameter for a different title on the next run. Advanced Firstmate drafting remains under **Design a custom workflow with Firstmate**.
+**Skip discussion: try a ready-made example** is an explicit shortcut. It starts a real responsive HTML example from a built-in template, without an AI model: **Create website → Preview website → Website complete**. Firstmate's custom-workflow interview remains available alongside it.
 
 ## Next steps
 

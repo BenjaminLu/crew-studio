@@ -45,6 +45,8 @@ export type WDef = {
   roles: WRole[]; nodes: WNode[]; edges: WEdge[];
   /** role pairs whose rounds the Task page compares side by side, k-th round with k-th round (src/compare.ts) */
   compare?: [string, string][];
+  isTemplate?: boolean;
+  templateSource?: {workflow:string;version:number;sha256:string};
   policies?: Record<string, any>; card_checks?: string[]; hooks?: { at: string; use: string; params?: Record<string, any> }[];
   parent?: number | null; createdAt?: string; by?: string; note?: string | null; diff?: DefDiff | null; seed?: string | null;
   /** the captain's own workflow: where v1 came from (a Firstmate draft or the free starter); kept by every later version, never set by an edit */
@@ -226,7 +228,7 @@ export class WorkflowDefs {
   catalog(){return this.list().filter(w=>this.selectable(w.id,w.version));}
   /** Workflows kept in the catalog for editing that the Start form and start routes do not offer. */
   heldCatalog(){return this.list().filter(w=>!INTERNAL_WORKFLOWS.has(w.id)&&!!this.held(w.id)).map(w=>({...w,held:this.held(w.id)!}));}
-  list() { return this.ids().map((id) => { const vs = this.versions(id); const l = vs.at(-1)!; return { id, name: l.name, description: l.description ?? "", kind: l.kind ?? null, version: l.version, versions: vs.length, nodes: l.nodes.length, intent: l.intent ?? null, params: l.params ?? null }; }); }
+  list() { return this.ids().map((id) => { const vs = this.versions(id); const l = vs.at(-1)!; return { id, name: l.name, description: l.description ?? "", kind: l.kind ?? null, isTemplate: l.isTemplate === true, version: l.version, versions: vs.length, nodes: l.nodes.length, intent: l.intent ?? null, params: l.params ?? null }; }); }
   layout(id: string, v: number): Record<string, { x: number; y: number }> { try { return JSON.parse(readFileSync(join(this.wdir(id), `layout-v${v}.json`), "utf8")); } catch { return {}; } }
   /** Dragging nodes: positions are kept per version without making a new one. */
   setLayout(id: string, v: number, pos: Record<string, { x: number; y: number }>) {
@@ -272,6 +274,18 @@ export class WorkflowDefs {
       this.write(definition);return definition;
     });
   }
+  /** A template is a new definition, never a task, approval or live artifact copy. */
+  copyTemplate(source:string,version:number,id:string,name:string,asTemplate:boolean,by:string):WDef {
+    if(!/^[a-z0-9][a-z0-9-]{0,40}$/.test(id)||typeof name!=='string'||!name.trim()||name.trim().length>120||/[\x00-\x1f\x7f]/.test(name)||!Number.isSafeInteger(version)||version<1||typeof asTemplate!=='boolean')throw new Error('Invalid template identity or exact version');
+    return withLock(this.dir,'create-'+id,()=>{
+      if(existsSync(this.wdir(id)))throw new Error('A workflow with this id already exists');
+      const saved=this.get(source,version);if(!saved?.origin||this.previewOnly(source)||!this.selectable(source,version))throw new Error('Choose an available personal workflow');
+      const canonical=this.versions(source).find(v=>v.version===version)!;
+      const def:WDef={...structuredClone(saved),id,name:name.trim(),version:1,parent:null,createdAt:now(),by,note:`Copied from ${source} v${version}`,diff:null,seed:null,origin:{schema:1,source:saved.origin.source,...(saved.origin.brief?{brief:structuredClone(saved.origin.brief)}:{})},isTemplate:asTemplate,templateSource:{workflow:source,version,sha256:createHash('sha256').update(JSON.stringify(canonical)).digest('hex')}};
+      const errors=validate(def,this.known,this.runners?.(),this.skillInfo??undefined).filter(p=>p.level==='error');if(errors.length)throw new Error(errors[0].text);
+      this.write(def);return def;
+    });
+  }
   /** Immutable source lineage plus a signed draft capability; editable node metadata is never authority. */
   previewOnly(id:string):boolean {const ledger=new Ledger(this.dataDir,'workflow-draft-'+id);if(existsSync(ledger.file()))return true;return id==='github-review'||this.versions(id).some(d=>d.note?.startsWith('Source template github-review SHA256 ')||d.nodes.some(n=>n.do==='github.review.wait'));}
   /** Save an edit as a new version; refused when it has errors or changes nothing. */
@@ -280,6 +294,8 @@ export class WorkflowDefs {
     if (body?.base == null) throw new Error(`say which version you edited (base); v${prev.version} is the latest`);
     if (Number(body.base) !== prev.version) throw new Error(`v${prev.version} is the latest now (you edited v${body.base}); reload and edit again`);
     const next = normalize({ ...prev, ...body, id, version: prev.version + 1 });
+    if(prev.templateSource)next.templateSource=prev.templateSource;else delete next.templateSource;
+    if(prev.isTemplate!==undefined)next.isTemplate=prev.isTemplate;else delete next.isTemplate;
     if (prev.origin) next.origin = prev.origin; else delete next.origin; // lineage is never an edit
     const errs = validate(next, this.known, this.runners?.(), this.skillInfo ?? undefined).filter((p) => p.level === "error");
     if (errs.length) { const e: any = new Error(`the workflow has ${errs.length} problem${errs.length > 1 ? "s" : ""}: ${errs.map((p) => p.text).join("; ")}`); e.problems = errs; throw e; }

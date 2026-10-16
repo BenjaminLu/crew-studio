@@ -216,6 +216,11 @@ export function createRuntime(d: RuntimeDeps) {
         d.log.emit({type:"workflow_created",workflow:def.id,summary:`${def.id} v1 created by ${by}`});
         return json({def},201);
       }
+      {const copy=/^\/api\/wf\/([a-z0-9-]+)\/copy$/.exec(p);if(copy){
+        if(req.method!=='POST')return json({error:'POST required'},405);if(who.kind!=='desktop')return json({error:'Save templates on the desktop'},403);
+        const def=defs.copyTemplate(copy[1],b?.version,b?.id,b?.name,b?.asTemplate,by);
+        d.log.emit({type:'workflow_created',workflow:def.id,summary:`${def.id} copied from ${copy[1]} v${b.version}`});return json({def},201);
+      }}
       if (p === "/api/wf/validate" && writing) return json({ problems: validate(normDef(b?.def ?? {}), defs.known, undefined, defs.skillInfo ?? undefined) });
       let m = /^\/api\/wf\/([a-z0-9-]+)(?:\/(layout))?$/.exec(p);
       if (m) {
