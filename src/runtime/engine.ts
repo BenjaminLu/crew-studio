@@ -1106,6 +1106,20 @@ export class Engine {
       log: first?.dir ? { k: "evidence", run: x.run.id, dir: String(first.dir), file: "output.txt" } : null, diagnostics: c.startsWith("internal") ? { checks: blocked.map((e) => `${e.check}#${e.seq}`).join(", "), edge: edge ?? "" } : null });
   }
   /** The failure that ended a run at this node: what the source said, else the outcome's own class, else its words. */
+  refreshFailure(id: string) {
+    const r = this.must(id);
+    this.ended(r, "diagnosed");
+    if (r.status !== "failed" || r.archived || r.parked || r.ctx.firstmateQuestion || !this.trusted(id).ok) throw new Error("Only a trusted, unarchived failed task without a pending Firstmate question can be diagnosed");
+    if (r.failureCard) return this.cards.get(r.failureCard);
+    if (this.cards.list({run:id,open:true}).length) throw new Error("Resolve the existing card first");
+    const terminal = this.events(id).filter(e => e.type === "failed").at(-1);
+    const node = r.def.nodes.find(n => n.id === terminal?.node), last = r.steps.at(-1);
+    const rn = node && r.nodes[node.id];
+    if (!node || !rn || !last || last.node !== node.id || last.visit !== rn.visits || !rn.outcome || ["running", "pending", "waiting", "skipped"].includes(rn.state)) throw new Error("The failed source node is ambiguous; no recovery card was created");
+    const f = this.failureOf(r, node, rn.outcome);
+    // Diagnosis only creates a captain card; it must never wake Firstmate.
+    return this.raiseFailure(r, node, f.code === "ask.escalated" ? { ...f, escalation: { by: "firstmate", reason: "A historical failure was recovered for captain review; no agent was started." } } : f);
+  }
   failureOf(r: Run, node: WNode, outcome: string): Failure {
     const rn = r.nodes[node.id]; const o = { source: "engine" as const, run: r.id, node: node.id, visit: rn.visits, inputs: this.failureInputs(r, node), log: rn.job ? { k: "job" as const, job: rn.job, run: r.id, node: node.id, round: String(rn.visits) } : null };
     const known = rn.data.failure as Failure | null;

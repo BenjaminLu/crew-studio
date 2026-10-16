@@ -29,7 +29,7 @@ export function installCodeRecovery(engine:Engine,W:Worktrees){
   const priorView=engine.cards.view;
   engine.cards.view=c=>{
     const view=priorView(c),r=engine.get(c.run);
-    if(c.status!=='open'||!c.options.some(o=>o.id==='rescope')||!r?.ctx.wt||!r.def.nodes.some(n=>n.do==='git.merge'))return view;
+    if(c.kind==='failure'||c.status!=='open'||!c.options.some(o=>o.id==='rescope')||!r?.ctx.wt||!r.def.nodes.some(n=>n.do==='git.merge'))return view;
     try{
       const k=key(r),rec=W.get(k.project,k.task),trusted=engine.trusted(r.id),{prior,signed}=signedReservation(engine,r,trusted);
       if(!rec||r.ctx.pr||rec.nativeRebase||r.ctx.remoteRebaseApproved||r.ctx.remoteUpdatePending||rec.head!==rec.baseCommit||rec.head!==r.ctx.head||rec.baseCommit!==r.ctx.baseCommit||

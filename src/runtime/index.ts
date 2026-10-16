@@ -316,6 +316,8 @@ export function createRuntime(d: RuntimeDeps) {
         return json(runView(r.id, who));
       }
       const recovery=/^\/api\/wruns\/(R-\d+)\/continuation\/(offer|confirm)$/.exec(p);
+      const failureRefresh=/^\/api\/wruns\/(R-\d+)\/failure-refresh$/.exec(p);
+      if(failureRefresh&&writing){if(req.method!=="POST")return json({error:"POST required"},405);if(who.kind!=="desktop")return json({error:"Only the desktop captain can refresh failure diagnostics"},403);if(!b||typeof b!=="object"||Array.isArray(b)||Object.keys(b).length)return json({error:"Failure refresh accepts no execution choices"},400);engine.refreshFailure(failureRefresh[1]);return json(runView(failureRefresh[1],who));}
       if(recovery&&writing){if(who.kind!=="desktop")return json({error:"Only the desktop captain can continue a closed task"},403);const id=recovery[1];return json(recovery[2]==="offer"?engine.continuationOffer(id):(engine.confirmContinuation(id,String(b?.token??""),String(b?.confirm??"")),runView(id, who)));}
       // an app's before / after captures (a domain check makes them): the PNGs, and the built pages ("Open the app"), served sandboxed: no script, no request out
       // the agent node runs working now, for the Crew page: run, node, role, model, round, elapsed, last activity (redacted)
