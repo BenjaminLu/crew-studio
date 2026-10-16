@@ -78,8 +78,9 @@
   //   - a markdown link's target: "](" then 1-300 characters that are not ")" or whitespace, then ")" — the
   //     same rule md() (public/m2.js) uses for an href; the link text converts;
   //   - a bare URL or path: a run of ASCII URL/path characters that holds "/" or "\". It ends where the ASCII
-  //     ends ("src/app.ts的設定" converts 設定), unless it ends in "/" or "\": then the next segment belongs to
-  //     the path up to whitespace or closing punctuation ("src/設定.ts", "https://x/blob/main/設定.md" stay).
+  //     ends ("src/app.ts的設定" converts 設定), unless it ends in "/" or "\" with an ASCII letter or digit before
+  //     that slash: then the next segment belongs to the path up to whitespace or closing punctuation
+  //     ("src/設定.ts", "https://x/blob/main/設定.md" stay). A lone "/" or "\" is prose, so 開發/測試 and 見 /設定頁面 convert.
   // Every step is one forward scan: linear in the text.
   const ASCII_PATH = /[A-Za-z0-9_.~:@%+=&?#!$*\-\/\\]/;
   const isPathChar = (c) => c < 128 && ASCII_PATH.test(String.fromCharCode(c));
@@ -108,10 +109,12 @@
         i++; continue;
       }
       if (isPathChar(c) && (i === 0 || !isPathChar(t.charCodeAt(i - 1)))) {
-        let j = i, slash = false; while (j < stop && isPathChar(t.charCodeAt(j))) { const d = t.charCodeAt(j); if (d === 47 || d === 92) slash = true; j++; }
+        // named: an ASCII letter or digit comes before the run's last slash ("docs/", "x.tw/", "C:\\a\\"); a lone "/" is not
+        let j = i, slash = false, alnum = false, named = false;
+        while (j < stop && isPathChar(t.charCodeAt(j))) { const d = t.charCodeAt(j); if (d === 47 || d === 92) { slash = true; named = alnum; } else if ((d >= 48 && d <= 57) || ((d | 32) >= 97 && (d | 32) <= 122)) alnum = true; j++; }
         if (slash) {
           const last = t.charCodeAt(j - 1);
-          if (last === 47 || last === 92) while (j < stop) { const d = t.charCodeAt(j); if (isSpace(d) || CLOSERS.has(d)) break; j++; }
+          if ((last === 47 || last === 92) && named) while (j < stop) { const d = t.charCodeAt(j); if (isSpace(d) || CLOSERS.has(d)) break; j++; }
           spans.push([i, j]);
         }
         i = j; continue;
