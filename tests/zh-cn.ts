@@ -82,9 +82,10 @@ if (w?.crewI18n) {
   // ---------- the chat's Studio notes are bilingual ----------
   const main = readFileSync(join(root, "src/host/main.ts"), "utf8");
   // every status/system note the chat can show carries both languages; a Codex/fresh "statement" (filtered out of the
-  // chat) and a native tool failure (rendered from its own {en, zh-TW} reason) are the two exceptions
+  // chat), a native tool failure (rendered from its own {en, zh-TW} reason) and a typed external error (rendered by
+  // externalView from its own {en, zh-TW} reason) are the exceptions
   const notes = main.split("this.note(").slice(1).map((c) => c.slice(0, 700).split("});")[0]).filter((c) => /^\{\s*kind: "(status|system)"/.test(c));
-  const englishOnly = notes.filter((l) => !/\bbi\(|i18n/.test(l) && !/text: statement|nativeFailure/.test(l));
+  const englishOnly = notes.filter((l) => !/\bbi\(|i18n/.test(l) && !/text: statement|nativeFailure|external: /.test(l));
   ok(notes.length >= 12 && !englishOnly.length, `Studio's ${notes.length} status/system notes in the Firstmate chat carry an i18n {en, zh-TW} field (incl. Claude permission mode, auto-mode rules)`, englishOnly.map((l) => l.trim().slice(0, 90)).join(" | "));
   ok(/claudeModeLineZh/.test(main) && /auto mode 規則/.test(main), "the Claude permission-mode and auto-mode-rules notes have their zh-TW line");
 }
