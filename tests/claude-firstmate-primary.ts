@@ -1,7 +1,7 @@
 // A fresh Firstmate primary on Claude: the actual server, a stub Claude CLI (tests/stub-host-claude.mjs),
 // the official-login fixture for `claude auth status`, a keychain stand-in and the Codex account fixture.
 // Offline: no model is called, no real credential is read.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -84,7 +84,7 @@ try {
   // --- typed refusals, never Codex ---
   signedIn(false); setKeychain("crew");
   let r = await api("/api/main/start", { host: "claude", confirm: true });
-  ok(r.status === 409 && r.body.code === "claudeNotSignedIn" && /Sign in to Claude/.test(r.body.reason), "not signed in: typed claudeNotSignedIn refusal");
+  ok(r.status === 409 && r.body.code === "claudeNotSignedIn" && /Sign in to Claude on this card/.test(r.body.en) && /這張卡片/.test(r.body.zh), "not signed in: typed claudeNotSignedIn refusal that points at this card (no separate account card)");
   ok(codexStarts() === 0 && claudeRuns().length === 0 && (await view()).state === "detached", "not signed in: no Codex thread, no Claude process, nothing attached");
   ok((await ready()).code === "claudeNotSignedIn", "the read-only preflight says not signed in");
   signedIn(true); setKeychain("none");
@@ -105,6 +105,10 @@ try {
   const okPre = await ready();
   ok(okPre.ok === true && okPre.model === "claude-sonnet-5-5" && !existsSync(join(data, "claude-firstmate")), "the preflight passes without creating the config folder");
   ok(!readFileSync(kcLog, "utf8").slice(kcBefore.length).includes(" -w"), "the preflight never decrypts a keychain item");
+  // planted symlinks in the primary's config folder: Studio's settings write never follows one
+  const cfgPlant = join(data, "claude-firstmate"), victimTmp = join(root, "victim-tmp.txt"), victimSettings = join(root, "victim-settings.txt");
+  mkdirSync(cfgPlant, { recursive: true, mode: 0o700 }); writeFileSync(victimTmp, "untouched"); writeFileSync(victimSettings, "untouched");
+  symlinkSync(victimTmp, join(cfgPlant, `settings.json.${app.pid}.tmp`)); symlinkSync(victimSettings, join(cfgPlant, "settings.json"));
   r = await api("/api/main/start", { host: "claude", confirm: true });
   ok(r.status === 200 && r.body.ok && UUID.test(r.body.id), "signed in with a crew token: a fresh Claude primary starts with a new UUID");
   const first = r.body.id;
@@ -122,11 +126,14 @@ try {
   const studioSettings = JSON.parse(readFileSync(join(data, "claude-firstmate", "settings.json"), "utf8"));
   ok(JSON.stringify(studioSettings) === JSON.stringify({ autoMode: AUTO }) && (statSync(join(data, "claude-firstmate", "settings.json")).mode & 0o777) === 0o600, "Studio's primary settings hold exactly the captain's autoMode block (0600): no hooks, permissions, env, mcpServers or apiKeyHelper");
   ok(v1.drive?.autoMode?.state === "applied", "the view says the captain's auto-mode rules are applied");
+  ok(readFileSync(victimTmp, "utf8") === "untouched" && readFileSync(victimSettings, "utf8") === "untouched" && !lstatSync(join(cfgPlant, "settings.json")).isSymbolicLink(), "a planted symlink (temp name or settings.json itself) is never written through; settings.json is a regular file");
+  ok(/已套用/.test(v1.drive?.autoMode?.summaryZh ?? "") && /soft_deny 2/.test(v1.drive?.autoMode?.summaryZh ?? ""), "the auto-mode rules summary also comes in Traditional Chinese");
   const denied = (a[a.indexOf("--disallowedTools") + 1] ?? "").split(",");
   const cfgDir = join(data, "claude-firstmate");
-  ok(denied.includes(`Edit(/${cfgDir}/settings*.json)`) && denied.includes(`Edit(/${cfgDir}/.claude.json)`) && denied.includes(`Edit(/${join(import.meta.dir, "..", ".env")})`) && denied.every((d) => d.startsWith("Edit(//")), "deny rules keep the model's edit tools off Studio's primary settings and Studio's .env, whatever the classifier says");
+  ok(denied.includes(`Edit(/${cfgDir}/settings*.json)`) && denied.includes(`Edit(/${cfgDir}/.claude.json)`) && denied.includes(`Edit(/${join(import.meta.dir, "..", ".env")})`) && [".env.local", ".env.development", ".env.production"].every((f) => denied.includes(`Edit(/${join(import.meta.dir, "..", f)})`)) && denied.every((d) => d.startsWith("Edit(//")), "deny rules keep the model's edit tools off Studio's primary settings and Studio's .env, whatever the classifier says");
   ok(!(existsSync(seedFile) ? readFileSync(seedFile, "utf8") : "").includes("local unrestricted execution") && v1.drive?.executionMode === "default", "by default the primary is told nothing about unrestricted execution");
   const doc1 = ((await api("/api/doctor")).body.items ?? []).find((i: any) => i.id === "claude-permission-mode");
+  ok((doc1?.detailZh ?? "").startsWith("設定的 Claude 權限模式：auto") && /已套用/.test(doc1?.detailZh ?? ""), "Doctor's Chinese detail is Chinese from its first word");
   ok(/Captain auto-mode rules: applied/.test(doc1?.detail ?? "") && /Configured Claude permission mode: auto/.test(doc1?.detail ?? ""), "Doctor labels the mode as configured and says the captain's auto-mode rules are applied");
   ok(doc1?.status === "ok" && /Claude permission mode: auto/.test(doc1.detail) && /CREW_CLAUDE_PERMISSION_MODE/.test(doc1.fix + doc1.adds + doc1.detail), "Doctor shows Claude permission mode: auto and names the operator override");
   const allowed = (a[a.indexOf("--allowedTools") + 1] ?? "").split(",");

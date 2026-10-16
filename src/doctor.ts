@@ -203,10 +203,10 @@ export function diagnose(i: DoctorInput): Item[] {
   const pm = claudePermissionMode(process.env.CREW_CLAUDE_PERMISSION_MODE), am = captainAutoMode();
   let unrestricted = false; try { unrestricted = !!localExecutionNotice(); } catch {}
   const extra = ` Captain auto-mode rules: ${am.summary}. Local unrestricted mode: ${unrestricted ? "on (the Claude primary runs as you with no OS sandbox or egress limits and is told so; the permission bridge, deny rules and token files stay)" : "off"}.`;
-  const extraZh = ` 船長的 auto mode 規則：${am.state === "applied" ? "已套用" : am.state === "none" ? "沒有，使用 Claude 內建預設" : "格式錯誤，改用 Claude 內建預設"}。本機無限制模式：${unrestricted ? "開啟" : "關閉"}。`;
+  const extraZh = ` 船長的 auto mode 規則：${am.summaryZh}。本機無限制模式：${unrestricted ? "開啟" : "關閉"}。`;
   items.push({ id: "claude-permission-mode", title: "Claude Firstmate permission mode", titleZh: "Claude Firstmate 權限模式", status: !pm.ok ? "missing" : am.state === "malformed" || unrestricted ? "degraded" : "ok",
     detail: pm.ok ? `Configured Claude permission mode: ${pm.mode}${pm.mode === "auto" ? " (Claude's classifier approves or denies tool calls; what it escalates asks you through Studio's permission bridge; the Firstmate card shows the mode Claude actually reports)" : " (every tool outside Studio's own asks you through Studio's permission bridge)"}.${extra}` : pm.en,
-    detailZh: pm.ok ? `Configured Claude permission mode: ${pm.mode}${pm.mode === "auto" ? "（由 Claude 的分類器核准或拒絕工具呼叫；它升級的請求會透過 Studio 的權限橋問你；Firstmate 卡片顯示 Claude 實際回報的模式）" : "（Studio 以外的工具都會透過 Studio 的權限橋問你）"}。${extraZh}` : pm.zh,
+    detailZh: pm.ok ? `設定的 Claude 權限模式：${pm.mode}${pm.mode === "auto" ? "（由 Claude 的分類器核准或拒絕工具呼叫；它升級的請求會透過 Studio 的權限橋問你；Firstmate 卡片顯示 Claude 實際回報的模式）" : "（Studio 以外的工具都會透過 Studio 的權限橋問你）"}。${extraZh}` : pm.zh,
     adds: "How a fresh Claude Firstmate approves tool calls. Worker rounds are not affected. The operator sets CREW_CLAUDE_PERMISSION_MODE=default|auto in the environment or .env; no model or API request can change it. Only the autoMode block of the captain's Claude settings is copied; hooks, permissions, env and MCP servers are never copied.",
     fix: !pm.ok ? "Set CREW_CLAUDE_PERMISSION_MODE to default or auto (or unset it for auto), then restart Studio." : am.state === "malformed" ? "Fix the autoMode block in your Claude settings.json (lists of text rules: environment, allow, soft_deny, hard_deny; classifyAllShell true/false), then start the Claude Firstmate again." : "", action: { kind: "none" } });
   for (const item of items) {

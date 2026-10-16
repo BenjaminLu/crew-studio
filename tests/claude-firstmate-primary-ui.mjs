@@ -40,7 +40,9 @@ try {
   // signed out: Claude is shown beside Codex, but cannot start
   await p.goto(base + "/#/firstmate");
   ok(await seen(p, '[data-section="start-firstmate"] [data-section="start-codex"]') && await seen(p, '[data-section="start-firstmate"] [data-section="start-claude"]'), "the Firstmate page offers Codex and Claude together");
-  ok(await seen(p, '[data-claude-start-why="claudeNotSignedIn"]', 20000) && await p.locator("#startClaudeBtn").isDisabled(), "Claude cannot start before the Claude account card shows signed in");
+  ok(await seen(p, '[data-section="start-claude"][data-claude-account="signed-out"]', 20000) && await p.locator("#startClaudeBtn").isDisabled(), "Claude cannot start before its card shows signed in");
+  await p.waitForTimeout(500);
+  ok(await p.locator('[data-section="start-claude"] [data-claude-start-why="claudeNotSignedIn"]').count() === 0 && await p.locator('[data-section="start-claude"] [data-claude-status]').count() === 1, "signed out: the card's account line says so once; no second not-signed-in note pointing at another card");
   ok(await p.locator('.tk-account').count() === 0 && await p.locator('[data-section="start-codex"][data-codex-account] [data-codex-connect]').count() === 1 && await p.locator('[data-section="start-claude"][data-claude-account="signed-out"] [data-claude-signin]').count() === 1, "one card per host: each host card carries its account state and sign-in, and no separate account card sits beside it");
   await p.goto(base + "/#/board");
   ok(await seen(p, "[data-firstmate-welcome] [data-section=\"start-claude\"][data-claude-account]") && await p.locator("[data-firstmate-welcome] .tk-account").count() === 0, "the board welcome follows the same rule: one card per host");
@@ -65,7 +67,7 @@ try {
   setKeychain("none"); await p.goto(base + "/#/firstmate"); await p.evaluate(() => window.dispatchEvent(new Event("crew:live")));
   ok(await seen(p, '[data-claude-start-why="claudeCrewTokenMissing"]') && /claude setup-token/.test(await p.locator('[data-claude-start-why="claudeCrewTokenMissing"]').first().innerText()) && await p.locator("#startClaudeBtn").isDisabled(), "without a crew token the Claude card shows the crew-token step and cannot start");
   setKeychain("crew");
-  rmSync(join(home, ".claude-login-marker"), { force: true }); await p.evaluate(() => window.dispatchEvent(new Event("crew:live"))); await seen(p, '[data-claude-start-why="claudeNotSignedIn"]');
+  rmSync(join(home, ".claude-login-marker"), { force: true }); await p.evaluate(() => window.dispatchEvent(new Event("crew:live"))); await seen(p, '[data-section="start-claude"][data-claude-account="signed-out"]');
   // signing in to Claude here continues into a fresh Claude Firstmate, which greets in the right-side chat
   await p.locator("[data-claude-signin]").first().click();
   const greeted = await seen(p, '#chatLog :text("echo: Coffee onboarding")', 15000);
@@ -75,6 +77,7 @@ try {
   ok(/claude/.test(await p.locator("#chatSub").innerText()), "the chat header names the Claude host");
   await shot(p, "chat-claude-greeting");
   await p.goto(base + "/#/firstmate"); await seen(p, "[data-claude-model]");
+  ok(!/auto|default|→/.test(await p.locator("[data-claude-model]").first().innerText()), "the running card shows the permission mode once, in its own row, not again beside the model");
   ok(/Claude permission mode: auto/.test(await p.locator('.tk-drive [data-claude-permission-mode]').first().innerText().catch(() => "")), "the running Firstmate card shows Claude permission mode: auto");
   ok(/Captain auto-mode rules: none/.test(await p.locator('.tk-drive [data-claude-automode]').first().innerText().catch(() => "")), "the running card says whether the captain's auto-mode rules are applied (none here: built-in defaults)");
   await shot(p, "firstmate-claude-running");
@@ -134,6 +137,19 @@ try {
   ok(fb.ok && (await p.locator(".tk-drive [data-claude-permission-mode]").first().innerText()).includes("Claude permission mode: default (auto was requested; Claude did not enable it)"), "when Claude falls back, the card shows the effective mode and that auto was requested");
   await shot(p, "claude-mode-fallback");
   await api("/api/main/detach", {}); rmSync(join(tmp, "effective-mode"), { force: true });
+  // Traditional Chinese: the Claude card speaks Chinese, including the mode and the auto-mode rules
+  { const zc = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark" }); await zc.addInitScript(() => { try { localStorage.setItem("crew.lang", "zh-TW"); localStorage.setItem("crew.theme", "dark"); localStorage.setItem("crew.chatOpen", "0"); } catch {} });
+    codexAuth(false); await api("/api/codex/account/verify", {}).catch(() => null);
+    const z = await zc.newPage(); z.on("pageerror", (e) => errors.push(String(e)));
+    await z.goto(base + "/#/firstmate"); await seen(z, '[data-section="start-claude"][data-claude-ready="true"] [data-claude-permission-mode]');
+    const card = await z.locator('[data-section="start-claude"]').innerText().catch(() => "");
+    ok(card.includes("Claude 權限模式：auto") && card.includes("船長的 auto mode 規則") && !/Claude permission mode|Captain auto-mode rules|built-in defaults/.test(card), "zh-TW: the Claude start card shows the mode and the auto-mode rules in Chinese");
+    await z.locator("#startClaudeBtn").click(); await seen(z, '#chatLog :text("echo: Coffee onboarding")', 15000);
+    await z.goto(base + "/#/firstmate"); await seen(z, ".tk-drive [data-claude-permission-mode]");
+    const run = await z.locator(".tk-drive").first().innerText().catch(() => "");
+    ok(run.includes("Claude 權限模式：auto") && !/Claude permission mode|Captain auto-mode rules/.test(run), "zh-TW: the running card shows the effective mode in Chinese");
+    if (shots) { mkdirSync(shots, { recursive: true }); await z.evaluate(() => { try { openChat(false); } catch {} }); await z.waitForTimeout(300); await z.locator(".tk-drive").first().screenshot({ path: join(shots, "review-running-390-dark-zh-TW.png") }); }
+    await api("/api/main/detach", {}); await zc.close(); }
   if (shots) { // the review set: the choice, the Claude card, the chat greeting; 1280 light English and 390 dark Traditional Chinese
     codexAuth(false); await api("/api/codex/account/verify", {}).catch(() => null);
     for (const o of [{ w: 1280, h: 900, theme: "light", lang: "en" }, { w: 390, h: 844, theme: "dark", lang: "zh-TW" }]) {
