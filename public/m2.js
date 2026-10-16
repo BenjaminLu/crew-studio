@@ -57,7 +57,7 @@ function msgView(m, i) {
   return h("div", { class: "msg fm", "data-msg": i },
     h("div", { class: "meta" }, "firstmate", m.provider ? h("span", { class: "vbadge" }, `${m.provider}${m.model ? " · " + m.model : ""}`) : null, m.ms ? h("span", {}, `${(m.ms / 1000).toFixed(1)} s`) : null),
     toolChips(m.tools),
-    m.text ? h("div", { class: "bub" }, md(m.text)) : m.error ? null : h("div", { class: "typing", "aria-label": T("firstmate is answering", "firstmate 回答中") }, h("i"), h("i"), h("i")),
+    m.text ? h("div", { class: "bub" }, md(m.role === "firstmate" ? I18N.chatText(lang, m.text) : m.text)) : m.error ? null : h("div", { class: "typing", "aria-label": T("firstmate is answering", "firstmate 回答中") }, h("i"), h("i"), h("i")),
     m.intent ? intentCard(m.intent) : null,
     m.error ? h("div", { class: "rich chat-err", role: "alert" }, h("div", { class: "rk", style: "color:var(--bad)" }, icon("alert", "ic sm"), errTitle(m.error.code)),
       h("div", { style: "font-size:13px;color:var(--text-2)" }, m.error.message),

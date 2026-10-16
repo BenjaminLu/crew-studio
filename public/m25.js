@@ -25,7 +25,7 @@ getJ("/api/remote/me").then((m) => { MS.me = m; if (isMain()) renderChat(false);
     const e = JSON.parse(m.data);
     if (e.type === "delta") MS.live += e.text;
     else if (e.type === "toolStart") MS.liveTools.push(`${e.name} ${e.summary}`.trim());
-    if (isMain()) { const el = $("#mainLive"); if (el && e.type === "delta") { el.textContent = MS.live; const log = $("#chatLog"); log.scrollTop = log.scrollHeight; } else renderChat(false); }
+    if (isMain()) { const el = $("#mainLive"); if (el && e.type === "delta") { el.textContent = I18N.chatText(lang, MS.live); const log = $("#chatLog"); log.scrollTop = log.scrollHeight; } else renderChat(false); }
   });
 })();
 loadMain();
@@ -128,7 +128,7 @@ function logItem(it, i) {
   if (it.kind === "captain") return h("div", { class: "msg me", "data-main": "captain" }, it.text ? h("div", { class: "bub" }, it.text) : null, it.attachments?.length ? attView(it.attachments) : null, it.source && it.source !== "desktop" ? h("div", { class: "faint", style: "font-size:11px;text-align:right" }, it.source) : null);
   if (it.external) return externalView(it.external);
   if (it.attachmentRefusal) return externalView({ source: "studio", class: "attachment", code: it.attachmentRefusal, message: it.text.replace(/^Not sent: /, ""), reason: { en: "An attachment could not be sent.", "zh-TW": "附件無法送出。" } });
-  if (it.kind === "firstmate") return h("div", { class: "msg fm", "data-main": "firstmate" }, h("div", { class: "meta" }, "Firstmate", (it.session?.host || MS.view?.host) ? h("span", { class: "vbadge" }, it.session?.host || MS.view.host) : null), h("div", { class: "bub" }, md(it.text)));
+  if (it.kind === "firstmate") return h("div", { class: "msg fm", "data-main": "firstmate" }, h("div", { class: "meta" }, "Firstmate", (it.session?.host || MS.view?.host) ? h("span", { class: "vbadge" }, it.session?.host || MS.view.host) : null), h("div", { class: "bub" }, md(I18N.chatText(lang, it.text))));
   if (it.kind === "tool") return h("div", { class: "toolrow", "data-main": "tool", style: "padding:2px 6px" }, h("code", { style: "font-size:12px" }, it.text.slice(0, 160)));
   const lab = KLABEL[it.kind]?.();
   return h("div", { class: "faint", "data-main": it.kind, style: "font-size:12.5px;padding:4px 8px;border-left:2px solid var(--line);white-space:pre-wrap" }, lab ? h("b", {}, lab + " · ") : null, it.kind === "wake" ? it.text.split("\n").slice(1, -1).join("\n") : noteText(it));
@@ -145,7 +145,7 @@ renderChat = function (stick = true) {
     v.log.filter((x) => !(v.context==="studio"&&x.source==="studio:handoff") && (x.kind !== "status" || x.attachmentRefusal || x.external || /Paused|Handed|Attached|re-identified|Turn (failed|interrupted)/.test(x.text))).slice(-80).forEach((x, i, all) => { const sep = sessionSep(x, all[i - 1], all, v); if (sep) kids.push(sep); kids.push(logItem(x, i)); });
     if (v.busy) kids.push(h("div", { class: "msg fm", "data-main": "live" }, h("div", { class: "meta" }, "Firstmate", h("span", { class: "faint" }, T("working…", "處理中…"))),
       MS.liveTools.length ? h("div", { class: "faint", style: "font-size:12px" }, MS.liveTools.slice(-3).join(" · ")) : null,
-      MS.live ? h("div", { class: "bub", id: "mainLive" }, MS.live) : h("div", { class: "typing" }, h("i"), h("i"), h("i"))));
+      MS.live ? h("div", { class: "bub", id: "mainLive" }, I18N.chatText(lang, MS.live)) : h("div", { class: "typing" }, h("i"), h("i"), h("i"))));
     (MS.notices || []).forEach((n) => kids.push(externalView(n)));
     const q = queueView(v); if (q) kids.push(q);
   }

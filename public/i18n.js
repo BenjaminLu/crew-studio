@@ -43,7 +43,7 @@
     deepMemo.set(v, out); return out;
   }
   const norm = (l) => (LANGS.includes(l) ? l : "en");
-  /** the first preferred browser language: zh-CN / zh-SG / zh-Hans -> zh-CN; zh-TW / zh-HK / zh-Hant -> zh-TW; anything else -> en */
+  /** the first preferred browser language: zh / zh-CN / zh-SG / zh-Hans -> zh-CN; zh-TW / zh-HK / zh-Hant -> zh-TW; anything else -> en */
   function browserLang(list) {
     const tag = String((Array.isArray(list) ? list[0] : list) || "").toLowerCase();
     if (!/^zh(-|$)/.test(tag)) return "en";
@@ -52,7 +52,7 @@
     if (parts.includes("hans")) return "zh-CN";
     if (parts.some((p) => ["tw", "hk", "mo"].includes(p))) return "zh-TW";
     if (parts.some((p) => ["cn", "sg"].includes(p))) return "zh-CN";
-    return "en";
+    return parts.length ? "en" : "zh-CN"; // a bare "zh" reads as Simplified
   }
   /** the stored choice when it is one of the three, else the browser's language */
   const initial = (stored, list) => (LANGS.includes(stored) ? stored : browserLang(list));
@@ -78,7 +78,19 @@
   const modelLang = (lang) => (lang === "zh-CN" ? "zh-TW" : norm(lang));
   /** the per-card language toggle: English and the page's Chinese */
   const cardLangs = (lang) => [["en", "EN"], lang === "zh-CN" ? ["zh-CN", "简中"] : ["zh-TW", "繁中"]];
+  // what display-time conversion must leave alone: fenced and inline code, a markdown link's target, URLs and file paths
+  // (a URL or path ends at whitespace or Chinese punctuation: "src/a.ts，然後" keeps only the path)
+  const P = "[^\\s，。、；：！？（）「」『』“”]";
+  const KEEP = new RegExp("```[\\s\\S]*?(?:```|$)|`[^`\\n]*`|\\]\\([^)\\s]*\\)|https?:\\/\\/" + P + "+|" + P + "*[A-Za-z0-9_.~-]\\/" + P + "*|\\/[A-Za-z0-9_.~-]" + P + "*", "g");
+  /** a model reply or chat line shown in 简体中文: converted for display only, code, links and paths untouched */
+  function displayCN(s) {
+    if (typeof s !== "string" || !s) return s;
+    let out = "", last = 0;
+    for (const m of s.matchAll(KEEP)) { out += toCN(s.slice(last, m.index)) + m[0]; last = m.index + m[0].length; }
+    return out + toCN(s.slice(last));
+  }
+  const chatText = (lang, s) => (lang === "zh-CN" ? displayCN(s) : s);
   const NAMES = { en: "English", "zh-TW": "繁體中文", "zh-CN": "简体中文" };
   const locale = (lang) => (lang === "en" ? "en-US" : lang);
-  window.crewI18n = { LANGS, NAMES, toCN, deepCN, browserLang, initial, pick, loc, deep, zhField, modelLang, cardLangs, locale };
+  window.crewI18n = { LANGS, NAMES, toCN, deepCN, displayCN, chatText, browserLang, initial, pick, loc, deep, zhField, modelLang, cardLangs, locale };
 })();

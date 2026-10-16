@@ -47,7 +47,7 @@ if (w?.crewI18n) {
   ok(w2?.crewI18n, "i18n.js still loads without the terms file");
   // ---------- browser language on first run ----------
   const cases: [string[] | string, string][] = [[["zh-CN"], "zh-CN"], [["zh-SG"], "zh-CN"], [["zh-Hans"], "zh-CN"], [["zh-Hans-CN"], "zh-CN"], [["zh-TW"], "zh-TW"], [["zh-HK"], "zh-TW"],
-    [["zh-Hant"], "zh-TW"], [["zh-Hant-HK"], "zh-TW"], [["en-US"], "en"], [["ja-JP"], "en"], [[], "en"], [["fr", "zh-CN"], "en"], ["zh-CN", "zh-CN"]];
+    [["zh-Hant"], "zh-TW"], [["zh-Hant-HK"], "zh-TW"], [["en-US"], "en"], [["ja-JP"], "en"], [[], "en"], [["fr", "zh-CN"], "en"], ["zh-CN", "zh-CN"], [["zh"], "zh-CN"]];
   for (const [list, want] of cases) ok(I.browserLang(list) === want, `browser ${JSON.stringify(list)} -> ${want}`, I.browserLang(list));
   ok(I.initial("zh-CN", ["en-US"]) === "zh-CN" && I.initial("zh-TW", ["zh-CN"]) === "zh-TW" && I.initial("en", ["zh-CN"]) === "en", "a stored choice beats the browser language");
   ok(I.initial(null, ["zh-HK"]) === "zh-TW" && I.initial("klingon", ["zh-SG"]) === "zh-CN", "no (or an unknown) stored choice falls back to the browser language");
@@ -63,6 +63,11 @@ if (w?.crewI18n) {
   ok(I.loc("zh-CN", { en: "Only English" }) === "Only English" && I.loc("zh-TW", { en: "Only English" }) === "Only English", "an English-only field falls back to English");
   ok(I.deep("zh-CN", { en: { a: 1 } })?.a === 1, "a structure with no Chinese falls back to English");
   ok(I.zhField("zh-CN", "Build loop", "建置迴圈") === "建置循环" && I.zhField("zh-TW", "Build loop", "建置迴圈") === "建置迴圈" && I.zhField("zh-CN", "Gates", "") === "Gates", "zh-TW-only fields (label_tw) convert");
+  // ---------- model replies: display-time conversion leaves code, links and paths alone ----------
+  const reply = "這個檔案 `程式碼.js`：\n```\n設定 = 1\n```\n見 [設定頁](#/settings) https://x.tw/設定 ./資料/設定.md src/設定.ts，然後登入。";
+  ok(I.displayCN(reply) === "这个文件 `程式碼.js`：\n```\n設定 = 1\n```\n见 [设置页](#/settings) https://x.tw/設定 ./資料/設定.md src/設定.ts，然后登录。", "a reply converts for display; fenced code, inline code, link targets, URLs and paths stay as written", I.displayCN(reply));
+  ok(I.chatText("zh-TW", reply) === reply && I.chatText("en", reply) === reply && I.chatText("zh-CN", reply) === I.displayCN(reply), "only 简体中文 converts a reply");
+  ok(I.toCN("ab") === "ab" && reply.includes("設定"), "the stored reply itself is never changed");
   // ---------- model inputs keep today's language ----------
   ok(I.modelLang("zh-CN") === "zh-TW" && I.modelLang("zh-TW") === "zh-TW" && I.modelLang("en") === "en", "model-bound language: zh-CN sends the zh-TW it sent before");
   // ---------- every zh-TW string in the UI converts cleanly ----------

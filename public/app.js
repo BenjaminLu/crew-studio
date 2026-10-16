@@ -433,6 +433,9 @@ function setLang(l, persist = true) { l = I18N.LANGS.includes(l) ? l : "en"; lan
   $$("[data-lang-set]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.langSet === l)));
   const names = { board: ["Board", "看板"], inbox: ["Inbox", "收件匣"], crew: ["Crew", "船員"], activity: ["Activity", "事件"], workflow: ["Workflow", "流程"], intents: ["Intents", "意圖"], library: ["Library", "成品庫"], remote: ["Phone", "手機"], doctor: ["Doctor", "健康檢查"], changes: ["Changes", "變更"] };
   $$(".nav-item").forEach((b) => { const n = names[b.dataset.view]; if (!n) return; b.querySelector(".nl").textContent = T(...n); b.dataset.tip = T(...n); });
+  const th = { system: ["Auto", "自動", "Use system theme", "跟隨系統主題"], light: ["Light", "淺色", "Light theme", "淺色主題"], dark: ["Dark", "深色", "Dark theme", "深色主題"] };
+  $("#themeLabel").textContent = T("Theme", "主題"); $("#themeSeg").setAttribute("aria-label", T("Theme", "主題"));
+  $$("#themeSeg button").forEach((b) => { const t = th[b.dataset.themeSet]; if (!t) return; const sp = b.querySelector("span:not([data-ic])"); if (sp) sp.textContent = T(t[0], t[1]); b.setAttribute("aria-label", T(t[2], t[3])); });
   window.onLang?.();
   if (S.route) render(); }
 function setSide(collapsed) { document.body.classList.toggle("side-collapsed", collapsed); store.set("crew.side", collapsed ? "collapsed" : "open");

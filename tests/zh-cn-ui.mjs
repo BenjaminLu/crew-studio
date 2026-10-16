@@ -2,7 +2,8 @@
 // English, 繁體中文 and 简体中文; the lower-left switcher is gone; the choice survives a
 // reload; the first run follows the browser language; and in zh-CN no Traditional-only
 // character is left on Firstmate (with Studio's chat notes), Tasks, a card, Settings and
-// Doctor. Text an element marks as lang="zh-TW" (the 繁體中文 option) is meant to be Traditional.
+// Doctor. The captain's own chat lines (kept as typed) and Firstmate's replies (checked exactly: code, URLs
+// and paths stay as written) are left out of the generic check. Text an element marks as lang="zh-TW" (the 繁體中文 option) is meant to be Traditional.
 // Runs against a temporary copy of tests/fixture/state, a mock board and stub hosts.
 //   PLAYWRIGHT_MODULE=…/playwright/index.mjs node tests/zh-cn-ui.mjs
 import { spawn } from "node:child_process";
@@ -45,7 +46,7 @@ const TRAD = "這們個說會時對開發體為裡與從後來還點過讓樣請
 /** Traditional-only characters in the page's visible text and labels, outside lang="zh-TW" elements */
 const tradLeft = (p) => p.evaluate((TRAD) => {
   // an element (not the page itself) marked lang="zh-TW" is meant to be Traditional, like the 繁體中文 option
-  const out = [], skip = (el) => { const l = el?.closest?.("[lang]"); return (l && l !== document.documentElement && l.lang === "zh-TW") || el?.closest?.("script,style,textarea,[hidden]"); };
+  const out = [], skip = (el) => { const l = el?.closest?.("[lang]"); return (l && l !== document.documentElement && l.lang === "zh-TW") || el?.closest?.("script,style,textarea,[hidden]") || el?.closest?.('[data-main="captain"],[data-main="firstmate"]'); };
   const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   for (let n; (n = w.nextNode());) { const el = n.parentElement; if (skip(el) || !el.getClientRects().length) continue; const t = n.textContent; if ([...t].some((c) => TRAD.includes(c))) out.push(t.trim().slice(0, 80)); }
   for (const el of document.body.querySelectorAll("[title],[aria-label],[placeholder],[data-tip]")) { if (skip(el)) continue;
@@ -97,6 +98,11 @@ try {
     ok((await tradLeft(p)).length > 0, "the check has teeth: the same Settings page in 繁體中文 does show Traditional characters"); await c.close(); }
   const att = await api("/api/main/attach", { host: "claude", id: "sess-zh" });
   ok(att.status === 200, "the fixture session attaches, so the chat carries Studio's notes", JSON.stringify(att.body));
+  // a model reply with Traditional text, inline code, a URL and a path (the stub echoes the captain's line)
+  const said = "這個檔案 `程式碼.js` 看 https://x.tw/設定 和 src/設定.ts 的設定";
+  const sent = await api("/api/main/send", { text: said });
+  ok(sent.status === 200, "a captain line goes to the stub Firstmate", JSON.stringify(sent.body));
+  await new Promise((r) => setTimeout(r, 1500));
   for (const [width, scheme] of [[1280, "light"], [390, "dark"]]) {
     const c = await ctxFor({ width, scheme, lang: "zh-CN" });
     for (const [name, hash, sel] of [["settings", "#/settings", "[data-settings-lang]"], ["doctor", "#/doctor", ".doc-t"], ["tasks", "#/runs", "h1"], ["card", "#/inbox", "[data-card]"], ["firstmate", "#/firstmate", "#chatLog [data-main]"]]) {
@@ -109,7 +115,14 @@ try {
       ok(left.length === 0, `${name}: no Traditional characters left at ${width} ${scheme}`, JSON.stringify(left.slice(0, 6)));
       ok(await cjk(p) > 10, `${name}: the page really shows Chinese at ${width} ${scheme}`);
       ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name}: no sideways scroll at ${width} ${scheme}`);
-      if (name === "firstmate") ok(/已接上 claude session/.test(await p.locator("#chatLog").innerText()), `the chat's Studio note reads in 简体中文 at ${width}`, (await p.locator("#chatLog").innerText()).slice(0, 200));
+      if (name === "firstmate") {
+        const log = await p.locator("#chatLog").innerText();
+        ok(/已接上 claude session/.test(log), `the chat's Studio note reads in 简体中文 at ${width}`, log.slice(0, 200));
+        const reply = await p.locator('#chatLog [data-main="firstmate"] .bub').last().innerText().catch(() => "");
+        ok(reply === "echo: 这个文件 程式碼.js 看 https://x.tw/設定 和 src/設定.ts 的设置", `a Firstmate reply converts for display; inline code, the URL and the path stay as written (${width})`, reply);
+        ok(await p.locator('#chatLog [data-main="captain"] .bub').last().innerText() === said, `the captain's own line stays as typed (${width})`);
+        ok(await p.locator("#themeLabel").innerText() === "主题" || width < 761, `the sidebar theme title reads 主题 (${width})`, await p.locator("#themeLabel").innerText());
+      }
       if (name === "settings" || name === "firstmate") await p.screenshot({ path: join(shots, `zh-cn-${name}-${width}-${scheme}.png`) });
       await p.close();
     }
