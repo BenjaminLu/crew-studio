@@ -1,0 +1,17 @@
+# Live acceptance: Web prototype. Two designer agents draft variants A and B, checks and refine run,
+# the captain's acceptance card approves one, it goes to Studio's own library.
+schema: 1
+workflow: web-prototype
+topic: "A single-page status board that lists three tasks with their state and a last-updated time."
+start: { provider: null, params: {} }
+providers: []
+approvals: { staffing: false, dispatch: false }
+cards:
+  - { node: accept, answer: approved, note: "live acceptance: approved to finish the run; quality is judged from the report" }
+  - { node: capability, action: stop }
+  - { node: escalation, action: stop }
+expect:
+  status: succeeded
+  result: done
+  artifacts: [{ deliver: 1 }]
+budget: { wall_minutes: 40, max_rounds: 18 }

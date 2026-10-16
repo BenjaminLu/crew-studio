@@ -1,0 +1,17 @@
+# Live acceptance: Documents. A writer agent drafts doc.md, checks and the refine loop run,
+# the captain's acceptance card approves, the document is exported to Studio's own library.
+schema: 1
+workflow: documents
+topic: "Write a one-page memo that explains what Crew Studio's live acceptance run checks, for a new teammate."
+start: { provider: null, params: {} }   # the board's Start form with "Default provider"
+providers: []                           # the default provider is added when the workflow has agent nodes
+approvals: { staffing: false, dispatch: false }
+cards:
+  - { node: accept, answer: approved, note: "live acceptance: approved to finish the run; quality is judged from the report" }
+  - { node: capability, action: stop }  # the renderer is unavailable: report it, do not close the Task
+  - { node: escalation, action: stop }  # checks did not converge: report it
+expect:
+  status: succeeded
+  result: done
+  artifacts: [{ deliver: 1 }]
+budget: { wall_minutes: 30, max_rounds: 14 }

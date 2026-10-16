@@ -1,0 +1,14 @@
+# Live acceptance: Images. One Codex image generation, checks, the captain's acceptance card, library.
+schema: 1
+workflow: images
+topic: "A flat, friendly illustration of a small crew of robots reviewing a checklist, square, light background."
+start: { provider: null, params: {} }
+providers: [codex]                      # image.generate always uses the configured Codex image model
+approvals: { staffing: false, dispatch: false }
+cards:
+  - { node: accept, answer: approved, note: "live acceptance: approved to finish the run; quality is judged from the report" }
+expect:
+  status: succeeded
+  result: done
+  artifacts: [{ deliver: 1 }]
+budget: { wall_minutes: 20, max_rounds: 8 }

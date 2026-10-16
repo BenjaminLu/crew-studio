@@ -1,0 +1,14 @@
+# Offline fixture: the bundled documents workflow on the stub provider writes no doc.md and fails.
+schema: 1
+workflow: documents
+topic: "fixture failing memo"
+start: { provider: null, params: {} }
+providers: [stub]
+approvals: { staffing: false, dispatch: false }
+cards:
+  - { node: accept, answer: approved }
+expect:
+  status: succeeded
+  result: done
+  artifacts: [{ deliver: 1 }]
+budget: { wall_minutes: 2, max_rounds: 10 }

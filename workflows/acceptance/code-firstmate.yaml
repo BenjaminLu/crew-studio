@@ -1,0 +1,13 @@
+# Live acceptance: Code (firstmate). The coordinator writes the spec; the dispatch card is the last
+# point before work that opens a pull request, so the run stops there. Dispatch is not approved here.
+schema: 1
+workflow: code-firstmate
+topic: "Add one sentence to the README that says how to run the offline tests."
+start: { provider: null, params: {}, required_params: [project] }
+providers: []
+approvals: { staffing: false, dispatch: false }
+cards: []
+expect:
+  stop_at: dispatch
+  artifacts: []
+budget: { wall_minutes: 30, max_rounds: 8 }

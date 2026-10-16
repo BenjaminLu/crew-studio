@@ -1,0 +1,13 @@
+# Live acceptance: GitHub review. Like code-firstmate up to the dispatch card; the steps after it
+# open a pull request and wait on GitHub, so the run stops at dispatch.
+schema: 1
+workflow: github-review
+topic: "Add one sentence to the README that says how to run the offline tests."
+start: { provider: null, params: {}, required_params: [project] }
+providers: []
+approvals: { staffing: false, dispatch: false }
+cards: []
+expect:
+  stop_at: dispatch
+  artifacts: []
+budget: { wall_minutes: 30, max_rounds: 8 }

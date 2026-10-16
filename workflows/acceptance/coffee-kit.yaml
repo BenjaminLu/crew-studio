@@ -1,0 +1,14 @@
+# Live acceptance: Coffee kit. Starting it needs the captain's discussed design plan and an approved
+# coffee staffing, so it starts only with --params carrying project and coffeeDesignPlan. The
+# direction card confirms paid generation: the run is accepted when it reaches that card.
+schema: 1
+workflow: coffee-kit
+topic: "A small coffee shop's opening week kit."
+start: { provider: null, params: {}, required_params: [project, coffeeDesignPlan] }
+providers: [codex]
+approvals: { staffing: false, dispatch: false }
+cards: []
+expect:
+  stop_at: direction
+  artifacts: []
+budget: { wall_minutes: 10, max_rounds: 4 }

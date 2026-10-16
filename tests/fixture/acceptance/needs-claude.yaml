@@ -1,0 +1,11 @@
+# Offline fixture: Claude must report signed in; the fixture home has no Claude login.
+schema: 1
+workflow: accept-pass
+topic: "fixture needs claude"
+start: { provider: null, params: {} }
+providers: [claude, codex]
+approvals: { staffing: false, dispatch: false }
+cards:
+  - { node: ask, answer: continue }
+expect: { status: succeeded, artifacts: [] }
+budget: { wall_minutes: 2, max_rounds: 5 }

@@ -1,0 +1,13 @@
+# Live acceptance: Pack genesis. The coordinator interviews in one batch; answering the interview
+# needs the captain's own words, so the run is accepted when it reaches that card.
+schema: 1
+workflow: pack-genesis
+topic: "A pack that checks every button on a web page has a visible or accessible label."
+start: { provider: null, params: {} }
+providers: []
+approvals: { staffing: false, dispatch: false }
+cards: []
+expect:
+  stop_at: interview-answers
+  artifacts: []
+budget: { wall_minutes: 15, max_rounds: 4 }

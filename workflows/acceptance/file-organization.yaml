@@ -1,0 +1,14 @@
+# Live acceptance: File organization. Studio plans moves inside one folder and gates them; the
+# acceptance card would move real files, so the run is accepted when it reaches that card with a plan.
+# The captain names a throwaway folder: --params '{"folder": "<path>"}' in a JSON file.
+schema: 1
+workflow: file-organization
+topic: "Sort the files in the acceptance folder by type."
+start: { provider: null, params: {}, required_params: [folder] }
+providers: []
+approvals: { staffing: false, dispatch: false }
+cards: []
+expect:
+  stop_at: card
+  artifacts: []
+budget: { wall_minutes: 10, max_rounds: 4 }
