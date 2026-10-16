@@ -86,6 +86,8 @@ export class PolicyUnreadable extends Error {
   readonly code = "policyUnreadable"; readonly status = 409;
   constructor(readonly file: string, why: string) { super(`policy file unreadable: ${file.split("/").slice(-2).join("/")} (${why}); fix or move it before changing policy`); this.name = "PolicyUnreadable"; }
 }
+/** The catch-all line that makes every path one-way while a policy file cannot be read. */
+export const unreadableRule = (level: string) => ({ glob: "**", why: `policy file unreadable (${level}): every path is one-way until it is fixed` });
 export class Policies {
   onChange: (() => void) | null = null;
   constructor(readonly dataDir: string) { mkdirSync(join(dataDir, "policies"), { recursive: true }); }
@@ -103,6 +105,9 @@ export class Policies {
       const levels = [["org", getPath(this.org(), path)], ["project", getPath(this.project(o.project), path)], ["workflow", getPath(o.workflow ?? {}, path)]] as const;
       const out: any[] = []; let from: "workflow" | "project" | "org" | null = null;
       for (const [lv, v] of levels) if (Array.isArray(v)) { from = lv; for (const x of v) if (!out.some((y) => JSON.stringify(y?.glob ?? y) === JSON.stringify(x?.glob ?? x))) out.push(x); }
+      // a policy file that cannot be read may hold sensitive paths nobody can see: every path is one-way until it is fixed (fail closed)
+      if (path === "sensitive_paths") { const why = this.orgUnreadable() ? "org" : o.project && this.projectUnreadable(o.project) ? `project ${o.project}` : null;
+        if (why) { out.unshift(unreadableRule(why)); from ??= why === "org" ? "org" : "project"; } }
       return { value: from ? out : undefined, from };
     }
     const w = getPath(o.workflow ?? {}, path); if (w !== undefined) return { value: w, from: "workflow" };
@@ -118,6 +123,8 @@ export class Policies {
     if (!v || typeof v !== "object" || Array.isArray(v)) throw new PolicyUnreadable(f, "it is not a mapping");
     return v as Record<string, any>;
   }
+  /** The org policy file exists but cannot be read. */
+  orgUnreadable(): boolean { try { this.forWrite(join(this.dataDir, "policies", "org.yaml")); return false; } catch (e) { return e instanceof PolicyUnreadable; } }
   /** The project's policy file exists but cannot be read (writers refuse it). */
   projectUnreadable(id: string): boolean { try { this.forWrite(join(this.dataDir, "policies", `project-${id.replace(/[^\w-]/g, "")}.yaml`)); return false; } catch (e) { return e instanceof PolicyUnreadable; } }
   setOrg(patch: Record<string, any>) { const f = join(this.dataDir, "policies", "org.yaml"); const cur = this.forWrite(f); writeFileSync(f, JSON.stringify(deepMerge(cur, patch), null, 1)); this.onChange?.(); }

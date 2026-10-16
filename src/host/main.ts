@@ -1,3 +1,4 @@
+import { neutralizeMarkers } from "../operating-rules";
 import { createHash } from "node:crypto";
 import {writeNativeDiagnostic} from './native-errors';
 import {NativeToolFailure,type NativeFailure} from './types';
@@ -340,9 +341,9 @@ export class MainSession {
     this.seenWakes.clear();
     this.note({ kind: "status", text: statement });
     if (host === "claude" && extra?.autoMode) this.note({ kind: "status", text: `The captain's auto-mode rules are ${extra.autoMode.summary}` });
-    const freshSeed = withRulesSeed(this.o.nativeWorkspace ? nativeFreshText(cwd, (() => { try { const n = this.o.nativeTools?.().specs.map((t) => t.name) ?? []; return n.length ? n : undefined; } catch { return undefined; } })()) : freshText(cwd, newest), this.o.operatingRules, !!this.o.nativeWorkspace);
-    // local unrestricted mode (operator .env): a Claude primary is told so in its first message, as Codex is on every turn
-    this.queue.seed(host === "claude" && localExecutionNotice() ? `${localExecutionNotice()}\n\n${freshSeed}` : freshSeed);
+    // local unrestricted mode (operator .env): a Claude primary is told so in its first message, as Codex is on every turn (after the rules, before the body)
+    const body = this.o.nativeWorkspace ? nativeFreshText(cwd, (() => { try { const n = this.o.nativeTools?.().specs.map((t) => t.name) ?? []; return n.length ? n : undefined; } catch { return undefined; } })()) : freshText(cwd, newest);
+    this.queue.seed(withRulesSeed(body, this.o.operatingRules, !!this.o.nativeWorkspace, host === "claude" ? localExecutionNotice() : ""));
     this.timer = setInterval(() => this.tick(), this.o.pollMs ?? 1000);
     this.changed();
     void this.pump();
@@ -420,7 +421,7 @@ export class MainSession {
         // the operating rules reach every session once and again after each edit: a takeover, a resume or a restart has no seed
         let sendText = item.text, sentRules: { session: string; hash: string } | null = null;
         if (this.o.operatingRules) { const section = rulesNow(this.o.operatingRules), hash = createHash("sha256").update(section).digest("hex"), sid = this.session.id, prev = this.driver().rulesSent;
-          if (prev?.session !== sid || prev.hash !== hash) { if (!item.text.includes(section)) sendText = withRulesTurn(item.text, section, prev?.session === sid); sentRules = { session: sid, hash }; } }
+          if (prev?.session !== sid || prev.hash !== hash) { if (!item.text.startsWith(section) && !(item.source === "studio:handoff" && item.text.startsWith(`${localExecutionNotice()}\n\n${section}`))) sendText = withRulesTurn(item.text, section, prev?.session === sid); sentRules = { session: sid, hash }; } }
         const compactedBefore = this.compactions;
         const r = await this.session.send(sendText, files).catch((e) => ({ status: "failed" as const, message: String(e?.message ?? e), refusal: e?.refusal?.code as import("../attachments").AttachmentRefusalCode | undefined }));
         if ("refusal" in r && r.refusal) { this.activeInput = null; this.note({ kind: "status", text: `Not sent: ${r.message}`, status: "failed", attachmentRefusal: r.refusal, external: externalError("studio", r.message, { cls: "attachment", code: r.refusal }) }); this.changed(); continue; }
@@ -600,15 +601,20 @@ export function newestHandoffFile(stateDir: string, cap = 60_000): { name: strin
 }
 
 /** A first message with the captain's operating rules after it: the same section every worker and reviewer gets. */
-export function withRulesSeed(text: string, rules?: () => string, tool = false): string {
-  if (!rules) return text;
-  return `${text}\n\n${rulesNow(rules)}\n\nThese rules bind you and every job you propose.${tool ? " Project rules are not included here: call studio_operating_rules before you propose work for a project, and read them again any time." : ""} Only the captain edits them, in Studio's settings.`;
+/**
+ * A first message: the captain's operating rules first (after Studio's own lead line, e.g. the local execution notice), then the body. The body may quote untrusted text (the original
+ * thread's recent turns, a handoff file, a worker's report): its rules markers and headings are neutralised, so the
+ * real section is always the first one the model reads.
+ */
+export function withRulesSeed(text: string, rules?: () => string, tool = false, lead = ""): string {
+  if (!rules) return lead ? `${lead}\n\n${text}` : text;
+  return `${lead ? `${lead}\n\n` : ""}${rulesNow(rules)}\n\nThese rules bind you and every job you propose.${tool ? " Project rules are not included here: call studio_operating_rules before you propose work for a project, and read them again any time." : ""} Only the captain edits them, in Studio's settings. The message follows.\n\n${neutralizeMarkers(text)}`;
 }
 const RULES_UNREADABLE_SECTION = "# Operating rules (set by the captain)\n\nRULES UNREADABLE: Studio could not read the operating rules. Treat every action they usually cover (sign-in flows, live services, shared git config, accounts and billing) as forbidden and ask the captain.";
 function rulesNow(rules: () => string): string { try { return rules(); } catch { return RULES_UNREADABLE_SECTION; } }
 /** A turn for a session that has not seen the current rules (a takeover, a resume, a restart, or an edit since): the section first. */
 export function withRulesTurn(text: string, section: string, changed: boolean): string {
-  return `${section}\n\n${changed ? "The captain changed the operating rules above since you last saw them; they replace the earlier text." : "These are the captain's standing operating rules for this session."} The message follows.\n\n${text}`;
+  return `${section}\n\n${changed ? "The captain changed the operating rules above since you last saw them; they replace the earlier text." : "These are the captain's standing operating rules for this session."} The message follows.\n\n${neutralizeMarkers(text)}`;
 }
 
 /** The first message of a new thread that stands in for a fork: the original's recent turns (read only) and firstmate's handoff file. */

@@ -10,7 +10,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { join, resolve, relative, isAbsolute } from "node:path";
 import {homedir} from "node:os";
 import { bundledText, parseYaml } from "./bundled";
-import { Policies } from "./runtime/checks";
+import { Policies, unreadableRule } from "./runtime/checks";
 
 /**
  * The one exception to Studio's private data root: the source-owned sandbox repository,
@@ -40,6 +40,7 @@ export type ChangedPath = { path: string; status?: string; added?: number; remov
 export type Reason = { path: string; list: "org" | "project" | "trivial" | "unclassified"; glob: string | null; why: string };
 export type DoorResult = { tier: Tier; door: "one-way" | "two-way" | "undecided"; reasons: Reason[]; lines: number; paths: number; decidedBy: "classifier" | "captain"; lists: { org: number; project: number } };
 export type Project = { id: string; name: string; path: string | null; base: string; sensitive: Rule[]; proposed: Rule[] | null; proposedAt: string | null; approvedAt: string | null; enabled?: boolean;
+  /** its policy file exists but cannot be read: classification fails closed (one-way) */ policyUnreadable?: boolean;
   github?: import("./adapters/github").GitHubProjectGrant;
   gates?: Record<string, any[]> };
 
@@ -161,6 +162,9 @@ export class Projects {
     for (const p of legacy) if (p.approvedAt && pol.project(p.id).sensitive_paths === undefined) { try { pol.setProject(p.id, { sensitive_paths: p.sensitive }); } catch (e: any) { if (e?.code !== "policyUnreadable") throw e; kept.add(p.id); } }
     if (legacy.length) writeFileSync(this.file(), JSON.stringify(raw.map((p) => kept.has(p.id) ? p : { ...p, sensitive: [] }), null, 1));
     return raw.map((p) => {
+      // an unreadable policy file fails closed: the legacy list it could not take yet, plus a catch-all one-way line
+      if (pol.projectUnreadable(p.id)) { const kept = Array.isArray(p.sensitive) ? p.sensitive.map((r: any) => ({ glob: String(r?.glob ?? r), why: String(r?.why ?? "project rule") })) : [];
+        return { ...p, sensitive: [unreadableRule(`project ${p.id}`), ...kept], policyUnreadable: true }; }
       const cur = pol.project(p.id).sensitive_paths;
       return { ...p, sensitive: Array.isArray(cur) ? cur.map((r: any) => ({ glob: String(r?.glob ?? r), why: String(r?.why ?? "project rule") })) : [] };
     });
@@ -168,7 +172,7 @@ export class Projects {
   get(id: string) { return this.list().find((p) => p.id === id) ?? null; }
   /** projects.json keeps no copy of a policy's lists, except a legacy list whose policy file cannot be read yet (it moves once the file is fixed). */
   private save(list: Project[]) { const raw = new Map(this.raw().map((p) => [p.id, p])), pol = new Policies(this.dataDir);
-    writeFileSync(this.file(), JSON.stringify(list.map((p) => { const old = raw.get(p.id)?.sensitive; return { ...p, sensitive: Array.isArray(old) && old.length && pol.projectUnreadable(p.id) ? old : [] }; }), null, 1)); }
+    writeFileSync(this.file(), JSON.stringify(list.map((p) => { const old = raw.get(p.id)?.sensitive; const { policyUnreadable: _, ...rest } = p as any; return { ...rest, sensitive: Array.isArray(old) && old.length && pol.projectUnreadable(p.id) ? old : [] }; }), null, 1)); }
   add(o: { id?: string; name?: string; path?: string | null; base?: string; propose?: Rule[] }): Project {
     const name = String(o.name ?? o.id ?? "").trim();
     const id = String(o.id ?? name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);

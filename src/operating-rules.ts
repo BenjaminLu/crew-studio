@@ -105,19 +105,37 @@ export class OperatingRules {
 
 export const UNREADABLE = (level: string, why: string) => `RULES UNREADABLE: Studio could not read the captain's ${level} rules (${why}). Treat every action such rules usually cover (sign-in flows, live services, shared git config, accounts and billing) as forbidden and ask the captain.`;
 /** Invisible characters (zero-width, soft hyphen, BOM) are dropped; fullwidth and other compatibility forms are compared as ASCII. */
-const INVISIBLE = /[\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g;
-const HAS_INVISIBLE = new RegExp(INVISIBLE.source);
-const folded = (l: string) => l.replace(INVISIBLE, "").normalize("NFKC");
-const MARKER = /(BEGIN|END)\s*OPERATING\s*RULES/i, STUDIO_HEADING = /Operating\s*rules\s*\(\s*set\s*by\s*the\s*captain\s*\)|Studio\s*safety\s*rules/i;
+// Invisible characters (zero-width, soft hyphen, bidi controls, BOM, Unicode tag characters) are dropped from stored text.
+const INVISIBLE = /[­᠎​-‏‪-‮⁠-⁤﻿\u{E0000}-\u{E007F}]/gu;
+const HAS_INVISIBLE = new RegExp(INVISIBLE.source, "u");
+// For matching only: Cyrillic and Greek letters that look like Latin ones are read as Latin.
+const CONFUSABLE: Record<string, string> = { "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H", "О": "O", "Р": "P", "С": "C", "Т": "T", "У": "Y", "Х": "X", "І": "I", "Ј": "J", "Ѕ": "S", "Ԍ": "G", "Ԁ": "D", "Ү": "Y",
+  "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x", "і": "i", "ј": "j", "ѕ": "s", "һ": "h", "ԁ": "d", "ԛ": "q", "ԝ": "w", "ɡ": "g", "ɩ": "i",
+  "Α": "A", "Β": "B", "Ε": "E", "Ζ": "Z", "Η": "H", "Ι": "I", "Κ": "K", "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T", "Υ": "Y", "Χ": "X", "ο": "o", "ν": "v", "ρ": "p", "ι": "i", "κ": "k", "τ": "t", "υ": "u", "α": "a" };
+const CONFUSABLE_RE = new RegExp(`[${Object.keys(CONFUSABLE).join("")}]`, "g");
+/** The text a matcher sees: no invisible or combining characters, compatibility forms folded, look-alike letters as Latin. */
+const folded = (l: string) => l.replace(INVISIBLE, "").normalize("NFKC").normalize("NFD").replace(/[̀-ͯ᪰-᫿᷀-᷿⃐-⃿︠-︯]/g, "").replace(CONFUSABLE_RE, (c) => CONFUSABLE[c]).normalize("NFC");
+const SEP = "[\\s_\\-.]*";
+const MARKER = new RegExp(`(BEGIN|END)${SEP}OPERATING${SEP}RULES`, "i");
+const RULES_HEADING = new RegExp(`Operating${SEP}rules${SEP}\\(${SEP}set${SEP}by${SEP}the${SEP}captain${SEP}\\)`, "i");
+const STUDIO_HEADING = new RegExp(`${RULES_HEADING.source}|Studio${SEP}safety${SEP}rules`, "i");
 const neutral = (l: string) => `\\ ${folded(l).replace(/=/g, "-")}`;
-/** A line of the captain's text that looks like a heading, a section marker or Studio's own headings (in any width, with any invisible characters) is kept as plain text. */
-export function neutralizeRulesText(t: string): string {
-  return t.replace(INVISIBLE, "").split("\n").map((l) => { const f = folded(l); return /^\s*#/.test(f) || MARKER.test(f) || STUDIO_HEADING.test(f) ? neutral(l) : l; }).join("\n");
+/** Indexes of lines to neutralise: a line that matches alone, or two neighbouring lines that match once joined (a marker split over a newline). */
+function flagged(lines: string[], line: (f: string) => boolean, joined: RegExp[]): Set<number> {
+  const out = new Set<number>(), f = lines.map(folded);
+  f.forEach((x, i) => { if (line(x)) out.add(i); if (i + 1 < f.length && joined.some((r) => r.test(`${x} ${f[i + 1]}`)) && !joined.some((r) => r.test(x) || r.test(f[i + 1]))) { out.add(i); out.add(i + 1); } });
+  return out;
 }
-/** Role, skill and brief text never carries a rules marker or the rules heading: such a line is shown as plain text. */
+/** A line of the captain's text that looks like a heading, a section marker or Studio's own headings (any width, look-alike letters, invisible or combining characters, split over two lines) is kept as plain text. */
+export function neutralizeRulesText(t: string): string {
+  const lines = t.replace(INVISIBLE, "").split("\n"), bad = flagged(lines, (f) => /^\s*#/.test(f) || MARKER.test(f) || STUDIO_HEADING.test(f), [MARKER, STUDIO_HEADING]);
+  return lines.map((l, i) => bad.has(i) ? neutral(l) : l).join("\n");
+}
+/** Role, skill, brief and seed text never carries a rules marker or the rules heading: such a line is shown as plain text. */
 export function neutralizeMarkers(t: string): string {
-  if (!MARKER.test(folded(t)) && !STUDIO_HEADING.test(folded(t)) && !HAS_INVISIBLE.test(t)) return t;
-  return t.split("\n").map((l) => { const f = folded(l); return MARKER.test(f) || /Operating\s*rules\s*\(\s*set\s*by\s*the\s*captain\s*\)/i.test(f) ? neutral(l) : l; }).join("\n");
+  const lines = t.split("\n"), bad = flagged(lines, (f) => MARKER.test(f) || RULES_HEADING.test(f), [MARKER, RULES_HEADING]);
+  if (!bad.size && !HAS_INVISIBLE.test(t)) return t;
+  return lines.map((l, i) => bad.has(i) ? neutral(l) : l.replace(INVISIBLE, "")).join("\n");
 }
 type Level = string | RulesEntry | null;
 const levelText = (v: Level, label: string) => { if (v === null) return null; const e = typeof v === "string" ? { text: v, updatedAt: null, by: null } as RulesEntry : v;
