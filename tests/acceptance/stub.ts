@@ -17,12 +17,13 @@
 //       expect: { status: succeeded, result: done, visited: [...], not_visited: [...], library: true,
 //                 outputs: 1, min_visits: { draft: 2 }, approved: "startup-{task}", waiting_on: node }
 //       board_refusal: { status: 409, error: "regex" }   # the board start must be refused this way
-//       known_failure: { observed: …, root_cause: "file:line …", covered_by: … }
+//       known_failure: { observed: …, match: "regex", root_cause: "file:line …", covered_by: … }
+//                                          # match: the run's failure text must match it, or the run is a FAIL
 import { decideCard, type RunContext, type Scenario } from "../../scripts/acceptance/scenarios";
 
 export type StubCard = { node: string; answers: string[]; note: string | null; before: string | null };
 export type StubExpect = { status?: "succeeded" | "failed" | "cancelled"; result?: string | null; visited: string[]; not_visited: string[]; library: boolean; outputs?: number; min_visits: Record<string, number>; approved?: string; waiting_on?: string };
-export type KnownFailure = { observed: string; root_cause: string; covered_by?: string };
+export type KnownFailure = { observed: string; match: RegExp; root_cause: string; covered_by?: string };
 export type StubRun = { workflow: string; name: string; covers: string; how: "board" | "firstmate" | "proposal" | "register" | "staffing" | "retired"; server: "sandbox" | "local-unrestricted";
   provider: string | null; topic: string; params: Record<string, string>; setup: string[]; cards: StubCard[]; expect: StubExpect | null; board_refusal: { status: number; error: RegExp } | null;
   known_failure: KnownFailure | null; target: { workflow: string; params: Record<string, string> } | null; timeout_s: number; shared: Scenario };
@@ -56,13 +57,14 @@ export function stubRuns(s: Scenario): StubRun[] {
       if (e.waiting_on === undefined && !["succeeded", "failed", "cancelled"].includes(e.status)) throw new Error(`${at} expect: status succeeded, failed or cancelled (or waiting_on a node)`);
       expect = { status: e.status, result: e.result, visited: strings(e.visited, `${at} expect.visited`), not_visited: strings(e.not_visited, `${at} expect.not_visited`), library: e.library === true, outputs: e.outputs, min_visits: e.min_visits ?? {}, approved: e.approved, waiting_on: e.waiting_on };
     }
-    const kf = raw.known_failure; if (kf !== undefined && (!isObj(kf) || typeof kf.observed !== "string" || typeof kf.root_cause !== "string")) throw new Error(`${at}: known_failure needs observed and root_cause`);
+    const kf = raw.known_failure; if (kf !== undefined && (!isObj(kf) || typeof kf.observed !== "string" || typeof kf.match !== "string" || !kf.match || typeof kf.root_cause !== "string")) throw new Error(`${at}: known_failure needs observed, match (a regex for the failure text) and root_cause`);
+    if (kf) for (const k of Object.keys(kf)) if (!["observed", "match", "root_cause", "covered_by"].includes(k)) throw new Error(`${at} known_failure: unknown field ${k}`);
     const br = raw.board_refusal; if (br !== undefined && (!isObj(br) || !Number.isInteger(br.status) || typeof br.error !== "string")) throw new Error(`${at}: board_refusal needs status and error`);
     const tg = raw.target; if (tg !== undefined && (!isObj(tg) || typeof tg.workflow !== "string")) throw new Error(`${at}: target needs a workflow`);
     if (["proposal", "register", "staffing"].includes(how) && !tg) throw new Error(`${at}: how ${how} needs a target workflow`);
     return { workflow: s.workflow, name: raw.name, covers: raw.covers.trim(), how, server, provider: raw.provider === undefined ? s.start.provider : raw.provider, topic: raw.topic ?? s.topic,
       params: raw.params ?? {}, setup: strings(raw.setup, `${at} setup`), cards, expect, board_refusal: br ? { status: br.status, error: new RegExp(br.error) } : null,
-      known_failure: kf ? { observed: kf.observed, root_cause: kf.root_cause, ...(kf.covered_by ? { covered_by: kf.covered_by } : {}) } : null,
+      known_failure: kf ? { observed: kf.observed, match: new RegExp(kf.match), root_cause: kf.root_cause, ...(kf.covered_by ? { covered_by: kf.covered_by } : {}) } : null,
       target: tg ? { workflow: tg.workflow, params: tg.params ?? {} } : null, timeout_s: Number(raw.timeout_s ?? 120), shared: s };
   });
 }
@@ -74,4 +76,11 @@ export function stubDecision(run: StubRun, card: any, visit: number, def: any, c
   if (rule) return { choice: rule.answers[Math.min(visit, rule.answers.length - 1)], note: rule.note, before: rule.before };
   const d = decideCard(run.shared, card, def, ctx);
   return d.action === "answer" ? { choice: d.choice, note: d.note, before: null } : { stop: d.action === "stop" ? d.reason : `the shared scenario leaves ${card.node} for a person` };
+}
+
+/** A run's verdict. A known failure counts only when the failure text matches its `match`: any other
+ *  failure (a broken setup step, a new bug on the same run) is a FAIL. */
+export function verdictOf(run: StubRun, failures: string[]): "pass" | "FAIL" | "known-fail" | "UNEXPECTED PASS" {
+  if (!failures.length) return run.known_failure ? "UNEXPECTED PASS" : "pass";
+  return run.known_failure && run.known_failure.match.test(failures.join(" | ")) ? "known-fail" : "FAIL";
 }

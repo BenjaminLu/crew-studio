@@ -49,13 +49,16 @@ where the workflow makes one, and no generic error text (`[object Object]`, `und
 `TypeError`, "the agent run failed" …). A card the run does not script stops it as a failure.
 
 `ACCEPTANCE_ONLY=documents,code-firstmate:firstmate-ask` runs a subset; `ACCEPTANCE_KEEP=1` keeps
-the temporary Studio data and prints its path.
+the temporary Studio data and prints its path. The captain's throwaway folders and repositories are
+made under that same temporary root, so nothing is left in `$TMPDIR`.
 
 ## Known failures
 
 A run with `known_failure` is a product bug that breaks the workflow on the live board today. It
 prints loudly (`KNOWN-FAIL` and a `!!` block at the end) and does not fail the suite. When it starts
-passing, the suite fails with `UNEXPECTED PASS` until its `known_failure` and its row here are removed.
+passing, the suite fails with `UNEXPECTED PASS` until its `known_failure` and its row here are removed. Its
+`match` is a regular expression for the run's failure text: a run that fails some other way (a broken
+setup step, a new bug on the same path) is a `FAIL`, not a known failure (`tests/acceptance-known.ts`).
 
 | Workflow · run | Node | Error | Root cause | Fix that should cover it |
 |---|---|---|---|---|

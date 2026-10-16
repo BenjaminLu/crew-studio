@@ -1,7 +1,6 @@
 // Named captain steps a stub run names in `setup:` (before its start) or `before:` (before it answers a
 // card). Each is something the captain does on the board, through the same HTTP route.
-import { mkdtempSync, writeFileSync, readFileSync, realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { drive, verify, answerCard, type Decide } from "./drive";
 import type { Studio } from "./studio";
@@ -9,6 +8,8 @@ import type { Studio } from "./studio";
 export type Ctx = { s: Studio; vars: Record<string, string>; firstmate(marker: "NATIVE-PROPOSE " | "NATIVE-PROJECT ", args: unknown): Promise<any[]> };
 type Step = (h: Ctx, card?: any, view?: any) => Promise<void | { note?: string; choice?: string }>;
 const git = (cwd: string, ...a: string[]) => { const r = Bun.spawnSync(["git", "-c", "user.name=Acceptance", "-c", "user.email=acceptance@example.invalid", ...a], { cwd, stdout: "pipe", stderr: "pipe" }); if (r.exitCode) throw new Error(`git ${a.join(" ")}: ${r.stderr}`); };
+/** Captain-side folders live under the Studio's own temp root (outside its CREW_DATA), so close() removes them. */
+const scratch = (h: Ctx) => { const d = join(h.s.root, "captain"); mkdirSync(d, { recursive: true }); return d; };
 const approveOnly: Decide = async (c) => ({ choice: c.options?.some((o: any) => o.id === "approve") ? "approve" : "?" });
 
 /** The staffing interview and its captain-only confirmation card, for every role of one workflow. */
@@ -35,9 +36,9 @@ export const STEPS: Record<string, Step> = {
   /** the Claude account card's Verify (one bounded request on the exact configured model); its receipt admits Claude rounds for 30 s */
   async "verify-claude"(h) { const r = await h.s.api("/api/claude/native/verify", { model: "claude-sonnet-5-5", effort: null, confirm: true }); if (r.status !== 200 || r.body.admission !== "verified-execution") throw new Error(`Claude verify: ${r.status} ${JSON.stringify(r.body).slice(0, 300)}`); },
   /** a throwaway folder with a few files to tidy: {folder} */
-  async folder(h) { const d = realpathSync(mkdtempSync(join(tmpdir(), "acceptance-folder-"))); for (const f of ["report.pdf", "photo.jpg", "notes.txt", "song.mp3"]) writeFileSync(join(d, f), `acceptance ${f}\n`); h.vars.folder = d; },
+  async folder(h) { const d = realpathSync(mkdtempSync(join(scratch(h), "folder-"))); for (const f of ["report.pdf", "photo.jpg", "notes.txt", "song.mp3"]) writeFileSync(join(d, f), `acceptance ${f}\n`); h.vars.folder = d; },
   /** a throwaway local git repository: {repo} */
-  async repo(h) { const d = realpathSync(mkdtempSync(join(tmpdir(), "acceptance-repo-"))); git(d, "init", "-q", "-b", "main"); writeFileSync(join(d, "README.md"), "# Acceptance repo\n"); git(d, "add", "."); git(d, "commit", "-qm", "Initial"); h.vars.repo = d; },
+  async repo(h) { const d = realpathSync(mkdtempSync(join(scratch(h), "repo-"))); git(d, "init", "-q", "-b", "main"); writeFileSync(join(d, "README.md"), "# Acceptance repo\n"); git(d, "add", "."); git(d, "commit", "-qm", "Initial"); h.vars.repo = d; },
   /** register {repo} through Firstmate (NATIVE-PROJECT) and approve the registration card: {project} */
   async register(h) {
     if (!h.vars.repo) await STEPS.repo(h);

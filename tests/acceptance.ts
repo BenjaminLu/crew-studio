@@ -15,11 +15,12 @@
 // A run with `known_failure` is a product bug recorded with its root cause: it prints loudly and does
 // not fail the suite. If it passes, the suite fails, so the list stays true when the fix lands.
 // See docs/acceptance.md.   ACCEPTANCE_ONLY=<workflow|workflow:run>[,…]   ACCEPTANCE_KEEP=1 keeps temp data
+// ACCEPTANCE_SCENARIO_DIR=<dir> reads the scenario files from another folder (tests/acceptance-known.ts)
 import { bundledList, bundledText, parseYaml } from "../src/bundled";
 import { loadScenario, openWindowIds, scenarioFiles, type Scenario } from "../scripts/acceptance/scenarios";
 import { bootStudio, type Studio } from "./acceptance/studio";
 import { drive, verify, type Expect } from "./acceptance/drive";
-import { stubRuns, stubDecision, type StubRun } from "./acceptance/stub";
+import { stubRuns, stubDecision, verdictOf, type StubRun } from "./acceptance/stub";
 import { STEPS, approveStaffing, type Ctx } from "./acceptance/steps";
 
 const t0 = Date.now(), problems: string[] = [];
@@ -27,7 +28,7 @@ const t0 = Date.now(), problems: string[] = [];
 const files = [...bundledList("workflows/v2/"), ...bundledList("packs/")].filter((f) => f.endsWith(".wf.yaml") || (f.startsWith("packs/") && f.endsWith(".flow.yaml")));
 const bundled = [...new Set(files.map((f) => String((parseYaml(bundledText(f) ?? "") as any)?.id ?? f)))];
 const scenarios: Scenario[] = [];
-for (const f of scenarioFiles()) { try { scenarios.push(loadScenario(f)); } catch (e: any) { problems.push(e.message); } }
+for (const f of scenarioFiles(process.env.ACCEPTANCE_SCENARIO_DIR || undefined)) { try { scenarios.push(loadScenario(f)); } catch (e: any) { problems.push(e.message); } }
 const runs: StubRun[] = [];
 for (const s of scenarios) { try { runs.push(...stubRuns(s)); } catch (e: any) { problems.push(e.message); } }
 for (const id of bundled) {
@@ -125,7 +126,7 @@ const rows: Row[] = [];
 async function record(r: StubRun) {
   const t = Date.now(); let out: { failures: string[]; task?: string };
   try { out = await runOne(r); } catch (e: any) { out = { failures: [`scenario threw: ${String(e?.message ?? e).slice(0, 500)}`] }; }
-  const failed = out.failures.length > 0, verdict: Row["verdict"] = r.known_failure ? (failed ? "known-fail" : "UNEXPECTED PASS") : failed ? "FAIL" : "pass";
+  const failed = out.failures.length > 0, verdict: Row["verdict"] = verdictOf(r, out.failures);
   const row: Row = { r, verdict, ms: Date.now() - t, task: out.task, detail: failed ? out.failures.join(" | ") : r.covers }; rows.push(row);
   console.log(`${(verdict === "pass" ? "PASS" : verdict === "known-fail" ? "KNOWN-FAIL" : verdict).padEnd(15)} ${r.workflow}:${r.name} (${(row.ms / 1000).toFixed(1)} s${row.task ? `, ${row.task}` : ""})${verdict === "pass" ? "" : `\n    ${row.detail}`}`);
 }
@@ -142,7 +143,7 @@ try {
 const known = rows.filter((x) => x.verdict === "known-fail");
 if (known.length) {
   console.log(`\n${"!".repeat(78)}\n!! ${known.length} KNOWN-FAILING acceptance run(s): workflows that break on the live board today\n${"!".repeat(78)}`);
-  for (const x of known) console.log(`!! ${x.r.workflow}:${x.r.name}\n!!    observed:   ${x.r.known_failure!.observed}\n!!    root cause: ${x.r.known_failure!.root_cause}${x.r.known_failure!.covered_by ? `\n!!    fix:        ${x.r.known_failure!.covered_by}` : ""}\n!!    this run:   ${x.detail.slice(0, 400)}`);
+  for (const x of known) console.log(`!! ${x.r.workflow}:${x.r.name}\n!!    observed:   ${x.r.known_failure!.observed}\n!!    matches:    ${x.r.known_failure!.match}\n!!    root cause: ${x.r.known_failure!.root_cause}${x.r.known_failure!.covered_by ? `\n!!    fix:        ${x.r.known_failure!.covered_by}` : ""}\n!!    this run:   ${x.detail.slice(0, 400)}`);
 }
 for (const x of rows.filter((x) => x.verdict === "UNEXPECTED PASS")) console.log(`\nUNEXPECTED PASS: ${x.r.workflow}:${x.r.name} now passes; remove its known_failure in ${x.r.shared.file} and its row in docs/acceptance.md.`);
 const bad = rows.filter((x) => x.verdict === "FAIL" || x.verdict === "UNEXPECTED PASS");
