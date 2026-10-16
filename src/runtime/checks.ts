@@ -145,6 +145,10 @@ export class CheckRegistry {
     this.verifySource?.(man);
     const rel = `${man.dir}/${man.run}`; const bytes = man.dir.startsWith("/") ? (existsSync(rel) ? readFileSync(rel) : null) : bundledBytes(rel); if (!bytes) throw new Error(`${man.ref}: no ${man.run}`);
     const d = join(this.dataDir, "tools", "checks", man.pack, man.id, man.version); mkdirSync(d, { recursive: true });
+    // Extensionless Node checks use CommonJS. Do not inherit the Studio checkout's
+    // package type when data/ lives below an ESM package; .mjs stays explicit ESM.
+    const boundary = join(d, "package.json"), moduleType = '{"type":"commonjs"}\n';
+    if (!existsSync(boundary) || readFileSync(boundary, "utf8") !== moduleType) writeFileSync(boundary, moduleType);
     const p = join(d, man.run!);
     if (!existsSync(p) || readFileSync(p).compare(bytes) !== 0) { writeFileSync(p, bytes); chmodSync(p, 0o755); }
     return p;

@@ -10,6 +10,8 @@ packs/<pack>/checks/<id>/
   run            executable (bash, python, node, binary)
 ```
 
+Extracted checks have a local `package.json` declaring `"type": "commonjs"`, so extensionless Node executables do not inherit an enclosing application's ESM setting. Use an explicit `.mjs` executable for ESM checks. Extraction preserves the script bytes and repairs this module boundary for existing caches. This does not change sandbox policy, approval requirements or evidence validation.
+
 ## Manifest
 
 ```yaml
