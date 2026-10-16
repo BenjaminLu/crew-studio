@@ -315,3 +315,38 @@ ffprobe -v error -show_entries format=duration -show_entries stream=codec_name,w
 - 限制：沒有在另一台實體展示機驗證，也未加入旁白；raw runtime、完整 server log 與 session credentials 保持本地私人，不納入分享包或 Git。
 
 - 影片與圖片 SHA256 清單：`evidence/SHA256SUMS`；備援影片位於 `presentation-backup/`，已以離線 Chrome 播放到結尾。統一觀看入口：同 take 的 `watch.html`。
+
+## 15. 新版 onboarding 重錄：預檢與剪輯要求（2026-10-16）
+
+- 最新指示：先將既有修復停在可交接點，確認最新 origin 的 onboarding，再開始錄製。R-038／R-040／R-043／R-044 未完成，不因錄影而宣稱結案。
+- 已推送階段基準：`49a0a04487723aed536cd9fbf673aa6e3ca93511`；本次 fetch 後 local 與 origin/main 一致。正式錄製前再核對並固定 SHA。
+- 預檢 instance：`http://127.0.0.1:4212`，data `.tmp/showcase/2026-10-16-onboarding-preflight/studio-data`。原 4210 與既有任務保留。此資料只供預檢，正式錄製另建空白資料。
+- 已實際看到：全新 Board 為 0 tasks／0 crew；Codex account、configured model 與 quota 驗證成功。這不代表 worker 或媒體已驗證。
+- 新版教學入口：Workflows -> First workflow tutorial；步驟為 Interview -> Generated graph and preview -> Edit each node's model -> Confirm staffing at Run。
+- 教學頁的 Compare and refine、Save as template 明確標為 Roadmap；不得剪成已可用功能。Coffee shop 現為 Advanced example，不可直接沿用舊 Coffee-kit 腳本冒充新版教學。
+- 首次 journey 遮罩開啟時，預檢點教學連結未導航；收起 guide 後成功。正式預檢需由 Firstmate greeting 後的正常教學入口確認，不以隱藏遮罩當作首次導覽成功。
+
+### 錄製前放行檢查
+
+- [ ] 現有 R-044 本輪交回並記錄交接點；不為錄影中斷活躍 worker，也不續派下一輪。
+- [ ] 啟動 Firstmate 並收到真實 greeting，走正常新版 onboarding 入口。
+- [ ] 實際驗證訪談、生成圖、節點模型編輯、儲存、Run 與正式配置核准；區分草稿與實際任務。
+- [ ] 預檢獨立工作可否並行，爭取 3 位以上真實工作船員；以 job、節點與時間戳確認重疊，不以配置角色或等待中卡片湊數。
+- [ ] 核對 Captain 外觀的真實工作狀態，準備 hover／進度與多船員畫面。
+- [ ] 正式錄影另開全新資料與站台狀態，固定 theme、viewport、模型與版本；保留預檢資料。
+- [ ] 成功交付需作品能從成品庫重新開啟，不能只錄素材或草稿。
+
+### 前次回饋全部沿用
+
+- [ ] 全程保留 Firstmate 訪談、需求與派工對話原片；剪輯呈現必要步驟。
+- [ ] 真正點擊收件匣／正式卡片核准，不能用聊天「確認」替代核准畫面。
+- [ ] Captain 外觀直接進入工作畫面，省略 skins 選擇操作；固定 theme，刪除跳 theme 與抖動畫格。
+- [ ] 簡體中文標題只保留 title，依順序編號 1、2、3、4；與實際操作對齊。
+- [ ] 核准點擊至綠框結果共留約 2.5 秒，拉長真正狀態變化與結果停留，刪除前面的空等；必要時用清楚的游標標記。
+- [ ] 等待核准的前導最多約 3 秒；刪除無法解釋目的的中間段，不沿用舊片時間碼盲剪。
+- [ ] 完成核准的關鍵段可用約 0.7 倍，讓完成結果可辨認。
+- [ ] 進網站前加入單頁文字轉場，說明「在浏览器打开成品」，同時銜接音樂。
+- [ ] 真正開啟完整網站、捲動與播放影片，不以素材重放取代成品展示；生成影片維持 12 秒、靜音 autoplay 與 reduced-motion 行為。
+- [ ] 配樂輸出兩版：全片 Tech House vibes；前段 Tech House vibes、網站段原輕柔配樂。沿用已驗證素材與授權紀錄。
+- [ ] 保留原始錄影、關鍵變化點截圖、task/card/job/artifact 版本與時間碼，剪輯不能偽造同一次成功流程。
+- [ ] 最終以 macOS 可播放 MP4 驗證音畫、文字、影片結尾與兩版配樂；交付前完整看一遍。
