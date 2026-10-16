@@ -38,10 +38,20 @@ try{
  // cancel
  rmSync(join(home,'.claude-login-pid'),{force:true});mode('hang');const hang=await raw('POST','/api/claude/account/login');ok(hang.body.state==='pending','a waiting sign-in is pending');
  ok((await raw('POST','/api/claude/account/login')).status===409,'a second sign-in while one runs is refused');
+ ok(/claude auth login/.test(hang.body.reason)&&/code to paste/.test(hang.body.reason)&&/stops waiting after 2 seconds/.test(hang.body.reason)&&/claude auth login/.test(hang.body.reasonZh)&&/2 秒後停止等待/.test(hang.body.reasonZh),'pending copy says what to do if no browser opens or a code is shown, and when Studio stops waiting');
  await until(()=>existsSync(join(home,'.claude-login-pid')));const pid=Number(readFileSync(join(home,'.claude-login-pid'),'utf8'));
  const cancelled=await raw('POST','/api/claude/account/cancel');ok(cancelled.body.state==='cancelled','cancel reports cancelled');ok(!alive(pid),'cancel stops the owned CLI process');
+ // Doctor's Log in for Claude runs the same shared sign-in, never a Terminal job
+ rmSync(join(home,'.claude-login-pid'),{force:true});const docLogin=await raw('POST','/api/doctor/login',{body:{item:'claude'}});ok(docLogin.status===200&&docLogin.body.state==='pending'&&!docLogin.body.job,'Doctor Claude login starts the shared sign-in, not a Terminal job');
+ ok((await account()).state==='pending','Doctor sign-in is the same owned flow the card shows');await until(()=>existsSync(join(home,'.claude-login-pid')));await raw('POST','/api/claude/account/cancel');
  // timeout
  rmSync(join(home,'.claude-login-pid'),{force:true});await raw('POST','/api/claude/account/login');await until(()=>existsSync(join(home,'.claude-login-pid')));const tpid=Number(readFileSync(join(home,'.claude-login-pid'),'utf8'));
  const timed=await settle();ok(timed.state==='timeout','an abandoned sign-in times out');ok(!alive(tpid),'timeout stops the owned CLI process');
 }finally{if(app.exitCode===null&&app.signalCode===null){const exited=new Promise(r=>app.once('exit',r));app.kill('SIGTERM');await exited;}rmSync(root,{recursive:true,force:true});}
+{ // a sign-in whose process cleanup is unverified blocks the next one
+ const {ClaudeLogin}=await import('../src/host/claude-login');const uhome=mkdtempSync(join(tmpdir(),'crew-claude-login-unit-'));const saved=process.env.HOME;process.env.HOME=uhome;writeFileSync(join(uhome,'.claude-login-mode'),'hang');
+ const l=new ClaudeLogin({bin:()=>fixture});try{const first=l.start();ok(/stops waiting after 5 minutes/.test(first.reason)&&/5 分鐘後停止等待/.test(first.reasonZh),'default pending copy says Studio stops waiting after 5 minutes');await until(()=>existsSync(join(uhome,'.claude-login-pid')));const owner=(l as any).owner,realStop=owner.proc.stop;owner.proc.stop=()=>Promise.reject(new Error('probe group death unverified'));
+  const v:any=await Promise.race([l.cancel(),Bun.sleep(3000).then(()=>({state:'hung'}))]);let refused=false;try{l.start();}catch{refused=true;}ok(v.state==='failed'&&refused,'start refuses while an earlier owned process cleanup is unverified');await realStop();
+ }finally{process.env.HOME=saved;rmSync(uhome,{recursive:true,force:true});}
+}
 end();

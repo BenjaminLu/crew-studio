@@ -38,25 +38,29 @@ function accountPanel(begin=false){
  !pending&&!checking?h("button",{class:"btn","data-codex-verify":"1",disabled:phone||owned||null,onclick:()=>accountAction("verify")},T("Verify account","驗證帳號")):null));
 }
 // Claude: status from the official read-only `claude auth status`; sign-in runs the official `claude auth login`
-// (the CLI opens the browser itself). Neither makes a model request; the paid Verify stays on the Doctor page.
-const CLAUDE={login:null,status:null,loading:false,busy:false,read:0};
-function claudeRefresh(){const read=++CLAUDE.read;CLAUDE.loading=true;return Promise.all([getJ("/api/claude/account").catch(()=>null),getJ("/api/claude/native/status").catch(()=>null)]).then(([l,st])=>{if(read!==CLAUDE.read)return;if(l&&!l.error)CLAUDE.login=l;CLAUDE.status=st?.provider==="claude"?st:null;}).finally(()=>{if(read===CLAUDE.read){CLAUDE.loading=false;render();}});}
+// (the CLI opens the browser itself). Neither makes a model request.
+const CLAUDE={login:null,status:null,loading:false,loaded:false,busy:false,read:0};
+function claudeRefresh(){const read=++CLAUDE.read,before=JSON.stringify([CLAUDE.login,CLAUDE.status]);CLAUDE.loading=true;return Promise.all([getJ("/api/claude/account").catch(()=>null),getJ("/api/claude/native/status").catch(()=>null)]).then(([l,st])=>{if(read!==CLAUDE.read)return;if(l&&!l.error)CLAUDE.login=l;CLAUDE.status=st?.provider==="claude"?{...st,at:0,expires:0}:null;}).finally(()=>{if(read!==CLAUDE.read)return;CLAUDE.loading=false;const first=!CLAUDE.loaded;CLAUDE.loaded=true;if(first||JSON.stringify([CLAUDE.login,CLAUDE.status])!==before)render();});}
 function claudeChanged(v){const was=CLAUDE.login?.state;CLAUDE.login=v;if(was==="pending"&&v.state!=="pending"){void claudeRefresh();dispatchEvent(new Event("crew:claude-account"));}render();}
 async function claudeAction(action){if(CLAUDE.busy)return;CLAUDE.busy=true;render();try{const r=await postJ(`/api/claude/account/${action}`,{});if(r.error)return toast(r.error);claudeChanged(r);}finally{CLAUDE.busy=false;render();}}
 function claudeAccountPanel(){
- if(!CLAUDE.login&&!CLAUDE.loading)void claudeRefresh();
+ if(!CLAUDE.loaded&&!CLAUDE.loading)void claudeRefresh();
  const l=CLAUDE.login||{state:"idle"},st=CLAUDE.status,phone=MS.me.kind==="phone",pending=l.state==="pending";
  const state=st?.quota==="exhausted"?"exhausted":st?.loginState==="logged-in"?"signed-in":st?.loginState==="not-logged-in"?"signed-out":"unknown";
- const label={"exhausted":T("Signed in, but quota is exhausted. Wait for reset; signing in again will not help.","已登入，但額度已耗盡。請等待重設，重新登入沒有幫助。"),"signed-in":T("Signed in to Claude.","已登入 Claude。"),"signed-out":T("Not signed in to Claude.","尚未登入 Claude。"),"unknown":T("Claude sign-in status is unknown.","Claude 登入狀態未知。")}[state];
+ const label={"exhausted":T(`Signed in, but quota is exhausted. ${st?.resetAt?"Reported reset: "+new Date(st.resetAt).toLocaleString()+".":"Reset time unknown."} Wait for reset; signing in again will not help.`,`已登入，但額度已耗盡。${st?.resetAt?"回報的重設時間："+new Date(st.resetAt).toLocaleString()+"。":"重設時間未知。"}請等待重設，重新登入沒有幫助。`),"signed-in":T("This Claude CLI context is signed in. Remaining quota is unknown.","這個 Claude CLI 環境已登入。剩餘額度未知。"),"signed-out":T("Not signed in to Claude in this Studio context. An existing Claude session may use another context; this does not mean the machine is globally logged out.","這個 Studio 環境尚未登入 Claude。既有 Claude 對話可能使用另一個環境；這不代表整台機器都已登出。"),"unknown":T("Claude sign-in in this Studio process is unverified. This does not mean the machine is globally logged out.","這個 Studio 程序的 Claude 登入尚未驗證；這不代表整台機器都已登出。")}[state];
  return h("section",{class:"card tk-drive tk-account","data-claude-account":state,"data-claude-login":l.state},h("h2",{},T("Claude account","Claude 帳號")),
   h("p",{"data-claude-status":"1"},label),
   l.state!=="idle"?h("p",{class:"muted","data-claude-login-reason":"1"},T(l.reason,l.reasonZh)):null,
-  h("div",{class:"faint"},T("Signing in makes no model request. Verifying the model is a separate, paid check on the Doctor page.","登入不會呼叫模型。驗證模型是 Doctor 頁上另外的付費檢查。")),
-  h("div",{class:"actions"},pending?h("button",{class:"btn","data-claude-cancel":"1",disabled:phone||CLAUDE.busy||null,onclick:()=>claudeAction("cancel")},T("Cancel sign-in","取消登入")):h("button",{class:state==="signed-in"?"btn":"btn primary","data-claude-signin":"1",disabled:phone||CLAUDE.busy||null,onclick:()=>claudeAction("login")},state==="signed-in"?T("Sign in again…","重新登入…"):T("Sign in to Claude…","登入 Claude…")),
-   h("button",{class:"btn ghost","data-claude-refresh":"1",disabled:CLAUDE.loading||null,onclick:()=>void claudeRefresh()},T("Check again","重新檢查"))),
+  h("div",{class:"faint"},T("Signing in makes no model request.","登入不會呼叫模型。")),
+  h("div",{class:"actions"},state==="exhausted"&&!pending?null:pending?h("button",{class:"btn","data-claude-cancel":"1",disabled:phone||CLAUDE.busy||null,onclick:()=>claudeAction("cancel")},T("Cancel sign-in","取消登入")):h("button",{class:state==="signed-in"?"btn":"btn primary","data-claude-signin":"1",disabled:phone||CLAUDE.busy||null,onclick:()=>claudeAction("login")},state==="signed-in"?T("Sign in again…","重新登入…"):T("Sign in to Claude…","登入 Claude…")),
+   h("button",{class:"btn ghost","data-claude-refresh":"1",onclick:()=>void claudeRefresh()},T("Check again","重新檢查"))),
   phone?h("p",{class:"note"},T("Sign in on the Mac.","請在 Mac 上登入。")):null);
 }
-window.crewClaudeAccountPanel=claudeAccountPanel;window.liveListen("claude-account",m=>claudeChanged(JSON.parse(m.data)));
+window.crewClaudeAccountPanel=claudeAccountPanel;window.crewConnectClaude=()=>claudeAction("login");
+// a reconnect may have missed live events (a sign-in finished or was cancelled meanwhile): read the state again.
+// Before the first read lands there is nothing stale; that read already covers it.
+addEventListener("crew:live",()=>{if(CLAUDE.loaded)void claudeRefresh();});
+window.liveListen("claude-account",m=>claudeChanged(JSON.parse(m.data)));
 window.crewCodexAccountPanel=accountPanel;window.crewConnectCodex=()=>accountAction("login");
 window.liveListen("codex-account",m=>accountChanged(JSON.parse(m.data),"live"));
 

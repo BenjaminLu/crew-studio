@@ -36,7 +36,6 @@ function viewDoctor() {
     DOC.job ? jobBox(DOC.job) : null,
     window.crewCodexAccountPanel?.(),
     window.crewClaudeAccountPanel?.(),
-    h('div',{class:'rich','data-claude-native-status':DOC.claude?.quota||'unknown'},h('b',{},T('Claude account and quota','Claude 帳號與額度')),h('p',{},DOC.claude?.quota==='exhausted'?T(`Quota exhausted. ${DOC.claude.resetAt?'Reported reset: '+new Date(DOC.claude.resetAt).toLocaleString():'Reset time unknown.'} Wait for reset; do not sign in again.`,`額度已耗盡。${DOC.claude.resetAt?'回報的重設時間：'+new Date(DOC.claude.resetAt).toLocaleString():'重設時間未知。'}請等待重設，不需重新登入。`):DOC.claude?.loginState==='logged-in'?T('This Claude CLI context is signed in. Remaining quota is unknown; sign-in does not prove native worker readiness.','這個 Claude CLI 環境已登入。剩餘額度未知；登入不代表原生工作回合已就緒。'):T('Authentication in this Studio process is unverified or absent. An existing Claude session may use another context. This does not mean the machine is globally logged out.','這個 Studio 程序的登入尚未驗證或不存在；既有 Claude 對話可能使用另一個環境。這不代表整台機器都已登出。')),h('p',{class:'faint'},T('Account sign-in, quota exhaustion and verified model execution are separate states. Checking this page makes no model request.','帳號登入、額度耗盡與模型執行驗證是不同狀態。查看此頁不會發出模型請求。'))),
     h("div", { class: "faint", style: "font-size:13px" }, bad ? T(`${bad} item(s) need attention.`, `${bad} 項需要處理。`) : T("Listed dependencies are detected. Logins and actual tool execution need separate verification.", "已偵測到列出的依賴；登入與實際工具執行仍需分別驗證。")),
     ["basic","coding","optional"].map(group=>h("section", { "data-doc-group":group },
       h("h2", {}, group==="basic"?T("Basic web readiness","基本網頁功能"):group==="coding"?T("Coding and checks","程式碼與檢查"):T("Optional integrations","選用整合")),
@@ -110,6 +109,7 @@ async function openInstall(item) {
 }
 async function startLogin(item) {
   if(item==="codex")return window.crewConnectCodex?.();
+  if(item==="claude")return window.crewConnectClaude?.();
   const res = await postJ("/api/doctor/login", { item });
   if (res.error) return toast(res.error);
   if (res.open) { window.open(res.open, "_blank", "noopener"); toast(res.note || T("Opened the sign-in page", "已打開登入頁")); return; }

@@ -493,6 +493,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     if(["/api/codex/account/login","/api/codex/account/cancel","/api/codex/account/verify"].includes(p)&&writing){try{return json(p.endsWith("/login")?await codexAccount.start():p.endsWith("/cancel")?await codexAccount.cancel():await codexAccount.verify());}catch{return json({error:"Codex account action unavailable; complete/cancel any existing sign-in and release Studio-owned firstmate before retrying / Codex 帳號操作無法進行；請先完成或取消登入，並交還 Studio 正在操作的 firstmate"},409);}}
     if (p === "/api/doctor/login" && writing) {
       let b: any = {}; try { b = await req.json(); } catch {}
+      if(b?.item==="claude"){try{return json(claudeLogin.start());}catch(e:any){return json({error:String(e?.message??e)},409);}}
       if(b?.item==="codex"){try{return json(await codexAccount.start());}catch{return json({error:"Codex sign-in unavailable; release Studio-owned firstmate or complete/cancel the pending sign-in / 無法登入 Codex；請先交還 Studio 正在操作的 firstmate，或完成／取消目前登入"},409);}}
       const l = LOGINS[String(b?.item ?? "")];
       if (!l) return json({ error: "no login flow for that" }, 404);

@@ -90,8 +90,7 @@ export const INSTALLERS: Record<string, Record<string, Method[]>> = {
 
 /** Vendor login flows: Studio starts or links them, never sees the credentials. */
 export const LOGINS: Record<string, { label: string; argv?: string[]; url?: string; note: string }> = {
-  claude: { label: "Log in to Claude Code", argv: ["osascript", "-e", 'tell application "Terminal" to do script "claude"', "-e", 'tell application "Terminal" to activate'], url: "https://claude.ai/login",
-    note: "Opens Terminal running `claude`; type /login there and finish in your browser. Studio never sees the credentials." },
+  claude: { label: "Sign in to Claude", url: "https://claude.ai/login", note: "Studio runs the official `claude auth login`, which opens your browser. Studio never sees the credentials." },
   codex: { label: "Log in to Codex", argv: ["codex", "login"], url: "https://chatgpt.com/auth/login", note: "Studio owns the official Codex browser sign-in; no terminal session is required." },
   tailscale: { label: "Sign in to Tailscale", argv: ["open", "-a", "Tailscale"], url: "https://login.tailscale.com", note: "Opens the Tailscale app; sign in there." },
 };

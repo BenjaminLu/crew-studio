@@ -59,7 +59,7 @@
     "test:hyperframes-containment": "bun tests/hyperframes-containment.mjs",
     "test:firstmate-project-registration": "bun tests/firstmate-project-registration.ts",
     "test:claude-native-capability": "bun tests/claude-native-capability.ts",
-    "test:claude-login": "bun tests/claude-login.ts",
+    "test:claude-login": "bun tests/claude-login.ts && node tests/claude-login-ui.mjs",
     "test:pack-genesis-interview": "PG_INTERVIEW_ONLY=1 node tests/pack-genesis-native-ui.mjs",
     "test:media-library": "bun tests/media-library.ts && node tests/media-library-ui.mjs",
     "test:firstmate-staffing": "STAFFING_CONVERSATION=1 bun tests/firstmate-staffing.ts",
