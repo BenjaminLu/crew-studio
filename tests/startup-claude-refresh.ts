@@ -64,6 +64,19 @@ for(const mode of ['failed','concurrent','replay','owner-ended','wrong-model','w
   ok(F.calls===1&&first.expires<=Date.now()+30000,'configured founder model (no param) is verified within the approved probe budget');
  }finally{await F.stop();}
 }
+// Two startup Tasks started together: both rounds become ready from the real native verifier, neither stalls.
+{
+ const {ClaudeNative,isClaudeExecutionAdmission}=await import('../src/providers/claude-native');const {mkdtempSync,copyFileSync,readFileSync,rmSync}=await import('node:fs');const {join}=await import('node:path');
+ const dir=mkdtempSync('/private/tmp/crew-startup-claude-pair-'),bin=join(dir,'success.mjs');copyFileSync(join(import.meta.dirname,'fixture/claude-native.mjs'),bin);
+ const native=new ClaudeNative({bin,login:()=>({ok:true,env:{CLAUDE_CODE_OAUTH_TOKEN:'sk-ant-oat01-'+'x'.repeat(48)},source:'offline fixture only',warn:null})});
+ const A=await fixture(),B=await fixture();try{
+  for(const F of [A,B])F.deps={verify:(p:any,o:any)=>native.verify(p,o),admitted:isClaudeExecutionAdmission};
+  const [a,b]=await Promise.all([refreshStartupClaude(A.x,input,pair,cap,A.deps),refreshStartupClaude(B.x,input,pair,cap,B.deps)]);
+  const probes=readFileSync(join(dir,'trace.jsonl'),'utf8').trim().split('\n').map(l=>JSON.parse(l)).filter(r=>r.phase==='model').length;
+  ok(isClaudeExecutionAdmission(a,pair)&&isClaudeExecutionAdmission(b,pair)&&probes===1,'two startup Tasks verifying the same pair together both become ready from one bounded request');
+  ok([A,B].every(F=>F.E.trusted(F.r.id).entries.filter(e=>e.record==='startup-claude-verification-attempt').length===1),'each Task still spends exactly one approved probe attempt');
+ }finally{await A.stop();await B.stop();rmSync(dir,{recursive:true,force:true});}
+}
 for(const mode of ['resolved-drift','param-after-resolution']){
  const F=await fixture({resolved:mode==='resolved-drift'?'claude-opus-5-5':pair.model});try{
   if(mode==='param-after-resolution')F.r.params.founderModel='claude-opus-5-5';

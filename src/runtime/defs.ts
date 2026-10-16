@@ -167,6 +167,8 @@ export const diffEmpty = (d: DefDiff) => !d.nodesAdded.length && !d.nodesRemoved
 
 const RETIRED_DEFAULTS=new Set(["refine-demo","trivial-lane"]);
 const INTERNAL_WORKFLOWS=new Set(["firstmate-proposal","firstmate-register-project","firstmate-staffing"]);
+/** Kept and editable, but no new Task starts until its runtime is activated. The reason is shown in the catalog. */
+const HELD_REASON={en:"held: GitHub review runtime not activated yet",zh:"暫停：GitHub 審查執行尚未啟用"};
 function defaultDefinitions(){return [...bundledList("workflows/v2/"),...bundledList("packs/")].filter(f=>f.endsWith(".wf.yaml")).map(f=>bundledText(f)??"").filter(text=>{if(!text.trim())return false;return !RETIRED_DEFAULTS.has(normalize(parseYaml(text)).id);});}
 
 export class WorkflowDefs {
@@ -218,8 +220,12 @@ export class WorkflowDefs {
     return { ...d, nodes: d.nodes.map((n) => (lay[n.id] ? { ...n, x: lay[n.id].x, y: lay[n.id].y } : n)) };
   }
   /** Exact versions remain readable for pinned Tasks; only public choices enter a new dispatch. */
-  selectable(id:string,version?:number){const d=this.get(id,version);return !!d&&!INTERNAL_WORKFLOWS.has(id)&&!(RETIRED_DEFAULTS.has(id)&&!!d.seed&&!!d.by?.startsWith("studio (built-in"));}
+  selectable(id:string,version?:number){const d=this.get(id,version);return !!d&&!INTERNAL_WORKFLOWS.has(id)&&!(RETIRED_DEFAULTS.has(id)&&!!d.seed&&!!d.by?.startsWith("studio (built-in"))&&!this.held(id);}
+  /** Why a kept workflow cannot start a Task yet (the GitHub review template and copies of it), or null. */
+  held(id:string):{en:string;zh:string}|null{return this.versions(id).length&&this.previewOnly(id)?HELD_REASON:null;}
   catalog(){return this.list().filter(w=>this.selectable(w.id,w.version));}
+  /** Workflows kept in the catalog for editing that the Start form and start routes do not offer. */
+  heldCatalog(){return this.list().filter(w=>!INTERNAL_WORKFLOWS.has(w.id)&&!!this.held(w.id)).map(w=>({...w,held:this.held(w.id)!}));}
   list() { return this.ids().map((id) => { const vs = this.versions(id); const l = vs.at(-1)!; return { id, name: l.name, description: l.description ?? "", kind: l.kind ?? null, version: l.version, versions: vs.length, nodes: l.nodes.length, intent: l.intent ?? null, params: l.params ?? null }; }); }
   layout(id: string, v: number): Record<string, { x: number; y: number }> { try { return JSON.parse(readFileSync(join(this.wdir(id), `layout-v${v}.json`), "utf8")); } catch { return {}; } }
   /** Dragging nodes: positions are kept per version without making a new one. */

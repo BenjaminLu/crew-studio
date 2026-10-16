@@ -179,7 +179,17 @@ export class PackGenesis {
   const eligible=tasks.length>=p.m&&matches>=p.n&&!!metric&&!metric.errors&&metric.inputHashAlgorithm===INPUT_HASH_ALGORITHM&&(!agreement||(agreement.vendors.length>=2&&agreement.total>0));return {check,n:p.n,m:p.m,completed:tasks.length,matches,eligible,blocking:p.blocking,needsEye:!p.blocking};}
  selectPromotion(run:string,check:string,selected:boolean){const g=this.get(run);if(!this.activeDecision(run,'promote'))throw new Error('promotion selection requires the active captain promotion card');if(selected&&!this.eligibility(g,check).eligible)throw new Error('below the measured N/M threshold: this check stays advisory');g.promotion[check].selected=selected;this.save(g);return this.eligibility(g,check);}
  async shadowStart(run:string,text:string){const c=this.candidate(run),g=c.g;if(!this.activeDecision(run,'shadow'))throw new Error('shadow Tasks start only at the shadow card');if(c.hash!==g.candidateHash||hash(this.evalSet(g))!==g.evalHash)throw new Error('candidate/eval set changed: remeasure before shadow');
-  const pin=this.pinCandidate(g),flow=this.pinnedFlow(pin,c.flows[0],true);this.loadPin(pin);const installed=this.engine.defs.importPinned(flow,{hash:pin.hash,verify:()=>this.verifyPin(pin.namespace,pin.hash)});return this.engine.start({workflow:installed.id,version:installed.version,text:String(text).slice(0,4000),title:String(text).split('\n')[0].slice(0,160),params:{genesis:run,packNamespace:pin.namespace,packHash:pin.hash,shadow:true}});
+  const pin=this.pinCandidate(g),flow=this.pinnedFlow(pin,c.flows[0],true);this.loadPin(pin);const installed=this.engine.defs.importPinned(flow,{hash:pin.hash,verify:()=>this.verifyPin(pin.namespace,pin.hash)});const choice=this.genesisChoice(run);this.pendingShadowChoice=choice?{genesis:run,...choice}:null;
+  try{return this.engine.start({workflow:installed.id,version:installed.version,text:String(text).slice(0,4000),title:String(text).split('\n')[0].slice(0,160),params:{genesis:run,packNamespace:pin.namespace,packHash:pin.hash,shadow:true,...(choice?{provider:choice.provider,...(choice.model?{model:choice.model}:{}),...(choice.effort?{effort:choice.effort}:{})}:{})} as any});}finally{this.pendingShadowChoice=null;}
+ }
+ /** The shadow works with what the genesis chose: its explicit provider/model/effort, completed by the genesis's own signed provider selection. */
+ pendingShadowChoice:{genesis:string;provider:string;model:string|null;effort:string|null;source:string}|null=null;
+ private genesisChoice(run:string){
+  const r=this.engine.get(run);if(!r)throw new Error('the genesis Task is missing');const trusted=this.engine.trusted(run);if(!trusted.ok)throw new Error('genesis Task history is untrusted; the shadow cannot inherit its provider');
+  const agents=new Set(r.def.nodes.filter(n=>n.kind==='agent').map(n=>n.id));
+  const selected=trusted.entries.filter((e:any)=>e.record==='provider-selection'&&agents.has(e.node)&&e.data?.role!=='judge'&&typeof e.data?.provider==='string').at(-1)?.data;
+  const provider=r.params.provider||selected?.provider;if(!provider)return null;const same=selected?.provider===provider?selected:null;
+  return{provider:String(provider),model:r.params.model||same?.model||null,effort:r.params.effort||same?.effort||null,source:r.params.provider?(same?'genesis-params+provider-selection':'genesis-params'):'provider-selection'};
  }
  shadowDecision(x:X,choice:'accept'|'reject',note:string|null){
   const pin=this.pin(String(x.run.params.packNamespace??x.node.args?.packNamespace),String(x.run.params.packHash??x.ctx.head)),run=String(x.run.params.genesis??pin.genesis),g=this.get(run);const output=x.ctx.packArtifact;if(!output)throw new Error('shadow producer did not create an artifact');const v=this.artifacts.version(output.artifact,output.version);if(!v||v.sha256!==output.sha256||this.artifacts.verify(output.artifact,output.version).length)throw new Error('shadow output changed');if(g.shadow.some(s=>s.task===x.run.id&&s.decision))return;
@@ -227,6 +237,9 @@ const body=(title:string,zhTitle:string,why:string,zhWhy:string,options:any[],li
 
 export function installPackGenesis(engine:Engine,o:{dataDir:string;artifacts:ArtifactStore}){
  const pg=new PackGenesis(o.dataDir,o.artifacts);pg.attach(engine);
+ // Signed before the shadow's first round: which genesis choice it inherited and where that choice came from.
+ const previousInitialize=engine.deps.initializeRun;engine.deps.initializeRun=(run:any)=>{previousInitialize?.(run);const c=pg.pendingShadowChoice;if(!c||run.params.shadow!=='true'||run.params.genesis!==c.genesis)return;const node=run.def.nodes[0];
+  if(!engine.record(engine.x(run,node,run.nodes[node.id]),'pack-shadow-provider',{data:{schema:1,genesis:c.genesis,provider:c.provider,model:c.model,effort:c.effort,source:c.source}}))throw new Error('the shadow provider choice was not recorded');};
  const keys=['inputs','outputs','tools','quality','dealbreakers','signoff'];
  const questionHash=(g:Genesis)=>sha(stable(g.questions));
  function interview(c:import('./runtime/cards').SCard){

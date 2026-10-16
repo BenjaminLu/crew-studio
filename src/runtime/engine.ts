@@ -465,7 +465,7 @@ export class Engine {
       if (node.provider) return { provider: node.provider, model: node.model ?? null, ...(node.effort ? { effort: node.effort } : {}) };
       const role = r.def.roles.find((x) => x.id === node.role);
       if (role?.provider) return { provider: role.provider, model: role.model ?? null };
-      if (r.params.provider) return { provider: r.params.provider, model: r.params.model || null };
+      if (r.params.provider) return { provider: r.params.provider, model: r.params.model || null, ...(r.params.effort ? { effort: r.params.effort } : {}) };
       return this.deps.defaultProvider();
     };
     return { run: r, node, rn, visit: rn.visits, engine: this, deps: this.deps, ctx: r.ctx, dir: this.rdir(r.id),

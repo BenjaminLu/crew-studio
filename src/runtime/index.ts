@@ -117,6 +117,16 @@ export function createRuntime(d: RuntimeDeps) {
   const staffingFacts=async()=>{staffingCapabilities=await(d.staffingFacts??(async()=>[]))();return staffingCapabilities;};
   const staffingGuard=installStaffingGuard(engine,staffing,staffingProject,config=>{for(const role of Object.values(config.roles)){const cap=staffingCapabilities.find(c=>c.provider===role.provider),model=cap?.models.find(m=>m.id===role.model);if(!cap||cap.support!=='supported'||cap.auth!=='verified'||!staffingQuotaReady(role,cap,d.staffingAdmission)||cap.expires<=Date.now()||!model||role.effort!==null&&!model.efforts.includes(role.effort))throw new Error('Refresh staffing facts and confirm available role models before work / 請先更新派工能力並確認可用的角色模型');}});
   const staffingTools=installFirstmateStaffing(engine,staffing,staffingProject,staffingFacts,d.staffingAdmission);
+  // Board start of a project-staffed workflow (code-firstmate): the approved configuration of the chosen registered
+  // project, the same one Firstmate's dispatch binds. Never a bypass: the staffing guard still verifies it at start.
+  const boardStaffed=(def:any)=>!!def&&staffingGuard.applies(def)&&def.kind!=='coffee-kit';
+  type BoardStaffing={state:'approved';hash:string;version:number;roles:Record<string,{provider:string;model:string;effort:string|null}>}|{state:'missing'|'blocked';code:string;reason:{en:string;zh:string}};
+  const boardStaffing=(def:any,projectId:string):BoardStaffing=>{
+   let project:StaffingProject;try{project=staffingProject(projectId);}catch(e:any){return{state:'blocked',code:'project_unavailable',reason:{en:String(e?.message??e),zh:'已登錄專案不存在、已停用或無法驗證 / '+String(e?.message??e)}};}
+   let config;try{config=staffing.current(project);}catch(e:any){return e?.code==='ENOENT'?{state:'missing',code:'staffing_missing',reason:{en:'No crew is approved for this project yet. Choose your crew together with Firstmate first.',zh:'此專案尚未核准代理配置；請先和 Firstmate 一起決定代理配置。'}}:{state:'blocked',code:'staffing_unverifiable',reason:{en:'The approved crew for this project cannot be verified: '+String(e?.message??e),zh:'無法驗證此專案已核准的代理配置。'}};}
+   try{staffingGuard.verified(def,{project:projectId,_staffing:config.hash});}catch(e:any){return{state:'blocked',code:'staffing_changed',reason:{en:String(e?.message??e).replace(/^Staffing approval requires confirmation: /,''),zh:'已核准的代理配置與目前流程或技能不符；請重新和 Firstmate 決定代理配置。'}};}
+   return{state:'approved',hash:config.hash,version:config.version,roles:Object.fromEntries(Object.entries(config.roles).map(([id,r])=>[id,{provider:r.provider,model:r.model,effort:r.effort}]))};
+  };
   const onboarding=new Onboarding(engine,d.m3?.store??new ArtifactStore(d.dataDir));
   const originalFirstmate=installFirstmate(engine,projects,{prepareDispatch:async(workflow,version)=>{const def=engine.defs.get(workflow,version);if(def?.id==='code-firstmate'||def?.kind==='coffee-kit')await staffingFacts();},onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending});
   // free drafting: its own store and tools, separate from proposals, staffing and execution
@@ -187,7 +197,7 @@ export function createRuntime(d: RuntimeDeps) {
       }
       // ---------- definitions ----------
       if(p==="/api/coffee/design"&&writing){if(req.method!=="POST")return json({error:"POST required"},405);if(who.kind!=="desktop")return json({error:"Review coffee design on the desktop"},403);return json({plan:validateCoffeeDesign(b?.plan),canonical:coffeeDesignJSON(b?.plan)});}
-      if (p === "/api/wf" && !writing) return json({ workflows: defs.catalog(), checks: engine.registry.all().map(checkView) });
+      if (p === "/api/wf" && !writing) return json({ workflows: defs.catalog(), held: defs.heldCatalog(), checks: engine.registry.all().map(checkView) });
       if(readiness){const gated=await readiness.route(p,url,req.method,writing,b,by,who);if(gated)return gated;}
       const drafted=await draftRoute(drafts,p,req.method,writing,b,by);if(drafted)return drafted;
       if (p === "/api/wf" && writing) {
@@ -203,7 +213,7 @@ export function createRuntime(d: RuntimeDeps) {
         if (m[2] === "layout" && writing) return json({ layout: defs.setLayout(id, Number(b?.version), b?.positions ?? {}) });
         if (!writing) {
           const v = url.searchParams.get("v"); const def = defs.get(id, v ? Number(v) : undefined); if (!def) return json({ error: "no such workflow" }, 404);
-          return json({ def, selectable:defs.selectable(id,def.version), coffeeFilmStatus:def.kind==="coffee-kit"?d.coffeeFilmStatus??{ready:false,reason:"Local film capability is unavailable"}:null, coffeeDesign:def.kind==="coffee-kit"?COFFEE_DESIGN_FIELDS:null, coffeeChoice:def.kind==="coffee-kit" ? d.coffeeChoice?.() ?? null : null, problems: validate(def, defs.known, undefined, defs.skillInfo ?? undefined), versions: defs.versions(id).map((x) => ({ version: x.version, createdAt: x.createdAt, by: x.by, note: x.note, parent: x.parent, diff: x.diff })),
+          return json({ def, selectable:defs.selectable(id,def.version), held:defs.held(id), coffeeFilmStatus:def.kind==="coffee-kit"?d.coffeeFilmStatus??{ready:false,reason:"Local film capability is unavailable"}:null, coffeeDesign:def.kind==="coffee-kit"?COFFEE_DESIGN_FIELDS:null, coffeeChoice:def.kind==="coffee-kit" ? d.coffeeChoice?.() ?? null : null, problems: validate(def, defs.known, undefined, defs.skillInfo ?? undefined), versions: defs.versions(id).map((x) => ({ version: x.version, createdAt: x.createdAt, by: x.by, note: x.note, parent: x.parent, diff: x.diff })),
             runs: engine.list().filter((r) => r.workflow === id).map((r) => ({ id: r.id, version: r.version, status: r.status, result: r.result, merged: !!r.ctx?.merged, title: r.title, createdAt: r.createdAt })) });
         }
         {const own=ownWorkflow(defs.get(id));for(const n of Array.isArray(b?.nodes)?b.nodes:[]){try{if(own)checkNodeStaffing(n);else checkEffort(n);}catch(e:any){return json({error:e.message},400);}}}
@@ -251,6 +261,12 @@ export function createRuntime(d: RuntimeDeps) {
       if(coffeeRecovery&&writing){if(req.method!=='POST')return json({error:'POST required'},405);if(!b||typeof b!=='object'||Array.isArray(b)||Object.keys(b).length)return json({error:'Recovery refresh accepts no production choices'},400);if(who.kind!=='desktop')return json({error:'Refresh recovery on the Mac'},403);if(!coffee)return json({error:'Coffee workflow unavailable'},409);return json(await coffee.refreshRecovery(coffeeRecovery[1]));}
       // ---------- runs ----------
       // the default list hides archived runs; ?archived=1 lists them too
+      // what the Start form needs for one workflow: whether it runs on a registered project, and each project's crew state
+      if (p === "/api/wruns/start-options" && !writing) {
+        const wf=String(url.searchParams.get("workflow")??""),def=defs.get(wf);if(!def||!defs.selectable(wf))return json({error:"This workflow is not available for new tasks",code:"workflow_unavailable"},409);
+        const projectScoped=def.kind==="code",staffed=boardStaffed(def);
+        return json({workflow:wf,version:def.version,projectScoped,staffing:staffed,crewHref:staffed?"#/firstmate":null,projects:projectScoped?projects.list().filter(x=>!!x.path).map(x=>({id:x.id,name:x.name,base:x.base,staffing:staffed?boardStaffing(def,x.id):null})):[]});
+      }
       if (p === "/api/wruns" && !writing) return json({ runs: engine.list().filter((r) => url.searchParams.get("archived") === "1" || !r.archived).map((r) => ({ id: r.id, workflow: r.workflow, version: r.version, title: r.title, status: r.status, result: r.result, createdAt: r.createdAt, updatedAt: r.updatedAt, endedAt: r.endedAt, error: r.error,
         childRun: (() => { const child = engine.get(r.ctx?.childRun); return child?.params?._firstmateProposal === r.id ? child.id : null; })(),
         archived: !!r.archived, merged: !!r.ctx?.merged, cancelReason: r.cancelReason ?? null,
@@ -260,6 +276,7 @@ export function createRuntime(d: RuntimeDeps) {
         const text = String(b?.text ?? "").trim(); if (!text && !b?.workflow) return json({ error: "say what you want done" }, 400);
         const cls = classifyIntent(defs, text, engine.policies.get("sensitive_paths", { project: b?.params?.project ? String(b.params.project) : b?.project ? String(b.project) : null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []);
         const wf = b?.workflow || cls.workflow; if (!wf) return json({ error: "Studio could not tell which workflow this is: pick one", classifier: cls }, 409);
+        {const held=defs.held(wf);if(held)return json({error:`This workflow is ${held.en}. It stays in the catalog for editing. / 此流程${held.zh}，仍可在流程目錄中編輯。`,code:"workflow_held",held},409);}
         if(!defs.selectable(wf,b?.version?Number(b.version):undefined))return json({error:"This workflow is internal or retired. Choose an available workflow. / 此流程為內部或已退役流程，請選擇可用流程。",code:"workflow_unavailable"},409);
         let params={...(b?.params??{})};delete params._ownStaffing;
         const chosenDef=defs.get(wf,b?.version?Number(b.version):undefined);
@@ -269,12 +286,20 @@ export function createRuntime(d: RuntimeDeps) {
           if(b?.staffingConfirm!==staffing.hash)return json({error:'Confirm who works on each node before this Task starts / 開始任務前請確認每個節點的人員配置',code:'staffing_confirmation_required',staffing},409);
           params._ownStaffing=staffing.hash;
         }
+        if(boardStaffed(chosenDef)){
+          if(params.repo)return json({error:'Choose a registered project; a repository path cannot carry approved staffing / 請選擇已登錄專案；直接指定儲存庫路徑無法帶入已核准的代理配置',code:'project_required'},400);
+          const pid=String(params.project??'');if(!pid)return json({error:'Choose a registered project for this workflow / 請為此流程選擇已登錄專案',code:'project_required'},400);
+          const crew=boardStaffing(chosenDef,pid);if(crew.state!=='approved')return json({error:`${crew.reason.en} / ${crew.reason.zh}`,code:crew.code,staffing:crew},409);
+          params={...params,base:projects.get(pid)!.base,_staffing:crew.hash};
+          await staffingFacts();
+        }
         if(chosenDef?.kind==="coffee-kit") {
           let config;try{config=staffing.current(coffeeStaffingProject(params.project));}catch{return json({error:'Discuss and approve each coffee role before starting',code:'coffee-staffing-required'},409);}const image=config.roles['image-worker'];
           if(!image||image.provider!=='codex')return json({error:"Confirm an available dedicated Codex image role; no vendor fallback",code:"coffee-staffing-required"},409);
           params={...params,_staffing:config.hash};
         }
-        const r = engine.start({ workflow: wf, version: b?.version ? Number(b.version) : undefined, title: b?.title, text: ownWorkflow(chosenDef) ? ownBrief(chosenDef, text, params) : text, params, by, classifier: cls });
+        let r;try{r = engine.start({ workflow: wf, version: b?.version ? Number(b.version) : undefined, title: b?.title, text: ownWorkflow(chosenDef) ? ownBrief(chosenDef, text, params) : text, params, by, classifier: cls });}
+        catch(e:any){if(!boardStaffed(chosenDef))throw e;const message=String(e?.message??e).replace(/^Staffing approval requires confirmation: /,'');return json({error:message,code:'staffing_not_ready',staffing:{state:'blocked',code:'staffing_not_ready',reason:{en:message,zh:'已核准的代理目前無法開始；請更新代理能力狀態後再試。'}}},409);}
         return json(runView(r.id, who));
       }
       const recovery=/^\/api\/wruns\/(R-\d+)\/continuation\/(offer|confirm)$/.exec(p);

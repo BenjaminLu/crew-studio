@@ -43,6 +43,16 @@ try{
  const beforeClock=Date.now;try{const current=Date.now();Date.now=()=>current+60000;ok(!isClaudeExecutionAdmission(workerCap,pair),'expired source receipt cannot authorize a new round');}finally{Date.now=beforeClock;}
  {const saved={USER:process.env.USER,LOGNAME:process.env.LOGNAME};process.env.USER??='fixture-user';process.env.LOGNAME??='fixture-user';try{const keychain=await controller('keychain-user').status(pair);ok(keychain.loginState==='logged-in'&&keychain.auth==='verified','status probe passes USER/LOGNAME so a Keychain-backed login is found');}finally{for(const[k,v]of Object.entries(saved))if(v===undefined)delete process.env[k];else process.env[k]=v;}}
  {const owner=controller('success'),receipt=await owner.verify(pair,{confirm:true,timeoutMs:2000});owner.signedIn();ok(!isClaudeExecutionAdmission(receipt,pair),'a fresh sign-in (possibly another account) drops the cached verified admission');}
+ {const models=()=>rows().filter(r=>r.phase==='model').length;
+  const shared=controller('success'),before=models(),[a,b]=await Promise.all([shared.verify(pair,{confirm:true,timeoutMs:4000}),shared.verify(pair,{confirm:true,timeoutMs:4000})]);
+  ok(a===b&&isClaudeExecutionAdmission(a,pair)&&models()===before+1,'two concurrent verifications of the same exact pair share one bounded request and both become ready');
+  const other={...pair,effort:'high'},queuedBefore=models(),[first,second]=await Promise.all([shared.verify(pair,{confirm:true,timeoutMs:4000}),shared.verify(other,{confirm:true,timeoutMs:4000})]);
+  ok(isClaudeExecutionAdmission(first,pair)&&isClaudeExecutionAdmission(second,other)&&models()===queuedBefore+2,'a different pair waits for the running verification instead of being refused');
+  const leaving=new AbortController(),staying=shared.verify(pair,{confirm:true,timeoutMs:4000}),left=shared.verify(pair,{confirm:true,signal:leaving.signal,timeoutMs:4000});leaving.abort();const [stayed,gone]=await Promise.all([staying,left]);
+  ok(isClaudeExecutionAdmission(stayed,pair)&&!isClaudeExecutionAdmission(gone,pair),'one waiter leaving never cancels the shared verification for the others');
+  const crowd=controller('success'),results=await Promise.all(['low','medium','high','xhigh','max'].map(effort=>crowd.verify({...pair,effort},{confirm:true,timeoutMs:4000})));
+  ok(results.filter(r=>r.admission==='verified-execution').length===4&&results.some(r=>/Too many Claude verifications/.test(r.reason??'')),'distinct pairs waiting at once stay bounded');
+ }
  const missing=await controller('missing').status(pair);ok(missing.loginState==='not-logged-in'&&missing.reason?.includes('this does not describe unrelated'),'missing selected context does not claim global machine logout');
  const invalid=controller('success'),n=rows().length;await invalid.verify({...pair,effort:'invented'},{confirm:true});ok(rows().length===n,'unsupported effort holds without launching CLI');
  const hung=controller('hang');const start=Date.now();await hung.verify(pair,{confirm:true,timeoutMs:500});ok(Date.now()-start<4000,'actual hung CLI is bounded and drained');const pid=Number(readFileSync(join(root,'hang.pid'),'utf8'));let dead=false;try{process.kill(pid,0);}catch{dead=true;}ok(dead,'actual owned timed-out process is gone');

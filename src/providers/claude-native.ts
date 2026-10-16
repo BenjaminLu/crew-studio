@@ -41,7 +41,9 @@ export const claudeAccountEnv=():Record<string,string>=>({PATH:process.env.PATH|
 const argv=(bin:string,args:string[])=>/\.(?:mjs|js|ts)$/.test(bin)?[process.execPath,bin,...args]:[bin,...args];
 export class ClaudeNative{
  private admitted=new Map<string,ClaudeCapability>();private authDenied=false;private cleanupBlocked=false;private denial:{code:string;resetAt:number|null;at:number}|null=null;
- private active:{abort:AbortController;done:Promise<ClaudeCapability>}|null=null;private unknownProcess:ReturnType<typeof probeProcess>|null=null;
+ /** One paid verification runs at a time. A request for the exact pair already running or queued shares that
+  * flight's result; a different pair waits its turn. At most MAX_FLIGHTS pairs are in flight or queued. */
+ private flights=new Map<string,{abort:AbortController;done:Promise<ClaudeCapability>;waiters:number}>();private tail:Promise<unknown>=Promise.resolve();static readonly MAX_FLIGHTS=4;private unknownProcess:ReturnType<typeof probeProcess>|null=null;
  constructor(private options:{bin?:string;login?:()=>Login;authEnv?:()=>Record<string,string>}={}){}
  currentBinary(){return resolveBin(this.options.bin??process.env.CREW_CLAUDE_BIN??'claude')??'';}
  private base(p:ClaudePair,patch:Partial<ClaudeCapability>={}):ClaudeCapability{const at=Date.now();return{provider:'claude',available:!!this.currentBinary(),auth:'unverified',quota:this.denial?.code==='quotaExhausted'?'exhausted':'unknown',models:[],at,expires:at+30000,refusal:'unverified',loginState:'unknown',resetAt:this.denial?.resetAt??null,admission:'none',guidance:this.denial?.code==='quotaExhausted'?'Claude quota is exhausted. Wait for reset; do not sign in again. Reset time is unknown unless the CLI reports it. / Claude 額度已耗盡；請等待重設，不需重新登入。只有 CLI 回報時才有確切重設時間。':'Verify the selected Claude CLI/config context. Existing sessions may use another context. / 請確認選定的 Claude CLI 與設定環境；既有對話可能使用不同環境。',context:{executable:this.currentBinary()||null,configDirectory:null,version:null},...patch};}
@@ -73,11 +75,22 @@ export class ClaudeNative{
  }
  async verify(p:ClaudePair,o:{confirm:boolean;signal?:AbortSignal;timeoutMs?:number;}):Promise<ClaudeCapability>{
   if(o.confirm!==true||!validClaudePair(p))return this.base(p,{reason:'Explicit confirmation of the exact configured Claude model/effort is required'});
-  if(this.active)return this.base(p,{reason:'A Claude verification is already running'});
-  if(this.denial?.code==='quotaExhausted'&&(!this.denial.resetAt||this.denial.resetAt>Date.now()))return this.base(p,{reason:'Quota is exhausted; do not retry before reset'});
-  const abort=new AbortController(),onAbort=()=>abort.abort();o.signal?.addEventListener('abort',onAbort,{once:true});if(o.signal?.aborted)abort.abort();
-  const done=this.runVerify(p,abort.signal,o.timeoutMs??120000);this.active={abort,done};try{return await done;}finally{o.signal?.removeEventListener('abort',onAbort);this.active=null;}
+  if(this.quotaHeld())return this.base(p,{reason:'Quota is exhausted; do not retry before reset'});
+  const key=pairKey(p);let flight=this.flights.get(key);if(flight?.abort.signal.aborted)flight=undefined; // every earlier waiter left: never join a cancelled request
+  if(!flight){
+   if([...this.flights.values()].filter(f=>!f.abort.signal.aborted).length>=ClaudeNative.MAX_FLIGHTS)return this.base(p,{reason:'Too many Claude verifications are waiting; try again when they finish'});
+   const abort=new AbortController(),previous=this.tail,timeoutMs=o.timeoutMs??120000;
+   // Queued behind the running pair: the deadline starts when this pair's own request starts.
+   const done=previous.then(()=>abort.signal.aborted?this.base(p,{reason:'Claude verification ended before it started'}):this.quotaHeld()?this.base(p,{reason:'Quota is exhausted; do not retry before reset'}):this.runVerify(p,abort.signal,timeoutMs));
+   const created={abort,done,waiters:0};flight=created;this.flights.set(key,created);
+   const leave=()=>{if(this.flights.get(key)===created)this.flights.delete(key);};this.tail=done.then(leave,leave);
+  }
+  const shared=flight;shared.waiters++;
+  let release=()=>{};const ended=new Promise<ClaudeCapability>(resolve=>{const stop=()=>resolve(this.base(p,{reason:'Claude verification owner ended'}));if(o.signal?.aborted)stop();else{o.signal?.addEventListener('abort',stop,{once:true});release=()=>o.signal?.removeEventListener('abort',stop);}});
+  try{return await Promise.race([shared.done,ended]);}
+  finally{release();shared.waiters--;if(shared.waiters<=0)shared.abort.abort();}
  }
+ private quotaHeld(){return this.denial?.code==='quotaExhausted'&&(!this.denial.resetAt||this.denial.resetAt>Date.now());}
  private async runVerify(p:ClaudePair,signal:AbortSignal,timeoutMs:number):Promise<ClaudeCapability>{
   if(!Number.isInteger(timeoutMs)||timeoutMs<500||timeoutMs>120000)return this.base(p,{reason:'Claude verification deadline is invalid'});
   const auth=await this.status(p,signal);if(auth.loginState!=='logged-in'||signal.aborted)return auth;
@@ -102,7 +115,7 @@ export class ClaudeNative{
    receipts.set(cap,{valid:true,pair:{...p},expires:cap.expires,login:{...login,env:{...login.env}},owner:this,binary});this.admitted.set(pairKey(p),cap);return cap;
   }catch{return this.base(p,{auth:auth.auth,loginState:auth.loginState,reason:'Claude bounded verification did not establish readiness; no work or fallback was started'});}finally{signal.removeEventListener('abort',abort);if(proc)try{await proc.stop();}catch{clean=false;this.unknownProcess=proc;this.invalidate();}if(clean)rmSync(root,{recursive:true,force:true});}
  }
- async cancel(){this.active?.abort.abort();if(this.active)await this.active.done;}
+ async cancel(){const flights=[...this.flights.values()];for(const f of flights)f.abort.abort();await Promise.all(flights.map(f=>f.done.catch(()=>null)));}
 }
 export const nativeClaude=new ClaudeNative();
 export const probeClaudeNative=(p:ClaudePair,signal?:AbortSignal)=>nativeClaude.status(p,signal);
