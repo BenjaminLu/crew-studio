@@ -1,4 +1,5 @@
 import {withSafetyRules} from "../skills";
+import { codeHandoffView } from "./code-handoff";
 import { installCodeQueue } from "./code-queue";
 import {GitHubPoller} from '../github-poller';
 // The coding pipeline's runtime side (packs/firstmate, docs/code-firstmate-pipeline.md):
@@ -63,6 +64,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   /** test-only seams; production never sets them. afterBuildExit: called once the app build has exited and before its output is read (it models a writer still holding the build's folder) */
   seams?: { afterBuildExit?: (rawDir: string, side: "before" | "after") => void | Promise<void> } }) {
   installCodeQueue(engine);
+  const priorCardView = engine.cards.view;
+  engine.cards.view = card => codeHandoffView(priorCardView(card));
   engine.beforeNodeChecks ??= {}; engine.cardPrepared ??= {}; engine.beforeStart ??= {}; engine.externalHandlers ??= {}; engine.externalValidators ??= {};
   // A worker asking the captain for scope/door authority has not completed a build.
   // Preserve the escalation; do not fabricate passing check entries or enter CI.

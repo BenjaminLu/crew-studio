@@ -3,6 +3,8 @@
 import { basename } from 'node:path';
 const suites: Record<string, { argv: string[]; env?: Record<string,string> }> = {
   'tests/pack-genesis-interview.ts': {argv:['bun','tests/pack-genesis-interview.ts'],env:{CREW_TEST_IN_PROCESS:'1'}},
+  'tests/code-handoff.ts': {argv:['bun','tests/code-handoff.ts']},
+  'tests/proposal-state.mjs': {argv:['node','tests/proposal-state.mjs']},
   'tests/onboarding-ui.mjs': {argv:['node','tests/onboarding-ui.mjs']},
   'tests/caller-coverage.mjs': {argv:['node','tests/caller-coverage.mjs']},
   'tests/code-check-config.mjs': {argv:['node','tests/code-check-config.mjs']},

@@ -8,6 +8,7 @@
 const WORDS = {
   running: ["Running", "進行中", "run"], waiting: ["Waiting for you", "等你處理", "human"], paused: ["Paused", "已暫停", "warn"],
   merged: ["Merged", "已合併", "ok"], done: ["Done", "完成", "ok"], closed: ["Closed without merging", "未合併就關閉", "neutral"],
+  dispatched: ["Proposal dispatched", "提案已派工", "neutral"],
   cancelled: ["Cancelled", "已取消", "neutral"], failed: ["Failed", "失敗", "bad"],
 };
 const FAILED_RESULTS = new Set(["fail", "error", "timeout", "cap"]);
@@ -18,7 +19,7 @@ function key(r) {
   if (s === "paused") return "paused";
   if (s === "cancelled") return "cancelled";
   if (s === "failed") return "failed";
-  if (s === "succeeded") { const res = r.result || "done"; if (res === "closed") return "closed"; if (FAILED_RESULTS.has(res)) return "failed"; return r.merged || r.ctx?.merged ? "merged" : "done"; }
+  if (s === "succeeded") { const res = r.result || "done"; if (res === "closed") return "closed"; if (FAILED_RESULTS.has(res)) return "failed"; if (r.workflow === "firstmate-proposal") return "dispatched"; return r.merged || r.ctx?.merged ? "merged" : "done"; }
   return "running";
 }
 window.runState = (r) => { const k = key(r); const [en, tw, tone] = WORDS[k]; return { key: k, en, tw, tone }; };

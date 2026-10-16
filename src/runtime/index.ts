@@ -201,6 +201,7 @@ export function createRuntime(d: RuntimeDeps) {
       // ---------- runs ----------
       // the default list hides archived runs; ?archived=1 lists them too
       if (p === "/api/wruns" && !writing) return json({ runs: engine.list().filter((r) => url.searchParams.get("archived") === "1" || !r.archived).map((r) => ({ id: r.id, workflow: r.workflow, version: r.version, title: r.title, status: r.status, result: r.result, createdAt: r.createdAt, updatedAt: r.updatedAt, endedAt: r.endedAt, error: r.error,
+        childRun: (() => { const child = engine.get(r.ctx?.childRun); return child?.params?._firstmateProposal === r.id ? child.id : null; })(),
         archived: !!r.archived, merged: !!r.ctx?.merged, cancelReason: r.cancelReason ?? null,
         current: Object.entries(r.nodes).filter(([, n]) => ["running", "waiting"].includes(n.state)).map(([k, n]) => ({ node: k, state: n.state, waiting: n.waiting ?? null, label: r.def.nodes.find((x) => x.id === k)?.label ?? k })), door: engine.cards.list({ run: r.id }).find((c) => c.door)?.door ?? null, recovered: r.recovered })),
         cards: engine.cards.list({ open: true }).map(c=>engine.cards.view(c)) });

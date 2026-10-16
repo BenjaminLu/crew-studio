@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {runInNewContext} from 'node:vm';
+const ctx={window:{}};runInNewContext(readFileSync('public/runstate.js','utf8'),ctx);
+const state=ctx.window.runState;
+assert.equal(state({workflow:'firstmate-proposal',status:'succeeded',result:'done'}).key,'dispatched');
+assert.equal(state({workflow:'code-firstmate',status:'succeeded',result:'done'}).key,'done');
+assert.equal(state({workflow:'firstmate-proposal',status:'succeeded',result:'closed'}).key,'closed');
+assert.equal(state({workflow:'firstmate-proposal',status:'failed'}).key,'failed');
+console.log('proposal-state: proposal dispatch is distinct from delivered work PASS');

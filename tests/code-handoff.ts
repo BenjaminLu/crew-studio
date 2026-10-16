@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {codeHandoffView} from '../src/domain/code-handoff';
+import {emptySections,type SCard} from '../src/runtime/cards';
+const card={workflow:'code-firstmate',node:'scope-card',kind:'scope',status:'open',body:'SCOPE-BLOCKED: repo.lint is not declared in .crew/gates.json',sections:{en:emptySections(),'zh-TW':emptySections()},options:[{id:'rescope',note:true},{id:'park'}]} as SCard;
+const original=JSON.stringify(card),view=codeHandoffView(card);
+assert.match(view.sections['zh-TW'].why,/執行設定/);assert.match(view.sections['zh-TW'].how,/不是重試 build/);
+assert.equal(JSON.stringify(card),original);assert.equal(view.body,card.body);assert.deepEqual(view.options.map(o=>o.id),card.options.map(o=>o.id));
+assert.match(codeHandoffView({...card,body:'scope-overlap: tests/a.ts overlaps R-023'}).sections['zh-TW'].why,/衝突/);
+assert.equal(codeHandoffView({...card,status:'answered'}).sections,card.sections);
+assert.equal(codeHandoffView({...card,node:'other'}).sections,card.sections);
+console.log('code-handoff: read-only reason, owner, required input and unchanged authority PASS');
