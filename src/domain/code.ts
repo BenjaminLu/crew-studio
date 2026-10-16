@@ -1,5 +1,6 @@
 import {withSafetyRules} from "../skills";
 import { codeHandoffView } from "./code-handoff";
+import { installCodeRecovery } from "./code-recovery";
 import { installCodeQueue } from "./code-queue";
 import {GitHubPoller} from '../github-poller';
 // The coding pipeline's runtime side (packs/firstmate, docs/code-firstmate-pipeline.md):
@@ -174,6 +175,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   };
   // one worktree per task under data/work/<project>/<task> (src/worktrees.ts); the task is the run
   const W = new Worktrees(o.dataDir, { protect: () => engine.deps.protectedRoots ?? [], egress: () => (engine.deps.agents as any).egress ?? null });
+  const recoverLocalRescope=installCodeRecovery(engine,W);
   const wkey = (x: { ctx: any; run?: any; id?: string }) => ({ project: x.ctx.wt?.project ?? "local", task: x.ctx.wt?.task ?? (x.run?.id ?? x.id) });
   const tmpTree = (run: string, what: string) => W.tmpOf(run, what);
   const held = new Map<string, () => void>();
@@ -517,6 +519,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const holder = (x: X) => `${x.run.id}/${x.node.id}#${x.visit}`;
   const beginRound = (write: boolean, skipInstall = false) => async (x: X) => {
     if (!x.ctx.wt) return;
+    if(x.node.mode==="spec")recoverLocalRescope(x);
     const k = wkey(x); const install = x.policy("install");
     let s: Awaited<ReturnType<typeof W.startRound>>;
     try { s = await W.startRound(k.project, k.task, holder(x), { write, skipInstall, install: install === false ? false : Array.isArray(install) ? install.map(String) : null, scripts: x.policy("install_scripts") === true,

@@ -266,7 +266,7 @@ export function createRuntime(d: RuntimeDeps) {
       m = /^\/api\/scards\/(SC-\d+)(?:\/(answer))?$/.exec(p);
       if (m) {
         if (!writing) { const c = engine.cards.get(m[1]); return c ? json(engine.cards.view(c)) : json({ error: "no such card" }, 404); }
-        const c = await engine.answer(m[1], { choice: String(b?.choice ?? ""), note: b?.note ?? null, by, confirm: b?.confirm ?? null, aligned: Array.isArray(b?.aligned) ? b.aligned : null });
+        const c = await engine.answer(m[1], { choice: String(b?.choice ?? ""), note: b?.note ?? null, by, confirm: b?.confirm ?? null, aligned: Array.isArray(b?.aligned) ? b.aligned : null, localRescope:b?.localRescope??null });
         return json(c);
       }
       return json({ error: "not found" }, 404);

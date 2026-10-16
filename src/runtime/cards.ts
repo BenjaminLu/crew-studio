@@ -12,7 +12,10 @@ export type CardKind = (typeof CARD_KINDS)[number];
 /** The intent sections every card carries, per locale. */
 export type Sections = { intent: string; why: string; scope: { in: string[]; out: string[] }; done: string[]; beforeAfter: string; how: string; glossary: { term: string; means: string }[] };
 export type InterviewBatch = {schema:1;visit:number;batchHash:string;questions:{key:string;en:string;zh:string}[];revision:number;answers:Record<string,string>};
+export type LocalRescope = {version:1;card:string;visit:number;base:string;from:string;target:string};
 export type SCard = {
+  /** Read-only code recovery preview; execution requires the same descriptor in the answer. */
+  localRescope?: LocalRescope;
   id: string; run: string; node: string; visit: number; kind: CardKind; title: { en: string; "zh-TW": string }; sections: { en: Sections; "zh-TW": Sections }; body: string;
   interview?: InterviewBatch;
   /** hold: an option that does not go through the door (close, request changes); every other option needs the door confirmation when the card's door is one-way */
@@ -23,7 +26,7 @@ export type SCard = {
   /** an authorization window never answers this card (set by its body; the merge card sets it) */
   captainOnly?: boolean;
   status: "open" | "answered" | "cancelled"; createdAt: string;
-  answer: { choice: string; note: string | null; by: string; at: string; confirm: string | null; aligned?: number[] | null } | null;
+  answer: { choice: string; note: string | null; by: string; at: string; confirm: string | null; aligned?: number[] | null; localRescope?: LocalRescope } | null;
   workflow: string; runTitle: string;
   /** before / after captures of an app the change touches (a domain check fills them): image URLs and the visible text that changed */
   captures?: { label: string; before: string | null; after: string | null; changed?: { removed: string[]; added: string[] } | null }[] | null;
@@ -78,7 +81,7 @@ export class Cards {
   }
   /** Record an answer, exactly once. One-way merge cards need the door confirmation. A card with intent lines
    *  (detail.intents) takes a non-hold answer only when every line is ticked (`aligned`), or with a note. */
-  answer(id: string, a: { choice: string; note?: string | null; by: string; confirm?: string | null; aligned?: number[] | null }): SCard {
+  answer(id: string, a: { choice: string; note?: string | null; by: string; confirm?: string | null; aligned?: number[] | null; localRescope?: LocalRescope | null }): SCard {
     const c = this.get(id); if (!c) throw new Error("no such card");
     if (c.status !== "open") throw new Error(`this card is ${c.status}: a card is answered exactly once`);
     const opt = c.options.find((o) => o.id === a.choice); if (!opt) throw new Error(`choose one of ${c.options.map((o) => o.id).join(", ")}`);
@@ -87,7 +90,8 @@ export class Cards {
     const n = c.detail?.intents?.length ?? 0;
     const aligned = Array.isArray(a.aligned) ? [...new Set(a.aligned.filter((i) => Number.isInteger(i) && i >= 0 && i < n))].sort((x, y) => x - y) : [];
     if (n && !opt.hold && aligned.length !== n && !String(a.note ?? "").trim()) throw new Error(`tick every intent line as met (${aligned.length} of ${n}), or write a note`);
-    c.status = "answered"; c.answer = { choice: a.choice, note: a.note ? String(a.note).slice(0, 4000) : null, by: a.by, at: new Date().toISOString(), confirm: a.confirm ?? null, ...(n ? { aligned } : {}) };
+    if(a.localRescope!=null){const p=a.localRescope;if(a.choice!=="rescope"||p.version!==1||p.card!==c.id||p.visit!==c.visit||typeof p.base!=="string"||!/^[A-Za-z0-9][A-Za-z0-9/_-]*$/.test(p.base)||![p.from,p.target].every(h=>typeof h==="string"&&/^[a-f0-9]{40}$/.test(h))||Object.keys(p).sort().join()!=="base,card,from,target,version,visit")throw new Error("invalid local rescope preview");}
+    c.status = "answered"; c.answer = { choice: a.choice, note: a.note ? String(a.note).slice(0, 4000) : null, by: a.by, at: new Date().toISOString(), confirm: a.confirm ?? null, ...(n ? { aligned } : {}), ...(a.localRescope ? {localRescope: structuredClone(a.localRescope)} : {}) };
     this.save(c); return c;
   }
   /** A deleted run's cards go with it; returns their ids. */

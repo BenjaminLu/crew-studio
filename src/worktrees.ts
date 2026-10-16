@@ -164,6 +164,37 @@ export class Worktrees {
     } catch (e) { release(); throw e; }
   }
 
+  /** Captain-authorized local base refresh, only before this task has any work.
+   * No startRound reconciliation: dirty/drifted state is refused, never reset.
+   * The exact target ref permits recovery after a crash between ref CAS and save.
+   */
+  refreshPristine(project: string, task: string, holder: string, intent: {repo:string;branch:string;base:string;from:string;target:string}) {
+    const release=this.lock(project,task,holder);let thawed:WorktreeRecord|null=null;
+    try {
+      const r=this.get(project,task);
+      if(!r||r.removedAt||r.nativeRebase||realOf(r.repo)!==realOf(intent.repo)||r.branch!==intent.branch||r.base!==intent.base||
+        ![intent.from,intent.target].every(h=>/^[a-f0-9]{40}$/.test(h))||
+        !/^[A-Za-z0-9][A-Za-z0-9/_-]*$/.test(intent.base)||
+        ![intent.from,intent.target].includes(r.head)||![intent.from,intent.target].includes(r.baseCommit)||
+        r.head!==r.baseCommit||must(r.path,["symbolic-ref","--short","HEAD"])!==r.branch||
+        git(r.repo,["symbolic-ref","--short","HEAD"]).out===r.branch)
+        throw new RoundBlocked("local rescope base refresh identity changed");
+      const actual=must(r.path,["rev-parse","HEAD"]);
+      const index=must(r.path,["write-tree"]);
+      const expectedTrees=[must(r.repo,["rev-parse",`${actual}^{tree}`]),...(actual===intent.target&&r.head===intent.from?[must(r.repo,["rev-parse",`${intent.from}^{tree}`])]:[])];
+      if(![intent.from,intent.target].includes(actual)||must(r.repo,["rev-parse",`refs/heads/${r.base}`])!==intent.target||
+        !expectedTrees.includes(index)||!git(r.path,["diff","--quiet"]).ok||must(r.path,["ls-files","--others","--exclude-standard"])||
+        !git(r.repo,["merge-base","--is-ancestor",intent.from,intent.target]).ok)
+        throw new RoundBlocked("local rescope requires a clean base-only task and the approved base target");
+      this.thaw(r);thawed=r;
+      // Verify the base and update the task branch in the same ref transaction.
+      const txn=`start\nverify refs/heads/${r.base} ${intent.target}\nupdate refs/heads/${r.branch} ${intent.target} ${actual}\nprepare\ncommit\n`;
+      const updated=git(r.repo,["update-ref","--stdin"],txn);if(!updated.ok)throw new RoundBlocked("local rescope base/head CAS failed");
+      must(r.path,["read-tree","--reset","-u",intent.target]);
+      r.head=intent.target;r.baseCommit=intent.target;this.note(r,`captain rescope refreshed base ${intent.from} -> ${intent.target}`);this.save(r);this.freeze(r);return r;
+    } finally {if(thawed)this.freeze(thawed);release();}
+  }
+
   /** Hand back an imported remote head under the existing task lock. */
   acceptHead(project: string, task: string, expected: string, next: string, base: string) {
     if (!this.held.has(`${project}/${task}`)) throw new Error("task lock required for imported head");

@@ -11,30 +11,79 @@ class ReservationUnavailable extends Error {
 function reservationData(engine: Engine, run: Run, record: any) {
     const data: any = record.data;
     if (record.kind !== "record" || record.verdict !== "pass" || !data ||
-      !(data.version === 1 && data.hashAlgorithm === undefined || data.version === 2 && data.hashAlgorithm === INPUT_HASH_ALGORITHM) ||
+      !(data.version === 1 && data.hashAlgorithm === undefined || (data.version === 2 || data.version === 3) && data.hashAlgorithm === INPUT_HASH_ALGORITHM) ||
       typeof data.project !== "string" || !data.project || typeof data.repo !== "string" || !data.repo || engine.queueRepo(data.repo) !== data.repo ||
       typeof data.specHash !== "string" || !/^[0-9a-f]{16}$/.test(data.specHash) ||
       !Array.isArray(data.scope) || !data.scope.length || data.scope.some((s: unknown) => typeof s !== "string" || !s.trim()) ||
       !Array.isArray(data.dependencies) || data.dependencies.length > 64 || data.dependencies.some((id: unknown) => typeof id !== "string" || !/^R-\d+$/.test(id) || id === run.id) || new Set(data.dependencies).size !== data.dependencies.length) throw new Error("signed scope binding is incomplete or uses an unknown algorithm; fresh preparation required");
     return data;
 }
-function signedReservation(engine: Engine, run: Run, trusted: ReturnType<Engine["trusted"]>) {
+export function signedReservation(engine: Engine, run: Run, trusted: ReturnType<Engine["trusted"]>) {
     const records = trusted.entries.filter(e => e.record === "scope-admission"), firstRecord = records[0];
     // Anchor only the actual object authenticated by the host's ordered scan.
     // Rejected sequence metadata never participates in a trust comparison.
     let first: any = null;
     if (firstRecord && trusted.prefix.includes(firstRecord)) {
-      try { first = reservationData(engine, run, firstRecord); } catch {}
+      try { first = reservationData(engine, run, firstRecord); if(first.version===3)first=null; } catch {}
     }
+    // Preserve every proven epoch's held scope when a later record is corrupt.
+    // Otherwise a bad tail could make the recovery's added scope appear free.
+    if(first){
+      const prefix={...trusted,ok:true,entries:trusted.prefix};let previous:any=null;
+      for(const record of trusted.prefix.filter(e=>e.record==="scope-admission")){
+        try{
+          const d=reservationData(engine,run,record);
+          if(d.version===3){if(!previous||!validRecoveryTransition(prefix,previous,record))break;first={...first,scope:[...new Set([...first.scope,...reservedScope(d)])]};}
+          else if(previous&&(previous.data.version===3||d.repo!==previous.data.repo||d.project!==previous.data.project||hashInput(d.scope)!==hashInput(previous.data.scope)||hashInput(d.dependencies)!==hashInput(previous.data.dependencies)))break;
+          previous=record;
+        }catch{break;}
+      }
+    }
+    const anchor=firstRecord?.data;
     try {
       if (!trusted.ok) throw new Error("signed scope binding is unavailable; fresh preparation required");
+      let previous:any=null;
       for (const record of records) {
         const data = reservationData(engine, run, record);
-        if (first && (data.repo !== first.repo || data.project !== first.project || hashInput(data.scope) !== hashInput(first.scope) || hashInput(data.dependencies) !== hashInput(first.dependencies))) throw new Error("signed scope reservation lineage changed; fresh preparation required");
+        if(data.version===3){
+          if(!previous||!validRecoveryTransition(trusted,previous,record))throw new Error("signed rescope epoch has no bound captain recovery and dispatch");
+        }else if(previous?.data.version===3||anchor&&(data.repo!==anchor.repo||data.project!==anchor.project||hashInput(data.scope)!==hashInput(anchor.scope)||hashInput(data.dependencies)!==hashInput(anchor.dependencies)))throw new Error("signed scope reservation lineage changed; fresh preparation required");
+        previous=record;
       }
       const prior = records.at(-1), signed: any = prior?.data;
       return { prior, signed };
     } catch (error) { throw new ReservationUnavailable((error as Error).message, first); }
+}
+
+const reservedScope=(pin:any):string[]=>pin.version===3?pin.heldScope:pin.scope;
+/** A v3 epoch adds scope only after signed rescope -> base refresh -> fresh dispatch.
+ * The old reservation remains held, even when the new scope is narrower.
+ */
+function validRecoveryTransition(trusted:ReturnType<Engine["trusted"]>,prior:any,next:any){
+  const p=prior.data,d=next.data;
+  if(!trusted.ok||d.predecessor!==prior.seq||d.repo!==p.repo||d.project!==p.project||hashInput(d.dependencies)!==hashInput(p.dependencies)||
+    hashInput(d.heldScope)!==hashInput([...new Set([...reservedScope(p),...d.scope])]))return false;
+  const applied=trusted.entries.find(e=>e.seq===d.recovery&&e.record==="local-rescope-applied"&&e.verdict==="pass");
+  const request=trusted.entries.find(e=>e.seq===applied?.data?.request&&e.record==="local-rescope-request"&&e.verdict==="pass"),i:any=request?.data;
+  if(!request||!applied)return false;
+  const answer=trusted.entries.find(e=>e.record==="card-answer"&&e.data?.card===i?.card&&e.data?.choice==="rescope"&&!String(e.actor??"").startsWith("auth window")&&e.seq>request.seq&&e.seq<applied.seq);
+  const dispatch=trusted.entries.find(e=>e.seq===d.dispatch&&e.record==="card-answer"&&e.data?.kind==="dispatch"&&e.data?.choice==="dispatch");
+  return !!(request&&applied&&answer&&dispatch&&i?.version===1&&i.prior===prior.seq&&i.priorHash===hashInput(p)&&i.repo===p.repo&&i.project===p.project&&
+    answer.data?.localRescope&&hashInput(answer.data.localRescope)===hashInput({version:1,card:i.card,visit:i.visit,base:i.base,from:i.from,target:i.target})&&
+    i.from===request.head&&/^[a-f0-9]{40}$/.test(i.from)&&/^[a-f0-9]{40}$/.test(i.target)&&applied.head===i.target&&applied.data?.intentHash===hashInput(i)&&
+    request.seq>prior.seq&&dispatch.seq>applied.seq&&next.seq>dispatch.seq&&dispatch.head===i.target&&
+    dispatch.data?.queueHashAlgorithm===INPUT_HASH_ALGORITHM&&dispatch.data?.queueSpec===d.specHash&&dispatch.data?.repo===d.repo&&dispatch.data?.project===d.project&&
+    hashInput(dispatch.data?.scope)===hashInput(d.scope)&&hashInput(dispatch.data?.dependencies)===hashInput(d.dependencies));
+}
+function recoveryReplacement(trusted:ReturnType<Engine["trusted"]>,prior:any,acceptance:any){
+  if(!prior||!acceptance||acceptance.data?.kind!=="dispatch"||acceptance.data?.choice!=="dispatch")return null;
+  const a=acceptance.data,p=prior.data;
+  if(p.specHash===a.queueSpec&&hashInput(p.scope)===hashInput(a.scope))return null;
+  const applied=trusted.entries.filter(e=>e.record==="local-rescope-applied"&&e.seq>prior.seq&&e.seq<acceptance.seq).at(-1);
+  if(!applied)return null;
+  const data={version:3,hashAlgorithm:INPUT_HASH_ALGORITHM,repo:a.repo,project:a.project,specHash:a.queueSpec,scope:clone(a.scope),dependencies:clone(a.dependencies),
+    predecessor:prior.seq,recovery:applied.seq,dispatch:acceptance.seq,heldScope:[...new Set([...reservedScope(p),...a.scope])]};
+  return validRecoveryTransition(trusted,prior,{data,seq:Infinity})?data:null;
 }
 
 function verifiedMerge(this: Engine, r: Run, expected?: { project: string; repo: string }) {
@@ -50,7 +99,8 @@ function verifiedMerge(this: Engine, r: Run, expected?: { project: string; repo:
 function scopeState(this: Engine, x: X) {
     if (x.run.ctx.nativeQueueVersion !== 1) throw new Error("historical round has no native queue binding; fresh preparation required");
     const project = this.queueProject(x.run), repo = this.queueRepo(x.ctx.repo), trusted = this.trusted(x.run.id);
-    const acceptance: any = trusted.entries.filter(e => e.record === "card-answer" && (((e.data as any)?.kind === "dispatch" && (e.data as any)?.choice === "dispatch") || ((e.data as any)?.queueRecovery === true && (e.data as any)?.choice === "retry"))).at(-1)?.data;
+    const acceptanceRecord = trusted.entries.filter(e => e.record === "card-answer" && (((e.data as any)?.kind === "dispatch" && (e.data as any)?.choice === "dispatch") || ((e.data as any)?.queueRecovery === true && (e.data as any)?.choice === "retry"))).at(-1);
+    const acceptance:any=acceptanceRecord?.data;
     const deps = this.queueDependencies(x.run), specHash = hashInput(x.ctx.spec);
     const staffing=this.deps.staffingBinding?.(x.run);if(staffing&&acceptance?.staffing!==staffing)throw new Error("staffing approval changed; explicit fresh preparation required");
     if (!acceptance || acceptance.queueHashAlgorithm !== INPUT_HASH_ALGORITHM) throw new Error("historical or unknown scope hash algorithm; fresh preparation required");
@@ -61,7 +111,8 @@ function scopeState(this: Engine, x: X) {
     const pin = x.ctx.nativeAdmission ?? signed;
     const sameReservation = pin && pin.repo === repo && pin.project === project && hashInput(pin.dependencies) === hashInput(deps) && hashInput(pin.scope) === hashInput(acceptance.scope);
     const upgradingLegacy = pin?.version === 1 && pin.hashAlgorithm === undefined && acceptance.queueRecovery === true && sameReservation;
-    if (pin && (!sameReservation || !upgradingLegacy && (pin.version !== 2 || pin.hashAlgorithm !== INPUT_HASH_ALGORITHM || pin.specHash !== specHash))) throw new Error("native scope pin changed or uses unknown hash algorithm; fresh preparation required");
+    const replacement=recoveryReplacement(trusted,prior,acceptanceRecord);
+    if (pin && !replacement && (!sameReservation || !upgradingLegacy && (![2,3].includes(pin.version) || pin.hashAlgorithm !== INPUT_HASH_ALGORITHM || pin.specHash !== specHash))) throw new Error("native scope pin changed or uses unknown hash algorithm; fresh preparation required");
     for (const id of deps) { const parent = this.get(id); if (!parent || !this.verifiedMerge(parent, { project, repo })) return { ready: false, reason: `dependency ${id} has no verified authoritative merge` }; }
     for (const other of this.list()) {
       if (other.id === x.run.id) continue;
@@ -77,7 +128,7 @@ function scopeState(this: Engine, x: X) {
         return { ready: false, reason: `scope identity unavailable for ${other.id}` };
       }
       if (held.repo !== repo || held.project !== project) continue;
-      if (!this.verifiedMerge(other) && scopesOverlap(acceptance.scope, held.scope)) return { ready: false, reason: `scope held by ${other.id} until verified merge` };
+      if (!this.verifiedMerge(other) && scopesOverlap(acceptance.scope, reservedScope(held))) return { ready: false, reason: `scope held by ${other.id} until verified merge` };
     }
     return { ready: true };
   }
@@ -88,6 +139,10 @@ export function installCodeQueue(engine: Engine) {
     ready: x => scopeState.call(engine, x),
     merged: (r, expected) => verifiedMerge.call(engine, r, expected),
     admitted(x) {
+        const trusted=engine.trusted(x.run.id),{prior}=signedReservation(engine,x.run,trusted);
+        const acceptance=trusted.entries.filter(e=>e.record==="card-answer"&&e.data?.kind==="dispatch"&&e.data?.choice==="dispatch").at(-1);
+        const replacement=recoveryReplacement(trusted,prior,acceptance);
+        if(replacement){x.ctx.nativeAdmission=replacement;engine.record(x,"scope-admission",{data:clone(replacement)});return;}
         if (!x.ctx.nativeAdmission || x.ctx.nativeAdmission.version === 1 && x.ctx.nativeAdmission.hashAlgorithm === undefined) {
           const data: any = engine.trusted(x.run.id).entries.filter(e => e.record === "card-answer" && (((e.data as any)?.kind === "dispatch" && (e.data as any)?.choice === "dispatch") || ((e.data as any)?.queueRecovery === true && (e.data as any)?.choice === "retry"))).at(-1)!.data;
           x.ctx.nativeAdmission = { version: 2, hashAlgorithm: INPUT_HASH_ALGORITHM, project: data.project, repo: data.repo, specHash: data.queueSpec, scope: clone(data.scope), dependencies: clone(data.dependencies) };

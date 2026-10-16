@@ -25,7 +25,7 @@ import type { StudioLog } from "../rawlog";
 import { ProviderRefusal } from "../providers/policy";
 import { QueueRefusal, capacity, type QueueRequest } from "./queue";
 import { Grants } from "./grants";
-import { Cards, emptySections, type CardKind, type SCard, type Sections } from "./cards";
+import { Cards, emptySections, type CardKind, type SCard, type Sections, type LocalRescope } from "./cards";
 import { CheckRegistry, Ledger, Policies, INPUT_HASH_ALGORITHM, coerce, doneMap, execAdapter, hashInput, inputPaths, jsRegex, parseOutput, sandboxed, schemaDefaults, schemaErrors,
   type CheckInput, type CheckManifest, type CheckOutput, type CheckRef, type LedgerEntry, type Native } from "./checks";
 import { briefFor, installRefine } from "./refine";
@@ -885,7 +885,7 @@ export class Engine {
   private raising = new Map<string, { done: Promise<void>; resolve: () => void }>();
   /** How long an answer waits for a card that is still being raised. */
   cardReadyMs = 30_000;
-  async answer(cardId: string, a: { choice: string; note?: string | null; by: string; confirm?: string | null; aligned?: number[] | null }) {
+  async answer(cardId: string, a: { choice: string; note?: string | null; by: string; confirm?: string | null; aligned?: number[] | null; localRescope?: LocalRescope | null }) {
     const c0 = this.cards.get(cardId); if (!c0) throw new Error("no such card");
     const r = this.must(c0.run);
     if(this.repreparing.has(`${r.id}/${c0.node}`))throw new Error("Captain card preparation is still running; no answer was submitted");
@@ -910,7 +910,7 @@ export class Engine {
     const node = r.def.nodes.find((n) => n.id === nodeId)!; const rn = r.nodes[nodeId]; const c = this.cards.get(rn.card ?? "")!;
     r.ctx.answers = { ...(r.ctx.answers ?? {}), [node.id]: c.answer };
     // the answer goes into the ledger once, here, so an answer carried on after a crash is recorded too
-    if (!r.ctx.answersRecorded?.includes(c.id)) { r.ctx.answersRecorded = [...(r.ctx.answersRecorded ?? []), c.id]; this.record(this.x(r, node, rn), "card-answer", { actor: c.answer!.by, data: { card: c.id, kind: c.kind, choice: c.answer!.choice, note: c.answer!.note, confirm: c.answer!.confirm, ...(this.queueDomain?.answer(r, node, rn, c) ?? {}) } }); }
+    if (!r.ctx.answersRecorded?.includes(c.id)) { r.ctx.answersRecorded = [...(r.ctx.answersRecorded ?? []), c.id]; this.record(this.x(r, node, rn), "card-answer", { actor: c.answer!.by, data: { card: c.id, kind: c.kind, choice: c.answer!.choice, note: c.answer!.note, confirm: c.answer!.confirm, ...(c.answer!.localRescope?{localRescope:c.answer!.localRescope}:{}), ...(this.queueDomain?.answer(r, node, rn, c) ?? {}) } }); }
     // the card's effects, once per card (an answer carried on after a restart does not apply them twice)
     const eff = node.card?.effects?.[c.answer!.choice] as any;
     if (eff && !r.ctx.effectsApplied?.includes(c.id)) {

@@ -241,7 +241,7 @@ function mountCard(el, card, opts = {}) {
       try {
         if(draft&&!o.hold)await saveDraft();else if(draft)clearTimeout(draft.timer);
         const note=draft&&!o.hold?JSON.stringify({schema:1,card:c.id,visit:c.visit,batchHash:draft.hash,answers:draft.answers}):st.note.trim()||null;
-        took(await post(`/api/scards/${encodeURIComponent(c.id)}/answer`, { choice: o.id, note, confirm: st.confirm ? "one-way" : null, aligned: n ? [...st.ticks].sort((a, b) => a - b) : undefined }));
+        took(await post(`/api/scards/${encodeURIComponent(c.id)}/answer`, { choice: o.id, note, confirm: st.confirm ? "one-way" : null, aligned: n ? [...st.ticks].sort((a, b) => a - b) : undefined, ...(o.id === "rescope" && c.localRescope ? {localRescope:c.localRescope} : {}) }));
       } catch (e) {
         // answered already with this very choice: that is the answer, not a refusal
         let same = null; if (/answered exactly once/.test(e.message || "")) { try { const now = await get(`/api/scards/${encodeURIComponent(c.id)}`); if (now?.answer?.choice === o.id) same = now; } catch {} }
