@@ -72,15 +72,15 @@ ok(vw.w===1920&&vw.h===1080&&vw.result?.normalized===false&&red(vw.px(930,50))&&
 const r035=shot('r035',film('#stage{width:100%;height:100vh;background:#08f}','<div id="stage"><h1>R-035</h1></div>'));
 ok(r035.w===1920&&r035.h===1080&&blue(r035.px(1900,1060)),'film: the R-035 #stage{width:100%;height:100vh} renders exactly 1920x1080 edge to edge');
 const square=shot('square',film('#stage{width:800px;height:800px;background:#08f}','<div id="stage"></div>'));
-ok(square.w===1920&&square.h===1080&&square.result?.normalized===true&&square.result.notes.some(n=>/stage normalized: #stage measured 800x800, not 16:9; forced to 960x540/.test(n))&&blue(square.px(1900,1060)),'film: a fixed 800x800 stage is forced to 960x540 with the normalization note and fills 1920x1080',JSON.stringify(square.result?.notes));
+ok(square.w===1920&&square.h===1080&&square.result?.normalized===true&&square.result.notes.some(n=>/stage normalized: #stage measured 800x800, not 16:9 or a fixed 9:16; forced to 960x540/.test(n))&&blue(square.px(1900,1060)),'film: a fixed 800x800 stage is forced to 960x540 with the normalization note and fills 1920x1080',JSON.stringify(square.result?.notes));
 const empty=shot('zero-box',film('#stage{position:absolute}#stage div{position:absolute;width:960px;height:540px;background:#08f}','<div id="stage"><div></div></div>'));
 ok(empty.status===0&&empty.w===1920&&empty.h===1080&&empty.result?.normalized===true&&empty.ms<25000,'film: a 0x0 #stage with absolute children is normalized instead of timing out',JSON.stringify({ms:empty.ms,notes:empty.result?.notes}));
 const none=shot('no-stage',film('','<div><h1>no stage</h1></div>'));
 ok(none.status!==0&&none.result?.ok===false&&none.result.code==='no-stage'&&/no #stage/.test(none.result.error)&&none.ms<20000,'film: a film without #stage fails fast with code no-stage',JSON.stringify({ms:none.ms,r:none.result}));
 const tall=shot('portrait-fixed',film('#stage{width:540px;height:960px;background:#08f}','<div id="stage"></div>'));
-ok(tall.w===1080&&tall.h===1920&&tall.result?.normalized===false,'film: a fixed 540x960 stage renders exactly 1080x1920');
-const vertical=shot('portrait-responsive',film('#stage{width:100vw;height:100vh;background:#08f}','<div id="stage"></div>'),['--orient','portrait']);
-ok(vertical.w===1080&&vertical.h===1920&&vertical.result?.normalized===false&&blue(vertical.px(1060,1900)),'film: a responsive stage with --orient portrait renders exactly 1080x1920 edge to edge');
+ok(tall.w===1080&&tall.h===1920&&tall.result?.normalized===false&&tall.result.notes.some(n=>/portrait: #stage is a fixed 9:16 box \(540x960\)/.test(n))&&blue(tall.px(1060,1900)),'film: a fixed 540x960 stage renders exactly 1080x1920 with a portrait note',JSON.stringify(tall.result?.notes));
+const flag=shot('orient-flag-ignored',film('#stage{width:100vw;height:100vh;background:#08f}','<div id="stage"></div>'),['--orient','portrait']);
+ok(flag.w===1920&&flag.h===1080&&!flag.result?.notes?.length,'film: a responsive stage is 1920x1080; no flag or guess turns it portrait');
 const short=shot('one-frame',film('#stage{width:960px;height:540px;background:#08f}','<div id="stage"></div>').replace('DUR=0.2','DUR=0.01').replace('function build(){}','function build(){ctx=new AudioContext()}'),['--fps','1']);
 ok(short.w===1920&&short.h===1080,'film: a film shorter than one frame, with audio, still has a video stream');
 

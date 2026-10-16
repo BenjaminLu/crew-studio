@@ -1,11 +1,11 @@
 // Studio's render helper, run with node (playwright needs it). Four modes:
-//   film  --html F --out OUT.mp4 [--fps 30] [--width 1600] [--workers 4] [--orient landscape|portrait]
+//   film  --html F --out OUT.mp4 [--fps 30] [--width 1600] [--workers 4]
 //         an HTML film that defines DUR, render(t), build(), schedule() and #stage (the firstmate
 //         promo film's contract): frames by seeking render(t), audio rendered offline from the page's
-//         own WebAudio schedule, muxed by ffmpeg. The MP4 is exactly 1920x1080 (1080x1920 for a portrait
-//         stage or --orient portrait): the viewport is exactly 16:9 (9:16), so a stage that follows it is
-//         captured as authored; a #stage of any other shape (or empty) is forced to 960x540 (540x960)
-//         and the evidence carries a note saying so. No #stage fails fast with code "no-stage".
+//         own WebAudio schedule, muxed by ffmpeg. The MP4 is exactly 1920x1080, or 1080x1920 only when
+//         #stage itself is a fixed 9:16 box: the viewport is exactly 16:9, so a stage that follows it is
+//         captured as authored; a #stage of any other shape (or empty) is forced to 960x540 and the
+//         evidence carries a note saying so. No #stage fails fast with code "no-stage".
 //   stills --html F --out DIR --times 1.5,6 [--width 1600]      one PNG per time (A/B compare)
 //   crop  --html F --out OUT.png --selector S | --bbox x,y,w,h [--width 1280]   a web element crop
 //   page  --root DIR --page NAME --out OUT.png [--width 1280]   a whole page a change built (hostile): served from DIR over
@@ -98,23 +98,24 @@ const inputUrl = inputOrigin ? `${inputOrigin}/${encodeURIComponent(basename(htm
     let stage = null; const notes = [];
     const force = (p, s) => p.evaluate(({ w, h }) => { const e = document.getElementById("stage"); if (!e) return; for (const [k, v] of [["width", `${w}px`], ["height", `${h}px`], ["min-width", "0"], ["min-height", "0"], ["max-width", "none"], ["max-height", "none"], ["flex", "none"], ["aspect-ratio", "auto"]]) e.style.setProperty(k, v, "important"); }, s);
     const open = async () => {
-      const asked = opt("orient") === "portrait" ? "portrait" : "landscape";
-      const ctx = await browser.newContext({ viewport: (stage?.orient ?? asked) === "portrait" ? portrait : landscape, serviceWorkers: "block" });
+      const ctx = await browser.newContext({ viewport: stage?.orient === "portrait" ? portrait : landscape, serviceWorkers: "block" });
       await offline(ctx, inputOrigin);
       const p = await ctx.newPage();
       await p.goto(inputUrl);
       await p.waitForTimeout(1500);
       await p.evaluate(() => { const ps = document.getElementById("poster"); if (ps) ps.hidden = true; });
       if (!stage) {
-        // The viewport is exactly 16:9 (9:16), so a stage that follows it (%, vw/vh, scale-to-fit) already
+        // The viewport is exactly 16:9, so a stage that follows it (%, vw/vh, scale-to-fit) already
         // measures the right shape and is captured as authored. Only a stage of another shape is forced.
         let measured = await box(p);
         if (!measured) { log({ ok: false, code: "no-stage", error: "the film has no #stage element: the renderer captures only #stage", refused }); process.exit(2); }
-        let orient = shape(measured);
-        if (orient && orient !== asked) { await p.setViewportSize(orient === "portrait" ? portrait : landscape); measured = await box(p); orient = shape(measured); }
-        orient ??= asked;
-        stage = { orient, measured, forced: shape(measured) ? null : orient === "portrait" ? { w: 540, h: 960 } : { w: 960, h: 540 } };
-        if (stage.forced) notes.push(`stage normalized: #stage measured ${Math.round(measured.width)}x${Math.round(measured.height)}, not ${orient === "portrait" ? "9:16" : "16:9"}; forced to ${stage.forced.w}x${stage.forced.h} px`);
+        // Orientation comes only from the stage the film wrote: a fixed 9:16 box (it stays 9:16 in this
+        // 16:9 viewport, so it cannot be following the viewport) renders portrait; everything else is 16:9.
+        let orient = shape(measured) ?? "landscape";
+        if (orient === "portrait") { await p.setViewportSize(portrait); measured = await box(p); if (shape(measured) !== "portrait") { orient = "landscape"; await p.setViewportSize(landscape); measured = await box(p); } }
+        stage = { orient, measured, forced: shape(measured) === orient ? null : { w: 960, h: 540 } };
+        if (orient === "portrait") notes.push(`portrait: #stage is a fixed 9:16 box (${Math.round(measured.width)}x${Math.round(measured.height)}); rendered 1080x1920`);
+        if (stage.forced) notes.push(`stage normalized: #stage measured ${Math.round(measured.width)}x${Math.round(measured.height)}, not 16:9 or a fixed 9:16; forced to ${stage.forced.w}x${stage.forced.h} px`);
       }
       if (stage.forced) await force(p, stage.forced);
       return p;

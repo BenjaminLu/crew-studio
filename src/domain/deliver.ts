@@ -8,7 +8,7 @@ import { folderTools } from "../agent";
 import { websiteHref, type ArtifactStore } from "../artifacts";
 import { bundledText } from "../bundled";
 import { mdToDocHtml, toDocx, toPdf } from "../docrender";
-import { orientFor, probeVideo, runRender, renderEnv } from "../render";
+import { probeVideo, runRender, renderEnv } from "../render";
 import {imageRefinement} from "./image-refinement";
 import { briefFor } from "../runtime/refine";
 import { mergeDetail } from "./mergecard";
@@ -98,7 +98,7 @@ export function installDeliver(engine: Engine, d: Deps) {
       const probe = await probeVideo(mp4!);
       if (probe.kind === "no-tool") bad("the rendered MP4's size cannot be read: neither ffprobe nor ffmpeg is installed", "install ffmpeg (with ffprobe) from Doctor; the film itself needs no change", "renderer-unavailable");
       else if (probe.kind === "no-video") bad("rendered MP4 has no video stream (audio only)", "keep DUR long enough for at least two frames and #stage visible so the render has video", "video-stream");
-      else if (probe.kind === "unreadable") bad("rendered MP4 cannot be read as a video", "render this exact film version again", "video-stream");
+      else if (probe.kind === "unreadable") bad(`the rendered MP4 cannot be read by ${probe.tool}`, "re-render this exact film version with a working local renderer; the film itself needs no change", "renderer-unavailable");
       else if (!((probe.width === 1920 && probe.height === 1080) || (probe.width === 1080 && probe.height === 1920))) bad(`rendered MP4 is ${probe.width}x${probe.height}, not 1920x1080 or 1080x1920`, "make #stage a fixed 960x540 px box (540x960 vertical), never vw/vh/%, so the render is exactly 1920x1080 (1080x1920)", "video-size");
     }
     return findings;
@@ -107,13 +107,13 @@ export function installDeliver(engine: Engine, d: Deps) {
   engine.actions["deliver.render"] = async x => {
     const r = ref(x), html = st.file(r.id, r.n, "film.html"); if (!html) throw new Error("film source unavailable");
     if (!renderEnv().canFilm) { st.setRender(r.id, r.n, { state: "failed", detail: "optional renderer unavailable: node, Playwright browser and ffmpeg required", ms: null }); x.rn.note = "MP4 unverified: optional renderer unavailable"; return "unavailable"; }
-    const out = join(x.dir, `render-${r.id}-v${r.n}.mp4`); const orient = orientFor(`${x.run.text ?? ""} ${x.run.title ?? ""}`); const job = runRender(d.dataDir, "film", { html, out, orient });
+    const out = join(x.dir, `render-${r.id}-v${r.n}.mp4`); const job = runRender(d.dataDir, "film", { html, out });
     st.setRender(r.id, r.n, { state: "running", ms: null });
     let settled = false; job.done.finally(() => settled = true); while (!settled) { if (x.cancelled()) { job.cancel(); await job.done; throw new Error("cancelled"); } await sleep(40); }
     const result = await job.done; if (x.cancelled()) throw new Error("cancelled");
     const notes = Array.isArray(result.info?.notes) ? result.info.notes.map(String).slice(0, 8) : [];
     const code = result.ok ? null : typeof result.info?.code === "string" ? result.info.code.slice(0, 40) : null;
-    st.setRender(r.id, r.n, { state: result.ok ? "done" : "failed", detail: result.error ?? (notes.join("; ") || null), ms: result.ms, orient: result.ok && Number(result.info?.height) > Number(result.info?.width) ? "portrait" : result.ok ? "landscape" : orient, ...(result.ok ? { normalized: !!result.info?.normalized, notes } : {}), ...(code ? { code } : {}) });
+    st.setRender(r.id, r.n, { state: result.ok ? "done" : "failed", detail: result.error ?? (notes.join("; ") || null), ms: result.ms, ...(result.ok ? { orient: Number(result.info?.height) > Number(result.info?.width) ? "portrait" as const : "landscape" as const } : {}), ...(result.ok ? { normalized: !!result.info?.normalized, notes } : {}), ...(code ? { code } : {}) });
     if (notes.length) x.rn.note = notes.join("; ");
     if (result.ok && existsSync(out)) st.attach(r.id, r.n, "render.mp4", out);
     return result.ok ? "ok" : "unavailable";

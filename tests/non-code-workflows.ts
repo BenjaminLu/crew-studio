@@ -41,6 +41,7 @@ const srv = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: async req => {
 } }); port = srv.port;
 // The live R-035 shape: the model rewrote the template's fixed 960x540 #stage as a viewport-sized box.
 const r035Film = `<!doctype html><html><head><style>html,body{margin:0}#stage{width:100%;height:100vh;position:relative;overflow:hidden;background:#0f1726;color:#f4f6fb}</style></head><body><div id="stage"><h1>R-035 responsive stage</h1></div><script>const DUR=0.4;let muted=true,startAt=0,ctx=null;function build(){}function schedule(){}function render(t){document.querySelector('h1').style.opacity=String(1-t)}render(0)</script></body></html>`;
+const portraitFilm = `<!doctype html><html><head><style>html,body{margin:0}#stage{width:540px;height:960px;background:#0f1726}</style></head><body><div id="stage"><h1>Vertical</h1></div><script>const DUR=0.4;function build(){}function schedule(){}function render(t){}</script></body></html>`;
 const noStageFilm = `<!doctype html><html><body><h1>No stage</h1><script>const DUR=0.4;function build(){}function schedule(){}function render(t){}</script></body></html>`;
 const fixture: any = { id: "fixture", model: "strict-local", sandboxFree: true, start(system: string, tools: any[], ctx: any) {
   ok(tools.every(t => t.name.startsWith("work_")), "provider receives only bounded folder tools"); 
@@ -51,7 +52,7 @@ const fixture: any = { id: "fixture", model: "strict-local", sandboxFree: true, 
     const format = /DELIVER (\w+)/.exec(text)?.[1], variant = /Variant: (\w+)/.exec(text)?.[1];
     const repaired = /BRIEF|Open annotations: \[\{/.test(text);
     const path = format === "document" ? "doc.md" : format === "video" ? "film.html" : "index.html";
-    const content = format === "web" && variant === "B" && /FAIL_VARIANT_B/.test(text) && (!repaired || /PERMANENT/.test(text)) ? "No content element" : format === "document" ? repaired ? "# Fixture memo\n\nA repaired memo with a summary. 中文內容。\n" : "No title in the first memo.\n" : format === "video" ? /R035_STAGE|VERTICAL_FILM/.test(text) ? r035Film : /NO_STAGE_FILM/.test(text) ? repaired ? r035Film : noStageFilm : realVideo ? `<html><body style="margin:0"><div id="stage" style="width:320px;height:180px;background:#102030;color:white"><h1>${repaired ? "Revised captions" : "Initial captions"}</h1><div id="moving" style="width:100px;height:50px"></div></div><script>const DUR=0.8;function render(t){document.getElementById('moving').style.background=t<0.4?'rgb(255,0,0)':'rgb(0,0,255)';document.getElementById('moving').style.transform='translateX('+(t*120)+'px)'}render(0)</script></body></html>` : '<html><body><h1>Fixture film</h1></body></html>'  : `<html><body><h1>Variant ${variant}</h1><p>${repaired ? "Repaired" : "Initial"}</p></body></html>`;
+    const content = format === "web" && variant === "B" && /FAIL_VARIANT_B/.test(text) && (!repaired || /PERMANENT/.test(text)) ? "No content element" : format === "document" ? repaired ? "# Fixture memo\n\nA repaired memo with a summary. 中文內容。\n" : "No title in the first memo.\n" : format === "video" ? /FIXED_PORTRAIT/.test(text) ? portraitFilm : /R035_STAGE|PHRASE_FILM/.test(text) ? r035Film : /NO_STAGE_FILM/.test(text) ? repaired ? r035Film : noStageFilm : realVideo ? `<html><body style="margin:0"><div id="stage" style="width:320px;height:180px;background:#102030;color:white"><h1>${repaired ? "Revised captions" : "Initial captions"}</h1><div id="moving" style="width:100px;height:50px"></div></div><script>const DUR=0.8;function render(t){document.getElementById('moving').style.background=t<0.4?'rgb(255,0,0)':'rgb(0,0,255)';document.getElementById('moving').style.transform='translateX('+(t*120)+'px)'}render(0)</script></body></html>` : '<html><body><h1>Fixture film</h1></body></html>'  : `<html><body><h1>Variant ${variant}</h1><p>${repaired ? "Repaired" : "Initial"}</p></body></html>`;
     const escape = await fetch(`${ctx.studioUrl}/api/tools/work_write`, { method: "POST", headers: { "content-type": "application/json", "x-crew-tool-token": ctx.token }, body: JSON.stringify({ path: "../escape.txt", content: "must be refused" }) });
     boundedWriteRefused ||= !!(await escape.json()).error;
     const r = await fetch(`${ctx.studioUrl}/api/tools/work_write`, { method: "POST", headers: { "content-type": "application/json", "x-crew-tool-token": ctx.token }, body: JSON.stringify({ path, content }) }); const result = await r.json();
@@ -241,6 +242,11 @@ const envProbe = process.env.CREW_FFPROBE; process.env.CREW_RENDER_STUB_MP4 = go
 const noProbe = E.start({ workflow: "video", params: {}, text: "No ffprobe fixture film" }); const noProbeCard = await waiting(noProbe.id);
 ok(!!noProbeCard && E.get(noProbe.id)!.nodes.draft.visits === 1 && !classes(noProbe.id).length, "with CREW_FFPROBE=/nonexistent the size is read with ffmpeg and a 1920x1080 film reaches acceptance in one round", JSON.stringify(classes(noProbe.id)));
 cancelActive(noProbe.id);
+// A file no probe can read is a render-layer problem: capability card, never a draft fix.
+delete process.env.CREW_RENDER_STUB_MP4;
+const unreadable = E.start({ workflow: "video", params: {}, text: "Unreadable render fixture film" }); const unreadableCard = await waiting(unreadable.id, "capability");
+ok(!!unreadableCard && E.get(unreadable.id)!.nodes.draft.visits === 1 && classes(unreadable.id).includes("renderer-unavailable") && !classes(unreadable.id).includes("video-stream") && !accepted(unreadable.id), "an MP4 the probe cannot read raises the capability card after one draft round, never a draft fix", JSON.stringify(classes(unreadable.id)));
+cancelActive(unreadable.id); process.env.CREW_RENDER_STUB_MP4 = goodMp4;
 // With neither tool the size is a capability gap, not a draft fix: no model round is spent on it.
 process.env.CREW_FFMPEG = "/nonexistent/ffmpeg";
 const noTool = E.start({ workflow: "video", params: {}, text: "No probe tool fixture film" }); const noToolCard = await waiting(noTool.id, "capability");
@@ -251,10 +257,16 @@ process.env.CREW_RENDER_STUB = "0"; const r035 = E.start({ workflow: "video", pa
 const r035Size = r035Ref && store.file(r035Ref.id, r035Ref.n, "render.mp4") ? await sizeOf(store.file(r035Ref.id, r035Ref.n, "render.mp4")!) : null;
 ok(!!r035Card && r035Size === "1920x1080" && r035Version?.render?.orient === "landscape" && !classes(r035.id).includes("video-size"), "the R-035 #stage{width:100%;height:100vh} film renders exactly 1920x1080 and reaches acceptance", JSON.stringify({ r035Size, render: r035Version?.render }));
 cancelActive(r035.id);
-const vertical = E.start({ workflow: "video", params: {}, text: "VERTICAL_FILM a vertical reel" }); const verticalCard = await waiting(vertical.id); const verticalRef = E.get(vertical.id)!.ctx.deliver?.draft;
-const verticalSize = verticalRef && store.file(verticalRef.id, verticalRef.n, "render.mp4") ? await sizeOf(store.file(verticalRef.id, verticalRef.n, "render.mp4")!) : null;
-ok(!!verticalCard && verticalSize === "1080x1920" && store.version(verticalRef.id, verticalRef.n)?.render?.orient === "portrait", "a vertical request renders the same responsive stage at exactly 1080x1920", String(verticalSize));
-cancelActive(vertical.id);
+// Orientation comes only from the stage the film wrote, never from intent words: every phrase below with a
+// viewport-following stage renders 1920x1080; only a fixed 540x960 stage renders 1080x1920.
+const renderedSize = async (id: string) => { const r = E.get(id)!.ctx.deliver?.draft; const f = r && store.file(r.id, r.n, "render.mp4"); return { size: f ? await sizeOf(f) : null, render: r && store.version(r.id, r.n)?.render }; };
+for (const phrase of ["not vertical", "vertical integration", "stories montage", "A portrait of our founder", "Landscape 1920x1080, 9:16 cutdown later", "垂直領域", "橫式影片，不要直式"]) {
+  const t = E.start({ workflow: "video", params: {}, text: `PHRASE_FILM ${phrase}` }); const c = await waiting(t.id); const got = await renderedSize(t.id);
+  ok(!!c && got.size === "1920x1080" && got.render?.orient === "landscape", `intent "${phrase}" with a responsive stage renders exactly 1920x1080`, JSON.stringify(got)); cancelActive(t.id);
+}
+const portrait = E.start({ workflow: "video", params: {}, text: "FIXED_PORTRAIT a film" }); const portraitCard = await waiting(portrait.id); const portraitGot = await renderedSize(portrait.id);
+ok(!!portraitCard && portraitGot.size === "1080x1920" && portraitGot.render?.orient === "portrait" && portraitGot.render?.notes?.some((n: string) => /portrait: #stage is a fixed 9:16 box/.test(n)) === true, "a fixed 540x960 stage renders exactly 1080x1920 with the portrait note", JSON.stringify(portraitGot));
+cancelActive(portrait.id);
 const noStage = E.start({ workflow: "video", params: {}, text: "NO_STAGE_FILM film without a stage" }); const noStageCard = await waiting(noStage.id); const noStageFinding = E.ledger(noStage.id).flatMap(e => e.findings ?? []).find((f: any) => f.class === "video-stage");
 ok(!!noStageCard && !!noStageFinding && /no #stage/.test(noStageFinding.message) && E.get(noStage.id)!.nodes.draft.visits === 2 && !classes(noStage.id).includes("renderer-unavailable") && !E.cards.list({ run: noStage.id }).some(c => c.node === "capability"), "a film without #stage fails fast as a video-stage finding the draft round fixes, then reaches acceptance", JSON.stringify(classes(noStage.id)));
 cancelActive(noStage.id);

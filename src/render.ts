@@ -84,10 +84,6 @@ export function runRender(dataDir: string, mode: "film" | "stills" | "crop" | "p
 // a 1×1 transparent PNG
 const PNG1 = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
 
-/** A film's orientation from the words of its intent: a vertical request renders 1080x1920. */
-export const orientFor = (text: string): "portrait" | "landscape" =>
-  /\b(?:vertical|portrait|9\s*[:x×/]\s*16|reels?|tiktok|shorts|stories)\b/i.test(text) || /直式|直向|豎|竖|垂直/.test(text) ? "portrait" : "landscape";
-
 export type VideoProbe = { kind: "size"; width: number; height: number; tool: "ffprobe" | "ffmpeg" } | { kind: "no-video"; tool: "ffprobe" | "ffmpeg" } | { kind: "unreadable"; tool: "ffprobe" | "ffmpeg" } | { kind: "no-tool" };
 const capture = async (argv: string[], ms: number) => {
   const p = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe", stdin: "ignore" }); const timer = setTimeout(() => { try { p.kill(); } catch {} }, ms);

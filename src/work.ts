@@ -16,7 +16,7 @@ import type { ArtifactStore, Cost, Note, Version } from "./artifacts";
 import { sha256File } from "./artifacts";
 import type { Provider } from "./providers";
 import { helperCommand } from "./self";
-import { orientFor, runRender } from "./render";
+import { runRender } from "./render";
 import { blockAt, mdToDocHtml } from "./docrender";
 
 export type WorkEvent = { ts: string; kind: "start" | "tool" | "result" | "text" | "end" | "render" | "version" | "error"; text: string };
@@ -299,12 +299,10 @@ export class WorkRuns {
     const tmp = join(this.dataDir, "work", `render-${artifact}-v${n}.mp4`);
     mkdirSync(join(this.dataDir, "work"), { recursive: true });
     const prevMp4 = this.store.file(artifact, Math.max(1, n - 1), "render.mp4") ?? "";
-    // keep the film's orientation: the last render's, else a vertical request in its title or notes
-    const orient = this.store.version(artifact, Math.max(1, n - 1))?.render?.orient ?? orientFor(`${art.title ?? ""} ${(run?.notes ?? []).join(" ")}`);
-    const job = runRender(this.dataDir, "film", { html, out: tmp, orient, fps: process.env.CREW_RENDER_FPS ?? "30", width: process.env.CREW_RENDER_WIDTH ?? "1600", workers: process.env.CREW_RENDER_WORKERS ?? "4", copyFrom: prevMp4 },
+    const job = runRender(this.dataDir, "film", { html, out: tmp, fps: process.env.CREW_RENDER_FPS ?? "30", width: process.env.CREW_RENDER_WIDTH ?? "1600", workers: process.env.CREW_RENDER_WORKERS ?? "4", copyFrom: prevMp4 },
       (f) => { if (run) { run.renderProgress = Math.round(f * 100) / 100; this.onChange(run); } });
     job.done.then((r) => {
-      if (r.ok && existsSync(tmp)) { this.store.attach(artifact, n, "render.mp4", tmp); rmSync(tmp, { force: true }); this.store.setRender(artifact, n, { state: "done", detail: (r.info?.notes ?? []).join("; ") || null, ms: r.ms, orient: Number(r.info?.height) > Number(r.info?.width) ? "portrait" : r.info?.width ? "landscape" : orient, ...(r.info?.notes?.length ? { normalized: !!r.info.normalized, notes: r.info.notes.map(String).slice(0, 8) } : {}) }); }
+      if (r.ok && existsSync(tmp)) { this.store.attach(artifact, n, "render.mp4", tmp); rmSync(tmp, { force: true }); this.store.setRender(artifact, n, { state: "done", detail: (r.info?.notes ?? []).join("; ") || null, ms: r.ms, ...(r.info?.width ? { orient: Number(r.info.height) > Number(r.info.width) ? "portrait" as const : "landscape" as const } : {}), ...(r.info?.notes?.length ? { normalized: !!r.info.normalized, notes: r.info.notes.map(String).slice(0, 8) } : {}) }); }
       else this.store.setRender(artifact, n, { state: "failed", detail: r.error ?? "render failed", ms: r.ms });
       if (run) { run.status = "done"; run.renderProgress = r.ok ? 1 : null; run.ended = now(); this.log(run, "render", r.ok ? `rendered in ${Math.round(r.ms / 1000)} s` : `render failed: ${r.error}`); }
     });
