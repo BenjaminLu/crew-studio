@@ -51,6 +51,8 @@ try {
         ok((zh ? /^已拒絕重試：失敗之後沒有任何輸入改變（比對了：agent, base, budget, head, params, policy, spec, workflow）/.test(msg ?? "") : /^Retry refused: nothing changed since the failure \(compared: agent, base, budget, head, params, policy, spec, workflow\)/.test(msg ?? "")) && still.status === "open",
           `${tag}: the real answer route refuses Retry with the compared inputs, in the card's language, and the card stays open`, msg);
       }
+      if (cls === "ask") { const esc = await p.evaluate(() => document.querySelector("[data-failure-escalation]")?.textContent ?? "");
+        ok((zh ? /^Firstmate 的理由：/ : /^Firstmate's reason: /).test(esc) && esc.includes("pricing choice") && (zh ? /Firstmate 轉交給你/ : /Escalated by Firstmate/).test(await p.textContent("[data-card-root]")), `${tag}: the escalated card shows Firstmate's reason`, esc); }
       if (cls === "internal") ok(v.diag, `${tag}: the kept diagnostics are on the card`);
       ok(!v?.overflow, `${tag}: no horizontal page scroll`);
       const el = p.locator("#c"); await el.screenshot({ path: join(shots, `${cls}-${lang}-${w}-${scheme}.png`) });

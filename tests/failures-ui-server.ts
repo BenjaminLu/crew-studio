@@ -12,7 +12,7 @@ const flow = Y({ id: "fx", name: "failure fixture", roles: [{ id: "worker", labe
   nodes: [{ id: "act", kind: "hook", label: "Act", do: "act", x: 0, y: 0 }, { id: "end", kind: "hook", label: "End", x: 1, y: 0 }], edges: [["act", "end", "ok"]] });
 const act = (x: any) => {
   const m = x.run.params.mode, fa = x.rn.data.failureAnswer;
-  if (m === "ask") return fa?.kind === "answer" ? "ok" : { outcome: "ask", note: "Which currency does the total use?" };
+  if (m === "ask") { if (fa?.kind === "answer") return "ok"; x.rn.data.escalation = { reason: "The currency is a pricing choice only the captain sets." }; return { outcome: "ask", note: "Which currency does the total use?" }; }
   if (m === "env") throw new FailureError("env.test-command", "run_tests: no test command configured for this repository");
   if (m === "transient") throw new Error("fetch failed: ECONNRESET socket hang up");
   if (m === "det") return x.run.params.want === "pass" ? "ok" : { outcome: "fail", note: "totals.check: fail — 1235 JPY shows as $12.35" };

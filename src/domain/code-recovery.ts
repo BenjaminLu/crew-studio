@@ -23,7 +23,7 @@ export function installCodeRecovery(engine:Engine,W:Worktrees){
     if(!last||last.node!=='build'||!build||last.visit!==build.visits)return;
     const rep=build.data?.report;if(!rep?.marker||!['ASK','SCOPE-BLOCKED','DOOR-CHANGE','BLOCKED'].includes(rep.marker))return;
     const msg=String(rep.summary??rep.marker);
-    const typed=rep.marker==='ASK'?failure('ask.agent-question',msg,{source:'agent',run:x.run.id,node:'build'}):rep.marker==='BLOCKED'?fromError(Object.assign(new Error(msg),{outcome:'blocked'}),{source:'agent',run:x.run.id,node:'build'}):failure('scope.blocked',msg,{source:'agent',run:x.run.id,node:'build'});
+    const typed=rep.marker==='ASK'?failure('ask.escalated',msg,{source:'agent',run:x.run.id,node:'build',escalation:x.run.nodes.build?.data?.escalation?.reason??null}):rep.marker==='BLOCKED'?fromError(Object.assign(new Error(msg),{outcome:'blocked'}),{source:'agent',run:x.run.id,node:'build'}):failure('scope.blocked',msg,{source:'agent',run:x.run.id,node:'build'});
     const cur=engine.cards.get(card.id);if(!cur)return;cur.failure=typed;card.failure=typed;engine.cards.save(cur); // the stored card keeps its STE result
   };
   const priorView=engine.cards.view;

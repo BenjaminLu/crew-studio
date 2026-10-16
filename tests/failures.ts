@@ -36,7 +36,7 @@ E.actions.slow = async (x) => { x.run.ctx.slowRuns = (x.run.ctx.slowRuns ?? 0) +
 E.actions["merge-once"] = (x) => { x.run.ctx.mergeTries = (x.run.ctx.mergeTries ?? 0) + 1; if (x.run.ctx.mergeTries > 1) return "ok"; throw new Error(x.run.params.mode === "door" ? "a one-way change needs the door confirmation on the merge card" : "the branch moved since the six gates ran"); };
 E.actions.act = (x) => {
   const m = x.run.params.mode, fa = x.rn.data.failureAnswer;
-  if (m === "ask") return fa?.kind === "answer" ? "ok" : { outcome: "ask", note: "Which currency does the total use?" };
+  if (m === "ask") { if (fa?.kind === "answer") return "ok"; x.rn.data.escalation = { reason: "The currency is a pricing choice only the captain sets." }; return { outcome: "ask", note: "Which currency does the total use?" }; }
   if (m === "env") { if (envFixed) return "ok"; throw new F.FailureError("env.test-command", "run_tests: no test command configured for this repository"); }
   if (m === "transient") { x.rn.data.tries = (x.rn.data.tries ?? 0) + 1; if (x.run.ctx.netOk) return "ok"; throw new Error("fetch failed: ECONNRESET socket hang up"); }
   if (m === "det") return x.run.params.want === "pass" ? "ok" : { outcome: "fail", note: "totals.check: fail — 1235 JPY shows as $12.35" };
@@ -60,8 +60,10 @@ const keep = (c: any) => { shown.push(c); shownViews.push(E.cards.view(E.cards.g
 
 // ---------- ask ----------
 { const r = start("ask"); const run = await failed(r.id); const c = cardOf(r.id);
-  ok(run.status === "failed" && run.failure?.class === "ask" && run.failure.code === "ask.agent-question" && c.kind === "failure" && c.captainOnly === true && ids(c) === "answer,park" && c.options[0].note === true,
-    "ask: an agent question is the ask class (not scope), its card offers Answer and continue and Park", JSON.stringify([run.status, run.failure?.code, ids(c)]));
+  ok(run.status === "failed" && run.failure?.class === "ask" && run.failure.code === "ask.escalated" && c.kind === "failure" && c.captainOnly === true && ids(c) === "answer,park" && c.options[0].note === true,
+    "ask: a question Firstmate escalated is the ask class (not scope), titled Escalated by Firstmate, with Answer and continue and Park", JSON.stringify([run.status, run.failure?.code, ids(c)]));
+  ok(c.title.en.startsWith("Escalated by Firstmate") && c.failure!.escalation?.reason === "The currency is a pricing choice only the captain sets." && c.sections.en.why.endsWith("Firstmate's reason: The currency is a pricing choice only the captain sets.") && c.sections["zh-TW"].why.includes("Firstmate 的理由："),
+    "ask: the card shows Firstmate's reason for escalating, in en and zh-TW", c.sections.en.why);
   ok(c.failure!.message === "Which currency does the total use?" && /Answer and continue/.test(c.sections.en.how) && /回答並繼續/.test(c.sections["zh-TW"].how), "ask: the card carries the exact question and the next action in en and zh-TW");
   const e = await refusal(c.id, { choice: "answer" }); ok(!!e && E.cards.get(c.id)!.status === "open", "ask: an answer with no text is refused and the card stays open", e?.message);
   keep(E.cards.get(c.id));
@@ -72,7 +74,7 @@ const keep = (c: any) => { shown.push(c); shownViews.push(E.cards.view(E.cards.g
 }
 // an agent's question reaches its next prompt
 { const r = E.start({ workflow: "ag", text: "agent ask" }); await failed(r.id); const c = cardOf(r.id);
-  ok(c.failure?.class === "ask" && c.failure.message === "Should JPY have decimals?", "ask: an agent node's ASK report is the question on the card", JSON.stringify(c.failure));
+  ok(c.failure?.code === "ask.escalated" && c.failure.message === "Should JPY have decimals?" && c.failure.escalation?.reason === null && /Firstmate gave no reason/.test(c.sections.en.why), "ask: an agent node's ASK report is the question on the card; with no Firstmate reason the card says so", JSON.stringify(c.failure));
   await E.answer(c.id, { choice: "answer", note: "No decimals for JPY", by: "captain" }); await until(() => E.get(r.id)!.status === "succeeded");
   ok(E.get(r.id)!.status === "succeeded" && /CAPTAIN'S ANSWER[\s\S]*Should JPY have decimals\?[\s\S]*No decimals for JPY/.test(E.get(r.id)!.ctx.lastPrompt?.build ?? ""), "ask: the same agent node runs again with the captain's answer in its prompt", E.get(r.id)!.ctx.lastPrompt?.build);
 }
@@ -297,7 +299,7 @@ const keep = (c: any) => { shown.push(c); shownViews.push(E.cards.view(E.cards.g
 }
 // every code's own words pass STE (en) and are real zh-TW
 { const texts = Object.entries(F.FAILURE_CODES).flatMap(([k, v]: any) => [v.title, v.meaning, v.fix, v.where].filter(Boolean).flatMap((x: any, i: number) => [{ section: `en.${k}.${i}`, text: x.en }, { section: `zh-TW.${k}.${i}`, text: x["zh-TW"] }]))
-    .concat(F.FAILURE_CLASSES.flatMap((c) => { const h = F.failureHow(F.failure(c === "ask" ? "ask.agent-question" : c === "environment" ? "env.login" : c === "scope" ? "scope.blocked" : c === "transient" ? "transient.network" : c === "deterministic" ? "deterministic.check" : c === "invalid-input" ? "invalid-input.params" : "internal.bug", "m")); return [{ section: `en.how.${c}`, text: h.en }, { section: `zh-TW.how.${c}`, text: h["zh-TW"] }]; }));
+    .concat(F.FAILURE_CLASSES.flatMap((c) => { const h = F.failureHow(F.failure(c === "ask" ? "ask.escalated" : c === "environment" ? "env.login" : c === "scope" ? "scope.blocked" : c === "transient" ? "transient.network" : c === "deterministic" ? "deterministic.check" : c === "invalid-input" ? "invalid-input.params" : "internal.bug", "m")); return [{ section: `en.how.${c}`, text: h.en }, { section: `zh-TW.how.${c}`, text: h["zh-TW"] }]; }));
   const out = ste(texts);
   ok(out.verdict !== "fail", `all ${Object.keys(F.FAILURE_CODES).length} codes and 7 class instructions pass STE in en and zh-TW`, JSON.stringify(out.findings?.slice(0, 5)));
 }

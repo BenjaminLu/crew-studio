@@ -27,7 +27,7 @@ const t = (en: string, zh: string): FText => ({ en, "zh-TW": zh });
 type CodeInfo = { class: FailureClass; title: FText; meaning: FText; fix?: FText; where?: FText };
 /** Every typed code. The class of a code never changes; new failures get a new code. */
 export const FAILURE_CODES = {
-  "ask.agent-question": { class: "ask", title: t("The agent asks a question", "agent 提出問題"), meaning: t("The agent stopped to ask you a question. It is not a scope conflict.", "agent 停下來問你一個問題；這不是範圍衝突。") },
+  "ask.escalated": { class: "ask", title: t("Escalated by Firstmate", "Firstmate 轉交給你"), meaning: t("An agent asked a question. Firstmate answers agent questions itself; it passed this one to you, for the reason below.", "agent 提了一個問題。agent 的問題由 Firstmate 自己回答；這一題它轉交給你，理由如下。") },
   "ask.one-way": { class: "ask", title: t("A one-way choice is needed", "需要一個單向的選擇"), meaning: t("Two versions of the work diverged. Keeping one discards the other, so only you can pick.", "工作的兩個版本分岔了。保留一個就會捨棄另一個，所以只能由你決定。") },
   "env.login": { class: "environment", title: t("Sign-in is missing", "缺少登入"), meaning: t("The provider refused the sign-in, or no account is signed in.", "供應商拒絕登入，或沒有帳號登入。"),
     fix: t("Sign in again on the provider's account card.", "請在供應商的帳號卡片重新登入。"), where: t("Board → Accounts (the Codex or Claude card)", "Board → 帳號（Codex 或 Claude 卡片）") },
@@ -100,6 +100,8 @@ export type Failure = {
   diagnostics: Record<string, string> | null;
   /** what the failed attempt ran on: retry of a deterministic failure is refused until one of these changes */
   inputs: { hash: string; snapshot: InputSnapshot } | null;
+  /** ask.escalated: why Firstmate passed the agent's question to the captain (Firstmate's own words; null when it gave none) */
+  escalation?: { by: "firstmate"; reason: string | null } | null;
   /** transient: the retry number and the wait before it runs */
   retry: { attempt: number; backoffMs: number } | null;
 };
@@ -116,7 +118,7 @@ export function sanitizeMessage(raw: unknown): string {
 
 /** A typed failure. `diagnostics` is always filled for an internal class. */
 export function failure(code: FailureCode, message: unknown, o: { source?: FailureSource; run?: string | null; node?: string | null; visit?: number | null; log?: FailureLogRef | null;
-  diagnostics?: Record<string, unknown> | null; inputs?: InputSnapshot | null; attempt?: number; where?: FText; fix?: FText } = {}): Failure {
+  diagnostics?: Record<string, unknown> | null; inputs?: InputSnapshot | null; attempt?: number; where?: FText; fix?: FText; escalation?: string | null } = {}): Failure {
   const info: CodeInfo = FAILURE_CODES[code] ?? FAILURE_CODES["internal.unmapped"];
   const msg = sanitizeMessage(message) || "(the source gave no message)";
   const cls = info.class;
@@ -124,7 +126,8 @@ export function failure(code: FailureCode, message: unknown, o: { source?: Failu
   const attempt = Math.max(1, o.attempt ?? 1);
   return { schema: 1, class: cls, code: FAILURE_CODES[code] ? code : "internal.unmapped", source: o.source ?? "engine", at: new Date().toISOString(), run: o.run ?? null, node: o.node ?? null, visit: o.visit ?? null,
     title: info.title, meaning: info.meaning, fix: o.fix ?? info.fix ?? null, where: o.where ?? info.where ?? null, message: msg, log: failureLog(o.log ?? null), diagnostics: diag,
-    inputs: o.inputs ? { hash: inputsHash(o.inputs), snapshot: o.inputs } : null, retry: cls === "transient" ? { attempt, backoffMs: backoffMs(attempt) } : null };
+    inputs: o.inputs ? { hash: inputsHash(o.inputs), snapshot: o.inputs } : null,
+    ...(code === "ask.escalated" ? { escalation: { by: "firstmate" as const, reason: o.escalation ? sanitizeMessage(o.escalation) : null } } : {}), retry: cls === "transient" ? { attempt, backoffMs: backoffMs(attempt) } : null };
 }
 
 /** A failure thrown at its source: the engine keeps its class instead of guessing from the words. */
@@ -138,7 +141,7 @@ export const isFailure = (v: any): v is Failure => !!v && v.schema === 1 && (FAI
  * predates the taxonomy). Order matters: the first match wins. Nothing here guesses "internal": no match is internal.unmapped.
  */
 export const TEXT_RULES: { re: RegExp; code: FailureCode }[] = [
-  { re: /^ASK\b|\bworker (asks|asked)\b|\bneeds? (an )?answer\b/i, code: "ask.agent-question" },
+  { re: /^ASK\b|\bworker (asks|asked)\b|\bneeds? (an )?answer\b/i, code: "ask.escalated" },
   // first: a change after approval or after the gates. Running the same step again never passes; the card offers what does
   { re: /moved since the (six )?gates ran|remote checks changed before merge|needs the door confirmation|base moved after review|needs explicit recovery/i, code: "deterministic.prepare-again" },
   { re: /identity changed or predates pinning|prepare a new task|approved lane image changed|never replay/i, code: "deterministic.new-task" },
@@ -269,7 +272,7 @@ export function failureHow(f: Failure, o: { ended?: boolean } = {}): FText {
   if (f.code === "deterministic.new-task") return t("Start a new task: it gets the same request and declared params and prepares everything again. This task stays as it is.", "開始新任務：它會用同樣的需求和已宣告的參數，重新準備一切。這個任務維持原狀。");
   switch (f.class) {
     case "ask": if (f.code === "ask.one-way") return t("Write which version to keep in the note, then pick Answer and continue. The step runs again with your choice. The version you do not keep is discarded.", "請在備註寫下要保留哪個版本，再選「回答並繼續」；這一步會帶著你的選擇再跑一次，沒保留的版本會被捨棄。");
-      return t("Write your answer in the note and pick Answer and continue. The same step runs again with your answer.", "請在備註寫下回答，再選「回答並繼續」；同一步會帶著你的回答再跑一次。");
+      return t("Firstmate did not answer this itself. Write your answer in the note and pick Answer and continue. The same step runs again with your answer.", "Firstmate 沒有自己回答這一題。請在備註寫下回答，再選「回答並繼續」；同一步會帶著你的回答再跑一次。");
     case "environment": return t(`Fix this first: ${f.fix?.en ?? "the cause the message names."} Where: ${f.where?.en ?? "the place the message names."} Then pick Fix and retry.`, `請先修好：${f.fix?.["zh-TW"] ?? "訊息中提到的原因。"} 位置：${f.where?.["zh-TW"] ?? "訊息中提到的地方。"} 修好後選「修好後重試」。`);
     case "transient": { const a = f.retry?.attempt ?? 1, ms = f.retry?.backoffMs ?? backoffMs(a); return t(`Retry ${a} waits ${secs(ms)} before it runs (backoff: 5 s, 30 s, 2 min, then 10 min).`, `第 ${a} 次重試會先等 ${secsZh(ms)} 再執行（間隔：5 秒、30 秒、2 分鐘，之後 10 分鐘）。`); }
     case "deterministic": return t("The same inputs give the same failure. Studio refuses Retry until an input changes: the params, the agent, the code head, the policy or the round budget. Edit params and retry changes the params.", "相同輸入會得到相同的失敗。在輸入改變前，Studio 會拒絕重試；輸入包含參數、agent、程式碼 head、policy 或回合預算。「修改參數後重試」會改變參數。");
@@ -286,7 +289,10 @@ export function failureCardBody(f: Failure, o: { label?: string; ended?: boolean
   const how = failureHow(f, o);
   const where = o.label ? ` (${o.label})` : "";
   // the card's failure box (card.failure) shows the message, fix, where, log and diagnostics in the card's language: no second copy in the body
-  return { title: `${f.title.en}${where}`, zhTitle: `${f.title["zh-TW"]}${where}`, en: { why: f.meaning.en, how: how.en }, zh: { why: f.meaning["zh-TW"], how: how["zh-TW"] },
+  // an escalated question: the card leads with Firstmate's own reason
+  const esc = f.code === "ask.escalated" ? f.escalation?.reason ?? null : undefined;
+  const why = esc === undefined ? { en: f.meaning.en, zh: f.meaning["zh-TW"] } : esc ? { en: `${f.meaning.en} Firstmate's reason: ${esc}`, zh: `${f.meaning["zh-TW"]} Firstmate 的理由：${esc}` } : { en: `${f.meaning.en} Firstmate gave no reason.`, zh: `${f.meaning["zh-TW"]} Firstmate 沒有給理由。` };
+  return { title: `${f.title.en}${where}`, zhTitle: `${f.title["zh-TW"]}${where}`, en: { why: why.en, how: how.en }, zh: { why: why.zh, how: how["zh-TW"] },
     body: "", options: failureActions(f.class, f.code, o) };
 }
 

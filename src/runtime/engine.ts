@@ -1111,7 +1111,8 @@ export class Engine {
     const note = String(rn.note ?? rn.error ?? "");
     if (outcome === "cap") return failure("deterministic.round-cap", `${node.label}: the round cap was reached${note ? ` (${note})` : ""}`, o);
     if (outcome === "timeout") return failure("transient.timeout", note || `${node.label} stopped at its time limit`, o);
-    if (outcome === "ask") return failure("ask.agent-question", note || rn.data.report?.summary || `${node.label} asks a question`, { ...o, source: "agent" });
+    // an agent question reaches the captain only when Firstmate escalated it (rn.data.escalation: Firstmate's reason); a domain without that path escalates as is
+    if (outcome === "ask") return failure("ask.escalated", note || rn.data.report?.summary || `${node.label} asks a question`, { escalation: rn.data.escalation?.reason ?? null, ...o, source: "agent" });
     if (outcome === "error") return fromError(rn.error ?? "", o);
     const byWords = note ? codeOf(note) : "internal.unmapped";
     if (byWords !== "internal.unmapped") return failure(byWords, note, o);

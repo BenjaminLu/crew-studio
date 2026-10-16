@@ -268,6 +268,7 @@ function mountCard(el, card, opts = {}) {
       h("div", { class: "cc-h" }, h("span", { class: `cc-chip ${f.class === "ask" ? "" : f.class === "transient" || f.class === "environment" ? "warn" : "bad"}`, "data-failure-chip": f.class }, T(FCLASS[f.class][0], FCLASS[f.class][1])), h("span", { class: "cc-mono" }, f.code)),
       h("p", {}, L(f.meaning)),
       h("h4", {}, f.class === "ask" ? T("The question", "問題") : T("Exact message", "原始訊息")), h("pre", { class: "cc-pre", "data-failure-message": "" }, f.message),
+      f.escalation ? h("p", { "data-failure-escalation": "" }, h("b", {}, T("Firstmate's reason: ", "Firstmate 的理由：")), f.escalation.reason || T("Firstmate gave no reason.", "Firstmate 沒有給理由。")) : null,
       (f.fix || f.where) ? h("dl", { class: "cc-kv" }, ...kv("fix", T("Fix", "要修什麼"), f.fix && L(f.fix)), ...kv("where", T("Where", "在哪裡"), f.where && L(f.where))) : null,
       f.retry ? h("p", { class: "cc-count", "data-failure-backoff": f.retry.backoffMs }, T(`Retry ${f.retry.attempt}: waits ${waitText(f.retry.backoffMs, false)} before it runs.`, `第 ${f.retry.attempt} 次重試：執行前先等 ${waitText(f.retry.backoffMs, true)}。`)) : null,
       f.class === "deterministic" && changed ? h("div", { "data-failure-changed": String(changed.length) }, h("h4", {}, T("Changed since the failure", "失敗後改變的輸入")),
