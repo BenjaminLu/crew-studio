@@ -79,7 +79,9 @@ const browser = withSession(await chromium.launch(), base);
 const errors = [];
 const page = async (width, scheme) => {
   const p = await browser.newPage({ viewport: { width, height: 900 }, colorScheme: scheme });
-  await p.addInitScript(() => { try { localStorage.setItem("crew.labs", "1"); } catch {} }); // phone pairing is a lab (backbone sidebar)
+  // phone pairing is a lab (backbone sidebar); the first-project guide (public/onboarding.js) is covered by
+  // the onboarding suites and would otherwise overlay the chat button on a phone
+  await p.addInitScript(() => { try { localStorage.setItem("crew.labs", "1"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} });
   p.on("pageerror", (e) => errors.push(`${width}/${scheme}: ${e}`));
   p.on("console", (m) => { if (m.type() === "error") errors.push(`${width}/${scheme}: ${m.text()}`); });
   return p;
@@ -171,31 +173,47 @@ try {
 
 
   // ---------- M2: chat, intents, library ----------
+  // Since acc5b89 the chat panel is the one primary Firstmate conversation (public/m25.js:
+  // chatMode is always "main"); the read-only status agent has no panel of its own any more.
+  // Its server side (/api/chat, the question-token tools, intent capture) is still served,
+  // so it is checked here through the API, and the panel through what it shows now.
   const stateSig = () => { const walk = (d) => readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(join(d, e.name)) : [`${join(d, e.name)}:${statSync(join(d, e.name)).size}`]); return walk(state).sort().join("\n"); };
   const before2 = stateSig();
   ok((await fetch(base + "/api/tools")).status === 403 && (await fetch(base + "/api/tools/runs_list", { method: "POST", body: "{}" })).status === 403, "chat tools refuse a call without a question token");
+  const chatApi = async (message) => {
+    const r = await fetch(base + "/api/chat", { method: "POST", headers: { "content-type": "application/json", "x-crew-session": process.env.CREW_SESSION_TOKEN }, body: JSON.stringify({ message }) });
+    return (await r.text()).split("\n\n").map((b) => /^data: (.*)$/m.exec(b)?.[1]).filter(Boolean).map((d) => JSON.parse(d));
+  };
+  {
+    const ev = await chatApi("How is it going?");
+    const done = ev.find((e) => e.type === "done");
+    ok(ev[0]?.type === "start" && ev[0].provider === "stub" && ev.some((e) => e.type === "text") && !!done, "the status agent streams an answer (start, text, done)", JSON.stringify(ev.map((e) => e.type)));
+    const tools = ev.filter((e) => e.type === "tool"), results = ev.filter((e) => e.type === "toolResult");
+    ok(tools.length === 2 && /runs\.list/.test(tools[0].name) && typeof results[0]?.rows === "number", "each lookup is reported with the tool name and its row count", JSON.stringify(tools));
+    ok(/\(#\/task\/T-\d+\)/.test(done?.text ?? ""), "the answer links back to the task page", done?.text);
+    const ie = (await chatApi("STUB_INTENT please")).find((e) => e.type === "intent");
+    ok(ie?.intent?.id === "I-001", "a captured intent is streamed as an intent event");
+    const rec = readFileSync(join(data, "intents.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)).at(-1);
+    ok(rec?.id === "I-001" && rec.status === "received" && rec.goal === "Add a dark mode to the docs site", "intent.capture appends to Studio's intents.jsonl");
+    for (const [msg, code, label] of [["STUB_LOGIN", "notLoggedIn", "a logged-out provider"], ["STUB_TIMEOUT", "timeout", "a question past its time limit"]]) {
+      const er = (await chatApi(msg)).find((e) => e.type === "error");
+      ok(er?.code === code, `${label} ends with a clear ${code} error`, JSON.stringify(er));
+    }
+    const s1 = await (await fetch(base + "/api/settings", { method: "POST", headers: { "content-type": "application/json", "x-crew-session": process.env.CREW_SESSION_TOKEN }, body: JSON.stringify({ provider: "codex" }) })).json();
+    ok(s1.provider === "codex" && (await (await fetch(base + "/api/settings")).json()).provider === "codex", "the status agent's provider is a setting");
+    const s2 = await (await fetch(base + "/api/settings", { method: "POST", headers: { "content-type": "application/json", "x-crew-session": process.env.CREW_SESSION_TOKEN }, body: JSON.stringify({ provider: "claude", model: "bad name!" }) })).json();
+    ok(!!s2.error, "settings refuse a malformed model name");
+    await fetch(base + "/api/settings", { method: "POST", headers: { "content-type": "application/json", "x-crew-session": process.env.CREW_SESSION_TOKEN }, body: JSON.stringify({ provider: "stub" }) });
+  }
   for (const [width, scheme] of [[1440, "light"], [1440, "dark"], [390, "light"], [390, "dark"]]) {
     const q = await page(width, scheme);
     await q.goto(`${base}/#/board`); await q.waitForSelector(".rrow:not(.head)");
     if (width < 1100) { ok(await q.locator("#chatFab").isVisible(), `chat opens from a button on a phone (${width} ${scheme})`); await q.click("#chatFab"); }
     ok(await q.locator("#chatIn").isVisible(), `the chat panel is on screen at ${width} ${scheme}`);
-    ok(/stub · no model/.test(await q.locator("#chatSub").textContent()), `the chat header names the provider and model at ${width} ${scheme}`);
-    await q.click("#chatClear");
-    await q.fill("#chatIn", "How is it going?"); await q.press("#chatIn", "Enter");
-    const answered = await q.waitForSelector(".msg.fm .bub a.cite", { timeout: 8000 }).then(() => true).catch(() => false);
-    ok(answered, `the chat streams an answer with source links at ${width} ${scheme}`);
+    ok(await q.waitForFunction(() => { const t = document.querySelector("#chatSub")?.textContent ?? ""; return t && t !== "…"; }, null, { timeout: 6000 }).then(() => true).catch(() => false), `the chat header says where the Firstmate conversation stands at ${width} ${scheme}`);
+    ok(await q.locator("#chatClear").isHidden() && await q.locator("#chatProv").isHidden(), `the primary conversation offers no clear button and no status-provider picker at ${width} ${scheme}`);
     if (width === 1440 && scheme === "light") {
-      ok((await q.locator(".msg.fm details.tools .toolrow").count()) === 2, "each lookup shows as a chip");
-      await q.click(".msg.fm details.tools summary");
-      ok(/runs\.list\(\)/.test(await q.locator(".msg.fm .toolrow").first().textContent()) && /\d+ rows/.test(await q.locator(".msg.fm .toolrow").first().textContent()), "a chip names the tool and its row count");
-      ok((await q.locator(".msg.fm .bub a.cite").count()) === 2, "only Studio and GitHub links become citations; other links stay text");
-      await q.locator(".msg.fm .bub a.cite").first().click();
-      ok(await q.waitForSelector("[data-lineage]", { timeout: 6000 }).then(() => true).catch(() => false), "a citation opens the task page");
-      // a new piece of work becomes an intent in Studio's own store
-      await q.fill("#chatIn", "STUB_INTENT please"); await q.press("#chatIn", "Enter");
-      ok(await q.waitForSelector(".msg.fm [data-intent]", { timeout: 8000 }).then(() => true).catch(() => false), "a captured intent shows as a card in the chat");
-      const rec = readFileSync(join(data, "intents.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)).at(-1);
-      ok(rec?.id === "I-001" && rec.status === "received" && rec.goal === "Add a dark mode to the docs site", "intent.capture appends to Studio's intents.jsonl");
+      // the Intents page, a linked task and the Library
       await q.goto(`${base}/#/intents`);
       ok(await q.waitForSelector('[data-intent-row="I-001"] [data-step="received"]', { timeout: 6000 }).then(() => true).catch(() => false), "the Intents page lists the intent at Received");
       // firstmate links the intent to a task; the trail follows that task's events to its merge
@@ -203,12 +221,6 @@ try {
       ok(await q.waitForSelector('[data-intent-row="I-001"] .s.fin[data-step="merged"]', { timeout: 6000 }).then(() => true).catch(() => false), "a linked intent advances along its task's events to Merged, live");
       await q.goto(`${base}/#/intents/I-001`);
       ok(await q.waitForSelector('[data-lineage="T-304"]', { timeout: 6000 }).then(() => true).catch(() => false), "the intent page shows its task's lineage");
-      // guardrails reach the UI
-      for (const [msg, code, label] of [["STUB_LOGIN", "notLoggedIn", "a logged-out provider"], ["STUB_TIMEOUT", "timeout", "a question past its time limit"]]) {
-        await q.fill("#chatIn", msg); await q.press("#chatIn", "Enter");
-        ok(await q.waitForSelector(".chat-err", { timeout: 9000 }).then(() => true).catch(() => false), `${label} shows a clear error in the chat`);
-        await q.click("#chatClear");
-      }
       // the library: lineage from the event log, CI and the commit from GitHub, and a video that plays
       await q.goto(`${base}/#/library`);
       await q.waitForSelector('[data-pr="287"]');
@@ -221,12 +233,6 @@ try {
       await q.locator('[data-filter="video"]').click();
       ok((await q.locator("[data-pr]").count()) === 0 && (await q.locator("[data-file]").count()) === 2, "the type filter narrows the Library");
       await q.locator('[data-filter="all"]').first().click();
-      // the provider is a setting
-      const s1 = await (await fetch(base + "/api/settings", { method: "POST", headers: { "content-type": "application/json", "x-crew-session": process.env.CREW_SESSION_TOKEN }, body: JSON.stringify({ provider: "codex" }) })).json();
-      ok(s1.provider === "codex" && await q.waitForFunction(() => /^codex/.test(document.querySelector("#chatSub").textContent), null, { timeout: 6000 }).then(() => true).catch(() => false), "switching the provider in settings updates the chat header live");
-      const s2 = await (await fetch(base + "/api/settings", { method: "POST", headers: { "content-type": "application/json", "x-crew-session": process.env.CREW_SESSION_TOKEN }, body: JSON.stringify({ provider: "claude", model: "bad name!" }) })).json();
-      ok(!!s2.error, "settings refuse a malformed model name");
-      await fetch(base + "/api/settings", { method: "POST", headers: { "content-type": "application/json", "x-crew-session": process.env.CREW_SESSION_TOKEN }, body: JSON.stringify({ provider: "stub" }) });
     }
     ok(await noHScroll(q), `no sideways scroll with the chat open at ${width} ${scheme}`);
     await q.screenshot({ path: join(shots, `smoke-chat-${width}-${scheme}.png`) });
@@ -276,16 +282,19 @@ try {
   ok((await raw("POST", "/api/remote/tailscale", { body: { action: "disable", confirm: true } })).body?.ran === "tailscale serve --https=8443 off", "turning it off names `tailscale serve --https=8443 off` (stub)");
   ok(tsServe() === tsBefore, "Tailscale serve state is unchanged by the tests");
 
-  // the main session through the UI: attach, talk, approve a tool, a wake, hand back
+  // the main session through the UI: attach, talk, approve a tool, a wake, hand back.
+  // Since acc5b89 the chat is always the primary Firstmate conversation (no mode switch) and the
+  // chat no longer has its own Attach button: an existing session is attached from the Take over
+  // page (covered by tests/takeover-ui.mjs). Here the session is attached through the same API.
   {
     const q = await page(1440, "light");
     await q.goto(`${base}/#/board`); await q.waitForSelector(".rrow:not(.head)");
-    await q.click('#chatMode [data-mode="main"]');
-    ok(await q.waitForSelector('[data-banner="detached"]', { timeout: 5000 }).then(() => true).catch(() => false), "firstmate mode shows that no session is attached");
-    ok(/not attached/.test(await q.locator("#chatSub").textContent()) && await q.locator("#chatSend").isDisabled(), "the header says not attached and sending is off");
-    await q.click("#attachBtn");
-    await q.waitForSelector('[data-session="sess-ui"]', { timeout: 8000 });
-    await q.click('[data-attach="sess-ui"]');
+    ok(await q.waitForSelector('[data-banner="detached"]', { timeout: 5000 }).then(() => true).catch(() => false), "the Firstmate chat shows that no session is attached");
+    ok(/Connect your account to begin/.test(await q.locator("#chatSub").textContent()) && await q.locator("#chatSend").isDisabled(), "the header says to connect first and sending is off");
+    const sessions = (await raw("GET", "/api/main/sessions?host=claude")).body?.sessions ?? [];
+    ok(sessions.some((x) => x.id === "sess-ui"), "the project's terminal session is listed for attaching");
+    const att = await raw("POST", "/api/main/attach", { body: { host: "claude", id: "sess-ui" } });
+    ok(att.body?.ok === true, "attaching the session succeeds", JSON.stringify(att.body));
     ok(await q.waitForSelector('[data-banner="attached"]', { timeout: 8000 }).then(() => true).catch(() => false), "attaching shows Studio as the driver");
     ok(JSON.parse(readFileSync(join(data, "driver.json"), "utf8")).holder === "studio", "the driver lock says studio");
     ok(/main session · claude/.test(await q.locator("#chatSub").textContent()), "the header names the main session and host");
