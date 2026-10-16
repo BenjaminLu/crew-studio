@@ -1,6 +1,6 @@
 // Host-owned source bindings. Never enqueue these receipts as captain/model input.
 import {createHash} from 'node:crypto';
-import {mkdirSync,writeFileSync,readdirSync,existsSync,openSync,closeSync,fstatSync,readSync,constants,lstatSync,realpathSync} from 'node:fs';
+import {mkdirSync,writeFileSync,readdirSync,existsSync,openSync,closeSync,fstatSync,readSync,constants,lstatSync,realpathSync,unlinkSync} from 'node:fs';
 import {join} from 'node:path';
 import type {Engine} from '../runtime/engine';
 export type NativeOrigin={host:string;thread:string;turn:string};
@@ -11,6 +11,8 @@ const validOrigin=(o:any)=>o&&['claude','codex'].includes(o.host)&&[o.thread,o.t
 const validBinding=(b:any,id:string)=>validOrigin(b)&&b.schema===1&&b.proposal===id&&/^R-\d+$/.test(id)&&Object.keys(b).sort().join(',')==='host,proposal,schema,source,thread,turn'&&b.source===sourceOf(b);
 function readOwned(file:string){const fd=openSync(file,constants.O_RDONLY|constants.O_NOFOLLOW);try{const st=fstatSync(fd);if(!st.isFile()||st.nlink!==1||st.size>32768)throw Error('Invalid outcome file');const bytes=Buffer.alloc(32769);let total=0,n=0;while(total<bytes.length&&(n=readSync(fd,bytes,total,bytes.length-total,null))>0)total+=n;if(total>32768)throw Error('Oversized outcome file');return bytes.subarray(0,total).toString('utf8');}finally{closeSync(fd);}}
 function createOwned(file:string,value:unknown){const text=JSON.stringify(value);if(Buffer.byteLength(text)>32768)throw Error('Oversized outcome record');const fd=openSync(file,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);try{writeFileSync(fd,text);}finally{closeSync(fd);}}
+/** A task that failed, was retried from its failure card and ended again: the receipt follows its latest terminal state, never the first one. */
+function renewIfLater(file:string,endedAt:string){if(!existsSync(file))return;try{const saved=JSON.parse(readOwned(file));if(Date.parse(endedAt)>Date.parse(saved.endedAt))unlinkSync(file);}catch{}}
 export class NativeOutcomes {
  private dir:string;
  constructor(data:string,private engine:()=>Engine,private proof:(id:string)=>{complete:boolean;artifact?:string;version?:number;preview?:string}){this.dir=join(realpathSync(data),'native-outcomes');mkdirSync(this.dir,{recursive:true,mode:0o700});this.assertDirectory();}
@@ -38,7 +40,7 @@ export class NativeOutcomes {
     // No claimed child/artifact: a launch error is a proposal outcome, not success.
     const receipt={id:`native-outcome:${proposal.id}:proposal`,at:Date.parse(proposal.endedAt),kind:'system' as const,source:'studio:native-outcome',text:`${proposal.id}: ${proposal.status==='failed'?'派工提案失敗，請查看任務診斷；未確認已派出子任務':'派工提案已取消'}。`,links:[{label:`Proposal ${proposal.id}`,href:`#/run/${proposal.id}`}]};
     const receiptFile=join(this.dir,`${proposal.id}-proposal.receipt.json`);
-    if(!existsSync(receiptFile))createOwned(receiptFile,{schema:1,binding:b,status:proposal.status,endedAt:proposal.endedAt,receipt});
+    renewIfLater(receiptFile,proposal.endedAt);if(!existsSync(receiptFile))createOwned(receiptFile,{schema:1,binding:b,status:proposal.status,endedAt:proposal.endedAt,receipt});
     const saved=JSON.parse(readOwned(receiptFile));if(saved.schema!==1||!validBinding(saved.binding,proposal.id)||JSON.stringify(saved.binding)!==JSON.stringify(b)||saved.status!==proposal.status||saved.endedAt!==proposal.endedAt)continue;
     out.push(receipt);continue;
    }
@@ -55,7 +57,7 @@ export class NativeOutcomes {
    const receipt={id:`native-outcome:${proposal.id}:${child.id}`,at:Date.parse(child.endedAt),kind:'system' as const,source:'studio:native-outcome',text:`${child.id}: ${state==='approved'?(child.def.kind==='image'?'圖片已完成並通過船長驗收':'網站已完成並通過船長驗收'):state==='failed'?'任務失敗':state==='cancelled'?'任務已取消':'流程已結束，未確認作品通過驗收'}。`,links};
    // Stable identity + persisted terminal evidence: replay/restart projects one entry.
    const receiptFile=join(this.dir,`${proposal.id}-${child.id}.receipt.json`);
-   if(!existsSync(receiptFile))createOwned(receiptFile,{schema:1,binding:b,child:child.id,status:child.status,result:child.result,endedAt:child.endedAt,receipt});
+   renewIfLater(receiptFile,child.endedAt);if(!existsSync(receiptFile))createOwned(receiptFile,{schema:1,binding:b,child:child.id,status:child.status,result:child.result,endedAt:child.endedAt,receipt});
    const saved=JSON.parse(readOwned(receiptFile));if(saved.schema!==1||!validBinding(saved.binding,proposal.id)||JSON.stringify(saved.binding)!==JSON.stringify(b)||saved.child!==child.id||saved.endedAt!==child.endedAt||saved.status!==child.status)continue;
    out.push(receipt);
   }catch{/* Missing/corrupt authority is never guessed or delivered to another session. */}}

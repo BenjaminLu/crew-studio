@@ -41,7 +41,7 @@ export type WDef = {
   intents?: { n: number; text: string; done: string; assumption?: string }[];
   /** the small sample input the readiness gate's dry run and verification run use */
   sample?: { text?: string; params?: Record<string, string> };
-  params?: Record<string, { label: string; default?: string }>;
+  params?: Record<string, { label: string; default?: string; /** a failure card's Edit params checks values against these */ options?: string[]; pattern?: string; max_length?: number }>;
   roles: WRole[]; nodes: WNode[]; edges: WEdge[];
   /** role pairs whose rounds the Task page compares side by side, k-th round with k-th round (src/compare.ts) */
   compare?: [string, string][];

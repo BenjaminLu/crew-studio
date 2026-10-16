@@ -206,4 +206,16 @@ for(const mode of ['success','admitted','dirty','task-commit','unmatched','missi
   ok(/refreshes base main from \w{12} to \w{12}, which changes nothing/.test(msg)&&F.E.cards.get(sc.id)!.status==='open','a rescope that refreshes base from X to X is refused with its explanation and the card stays open',msg);
  }finally{await F.stop();}
 }
+// The scope card a build report raises carries that report's class; a card raised on another node (the readiness card) or for an older round is never stamped.
+{
+ const F=await fixture();try{
+  const r=await F.start(),sc=await F.card(r.id,'scope-card');
+  ok(F.E.cards.get(sc.id)?.failure?.code==='scope.blocked'&&F.E.cards.get(sc.id)?.failure?.message.includes('fresh base'),'the scope card of this build round carries scope.blocked with the report',JSON.stringify(F.E.cards.get(sc.id)?.failure?.code));
+  const hook=F.E.cardPrepared['failure-class'],readiness:any={...structuredClone(sc),id:'SC-999',node:'build',kind:'scope',failure:undefined};F.E.cards.save(readiness);
+  hook({run:r,node:{id:'build'},rn:r.nodes.build,visit:r.nodes.build.visits} as any,readiness,{} as any);
+  const stale:any={...structuredClone(sc),id:'SC-998',failure:undefined};F.E.cards.save(stale);const steps=r.steps;r.steps=[...steps,{seq:999,node:'spec',kind:'agent',visit:9,state:'passed'} as any];
+  hook({run:r,node:{id:'scope-card'},rn:r.nodes['scope-card'],visit:1} as any,stale,{} as any);r.steps=steps;
+  ok(!F.E.cards.get('SC-999')?.failure&&!F.E.cards.get('SC-998')?.failure,'a readiness card on the build node, or a scope card after another step, is not stamped with a stale build report');
+ }finally{await F.stop();}
+}
 end();

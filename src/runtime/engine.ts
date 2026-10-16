@@ -29,14 +29,14 @@ import { Cards, emptySections, type CardKind, type SCard, type Sections, type Lo
 import { CheckRegistry, Ledger, Policies, INPUT_HASH_ALGORITHM, coerce, doneMap, execAdapter, hashInput, inputPaths, jsRegex, parseOutput, sandboxed, schemaDefaults, schemaErrors,
   type CheckInput, type CheckManifest, type CheckOutput, type CheckRef, type LedgerEntry, type Native } from "./checks";
 import { briefFor, installRefine } from "./refine";
-import { realInside } from "../secure";
+import { realInside, redactJSON, redactText } from "../secure";
 import { helperCommand, helperReads } from "../self";
 import { entryOf, validate, type WDef, type WEdge, type WNode, type WorkflowDefs } from "./defs";
 import { locatorText, parseFinding, type Finding } from "./locator";
 import { materializeRoundDir, roundWorkPath } from "./round-paths";
 import { composeInstructions, Skills } from "../skills";
 import { OperatingRules, jobInstructions } from "../operating-rules";
-import { ACT, FailureError, FailureRefusal, changedInputs, codeOf, failure, failureActions, failureCardBody, fromError, inputsHash, parseParamEdit, rescopeRefusal, retryRefusal, type Failure, type FailureCode, type InputSnapshot } from "./failures";
+import { ACT, homeless, FailureError, FailureRefusal, changedInputs, codeOf, failure, failureActions, failureCardBody, fromError, inputsHash, parseParamEdit, rescopeRefusal, retryRefusal, type Failure, type FailureCode, type InputSnapshot } from "./failures";
 
 export type NState = "pending" | "running" | "passed" | "failed" | "error" | "skipped" | "superseded";
 export type AgentPick = { provider: string; model: string | null; effort?: string | null };
@@ -248,7 +248,12 @@ export class Engine {
     this.policies = new Policies(deps.dataDir);
     // a failure card shows, live, which inputs changed since it failed (a deterministic retry needs one)
     { const prior = this.cards.view; this.cards.view = (c) => { const v = prior(c); if (c.kind !== "failure" || c.status !== "open" || !c.failure?.inputs) return v;
-      try { const r = this.runs.get(c.run); const node = r?.def.nodes.find((n) => n.id === c.node) ?? null; return r ? { ...v, failureChanged: changedInputs(c.failure.inputs.snapshot, this.failureInputs(r, node)) } as SCard : v; } catch { return v; } }; }
+      try { const r = this.runs.get(c.run); const node = r?.def.nodes.find((n) => n.id === c.node) ?? null; if (!r) return v;
+        // one computation per card while its run is unchanged, at most every few seconds (the board polls every card)
+        const key = `${r.updatedAt}`, hit = this.changedCache.get(c.id);
+        const changed = hit && hit.key === key && Date.now() - hit.at < 5_000 ? hit.value : changedInputs(c.failure.inputs.snapshot, this.failureInputs(r, node));
+        if (!hit || hit.value !== changed) { this.changedCache.set(c.id, { key, at: Date.now(), value: changed }); if (this.changedCache.size > 500) this.changedCache.delete(this.changedCache.keys().next().value!); }
+        return { ...v, failureChanged: changed } as SCard; } catch { return v; } }; }
     this.policies.onChange = () => this.deps.agents.queue.wake();
     this.grants = new Grants(deps.dataDir);
     defs.known ??= (ref) => !!this.registry.get(ref);
@@ -316,6 +321,7 @@ export class Engine {
 
   /** Replay every run from its events; a run that was live when the server stopped resumes from its last durable step. */
   load() {
+    const backoffs: [Run, string][] = [];
     for (const d of readdirSync(this.root).filter((x) => /^R-\d+$/.test(x))) {
       const r = fold(this.events(d)); if (!r) continue;
       this.runs.set(r.id, r); this.committed.set(r.id, clone(r));
@@ -326,7 +332,7 @@ export class Engine {
         if (rn.state !== "running") continue;
         if (rn.waiting === "external") continue;
         // a retry that was waiting out its backoff (failure card): it never started, so it runs now with no visit taken back
-        if ((rn as any).waiting === "backoff") { rn.waiting = null; rn.state = "pending"; delete rn.data.backoffUntil; rn.cause = "recovered: retry after backoff"; if (!r.queue.includes(id)) r.queue.unshift(id); continue; }
+        if ((rn as any).waiting === "backoff") { backoffs.push([r, id]); continue; } // it keeps waiting only the time still left
         if (rn.waiting === "card") {
           const c = rn.card ? this.cards.get(rn.card) : null;
           if (c?.status === "open") continue;                 // still waiting for the captain
@@ -352,6 +358,7 @@ export class Engine {
     }
     for (const r of this.runs.values()) if (!TERMINAL.includes(r.status)) for (const [id, rn] of Object.entries(r.nodes)) if (rn.state === "running" && rn.waiting === "external") this.registerExternal(r, r.def.nodes.find(n => n.id === id)!, rn);
     for (const r of this.runs.values()) if (r.status === "running" || r.status === "waiting" || r.status === "queued") this.tick(r);
+    for (const [r, id] of backoffs) this.scheduleBackoff(r, id);
   }
 
   // ---------- starting ----------
@@ -536,7 +543,7 @@ export class Engine {
       for (const guard of Object.values(this.beforeStart)) { res = await guard(x); if (res) break; }
       if (!res) res = await h.start(x);
       res = await this.afterChecks(x, step, res);
-    } catch (e: any) { err = String(e?.message ?? e).slice(0, 1200); blocked = e?.outcome === "blocked"; thrown = e; } // a RoundBlocked (e.g. a broken shared git config): never retried
+    } catch (e: any) { err = homeless(redactText(String(e?.message ?? e))).slice(0, 1200); blocked = e?.outcome === "blocked"; thrown = e; } // credentials and the home folder go before any cut; a RoundBlocked is never retried
     finally { this.live.delete(key); }
     this.finish(r, node, rn, step, res, err, blocked, thrown);
   }
@@ -678,6 +685,8 @@ export class Engine {
   private stopAll(r: Run, cause: string) {
     for (const [key, owner] of this.externalOwners) if (key.startsWith(r.id + "/")) { owner.cancel(); this.externalOwners.delete(key); }
     this.abortOf(r).abort(); this.aborts.delete(r.id);
+    // what this stop interrupted: a failure card's retry puts these back (parallel siblings, queued nodes), so a join still gets every input
+    r.ctx.stopped = { cause, nodes: Object.entries(r.nodes).filter(([, n]) => n.state === "running").map(([id]) => id), queue: [...r.queue] };
     for (const rn of Object.values(r.nodes)) {
       if (rn.state !== "running" && !r.queue.length) continue;
       if (rn.state === "running") { if (rn.job) this.deps.agents.cancel(rn.job); if (rn.card) { this.cards.cancel(rn.card); this.raising.get(rn.card)?.resolve(); } rn.state = "skipped"; rn.waiting = null; rn.cause = cause; }
@@ -1079,6 +1088,7 @@ export class Engine {
   }
   /** A domain adds what else its node reads (a coffee film adds its input digest). */
   failureInputExtra: (r: Run, node: WNode | null) => InputSnapshot = () => ({});
+  private changedCache = new Map<string, { key: string; at: number; value: ReturnType<typeof changedInputs> }>();
   /** environment probes by code: a string says what is still broken (Fix and retry is refused), null says fixed or unknown */
   failureProbes: Partial<Record<FailureCode, (r: Run) => string | null>> = {};
   /** transient retries wait this long (failures.ts backoffMs); a test may shorten it */
@@ -1113,7 +1123,8 @@ export class Engine {
     if (this.gone.has(r.id)) return null;
     if (f.class === "transient" && node) { const attempt = (r.nodes[node.id].data.failureRetries ?? 0) + 1; f = { ...f, retry: { attempt, backoffMs: this.failureBackoff(attempt) } }; }
     r.failure = f; r.failures = [...(r.failures ?? []), f].slice(-20);
-    const b = failureCardBody(f, { label: node?.label });
+    const ended = r.status === "succeeded"; // a run that ended on a failed outcome: its card offers a new task, it is never revived
+    const b = failureCardBody(f, { label: node?.label, ended });
     const sec = (p: { why: string; how: string }) => ({ ...emptySections(), intent: r.text.split("\n")[0].slice(0, 300) || r.title, ...p });
     let c: SCard | null = null;
     try { c = this.cards.create({ run: r.id, node: node?.id ?? "", visit: node ? r.nodes[node.id].visits : 0, kind: "failure", title: { en: b.title, "zh-TW": b.zhTitle }, sections: { en: sec(b.en), "zh-TW": sec(b.zh) }, body: b.body,
@@ -1135,7 +1146,11 @@ export class Engine {
     if (!f || c.status !== "open" || r.failureCard !== c.id || !TERMINAL.includes(r.status) || r.parked) throw new Error(c.status !== "open" ? `this card is ${c.status}: a card is answered exactly once` : "this failure card is no longer the run's current failure");
     if (!c.options.some((o) => o.id === a.choice)) throw new Error(`choose one of ${c.options.map((o) => o.id).join(", ")}`);
     if (String(a.by).startsWith("auth window")) throw new Error("a failure card is answered by the captain only");
+    // an archived run stays hidden and ended; a run whose evidence does not verify is never revived (like a continuation)
+    if (r.archived) throw new Error("this run is archived: unarchive it before you answer its failure card");
+    if (!this.trusted(r.id).ok) throw new Error("this run's evidence ledger does not verify: it cannot run again");
     const b = this.busy(r.id); if (b) throw new Error(`still finishing: ${b}. Answer again once that is done`);
+    if (r.status === "succeeded" && ![ACT.newTask, ACT.park, ACT.report].includes(a.choice as any)) throw new Error("this run ended: start a new task or park the card");
     const node = r.def.nodes.find((n) => n.id === c.node) ?? null; const note = String(a.note ?? "").trim();
     const refuse = (x: { en: string }) => { throw new FailureRefusal(x as any); };
     let delay = 0, params: Record<string, string> | null = null;
@@ -1143,8 +1158,17 @@ export class Engine {
     if (a.choice === ACT.report) {
       const dir = join(this.deps.dataDir, "failures"); mkdirSync(dir, { recursive: true });
       const file = join(dir, `${r.id}-${c.id}.json`);
-      writeFileSync(file, JSON.stringify({ schema: 1, failure: f, run: { id: r.id, workflow: r.workflow, version: r.version, status: r.status, error: r.error, steps: r.steps.slice(-20), nodes: this.nodeStates(r) }, note: note || null, by: a.by, at: now() }, null, 1));
+      // credentials go first (before any cut), then the home folder: the report is kept and may be shared
+      const report = redactJSON(JSON.parse(JSON.stringify({ schema: 1, failure: f, run: { id: r.id, workflow: r.workflow, version: r.version, status: r.status, error: r.error, steps: r.steps, nodes: this.nodeStates(r) }, note: note || null, by: a.by, at: now() })));
+      report.run.steps = report.run.steps.slice(-20);
+      writeFileSync(file, homeless(JSON.stringify(report, null, 1)));
       const ans = this.cards.answer(c.id, a); this.recordFailure(r, c, "report", { file: `failures/${r.id}-${c.id}.json` }); this.emit(r, "failure_reported", `${f.code}: diagnostics kept in failures/${r.id}-${c.id}.json`, { card: c.id }); return ans;
+    }
+    if (a.choice === ACT.newTask) {
+      const params = Object.fromEntries(Object.entries(r.params).filter(([k]) => !k.startsWith("_")));
+      const next = this.start({ workflow: r.workflow, version: r.version, title: r.title, text: r.text, params, by: a.by }); // staffing and start checks apply as for any new task
+      const ans = this.cards.answer(c.id, a); r.parked = { by: a.by, at: now(), note: `followed by ${next.id}` }; r.ctx.followedBy = next.id;
+      this.recordFailure(r, c, ACT.newTask, { task: next.id }); this.commit(r, `followed by ${next.id}`); this.emit(r, "failure_new_task", `${f.code}: a new task ${next.id} starts from the same request`, { card: c.id, task: next.id }); return ans;
     }
     if (!node) throw new Error("this failure has no step to run again: report it or park it");
     if (a.choice === ACT.retry || a.choice === ACT.fixRetry) {
@@ -1154,29 +1178,56 @@ export class Engine {
     } else if (a.choice === ACT.rescope) {
       const no = rescopeRefusal({ note, previous: r.ctx.failureRescope?.note ?? null, requireConcrete: true }); if (no) refuse(no);
     } else if (a.choice === ACT.editParams) {
-      const known = [...new Set([...Object.keys(r.def.params ?? {}), ...Object.keys(r.params)])];
-      const got = parseParamEdit(note, r.params, Object.keys(r.def.params ?? {}).length ? Object.keys(r.def.params ?? {}) : known.length ? known : null);
+      const got = parseParamEdit(note, r.params, r.def.params ?? null); // only declared, unlocked params, checked against their spec
       if ("code" in got) refuse(got); else params = got.params;
-    } else if (a.choice !== "answer") throw new Error(`choose one of ${c.options.map((o) => o.id).join(", ")}`);
+    } else if (a.choice !== ACT.answer && a.choice !== ACT.prepareAgain) throw new Error(`choose one of ${c.options.map((o) => o.id).join(", ")}`);
     const ans = this.cards.answer(c.id, a);
+    if (a.choice === ACT.prepareAgain) { const from = this.preparationNode(r, node); this.recordFailure(r, c, a.choice, { from: from.id }); r.nodes[node.id].state = "pending"; r.nodes[node.id].routing = null; r.nodes[node.id].data.failure = null; return this.reopenAt(r, c, f, from, a, 0); }
     const rn = r.nodes[node.id];
     if (params) { r.params = { ...r.params, ...params }; }
     if (a.choice === ACT.answer) { rn.data.failureAnswer = { kind: "answer", question: f.message, note }; r.ctx.answers = { ...(r.ctx.answers ?? {}), [node.id]: ans.answer }; }
     else if (a.choice === ACT.rescope) { rn.data.failureAnswer = { kind: "rescope", question: f.message, note }; r.ctx.failureRescope = { node: node.id, note, at: now() }; }
     else delete rn.data.failureAnswer;
     this.recordFailure(r, c, a.choice, params ? { params } : {});
-    // the run goes on from the same step: nothing else is reset, every earlier step and record stays
+    return this.reopenAt(r, c, f, node, a, delay);
+  }
+  /** The node a fresh preparation goes back to: the step before the card that led here, so that card's edge checks (gates) run again and a new card is raised. */
+  preparationNode(r: Run, node: WNode): WNode {
+    const visited = (id: string) => (r.nodes[id]?.visits ?? 0) > 0;
+    const pred = (n: WNode) => r.def.edges.filter((e) => e.to === n.id && visited(e.from)).map((e) => r.def.nodes.find((x) => x.id === e.from)!).find(Boolean) ?? null;
+    let p = pred(node); if (!p) return node;
+    if (p.kind === "card") { const q = pred(p); if (q) p = q; }
+    return p;
+  }
+  /** The run goes on from `node`: nothing else is reset, every earlier step and record stays. Siblings the failure stopped run again too. */
+  private reopenAt(r: Run, c: SCard, f: Failure, node: WNode, a: { choice: string }, delay: number) {
+    const rn = r.nodes[node.id]; const ans = this.cards.get(c.id)!;
     r.status = "running"; r.result = null; r.endedAt = null; r.error = null; r.failureCard = null; r.queue = [];
     rn.state = "pending"; rn.waiting = null; rn.card = null; rn.attempt = 0; rn.routing = null; rn.data.failure = null;
+    // the failure stopped the run's other live work (parallel siblings, queued nodes): it runs again, so joins downstream get every input
+    const stopped = r.ctx.stopped ?? { nodes: [], queue: [] }; const again: string[] = [];
+    for (const id of stopped.nodes as string[]) { const sib = r.nodes[id]; if (id === node.id || !sib || sib.state !== "skipped") continue;
+      sib.state = "pending"; sib.waiting = null; sib.card = null; sib.job = null; sib.routing = null; sib.visits = Math.max(0, sib.visits - 1); sib.cause = `re-queued: stopped by the failure, ${a.choice} on ${c.id}`; again.push(id); }
+    for (const id of stopped.queue as string[]) if (id !== node.id && r.nodes[id]?.state === "pending" && !again.includes(id)) again.push(id);
+    delete r.ctx.stopped;
     if (node.max_visits && rn.visits >= node.max_visits + (rn.extra ?? 0)) rn.extra = (rn.extra ?? 0) + 1;
     rn.data.failureRetries = (rn.data.failureRetries ?? 0) + 1; this.aborts.delete(r.id);
-    rn.cause = delay ? `retry after ${Math.round(delay / 1000)} s (backoff)` : `${a.choice} on ${c.id}`;
-    this.commit(r, rn.cause); this.emit(r, "failure_retry", `${node.label}: ${a.choice} after ${f.class} · ${f.code}${delay ? ` (waits ${Math.round(delay / 1000)} s)` : ""}`, { node: node.id, card: c.id, choice: a.choice, delayMs: delay });
-    const go = () => { if (this.runs.get(r.id) !== r || this.gone.has(r.id) || TERMINAL.includes(r.status) || rn.state !== "pending") return; if (!r.queue.includes(node.id)) r.queue.push(node.id); this.tick(r); };
-    if (delay) { rn.state = "running"; (rn as any).waiting = "backoff"; rn.data.backoffUntil = new Date(Date.now() + delay).toISOString(); r.status = "waiting"; this.commit(r, "backoff");
-      setTimeout(() => { if (rn.state === "running" && (rn as any).waiting === "backoff") { rn.state = "pending"; rn.waiting = null; delete rn.data.backoffUntil; go(); } }, delay); }
-    else go();
+    const wait = delay >= 60_000 ? `${Math.round(delay / 60_000)} min` : `${Math.round(delay / 1000)} s`;
+    rn.cause = delay ? `retry after ${wait} (backoff)` : `${a.choice} on ${c.id}`;
+    this.commit(r, rn.cause); this.emit(r, "failure_retry", `${node.label}: ${a.choice} after ${f.class} · ${f.code}${delay ? ` (waits ${wait})` : ""}`, { node: node.id, card: c.id, choice: a.choice, delayMs: delay });
+    if (delay) { rn.state = "running"; (rn as any).waiting = "backoff"; rn.data.backoffUntil = new Date(Date.now() + delay).toISOString(); rn.data.backoffAlso = again; r.status = "waiting"; this.commit(r, "backoff"); this.scheduleBackoff(r, node.id); }
+    else { for (const id of [node.id, ...again]) if (!r.queue.includes(id) && r.nodes[id]?.state === "pending") r.queue.push(id); this.tick(r); }
     return ans;
+  }
+  /** A transient retry waits out its backoff (also after a restart: only the time still left), then runs with the siblings the failure stopped. */
+  private scheduleBackoff(r: Run, id: string) {
+    const rn = r.nodes[id]; const left = Math.max(0, Date.parse(rn.data.backoffUntil ?? "") - Date.now() || 0);
+    setTimeout(() => {
+      if (this.runs.get(r.id) !== r || this.gone.has(r.id) || TERMINAL.includes(r.status) || rn.state !== "running" || (rn as any).waiting !== "backoff") return;
+      const also: string[] = rn.data.backoffAlso ?? []; rn.state = "pending"; rn.waiting = null; delete rn.data.backoffUntil; delete rn.data.backoffAlso;
+      for (const n of [id, ...also]) if (!r.queue.includes(n) && r.nodes[n]?.state === "pending") r.queue.push(n);
+      r.status = "running"; this.commit(r, "backoff over"); this.tick(r);
+    }, left);
   }
   private recordFailure(r: Run, c: SCard, choice: string, extra: Record<string, unknown> = {}) {
     const node = r.def.nodes.find((n) => n.id === c.node) ?? r.def.nodes[0]; if (!node) return;

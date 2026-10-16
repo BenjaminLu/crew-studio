@@ -286,7 +286,7 @@ export function createRuntime(d: RuntimeDeps) {
         const refuse = (o: Record<string, unknown>, st: number, code: FailureCode) => json({ ...o, failure: failure(code, String(o.error ?? ""), { source: "params" }) }, st);
         const text = String(b?.text ?? "").trim(); if (!text && !b?.workflow) return refuse({ error: "say what you want done" }, 400, "invalid-input.params");
         const cls = classifyIntent(defs, text, engine.policies.get("sensitive_paths", { project: b?.params?.project ? String(b.params.project) : b?.project ? String(b.project) : null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []);
-        const wf = b?.workflow || cls.workflow; if (!wf) return refuse({ error: "Studio could not tell which workflow this is: pick one", classifier: cls }, 409, "ask.captain-decision");
+        const wf = b?.workflow || cls.workflow; if (!wf) return refuse({ error: "Studio could not tell which workflow this is: pick one", classifier: cls }, 409, "invalid-input.params");
         {const held=defs.held(wf);if(held)return refuse({error:`This workflow is ${held.en}. It stays in the catalog for editing. / 此流程${held.zh}，仍可在流程目錄中編輯。`,code:"workflow_held",held},409,"invalid-input.config");}
         if(!defs.selectable(wf,b?.version?Number(b.version):undefined))return refuse({error:"This workflow is internal or retired. Choose an available workflow. / 此流程為內部或已退役流程，請選擇可用流程。",code:"workflow_unavailable"},409,"invalid-input.config");
         let params={...(b?.params??{})};delete params._ownStaffing;
@@ -294,7 +294,7 @@ export function createRuntime(d: RuntimeDeps) {
         if(ownWorkflow(chosenDef)&&ownStaffingPlan(chosenDef!).plan.length){ // nothing to staff: a card-only workflow just starts
           const staffing=ownStaffingPlan(chosenDef!);
           if(staffing.missing.length)return refuse({error:'Choose a provider, model and (for Codex) effort for every agent node before Run / 執行前請為每個代理節點選擇供應商、模型與（Codex）推理強度',code:'staffing_incomplete',staffing},409,"env.staffing");
-          if(b?.staffingConfirm!==staffing.hash)return refuse({error:'Confirm who works on each node before this Task starts / 開始任務前請確認每個節點的人員配置',code:'staffing_confirmation_required',staffing},409,"ask.captain-decision");
+          if(b?.staffingConfirm!==staffing.hash)return refuse({error:'Confirm who works on each node before this Task starts / 開始任務前請確認每個節點的人員配置',code:'staffing_confirmation_required',staffing},409,"env.staffing");
           params._ownStaffing=staffing.hash;
         }
         if(boardStaffed(chosenDef)){

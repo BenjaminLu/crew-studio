@@ -3,6 +3,7 @@
 //   bun tests/failures.ts
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { harness, suite, until, Y } from "./rt-harness";
 const { ok, end } = suite("failures");
 const F = await import("../src/runtime/failures");
@@ -11,14 +12,28 @@ const root = join(import.meta.dir, "..");
 const flows: string[] = [];
 const W = (o: any) => { flows.push(Y({ roles: [{ id: "worker", label: "Worker", skill: "x" }], ...o })); return o.id; };
 // one step that fails the way the run's "mode" param says, then succeeds once the captain's action changed what it needs
-W({ id: "fx", name: "failure fixture", params: { mode: { default: "" }, want: { default: "fail" } }, nodes: [
+W({ id: "fx", name: "failure fixture", params: { mode: { default: "" }, want: { default: "fail", options: ["pass", "fail", "maybe"] }, project: { default: "p1" } }, nodes: [
   { id: "act", kind: "hook", label: "Act", do: "act", x: 0, y: 0 }, { id: "end", kind: "hook", label: "End", x: 1, y: 0 }], edges: [["act", "end", "ok"]] });
 W({ id: "ag", name: "agent asks", nodes: [{ id: "build", kind: "agent", label: "Build", role: "worker", mode: "asker", x: 0, y: 0 }, { id: "end", kind: "hook", label: "End", x: 1, y: 0 }], edges: [["build", "end", "ok"]] });
+// a → (b, c) → d (join all): b fails while c still runs
+W({ id: "par", name: "parallel join", nodes: [{ id: "a", kind: "hook", label: "A", do: "set", args: { key: "a", value: 1 }, x: 0, y: 0 },
+  { id: "b", kind: "hook", label: "B", do: "flaky", x: 1, y: 0 }, { id: "c", kind: "hook", label: "C", do: "slow", x: 1, y: 1 },
+  { id: "d", kind: "hook", label: "D", do: "set", args: { key: "joined", value: true }, join: "all", x: 2, y: 0 }, { id: "end", kind: "hook", label: "End", x: 3, y: 0 }],
+  edges: [["a", "b"], ["a", "c"], ["b", "d"], ["c", "d"], ["d", "end"]] });
+// p → k (card) → m: m fails because something changed after the card; a fresh preparation goes back to p
+W({ id: "pg", name: "prepare again", nodes: [{ id: "p", kind: "hook", label: "Prepare", do: "set", args: { key: "prepared", value: true }, x: 0, y: 0 },
+  { id: "k", kind: "card", label: "Merge card", card: { title: "Merge?", body: "merge", options: [{ id: "merge", label: "Merge", primary: true }] }, x: 1, y: 0 },
+  { id: "m", kind: "hook", label: "Merge", do: "merge-once", x: 2, y: 0 }, { id: "end", kind: "hook", label: "End", x: 3, y: 0 }], edges: [["p", "k"], ["k", "m", "merge"], ["m", "end", "ok"]] });
+// a run whose last step fails ends "succeeded · fail": it is never revived
+W({ id: "endfail", name: "ends on fail", nodes: [{ id: "only", kind: "hook", label: "Only", do: "act", x: 0, y: 0 }], edges: [] });
 const H = await harness(flows);
 const E = H.engine;
 let envFixed = false;
 E.failureBackoff = () => 60; // the real schedule is 5 s, 30 s, 2 min, 10 min: shortened here
 E.failureProbes["env.test-command"] = () => (envFixed ? null : "package.json still has no scripts.test");
+E.actions.flaky = (x) => { x.run.ctx.flakyTries = (x.run.ctx.flakyTries ?? 0) + 1; if (x.run.ctx.netOk) return "ok"; throw new Error("fetch failed: ECONNRESET"); };
+E.actions.slow = async (x) => { x.run.ctx.slowRuns = (x.run.ctx.slowRuns ?? 0) + 1; await new Promise((res) => setTimeout(res, 300)); return "ok"; };
+E.actions["merge-once"] = (x) => { x.run.ctx.mergeTries = (x.run.ctx.mergeTries ?? 0) + 1; if (x.run.ctx.mergeTries > 1) return "ok"; throw new Error(x.run.params.mode === "door" ? "a one-way change needs the door confirmation on the merge card" : "the branch moved since the six gates ran"); };
 E.actions.act = (x) => {
   const m = x.run.params.mode, fa = x.rn.data.failureAnswer;
   if (m === "ask") return fa?.kind === "answer" ? "ok" : { outcome: "ask", note: "Which currency does the total use?" };
@@ -27,6 +42,8 @@ E.actions.act = (x) => {
   if (m === "det") return x.run.params.want === "pass" ? "ok" : { outcome: "fail", note: "totals.check: fail — 1235 JPY shows as $12.35" };
   if (m === "scope") { if (fa?.kind === "rescope" && /src\/fx\.ts/.test(fa.note)) return "ok"; throw new Error("src/fx.ts is outside the spec's scope"); }
   if (m === "params") { if (x.run.params.want === "pass") return "ok"; throw new Error("params: want must be pass or fail, not " + x.run.params.want); }
+  if (m === "stale") throw new Error("approved lane image changed");
+  if (m === "secret") throw new Error(`boom at ${homedir()}/work/x.ts ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij12`);
   if (m === "internal") throw new Error("kaboom: the act step met a state nobody planned for sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
   return "ok";
 };
@@ -155,7 +172,7 @@ const keep = (c: any) => { shown.push(c); shownViews.push(E.cards.view(E.cards.g
 { const cases: [unknown, string][] = [
     [Object.assign(new Error("provider capability is unverified: codex; hold without fallback"), { providerRefusal: true }), "env.provider-unavailable"],
     [Object.assign(new Error("scope held by R-12 until verified merge"), { queueRefusal: true }), "scope.overlap"],
-    [Object.assign(new Error("remote X and last hand-back diverged: decide which work to keep"), { outcome: "blocked" }), "ask.captain-decision"],
+    [Object.assign(new Error("remote X and last hand-back diverged: decide which work to keep"), { outcome: "blocked" }), "ask.one-way"],
     [Object.assign(new Error("inputs are unchanged since the failed check"), { name: "HyperframesFailure", code: "unchanged-inputs", cleanupSafe: true }), "deterministic.unchanged"],
     [Object.assign(new Error("HyperFrames check failed"), { name: "HyperframesFailure", code: "command-failed", cleanupSafe: true }), "deterministic.film"],
     [new Error("You exceeded your current quota"), "env.quota"], [new Error("429 Too Many Requests"), "transient.rate-limit"], [new Error("Not logged in · Please run /login"), "env.login"],
@@ -177,6 +194,90 @@ const keep = (c: any) => { shown.push(c); shownViews.push(E.cards.view(E.cards.g
   // tests/failures-ui.mjs renders these real cards (as /api/scards serves them) in en and zh-TW
   const emit = process.argv.indexOf("--emit"); if (emit > 0) writeFileSync(process.argv[emit + 1], JSON.stringify(shownViews));
 }
+// ---------- round 2: the review's blocking and should-fix items ----------
+// (1) a retry brings back the siblings the failure stopped, so a join gets every input
+{ const r = E.start({ workflow: "par", text: "join" }); await until(() => !!E.get(r.id)!.failureCard, 10000); const c = cardOf(r.id);
+  ok(c.failure?.code === "transient.network" && E.get(r.id)!.nodes.c.state === "skipped", "join: b fails while c runs; the failure stopped c", JSON.stringify([c.failure?.code, E.get(r.id)!.nodes.c.state]));
+  await until(() => !E.busy(r.id), 5000); E.get(r.id)!.ctx.netOk = true;
+  await E.answer(c.id, { choice: "retry", by: "captain" }); await until(() => ["succeeded", "failed"].includes(E.get(r.id)!.status) && !E.get(r.id)!.failureCard?.startsWith("x"), 10000);
+  const done = E.get(r.id)!;
+  ok(done.status === "succeeded" && done.ctx.joined === true && done.ctx.slowRuns === 2 && !done.failures?.some((f: any) => f.code === "internal.bug"), "join: Retry re-runs b and the stopped sibling c; d gets both inputs and the run succeeds (no stall)", JSON.stringify([done.status, done.ctx.joined, done.ctx.slowRuns, done.failure?.code, done.error]));
+}
+// (2) the Report file is redacted before any cut, home folder as ~
+{ const r = start("secret"); await failed(r.id); const c = cardOf(r.id); const run = E.get(r.id)!;
+  run.steps.at(-1)!.note = "token sk-ant-api03-ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ in a step note"; run.error = `R failed: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij34 at ${homedir()}/x`;
+  ok(!c.failure!.message.includes("ghp_ABCDEFGHIJ") && !c.failure!.message.includes(homedir()) && c.failure!.message.includes("~/work/x.ts"), "report: the card message has no token and no home path", c.failure!.message);
+  await E.answer(c.id, { choice: "report", by: "captain" });
+  const text = readFileSync(join(H.data, "failures", `${r.id}-${c.id}.json`), "utf8");
+  ok(!/sk-ant-api03-Z|ghp_ABCDEFGHIJ/.test(text) && !text.includes(homedir()) && text.includes("~/x"), "report: the kept report holds no credential and no home path", text.match(/(sk-ant|ghp_|\/Users\/)[^"]{0,30}/)?.[0]);
+}
+// (3) an archived run, or one whose ledger does not verify, is never revived
+{ const r = start("det"); await failed(r.id); const c = cardOf(r.id); await until(() => !E.busy(r.id));
+  E.archive(r.id, true);
+  const e = await refusal(c.id, { choice: "edit-params", note: "want=pass" });
+  ok(!!e && /archived/.test(e.message) && E.get(r.id)!.status === "failed" && E.get(r.id)!.archived === true && E.cards.get(c.id)!.status === "open", "archived: answering a failure card of an archived run is refused; it stays failed and hidden", e?.message);
+  E.archive(r.id, false);
+  mkdirSync(join(H.data, "evidence", r.id), { recursive: true }); writeFileSync(join(H.data, "evidence", r.id, "ledger.jsonl"), JSON.stringify({ seq: 1, run: r.id, record: "card-answer", sig: "forged" }) + "\n", { flag: "a" });
+  const e2 = await refusal(c.id, { choice: "edit-params", note: "want=pass" });
+  ok(!!e2 && /does not verify/.test(e2.message) && E.get(r.id)!.status === "failed", "untrusted: a run whose ledger does not verify cannot run again", e2?.message);
+}
+// (4) Edit params: only declared, unlocked params, checked against their spec
+{ const r = start("params", { want: "maybe" }); await failed(r.id); const c = cardOf(r.id);
+  const tries = [["_staffing=forged", /not accepted: _staffing/], ["project=other", /not accepted: project/], ["target=/tmp/x", /not accepted: target/], ["want=nope", /want \(not one of pass, fail, maybe\)/]] as const;
+  const got = [] as string[]; for (const [note] of tries) got.push((await refusal(c.id, { choice: "edit-params", note }))?.message ?? "taken");
+  ok(tries.every(([, re], i) => re.test(got[i])) && E.get(r.id)!.params.project === "p1" && !E.get(r.id)!.params._staffing, "params: _-prefixed and identity keys are refused, and a value outside the declared options is refused", JSON.stringify(got));
+  ok(/Known: mode, want\./.test(got[0]) && F.parseParamEdit("x=1", {}, null).code === "bad-params", "params: only declared params are offered; a workflow with none has nothing to edit");
+}
+// (6) a restart honours the backoff time still left
+{ const r = start("transient"); await failed(r.id); const c = cardOf(r.id); E.failureBackoff = () => 1500;
+  E.get(r.id)!.ctx.netOk = true; E.commit(E.get(r.id)!); await E.answer(c.id, { choice: "retry", by: "captain" }); E.failureBackoff = () => 60;
+  const until0 = Date.parse(E.get(r.id)!.nodes.act.data.backoffUntil); E.runs.delete(r.id); // the old process is gone
+  const H2 = await harness(flows, { data: H.data }); const E2 = H2.engine; E2.actions.act = E.actions.act; E2.load();
+  await new Promise((res) => setTimeout(res, 400));
+  ok(E2.get(r.id)!.status === "waiting" && (E2.get(r.id)!.nodes.act as any).waiting === "backoff" && E2.get(r.id)!.nodes.act.data.backoffUntil, "restart: a retry waiting out its backoff keeps waiting after a restart", JSON.stringify([E2.get(r.id)!.status, E2.get(r.id)!.nodes.act.waiting]));
+  await until(() => E2.get(r.id)!.status === "succeeded", 5000);
+  ok(E2.get(r.id)!.status === "succeeded" && Date.now() >= until0, "restart: it runs once the time still left is over, not before");
+  H2.stop();
+}
+// (7) a change after the gates or after approval: the card offers what works, never Retry or Answer
+{ const codes = ["the branch moved since the six gates ran", "remote checks changed before merge", "a one-way change needs the door confirmation on the merge card", "reviewed move identity changed or predates pinning; prepare a new task", "approved lane image changed"].map((m) => F.fromError(new Error(m)).code);
+  const native = F.fromError(Object.assign(new Error("This proposal already dispatched work that was removed; never replay it"), { publicFailure: { code: "target_changed" } })).code;
+  ok(JSON.stringify(codes) === JSON.stringify(["deterministic.prepare-again", "deterministic.prepare-again", "deterministic.prepare-again", "deterministic.new-task", "deterministic.new-task"]) && native === "deterministic.new-task", "classify: moved gates, changed checks and a missing door confirmation need a fresh preparation; a changed approval needs a new task", JSON.stringify([codes, native]));
+  ok(F.failureActions("deterministic", "deterministic.prepare-again").map((o) => o.id).join() === "prepare-again,park" && F.failureActions("deterministic", "deterministic.new-task").map((o) => o.id).join() === "new-task,park", "classify: those cards offer Prepare again or Start a new task, and Park");
+  for (const mode of ["gates", "door"]) {
+    const r = E.start({ workflow: "pg", text: `prepare ${mode}`, params: { mode } }); await until(() => E.cards.list({ run: r.id, open: true }).length > 0); await E.answer(E.cards.list({ run: r.id, open: true })[0].id, { choice: "merge", by: "captain" });
+    await failed(r.id); const c = cardOf(r.id);
+    ok(c.failure?.code === "deterministic.prepare-again" && ids(c) === "prepare-again,park", `prepare (${mode}): the failed merge offers Prepare again, not Retry or Answer and continue`, JSON.stringify([c.failure?.code, ids(c)]));
+    await E.answer(c.id, { choice: "prepare-again", by: "captain" });
+    await until(() => E.cards.list({ run: r.id, open: true }).some((k) => k.node === "k"));
+    const k2 = E.cards.list({ run: r.id, open: true }).find((k) => k.node === "k")!;
+    ok(E.get(r.id)!.nodes.p.visits === 2 && E.get(r.id)!.ctx.mergeTries === 1, `prepare (${mode}): it goes back before the card, and the merge waits for a new card`, JSON.stringify([E.get(r.id)!.nodes.p.visits, E.get(r.id)!.ctx.mergeTries]));
+    await E.answer(k2.id, { choice: "merge", by: "captain" }); await until(() => E.get(r.id)!.status === "succeeded");
+    ok(E.get(r.id)!.status === "succeeded", `prepare (${mode}): the new card's answer merges`);
+  }
+  const r = start("stale"); await failed(r.id); const c = cardOf(r.id);
+  ok(c.failure?.code === "deterministic.new-task" && ids(c) === "new-task,park", "new task: a changed approval offers Start a new task", ids(c));
+  await E.answer(c.id, { choice: "new-task", by: "captain" });
+  const next = E.get(E.get(r.id)!.ctx.followedBy)!;
+  ok(!!next && next.id !== r.id && next.params.mode === "stale" && E.get(r.id)!.parked?.note === `followed by ${next.id}` && E.get(r.id)!.status === "failed", "new task: a new task starts with the same request and params; this one is parked", JSON.stringify([next?.id, E.get(r.id)!.parked]));
+  await until(() => !!E.get(next.id)!.failureCard);
+}
+// (9) a run that ends "succeeded · fail" is never revived; its card says so and offers a new task
+{ const r = E.start({ workflow: "endfail", text: "ends on fail", params: { mode: "det" } }); await until(() => !!E.get(r.id)!.failureCard); const c = cardOf(r.id);
+  ok(E.get(r.id)!.status === "succeeded" && E.get(r.id)!.result === "fail" && ids(c) === "new-task,park" && /ended on this result/.test(c.sections.en.how) && !/stays failed/.test(c.sections.en.how), "ended: the card of a run that ended on fail offers a new task and says it does not run again", JSON.stringify([ids(c), c.sections.en.how]));
+  const e = await refusal(c.id, { choice: "retry" });
+  ok(!!e && E.get(r.id)!.status === "succeeded" && E.get(r.id)!.nodes.only.visits === 1, "ended: a retry on it is refused; the run is not revived", e?.message);
+}
+// (13) the board's poll reads the changed inputs once per card while the run is unchanged
+{ const r = start("det"); await failed(r.id); const c = cardOf(r.id); let n = 0; const orig = E.failureInputs.bind(E); E.failureInputs = (...a: any[]) => { n++; return orig(...(a as [any, any])); };
+  for (let i = 0; i < 5; i++) E.cards.view(E.cards.get(c.id)!);
+  ok(n === 1, "view: five board polls compute the changed inputs once", String(n)); E.failureInputs = orig;
+}
+// (10) the card body does not repeat the failure box; zh cards carry no English body or stack
+{ const internal = shown.find((c: any) => c.failure.class === "internal");
+  ok(shown.every((c: any) => c.body === "") && !!internal.failure.diagnostics.stack, "card: no duplicate body; the stack lives only in the diagnostics");
+}
+
 // ---------- a restart keeps the typed failure, its card and an edited param ----------
 { const r = start("params", { want: "maybe" }); await failed(r.id); const c = cardOf(r.id);
   const H2 = await harness(flows, { data: H.data }); const E2 = H2.engine; E2.actions.act = E.actions.act; E2.load();

@@ -17,8 +17,11 @@ export function installCodeRecovery(engine:Engine,W:Worktrees){
   const descriptor=(c:any,rec:any,target:string,extra:ReturnType<typeof relation>)=>({version:1 as const,card:c.id,visit:c.visit,base:rec.base,from:rec.head,target,...extra});
   // the scope card a worker's report raises carries the report's class: a question (ASK) is never a scope conflict
   engine.cardPrepared['failure-class']=(x,card)=>{
-    if(card.kind!=='scope'||x.run.workflow!=='code-firstmate'&&!x.run.def.nodes.some(n=>n.do==='git.merge'))return;
-    const rep=x.run.nodes.build?.data?.report;if(!rep?.marker||!['ASK','SCOPE-BLOCKED','DOOR-CHANGE','BLOCKED'].includes(rep.marker))return;
+    if(card.kind!=='scope'||card.node!=='scope-card'||x.node.id!=='scope-card'||x.run.workflow!=='code-firstmate'&&!x.run.def.nodes.some(n=>n.do==='git.merge'))return;
+    // only the report of the build round that raised this very card: the step before this card's is that build visit (never a readiness card, never an older round)
+    const steps=x.run.steps.filter(s=>s.node!=='scope-card'),last=steps.at(-1),build=x.run.nodes.build;
+    if(!last||last.node!=='build'||!build||last.visit!==build.visits)return;
+    const rep=build.data?.report;if(!rep?.marker||!['ASK','SCOPE-BLOCKED','DOOR-CHANGE','BLOCKED'].includes(rep.marker))return;
     const msg=String(rep.summary??rep.marker);
     const typed=rep.marker==='ASK'?failure('ask.agent-question',msg,{source:'agent',run:x.run.id,node:'build'}):rep.marker==='BLOCKED'?fromError(Object.assign(new Error(msg),{outcome:'blocked'}),{source:'agent',run:x.run.id,node:'build'}):failure('scope.blocked',msg,{source:'agent',run:x.run.id,node:'build'});
     const cur=engine.cards.get(card.id);if(!cur)return;cur.failure=typed;card.failure=typed;engine.cards.save(cur); // the stored card keeps its STE result

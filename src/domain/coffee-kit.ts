@@ -282,7 +282,7 @@ export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; 
     requireOwner(x); requireChoice(x);if(coffeeNeeds(x,d.artifacts,'video')==='current')return 'ok'; const p = productionPlan(x), generation = p.generations.video;
     if (!d.video) {x.rn.note='HyperFrames rendering is unavailable. No playable film is offered.';x.rn.data.filmFailure=failure('env.renderer',x.rn.note,{source:'render',run:x.run.id,node:x.node.id,visit:x.visit}); return 'unavailable';}
     const image = coffeeReceipt(x,d.artifacts,'image'), page = coffeeReceipt(x,d.artifacts,'page');
-    if (trustedCoffee(x).some(e => e.record === 'coffee-operation-v1' && e.data?.part === 'video' && e.data?.generation === generation)) {x.rn.note='A prior render operation needs explicit recovery.';x.rn.data.filmFailure=failure('ask.captain-decision',x.rn.note,{source:'render',run:x.run.id,node:x.node.id,visit:x.visit});return 'unavailable';}
+    if (trustedCoffee(x).some(e => e.record === 'coffee-operation-v1' && e.data?.part === 'video' && e.data?.generation === generation)) {x.rn.note='A prior render operation needs explicit recovery.';x.rn.data.filmFailure=failure('deterministic.prepare-again',x.rn.note,{source:'render',run:x.run.id,node:x.node.id,visit:x.visit});return 'unavailable';}
     const admission = engine.deps.agents.admission; if(!admission)throw new Error('Coffee render capacity admission unavailable');
     const request=admission({ref:x.run.id},`${x.run.id}/${x.node.id}#${x.visit}/coffee-video`),ready=request.ready;
     request.ready=()=>{requireOwner(x);requireChoice(x);return ready();};

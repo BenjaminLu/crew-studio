@@ -15,6 +15,7 @@
 // Sources classify where the failure happens (FailureError, failure()); anything that reaches the engine without a
 // class is classified by its words, and what no rule recognizes is "internal" with full diagnostics.
 import { createHash } from "node:crypto";
+import { homedir } from "node:os";
 import { redactText } from "../secure";
 
 export const FAILURE_CLASSES = ["ask", "environment", "scope", "transient", "deterministic", "invalid-input", "internal"] as const;
@@ -27,7 +28,7 @@ type CodeInfo = { class: FailureClass; title: FText; meaning: FText; fix?: FText
 /** Every typed code. The class of a code never changes; new failures get a new code. */
 export const FAILURE_CODES = {
   "ask.agent-question": { class: "ask", title: t("The agent asks a question", "agent 提出問題"), meaning: t("The agent stopped to ask you a question. It is not a scope conflict.", "agent 停下來問你一個問題；這不是範圍衝突。") },
-  "ask.captain-decision": { class: "ask", title: t("A decision is needed", "需要你做決定"), meaning: t("The work cannot go on without your decision.", "沒有你的決定，工作無法繼續。") },
+  "ask.one-way": { class: "ask", title: t("A one-way choice is needed", "需要一個單向的選擇"), meaning: t("Two versions of the work diverged. Keeping one discards the other, so only you can pick.", "工作的兩個版本分岔了。保留一個就會捨棄另一個，所以只能由你決定。") },
   "env.login": { class: "environment", title: t("Sign-in is missing", "缺少登入"), meaning: t("The provider refused the sign-in, or no account is signed in.", "供應商拒絕登入，或沒有帳號登入。"),
     fix: t("Sign in again on the provider's account card.", "請在供應商的帳號卡片重新登入。"), where: t("Board → Accounts (the Codex or Claude card)", "Board → 帳號（Codex 或 Claude 卡片）") },
   "env.quota": { class: "environment", title: t("Usage quota is used up", "用量額度已用完"), meaning: t("The provider account has no quota left for this round.", "供應商帳號沒有剩餘額度可跑這一輪。"),
@@ -41,9 +42,9 @@ export const FAILURE_CODES = {
   "env.permission": { class: "environment", title: t("Permission was refused", "權限被拒絕"), meaning: t("Studio has no permission for a path, a tool or a network address this step needs.", "Studio 沒有這一步需要的路徑、工具或網路位址的權限。"),
     fix: t("Grant the permission the message names, then retry.", "請開啟訊息中提到的權限，再重試。"), where: t("The path or grant named in the message", "訊息中提到的路徑或授權") },
   "env.provider-unavailable": { class: "environment", title: t("No verified provider", "沒有已驗證的供應商"), meaning: t("No provider has a verified sign-in, quota and model for this round.", "沒有供應商的登入、額度和模型都已驗證，可以跑這一輪。"),
-    fix: t("Verify a provider, or pick a model the provider supports.", "請驗證一個供應商，或選一個供應商支援的模型。"), where: t("Settings → Doctor, and the task's staffing", "Settings → Doctor，以及任務的人員配置") },
+    fix: t("Verify a provider, or pick a model the provider supports.", "請驗證一個供應商，或選一個供應商支援的模型。"), where: t("Settings → Doctor, and the task's staffing", "設定 → Doctor 檢查頁，以及任務的人員配置") },
   "env.staffing": { class: "environment", title: t("Staffing is not ready", "人員配置尚未就緒"), meaning: t("A role of this workflow has no approved provider or model.", "這個工作流程有角色沒有核准的供應商或模型。"),
-    fix: t("Approve a provider and model for every role.", "請為每個角色核准供應商和模型。"), where: t("The task's staffing card, or Settings → Staffing", "任務的人員配置卡，或 Settings → Staffing") },
+    fix: t("Approve a provider and model for every role.", "請為每個角色核准供應商和模型。"), where: t("The task's staffing card, or Settings → Staffing", "任務的人員配置卡，或 設定 → 人員配置") },
   "env.renderer": { class: "environment", title: t("The film renderer is not available", "影片渲染工具無法使用"), meaning: t("HyperFrames or its browser is not installed at the pinned version.", "HyperFrames 或它的瀏覽器沒有安裝在指定版本。"),
     fix: t("Install the film renderer, then restart Studio.", "請安裝影片渲染工具，再重新啟動 Studio。"), where: t("Settings → Doctor (HyperFrames)", "設定 → Doctor 檢查頁（HyperFrames）") },
   "env.repository": { class: "environment", title: t("The repository is not usable", "儲存庫無法使用"), meaning: t("The repository, branch or worktree this step needs is missing or cannot be read.", "這一步需要的儲存庫、branch 或 worktree 不存在或無法讀取。"),
@@ -60,6 +61,8 @@ export const FAILURE_CODES = {
   "deterministic.round-cap": { class: "deterministic", title: t("The round cap is reached", "已達回合上限"), meaning: t("The step used all of its rounds and still did not pass.", "這一步用完所有回合，仍然沒有通過。") },
   "deterministic.agent-result": { class: "deterministic", title: t("The agent's result was refused", "agent 的結果被拒絕"), meaning: t("The agent finished, but its result did not meet the step's rule.", "agent 做完了，但結果不符合這一步的規則。") },
   "deterministic.film": { class: "deterministic", title: t("The film did not pass its checks", "影片沒有通過檢查"), meaning: t("The film was made, but its checks failed on these inputs. No verified film was offered.", "影片做出來了，但在這組輸入上沒有通過檢查，所以沒有提供已驗證的影片。") },
+  "deterministic.prepare-again": { class: "deterministic", title: t("The step needs a fresh preparation", "這一步需要重新準備"), meaning: t("Something changed after the gates or the card were prepared: the branch, its checks, or a confirmation the card did not get. Running this step again fails the same way.", "gate 或卡片準備好之後有東西改變了：branch、它的檢查，或卡片少了一個確認。直接重跑這一步會用同樣的方式失敗。") },
+  "deterministic.new-task": { class: "deterministic", title: t("What was approved has changed", "已核准的內容改變了"), meaning: t("An approved plan, artifact or launched work changed or is gone after review. This task cannot go on from it.", "審查後，已核准的方案、作品或已派出的工作改變了或不見了。這個任務無法再從它繼續。") },
   "deterministic.unchanged": { class: "deterministic", title: t("Nothing changed since the last failure", "和上次失敗相比沒有任何改變"), meaning: t("The inputs are identical to the last failed attempt, so Studio did not run it again.", "輸入和上次失敗時完全相同，所以 Studio 沒有再跑一次。") },
   "invalid-input.params": { class: "invalid-input", title: t("A task parameter is invalid", "任務參數無效"), meaning: t("A parameter of this task has a value the workflow refuses.", "這個任務有參數的值被工作流程拒絕。") },
   "invalid-input.config": { class: "invalid-input", title: t("The configuration is invalid", "設定無效"), meaning: t("A workflow, policy or project setting is invalid.", "工作流程、policy 或專案設定無效。") },
@@ -102,10 +105,12 @@ export type Failure = {
 };
 
 export const FAILURE_MESSAGE_MAX = 2000;
+/** The user's home folder as ~ (stacks and paths carry it). */
+export const homeless = (s: string) => { const h = homedir(); return h && h.length > 1 ? s.split(h).join("~") : s; };
 /** The underlying message as it may be shown and kept: no credentials, no control characters, bounded. */
 export function sanitizeMessage(raw: unknown): string {
   const stripped = String(raw ?? "").replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, "").replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩]/g, "");
-  const s = redactText(stripped).trim();
+  const s = homeless(redactText(stripped)).trim();
   return s.length > FAILURE_MESSAGE_MAX ? s.slice(0, FAILURE_MESSAGE_MAX - 1) + "…" : s;
 }
 
@@ -134,7 +139,11 @@ export const isFailure = (v: any): v is Failure => !!v && v.schema === 1 && (FAI
  */
 export const TEXT_RULES: { re: RegExp; code: FailureCode }[] = [
   { re: /^ASK\b|\bworker (asks|asked)\b|\bneeds? (an )?answer\b/i, code: "ask.agent-question" },
-  { re: /\bdiverged: decide\b|needs explicit recovery|confirm a fresh proposal|requires confirmation|wait for the captain/i, code: "ask.captain-decision" },
+  // first: a change after approval or after the gates. Running the same step again never passes; the card offers what does
+  { re: /moved since the (six )?gates ran|remote checks changed before merge|needs the door confirmation|base moved after review|needs explicit recovery/i, code: "deterministic.prepare-again" },
+  { re: /identity changed or predates pinning|prepare a new task|approved lane image changed|never replay/i, code: "deterministic.new-task" },
+  { re: /\bdiverged: decide\b/i, code: "ask.one-way" },
+  { re: /confirm a fresh proposal|requires confirmation|wait for the captain/i, code: "env.staffing" },
   { re: /\bSCOPE-BLOCKED\b|outside the (spec's )?scope|is outside the scope/i, code: "scope.blocked" },
   { re: /\bscope held by R-\d+|\boverlaps R-\d+/i, code: "scope.overlap" },
   { re: /rate.?limit|\b429\b|too many requests|overloaded/i, code: "transient.rate-limit" },
@@ -166,7 +175,8 @@ export const TEXT_RULES: { re: RegExp; code: FailureCode }[] = [
   { re: /^quota_exhausted$/, code: "env.quota" },
   { re: /^(target_changed|registry_changed)$/, code: "transient.stale" },
   { re: /^(owner_ended|cancelled)$/, code: "transient.interrupted" },
-  { re: /^(captain_confirmation_required|staffing_wait_captain|project_required|project_ambiguous)$/, code: "ask.captain-decision" },
+  { re: /^(captain_confirmation_required|staffing_wait_captain)$/, code: "env.staffing" },
+  { re: /^(project_required|project_ambiguous)$/, code: "invalid-input.params" },
   { re: /^(project_unregistered|project_disabled|project_revoked|workflow_missing|draft_missing)$/, code: "invalid-input.config" },
   { re: /^internal_error$/, code: "internal.bug" },
   { re: /requires (local )?(ffprobe|ffmpeg|git|node|python)|\bffprobe\b.*(missing|not found)/i, code: "env.tool-missing" },
@@ -179,7 +189,7 @@ export const TEXT_RULES: { re: RegExp; code: FailureCode }[] = [
   { re: /malformed|untrusted|not persisted|evidence (changed|is missing)|history (is|cannot)|integrity|invariant|no intact|no pinned|no approved/i, code: "internal.bug" },
   { re: /owner ended|\bcancell?ed\b|was stopped|process death/i, code: "transient.interrupted" },
   { re: /\bchanged\b|\bstale\b|reload|differs\b|moved since|no longer|already (owned|attempted|running)/i, code: "transient.stale" },
-  { re: /captain|approv|confirm|explicit (recovery|request|choice)|proposal|requires? a new .*card/i, code: "ask.captain-decision" },
+  { re: /captain|approv|confirm|explicit (recovery|request|choice)|proposal|requires? a new .*card/i, code: "deterministic.prepare-again" },
   { re: /\bunavailable\b|not installed|requires codex|needs (the )?(OS|codex|claude)|not configured/i, code: "env.tool-missing" },
   { re: /\binvalid\b|must (be|name|have)|is required|\brequired\b|\bunknown\b|unsupported|exceeds?|too (large|long|many)|no such/i, code: "invalid-input.config" },
 ];
@@ -196,10 +206,11 @@ export function fromError(e: unknown, o: { source?: FailureSource; run?: string 
   const message = String(err?.message ?? err ?? "");
   let code: FailureCode | null = err instanceof FailureError ? err.code : null;
   // a native tool's typed refusal (host/types.ts NativeToolFailure): its own code decides, then its words
-  if (!code && typeof err?.publicFailure?.code === "string") { const byCode = codeOf(err.publicFailure.code); code = byCode !== "internal.unmapped" ? byCode : null; }
+  if (!code && typeof err?.publicFailure?.code === "string") { const byWords = codeOf(message), byCode = codeOf(err.publicFailure.code);
+    code = byWords === "deterministic.new-task" || byWords === "deterministic.prepare-again" ? byWords : byCode !== "internal.unmapped" ? byCode : null; }
   if (!code && err?.providerRefusal) code = /quota/i.test(message) ? "env.quota" : /login|sign/i.test(message) ? "env.login" : /fallback chain|must be/i.test(message) ? "invalid-input.config" : "env.provider-unavailable";
-  if (!code && err?.queueRefusal) code = /scope held|overlap/i.test(message) ? "scope.overlap" : /staffing|confirmation/i.test(message) ? "ask.captain-decision" : codeOf(message) === "internal.unmapped" ? "transient.interrupted" : codeOf(message);
-  if (!code && err?.outcome === "blocked") code = codeOf(message) === "internal.unmapped" ? "ask.captain-decision" : codeOf(message);
+  if (!code && err?.queueRefusal) code = /scope held|overlap/i.test(message) ? "scope.overlap" : /staffing|confirmation/i.test(message) ? "env.staffing" : codeOf(message) === "internal.unmapped" ? "transient.interrupted" : codeOf(message);
+  if (!code && err?.outcome === "blocked") code = codeOf(message);
   if (!code && err?.name === "HyperframesFailure") code = err.code === "unchanged-inputs" ? "deterministic.unchanged" : err.code === "timeout" ? "transient.timeout" : err.cleanupSafe === false ? "internal.bug" : err.code === "command-failed" || err.diagnostic ? "deterministic.film" : codeOf(message) === "internal.unmapped" ? "deterministic.film" : codeOf(message);
   if (!code) code = codeOf(message);
   const extra = err instanceof FailureError ? err.extra : {};
@@ -230,11 +241,15 @@ const secsZh = (ms: number) => (ms >= 60_000 ? `${Math.round(ms / 60_000)} 分�
 
 // ---------- the card and its actions ----------
 /** The action ids of failure cards: the runtime answers them by these names, never by a domain's words. */
-export const ACT = { answer: "answer", fixRetry: "fix-retry", retry: "retry", rescope: "rescope", editParams: "edit-params", report: "report", park: "park" } as const;
+export const ACT = { answer: "answer", fixRetry: "fix-retry", retry: "retry", rescope: "rescope", editParams: "edit-params", report: "report", park: "park", prepareAgain: "prepare-again", newTask: "new-task" } as const;
 export type FailureOption = { id: string; label: string; labelZh: string; primary?: boolean; note?: boolean; hold?: boolean };
 export const PARK: FailureOption = { id: "park", label: "Park", labelZh: "暫停（Park）", hold: true };
 /** The actions each class offers. Park is always there. */
-export function failureActions(cls: FailureClass): FailureOption[] {
+export function failureActions(cls: FailureClass, code?: FailureCode, o: { ended?: boolean } = {}): FailureOption[] {
+  // a run that ended (succeeded) on a failed outcome is not revived: a new task is the way on
+  if (o.ended) return [{ id: ACT.newTask, label: "Start a new task", labelZh: "開始新任務", primary: true }, PARK];
+  if (code === "deterministic.prepare-again") return [{ id: ACT.prepareAgain, label: "Prepare again", labelZh: "重新準備", primary: true }, PARK];
+  if (code === "deterministic.new-task") return [{ id: ACT.newTask, label: "Start a new task", labelZh: "開始新任務", primary: true }, PARK];
   const main: Record<FailureClass, FailureOption[]> = {
     ask: [{ id: "answer", label: "Answer and continue", labelZh: "回答並繼續", primary: true, note: true }],
     environment: [{ id: "fix-retry", label: "Fix and retry", labelZh: "修好後重試", primary: true }],
@@ -248,14 +263,18 @@ export function failureActions(cls: FailureClass): FailureOption[] {
 }
 
 /** What the card says to do, per class. */
-export function failureHow(f: Failure): FText {
+export function failureHow(f: Failure, o: { ended?: boolean } = {}): FText {
+  if (o.ended) return t("This run ended on this result, so it does not run again. Start a new task: it gets the same request and params and runs from the start.", "這個 run 已經以這個結果結束，不會再跑。請開始新任務：它會用同樣的需求和參數從頭執行。");
+  if (f.code === "deterministic.prepare-again") return t("Prepare again: Studio goes back to the step before the card, runs the gates again and raises a new card. Nothing is merged before that card is answered.", "重新準備：Studio 回到卡片前一步，重跑 gate，再發一張新卡。新卡回答前不會合併任何東西。");
+  if (f.code === "deterministic.new-task") return t("Start a new task: it gets the same request and declared params and prepares everything again. This task stays as it is.", "開始新任務：它會用同樣的需求和已宣告的參數，重新準備一切。這個任務維持原狀。");
   switch (f.class) {
-    case "ask": return t("Write your answer in the note and pick Answer and continue. The same step runs again with your answer.", "請在備註寫下回答，再選「回答並繼續」；同一步會帶著你的回答再跑一次。");
+    case "ask": if (f.code === "ask.one-way") return t("Write which version to keep in the note, then pick Answer and continue. The step runs again with your choice. The version you do not keep is discarded.", "請在備註寫下要保留哪個版本，再選「回答並繼續」；這一步會帶著你的選擇再跑一次，沒保留的版本會被捨棄。");
+      return t("Write your answer in the note and pick Answer and continue. The same step runs again with your answer.", "請在備註寫下回答，再選「回答並繼續」；同一步會帶著你的回答再跑一次。");
     case "environment": return t(`Fix this first: ${f.fix?.en ?? "the cause the message names."} Where: ${f.where?.en ?? "the place the message names."} Then pick Fix and retry.`, `請先修好：${f.fix?.["zh-TW"] ?? "訊息中提到的原因。"} 位置：${f.where?.["zh-TW"] ?? "訊息中提到的地方。"} 修好後選「修好後重試」。`);
     case "transient": { const a = f.retry?.attempt ?? 1, ms = f.retry?.backoffMs ?? backoffMs(a); return t(`Retry ${a} waits ${secs(ms)} before it runs (backoff: 5 s, 30 s, 2 min, then 10 min).`, `第 ${a} 次重試會先等 ${secsZh(ms)} 再執行（間隔：5 秒、30 秒、2 分鐘，之後 10 分鐘）。`); }
     case "deterministic": return t("The same inputs give the same failure. Studio refuses Retry until an input changes: the params, the agent, the code head, the policy or the round budget. Edit params and retry changes the params.", "相同輸入會得到相同的失敗。在輸入改變前，Studio 會拒絕重試；輸入包含參數、agent、程式碼 head、policy 或回合預算。「修改參數後重試」會改變參數。");
     case "scope": return t("Write a concrete note: the files or the change the new scope adds or removes. Rescope refuses an empty note, a vague note and the same note again.", "請寫具體的備註：新範圍加入或移除哪些檔案或改動。空白、含糊或與上次相同的備註會被拒絕。");
-    case "invalid-input": return t("Write one parameter per line as key=value in the note, then pick Edit params. Studio checks the values before the step runs again.", "請在備註每行寫一個參數，格式 key=value，再選「修改參數」。Studio 會先檢查參數值，再重跑這一步。");
+    case "invalid-input": return t("Write one parameter per line as key=value in the note, then pick Edit params. Studio accepts only the parameters the workflow declares, checks each value against its declared options and pattern, and then runs the step again.", "請在備註每行寫一個參數，格式 key=value，再選「修改參數」。Studio 只接受工作流程宣告的參數，依宣告的選項和格式檢查每個值，再重跑這一步。");
     case "internal": return t("This is a Studio bug. Report it: Studio keeps the diagnostics below with the task. The run stays failed.", "這是 Studio 的 bug。請回報：Studio 會把下方的診斷資料和任務一起保留。run 會維持失敗狀態。");
   }
 }
@@ -263,15 +282,12 @@ const CLASS_NAME: Record<FailureClass, FText> = { ask: t("Question", "提問"), 
 export const className = (c: FailureClass) => CLASS_NAME[c];
 
 /** A card body for one failure: title, why (what failed), how (what to do), the exact message, and the class's actions. */
-export function failureCardBody(f: Failure, o: { label?: string } = {}) {
-  const how = failureHow(f);
+export function failureCardBody(f: Failure, o: { label?: string; ended?: boolean } = {}) {
+  const how = failureHow(f, o);
   const where = o.label ? ` (${o.label})` : "";
-  const lines = [`${f.class} · ${f.code}`, `Message: ${f.message}`];
-  if (f.fix) lines.push(`Fix: ${f.fix.en}`); if (f.where) lines.push(`Where: ${f.where.en}`);
-  if (f.log.href) lines.push(`Log: ${f.log.href}`); else if (f.log.ref) lines.push(`Log: ${JSON.stringify(f.log.ref)} (${f.log.reason?.en ?? "link pending"})`);
-  if (f.diagnostics) lines.push(`Diagnostics: ${JSON.stringify(f.diagnostics)}`);
-  return { title: `${f.title.en}${where}`, zhTitle: `${f.title["zh-TW"]}${where}`, en: { why: `${f.meaning.en} ${f.message}`.trim(), how: how.en }, zh: { why: f.meaning["zh-TW"], how: how["zh-TW"] },
-    body: lines.join("\n"), options: failureActions(f.class) };
+  // the card's failure box (card.failure) shows the message, fix, where, log and diagnostics in the card's language: no second copy in the body
+  return { title: `${f.title.en}${where}`, zhTitle: `${f.title["zh-TW"]}${where}`, en: { why: f.meaning.en, how: how.en }, zh: { why: f.meaning["zh-TW"], how: how["zh-TW"] },
+    body: "", options: failureActions(f.class, f.code, o) };
 }
 
 // ---------- no-change refusals ----------
@@ -300,16 +316,27 @@ export function rescopeRefusal(o: { note: string | null | undefined; previous?: 
     return { code: "same-note", en: "Rescope refused: the note is the same as the last rescope, so the scope does not change. Write what is different this time.", "zh-TW": "已拒絕重新界定範圍：備註和上次相同，範圍不會改變。請寫出這次不同的地方。" };
   return null;
 }
-/** key=value lines → params; refuses unknown keys and a change that changes nothing. */
-export function parseParamEdit(note: string | null | undefined, current: Record<string, string>, known: string[] | null): { params: Record<string, string> } | Refusal {
+/** Keys a param edit never changes: Studio's own pins (_…) and what names the task's identity (project, repository, target, definition). */
+export const PARAM_LOCKED = /^_|^(project|repo|repository|target|definition|workflow|branch|base|worktree|source)$/i;
+export type ParamSpec = { label?: string; default?: string; options?: string[]; pattern?: string; max_length?: number };
+/** key=value lines → params. Only declared, unlocked params; each value is checked against its declared spec. */
+export function parseParamEdit(note: string | null | undefined, current: Record<string, string>, declared: Record<string, ParamSpec> | null | undefined): { params: Record<string, string> } | Refusal {
+  const spec = declared ?? {}; const editable = Object.keys(spec).filter((k) => !PARAM_LOCKED.test(k));
+  if (!editable.length) return { code: "bad-params", en: "Edit refused: this workflow declares no parameter you can edit. Start a new task instead.", "zh-TW": "已拒絕修改：這個工作流程沒有宣告可修改的參數。請改為開始新任務。" };
   const out: Record<string, string> = {}; const bad: string[] = [];
   for (const line of String(note ?? "").split(/\r?\n/)) { const l = line.trim(); if (!l) continue; const m = /^([A-Za-z_][\w.-]*)\s*=\s*(.*)$/.exec(l); if (!m) { bad.push(l.slice(0, 60)); continue; }
-    if (known && !known.includes(m[1])) { bad.push(m[1]); continue; } out[m[1]] = m[2].slice(0, 4000); }
+    const [k, v] = [m[1], m[2]];
+    if (!editable.includes(k)) { bad.push(k); continue; }
+    const p = spec[k]; const problem = /[\u0000-\u001f\u007f]/.test(v) ? "control characters" : v.length > Math.min(4000, p.max_length ?? 4000) ? `longer than ${Math.min(4000, p.max_length ?? 4000)}`
+      : p.options?.length && !p.options.map(String).includes(v) ? `not one of ${p.options.join(", ")}` : p.pattern && !safeTest(p.pattern, v) ? `does not match ${p.pattern}` : null;
+    if (problem) { bad.push(`${k} (${problem})`); continue; }
+    out[k] = v; }
   if (bad.length || !Object.keys(out).length)
-    return { code: "bad-params", en: `Edit refused: write one known parameter per line as key=value${bad.length ? ` (not accepted: ${bad.join(", ")})` : ""}${known ? `. Known: ${known.join(", ") || "none"}` : ""}.`,
-      "zh-TW": `已拒絕修改：請每行寫一個已知參數，格式 key=value${bad.length ? `（不接受：${bad.join("、")}）` : ""}${known ? `。已知參數：${known.join("、") || "無"}` : ""}。` };
+    return { code: "bad-params", en: `Edit refused: write one editable parameter per line as key=value${bad.length ? ` (not accepted: ${bad.join(", ")})` : ""}. Known: ${editable.join(", ")}.`,
+      "zh-TW": `已拒絕修改：請每行寫一個可修改的參數，格式 key=value${bad.length ? `（不接受：${bad.join("、")}）` : ""}。已知參數：${editable.join("、")}。` };
   if (Object.entries(out).every(([k, v]) => current[k] === v))
     return { code: "no-change", en: "Edit refused: every value is the same as now, so nothing changes.", "zh-TW": "已拒絕修改：每個值都和目前相同，沒有任何改變。", changed: [] };
   return { params: out };
 }
+const safeTest = (re: string, v: string) => { try { return new RegExp(`^(?:${re})$`).test(v); } catch { return false; } };
 export class FailureRefusal extends Error { constructor(readonly refusal: Refusal) { super(refusal.en); } }

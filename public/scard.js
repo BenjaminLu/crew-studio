@@ -258,6 +258,7 @@ function mountCard(el, card, opts = {}) {
   // a typed failure (src/runtime/failures.ts): its class, code, meaning, the exact message, what to fix and where,
   // what changed since it failed, the log link (or why there is none) and, for a Studio bug, the kept diagnostics
   const FCLASS = { ask: ["Question", "提問"], environment: ["Environment", "環境"], scope: ["Scope", "範圍"], transient: ["Transient", "暫時性"], deterministic: ["Deterministic", "確定性"], "invalid-input": ["Invalid input", "輸入無效"], internal: ["Studio bug", "Studio bug"] };
+  const waitText = (ms, zhUnits) => ms >= 60000 ? (zhUnits ? `${Math.round(ms / 60000)} 分鐘` : `${Math.round(ms / 60000)} min`) : (zhUnits ? `${Math.round(ms / 1000)} 秒` : `${Math.round(ms / 1000)} s`);
   function failureView(c) {
     const f = c.failure; if (!f || typeof f.class !== "string" || typeof f.message !== "string" || !FCLASS[f.class]) return null;
     const kv = (k, label, v) => v ? [h("dt", {}, label), h("dd", { "data-failure-field": k }, v)] : [];
@@ -268,7 +269,7 @@ function mountCard(el, card, opts = {}) {
       h("p", {}, L(f.meaning)),
       h("h4", {}, f.class === "ask" ? T("The question", "問題") : T("Exact message", "原始訊息")), h("pre", { class: "cc-pre", "data-failure-message": "" }, f.message),
       (f.fix || f.where) ? h("dl", { class: "cc-kv" }, ...kv("fix", T("Fix", "要修什麼"), f.fix && L(f.fix)), ...kv("where", T("Where", "在哪裡"), f.where && L(f.where))) : null,
-      f.retry ? h("p", { class: "cc-count", "data-failure-backoff": f.retry.backoffMs }, T(`Retry ${f.retry.attempt}: waits ${Math.round(f.retry.backoffMs / 1000)} s before it runs.`, `第 ${f.retry.attempt} 次重試：執行前先等 ${Math.round(f.retry.backoffMs / 1000)} 秒。`)) : null,
+      f.retry ? h("p", { class: "cc-count", "data-failure-backoff": f.retry.backoffMs }, T(`Retry ${f.retry.attempt}: waits ${waitText(f.retry.backoffMs, false)} before it runs.`, `第 ${f.retry.attempt} 次重試：執行前先等 ${waitText(f.retry.backoffMs, true)}。`)) : null,
       f.class === "deterministic" && changed ? h("div", { "data-failure-changed": String(changed.length) }, h("h4", {}, T("Changed since the failure", "失敗後改變的輸入")),
         changed.length ? h("ul", {}, changed.map((x) => h("li", { class: "cc-mono" }, `${x.key}: ${x.before ?? "—"} → ${x.now ?? "—"}`))) : h("p", { class: "cc-count" }, T("Nothing changed yet: Retry is refused until an input changes.", "目前沒有任何輸入改變：輸入改變前，重試會被拒絕。"))) : null,
       h("p", { class: "cc-count", "data-failure-log": log.href ? "link" : "none" }, log.href ? h("a", { href: log.href }, T("Open the log", "打開日誌")) : [T("No log link: ", "沒有日誌連結："), L(log.reason) || "—"]),
