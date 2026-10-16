@@ -1,6 +1,6 @@
 # Crew Studio：全新使用者 Coffee-kit showcase
 
-- 狀態：準備計畫；尚未完成全新環境彩排，不代表 E2E 已通過。
+- 狀態：2026-10-16 已完成 fresh-data E2E 與實際錄製；R-003 / site v3 已核准入庫。包含一次原生來源修復與一次影片修改，並非無錯誤首跑。詳見第 14 節。
 - 研究基準：2026-10-16，repo `d58fa93f`；實際錄製前記錄新的 commit SHA。
 - 目標：觀眾看見全新的 Studio，從第一次開啟、模型連接、Firstmate 引導，到產生網站／圖片／影片、修改、驗收，最後在成品庫重新開啟。
 - 成功定義：同一個全新資料集內完成真實任務與一輪修改；最後核准版本可從成品庫開啟；錄影、截圖與任務證據對得上。
@@ -200,7 +200,7 @@ ffprobe -v error -show_entries format=duration -show_entries stream=codec_name,w
 | 正式錄製遇錯 | 結束此 take，保留原片與原因，修完再開新空白 take | 把不同任務拼接成同一次連續成功 |
 
 - [ ] 第一個未解釋的重複錯誤就停止盲目重試；記下原因和修復，重跑相關驗證。
-- [ ] 只有已完成真實 E2E 的錄影片段可當 pitch 成功備援；目前 R-031 不符合。
+- [ ] 只有已完成真實 E2E 的錄影片段可當 pitch 成功備援；R-031 是歷史恢復成品，本次 fresh-data 證據以 R-003 為準。
 - [ ] 現場服務不穩時播放標示為「事先實際錄製」的成功影片，再開已核准作品；不冒充即時生成。
 
 ## 9. 證據包與 pitch 剪輯
@@ -227,7 +227,7 @@ ffprobe -v error -show_entries format=duration -show_entries stream=codec_name,w
 - [ ] 對影片與圖做 SHA256 清單；將錄影複製到另一個本機資料夾／展示機並實際離線播放。
 - [ ] 成功資料集保留，收尾停止 server 後做一致備份；記錄如何用相同 `CREW_DATA` 重開，不能再重設這份成功資料。
 
-## 10. 最後檢查（每項填 PASS／FAIL／未驗證 + 證據）
+## 10. 最後檢查（初始清單；本次結果見第 14 節及 evidence/checks.md）
 
 | 檢查 | 結果 | 證據／檔名 |
 | --- | --- | --- |
@@ -288,3 +288,30 @@ ffprobe -v error -show_entries format=duration -show_entries stream=codec_name,w
 
 - R-031 完成結果：site v10、SC-068 核准、run succeeded、library/done passed、ledgerOk=true、無未處理卡片；可作歷史成功成品備援。
 - 真正空白 Studio 的完整錄影尚未執行；不要以本次 R-031 恢復取代首次上手 showcase。
+
+
+## 14. Fresh-data 實際錄製結果（2026-10-16）
+
+- 固定原始碼：`3dae967647fa3d88cebed801dec6db5553e7b849`；錄製期間未修改 Studio 原始碼或重啟服務。
+- 資料集：`.tmp/showcase/2026-10-16-take01/studio-data`，專用全新 Chrome profile；原始資料與 R-031 保留在另外的 instance。
+- Firstmate 對話：`01a1430d-0312-7e42-9b9d-5183251479b1`。首次問候、需求輸入、設計與三輪 staffing 討論皆包含在原始錄影；關鍵 UI 另有截圖。
+- 正式鏈路：R-001 / SC-001 配置 -> R-002 / SC-002 派工 -> R-003 / SC-003 方向 -> 真實網頁、圖片、12 秒影片。
+- 原生修復：v1 的 worker CSS 與 host reduced-motion 封面重複，六個獨立來源審查攔下；SC-004 修改網頁 -> v2 技術驗證及來源審查通過。
+- 展示修改：SC-005 要求更柔和運鏡（less motion）-> film/site v3；保留 page v2 與 image v1。renderer 的 motion factor 從 1 變為 .35；新影片 hash 與舊版不同。
+- 最終核准：SC-006 核准 site v3，bundle `0735dd177133afed1a260712797842077a16125f913d9da52e1e20bee0196cba`。R-003 succeeded，library/done passed，ledgerOk=true；R-001、R-002 也 succeeded，無待處理卡片。
+- 技術 PASS：H.264 960x540、12.000 秒、完整解碼；Chrome 靜音 autoplay、完整循環、pause、seek、reduced-motion 單一首幀 poster、手動 opt-in；390/1440 無橫向溢出；圖片載入正常。
+- 原始對話自動回傳 PASS：`native-outcome:R-002:R-003`，附 Task R-003 與 Approved website v3 連結；重整不新增任務或重跑。重啟後完成 receipt 仍存在。
+- 成品庫 PASS：可見 approved v3，開啟與重整皆為同版本。安全 iframe 停用作品 script，使用成品庫外層播放按鈕；直接開網站會靜音自動播放。
+- Captain PASS：錄到工作、待核准、修改與完成；SC-005 外觀待辦實際開啟正確原生卡；完成後清掉工作／待辦。
+- 人工視覺品質：依 Captain 明確決定暫免，未宣稱通過。
+- 主原片：`evidence/video/page@080312817346ac916a6fccc62e87d118.webm`，18:01，1440x810，無聲；真實瀏覽器 frames，非截圖串接。
+- 快速切頁的錄影畫面與 screenshot 時點有差異；短版依實際畫面調整字幕，所有截圖與原片保留，不假裝每張 screenshot 都在原片停留。
+- 補錄：`evidence/video/delivery/` 為完成後的 45 秒交付重播（成品庫、播放、持久化結果），短版明確標示 `Delivery replay after completion`，不冒充首次產出。
+- 短版：`evidence/video/coffee-kit-showcase.mp4`，3:43.04、1440x810 H.264；已完整解碼且離線播放通過，保留真實操作片段，明確標示等待省略；無旁白。完整原片與短版均需保留。
+- 成品副本：`deliverables/slow-day-coffee/index.html` 與 `deliverables/coffee-film-12s.mp4`。
+- 成功資料備份：確認所有任務及 Firstmate 空閒後停止服務，複製至 `success-data-backup`，再用原成功資料重啟 4210。此資料不能再當空白 take 使用。
+- 詳細驗證：同 take 的 `evidence/manifest.md`、`checks.md`、`timeline.jsonl`、`site-v3-technical.json`、`run-complete.json`、`firstmate-complete.json` 與 screenshots。
+- 展示入口：`http://127.0.0.1:4210/#/library`；直接網站 `http://127.0.0.1:4210/af/coffee-r-003-site/3/index.html`。
+- 限制：沒有在另一台實體展示機驗證，也未加入旁白；raw runtime、完整 server log 與 session credentials 保持本地私人，不納入分享包或 Git。
+
+- 影片與圖片 SHA256 清單：`evidence/SHA256SUMS`；備援影片位於 `presentation-backup/`，已以離線 Chrome 播放到結尾。統一觀看入口：同 take 的 `watch.html`。

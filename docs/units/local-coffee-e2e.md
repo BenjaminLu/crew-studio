@@ -73,3 +73,13 @@
 - Rebased onto upstream f1b3c8f6, preserving its readable film text and typed failure diagnostics.
 - Private local evidence: `.tmp/showcase/2026-10-16-preflight/evidence/r031-complete.json`, `r031-autoplay-live.json`, and screenshots.
 - 4210 remains a separate fresh preflight data set; original-source-chat success projection and full fresh-data recording still need verification in the next showcase run.
+
+
+## Fresh-data showcase completed (2026-10-16)
+
+- New take: `.tmp/showcase/2026-10-16-take01`, source fixed at 3dae9676; actual Firstmate dialogue, native staffing and dispatch, Captain state flow, media generation, review, revision and final delivery recorded.
+- R-001 staffing and R-002 dispatch succeeded; child R-003 completed after source-review repair SC-004 and gentler-film revision SC-005. SC-006 approved coffee-r-003-site v3.
+- Final bundle 0735dd177133afed1a260712797842077a16125f913d9da52e1e20bee0196cba; library/done passed, ledger valid, artifact approved, no open cards. Original Firstmate native-outcome:R-002:R-003 automatically returned task and approved-version links.
+- Technical playback and source checks passed; human visual quality waived, not certified. Library iframe uses its host play button; standalone website autoplays muted.
+- Full raw 18:01 recording, 3:43 edited pitch and explicitly labeled 45-second delivery replay retained locally. Full decode and offline pitch/backup/website playback passed. Screenshot evidence and consistent data backup retained.
+- 4210 now serves this completed fresh-data take. See docs/tasks/showcase.md section 14 and local evidence/checks.md for details; this supersedes the earlier statement that no fresh-data run had completed.
