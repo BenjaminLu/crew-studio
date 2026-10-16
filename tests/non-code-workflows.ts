@@ -46,7 +46,7 @@ const r035Film = `<!doctype html><html><head><style>html,body{margin:0}#stage{wi
 const portraitFilm = `<!doctype html><html><head><style>html,body{margin:0}#stage{width:540px;height:960px;background:#0f1726}</style></head><body><div id="stage"><h1>Vertical</h1></div><script>const DUR=0.4;function build(){}function schedule(){}function render(t){}</script></body></html>`;
 const noStageFilm = `<!doctype html><html><body><h1>No stage</h1><script>const DUR=0.4;function build(){}function schedule(){}function render(t){}</script></body></html>`;
 const fixture: any = { id: "fixture", model: "strict-local", sandboxFree: true, start(system: string, tools: any[], ctx: any) {
-  ok(tools.every(t => t.name.startsWith("work_")), "provider receives only bounded folder tools"); 
+  ok(tools.every(t => t.name.startsWith("work_") || ["input_list","input_read"].includes(t.name)), "provider receives only bounded work tools and pinned read-only inputs");
   let interrupted = false;
   return { interrupt() { interrupted = true; }, async *send(text: string) {
     rounds++; while (hold && !interrupted) await Bun.sleep(20);

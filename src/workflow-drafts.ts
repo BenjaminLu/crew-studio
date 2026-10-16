@@ -130,7 +130,7 @@ export class WorkflowDrafts{
   const def=draftDefinition(args.workflow,this.defs);
   for(const node of def.nodes){const outcomes=outcomesOf(node),edges=def.edges.filter(e=>e.from===node.id);if(!outcomes)continue;
    for(const edge of edges)if(edge.when&&!outcomes.includes(edge.when))throw new DraftError(`edge ${edge.from} -> ${edge.to}: ${edge.when} is not an outcome of ${node.id}; use ${outcomes.join(', ')}`);
-   if(node.kind==='card')for(const outcome of outcomes)if(!edges.some(e=>!e.when||e.when===outcome))throw new DraftError(`node ${node.id}: outcome ${outcome} has no route`);
+   if(node.kind==='card')for(const outcome of outcomes)if(!edges.some(e=>(node.args?.mode!=='deliver-accept'&&!e.when)||e.when===outcome))throw new DraftError(`node ${node.id}: outcome ${outcome} needs ${node.args?.mode==='deliver-accept'?'an explicit':'a'} route`);
   }
   return def;
  }

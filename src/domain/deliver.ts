@@ -1,5 +1,6 @@
 // Native non-code workflows share the persisted scheduler, sandboxed agent rounds,
 // check ledger and refine loop. No domain agent owns a human decision or a merge.
+import {captureDeliverInputs,deliverInputTools} from "./deliver-inputs";
 import { OperatingRules, type RulesSection } from "../operating-rules";
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -58,12 +59,13 @@ export function installDeliver(engine: Engine, d: Deps) {
       const dir = engine.roundDir(x, "deliver");
       const old = x.ctx.deliver?.[x.node.id]; if (old) cpSync(st.filesDir(old.id, old.n), dir, { recursive: true });
       if (kind(x) === "video" && !old) { const tpl = bundledText("workflows/v2/templates/film.html"); if (!tpl) throw new Error("film template unavailable"); writeFileSync(join(dir, "film.html"), tpl.replaceAll(/\{\{(?:TITLE|LINE[123])\}\}/g, "Crew Studio")); }
+      x.rn.data.inputs = captureDeliverInputs(x,st); engine.record(x,"deliver-inputs",{data:{inputs:x.rn.data.inputs}});
       x.rn.data.brief = briefFor(x); x.rn.data.dir = dir; x.rn.data.parent = old ?? null; x.rn.data.notes = old ? st.notes(old.id, old.n).filter(n => n.status === "open") : []; x.save();
     },
     sandbox: x => { const dir = engine.roundDirPath(x, "deliver"); return { writes: [dir], cwd: dir }; },
-    tools: x => folderTools(x.rn.data.dir, () => {}, "work").filter(t => t.name !== "work_search"), maxTools: 30,
-    system: (x, skill) => `${skill}\nProduce ${entry(kind(x))} in the isolated work folder using work_* tools only. No shell, network or external assets. Preserve existing content unless the brief changes it.${kind(x) === "video" ? " Keep the renderer contract: #stage, DUR, render(t), build() and schedule(). #stage must be a fixed 960x540 px box (16:9), or 540x960 when the intent asks for vertical; never vw/vh/%. The MP4 is rendered at exactly 1920x1080 (1080x1920 vertical) from that box." : ""}`,
-    prompt: x => `DELIVER ${kind(x)}\nVariant: ${x.node.args?.variant ?? "A"}\nIntent: ${x.run.text || x.run.title}\n${x.rn.data.brief?.text ?? ""}\nOpen annotations: ${JSON.stringify(x.rn.data.notes ?? [])}\nWrite ${entry(kind(x))}.`,
+    tools: x => [...folderTools(x.rn.data.dir, () => {}, "work").filter(t => t.name !== "work_search"),...deliverInputTools(st,x.run.id,x.rn.data.inputs??[],()=>engine.owns(x))], maxTools: 30,
+    system: (x, skill) => `${skill}\nProduce ${entry(kind(x))} in the isolated work folder using work_* tools. Read related fixed-version source documents with input_list/input_read before building on or reviewing them; input sources are read-only and are not in the work folder. No shell, network, browser inspection or external assets. Preserve existing content unless the brief changes it.${kind(x) === "video" ? " Keep the renderer contract: #stage, DUR, render(t), build() and schedule(). #stage must be a fixed 960x540 px box (16:9), or 540x960 when the intent asks for vertical; never vw/vh/%. The MP4 is rendered at exactly 1920x1080 (1080x1920 vertical) from that box." : ""}`,
+    prompt: x => `DELIVER ${kind(x)}\nNode: ${x.node.id} — ${x.node.label}\nAssignment: ${x.node.detail ?? "Produce the requested output for this step."}\nFixed Task inputs (use input_read with producer): ${JSON.stringify(x.rn.data.inputs??[])}\nVariant: ${x.node.args?.variant ?? "A"}\nIntent: ${x.run.text || x.run.title}\n${x.rn.data.brief?.text ?? ""}\nOpen annotations: ${JSON.stringify(x.rn.data.notes ?? [])}\nWrite ${entry(kind(x))}.`,
     after(x, job) {
       if (x.cancelled()) throw new Error("cancelled");
       const f = kind(x), dir = x.rn.data.dir, e = entry(f); if (!existsSync(join(dir, e))) throw new Error(`the agent wrote no ${e}`);
