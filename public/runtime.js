@@ -637,7 +637,8 @@ function roundHistory(r) {
   const stamp = (iso) => iso ? h("time", { datetime: iso, title: iso }, new Date(iso).toLocaleString(zhOn() ? "zh-TW" : "en-US")) : T("Not yet", "尚未");
   const field = (en, tw, value) => h("div", {}, h("dt", {}, T(en, tw)), h("dd", {}, value));
   return h("section", { class: "card x-pad rt-rounds", "data-rounds": r.id, "aria-label": T("Rounds", "回合") },
-    h("h2", {}, T("Rounds", "回合")), !(r.rounds || []).length ? h("p", { class: "faint" }, T("No rounds yet.", "還沒有回合。")) :
+    h("div", { class: "rt-rounds-head" }, h("h2", {}, T("Rounds", "回合")), (r.rounds || []).filter((x) => x.actor.kind === "agent").length > 1 ? h("a", { class: "btn", href: `#/tasks/${r.id}/compare`, "data-compare-link": r.id }, T("Compare transcripts", "並排比較紀錄")) : null),
+    !(r.rounds || []).length ? h("p", { class: "faint" }, T("No rounds yet.", "還沒有回合。")) :
     h("ol", { class: "rt-round-list" }, r.rounds.map((rd) => {
       const actor = rd.actor.kind === "agent" ? [r.def?.roles?.find((x) => x.id === rd.actor.role)?.label || rd.actor.role, rd.actor.provider, rd.actor.model].filter(Boolean).join(" · ") : rd.actor.kind === "check" ? rd.actor.name || T("Check", "檢查") : T("Captain", "船長");
       const imageCards=(r.cards||[]).filter(c=>c.node===rd.node&&c.visit===rd.number&&c.detail?.artifactAcceptance?.offered?.some(o=>o.format==="image"));

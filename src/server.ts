@@ -84,6 +84,7 @@ import { applySandboxAddons, prepareSandbox, registerSandbox } from "./sandbox-r
 import { createTakeover, doorComplete, doorInput, needsDoor } from "./takeover";
 import { createTranscripts } from "./transcripts";
 import { createTasksApi, taskAlias } from "./tasks-api";
+import { createCompare } from "./compare";
 import { createGraphMode } from "./graphmode";
 import { createSkillRoutes } from "./skill-routes";
 import { startupPaths } from "./startup";
@@ -374,6 +375,7 @@ gh.start();
 process.once("exit",()=>{gh.stop();githubPoller.stop();});
 const tasksApi = createTasksApi({ list: () => runtime.engine.list(), get: (id) => runtime.engine.get(id), openCards: () => runtime.engine.cards.list({ open: true }),
   runView: async (id) => { const r = await runtime.handle(new Request(`http://127.0.0.1/api/wruns/${id}`), new URL(`http://127.0.0.1/api/wruns/${id}`), { kind: "desktop" }, false); return r && r.ok ? r.json() : null; } });
+const compareApi = createCompare({ dataDir: DATA, get: (id) => runtime.engine.get(id), current: (wf) => runtime.engine.defs.get(wf), phoneRaw: () => transcripts.settings().phoneRaw });
 // rounds of an earlier Studio left their throwaway homes and tmp behind (it stopped mid-round): no job is live at start, so they go
 try { const rd = join(DATA, "rounds"); if (existsSync(rd)) for (const d of readdirSync(rd)) for (const x of ["home", "tmp"]) { const p = join(rd, d, x); if (existsSync(p)) rmSync(p, { recursive: true, force: true }); }
   if (existsSync(rd)) for (const d of readdirSync(rd)) if (d.startsWith("install-")) rmSync(join(rd, d), { recursive: true, force: true }); } catch {}
@@ -463,6 +465,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     { const rc = await changes.handle(req, url, who, writing); if (rc) return rc; }
     { const r7 = await m7.handle(req, url, who, writing); if (r7) return r7; }
     { const r8 = await docs.handle(req, url, who, writing); if (r8) return r8; }
+    { const rc = await compareApi.handle(url, who as any, writing); if (rc) return rc; }
     { const rk = await tasksApi.handle(url, writing); if (rk) return rk; }
     { const rr = await runtime.handle(req, url, who, writing); if (rr) return rr; }
     { const rk = await skillRoutes(req, url, who, writing); if (rk) return rk; }

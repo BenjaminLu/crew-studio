@@ -15,6 +15,7 @@ export function taskAlias(p: string, writing: boolean): string | null {
   const rest = m[1];
   if (/^R-\d+$/.test(rest) && !writing) return null; // the Task view, served here
   if (/^R-\d+\/rounds$/.test(rest)) return null;
+  if (/^R-\d+\/compare(\/|$)/.test(rest)) return null; // src/compare.ts
   return `/api/wruns/${rest}`;
 }
 

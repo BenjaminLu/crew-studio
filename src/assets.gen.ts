@@ -7,45 +7,47 @@ import a3 from "../public/backbone.css" with { type: "file" };
 import a4 from "../public/backbone.js" with { type: "file" };
 import a5 from "../public/board.css" with { type: "file" };
 import a6 from "../public/board.js" with { type: "file" };
-import a7 from "../public/ext.css" with { type: "file" };
-import a8 from "../public/ext.js" with { type: "file" };
-import a9 from "../public/fonts/OFL-IBM-Plex.txt" with { type: "file" };
-import a10 from "../public/fonts/ibm-plex-mono-latin-400-normal.woff2" with { type: "file" };
-import a11 from "../public/fonts/ibm-plex-mono-latin-500-normal.woff2" with { type: "file" };
-import a12 from "../public/fonts/ibm-plex-sans-latin-400-normal.woff2" with { type: "file" };
-import a13 from "../public/fonts/ibm-plex-sans-latin-500-normal.woff2" with { type: "file" };
-import a14 from "../public/fonts/ibm-plex-sans-latin-600-normal.woff2" with { type: "file" };
-import a15 from "../public/fonts.css" with { type: "file" };
-import a16 from "../public/gates.js" with { type: "file" };
-import a17 from "../public/graph-layout.js" with { type: "file" };
-import a18 from "../public/index.html" with { type: "file" };
-import a19 from "../public/kit.js" with { type: "file" };
-import a20 from "../public/m2.js" with { type: "file" };
-import a21 from "../public/m25.js" with { type: "file" };
-import a22 from "../public/m3.css" with { type: "file" };
-import a23 from "../public/m3.js" with { type: "file" };
-import a24 from "../public/m6.js" with { type: "file" };
-import a25 from "../public/m7.js" with { type: "file" };
-import a26 from "../public/m8.js" with { type: "file" };
-import a27 from "../public/onboarding.css" with { type: "file" };
-import a28 from "../public/onboarding.js" with { type: "file" };
-import a29 from "../public/ootb.js" with { type: "file" };
-import a30 from "../public/pack-genesis.css" with { type: "file" };
-import a31 from "../public/pack-genesis.js" with { type: "file" };
-import a32 from "../public/runstate.js" with { type: "file" };
-import a33 from "../public/runtime.css" with { type: "file" };
-import a34 from "../public/runtime.js" with { type: "file" };
-import a35 from "../public/scard.js" with { type: "file" };
-import a36 from "../public/skills.css" with { type: "file" };
-import a37 from "../public/skills.js" with { type: "file" };
-import a38 from "../public/skins.js" with { type: "file" };
-import a39 from "../public/styles.css" with { type: "file" };
-import a40 from "../public/takeover.css" with { type: "file" };
-import a41 from "../public/takeover.js" with { type: "file" };
-import a42 from "../public/transcripts.css" with { type: "file" };
-import a43 from "../public/transcripts.js" with { type: "file" };
-import a44 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
-import a45 from "../public/workflow-overview.js" with { type: "file" };
+import a7 from "../public/compare.css" with { type: "file" };
+import a8 from "../public/compare.js" with { type: "file" };
+import a9 from "../public/ext.css" with { type: "file" };
+import a10 from "../public/ext.js" with { type: "file" };
+import a11 from "../public/fonts/OFL-IBM-Plex.txt" with { type: "file" };
+import a12 from "../public/fonts/ibm-plex-mono-latin-400-normal.woff2" with { type: "file" };
+import a13 from "../public/fonts/ibm-plex-mono-latin-500-normal.woff2" with { type: "file" };
+import a14 from "../public/fonts/ibm-plex-sans-latin-400-normal.woff2" with { type: "file" };
+import a15 from "../public/fonts/ibm-plex-sans-latin-500-normal.woff2" with { type: "file" };
+import a16 from "../public/fonts/ibm-plex-sans-latin-600-normal.woff2" with { type: "file" };
+import a17 from "../public/fonts.css" with { type: "file" };
+import a18 from "../public/gates.js" with { type: "file" };
+import a19 from "../public/graph-layout.js" with { type: "file" };
+import a20 from "../public/index.html" with { type: "file" };
+import a21 from "../public/kit.js" with { type: "file" };
+import a22 from "../public/m2.js" with { type: "file" };
+import a23 from "../public/m25.js" with { type: "file" };
+import a24 from "../public/m3.css" with { type: "file" };
+import a25 from "../public/m3.js" with { type: "file" };
+import a26 from "../public/m6.js" with { type: "file" };
+import a27 from "../public/m7.js" with { type: "file" };
+import a28 from "../public/m8.js" with { type: "file" };
+import a29 from "../public/onboarding.css" with { type: "file" };
+import a30 from "../public/onboarding.js" with { type: "file" };
+import a31 from "../public/ootb.js" with { type: "file" };
+import a32 from "../public/pack-genesis.css" with { type: "file" };
+import a33 from "../public/pack-genesis.js" with { type: "file" };
+import a34 from "../public/runstate.js" with { type: "file" };
+import a35 from "../public/runtime.css" with { type: "file" };
+import a36 from "../public/runtime.js" with { type: "file" };
+import a37 from "../public/scard.js" with { type: "file" };
+import a38 from "../public/skills.css" with { type: "file" };
+import a39 from "../public/skills.js" with { type: "file" };
+import a40 from "../public/skins.js" with { type: "file" };
+import a41 from "../public/styles.css" with { type: "file" };
+import a42 from "../public/takeover.css" with { type: "file" };
+import a43 from "../public/takeover.js" with { type: "file" };
+import a44 from "../public/transcripts.css" with { type: "file" };
+import a45 from "../public/transcripts.js" with { type: "file" };
+import a46 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
+import a47 from "../public/workflow-overview.js" with { type: "file" };
 
 export const ASSETS: Record<string, string> = {
   "/app.css": a0,
@@ -55,43 +57,45 @@ export const ASSETS: Record<string, string> = {
   "/backbone.js": a4,
   "/board.css": a5,
   "/board.js": a6,
-  "/ext.css": a7,
-  "/ext.js": a8,
-  "/fonts/OFL-IBM-Plex.txt": a9,
-  "/fonts/ibm-plex-mono-latin-400-normal.woff2": a10,
-  "/fonts/ibm-plex-mono-latin-500-normal.woff2": a11,
-  "/fonts/ibm-plex-sans-latin-400-normal.woff2": a12,
-  "/fonts/ibm-plex-sans-latin-500-normal.woff2": a13,
-  "/fonts/ibm-plex-sans-latin-600-normal.woff2": a14,
-  "/fonts.css": a15,
-  "/gates.js": a16,
-  "/graph-layout.js": a17,
-  "/index.html": a18,
-  "/kit.js": a19,
-  "/m2.js": a20,
-  "/m25.js": a21,
-  "/m3.css": a22,
-  "/m3.js": a23,
-  "/m6.js": a24,
-  "/m7.js": a25,
-  "/m8.js": a26,
-  "/onboarding.css": a27,
-  "/onboarding.js": a28,
-  "/ootb.js": a29,
-  "/pack-genesis.css": a30,
-  "/pack-genesis.js": a31,
-  "/runstate.js": a32,
-  "/runtime.css": a33,
-  "/runtime.js": a34,
-  "/scard.js": a35,
-  "/skills.css": a36,
-  "/skills.js": a37,
-  "/skins.js": a38,
-  "/styles.css": a39,
-  "/takeover.css": a40,
-  "/takeover.js": a41,
-  "/transcripts.css": a42,
-  "/transcripts.js": a43,
-  "/vendor/qrcode-1.4.4.min.js": a44,
-  "/workflow-overview.js": a45,
+  "/compare.css": a7,
+  "/compare.js": a8,
+  "/ext.css": a9,
+  "/ext.js": a10,
+  "/fonts/OFL-IBM-Plex.txt": a11,
+  "/fonts/ibm-plex-mono-latin-400-normal.woff2": a12,
+  "/fonts/ibm-plex-mono-latin-500-normal.woff2": a13,
+  "/fonts/ibm-plex-sans-latin-400-normal.woff2": a14,
+  "/fonts/ibm-plex-sans-latin-500-normal.woff2": a15,
+  "/fonts/ibm-plex-sans-latin-600-normal.woff2": a16,
+  "/fonts.css": a17,
+  "/gates.js": a18,
+  "/graph-layout.js": a19,
+  "/index.html": a20,
+  "/kit.js": a21,
+  "/m2.js": a22,
+  "/m25.js": a23,
+  "/m3.css": a24,
+  "/m3.js": a25,
+  "/m6.js": a26,
+  "/m7.js": a27,
+  "/m8.js": a28,
+  "/onboarding.css": a29,
+  "/onboarding.js": a30,
+  "/ootb.js": a31,
+  "/pack-genesis.css": a32,
+  "/pack-genesis.js": a33,
+  "/runstate.js": a34,
+  "/runtime.css": a35,
+  "/runtime.js": a36,
+  "/scard.js": a37,
+  "/skills.css": a38,
+  "/skills.js": a39,
+  "/skins.js": a40,
+  "/styles.css": a41,
+  "/takeover.css": a42,
+  "/takeover.js": a43,
+  "/transcripts.css": a44,
+  "/transcripts.js": a45,
+  "/vendor/qrcode-1.4.4.min.js": a46,
+  "/workflow-overview.js": a47,
 };

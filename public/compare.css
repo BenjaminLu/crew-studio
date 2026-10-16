@@ -1,0 +1,38 @@
+/* Compare transcripts: two agent Rounds side by side (public/compare.js) */
+.cmp-page{min-width:0}
+.cmp-picker{display:grid;gap:10px;min-width:0}
+.cmp-picker .seg{flex-wrap:wrap;justify-self:start}
+.cmp-sel{display:grid;gap:4px;min-width:0;flex:1 1 220px}
+.cmp-sel .select{width:100%;min-width:0}
+.cmp-tools{margin:10px 0}
+.cmp-toggle{display:none}
+.cmp-sync{display:flex;gap:6px;align-items:center;font-size:12.5px}
+.cmp-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-rows:auto auto;gap:0 12px;min-width:0}
+.cmp-head{background:var(--surface);border:1px solid var(--border);border-bottom:0;border-radius:10px 10px 0 0;padding:12px 14px;display:grid;gap:8px;align-content:start;min-width:0}
+.cmp-title{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;overflow-wrap:anywhere}
+.cmp-meta{display:grid;grid-template-columns:repeat(3,minmax(0,auto));gap:4px 16px;margin:0;font-size:13px;justify-content:start}
+.cmp-meta dt{color:var(--text-3);font-size:11.5px}
+.cmp-meta dd{margin:0;overflow-wrap:anywhere}
+.cmp-log{justify-self:start}
+.cmp-err{margin:0;font-size:13px}
+.cmp-body{background:var(--surface);border:1px solid var(--border);border-top:1px solid var(--border);border-radius:0 0 10px 10px;padding:12px 14px;display:grid;gap:12px;align-content:start;min-width:0;
+  max-height:calc(100vh - 260px);min-height:320px;overflow:auto;overscroll-behavior:contain}
+.cmp-prompt{border:1px solid var(--border);border-radius:8px;padding:6px 10px;min-width:0}
+.cmp-prompt>summary{cursor:pointer}
+.cmp-prompt .tr-raw{margin-top:8px;max-height:40vh}
+.cmp-args{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12.5px;margin-top:4px}
+.cmp-long{margin-top:6px;min-width:0}
+.cmp-long>summary{cursor:pointer;font-size:12.5px}
+.cmp-text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13.5px;line-height:1.55}
+.cmp-long .cmp-text{background:var(--surface-2);border-radius:6px;padding:8px 10px;margin-top:4px}
+.cmp-report{border-top:1px solid var(--border);padding-top:10px;display:grid;gap:6px}
+.cmp-report h3{margin:0;font-size:14px}
+.cmp-report p{margin:0}
+@media (max-width:640px){
+  .cmp-toggle{display:inline-flex}
+  .cmp-grid{grid-template-columns:minmax(0,1fr)}
+  .cmp-grid[data-cmp-showing="left"] .cmp-right,.cmp-grid[data-cmp-showing="right"] .cmp-left{display:none}
+  .cmp-meta{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .cmp-body{max-height:none;min-height:0;overflow:visible}
+  .cmp-sync{display:none}
+}

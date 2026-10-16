@@ -11,6 +11,7 @@ import { join } from "node:path";
 import {withLock} from "../ids";
 import {Ledger} from "./checks";
 import { bundledList, bundledText, parseYaml } from "../bundled";
+import { compareProblem } from "../compare";
 
 export const NODE_KINDS = ["agent", "check", "card", "loop", "hook"] as const; // a closed set (architecture §3.1)
 export type NodeKind = (typeof NODE_KINDS)[number];
@@ -34,7 +35,10 @@ export type WRole = { id: string; label: string; skill: string; provider?: strin
 export type WDef = {
   id: string; name: string; version: number; description?: string; kind?: string;
   intent?: { keywords?: string[]; examples?: string[] }; params?: Record<string, { label: string; default?: string }>;
-  roles: WRole[]; nodes: WNode[]; edges: WEdge[]; policies?: Record<string, any>; card_checks?: string[]; hooks?: { at: string; use: string; params?: Record<string, any> }[];
+  roles: WRole[]; nodes: WNode[]; edges: WEdge[];
+  /** role pairs whose rounds the Task page compares side by side, k-th round with k-th round (src/compare.ts) */
+  compare?: [string, string][];
+  policies?: Record<string, any>; card_checks?: string[]; hooks?: { at: string; use: string; params?: Record<string, any> }[];
   parent?: number | null; createdAt?: string; by?: string; note?: string | null; diff?: DefDiff | null; seed?: string | null;
   /** the captain's own workflow: where v1 came from (a Firstmate draft or the free starter); kept by every later version, never set by an edit */
   origin?: { schema: 1; source: "firstmate-draft" | "starter"; draft?: string; revision?: number; definition?: string; brief?: { goal: string; interview: { question: string; answer: string }[] } };
@@ -115,6 +119,7 @@ export function validate(d: WDef, known?: (ref: string) => boolean, runners?: Se
     if (!ids.has(e.from) || !ids.has(e.to)) out.push({ level: "error", edge: ekey(e), text: `edge ${ekey(e)} names a node that does not exist` });
     for (const c of e.checks ?? []) if (known && !known(c.use)) out.push({ level: "error", edge: ekey(e), text: `edge ${ekey(e)}: no check ${c.use}` });
   }
+  { const c = compareProblem((d as any).compare, d.roles); if (c) out.push({ level: "error", text: c }); }
   const ins = new Set(d.edges.map((e) => e.to));
   const entries = d.nodes.filter((n) => !ins.has(n.id));
   if (entries.length !== 1) out.push({ level: "error", text: entries.length ? `a workflow has exactly one entry (a node no edge leads to); this one has ${entries.length}: ${entries.map((n) => n.label).join(", ")}` : "a workflow needs an entry: a node no edge leads to" });

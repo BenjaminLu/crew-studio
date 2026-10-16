@@ -202,6 +202,7 @@ body:not(.chat-closed) .rt-cue { top: calc(120px + env(safe-area-inset-top, 0px)
 
 /* Task/Round phase B: ordered history wraps rather than requiring horizontal table scrolling. */
 .rt-rounds{display:grid;gap:16px}
+.rt-rounds-head{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;justify-content:space-between}.rt-rounds-head h2{margin:0}
 .rt-round-list{list-style:none;padding:0;margin:0;display:grid;gap:16px}
 .rt-round-list>li{padding:16px;border:1px solid var(--border);border-radius:10px;min-width:0;overflow-wrap:anywhere}
 .rt-round-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}

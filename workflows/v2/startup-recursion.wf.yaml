@@ -36,6 +36,12 @@
       "skill": "bundled:workflows/skills/startup-judge.md"
     }
   ],
+  "compare": [
+    [
+      "founder",
+      "judge"
+    ]
+  ],
   "nodes": [
     {
       "id": "choose",
