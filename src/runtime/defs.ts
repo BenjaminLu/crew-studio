@@ -21,7 +21,7 @@ export type CardSpec = { title?: string | { en: string; "zh-TW"?: string }; body
   door_from?: string; options?: { id: string; label: string }[]; confirm_door?: boolean; effects?: Record<string, { node: string; add: number }> };
 export type WNode = {
   id: string; kind: NodeKind; label: string; x: number; y: number; detail?: string;
-  role?: string; mode?: string; provider?: string; model?: string; skill?: string;
+  role?: string; mode?: string; provider?: string; model?: string; effort?: string; skill?: string;
   gates?: GateSpec[]; checks?: CheckRef[]; do?: string; args?: Record<string, any>; card?: CardSpec;
   max_visits?: number; retries?: number; timeout_s?: number; join?: "any" | "all"; lane?: string;
   /** lifecycle points this node marks when it finishes (after_round, after_merge …): the workflow's hooks at those points run */
@@ -36,6 +36,8 @@ export type WDef = {
   intent?: { keywords?: string[]; examples?: string[] }; params?: Record<string, { label: string; default?: string }>;
   roles: WRole[]; nodes: WNode[]; edges: WEdge[]; policies?: Record<string, any>; card_checks?: string[]; hooks?: { at: string; use: string; params?: Record<string, any> }[];
   parent?: number | null; createdAt?: string; by?: string; note?: string | null; diff?: DefDiff | null; seed?: string | null;
+  /** the captain's own workflow: where v1 came from (a Firstmate draft or the free starter); kept by every later version, never set by an edit */
+  origin?: { schema: 1; source: "firstmate-draft" | "starter"; draft?: string; revision?: number; definition?: string };
 };
 export type DefDiff = {
   nodesAdded: string[]; nodesRemoved: string[]; nodesChanged: { id: string; fields: string[] }[]; nodesMoved: string[];
@@ -131,7 +133,7 @@ export function validate(d: WDef, known?: (ref: string) => boolean, runners?: Se
   return out;
 }
 
-const FIELDS: (keyof WNode)[] = ["kind", "label", "detail", "role", "mode", "provider", "model", "skill", "skills", "gates", "checks", "lifecycle", "do", "args", "card", "max_visits", "retries", "timeout_s", "join", "lane"];
+const FIELDS: (keyof WNode)[] = ["kind", "label", "detail", "role", "mode", "provider", "model", "effort", "skill", "skills", "gates", "checks", "lifecycle", "do", "args", "card", "max_visits", "retries", "timeout_s", "join", "lane"];
 export function diff(a: WDef, b: WDef): DefDiff {
   const an = new Map(a.nodes.map((n) => [n.id, n])), bn = new Map(b.nodes.map((n) => [n.id, n]));
   const ae = new Set(a.edges.map(ekey)), be = new Set(b.edges.map(ekey));
@@ -217,7 +219,8 @@ export class WorkflowDefs {
     return clean;
   }
   /** Explicit captain-created safe starter, never arbitrary execution/import authority. */
-  create(id:unknown,name:unknown,by:string,locale:unknown="en",template:unknown=undefined):WDef {
+  create(id:unknown,name:unknown,by:string,locale:unknown="en",template:unknown=undefined,origin:unknown=undefined):WDef {
+    if(origin!==undefined&&(origin!=="starter"||template!==undefined))throw new Error("Unsupported workflow origin");
     if(template!==undefined&&!["coffee-kit","github-review"].includes(String(template)))throw new Error("Unsupported workflow template");
     if(locale!=="en"&&locale!=="zh-TW"&&!(locale==="zh-CN"&&template==="coffee-kit"))throw new Error("Unsupported workflow language");
     const zh=locale==="zh-TW";
@@ -236,7 +239,17 @@ export class WorkflowDefs {
       }
       const definition:WDef={id,name:name.trim(),version:1,description:"",roles:[],nodes:[
         {id:"start",kind:"card",label:zh?"開始":"Start",x:80,y:100,card:{title:{en:"Ready to continue?","zh-TW":"準備好繼續了嗎？"},body:{en:"This starter waits for your confirmation.","zh-TW":"此起始流程會等待你的確認。"},options:[{id:"continue",label:zh?"繼續":"Continue"}]}},
-        {id:"done",kind:"hook",label:zh?"完成":"Done",x:340,y:100}],edges:[{from:"start",to:"done",when:"continue"}],parent:null,createdAt:now(),by,note:null,diff:null,seed:null};
+        {id:"done",kind:"hook",label:zh?"完成":"Done",x:340,y:100}],edges:[{from:"start",to:"done",when:"continue"}],parent:null,createdAt:now(),by,note:null,diff:null,seed:null,...(origin==="starter"?{origin:{schema:1 as const,source:"starter" as const}}:{})};
+      const errors=validate(definition,this.known,this.runners?.(),this.skillInfo??undefined).filter(p=>p.level==="error");if(errors.length)throw new Error(errors[0].text);
+      this.write(definition);return definition;
+    });
+  }
+  /** A reviewed Firstmate draft becomes the captain's own workflow v1. The caller validated the drafting vocabulary. */
+  createDrafted(id:string,draft:WDef,by:string,origin:NonNullable<WDef["origin"]>):WDef {
+    if(!/^[a-z0-9][a-z0-9-]{0,40}$/.test(id))throw new Error("bad workflow id");
+    return withLock(this.dir,"create-"+id,()=>{
+      if(existsSync(this.wdir(id)))throw new Error("A workflow with this id already exists");
+      const definition:WDef={...normalize(draft),id,version:1,parent:null,createdAt:now(),by,note:"Saved from Firstmate draft "+origin.draft,diff:null,seed:null,origin};
       const errors=validate(definition,this.known,this.runners?.(),this.skillInfo??undefined).filter(p=>p.level==="error");if(errors.length)throw new Error(errors[0].text);
       this.write(definition);return definition;
     });
@@ -249,6 +262,7 @@ export class WorkflowDefs {
     if (body?.base == null) throw new Error(`say which version you edited (base); v${prev.version} is the latest`);
     if (Number(body.base) !== prev.version) throw new Error(`v${prev.version} is the latest now (you edited v${body.base}); reload and edit again`);
     const next = normalize({ ...prev, ...body, id, version: prev.version + 1 });
+    if (prev.origin) next.origin = prev.origin; else delete next.origin; // lineage is never an edit
     const errs = validate(next, this.known, this.runners?.(), this.skillInfo ?? undefined).filter((p) => p.level === "error");
     if (errs.length) { const e: any = new Error(`the workflow has ${errs.length} problem${errs.length > 1 ? "s" : ""}: ${errs.map((p) => p.text).join("; ")}`); e.problems = errs; throw e; }
     const dd = diff(prev, next);

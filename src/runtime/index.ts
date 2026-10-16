@@ -5,6 +5,7 @@ import {ArtifactStore,websiteHref} from '../artifacts';
 import {StaffingStore,staffingHash,installStaffingGuard,coffeeStaffingProject,type StaffingProject} from '../domain/staffing';
 import {installFirstmateStaffing,staffingQuotaReady,type StaffingFacts,type StaffingAdmission} from '../firstmate-staffing';
 import {installFirstmate} from "../firstmate";
+import {WorkflowDrafts,installWorkflowDraftTools,draftRoute,ownStaffingPlan,ownWorkflow,checkNodeStaffing} from "../workflow-drafts";
 // Studio's native runtime, wired: versioned workflow definitions, the engine,
 // the check runtime, Studio-owned cards, and the steps each workflow uses.
 // Routes (all under /api/wf, /api/wruns, /api/scards, /api/checks, /api/policies, /api/intake):
@@ -108,7 +109,13 @@ export function createRuntime(d: RuntimeDeps) {
   const staffingTools=installFirstmateStaffing(engine,staffing,staffingProject,staffingFacts,d.staffingAdmission);
   const onboarding=new Onboarding(engine,d.m3?.store??new ArtifactStore(d.dataDir));
   const originalFirstmate=installFirstmate(engine,projects,{prepareDispatch:async(workflow,version)=>{const def=engine.defs.get(workflow,version);if(def?.id==='code-firstmate'||def?.kind==='coffee-kit')await staffingFacts();},onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending});
-  const firstmate={specs:[...originalFirstmate.specs,...staffingTools.specs],call:(name:string,args:any,owner:any)=>name==='studio_change_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
+  // free drafting: its own store and tools, separate from proposals, staffing and execution
+  const drafts=new WorkflowDrafts(d.dataDir,defs,(id,revision)=>{try{d.send('wfdraft',{id,revision});}catch{}});
+  const draftTools=installWorkflowDraftTools(drafts);
+  const firstmate={specs:[...originalFirstmate.specs,...staffingTools.specs,...draftTools.specs],call:(name:string,args:any,owner:any)=>name==='studio_draft_workflow'||name==='studio_save_workflow_draft'?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
+  // the captain's own workflows start only with the staffing the captain confirmed at Run (never at drafting)
+  const previousOwnStart=engine.deps.authorizeStart;
+  engine.deps.authorizeStart=(def:any,o:any)=>{previousOwnStart?.(def,o);if(ownWorkflow(def)){const s=ownStaffingPlan(def);if(s.plan.length&&(s.missing.length||o.params?._ownStaffing!==s.hash))throw new Error('Confirm staffing for every agent node when you click Run / 請在按下執行時確認每個代理節點的配置');}};
   const githubReview=installGitHubReviewWorkflow(engine,projects,d.dataDir,d.protectedRoots??[]);
   installReadinessViews(engine);
   engine.load();
@@ -168,9 +175,10 @@ export function createRuntime(d: RuntimeDeps) {
       // ---------- definitions ----------
       if(p==="/api/coffee/design"&&writing){if(req.method!=="POST")return json({error:"POST required"},405);if(who.kind!=="desktop")return json({error:"Review coffee design on the desktop"},403);return json({plan:validateCoffeeDesign(b?.plan),canonical:coffeeDesignJSON(b?.plan)});}
       if (p === "/api/wf" && !writing) return json({ workflows: defs.catalog(), checks: engine.registry.all().map(checkView) });
+      const drafted=await draftRoute(drafts,p,req.method,writing,b,by);if(drafted)return drafted;
       if (p === "/api/wf" && writing) {
         if(req.method!=="POST")return json({error:"use POST to create a workflow"},405);
-        const def=defs.create(b?.id,b?.name,by,b?.locale??"en",b?.template);
+        const def=defs.create(b?.id,b?.name,by,b?.locale??"en",b?.template,b?.origin);
         d.log.emit({type:"workflow_created",workflow:def.id,summary:`${def.id} v1 created by ${by}`});
         return json({def},201);
       }
@@ -184,6 +192,7 @@ export function createRuntime(d: RuntimeDeps) {
           return json({ def, selectable:defs.selectable(id,def.version), coffeeFilmStatus:def.kind==="coffee-kit"?d.coffeeFilmStatus??{ready:false,reason:"Local film capability is unavailable"}:null, coffeeDesign:def.kind==="coffee-kit"?COFFEE_DESIGN_FIELDS:null, coffeeChoice:def.kind==="coffee-kit" ? d.coffeeChoice?.() ?? null : null, problems: validate(def, defs.known, undefined, defs.skillInfo ?? undefined), versions: defs.versions(id).map((x) => ({ version: x.version, createdAt: x.createdAt, by: x.by, note: x.note, parent: x.parent, diff: x.diff })),
             runs: engine.list().filter((r) => r.workflow === id).map((r) => ({ id: r.id, version: r.version, status: r.status, result: r.result, merged: !!r.ctx?.merged, title: r.title, createdAt: r.createdAt })) });
         }
+        if(ownWorkflow(defs.get(id)))for(const n of Array.isArray(b?.nodes)?b.nodes:[]){try{checkNodeStaffing(n);}catch(e:any){return json({error:e.message},400);}}
         const saved = defs.save(id, b, by, b?.note);
         d.log.emit({ type: "workflow_saved", workflow: id, summary: `${id} v${saved.version} saved by ${by}`, data: { diff: saved.diff } });
         return json({ def: saved, diff: saved.diff });
@@ -233,8 +242,14 @@ export function createRuntime(d: RuntimeDeps) {
         const cls = classifyIntent(defs, text, engine.policies.get("sensitive_paths", { project: b?.params?.project ? String(b.params.project) : b?.project ? String(b.project) : null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []);
         const wf = b?.workflow || cls.workflow; if (!wf) return json({ error: "Studio could not tell which workflow this is: pick one", classifier: cls }, 409);
         if(!defs.selectable(wf,b?.version?Number(b.version):undefined))return json({error:"This workflow is internal or retired. Choose an available workflow. / 此流程為內部或已退役流程，請選擇可用流程。",code:"workflow_unavailable"},409);
-        let params=b?.params??{};
+        let params={...(b?.params??{})};delete params._ownStaffing;
         const chosenDef=defs.get(wf,b?.version?Number(b.version):undefined);
+        if(ownWorkflow(chosenDef)&&ownStaffingPlan(chosenDef!).plan.length){ // nothing to staff: a card-only workflow just starts
+          const staffing=ownStaffingPlan(chosenDef!);
+          if(staffing.missing.length)return json({error:'Choose a provider, model and (for Codex) effort for every agent node before Run / 執行前請為每個代理節點選擇供應商、模型與（Codex）推理強度',code:'staffing_incomplete',staffing},409);
+          if(b?.staffingConfirm!==staffing.hash)return json({error:'Confirm who works on each node before this Task starts / 開始任務前請確認每個節點的人員配置',code:'staffing_confirmation_required',staffing},409);
+          params._ownStaffing=staffing.hash;
+        }
         if(chosenDef?.kind==="coffee-kit") {
           let config;try{config=staffing.current(coffeeStaffingProject(params.project));}catch{return json({error:'Discuss and approve each coffee role before starting',code:'coffee-staffing-required'},409);}const image=config.roles['image-worker'];
           if(!image||image.provider!=='codex')return json({error:"Confirm an available dedicated Codex image role; no vendor fallback",code:"coffee-staffing-required"},409);

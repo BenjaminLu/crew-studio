@@ -19,7 +19,7 @@
 (() => {
 const SVGNS = "http://www.w3.org/2000/svg";
 const s = (tag, attrs = {}, ...kids) => { const e = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) { if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (v != null && v !== false) e.setAttribute(k, v === true ? "" : v); } for (const c of kids.flat()) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(c)); return e; };
-const api = async (u, body, method, signal) => { const r = await fetch(u, { signal, ...(body === undefined && !method ? {} : { method: method || "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) }) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) { const e = new Error(j.error || `HTTP ${r.status}`); e.problems = j.problems; e.code=j.code; e.status=r.status; throw e; } return j; };
+const api = async (u, body, method, signal) => { const r = await fetch(u, { signal, ...(body === undefined && !method ? {} : { method: method || "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) }) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) { const e = new Error(j.error || `HTTP ${r.status}`); e.problems = j.problems; e.code=j.code; e.status=r.status; e.staffing=j.staffing; throw e; } return j; };
 const KINDS = [["agent", "Agent", "代理"], ["check", "Check", "檢查"], ["card", "Card", "卡片"], ["loop", "Refine loop", "精修迴圈"], ["hook", "Hook", "掛勾"]];
 const NW = 150, NH = 52;
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -467,7 +467,9 @@ function buildEditor(ed) {
       panel.replaceChildren(...[h("h3", {}, n.label), h("p", { class: "faint" }, `${n.id} · ${n.kind}`),
         txt("label", T("Label", "名稱")), txt("detail", T("Detail", "說明")),
         n.kind === "agent" ? field(T("Role", "角色"), h("select", { class: "select", onchange: (e) => { n.role = e.target.value; dirty(); } }, ed.def.roles.map((r) => h("option", { value: r.id, selected: r.id === n.role || null }, r.label)))) : null,
-        n.kind === "agent" ? txt("mode", T("Mode", "模式")) : null, n.kind === "agent" ? skillsBlock(n) : null, n.kind === "hook" ? txt("do", T("Action", "動作")) : null,
+        n.kind === "agent" ? txt("mode", T("Mode", "模式")) : null,
+        n.kind === "agent" ? nodeModelControls(n, ed.def.roles.find((r) => r.id === n.role)?.skill, { attr: "data-node-model-config", onChange: (k, v) => { if (v === "") delete n[k]; else n[k] = v; dirty(); } }) : null,
+        n.kind === "agent" ? skillsBlock(n) : null, n.kind === "hook" ? txt("do", T("Action", "動作")) : null,
         ["agent", "check"].includes(n.kind) ? txt("timeout_s", T("Time limit (s)", "時間上限（秒）")) : null, n.kind === "agent" ? txt("retries", T("Retries", "重試次數")) : null,
         checksBlock(n),
         h("h4", {}, T("Connect", "連線")), h("div", { class: "rt-row" }, target, when, h("button", { class: "btn sm", "data-connect": "1", onclick: () => { connect(n.id, target.value, when.value.trim()); drawPanel(); } }, T("Connect", "連線"))),
@@ -537,7 +539,7 @@ function buildEditor(ed) {
   const svgZoom = (k) => canvas.querySelector("svg.rt-graph")?.zoom(k);
   root.append(
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, ed.def.name), h("p", {}, (ed.def.description || "").slice(0, 300))),
-      h("div", { class: "actions" }, h("a", { class: "btn ghost", href: "#/workflows" }, T("All workflows", "全部流程")), ed.selectable===false?h("span",{class:"faint","data-workflow-unavailable":"1"},T("Historical or internal workflow · unavailable for new tasks","歷史或內部流程 · 不提供新任務使用")):h("a", { class: "btn", href: "#/runs", "data-start-run": ed.id, onclick: () => { RN.prefill = ed.id; } }, T("Start a task", "開始一個任務")))),
+      h("div", { class: "actions" }, h("a", { class: "btn ghost", href: "#/workflows" }, T("All workflows", "全部流程")), ed.selectable===false?h("span",{class:"faint","data-workflow-unavailable":"1"},T("Historical or internal workflow · unavailable for new tasks","歷史或內部流程 · 不提供新任務使用")):ed.def.origin?h("button",{class:"btn primary","data-ed-run":ed.id,onclick:async(e)=>{if(ed.dirty){say(T("Save your edits as a new version before Run.","執行前請先把修改存成新版本。"));return;}e.target.disabled=true;try{const r=await startOwnRun({workflow:ed.id,version:ed.saved.version,title:ed.def.name,text:ed.def.name});if(r){RN.list=null;location.hash=`#/run/${r.id}`;}}catch(err){say(err.message);}finally{e.target.disabled=false;}}},T("Run…","執行…")):h("a", { class: "btn", href: "#/runs", "data-start-run": ed.id, onclick: () => { RN.prefill = ed.id; } }, T("Start a task", "開始一個任務")))),
     h("div", { class: "rt-toolbar" }, verSel, h("button", { class: "btn sm", "aria-label": T("Zoom in", "放大"), onclick: () => svgZoom(1 / 1.2) }, "+"), h("button", { class: "btn sm", "aria-label": T("Zoom out", "縮小"), onclick: () => svgZoom(1.2) }, "−"),
       h("div", { class: "seg rt-viewseg", role: "group", "aria-label": T("Graph view", "流程圖檢視") }, ["simple", "detail"].map((k) => h("button", { type: "button", "data-view-toggle": k, "aria-pressed": String(gview === k), onclick: () => setView(k) },
         h("span", { class: "keep" }, k === "simple" ? T("Simple", "簡易") : T("Detail", "詳細"))))),
@@ -573,7 +575,7 @@ function viewRuns() {
   const msg = h("div", { class: "faint", role: "status" });
   return h("div", { class: "page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Tasks", "任務")), h("p", {}, T("Studio's workflow tasks, each with its live graph.", "Studio 的流程任務，每個都有即時流程圖。")))),
     h("div", { class: "card x-pad rt-start" }, h("h3", {}, T("Start a task", "開始一個任務")), text, h("div", { class: "rt-row" }, wf, provider, h("button", { class: "btn primary", "data-run-start": "1", onclick: async () => {
-      try { const r = await api("/api/wruns", { text: text.value, workflow: wf.value || undefined, params: provider.value ? { provider: provider.value } : {} }); RN.list = null; RN.draft = ""; location.hash = `#/run/${r.id}`; } catch (e) { msg.textContent = e.message; } } }, T("Start", "開始"))), msg),
+      try { const r = await startOwnRun({ text: text.value, workflow: wf.value || undefined, params: provider.value ? { provider: provider.value } : {} }); if (!r) return; RN.list = null; RN.draft = ""; location.hash = `#/run/${r.id}`; } catch (e) { msg.textContent = e.message; } } }, T("Start", "開始"))), msg),
     // one word per state (public/runstate.js); archived runs only with "Show archived", each with Unarchive
     h("label", { class: "rt-row rt-archived-toggle" }, h("input", { type: "checkbox", "data-show-archived": "1", checked: RN.archived || null, onchange: (e) => { RN.archived = e.target.checked; RN.list = null; rerender(); } }), T("Show archived", "顯示已封存")),
     RN.list === "loading" || RN.list === null ? h("div", { class: "skel", style: "height:120px" }) : runs.length ? h("div", { class: "card rt-runs" }, runs.map((r) => h("a", { class: `rt-run st-${r.status}${r.archived ? " archived" : ""}`, href: `#/run/${r.id}`, "data-run": r.id },
@@ -834,14 +836,88 @@ window.studioAgents = { count: () => SA.list.length+SA.local.filter(j=>j.outcome
       : h("p", { class: "faint" }, T("No Studio agent is working right now.", "目前沒有 Studio 的 agent 在工作。"))) };
 
 // Free authoring is separate from model execution and staffing admission.
-function firstWorkflow(){
+// Choices a node may take (the server's closed sets, read once): providers, efforts, bundled role skills.
+const DRAFT_OPTS={value:null,pending:null};
+const draftOpts=()=>DRAFT_OPTS.value?Promise.resolve(DRAFT_OPTS.value):(DRAFT_OPTS.pending||=api("/api/wf/drafts").then(j=>(DRAFT_OPTS.value={providers:j.providers||[],efforts:j.efforts||[],skills:j.skills||[]})).finally(()=>{DRAFT_OPTS.pending=null;}));
+/** One agent node's worker/reviewer model settings: provider, model, effort and role skill.
+ *  live: each change applies at once (the editor's next saved version); otherwise a Save button posts it. */
+function nodeModelControls(n,roleSkill,{onChange,onSave,attr}){
+  const opts=DRAFT_OPTS.value||{providers:["codex","claude"],efforts:["minimal","low","medium","high","xhigh"],skills:[]};
+  const sel=(k,list,label,cur)=>h("label",{class:"rt-field"},h("span",{},label),h("select",{class:"select",[`data-node-config-${k}`]:"",onchange:e=>onChange?.(k,e.target.value)},h("option",{value:""},k==="skill"?T("Role default","角色預設"):T("Not chosen","尚未選擇")),list.map(([v,l])=>h("option",{value:v,selected:v===cur||null},l))));
+  const model=h("input",{class:"input",value:n.model||"","data-node-config-model":"",placeholder:T("model id, e.g. gpt-5.5 or claude-sonnet-5-5","模型代號"),maxlength:80,onchange:e=>onChange?.("model",e.target.value.trim())});
+  const status=h("span",{class:"faint",role:"status","data-node-config-status":""});
+  const box=h("div",{class:"fw-node-config",[attr]:n.id},
+    h("h4",{},T("Who does this node","這個節點由誰做")),
+    sel("provider",opts.providers.map(v=>[v,v==="codex"?"Codex":"Claude"]),T("Provider","供應商"),n.provider),
+    h("label",{class:"rt-field"},h("span",{},T("Model","模型")),model),
+    sel("effort",opts.efforts.map(v=>[v,v]),T("Reasoning effort","推理強度"),n.effort),
+    sel("skill",opts.skills.map(x=>[x.ref,T(x.en,x.zh)]),T("Role skill","角色技能"),n.skill),
+    h("p",{class:"faint"},T(`Role default: ${(roleSkill||"none").replace(/^bundled:workflows\/skills\/v2\//,"")}. Nothing runs or is staffed here; you confirm staffing when you click Run.`,`角色預設：${(roleSkill||"無").replace(/^bundled:workflows\/skills\/v2\//,"")}。這裡不會執行或派工；按下執行時才會確認人員配置。`)),
+    onSave?h("div",{class:"rt-row"},h("button",{class:"btn sm primary",type:"button","data-node-config-save":"",onclick:async()=>{const val=k=>box.querySelector(`[data-node-config-${k}]`).value;status.textContent=T("Saving…","儲存中…");try{const r=await onSave({provider:val("provider"),model:val("model").trim(),effort:val("effort"),skill:val("skill")});status.textContent=T(`Saved · revision ${r.revision}`,`已儲存 · 第 ${r.revision} 版`);}catch(e){status.textContent=e.message;}}},T("Save node settings","儲存節點設定")),status):null);
+  if(!DRAFT_OPTS.value)draftOpts().then(()=>{if(box.isConnected)box.replaceWith(nodeModelControls(n,roleSkill,{onChange,onSave,attr}));}).catch(()=>{});
+  return box;
+}
+/** Run of the captain's own workflow: the staffing confirmation appears only now. Resolves true when confirmed. */
+function staffingConfirm(staffing,missing){
+  return new Promise(resolve=>{
+    const dlg=h("dialog",{class:"fw-dialog","data-staffing-confirm":"","aria-label":T("Confirm staffing","確認人員配置")});
+    const close=v=>{dlg.close();dlg.remove();resolve(v);};
+    dlg.append(h("h2",{},missing?T("Choose who works on each node","請先選擇每個節點的人員"):T("Confirm staffing before this Task starts","開始任務前確認人員配置")),
+      h("p",{},missing?T("These agent nodes still need a provider, model and (for Codex) effort. Select the node in the editor to choose.","這些代理節點還需要供應商、模型與（Codex）推理強度；請在編輯器選取節點設定。"):T("Only your confirmation starts the Task. Each node below runs with exactly this provider, model, effort and skill.","只有你的確認會開始任務；以下每個節點將完全依照這些供應商、模型、推理強度與技能執行。")),
+      h("table",{class:"fw-staffing"},h("thead",{},h("tr",{},[T("Node","節點"),T("Provider","供應商"),T("Model","模型"),T("Effort","推理強度"),T("Skill","技能")].map(x=>h("th",{},x)))),
+        h("tbody",{},staffing.plan.map(r=>h("tr",{"data-staffing-row":r.node,class:staffing.missing.includes(r.node)?"missing":null},h("td",{},r.label),h("td",{},r.provider||"—"),h("td",{},r.model||"—"),h("td",{},r.effort||"—"),h("td",{},(r.skill||"—").replace(/^bundled:workflows\/skills\/v2\//,"")))))),
+      h("div",{class:"actions"},h("button",{class:"btn",type:"button","data-staffing-cancel":"",onclick:()=>close(false)},missing?T("Close","關閉"):T("Cancel, no Task","取消，不開始")),missing?null:h("button",{class:"btn primary",type:"button","data-staffing-approve":"",onclick:()=>close(true)},T("Confirm staffing and start","確認配置並開始"))));
+    dlg.addEventListener("cancel",e=>{e.preventDefault();close(false);});
+    document.body.append(dlg);dlg.showModal();
+  });
+}
+async function startOwnRun(body){
+  try{return await api("/api/wruns",body);}
+  catch(e){const j=e.staffing;if(e.code==="staffing_incomplete"){await staffingConfirm(j,true);return null;}if(e.code!=="staffing_confirmation_required")throw e;if(!await staffingConfirm(j,false))return null;return api("/api/wruns",{...body,staffingConfirm:j.hash});}
+}
+const DRAFT_LIVE={fn:null};window.liveListen?.("wfdraft",()=>DRAFT_LIVE.fn?.());
+function firstWorkflow(arg){
   const key="crew.firstWorkflow.draft.v1";let draft={};try{draft=JSON.parse(store.get(key)||"{}");}catch{}if(!draft||typeof draft!=="object")draft={};
-  const goal=h("textarea",{class:"input",rows:4,"data-first-workflow-goal":"",placeholder:T("What should your workflow help you do?","你希望流程幫你完成什麼？")});goal.value=draft.goal||"";
-  const status=h("p",{role:"status","data-first-workflow-status":""}),preview=h("section",{class:"card x-pad","data-first-workflow-preview":"",hidden:!draft.goal});
-  const remember=()=>{draft.goal=goal.value;store.set(key,JSON.stringify(draft));};goal.addEventListener("input",remember);
-  const draw=()=>{preview.replaceChildren(h("h2",{},T("Free starter preview · not AI generated","免費起始範本預覽 · 並非 AI 生成")),h("p",{},draft.goal),h("p",{},T("Captain confirmation → Done","船長確認 → 完成")),h("pre",{style:"white-space:pre-wrap;overflow-wrap:anywhere"},JSON.stringify({nodes:[{id:"start",kind:"card"},{id:"done",kind:"hook"}],edges:[{from:"start",to:"done",when:"continue"}]},null,2)));};draw();
-  let pending=false;const create=h("button",{class:"btn primary","data-first-workflow-create":"",onclick:async()=>{if(pending)return;remember();if(!draft.goal?.trim()){status.textContent=T("Describe your goal first.","請先寫下目標。");return;}if(draft.workflow){location.hash="#/workflows/"+draft.workflow;return;}if(draft.uncertain){status.textContent=T("Creation is uncertain. Check Workflows for the saved ID before retrying: ","建立結果尚未確認。請先到流程列表查找代號，避免重複建立：")+draft.id;return;}draft.id||="my-workflow-"+crypto.randomUUID().slice(0,8);draft.uncertain=true;store.set(key,JSON.stringify(draft));pending=true;create.disabled=true;try{const result=await api("/api/wf",{id:draft.id,name:draft.goal.trim().slice(0,120),locale:lang==="en"?"en":"zh-TW"});draft.workflow=result.def.id;draft.uncertain=false;store.set(key,JSON.stringify(draft));WF.list=null;WF.listGeneration++;location.hash="#/workflows/"+draft.workflow;}catch(e){status.textContent=T("Could not confirm creation. Inspect Workflows for ","無法確認建立結果，請到流程列表查看 ")+draft.id;}finally{pending=false;create.disabled=false;}}},T("Save starter and edit nodes","儲存起始範本並編輯節點"));
-  return h("div",{class:"page","data-first-workflow":""},h("h1",{},T("Your first workflow","建立你的第一個流程")),h("p",{},T("1 Discuss → 2 Preview → 3 Edit → 4 Confirm Run → 5 Compare and refine → 6 Save a template","1 討論 → 2 預覽 → 3 編輯 → 4 確認執行 → 5 比較修改 → 6 儲存範本")),h("label",{},T("Your goal (saved locally)","你的目標（儲存在此瀏覽器）"),goal),h("div",{class:"actions"},h("button",{class:"btn","data-first-workflow-chat":"",onclick:()=>{remember();chatMode="main";store.set("crew.chatMode","main");openChat(true);const input=document.querySelector("#chatIn");if(input){if(!input.value)input.value=T("Help me design a personal workflow. Discuss the goal and preview the nodes before any execution or staffing approval. My goal: ","請幫我設計個人流程，先討論目標並預覽節點，暫不執行或核准派工。我的目標：")+draft.goal;input.dispatchEvent(new Event("input",{bubbles:true}));input.focus();}}},T("Discuss with Firstmate (review before sending)","和 Firstmate 討論（確認後自行送出）")),h("button",{class:"btn","data-first-workflow-preview-button":"",onclick:()=>{remember();preview.hidden=false;draw();}},T("Preview free starter","預覽免費起始範本"))),preview,create,status,h("p",{class:"faint"},T("This starter only waits for your confirmation. It does not generate proposals. In the editor, select a node to edit it and save a workflow version. Configure actual worker/reviewer models before Run. Model-generated personalization, comparison and refinement require real execution; this guide never submits a task or approves it.","起始範本只會等待確認，不會生成提案。在編輯器選取節點修改並儲存版本；真正執行前再設定 worker/reviewer 模型。模型個人化、提案比較與修改需要實際執行；本教學不會送出任務或代為核准。")),h("a",{class:"btn",href:"#/workflows"},T("Saved workflows","已儲存的流程")));
+  const save=()=>store.set(key,JSON.stringify(draft));
+  const goal=h("textarea",{class:"input",rows:3,"data-first-workflow-goal":"",placeholder:T("What should your workflow help you do?","你希望流程幫你完成什麼？")});goal.value=draft.goal||"";
+  const status=h("p",{role:"status","data-first-workflow-status":""}),preview=h("section",{class:"card x-pad fw-preview","data-first-workflow-preview":"",hidden:true});
+  const remember=()=>{draft.goal=goal.value;save();};goal.addEventListener("input",remember);
+  let model=null,showStarter=false,openNode=null,seen="";
+  const graph=(def,onNode)=>{const byId=Object.fromEntries(def.nodes.map(n=>[n.id,n]));const ins=new Set(def.edges.map(e=>e.to));const order=[];const q=def.nodes.filter(n=>!ins.has(n.id)).map(n=>n.id);const seenN=new Set();while(q.length){const id=q.shift();if(seenN.has(id))continue;seenN.add(id);order.push(id);for(const e of def.edges)if(e.from===id)q.push(e.to);}for(const n of def.nodes)if(!seenN.has(n.id))order.push(n.id);
+    return h("div",{class:"fw-graph"},h("ol",{class:"fw-nodes"},order.map(id=>{const n=byId[id],role=def.roles.find(r=>r.id===n.role);return h("li",{},h("button",{type:"button",class:`fw-node k-${n.kind}${openNode===n.id?" open":""}`,"data-draft-node":n.id,"aria-expanded":n.kind==="agent"?String(openNode===n.id):null,onclick:()=>onNode?.(n)},h("b",{},n.label),h("span",{class:"faint"},n.kind==="agent"?[role?.label||n.role,n.provider?`${n.provider}${n.model?" · "+n.model:""}${n.effort?" · "+n.effort:""}`:T("not staffed yet","尚未配置")].filter(Boolean).join(" · "):n.kind==="card"?T("your decision","你的決定"):T("end","結束"))));})),
+      h("ul",{class:"fw-edges faint"},def.edges.map(e=>h("li",{},`${byId[e.from]?.label||e.from} → ${byId[e.to]?.label||e.to}${e.when?` (${e.when})`:""}`))));};
+  const draw=()=>{
+    if(model&&!showStarter){const d=model,def=d.def;preview.hidden=false;preview.dataset.firstWorkflowSource="model";
+      const roleOf=n=>def.roles.find(r=>r.id===n.role)?.skill;
+      const onNode=n=>{openNode=n.kind==="agent"&&openNode!==n.id?n.id:null;draw();};
+      const openN=openNode&&def.nodes.find(n=>n.id===openNode&&n.kind==="agent");
+      preview.replaceChildren(...[
+        h("div",{class:"fw-head"},h("span",{class:"badge fw-badge model"},d.provenance.edited?T("Generated by Firstmate · AI model · edited by you","由 Firstmate 生成 · AI 模型 · 你已修改"):T("Generated by Firstmate · AI model","由 Firstmate 生成 · AI 模型")),h("span",{class:"faint"},T(`revision ${d.revision} · free draft, nothing runs`,`第 ${d.revision} 版 · 免費草稿，不會執行`))),
+        h("h2",{},def.name),h("p",{class:"faint"},d.goal),
+        d.interview?.length?h("details",{},h("summary",{},T(`Interview (${d.interview.length} answers)`,`訪談（${d.interview.length} 則回答）`)),h("dl",{class:"fw-interview"},d.interview.flatMap(q=>[h("dt",{},q.question),h("dd",{},q.answer)]))):null,
+        h("p",{class:"faint"},T("Click an agent node to choose its provider, model, effort and skill.","點代理節點可選擇供應商、模型、推理強度與技能。")),
+        graph(def,onNode),
+        openN?nodeModelControls(openN,roleOf(openN),{attr:"data-node-config",onSave:async body=>{const r=await api(`/api/wf/drafts/${d.id}/nodes/${openN.id}`,{revision:d.revision,...body});model=r.draft;seen=`${model.id}@${model.revision}`;const keep=openNode;draw();openNode=keep;const st=preview.querySelector("[data-node-config-status]");if(st)st.textContent=T(`Saved · revision ${model.revision}`,`已儲存 · 第 ${model.revision} 版`);return model;}}):null,
+        h("details",{open:true},h("summary",{},T("Graph JSON","流程圖 JSON")),h("pre",{class:"fw-json","data-first-workflow-json":""},JSON.stringify({name:def.name,roles:def.roles,nodes:def.nodes.map(({x,y,...n})=>n),edges:def.edges},null,2))),
+        d.saved?h("a",{class:"btn primary",href:`#/workflows/${d.saved.workflow}`,"data-first-workflow-open-saved":""},T("Open the saved workflow","打開已儲存的流程")):
+        h("button",{class:"btn primary","data-first-workflow-save-draft":"",onclick:async e=>{e.target.disabled=true;try{const r=await api(`/api/wf/drafts/${d.id}/save`,{});WF.list=null;WF.listGeneration++;location.hash=r.href;}catch(err){status.textContent=err.message;e.target.disabled=false;}}},T("Save as my workflow (no Task)","儲存為我的流程（不建立任務）"))].filter(Boolean));
+      return;}
+    if(!showStarter){preview.hidden=true;return;}
+    preview.hidden=false;preview.dataset.firstWorkflowSource="starter";
+    preview.replaceChildren(h("div",{class:"fw-head"},h("span",{class:"badge fw-badge starter"},T("Free starter · not AI generated","免費起始範本 · 並非 AI 生成"))),h("h2",{},T("Free starter preview · not AI generated","免費起始範本預覽 · 並非 AI 生成")),h("p",{},draft.goal),h("p",{},T("Captain confirmation → Done","船長確認 → 完成")),h("pre",{class:"fw-json"},JSON.stringify({nodes:[{id:"start",kind:"card"},{id:"done",kind:"hook"}],edges:[{from:"start",to:"done",when:"continue"}]},null,2)),create);
+  };
+  const refresh=async()=>{if(!root.isConnected&&seen)return;try{const want=arg||draft.draftId;let d=null;if(want){try{d=(await api(`/api/wf/drafts/${want}`)).draft;}catch{}}const list=(await api("/api/wf/drafts")).drafts||[];const newest=list.find(x=>!x.saved&&(!draft.askedAt||x.updatedAt>=draft.askedAt));if(!arg&&newest&&(!d||d.saved||newest.updatedAt>d.updatedAt))d=(await api(`/api/wf/drafts/${newest.id}`)).draft;if(!d)return;const sig=`${d.id}@${d.revision}`;if(sig===seen)return;seen=sig;model=d;showStarter=false;if(!arg){draft.draftId=d.id;save();}draw();}catch{}};
+  let pending=false;const create=h("button",{class:"btn","data-first-workflow-create":"",onclick:async()=>{if(pending)return;remember();if(!draft.goal?.trim()){status.textContent=T("Describe your goal first.","請先寫下目標。");return;}if(draft.workflow){location.hash="#/workflows/"+draft.workflow;return;}if(draft.uncertain){status.textContent=T("Creation is uncertain. Check Workflows for the saved ID before retrying: ","建立結果尚未確認。請先到流程列表查找代號，避免重複建立：")+draft.id;return;}draft.id||="my-workflow-"+crypto.randomUUID().slice(0,8);draft.uncertain=true;save();pending=true;create.disabled=true;try{const result=await api("/api/wf",{id:draft.id,name:draft.goal.trim().slice(0,120),locale:lang==="en"?"en":"zh-TW",origin:"starter"});draft.workflow=result.def.id;draft.uncertain=false;save();WF.list=null;WF.listGeneration++;location.hash="#/workflows/"+draft.workflow;}catch(e){status.textContent=T("Could not confirm creation. Inspect Workflows for ","無法確認建立結果，請到流程列表查看 ")+draft.id;}finally{pending=false;create.disabled=false;}}},T("Save starter and edit nodes","儲存起始範本並編輯節點"));
+  const ask=()=>{remember();draft.askedAt=new Date(Date.now()-5000).toISOString();save();chatMode="main";store.set("crew.chatMode","main");openChat(true);const input=document.querySelector("#chatIn");if(input){if(!input.value)input.value=T("Help me design my own workflow. Interview me briefly (two or three short questions, one at a time: who does the work, who reviews it, when I decide). Then design the graph and call studio_draft_workflow so the page previews it. This is free drafting: do not use studio_propose_work or staffing tools and do not start any Task. My goal: ","請幫我設計我自己的流程。先簡短訪談我（兩三個問題，一次一題：誰做、誰審、我何時決定），再設計流程圖並呼叫 studio_draft_workflow 讓頁面預覽。這是免費起草：不要使用 studio_propose_work 或派工工具，也不要開始任何任務。我的目標：")+draft.goal;input.dispatchEvent(new Event("input",{bubbles:true}));input.focus();}};
+  const root=h("div",{class:"page fw-page","data-first-workflow":""},h("h1",{},T("Your first workflow","建立你的第一個流程")),
+    h("ol",{class:"fw-steps"},[[T("Interview","訪談"),T("free","免費")],[T("Generated graph and preview","生成流程圖與預覽"),T("free","免費")],[T("Edit each node's model","設定節點模型"),T("free","免費")],[T("Confirm staffing at Run","執行時確認配置"),T("starts the Task","開始任務")],[T("Compare and refine","比較與修改"),T("next","下一步")],[T("Save as template","存成範本"),T("next","下一步")]].map(([a,b])=>h("li",{},h("b",{},a),h("span",{class:"faint"},b)))),
+    h("label",{class:"rt-field"},h("span",{},T("Your goal (saved in this browser)","你的目標（儲存在此瀏覽器）")),goal),
+    h("div",{class:"actions"},h("button",{class:"btn primary","data-first-workflow-chat":"",onclick:ask},T("Interview with Firstmate (you send it)","和 Firstmate 訪談（由你送出）")),h("button",{class:"btn","data-first-workflow-preview-button":"",onclick:()=>{remember();showStarter=true;draw();}},T("Preview free starter instead","改用免費起始範本"))),
+    preview,status,
+    h("p",{class:"faint"},T("Drafting, previewing, editing nodes and saving are free: no Task, no staffing. Firstmate's graph is labeled as AI model output; the starter is labeled as not AI generated. Staffing is confirmed only when you click Run. The coffee shop is the advanced example.","起草、預覽、設定節點與儲存都免費：不建立任務、不派工。Firstmate 的流程圖標示為 AI 模型產出；起始範本標示為非 AI 生成。只有按下執行時才確認人員配置。咖啡店是進階範例。")),
+    h("div",{class:"actions"},h("a",{class:"btn",href:"#/workflows"},T("Saved workflows","已儲存的流程")),h("a",{class:"btn ghost",href:"#/workflows/coffee-kit"},T("Advanced example: coffee shop","進階範例：咖啡店"))));
+  DRAFT_LIVE.fn=refresh;draftOpts().catch(()=>{});refresh();const timer=setInterval(()=>{if(!root.isConnected){clearInterval(timer);if(DRAFT_LIVE.fn===refresh)DRAFT_LIVE.fn=null;return;}refresh();},2000);
+  return root;
 }
 routes["first-workflow"]=firstWorkflow;
 Object.assign(routes, { workflows: viewWorkflows, runs: viewRuns, run: viewRun });

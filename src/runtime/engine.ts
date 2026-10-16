@@ -416,7 +416,7 @@ export class Engine {
     const pick = (): AgentPick => {
       const approved = self.deps.approvedPick?.(r, node); if (approved) return approved;
       if (rn.agent) return rn.agent;
-      if (node.provider) return { provider: node.provider, model: node.model ?? null };
+      if (node.provider) return { provider: node.provider, model: node.model ?? null, ...(node.effort ? { effort: node.effort } : {}) };
       const role = r.def.roles.find((x) => x.id === node.role);
       if (role?.provider) return { provider: role.provider, model: role.model ?? null };
       if (r.params.provider) return { provider: r.params.provider, model: r.params.model || null };
@@ -428,12 +428,14 @@ export class Engine {
       pick, provider: () => { const p = pick(); return self.deps.provider(p.provider, p.model ?? undefined); },
       policy: (path, dflt) => self.policy(r, path, dflt),
       // the agent's instructions: Studio's safety rules, the role skill, then each enabled skill (pinned by version and hash) under its heading
-      skill: () => self.instructions(r, node.role ?? node.args?.role, node.kind === "agent" && Array.isArray(node.skills) ? node.skills : []) };
+      skill: () => self.instructions(r, node.role ?? node.args?.role, node.kind === "agent" && Array.isArray(node.skills) ? node.skills : [], node.kind === "agent" ? node.skill : undefined) };
   }
   /** The one way an agent's instructions are built (architecture §5): the safety rules, the role's skill, then each pinned skill in order. */
-  instructions(r: Run, roleId: string | undefined, pins: { id: string; v: number; sha256: string }[]): string {
+  instructions(r: Run, roleId: string | undefined, pins: { id: string; v: number; sha256: string }[], nodeSkill?: string): string {
     const approved = this.deps.approvedSkill?.(r, roleId);
-    const role = r.def.roles.find((x) => x.id === roleId); let roleText = approved === undefined ? "" : `# Approved native role snapshot\n${approved}\n# End native role snapshot`; if (approved === undefined && role?.skill) { try { roleText = this.deps.skillText(role.skill); } catch {} }
+    const role = r.def.roles.find((x) => x.id === roleId); let roleText = approved === undefined ? "" : `# Approved native role snapshot\n${approved}\n# End native role snapshot`; // a node may name its own bundled role skill (the captain's inline choice); never a file path
+    const roleSkill = typeof nodeSkill === "string" && nodeSkill.startsWith("bundled:workflows/skills/v2/") ? nodeSkill : role?.skill;
+    if (approved === undefined && roleSkill) { try { roleText = this.deps.skillText(roleSkill); } catch {} }
     // the library is Studio's skill store under this data folder; an engine built without one (a test, a tool) opens the same store
     if (pins.length && !this.deps.library) this.deps.library = new Skills(this.deps.dataDir, { list: () => [], get: () => null, sourceSkill: () => null } as any);
     return composeInstructions(roleText, pins.map((p) => ({ id: p.id, v: p.v, body: this.deps.library.body(p.id, p.v, p.sha256) })));

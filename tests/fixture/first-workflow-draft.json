@@ -1,0 +1,29 @@
+{
+  "goal": "A weekly newsletter about local coffee events",
+  "interview": [
+    {"question": "Who reads it?", "answer": "Regulars who visit on weekends"},
+    {"question": "Who checks it before it goes out?", "answer": "A reviewer, then me"}
+  ],
+  "workflow": {
+    "name": "Weekly coffee newsletter",
+    "description": "Pick topics, draft, review, then the captain approves.",
+    "roles": [
+      {"id": "writer", "label": "Writer", "skill": "bundled:workflows/skills/v2/writer.md"},
+      {"id": "reviewer", "label": "Reviewer", "skill": "bundled:workflows/skills/v2/writer.md"}
+    ],
+    "nodes": [
+      {"id": "topics", "kind": "card", "label": "Confirm this week's topics", "card": {"title": {"en": "Topics ready?"}, "options": [{"id": "continue", "label": "Continue"}]}},
+      {"id": "draft", "kind": "agent", "label": "Draft the newsletter", "role": "writer", "mode": "deliver", "args": {"format": "document"}, "provider": "codex", "model": "fixture-model", "effort": "low"},
+      {"id": "review", "kind": "agent", "label": "Review the draft", "role": "reviewer", "mode": "deliver", "args": {"format": "document"}},
+      {"id": "approve", "kind": "card", "label": "Captain approval", "card": {"options": [{"id": "publish", "label": "Publish"}, {"id": "revise", "label": "Revise"}]}},
+      {"id": "done", "kind": "hook", "label": "Done"}
+    ],
+    "edges": [
+      {"from": "topics", "to": "draft", "when": "continue"},
+      {"from": "draft", "to": "review"},
+      {"from": "review", "to": "approve"},
+      {"from": "approve", "to": "done", "when": "publish"},
+      {"from": "approve", "to": "draft", "when": "revise"}
+    ]
+  }
+}
