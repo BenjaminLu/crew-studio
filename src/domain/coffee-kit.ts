@@ -120,7 +120,7 @@ function coffeeConstraintContext(x:X,through?:number){
  // Artifact findings are distinct from presentation-copy lint on captain cards. Both remain in the signed ledger.
  const machineFindings=entries.filter(e=>e.record==='check'&&e.check?.startsWith('coffee-kit/')&&['fail','warn','error'].includes(e.verdict)&&((e.findings??[]).length||e.error)).map(e=>({source:{seq:e.seq,sig:e.sig},check:e.check,head:e.head,verdict:e.verdict,findings:e.findings,error:e.error??null}));
  const context={schema:1,machineFindings,rule:'Preserve earlier captain constraints unless a later request explicitly replaces them. Do not infer resolution or rely on model memory.',requests};
- if(JSON.stringify(context).length>12000)throw new Error('Cumulative captain constraints exceed bounded context; discuss a new explicit plan without discarding history');
+ if(JSON.stringify(context).length>48000)throw new Error('Cumulative captain constraints exceed bounded context; discuss a new explicit plan without discarding history');
  return context;
 }
 export type CoffeeChoice = {provider:'codex';model:string;effort:string|null};
@@ -326,7 +326,7 @@ export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; 
     ].filter(Boolean);
     const staffingEvidence=[...entries.filter(e=>e.record==='staffing-start'||e.record==='staffing-upgrade'),...producerInstructions].map(e=>({record:e!.record,source:{seq:e!.seq,sig:e!.sig},node:e!.node,round:e!.round,data:e!.data}));
     const snapshot={schema:1,scope:'text-and-source-only',design:plan.direction.design,designHash:plan.direction.designHash,generations:plan.generations,revision:plan.revision,cumulativeCaptainConstraints:coffeeConstraintContext(x),staffing:{config:x.run.params._staffing??null,approved:d.reviewStaffing?.(x.run.def,x.run.params)??null,evidence:staffingEvidence},receiptEvidence,receipts,texts};
-    if(JSON.stringify(snapshot).length>48000)throw new Error('Complete coffee review input exceeds bounded capacity; no truncated approval');
+    if(JSON.stringify(snapshot).length>96000)throw new Error('Complete coffee review input exceeds bounded capacity; no truncated approval');
     return snapshot;
   };
   const openBundleCard = async (x:X) => {
