@@ -14,9 +14,9 @@ export async function selectNativeProvider(i: ProviderSelection, probe: (id: str
   if (!chain.length) throw new ProviderRefusal("worker fallback chain is not configured");
   const unavailable: { provider: string; reason: string }[] = [];
   for (const id of chain) {
-    const selected = explicit ? { model: i.model ?? i.configured[id]?.model ?? null, effort: i.effort ?? i.configured[id]?.effort ?? null } : i.roleModel && id === chain[0] ? { ...i.configured[id], model: i.roleModel } : i.configured[id];
+    const selected = explicit ? { model: i.model ?? i.configured[id]?.model ?? null, effort: Object.hasOwn(i,"effort") ? i.effort ?? null : i.configured[id]?.effort ?? null } : i.roleModel && id === chain[0] ? { ...i.configured[id], model: i.roleModel } : i.configured[id];
     if (!selected?.model || typeof selected.model !== "string") throw new ProviderRefusal(`no approved model configured for ${id}`);
-    let cap: ProviderCapability; try { cap = await probe(id,{model:selected.model,effort:selected.effort??null}); } catch { throw new ProviderRefusal(`capability probe failed for ${id}; verification unavailable`); }
+    let cap: ProviderCapability; try { cap = await probe(id,{model:selected.model,effort:selected.effort??null}); } catch(error) { if(error instanceof ProviderRefusal)throw error;throw new ProviderRefusal(`capability probe failed for ${id}; verification unavailable`); }
     if (!cap || !Array.isArray(cap.models) || cap.models.some(m => !m || typeof m.id !== "string" || m.efforts !== undefined && (!Array.isArray(m.efforts) || m.efforts.some(e => typeof e !== "string"))) || typeof cap.available !== "boolean" || !["verified", "unverified", "missing"].includes(cap.auth) || !["available", "exhausted", "unknown"].includes(cap.quota) || cap.provider !== id || !Number.isFinite(cap.at) || !Number.isFinite(cap.expires) || cap.at > Date.now() || cap.expires <= Date.now() || cap.expires - cap.at > 300_000) throw new ProviderRefusal(`provider capability identity or freshness unavailable: ${id}`);
     const classifiedUnavailable = cap.refusal === "unavailable" && !cap.available;
     const classifiedMissingLogin = cap.refusal === "missing-login" && cap.auth === "missing";

@@ -87,7 +87,9 @@
     "test:github-review-workflow": "bun tests/github-review-workflow.ts && bun tests/github-community.ts",
     "test:github-review-workflow-ui": "node tests/github-review-workflow-ui.mjs",
     "test:web-open-task-reopen": "bun tests/task-reopen.ts && bun tests/web-open-links.ts && bun tests/web-open-task-reopen-ui.mjs && bun tests/web-open-server.mjs",
-    "test:first-workflow-tutorial": "bun tests/first-workflow-draft-lock.ts && bun tests/first-workflow-draft.ts && node tests/first-workflow-tutorial-ui.mjs && node tests/first-workflow-draft-ui.mjs"
+    "test:first-workflow-tutorial": "bun tests/first-workflow-draft-lock.ts && bun tests/first-workflow-draft.ts && node tests/first-workflow-tutorial-ui.mjs && node tests/first-workflow-draft-ui.mjs",
+    "test:startup-recursion": "CREW_TEST_IN_PROCESS=1 bun tests/startup-recursion.ts",
+    "test:startup-claude-refresh": "bun tests/startup-claude-refresh.ts"
   },
   "devDependencies": {
     "gsap": "3.14.2",
