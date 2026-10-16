@@ -62,20 +62,27 @@ try {
     await p.screenshot({ path: join(shots, 'project-kelp-notes-1280-light.png'), fullPage: false });
     await p.goto(`${base}/#/projects`); await p.waitForSelector('[data-projects-index] [data-project-card="reef-log"]');
     ok((await p.locator('[data-project-card="reef-log"] .faint').textContent()).startsWith('Folder missing'), 'the index card of reef-log says Folder missing');
-    // the sidebar at 1280x900 with six projects and Studio: the list scrolls above the footer, nothing hidden under it
-    await p.goto(`${base}/#/project/harbor-api`); await p.reload(); await p.waitForSelector('[data-projects-nav] [data-project-row="studio"]'); await p.waitForTimeout(300);
+    // the sidebar at 1280x900 with more projects than it can show (independent of the sidebar's own chrome): spare
+    // registrations (missing roots, so they block nothing) are added until the list runs on 100 px past its height
+    const spare = (i) => ({ id: `spare-${String(i).padStart(2, '0')}`, name: `spare-${String(i).padStart(2, '0')}`, path: join(seed.data, `spare-gone-${i}`), base: 'main', sensitive: [], proposed: null, proposedAt: null, approvedAt: null });
+    const overflowList = async () => { for (let n = 4; n <= 60; n += 4) {
+      writeFileSync(regFile, JSON.stringify([...JSON.parse(healthy), ...seed.broken, ...Array.from({ length: n }, (_, i) => spare(i + 1))], null, 1));
+      await p.goto(`${base}/#/project/harbor-api`); await p.reload(); await p.waitForSelector('[data-projects-nav] [data-project-row="studio"]'); await p.waitForTimeout(300);
+      const o = await p.evaluate(() => { const l = document.querySelector('[data-projects-list]'); return { sh: l.scrollHeight, ch: l.clientHeight }; });
+      if (o.sh > o.ch + 100) return { n, ...o }; } return null; };
+    const of = await overflowList();
+    ok(!!of, 'precondition: the projects list overflows its height by more than 100 px at 1280x900 (spare registrations added until it does)', JSON.stringify(of));
     const side = await p.evaluate(async () => { const sec = document.querySelector('[data-projects-list]'), foot = document.querySelector('.side-foot'); const moreAtTop = sec.dataset.more; sec.scrollTop = sec.scrollHeight; await new Promise((r) => setTimeout(r, 200));
       const sr = sec.getBoundingClientRect(), fr = foot.getBoundingClientRect(), last = sec.querySelector('[data-project-row="studio"]').getBoundingClientRect();
       return { secBottom: sr.bottom, footTop: fr.top, lastTop: last.top, lastBottom: last.bottom, secTop: sr.top, scrolls: sec.scrollHeight > sec.clientHeight, moreAtTop, moreAtEnd: sec.dataset.more }; });
     ok(side.secBottom <= side.footTop + 0.5 && side.lastBottom <= side.secBottom + 0.5 && side.lastTop >= side.secTop, 'at 1280x900 the projects list scrolls above the footer; its last row is fully visible when scrolled', JSON.stringify(side));
     ok(side.scrolls && side.moreAtTop === '1' && side.moreAtEnd === '0', 'a list that runs on past the footer says so (a fade and a "more" mark) until it is scrolled to the end', JSON.stringify(side));
     await p.evaluate(() => { document.querySelector('[data-projects-list]').scrollTop = 0; });
-    await p.screenshot({ path: join(shots, 'sidebar-1280x900-six-projects.png'), clip: { x: 0, y: 0, width: 240, height: 900 } });
+    await p.screenshot({ path: join(shots, 'sidebar-1280x900-overflowing.png'), clip: { x: 0, y: 0, width: 240, height: 900 } });
     // ten projects at 1280x900, the list scrolled to the middle: nothing shows through above the PROJECTS heading, and no row
     // is drawn under it (a row's visible part starts below the heading)
-    { const extra = [1, 2, 3, 4].map((i) => ({ id: `spare-${i}`, name: `spare-${i}`, path: join(seed.data, `spare-gone-${i}`), base: 'main', sensitive: [], proposed: null, proposedAt: null, approvedAt: null }));
-      writeFileSync(regFile, JSON.stringify([...JSON.parse(healthy), ...seed.broken, ...extra], null, 1));
-      await p.reload(); await p.waitForSelector('[data-projects-nav] [data-project-row="spare-4"]'); await p.waitForTimeout(300);
+    { // the overflowing registry written above is still in place
+      await p.reload(); await p.waitForSelector('[data-projects-nav] [data-project-row="studio"]'); await p.waitForTimeout(300);
       const r = await p.evaluate(async () => {
         const sec = document.querySelector('[data-projects-nav]'), hdr = sec.querySelector('.nav-proj-h');
         const scroller = [sec, ...sec.querySelectorAll('*')].find((e) => e.scrollHeight > e.clientHeight + 2 && /auto|scroll/.test(getComputedStyle(e).overflowY));
@@ -86,7 +93,7 @@ try {
         const rowsUnder = [...sec.querySelectorAll('.pj-item')].map((e) => e.getBoundingClientRect()).filter((b) => b.bottom > clip.top && b.top < clip.bottom).filter((b) => Math.max(b.top, clip.top) < h.bottom - 0.5).length;
         return { bad: bad.slice(0, 3), rowsUnder, hdrBottom: h.bottom, clipTop: clip.top, scrollTop: scroller.scrollTop };
       });
-      ok(!r.error && !r.bad.length && r.rowsUnder === 0, 'ten projects, list scrolled: no row shows above or under the PROJECTS heading', JSON.stringify(r));
+      ok(!r.error && !r.bad.length && r.rowsUnder === 0, 'an overflowing list, scrolled: no row shows above or under the PROJECTS heading', JSON.stringify(r));
       await p.screenshot({ path: join(shots, 'sidebar-1280x900-ten-projects-scrolled.png'), clip: { x: 0, y: 0, width: 240, height: 900 } });
       writeFileSync(regFile, JSON.stringify([...JSON.parse(healthy), ...seed.broken], null, 1)); await p.reload(); await p.waitForSelector('[data-projects-nav] [data-project-row="studio"]'); }
     // an unreadable project policy: every path is one-way; the page says so and offers no edits
@@ -184,9 +191,11 @@ try {
       const counted = await p.waitForFunction(() => document.querySelector('[data-projects-nav] [data-project-row="harbor-api"] .count')?.textContent === '3', null, { timeout: 8000 }).then(() => true).catch(() => false);
       ok(counted, 'the sidebar count follows the new card');
       // language switch: the sidebar and the page relabel
-      await p.click('[data-lang-set="zh-TW"]');
+      // the language picker lives on Settings now (it left the sidebar): switch there, then come back to the project page
+      await p.goto(`${base}/#/settings`); await p.click('[data-lang-set="zh-TW"]');
+      await p.goto(`${base}/#/project/harbor-api`); await p.waitForSelector('[data-project-page="harbor-api"]:not([data-loading]) #hHealth');
       ok((await p.locator('#projH').textContent()) === '專案' && (await pg.locator('#hHealth').textContent()) === '健康狀態' && (await pg.locator('[data-health="rules"]').textContent()).includes('尚未檢查'), 'switching to zh-TW relabels the section and the page');
-      await p.click('[data-lang-set="en"]');
+      await p.goto(`${base}/#/settings`); await p.click('[data-lang-set="en"]');
       // the Studio page refetches on a wrun of a run that counts under Studio (a coffee run's own namespace, not a registered id)
       await p.goto(`${base}/#/project/studio`); await p.waitForSelector('[data-project-page="studio"]:not([data-loading])');
       const hits = await p.evaluate(async () => { let hit = 0; const f = window.fetch; window.fetch = (u, ...a) => { if (String(u).includes('/api/projects/studio/overview')) hit++; return f(u, ...a); };
