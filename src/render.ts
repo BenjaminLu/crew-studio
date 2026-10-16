@@ -7,7 +7,7 @@
 import { scrubEnv } from "./secure";
 import { accessSync, constants, copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import renderSrc from "./render/render.mjs" with { type: "text" };
 
 const which = (bin: string): string | null => {
@@ -24,7 +24,10 @@ export function renderEnv() {
     join(import.meta.dir, "../node_modules/playwright/index.mjs")].filter(Boolean) as string[];
   const playwright = candidates.find((p) => existsSync(p)) ?? null;
   const stub = process.env.CREW_RENDER_STUB === "1";
-  return { node, ffmpeg, playwright, stub, canCrop: stub || !!(node && playwright), canFilm: stub || !!(node && playwright && ffmpeg) };
+  // ffprobe reads a rendered MP4's exact size; an explicit CREW_FFPROBE that does not exist means none
+  const sibling = ffmpeg && ffmpeg.includes("/") ? join(dirname(ffmpeg), "ffprobe") : null;
+  const ffprobe = process.env.CREW_FFPROBE ? which(process.env.CREW_FFPROBE) : (sibling && which(sibling)) || which("ffprobe");
+  return { node, ffmpeg, ffprobe, playwright, stub, canCrop: stub || !!(node && playwright), canFilm: stub || !!(node && playwright && ffmpeg) };
 }
 
 /** The account's own home from the directory service (a process may run with another HOME; Bun's userInfo follows HOME). */
@@ -73,10 +76,43 @@ export function runRender(dataDir: string, mode: "film" | "stills" | "crop" | "p
   const done = p.exited.then(async (code) => {
     clearTimeout(timer); await Bun.sleep(30);
     if (code === 0 && last?.ok) return { ok: true, ms: Date.now() - started, info: last };
-    return { ok: false, error: last?.error ?? (err.trim().split("\n").slice(-2).join(" ").slice(0, 300) || `render exited ${code}`), ms: Date.now() - started };
+    return { ok: false, error: last?.error ?? (err.trim().split("\n").slice(-2).join(" ").slice(0, 300) || `render exited ${code}`), ms: Date.now() - started, info: last ?? undefined };
   });
   return { done, cancel: () => { try { p.kill(); } catch {} } };
 }
 
 // a 1×1 transparent PNG
 const PNG1 = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+
+/** A film's orientation from the words of its intent: a vertical request renders 1080x1920. */
+export const orientFor = (text: string): "portrait" | "landscape" =>
+  /\b(?:vertical|portrait|9\s*[:x×/]\s*16|reels?|tiktok|shorts|stories)\b/i.test(text) || /直式|直向|豎|竖|垂直/.test(text) ? "portrait" : "landscape";
+
+export type VideoProbe = { kind: "size"; width: number; height: number; tool: "ffprobe" | "ffmpeg" } | { kind: "no-video"; tool: "ffprobe" | "ffmpeg" } | { kind: "unreadable"; tool: "ffprobe" | "ffmpeg" } | { kind: "no-tool" };
+const capture = async (argv: string[], ms: number) => {
+  const p = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe", stdin: "ignore" }); const timer = setTimeout(() => { try { p.kill(); } catch {} }, ms);
+  const [out, err, code] = await Promise.all([new Response(p.stdout as any).text(), new Response(p.stderr as any).text(), p.exited]); clearTimeout(timer);
+  return { out: out.slice(0, 65536), err: err.slice(0, 65536), code };
+};
+/** Exact pixel size of an MP4's first video stream: ffprobe, or ffmpeg's own stream listing when ffprobe is absent. */
+export async function probeVideo(file: string): Promise<VideoProbe> {
+  const env = renderEnv();
+  if (env.ffprobe) {
+    try {
+      const r = await capture([env.ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "json", file], 10000);
+      if (r.code !== 0) return { kind: "unreadable", tool: "ffprobe" };
+      const s = JSON.parse(r.out).streams?.[0];
+      return s && Number.isInteger(s.width) && Number.isInteger(s.height) ? { kind: "size", width: s.width, height: s.height, tool: "ffprobe" } : { kind: "no-video", tool: "ffprobe" };
+    } catch { return { kind: "unreadable", tool: "ffprobe" }; }
+  }
+  if (env.ffmpeg) {
+    try {
+      // `ffmpeg -i` with no output lists the streams on stderr and exits 1
+      const r = await capture([env.ffmpeg, "-hide_banner", "-nostdin", "-i", file], 10000);
+      const v = /Stream #\d+:\d+[^\n]*?: Video: [^\n]*?\b(\d{2,5})x(\d{2,5})\b/.exec(r.err);
+      if (v) return { kind: "size", width: Number(v[1]), height: Number(v[2]), tool: "ffmpeg" };
+      return /Input #0/.test(r.err) ? { kind: "no-video", tool: "ffmpeg" } : { kind: "unreadable", tool: "ffmpeg" };
+    } catch { return { kind: "unreadable", tool: "ffmpeg" }; }
+  }
+  return { kind: "no-tool" };
+}

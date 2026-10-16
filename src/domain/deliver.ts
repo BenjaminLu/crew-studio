@@ -8,7 +8,7 @@ import { folderTools } from "../agent";
 import { websiteHref, type ArtifactStore } from "../artifacts";
 import { bundledText } from "../bundled";
 import { mdToDocHtml, toDocx, toPdf } from "../docrender";
-import { runRender, renderEnv } from "../render";
+import { orientFor, probeVideo, runRender, renderEnv } from "../render";
 import {imageRefinement} from "./image-refinement";
 import { briefFor } from "../runtime/refine";
 import { mergeDetail } from "./mergecard";
@@ -18,16 +18,6 @@ import type { Engine, X } from "../runtime/engine";
 type Deps = { dataDir: string; artifacts: ArtifactStore; lane: any; fileorg: any; docs: any; generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference, rules?: RulesSection) => Promise<CodexImage> };
 const hash = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-/** Exact pixel size of a rendered MP4's first video stream, from ffprobe; null when it cannot be read. */
-export function videoSize(file: string): { width: number; height: number } | null {
-  const ffmpeg = renderEnv().ffmpeg, sibling = ffmpeg && ffmpeg.includes("/") ? join(dirname(ffmpeg), "ffprobe") : null;
-  const probe = process.env.CREW_FFPROBE || (sibling && existsSync(sibling) ? sibling : null) || Bun.which("ffprobe"); if (!probe) return null;
-  try {
-    const r = Bun.spawnSync([probe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "json", file], { stdout: "pipe", stderr: "ignore", timeout: 10000 });
-    const s = r.exitCode === 0 ? JSON.parse(r.stdout.toString()).streams?.[0] : null;
-    return s && Number.isInteger(s.width) && Number.isInteger(s.height) ? { width: s.width, height: s.height } : null;
-  } catch { return null; }
-}
 export function installDeliver(engine: Engine, d: Deps) {
   const st = d.artifacts;
   engine.actions["deliver.intake"] = x => { x.ctx.intent = { text: x.run.text, workflow: x.run.workflow }; x.ctx.spec ??= { done: [x.run.workflow === "trivial-lane" ? "The local image recipe passes its deterministic checks" : x.run.workflow === "file-organization" ? "The planned moves stay inside the folder without overwrite" : "Every delivered source passes its deterministic readiness check", "The content and presentation match the captain's intent"] }; return "ok"; };
@@ -91,7 +81,7 @@ export function installDeliver(engine: Engine, d: Deps) {
   const previousRunInput = engine.artifacts.run;
   engine.artifacts.run = x => x.ctx.deliver ? ({ type: "run", data: refs(x), version: x.ctx.head }) : previousRunInput?.(x) ?? ({ type: "run", id: x.run.id });
   for (const t of ["web", "document", "video"]) engine.artifacts[t] = x => { const r = x.node.args?.producer === "all" ? refs(x)[0] : ref(x); return { type: t, path: st.file(r.id, r.n, entry(r.format)), version: r.n, data: r }; };
-  const readiness = (x: X, r: any) => {
+  const readiness = async (x: X, r: any) => {
     const a = st.get(r.id), v = st.version(r.id, r.n); const findings: any[] = [];
     const bad = (message: string, expected: string, cls: string) => findings.push({ locator: r.format === "document" ? { type: "text", section: "source", start: 0, end: 1 } : r.format === "video" ? { type: "timeline", from: 0, to: 1 } : { type: "web", url: `#/review/${r.id}/${r.n}`, selector: "body", viewport: { width: 1280, height: 720 } }, message, expected, class: cls, severity: "blocking" });
     if (!a || !v || st.latest(r.id)?.n !== r.n || v.sha256 !== r.sha256 || st.verify(r.id, r.n).length) bad("artifact source changed or disappeared", "restore the exact version source", "artifact-integrity");
@@ -102,20 +92,28 @@ export function installDeliver(engine: Engine, d: Deps) {
     if (!["document", "image"].includes(r.format) && /(?:src|href)\s*=\s*["'](?:https?:|\/\/)/i.test(s)) bad("external resource URL", "embed required resources locally", "external-resource");
     if (st.notes(r.id, r.n).some(n => n.status === "open")) bad("artifact has unresolved notes", "produce a new version addressing the annotations", "open-note");
     const mp4 = r.format === "video" ? st.file(r.id, r.n, "render.mp4") : null;
-    if (r.format === "video" && (v?.render?.state !== "done" || !mp4)) bad("rendered MP4 is unavailable", "render this exact film version with the optional local renderer", "renderer-unavailable");
-    else if (r.format === "video") { const size = videoSize(mp4!); if (!size || !((size.width === 1920 && size.height === 1080) || (size.width === 1080 && size.height === 1920))) bad(`rendered MP4 is ${size ? `${size.width}x${size.height}` : "of unknown size"}, not 1920x1080 or 1080x1920`, "make #stage a fixed 960x540 px box (540x960 vertical), never vw/vh/%, so the render is exactly 1920x1080 (1080x1920)", "video-size"); }
+    if (r.format === "video" && v?.render?.state === "failed" && v.render.code === "no-stage") bad("the film has no #stage element, so the renderer has nothing to capture", "wrap the film in #stage: a fixed 960x540 px box (540x960 vertical), never vw/vh/%", "video-stage");
+    else if (r.format === "video" && (v?.render?.state !== "done" || !mp4)) bad("rendered MP4 is unavailable", "render this exact film version with the optional local renderer", "renderer-unavailable");
+    else if (r.format === "video") {
+      const probe = await probeVideo(mp4!);
+      if (probe.kind === "no-tool") bad("the rendered MP4's size cannot be read: neither ffprobe nor ffmpeg is installed", "install ffmpeg (with ffprobe) from Doctor; the film itself needs no change", "renderer-unavailable");
+      else if (probe.kind === "no-video") bad("rendered MP4 has no video stream (audio only)", "keep DUR long enough for at least two frames and #stage visible so the render has video", "video-stream");
+      else if (probe.kind === "unreadable") bad("rendered MP4 cannot be read as a video", "render this exact film version again", "video-stream");
+      else if (!((probe.width === 1920 && probe.height === 1080) || (probe.width === 1080 && probe.height === 1920))) bad(`rendered MP4 is ${probe.width}x${probe.height}, not 1920x1080 or 1080x1920`, "make #stage a fixed 960x540 px box (540x960 vertical), never vw/vh/%, so the render is exactly 1920x1080 (1080x1920)", "video-size");
+    }
     return findings;
   };
-  engine.natives["artifact-ready"] = (_i, h) => { const x = h.x as X; const rs = x.node.args?.producer === "all" ? refs(x) : [ref(x)]; const findings = rs.length ? rs.flatMap(r => readiness(x, r)) : [{ locator: { type: "card", field: "output" }, message: "No pinned artifact output exists", expected: "produce a versioned artifact before readiness checks", class: "missing-output", severity: "blocking" }]; return { verdict: findings.length ? "fail" : "pass", score: findings.length ? 0 : 1, findings, data: { artifacts: rs }, proves: findings.length ? [] : [0] } as any; };
+  engine.natives["artifact-ready"] = async (_i, h) => { const x = h.x as X; const rs = x.node.args?.producer === "all" ? refs(x) : [ref(x)]; const findings = rs.length ? (await Promise.all(rs.map(r => readiness(x, r)))).flat() : [{ locator: { type: "card", field: "output" }, message: "No pinned artifact output exists", expected: "produce a versioned artifact before readiness checks", class: "missing-output", severity: "blocking" }]; return { verdict: findings.length ? "fail" : "pass", score: findings.length ? 0 : 1, findings, data: { artifacts: rs }, proves: findings.length ? [] : [0] } as any; };
   engine.actions["deliver.render"] = async x => {
     const r = ref(x), html = st.file(r.id, r.n, "film.html"); if (!html) throw new Error("film source unavailable");
     if (!renderEnv().canFilm) { st.setRender(r.id, r.n, { state: "failed", detail: "optional renderer unavailable: node, Playwright browser and ffmpeg required", ms: null }); x.rn.note = "MP4 unverified: optional renderer unavailable"; return "unavailable"; }
-    const out = join(x.dir, `render-${r.id}-v${r.n}.mp4`); const job = runRender(d.dataDir, "film", { html, out });
+    const out = join(x.dir, `render-${r.id}-v${r.n}.mp4`); const orient = orientFor(`${x.run.text ?? ""} ${x.run.title ?? ""}`); const job = runRender(d.dataDir, "film", { html, out, orient });
     st.setRender(r.id, r.n, { state: "running", ms: null });
     let settled = false; job.done.finally(() => settled = true); while (!settled) { if (x.cancelled()) { job.cancel(); await job.done; throw new Error("cancelled"); } await sleep(40); }
     const result = await job.done; if (x.cancelled()) throw new Error("cancelled");
     const notes = Array.isArray(result.info?.notes) ? result.info.notes.map(String).slice(0, 8) : [];
-    st.setRender(r.id, r.n, { state: result.ok ? "done" : "failed", detail: result.error ?? (notes.join("; ") || null), ms: result.ms, ...(result.ok ? { normalized: !!result.info?.normalized, notes } : {}) });
+    const code = result.ok ? null : typeof result.info?.code === "string" ? result.info.code.slice(0, 40) : null;
+    st.setRender(r.id, r.n, { state: result.ok ? "done" : "failed", detail: result.error ?? (notes.join("; ") || null), ms: result.ms, orient: result.ok && Number(result.info?.height) > Number(result.info?.width) ? "portrait" : result.ok ? "landscape" : orient, ...(result.ok ? { normalized: !!result.info?.normalized, notes } : {}), ...(code ? { code } : {}) });
     if (notes.length) x.rn.note = notes.join("; ");
     if (result.ok && existsSync(out)) st.attach(r.id, r.n, "render.mp4", out);
     return result.ok ? "ok" : "unavailable";
@@ -140,7 +138,7 @@ export function installDeliver(engine: Engine, d: Deps) {
       if (c.answer!.choice === "changes") { if (!c.answer!.note?.trim() && !refs(x).some(r => st.notes(r.id, r.n).some(n => n.status === "open"))) return finalCard(x, "Write a change request or add an annotation first.");
         for (const r of offers) if (c.answer!.note) st.addNote(r.id, r.n, r.format === "video" ? { kind: "range", t0: 0, t1: 1, comment: c.answer!.note } : { kind: "pin", selector: r.format === "document" ? null : "body", comment: c.answer!.note });
         return { outcome: "changes" }; }
-      if (!selected || readiness(x, selected).length || !engine.trusted(x.run.id).ok) return finalCard(x, "Checks or annotations need attention before approval.");
+      if (!selected || (await readiness(x, selected)).length || !engine.trusted(x.run.id).ok) return finalCard(x, "Checks or annotations need attention before approval.");
       st.approve(selected.id, selected.n, c.answer!.by); x.ctx.approved = { artifact: selected.id, version: selected.n, sha256: selected.sha256, by: c.answer!.by }; return { outcome: "approved" };
     },
   };

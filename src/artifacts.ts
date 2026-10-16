@@ -26,7 +26,7 @@ export type Version = {
   artifact: string; n: number; type: ArtifactType; files: FileRec[]; primary: string | null; sha256: string | null; url: string | null;
   parent: number | null; createdBy: Maker; source: { intent?: string | null; run?: string | null }; annotations: string[];
   status: Status; approvedBy: string | null; approvedAt: string | null; createdAt: string; cost: Cost | null; summary: string | null;
-  render: { state: "none" | "running" | "done" | "failed"; detail?: string | null; ms?: number | null; normalized?: boolean; notes?: string[] } | null;
+  render: { state: "none" | "running" | "done" | "failed"; detail?: string | null; ms?: number | null; normalized?: boolean; notes?: string[]; orient?: "landscape" | "portrait"; code?: string } | null;
 };
 /** source: "html" = a page to pin-review; "film" = HTML that renders to an MP4 (render.mp4 in the version);
  *  "file" = a plain file (MP4, image) reviewed without regeneration; "url" = an external link only. */

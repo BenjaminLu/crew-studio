@@ -43,7 +43,7 @@ for(const mode of ['crop','stills','film','page']){
  let result=null; for(const line of r.stdout.split('\n'))try{const value=JSON.parse(line);if(value.ok!==undefined)result=value}catch{}
  ok(r.status===0&&result?.ok,`${mode}: outside image/frame/fetch/traversal/symlink inputs are blocked while legitimate local assets remain usable`,r.stderr.slice(-300));
  if(mode!=='page'){ok(accepted===beforeConnections&&messages===beforeMessages,`${mode}: planted outside and loopback WebSocket server receives zero connections and messages`);ok(result?.refused?.some(x=>x.startsWith('ws:')&&x.includes('artifact-origin'))&&result.refused.length<=128,`${mode}: WebSocket refusal evidence is bounded and includes artifact-origin sockets`);}
- if(mode==='film'){const probe=spawnSync(process.env.CREW_FFPROBE||'ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=width,height','-of','csv=p=0',out],{encoding:'utf8'});ok(probe.status===0&&probe.stdout.trim()==='1920,1080'&&result?.width===1920&&result?.height===1080&&result?.normalized===false,'film: a fixed 16:9 #stage renders an MP4 of exactly 1920x1080 (ffprobe)',JSON.stringify({probe:probe.stdout.trim(),err:probe.stderr.slice(-200),width:result?.width,height:result?.height,normalized:result?.normalized}));}
+ if(mode==='film'){const probe=spawnSync('ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=width,height','-of','csv=p=0',out],{encoding:'utf8'});ok(probe.status===0&&probe.stdout.trim()==='1920,1080'&&result?.width===1920&&result?.height===1080&&result?.normalized===false,'film: a fixed 16:9 #stage renders an MP4 of exactly 1920x1080 (ffprobe)',JSON.stringify({probe:probe.stdout.trim(),err:probe.stderr.slice(-200),width:result?.width,height:result?.height,normalized:result?.normalized}));}
  if(result?.ok&&mode!=='film'){const rgb=firstPixel(mode==='stills'?join(out,'t0.00.png'):out);ok(rgb[1]>180&&rgb[0]<40,`${mode}: planted outside fixture never changes rendered output`,JSON.stringify(rgb));}
  if(result?.ok)ok(Array.isArray(result.refused)&&result.refused.some(x=>/outside|escape/.test(x)),`${mode}: refused outside inputs remain observable in renderer evidence`);
 }
@@ -52,6 +52,37 @@ const wrapper=join(tmp,'no-websocket-boundary.mjs');
 writeFileSync(wrapper, `import {chromium as real} from ${JSON.stringify(process.env.PLAYWRIGHT_MODULE)}; export const chromium={launch:async(...args)=>{const browser=await real.launch(...args);return new Proxy(browser,{get(target,key){if(key==='newContext')return async(...args)=>{const ctx=await target.newContext(...args);ctx.routeWebSocket=undefined;return ctx};const value=target[key];return typeof value==='function'?value.bind(target):value}})}};`);
 const missing=spawn(process.execPath,[script,'crop','--html',join(input,'film.html'),'--out',join(tmp,'missing.png'),'--selector','#stage'],{env:{...process.env,CREW_PLAYWRIGHT_MODULE:wrapper},stdio:['ignore','pipe','pipe']});let missingError='';missing.stderr.on('data',x=>missingError+=x);const oldConnections=accepted;const missingCode=await new Promise(r=>missing.on('exit',r));
 ok(missingCode!==0&&/WebSocket isolation unavailable/.test(missingError)&&accepted===oldConnections,'unavailable WebSocket boundary fails closed before loading any artifact page');
+
+// Film stage shapes: the MP4 is always exactly 1920x1080 (1080x1920), a stage that follows the 16:9
+// viewport keeps its whole frame and proportions, only a stage of another shape is forced to 960x540.
+const shapes=join(tmp,'shapes');mkdirSync(shapes);
+const film=(css,body,extra='')=>`<!doctype html><html><head><style>html,body{margin:0}${css}</style></head><body>${body}<script>const DUR=0.2;let muted=true,startAt=0,ctx=null;function build(){}function schedule(){}function render(t){}${extra}</script></body></html>`;
+const shot=(name,html,args=[])=>{const f=join(shapes,`${name}.html`),out=join(shapes,`${name}.mp4`);writeFileSync(f,html);const t0=Date.now();
+ const r=spawnSync(process.execPath,[script,'film',...args,'--html',f,'--out',out,'--fps','10','--workers','1'],{env:{...process.env,CREW_PLAYWRIGHT_MODULE:process.env.PLAYWRIGHT_MODULE,CREW_FFMPEG:process.env.CREW_FFMPEG||'ffmpeg'},encoding:'utf8',timeout:60000});
+ let result=null;for(const line of String(r.stdout).split('\n'))try{const v=JSON.parse(line);if(v.ok!==undefined)result=v}catch{}
+ const probe=spawnSync('ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=width,height','-of','csv=p=0',out],{encoding:'utf8'});const [w,h]=probe.status===0?probe.stdout.trim().split(',').map(Number):[0,0];
+ const raw=w?spawnSync(process.env.CREW_FFMPEG||'ffmpeg',['-v','error','-i',out,'-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-'],{maxBuffer:64*1024*1024}).stdout:null;
+ const px=(x,y)=>raw?[...raw.subarray((y*w+x)*3,(y*w+x)*3+3)]:[0,0,0];
+ return {result,w,h,px,ms:Date.now()-t0,status:r.status};};
+const blue=p=>p[2]>180&&p[0]<60, red=p=>p[0]>180&&p[2]<60;
+const fit=shot('scale-to-fit',film('#stage{position:relative;width:1920px;height:1080px;background:#08f;transform-origin:0 0}#corner{position:absolute;right:0;bottom:0;width:120px;height:120px;background:#f00}','<div id="stage"><div id="corner"></div></div>','function fit(){document.getElementById("stage").style.transform="scale("+(innerWidth/1920)+")"}fit();addEventListener("resize",fit)'));
+ok(fit.w===1920&&fit.h===1080&&fit.result?.normalized===false&&red(fit.px(1890,1050))&&blue(fit.px(960,540))&&blue(fit.px(30,30)),'film: a scale-to-fit 1920x1080 stage keeps its whole frame (bottom-right corner present) at exactly 1920x1080',JSON.stringify({w:fit.w,h:fit.h,n:fit.result?.normalized,corner:fit.px(1890,1050),center:fit.px(960,540)}));
+const vw=shot('viewport-units',film('#stage{position:relative;width:100vw;height:100vh;background:#08f}#bar{position:absolute;left:0;top:0;width:50vw;height:10vh;background:#f00}','<div id="stage"><div id="bar"></div></div>'));
+ok(vw.w===1920&&vw.h===1080&&vw.result?.normalized===false&&red(vw.px(930,50))&&blue(vw.px(990,50))&&red(vw.px(50,98))&&blue(vw.px(50,118)),'film: a 100vw/100vh stage keeps vw/vh proportions (a 50vw x 10vh bar stays 960x108 of 1920x1080)',JSON.stringify({w:vw.w,h:vw.h,in:vw.px(930,50),out:vw.px(990,50)}));
+const r035=shot('r035',film('#stage{width:100%;height:100vh;background:#08f}','<div id="stage"><h1>R-035</h1></div>'));
+ok(r035.w===1920&&r035.h===1080&&blue(r035.px(1900,1060)),'film: the R-035 #stage{width:100%;height:100vh} renders exactly 1920x1080 edge to edge');
+const square=shot('square',film('#stage{width:800px;height:800px;background:#08f}','<div id="stage"></div>'));
+ok(square.w===1920&&square.h===1080&&square.result?.normalized===true&&square.result.notes.some(n=>/stage normalized: #stage measured 800x800, not 16:9; forced to 960x540/.test(n))&&blue(square.px(1900,1060)),'film: a fixed 800x800 stage is forced to 960x540 with the normalization note and fills 1920x1080',JSON.stringify(square.result?.notes));
+const empty=shot('zero-box',film('#stage{position:absolute}#stage div{position:absolute;width:960px;height:540px;background:#08f}','<div id="stage"><div></div></div>'));
+ok(empty.status===0&&empty.w===1920&&empty.h===1080&&empty.result?.normalized===true&&empty.ms<25000,'film: a 0x0 #stage with absolute children is normalized instead of timing out',JSON.stringify({ms:empty.ms,notes:empty.result?.notes}));
+const none=shot('no-stage',film('','<div><h1>no stage</h1></div>'));
+ok(none.status!==0&&none.result?.ok===false&&none.result.code==='no-stage'&&/no #stage/.test(none.result.error)&&none.ms<20000,'film: a film without #stage fails fast with code no-stage',JSON.stringify({ms:none.ms,r:none.result}));
+const tall=shot('portrait-fixed',film('#stage{width:540px;height:960px;background:#08f}','<div id="stage"></div>'));
+ok(tall.w===1080&&tall.h===1920&&tall.result?.normalized===false,'film: a fixed 540x960 stage renders exactly 1080x1920');
+const vertical=shot('portrait-responsive',film('#stage{width:100vw;height:100vh;background:#08f}','<div id="stage"></div>'),['--orient','portrait']);
+ok(vertical.w===1080&&vertical.h===1920&&vertical.result?.normalized===false&&blue(vertical.px(1060,1900)),'film: a responsive stage with --orient portrait renders exactly 1080x1920 edge to edge');
+const short=shot('one-frame',film('#stage{width:960px;height:540px;background:#08f}','<div id="stage"></div>').replace('DUR=0.2','DUR=0.01').replace('function build(){}','function build(){ctx=new AudioContext()}'),['--fps','1']);
+ok(short.w===1920&&short.h===1080,'film: a film shorter than one frame, with audio, still has a video stream');
 
 for(const socket of sockets)socket.destroy();await new Promise(r=>wsServer.close(r));
 console.log(`renderer-containment: ${pass} passed, ${fail} failed`);process.exit(fail?1:0);

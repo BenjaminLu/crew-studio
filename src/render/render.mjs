@@ -2,9 +2,10 @@
 //   film  --html F --out OUT.mp4 [--fps 30] [--width 1600] [--workers 4] [--orient landscape|portrait]
 //         an HTML film that defines DUR, render(t), build(), schedule() and #stage (the firstmate
 //         promo film's contract): frames by seeking render(t), audio rendered offline from the page's
-//         own WebAudio schedule, muxed by ffmpeg. The MP4 is always exactly 1920x1080 (or 1080x1920
-//         for a portrait stage): the viewport is exactly 16:9 (9:16), a #stage that is not a fixed
-//         16:9 / 9:16 box is forced to 960x540 (540x960) and the evidence carries a note saying so.
+//         own WebAudio schedule, muxed by ffmpeg. The MP4 is exactly 1920x1080 (1080x1920 for a portrait
+//         stage or --orient portrait): the viewport is exactly 16:9 (9:16), so a stage that follows it is
+//         captured as authored; a #stage of any other shape (or empty) is forced to 960x540 (540x960)
+//         and the evidence carries a note saying so. No #stage fails fast with code "no-stage".
 //   stills --html F --out DIR --times 1.5,6 [--width 1600]      one PNG per time (A/B compare)
 //   crop  --html F --out OUT.png --selector S | --bbox x,y,w,h [--width 1280]   a web element crop
 //   page  --root DIR --page NAME --out OUT.png [--width 1280]   a whole page a change built (hostile): served from DIR over
@@ -92,27 +93,28 @@ const inputUrl = inputOrigin ? `${inputOrigin}/${encodeURIComponent(basename(htm
     // The film contract is a fixed 16:9 (or 9:16) #stage. A stage sized by the viewport (%, vw, vh)
     // or of another shape is forced to the template's 960x540 (540x960) box before any capture.
     const landscape = { width, height: Math.round(width * 9 / 16) }, portrait = { width: Math.round(width * 9 / 16), height: width };
-    const shape = (b) => !b ? null : Math.abs(b.height - b.width * 9 / 16) <= 1 ? "landscape" : Math.abs(b.width - b.height * 9 / 16) <= 1 ? "portrait" : null;
+    const shape = (b) => !b || !(b.width > 0 && b.height > 0) ? null : Math.abs(b.height - b.width * 9 / 16) <= 1 ? "landscape" : Math.abs(b.width - b.height * 9 / 16) <= 1 ? "portrait" : null;
     const box = (p) => p.evaluate(() => { const e = document.getElementById("stage"); if (!e) return null; const r = e.getBoundingClientRect(); return { width: r.width, height: r.height }; });
     let stage = null; const notes = [];
     const force = (p, s) => p.evaluate(({ w, h }) => { const e = document.getElementById("stage"); if (!e) return; for (const [k, v] of [["width", `${w}px`], ["height", `${h}px`], ["min-width", "0"], ["min-height", "0"], ["max-width", "none"], ["max-height", "none"], ["flex", "none"], ["aspect-ratio", "auto"]]) e.style.setProperty(k, v, "important"); }, s);
     const open = async () => {
-      const ctx = await browser.newContext({ viewport: stage?.orient === "portrait" ? portrait : landscape, serviceWorkers: "block" });
+      const asked = opt("orient") === "portrait" ? "portrait" : "landscape";
+      const ctx = await browser.newContext({ viewport: (stage?.orient ?? asked) === "portrait" ? portrait : landscape, serviceWorkers: "block" });
       await offline(ctx, inputOrigin);
       const p = await ctx.newPage();
       await p.goto(inputUrl);
       await p.waitForTimeout(1500);
       await p.evaluate(() => { const ps = document.getElementById("poster"); if (ps) ps.hidden = true; });
       if (!stage) {
-        // a stage whose box follows the viewport is not a fixed box even when it happens to be 16:9 here
-        const measured = await box(p); await p.setViewportSize({ width: landscape.width + 97, height: landscape.height + 211 });
-        const probe = await box(p); await p.setViewportSize(landscape);
-        const fixed = !!measured && !!probe && Math.abs(measured.width - probe.width) <= 1 && Math.abs(measured.height - probe.height) <= 1;
-        const asked = opt("orient"), found = fixed ? shape(measured) : null;
-        const orient = found ?? (asked === "portrait" ? "portrait" : "landscape");
-        stage = { orient, measured, forced: found ? null : orient === "portrait" ? { w: 540, h: 960 } : { w: 960, h: 540 } };
-        if (stage.forced) notes.push(`stage normalized: #stage measured ${measured ? `${Math.round(measured.width)}x${Math.round(measured.height)}` : "missing"}${fixed ? "" : " and follows the viewport"}; forced to ${stage.forced.w}x${stage.forced.h} px (${orient === "portrait" ? "9:16" : "16:9"})`);
-        if (orient === "portrait") await p.setViewportSize(portrait);
+        // The viewport is exactly 16:9 (9:16), so a stage that follows it (%, vw/vh, scale-to-fit) already
+        // measures the right shape and is captured as authored. Only a stage of another shape is forced.
+        let measured = await box(p);
+        if (!measured) { log({ ok: false, code: "no-stage", error: "the film has no #stage element: the renderer captures only #stage", refused }); process.exit(2); }
+        let orient = shape(measured);
+        if (orient && orient !== asked) { await p.setViewportSize(orient === "portrait" ? portrait : landscape); measured = await box(p); orient = shape(measured); }
+        orient ??= asked;
+        stage = { orient, measured, forced: shape(measured) ? null : orient === "portrait" ? { w: 540, h: 960 } : { w: 960, h: 540 } };
+        if (stage.forced) notes.push(`stage normalized: #stage measured ${Math.round(measured.width)}x${Math.round(measured.height)}, not ${orient === "portrait" ? "9:16" : "16:9"}; forced to ${stage.forced.w}x${stage.forced.h} px`);
       }
       if (stage.forced) await force(p, stage.forced);
       return p;
@@ -156,7 +158,8 @@ const inputUrl = inputOrigin ? `${inputOrigin}/${encodeURIComponent(basename(htm
       const ff = [FFMPEG, "-y", "-loglevel", "error", "-framerate", String(fps), "-i", join(frames, "f%05d.png")];
       if (wav) ff.push("-i", out + ".wav");
       ff.push("-vf", `scale=${target.w}:${target.h}:force_original_aspect_ratio=decrease,pad=${target.w}:${target.h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p`, "-c:v", "libx264", "-crf", "20", "-preset", "medium");
-      if (wav) ff.push("-c:a", "aac", "-b:a", "192k", "-shortest");
+      // cut to the video's own length: -shortest can end the mux before the encoder emits a single video packet
+      if (wav) ff.push("-c:a", "aac", "-b:a", "192k", "-t", String((N + 1) / fps));
       ff.push(out);
       const r = spawnSync(ff[0], ff.slice(1), { stdio: ["ignore", "inherit", "inherit"] });
       rmSync(frames, { recursive: true, force: true }); rmSync(out + ".wav", { force: true });

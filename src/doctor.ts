@@ -109,7 +109,7 @@ export type DoctorInput = {
   state: string; legacy?: boolean; board: { writable: boolean; readonlyReason?: string | null }; gh: { connected: boolean; tokenSource: string | null; enabled: boolean };
   keys: { anthropic: string | null; openai: string | null; compatBaseUrl: string | null }; chatProvider: string; lanIp: string | null;
   tailscale: { installed: boolean; running: boolean; dnsName: string | null }; claudeBin?: string; codexBin?: string; compiled: boolean;
-  render?: { node: string | null; ffmpeg: string | null; playwright: string | null };
+  render?: { node: string | null; ffmpeg: string | null; ffprobe?: string | null; playwright: string | null };
   /** the egress proxy agent rounds go through */
   egress?: { running: boolean; port: number; rounds: number };
   /** how claude rounds sign in: the login Studio hands them (v1 option A) */
@@ -181,6 +181,9 @@ export function diagnose(i: DoctorInput): Item[] {
     items.push({ id: "ffmpeg", title: "ffmpeg (film render)", status: r.ffmpeg ? "ok" : "info", detail: r.ffmpeg ? `${r.ffmpeg}` : "not installed",
       adds: "Turning a revised HTML film into an MP4. Without it, notes and briefs still work; a regenerated film waits for a render.", fix: r.ffmpeg ? "" : "Install ffmpeg (Homebrew or the official build).",
       action: r.ffmpeg ? { kind: "none" } : { kind: "install", item: "ffmpeg" } });
+    items.push({ id: "ffprobe", title: "ffprobe (film size check)", status: r.ffprobe ? "ok" : "info", detail: r.ffprobe ? `${r.ffprobe}` : r.ffmpeg ? "not installed; ffmpeg reads the MP4 size instead" : "not installed",
+      adds: "Confirming a rendered film is exactly 1920x1080 (or 1080x1920) before it is offered for acceptance.", fix: r.ffprobe || r.ffmpeg ? "" : "Install ffmpeg; its official builds include ffprobe.",
+      action: r.ffprobe || r.ffmpeg ? { kind: "none" } : { kind: "install", item: "ffmpeg" } });
     items.push({ id: "renderer", title: "Headless browser (film frames, pin crops)", status: "info",
       detail: r.node && r.playwright ? `Node and Playwright detected; Chromium and actual capture execution are unverified.` : !r.node ? "node not installed" : "Playwright and Chromium not installed",
       adds: "Screenshot crops of web pins and the frames of a film render.", fix: r.node && r.playwright ? "" : !r.node ? "Install Node.js first, then the renderer." : "Install Playwright with Chromium (no admin rights).",
@@ -219,11 +222,12 @@ export function diagnose(i: DoctorInput): Item[] {
   for (const item of items) {
     if (item.id === "tailscale") { item.availability = i.tailscale.installed ? "available" : "missing"; item.authenticated = i.tailscale.running ? true : null; }
     if (item.id === "ffmpeg") item.availability = i.render?.ffmpeg ? (version(i.render.ffmpeg, "-version") ? "available" : "unusable") : "missing";
+    if (item.id === "ffprobe") item.availability = i.render?.ffprobe ? "available" : "missing";
     // A detected Playwright module alone does not prove Chromium is installed or runnable.
     if (item.id === "renderer" && !(i.render?.node && i.render?.playwright)) item.availability = "missing";
     if (item.id === "lock") item.availability = lock ? "available" : "missing";
     if (item.id === "sandbox") item.availability = sb.ok ? "available" : present("/usr/bin/sandbox-exec") ? "unusable" : "missing";
-    item.group ??= ["native","assets"].includes(item.id)?"basic":["state","board","github","lan","tailscale","ffmpeg","renderer"].includes(item.id)?"optional":"coding";
+    item.group ??= ["native","assets"].includes(item.id)?"basic":["state","board","github","lan","tailscale","ffmpeg","ffprobe","renderer"].includes(item.id)?"optional":"coding";
   }
   return items;
 }
