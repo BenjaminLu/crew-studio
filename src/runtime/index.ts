@@ -204,7 +204,7 @@ export function createRuntime(d: RuntimeDeps) {
         const args=writing?b:{project:url.searchParams.get('project'),workflow:url.searchParams.get('workflow'),version:Number(url.searchParams.get('version'))};
         const operation=writing&&b?.confirm===true?'studio_propose_staffing':'studio_staffing_interview';
         if(writing&&Object.hasOwn(args,'confirm')){delete args.confirm;}
-        return json(await staffingTools.call(operation,args,{key:`desktop:${randomBytes(16).toString('hex')}`,captain:true,text:'Captain staffing configuration request',live:()=>!req.signal.aborted}));
+        return json(await staffingTools.call(operation,args,{key:`desktop:${randomBytes(16).toString('hex')}`,captain:true,text:args.defaults==='reset'?'Captain explicitly requested reset to available staffing defaults':args.defaults==='use'?'Captain explicitly requested available staffing defaults':'Captain staffing configuration request',live:()=>!req.signal.aborted}));
       }
       // ---------- definitions ----------
       if(p==="/api/coffee/design"&&writing){if(req.method!=="POST")return json({error:"POST required"},405);if(who.kind!=="desktop")return json({error:"Review coffee design on the desktop"},403);return json({plan:validateCoffeeDesign(b?.plan),canonical:coffeeDesignJSON(b?.plan)});}
