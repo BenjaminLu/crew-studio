@@ -63,9 +63,10 @@ ok((await get(`${base}/transcript?prompt=prompt.attempt3.md`))!.body.live === fa
 {
   const big = join(fx.data, "runs", "R-6", "nodes", "make", "1"); mkdirSync(big, { recursive: true });
   writeFileSync(join(big, "prompt.md"), "---\nrun: \"R-6\"\n---\nbig\n");
-  const line = JSON.stringify({ ts: "2026-10-14T06:00:00Z", type: "message", text: "é".repeat(5000) }) + "\n";
-  const n = Math.ceil((17 << 20) / Buffer.byteLength(line));
-  writeFileSync(join(big, "stream.jsonl"), line.repeat(n));
+  // each message differs (a number in front): identical adjacent messages are shown once (transcripts.ts collapseTexts)
+  const line = (i: number) => JSON.stringify({ ts: "2026-10-14T06:00:00Z", type: "message", text: `${String(i).padStart(6, "0")} ${"é".repeat(5000)}` }) + "\n";
+  const n = Math.ceil((17 << 20) / Buffer.byteLength(line(0)));
+  writeFileSync(join(big, "stream.jsonl"), Array.from({ length: n }, (_, i) => line(i)).join(""));
   const bytes = statSync(join(big, "stream.jsonl")).size;
   const r1 = (await get(`/api/node-runs/R-6/make/1/transcript?prompt=prompt.md`))!;
   const off1 = Number(String(r1.body.next).split("|")[0]);

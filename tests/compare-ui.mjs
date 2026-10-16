@@ -14,7 +14,7 @@ const root = join(import.meta.dir, ".."), shots = join(root, "tests/out/compare"
 const { H, startup, plain } = await seeded(); H.stop();
 plant(H.data, startup, "pitch1");
 // markup in a message must stay text
-appendFileSync(join(H.data, "runs", startup, "nodes", "pitch1", "1", "stream.jsonl"), JSON.stringify({ ts: new Date().toISOString(), type: "message", text: "<img src=x onerror=\"window.__pwned=1\"> **bold** stays safe" }) + "\n");
+appendFileSync(join(H.data, "runs", startup, "nodes", "pitch1", "1", "stream.jsonl"), JSON.stringify({ ts: new Date().toISOString(), type: "message", text: "<img src=x onerror=\"window.__pwned=1\"> **bold** stays safe\n## 結論\n- 第一點\n> 引言" }) + "\n");
 const port = await freePort(), base = `http://127.0.0.1:${port}`;
 mkdirSync(join(H.data, "fm", "state"), { recursive: true });
 process.env.CREW_SESSION_TOKEN = "test-session";
@@ -55,6 +55,9 @@ try {
     ok(/Role: founder; round: 1\/3/.test(await text(p, '[data-cmp-body="left"] [data-cmp-prompt]')), "the prompt each agent received opens in its column");
     ok(!(await p.locator("body").innerText()).includes(PLANTED) && !(await p.content()).includes(PLANTED), "the planted credential is not on the page");
     ok(await p.locator('[data-cmp-body="left"] img').count() === 0 && /<img src=x onerror=/.test(bodyL) && !(await p.evaluate(() => window.__pwned)), "markup in a message is shown as text, never parsed");
+    ok(await p.locator('[data-cmp-body="left"] .cmp-h').count() >= 1 && await p.locator('[data-cmp-body="left"] blockquote').count() >= 1 && await p.locator('[data-cmp-body="left"] .cmp-li').count() >= 1, "headings, quotes and list items render as blocks");
+    ok(await p.locator('[data-cmp-said-same="right"]').count() === 1 && (bodyR.match(/已提交：65\/100/g) || []).length === 1, "a report that repeats the last message is not shown twice", bodyR.slice(-200));
+    { const pk = await box(p, ".cmp-picker"), hd = await box(p, '[data-cmp-head="left"]'); ok(pk && hd && hd.y - (pk.y + pk.height) <= 24, "the columns sit close under the round selector", JSON.stringify({ pk, hd })); }
     ok(await noHScroll(p), "no sideways scroll at 1280");
     ok(await p.locator("[data-cmp-sync]").isVisible(), "the sync-scroll-by-step toggle is offered");
     await p.screenshot({ path: join(shots, "compare-1280-light-en.png"), fullPage: true });

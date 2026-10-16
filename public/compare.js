@@ -54,22 +54,39 @@ function head(s, at, roles) {
     s.error ? h("p", { class: "bad cmp-err" }, s.error) : null,
     h("a", { class: "btn ghost cmp-log", href: s.transcript, "data-cmp-log": at }, T("Open the full log", "打開完整紀錄")));
 }
+/** md() per line, with headings, quotes and list items as blocks; every piece is still a text node */
+function blocks(text) {
+  const out = []; let para = [];
+  const end = () => { if (para.length) { out.push(h("p", {}, md(para.join("\n")))); para = []; } };
+  for (const line of String(text).split("\n")) {
+    let m;
+    if ((m = /^(#{1,6})\s+(.*)$/.exec(line))) { end(); out.push(h("div", { class: `cmp-h cmp-h${Math.min(m[1].length, 3)}` }, md(m[2]))); }
+    else if ((m = /^>\s?(.*)$/.exec(line))) { end(); out.push(h("blockquote", {}, md(m[1]))); }
+    else if ((m = /^(\s*)([-*•]|\d+[.)])\s+(.*)$/.exec(line))) { end(); out.push(h("div", { class: "cmp-li", style: `padding-left:${12 + Math.min(m[1].length, 8) * 6}px` }, h("span", { class: "cmp-bullet" }, /\d/.test(m[2]) ? m[2] : "•"), " ", md(m[3]))); }
+    else if (!line.trim()) end();
+    else para.push(line);
+  }
+  end(); return out;
+}
 function argBlocks(a) {
   const short = [], long = [];
   // a word or a number sits on one line; prose (a proposal, a critique) gets its own block
   for (const [k, v] of Object.entries(a || {})) { const str = typeof v === "string", t = str ? v : JSON.stringify(v); (str && (t.length > 60 || t.includes("\n")) ? long : short).push([k, t, str]); }
   return [short.length ? h("div", { class: "cmp-args" }, short.map(([k, t, str]) => h("span", {}, h("span", { class: "faint" }, `${k}: `), str ? h("b", {}, t || "—") : h("code", {}, t)))) : null,
-    ...long.map(([k, t]) => h("details", { class: "cmp-long", open: true }, h("summary", { class: "faint" }, k), h("div", { class: "cmp-text md" }, md(t))))];
+    ...long.map(([k, t]) => h("details", { class: "cmp-long", open: true }, h("summary", { class: "faint" }, k), h("div", { class: "cmp-text md" }, blocks(t))))];
 }
 function entry(e, i) {
   const t = h("span", { class: "tr-t" }, fmtT(e.t));
   const at = { "data-step": String(i), "data-entry": e.kind };
-  if (e.kind === "text") return h("div", { class: "tr-e text", ...at }, t, h("div", { class: "tr-body cmp-text md" }, md(e.text || "")));
+  if (e.kind === "text") return h("div", { class: "tr-e text", ...at }, t, h("div", { class: "tr-body cmp-text md" }, blocks(e.text || "")));
   if (e.kind === "tool") return h("div", { class: "tr-e tool", ...at }, t, h("div", { class: "tr-body" }, h("b", {}, "▸ ", e.name), ...argBlocks(e.args)));
   if (e.kind === "toolResult") return h("div", { class: `tr-e result${e.isError ? " err" : ""}`, ...at }, t,
     h("details", { class: "tr-res" }, h("summary", {}, e.isError ? "✗ " : "✓ ", T("result", "結果")), h("pre", {}, e.body || ""), e.truncated ? h("div", { class: "faint" }, T("Cut; the full log has the rest.", "已截斷；完整紀錄裡有其餘內容。")) : null));
   return h("div", { class: `tr-e ${e.kind}`, ...at }, t, h("div", { class: "tr-body faint" }, e.kind === "result" ? "✓ " : e.kind === "error" ? "✗ " : "", e.text || ""));
 }
+// a report's text is the agent's messages again: the last one, or all of them run together
+const flat = (t) => String(t || "").replace(/\s+/g, "");
+const saidShown = (said, es) => { const texts = es.filter((e) => e.kind === "text").map((e) => e.text || ""); const f = flat(said); return !!f && (f === flat(texts.at(-1)) || f === flat(texts.join(""))); };
 function body(s, at) {
   const v = side(s);
   const box = (...kids) => h("div", { class: `cmp-body cmp-${at}`, "data-cmp-body": at, onscroll: (ev) => syncFrom(ev.currentTarget, at) }, ...kids);
@@ -87,7 +104,8 @@ function body(s, at) {
     v.stream?.cut ? h("p", { class: "faint" }, T("The transcript is long; the full log has the rest.", "對話紀錄太長；完整紀錄裡有其餘內容。")) : null,
     h("section", { class: "cmp-report", "data-cmp-report": at }, h("h3", {}, T("Final report", "最終報告")),
       r ? [h("p", { class: "faint" }, [r.status, r.tools != null ? T(`${r.tools} tool calls`, `${r.tools} 次工具呼叫`) : null, r.cost?.usd != null ? `$${Number(r.cost.usd).toFixed(3)}` : null].filter(Boolean).join(" · ")),
-        r.error && r.error !== "null" ? h("p", { class: "bad" }, r.error) : null, r.said ? h("div", { class: "cmp-text md" }, md(r.said)) : null]
+        r.error && r.error !== "null" ? h("p", { class: "bad" }, r.error) : null, r.said ? (saidShown(r.said, v.entries) ? h("p", { class: "faint", "data-cmp-said-same": at }, T("Its text is the messages above.", "內容就是上方的訊息。"))
+          : h("div", { class: "cmp-text md" }, blocks(r.said))) : null]
         : h("p", { class: "faint" }, T("No report yet.", "還沒有報告。"))));
 }
 // sync scroll by step: the other column shows the same step number at its top
@@ -101,7 +119,7 @@ function syncFrom(el, at) {
   syncing = true; other.scrollTop += twin.getBoundingClientRect().top - other.getBoundingClientRect().top; requestAnimationFrame(() => { syncing = false; });
 }
 
-function picker() {
+function picker(tools) {
   const p = CV.plan;
   const anyBtn = h("button", { "data-cmp-any": "1", "aria-pressed": String(CV.any), onclick: () => { CV.any = true; render(); } }, h("span", { class: "keep" }, T("Pick any two rounds", "自選兩個回合")));
   const pairs = p.pairs.length ? h("div", { class: "seg", role: "group", "aria-label": T("Round", "輪次"), "data-cmp-rounds": String(p.pairs.length) },
@@ -112,7 +130,7 @@ function picker() {
       p.rounds.map((r) => h("option", { value: keyOf(r), selected: CV[at] === keyOf(r) || null }, `${r.label} · ${r.roleLabel || r.role || ""} · ${T(`round ${r.visit}`, `第 ${r.visit} 回合`)}`))));
   return h("div", { class: "card x-pad cmp-picker" }, pairs,
     !p.pairs.length ? h("p", { class: "faint", "data-cmp-undeclared": "1" }, T("This workflow does not pair its rounds. Pick any two.", "這個流程沒有宣告配對的回合，請自選兩個。")) : null,
-    CV.any ? h("div", { class: "tr-row" }, sel("left"), sel("right")) : null);
+    CV.any ? h("div", { class: "tr-row" }, sel("left"), sel("right")) : null, tools);
 }
 function view(id) {
   if (CV.id !== id) loadPlan(id);
@@ -128,7 +146,7 @@ function view(id) {
     h("button", { "data-cmp-show": k, "aria-pressed": String(CV.show === k), onclick: () => { CV.show = k; render(); } }, h("span", { class: "keep" }, t))));
   const sync = h("label", { class: "cmp-sync faint" }, h("input", { type: "checkbox", "data-cmp-sync": "1", checked: CV.sync || null, onchange: (e) => { CV.sync = e.target.checked; } }), T("Sync scroll by step", "依步驟同步捲動"));
   return h("div", { class: "page cmp-page", "data-compare": id },
-    top, picker(), h("div", { class: "tr-row cmp-tools" }, toggle, sync),
+    top, picker(h("div", { class: "tr-row cmp-tools" }, toggle, sync)),
     h("div", { class: "cmp-grid", "data-cmp-showing": CV.show }, head(l, "left", roles), head(r, "right", roles), body(l, "left"), body(r, "right")));
 }
 

@@ -98,7 +98,32 @@ export function readStream(file: string, after = 0): { entries: Entry[]; next: n
   } catch { return { entries: [], next: after, size: 0 }; } finally { if (fd >= 0) closeSync(fd); }
 }
 const resultText = (c: any): string => typeof c === "string" ? c : Array.isArray(c) ? c.map((x) => (typeof x?.text === "string" ? x.text : x?.type === "image" ? "[image]" : JSON.stringify(x))).join("\n") : JSON.stringify(c ?? "");
-export function parseLines(lines: string[]): Entry[] {
+/** A provider's final message is often in the stream twice (its streamed text, then the whole message), and a long
+ *  one also as pieces flushed while it streamed (src/agent.ts roundRecord before the fix). Adjacent text entries that
+ *  are the same text, or that together start (or make up) the next text, are shown once: as that next text. */
+export function collapseTexts(es: Entry[]): Entry[] {
+  const out: Entry[] = [];
+  let run: Entry[] = []; // the text entries just before this one, with nothing between them
+  for (const e of es) {
+    if (e.kind !== "text") { out.push(e); run = []; continue; }
+    const text = e.text ?? "";
+    const prev = run.at(-1);
+    if (prev && prev.text === text) continue; // the same message again
+    // the pieces are the last few texts of the run: the longest tail of it that joins to a strict start of this text
+    // (walked from the end, and only while the pieces fit in this text: the cost stays bounded by its length)
+    let tail = "", from = -1;
+    for (let j = run.length - 1; j >= 0; j--) {
+      tail = (run[j].text ?? "") + tail;
+      if (tail.length > text.length) break;
+      if (tail && text.startsWith(tail)) from = j;
+    }
+    if (from >= 0) { const n = run.length - from; out.splice(out.length - n, n); run = run.slice(0, from); }
+    out.push(e); run.push(e);
+  }
+  return out;
+}
+export function parseLines(lines: string[]): Entry[] { return collapseTexts(parseLinesRaw(lines)); }
+function parseLinesRaw(lines: string[]): Entry[] {
   const out: Entry[] = [];
   let t: string | null = null;
   for (const line of lines) {

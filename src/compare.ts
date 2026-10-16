@@ -102,7 +102,7 @@ export function readConfined(root: string, parts: string[], max: number): { text
     if (!inside(realRoot, realpathSync(dir))) return null;
     fd = openSync(p, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const st = fstatSync(fd);
-    if (!st.isFile()) return null;
+    if (!st.isFile() || st.nlink !== 1) return null; // a FIFO, device or folder, or a hard link that may point outside
     if (!inside(realRoot, realpathSync(dir))) return null; // the folder did not move while it opened
     const len = Math.min(st.size, max);
     const b = Buffer.alloc(len); const n = readSync(fd, b, 0, len, 0);
@@ -123,12 +123,8 @@ function newestLines(text: string, cut: boolean): { lines: string[]; prompt: str
   }
   return { lines: by.get(newest) ?? [], prompt: newest };
 }
-/** Stream entries, with a message the provider wrote twice in a row (same time, same text) shown once. */
-function entriesOf(lines: string[]): Entry[] {
-  const out: Entry[] = [];
-  for (const e of parseLines(lines)) { const p = out.at(-1); if (p && e.kind === "text" && p.kind === "text" && p.t === e.t && p.text === e.text) continue; out.push(e); }
-  return out;
-}
+/** Stream entries (parseLines already shows a message written twice, or in pieces before its whole text, once). */
+const entriesOf = (lines: string[]): Entry[] => parseLines(lines);
 export type SideView = { node: string; visit: number; prompt: { name: string; header: any; body: string; bytes: number } | null; entries: Entry[];
   report: { status: string | null; said: string | null; error: string | null; tools: number | null; cost: any } | null; stream: { bytes: number; cut: boolean } };
 /** One Round's record, read through the confined reader and redacted. */
@@ -136,17 +132,23 @@ export function readSide(dataDir: string, run: string, node: string, visit: numb
   const root = join(dataDir, "runs"), at = [run, "nodes", node, String(visit)];
   const s = readConfined(root, [...at, "stream.jsonl"], STREAM_MAX);
   const { lines, prompt: name } = s ? newestLines(s.text, s.cut) : { lines: [], prompt: "prompt.md" };
-  const pt = readConfined(root, [...at, name], PROMPT_MAX) ?? (name === "prompt.md" ? null : readConfined(root, [...at, "prompt.md"], PROMPT_MAX));
+  // the newest invocation's own prompt; when that file is gone, the round's first prompt, named as what it is
+  const own = readConfined(root, [...at, name], PROMPT_MAX);
+  const shown = own || name === "prompt.md" ? name : "prompt.md";
+  const pt = own ?? (name === "prompt.md" ? null : readConfined(root, [...at, "prompt.md"], PROMPT_MAX));
   const pv = pt ? recordPrompt(pt.text) : null;
   const sfx = name.slice("prompt".length, -".md".length);
-  const rt = (sfx ? readConfined(root, [...at, `report${sfx}.json`], REPORT_MAX) : null) ?? readConfined(root, [...at, "report.json"], REPORT_MAX);
+  const ownReport = sfx ? readConfined(root, [...at, `report${sfx}.json`], REPORT_MAX) : null;
+  const rt = ownReport ?? readConfined(root, [...at, "report.json"], REPORT_MAX);
   let report: SideView["report"] = null;
   if (rt) {
     let r: any; try { r = redactJSON(JSON.parse(rt.text)); } catch { r = { said: redactText(rt.text) }; }
+    // the shared report.json belongs to the invocation it names: another invocation's report is not this one's
+    if (!ownReport && r && typeof r.prompt === "string" && r.prompt !== name) r = null;
     if (r && typeof r === "object") report = { status: typeof r.status === "string" ? r.status : null, said: typeof r.said === "string" ? r.said : null,
       error: r.error ? String(r.error) : null, tools: typeof r.tools === "number" ? r.tools : null, cost: r.cost ?? null };
   }
-  return { node, visit, prompt: pv ? { name, header: pv.header, body: pv.body, bytes: pv.bytes } : null, entries: entriesOf(lines), report, stream: { bytes: s?.size ?? 0, cut: !!s?.cut } };
+  return { node, visit, prompt: pv ? { name: shown, header: pv.header, body: pv.body, bytes: pv.bytes } : null, entries: entriesOf(lines), report, stream: { bytes: s?.size ?? 0, cut: !!s?.cut } };
 }
 
 // ---------- routes ----------

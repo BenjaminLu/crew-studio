@@ -10,6 +10,8 @@ import { installStartupRecursion } from "../src/domain/startup-recursion";
 export const FLOW = readFileSync(join(import.meta.dir, "../workflows/v2/startup-recursion.wf.yaml"), "utf8");
 /** a credential planted into the files after the round wrote them: the reader must hide it */
 export const PLANTED = "ghp_" + "Q1w2E3r4T5y6U7i8O9p0A1s2D3f4G5h6J7k8";
+/** round 2's final answer is long: the writer used to flush it in pieces past 4000 characters */
+export const FINAL_LONG = "長答案：" + Array.from({ length: 300 }, (_, i) => `第 ${i + 1} 點，付費試點的假設與驗證。`).join("");
 export const PLAIN = Y({ id: "plain-two", name: "Plain two rounds", roles: [{ id: "writer", label: "Writer", skill: "x" }, { id: "editor", label: "Editor", skill: "x" }], nodes: [
   { id: "draft", kind: "agent", label: "Draft", role: "writer", mode: "test", args: { say: "write the draft" }, x: 0, y: 0 },
   { id: "edit", kind: "agent", label: "Edit", role: "editor", mode: "test", args: { say: "edit the draft" }, x: 1, y: 0 },
@@ -29,7 +31,10 @@ export async function seeded(o: { data?: string } = {}) {
     yield { type: "toolStart", id: `submit-${round}`, name: "startup_submit", args: payload };
     const result = await H.agents.callTool(ctx.token, "startup_submit", payload);
     yield { type: "toolEnd", id: `submit-${round}`, result: JSON.stringify(result) };
-    yield { type: "message", text: judge ? `已提交：${payload.score}/100，revise。` : `已提交第 ${round} 輪提案。` };
+    // like the real provider: the final answer streams as deltas, then arrives once more as a whole message
+    const final = judge ? `已提交：${payload.score}/100，revise。` : `已提交第 ${round} 輪提案。${round === 2 ? ` ${FINAL_LONG}` : ""}`;
+    for (let i = 0; i < final.length; i += 1000) yield { type: "delta", text: final.slice(i, i + 1000) };
+    yield { type: "message", text: final };
     yield { type: "turnEnd", status: "ok", usage: { usd: 0.01, inTokens: 100 * round, outTokens: 50 * round } };
   } }; } }) as any) as any;
   const run = H.engine.start({ workflow: "startup-recursion", text: "Fixture only: 『我是主理人』創業競賽。", params: { founderModel: "fixture-claude", judgeModel: "fixture-codex" } });

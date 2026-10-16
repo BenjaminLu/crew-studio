@@ -8,4 +8,4 @@ How the pairs are chosen: a workflow may declare role pairs in its yaml, `compar
 
 Data: `GET /api/tasks/<id>/compare` (the pairs and every agent Round) and `GET /api/tasks/<id>/compare/<node>/<visit>` (one Round). The second reads `data/runs/<run>/nodes/<node>/<visit>/` `prompt.md`, `stream.jsonl` and `report.json` by name only: the node and visit must name an agent step of that Task, no path part may be a symlink, the folder's realpath stays under `data/runs`, and the file opens O_NOFOLLOW. Every text passes the Transcripts redaction; a paired phone gets a summary unless the Mac allows more. TODO: read through `src/logs.ts` (openLog, log links) once the error-log-links branch lands.
 
-Done: `tests/compare.ts` (pairs for a seeded startup Task, any two rounds, redaction, traversal and symlinks) and `tests/compare-ui.mjs` (two columns at 1280, stacked at 390, the round selector switches the content).
+Done: `tests/compare.ts` (pairs for a seeded startup Task, any two rounds, redaction, traversal, symlinks, hard links and FIFOs, a final message shown once) and `tests/compare-ui.mjs` (two columns at 1280, stacked at 390, the round selector switches the content).

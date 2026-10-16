@@ -201,9 +201,10 @@ export function roundRecord(dir: string, header: Record<string, unknown>, text: 
   return {
     event(e: any) {
       if (e.type === "delta") { buf += e.text; if (buf.length > 4000) flush(); return; }
+      // a whole message repeats the deltas before it: keep the message, drop the streamed copy (it was written twice)
+      if (e.type === "message") { buf = ""; put({ type: "message", text: redactText(e.text) }); return; }
       flush();
-      if (e.type === "message") put({ type: "message", text: redactText(e.text) });
-      else if (e.type === "toolStart") put({ type: "tool_call", id: e.id, name: e.name, args: redactJSON(e.args ?? null) });
+      if (e.type === "toolStart") put({ type: "tool_call", id: e.id, name: e.name, args: redactJSON(e.args ?? null) });
       else if (e.type === "toolEnd") put({ type: "tool_result", id: e.id, error: e.error ? redactText(e.error) : null, rows: e.rows, result: redactText(textOnly(String(e.result ?? ""))).slice(0, 20000) }); // a picture is noted, not kept
       else if (e.type === "turnEnd") put({ type: "status", status: e.status, code: e.code ?? null, message: e.message ?? null, usage: e.usage ?? null });
     },

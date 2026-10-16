@@ -4,7 +4,7 @@
 .cmp-picker .seg{flex-wrap:wrap;justify-self:start}
 .cmp-sel{display:grid;gap:4px;min-width:0;flex:1 1 220px}
 .cmp-sel .select{width:100%;min-width:0}
-.cmp-tools{margin:10px 0}
+.cmp-tools{margin:0}
 .cmp-toggle{display:none}
 .cmp-sync{display:flex;gap:6px;align-items:center;font-size:12.5px}
 .cmp-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-rows:auto auto;gap:0 12px;min-width:0}
@@ -36,3 +36,7 @@
   .cmp-body{max-height:none;min-height:0;overflow:visible}
   .cmp-sync{display:none}
 }
+.cmp-text p{margin:0 0 8px}.cmp-text p:last-child{margin-bottom:0}
+.cmp-h{font-weight:600;margin:10px 0 4px}.cmp-h1{font-size:16px}.cmp-h2{font-size:15px}.cmp-h3{font-size:14px}
+.cmp-text blockquote{margin:4px 0;padding:2px 10px;border-left:3px solid var(--border-strong);color:var(--text-2)}
+.cmp-li{margin:2px 0}.cmp-bullet{color:var(--text-3)}
