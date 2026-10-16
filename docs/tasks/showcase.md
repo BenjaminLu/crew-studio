@@ -424,20 +424,17 @@ Coffee-kit 主案例沿用「慢日咖啡 Slow Day Coffee」：繁體中文單�
 - [x] 真實圖片與 12 秒影片；精確 v3 播放及 reduced-motion 驗證。
 - [x] 正式收件匣核准與修改；Captain 同時兩位實際審查員。
 - [x] 船員投影修正測試 13/13；commit／push 並讀回 origin SHA。
-- [x] 最終 MP4：ffmpeg 完整解碼、macOS AVFoundation 解碼 2,550 影格與音訊均成功；macOS Chromium 正常速度播至 102 秒 ended，無錯誤、掉幀 0。
-- [x] 交付 1:42 Tech House 單一版本，1080p H.264／AAC；原片與 31 張關鍵截圖保留。Downloads：`~/Downloads/crew-studio-showcase-2026-10-16/crew-studio-showcase-tech-house.mp4`。
+- [x] 最新 v4 MP4：95 秒，1080p H.264／AAC；ffmpeg 完整影音解碼 PASS，macOS AVFoundation 完整解碼 2,375 影格及 618 音訊 buffers，無錯誤。
 
-### take02 剪輯 v2 回饋
+### 最新剪輯與交接（v4）
 
-- 補回開啟 Hello Crew Studio 預覽的操作銜接，順序為產生、開啟預覽、返回確認。
-- 縮短收件匣卡片提交後的空畫面，包含原 0:47–0:49、0:58–0:59、1:07–1:09；核准動作保留。
-- 網站展示約在 1:34 結束，最後以 Hello Crew Studio 畫面及「17 轮到你了」收尾，全長約 1:38。此最新回饋取代先前 1:40–1:50 的長度目標。
-- 成品庫標題改為「14 网页、图片、影片，一次任务全部保存」，表達同一任務交付三種內容，不暗示一次生成即成功。
-- 保留全程 Tech House 與簡體中文編號 title；原版和原始錄影保留。
-
-### take02 剪輯 v3 回饋
-
-- 最前面新增 3 秒「Introducing Crew Studio」單頁轉場。
-- 重新從原始網站錄影取頁首、生成圖片、品牌／飲品到影片區的完整捲動，約 12 秒原片以 2 倍速濃縮為 6 秒；不逐一停留解釋 anchor。
-- 接約 8 秒網站內影片正常速度播放，保留成品庫三種內容標題與 Hello Crew Studio「轮到你了」結尾；全片約 1:31。
-- 此修訂依使用者澄清，保留整個網頁展示，不採只截取原 1:21 影片區的方案。
+- 開場 3 秒「Introducing Crew Studio」。移除 Hello Crew Studio 內建範例，避免被誤解為訪談生成的結果。
+- 保留原片 174–180、198–204 秒的真實訪談，放大對話區；接 347.5–352.5 秒的 Firstmate 生成流程與後續模型選擇。
+- 訪談生成三份咖啡店準備文件流程，後段另用 Coffee-kit 製作三種成品；不可混稱為動態生成 Coffee-kit。
+- 放慢正式核准卡片閱讀，保留真實按鈕操作、Captain 船員工作、修改、雙審查、核准入庫。
+- 成品庫標題：「13 网页、图片、影片，一次任务全部保存」。網站保留完整頁面捲動與影片播放，結尾成品庫「16 轮到你了」。
+- 全片 Tech House，編號簡體中文 title。最新 1:35 剪輯取代先前長度與 Hello 結尾安排。
+- 交接資料夾：`~/Downloads/crew-studio-showcase-2026-10-16/showcase/`；ZIP：同層 `crew-studio-showcase-v4.zip`。
+- 包含原片、相對路徑 timeline、標題 PNG／SVG、音樂與授權快照、截圖、成品網站、Python 重製／驗證腳本及 README。成片僅收 v4；網站成品版本仍是 v3。
+- 不含原 Studio runtime、憑證或 session cookies；不需原 repo 或 Studio 即可剪輯。Python 與 ffmpeg 為重製需求，修改標題另需固定版本 sharp 及中文字型。
+- ZIP 完整性與解壓後 checksum、素材檢查、全片解碼均 PASS；獨立解壓目錄完整重製 PASS，輸出 SHA-256 與交付影片完全一致。
