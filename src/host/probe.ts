@@ -6,6 +6,16 @@ import { readlinkSync, statSync } from "node:fs";
 export type Proc = { pid: number; command: string; cwd: string | null };
 export interface ProcProbe { list(): Proc[] }
 
+/** Match the launched CLI, not a shell/read command which merely mentions its path. */
+export function isVendorProcess(command:string):boolean {
+  if (/^(?:\S*\/)?(?:claude|codex)(?:\s|$)/.test(command)) return true;
+  const args = command.trim().split(/\s+/);
+  if (!/^(?:\S*\/)?node$/.test(args.shift() ?? '')) return false;
+  // Only skip known standalone flags; never mistake an eval payload for a CLI.
+  while (/^(?:--enable-source-maps|--no-warnings|--disable-warning=[^\s]+)$/.test(args[0] ?? '')) args.shift();
+  return /(?:^|\/)node_modules\/(?:@openai\/codex\/bin\/codex\.js|@anthropic-ai\/claude-code\/cli\.js)$/.test(args[0] ?? '');
+}
+
 const run = (argv: string[]): string => {
   try { const r = Bun.spawnSync(argv, { stdout: "pipe", stderr: "ignore" }); return r.success || r.exitCode === 1 ? r.stdout.toString() : ""; } catch { return ""; }
 };
@@ -18,7 +28,7 @@ export const systemProbe: ProcProbe = {
       const m = /^\s*(\d+)\s+(.*)$/.exec(line);
       if (!m) continue;
       const command = m[2];
-      if (!/(^|\/)(claude|codex)(\s|$)|\/(claude|codex)\b|\bnode .*(claude|codex)/.test(command)) continue;
+      if (!isVendorProcess(command)) continue;
       procs.push({ pid: Number(m[1]), command, cwd: null });
     }
     if (!procs.length) return procs;
