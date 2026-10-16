@@ -59,7 +59,7 @@
     "test:startup-ui": "STARTUP_ACCOUNT_READ_ONLY=1 node tests/backbone-ui.mjs && STARTUP_FIRSTMATE_UI=1 node tests/backbone-ui.mjs",
     "test:hyperframes-native": "bun tests/hyperframes-native.ts && HF_ADAPTER_CONTROL=1 bun tests/hyperframes-native.ts && HF_DIAGNOSTIC_CONTROL=1 bun tests/hyperframes-native.ts",
     "test:hyperframes-containment": "bun tests/hyperframes-containment.mjs",
-    "test:projects": "bun tests/project-of.ts && bun tests/waits-on.ts && bun tests/project-overview.ts && bun tests/projects-ui.mjs",
+    "test:projects": "bun tests/staffing-assess.ts && bun tests/project-of.ts && bun tests/waits-on.ts && bun tests/project-overview.ts && bun tests/projects-ui.mjs",
     "test:firstmate-project-registration": "bun tests/firstmate-project-registration.ts",
     "test:claude-native-capability": "bun tests/claude-native-capability.ts",
     "test:claude-login": "bun tests/claude-login.ts && node tests/claude-login-ui.mjs",

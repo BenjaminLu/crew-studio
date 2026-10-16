@@ -11,7 +11,7 @@
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, join, relative, isAbsolute, resolve } from "node:path";
 import { hasSession } from "./csrf";
-import { loadDefaults, type Project, type Projects } from "./doors";
+import { loadDefaults, type Project, type Projects, type StaffingRefusal } from "./doors";
 import { websiteHref } from "./artifacts";
 import { StaffingStore } from "./domain/staffing";
 import { roundsOf, waitsOn, type WaitsOn } from "./task-round";
@@ -117,10 +117,42 @@ export function createProjectOverview(d: OverviewDeps) {
     // mini: one pipe segment per active Task (human, running, or empty for held and paused), for the projects index
     return { attention, running, held, failed24h, mini: [...mini.filter((x) => x === "human"), ...mini.filter((x) => x === "running"), ...mini.filter((x) => !x)].slice(0, 12) };
   }
-  function statusLine(kind: string, enabled: boolean, c: ReturnType<typeof counts>, folderMissing = false): Line {
+  /**
+   * Can tasks start here: the staffing check itself (Projects.staffingAssess, the same steps dispatch runs), as data.
+   * `own` checks the project's own registration also when it is disabled (display only), for "Folder missing".
+   */
+  function startState(p: Project) {
+    const roots = d.protectedRoots ?? [];
+    // an external project is never put through the staffing check here (it cannot dispatch on this build)
+    if (kindOf(p) === "external") return { real: null, folderMissing: false, canStart: false };
+    let real: ReturnType<Projects["staffingAssess"]> | null = null, own: ReturnType<Projects["staffingAssess"]> | null = null;
+    try { real = d.projects.staffingAssess(p.id, roots); } catch {}
+    try { own = d.projects.staffingAssess(p.id, roots, { includeDisabled: true }); } catch {}
+    const folderMissing = !!own && !own.ok && own.record === p.id && own.reason === "folder_missing";
+    const canStart = enabledOf(p) && kindOf(p) !== "external" && !!real?.ok;
+    return { real, folderMissing, canStart };
+  }
+  /** fixed words per refusal reason, naming the registration (never a path, never exception text) */
+  function refusalText(a: { reason: StaffingRefusal; record: string; aliases: string[] }): { en: string; tw: string } {
+    const id = a.record || "?", al = a.aliases.join(", ");
+    switch (a.reason) {
+      case "folder_missing": return { en: `Registration ${id}: its folder is missing.`, tw: `登錄的專案 ${id}：資料夾不見了。` };
+      case "git_invalid": return { en: `Registration ${id}: its Git data is missing or malformed.`, tw: `登錄的專案 ${id}：Git 資料不見了或格式不正確。` };
+      case "git_escapes_container": return { en: `Registration ${id}: its Git data points outside its folder.`, tw: `登錄的專案 ${id}：Git 資料指向資料夾以外。` };
+      case "private_overlap": return { en: `Registration ${id}: its folder is inside, or holds, Studio's private data.`, tw: `登錄的專案 ${id}：資料夾位於 Studio 的私有資料裡，或包含它。` };
+      case "ambiguous_alias": return { en: `Registrations ${id} and ${al || "another"} point to the same repository.`, tw: `登錄的專案 ${id} 與 ${al || "另一個專案"} 指向同一個儲存庫。` };
+      case "base_invalid": return { en: `Registration ${id}: its base branch name is invalid.`, tw: `登錄的專案 ${id}：主 branch 名稱無效。` };
+      case "base_missing": return { en: `Registration ${id}: its base branch is missing.`, tw: `登錄的專案 ${id}：找不到主 branch。` };
+      case "external_unverified": return { en: `Registration ${id}: its GitHub grant cannot be verified on this build.`, tw: `登錄的專案 ${id}：目前版本無法驗證它的 GitHub 授權。` };
+      case "registry_unreadable": return { en: "The project registry cannot be read.", tw: "無法讀取專案登錄資料。" };
+      default: return { en: `Registration ${id}: the staffing check refused it.`, tw: `登錄的專案 ${id}：派工檢查未通過。` };
+    }
+  }
+  function statusLine(kind: string, enabled: boolean, c: ReturnType<typeof counts>, folderMissing = false, canStart = true): Line {
     if (!enabled) return { tone: "", en: "Disabled", tw: "已停用" };
     if (kind === "external") return { tone: "warn", en: "External: cannot dispatch yet", tw: "外部專案：暫無法派工" };
     if (folderMissing) return { tone: "warn", en: "Folder missing", tw: "資料夾不見了" };
+    if (!canStart && kind !== STUDIO) return { tone: "warn", en: "No task can start", tw: "無法開始任何任務" };
     if (c.failed24h) return { tone: "bad", en: `${c.failed24h} failed in the last 24 h`, tw: `近 24 小時 ${c.failed24h} 個失敗` };
     const en: string[] = [], tw: string[] = [];
     if (c.running) { en.push(`${c.running} running`); tw.push(`${c.running} 進行中`); }
@@ -140,8 +172,8 @@ export function createProjectOverview(d: OverviewDeps) {
     let error: { en: string; tw: string } | null = null, list: Project[] = [];
     try { list = records(); } catch { error = { en: "Registry unreadable", tw: "無法讀取登錄資料" }; }
     const rows = list.map((p) => {
-      const kind = kindOf(p), enabled = enabledOf(p), c = counts(by.get(p.id) ?? [], open), folderMissing = !!p.path && !repoOk(p.path);
-      return { id: p.id, name: p.name || p.id, enabled, kind, folderMissing, ...c, status: statusLine(kind, enabled, c, folderMissing) };
+      const kind = kindOf(p), enabled = enabledOf(p), c = counts(by.get(p.id) ?? [], open), st = startState(p);
+      return { id: p.id, name: p.name || p.id, enabled, kind, folderMissing: st.folderMissing, canStart: st.canStart, ...c, status: statusLine(kind, enabled, c, st.folderMissing, st.canStart) };
     });
     const rank = (r: (typeof rows)[number]) => (r.kind === "builtin" ? 3 : r.attention ? 0 : r.running ? 1 : 2);
     rows.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
@@ -153,22 +185,6 @@ export function createProjectOverview(d: OverviewDeps) {
   // ---------- one project's page ----------
   // a section that cannot be read says so in fixed words: no exception text and no path ever reaches a reply (or a phone)
   const section = <T>(f: () => T): T | { error: "unreadable" } => { try { return f(); } catch { return { error: "unreadable" }; } };
-  /**
-   * Whether a registration's folder still reads as a Git repository the way staffingIdentity reads it (read only, no git):
-   * a real directory, a .git directory or a "gitdir: <dir>" file whose directory exists, and a commondir that resolves.
-   * Used to say WHICH registration makes staffingIdentity refuse; the refusal itself always comes from staffingIdentity.
-   */
-  const repoOk = (path: string | null) => {
-    if (!path) return false;
-    try {
-      const root = realpathSync(path); if (!statSync(root).isDirectory()) return false;
-      let git = join(root, ".git"); const st = statSync(git);
-      if (st.isFile()) { const t = readFileSync(git, "utf8").trim(); if (!t.startsWith("gitdir: ") || t.includes("\n") || t.length > 4096) return false; git = resolve(root, t.slice(8)); }
-      git = realpathSync(git); if (!statSync(git).isDirectory()) return false;
-      const cf = join(git, "commondir"); if (existsSync(cf)) { const c = readFileSync(cf, "utf8").trim(); if (!c || c.length > 4096 || !statSync(realpathSync(resolve(git, c))).isDirectory()) return false; }
-      return true;
-    } catch { return false; }
-  };
   function pipeOf(r: Run): string[] {
     const out: string[] = [];
     for (const n of r.def?.nodes ?? []) {
@@ -197,45 +213,36 @@ export function createProjectOverview(d: OverviewDeps) {
     }
     return null;
   }
-  function crewOf(p: Project) {
+  function crewOf(p: Project, st: ReturnType<typeof startState>) {
     if (kindOf(p) === "external" || !enabledOf(p) || !p.path) return null;
-    if (!repoOk(p.path)) return { error: "folder-missing" as const };
-    const store = new StaffingStore(d.dataDir);
-    // the real check, the same one dispatch runs: when it refuses and another registration's folder is broken, that
-    // registration is why no task can start here either (named by id, never by path; never read from exception text)
-    let identity;
-    try { identity = d.projects.staffingIdentity(p.id, d.protectedRoots ?? []); }
-    catch {
-      let others: string[] = []; try { others = d.projects.nativeSnapshot().records.filter((r) => r.id !== p.id && r.path && !repoOk(r.path)).map((r) => r.id); } catch {}
-      return others.length ? { error: "other-broken" as const, others } : { error: "identity" as const };
-    }
+    // the staffing check refused: no task can start here, and the reply says which registration and why
+    if (!st.real) return { error: "refused" as const, detail: { en: "The staffing check could not run.", tw: "無法執行派工檢查。" } };
+    if (!st.real.ok) return { error: "refused" as const, record: st.real.record, detail: refusalText(st.real) };
+    const store = new StaffingStore(d.dataDir), identity = st.real.identity;
     if (!existsSync(join(d.dataDir, "projects", store.key(identity), "staffing", "current.json"))) return null;
     const c = store.current(identity);
     const card = E.cards.get(c.approval.card);
     return { workflow: c.workflow.id, version: c.workflow.version, config: c.version, approvedAt: card?.answer?.at ?? null, signed: true,
       roles: Object.entries(c.roles).map(([role, x]) => ({ role, provider: x.provider, model: x.model, effort: x.effort, skill: basename(x.skill.ref) })) };
   }
-  function health(p: Project, crew: ReturnType<typeof crewOf> | { error: string }) {
+  function health(p: Project, crew: ReturnType<typeof crewOf> | { error: string }, st: ReturnType<typeof startState>) {
     const kind = kindOf(p), enabled = enabledOf(p);
     const out = [];
-    out.push(enabled ? tile("enabled", "ok", "Enabled", "已啟用", { en: "New tasks can start", tw: "可以開始新任務" })
+    out.push(enabled && st.canStart ? tile("enabled", "ok", "Enabled", "已啟用", { en: "New tasks can start", tw: "可以開始新任務" })
+      : enabled ? tile("enabled", "warn", "Enabled", "已啟用", kind === "external" ? { en: "No task can start (see Registered)", tw: "無法開始任何任務（見「已註冊」）" } : { en: "No task can start (see Crew)", tw: "無法開始任何任務（見「船員」）" })
       : tile("enabled", "bad", "Disabled", "已停用", { en: "New tasks and rounds will not start.", tw: "不會開始新任務或新的一輪。" }));
     out.push(kind === "external" ? tile("registered", "warn", "External project: cannot dispatch yet", "外部專案：暫時無法派工", { en: "Its GitHub grant cannot be verified on this build.", tw: "目前版本無法驗證它的 GitHub 授權。" })
       : kind === "builtin" ? tile("registered", "ok", "Built-in", "內建", { en: "Studio's own practice repository", tw: "Studio 內建的練習用儲存庫" })
       : tile("registered", "ok", "Registered", "已註冊", { en: "Local repository", tw: "本機儲存庫" }));
     const b = readBaseRef(p.path, p.base);
     out.push(!p.path ? tile("base", "bad", "No repository path", "沒有儲存庫路徑", null)
-      : !repoOk(p.path) ? tile("base", "bad", "Repository folder missing", "找不到儲存庫資料夾", { en: "The registered folder is gone or is not a Git repository.", tw: "登錄的資料夾不見了，或不是 Git 儲存庫。" })
+      : st.folderMissing ? tile("base", "bad", "Repository folder missing", "找不到儲存庫資料夾", { en: "The registered folder is gone or is not a Git repository.", tw: "登錄的資料夾不見了，或不是 Git 儲存庫。" })
       : b.found ? tile("base", "ok", "Base branch found", "找到主 branch", { en: `${p.base} · ${short(b.sha)}`, tw: `${p.base} · ${short(b.sha)}` })
       : tile("base", "bad", "Base branch missing", "找不到主 branch", { en: p.base, tw: p.base }));
     if (kind === "external") out.push(tile("crew", "idle", "Crew not checked", "未檢查船員", { en: "External project", tw: "外部專案" }));
     else if (!enabled) out.push(tile("crew", "idle", "Crew not checked", "未檢查船員", { en: "Project disabled", tw: "專案已停用" }));
-    else if (crew && "error" in crew && crew.error === "other-broken") { const o = (crew as any).others as string[], more = o.length > 1 ? ` (+${o.length - 1} more)` : "", moreTw = o.length > 1 ? `（另有 ${o.length - 1} 個）` : "";
-      out.push(tile("crew", "warn", "No task can start", "無法開始任何任務", { en: `Registration ${o[0]} points to a missing or broken folder.${more}`, tw: `登錄的專案 ${o[0]} 指向不見或損壞的資料夾。${moreTw}` })); }
-    else if (crew && "error" in crew) out.push(tile("crew", "warn", "Crew cannot be read", "無法讀取船員配置",
-      crew.error === "folder-missing" ? { en: "This project's folder is missing.", tw: "這個專案的資料夾不見了。" }
-      : crew.error === "identity" ? { en: "The repository could not be confirmed (folder, Git data or base branch).", tw: "無法確認儲存庫（資料夾、Git 資料或主 branch）。" }
-      : { en: "The approved crew could not be read. Nothing was changed.", tw: "無法讀取已核准的船員配置。沒有任何變更。" }));
+    else if (crew && "error" in crew && crew.error === "refused") out.push(tile("crew", "warn", "No task can start", "無法開始任何任務", (crew as any).detail));
+    else if (crew && "error" in crew) out.push(tile("crew", "warn", "Crew cannot be read", "無法讀取船員配置", { en: "The approved crew could not be read. Nothing was changed.", tw: "無法讀取已核准的船員配置。沒有任何變更。" }));
     else if (crew) out.push(tile("crew", "ok", "Crew approved", "船員已核准", { en: `${crew.workflow} v${crew.version} · config v${crew.config}`, tw: `${crew.workflow} v${crew.version} · 配置 v${crew.config}` }));
     else out.push(tile("crew", "warn", "Crew not approved", "船員未核准", { en: "Tasks here will wait at their first round.", tw: "這裡的任務會停在第一輪。" }));
     const g = readGatesTest(p.path);
@@ -300,10 +307,11 @@ export function createProjectOverview(d: OverviewDeps) {
     const p = records().find((x) => x.id === id);
     if (!p) return null;
     const kind = kindOf(p);
-    const crew = section(() => crewOf(p));
+    const st = startState(p);
+    const crew = section(() => crewOf(p, st));
     return {
-      project: { id: p.id, name: p.name || p.id, path: p.path, base: p.base, kind, enabled: enabledOf(p), folderMissing: !!p.path && !repoOk(p.path), ...(p.github?.repository ? { repository: p.github.repository } : {}), registeredAt: section(() => registeredAt(p.id)) },
-      health: section(() => health(p, crew)), tasks, cards, crew,
+      project: { id: p.id, name: p.name || p.id, path: p.path, base: p.base, kind, enabled: enabledOf(p), folderMissing: st.folderMissing, canStart: st.canStart, ...(p.github?.repository ? { repository: p.github.repository } : {}), registeredAt: section(() => registeredAt(p.id)) },
+      health: section(() => health(p, crew, st)), tasks, cards, crew,
       sensitive: section(() => sensitive(p)), outputs: section(() => outputs(p.id, runs)), worktrees: section(() => worktreeRows(p.id, open)),
     };
   }

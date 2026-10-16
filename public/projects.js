@@ -89,6 +89,7 @@ function viewIndex() {
     const line = p.kind === "external" ? T("External project: cannot dispatch yet. Its GitHub grant cannot be verified on this build.", "外部專案：暫時無法派工。目前版本無法驗證它的 GitHub 授權。")
       : p.enabled === false ? T("Disabled. New tasks and rounds will not start.", "已停用。不會開始新任務或新的一輪。")
       : p.folderMissing ? T("Folder missing. The registered folder is gone or is not a Git repository.", "資料夾不見了。登錄的資料夾不見了，或不是 Git 儲存庫。")
+      : p.kind !== "studio" && p.kind !== "external" && p.canStart === false ? T("No task can start. The project page says why.", "無法開始任何任務。專案頁會說明原因。")
       : p.kind === "studio" ? T(`Tasks that belong to no project (artifact work, proposals).${counts ? ` ${counts.en}.` : ""}`, `不屬於任何專案的任務（成品工作、提案）。${counts ? `${counts.tw}。` : ""}`)
       : p.kind === "builtin" && !counts ? T("No tasks yet. Studio's own practice repository.", "還沒有任務。Studio 內建的練習用儲存庫。")
       : counts ? T(counts.en, counts.tw) + (p.failed24h ? T(` · ${p.failed24h} failed in the last 24 h`, ` · 近 24 小時 ${p.failed24h} 個失敗`) : "")
@@ -147,16 +148,14 @@ function cardRow(c) {
 }
 function crewSection(d) {
   const p = d.project, crew = d.crew;
-  const canLink = p.kind !== "external" && p.enabled !== false && p.kind !== "studio" && !p.folderMissing;
+  // the crew link only where tasks can start (the staffing check passes); otherwise the panel could not staff it
+  const canLink = p.kind !== "studio" && p.canStart === true;
   const head = h("div", { class: "sec-head" }, h("h2", { id: "hCrew" }, T("Crew", "船員")), h("span", { class: "faint" }, T("read only", "唯讀")), h("span", { class: "x-grow" }),
     canLink ? h("a", { class: "btn", href: `#/firstmate?staffing=${encodeURIComponent(p.id)}`, "data-crew-link": p.id }, icon("message", "ic sm"), h("span", {}, T("Choose your crew together", "一起決定代理配置"))) : null);
   let body;
   const plain = (en, tw, attr) => h("div", { class: "pj-empty-row", "data-crew-state": attr }, T(en, tw));
   if (p.enabled === false) body = plain("Crew not checked: the project is disabled.", "未檢查船員：專案已停用。", "disabled");
-  else if (failed(crew)) body = crew.error === "folder-missing" ? plain("Crew cannot be read: this project's folder is missing.", "無法讀取船員配置：這個專案的資料夾不見了。", "folder-missing")
-    : crew.error === "other-broken" ? plain(`No task can start: registration ${crew.others[0]} points to a missing or broken folder.${crew.others.length > 1 ? ` (+${crew.others.length - 1} more)` : ""}`,
-      `無法開始任何任務：登錄的專案 ${crew.others[0]} 指向不見或損壞的資料夾。${crew.others.length > 1 ? `（另有 ${crew.others.length - 1} 個）` : ""}`, "other-broken")
-    : crew.error === "identity" ? plain("Crew cannot be read: the repository could not be confirmed (folder, Git data or base branch).", "無法讀取船員配置：無法確認儲存庫（資料夾、Git 資料或主 branch）。", "identity")
+  else if (failed(crew)) body = crew.error === "refused" ? plain(`No task can start: ${crew.detail?.en ?? ""}`, `無法開始任何任務：${crew.detail?.tw ?? ""}`, "refused")
     : sectionErr("The crew", "船員配置");
   else if (p.kind === "external") body = h("div", { class: "pj-empty-row" }, T("External project: cannot dispatch yet. Its GitHub grant cannot be verified on this build.", "外部專案：暫時無法派工。目前版本無法驗證它的 GitHub 授權。"));
   else if (!crew) body = h("div", { class: "pj-empty-row", "data-crew-empty": "1" }, T("No crew approved yet. Tasks here will wait at their first round.", "還沒有核准的船員。這裡的任務會停在第一輪。"));

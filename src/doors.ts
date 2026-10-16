@@ -100,6 +100,10 @@ export function classify(paths: ChangedPath[], o: { defaults: DoorDefaults; proj
     lists: { org: o.defaults.base.length, project: proj.length } };
 }
 
+/** Why the staffing check refuses a project (bookkeeping beside the error it throws; see Projects.staffingAssess). */
+export type StaffingRefusal='invalid_id'|'registry_unreadable'|'missing_or_disabled'|'folder_missing'|'git_invalid'|'git_escapes_container'|'private_overlap'|'ambiguous_alias'|'base_invalid'|'base_missing'|'external_unverified'|'unsupported_value';
+/** `record` is the registration the failing step was reading (another one while checking aliases); `aliases` the other ids on the same repository. */
+export type StaffingAssessment={ok:true;identity:{namespace:'git';id:string;identity:string}}|{ok:false;reason:StaffingRefusal;record:string;aliases:string[];error:unknown};
 // ---------- projects ----------
 export class Projects {
   constructor(readonly dataDir: string) {}
@@ -122,34 +126,56 @@ export class Projects {
   }
   /** Stable source-only staffing identity. No Git commands, hooks or mutable HEAD authority. */
   staffingIdentity(id:string,protectedRoots:string[]=[]):{namespace:'git';id:string;identity:string}{
+    // the checks live in staffingAssess (read only); this throws the very error it recorded, as before the extraction
+    const a=this.staffingAssess(id,protectedRoots);if(!a.ok)throw a.error;return a.identity;
+  }
+  /**
+   * The staffing checks, read only, as data: the identity, or why it is refused and which registration is at fault.
+   * Same steps, same order, same errors as staffingIdentity has always run (it is now a thin wrapper over this); the
+   * reason and the record are bookkeeping alongside. `includeDisabled` (display only, never used for authority) lets a
+   * disabled registration be checked too.
+   */
+  staffingAssess(id:string,protectedRoots:string[]=[],o:{includeDisabled?:boolean}={}):StaffingAssessment{
+    let stage:StaffingRefusal='invalid_id',record:string=typeof id==='string'?id:'',aliases:string[]=[];
+    try{
     if(typeof id!=='string'||!id||id.length>200)throw new Error("Choose an exact registered project");
+    stage='registry_unreadable';
     const snapshot=this.nativeSnapshot(),project=snapshot.records.find(p=>p.id===id);
-    if(!project?.path||(project.enabled!==undefined&&project.enabled!==true))throw new Error("Registered project is missing or disabled");
+    stage='missing_or_disabled';
+    if(!project?.path||(!o.includeDisabled&&project.enabled!==undefined&&project.enabled!==true))throw new Error("Registered project is missing or disabled");
     const inside=(a:string,b:string)=>{const r=relative(a,b);return !r||r!=='..'&&!r.startsWith('../')&&!isAbsolute(r);};
     const privateRoots=[this.dataDir,...protectedRoots,process.env.CODEX_HOME||join(homedir(),'.codex'),join(homedir(),'.claude'),process.env.CREW_RUNTIME_DIR||join(homedir(),'.crew-studio/runtime')].map(p=>{try{return realpathSync(p)}catch{return resolve(p)}});
     // The built-in sandbox is the only repository allowed below the data root; other protected roots still apply to it.
     // Index 0 is the data root itself: an explicit protected root that equals it still refuses.
     const sandbox=builtInSandboxRoot(this.dataDir,id,project.path);
-    const allowed=(path:string)=>{if(privateRoots.some((root,i)=>!(sandbox&&i===0&&inside(sandbox,path))&&(inside(root,path)||inside(path,root))))throw new Error("Registered repository overlaps private or protected data");};
-    const small=(path:string,max:number,container:string,checkPrivate=true)=>{const actual=realpathSync(path);if(!inside(container,actual))throw new Error("Repository identity file escaped its container");if(checkPrivate)allowed(actual);const st=statSync(actual);if(!st.isFile()||st.size>max)throw new Error("Repository identity file is unavailable or oversized");return readFileSync(actual,'utf8').trim();};
+    const allowed=(path:string)=>{if(privateRoots.some((root,i)=>!(sandbox&&i===0&&inside(sandbox,path))&&(inside(root,path)||inside(path,root)))){stage='private_overlap';throw new Error("Registered repository overlaps private or protected data");}};
+    const small=(path:string,max:number,container:string,checkPrivate=true)=>{const actual=realpathSync(path);if(!inside(container,actual)){stage='git_escapes_container';throw new Error("Repository identity file escaped its container");}if(checkPrivate)allowed(actual);const st=statSync(actual);if(!st.isFile()||st.size>max)throw new Error("Repository identity file is unavailable or oversized");return readFileSync(actual,'utf8').trim();};
     const gitIdentity=(path:string,checkPrivate=true)=>{
+      stage='folder_missing';
       const root=realpathSync(path);if(!statSync(root).isDirectory())throw new Error("Repository root missing");if(checkPrivate)allowed(root);
+      stage='git_invalid';
       let git=join(root,'.git');if(statSync(git).isFile()){const text=small(git,4096,root,checkPrivate);if(!text.startsWith('gitdir: ')||text.includes('\n'))throw new Error("Malformed Git directory reference");git=resolve(root,text.slice(8));}
       git=realpathSync(git);if(!statSync(git).isDirectory())throw new Error("Git directory missing");if(checkPrivate)allowed(git);
       const commonFile=join(git,'commondir'),common=realpathSync(existsSync(commonFile)?resolve(git,small(commonFile,4096,git,checkPrivate)):git);if(!statSync(common).isDirectory())throw new Error("Git common directory missing");if(checkPrivate)allowed(common);
       return{root,git,common};
     };
     const repository=gitIdentity(project.path);let matches=0;
-    for(const other of snapshot.records){if(!other.path)continue;const identity=gitIdentity(other.path,false);if(identity.common===repository.common)matches++;}
+    for(const other of snapshot.records){if(!other.path)continue;record=other.id;const identity=gitIdentity(other.path,false);if(identity.common===repository.common){matches++;if(other.id!==id)aliases.push(other.id);}}
+    record=id;stage='ambiguous_alias';
     if(matches!==1)throw new Error("Repository has ambiguous registered aliases");
+    stage='base_invalid';
     if(typeof project.base!=='string'||!project.base||project.base.length>200||project.base.startsWith('-')||project.base.includes('..')||project.base.includes('@{')||/[\s~^:?*\[\]\\]/.test(project.base)||project.base.startsWith('/')||project.base.endsWith('/')||project.base.split('/').some(p=>!p||p.startsWith('.')||p.endsWith('.')||p.endsWith('.lock')))throw new Error("Registered base is invalid");
+    stage='base_missing';
     const ref='refs/heads/'+project.base,loose=join(repository.common,ref);let found=false;
-    if(existsSync(loose)){const actual=realpathSync(loose);if(!inside(repository.common,actual))throw new Error("Base reference escaped Git authority");found=/^[a-f0-9]{40,64}$/.test(small(actual,256,repository.common));}
+    if(existsSync(loose)){const actual=realpathSync(loose);if(!inside(repository.common,actual)){stage='git_escapes_container';throw new Error("Base reference escaped Git authority");}found=/^[a-f0-9]{40,64}$/.test(small(actual,256,repository.common));}
     if(!found&&existsSync(join(repository.common,'packed-refs'))){const lines=small(join(repository.common,'packed-refs'),1024*1024,repository.common).split('\n');found=lines.some(line=>{const parts=line.split(' ');return parts.length===2&&/^[a-f0-9]{40,64}$/.test(parts[0])&&parts[1]===ref;});}
-    if(!found)throw new Error("Confirmed base reference is unavailable");
+    if(!found){stage='base_missing';throw new Error("Confirmed base reference is unavailable");}
+    stage='external_unverified';
     if(project.github){const assert=(this as any).assertExecutable;if(typeof assert!=='function')throw new Error("External project grant verification is unavailable");assert.call(this,{project:id,base:project.base},{});}
+    stage='unsupported_value';
     const canonical=(v:any):string=>v===null||typeof v==='string'||typeof v==='boolean'?JSON.stringify(v):typeof v==='number'&&Number.isFinite(v)?JSON.stringify(v):Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&Object.getPrototypeOf(v)===Object.prototype?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':(()=>{throw new Error("Unsupported project authority value")})();
-    return{namespace:'git',id,identity:createHash('sha256').update(canonical({schema:1,id,root:repository.root,common:repository.common,base:project.base,enabled:project.enabled??true,grant:project.github??null})).digest('hex')};
+    return{ok:true,identity:{namespace:'git',id,identity:createHash('sha256').update(canonical({schema:1,id,root:repository.root,common:repository.common,base:project.base,enabled:project.enabled??true,grant:project.github??null})).digest('hex')}};
+    }catch(error){return{ok:false,reason:stage,record,aliases:stage==='ambiguous_alias'?aliases:[],error};}
   }
   private raw(): Project[] { try { const a = JSON.parse(readFileSync(this.file(), "utf8")); return Array.isArray(a) ? a : []; } catch { return []; } }
   /** Each project, its sensitive paths read from its policy (the one home of a project's sensitive paths). */

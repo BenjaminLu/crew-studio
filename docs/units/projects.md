@@ -20,9 +20,12 @@ Read only. It adds no new authority.
 
 - The registry: the strict reader (never the migrating one).
 - Git: refs read as files, as `staffingIdentity` reads them; git is never run. `.crew/gates.json` is read size-capped, without following links.
-- Crew: the real `staffingIdentity`, the same check dispatch runs. When it refuses because another registration's folder is
-  missing or broken (checked read-only: the folder, its `.git`, a `gitdir:` file's directory, `commondir`), the Crew tile
-  says "No task can start" and names that registration by id, never by path.
+- Crew and "can tasks start": `Projects.staffingAssess` (src/doors.ts), the staffing checks as data. `staffingIdentity`
+  is a thin wrapper that throws the error `staffingAssess` recorded, so the page and dispatch run the same steps
+  (tests/staffing-assess.ts compares it with the pre-extraction copy). When the check refuses, the Enabled tile warns
+  "No task can start (see Crew)", the Crew tile says "No task can start" and names the registration at fault and the
+  reason in fixed words (folder missing, Git data missing or malformed, Git data outside its folder, inside Studio's
+  private data, two registrations on one repository, base branch invalid or missing), and the crew link is hidden.
 - No cost fields.
 
 ## Writes

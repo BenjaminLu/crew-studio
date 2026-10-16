@@ -36,12 +36,19 @@ try {
     const { ctx, p } = await open(1280, 'light');
     await p.goto(`${base}/#/project/harbor-api`); await p.waitForSelector('[data-project-page="harbor-api"]:not([data-loading])');
     const crewTile = await p.locator('[data-health="crew"]').innerText(), crewSec = await p.locator('#s-crew').innerText(), txt = await p.locator('[data-project-page]').innerText();
-    ok(/No task can start/.test(crewTile) && /Registration (kelp-notes|reef-log) points to a missing or broken folder\. \(\+1 more\)/.test(crewTile) && !/Crew approved/.test(txt), 'harbor-api: the crew tile says no task can start and names the broken registration', crewTile);
-    ok(/No task can start/.test(crewSec) && /(kelp-notes|reef-log)/.test(crewSec) && !txt.includes('-gone') && !/ENOENT|no such file|stat '/.test(txt), 'the crew section says the same, with no path and no exception text', crewSec);
+    ok(/No task can start/.test(crewTile) && crewTile.includes('Registration kelp-notes: its folder is missing.') && !/Crew approved/.test(txt), 'harbor-api: the crew tile says no task can start and names the registration and why', crewTile);
+    ok(crewSec.includes('No task can start: Registration kelp-notes: its folder is missing.') && !txt.includes('-gone') && !/ENOENT|no such file|stat '/.test(txt), 'the crew section says the same, with no path and no exception text', crewSec);
+    const enabledTile = await p.locator('[data-health="enabled"]').innerText();
+    ok(enabledTile.includes('No task can start (see Crew)') && !enabledTile.includes('New tasks can start') && (await p.locator('[data-health="enabled"]').getAttribute('class')).includes(' warn'), 'the Enabled tile does not say tasks can start', enabledTile);
+    ok(await p.locator('[data-crew-link]').count() === 0, 'no Choose your crew together link while no task can start');
     ok(!(await p.locator('[data-health="crew"]').getAttribute('class')).includes(' ok'), 'the warning does not count as a passing check');
     const rows = Object.fromEntries(await p.locator('[data-projects-nav] [data-project-row]').evaluateAll((es) => es.map((e) => [e.dataset.projectRow, e.querySelector('[data-project-status]').textContent])));
-    ok(rows['reef-log'] === 'Folder missing' && rows['kelp-notes'] === 'Disabled', 'the sidebar: Folder missing for an enabled project whose folder is gone, Disabled first', JSON.stringify(rows));
+    ok(rows['reef-log'] === 'Folder missing' && rows['kelp-notes'] === 'Disabled' && rows['harbor-api'] === 'No task can start', 'the sidebar: Folder missing for an enabled project whose folder is gone, Disabled first', JSON.stringify(rows));
     await full(p); await p.screenshot({ path: join(shots, 'project-harbor-broken-registry-1280-light.png'), fullPage: true });
+    { const ph = await open(390, 'dark'); await ph.p.goto(`${base}/#/project/harbor-api`); await ph.p.waitForSelector('[data-project-page="harbor-api"]:not([data-loading])');
+      const sum = await ph.p.locator('.pj-h-sum').innerText().catch(() => '');
+      ok(!/enabled/i.test(sum) && await ph.p.locator('[data-health="enabled"]').isVisible(), 'on a phone the passing-checks summary does not list Enabled, and the Enabled warning stays visible', sum);
+      await ph.ctx.close(); }
     await p.goto(`${base}/#/project/reef-log`); await p.waitForSelector('[data-project-page="reef-log"]:not([data-loading])');
     ok(await p.locator('[data-project-folder="missing"]').count() === 1 && await p.locator('[data-project-registered]').count() === 0 && await p.locator('[data-crew-link]').count() === 0, 'reef-log: a Folder missing badge, and no Choose your crew together link');
     await p.screenshot({ path: join(shots, 'project-reef-log-1280-light.png'), fullPage: false });

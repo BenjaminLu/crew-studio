@@ -66,8 +66,8 @@ writeFileSync(join(wtDir, `${a.id}.json`), JSON.stringify({ kind: "crew-worktree
 const { Worktrees } = await import("../src/worktrees");
 
 let staffingCalls: string[] = [];
-const orig = Projects.prototype.staffingIdentity;
-Projects.prototype.staffingIdentity = function (this: Projects, id: string, roots?: string[]) { staffingCalls.push(id); return orig.call(this, id, roots); };
+const orig = Projects.prototype.staffingAssess;
+Projects.prototype.staffingAssess = function (this: Projects, id: string, roots?: string[], o?: any) { staffingCalls.push(id); return orig.call(this, id, roots, o); };
 // two artifacts named "harbor-api": one made by a harbor-api Task, one by the Task in no project (a coffee-style namespace clash)
 const { ArtifactStore } = await import("../src/artifacts");
 const arts = new ArtifactStore(DATA);
@@ -121,7 +121,7 @@ ok(pg.sensitive.project[0]?.glob === "migrations/**" && pg.sensitive.proposed?.[
 ok(pg.outputs.some((o: any) => o.kind === "merge" && o.task === "R-901") && pg.outputs.some((o: any) => o.kind === "review" && o.task === "R-901") === false, "outputs: a merge (a merged change is no longer an open review request)", JSON.stringify(pg.outputs));
 ok(pg.worktrees.length === 1 && pg.worktrees[0].branch === `crew/${a.id}` && pg.worktrees[0].path.endsWith(`/work/wt/harbor-api/${a.id}`) && pg.worktrees[0].busy === false, "worktrees with branch and path", JSON.stringify(pg.worktrees));
 
-ok(staffingCalls.includes("harbor-api"), "harbor-api's crew is read through staffingIdentity", JSON.stringify(staffingCalls));
+ok(staffingCalls.includes("harbor-api"), "harbor-api's crew is read through the staffing check (staffingAssess)", JSON.stringify(staffingCalls));
 ok(pg.outputs.some((o: any) => o.title.en === "harbor-doc") && !pg.outputs.some((o: any) => o.title.en === "clash-doc"), "an artifact counts where its Task counts: the no-project Task's artifact stays with Studio", JSON.stringify(pg.outputs.map((o: any) => o.title.en)));
 // ---- the external project: staffing is not attempted ----
 staffingCalls = [];
@@ -180,22 +180,33 @@ const healthy = readFileSync(join(DATA, "projects.json"), "utf8");
 const withBroken = (list: any[]) => writeFileSync(join(DATA, "projects.json"), JSON.stringify([...JSON.parse(healthy), ...list]));
 const crewTile = async (id: string) => (await get(`/api/projects/${id}/overview`))!.body.health.find((t: any) => t.key === "crew");
 const leak = (v: any) => /ENOENT|EACCES|no such file|stat '|Error:|gitdir/i.test(JSON.stringify(v));
-for (const [label, list, names] of [["a disabled registration whose folder is gone", [rec("gone-off", gone, { enabled: false })], "gone-off"],
-  ["a registration whose .git points at a gone gitdir", [rec("ghost-wt", ghost)], "ghost-wt"], ["a registration with a garbage .git file", [rec("junk", junk)], "junk"]] as any[]) {
+const wtAlias = join(repos, "harbor-wt"); git(harbor, "worktree", "add", "-q", "-b", "side", wtAlias);
+for (const [label, list, en, tw] of [
+  ["a disabled registration whose folder is gone", [rec("gone-off", gone, { enabled: false })], "Registration gone-off: its folder is missing.", "登錄的專案 gone-off：資料夾不見了。"],
+  ["a registration whose .git points at a gone gitdir", [rec("ghost-wt", ghost)], "Registration ghost-wt: its Git data is missing or malformed.", "登錄的專案 ghost-wt：Git 資料不見了或格式不正確。"],
+  ["a registration with a garbage .git file", [rec("junk", junk)], "Registration junk: its Git data is missing or malformed.", "登錄的專案 junk：Git 資料不見了或格式不正確。"],
+  ["a worktree of harbor-api registered under another id", [rec("harbor-wt", wtAlias)], "Registrations harbor-api and harbor-wt point to the same repository.", "登錄的專案 harbor-api 與 harbor-wt 指向同一個儲存庫。"]] as any[]) {
   withBroken(list);
-  const t = await crewTile("harbor-api"), page = (await get("/api/projects/harbor-api/overview"))!.body;
-  ok(t.tone === "warn" && t.en === "No task can start" && t.detail.en === `Registration ${names} points to a missing or broken folder.` && t.detail.tw === `登錄的專案 ${names} 指向不見或損壞的資料夾。`, `${label}: harbor-api's crew tile names it and warns`, JSON.stringify(t));
-  ok(!leak(page) && ![gone, lost, ghost, junk].some((x) => JSON.stringify(page).includes(x)), `${label}: no exception text and no other folder in the reply`, (JSON.stringify(page).match(/.{40}(ENOENT|no such file|stat '|gitdir|crew-po-repos).{40}/) || [""])[0]);
+  const page = (await get("/api/projects/harbor-api/overview"))!.body, t = page.health.find((x: any) => x.key === "crew"), en0 = page.health.find((x: any) => x.key === "enabled");
+  ok(t.tone === "warn" && t.en === "No task can start" && t.detail.en === en && t.detail.tw === tw, `${label}: harbor-api's crew tile says no task can start, names it and why`, JSON.stringify(t));
+  ok(en0.tone === "warn" && en0.detail.en === "No task can start (see Crew)" && page.project.canStart === false, `${label}: the Enabled tile does not say tasks can start`, JSON.stringify(en0));
+  ok(!leak(page) && ![gone, lost, ghost, junk, wtAlias].some((x) => JSON.stringify(page).includes(x)), `${label}: no exception text and no other folder in the reply`, (JSON.stringify(page).match(/.{40}(ENOENT|no such file|stat '|gitdir|crew-po-repos).{40}/) || [""])[0]);
 }
+{ const inData = join(DATA, "inside-repo"); mkdirSync(inData); git(inData, "init", "-q", "-b", "main"); writeFileSync(join(inData, "R"), "x"); git(inData, "add", "R"); git(inData, "commit", "-q", "-m", "s");
+  withBroken([rec("priv", inData)]); const t = await crewTile("priv");
+  ok(t.en === "No task can start" && t.detail.en === "Registration priv: its folder is inside, or holds, Studio's private data." && !JSON.stringify(t).includes(inData), "a repository inside Studio's data: its own words", JSON.stringify(t));
+  rmSync(inData, { recursive: true, force: true }); }
 withBroken([rec("gone-off", gone, { enabled: false }), rec("lost", lost), rec("junk", junk)]);
 { const t = await crewTile("harbor-api");
-  ok(t.tone === "warn" && /^Registration (gone-off|lost|junk) points to a missing or broken folder\. \(\+2 more\)$/.test(t.detail.en), "several broken registrations: one named, the rest counted", JSON.stringify(t)); }
+  ok(t.tone === "warn" && t.detail.en === "Registration gone-off: its folder is missing.", "several broken registrations: the one the check stops at is named", JSON.stringify(t)); }
 const side2 = (await get("/api/projects/overview"))!.body, lrow = side2.projects.find((p: any) => p.id === "lost");
 ok(lrow.status.en === "Folder missing" && lrow.status.tw === "資料夾不見了" && lrow.status.tone === "warn" && lrow.folderMissing === true, "F3: a project whose own folder is missing reads Folder missing in the sidebar", JSON.stringify(lrow));
 ok(side2.projects.find((p: any) => p.id === "gone-off").status.en === "Disabled", "a disabled project still reads Disabled first");
 const lostPg = (await get("/api/projects/lost/overview"))!.body;
 const lk = Object.fromEntries(lostPg.health.map((t: any) => [t.key, t]));
-ok(lostPg.project.folderMissing === true && lk.crew.tone === "warn" && lk.crew.detail.en === "This project's folder is missing." && lk.crew.detail.tw === "這個專案的資料夾不見了。", "a project whose own folder is missing: the crew tile says so in plain words", JSON.stringify(lk.crew));
+ok(lostPg.project.folderMissing === true && lk.crew.tone === "warn" && lk.crew.en === "No task can start" && lk.crew.detail.en === "Registration lost: its folder is missing." && lk.crew.detail.tw === "登錄的專案 lost：資料夾不見了。", "a project whose own folder is missing: no task can start, in plain words", JSON.stringify(lk.crew));
+ok(lk.enabled.tone === "warn" && lk.enabled.detail.en === "No task can start (see Crew)", "its Enabled tile does not pass either");
+ok(side2.projects.find((p: any) => p.id === "harbor-api").status.en === "No task can start" && side2.projects.find((p: any) => p.id === "harbor-api").canStart === false, "the sidebar says no task can start for a project the check refuses");
 const goneOff = (await get("/api/projects/gone-off/overview"))!.body;
 ok(!leak(lostPg) && !leak(goneOff) && !leak(side2), "no reply carries exception text");
 ok(goneOff.health[0].en === "Disabled" && goneOff.crew === null && goneOff.health.find((t: any) => t.key === "base").en === "Repository folder missing" && lk.base.en === "Repository folder missing", "a missing folder reads as such on the base tile");
