@@ -71,6 +71,7 @@ import { classify, orgDefaults } from "./doors";
 import { installPackGenesis } from "./pack-genesis";
 import { createRuntime, skillTextFor } from "./runtime";
 import { EXEMPT, guardWrite, hasSession, sessionCookie, sessionToken } from "./csrf";
+import { AttachmentStore, deliveryFor, uploadAttachment } from "./attachments";
 import { registerSecretValues } from "./secure";
 import { timingSafeEqual } from "node:crypto";
 import { git, setGitHome } from "./git";
@@ -171,12 +172,15 @@ setInterval(() => send("ping", Date.now()), 20_000);
 const PROJECT = startup.project;
 if (!startup.legacy && !process.env.CREW_MAIN_PROJECT) mkdirSync(PROJECT, { recursive: true });
 const nativeOutcomes = new NativeOutcomes(DATA,()=>runtime.engine,id=>runtime.engine.get(id)?.def.kind==='image'?imageOutcomeProof(runtime.engine,m3.store,id):coffeeJourneyProof(runtime.engine,m3.store,id));
+// the captain's chat attachments: content-hash names in Studio's data folder (src/attachments.ts)
+const chatFiles = new AttachmentStore(DATA);
 const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STATE, nativeWorkspace: !startup.legacy && !process.env.CREW_MAIN_PROJECT,
   nativeTools:()=>runtime.firstmate,
   onNativeProposal:(origin,result)=>nativeOutcomes.bind(origin,result),
   nativeOutcomes:(host,thread)=>{try{return nativeOutcomes.list(host,thread);}catch{return[];}},
   onGeneratedImage:async(image,owner)=>{await publishGeneratedImage(m3.media,image,owner);},
   permissionMcp: (b) => ({ command: helperCommand("permission-mcp"), env: { CREW_PERM_SOCKET: b.socket, CREW_PERM_TOKEN: b.token } }),
+  attachmentFiles: (ids) => chatFiles.resolve(ids),
   studioMcp: () => helperCommand("mcp") });
 main.onView = (v) => send("main", v);
 main.onEvent = (e: HostEvent) => {
@@ -214,7 +218,7 @@ refreshTs(); setInterval(refreshTs, 60_000);
 const tsRunner: TsRunner = process.env.CREW_TAILSCALE_LIVE === "1" ? new LiveRunner() : new StubRunner();
 let serveOn = false;
 // a phone may read and interrupt; driving firstmate (and answering cards, changing settings) needs "allow phone to drive"
-const PHONE_DRIVE = new Set(["/api/main/takeover", "/api/main/start", "/api/main/switch", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door", "/api/main/attach", "/api/main/send", "/api/main/approve", "/api/main/resume", "/api/main/detach", "/api/main/queue/remove", "/api/answer", "/api/settings"]);
+const PHONE_DRIVE = new Set(["/api/main/attachments", "/api/main/takeover", "/api/main/start", "/api/main/switch", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door", "/api/main/attach", "/api/main/send", "/api/main/approve", "/api/main/resume", "/api/main/detach", "/api/main/queue/remove", "/api/answer", "/api/settings"]);
 const DESKTOP_ONLY = new Set(["/api/transcripts/settings", "/api/remote/pair/start", "/api/remote/revoke", "/api/remote/settings", "/api/remote/tailscale", "/api/remote/lan",
   "/api/claude/native/verify","/api/claude/native/cancel","/api/claude/account/login","/api/claude/account/cancel","/api/codex/account/login", "/api/codex/account/cancel", "/api/codex/account/verify", "/api/github/token", "/api/github/forget", "/api/keys", "/api/doctor/install", "/api/doctor/login", "/api/doctor/cancel"]);
 
@@ -548,14 +552,29 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       if (!["claude", "codex"].includes(host)) return json({ error: "host must be claude or codex" }, 400);
       try { return json({ host, project: PROJECT, sessions: await main.discover(host) }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 500); }
     }
+    // chat attachments: one file per upload (JSON, base64), read capped; the bytes come back only to this Mac's session or a paired phone
+    if (p === "/api/main/attachments" && writing) { const r = await uploadAttachment(req, chatFiles, main.view().state === "detached" ? null : main.view().host); return json(r.body, r.status); }
+    { const am = /^\/api\/main\/attachments\/([a-f0-9]{64})$/.exec(p);
+      if (am && !writing) {
+        if (who.kind === "desktop" && !hasSession(req, SESSION)) return json({ error: "Studio session required" }, 401);
+        const f = chatFiles.get(am[1]); if (!f) return json({ error: "no such attachment" }, 404);
+        return new Response(Bun.file(f.path), { headers: { "content-type": f.mime, "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff",
+          "content-security-policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox", "content-disposition": `inline; filename="${f.id.slice(0, 12)}.${f.mime === "application/pdf" ? "pdf" : f.mime.split("/")[1]}"` } });
+      } }
     if (p.startsWith("/api/main/") && writing) {
       let b: any = {}; try { b = await req.json(); } catch {}
       if (p === "/api/main/attach") { if(codexAccount.blocking)return json({error:"Complete or cancel Codex account action first / 請先完成或取消 Codex 帳號操作"},409); const r = await main.attach(b?.host === "codex" ? "codex" : "claude", String(b?.id ?? "")); return json(r, r.ok ? 200 : 409); }
       if (p === "/api/main/send") {
         const text = String(b?.text ?? "").trim().slice(0, 8000);
-        if (!text) return json({ error: "empty message" }, 400);
-        if (main.view().state === "detached") return json({ error: "no main session is attached", code: "detached" }, 409);
-        return json({ queued: main.enqueue("chat", text, who.kind === "phone" ? `phone:${who.device.name}` : "desktop") });
+        const files = chatFiles.resolve(b?.attachments);
+        if (!files.ok) return json({ ...files, error: `${files.reason.en} / ${files.reason["zh-TW"]}` }, 400);
+        if (!text && !files.files.length) return json({ error: "empty message" }, 400);
+        const v = main.view();
+        if (v.state === "detached") return json({ error: "no main session is attached", code: "detached" }, 409);
+        // the host that runs the turn must take every file, or nothing is queued: a typed refusal the chat shows
+        const fit = deliveryFor(v.host, files.files);
+        if (!fit.ok) return json({ ...fit, error: `${fit.reason.en} / ${fit.reason["zh-TW"]}` }, 409);
+        return json({ queued: main.enqueue("chat", text, who.kind === "phone" ? `phone:${who.device.name}` : "desktop", files.files.map(({ path, ...ref }) => ref)), deliveries: fit.deliveries });
       }
       if (p === "/api/main/interrupt") { await main.interrupt(); return json({ ok: true }); }
       if (p === "/api/main/resume") { const r = main.resume(); return json(r, r.ok ? 200 : 409); }

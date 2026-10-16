@@ -9,7 +9,7 @@
 //   thread/resume    the thread (an id starting with "fork-" comes back as "<id>-new")
 //   turn/start       streams an echo; STUB_TOOL asks for a command approval and waits; STUB_SLOW streams until turn/interrupt
 //   STUB_CODEX_LOG   a file: how it was started (cwd, FM_IN_ROUND), every message in and out, and every protocol problem, one JSON line each
-import { appendFileSync } from "node:fs";
+import { appendFileSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { check, isMethod } from "./codex-protocol.mjs";
 
@@ -45,10 +45,13 @@ const opened = (t) => ({ thread: { ...t, status: { type: "idle" } }, model: t.mo
   sandbox: { type: "workspaceWrite", writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, reasoningEffort: t.reasoningEffort ?? EFFORT });
 const turnObj = (id, status, items = []) => ({ id, rootTurnId: id, items, itemsView: "summary", status, error: null, startedAt: now(), completedAt: status === "inProgress" ? null : now(), durationMs: null });
 
-async function runTurn(turnId, text) {
+async function runTurn(turnId, text, input = []) {
   const note = (method, params) => out({ jsonrpc: "2.0", method, params: { threadId: thread, ...params } });
   note("turn/started", { turn: turnObj(turnId, "inProgress") });
   let say = `echo: ${text.slice(0, 80)}`;
+  // chat attachments: localImage items name a file the app-server reads, as codex does
+  const imgs = input.filter((i) => i.type === "localImage");
+  if (imgs.length) say += ` [images: ${imgs.map((i) => { try { return `${statSync(i.path).size}B`; } catch { return "unreadable"; } }).join(", ")}]`;
   if (text.includes("STUB_FOREIGN_DYNAMIC")) {
     await request("item/tool/call", { threadId: "foreign-thread", turnId, callId: "foreign-call", tool: "exec", namespace: "functions", arguments: {} });
   }
@@ -116,7 +119,7 @@ createInterface({ input: process.stdin }).on("line", (l) => {
       turnObj(uuid(), "completed", [{ type: "userMessage", id: "u1", content: [{ type: "text", text: "Watch T-310 until CI is green", text_elements: [] }] }, { type: "agentMessage", id: "a1", text: "T-310 is green; merge card D-310 raised." }]),
       turnObj(uuid(), "completed", [{ type: "userMessage", id: "u0", content: [{ type: "text", text: "firstmate: run the crew", text_elements: [] }] }, { type: "agentMessage", id: "a0", text: "Crew running: T-310 worker round 2." }]),
     ], nextCursor: null, backwardsCursor: null });
-    case "turn/start": { const tid = uuid(); reply({ turn: turnObj(tid, "inProgress") }); runTurn(tid, p.input?.[0]?.text ?? ""); return; }
+    case "turn/start": { const tid = uuid(); reply({ turn: turnObj(tid, "inProgress") }); runTurn(tid, p.input?.[0]?.text ?? "", p.input ?? []); return; }
     case "turn/interrupt": interrupted = true; return reply({});
   }
 });

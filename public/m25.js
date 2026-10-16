@@ -87,7 +87,7 @@ function queueView(v) {
   return h("details", { class: "tools", open: true, "data-queue": v.queue.length },
     h("summary", {}, icon("clock", "ic sm"), T(`${v.queue.length} waiting for the next turn`, `${v.queue.length} 則等下一回合`)),
     v.queue.map((q) => h("div", { class: "toolrow", "data-q": q.kind },
-      h("span", {}, h("span", { class: "vbadge" }, q.kind), " ", q.kind === "wake" ? q.lines.join(" · ") : q.text.slice(0, 120)),
+      h("span", {}, h("span", { class: "vbadge" }, q.kind), " ", q.kind === "wake" ? q.lines.join(" · ") : q.text.slice(0, 120), q.attachments?.length ? h("span", { class: "faint", "data-q-att": q.attachments.length }, ` · ${T(`${q.attachments.length} file${q.attachments.length > 1 ? "s" : ""}`, `${q.attachments.length} 個檔案`)}`) : null),
       h("button", { class: "btn ghost icon", "aria-label": T("Remove", "移除"), onclick: () => postJ("/api/main/queue/remove", { id: q.id }) }, icon("x", "ic sm")))));
 }
 function approvalCard(a) {
@@ -101,7 +101,8 @@ function approvalCard(a) {
 }
 function logItem(it, i) {
   if(it.source === "studio:native-outcome")return h("div",{class:"card x-pad","data-native-outcome":it.id},h("p",{},it.text),...(it.links||[]).filter(l=>/^#\/(run|review)\//.test(l.href)).map(l=>h("a",{class:"btn",href:l.href},l.label)));
-  if (it.kind === "captain") return h("div", { class: "msg me", "data-main": "captain" }, h("div", { class: "bub" }, it.text), it.source && it.source !== "desktop" ? h("div", { class: "faint", style: "font-size:11px;text-align:right" }, it.source) : null);
+  if (it.kind === "captain") return h("div", { class: "msg me", "data-main": "captain" }, it.text ? h("div", { class: "bub" }, it.text) : null, it.attachments?.length ? attView(it.attachments) : null, it.source && it.source !== "desktop" ? h("div", { class: "faint", style: "font-size:11px;text-align:right" }, it.source) : null);
+  if (it.attachmentRefusal) return h("div", { class: "rich chat-err", role: "alert", "data-attachment-refusal": it.attachmentRefusal }, h("div", { class: "rk", style: "color:var(--bad)" }, icon("alert", "ic sm"), T("Not sent", "沒有送出")), h("div", { style: "font-size:13px" }, it.text.replace(/^Not sent: /, "")));
   if (it.kind === "firstmate") return h("div", { class: "msg fm", "data-main": "firstmate" }, h("div", { class: "meta" }, "Firstmate", MS.view?.host ? h("span", { class: "vbadge" }, MS.view.host) : null), h("div", { class: "bub" }, md(it.text)));
   if (it.kind === "tool") return h("div", { class: "toolrow", "data-main": "tool", style: "padding:2px 6px" }, h("code", { style: "font-size:12px" }, it.text.slice(0, 160)));
   const lab = KLABEL[it.kind]?.();
@@ -116,7 +117,7 @@ renderChat = function (stick = true) {
   else {
     kids.push(driverBanner(v));
     v.approvals.forEach((a) => kids.push(approvalCard(a)));
-    v.log.filter((x) => !(v.context==="studio"&&x.source==="studio:handoff") && (x.kind !== "status" || /Paused|Handed|Attached|re-identified|Turn (failed|interrupted)/.test(x.text))).slice(-80).forEach((x, i) => kids.push(logItem(x, i)));
+    v.log.filter((x) => !(v.context==="studio"&&x.source==="studio:handoff") && (x.kind !== "status" || x.attachmentRefusal || /Paused|Handed|Attached|re-identified|Turn (failed|interrupted)/.test(x.text))).slice(-80).forEach((x, i) => kids.push(logItem(x, i)));
     if (v.busy) kids.push(h("div", { class: "msg fm", "data-main": "live" }, h("div", { class: "meta" }, "Firstmate", h("span", { class: "faint" }, T("working…", "處理中…"))),
       MS.liveTools.length ? h("div", { class: "faint", style: "font-size:12px" }, MS.liveTools.slice(-3).join(" · ")) : null,
       MS.live ? h("div", { class: "bub", id: "mainLive" }, MS.live) : h("div", { class: "typing" }, h("i"), h("i"), h("i"))));
@@ -127,16 +128,114 @@ renderChat = function (stick = true) {
   $("#chatSug").replaceChildren();
   const attached = v && (v.state === "attached" || v.state === "paused");
   $("#chatSend").disabled = !attached;
+  renderAtt();
   $("#chatIn").placeholder = attached ? T("Tell Firstmate what you want done", "告訴 Firstmate 要做什麼") : T("Connect your account to begin", "連接帳號即可開始");
   if (stick || atBottom) log.scrollTop = log.scrollHeight;
 };
 ask = async function (text) {
   if (!isMain()) return askStatus(text);
-  text = String(text || "").trim(); if (!text) return;
+  text = String(text || "").trim();
+  const att = MS.att;
+  if (!text && !att.length) return;
+  // every pending file goes, or nothing does: never a silent drop
+  if (att.some((a) => a.state === "uploading")) { restoreDraft(text); return toast(T("Wait until the files finish uploading.", "請等檔案上傳完成。")); }
+  const bad = att.find((a) => a.state === "refused" || attNote(a)?.refused);
+  if (bad) { restoreDraft(text); return toast(T(`Remove ${bad.name} first: it cannot be sent.`, `請先移除 ${bad.name}：它無法送出。`)); }
   openChat(true);
-  const r = await postJ("/api/main/send", { text });
-  if (r.error) toast(r.error);
+  const r = await postJ("/api/main/send", { text, ...(att.length ? { attachments: att.map((a) => a.ref.id) } : {}) });
+  if (r.error) { restoreDraft(text); return toast(r.reason ? r.reason[lang] || r.reason.en : r.error); }
+  if (att.length) clearAtt();
 };
+const restoreDraft = (text) => { const el = $("#chatIn"); if (el && text && !el.value) el.value = text; };
+
+// ---------- chat attachments: drop, paste or pick images and PDFs; they go with the next message ----------
+// The limits mirror src/attachments.ts; the server checks the real type by the file's first bytes and decides.
+const ATT = { max: 5, image: 10 * 1024 * 1024, pdf: 20 * 1024 * 1024, claudeImage: 5 * 1024 * 1024, accept: "image/png,image/jpeg,image/webp,image/gif,application/pdf" };
+MS.att = [];
+let attSeq = 0;
+const fmtSize = (n) => n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+/** What the current host does with a ready file: a note, or a refusal the captain must act on. */
+function attNote(a) {
+  const host = MS.view?.state !== "detached" ? MS.view?.host : null, ref = a.ref;
+  if (!ref) return null;
+  if (host === "codex" && ref.kind === "pdf") return { refused: false, text: T("Codex cannot read PDFs directly: it gets the file path and opens it itself.", "Codex 無法直接讀 PDF：它會拿到檔案路徑，自己打開來讀。") };
+  if (host === "claude" && ref.kind === "image" && ref.size > ATT.claudeImage) return { refused: true, text: T("Claude takes images up to 5 MB. Remove it or send a smaller one.", "Claude 只收 5 MB 以內的圖片，請移除或換小一點的。") };
+  return null;
+}
+function addFiles(list) {
+  const files = [...(list || [])];
+  if (!files.length) return;
+  for (const f of files) {
+    if (MS.att.length >= ATT.max) { toast(T(`At most ${ATT.max} files per message.`, `每則訊息最多 ${ATT.max} 個檔案。`)); break; }
+    const a = { key: `a${++attSeq}`, name: String(f.name || T("pasted image", "貼上的圖片")), size: f.size, state: "uploading", ref: null, error: null,
+      url: /^image\/(png|jpeg|webp|gif)$/.test(f.type) ? URL.createObjectURL(f) : null, pdf: f.type === "application/pdf" };
+    MS.att.push(a);
+    if (f.size > ATT.pdf) { a.state = "refused"; a.error = T("Too large: images up to 10 MB, PDFs up to 20 MB.", "太大：圖片最大 10 MB，PDF 最大 20 MB。"); continue; }
+    upload(a, f);
+  }
+  renderAtt();
+}
+async function upload(a, f) {
+  try {
+    const data = await new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).replace(/^data:[^,]*,/, "")); r.onerror = () => no(r.error); r.readAsDataURL(f); });
+    if (!MS.att.includes(a)) return; // removed while reading
+    const r = await postJ("/api/main/attachments", { name: a.name, data });
+    if (!MS.att.includes(a)) return;
+    if (r.ok && r.attachment) { a.state = "ready"; a.ref = r.attachment; a.name = r.attachment.name; a.pdf = r.attachment.kind === "pdf"; if (a.pdf && a.url) { URL.revokeObjectURL(a.url); a.url = null; } }
+    else { a.state = "refused"; a.error = r.reason ? r.reason[lang] || r.reason.en : r.error || T("Upload failed.", "上傳失敗。"); a.code = r.code || null; }
+  } catch (e) { a.state = "refused"; a.error = T("Upload failed.", "上傳失敗。"); }
+  renderAtt();
+}
+function removeAtt(key) { const k = MS.att.findIndex((a) => a.key === key); if (k < 0) return; const [a] = MS.att.splice(k, 1); if (a.url) URL.revokeObjectURL(a.url); renderAtt(); $("#chatIn")?.focus(); }
+function clearAtt() { for (const a of MS.att) if (a.url) URL.revokeObjectURL(a.url); MS.att = []; renderAtt(); }
+function renderAtt() {
+  const tray = $("#chatAtt"); if (!tray) return;
+  const show = isMain() && MS.att.length;
+  tray.hidden = !show;
+  if (!show) return tray.replaceChildren();
+  tray.replaceChildren(...MS.att.map((a) => {
+    const note = a.state === "refused" ? { refused: true, text: a.error } : attNote(a);
+    return h("div", { class: `att-chip${note?.refused ? " is-bad" : ""}`, "data-att": a.state, "data-att-name": a.name, role: "group", "aria-label": a.name },
+      a.url ? h("img", { class: "att-thumb", src: a.url, alt: "" }) : h("span", { class: "att-thumb att-doc" }, icon("doc", "ic sm")),
+      h("span", { class: "att-meta" }, h("span", { class: "att-name" }, a.name),
+        h("span", { class: "att-sub" }, a.state === "uploading" ? T("Uploading…", "上傳中…") : fmtSize(a.ref?.size ?? a.size)),
+        note ? h("span", { class: "att-note", role: note.refused ? "alert" : null, "data-att-note": note.refused ? "refused" : "info" }, note.text) : null),
+      h("button", { type: "button", class: "btn ghost icon att-x", "aria-label": T(`Remove ${a.name}`, `移除 ${a.name}`), onclick: () => removeAtt(a.key) }, icon("x", "ic sm")));
+  }));
+}
+/** A sent message's files in the history: thumbnails for images, a labelled link for PDFs (opened from Studio's copy). */
+function attView(list) {
+  return h("div", { class: "att-sent", "data-main-att": list.length }, list.map((r) => {
+    const href = window.crewRemote?.withToken ? window.crewRemote.withToken(`/api/main/attachments/${r.id}`) : `/api/main/attachments/${r.id}`;
+    return r.kind === "image"
+      ? h("a", { class: "att-sent-img", href, target: "_blank", rel: "noopener", "data-att-sent": "image", title: r.name }, h("img", { src: `/api/main/attachments/${r.id}`, alt: r.name, loading: "lazy" }))
+      : h("a", { class: "att-chip att-sent-doc", href, target: "_blank", rel: "noopener", "data-att-sent": "pdf", title: r.name }, h("span", { class: "att-thumb att-doc" }, icon("doc", "ic sm")),
+          h("span", { class: "att-meta" }, h("span", { class: "att-name" }, r.name), h("span", { class: "att-sub" }, `PDF · ${fmtSize(r.size)}`)));
+  }));
+}
+(function mountAttachments() {
+  const form = $("#chatForm"), input = $("#chatIn"), chat = $("#chat");
+  if (!form || !input || !chat) return;
+  const picker = h("input", { type: "file", id: "chatFile", accept: ATT.accept, multiple: true, hidden: true, tabindex: "-1", "aria-hidden": "true", onchange: (e) => { addFiles(e.target.files); e.target.value = ""; } });
+  const btn = h("button", { type: "button", class: "btn ghost icon", id: "chatAttach", "aria-label": T("Attach images or PDFs", "附加圖片或 PDF"), title: T("Attach images or PDFs", "附加圖片或 PDF"), onclick: () => picker.click() }, icon("clip", "ic"));
+  form.prepend(btn, picker);
+  form.before(h("div", { class: "att-tray", id: "chatAtt", hidden: true, "aria-live": "polite" }));
+  chat.append(h("div", { class: "att-drop", id: "chatDrop", "aria-hidden": "true" }, h("div", {}, icon("clip", "ic"), h("b", {}, T("Drop images or PDFs", "放開即可附加圖片或 PDF")), h("span", {}, T("PNG, JPEG, WebP, GIF · PDF", "PNG、JPEG、WebP、GIF · PDF")))));
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+  let depth = 0;
+  chat.addEventListener("dragenter", (e) => { if (!hasFiles(e) || !isMain()) return; e.preventDefault(); depth++; chat.classList.add("drop-on"); });
+  chat.addEventListener("dragover", (e) => { if (!hasFiles(e) || !isMain()) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; chat.classList.add("drop-on"); });
+  chat.addEventListener("dragleave", (e) => { if (!hasFiles(e)) return; depth = Math.max(0, depth - 1); if (!depth) chat.classList.remove("drop-on"); });
+  chat.addEventListener("drop", (e) => { if (!hasFiles(e) || !isMain()) return; e.preventDefault(); depth = 0; chat.classList.remove("drop-on"); addFiles(e.dataTransfer.files); });
+  input.addEventListener("paste", (e) => {
+    if (!isMain()) return;
+    const files = [...(e.clipboardData?.items || [])].filter((i) => i.kind === "file").map((i) => i.getAsFile()).filter(Boolean);
+    if (!files.length) return;
+    if (![...(e.clipboardData?.types || [])].includes("text/plain")) e.preventDefault();
+    addFiles(files);
+  });
+  hydrateIcons?.(chat);
+})();
 async function handBack() {
   const native=MS.view?.context==="studio";
   const r = await postJ("/api/main/detach");

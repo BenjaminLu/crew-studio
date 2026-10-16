@@ -23,7 +23,7 @@
   window.EventSource = function (u, o) { return new _ES(withToken(u), o); };
   window.EventSource.prototype = _ES.prototype;
   const _set = Element.prototype.setAttribute;
-  Element.prototype.setAttribute = function (k, v) { if (k === "src" && typeof v === "string" && /^\/(files|af)\/|^\/api\/(artifacts|lane)\//.test(v)) v = withToken(v); return _set.call(this, k, v); };
+  Element.prototype.setAttribute = function (k, v) { if (k === "src" && typeof v === "string" && /^\/(files|af)\/|^\/api\/(artifacts|lane|main\/attachments)\//.test(v)) v = withToken(v); return _set.call(this, k, v); };
   window.crewRemote = { token: get, set, withToken,
     async pair(code, name) {
       const r = await _fetch("/api/remote/pair", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code, name }) });

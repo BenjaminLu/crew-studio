@@ -17,6 +17,7 @@ import { driving, mtimeOf, systemProbe, type ProcProbe } from "./probe";
 import { InputQueue, lastArrival, type QItem, type QKind } from "./queue";
 import type { AttachedSession, Host, HostEvent, HostId, SessionInfo, SessionPath } from "./types";
 import { WakeReader, acknowledged } from "./wakes";
+import { deliveryFor } from "../attachments";
 
 export type Driver = { holder: "studio" | "terminal" | "none"; host: HostId | null; sessionId: string | null; pid: number | null; since: string | null; resume?: string;
   /** a takeover: the session Studio forked, which stays untouched */
@@ -38,7 +39,11 @@ export type MainView = {
   pausedReason: string | null; queue: QItem[]; approvals: ReturnType<PermissionBridge["pending"]>; log: LogItem[]; resume: string | null; project: string;
   origin: Origin | null; context?: "studio" | "explicit-project"; holdWakes: boolean; wakeGraceMs: number; drive: Drive | null;
 };
-export type LogItem = { at: number; kind: "captain" | "card" | "wake" | "firstmate" | "tool" | "status" | "system"; text: string; source?: string; status?: string; refusal?: import("./types").HostRefusalCode; nativeFailure?:NativeFailure; links?:{label:string;href:string}[] };
+export type LogItem = { at: number; kind: "captain" | "card" | "wake" | "firstmate" | "tool" | "status" | "system"; text: string; source?: string; status?: string; refusal?: import("./types").HostRefusalCode; nativeFailure?:NativeFailure; links?:{label:string;href:string}[];
+  /** a captain message's attachments (ids and labels; served from /api/main/attachments/<id>) */
+  attachments?: import("../attachments").AttachmentRef[];
+  /** why the attachments of a captain message could not be sent: typed, never a silent drop */
+  attachmentRefusal?: import("../attachments").AttachmentRefusalCode };
 
 export type MainOpts = {
   dataDir: string; projectDir: string; stateDir: string; probe?: ProcProbe;
@@ -52,6 +57,8 @@ export type MainOpts = {
   studioMcp?: () => string[];
   onNativeProposal?: (origin:import("./native-outcomes").NativeOrigin,result:unknown)=>void;
   nativeOutcomes?: (host:string|null,thread:string|null)=>LogItem[];
+  /** the stored files behind a captain message's attachment ids (src/attachments.ts AttachmentStore.resolve) */
+  attachmentFiles?: (ids: string[]) => ReturnType<import("../attachments").AttachmentStore["resolve"]>;
   /** how long a new wake waits for firstmate's own hook to deliver it before Studio sends it itself */
   wakeGraceMs?: number;
 };
@@ -333,8 +340,8 @@ export class MainSession {
     try { return readdirSync(this.handoffDir()).filter((f) => f.endsWith(".md")).sort().reverse().slice(0, 10).map((name) => ({ name, text: readFileSync(join(this.handoffDir(), name), "utf8") })); } catch { return []; }
   }
 
-  enqueue(kind: QKind, text: string, source: string) {
-    const item = this.queue.push(kind, text, source);
+  enqueue(kind: QKind, text: string, source: string, attachments?: import("../attachments").AttachmentRef[]) {
+    const item = this.queue.push(kind, text, source, undefined, attachments);
     this.changed();
     void this.pump();
     return item;
@@ -358,12 +365,25 @@ export class MainSession {
         this.pruneWakes();
         const item = this.queue.take((i) => this.ready(i));
         if (!item) break;
-        this.note({ kind: item.kind === "chat" ? "captain" : item.kind, text: item.text, source: item.source });
+        this.note({ kind: item.kind === "chat" ? "captain" : item.kind, text: item.text, source: item.source, ...(item.attachments?.length ? { attachments: item.attachments } : {}) });
+        // the captain's files go with this turn, or the turn is not sent: a typed refusal, never a silent drop
+        let files: import("../attachments").AttachmentFile[] = [];
+        if (item.attachments?.length) {
+          const got = this.o.attachmentFiles ? this.o.attachmentFiles(item.attachments.map((a) => a.id)) : null;
+          const fit = got?.ok ? deliveryFor(this.session.host, got.files) : got;
+          if (!got || !got.ok || !fit || !fit.ok) {
+            const why = fit && !fit.ok ? fit : { code: "attachmentMissing" as const, reason: { en: "Studio cannot read the attached files.", "zh-TW": "Studio 讀不到附件。" } };
+            this.note({ kind: "status", text: `Not sent: ${why.reason.en} / ${why.reason["zh-TW"]}`, status: "failed", attachmentRefusal: why.code });
+            this.changed(); continue;
+          }
+          files = got.files;
+        }
         this.reply = "";
         this.lastOwnWrite = Date.now();
         this.changed();
         this.activeInput=item;
-        const r = await this.session.send(item.text).catch((e) => ({ status: "failed" as const, message: String(e?.message ?? e) }));
+        const r = await this.session.send(item.text, files).catch((e) => ({ status: "failed" as const, message: String(e?.message ?? e), refusal: e?.refusal?.code as import("../attachments").AttachmentRefusalCode | undefined }));
+        if ("refusal" in r && r.refusal) { this.activeInput = null; this.note({ kind: "status", text: `Not sent: ${r.message}`, status: "failed", attachmentRefusal: r.refusal }); this.changed(); continue; }
         this.activeInput=null;
         this.lastOwnWrite = Date.now();
         this.lastSeenMtime = mtimeOf(this.sessionFile);

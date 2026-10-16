@@ -18,6 +18,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { binArgv, spawnJsonl, type JsonProc } from "./jsonl";
+import { codexInput, deliveryFor } from "../attachments";
 import { cleanEnv, shortSummary, type AttachOpts, type AttachedSession, type Host, type HostEvent, type SessionInfo } from "./types";
 
 type Rpc = { proc: JsonProc; call(method: string, params?: unknown, ms?: number): Promise<any>; notify(method: string, params?: unknown): void; close(): void };
@@ -241,14 +242,16 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
         get id() { return id; }, get model() { return model; }, get busy() { return busy; }, get pid() { return r?.proc.pid ?? null; },
         get effort() { return effort; }, get approvalPolicy() { return approvalPolicy; }, get sandbox() { return sandbox; },
         get path() { return path; }, get noFork() { return noFork; }, get recentTurns() { return recentTurns; }, get file() { return file; },
-        async send(t) {
+        async send(t, files = []) {
           if (busy) throw new Error("BUSY");
+          // attachments: images as localImage items (the app-server reads the file); a PDF is named by path in the text (no PDF input item exists)
+          const delivered = deliveryFor("codex", files); if (!delivered.ok) throw Object.assign(new Error(delivered.reason.en), { refusal: delivered });
           busy = true; toolFailure = null;
           let c: Rpc;
           try { c = r ?? (await start()); } catch (e) { busy = false; throw e; }
           return new Promise((resolve) => {
             startedAt=Date.now();images.clear();const sentTurn = { resolve }; turn = sentTurn;
-            c.call("turn/start", { threadId: id, ...(localUnrestricted()?{sandboxPolicy:{type:"dangerFullAccess"}}:{}), input: [{ type: "text", text:localUnrestricted()?localExecutionNotice()+"\n\n"+t:t, text_elements: [] }] })
+            c.call("turn/start", { threadId: id, ...(localUnrestricted()?{sandboxPolicy:{type:"dangerFullAccess"}}:{}), input: codexInput(localUnrestricted()?localExecutionNotice()+"\n\n"+t:t, files) })
               .then((res) => { if (turn === sentTurn && !turnId) turnId = String(res?.turn?.id ?? res?.turnId ?? ""); })
               .catch((e) => { if (turn === sentTurn) endTurn("failed", String(e?.message ?? e)); });
           });

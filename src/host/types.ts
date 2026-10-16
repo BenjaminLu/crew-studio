@@ -60,7 +60,8 @@ export interface AttachedSession {
   readonly recentTurns?: string | null;
   /** the session's transcript file, when the vendor names it */
   readonly file?: string | null;
-  send(text: string): Promise<{ status: "completed" | "interrupted" | "failed"; message?: string }>;
+  /** one captain turn; `files` are chat attachments, delivered as this host's CLI takes them (src/attachments.ts) */
+  send(text: string, files?: import("../attachments").AttachmentFile[]): Promise<{ status: "completed" | "interrupted" | "failed"; message?: string }>;
   interrupt(): Promise<void>;
   /** stops Studio's process; returns the command that resumes the session in a terminal */
   detach(): Promise<string>;

@@ -62,7 +62,7 @@ const requestedMode = argv.includes("--permission-mode") ? argv[argv.indexOf("--
 const knobMode = (() => { try { const f = process.env.STUB_EFFECTIVE_MODE_FILE; if (f && existsSync(f)) return readFileSync(f, "utf8").trim(); } catch {} return process.env.STUB_EFFECTIVE_MODE || ""; })();
 const effectiveMode = () => knobMode || requestedMode;
 
-async function turn(text) {
+async function turn(text, files = []) {
   if (!inited && process.env.STUB_SEED_FILE) appendFileSync(process.env.STUB_SEED_FILE, JSON.stringify({ seed: text, pid: process.pid }) + "\n");
   if (!inited) { inited = true; out({ type: "system", subtype: "init", session_id: id, model: "stub-opus", tools: [], permissionMode: effectiveMode() }); }
   touch({ type: "user", message: { role: "user", content: text } });
@@ -105,7 +105,7 @@ async function turn(text) {
     slow = false;
     out({ type: "result", subtype: interrupted ? "error_during_execution" : "success", is_error: interrupted, result: interrupted ? "" : "slow done" });
   } else {
-    const say = `echo: ${text.split("\n")[0].slice(0, 80)}`;
+    const say = `echo: ${text.split("\n")[0].slice(0, 80)}${files.length ? ` [${files.map((f) => `${f.type} ${f.media_type} ${f.bytes}B`).join(", ")}]` : ""}`;
     for (const part of say.match(/.{1,10}/gs)) { out({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: part } } }); await sleep(5); }
     out({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: say }] } });
     out({ type: "result", subtype: "success", is_error: false, result: say });
@@ -122,5 +122,12 @@ let chain = Promise.resolve();
 createInterface({ input: process.stdin }).on("line", (l) => {
   let m; try { m = JSON.parse(l); } catch { return; }
   if (m.type === "control_request" && m.request?.subtype === "interrupt") { interrupted = true; out({ type: "control_response", response: { subtype: "success", request_id: m.request_id } }); return; }
-  if (m.type === "user") { const t = m.message?.content?.find?.((c) => c.type === "text")?.text ?? ""; chain = chain.then(() => turn(t)); }
+  if (m.type === "user") {
+    const content = Array.isArray(m.message?.content) ? m.message.content : [];
+    const t = content.find((c) => c.type === "text")?.text ?? "";
+    // chat attachments: image and document blocks as the CLI takes them; STUB_INPUT_FILE records their shape (never the bytes)
+    const files = content.filter((c) => c.type !== "text").map((c) => ({ type: c.type, source: c.source?.type, media_type: c.source?.media_type, bytes: c.source?.data ? Buffer.from(c.source.data, "base64").length : null, title: c.title ?? null }));
+    if (process.env.STUB_INPUT_FILE) appendFileSync(process.env.STUB_INPUT_FILE, JSON.stringify({ text: t, files }) + "\n");
+    chain = chain.then(() => turn(t, files));
+  }
 });

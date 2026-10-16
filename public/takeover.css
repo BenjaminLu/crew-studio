@@ -65,3 +65,29 @@
 .tk-hosts .tk-kv .kv{grid-template-columns:1fr;gap:2px}
 .tk-hosts>.tk-drive .actions{margin-top:auto}
 @media (max-width:860px){.tk-hosts{grid-template-columns:1fr}}
+/* chat attachments: the pending tray above the input, the drop target, and sent files in the history */
+.att-tray{display:flex;gap:8px;overflow-x:auto;padding:10px 14px 0;scrollbar-width:thin}
+.att-tray[hidden]{display:none}
+.att-chip{display:flex;align-items:center;gap:8px;flex:none;max-width:260px;min-width:0;padding:6px 6px 6px 6px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);color:var(--text);text-decoration:none}
+.att-chip.is-bad{border-color:color-mix(in srgb,var(--bad) 55%,var(--border));background:var(--bad-soft)}
+.att-thumb{width:40px;height:40px;flex:none;border-radius:6px;object-fit:cover;background:var(--surface);border:1px solid var(--border)}
+.att-doc{display:grid;place-items:center;color:var(--text-2)}
+.att-doc .ic{width:20px;height:20px}
+.att-meta{display:grid;min-width:0;gap:1px;line-height:1.3}
+.att-name{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.att-sub{font-size:11.5px;color:var(--text-2)}
+.att-note{font-size:11.5px;color:var(--text-2);white-space:normal}
+.att-chip.is-bad .att-note{color:var(--bad)}
+.att-chip[data-att="uploading"] .att-thumb{opacity:.55}
+.att-x{flex:none;align-self:flex-start}
+.chat-form #chatAttach{flex:none;height:42px;width:38px}
+.att-drop{position:absolute;inset:8px;z-index:5;display:none;place-items:center;border:2px dashed var(--accent);border-radius:12px;background:color-mix(in srgb,var(--surface) 88%,transparent);pointer-events:none;text-align:center}
+.att-drop>div{display:grid;gap:6px;justify-items:center;color:var(--accent-text)}
+.att-drop .ic{width:26px;height:26px}
+.att-drop span{font-size:12.5px;color:var(--text-2)}
+.chat.drop-on .att-drop{display:grid}
+.att-sent{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;max-width:100%}
+.att-sent-img{display:block;border-radius:10px;overflow:hidden;border:1px solid var(--border);background:var(--surface-2)}
+.att-sent-img img{display:block;width:120px;height:90px;object-fit:cover}
+.att-sent-doc{max-width:220px}
+@media (max-width:640px){.att-chip{max-width:210px}.att-sent-img img{width:96px;height:72px}}

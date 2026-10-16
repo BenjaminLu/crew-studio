@@ -20,6 +20,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { binArgv, spawnJsonl, type JsonProc } from "./jsonl";
+import { claudeContent, readAttachment } from "../attachments";
 import { nativeToolError } from "./native-errors";
 import { NativeToolFailure, cleanEnv, shortSummary, type AttachOpts, type AttachedSession, type Host, type HostEvent, type HostRefusalCode, type SessionInfo } from "./types";
 
@@ -247,13 +248,16 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
         get pid() { return proc?.pid ?? null; },
         get path() { return fresh ? "fresh" as const : opts.fork ? "fork" as const : "resume" as const; },
         get file() { return fresh ? join(opts.env?.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects", encodeCwd(opts.cwd), `${id}.jsonl`) : null; },
-        send(text) {
+        send(text, files = []) {
           if (busy) return Promise.reject(new Error("BUSY"));
+          // attachments: image and document (PDF) blocks, base64, in the same user message; a refusal fails the turn before anything is sent
+          let content: any[];
+          try { content = files.length ? claudeContent(text, files, readAttachment) : [{ type: "text", text }]; } catch (e: any) { return Promise.reject(e); }
           busy = true;
           if (!proc) proc = spawn();
           return new Promise((resolve) => {
             turn = { resolve }; turnSeq++; refused = null;
-            proc!.write({ type: "user", session_id: id, parent_tool_use_id: null, message: { role: "user", content: [{ type: "text", text }] } });
+            proc!.write({ type: "user", session_id: id, parent_tool_use_id: null, message: { role: "user", content } });
           });
         },
         async interrupt() {
