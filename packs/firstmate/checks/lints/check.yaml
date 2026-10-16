@@ -8,6 +8,7 @@ blocking: true
 needs: [artifact]
 adapter:
   command: ["{repo.lint}"]
+  optional: true
   pass_on: [0]
   findings_from: { regex: "^(?P<path>[\\w./-]+):(?P<line>\\d+): (?P<message>.*)$", class: lint }
 params: { type: object, properties: {} }

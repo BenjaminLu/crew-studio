@@ -27,7 +27,7 @@ import { locatorText } from "../runtime/locator";
 import { briefSection, briefState, type BriefState, type CarryCheck } from "../runtime/refine";
 import { sandboxed } from "../runtime/checks";
 import { EnvGapError, RoundBlocked, Worktrees } from "../worktrees";
-import { envPreflight, type EnvGap } from "../env-preflight";
+import { envPreflight, isNpmTestPlaceholder, type EnvGap } from "../env-preflight";
 import { runRender } from "../render";
 import { copyUntrusted } from "../secure";
 import { helper, kindOf, LINES_PER_READ, LIST_CAP, listTree, normPath, READ_CAP_BYTES, searchTree, typedRead } from "../review-read";
@@ -38,7 +38,7 @@ import type { CardDetail } from "../runtime/cards";
 
 export { git, must };
 
-export type RepoCfg = { test: string[] | null; lint: string[] | null; shards: number; tests: string[]; timeout_s: number; fixture_lists: string[]; testSource: string | null;
+export type RepoCfg = { test: string[] | null; lint: string[] | null; shards: number; tests: string[]; timeout_s: number; fixture_lists: string[]; testSource: string | null; testError?: string | null; testSkipped?: string | null;
   /** npm lifecycle hooks (pretest, posttest) the package declares around its test script: Studio runs the script text alone, never these */
   skippedHooks: string[] };
 /**
@@ -49,20 +49,32 @@ export type RepoCfg = { test: string[] | null; lint: string[] | null; shards: nu
  * /bin/sh, never a `sh` found on the PATH it puts the worktree's node_modules/.bin in front of.
  */
 export function repoCfgFrom(read: (path: string) => string | null): RepoCfg {
-  let c: any = {}; try { c = JSON.parse(read(".crew/gates.json") ?? "{}") ?? {}; } catch {}
-  if (!c || typeof c !== "object" || Array.isArray(c)) c = {};
-  const argv = (v: any) => (Array.isArray(v) && v.length && v.every((s: any) => typeof s === "string") ? v : null);
+  let c: any = {}, testError: string | null = null, testSkipped: string | null = null;
+  const raw = read(".crew/gates.json");
+  try { c = JSON.parse(raw ?? "{}"); } catch { testError = "the base .crew/gates.json is not valid JSON"; }
+  if (!c || typeof c !== "object" || Array.isArray(c)) { testError = "the base .crew/gates.json must be an object"; c = {}; }
+  const argv = (v: any) => (Array.isArray(v) && v.length && v.every((s: any) => typeof s === "string") && v[0].trim() ? v : null);
   let packageTest: string[] | null = null, testSource: string | null = argv(c.test) ? ".crew/gates.json test" : null, skippedHooks: string[] = [];
-  if (!Object.prototype.hasOwnProperty.call(c, "test")) {
-    try {
-      const pkg = JSON.parse(read("package.json") ?? "");
+  if (Object.prototype.hasOwnProperty.call(c, "test")) {
+    if (c.test === null) testSkipped = "test execution explicitly disabled by base .crew/gates.json";
+    else if (!argv(c.test)) testError = "the base .crew/gates.json test must be a nonempty argv array or null";
+  } else if (!testError) {
+    const rawPkg = read("package.json");
+    if (rawPkg !== null) try {
+      const pkg = JSON.parse(rawPkg);
       const script = pkg?.scripts?.test;
-      if (typeof script === "string" && script.trim()) { packageTest = ["/bin/sh", "-c", 'PATH="$PWD/node_modules/.bin:$PATH"; export PATH; exec /bin/sh -c "$1"', "crew-test", script]; testSource = `package.json scripts.test: ${script}`;
-        skippedHooks = ["pretest", "posttest"].filter((k) => typeof pkg.scripts[k] === "string" && pkg.scripts[k].trim()); }
-    } catch {}
+      if (script !== undefined && (typeof script !== "string" || !script.trim())) testError = "the base package.json scripts.test must be a nonempty string";
+      else if (typeof script === "string") {
+        testSource = `package.json scripts.test: ${script}`;
+        if (isNpmTestPlaceholder(script)) testSkipped = "the base package.json has only npm init's no-test placeholder";
+        else packageTest = ["/bin/sh", "-c", 'PATH="$PWD/node_modules/.bin:$PATH"; export PATH; exec /bin/sh -c "$1"', "crew-test", script];
+        skippedHooks = ["pretest", "posttest"].filter((k) => typeof pkg.scripts[k] === "string" && pkg.scripts[k].trim());
+      }
+    } catch { testError = "the base package.json is not valid JSON"; }
   }
+  if (!argv(c.test) && !packageTest && !testError && !testSkipped) testSkipped = "the repository declares no test command at the base";
   return { test: argv(c.test) ?? packageTest, lint: argv(c.lint), shards: Math.max(1, Math.min(8, Number(c.shards) || 1)), tests: Array.isArray(c.tests) && c.tests.length ? c.tests.map(String) : ["tests/**", "**/*.test.*", "test/**"],
-    timeout_s: Number(c.timeout_s) || 180, fixture_lists: Array.isArray(c.fixture_lists) ? c.fixture_lists.map(String) : [], testSource, skippedHooks };
+    timeout_s: Number(c.timeout_s) || 180, fixture_lists: Array.isArray(c.fixture_lists) ? c.fixture_lists.map(String) : [], testSource, testError, testSkipped, skippedHooks };
 }
 export function repoCfg(dir: string): RepoCfg { return repoCfgFrom((p) => { try { return readFileSync(join(dir, p), "utf8"); } catch { return null; } }); }
 const showAt = (repo: string, commit: string, path: string) => { const r = git(repo, ["show", `${commit}:${path}`]); return r.ok ? r.out : null; };
@@ -93,6 +105,13 @@ export const briefCarryCheck: CarryCheck = (b, x) => {
   return { ok: true, proof: { base: toBase, patch: p2, files: f2 } };
 };
 const isTest = (cfg: RepoCfg, p: string) => cfg.tests.some((g) => matches(g, p));
+/** Host-owned inventory: checks consume paths, never reinterpret globs or walk generated artifacts. */
+export function testFilesOf(wt: string, cfg: RepoCfg): string[] {
+  return must(wt, ["ls-files", "-z"]).split("\0").filter(p => {
+    if (!p || !isTest(cfg, p)) return false;
+    try { return lstatSync(join(wt, p)).isFile(); } catch { return false; }
+  }).sort();
+}
 const isDoc = (p: string) => /\.md$/i.test(p) || p.startsWith("docs/");
 export const inScope = (scope: string[], p: string) => scope.some((s) => { const g = String(s).trim().replace(/^\.\//, ""); return !!g && (g === p || (g.endsWith("/") && p.startsWith(g)) || (/[*?]/.test(g) ? matches(g, p) : p.startsWith(g + "/"))); });
 /** Door: the spec's scope (or a diff) against the sensitive paths of the policy and the org list. */
@@ -247,7 +266,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   engine.needs.diff = (x) => ({ paths: changedOf(shellOk(x), x.ctx.baseCommit) });
   engine.needs.diff_text = (x) => git(shellOk(x), ["diff", "--no-color", `${x.ctx.baseCommit}..HEAD`]).out.slice(0, 24000);
   engine.needs.scope = (x) => x.ctx.spec?.scope ?? [];
-  engine.needs.repo_cfg = (x) => {const cfg=cfgOf(x),wt=shellOk(x);return{...cfg,runner:testRunner(cfg),testEnv:testEnvironment(),selectedTests:changedOf(wt,x.ctx.baseCommit).filter(p=>isTest(cfg,p.path)&&!p.status?.startsWith('D')).map(p=>p.path)};};
+  engine.needs.repo_cfg = (x) => {const cfg=cfgOf(x),wt=shellOk(x);return{...cfg,runner:testRunner(cfg),testEnv:testEnvironment(),testFiles:testFilesOf(wt,cfg),selectedTests:changedOf(wt,x.ctx.baseCommit).filter(p=>isTest(cfg,p.path)&&!p.status?.startsWith('D')).map(p=>p.path)};};
   engine.needs.report = (x) => x.run.nodes.build?.data?.report ?? null;
   engine.needs.brief_classes = (x) => (x.ctx.briefs?.build?.items ?? []).map((i: any) => i.class);
   engine.needs.ci_timings = (x) => { const e = engine.ledger(x.run.id).filter((y) => y.check === "firstmate/ci").at(-1) as any; return e?.data?.shards ?? null; };
@@ -304,7 +323,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const gaps = envGapsOf(x); recordEnvGaps(x, gaps, "dispatch");
     const findings = gaps.map((g) => ({ locator: g.done != null ? { type: "text", section: `done[${g.done}]` } : g.code === "env.test-command" ? { type: "file", path: ".crew/gates.json" } : { type: "text", section: "env" },
       message: g.message, expected: g.expected, class: g.code, severity: "blocking" as const }));
-    return { verdict: gaps.length ? "fail" : "pass", score: gaps.length ? 0 : 1, findings, data: { gaps } } as any;
+    return { verdict: gaps.length ? "fail" : "pass", score: gaps.length ? 0 : 1, findings, data: { gaps, testing: (() => { const cfg=cfgOf(x); return cfg.testError ? {status:"invalid",reason:cfg.testError} : !cfg.test ? {status:"not-run",reason:cfg.testSkipped} : {status:"configured",command:cfg.test}; })() } } as any;
   };
   engine.natives.overlap = (i) => {
     const mine: string[] = i.artifact?.data?.scope ?? []; const f: any[] = [];
@@ -719,7 +738,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       return [...folderTools(wt, () => {}, "fs"), context, report,
         { name: "run_tests", description: "Run the repository's declared test command (at most 6 times per round). Optional files selects scoped tests with the runner adapter. target=base runs candidate tests against base source in an isolated copy, preserving the base package.json. evidenceDir selects an approved writable directory on head; CREW_TEST_OUTPUT_DIR names it. PLAYWRIGHT_MODULE names the host browser library when available. runner=npm-test runs the actual unchanged package test script with pre/post hooks disabled. Returns actual exit, output tail and signed execution evidence.", schema: { type: "object", properties: {files:{type:'array',items:{type:'string'},maxItems:12},target:{type:'string',enum:['head','base']},evidenceDir:{type:'string'},runner:{type:'string',enum:['declared','npm-test']}} },
           // the repository's tests run in the check sandbox: they read the worktree, write only their own out/ and tmp, no network
-          run: async (a) => { if (!engine.owns(x))return{error:'round owner ended'};if (!cfg.test) return { status:'not-run',reason:'The repository has no test command; continue with review and record the testing gap.',exit:null };
+          run: async (a) => { if (!engine.owns(x))return{error:'round owner ended'};if(cfg.testError)return{error:cfg.testError};if (!cfg.test) return { status:'not-run',reason:cfg.testSkipped??'The repository has no test command; continue with review and record the testing gap.',exit:null };
             const files=a?.files;if(files!==undefined&&(!Array.isArray(files)||!files.length||files.length>12||files.some((p:any)=>typeof p!=='string'||normPath(p)!==p||p.includes(',')||(!((x.ctx.spec?.scope??[]).some((g:string)=>matches(g,p))||(x.ctx.spec?.verificationScope??[]).includes(p)))||!cfg.tests.some(g=>matches(g,p)))))return{error:'files must name tests inside the approved write or verification scope'};
             if (++runs > 6) return { error: "test run limit reached" };
             const box = join(x.dir, "tests", `round-${x.visit}-${runs}`); mkdirSync(join(box, "out"), { recursive: true }); mkdirSync(join(box, "tmp"), { recursive: true });

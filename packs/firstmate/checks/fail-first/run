@@ -3,9 +3,11 @@ const fs = require("fs"), path = require("path"), { spawnSync } = require("child
 let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
   const i = JSON.parse(s); const cfg = i.repo_cfg ?? {}; const b = i.base_tree ?? {};
   const out = (verdict, findings, extra = {}) => process.stdout.write(JSON.stringify({ verdict, score: verdict === "pass" ? 1 : 0, findings, evidence: ["out/base.log", "out/head.log"].filter((e) => fs.existsSync(path.join(i.out, e.slice(4)))), proves: [], ...extra }));
+  if (cfg.testError) return process.stdout.write(JSON.stringify({verdict:"fail",score:0,findings:[{locator:{type:"file",path:".crew/gates.json"},message:cfg.testError,expected:"valid base test configuration",class:"ci-config",severity:"blocking"}],evidence:[],proves:[],data:{status:"invalid"}}));
+  if (!cfg.test) return out("pass", [], {evidence:[],data:{status:"not-run",reason:cfg.testSkipped??"the repository declares no test command"}});
   if (!b.applicable) return out("pass", [], { data: { applicable: false, why: "no behaviour file changed" } });
   if (!b.tests?.length) return out("fail", b.behaviour.map((p) => ({ locator: { type: "file", path: p }, message: `${p} changed with no test change`, expected: "add or change a test that fails without this change", class: "failfirst-no-test", severity: "blocking" })));
-  if (!cfg.test) return out("fail", [{ locator: { type: "file", path: ".crew/gates.json" }, message: "no test command", expected: "declare test", class: "ci-config", severity: "blocking" }]);
+
   if(cfg.runner?.error)return out('fail',[{locator:{type:'file',path:b.tests[0]},message:cfg.runner.error,expected:'a supported test runner adapter',class:'runner-adapter',severity:'blocking'}]);
   const command=cfg.runner?.node?[cfg.runner.node,'--test',...b.tests]:cfg.test;
   const run = (dir) => { const r = spawnSync(command[0], command.slice(1), { cwd: dir, env: { ...process.env, ...(cfg.testEnv||{}), CREW_TEST_OUTPUT_DIR:i.out, CREW_TEST_FILES:b.tests.map(t=>path.basename(t)).join(","), CREW_SHARD: "0", CREW_SHARDS: "1" }, encoding: "utf8", timeout: Math.min(280000, Number(cfg.timeout_s)>0?Number(cfg.timeout_s)*1000:280000) }); return { code: r.status, signal:r.signal, error:r.error?String(r.error.code||r.error.message):null, log: (r.stdout ?? "") + (r.stderr ?? "") }; };

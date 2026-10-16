@@ -66,7 +66,8 @@ export function toolMissing(bin: string, why: string): EnvGap {
     expected: `install ${bin} where Studio runs (Doctor), or change the repository to a tool that is there` };
 }
 
-const NPM_PLACEHOLDER = /no test specified/i;
+/** Only npm init's literal placeholder is absence of a real test script. */
+export const isNpmTestPlaceholder = (script: string) => /^\s*echo\s+(?:"Error: no test specified"|'Error: no test specified')\s*&&\s*exit\s+1\s*$/.test(script);
 const TEST_PATH = /(?:^|[\s`(])((?:tests?\/[\w./-]+)|(?:[\w./-]+\.test\.\w+))/gi;
 
 /**
@@ -74,7 +75,7 @@ const TEST_PATH = /(?:^|[\s`(])((?:tests?\/[\w./-]+)|(?:[\w./-]+\.test\.\w+))/gi
  * HOLD on). `cfg` is the repository's declared commands at the base; `read`/`has` read files of the base commit.
  */
 export function envPreflight(o: {
-  cfg: { test: string[] | null; tests: string[]; testSource: string | null };
+  cfg: { test: string[] | null; tests: string[]; testSource: string | null; testError?: string | null };
   done: string[]; has: (path: string) => boolean; read: (path: string) => string | null;
   install: string[] | false | null; scripts?: boolean; egressHosts: string[]; unrestricted: boolean;
   which?: (bin: string) => string | null;
@@ -95,10 +96,8 @@ export function envPreflight(o: {
   }
   // P3: the test command, from the base
   const script = o.cfg.testSource?.startsWith("package.json") ? o.cfg.test?.at(-1) ?? "" : null;
-  if (!o.cfg.test || (script !== null && NPM_PLACEHOLDER.test(script)))
-    gaps.push({ code: "env.test-command", route: "firstmate", message: o.cfg.test ? `the base's package.json test script is npm's placeholder ("${script}")` : "the repository has no test command at the base: no `test` in .crew/gates.json and no package.json scripts.test",
-      expected: "declare the test command on the base branch (.crew/gates.json `test`, or package.json scripts.test) before dispatch, or rescope the spec" });
-  else {
+  if (o.cfg.testError) gaps.push({code:"env.test-command",route:"firstmate",message:o.cfg.testError,expected:"repair the malformed test configuration on the base branch"});
+  else if (o.cfg.test && !(script !== null && isNpmTestPlaceholder(script))) {
     const prog = script !== null ? (script.trim().split(/\s+/)[0] ?? "") : o.cfg.test[0];
     if (prog && !/[=$`'"]/.test(prog) && !which(prog) && !(script !== null && deps))
       gaps.push(toolMissing(prog, `the test command (${o.cfg.testSource ?? o.cfg.test.join(" ")}) runs it`));

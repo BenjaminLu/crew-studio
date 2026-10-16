@@ -8,7 +8,7 @@ needs: [artifact, diff, repo_cfg]
 params:
   type: object
   properties:
-    glob_prefix: { type: string, default: "", description: "blank = the repository's test folders (.crew/gates.json tests)" }
+    glob_prefix: { type: string, default: "", description: "blank = the host inventory of tracked test files matched by the base repository configuration" }
     max: { type: integer, default: 1200, minimum: 10 }
 policy_bind:
   max: file_size_cap.max

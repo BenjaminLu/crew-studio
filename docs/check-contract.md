@@ -82,6 +82,8 @@ adapter:
   findings_from: { regex: "^(?P<path>tests/[^:]+):(?P<line>\\d+): (?P<message>.*)$" }
 ```
 
+`adapter.optional: true` allows a missing repository command only when expansion produces an empty argv. The result allows the gate with `data.status: not-run`, a reason, and empty evidence/proves; it does not claim execution or test success. The default remains an error for an empty argv. A configured command always executes normally, and its nonzero exit still blocks. The built-in repository lint adapter opts into this behavior.
+
 ## Hooks
 
 The same contract with `kind: hook` runs at a lifecycle point (`after_merge`, `after_round`, `on_cancel`). Its verdict is reported and does not move the task backward.

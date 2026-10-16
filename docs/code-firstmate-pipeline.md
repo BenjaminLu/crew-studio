@@ -34,7 +34,7 @@ intent ─▶ spec ─▶ dispatch(H) ─▶ door ─┬─ one-way ─▶ plan 
 | overlap | D | yes | the scope does not overlap a pinned in-flight scope | "check overlap before dispatch" |
 | ste-wording | D | yes | plain-English rules (banned words, sentence length); a zh-TW text (zh title, zh why, zh explain) is a real Chinese translation, not English behind a Chinese word, not a stock placeholder | fm_ste |
 | no-impl-detail | J | warn | no line numbers or implementation steps in the spec | "specs: what, why, done" |
-| env-preflight | D | yes | the environment the build needs, read from the base: the lockfile's package manager is installed, the test command resolves (`.crew/gates.json` `test`, else package.json `scripts.test`), and every done-line test path matches the repository's test globs. A gap is a typed record (`env.test-command`, `env.test-path`, `env.tool-missing`) sent to Firstmate's spec repair turn; only `env.permission` (dependencies that need a registry host the round sandbox may not reach) raises a captain card. Never a HOLD inside the build round (R-028) | "local deps and fresh worktrees", "done lines must be provable" |
+| env-preflight | D | yes | the environment the build needs, read from the base: the lockfile's package manager is installed, a declared test command resolves (`.crew/gates.json` `test`, else package.json `scripts.test`); absent/explicit-null commands and the exact npm-init placeholder are recorded as testing `not-run` and allowed, while malformed declarations remain typed gaps, and every done-line test path matches the repository's test globs. A gap is a typed record (`env.test-command`, `env.test-path`, `env.tool-missing`) sent to Firstmate's spec repair turn; only `env.permission` (dependencies that need a registry host the round sandbox may not reach) raises a captain card. Never a HOLD inside the build round (R-028) | "local deps and fresh worktrees", "done lines must be provable" |
 
 The refine loop runs on the coordinator until the blocking checks pass, and only then is the dispatch card raised.
 
@@ -71,11 +71,15 @@ Round-local checks, run before a push:
 | check | kind | blocking |
 |---|---|---|
 | scope | D | yes. Diff ⊆ scope |
-| lints (shellcheck, option-loop, trap, `shift 2` guard) | D | yes |
-| file-size-cap (1200 lines under tests/) | D | yes |
+| lints (the repository-declared lint command) | D | yes when declared; absence is an optional adapter result with `data.status: not-run`, not lint execution evidence |
+| file-size-cap (1200 lines in tracked test files selected by the base configuration) | D | yes. An explicit `glob_prefix` applies to matching source paths; binary files are recorded, not decoded as text lines |
 | covering-suites | D | yes. The suites that cover the changed files run locally |
 | fixture-modules | D | yes. A new shared module is in every fixture list |
 | report-schema | D | yes. WORKER_COMPLETE, the SWEPT block, the class list |
+
+The host supplies `repo_cfg.testFiles` from `git ls-files -z`, matched with the base configuration's test globs. Covering suites and the default line cap consume that inventory; they do not approximate glob prefixes or walk documentation and screenshots. Missing inventory is a typed blocking configuration finding. Covering suites retain changed-test and importer selection.
+
+When no test command is declared, CI, covering suites and fail-first allow their gate with `data.status: not-run`, an explicit reason, and empty evidence/proves. This is not a passing test result. When a command exists, assertion failures, runner errors and fail-first evidence requirements still block normally.
 
 - A report-only failure keeps the code and re-runs only the report (v1 T-304).
 - A round killed at `policy.round_timeout_s` is classed `timeout`, not report-only, so the next round can still change code (the v1 gap).

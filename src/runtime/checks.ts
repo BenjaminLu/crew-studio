@@ -26,7 +26,7 @@ export type CheckManifest = {
   id: string; pack: string; ref: string; version: string; title: { en: string; "zh-TW"?: string }; description?: string;
   applies_to: string[]; kind: "deterministic" | "judged" | "hook"; blocking: boolean; needs: string[];
   params: Schema; policy_bind: Record<string, string>; timeout_s: number; network: boolean;
-  adapter?: { command: string[]; pass_on?: number[]; findings_from?: { regex: string; class?: string; severity?: string } } | null;
+  adapter?: { command: string[]; optional?: boolean; pass_on?: number[]; findings_from?: { regex: string; class?: string; severity?: string } } | null;
   native?: string | null; run?: string | null; at?: string | null; proves?: number[] | null;
   judge?: { prompt: string; provider?: string | null; model?: string | null; quorum?: { n: number; of: number } | null; vendors?: string[] | null; distinct_providers?: boolean; from_node?: string | null } | null;
   sample?: any; dir: string; runtime?: "studio" | null;

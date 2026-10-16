@@ -6,8 +6,8 @@ import { checkedTempDir } from "./lib/git-hygiene.mjs"; // repositories only in 
 //   1. a worktree with only package-lock.json / pnpm-lock.yaml / yarn.lock runs the matching frozen install (deps.ran
 //      recorded); a missing package manager is a typed gap (env.tool-missing), not ok
 //   2. repoCfgAt resolves the test command from package.json scripts.test when .crew/gates.json has none, from the base
-//   3. at dispatch, a done-line test path outside the test globs, or a repo with no test command, is a typed gap sent to
-//      Firstmate's spec repair turn; the build round never starts
+//   3. at dispatch, a done-line test path outside the test globs, is a typed gap sent to
+//      Firstmate's spec repair turn; absent test commands are recorded not-run and allowed
 //   4. env.test-command / env.tool-missing go to Firstmate first; only env.permission (a host the sandbox must reach)
 //      raises a captain card
 //      bun tests/env-preflight.ts
@@ -106,18 +106,14 @@ const envEntries = (id: string) => E.ledger(id).filter((e: any) => e.check === "
 const nodes = (id: string) => JSON.stringify(Object.entries(E.get(id)!.nodes).filter(([, x]: any) => x.state !== "pending").map(([k, x]: any) => `${k}:${x.state}:${x.outcome}:${x.visits}`));
 const firstOutcome = (id: string) => E.get(id)!.ctx.refine?.["spec-fix"]?.history?.[0]?.outcome;
 
-// 3a. a repository with no test command (R-028's class): a gap at dispatch, sent to Firstmate; no dispatch card, no build round
+// 3a. a repository without a test command proceeds to dispatch; missing tests are not an environment blocker.
 { const repo = mkRepo({ "package.json": pkg(), "src/money.mjs": "export const m = 1;\n" });
   const r = E.start({ workflow: "code-firstmate", text: intent(), params: { repo } });
-  await settle(r.id, () => (E.get(r.id)!.nodes.spec?.visits ?? 0) >= 2 || openCards(r.id).length > 0);
-  const g = E.get(r.id)!; const pf = envEntries(r.id)[0] as any;
-  ok(pf?.verdict === "fail" && pf.findings.some((f: any) => f.class === "env.test-command"), "3a: a repository with no test command fails the env preflight at the spec, before the dispatch card", JSON.stringify(pf?.findings ?? null) + nodes(r.id));
-  ok(!E.cards.list({ run: r.id }).some((c: any) => c.kind === "dispatch") && g.nodes.build.state === "pending" && !(g.nodes.build.data?.jobs ?? []).length,
-    "3b: no dispatch card and no build round: the gap never becomes a HOLD inside the build", nodes(r.id));
-  ok(firstOutcome(r.id) === "retry" && g.nodes.spec.visits >= 2 && /env\.test-command/.test(g.ctx.briefs?.spec?.text ?? "") && (g.ctx.envGaps ?? []).some((x: any) => x.code === "env.test-command" && x.route === "firstmate"),
-    "3c: the gap is a typed record routed to Firstmate, and the spec repair turn (the coordinator) gets it in its brief", JSON.stringify([firstOutcome(r.id), g.ctx.envGaps]));
-  ok(E.events(r.id).some((e: any) => e.type === "env_gap" && e.code === "env.test-command" && e.route === "firstmate"),
-    "3d: Studio reports the gap as an env_gap event (a Studio message for Firstmate)");
+  await settle(r.id, () => openCards(r.id).length > 0);
+  const pf = envEntries(r.id)[0] as any;
+  ok(pf?.verdict === "pass" && pf.data?.testing?.status === "not-run", "3a: no test command allows dispatch and records testing as not-run", JSON.stringify(pf));
+  ok(E.cards.list({ run: r.id }).some((c: any) => c.kind === "dispatch"), "3b: no-test repository reaches the captain's dispatch card", nodes(r.id));
+  ok(!E.events(r.id).some((e: any) => e.type === "env_gap" && e.code === "env.test-command"), "3c: absent tests do not cause spec repair or a fabricated test result");
   await E.cancel(r.id, "captain"); }
 
 // 3e. a done line whose test path matches none of the repository's test globs

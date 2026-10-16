@@ -2,22 +2,21 @@
 // covering-suites: the test files that import a changed file (or changed themselves) run with CREW_TEST_FILES.
 const fs = require("fs"), path = require("path"), { spawnSync } = require("child_process");
 let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
-  const i = JSON.parse(s); const root = i.workdir; const cfg = i.repo_cfg ?? {}; const out = (v, f = []) => process.stdout.write(JSON.stringify({ verdict: v, score: v === "pass" ? 1 : 0, findings: f, evidence: ["out/covering.log"], proves: [] }));
-  if (!cfg.test) {
-    process.stdout.write(JSON.stringify({ verdict: "fail", score: 0, findings: [{ locator: { type: "file", path: ".crew/gates.json" }, message: "the repository declares no test command", expected: '\"test\": [argv] in .crew/gates.json', class: "ci-config", severity: "blocking" }], evidence: [], proves: [] }));
-    return;
-  }
-  const isTest = (p) => (cfg.tests ?? ["tests/**"]).some((g) => p.startsWith(g.replace(/\*\*.*$/, "")) || /\.test\./.test(p));
+  const i = JSON.parse(s); const root = i.workdir; const cfg = i.repo_cfg ?? {}; const out = (v, f = [], data = undefined) => process.stdout.write(JSON.stringify({ verdict: v, score: v === "pass" ? 1 : 0, findings: f, evidence: ["out/covering.log"], proves: [], ...(data ? {data} : {}) }));
+  if (cfg.testError) return process.stdout.write(JSON.stringify({verdict:"fail",score:0,findings:[{locator:{type:"file",path:".crew/gates.json"},message:cfg.testError,expected:"valid base test configuration",class:"ci-config",severity:"blocking"}],evidence:[],proves:[],data:{status:"invalid"}}));
+  if (!cfg.test) return process.stdout.write(JSON.stringify({ verdict:"pass", score:1, findings:[], evidence:[], proves:[], data:{status:"not-run",reason:cfg.testSkipped??"the repository declares no test command"} }));
+  if (!Array.isArray(cfg.testFiles) || !cfg.testFiles.every(p => typeof p === "string" && p && !path.isAbsolute(p) && !p.split(/[\\/]/).includes(".."))) return process.stdout.write(JSON.stringify({verdict:"fail",score:0,findings:[{locator:{type:"file",path:".crew/gates.json"},message:"host test-file inventory is missing or invalid",expected:"repo_cfg.testFiles from the host glob matcher",class:"test-inventory",severity:"blocking"}],evidence:[],proves:[]}));
+  const inventory = new Set(cfg.testFiles);
+  const isTest = p => inventory.has(p);
   const changed = (i.diff?.paths ?? []).filter((c) => !String(c.status).startsWith("D")).map((c) => c.path);
   const tests = new Set(changed.filter(isTest));
-  const all = []; const walk = (d) => { for (const n of fs.readdirSync(d)) { if (n === ".git" || n === "node_modules") continue; const p = path.join(d, n); if (fs.statSync(p).isDirectory()) walk(p); else all.push(path.relative(root, p)); } }; walk(root);
-  for (const t of all.filter(isTest)) { const txt = fs.readFileSync(path.join(root, t), "utf8"); for (const c of changed) if (!isTest(c) && txt.includes(path.basename(c).replace(/\.[^.]+$/, ""))) tests.add(t); }
-  if (!tests.size) return out("pass");
+  for (const t of inventory) { const p=path.join(root,t); if (!fs.existsSync(p) || !fs.lstatSync(p).isFile()) continue; const txt = fs.readFileSync(p, "utf8"); for (const c of changed) if (!isTest(c) && txt.includes(path.basename(c).replace(/\.[^.]+$/, ""))) tests.add(t); }
+  if (!tests.size) return process.stdout.write(JSON.stringify({verdict:"pass",score:1,findings:[],evidence:[],proves:[],data:{status:"not-run",reason:"no changed or importing test in the host inventory"}}));
   if(cfg.runner?.error)return out('fail',[{locator:{type:'file',path:[...tests][0]},message:cfg.runner.error,expected:'a supported test runner adapter',class:'runner-adapter',severity:'blocking'}]);
   const command=cfg.runner?.node?[cfg.runner.node,'--test',...[...tests].sort()]:cfg.test;
   const r = spawnSync(command[0], command.slice(1), { cwd: root, env: { ...process.env, ...(cfg.testEnv||{}), CREW_TEST_OUTPUT_DIR:i.out, CREW_TEST_FILES: [...tests].map((t) => path.basename(t)).join(",") }, encoding: "utf8", timeout: 200000 });
   const log = (r.stdout ?? "") + (r.stderr ?? ""); fs.writeFileSync(path.join(i.out, "covering.log"), log);
   const f = log.split("\n").filter((l) => /^FAIL\b/.test(l)).slice(0, 20).map((l) => { const m = /^FAIL\s+([^:]+):\s*(.*)$/.exec(l); return { locator: { type: "file", path: m ? `tests/${m[1]}` : [...tests][0] }, message: l.slice(0, 300), expected: "the covering test passes", class: "covering-test-fails", severity: "blocking" }; });
   if (r.status !== 0 && !f.length) f.push({ locator: { type: "file", path: [...tests][0] }, message: log.trim().split("\n").slice(-3).join(" | ").slice(0, 300), expected: "exit 0", class: "covering-test-fails", severity: "blocking" });
-  out(r.status === 0 ? "pass" : "fail", f);
+  out(r.status === 0 ? "pass" : "fail", f, {status:"ran", command, tests:[...tests].sort()});
 });

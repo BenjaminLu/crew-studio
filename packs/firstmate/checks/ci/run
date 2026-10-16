@@ -3,7 +3,8 @@
 const fs = require("fs"), path = require("path"), { spawn } = require("child_process");
 let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", async () => {
   const i = JSON.parse(s); const cfg = i.repo_cfg ?? {};
-  if (!cfg.test) { process.stdout.write(JSON.stringify({ verdict: "fail", score: 0, findings: [{ locator: { type: "file", path: ".crew/gates.json" }, message: "the repository declares no test command", expected: "\"test\": [argv] in .crew/gates.json", class: "ci-config", severity: "blocking" }], evidence: [], proves: [] })); return; }
+  if (cfg.testError) return process.stdout.write(JSON.stringify({verdict:"fail",score:0,findings:[{locator:{type:"file",path:".crew/gates.json"},message:cfg.testError,expected:"valid base test configuration",class:"ci-config",severity:"blocking"}],evidence:[],proves:[],data:{status:"invalid"}}));
+  if (!cfg.test) { process.stdout.write(JSON.stringify({verdict:"pass",score:1,findings:[],evidence:[],proves:[],data:{status:"not-run",reason:cfg.testSkipped??"the repository declares no test command"}})); return; }
   if(cfg.runner?.error&&cfg.selectedTests?.length){process.stdout.write(JSON.stringify({verdict:'fail',score:0,findings:[{locator:{type:'file',path:cfg.selectedTests[0]},message:cfg.runner.error,expected:'supported runner adapter',class:'runner-adapter',severity:'blocking'}],evidence:[],proves:[]}));return;}
   const commands=[cfg.test];if(cfg.runner?.node&&cfg.selectedTests?.length)commands.push([cfg.runner.node,'--test',...cfg.selectedTests]);
   const n = i.params.shards || cfg.shards || 1;

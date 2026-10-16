@@ -833,7 +833,11 @@ export class Engine {
       const sb = { out: input.out, tmp: join(cdir, "tmp"), timeoutS: man.timeout_s, network: man.network, reads, dataDir: this.deps.dataDir, signal };
       if (man.adapter) {
         const argv = man.adapter.command.flatMap((a) => { const m = /^\{([\w.]+)\}$/.exec(a); if (m) return this.expand[m[1]]?.(x) ?? []; return [a.replace(/\{param\.(\w+)\}/g, (_, k) => String(input.params[k] ?? "")).replace(/\{workdir\}/g, input.workdir ?? "")]; });
-        if (!argv.length) return E(`nothing to run: ${man.adapter.command.join(" ")} is not declared for this repository`);
+        if (!argv.length) {
+          const reason = `nothing to run: ${man.adapter.command.join(" ")} is not declared for this repository`;
+          if (man.adapter.optional === true) return {verdict:"pass",score:1,findings:[],evidence:[],proves:[],data:{status:"not-run",reason}};
+          return E(reason);
+        }
         const { log, ...res } = await execAdapter(argv, { ...sb, cwd: input.workdir ?? cdir, passOn: man.adapter.pass_on, regex: man.adapter.findings_from?.regex ?? null, cls: man.adapter.findings_from?.class ?? man.id, severity: man.adapter.findings_from?.severity, ref: man.ref, env: input.env ?? {} });
         void log; return res;
       }

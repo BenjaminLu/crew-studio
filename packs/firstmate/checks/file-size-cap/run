@@ -1,10 +1,20 @@
 #!/usr/bin/env node
-const fs = require("fs"), path = require("path");
+const fs = require("fs"), path = require("path"), { TextDecoder } = require("util");
 let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
   const i = JSON.parse(s); const f = []; const max = i.params.max;
-  const pres = i.params.glob_prefix ? [i.params.glob_prefix] : (i.repo_cfg?.tests ?? ["tests/"]).map((g) => g.replace(/\*.*$/, ""));
-  for (const c of i.diff?.paths ?? []) { if (String(c.status).startsWith("D") || !pres.some((pre) => c.path.startsWith(pre))) continue; const p = path.join(i.workdir, c.path); if (!fs.existsSync(p)) continue;
-    const t = fs.readFileSync(p, "utf8"); const n = t.split("\n").length - (t.endsWith("\n") ? 1 : 0);
-    if (n > max) f.push({ locator: { type: "file", path: c.path, line: max + 1 }, message: `${c.path} has ${n} lines (cap ${max})`, expected: `split it so each file stays within ${max} lines`, class: "file-size-cap", severity: "blocking" }); }
-  process.stdout.write(JSON.stringify({ verdict: f.length ? "fail" : "pass", score: f.length ? 0 : 1, findings: f, evidence: [], proves: [] }));
+  const inventory = i.repo_cfg?.testFiles;
+  const explicit = typeof i.params.glob_prefix === "string" && i.params.glob_prefix.length > 0;
+  if (!explicit && (!Array.isArray(inventory) || !inventory.every(p => typeof p === "string" && p && !path.isAbsolute(p) && !p.split(/[\\/]/).includes("..")))) {
+    process.stdout.write(JSON.stringify({verdict:"fail",score:0,findings:[{locator:{type:"file",path:".crew/gates.json"},message:"host test-file inventory is missing or invalid",expected:"repo_cfg.testFiles from the host glob matcher",class:"test-inventory",severity:"blocking"}],evidence:[],proves:[]})); return;
+  }
+  const tests = new Set(inventory ?? []); const skippedBinary = [];
+  for (const c of i.diff?.paths ?? []) {
+    if (String(c.status).startsWith("D") || !(explicit ? c.path.startsWith(i.params.glob_prefix) : tests.has(c.path))) continue;
+    const p = path.join(i.workdir, c.path); if (!fs.existsSync(p) || !fs.lstatSync(p).isFile()) continue;
+    const bytes = fs.readFileSync(p); let t;
+    try { if (bytes.includes(0)) throw new Error("binary NUL"); t = new TextDecoder("utf-8", {fatal:true}).decode(bytes); } catch { skippedBinary.push(c.path); continue; }
+    const n = t.split("\n").length - (t.endsWith("\n") ? 1 : 0);
+    if (n > max) f.push({ locator: { type: "file", path: c.path, line: max + 1 }, message: `${c.path} has ${n} lines (cap ${max})`, expected: `split it so each file stays within ${max} lines`, class: "file-size-cap", severity: "blocking" });
+  }
+  process.stdout.write(JSON.stringify({ verdict: f.length ? "fail" : "pass", score: f.length ? 0 : 1, findings: f, evidence: [], proves: [], data:{skippedBinary} }));
 });
