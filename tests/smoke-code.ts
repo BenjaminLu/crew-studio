@@ -97,6 +97,8 @@ ok(starts.length === 2 && starts[0].data.brief === null && starts[1].data.brief 
   const ok1 = (m: string, n: number) => /^\s*Crew agent \(stub·no model\)\|/.test(m) && new RegExp(`Crew-Run: ${r.id}\\b`).test(m) && /Crew-Node: build\b/.test(m) && new RegExp(`Crew-Round: ${n}\\b`).test(m) && /Crew-Agent: stub·no model/.test(m);
   ok(ok1(per(1), 1) && ok1(per(2), 2), "each round handed back its own commit as the agent: round 1's and round 2's, each with run, node, round and agent trailers", JSON.stringify([per(1).slice(0, 200), per(2).slice(0, 200)])); }
 ok(existsSync(join(data, "runs", r.id, "nodes", "build", "2", "prompt.md")) && /BRIEF for round 2/.test(readFileSync(join(data, "runs", r.id, "nodes", "build", "2", "prompt.md"), "utf8")), "every agent round left its exact prompt (round 2's carries the brief)");
+{ const p1 = readFileSync(join(data, "runs", r.id, "nodes", "build", "1", "prompt.md"), "utf8");
+  ok(/ROUND FACTS: this is two-way work with no plan round, so the approved spec above is the plan/.test(p1) && /Staffing, rosters and role skills are Studio's job/.test(p1) && !/Accepted plan:/.test(p1), "a two-way build round says the spec is the plan and that staffing is not the worker's input (no HOLD for a roster or plan)"); }
 ok(merge!.options.filter((o) => o.hold).map((o) => o.id).join(",") === "changes,close", "on the merge card, request changes and close are hold options (no door confirmation)");
 // a remote that cannot be read stops the build round before its agent starts, and code-firstmate routes it to the scope card
 { const b = E.start({ workflow: "code-firstmate", text: intent, params: {} });

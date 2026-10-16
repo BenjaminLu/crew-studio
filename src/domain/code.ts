@@ -687,7 +687,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       const fix = briefSection(b);
       const plan = x.ctx.door?.door === "one-way" ? (() => { if (!existsSync(join(x.dir, "plan-accept.json"))) throw new Error("a one-way change needs an accepted plan before it builds"); return `\nAccepted plan:\n${JSON.stringify(x.ctx.plan?.rows ?? [])}\nAnswers:\n${(x.ctx.planDecision?.answers ?? []).map((q: any) => `- ${q.q}: ${q.a}`).join("\n")}\n`; })() : "";
       const ro = x.ctx.reportOnly?.build ? "\nREPORT ONLY: the code stays as it is; write the report the checks asked for.\n" : "";
-      const text = `BUILD ROUND\nRun ${x.run.id} · round ${x.visit} · head ${h} · branch ${x.ctx.branch}\n${specMd(x.ctx.spec)}${plan}${fix}${ro}${rebaseNote}\nStart with fs_list.${x.run.text.includes("STUB_") ? `\n\nIntent notes:\n${x.run.text}` : ""}`;
+      // Round facts override the role skill's general wording (the skill text is pinned in approved staffing, so it is not edited here).
+      const facts = plan ? "" : "\nROUND FACTS: this is two-way work with no plan round, so the approved spec above is the plan. Staffing, rosters and role skills are Studio's job, not inputs you need. Hold only for an input this brief names that you cannot read. Where the spec is unclear, choose the reading that best fits it, implement it, and list the assumption in worker_report instead of asking.\n";
+      const text = `BUILD ROUND\nRun ${x.run.id} · round ${x.visit} · head ${h} · branch ${x.ctx.branch}\n${specMd(x.ctx.spec)}${plan}${facts}${fix}${ro}${rebaseNote}\nStart with fs_list.${x.run.text.includes("STUB_") ? `\n\nIntent notes:\n${x.run.text}` : ""}`;
       let prev: any = null; try { prev = JSON.parse(readFileSync(briefFile(x), "utf8")); } catch {}
       if (prev && prev.head !== h) x.log(`round ${x.visit} brief rebound from ${String(prev.head).slice(0, 8)} to ${h.slice(0, 8)}`);
       writeFileSync(briefFile(x), JSON.stringify({ run: x.run.id, round: x.visit, head: h, branch: x.ctx.branch, brief: text }, null, 1));
