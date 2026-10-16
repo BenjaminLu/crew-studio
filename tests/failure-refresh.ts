@@ -1,4 +1,4 @@
-import './lib/isolated-env.mjs';
+import "./lib/isolated-env.mjs";
 import assert from 'node:assert/strict';
 import {harness,until,Y} from './rt-harness';
 const h=await harness([Y({id:'legacy-failure',name:'Legacy failure',nodes:[{id:'spec',kind:'hook',label:'Spec',do:'spec',x:0,y:0},{id:'end',kind:'hook',label:'End',x:1,y:0}],edges:[['spec','end','ok']]})]);
