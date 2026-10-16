@@ -87,12 +87,16 @@ for(const mutation of ['dirty','commit','ctx-pin','dependencies','auth-window'])
  }catch(e){ok(false,mutation,String(e));}finally{await F.stop();}
 }
 // Git-level CAS and interrupted ref update recovery, without any unchecked reset.
-for(const mode of ['base-drift','head-drift','after-ref-cas','after-record-save']){
+for(const mode of ['base-advanced','base-diverged','base-rewound','head-drift','after-ref-cas','after-record-save']){
  const F=await fixture();try{
   const r=await F.start(),W=new Worktrees(F.H.data),from=r.ctx.head,target=F.advance();
   const intent={repo:F.E.queueRepo(r.ctx.repo),branch:r.ctx.branch,base:r.ctx.base,from,target};
-  if(mode==='base-drift'){writeFileSync(join(F.repo,'another.txt'),'new base');must(F.repo,['add','another.txt']);must(F.repo,['commit','-qm','Moved base']);
-   ok(rejects(()=>W.refreshPristine('fixture',r.id,'fixture recovery',intent))&&must(r.ctx.worktree,['rev-parse','HEAD'])===from,'atomic base CAS refuses changed target without moving task');
+  if(mode==='base-advanced'){writeFileSync(join(F.repo,'another.txt'),'new base');must(F.repo,['add','another.txt']);must(F.repo,['commit','-qm','Moved base']);
+   const observed=must(F.repo,['rev-parse','HEAD']),updated=W.refreshPristine('fixture',r.id,'fixture recovery',intent);
+   ok(updated.head===target&&updated.baseCommit===target&&must(r.ctx.worktree,['rev-parse','HEAD'])===target&&must(F.repo,['rev-parse','main'])===observed&&observed!==target,'main may advance but task refreshes only to exact signed target');
+  }else if(mode==='base-diverged'||mode==='base-rewound'){
+   const changed=mode==='base-rewound'?from:must(F.repo,['commit-tree',`${target}^{tree}`,'-p',from,'-m','Sibling main']);must(F.repo,['update-ref','refs/heads/main',changed,target]);
+   ok(rejects(()=>W.refreshPristine('fixture',r.id,'fixture recovery',intent))&&must(r.ctx.worktree,['rev-parse','HEAD'])===from,mode+' refuses non-descendant base without moving task');
   }else if(mode==='head-drift'){
    const foreign=must(F.repo,['commit-tree',`${target}^{tree}`,'-p',target,'-m','Unowned head']);must(F.repo,['update-ref',`refs/heads/${r.ctx.branch}`,foreign,from]);
    ok(rejects(()=>W.refreshPristine('fixture',r.id,'fixture recovery',intent))&&must(r.ctx.worktree,['rev-parse','HEAD'])===foreign,'head CAS refuses an unowned commit without resetting it');
@@ -104,14 +108,15 @@ for(const mode of ['base-drift','head-drift','after-ref-cas','after-record-save'
   }
  }catch(e){ok(false,mode,String(e));}finally{await F.stop();}
 }
-// A signed answer whose target drifts before application cannot start a worker.
+// Main advancing after the exact answer is bound must not substitute a newer target.
 {
  const F=await fixture();try{
-  const r=await F.start(),from=r.ctx.head;F.advance();const record=F.E.record.bind(F.E);
+  const r=await F.start(),from=r.ctx.head,target=F.advance();const record=F.E.record.bind(F.E);
   F.E.record=(x,name,e)=>{const value=record(x,name,e);if(name==='local-rescope-request'){writeFileSync(join(F.repo,'raced.txt'),'target moved');must(F.repo,['add','raced.txt']);must(F.repo,['commit','-qm','Target drift']);}return value;};
   const c=await F.card(r.id,'scope-card');await F.E.answer(c.id,{choice:'rescope',note:'Refresh base',by:'fixture captain',localRescope:(F.E.cards.view(c) as any).localRescope} as any);
-  await until(()=>['failed','waiting'].includes(r.status),1000);
-  ok(must(r.ctx.worktree,['rev-parse','HEAD'])===from&&F.starts.get(r.id)===1&&!F.E.trusted(r.id).entries.some(e=>e.record==='local-rescope-applied'),'signed target drift fails closed before spec or a second worker');
+  await F.card(r.id,'dispatch');
+  const applied=F.E.trusted(r.id).entries.find(e=>e.record==='local-rescope-applied');
+  ok(must(r.ctx.worktree,['rev-parse','HEAD'])===target&&r.ctx.baseCommit===target&&F.starts.get(r.id)===1&&applied?.head===target&&must(F.repo,['rev-parse','main'])!==target,'signed target remains fixed after main advances; spec returns to fresh dispatch without launching worker');
  }catch(e){ok(false,'signed target drift',String(e));}finally{await F.stop();}
 }
 for(const mode of ['stale-preview','orphan-request','ordinary-clean']){

@@ -181,14 +181,16 @@ export class Worktrees {
         throw new RoundBlocked("local rescope base refresh identity changed");
       const actual=must(r.path,["rev-parse","HEAD"]);
       const index=must(r.path,["write-tree"]);
+      const observedBase=must(r.repo,["rev-parse",`refs/heads/${r.base}`]);
       const expectedTrees=[must(r.repo,["rev-parse",`${actual}^{tree}`]),...(actual===intent.target&&r.head===intent.from?[must(r.repo,["rev-parse",`${intent.from}^{tree}`])]:[])];
-      if(![intent.from,intent.target].includes(actual)||must(r.repo,["rev-parse",`refs/heads/${r.base}`])!==intent.target||
+      if(![intent.from,intent.target].includes(actual)||!git(r.repo,["merge-base","--is-ancestor",intent.target,observedBase]).ok||
         !expectedTrees.includes(index)||!git(r.path,["diff","--quiet"]).ok||must(r.path,["ls-files","--others","--exclude-standard"])||
         !git(r.repo,["merge-base","--is-ancestor",intent.from,intent.target]).ok)
         throw new RoundBlocked("local rescope requires a clean base-only task and the approved base target");
       this.thaw(r);thawed=r;
-      // Verify the base and update the task branch in the same ref transaction.
-      const txn=`start\nverify refs/heads/${r.base} ${intent.target}\nupdate refs/heads/${r.branch} ${intent.target} ${actual}\nprepare\ncommit\n`;
+      // Main may advance during captain/staffing handoff. Refresh only to the signed
+      // target; verify the observed descendant base and task head atomically.
+      const txn=`start\nverify refs/heads/${r.base} ${observedBase}\nupdate refs/heads/${r.branch} ${intent.target} ${actual}\nprepare\ncommit\n`;
       const updated=git(r.repo,["update-ref","--stdin"],txn);if(!updated.ok)throw new RoundBlocked("local rescope base/head CAS failed");
       must(r.path,["read-tree","--reset","-u",intent.target]);
       r.head=intent.target;r.baseCommit=intent.target;this.note(r,`captain rescope refreshed base ${intent.from} -> ${intent.target}`);this.save(r);this.freeze(r);return r;
