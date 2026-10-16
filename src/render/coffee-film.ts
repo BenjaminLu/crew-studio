@@ -90,16 +90,17 @@ export const COFFEE_PLAYBACK_SCRIPT=`(()=>{
  for(const v of document.querySelectorAll('video.coffee-native-film')){
   const frame=document.createElement('div');frame.className='coffee-film-player';v.before(frame);frame.append(v);
   const button=document.createElement('button');button.type='button';button.className='coffee-film-toggle';frame.append(button);
+  const autoplay=v.getAttribute('data-coffee-autoplay')==='true';
   let posterOnly=false;
   const sync=()=>{const label=v.paused?(posterOnly?(zh?'仍要播放影片':'Play film with motion'):(zh?'播放影片':'Play film')):(zh?'暫停影片':'Pause film');button.textContent=label;button.setAttribute('aria-label',label);};
   button.onclick=()=>{if(v.paused){posterOnly=false;v.controls=true;v.play().catch(()=>{if(reduced.matches)apply();else sync();});}else v.pause();};
   v.addEventListener('play',sync);v.addEventListener('pause',sync);
-  const apply=()=>{if(reduced.matches){v.pause();v.removeAttribute('autoplay');posterOnly=true;v.controls=false;v.load();}else{posterOnly=false;v.controls=true;}sync();};
+  const apply=()=>{if(reduced.matches){v.pause();v.removeAttribute('autoplay');posterOnly=true;v.controls=false;v.load();}else{posterOnly=false;v.controls=true;if(autoplay){v.muted=true;v.autoplay=true;v.play().catch(()=>sync());}}sync();};
   apply();reduced.addEventListener('change',apply);
  }
 })();`;
 
 export async function integrateCoffeeSite(html:string,design:unknown):Promise<string>{
  const p=validateCoffeeDesign(design),style=`<style>video.coffee-native-film{display:block;width:100%;height:auto;aspect-ratio:16/9;object-fit:cover;object-position:${p.integration.mobileCrop};background:${p.brand.palette[1]}}.coffee-film-player{position:relative;width:100%;aspect-ratio:16/9}.coffee-film-toggle{position:absolute;top:12px;left:12px;z-index:1;max-width:calc(100% - 24px);min-height:44px;padding:10px 18px;border:1px solid currentColor;border-radius:999px;background:${p.brand.palette[0]};color:${coffeeTextColor(p.brand.palette[0],[p.brand.palette[1],p.brand.palette[2]])};cursor:pointer}.coffee-film-toggle:focus-visible{outline:3px solid ${p.brand.palette[2]};outline-offset:3px}@media(prefers-reduced-motion:reduce){video.coffee-native-film{animation:none!important;transition:none!important}}</style><script src="assets/coffee-playback.js" defer></script>`;
- let inserted=false;const result=await new HTMLRewriter().on('head',{element(e){inserted=true;e.append(style,{html:true});}}).on('video',{element(e){e.setAttribute('class',((e.getAttribute('class')||'')+' coffee-native-film').trim());for(const a of ['controls','muted','loop','playsinline'])e.setAttribute(a,'');e.setAttribute('preload','metadata');e.setAttribute('poster','assets/coffee-poster.png');if(p.integration.autoplay)e.setAttribute('autoplay','');else e.removeAttribute('autoplay');}}).transform(new Response(html)).text();if(!inserted)throw new HyperframesFailure('The page needs a complete HTML head for integrated playback',true);return result;
+ let inserted=false;const result=await new HTMLRewriter().on('head',{element(e){inserted=true;e.append(style,{html:true});}}).on('video',{element(e){e.setAttribute('class',((e.getAttribute('class')||'')+' coffee-native-film').trim());for(const a of ['controls','muted','loop','playsinline'])e.setAttribute(a,'');e.setAttribute('preload','metadata');e.setAttribute('poster','assets/coffee-poster.png');e.removeAttribute('autoplay');if(p.integration.autoplay)e.setAttribute('data-coffee-autoplay','true');else e.removeAttribute('data-coffee-autoplay');}}).transform(new Response(html)).text();if(!inserted)throw new HyperframesFailure('The page needs a complete HTML head for integrated playback',true);return result;
 }
