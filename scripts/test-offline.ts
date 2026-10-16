@@ -1,8 +1,9 @@
 // Offline native-code gate. HTTP/browser integration remains a separate captain acceptance.
 // Unsupported covering suites fail explicitly; they are never silently called proved.
 import { basename } from 'node:path';
-const suites: Record<string, { argv: string[]; env?: Record<string,string> }> = {
+const suites: Record<string, { argv: string[]; env?: Record<string,string>; explicitOnly?:boolean }> = {
   'tests/pack-genesis-interview.ts': {argv:['bun','tests/pack-genesis-interview.ts'],env:{CREW_TEST_IN_PROCESS:'1'}},
+  'tests/pack-genesis-native-ui.mjs': {argv:['bun','tests/pack-genesis-native-ui.mjs'],env:{PG_INTERVIEW_ONLY:'1'},explicitOnly:true},
   'tests/code-handoff.ts': {argv:['bun','tests/code-handoff.ts']},
   'tests/proposal-state.mjs': {argv:['node','tests/proposal-state.mjs']},
   'tests/onboarding-ui.mjs': {argv:['node','tests/onboarding-ui.mjs']},
@@ -13,7 +14,7 @@ const only=(process.env.CREW_TEST_FILES||'').split(',').filter(Boolean);
 const names=Object.keys(suites);
 const unknown=only.filter(p=>!names.some(n=>n===p||basename(n)===p));
 if(unknown.length){for(const p of unknown)console.error(`FAIL ${p}: no offline suite registered; add executable coverage or request captain integration acceptance`);process.exit(1);}
-const selected=names.filter(n=>!only.length||only.includes(n)||only.includes(basename(n)));
+const selected=names.filter(n=>(!only.length&&!suites[n].explicitOnly)||only.includes(n)||only.includes(basename(n)));
 const shard=Number(process.env.CREW_SHARD||0),shards=Number(process.env.CREW_SHARDS||1);
 if(!Number.isInteger(shards)||shards<1||!Number.isInteger(shard)||shard<0||shard>=shards)throw Error('invalid shard');
 let failed=0;

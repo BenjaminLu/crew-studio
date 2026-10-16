@@ -1,4 +1,5 @@
 import {withSafetyRules} from "../skills";
+import {localUnrestricted} from "../local-execution";
 import { codeHandoffView } from "./code-handoff";
 import { installCodeRecovery } from "./code-recovery";
 import { installCodeQueue } from "./code-queue";
@@ -609,15 +610,29 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
         schema: { type: "object", properties: { marker: { type: "string", enum: ["WORKER_COMPLETE", "SCOPE-BLOCKED", "DOOR-CHANGE", "ASK"] }, summary: { type: "string" }, swept: { type: "object", properties: { searched: { type: "string" }, found: { type: "number" }, fixed: { type: "number" } } }, classes: { type: "array", items: { type: "string" } }, failfirst: { type: "string" } }, required: ["marker", "summary"] },
         run: (a) => { const sw = a.swept && typeof a.swept === "object" ? { searched: String(a.swept.searched ?? ""), found: Number(a.swept.found) || 0, fixed: Number(a.swept.fixed) || 0 } : null;
           x.rn.data.report = { marker: String(a.marker), summary: String(a.summary ?? "").slice(0, 1500), swept: sw, classes: (a.classes ?? []).map(String).slice(0, 20), failfirst: a.failfirst ? String(a.failfirst).slice(0, 300) : null, round: x.visit }; x.save(); return { ok: true }; } };
-      if (reportOnly) return [...READ_ONLY(wt), report];
-      return [...folderTools(wt, () => {}, "fs"), report,
-        { name: "run_tests", description: "Run the repository's own test command in your worktree (at most 6 times per round). Returns the exit code and the last lines.", schema: { type: "object", properties: {} },
+      const context:AgentTool={name:'run_context',description:'Read host-verified current task, checkout, approved dispatch, project install policy and actual job execution mode. No credentials or mutable runtime files.',schema:{type:'object',properties:{}},run:()=>{
+        if(!engine.owns(x))return{error:'round owner ended'};
+        const trusted=engine.trusted(x.run.id);if(!trusted.ok)return{error:'task ledger is not trusted'};
+        const approval=trusted.entries.filter(e=>e.record==='card-answer'&&e.data?.choice==='dispatch').at(-1);
+        const jobs=[...engine.deps.agents.jobs.values()].filter(j=>j.ref===x.run.id&&j.status==='running');
+        return{task:x.run.id,node:x.node.id,round:x.visit,checkout:{head:must(wt,['rev-parse','HEAD']),branch:must(wt,['symbolic-ref','--short','HEAD']),status:must(wt,['status','--porcelain=v1']),base:x.ctx.baseCommit},policy:{install:x.policy('install')??null},dispatch:approval?{seq:approval.seq,sig:approval.sig,card:approval.data.card,choice:approval.data.choice,note:approval.data.note??null}:null,jobs:jobs.map(j=>({id:j.id,kind:j.kind,provider:j.provider,model:j.model,executionMode:j.executionMode??'default'})),testCommand:cfg.test};
+      }};
+      if (reportOnly) return [...READ_ONLY(wt), context, report];
+      return [...folderTools(wt, () => {}, "fs"), context, report,
+        { name: "run_tests", description: "Run the repository's declared test command (at most 6 times per round). Optional files selects scoped test paths through CREW_TEST_FILES; the repository test runner must support it. Returns actual exit, output tail and signed execution evidence.", schema: { type: "object", properties: {files:{type:'array',items:{type:'string'},maxItems:12}} },
           // the repository's tests run in the check sandbox: they read the worktree, write only their own out/ and tmp, no network
-          run: async () => { if (!cfg.test) return { error: "the repository declares no test command" }; if (++runs > 6) return { error: "test run limit reached" };
+          run: async (a) => { if (!engine.owns(x))return{error:'round owner ended'};if (!cfg.test) return { error: "the repository declares no test command" };
+            const files=a?.files;if(files!==undefined&&(!Array.isArray(files)||!files.length||files.length>12||files.some((p:any)=>typeof p!=='string'||normPath(p)!==p||p.includes(',')||!(x.ctx.spec?.scope??[]).some((g:string)=>matches(g,p))||!cfg.tests.some(g=>matches(g,p)))))return{error:'files must name tests inside the approved scope'};
+            if (++runs > 6) return { error: "test run limit reached" };
             const box = join(x.dir, "tests", `round-${x.visit}-${runs}`); mkdirSync(join(box, "out"), { recursive: true }); mkdirSync(join(box, "tmp"), { recursive: true });
-            const r = await sandboxed(cfg.test, { cwd: wt, out: join(box, "out"), tmp: join(box, "tmp"), timeoutS: cfg.timeout_s, network: false, dataDir: o.dataDir });
+            const env:Record<string,string>={...(files?{CREW_TEST_FILES:files.join(',')}:{})};
+            if(localUnrestricted())for(const [target,source] of [['PLAYWRIGHT_MODULE','CREW_PLAYWRIGHT_MODULE'],['PLAYWRIGHT_BROWSERS_PATH','CREW_PLAYWRIGHT_BROWSERS_PATH'],['PLAYWRIGHT_EXECUTABLE_PATH','CREW_PLAYWRIGHT_EXECUTABLE_PATH']])if(process.env[source])env[target]=process.env[source]!;
+            const r = await sandboxed(cfg.test, { cwd: wt, out: join(box, "out"), tmp: join(box, "tmp"), timeoutS: cfg.timeout_s, network: false, dataDir: o.dataDir,env });
             if (r.refused) return { error: `refused: ${r.refused}` };
-            return { exit: r.timedOut ? null : r.code, timedOut: r.timedOut, tail: (r.stdout + r.stderr).trim().split("\n").slice(-25).join("\n") }; } }];
+            if(!engine.owns(x))return{error:'round owner ended during tests'};
+            const output=r.stdout+r.stderr;writeFileSync(join(box,'output.log'),output);
+            const evidence=engine.record(x,'worker-test-execution',{head:head(wt),data:{command:cfg.test,files:files??null,exit:r.timedOut?null:r.code,timedOut:r.timedOut,executionMode:localUnrestricted()?'local-unrestricted':'default',outputSha256:createHash('sha256').update(output).digest('hex')}});
+            return { exit: r.timedOut ? null : r.code, timedOut: r.timedOut, evidence:evidence?{seq:evidence.seq,sig:evidence.sig}:null,tail: output.trim().split("\n").slice(-25).join("\n") }; } }];
     },
     system: (x, skill) => x.ctx.reportOnly?.build ? `${skill}\n\nREPORT ONLY: your code from the last round is kept. Do not change any file. Read what you need and call worker_report once with a complete report, then one line.`
       : `${skill}\n\nYou build ONE change in the run's worktree with the fs_* tools (no shell; run_tests runs the repository's tests). Stay inside the spec's scope. Each done line needs a test that fails without your change. Studio commits your work; you never commit. End with worker_report, then one line.`,
