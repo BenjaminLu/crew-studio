@@ -131,7 +131,7 @@ function graph(def, o = {}) {
           if (o.simple) o.onNudge?.(n.id, dx, dy); else { o.onDragStart?.(lay); o.onMove(n.id, vn.x + dx, vn.y + dy, true); } }
         else if (o.editable && (ev.key === "Delete" || ev.key === "Backspace")) { ev.preventDefault(); o.onDeleteNode?.(n.id); }
       });
-      g.addEventListener("click", (ev) => { if (svg.interactionActive) return; ev.stopPropagation(); if (!g.dataset.dragged) o.onSelect({ node: n.id }); delete g.dataset.dragged; });
+      g.addEventListener("click", (ev) => { if (svg.interactionActive) return; ev.stopPropagation(); if (!g.dataset.dragged && !svg.selectedOnUp) o.onSelect({ node: n.id }); delete g.dataset.dragged; delete svg.selectedOnUp; });
     }
     if (o.onDropCheck) { g.addEventListener("dragover", (ev) => { if (ev.dataTransfer.types.includes("text/x-check")) { ev.preventDefault(); g.classList.add("drop"); } }); g.addEventListener("dragleave", () => g.classList.remove("drop"));
       g.addEventListener("drop", (ev) => { ev.preventDefault(); g.classList.remove("drop"); const c = ev.dataTransfer.getData("text/x-check"); if (c) o.onDropCheck({ node: n.id }, c); }); }
@@ -174,6 +174,8 @@ function graph(def, o = {}) {
     svg.addEventListener("pointerup", (ev) => {
       if (!drag || ev.pointerId !== drag.pointerId) return; const d = drag; drag = null; svg.interactionActive = false;
       if (d.kind === "node" && d.moved) { d.g.dataset.dragged = "1"; const n = byId[d.id]; if (o.simple) o.onNudge?.(d.id, n.x - d.x0, n.y - d.y0); else { o.onMove?.(d.id, n.x, n.y, false); o.onMoved?.(d.id); } }
+      // a press and release without moving selects the node here: the svg holds the pointer capture, so the click that follows lands on the svg, not the node
+      if (d.kind === "node" && !d.moved && o.onSelect) { svg.selectedOnUp = true; setTimeout(() => delete svg.selectedOnUp, 0); o.onSelect({ node: d.id }); }
       if (d.kind === "wire") { d.line.remove(); const el = document.elementFromPoint(ev.clientX, ev.clientY); const to = el?.closest?.("[data-node]")?.dataset.node; if (to && to !== d.from) o.onConnect?.(d.from, to); }
       o.onInteractionEnd?.();
     });
@@ -188,7 +190,7 @@ function graph(def, o = {}) {
     svg.addEventListener("pointercancel", cancelInteraction);
     svg.addEventListener("lostpointercapture", cancelInteraction);
     svg.addEventListener("wheel", (ev) => { ev.preventDefault(); zoom(ev.deltaY > 0 ? 1.1 : 1 / 1.1, pt(ev)); }, { passive: false });
-    svg.addEventListener("click", () => { if (!svg.interactionActive) o.onSelect?.(null); });
+    svg.addEventListener("click", () => { if (svg.selectedOnUp) { delete svg.selectedOnUp; return; } if (!svg.interactionActive) o.onSelect?.(null); });
   }
   const zoom = (k, at) => { const c = at || { x: view.x + view.w / 2, y: view.y + view.h / 2 }; view.x = c.x - (c.x - view.x) * k; view.y = c.y - (c.y - view.y) * k; view.w *= k; view.h *= k; setView(); };
   svg.zoom = zoom; svg.view = view; svg.lay = lay; svg.setView = (v) => { Object.assign(view, v); setView(); };
