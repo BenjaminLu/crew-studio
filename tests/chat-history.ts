@@ -114,6 +114,7 @@ try {
     const q = v.log.find((x: any) => x.external?.code === "claudeQuotaExhausted");
     ok(q && q.external.class === "quota" && /rate limit rejected|usage limit reached/.test(q.external.message) && q.refusal === "claudeQuotaExhausted", "Claude quota refusal: typed (claudeQuotaExhausted) with Claude's own message", JSON.stringify(q?.external));
     ok(v.log.filter((x: any) => x.external?.code === "claudeQuotaExhausted" || (x.external && /usage limit reached/.test(x.external.message))).length === 1, "a refusal is one notice, not a refusal plus a generic failed turn");
+    ok(!v.log.some((x: any) => x.kind === "status" && /^Turn failed/.test(x.text) && x.session?.id === "sess-b" && /usage limit|quota/i.test(x.text)), "the refused turn has no grey \"Turn failed\" line beside its typed notice");
     ok(v.log.some((x: any) => x.external?.source === "claude" && /connection to the API was closed unexpectedly|exited 3/.test(x.external.message)), "Claude process exit: a notice with the exit and its last stderr");
     // a PDF whose pages Studio cannot read: the captain is warned before Claude decides
     const opaque = Buffer.concat([Buffer.from("%PDF-1.7\n"), Buffer.alloc(200, 0x41)]);

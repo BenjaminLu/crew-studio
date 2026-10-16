@@ -288,7 +288,7 @@ try {
   await idle();
   const starts = codexStarts();
   out = await say("STUB_QUOTA");
-  ok(out.some((l: any) => l.refusal === "claudeQuotaExhausted" && /quota is exhausted/.test(l.text)) && out.some((l: any) => l.status === "failed" && /Turn failed/.test(l.text)), "a quota refusal mid-run fails the turn with a typed reason");
+  ok(out.some((l: any) => l.refusal === "claudeQuotaExhausted" && l.status === "failed" && l.external?.code === "claudeQuotaExhausted" && /quota is exhausted/.test(l.text)) && !out.some((l: any) => /Turn failed/.test(l.text)), "a quota refusal mid-run fails the turn with one typed notice, no second generic line");
   ok((await view()).host === "claude" && codexStarts() === starts, "the quota refusal does not fall back to Codex");
   await api("/api/main/detach", {});
   r = await api("/api/main/start", { host: "claude", confirm: true });

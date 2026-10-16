@@ -417,7 +417,8 @@ export class MainSession {
         this.lastOwnWrite = Date.now();
         this.lastSeenMtime = mtimeOf(this.sessionFile);
         if (r.status === "failed" && !this.refusedThisTurn) this.external(this.session?.host ?? "claude", r.message || (this.lastExit ? `exited ${this.lastExit.code}: ${this.lastExit.stderr.trim().split("\n").slice(-3).join(" ")}` : ""));
-        else if (r.status !== "completed") this.note({ kind: "status", text: `Turn ${r.status}${r.message ? `: ${r.message}` : ""}`, status: r.status });
+        // a refusal already showed as a typed notice for this turn: no second, grey "Turn failed" line
+        else if (r.status !== "completed" && !(r.status === "failed" && this.refusedThisTurn)) this.note({ kind: "status", text: `Turn ${r.status}${r.message ? `: ${r.message}` : ""}`, status: r.status });
         this.refusedThisTurn = false; this.lastExit = null;
         this.changed();
       }
