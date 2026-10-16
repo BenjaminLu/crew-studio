@@ -388,3 +388,14 @@ Coffee-kit 主案例沿用「慢日咖啡 Slow Day Coffee」：繁體中文單�
 
 完成標準：新版流程實際跑通、成果已驗收入庫且可重新開啟、兩版 MP4 在 macOS 完整播放驗證通過、原片與截圖保存、文件及必要修正已推送並確認 origin。不得把預檢完成或開始錄影當成整個任務完成。
 ```
+
+### 新版教學實際預檢補記（2026-10-16）
+
+- 基準 `7f0d4b4a`：修正 Studio 自動注入執行說明造成的 `brief-path` 誤判；重新 fetch 後與 origin/main 一致。
+- 原生新草稿 `d-0be77e030a0e` revision 1 的 readiness 1–4 通過；UI 儲存為 `my-workflow-0be77e@1`，正式 staffing dialog 確認六個製作／修訂節點均為 Codex、`gpt-6.1-sol`、medium、Writer。
+- 預檢 R-001 已真實執行三位 Writer，品牌故事、菜單文案、三則社群草稿均可從成品庫預覽。這是依序執行，不能剪成三人同時工作；已經 SC-001／SC-002／SC-003 分別精確核准 brand/menu/social v1，R-001 succeeded、9 筆 ledger 簽章正常，成品庫三份均 Approved；不是正式錄影成品。
+- `accept: true` 的既有契約為列出全部 pinned 產出並選一份核准；卡片名稱不會自動綁定 producer。正式操作需辨識來源後逐份核准，不宣稱系統自動限定單份。
+- 新的修訂節點會建立自己的 producer 產出；只有重跑原 producer 節點才增加原 artifact 的版本。新版教學不宣稱尚未驗證的修訂行為；Coffee-kit 的真實修改與版本驗收仍完整保留在主展示範圍。
+- Captain 待辦實測可從外觀開啟正確的 SC-001 原生收件匣卡；工作中多人畫面仍待驗證。
+- 實際 encoder smoke 通過：HyperFrames `0.8.159`、H.264、960x540、12 秒。使用測試色塊素材，只證明編碼能力，不能代替真實圖片生成或 Coffee-kit 端到端驗證。
+- 多產出核准按鈕及版本連結重名已以最小標籤修正處理，包含既存卡片；48 項原生流程及 26 項 UI 標籤測試通過、獨立審查通過，4212 瀏覽器已驗證三張正式卡正常流轉。正式 take 尚未開始。
