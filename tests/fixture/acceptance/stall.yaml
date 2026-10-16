@@ -1,0 +1,11 @@
+# Offline fixture: the draft round never answers (STUB_TIMEOUT); the test's proxy then fails reads of the Task.
+schema: 2
+workflow: documents
+pin: { sha256: "63af62fcec510e63d89ab2dc3e746d2485b3e27c96982d6451627ac4bc455bbf" }
+topic: "fixture read failure STUB_TIMEOUT"
+start: { provider: null, params: {} }
+providers: [stub]
+approvals: { staffing: false }
+cards: []
+expect: { status: succeeded, artifacts: [] }
+budget: { wall_minutes: 1, max_rounds: 5 }

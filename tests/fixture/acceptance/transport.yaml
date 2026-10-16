@@ -1,4 +1,4 @@
-# Offline fixture: the card is left for a person while the test restarts Studio under the driver.
+# Offline fixture: the card is left for a person while reads of the Task fail; the driver must not cancel it.
 schema: 2
 workflow: accept-wait
 pin: { sha256: "5c176af4bcd70bfbc6773febfe8ce569ce62a2c640ecb89a5a8388fc15d01748" }

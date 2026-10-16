@@ -13,7 +13,6 @@ cards:
 expect:
   status: succeeded
   result: done
-  # PENDING(startup-output-fix-20261016): once that fix is on main, assert the competition text:
-  # artifacts: [{ file: startup-output/competition.md }]
-  artifacts: []
+  # the signed competition text the accept node writes into the run folder (startup-output-fix, 269c9c0)
+  artifacts: [{ file: startup-output/competition.md }]
 budget: { wall_minutes: 40, max_rounds: 10 }

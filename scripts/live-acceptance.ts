@@ -17,7 +17,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join, resolve } from "node:path";
 import { discoverInstance } from "../src/instance";
 import { decideCard, defHash, loadScenario, type Scenario } from "./acceptance/scenarios";
-import { modelProblems, nodeRecords, REAL } from "./acceptance/report";
+import { modelCalls, modelProblems, nodeRecords, providersToCheck, REAL } from "./acceptance/report";
+import { redactJSON, redactText } from "../src/secure";
 
 const REPO = resolve(import.meta.dir, "..");
 const EXIT = { PASS: 0, FAIL: 1, STOP: 2, BUDGET: 3, ERROR: 4 } as const;
@@ -58,7 +59,7 @@ class Studio {
   #session: string;
   constructor(readonly base: string, session: string, readonly data: string) { this.#session = session; }
   /** every text this script prints or writes passes here, so the session never leaves even by accident */
-  scrub(s: string) { return this.#session ? s.split(this.#session).join("[session]") : s; }
+  scrub(s: string) { return redactText(this.#session ? String(s).split(this.#session).join("[session]") : String(s)); }
   async get(path: string) { const r = await fetch(this.base + path, { headers: { "x-crew-session": this.#session }, signal: AbortSignal.timeout(60_000) }); const t = await r.text(); let body: any = null; try { body = JSON.parse(t); } catch { body = t; } return { status: r.status, body }; }
   async post(path: string, payload: unknown) { const r = await fetch(this.base + path, { method: "POST", headers: { "x-crew-session": this.#session, "content-type": "application/json" }, body: JSON.stringify(payload), signal: AbortSignal.timeout(60_000) }); const t = await r.text(); let body: any = null; try { body = JSON.parse(t); } catch { body = t; } return { status: r.status, body }; }
   /** the server's event stream (/api/stream): calls onEvent for each event, reconnecting until stopped */
@@ -84,23 +85,18 @@ class Studio {
 // ---------- one workflow ----------
 type CardRecord = { id: string; node: string; kind: string; decision: string; answered: string | null; reason: string | null; at: string };
 
-async function providersReady(st: Studio, s: Scenario, def: any, offline: boolean): Promise<{ checked: { provider: string; state: string }[]; stop: string | null }> {
-  // Which vendor runs an agent round is Studio's choice at run time (src/providers/policy.ts: the
-  // opposite of the host, then a configured fallback), not the chat setting. Unless the Start form
-  // names a provider, every vendor the workflow can use must be signed in; the report then records
-  // the provider/model each round really used.
-  const required = new Set(s.providers);
-  const agents = (def?.nodes ?? []).filter((n: any) => n.kind === "agent");
-  for (const n of agents) if (typeof n.provider === "string") required.add(n.provider);
-  if (agents.some((n: any) => typeof n.provider !== "string")) {
-    if (s.start.provider) required.add(s.start.provider);
-    else if (offline && (await st.get("/api/settings")).body?.provider === "stub") required.add("stub");
-    else { required.add("claude"); required.add("codex"); }
-  }
+async function providersReady(st: Studio, s: Scenario, def: any, offline: boolean, extra: { provider: string; why: string }[] = []): Promise<{ checked: { provider: string; state: string; why?: string[] }[]; stop: string | null }> {
+  // Which vendor runs a model call is the engine's pick at run time: node provider, then role
+  // provider, then the Start form's provider, then Studio's policy (opposite of the host, then a
+  // fallback; src/providers/policy.ts). Every vendor that pick can land on must be signed in.
+  const judged = new Set<string>(((await st.get("/api/checks")).body?.checks ?? []).filter((c: any) => c.kind === "judged").map((c: any) => c.ref));
+  const policy = offline && (await st.get("/api/settings")).body?.provider === "stub" ? ["stub"] : ["claude", "codex"];
+  const needs = [...s.providers.map((p) => ({ provider: p, why: "the scenario lists it" })), ...providersToCheck(def, s.start.provider, judged, policy), ...extra];
+  const required = new Map<string, string[]>(); for (const n of needs) required.set(n.provider, [...(required.get(n.provider) ?? []), n.why]);
   const checked: { provider: string; state: string }[] = []; const missing: string[] = [];
   let items: any[] | null = null;
-  for (const p of required) {
-    if (p === "stub") { if (offline) { checked.push({ provider: p, state: "offline fixture" }); continue; } checked.push({ provider: p, state: "not a real model" }); missing.push("stub is not a real model; live acceptance needs Claude or Codex"); continue; }
+  for (const p of required.keys()) {
+    if (p === "stub") { if (offline) { checked.push({ provider: p, state: "offline fixture", why: required.get(p) }); continue; } checked.push({ provider: p, state: "not a real model", why: required.get(p) }); missing.push("stub is not a real model; live acceptance needs Claude or Codex"); continue; }
     if (!REAL.has(p)) { checked.push({ provider: p, state: "not a vendor CLI" }); missing.push(`${p} is not a vendor CLI whose login this script can read`); continue; }
     items ??= (await st.get("/api/doctor")).body?.items ?? [];
     const it = items!.find((x: any) => x.id === p);
@@ -108,7 +104,7 @@ async function providersReady(st: Studio, s: Scenario, def: any, offline: boolea
     const name = p === "claude" ? "Claude" : "Codex";
     // what the Doctor reported, verbatim: an unreadable login is treated as not signed in, and says exactly why
     const doctor = it ? `Doctor item ${p}: authenticated=${JSON.stringify(it.authenticated ?? null)}, version=${JSON.stringify(it.version ?? null)}, detail=${JSON.stringify(String(it.detail ?? "").slice(0, 300))}` : `Doctor reported no ${p} item`;
-    checked.push({ provider: p, state, ...(state !== "signed in" ? { doctor } : {}) });
+    checked.push({ provider: p, state, why: required.get(p), ...(state !== "signed in" ? { doctor } : {}) });
     if (state === "signed in") continue;
     if (state === "not signed in") missing.push(`${name} is not signed in (${doctor}). Sign in from Studio's Doctor yourself, then run this again; this script never starts a sign-in`);
     else missing.push(`${name} login status could not be read (${state}; ${doctor}); treated as not signed in. Fix the ${p} CLI or sign in from Studio's Doctor, then run this again; this script never starts a sign-in`);
@@ -126,7 +122,9 @@ async function runOne(st: Studio, s: Scenario, a: Args, date: string) {
   const finish = (v: Verdict) => { report.verdict = v; report.endedAt = new Date().toISOString(); report.wallSeconds = Math.round((Date.now() - t0) / 100) / 10; return report; };
   const stopWith = (reason: string, card: string | null = null) => { report.stop = { reason, card }; return finish("STOP"); };
   // what the error path needs to know: a started Task, a request whose reply never came
-  const live = { id: null as string | null, starting: false, answering: null as string | null, terminal: false };
+  const live = { id: null as string | null, starting: false, answering: null as string | null, terminal: false, waiting: null as string | null };
+  // a card left for a person is never cancelled under them, on any path: budget, error or otherwise
+  const leftFor = () => live.waiting ? `${live.waiting} waits for a person; the Task is left for the captain, not cancelled` : null;
 
   const steps = async () => {
   const extra: Record<string, string> = a.params ? JSON.parse(readFileSync(a.params, "utf8")) : {};
@@ -149,6 +147,9 @@ async function runOne(st: Studio, s: Scenario, a: Args, date: string) {
   if (started.status === 409 && started.body?.code === "staffing_confirmation_required") {
     const plan = started.body.staffing;
     if (!s.approvals.staffing) return stopWith(`the Task needs a staffing confirmation (${(plan?.plan ?? []).map((r: any) => `${r.node}: ${r.provider}/${r.model}`).join(", ")}) and this scenario does not allow staffing approvals`);
+    // the staffing plan pins the picks: their vendors must be signed in before the captain-approved confirmation is sent
+    const staffed = await providersReady(st, s, wf.body.def, a.offline, (plan?.plan ?? []).filter((r: any) => r.provider).map((r: any) => ({ provider: r.provider, why: `staffing plan ${r.node}` })));
+    report.providers = staffed.checked; if (staffed.stop) { live.starting = false; return stopWith(staffed.stop); }
     report.staffing = { approved: plan.hash, plan: plan.plan };
     started = await st.post("/api/wruns", { ...body, staffingConfirm: plan.hash });
   }
@@ -168,13 +169,19 @@ async function runOne(st: Studio, s: Scenario, a: Args, date: string) {
   const handled = new Map<string, CardRecord>(); let view: any = null; let stoppedAt: string | null = null;
   try {
     for (;;) {
-      const r = await st.get(`/api/tasks/${id}`); if (r.status !== 200) { report.problems.push(`could not read ${id}: ${r.status}`); break; }
+      const r = await st.get(`/api/tasks/${id}`);
+      if (r.status !== 200) throw new Error(`could not read ${id}: HTTP ${r.status} ${String(r.body?.error ?? r.body).slice(0, 200)}`);
       view = r.body; live.terminal = TERMINAL.has(view.status); report.budget.rounds = (view.rounds ?? []).length;
-      if (report.budget.rounds > maxRounds) { report.budget.exceeded = `rounds: ${report.budget.rounds} > ${maxRounds}`; break; }
+      // a card left for a person: one the driver already left, or one the scenario says to leave
+      live.waiting = (view.cards ?? []).find((c: any) => c.status === "open" && (handled.get(c.id)?.decision === "wait" || s.cards.some((r) => r.action === "wait" && r.node === c.node && (!r.kind || r.kind === c.kind))))?.id ?? null;
+      if (report.budget.rounds > maxRounds) {
+        if (leftFor()) report.stop = { reason: `the round budget (${maxRounds}) ran out while ${leftFor()}`, card: live.waiting };
+        else report.budget.exceeded = `rounds: ${report.budget.rounds} > ${maxRounds}`;
+        break;
+      }
       if (Date.now() - t0 > wallMinutes * 60_000) {
         // a card left for a person is never cancelled under them: the Task stays for the captain
-        const waiting = (view.cards ?? []).find((c: any) => c.status === "open" && handled.get(c.id)?.decision === "wait");
-        if (waiting) report.stop = { reason: `the wall budget (${wallMinutes} min) ran out while ${waiting.id} (${waiting.node}) waits for a person; the Task is left for the captain, not cancelled`, card: waiting.id };
+        if (leftFor()) report.stop = { reason: `the wall budget (${wallMinutes} min) ran out while ${leftFor()}`, card: live.waiting };
         else report.budget.exceeded = `wall time: over ${wallMinutes} min`;
         break;
       }
@@ -182,7 +189,7 @@ async function runOne(st: Studio, s: Scenario, a: Args, date: string) {
       for (const c of (view.cards ?? []).filter((c: any) => c.status === "open")) {
         if (handled.has(c.id)) continue; // answered or left for a person: never answered twice
         if (s.expect.stop_at && c.node === s.expect.stop_at) { stoppedAt = c.node; handled.set(c.id, { id: c.id, node: c.node, kind: c.kind, decision: "expected stop", answered: null, reason: `reached ${c.node} as expected`, at: new Date().toISOString() }); break; }
-        const d = decideCard(s, c, view.def);
+        const d = decideCard(s, c, view.def, { openAuthWindows: await openWindows(st, view) });
         if (d.action === "stop") { handled.set(c.id, { id: c.id, node: c.node, kind: c.kind, decision: "stop", answered: null, reason: d.reason, at: new Date().toISOString() }); report.stop = { reason: d.reason, card: c.id }; break; }
         if (d.action === "wait") { handled.set(c.id, { id: c.id, node: c.node, kind: c.kind, decision: "wait", answered: null, reason: "left for a person on the board", at: new Date().toISOString() }); continue; }
         live.answering = c.id;
@@ -214,10 +221,10 @@ async function runOne(st: Studio, s: Scenario, a: Args, date: string) {
     report.nodes = nodeRecords(st.base, view, artifacts);
     // an ACCEPT Task's approved artifact lands in Studio's own local Library: the report marks it as an acceptance-run item
     const lib = view.ctx?.library; if (lib?.artifact) report.library.push({ artifact: lib.artifact, version: lib.version ?? null, href: lib.href ? `${st.base}/${lib.href}` : null, label: "acceptance run", task: id });
-    report.problems.push(...modelProblems(report.nodes, a.offline));
-    // what really ran, from the run's own rounds, next to what was checked before the start
-    report.usedProviders = [...new Set([...(view.rounds ?? []).filter((r: any) => r.actor?.kind === "agent" && r.actor.provider).map((r: any) => `${r.actor.provider}/${r.actor.model ?? "?"}`),
-      ...report.nodes.filter((n: any) => n.source === "artifact" && n.provider).map((n: any) => `${n.provider}/${n.model ?? "?"}`)])];
+    // what really ran: agent rounds, every node job (loop coordinators), judged-check votes, model hooks' artifacts
+    const calls = modelCalls(view, report.nodes);
+    report.problems.push(...modelProblems(report.nodes, a.offline, calls));
+    report.usedProviders = [...new Set(calls.map((c) => c.call))];
     for (const u of report.usedProviders) if (!report.providers.some((p: any) => p.provider === u.split("/")[0])) report.problems.push(`a round ran on ${u}, whose login was not checked before the start`);
   }
   if (report.stop) return finish("STOP");
@@ -245,25 +252,35 @@ async function runOne(st: Studio, s: Scenario, a: Args, date: string) {
     report.error = msg; report.problems.push(`error: ${msg}`);
     if (live.starting && !live.id) report.problems.push("the start request got no reply: a Task may have been created anyway; check the board for one with this ACCEPT brief");
     if (live.answering) report.problems.push(`the answer to ${live.answering} got no reply: it may have been applied on the server; check the card on the board`);
-    if (live.id && !live.terminal) report.cancel = await cancelTask(st, live.id, `live acceptance stopped on an error: ${msg.slice(0, 200)}`);
+    if (live.id && !live.terminal && leftFor()) report.problems.push(leftFor()!);
+    else if (live.id && !live.terminal) report.cancel = await cancelTask(st, live.id, `live acceptance stopped on an error: ${msg.slice(0, 200)}`);
     if (live.id) report.task = { ...(report.task ?? { id: live.id, href: `${st.base}/#/run/${live.id}` }) };
     return finish("ERROR");
   }
 }
 
+/** The captain's authorization windows open for this run's project: any of them may answer a later card. */
+async function openWindows(st: Studio, view: any): Promise<string[]> {
+  const r = await st.get("/api/policies/auth-window");
+  if (r.status !== 200 || !Array.isArray(r.body?.grants)) throw new Error(`could not read the authorization windows: HTTP ${r.status}`);
+  const all: any[] = r.body.grants, revoked = new Set(all.filter((g) => g.revoked).map((g) => g.id)), project = view.ctx?.project ?? view.params?.project ?? null;
+  return all.filter((g) => !g.revoked && !revoked.has(g.id) && Date.parse(g.until) > Date.now() && (!g.project || g.project === project)).map((g) => g.id);
+}
+
 /** Cancel a Task, retrying for a while: the error that led here may be a Studio restart. */
 async function cancelTask(st: Studio, id: string, reason: string, tries = 15) {
-  let last = "";
+  let last = "", attempts = 0;
   for (let i = 0; i < tries; i++) {
+    attempts++;
     try {
       const c = await st.post(`/api/wruns/${id}/cancel`, { reason });
-      if (c.status === 200) return { cancelled: true, attempts: i + 1, error: null };
+      if (c.status === 200) return { cancelled: true, attempts, error: null };
       last = `${c.status} ${st.scrub(String(c.body?.error ?? c.body)).slice(0, 300)}`;
       if (c.status !== 404 && c.status < 500) break; // refused for a reason (already ended): retrying will not help
     } catch (e: any) { last = st.scrub(String(e?.message ?? e)).slice(0, 300); }
-    await sleep(2000);
+    if (i < tries - 1) await sleep(2000);
   }
-  return { cancelled: false, attempts: tries, error: last };
+  return { cancelled: false, attempts, error: last };
 }
 
 // ---------- the report ----------
@@ -305,7 +322,7 @@ function writeReport(st: Studio, r: any) {
   const dir = join(st.data, "acceptance", r.date); mkdirSync(dir, { recursive: true, mode: 0o700 });
   let name = r.workflow; for (let i = 2; existsSync(join(dir, `${name}.md`)) || existsSync(join(dir, `${name}.json`)); i++) name = `${r.workflow}-${i}`;
   const md = join(dir, `${name}.md`), js = join(dir, `${name}.json`);
-  writeFileSync(js, st.scrub(JSON.stringify(r, null, 2)) + "\n", { mode: 0o600 }); writeFileSync(md, st.scrub(markdown(r)), { mode: 0o600 });
+  writeFileSync(js, st.scrub(JSON.stringify(redactJSON(r), null, 2)) + "\n", { mode: 0o600 }); writeFileSync(md, st.scrub(markdown(r)), { mode: 0o600 });
   return { md, js };
 }
 

@@ -32,14 +32,15 @@ Real models cost money. Run one workflow at a time unless you mean `--all`.
 - **Checks the definition pin**: the workflow Studio serves must have the sha256 the scenario was
   reviewed against (`bun scripts/acceptance/pin.ts <id>` prints it). A different definition stops the
   run before it starts; the run's own definition is checked again before every card.
-- **Checks login state** (GET `/api/doctor`) for every vendor the scenario lists. When the workflow
-  has agent nodes and the Start form names no provider, Studio picks the vendor at run time (the
-  opposite of the host, then a fallback), so every vendor it may pick, Claude and Codex, must be
-  signed in. A vendor that does not report
-  signed in stops the run before any Task starts. When the login cannot be read (the CLI fails, or
-  reports neither state), the run also stops, and the message and report say exactly which provider
-  and what the Doctor reported. The Studio stub provider is refused: live
-  acceptance needs real models.
+- **Checks login state** (GET `/api/doctor`) for every vendor the run may call. The engine picks a
+  vendor in this order: the node's own provider, then its role's provider, then the Start form's
+  provider, then Studio's policy (the opposite of the host, then a fallback). The script follows the
+  same order for agent nodes, loop coordinators and judged checks; where the policy decides, Claude
+  and Codex must both be signed in. When Studio shows a staffing plan, its picks are checked before
+  the confirmation is sent. A vendor that does not report signed in stops the run before any Task
+  starts. When the login cannot be read (the CLI fails, or reports neither state), the run also
+  stops, and the message and report say which provider, why it was needed, and what the Doctor
+  reported. The Studio stub provider is refused: live acceptance needs real models.
 - **Starts a Task** with exactly the body the board's Start form sends: `{text, workflow, params}`.
   The brief starts with `ACCEPT <date>`. If Studio asks for a staffing confirmation, the script
   confirms it only when the scenario allows staffing approvals.
@@ -56,17 +57,33 @@ Real models cost money. Run one workflow at a time unless you mean `--all`.
     bound to the same definition hash. Today that is the deliver acceptance cards'
     `approve-<producer>` options (their artifact goes to the local Library) and the startup
     competition's two cards;
+  - no authorization window is open for the run's project: an open window can answer a later
+    card without the captain, so that card would be no gate;
+  - the card's own node has no unreviewed card mode (`REVIEWED_CARD_MODES`), and the chosen option
+    sets off no card `effects` (such as `{policy: round_cap, add: 2}`) that are not allowlisted;
+  - the workflow has no lifecycle `hooks`;
   - every node the answer can reach before the next card runs only actions in `LOCAL_ACTIONS`.
-    This includes the card's own node when a hook raised the card. Any other action stops the run:
-    `pr.open`, `remote.ready`, `github.*`, `git.merge`, `firstmate.*`, `fileorg.apply`,
-    `pack-genesis-publish`, and any action not yet reviewed. No names are matched.
+    The walk follows every out-edge, of the card node and of every node after it. An edge's
+    blocking checks re-route its source as `fail`, and which outcome a model, a check or a card mode
+    produces is not known in advance. The card's own node counts when a hook raised the card. Any
+    other action stops the run: `pr.open`, `remote.ready`, `github.*`, `git.merge`, `firstmate.*`,
+    `fileorg.apply`, `pack-genesis-publish`, the coffee kit's paid generation (`coffee.image`,
+    `coffee.video`, which the captain directs), and any action not yet reviewed. No names are matched.
 - **Enforces a budget**: a maximum wall time and a maximum number of Rounds. A run over budget is
-  cancelled, so it spends nothing more. When the wall time runs out while a card waits for a person
-  (`action: wait`), the run stops instead and the Task is left for the captain.
-- **Never leaves a started Task unreported**: on a transport or script error, the report is still
-  written (verdict ERROR) and the Task is cancelled, retrying while Studio restarts. When a start or
-  answer request got no reply, the report warns that it may have been applied on the server.
-- **Records what really ran**: each node's provider and model come from its Rounds. A hook node that
+  cancelled, so it spends nothing more.
+- **Never leaves a started Task unreported**: on a transport or script error, or a failed read of the
+  Task, the report is still written (verdict ERROR) and the Task is cancelled, retrying while Studio
+  restarts. The report gives the real number of cancel attempts. When a start or answer request got
+  no reply, the report warns that it may have been applied on the server.
+- **Never cancels under a person**: when a card waits for a person (`action: wait`), neither budget
+  nor an error cancels the Task. The run stops, and the Task is left for the captain.
+- **Removes credentials** from everything it prints or writes. That covers the run error, node
+  errors, the brief, start params, error messages and stack traces. The session is removed, and so
+  is anything Studio's own redactor (`src/secure.ts`) treats as a credential.
+- **Records what really ran**: every model call the run made, from its own records. That means
+  agent Rounds, every job a node ran (loop coordinators included) and judged-check votes. Each
+  node's provider and model come from its Rounds. An agent node that ran Rounds with no provider
+  recorded fails the real-model check. A hook node that
   calls a model itself (`image.generate`, `coffee.image`) gets them from the provenance of the
   artifact it made. A model hook with no such record fails the real-model check.
 - **Writes a report** to `data/acceptance/<date>/<workflow>.md` and `.json` in the target Studio's
@@ -153,7 +170,7 @@ The stub-CLI acceptance harness (branch `workflow-acceptance-20261016`) is meant
 list. When this was written, that branch had not landed, so this format is the first definition.
 The coupling is:
 
-- the harness imports `loadScenario`, `decideCard(scenario, card, def)` and `defHash` from
+- the harness imports `loadScenario`, `decideCard(scenario, card, def, { openAuthWindows })` and `defHash` from
   `scripts/acceptance/scenarios.ts`;
 - it answers cards with the same rules;
 - it checks the same `expect`.

@@ -1,0 +1,12 @@
+# Offline fixture: the folder param (passed with --params) holds credential-shaped text; the run's own
+# error repeats it. Reports and output must show it removed.
+schema: 2
+workflow: file-organization
+pin: { sha256: "b10c52ada65891c8b1982f1b12783e48f51cfd345e4d66da2a2174415b8c8f3b" }
+topic: "fixture redaction"
+start: { provider: null, params: {}, required_params: [folder] }
+providers: []
+approvals: { staffing: false }
+cards: []
+expect: { status: succeeded, artifacts: [] }
+budget: { wall_minutes: 1, max_rounds: 5 }

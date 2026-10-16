@@ -23,16 +23,24 @@ export const ANSWERABLE_KINDS = new Set(["acceptance", "question", "plan"]);
 
 /**
  * Node actions (`do`) that stay inside this Mac and Studio's own data: intake, model rounds,
- * local renders, checks, exports into the run folder, Studio's local Library. Every other action
- * (pr.open, remote.ready, github.*, git.merge, lane.merge, firstmate.dispatch / launch /
- * project-*, fileorg.apply, pack-genesis-publish, staffing.activate, repo.cleanup, and any action
- * added later) counts as an external or irreversible effect until it is reviewed into this list.
+ * local renders, exports into the run folder, Studio's local Library. Every other action counts
+ * as an external, irreversible or captain-directed effect until it is reviewed into this list:
+ * pr.open, remote.ready, github.*, git.merge, lane.merge, firstmate.*, fileorg.apply,
+ * pack-genesis-publish, staffing.activate, repo.cleanup, the coffee kit's paid generation
+ * (coffee.image, coffee.video: the captain directs it), and any action added later.
  */
 export const LOCAL_ACTIONS = new Set([
   "deliver.intake", "deliver.round", "deliver.render", "doc.export", "image.generate", "library.publish",
-  "coffee.ready", "coffee.page-needed", "coffee.image-needed", "coffee.video-needed", "coffee.image", "coffee.video", "coffee.assemble", "coffee.library",
-  "fileorg.plan", "fileorg.discard", "intent.capture", "pack-genesis-init", "note",
+  "coffee.ready", "coffee.page-needed", "coffee.image-needed", "coffee.video-needed", "coffee.assemble", "coffee.library",
+  "fileorg.plan", "fileorg.discard", "intent.capture", "pack-genesis-init",
 ]);
+
+/** Card modes whose answer code was reviewed: it only records the choice, approves an artifact
+ *  into the local Library, or starts the workflow's own model rounds. Any other mode stops. */
+export const REVIEWED_CARD_MODES = new Set(["deliver-accept", "startup-choice", "startup-accept"]);
+
+/** Card `effects` (e.g. {policy: round_cap, add: 2}) the driver may set off: none yet. */
+export const ALLOWED_CARD_EFFECTS: { workflow: string; node: string; option: string }[] = [];
 
 /**
  * Captain-only cards the driver may answer on an ACCEPT Task: exact pairs, each bound to the
@@ -141,23 +149,29 @@ export function loadScenario(file: string): Scenario {
 }
 
 // ---------- the effect walk ----------
-const whenSet = (w: unknown) => typeof w === "string" ? w.split("|").map((x) => x.trim()) : null;
 /**
- * The first node the answer can reach before the next card whose action is not in LOCAL_ACTIONS,
- * or null. A card node's plain answer routes by the chosen option; a card raised by a hook, an
- * agent or a card mode may turn the choice into another outcome, so every edge out of it counts.
- * Past the first step every edge counts: which outcome a model or check produces is not known.
+ * Why answering `choice` on the card at `node` may set off an effect the driver must not, or null.
+ * The walk follows EVERY out-edge, from the card node and from every node after it: an edge's
+ * blocking checks re-route its source as "fail" (engine.route), and which outcome a model, a check
+ * or a card mode produces is not known in advance. It stops at the next card, which is the next
+ * gate (the caller refuses when an authorization window could answer that card instead).
+ * Also refused: the card's own action or unreviewed mode, card effects that are not allowlisted,
+ * and workflow hooks (they run checks at lifecycle points the walk does not review).
  */
-export function externalEffect(def: any, node: string, choice: string): { node: string; do: string } | null {
+export function externalEffect(def: any, node: string, choice: string, workflow = def?.id): { node: string; do: string } | null {
   const nodes = new Map<string, any>((def?.nodes ?? []).map((n: any) => [n.id, n]));
   const edges: any[] = (def?.edges ?? []).map((e: any) => Array.isArray(e) ? { from: e[0], to: e[1], when: e[2] } : e);
   const own = nodes.get(node);
   if (!own) return { node, do: "(node not in the definition)" };
+  if (Array.isArray(def?.hooks) && def.hooks.length) return { node: "(workflow hooks)", do: def.hooks.map((h: any) => `${h.at}: ${h.use}`).join(", ") };
   const localDo = (n: any) => !n.do || LOCAL_ACTIONS.has(n.do);
   if (!localDo(own)) return { node, do: own.do };
-  const plain = own.kind === "card" && !own.mode && !own.do && !own.args?.body_from;
-  const first = edges.filter((e) => e.from === node && (!plain || !whenSet(e.when) || whenSet(e.when)!.includes(choice))).map((e) => e.to);
-  const seen = new Set<string>(); const queue = [...first];
+  const mode = own.args?.mode ?? own.mode ?? null;
+  if (mode && !REVIEWED_CARD_MODES.has(mode)) return { node, do: `card mode ${mode} (answer code not reviewed)` };
+  // the engine applies node.card.effects[choice] once the card is answered (engine.carryAnswer)
+  const effect = own.card?.effects?.[choice];
+  if (effect && !ALLOWED_CARD_EFFECTS.some((a) => a.workflow === workflow && a.node === node && a.option === choice)) return { node, do: `card effect ${JSON.stringify(effect)}` };
+  const seen = new Set<string>(); const queue = edges.filter((e) => e.from === node).map((e) => e.to);
   while (queue.length) {
     const id = queue.shift()!; if (seen.has(id)) continue; seen.add(id);
     const n = nodes.get(id); if (!n) return { node: id, do: "(node not in the definition)" };
@@ -173,8 +187,12 @@ export type CardView = { id: string; node: string; kind: string; options?: { id:
 export type Decision = { action: "answer"; choice: string; note: string | null } | { action: "wait" } | { action: "stop"; reason: string };
 
 /** What the driver does with one open card of a run whose definition is `def`: answer it, leave it for a person, or stop. */
-export function decideCard(s: Scenario, c: CardView, def: any): Decision {
+/** What the driver knows about the run besides its definition. openAuthWindows: the ids of the
+ *  captain's authorization windows open for this run's project (GET /api/policies/auth-window). */
+export type RunContext = { openAuthWindows: string[] };
+export function decideCard(s: Scenario, c: CardView, def: any, run: RunContext): Decision {
   const stop = (reason: string): Decision => ({ action: "stop", reason: `${c.id} (${c.kind} on node ${c.node}): ${reason}` });
+  if (!run || !Array.isArray(run.openAuthWindows)) return stop("the caller did not say which authorization windows are open");
   const hash = defHash(def);
   if (def?.id !== s.workflow || hash !== s.pin.sha256) return stop(`the run's ${def?.id ?? "?"} definition (sha256 ${hash.slice(0, 12)}) is not the one this scenario pins (${s.pin.sha256.slice(0, 12)}); re-review the scenario`);
   const rule = s.cards.find((r) => r.node === c.node && (!r.kind || r.kind === c.kind));
@@ -189,7 +207,9 @@ export function decideCard(s: Scenario, c: CardView, def: any): Decision {
   if (!c.options.some((o) => o.id === rule.answer)) return stop(`has no option ${rule.answer} (it offers ${c.options.map((o) => o.id).join(", ")})`);
   if (c.captainOnly && !CAPTAIN_ONLY_ALLOW.some((a) => a.workflow === s.workflow && a.sha256 === hash && a.node === c.node && a.kind === c.kind && a.option === rule.answer))
     return stop(`captain-only, and (${s.workflow}, ${c.node}, ${c.kind}, ${rule.answer}) at this definition is not in CAPTAIN_ONLY_ALLOW`);
-  const effect = externalEffect(def, c.node, rule.answer!);
+  // an open window may answer the next card without the captain: that card is then no gate
+  if (run.openAuthWindows.length) return stop(`authorization window ${run.openAuthWindows.join(", ")} is open: a later card could be answered without the captain, so the walk cannot stop at it`);
+  const effect = externalEffect(def, c.node, rule.answer!, s.workflow);
   if (effect) return stop(`answering ${rule.answer} can reach ${effect.node} (${effect.do}) before another card: an external or irreversible effect`);
   return { action: "answer", choice: rule.answer!, note: rule.note ?? null };
 }

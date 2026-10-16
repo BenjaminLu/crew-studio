@@ -5,10 +5,13 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+import { createHmac, randomBytes } from "node:crypto";
 import { freePort, waitUp } from "./boot.mjs";
-import { loadScenario, decideCard, validateScenario, defHash } from "../scripts/acceptance/scenarios";
+import { loadScenario, decideCard, validateScenario, defHash, externalEffect, LOCAL_ACTIONS } from "../scripts/acceptance/scenarios";
+// no authorization window is open unless a case says so
+const decide = (s: any, c: any, d: any, w: string[] = []) => decideCard(s, c, d, { openAuthWindows: w });
 import { normalize } from "../src/runtime/defs";
-import { modelProblems, nodeRecords } from "../scripts/acceptance/report";
+import { modelCalls, modelProblems, nodeRecords, providersToCheck } from "../scripts/acceptance/report";
 
 let pass = 0, fail = 0;
 const ok = (c: unknown, name: string, extra = "") => { if (c) { pass++; console.log(`  ok    ${name}`); } else { fail++; console.log(`  FAIL  ${name} ${extra}`); } };
@@ -36,6 +39,10 @@ seed({ id: "accept-unsafe", name: "Acceptance unsafe fixture", nodes: [
   { id: "gate", kind: "card", label: "Merge it?", x: 1, y: 1, args: { card_kind: "merge" }, card: { options: [{ id: "merge", label: "Merge" }, { id: "close", label: "Close", hold: true }] } },
   { id: "done", kind: "hook", label: "Done", x: 2, y: 1 }, { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 2, y: 2 }],
   edges: [["gate", "done", "merge"], ["gate", "closed", "close"]] });
+seed({ id: "accept-two", name: "Acceptance two-card fixture", nodes: [
+  { id: "ask", kind: "card", label: "Go ahead?", x: 1, y: 1, card: { options: [{ id: "continue", label: "Continue" }] } },
+  { id: "hold", kind: "card", label: "A person decides", x: 2, y: 1, card: { options: [{ id: "continue", label: "Continue" }] } },
+  { id: "done", kind: "hook", label: "Done", x: 3, y: 1 }], edges: [["ask", "hold", "continue"], ["hold", "done", "continue"]] });
 seed({ id: "accept-wait", name: "Acceptance wait fixture", nodes: [
   { id: "hold", kind: "card", label: "A person decides", x: 1, y: 1, card: { options: [{ id: "continue", label: "Continue" }] } },
   { id: "done", kind: "hook", label: "Done", x: 2, y: 1 }], edges: [["hold", "done", "continue"]] });
@@ -49,12 +56,31 @@ for (const k of ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY
 const boot = () => spawn("bun", ["src/server.ts"], { cwd: repo, env, stdio: ["ignore", "pipe", "pipe"] });
 let app = boot();
 const api = async (path: string) => (await fetch(base + path, { headers: { "x-crew-session": token } })).json();
+const post = async (path: string, body: unknown) => (await fetch(base + path, { method: "POST", headers: { "x-crew-session": token, "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+/**
+ * A registered Studio instance that forwards to the real one but fails every read of a Task after
+ * the first `okReads`: the driver finds it exactly as it finds Studio (instance record + proof).
+ */
+async function faultyStudio(okReads: number) {
+  const boot = randomBytes(24).toString("hex"); let reads = 0;
+  const srv = Bun.serve({ port: 0, hostname: "127.0.0.1", idleTimeout: 0, async fetch(req) {
+    const u = new URL(req.url);
+    if (u.pathname === "/api/instance") return Response.json({ pid: process.pid, boot, proof: createHmac("sha256", token).update(`crew-launch-v1\0${boot}\0${u.searchParams.get("challenge")}`).digest("hex") });
+    if (req.method === "GET" && /^\/api\/tasks\/R-\d+$/.test(u.pathname) && ++reads > okReads) return Response.json({ error: "fixture proxy: this read fails" }, { status: 503 });
+    const h = new Headers(req.headers); h.delete("host"); h.delete("content-length");
+    const r = await fetch(base + u.pathname + u.search, { method: req.method, headers: h, body: req.method === "GET" ? undefined : await req.text() });
+    return new Response(r.body, { status: r.status, headers: r.headers });
+  } });
+  const rec = join(runtimeDir, `${boot}.json`), key = join(runtimeDir, `${boot}.key`);
+  writeFileSync(key, token, { mode: 0o600 }); writeFileSync(rec, JSON.stringify({ schema: 1, boot, pid: process.pid, origin: `http://127.0.0.1:${srv.port}`, data }), { mode: 0o600 });
+  return { base: `http://127.0.0.1:${srv.port}`, stop: () => { srv.stop(true); rmSync(rec, { force: true }); rmSync(key, { force: true }); } };
+}
 
 // the script never receives the session in its environment: it finds it the way `open` does
 const scriptEnv = (): any => { const e: any = { ...env }; delete e.CREW_SESSION_TOKEN; delete e.CREW_DATA; delete e.CREW_PORT; return e; };
 const outputs: string[] = [];
-async function accept(args: string[]) {
-  const p = Bun.spawn(["bun", "scripts/live-acceptance.ts", "--base", base, "--offline-fixture", ...args], { cwd: repo, env: scriptEnv(), stdout: "pipe", stderr: "pipe" });
+async function accept(args: string[], at = base) {
+  const p = Bun.spawn(["bun", "scripts/live-acceptance.ts", "--base", at, "--offline-fixture", ...args], { cwd: repo, env: scriptEnv(), stdout: "pipe", stderr: "pipe" });
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]); const code = await p.exited;
   outputs.push(out, err);
   const md = /^report: (.+\.md)$/m.exec(out)?.[1] ?? null, js = /^json: (.+\.json)$/m.exec(out)?.[1] ?? null;
@@ -86,43 +112,84 @@ try {
   // 1: the remote-ready card (approve-name pushes; rebase rebuilds) passes no rule
   const rr = scen(gh, [{ node: "remote-ready", kind: "question", answer: "approve-name" }, { node: "remote-ready", kind: "plan", answer: "rebase" }]);
   const rrCard = card({ node: "remote-ready", options: [{ id: "approve-name" }, { id: "rebase" }], captainOnly: true });
-  ok(decideCard(rr, rrCard, gh).action === "stop" && decideCard(rr, { ...rrCard, captainOnly: false }, gh).action === "stop" && decideCard(rr, { ...rrCard, kind: "plan", captainOnly: false }, gh).action === "stop" && /remote\.ready/.test((decideCard(rr, { ...rrCard, captainOnly: false }, gh) as any).reason),
-    "1: a card on github-review's remote-ready node is never answered: its own action (remote.ready) is external", JSON.stringify(decideCard(rr, { ...rrCard, captainOnly: false }, gh)));
+  ok(decide(rr, rrCard, gh).action === "stop" && decide(rr, { ...rrCard, captainOnly: false }, gh).action === "stop" && decide(rr, { ...rrCard, kind: "plan", captainOnly: false }, gh).action === "stop" && /remote\.ready/.test((decide(rr, { ...rrCard, captainOnly: false }, gh) as any).reason),
+    "1: a card on github-review's remote-ready node is never answered: its own action (remote.ready) is external", JSON.stringify(decide(rr, { ...rrCard, captainOnly: false }, gh)));
   // 2: dispatch, step-back continue, budget extend cannot be allowed; a dispatch-like answer that reaches pr.open stops
   ok(/approvals has only staffing/.test(refusedBy(() => scen(gh, [], { approvals: { staffing: false, dispatch: true } }))) && /kind acceptance, question or plan/.test(refusedBy(() => scen(gh, [{ node: "dispatch", kind: "dispatch", answer: "dispatch" }])))
     && /kind acceptance, question or plan/.test(refusedBy(() => scen(gh, [{ node: "step-back", kind: "step-back", answer: "continue" }]))) && /kind acceptance, question or plan/.test(refusedBy(() => scen(gh, [{ node: "budget", answer: "extend" }]))),
     "2: dispatch approvals, step-back continue and budget extend cannot be written into a scenario");
   const disguised = scen(gh, [{ node: "dispatch", kind: "question", answer: "dispatch" }, { node: "step-back", kind: "question", answer: "continue" }]);
-  const dd = decideCard(disguised, card({ node: "dispatch", options: [{ id: "dispatch" }] }), gh) as any, sb = decideCard(disguised, card({ node: "step-back", options: [{ id: "continue" }] }), gh) as any;
+  const dd = decide(disguised, card({ node: "dispatch", options: [{ id: "dispatch" }] }), gh) as any, sb = decide(disguised, card({ node: "step-back", options: [{ id: "continue" }] }), gh) as any;
   ok(dd.action === "stop" && /pr-open \(pr\.open\)/.test(dd.reason) && sb.action === "stop" && /pr\.open|remote\.ready/.test(sb.reason), "2: a question-kind card on dispatch or step-back still stops: the walk reaches pr.open before another card", `${dd.reason} | ${sb.reason}`);
   // 3: one-way doors on either field
   const pass = loadScenario(join(import.meta.dir, "fixture/acceptance/accept-pass.yaml")), passDef = await defOf("accept-pass");
-  ok(decideCard(pass, card({}), passDef).action === "answer" && decideCard(pass, card({ door: "one-way" }), passDef).action === "stop" && decideCard(pass, card({ detail: { door: { kind: "one-way" } } }), passDef).action === "stop" && decideCard(pass, card({ confirmDoor: true }), passDef).action === "stop",
+  ok(decide(pass, card({}), passDef).action === "answer" && decide(pass, card({ door: "one-way" }), passDef).action === "stop" && decide(pass, card({ detail: { door: { kind: "one-way" } } }), passDef).action === "stop" && decide(pass, card({ confirmDoor: true }), passDef).action === "stop",
     "3: a one-way door stops whether it is on door, detail.door.kind or confirmDoor");
   // 4: no names: an innocent-looking node with an external action stops; any action not reviewed as local stops
   const syn = (doName: string, nodeName: string) => ({ id: "syn", kind: "x", roles: [], params: {}, nodes: [{ id: "ask", kind: "card", card: { options: [{ id: "continue" }] } }, { id: nodeName, kind: "hook", do: doName }, { id: "done", kind: "hook" }], edges: [{ from: "ask", to: nodeName, when: "continue" }, { from: nodeName, to: "done" }] });
   const names = ["tidy", "上線", "合併", "發布", "推送", "部署", "openPR", "createPr", "pull-request", "upload", "send", "submit", "commit", "tag", "rollout", "land", "promote-now"];
   const effects = ["fileorg.apply", "pr.open", "github.comment", "git.merge", "firstmate.dispatch", "pack-genesis-publish", "send.mail"];
-  const allStop = names.every((n, i) => { const d = syn(effects[i % effects.length], n); return decideCard(scen(d, [{ node: "ask", kind: "question", answer: "continue" }]), card({ options: [{ id: "continue" }] }), d).action === "stop"; });
-  const localOk = (() => { const d = syn("deliver.round", "x"); return decideCard(scen(d, [{ node: "ask", kind: "question", answer: "continue" }]), card({ options: [{ id: "continue" }] }), d).action === "answer"; })();
+  const allStop = names.every((n, i) => { const d = syn(effects[i % effects.length], n); return decide(scen(d, [{ node: "ask", kind: "question", answer: "continue" }]), card({ options: [{ id: "continue" }] }), d).action === "stop"; });
+  const localOk = (() => { const d = syn("deliver.round", "x"); return decide(scen(d, [{ node: "ask", kind: "question", answer: "continue" }]), card({ options: [{ id: "continue" }] }), d).action === "answer"; })();
   ok(allStop && localOk, "4: the effect walk reads node actions, not names: every unreviewed or external action stops, a reviewed local one passes");
   // 5: unknown kinds and captain-only cards
   const dsc = scen(docs, [{ node: "accept", kind: "acceptance", answer: "approve-draft" }]);
   const acc = card({ node: "accept", kind: "acceptance", options: [{ id: "approve-draft" }, { id: "changes" }, { id: "reject" }], captainOnly: true });
-  ok(["permission", "round-budget", "future-kind"].every((k) => decideCard(dsc, { ...acc, kind: k }, docs).action === "stop") && /kind acceptance, question or plan/.test(refusedBy(() => scen(docs, [{ node: "accept", kind: "permission", answer: "approve-draft" }]))),
+  ok(["permission", "round-budget", "future-kind"].every((k) => decide(dsc, { ...acc, kind: k }, docs).action === "stop") && /kind acceptance, question or plan/.test(refusedBy(() => scen(docs, [{ node: "accept", kind: "permission", answer: "approve-draft" }]))),
     "5: permission, round-budget and unknown kinds are never answered, and a rule cannot name them");
-  ok(decideCard(dsc, acc, docs).action === "answer" && decideCard(scen(docs, [{ node: "accept", kind: "acceptance", answer: "reject" }]), acc, docs).action === "stop" && /unknown field captain_only/.test(refusedBy(() => scen(docs, [{ node: "accept", kind: "acceptance", answer: "approve-draft", captain_only: true }]))),
+  ok(decide(dsc, acc, docs).action === "answer" && decide(scen(docs, [{ node: "accept", kind: "acceptance", answer: "reject" }]), acc, docs).action === "stop" && /unknown field captain_only/.test(refusedBy(() => scen(docs, [{ node: "accept", kind: "acceptance", answer: "approve-draft", captain_only: true }]))),
     "5: a captain-only card is answered only as an exact allowlisted (workflow, node, kind, option) pair; a scenario cannot allow one itself");
   // A: the deliver acceptance cards offer approve-<producer>; the shipped scenarios answer exactly those, allowlisted at their pin
   const shipped = await Promise.all(["documents", "images", "video", "web-prototype"].map(async (w) => { const sc = loadScenario(join(repo, "tests/acceptance", `${w}.yaml`)); const d = await defOf(w);
     const producers = w === "web-prototype" ? ["design-a", "design-b"] : ["draft"]; const c = card({ node: "accept", kind: "acceptance", captainOnly: true, options: [...producers.map((p) => ({ id: `approve-${p}` })), { id: "changes" }, { id: "reject" }] });
-    return decideCard(sc, c, d).action === "answer" && decideCard(sc, { ...c, options: [{ id: "approved" }] }, d).action === "stop" ? null : w; }));
-  const web = await defOf("web-prototype"), webB = decideCard(scen(web, [{ node: "accept", kind: "acceptance", answer: "approve-design-b" }]), card({ node: "accept", kind: "acceptance", captainOnly: true, options: [{ id: "approve-design-a" }, { id: "approve-design-b" }] }), web);
+    return decide(sc, c, d).action === "answer" && decide(sc, { ...c, options: [{ id: "approved" }] }, d).action === "stop" ? null : w; }));
+  const web = await defOf("web-prototype"), webB = decide(scen(web, [{ node: "accept", kind: "acceptance", answer: "approve-design-b" }]), card({ node: "accept", kind: "acceptance", captainOnly: true, options: [{ id: "approve-design-a" }, { id: "approve-design-b" }] }), web);
   ok(shipped.every((x) => !x) && webB.action === "answer", "A: the shipped documents/images/video/web-prototype scenarios answer the approve-<producer> option their captain-only card really offers", shipped.filter(Boolean).join(","));
   const edited = { ...docs, nodes: docs.nodes.map((n: any) => n.id === "library" ? { ...n, do: "pr.open" } : n) };
-  ok(decideCard(dsc, acc, edited).action === "stop", "5: a changed definition voids the pin and the allowlist: the same card stops");
+  ok(decide(dsc, acc, edited).action === "stop", "5: a changed definition voids the pin and the allowlist: the same card stops");
   // 6: no options
-  ok(decideCard(pass, card({ options: undefined }), passDef).action === "stop" && decideCard(pass, card({ options: [] }), passDef).action === "stop", "6: a card without options is never answered");
+  ok(decide(pass, card({ options: undefined }), passDef).action === "stop" && decide(pass, card({ options: [] }), passDef).action === "stop", "6: a card without options is never answered");
+
+  // --- round 4 ---
+  const N = (id: string, kind: string, extra: any = {}) => ({ id, kind, label: id, ...extra });
+  const wq = (def: any) => scen(def, [{ node: "ask", kind: "question", answer: "go" }]);
+  const qc = card({ options: [{ id: "go" }, { id: "no" }] });
+  // F1: an edge's blocking checks re-route its source as "fail": every out-edge counts, at every step
+  const f1 = { id: "f1", kind: "x", roles: [], params: {}, nodes: [N("ask", "card"), N("ok", "hook"), N("pub", "hook", { do: "pr.open" })], edges: [{ from: "ask", to: "ok", when: "go", checks: [{ use: "core/x" }] }, { from: "ask", to: "pub", when: "fail" }] };
+  const f1b = { id: "f1b", kind: "x", roles: [], params: {}, nodes: [N("ask", "card"), N("a", "hook"), N("ok", "hook"), N("pub", "hook", { do: "git.merge" })], edges: [{ from: "ask", to: "a", when: "go" }, { from: "a", to: "ok", when: "ok", checks: [{ use: "core/x" }] }, { from: "a", to: "pub", when: "fail" }] };
+  ok(decide(wq(f1), qc, f1).action === "stop" && decide(wq(f1b), qc, f1b).action === "stop", "F1: an edge whose checks can re-route the card as fail into pr.open stops, at the first step and later ones", JSON.stringify(decide(wq(f1), qc, f1)));
+  // F7: card effects, workflow hooks, unreviewed card modes, open authorization windows
+  const eff = { id: "eff", kind: "x", roles: [], params: {}, nodes: [N("ask", "card", { card: { options: [{ id: "go" }], effects: { go: { policy: "round_cap", add: 2 } } } }), N("done", "hook")], edges: [{ from: "ask", to: "done" }] };
+  const hk = { id: "hk", kind: "x", roles: [], params: {}, hooks: [{ at: "after:ask", use: "core/x" }], nodes: [N("ask", "card"), N("done", "hook")], edges: [{ from: "ask", to: "done" }] };
+  const md = { id: "md", kind: "x", roles: [], params: {}, nodes: [N("ask", "card", { args: { mode: "pack-promote" } }), N("done", "hook")], edges: [{ from: "ask", to: "done" }] };
+  const plain = { id: "pl", kind: "x", roles: [], params: {}, nodes: [N("ask", "card"), N("done", "hook")], edges: [{ from: "ask", to: "done" }] };
+  ok(/card effect/.test((decide(wq(eff), qc, eff) as any).reason) && /hooks/.test((decide(wq(hk), qc, hk) as any).reason) && /card mode pack-promote/.test((decide(wq(md), qc, md) as any).reason) && decide(wq(plain), qc, plain).action === "answer",
+    "F7: a card effect (round_cap +2), workflow hooks and an unreviewed card mode stop; a plain card passes");
+  ok(/authorization window G-1 is open/.test((decide(wq(plain), qc, plain, ["G-1"]) as any).reason) && decideCard(wq(plain), qc, plain, undefined as any).action === "stop", "F7: an open authorization window stops (the next card is then no gate); a caller that says nothing about windows stops too");
+  // F8: the coffee kit's paid generation and the unregistered note action are not local
+  ok(!LOCAL_ACTIONS.has("coffee.image") && !LOCAL_ACTIONS.has("coffee.video") && !LOCAL_ACTIONS.has("note") && externalEffect({ id: "c", nodes: [N("ask", "card"), N("img", "hook", { do: "coffee.image" })], edges: [{ from: "ask", to: "img" }] }, "ask", "go")?.do === "coffee.image",
+    "F8: coffee.image, coffee.video and note are not in LOCAL_ACTIONS; a walk reaching coffee.image stops");
+  // F10: decideCard holds on its own when a caller skips validateScenario
+  const plain2 = { ...plain, nodes: [...plain.nodes, N("other", "card")] };
+  const raw: any = { schema: 2, workflow: "pl", pin: { sha256: defHash(plain2) }, cards: [{ node: "ask", kind: "merge", action: "answer", answer: "go" }, { node: "other", action: "answer", answer: "go" }], approvals: { staffing: false } };
+  const r10a = decide(raw, card({ kind: "merge", options: [{ id: "go" }] }), plain2) as any, r10b = decide(raw, card({ node: "other", kind: "question", options: [{ id: "go" }] }), plain2) as any;
+  ok(r10a.action === "stop" && /not answerable/.test(r10a.reason) && r10b.action === "stop" && /not answerable/.test(r10b.reason),
+    "F10: an unvalidated rule naming kind merge, or no kind at all, is still refused by decideCard");
+  // F5: rounds with no provider are flagged; loop coordinator jobs and judged-check votes count as model calls
+  const f5view = { id: "R-950", def: { nodes: [N("draft", "agent"), N("fix", "loop")] }, nodes: { draft: { state: "passed" }, fix: { state: "passed", data: { jobs: [{ id: "j1", provider: "codex", model: "gpt-x" }] } } },
+    rounds: [{ id: "R-950/draft/1", node: "draft", actor: { kind: "agent", provider: null, model: null }, outcome: "passed", startedAt: null, endedAt: null }], ledger: [{ check: "core/judge", seq: 4, votes: [{ by: "j", provider: "stub", model: "no model", verdict: "pass" }] }], ctx: {} };
+  const f5nodes = nodeRecords(base, f5view), f5calls = modelCalls(f5view, f5nodes), f5p = modelProblems(f5nodes, false, f5calls);
+  ok(f5calls.some((c) => c.call === "codex/gpt-x" && /job fix/.test(c.from)) && f5calls.some((c) => c.call === "stub/no model" && /vote core\/judge/.test(c.from)) && f5p.some((p) => /draft ran 1 round\(s\) with no provider/.test(p)) && f5p.some((p) => /vote core\/judge#4 ran on stub\/no model, not a real model/.test(p)),
+    "F5: an agent round with no provider is flagged; loop coordinator jobs and judged-check votes are model calls and must be real", JSON.stringify(f5p));
+  // F6: the login check follows the engine's pick order
+  const startup = await defOf("startup-recursion"), ghDef = await defOf("github-review");
+  const sp6 = providersToCheck(startup, null, new Set(), ["claude", "codex"]);
+  ok(sp6.some((n) => n.provider === "claude" && /role founder/.test(n.why)) && sp6.some((n) => n.provider === "codex" && /role judge/.test(n.why)) && !sp6.some((n) => /policy/.test(n.why)), "F6: role providers (founder claude, judge codex) are what the startup workflow checks", JSON.stringify(sp6.slice(0, 3)));
+  const gh6 = providersToCheck(ghDef, "codex", new Set(), ["claude", "codex"]), jd6 = providersToCheck({ nodes: [N("c", "check", { checks: [{ use: "core/j" }, { use: "core/k", provider: "claude" }] })], edges: [] }, null, new Set(["core/j", "core/k"]), ["claude", "codex"]);
+  const nd6 = providersToCheck({ roles: [{ id: "w", provider: "codex" }], nodes: [N("a", "agent", { role: "w", provider: "claude" }), N("l", "loop", { args: { coordinator: "w" } })], edges: [] }, "stub", new Set(), ["claude", "codex"]);
+  ok(gh6.every((n) => n.provider === "codex") && gh6.some((n) => /loop .* coordinator/.test(n.why)) && jd6.filter((n) => /core\/j/.test(n.why)).map((n) => n.provider).join() === "claude,codex" && jd6.some((n) => n.provider === "claude" && /core\/k/.test(n.why))
+    && nd6[0].provider === "claude" && /node provider/.test(nd6[0].why) && nd6[1].provider === "codex" && /role w/.test(nd6[1].why),
+    "F6: node provider, then role, then Start form, then policy; loop coordinators and judged checks are included", JSON.stringify({ gh6: gh6.slice(0, 2), jd6, nd6 }));
 
   // --- hook nodes that call a model: provider/model from the artifact they made, and required ---
   const imagesDef = await defOf("images");
@@ -213,16 +280,54 @@ try {
 
   // 7: a transport error after the start: the report is still written and the Task cancelled (Studio restarts under the driver)
   const tBefore = (await api("/api/tasks")).tasks.map((t: any) => t.id);
-  const tp = Bun.spawn(["bun", "scripts/live-acceptance.ts", "--base", base, "--offline-fixture", ...fx("transport")], { cwd: repo, env: scriptEnv(), stdout: "pipe", stderr: "pipe" });
+  const tp = Bun.spawn(["bun", "scripts/live-acceptance.ts", "--base", base, "--offline-fixture", ...fx("stall")], { cwd: repo, env: scriptEnv(), stdout: "pipe", stderr: "pipe" });
   let tid: string | null = null;
-  for (let i = 0; i < 200 && !tid; i++) { await Bun.sleep(100); const t = (await api("/api/tasks")).tasks.find((x: any) => !tBefore.includes(x.id) && x.status === "needs-you"); tid = t?.id ?? null; }
+  for (let i = 0; i < 200 && !tid; i++) { await Bun.sleep(100); const t = (await api("/api/tasks")).tasks.find((x: any) => !tBefore.includes(x.id) && x.status === "running"); tid = t?.id ?? null; }
   app.kill("SIGKILL"); await new Promise((r) => app.once("exit", r));
-  await Bun.sleep(5000); app = boot(); // down longer than the driver's 3 s poll, so a request really fails await waitUp(base, app);
+  await Bun.sleep(5000); app = boot(); await waitUp(base, app); // down longer than the driver's 3 s poll, so a request really fails
   const [t1, t2] = await Promise.all([new Response(tp.stdout).text(), new Response(tp.stderr).text()]); const tc = await tp.exited; outputs.push(t1, t2);
   const tjs = /^json: (.+\.json)$/m.exec(t1)?.[1]; const tr = tjs && existsSync(tjs) ? JSON.parse(readFileSync(tjs, "utf8")) : null; if (tjs && existsSync(tjs)) outputs.push(readFileSync(tjs, "utf8"));
   const tTask = tid ? await api(`/api/tasks/${tid}`) : null;
   ok(tid && tc === 4 && tr?.verdict === "ERROR" && tr?.task?.id === tid && /error:/.test((tr?.problems ?? []).join(" ")), "7: a transport error after the start still writes a report (verdict ERROR, exit 4)", `${tid} ${tc} ${t1} ${t2}`);
   ok(tr?.cancel?.cancelled === true && tTask?.status === "cancelled", "7: the started Task is cancelled once Studio answers again", `${JSON.stringify(tr?.cancel)} ${tTask?.status}`);
+
+  // F4: the real number of cancel attempts
+  ok(w.report?.cancel?.attempts === 1 && w.report?.cancel?.cancelled === true, "F4: the report gives the real number of cancel attempts", JSON.stringify(w.report?.cancel));
+
+  // F9: the round budget never cancels a Task with a card left for a person
+  const tw = await accept(fx("two-wait"));
+  const twTask = tw.report?.task ? await api(`/api/tasks/${tw.report.task.id}`) : null;
+  ok(tw.code === 2 && /round budget \(1\) ran out while SC-\d+ waits for a person/.test(tw.report?.stop?.reason ?? "") && !tw.report?.budget?.cancelled && !tw.report?.cancel && twTask?.task?.status === "needs-you",
+    "F9: when the round budget runs out on a card left for a person, the driver stops and leaves the Task", `${tw.code} ${JSON.stringify(tw.report?.stop)} ${twTask?.task?.status}`);
+
+  // F2: a failed read of the Task is an error: verdict ERROR, the Task cancelled
+  const fs1 = await faultyStudio(2);
+  const rf = await accept(fx("stall"), fs1.base); fs1.stop();
+  const rfTask = rf.report?.task ? await api(`/api/tasks/${rf.report.task.id}`) : null;
+  ok(rf.code === 4 && rf.report?.verdict === "ERROR" && /HTTP 503/.test(rf.report?.error ?? "") && rf.report?.cancel?.cancelled === true && rfTask?.status === "cancelled",
+    "F2: a non-200 read of the Task is an ERROR (exit 4) and the running Task is cancelled", `${rf.code} ${rf.report?.verdict} ${rf.report?.error} ${JSON.stringify(rf.report?.cancel)} ${rfTask?.status} ${rf.err}`);
+  // F9: ... and the error path leaves a card that waits for a person alone
+  const fs2 = await faultyStudio(2);
+  const re = await accept(fx("transport"), fs2.base); fs2.stop();
+  const reTask = re.report?.task ? await api(`/api/tasks/${re.report.task.id}`) : null;
+  ok(re.code === 4 && re.report?.verdict === "ERROR" && !re.report?.cancel && (re.report?.problems ?? []).some((p: string) => /waits for a person; the Task is left for the captain/.test(p)) && reTask?.task?.status === "needs-you",
+    "F9: the error path does not cancel a Task whose card waits for a person", `${re.code} ${JSON.stringify(re.report?.problems)} ${reTask?.task?.status}`);
+
+  // F7: an open authorization window stops the driver before it answers
+  const nonce = (await api("/api/policies/auth-window/confirm")).confirm;
+  const grant = await post("/api/policies/auth-window", { confirm: nonce, kinds: ["question"], until: new Date(Date.now() + 3600_000).toISOString(), project: null });
+  const aw = await accept(fx("accept-pass"));
+  await post("/api/policies/auth-window", { revoke: grant.id });
+  ok(grant.id && aw.code === 2 && new RegExp(`authorization window ${grant.id} is open`).test(aw.report?.stop?.reason ?? "") && aw.report?.cards?.every((c: any) => c.decision !== "answered"),
+    "F7: with an authorization window open on the run, the driver stops instead of answering", `${JSON.stringify(grant).slice(0, 200)} ${aw.code} ${aw.report?.stop?.reason}`);
+
+  // F3: credential-shaped text in a run error, the brief and the start params never reaches a report or the output
+  const ghp = "ghp_" + "Ab1".repeat(10), sk = "sk-" + "Zz9".repeat(8);
+  const pf = join(root, "redact-params.json"); writeFileSync(pf, JSON.stringify({ folder: `/nonexistent-acceptance/${ghp}` }));
+  const rdx = await accept([...fx("redact"), "--params", pf, "--topic", `redact ${sk} topic`]);
+  const rdAll = rdx.out + rdx.err + rdx.mdText + (rdx.js && existsSync(rdx.js) ? readFileSync(rdx.js, "utf8") : "");
+  ok(rdx.report && /\[credential removed\]/.test(rdx.report?.run?.error ?? "") && /\[credential removed\]/.test(rdx.mdText) && !rdAll.includes(ghp) && !rdAll.includes(sk),
+    "F3: ghp_ and sk- tokens in a run error, the brief and the start params are removed from the report and the output", `${rdx.code} ${rdx.report?.run?.error} ${rdx.err}`);
 
   // --- no instance: a clear refusal, no sign-in, nothing printed that matters ---
   const other = await freePort();

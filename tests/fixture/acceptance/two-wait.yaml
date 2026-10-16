@@ -1,0 +1,14 @@
+# Offline fixture: the first card is answered, the second is left for a person; the round budget
+# then runs out, and the driver stops and leaves the Task for the captain instead of cancelling it.
+schema: 2
+workflow: accept-two
+pin: { sha256: "2fc799999f4fb4cebb12ac1f9ad7f450a437aff280c1bf2c00f95c54a889bfd1" }
+topic: "fixture round budget with a waiting card"
+start: { provider: null, params: {} }
+providers: []
+approvals: { staffing: false }
+cards:
+  - { node: ask, kind: question, answer: continue }
+  - { node: hold, action: wait }
+expect: { status: succeeded, artifacts: [] }
+budget: { wall_minutes: 2, max_rounds: 1 }
