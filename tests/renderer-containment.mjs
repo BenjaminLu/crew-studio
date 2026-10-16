@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { inflateSync } from 'node:zlib';
@@ -37,12 +37,13 @@ const firstPixel = p => { const b=readFileSync(p), chunks=[];let pos=8,width=0,c
 const script=process.env.CREW_TEST_RENDERER_SCRIPT || join(root,'src/render/render.mjs');
 for(const mode of ['crop','stills','film','page']){
  const out=join(tmp,mode==='stills'?'stills':`${mode}.${mode==='film'?'mp4':'png'}`);
- const args=[script,mode,...(mode==='page'?['--root',input,'--page','film.html']:['--html',join(input,'film.html')]),'--out',out,'--width','200',...(mode==='crop'?['--selector','#stage']:mode==='stills'?['--times','0']:mode==='film'?['--fps','1','--workers','1']:[])];
+ const args=[script,mode,...(mode==='page'?['--root',input,'--page','film.html']:['--html',join(input,'film.html')]),'--out',out,'--width','200',...(mode==='crop'?['--selector','#stage']:mode==='stills'?['--times','0']:mode==='film'?['--fps','30','--workers','1']:[])];
  const beforeConnections=accepted,beforeMessages=messages;
  const child=spawn(process.execPath,args,{env:{...process.env,CREW_PLAYWRIGHT_MODULE:process.env.PLAYWRIGHT_MODULE,CREW_FFMPEG:process.env.CREW_FFMPEG||'ffmpeg'},stdio:['ignore','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',x=>stdout+=x);child.stderr.on('data',x=>stderr+=x);const timer=setTimeout(()=>child.kill('SIGKILL'),30000);const status=await new Promise(resolve=>child.on('exit',resolve));clearTimeout(timer);const r={status,stdout,stderr};
  let result=null; for(const line of r.stdout.split('\n'))try{const value=JSON.parse(line);if(value.ok!==undefined)result=value}catch{}
  ok(r.status===0&&result?.ok,`${mode}: outside image/frame/fetch/traversal/symlink inputs are blocked while legitimate local assets remain usable`,r.stderr.slice(-300));
  if(mode!=='page'){ok(accepted===beforeConnections&&messages===beforeMessages,`${mode}: planted outside and loopback WebSocket server receives zero connections and messages`);ok(result?.refused?.some(x=>x.startsWith('ws:')&&x.includes('artifact-origin'))&&result.refused.length<=128,`${mode}: WebSocket refusal evidence is bounded and includes artifact-origin sockets`);}
+ if(mode==='film'){const probe=spawnSync(process.env.CREW_FFPROBE||'ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=width,height','-of','csv=p=0',out],{encoding:'utf8'});ok(probe.status===0&&probe.stdout.trim()==='1920,1080'&&result?.width===1920&&result?.height===1080&&result?.normalized===false,'film: a fixed 16:9 #stage renders an MP4 of exactly 1920x1080 (ffprobe)',JSON.stringify({probe:probe.stdout.trim(),err:probe.stderr.slice(-200),width:result?.width,height:result?.height,normalized:result?.normalized}));}
  if(result?.ok&&mode!=='film'){const rgb=firstPixel(mode==='stills'?join(out,'t0.00.png'):out);ok(rgb[1]>180&&rgb[0]<40,`${mode}: planted outside fixture never changes rendered output`,JSON.stringify(rgb));}
  if(result?.ok)ok(Array.isArray(result.refused)&&result.refused.some(x=>/outside|escape/.test(x)),`${mode}: refused outside inputs remain observable in renderer evidence`);
 }

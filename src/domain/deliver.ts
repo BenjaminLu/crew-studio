@@ -18,6 +18,16 @@ import type { Engine, X } from "../runtime/engine";
 type Deps = { dataDir: string; artifacts: ArtifactStore; lane: any; fileorg: any; docs: any; generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference, rules?: RulesSection) => Promise<CodexImage> };
 const hash = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+/** Exact pixel size of a rendered MP4's first video stream, from ffprobe; null when it cannot be read. */
+export function videoSize(file: string): { width: number; height: number } | null {
+  const ffmpeg = renderEnv().ffmpeg, sibling = ffmpeg && ffmpeg.includes("/") ? join(dirname(ffmpeg), "ffprobe") : null;
+  const probe = process.env.CREW_FFPROBE || (sibling && existsSync(sibling) ? sibling : null) || Bun.which("ffprobe"); if (!probe) return null;
+  try {
+    const r = Bun.spawnSync([probe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "json", file], { stdout: "pipe", stderr: "ignore", timeout: 10000 });
+    const s = r.exitCode === 0 ? JSON.parse(r.stdout.toString()).streams?.[0] : null;
+    return s && Number.isInteger(s.width) && Number.isInteger(s.height) ? { width: s.width, height: s.height } : null;
+  } catch { return null; }
+}
 export function installDeliver(engine: Engine, d: Deps) {
   const st = d.artifacts;
   engine.actions["deliver.intake"] = x => { x.ctx.intent = { text: x.run.text, workflow: x.run.workflow }; x.ctx.spec ??= { done: [x.run.workflow === "trivial-lane" ? "The local image recipe passes its deterministic checks" : x.run.workflow === "file-organization" ? "The planned moves stay inside the folder without overwrite" : "Every delivered source passes its deterministic readiness check", "The content and presentation match the captain's intent"] }; return "ok"; };
@@ -62,7 +72,7 @@ export function installDeliver(engine: Engine, d: Deps) {
     },
     sandbox: x => { const dir = engine.roundDirPath(x, "deliver"); return { writes: [dir], cwd: dir }; },
     tools: x => folderTools(x.rn.data.dir, () => {}, "work").filter(t => t.name !== "work_search"), maxTools: 30,
-    system: (x, skill) => `${skill}\nProduce ${entry(kind(x))} in the isolated work folder using work_* tools only. No shell, network or external assets. Preserve existing content unless the brief changes it.${kind(x) === "video" ? " Keep the renderer contract: #stage, DUR, render(t), build() and schedule()." : ""}`,
+    system: (x, skill) => `${skill}\nProduce ${entry(kind(x))} in the isolated work folder using work_* tools only. No shell, network or external assets. Preserve existing content unless the brief changes it.${kind(x) === "video" ? " Keep the renderer contract: #stage, DUR, render(t), build() and schedule(). #stage must be a fixed 960x540 px box (16:9), or 540x960 when the intent asks for vertical; never vw/vh/%. The MP4 is rendered at exactly 1920x1080 (1080x1920 vertical) from that box." : ""}`,
     prompt: x => `DELIVER ${kind(x)}\nVariant: ${x.node.args?.variant ?? "A"}\nIntent: ${x.run.text || x.run.title}\n${x.rn.data.brief?.text ?? ""}\nOpen annotations: ${JSON.stringify(x.rn.data.notes ?? [])}\nWrite ${entry(kind(x))}.`,
     after(x, job) {
       if (x.cancelled()) throw new Error("cancelled");
@@ -91,7 +101,9 @@ export function installDeliver(engine: Engine, d: Deps) {
     else if (!/<(?:html|body|main|div|h1|p)\b/i.test(s)) bad("page has no content element", "write a self-contained HTML page", "html-content");
     if (!["document", "image"].includes(r.format) && /(?:src|href)\s*=\s*["'](?:https?:|\/\/)/i.test(s)) bad("external resource URL", "embed required resources locally", "external-resource");
     if (st.notes(r.id, r.n).some(n => n.status === "open")) bad("artifact has unresolved notes", "produce a new version addressing the annotations", "open-note");
-    if (r.format === "video" && (v?.render?.state !== "done" || !st.file(r.id, r.n, "render.mp4"))) bad("rendered MP4 is unavailable", "render this exact film version with the optional local renderer", "renderer-unavailable");
+    const mp4 = r.format === "video" ? st.file(r.id, r.n, "render.mp4") : null;
+    if (r.format === "video" && (v?.render?.state !== "done" || !mp4)) bad("rendered MP4 is unavailable", "render this exact film version with the optional local renderer", "renderer-unavailable");
+    else if (r.format === "video") { const size = videoSize(mp4!); if (!size || !((size.width === 1920 && size.height === 1080) || (size.width === 1080 && size.height === 1920))) bad(`rendered MP4 is ${size ? `${size.width}x${size.height}` : "of unknown size"}, not 1920x1080 or 1080x1920`, "make #stage a fixed 960x540 px box (540x960 vertical), never vw/vh/%, so the render is exactly 1920x1080 (1080x1920)", "video-size"); }
     return findings;
   };
   engine.natives["artifact-ready"] = (_i, h) => { const x = h.x as X; const rs = x.node.args?.producer === "all" ? refs(x) : [ref(x)]; const findings = rs.length ? rs.flatMap(r => readiness(x, r)) : [{ locator: { type: "card", field: "output" }, message: "No pinned artifact output exists", expected: "produce a versioned artifact before readiness checks", class: "missing-output", severity: "blocking" }]; return { verdict: findings.length ? "fail" : "pass", score: findings.length ? 0 : 1, findings, data: { artifacts: rs }, proves: findings.length ? [] : [0] } as any; };
@@ -102,7 +114,9 @@ export function installDeliver(engine: Engine, d: Deps) {
     st.setRender(r.id, r.n, { state: "running", ms: null });
     let settled = false; job.done.finally(() => settled = true); while (!settled) { if (x.cancelled()) { job.cancel(); await job.done; throw new Error("cancelled"); } await sleep(40); }
     const result = await job.done; if (x.cancelled()) throw new Error("cancelled");
-    st.setRender(r.id, r.n, { state: result.ok ? "done" : "failed", detail: result.error ?? null, ms: result.ms });
+    const notes = Array.isArray(result.info?.notes) ? result.info.notes.map(String).slice(0, 8) : [];
+    st.setRender(r.id, r.n, { state: result.ok ? "done" : "failed", detail: result.error ?? (notes.join("; ") || null), ms: result.ms, ...(result.ok ? { normalized: !!result.info?.normalized, notes } : {}) });
+    if (notes.length) x.rn.note = notes.join("; ");
     if (result.ok && existsSync(out)) st.attach(r.id, r.n, "render.mp4", out);
     return result.ok ? "ok" : "unavailable";
   };

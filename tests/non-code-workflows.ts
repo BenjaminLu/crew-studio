@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agents } from "../src/agent";
 import { ArtifactStore } from "../src/artifacts";
+import { videoSize } from "../src/domain/deliver";
 import { createFileOrg } from "../src/fileorg";
 import { createM3 } from "../src/m3";
 import { Lane } from "../src/recipes";
@@ -38,6 +39,8 @@ const srv = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: async req => {
   const artResponse = await artifactHttp.handle(req, u, { kind: "desktop" }, req.method !== "GET"); if (artResponse) return artResponse;
   return await rt.handle(req, u, { kind: "desktop" }, req.method !== "GET") ?? new Response("not found", { status: 404 });
 } }); port = srv.port;
+// The live R-035 shape: the model rewrote the template's fixed 960x540 #stage as a viewport-sized box.
+const r035Film = `<!doctype html><html><head><style>html,body{margin:0}#stage{width:100%;height:100vh;position:relative;overflow:hidden;background:#0f1726;color:#f4f6fb}</style></head><body><div id="stage"><h1>R-035 responsive stage</h1></div><script>const DUR=0.4;let muted=true,startAt=0,ctx=null;function build(){}function schedule(){}function render(t){document.querySelector('h1').style.opacity=String(1-t)}render(0)</script></body></html>`;
 const fixture: any = { id: "fixture", model: "strict-local", sandboxFree: true, start(system: string, tools: any[], ctx: any) {
   ok(tools.every(t => t.name.startsWith("work_")), "provider receives only bounded folder tools"); 
   let interrupted = false;
@@ -47,7 +50,7 @@ const fixture: any = { id: "fixture", model: "strict-local", sandboxFree: true, 
     const format = /DELIVER (\w+)/.exec(text)?.[1], variant = /Variant: (\w+)/.exec(text)?.[1];
     const repaired = /BRIEF|Open annotations: \[\{/.test(text);
     const path = format === "document" ? "doc.md" : format === "video" ? "film.html" : "index.html";
-    const content = format === "web" && variant === "B" && /FAIL_VARIANT_B/.test(text) && (!repaired || /PERMANENT/.test(text)) ? "No content element" : format === "document" ? repaired ? "# Fixture memo\n\nA repaired memo with a summary. 中文內容。\n" : "No title in the first memo.\n" : format === "video" ? realVideo ? `<html><body style="margin:0"><div id="stage" style="width:320px;height:180px;background:#102030;color:white"><h1>${repaired ? "Revised captions" : "Initial captions"}</h1><div id="moving" style="width:100px;height:50px"></div></div><script>const DUR=0.8;function render(t){document.getElementById('moving').style.background=t<0.4?'rgb(255,0,0)':'rgb(0,0,255)';document.getElementById('moving').style.transform='translateX('+(t*120)+'px)'}render(0)</script></body></html>` : '<html><body><h1>Fixture film</h1></body></html>'  : `<html><body><h1>Variant ${variant}</h1><p>${repaired ? "Repaired" : "Initial"}</p></body></html>`;
+    const content = format === "web" && variant === "B" && /FAIL_VARIANT_B/.test(text) && (!repaired || /PERMANENT/.test(text)) ? "No content element" : format === "document" ? repaired ? "# Fixture memo\n\nA repaired memo with a summary. 中文內容。\n" : "No title in the first memo.\n" : format === "video" ? /R035_STAGE/.test(text) ? r035Film : realVideo ? `<html><body style="margin:0"><div id="stage" style="width:320px;height:180px;background:#102030;color:white"><h1>${repaired ? "Revised captions" : "Initial captions"}</h1><div id="moving" style="width:100px;height:50px"></div></div><script>const DUR=0.8;function render(t){document.getElementById('moving').style.background=t<0.4?'rgb(255,0,0)':'rgb(0,0,255)';document.getElementById('moving').style.transform='translateX('+(t*120)+'px)'}render(0)</script></body></html>` : '<html><body><h1>Fixture film</h1></body></html>'  : `<html><body><h1>Variant ${variant}</h1><p>${repaired ? "Repaired" : "Initial"}</p></body></html>`;
     const escape = await fetch(`${ctx.studioUrl}/api/tools/work_write`, { method: "POST", headers: { "content-type": "application/json", "x-crew-tool-token": ctx.token }, body: JSON.stringify({ path: "../escape.txt", content: "must be refused" }) });
     boundedWriteRefused ||= !!(await escape.json()).error;
     const r = await fetch(`${ctx.studioUrl}/api/tools/work_write`, { method: "POST", headers: { "content-type": "application/json", "x-crew-tool-token": ctx.token }, body: JSON.stringify({ path, content }) }); const result = await r.json();
@@ -142,7 +145,7 @@ const playback = async (r: any, label: string) => {
     await seek(0.1); ctx.drawImage(v, 0, 0); const a = canvas.toDataURL(); await seek(0.6); ctx.drawImage(v, 0, 0); const b = canvas.toDataURL();
     return { duration: v.duration, width: v.videoWidth, height: v.videoHeight, first, next, changed: a !== b, src: v.currentSrc };
   });
-  ok(evidence.duration >= 0.7 && evidence.width === 1920 && evidence.height > 0 && evidence.next > evidence.first && evidence.changed && evidence.src.includes(`/af/${r.id}/${r.n}/render.mp4`), `${label} actual native MP4 decodes dimensions/duration, advances playback and changes seeked frames for pinned v${r.n}`);
+  ok(evidence.duration >= 0.7 && evidence.width === 1920 && evidence.height === 1080 && evidence.next > evidence.first && evidence.changed && evidence.src.includes(`/af/${r.id}/${r.n}/render.mp4`), `${label} actual native MP4 decodes exactly 1920x1080 and duration, advances playback and changes seeked frames for pinned v${r.n}`);
   console.log("REAL_MP4", JSON.stringify({ artifact: r.id, n: r.n, ...evidence }));
   if (screenshots) await page.screenshot({ path: join(screenshots, `${label}-actual-playback-v${r.n}.png`), fullPage: true }); await page.close();
 };
@@ -213,13 +216,30 @@ const film = E.start({ workflow: "video", params: {}, text: "Make fixture film" 
 ok(!!fc && E.ledger(film.id).some(e => e.verdict === "fail" && e.findings.some(f => f.class === "renderer-unavailable" && f.locator?.type === "timeline")) && !E.get(film.id)!.ctx.approved, "missing optional renderer fails MP4 verification and raises capability card");
 await capture(fc, "renderer-capability");
 cancelActive(film.id); Object.assign(process.env, oldEnv); for (const k of Object.keys(process.env)) if (!(k in oldEnv)) delete process.env[k];
+// Readiness probes the rendered MP4's exact size: a wrong-size render is a blocking video-size finding
+// that sends the film back through the refine loop and never reaches the acceptance card.
+const ffmpegBin = Bun.which("ffmpeg"), samples = join(data, "sample-mp4"); mkdirSync(samples, { recursive: true });
+const sample = (w: number, h: number) => { const f = join(samples, `${w}x${h}.mp4`); Bun.spawnSync([ffmpegBin ?? "ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", `color=c=0x102030:s=${w}x${h}:d=1:r=10`, "-c:v", "libx264", "-pix_fmt", "yuv420p", f]); return f; };
+const goodMp4 = sample(1920, 1080), wrongMp4 = sample(1920, 1320);
+ok(!!ffmpegBin && videoSize(goodMp4)?.height === 1080 && videoSize(wrongMp4)?.height === 1320, "fixture MP4 samples have the exact sizes ffprobe reports (ffmpeg and ffprobe required)");
+process.env.CREW_RENDER_STUB = "1"; process.env.CREW_RENDER_STUB_MP4 = wrongMp4;
+const wrongSize = E.start({ workflow: "video", params: {}, text: "Wrong size fixture film" }); const wrongEnd = await waiting(wrongSize.id, "escalation");
+const sizeFindings = E.ledger(wrongSize.id).flatMap(e => e.findings ?? []).filter(f => f.class === "video-size");
+ok(!!wrongEnd && sizeFindings.length > 0 && sizeFindings.every(f => f.severity === "blocking" && /1920x1320/.test(f.message)) && E.get(wrongSize.id)!.nodes.draft.visits >= 2 && !E.cards.list({ run: wrongSize.id }).some(c => c.node === "accept") && !E.get(wrongSize.id)!.ctx.approved, "a 1920x1320 render is a blocking video-size finding: the refine loop reruns the draft and no acceptance card appears");
+cancelActive(wrongSize.id);
+process.env.CREW_RENDER_STUB_MP4 = goodMp4;
+// The R-035 film itself through the real renderer: normalized to a 960x540 stage, exactly 1920x1080, with the note recorded.
+process.env.CREW_RENDER_STUB = "0"; const r035 = E.start({ workflow: "video", params: {}, text: "R035_STAGE responsive stage film" }); const r035Card = await waiting(r035.id); const r035Ref = E.get(r035.id)!.ctx.deliver?.draft, r035Version = r035Ref && store.version(r035Ref.id, r035Ref.n);
+const r035Size = r035Ref && store.file(r035Ref.id, r035Ref.n, "render.mp4") ? videoSize(store.file(r035Ref.id, r035Ref.n, "render.mp4")!) : null;
+ok(!!r035Card && r035Size?.width === 1920 && r035Size?.height === 1080 && r035Version?.render?.normalized === true && r035Version.render.notes?.some((n: string) => /stage normalized: #stage measured 1600x900 and follows the viewport; forced to 960x540/.test(n)) === true && !E.ledger(r035.id).some(e => (e.findings ?? []).some((f: any) => f.class === "video-size")), "the R-035 #stage{width:100%;height:100vh} film renders exactly 1920x1080 with the stage normalization note", JSON.stringify({ r035Size, render: r035Version?.render }));
+cancelActive(r035.id);
 process.env.CREW_RENDER_STUB = realVideo ? "0" : "1"; const rendered = E.start({ workflow: "video", params: {}, text: "Render fixture film" }); const rc = await waiting(rendered.id); const rr = E.get(rendered.id)!.ctx.deliver?.draft; await destinations(rc, "video"); await playback(rr, "video");
 ok(!!rc && !!store.file(rr.id, rr.n, "render.mp4") && store.version(rr.id, rr.n)?.render?.state === "done", "fixture renderer completion is required before video final acceptance");
 if (rc) { await E.answer(rc.id, { choice: "changes", note: "Use repaired captions", by: "fixture captain", aligned: [0] }); const revisedFilmCard = await waiting(rendered.id); const revisedFilm = E.get(rendered.id)!.ctx.deliver.draft; await playback(revisedFilm, "video-revised");
   ok(!!revisedFilmCard && revisedFilm.n === 2 && !!store.file(rr.id, 1, "render.mp4") && !!store.file(revisedFilm.id, 2, "render.mp4") && store.notes(rr.id, 1).some(n => n.kind === "range"), "film range feedback produces a new native agent round and rerenders its pinned version while keeping the prior film version");
   if (revisedFilmCard) await E.answer(revisedFilmCard.id, { choice: "approve-draft", by: "fixture captain", aligned: [0] }); await until(() => E.get(rendered.id)!.status === "succeeded", 10000);
   ok(E.get(rendered.id)!.ctx.library?.version === 2 && E.get(rendered.id)!.steps.filter(s => s.node === "render").length === 2, "only the rechecked rendered film version is approved and native Task history records both renders");
-} delete process.env.CREW_RENDER_STUB;
+} delete process.env.CREW_RENDER_STUB; delete process.env.CREW_RENDER_STUB_MP4;
 hold = true; const cancel = E.start({ workflow: "documents", params: {}, text: "Cancel during provider revision" }); await until(() => !!E.get(cancel.id)!.nodes.draft?.job, 10000); cancelActive(cancel.id); hold = false; await Bun.sleep(200);
 ok(E.get(cancel.id)!.status === "cancelled" && !E.get(cancel.id)!.ctx.approved && !E.cards.list({ run: cancel.id, open: true }).length, "native cancellation interrupts owned agent work and produces no approval or open final card");
 const folder = join(data, "folder"); mkdirSync(folder); writeFileSync(join(folder, "a.txt"), "fixture"); const files = E.start({ workflow: "file-organization", params: { folder }, text: "Tidy fixture folder" }); const pc = await waiting(files.id, "card"); await capture(pc, "file-plan-acceptance");

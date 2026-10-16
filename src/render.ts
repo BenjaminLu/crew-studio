@@ -3,7 +3,7 @@
 // capture notes and briefs, and a regenerated film waits for a render. The Doctor
 // shows each one with a one-click official install.
 //   CREW_NODE_BIN, CREW_PLAYWRIGHT_MODULE, CREW_FFMPEG  override the lookups (tests use stubs)
-//   CREW_RENDER_STUB=1  a fake renderer (tests): copies the previous MP4 and writes small PNGs
+//   CREW_RENDER_STUB=1  a fake renderer (tests): copies the previous MP4 (or CREW_RENDER_STUB_MP4) and writes small PNGs
 import { scrubEnv } from "./secure";
 import { accessSync, constants, copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
@@ -54,7 +54,7 @@ export function runRender(dataDir: string, mode: "film" | "stills" | "crop" | "p
     // test renderer: no browser, no ffmpeg
     const done = (async () => {
       await Bun.sleep(150);
-      if (mode === "film") { if (a.copyFrom && existsSync(a.copyFrom)) copyFileSync(a.copyFrom, a.out); else writeFileSync(a.out, "stub mp4"); onProgress(1); }
+      if (mode === "film") { const sample = process.env.CREW_RENDER_STUB_MP4; if (a.copyFrom && existsSync(a.copyFrom)) copyFileSync(a.copyFrom, a.out); else if (sample && existsSync(sample)) copyFileSync(sample, a.out); else writeFileSync(a.out, "stub mp4"); onProgress(1); }
       else if (mode === "stills") { mkdirSync(a.out, { recursive: true }); for (const t of (a.times ?? "0").split(",")) writeFileSync(join(a.out, `t${Number(t).toFixed(2)}.png`), PNG1); }
       else writeFileSync(a.out, PNG1);
       return { ok: true, ms: Date.now() - started, info: mode === "page" ? { refused: [] } : undefined };
