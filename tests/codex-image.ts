@@ -11,6 +11,10 @@ const base={approved:{model:'fixture-model',effort:'low'},bin:join(import.meta.d
 async function refuses(mode:string,extra:Record<string,unknown>={}){let error='';try{await generateCodexImage({...base,prompt:`coffee MODE:${mode} PLANTED:${planted}`,...extra});}catch(e){error=(e as Error).message;ok(e instanceof CodexImageFailure && e.cleanupSafe===true,`${mode} rejection carries verified process cleanup receipt`);}ok(!!error,`${mode} refuses without image success`);return error;}
 try{
  let image=await generateCodexImage({...base,prompt:'coffee MODE:success'});ok(image.mime==='image/png'&&image.width===1&&image.height===1&&image.sha256.length===64&&image.provider==='codex'&&image.model==='fixture-model','actual sandboxed image completion validates PNG and exact provider/model');
+ const longPrompt='coffee MODE:success '+ 'preserved context '.repeat(1200);
+ await refuses('success',{prompt:longPrompt});
+ const longImage=await generateCodexImage({...base,prompt:longPrompt,contextProfile:'coffee-kit'});ok(longImage.sha256===image.sha256,'host coffee profile accepts complete evidence beyond generic 16KB cap');
+ await refuses('success',{prompt:'x'.repeat(262145),contextProfile:'coffee-kit'});
  const refined=await generateCodexImage({...base,prompt:`Keep black fur; change only head tilt. MODE:reference REFERENCE_SHA:${image.sha256}`,reference:{bytes:image.bytes,sha256:image.sha256}});ok(refined.sha256===image.sha256,'actual sandboxed turn transports exact reference PNG as image input');
  await refuses('reference',{reference:{bytes:image.bytes,sha256:'0'.repeat(64)}});
  const saved=await generateCodexImage({...base,prompt:'coffee MODE:saved'});ok(saved.sha256===image.sha256,'actual owned saved PNG imported before credential cleanup');

@@ -6,6 +6,7 @@ import {join} from 'node:path';
 import {harness,until} from './rt-harness';
 import {bundledText} from '../src/bundled';
 import {ArtifactStore} from '../src/artifacts';
+import {CodexImageFailure} from '../src/providers/codex-image';
 import {installCoffeeKit} from '../src/domain/coffee-kit';
 import {StaffingStore,coffeeStaffingProject,staffingHash,installStaffingGuard} from '../src/domain/staffing';
 import {skillTextFor} from '../src/runtime';
@@ -13,7 +14,7 @@ process.env.CREW_TEST_IN_PROCESS='1';
 const H=await harness([bundledText('workflows/v2/coffee-kit.wf.yaml')!]);
 const png=execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','color=c=tan:s=16x16','-frames:v','1','-vcodec','png','-f','image2pipe','pipe:1']);
 const film=execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','color=c=tan:s=160x90:r=1:d=12','-c:v','libx264','-pix_fmt','yuv420p','-movflags','frag_keyframe+empty_moov','-f','mp4','pipe:1']);
-let pages=0,images=0,videos=0,judges=0,fail=true,snapshots:any[]=[];
+let pages=0,images=0,videos=0,judges=0,fail=true,failImage=true,snapshots:any[]=[];
 H.engine.deps.skillText=skillTextFor(join(H.data,'protected'));
 const staffing=new StaffingStore(H.data),def=H.defs.get('coffee-kit')!,roles:any={};for(const role of def.roles)roles[role.id]={provider:'codex',model:'fixture-model',effort:'low',skill:staffing.remember({ref:role.skill,version:1,text:H.engine.deps.skillText(role.skill)})};
 const config=staffing.approve({schema:1,algorithm:'sha256-canonical-v1',project:coffeeStaffingProject('review-fixture'),workflow:{id:def.id,version:def.version,sha256:staffingHash(def)},roles,review:{freshContexts:3,distinctProviders:false}},null,{run:'fixture-staffing',card:'fixture-card',answerSeq:1});
@@ -27,11 +28,13 @@ H.engine.deps.provider=()=>({id:'codex',model:'fixture-model',reasoningEffort:'l
  }else{pages++;const result=await call('work_write',{path:'index.html',content:'<!doctype html><html><head><title>Fixture</title></head><body><main><h1>Test</h1><img src="assets/coffee.png" alt="Coffee"><video controls src="assets/coffee.mp4"></video></main></body></html>'});assert(!result.error);}
  yield{type:'turnEnd',status:'ok'};
 }};}} as any);
-const store=new ArtifactStore(H.data),api=installCoffeeKit(H.engine,{artifacts:store,choice:()=>({provider:'codex',model:'fixture-model',effort:'low'}),reviewStaffing:(def,params)=>{const c=guard.verified(def,params);return{hash:c.hash,roles:c.roles,workflow:c.workflow,approval:c.approval};},image:async(o:any)=>{o.authorize();images++;return{bytes:png,mime:'image/png',width:16,height:16,sha256:'fixture',provider:'codex',model:'fixture-model',effort:'low'};},video:async(o:any)=>{o.authorize();videos++;return{bytes:film,poster:png,codec:'h264',duration:12,width:160,height:90,renderer:'hyperframes@0.8.159'};}});
+const store=new ArtifactStore(H.data),api=installCoffeeKit(H.engine,{artifacts:store,choice:()=>({provider:'codex',model:'fixture-model',effort:'low'}),reviewStaffing:(def,params)=>{const c=guard.verified(def,params);return{hash:c.hash,roles:c.roles,workflow:c.workflow,approval:c.approval};},image:async(o:any)=>{o.authorize();images++;if(failImage)throw new CodexImageFailure("Controlled image failure",true);return{bytes:png,mime:'image/png',width:16,height:16,sha256:'fixture',provider:'codex',model:'fixture-model',effort:'low'};},video:async(o:any)=>{o.authorize();videos++;return{bytes:film,poster:png,codec:'h264',duration:12,width:160,height:90,renderer:'hyperframes@0.8.159'};}});
 try{
  const r=H.engine.start({workflow:'coffee-kit',text:'Offline review fixture',params:{project:'review-fixture',_staffing:config.hash,coffeeDesignPlan:readFileSync(join(import.meta.dir,'fixture/coffee-design.json'),'utf8')}});
  const card=async(node:string)=>{assert(await until(()=>H.engine.cards.list({run:r.id,open:true}).some(c=>c.node===node)&&!H.engine.busy(r.id)),JSON.stringify(r.nodes));return H.engine.cards.list({run:r.id,open:true}).find(c=>c.node===node)!;};
  await H.engine.answer((await card('direction')).id,{choice:'confirm',by:'fixture captain'});
+ const imageHold=await card('capability');assert.equal(images,1);assert.equal(pages,1);const imageRecovery=(await api.refreshRecovery(r.id))!;assert(imageRecovery.options.some(o=>o.id==='fresh-image'));assert.equal(images,1,'refresh never starts production');await assert.rejects(H.engine.answer(imageHold.id,{choice:'fresh-image',note:'stale',by:'fixture captain'}));failImage=false;await H.engine.answer(imageRecovery.id,{choice:'fresh-image',note:'Retry image after capability repair, preserve current page',by:'fixture captain'});
+
  let hold=await card('capability');assert(hold.options.some(o=>o.id==='retry-review'),JSON.stringify({nodes:r.nodes,jobs:[...H.agents.jobs.values()].map(j=>({error:j.error,said:j.said})),ledger:H.engine.trusted(r.id).entries.filter(e=>e.record==='check').map(e=>({check:e.check,error:e.error}))}));assert(hold.options.some(o=>o.id==='revise-page'));assert(!hold.options.some(o=>o.id==='approve'));
  const checks=H.engine.trusted(r.id).entries.filter(e=>e.node==='checks'&&e.kind==='judged');assert.equal(checks.length,2);assert(checks.every(e=>e.verdict==='fail'&&e.findings.length===3&&e.dropped===0));
  const snap=snapshots[0];assert.deepEqual(snap.reviewBoundary,{decision:'source-correctness-before-captain-acceptance',visualEvidence:'not-supplied-not-certified',missingVisualEvidenceBlocksSourceReview:false,captainWholeSiteApprovalRequired:true});assert(snap.texts['assets/coffee-playback.js'].includes('video'));assert.equal(snap.staffing.approved.hash,config.hash);assert(snap.staffing.evidence.some((e:any)=>e.record==='staffing-start'));assert(snap.staffing.evidence.some((e:any)=>e.record==='staffing-instructions'&&e.data.role==='worker'));

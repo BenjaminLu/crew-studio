@@ -17,6 +17,8 @@ const MAX_IMAGE = 16 * 1024 * 1024;
 export type CodexImage = { bytes: Buffer; mime: 'image/png'; width: number; height: number; sha256: string; provider: 'codex'; model: string; effort: string | null };
 export type CodexImageReference={bytes:Buffer;sha256:string};
 export type CodexImageOptions = {
+  /** Host-owned complete coffee evidence; not accepted from HTTP/tool arguments. */
+  contextProfile?: "coffee-kit";
   reference?:CodexImageReference;
   prompt: string; approved: ApprovedCodexConfig; authorize(): void; signal?: AbortSignal;
   bin?: string; timeoutMs?: number;
@@ -67,7 +69,7 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
   if(reference){verifyImagePng(reference.bytes);if(createHash('sha256').update(reference.bytes).digest('hex')!==reference.sha256)throw new Error('Codex image reference hash differs');}
   const guard = () => { if (o.signal?.aborted) throw new Error('Codex image cancelled'); o.authorize(); };
   guard();
-  if (typeof o.prompt !== 'string' || !o.prompt.trim() || Buffer.byteLength(o.prompt) > 16000 || !o.approved || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(o.approved.model) || o.approved.effort !== null && !['none','minimal','low','medium','high','xhigh','max','ultra'].includes(o.approved.effort)) throw new Error('Codex image request invalid');
+  if (typeof o.prompt !== 'string' || !o.prompt.trim() || Buffer.byteLength(o.prompt) > (o.contextProfile === "coffee-kit" ? 262144 : 16000) || !o.approved || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(o.approved.model) || o.approved.effort !== null && !['none','minimal','low','medium','high','xhigh','max','ultra'].includes(o.approved.effort)) throw new Error('Codex image request invalid');
   const timeout = o.timeoutMs ?? 180000;
   if (!Number.isInteger(timeout) || timeout < 100 || timeout > 240000) throw new Error('Codex image deadline invalid');
   if (!sandboxInfo().ok && !localUnrestricted()) throw new Error('Codex image needs the OS sandbox');
