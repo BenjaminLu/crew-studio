@@ -22,6 +22,25 @@ export type TaskView = {
   /** one word for the Board and Inbox; `state` keeps the run's own status */
   status: TaskStatus; state: string; node: string | null;
   createdAt: string | null; updatedAt: string | null; endedAt: string | null; href: string; roundCount: number;
+  /** the run's result once it ended (closed, fail, …): `status` folds succeeded into done */
+  result: string | null;
+  /** who the Task waits on now (§3.3 of the projects design) */
+  waitsOn: WaitsOn;
+};
+/**
+ * Who a Task waits on. kind: captain (an open card on a waiting node), hold (a round that is not ready, with its
+ * captain-only recovery card), queue (project or global capacity), ci (remote checks), agent (a running round), none.
+ */
+export type WaitsOn = {
+  kind: "captain" | "hold" | "agent" | "queue" | "ci" | "none";
+  node: string | null; nodeLabel: string | null; card: string | null;
+  /** hold: the readiness reason; staffing is true when the hold is the crew-approval variant */
+  reason?: string | null; staffing?: boolean;
+  /** agent: the round's role and pick */
+  role?: string | null; provider?: string | null; model?: string | null; effort?: string | null;
+  /** ci: the wait's deadline (epoch ms); queue: the queue's own reason text */
+  deadline?: number | null;
+  detail: Text;
 };
 export type TaskDetail = TaskView & { rounds: Round[] };
 
@@ -85,8 +104,72 @@ export function taskOf(run: Run, openCards: { run?: string | null }[] = []): Tas
   return {
     id: run.id, workflow: run.workflow, version: run.version ?? null, title: run.title ?? "", project: run.params?.project || null,
     status, state: run.status, node: live?.[0] ?? last?.node ?? null,
-    createdAt: run.createdAt ?? null, updatedAt: run.updatedAt ?? null, endedAt: run.endedAt ?? null, href: `#/run/${run.id}`, roundCount: rounds.length, rounds,
+    createdAt: run.createdAt ?? null, updatedAt: run.updatedAt ?? null, endedAt: run.endedAt ?? null, href: `#/run/${run.id}`, roundCount: rounds.length,
+    result: run.result ?? null, waitsOn: waitsOn(run, openCards as any), rounds,
   };
 }
 
 export const summaryOf = (t: TaskDetail): TaskView => { const { rounds, ...rest } = t; return rest; };
+
+const STAFFING_HOLD = /staffing|role configuration|角色配置|派工配置/i;
+const nodeDef = (run: Run, id: string): any => run.def?.nodes?.find((n: any) => n.id === id) ?? null;
+/** "(a/b)" from a queue reason such as "project capacity full (2/2)", when it carries one */
+const capacityOf = (reason: string) => /\((\d+)\s*\/\s*(\d+)\)/.exec(reason);
+/**
+ * Who a Task waits on (projects design §3.3), first match: an open card on a waiting node (a readiness hold when the
+ * node carries one), a readiness hold, a queue wait, a remote CI wait, a running round with a job, else none.
+ * Reads the run as stored; no state changes.
+ */
+export function waitsOn(run: Run, openCards: { id?: string; run?: string | null; node?: string; status?: string }[] = [], capacity: { active: number; limit: number } | null = null): WaitsOn {
+  const ended = ["succeeded", "failed", "cancelled"].includes(run.status);
+  const none: WaitsOn = { kind: "none", node: null, nodeLabel: null, card: null, detail: { en: "", "zh-TW": "" } };
+  if (ended) return none;
+  const nodes = Object.entries(run.nodes ?? {});
+  const label = (id: string) => nodeDef(run, id)?.label ?? id;
+  const mine = openCards.filter((c) => c.run === run.id && (c.status === undefined || c.status === "open"));
+  const hold = (id: string, rn: any, card: string | null): WaitsOn => {
+    const reason = String(rn.data?.nativeQueueCapability?.reason ?? "");
+    const staffing = STAFFING_HOLD.test(reason);
+    const why = staffing ? { en: "crew needs approval", "zh-TW": "船員配置待核准" } : { en: reason || "readiness needs confirmation", "zh-TW": reason || "就緒狀態需要確認" };
+    return { kind: "hold", node: id, nodeLabel: label(id), card, reason, staffing, detail: { en: `Round not ready: ${why.en}`, "zh-TW": `這一輪還不能開始：${why["zh-TW"]}` } };
+  };
+  // 1. an open card on a waiting node (a readiness hold's card reads as the hold)
+  for (const [id, rn] of nodes) {
+    if (rn.waiting !== "card") continue;
+    const card = mine.find((c) => c.node === id && (!rn.card || c.id === rn.card)) ?? mine.find((c) => c.node === id);
+    if (!card) continue;
+    if (rn.data?.nativeQueueCapability) return hold(id, rn, card.id ?? null);
+    return { kind: "captain", node: id, nodeLabel: label(id), card: card.id ?? null, detail: { en: `at ${label(id)}`, "zh-TW": `在「${label(id)}」` } };
+  }
+  // 2. a readiness hold whose card is not (or no longer) open
+  for (const [id, rn] of nodes) if (rn.state === "running" && rn.data?.nativeQueueCapability) return hold(id, rn, rn.card ?? null);
+  // 3. a queue wait
+  for (const [id, rn] of nodes) if (rn.state === "running" && rn.data?.nativeQueue?.state === "waiting") {
+    const reason = String(rn.data.nativeQueue.reason ?? "");
+    const m = capacityOf(reason), full = /capacity/i.test(reason);
+    const cap = m ? [Number(m[1]), Number(m[2])] : full && capacity ? [capacity.active, capacity.limit] : null;
+    const en = cap ? `queue: project capacity full (${cap[0]}/${cap[1]})` : full ? "queue: capacity full" : `queue: ${reason || "waiting for capacity"}`;
+    const zh = cap ? `佇列：專案名額已滿（${cap[0]}/${cap[1]}）` : full ? "佇列：名額已滿" : `佇列：${reason || "等待名額"}`;
+    return { kind: "queue", node: id, nodeLabel: label(id), card: null, reason, detail: { en, "zh-TW": zh } };
+  }
+  // 4. a remote CI wait
+  for (const [id, rn] of nodes) if (rn.waiting === "external" && rn.data?.external?.handler === "github-ci") {
+    const deadline = Number.isFinite(rn.data.external.deadline) ? rn.data.external.deadline : null;
+    const left = deadline ? Math.max(0, Math.round((deadline - Date.now()) / 60000)) : null;
+    return { kind: "ci", node: id, nodeLabel: label(id), card: null, deadline,
+      detail: { en: `CI: GitHub checks${left != null ? ` · ${left} min left` : ""}`, "zh-TW": `CI：GitHub 檢查${left != null ? ` · 剩 ${left} 分鐘` : ""}` } };
+  }
+  // 5. a running round with a job
+  for (const [id, rn] of nodes) if (rn.state === "running" && rn.job && !rn.waiting) {
+    const def = nodeDef(run, id);
+    const step = [...(run.steps ?? [])].reverse().find((s) => s.node === id && s.state === "running");
+    const job = Array.isArray(rn.data?.jobs) ? rn.data.jobs.find((j: any) => j?.id === rn.job) : null;
+    const role = def?.role ?? def?.args?.role ?? null;
+    const provider = rn.agent?.provider ?? step?.provider ?? job?.provider ?? null;
+    const model = rn.agent?.model ?? step?.model ?? job?.model ?? null;
+    const effort = rn.agent?.effort ?? null;
+    const who = [role ?? label(id), [provider, model, effort].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
+    return { kind: "agent", node: id, nodeLabel: label(id), card: null, role, provider, model, effort, detail: { en: `agent: ${who}`, "zh-TW": `代理：${who}` } };
+  }
+  return none;
+}

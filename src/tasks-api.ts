@@ -1,6 +1,7 @@
 // /api/tasks: Tasks and their Rounds (docs/units/task-round.md). A Task is stored as a run, so the
 // run routes stay as they were and answer under both names: /api/wruns is the old one, kept as an alias.
-//   GET  /api/tasks                       unarchived Tasks (newest first); ?archived=1 includes archived
+//   GET  /api/tasks                       unarchived Tasks (newest first); ?archived=1 includes archived;
+//                                         ?project=<id> only that project's Tasks (?project=studio: the Tasks in no registered project)
 //   GET  /api/tasks/<id>                  one Task: the run view (/api/wruns/<id>) plus `task` and `rounds`
 //   GET  /api/tasks/<id>/rounds           its Rounds only
 //   POST /api/tasks, /api/tasks/<id>/<action>, /api/tasks/agents, …   the same as under /api/wruns
@@ -23,6 +24,8 @@ export type TasksDeps = {
   list(): Run[]; get(id: string): Run | null | undefined; openCards(): any[];
   /** the run view the run routes serve for GET /api/wruns/<id> */
   runView(id: string): Promise<any | null>;
+  /** the sidebar row a run counts under: a registered project id, or "studio" (no project) */
+  projectOf?(run: Run): string;
 };
 
 export function createTasksApi(d: TasksDeps) {
@@ -32,8 +35,10 @@ export function createTasksApi(d: TasksDeps) {
     if (writing || !/^\/api\/tasks(\/|$)/.test(p)) return null;
     if (p === "/api/tasks") {
       const cards = d.openCards();
-      const tasks = d.list().filter((r) => url.searchParams.get("archived") === "1" || !r.archived).map((r) => summaryOf(taskOf(r, cards))).sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
-      return json({ tasks, cards });
+      const project = url.searchParams.get("project");
+      if (project !== null && !d.projectOf) return json({ error: "this list cannot filter by project" }, 400);
+      const tasks = d.list().filter((r) => url.searchParams.get("archived") === "1" || !r.archived).filter((r) => project === null || d.projectOf!(r) === project).map((r) => summaryOf(taskOf(r, cards))).sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+      return json({ tasks, cards: project === null ? cards : cards.filter((c: any) => tasks.some((t) => t.id === c.run)) });
     }
     const m = /^\/api\/tasks\/(R-\d+)(\/rounds)?$/.exec(p);
     if (!m) return null;

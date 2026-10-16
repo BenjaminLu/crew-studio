@@ -28,7 +28,10 @@ await until(() => E.cards.list({ run: r.id, open: true }).length > 0, 15000);
 { const t = taskOf(E.get(r.id), E.cards.list({ open: true }));
   ok(t.status === "needs-you" && t.node === "k", "a Task waiting on its card needs the captain, on the card's node", `${t.status} ${t.node}`);
   const lst = await call("/api/tasks");
-  ok(lst?.status === 200 && lst.body.tasks.some((x: any) => x.id === r.id && x.status === "needs-you" && x.roundCount === 3 && !("rounds" in x)), "GET /api/tasks lists the Task with its status and Round count", JSON.stringify(lst?.body.tasks)); }
+  ok(lst?.status === 200 && lst.body.tasks.some((x: any) => x.id === r.id && x.status === "needs-you" && x.roundCount === 3 && !("rounds" in x)), "GET /api/tasks lists the Task with its status and Round count", JSON.stringify(lst?.body.tasks));
+  await until(() => E.get(r.id).status === "waiting", 15000);
+  const again = await call("/api/tasks"), mine = again?.body.tasks.find((x: any) => x.id === r.id);
+  ok(mine?.result === null && mine?.waitsOn?.kind === "captain" && mine.waitsOn.node === "k", "a listed Task carries its result and who it waits on", JSON.stringify(mine?.waitsOn)); }
 await E.answer(E.cards.list({ run: r.id, open: true })[0].id, { choice: "go", by: "captain" });
 await until(() => E.get(r.id).status === "succeeded", 15000);
 

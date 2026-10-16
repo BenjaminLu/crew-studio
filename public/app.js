@@ -64,11 +64,14 @@ function ciSummary(pr) {
 // ---------- routing ----------
 const routes = { board: viewBoard, inbox: viewInbox, crew: viewCrew, activity: viewActivity, workflow: viewWorkflow };
 function route() {
-  const [name, ...rest] = (location.hash.replace(/^#\/?/, "") || "board").split("/");
+  // a route may carry a query after "?" (#/run/R-1?card=SC-2, #/runs?project=studio): S.route.query
+  const raw = location.hash.replace(/^#\/?/, "") || "board", qi = raw.indexOf("?");
+  const [name, ...rest] = (qi < 0 ? raw : raw.slice(0, qi)).split("/");
+  const query = new URLSearchParams(qi < 0 ? "" : raw.slice(qi + 1));
   const normalized = name === "tasks" ? (/^R-\d+$/.test(rest[0] || "") ? "run" : "runs") : name;
   const v = routes[normalized] ? normalized : "board";
   $$(".nav-item").forEach((b) => b.dataset.view === v ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
-  S.route = { name: v, arg: rest.map(decodeURIComponent).join("/") || null };
+  S.route = { name: v, arg: rest.map(decodeURIComponent).join("/") || null, query };
   render();
 }
 function render() {

@@ -7,6 +7,8 @@
 const BACKBONE = [
   ["board", "board", "Board", "看板"], ["firstmate", "message", "Firstmate", "Firstmate"], ["inbox", "inbox", "Inbox", "收件匣"], ["crew", "crew", "Crew", "船員"],
   ["runs", "play", "Tasks", "任務"], ["workflows", "workflow", "Workflows", "流程"], ["library", "library", "Library", "成品庫"],
+  // Projects: on a desktop the sidebar's own Projects section (public/projects.js); this item shows only in the phone's top bar
+  ["projects", "folder", "Projects", "專案"],
 ];
 // planned work, by milestone: these routes are labs
 const ROADMAP = [
@@ -19,7 +21,7 @@ const ROADMAP = [
   { id: "remote", routes: ["remote"], m: "M2.5", en: "Phone pairing: Studio on your phone over Wi-Fi or Tailscale.", tw: "手機配對：透過 Wi-Fi 或 Tailscale 在手機上用 Studio。" },
 ];
 const LABS = new Map(ROADMAP.flatMap((r) => r.routes.map((x) => [x, r])));
-const OWNED = { activity: "crew", intents: "inbox", review: "runs", compare: "runs", artifact: "library", run: "runs", workflow: "workflows", flow: "workflows", settings: "settings", doctor: "settings", roadmap: "settings", task: "crew", event: "crew" };
+const OWNED = { project: "projects", activity: "crew", intents: "inbox", review: "runs", compare: "runs", artifact: "library", run: "runs", workflow: "workflows", flow: "workflows", settings: "settings", doctor: "settings", roadmap: "settings", task: "crew", event: "crew" };
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch {} } };
 if (/[?&]labs=1\b/.test(location.search)) store.set("crew.labs", "1");
 const labsOn = () => store.get("crew.labs") === "1";
@@ -29,7 +31,7 @@ window.crewLabs = labsOn;
 const nav = $(".nav");
 const item = (view, ic, en, tw) => {
   let b = nav.querySelector(`.nav-item[data-view="${view}"]`);
-  if (!b) { b = h("button", { class: "nav-item", "data-view": view, "data-tip": T(en, tw) }, icon(ic), h("span", { class: "nl" }, T(en, tw))); b.addEventListener("click", () => { location.hash = `#/${view}`; }); }
+  if (!b) { b = h("button", { class: view === "projects" ? "nav-item nav-proj-phone" : "nav-item", "data-view": view, "data-tip": T(en, tw) }, icon(ic), h("span", { class: "nl" }, T(en, tw))); b.addEventListener("click", () => { location.hash = `#/${view}`; }); }
   else { b.dataset.tip = T(en, tw); const nl = b.querySelector(".nl"); if (nl) nl.textContent = T(en, tw); }
   b.dataset.backbone = "1"; return b;
 };

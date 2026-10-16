@@ -1,0 +1,114 @@
+/* Projects (phase 1): the sidebar section and the project page. Ported from the approved prototype
+   (projects-design/prototype.html, "projects: the sidebar section and the project page"); shell tokens only,
+   so light and dark both work. */
+.nav-proj{display:flex;flex-direction:column;gap:2px;margin-top:10px;padding-top:8px;border-top:1px solid var(--border);min-height:0;overflow:auto}
+.nav-proj-h{display:flex;align-items:center;gap:6px;padding:0 4px 4px 10px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);min-height:26px}
+.nav-proj-h a{color:inherit;text-decoration:none}
+.nav-proj-h a:hover{color:var(--text)}
+.pj-item{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:2px 10px;align-items:center;padding:6px 10px;border-radius:6px;border:0;background:none;color:var(--text-2);text-align:left;width:100%;min-height:44px;text-decoration:none}
+.pj-item:hover{background:var(--surface-2);color:var(--text)}
+.pj-item[aria-current="page"]{background:var(--surface-3);color:var(--text)}
+.pj-item .pmark{grid-row:1/3}
+.pj-item .pn{font-size:13px;font-weight:500;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pj-item .ps{grid-column:2/4;font-size:11.5px;color:var(--text-3);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;gap:6px;align-items:center}
+.pj-item .ps > span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.pj-item .count{font-size:12px}
+.pj-item .count.attn{background:var(--human-soft);color:var(--human);border-radius:99px;padding:0 7px;font-weight:600}
+.pj-item.off{opacity:.62}
+.pj-side-msg{font-size:12px;color:var(--text-3);padding:4px 10px}
+.pj-side-msg.bad{color:var(--bad)}
+.pj-side-skel{height:36px;margin:2px 10px}
+.sdot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--text-3)}
+.sdot.run{background:var(--accent)}.sdot.human{background:var(--human)}.sdot.bad{background:var(--bad)}.sdot.warn{background:var(--warn)}.sdot.ok{background:var(--ok)}
+.pmark.p2{background:var(--a2);color:var(--a2t)}.pmark.p3{background:var(--a3);color:var(--a3t)}.pmark.p6{background:var(--a6);color:var(--a6t)}
+/* collapsed sidebar: marks only */
+@media (min-width: 761px){
+  body.side-collapsed .nav-proj{align-items:center;padding-top:8px}
+  body.side-collapsed .nav-proj-h{display:none}
+  body.side-collapsed .pj-item{width:40px;min-height:40px;padding:0;display:grid;place-items:center;grid-template-columns:1fr;position:relative}
+  body.side-collapsed .pj-item .pmark{grid-row:auto}
+  body.side-collapsed .pj-item .pn,body.side-collapsed .pj-item .ps,body.side-collapsed .pj-item .count,body.side-collapsed .pj-side-msg{display:none}
+}
+
+/* page */
+.pj-head{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+.pj-head .pmark.lg{margin-top:2px}
+.pj-title{flex:1 1 380px;min-width:0;display:grid;gap:6px}
+.pj-title h1{font-size:22px;line-height:1.25;font-weight:600;margin:0;letter-spacing:-.01em;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.pj-id{display:flex;gap:6px 14px;flex-wrap:wrap;font-size:13px;color:var(--text-2);align-items:center}
+.pj-id code{font:12px var(--f-mono);color:var(--text-2);overflow-wrap:anywhere}
+.pj-id .ic{color:var(--text-3)}
+.pj-id > span{display:inline-flex;gap:6px;align-items:center;min-width:0}
+.pj-id .cp{width:26px;min-height:26px}
+.pj-jump{display:flex;gap:6px;flex-wrap:wrap;position:sticky;top:-24px;z-index:5;background:var(--bg);padding:8px 0;margin:-8px 0}
+.pj-jump a{text-decoration:none}
+.pj-attn{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 16px;border-color:color-mix(in srgb,var(--human) 35%,var(--border));background:color-mix(in srgb,var(--human-soft) 55%,var(--surface))}
+.pj-attn .need-ic{background:var(--human-soft);color:var(--human)}
+.pj-cols{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:24px;align-items:start}
+.pj-col{display:grid;gap:24px;min-width:0}
+.pj-health{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,200px),1fr));gap:0}
+.pj-h{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 10px;padding:12px 14px;border-right:1px solid var(--border);border-bottom:1px solid var(--border);min-width:0;align-content:start}
+.pj-h .ic{margin-top:2px}
+.pj-h b{font-weight:500;font-size:13px}
+.pj-h span{grid-column:2;font-size:12px;color:var(--text-3);overflow-wrap:anywhere}
+.pj-h.ok .ic{color:var(--ok)}.pj-h.warn .ic{color:var(--warn)}.pj-h.bad .ic{color:var(--bad)}.pj-h.idle .ic{color:var(--text-3)}
+.pj-h-sum{display:none}
+.pj-task{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;padding:12px 16px;border-top:1px solid var(--border);align-items:center}
+.pj-task:first-child{border-top:0}
+.pj-task:hover{background:var(--surface-2)}
+.pj-task .run-t{line-height:1.5}
+.pj-task .run-t a{color:inherit;text-decoration:none}
+.pj-task .run-t a:hover{text-decoration:underline}
+.pj-task .run-t span{padding-bottom:1px}
+.pj-task .tid{font:12px var(--f-mono);color:var(--text-3);flex:none}
+.pj-task .pipe{margin:6px 0 2px;max-width:340px}
+.pj-wait{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.pj-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 16px;border-top:1px solid var(--border)}
+.pj-card:first-child{border-top:0}
+.pj-card .need-ic{background:var(--human-soft);color:var(--human)}
+.pj-crew-wf{border-top:1px solid var(--border);padding:12px 16px;display:grid;gap:8px}
+.pj-crew-wf:first-of-type{border-top:0}
+.pj-roles{display:grid;gap:4px}
+.pj-role{display:grid;grid-template-columns:96px minmax(0,1fr) auto;gap:10px;align-items:center;font-size:13px;min-width:0}
+.pj-role .rn{color:var(--text-2)}
+.pj-role .rc{display:flex;gap:4px;flex-wrap:wrap;min-width:0}
+.pj-list{display:grid}
+.pj-li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 16px;border-top:1px solid var(--border);font-size:13px;min-width:0}
+.pj-li:first-child{border-top:0}
+.pj-li .t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pj-li .t small{display:block;color:var(--text-3);font-size:12px;overflow:hidden;text-overflow:ellipsis}
+.pj-li code{font:12px var(--f-mono)}
+.pj-li a{font-size:13px;color:var(--accent-text);text-decoration:none}
+.pj-thumb{width:34px;height:34px;border-radius:6px;display:grid;place-items:center;flex:none}
+.pj-sens li{font-size:13px}
+[data-project-page] .x-reasons{list-style:disc;padding-left:18px;gap:4px;font-size:13px}
+.pj-src{font-size:11px;color:var(--text-3);font-family:var(--f-mono)}
+.sec-head .x-grow{flex:1}
+.sec-head .btn{min-height:30px;padding:4px 10px}
+a.btn,a.chip,.sec-head a{text-decoration:none}
+.pj-empty-row{padding:14px 16px;color:var(--text-3);font-size:13px}
+.pj-states{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr));gap:12px}
+.pj-states > a{color:inherit;text-decoration:none}
+.pj-notice{font-size:13px}
+.pj-propose{display:grid;gap:8px}
+.pj-propose textarea{min-height:72px;font-family:var(--f-mono);font-size:12px}
+/* a card opened from a deep link (#/run/<id>?card=<cardId>) */
+.rt-card-linked{outline:2px solid var(--human);outline-offset:2px}
+/* the phone's Projects item: shown only in the phone top bar (the desktop has the section) */
+.nav-item.nav-proj-phone{display:none}
+
+@media (max-width:1100px){.pj-cols{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:760px){
+  .nav-proj{display:none}
+  .nav-item.nav-proj-phone{display:flex}
+  .pj-jump{top:-16px}
+  .pj-task{grid-template-columns:minmax(0,1fr)}
+  .pj-wait{justify-content:flex-start}
+  .pj-attn,.pj-card{grid-template-columns:auto minmax(0,1fr)}
+  .pj-attn > :last-child,.pj-card > :last-child{grid-column:1/-1}
+  .pj-role{grid-template-columns:80px minmax(0,1fr)}
+  .pj-role > :last-child{grid-column:2}
+  .pj-health .pj-h.ok{display:none}
+  .pj-h-sum{display:grid}
+  .pj-h-sum .ic{color:var(--ok)}
+}

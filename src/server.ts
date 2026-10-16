@@ -63,6 +63,7 @@ import { RawLog, StudioLog } from "./rawlog";
 import { Workflows } from "./workflows";
 import { createImprove } from "./improve";
 import { createChanges } from "./changes";
+import { createProjectOverview } from "./project-overview";
 import { createM7 } from "./m7";
 import { createDocs } from "./docs";
 import { Skins, snapshotFor, nativeSkinData } from "./skins";
@@ -378,7 +379,7 @@ const runtime = createRuntime({coffeeVideo:coffeeTools.ready?(request=>renderCof
 nativeEngineForPolicy = runtime.engine;
 gh.start();
 process.once("exit",()=>{gh.stop();githubPoller.stop();});
-const tasksApi = createTasksApi({ list: () => runtime.engine.list(), get: (id) => runtime.engine.get(id), openCards: () => runtime.engine.cards.list({ open: true }),
+const tasksApi = createTasksApi({ list: () => runtime.engine.list(), get: (id) => runtime.engine.get(id), openCards: () => runtime.engine.cards.list({ open: true }), projectOf: (r) => runtime.engine.projectRow(r),
   runView: async (id) => { const r = await runtime.handle(new Request(`http://127.0.0.1/api/wruns/${id}`), new URL(`http://127.0.0.1/api/wruns/${id}`), { kind: "desktop" }, false); return r && r.ok ? r.json() : null; } });
 const compareApi = createCompare({ dataDir: DATA, get: (id) => runtime.engine.get(id), current: (wf) => runtime.engine.defs.get(wf), phoneRaw: () => transcripts.settings().phoneRaw });
 // rounds of an earlier Studio left their throwaway homes and tmp behind (it stopped mid-round): no job is live at start, so they go
@@ -418,6 +419,8 @@ const serveStatic = (path: string) => {
 };
 
 const SESSION = sessionToken(DATA);
+// the sidebar's Projects section and each project's page: read only (src/project-overview.ts)
+const projectOverview = createProjectOverview({ dataDir: DATA, projects: new Projects(DATA), engine: runtime.engine, session: SESSION, worktrees, artifacts: m3.store, protectedRoots: PROTECTED });
 async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> {
     const url = new URL(req.url);
     // /api/tasks is the new name of /api/wruns: a path the run routes serve is handed to them under its old name
@@ -467,6 +470,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     { const r3 = await m3.handle(req, url, who, writing); if (r3) return r3; }
     { const rp = await packGenesis.handle(req, url, who, writing); if (rp) return rp; }
     { const r6 = await improve.handle(req, url, who, writing); if (r6) return r6; }
+    { const ro = await projectOverview.handle(req, url, who as any, writing); if (ro) return ro; }
     { const rc = await changes.handle(req, url, who, writing); if (rc) return rc; }
     { const r7 = await m7.handle(req, url, who, writing); if (r7) return r7; }
     { const r8 = await docs.handle(req, url, who, writing); if (r8) return r8; }

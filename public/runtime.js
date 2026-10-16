@@ -566,7 +566,12 @@ window.crewPrefillFirstTask = () => {
 };
 function viewRuns() {
   if (!RN.list) { RN.list = "loading"; Promise.all([api(`/api/wruns${RN.archived ? "?archived=1" : ""}`), api("/api/wf")]).then(([r, w]) => { RN.list = r.runs; RN.cards = r.cards; RN.wfs = w.workflows; rerender(); }).catch(() => { RN.list = []; rerender(); }); }
-  const runs = Array.isArray(RN.list) ? RN.list.slice().reverse() : [];
+  // #/runs?project=<id>: only that project's Tasks (studio: the Tasks in no project), as /api/tasks?project= lists them
+  const pf = S.route?.query?.get("project") || null;
+  if (pf && (RN.pf !== pf || RN.pfArchived !== !!RN.archived || RN.pIds === undefined)) { RN.pf = pf; RN.pfArchived = !!RN.archived; RN.pIds = null;
+    api(`/api/tasks?project=${encodeURIComponent(pf)}${RN.archived ? "&archived=1" : ""}`).then((x) => { if (RN.pf === pf) { RN.pIds = new Set((x.tasks || []).map((t) => t.id)); rerender(); } }).catch(() => { RN.pIds = new Set(); rerender(); }); }
+  if (!pf) { RN.pf = null; RN.pIds = undefined; }
+  const runs = (Array.isArray(RN.list) ? RN.list.slice().reverse() : []).filter((r) => !pf || (RN.pIds && RN.pIds.has(r.id)));
   // the form keeps what was typed across re-renders (the list loads, a run moves)
   const text = h("textarea", { class: "input", rows: 3, placeholder: T("Say what you want done", "說你要做什麼"), "aria-label": T("Intent", "意圖"), "data-run-text": "1", oninput: (e) => { RN.draft = e.target.value; } });
   text.value = RN.draft || "";
@@ -579,7 +584,9 @@ function viewRuns() {
       try { const r = await startOwnRun({ text: text.value, workflow: wf.value || undefined, params: provider.value ? { provider: provider.value } : {} }); if (!r) return; RN.list = null; RN.draft = ""; location.hash = `#/run/${r.id}`; } catch (e) { msg.textContent = e.message; } } }, T("Start", "開始"))), msg),
     // one word per state (public/runstate.js); archived runs only with "Show archived", each with Unarchive
     h("label", { class: "rt-row rt-archived-toggle" }, h("input", { type: "checkbox", "data-show-archived": "1", checked: RN.archived || null, onchange: (e) => { RN.archived = e.target.checked; RN.list = null; rerender(); } }), T("Show archived", "顯示已封存")),
-    RN.list === "loading" || RN.list === null ? h("div", { class: "skel", style: "height:120px" }) : runs.length ? h("div", { class: "card rt-runs" }, runs.map((r) => h("a", { class: `rt-run st-${r.status}${r.archived ? " archived" : ""}`, href: `#/run/${r.id}`, "data-run": r.id },
+    pf ? h("div", { class: "rt-row", "data-project-filter": pf }, h("span", { class: "badge neutral" }, pf === "studio" ? T("Project: none (Studio)", "專案：無（Studio）") : T(`Project: ${pf}`, `專案：${pf}`)),
+      pf === "studio" ? null : h("a", { href: `#/project/${encodeURIComponent(pf)}` }, T("Open the project", "開啟專案")), h("a", { href: "#/runs" }, T("Show all tasks", "顯示全部任務"))) : null,
+    RN.list === "loading" || RN.list === null || (pf && !RN.pIds) ? h("div", { class: "skel", style: "height:120px" }) : runs.length ? h("div", { class: "card rt-runs" }, runs.map((r) => h("a", { class: `rt-run st-${r.status}${r.archived ? " archived" : ""}`, href: `#/run/${r.id}`, "data-run": r.id },
       h("span", { class: "mono" }, r.id), h("b", {}, r.title), h("span", { class: "vbadge" }, `${r.workflow} v${r.version}`),
       // the state and the archived marker read together; the foot says where the run is and holds Unarchive
       h("span", { class: "rt-state" }, window.runStateBadge(r), r.childRun ? h("span", {class:"faint"}, T(`Execution: ${r.childRun}`,`執行任務：${r.childRun}`)) : null, r.archived ? h("span", { class: "badge neutral rt-archived-tag", "data-archived": "1" }, T("Archived", "已封存")) : null,
@@ -675,6 +682,11 @@ function viewRun(id) {
   const visits = Object.fromEntries(Object.entries(r.nodes).map(([k, n]) => [k, n.visits || 0]));
   const simpleRun = v.gview === "simple";
   const graphPanel=buildRunGraph(r,v);
+  // #/run/<id>?card=<cardId> (a deep link, e.g. from a project page): bring that card into view once
+  const want = S.route?.query?.get("card");
+  if (want && v.cardShown !== want) { v.cardShown = want; requestAnimationFrame(() => { const el = document.querySelector(`[data-scard="${CSS.escape(want)}"]`);
+    if (el) { el.classList.add("rt-card-linked"); el.setAttribute("data-card-linked", "1"); el.scrollIntoView({ block: "start" }); el.querySelector("button, textarea")?.focus({ preventScroll: true }); }
+    else toast(T("That card is no longer waiting: it was answered or withdrawn.", "這張卡片已不在等待：已回答或撤回。")); }); }
   return h("div", { class: `page rt-runview${(r.def.kind==="coffee-kit"||coffeeProposal)?" rt-coffee-run":""}`, "data-runview": id },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, r.title), h("p", {}, h("span", { class: "mono" }, r.id), " · ", h("a", { href: `#/workflows/${r.workflow}/v${r.version}` }, `${r.workflow} v${r.version}`), " · ", h("span", { "data-run-status": r.status }, window.runStateBadge(r)), r.ctx?.childRun ? [" · ", h("a", {href:`#/run/${r.ctx.childRun}`},T(`Execution: ${r.ctx.childRun}`,`執行任務：${r.ctx.childRun}`))] : null, r.archived ? [" ", h("span", { class: "badge neutral rt-archived-tag", "data-archived": "1" }, T("Archived", "已封存"))] : null, r.error ? ` · ${r.error}` : "")),
       h("div", { class: "actions" }, r.ctx?.captures?.app ? h("a", { class: "btn", href: r.ctx.captures.app, target: "_blank", rel: "noopener", "data-open-app": r.id }, T("Open the app", "打開 app")) : null,

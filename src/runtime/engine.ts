@@ -131,6 +131,35 @@ export function fold(events: any[]): Run | null {
   return r;
 }
 
+/** What a run's project resolves against: the registered ids, and (for a run that named a raw repository path) their real paths. */
+export type ProjectRegistry = { ids: ReadonlySet<string>; byPath?: (path: string) => string | null };
+/**
+ * Which project a run is in (docs: projects design §3.2), first match:
+ *   1. ctx.project (set by repo.prepare);
+ *   2. a firstmate-proposal's target params.project (the proposal's own params.project is a binding);
+ *   3. params.project when it is a registered id (a code run with neither project nor repo works on the sandbox);
+ *   4. a coffee-kit run's artifact namespace, as "coffee:<name>" (never a registered id);
+ *   5. "studio": the run has no project.
+ * A code run given a raw params.repo resolves to the registered project at that path, if any.
+ */
+export function projectOf(r: Pick<Run, "workflow" | "params" | "ctx"> & { def?: { kind?: string } | null }, reg: ProjectRegistry): string {
+  const known = (v: unknown) => typeof v === "string" && reg.ids.has(v) ? v : null;
+  const params = r.params ?? {}, ctx = r.ctx ?? {};
+  const fromCtx = known(ctx.project); if (fromCtx) return fromCtx;
+  if (r.workflow === "firstmate-proposal") {
+    try { const t = typeof params.target === "string" && params.target.trim().startsWith("{") ? JSON.parse(params.target) : null; const id = known(t?.params?.project); if (id) return id; } catch {}
+    return "studio";
+  }
+  const kind = r.def?.kind;
+  if (kind === "coffee-kit") return `coffee:${params.project || r.workflow}`;
+  const fromParams = known(params.project); if (fromParams) return fromParams;
+  if (kind === "code" && !params.project) {
+    if (params.repo) return reg.byPath?.(String(params.repo)) ?? "studio";
+    if (reg.ids.has("sandbox")) return "sandbox";
+  }
+  return "studio";
+}
+
 /** A judged check may block only with a quorum: n ≥ 2 failing votes out of of ≥ n independent runs. */
 export const quorumOk = (q: { n: number; of: number } | null | undefined) => !!q && Number.isInteger(q.n) && Number.isInteger(q.of) && q.n >= 2 && q.of >= q.n;
 
@@ -251,7 +280,7 @@ export class Engine {
     this.deps.agents.queue.wake();
     const f = join(this.rdir(r.id), "run.json"); writeFileSync(f + ".tmp", JSON.stringify(r)); renameSync(f + ".tmp", f);
     for (const e of evs) { this.deps.log.emit({ type: `run_${e.type === "run" ? "status" : "node"}`, workflow: r.workflow, task: r.id, summary: e.type === "run" ? `${e.from} → ${e.to} (${e.cause})` : `${e.node}: ${e.from} → ${e.to} (${e.cause})`, data: { version: r.version, node: e.node ?? null, from: e.from, to: e.to, cause: e.cause } });
-      this.deps.send("wrun", { id: r.id, status: r.status, event: { seq: e.seq, ts: e.ts, type: e.type, node: e.node ?? null, from: e.from, to: e.to, cause: e.cause, outcome: e.outcome ?? null }, nodes: this.nodeStates(r) }); }
+      this.deps.send("wrun", { id: r.id, project: this.projectOf(r), status: r.status, event: { seq: e.seq, ts: e.ts, type: e.type, node: e.node ?? null, from: e.from, to: e.to, cause: e.cause, outcome: e.outcome ?? null }, nodes: this.nodeStates(r) }); }
   }
   save(r: Run) { this.commit(r); }
   /** A display event (logs, check results, cards raised): in the run's events and Studio's log, ignored by the fold. */
@@ -259,7 +288,7 @@ export class Engine {
     if (this.gone.has(r.id)) return;
     const ev = this.append(r, { type, summary, ...data });
     this.deps.log.emit({ type: `run_${type}`, workflow: r.workflow, task: r.id, summary, data: { version: r.version, ...data } });
-    this.deps.send("wrun", { id: r.id, status: r.status, event: ev, nodes: this.nodeStates(r) });
+    this.deps.send("wrun", { id: r.id, project: this.projectOf(r), status: r.status, event: ev, nodes: this.nodeStates(r) });
   }
   events(id: string, after = 0): any[] {
     const f = join(this.rdir(id), "events.jsonl"); if (!existsSync(f)) return [];
@@ -350,6 +379,21 @@ export class Engine {
   }
 
   private queueOwner = randomBytes(8).toString("hex");
+  private projectCache: { key: string; reg: ProjectRegistry } | null = null;
+  /** The registry projectOf reads: data/projects.json, re-read only when it changes (a wrun event carries the project). */
+  projectRegistry(): ProjectRegistry {
+    const file = join(this.deps.dataDir, "projects.json");
+    let key = "absent"; try { const st = lstatSync(file); key = `${st.mtimeMs}:${st.size}`; } catch {}
+    if (this.projectCache?.key === key) return this.projectCache.reg;
+    let list: any[] = []; try { const st = lstatSync(file); if (st.isFile() && st.size <= 1024 * 1024) { const v = JSON.parse(readFileSync(file, "utf8")); if (Array.isArray(v)) list = v; } } catch {}
+    const ids = new Set<string>(list.filter((p) => p && typeof p.id === "string" && p.id).map((p) => p.id));
+    const real = (p: string) => { try { return realpathSync(p); } catch { return null; } };
+    const reg: ProjectRegistry = { ids, byPath: (path) => { const want = real(path); if (!want) return null; const hit = list.find((p) => typeof p?.path === "string" && real(p.path) === want); return hit?.id ?? null; } };
+    this.projectCache = { key, reg }; return reg;
+  }
+  projectOf(r: Run) { try { return projectOf(r, this.projectRegistry()); } catch { return "studio"; } }
+  /** The sidebar row a run counts under: its registered project, else "studio" (no project; a coffee namespace is not a registered project). */
+  projectRow(r: Run) { const id = this.projectOf(r); return this.projectRegistry().ids.has(id) ? id : "studio"; }
   queueProject(r: Run) { return String(r.ctx.project ?? r.params.project ?? "studio") || "studio"; }
   queueRepo(repo: unknown) { try { return typeof repo === "string" && repo ? realpathSync(repo) : ""; } catch { return ""; } }
   queueDependencies(r: Run): string[] {
@@ -877,7 +921,7 @@ export class Engine {
     const c = this.committed.get(r.id); if (c) c.archived = on;
     const f = join(this.rdir(r.id), "run.json"); writeFileSync(f + ".tmp", JSON.stringify(r)); renameSync(f + ".tmp", f);
     this.deps.log.emit({ type: on ? "run_archived" : "run_unarchived", workflow: r.workflow, task: r.id, summary: `${r.id} ${on ? "archived" : "unarchived"} by ${by}`, data: { by } });
-    this.deps.send("wrun", { id: r.id, status: r.status, archived: on, event: { type: "archived", archived: on }, nodes: this.nodeStates(r) });
+    this.deps.send("wrun", { id: r.id, project: this.projectOf(r), status: r.status, archived: on, event: { type: "archived", archived: on }, nodes: this.nodeStates(r) });
     return r;
   }
   /**
