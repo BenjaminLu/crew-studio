@@ -45,9 +45,14 @@ function drawSide() {
     const list = PJ.side.projects || [], real = list.filter((p) => p.kind !== "studio");
     body = [PJ.side.error ? h("div", { class: "pj-side-msg bad", role: "status" }, LX(PJ.side.error)) : !real.length ? h("div", { class: "pj-side-msg", "data-projects-empty": "1" }, T("No project yet", "還沒有專案")) : null, ...list.map(sideRow)];
   }
-  sec.replaceChildren(head, ...body.filter(Boolean));
-  markMore(sec);
-  if (!sec.dataset.moreWatch) { sec.dataset.moreWatch = "1"; sec.addEventListener("scroll", () => markMore(sec), { passive: true }); addEventListener("resize", () => markMore(sec)); }
+  // the heading stays outside the scrolling list, so no row is ever drawn under or above it
+  const prev = sec.querySelector("[data-projects-list]"), keepTop = prev ? prev.scrollTop : 0;
+  const listBox = h("div", { class: "nav-proj-list", "data-projects-list": "1" }, ...body.filter(Boolean));
+  sec.replaceChildren(head, listBox);
+  listBox.scrollTop = keepTop;
+  markMore(listBox);
+  listBox.addEventListener("scroll", () => markMore(listBox), { passive: true });
+  if (!sec.dataset.moreWatch) { sec.dataset.moreWatch = "1"; addEventListener("resize", () => { const l = document.querySelector("[data-projects-list]"); if (l) markMore(l); }); }
   hydrateIcons(sec);
   // the phone's top-bar item carries the open-card count
   const n = (PJ.side?.projects || []).reduce((a, p) => a + (p.attention || 0), 0);
@@ -182,7 +187,7 @@ function sensitiveSection(d, id) {
   if (ta) ta.value = PJ.proposing;
   // an unreadable policy file: the classifier treats every path as one-way; nothing here can be proposed or approved
   if (s.unreadable) return h("section", { id: "s-paths", "aria-labelledby": "hSens" }, head, h("div", { class: "card x-pad x-stack" },
-    h("div", { class: "err", role: "status", "data-policy-unreadable": s.unreadable }, icon("alert", "ic sm"), h("span", {}, LX(s.message))),
+    h("div", { class: "err pj-err-inline", role: "status", "data-policy-unreadable": s.unreadable }, icon("alert", "ic sm"), h("span", {}, LX(s.message))),
     s.proposed ? h("div", { class: "faint", style: "font-size:13px" }, T("A proposed list waits; it can be approved once the policy file is fixed.", "有一份提議中的清單；政策檔修好後才能核准。")) : null));
   return h("section", { id: "s-paths", "aria-labelledby": "hSens" }, head, h("div", { class: "card x-pad x-stack" },
     s.project.length ? lines(s.project) : h("div", { class: "faint", style: "font-size:13px" }, T("No project lines yet.", "還沒有專案自己的規則。")),

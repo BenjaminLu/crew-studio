@@ -1,12 +1,12 @@
 /* Projects (phase 1): the sidebar section and the project page. Ported from the approved prototype
    (projects-design/prototype.html, "projects: the sidebar section and the project page"); shell tokens only,
    so light and dark both work. */
-.nav-proj{display:flex;flex-direction:column;gap:2px;margin-top:10px;padding-top:8px;border-top:1px solid var(--border);min-height:0;overflow:auto}
-.nav-proj-h{display:flex;align-items:center;gap:6px;padding:0 4px 4px 10px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);min-height:26px}
+.nav-proj{display:flex;flex-direction:column;margin-top:10px;padding-top:0;border-top:1px solid var(--border);min-height:0;overflow:hidden}
+.nav-proj-h{flex:none;display:flex;align-items:center;gap:6px;padding:8px 4px 4px 10px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);min-height:26px;background:var(--surface)}
+.nav-proj-list{display:flex;flex-direction:column;gap:2px;min-height:0;overflow:auto;overscroll-behavior:contain}
 /* the list scrolls above the footer: the heading stays, and a fade with a line marks rows below the fold */
-.nav-proj{flex:0 1 auto;overscroll-behavior:contain}
-.nav-proj-h{position:sticky;top:0;z-index:1;background:var(--surface)}
-.nav-proj[data-more="1"]{-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 28px),transparent);border-bottom:1px solid var(--border)}
+.nav-proj{flex:0 1 auto}
+.nav-proj-list[data-more="1"]{-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 28px),transparent);border-bottom:1px solid var(--border)}
 .nav-proj-h a{color:inherit;text-decoration:none}
 .nav-proj-h a:hover{color:var(--text)}
 .pj-item{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:2px 10px;align-items:center;padding:6px 10px;border-radius:6px;border:0;background:none;color:var(--text-2);text-align:left;width:100%;min-height:44px;text-decoration:none}
@@ -28,6 +28,7 @@
 /* collapsed sidebar: marks only */
 @media (min-width: 761px){
   body.side-collapsed .nav-proj{align-items:center;padding-top:8px}
+  body.side-collapsed .nav-proj-list{align-items:center}
   body.side-collapsed .nav-proj-h{display:none}
   body.side-collapsed .pj-item{width:40px;min-height:40px;padding:0;display:grid;place-items:center;grid-template-columns:1fr;position:relative}
   body.side-collapsed .pj-item .pmark{grid-row:auto}
@@ -94,6 +95,9 @@ a.btn,a.chip,.sec-head a{text-decoration:none}
 .pj-states{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr));gap:12px}
 .pj-states > a{color:inherit;text-decoration:none}
 .pj-notice{font-size:13px}
+.err.pj-err-inline{flex-wrap:nowrap;align-items:flex-start}
+.err.pj-err-inline .ic{flex:none;margin-top:2px}
+.err.pj-err-inline > span{min-width:0}
 .pj-propose{display:grid;gap:8px}
 .pj-propose textarea{min-height:72px;font-family:var(--f-mono);font-size:12px}
 /* a card opened from a deep link (#/run/<id>?card=<cardId>) */

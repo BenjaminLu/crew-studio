@@ -64,19 +64,39 @@ try {
     ok((await p.locator('[data-project-card="reef-log"] .faint').textContent()).startsWith('Folder missing'), 'the index card of reef-log says Folder missing');
     // the sidebar at 1280x900 with six projects and Studio: the list scrolls above the footer, nothing hidden under it
     await p.goto(`${base}/#/project/harbor-api`); await p.reload(); await p.waitForSelector('[data-projects-nav] [data-project-row="studio"]'); await p.waitForTimeout(300);
-    const side = await p.evaluate(async () => { const sec = document.querySelector('[data-projects-nav]'), foot = document.querySelector('.side-foot'); const moreAtTop = sec.dataset.more; sec.scrollTop = sec.scrollHeight; await new Promise((r) => setTimeout(r, 200));
+    const side = await p.evaluate(async () => { const sec = document.querySelector('[data-projects-list]'), foot = document.querySelector('.side-foot'); const moreAtTop = sec.dataset.more; sec.scrollTop = sec.scrollHeight; await new Promise((r) => setTimeout(r, 200));
       const sr = sec.getBoundingClientRect(), fr = foot.getBoundingClientRect(), last = sec.querySelector('[data-project-row="studio"]').getBoundingClientRect();
       return { secBottom: sr.bottom, footTop: fr.top, lastTop: last.top, lastBottom: last.bottom, secTop: sr.top, scrolls: sec.scrollHeight > sec.clientHeight, moreAtTop, moreAtEnd: sec.dataset.more }; });
     ok(side.secBottom <= side.footTop + 0.5 && side.lastBottom <= side.secBottom + 0.5 && side.lastTop >= side.secTop, 'at 1280x900 the projects list scrolls above the footer; its last row is fully visible when scrolled', JSON.stringify(side));
     ok(side.scrolls && side.moreAtTop === '1' && side.moreAtEnd === '0', 'a list that runs on past the footer says so (a fade and a "more" mark) until it is scrolled to the end', JSON.stringify(side));
-    await p.evaluate(() => { document.querySelector('[data-projects-nav]').scrollTop = 0; });
+    await p.evaluate(() => { document.querySelector('[data-projects-list]').scrollTop = 0; });
     await p.screenshot({ path: join(shots, 'sidebar-1280x900-six-projects.png'), clip: { x: 0, y: 0, width: 240, height: 900 } });
+    // ten projects at 1280x900, the list scrolled to the middle: nothing shows through above the PROJECTS heading, and no row
+    // is drawn under it (a row's visible part starts below the heading)
+    { const extra = [1, 2, 3, 4].map((i) => ({ id: `spare-${i}`, name: `spare-${i}`, path: join(seed.data, `spare-gone-${i}`), base: 'main', sensitive: [], proposed: null, proposedAt: null, approvedAt: null }));
+      writeFileSync(regFile, JSON.stringify([...JSON.parse(healthy), ...seed.broken, ...extra], null, 1));
+      await p.reload(); await p.waitForSelector('[data-projects-nav] [data-project-row="spare-4"]'); await p.waitForTimeout(300);
+      const r = await p.evaluate(async () => {
+        const sec = document.querySelector('[data-projects-nav]'), hdr = sec.querySelector('.nav-proj-h');
+        const scroller = [sec, ...sec.querySelectorAll('*')].find((e) => e.scrollHeight > e.clientHeight + 2 && /auto|scroll/.test(getComputedStyle(e).overflowY));
+        if (!scroller) return { error: 'no scroller' };
+        scroller.scrollTop = Math.round((scroller.scrollHeight - scroller.clientHeight) / 2) + 13; await new Promise((x) => setTimeout(x, 150));
+        const h = hdr.getBoundingClientRect(), sr = sec.getBoundingClientRect(), clip = scroller.getBoundingClientRect(), bad = [];
+        for (let y = Math.ceil(sr.top) + 1; y < h.bottom - 1; y += 2) for (const x of [h.left + 14, (h.left + h.right) / 2, h.right - 14]) { const el = document.elementFromPoint(x, y); if (el && el.closest('.pj-item')) bad.push(`row shows at y=${y}`); }
+        const rowsUnder = [...sec.querySelectorAll('.pj-item')].map((e) => e.getBoundingClientRect()).filter((b) => b.bottom > clip.top && b.top < clip.bottom).filter((b) => Math.max(b.top, clip.top) < h.bottom - 0.5).length;
+        return { bad: bad.slice(0, 3), rowsUnder, hdrBottom: h.bottom, clipTop: clip.top, scrollTop: scroller.scrollTop };
+      });
+      ok(!r.error && !r.bad.length && r.rowsUnder === 0, 'ten projects, list scrolled: no row shows above or under the PROJECTS heading', JSON.stringify(r));
+      await p.screenshot({ path: join(shots, 'sidebar-1280x900-ten-projects-scrolled.png'), clip: { x: 0, y: 0, width: 240, height: 900 } });
+      writeFileSync(regFile, JSON.stringify([...JSON.parse(healthy), ...seed.broken], null, 1)); await p.reload(); await p.waitForSelector('[data-projects-nav] [data-project-row="studio"]'); }
     // an unreadable project policy: every path is one-way; the page says so and offers no edits
     { const pf = join(seed.data, 'policies', 'project-harbor-api.yaml'), keep = readFileSync(pf, 'utf8'); writeFileSync(pf, 'sensitive_paths: [unclosed\n  - : :');
       await p.goto(`${base}/#/projects`); await p.goto(`${base}/#/project/harbor-api`); await p.waitForSelector('[data-project-page="harbor-api"]:not([data-loading]) #s-paths');
       await p.waitForSelector('#s-paths [data-policy-unreadable]', { timeout: 8000 }).catch(() => {});
       const t = await p.locator('#s-paths').innerText();
       ok(t.includes('Policy file cannot be read: every path is one-way until it is fixed') && await p.locator('[data-propose-open]').count() === 0 && await p.locator('[data-approve-list]').count() === 0 && !t.includes('No project lines yet'), 'an unreadable project policy: one-way message, no Propose, no Approve', t);
+      const inline = await p.evaluate(() => { const e = document.querySelector('#s-paths [data-policy-unreadable]'), i = e.querySelector('svg').getBoundingClientRect(), t = e.querySelector('span').getBoundingClientRect(); return i.right <= t.left + 0.5 && Math.abs(i.top - t.top) < 8; });
+      ok(inline, 'the alert icon sits inline before the message');
       { const r = await p.locator('#s-paths').boundingBox(); if (r) await p.screenshot({ path: join(shots, 'sensitive-unreadable-1280-light.png'), clip: r }); }
       writeFileSync(pf, keep); }
     await ctx.close(); writeFileSync(regFile, healthy);
