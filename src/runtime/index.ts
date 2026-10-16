@@ -300,7 +300,7 @@ export function createRuntime(d: RuntimeDeps) {
         const refuse = (o: Record<string, unknown>, st: number, code: FailureCode) => json({ ...o, failure: failure(code, String(o.error ?? ""), { source: "params" }) }, st);
         const text = String(b?.text ?? "").trim(); if (!text && !b?.workflow) return refuse({ error: "say what you want done" }, 400, "invalid-input.params");
         const cls = classifyIntent(defs, text, engine.policies.get("sensitive_paths", { project: b?.params?.project ? String(b.params.project) : b?.project ? String(b.project) : null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []);
-        const wf = b?.workflow || cls.workflow; if (!wf) return refuse({ error: "Studio could not tell which workflow this is: pick one", classifier: cls }, 409, "invalid-input.params");
+        const wf = b?.workflow || cls.workflow; if (!wf) return refuse({ error: "Choose a workflow below; your request is still saved. / 請從下方選擇流程；你輸入的需求已保留。", code: "workflow_required", classifier: cls }, 409, "invalid-input.params");
         {const held=defs.held(wf);if(held)return refuse({error:`This workflow is ${held.en}. It stays in the catalog for editing. / 此流程${held.zh}，仍可在流程目錄中編輯。`,code:"workflow_held",held},409,"invalid-input.config");}
         if(!defs.selectable(wf,b?.version?Number(b.version):undefined))return refuse({error:"This workflow is internal or retired. Choose an available workflow. / 此流程為內部或已退役流程，請選擇可用流程。",code:"workflow_unavailable"},409,"invalid-input.config");
         let params={...(b?.params??{})};delete params._ownStaffing;

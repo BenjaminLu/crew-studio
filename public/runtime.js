@@ -637,7 +637,14 @@ function viewRuns() {
   const msg = h("div", { class: "faint", role: "status" }, RN.startError || "");
   return h("div", { class: "page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Tasks", "任務")), h("p", {}, T("Studio's workflow tasks, each with its live graph.", "Studio 的流程任務，每個都有即時流程圖。")))),
     h("div", { class: "card x-pad rt-start" }, h("h3", {}, T("Start a task", "開始一個任務")), text, h("div", { class: "rt-row" }, wf, provider, h("button", { class: "btn primary", "data-run-start": "1", disabled: startBlocked(wf.value) || null, onclick: async () => {
-      try { const r = await startOwnRun({ text: text.value, workflow: wf.value || undefined, params: { ...(provider.value ? { provider: provider.value } : {}), ...startParamValues(wf.value), ...startProjectValue(wf.value) }, ...startStaffingExpected(wf.value) }); if (!r) return; RN.list = null; RN.draft = ""; RN.startError = ""; location.hash = `#/run/${r.id}`; }
+      try {
+        if(!wf.value){
+          RN.draft=text.value;
+          const choice=await api("/api/intake",{text:text.value});
+          if(!choice.workflow||!choice.confident){msg.textContent=RN.startError=T("Choose a workflow below; your request is still saved.","請選擇流程；你輸入的需求已保留。");wf.focus();return;}
+          RN.prefill=choice.workflow;RN.startError=T("Workflow selected. Review its inputs, then press Start.","已選好流程，確認輸入後按「開始」。");rerender();return;
+        }
+        const r = await startOwnRun({ text: text.value, workflow: wf.value || undefined, params: { ...(provider.value ? { provider: provider.value } : {}), ...startParamValues(wf.value), ...startProjectValue(wf.value) }, ...startStaffingExpected(wf.value) }); if (!r) return; RN.list = null; RN.draft = ""; RN.startError = ""; location.hash = `#/run/${r.id}`; }
       catch (e) { msg.textContent = RN.startError = e.message; if (/^(staffing_|project_)/.test(e.code || "") && RN.startOptions) { delete RN.startOptions[wf.value]; rerender(); } } } }, T("Start", "開始"))), startProjectPicker(wf.value), startParamInputs(wf.value), msg),
     // one word per state (public/runstate.js); archived runs only with "Show archived", each with Unarchive
     h("label", { class: "rt-row rt-archived-toggle" }, h("input", { type: "checkbox", "data-show-archived": "1", checked: RN.archived || null, onchange: (e) => { RN.archived = e.target.checked; RN.list = null; rerender(); } }), T("Show archived", "顯示已封存")),

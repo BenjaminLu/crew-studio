@@ -20,6 +20,14 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
  for(const width of[1440,390])for(const theme of['light','dark'])for(const lang of['en','zh-TW']){const tag=`${width} ${theme} ${lang}`,p=await browser.newPage({viewport:{width,height:1000},colorScheme:theme});
   await p.goto(base+'/#/runs');await p.evaluate(({theme,lang})=>{setTheme(theme);setLang(lang);},{theme,lang});await p.locator('[data-run-wf] option[value="code-firstmate"]').waitFor({state:'attached'});
   ok(await p.locator('[data-run-wf] option[value="github-review"]').count()===0,'the Start form does not offer the held github-review '+tag);
+  if(width===1440&&theme==='light'&&lang==='en'){
+   let starts=0;const listener=r=>{if(r.method()==='POST'&&r.url().endsWith('/api/wruns'))starts++;};p.on('request',listener);
+   await p.locator('[data-run-text]').fill('zzzxqv ambiguous request');await p.locator('[data-run-start]').click();
+   await p.waitForFunction(()=>document.activeElement?.matches('[data-run-wf]'));
+   ok(starts===0&&await p.locator('[data-run-text]').inputValue()==='zzzxqv ambiguous request','unknown intent focuses workflow picker, retains prompt and allocates no Task');
+   await p.locator('[data-run-text]').fill('coffee-kit');await p.locator('[data-run-start]').click();await p.waitForFunction(()=>document.querySelector('[data-run-wf]')?.value==='coffee-kit');
+   ok(starts===0&&await p.locator('[data-run-text]').inputValue()==='coffee-kit','recognized workflow shows declared inputs before allocating a Task');p.off('request',listener);
+  }
   await p.locator('[data-run-wf]').selectOption('code-firstmate');await p.locator('[data-run-project="code-firstmate"]').waitFor();
   const values=await p.locator('[data-run-project="code-firstmate"] option').evaluateAll(o=>o.map(x=>x.value));
   ok(['fixture','unstaffed','stale'].every(id=>values.includes(id)),'the picker lists every registered project '+tag);
