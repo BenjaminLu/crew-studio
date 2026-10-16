@@ -55,6 +55,8 @@ export type RuntimeDeps = {
   coffeeVideo?:Parameters<typeof installCoffeeKit>[1]["video"];
   coffeeFilmStatus?:{ready:boolean;reason:string|null};
   coffeeChoice?:()=>{provider:"codex";model:string;effort:string|null}|null;
+  /** Studio's configured model per provider (chat settings, env, Codex config): the startup workflow's default when no exact model param was given. */
+  startupModel?:(provider:"claude"|"codex")=>string|null|undefined;
   generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference) => Promise<import("../providers/codex-image").CodexImage>;
   staffingFacts?: () => Promise<StaffingFacts[]>;
   staffingAdmission?: StaffingAdmission;
@@ -94,7 +96,7 @@ export function createRuntime(d: RuntimeDeps) {
   const engine = new Engine({ dataDir: d.dataDir, agents: d.agents, provider: d.provider, defaultProvider: d.defaultProvider, selectProvider: d.selectProvider, log: d.log, send: d.send, skillText: skillTextFor(d.fmRoot), store: d.store, protectedRoots: d.protectedRoots ?? [d.fmRoot], library: d.skills ?? null }, defs);
   const projects = new Projects(d.dataDir);
   if (d.m3?.store && d.m3?.lane && d.fileorg && d.docs) installDeliver(engine, { dataDir: d.dataDir, artifacts: d.m3.store, lane: d.m3.lane, fileorg: d.fileorg, docs: d.docs, generateImage: d.generateImage });
-  if(d.m3?.store)installStartupRecursion(engine,{artifacts:d.m3.store});
+  if(d.m3?.store)installStartupRecursion(engine,{artifacts:d.m3.store,configuredModel:d.startupModel});
   let coffee:ReturnType<typeof installCoffeeKit>|undefined;
   if(d.m3?.store){coffee=installCoffeeKit(engine,{artifacts:d.m3.store,choice:d.coffeeChoice,reviewStaffing:(def,params)=>{const c=staffingGuard.verified(def,params);return{hash:c.hash,workflow:c.workflow,roles:c.roles,approval:c.approval};},staffing:(def,params)=>{const config=staffingGuard.verified(def,params),role=config.roles['image-worker'];if(!role||role.provider!=='codex')throw new Error('The dedicated image adapter requires an explicitly approved available Codex image-worker; no vendor fallback');return {provider:'codex',model:role.model,effort:role.effort};},video:d.coffeeVideo});d.m3.useArtifactReviewPolicy?.(coffee.artifactReview);}
   engine.deps.continuationEvidence=(r:any)=>{const refs=Object.values(r.ctx.deliver??{})as any[];if(refs.length&&!d.m3?.store)throw new Error('Artifact storage unavailable for continuation');

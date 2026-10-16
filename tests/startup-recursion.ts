@@ -33,6 +33,39 @@ for(const scenario of ['three-rounds','early-ready','fallback','reject','tamper'
  await a.rejects(H.engine.answer(accept.id,{choice:'accept',by:'fixture captain'}));
  }finally{H.stop();}
 }
+// Board start: no hand-typed model params. Studio's configured model per exact provider is bound before the captain card.
+const {StartupModelRefusal}=await import('../src/domain/startup-recursion');
+const configured=(p:string)=>p==='claude'?'cfg-claude-model':p==='codex'?'cfg-codex-model':null;
+for(const scenario of ['configured','explicit-override','tamper-after-approval']){
+ const H=await harness([flow]);const store=new ArtifactStore(H.data);installStartupRecursion(H.engine,{artifacts:store,configuredModel:configured as any});const jobs:{id:string;model:string}[]=[];let run:any;
+ H.engine.deps.provider=(id='codex',model='fixture-model')=>({id,model,sandboxFree:true,start(_sys:any,_tools:any,ctx:any){return{interrupt(){},async *send(text:string){jobs.push({id,model});const judge=text.includes('Role: judge'),round=Number(/round: (\d)/.exec(text)![1]);if(scenario==='tamper-after-approval'&&!judge&&round===1)run.params.founderModel='tampered-claude-model';const payload=judge?{text:`Critique round ${round}: willingness to pay is untested; run five paid pilots before growth spending.`,score:80,verdict:'ready'}:{text:`Proposal round ${round}: research service for independent coffee shops with paid pilot validation and explicit revenue assumptions.`,revision:''};yield{type:'toolStart',id:'submit',name:'startup_submit',args:payload};const result=await H.agents.callTool(ctx.token,'startup_submit',payload);yield{type:'toolEnd',id:'submit',result:JSON.stringify(result)};yield{type:'turnEnd',status:'ok'};}};} } as any);
+ try{
+  const params:Record<string,string>={provider:'codex',...(scenario==='explicit-override'?{founderModel:'explicit-claude-model'}:{})};
+  run=H.engine.start({workflow:'startup-recursion',text:'Fixture only: board-started startup competition.',params});
+  const founder=scenario==='explicit-override'?'explicit-claude-model':'cfg-claude-model';
+  a(await until(()=>H.engine.cards.list({run:run.id,open:true}).length===1),JSON.stringify(H.engine.get(run.id)?.nodes.choose));const c=H.engine.cards.list({run:run.id,open:true})[0];
+  check(`${scenario}: exact models resolved and recorded before the captain card`,()=>{const r=H.engine.trusted(run.id).entries.filter(e=>e.record==='startup-models-resolved');a.equal(r.length,1);a.equal(r[0].data.founder.model,founder);a.equal(r[0].data.founder.source,scenario==='explicit-override'?'param':'configured');a.equal(r[0].data.judge.model,'cfg-codex-model');a.equal(r[0].data.judge.provider,'codex');a.equal(jobs.length,0);});
+  check(`${scenario}: selection card shows the exact resolved models`,()=>{a(c.body.includes(`Claude: ${founder} / effort=null`),c.body);a(c.body.includes('Codex: cfg-codex-model / effort=null'),c.body);});
+  await H.engine.answer(c.id,{choice:'template',by:'fixture captain'});
+  check(`${scenario}: signed approval binds the resolved models`,()=>{const p=H.engine.trusted(run.id).entries.find(e=>e.record==='startup-contract-approved')!.data;a.equal(p.founder.model,founder);a.equal(p.judge.model,'cfg-codex-model');a.equal(p.claudeVerification.model,founder);});
+  if(scenario==='tamper-after-approval'){a(await until(()=>H.engine.get(run.id)?.status==='failed'),JSON.stringify(H.engine.get(run.id)?.status));check('model param changed after approval is refused',()=>{a(!H.engine.trusted(run.id).entries.some(e=>e.record==='startup-round'));a(String(H.engine.get(run.id)!.nodes.pitch1.error).includes('changed'),String(H.engine.get(run.id)!.nodes.pitch1.error));});continue;}
+  a(await until(()=>H.engine.cards.list({run:run.id,open:true}).some(c=>c.node==='accept')),JSON.stringify(H.engine.get(run.id)?.nodes));
+  check(`${scenario}: rounds run on the exact approved models`,()=>{const rounds=H.engine.trusted(run.id).entries.filter(e=>e.record==='startup-round');a.equal(rounds.length,2);a.deepEqual(rounds.map(e=>`${e.data.provider}/${e.data.model}`),[`claude/${founder}`,'codex/cfg-codex-model']);a.deepEqual(jobs,[{id:'claude',model:founder},{id:'codex',model:'cfg-codex-model'}]);});
+  const accept=H.engine.cards.list({run:run.id,open:true}).find(c=>c.node==='accept')!;await H.engine.answer(accept.id,{choice:'accept',by:'fixture captain'});
+  a(await until(()=>H.engine.get(run.id)?.status==='succeeded'));check(`${scenario}: captain acceptance completes end to end`,()=>a(H.engine.trusted(run.id).entries.some(e=>e.record==='startup-accepted')));
+ }finally{H.stop();}
+}
+for(const [name,cfg,params,provider] of [['no configured codex model',(p:string)=>p==='claude'?'cfg-claude-model':null,{provider:'codex'},'codex'],['no configured claude model',(p:string)=>p==='codex'?'cfg-codex-model':null,{},'claude'],['no configured models and no installer source',undefined,{judgeModel:'fixture-codex'},'claude']] as const){
+ const H=await harness([flow]);installStartupRecursion(H.engine,{artifacts:new ArtifactStore(H.data),configuredModel:cfg as any});
+ try{
+  let error:any;try{H.engine.start({workflow:'startup-recursion',text:'Fixture only.',params:params as any});}catch(e){error=e;}
+  check(`${name}: typed bilingual refusal naming ${provider} and where to set it, no Task, no fallback`,()=>{a(error instanceof StartupModelRefusal,String(error));a.equal(error.publicFailure.code,'startup_model_unconfigured');a.equal(error.provider,provider);a(error.publicFailure.reason.en.includes(provider)&&error.publicFailure.reason.en.includes('Settings'));a(error.publicFailure.reason['zh-TW'].includes(provider)&&error.publicFailure.reason['zh-TW'].includes('設定'));a(error.message.includes(error.publicFailure.reason['zh-TW']));a.equal(H.engine.list().length,0);});
+ }finally{H.stop();}
+}
+{
+ const H=await harness([flow]);installStartupRecursion(H.engine,{artifacts:new ArtifactStore(H.data),configuredModel:configured as any});
+ try{let error:any;try{H.engine.start({workflow:'startup-recursion',text:'Fixture only.',params:{judgeModel:'bad model/with space'}});}catch(e){error=e;}check('invalid explicit model is refused, never replaced by the configured one',()=>{a(error instanceof StartupModelRefusal);a.equal(error.publicFailure.code,'startup_model_invalid');a.equal(H.engine.list().length,0);});}finally{H.stop();}
+}
 {
  const {installFirstmate}=await import('../src/firstmate');const {Projects}=await import('../src/doors');
  const H=await harness([flow,readFileSync(join(import.meta.dir,'../workflows/v2/firstmate-proposal.wf.yaml'),'utf8')]);
@@ -47,6 +80,26 @@ for(const scenario of ['three-rounds','early-ready','fallback','reject','tamper'
  const child=H.engine.get(H.engine.get(result.proposal)!.ctx.childRun)!;a(await until(()=>H.engine.cards.list({run:child.id,open:true}).length===1));
  check('native dispatch retains complete candidate and still waits for explicit template selection',()=>{a.equal(child.params.generatedWorkflow,JSON.stringify(contract.candidate));a.equal(child.steps.filter(s=>s.job).length,0);a(H.engine.cards.list({run:child.id,open:true})[0].body.includes('固定 template runner'));});
  H.engine.cancel(child.id,'fixture complete');
+ }finally{H.stop();}
+}
+{
+ const {installFirstmate}=await import('../src/firstmate');const {Projects}=await import('../src/doors');
+ const H=await harness([flow,readFileSync(join(import.meta.dir,'../workflows/v2/firstmate-proposal.wf.yaml'),'utf8')]);
+ try{installStartupRecursion(H.engine,{artifacts:new ArtifactStore(H.data),configuredModel:configured as any});const tools=installFirstmate(H.engine,new Projects(H.data)),owner={key:'fixture:startup-configured',captain:true,text:'Run a startup competition',live:()=>true};
+  const contract:any=await tools.call('studio_startup_workflow_contract',{},owner);check('Firstmate contract lists model params as optional, not required',()=>{a(!contract.requiredParams);a(contract.optionalParams.includes('founderModel')&&contract.optionalParams.includes('judgeModel'));});
+  const result:any=await tools.call('studio_propose_work',{workflow:'startup-recursion',version:1,text:'Startup competition for a coffee research service.',params:{}},owner);
+  a(await until(()=>H.engine.cards.list({run:result.proposal,open:true}).length===1));await H.engine.answer(H.engine.cards.list({run:result.proposal,open:true})[0].id,{choice:'approve',by:'fixture captain'});a(await until(()=>!!H.engine.get(result.proposal)?.ctx.childRun));
+  const child=H.engine.get(H.engine.get(result.proposal)!.ctx.childRun)!;a(await until(()=>H.engine.cards.list({run:child.id,open:true}).length===1));
+  check('Firstmate proposal without model params binds the configured models on the selection card',()=>{const body=H.engine.cards.list({run:child.id,open:true})[0].body;a(body.includes('Claude: cfg-claude-model')&&body.includes('Codex: cfg-codex-model'),body);});
+  H.engine.cancel(child.id,'fixture complete');
+ }finally{H.stop();}
+}
+{
+ const {installFirstmate}=await import('../src/firstmate');const {Projects}=await import('../src/doors');
+ const H=await harness([flow,readFileSync(join(import.meta.dir,'../workflows/v2/firstmate-proposal.wf.yaml'),'utf8')]);
+ try{installStartupRecursion(H.engine,{artifacts:new ArtifactStore(H.data),configuredModel:(p:string)=>p==='claude'?'cfg-claude-model':null});const tools=installFirstmate(H.engine,new Projects(H.data)),owner={key:'fixture:startup-unconfigured',captain:true,text:'Run a startup competition',live:()=>true};
+  let error:any;try{await tools.call('studio_propose_work',{workflow:'startup-recursion',version:1,text:'Startup competition for a coffee research service.',params:{}},owner);}catch(e){error=e;}
+  check('Firstmate proposal refuses before any card when the codex model is not configured',()=>{a.equal(error?.publicFailure?.code,'startup_model_unconfigured');a.equal(H.engine.list().length,0);});
  }finally{H.stop();}
 }
 console.log(`${passed}/0 startup assertions (controlled providers; no live model proof)`);

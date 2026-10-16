@@ -6,6 +6,37 @@ import {bundledText,parseYaml} from '../bundled';
 import {redactText} from '../secure';
 import type {ArtifactStore} from '../artifacts';
 import type {Engine,X} from '../runtime/engine';
+import {NativeToolFailure} from '../host/types';
+export type StartupRole='founder'|'judge';
+export type StartupProvider='claude'|'codex';
+export type StartupConfiguredModel=(provider:StartupProvider)=>string|null|undefined;
+const ROLE={founder:{provider:'claude',param:'founderModel',name:'Claude',zh:'Claude 創業者'},judge:{provider:'codex',param:'judgeModel',name:'Codex',zh:'Codex 評審'}} as const;
+const validModel=(s:unknown):s is string=>typeof s==='string'&&!!s.trim()&&s.length<=150&&/^[a-zA-Z0-9._-]+$/.test(s);
+/** A typed, bilingual refusal: no exact model for one role, and no other vendor stands in. */
+export class StartupModelRefusal extends NativeToolFailure{
+ readonly role:StartupRole;readonly provider:StartupProvider;
+ constructor(role:StartupRole,kind:'unconfigured'|'invalid'){
+  const r=ROLE[role];
+  const en=kind==='invalid'?`Startup competition: ${r.param} must be an exact ${r.name} model id (letters, digits, dot, dash, underscore). Fix it, or leave it empty to use Studio's configured ${r.provider} model.`:`Startup competition needs an exact ${r.provider} model for the ${role} role, but none was given and Studio has no configured ${r.provider} model. Set one in Settings → Chat model (provider ${r.provider})${r.provider==='codex'?', or model in ~/.codex/config.toml':''}, or pass ${r.param}. No other vendor is used instead.`;
+  const zh=kind==='invalid'?`創業比賽：${r.param} 必須是確切的 ${r.name} 模型 ID（英數字、點、連字號、底線）。請修正，或留空以使用 Studio 已設定的 ${r.provider} 模型。`:`創業比賽的${r.zh}需要確切的 ${r.provider} 模型，但沒有提供 ${r.param}，Studio 也沒有設定 ${r.provider} 模型。請到「設定 → 對話模型」為 ${r.provider} 選擇模型${r.provider==='codex'?'（或在 ~/.codex/config.toml 設定 model）':''}，或提供 ${r.param}。不會改用其他廠商。`;
+  super(kind==='invalid'?'startup_model_invalid':'startup_model_unconfigured',en,zh,'review_configuration');
+  this.message=`${en} / ${zh}`;this.role=role;this.provider=r.provider;
+ }
+}
+/** Explicit params win; otherwise Studio's configured model for that exact provider. Never another vendor. */
+export function resolveStartupModels(params:Record<string,unknown>,configured?:StartupConfiguredModel){
+ const one=(role:StartupRole)=>{const r=ROLE[role],explicit=params[r.param];
+  if(explicit!==undefined&&explicit!==''){if(!validModel(explicit))throw new StartupModelRefusal(role,'invalid');return{provider:r.provider,model:explicit,source:'param' as const};}
+  const c=configured?.(r.provider);if(!validModel(c))throw new StartupModelRefusal(role,'unconfigured');return{provider:r.provider,model:c,source:'configured' as const};};
+ return{founder:one('founder'),judge:one('judge')};
+}
+/** The one exact model bound to a role: the signed resolution record, never changed by a later param. */
+export function startupBoundModel(entries:any[],params:Record<string,unknown>,role:StartupRole):string{
+ const r=ROLE[role],resolved=entries.filter(e=>e.record==='startup-models-resolved');if(resolved.length>1)throw new Error('Startup models were resolved more than once');
+ const param=params[r.param],bound=resolved[0]?.data?.[role];
+ if(bound){if(bound.provider!==r.provider||!validModel(bound.model)||(bound.source==='param'?param!==bound.model:param!==undefined))throw new Error(`Startup ${role} model changed after it was resolved`);return bound.model;}
+ if(!validModel(param))throw new Error(`Startup ${role} model was never resolved before dispatch`);return param;
+}
 const digest=(v:unknown)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const stable=(v:any):any=>Array.isArray(v)?v.map(stable):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,stable(v[k])])):v;
 export const startupTemplate=()=>parseYaml(bundledText('workflows/v2/startup-recursion.wf.yaml')!);
@@ -29,22 +60,27 @@ export function inspectStartupCandidate(raw:string|undefined){
 }
 export function startupCandidateExample(){const f=startupTemplate();return Object.fromEntries(['id','name','version','kind','description','roles','nodes','edges'].map(k=>[k,f[k]]));}
 type Entry={round:number;role:'founder'|'judge';provider:string;model:string;job:string;text:string;revision:string;verdict?:'ready'|'revise';score?:number;sha256:string};
-export function installStartupRecursion(engine:Engine,o:{artifacts:ArtifactStore}){
+export function installStartupRecursion(engine:Engine,o:{artifacts:ArtifactStore;configuredModel?:StartupConfiguredModel}){
  const guard=(x:X)=>{if(x.cancelled()||!engine.owns(x))throw new Error('Startup round owner ended');};
  const records=(x:X)=>{const t=engine.trusted(x.run.id);if(!t.ok)throw new Error('Startup ledger failed verification');return t.entries;};
  const entries=(x:X):Entry[]=>records(x).filter(e=>e.record==='startup-round').map(e=>e.data as Entry);
- const model=(x:X,role:string)=>{const s=x.run.params[role==='founder'?'founderModel':'judgeModel'];if(typeof s!=='string'||!s.trim()||s.length>150||!/^[a-zA-Z0-9._-]+$/.test(s))throw new Error(`Provide an explicit ${role} model before dispatch`);return s;};
+ const model=(x:X,role:StartupRole)=>startupBoundModel(records(x),x.run.params,role);
+ const source=(x:X,role:StartupRole)=>records(x).find(e=>e.record==='startup-models-resolved')?.data?.[role]?.source==='configured'?'configured':'param';
+ const previousStart=engine.deps.authorizeStart;engine.deps.authorizeStart=(def,request)=>{previousStart?.(def,request);if(def.kind==='startup-recursion'&&def.id==='startup-recursion')resolveStartupModels(request.params??{},o.configuredModel);};
  const authorize=(x:X)=>{const p=records(x).find(e=>e.record==='startup-contract-approved');if(!p||p.data?.definitionHash!==hashInput(x.run.def)||p.data?.founder?.model!==model(x,'founder')||p.data?.judge?.model!==model(x,'judge'))throw new Error('Captain has not selected and approved this exact template');return p.data;};
  const history=(x:X)=>entries(x).map(e=>`## Round ${e.round}: ${e.role} (${e.provider} / ${e.model})\n${e.text}\n${e.revision?`Revision response: ${e.revision}\n`:''}${e.role==='judge'?`Score: ${e.score}; verdict: ${e.verdict}\n`:''}`).join('\n');
  const pins=(x:X)=>{const a=records(x).filter(e=>e.record==='startup-artifact').at(-1)?.data;if(!a||o.artifacts.verify(a.artifact,a.version).length||o.artifacts.version(a.artifact,a.version)?.sha256!==a.sha256)throw new Error('Startup artifact pin is missing or changed');return a;};
  const previousAnswer=engine.deps.authorizeAnswer;engine.deps.authorizeAnswer=(run,card,answer)=>{previousAnswer?.(run,card,answer);if(run.def.kind==='startup-recursion'&&card.node==='accept'&&answer.choice==='accept'){const node=run.def.nodes.find(n=>n.id===card.node)!;pins(engine.x(run,node,run.nodes[node.id]));}};
  engine.cardModes['startup-choice']={async start(x){
-  const inspected=inspectStartupCandidate(x.run.params.generatedWorkflow);model(x,'founder');model(x,'judge');
+  const inspected=inspectStartupCandidate(x.run.params.generatedWorkflow);
+  if(!records(x).some(e=>e.record==='startup-models-resolved')){guard(x);engine.record(x,'startup-models-resolved',{data:{schema:1,...resolveStartupModels(x.run.params,o.configuredModel)}});}
+  model(x,'founder');model(x,'judge');
+  const label=(role:StartupRole)=>source(x,role)==='configured'?'Studio configured model / Studio 設定的模型':'explicit param / 明確指定';
   mkdirSync(x.dir,{recursive:true});if(x.run.params.generatedWorkflow)writeFileSync(join(x.dir,'generated-candidate.json'),x.run.params.generatedWorkflow);
   const note=inspected.source==='template'?'使用事先審查的 template。':inspected.matches?'Firstmate 生成的候選契約符合檢查；由固定 template runner 執行，不是通用動態 workflow 編譯。':`Firstmate 候選不相符：${inspected.reasons.join('；')}。不會執行候選；需明確切到 template。`;
-  await engine.card(x,'question',{title:'Choose startup workflow',zhTitle:'選擇創業比賽流程',captainOnly:true,en:{intent:'Claude founder, Codex judge, at most three rounds, captain signoff.',beforeAfter:note,why:'Each founder round may refresh exact Claude execution verification once: max 1 turn and US$0.05 per probe, at most 3 probes. Actual proposal/review inference is separate.'},zh:{intent:'Claude 創業提案與修訂，Codex 銳評，最多三輪後由船長驗收。',beforeAfter:note,why:'授權每個 Claude 創業者回合最多一次有限驗證：每次最多 1 turn、US$0.05，總共最多 3 次。提案／評審本身的推論費用另計。'},body:`${note}\nClaude: ${model(x,'founder')} / effort=null\nCodex: ${model(x,'judge')} / effort=null`,links:x.run.params.generatedWorkflow?[{label:'檢視 Firstmate 候選 manifest',href:`/api/wruns/${x.run.id}/file?path=generated-candidate.json`}]:[],options:[{id:'template',label:'Approve and run template',labelZh:inspected.matches?'同意並執行 template':'同意並切到 template',primary:true},{id:'close',label:'Close',labelZh:'關閉',hold:true}]});return{wait:true};},async answer(x,c){
+  await engine.card(x,'question',{title:'Choose startup workflow',zhTitle:'選擇創業比賽流程',captainOnly:true,en:{intent:'Claude founder, Codex judge, at most three rounds, captain signoff.',beforeAfter:note,why:'Each founder round may refresh exact Claude execution verification once: max 1 turn and US$0.05 per probe, at most 3 probes. Actual proposal/review inference is separate.'},zh:{intent:'Claude 創業提案與修訂，Codex 銳評，最多三輪後由船長驗收。',beforeAfter:note,why:'授權每個 Claude 創業者回合最多一次有限驗證：每次最多 1 turn、US$0.05，總共最多 3 次。提案／評審本身的推論費用另計。'},body:`${note}\nClaude: ${model(x,'founder')} / effort=null (${label('founder')})\nCodex: ${model(x,'judge')} / effort=null (${label('judge')})`,links:x.run.params.generatedWorkflow?[{label:'檢視 Firstmate 候選 manifest',href:`/api/wruns/${x.run.id}/file?path=generated-candidate.json`}]:[],options:[{id:'template',label:'Approve and run template',labelZh:inspected.matches?'同意並執行 template':'同意並切到 template',primary:true},{id:'close',label:'Close',labelZh:'關閉',hold:true}]});return{wait:true};},async answer(x,c){
   if(c.answer!.choice!=='template')return{outcome:'close'};guard(x);const inspected=inspectStartupCandidate(x.run.params.generatedWorkflow);
-  if(!records(x).some(e=>e.record==='startup-contract-approved'))engine.record(x,'startup-contract-approved',{actor:c.answer!.by,data:{schema:1,definitionHash:hashInput(x.run.def),card:c.id,candidateHash:inspected.hash,candidateMatches:inspected.matches,execution:'fixed-template',founder:{provider:'claude',model:model(x,'founder'),effort:null},judge:{provider:'codex',model:model(x,'judge'),effort:null},claudeVerification:{provider:'claude',model:model(x,'founder'),effort:null,maxProbes:3,maxBudgetUSD:0.05,maxTurns:1}}});return{outcome:'template'};
+  if(!records(x).some(e=>e.record==='startup-contract-approved'))engine.record(x,'startup-contract-approved',{actor:c.answer!.by,data:{schema:1,definitionHash:hashInput(x.run.def),card:c.id,candidateHash:inspected.hash,candidateMatches:inspected.matches,execution:'fixed-template',founder:{provider:'claude',model:model(x,'founder'),effort:null,source:source(x,'founder')},judge:{provider:'codex',model:model(x,'judge'),effort:null,source:source(x,'judge')},claudeVerification:{provider:'claude',model:model(x,'founder'),effort:null,maxProbes:3,maxBudgetUSD:0.05,maxTurns:1}}});return{outcome:'template'};
  }};
  for(const role of ['founder','judge'] as const){const provider=role==='founder'?'claude':'codex';engine.modes[role==='founder'?'startup-pitch':'startup-judge']={
   preparePick(x){authorize(x);const selected={provider,model:model(x,role),effort:null};if(x.rn.agent&&(x.rn.agent.provider!==provider||x.rn.agent.model!==selected.model))throw new Error('Startup provider substitution is forbidden');x.rn.agent=selected;x.save();},

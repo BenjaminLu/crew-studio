@@ -2,6 +2,7 @@
 import {createHash} from 'node:crypto';
 import {hashInput} from '../runtime/checks';
 import {ProviderRefusal,type ProviderCapability,type ProviderSelection} from './policy';
+import {startupBoundModel} from '../domain/startup-recursion';
 import {nativeClaude,isClaudeExecutionAdmission,validClaudePair,type ClaudePair} from './claude-native';
 const ATTEMPT='startup-claude-verification-attempt';
 const refuse=(reason:string):never=>{throw new ProviderRefusal(`Startup Claude verification: ${reason}; hold without fallback`);};
@@ -16,8 +17,9 @@ export async function refreshStartupClaude(x:any,input:ProviderSelection,pair:Cl
   own();
   if(run.def.id!=='startup-recursion'||run.def.kind!=='startup-recursion'||run.def.version!==1||x.node.id!==`pitch${round}`||
     ![1,2,3].includes(round)||x.node.kind!=='agent'||x.node.mode!=='startup-pitch'||x.node.role!=='founder'||input.role!=='founder'||
-    !input.explicit||input.provider!=='claude'||input.model!==pair.model||input.effort!==null||pair.effort!==null||!validClaudePair(pair)||run.params.founderModel!==pair.model)refuse('exact founder role/model binding changed');
+    !input.explicit||input.provider!=='claude'||input.model!==pair.model||input.effort!==null||pair.effort!==null||!validClaudePair(pair))refuse('exact founder role/model binding changed');
   const trusted=engine.trusted(run.id);if(!trusted.ok)refuse('task ledger is untrusted');
+  let bound:string|null=null;try{bound=startupBoundModel(trusted.entries,run.params,'founder');}catch{}if(bound!==pair.model)refuse('exact founder role/model binding changed');
   const approvals=trusted.entries.filter((e:any)=>e.record==='startup-contract-approved');if(approvals.length!==1)refuse('exactly one captain contract is required');
   const contract=approvals[0],a=contract.data,c=engine.cards.get(a?.card);
   const answer=trusted.entries.find((e:any)=>e.record==='card-answer'&&e.seq<contract.seq&&e.data?.card===a?.card&&e.data?.choice==='template'&&!String(e.actor??'').startsWith('auth window'));

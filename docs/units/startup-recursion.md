@@ -10,7 +10,7 @@
 ## Firstmate demo
 
 - Read `studio_startup_workflow_contract`; it returns a complete inspectable candidate manifest with roles, nodes and edges.
-- Ask Firstmate to draft a candidate for the competition and call `studio_propose_work` with workflow `startup-recursion`, version `1`, a specific business brief, exact `founderModel` and `judgeModel`, and optional JSON string `generatedWorkflow`.
+- Ask Firstmate to draft a candidate for the competition and call `studio_propose_work` with workflow `startup-recursion`, version `1`, a specific business brief, optional exact `founderModel` and `judgeModel`, and optional JSON string `generatedWorkflow`.
 - Candidate payloads may arrive pretty-printed (16,000 characters maximum); native proposal validation compacts them to at most 3,000 characters. Larger proposals use existing immutable transport so Engine parameters are not truncated.
 - Approve the native dispatch card. The next captain card compares the candidate against the reviewed contract and links the actual candidate file.
 - A matching candidate is explicitly described as **Firstmate-generated candidate contract, executed by the fixed template runner**. This is not a generic dynamically compiled workflow.
@@ -20,6 +20,9 @@
 ## Provider capability
 
 - Exact Claude/Codex models are required. No vendor fallback or role substitution.
+- An explicit `founderModel` / `judgeModel` param wins. When one is omitted (the board's Tasks start offers neither), Studio binds its configured model for that exact provider: Settings → Chat model for that provider, else `CREW_CLAUDE_MODEL` / `CREW_CODEX_MODEL`, else Studio's Claude default or the `model` in Codex `config.toml`. The binding is a signed `startup-models-resolved` record written before the selection card; the card shows those exact models and the captain approves them.
+- A later param change cannot replace the bound model: approval, every round and the Claude verification probe refuse it.
+- No configured model for a provider refuses the start with a typed bilingual reason (`startup_model_unconfigured`, or `startup_model_invalid` for a malformed explicit id) naming the provider and where to set it. Nothing falls back to the other vendor.
 - Login is not execution proof. Native provider policy remains authoritative; unavailable Claude blocks the task.
 - The selection card explicitly authorizes up to one bounded Claude verification probe per founder round, maximum three probes, each at most one turn and US$0.05. Proposal/review model inference is separate.
 - Signed `startup-contract-approved` binds definition hash, candidate hash, captain card, exact roles/models/effort, and probe limits. A provider-layer verifier must enforce that authority and charge failed attempts; the workflow itself does not fabricate an execution receipt or claim quota availability.
@@ -27,5 +30,5 @@
 ## Verification
 
 - `CREW_TEST_IN_PROCESS=1 bun tests/startup-recursion.ts` uses controlled providers through real Engine, native Firstmate proposal/dispatch, captain cards, tool authorization and signed ledger. It makes no vendor request.
-- Covers three rounds, early readiness, explicit fallback, retained critique/revision context, wrong-provider refusal, artifact tamper refusal before answer, cancellation, rejection, duplicate captain answer, restart without new model jobs, complete generated candidate retention and long-proposal transport.
+- Covers board start without model params (configured models bound, shown, approved and run end to end), explicit override, unconfigured-model refusal, model change after approval, three rounds, early readiness, explicit fallback, retained critique/revision context, wrong-provider refusal, artifact tamper refusal before answer, cancellation, rejection, duplicate captain answer, restart without new model jobs, complete generated candidate retention and long-proposal transport.
 - Live acceptance still requires actual CLI provider-selection evidence, real transcript review and captain acceptance. Fixture pass is not live E2E proof.
