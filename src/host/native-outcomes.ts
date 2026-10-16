@@ -34,6 +34,14 @@ export class NativeOutcomes {
    const proposal=e.get(b.proposal),trust=proposal&&e.trusted(proposal.id);
    if(!proposal||proposal.workflow!=='firstmate-proposal'||proposal.params.source!==b.source||!trust?.ok)continue;
    const dispatch=trust.entries.filter(v=>v.record==='native-dispatch').at(-1)?.data;
+   if(!dispatch&&['failed','cancelled'].includes(proposal.status)&&proposal.endedAt){
+    // No claimed child/artifact: a launch error is a proposal outcome, not success.
+    const receipt={id:`native-outcome:${proposal.id}:proposal`,at:Date.parse(proposal.endedAt),kind:'system' as const,source:'studio:native-outcome',text:`${proposal.id}: ${proposal.status==='failed'?'派工提案失敗，請查看任務診斷；未確認已派出子任務':'派工提案已取消'}。`,links:[{label:`Proposal ${proposal.id}`,href:`#/run/${proposal.id}`}]};
+    const receiptFile=join(this.dir,`${proposal.id}-proposal.receipt.json`);
+    if(!existsSync(receiptFile))createOwned(receiptFile,{schema:1,binding:b,status:proposal.status,endedAt:proposal.endedAt,receipt});
+    const saved=JSON.parse(readOwned(receiptFile));if(saved.schema!==1||!validBinding(saved.binding,proposal.id)||JSON.stringify(saved.binding)!==JSON.stringify(b)||saved.status!==proposal.status||saved.endedAt!==proposal.endedAt)continue;
+    out.push(receipt);continue;
+   }
    if(!dispatch||dispatch.schema!==1||dispatch.proposal!==proposal.id||dispatch.definition!==proposal.params.definition)continue;
    const card=e.cards.get(dispatch.card),child=e.get(dispatch.child);
    if(!card||card.run!==proposal.id||card.node!=='dispatch'||!card.captainOnly||card.status!=='answered'||card.answer?.choice!=='approve'||!trust.entries.some(v=>v.record==='card-answer'&&v.data?.card===card.id&&v.data?.choice==='approve'))continue;

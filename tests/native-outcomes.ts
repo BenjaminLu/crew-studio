@@ -35,5 +35,10 @@ try{
  await cap.call('studio_propose_work',{},identity);assert.equal(bindings,1);assert.equal(toolName,'studio_propose_work');assert.equal(store.list(origin.host,origin.thread).length,1,'Main-bound work projects to exact source');
  main.activeInput={kind:'card',source:'studio',text:'notice'};await cap.call('studio_propose_work',{},identity);assert.equal(bindings,1,'system notice does not bind captain result');
  main.state='detached';await assert.rejects(()=>cap.call('studio_propose_work',{},identity));assert.equal(bindings,1,'ended owner cannot bind');
+ const dispatchRecord=entries.pop();proposal.status='failed';proposal.endedAt='2026-10-16T11:00:00Z';
+ const failure=store.list(origin.host,origin.thread);assert.equal(failure.length,1);assert.match(failure[0].text,/派工提案失敗/);assert.deepEqual(failure[0].links,[{label:'Proposal R-001',href:'#/run/R-001'}]);
+ assert.deepEqual(make().list(origin.host,origin.thread),failure,'proposal launch failure survives restart exactly once');assert.equal(store.list(origin.host,'other-thread').length,0);
+ proposal.status='running';assert.equal(store.list(origin.host,origin.thread).length,0,'nonterminal proposal does not replay failed result');
+ proposal.status='failed';trusted=false;assert.equal(store.list(origin.host,origin.thread).length,0,'corrupt proposal ledger suppresses failure projection');trusted=true;entries.push(dispatchRecord);delete proposal.status;delete proposal.endedAt;
  console.log('PASS Main staffing/work boundary, bounded nofollow storage; source binding, dispatch authority, replay/restart, wrong session, missing history, terminal distinctions and artifact revalidation');
 }finally{rmSync(dir,{recursive:true,force:true})}
