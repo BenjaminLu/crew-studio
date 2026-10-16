@@ -445,17 +445,18 @@ const viewCrewBase = viewCrew;
 function viewCrewLive(actor) {
   if (actor) return viewCrewBase(actor);
   if (!TK.crew) loadCrewLive();
-  clearTimeout(TK.crewTimer); TK.crewTimer = setTimeout(() => { if (S.route?.name === "crew" && !S.route.arg) loadCrewLive(); }, 3000);
+  if (!TK.crewTimer) TK.crewTimer = setTimeout(() => { TK.crewTimer = null; if (S.route?.name === "crew" && !S.route.arg) loadCrewLive(); }, 3000);
   const all = TK.crew || [];
   const list = crewLiveOnly ? all.filter((c) => c.alive) : all;
   const ci = (c) => !c.ci ? h("span", { class: "faint" }, "—") : c.ci.fail ? h("span", { class: "badge bad" }, `✗ ${c.ci.fail}`) : c.ci.pending ? h("span", { class: "badge warn" }, `… ${c.ci.pending}`) : h("span", { class: "badge ok" }, `✓ ${c.ci.pass}`);
   return h("div", { class: "page" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Crew", "船員")),
-      h("p", {}, T(`${all.filter((c) => c.alive).length + (window.studioAgents?.count() || 0)} working now · Studio agents and recent Firstmate rounds`, `目前 ${all.filter((c) => c.alive).length + (window.studioAgents?.count() || 0)} 位工作中 · Studio 的 agent 與近期 Firstmate 回合`))),
+      h("p", {}, TK.crew && !TK.crewError && window.studioAgents?.ready() ? T(`${all.filter((c) => c.alive).length + (window.studioAgents?.count() || 0)} working now · Studio agents and recent Firstmate rounds`, `目前 ${all.filter((c) => c.alive).length + (window.studioAgents?.count() || 0)} 位工作中 · Studio 的 agent 與近期 Firstmate 回合`) : TK.crewError ? T("Firstmate status unavailable; retrying…","Firstmate 狀態暫時無法取得，正在重試…") : window.studioAgents?.status() || T("Checking crew status…","正在確認船員狀態…"))),
       h("div", { class: "seg", role: "group" },
         h("button", { "aria-pressed": crewLiveOnly ? "false" : "true", onclick: () => { crewLiveOnly = false; store.set("crew.liveOnly", "0"); render(); } }, h("span", { class: "keep" }, T("Recent", "近期"))),
         h("button", { "aria-pressed": crewLiveOnly ? "true" : "false", onclick: () => { crewLiveOnly = true; store.set("crew.liveOnly", "1"); render(); } }, h("span", { class: "keep" }, T("Working", "工作中"))))),
-    !TK.crew ? h("div", { class: "skel", style: "height:240px" }) : !list.length ? h("div", { class: "card" }, h("div", { class: "empty" }, icon("crew"), h("b", {}, T("No crew round is running", "目前沒有船員在跑"))))
+    window.studioAgents?.section() || null,
+    !TK.crew ? h("div", { class: "skel", style: "height:240px" }) : !list.length ? h("div", { class: "card" }, h("div", { class: "empty" }, icon("crew"), h("b", {}, TK.crewError ? T("Firstmate status unavailable; retrying…","Firstmate 狀態暫時無法取得，正在重試…") : crewLiveOnly ? T("No Firstmate round is working right now", "目前沒有 Firstmate 回合在工作") : T("No recent Firstmate rounds", "近期沒有 Firstmate 回合"))))
       : h("div", { class: "tk-crew", role: "list" }, list.slice(0, 40).map((c) => h("article", { class: `card tk-round${c.alive ? " is-live" : ""}`, role: "listitem", "data-actor": c.actor },
         h("div", { class: "tk-row" }, avaFor(c.name, "ava"), h("a", { href: `#/crew/${encodeURIComponent(c.actor)}`, class: "tk-name" }, c.name), h("span", { class: "vbadge" }, c.role),
           c.task ? h("a", { class: "mono", href: `#/activity/${c.task}` }, c.task) : null, c.round ? h("span", { class: "faint" }, T(`round ${c.round}`, `第 ${c.round} 回合`)) : null,
@@ -470,10 +471,10 @@ function viewCrewLive(actor) {
           c.pr ? h("a", { href: prUrl(c.pr), target: "_blank", rel: "noopener" }, icon("pr", "ic sm"), `#${c.pr}`) : null,
           c.pr ? h("span", { class: "tk-ci" }, "CI ", ci(c)) : null, c.merged ? h("span", { class: "badge ok" }, T("merged", "已合併")) : null,
           c.report ? h("button", { class: "btn ghost", "data-report": c.actor, onclick: () => openReport(c.actor) }, icon("doc", "ic sm"), T("Final report", "最終報告")) : null)))),
-    window.studioAgents?.section() || null); // Studio tasks' agents (public/runtime.js)
+    null); // Firstmate history stays separate from Studio jobs
 }
 const phaseLabel = (p) => ({ building: T("building", "實作中"), reviewing: T("reviewing", "審查中"), finished: T("finished", "完成"), stopped: T("stopped", "已停止") })[p] || p;
-async function loadCrewLive() { const seq = TK.crewSeq = (TK.crewSeq || 0) + 1; let r = null; try { r = await getJ("/api/crew/live"); } catch {} if (seq !== TK.crewSeq) return; if (r) TK.crew = r; if (S.route?.name === "crew" && !S.route.arg) render(); }
+async function loadCrewLive() { const seq = TK.crewSeq = (TK.crewSeq || 0) + 1; let r = null; try { r = await getJ("/api/crew/live"); } catch {} if (seq !== TK.crewSeq) return; TK.crewError = !r; if (r) TK.crew = r; if (S.route?.name === "crew" && !S.route.arg) render(); }
 async function openReport(actor) {
   const seq = TK.reportSeq = (TK.reportSeq || 0) + 1;
   const r = await getJ(`/api/crew/report/${encodeURIComponent(actor)}`).catch((e) => ({ error: String(e) }));

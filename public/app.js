@@ -129,11 +129,11 @@ function viewBoard() {
         idle.length ? h("div", { class: "rrow cs", style: "display:flex" }, h("button", { class: "btn ghost", onclick: () => { S.showIdle = !S.showIdle; render(); } },
           S.showIdle ? T(`Hide ${idle.length} idle`, `隱藏 ${idle.length} 個閒置`) : T(`Show ${idle.length} idle (no crew, no card)`, `顯示 ${idle.length} 個閒置（沒有船員、沒有卡）`))) : null)),
     h("section", {},
-      h("div", { class: "sec-head" }, h("h2", {}, T("Crew on duty", "值班船員")), h("span", { class: "faint" }, T(`${live.length} working`, `${live.length} 位工作中`))),
+      h("div", { class: "sec-head" }, h("h2", {}, T("Crew on duty", "值班船員")), h("span", { class: "faint" }, window.studioAgents?.ready() ? T(`${live.length + window.studioAgents.count()} working`, `${live.length + window.studioAgents.count()} 位工作中`) : window.studioAgents?.status() || T("Checking crew status…","正在確認船員狀態…"))),
       h("div", { class: "card crewline" },
         h("div", { class: "avas" }, live.length ? live.map((c) => h("a", { href: `#/crew/${encodeURIComponent(c.actor)}`, title: `${c.actor}\n${L(c.activity)}`, style: "display:flex;gap:8px;align-items:center;text-decoration:none;color:inherit" },
           avaFor(c.name), h("span", { style: "font-size:13px" }, c.name, h("span", { class: "faint" }, ` · ${c.role} · ${c.task || ""}`))))
-          : h("span", { class: "faint" }, T("No crew round is running.", "目前沒有船員在跑。"))),
+          : h("span", { class: "faint" }, window.studioAgents?.count() ? T(`${window.studioAgents.count()} Studio agents or local jobs working — open crew for details.`, `${window.studioAgents.count()} 個 Studio agent 或本機工作執行中，打開船員查看。`) : window.studioAgents?.ready() ? T("No crew round is running.", "目前沒有船員在跑。") : window.studioAgents?.status() || T("Checking crew status…","正在確認船員狀態…"))),
         h("a", { class: "btn ghost", href: "#/crew" }, T("Open crew", "打開船員")))));
 }
 function ghBar() {
@@ -255,12 +255,13 @@ function viewCrew(actor) {
   const list = crewLiveOnly ? S.crew.filter((c) => c.alive) : S.crew;
   return h("div", { class: "page" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Crew", "船員")),
-      h("p", {}, T(`${S.crew.filter((c) => c.alive).length} working now · rounds from the last two days`, `目前 ${S.crew.filter((c) => c.alive).length} 位工作中 · 近兩天的回合`))),
+      h("p", {}, window.studioAgents?.ready() ? T(`${S.crew.filter((c) => c.alive).length + window.studioAgents.count()} working now · Studio agents and Firstmate rounds`, `目前 ${S.crew.filter((c) => c.alive).length + window.studioAgents.count()} 位工作中 · Studio agent 與 Firstmate 回合`) : window.studioAgents?.status() || T("Checking crew status…","正在確認船員狀態…"))),
       h("div", { class: "seg", role: "group" },
         h("button", { "aria-pressed": crewLiveOnly ? "false" : "true", onclick: () => { crewLiveOnly = false; store.set("crew.liveOnly", "0"); render(); } }, h("span", {}, T("Recent", "近期"))),
         h("button", { "aria-pressed": crewLiveOnly ? "true" : "false", onclick: () => { crewLiveOnly = true; store.set("crew.liveOnly", "1"); render(); } }, h("span", {}, T("Working", "工作中"))))),
+    window.studioAgents?.section() || null,
     list.length ? h("div", { class: "crewgrid" }, list.slice(0, 24).map(crewTile))
-      : h("div", { class: "card" }, h("div", { class: "empty" }, icon("crew"), h("b", {}, T("No crew round is running", "目前沒有船員在跑")), T("Live rounds show up here with their log.", "跑起來的回合會帶著 log 出現在這裡。"))));
+      : h("div", { class: "card" }, h("div", { class: "empty" }, icon("crew"), h("b", {}, crewLiveOnly ? T("No Firstmate round is working right now","目前沒有 Firstmate 回合在工作") : T("No recent Firstmate rounds","近期沒有 Firstmate 回合")), T("Live rounds show up here with their log.", "跑起來的回合會帶著 log 出現在這裡。"))));
 }
 const term = (lines, big) => h("div", { class: `screen dark${big ? " big" : ""}` },
   h("div", { class: "term" }, lines.length ? lines.map((l) => h("div", { class: `tl ${l.kind}` }, (l.kind === "tool" ? "▸ " : l.kind === "error" ? "✗ " : l.kind === "result" ? "✓ " : "") + l.text))

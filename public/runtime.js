@@ -895,25 +895,31 @@ window.studioCards = { count: () => SCX.open.length,
       cs.map((c) => cardView(c, { inbox: true }))); } };
 
 // ---------- Studio tasks' live agent node runs on the Crew page, beside firstmate's rounds ----------
-const SA = { local: [], list: [], t: null, tick: null };
-async function loadAgents() { try { const data=await api("/api/wruns/agents");SA.list=data.agents||[];SA.local=data.localJobs||[]; } catch { return; } updateNav(); if (S.route?.name === "crew" && !S.route.arg) render(); }
+const SA = { local: [], list: [], t: null, pending: null, ready: false, error: false };
+function agentsChanged(){ updateNav(); if (["crew","board"].includes(S.route?.name) && !S.route.arg) soft(); }
+async function loadAgents() {
+  if(SA.pending)return SA.pending;
+  SA.pending=(async()=>{try{const data=await api("/api/wruns/agents");SA.list=data.agents||[];SA.local=data.localJobs||[];SA.ready=true;SA.error=false;}catch{SA.error=true;}finally{SA.pending=null;agentsChanged();}})();
+  return SA.pending;
+}
 for (const t of ["agent", "wrun", "coffee-local-job"]) window.liveListen(t, () => { clearTimeout(SA.t); SA.t = setTimeout(loadAgents, 200); });
-addEventListener("hashchange", () => { if (location.hash.startsWith("#/crew")) loadAgents(); });
-setInterval(() => { if (S.route?.name === "crew" && !S.route.arg && SA.list.length) render(); }, 15000); // elapsed time moves on
+addEventListener("crew:live",loadAgents);
+addEventListener("hashchange", () => { if (/^#\/(crew|board)(?:[/?]|$)/.test(location.hash)) loadAgents(); });
+setInterval(() => { if (["crew","board"].includes(S.route?.name) && !S.route.arg) loadAgents(); }, 3000); // missed events still converge
 loadAgents();
 const elapsed = (iso) => { const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000)); return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`; };
-window.studioAgents = { count: () => SA.list.length+SA.local.filter(j=>j.outcome==="running"||j.cleanup==="unverified").length,
-  section: () => h("section", { class: "rt-agents", "data-studio-agents": String(SA.list.length) },
-    h("div", { class: "sec-head" }, h("h2", {}, T("Studio tasks: agents working", "Studio 的任務：工作中的 agent")), h("span", { class: "faint" }, String(SA.list.length))),
+window.studioAgents = { members: () => [...SA.list.map(a=>({name:a.label||a.provider,title:`${a.run} · ${a.label} · ${a.provider}`,href:`#/run/${encodeURIComponent(a.run)}`})),...SA.local.filter(j=>j.outcome==="running"||j.cleanup==="unverified").map(j=>({name:j.label,title:`${j.task} · ${j.label}`,href:`#/run/${encodeURIComponent(j.task)}`}))], ready: () => SA.ready && !SA.error, status: () => SA.error ? T("Crew status unavailable; retrying…", "船員狀態暫時無法取得，正在重試…") : T("Checking crew status…", "正在確認船員狀態…"), count: () => SA.list.length+SA.local.filter(j=>j.outcome==="running"||j.cleanup==="unverified").length,
+  section: () => h("section", { class: "rt-agents", "data-studio-agents": String(SA.list.length+SA.local.filter(j=>j.outcome==="running"||j.cleanup==="unverified").length) },
+    h("div", { class: "sec-head" }, h("h2", {}, T("Studio tasks: agents working", "Studio 的任務：工作中的 agent")), h("span", { class: "faint" }, SA.error || !SA.ready ? window.studioAgents.status() : String(window.studioAgents.count()))),
     SA.local.length ? h("section", {"data-local-render-jobs":"1"}, h("h3",{},T("Local render jobs (this server session)","本機渲染工作（本次伺服器執行期間）")), SA.local.map(j=>h("article",{class:"card x-pad", "data-local-render-job":j.id},h("b",{},j.label),h("p",{},h("a",{href:`#/run/${encodeURIComponent(j.task)}`},j.task),` · ${j.provider} · ${j.phase}`),h("p",{},T("Outcome","結果"),`: ${j.outcome} · `,T("Cleanup","清理"),`: ${j.cleanup}`),h("p",{class:"faint"},T("Started","開始"),`: ${j.startedAt} · `,T("Last progress","最近進度"),`: ${j.lastProgressAt}`)))):null,
     SA.list.length ? h("div", { class: "rt-agent-grid" }, SA.list.map((a) => { const base = `#/runs/node/${encodeURIComponent(a.run)}/${encodeURIComponent(a.node)}/${a.round}`;
-      return h("article", { class: "card x-pad rt-agent", "data-agent-node": `${a.run}/${a.node}/${a.round}` },
+      return h("article", { class: "card x-pad rt-agent", "data-agent-node": a.node ? `${a.run}/${a.node}/${a.round}` : a.job },
         h("div", { class: "rt-agent-h" }, h("b", {}, a.label), a.role ? h("span", { class: "vbadge" }, a.role) : null, h("span", { class: "st" }, h("span", { class: "d pulse" }), T("working", "工作中"))),
-        h("div", { class: "rt-agent-m" }, h("a", { href: `#/run/${encodeURIComponent(a.run)}`, class: "mono" }, a.run), h("span", {}, a.workflow), h("span", {}, T(`round ${a.round}`, `第 ${a.round} 回合`)),
+        h("div", { class: "rt-agent-m" }, h("a", { href: `#/run/${encodeURIComponent(a.run)}`, class: "mono" }, a.run), h("span", {}, a.workflow), a.round ? h("span", {}, T(`round ${a.round}`, `第 ${a.round} 回合`)) : null,
           h("span", { "data-elapsed": a.startedAt }, T(`up ${elapsed(a.startedAt)}`, `已跑 ${elapsed(a.startedAt)}`)), h("span", { class: "vbadge" }, `${a.provider}${a.model ? ` · ${a.model}` : ""}`)),
         h("div", { class: "rt-agent-act faint" }, a.lastActivity ? `${a.lastActivity.kind}: ${a.lastActivity.text}` : T("starting…", "啟動中…")),
-        h("div", { class: "rt-row" }, [["prompt", T("Prompt", "提示詞")], ["transcript", T("Transcript", "對話紀錄")], ["report", T("Report", "報告")]].map(([k, l]) => h("a", { class: "btn ghost", href: `${base}/${k}`, "data-agent-link": k }, l)))); }))
-      : h("p", { class: "faint" }, T("No Studio agent is working right now.", "目前沒有 Studio 的 agent 在工作。"))) };
+        a.node ? h("div", { class: "rt-row" }, [["prompt", T("Prompt", "提示詞")], ["transcript", T("Transcript", "對話紀錄")], ["report", T("Report", "報告")]].map(([k, l]) => h("a", { class: "btn ghost", href: `${base}/${k}`, "data-agent-link": k }, l))) : null); }))
+      : h("p", { class: "faint" }, SA.error || !SA.ready ? window.studioAgents.status() : SA.local.some(j=>j.outcome==="running"||j.cleanup==="unverified") ? T("Local jobs are listed above.","本機工作列於上方。") : T("No Studio agent is working right now.", "目前沒有 Studio 的 agent 在工作。"))) };
 
 // Free authoring is separate from model execution and staffing admission.
 // Choices a node may take (the server's closed sets, read once): providers, efforts, bundled role skills.

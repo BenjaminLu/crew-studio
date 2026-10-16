@@ -348,12 +348,19 @@ export function createRuntime(d: RuntimeDeps) {
       // an app's before / after captures (a domain check makes them): the PNGs, and the built pages ("Open the app"), served sandboxed: no script, no request out
       // the agent node runs working now, for the Crew page: run, node, role, model, round, elapsed, last activity (redacted)
       if (p === "/api/wruns/agents" && !writing) {
-        const out: any[] = [];
+        const out: any[] = [], seen = new Set<string>();
         for (const r of engine.list()) { if (["succeeded", "failed", "cancelled"].includes(r.status)) continue;
           for (const [nid, rn] of Object.entries(r.nodes)) { if (rn.state !== "running" || !rn.job) continue;
             const def = r.def.nodes.find((n: any) => n.id === nid) as any; const j = d.agents.jobs.get(rn.job); if (!j || j.status !== "running") continue; const last = j.log.at(-1);
-            out.push({ run: r.id, runTitle: r.title, workflow: r.workflow, node: nid, label: def?.label ?? nid, role: def?.role ?? null, provider: j.provider, model: j.model, round: rn.visits, attempt: rn.attempt,
+            seen.add(j.id); out.push({ job: j.id, run: r.id, runTitle: r.title, workflow: r.workflow, node: nid, label: def?.label ?? nid, role: def?.role ?? null, provider: j.provider, model: j.model, round: rn.visits, attempt: rn.attempt,
               startedAt: j.started, tools: j.tools, lastActivity: last ? { at: last.ts, kind: last.kind, text: redactText(last.text).slice(0, 240) } : null }); } }
+        // Helper/coordinator jobs can belong to a Task without owning rn.job. Only exact Studio Task refs qualify.
+        for (const j of d.agents.jobs.values()) {
+          if(j.status!=="running"||seen.has(j.id)||!j.ref)continue;
+          const r=engine.get(j.ref);if(!r||["succeeded","failed","cancelled"].includes(r.status))continue;
+          const last=j.log.at(-1);
+          out.push({job:j.id,run:r.id,runTitle:r.title,workflow:r.workflow,node:null,label:j.title,role:null,provider:j.provider,model:j.model,round:null,startedAt:j.started,tools:j.tools,lastActivity:last?{at:last.ts,kind:last.kind,text:redactText(last.text).slice(0,240)}:null});
+        }
         return json({ agents: out, localJobs:coffee?.localJobs()??[] });
       }
       m = CAPTURE_PATH.exec(p);

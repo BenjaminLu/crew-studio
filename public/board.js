@@ -243,13 +243,13 @@ const answeredRows = () => BD.answered.filter((a) => Date.now() - a.at < 10 * 60
 function counts() {
   const studio = (BD.list || []).map((id) => BD.det.get(id)).filter(Boolean);
   const fm = S.tasks.filter((t) => t.status !== "done" && t.status !== "idle");
-  const crew = [...studio.flatMap(studioCrew), ...fmCrew(null)];
+  const crew = [...(window.studioAgents?.members() || []), ...fmCrew(null)];
   const ran = [...BD.det.values()].filter(ranToday);
   const spend = ran.reduce((a, r) => a + spendToday(r), 0), costed = [...BD.det.values()].some((r) => jobsOf(r).some((j) => j.cost?.usd != null));
   return { studio, fm, crew, spend: costed ? spend : null };
 }
 function updateHead() { const c = counts(); const el = document.getElementById("boardSub"); if (el) el.textContent = subtitle(c); }
-const subtitle = (c) => T(`${c.studio.length + c.fm.length} tasks, ${c.crew.length} crew on duty, ${c.spend == null ? "—" : usd(c.spend)} today`, `${c.studio.length + c.fm.length} 個任務、${c.crew.length} 位船員值班、今天 ${c.spend == null ? "—" : usd(c.spend)}`);
+const subtitle = (c) => !window.studioAgents?.ready() ? window.studioAgents?.status() || T("Checking crew status…","正在確認船員狀態…") : T(`${c.studio.length + c.fm.length} tasks, ${c.crew.length} crew on duty, ${c.spend == null ? "—" : usd(c.spend)} today`, `${c.studio.length + c.fm.length} 個任務、${c.crew.length} 位船員值班、今天 ${c.spend == null ? "—" : usd(c.spend)}`);
 function viewBoard() {
   if (BD.list === null) loadStudio();
   if (BD.cards !== null) prune();
@@ -275,15 +275,15 @@ function viewBoard() {
         h("span", { class: "tid" }, r.id), h("div", { style: "min-width:0" }, h("div", { class: "need-t" }, r.title), h("div", { class: "need-d" }, `${r.workflow} v${r.version}${r.cancelReason ? ` · ${r.cancelReason}` : ""}`)),
         h("div", { class: "need-r" }, window.runStateBadge(r), h("span", { class: "faint num", style: "font-size:12px" }, ago(r.endedAt))))))) : null,
     h("section", { "aria-labelledby": "crewH" },
-      h("div", { class: "sec-head" }, h("h2", { id: "crewH" }, T("Crew on duty", "值班船員")), h("span", { class: "faint", id: "crewSum2" }, T(`${c.crew.length} working`, `${c.crew.length} 位工作中`))),
+      h("div", { class: "sec-head" }, h("h2", { id: "crewH" }, T("Crew on duty", "值班船員")), h("span", { class: "faint", id: "crewSum2" }, window.studioAgents?.ready() ? T(`${c.crew.length} working`, `${c.crew.length} 位工作中`) : window.studioAgents?.status())),
       h("div", { class: "card crewline" }, h("div", { class: "avas", "data-crew-strip": "1" }, c.crew.length ? c.crew.map((m) => { const a = h("a", { class: "ava lg", href: m.href, title: m.title, "aria-label": m.title, style: avaFor(m.name).getAttribute("style") }, m.name.slice(0, 2), h("span", { class: "sd pulse", style: "background:var(--accent);color:var(--accent)" })); return a; })
-        : h("span", { class: "faint" }, T("Nobody is working right now.", "目前沒有人在工作。"))), h("a", { class: "btn ghost", href: "#/crew" }, T("Open crew", "打開船員")))));
+        : h("span", { class: "faint" }, window.studioAgents?.ready() ? T("Nobody is working right now.", "目前沒有人在工作。") : window.studioAgents?.status())), h("a", { class: "btn ghost", href: "#/crew" }, T("Open crew", "打開船員")))));
 }
 routes.board = viewBoard;
 // re-renders from live data (app.js's stream handlers and the loaders here) go through soft(): mark them as live
 // and a live update that changes nothing the Board shows does not redraw it (the crew's log tails move every few seconds;
 // a redraw between a mouse-down and its mouse-up would swallow the captain's click)
-const boardSig = () => JSON.stringify([lang, window.crewFirstmateWelcomeSignature?.(), S.tasks.filter((t) => t.status !== "done" && t.status !== "idle").map((t) => [t.id, t.status, t.node, t.round, t.title, t.door, t.pr, t.failure?.type]),
+const boardSig = () => JSON.stringify([lang, window.studioAgents?.ready(), window.studioAgents?.status(), window.studioAgents?.members(), window.crewFirstmateWelcomeSignature?.(), S.tasks.filter((t) => t.status !== "done" && t.status !== "idle").map((t) => [t.id, t.status, t.node, t.round, t.title, t.door, t.pr, t.failure?.type]),
   S.pending.map((c) => [c.id, c.ts]), S.crew.filter((c) => c.alive).map((c) => [c.actor, c.task, c.vendor, c.model]), BD.list, BD.overviewIds, BD.cards, (BD.ended || []).map((r) => [r.id, r.status, r.result, r.endedAt]), [...BD.det.values()].map((r) => [r.id, r.status, r.updatedAt, r.nodes]), BD.answered.length, [...BD.open], [...BD.hidden]]);
 { const baseSoft = soft; soft = function () {
     if (S.route?.name === "board" && boardSig() === BD.sig) return updateNav();
