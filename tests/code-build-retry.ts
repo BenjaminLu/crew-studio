@@ -26,13 +26,13 @@ const flow={id:'code-firstmate',name:'Rescope fixture',version:1,roles:[{id:'coo
 async function fixture(){
  const H=await harness([Y(flow)]),E=H.engine,repo=join(H.data,'repo');mkdirSync(repo);assertTempRepo(repo);must(repo,['init','-q','-b','main']);writeFileSync(join(repo,'README.md'),'initial\n');must(repo,['add','README.md']);must(repo,['commit','-qm','Initial']);
  const projects=new Projects(H.data);projects.add({id:'fixture',path:repo});installCode(E,{dataDir:H.data,projects});E.policies.setProject('fixture',{install:false});
- const scopes=new Map<string,string>(),starts=new Map<string,number>();
+ const scopes=new Map<string,string>(),starts=new Map<string,number>(),prompts=new Map<string,string[]>();
  E.modes.spec.prompt=x=>`Run ${x.run.id} scope:${scopes.get(x.run.id)||'old.txt'}`;
  const provider:any={id:'fixture',model:'offline',sandboxFree:true,start(_s:any,tools:any[],ctx:any){return{interrupt(){},async *send(text:string){
   const id=/Run (R-\d+)/.exec(text)?.[1]!;
   const call=async(name:string,args:any)=>{const v:any=await H.agents.callTool(ctx.token,name,args);if(v.error)throw new Error(v.error);return v;};
   if(tools.some(t=>t.name==='spec_write'))await call('spec_write',{title:'Local verification',what:'Verify a local file',why:['Exercise signed recovery'],done:['tests/code-rescope-recovery.ts fails on base'],scope:[/scope:([^\s]+)/.exec(text)?.[1]],door:{kind:'two-way',reason:'Local fixture'},explain:{en:'Verify one file','zh-TW':'驗證單一檔案'},zh:{title:'本地驗證',why:['驗證簽章恢復']}});
-  else if(tools.some(t=>t.name==='worker_report')){starts.set(id,(starts.get(id)||0)+1);if(starts.get(id)!<=2){writeFileSync(join(E.get(id)!.ctx.worktree,'old.txt'),starts.get(id)===1?'product one\n':'product two\n');}await call('worker_report',{marker:'SCOPE-BLOCKED',summary:'Fixture needs a fresh base; no task files changed'});}
+  else if(tools.some(t=>t.name==='worker_report')){prompts.set(id,[...(prompts.get(id)||[]),text]);starts.set(id,(starts.get(id)||0)+1);if(starts.get(id)!<=2){writeFileSync(join(E.get(id)!.ctx.worktree,'old.txt'),starts.get(id)===1?'product one\n':'product two\n');}await call('worker_report',{marker:'SCOPE-BLOCKED',summary:'Fixture needs a fresh base; no task files changed'});}
   yield{type:'turnEnd',status:'ok'};
  }}}};
  E.deps.provider=()=>provider;
@@ -40,15 +40,15 @@ async function fixture(){
  const start=async(dispatch=true)=>{const r=E.start({workflow:flow.id,params:{project:'fixture'}}),c=await card(r.id,'dispatch');if(dispatch){await E.answer(c.id,{choice:'dispatch',by:'fixture captain'});await card(r.id,'scope-card');await E.answer((await card(r.id,'scope-card')).id,{choice:'rescope',note:'Second product round',by:'captain'});await E.answer((await card(r.id,'dispatch')).id,{choice:'dispatch',by:'captain'});await card(r.id,'scope-card');}return r;};
  const advance=()=>{writeFileSync(join(repo,'environment.txt'),'offline test configuration\n');must(repo,['add','environment.txt']);must(repo,['commit','-qm','Environment repair']);return must(repo,['rev-parse','HEAD']);};
  const stop=async()=>{for(const r of E.list())if(!['succeeded','cancelled','failed'].includes(r.status))await E.cancel(r.id);H.stop();};
- return {H,E,repo,scopes,starts,card,start,advance,stop};
+ return {H,E,repo,scopes,starts,prompts,card,start,advance,stop};
 }
 
 
-for(const mode of ['success','changed-spec','foreign-card']){
+for(const mode of ['success','no-note','changed-spec','foreign-card']){
  const F=await fixture();try{
   const {E}=F,r=await F.start(false),dispatch=await F.card(r.id,'dispatch');
   await E.answer(dispatch.id,{choice:'dispatch',by:'captain'});const c=await F.card(r.id,'scope-card');
-  const originalSpec=JSON.stringify(r.ctx.spec),originalDef=JSON.stringify(r.def),old=r.ctx.head;
+  const originalSpec=JSON.stringify(r.ctx.spec),originalDef=JSON.stringify(r.def),originalAdmission=JSON.stringify(r.ctx.nativeAdmission),old=r.ctx.head;
   ok(E.cards.view(c).options.some(o=>o.id==='retry-build'),mode+' offers approved build continuation');
   if(mode==='changed-spec'){
    r.ctx.spec.what+=' changed';let refused=false;try{await E.answer(c.id,{choice:'retry-build',by:'captain'});}catch{refused=true;}
@@ -57,9 +57,18 @@ for(const mode of ['success','changed-spec','foreign-card']){
    let refused=false;try{await E.answer(c.id,{choice:'retry-build',by:'auth window attacker'});}catch{refused=true;}
    ok(refused&&F.starts.get(r.id)===1,'auth window cannot grant captain continuation');
   }else{
-   await E.answer(c.id,{choice:'retry-build',by:'captain',note:'Runner repaired; preserve spec'});await F.card(r.id,'scope-card');
+   const route=E.continuationEdges['code-build-retry'];
+   E.continuationEdges['code-build-retry']=(run,node,outcome)=>{if(outcome==='retry-build'){const cached=E.cards.get(c.id)!;cached.answer!.note='UNSIGNED card instructions';E.cards.save(cached);}return route(run,node,outcome);};
+   await E.answer(c.id,{choice:'retry-build',by:'captain',...(mode==='success'?{note:'Runner repaired; preserve spec'}:{})});await F.card(r.id,'scope-card');
    ok(F.starts.get(r.id)===2&&r.nodes.spec.visits===1,'continues build without re-running spec');
-   ok(JSON.stringify(r.ctx.spec)===originalSpec&&JSON.stringify(r.def)===originalDef,'approved spec and pinned definition preserved');
+   const prompt=F.prompts.get(r.id)![1],brief=JSON.parse(readFileSync(join(E.root,r.id,'briefs','round-2.json'),'utf8'));
+   ok(brief.brief===prompt,'continued build durable brief equals actual prompt');
+   ok(!prompt.includes('UNSIGNED card instructions'),'mutable card note cannot replace signed instructions');
+   if(mode==='success'){
+    ok(prompt.includes('CAPTAIN\'S ANSWER')&&prompt.includes('Runner repaired; preserve spec'),'signed continuation note reaches actual build brief');
+    ok(r.ctx.rounds[1].answer?.note==='Runner repaired; preserve spec'&&r.ctx.rounds[1].answer?.question==='Fixture needs a fresh base; no task files changed','continued round retains signed answer and prior worker question');
+   }else ok(!prompt.includes('CAPTAIN\'S ANSWER')&&!r.ctx.rounds[1].answer,'continuation without signed note injects no answer');
+   ok(JSON.stringify(r.ctx.spec)===originalSpec&&JSON.stringify(r.def)===originalDef&&JSON.stringify(r.ctx.nativeAdmission)===originalAdmission,'approved spec, pinned definition and admission preserved');
    ok(r.ctx.baseCommit!==r.ctx.head&&old!==r.ctx.head,'existing work retained and next build committed');
    const answer=E.trusted(r.id).entries.filter(e=>e.record==='card-answer'&&e.data.choice==='retry-build');
    ok(answer.length===1&&E.trusted(r.id).ok,'continuation is signed exactly once');

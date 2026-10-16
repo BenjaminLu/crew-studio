@@ -40,7 +40,10 @@ export function installCodeRecovery(engine:Engine,W:Worktrees){
   engine.continuationEdges['code-build-retry']=(r,node,outcome)=>{
     if(node.id!=='scope-card'||outcome!=='retry-build')return [];
     const answer=engine.trusted(r.id).entries.filter(e=>e.record==='card-answer'&&e.data?.choice==='retry-build'&&e.node==='scope-card').at(-1);
-    const card=answer&&engine.cards.get(answer.data.card);if(!card||card.status!=='answered'||card.visit!==r.nodes[node.id].visits||!canRetryBuild(card,r))return [];
+    const card=answer&&engine.cards.get(answer.data.card);if(!answer||!card||card.run!==r.id||card.status!=='answered'||answer.round!==card.visit||card.visit!==r.nodes[node.id].visits||String(answer.actor??'').startsWith('auth window')||!canRetryBuild(card,r))return [];
+    // Only the verified captain decision supplies instructions; the card is a mutable display cache.
+    const note=typeof answer.data.note==='string'?answer.data.note.trim():'';
+    if(note)r.nodes.build.data.failureAnswer={kind:'answer',question:String(r.nodes.build.data.report?.summary??''),note,by:'captain'};
     return [{from:node.id,to:'build',when:'retry-build'}];
   };
   const retryPrepared=engine.cardPrepared['build-retry'];engine.cardPrepared['build-retry']=(x,c,b)=>{retryPrepared?.(x,c,b);offerRetry(c,x.run);};
