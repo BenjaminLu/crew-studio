@@ -297,10 +297,10 @@ function buildCoffeeGuide(ed) {
 }
 async function loadEditor(ed) {
   try {
-    const [j, all, lib] = await Promise.all([api(`/api/wf/${ed.id}${ed.v ? `?v=${ed.v}` : ""}`), api("/api/wf"), api("/api/skills").catch(() => ({ skills: [], caps: {} }))]);
+    const [j, all, lib, workspace] = await Promise.all([api(`/api/wf/${ed.id}${ed.v ? `?v=${ed.v}` : ""}`), api("/api/wf"), api("/api/skills").catch(() => ({ skills: [], caps: {} })), api("/api/wf/drafts").catch(() => ({}))]);
     let mode = "auto"; try { mode = (await api(`/api/graph-layout/${ed.id}/v${j.def.version}`)).mode; } catch {}
     const phone = matchMedia("(max-width: 640px)").matches;
-    Object.assign(ed, { mode, collapsed: phone ? (window.crewLayout.stagesFor(j.def) || []).map((x) => x.id) : [], loading: false, selectable:j.selectable!==false, held:j.held||null, coffeeChoice:j.coffeeChoice, coffeeFilmStatus:j.coffeeFilmStatus, def: clone(j.def), saved: clone(j.def), versions: j.versions, runs: j.runs, problems: j.problems, checks: all.checks, lib: lib.skills || [], skillCap: lib.caps?.node || 0, sel: null, overlay: null, states: null, lastDiff: null, dirty: false });
+    Object.assign(ed, { workspaceScope:workspace.scope||null, mode, collapsed: phone ? (window.crewLayout.stagesFor(j.def) || []).map((x) => x.id) : [], loading: false, selectable:j.selectable!==false, held:j.held||null, coffeeChoice:j.coffeeChoice, coffeeFilmStatus:j.coffeeFilmStatus, def: clone(j.def), saved: clone(j.def), versions: j.versions, runs: j.runs, problems: j.problems, checks: all.checks, lib: lib.skills || [], skillCap: lib.caps?.node || 0, sel: null, overlay: null, states: null, lastDiff: null, dirty: false });
   } catch (e) { ed.loading = false; ed.error = e.message; }
   if (WF.ed === ed) rerender();
 }
@@ -318,9 +318,15 @@ function workflowChanges(before,after){
   for(const k of ["name","description","roles","params","policies","hooks","intents","sample","compare"])if(JSON.stringify(before[k])!==JSON.stringify(after[k]))rows.push({label:k,before:JSON.stringify(before[k]??null,null,2),after:JSON.stringify(after[k]??null,null,2)});
   return rows;
 }
+function workflowBriefKey(ed){return ed.workspaceScope?`crew.workflow.startBrief.v1:${ed.workspaceScope}:${ed.id}`:null;}
+function workflowBrief(ed){if(ed.startBrief===undefined){const key=workflowBriefKey(ed);ed.startBrief=(key?store.get(key):null)??ed.def.origin?.brief?.goal??ed.def.sample?.text??"";}return ed.startBrief;}
+function saveWorkflowBrief(ed,value){ed.startBrief=value;const key=workflowBriefKey(ed);if(key)store.set(key,value);}
 function buildEditor(ed) {
   const root = h("div", { class: "page rt-editor", "data-editor": ed.id });
   const status = h("div", { class: "rt-status", role: "status", "aria-live": "polite" });
+  const direction=h("textarea",{class:"input",rows:4,maxlength:2000,"data-workflow-brief":"",placeholder:T("Describe the website, audience, style and outcome you want.","描述你想做的網頁、使用對象、風格與預期成果。"),oninput:e=>saveWorkflowBrief(ed,e.target.value)});direction.value=workflowBrief(ed);
+  const briefPanel=h("section",{class:"card x-pad","data-workflow-start-brief":""},h("h2",{},T("What would you like this workflow to make?","這次希望流程幫你做什麼？")),h("label",{class:"rt-field"},h("span",{},T("Task requirements and website direction","任務需求與網頁方向")),direction),h("p",{class:"faint"},T("Saved in this browser for this workflow. Discuss first, or review these requirements when you click Run. Nothing starts automatically.","內容會保留在這個瀏覽器的此流程草稿。你可以先討論，或按下執行時再確認需求；不會自動開始任務。")),h("button",{class:"btn","data-workflow-discuss":"",onclick:()=>{const message=T(`Discuss the direction before running workflow ${ed.id} v${ed.saved.version} (${ed.saved.name}). Ask one short question at a time and help refine my task brief. Do not start a Task or change the workflow until I explicitly confirm. My current requirements: `,`執行流程 ${ed.id} v${ed.saved.version}（${ed.saved.name}）之前，先和我討論方向，一次問一個簡短問題，幫我完善任務需求。在我明確確認之前，不要啟動任務或修改流程。我的目前需求： `)+direction.value;chatMode="main";store.set("crew.chatMode","main");openChat(true);const input=document.querySelector("#chatIn");if(input){if(!input.value.includes(message))input.value+=(input.value.trim()?"\n\n":"")+message;input.dispatchEvent(new Event("input",{bubbles:true}));input.focus();}}},T("Discuss with Firstmate first","先和 Firstmate 討論")));
+
   const stepList=h("section",{class:"card x-pad","data-workflow-step-list":""});
   const canvas = h("div", { class: "rt-canvas" });
   const dock = h("div", { class: "rt-mm-dock" }); // the minimap sits here, outside the canvas: it never covers the graph
@@ -575,7 +581,7 @@ function buildEditor(ed) {
   const reuse=h("details",{class:"card x-pad","data-workflow-reuse":""},h("summary",{},T("Reuse this workflow","复用这个流程")),h("p",{},T("Save the exact saved version as a named template. Create independent workflows from it without copying tasks or approvals.","把已保存的确切版本保存为命名模板，再从中创建独立流程，不复制任务或核准。")),h("button",{class:"btn","data-save-workflow-template":"",onclick:()=>copyWorkflowTemplate(ed,true).catch(e=>say(e.message))},T("Save as template","保存为模板")),ed.def.isTemplate?h("button",{class:"btn primary","data-use-workflow-template":"",onclick:()=>copyWorkflowTemplate(ed,false).catch(e=>say(e.message))},T("Create workflow from this template","从此模板创建流程")):null);
   root.append(
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, ed.def.name), h("p", {}, (ed.def.description || "").slice(0, 300))),
-      h("div", { class: "actions" }, h("a", { class: "btn ghost", href: "#/workflows" }, T("All workflows", "全部流程")), ed.held?h("span",{class:"faint","data-workflow-held":"1"},T(ed.held.en,ed.held.zh)):ed.selectable===false?h("span",{class:"faint","data-workflow-unavailable":"1"},T("Historical or internal workflow · unavailable for new tasks","歷史或內部流程 · 不提供新任務使用")):ed.def.origin?h("button",{class:"btn primary","data-ed-run":ed.id,onclick:async(e)=>{if(ed.dirty){say(T("Save your edits as a new version before Run.","執行前請先把修改存成新版本。"));return;}e.target.disabled=true;try{const params=await startInputs(ed.def);if(params===null)return;const r=await startOwnRun({workflow:ed.id,version:ed.saved.version,title:ed.def.name,text:ed.def.name,params});if(r){RN.list=null;location.hash=`#/run/${r.id}`;}}catch(err){say(err.message);}finally{e.target.disabled=false;}}},T("Run…","執行…")):h("a", { class: "btn", href: "#/runs", "data-start-run": ed.id, onclick: () => { RN.prefill = ed.id; } }, T("Start a task", "開始一個任務")))),
+      h("div", { class: "actions" }, h("a", { class: "btn ghost", href: "#/workflows" }, T("All workflows", "全部流程")), ed.held?h("span",{class:"faint","data-workflow-held":"1"},T(ed.held.en,ed.held.zh)):ed.selectable===false?h("span",{class:"faint","data-workflow-unavailable":"1"},T("Historical or internal workflow · unavailable for new tasks","歷史或內部流程 · 不提供新任務使用")):ed.def.origin?h("button",{class:"btn primary","data-ed-run":ed.id,onclick:async(e)=>{if(ed.dirty){say(T("Save your edits as a new version before Run.","執行前請先把修改存成新版本。"));return;}e.target.disabled=true;try{const input=await startInputs(ed.def,workflowBrief(ed),value=>{saveWorkflowBrief(ed,value);direction.value=value;});if(input===null)return;const r=await startOwnRun({workflow:ed.id,version:ed.saved.version,title:ed.def.name,text:input.text,params:input.params});if(r){RN.list=null;location.hash=`#/run/${r.id}`;}}catch(err){say(err.message);}finally{e.target.disabled=false;}}},T("Run…","執行…")):h("a", { class: "btn", href: "#/runs", "data-start-run": ed.id, onclick: () => { RN.prefill = ed.id; } }, T("Start a task", "開始一個任務")))),
     h("div", { class: "rt-toolbar" }, verSel, h("button", { class: "btn sm", "aria-label": T("Zoom in", "放大"), onclick: () => svgZoom(1 / 1.2) }, "+"), h("button", { class: "btn sm", "aria-label": T("Zoom out", "縮小"), onclick: () => svgZoom(1.2) }, "−"),
       h("div", { class: "seg rt-viewseg", role: "group", "aria-label": T("Graph view", "流程圖檢視") }, ["simple", "detail"].map((k) => h("button", { type: "button", "data-view-toggle": k, "aria-pressed": String(gview === k), onclick: () => setView(k) },
         h("span", { class: "keep" }, k === "simple" ? T("Simple", "簡易") : T("Detail", "詳細"))))),
@@ -585,7 +591,7 @@ function buildEditor(ed) {
     ed.def.origin ? gateHost : null,
     h("div", { "data-diff-host": "1" }, WF.lastDiff || diffBox),
     h("div", { class: "rt-work" }, palette, paletteNote, canvasWrap, panel));
-  if(ed.def.origin)root.querySelector(".rt-toolbar").after(stepList,compareVersions,reuse);
+  if(ed.def.origin)root.querySelector(".rt-toolbar").after(briefPanel,stepList,compareVersions,reuse);
   WF.lastDiff = null;
   drawProblems(); draw(); drawPanel();
   return root;
@@ -1012,12 +1018,13 @@ function gatePanel(v,o={}){
   if(g?.smoke?.status==="running")box.append(h("p",{"data-gate-smoke":"running"},T("Verification run: ","驗證試跑："),h("a",{href:`#/run/${g.smoke.task}`},g.smoke.task)));
   return box;
 }
-/** Start inputs a workflow declares (params): asked when Run is clicked. Resolves the values, or null when cancelled. */
-function startInputs(def){const ps=Object.entries(def?.params||{});if(!ps.length)return Promise.resolve({});
-  return new Promise(resolve=>{const dlg=h("dialog",{class:"fw-dialog","data-start-inputs":""}),fields={};const close=v=>{dlg.close();dlg.remove();resolve(v);};
-    dlg.append(h("h2",{},T("Start inputs","開始輸入")),...ps.map(([k,p])=>h("label",{class:"rt-field"},h("span",{},p.label||k),fields[k]=h("input",{class:"input",value:p.default??def.sample?.params?.[k]??"","data-start-input":k}))),
-      h("div",{class:"actions"},h("button",{class:"btn",type:"button",onclick:()=>close(null)},T("Cancel","取消")),h("button",{class:"btn primary",type:"button","data-start-inputs-ok":"",onclick:()=>{const out={};for(const[k,el]of Object.entries(fields)){if(!el.value.trim()){el.focus();return;}out[k]=el.value.trim();}close(out);}},T("Continue","繼續"))));
-    dlg.addEventListener("cancel",e=>{e.preventDefault();close(null);});document.body.append(dlg);dlg.showModal();});}
+/** Review the actual task brief and declared inputs before Run, including workflows without params. */
+function startInputs(def,text,onText){const ps=Object.entries(def?.params||{});
+  return new Promise(resolve=>{const dlg=h("dialog",{class:"fw-dialog","data-start-inputs":""}),fields={},brief=h("textarea",{class:"input",rows:4,maxlength:2000,required:true,"data-start-brief":"",oninput:e=>onText(e.target.value)}),status=h("p",{role:"status"});brief.value=text;
+    const close=v=>{dlg.close();dlg.remove();resolve(v);};
+    dlg.append(h("h2",{},T("Review task requirements","確認任務需求")),h("label",{class:"rt-field"},h("span",{},T("What should this task make?","這次任務要做什麼？")),brief),...ps.map(([k,p])=>h("label",{class:"rt-field"},h("span",{},T(p.label,p.labelZh||p.label)),fields[k]=h("input",{class:"input",value:p.default??def.sample?.params?.[k]??"","data-start-input":k}))),status,
+      h("div",{class:"actions"},h("button",{class:"btn",type:"button",onclick:()=>close(null)},T("Cancel","取消")),h("button",{class:"btn primary",type:"button","data-start-inputs-ok":"",onclick:()=>{if(!brief.value.trim()){status.textContent=T("Describe the task requirements first.","請先描述任務需求。");brief.focus();return;}const params={};for(const[k,el]of Object.entries(fields)){if(!el.value.trim()){el.focus();return;}params[k]=el.value.trim();}onText(brief.value);close({text:brief.value.trim(),params});}},T("Continue","繼續"))));
+    dlg.addEventListener("cancel",e=>{e.preventDefault();close(null);});document.body.append(dlg);dlg.showModal();brief.focus();});}
 const skillName=ref=>{const x=(DRAFT_OPTS.value?.skills||[]).find(s=>s.ref===ref);return x?T(x.en,x.zh):String(ref).replace(/^.*\//,"").replace(/\.md$/,"");};
 function firstWorkflow(arg){
   // local tutorial state is scoped to the server's data folder: a fresh folder never shows a stale draft or starter

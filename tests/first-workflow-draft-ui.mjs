@@ -85,7 +85,7 @@ try{
   ok(stored.version===2&&stored.nodes.find(n=>n.id==='review').model==='claude-opus-5-5'&&stored.nodes.find(n=>n.id==='review').effort==='medium',`${tag} editor dropdown saves selected Claude model and effort in v2`);
 
   await panel.scrollIntoViewIfNeeded().catch(()=>{});await p.screenshot({path:join(shots,`${tag}-4-editor.png`)});
-  await p.evaluate(()=>scrollTo(0,0));await p.locator('[data-ed-run]').click();
+  await p.evaluate(()=>scrollTo(0,0));await p.locator('[data-ed-run]').click();await p.locator('[data-start-brief]').fill('Create a welcoming coffee newsletter for weekend visitors.');await p.locator('[data-start-inputs-ok]').click();
   const confirm=p.locator('[data-staffing-confirm]');await confirm.waitFor({timeout:8000});
   ok(await confirm.locator('[data-staffing-row]').count()===2,`${tag} Run shows one staffing row per agent node`);
   ok((await confirm.innerText()).includes('claude-opus-5-5'),`${tag} confirmation lists the chosen model`);
@@ -95,7 +95,7 @@ try{
   await p.screenshot({path:join(shots,`${tag}-5-run-confirm.png`)});
   const runsBefore=await p.evaluate(async()=>(await (await fetch('/api/wruns')).json()).runs.filter(r=>/^weekly-coffee/.test(r.workflow)&&!['cancelled'].includes(r.status)).length);ok(runsBefore===0,`${tag} no Task exists while the confirmation is open`);
   await confirm.locator('[data-staffing-cancel]').click();ok(!(await p.locator('[data-staffing-confirm]').count()),`${tag} cancel closes the confirmation without a Task`);
-  await p.locator('[data-ed-run]').click();await p.locator('[data-staffing-confirm]').waitFor();await p.locator('[data-staffing-approve]').click();
+  await p.locator('[data-ed-run]').click();await p.locator('[data-start-brief]').fill('Create a welcoming coffee newsletter for weekend visitors.');await p.locator('[data-start-inputs-ok]').click();await p.locator('[data-staffing-confirm]').waitFor();await p.locator('[data-staffing-approve]').click();
   await p.waitForURL(/#\/run\/R-/,{timeout:8000});const id=p.url().match(/R-\d+/)[0];const run=await p.evaluate(async id=>(await (await fetch('/api/wruns/'+id)).json()),id);ok(run.text?.includes('A weekly newsletter about local coffee events'),`${tag} W1 the started Task carries the captain brief`);
   await p.screenshot({path:join(shots,`${tag}-6-task.png`)});
   await p.evaluate(async id=>fetch(`/api/wruns/${id}/cancel`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'}),id);
