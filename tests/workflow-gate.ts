@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The readiness gate between a drafted workflow and Run (src/readiness), on the real runtime
 // over throwaway data: intent lines, the static contract, rendered briefs, the stub dry run, the
 // stub-tested real smoke stage, hash-bound results, the repair loop with a stub Firstmate, the

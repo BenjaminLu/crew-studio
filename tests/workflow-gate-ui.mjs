@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The readiness gate in a real browser against the actual server (throwaway data, offline Codex
 // fixture as Firstmate, no model, no network): the draft preview shows the intent-line mapping, every
 // stage with step / reason / fix, collapsed briefs and the repair round; the workflow page shows the
