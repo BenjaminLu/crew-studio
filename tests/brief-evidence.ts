@@ -11,12 +11,13 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   bun tests/brief-evidence.ts
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { checkedTempDir } from "./lib/git-hygiene.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { harness, suite, until, Y } from "./rt-harness";
 const { ok, end } = suite("brief-evidence");
 const root = join(import.meta.dir, "..");
-const tmp = mkdtempSync(join(tmpdir(), "crew-brief-ev-"));
+const tmp = checkedTempDir("crew-brief-ev-"); // repositories only in checked temp folders
 const sh = (cwd: string, ...a: string[]) => { const r = spawnSync(a[0], a.slice(1), { cwd, encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
   if (r.status !== 0) throw new Error(`${a.join(" ")}: ${r.stderr}`); return String(r.stdout).trim(); };
 const write = (repo: string, p: string, c: string) => { mkdirSync(join(repo, p, ".."), { recursive: true }); writeFileSync(join(repo, p), c); };
