@@ -716,7 +716,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       }};
       if (reportOnly) return [...READ_ONLY(wt), context, report];
       return [...folderTools(wt, () => {}, "fs"), context, report,
-        { name: "run_tests", description: "Run the repository's declared test command (at most 6 times per round). Optional files selects scoped tests with the runner adapter. target=base runs candidate tests against base source in an isolated copy, preserving the base package.json. Browser tests may write scoped evidence in the head checkout. Returns actual exit, output tail and signed execution evidence.", schema: { type: "object", properties: {files:{type:'array',items:{type:'string'},maxItems:12},target:{type:'string',enum:['head','base']}} },
+        { name: "run_tests", description: "Run the repository's declared test command (at most 6 times per round). Optional files selects scoped tests with the runner adapter. target=base runs candidate tests against base source in an isolated copy, preserving the base package.json. evidenceDir selects an approved writable directory on head; CREW_TEST_OUTPUT_DIR names it. PLAYWRIGHT_MODULE names the host browser library when available. Returns actual exit, output tail and signed execution evidence.", schema: { type: "object", properties: {files:{type:'array',items:{type:'string'},maxItems:12},target:{type:'string',enum:['head','base']},evidenceDir:{type:'string'}} },
           // the repository's tests run in the check sandbox: they read the worktree, write only their own out/ and tmp, no network
           run: async (a) => { if (!engine.owns(x))return{error:'round owner ended'};if (!cfg.test) return { status:'not-run',reason:'The repository has no test command; continue with review and record the testing gap.',exit:null };
             const files=a?.files;if(files!==undefined&&(!Array.isArray(files)||!files.length||files.length>12||files.some((p:any)=>typeof p!=='string'||normPath(p)!==p||p.includes(',')||(!((x.ctx.spec?.scope??[]).some((g:string)=>matches(g,p))||(x.ctx.spec?.verificationScope??[]).includes(p)))||!cfg.tests.some(g=>matches(g,p)))))return{error:'files must name tests inside the approved write or verification scope'};
@@ -730,9 +730,16 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
               if(!files?.length)return{error:'base comparison requires explicit candidate test files'};
               cwd=prepareTestBase(wt,join(box,'base'),x.ctx.baseCommit,cfg.tests);
             }
-            const env:Record<string,string>={...(files?{CREW_TEST_FILES:files.join(',')}:{})};
+            let outputDir=join(box,'out');
+            if(a?.evidenceDir!==undefined){
+              const p=a.evidenceDir;if(target!=='head'||typeof p!=='string'||normPath(p)!==p||!['evidence.png','evidence.json'].every(f=>(x.ctx.spec?.scope??[]).some((g:string)=>matches(g,`${p}/${f}`))))return{error:'evidenceDir must be a directory inside approved writable scope on head'};
+              let cursor=wt;for(const part of p.split('/')){cursor=join(cursor,part);if(existsSync(cursor)&&lstatSync(cursor).isSymbolicLink())return{error:'evidenceDir cannot traverse symlinks'};}
+              outputDir=join(wt,p);mkdirSync(outputDir,{recursive:true});
+            }
+            const env:Record<string,string>={...(files?{CREW_TEST_FILES:files.join(',')}:{}) , CREW_TEST_OUTPUT_DIR:outputDir};
+            if(localUnrestricted()&&!process.env.CREW_PLAYWRIGHT_MODULE&&process.env.CREW_LOCAL_DEPENDENCY_ROOT){const module=join(process.env.CREW_LOCAL_DEPENDENCY_ROOT,'node_modules','playwright');if(existsSync(join(module,'package.json')))env.PLAYWRIGHT_MODULE=module;}
             if(localUnrestricted())for(const [target,source] of [['PLAYWRIGHT_MODULE','CREW_PLAYWRIGHT_MODULE'],['PLAYWRIGHT_BROWSERS_PATH','CREW_PLAYWRIGHT_BROWSERS_PATH'],['PLAYWRIGHT_EXECUTABLE_PATH','CREW_PLAYWRIGHT_EXECUTABLE_PATH']])if(process.env[source])env[target]=process.env[source]!;
-            const r = await sandboxed(command, { cwd, out: target==='head'?wt:join(box, "out"), tmp: join(box, "tmp"), timeoutS: cfg.timeout_s, network: false, dataDir: o.dataDir,env });
+            const r = await sandboxed(command, { cwd, out: outputDir, tmp: join(box, "tmp"), timeoutS: cfg.timeout_s, network: false, dataDir: o.dataDir,env });
             if (r.refused) return { error: `refused: ${r.refused}` };
             if(!engine.owns(x))return{error:'round owner ended during tests'};
             const output=r.stdout+r.stderr;writeFileSync(join(box,'output.log'),output);
@@ -740,7 +747,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
             return { status:'executed',target,command,base:x.ctx.baseCommit,head:head(wt),exit: r.timedOut ? null : r.code, timedOut: r.timedOut, evidence:evidence?{seq:evidence.seq,sig:evidence.sig}:null,tail: output.trim().split("\n").slice(-25).join("\n") }; } }];
     },
     system: (x, skill) => x.ctx.reportOnly?.build ? `${skill}\n\nREPORT ONLY: your code from the last round is kept. Do not change any file. Read what you need and call worker_report once with a complete report, then one line.`
-      : `${skill}\n\nYou build ONE change in the run's worktree with the fs_* tools (no shell; run_tests runs the repository's tests). Stay inside the spec's scope. Each done line needs a test that fails without your change. Use run_tests({files:[testPath],target:"base"}) for candidate fail-first tests on base source and target:"head" on the implementation. Browser tests can create screenshots in approved validation paths. No test command means not-run, not a reason to HOLD. Studio commits your work; you never commit. Tool budget: 180 calls. Use at most 60 read/search calls before implementation; reserve calls for edits, verification and worker_report. Prefer targeted reads over whole files. Do not spend the full budget exploring. End with worker_report, then one line.`,
+      : `${skill}\n\nYou build ONE change in the run's worktree with the fs_* tools (no shell; run_tests runs the repository's tests). Stay inside the spec's scope. Each done line needs a test that fails without your change. Use run_tests({files:[testPath],target:"base"}) for candidate fail-first tests on base source and target:"head" on the implementation. Use evidenceDir for screenshots inside approved validation paths. Tests can import the host browser library through PLAYWRIGHT_MODULE and write to CREW_TEST_OUTPUT_DIR. No test command means not-run, not a reason to HOLD. Studio commits your work; you never commit. Tool budget: 180 calls. Use at most 60 read/search calls before implementation; reserve calls for edits, verification and worker_report. Prefer targeted reads over whole files. Do not spend the full budget exploring. End with worker_report, then one line.`,
     prompt: (x) => {
       const wt = shellOk(x); const h = head(wt); x.ctx.head = h;
       mkdirSync(join(x.dir, "briefs"), { recursive: true });
