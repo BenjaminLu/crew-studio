@@ -18,7 +18,7 @@
 // ACCEPTANCE_SCENARIO_DIR=<dir> reads the scenario files from another folder (tests/acceptance-known.ts)
 import { bundledList, bundledText, parseYaml } from "../src/bundled";
 import { loadScenario, openWindowIds, scenarioFiles, type Scenario } from "../scripts/acceptance/scenarios";
-import { bootStudio, type Studio } from "./acceptance/studio";
+import { bootStudio, filmSample, type Studio } from "./acceptance/studio";
 import { drive, verify, type Expect } from "./acceptance/drive";
 import { stubRuns, stubDecision, verdictOf, type StubRun } from "./acceptance/stub";
 import { STEPS, approveStaffing, type Ctx } from "./acceptance/steps";
@@ -121,10 +121,13 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
   return { failures, task };
 }
 
-type Row = { r: StubRun; verdict: "pass" | "FAIL" | "known-fail" | "UNEXPECTED PASS"; ms: number; task?: string; detail: string };
+type Row = { r: StubRun; verdict: "pass" | "FAIL" | "known-fail" | "UNEXPECTED PASS" | "SKIPPED"; ms: number; task?: string; detail: string };
+/** Why a run cannot run here (a local tool it needs is missing), or null. */
+const missing = (r: StubRun) => r.needs.includes("ffmpeg") && !filmSample.path ? filmSample.reason : null;
 const rows: Row[] = [];
 async function record(r: StubRun) {
   const t = Date.now(); let out: { failures: string[]; task?: string };
+  const skip = missing(r); if (skip) { rows.push({ r, verdict: "SKIPPED", ms: 0, detail: skip }); console.log(`${"SKIPPED".padEnd(15)} ${r.workflow}:${r.name}\n    ${skip}`); return; }
   try { out = await runOne(r); } catch (e: any) { out = { failures: [`scenario threw: ${String(e?.message ?? e).slice(0, 500)}`] }; }
   const failed = out.failures.length > 0, verdict: Row["verdict"] = verdictOf(r, out.failures);
   const row: Row = { r, verdict, ms: Date.now() - t, task: out.task, detail: failed ? out.failures.join(" | ") : r.covers }; rows.push(row);
@@ -147,5 +150,6 @@ if (known.length) {
 }
 for (const x of rows.filter((x) => x.verdict === "UNEXPECTED PASS")) console.log(`\nUNEXPECTED PASS: ${x.r.workflow}:${x.r.name} now passes; remove its known_failure in ${x.r.shared.file} and its row in docs/acceptance.md.`);
 const bad = rows.filter((x) => x.verdict === "FAIL" || x.verdict === "UNEXPECTED PASS");
-console.log(`\nacceptance: ${rows.filter((x) => x.verdict === "pass").length} pass, ${known.length} known-fail, ${bad.length} fail, ${problems.length} coverage problem(s) · ${bundled.length} bundled workflows · ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+const skipped = rows.filter((x) => x.verdict === "SKIPPED");
+console.log(`\nacceptance: ${rows.filter((x) => x.verdict === "pass").length} pass, ${known.length} known-fail, ${bad.length} fail, ${skipped.length} skipped (not passed), ${problems.length} coverage problem(s) · ${bundled.length} bundled workflows · ${((Date.now() - t0) / 1000).toFixed(0)} s`);
 process.exit(bad.length || problems.length ? 1 : 0);

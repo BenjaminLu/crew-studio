@@ -18,6 +18,7 @@ expect:
 budget: { wall_minutes: 40, max_rounds: 18 }
 stub:
   - name: approve
-    covers: "editor round on the film template → render (the renderer's own stub) → checks → approve → Library"
+    covers: "editor round on the film template → render (the renderer's own stub copies a real 1920x1080 sample film) → checks → approve → Library"
     provider: codex
+    needs: [ffmpeg]
     expect: { status: succeeded, visited: [intake, produce, draft, render, checks, refine, accept, library, done], library: true }

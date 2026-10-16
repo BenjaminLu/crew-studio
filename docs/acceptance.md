@@ -29,7 +29,9 @@ Stubs, bound through the existing overrides (`CREW_CODEX_BIN`, `CREW_CLAUDE_BIN`
   round's tools and calls them over MCP, and prints the vendor's own event shapes. Its scripts are
   `src/providers/stub-agent.ts` plus the modes it lacks (deliver, startup, coffee page, a worker ASK).
 - The film renderer is a local tool: its existing stub (`CREW_RENDER_STUB=1`) stands in for
-  Playwright and ffmpeg. The coffee film needs the pinned HyperFrames toolchain, which the offline
+  Playwright and ffmpeg. It copies a real 1920x1080, 1 s sample film (`CREW_RENDER_STUB_MP4`) that
+  the suite makes once with ffmpeg, so the video readiness probe reads a real MP4. Without ffmpeg the
+  runs marked `needs: [ffmpeg]` print `SKIPPED` with the reason and do not count as passed. The coffee film needs the pinned HyperFrames toolchain, which the offline
   harness does not have, so the coffee run takes its capability path.
 
 ## Scenarios

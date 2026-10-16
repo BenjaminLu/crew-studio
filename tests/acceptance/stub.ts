@@ -17,6 +17,7 @@
 //       expect: { status: succeeded, result: done, visited: [...], not_visited: [...], library: true,
 //                 outputs: 1, min_visits: { draft: 2 }, approved: "startup-{task}", waiting_on: node }
 //       board_refusal: { status: 409, error: "regex" }   # the board start must be refused this way
+//       needs: [ffmpeg]                    # local tools the run needs; without one it is SKIPPED (not passed)
 //       known_failure: { observed: …, match: "regex", root_cause: "file:line …", covered_by: … }
 //                                          # match: the run's failure text must match it, or the run is a FAIL
 import { decideCard, type RunContext, type Scenario } from "../../scripts/acceptance/scenarios";
@@ -26,17 +27,21 @@ export type StubExpect = { status?: "succeeded" | "failed" | "cancelled"; result
 export type KnownFailure = { observed: string; match: RegExp; root_cause: string; covered_by?: string };
 export type StubRun = { workflow: string; name: string; covers: string; how: "board" | "firstmate" | "proposal" | "register" | "staffing" | "retired"; server: "sandbox" | "local-unrestricted";
   provider: string | null; topic: string; params: Record<string, string>; setup: string[]; cards: StubCard[]; expect: StubExpect | null; board_refusal: { status: number; error: RegExp } | null;
-  known_failure: KnownFailure | null; target: { workflow: string; params: Record<string, string> } | null; timeout_s: number; shared: Scenario };
+  known_failure: KnownFailure | null; target: { workflow: string; params: Record<string, string> } | null; timeout_s: number; needs: string[]; shared: Scenario };
 
 const HOWS = ["board", "firstmate", "proposal", "register", "staffing", "retired"];
 const isObj = (v: unknown): v is Record<string, any> => !!v && typeof v === "object" && !Array.isArray(v);
 const strings = (v: unknown, at: string): string[] => { if (v === undefined) return []; if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) throw new Error(`${at} must be a list of names`); return v; };
 
+/** The local tools a run may need (tests/acceptance/studio.ts provides them). */
+export const TOOLS = ["ffmpeg"];
+const needsOf = (v: unknown, at: string) => { const n = strings(v, `${at} needs`); for (const t of n) if (!TOOLS.includes(t)) throw new Error(`${at}: needs names an unknown tool ${t} (known: ${TOOLS.join(", ")})`); return n; };
+
 export function stubRuns(s: Scenario): StubRun[] {
   const where = `${s.file ?? s.workflow} stub`; const seen = new Set<string>();
   return (s.stub ?? []).map((raw: any, i) => {
     const at = `${where}[${i}]`;
-    const known = ["name", "covers", "how", "server", "provider", "topic", "params", "setup", "cards", "expect", "board_refusal", "known_failure", "target", "timeout_s"];
+    const known = ["name", "covers", "how", "server", "provider", "topic", "params", "setup", "cards", "expect", "board_refusal", "known_failure", "target", "timeout_s", "needs"];
     for (const k of Object.keys(raw)) if (!known.includes(k)) throw new Error(`${at}: unknown field ${k}`);
     if (typeof raw.name !== "string" || !raw.name || seen.has(raw.name)) throw new Error(`${at}: needs a unique name`); seen.add(raw.name);
     if (typeof raw.covers !== "string" || !raw.covers.trim()) throw new Error(`${at}: covers says what the run proves`);
@@ -65,7 +70,7 @@ export function stubRuns(s: Scenario): StubRun[] {
     return { workflow: s.workflow, name: raw.name, covers: raw.covers.trim(), how, server, provider: raw.provider === undefined ? s.start.provider : raw.provider, topic: raw.topic ?? s.topic,
       params: raw.params ?? {}, setup: strings(raw.setup, `${at} setup`), cards, expect, board_refusal: br ? { status: br.status, error: new RegExp(br.error) } : null,
       known_failure: kf ? { observed: kf.observed, match: new RegExp(kf.match), root_cause: kf.root_cause, ...(kf.covered_by ? { covered_by: kf.covered_by } : {}) } : null,
-      target: tg ? { workflow: tg.workflow, params: tg.params ?? {} } : null, timeout_s: Number(raw.timeout_s ?? 120), shared: s };
+      target: tg ? { workflow: tg.workflow, params: tg.params ?? {} } : null, timeout_s: Number(raw.timeout_s ?? 120), needs: needsOf(raw.needs, at), shared: s };
   });
 }
 
