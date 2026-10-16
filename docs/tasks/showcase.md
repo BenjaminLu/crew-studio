@@ -98,21 +98,14 @@ test ! -e "$CREW_DATA"  # 首次啟動前必須成功；失敗就改 take 名稱
 
 ## 5. 錄影與截圖準備
 
-- [ ] 主錄影選 macOS `Shift-Command-5`，只框住 Chrome 展示區；固定 16:9，建議 1920x1080。
-- [ ] 顯示點擊、游標與必要的網址／導航；關閉書籤列、通知、私人分頁及帳號選單。
-- [ ] 螢幕錄影權限需先完成並測試；授權失敗不得開始正式 take。
-- [ ] 先錄 10 秒試片：開 Firstmate、點一次、捲動、停止；播放確認清楚、不黑屏、沒有憑證、可正常結尾。
-- [ ] 可先錄無旁白完整操作，再配講稿；若要同步旁白，先測麥克風。不要把生成影片的無聲當作錄音故障。
-- [ ] 如採 CLI，以下命令須先在此機試片驗證；正式錄影以互動工具選區與停止較直覺。
-
-```sh
-/usr/sbin/screencapture -v -V 10 -k "$SHOWCASE_ROOT/evidence/video/capture-smoke.mov"
-/usr/sbin/screencapture -i -x "$SHOWCASE_ROOT/evidence/screenshots/capture-smoke.png"
-ffprobe -v error -show_entries format=duration -show_entries stream=codec_name,width,height -of json "$SHOWCASE_ROOT/evidence/video/capture-smoke.mov"
-```
-
+- [ ] 主錄影沿用已驗證的 Playwright `recordVideo` 腳本，只錄 Chrome 網頁 viewport，固定 1440x810；使用獨立 profile 與正式 take 的 CREW_DATA。
+- [ ] 不改用一般桌面 screen recording；瀏覽器操作與錄影分開，保留真實操作原片。
+- [ ] 先試錄 Firstmate、切頁與捲動，確認畫面、尺寸、無憑證與正常結尾。
+- [ ] 停止時先正常 `await context.close()`，等待影片寫完並記錄完成時間；不可直接 Ctrl-C 殺掉錄影程序。以 stop-file 通知錄影腳本收尾。
+- [ ] 用 ffprobe 檢查尺寸、duration，ffmpeg 完整解碼且不得出現 `File ended prematurely`；抽查中段與最後畫格。
+- [ ] 顯示必要點擊與導航；游標若未被頁面錄影捕捉，剪輯時依真實點擊時間加入標記。
 - [ ] 截圖固定相同尺寸、theme 與繁體中文；長頁另存 full-page 圖，不拿長圖充當影片畫格。
-- [ ] Playwright 可補精確 viewport 截圖／播放數據；現有測試使用此方法，但 fixture 圖不能當 live showcase 證據。
+- [ ] 無旁白錄製完整操作，配樂在剪輯加入；fixture 圖不能當 live showcase 證據。
 - [ ] 不把「截圖串成影片」稱為完整操作錄影。若剪掉等待，保留原片並在成片標示。
 - [ ] 每個關鍵節點記錄：時間、影片 timecode、task/card ID、artifact/version、動作、結果、截圖檔名。
 
@@ -399,3 +392,12 @@ Coffee-kit 主案例沿用「慢日咖啡 Slow Day Coffee」：繁體中文單�
 - Captain 待辦實測可從外觀開啟正確的 SC-001 原生收件匣卡；工作中多人畫面仍待驗證。
 - 實際 encoder smoke 通過：HyperFrames `0.8.159`、H.264、960x540、12 秒。使用測試色塊素材，只證明編碼能力，不能代替真實圖片生成或 Coffee-kit 端到端驗證。
 - 多產出核准按鈕及版本連結重名已以最小標籤修正處理，包含既存卡片；48 項原生流程及 26 項 UI 標籤測試通過、獨立審查通過，4212 瀏覽器已驗證三張正式卡正常流轉。正式 take 尚未開始。
+
+### 正式 take02 準備（2026-10-16）
+
+- 已 fast-forward 至 `86cbc9e8`，新版第一個流程入口為 Hello Crew Studio，一鍵內建 HTML 範本；其後仍保留 Firstmate 訪談／模型圖與 Coffee-kit 完整主案例，不把範本宣稱為 AI 生成。
+- 預檢 R-002 實際開啟網站並點擊正式確認，完成；發現中文介面的任務文字固定英文，已改用介面語系，避免 `ste-locale` 誤警示。
+- Hello 原生測試 PASS；既有 UI 測試以已安裝 Chrome 執行，13 PASS。預設測試瀏覽器版本不存在，未下載新依賴。
+- `recordVideo` 正常收尾驗證：83.68 秒、1440x810、完整解碼無錯；啟動後再設定 page viewport 可消除灰邊。正式錄影用 stop-file 正常關閉 context，不能 Ctrl-C。
+- 正式 take：`.tmp/showcase/2026-10-16-take02`，instance 4213，全新 studio-data 與 chrome-testing-profile；未複製預檢任務或成品。原 dogfood 4210 保留。
+- 多船員重疊工作、正式 Coffee-kit 媒體與兩版成片仍待驗證，不將上述準備視為交付完成。
