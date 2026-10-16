@@ -77,7 +77,14 @@ const settle = (id: string, ms = 30000) => until(() => ["succeeded", "failed", "
   ok(bad.verdict === "fail" && bad.findings.length === 2 && bad.findings.every((f: any) => f.class === "brief-placeholder") && good.verdict === "pass",
     "brief-quality fails an item whose expected change is only '<check> passes', and passes a concrete one", JSON.stringify(bad));
 
+  const approvedRoles:string[]=[];
+  E.deps.approvedPick=(_run,node)=>{
+    if(!['maker','coordinator'].includes(node.role??''))throw new Error('Approved agent role is missing');
+    approvedRoles.push(node.role!);return E.deps.defaultProvider();
+  };
   const r = E.start({ workflow: "vague", text: "vague" }); await settle(r.id);
+  E.deps.approvedPick=undefined;
+  ok(approvedRoles.includes('coordinator'),'root-cause turn resolves the approved coordinator role instead of the unstaffed loop');
   const g = E.get(r.id)!; const q = E.ledger(r.id).filter((e) => e.check === "core/brief-quality"); const it = g.ctx.briefs?.make?.items?.[0];
   ok(g.status === "succeeded" && q.map((e) => e.verdict).join(",") === "fail,pass", "a brief that fails brief-quality goes to a coordinator root-cause turn, then passes", `${g.status} ${q.map((e) => e.verdict)} ${g.error}`);
   ok(!!it && it.expected !== "t/noexp passes" && !/ passes$/.test(it.expected) && it.locator?.type === "card" && /no longer occurs/.test(it.expected) && (g.nodes.fix.data.jobs ?? []).length >= 1,

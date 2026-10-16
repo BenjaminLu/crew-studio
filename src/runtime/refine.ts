@@ -234,7 +234,7 @@ export function installRefine(engine: Engine) {
       const rootCause = async (role: string) => {
         x.rn.data.brief = brief; x.rn.data.rootcause = null;
         try {
-          const sub: X = { ...x, node: { ...x.node, role } };
+          const sub: X = engine.x(x.run, { ...x.node, role }, x.rn);
           await engine.runAgent(sub, "rootcause");
           const rc = x.rn.data.rootcause;
           if (rc) { for (const e of rc.expected ?? []) { const it = brief.items.find((i) => i.n === Number(e.n)); if (!it) continue;
