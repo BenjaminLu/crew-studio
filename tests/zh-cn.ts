@@ -18,7 +18,7 @@ export function loadI18n(extra: Record<string, any> = {}) {
   return win;
 }
 /** characters that exist only in Traditional script: none may survive in a zh-CN string */
-export const TRAD_ONLY = [..."這們個說會時對開發體為裡與從後來還點過讓樣請機關門問題設資檔閱錄讀確認驗證狀態務頁選單號帳碼試應該無經將處動們給學實際聯絡網際線運連標準種類換單價錢費辦應變邊東車長場現見覽視訊顯開啟執絕擇隊員導覺歷識軟訊龍據術顏顯"];
+export const TRAD_ONLY = [..."著麼劃傳這們個說會時對開發體為裡與從後來還點過讓樣請機關門問題設資檔閱錄讀確認驗證狀態務頁選單號帳碼試應該無經將處動們給學實際聯絡網際線運連標準種類換單價錢費辦應變邊東車長場現見覽視訊顯開啟執絕擇隊員導覺歷識軟訊龍據術顏顯"];
 const trad = (s: string) => [...s].filter((c) => TRAD_ONLY.includes(c));
 
 const w = loadI18n();
@@ -65,9 +65,42 @@ if (w?.crewI18n) {
   ok(I.zhField("zh-CN", "Build loop", "建置迴圈") === "建置循环" && I.zhField("zh-TW", "Build loop", "建置迴圈") === "建置迴圈" && I.zhField("zh-CN", "Gates", "") === "Gates", "zh-TW-only fields (label_tw) convert");
   // ---------- model replies: display-time conversion leaves code, links and paths alone ----------
   const reply = "這個檔案 `程式碼.js`：\n```\n設定 = 1\n```\n見 [設定頁](#/settings) https://x.tw/設定 ./資料/設定.md src/設定.ts，然後登入。";
-  ok(I.displayCN(reply) === "这个文件 `程式碼.js`：\n```\n設定 = 1\n```\n见 [设置页](#/settings) https://x.tw/設定 ./資料/設定.md src/設定.ts，然后登录。", "a reply converts for display; fenced code, inline code, link targets, URLs and paths stay as written", I.displayCN(reply));
+  ok(I.displayCN(reply) === "这个文件 `程式碼.js`：\n```\n設定 = 1\n```\n见 [设置页](#/settings) https://x.tw/设置 ./资料/设置.md src/设置.ts，然后登录。", "a reply converts for display; fenced code, inline code and link targets stay as written; a URL or path ends at Han", I.displayCN(reply));
   ok(I.chatText("zh-TW", reply) === reply && I.chatText("en", reply) === reply && I.chatText("zh-CN", reply) === I.displayCN(reply), "only 简体中文 converts a reply");
   ok(I.toCN("ab") === "ab" && reply.includes("設定"), "the stored reply itself is never changed");
+  // ---------- OpenCC phrases that block a character change, and text that is already Simplified ----------
+  const fixed: [string, string][] = [["著名", "著名"], ["顯著", "显著"], ["著作", "著作"], ["名著", "名著"], ["乾坤", "乾坤"], ["乾隆", "乾隆"], ["看著", "看着"], ["什麼", "什么"], ["什么", "什么"], ["這麼", "这么"], ["乾淨", "干净"]];
+  for (const [tw, cn] of fixed) ok(I.toCN(tw) === cn, `phrase ${tw} -> ${cn}`, I.toCN(tw));
+  ok(I.toCN("这是简体：什么、怎么、为什么，已经是简体了。") === "这是简体：什么、怎么、为什么，已经是简体了。", "already-Simplified text is left as it is (么 never becomes 幺)", I.toCN("这是简体：什么、怎么、为什么，已经是简体了。"));
+  // ---------- display-time conversion: what stays as written ----------
+  const shown: [string, string, string][] = [
+    ["我改了src/app.ts的設定，", "我改了src/app.ts的设置，", "a path stops at the Han text after it"],
+    ["[這份說明](docs/a.md)", "[这份说明](docs/a.md)", "link text converts, its target does not"],
+    ["見[設定](docs/設定.md)。", "见[设置](docs/設定.md)。", "a link target with Han stays as written"],
+    ["T-305/T-306兩個任務", "T-305/T-306两个任务", "a slash between task ids does not swallow the Han after it"],
+    ["HTTP/2連線逾時", "HTTP/2连接超时", "HTTP/2 does not swallow the Han after it"],
+    ["看 https://x.tw/a?b=1的設定", "看 https://x.tw/a?b=1的设置", "a URL stops at Han"],
+    ["路徑 C:\\Users\\me\\a.txt 的設定", "路径 C:\\Users\\me\\a.txt 的设置", "a Windows path stays, the Han around it converts"],
+    ["用 `設定.js` 檔案", "用 `設定.js` 文件", "inline code stays as written"],
+    ["說明：\n```js\n設定 = 1\n```\n然後登入", "说明：\n```js\n設定 = 1\n```\n然后登录", "a ``` fence stays as written"],
+    ["說明：\n~~~\n設定 = 1\n~~~\n然後登入", "说明：\n~~~\n設定 = 1\n~~~\n然后登录", "a ~~~ fence stays as written"],
+    ["說明：\n\n    設定 = 1\n    還是程式碼\n\n然後登入", "说明：\n\n    設定 = 1\n    還是程式碼\n\n然后登录", "an indented code block (after a blank line) stays as written"],
+    ["第一行\n    續行的設定", "第一行\n    续行的设置", "an indented line inside a paragraph is prose, not code"],
+    ["說明\n```\n設定 = 1\n還在程式碼裡", "说明\n```\n設定 = 1\n還在程式碼裡", "an unclosed fence is code to the end of the text"],
+    ["見 ``` 不是圍欄 的設定", "见 ``` 不是围栏 的设置", "``` in the middle of a line opens no fence"],
+    ["單個 ` 反引號的設定", "单个 ` 反引号的设置", "an unclosed backtick is plain text"],
+  ];
+  for (const [tw, cn, name] of shown) ok(I.displayCN?.(tw) === cn, name, JSON.stringify(I.displayCN?.(tw)));
+  // ---------- linear time, cached ----------
+  const big = "設定".repeat(20000), messy = "a/設`[x](".repeat(5000);
+  let t0 = performance.now(); const out1 = I.displayCN?.(big); const t1 = performance.now() - t0;
+  t0 = performance.now(); I.displayCN?.(messy); const t2 = performance.now() - t0;
+  t0 = performance.now(); const out2 = I.displayCN?.(big); const t3 = performance.now() - t0;
+  ok(out1 === "设置".repeat(20000) && t1 < 400, `a 40,000-character Han reply converts in linear time (${t1.toFixed(0)} ms)`);
+  ok(t2 < 400, `a 40,000-character reply full of slashes, backticks and brackets converts in linear time (${t2.toFixed(0)} ms)`);
+  ok(out2 === out1 && t3 < 5, `the same reply again comes from the cache (${t3.toFixed(1)} ms)`);
+  // ---------- wording ----------
+  for (const [tw, cn] of [["證據帳本", "证据账本"], ["這裡顯示 6 位數碼", "这里显示 6 位数字"], ["瀏覽器會自己開檔。", "浏览器会自己打开文件。"]]) ok(I.toCN(tw) === cn, `wording ${tw} -> ${cn}`, I.toCN(tw));
   // ---------- model inputs keep today's language ----------
   ok(I.modelLang("zh-CN") === "zh-TW" && I.modelLang("zh-TW") === "zh-TW" && I.modelLang("en") === "en", "model-bound language: zh-CN sends the zh-TW it sent before");
   // ---------- every zh-TW string in the UI converts cleanly ----------
@@ -79,6 +112,9 @@ if (w?.crewI18n) {
   ok(!left.length, "no Traditional-only character survives conversion of any UI string literal", left.slice(0, 5).join(" | "));
 }
 {
+  // ---------- the status chat's suggestion chips go through T() ----------
+  const m2 = readFileSync(join(root, "public/m2.js"), "utf8");
+  ok(/const SUG = \(\) => \[\s*T\(/.test(m2) && !/const SUG = \(\) => zh\(\)/.test(m2), "the chat suggestion chips are T(en, zh-TW) pairs, so 简体中文 converts them");
   // ---------- the chat's Studio notes are bilingual ----------
   const main = readFileSync(join(root, "src/host/main.ts"), "utf8");
   // every status/system note the chat can show carries both languages; a Codex/fresh "statement" (filtered out of the

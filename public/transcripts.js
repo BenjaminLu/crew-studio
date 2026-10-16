@@ -147,7 +147,8 @@ function promptTab(inv) {
 }
 function entryNode(e, i) {
   const t = e.t ? h("span", { class: "tr-t" }, fmtT(e.t)) : h("span", { class: "tr-t" });
-  if (e.kind === "text") return h("div", { class: "tr-e text", "data-entry": "text" }, t, h("div", { class: "tr-body md" }, md(e.text)));
+  // a model's own words read like a Firstmate reply: 简体中文 converts them for display (i18n.js); code and raw output stay as written
+  if (e.kind === "text") return h("div", { class: "tr-e text", "data-entry": "text" }, t, h("div", { class: "tr-body md" }, md(window.crewI18n && typeof lang !== "undefined" ? window.crewI18n.chatText(lang, e.text) : e.text)));
   if (e.kind === "tool") {
     const a = e.args || {}; const main = a.command ?? a.file_path ?? a.pattern ?? a.url ?? a.description ?? "";
     return h("div", { class: "tr-e tool", "data-entry": "tool" }, t, h("div", { class: "tr-body" }, h("b", {}, "▸ ", e.name), " ", h("code", {}, String(main).slice(0, 300)),

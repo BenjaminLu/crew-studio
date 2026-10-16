@@ -27,8 +27,8 @@ function md(text) {
 const CH = { msgs: [], busy: false, abort: null };
 try { const s = JSON.parse(localStorage.getItem("crew.chat") || "[]"); if (Array.isArray(s)) CH.msgs = s.slice(-60); } catch {}
 const saveChat = () => { try { localStorage.setItem("crew.chat", JSON.stringify(CH.msgs.slice(-60))); } catch {} };
-const SUG = () => zh() ? ["T-305 現在進度如何", "今天合併了什麼？", "有什麼卡在等我？", "船員現在在做什麼？"]
-  : ["How is T-305 doing?", "What did the crew merge today?", "Which cards wait on me?", "What is the crew doing right now?"];
+const SUG = () => [T("How is T-305 doing?", "T-305 現在進度如何"), T("What did the crew merge today?", "今天合併了什麼？"),
+  T("Which cards wait on me?", "有什麼卡在等我？"), T("What is the crew doing right now?", "船員現在在做什麼？")];
 
 function toolChips(tools) {
   if (!tools?.length) return null;
