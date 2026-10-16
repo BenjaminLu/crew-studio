@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // M3 in the browser: the Library's artifacts, the artifact page, the web pin
 // review (click to pin, request changes with the stub agent, compare), the video
 // timeline review (drag a range, draw a box, add a note), and the Changes page
@@ -18,7 +19,7 @@ const root = join(here, "..");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright").catch(() => {
   console.error("m3-ui: Playwright not found; set PLAYWRIGHT_MODULE to its index.mjs or install it"); process.exit(2); });
 process.env.CREW_SESSION_TOKEN ??= "test-session"; // the server's write guard: a local client sends it as x-crew-session
-const tmp = mkdtempSync(join(tmpdir(), "crew-m3ui-"));
+const tmp = checkedTempDir("crew-m3ui-");
 const state = join(tmp, "state"); cpSync(join(here, "fixture/state"), state, { recursive: true });
 const data = join(tmp, "data"); mkdirSync(data);
 const films = join(tmp, "films"); mkdirSync(films);

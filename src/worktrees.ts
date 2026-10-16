@@ -30,6 +30,8 @@ import { basename, dirname, join } from "node:path";
 import { addPaths, changedPaths, git, gitArgv, gitEnv, must } from "./git";
 import { realInside, realOf } from "./secure";
 import { roundExec } from "./runtime/checks";
+import { assertSharedGitConfig } from "./git-config-health";
+export { SharedGitConfigBroken, assertSharedGitConfig } from "./git-config-health";
 
 export type Egress = { port: number; open(t: string, h: string[]): void; close(t: string): void };
 
@@ -107,6 +109,7 @@ export class Worktrees {
   }
   ensure(a: { project: string; task: string; repo: string; base: string; branchPrefix: string; run?: string | null }): WorktreeRecord {
     const path = this.pathOf(a.project, a.task); this.assertPlace(path, a.repo);
+    assertSharedGitConfig(a.repo); // a broken shared config (core.bare, core.worktree, hooksPath) refuses here, with its reason
     this.assertNoCaseTwin(this.root, safe(a.project)); this.assertNoCaseTwin(this.dir(a.project), safe(a.task));
     let r = this.get(a.project, a.task);
     if (r && !r.removedAt && existsSync(path)) return r;
@@ -150,6 +153,7 @@ export class Worktrees {
    */
   async startRound(project: string, task: string, holder: string, o: { install?: string[] | false | null; scripts?: boolean; allow?: string[]; write?: boolean; skipInstall?: boolean } = {}): Promise<RoundStart & { release: () => void }> {
     const r0 = this.get(project, task); if (!r0 || r0.removedAt || !existsSync(r0.path)) throw new Error(`no worktree for ${task}`);
+    assertSharedGitConfig(r0.repo); // before the lock: a broken shared config stops the round with its reason
     const release0 = this.lock(project, task, holder); this.held.add(`${project}/${task}`);
     const r = this.get(project, task)!; // read again: taking the lock may have recorded a stale holder
     const release = () => { this.held.delete(`${project}/${task}`); release0(); };
@@ -473,6 +477,8 @@ export class Worktrees {
       if (e.isSymbolicLink()) continue; if (e.isDirectory()) { f(p, true); this.walk(p, f); } else f(p, false); }
   }
   /** Where a run's temporary trees go (fail-first's base tree, main's tree): removed with the worktree, swept when the run is not live. */
+  /** Before a run adds a temporary worktree on a repository: its shared config must be sound. */
+  guard(repo: string) { assertSharedGitConfig(repo); }
   tmpOf(run: string, what: string) { const d = join(this.root, ".tmp"); mkdirSync(d, { recursive: true }); const name = `${safe(run)}-${safe(what)}`; writeFileSync(join(d, `${name}.marker`), JSON.stringify({ kind: "crew-tmp", run, at: now() })); return join(d, name); }
   freeze(r: WorktreeRecord) { if (!existsSync(r.path)) return; this.walk(r.path, (p, d) => { try { const m = statSync(p).mode & 0o777; chmodSync(p, d ? m & ~0o222 : m & ~0o222); } catch {} }); try { chmodSync(r.path, statSync(r.path).mode & ~0o222); } catch {} }
   thaw(r: WorktreeRecord) { this.thawPath(r.path); }

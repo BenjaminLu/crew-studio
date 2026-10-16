@@ -1,10 +1,11 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 import {mkdtempSync,rmSync,writeFileSync,readFileSync} from 'node:fs';
 import{OperatingRules,jobInstructions}from'../src/operating-rules';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {StaffingStore,staffingHash} from '../src/domain/staffing';
-const root=mkdtempSync(join(tmpdir(),'staffing-'));let n=0;
+const root=checkedTempDir('staffing-');let n=0;
 const ok=(v:unknown,m:string)=>{if(!v)throw new Error(m);n++};
 const rejects=(f:()=>unknown,m:string)=>{let rejected=false;try{f()}catch{rejected=true}ok(rejected,m)};
 try{
@@ -163,7 +164,7 @@ if(process.env.STAFFING_BASE_ENGINE){
 // Canonical project identity uses actual local Git metadata, never a model path.
 {
  const {mkdirSync,symlinkSync}=await import('node:fs');const {Projects}=await import('../src/doors');
- const base=mkdtempSync(join(tmpdir(),'staffing-identity-')),data=join(base,'data'),repo=join(base,'repo');mkdirSync(data);mkdirSync(repo);
+ const base=checkedTempDir('staffing-identity-'),data=join(base,'data'),repo=join(base,'repo');mkdirSync(data);mkdirSync(repo);
  const git=(args:string[])=>{const r=Bun.spawnSync(['git',...args],{cwd:repo,env:{PATH:process.env.PATH!,HOME:base,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_TERMINAL_PROMPT:'0'},stdout:'pipe',stderr:'pipe'});if(r.exitCode)throw new Error(r.stderr.toString());};
  try{
   git(['init','-b','main']);git(['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture initial']);
@@ -288,7 +289,7 @@ if(process.env.STAFFING_CONVERSATION==='1'){
 
 // Workflow upgrades start a separate signed conversation, preserving prior answers.
 {
- const data=mkdtempSync(join(tmpdir(),'staffing-interview-upgrade-')),store=new StaffingStore(data),project={namespace:'git' as const,id:'p',identity:'interview-upgrade'},v1={id:'code-firstmate',version:1,sha256:staffingHash({v:1})},v2={...v1,version:2,sha256:staffingHash({v:2})};
+ const data=checkedTempDir('staffing-interview-upgrade-'),store=new StaffingStore(data),project={namespace:'git' as const,id:'p',identity:'interview-upgrade'},v1={id:'code-firstmate',version:1,sha256:staffingHash({v:1})},v2={...v1,version:2,sha256:staffingHash({v:2})};
  try{
   const old=store.interview(project,v1,['worker']);old.choices.worker={provider:'codex'};old.round=2;old.lastTurn='captain-v1';store.saveInterview(old,1);
   const upgraded=store.interview(project,v2,['worker']);ok(upgraded.round===1&&Object.keys(upgraded.choices).length===0,'workflow v2 receives a fresh provider frontier after saved v1 discussion');

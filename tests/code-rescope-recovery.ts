@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // Signed local recovery: real cards, native queue admissions and temporary git
 // worktrees. Stub agents call the same token-authorized tools in process.
 import {mkdirSync,mkdtempSync,readFileSync,writeFileSync} from 'node:fs';
@@ -23,7 +24,7 @@ const flow={id:'rescope-fixture',name:'Rescope fixture',version:1,roles:[{id:'co
  {id:'merge',kind:'hook',do:'git.merge',label:'Merge',x:5,y:0},
  {id:'done',kind:'hook',label:'Done',x:6,y:0}],edges:[['prepare','spec'],['spec','dispatch'],['dispatch','build','dispatch'],['dispatch','spec','rescope'],['build','scope-card'],['scope-card','spec','rescope'],['scope-card','done','park'],['scope-card','merge','merge'],['merge','done']]};
 async function fixture(){
- const H=await harness([Y(flow)]),E=H.engine,repo=join(H.data,'repo');mkdirSync(repo);must(repo,['init','-q','-b','main']);writeFileSync(join(repo,'README.md'),'initial\n');must(repo,['add','README.md']);must(repo,['commit','-qm','Initial']);
+ const H=await harness([Y(flow)]),E=H.engine,repo=join(H.data,'repo');mkdirSync(repo);assertTempRepo(repo);must(repo,['init','-q','-b','main']);writeFileSync(join(repo,'README.md'),'initial\n');must(repo,['add','README.md']);must(repo,['commit','-qm','Initial']);
  const projects=new Projects(H.data);projects.add({id:'fixture',path:repo});installCode(E,{dataDir:H.data,projects});E.policies.setProject('fixture',{install:false});
  const scopes=new Map<string,string>(),starts=new Map<string,number>();
  E.modes.spec.prompt=x=>`Run ${x.run.id} scope:${scopes.get(x.run.id)||'old.txt'}`;

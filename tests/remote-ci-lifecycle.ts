@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -18,7 +19,7 @@ const ok = (v: any, name: string) => { console.log(`${v ? "PASS" : "FAIL"} ${nam
 const heldStarted = async (started: Promise<void>) => { let timer: ReturnType<typeof setTimeout>; try { await Promise.race([started, new Promise<void>((_r, reject) => timer = setTimeout(() => reject(new Error("held fixture request was not reached")), 2500))]); } finally { clearTimeout(timer!); } };
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const until = async (f: () => boolean, ms = 2500) => { const end = Date.now() + ms; while (!f() && Date.now() < end) await sleep(5); return f(); };
-const temp = mkdtempSync(join(tmpdir(), "remote-r2-")), repo = join(temp, "repo"), bare = join(temp, "bare.git"), packs = join(temp, "packs"); mkdirSync(repo); setGitHome(join(temp, "git-home"));
+const temp = checkedTempDir("remote-r2-"), repo = join(temp, "repo"), bare = join(temp, "bare.git"), packs = join(temp, "packs"); mkdirSync(repo); setGitHome(join(temp, "git-home"));
 must(repo, ["init", "-qb", "main"]); writeFileSync(join(repo, "file"), "one"); must(repo, ["add", "."]); must(repo, ["commit", "-qm", "one"]); must(temp, ["clone", "--bare", "-q", repo, bare]); must(repo, ["checkout", "-qb", "crew/task"]); writeFileSync(join(repo, "file"), "two"); must(repo, ["commit", "-qam", "two"]); const head = must(repo, ["rev-parse", "HEAD"]);
 const sim = githubSimulator(bare), grant = { mode: "simulator" as const, repository: "fixture/project", localPath: repo, pushUrl: bare, apiOrigin: sim.origin, base: "main", branchPrefix: "crew/", approvedAt: "2026-10-15T00:00:00Z", approvalId: "local-fixture" }, adapter = new GitHubPrAdapter(grant, () => "fake-token", 2000), engines: Engine[] = [], watchers: RemoteWatchers[] = [];
 const dir = join(temp, "record"); mkdirSync(dir);

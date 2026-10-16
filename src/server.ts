@@ -12,6 +12,7 @@ import {createNativeProviderAdmission} from "./providers/native-admission";
 import { registerInstance } from "./instance";
 import {GitHubPoller} from './github-poller';
 import {Projects} from './doors';
+import { gitConfigReport } from "./git-config-health";
 import {projectPrAdapter,GitHubPrAdapter,type GitHubProjectGrant} from './adapters/github';
 // Crew Studio: a read-only window onto a running firstmate, plus card answers
 // sent through the firstmate board's own write route.
@@ -253,7 +254,7 @@ function setLan(on: boolean): { ok: boolean; error?: string } {
 const installs = new Installs(process.env.CREW_INSTALL_RUNNER === "mock" ? new MockRunner() : new RealRunner());
 let doctorCache: Item[] = [];
 const doctor = () => (doctorCache = diagnose({ state: STATE, legacy: startup.legacy, board: board.status(), gh: gh.state, keys: keyStatus() as any, chatProvider: chatInfo().provider, lanIp: lanIp(),
-  tailscale: ts, compiled: COMPILED, render: renderEnv(), egress: egress.status(), codexAccount:codexAccount.view(), operatingRules: (() => { const r = new OperatingRules(DATA); return { studio: r.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, ...r.project(x.id) })) }; })(), roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined }));
+  tailscale: ts, compiled: COMPILED, render: renderEnv(), egress: egress.status(), codexAccount:codexAccount.view(), operatingRules: (() => { const r = new OperatingRules(DATA); return { studio: r.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, ...r.project(x.id) })) }; })(), gitConfig: gitConfigNow(), roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined }));
 installs.onChange = (j, line) => send("install", { id: j.id, item: j.item, state: j.state, code: j.code, line: line ?? null });
 installs.onFinished = () => { refreshTs(); send("doctor", doctor()); };
 
@@ -361,6 +362,12 @@ const skins = new Skins(DATA);
 try { new OperatingRules(DATA).seed(); } catch (e: any) { console.warn(`crew-studio: operating rules: ${e?.message ?? e}`); }
 // the sandbox repository the coding workflow runs on (data/demo-repo, project "sandbox"); CREW_SANDBOX=0 skips it
 if (process.env.CREW_SANDBOX !== "0") { try { prepareSandbox(DATA); registerSandbox(DATA); } catch (e: any) { console.warn(`crew-studio: sandbox repo: ${e?.message ?? e}`); } }
+// the shared git config of Studio's own checkout, every registered project and the sandbox: a broken one (core.bare=true,
+// a stray core.worktree or hooksPath) breaks the checkout and every linked worktree at once; reported here and in the Doctor, never fixed
+const gitConfigTargets = () => { let projects: { id: string; path: string | null }[] = []; try { projects = new Projects(DATA).nativeSnapshot().records as any; } catch {} // the strict reader: no migration as a side effect
+  return [...(!COMPILED ? [{ label: "Crew Studio's own checkout", path: SRC_ROOT }] : []), ...projects.map((p) => ({ label: `project ${p.id}`, path: p.path })), { label: "built-in sandbox (data/demo-repo)", path: join(DATA, "demo-repo") }]; };
+const gitConfigNow = () => { try { return gitConfigReport(gitConfigTargets()); } catch { return { checked: [], problems: [] }; } };
+for (const p of gitConfigNow().problems) console.warn(`crew-studio: WARNING broken shared git config in ${p.label} (${p.repo}): ${p.key}=${p.value}. ${p.why}. Studio does not change it; fix by hand: ${p.fix}`);
 // --- v2: Studio's native runtime (workflows that really run, checks, Studio-owned cards) ---
 const worktrees = new Worktrees(DATA, { protect: () => PROTECTED });
 let packGenesis: ReturnType<typeof installPackGenesis>;

@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +12,7 @@ import { githubSimulator } from "./lib/github-simulator";
 let passed = 0, failed = 0;
 const ok = (v: any, name: string) => { console.log(`${v ? "PASS" : "FAIL"} ${name}`); v ? passed++ : failed++; };
 const rejects = async (f: () => any, pattern: RegExp, name: string) => { try { await f(); ok(false, name); } catch (e: any) { ok(pattern.test(e.message) && !e.message.includes("fake-test-token"), name); } };
-const temp = mkdtempSync(join(tmpdir(), "github-foundation-")), repo = join(temp, "source"), bare = join(temp, "remote.git");
+const temp = checkedTempDir("github-foundation-"), repo = join(temp, "source"), bare = join(temp, "remote.git");
 mkdirSync(repo); setGitHome(join(temp, "data"));
 must(repo, ["init", "-q", "-b", "main"]); writeFileSync(join(repo, "file"), "one"); must(repo, ["add", "file"]); must(repo, ["commit", "-qm", "one"]);
 const initial = must(repo, ["rev-parse", "HEAD"]);

@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // The reviewer's modes (unit review-modes; v1's config.yaml `reviewer: mode: diff|run`, bin/fm-review.sh and
 // skills/reviewer/SKILL.md). Diff mode (the default): read-only, type-aware reads of a fresh checkout of the head,
 // no execution; review-depth asks that every changed file be read (any type, within the read budget). Run mode
@@ -15,7 +16,7 @@ const root = join(import.meta.dir, "..");
 const WF = readFileSync(join(root, "packs/firstmate/workflows/code-firstmate.wf.yaml"), "utf8");
 const { prepareSandbox, registerSandbox } = await import("../src/sandbox-repo");
 const { installCode } = await import("../src/domain/code"); const { Projects } = await import("../src/doors");
-const boot = async (policies?: string) => { const data = mkdtempSync(join(tmpdir(), "crew-revmode-")); prepareSandbox(data); registerSandbox(data);
+const boot = async (policies?: string) => { const data = checkedTempDir("crew-revmode-"); prepareSandbox(data); registerSandbox(data);
   const H = await harness([WF], { data, checkRoots: [], policies }); installCode(H.engine, { dataDir: data, projects: new Projects(data) }); return H; };
 const intent = (extra: string) => ["Add a percent function to money-kit",
   `STUB_FILE src/percent.ts :: ${extra ? `// ${extra}\\n` : ""}export function percent(amount: number, pct: number): number {\\n  return Math.round((amount * pct) / 100);\\n}\\n`,
@@ -98,7 +99,7 @@ const pdf = (text: string, flate: boolean) => { const content = Buffer.from(`BT 
     `4 0 obj << /Length ${body.length}${flate ? " /Filter /FlateDecode" : ""} >>\nstream\n`];
   return Buffer.concat([Buffer.from(parts.join("")), body, Buffer.from("\nendstream endobj\n5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n")]); };
 const repoWith = (gates: any, files: Record<string, string | Buffer>, baseFiles: Record<string, string | Buffer> = {}) => {
-  const repo = mkdtempSync(join(tmpdir(), "crew-revrepo-")); sh(repo, "git", "init", "-q", "-b", "main");
+  const repo = checkedTempDir("crew-revrepo-"); sh(repo, "git", "init", "-q", "-b", "main");
   mkdirSync(join(repo, ".crew")); writeFileSync(join(repo, ".crew", "gates.json"), JSON.stringify(gates)); writeFileSync(join(repo, "README.md"), "# r\n");
   for (const [p, c] of Object.entries(baseFiles)) { mkdirSync(join(repo, p, ".."), { recursive: true }); writeFileSync(join(repo, p), c); }
   sh(repo, "git", "add", "-A"); sh(repo, "git", "commit", "-q", "-m", "base"); const base = sh(repo, "git", "rev-parse", "HEAD");
@@ -107,7 +108,7 @@ const repoWith = (gates: any, files: Record<string, string | Buffer>, baseFiles:
 };
 let n = 900;
 const fakeX = (repo: string, base: string, policy: Record<string, any>, done: string[] = []) => ({ run: { id: `R-${n++}`, nodes: {}, def: { nodes: [] } }, node: { id: "review", retries: 1 }, rn: { data: {} as any, attempt: 0 }, visit: 1,
-  ctx: { worktree: repo, repo, baseCommit: base, spec: { title: "t", what: "w", why: [], done, scope: [] } }, dir: mkdtempSync(join(tmpdir(), "crew-revx-")), log() {}, save() {}, policy: (k: string) => policy[k] }) as any;
+  ctx: { worktree: repo, repo, baseCommit: base, spec: { title: "t", what: "w", why: [], done, scope: [] } }, dir: checkedTempDir("crew-revx-"), log() {}, save() {}, policy: (k: string) => policy[k] }) as any;
 const mode = (E as any).modes.review;
 const toolsOf = async (x: any) => { await mode.prepare(x); const t = mode.tools(x); return Object.fromEntries(t.map((y: any) => [y.name, y])); };
 const verdict = async (T: any) => T.review_verdict.run({ verdict: "APPROVE", findings: [] });
@@ -183,7 +184,7 @@ const depRepo = (extra: Record<string, string> = {}) => repoWith({ test: ["bun",
   await mode.end?.(x, "done"); }
 // the sandbox never adds a reviewer-chosen program's folder to its reads (argvRead: false, as both review runs call it)
 { const { sandboxed } = await import("../src/runtime/checks"); const { copyFileSync } = await import("node:fs");
-  const d = mkdtempSync(join(tmpdir(), "crew-argv-")); writeFileSync(join(d, "show"), '#!/bin/sh\n/bin/cat "$(dirname "$0")/secret.txt"\n', { mode: 0o755 }); writeFileSync(join(d, "secret.txt"), "SECRET-ARGV-DIR\n"); void copyFileSync; const box = mkdtempSync(join(tmpdir(), "crew-argvbox-"));
+  const d = checkedTempDir("crew-argv-"); writeFileSync(join(d, "show"), '#!/bin/sh\n/bin/cat "$(dirname "$0")/secret.txt"\n', { mode: 0o755 }); writeFileSync(join(d, "secret.txt"), "SECRET-ARGV-DIR\n"); void copyFileSync; const box = checkedTempDir("crew-argvbox-");
   const run = (argvRead: boolean) => sandboxed([join(d, "show")], { cwd: box, out: join(box, "out"), tmp: join(box, "tmp"), timeoutS: 20, network: false, argvRead });
   const wide = await run(true), narrow = await run(false);
   ok(/SECRET-ARGV-DIR/.test(wide.stdout) && !/SECRET-ARGV-DIR/.test(narrow.stdout) && narrow.code !== 0, "with argvRead: false the program's folder is not readable: an absolute argv[0] never widens the sandbox's reads", JSON.stringify([wide.code, narrow.code, narrow.stderr.slice(0, 200)]));
@@ -237,7 +238,7 @@ const depRepo = (extra: Record<string, string> = {}) => repoWith({ test: ["bun",
   ok([ea, eo, ec, es].every((evs) => evs.some((e) => e.type === "toolEnd") && !has(evs)), "no provider's events (what logs and the UI see) carry the picture: anthropic, openai, openai-compatible, stub", JSON.stringify(es.filter((e) => e.type === "toolEnd")).slice(0, 300));
   // the CLIs (claude, codex) as the vendors answer: each asks Studio's MCP server for the tool, which hands the picture as an
   // MCP image block; claude prints it as an Anthropic image block, codex as the MCP block itself. Their events keep a note only.
-  const cliDir = mkdtempSync(join(tmpdir(), "crew-cli-img-"));
+  const cliDir = checkedTempDir("crew-cli-img-");
   const mcpCall = `const { spawn } = await import("node:child_process"); const cmd = JSON.parse(process.env.STUB_MCP);
 const srv = spawn(cmd[0], cmd.slice(1), { stdio: ["pipe", "pipe", "inherit"], env: process.env }); let buf = ""; const waiting = new Map();
 srv.stdout.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n")) >= 0) { const m = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1); waiting.get(m.id)?.(m); } });

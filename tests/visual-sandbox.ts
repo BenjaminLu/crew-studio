@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // The visual sandbox (unit visual-sandbox): the sandbox repository gains Corner Shop, a
 // shop page built on money-kit (a normal commit on main, held while a run works on the
 // repository, never over the captain's files), and code-firstmate captures the app on
@@ -20,7 +21,7 @@ const YEN_MONEY = readFileSync(join(root, "templates/sandbox-repo/src/money.ts")
   .replace("  const abs = Math.abs(amount);\n", '  const abs = Math.abs(amount);\n  if (currency === "JPY") {\n    return `${sign}¥${abs.toLocaleString("en-US")}`;\n  }\n');
 
 // ---------- the addition: a normal commit on main, held while a run works on the repository ----------
-const d1 = mkdtempSync(join(tmpdir(), "crew-vis-")); const repo1 = join(d1, "demo-repo"); mkdirSync(repo1);
+const d1 = checkedTempDir("crew-vis-"); const repo1 = join(d1, "demo-repo"); mkdirSync(repo1);
 sh(repo1, "git", "init", "-q", "-b", "main"); writeFileSync(join(repo1, "NOTES.md"), "Notes.\n"); sh(repo1, "git", "add", "NOTES.md"); sh(repo1, "git", "commit", "-q", "-m", "Demo repository");
 prepareSandbox(d1); const setupHead = sh(repo1, "git", "rev-parse", "HEAD").out;
 const held = applySandboxAddons(d1, { live: () => ["R-002"] });
@@ -51,7 +52,7 @@ const jpy1 = readFileSync(join(out2, "jpy.html"), "utf8");
 ok(jpy1.includes("<b data-total>¥5,588</b>") && jpy1.includes('data-price="tea">¥1,275<') && readFileSync(join(out2, "index.html"), "utf8").includes("<b data-total>$37.25</b>"), "with R-002's change applied, the yen switch shows ¥ formatting (¥5,588) and dollars stay as they were", jpy1.match(/data-total>[^<]*/)?.[0] ?? "");
 
 // ---------- the captain's files are never overwritten ----------
-{ const d2 = mkdtempSync(join(tmpdir(), "crew-vis2-")); const r2 = join(d2, "demo-repo"); mkdirSync(r2); sh(r2, "git", "init", "-q", "-b", "main"); prepareSandbox(d2);
+{ const d2 = checkedTempDir("crew-vis2-"); const r2 = join(d2, "demo-repo"); mkdirSync(r2); sh(r2, "git", "init", "-q", "-b", "main"); prepareSandbox(d2);
   mkdirSync(join(r2, "app")); writeFileSync(join(r2, "app/shop.ts"), "// the captain's own shop\n"); sh(r2, "git", "add", "app/shop.ts"); sh(r2, "git", "commit", "-q", "-m", "my shop");
   const pj = readFileSync(join(r2, "package.json"), "utf8"); writeFileSync(join(r2, "package.json"), pj.replace('"lint"', '"fmt": "x",\n    "lint"'));
   const a2 = applySandboxAddons(d2);
@@ -61,7 +62,7 @@ ok(jpy1.includes("<b data-total>¥5,588</b>") && jpy1.includes('data-price="tea"
 
 // ---------- what an untrusted build wrote is copied with links refused, never followed ----------
 { const { copyUntrusted } = await import("../src/secure"); const fs = await import("node:fs");
-  const src = mkdtempSync(join(tmpdir(), "crew-vis-out-")), dst = mkdtempSync(join(tmpdir(), "crew-vis-copy-")), sec = mkdtempSync(join(tmpdir(), "crew-vis-key-"));
+  const src = checkedTempDir("crew-vis-out-"), dst = checkedTempDir("crew-vis-copy-"), sec = checkedTempDir("crew-vis-key-");
   writeFileSync(join(sec, "key"), "SECRET-KEY-MATERIAL-1\n"); writeFileSync(join(src, "index.html"), "<h1>ok</h1>"); mkdirSync(join(src, "css")); writeFileSync(join(src, "css", "a.css"), "h1{}");
   fs.symlinkSync(join(sec, "key"), join(src, "link.html")); fs.symlinkSync(sec, join(src, "dir")); fs.linkSync(join(sec, "key"), join(src, "hard.html"));
   Bun.spawnSync(["mkfifo", join(src, "pipe")]);
@@ -71,24 +72,24 @@ ok(jpy1.includes("<b data-total>¥5,588</b>") && jpy1.includes('data-price="tea"
   for (const x of [src, dst, sec]) rmSync(x, { recursive: true, force: true }); }
 // the descriptor copy reads macOS arm64's struct layouts: elsewhere (x86_64 macOS, Linux) the copy falls back to the path walk, which refuses links too
 { const { copyUntrusted } = await import("../src/secure"); const { canCopyByDescriptor } = await import("../src/untrusted-copy"); const fs = await import("node:fs");
-  const src = mkdtempSync(join(tmpdir(), "crew-vis-out-")), sec = mkdtempSync(join(tmpdir(), "crew-vis-key-")); writeFileSync(join(sec, "k"), "SECRET-KEY-MATERIAL-4"); writeFileSync(join(src, "ok.html"), "ok"); fs.symlinkSync(join(sec, "k"), join(src, "l.html"));
-  const runs = [["darwin", "x64"], ["linux", "x64"], ["linux", "arm64"]].map(([platform, arch]) => { const d = mkdtempSync(join(tmpdir(), "crew-vis-copy-")); const r = copyUntrusted(src, d, { platform, arch }); return { platform, arch, r, files: fs.readdirSync(d) }; });
+  const src = checkedTempDir("crew-vis-out-"), sec = checkedTempDir("crew-vis-key-"); writeFileSync(join(sec, "k"), "SECRET-KEY-MATERIAL-4"); writeFileSync(join(src, "ok.html"), "ok"); fs.symlinkSync(join(sec, "k"), join(src, "l.html"));
+  const runs = [["darwin", "x64"], ["linux", "x64"], ["linux", "arm64"]].map(([platform, arch]) => { const d = checkedTempDir("crew-vis-copy-"); const r = copyUntrusted(src, d, { platform, arch }); return { platform, arch, r, files: fs.readdirSync(d) }; });
   ok(!canCopyByDescriptor("darwin", "x64") && !canCopyByDescriptor("linux", "arm64") && canCopyByDescriptor("darwin", "arm64") && runs.every((x) => x.r.method === "path" && JSON.stringify(x.files) === '["ok.html"]' && x.r.refused.includes("l.html: a symlink")),
     "off macOS arm64 the copy never uses the arm64 struct layout: it falls back to the path walk, which still refuses a link", JSON.stringify(runs.map((x) => [x.platform, x.arch, x.r.method, x.files])));
-  if (process.platform === "darwin" && process.arch === "arm64") { const d = mkdtempSync(join(tmpdir(), "crew-vis-copy-")); ok(copyUntrusted(src, d).method === "descriptor", "on macOS arm64 the copy is by descriptor"); }
+  if (process.platform === "darwin" && process.arch === "arm64") { const d = checkedTempDir("crew-vis-copy-"); ok(copyUntrusted(src, d).method === "descriptor", "on macOS arm64 the copy is by descriptor"); }
   for (const x of [src, sec]) rmSync(x, { recursive: true, force: true }); }
 { const { copyUntrusted } = await import("../src/secure"); const fs = await import("node:fs");
-  const src = mkdtempSync(join(tmpdir(), "crew-vis-out-")), sec = mkdtempSync(join(tmpdir(), "crew-vis-key-"));
+  const src = checkedTempDir("crew-vis-out-"), sec = checkedTempDir("crew-vis-key-");
   mkdirSync(join(sec, "deep")); writeFileSync(join(sec, "deep", "page.html"), "SECRET-KEY-MATERIAL-2"); writeFileSync(join(sec, "page.html"), "SECRET-KEY-MATERIAL-3");
   // a link one level down: a/ is a real folder, a/b is a link to a folder outside
   mkdirSync(join(src, "a")); writeFileSync(join(src, "a", "ok.html"), "ok"); fs.symlinkSync(sec, join(src, "a", "b"));
-  const d1 = mkdtempSync(join(tmpdir(), "crew-vis-copy-")); const r1 = copyUntrusted(src, d1); const got1 = (fs.readdirSync(d1, { recursive: true }) as string[]).sort();
+  const d1 = checkedTempDir("crew-vis-copy-"); const r1 = copyUntrusted(src, d1); const got1 = (fs.readdirSync(d1, { recursive: true }) as string[]).sort();
   ok(JSON.stringify(got1) === '["a","a/ok.html"]' && r1.refused.includes("a/b: a symlink"), "a link at an inner level (a/b → a folder outside) is refused, never walked into", JSON.stringify([got1, r1.refused]));
   // a process that swaps a folder for a link while the copy runs: whatever the timing, nothing from outside is copied
   mkdirSync(join(src, "d")); writeFileSync(join(src, "d", "page.html"), "fine"); rmSync(join(src, "a"), { recursive: true, force: true });
   const swapper = Bun.spawn(["/bin/sh", "-c", `cd "${src}" && while true; do mv d d.real && ln -s "${sec}" d && rm d && mv d.real d; done`], { stdout: "ignore", stderr: "ignore" });
   let leaks = 0, sawLink = 0, sawDir = 0;
-  for (let i = 0; i < 300; i++) { const d = mkdtempSync(join(tmpdir(), "crew-vis-race-")); const r = copyUntrusted(src, d);
+  for (let i = 0; i < 300; i++) { const d = checkedTempDir("crew-vis-race-"); const r = copyUntrusted(src, d);
     const files = (fs.readdirSync(d, { recursive: true }) as string[]).map(String); if (files.some((f) => { try { return fs.readFileSync(join(d, f), "utf8").includes("SECRET"); } catch { return false; } })) leaks++;
     if (r.refused.some((x) => x.startsWith("d: "))) sawLink++; if (files.includes("d/page.html")) sawDir++; rmSync(d, { recursive: true, force: true }); }
   swapper.kill();
@@ -98,7 +99,7 @@ ok(jpy1.includes("<b data-total>¥5,588</b>") && jpy1.includes('data-price="tea"
 // ---------- captures in code-firstmate ----------
 // A: a change to the library the app uses, with no headless browser: the pages are built and compared as text only
 process.env.CREW_NODE_BIN = "/nonexistent/node"; delete process.env.CREW_RENDER_STUB;
-let data = mkdtempSync(join(tmpdir(), "crew-vis-run-")); const scenarioData=[data]; prepareSandbox(data); applySandboxAddons(data); registerSandbox(data);
+let data = checkedTempDir("crew-vis-run-"); const scenarioData=[data]; prepareSandbox(data); applySandboxAddons(data); registerSandbox(data);
 const { installCode } = await import("../src/domain/code"); const { Projects } = await import("../src/doors");
 let H = await harness([readFileSync(join(root, "packs/firstmate/workflows/code-firstmate.wf.yaml"), "utf8")], { data, checkRoots: [] });
 // the late writer (test seam): once the build has exited it still holds the path of the build's output folder, as a process that
@@ -113,7 +114,7 @@ const waitCard = async (id: string, kind: string) => { await until(() => E.cards
 const toMerge = async (text: string) => {
   // Each independent capture scenario owns a different actual native project;
   // cancelled unmerged work in the previous scenario retains its scope.
-  if(E.list().length){H.stop();data=mkdtempSync(join(tmpdir(),"crew-vis-run-"));scenarioData.push(data);prepareSandbox(data);applySandboxAddons(data);registerSandbox(data);H=await harness([readFileSync(join(root,"packs/firstmate/workflows/code-firstmate.wf.yaml"),"utf8")],{data,checkRoots:[]});E=H.engine;installVisual();}
+  if(E.list().length){H.stop();data=checkedTempDir("crew-vis-run-");scenarioData.push(data);prepareSandbox(data);applySandboxAddons(data);registerSandbox(data);H=await harness([readFileSync(join(root,"packs/firstmate/workflows/code-firstmate.wf.yaml"),"utf8")],{data,checkRoots:[]});E=H.engine;installVisual();}
   const r = E.start({ workflow: "code-firstmate", params: {}, text }); const d = await waitCard(r.id, "dispatch"); if (d) await E.answer(d.id, { choice: "dispatch", by: "captain" });
   const m = await waitCard(r.id, "merge"); const g = E.get(r.id)!;
   if (!m) console.log("no merge card:", JSON.stringify(Object.fromEntries(Object.entries(g.nodes).filter(([, n]: any) => n.state !== "pending").map(([k, n]: any) => [k, `${n.state}:${n.outcome}:${n.error ?? ""}`]))), JSON.stringify(E.ledger(r.id).filter((e) => e.verdict !== "pass").map((e) => [e.check, e.findings.slice(0, 2).map((f: any) => f.message)])).slice(0, 800));
@@ -147,11 +148,11 @@ delete process.env.CREW_NODE_BIN;
 const PW = process.env.PLAYWRIGHT_MODULE || (() => { try { return Bun.fileURLToPath(import.meta.resolve("playwright")); } catch { return ""; } })();
 ok(!!PW && existsSync(PW), "Playwright is found (PLAYWRIGHT_MODULE, else the playwright package): the renderer checks below need it", PW || "set PLAYWRIGHT_MODULE to playwright's index.mjs, or install playwright");
 process.env.CREW_PLAYWRIGHT_MODULE = PW;
-{ const { runRender } = await import("../src/render"); const pd = mkdtempSync(join(tmpdir(), "crew-vis-probe-")); writeFileSync(join(pd, "p.html"), "<h1>probe</h1>");
+{ const { runRender } = await import("../src/render"); const pd = checkedTempDir("crew-vis-probe-"); writeFileSync(join(pd, "p.html"), "<h1>probe</h1>");
   const res = await runRender(pd, "page", { root: pd, page: "p.html", out: join(pd, "p.png"), width: "400" }).done;
   ok(res.ok && existsSync(join(pd, "p.png")), "the renderer works with this Playwright (its browser is installed)", `${PW}: ${res.error ?? ""}`); rmSync(pd, { recursive: true, force: true }); }
 const LINGER = `61.${process.pid}${Date.now() % 100000}`; // this run's own marker: parallel runs (other worktrees) never cross
-const secretDir = mkdtempSync(join(tmpdir(), "crew-vis-secret-")); const SECRET = join(secretDir, "id_ed25519"); writeFileSync(SECRET, "SECRET-KEY-MATERIAL-7c41\n");
+const secretDir = checkedTempDir("crew-vis-secret-"); const SECRET = join(secretDir, "id_ed25519"); writeFileSync(SECRET, "SECRET-KEY-MATERIAL-7c41\n");
 const hostile = [
   'import { linkSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";', 'import { join } from "node:path";',
   'const out = process.argv[2] ?? "out/app";', "mkdirSync(out, { recursive: true });",

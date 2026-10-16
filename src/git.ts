@@ -34,10 +34,19 @@ export function gitPaths() {
   return { cfg, hooks };
 }
 export const STUDIO_AUTHOR = { GIT_AUTHOR_NAME: "Crew Studio", GIT_AUTHOR_EMAIL: "crew-studio@localhost", GIT_COMMITTER_NAME: "Crew Studio", GIT_COMMITTER_EMAIL: "crew-studio@localhost" };
+/**
+ * Variables that point git at another repository or inject config. Inherited from a parent
+ * git (a hook, `git bisect run`, `git rebase -x`), they turn `git init` or `git config` in a
+ * folder Studio chose into a write to the parent's repository: on 2026-10-16 a test fixture's
+ * `git init` under `git bisect run` re-initialised a checkout's git folder with core.bare=true.
+ * Studio's git never inherits them (tests/lib/git-hygiene.mjs keeps the same list for tests).
+ */
+export const INHERITED_GIT_VARS = /^GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|PREFIX|QUARANTINE_PATH|CONFIG|CONFIG_PARAMETERS|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+)$/;
+export function withoutInheritedGit(env: Record<string, string>): Record<string, string> { for (const k of Object.keys(env)) if (INHERITED_GIT_VARS.test(k)) delete env[k]; return env; }
 /** The environment of every git Studio runs. */
 export function gitEnv(extra: Record<string, string> = {}): Record<string, string> {
   const { cfg } = gitPaths();
-  return { ...scrubEnv(), ...STUDIO_AUTHOR, GIT_CONFIG_GLOBAL: cfg, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0", ...extra };
+  return { ...withoutInheritedGit(scrubEnv()), ...STUDIO_AUTHOR, GIT_CONFIG_GLOBAL: cfg, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0", ...extra };
 }
 /** Studio's git argv: no hook, no fsmonitor command (nothing a worktree's content can make Studio's git run) */
 export function gitArgv(args: string[]) { return ["git", "-c", `core.hooksPath=${gitPaths().hooks}`, "-c", "core.fsmonitor=false", ...args]; }

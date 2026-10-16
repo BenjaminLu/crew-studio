@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // Exact reviewed recipe identity; actual git refs, checked-out and other-branch paths.
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,7 +8,7 @@ import { ArtifactStore } from "../src/artifacts";
 import { Lane } from "../src/recipes";
 import { suite } from "./rt-harness";
 const { ok, end } = suite("lane-pin");
-const data = mkdtempSync(join(tmpdir(), "crew-lane-pin-")), store = new ArtifactStore(data), lane = new Lane(data, store);
+const data = checkedTempDir("crew-lane-pin-"), store = new ArtifactStore(data), lane = new Lane(data, store);
 const image = join(data, "image"); mkdirSync(image); writeFileSync(join(image, "banner.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'); store.create({ id: "fixture-image", title: "Fixture image", type: "image", source: "file", entry: "banner.svg" }); store.addVersion("fixture-image", { from: image, primary: "banner.svg", createdBy: { kind: "captain" } }); store.approve("fixture-image", 1, "fixture captain");
 const sh = (cwd: string, ...argv: string[]) => { const r = Bun.spawnSync(argv, { cwd, env: { ...process.env, GIT_AUTHOR_NAME: "Fixture", GIT_AUTHOR_EMAIL: "fixture@example.invalid", GIT_COMMITTER_NAME: "Fixture", GIT_COMMITTER_EMAIL: "fixture@example.invalid" }, stdout: "pipe", stderr: "pipe" }); if (r.exitCode) throw new Error(r.stderr.toString()); return r.stdout.toString().trim(); };
 let n = 0;

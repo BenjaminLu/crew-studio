@@ -179,6 +179,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const recoverLocalRescope=installCodeRecovery(engine,W);
   const wkey = (x: { ctx: any; run?: any; id?: string }) => ({ project: x.ctx.wt?.project ?? "local", task: x.ctx.wt?.task ?? (x.run?.id ?? x.id) });
   const tmpTree = (run: string, what: string) => W.tmpOf(run, what);
+  /** a run's temporary worktree, added only on a repository whose shared git config is sound (a typed refusal otherwise) */
+  const addTree = (repo: string, rest: string[]) => { W.guard(repo); return must(repo, ["worktree", "add", ...rest]); };
   const held = new Map<string, () => void>();
   const cfgOf = (x: X) => repoCfg(x.ctx.worktree ?? x.ctx.repo);
   const shellOk = (x: X) => { if (!x.ctx.worktree || !existsSync(x.ctx.worktree)) throw new Error("the run's worktree is gone"); return x.ctx.worktree as string; };
@@ -217,13 +219,13 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const beh = ch.filter((p) => !isTest(cfg, p.path) && !isDoc(p.path) && !p.path.startsWith(".crew/") && !p.path.startsWith(".github/"));
     if (!beh.length) return { applicable: false, tests, behaviour: [], path: null };
     const tmp = tmpTree(x.run.id, "base"); git(x.ctx.repo, ["worktree", "remove", "--force", tmp]); rmSync(tmp, { recursive: true, force: true });
-    must(x.ctx.repo, ["worktree", "add", "-q", "--detach", tmp, head(wt)]);
+    addTree(x.ctx.repo, ["-q", "--detach", tmp, head(wt)]);
     for (const p of beh) { if (p.status?.startsWith("A")) rmSync(join(tmp, p.path), { force: true }); else { must(tmp, ["checkout", x.ctx.baseCommit, "--", p.from ?? p.path]); if (p.from && p.from !== p.path) rmSync(join(tmp, p.path), { force: true }); } }
     return { applicable: true, tests, behaviour: beh.map((p) => p.path), path: tmp };
   };
   engine.needs.main_tree = (x) => {
     if (!x.ctx.repo) return null; const tmp = tmpTree(x.run.id, "main"); git(x.ctx.repo, ["worktree", "remove", "--force", tmp]); rmSync(tmp, { recursive: true, force: true });
-    must(x.ctx.repo, ["worktree", "add", "-q", "--detach", tmp, x.ctx.merged?.adapter === "github" ? x.ctx.merged.head : x.ctx.base]); return tmp;
+    addTree(x.ctx.repo, ["-q", "--detach", tmp, x.ctx.merged?.adapter === "github" ? x.ctx.merged.head : x.ctx.base]); return tmp;
   };
   engine.needs.screenshots = async (x) => {
     // the app's before / after captures when this head has them (firstmate/ui-captures); else the changed UI paths for the judge to read in the diff
@@ -334,7 +336,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (!touched.length) return { skipped: "no app path changed", pages: [], head: h, app: null, rendered: false };
     const h8 = h.slice(0, 12); const dir = join(capturesOf(x.run.id), h8); rmSync(dir, { recursive: true, force: true });
     const baseTree = tmpTree(x.run.id, "capture-base"); git(x.ctx.repo, ["worktree", "remove", "--force", baseTree]); rmSync(baseTree, { recursive: true, force: true });
-    must(x.ctx.repo, ["worktree", "add", "-q", "--detach", baseTree, x.ctx.baseCommit]);
+    addTree(x.ctx.repo, ["-q", "--detach", baseTree, x.ctx.baseCommit]);
     const html: Record<string, Record<string, string>> = { before: {}, after: {} }; let rendered = true; const refusedFiles: string[] = [], refusedRequests: string[] = [], frames: string[] = [];
     try {
       for (const [side, tree] of [["before", baseTree], ["after", wt]] as const) {
@@ -747,7 +749,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (provider) { x.rn.agent = { provider, model: rest.join("/") || null }; x.log(`the step-back card's pick: this review runs on ${provider}${rest.length ? ` · ${rest.join("/")}` : ""}`); } };
   /** a fresh checkout of the head for the reviewer's reads (detached; removed when the review ends) */
   const reviewTree = (x: X) => { const h = head(shellOk(x)); const t = tmpTree(x.run.id, "review-head"); git(x.ctx.repo, ["worktree", "remove", "--force", t]); rmSync(t, { recursive: true, force: true });
-    must(x.ctx.repo, ["worktree", "add", "-q", "--detach", t, h]); return t; };
+    addTree(x.ctx.repo, ["-q", "--detach", t, h]); return t; };
   const dropReviewTree = (x: X) => { const t = x.rn.data.tree; if (t) { git(x.ctx.repo, ["worktree", "remove", "--force", t]); rmSync(t, { recursive: true, force: true }); x.rn.data.tree = null; }
     rmSync(join(x.dir, "review-runs"), { recursive: true, force: true }); x.rn.data.runBase = null; };
   /** each attempt starts from nothing: its own checkout, plan and verification */

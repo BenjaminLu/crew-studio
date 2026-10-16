@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,existsSync,rmSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {join} from 'node:path';import {tmpdir} from 'node:os';
@@ -6,7 +7,7 @@ import {harness,Y,until,suite} from './rt-harness';import {must,setGitHome} from
 import {GitHubPrAdapter} from '../src/adapters/github';import {mergeOnce,updateOnce,assertMergeAvailable} from '../src/domain/remote-gates';
 import {grantIdentity,reconcile,validRemoteWait,requiredPolicy} from '../src/domain/remote-ci';
 import {installCode} from '../src/domain/code';import {Projects} from '../src/doors';import {Worktrees} from '../src/worktrees';import {githubSimulator} from './lib/github-simulator';
-const {ok,end}=suite('remote-gates-r3'),temp=mkdtempSync(join(tmpdir(),'gates-r3-')),repo=join(temp,'repo'),bare=join(temp,'bare.git'),data=join(temp,'data');mkdirSync(repo);setGitHome(data);must(repo,['init','-qb','main']);writeFileSync(join(repo,'file'),'base');must(repo,['add','.']);must(repo,['commit','-qm','base']);const base=must(repo,['rev-parse','HEAD']);must(temp,['clone','--bare','-q',repo,bare]);must(repo,['checkout','-qb','crew/task']);writeFileSync(join(repo,'file'),'head');must(repo,['commit','-qam','head']);const head=must(repo,['rev-parse','HEAD']),sim=githubSimulator(bare);
+const {ok,end}=suite('remote-gates-r3'),temp=checkedTempDir('gates-r3-'),repo=join(temp,'repo'),bare=join(temp,'bare.git'),data=join(temp,'data');mkdirSync(repo);setGitHome(data);must(repo,['init','-qb','main']);writeFileSync(join(repo,'file'),'base');must(repo,['add','.']);must(repo,['commit','-qm','base']);const base=must(repo,['rev-parse','HEAD']);must(temp,['clone','--bare','-q',repo,bare]);must(repo,['checkout','-qb','crew/task']);writeFileSync(join(repo,'file'),'head');must(repo,['commit','-qam','head']);const head=must(repo,['rev-parse','HEAD']),sim=githubSimulator(bare);
 const grant:any={mode:'simulator',repository:'fixture/project',localPath:repo,pushUrl:bare,apiOrigin:sim.origin,base:'main',branchPrefix:'crew/',approvedAt:'2026-10-15T00:00:00Z',approvalId:'fixture',operations:{version:1,repository:'fixture/project',approvalId:'op',approvedAt:'2026-10-15T00:00:00Z',mergeMethod:'merge'}};
 const adapter=()=>{const a=new GitHubPrAdapter(grant,()=> 'fake-token',2000);(a as any).bindOperationStore?.(data);return a;};const a=adapter();const dir=(n:string)=>{const p=join(data,'runs',n);mkdirSync(p,{recursive:true});return p;};const denied=async(f:()=>any)=>{try{await f();return false;}catch{return true;}};
 try{

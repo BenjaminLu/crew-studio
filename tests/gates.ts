@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // Doors and gates: the classifier (org defaults, a project's approved list,
 // trivial and undecided), the builtin gates, and Studio's change workflow on a
 // local repository: gates per node, the worker/reviewer cycle (stub agents),
@@ -40,7 +41,7 @@ const sh = (cwd: string, ...a: string[]) => { const r = Bun.spawnSync(a, { cwd, 
 }
 
 // ---------- the change workflow on a local repository ----------
-const tmp = mkdtempSync(join(tmpdir(), "crew-gates-"));
+const tmp = checkedTempDir("crew-gates-");
 const state = join(tmp, "fm", "state"), data = join(tmp, "data"), repo = join(tmp, "repo");
 mkdirSync(join(state, "pending"), { recursive: true }); writeFileSync(join(state, "events.jsonl"), ""); mkdirSync(data); mkdirSync(repo);
 sh(repo, "git", "init", "-q", "-b", "main");

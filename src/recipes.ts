@@ -10,6 +10,7 @@
 //   CREW_DATA/repo-refs.jsonl   what a merged card put where (for update proposals)
 //   CREW_LANE_MAX_LINES  diff budget in text lines (default 20)
 import { addPaths, git, must } from "./git";
+import { assertSharedGitConfig } from "./git-config-health";
 import { randomBytes } from "node:crypto";
 import { realpathSync, appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -130,7 +131,7 @@ export class Lane {
       card.baseCommit = must(repo.path, ["rev-parse", `${repo.base}^{commit}`]);
       let branch = `crew/${slug(a.id)}-v${v.n}`;
       for (let i = 2; git(repo.path, ["rev-parse", "--verify", `refs/heads/${branch}`]).ok; i++) branch = `crew/${slug(a.id)}-v${v.n}-${i}`;
-      must(repo.path, ["worktree", "add", "-q", "-b", branch, wt, card.baseCommit]);
+      assertSharedGitConfig(repo.path); must(repo.path, ["worktree", "add", "-q", "-b", branch, wt, card.baseCommit]);
       card.branch = branch;
       mkdirSync(join(wt, "assets"), { recursive: true });
       copyFileSync(img, join(wt, asset));

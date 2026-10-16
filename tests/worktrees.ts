@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // Worktrees (units worktrees, fix-worktrees-r1; architecture §10): one worktree per
 // task in Studio's own marked namespace data/work/wt/<project>/<task>, one round at a time, each round at the branch's
 // durable head with its dependencies installed, hand-back by a commit as the agent,
@@ -13,7 +14,7 @@ let pass = 0, fail = 0;
 const ok = (c: boolean, name: string, extra = "") => { if (c) { pass++; console.log(`  ok    ${name}`); } else { fail++; console.log(`  FAIL  ${name} ${extra}`); } };
 const { Worktrees, RoundBlocked } = await import("../src/worktrees");
 const sh = (cwd: string, ...a: string[]) => { const r = Bun.spawnSync(a, { cwd, stdout: "pipe", stderr: "pipe", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } }); return { ok: r.success, out: (r.stdout.toString() + r.stderr.toString()).trim() }; };
-const tmp = mkdtempSync(join(tmpdir(), "crew-wt-"));
+const tmp = checkedTempDir("crew-wt-");
 const data = join(tmp, "data"); mkdirSync(data);
 // a repository with a local dependency (offline: a file: package) and a bun lockfile
 const repo = join(tmp, "repo"); mkdirSync(join(repo, "vendor", "helper"), { recursive: true }); mkdirSync(join(repo, "test"));

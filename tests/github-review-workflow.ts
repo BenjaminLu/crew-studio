@@ -1,10 +1,11 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,rmSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 const {GitHubPrAdapter}=await import(process.env.GITHUB_REVIEW_BASE?process.env.GITHUB_REVIEW_BASE+'/src/adapters/github.ts':'../src/adapters/github');
 let pass=0;const ok=(v:unknown,n:string)=>{assert.ok(v,n);pass++;console.log('PASS '+n);};
-const temp=mkdtempSync('/tmp/github-review-test-'),repo=join(temp,'repo');mkdirSync(repo);assert.equal(Bun.spawnSync(['git','init','-q',repo]).exitCode,0);assert.equal(Bun.spawnSync(['git','init','--bare','-q',join(temp,'bare.git')]).exitCode,0); 
+const temp=checkedTempDir('github-review-test-'),repo=join(temp,'repo');mkdirSync(repo);assert.equal(Bun.spawnSync(['git','init','-q',repo]).exitCode,0);assert.equal(Bun.spawnSync(['git','init','--bare','-q',join(temp,'bare.git')]).exitCode,0); 
 const head='a'.repeat(40),old='b'.repeat(40),user={id:101,login:'review-fixture-a'},calls:string[]=[];
 let reviews:any[]=[{id:11,user,state:'APPROVED',commit_id:head,submitted_at:'2026-10-15T01:00:00Z',html_url:'https://github.com/fixture/project/pull/1#pullrequestreview-11',body:''}],comments:any[]=[],issues:any[]=[];
 let failure=0,changeHead=false,current=head;

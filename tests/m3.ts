@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // M3 checks: artifact versions and manifest integrity, the web and video review
 // loops with a stub agent and a stub renderer, the work tools' path guard, and
 // the trivial lane against a local bare repo plus a mock GitHub REST server.
@@ -23,7 +24,7 @@ const PNG_B = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQ
 // ---------- 1. artifact store: versions and integrity ----------
 {
   const { ArtifactStore } = await import("../src/artifacts");
-  const data = mkdtempSync(join(tmpdir(), "crew-m3-store-"));
+  const data = checkedTempDir("crew-m3-store-");
   const s = new ArtifactStore(data);
   const src = join(data, "src"); mkdirSync(src); writeFileSync(join(src, "index.html"), "<h1>v1</h1>"); writeFileSync(join(src, "style.css"), "h1{}");
   s.create({ id: "page", title: "Page", type: "web", source: "html", entry: "index.html" });
@@ -62,7 +63,7 @@ const PNG_B = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQ
 {
   const { ArtifactStore } = await import("../src/artifacts");
   const { WorkRuns } = await import("../src/work");
-  const data = mkdtempSync(join(tmpdir(), "crew-m3-work-"));
+  const data = checkedTempDir("crew-m3-work-");
   const s = new ArtifactStore(data); const w = new WorkRuns(s, data);
   const dir = join(data, "wd"); mkdirSync(dir); writeFileSync(join(dir, "index.html"), "<body>x</body>"); mkdirSync(join(data, "shared")); writeFileSync(join(data, "shared", "a.png"), "x");
   symlinkSync(join(data, "shared"), join(dir, "cast"));
@@ -105,7 +106,7 @@ const mkRepo = (root: string, name: string, readme: string) => {
 {
   const { ArtifactStore } = await import("../src/artifacts");
   const { Lane } = await import("../src/recipes");
-  const data = mkdtempSync(join(tmpdir(), "crew-m3-lane-"));
+  const data = checkedTempDir("crew-m3-lane-");
   const s = new ArtifactStore(data);
   const img = join(data, "banner.png"); writeFileSync(img, PNG_A);
   const t = join(data, "t"); mkdirSync(t); cpSync(img, join(t, "image.png"));
@@ -139,7 +140,7 @@ const mkRepo = (root: string, name: string, readme: string) => {
 
 // ---------- 4. the server: web loop, video loop, lane over HTTP ----------
 const PW_STATE = join(here, "fixture/state");
-const tmp = mkdtempSync(join(tmpdir(), "crew-m3-http-"));
+const tmp = checkedTempDir("crew-m3-http-");
 const state = join(tmp, "state"); cpSync(PW_STATE, state, { recursive: true });
 const data = join(tmp, "data"); mkdirSync(data);
 // an org policy line: the lane card's asset path is sensitive for the whole org (fix-sb-nav-leftovers #21)

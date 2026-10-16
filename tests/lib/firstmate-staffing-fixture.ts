@@ -1,3 +1,4 @@
+import { checkedTempDir, assertTempRepo } from "./git-hygiene.mjs"; // scrubs inherited GIT_* first; repositories only in checked temp folders
 // Offline visual fixture: actual staffing source/tools/cards, synthetic project authority.
 // This does not certify a real account, repository, model quality or coffee workflow.
 import {harness,Y} from '../rt-harness';
@@ -23,7 +24,7 @@ if(import.meta.main)await runVisualFixture();
 
 export async function staffingConversationFixture(){
  const {mkdtempSync,mkdirSync,writeFileSync,readFileSync}=await import('node:fs');const{tmpdir}=await import('node:os');const{join}=await import('node:path');const{spawn}=await import('node:child_process');const{freePort,waitUp}=await import('../boot.mjs');
- const root=mkdtempSync(join(tmpdir(),'staffing-conversation-')),home=join(root,'home'),data=join(root,'data'),repo=join(root,'repo'),log=join(root,'rpc.jsonl'),token='offline-staffing-conversation-session';mkdirSync(join(home,'.codex'),{recursive:true});mkdirSync(data);mkdirSync(repo);
+ const root=checkedTempDir('staffing-conversation-'),home=join(root,'home'),data=join(root,'data'),repo=join(root,'repo'),log=join(root,'rpc.jsonl'),token='offline-staffing-conversation-session';mkdirSync(join(home,'.codex'),{recursive:true});mkdirSync(data);mkdirSync(repo);
  writeFileSync(join(home,'.codex','config.toml'),'model="fixture-model"\nmodel_reasoning_effort="low"\n');writeFileSync(join(home,'.codex','.fixture-account.json'),'{"authenticated":true}');writeFileSync(join(home,'.codex','auth.json'),JSON.stringify({auth_mode:'chatgpt',last_refresh:'2020-02-29T12:34:56.123+08:00',tokens:{access_token:'abcdefgh.abcdefgh.abcdefgh',id_token:'fixture-id-token',account_id:'fixture-native-staffing',refresh_token:'source-fixture-refresh-must-not-copy'}}),{mode:0o600});
  for(const args of [['init','-b','main'],['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Initial fixture']]){if(Bun.spawnSync(['git',...args],{cwd:repo,stdout:'pipe',stderr:'pipe'}).exitCode)throw new Error('Temporary repository setup failed');}
  const fixture=join(import.meta.dir,'../fixture/codex-account.mjs'),port=await freePort(),base=`http://127.0.0.1:${port}`,env:any={...process.env,HOME:home,CODEX_HOME:join(home,'.codex'),CREW_DATA:data,CREW_RUNTIME_DIR:join(root,'runtime'),CREW_PORT:String(port),CREW_SESSION_TOKEN:token,CREW_GH:'0',CREW_CHAT_PROVIDER:'stub',CREW_INSTALL_RUNNER:'mock',CREW_CODEX_BIN:fixture,CREW_HOST_CODEX_BIN:fixture,CREW_HOST_CLAUDE_BIN:'/nonexistent/claude',ACCOUNT_FIXTURE_LOG:log};for(const key of ['CREW_MAIN_PROJECT','CREW_FM_STATE','OPENAI_API_KEY','ANTHROPIC_API_KEY','GITHUB_TOKEN','GH_TOKEN'])delete env[key];

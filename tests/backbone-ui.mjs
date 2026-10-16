@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // The backbone sidebar (docs/architecture.md §2): exactly Board, Firstmate, Inbox, Crew,
 // Runs, Workflows, Library and a gear; labs routes show a roadmap panel without the
 // flag and work with it (Settings toggle or ?labs=1); home is the Board; the
@@ -18,7 +19,7 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright")
 if(process.env.STAFFING_UI){await staffingUI(chromium);process.exit(process.exitCode||0);}
 if(process.env.STARTUP_FIRSTMATE_UI){await startupFirstmateUI(chromium);process.exit(process.exitCode||0);}
 process.env.CREW_SESSION_TOKEN ??= "test-session"; // the server's write guard: a local client sends it as x-crew-session
-const tmp = mkdtempSync(join(tmpdir(), "crew-bb-"));
+const tmp = checkedTempDir("crew-bb-");
 const state = join(tmp, "fm", "state"), data = join(tmp, "data");
 mkdirSync(join(state, "pending"), { recursive: true }); mkdirSync(data);
 const ev = (i) => JSON.stringify({ ts: new Date(Date.now() - (5 - i) * 60000).toISOString(), actor: "firstmate", type: "crew_status", task: "T-001", summary: { en: `crew note ${i}`, "zh-TW": `船員記錄 ${i}` } });
@@ -136,7 +137,7 @@ process.exit(fail ? 1 : 0);
 // One actual browser, many contexts. Only disposable local API/provider fixtures.
 async function startupFirstmateUI(chromium){
  const projectMode=process.env.STARTUP_PROJECT_UI==="1",targetWorkflow=projectMode?"code-firstmate":"native-fixture";
- const tmp=mkdtempSync(join(tmpdir(),"crew-startup-ui-")),home=join(tmp,"home"),data=join(tmp,"data"),token="startup-ui-synthetic-session";
+ const tmp=checkedTempDir("crew-startup-ui-"),home=join(tmp,"home"),data=join(tmp,"data"),token="startup-ui-synthetic-session";
  mkdirSync(join(home,".codex"),{recursive:true});writeFileSync(join(home,".codex","config.toml"),'model="fixture-model"\nmodel_reasoning_effort="low"\n');
  const port=await freePort(),controlPort=await freePort(),base=`http://127.0.0.1:${port}`,shots=process.env.STARTUP_SHOTS||"/tmp/v2-startup-firstmate-captures";mkdirSync(shots,{recursive:true});
  const env={...process.env,HOME:home,CODEX_HOME:join(home,".codex"),CREW_DATA:data,CREW_RUNTIME_DIR:join(tmp,"runtime"),CREW_PORT:String(port),CREW_SESSION_TOKEN:token,CREW_GH:"0",CREW_CHAT_PROVIDER:"stub",CREW_INSTALL_RUNNER:"mock",CREW_NO_REAL_INSTALL:"1",CREW_HOST_CODEX_BIN:join(here,"fixture/codex-account.mjs"),CREW_HOST_CLAUDE_BIN:"/nonexistent/claude",CREW_CODEX_BIN:"/nonexistent/codex",CREW_CLAUDE_BIN:"/nonexistent/claude",ACCOUNT_FIXTURE_PORT:String(controlPort),ACCOUNT_FIXTURE_LOG:join(tmp,"rpc.jsonl"),ACCOUNT_FIXTURE_UI_PROPOSAL:"1"};
@@ -189,7 +190,7 @@ async function startupAccountReads(){
 
 
 async function staffingUI(chromium){
- const tmp=mkdtempSync(join(tmpdir(),'crew-staffing-ui-')),data=join(tmp,'data'),home=join(tmp,'home'),token='staffing-visual-session',fixtureToken='strict-source-visual',port=await freePort(),base=`http://127.0.0.1:${port}`,shots=process.env.STAFFING_SHOTS||'/tmp/crew-staffing-visual-captures';mkdirSync(data,{recursive:true});mkdirSync(home,{recursive:true});mkdirSync(shots,{recursive:true});
+ const tmp=checkedTempDir('crew-staffing-ui-'),data=join(tmp,'data'),home=join(tmp,'home'),token='staffing-visual-session',fixtureToken='strict-source-visual',port=await freePort(),base=`http://127.0.0.1:${port}`,shots=process.env.STAFFING_SHOTS||'/tmp/crew-staffing-visual-captures';mkdirSync(data,{recursive:true});mkdirSync(home,{recursive:true});mkdirSync(shots,{recursive:true});
  const env={...process.env,HOME:home,CREW_DATA:data,CREW_RUNTIME_DIR:join(tmp,'runtime'),CREW_PORT:String(port),CREW_SESSION_TOKEN:token,CREW_GH:'0',CREW_CHAT_PROVIDER:'stub',CREW_INSTALL_RUNNER:'mock',CREW_NO_REAL_INSTALL:'1',CREW_CODEX_BIN:'/nonexistent/codex',CREW_CLAUDE_BIN:'/nonexistent/claude',CREW_HOST_CODEX_BIN:'/nonexistent/codex',CREW_HOST_CLAUDE_BIN:'/nonexistent/claude'};for(const key of ['CREW_MAIN_PROJECT','CREW_FM_STATE','GITHUB_TOKEN','GH_TOKEN','CREW_GITHUB_TOKEN','OPENAI_API_KEY','ANTHROPIC_API_KEY'])delete env[key];
  const app=spawn('bun',['src/server.ts'],{cwd:root,env,stdio:['ignore','pipe','pipe']}),fixture=spawn('bun',['tests/lib/firstmate-staffing-fixture.ts'],{cwd:root,env:{...env,STAFFING_FIXTURE_TOKEN:fixtureToken},stdio:['ignore','pipe','pipe']});let output='',fixtureOutput='',browser,closing=false,pass=0,fail=0;const captures=[],errors=[],contexts=[];app.stdout.on('data',b=>output+=b);app.stderr.on('data',b=>output+=b);fixture.stdout.on('data',b=>fixtureOutput+=b);fixture.stderr.on('data',b=>output+=b);
  const check=(value,name)=>{console.log(`${value?'ok':'FAIL'} ${name}`);value?pass++:fail++;};

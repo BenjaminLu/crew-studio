@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // Native workflows through createRuntime, persisted engine and actual tool routes.
 // All sources, artifacts, repositories and provider messages are throwaway fixtures.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
@@ -16,7 +17,7 @@ import {bundledText}from "../src/bundled";
 import { StudioLog } from "../src/rawlog";
 import { suite, until } from "./rt-harness";
 const { ok, end } = suite("non-code-workflows");
-const data = process.env.CREW_NATIVE_RESTART_DATA ?? mkdtempSync(join(tmpdir(), "crew-native-deliver-")), fm = join(data, "protected-fm"); mkdirSync(fm, { recursive: true });
+const data = process.env.CREW_NATIVE_RESTART_DATA ?? checkedTempDir("crew-native-deliver-"), fm = join(data, "protected-fm"); mkdirSync(fm, { recursive: true });
 const log = new StudioLog(join(data, "events.jsonl")), store = new ArtifactStore(data), lane = new Lane(data, store);
 const fileorg = createFileOrg({ dataDir: data, refuse: [fm], rules: () => ({ categories: { Text: ["txt"] }, other: "Other" }), gates: () => [{ id: "in", builtin: "fileorg-inside-root" }, { id: "nc", builtin: "fileorg-no-overwrite" }, { id: "cap", builtin: "fileorg-max-moves", args: { max: 10 } }], log, send() {} });
 const realVideo = process.env.CREW_NATIVE_REAL_VIDEO === "1";
@@ -348,7 +349,7 @@ for (const mutation of ["branch", "backing-card", "legacy-context", "side-effect
 }
 
 // Kill only the fixture process we started, then recover its active native round.
-const restartData = mkdtempSync(join(tmpdir(), "crew-native-restart-"));
+const restartData = checkedTempDir("crew-native-restart-");
 const child = Bun.spawn([process.execPath, import.meta.path], { cwd: join(import.meta.dir, ".."), env: { ...process.env, CREW_NATIVE_RESTART_DATA: restartData, CREW_NATIVE_RESTART_PHASE: "hold" }, stdout: "pipe", stderr: "pipe" });
 let childText = ""; const reader = (async () => { for await (const chunk of child.stdout as any) childText += Buffer.from(chunk).toString(); })();
 const ready = await until(() => /RESTART_READY:R-/.test(childText), 15000); child.kill("SIGKILL"); await child.exited; await reader;

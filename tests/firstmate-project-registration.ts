@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 import {existsSync,readFileSync,writeFileSync,mkdirSync,symlinkSync,realpathSync,rmSync,mkdtempSync,cpSync} from 'node:fs';
 // Actual primary tool bridge, real local Git repository, cards, registry and Engine.
 import {join} from 'node:path';
@@ -41,7 +42,7 @@ try{
 // the referenced proposal. Copy the durable store and recover a second real Engine.
 {
  const {harness,until,Y}=await import('./rt-harness');const {bundledText}=await import('../src/bundled');const {installFirstmate}=await import(process.env.FIRSTMATE_PROJECT_BASELINE_ROOT?join(process.env.FIRSTMATE_PROJECT_BASELINE_ROOT,'src/firstmate.ts'):'../src/firstmate');
- const root=mkdtempSync(join(tmpdir(),'crew-project-finality-')),repo=join(root,'repo');mkdirSync(repo);for(const a of [['init','-b','main'],['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture']])if(Bun.spawnSync(['git',...a],{cwd:repo,stdout:'pipe',stderr:'pipe'}).exitCode)throw new Error('owned finality repo setup');
+ const root=checkedTempDir('crew-project-finality-'),repo=join(root,'repo');mkdirSync(repo);for(const a of [['init','-b','main'],['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture']])if(Bun.spawnSync(['git',...a],{cwd:repo,stdout:'pipe',stderr:'pipe'}).exitCode)throw new Error('owned finality repo setup');
  const flows=[bundledText('workflows/v2/firstmate-proposal.wf.yaml')!,bundledText('workflows/v2/firstmate-register-project.wf.yaml')!,Y({id:'local-code',kind:'code',name:'Local code',version:1,params:{project:{},base:{}},roles:[],nodes:[{id:'wait',kind:'card',label:'Wait',card:{options:[{id:'close',label:'Close'}]}}],edges:[]})];
  const h=await harness(flows,{data:join(root,'data')}),E=h.engine;const tools=installFirstmate(E,new Projects(h.data));let release!:()=>void;const barrier=new Promise<void>(r=>release=r),original=E.actions['firstmate.project-continue'];let held:any;E.actions['firstmate.project-continue']=async x=>{const result=await original(x);held=x;await barrier;return result;};E.load();let recovered:any;
  try{const r=await tools.call('studio_prepare_project_work',{path:repo,workflow:'local-code',version:1,text:'Preserve one durable intent'},{key:'finality',captain:true,text:'Explicit captain intent',live:()=>true})as any;await until(()=>E.get(r.proposal)?.nodes.register.waiting==='card');const card=E.cards.list({run:r.proposal})[0];await E.answer(card.id,{choice:'approve',by:'captain'});await until(()=>!!held);if(!held)throw new Error('actual continuation not reached');const child=E.list().find(r=>r.workflow==='firstmate-proposal')!;await E.cancel(child.id,'fixture removes referenced proposal');await until(()=>!E.busy(child.id));E.remove(child.id,child.id);const count=E.list().length;let refused=false;try{await original(held);}catch{refused=true;}ok(refused&&E.list().length===count&&!E.list().some(r=>r.workflow==='firstmate-proposal'),'consumed continuation with deleted referenced proposal refuses instead of replacing it');
@@ -52,7 +53,7 @@ try{
 // below Studio's data that a coding proposal may capture; every other data path stays refused.
 {
  const {harness,Y}=await import('./rt-harness');const {bundledText}=await import('../src/bundled');const {installFirstmate}=await import('../src/firstmate');
- const root=mkdtempSync(join(tmpdir(),'crew-sandbox-capture-')),data=join(root,'data'),gitInit=(p:string)=>{mkdirSync(p,{recursive:true});for(const a of [['init','-b','main'],['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture']])if(Bun.spawnSync(['git',...a],{cwd:p,stdout:'pipe',stderr:'pipe'}).exitCode)throw new Error('sandbox capture repo setup');};
+ const root=checkedTempDir('crew-sandbox-capture-'),data=join(root,'data'),gitInit=(p:string)=>{mkdirSync(p,{recursive:true});for(const a of [['init','-b','main'],['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture']])if(Bun.spawnSync(['git',...a],{cwd:p,stdout:'pipe',stderr:'pipe'}).exitCode)throw new Error('sandbox capture repo setup');};
  const flows=[bundledText('workflows/v2/firstmate-proposal.wf.yaml')!,bundledText('workflows/v2/firstmate-register-project.wf.yaml')!,Y({id:'local-code',kind:'code',name:'Local code',version:1,params:{project:{},base:{}},roles:[],nodes:[{id:'wait',kind:'card',label:'Wait',card:{options:[{id:'close',label:'Close'}]}}],edges:[]})];
  const h=await harness(flows,{data}),E=h.engine;
  try{

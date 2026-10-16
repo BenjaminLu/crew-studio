@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // Adversarial Git helpers remain local, own a bounded lifetime, and report only
 // fixture PIDs/PGIDs. No real credentials, repositories or remote are used.
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync } from "node:fs";
@@ -9,7 +10,7 @@ import { must, setGitHome } from "../src/git";
 import { githubSimulator } from "./lib/github-simulator";
 let passed = 0, failed = 0;
 const ok = (v: any, name: string) => { console.log(`${v ? "PASS" : "FAIL"} ${name}`); v ? passed++ : failed++; };
-const temp = mkdtempSync(join(tmpdir(), "github-process-")), repo = join(temp, "repo"), bare = join(temp, "remote.git"), bin = join(temp, "bin");
+const temp = checkedTempDir("github-process-"), repo = join(temp, "repo"), bare = join(temp, "remote.git"), bin = join(temp, "bin");
 mkdirSync(repo); mkdirSync(bin); setGitHome(join(temp, "data"));
 must(repo, ["init", "-qb", "main"]); writeFileSync(join(repo, "file"), "fixture"); must(repo, ["add", "file"]); must(repo, ["commit", "-qm", "fixture"]);
 const head = must(repo, ["rev-parse", "HEAD"]); must(temp, ["clone", "--bare", "-q", repo, bare]);

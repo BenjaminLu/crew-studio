@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 import assert from 'node:assert/strict';
 import {mkdirSync,writeFileSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
@@ -19,7 +20,7 @@ try{
  writeFileSync(join(repo,'tests/allowed.ts'),'// scoped fixture\n');
  writeFileSync(join(repo,'test.mjs'),'console.log("SELECTED="+process.env.CREW_TEST_FILES);process.exit(process.env.CREW_TEST_FILES==="tests/allowed.ts"?0:9);');
  writeFileSync(join(repo,'.crew/gates.json'),JSON.stringify({test:[process.execPath,'test.mjs'],tests:['tests/**'],timeout_s:10}));
- must(repo,['init','-q','-b','main']);must(repo,['add','.']);must(repo,['commit','-qm','Fixture']);
+ assertTempRepo(repo);must(repo,['init','-q','-b','main']);must(repo,['add','.']);must(repo,['commit','-qm','Fixture']);
  const projects=new Projects(H.data);projects.add({id:'fixture',path:repo});installCode(E,{dataDir:H.data,projects});E.policies.setProject('fixture',{install:false});
  process.env.CREW_LOCAL_UNRESTRICTED='1';process.env.CREW_LOCAL_DEPENDENCY_ROOT=repo;
  let context:any,result:any,rejected=0;

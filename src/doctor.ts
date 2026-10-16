@@ -116,6 +116,8 @@ export type DoctorInput = {
   roundLogin?: { ok: boolean; verified?: boolean; source?: string; warn?: string | null; error?: string };
   /** the captain's operating rules: an unreadable text is a visible problem, never a silent "none" */
   operatingRules?: { studio: { text: string; unreadable?: string }; projects: { id: string; text: string; unreadable?: string }[] };
+  /** the shared git config of Studio's own checkout, every registered project and the built-in sandbox (src/git-config-health.ts) */
+  gitConfig?: { checked: { label: string; path: string }[]; problems: import("./git-config-health").GitConfigProblem[] };
 };
 
 export function diagnose(i: DoctorInput): Item[] {
@@ -201,7 +203,17 @@ export function diagnose(i: DoctorInput): Item[] {
   items.push({ id: "round-sandbox", title: "Agent round sandbox and egress proxy", status: roundOk ? "ok" : "missing",
     detail: roundOk ? `rounds write only their worktree and a throwaway home; they reach Studio only through its tool listener and the network only through the proxy on 127.0.0.1:${eg!.port}, each with its own credential and host list (${eg!.rounds} open now)` : !sb.ok ? "no OS sandbox: agent rounds are refused" : "the egress proxy is not running: agent rounds are refused",
     adds: "Every workflow agent round (worker, coordinator, reviewer, judge) runs in the OS sandbox and reaches only its provider's API.", fix: roundOk ? "" : "Run Studio on macOS; the proxy starts with Studio.", action: { kind: "none" } });
-  if(localUnrestricted())for(const item of items.filter(v=>["sandbox","round-sandbox"].includes(v.id))){item.status="degraded";item.detail="Local unrestricted mode: OS sandbox and outbound-network restrictions disabled by operator configuration";item.adds="Captain approvals, task scope and ledger validation remain required. Dependencies are repository-local only. Unsandboxed processes run as you, so Studio's 0600 tool-token files no longer isolate the Firstmate's Studio tools from them.";item.fix="Unset CREW_LOCAL_UNRESTRICTED and restart to restore isolation.";}
+  if(localUnrestricted())for(const item of items.filter(v=>["sandbox","round-sandbox"].includes(v.id))){item.status="degraded";item.detail="Local unrestricted mode: OS sandbox and outbound-network restrictions disabled by operator configuration";item.adds="Captain approvals, task scope and ledger validation remain required. Dependencies are repository-local only. Unsandboxed processes run as you, so Studio's 0600 tool-token files no longer isolate the Firstmate's Studio tools from them.";item.fix="Unset CREW_LOCAL_UNRESTRICTED and restart to restore isolation.";if(item.id==="round-sandbox")item.adds+=" Agent rounds can also write a repository's shared .git/config (core.bare, core.worktree, hooksPath); the git-config item reports a broken one.";}
+  if (i.gitConfig) { const g = i.gitConfig, bad = g.problems;
+    // only reported: Studio never rewrites a repository's config (a broken one refuses task worktrees with the same reason)
+    items.push({ id: "git-config", title: "Shared git config of Studio's repositories", titleZh: "儲存庫共用的 git 設定", status: bad.length ? "degraded" : "ok",
+      detail: bad.length ? bad.map((p) => `${p.label} (${p.repo}): ${p.key}=${p.value}. ${p.why}`).join("\n") : `${g.checked.length} checked: ${g.checked.map((c) => c.label).join(", ") || "none"}`,
+      detailZh: bad.length ? bad.map((p) => `${p.label}（${p.repo}）：${p.key}=${p.value}，${p.config} 的共用設定壞了，這個儲存庫與它的連結 worktree 的 git 指令都會失敗`).join("\n") : `已檢查 ${g.checked.length} 個儲存庫`,
+      adds: "Every linked worktree, Studio's task worktrees included, reads its checkout's shared .git/config: one bad key there breaks them all at once.",
+      addsZh: "每個連結 worktree（包括 Studio 的任務 worktree）都讀同一份 .git/config，一個壞掉的設定會讓它們全部失敗。",
+      fix: bad.length ? `Studio does not change it. Find what wrote it, then fix by hand: ${bad.map((p) => p.fix).join("; ")}` : "",
+      fixZh: bad.length ? `Studio 不會自動修改。先找出寫入來源，再手動修正：${bad.map((p) => p.fix).join("；")}` : "",
+      group: "coding", action: { kind: "none" } }); }
   const rl = i.roundLogin;
   // degraded (the Doctor's warn) while the login is a keychain item no round has signed in with yet; ok once one has; missing when no source works
   if (rl) items.push({ id: "round-login", title: "Vendor token handed to rounds; keychain not reachable", status: !rl.ok ? "missing" : rl.verified === false ? "degraded" : "ok",

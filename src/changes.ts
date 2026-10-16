@@ -6,6 +6,7 @@
 // needs an explicit confirm. Everything is local git: nothing is pushed.
 //   data/changes/<id>.json   data/gates/wt/<id> (the worktree, on branch crew/<id>)
 import { addPaths, changedPaths, git, must } from "./git";
+import { assertSharedGitConfig } from "./git-config-health";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { allocate } from "./ids";
@@ -159,7 +160,7 @@ export function createChanges(o: { dataDir: string; flows: Workflows; skills: Sk
     const wfId = String(b.workflow ?? "change"); const f = o.flows.get(wfId)?.flow; if (!f) throw new Error(`no workflow ${wfId}`);
     const id = allocate(dir, "C");
     const branch = `crew/${id.toLowerCase()}`;
-    must(repo, ["worktree", "add", "-q", "-b", branch, join(wtRoot, id), source]);
+    assertSharedGitConfig(repo); must(repo, ["worktree", "add", "-q", "-b", branch, join(wtRoot, id), source]);
     const cyc = f.nodes.map((x) => x.cycle).find(Boolean);
     const c: Change = { id, title: String(b.title ?? source).slice(0, 200), project: proj?.id ?? null, repo, base, baseCommit: baseCommit.out, source, branch, workflow: wfId, hint: b.hint ? String(b.hint).slice(0, 500) : null,
       createdAt: new Date().toISOString(), status: "classifying", door: null, gates: [], rounds: [], head: null, error: null, mergedAt: null, paths: [], maxRounds: cyc?.max_rounds ?? 3 };
