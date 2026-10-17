@@ -63,8 +63,9 @@ try {
     await p.evaluate(() => document.body.classList.add("chat-closed")); // the chat panel closed: the editor gets the room
     await p.click('[data-wf="code-firstmate"]'); await p.waitForSelector('[data-editor="code-firstmate"] [data-node="spec"]');
     await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="spec-fix"]'); // editing happens in Detail view
-    ok(await p.getAttribute('[data-node="spec"]', "data-checks") === "7" && await p.locator('[data-edge="remote-ready→merge-card[ok]"]').getAttribute("data-edge-checks") === "6" && (await p.locator("[data-node]").count()) >= 25,
-      "the editor loads code-firstmate's graph with check badges on nodes (spec ✓7) and edges (six gates on review → merge card)");
+    // spec carries eight checks since 21b3fe5 added firstmate/env-preflight (the round contract's environment preflight)
+    ok(await p.getAttribute('[data-node="spec"]', "data-checks") === "8" && await p.locator('[data-edge="remote-ready→merge-card[ok]"]').getAttribute("data-edge-checks") === "6" && (await p.locator("[data-node]").count()) >= 25,
+      "the editor loads code-firstmate's graph with check badges on nodes (spec ✓8) and edges (six gates on review → merge card)");
     ok((await p.textContent("[data-valid]")).startsWith("Valid"), "the loaded graph validates");
     // drag a node: its position is kept for the version
     const before = await pos(p, "prepare"); const box = await p.locator('[data-node="prepare"] .rt-box').boundingBox();
