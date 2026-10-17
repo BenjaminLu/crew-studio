@@ -1340,7 +1340,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const mergeOnGitHubBody = (pr: any): Body => ({ title: `Pull request #${pr.id} is open: merge it on GitHub`, zhTitle: `Pull request #${pr.id} 已開：請到 GitHub 合併`, captainOnly: true,
     en: { why: `PR #${pr.id} is open at ${pr.url}. Merging from Studio is off for this project, so merge it on GitHub.`, how: "Merge the pull request on GitHub, then close this Task here; or request changes for another round." },
     zh: { why: `PR #${pr.id} 已在 ${pr.url} 開好。這個專案在 Studio 裡合併是關閉的，請到 GitHub 合併。`, how: "到 GitHub 合併這個 pull request，再回來關閉這個任務；或要求修改，再跑一輪。" },
-    body: `PR #${pr.id} is open at ${pr.url}; merging from Studio is off, so merge it on GitHub.\nPR #${pr.id} 已開在 ${pr.url}；Studio 不合併，請到 GitHub 合併。\n\nBranch: ${pr.branch} → ${pr.base} at ${pr.head}`,
+    // each language its own line (and literal): the zh rule reads the Chinese line alone
+    body: [`PR #${pr.id} is open at ${pr.url}; merging from Studio is off, so merge it on GitHub.`, `PR #${pr.id} 已開在 ${pr.url}；Studio 不合併，請到 GitHub 合併。`, "", `Branch: ${pr.branch} → ${pr.base} at ${pr.head}`].join("\n"),
     links: [{ label: `Pull request #${pr.id}`, href: pr.url }],
     options: [{ id: "close", label: "Close here (I merge on GitHub)", labelZh: "在這裡關閉（我到 GitHub 合併）", primary: true, hold: true }, { id: "changes", label: "Request changes", labelZh: "要求修改", note: true, hold: true }] });
   engine.cardBodies.merge = async (x) => {

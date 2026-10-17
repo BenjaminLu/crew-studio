@@ -5,7 +5,7 @@
 // The author is the repository's own user (its config file), else the captain's git identity; Crew Studio commits it.
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import { git, gitArgv, gitEnv } from "../git";
 
 export type CommitConvention = { conventional: boolean; max: number; source: string | null; signoff?: boolean };
@@ -26,14 +26,15 @@ export function commitConvention(repo: string, at: string): CommitConvention {
     const conventional = /conventional\s+commits?/i.test(rules) || /`(?:feat|fix)(?:\([^)]*\))?:/.test(rules) || (!section && !/\bcommit/i.test(text));
     const m = /\b(under|fewer than|less than|below|at most|no more than|within|up to|max(?:imum)?(?: of)?|≤|<=?)\s*(\d{2,3})\s*(?:characters|chars?)\b/i.exec(rules);
     let max = DEFAULT_MAX; if (m) { const n = Number(m[2]); max = /^(under|fewer than|less than|below|<)$/i.test(m[1]) ? n - 1 : n; }
-    // a Developer Certificate of Origin rule asks for a Signed-off-by trailer (anywhere in the file)
-    const signoff = /\bDCO\b|Developer Certificate of Origin|Signed-off-by|\bsign[- ]?off\b/i.test(text);
+    // a Developer Certificate of Origin rule in the commit section (or a section of its own) asks for a Signed-off-by trailer
+    const signoff = /\bDCO\b|Developer Certificate of Origin|Signed-off-by|\bsign[- ]?off\b/i.test([section ?? "", sectionOf(text, /\bDCO\b|sign[- ]?off|certificate of origin/i) ?? ""].join("\n"));
     return { conventional, max: Math.max(30, Math.min(100, max)), source: path, signoff };
   }
   return { conventional: true, max: DEFAULT_MAX, source: null };
 }
-function commitSection(text: string): string | null {
-  const lines = text.split("\n"); const start = lines.findIndex((l) => /^#{1,6}\s.*\bcommit/i.test(l)); if (start < 0) return null;
+function commitSection(text: string): string | null { return sectionOf(text, /\bcommit/i); }
+function sectionOf(text: string, heading: RegExp): string | null {
+  const lines = text.split("\n"); const start = lines.findIndex((l) => /^#{1,6}\s/.test(l) && heading.test(l.replace(/^#+\s*/, ""))); if (start < 0) return null;
   const level = /^#+/.exec(lines[start])![0].length; const end = lines.findIndex((l, i) => i > start && new RegExp(`^#{1,${level}}\\s`).test(l));
   return lines.slice(start, end < 0 ? undefined : end).join("\n");
 }
@@ -77,21 +78,23 @@ export function taskCommitMessage(i: TaskCommitInput, conv: CommitConvention): {
   return { subject, body, message: `${subject}\n\n${body}\n` };
 }
 
-/** a user.name / user.email read from one git config file, never written; [include] files are not followed */
-function configUser(file: string): { name?: string; email?: string } {
-  if (!existsSync(file)) return {};
-  const r = Bun.spawnSync(gitArgv(["config", "--file", file, "--no-includes", "--get-regexp", "^user\\.(name|email)$"]), { stdout: "pipe", stderr: "pipe", env: gitEnv() });
+/** a user.name / user.email as git reads it, never written: `args` picks the scope (--local in the repository, or --file);
+ * [include] and [includeIf] are followed (--includes; with --file an includeIf "gitdir:" cannot match, git's own rule) */
+function configUser(cwd: string, args: string[]): { name?: string; email?: string } {
+  const r = Bun.spawnSync(gitArgv(["config", ...args, "--includes", "--show-origin", "--get-regexp", "^user\\.(name|email)$"]), { cwd, stdout: "pipe", stderr: "pipe", env: gitEnv() });
   const out: { name?: string; email?: string } = {};
-  for (const line of r.success ? r.stdout.toString().split("\n") : []) { const m = /^user\.(name|email) (.+)$/.exec(line.trim()); if (m) out[m[1] as "name" | "email"] = m[2].trim(); }
+  // --show-origin: "file:<path>\tuser.name value"; the last one git reads wins, as git itself resolves it
+  for (const line of r.success ? r.stdout.toString().split("\n") : []) { const m = /^\S+\tuser\.(name|email) (.+)$/.exec(line.trim()); if (m) out[m[1] as "name" | "email"] = m[2].trim(); }
   return out;
 }
+const fileUser = (file: string) => (existsSync(file) ? configUser(homedir(), ["--file", file]) : {});
 const sane = (v: string | undefined, max: number) => typeof v === "string" && v.trim().length > 0 && v.length <= max && !/[\u0000-\u001f<>]/.test(v);
-/** who authors the Task's commit: the repository's own user.name and user.email (its config file), else the captain's git
- * identity (~/.gitconfig, then ~/.config/git/config), else Crew Studio. Read only: no git config is ever written. */
+/** who authors the Task's commit: the repository's own user.name and user.email (its config, includes followed), else the
+ * captain's git identity (~/.gitconfig over ~/.config/git/config, includes followed), else Crew Studio. Studio's git runs
+ * with its own isolated global config, so the captain's files are read by path. Read only: no git config is ever written. */
 export function commitIdentity(repo: string, home = homedir()): CommitIdentity {
-  const common = git(repo, ["rev-parse", "--git-common-dir"]).out; const dir = common ? (isAbsolute(common) ? common : join(repo, common)) : join(repo, ".git");
   const xdg = home === homedir() && process.env.XDG_CONFIG_HOME ? join(process.env.XDG_CONFIG_HOME, "git", "config") : join(home, ".config", "git", "config");
-  const tries: [CommitIdentity["source"], { name?: string; email?: string }][] = [["repository", configUser(join(dir, "config"))], ["captain", { ...configUser(xdg), ...configUser(join(home, ".gitconfig")) }]];
+  const tries: [CommitIdentity["source"], { name?: string; email?: string }][] = [["repository", configUser(repo, ["--local"])], ["captain", { ...fileUser(xdg), ...fileUser(join(home, ".gitconfig")) }]];
   for (const [source, u] of tries) if (sane(u.name, 200) && sane(u.email, 320)) return { name: u.name!.trim(), email: u.email!.trim(), source };
   return { name: "Crew Studio", email: "crew-studio@localhost", source: "studio" };
 }

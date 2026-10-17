@@ -48,11 +48,19 @@ try {
     const before = readFileSync(join(own.repo, ".git", "config"), "utf8");
     const sha = commitTree(own.repo, must(own.repo, ["rev-parse", "HEAD^{tree}"]), own.head, "feat: one\n\nbody\n", a);
     ok(must(own.repo, ["log", "-1", "--format=%an <%ae>|%cn", sha]) === "Repo Bob <bob@example.com>|Crew Studio" && readFileSync(join(own.repo, ".git", "config"), "utf8") === before,
-      "the commit is authored by that identity and committed by Crew Studio; the repository's config is untouched", must(own.repo, ["log", "-1", "--format=%an <%ae>|%cn", sha])); }
+      "the commit is authored by that identity and committed by Crew Studio; the repository's config is untouched", must(own.repo, ["log", "-1", "--format=%an <%ae>|%cn", sha]));
+    // includes are followed, as git resolves the identity: the repository's [include] and the captain's
+    const inc = repoWith("include-user", {}); writeFileSync(join(temp, "ident.cfg"), "[user]\n\tname = Included Cy\n\temail = cy@example.com\n");
+    writeFileSync(join(inc.repo, ".git", "config"), readFileSync(join(inc.repo, ".git", "config"), "utf8") + `[include]\n\tpath = ${join(temp, "ident.cfg")}\n`);
+    const home2 = join(temp, "home-include"); mkdirSync(home2); writeFileSync(join(home2, "who.cfg"), "[user]\n\tname = Captain Dee\n\temail = dee@example.com\n"); writeFileSync(join(home2, ".gitconfig"), "[include]\n\tpath = who.cfg\n");
+    const d = commitIdentity(inc.repo, bare), e = commitIdentity(plainRepo.repo, home2);
+    ok(d.source === "repository" && d.name === "Included Cy" && e.source === "captain" && e.email === "dee@example.com", "an identity behind an [include] is followed, in the repository and in the captain's config", JSON.stringify([d, e])); }
   { const dco = repoWith("dco", { "CONTRIBUTING.md": "# Contributing\n\n## Commits\n\nConventional Commits. Every commit carries a DCO sign-off (Signed-off-by).\n" });
     const conv = commitConvention(dco.repo, dco.head); const msg = taskCommitMessage({ run: "R-3", head: "d".repeat(40), title: "Add x", done: [], author: { name: "Ada", email: "ada@example.com", source: "captain" } }, conv).message;
     const none = taskCommitMessage({ run: "R-3", head: "d".repeat(40), title: "Add x", done: [], author: { name: "Ada", email: "ada@example.com", source: "captain" } }, def).message;
-    ok(conv.signoff === true && msg.trimEnd().endsWith("Signed-off-by: Ada <ada@example.com>") && !/Signed-off-by/.test(none), "Signed-off-by only when CONTRIBUTING asks for a DCO sign-off", msg); }
+    ok(conv.signoff === true && msg.trimEnd().endsWith("Signed-off-by: Ada <ada@example.com>") && !/Signed-off-by/.test(none), "Signed-off-by only when CONTRIBUTING asks for a DCO sign-off", msg);
+    const other = repoWith("signoff-elsewhere", { "CONTRIBUTING.md": "# Contributing\n\n## Commits\n\nConventional Commits.\n\n## Design reviews\n\nA designer signs off on UI changes; see the DCO FAQ for legal questions.\n" });
+    ok(commitConvention(other.repo, other.head).signoff === false, "a sign-off or DCO mention outside the commit section asks for no Signed-off-by"); }
   // ---------- the repository's rules ----------
   const kit = repoWith("money-kit", { "CONTRIBUTING.md": readFileSync(join(import.meta.dir, "../templates/sandbox-repo/CONTRIBUTING.md"), "utf8") });
   const kc = commitConvention(kit.repo, kit.head);
