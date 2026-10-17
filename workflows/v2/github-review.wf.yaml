@@ -27,21 +27,25 @@
     {
       "id": "coordinator",
       "label": "Coordinator (firstmate)",
+      "seat": "coordinator",
       "skill": "pack:firstmate/skills/firstmate.md"
     },
     {
       "id": "worker",
       "label": "Worker",
+      "seat": "maker",
       "skill": "pack:firstmate/skills/worker.md"
     },
     {
       "id": "reviewer",
       "label": "Reviewer",
+      "seat": "reviewer",
       "skill": "pack:firstmate/skills/reviewer.md"
     },
     {
       "id": "designer",
       "label": "Designer reviewer",
+      "seat": "design-reviewer",
       "skill": "pack:firstmate/skills/designer.md"
     }
   ],

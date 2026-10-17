@@ -4,7 +4,7 @@ name: Refine loop (pattern)
 version: 1
 description: "The refine loop pattern: an agent produces, its checks judge, the loop compiles a brief and the agent produces again; a human sees only escalations."
 roles:
-  - { id: coordinator, label: Coordinator, skill: "pack:core/skills/coordinator.md" }
+  - { id: coordinator, label: Coordinator, seat: maker, skill: "pack:core/skills/coordinator.md" }
 nodes:
   - { id: intake, kind: hook, label: Capture intent, do: intent.capture, x: 0, y: 100 }
   - { id: produce, kind: agent, label: Produce, role: coordinator, mode: draft, checks: [{ use: core/brief-quality, blocking: false }], x: 180, y: 100 }

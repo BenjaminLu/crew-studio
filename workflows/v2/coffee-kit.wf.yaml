@@ -13,22 +13,35 @@
     {
       "id": "worker",
       "label": "Website worker",
+      "seat": "maker",
       "skills": ["pack:firstmate/skills/worker.md", "pack:coffee-kit/skills/website.md"]
     },
     {
       "id": "image-worker",
       "label": "Image worker",
+      "seat": "image-maker",
       "skills": ["pack:firstmate/skills/worker.md", "pack:coffee-kit/skills/image.md"]
     },
     {
       "id": "reviewer",
       "label": "Reviewer",
+      "seat": "reviewer",
       "skills": ["pack:firstmate/skills/reviewer.md", "pack:coffee-kit/skills/reviewer.md"]
     },
     {
       "id": "designer",
       "label": "Designer",
+      "seat": "design-reviewer",
       "skills": ["pack:firstmate/skills/designer.md", "pack:coffee-kit/skills/designer.md"]
+    }
+  ],
+  "seats": [
+    {
+      "id": "image-maker",
+      "label": "Image maker",
+      "labelZh": "圖像產出",
+      "needs": ["image-generation"],
+      "suggest": { "provider": "codex" }
     }
   ],
   "nodes": [

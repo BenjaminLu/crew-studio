@@ -14,6 +14,7 @@
     {
       "id": "designer",
       "label": "Designer",
+      "seat": "maker",
       "skill": "bundled:workflows/skills/v2/designer.md"
     }
   ],
@@ -54,6 +55,7 @@
       "kind": "agent",
       "label": "Produce design-b",
       "role": "designer",
+      "seat": "alt-maker",
       "mode": "deliver",
       "args": {
         "format": "web",

@@ -26,12 +26,14 @@
     {
       "id": "founder",
       "label": "Claude 創業者",
+      "seat": "maker",
       "provider": "claude",
       "skill": "bundled:workflows/skills/startup-founder.md"
     },
     {
       "id": "judge",
       "label": "Codex 評審",
+      "seat": "reviewer",
       "provider": "codex",
       "skill": "bundled:workflows/skills/startup-judge.md"
     }

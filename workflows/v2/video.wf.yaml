@@ -14,6 +14,7 @@
     {
       "id": "editor",
       "label": "Editor",
+      "seat": "maker",
       "skill": "bundled:workflows/skills/v2/film-editor.md"
     }
   ],

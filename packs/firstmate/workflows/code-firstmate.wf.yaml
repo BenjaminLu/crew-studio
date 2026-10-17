@@ -17,10 +17,10 @@ params:
   project: { label: "Project id (optional)", default: "" }
   base: { label: "Base branch", default: "main" }
 roles:
-  - { id: coordinator, label: Coordinator (firstmate), skill: "pack:firstmate/skills/firstmate.md" }
-  - { id: worker, label: Worker, skill: "pack:firstmate/skills/worker.md" }
-  - { id: reviewer, label: Reviewer, skill: "pack:firstmate/skills/reviewer.md" }
-  - { id: designer, label: Designer reviewer, skill: "pack:firstmate/skills/designer.md" }
+  - { id: coordinator, label: Coordinator (firstmate), seat: coordinator, skill: "pack:firstmate/skills/firstmate.md" }
+  - { id: worker, label: Worker, seat: maker, skill: "pack:firstmate/skills/worker.md" }
+  - { id: reviewer, label: Reviewer, seat: reviewer, skill: "pack:firstmate/skills/reviewer.md" }
+  - { id: designer, label: Designer reviewer, seat: design-reviewer, skill: "pack:firstmate/skills/designer.md" }
 nodes:
   - { id: intake, kind: hook, label: Capture intent, do: intent.capture, x: 170, y: 220 }
   - { id: prepare, kind: hook, label: Worktree, detail: "branch on base", do: repo.prepare, x: 340, y: 220 }

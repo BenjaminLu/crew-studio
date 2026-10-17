@@ -31,12 +31,19 @@ export type WNode = {
   serves?: number[];
   /** an agent or loop node's enabled skills, in order, each pinned by version and hash (unit agent-skills); text only, never tools or sandbox */
   skills?: { id: string; v: number; sha256: string }[];
+  /** the team seat this node runs as when it is not its role's (web-prototype design-b: alt-maker; docs/design/crew-seats.md) */
+  seat?: string;
 };
 export type WEdge = { from: string; to: string; when?: string; checks?: CheckRef[] };
 /** A role's defaults: its skill, and the provider, model and reasoning effort its nodes run on unless a node (or approved staffing) says otherwise.
  *  skills: several named skills (a shared contract, then a domain profile), in order; normalize() then sets skill to their joined ref,
  *  the one text the role receives, versions and pins. */
-export type WRole = { id: string; label: string; skill: string; skills?: string[]; provider?: string; model?: string; effort?: string };
+export type WRole = { id: string; label: string; skill: string; skills?: string[]; provider?: string; model?: string; effort?: string;
+  /** the team seat its nodes run as (docs/design/crew-seats.md) */
+  seat?: string };
+/** The team's built-in seats; a workflow declares any specialist seat it needs in seats (src/domain/crew.ts). */
+export const TEAM_SEATS = ["coordinator", "maker", "alt-maker", "reviewer", "design-reviewer"] as const;
+export type SeatDecl = { id: string; label: string; labelZh: string; reviews?: string; needs?: string[]; suggest?: { provider?: "codex" | "claude"; model?: string; effort?: string | null } };
 /** The separator of a role's joined skill ref. */
 export const ROLE_SKILL_JOIN = "+";
 /** A role skill ref's named parts, in order (one part for a plain ref). */
@@ -52,6 +59,8 @@ export type WDef = {
   sample?: { text?: string; params?: Record<string, string> };
   params?: Record<string, { label: string; labelZh?: string; required?: boolean; default?: string; /** a failure card's Edit params checks values against these */ options?: string[]; pattern?: string; max_length?: number }>;
   roles: WRole[]; nodes: WNode[]; edges: WEdge[];
+  /** the specialist team seats this workflow needs besides the built-in ones */
+  seats?: SeatDecl[];
   /** role pairs whose rounds the Task page compares side by side, k-th round with k-th round (src/compare.ts) */
   compare?: [string, string][];
   isTemplate?: boolean;
@@ -144,6 +153,13 @@ export function validate(d: WDef, known?: (ref: string) => boolean, runners?: Se
       }
     }
   }
+  // team seats: a role's or node's seat is a built-in seat or one this workflow declares (docs/design/crew-seats.md)
+  const declared = Array.isArray(d.seats) ? d.seats : d.seats == null ? [] : (out.push({ level: "error", text: "seats is a list of {id, label, labelZh}" }), []);
+  for (const s of declared) if (!s || typeof s.id !== "string" || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(s.id) || (TEAM_SEATS as readonly string[]).includes(s.id) || typeof s.label !== "string" || !s.label.trim() || typeof s.labelZh !== "string" || !s.labelZh.trim() || (s.needs != null && (!Array.isArray(s.needs) || s.needs.some((x: any) => typeof x !== "string"))))
+    out.push({ level: "error", text: `seat ${s?.id ?? "?"}: a specialist seat has its own id (not ${TEAM_SEATS.join(", ")}), a label, a labelZh, and needs as a list of capability tags` });
+  const seatOk = (x: unknown) => typeof x === "string" && ((TEAM_SEATS as readonly string[]).includes(x) || declared.some((s) => s?.id === x));
+  for (const r of d.roles) if (r.seat != null && !seatOk(r.seat)) out.push({ level: "error", text: `role ${r.id}: seat ${r.seat} is not a team seat (${TEAM_SEATS.join(", ")}) or one this workflow declares in seats` });
+  for (const n of d.nodes) if (n.seat != null && (!seatOk(n.seat) || (n.kind !== "agent" && n.kind !== "loop"))) out.push({ level: "error", node: n.id, text: `${n.label}: seat ${n.seat} is not a team seat (${TEAM_SEATS.join(", ")}) or one this workflow declares, or the node is not an agent or loop` });
   for (const r of d.roles) if (r.skills != null && (!Array.isArray(r.skills) || !r.skills.length || r.skills.some((x: any) => typeof x !== "string" || !x || x.includes(ROLE_SKILL_JOIN)) || new Set(r.skills).size !== r.skills.length))
     out.push({ level: "error", text: `role ${r.id}: skills is an ordered list of distinct skill refs` });
   else if (r.skills != null && r.skill !== r.skills.join(ROLE_SKILL_JOIN)) out.push({ level: "error", text: `role ${r.id}: name its skill once, as skill or as skills, not both` });
@@ -182,7 +198,7 @@ export function validate(d: WDef, known?: (ref: string) => boolean, runners?: Se
   return out;
 }
 
-const FIELDS: (keyof WNode)[] = ["kind", "label", "detail", "role", "mode", "provider", "model", "effort", "skill", "skills", "gates", "checks", "lifecycle", "do", "args", "card", "max_visits", "retries", "timeout_s", "join", "lane", "serves"];
+const FIELDS: (keyof WNode)[] = ["kind", "label", "detail", "role", "seat", "mode", "provider", "model", "effort", "skill", "skills", "gates", "checks", "lifecycle", "do", "args", "card", "max_visits", "retries", "timeout_s", "join", "lane", "serves"];
 export function diff(a: WDef, b: WDef): DefDiff {
   const an = new Map(a.nodes.map((n) => [n.id, n])), bn = new Map(b.nodes.map((n) => [n.id, n]));
   const ae = new Set(a.edges.map(ekey)), be = new Set(b.edges.map(ekey));
@@ -193,7 +209,7 @@ export function diff(a: WDef, b: WDef): DefDiff {
     if (Math.round(o.x) !== Math.round(n.x) || Math.round(o.y) !== Math.round(n.y)) moved.push(id); }
   const ac = new Map(a.edges.map((e) => [ekey(e), JSON.stringify(e.checks ?? [])]));
   const edgesChanged = b.edges.filter((e) => ac.has(ekey(e)) && ac.get(ekey(e)) !== JSON.stringify(e.checks ?? [])).map(ekey);
-  const meta = (["name", "description", "roles", "params", "intent", "intents", "sample", "policies", "hooks", "card_checks"] as const).filter((k) => JSON.stringify((a as any)[k] ?? null) !== JSON.stringify((b as any)[k] ?? null));
+  const meta = (["name", "description", "roles", "seats", "params", "intent", "intents", "sample", "policies", "hooks", "card_checks"] as const).filter((k) => JSON.stringify((a as any)[k] ?? null) !== JSON.stringify((b as any)[k] ?? null));
   const skills: { node: string; before: string[]; after: string[] }[] = [];
   for (const [id, n] of bn) { const before = (an.get(id)?.skills ?? []).map(pinName), after = (n.skills ?? []).map(pinName);
     if (JSON.stringify(before) !== JSON.stringify(after)) skills.push({ node: id, before, after }); }

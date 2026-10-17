@@ -8,8 +8,9 @@ import {existsSync,mkdirSync,readFileSync,writeFileSync,renameSync,rmSync,readdi
 import {join} from 'node:path';
 import {ledgerKey} from '../runtime/checks';
 import {staffingHash,nodeRole} from './staffing';
+import {TEAM_SEATS} from '../runtime/defs';
 
-export const BUILTIN_SEATS=['coordinator','maker','alt-maker','reviewer','design-reviewer'] as const;
+export const BUILTIN_SEATS=TEAM_SEATS;
 export const SEAT_LABELS:Record<string,{en:string;zh:string}>={coordinator:{en:'Coordinator',zh:'協調'},maker:{en:'Maker',zh:'產出'},'alt-maker':{en:'Second maker',zh:'第二產出'},reviewer:{en:'Reviewer',zh:'審查'},'design-reviewer':{en:'Design reviewer',zh:'設計審查'}};
 /** The seat a built-in reviewing seat judges: its model must differ from that seat's (alt-maker differs from maker too). */
 const BUILTIN_REVIEWS:Record<string,string>={reviewer:'maker','design-reviewer':'maker','alt-maker':'maker'};

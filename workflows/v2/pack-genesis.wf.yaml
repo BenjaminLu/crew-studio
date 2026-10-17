@@ -17,11 +17,13 @@
     {
       "id": "coordinator",
       "label": "Pack coordinator",
+      "seat": "coordinator",
       "skill": "bundled:workflows/skills/pack-genesis-coordinator.md"
     },
     {
       "id": "author",
       "label": "Pack author",
+      "seat": "maker",
       "skill": "bundled:workflows/skills/pack-genesis-author.md"
     }
   ],

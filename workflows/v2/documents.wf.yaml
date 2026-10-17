@@ -14,6 +14,7 @@
     {
       "id": "writer",
       "label": "Writer",
+      "seat": "maker",
       "skill": "bundled:workflows/skills/v2/writer.md"
     }
   ],

@@ -16,7 +16,21 @@
     {
       "id": "image-worker",
       "label": "Image maker",
+      "seat": "image-maker",
       "skill": "bundled:workflows/skills/v2/image.md"
+    }
+  ],
+  "seats": [
+    {
+      "id": "image-maker",
+      "label": "Image maker",
+      "labelZh": "圖像產出",
+      "needs": [
+        "image-generation"
+      ],
+      "suggest": {
+        "provider": "codex"
+      }
     }
   ],
   "nodes": [
