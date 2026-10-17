@@ -196,7 +196,9 @@ export function mergeDetail(i: MergeInput, co: Coordinator | null = null): CardD
     how: lastReport ? [loc(lastReport, co?.how)] : [],
     scope: { in: spec.scope ?? [], out: spec.out_of_scope ?? spec.scopeOut ?? [] },
     done: doneOut,
-    beforeAfter: { text: spec.explain?.en ? loc(spec.explain.en, spec.explain["zh-TW"]) : loc(spec.what ?? "", null), stat: i.stat, images },
+    // the change itself (the spec's what) beside the captures and the diff stat; never the spec's explain block,
+    // which is the spec writer's reasoning, not what changed
+    beforeAfter: { text: loc(String(spec.what ?? ""), spec.zh?.what), stat: i.stat, images },
     door: kind || spec.door ? { kind, reason: loc(spec.door?.reason ?? (reasons.join("; ") || ""), co?.door_reason), rollback } : null,
     review: (i.ctx.reviews ?? []).length || followups.length ? { verdicts: (i.ctx.reviews ?? []).map((r: any) => ({ by: String(r.by ?? "reviewer"), verdict: String(r.verdict ?? "?") })), followups: followups.map((f, k) => loc(f, co?.followups?.[k])),
       mode: (i.ctx.reviews ?? []).at(-1)?.mode ?? null, notes: [...((i.ctx.reviews ?? []).at(-1)?.notCovered ?? [])] } : null,

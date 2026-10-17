@@ -28,7 +28,7 @@ ok(d.intent.en === input.intent && d.intents.length === 3 && /JPY/.test(d.intent
 ok(d.why.length === 3 && d.why[0].en === input.spec.why[0], "why: the spec's three reasons");
 ok(d.scope.in.join(",") === "src/money.ts,test/format.test.ts,test/money.test.ts,README.md" && Array.isArray(d.scope.out), "scope: in and out");
 ok(d.done.length === 4 && d.done.every((x) => x.proved), "done: four lines, every one proved");
-ok(/format\(1235, "JPY"\) gives "¥1,235"/.test(d.beforeAfter.text.en) && /README\.md/.test(d.beforeAfter.stat) && /3 files changed/.test(d.beforeAfter.stat), "before/after: the spec's explanation and the diff stat");
+ok(d.beforeAfter.text.en === input.spec.what && d.beforeAfter.text.en !== input.spec.explain.en && /README\.md/.test(d.beforeAfter.stat) && /3 files changed/.test(d.beforeAfter.stat), "before/after: the change itself (the spec's what) and the diff stat, not the spec's explain block");
 ok(d.how.length === 1 && /optional second argument/.test(d.how[0].en), "how: the worker's report");
 ok(d.door?.kind === "two-way" && /optional parameter/.test(d.door.reason.en) && /revert/.test(d.door.rollback.en) && CJK.test(d.door.rollback["zh-TW"]), "door and rollback");
 ok(d.review?.verdicts[0]?.verdict === "APPROVE" && d.review.followups.length === 2 && /src\/money\.ts:24/.test(d.review.followups[0].en), "reviewer verdict and its two follow-ups");
@@ -67,8 +67,8 @@ const zhAll = [d.intents, d.why, d.how, d.done.map((x) => x.text), d.review!.fol
 ok(zhAll.every((l) => !l.untranslated && CJK.test(l["zh-TW"]) && l["zh-TW"] !== l.en) && d.writer === "coordinator", "with the coordinator every line has a Chinese zh-TW text, not the English", JSON.stringify(zhAll.filter((l) => l.untranslated || !CJK.test(l["zh-TW"]))));
 ok(!zhAll.some((l) => /船長要求的變更/.test(l["zh-TW"])), "no placeholder sentence stands in for a translation");
 ok([fb.intents, fb.why, fb.how, fb.done.map((x) => x.text), fb.review!.followups, [fb.door!.reason]].flat().every((l) => l.untranslated && l["zh-TW"] === l.en), "without the coordinator the done lines, why, how, follow-ups and door reason are all marked untranslated");
-ok(fb.writer === "fallback" && fb.intents.every((l) => l.untranslated && l["zh-TW"] === l.en) && fb.beforeAfter.text["zh-TW"] === input.spec.explain["zh-TW"],
-  "without the coordinator untranslated lines are marked (the spec's own zh-TW explanation still shows)");
+ok(fb.writer === "fallback" && fb.intents.every((l) => l.untranslated && l["zh-TW"] === l.en) && fb.beforeAfter.text.untranslated === true && fb.beforeAfter.text.en === input.spec.what,
+  "without the coordinator untranslated lines are marked (the before/after line too, when the spec has no zh what)");
 ok(mergeDetail(mi, { ...coord, intents: ["one", "two", "three"] }).intents.every((l) => l.untranslated), "a 'translation' with no Chinese in it is refused and marked untranslated");
 // malformed coordinator output (its tool arguments are not schema-checked) falls back, marked, and never throws
 const { coordinatorDetail, validCoordinator } = await import("../src/domain/mergecard");
