@@ -53,12 +53,14 @@ export type StaffingRole={provider:'codex'|'claude';model:string;effort:string|n
 export type StaffingNode={provider?:'codex'|'claude';model?:string;effort?:string|null;skills?:SkillPin[]};
 export type StaffingDraft={schema:1;algorithm:'sha256-canonical-v1';project:StaffingProject;workflow:{id:string;version:number;sha256:string};roles:Record<string,StaffingRole>;review:{freshContexts:number;distinctProviders:boolean};
  /** per-node overrides (absent in approvals made before node overrides existed: those cover a workflow with no node provider, model or effort) */
- nodes?:Record<string,StaffingNode>};
+ nodes?:Record<string,StaffingNode>;
+ /** derived from the Studio team (src/crew-staffing.ts): the signed team version it was derived from; the guard re-derives it and refuses any difference */
+ crew?:{team:string}};
 export type StaffingConfig=StaffingDraft&{version:number;previous:string|null;approval:{run:string;card:string;answerSeq:number};hash:string;signature:string};
 function plain(x:any){return !!x&&typeof x==='object'&&!Array.isArray(x)&&Object.getPrototypeOf(x)===Object.prototype;}
 function keys(x:any,expected:string[]){if(!plain(x)||Object.keys(x).sort().join('|')!==[...expected].sort().join('|'))throw new Error('Staffing schema keys differ');}
-/** the same, with node overrides allowed (they are optional) */
-const withNodes=(x:any,expected:string[])=>keys(x,plain(x)&&Object.hasOwn(x,'nodes')?[...expected,'nodes']:expected);
+/** the same, with node overrides and a crew derivation allowed (both are optional) */
+const withNodes=(x:any,expected:string[])=>keys(x,[...expected,...(['nodes','crew'] as const).filter(k=>plain(x)&&Object.hasOwn(x,k))]);
 function text(x:any,max=200){if(typeof x!=='string'||!x.trim()||x.length>max||/[\u0000-\u001f]/.test(x))throw new Error('Malformed staffing text');}
 function integer(x:any){if(!Number.isSafeInteger(x)||x<1)throw new Error('Malformed staffing version');}
 function digest(x:any){if(typeof x!=='string'||!/^[a-f0-9]{64}$/.test(x))throw new Error('Malformed staffing digest');}
@@ -130,7 +132,7 @@ export function nodeOverrideProblems(def:any,roles:Record<string,{provider:strin
 }
 function validateProject(x:StaffingProject){keys(x,['namespace','id','identity']);if(!['git','artifact'].includes(x.namespace))throw new Error('Unknown project namespace');text(x.id);text(x.identity,2000);}
 export function validateStaffingDraft(x:StaffingDraft):void{
- withNodes(x,['schema','algorithm','project','workflow','roles','review']);if(Object.hasOwn(x,'nodes'))validateNodes(x.nodes);if(x.schema!==1||x.algorithm!=='sha256-canonical-v1')throw new Error('Unsupported staffing schema');validateProject(x.project);
+ withNodes(x,['schema','algorithm','project','workflow','roles','review']);if(Object.hasOwn(x,'nodes'))validateNodes(x.nodes);if(Object.hasOwn(x,'crew')){keys(x.crew,['team']);digest(x.crew.team);}if(x.schema!==1||x.algorithm!=='sha256-canonical-v1')throw new Error('Unsupported staffing schema');validateProject(x.project);
  keys(x.workflow,['id','version','sha256']);text(x.workflow.id);integer(x.workflow.version);digest(x.workflow.sha256);
  if(!plain(x.roles)||!Object.keys(x.roles).length||Object.keys(x.roles).length>12)throw new Error('Staffing roles are missing or excessive');
  for(const[id,r]of Object.entries(x.roles)){if(!/^[a-z][a-z0-9-]{0,39}$/.test(id))throw new Error('Malformed role');keys(r,Object.hasOwn(r,'skills')?['provider','model','effort','skill','skills']:['provider','model','effort','skill']);if(!['codex','claude'].includes(r.provider))throw new Error('Unsupported staffing provider');text(r.model);if(r.effort!==null)text(r.effort,40);if(r.provider==='codex'&&!r.effort)throw new Error('Choose Codex effort explicitly');keys(r.skill,['ref','version','sha256','snapshotSha256']);text(r.skill.ref,400);integer(r.skill.version);digest(r.skill.sha256);digest(r.skill.snapshotSha256);if(r.skill.sha256!==r.skill.snapshotSha256)throw new Error('Skill snapshot differs');
@@ -206,7 +208,9 @@ export function signedStaffingBinding(engine:import('../runtime/engine').Engine,
  }
  return current;
 }
-export function installStaffingGuard(engine:import('../runtime/engine').Engine,store:StaffingStore,resolveProject:(id:string)=>StaffingProject,verifyCapability?:(config:StaffingConfig)=>void){
+export function installStaffingGuard(engine:import('../runtime/engine').Engine,store:StaffingStore,resolveProject:(id:string)=>StaffingProject,verifyCapability?:(config:StaffingConfig)=>void,
+ /** a crew-derived configuration (config.crew): re-derive it from its signed team version and throw on any difference (src/crew-staffing.ts) */
+ verifyCrew?:(def:any,config:StaffingConfig)=>void){
  const applies=staffingApplies;
  // The role text agents receive now: Studio's versioned copy (what the Improve page shows and edits), else the source.
  function currentSkill(def:any,id:string){const source=engine.roleSkillText(def,id)?.text;if(typeof source!=='string'||!source.trim())throw new Error('Current workflow role skill is missing');return source;}
@@ -237,13 +241,16 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
   return{def,project,current,bound,binding,live,changed,rebind:current.hash!==binding&&Object.keys(current.roles).every(id=>sha(live[id].text)===current.roles[id].skill.sha256&&!partsDiffer(def,id,current.roles[id]))};
  }
  function verifyStored(def:any,params:Record<string,string>){
-  const project=def.kind==='coffee-kit'?coffeeStaffingProject(params.project):resolveProject(params.project);const config=store.current(project);
+  const project=def.kind==='coffee-kit'?coffeeStaffingProject(params.project):resolveProject(params.project);let config=store.current(project);
+  // a Task bound to an earlier crew-derived version keeps it when the team changed since (each version re-derives from its own signed team)
+  if(verifyCrew&&params._staffing&&params._staffing!==config.hash&&/^[a-f0-9]{64}$/.test(params._staffing)){const earlier=store.byHash(project,params._staffing);if(earlier?.crew&&config.crew)config=earlier;}
   // a newer approval that only re-pinned role skills (another task approved the new text): this task's own skill is what changed
   if(params._staffing&&params._staffing!==config.hash){const d=(()=>{try{return skillDrift(def,params)}catch{return null}})();if(d){const id=d.changed[0];throw new SkillChanged(id,d.bound.roles[id].skill.sha256,sha(d.live[id].text));}}
   if(params._staffing!==config.hash||config.workflow.id!==def.id||config.workflow.version!==def.version||config.workflow.sha256!==staffingHash(def))throw new Error('Staffing approval missing or changed; confirm project role configuration / 派工配置尚未核准或已變更，請確認各角色配置');
   // node overrides: what the captain approved is what the definition asks for (an approval from before node overrides covers a definition without provider, model or effort overrides; its node skills are bound by the definition hash)
   const wanted=staffingNodeOverrides(def);
-  if(Object.hasOwn(config,'nodes')?staffingHash(config.nodes)!==staffingHash(wanted??null):Object.values(wanted??{}).some(pickOverride))throw new Error('Approved node overrides differ from the workflow; confirm staffing again / 已核准的節點設定與流程不同，請重新確認派工配置');
+  if(config.crew){if(!verifyCrew)throw new Error('This staffing was derived from the Studio team, which cannot be checked here');verifyCrew(def,config);}
+  else if(Object.hasOwn(config,'nodes')?staffingHash(config.nodes)!==staffingHash(wanted??null):Object.values(wanted??{}).some(pickOverride))throw new Error('Approved node overrides differ from the workflow; confirm staffing again / 已核准的節點設定與流程不同，請重新確認派工配置');
   const required=def.roles.map((r:any)=>r.id);
   if(required.some((id:string)=>!config.roles[id]))throw new Error('Approve every workflow role before dispatch');
   for(const[id,pick]of Object.entries(config.roles)){const role=def.roles.find((r:any)=>r.id===id);if(!role||role.skill!==staffingSkillRef(def,id)||role.skill!==pick.skill.ref)throw new Error('Approved role skill differs from workflow policy');pinnedSkill(def,id,pick.skill);

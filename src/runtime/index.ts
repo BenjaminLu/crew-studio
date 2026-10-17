@@ -12,6 +12,9 @@ import {installGitHubReviewWorkflow} from '../domain/github-review-workflow';
 import {Onboarding} from '../onboarding';
 import {ArtifactStore,websiteHref} from '../artifacts';
 import {StaffingStore,staffingHash,installStaffingGuard,coffeeStaffingProject,staffingApplies,staffedCapability,type StaffingProject} from '../domain/staffing';
+import {CrewStore} from '../domain/crew';
+import {installCrewGuard} from '../crew-guard';
+import {installCrewStaffing} from '../crew-staffing';
 import {installFirstmateStaffing,staffingQuotaReady,type StaffingFacts,type StaffingAdmission} from '../firstmate-staffing';
 import {installFirstmate} from "../firstmate";
 import {WorkflowDrafts,installWorkflowDraftTools,draftRoute,ownStaffingPlan,ownWorkflow,checkNodeStaffing,ownBrief} from "../workflow-drafts";
@@ -134,26 +137,34 @@ export function createRuntime(d: RuntimeDeps) {
   const roleReady=(role:{provider:string;model:string;effort:string|null})=>{const cap=staffingCapabilities.find(c=>c.provider===role.provider),model=cap?.models.find(m=>m.id===role.model);return !(!cap||cap.support!=='supported'||cap.auth!=='verified'||!staffingQuotaReady(role as any,cap,d.staffingAdmission)||cap.expires<=Date.now()||!model||role.effort!==null&&!model.efforts.includes(role.effort));};
   // each role's pick and each node override's effective pick (the definition the configuration names)
   const staffingCapability=(config:any)=>staffedCapability(config,engine.defs.get(config.workflow.id,config.workflow.version),roleReady);
-  const staffingGuard=installStaffingGuard(engine,staffing,staffingProject,staffingCapability);
+  // the Studio-wide team (docs/design/crew-seats.md): a staffed workflow's project staffing is derived from it when it covers the
+  // workflow; every other workflow's Task records the crew it started with
+  const crewStore=new CrewStore(d.dataDir);
+  const crewStaffing=installCrewStaffing(engine,staffing,crewStore);
+  const staffingGuard=installStaffingGuard(engine,staffing,staffingProject,staffingCapability,(def,config)=>crewStaffing.verify(def,config));
+  const crewGuard=installCrewGuard(engine,crewStore);
+  /** The project's staffing from the team, when the team covers this workflow (null: the per-project staffing flow applies). */
+  const teamStaffing=(def:any,projectId:string)=>{if(!staffingApplies(def))return null;const project=def.kind==='coffee-kit'?coffeeStaffingProject(projectId):staffingProject(projectId);return crewStaffing.ensure(def,project);};
   /** The Start form's readiness of an approved crew, from free probes only (the Codex probe, Claude auth status).
    *  A Claude role that is signed in but not verified by a bounded request cannot start: the form never pays for it. */
   const crewReadiness=(roles:Record<string,{provider:string;model:string;effort:string|null}>)=>{for(const[id,role]of Object.entries(roles)){if(roleReady(role))continue;const cap=staffingCapabilities.find(c=>c.provider===role.provider);
     if(role.provider==='claude'&&cap?.support==='supported'&&cap.auth==='verified'&&cap.expires>Date.now())return{state:'blocked' as const,role:id,reason:{en:`The ${id} role's Claude ${role.model} is signed in but not verified by a bounded request. Verify it with Firstmate, then Start.`,zh:`${id} 角色的 Claude ${role.model} 已登入，但尚未經有限請求驗證；請先和 Firstmate 驗證，再按開始。`}};
     return{state:'blocked' as const,role:id,reason:{en:`The ${id} role's ${role.provider} ${role.model} is not available now${cap?.reason?` (${cap.reason})`:''}. Check the account, then refresh.`,zh:`${id} 角色的 ${role.provider} ${role.model} 目前不可用；請確認帳號後重新整理。`}};}
    return{state:'ready' as const};};
-  const staffingTools=installFirstmateStaffing(engine,staffing,staffingProject,staffingFacts,d.staffingAdmission,a=>d.staffingApproved?.(a),{verified:(def,params)=>staffingGuard.verified(def,params),capability:staffingCapability});
+  const staffingTools=installFirstmateStaffing(engine,staffing,staffingProject,staffingFacts,d.staffingAdmission,a=>d.staffingApproved?.(a),{verified:(def,params)=>staffingGuard.verified(def,params),capability:staffingCapability},(def,projectId)=>teamStaffing(def,projectId));
   // Board start of a project-staffed workflow (code-firstmate): the approved configuration of the chosen registered
   // project, the same one Firstmate's dispatch binds. Never a bypass: the staffing guard still verifies it at start.
   const boardStaffed=(def:any)=>!!def&&staffingGuard.applies(def)&&def.kind!=='coffee-kit';
   type BoardStaffing={state:'approved';hash:string;version:number;roles:Record<string,{provider:string;model:string;effort:string|null}>}|{state:'missing'|'blocked';code:string;reason:{en:string;zh:string}};
   const boardStaffing=(def:any,projectId:string):BoardStaffing=>{
    let project:StaffingProject;try{project=staffingProject(projectId);}catch(e:any){return{state:'blocked',code:'project_unavailable',reason:{en:String(e?.message??e),zh:'已登錄專案不存在、已停用或無法驗證 / '+String(e?.message??e)}};}
+   try{teamStaffing(def,projectId);}catch(e:any){return{state:'blocked',code:'staffing_unverifiable',reason:{en:'The Studio team cannot give this project its crew: '+String(e?.message??e),zh:'無法從 Studio 團隊產生此專案的人員配置。'}};}
    let config;try{config=staffing.current(project);}catch(e:any){return e?.code==='ENOENT'?{state:'missing',code:'staffing_missing',reason:{en:'No crew is approved for this project yet. Choose your crew together with Firstmate first.',zh:'此專案尚未核准代理配置；請先和 Firstmate 一起決定代理配置。'}}:{state:'blocked',code:'staffing_unverifiable',reason:{en:'The approved crew for this project cannot be verified: '+String(e?.message??e),zh:'無法驗證此專案已核准的代理配置。'}};}
    try{staffingGuard.verified(def,{project:projectId,_staffing:config.hash});}catch(e:any){return{state:'blocked',code:'staffing_changed',reason:{en:String(e?.message??e).replace(/^Staffing approval requires confirmation: /,''),zh:'已核准的代理配置與目前流程或技能不符；請重新和 Firstmate 決定代理配置。'}};}
    return{state:'approved',hash:config.hash,version:config.version,roles:Object.fromEntries(Object.entries(config.roles).map(([id,r])=>[id,{provider:r.provider,model:r.model,effort:r.effort}]))};
   };
   const onboarding=new Onboarding(engine,d.m3?.store??new ArtifactStore(d.dataDir));
-  const originalFirstmate=installFirstmate(engine,projects,{prepareDispatch:async(workflow,version)=>{const def=engine.defs.get(workflow,version);if(staffingApplies(def))await staffingFacts();},onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending});
+  const originalFirstmate=installFirstmate(engine,projects,{prepareDispatch:async(workflow,version)=>{const def=engine.defs.get(workflow,version);if(staffingApplies(def))await staffingFacts();},onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending,teamStaffing});
   // free drafting: its own store and tools, separate from proposals, staffing and execution
   const drafts=new WorkflowDrafts(d.dataDir,defs,(id,revision)=>{try{d.send('wfdraft',{id,revision});}catch{}});
   const readiness=d.readiness===false?null:installReadiness({engine,defs,drafts,dataDir:d.dataDir,protectedRoots:d.protectedRoots??[d.fmRoot],send:d.send,startOwn:(o:any,g:unknown)=>ownClaude.start(o,g),...(d.readiness??{}),createRuntime:(d.readiness as any)?.createRuntimeOverride??createRuntime});
