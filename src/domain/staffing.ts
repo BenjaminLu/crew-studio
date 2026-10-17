@@ -6,6 +6,7 @@ import {ledgerKey} from '../runtime/checks';
 import {QueueRefusal} from '../runtime/queue';
 import {jobInstructions} from '../operating-rules';
 import {failure} from '../runtime/failures';
+import {unified} from '../diff';
 export function nativeStaffingSkillRef(role:string,workflow='code-firstmate'):string{
  const names:Record<string,string>=workflow==='coffee-kit'?{worker:'website','image-worker':'image',reviewer:'reviewer',designer:'designer'}:workflow==='code-firstmate'?{coordinator:'firstmate',worker:'worker',reviewer:'reviewer',designer:'designer'}:{};
  if(!Object.hasOwn(names,role))throw new Error('Unknown native staffing workflow or role');
@@ -79,6 +80,15 @@ export class StaffingStore{
  private pendingSkills=new Map<string,string>();
  remember(input:{ref:string;version:number;text:string}){const pin=this.snapshot(input);this.pendingSkills.set(pin.sha256,input.text);return pin;}
  skill(pin:SkillPin,project?:StaffingProject){if(!project){const pending=this.pendingSkills.get(pin.sha256);if(pending!==undefined)return pending;throw new Error('Project identity required for skill');}const body=this.read(this.snapshotPath(project,pin.sha256));if(createHash('sha256').update(body).digest('hex')!==pin.sha256)throw new Error('Approved skill changed');return body;}
+ /** An earlier approved version by its hash (a task bound before a newer approval), verified like the current one; null when none matches. */
+ byHash(project:StaffingProject,hash:string):StaffingConfig|null{
+  digest(hash);const dir=this.dir(project);if(!existsSync(dir))return null;
+  for(const file of readdirSync(dir).filter(f=>/^v[1-9][0-9]*\.json$/.test(f))){let c:any;try{c=JSON.parse(this.read(join(dir,file)));}catch{continue;}if(c?.hash!==hash)continue;
+   keys(c,['schema','algorithm','project','workflow','roles','review','version','previous','approval','hash','signature']);const{version,previous,approval,hash:h,signature,...draft}=c;validateStaffingDraft(draft);
+   const expected=createHmac('sha256',ledgerKey(this.dataDir)).update(h).digest('hex');if(staffingHash({...draft,version,previous,approval})!==h||staffingHash(project)!==staffingHash(c.project)||typeof signature!=='string'||signature.length!==expected.length||!timingSafeEqual(Buffer.from(signature),Buffer.from(expected)))throw new Error('Staffing approval verification failed');
+   return c as StaffingConfig;}
+  return null;
+ }
  current(project:StaffingProject):StaffingConfig{
  const dir=this.dir(project),pointer=JSON.parse(this.read(join(dir,'current.json')));keys(pointer,['schema','version','hash','signature']);if(pointer.schema!==1)throw new Error('Unknown staffing pointer schema');integer(pointer.version);digest(pointer.hash);digest(pointer.signature);const pointerSignature=createHmac('sha256',ledgerKey(this.dataDir)).update(staffingHash({project:this.key(project),version:pointer.version,hash:pointer.hash})).digest('hex');if(pointer.signature!==pointerSignature||readdirSync(dir).some(file=>/^v[1-9][0-9]*\.json$/.test(file)&&Number(file.slice(1,-5))>pointer.version))throw new Error('Staffing activation pointer changed or rolled back');const c=JSON.parse(this.read(join(dir,`v${pointer.version}.json`))) as StaffingConfig;
  keys(c,['schema','algorithm','project','workflow','roles','review','version','previous','approval','hash','signature']);const{version,previous,approval,hash,signature,...draft}=c;validateStaffingDraft(draft);integer(version);if(previous!==null)digest(previous);keys(approval,['run','card','answerSeq']);text(approval.run);text(approval.card);integer(approval.answerSeq);digest(hash);digest(signature);
@@ -106,8 +116,23 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
  function currentSkill(def:any,id:string){const source=engine.roleSkillText(def,id)?.text;if(typeof source!=='string'||!source.trim())throw new Error('Current workflow role skill is missing');return source;}
  // A round runs only with the role text the captain approved: a changed skill (a pack update, an adopted edit) refuses at round start until staffing is confirmed again.
  function pinnedSkill(def:any,id:string,pin:SkillPin){const text=currentSkill(def,id),sha=createHash('sha256').update(text).digest('hex');if(sha!==pin.sha256)throw new SkillChanged(id,pin.sha256,sha);return text;}
+ const sha=(t:string)=>createHash('sha256').update(t).digest('hex');
+ /** A task's approved staffing that differs from what runs now only in role skill text: which roles changed, and whether a newer approval already covers the new text (rebind only). */
+ function skillDrift(def:any,params:Record<string,string>){
+  const project=def.kind==='coffee-kit'?coffeeStaffingProject(params.project):resolveProject(params.project),current=store.current(project),binding=params._staffing;
+  const bound=binding===current.hash?current:typeof binding==='string'&&/^[a-f0-9]{64}$/.test(binding)?store.byHash(project,binding):null;if(!bound)return null;
+  if([current,bound].some(c=>c.workflow.id!==def.id||c.workflow.version!==def.version||c.workflow.sha256!==staffingHash(def)))return null;
+  // only the skill pins may differ: providers, models, efforts, refs, review and project stay as approved
+  const strip=(c:StaffingConfig)=>({project:c.project,review:c.review,roles:Object.fromEntries(Object.entries(c.roles).map(([id,r])=>[id,{provider:r.provider,model:r.model,effort:r.effort,ref:r.skill.ref}]))});
+  if(staffingHash(strip(bound))!==staffingHash(strip(current)))return null;
+  const live:Record<string,{text:string;version:number}>={};for(const id of Object.keys(bound.roles)){const t=engine.roleSkillText(def,id);if(!t?.text?.trim())return null;live[id]={text:t.text,version:t.version??1};}
+  const changed=Object.keys(bound.roles).filter(id=>sha(live[id].text)!==bound.roles[id].skill.sha256);if(!changed.length)return null;
+  return{project,current,bound,binding,live,changed,rebind:current.hash!==binding&&Object.keys(current.roles).every(id=>sha(live[id].text)===current.roles[id].skill.sha256)};
+ }
  function verifyStored(def:any,params:Record<string,string>){
   const project=def.kind==='coffee-kit'?coffeeStaffingProject(params.project):resolveProject(params.project);const config=store.current(project);
+  // a newer approval that only re-pinned role skills (another task approved the new text): this task's own skill is what changed
+  if(params._staffing&&params._staffing!==config.hash){const d=(()=>{try{return skillDrift(def,params)}catch{return null}})();if(d){const id=d.changed[0];throw new SkillChanged(id,d.bound.roles[id].skill.sha256,sha(d.live[id].text));}}
   if(params._staffing!==config.hash||config.workflow.id!==def.id||config.workflow.version!==def.version||config.workflow.sha256!==staffingHash(def))throw new Error('Staffing approval missing or changed; confirm project role configuration / 派工配置尚未核准或已變更，請確認各角色配置');
   const required=def.roles.map((r:any)=>r.id);
   if(required.some((id:string)=>!config.roles[id]))throw new Error('Approve every workflow role before dispatch');
@@ -120,7 +145,28 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
  const previousInitialize=engine.deps.initializeRun;
  engine.deps.initializeRun=(run:any)=>{previousInitialize?.(run);if(applies(run.def)){const c=verified(run.def,run.params),node=run.def.nodes[0];engine.record(engine.x(run,node,run.nodes[node.id]),'staffing-start',{data:{schema:1,config:c.hash,project:staffingHash(c.project),definition:c.workflow.sha256}});}};
  function verifyRun(run:any){const binding=signedStaffingBinding(engine,run);if(!binding)throw new QueueRefusal('Historical or changed staffing lacks task approval; propose an explicit configuration upgrade / 舊任務或已變更配置缺少任務核准，請提出配置升級');return verified(run.def,{...run.params,_staffing:binding});}
- const previousAnswer=engine.deps.authorizeAnswer;engine.deps.authorizeAnswer=(run:any,card:any,answer:any)=>{previousAnswer?.(run,card,answer);if(applies(run?.def)&&((card.kind==='scope'&&answer.choice==='retry')||(card.kind==='dispatch'&&answer.choice==='dispatch')))verifyRun(run);};
+ const previousAnswer=engine.deps.authorizeAnswer;engine.deps.authorizeAnswer=(run:any,card:any,answer:any)=>{previousAnswer?.(run,card,answer);if(applies(run?.def)&&((card.kind==='scope'&&answer.choice==='retry')||(card.kind==='dispatch'&&answer.choice==='dispatch')))verifyRun(run);if(applies(run?.def)&&answer.choice==='approve-skill'&&!driftOf(run))throw new Error('Role skill approval is stale: read the current task state');};
+ // The readiness card's way out of env.skill-changed: the captain sees the change (approved pin → new text) and approves it with one click.
+ // Only the changed skill pins are replaced (a new staffing version; providers, models and efforts unchanged), the task is rebound, and the round is prepared again.
+ const SKILL_ACTION='approve-skill';
+ function driftOf(run:any){const binding=signedStaffingBinding(engine,run);return binding?skillDrift(run.def,{...run.params,_staffing:binding}):null;}
+ const previousRecovery=engine.deps.readinessRecovery;
+ engine.deps.readinessRecovery=(x:any,typed:any)=>{if(!applies(x.run?.def)||typed?.code!=='env.skill-changed')return previousRecovery?.(x,typed)??null;const d=driftOf(x.run);if(!d)return null;
+  const detail=d.changed.map((id:string)=>{const pin=d.bound.roles[id].skill;let before:string|null=null;try{before=store.skill(pin,d.project);}catch{}
+   const head=`Role ${id} (${pin.ref}): approved v${pin.version} · ${pin.sha256.slice(0,12)} → now v${d.live[id].version} · ${sha(d.live[id].text).slice(0,12)}`;
+   return before==null?`${head}\n(the approved text is not archived; the new text is in Improve → ${id})`:`${head}\n${unified(before,d.live[id].text,`${id}.md`).slice(0,6000)}`;}).join('\n\n');
+  return{options:[{id:SKILL_ACTION,label:d.rebind?'Use the approved new role skill':'Approve new role skill',labelZh:d.rebind?'改用已核准的新角色技能':'核准新的角色技能'}],detail:`Role skill change / 角色技能變更:\n${detail}`};};
+ const previousAction=engine.deps.readinessAction;
+ engine.deps.readinessAction=(run:any,node:any,rn:any,card:any)=>{if(!applies(run?.def)||card.answer?.choice!==SKILL_ACTION)return previousAction?.(run,node,rn,card)??false;
+  if(!card.captainOnly)throw new Error('Only the captain approves a role skill change');const d=driftOf(run);if(!d)throw new QueueRefusal('Role skill approval is stale: read the current task state');
+  let approved:StaffingConfig=d.current;
+  if(!d.rebind){const answer=engine.ledger(run.id).filter(e=>e.record==='card-answer'&&e.data?.card===card.id).at(-1);if(!answer)throw new Error('The captain answer is not recorded');
+   const{version,previous,approval,hash,signature,...draft}=structuredClone(d.current);const sources:Record<string,string>={};
+   for(const id of Object.keys(draft.roles)){const text=d.live[id].text;if(sha(text)===draft.roles[id].skill.sha256)continue;draft.roles[id]={...draft.roles[id],skill:store.remember({ref:draft.roles[id].skill.ref,version:d.live[id].version,text})};sources[draft.roles[id].skill.ref]=text;}
+   approved=store.approve(draft as StaffingDraft,d.current.hash,{run:run.id,card:card.id,answerSeq:answer.seq},sources);}
+  run.params._staffing=approved.hash;
+  engine.record(engine.x(run,node,rn),'staffing-upgrade',{actor:card.answer.by,data:{schema:1,config:approved.hash,previous:d.binding,card:card.id,node:node.id,visit:rn.visits,attempt:rn.attempt,head:run.ctx.head??null,reason:'role-skill',roles:d.changed}});
+  return true;};
  const previousBinding=engine.deps.staffingBinding;engine.deps.staffingBinding=(run:any)=>applies(run?.def)?verifyRun(run).hash:previousBinding?.(run);
  const previousPick=engine.deps.approvedPick;
  engine.deps.approvedPick=(run:any,node:any,roleOverride?:string)=>{if(!applies(run?.def))return previousPick?.(run,node,roleOverride);const c=verifyRun(run),id=roleOverride??node.role??node.args?.role;const role=c.roles[id];if(!role)throw new Error('Approved agent role is missing');return{provider:role.provider,model:role.model,effort:role.effort};};

@@ -6,6 +6,8 @@ kind: judged
 blocking: false
 needs: [artifact]
 judge:
+  # the spec is the coordinator's own work: a reviewer judges it
+  role: reviewer
   prompt: "Does this spec contain implementation detail: line numbers, function-level steps, or how to code it? Report each such spot with a locator {type: text, section: <field>[<index>]}. Verdict warn if any, else pass."
   quorum: { n: 1, of: 1 }
 params: { type: object, properties: {} }

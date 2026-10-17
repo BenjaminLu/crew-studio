@@ -411,14 +411,17 @@ export class Engine {
   private async queueCapability(x: X, reason: string, cause: unknown = null): Promise<Result> {
     // the readiness card keeps its retry / close actions; the typed failure says which class stopped the round (login, quota, overlap, staffing …)
     const typed = fromError(cause ?? new Error(reason), { source: "queue", run: x.run.id, node: x.node.id, visit: x.visit });
-    x.rn.data.nativeQueueCapability = { version: 1, reason, retryAction: "retry", closeAction: "close" };
+    // a domain may offer one more captain action for this failure (staffing: approve a changed role skill), with what the captain approves
+    let extra: { options: { id: string; label: string; labelZh: string }[]; detail?: string } | null = null;
+    try { extra = this.deps.readinessRecovery?.(x, typed) ?? null; } catch (e: any) { x.log(`readiness recovery option unavailable: ${e?.message ?? e}`); }
+    x.rn.data.nativeQueueCapability = { version: 1, reason, retryAction: "retry", closeAction: "close", ...(extra?.options.length ? { extraActions: extra.options.map((o) => o.id) } : {}) };
     const scope = Array.isArray(x.ctx.spec?.scope) ? x.ctx.spec.scope.map(String) : [];
     const project = this.queueProject(x.run), repo = this.queueRepo(x.ctx.repo) || "artifact workflow"; let dependencies: string[] = []; try { dependencies = this.queueDependencies(x.run); } catch {}
     const zhReason = /dependency (R-\d+)/.test(reason) ? `依賴 ${/dependency (R-\d+)/.exec(reason)![1]} 尚未取得可驗證的合併證據。` : /scope held by (R-\d+)/.test(reason) ? `範圍與 ${/scope held by (R-\d+)/.exec(reason)![1]} 重疊；必須等待該任務完成可驗證的合併。` : /capacity.*full/.test(reason) ? "目前的實際執行回合已達容量上限。" : /deadline/.test(reason) ? "等待時間已到，請核准重新準備或關閉任務。" : /role skill \S+ changed since staffing approval/i.test(reason) ? "角色技能在派工核准後已變更；請先確認新的技能內容，再重新確認人員配置。" : /historical|binding|scope pin|dispatch/.test(reason) ? "此回合缺少有效的核准範圍或依賴綁定；請重新確認範圍並核准準備。" : /capacity|wait_timeout/.test(reason) ? "排隊容量或等待期限設定無效；必須先修正設定。" : /model|effort/.test(reason) ? "已設定的模型或推理強度尚未驗證為可用；請保留設定並先完成驗證。" : /provider|capability|login|quota/.test(reason) ? "目前沒有登入、額度與模型皆完成驗證的可用供應商；回合尚未啟動。" : "回合的執行權或驗證資料尚未確認，不能開始工作。";
     const c = await this.card(x, "scope", { captainOnly: true, title: "Round is not ready", zhTitle: "回合尚未就緒",
-      en: { why: reason, how: "Resolve the readiness issue, then approve fresh preparation or close this task.", scope: { in: [...scope, `Project: ${project}`, `Repository: ${repo}`, ...dependencies.map(id => `Dependency: ${id}`)], out: [] } },
+      en: { why: extra?.detail ? `${reason}\n\n${extra.detail}` : reason, how: "Resolve the readiness issue, then approve fresh preparation or close this task.", scope: { in: [...scope, `Project: ${project}`, `Repository: ${repo}`, ...dependencies.map(id => `Dependency: ${id}`)], out: [] } },
       zh: { why: zhReason, how: "先排除等待原因，再核准重新準備；也可以關閉任務。", scope: { in: [...scope, `專案：${project}`, `儲存庫：${repo === "artifact workflow" ? "產物工作流程" : repo}`, ...dependencies.map(id => `依賴：${id}`)], out: [] } },
-      options: [{ id: "retry", label: "Approve fresh preparation", labelZh: "核准重新準備" }, { id: "close", label: "Close task", labelZh: "關閉任務", hold: true }], failure: typed });
+      options: [...(extra?.options ?? []), { id: "retry", label: "Approve fresh preparation", labelZh: "核准重新準備" }, { id: "close", label: "Close task", labelZh: "關閉任務", hold: true }], failure: typed });
     return { wait: true, note: `readiness recovery card ${c.id}` };
   }
 
@@ -949,7 +952,12 @@ export class Engine {
   }
   /** The role a judged check is judged as: the role its check.yaml names (judge.role), else the role of the node it sits on, else (a node with no role) the designer for a check named for one, else the reviewer. */
   judgeRole(x: X, man: CheckManifest): string {
-    const declared = man.judge?.role; if (typeof declared === "string" && declared) return declared;
+    const declared = man.judge?.role;
+    if (typeof declared === "string" && declared) {
+      // a declared role must be one of the workflow's roles: its skill is the judge's instructions
+      if (x.run?.def?.roles && !x.run.def.roles.some((r) => r.id === declared)) throw new Error(`check ${man.ref} judges as role "${declared}", which workflow ${x.run.def.id} does not define (roles: ${x.run.def.roles.map((r) => r.id).join(", ") || "none"})`);
+      return declared;
+    }
     const own = x.node?.role ?? x.node?.args?.role;
     if (own && x.run?.def?.roles?.some((r) => r.id === own)) return own;
     return man.id.includes("designer") ? "designer" : "reviewer";
@@ -1135,8 +1143,14 @@ export class Engine {
       else if (r.nodes[eff.node]) { r.nodes[eff.node].extra += eff.add; this.emit(r, "budget", `${eff.node}: ${eff.add} more visits`, { node: eff.node }); }
     }
     const step = [...r.steps].reverse().find((s) => s.node === node.id && s.state === "waiting");
-    if ((node.kind === "agent" || node.kind === "loop") && rn.data.nativeQueueCapability && c.answer!.choice === rn.data.nativeQueueCapability.retryAction) {
+    const hold = (node.kind === "agent" || node.kind === "loop") ? rn.data.nativeQueueCapability : null;
+    if (hold && (c.answer!.choice === hold.retryAction || (Array.isArray(hold.extraActions) && hold.extraActions.includes(c.answer!.choice)))) {
       if (!this.owns(this.x(r, node, rn))) throw new Error("readiness recovery owner ended");
+      // a domain action (e.g. approve a changed role skill) applies first, once per card, then the round is prepared again like a retry
+      if (c.answer!.choice !== hold.retryAction && !r.ctx.recoveryApplied?.includes(c.id)) {
+        if (!this.deps.readinessAction?.(r, node, rn, c)) throw new Error(`no handler for readiness action ${c.answer!.choice}`);
+        r.ctx.recoveryApplied = [...(r.ctx.recoveryApplied ?? []), c.id];
+      }
       r.ctx.nativeQueueVersion = 1; delete rn.data.nativeQueue; delete rn.data.nativeQueueCapability;
       if (step) { step.state = "passed"; step.outcome = "retry"; step.endedAt = now(); }
       rn.waiting = null; rn.card = null; rn.state = "pending"; rn.cause = `fresh preparation approved by ${c.id}`;

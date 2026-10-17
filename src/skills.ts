@@ -28,17 +28,33 @@ import { bundledBytes, bundledList } from "./bundled";
 import { copyUntrusted, realInside, scrubEnv } from "./secure";
 import { fmtSize, SKILL_NODE_CAP } from "./runtime/defs";
 
-/** source256: the hash of the source text this version derives from (an import: its own text; an edit: its parent's source). */
-export type SkillVersion = { n: number; sha256: string; parent: number | null; by: string; reason: string; edit: string | null; createdAt: string; lines: number; source256?: string };
+/** source256: the hash of the source text this version derives from (an import: its own text; an edit: its parent's source).
+ *  sourceRef: the source it was imported from (an import), so a refresh only follows that same source. */
+export type SkillVersion = { n: number; sha256: string; parent: number | null; by: string; reason: string; edit: string | null; createdAt: string; lines: number; source256?: string; sourceRef?: string };
 const SAFE = /^[a-z0-9][a-z0-9-]{0,40}$/;
 const sha = (t: string) => createHash("sha256").update(t).digest("hex");
 
 export class Skills {
-  /** a second source of role skills (the v2 workflow definitions' roles), consulted after the flows */
+  /** a second source of role skills (the v2 workflow definitions' roles); when it knows the role it wins over the flows, as the runtime reads it */
   extraSource: ((wf: string, role: string) => { text: string; source: string } | null) | null = null;
   constructor(readonly dataDir: string, readonly flows: Pick<Workflows, "list" | "get" | "sourceSkill">) {}
   private dir(wf: string, role: string) { if (!SAFE.test(wf) || !SAFE.test(role)) throw new Error("bad workflow or role id"); return join(this.dataDir, "skills", wf, role); }
-  index(wf: string, role: string): SkillVersion[] { try { return JSON.parse(readFileSync(join(this.dir(wf, role), "index.json"), "utf8")); } catch { return []; } }
+  /** The versions; none when the role was never used. An index that exists but cannot be read is an error, never "no versions" (that would import over v1). */
+  index(wf: string, role: string): SkillVersion[] {
+    const f = join(this.dir(wf, role), "index.json"); if (!existsSync(f)) return [];
+    let v: unknown; try { v = JSON.parse(readFileSync(f, "utf8")); } catch (e: any) { throw new Error(`skill ${wf}/${role}: index.json cannot be read (${e?.message ?? e}); nothing was imported over it`); }
+    if (!Array.isArray(v)) throw new Error(`skill ${wf}/${role}: index.json is not a list of versions; nothing was imported over it`);
+    return v as SkillVersion[];
+  }
+  /** The role's source, resolved the way the runtime resolves it: the workflow definition's role first, else the legacy flow. */
+  source(wf: string, role: string): { text: string; source: string } | null {
+    try { return this.extraSource?.(wf, role) ?? this.flows.sourceSkill(wf, role) ?? null; } catch { return null; }
+  }
+  /** Walk from a version up its parents to the import it derives from. */
+  private importOf(idx: SkillVersion[], v: SkillVersion | undefined): SkillVersion | null {
+    for (let at = v, hops = 0; at && hops <= idx.length; hops++) { if (at.by === "import") return at; at = idx.find((x) => x.n === at!.parent); }
+    return null;
+  }
   /** The source text a version derives from: recorded on new versions; for older records, the nearest import up its parents. */
   sourceOf(idx: SkillVersion[], v: SkillVersion | undefined): string | null {
     for (let at = v, hops = 0; at && hops <= idx.length; hops++) {
@@ -48,28 +64,44 @@ export class Skills {
     }
     return null;
   }
-  /** Import v1 from the source the first time a role is used; import the source again when it changed under an imported current version. */
+  /** The source ref a version derives from (an older import names it only in its reason). */
+  refOf(idx: SkillVersion[], v: SkillVersion | undefined): string | null {
+    const imp = this.importOf(idx, v); if (!imp) return null;
+    return imp.sourceRef ?? /^(?:imported|refreshed) from (\S+?):?(?:\s|$)/.exec(imp.reason)?.[1] ?? null;
+  }
+  /**
+   * Import v1 from the source the first time a role is used. Later, the source is imported again only when the
+   * current version is an unedited import and either (a) the same source ref now has other text, or (b) the runtime
+   * passes the ref source() also resolves and the recorded one differs: a one-way move to the source the runtime reads.
+   * A read without a source never moves the ref and a source with any other ref writes nothing, so two readers with
+   * two refs never add versions in turn.
+   */
   ensure(wf: string, role: string, given?: { text: string; source: string } | null): SkillVersion[] {
     const idx = this.index(wf, role);
-    const src = given ?? (() => { try { return this.flows.sourceSkill(wf, role) ?? this.extraSource?.(wf, role) ?? null; } catch { return null; } })();
+    const preferred = this.source(wf, role);
+    const src = given ?? preferred;
     if (!idx.length) {
       if (!src) throw new Error(`no skill source for ${wf}/${role}`);
-      this.write(wf, role, src.text, { by: "import", reason: `imported from ${src.source}`, edit: null, parent: null, source256: sha(src.text) });
+      this.write(wf, role, src.text, { by: "import", reason: `imported from ${src.source}`, edit: null, parent: null, source256: sha(src.text), sourceRef: src.source });
       return this.index(wf, role);
     }
     const cur = idx.at(-1)!;
-    if (src && src.text.trim() && this.sourceOf(idx, cur) !== sha(src.text) && cur.by === "import") {
-      this.write(wf, role, src.text, { by: "import", reason: `refreshed from ${src.source}: the source changed after v${cur.n}`, edit: null, parent: cur.n, source256: sha(src.text) });
+    if (!src || !src.text.trim() || cur.by !== "import") return idx;
+    const recorded = this.refOf(idx, cur);
+    const sameSource = recorded === src.source && this.sourceOf(idx, cur) !== sha(src.text);
+    const toRuntimeSource = !!given && !!preferred && given.source === preferred.source && recorded !== preferred.source;
+    if (sameSource || toRuntimeSource) {
+      this.write(wf, role, src.text, { by: "import", reason: `refreshed from ${src.source}: ${sameSource ? "the source changed" : "the source the runtime reads"} after v${cur.n}`, edit: null, parent: cur.n, source256: sha(src.text), sourceRef: src.source });
       return this.index(wf, role);
     }
     return idx;
   }
   /** The text agents receive for a role (the current version, refreshed from its source first), with its version and hash.
-   *  sourceChanged: an adopted edit is current and the source changed after it was made. */
+   *  sourceChanged: an adopted edit is current and its source changed after it was made. */
   current(wf: string, role: string, src?: { text: string; source: string } | null): { n: number; sha256: string; text: string; sourceChanged: boolean } {
     const idx = this.ensure(wf, role, src); const cur = idx.at(-1)!;
-    const live = src ?? (() => { try { return this.flows.sourceSkill(wf, role) ?? this.extraSource?.(wf, role) ?? null; } catch { return null; } })();
-    return { n: cur.n, sha256: cur.sha256, text: this.text(wf, role, cur.n), sourceChanged: !!live && this.sourceOf(idx, cur) !== sha(live.text) };
+    const live = src ?? this.source(wf, role);
+    return { n: cur.n, sha256: cur.sha256, text: this.text(wf, role, cur.n), sourceChanged: !!live && this.refOf(idx, cur) === live.source && this.sourceOf(idx, cur) !== sha(live.text) };
   }
   text(wf: string, role: string, n?: number): string {
     const known = this.index(wf, role); const idx = known.length && n != null ? known : this.ensure(wf, role); const v = n ?? idx.at(-1)!.n;
@@ -78,13 +110,18 @@ export class Skills {
     if (rec && sha(t) !== rec.sha256) throw new Error(`skill ${wf}/${role} v${v} changed on disk since it was recorded`);
     return t;
   }
-  write(wf: string, role: string, text: string, o: { by: string; reason: string; edit: string | null; parent: number | null; source256?: string }): SkillVersion {
+  /** A new version: its text file is created once (never overwritten), then the index is replaced atomically. */
+  write(wf: string, role: string, text: string, o: { by: string; reason: string; edit: string | null; parent: number | null; source256?: string; sourceRef?: string }): SkillVersion {
     const d = this.dir(wf, role); mkdirSync(d, { recursive: true });
-    const idx = this.index(wf, role); const n = (idx.at(-1)?.n ?? 0) + 1;
-    writeFileSync(join(d, `v${n}.md`), text);
-    const source256 = o.source256 ?? this.sourceOf(idx, idx.find((x) => x.n === o.parent)) ?? undefined;
-    const v: SkillVersion = { n, sha256: sha(text), parent: o.parent, by: o.by, reason: o.reason, edit: o.edit, createdAt: new Date().toISOString(), lines: text.split("\n").length, ...(source256 ? { source256 } : {}) };
-    writeFileSync(join(d, "index.json"), JSON.stringify([...idx, v], null, 1));
+    const idx = this.index(wf, role);
+    // a version file no index names (a crash between the two writes) is kept: the new version takes the next free number
+    let n = (idx.at(-1)?.n ?? 0) + 1; while (existsSync(join(d, `v${n}.md`))) n++;
+    writeFileSync(join(d, `v${n}.md`), text, { flag: "wx" });
+    const parent = idx.find((x) => x.n === o.parent);
+    const source256 = o.source256 ?? this.sourceOf(idx, parent) ?? undefined;
+    const v: SkillVersion = { n, sha256: sha(text), parent: o.parent, by: o.by, reason: o.reason, edit: o.edit, createdAt: new Date().toISOString(), lines: text.split("\n").length, ...(source256 ? { source256 } : {}), ...(o.sourceRef ? { sourceRef: o.sourceRef } : {}) };
+    const tmp = join(d, `index.json.${randomBytes(4).toString("hex")}.tmp`);
+    writeFileSync(tmp, JSON.stringify([...idx, v], null, 1), { flag: "wx" }); renameSync(tmp, join(d, "index.json"));
     return v;
   }
   /** Every role of every workflow, with how many Studio versions it has (none until first use). */
