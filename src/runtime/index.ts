@@ -71,6 +71,8 @@ export type RuntimeDeps = {
   staffingAdmission?: StaffingAdmission;
   staffingProject?: (id:string) => StaffingProject;
   staffingPending?: (intent:any) => void;
+  /** the captain approved a crew Firstmate proposed: tell Firstmate, so it proposes the work (still captain-approved) */
+  staffingApproved?: (a: import('../firstmate-staffing').StaffingApproved) => void;
 
   selectProvider?: (x: import("./engine").X, pick: AgentPick, context?: { role: string; explicit: boolean }) => Promise<Provider>;
   /** the readiness gate (src/readiness): false inside the gate's own dry run */
@@ -130,7 +132,7 @@ export function createRuntime(d: RuntimeDeps) {
     if(role.provider==='claude'&&cap?.support==='supported'&&cap.auth==='verified'&&cap.expires>Date.now())return{state:'blocked' as const,role:id,reason:{en:`The ${id} role's Claude ${role.model} is signed in but not verified by a bounded request. Verify it with Firstmate, then Start.`,zh:`${id} 角色的 Claude ${role.model} 已登入，但尚未經有限請求驗證；請先和 Firstmate 驗證，再按開始。`}};
     return{state:'blocked' as const,role:id,reason:{en:`The ${id} role's ${role.provider} ${role.model} is not available now${cap?.reason?` (${cap.reason})`:''}. Check the account, then refresh.`,zh:`${id} 角色的 ${role.provider} ${role.model} 目前不可用；請確認帳號後重新整理。`}};}
    return{state:'ready' as const};};
-  const staffingTools=installFirstmateStaffing(engine,staffing,staffingProject,staffingFacts,d.staffingAdmission);
+  const staffingTools=installFirstmateStaffing(engine,staffing,staffingProject,staffingFacts,d.staffingAdmission,a=>d.staffingApproved?.(a));
   // Board start of a project-staffed workflow (code-firstmate): the approved configuration of the chosen registered
   // project, the same one Firstmate's dispatch binds. Never a bypass: the staffing guard still verifies it at start.
   const boardStaffed=(def:any)=>!!def&&staffingGuard.applies(def)&&def.kind!=='coffee-kit';
