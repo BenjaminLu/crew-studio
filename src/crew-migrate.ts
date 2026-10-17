@@ -38,6 +38,7 @@ export function migrateCrew(dataDir:string,defs:{get(id:string,v?:number):any}):
    const o:NodeOverride={at:{role:slot.role,kind:slot.kind}};if(row.provider!==pick.provider)o.provider=pick.provider;if(row.model!==pick.model)o.model=pick.model;if(row.effort!==pick.effort)o.effort=pick.effort;
    if(Object.keys(o).length>1){nodes[slot.node]=o;overrides.push(`${def.id}/${slot.node}`);}}
   if(Object.keys(nodes).length)team.workflows[def.id]={nodes};}
- const written=crew.write(team,null,{by:'migration',via:'migration',run:c.approval.run,card:c.approval.card});
+ // the seed record is the team version itself (by migration); it never cites a project's staffing card as its own approval
+ const written=crew.write(team,null,{by:'migration',via:'migration'});
  return{status:'seeded',version:written.version,from:{project:c.project.id,workflow:c.workflow.id,version:c.workflow.version},overrides};
 }

@@ -1002,8 +1002,12 @@ function staffingConfirm(staffing,missing){
     const close=v=>{dlg.close();dlg.remove();resolve(v);};
     dlg.append(h("h2",{},missing?T("Choose who works on each node","請先選擇每個節點的人員"):T("Confirm staffing before this Task starts","開始任務前確認人員配置")),
       h("p",{},missing?T("These agent nodes still need a provider, model and (for Codex) effort. Select the node in the editor to choose.","這些代理節點還需要供應商、模型與（Codex）推理強度；請在編輯器選取節點設定。"):T("Only your confirmation starts the Task. Each node below runs with exactly this provider, model, effort and skill.","只有你的確認會開始任務；以下每個節點將完全依照這些供應商、模型、推理強度與技能執行。")),
-      h("table",{class:"fw-staffing"},h("thead",{},h("tr",{},[T("Node","節點"),T("Provider","供應商"),T("Model","模型"),T("Effort","推理強度"),T("Skill","技能")].map(x=>h("th",{},x)))),
-        h("tbody",{},staffing.plan.map(r=>h("tr",{"data-staffing-row":r.node,class:staffing.missing.includes(r.node)?"missing":null},h("td",{},r.label),h("td",{},r.provider||"—"),h("td",{},r.model||"—"),h("td",{},r.effort||"—"),h("td",{},r.skill?skillName(r.skill):"—"))))),
+      // with a Studio team each row is what will run: the member, the final pick, every skill with its version, where it comes from and any team rule note
+      h("table",{class:"fw-staffing"},h("thead",{},h("tr",{},[T("Node","節點"),T("Provider","供應商"),T("Model","模型"),T("Effort","推理強度"),T("Skill","技能"),...(staffing.team!==undefined?[T("Source","來源")]:[])].map(x=>h("th",{},x)))),
+        h("tbody",{},staffing.plan.flatMap(r=>[h("tr",{"data-staffing-row":r.node,class:staffing.missing.includes(r.node)?"missing":null},h("td",{},r.label,r.seat?h("div",{class:"faint","data-staffing-seat":r.seat},r.judge?T(`check · ${r.seat}`,`檢查 · ${r.seat}`):r.seat):null),h("td",{},r.provider||"—"),h("td",{},r.model||"—"),h("td",{},r.effort||(r.provider==="claude"?T("default","預設"):"—")),
+          h("td",{"data-staffing-skills":r.node},[r.skill?skillName(r.skill):null,...(r.skills||[]).map(p=>`${p.id}@v${p.v}${p.from==="member"?T(" (member)","（成員）"):""}`)].filter(Boolean).join(", ")||"—"),
+          ...(staffing.team!==undefined?[h("td",{"data-staffing-source":r.source},{team:T("Team","跟團隊"),workflow:T("Custom here","這裡自訂"),definition:T("Workflow sets it","流程設定"),run:T("This run","這次"),missing:T("Missing","缺人")}[r.source]||r.source)]:[])),
+          ...(r.notes||[]).map(n=>h("tr",{class:"fw-staffing-note","data-staffing-note":r.node},h("td",{colspan:6},T(n.en,n.zh))))]))),
       claudeVerificationDisclosure(staffing.claudeVerification),
       h("div",{class:"actions"},h("button",{class:"btn",type:"button","data-staffing-cancel":"",onclick:()=>close(false)},missing?T("Close","關閉"):T("Cancel, no Task","取消，不開始")),missing?null:h("button",{class:"btn primary",type:"button","data-staffing-approve":"",onclick:()=>close(true)},T("Confirm staffing and start","確認配置並開始"))));
     dlg.addEventListener("cancel",e=>{e.preventDefault();close(false);});

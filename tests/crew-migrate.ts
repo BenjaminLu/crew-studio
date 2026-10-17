@@ -35,7 +35,7 @@ try {
   const before = readdirSync(fixture).sort().join();
   const m1 = migrateCrew(data, defs);
   const team = new CrewStore(data).current()!;
-  ok(m1.status === "seeded" && m1.from?.project === "shop" && team.approval.via === "migration" && team.approval.run === "R-7", "the most recent approved code-firstmate staffing seeds the team", JSON.stringify(m1));
+  ok(m1.status === "seeded" && m1.from?.project === "shop" && team.approval.via === "migration" && team.approval.run === undefined && team.approval.card === undefined, "the most recent approved code-firstmate staffing seeds the team", JSON.stringify(m1));
   ok(team.members.maker.model === "gpt-6.1-sol" && team.members.reviewer.model === "opus-5.5" && team.members["design-reviewer"].model === "gpt-6-astra" && team.members.coordinator.provider === "claude", "roles become seats: worker → maker, reviewer, designer → design-reviewer, coordinator", JSON.stringify(team.members));
   ok(team.members["alt-maker"].model !== team.members.maker.model, "the second maker is on another model than the maker", team.members["alt-maker"].model);
   const gr = team.workflows["github-review"]?.nodes ?? {};

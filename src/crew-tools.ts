@@ -4,9 +4,9 @@
 // added), with a suggestion filtered by the capabilities the seat needs; when no model qualifies, the card says which
 // capability is missing and where to add an account, and offers nothing to approve.
 import {createHash} from 'node:crypto';
-import {CrewStore,resolveCrew,applyChange,validateChange,changeImpact,crewBadge,teamBody,emptyTeam,slotsOf,declaredSeats,seatLabel,seatUses,capabilitiesOf,CAP_LABELS,BUILTIN_SEATS,EFFORTS,type CrewChange,type Team,type SeatDecl,type Member} from './domain/crew';
+import {withJudges,CrewStore,resolveCrew,applyChange,validateChange,changeImpact,crewBadge,teamBody,emptyTeam,slotsOf,declaredSeats,seatLabel,seatUses,capabilitiesOf,CAP_LABELS,BUILTIN_SEATS,EFFORTS,type CrewChange,type Team,type SeatDecl,type Member} from './domain/crew';
 import {staffingApplies,staffingHash} from './domain/staffing';
-import {crewApplies} from './crew-guard';
+import {crewApplies,judgeSlots} from './crew-guard';
 import {crewWorkflows} from './crew-routes';
 import {withRoleNodes} from './crew-staffing';
 import {NativeToolFailure,type NativeMainTools} from './host/types';
@@ -134,7 +134,7 @@ export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Prom
     if(args.change!==undefined){let c:CrewChange;try{validateChange(args.change);c=args.change;}catch(e:any){throw new NativeToolFailure('crew_change_invalid',`This change is malformed: ${e?.message??e}`,'這個變更格式不對。','read_current_state');}
      let after:Team;try{after=applyChange(team,c,c.kind==='node'?engine.defs.get(c.workflow):undefined);}catch(e:any){throw new NativeToolFailure('crew_change_invalid',`This change does not apply: ${e?.message??e}`,'這個變更無法套用。','read_current_state');}
      const impact=changeImpact(team,after,wfs);return{...base,hypothetical:true,change:describeChange(c,team,c.kind==='node'?engine.defs.get(c.workflow):undefined).en,reaches:impact,count:impact.length,note:'Nothing changed. To make it, call studio_propose_crew_change with the same change (the captain approves it on a card).'};}
-    if(typeof args.workflow==='string'){const def=wfs.find(d=>d.id===args.workflow);if(!def)throw new NativeToolFailure('workflow_missing',`No workflow ${args.workflow} with agent nodes; read studio_list_workflows.`,'沒有這個有 agent 節點的 workflow。','list_workflows');const res=resolveCrew(team,def,{},cfg?.hash??null);return{...base,workflow:{id:def.id,name:def.name,version:def.version,badge:crewBadge(res),missing:res.missing,nodes:res.nodes.filter(r=>!args.diff||r.custom||r.source==='missing').map(r=>view(r,team))}};}
+    if(typeof args.workflow==='string'){const def=wfs.find(d=>d.id===args.workflow);if(!def)throw new NativeToolFailure('workflow_missing',`No workflow ${args.workflow} with agent nodes; read studio_list_workflows.`,'沒有這個有 agent 節點的 workflow。','list_workflows');const res=resolveCrew(team,withJudges(def,judgeSlots(engine,def)),{},cfg?.hash??null);return{...base,workflow:{id:def.id,name:def.name,version:def.version,badge:crewBadge(res),missing:res.missing,nodes:res.nodes.filter(r=>!args.diff||r.custom||r.source==='missing').map(r=>view(r,team))}};}
     if(typeof args.member==='string'){if(!ID.test(args.member))throw new NativeToolFailure('invalid_params','member is a seat id (maker, reviewer …)','member 是位置 id。','read_current_state');return{...base,member:args.member,nodes:seatUses(team,args.member,wfs)};}
     const all=wfs.map(def=>{const res=resolveCrew(team,def,{},cfg?.hash??null);return{id:def.id,name:def.name,version:def.version,badge:crewBadge(res),missing:res.missing,...(args.diff?{differs:res.nodes.filter(r=>r.custom||r.source==='missing').map(r=>view(r,team))}:{})};});
     return{...base,workflows:args.diff?all.filter(w=>w.badge.state!=='team'):all};}

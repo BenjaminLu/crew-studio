@@ -41,7 +41,7 @@ try {
   const c1 = cs.ensure(def, project)!;
   ok(c1?.crew?.team === t1.hash && c1.roles.worker.model === "gpt-6.1-sol" && c1.roles.reviewer.model === "opus-5.5" && c1.roles.designer.model === "gpt-6-astra" && c1.roles.coordinator.provider === "claude",
     "the team covers code-firstmate: the project's staffing is derived (roles take their seats' members)", JSON.stringify(c1?.roles && Object.fromEntries(Object.entries(c1.roles).map(([k, r]: any) => [k, r.model]))));
-  ok(c1.approval.run === `crew-v${t1.version}` && c1.version === 1, "the derived version cites the team version it came from");
+  ok(c1.approval.run === "crew-page" && c1.approval.card === `crew-team-v${t1.version}-${t1.hash.slice(0, 12)}` && c1.version === 1, "a team changed on the Crew page: the derived version cites that team version, no card", JSON.stringify(c1.approval));
   ok(c1.nodes?.build?.skills?.map((p: any) => p.ref).join() === "skill:plain-writing" && c1.nodes?.review?.skills?.map((p: any) => p.ref).join() === "skill:code-review,skill:plain-writing", "member skills reach their nodes as pinned node skills", JSON.stringify(c1.nodes));
   ok(cs.ensure(def, project)!.hash === c1.hash, "deriving again with nothing changed writes nothing");
   ok((guard.verified(def, { project: "shop", _staffing: c1.hash }) as any).hash === c1.hash, "the staffing guard accepts the derived version (it re-derives it from the signed team)");
@@ -76,8 +76,15 @@ try {
     const own = staffing.approve({ ...body, project: legacy, roles: { ...body.roles, reviewer: { ...body.roles.reviewer, effort: "low" } } }, null, { run: "R-9", card: "SC-9", answerSeq: 1 });
     const seeded = crew.write(C.teamBody(crew.current()!), crew.current()!.hash, { by: "migration", via: "migration" });
     ok(cs.ensure(def2, legacy)!.hash === own.hash, "a seeded team keeps a project's own still-valid approval: deploying never restaffs it");
+    const ownCard = own.approval.card;
+    { const viaSeed = (await import("../src/crew-staffing")).crewApproval(seeded);
+      ok(viaSeed.card !== ownCard && viaSeed.run === "crew-migration" && viaSeed.card.startsWith(`crew-team-v${seeded.version}-`), "a seeded team's derived staffing cites the seed record, never another project's card", JSON.stringify(viaSeed)); }
     crew.write(C.teamBody(seeded), seeded.hash, { by: "captain", via: "page" });
     ok(cs.ensure(def2, legacy)!.crew?.team === crew.current()!.hash, "once the captain changes the team, that project's staffing comes from the team"); }
+  // a team change approved on a crew card: the derived staffing cites that card and its run
+  { const viaCard = crew.write(C.teamBody(crew.current()!), crew.current()!.hash, { by: "captain (card)", via: "card", card: "SC-77", run: "R-77", answerSeq: 5 });
+    const c = cs.ensure(def2, project)!;
+    ok(c.crew?.team === viaCard.hash && c.approval.card === "SC-77" && c.approval.run === "R-77" && c.approval.answerSeq === 5, "a team change approved on a card: the derived staffing cites that card", JSON.stringify(c.approval)); }
   // the old staffing tools map cleanly: the interview says the team staffs it (approved and valid); proposing staffing points to a crew change
   { const facts = [{ provider: "codex", support: "supported", auth: "verified", quota: "available", expires: Date.now() + 200000, models: [{ id: "gpt-6.1-sol", efforts: ["low", "medium", "high", "xhigh"] }, { id: "gpt-6-astra", efforts: ["low", "medium", "high"] }] },
       { provider: "claude", support: "supported", auth: "verified", quota: "available", expires: Date.now() + 200000, models: [{ id: "opus-5.5", efforts: ["low", "medium", "high", "xhigh"] }, { id: "sonnet-5.5", efforts: ["medium", "high"] }] }];

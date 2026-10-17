@@ -12,8 +12,8 @@ import {installGitHubReviewWorkflow} from '../domain/github-review-workflow';
 import {Onboarding} from '../onboarding';
 import {ArtifactStore,websiteHref} from '../artifacts';
 import {StaffingStore,staffingHash,installStaffingGuard,coffeeStaffingProject,staffingApplies,staffedCapability,type StaffingProject} from '../domain/staffing';
-import {CrewStore} from '../domain/crew';
-import {installCrewGuard} from '../crew-guard';
+import {CrewStore,resolveCrew,teamBody,withJudges} from '../domain/crew';
+import {installCrewGuard,judgeSlots} from '../crew-guard';
 import {installCrewStaffing} from '../crew-staffing';
 import {migrateCrew} from '../crew-migrate';
 import {crewRoutes} from '../crew-routes';
@@ -149,8 +149,10 @@ export function createRuntime(d: RuntimeDeps) {
   const crewStaffing=installCrewStaffing(engine,staffing,crewStore);
   const staffingGuard=installStaffingGuard(engine,staffing,staffingProject,staffingCapability,(def,config)=>crewStaffing.verify(def,config));
   const crewGuard=installCrewGuard(engine,crewStore);
+  // a captain's own workflow confirms at Run exactly the crew its Task will record (the guard's own resolution, judges included)
+  defs.ownCrew=(def:any)=>{const t=crewStore.current();return t?resolveCrew(teamBody(t),withJudges(def,judgeSlots(engine,def)),{},t.hash):null;};
   const crewTools=installCrewTools(engine,crewStore,{facts:staffingFacts as any,send:d.send});
-  const crewApi=crewRoutes({defs,store:crewStore,facts:()=>staffingCapabilities,refreshFacts:staffingFacts,library:()=>engine.skillLibrary().library()});
+  const crewApi=crewRoutes({judges:def=>judgeSlots(engine,def),defs,store:crewStore,facts:()=>staffingCapabilities,refreshFacts:staffingFacts,library:()=>engine.skillLibrary().library()});
   /** The project's staffing from the team, when the team covers this workflow (null: the per-project staffing flow applies). */
   const teamStaffing=(def:any,projectId:string)=>{if(!staffingApplies(def))return null;const project=def.kind==='coffee-kit'?coffeeStaffingProject(projectId):staffingProject(projectId);return crewStaffing.ensure(def,project);};
   /** The Start form's readiness of an approved crew, from free probes only (the Codex probe, Claude auth status).
@@ -180,7 +182,7 @@ export function createRuntime(d: RuntimeDeps) {
   const firstmate={specs:[...originalFirstmate.specs,...staffingTools.specs,...draftTools.specs,...crewTools.specs],call:(name:string,args:any,owner:any)=>crewTools.specs.some(spec=>spec.name===name)?crewTools.call(name,args,owner):draftTools.specs.some(spec=>spec.name===name)?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_keep_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
   // the captain's own workflows start only with the staffing the captain confirmed at Run (never at drafting)
   const previousOwnStart=engine.deps.authorizeStart;
-  engine.deps.authorizeStart=(def:any,o:any)=>{previousOwnStart?.(def,o);if(ownWorkflow(def)){const s=ownStaffingPlan(def);if(s.plan.length&&(s.missing.length||o.params?._ownStaffing!==s.hash))throw new Error('Confirm staffing for every agent node when you click Run / 請在按下執行時確認每個代理節點的配置');}};
+  engine.deps.authorizeStart=(def:any,o:any)=>{previousOwnStart?.(def,o);if(ownWorkflow(def)){const s=ownStaffingPlan(def,defs.ownCrew);if(s.plan.length&&(s.missing.length||o.params?._ownStaffing!==s.hash))throw new Error('Confirm staffing for every agent node when you click Run / 請在按下執行時確認每個代理節點的配置');}};
   const ownClaude=installOwnClaudeGrants(engine);
   const githubReview=installGitHubReviewWorkflow(engine,projects,d.dataDir,d.protectedRoots??[]);
   installReadinessViews(engine);
@@ -349,8 +351,8 @@ export function createRuntime(d: RuntimeDeps) {
           if(typeof params[key]==='string'&&params[key].trim()===''){params[key]='';continue;} // blank means the declared default (file-organization: a sample folder)
           if(typeof params[key]!=='string'||spec.pattern&&!new RegExp(spec.pattern).test(params[key]))return refuse({error:`Invalid workflow input / 流程輸入格式不正確: ${key}`,code:'param_invalid',params:[key]},400,'invalid-input.params');
         }
-        if(ownWorkflow(chosenDef)&&ownStaffingPlan(chosenDef!).plan.length){ // nothing to staff: a card-only workflow just starts
-          const staffing={...ownStaffingPlan(chosenDef!),claudeVerification:ownClaudePlan(chosenDef)};
+        if(ownWorkflow(chosenDef)&&ownStaffingPlan(chosenDef!,defs.ownCrew).plan.length){ // nothing to staff: a card-only workflow just starts
+          const staffing={...ownStaffingPlan(chosenDef!,defs.ownCrew),claudeVerification:ownClaudePlan(chosenDef,defs.ownCrew)};
           if(staffing.missing.length)return refuse({error:'Choose a provider, model and (for Codex) effort for every agent node before Run / 執行前請為每個代理節點選擇供應商、模型與（Codex）推理強度',code:'staffing_incomplete',staffing},409,"env.staffing");
           if(b?.staffingConfirm!==staffing.hash||(staffing.claudeVerification&&hashInput({value:b?.claudeVerification??null})!==hashInput({value:staffing.claudeVerification})))return refuse({error:'Confirm who works on each node before this Task starts / 開始任務前請確認每個節點的人員配置',code:'staffing_confirmation_required',staffing},409,"env.staffing");
           params._ownStaffing=staffing.hash;

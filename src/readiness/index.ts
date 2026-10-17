@@ -105,7 +105,7 @@ export function installReadiness(d: ReadinessDeps) {
     const key = gateKeyForWorkflow(id, def.version); const r = gate.read(key, def);
     if (!gatePassed(r)) return json({ error: "Stages 1-4 must pass on this version first / 這個版本需先通過前四關", code: "gate_not_passed", status: gate.status(r) }, 409);
     if (r!.smoke?.status === "running") return json({ error: `A verification run is already going: ${r!.smoke.task} / 驗證試跑進行中：${r!.smoke.task}`, code: "smoke_running", task: r!.smoke.task }, 409);
-    const staffing = { ...ownStaffingPlan(def), claudeVerification: ownClaudePlan(def) };
+    const staffing = { ...ownStaffingPlan(def, d.defs.ownCrew), claudeVerification: ownClaudePlan(def, d.defs.ownCrew) };
     if (staffing.plan.length) {
       if (staffing.missing.length) return json({ error: "Choose a provider, model and (for Codex) effort for every agent node first / 請先為每個代理節點選擇供應商、模型與（Codex）推理強度", code: "staffing_incomplete", staffing }, 409);
       if (b?.staffingConfirm !== staffing.hash || (staffing.claudeVerification && hashInput({ value: b?.claudeVerification ?? null }) !== hashInput({ value: staffing.claudeVerification }))) return json({ error: "Confirm who works on each node before the verification run / 驗證試跑前請確認每個節點的人員配置", code: "staffing_confirmation_required", staffing }, 409);

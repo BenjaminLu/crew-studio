@@ -40,6 +40,12 @@ GitHub connect orphaned the approval (H2/H3), and nothing showed who finally run
   version). The staffing guard re-derives it from the signed team version and refuses any difference; role skill pins,
   hashes and CAS are unchanged. No team → the old per-project staffing flow, unchanged.
 
+- What the captain approves is what runs: the dispatch card carries the team version it showed (`_crewTeam`); a team
+  change before the start refuses it and raises the card again. A captain's own workflow confirms the full resolution
+  at Run (`_ownStaffing` hashes it, team version included). A crew-derived staffing version cites the team's own
+  approval (its crew card, or the team version for a page edit or the seed), never another project's card.
+- Judged checks occupy their reviewing seat: resolved, recorded and shown like nodes.
+
 ## Cards (only these)
 
 1. A workflow needs a seat the team has not filled (incl. a specialist): one card, suggestion filtered by the model
@@ -76,5 +82,3 @@ workflow overrides. Idempotent (a Studio that has a team is never touched); test
   carry a per-run effort yet; their dispatch card shows the crew line read-only.
 - Image hook nodes (images, coffee's image step) keep the dedicated image adapter's own Codex choice; coffee's
   `image-maker` seat only decides whether the team covers coffee-kit.
-- The captain's own workflows still confirm node picks at Run (`_ownStaffing`); their node picks count as the
-  definition's own choice in resolution.

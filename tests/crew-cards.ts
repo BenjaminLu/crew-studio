@@ -100,6 +100,20 @@ try {
   const rec = E.trusted(child.id).entries.find((x) => x.record === "crew-resolved")?.data as any;
   ok(JSON.parse(child.params._crewRun).b.effort === "high" && rec?.nodes.b.effort === "high" && rec.nodes.b.source === "run" && rec.nodes.a.effort === "high" && rec.nodes.a.source === "workflow", "the captain's effort applies to this run only, recorded with its source", JSON.stringify(rec?.nodes));
   ok(store.current()!.workflows["fixture-web"].nodes.b === undefined, "the team itself is unchanged by a run's effort");
+  // the captain's own pick on the run page: recorded next to the crew, with the rule it breaks said plainly
+  E.setAgent(child.id, "b", { provider: "codex", model: "gpt-6.1-sol", effort: "low" });
+  const swap = E.trusted(child.id).entries.find((x) => x.record === "crew-run-override")?.data as any;
+  ok(swap?.node === "b" && swap.to.model === "gpt-6.1-sol" && swap.from.model === rec.nodes.b.model && swap.notes.some((n: any) => /same model as Maker/.test(n.en)), "a run-page pick is recorded in the crew ledger with the rule's note", JSON.stringify(swap));
+  // the dispatch card is bound to the team it showed: a team change before approval raises the card again, and nothing starts
+  const prop2: any = await fm.call("studio_propose_work", { workflow: "fixture-web", version: 1, text: "two more designs" }, captain("w6"));
+  const dc2 = await cardOf(prop2.proposal), shownTeam = dc2.crew!.team;
+  const changed = store.write(C.applyChange(C.teamBody(store.current()!), { kind: "member", seat: "alt-maker", set: { effort: "high" } }), store.current()!.hash, { by: "captain", via: "page" });
+  await E.answer(dc2.id, { choice: "approve", by: "captain" }); await done(prop2.proposal);
+  const old = E.get(prop2.proposal)!, again = old.ctx.crewReraised ? E.get(old.ctx.crewReraised) : null;
+  const dc3 = again && await cardOf(again.id);
+  ok(old.status === "failed" && !old.ctx.childRun && shownTeam !== changed.hash && dc3?.kind === "dispatch" && dc3.crew?.team === changed.hash, "a team change after the dispatch card showed its crew starts nothing and raises the card again with the new crew", JSON.stringify({ status: old.status, child: old.ctx.childRun, again: again?.id, team: dc3?.crew?.team === changed.hash }));
+  refused = ""; try { E.start({ workflow: "fixture-web", text: "x", params: { _crewTeam: shownTeam } }); } catch (e: any) { refused = e.message; }
+  ok(/team changed after the dispatch card showed its crew/.test(refused), "a Task bound to the team version a card showed refuses to start on another one", refused);
 } catch (e: any) { ok(false, "crew-cards threw", e?.stack ?? String(e)); }
 finally { for (const x of E.list()) if (!["failed", "cancelled", "succeeded"].includes(x.status)) { try { await E.cancel(x.id); } catch {} } H.stop(); }
 end();

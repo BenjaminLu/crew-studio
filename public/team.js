@@ -61,7 +61,8 @@ function skillAdd(label, have, onpick) {
 function askPanel(wf, row) {
   const a = TM.ask; const what = a.field === "model" ? T("model", "模型") : "effort";
   const shown = a.field === "model" ? a.value.split("/").slice(1).join("/") || T("unassigned", "未指派") : a.value ?? T("default", "預設");
-  const uses = seatOf(row.seat)?.uses ?? 0;
+  // the nodes a member change reaches: those that follow the team for this field (a node this workflow set itself keeps it)
+  const uses = (a.field === "model" ? seatOf(row.seat)?.usesModel : seatOf(row.seat)?.usesEffort) ?? 0;
   const set = a.field === "model" ? (() => { const [provider, ...m] = a.value.split("/"); return { provider, model: m.join("/") }; })() : { effort: a.value };
   return h("div", { class: "tm-ask", role: "group", "aria-label": T("Where to apply this change", "這個改動要套用到哪裡"), "data-scope-ask": row.node },
     h("span", { class: "tm-ask-t" }, T(`Change ${row.label}'s ${what} to ${shown}:`, `把「${row.label}」的${what}改成 ${shown}：`)),
@@ -71,7 +72,20 @@ function askPanel(wf, row) {
     h("button", { class: "btn ghost", onclick: () => { TM.ask = null; render(); } }, T("Cancel", "取消")));
 }
 // ---------- one node row ----------
+// a judged check runs as its reviewing seat: shown so the captain sees who reviews; it follows that member (change it there)
+function judgeRow(row) {
+  return h("div", { class: `tm-row tm-judge${row.source === "missing" ? " missing" : ""}`, "data-team-row": row.node, "data-team-judge": "" },
+    h("div", { class: "tm-grid" },
+      h("span", { class: "tm-node" }, h("b", {}, row.label), h("span", { class: "faint" }, T("check", "檢查"))),
+      h("span", { class: "tm-cell" }, h("span", { class: "tm-k" }, T("Member", "成員")), seatName(row.seat)),
+      h("span", { class: "tm-cell mono" }, h("span", { class: "tm-k" }, T("Model", "模型")), row.provider ? `${row.provider} · ${row.model}` : T("— unassigned", "— 未指派")),
+      h("span", { class: "tm-cell" }, h("span", { class: "tm-k" }, "Effort"), row.effort ?? T("default", "預設")),
+      h("span", { class: "tm-cell tm-wide faint" }, T(`Follows “${seatName(row.seat)}”; change it on the member.`, `跟著「${seatName(row.seat)}」；要改請改成員。`)),
+      h("span", { class: `tm-src ${row.source}`, "data-source": row.source }, T(...(SOURCE[row.source] || [row.source, row.source])))),
+    row.notes.length ? h("ul", { class: "tm-notes" }, row.notes.map((n) => h("li", {}, L(n)))) : null);
+}
 function nodeRow(wf, row) {
+  if (row.judge) return judgeRow(row);
   const asking = TM.ask?.workflow === wf.id && TM.ask?.node === row.node ? TM.ask : null;
   const member = h("select", { "aria-label": T(`${row.label}'s member`, `${row.label} 的成員`), class: "tm-sel", onchange: (e) => change({ kind: "node", workflow: wf.id, node: row.node, set: { seat: e.target.value } }) },
     (TM.data.seats ?? []).map((s) => h("option", { value: s.id }, L(s.label))));
@@ -124,8 +138,15 @@ function card(w) {
   const badge = b.state === "missing" ? T("Missing", "缺人") : b.state === "custom" ? T(`${b.count} custom`, `${b.count} 項自訂`) : T("Follows team", "跟團隊");
   return h("button", { class: `tm-card${on ? " on" : ""}`, "aria-pressed": String(on), "data-team-card": w.id, onclick: () => { TM.sel = w.id; TM.ask = null; render(); } },
     h("span", { class: "tm-card-h" }, h("b", {}, w.name), h("span", { class: `tm-badge ${b.state}` }, badge)),
-    h("span", { class: "tm-steps" }, w.nodes.map((n) => h("span", { class: `tm-step${n.source === "missing" ? " missing" : n.custom ? " custom" : ""}`, title: `${n.label} · ${seatName(n.seat)}` },
-      h("i", { class: "tm-dot", style: `background:${seatColor(n.seat)}` }), n.label, n.custom ? " ★" : ""))));
+    h("span", { class: "tm-steps" }, w.nodes.map((n) => h("span", { class: `tm-step${n.source === "missing" ? " missing" : n.custom ? " custom" : ""}${n.judge ? " judge" : ""}`, title: `${n.label} · ${seatName(n.seat)}`, "data-step-seat": n.seat },
+      h("i", { class: "tm-dot", style: `background:${seatColor(n.seat)}` }), n.judge ? "✓ " : "", n.label, n.custom ? " ★" : ""))),
+    // a seat a role needs that no step shows (coffee's image worker): named, in red
+    missingLine(w));
+}
+function missingLine(w) {
+  const roles = w.missingRoles ?? [];
+  return roles.length ? h("span", { class: "tm-missing-line", "data-missing-roles": w.id }, h("i", { class: "tm-dot", style: "background:var(--bad)" }),
+    T(`Missing: ${roles.map((r) => `${r.seatLabel.en} (${r.label})`).join(", ")}`, `缺人：${roles.map((r) => `${r.seatLabel.zh}（${r.label}）`).join("、")}`)) : null;
 }
 function legend() {
   return h("div", { class: "tm-legend", role: "group", "aria-label": T("Team members (open the member editor)", "團隊成員（打開成員編輯）") },
@@ -148,6 +169,7 @@ function view() {
         h("span", { class: "faint" }, T("Grey skills come with the member; white ones are this node's.", "灰色 skill＝成員本身帶的；白色＝這個節點加的")),
         custom ? h("button", { class: "btn", "data-restore": wf.id, disabled: TM.busy, onclick: () => change({ kind: "restore", workflow: wf.id }) }, T("Restore to team", "恢復成團隊設定")) : null),
       h("div", { class: "tm-grid tm-head", "aria-hidden": "true" }, [T("Node", "節點"), T("Member", "成員"), T("Model", "模型"), "Effort", "Skills", T("Source", "來源")].map((x) => h("span", {}, x))),
+      missingLine(wf),
       wf.nodes.map((n) => nodeRow(wf, n)),
       TM.notes.length ? h("div", { class: "tm-adjust", role: "status", "data-team-notes": "" }, h("b", {}, T("Adjusted by the team rules:", "團隊規則自動調整：")), h("ul", {}, TM.notes.map((n) => h("li", {}, `${n.workflow} · ${n.node}: ${L(n)}`)))) : null) : null);
 }

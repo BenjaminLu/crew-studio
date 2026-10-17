@@ -237,6 +237,8 @@ export class WorkflowDefs {
   skillInfo: SkillInfo | null = null;
   /** the library itself (set by the runtime): Firstmate drafts and configures node skills by id from it */
   skillLibrary: SkillCatalogue | null = null;
+  /** the Studio team's resolution of a definition (set by the runtime): a captain's own workflow confirms exactly what will run */
+  ownCrew: ((def: WDef) => any) | null = null;
   constructor(readonly dataDir: string, readonly bundled = defaultDefinitions, public known?: (ref: string) => boolean, public runners?: () => Set<string>) {
     this.dir = join(dataDir, "workflows"); mkdirSync(this.dir, { recursive: true });
     this.seed();

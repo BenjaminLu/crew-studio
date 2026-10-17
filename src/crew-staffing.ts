@@ -29,6 +29,12 @@ export function crewStaffingDraft(def:any,team:TeamConfig,project:StaffingProjec
 }
 /** What a crew-derived configuration must match: everything but the role skill pins (those are checked against the live text). */
 const shape=(c:Pick<StaffingDraft,'project'|'workflow'|'roles'|'review'|'nodes'|'crew'>)=>({project:c.project,workflow:c.workflow,review:c.review,nodes:c.nodes??null,crew:c.crew??null,roles:Object.fromEntries(Object.entries(c.roles).map(([id,r])=>[id,{provider:r.provider,model:r.model,effort:r.effort,ref:r.skill.ref}]))});
+/** The approval a crew-derived staffing version cites: the team version's own approval. A team change approved on a crew card cites that
+ *  card and its run; one made on the Crew page or seeded from approved staffing cites the team version itself, never another project's card. */
+export function crewApproval(team:TeamConfig):{run:string;card:string;answerSeq:number}{
+ if(team.approval.via==='card'&&team.approval.card&&team.approval.run)return{run:team.approval.run,card:team.approval.card,answerSeq:team.approval.answerSeq??team.version};
+ return{run:`crew-${team.approval.via}`,card:`crew-team-v${team.version}-${team.hash.slice(0,12)}`,answerSeq:team.version};
+}
 export function installCrewStaffing(engine:Engine,store:StaffingStore,crew:CrewStore){
  const live=(def:any,role:any)=>{const t=engine.roleSkillText(def,role.id);const text=t?.text??engine.deps.skillText(role.skill),version=t?.version??1;const parts=skillPartPins(role.skill,engine.deps.skillText);return{pin:{skill:store.remember({ref:role.skill,version,text}),...(parts?{skills:parts}:{})},text};};
  /** The project's staffing derived from the current team: written (a new signed version) only when it differs from the current one.
@@ -42,7 +48,7 @@ export function installCrewStaffing(engine:Engine,store:StaffingStore,crew:CrewS
   // deploying crew seats never restaffs a project behind the captain's back
   if(current&&!current.crew&&team.approval.via==='migration'&&current.workflow.id===def.id&&current.workflow.version===def.version&&current.workflow.sha256===staffingHash(def))return current;
   if(current?.crew&&staffingHash(shape(current))===staffingHash(shape(d.draft))&&Object.entries(current.roles).every(([id,r])=>r.skill.sha256===d.draft.roles[id]?.skill.sha256&&staffingHash(r.skills??null)===staffingHash(d.draft.roles[id]?.skills??null)))return current;
-  return store.approve(d.draft,current?.hash??null,{run:`crew-v${team.version}`,card:team.approval.card??`crew-team-v${team.version}`,answerSeq:team.approval.answerSeq??team.version},d.sources);
+  return store.approve(d.draft,current?.hash??null,crewApproval(team),d.sources);
  }
  /** The guard's check of a crew-derived version: its team version verifies and derives exactly this configuration. */
  function verify(def:any,config:StaffingConfig){

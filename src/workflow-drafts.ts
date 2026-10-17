@@ -258,8 +258,17 @@ export class WorkflowDrafts{
 }
 
 function intentRefusal(ps:ReturnType<typeof intentStage>){return new DraftError(`Cannot save yet: ${ps.map(p=>p.reason.en).join(' ')} / 還不能儲存：${ps.map(p=>p.reason.zh).join('')}`,400,ps.map(p=>({level:'error',node:p.node??undefined,text:p.reason.en,zh:p.reason.zh,fix:p.fix})));}
+/** A team's resolution of a workflow, as the own-workflow plan reads it (src/domain/crew.ts Resolution). */
+export type OwnCrew={team:string|null;nodes:{node:string;label:string;role:string|null;seat:string;provider:string|null;model:string|null;effort:string|null;skills:{id:string;v:number;sha256:string;from:string}[];source:string;notes:{en:string;zh:string}[]}[]};
 /** The plan a Run of the captain's own workflow needs confirmed: one row per agent node. */
-export function ownStaffingPlan(def:WDef){
+export function ownStaffingPlan(def:WDef,crew?:((def:WDef)=>OwnCrew|null)|null){
+ // with a Studio team, the plan is what will run: each node's final provider, model, effort and pinned skills, where each comes from,
+ // and any team rule note (src/domain/crew.ts resolveCrew, the same resolution the Task records at start); the hash covers all of it
+ const res=crew?.(def)??null;
+ if(res){const roleSkill=(id:string)=>{const n=def.nodes.find(x=>x.id===id);return n?.skill??def.roles.find(r=>r.id===n?.role)?.skill??null;};
+  const plan=res.nodes.map(r=>({node:r.node,label:r.label,role:r.role,seat:r.seat,provider:r.provider,model:r.model,effort:r.effort,skill:roleSkill(r.node),skills:r.skills.map(p=>({id:p.id,v:p.v,sha256:p.sha256,from:p.from})),source:r.source,notes:r.notes,judge:r.node.startsWith('judge--')}));
+  const missing=[...plan.filter(p=>!p.provider||!p.model||p.provider==='codex'&&!p.effort).map(p=>p.node)];
+  return{plan,missing,team:res.team,hash:sha({workflow:def.id,version:def.version,team:res.team,plan})};}
  const plan=def.nodes.filter(n=>n.kind==='agent').map((n:WNode)=>{const role=def.roles.find(r=>r.id===n.role);return{node:n.id,label:n.label,role:n.role??null,provider:n.provider??null,model:n.model??null,effort:(n as any).effort??null,skill:n.skill??role?.skill??null};});
  const missing=plan.filter(p=>!p.provider||!p.model||p.provider==='codex'&&!p.effort).map(p=>p.node);
  return{plan,missing,hash:sha({workflow:def.id,version:def.version,plan})};

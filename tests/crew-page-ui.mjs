@@ -52,13 +52,14 @@ try {
     await rowA.locator("select").nth(2).selectOption("high");
     const ask = p.locator('[data-scope-ask="design-a"]'); await ask.waitFor();
     const teamBtn = await ask.locator("[data-scope-team]").innerText();
-    const uses = (await view(p)).seats.find((s) => s.id === "maker").uses;
+    const uses = (await view(p)).seats.find((s) => s.id === "maker").usesEffort;
     ok(uses >= 3 && teamBtn.includes(String(uses)) && teamBtn.includes(lang === "en" ? "Maker" : "產出"), `the scope question names the member and how many nodes it reaches ${tag}`, teamBtn);
     await ask.locator("[data-scope-here]").click();
     await p.waitForFunction(() => document.querySelector('[data-team-row="design-a"] [data-source]')?.dataset.source === "workflow");
     let v = await view(p);
     const wp = (id) => v.workflows.find((w) => w.id === id), node = (w, n) => wp(w).nodes.find((x) => x.node === n);
     ok(node("web-prototype", "design-a").effort === "high" && node("documents", "draft").effort === "medium" && node("web-prototype", "design-b").effort === "medium", `only this workflow: one node changed ${tag}`);
+    ok(v.seats.find((s) => s.id === "maker").usesEffort === uses - 1 && v.seats.find((s) => s.id === "maker").usesModel === uses, `the member's reach for effort no longer counts the node this workflow set itself ${tag}`);
     ok((await card.innerText()).includes(lang === "en" ? "1 custom" : "1 項自訂") && (await card.innerText()).includes("★"), `the card counts the custom node and stars it ${tag}`, await card.innerText());
     // model, the whole member
     await rowA.locator("select").nth(1).selectOption("codex/gpt-6-astra");
@@ -67,6 +68,11 @@ try {
     v = await view(p);
     ok(node("documents", "draft").model === "gpt-6-astra" && node("web-prototype", "design-a").model === "gpt-6-astra" && node("web-prototype", "design-a").effort === "high" && node("video", "draft").model === "gpt-6-astra", `the whole member: every maker node changes, the workflow's own effort stays ${tag}`);
     ok(node("web-prototype", "design-b").model === "sonnet-5.5", `the second maker is not touched ${tag}`);
+    // coffee's empty image seat is named on its card; code-firstmate's judged checks show who reviews
+    ok(/Image maker|圖像產出/.test(await p.locator('[data-missing-roles="coffee-kit"]').innerText()), `a missing seat says which seat and role ${tag}`);
+    await p.locator('[data-team-card="code-firstmate"]').click(); await p.locator('[data-team-detail="code-firstmate"]').waitFor();
+    ok(await p.locator('[data-team-judge]').count() > 0 && (await p.locator('[data-team-card="code-firstmate"] .tm-step.judge').count()) > 0, `judged checks show on the card and in the table, on their reviewing seat ${tag}`);
+    await card.click(); await rowB.waitFor();
     // skills: add one, remove it
     await rowB.locator(".tm-add").selectOption("accessible-ui");
     await p.waitForFunction(() => [...document.querySelectorAll('[data-team-row="design-b"] .tm-skill.own')].some((e) => e.textContent.includes("accessible-ui")));

@@ -70,6 +70,12 @@ export function slotsOf(def:any):Slot[]{
   out.push({node:n.id,label:String(n.label??n.id),kind:n.kind,role,seat:declared??fallbackSeat(def,role),declared:!!declared,skills:Array.isArray(n.skills)?n.skills.map((p:any)=>({id:String(p.id),v:Number(p.v),sha256:String(p.sha256)})):[],def:d});}
  return out;
 }
+/** A judged check (a model judges a node's work) occupies a reviewing seat too: shown and resolved like a node. */
+export type JudgeSlot={node:string;check:string;label:string;seat:string};
+export const JUDGE_NODE='judge--';
+export const isJudgeRow=(id:string)=>id.startsWith(JUDGE_NODE);
+/** The definition with one virtual agent node per judged check, on the seat it judges as (its rows resolve and follow the rules like any node). */
+export function withJudges(def:any,judges:JudgeSlot[]){if(!judges.length)return def;return{...def,nodes:[...def.nodes,...judges.map((j,i)=>({id:`${JUDGE_NODE}${j.node}--${i}`,kind:'agent',label:j.label,role:null,seat:j.seat,mode:'judge'}))]};}
 /** The specialist seats a workflow declares (def.seats). */
 export const declaredSeats=(def:any):SeatDecl[]=>Array.isArray(def?.seats)?def.seats.filter((s:any)=>plain(s)&&typeof s.id==='string'):[];
 export const seatLabel=(team:Team|null,id:string,def?:any):{en:string;zh:string}=>{const b=SEAT_LABELS[id];if(b)return b;const s=team?.seats[id]??declaredSeats(def).find(x=>x.id===id);return s?{en:s.label,zh:s.labelZh}:{en:id,zh:id};};
@@ -178,7 +184,7 @@ export function changeImpact(before:Team,after:Team,defs:any[]):{workflow:string
  return out;
 }
 /** The nodes of other workflows a member change reaches: those that follow the team for that field. */
-export function seatUses(team:Team,seat:string,defs:any[]):{workflow:string;node:string}[]{return defs.flatMap(def=>resolveCrew(team,def).nodes.filter(r=>r.seat===seat).map(r=>({workflow:def.id,node:r.node})));}
+export function seatUses(team:Team,seat:string,defs:any[],field?:'model'|'effort'):{workflow:string;node:string}[]{return defs.flatMap(def=>resolveCrew(team,def).nodes.filter(r=>r.seat===seat&&(!field||r.fields[field]==='team'&&(field!=='model'||r.fields.provider==='team'))).map(r=>({workflow:def.id,node:r.node})));}
 
 // ---------- the store ----------
 export class CrewStore{

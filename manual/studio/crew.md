@@ -18,7 +18,11 @@ changes. Design: `docs/design/crew-seats.md`.
 - **Rules, never silent.** A reviewing seat never runs on the model of the seat it reviews; `alt-maker` never runs
   on `maker`'s model; reviewing seats think at medium effort or more. When one applies, the node shows a note.
 - **Tasks.** A Task records the crew it started with in its signed ledger (`crew-resolved`): a later team change
-  never changes a running Task.
+  never changes a running Task. The dispatch card shows the crew of one team version; if the team changes before the
+  captain approves, nothing starts and Studio raises the card again with the new crew. A captain's own workflow
+  confirms at Run exactly what will run (final picks, skills, sources, rule notes); a team change since then asks
+  again. A pick changed on the run page is recorded next to the crew, with any rule it breaks.
+- **Checks.** A judged check runs as its reviewing seat (`reviewer` or `design-reviewer`) and shows on the Crew page.
 - **Staffed workflows** (code-firstmate, coffee-kit): when the team fills every seat the workflow needs, Studio
   derives the project's signed staffing from the team. No staffing card, no keep-crew card on an upgrade, and a
   GitHub connect gets the same crew at once. With no team yet, the old staffing flow applies unchanged.
