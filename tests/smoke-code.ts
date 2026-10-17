@@ -135,5 +135,19 @@ ok(merge!.options.filter((o) => o.hold).map((o) => o.id).join(",") === "changes,
   const p = E.get(c.id)!.ctx.worktree; const existed = !!p && existsSync(p);
   E.cancel(c.id, "captain"); await until(() => !existsSync(p), 10000);
   ok(existed && !existsSync(p) && !git("worktree", "list").includes(c.id), "cancelling a run removes its worktree (and its git worktree entry)", p); }
+// resume: the merge hook runs again after a restart (its ctx and record lost) and finds its own commit on main: ok, the same
+// head and one native-merge record, never a rebase round; a commit with the same tree but another Task's trailer is not it
+{ const run = E.get(r.id)!; const node = run.def.nodes.find((n: any) => n.id === "merge")!; const tip = git("rev-parse", "main"); const reviewed = run.ctx.merged!.reviewed;
+  const wt = join(data, "resume-wt"); git("worktree", "add", "-q", "--detach", wt, reviewed);
+  const again = () => { const rn = { ...structuredClone(run.nodes.merge), visits: (run.nodes.merge.visits ?? 1) + 5 }; const x = E.x(run, node, rn); x.ctx.worktree = wt; x.ctx.merged = null; return x; };
+  const x1 = again(); const o1 = await (E as any).actions["git.merge"](x1); const o2 = await (E as any).actions["git.merge"](again());
+  const recs = E.ledger(r.id).filter((e: any) => e.record === "native-merge" && e.round === x1.visit);
+  ok(o1 === "ok" && o2 === "ok" && x1.ctx.merged?.head === tip && git("rev-parse", "main") === tip && recs.length === 1 && recs[0].head === tip,
+    "a merge hook run again after a restart finds its own commit on main: ok, merged.head is that tip, one native-merge record, no rebase", JSON.stringify([o1, o2, x1.ctx.merged, recs.length]));
+  const msg = git("log", "-1", "--format=%B", tip).replace(`Crew Studio Task ${r.id},`, "Crew Studio Task R-999,");
+  const impostor = Bun.spawnSync(["git", "commit-tree", `${tip}^{tree}`, "-p", tip, "-F", "-"], { cwd: repo, stdin: new TextEncoder().encode(msg), stdout: "pipe" }).stdout.toString().trim();
+  git("update-ref", "refs/heads/main", impostor, tip); const xn = again(); const on = await (E as any).actions["git.merge"](xn).catch((e: any) => `threw: ${e.message}`);
+  ok(/^[0-9a-f]{40}$/.test(impostor) && on !== "ok" && !xn.ctx.merged && git("rev-parse", "main") === impostor, "a tip with the same tree but another Task's trailer is not taken as this Task's merge", JSON.stringify([on, xn.ctx.merged]));
+  git("update-ref", "refs/heads/main", tip, impostor); git("worktree", "remove", "--force", wt); }
 H.stop();
 end();
