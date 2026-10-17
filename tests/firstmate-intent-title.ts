@@ -56,7 +56,7 @@ try {
   ok(staffed?.publicFailure?.code === "invalid_params" && String(staffed.message).includes("使用已核准 R-056") && !E.list().length, "a proposal that restates the approved crew in its text is refused before any Task, naming the sentence", String(staffed?.message));
   for (const [k, t] of OWN.entries()) { const r = await refusal(() => tools.call("studio_propose_work", { workflow: "title-fixture", version: 1, title: "Staffing fix", text: t }, { key: "own-" + k, captain: true, text: t, live: () => true }));
     ok(r === null, `the captain's own words propose: ${t}`, String(r?.message)); }
-  ok((await refusal(() => tools.call("studio_propose_work", { workflow: "title-fixture", version: 1, title: "依據 /Users/x/brief.pdf", text: REQUEST }, owner("path"))))?.publicFailure?.code === "invalid_params", "a title with a path is refused");
+  ok((await refusal(() => tools.call("studio_propose_work", { workflow: "title-fixture", version: 1, title: "依據 /Users/you/brief.pdf", text: REQUEST }, owner("path"))))?.publicFailure?.code === "invalid_params", "a title with a path is refused");
   const p: any = await tools.call("studio_propose_work", { workflow: "title-fixture", version: 1, title: "EUR 金額格式", text: REQUEST, params: { mode: "fast" } }, owner("titled"));
   const proposal = E.get(p.proposal)!;
   ok(proposal.title === "EUR 金額格式" && proposal.text === REQUEST, "Firstmate's title names the proposal Task; the request is kept whole", proposal.title);
