@@ -305,6 +305,26 @@ try {
   await api("/api/main/detach", {});
   await stop(); const runsStopped = claudeRuns().length; app = start(); await waitUp(base, app); await Bun.sleep(600);
   ok((await view()).state === "detached" && claudeRuns().length === runsStopped, "a primary the captain stopped is not started again by a restart");
+  // a crash (Studio killed without its shutdown) never restarts the primary: one that brought Studio down would do it again
+  // on every boot. It stays stopped with a notice; a later graceful shutdown restarts it once, and only once
+  r = await api("/api/main/start", { host: "claude", confirm: true }); await idle();
+  const crashedPid = claudeRuns().at(-1).pid;
+  { const done = new Promise((res) => app.once("exit", res)); app.kill("SIGKILL"); await done; }
+  try { process.kill(crashedPid, "SIGKILL"); } catch {}
+  const runsCrashed = claudeRuns().length; app = start(); await waitUp(base, app); await Bun.sleep(600);
+  rv = await view();
+  ok(rv.state === "detached" && claudeRuns().length === runsCrashed && rv.driver.holder === "none" && !rv.driver.restartOnBoot, "after a crash the primary is not started again on boot (no resume loop)");
+  ok(rv.log.some((l: any) => /stopped unexpectedly, so it was not started again/.test(l.text) && /Press Start/.test(l.text)), "after a crash a notice says the primary was not started again and to press Start");
+  await stop(); app = start(); await waitUp(base, app); await Bun.sleep(600);
+  ok((await view()).state === "detached" && claudeRuns().length === runsCrashed, "the crash notice is not a deferred resume: a later restart still starts nothing");
+  r = await api("/api/main/start", { host: "claude", confirm: true }); await idle();
+  await stop(); app = start(); await waitUp(base, app);
+  ok(await until(async () => (await view()).state === "attached"), "a graceful shutdown still starts the running primary again on boot");
+  await idle(); const runsResumed = claudeRuns().length, resumedPid = claudeRuns().at(-1).pid;
+  { const done = new Promise((res) => app.once("exit", res)); app.kill("SIGKILL"); await done; }
+  try { process.kill(resumedPid, "SIGKILL"); } catch {}
+  app = start(); await waitUp(base, app); await Bun.sleep(600);
+  ok((await view()).state === "detached" && claudeRuns().length === runsResumed, "the shutdown's restart is consumed once: a crash after it does not start the primary again");
 
   // --- quota: typed at run time and at start, never Codex ---
   r = await api("/api/main/start", { host: "claude", confirm: true });

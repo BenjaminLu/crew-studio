@@ -132,9 +132,14 @@ export class MainSession {
     const d = this.driver();
     // Studio restarted while it held a session: its CLI died with it; keep the way back
     const own = !!(this.o.nativeWorkspace && d.path === "fresh" && !d.forkedFrom && !d.mode);
-    // Studio's own primary was running when Studio stopped (its shutdown, or a crash): remember how, once, so boot starts it
-    // again (takeover's resumeOnBoot) instead of waiting for the captain's Start
-    if ((d.holder === "studio" || (d.holder === "none" && d.restartOnBoot)) && own && d.host && d.primary?.host === d.host) this.bootPrimary = d.primary;
+    // Studio's own shutdown stopped its primary (detach({shutdown}) wrote restartOnBoot): remember how, once, so boot starts it
+    // again (takeover's resumeOnBoot) instead of waiting for the captain's Start. A crash (the lock still says studio) never
+    // restarts it: a primary that brought Studio down would bring it down again on every boot, so it stays stopped with a notice
+    if (d.holder === "none" && d.restartOnBoot === true && own && d.host && d.primary?.host === d.host) this.bootPrimary = d.primary;
+    if (d.holder === "studio" && own) {
+      const en = "Firstmate was running when Studio stopped unexpectedly, so it was not started again. Press Start to begin again.", zh = "Studio 意外停止時 Firstmate 正在執行，所以沒有自動重開。請按 Start 重新開始。";
+      this.note({ kind: "status", text: `${en} / ${zh}`, i18n: { en, "zh-TW": zh } });
+    }
     if (d.holder === "studio" || d.restartOnBoot) this.writeDriver({ holder: "none", host: d.host, sessionId: d.sessionId, pid: null, since: d.holder === "studio" ? new Date().toISOString() : d.since,
       resume: d.sessionId && !own ? this.hosts[d.host ?? "claude"].resumeCommand(d.sessionId) : d.holder === "studio" ? undefined : d.resume, forkedFrom: d.forkedFrom ?? null, mode: d.mode ?? null, handoff: d.handoff ?? null, path: d.path ?? null, primary: d.primary ?? null });
   }
