@@ -56,6 +56,24 @@ Branching is an edge condition over earlier outputs, for example `door == "one-w
 - How a task ends, as the captain reads it: one word per state (Running, Waiting for you, Merged, Done, Closed without merging, Cancelled, Failed). A task that ends at a "closed" end node is `succeeded` with result `closed` and reads "Closed without merging", never in the success style. Cancel works from any live state and takes an optional reason. It withdraws the task's open cards and runs `on_cancel`.
 - An ended task can be archived, which hides it from the default lists, or deleted. Delete needs the typed task id. It removes the task's folder, captures and cards, plus the domain's own traces (`onDelete`; the code pack removes the worktree and branch, never a commit in main). The evidence ledger keeps its entries and gains one signed deletion entry. Both actions are events. The server refuses them for a live task. Unit spec: [units/run-end-and-remove.md](units/run-end-and-remove.md).
 
+#### Resume per node kind
+
+When Studio stops mid-Task, the next start replays the events and resumes each live node as below. Nothing a node finished runs again. A result whose routing was not carried out routes again, and an answer recorded just before the stop is carried on. No provider session is continued: Codex and Claude rounds start fresh, so a resumed turn never depends on a session that died with the old process.
+
+| Kind | Interrupted while running | What does not repeat |
+|---|---|---|
+| `agent` | Runs again from scratch at the same visit, with the same prompt (same context, brief and pins). The interrupted turn keeps its record: its `prompt.md`, and a `stream.jsonl` line that says it was interrupted. The re-run counts as the next attempt and writes `prompt.attempt<k>.md` beside it. | Its downstream nodes: they only run after a finished result. A card the interrupted turn raised but did not record is cancelled; the re-run raises its own. |
+| `hook` | Runs again. Hooks are written to be idempotent: `pr.open` finds the existing pull request for the branch, `mergeOnce`/`updateOnce` keep an attempts file, and a local merge is a fast-forward that is a no-op when the base already has the head. | A push, merge or pull request already made. |
+| `check` | Runs again. Checks are pure over their input, and the ledger keeps every result. | Nothing is lost. A repeated result is a new ledger entry for the same input. |
+| `card` | An open card stays open and keeps its id. An answered card is carried on. | A second card. |
+| `loop` | Runs again from the ledger. Its coordinator turn is an agent turn (see `agent`). | The brief already sent to a finished producer round. |
+
+External waits keep their visit and deadline (below). A pending Firstmate question is sent to Firstmate again after the restart, or waits until Firstmate attaches. Every agent round's record (`prompt.md`, `system.md`, `stream.jsonl`, `report.json`) is on disk before the next node starts. Tests: `tests/resume-semantics.ts`, `tests/durability.ts`, `tests/code-worker-ask.ts`.
+
+#### Per-node configuration
+
+A role carries the defaults its nodes run on: skill, provider, model and `effort`. An agent or loop node may override provider, model and effort, and it may name skills (library pins, `name@vN` with sha256). This holds on every workflow, bundled ones included. A loop node's override applies to its coordinator turns. On a staffed workflow (code-firstmate, coffee-kit), the staffing proposal records the overrides as `nodes` in the signed staffing configuration. The staffing card lists them under the roles, and the captain approves both together. Round start refuses an approval whose node overrides differ from the definition. An approval made before overrides existed still covers a definition whose nodes only pin skills, because the definition hash already binds those pins. The approved override is what the staffing-instructions entry, the job admission and the provider receipt check. A role-skill approval with one click keeps the overrides. The run page names each agent round's provider, model, effort and skills. Test: `tests/node-overrides.ts`.
+
 External hook waits persist a version-1 descriptor under NodeRun.data.external before registration. The engine owns each callback and rejects it after cancellation or deletion. Restart keeps the original visit/deadline and re-registers the known handler. Unknown handlers fail closed; a known GitHub handler raises a bilingual stop card for an unsupported/malformed descriptor. Existing local/card waits retain their prior replay contract. GitHub waits share one grant-bound repository timer/request owner; the last subscription aborts the request and clears both poll and deadline timers. Required policy content/hash, app identity and PR head are rechecked; local CI never substitutes for remote CI.
 
 ### 3.3 Refine loop and brief compiler

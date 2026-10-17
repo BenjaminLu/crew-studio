@@ -11,7 +11,8 @@ export type Text = { en: string; "zh-TW": string };
 export type Cost = { usd: number | null; inTokens: number | null; outTokens: number | null; seconds: number | null };
 /** a step's state; a card a person answered is "chosen" (its choice in `verdict`) */
 export type RoundOutcome = "running" | "waiting" | "passed" | "failed" | "error" | "chosen" | "interrupted" | "skipped" | "superseded" | "swapped";
-export type RoundActor = { kind: "agent" | "check" | "card"; role: string | null; name: string | null; label: string; provider: string | null; model: string | null };
+/** effort and skills: what an agent round ran at and loaded (null effort: the provider's default; skills as name@vN) */
+export type RoundActor = { kind: "agent" | "check" | "card"; role: string | null; name: string | null; label: string; provider: string | null; model: string | null; effort?: string | null; skills?: string[] };
 export type Round = {
   id: string; task: string; seq: number; node: string; actor: RoundActor; number: number; attempt: number;
   startedAt: string | null; endedAt: string | null; outcome: RoundOutcome; verdict: string | null; reason: Text | null;
@@ -86,7 +87,7 @@ export function roundsOf(run: Run): Round[] {
     const role = kind === "agent" ? def?.role ?? null : kind === "card" ? "captain" : null;
     out.push({
       id: `${run.id}/${s.node}/${s.visit}${attempt > 1 ? `.${attempt}` : ""}`, task: run.id, seq: s.seq, node: s.node,
-      actor: { kind, role, name: kind === "check" ? checkNames(s, def) : null, label: def?.label ?? s.node, provider: s.provider ?? null, model: s.model ?? null },
+      actor: { kind, role, name: kind === "check" ? checkNames(s, def) : null, label: def?.label ?? s.node, provider: s.provider ?? null, model: s.model ?? null, ...(kind === "agent" ? { effort: s.effort ?? null, skills: s.skills ?? [] } : {}) },
       number: s.visit, attempt, startedAt: s.startedAt ?? null, endedAt: s.endedAt ?? null, outcome: stepOutcome(s),
       verdict: kind === "card" && s.state === "passed" ? s.outcome : null, reason: s.error ? { en: s.error, "zh-TW": s.error } : null,
       cost, transcript: kind === "agent" ? `#/runs/node/${encodeURIComponent(run.id)}/${encodeURIComponent(s.node)}/${s.visit}` : null, note: s.note ?? null,

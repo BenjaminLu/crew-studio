@@ -25,7 +25,8 @@ const card = (id, run, kind, title, body, intent) => ({ id, run, node: kind === 
 const skill = (role) => ({ ref: `pack:firstmate/skills/${role}.md`, version: 1, sha256: "a".repeat(64), snapshotSha256: "b".repeat(64) });
 const role = (r, effort) => ({ provider: "codex", model: "gpt-6.1-sol", effort, skill: skill(r) });
 const configuration = { schema: 1, algorithm: "sha256-canonical-v1", project: { namespace: "git", id: "sandbox", identity: "d".repeat(64) }, workflow: { id: "code-firstmate", version: 8, sha256: "e".repeat(64) },
-  roles: { coordinator: role("firstmate", "low"), worker: role("worker", "low"), reviewer: role("reviewer", "medium"), designer: role("designer", "medium") }, review: { freshContexts: 1, distinctProviders: false } };
+  roles: { coordinator: role("firstmate", "low"), worker: role("worker", "low"), reviewer: role("reviewer", "medium"), designer: role("designer", "medium") }, review: { freshContexts: 1, distinctProviders: false },
+  nodes: { build: { model: "gpt-6.1-max", effort: "high", skills: [{ ref: "skill:plain-writing", version: 1, sha256: "a".repeat(64), snapshotSha256: "a".repeat(64) }] } } };
 const cards = [
   card("SC-901", "R-901", "permission", "Confirm role models", JSON.stringify({ configuration, existingTask: null }, null, 2), "Approve this project-local agent configuration"),
   // the body R-057 had: parameters as one JSON line, the _staffing pin among them
@@ -56,6 +57,8 @@ try {
     await p.goto(`${base}/#/inbox/SC-901`); await p.waitForSelector(`${at("SC-901")} [data-staffing-table]`, { timeout: 15000 });
     const rows = await p.$$eval(`${at("SC-901")} [data-staffing-role]`, (trs) => trs.map((tr) => [...tr.querySelectorAll("td")].map((td) => td.textContent)));
     ok(rows.length === 4 && rows.find((r) => r[0] === "reviewer")?.join("|") === "reviewer|codex|gpt-6.1-sol|medium|reviewer.md v1", `${lang}: the staffing card shows one row per role: provider, model, effort, skill and version`, JSON.stringify(rows));
+    const nodeRows = await p.$$eval(`${at("SC-901")} [data-staffing-node]`, (trs) => trs.map((tr) => [...tr.querySelectorAll("td")].map((td) => td.textContent)));
+    ok(nodeRows.length === 1 && nodeRows[0].slice(2).join("|") === "gpt-6.1-max|high|plain-writing v1" && nodeRows[0][0].includes("build"), `${lang}: a node override is a row in the role table: its model, effort and named skills`, JSON.stringify(nodeRows));
     const shown = await p.$eval(at("SC-901"), (el) => [...el.querySelectorAll("[data-card-root] > *")].filter((x) => !x.matches("details")).map((x) => x.innerText).join("\n"));
     ok(!/sha256|"configuration"|aaaaaaaa/.test(shown), `${lang}: no hash or raw JSON outside the closed details`, shown.slice(0, 300));
     ok(await p.$eval(`${at("SC-901")} [data-card-raw]`, (d) => !d.open && d.textContent.includes('"sha256"')), `${lang}: the configuration hashes stay in a closed details`);

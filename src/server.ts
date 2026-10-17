@@ -329,7 +329,7 @@ async function nativeSelection(input: ProviderSelection, x?: any): Promise<Provi
   }, (id, model, effort) => id === "codex" ? codexProvider(model, undefined, { model, effort }) : id==='claude'?makeNativeClaudeProvider(capabilities.get(id)!,{model,effort}):makeProvider(id, model));
   if (signal?.aborted || x && x.engine.get(x.run.id) && !x.engine.owns(x)) throw new ProviderRefusal("native round owner ended during capability verification");
   certified.set(selected.provider, { input, expires: capabilities.get(selected.provider.id)!.expires, x });
-  if (x && x.engine.get(x.run.id)) { x.engine.record(x, "provider-selection", { data: selected.evidence }); const step = [...x.run.steps].reverse().find((s: any) => s.node === x.node.id && s.state === "running"); if (step) { step.provider = selected.provider.id; step.model = selected.provider.model; } x.save(); }
+  if (x && x.engine.get(x.run.id)) { x.engine.record(x, "provider-selection", { data: selected.evidence }); const step = [...x.run.steps].reverse().find((s: any) => s.node === x.node.id && s.state === "running"); if (step) { step.provider = selected.provider.id; step.model = selected.provider.model; step.effort = selected.provider.reasoningEffort ?? null; } x.save(); }
   return selected.provider;
 }
 const nativePick = async (x: any, pick: any, context?: { role: string; explicit: boolean }): Promise<Provider> => {

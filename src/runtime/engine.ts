@@ -48,7 +48,9 @@ export type NodeRun = {
   routing?: { outcome: string } | null;
 };
 export type Step = { seq: number; node: string; kind: string; visit: number; state: "running" | "waiting" | "passed" | "failed" | "error" | "interrupted" | "skipped" | "superseded" | "swapped";
-  outcome: string | null; startedAt: string; endedAt: string | null; error: string | null; job: string | null; provider: string | null; model: string | null; note: string | null; handoff?: string | null; checks?: { check: string; verdict: string; seq: number }[];
+  outcome: string | null; startedAt: string; endedAt: string | null; error: string | null; job: string | null; provider: string | null; model: string | null; note: string | null; handoff?: string | null;
+  /** the reasoning effort the step's agent ran at (null: the provider's own default) */
+  effort?: string | null; checks?: { check: string; verdict: string; seq: number }[];
   /** the enabled skills an agent step loaded, as name@vN in order (unit agent-skills) */
   skills?: string[];
   /** the role skill its latest agent turn received (ref, Studio version, sha256 of the text) */
@@ -361,6 +363,11 @@ export class Engine {
         rn.waiting = null;
         const st = [...r.steps].reverse().find((s) => s.node === id && (s.state === "running" || s.state === "waiting"));
         if (st) { st.state = "interrupted"; st.endedAt = now(); st.error = "Studio stopped during this step"; }
+        // an agent turn that had started keeps its record: the round's stream says it was interrupted, and the turn counts as an
+        // attempt, so the re-run writes prompt.attempt<k>.md beside it instead of over it (docs/architecture.md §3.2, resume semantics)
+        if (rn.job) { rn.data = { ...rn.data, interrupted: [...(rn.data.interrupted ?? []), { round: rn.visits, job: rn.job }] };
+          const dir = join(this.root, r.id, "nodes", id, String(rn.visits));
+          if (existsSync(join(dir, "stream.jsonl"))) try { appendFileSync(join(dir, "stream.jsonl"), JSON.stringify({ ts: now(), type: "status", status: "interrupted", job: rn.job, error: "Studio stopped during this round" }) + "\n"); } catch {} }
         rn.visits = Math.max(0, rn.visits - 1); rn.job = null; rn.cause = "recovered: interrupted, runs again"; n++;
         if (rn.swap) { rn.agent = rn.swap; rn.swap = null; }
         rn.state = "pending"; if (!r.queue.includes(id)) r.queue.unshift(id);
@@ -515,7 +522,7 @@ export class Engine {
       if (rn.agent) return rn.agent;
       if (node.provider) return { provider: node.provider, model: node.model ?? null, ...(node.effort ? { effort: node.effort } : {}) };
       const role = r.def.roles.find((x) => x.id === node.role);
-      if (role?.provider) return { provider: role.provider, model: role.model ?? null };
+      if (role?.provider) return { provider: role.provider, model: role.model ?? null, ...(role.effort ? { effort: role.effort } : {}) };
       if (r.params.provider) return { provider: r.params.provider, model: r.params.model || null, ...(r.params.effort ? { effort: r.params.effort } : {}) };
       return this.deps.defaultProvider();
     };
@@ -530,6 +537,8 @@ export class Engine {
   }
   /** The skills a node's agent turns load: an agent node's own pins; a loop node's own, else those its role's agent nodes pin (its coordinator turns keep them). */
   nodePins(r: Run, node: WNode): { id: string; v: number; sha256: string }[] {
+    // a staffed workflow's node loads the skills its approved configuration names for it (src/domain/staffing.ts)
+    const approved = this.deps.approvedNodePins?.(r, node); if (approved !== undefined) return approved;
     if (Array.isArray(node.skills)) return node.kind === "agent" || node.kind === "loop" ? node.skills : [];
     if (node.kind !== "loop") return [];
     const role = node.role ?? node.args?.role; if (!role) return [];
@@ -583,7 +592,7 @@ export class Engine {
     const x = this.x(r, node, rn);
     let pk: AgentPick | null = null;
     try { pk = node.kind === "agent" ? x.pick() : null; } catch (error) { if (!(error instanceof QueueRefusal) && !(error instanceof ProviderRefusal)) throw error; }
-    const step: Step = { seq: r.steps.length + 1, node: id, kind: node.kind, visit: rn.visits, state: "running", outcome: null, startedAt: now(), endedAt: null, error: null, job: null, provider: pk?.provider ?? null, model: pk?.model ?? null, note: null };
+    const step: Step = { seq: r.steps.length + 1, node: id, kind: node.kind, visit: rn.visits, state: "running", outcome: null, startedAt: now(), endedAt: null, error: null, job: null, provider: pk?.provider ?? null, model: pk?.model ?? null, ...(pk ? { effort: pk.effort ?? null } : {}), note: null };
     r.steps.push(step); this.commit(r, rn.cause);
     this.emit(r, "node_started", `${node.label}${rn.visits > 1 ? ` (visit ${rn.visits})` : ""}`, { node: id, visit: rn.visits, kind: node.kind, ...(pk ? { provider: pk.provider, model: pk.model } : {}) });
     this.live.add(key);
@@ -1648,7 +1657,7 @@ export class Engine {
       const job = await this.deps.agents.run({ kind: `run:${modeName}`, title: `${x.run.id} ${x.node.label}${x.visit > 1 ? ` (visit ${x.visit})` : ""}`, system, text, admissionReceipt, tools: mode.tools(x), provider: prov,
         ref: x.run.id, project: x.run.params?.project || null, rules, receiptFor: (r: any) => this.deps.instructionReceipt?.(x, x.node.role ?? x.node.args?.role, jobInstructions(system, r), prov), queueLease: true, signal: this.abortOf(x.run).signal, owns: () => this.owns(x) && hashInput(x.pick()) === pickIdentity, maxTools: (typeof mode.maxTools === "function" ? mode.maxTools(x) : mode.maxTools) ?? 60, timeoutMs: tl * 1000,
         // a sandboxed round reaches its provider's API, plus the hosts policy egress.allow grants (e.g. a package registry)
-        record: (() => { const b = briefFor(x); return { dir: join(this.root, x.run.id, "nodes", x.node.id, String(x.visit)), header: { run: x.run.id, node: x.node.id, round: x.visit, attempt: (x.rn.data.jobs ?? []).filter((j: any) => j.round === x.visit && !j.hop).length + (hop ? 0 : 1), head: x.ctx.head ?? null, brief: b?.id ?? null, ledger: b?.ledger ?? [], hop, mode: modeName, roleSkill: use.roleSkill, skills: use.skills } }; })(),
+        record: (() => { const b = briefFor(x); return { dir: join(this.root, x.run.id, "nodes", x.node.id, String(x.visit)), header: { run: x.run.id, node: x.node.id, round: x.visit, attempt: (x.rn.data.jobs ?? []).filter((j: any) => j.round === x.visit && !j.hop).length + (x.rn.data.interrupted ?? []).filter((j: any) => j.round === x.visit).length + (hop ? 0 : 1), head: x.ctx.head ?? null, brief: b?.id ?? null, ledger: b?.ledger ?? [], hop, mode: modeName, roleSkill: use.roleSkill, skills: use.skills } }; })(),
         sandbox: this.roundSandbox(x, mode.sandbox?.(x) ?? null), onStart: (jid: string) => { x.rn.job = jid; x.save(); this.emit(x.run, "agent_started", `${x.node.label}: ${prov.id} · ${prov.model}`, { node: x.node.id, job: jid, provider: prov.id, model: prov.model }); } } as any);
       x.rn.data = { ...x.rn.data, jobs: [...(x.rn.data.jobs ?? []), { id: job.id, round: x.visit, hop, provider: job.provider, model: job.model, status: job.status, cost: job.cost, tools: job.tools, error: job.error, operatingRules: job.operatingRules?.hash ?? null }] };
       if (x.cancelled()) throw new Error("cancelled");

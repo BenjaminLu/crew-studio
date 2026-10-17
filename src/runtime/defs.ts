@@ -29,11 +29,12 @@ export type WNode = {
   lifecycle?: string[];
   /** the captain's intent lines (numbers) this node serves (readiness gate stage 1) */
   serves?: number[];
-  /** an agent node's enabled skills, in order, each pinned by version and hash (unit agent-skills); text only, never tools or sandbox */
+  /** an agent or loop node's enabled skills, in order, each pinned by version and hash (unit agent-skills); text only, never tools or sandbox */
   skills?: { id: string; v: number; sha256: string }[];
 };
 export type WEdge = { from: string; to: string; when?: string; checks?: CheckRef[] };
-export type WRole = { id: string; label: string; skill: string; provider?: string; model?: string };
+/** A role's defaults: its skill, and the provider, model and reasoning effort its nodes run on unless a node (or approved staffing) says otherwise. */
+export type WRole = { id: string; label: string; skill: string; provider?: string; model?: string; effort?: string };
 export type WDef = {
   id: string; name: string; version: number; description?: string; kind?: string;
   intent?: { keywords?: string[]; examples?: string[] };
@@ -107,7 +108,7 @@ export function validate(d: WDef, known?: (ref: string) => boolean, runners?: Se
     if (n.max_visits != null && !(Number(n.max_visits) >= 1)) out.push({ level: "error", node: n.id, text: `${n.label}: max_visits must be 1 or more` });
     for (const c of n.checks ?? []) if (known && !known(c.use)) out.push({ level: "error", node: n.id, text: `${n.label}: no check ${c.use}` });
     if (n.skills != null) {
-      if (n.kind !== "agent") out.push({ level: "error", node: n.id, text: `${n.label}: only an agent node enables skills` });
+      if (n.kind !== "agent" && n.kind !== "loop") out.push({ level: "error", node: n.id, text: `${n.label}: only an agent or loop node enables skills` });
       else if (!Array.isArray(n.skills)) out.push({ level: "error", node: n.id, text: `${n.label}: skills is an ordered list of {id, v, sha256}` });
       else {
         let total = 0; const seen = new Set<string>();

@@ -48,7 +48,7 @@ export function checkNodeStaffing(n:any,label=n?.id){
  if(n.model!==undefined&&!(typeof n.model==='string'&&MODEL.test(n.model)))throw new DraftError(`${label}: model must be a short model id`);
  if(n.effort!==undefined&&!(DRAFT_EFFORTS as readonly string[]).includes(n.effort))throw new DraftError(`${label}: effort must be one of ${DRAFT_EFFORTS.join(', ')}`);
  if(n.skill!==undefined&&!Object.hasOwn(DRAFT_SKILLS,n.skill))throw new DraftError(`${label}: skill must be a bundled Studio role skill`);
- if(n.kind!=='agent'&&['provider','model','effort','skill'].some(k=>n[k]!==undefined))throw new DraftError(`${label}: only agent nodes have a provider, model, effort or skill`);
+ if(n.kind!=='agent'&&n.kind!=='loop'&&['provider','model','effort','skill'].some(k=>n[k]!==undefined))throw new DraftError(`${label}: only agent and loop nodes have a provider, model, effort or skill`);
 }
 
 /** The model's graph, restricted to a drafting vocabulary that can never name a privileged action. */

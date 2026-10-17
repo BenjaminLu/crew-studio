@@ -506,8 +506,9 @@ function buildEditor(ed) {
         txt("label", T("Label", "名稱")), txt("detail", T("Detail", "說明")),
         n.kind === "agent" ? field(T("Role", "角色"), h("select", { class: "select", onchange: (e) => { n.role = e.target.value; dirty(); } }, ed.def.roles.map((r) => h("option", { value: r.id, selected: r.id === n.role || null }, r.label)))) : null,
         n.kind === "agent" ? txt("mode", T("Mode", "模式")) : null,
-        n.kind === "agent" && ed.def.origin ? nodeModelControls(n, ed.def.roles.find((r) => r.id === n.role)?.skill, { attr: "data-node-model-config", onChange: (k, v) => { if (v === "") delete n[k]; else n[k] = v; dirty(); } }) : null,
-        n.kind === "agent" ? skillsBlock(n) : null, n.kind === "hook" ? txt("do", T("Action", "動作")) : null,
+        // every workflow's agent and loop nodes take their own provider, model, effort and skills; a staffed workflow's captain approves them on the staffing card
+        ["agent", "loop"].includes(n.kind) ? nodeModelControls(n, ed.def.roles.find((r) => r.id === (n.role ?? (n.kind === "loop" ? n.args?.coordinator ?? "coordinator" : undefined)))?.skill, { attr: "data-node-model-config", note: ed.def.id === "code-firstmate" || ed.def.kind === "coffee-kit" ? "staffed" : ed.def.origin ? "run" : "saved", roleSkillPick: n.kind === "agent" && !(ed.def.id === "code-firstmate" || ed.def.kind === "coffee-kit"), onChange: (k, v) => { if (v === "") delete n[k]; else n[k] = v; dirty(); } }) : null,
+        ["agent", "loop"].includes(n.kind) ? skillsBlock(n) : null, n.kind === "hook" ? txt("do", T("Action", "動作")) : null,
         ["agent", "check"].includes(n.kind) ? txt("timeout_s", T("Time limit (s)", "時間上限（秒）")) : null, n.kind === "agent" ? txt("retries", T("Retries", "重試次數")) : null,
         checksBlock(n),
         h("h4", {}, T("Connect", "連線")), h("div", { class: "rt-row" }, target, when, h("button", { class: "btn sm", "data-connect": "1", onclick: () => { connect(n.id, target.value, when.value.trim()); drawPanel(); } }, T("Connect", "連線"))),
@@ -715,7 +716,8 @@ function roundHistory(r) {
     h("div", { class: "rt-rounds-head" }, h("h2", {}, T("Rounds", "回合")), (r.rounds || []).filter((x) => x.actor.kind === "agent").length > 1 ? h("a", { class: "btn", href: `#/tasks/${r.id}/compare`, "data-compare-link": r.id }, T("Compare transcripts", "並排比較紀錄")) : null),
     !(r.rounds || []).length ? h("p", { class: "faint" }, T("No rounds yet.", "還沒有回合。")) :
     h("ol", { class: "rt-round-list" }, r.rounds.map((rd) => {
-      const actor = rd.actor.kind === "agent" ? [r.def?.roles?.find((x) => x.id === rd.actor.role)?.label || rd.actor.role, rd.actor.provider, rd.actor.model].filter(Boolean).join(" · ") : rd.actor.kind === "check" ? rd.actor.name || T("Check", "檢查") : T("Captain", "船長");
+      // an agent round: role · provider · model · effort, then the named skills it loaded
+      const actor = rd.actor.kind === "agent" ? [r.def?.roles?.find((x) => x.id === rd.actor.role)?.label || rd.actor.role, rd.actor.provider, rd.actor.model, rd.actor.effort ? T(`effort ${rd.actor.effort}`, `推理 ${rd.actor.effort}`) : null, rd.actor.skills?.length ? T(`skills ${rd.actor.skills.join(", ")}`, `技能 ${rd.actor.skills.join("、")}`) : null].filter(Boolean).join(" · ") : rd.actor.kind === "check" ? rd.actor.name || T("Check", "檢查") : T("Captain", "船長");
       const imageCards=(r.cards||[]).filter(c=>c.node===rd.node&&c.visit===rd.number&&c.detail?.artifactAcceptance?.offered?.some(o=>o.format==="image"));
       const exact=imageCards.filter(c=>c.detail.artifactAcceptance.review?.round===rd.number&&c.detail.artifactAcceptance.review?.attempt===rd.attempt);
       const imageEvidence=rd.actor.kind==="card"&&imageCards.length&&window.crewImageRefinementSnapshot
@@ -939,7 +941,7 @@ const DRAFT_OPTS={value:null,pending:null};
 const draftOpts=()=>DRAFT_OPTS.value?Promise.resolve(DRAFT_OPTS.value):(DRAFT_OPTS.pending||=api("/api/wf/drafts").then(j=>(DRAFT_OPTS.value={providers:j.providers||[],efforts:j.efforts||[],skills:j.skills||[]})).finally(()=>{DRAFT_OPTS.pending=null;}));
 /** One agent node's worker/reviewer model settings: provider, model, effort and role skill.
  *  live: each change applies at once (the editor's next saved version); otherwise a Save button posts it. */
-function nodeModelControls(n,roleSkill,{onChange,onSave,attr}){
+function nodeModelControls(n,roleSkill,{onChange,onSave,attr,note="run",roleSkillPick=true}){
   const opts=DRAFT_OPTS.value||{providers:["codex","claude"],efforts:["minimal","low","medium","high","xhigh"],skills:[]};
   const sel=(k,list,label,cur)=>h("label",{class:"rt-field"},h("span",{},label),h("select",{class:"select",[`data-node-config-${k}`]:"",onchange:e=>onChange?.(k,e.target.value)},h("option",{value:""},k==="skill"?T("Role default","角色預設"):T("Not chosen","尚未選擇")),list.map(([v,l])=>h("option",{value:v,selected:v===cur||null},l))));
   let catalog=null,chosenProvider=n.provider||"",chosenModel=n.model||"";
@@ -953,12 +955,15 @@ function nodeModelControls(n,roleSkill,{onChange,onSave,attr}){
     sel("provider",opts.providers.map(v=>[v,v==="codex"?"Codex":"Claude"]),T("Provider","供應商"),n.provider),
     h("label",{class:"rt-field"},h("span",{},T("Model","模型")),model,customModel),
     sel("effort",opts.efforts.map(v=>[v,v]),T("Reasoning effort","推理強度"),n.effort),
-    sel("skill",opts.skills.map(x=>[x.ref,T(x.en,x.zh)]),T("Role skill","角色技能"),n.skill),
-    h("p",{class:"faint"},T(`Role default: ${roleSkill?skillName(roleSkill):"none"}. Nothing runs or is staffed here; you confirm staffing when you click Run.`,`角色預設：${roleSkill?skillName(roleSkill):"無"}。這裡不會執行或派工；按下執行時才會確認人員配置。`)),
+    roleSkillPick?sel("skill",opts.skills.map(x=>[x.ref,T(x.en,x.zh)]),T("Role skill","角色技能"),n.skill):null,
+    // what saving these means: a staffed workflow's captain approves them on the staffing card; the captain's own workflow confirms at Run; any other applies to new Tasks
+    h("p",{class:"faint","data-node-config-note":note},note==="staffed"?T(`Empty fields keep the role's approved staffing (role skill: ${roleSkill?skillName(roleSkill):"none"}). A change saves a new version; Firstmate then proposes staffing again and the staffing card lists this node's override for you to approve.`,`留空的欄位沿用角色已核准的配置（角色技能：${roleSkill?skillName(roleSkill):"無"}）。修改後會存成新版本；Firstmate 會重新提出派工配置，配置卡會列出這個節點的設定讓你核准。`)
+      :note==="saved"?T(`Empty fields keep the role's defaults (role skill: ${roleSkill?skillName(roleSkill):"none"}). Saving makes a new version; new Tasks run this node with these settings.`,`留空的欄位沿用角色預設（角色技能：${roleSkill?skillName(roleSkill):"無"}）。儲存後成為新版本；之後的新任務以這些設定執行這個節點。`)
+      :T(`Role default: ${roleSkill?skillName(roleSkill):"none"}. Nothing runs or is staffed here; you confirm staffing when you click Run.`,`角色預設：${roleSkill?skillName(roleSkill):"無"}。這裡不會執行或派工；按下執行時才會確認人員配置。`)),
     onSave?h("div",{class:"rt-row"},h("button",{class:"btn sm primary",type:"button","data-node-config-save":"",onclick:async()=>{const val=k=>k==="model"?chosenModel:box.querySelector(`[data-node-config-${k}]`).value;status.textContent=T("Saving…","儲存中…");try{const r=await onSave({provider:val("provider"),model:val("model").trim(),effort:val("effort"),skill:val("skill")});status.textContent=T(`Saved · revision ${r.revision}`,`已儲存 · 第 ${r.revision} 版`);}catch(e){status.textContent=e.message;}}},T("Save node settings","儲存節點設定")),status):null);
   box.querySelector('[data-node-config-provider]').addEventListener('change',e=>{chosenProvider=e.target.value;chosenModel="";customModel.hidden=true;customModel.value="";onChange?.("model","");fillModels();});
   // choices that arrive late fill the selects in place: never replace the box under the captain's typing or click
-  if(!DRAFT_OPTS.value)draftOpts().then(o=>{const fill=(k,list)=>{const el=box.querySelector(`[data-node-config-${k}]`);if(!el)return;const cur=el.value;el.replaceChildren(el.firstChild,...list.map(([v,l])=>h("option",{value:v,selected:v===cur||null},l)));el.value=cur;};fill("provider",o.providers.map(v=>[v,v==="codex"?"Codex":"Claude"]));fill("effort",o.efforts.map(v=>[v,v]));fill("skill",o.skills.map(x=>[x.ref,T(x.en,x.zh)]));}).catch(()=>{});
+  if(!DRAFT_OPTS.value)draftOpts().then(o=>{const fill=(k,list)=>{const el=box.querySelector(`[data-node-config-${k}]`);if(!el)return;const cur=el.value;el.replaceChildren(el.firstChild,...list.map(([v,l])=>h("option",{value:v,selected:v===cur||null},l)));el.value=cur;};fill("provider",o.providers.map(v=>[v,v==="codex"?"Codex":"Claude"]));fill("effort",o.efforts.map(v=>[v,v]));if(roleSkillPick)fill("skill",o.skills.map(x=>[x.ref,T(x.en,x.zh)]));}).catch(()=>{});
   return box;
 }
 /** Run of the captain's own workflow: the staffing confirmation appears only now. Resolves true when confirmed. */
