@@ -18,7 +18,7 @@ const flow={id:'code-firstmate',name:'Question fixture',version:1,roles:[{id:'co
 {id:'build',kind:'agent',role:'worker',mode:'build',label:'Build',checks:[{use:'firstmate/report-schema'}]},
 {id:'done',kind:'hook',label:'Done'}],edges:[['prepare','spec'],['spec','dispatch'],['dispatch','build','dispatch'],['build','done','ok']]};
 
-for(const scenario of ['firstmate','captain','amendment','timeout']){
+for(const scenario of ['firstmate','captain','amendment','timeout','reattach']){
  const H=await harness([Y(flow)]);let E=H.engine;const repo=join(H.data,'repo');mkdirSync(repo);assertTempRepo(repo);must(repo,['init','-q','-b','main']);writeFileSync(join(repo,'README.md'),'initial\n');must(repo,['add','.']);must(repo,['commit','-qm','Initial']);
  const projects=new Projects(H.data);projects.add({id:'fixture',path:repo});
  let asked=0;const install=()=>{installCode(E,{dataDir:H.data,projects});E.policies.setProject('fixture',{install:false});E.askFirstmate=()=>{asked++;return true;};if(scenario==='timeout')E.firstmateAnswerMs=400;E.deps.provider=()=>provider;};
@@ -55,6 +55,16 @@ for(const scenario of ['firstmate','captain','amendment','timeout']){
  ok(await until(()=>E.cards.list({run:r.id,open:true}).some(c=>c.kind==='failure')&&!E.busy(r.id)),'unanswered question reaches the captain after the bounded wait');
  const c=E.cards.list({run:r.id,open:true}).find(c=>c.kind==='failure')!;
  ok(c.failure?.code==='ask.escalated'&&/did not answer within/.test(c.failure?.escalation?.reason??'')&&E.get(r.id)!.status==='failed'&&!E.get(r.id)!.ctx.firstmateQuestion,'the card says Firstmate did not answer in time',JSON.stringify(c.failure?.escalation));
+ continue;}
+ if(scenario==='reattach'){
+ // restart while Firstmate is not attached: the question keeps waiting (no card), is sent once Firstmate attaches, and the deadline still holds
+ let up=false;const sentBefore=asked;E=new Engine(E.deps,E.defs);install();E.firstmateAnswerMs=2500;E.askFirstmate=()=>{if(!up)return false;asked++;return true;};E.load();
+ ok(E.get(r.id)!.status==='waiting'&&!!E.get(r.id)!.ctx.firstmateQuestion&&!E.cards.list({run:r.id,open:true}).length&&asked===sentBefore,'restart with Firstmate detached keeps waiting, no captain card',JSON.stringify([E.get(r.id)!.status,asked-sentBefore]));
+ up=true;E.resumeFirstmateQuestions();E.resumeFirstmateQuestions();
+ ok(asked===sentBefore+1,'Firstmate attaching re-sends the question exactly once',String(asked-sentBefore));
+ ok(await until(()=>E.cards.list({run:r.id,open:true}).some(c=>c.kind==='failure')&&!E.busy(r.id)),'the deadline still takes the unanswered question to the captain');
+ const c=E.cards.list({run:r.id,open:true}).find(c=>c.kind==='failure')!;
+ ok(/did not answer within/.test(c.failure?.escalation?.reason??'')&&E.get(r.id)!.status==='failed','the card says Firstmate did not answer in time');
  continue;}
  const snapshot=JSON.stringify({spec:r.ctx.spec,def:r.def,head:r.ctx.head,admission:E.ledger(r.id).filter(e=>e.record==='scope-admission'),dispatch:E.cards.get(dispatch.id)});
  ok(rejects(()=>E.answerFromFirstmate(r.id,'build',{answer:'  '})),scenario+' blank Firstmate answer refused');

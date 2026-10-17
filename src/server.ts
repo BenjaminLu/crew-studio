@@ -197,7 +197,7 @@ const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STA
   chatLog,
   studioMcp: () => helperCommand("mcp") });
 sweepChatFiles(); setInterval(sweepChatFiles, Number(process.env.CREW_ATTACH_SWEEP_MS) || 3600_000).unref?.(); // CREW_ATTACH_SWEEP_MS: tests only
-main.onView = (v) => send("main", v);
+main.onView = (v) => { send("main", v); if (v.state === "attached") { try { runtime.engine.resumeFirstmateQuestions(); } catch {} } }; // Firstmate attached: send questions it could not take at the restart
 main.onEvent = (e: HostEvent) => {
   // a Claude primary's own quota or sign-in refusal is the Claude account card's fact too (no fallback anywhere)
   if (e.type === "hostRefusal" && main.view().host === "claude") { try { nativeClaude.observe(e.raw); } catch {} } if (e.type === "delta" || e.type === "toolStart" || e.type === "permissionRequest" || e.type === "turnStart") send("mainEvent", e); };

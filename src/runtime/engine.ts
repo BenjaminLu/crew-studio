@@ -926,7 +926,7 @@ export class Engine {
   // ---------- the captain's controls ----------
   pause(id: string) { const r = this.must(id); if (TERMINAL.includes(r.status)) throw new Error(`the run is ${r.status}`); if (r.status === "paused") return r;
     r.status = "paused"; this.commit(r, "paused by the captain"); this.emit(r, "paused", "paused: running steps finish, nothing new starts"); return r; }
-  resume(id: string) { const r = this.must(id); if (r.status !== "paused") throw new Error(`the run is ${r.status}`); r.status = "running"; this.commit(r, "resumed by the captain"); this.emit(r, "resumed", "resumed"); this.tick(r); this.settle(r); return r; }
+  resume(id: string) { const r = this.must(id); if (r.status !== "paused") throw new Error(`the run is ${r.status}`); r.status = "running"; this.commit(r, "resumed by the captain"); this.emit(r, "resumed", "resumed"); this.tick(r); this.settle(r); this.watchFirstmate(r); return r; }
   cancel(id: string, by = "captain", reason: string | null = null) {
     const r = this.must(id); if (TERMINAL.includes(r.status)) throw new Error(`the run is ${r.status}`);
     const why = reason ? String(reason).trim().slice(0, 1000) || null : null;
@@ -1233,26 +1233,34 @@ export class Engine {
     if (!sent) return false;
     r.failure = f; r.failures = [...(r.failures ?? []), f].slice(-20); r.failureCard = null; r.ctx.firstmateQuestion = { node: node.id, visit: r.nodes[node.id].visits, question: f.message, at: now() };
     this.commit(r, "question to Firstmate"); this.emit(r, "question_to_firstmate", `${node.label}: ${f.message.slice(0, 200)}`, { node: node.id });
-    this.watchFirstmate(r);
+    this.firstmateSent.add(`${r.id}@${r.ctx.firstmateQuestion.at}`); this.watchFirstmate(r);
     return true;
   }
   /** How long a question waits for Firstmate before it goes to the captain as the failure card. */
   firstmateAnswerMs = 15 * 60_000;
   /** After a restart: send each pending question to Firstmate again (its wake notice died with the old process), or to the captain when Firstmate cannot take it. */
+  /** Questions this process has sent to Firstmate (run@question time): each is sent once; resume skips them. */
+  private firstmateSent = new Set<string>();
+  /** Also called when Firstmate attaches (server.ts): a question it could not take at the restart is sent then. */
   resumeFirstmateQuestions() {
     for (const r of this.runs.values()) {
-      const q = r.ctx.firstmateQuestion; if (!q || r.failureCard || r.archived || r.parked || this.gone.has(r.id) || !["waiting", "failed"].includes(r.status)) continue;
+      const q = r.ctx.firstmateQuestion; if (!q || r.failureCard || r.archived || r.parked || this.gone.has(r.id) || !["waiting", "failed", "paused"].includes(r.status)) continue;
       const node = r.def.nodes.find((n) => n.id === q.node); if (!node) continue;
+      this.watchFirstmate(r); // the bounded wait holds whether or not Firstmate can take the question now
+      const key = `${r.id}@${q.at}`; if (this.firstmateSent.has(key)) continue;
       let sent = false; try { sent = !!this.askFirstmate?.(r, node, q.question, q.visit ?? r.nodes[node.id].visits); } catch { sent = false; }
-      if (!sent) { if (this.askFirstmate) this.escalateQuestion(r, node, "Firstmate is not running, so it could not answer this question."); continue; }
-      this.emit(r, "question_to_firstmate", `${node.label}: sent again after a restart`, { node: node.id }); this.watchFirstmate(r);
+      if (!sent) continue; // Firstmate is not attached yet: sent when it attaches, or the deadline takes it to the captain
+      this.firstmateSent.add(key); this.emit(r, "question_to_firstmate", `${node.label}: sent again after a restart`, { node: node.id });
     }
   }
   /** The bounded wait: a question Firstmate has not answered by its deadline goes to the captain (the same path as Firstmate's escalation). */
+  private firstmateWatched = new Set<string>();
   private watchFirstmate(r: Run) {
     const q = r.ctx.firstmateQuestion; if (!q) return;
+    const key = `${r.id}@${q.at}`; if (this.firstmateWatched.has(key)) return; this.firstmateWatched.add(key);
     const left = Math.max(0, Date.parse(q.at) + this.firstmateAnswerMs - Date.now());
     const t: any = setTimeout(() => {
+      this.firstmateWatched.delete(key); // a paused run is armed again on resume
       const cur = this.runs.get(r.id); if (cur !== r || this.gone.has(r.id) || r.failureCard || r.ctx.firstmateQuestion?.at !== q.at || !["waiting", "failed"].includes(r.status)) return;
       if (this.busy(r.id)) { setTimeout(() => this.watchFirstmate(r), 1000)?.unref?.(); return; }
       const node = r.def.nodes.find((n) => n.id === q.node); if (!node) return;
