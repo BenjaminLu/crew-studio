@@ -26,10 +26,7 @@ const rules: Rule[] = [
 // source 671a0c7185d94b56b8d791fac309965251a3f966. Only the local-user
 // heuristic is excepted: every path, denylist and secret-file check still runs.
 const publicAttribution = new Map<string,string>([
- ["scripts/import-captain.py:23","b9bdb746199e3121f0fb698169aa8092479efb64fa95e54dc90142ef3ee67fb0"],
- ["scripts/import-captain.py:46","de19b9e0d77a12e38c4c6fb6794ab32bebd501c7f0361d8ddda1f710c5d6b335"],
  ["skins/captain/LICENSE.txt:3","0b744944c7f97122742417ed9293aa005079a2392d189913eab704590c476760"],
- ["skins/captain/ORIGIN.txt:1","05e4f682d505f2116a7b9b4cad5d04c9d28602634542f77d3a5e2051ebabdc96"],
 ]);
 const publicLine=(f:string,n:number,line:string)=>publicAttribution.get(`${f}:${n}`)===createHash("sha256").update(line).digest("hex");
 function violations(f:string,n:number,line:string,checks:Rule[]=rules){return checks.filter(([,re,kind])=>re.test(line)&&!(kind==="local-user"&&publicLine(f,n,line))).map(([what])=>`${f}:${n} ${what}`);}
@@ -43,7 +40,7 @@ for(const [key] of publicAttribution){const split=key.lastIndexOf(":"),file=key.
  ok(violations(file,n,line+privatePath,[local,rules[0]]).length===2,`private path appended to attribution is refused: ${key}`);
  ok(violations(file,n,line,[["explicit denylist",/./]]).length===1,`explicit denylist overrides public attribution: ${key}`);
 }
-ok(secretFile("data/github-token")&&secretFile("private/ledger.key")&&!publicLine("data/github-token",1,text("skins/captain/ORIGIN.txt")?.split("\n")[0]??""),"public attribution cannot exempt tracked token or key files");
+ok(secretFile("data/github-token")&&secretFile("private/ledger.key")&&!publicLine("data/github-token",1,text("skins/captain/LICENSE.txt")?.split("\n")[2]??""),"public attribution cannot exempt tracked token or key files");
 const hits: string[] = [];
 for (const f of files) { const t = text(f); if (t == null) continue;
   t.split("\n").forEach((l, i) => { hits.push(...violations(f,i+1,l)); }); }

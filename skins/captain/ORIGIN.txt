@@ -1,3 +1,3 @@
-Firstmate Voyage 2D, OWNER/firstmate-workflow
+Firstmate Voyage 2D, the firstmate-workflow repository (MIT, see LICENSE.txt)
 Source commit: 671a0c7185d94b56b8d791fac309965251a3f966
 Imported by scripts/import-captain.py; Studio bridge: scripts/captain-adapter.js.

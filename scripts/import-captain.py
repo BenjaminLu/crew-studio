@@ -20,7 +20,7 @@ with tempfile.TemporaryDirectory(prefix='captain-build-') as tmp:
     main = main.replace('    render();', '    render();\n    LIVE?.placeInputs?.(crewAt);')
     (work / 'src/main.js').write_text(main)
     hud = work / 'src/hud.js'
-    hud_text = hud.read_text().replace('https://github.com/OWNER/firstmate-workflow', '')
+    hud_text = re.sub(r'https://github\.com/[^/\s\'"]+/firstmate-workflow', '', hud.read_text())
     hud_text = hud_text.replace('["task",task?.boardId || ""]', '["task",task ? [task.boardId, task.title].filter(Boolean).join(" · ") : ""]')
     hud.write_text(hud_text)
     # Remove the upstream write transport entirely before bundling.
@@ -43,4 +43,4 @@ html = html.replace('</head>', '<link rel="stylesheet" href="captain.css"></head
 (out / 'index.html').write_text(html)
 shutil.copyfile(repo / 'LICENSE', out / 'LICENSE.txt')
 sha = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
-(out / 'ORIGIN.txt').write_text('Firstmate Voyage 2D, OWNER/firstmate-workflow\nSource commit: ' + sha + '\nImported by scripts/import-captain.py; Studio bridge: scripts/captain-adapter.js.\n')
+(out / 'ORIGIN.txt').write_text('Firstmate Voyage 2D, the firstmate-workflow repository (MIT, see LICENSE.txt)\nSource commit: ' + sha + '\nImported by scripts/import-captain.py; Studio bridge: scripts/captain-adapter.js.\n')
