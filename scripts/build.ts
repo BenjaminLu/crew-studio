@@ -11,7 +11,9 @@ const targets: [string, string][] = [["", "crew-studio"]];
 if (process.argv.includes("--all")) targets.push(["bun-darwin-x64", "crew-studio-darwin-x64"], ["bun-linux-x64", "crew-studio-linux-x64"], ["bun-windows-x64", "crew-studio-windows-x64.exe"]);
 for (const [target, out] of targets) {
   const file = join(root, "dist", out);
-  const args = ["build", "--compile", "--minify", ...(target ? [`--target=${target}`] : []), join(root, "src/main.ts"), "--outfile", file];
+  // The binary reads its configuration from the environment only: never a .env or bunfig.toml from the
+  // folder it starts in (a stray .env there could switch the sandbox off, retro 2026-10-17 finding 24).
+  const args = ["build", "--compile", "--minify", "--no-compile-autoload-dotenv", "--no-compile-autoload-bunfig", ...(target ? [`--target=${target}`] : []), join(root, "src/main.ts"), "--outfile", file];
   const r = Bun.spawnSync(["bun", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" });
   if (!r.success) { console.error(`build ${out} failed:\n${r.stderr}`); process.exitCode = 1; continue; }
   console.log(`built dist/${out}  ${(statSync(file).size / 1e6).toFixed(1)} MB`);

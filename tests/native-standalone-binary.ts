@@ -1,5 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
-import {mkdirSync,mkdtempSync,existsSync} from "node:fs";import {join} from "node:path";import {tmpdir} from "node:os";import {freePort,waitUp} from "./boot.mjs";
+import {mkdirSync,mkdtempSync,existsSync,writeFileSync} from "node:fs";import {join} from "node:path";import {tmpdir} from "node:os";import {freePort,waitUp} from "./boot.mjs";
 const root=join(import.meta.dir,".."),bin=process.argv[2]||join(root,"dist/crew-studio"),temp=mkdtempSync(join(tmpdir(),"native-binary-")),path=join(temp,"no-tools"),data=join(temp,"data");mkdirSync(path);
 let pass=0,fail=0;const ok=(c:unknown,n:string)=>{console.log(`${c?"ok":"FAIL"} ${n}`);c?pass++:fail++;};
 if(!existsSync(bin))throw new Error("build the binary first");
@@ -7,6 +7,8 @@ ok(!existsSync(data)&&!existsSync(join(temp,"Desktop/firstmate-workflow")),"fixt
 const port=await freePort(),base=`http://127.0.0.1:${port}`;
 const env={HOME:temp,TMPDIR:temp,PATH:path,CREW_DATA:data,CREW_PORT:String(port),CREW_INSTALL_RUNNER:"mock",CREW_NO_REAL_INSTALL:"1",CREW_SESSION_TOKEN:"native-test-session"};
 for(const tool of ["bun","node","python3","git","gh","claude","codex"]) {let absent=false;try{absent=!Bun.spawnSync([tool,"--version"],{env}).success;}catch{absent=true;}ok(absent,`clean launch PATH has no ${tool}`);}
+// a .env in the folder the binary starts in is not configuration (retro finding 24): it could switch the sandbox off
+writeFileSync(join(temp,".env"),`CREW_LOCAL_UNRESTRICTED=1\nCREW_LOCAL_DEPENDENCY_ROOT=${join(temp,"deps")}\n`);writeFileSync(join(temp,"bunfig.toml"),'preload = ["./nope-preload.ts"]\n');
 const app=Bun.spawn([bin],{cwd:temp,env,stdout:"ignore",stderr:"pipe"});
 let diagnostics=""; (async()=>{for await(const d of app.stderr)diagnostics+=new TextDecoder().decode(d);})();
 try{
@@ -14,6 +16,7 @@ try{
  const summary=await(await fetch(base+"/api/summary")).json();ok(summary.state===join(data,"legacy-empty")&&!summary.github.enabled&&!summary.board.writable&&summary.tasks.length===0,"default startup reads no legacy checkout and enables no external adapters");
  const doctor=await(await fetch(base+"/api/doctor")).json(),by=Object.fromEntries(doctor.items.map((i:any)=>[i.id,i]));
  ok(doctor.compiled&&by.native.status==="ok"&&by.assets.status==="ok","basic web readiness and assets are native and embedded");
+ ok(!/Local unrestricted mode: OS sandbox/.test(by.sandbox?.detail??"")&&/Local unrestricted mode: off/.test(by["claude-permission-mode"]?.detail??""),"the binary ignores a .env (and bunfig.toml) in the folder it starts in: the sandbox stays on");
  ok(["git","node","python","claude","codex"].every(id=>by[id]?.status==="missing"),"missing coding/interpreter dependencies are reported honestly");
  ok(by.state.status==="info"&&by.board.status==="info"&&!by["round-login"],"no outside vendor credential probe or legacy adapter is needed for basic pages");
  const wf=await(await fetch(base+"/api/wf")).json();ok(wf.workflows.length>0&&wf.checks.length>0,"native workflow and check manifests work without their optional interpreters");
