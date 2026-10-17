@@ -641,7 +641,8 @@ function viewRuns() {
         if(!wf.value){
           RN.draft=text.value;
           const choice=await api("/api/intake",{text:text.value});
-          if(!choice.workflow||!choice.confident){msg.textContent=RN.startError=T("Choose a workflow below; your request is still saved.","請選擇流程；你輸入的需求已保留。");wf.focus();return;}
+          // the page may have been redrawn while intake answered (a live event): say it and focus the picker on the page as it is now
+          if(!choice.workflow||!choice.confident){RN.startError=T("Choose a workflow below; your request is still saved.","請選擇流程；你輸入的需求已保留。");rerender();(document.querySelector("[data-run-wf]")||wf).focus();return;}
           RN.prefill=choice.workflow;RN.startError=T("Workflow selected. Review its inputs, then press Start.","已選好流程，確認輸入後按「開始」。");rerender();return;
         }
         const r = await startOwnRun({ text: text.value, workflow: wf.value || undefined, params: { ...(provider.value ? { provider: provider.value } : {}), ...startParamValues(wf.value), ...startProjectValue(wf.value) }, ...startStaffingExpected(wf.value) }); if (!r) return; RN.list = null; RN.draft = ""; RN.startError = ""; location.hash = `#/run/${r.id}`; }

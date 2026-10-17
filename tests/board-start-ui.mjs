@@ -22,8 +22,13 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
   ok(await p.locator('[data-run-wf] option[value="github-review"]').count()===0,'the Start form does not offer the held github-review '+tag);
   if(width===1440&&theme==='light'&&lang==='en'){
    let starts=0;const listener=r=>{if(r.method()==='POST'&&r.url().endsWith('/api/wruns'))starts++;};p.on('request',listener);
+   // the page redraws (a live event) while intake is still answering: the picker it then focuses is the one on the page
+   let answerIntake;const intakeHeld=new Promise(r=>answerIntake=r),intakeAsked=p.waitForRequest(r=>new URL(r.url()).pathname==='/api/intake');
+   await p.route('**/api/intake',async route=>{await intakeHeld;await route.continue();});
    await p.locator('[data-run-text]').fill('zzzxqv ambiguous request');await p.locator('[data-run-start]').click();
-   await p.waitForFunction(()=>document.activeElement?.matches('[data-run-wf]'));
+   await intakeAsked;await p.evaluate(()=>render());answerIntake();
+   await p.waitForFunction(()=>document.activeElement?.matches('[data-run-wf]'),null,{timeout:10000});await p.unroute('**/api/intake');
+   ok(/Choose a workflow/.test(await p.locator('.rt-start [role=status]').textContent()),'unknown intent says to choose a workflow on the page as it is now');
    ok(starts===0&&await p.locator('[data-run-text]').inputValue()==='zzzxqv ambiguous request','unknown intent focuses workflow picker, retains prompt and allocates no Task');
    await p.locator('[data-run-text]').fill('coffee-kit');await p.locator('[data-run-start]').click();await p.waitForFunction(()=>document.querySelector('[data-run-wf]')?.value==='coffee-kit');
    ok(starts===0&&await p.locator('[data-run-text]').inputValue()==='coffee-kit','recognized workflow shows declared inputs before allocating a Task');p.off('request',listener);
