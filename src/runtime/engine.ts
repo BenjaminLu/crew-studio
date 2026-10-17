@@ -574,9 +574,12 @@ export class Engine {
     const parts = roleSkillParts(src?.ref);
     const partUse = parts.length > 1 ? { parts: parts.map((ref) => { let sha256: string | null = null; try { sha256 = createHash("sha256").update(this.deps.skillText(ref)).digest("hex"); } catch {} return { ref, sha256 }; }) } : {};
     const roleSkill: RoleSkillUse | null = text.trim() ? { role: roleId ?? null, ref: src?.ref ?? null, version: src?.version ?? null, sha256: createHash("sha256").update(text).digest("hex"), ...partUse } : null;
-    // the library is Studio's skill store under this data folder; an engine built without one (a test, a tool) opens the same store
-    if (pins.length && !this.deps.library) this.deps.library = new Skills(this.deps.dataDir, { list: () => [], get: () => null, sourceSkill: () => null } as any);
-    return { text: composeInstructions(roleText, pins.map((p) => ({ id: p.id, v: p.v, body: this.deps.library.body(p.id, p.v, p.sha256) }))), roleSkill, skills: pins.map((p) => `${p.id}@v${p.v}`) };
+    return { text: composeInstructions(roleText, pins.map((p) => ({ id: p.id, v: p.v, body: this.skillLibrary().body(p.id, p.v, p.sha256) }))), roleSkill, skills: pins.map((p) => `${p.id}@v${p.v}`) };
+  }
+  /** Studio's skill library under this data folder; an engine built without one (a test, a tool) opens the same store. */
+  skillLibrary(): Skills {
+    if (!this.deps.library) this.deps.library = new Skills(this.deps.dataDir, { list: () => [], get: () => null, sourceSkill: () => null } as any);
+    return this.deps.library;
   }
   /** Policy resolution (§6): org → project → workflow version override → run override (only set by a card answer). auth.* never resolves here: see grants. */
   policy(r: Run, path: string, dflt?: any) {

@@ -258,7 +258,7 @@ H.stop();
       ok(/Approved role skill differs from workflow policy/.test(msg), "an approval without each named skill's pin is refused at start", msg); }
     const parts = skillPartPins(ref, e.deps.skillText)!;
     const c1 = staffing.approve(draft({ skills: parts }), c0.hash, { run: "R-1", card: "SC-1", answerSeq: 1 });
-    ok(c1.roles.worker.skills?.length === 2 && c1.roles.worker.skills[0].sha256 === sha(contract) && c1.roles.worker.skills[1].sha256 === sha(profile), "staffing pins each named skill's sha256", JSON.stringify(c1.roles.worker.skills));
+    ok(c1.roles.worker.skills?.length === 2 && c1.roles.worker.skills[0].sha256 === sha(contract) && c1.roles.worker.skills[1].sha256 === sha(profile) && c1.roles.worker.skills.every((p: any) => Object.keys(p).sort().join() === "ref,sha256,snapshotSha256,version"), "staffing pins each named skill as a SkillPin, the shape a node's skills use", JSON.stringify(c1.roles.worker.skills));
     const systems: string[] = [];
     e.modes.test.system = (_x: any, skill: string) => skill;
     e.deps.selectProvider = async (_x: any, p: any) => { const base = e.deps.provider(p.provider, p.model); return { ...base, reasoningEffort: p.effort, start: (sys: string, tools: any, ctx: any) => { systems.push(sys); return base.start(sys, tools, ctx); } }; };

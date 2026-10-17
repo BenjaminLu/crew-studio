@@ -215,7 +215,7 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
   if(!!pinned!==!!live||pinned&&(pinned.length!==live!.length||pinned.some((p,i)=>p.ref!==live![i].ref)))throw new Error('Approved role skill differs from workflow policy');
   const i=pinned?.findIndex((p,k)=>p.sha256!==live![k].sha256)??-1;return i>=0?{pinned:pinned![i],live:live![i]}:null;}
  /** A node's approved library skills as the library holds them now (versions are immutable: a changed one was altered, not updated). */
- const liveNodePins=(pins:SkillPin[]|undefined)=>pins?.map(p=>{const info=engine.deps.library?.pinInfo(p.ref.slice('skill:'.length),p.version);return{ref:p.ref,sha256:info?.sha256??''};});
+ const liveNodePins=(pins:SkillPin[]|undefined)=>pins?.map(p=>{const info=engine.skillLibrary().pinInfo(p.ref.slice('skill:'.length),p.version);return{ref:p.ref,sha256:info?.sha256??''};});
  /** A task's approved staffing that differs from what runs now only in role skill text: which roles changed, and whether a newer approval already covers the new text (rebind only). */
  function skillDrift(def:any,params:Record<string,string>){
   const project=def.kind==='coffee-kit'?coffeeStaffingProject(params.project):resolveProject(params.project),current=store.current(project),binding=params._staffing;
@@ -242,7 +242,7 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
    // a role with several named skills: each skill's text is the one approved for it
    const moved=pinMoved(pick.skills,liveParts(def,id));if(moved)throw new SkillChanged(id,moved.pinned.sha256,moved.live.sha256);}
   // a node's library skills: the same pin check; a library version never changes, so a mismatch is refused, not offered for approval
-  for(const[id,n]of Object.entries(config.nodes??{})){if(!n.skills||!engine.deps.library)continue;const moved=pinMoved(n.skills,liveNodePins(n.skills));if(moved)throw new Error(`Node ${id} skill ${moved.pinned.ref} v${moved.pinned.version} no longer has its approved hash in the skill library`);}
+  for(const[id,n]of Object.entries(config.nodes??{})){if(!n.skills)continue;const moved=pinMoved(n.skills,liveNodePins(n.skills));if(moved)throw new Error(`Node ${id} skill ${moved.pinned.ref} v${moved.pinned.version} no longer has its approved hash in the skill library`);}
   return config;
  }
  function verified(def:any,params:Record<string,string>){try{return verifyStored(def,params)}catch(error){const refusal=new QueueRefusal('Staffing approval requires confirmation: '+String((error as any)?.message??error));if(error instanceof SkillChanged)(refusal as any).failure=failure('env.skill-changed',error.message,{source:'staffing'});throw refusal;}}

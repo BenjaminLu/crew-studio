@@ -87,10 +87,21 @@ function render() {
 }
 // a live update never yanks focus out of a field being typed in; it renders once the field is left
 let deferred = false;
+// a pointer press in progress: the field is left by pressing a button, and that button must still be there when the press ends
+let pressing = false;
+addEventListener("pointerdown", () => { pressing = true; }, true);
+addEventListener("pointerup", () => { pressing = false; }, true);
+addEventListener("pointercancel", () => { pressing = false; }, true);
 function soft() {
   const a = document.activeElement;
   if (a && $("#view").contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) {
-    if (!deferred) { deferred = true; a.addEventListener("blur", () => { deferred = false; render(); }, { once: true }); }
+    if (!deferred) { deferred = true; a.addEventListener("blur", () => {
+      const go = () => { deferred = false; render(); };
+      // rendering now would replace the pressed button before its click (mouseup on a new element: no click); render once the press is over
+      if (!pressing) return go();
+      const after = () => { removeEventListener("pointerup", after, true); removeEventListener("pointercancel", after, true); setTimeout(go, 0); };
+      addEventListener("pointerup", after, true); addEventListener("pointercancel", after, true);
+    }, { once: true }); }
     return updateNav();
   }
   render();

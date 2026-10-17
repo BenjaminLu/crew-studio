@@ -56,7 +56,13 @@ const safe = (pg) => { pg.setDefaultTimeout(8000); return new Proxy(pg, { get(t,
 const noHScroll = (p) => p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1);
 const sha = (f) => createHash("sha256").update(readFileSync(f)).digest("hex");
 const wait = (p, sel, ms = 8000) => p.waitForSelector(sel, { timeout: ms }).then(() => true, () => false);
-const importFolder = async (p, path) => { await p.click('[data-import-kind="folder"]'); await p.fill("[data-import-path]", path); await p.click("[data-import-go]"); };
+// an import ends with a result under the field (imported, unchanged, or the reason it was refused): wait for that result, bounded,
+// and say plainly when none came (the click was lost or the server never answered), instead of failing later on a missing row
+const IMPORT_WAIT_MS = 20000;
+const importFolder = async (p, path) => { await p.click('[data-import-kind="folder"]'); await p.fill("[data-import-path]", path); await p.click("[data-import-go]");
+  const done = await p.waitForFunction(() => ["ok", "error"].includes(document.querySelector("[data-import-msg]")?.dataset.state || ""), null, { timeout: IMPORT_WAIT_MS }).then(() => true, () => false);
+  if (!done) ok(false, `the folder import of ${path} shows its result within ${IMPORT_WAIT_MS / 1000} s`, `import message: "${await p.textContent("[data-import-msg]")}"`);
+  return done ? await p.textContent("[data-import-msg]") : null; };
 const selectNode = async (p, id) => { await p.focus(`[data-node="${id}"]`); await p.keyboard.press("Enter"); await p.waitForSelector(`.rt-panel [data-node-skills="${id}"]`, { timeout: 8000 }).catch(() => {}); };
 const order = (p) => p.$$eval("[data-node-skill]", (els) => els.map((e) => e.dataset.nodeSkill)).catch(() => []);
 let runId = null;

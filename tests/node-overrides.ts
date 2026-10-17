@@ -13,7 +13,7 @@ import { checkedTempDir } from "./lib/git-hygiene.mjs"; // temp folders only thr
 //   - a loop node's override reaches its coordinator turn end to end (model, effort, named skills)
 //      bun tests/node-overrides.ts
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { harness, suite, until, Y } from "./rt-harness";
 const { ok, end } = suite("node-overrides");
@@ -89,6 +89,15 @@ try {
   ok(actor?.effort === "xhigh" && actor.skills?.join() === "plain-writing@v1", "the run page's round shows the effort and skills", JSON.stringify(actor));
   const receipt = e.ledger(task.id).filter((x: any) => x.record === "staffing-instructions" && x.data?.node === "work").at(-1);
   ok(receipt?.data?.model === "node-model" && receipt.data.effort === "xhigh" && receipt.data.config === c1.hash, "the signed staffing-instructions entry records the node's approved override", JSON.stringify(receipt?.data));
+
+  // ---------- node skills and a role's named skills share one SkillPin list and one pin check ----------
+  { const idxFile = join(h.data, "skills", "_library", "plain-writing", "index.json"), saved = readFileSync(idxFile, "utf8");
+    ok(c1.nodes?.work?.skills?.every((p: any) => Object.keys(p).sort().join() === "ref,sha256,snapshotSha256,version"), "a node's approved skills are SkillPins (ref, version, sha256, snapshot)", JSON.stringify(c1.nodes));
+    // a library version's record never changes; one that no longer carries the approved hash is refused before the Task exists
+    const idx = JSON.parse(saved); idx[0].sha256 = "f".repeat(64); writeFileSync(idxFile, JSON.stringify(idx));
+    let msg = ""; const runs = e.list().length; try { e.start({ workflow: flow.id, text: "x", params: { project: project.id, _staffing: c1.hash } }); } catch (err: any) { msg = String(err?.message); }
+    writeFileSync(idxFile, saved);
+    ok(/Node work skill skill:plain-writing v1 no longer has its approved hash in the skill library/.test(msg) && e.list().length === runs, "a node skill whose library hash moved is refused at start, by the same pin check a role's named skills use", msg); }
 
   // ---------- an override whose model is not verified available: refused at start and at proposal ----------
   available.delete("node-model");
