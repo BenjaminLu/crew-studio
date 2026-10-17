@@ -36,7 +36,7 @@ import { runRender } from "../render";
 import { copyUntrusted } from "../secure";
 import { helper, kindOf, LINES_PER_READ, LIST_CAP, listTree, normPath, READ_CAP_BYTES, searchTree, typedRead } from "../review-read";
 import { COORDINATOR_TOOL_SCHEMA, coordinatorDetail, coordinatorText, designText, mergeDetail, type MergeInput } from "./mergecard";
-import { RemoteWatchers, requiredPolicy, reconcile, inspectRemote, grantIdentity, registerRemoteWait, validRemoteWait, remoteStopBody, remoteStopReason, observedNotice, type RequiredPolicy } from "./remote-ci";
+import { RemoteWatchers, requiredPolicy, reconcile, inspectRemote, grantIdentity, registerRemoteWait, validRemoteWait, remoteStopBody, remoteStopReason, observedNotice, OBSERVED_REFUSAL, type RequiredPolicy } from "./remote-ci";
 import { stablePatch, proveCleanCarry, mergeOnce, updateOnce, assertMergeAvailable } from "./remote-gates";
 import type { CardDetail } from "../runtime/cards";
 import { commitConvention, commitIdentity, commitSubject, commitTree, taskCommitMessage } from "./commit-message";
@@ -680,7 +680,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       if(!intent||intent.head!==h||intent.data.head!==h||intent.data.version!==1||intent.data.grant!==grantIdentity(a)||intent.data.repository!==a.grant.repository||intent.data.pr!==x.ctx.pr.id||intent.data.branch!==x.ctx.pr.branch||intent.data.base!==x.ctx.pr.base||intent.data.baseHead!==x.ctx.baseCommit||intent.data.method!==a.operationGrant().mergeMethod||intent.data.policyHash!==x.ctx.remoteCI?.policyHash)throw new Error("remote captain card target/grant/method changed; fresh intent required");
 
       if (!["branch","rebase","scope","failfirst","ci","approval","design"].every(name => { const e = trusted.entries.filter(e => e.check === `firstmate/gate-${name}`).at(-1); return e?.head === h && e.verdict === "pass"; })) throw new Error("seven signed exact-head gates required (the six and gate-design)");
-      const policy = await requiredPolicy(a,phase.signal); phase.assert();
+      const policy = await requiredPolicy(a,phase.signal); phase.assert(); if (policy.observed) throw new Error(OBSERVED_REFUSAL);
       if ((await inspectRemote(a,x.ctx.pr,policy,phase.signal)).state !== "pass" || x.ctx.remoteCI?.head !== h || x.ctx.remoteCI?.policyHash !== policy.hash || x.ctx.remoteCI?.grant !== grantIdentity(a)) throw new Error("remote checks changed before merge"); phase.assert();
       const curated = taskCommit(x, h); const result = await mergeOnce(a,x.ctx.pr,x.dir,answer.data.card,phase.signal,x.ctx.baseCommit,phase.assert,{ title: curated.subject, message: curated.body }); phase.assert();
       await a.importHeads(x.ctx.pr,phase.signal); phase.assert(); x.ctx.merged = { ...result, adapter: "github", at: new Date().toISOString() }; x.save(); return "ok";
@@ -1404,6 +1404,9 @@ ${said}`, options: rescopeOpts }; }
       // no operations grant (merging from Studio is off by design): the pull request is open and merges on GitHub
       let mergeOff = false; try { (a as GitHubPrAdapter).operationGrant(); } catch { mergeOff = true; }
       if (mergeOff) return mergeOnGitHubBody(x.ctx.pr, policy);
+      // with an operations grant the required checks must be ones GitHub enforces: an observed policy (protection not shown)
+      // proves only what Studio saw, so the merge stays on GitHub
+      if (policy?.observed) return remoteStopBody(OBSERVED_REFUSAL);
       try { (a as GitHubPrAdapter).operationGrant(); assertMergeAvailable(a as GitHubPrAdapter,x.ctx.pr,x.dir); const p = await (a as GitHubPrAdapter).mutationState(x.ctx.pr,phase.signal,phase.assert); phase.assert(); if (p.base?.sha !== x.ctx.baseCommit || p.draft !== false || p.mergeable !== true || p.mergeable_state !== "clean") throw new Error(); remoteIntent={version:1,grant:grantIdentity(a as GitHubPrAdapter),repository:(a as GitHubPrAdapter).grant.repository,pr:x.ctx.pr.id,branch:x.ctx.pr.branch,base:x.ctx.pr.base,baseHead:x.ctx.baseCommit,head:x.ctx.pr.head,method:(a as GitHubPrAdapter).operationGrant().mergeMethod,policyHash:x.ctx.remoteCI.policyHash}; }
       catch { phase.assert(); return remoteStopBody("remote merge grant or CLEAN/non-draft state is unverified"); }
 

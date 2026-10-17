@@ -4,13 +4,13 @@ import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repos
 // Pro or make this repository public"): the required checks become every check reported on the PR head, a
 // notice is recorded, and the Task reaches the merge-on-GitHub card instead of "Remote verification
 // stopped". Real failures keep their own typed cards: a red check, a closed pull request, refused access.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { harness, Y, until, suite } from "./rt-harness";
 import { installCode } from "../src/domain/code";
 import { Projects } from "../src/doors";
 import { GitHubPrAdapter } from "../src/adapters/github";
-import { requiredPolicy, inspectRemote } from "../src/domain/remote-ci";
+import { requiredPolicy, inspectRemote, grantIdentity } from "../src/domain/remote-ci";
 import { must, setGitHome } from "../src/git";
 import { githubSimulator } from "./lib/github-simulator";
 
@@ -97,5 +97,43 @@ try {
     await E.answer(dc.id, { choice: "close", by: "captain" } as any);
     E.actions["fixture.seed"] = seed;
   } finally { H.stop(); }
+
+  // ---------- an operations grant on an observed policy: Studio never merges; the card and the merge hook both refuse ----------
+  // (the required checks are only what Studio saw on the head, not what GitHub enforces, so no Merge option, no PUT, and no
+  // merge attempt recorded that would lock the head)
+  const ops = new GitHubPrAdapter({ ...grant, operations: { version: 1, repository: "fixture/project", approvalId: "fixture-op", approvedAt: "2026-10-17T00:00:00Z", mergeMethod: "merge" } }, () => "fake-token", 3000);
+  {
+    const H2 = await harness([flow]), E2 = H2.engine; let dir = "";
+    installCode(E2, { dataDir: H2.data, projects: new Projects(H2.data), adapter: ops });
+    const seedOps = E.actions["fixture.seed"]; E2.actions["fixture.seed"] = (x) => { dir = x.dir; const r = seedOps(x); rows(x.ctx.head, [run1(x.ctx.head)]); return r; };
+    try {
+      sim.expect("GET", POLICY, PLAN, undefined, 403); const before = sim.calls.length;
+      const r = E2.start({ workflow: "obs-flow", text: "observed", params: { branch: "crew/ops-card" } });
+      await until(() => !!E2.cards.list({ run: r.id, open: true }).length || ["succeeded", "failed"].includes(r.status), 15000);
+      const c = E2.cards.list({ run: r.id, open: true })[0];
+      ok(c?.title.en === "GitHub does not show branch protection: Studio will not merge this pull request" && !c.options.some((o: any) => o.id === "merge") && c.body.includes("only observed"),
+        "operations grant + observed policy: the merge card offers no Merge option", `${c?.title?.en} | ${JSON.stringify(c?.options?.map((o: any) => o.id))}`);
+      ok(!sim.calls.slice(before).some((k: any) => k.method === "PUT") && !existsSync(join(dir, "remote-merge-attempts.json")), "no PUT and no merge attempt recorded", dir);
+    } finally { H2.stop(); }
+  }
+  {
+    must(repo, ["checkout", "-qb", "crew/ops-merge", "main"]); const h = commit("ops-merge"); must(repo, ["checkout", "-q", "main"]);
+    mkdirSync(join(temp, "rec-ops")); const pr = await ops.open({ repo, base: "main", branch: "crew/ops-merge", head: h, title: "Ops", body: "b" }, join(temp, "rec-ops"));
+    sim.expect("GET", POLICY, PLAN, undefined, 403); const observed = await requiredPolicy(ops);
+    const H3 = await harness([Y({ id: "ops-merge", name: "Ops merge", roles: [], nodes: [{ id: "n", kind: "hook", do: "fixture.merge", label: "Merge", x: 0, y: 0 }], edges: [] })]), E3 = H3.engine;
+    installCode(E3, { dataDir: H3.data, projects: new Projects(H3.data), adapter: ops }); let message = "", dir = "";
+    E3.actions["fixture.merge"] = async (x) => {
+      dir = x.dir; Object.assign(x.ctx, { repo, worktree: repo, head: h, baseCommit, base: "main", branch: pr.branch, pr, gatedHead: h, door: { door: "two-way" }, spec: { title: "Ops", what: "w", why: ["y"], done: ["d"] }, remoteCI: { state: "pass", head: h, policyHash: observed.hash, grant: grantIdentity(ops) } });
+      for (const name of ["branch", "rebase", "scope", "failfirst", "ci", "approval", "design"]) E3.record(x, "fixture-gate", { check: `firstmate/gate-${name}`, head: h, verdict: "pass" } as any);
+      E3.record(x, "remote-merge-request", { head: h, data: { version: 1, card: "fixture-card", grant: grantIdentity(ops), repository: ops.grant.repository, pr: pr.id, branch: pr.branch, base: pr.base, baseHead: baseCommit, head: h, method: "merge", policyHash: observed.hash } } as any);
+      E3.record(x, "card-answer", { head: h, actor: "captain", data: { card: "fixture-card", kind: "merge", choice: "merge" } } as any);
+      must(repo, ["checkout", "-q", pr.branch]); sim.expect("GET", POLICY, PLAN, undefined, 403); rows(h, [run1(h)]);
+      try { await E3.actions["git.merge"](x); } catch (e: any) { message = e.message; } must(repo, ["checkout", "-q", "main"]); return "ok";
+    };
+    const before = sim.calls.length; const r = E3.start({ workflow: "ops-merge" }); await until(() => ["succeeded", "failed"].includes(r.status), 15000);
+    ok(/only observed/.test(message) && !r.ctx.merged, "operations grant + observed policy: the merge hook refuses", message);
+    ok(!sim.calls.slice(before).some((k: any) => k.method === "PUT") && !existsSync(join(dir, "remote-merge-attempts.json")), "the merge hook sends no PUT and records no merge attempt (the head is not locked)", dir);
+    H3.stop();
+  }
 } catch (e: any) { ok(false, "unexpected error", e.stack); } finally { sim.stop(); }
 end();

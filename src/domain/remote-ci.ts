@@ -127,8 +127,11 @@ export function remoteStopReason(e: any, fallback: string) {
 
 /** The card when the remote PR stopped verification: what changed on GitHub (the reason), in both languages; nothing was merged.
  *  A known class gets its own title (closed or moved, refused access, unreachable, checks failed). */
+/** Why Studio will not merge on an observed policy: the required checks are what Studio saw on the head, not what GitHub enforces. */
+export const OBSERVED_REFUSAL = "required checks are only observed (GitHub does not show branch protection for the base branch); Studio merge refused";
 export function remoteStopBody(reason: string) {
-  const zh = /pushed|moved away|changed on GitHub|changed since/i.test(reason) ? "GitHub 上的 PR 或任務 branch 在 Studio 上次推送後被改動了（例如有人推送）；Studio 沒有覆蓋它。"
+  const zh = /only observed/i.test(reason) ? "GitHub 沒有顯示 base 分支的分支保護，必要檢查只是 Studio 觀察到的，所以 Studio 不合併；請到 GitHub 合併。"
+    : /pushed|moved away|changed on GitHub|changed since/i.test(reason) ? "GitHub 上的 PR 或任務 branch 在 Studio 上次推送後被改動了（例如有人推送）；Studio 沒有覆蓋它。"
     : /closed, retargeted|head moved on GitHub/i.test(reason) ? "GitHub 上的 PR 已關閉、改了目標，或它的 head 被移動了。"
     : /\(authorization\)/i.test(reason) ? "GitHub 拒絕了這個專案的 GitHub 存取權（授權問題）。"
     : /could not be reached/i.test(reason) ? "連不上 GitHub。"
@@ -137,7 +140,8 @@ export function remoteStopBody(reason: string) {
     : /grant|CLEAN|draft/i.test(reason) ? "無法確認合併授權，或 PR 不是可乾淨合併的非草稿狀態。"
     : /naming|deadline/i.test(reason) ? "待處理更新的目標、授權或期限改變了；保留給船長處理。"
     : "無法驗證遠端 PR 或它的必要檢查；這一輪已停止。";
-  const [title, zhTitle] = /closed, retargeted|head moved on GitHub/i.test(reason) ? ["The pull request was closed or moved on GitHub: close this task?", "GitHub 上的 PR 已關閉或被移動：要關閉這個任務嗎？"]
+  const [title, zhTitle] = /only observed/i.test(reason) ? ["GitHub does not show branch protection: Studio will not merge this pull request", "GitHub 沒有顯示分支保護：Studio 不合併這個 PR"]
+    : /closed, retargeted|head moved on GitHub/i.test(reason) ? ["The pull request was closed or moved on GitHub: close this task?", "GitHub 上的 PR 已關閉或被移動：要關閉這個任務嗎？"]
     : /\(authorization\)/i.test(reason) ? ["GitHub refused the project's access: close this task?", "GitHub 拒絕了專案的存取：要關閉這個任務嗎？"]
     : /could not be reached/i.test(reason) ? ["GitHub could not be reached: close this task?", "連不上 GitHub：要關閉這個任務嗎？"]
     : /did not succeed/i.test(reason) ? ["Checks failed on the pull request: close this task?", "PR 的檢查沒有通過：要關閉這個任務嗎？"]
