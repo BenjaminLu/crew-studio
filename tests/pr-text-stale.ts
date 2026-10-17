@@ -78,6 +78,10 @@ const plainFlow = Y({ id: "plain-flow", name: "Plain flow", roles: [{ id: "coord
 const legacyPlain = Y({ id: "legacy-plain", name: "Legacy plain", roles: [{ id: "coordinator", label: "Coordinator" }],
   nodes: [...nodes.filter((n) => ["seed", "pr-open", "merge-card", "closed"].includes(n.id)), { id: "legacy", kind: "hook", do: "fixture.legacy-plain", label: "Older release", x: 2, y: 2 }],
   edges: [["seed", "pr-open"], ["pr-open", "legacy", "ok"], ["pr-open", "closed", "close"], ["legacy", "merge-card"], ["merge-card", "closed", "close"], ["merge-card", "closed", "changes"]] });
+// the template is deleted between pr-open (which deferred to it) and remote-ready: the pull request opens without one; the door flips later
+const vanished = Y({ id: "vanished-template", name: "Vanished template", roles: [{ id: "coordinator", label: "Coordinator" }],
+  nodes: [...nodes.filter((n) => ["seed", "pr-open", "remote-ready", "merge-card", "closed"].includes(n.id)), { id: "drop", kind: "hook", do: "fixture.drop-template", label: "Template deleted", x: 2, y: 2 }, { id: "flip", kind: "hook", do: "fixture.rescope", label: "Door flips", x: 3, y: 2 }],
+  edges: [["seed", "pr-open"], ["pr-open", "drop", "ok"], ["pr-open", "closed", "close"], ["drop", "remote-ready"], ["remote-ready", "flip", "ok"], ["remote-ready", "closed", "close"], ["flip", "merge-card"], ["merge-card", "closed", "close"], ["merge-card", "closed", "changes"]] });
 const studioMerge = Y({ id: "stale-studio-merge", name: "Stale Studio merge", roles: [{ id: "coordinator", label: "Coordinator" }],
   nodes: [...nodes.filter((n) => !["remote-ready", "round", "pr-push"].includes(n.id)), { id: "merged", kind: "hook", do: "fixture.merged", label: "Merge", x: 5, y: 0 }, { id: "done", kind: "hook", label: "Done", x: 6, y: 0 }],
   edges: [["seed", "pr-open"], ["pr-open", "r069", "ok"], ["pr-open", "closed", "close"], ["r069", "merge-card"], ["merge-card", "merged", "merge"], ["merge-card", "closed", "close"], ["merge-card", "closed", "changes"], ["merged", "done"]] });
@@ -91,13 +95,15 @@ const finalText = (head: string) => ({ title: "Add euro formatting and EUR switc
   { heading: "How it was tested", text: `The acceptance tests below fail on main and pass at ${head.slice(0, 8)}.` },
   { heading: "Screenshots", text: "The shop views now include the € EUR option." }, { heading: "Risk and rollback", text: "Incorrect amounts or links could show; the acceptance tests cover them." }] });
 
-const install = async (data?: string, with_: GitHubPrAdapter = adapter) => {
-  const H = await harness([flow, readyFlow, studioMerge, plainFlow, legacyPlain], data ? { data } : {}), E = H.engine;
-  installCode(E, { dataDir: H.data, projects: new Projects(H.data), adapter: with_ });
+// olderRelease: the first harness of a restart test plays a release without the text check (the engine's test-only switch)
+const install = async (data?: string, with_: GitHubPrAdapter = adapter, olderRelease = false) => {
+  const H = await harness([flow, readyFlow, studioMerge, plainFlow, legacyPlain, vanished], data ? { data } : {}), E = H.engine;
+  installCode(E, { dataDir: H.data, projects: new Projects(H.data), adapter: with_ }); if (olderRelease) E.testOnlySkipPrTextCheck = () => true;
   (E.deps.agents as any).run = async (job: any) => { const t = job.tools?.find((t: any) => t.name === "pull_request_text"); if (t) { prompts.push({ system: job.system, text: job.text }); t.run(finalText(/head ([a-f0-9]{40})/.exec(job.text)?.[1] ?? "")); } return { status: "done" }; };
   const evidenceAt = (x: any) => { E.record(x, "check", { check: "firstmate/ci", verdict: "pass", kind: "deterministic", data: { shards: [] } } as any); E.record(x, "check", { check: "firstmate/fail-first", verdict: "pass", kind: "deterministic", proves: R069.proves, data: { applicable: true } } as any); };
   E.actions["fixture.seed"] = (x) => {
     sim.community.clear(); // the older release opened the pull request right away
+    if (x.run.params.template) sim.community.set(TEMPLATE.path, TEMPLATE_TEXT); // pr-open finds a template and defers
     const branch = x.run.params.branch; must(repo, ["checkout", "-qb", branch, "main"]); const head = commit(branch); green(head);
     const door = x.run.params.door === "one-way" ? { door: "one-way", tier: "one-way", reasons: [{ path: "db/migrate.sql", list: "org", glob: "db/**", why: "a schema migration drops a column" }], decidedBy: "classifier" } : { door: "two-way", tier: "two-way", reasons: [], decidedBy: "classifier" };
     Object.assign(x.ctx, { repo, worktree: repo, base: "main", baseCommit, head, branch, door, spec: { title: R069.title, what: "Euro formatting.", why: ["Euro amounts."], done: R069.done, scope: ["file"] } });
@@ -119,10 +125,10 @@ const install = async (data?: string, with_: GitHubPrAdapter = adapter) => {
   const OLD_PLAIN = "# Format euro prices\n\nWhat: Euro formatting.\n\n## Door\ntwo-way\n\n## Rollback\nRevert the change to undo it.";
   E.actions["fixture.legacy-plain"] = (x) => {
     delete x.ctx.prPlain; x.ctx.pr = { ...x.ctx.pr, body: OLD_PLAIN }; pullOf(x).body = OLD_PLAIN;
-    if (x.run.params.boot) x.ctx.prText = { version: 0 }; // the older release: no text check at all (undone before the restart)
     x.ctx.door = { door: "one-way", tier: "one-way", reasons: [{ path: "db/migrate.sql", list: "org", glob: "db/**", why: "a schema migration drops a column" }], decidedBy: "classifier" };
     return "ok";
   };
+  E.actions["fixture.drop-template"] = () => { sim.community.clear(); return "ok"; };
   E.actions["fixture.rescope"] = (x) => { x.ctx.door = { door: "one-way", tier: "one-way", reasons: [{ path: "db/migrate.sql", list: "org", glob: "db/**", why: "a schema migration drops a column" }], decidedBy: "classifier" }; return "ok"; };
   E.actions["fixture.merged"] = (x) => { x.ctx.mergedBody = pullOf(x).body; return "ok"; };
   return { H, E };
@@ -318,12 +324,12 @@ try {
     } catch (e: any) { ok(false, "unexpected error", e.stack?.split("\n").slice(0, 2).join(" ")); } finally { H.stop(); }
   }
   {
-    const first = await install(); const data = first.H.data; let runId = "", oldId = "";
+    const first = await install(undefined, adapter, true); const data = first.H.data; let runId = "", oldId = "";
     try {
       const r = first.E.start({ workflow: "legacy-plain", text: "euro", params: { branch: "crew/legacy-boot", boot: "1" } }); await settle(first.E, r); runId = r.id;
       const c = openCard(first.E, r); oldId = c?.id;
       ok(c?.title.en.endsWith("merge it on GitHub"), "the older release raised its merge card over the pre-upgrade text", c?.title?.en);
-      delete r.ctx.prText; first.E.commit(r, "test: a pull request without a template, as the older release left it");
+
     } catch (e: any) { ok(false, "unexpected error", e.stack?.split("\n").slice(0, 2).join(" ")); } finally { first.H.stop(); }
     const { H, E } = await install(data);
     try {
@@ -333,6 +339,23 @@ try {
       await E.answer(c.id, { choice: "render-text", by: "captain" } as any); await settle(E, r, c.id);
       const s = openCard(E, r);
       ok(ids(s) === "update-text,changes,close" && s.body.includes("+one-way"), "and its 'Write the text again' shows the update first", ids(s));
+      await close(E, r);
+    } catch (e: any) { ok(false, "unexpected error", e.stack?.split("\n").slice(0, 2).join(" ")); } finally { H.stop(); }
+  }
+
+  // ---------- the template was deleted before the pull request opened (prText without a template): checked all the same ----------
+  {
+    const { H, E } = await install();
+    try {
+      const r = E.start({ workflow: "vanished-template", text: "euro", params: { branch: "crew/vanished", template: "1" } }); await settle(E, r);
+      const o = openCard(E, r);
+      ok(o?.title.en === "Open this pull request?" && r.ctx.prDeferred?.version === 1 && !o.pullRequest?.template, "pr-open deferred to a template that was gone by remote-ready: the pull request is opened without one", `${o?.title?.en} ${JSON.stringify(o?.pullRequest?.template)}`);
+      await E.answer(o.id, { choice: "open", by: "captain" } as any); await settle(E, r, o.id);
+      const c = openCard(E, r), p0 = patches();
+      ok(r.ctx.prText?.version === 1 && !r.ctx.prText.template && r.ctx.door.door === "one-way" && c?.title.en === STANDIN(r) && ids(c) === "update-text,changes,close" && c.body.includes("-two-way") && c.body.includes("+one-way"),
+        "its door flipped to one-way: no 'merge on GitHub' while GitHub says two-way; the update comes first", `${c?.title?.en} ${ids(c)}`);
+      await E.answer(c.id, { choice: "update-text", by: "captain" } as any); await settle(E, r, c.id);
+      ok(patches() === p0 + 1 && /## Door\none-way/.test(pullOf(r).body) && ids(openCard(E, r)) === "confirm-door,changes,close", "after the update the text says one-way, and the merge on GitHub asks for the confirmation", ids(openCard(E, r)));
       await close(E, r);
     } catch (e: any) { ok(false, "unexpected error", e.stack?.split("\n").slice(0, 2).join(" ")); } finally { H.stop(); }
   }
@@ -356,7 +379,7 @@ try {
 
   // ---------- an open merge card from an older release is replaced on restart by the stand-in, unanswered ----------
   {
-    const first = await install(); const data = first.H.data; let runId = "", oldId = "";
+    const first = await install(undefined, adapter, true); const data = first.H.data; let runId = "", oldId = "";
     try {
       const r = first.E.start({ workflow: "stale-flow", text: "euro", params: { branch: "crew/legacy", legacy: "1" } }); await settle(first.E, r); runId = r.id;
       const c = openCard(first.E, r); oldId = c?.id;

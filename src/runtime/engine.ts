@@ -273,6 +273,9 @@ export class Engine {
   /** A card node's answer that its body's domain handles itself (keyed by args.body_from, e.g. the merge card's "update-text");
    *  null routes the choice as the outcome. */
   cardAnswers: Record<string, (x: X, card: SCard) => Promise<Result | null>> = {};
+  /** Tests only, never set in production: a run whose GitHub pull request text is left out of the check before the merge
+   *  (a fixture that injects a pull request Studio has no record of, or plays an older release). */
+  testOnlySkipPrTextCheck?: (x: X) => boolean;
   private live = new Set<string>(); // "run/node" being executed in this process
   private routing = new Map<string, number>();
 

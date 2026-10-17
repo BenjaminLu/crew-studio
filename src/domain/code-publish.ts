@@ -188,12 +188,12 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
       if (id) { proven.add(c.text); proofs[c.text] = `${id}: ${ids[id]}`; } else unproven.push(c.text); }
     const title = typeof got?.title === "string" && got.title.trim() && got.title.length <= 200 && !/[\r\n]/.test(got.title) && !SESSION_LINK.test(got.title) ? got.title.trim() : String(x.ctx.spec?.title ?? x.run.title).slice(0, 200);
     const inner = withoutSessionLinks(template ? `${renderPullBody(sections, { text, rows, proven })}${trailer ? `\n${trailer}\n` : ""}`
-      : `${d.specMd(x.ctx.spec)}\n\n## Door\n${x.ctx.door?.door ?? "undecided"}\n\n## Rollback\n${rollback}`);
+      : plainInner(x));
     // the rendered body keeps the template (every heading, every box, ticked only where proven); otherwise no preview is raised
     const shape = template ? templateShapeProblem(template.text, inner, [...proven]) : null;
     if (shape) missing.push({ field: "template shape", why: `the text does not keep the template: ${shape}` });
-    // a template's text is Studio's part of the body, between its markers (head and hash): what lags the head or was edited shows
-    const body = template ? `${wrapStudioText(inner, h)}\n` : inner;
+    // the text is Studio's part of the body, between its markers (head and hash): what lags the head or was edited shows
+    const body = `${wrapStudioText(inner, h)}\n`;
     return { title, body, inner, proven: [...proven], proofs, unproven, missing, by: got ? "coordinator" : "studio" };
   }
 
@@ -267,7 +267,7 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     if (p.template) applyPullTemplate(bundle, { path: p.template.path, blob: p.template.blob, title: p.title, body: p.body, requiredInputsConfirmed: true, sources: bundle.sha256, proven: p.proven });
     const published = await a.open({ repo: x.ctx.repo, base: x.ctx.base, branch: x.ctx.branch, head: h, title: p.title, body: p.body, ...(p.draft ? { draft: true as const } : {}) }, x.dir, phase.signal, phase.assert); phase.assert();
     x.ctx.pr = published; x.ctx.prDeferred = null;
-    engine.record(x, "pr-opened", { head: h, data: { version: 1, repository: a.grant.repository, number: published.id, url: published.url, branch: x.ctx.branch, base: x.ctx.base, card: card.id, hash, ...(p.template ? { text: studioTextHash(studioParts(p.body).inner) } : {}) } } as any);
+    engine.record(x, "pr-opened", { head: h, data: { version: 1, repository: a.grant.repository, number: published.id, url: published.url, branch: x.ctx.branch, base: x.ctx.base, card: card.id, hash, text: studioTextHash(studioParts(p.body).inner) } } as any);
     x.rn.note = `pull request #${published.id} opened: ${published.url}`; x.save();
     return d.remoteWait(x, a);
   }
@@ -287,9 +287,10 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
   const crlf = (v: unknown) => String(v ?? "").replace(/\r\n?/g, "\n");
   const liveDigest = (l: { title: string; body: string }) => digest({ title: l.title, body: l.body });
   /** A template pull request Studio published (its text is Studio's to keep current). */
-  // every GitHub pull request Studio opened: from a template, without one (prPlain), or without one by an older release (no
-  // prText, no markers: its text is checked as unmarked and rewritten through the update card, never kept)
-  const ours = (x: X) => x.ctx.pr?.adapter === "github" && ((x.ctx.prText?.version === 1 && !!x.ctx.prText.template) || x.ctx.prPlain?.version === 1 || !x.ctx.prText);
+  // every GitHub pull request Studio opened is checked (fail closed), whatever its shape: from a template, without one, or by an
+  // older release (no markers: checked as unmarked and rewritten through the update card, never kept). The one way out is the
+  // engine's test-only switch, which production never sets.
+  const ours = (x: X) => x.ctx.pr?.adapter === "github" && !engine.testOnlySkipPrTextCheck?.(x);
   const templated = (x: X) => x.ctx.prText?.version === 1 && !!x.ctx.prText.template;
   /** A pull request without a template: Studio's part is the spec, the door and the rollback, rendered from the final state. */
   function plainInner(x: X): string {
