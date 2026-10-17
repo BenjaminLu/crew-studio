@@ -86,14 +86,14 @@ try {
     // red: a failing check is its own typed card
     E.actions["fixture.seed"] = pre("crew/red", (h) => [run1(h, { conclusion: "failure" })]);
     const red = await start("crew/red"); const rc = openCard(red);
-    ok(rc?.title.en === "Checks failed on the pull request: close this task?" && rc.body.includes("check test did not succeed"), "a red check raises the typed 'Checks failed' card", rc?.title?.en);
+    ok(rc?.title.en === "Checks failed on the pull request: check again or close this task?" && rc.body.includes("check test did not succeed") && rc.options.map((o: any) => o.id).join() === "check,close", "a red check raises the typed 'Checks failed' card (re-run it on GitHub, then check again)", rc?.title?.en);
     await E.answer(rc.id, { choice: "close", by: "captain" } as any);
 
     // refused access: a plain 403 on the policy read is the typed authorization card
     sim.expect("GET", POLICY, { message: "Resource not accessible by integration" }, undefined, 403);
     E.actions["fixture.seed"] = pre("crew/denied", (h) => [run1(h)]);
     const denied = await start("crew/denied"); const dc = openCard(denied);
-    ok(dc?.title.en === "GitHub refused the project's access: close this task?" && dc.body.includes("(authorization)") && dc.sections?.["zh-TW"]?.why?.includes("授權"), "a refused policy read raises the typed authorization card", dc?.title?.en);
+    ok(dc?.title.en === "GitHub refused the project's access: check again or close this task?" && dc.body.includes("(authorization)") && dc.sections?.["zh-TW"]?.why?.includes("授權"), "a refused policy read raises the typed authorization card", dc?.title?.en);
     await E.answer(dc.id, { choice: "close", by: "captain" } as any);
     E.actions["fixture.seed"] = seed;
   } finally { H.stop(); }
@@ -111,8 +111,8 @@ try {
       const r = E2.start({ workflow: "obs-flow", text: "observed", params: { branch: "crew/ops-card" } });
       await until(() => !!E2.cards.list({ run: r.id, open: true }).length || ["succeeded", "failed"].includes(r.status), 15000);
       const c = E2.cards.list({ run: r.id, open: true })[0];
-      ok(c?.title.en === "GitHub does not show branch protection: Studio will not merge this pull request" && !c.options.some((o: any) => o.id === "merge") && c.body.includes("only observed"),
-        "operations grant + observed policy: the merge card offers no Merge option", `${c?.title?.en} | ${JSON.stringify(c?.options?.map((o: any) => o.id))}`);
+      ok(c?.title.en === `Pull request #${r.ctx.pr?.id} is open: merge it on GitHub` && !c.options.some((o: any) => o.id === "merge") && c.body.includes("only observed") && c.options.map((o: any) => o.id).join() === "close,changes",
+        "operations grant + observed policy: the merge card offers no Merge option; the green pull request is the captain's to merge on GitHub", `${c?.title?.en} | ${JSON.stringify(c?.options?.map((o: any) => o.id))}`);
       ok(!sim.calls.slice(before).some((k: any) => k.method === "PUT") && !existsSync(join(dir, "remote-merge-attempts.json")), "no PUT and no merge attempt recorded", dir);
     } finally { H2.stop(); }
   }

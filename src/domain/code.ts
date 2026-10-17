@@ -36,7 +36,7 @@ import { runRender } from "../render";
 import { copyUntrusted } from "../secure";
 import { helper, kindOf, LINES_PER_READ, LIST_CAP, listTree, normPath, READ_CAP_BYTES, searchTree, typedRead } from "../review-read";
 import { COORDINATOR_TOOL_SCHEMA, coordinatorDetail, coordinatorText, designText, mergeDetail, type MergeInput } from "./mergecard";
-import { RemoteWatchers, requiredPolicy, reconcile, inspectRemote, grantIdentity, registerRemoteWait, validRemoteWait, remoteStopBody, remoteStopReason, observedNotice, OBSERVED_REFUSAL, type RequiredPolicy } from "./remote-ci";
+import { RemoteWatchers, requiredPolicy, reconcile, inspectRemote, grantIdentity, registerRemoteWait, validRemoteWait, remoteStopBody, remoteStopReason, remoteStopCard, remoteStopReasonOf, remoteChecksUsed, REMOTE_CHECK_LIMIT, REMOTE_CHECK_NODES, observedNotice, OBSERVED_REFUSAL, type RequiredPolicy } from "./remote-ci";
 import { stablePatch, proveCleanCarry, mergeOnce, updateOnce, assertMergeAvailable } from "./remote-gates";
 import type { CardDetail } from "../runtime/cards";
 import { commitConvention, commitIdentity, commitSubject, commitTree, taskCommitMessage } from "./commit-message";
@@ -242,11 +242,15 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     };
     return { signal, live, assert, rebind, retainPending };
   };
+  const stopCard = (x: X, reason: string) => remoteStopCard(x, reason, engine);
   engine.beforeStart["github-reconcile"] = async x => {
-    if (x.ctx.pr?.adapter !== "github" || x.node.do === "pr.open") return null;
+    // an end node (closed, parked …) reads nothing on GitHub: a pull request closed there must not stop the close itself
+    if (x.ctx.pr?.adapter !== "github" || x.node.do === "pr.open" || !x.run.def.edges.some((e) => e.from === x.node.id)) return null;
     const phase = remotePhase(x); phase.assert(); const a = selectedAdapter(x);
     try { if (!(a instanceof GitHubPrAdapter)) throw new Error(); if(x.ctx.remoteUpdatePending){const p=pendingUpdate(x,a);await a.verifyUpdateResult(p.old,p.next,phase.signal,phase.assert);}else await reconcile(a, x.ctx.pr, phase.signal); phase.assert(); return null; }
-    catch { if (!phase.live()) return { outcome: "cancel" }; await engine.card(x, "step-back", remoteStopBody(x.node.mode === "build" ? "the PR or its Task branch changed on GitHub since Studio last pushed (for example someone else pushed); this round did not rebase or push anything" : "authoritative PR/ref changed at node start; verification stopped")); return { wait: true }; }
+    // at remote-ready the reason keeps its class: GitHub unreachable or refusing access can be checked again there
+    catch (e) { if (!phase.live()) return { outcome: "cancel" }; const moved = "authoritative PR/ref changed at node start; verification stopped";
+      await stopCard(x, x.node.mode === "build" ? "the PR or its Task branch changed on GitHub since Studio last pushed (for example someone else pushed); this round did not rebase or push anything" : x.node.do === "remote.ready" ? remoteStopReason(e, moved) : moved); return { wait: true }; }
   };
   engine.externalValidators["github-ci"] = (x, descriptor) => { const a = selectedAdapter(x); return a instanceof GitHubPrAdapter && validRemoteWait(descriptor, a); };
   engine.externalHandlers["github-ci"] = (x, descriptor, wake) => {
@@ -263,7 +267,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       if (notice && !engine.ledger(x.run.id).some((e: any) => e.record === "remote-policy-notice" && e.head === x.ctx.pr.head)) { engine.record(x, "remote-policy-notice", { head: x.ctx.pr.head, data: { version: 1, observed: policy.observed, repository: a.grant.repository, base: a.grant.base, notice: notice.en } } as any); x.log(`remote CI: ${notice.en}`); }
       const duration = Math.max(1000, Math.min(24 * 3600_000, Number(x.policy("remote_ci.timeout_s", 1800)) * 1000 || 1800_000));
       return { wait: true as const, external: { version: 1 as const, handler: "github-ci", grant: grantIdentity(a), repository: a.grant.repository, pr: structuredClone(x.ctx.pr), policy, startedAt, deadline: startedAt + duration, lastDigest: null }, note: "waiting for required remote CI on the exact PR head" };
-    } catch (e) { if (!phase.live()) return { outcome: "cancel" }; await engine.card(x, "step-back", remoteStopBody(remoteStopReason(e, "remote PR or required policy could not be verified"))); return { wait: true as const }; }
+    } catch (e) { if (!phase.live()) return { outcome: "cancel" }; await stopCard(x, remoteStopReason(e, "remote PR or required policy could not be verified")); return { wait: true as const }; }
   };
   // one worktree per task under data/work/<project>/<task> (src/worktrees.ts); the task is the run
   const W = new Worktrees(o.dataDir, { protect: () => engine.deps.protectedRoots ?? [], egress: () => (engine.deps.agents as any).egress ?? null });
@@ -579,7 +583,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
         // the push is --force-with-lease=<Task branch>:<last pushed head>: someone else's push is never overwritten
         if (adapter instanceof GitHubPrAdapter && /lease mismatch|mismatched pull request target or head/.test(String(e?.message ?? e))) {
           if (!phase.live()) return { outcome: "cancel" } as any;
-          await engine.card(x, "step-back", remoteStopBody(`the Task branch ${old.branch} on GitHub moved away from the last pushed head ${String(old.head).slice(0, 8)} (someone else pushed); Studio did not overwrite it`)); return { wait: true } as any;
+          await stopCard(x, `the Task branch ${old.branch} on GitHub moved away from the last pushed head ${String(old.head).slice(0, 8)} (someone else pushed); Studio did not overwrite it`); return { wait: true } as any;
         }
         throw e;
       }
@@ -590,7 +594,34 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     x.rn.note = `review request on ${x.ctx.branch} (${adapter.id})`; return remoteWait(x, adapter);
   };
   engine.actionAnswers ??= {};
+  /** "Check again" on a remote-stop card: the captain's own signed answer, below the limit; the node verifies the pull request
+   *  on GitHub again under the current release's rules (again), and a fresh stop raises a fresh card. */
+  const checkAgain = async (x: X, card: any, again: () => Promise<Result | string>): Promise<Result> => {
+    const trusted = engine.trusted(x.run.id), used = remoteChecksUsed(x, engine);
+    if (!card.captainOnly || !card.options?.some((o: any) => o.id === "check") || !remoteStopReasonOf(card.body) || used > REMOTE_CHECK_LIMIT || !trusted.ok
+      || !trusted.entries.some((e: any) => e.record === "card-answer" && e.data?.card === card.id && e.data?.choice === "check" && /^captain\b/i.test(String(e.actor ?? "")))) throw new Error("check again needs the captain's own answer on a remote-stop card");
+    x.ctx.remoteCI = null; x.log(`remote CI: checking again under the current rules (${used} of ${REMOTE_CHECK_LIMIT}, card ${card.id})`); x.save();
+    const out = await again(); return typeof out === "string" ? { outcome: out } : out;
+  };
+  // only the captain checks a remote stop again (never Firstmate, never an authorization window), and only below the limit
+  const answerGuard = engine.deps.authorizeAnswer;
+  engine.deps.authorizeAnswer = (run: any, card: any, answer: any) => {
+    answerGuard?.(run, card, answer);
+    if (answer?.choice !== "check" || !card.options?.some((o: any) => o.id === "check") || !remoteStopReasonOf(card.body)) return;
+    if (!card.captainOnly || !/^captain\b/i.test(String(answer.by ?? ""))) throw new Error("Only the captain checks a stopped remote verification again");
+    const node = run.def.nodes.find((n: any) => n.id === card.node);
+    if (!node || remoteChecksUsed(engine.x(run, node, run.nodes[node.id])) >= REMOTE_CHECK_LIMIT) throw new Error(`Studio already checked again ${REMOTE_CHECK_LIMIT} times; close this task instead`);
+  };
+  // an open remote-stop card an older release raised (close its only answer): presented again under the current classification,
+  // so a stop a fresh check can clear offers Check again; nothing is answered for the captain
+  (engine.cardUpgrades ??= []).push((r, node, rn, c) => {
+    if (c.kind !== "step-back" || !c.captainOnly || !REMOTE_CHECK_NODES.includes(node.do ?? "")) return null;
+    const reason = remoteStopReasonOf(c.body); if (!reason) return null;
+    const b = remoteStopBody(reason, { used: remoteChecksUsed(engine.x(r, node, rn)) });
+    return b.options.map((o) => o.id).join() === c.options.map((o) => o.id).join() ? null : b;
+  });
   engine.actionAnswers["pr.open"] = async (x,card) => {
+    if (card.answer?.choice === "check") return checkAgain(x, card, async () => { const a = selectedAdapter(x); return x.ctx.pr && a instanceof GitHubPrAdapter ? remoteWait(x, a) : engine.actions["pr.open"](x); });
     if (card.answer?.choice === "retry") { const result = await engine.actions["pr.open"](x); return typeof result === "string" ? { outcome: result } : result; }
     if (card.answer?.choice !== "approve-name") return { outcome: card.answer?.choice ?? "close" };
     const n = x.ctx.remoteNaming;
@@ -598,6 +629,12 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const result = await engine.actions["pr.open"](x); return typeof result === "string" ? { outcome: result } : result;
   };
   engine.actionAnswers["remote.ready"] = async (x,card) => {
+    // remote readiness again from the top (a pending update, mergeability), then a fresh wait for the checks on the PR head
+    // when nothing else verified them (the stop cleared remoteCI)
+    if (x.ctx.pr && card.answer?.choice === "check") return checkAgain(x, card, async () => {
+      const out = await engine.actions["remote.ready"](x), a = selectedAdapter(x);
+      return out === "ok" && x.ctx.pr?.adapter === "github" && a instanceof GitHubPrAdapter && x.ctx.remoteCI?.head !== x.ctx.pr.head ? remoteWait(x, a) : out;
+    });
     if (!x.ctx.pr && x.ctx.prDeferred) return publication.answer(x, card);
     if (card.answer?.choice === "update-text" || card.answer?.choice === "keep-text") return publication.refreshAnswer(x, card);
     if(card.answer?.choice === "approve-name") {
@@ -607,7 +644,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       const a=selectedAdapter(x);if(!(a instanceof GitHubPrAdapter)||x.ctx.remoteNaming?.card!==card.id||!card.captainOnly)throw new Error("pending update naming decision changed");
       const p=pendingUpdate(x,a);if(!a.branchAllowed(p.next.pr.branch,p.next.pr.head))throw new Error("new update head requires its bound naming decision");
       const result=await engine.actions["remote.ready"](x);return typeof result==="string"?{outcome:result}:result;
-      } catch { if(!phase.live())return {outcome:"cancel"};await engine.card(x,"step-back",remoteStopBody("pending update naming target, grant or deadline changed; retained for captain recovery"));return {wait:true}; }
+      } catch { if(!phase.live())return {outcome:"cancel"};await stopCard(x,"pending update naming target, grant or deadline changed; retained for captain recovery");return {wait:true}; }
 
     }
     if(card.answer?.choice!=="rebase")return {outcome:card.answer?.choice??"close"};
@@ -661,7 +698,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       if (checks.blocked.length) return "fail";
       if(!a.branchAllowed(x.ctx.branch,x.ctx.head)) return namingCard(x,a,x.ctx.head);
       return remoteWait(x,a);
-    } catch { if (!phase.live()) return { outcome: "cancel" }; await engine.card(x,"step-back",remoteStopBody("remote readiness/update could not be proved; no approval or merge allowed")); return { wait: true }; } finally { release?.(); }
+    } catch { if (!phase.live()) return { outcome: "cancel" }; await stopCard(x,"remote readiness/update could not be proved; no approval or merge allowed"); return { wait: true }; } finally { release?.(); }
   };
   /** the Task's one curated commit message (src/domain/commit-message.ts): the spec's what and why, each done line with the
    * checks that proved it on the reviewed head, under the repository's CONTRIBUTING commit rules read at that head */
@@ -1387,12 +1424,14 @@ ${said}`, options: rescopeOpts }; }
     return { title: `The ${loop} did not pass its checks: rescope it? ${T(x)}`, zhTitle: `${loop === "plan" ? "計畫" : "規格"}沒有通過檢查：要調整範圍嗎？${ZT(x)}`,
       ...base(x, `The ${loop} stopped on ${why}. ${failingEn(x, loop)}`, "Rescope the spec, or park the run.", `${loop === "plan" ? "計畫" : "規格"}停住了。${failingZh(x, loop)}`, "調整規格範圍，或暫停這個 run。"),
       body: `The ${loop} stopped on ${why}.\n\nStill failing:\n${failingList(x, loop) || "- (no check named a failure)"}`, options: rescopeOpts }; };
-  /** The merge card of a GitHub Task whose project has no operations grant: the open pull request, merged by the captain on GitHub. */
-  const mergeOnGitHubBody = (pr: any, policy?: RequiredPolicy): Body => ({ title: `Pull request #${pr.id} is open: merge it on GitHub`, zhTitle: `Pull request #${pr.id} 已開：請到 GitHub 合併`, captainOnly: true,
-    en: { why: `PR #${pr.id} is open at ${pr.url}. Merging from Studio is off for this project, so merge it on GitHub.`, how: "Merge the pull request on GitHub, then close this Task here; or request changes for another round." },
-    zh: { why: `PR #${pr.id} 已在 ${pr.url} 開好。這個專案在 Studio 裡合併是關閉的，請到 GitHub 合併。`, how: "到 GitHub 合併這個 pull request，再回來關閉這個任務；或要求修改，再跑一輪。" },
+  /** The merge card of a GitHub Task whose project has no operations grant: the open pull request, merged by the captain on GitHub.
+   *  observed: an operations grant, but GitHub does not show the base branch's protection, so Studio does not merge (OBSERVED_REFUSAL)
+   *  and the green pull request is the captain's to merge on GitHub just the same. */
+  const mergeOnGitHubBody = (pr: any, policy?: RequiredPolicy, observed = false): Body => ({ title: `Pull request #${pr.id} is open: merge it on GitHub`, zhTitle: `Pull request #${pr.id} 已開：請到 GitHub 合併`, captainOnly: true,
+    en: { why: observed ? `PR #${pr.id} is open at ${pr.url} and every check on its head passed. GitHub does not show branch protection for the base branch, so Studio does not merge it: merge it on GitHub.` : `PR #${pr.id} is open at ${pr.url}. Merging from Studio is off for this project, so merge it on GitHub.`, how: "Merge the pull request on GitHub, then close this Task here; or request changes for another round." },
+    zh: { why: observed ? `PR #${pr.id} 已在 ${pr.url} 開好，head 上的檢查全部通過。GitHub 沒有顯示 base 分支的分支保護，所以 Studio 不合併：請到 GitHub 合併。` : `PR #${pr.id} 已在 ${pr.url} 開好。這個專案在 Studio 裡合併是關閉的，請到 GitHub 合併。`, how: "到 GitHub 合併這個 pull request，再回來關閉這個任務；或要求修改，再跑一輪。" },
     // each language its own line (and literal): the zh rule reads the Chinese line alone
-    body: [`PR #${pr.id} is open at ${pr.url}; merging from Studio is off, so merge it on GitHub.`, `PR #${pr.id} 已開在 ${pr.url}；Studio 不合併，請到 GitHub 合併。`, "", `Branch: ${pr.branch} → ${pr.base} at ${pr.head}`, ...(policy?.observed ? ["", observedNotice(policy)!.en, observedNotice(policy)!.zh] : [])].join("\n"),
+    body: [observed ? `PR #${pr.id} is open at ${pr.url}; ${OBSERVED_REFUSAL}, so merge it on GitHub.` : `PR #${pr.id} is open at ${pr.url}; merging from Studio is off, so merge it on GitHub.`, `PR #${pr.id} 已開在 ${pr.url}；Studio 不合併，請到 GitHub 合併。`, "", `Branch: ${pr.branch} → ${pr.base} at ${pr.head}`, ...(policy?.observed ? ["", observedNotice(policy)!.en, observedNotice(policy)!.zh] : [])].join("\n"),
     links: [{ label: `Pull request #${pr.id}`, href: pr.url }],
     options: [{ id: "close", label: "Close here (I merge on GitHub)", labelZh: "在這裡關閉（我到 GitHub 合併）", primary: true, hold: true }, { id: "changes", label: "Request changes", labelZh: "要求修改", note: true, hold: true }] });
   engine.cardBodies.merge = async (x) => {
@@ -1402,16 +1441,17 @@ ${said}`, options: rescopeOpts }; }
       const phase = remotePhase(x); phase.assert(); const a = selectedAdapter(x); assertRemoteCard=phase.assert;
       let policy: RequiredPolicy | undefined;
       try { if (!(a instanceof GitHubPrAdapter)) throw new Error(); await reconcile(a, x.ctx.pr, phase.signal); phase.assert(); policy = await requiredPolicy(a, phase.signal); phase.assert(); if (x.ctx.remoteCI?.head !== x.ctx.pr.head || x.ctx.remoteCI?.policyHash !== policy.hash || x.ctx.remoteCI?.grant !== grantIdentity(a) || (await inspectRemote(a, x.ctx.pr, policy, phase.signal)).state !== "pass") throw new Error(); }
-      catch { phase.assert(); return remoteStopBody("authoritative PR, head or required CI no longer matches; merge refused"); }
+      // the merge card has no route back to remote-ready: its stops are answered by close
+      catch { phase.assert(); return remoteStopBody("authoritative PR, head or required CI no longer matches; merge refused", { recover: false }); }
       phase.assert();
       // no operations grant (merging from Studio is off by design): the pull request is open and merges on GitHub
       let mergeOff = false; try { (a as GitHubPrAdapter).operationGrant(); } catch { mergeOff = true; }
       if (mergeOff) return mergeOnGitHubBody(x.ctx.pr, policy);
       // with an operations grant the required checks must be ones GitHub enforces: an observed policy (protection not shown)
-      // proves only what Studio saw, so the merge stays on GitHub
-      if (policy?.observed) return remoteStopBody(OBSERVED_REFUSAL);
+      // proves only what Studio saw, so the merge stays on GitHub, and the green pull request is still the captain's to merge there
+      if (policy?.observed) return mergeOnGitHubBody(x.ctx.pr, policy, true);
       try { (a as GitHubPrAdapter).operationGrant(); assertMergeAvailable(a as GitHubPrAdapter,x.ctx.pr,x.dir); const p = await (a as GitHubPrAdapter).mutationState(x.ctx.pr,phase.signal,phase.assert); phase.assert(); if (p.base?.sha !== x.ctx.baseCommit || p.draft !== false || p.mergeable !== true || p.mergeable_state !== "clean") throw new Error(); remoteIntent={version:1,grant:grantIdentity(a as GitHubPrAdapter),repository:(a as GitHubPrAdapter).grant.repository,pr:x.ctx.pr.id,branch:x.ctx.pr.branch,base:x.ctx.pr.base,baseHead:x.ctx.baseCommit,head:x.ctx.pr.head,method:(a as GitHubPrAdapter).operationGrant().mergeMethod,policyHash:x.ctx.remoteCI.policyHash}; }
-      catch { phase.assert(); return remoteStopBody("remote merge grant or CLEAN/non-draft state is unverified"); }
+      catch { phase.assert(); return remoteStopBody("remote merge grant or CLEAN/non-draft state is unverified", { recover: false }); }
 
     }
     const wt = x.ctx.worktree; const stat = wt && existsSync(wt) ? git(wt, ["diff", "--stat", `${x.ctx.baseCommit}..HEAD`]).out : "";

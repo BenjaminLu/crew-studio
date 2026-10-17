@@ -388,6 +388,7 @@ export class Engine {
       // a card raised by a step that did not finish raising it: cancel the orphan (the step runs again and raises its own)
       const waitingOn = new Set(Object.values(r.nodes).filter((x) => x.waiting === "card" && x.card).map((x) => x.card));
       for (const c of this.cards.list({ run: r.id, open: true })) if (!waitingOn.has(c.id)) this.cards.cancel(c.id);
+      this.upgradeCards(r);
       // a run whose creation was recorded but not its first step: start at the entry
       if (r.status === "queued" && !r.steps.length && !r.queue.length) { const e = entryOf(r.def); if (e) { r.queue.push(e.id); r.status = "running"; } }
       r.recovered = (r.recovered ?? 0) + 1;
@@ -401,6 +402,29 @@ export class Engine {
     for (const r of this.runs.values()) if (r.status === "running" || r.status === "waiting" || r.status === "queued") this.tick(r);
     for (const [r, id] of backoffs) this.scheduleBackoff(r, id);
     this.resumeFirstmateQuestions(); // a no-op until askFirstmate is wired (server.ts calls it again then)
+  }
+
+  /** A domain presents an open card that an older release raised again under the current rules (other options, other words):
+   *  the body to show instead, or null to keep the card. A card is only ever replaced here, never answered. */
+  cardUpgrades: ((r: Run, node: WNode, rn: NodeRun, c: SCard) => Body | null)[] = [];
+  /** On boot: replace each open card a node waits on when a domain upgrades it. The new card is created before the node points
+   *  at it and the old one is cancelled last, so a crash between the writes leaves an orphan the next boot's sweep cancels. */
+  private upgradeCards(r: Run) {
+    if (!this.cardUpgrades.length) return;
+    for (const [id, rn] of Object.entries(r.nodes)) {
+      const node = r.def.nodes.find((n) => n.id === id), old = rn.card ? this.cards.get(rn.card) : null;
+      if (!node || rn.state !== "running" || rn.waiting !== "card" || old?.status !== "open") continue;
+      let b: Body | null = null;
+      for (const up of this.cardUpgrades) { try { b = up(r, node, rn, old); } catch { b = null; } if (b) break; }
+      if (!b) continue;
+      const { id: _id, status: _status, createdAt: _at, answer: _answer, ...kept } = old;
+      const c = this.cards.create({ ...kept, title: { en: b.title, "zh-TW": b.zhTitle ?? b.title }, sections: { en: { ...old.sections.en, ...b.en }, "zh-TW": { ...old.sections["zh-TW"], ...b.zh } },
+        body: b.body ?? old.body, options: b.options ?? old.options, ...(b.captainOnly ? { captainOnly: true } : {}), ledger: { upgradedFrom: old.id } as any, ste: null });
+      const broken = cardContract(c); if (broken.length) { this.cards.cancel(c.id); this.emit(r, "log", `card contract: ${old.id} kept, its upgrade broke it: ${broken.join("; ").slice(0, 400)}`); continue; }
+      rn.card = c.id; this.commit(r, `card ${old.id} replaced by ${c.id} under the current release`); this.cards.cancel(old.id);
+      this.record(this.x(r, node, rn), "card-upgraded", { data: { from: old.id, to: c.id, options: c.options.map((o) => o.id) } });
+      this.emit(r, "card_raised", `${c.id} ${c.title.en} (replaces ${old.id})`, { node: id, card: c.id, kind: c.kind });
+    }
   }
 
   // ---------- starting ----------

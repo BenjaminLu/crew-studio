@@ -125,39 +125,71 @@ export function remoteStopReason(e: any, fallback: string) {
   return fallback;
 }
 
-/** The card when the remote PR stopped verification: what changed on GitHub (the reason), in both languages; nothing was merged.
- *  A known class gets its own title (closed or moved, refused access, unreachable, checks failed). */
 /** Why Studio will not merge on an observed policy: the required checks are what Studio saw on the head, not what GitHub enforces. */
 export const OBSERVED_REFUSAL = "required checks are only observed (GitHub does not show branch protection for the base branch); Studio merge refused";
-export function remoteStopBody(reason: string) {
+/** A stop that only someone's change on GitHub explains: the pull request closed or retargeted, its head or Task branch moved
+ *  (someone else pushed). Studio never adopts that change, so a fresh check stops the same way: close is the only answer. */
+const TERMINAL_STOP = /closed, retargeted|PR closed, target changed|head moved|moved away|changed on GitHub|changed since|PR\/ref changed|no longer matches/i;
+export const remoteStopRecoverable = (reason: string) => !TERMINAL_STOP.test(reason);
+/** How many times the captain may check one node's remote stop again in a Task; after that, close is the only answer. */
+export const REMOTE_CHECK_LIMIT = 5;
+/** The captain's "Check again" answers on this node's remote-stop cards (signed card-answer entries). */
+export const remoteChecksUsed = (x: X, engine: X["engine"] = x.engine) => (engine.ledger?.(x.run.id) ?? []).filter((e: any) => e.record === "card-answer" && e.node === x.node.id && e.data?.choice === "check").length;
+/** The reason a remote-stop card names, read back from its body (an older release's card keeps no other record of it). */
+export const remoteStopReasonOf = (body: string) => /^Remote verification stopped: ([^]*)\. Nothing was merged\.$/.exec(String(body ?? ""))?.[1] ?? null;
+
+/** The card when the remote PR stopped verification: what went wrong (the reason), in both languages; nothing was merged.
+ *  A known class gets its own title (closed or moved, refused access, unreachable, checks failed). A stop a fresh check can
+ *  clear (recover, below the limit) also offers "Check again": its node verifies the pull request again under the current rules. */
+export function remoteStopBody(reason: string, o: { recover?: boolean; used?: number } = {}) {
+  const used = o.used ?? 0, recoverable = (o.recover ?? true) && remoteStopRecoverable(reason), check = recoverable && used < REMOTE_CHECK_LIMIT;
   const zh = /only observed/i.test(reason) ? "GitHub 沒有顯示 base 分支的分支保護，必要檢查只是 Studio 觀察到的，所以 Studio 不合併；請到 GitHub 合併。"
     : /pushed|moved away|changed on GitHub|changed since/i.test(reason) ? "GitHub 上的 PR 或任務 branch 在 Studio 上次推送後被改動了（例如有人推送）；Studio 沒有覆蓋它。"
     : /closed, retargeted|head moved on GitHub/i.test(reason) ? "GitHub 上的 PR 已關閉、改了目標，或它的 head 被移動了。"
     : /\(authorization\)/i.test(reason) ? "GitHub 拒絕了這個專案的 GitHub 存取權（授權問題）。"
     : /could not be reached/i.test(reason) ? "連不上 GitHub。"
     : /did not succeed/i.test(reason) ? "PR head 上有檢查沒有通過。"
+    : /CI deadline expired/i.test(reason) ? "PR head 上的檢查沒有在等待期限內完成。"
     : /merge refused|no longer matches/i.test(reason) ? "PR、head 或必要的 CI 已和核准時不同，所以拒絕合併。"
     : /grant|CLEAN|draft/i.test(reason) ? "無法確認合併授權，或 PR 不是可乾淨合併的非草稿狀態。"
     : /naming|deadline/i.test(reason) ? "待處理更新的目標、授權或期限改變了；保留給船長處理。"
     : "無法驗證遠端 PR 或它的必要檢查；這一輪已停止。";
-  const [title, zhTitle] = /only observed/i.test(reason) ? ["GitHub does not show branch protection: Studio will not merge this pull request", "GitHub 沒有顯示分支保護：Studio 不合併這個 PR"]
-    : /closed, retargeted|head moved on GitHub/i.test(reason) ? ["The pull request was closed or moved on GitHub: close this task?", "GitHub 上的 PR 已關閉或被移動：要關閉這個任務嗎？"]
-    : /\(authorization\)/i.test(reason) ? ["GitHub refused the project's access: close this task?", "GitHub 拒絕了專案的存取：要關閉這個任務嗎？"]
-    : /could not be reached/i.test(reason) ? ["GitHub could not be reached: close this task?", "連不上 GitHub：要關閉這個任務嗎？"]
-    : /did not succeed/i.test(reason) ? ["Checks failed on the pull request: close this task?", "PR 的檢查沒有通過：要關閉這個任務嗎？"]
-    : ["Remote verification stopped: close this task?", "遠端驗證已停止：要關閉這個任務嗎？"];
+  // what the captain sets right first, before checking again (en, zh-TW)
+  const fix = /\(authorization\)/i.test(reason) ? ["Fix the project's GitHub access first (its grant in the project settings).", "請先修好專案的 GitHub 存取權（專案設定裡的授權）。"]
+    : /could not be reached/i.test(reason) ? ["Wait until GitHub answers again.", "請等 GitHub 恢復回應。"]
+    : /did not succeed/i.test(reason) ? ["Re-run or fix the failed check on GitHub first; Studio reads its latest result.", "請先在 GitHub 重新執行或修好沒通過的檢查；Studio 會讀它最新的結果。"]
+    : /CI deadline expired/i.test(reason) ? ["Make sure the checks run on the PR head.", "請確認 PR head 上的檢查有在執行。"]
+    : ["Look at the PR on GitHub if you want to.", "需要的話，可以先到 GitHub 看這個 PR。"];
+  const [what, zhWhat] = /only observed/i.test(reason) ? ["GitHub does not show branch protection", "GitHub 沒有顯示分支保護"]
+    : /closed, retargeted|head moved on GitHub/i.test(reason) ? ["The pull request was closed or moved on GitHub", "GitHub 上的 PR 已關閉或被移動"]
+    : /\(authorization\)/i.test(reason) ? ["GitHub refused the project's access", "GitHub 拒絕了專案的存取"]
+    : /could not be reached/i.test(reason) ? ["GitHub could not be reached", "連不上 GitHub"]
+    : /did not succeed/i.test(reason) ? ["Checks failed on the pull request", "PR 的檢查沒有通過"]
+    : ["Remote verification stopped", "遠端驗證已停止"];
+  const [title, zhTitle] = /only observed/i.test(reason) ? [`${what}: Studio will not merge this pull request`, `${zhWhat}：Studio 不合併這個 PR`]
+    : check ? [`${what}: check again or close this task?`, `${zhWhat}：要重新檢查，還是關閉這個任務？`] : [`${what}: close this task?`, `${zhWhat}：要關閉這個任務嗎？`];
+  const how = check ? { en: `${fix[0]} Check again verifies the PR, its branch protection and its checks on GitHub again under the current release's rules, then waits for the checks on the PR head. It does not push or merge. Or close without merging.`,
+      zh: `${fix[1]}「重新檢查」會用目前版本的規則，再到 GitHub 驗證一次 PR、分支保護和檢查，然後等 PR head 上的檢查；不會推送，也不會合併。或者不合併，直接關閉。` }
+    : recoverable ? { en: `Studio already checked again ${used} times. Inspect the PR on GitHub, then close this task and start a fresh one if the change should go on. No merge is authorized.`,
+      zh: `已經重新檢查 ${used} 次。請在 GitHub 核對 PR，關閉這個任務；如果改動要繼續，再開一個新任務。尚未授權合併。` }
+    : { en: "Inspect the PR on GitHub, then close this task and start a fresh one if the change should go on. No merge is authorized.", zh: "請在 GitHub 核對 PR，關閉這個任務；如果改動要繼續，再開一個新任務。尚未授權合併。" };
   return { title, zhTitle, captainOnly: true, direct: true,
-    en: { why: `Remote verification stopped: ${reason}. Nothing was merged.`, how: "Inspect the PR on GitHub, then close this task and start a fresh one if the change should go on. No merge is authorized." },
-    zh: { why: `遠端驗證已停止：${zh}沒有合併任何東西。`, how: "請在 GitHub 核對 PR，關閉這個任務；如果改動要繼續，再開一個新任務。尚未授權合併。" }, body: `Remote verification stopped: ${reason}. Nothing was merged.`,
-    options: [{ id: "close", label: "Close without merging", labelZh: "不合併，關閉" }] };
+    en: { why: `Remote verification stopped: ${reason}. Nothing was merged.`, how: how.en },
+    zh: { why: `遠端驗證已停止：${zh}沒有合併任何東西。`, how: how.zh }, body: `Remote verification stopped: ${reason}. Nothing was merged.`,
+    options: [...(check ? [{ id: "check", label: "Check again", labelZh: "重新檢查", primary: true }] : []), { id: "close", label: "Close without merging", labelZh: "不合併，關閉" }] };
 }
+/** The nodes whose answer handler checks a remote stop again (code.ts); a stop anywhere else is answered by close. */
+export const REMOTE_CHECK_NODES = ["pr.open", "remote.ready"];
+/** Raise the remote-stop card on this node, with its check-again count read from the ledger. */
+export const remoteStopCard = (x: X, reason: string, engine: X["engine"] = x.engine) =>
+  engine.card(x, "step-back", remoteStopBody(reason, { recover: REMOTE_CHECK_NODES.includes(x.node.do ?? ""), used: remoteChecksUsed(x, engine) }));
 export function registerRemoteWait(x: X, adapter: GitHubPrAdapter, watchers: RemoteWatchers, wait: any, wake: (r: Result) => void) {
   let active = true, stopping = false, unsubscribe = () => {};
   const signal = x.engine.abortOf?.(x.run)?.signal;
   const live = () => active && !signal?.aborted && (x.engine.owns ? x.engine.owns(x) : !x.cancelled());
   const stop = (reason: string) => {
     if (!live() || stopping) return; stopping = true; unsubscribe(); x.ctx.remoteCI = null;
-    const work = (async () => { try { await x.engine.card(x, "step-back", remoteStopBody(reason)); if (live()) wake({ wait: true, note: reason }); } catch { if (live()) wake({ outcome: "error", note: "remote stop presentation failed" }); } })();
+    const work = (async () => { try { await remoteStopCard(x, reason); if (live()) wake({ wait: true, note: reason }); } catch { if (live()) wake({ outcome: "error", note: "remote stop presentation failed" }); } })();
     if (x.engine.trackExternal) void x.engine.trackExternal(x, work); else void work;
   };
   if (!validRemoteWait(wait, adapter)) { queueMicrotask(() => void stop("stored external wait is unsupported or stale; fresh verification required")); return () => { active = false; }; }
