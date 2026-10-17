@@ -20,20 +20,17 @@ export const DRAFT_SKILLS:Record<string,{en:string;zh:string;makes:string;format
  'bundled:workflows/skills/v2/writer.md':{en:'Writer',zh:'撰稿',makes:'documents: copy, articles, plans, reports and reviews of written work',formats:['document'],design:false},
  'bundled:workflows/skills/v2/designer.md':{en:'Designer',zh:'設計',makes:'web pages, design direction and design review of a page',formats:['web','document'],design:true},
 };
-const DESIGN_WORK=/\b(?:design|visual|layout|style ?guide|mock-?ups?|wireframes?)\b|設計|设计|視覺|视觉|版面|排版/i,REVIEW_WORK=/\b(?:review|critique|audit)\b|審查|审查|審閱|审阅|檢查|检查|評審|评审/i;
-/** Design work: a node that names design, or a review of a web page an earlier node built. */
-function designWork(def:{nodes:any[];edges:{from:string;to:string}[]},n:any){
- if(DESIGN_WORK.test(`${n.label} ${n.detail??''}`))return true;if(!REVIEW_WORK.test(`${n.label} ${n.detail??''}`))return false;
- const seen=new Set<string>(),todo=[n.id];while(todo.length){const to=todo.pop()!;for(const e of def.edges)if(e.to===to&&!seen.has(e.from)){seen.add(e.from);todo.push(e.from);}}
- return def.nodes.some(m=>seen.has(m.id)&&m.kind==='agent'&&m.args?.format==='web');
-}
-/** Why a node's skill does not fit its work, or null. strict: the model's draft also gets the work-kind check (a captain's inline choice only the format check). */
+// Visual design work only: "design" alone (a design doc, a meal-plan design, a system design) is not visual work.
+const VISUAL_WORK=/\b(?:visual(?:\s+(?:design|direction|style))?|layout|mock-?ups?|wireframes?|style ?guide|look and feel|UI|UX|design direction|design review|art direction)\b|視覺|视觉|版面|排版|設計方向|设计方向|設計審查|设计审查|視覺風格|视觉风格/i,NOT_VISUAL=/\bdesign\s+(?:doc|document|plan|spec|proposal)s?\b|系統設計|系统设计/i;
+/** Visual design work: a node whose label or assignment names visual design (and not a design document). */
+const visualWork=(n:any)=>{const t=`${n.label} ${n.detail??''}`;return VISUAL_WORK.test(t)&&!NOT_VISUAL.test(t);};
+/** Why a node's skill does not fit its work, or null. The format check is strict (a Writer cannot make a web
+ *  page); the work check refuses only a skill without design on visual design work (R-044), and only for the
+ *  model's draft (strict), never a captain's inline choice. Anything else a skill can make is allowed. */
 export function skillMismatch(def:{nodes:any[];edges:{from:string;to:string}[];roles:{id:string;skill:string}[]},n:any,strict=true):string|null{
  if(n.kind!=='agent')return null;const ref=n.skill??def.roles.find(r=>r.id===n.role)?.skill,s=ref&&DRAFT_SKILLS[ref];if(!s)return null;const f=n.args?.format;
  if(f&&!s.formats.includes(f))return `node ${n.id}: the ${s.en} skill makes ${s.makes}, not a ${f} output; use ${Object.values(DRAFT_SKILLS).filter(o=>o.formats.includes(f)).map(o=>o.en).join(' or ')}`;
- if(!strict||f!=='document')return null;const design=designWork(def,n);
- if(design&&!s.design)return `node ${n.id}: design direction or design review is the Designer's work, not the ${s.en}'s`;
- if(!design&&s.design)return `node ${n.id}: a written document that is not design work is the Writer's work, not the ${s.en}'s`;
+ if(strict&&f==='document'&&!s.design&&visualWork(n))return `node ${n.id}: visual design direction or design review is the Designer's work, not the ${s.en}'s`;
  return null;
 }
 export const DRAFT_PROVIDERS=['codex','claude'] as const;

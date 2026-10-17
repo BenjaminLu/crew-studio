@@ -52,10 +52,20 @@ try {
   ok(writerWeb.code === "draft_invalid" && /web/.test(JSON.stringify(writerWeb)), "a Writer on a web page node is refused", JSON.stringify(writerWeb).slice(0, 300));
   const reviewOnly = r044(DESIGNER, DESIGNER); reviewOnly.workflow.roles.push({ id: "copy", label: "Copy", skill: WRITER }); (reviewOnly.workflow.nodes[2] as any).role = "copy";
   const rv = await h.tool("studio_draft_workflow", reviewOnly);
-  ok(rv.code === "draft_invalid" && /review/.test(JSON.stringify(rv)), "a Writer reviewing the page an earlier node built is refused (design review)", JSON.stringify(rv).slice(0, 300));
+  ok(typeof rv.draft === "string", "a Writer reviewing the page's copy is allowed: a review is not visual design work by itself", JSON.stringify(rv).slice(0, 300));
   const designerDoc = structuredClone(WORKFLOW_DRAFT_EXAMPLE) as any; designerDoc.workflow.nodes[1].args = { format: "document" }; designerDoc.workflow.nodes[1].label = "Write the newsletter";
   const dd = await h.tool("studio_draft_workflow", designerDoc);
-  ok(dd.code === "draft_invalid" && /Writer/.test(JSON.stringify(dd)), "a Designer on a written document that is not design work is refused", JSON.stringify(dd).slice(0, 300));
+  ok(typeof dd.draft === "string", "a Designer on a written document is allowed (a designer can write; only the format is strict)", JSON.stringify(dd).slice(0, 300));
+  // no false refusals: "design" or "review" alone is not visual design work
+  const one = (skill: string, label: string, web = false) => { const w = structuredClone(WORKFLOW_DRAFT_EXAMPLE) as any; w.workflow.roles = [{ id: "maker", label: "Maker", skill }, { id: "web", label: "Web", skill: DESIGNER }];
+    const make = w.workflow.nodes[1]; Object.assign(make, { role: "maker", args: { format: "document" }, label, detail: label });
+    if (web) { w.workflow.nodes.splice(1, 0, { id: "page", kind: "agent", label: "Build the landing page", detail: "Build the landing page (index.html).", role: "web", mode: "deliver", args: { format: "web" }, serves: [1] });
+      w.workflow.edges = [{ from: "confirm", to: "page", when: "begin" }, { from: "page", to: "make" }, ...w.workflow.edges.filter((e: any) => e.from !== "confirm")]; }
+    return h.tool("studio_draft_workflow", w); };
+  for (const [skill, label, web] of [[WRITER, "Write the system design doc"], [WRITER, "Design a weekly meal plan"], [DESIGNER, "Plan the family trip itinerary"], [WRITER, "Review the landing page copy for typos", true]] as [string, string, boolean?][]) {
+    const r = await one(skill, label, web); ok(typeof r.draft === "string", `no false refusal: ${skill === WRITER ? "Writer" : "Designer"} on "${label}"`, JSON.stringify(r).slice(0, 300)); }
+  const visual = await one(WRITER, "Write the visual style guide");
+  ok(visual.code === "draft_invalid" && /Designer/.test(JSON.stringify(visual)), "a Writer on visual design work is still refused", JSON.stringify(visual).slice(0, 300));
   const example = await h.tool("studio_draft_workflow", WORKFLOW_DRAFT_EXAMPLE);
   ok(typeof example.draft === "string", "the contract's own example (Designer on a web page) still drafts", JSON.stringify(example).slice(0, 200));
   // the captain's inline choice: any skill that can make the output; a writer cannot make a web page
