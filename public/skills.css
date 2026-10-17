@@ -58,6 +58,8 @@
 .rt-step{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;font-size:13px;padding:4px 0;border-top:1px solid var(--border)}
 .rt-step:first-child{border-top:0}
 .rt-step-skills{display:flex;flex-wrap:wrap;gap:4px}
+/* the role skill badge (role · ref vN · sha256) is one long run: it wraps on a phone instead of widening the run page */
+.rt-step [data-role-skill]{white-space:normal;overflow-wrap:anywhere;min-width:0;max-width:100%}
 /* the floating firstmate button never covers the end of a page (the same rule as unit run-end-and-remove: 44 px button, 20 px off the edge, plus a gap) */
 
 /* the editor: the side panel scrolls on its own, so its end clears the button too */
