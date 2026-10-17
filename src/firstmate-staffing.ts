@@ -154,7 +154,7 @@ export function installFirstmateStaffing(engine:Engine,store:StaffingStore,resol
   let current:StaffingConfig|null=null;try{current=store.current(project);}catch(e){if(existsCurrent(store,project))throw e;}
   // a kept crew (upgrade) keeps the project's approved crew as it is now, when that crew is for the same workflow
   const upgrade=old.params.upgrade&&current&&current.workflow.id===draft.workflow.id&&current.workflow.version!==draft.workflow.version?JSON.stringify({from:current.hash}):null;
-  const installed=installedStaffing();if(!installed)throw new NativeToolFailure("configuration_missing","Staffing workflow missing","必要的流程或配置尚未就緒；請檢查現有設定，不要重複登入或直接派工。","review_configuration");sourceBound(installed);
+  const installed=installedStaffing();if(!installed)throw staffingFlowMissing();sourceBound(installed);
   const target=JSON.stringify(draft);if(target.length>draftCap())throw new NativeToolFailure("invalid_params","Staffing proposal exceeds bounded workflow parameters","請依目前問題格式提供明確選項，再讀取目前狀態確認。","read_current_state");
   const key=staffingHash({repropose:old.id});const open=engine.list().find(r=>r.workflow===source.id&&r.params.source===key);if(open)return open;
   return engine.start({workflow:source.id,version:installed.version,text:old.text,params:{source:key,draft:target,previous:current?.hash??'',...(upgrade?{upgrade}:{}),...(old.params.recovery?{recovery:old.params.recovery}:{})}});
