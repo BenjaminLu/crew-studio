@@ -34,12 +34,18 @@ const STOP = (c: any) => c.kind === "merge" || c.node === "design-gap-card" || c
 const L = (E: any, id: string, check: string) => E.ledger(id).filter((e: any) => e.check === check);
 const nodes = (E: any, id: string) => JSON.stringify(Object.fromEntries(Object.entries(E.get(id)!.nodes).filter(([, n]: any) => n.state !== "pending").map(([k, n]: any) => [k, `${n.state}:${n.outcome}:${n.error ?? n.note ?? ""}`.slice(0, 160)])));
 // a test that is red on the base by an assertion (the module is missing), not by a failed import
+// R-002's change to format(), as it was built: yen have no cents (the yen page's total changes on screen)
+const YEN_MONEY = readFileSync(join(root, "templates/sandbox-repo/src/money.ts"), "utf8")
+  .replace('/** "$12.34" from 1234. */\nexport function format(amount: number): string {', '/** Currencies format() knows. */\nexport type Currency = "USD" | "JPY";\n\n/** "$12.34" from 1234 (USD); "¥1,234" from (1234, "JPY"). */\nexport function format(amount: number, currency: Currency = "USD"): string {')
+  .replace("  const abs = Math.abs(amount);\n", '  const abs = Math.abs(amount);\n  if (currency === "JPY") {\n    return `${sign}¥${abs.toLocaleString("en-US")}`;\n  }\n');
+const esc = (s: string) => { if (s.includes("\\")) throw new Error("the stub writes \\n only: no backslashes in a STUB_FILE"); return s.replace(/\n/g, "\\n"); };
 const TEST = "STUB_FILE test/notes.test.ts :: import { expect, test } from 'bun:test';\\ntest('the shop has notes', async () => { expect(await Bun.file(new URL('../app/notes.ts', import.meta.url)).exists()).toBe(true); const { notes } = await import('../app/notes'); expect(notes).toBe(1); });\\n";
 
 // ---------- 1. a UI change: the designer sees the captures, REJECTs, the fix loop runs, the re-review approves, the card shows it ----------
 { const { E, data } = await boot(true);
-  const id = await toMerge(E, ["Add a notes module to the shop app",
-    "STUB_FILE app/notes.ts :: // notes STUB_DESIGN_REJECT STUB_DESIGN_LAZY\\nexport const notes = 1;\\n",
+  // the change also gives format() yen without cents (R-002's change), so the yen page's text changes on screen
+  const id = await toMerge(E, ["Add a notes module to the shop app", "STUB_SCOPE app/", "STUB_SCOPE README.md", "STUB_SCOPE test/",
+    "STUB_FILE app/notes.ts :: // notes STUB_DESIGN_REJECT STUB_DESIGN_LAZY\\nexport const notes = 1;\\n", `STUB_FILE src/money.ts :: ${esc(YEN_MONEY)}`,
     "STUB_FIX app/notes.ts :: STUB_DESIGN_REJECT => designed", TEST].join("\n"), "Keep the heading short");
   const run = E.get(id)!; const merge = openCard(E, id, (c: any) => c.kind === "merge");
   if (!merge) console.log("no merge card:", nodes(E, id));
@@ -82,8 +88,9 @@ const TEST = "STUB_FILE test/notes.test.ts :: import { expect, test } from 'bun:
     && dd?.gate?.verdict === "pass" && /\nDesign gate: ✓ design APPROVE at /.test(merge!.body) && (merge!.detail?.gates ?? []).length === 6,
     "5: gate-design passes on the merge edge only on the head the designer approved, beside the six gates", JSON.stringify([gate?.data, gate?.edge]));
   const gx = (ctx: any, ledger: any[]) => (E as any).natives["gate-design"]({}, { x: { run: { id: "R-gate" }, ctx, rn: { data: {} } } });
-  const realLedger = E.ledger.bind(E); const h = run.ctx.designs[1].head;
-  const withLedger = async (entries: any[]) => { (E as any).ledger = () => entries; try { return await gx({ ...run.ctx }, entries); } finally { (E as any).ledger = realLedger; } };
+  const realTrusted = E.trusted.bind(E); const h = run.ctx.designs[1].head;
+  // gate-design reads the verified ledger (engine.trusted), as gate-approval does
+  const withLedger = async (entries: any[]) => { (E as any).trusted = () => ({ ok: true, entries, prefix: entries, bad: new Set(), truncated: false }); try { return await gx({ ...run.ctx }, entries); } finally { (E as any).trusted = realTrusted; } };
   const scopeUi = { check: "firstmate/design-scope", head: "0".repeat(40), data: { route: "ui" } };
   const stale = await withLedger([scopeUi, { check: "firstmate/design-verdict", verdict: "pass", head: "1".repeat(40), data: { head: "1".repeat(40) } }]);
   const reject = await withLedger([scopeUi, { check: "firstmate/design-verdict", verdict: "fail", head: h, data: { head: h } }]);
@@ -91,7 +98,23 @@ const TEST = "STUB_FILE test/notes.test.ts :: import { expect, test } from 'bun:
   const noneElsewhere = await withLedger([{ check: "firstmate/design-scope", head: "1".repeat(40), data: { route: "none" } }]);
   ok(stale.verdict === "fail" && /not an APPROVE on/.test(stale.data.detail) && reject.verdict === "fail" && carried.verdict === "pass" && /carried to/.test(carried.data.detail) && noneElsewhere.verdict === "fail",
     "5: gate-design fails an APPROVE on another head, a REJECT and a none on another head; a proven-identical carry passes", JSON.stringify([stale.data, reject.data, carried.data, noneElsewhere.data]));
-  E.cancel(id, "captain"); }
+  // the captures on the merge card (moved here from visual-sandbox, where an app without pictures now stops at the capture gap)
+  const h12 = String(run.ctx.captures?.head ?? "").slice(0, 12);
+  ok(!!merge && run.ctx.captures?.head === run.ctx.designs[1].head && JSON.stringify((merge.captures ?? []).map((c: any) => c.label)) === '["Shop in dollars","Shop in yen"]'
+    && (merge.captures ?? []).every((c: any) => ["before", "after"].every((side) => c[side] === `/api/wruns/${id}/captures/${h12}/${side}/${c.label === "Shop in yen" ? "jpy" : "index"}.html.png`)),
+    "1: the merge card carries each page's capture, labelled, linked by its own URL (/api/wruns/<run>/captures/<head>/before|after/<page>.png)", JSON.stringify(merge?.captures));
+  ok(!!merge && /\n\nBefore \/ after \(the app, base → head\):\n/.test(merge.body) && /- Shop in yen: \$12\.75.* → ¥1,275/.test(merge.body) && (merge.captures ?? []).find((c: any) => c.label === "Shop in yen")?.changed?.added?.includes("¥5,588"),
+    "1: the merge card body shows the text that changed on screen, base → head", merge?.body.slice(0, 1200));
+  ok(!!merge && merge.links.some((l: any) => l.label === "Open the app" && l.href === `/api/wruns/${id}/captures/${h12}/after/index.html`) && run.ctx.captures?.app === `/api/wruns/${id}/captures/${h12}/after/index.html`,
+    "1: Open the app links the head's build (/after/index.html), and the run records it", JSON.stringify([merge?.links, run.ctx.captures?.app]));
+  // the captain merges: the designer's APPROVE and the seven gates let it through
+  if (merge) await E.answer(merge.id, { choice: "merge", by: "captain", aligned: (merge.detail?.intents ?? []).map((_: any, i: number) => i) });
+  await until(() => settled(E, id), 120000);
+  const done = E.get(id)!; const repo = join(data, "demo-repo");
+  const mainHas = Bun.spawnSync(["git", "-C", repo, "show", "main:app/notes.ts"], { stdout: "pipe", stderr: "pipe" }).stdout.toString();
+  ok(done.status === "succeeded" && done.result === "done" && !!done.ctx.merged && /designed/.test(mainHas) && !/STUB_DESIGN_REJECT/.test(mainHas),
+    "1: the run merges the change the designer approved into main", JSON.stringify([done.status, done.result, mainHas.slice(0, 80)]));
+  if (!settled(E, id)) E.cancel(id, "captain"); }
 
 // ---------- 1. the merge card shows a standing REJECT's findings and designer-compare's warnings ----------
 { const { designDetail, designText } = await import("../src/domain/mergecard");
@@ -127,7 +150,7 @@ const TEST = "STUB_FILE test/notes.test.ts :: import { expect, test } from 'bun:
   E.cancel(id, "captain"); }
 
 // ---------- (i) an app declared but its pages not captured: an env gap to Firstmate first, never a diff-only verdict ----------
-{ const { E } = await boot(true); delete process.env.CREW_RENDER_STUB; process.env.CREW_NODE_BIN = "/nonexistent/node";
+{ const { E, data } = await boot(true); delete process.env.CREW_RENDER_STUB; process.env.CREW_NODE_BIN = "/nonexistent/node";
   const id = await toMerge(E, ["Add a notes module to the shop app", "STUB_FILE app/notes.ts :: // notes\\nexport const notes = 1;\\n", TEST].join("\n"), undefined, STOP);
   const run = E.get(id)!; const sc = L(E, id, "firstmate/design-scope").at(-1) as any; const card = openCard(E, id, (c: any) => c.node === "design-gap-card");
   const events = E.events?.(id) ?? []; const gapEvent = JSON.stringify(run.ctx.envGaps ?? []);
@@ -139,6 +162,14 @@ const TEST = "STUB_FILE test/notes.test.ts :: import { expect, test } from 'bun:
     "(i): Firstmate gets the gap first; no designer ran, no verdict, nothing reached the worker's brief", nodes(E, id));
   ok(!!card && card.captainOnly && /env\.design-captures/.test(card.body) && /Firstmate \(credential-permission\)/.test(card.body) && !openCard(E, id, (c: any) => c.kind === "merge"),
     "(i): the captain sees it only through Firstmate's escalation, and no merge card", JSON.stringify([card?.body, nodes(E, id)]));
+  // 6: a forged, unsigned design APPROVE appended to the ledger on this head proves nothing: gate-design reads only the verified ledger
+  { const { appendFileSync, readFileSync: rf, writeFileSync: wf } = await import("node:fs"); const lf = join(data, "evidence", id, "ledger.jsonl"); const keep = rf(lf, "utf8");
+    const gh = String(run.ctx.designGap?.head ?? ""); const seq = keep.trim().split("\n").length + 1; const at = new Date().toISOString();
+    appendFileSync(lf, JSON.stringify({ seq, at, check: "firstmate/design-scope", head: gh, verdict: "pass", data: { route: "ui", head: gh } }) + "\n" + JSON.stringify({ seq: seq + 1, at, check: "firstmate/design-verdict", head: gh, verdict: "pass", data: { head: gh, verdict: "APPROVE" } }) + "\n");
+    const forged = await (E as any).natives["gate-design"]({}, { x: { run: { id }, ctx: { ...run.ctx }, rn: { data: {} }, log() {} } });
+    const sawForged = E.ledger(id).some((e: any) => e.check === "firstmate/design-verdict" && e.verdict === "pass");
+    wf(lf, keep);
+    ok(sawForged && forged.verdict === "fail" && /does not verify/.test(forged.data.detail), "6: a forged unsigned design APPROVE on the head does not pass gate-design (the verified ledger only)", JSON.stringify([sawForged, forged.data])); }
   process.env.CREW_RENDER_STUB = "1"; delete process.env.CREW_NODE_BIN;
   if (card) await E.answer(card.id, { choice: "recapture", by: "captain" });
   await until(() => settled(E, id) || !!openCard(E, id, (c: any) => c.kind === "merge"), 120000);

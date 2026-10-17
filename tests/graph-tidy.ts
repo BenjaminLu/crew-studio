@@ -28,7 +28,7 @@ const expectedIds=["code-firstmate","coffee-kit","crew-onboarding-collab","docum
 ok(JSON.stringify(defs.map(d=>d.id).sort())===JSON.stringify(expectedIds) && defs.every((d) => d.nodes.length && d.edges.length), "exact nine built-in workflows plus the two retained four-agent fixtures to lay out, including native coffee-kit", defs.map((d) => d.id).join(","));
 
 // crossings measured on the new layout (and, for comparison, on the hand-placed one)
-// code-firstmate: 45 since the designer round (design-scope, designer, the capture gap and its card in the Build loop), at half the hand layout's 90
+// code-firstmate: 45 is the ceiling since the designer round (design-scope and designer in the Build loop, the capture gap and its card in Gates)
 const THRESHOLD: Record<string, number> = { "code-firstmate": 45, "refine-demo": 0, "pack-genesis": 3, "coffee-kit": 4, "crew-onboarding-collab": 0, "four-agent-proposals": 0, documents: 0, "file-organization": 0, "trivial-lane": 0, video: 0, "web-prototype": 0 };
 
 const inside = (p: [number, number], r: any, m = 2) => p[0] > r.x + m && p[0] < r.x + r.w - m && p[1] > r.y + m && p[1] < r.y + r.h - m;
@@ -67,7 +67,7 @@ for (const def of defs) {
     ok(!lo.length, `no edge labels overlap: ${id}`, lo.slice(0, 5).join("; "));
     if (def.id === "code-firstmate" && tag === "expanded") {
       const st = g.stages;
-      ok(JSON.stringify(st.find((s: any) => s.id === "build")?.nodes) === JSON.stringify(["build", "pr-open", "ci", "review", "design-scope", "designer", "design-gap", "design-gap-card", "remote-ready", "fix"]), "review publication belongs to the named Build loop stage before CI and review");
+      ok(JSON.stringify(st.find((s: any) => s.id === "build")?.nodes) === JSON.stringify(["build", "pr-open", "ci", "review", "design-scope", "designer", "remote-ready", "fix"]), "review publication belongs to the named Build loop stage before CI and review");
       const wrong: string[] = [];
       for (const s of st) for (const r of rects) { const member = (s.nodes || []).includes(r.id); const inBox = overlap(s, r); if (member && !(r.x >= s.x && r.y >= s.y && r.x + r.w <= s.x + s.w && r.y + r.h <= s.y + s.h)) wrong.push(`${r.id} outside ${s.id}`); if (!member && inBox) wrong.push(`${r.id} inside ${s.id}`); }
       ok(st.length === 7 && !wrong.length, "every code-firstmate node of a named stage is inside its box, and no other node is", `${st.map((s: any) => s.id).join(",")} ${wrong.join("; ")}`);

@@ -141,7 +141,7 @@ nodes:
     args: { body_from: design-gap, card_kind: question }
     x: 2410
     y: 40
-  - { id: fix, kind: loop, label: Fix (refine loop), detail: "brief · step-back · budget", args: { producer: build, coordinator: coordinator, route_classes: { door-change: door-change, review-unverified: step-back, design-unverified: step-back, env.design-captures: design-gap }, answer_routes: { "step-back:other-model": pass }, report_checks: [firstmate/report-schema] }, x: 1700, y: 460 }
+  - { id: fix, kind: loop, label: Fix (refine loop), detail: "brief · step-back · budget", args: { producer: build, coordinator: coordinator, route_classes: { door-change: door-change, review-unverified: step-back, design-unverified: step-back }, answer_routes: { "step-back:other-model": pass }, report_checks: [firstmate/report-schema] }, x: 1700, y: 460 }
   - { id: remote-ready, kind: hook, do: remote.ready, label: Remote readiness, x: 1970, y: 220 }
   - id: merge-card
     kind: card
@@ -233,7 +233,6 @@ edges:
   - [design-gap-card, design-scope, recapture]
   - [design-gap-card, spec, rescope]
   - [design-gap-card, parked, park]
-  - [fix, design-gap, design-gap]
   - [designer, remote-ready, ok]
   - [designer, fix, fail]
   - [remote-ready, build, rebase]

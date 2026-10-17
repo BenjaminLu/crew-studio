@@ -8,7 +8,18 @@ const startCalls=sim.calls.length;let refused=false;try{await (adapter as any).p
 for(const changed of ["legacy","grant","repository","pr","branch","base","baseHead","head","method","policyHash"]){
  const H=await harness([Y({id:"intent",name:"Intent",roles:[],nodes:[{id:"n",kind:"hook",do:"fixture.intent",label:"Intent",x:0,y:0}],edges:[]})]),E=H.engine;installCode(E,{dataDir:H.data,projects:new Projects(H.data),adapter});let message="",before=sim.calls.length;
  E.actions["fixture.intent"]=async x=>{Object.assign(x.ctx,{repo,worktree:repo,head,baseCommit:base,base:"main",branch:pr.branch,pr,gatedHead:head,remoteCI:{state:"pass",head,policyHash:"fixture-policy",grant:grantIdentity(adapter)}});
- for(const name of ["branch","rebase","scope","failfirst","ci","approval"])E.record(x,"fixture-gate",{check:`firstmate/gate-${name}`,head,verdict:"pass"} as any);
+ for(const name of ["branch","rebase","scope","failfirst","ci","approval","design"])E.record(x,"fixture-gate",{check:`firstmate/gate-${name}`,head,verdict:"pass"} as any);
  const target:any={version:1,card:"fixture-card",grant:grantIdentity(adapter),repository:adapter.grant.repository,pr:pr.id,branch:pr.branch,base:pr.base,baseHead:base,head,method:"merge",policyHash:"fixture-policy"};if(changed!=="legacy"){target[changed]="changed";E.record(x,"remote-merge-request",{head,data:target} as any);}E.record(x,"card-answer",{head,actor:"captain",data:{card:"fixture-card",kind:"merge",choice:"merge"}} as any);
  try{await E.actions["git.merge"](x);}catch(e:any){message=e.message;}return "ok";};const r=E.start({workflow:"intent"});await until(()=>r.status==="succeeded"||r.status==="failed",8000);ok(/remote captain card target\/grant\/method changed/.test(message)&&sim.calls.length===before&&!r.ctx.merged,`${changed}: signed tuple mismatch has zero vendor calls and no false merge`);H.stop();
-}sim.stop();rmSync(temp,{recursive:true,force:true});end();
+}
+// the GitHub merge needs gate-design too (the seventh signed exact-head gate): the six alone stop before any vendor call
+for(const withDesign of [false,true]){
+ const H=await harness([Y({id:"intent",name:"Intent",roles:[],nodes:[{id:"n",kind:"hook",do:"fixture.intent",label:"Intent",x:0,y:0}],edges:[]})]),E=H.engine;installCode(E,{dataDir:H.data,projects:new Projects(H.data),adapter});let message="",before=sim.calls.length;
+ E.actions["fixture.intent"]=async x=>{Object.assign(x.ctx,{repo,worktree:repo,head,baseCommit:base,base:"main",branch:pr.branch,pr,gatedHead:head,remoteCI:{state:"pass",head,policyHash:"fixture-policy",grant:grantIdentity(adapter)}});
+ for(const name of ["branch","rebase","scope","failfirst","ci","approval",...(withDesign?["design"]:[])])E.record(x,"fixture-gate",{check:`firstmate/gate-${name}`,head,verdict:"pass"} as any);
+ E.record(x,"remote-merge-request",{head,data:{version:1,card:"fixture-card",grant:grantIdentity(adapter),repository:adapter.grant.repository,pr:pr.id,branch:pr.branch,base:pr.base,baseHead:base,head,method:"merge",policyHash:"fixture-policy"}} as any);E.record(x,"card-answer",{head,actor:"captain",data:{card:"fixture-card",kind:"merge",choice:"merge"}} as any);
+ try{await E.actions["git.merge"](x);}catch(e:any){message=e.message;}return "ok";};const r=E.start({workflow:"intent"});await until(()=>r.status==="succeeded"||r.status==="failed",8000);
+ if(!withDesign)ok(/seven signed exact-head gates required/.test(message)&&!sim.calls.slice(before).some(c=>c.method==="PUT")&&!r.ctx.merged,"the six gates without gate-design: the GitHub merge is refused before any vendor mutation",message);
+ else ok(!/seven signed exact-head gates|bound captain merge intent|target\/grant\/method changed/.test(message),"with gate-design signed on the head, the GitHub merge passes the gate check",message);H.stop();
+}
+sim.stop();rmSync(temp,{recursive:true,force:true});end();

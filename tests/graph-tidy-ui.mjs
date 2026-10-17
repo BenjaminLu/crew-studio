@@ -120,7 +120,7 @@ try {
     const arcs = await p.$$eval(".rt-edge[data-back] .rt-line", (ps) => ps.map((x) => getComputedStyle(x).strokeDasharray));
     ok(arcs.length >= 10 && arcs.every((d) => d && d !== "none"), "back edges are drawn as dashed arcs", JSON.stringify(arcs.slice(0, 3)));
     // spec carries eight checks since 21b3fe5 added firstmate/env-preflight
-    ok(await p.textContent('[data-badge="n:spec"]') === "8 checks" && /6 gates/.test(await p.textContent('[data-badge^="e:remote-ready→merge-card"]')) && await p.getAttribute('[data-node="spec"]', "data-checks") === "8", "checks and gates show as count badges");
+    ok(await p.textContent('[data-badge="n:spec"]') === "8 checks" && /7 gates/.test(await p.textContent('[data-badge^="e:remote-ready→merge-card"]')) && await p.getAttribute('[data-node="spec"]', "data-checks") === "8", "checks and gates show as count badges");
     await p.click('[data-badge="n:spec"]'); await p.waitForTimeout(150);
     const items = await p.locator('[data-badge-list="n:spec"] .rt-badge-item').count();
     await p.click('[data-badge="n:spec"]'); await p.waitForTimeout(150);

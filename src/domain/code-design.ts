@@ -165,7 +165,9 @@ export function installCodeDesign(engine: Engine, d: Deps) {
 
   /** firstmate/gate-design: the merge edge needs design-scope's none, or a design APPROVE, on the exact head (or on a patch proven identical) */
   engine.natives["gate-design"] = (_i, hp) => {
-    const x = hp.x as X; const h = d.head(d.shellOk(x)); x.ctx.gatedHead = h; const L = engine.ledger(x.run.id) as any[];
+    // the verified ledger only (signed entries, like gate-approval): an entry that does not verify, or a ledger cut short, proves nothing
+    const x = hp.x as X; const h = d.head(d.shellOk(x)); x.ctx.gatedHead = h; const T = engine.trusted(x.run.id); const L = (T.ok ? T.entries : []) as any[];
+    if (!T.ok) return { verdict: "fail", score: 0, findings: [{ locator: { type: "card", field: "design" }, message: "the evidence ledger does not verify: no design verdict can be trusted", expected: `a signed design APPROVE (or no UI path changed) on ${h.slice(0, 8)}`, class: "gate-design", severity: "blocking" }], data: { detail: "the evidence ledger does not verify", head: h } } as any;
     const scope = L.filter((e) => e.check === "firstmate/design-scope").at(-1); const ver = L.filter((e) => e.check === "firstmate/design-verdict").at(-1);
     const carry = L.filter((e) => e.record === "approval-carry").at(-1);
     const verHead = ver?.data?.head ?? ver?.head ?? null;
