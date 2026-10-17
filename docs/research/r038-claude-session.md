@@ -19,14 +19,14 @@
 
 | 命令／讀取 | 已觀察結果 |
 | --- | --- |
-| `command -v claude` | `/Users/meng-yingyang/.local/bin/claude` |
+| `command -v claude` | `~/.local/bin/claude` |
 | `claude --version` | `2.1.299 (Claude Code)` |
 | `claude --help` | `--resume [value]` 接受 session ID；`--session-id <uuid>` 明確 UUID；`--fork-session` 產生新 ID；`--continue` 取目前目錄最近 conversation。 |
 | `claude --help` | `--input-format stream-json`、`--output-format stream-json`、`--tools ""`、`--strict-mcp-config`、`--safe-mode`、`--bare`、`--no-session-persistence` 均存在。 |
 | `claude --help` | `--bare` 不使用 OAuth/keychain；`--safe-mode` 保留正常 auth、關閉 customizations；`--no-session-persistence` 明載不能 resume。 |
 | `claude --help` | `--permission-mode` 列出 `acceptEdits/auto/bypassPermissions/manual/dontAsk/plan`，未列現有程式使用的 `default`；是否仍接受舊 alias 未實測，不可僅由 help 推斷拒絕。 |
 | 僅查環境變數是否存在 | `ANTHROPIC_API_KEY`、`CLAUDE_CODE_OAUTH_TOKEN`、`CLAUDE_CONFIG_DIR` 均 absent；未印出任何值，未查 keychain 或 credential file。 |
-| 規範 | 已逐層檢查適用 AGENTS；實際找到 `/Users/meng-yingyang/AGENTS.md`，內容與使用者提供 Constitution 一致。 |
+| 規範 | 已逐層檢查適用 AGENTS；實際找到 `~/AGENTS.md`，內容與使用者提供 Constitution 一致。 |
 
 ## 可行 CLI / SDK 路徑
 

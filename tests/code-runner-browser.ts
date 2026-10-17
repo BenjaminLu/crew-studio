@@ -21,7 +21,7 @@ try{
  writeFileSync(join(repo,'value.mjs'),'export const value=1;');
  assertTempRepo(repo);must(repo,['init','-q','-b','main']);must(repo,['add','.']);must(repo,['commit','-qm','Fixture']);
  const projects=new Projects(H.data);projects.add({id:'fixture',path:repo});installCode(E,{dataDir:H.data,projects});E.policies.setProject('fixture',{install:false});
- process.env.CREW_LOCAL_UNRESTRICTED='1';process.env.CREW_LOCAL_DEPENDENCY_ROOT='/Users/you/Desktop/crew-studio';
+ process.env.CREW_LOCAL_UNRESTRICTED='1';process.env.CREW_LOCAL_DEPENDENCY_ROOT=join(import.meta.dir,'..');
  let context:any,result:any,verification:any,baseResult:any,packageResult:any,rejected=0;
  E.deps.provider=()=>({id:'fixture',model:'offline',sandboxFree:true,start(_s:any,tools:any[],ctx:any){return{interrupt(){},async *send(){
   const call=(name:string,args:any)=>H.agents.callTool(ctx.token,name,args);
