@@ -174,7 +174,7 @@ export class GitHubPrAdapter implements PrAdapter {
   remoteGit(): RemoteGit {
     validateGitHubGrant(this.grant);
     const env = publicationEnv(this.gitAuth());
-    return { url: this.grant.pushUrl, env, fileProtocol: this.grant.mode === "simulator", secrets: this.tokenValue && this.grant.mode === "github" ? [this.tokenValue, env.GIT_CONFIG_VALUE_0] : [] };
+    return { url: this.grant.pushUrl, repo: this.grant.localPath, env, fileProtocol: this.grant.mode === "simulator", secrets: this.tokenValue && this.grant.mode === "github" ? [this.tokenValue, env.GIT_CONFIG_VALUE_0] : [] };
   }
   /** The complete allowlist; arbitrary URLs and generic request methods are not exposed. */
   private async api(method: "GET" | "POST" | "PATCH", suffix: string, body?: Record<string, any>, signal?: AbortSignal, assertOwner?: () => void) {

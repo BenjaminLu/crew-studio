@@ -28,7 +28,10 @@ Worktrees.prototype.installDeps = async function (...args) { installsBeforeDispa
 const def = readFileSync(join(root, "packs/firstmate/workflows/code-firstmate.wf.yaml"), "utf8");
 const H = await harness([def], { data, checkRoots: [] });
 const E = H.engine;
-installCode(E, { dataDir: data, projects: new Projects(data) });
+const P = new Projects(data), realGet = P.get.bind(P); let fakeGrant: any = null;
+// a test may give the sandbox project a GitHub grant (P.get answers with it while fakeGrant is set)
+P.get = ((id: string) => { const p = realGet(id); return p && fakeGrant ? { ...p, github: fakeGrant } : p; }) as any;
+installCode(E, { dataDir: data, projects: P });
 const repo = join(data, "demo-repo");
 const git = (...a: string[]) => Bun.spawnSync(["git", ...a], { cwd: repo, stdout: "pipe" }).stdout.toString().trim();
 const mainBefore = git("rev-parse", "main");
@@ -135,6 +138,18 @@ const divergedOrigin = (id: string) => { const bare = join(originsDir, `diverged
   git("remote", "remove", "origin");
   ok(!!sc && sc.node === "scope-card" && /spec round is blocked/.test(JSON.stringify(sc.title)) && /diverged/.test(sc.body) && run.nodes.spec.outcome === "blocked" && run.failure?.code !== "internal.unmapped",
     "a spec round blocked before its agent opens the scope card through [spec, scope-card, blocked], with its cause, never internal.unmapped", JSON.stringify([run.status, run.error, run.failure?.code, sc?.title, run.nodes.spec?.outcome]));
+  await E.cancel(b.id, "captain"); }
+// a GitHub-granted project whose grant does not validate (its localPath is not the project's) never runs local-only against an
+// unreadable origin: the spec round is blocked with the cause and goes to the scope card
+{ fakeGrant = { mode: "github", repository: "acme/app", localPath: join(data, "not-the-project"), pushUrl: "https://github.com/acme/app.git", apiOrigin: "https://api.github.com", base: "main", branchPrefix: "feature/", approvedAt: "2026-10-17T00:00:00Z", approvalId: "A-1" };
+  git("remote", "add", "origin", join(data, "no-such-remote.git"));
+  const b = E.start({ workflow: "code-firstmate", text: intent, params: {} });
+  await until(() => E.cards.list({ run: b.id, open: true }).some((k) => k.kind === "scope") || ["failed", "succeeded"].includes(E.get(b.id)!.status), 120000);
+  const sc = E.cards.list({ run: b.id, open: true }).find((k) => k.kind === "scope"), run = E.get(b.id)!;
+  fakeGrant = null; git("remote", "remove", "origin");
+  const notices = (run.ctx.wt ? (await import("node:fs")).readFileSync(join(data, "work", "wt", run.ctx.wt.project, `${run.ctx.wt.task}.json`), "utf8") : "");
+  ok(!!sc && /spec round is blocked/.test(JSON.stringify(sc.title)) && /cannot read the remote head/.test(sc.body) && /GitHub grant/.test(sc.body) && run.nodes.spec.outcome === "blocked" && !/local-only/.test(notices),
+    "a granted project whose grant does not validate is blocked (scope card with the cause), never read as local-only through an unreadable origin", JSON.stringify([run.status, run.error, sc?.body?.slice(0, 300), run.nodes.spec?.outcome]));
   await E.cancel(b.id, "captain"); }
 // A worker escalation must reach the captain before build checks can mask it.
 { const b = E.start({ workflow: "code-firstmate", text: intent.replaceAll("percent", "blockedPercent") + "\nSTUB_BLOCKED", params: {} });

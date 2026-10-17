@@ -30,7 +30,7 @@
 // - at start, worktrees and locks no live run owns are swept, each with its reason.
 import { withoutSessionLinks } from "./domain/pull-template";
 import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { addPaths, changedPaths, git, gitArgv, gitEnv, must } from "./git";
 import { tmpdir } from "node:os";
 /** A full conflict block as git writes it, in order: <<<<<<< ours, =======, >>>>>>> theirs
@@ -79,10 +79,11 @@ export type RoundStart = { head: string; corrected: { from: string; kept: string
  * pushUrl) and the git environment that authenticates it. Credentials live only in `env`; `secrets`
  * are cut from any git message before it is shown or recorded.
  */
-export type RemoteGit = { url: string; env: Record<string, string>; fileProtocol: boolean; secrets: string[] };
+export type RemoteGit = { url: string; repo: string; env: Record<string, string>; fileProtocol: boolean; secrets: string[] };
 /** Remote git through a temporary bare client: no project config, remotes, helpers or URL rewrites;
  * objects land in the repository's own object store. */
 export function grantedGit(auth: RemoteGit, repo: string, args: string[]): { ok: boolean; code: number | null; out: string; err: string } {
+  if (resolve(repo) !== resolve(auth.repo)) throw new Error("the GitHub grant names another repository than this worktree's");
   const dir = mkdtempSync(join(tmpdir(), "crew-remote-head-"));
   try {
     const objects = must(repo, ["rev-parse", "--path-format=absolute", "--git-path", "objects"]);
@@ -404,6 +405,7 @@ export class Worktrees {
     let run: (args: string[]) => { ok: boolean; code: number | null; out: string; err: string }, url: string;
     if (remote) {
       let auth: RemoteGit; try { auth = remote(); } catch (e: any) { throw new RoundBlocked(`cannot read the remote head of ${r.branch}: ${String(e?.message ?? e).slice(0, 300)}`); }
+      if (resolve(r.repo) !== resolve(auth.repo)) throw new RoundBlocked(`cannot read the remote head of ${r.branch}: the GitHub grant names another repository than this worktree's`);
       run = (args) => grantedGit(auth, r.repo, args); url = auth.url;
     } else {
       if (!git(r.repo, ["remote"]).out.split("\n").filter(Boolean).includes("origin")) return r.head;

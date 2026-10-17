@@ -742,7 +742,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const remoteTip = write && x.node.mode === "build" ? await remoteBaseTip(x) : null;
     const beforeInstall = write && x.node.mode === "build" ? (start: string) => { baseRefresh = refreshBase(x, start, remoteTip); return baseRefresh ? { pending: baseRefresh.conflicts.length > 0 } : null; } : undefined;
     // a GitHub-connected project's branch head is read from the granted repository with the grant's token, never from origin
-    const remote = isRemote(x) ? () => (selectedAdapter(x) as GitHubPrAdapter).remoteGit() : null;
+    // decided by the grant's presence, not by building the adapter: a grant that does not validate stops the round (RoundBlocked), never local-only
+    const granted = o.adapter instanceof GitHubPrAdapter || !!(x.ctx.project && o.projects.get(x.ctx.project)?.github);
+    const remote = granted ? () => { const a = selectedAdapter(x); if (!(a instanceof GitHubPrAdapter)) throw new Error("the project's GitHub grant gives no GitHub adapter"); return a.remoteGit(); } : null;
     try { s = await W.startRound(k.project, k.task, holder(x), { write, skipInstall, beforeInstall, remote, install: install === false ? false : Array.isArray(install) ? install.map(String) : null, scripts: x.policy("install_scripts") === true,
       allow: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String) }); }
     catch (e: any) { if (e instanceof RoundBlocked) { x.rn.data.report = { marker: "BLOCKED", summary: e.message, round: x.visit }; x.save(); } if (e instanceof EnvGapError) recordEnvGaps(x, [e.gap], "round"); throw e; }

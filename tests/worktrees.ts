@@ -112,7 +112,7 @@ const h2 = W.get("demo", "R-001")!.head;
     "an origin without a grant that cannot be read never blocks the round: the branch is local-only, the round and the record say so", e?.message ?? JSON.stringify(l?.remoteNotice));
   // a GitHub-connected project reads the grant's repository with the grant's auth, never origin (origin stays unreadable here)
   const granted = join(tmp, "granted.git"); sh(tmp, "git", "init", "-q", "--bare", granted); sh(repo, "git", "push", "-q", granted, `${hb.head}:refs/heads/feature/R-001`);
-  const auth = (url: string) => () => ({ url, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } as Record<string, string>, fileProtocol: true, secrets: [] });
+  const auth = (url: string, at = repo) => () => ({ url, repo: at, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } as Record<string, string>, fileProtocol: true, secrets: [] });
   let g = await W.startRound("demo", "R-001", "build round 8", { remote: auth(granted) }); g.release();
   ok(g.head === hb.head && !g.remoteNotice, "a granted remote is read at the grant's URL, not origin: the round starts at its head", JSON.stringify(g.remoteNotice));
   const ahead = join(tmp, "granted-clone"); sh(tmp, "git", "clone", "-q", "-b", "feature/R-001", granted, ahead); writeFileSync(join(ahead, "granted.txt"), "pushed to the grant\n");
@@ -122,6 +122,8 @@ const h2 = W.get("demo", "R-001")!.head;
   ok(g.head === aheadHead && existsSync(join(r.path, "granted.txt")), "a granted remote that moved on is fetched through the grant into the repository: the round starts at its head", g.head);
   let ge: any = null; try { (await W.startRound("demo", "R-001", "build round 10", { remote: auth(join(tmp, "no-such-grant.git")) })).release(); } catch (x) { ge = x; }
   ok(ge instanceof RoundBlocked && /cannot read the remote head/.test(ge.message), "a granted remote that cannot be read stops the round before the agent starts (never read as \"no remote branch\")", ge?.message);
+  let me: any = null; try { (await W.startRound("demo", "R-001", "build round 11", { remote: auth(granted, join(tmp, "elsewhere")) })).release(); } catch (x) { me = x; }
+  ok(me instanceof RoundBlocked && /grant names another repository/.test(me.message), "a grant for another repository than the worktree's stops the round, never read", me?.message);
   let te: any = null; try { (await W.startRound("demo", "R-001", "build round 11", { remote: () => { throw new Error("GitHub authentication is required"); } })).release(); } catch (x) { te = x; }
   ok(te instanceof RoundBlocked && /cannot read the remote head.*GitHub authentication is required/.test(te.message), "a granted project without its token stops the round with that cause", te?.message);
   sh(repo, "git", "remote", "remove", "origin");
@@ -130,15 +132,15 @@ const h2 = W.get("demo", "R-001")!.head;
   // the auth reaches only the spawned git's environment, and git's words never carry the secret
   { const { grantedGit } = await import("../src/worktrees"); const secret = "c2VjcmV0LXRva2Vu";
     const env = { ...process.env, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.https://github.com/.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${secret}` } as Record<string, string>;
-    const seen = grantedGit({ url: granted, env, fileProtocol: true, secrets: [secret] }, repo, ["config", "--get", "http.https://github.com/.extraHeader"]);
-    const leak = grantedGit({ url: granted, env, fileProtocol: true, secrets: [secret] }, repo, ["ls-remote", "--", `https://127.0.0.1:9/${secret}.git`]);
+    const seen = grantedGit({ url: granted, repo, env, fileProtocol: true, secrets: [secret] }, repo, ["config", "--get", "http.https://github.com/.extraHeader"]);
+    const leak = grantedGit({ url: granted, repo, env, fileProtocol: true, secrets: [secret] }, repo, ["ls-remote", "--", `https://127.0.0.1:9/${secret}.git`]);
     ok(seen.out === `Authorization: Basic ${secret}` && !sh(repo, "git", "config", "--list").out.includes(secret) && !leak.err.includes(secret) && !leak.ok,
       "the grant's auth header reaches the remote git through its environment only (no config file), and is cut from git's messages", JSON.stringify([seen.out, leak.err.slice(0, 200)])); }
   // the adapter's one auth helper: the grant's pushUrl, the token as an extraHeader in the environment, helpers off
   { const { GitHubPrAdapter } = await import("../src/adapters/github");
     const a = new GitHubPrAdapter({ mode: "github", repository: "acme/app", localPath: repo, pushUrl: "https://github.com/acme/app.git", apiOrigin: "https://api.github.com", base: "main", branchPrefix: "feature/", approvedAt: "2026-10-17T00:00:00Z", approvalId: "A-1" }, () => "tok-123");
     const rg = a.remoteGit();
-    ok(rg.url === "https://github.com/acme/app.git" && rg.env.GIT_CONFIG_VALUE_0 === `Authorization: Basic ${Buffer.from("x-access-token:tok-123").toString("base64")}` && rg.env.GIT_CONFIG_KEY_1 === "credential.helper" && rg.env.GIT_CONFIG_VALUE_1 === "" && rg.env.GIT_TERMINAL_PROMPT === "0" && !rg.fileProtocol && rg.secrets.includes("tok-123"),
+    ok(rg.url === "https://github.com/acme/app.git" && rg.repo === repo && rg.env.GIT_CONFIG_VALUE_0 === `Authorization: Basic ${Buffer.from("x-access-token:tok-123").toString("base64")}` && rg.env.GIT_CONFIG_KEY_1 === "credential.helper" && rg.env.GIT_CONFIG_VALUE_1 === "" && rg.env.GIT_TERMINAL_PROMPT === "0" && !rg.fileProtocol && rg.secrets.includes("tok-123"),
       "GitHubPrAdapter.remoteGit: only the grant's pushUrl, the grant's token as an http extraHeader in the git environment, credential helpers off", JSON.stringify({ url: rg.url, keys: Object.keys(rg.env).filter((k) => k.startsWith("GIT_CONFIG")) }));
     let ne = ""; try { new GitHubPrAdapter({ mode: "github", repository: "acme/app", localPath: repo, pushUrl: "https://github.com/acme/app.git", apiOrigin: "https://api.github.com", base: "main", branchPrefix: "feature/", approvedAt: "2026-10-17T00:00:00Z", approvalId: "A-1" }, () => null).remoteGit(); } catch (x: any) { ne = x.message; }
     ok(/GitHub authentication is required/.test(ne), "a grant without a token gives no remote git (the round stops with that cause)", ne); } }
