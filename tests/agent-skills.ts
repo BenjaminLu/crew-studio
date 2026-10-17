@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // Agent skills (docs/units/agent-skills.md): a skill library in Studio's versioned
 // skill store, imports from a folder, a skills home or a public https git URL, an
 // ordered list of enabled skills per agent node, pinned by version and hash, and
@@ -237,7 +238,7 @@ finally { app.kill(); }
 
 // ---------- a real code-firstmate run's coordinator prompt (engine, registered project, real role skill) ----------
 { const { installCode } = await import("../src/domain/code"); const { Projects } = await import("../src/doors"); const { bundledText } = await import("../src/bundled");
-  const d6 = mkdtempSync(join(tmpdir(), "crew-skills-run-")), repo = mkdtempSync(join(tmpdir(), "crew-skills-repo-"));
+  const d6 = mkdtempSync(join(tmpdir(), "crew-skills-run-")), repo = checkedTempDir("crew-skills-repo-");
   for (const a of [["init", "-b", "main"], ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "init"]]) Bun.spawnSync(["git", ...a], { cwd: repo, stdout: "pipe", stderr: "pipe" });
   writeFileSync(join(d6, "projects.json"), JSON.stringify([{ id: "p", name: "Fixture", path: repo, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: true }]));
   const H = await harness([readFileSync(join(root, "packs/firstmate/workflows/code-firstmate.wf.yaml"), "utf8")], { data: d6, checkRoots: [] });
