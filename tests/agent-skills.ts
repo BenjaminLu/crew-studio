@@ -223,26 +223,43 @@ try {
   const coord = (wf.def?.nodes ?? []).filter((n: any) => n.kind === "agent" && n.role === "coordinator");
   ok(!!pw && pw.sourceKind === "builtin" && pw.source === "core pack" && pw.current === 1 && pw.sha256 === sha(pwText) && coord.length >= 2 && coord.every((n: any) => (n.skills ?? []).some((p: any) => p.id === "plain-writing" && p.v === 1 && p.sha256 === pw.sha256)),
     "the built-in plain-writing skill is listed (core pack) and enabled on code-firstmate's coordinator nodes", JSON.stringify({ pw, coord: coord.map((n: any) => [n.id, n.skills]) }));
-  const start = await fetch(`${base}/api/wruns`, { method: "POST", headers: { "content-type": "application/json", "x-crew-session": TOKEN }, body: JSON.stringify({ workflow: "code-firstmate", text: "Add a percent function to money-kit" }) }).then((r) => r.json());
-  const sysFile = join(data, "runs", start.id ?? "none", "nodes", "spec", "1", "system.md");
-  await until(() => existsSync(sysFile), 30000);
-  const ssys = existsSync(sysFile) ? readFileSync(sysFile, "utf8") : "";
-  const roleText = readFileSync(join(root, "packs/firstmate/skills/firstmate.md"), "utf8").split("\n").find((l) => l.trim()) ?? "@@";
-  const pwBody = pwText.split("\n").find((l) => l.startsWith("# Plain writing")) ?? "@@";
-  const o = [ssys.search(/^# Studio safety rules/m), ssys.indexOf(roleText), ssys.search(/^# Skill: plain-writing \(v1\)$/m), ssys.indexOf(pwBody), ssys.indexOf("Credit and licenses: NOTICE.md")];
-  ok(o.every((v, i) => v >= 0 && (i === 0 || v > o[i - 1])), "a code-firstmate run's coordinator prompt contains plain-writing after the role skill", JSON.stringify({ o, run: start.id, err: start.error }));
+  // A code-firstmate Task through the HTTP route now needs the captain's staffing approval (src/domain/staffing.ts,
+  // installStaffingGuard), so the coordinator prompt is checked on the engine below, with the real role skill.
   const notice = join(data, "skills", "_library", "plain-writing", "v1", "files", "NOTICE.md");
-  ok(!!ssys && !/Copyright|MIT License|Permission is hereby granted/.test(ssys) && (pw?.files ?? []).includes("NOTICE.md") && existsSync(notice) && /MIT License/.test(readFileSync(notice, "utf8")) && /Copyright/.test(readFileSync(notice, "utf8")),
-    "the credit and MIT notices ship as NOTICE.md with the skill, never in the coordinator prompt", JSON.stringify({ files: pw?.files, copyright: /Copyright|MIT License/.test(ssys) }));
-  const run = await get(`/api/wruns/${start.id}`);
-  ok((run.steps ?? []).some((s: any) => s.node === "spec" && JSON.stringify(s.skills) === JSON.stringify(["plain-writing@v1"])), "the run's spec step shows plain-writing@v1", JSON.stringify((run.steps ?? []).map((s: any) => [s.node, s.skills])));
-  await fetch(`${base}/api/wruns/${start.id}/cancel`, { method: "POST", headers: { "content-type": "application/json", "x-crew-session": TOKEN }, body: "{}" });
+  ok((pw?.files ?? []).includes("NOTICE.md") && existsSync(notice) && /MIT License/.test(readFileSync(notice, "utf8")) && /Copyright/.test(readFileSync(notice, "utf8")),
+    "the credit and MIT notices ship as NOTICE.md with the skill", JSON.stringify({ files: pw?.files }));
   // imported text stays local: not in the events log, not in a workflow version
   const evs = existsSync(join(data, "events.jsonl")) ? readFileSync(join(data, "events.jsonl"), "utf8") : "";
   const wfs = JSON.stringify(readdirSync(join(data, "workflows", "code-firstmate")).map((f) => readFileSync(join(data, "workflows", "code-firstmate", f), "utf8")));
   ok(!evs.includes("FOLDER-BODY") && !evs.includes("HOME-BODY") && !wfs.includes("Plain writing (English"), "imported skill text is not written to the events log or a workflow version");
 } catch (e: any) { ok(false, "server suite", `${e?.stack ?? e}\n${appLog.slice(-2000)}`); }
 finally { app.kill(); }
+
+// ---------- a real code-firstmate run's coordinator prompt (engine, registered project, real role skill) ----------
+{ const { installCode } = await import("../src/domain/code"); const { Projects } = await import("../src/doors"); const { bundledText } = await import("../src/bundled");
+  const d6 = mkdtempSync(join(tmpdir(), "crew-skills-run-")), repo = mkdtempSync(join(tmpdir(), "crew-skills-repo-"));
+  for (const a of [["init", "-b", "main"], ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "init"]]) Bun.spawnSync(["git", ...a], { cwd: repo, stdout: "pipe", stderr: "pipe" });
+  writeFileSync(join(d6, "projects.json"), JSON.stringify([{ id: "p", name: "Fixture", path: repo, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: true }]));
+  const H = await harness([readFileSync(join(root, "packs/firstmate/workflows/code-firstmate.wf.yaml"), "utf8")], { data: d6, checkRoots: [] });
+  const lib6 = S.Skills ? new S.Skills(d6, { list: () => [], get: () => null, sourceSkill: () => null }) : null;
+  if (lib6) { (H.engine.deps as any).library = lib6; H.defs.skillInfo = (id: string, v: number) => lib6.pinInfo(id, v); }
+  (H.engine.deps as any).skillText = (ref: string) => bundledText("packs/" + ref.slice(5)) ?? "";
+  installCode(H.engine, { dataDir: d6, projects: new Projects(d6) });
+  const caught: { kind: string; system: string }[] = []; const run6 = H.agents.run.bind(H.agents);
+  (H.agents as any).run = (o: any) => { caught.push({ kind: o.kind, system: o.system }); return run6(o); };
+  const r = H.engine.start({ workflow: "code-firstmate", text: "Add a percent function to money-kit", params: { project: "p" } } as any);
+  await until(() => caught.some((c) => c.kind === "run:spec") || ["failed", "succeeded"].includes(H.engine.get(r.id)!.status), 30000);
+  const ssys = caught.find((c) => c.kind === "run:spec")?.system ?? "";
+  const pwText = readFileSync(join(root, "packs/core/skills/plain-writing/SKILL.md"), "utf8");
+  const roleText = readFileSync(join(root, "packs/firstmate/skills/firstmate.md"), "utf8").split("\n").find((l) => l.trim()) ?? "@@";
+  const pwBody = pwText.split("\n").find((l) => l.startsWith("# Plain writing")) ?? "@@";
+  const o = [ssys.search(/^# Studio safety rules/m), ssys.indexOf(roleText), ssys.search(/^# Skill: plain-writing \(v1\)$/m), ssys.indexOf(pwBody), ssys.indexOf("Credit and licenses: NOTICE.md")];
+  ok(o.every((v, i) => v >= 0 && (i === 0 || v > o[i - 1])), "a code-firstmate run's coordinator prompt contains plain-writing after the role skill", JSON.stringify({ o, run: r.id, err: H.engine.get(r.id)?.error }));
+  ok(!!ssys && !/Copyright|MIT License|Permission is hereby granted/.test(ssys), "the credit and MIT notices are never in the coordinator prompt");
+  const run = H.engine.get(r.id)!;
+  ok((run.steps ?? []).some((s: any) => s.node === "spec" && JSON.stringify(s.skills) === JSON.stringify(["plain-writing@v1"])), "the run's spec step shows plain-writing@v1", JSON.stringify((run.steps ?? []).map((s: any) => [s.node, s.skills])));
+  try { H.engine.cancel(r.id, "t"); } catch {}
+  H.stop(); }
 
 // ---------- done 9: the architecture says it ----------
 { const a = readFileSync(join(root, "docs/architecture.md"), "utf8");
