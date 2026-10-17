@@ -115,7 +115,7 @@
     "test:workflow-brief": "bun tests/own-workflow-brief.ts && node tests/own-workflow-brief-ui.mjs",
     "test:workflow-config": "bun tests/workflow-saved-staffing.ts && bun tests/staffing-candidate-models.ts && bun tests/workflow-design-skill.ts",
     "test:worker-ask": "bun tests/code-worker-ask.ts",
-    "test:test-runner": "bun tests/check-test-inventory.ts && node tests/code-check-config.mjs && bun tests/test-command.ts && bun tests/test-runner-gates.ts && bun tests/code-worker-evidence.ts && bun tests/code-runner-browser.ts && bun tests/code-build-retry.ts",
+    "test:test-runner": "bun tests/check-test-inventory.ts && node tests/code-check-config.mjs && bun tests/test-command.ts && bun tests/test-runner-gates.ts && bun tests/code-worker-evidence.ts && bun tests/worker-run-tests.ts && bun tests/code-runner-browser.ts && bun tests/code-build-retry.ts",
     "test:workflow-trash": "bun tests/workflow-trash.ts && node tests/workflow-trash-ui.mjs",
     "test:staffing-defaults": "bun tests/staffing-defaults.ts && bun tests/staffing-defaults-ui.ts",
     "test:own-claude-refresh": "bun tests/own-workflow-claude-refresh.ts && bun tests/own-workflow-claude-refresh-ui.ts",

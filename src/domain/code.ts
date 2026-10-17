@@ -1,5 +1,5 @@
 import {OperatingRules,jobInstructions} from "../operating-rules";
-import {selectTestCommand,packageTestCommand,prepareTestBase,testEnvironment,testRunner} from "../test-command";
+import {selectTestCommand,packageTestCommand,prepareTestBase,testEnvironment,testRunner,selectionEnv,ranNoTests,treeState} from "../test-command";
 import {localUnrestricted} from "../local-execution";
 import { codeHandoffView } from "./code-handoff";
 import { installCodeRecovery } from "./code-recovery";
@@ -88,6 +88,10 @@ export const changedOf = (wt: string, base: string): ChangedPath[] => {
   return ns.map((l, i) => { const p = l.split("\t"); const n = num[i]?.split("\t") ?? []; return { path: p.at(-1)!, status: p[0], from: p[0].startsWith("R") ? p[1] : null, added: Number(n[0]) || 0, removed: Number(n[1]) || 0 }; });
 };
 const head = (wt: string) => must(wt, ["rev-parse", "HEAD"]);
+/** Executed run_tests calls a worker gets per round; refused calls and runs that select no tests are not counted. */
+const WORKER_TEST_RUNS = 10;
+/** The base package.json scripts.test text, whatever source the declared test command came from (runner=npm-test runs it). */
+const baseTestScript = (wt: string, base: string) => { const raw = showAt(wt, base, "package.json"); if (raw === null) return null; try { const s = JSON.parse(raw)?.scripts?.test; return typeof s === "string" ? s : null; } catch { return null; } };
 /** A brief written for one head carries to the round's head only when the base alone moved (a merge of the base, or a rebase onto it):
  * the old base is an ancestor of the new one, and the task's own change (its stable patch id and its files) is the same. The proof is recorded. */
 export const briefCarryCheck: CarryCheck = (b, x) => {
@@ -722,7 +726,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     ...roundHooks(true),
     sandbox: (x) => { const wt = x.ctx.worktree; return wt && existsSync(wt) ? { writes: [wt], cwd: wt } : null; }, // writes only its worktree
     tools: (x) => {
-      const wt = shellOk(x); const cfg = cfgOf(x); let runs = 0; const reportOnly = !!x.ctx.reportOnly?.build;
+      const wt = shellOk(x); const cfg = cfgOf(x); let runs = 0, attempts = 0; const reportOnly = !!x.ctx.reportOnly?.build;
       const report: AgentTool = { name: "worker_report", description: "Your report, once at the end: marker WORKER_COMPLETE, SCOPE-BLOCKED, DOOR-CHANGE or ASK; a summary; on a fix round the SWEPT block (searched, found N, fixed M) and the classes you fixed; the test that fails on base (file:line).",
         schema: { type: "object", properties: { marker: { type: "string", enum: ["WORKER_COMPLETE", "SCOPE-BLOCKED", "DOOR-CHANGE", "ASK"] }, summary: { type: "string" }, swept: { type: "object", properties: { searched: { type: "string" }, found: { type: "number" }, fixed: { type: "number" } } }, classes: { type: "array", items: { type: "string" } }, failfirst: { type: "string" } }, required: ["marker", "summary"] },
         run: (a) => { if (!engine.owns(x)) return {error:"round owner ended"}; if (x.rn.data.report?.round === x.visit) return {error:"worker_report is submitted exactly once per round"}; const sw = a.swept && typeof a.swept === "object" ? { searched: String(a.swept.searched ?? ""), found: Number(a.swept.found) || 0, fixed: Number(a.swept.fixed) || 0 } : null;
@@ -736,39 +740,57 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       }};
       if (reportOnly) return [...READ_ONLY(wt), context, report];
       return [...folderTools(wt, () => {}, "fs"), context, report,
-        { name: "run_tests", description: "Run the repository's declared test command (at most 6 times per round). Optional files selects scoped tests with the runner adapter. target=base runs candidate tests against base source in an isolated copy, preserving the base package.json. evidenceDir selects an approved writable directory on head; CREW_TEST_OUTPUT_DIR names it. PLAYWRIGHT_MODULE names the host browser library when available. runner=npm-test runs the actual unchanged package test script with pre/post hooks disabled. Returns actual exit, output tail and signed execution evidence.", schema: { type: "object", properties: {files:{type:'array',items:{type:'string'},maxItems:12},target:{type:'string',enum:['head','base']},evidenceDir:{type:'string'},runner:{type:'string',enum:['declared','npm-test']}} },
+        { name: "run_tests", description: `Run the repository's declared test command (at most ${WORKER_TEST_RUNS} executed runs per round; refused calls and runs that select no tests do not count, and every result says how many remain). Optional files selects scoped tests by repo-relative path (e.g. "test/format.test.ts"); the runner adapter receives basenames in CREW_TEST_FILES and the paths in CREW_TEST_PATHS. target=base runs the head's candidate test files against base source in an isolated copy, preserving the base package.json. evidenceDir selects an approved writable directory on head; CREW_TEST_OUTPUT_DIR names it. PLAYWRIGHT_MODULE names the host browser library when available. runner=npm-test runs the whole unchanged base package.json test script with pre/post hooks disabled (no files). A run that executes no tests returns status no-tests, never a pass. Returns actual exit, the tree it ran on (head commit, dirty, tree hash), output tail and signed execution evidence.`, schema: { type: "object", properties: {files:{type:'array',items:{type:'string'},maxItems:12},target:{type:'string',enum:['head','base']},evidenceDir:{type:'string'},runner:{type:'string',enum:['declared','npm-test']}} },
           // the repository's tests run in the check sandbox: they read the worktree, write only their own out/ and tmp, no network
-          run: async (a) => { if (!engine.owns(x))return{error:'round owner ended'};if(cfg.testError)return{error:cfg.testError};if (!cfg.test) return { status:'not-run',reason:cfg.testSkipped??'The repository has no test command; continue with review and record the testing gap.',exit:null };
-            const files=a?.files;if(files!==undefined&&(!Array.isArray(files)||!files.length||files.length>12||files.some((p:any)=>typeof p!=='string'||normPath(p)!==p||p.includes(',')||(!((x.ctx.spec?.scope??[]).some((g:string)=>matches(g,p))||(x.ctx.spec?.verificationScope??[]).includes(p)))||!cfg.tests.some(g=>matches(g,p)))))return{error:'files must name tests inside the approved write or verification scope'};
-            if (++runs > 6) return { error: "test run limit reached" };
-            const box = join(x.dir, "tests", `round-${x.visit}-${runs}`); mkdirSync(join(box, "out"), { recursive: true }); mkdirSync(join(box, "tmp"), { recursive: true });
+          run: async (a) => { const res:any=await runTests(a);return{...res,runsRemaining:Math.max(0,WORKER_TEST_RUNS-runs)}; } }];
+      async function runTests(a:any):Promise<any>{ if (!engine.owns(x))return{error:'round owner ended'};if(cfg.testError)return{error:cfg.testError};if (!cfg.test) return { status:'not-run',reason:cfg.testSkipped??'The repository has no test command; continue with review and record the testing gap.',exit:null };
+            const target=a?.target??'head';if(!['head','base'].includes(target))return{error:'target must be "head" or "base"'};
+            if(a?.runner!==undefined&&!['declared','npm-test'].includes(a.runner))return{error:'runner must be "declared" or "npm-test"'};
+            const scope:string[]=x.ctx.spec?.scope??[],verification:string[]=x.ctx.spec?.verificationScope??[];
+            const allowed=(p:any)=>typeof p==='string'&&normPath(p)===p&&!p.includes(',')&&(scope.some(g=>matches(g,p))||verification.includes(p))&&cfg.tests.some(g=>matches(g,p));
+            const files=a?.files;
+            if(files!==undefined){
+              if(!Array.isArray(files)||!files.length||files.length>12)return{error:'files must be a nonempty list of at most 12 repo-relative test paths, e.g. run_tests({files:["test/example.test.ts"]}); omit files to run the whole declared command'};
+              const bad=files.filter((p:any)=>!allowed(p));
+              if(bad.length){ // a bare basename names the scoped test it ends, when exactly one does
+                const known=must(wt,['ls-files','--cached','--others','--exclude-standard']).split('\n').filter(Boolean);
+                const fixed=files.map((p:any)=>allowed(p)?[p]:typeof p==='string'?known.filter(k=>k.endsWith(`/${p}`)&&allowed(k)):[]);
+                const hint=fixed.every((f:string[])=>f.length===1)?` Call run_tests(${JSON.stringify({files:fixed.map((f:string[])=>f[0]),...(a?.target?{target}:{})})}).`:' Use repo-relative paths, e.g. "test/example.test.ts".';
+                return{error:`files must be repo-relative test paths (test globs: ${cfg.tests.join(', ')}) inside the approved write scope or verification scope; rejected ${JSON.stringify(bad)}.${hint}`};
+              }
+              const names=files.map((f:string)=>f.split('/').at(-1));const dup=names.find((n:string,i:number)=>names.indexOf(n)!==i);
+              if(dup)return{error:`the runner adapter selects by basename and two selected files are named ${dup}; select them in separate run_tests calls`};
+            }
+            const npm=a?.runner==='npm-test';
+            if(npm&&files?.length)return{error:`runner:"npm-test" runs the whole package test script and cannot select files; call run_tests(${JSON.stringify({files,target})}) without runner for the selected tests, or run_tests(${JSON.stringify({runner:'npm-test',target})}) without files for the whole script`};
+            if(target==='base'&&!npm&&!files?.length)return{error:'target:"base" needs the candidate test files: call run_tests({files:["test/example.test.ts"],target:"base"}), or run_tests({runner:"npm-test",target:"base"}) for the whole package script on base source'};
+            if(a?.evidenceDir!==undefined){
+              const p=a.evidenceDir;if(target!=='head'||typeof p!=='string'||normPath(p)!==p||!['evidence.png','evidence.json'].every(f=>scope.some((g:string)=>matches(g,`${p}/${f}`))))return{error:'evidenceDir must be a directory inside approved writable scope on head'};
+              let cursor=wt;for(const part of p.split('/')){cursor=join(cursor,part);if(existsSync(cursor)&&lstatSync(cursor).isSymbolicLink())return{error:'evidenceDir cannot traverse symlinks'};}
+            }
             let command:string[]|null;try{command=selectTestCommand(cfg,files);}catch(e:any){return{error:e.message};}
             if(!command)return{status:'not-run',exit:null};
-            const target=a?.target??'head';if(!['head','base'].includes(target))return{error:'target must be head or base'};
-            let cwd=wt;
-            if(target==='base'){
-              if(!files?.length)return{error:'base comparison requires explicit candidate test files'};
-              cwd=prepareTestBase(wt,join(box,'base'),x.ctx.baseCommit,cfg.tests);
-            }
-            if(a?.runner!==undefined&&!['declared','npm-test'].includes(a.runner))return{error:'runner must be declared or npm-test'};
-            if(a?.runner==='npm-test'){if(files?.length)return{error:'npm-test uses the unchanged declared script; use the adapter separately for selected files'};try{command=packageTestCommand(cfg,cwd);}catch(e:any){return{error:e.message};}}
-            let outputDir=join(box,'out');
-            if(a?.evidenceDir!==undefined){
-              const p=a.evidenceDir;if(target!=='head'||typeof p!=='string'||normPath(p)!==p||!['evidence.png','evidence.json'].every(f=>(x.ctx.spec?.scope??[]).some((g:string)=>matches(g,`${p}/${f}`))))return{error:'evidenceDir must be a directory inside approved writable scope on head'};
-              let cursor=wt;for(const part of p.split('/')){cursor=join(cursor,part);if(existsSync(cursor)&&lstatSync(cursor).isSymbolicLink())return{error:'evidenceDir cannot traverse symlinks'};}
-              outputDir=join(wt,p);mkdirSync(outputDir,{recursive:true});
-            }
-            const env:Record<string,string>={...(files?{CREW_TEST_FILES:files.join(',')}:{}) , CREW_TEST_OUTPUT_DIR:outputDir};
+            if (runs >= WORKER_TEST_RUNS) return { error: `test run limit reached: all ${WORKER_TEST_RUNS} executed runs of this round are used; say in worker_report which change is not verified` };
+            const box = join(x.dir, "tests", `round-${x.visit}-${++attempts}`); mkdirSync(join(box, "out"), { recursive: true }); mkdirSync(join(box, "tmp"), { recursive: true });
+            // base = base source bytes + the head's candidate test files (prepareTestBase, the same overlay the fail-first gate gets)
+            const cwd=target==='base'?prepareTestBase(wt,join(box,'base'),x.ctx.baseCommit,cfg.tests):wt;
+            if(npm){try{command=packageTestCommand(baseTestScript(wt,x.ctx.baseCommit),cwd,target);}catch(e:any){return{error:e.message};}}
+            let outputDir=join(box,'out');if(a?.evidenceDir!==undefined){outputDir=join(wt,a.evidenceDir);mkdirSync(outputDir,{recursive:true});}
+            const tree=treeState(wt,join(box,'tmp'));
+            const env:Record<string,string>={...selectionEnv(files), CREW_TEST_OUTPUT_DIR:outputDir};
             Object.assign(env,testEnvironment());
+            runs++;
             const r = await sandboxed(command, { cwd, out: outputDir, tmp: join(box, "tmp"), timeoutS: cfg.timeout_s, network: false, dataDir: o.dataDir,env });
-            if (r.refused) return { error: `refused: ${r.refused}` };
+            if (r.refused) { runs--; return { error: `refused: ${r.refused}` }; }
             if(!engine.owns(x))return{error:'round owner ended during tests'};
             const output=r.stdout+r.stderr;writeFileSync(join(box,'output.log'),output);
-            const evidence=engine.record(x,'worker-test-execution',{head:head(wt),data:{command,target,base:x.ctx.baseCommit,files:files??null,exit:r.timedOut?null:r.code,timedOut:r.timedOut,executionMode:localUnrestricted()?'local-unrestricted':'default',outputSha256:createHash('sha256').update(output).digest('hex')}});
-            return { status:'executed',target,command,base:x.ctx.baseCommit,head:head(wt),exit: r.timedOut ? null : r.code, timedOut: r.timedOut, evidence:evidence?{seq:evidence.seq,sig:evidence.sig}:null,tail: output.trim().split("\n").slice(-80).join("\n").slice(-16000) }; } }];
+            const tail=output.trim().split("\n").slice(-80).join("\n").slice(-16000);
+            if(ranNoTests(output)){runs--;return{status:'no-tests',error:`the run executed no tests, so it proves nothing and does not count against the limit. ${files?.length?`The adapter got CREW_TEST_FILES=${env.CREW_TEST_FILES} and CREW_TEST_PATHS=${env.CREW_TEST_PATHS}; check those name existing test files.`:'Check the declared command finds the test files.'}`,target,command,files:files??null,exit:r.timedOut?null:r.code,tail};}
+            const evidence=engine.record(x,'worker-test-execution',{head:tree.head,data:{command,target,base:x.ctx.baseCommit,files:files??null,dirty:tree.dirty,tree:tree.tree,exit:r.timedOut?null:r.code,timedOut:r.timedOut,executionMode:localUnrestricted()?'local-unrestricted':'default',outputSha256:createHash('sha256').update(output).digest('hex')}});
+            return { status:'executed',target,command,base:x.ctx.baseCommit,head:tree.head,dirty:tree.dirty,tree:tree.tree,exit: r.timedOut ? null : r.code, timedOut: r.timedOut, evidence:evidence?{seq:evidence.seq,sig:evidence.sig}:null,tail }; }
     },
     system: (x, skill) => x.ctx.reportOnly?.build ? `${skill}\n\nREPORT ONLY: your code from the last round is kept. Do not change any file. Read what you need and call worker_report once with a complete report, then one line.`
-      : `${skill}\n\nYou build ONE change in the run's worktree with the fs_* tools (no shell; run_tests runs the repository's tests). Stay inside the spec's scope. Each done line needs a test that fails without your change. Use run_tests({files:[testPath],target:"base"}) for candidate fail-first tests on base source and target:"head" on the implementation. Use runner:"npm-test" when literal npm test evidence is required; it runs the unchanged base script and skips pre/post hooks. Use evidenceDir for screenshots inside approved validation paths. Tests can import the host browser library through PLAYWRIGHT_MODULE and write to CREW_TEST_OUTPUT_DIR. No test command means not-run, not a reason to HOLD. Studio commits your work; you never commit. Tool budget: 180 calls. Use at most 60 read/search calls before implementation; reserve calls for edits, verification and worker_report. Prefer targeted reads over whole files. Do not spend the full budget exploring. End with worker_report, then one line.`,
+      : `${skill}\n\nYou build ONE change in the run's worktree with the fs_* tools (no shell; run_tests runs the repository's tests). Stay inside the spec's scope. Each done line needs a test that fails without your change. Use run_tests({files:["test/x.test.ts"],target:"base"}) with repo-relative paths for candidate fail-first tests on base source (your candidate test files over base source) and target:"head" on the implementation; a run that executes no tests is reported as no-tests, never a pass. You get ${WORKER_TEST_RUNS} executed runs per round and each result says how many remain: keep one for the final check after your last fix. Use runner:"npm-test" when literal npm test evidence is required; it runs the whole unchanged base package.json test script and skips pre/post hooks. Use evidenceDir for screenshots inside approved validation paths. Tests can import the host browser library through PLAYWRIGHT_MODULE and write to CREW_TEST_OUTPUT_DIR. No test command means not-run, not a reason to HOLD. Studio commits your work; you never commit. Tool budget: 180 calls. Use at most 60 read/search calls before implementation; reserve calls for edits, verification and worker_report. Prefer targeted reads over whole files. Do not spend the full budget exploring. End with worker_report, then one line.`,
     prompt: (x) => {
       const wt = shellOk(x); const h = head(wt); x.ctx.head = h;
       mkdirSync(join(x.dir, "briefs"), { recursive: true });

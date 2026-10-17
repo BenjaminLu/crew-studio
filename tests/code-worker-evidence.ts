@@ -19,7 +19,8 @@ try{
  mkdirSync(join(repo,'.crew'),{recursive:true});mkdirSync(join(repo,'tests'));
  writeFileSync(join(repo,'tests/allowed.ts'),'// scoped fixture\n');
  writeFileSync(join(repo,'tests/verification.ts'),'// read-only regression fixture\n');
- writeFileSync(join(repo,'test.mjs'),'console.log("SELECTED="+process.env.CREW_TEST_FILES);process.exit(["tests/allowed.ts","tests/verification.ts"].includes(process.env.CREW_TEST_FILES)?0:9);');
+ // adapters get basenames in CREW_TEST_FILES (the gates' contract) and repo-relative paths in CREW_TEST_PATHS
+ writeFileSync(join(repo,'test.mjs'),'const f=process.env.CREW_TEST_FILES,p=process.env.CREW_TEST_PATHS;console.log("SELECTED="+p);console.log("ok 1 - selected");process.exit(["tests/allowed.ts","tests/verification.ts"].includes(p)&&p.endsWith("/"+f)?0:9);');
  writeFileSync(join(repo,'.crew/gates.json'),JSON.stringify({test:[process.execPath,'test.mjs'],tests:['tests/**'],timeout_s:10}));
  assertTempRepo(repo);must(repo,['init','-q','-b','main']);must(repo,['add','.']);must(repo,['commit','-qm','Fixture']);
  const projects=new Projects(H.data);projects.add({id:'fixture',path:repo});installCode(E,{dataDir:H.data,projects});E.policies.setProject('fixture',{install:false});
