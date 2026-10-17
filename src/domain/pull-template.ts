@@ -3,6 +3,7 @@
 // (a table whose header names a test) gets one row per done line from Studio's own evidence;
 // every checkbox stays, ticked only where Studio's evidence proves it. The template text is
 // untrusted repository content: it shapes the body, it never grants anything.
+import { createHash } from "node:crypto";
 
 export type TemplateCheckbox = { text: string };
 export type TemplateTable = { header: string[]; headerLine: string; sepLine: string; rows: string[]; tests: boolean };
@@ -119,3 +120,25 @@ export const templateLanguage = (text: string) => ((String(text).match(/[぀-ヿ
 /** A claude.ai session link or a Claude-Session trailer never goes into text Studio pushes to GitHub (commit messages, pull request titles and bodies). */
 export const SESSION_LINK = /claude\.ai\/code\/session|Claude-Session:/i;
 export const withoutSessionLinks = (text: string) => String(text ?? "").split("\n").filter((l) => !SESSION_LINK.test(l)).join("\n");
+
+/** Studio's part of a pull request body, between two hidden markers: the begin marker names the head the text describes and
+ *  the hash of the text between them, so Studio can tell a text that lags the head, or that someone edited, from its own.
+ *  Text outside the markers (a reviewer's note, a person's addition) belongs to whoever wrote it and stays as it is. */
+const STUDIO_BEGIN = /<!-- crew-studio:pr-text head=([a-f0-9]{40}) hash=([a-f0-9]{64})[^>]*-->\n/;
+const STUDIO_END = "<!-- /crew-studio:pr-text -->";
+export const studioTextHash = (inner: string) => createHash("sha256").update(inner).digest("hex");
+/** Studio's text wrapped in its markers (a marker line inside the text is dropped, so the text cannot fake one). */
+export function wrapStudioText(inner: string, head: string): string {
+  const t = String(inner ?? "").replace(/\r\n?/g, "\n").split("\n").filter((l) => !/crew-studio:pr-text/.test(l)).join("\n").trimEnd() + "\n";
+  return `<!-- crew-studio:pr-text head=${head} hash=${studioTextHash(t)} (Studio writes the text between these markers; text outside them stays as it is) -->\n${t}${STUDIO_END}`;
+}
+export type StudioParts = { marked: boolean; before: string; inner: string; after: string; head: string | null; hash: string | null };
+/** A body split at Studio's markers. No markers (a text an older release wrote): the whole body is the candidate part.
+ *  A begin without its end, or more than one pair, is not Studio's shape: marked, with a hash nothing matches. */
+export function studioParts(body: string): StudioParts {
+  const b = String(body ?? "").replace(/\r\n?/g, "\n"), m = STUDIO_BEGIN.exec(b);
+  if (!m && !b.includes(STUDIO_END)) return { marked: false, before: "", inner: b, after: "", head: null, hash: null };
+  const end = m ? b.indexOf(STUDIO_END, m.index + m[0].length) : -1;
+  if (!m || end < 0 || STUDIO_BEGIN.test(b.slice(end)) || b.indexOf(STUDIO_END, end + 1) >= 0) return { marked: true, before: "", inner: b, after: "", head: m?.[1] ?? null, hash: null };
+  return { marked: true, before: b.slice(0, m.index), inner: b.slice(m.index + m[0].length, end), after: b.slice(end + STUDIO_END.length), head: m[1], hash: m[2] };
+}

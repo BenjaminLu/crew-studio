@@ -140,7 +140,7 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
     ok(pr.repository === "fixture/project" && pr.branch === "crew/euro" && pr.base === "main" && pr.head === head && pr.draft === false && pr.title === "Format euro prices with the euro sign", "the card names the target repository, branch, base, head and the exact title");
     const headings = TEMPLATE.split("\n").filter((l) => l.startsWith("## "));
     let at = -1; ok(headings.every((h) => { const i = body.indexOf(h + "\n", at + 1); const okay = i > at; at = i; return okay; }), "every template heading is present, in order", body);
-    ok(!body.includes("<!--") && body.includes("Euro prices now show the euro sign") && body.includes("Revert the pull request"), "the guidance comments give way to the coordinator's text");
+    ok(!body.replace(/<!-- \/?crew-studio:pr-text[^>]*-->/g, "").includes("<!--") && body.startsWith(`<!-- crew-studio:pr-text head=${head} hash=`) && body.includes("Euro prices now show the euro sign") && body.includes("Revert the pull request"), "the guidance comments give way to the coordinator's text");
     ok(body.includes("| Prices in euro format as €1,234.50 | test/format.test.ts | Yes (fail-first at " + head.slice(0, 8) + ") |") && body.includes("| Unknown currencies keep the code prefix | test/codes.test.ts | Not proven |") && !/\|\s+\|\s+\|\s+\|/.test(body),
       "the test table has a row per done line with its test and the fail-first result", body);
     ok(body.includes("- [x] `bun test` passes") && body.includes("- [ ] `bun run lint` passes"), "test-suite box ticked by CI; lint box stays unchecked without lint evidence (a cited review does not prove it)");
@@ -179,17 +179,16 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
     const patches = () => sim.calls.filter((c) => c.method === "PATCH").length, p0 = patches();
     const rf = E.start({ workflow: "pr-refresh", text: "refresh" }); await until(() => !!openCard(rf) || ["succeeded", "failed"].includes(rf.status), 15000);
     const rc = openCard(rf);
-    ok(rc?.title.en === `Update the text of pull request #${upd.ctx.pr.id}?` && rc.captainOnly && rc.options.map((o: any) => o.id).join() === "update-text,keep-text" && patches() === p0
+    ok(rc?.title.en === `Update the text of pull request #${upd.ctx.pr.id}?` && rc.captainOnly && rc.options.map((o: any) => o.id).join() === "update-text,keep-text,close" && patches() === p0
       && rc.body.includes("-| Prices in euro format as €1,234.50 | test/format.test.ts | Not proven |") && rc.body.includes(`+| Prices in euro format as €1,234.50 | test/format.test.ts | Yes (fail-first at ${head3.slice(0, 8)}) |`),
-      "a moved head offers 'Update the text' with a diff against the text on GitHub; nothing is edited before the captain answers", rc?.body?.slice(0, 900));
+      "a moved head offers 'Update the text' with a diff against the text on GitHub; nothing is edited before the captain answers", rc?.body?.slice(0, 4000));
     await E.answer(rc.id, { choice: "update-text", by: "captain" } as any); await until(() => ["succeeded", "failed"].includes(rf.status), 15000);
     const edit = sim.calls.filter((c) => c.method === "PATCH").at(-1), shown = rc.body.split("\nNew text:\n")[1];
     ok(rf.status === "succeeded" && patches() === p0 + 1 && edit?.body?.body === shown && rf.ctx.pr.body === shown && sim.head("crew/euro") === head3 && E.trusted(rf.id).entries.some((e) => e.record === "pr-text-updated" && e.data?.pr === upd.ctx.pr.id),
       "Update PATCHes exactly the shown text (the head stays), records it, and remote-ready goes on", `${rf.status} ${patches() - p0}`);
-    // Keep: no edit, and no second offer for the same head
-    const rk = E.start({ workflow: "pr-refresh", text: "refresh keep" }); await until(() => !!openCard(rk) || ["succeeded", "failed"].includes(rk.status), 15000);
-    const kc = openCard(rk); await E.answer(kc.id, { choice: "keep-text", by: "captain" } as any); await until(() => ["succeeded", "failed"].includes(rk.status), 15000);
-    ok(kc?.title.en.startsWith("Update the text") && rk.status === "succeeded" && patches() === p0 + 1 && rk.ctx.prRefresh?.decided === "keep" && E.cards.list({ run: rk.id }).length === 1, "Keep leaves GitHub's text alone and is not asked again for the same head", `${rk.status} ${rk.ctx.prRefresh?.decided}`);
+    // the text on GitHub now names this head (its markers): no second offer, nothing edited
+    const rk = E.start({ workflow: "pr-refresh", text: "refresh again" }); await until(() => !!openCard(rk) || ["succeeded", "failed"].includes(rk.status), 15000);
+    ok(rk.status === "succeeded" && patches() === p0 + 1 && E.cards.list({ run: rk.id }).length === 0, "a text whose markers name the head is not offered again", `${rk.status} ${E.cards.list({ run: rk.id }).length}`);
 
     // the merge card with no operations grant: the pull request is open; merge it on GitHub (with its link)
     source = structuredClone(upd.ctx);

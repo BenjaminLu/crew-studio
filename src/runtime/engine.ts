@@ -270,6 +270,9 @@ export class Engine {
   cardBodies: Record<string, (x: X) => Body | Promise<Body>> = {};
   /** card nodes with their own behaviour (an artifact review that runs an agent on "request changes") */
   cardModes: Record<string, KindHandler> = {};
+  /** A card node's answer that its body's domain handles itself (keyed by args.body_from, e.g. the merge card's "update-text");
+   *  null routes the choice as the outcome. */
+  cardAnswers: Record<string, (x: X, card: SCard) => Promise<Result | null>> = {};
   private live = new Set<string>(); // "run/node" being executed in this process
   private routing = new Map<string, number>();
 
@@ -419,7 +422,7 @@ export class Engine {
       if (!b) continue;
       const { id: _id, status: _status, createdAt: _at, answer: _answer, ...kept } = old;
       const c = this.cards.create({ ...kept, title: { en: b.title, "zh-TW": b.zhTitle ?? b.title }, sections: { en: { ...old.sections.en, ...b.en }, "zh-TW": { ...old.sections["zh-TW"], ...b.zh } },
-        body: b.body ?? old.body, options: b.options ?? old.options, ...(b.captainOnly ? { captainOnly: true } : {}), ledger: { upgradedFrom: old.id } as any, ste: null });
+        body: b.body ?? old.body, options: b.options ?? old.options, ...(b.captainOnly ? { captainOnly: true } : {}), ledger: { ...(old.ledger ?? {}), upgradedFrom: old.id } as any, ste: null });
       const broken = cardContract(c); if (broken.length) { this.cards.cancel(c.id); this.emit(r, "log", `card contract: ${old.id} kept, its upgrade broke it: ${broken.join("; ").slice(0, 400)}`); continue; }
       // the ledger names the replacement before the node points at it (a crash after the record leaves an orphan, swept and redone)
       this.record(this.x(r, node, rn), "card-upgraded", { data: { from: old.id, to: c.id, options: c.options.map((o) => o.id) } });
@@ -1757,7 +1760,10 @@ export class Engine {
         const c = await self.card(x, kind, body);
         return { wait: true, note: `card ${c.id}` };
       },
-      async answer(x: X, c: SCard) { return { outcome: c.answer!.choice, note: c.answer!.note }; },
+      async answer(x: X, c: SCard) {
+        const own = x.node.args?.body_from ? self.cardAnswers[x.node.args.body_from] : null, r = own ? await own(x, c) : null;
+        return r ?? { outcome: c.answer!.choice, note: c.answer!.note };
+      },
     };
     this.kinds.agent = {
       async start(x: X) {

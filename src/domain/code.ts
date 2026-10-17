@@ -565,6 +565,13 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   };
   // a repository pull request template: the pull request waits for the evidence and opens at remote-ready (code-publish.ts)
   const publication = installCodePublish(engine, { dataDir: o.dataDir, projects: o.projects, injected: !!o.adapter, selectedAdapter, remotePhase, remoteWait, namingCard, shellOk, head, specMd });
+  // the card that stands in for the merge card while the pull request text does not match the head: the staged text is bound
+  // to that card in the ledger (its answer verifies the record)
+  engine.cardPrepared["pr-text-final"] = (x, card) => {
+    if (card.kind !== "merge" || !card.options.some((o) => o.id === "update-text")) return;
+    const r = x.ctx.prRefresh; if (r?.kind !== "final" || r.decided || r.head !== x.ctx.pr?.head) throw new Error("the pull request text offer changed before its card");
+    r.card = card.id; engine.record(x, "pr-text-refresh", { head: r.head, data: { version: 1, kind: "final", reason: r.reason, card: card.id, hash: r.hash, pr: r.pr, repository: r.repository } } as any); x.save();
+  };
   engine.actions["pr.open"] = async (x) => {
     const phase = remotePhase(x); phase.assert(); const wt = shellOk(x); const h = head(wt);
     const adapter = selectedAdapter(x);
@@ -578,7 +585,13 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (x.ctx.pr && x.ctx.pr.adapter !== adapter.id) throw new Error("review adapter authority changed; resolve the existing review request before publishing");
     if (x.ctx.pr) {
       const old = x.ctx.pr; let published: any;
-      try { published = await adapter.update({ ...old, title, body }, h, x.dir, phase.signal,phase.assert); }
+      // a template pull request's push sends GitHub's current title and text back as they are: a person's edit there stays, and
+      // Studio's part is brought to the new head only by the captain's answer on the text card (x.ctx.pr keeps Studio's text)
+      let text = { title, body };
+      try { if (approved && adapter instanceof GitHubPrAdapter) { const live = await adapter.remoteRead("pull", old.id, 1, phase.signal, true); phase.assert();
+          if (typeof live?.title === "string" && typeof live?.body === "string") text = { title: live.title, body: live.body }; }
+        published = await adapter.update({ ...old, ...text }, h, x.dir, phase.signal,phase.assert);
+        if (approved) published = { ...published, title: old.title, body: old.body }; }
       catch (e: any) {
         // the push is --force-with-lease=<Task branch>:<last pushed head>: someone else's push is never overwritten
         if (adapter instanceof GitHubPrAdapter && /lease mismatch|mismatched pull request target or head/.test(String(e?.message ?? e))) {
@@ -621,6 +634,22 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const b = remoteStopBody(reason, { used: remoteChecksUsed(engine.x(r, node, rn)) });
     return b.options.map((o) => o.id).join() === c.options.map((o) => o.id).join() ? null : b;
   });
+  // the pull request's text is edited on GitHub only on the captain's own answer (never Firstmate, never an authorization window)
+  const textGuard = engine.deps.authorizeAnswer;
+  engine.deps.authorizeAnswer = (run: any, card: any, answer: any) => {
+    textGuard?.(run, card, answer);
+    const text = ["update-text", "keep-text", "render-text"];
+    if (text.includes(answer?.choice) && card.options?.some((o: any) => o.id === answer.choice) && (!card.captainOnly || !/^captain\b/i.test(String(answer.by ?? "")))) throw new Error("Only the captain decides the pull request text");
+  };
+  // an open merge card (merge on GitHub or in Studio) an older release raised over a text that does not describe the head (R-069):
+  // replaced by the card that stands in for it, without the merge; nothing is answered, and "Write the text again" reads GitHub
+  // and shows the change before anything is edited
+  (engine.cardUpgrades ??= []).push((r, node, rn, c) => {
+    if (c.kind !== "merge" || !c.captainOnly || node.args?.body_from !== "merge" || c.options.some((o) => ["update-text", "render-text", "keep-text"].includes(o.id))) return null;
+    const x = engine.x(r, node, rn); return publication.staleAtBoot(x) ? publication.bootCard(x, c) : null;
+  });
+  engine.cardAnswers.merge = async (x, card) => !["update-text", "keep-text", "render-text"].includes(card.answer?.choice ?? "") ? null
+    : publication.mergeTextAnswer(x, card, async () => engine.kinds.card.start(x) as Promise<Result>);
   engine.actionAnswers["pr.open"] = async (x,card) => {
     // checking again only reads GitHub: with no open GitHub pull request there is nothing to read, and publishing is never its job
     if (card.answer?.choice === "check") return checkAgain(x, card, async () => { const a = selectedAdapter(x); if (!x.ctx.pr || !(a instanceof GitHubPrAdapter)) throw new Error("check again needs an open GitHub pull request; it never publishes one"); return remoteWait(x, a); });
@@ -1451,6 +1480,9 @@ ${said}`, options: rescopeOpts }; }
       // the merge card has no route back to remote-ready: its stops are answered by close
       catch { phase.assert(); return remoteStopBody("authoritative PR, head or required CI no longer matches; merge refused", { recover: false }); }
       phase.assert();
+      // the step before the merge: the pull request text matches the head (written again from the final state if not)
+      const text = await publication.mergeGate(x, a as GitHubPrAdapter, phase); phase.assert();
+      if (text) return text;
       // no operations grant (merging from Studio is off by design): the pull request is open and merges on GitHub
       let mergeOff = false; try { (a as GitHubPrAdapter).operationGrant(); } catch { mergeOff = true; }
       if (mergeOff) return mergeOnGitHubBody(x.ctx.pr, policy);
