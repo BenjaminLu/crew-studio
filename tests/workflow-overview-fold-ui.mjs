@@ -21,17 +21,17 @@ const edges=[['intake','prepare'],['prepare','spec'],['spec','dispatch','ok'],['
 const chain=[...Array(13).keys()].map(n=>card('q'+n,'Step '+n,['go','jump']));
 const zlive={id:'zlive',name:'Live chain',roles:[],nodes:[hook('start','Start'),...chain],edges:[['start','q0'],...chain.slice(1).map((c,n)=>['q'+n,c.id,'go']),['q6','q10','jump']]};
 const fan={id:'fan',name:'Fan',roles:[],nodes:[hook('start','Start'),card('b1','Branch 1',['go']),card('b2','Branch 2',['go']),card('b3','Branch 3',['go']),hook('end','Done')],edges:[['start','b1'],['start','b2'],['start','b3'],['b1','end','go'],['b2','end','go'],['b3','end','go']]};
-const H=await harness([Y({id:'code-firstmate',name:'Code firstmate',roles:[],nodes,edges}),Y({id:'notes',name:'Notes',roles:[],nodes:[{id:'start',kind:'hook',do:'note',label:'Start'},{id:'end',kind:'hook',do:'note',label:'Done'}],edges:[['start','end']]})]);
+const H=await harness([Y({id:'code-firstmate',name:'Code firstmate',roles:[],nodes,edges})]);
 const ROUTES={scope:{spec:'fail','spec-fix':'step-back'},merge:{door:'two-way',ci:'pass'}};
 H.engine.actions.route=x=>ROUTES[x.run.text]?.[x.node.id]??'ok';
-H.engine.actions.note=x=>{if(x.run.text==='fail')throw new Error('Known fixture failure');return 'ok';};
-// zlive and fan run on a second server, so the first keeps a realistic Needs-you list above the overview.
+// zlive and fan run on a second server, so the first keeps a realistic Needs-you list above the overview: the three
+// waiting cards. (A failing Task here raised a fourth row, its failure card, once d3bca0d gave every failure a card.)
 const H2=await harness([Y(zlive),Y(fan)]);H2.engine.actions.route=()=>'ok';
 const settled=(r,E=H.engine)=>!E.busy(r.id)&&['waiting','failed'].includes(E.get(r.id)?.status);
 const openCard=(r,node,E=H.engine)=>E.cards.list({run:r.id,open:true}).find(c=>c.node===node);
-const a=H.engine.start({workflow:'code-firstmate',text:'scope',title:'Scope question on a real-size workflow'}),top=H.engine.start({workflow:'code-firstmate',text:'dispatch',title:'Dispatch waits'}),late=H.engine.start({workflow:'code-firstmate',text:'merge',title:'Merge waits'}),d=H.engine.start({workflow:'notes',text:'fail',title:'Explicit failure'});
+const a=H.engine.start({workflow:'code-firstmate',text:'scope',title:'Scope question on a real-size workflow'}),top=H.engine.start({workflow:'code-firstmate',text:'dispatch',title:'Dispatch waits'}),late=H.engine.start({workflow:'code-firstmate',text:'merge',title:'Merge waits'});
 const zl=H2.engine.start({workflow:'zlive',text:'zl',title:'Live mover'}),fa=H2.engine.start({workflow:'fan',text:'fan',title:'Fan waits'});
-await until(()=>[a,top,late,d].every(r=>settled(r))&&[zl,fa].every(r=>settled(r,H2.engine)));
+await until(()=>[a,top,late].every(r=>settled(r))&&[zl,fa].every(r=>settled(r,H2.engine)));
 await H.engine.answer(openCard(late,'dispatch').id,{choice:'dispatch',by:'captain'});await until(()=>!!openCard(late,'merge-card'));
 for(let n=0;n<6;n++){await H2.engine.answer(openCard(zl,'q'+n,H2.engine).id,{choice:'go',by:'captain'});await until(()=>!!openCard(zl,'q'+(n+1),H2.engine));}
 await until(()=>settled(late)&&settled(zl,H2.engine));
