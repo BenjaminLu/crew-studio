@@ -7,6 +7,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   bun tests/startup-run-output-ui.mjs        (PLAYWRIGHT_MODULE points at playwright/index.mjs)
 import{mkdtempSync,mkdirSync,readFileSync,writeFileSync,existsSync}from'node:fs';import{join}from'node:path';import{tmpdir}from'node:os';
 import{createM3}from'../src/m3.ts';import{createDocs}from'../src/docs.ts';import{createRuntime}from'../src/runtime/index.ts';import{Agents}from'../src/agent.ts';import{StudioLog}from'../src/rawlog.ts';
+process.env.CREW_EXAMPLE_WORKFLOWS='1'; // the startup competition is an example: seeded only when asked (src/runtime/defs.ts)
 const data=mkdtempSync(join(tmpdir(),'startup-run-output-ui-'));let port=0;
 const m3=createM3({dataDir:data,fileAllow:[data],studioUrl:()=>`http://127.0.0.1:${port}`,provider:()=>{throw new Error('No provider calls')},send(){},allowDrive:()=>true});
 const agents=new Agents(data,()=>'');

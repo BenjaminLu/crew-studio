@@ -175,11 +175,11 @@ const HELD_REASON={en:"held: GitHub review runtime not activated yet",zh:"暫停
 /**
  * Examples: shipped but not seeded on a fresh install (CREW_EXAMPLE_WORKFLOWS=1 seeds them). The startup competition
  * (docs/units/startup-recursion.md) is a two-vendor demonstration, not a starting point a new captain needs. An install
- * that already has it keeps it as it is, startable, and its Tasks keep running.
+ * that already has it keeps it, startable, and receives built-in updates of it while the captain has not edited it.
  */
 const EXAMPLE_DEFAULTS=new Set(["startup-recursion"]);
 const examplesOn=()=>process.env.CREW_EXAMPLE_WORKFLOWS==="1";
-function defaultDefinitions(){return [...bundledList("workflows/v2/"),...bundledList("packs/")].filter(f=>f.endsWith(".wf.yaml")).map(f=>bundledText(f)??"").filter(text=>{if(!text.trim())return false;const id=normalize(parseYaml(text)).id;return !RETIRED_DEFAULTS.has(id)&&(examplesOn()||!EXAMPLE_DEFAULTS.has(id));});}
+function defaultDefinitions(){return [...bundledList("workflows/v2/"),...bundledList("packs/")].filter(f=>f.endsWith(".wf.yaml")).map(f=>bundledText(f)??"").filter(text=>{if(!text.trim())return false;const id=normalize(parseYaml(text)).id;return !RETIRED_DEFAULTS.has(id);});}
 
 export class WorkflowDefs {
   readonly dir: string;
@@ -196,6 +196,8 @@ export class WorkflowDefs {
       if (!text.trim()) continue;
       const d = normalize(parseYaml(text)); const hash = createHash("sha256").update(text).digest("hex").slice(0, 16);
       const vs = this.versions(d.id);
+      // an example is seeded only when asked; once installed it gets built-in updates like any default (an edited copy is kept)
+      if (!vs.length && EXAMPLE_DEFAULTS.has(d.id) && this.bundled === defaultDefinitions && !examplesOn()) continue;
       if (!vs.length) { this.write({ ...d, version: 1, parent: null, createdAt: now(), by: "studio (built-in)", note: "built-in", diff: null, seed: hash }); continue; }
       const last = vs.at(-1)!;
       if (last.seed && last.seed !== hash && last.by?.startsWith("studio (built-in")) this.write({ ...d, version: last.version + 1, parent: last.version, createdAt: now(), by: "studio (built-in update)", note: "the built-in definition changed", diff: diff(last, d), seed: hash });
