@@ -23,6 +23,12 @@ for (const f of readdirSync(join(here, "fixture/workflows"))) { const d = JSON.p
 // a version dragged before graph-tidy: its layout file exists, with no layout-mode entry
 { const v = JSON.parse(readFileSync(join(here, "fixture/workflows/video.json"), "utf8")); const pos = Object.fromEntries(v.nodes.map((n, i) => [n.id, { x: 40 + i * 200, y: 60 + (i % 2) * 140 }]));
   writeFileSync(join(data, "workflows", "video", "layout-v1.json"), JSON.stringify(pos)); globalThis.legacyPos = pos; }
+// a real code-firstmate Task for the live view, seeded before the server starts: since a6fd64f one started through the
+// server needs a signed captain staffing approval naming a real provider (tests/lib/code-firstmate-run-seed.ts)
+const { spawnSync } = await import("node:child_process");
+const seeded = spawnSync("bun", ["tests/lib/code-firstmate-run-seed.ts", data, "Add a percent function"], { cwd: root, encoding: "utf8" });
+const seededRun = (() => { try { return JSON.parse(seeded.stdout.trim().split("\n").at(-1)).id; } catch { return null; } })();
+if (!seededRun) { console.error(`graph-tidy-ui: the code-firstmate Task could not be seeded\n${seeded.stdout}\n${seeded.stderr}`); process.exit(1); }
 const port = await freePort();
 const env = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) delete env[k];
 env.CREW_SESSION_TOKEN = process.env.CREW_SESSION_TOKEN ??= "test-session";
@@ -113,11 +119,12 @@ try {
     ok(!tb.length, "no drawn edge passes through a node", tb.slice(0, 5).join("; "));
     const arcs = await p.$$eval(".rt-edge[data-back] .rt-line", (ps) => ps.map((x) => getComputedStyle(x).strokeDasharray));
     ok(arcs.length >= 10 && arcs.every((d) => d && d !== "none"), "back edges are drawn as dashed arcs", JSON.stringify(arcs.slice(0, 3)));
-    ok(await p.textContent('[data-badge="n:spec"]') === "7 checks" && /6 gates/.test(await p.textContent('[data-badge^="e:remote-ready→merge-card"]')) && await p.getAttribute('[data-node="spec"]', "data-checks") === "7", "checks and gates show as count badges");
+    // spec carries eight checks since 21b3fe5 added firstmate/env-preflight
+    ok(await p.textContent('[data-badge="n:spec"]') === "8 checks" && /6 gates/.test(await p.textContent('[data-badge^="e:remote-ready→merge-card"]')) && await p.getAttribute('[data-node="spec"]', "data-checks") === "8", "checks and gates show as count badges");
     await p.click('[data-badge="n:spec"]'); await p.waitForTimeout(150);
     const items = await p.locator('[data-badge-list="n:spec"] .rt-badge-item').count();
     await p.click('[data-badge="n:spec"]'); await p.waitForTimeout(150);
-    ok(items === 7 && await p.locator('[data-badge-list="n:spec"]').count() === 0, "a badge opens its list", `items ${items}`);
+    ok(items === 8 && await p.locator('[data-badge-list="n:spec"]').count() === 0, "a badge opens its list", `items ${items}`);
     await p.focus('[data-stage-toggle="build"]'); await p.keyboard.press("Enter"); await p.waitForSelector('[data-stage-node="build"]'); // from the keyboard
     const collapsedOk = await p.locator('[data-node="build"]').count() === 0 && await p.locator('[data-node="ci"]').count() === 0 && !(await through(p)).length;
     await p.locator('[data-stage-node="build"]').dispatchEvent("click"); await p.waitForSelector('[data-node="build"]'); // and with a click
@@ -150,8 +157,7 @@ try {
   }
   // ---------- the live view: the same layout, node states; collapsed stages carry their state ----------
   let runId = null;
-  { const r = await fetch(`${base}/api/wruns`, { method: "POST", headers: { "content-type": "application/json", "x-crew-session": process.env.CREW_SESSION_TOKEN }, body: JSON.stringify({ text: "Add a percent function\nSTUB_FILE src/percent.ts :: export const percent = (a, p) => Math.round(a * p / 100);", workflow: "code-firstmate" }) });
-    runId = (await r.json()).id;
+  { runId = seededRun;
     const p = await page(1440, "light");
     await p.goto(`${base}/#/run/${runId}`); await p.waitForSelector('[data-runview] [data-node="spec"][data-state]', { timeout: 120000 }).catch(() => {});
     const simpleIds = await p.evaluate(async () => { const j = await (await fetch("/api/wf/code-firstmate")).json(); return window.crewLayout.layoutSimple(j.def, { wrap: 6 }).nodes.map((n) => n.id).sort(); });
@@ -180,7 +186,9 @@ try {
   }
   // ---------- every built-in workflow, 1440 and 390, light and dark ----------
   const wfs = (await (await fetch(`${base}/api/wf`)).json()).workflows.map((w) => w.id);
-  const expected=["code-firstmate","coffee-kit","documents","file-organization","images","pack-genesis","trivial-lane","video","web-prototype"];
+  // + the two retained four-agent fixtures (6ad1e71), the public startup-recursion (4bc5390) and hello-crew-studio (afe9e27)
+  // workflows; github-review is held as preview-only (73f504e), so /api/wf lists it under held, not here
+  const expected=["code-firstmate","coffee-kit","crew-onboarding-collab","documents","file-organization","four-agent-proposals","hello-crew-studio","images","pack-genesis","startup-recursion","trivial-lane","video","web-prototype"];
   ok(JSON.stringify([...wfs].sort())===JSON.stringify(expected), "public native workflows plus the explicitly installed captain fixture lane", wfs.join(","));
   for (const width of [1440, 390]) for (const scheme of ["light", "dark"]) {
     const p = await page(width, scheme);
