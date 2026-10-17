@@ -71,7 +71,8 @@
     <div class="chat-log" id="chatLog" aria-live="polite"></div>
     <div class="chat-sug" id="chatSug"></div>
     <form class="chat-form" id="chatForm">
-      <textarea id="chatIn" rows="1" aria-label="Message firstmate" placeholder="Ask about the crew, or say what you want done"></textarea>
+      <label class="sr" for="chatIn" id="chatInLabel">Message Firstmate</label>
+      <textarea id="chatIn" name="message" rows="1" aria-labelledby="chatInLabel" placeholder="Ask about the crew, or say what you want done"></textarea>
       <button class="btn primary icon" id="chatSend" type="submit" aria-label="Send"><span data-ic="send"></span></button>
     </form>
   </aside>

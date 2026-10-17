@@ -100,6 +100,9 @@ const CSS = `
 .cc-msg.ok { border-color: var(--ok); color: var(--ok); }
 .cc-kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: 13px; }
 .cc-kv dt { color: var(--text-3); }
+.cc-table { border-collapse: collapse; font-size: 13px; width: 100%; }
+.cc-table th, .cc-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.cc-table th { color: var(--text-3); font-weight: 600; }
 .cc-fail { border: 1px solid var(--bad); border-radius: 10px; padding: 10px; display: grid; gap: 8px; background: color-mix(in srgb, var(--bad) 6%, transparent); }
 .cc-fail[data-failure-class="ask"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .cc-fail[data-failure-class="transient"], .cc-fail[data-failure-class="environment"] { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 6%, transparent); }
@@ -288,6 +291,36 @@ function mountCard(el, card, opts = {}) {
       h("p", { class: "cc-count", "data-failure-log": log.href ? "link" : "none" }, log.href ? h("a", { href: log.href }, T("Open the log", "打開日誌")) : [T("No log link: ", "沒有日誌連結："), L(log.reason) || "—"]),
       f.diagnostics ? h("details", { "data-failure-diagnostics": "" }, h("summary", { class: "cc-count" }, T("Diagnostics (kept with the task)", "診斷資料（和任務一起保留）")), h("pre", { class: "cc-pre" }, JSON.stringify(f.diagnostics, null, 1))) : null);
   }
+  // A card's text body, readable: a staffing configuration (JSON) becomes a role table, a dispatch card's
+  // parameters become key/value lines; Studio's internal pins (_-prefixed params, hashes) stay in a closed details.
+  const raw = (label, text) => h("details", { class: "cc-sec", "data-card-raw": "" }, h("summary", { class: "cc-count" }, label), h("pre", { class: "cc-pre rt-card-body" }, text));
+  function staffingView(cfg, body) {
+    const roles = Object.entries(cfg.roles), worker = cfg.roles.worker;
+    const same = worker ? roles.filter(([id, r]) => id !== "worker" && ["reviewer", "designer"].includes(id) && r.provider === worker.provider && r.model === worker.model).map(([id]) => id) : [];
+    return [sec("staffing", T("Role configuration", "角色配置"),
+      h("p", { class: "cc-count" }, `${cfg.project?.id ?? ""} · ${cfg.workflow?.id ?? ""} v${cfg.workflow?.version ?? "?"}`),
+      h("div", { style: "overflow-x:auto" }, h("table", { class: "cc-table", "data-staffing-table": "" },
+        h("thead", {}, h("tr", {}, [T("Role", "角色"), T("Provider", "供應商"), T("Model", "模型"), T("Effort", "推理強度"), T("Skill", "技能")].map((x) => h("th", {}, x)))),
+        h("tbody", {}, roles.map(([id, r]) => h("tr", { "data-staffing-role": id }, h("td", {}, id), h("td", {}, r.provider), h("td", { class: "cc-mono" }, r.model), h("td", {}, r.effort ?? T("default", "預設")),
+          h("td", { class: "cc-mono" }, r.skill?.ref ? `${r.skill.ref.replace(/^pack:[^/]+\/skills\//, "")} v${r.skill.version}` : "—")))))),
+      same.length ? h("p", { class: "cc-msg", "data-staffing-independence": "same" }, T(`Not independent: ${same.join(", ")} uses the same provider and model as the worker, because no other verified configuration is available. Its review is a fresh context, not a second opinion from another model.`,
+        `不是獨立審查：${same.join("、")} 和 worker 用同一個供應商與模型，因為目前沒有其他已驗證的配置。它是新的對話脈絡，不是另一個模型的第二意見。`)) : null),
+      raw(T("Configuration details (hashes)", "配置細節（雜湊）"), body)];
+  }
+  function bodyView(c, body) {
+    let cfg = null; try { const j = JSON.parse(body); cfg = j?.configuration?.roles && typeof j.configuration.roles === "object" ? j.configuration : null; } catch {}
+    if (cfg) return staffingView(cfg, body);
+    // a dispatch card: "Parameters / 參數:" carries the params, as JSON (older cards) or as "key: value" lines
+    const pin = body.indexOf("\n\nInternal pins / 內部鎖定:"), lines = (pin < 0 ? body : body.slice(0, pin)).split("\n"), at = lines.findIndex((l) => l.startsWith("Parameters / 參數:"));
+    const pinsView = pin < 0 && at < 0 ? null : raw(T("Studio's internal pins and full text", "Studio 內部鎖定與全文"), body);
+    let params = null; const inline = at < 0 ? "" : lines[at].slice("Parameters / 參數:".length).trim(), end = at < 0 ? at : inline ? at + 1 : (() => { let k = at + 1; while (k < lines.length && /^ {2}\S/.test(lines[k])) k++; return k; })();
+    if (at >= 0 && inline) { try { const j = JSON.parse(inline); if (j && typeof j === "object" && !Array.isArray(j)) params = Object.entries(j).map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]); } catch {} }
+    else if (at >= 0) params = lines.slice(at + 1, end).map((l) => { const i = l.indexOf(":"); return [l.slice(0, i).trim(), l.slice(i + 1).trim()]; });
+    if (!params) return [h("pre", { class: "cc-pre rt-card-body" }, lines.join("\n")), pin < 0 ? null : pinsView];
+    const shown = params.filter(([k]) => !k.startsWith("_")), rest = [...lines.slice(0, at), ...lines.slice(end)].join("\n").trim();
+    return [sec("params", T("Parameters", "參數"), shown.length ? h("dl", { class: "cc-kv", "data-card-params": "" }, shown.flatMap(([k, v]) => [h("dt", {}, k), h("dd", { class: "cc-mono" }, v)])) : h("p", { class: "cc-count" }, "—")),
+      rest ? h("pre", { class: "cc-pre rt-card-body" }, rest) : null, pinsView];
+  }
   function plainView(c) {
     const s = cardI18n().deep(st.lang, c.sections); const out = [];
     if (s?.intent) out.push(sec("intent", T("Intent", "意圖"), h("p", { class: "cc-quote" }, s.intent)));
@@ -387,7 +420,7 @@ function mountCard(el, card, opts = {}) {
       ...(d ? (d.artifactAcceptance ? artifactDetailView(d, c) : detailView(d, c)) : plainView(c)),
       competitionView(c),
       // the competition already shows every round; its card text would repeat them, so it is not shown again
-      body && !c.competition ? (d ? h("details", { class: "cc-sec", open: st.opened.has("#body"), ontoggle: (e) => { e.target.open ? st.opened.add("#body") : st.opened.delete("#body"); } }, h("summary", { class: "cc-count" }, T("Card text", "卡片全文")), h("pre", { class: "cc-pre rt-card-body" }, body)) : h("pre", { class: "cc-pre rt-card-body" }, body)) : null,
+      body && !c.competition ? (d ? h("details", { class: "cc-sec", open: st.opened.has("#body"), ontoggle: (e) => { e.target.open ? st.opened.add("#body") : st.opened.delete("#body"); } }, h("summary", { class: "cc-count" }, T("Card text", "卡片全文")), h("pre", { class: "cc-pre rt-card-body" }, body)) : bodyView(c, body)) : null,
     ];
     if (open) {
       if (n) kids.push(h("section", { class: "cc-align", "data-align": c.id },

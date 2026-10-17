@@ -373,7 +373,7 @@ async function releaseFlow() {
 }
 
 function dispatchBox(v) {
-  const ta = h("textarea", { class: "input", id: "dispatchIn", rows: 3, placeholder: v.context==="studio" ? T("Describe the work. Firstmate proposes a native workflow and asks for your approval.","描述你想做的工作。Firstmate 會提出原生流程，請你核准。") : T("What do you want done? firstmate drafts the spec and raises a dispatch card in your inbox.", "你想做什麼？firstmate 會寫 spec，並在收件匣開一張派工卡。") });
+  const ta = h("textarea", { class: "input", id: "dispatchIn", rows: 3, "aria-label": T("Work for Firstmate to dispatch", "要 Firstmate 派的工作"), placeholder: v.context==="studio" ? T("Describe the work. Firstmate proposes a native workflow and asks for your approval.","描述你想做的工作。Firstmate 會提出原生流程，請你核准。") : T("What do you want done? firstmate drafts the spec and raises a dispatch card in your inbox.", "你想做什麼？firstmate 會寫 spec，並在收件匣開一張派工卡。") });
   return h("section", { class: "card tk-drive", "data-section": "dispatch" }, h("h2", {}, T("Dispatch from an intent", "從意圖派工")), ta,
     h("div", { class: "actions" }, h("button", { class: "btn primary", id: "dispatchBtn", disabled: v.origin?.mode === "rehearsal" || null, onclick: async () => {
       const text = ta.value.trim(); if (!text) return;

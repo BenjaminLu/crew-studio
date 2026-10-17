@@ -78,6 +78,7 @@ function renderChat(stick = true) {
   $("#chatSug").replaceChildren(...(CH.busy ? [] : SUG().map((s) => h("button", { class: "chip", type: "button", onclick: () => ask(s) }, s))));
   $("#chatSend").disabled = CH.busy;
   $("#chatIn").placeholder = T("Ask about the crew, or say what you want done", "問船員的狀況，或說出想做的事");
+  $("#chatInLabel").textContent = T("Message Firstmate", "傳訊息給 Firstmate");
   if (stick || atBottom) log.scrollTop = log.scrollHeight;
 }
 

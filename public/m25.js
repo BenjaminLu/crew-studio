@@ -161,6 +161,7 @@ renderChat = function (stick = true) {
   $("#chatSend").disabled = !attached;
   renderAtt();
   $("#chatIn").placeholder = attached ? T("Tell Firstmate what you want done", "告訴 Firstmate 要做什麼") : T("Connect your account to begin", "連接帳號即可開始");
+  $("#chatInLabel").textContent = T("Message Firstmate", "傳訊息給 Firstmate");
   if (stick || atBottom) log.scrollTop = log.scrollHeight;
 };
 ask = async function (text) {
