@@ -1,0 +1,12 @@
+id: design-verdict
+version: 1.0.0
+title: { en: "Designer verdict: APPROVE, or REJECT with its findings", zh-TW: "設計審查結論：APPROVE，或 REJECT 與它的問題清單" }
+description: "The fresh-context designer saw every before / after capture of the head as a picture before its verdict. A REJECT is a blocking fail: each finding (page, element, what is wrong on screen, the change) goes back to the worker through the fix loop, like a reviewer REJECT. No verdict after the retry: design-unverified (the step-back card)."
+applies_to: [code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact]
+native: design-verdict
+params: { type: object, properties: {} }
+timeout_s: 10
+network: false

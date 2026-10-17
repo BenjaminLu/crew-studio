@@ -80,7 +80,7 @@ ok(f.status === "succeeded" && f.result === "done", "the run reaches Merged", `$
 ok(JSON.stringify(f.steps.filter((s: any) => s.state === "superseded").map((s: any) => `${s.node}#${s.visit}`)) === JSON.stringify(["build#1"]), "the superseded steps are exactly the earlier visits of nodes that ran again (build round 1), and they count in the order",
   JSON.stringify(f.steps.filter((s: any) => s.state === "superseded").map((s: any) => `${s.node}#${s.visit}`)));
 const order = f.steps.map((s) => s.node);
-const expected = ["intake", "prepare", "spec", "dispatch", "door", "build", "fix", "build", "pr-open", "ci", "review", "remote-ready", "merge-card", "merge", "after-merge", "cleanup", "done"];
+const expected = ["intake", "prepare", "spec", "dispatch", "door", "build", "fix", "build", "pr-open", "ci", "review", "design-scope", "remote-ready", "merge-card", "merge", "after-merge", "cleanup", "done"];
 ok(JSON.stringify(order) === JSON.stringify(expected), "every node ran in the pipeline's order", JSON.stringify(order));
 ok(git("rev-parse", "main") !== mainBefore && existsSync(join(repo, "src/percent.ts")) && /^feat: /.test(git("log", "-1", "--format=%s", "main")) && Bun.spawnSync(["bun", "test"], { cwd: repo }).exitCode === 0, "main fast-forwarded to the change (a Conventional Commit) and its tests pass", git("log", "--oneline", "-3", "main"));
 ok(git("branch", "--list", "feature/*").includes(`feature/${r.id}`) && git("worktree", "list").split("\n").length === 1, "the work was on a feature/ branch; its worktree is cleaned up");

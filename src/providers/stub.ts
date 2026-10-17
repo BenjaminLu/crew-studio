@@ -45,7 +45,7 @@ function stubSession(ctx: ProviderCtx, sys = "", request: StubRequest = fetch): 
         if (!(yield* say(ans))) { yield { type: "turnEnd", status: "interrupted" }; return; }
         yield { type: "turnEnd", status: "ok", usage: { usd: 0, inTokens: 5, outTokens: 5 } }; return;
       }
-      if (/^(NATIVE PACK|SKILL EDIT REQUEST|PACK GENESIS|GATE FIX|GATE REVIEW|DOC DRAFT|SPEC DRAFT|PLAN ROUND|PLAN DECISION|BUILD ROUND|FIX BRIEF|CODE REVIEW|DESIGN DRAFT|JUDGE|ROOT CAUSE|FILM FIX|TEST AGENT)/.test(text) || (/^DELIVER /.test(text) && /STUB_LINGER/.test(text))) {
+      if (/^(NATIVE PACK|SKILL EDIT REQUEST|PACK GENESIS|GATE FIX|GATE REVIEW|DOC DRAFT|SPEC DRAFT|PLAN ROUND|PLAN DECISION|BUILD ROUND|FIX BRIEF|CODE REVIEW|DESIGN DRAFT|DESIGN REVIEW|DESIGN GAP|JUDGE|ROOT CAUSE|FILM FIX|TEST AGENT)/.test(text) || (/^DELIVER /.test(text) && /STUB_LINGER/.test(text))) {
         for await (const e of stubAgent(text, call, say)) { if (e === "interrupted") { yield { type: "turnEnd", status: "interrupted" }; return; } yield e; }
         yield { type: "turnEnd", status: "ok", usage: { usd: 0, inTokens: 20, outTokens: 10 } }; return;
       }

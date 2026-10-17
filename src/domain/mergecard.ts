@@ -8,6 +8,8 @@
 //               it serves (a test block to the done line whose calls it makes; a source
 //               hunk to the done lines that call what it changes; a doc hunk to intents)
 //   door, review, gates, cost, before/after
+//   design      the designer round (src/domain/code-design.ts): not applicable and why, or its verdicts, the last
+//               verdict's findings and how many captures it saw, with designer-compare's warnings
 // The coordinator agent writes the zh-TW translations and the walk notes; when it cannot,
 // the English stays and the zh-TW text is marked untranslated (never a placeholder).
 import type { CardDetail, L10n } from "../runtime/cards";
@@ -15,7 +17,7 @@ import type { LedgerEntry } from "../runtime/checks";
 
 export type DoneMapLine = { index: number; text: string; proved: boolean; by: { check: string; seq: number; kind?: string }[]; note?: string | null };
 export type MergeInput = {
-  run: string; intent: string; spec: any; ctx: { door?: any; reviews?: any[]; followups?: string[]; rounds?: any[]; head?: string | null; baseCommit?: string | null; base?: string | null; plan?: any };
+  run: string; intent: string; spec: any; ctx: { door?: any; reviews?: any[]; followups?: string[]; rounds?: any[]; head?: string | null; baseCommit?: string | null; base?: string | null; plan?: any; designScope?: any; designs?: any[] };
   ledger: LedgerEntry[]; doneMap: DoneMapLine[]; diff: string; stat: string;
   cost: { usd: number | null; rounds: number; minutes: number | null } | null;
 };
@@ -202,11 +204,36 @@ export function mergeDetail(i: MergeInput, co: Coordinator | null = null): CardD
     door: kind || spec.door ? { kind, reason: loc(spec.door?.reason ?? (reasons.join("; ") || ""), co?.door_reason), rollback } : null,
     review: (i.ctx.reviews ?? []).length || followups.length ? { verdicts: (i.ctx.reviews ?? []).map((r: any) => ({ by: String(r.by ?? "reviewer"), verdict: String(r.verdict ?? "?") })), followups: followups.map((f, k) => loc(f, co?.followups?.[k])),
       mode: (i.ctx.reviews ?? []).at(-1)?.mode ?? null, notes: [...((i.ctx.reviews ?? []).at(-1)?.notCovered ?? [])] } : null,
-    cost: i.cost, gates,
+    cost: i.cost, gates, design: designDetail(i),
     walk: map.map(({ hunk, serves }) => { const w = coWalk.get(hunk.id); const fb = walkNote(hunk, serves);
       return { id: hunk.id, file: hunk.file, start: hunk.start, lines: hunk.lines.slice(0, 60), note: w && w.en && zhOk(w.zh) ? { en: w.en, "zh-TW": w.zh } : fb, serves }; }),
     run: i.run, head: i.ctx.head ?? null, base: i.ctx.baseCommit ?? null, writer: translated ? "coordinator" : "fallback",
   };
+}
+
+/** The designer round as the merge card shows it; null when the run never reached design-scope (an older run). */
+export function designDetail(i: MergeInput): CardDetail["design"] {
+  const sc = i.ctx.designScope; const designs = i.ctx.designs ?? [];
+  const compare = i.ledger.filter((e) => e.check === "firstmate/designer-compare").at(-1) as any;
+  if (!sc && !designs.length && !compare) return null;
+  const last = designs.at(-1);
+  const warnings = compare && compare.verdict !== "pass" ? (compare.findings ?? []).map((f: any) => String(f.message ?? "")).filter(Boolean).slice(0, 8) : [];
+  return {
+    applicable: sc ? sc.route === "ui" : designs.length > 0, reason: String(sc?.reason ?? ""),
+    verdicts: designs.map((d: any) => ({ by: String(d.by ?? "designer"), verdict: String(d.verdict ?? "?"), head: d.head ?? null })),
+    findings: last?.verdict === "REJECT" ? (last.findings ?? []).map((f: any) => ({ page: f.page ?? null, element: f.element ?? null, problem: String(f.problem ?? ""), change: String(f.change ?? "") })) : [],
+    seen: Array.isArray(last?.seen) ? last.seen.length : 0,
+    compare: compare ? { verdict: String(compare.verdict), warnings } : null,
+  };
+}
+/** the design section of the merge card's text body */
+export function designText(d: CardDetail["design"]): string {
+  if (!d) return "";
+  if (!d.applicable) return `\n\nDesigner: not applicable (${d.reason.replace(/^not applicable: /, "") || "no UI path changed"}).`;
+  const last = d.verdicts.at(-1);
+  return `\n\nDesigner: ${last ? `${last.verdict} by ${last.by}${last.head ? ` at ${String(last.head).slice(0, 8)}` : ""}; saw ${d.seen} capture${d.seen === 1 ? "" : "s"}${d.seen ? "" : " (no pictures: judged from the diff)"}` : "no verdict"}${d.verdicts.length > 1 ? `\nEarlier: ${d.verdicts.slice(0, -1).map((v) => v.verdict).join(", ")}` : ""}`
+    + (d.findings.length ? `\n${d.findings.map((f, k) => `${k + 1}. ${f.page ?? "the UI"}${f.element ? ` ${f.element}` : ""}: ${f.problem} → ${f.change}`).join("\n")}` : "")
+    + (d.compare?.warnings.length ? `\nDesigner-compare (${d.compare.verdict}):\n${d.compare.warnings.map((w) => `- ${w}`).join("\n")}` : "");
 }
 
 /** The coordinator's turn: what it reads (the fallback detail) and the one tool it calls. */

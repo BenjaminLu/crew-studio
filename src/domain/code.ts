@@ -4,6 +4,7 @@ import {localUnrestricted} from "../local-execution";
 import { codeHandoffView } from "./code-handoff";
 import { installCodeRecovery } from "./code-recovery";
 import { installCodeQueue, scopeBlockers } from "./code-queue";
+import { installCodeDesign } from "./code-design";
 import {GitHubPoller} from '../github-poller';
 // The coding pipeline's runtime side (packs/firstmate, docs/code-firstmate-pipeline.md):
 // a local git repository, a worktree on <branch_prefix><run>, the spec (what, why,
@@ -31,7 +32,7 @@ import { envPreflight, isNpmTestPlaceholder, type EnvGap } from "../env-prefligh
 import { runRender } from "../render";
 import { copyUntrusted } from "../secure";
 import { helper, kindOf, LINES_PER_READ, LIST_CAP, listTree, normPath, READ_CAP_BYTES, searchTree, typedRead } from "../review-read";
-import { COORDINATOR_TOOL_SCHEMA, coordinatorDetail, coordinatorText, mergeDetail, type MergeInput } from "./mergecard";
+import { COORDINATOR_TOOL_SCHEMA, coordinatorDetail, coordinatorText, designText, mergeDetail, type MergeInput } from "./mergecard";
 import { RemoteWatchers, requiredPolicy, reconcile, inspectRemote, grantIdentity, registerRemoteWait, validRemoteWait, remoteStopBody } from "./remote-ci";
 import { stablePatch, proveCleanCarry, mergeOnce, updateOnce, assertMergeAvailable } from "./remote-gates";
 import type { CardDetail } from "../runtime/cards";
@@ -465,7 +466,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   /** firstmate/ui-captures: before / after captures of the app when the change touches it; skipped (pass) when it does not. */
   engine.natives["ui-captures"] = async (_i, hp) => {
     const x = hp.x as X; const c = await captureApp(x);
-    x.ctx.captures = { head: c.head, base: x.ctx.baseCommit, pages: c.pages, app: c.app, skipped: c.skipped, at: new Date().toISOString() };
+    x.ctx.captures = { head: c.head, base: x.ctx.baseCommit, pages: c.pages, app: c.app, skipped: c.skipped, rendered: c.rendered, at: new Date().toISOString() };
     if (c.skipped) return { verdict: "pass", score: 1, findings: [], data: { skipped: c.skipped } } as any;
     const broken = c.pages.filter((p) => !p.built.after);
     const findings = broken.map((p) => ({ locator: { type: "file", path: ".crew/app.json" }, message: `the app page ${p.file} did not build on the head`, expected: "the app builds", class: "app-build", severity: "minor" }));
@@ -474,6 +475,10 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     return { verdict: findings.length ? "warn" : "pass", score: findings.length ? 0.5 : 1, findings,
       data: { captures: c.pages.map((p) => ({ label: p.label, before: p.before, after: p.after, changed: p.changed })), app: c.app, rendered: c.rendered, head: c.head, refusedFiles: c.refusedFiles ?? [], refusedRequests: c.refusedRequests ?? [], frames: c.frames ?? [] } } as any;
   };
+  /** the changed paths that are UI as the repository classifies them: the policy's ui_paths, plus the paths its app declares */
+  const uiPathsOf = (x: X, wt: string): string[] => { const globs = [...((x.policy("ui_paths") ?? []) as string[]), ...(appCfg(wt)?.paths ?? [])];
+    return changedOf(wt, x.ctx.baseCommit).filter((p) => globs.some((g) => matches(g, p.path) || (!!p.from && matches(g, p.from)))).map((p) => p.path); };
+  installCodeDesign(engine, { dataDir: o.dataDir, shellOk, head, uiPathsOf, specMd });
 
   // ---------- actions ----------
   engine.actions["intent.capture"] = (x) => {
@@ -1150,7 +1155,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       detail.done = detail.done.map((d, i) => sup.has(i) ? { ...d, text: { ...d.text, en: d.text.en + supEn(i), "zh-TW": d.text["zh-TW"] + supZh(i) } } : d); }
     if (am.length) detail.amendments = am.map((m) => ({ n: m.n, note: m.note, card: m.card }));
     const body:Body = { title: `Merge: ${T(x)}`, zhTitle: `合併：${ZT(x)}`, ledger: { done: engine.doneLines(x.run) }, detail, captainOnly: true, captures, links: cap?.app ? [{ label: "Open the app", href: cap.app }] : [], ...b0,
-      body: `Intent: ${x.run.text.split("\n")[0].slice(0, 300)}\n\n${one ? `ONE-WAY: a revert will not undo this (${(x.ctx.door?.reasons ?? []).filter((r: any) => r.list !== "trivial").map((r: any) => `${r.path}: ${r.why}`).join("; ")}). Walk: ${walk}\nTick the door confirmation to merge.\n\n` : ""}${x.ctx.pr?.adapter === "github" ? `Merge PR #${x.ctx.pr.id} in ${(selectedAdapter(x) as GitHubPrAdapter).grant.repository} at ${x.ctx.pr.head} into ${x.ctx.pr.base}. Method: ${(selectedAdapter(x) as GitHubPrAdapter).operationGrant().mergeMethod}.` : `Fast-forwards ${x.ctx.base} in ${x.ctx.repo} to ${String(x.ctx.gatedHead ?? x.ctx.head).slice(0, 8)} (branch ${x.ctx.branch}). Local only: nothing is pushed.`}\n\nBefore → after:\n${stat}\n\nSix gates:\n${gates}\n\n${amendText}Proved by checks:\n${sp.proved.map((d) => `✓ ${d.index + 1}. ${d.text} — ${d.by.map((b) => b.check).join(", ")}${supEn(d.index)}`).join("\n") || "(none)"}\n\nNeeds your eye:\n${sp.eye.map((d) => `· ${d.index + 1}. ${d.text}${d.note ? ` (${d.note})` : ""}${supEn(d.index)}`).join("\n") || "(nothing)"}${x.ctx.followups?.length ? `\n\nReviewer follow-ups:\n${x.ctx.followups.map((f: string) => `- ${f}`).join("\n")}` : ""}${seen}${(() => { const rv = (x.ctx.reviews ?? []).at(-1); if (!rv?.mode) return ""; return `\n\nReviewed in ${rv.mode} mode.${rv.notCovered?.length ? `\nNeeds your eye (the review did not cover):\n${rv.notCovered.map((n: string) => `· ${n}`).join("\n")}` : ""}`; })()}`,
+      body: `Intent: ${x.run.text.split("\n")[0].slice(0, 300)}\n\n${one ? `ONE-WAY: a revert will not undo this (${(x.ctx.door?.reasons ?? []).filter((r: any) => r.list !== "trivial").map((r: any) => `${r.path}: ${r.why}`).join("; ")}). Walk: ${walk}\nTick the door confirmation to merge.\n\n` : ""}${x.ctx.pr?.adapter === "github" ? `Merge PR #${x.ctx.pr.id} in ${(selectedAdapter(x) as GitHubPrAdapter).grant.repository} at ${x.ctx.pr.head} into ${x.ctx.pr.base}. Method: ${(selectedAdapter(x) as GitHubPrAdapter).operationGrant().mergeMethod}.` : `Fast-forwards ${x.ctx.base} in ${x.ctx.repo} to ${String(x.ctx.gatedHead ?? x.ctx.head).slice(0, 8)} (branch ${x.ctx.branch}). Local only: nothing is pushed.`}\n\nBefore → after:\n${stat}\n\nSix gates:\n${gates}\n\n${amendText}Proved by checks:\n${sp.proved.map((d) => `✓ ${d.index + 1}. ${d.text} — ${d.by.map((b) => b.check).join(", ")}${supEn(d.index)}`).join("\n") || "(none)"}\n\nNeeds your eye:\n${sp.eye.map((d) => `· ${d.index + 1}. ${d.text}${d.note ? ` (${d.note})` : ""}${supEn(d.index)}`).join("\n") || "(nothing)"}${x.ctx.followups?.length ? `\n\nReviewer follow-ups:\n${x.ctx.followups.map((f: string) => `- ${f}`).join("\n")}` : ""}${seen}${designText(detail.design)}${(() => { const rv = (x.ctx.reviews ?? []).at(-1); if (!rv?.mode) return ""; return `\n\nReviewed in ${rv.mode} mode.${rv.notCovered?.length ? `\nNeeds your eye (the review did not cover):\n${rv.notCovered.map((n: string) => `· ${n}`).join("\n")}` : ""}`; })()}`,
       options: [{ id: "merge", label: "Merge", labelZh: "合併", primary: true }, { id: "changes", label: "Request changes", labelZh: "要求修改", note: true, hold: true }, { id: "close", label: "Close without merging", labelZh: "不合併，關閉", hold: true }] };
     if(remoteIntent)preparedRemoteCards.set(detail,{intent:structuredClone(remoteIntent),assert:assertRemoteCard!});
     return body;

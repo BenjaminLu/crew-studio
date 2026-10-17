@@ -1,7 +1,7 @@
 id: designer-compare
 version: 1.0.0
 title: { en: "Designer: screenshots of every changed page, before and after", zh-TW: "設計審查：每個改動頁面的前後截圖" }
-description: "Required by policy when the diff touches UI paths. Studio captures each changed page at the base and the head (Chromium, when installed) and measures how much changed (SSIM via ffmpeg); a judge reads the numbers and the diff. No UI path changed: pass."
+description: "Runs beside the designer round (only when the diff touches UI paths); its warnings are shown on the merge card. Studio captures each changed page at the base and the head (Chromium, when installed) and measures how much changed (SSIM via ffmpeg); a judge reads the numbers and the diff. No UI path changed: pass."
 applies_to: [code-diff]
 kind: judged
 blocking: false

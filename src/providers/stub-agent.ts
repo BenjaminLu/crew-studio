@@ -118,7 +118,7 @@ export async function* stubAgent(text: string, call: Call, say: Say): AsyncGener
     yield* call("work_list", {}); if (!(yield* say(".".repeat(24 * 6000)))) { yield "interrupted"; return; }
     yield* done("Still drafting."); return;
   }
-  if (/^(SPEC DRAFT|PLAN ROUND|PLAN DECISION|BUILD ROUND|FIX BRIEF|CODE REVIEW|DESIGN DRAFT|JUDGE|ROOT CAUSE|FILM FIX|TEST AGENT)/.test(text)) { yield* runtimeAgent(text, call, say); return; }
+  if (/^(SPEC DRAFT|PLAN ROUND|PLAN DECISION|BUILD ROUND|FIX BRIEF|CODE REVIEW|DESIGN DRAFT|DESIGN REVIEW|DESIGN GAP|JUDGE|ROOT CAUSE|FILM FIX|TEST AGENT)/.test(text)) { yield* runtimeAgent(text, call, say); return; }
 }
 
 const stubFiles = (text: string) => [...text.matchAll(/STUB_FILE (\S+) :: (.*)$/gm)].map((m) => ({ path: m[1], content: m[2].replace(/\\n/g, "\n") }));
@@ -197,6 +197,17 @@ async function* runtimeAgent(text: string, call: Call, say: Say): AsyncGenerator
     }
     yield* call("review_verdict", reject ? { verdict: "REJECT", findings: [{ text: "an added line still says STUB_REJECT", tag: "must-fix", fix: "replace it" }], followups: [] } : { verdict: "APPROVE", findings: [], followups: /STUB_FOLLOWUP/.test(text) ? ["a follow-up"] : [] });
     yield* done(reject ? "REJECT" : "APPROVE"); return;
+  }
+  if (text.startsWith("DESIGN REVIEW")) {
+    // every view the prompt lists, as a picture; then one verdict. STUB_DESIGN_REJECT on an added line of the UI diff: a REJECT
+    // with one finding (gone once the fix removes that line); STUB_DESIGN_LAZY: a verdict before any view (refused), then the views
+    const views = [...text.matchAll(/^View: page=(\S+) side=(before|after)/gm)].map((m) => ({ page: m[1], side: m[2] }));
+    const marked = /^\+.*STUB_DESIGN_REJECT/m.test(text);
+    if (/^\+.*STUB_DESIGN_LAZY/m.test(text)) yield* call("design_verdict", { verdict: "APPROVE" });
+    for (const v of views) yield* call("design_view", v);
+    const page = views.find((v) => v.side === "after")?.page;
+    yield* call("design_verdict", marked ? { verdict: "REJECT", findings: [{ ...(page ? { page } : {}), element: "h1", problem: "the heading still reads STUB_DESIGN_REJECT", change: "h1 { text-transform: none; } and the heading text the spec asks for" }] } : { verdict: "APPROVE" });
+    yield* done(marked ? "REJECT" : "APPROVE"); return;
   }
   if (text.startsWith("TEST AGENT")) {
     // tests: "Call: <tool> <json>" lines are made in order; STUB_SLOW talks for ~3 s first (unless handed off)

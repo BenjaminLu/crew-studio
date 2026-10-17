@@ -1,0 +1,12 @@
+id: design-scope
+version: 1.0.0
+title: { en: "Designer round: does the change touch UI?", zh-TW: "設計審查：這個改動有沒有碰到 UI？" }
+description: "A diff touching UI paths (policy ui_paths, plus the paths the repository's .crew/app.json declares) goes to the fresh-context designer round (data.route ui). Any other diff skips it (data.route none), with the reason it is not applicable recorded here."
+applies_to: [code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact]
+native: design-scope
+params: { type: object, properties: {} }
+timeout_s: 30
+network: false

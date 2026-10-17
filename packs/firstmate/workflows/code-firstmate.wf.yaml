@@ -8,7 +8,7 @@ id: code-firstmate
 name: code-firstmate
 kind: code
 version: 1
-description: "firstmate's coding pipeline: spec (refined until its checks pass) → dispatch → door → plan (one-way) → build ⇄ fix → CI, fail-first → fresh reviewer → the six gates on the edge into the merge card → local merge → after-merge hooks."
+description: "firstmate's coding pipeline: spec (refined until its checks pass) → dispatch → door → plan (one-way) → build ⇄ fix → CI, fail-first → fresh reviewer → designer (UI changes: the before / after captures) → the six gates on the edge into the merge card → local merge → after-merge hooks."
 intent:
   keywords: [fix, bug, add, feature, refactor, code, function, test, tests, implement, change, migration, schema, endpoint, api, repo, repository, rename]
 params:
@@ -115,10 +115,25 @@ nodes:
     checks:
       - { use: firstmate/review-depth }
       - { use: firstmate/review-verdict }
-      - { use: firstmate/designer-compare }
     x: 1870
     y: 220
-  - { id: fix, kind: loop, label: Fix (refine loop), detail: "brief · step-back · budget", args: { producer: build, coordinator: coordinator, route_classes: { door-change: door-change, review-unverified: step-back }, answer_routes: { "step-back:other-model": pass }, report_checks: [firstmate/report-schema] }, x: 1700, y: 460 }
+  # a diff touching UI paths (policy ui_paths, plus the paths .crew/app.json declares) gets a fresh-context designer round on
+  # the captures; any other diff skips it with the reason recorded in the ledger
+  - { id: design-scope, kind: check, label: "UI change?", detail: "UI paths → designer; else not applicable", checks: [{ use: firstmate/design-scope }], args: { route_from: firstmate/design-scope, store: designScope }, x: 1870, y: 40 }
+  - id: designer
+    kind: agent
+    label: Designer
+    detail: "fresh context · before / after captures · APPROVE or REJECT"
+    role: designer
+    mode: design-review
+    retries: 1
+    timeout_s: 900
+    checks:
+      - { use: firstmate/design-verdict }
+      - { use: firstmate/designer-compare }
+    x: 2070
+    y: 40
+  - { id: fix, kind: loop, label: Fix (refine loop), detail: "brief · step-back · budget", args: { producer: build, coordinator: coordinator, route_classes: { door-change: door-change, review-unverified: step-back, design-unverified: step-back }, answer_routes: { "step-back:other-model": pass }, report_checks: [firstmate/report-schema] }, x: 1700, y: 460 }
   - { id: remote-ready, kind: hook, do: remote.ready, label: Remote readiness, x: 1970, y: 220 }
   - id: merge-card
     kind: card
@@ -201,7 +216,11 @@ edges:
   - [build, door, door-change]
   - [ci, review, pass]
   - [ci, fix, fail]
-  - [review, remote-ready, ok]
+  - [review, design-scope, ok]
+  - [design-scope, remote-ready, none]
+  - [design-scope, designer, ui]
+  - [designer, remote-ready, ok]
+  - [designer, fix, fail]
   - [remote-ready, build, rebase]
   - [build, build, rebase-more]
   - [remote-ready, closed, close]
