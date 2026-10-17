@@ -92,6 +92,13 @@ export function normalize(raw: any): WDef {
   return d;
 }
 
+/** A definition's content without its version record (number, parent, author, note, diff, seed): what a built-in internal
+ *  workflow is bound by. Studio's seed stores a changed built-in as a new version, so the number is never part of the binding. */
+export const defBody = (d: any) => { const { parent, createdAt, by, note, diff, seed, version, ...rest } = d ?? {}; return rest; };
+/** The newest installed version of a built-in internal workflow whose content is the bundled source's; null when none is. */
+export function installedSource(defs: { versions(id: string): WDef[] }, source: WDef, same: (a: unknown, b: unknown) => boolean): WDef | null {
+  return [...defs.versions(source.id)].reverse().find((v) => same(defBody(v), defBody(source))) ?? null;
+}
 /** The entry: the one node no edge leads to. */
 export const entryOf = (d: WDef) => { const ins = new Set(d.edges.map((e) => e.to)); const c = d.nodes.filter((n) => !ins.has(n.id)); return c.length === 1 ? c[0] : null; };
 /** Terminals: nodes no edge leaves; finishing one ends the run. */

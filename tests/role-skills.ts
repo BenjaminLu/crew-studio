@@ -387,4 +387,51 @@ H.stop();
       "its profile text change goes to the one-click role skill approval, not the permanent policy refusal", JSON.stringify([card?.failure?.code, card?.failure?.message]));
   } finally { for (const x of e.list()) if (!["succeeded", "failed", "cancelled"].includes(x.status)) await e.cancel(x.id, "fixture cleanup"); h.stop(); }
 }
+// ---------- after a deploy: the seed adds firstmate-staffing v2 (and a new workflow version); proposing, recovering and keeping staffing all run ----------
+{
+  const { StaffingStore, installStaffingGuard, staffingHash } = await import("../src/domain/staffing");
+  const { installFirstmateStaffing } = await import("../src/firstmate-staffing");
+  const { bundledText } = await import("../src/bundled");
+  const { ProviderRefusal } = await import("../src/providers/policy");
+  const { Y } = await import("./rt-harness");
+  const current = bundledText("workflows/v2/firstmate-staffing.wf.yaml")!, old = current.replace(',"max":32000', "");
+  const long = (i: number) => `bundled:workflows/skills/v2/${"long-skill-name-".repeat(6)}${i}.md`;
+  const roles = Array.from({ length: 12 }, (_, i) => ({ id: i ? `role-${i}` : "worker", label: `Role ${i}`, skill: long(i) }));
+  const flow = (label: string) => ({ id: "code-firstmate", name: "Deploy fixture", kind: "code", version: 1, roles: [{ id: "worker", label: "Worker", skill: "pack:firstmate/skills/worker.md" }],
+    nodes: [{ id: "work", kind: "agent", label, role: "worker", mode: "receipt", x: 1, y: 1 }], edges: [] });
+  const own = { id: "my-code", name: "Own code", kind: "code", version: 1, roles, nodes: [{ id: "work", kind: "agent", label: "Work", role: "worker", mode: "receipt", x: 1, y: 1 }], edges: [] };
+  const data = checkedTempDir("crew-role-skills-deploy-");
+  const h0 = await harness([Y(flow("Work")), Y(own), old], { data }); const v1Staffing = h0.defs.get("firstmate-staffing")!; h0.stop();
+  const h = await harness([Y(flow("Work, updated")), Y(own), current], { data }), e = h.engine, store = new StaffingStore(h.data), project = { namespace: "git" as const, id: "p", identity: "deploy" };
+  try {
+    ok(!(v1Staffing.params as any)?.draft?.max && h.defs.versions("firstmate-staffing").length === 2 && (h.defs.get("firstmate-staffing")!.params as any)?.draft?.max === 32000, "the deploy seeds firstmate-staffing v2 beside the old v1 body");
+    e.deps.skillText = () => "# Test skill\n";
+    const facts = async () => [{ provider: "codex", support: "supported" as const, auth: "verified", quota: "available", expires: Date.now() + 30000, models: [{ id: "m", efforts: ["high"] }] }];
+    const guard = installStaffingGuard(e, store, () => project);
+    const tools = installFirstmateStaffing(e, store, () => project, facts, undefined, undefined, { verified: guard.verified, capability: () => {} });
+    const owner = (key: string) => ({ key, captain: true, text: "Staff it", live: () => true });
+    const staffingVersion = (id: string) => e.get(id)!.version;
+    // propose: a 12-role crew whose draft is over 4000 characters
+    const base = { project: project.id, workflow: own.id, version: e.defs.get(own.id)!.version };
+    const plan = await tools.call("studio_staffing_interview", { ...base, defaults: "use" }, owner("defaults")) as any;
+    const proposed = await tools.call("studio_propose_staffing", { ...base, roles: plan.choices }, owner("propose")) as any;
+    const draft = e.get(proposed.proposal)!.params.draft;
+    ok(!!proposed.proposal && staffingVersion(proposed.proposal) === 2 && draft.length > 4000 && JSON.parse(draft).roles["role-11"].skill.ref === long(11), "studio_propose_staffing runs on the seeded v2 and keeps a draft over 4000 characters whole", JSON.stringify([staffingVersion(proposed.proposal), draft.length]));
+    await until(() => e.get(proposed.proposal)?.nodes.confirm.waiting === "card");
+    // keep: code-firstmate moved to v2 after an approval on v1
+    const c1 = store.approve({ schema: 1, algorithm: "sha256-canonical-v1", project, workflow: { id: "code-firstmate", version: 1, sha256: staffingHash(e.defs.get("code-firstmate", 1)) }, roles: { worker: { provider: "codex", model: "m", effort: "high", skill: store.remember({ ref: "pack:firstmate/skills/worker.md", version: 1, text: "# Test skill\n" }) } }, review: { freshContexts: 3, distinctProviders: false } }, null, { run: "R-0", card: "SC-0", answerSeq: 1 });
+    const kept = await tools.call("studio_keep_staffing", { project: project.id, workflow: "code-firstmate", version: 2 }, owner("keep")) as any;
+    await until(() => e.get(kept.proposal)?.nodes.confirm.waiting === "card");
+    ok(staffingVersion(kept.proposal) === 2 && e.cards.list({ run: kept.proposal, open: true }).length === 1, "studio_keep_staffing runs on the seeded v2 and raises its card");
+    // change: a Task on v1 held on its readiness card gets a recovery proposal
+    e.modes.receipt = { system: (_x: any, skill: string) => skill, prompt: () => "receipt", tools: () => [], after: () => "ok" } as any;
+    e.deps.selectProvider = async () => { throw new ProviderRefusal("offline capability hold"); };
+    const held = e.start({ workflow: "code-firstmate", version: 1, params: { project: project.id, _staffing: c1.hash } });
+    await until(() => held.nodes.work.waiting === "card" && !e.busy(held.id));
+    await tools.call("studio_staffing_interview", { project: project.id, workflow: "code-firstmate", version: 1, defaults: "use" }, owner("defaults-v1"));
+    const changed = await tools.call("studio_change_staffing", { task: held.id, node: "work", roles: { worker: { provider: "codex", model: "m", effort: "high" } } }, owner("change")) as any;
+    await until(() => e.get(changed.proposal)?.nodes.confirm.waiting === "card");
+    ok(staffingVersion(changed.proposal) === 2 && e.cards.list({ run: changed.proposal, open: true }).length === 1, "studio_change_staffing runs on the seeded v2 and raises its card");
+  } finally { for (const x of e.list()) if (!["succeeded", "failed", "cancelled"].includes(x.status)) await e.cancel(x.id, "fixture cleanup"); h.stop(); }
+}
 end();
