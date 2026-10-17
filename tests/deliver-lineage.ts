@@ -51,5 +51,16 @@ try{
    ok(/- v1 N1 \[superseded by v301 N301\]$/m.test(text)||/v1 N1/.test(text.split('do not fit')[1]??''),'a superseded requirement collapses to its id and what replaced it'); }
  { const small=lineageText({schema:1,run:'R',producer:'d',round:3,attempt:1,intent:'',reference:null,history:[{key:'v1:A',version:1,note:'A',comment:'old colour',locator:null,bbox:null,box:null,t0:null,t1:null,status:'open',state:'superseded',supersedes:[],capturedFrom:'current-notes'},{key:'v2:B',version:2,note:'B',comment:'new colour',locator:null,bbox:null,box:null,t0:null,t1:null,status:'open',state:'active',supersedes:[{version:1,note:'A'}],capturedFrom:'current-notes'}],active:[]} as any);
    ok(/- v1 A \[superseded by v2 B\]\n/.test(small)&&!small.includes('old colour'),'a superseded requirement keeps no words, only its id',small); }
+ // a note's locator reads as words in the brief, never as raw locator JSON (H12): a whole-page web note
+ // names no place at all, a pointed one names its element or point on that version's page
+ { const r=(v:number,note:string,locator:any,selector:string|null=null)=>({key:`v${v}:${note}`,version:v,note,comment:note+' words',locator,selector,bbox:null,box:null,t0:null,t1:null,status:'open',state:'active',supersedes:[],capturedFrom:'current-notes'});
+   const web=(v:number,extra:any)=>({type:'web',url:`/af/out-r-071-design-a/${v}/index.html`,selector:null,x:null,y:null,w:null,h:null,viewport:{w:1280,h:800},...extra});
+   const history=[r(2,'P1',web(2,{selector:'body'}),'body'),r(3,'P2',web(3,{selector:'#menu .item'}),'#menu .item'),r(3,'P3',web(3,{x:40,y:60,w:120,h:30})),r(3,'P4',{type:'file',path:'src/a.ts',line:4,end_line:9}),r(3,'P5',{type:'text',section:'Intro',start:10,end:40})];
+   const text=lineageText({schema:1,run:'R',producer:'d',round:4,attempt:1,intent:'',reference:null,history,active:history} as any);
+   ok(!/\{"type"|"x":null|"viewport"/.test(text),'no raw locator JSON reaches the brief',text);
+   ok(/- v2 P1 \[[^\]]*\]: "P1 words"$/m.test(text),'a whole-page web note names no place',text);
+   ok(/- v3 P2 \[[^\]]*\] \(on the v3 page at #menu \.item\): /m.test(text)&&!/selector #menu \.item; /.test(text),'a pointed web note names its element once, on that version\'s page',text);
+   ok(/- v3 P3 \[[^\]]*\] \(on the v3 page at x 40, y 60, 120×30 of a 1280×800 viewport\): /m.test(text),'a point note names its box and viewport',text);
+   ok(/\(in src\/a\.ts lines 4-9\)/.test(text)&&/\(in section Intro, characters 10-40\)/.test(text),'file and text locators read as places',text); }
  console.log(`deliver-lineage: ${pass} passed, 0 failed`);
 }finally{for(const r of E.list())if(!['succeeded','failed','cancelled'].includes(r.status))await E.cancel(r.id);H.stop();}

@@ -26,6 +26,22 @@ export function requirementLineage(store:ArtifactStore,o:LineageOpts&{type:strin
  }
  return{schema:1,run:o.run,producer:o.producer,round:o.round,attempt:o.attempt,intent:o.intent,reference:o.old?{artifact:o.old.id,version:o.old.n,sha256:o.old.sha256}:null,history,active:history.filter(n=>n.state==='active')};
 }
+/** Selectors that point at the whole page: a note on them names no place. */
+const WHOLE_PAGE=new Set(['body','html',':root']);
+/** Where a note points, in words for a brief (H12: never the raw locator JSON); '' when it names no place
+ *  beyond the version itself (a whole-page web note, a whole document) or the line already names it (an image region). */
+export function placeText(l:Requirement['locator'],version:number):string{
+ if(!l)return'';const n=(v:unknown)=>typeof v==='number'&&Number.isFinite(v);
+ switch(l.type){
+  case'web':{const sel=l.selector?.trim(),box=n(l.x)&&n(l.y)?`x ${l.x}, y ${l.y}${n(l.w)&&n(l.h)?`, ${l.w}×${l.h}`:''}${l.viewport?` of a ${l.viewport.w}×${l.viewport.h} viewport`:''}`:'';
+   const at=[sel&&!WHOLE_PAGE.has(sel)?sel:'',box].filter(Boolean).join(', ');return at?`on the v${version} page at ${at}`:'';}
+  case'file':return`in ${l.path}${n(l.line)?n(l.end_line)&&l.end_line!==l.line?` lines ${l.line}-${l.end_line}`:` line ${l.line}`:''}`;
+  case'text':return l.section==='document'?'':`in section ${l.section}${n(l.start)&&n(l.end)?`, characters ${l.start}-${l.end}`:''}`;
+  case'timeline':return`time ${l.from}-${l.to}`;
+  case'image':return`region ${JSON.stringify(l.bbox)}`;
+  case'card':return`card field ${l.field}${n(l.index)?` #${l.index}`:''}`;
+  default:return'';}
+}
 /** The brief's byte budget for the lineage, the same one an image refinement prompt has. */
 export const LINEAGE_BUDGET=16000;
 /** The lineage as brief lines, oldest first, and the one place a round sees the captain's notes: each active
@@ -36,7 +52,7 @@ export function lineageText(s:RefinementSnapshot,budget=LINEAGE_BUDGET):string{
  if(!s.history.length)return'Captain requirements so far: none yet.';
  const newest=Math.max(...s.history.map(r=>r.version)),id=(r:Requirement)=>`v${r.version} ${r.note}`;
  const by=(r:Requirement)=>s.history.find(o=>o.supersedes.some(t=>t.version===r.version&&t.note===r.note));
- const where=(r:Requirement)=>{const w=[r.selector?`selector ${r.selector}`:'',r.bbox?`region ${JSON.stringify(r.bbox)}`:'',r.t0!=null&&r.t1!=null&&!(r.t0===0&&r.t1===1)?`time ${r.t0}-${r.t1}`:'',r.locator&&!['document'].includes(String((r.locator as any).section??''))?`at ${JSON.stringify(r.locator)}`:''].filter(Boolean);return w.length?` (${w.join('; ').slice(0,300)})`:'';};
+ const where=(r:Requirement)=>{const at=r.locator?.type==='image'&&r.bbox?'':placeText(r.locator,r.version),web=r.locator?.type==='web';const w=[r.selector&&!web&&!WHOLE_PAGE.has(r.selector.trim())?`selector ${r.selector}`:'',r.bbox?`region ${JSON.stringify(r.bbox)}`:'',r.t0!=null&&r.t1!=null&&!(r.t0===0&&r.t1===1)?`time ${r.t0}-${r.t1}`:'',at].filter(Boolean);return w.length?` (${w.join('; ').slice(0,300)})`:'';};
  const line=(r:Requirement)=>r.state==='superseded'?`- ${id(r)} [superseded${by(r)?` by ${id(by(r)!)}`:''}]`:`- ${id(r)} [${r.version===newest?'active, newest':'active, from an earlier round: still binding'}${r.status==='resolved'?', marked resolved: keep it done':''}]${where(r)}: ${JSON.stringify(r.comment)}`;
  const head='Captain requirements across every round (oldest first; every active one still binds; where two conflict the later one wins, only in the aspect it changes):';
  const lines=s.history.map(r=>({r,text:line(r)}));let size=Buffer.byteLength(head)+1200;const keep=new Set<Requirement>();
