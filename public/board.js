@@ -153,7 +153,7 @@ function studioRow(id) {
   const rd = roundOf(r, st); const crew = studioCrew(r); const sp = spendOf(r);
   const go = () => { location.hash = `#/run/${encodeURIComponent(id)}`; };
   const row = h("div", { class: "rrow bd-row", "data-run": id, "data-kind": "studio", tabindex: 0, role: "link", "aria-label": `${r.title}, ${r.workflow}`, onclick: (e) => { if (!e.target.closest("a")) go(); }, onkeydown: (e) => { if (e.key === "Enter") go(); } },
-    h("div", { style: "min-width:0" }, h("div", { class: "run-t" }, h("span", { class: "tid" }, r.id), h("span", { title: r.title }, r.title)),
+    h("div", { style: "min-width:0" }, h("div", { class: "run-t" }, h("span", { class: "tid" }, r.id), h("span", { title: r.request || r.title, "data-task-title": id }, r.title)),
       h("div", { class: "run-s" }, h("span", {}, `${r.workflow} v${r.version}`), h("span", {}, T(`updated ${ago(r.updatedAt)}`, `${ago(r.updatedAt)}更新`)))),
     h("div", { class: "c-stage", style: "min-width:0" }, pipe(p), h("div", { class: "pipe-l" }, st ? `${p.cur + 1}/${p.stages.length} ${stageLabel(st)}${rd ? T(` · round ${rd.n}/${rd.cap}`, ` · 第 ${rd.n}/${rd.cap} 回合`) : ""}` : "—")),
     h("div", {}, window.runStateBadge({ ...r, merged: !!r.ctx?.merged })),

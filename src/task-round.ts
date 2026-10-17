@@ -4,6 +4,7 @@
 //   Round     one launch of an agent or a check inside a Task (build round 2, review round 3), and the cards
 //             a person answers on the way.
 // Rounds are derived from a run's steps (its node visits): no stored data changes, the store reads runs as they are.
+import { taskTitle } from "./task-title";
 import type { Run, Step } from "./runtime/engine";
 
 export type Text = { en: string; "zh-TW": string };
@@ -19,6 +20,8 @@ export type Round = {
 export type TaskStatus = "queued" | "running" | "waiting" | "needs-you" | "paused" | "failed" | "done" | "cancelled" | "idle";
 export type TaskView = {
   id: string; workflow: string; version: number | null; title: string; project: string | null;
+  /** the captain's full request; `title` is its short name */
+  request: string;
   /** one word for the Board and Inbox; `state` keeps the run's own status */
   status: TaskStatus; state: string; node: string | null;
   createdAt: string | null; updatedAt: string | null; endedAt: string | null; href: string; roundCount: number;
@@ -102,7 +105,7 @@ export function taskOf(run: Run, openCards: { run?: string | null }[] = []): Tas
   if ((run.status === "running" || run.status === "waiting") && openCards.some((c) => c.run === run.id)) status = "needs-you";
   const last = [...(run.steps ?? [])].reverse().find((s) => s.state === "running" || s.state === "waiting");
   return {
-    id: run.id, workflow: run.workflow, version: run.version ?? null, title: run.title ?? "", project: run.params?.project || null,
+    id: run.id, workflow: run.workflow, version: run.version ?? null, title: taskTitle(run), request: run.text ?? "", project: run.params?.project || null,
     status, state: run.status, node: live?.[0] ?? last?.node ?? null,
     createdAt: run.createdAt ?? null, updatedAt: run.updatedAt ?? null, endedAt: run.endedAt ?? null, href: `#/run/${run.id}`, roundCount: rounds.length,
     result: run.result ?? null, waitsOn: waitsOn(run, openCards as any), rounds,

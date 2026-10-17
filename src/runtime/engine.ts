@@ -36,6 +36,7 @@ import { locatorText, parseFinding, type Finding } from "./locator";
 import { materializeRoundDir, roundWorkPath } from "./round-paths";
 import { composeInstructions, Skills } from "../skills";
 import { OperatingRules, jobInstructions } from "../operating-rules";
+import { clampTitle, deriveTitle } from "../task-title";
 import { ACT, homeless, FailureError, FailureRefusal, changedInputs, codeOf, failure, failureActions, failureCardBody, fromError, inputsHash, parseParamEdit, rescopeRefusal, retryRefusal, type Failure, type FailureCode, type InputSnapshot } from "./failures";
 
 export type NState = "pending" | "running" | "passed" | "failed" | "error" | "skipped" | "superseded";
@@ -379,7 +380,7 @@ export class Engine {
     for (const [k, p] of Object.entries(def.params ?? {})) if (p.default != null) params[k] = String(p.default);
     for (const [k, v] of Object.entries(o.params ?? {})) if (v != null && String(v) !== "") params[k] = String(v).slice(0, 4000);
     const text = String(o.text ?? "").slice(0, 8000);
-    const r: Run = { id, workflow: def.id, version: def.version, def, title: String(o.title || text.split("\n")[0] || def.name).slice(0, 160), text, params, by: o.by ?? "captain",
+    const r: Run = { id, workflow: def.id, version: def.version, def, title: (o.title ? clampTitle(o.title) : deriveTitle(text)) || clampTitle(def.name), text, params, by: o.by ?? "captain",
       status: "queued", result: null, createdAt: now(), updatedAt: now(), endedAt: null, error: null, nodes: {}, queue: [], steps: [], ctx: { nativeQueueVersion: 1 }, classifier: o.classifier ?? null, events: 0, recovered: 0 };
     for (const nd of def.nodes) r.nodes[nd.id] = { state: "pending", visits: 0, extra: 0, attempt: 0, outcome: null, cause: null, error: null, startedAt: null, endedAt: null, inbox: [], agent: null, swap: null, job: null, card: null, waiting: null, data: {}, note: null };
     this.runs.set(id, r);
