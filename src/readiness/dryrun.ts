@@ -77,7 +77,8 @@ export async function dryRun(def: WDef, o: DryRunOptions): Promise<DryRunResult>
     const wid = "gate-dry-run";
     rt.defs.createDrafted(wid, staffed, "readiness gate (dry run)", { schema: 1, source: "firstmate-draft", draft: "d-000000000000", revision: 1, definition: "dry", brief: { goal: o.sample.text, interview: [] } });
     let start = await api("/api/wruns", { workflow: wid, text: o.sample.text, params: o.sample.params });
-    if (start.status === 409 && start.body.staffing?.hash) start = await api("/api/wruns", { workflow: wid, text: o.sample.text, params: o.sample.params, staffingConfirm: start.body.staffing.hash });
+    // confirmed as Run is (the staffing hash and, for Claude-staffed nodes, the bounded Claude verification): in this throwaway folder every round is the stub, so nothing is spent
+    if (start.status === 409 && start.body.staffing?.hash) start = await api("/api/wruns", { workflow: wid, text: o.sample.text, params: o.sample.params, staffingConfirm: start.body.staffing.hash, claudeVerification: start.body.staffing.claudeVerification ?? undefined });
     if (start.status !== 200 || !start.body.id) { fail("dryrun-start", null, `The run did not start: ${start.body.error ?? start.status}`, `任務無法開始：${start.body.error ?? start.status}`, "Fix the Start inputs and staffing so Run can start the Task.", "修正開始輸入與配置，讓執行能開始任務。"); return { status: "fail", problems, steps, runStatus: "not-started", stoppedAt: null }; }
     const id = start.body.id as string; const dist = distances(staffed as WDef);
     const t0 = Date.now(); let answered = 0, stoppedAt: string | null = null; let r: any = null;
