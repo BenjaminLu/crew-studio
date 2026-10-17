@@ -31,7 +31,8 @@ try{
  await E.answer(card.id,{choice:'approve',by:'captain'});await until(()=>E.get(proposal.proposal)?.status==='succeeded');
  ok(heard.length===1&&heard[0].project==='only-codex'&&heard[0].workflow===def.id&&heard[0].card===card.id&&heard[0].hash===store.current(coffeeStaffingProject('only-codex')).hash,'the approval is heard once, naming the card, project and workflow',JSON.stringify(heard));
  const turn=heard[0]?staffingApprovedTurn(heard[0]):'';
- ok(/propose it now with studio_propose_work/.test(turn)&&/still approves its dispatch card/.test(turn)&&/never the staffing/.test(turn)&&/現在就用 studio_propose_work 提出/.test(turn),"Firstmate's turn says to propose the work now, without staffing in the text, for the captain's dispatch approval",turn);
+ ok(!/propose it now|studio_propose_work/.test(turn)&&/restate that request in one line and ask the captain to confirm/.test(turn)&&/do not propose or call a tool now/.test(turn)&&/請船長確認/.test(turn),"Firstmate's turn (no captain authority) asks it to restate the waiting request and ask the captain to confirm, not to call studio_propose_work",turn);
+
  // another verified provider: the judges go there
  caps=[codex(),claude];const two=(await read('two-providers')).defaults;
  ok(two.roles.worker.provider==='codex'&&two.roles.reviewer.provider==='claude'&&two.roles.designer.provider==='claude'&&two.roles.reviewer.effort==='medium'&&two.independence.independent===true,'with Claude verified too, reviewer and designer are staffed on Claude at medium; the worker stays on the Codex default',JSON.stringify(two.roles));

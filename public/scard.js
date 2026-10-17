@@ -311,7 +311,7 @@ function mountCard(el, card, opts = {}) {
     let cfg = null; try { const j = JSON.parse(body); cfg = j?.configuration?.roles && typeof j.configuration.roles === "object" ? j.configuration : null; } catch {}
     if (cfg) return staffingView(cfg, body);
     // a dispatch card: "Parameters / 參數:" carries the params, as JSON (older cards) or as "key: value" lines
-    const pin = body.indexOf("\n\nInternal pins / 內部鎖定:"), lines = (pin < 0 ? body : body.slice(0, pin)).split("\n"), at = lines.findIndex((l) => l.startsWith("Parameters / 參數:"));
+    const pin = body.lastIndexOf("\n\nInternal pins / 內部鎖定:"), lines = (pin < 0 ? body : body.slice(0, pin)).split("\n"), at = lines.findIndex((l) => l.startsWith("Parameters / 參數:"));
     const pinsView = pin < 0 && at < 0 ? null : raw(T("Studio's internal pins and full text", "Studio 內部鎖定與全文"), body);
     let params = null; const inline = at < 0 ? "" : lines[at].slice("Parameters / 參數:".length).trim(), end = at < 0 ? at : inline ? at + 1 : (() => { let k = at + 1; while (k < lines.length && /^ {2}\S/.test(lines[k])) k++; return k; })();
     if (at >= 0 && inline) { try { const j = JSON.parse(inline); if (j && typeof j === "object" && !Array.isArray(j)) params = Object.entries(j).map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]); } catch {} }

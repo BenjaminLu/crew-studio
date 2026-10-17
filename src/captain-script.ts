@@ -5,13 +5,14 @@
 import { Converter } from "opencc-js/t2cn";
 
 const toCN = Converter({ from: "tw", to: "cn" });
-const HAN = /\p{Script=Han}/u;
+const HAN = /\p{Script=Han}/u, KANA = /[\p{Script=Hiragana}\p{Script=Katakana}]/u;
 
-export const TRADITIONAL_NOTE = "[Studio note: the captain wrote this in Traditional Chinese (繁體中文). Reply in Traditional Chinese, not Simplified.]";
+export const TRADITIONAL_NOTE = "[Studio note: any Chinese in this message is Traditional (繁體中文); when you reply in Chinese, use Traditional, not Simplified.]";
 
-/** "traditional" when the text has a character opencc-js maps to a different Simplified one; "chinese" for Han text with none; else null. */
+/** "traditional" when the text has a character opencc-js maps to a different Simplified one; "chinese" for Han text with none;
+ * null for text without Han, and for Japanese (kana), whose kanji opencc-js would also change. */
 export function captainScript(text: string): "traditional" | "chinese" | null {
-  if (!HAN.test(text)) return null;
+  if (!HAN.test(text) || KANA.test(text)) return null;
   return toCN(text) !== text ? "traditional" : "chinese";
 }
 

@@ -26,10 +26,18 @@ ok(taskTitle({ title: R058, text: R058 }) === deriveTitle(R058), "a run recorded
 
 // ---- F7: staffing in the intent ----
 ok(staffingInIntent(R058) === "使用已核准 R-056 人員配置：四角色 Codex/gpt-6.1-sol/low 及各自固定原生技能。", "the staffing sentence in R-058's intent is found", String(staffingInIntent(R058)));
+// the captain's own words are never refused, even when they talk about staffing with a concrete model or card
+const OWN = ["Fix the staffing card so an approved crew shows its providers.", "R-041 follow-up: the staffing interview crashes when codex/gpt-5 is unverified.",
+  "approved R-041 follow-up: make the staffing defaults prefer medium effort", "修正人員配置卡：已核准後仍顯示舊的模型。", "Make the Claude staffing defaults use claude/opus."];
+ok(OWN.every((t) => staffingInIntent(t, t) === null), "the captain's own staffing requests pass when they are the captain's words", JSON.stringify(OWN.map((t) => staffingInIntent(t, t))));
+ok(staffingInIntent(R058, REQUEST) !== null, "R-058's sentence, which the captain never wrote, is still found");
 ok(staffingInIntent(REQUEST) === null && staffingInIntent("Show the Claude staffing defaults on the board.") === null, "a request without a restated crew passes, even one about staffing as a feature");
 
 // ---- F2: the captain's script ----
 ok(captainScript("已批准配置卡，請提交派工卡") === "traditional" && captainScript("我已经把默认配置记下来") === "chinese" && captainScript("approved, please propose") === null, "Traditional Chinese is told apart through opencc-js");
+ok(captainScript("日本語の文章です。設定を確認してください") === null && withScriptNote("日本語の文章です。設定を確認してください", "日本語の文章です。設定を確認してください") === "日本語の文章です。設定を確認してください", "Japanese (kana) gets no note, though opencc-js would change its kanji");
+ok(withScriptNote("fix the bug in 台灣 build", "fix the bug in 台灣 build").endsWith(TRADITIONAL_NOTE) && /when you reply in Chinese, use Traditional/.test(TRADITIONAL_NOTE) && !/Reply in Traditional/.test(TRADITIONAL_NOTE), "English with a Traditional proper noun gets a note that only binds a Chinese reply");
+ok(withScriptNote("我已经把默认配置记下来", "我已经把默认配置记下来") === "我已经把默认配置记下来", "a Simplified captain gets no note");
 ok(withScriptNote("1，用預設配置", "1，用預設配置").endsWith(TRADITIONAL_NOTE) && withScriptNote("use defaults", "use defaults") === "use defaults", "a Traditional Chinese turn carries the note; an English one is unchanged");
 const seed = nativeFreshText("/tmp/ws", undefined, "zh-CN");
 ok(seed.includes(REPLY_LANGUAGE) && !/converse in Simplified/.test(seed) && /Greet the captain in Simplified Chinese/.test(seed), "the seed names the dashboard language for the greeting only, and the captain's script for every reply");
@@ -39,13 +47,15 @@ ok(/text is only the captain's request/.test(seed) && /Never put staffing/.test(
 const flow = { id: "title-fixture", name: "Title fixture", version: 1, roles: [], params: { mode: { label: "Mode" } }, nodes: [{ id: "done", kind: "hook", label: "Done" }], edges: [] };
 const H = await harness([readFileSync(new URL("../workflows/v2/firstmate-proposal.wf.yaml", import.meta.url), "utf8"), JSON.stringify(flow)]); const E = H.engine;
 const tools = installFirstmate(E, new Projects(H.data));
-const owner = (key: string) => ({ key, captain: true, text: "captain turn " + key, live: () => true });
+const owner = (key: string) => ({ key, captain: true, text: REQUEST, live: () => true });
 const refusal = async (f: () => Promise<unknown>) => { try { await f(); return null; } catch (e: any) { return e; } };
 try {
   const spec = tools.specs.find((s: any) => s.name === "studio_propose_work") as any;
   ok(spec.inputSchema.properties.title && /captain's request only/.test(spec.inputSchema.properties.text.description) && /staffing/.test(spec.inputSchema.properties.text.description), "studio_propose_work asks for a title and says text is only the captain's request");
   const staffed = await refusal(() => tools.call("studio_propose_work", { workflow: "title-fixture", version: 1, title: "EUR 金額格式", text: R058 }, owner("staffed")));
   ok(staffed?.publicFailure?.code === "invalid_params" && String(staffed.message).includes("使用已核准 R-056") && !E.list().length, "a proposal that restates the approved crew in its text is refused before any Task, naming the sentence", String(staffed?.message));
+  for (const [k, t] of OWN.entries()) { const r = await refusal(() => tools.call("studio_propose_work", { workflow: "title-fixture", version: 1, title: "Staffing fix", text: t }, { key: "own-" + k, captain: true, text: t, live: () => true }));
+    ok(r === null, `the captain's own words propose: ${t}`, String(r?.message)); }
   ok((await refusal(() => tools.call("studio_propose_work", { workflow: "title-fixture", version: 1, title: "依據 /Users/x/brief.pdf", text: REQUEST }, owner("path"))))?.publicFailure?.code === "invalid_params", "a title with a path is refused");
   const p: any = await tools.call("studio_propose_work", { workflow: "title-fixture", version: 1, title: "EUR 金額格式", text: REQUEST, params: { mode: "fast" } }, owner("titled"));
   const proposal = E.get(p.proposal)!;

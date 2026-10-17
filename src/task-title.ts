@@ -11,6 +11,7 @@ const PAREN_RE = /（[^（）]*）|\([^()]*\)/g;
 // the first clause ends at a full stop, comma, colon, semicolon, question/exclamation mark or newline;
 // a Latin "." only ends it before a space or the end (so "Node.js" and "v2.1" stay whole)
 const CLAUSE_END = /[。，,：:；;！？!?\n\r]|\.(?=\s|$)/;
+const ABBREV = /\b(?:Mrs?|Ms|Dr|Prof|St|Jr|Sr|vs|etc|cf|approx|No|e\.g|i\.e)\./gi;
 const EDGE = /^[\s#>*\-–—•·、，。,.;；:：!?！？…]+|[\s#>*\-–—•·、，。,.;；:：!?！？]+$/g;
 
 export const titleWidth = (s: string): number => { let w = 0; for (const ch of s) w += WIDE.test(ch) ? 2 : 1; return w; };
@@ -22,6 +23,9 @@ export function clampTitle(s: unknown, width = TITLE_WIDTH): string {
   if (titleWidth(t) <= width) return t;
   let out = "", w = 0;
   for (const ch of t) { const cw = WIDE.test(ch) ? 2 : 1; if (w + cw > width - 1) break; out += ch; w += cw; }
+  // a Latin word cut in half ends at the last space instead, when one is close (within 12 characters)
+  const next = [...t][[...out].length] ?? "";
+  if (/[A-Za-z0-9]/.test(next) && /[A-Za-z0-9]$/.test(out)) { const sp = out.lastIndexOf(" "); if (sp > 0 && out.length - sp <= 12) out = out.slice(0, sp); }
   return out.replace(EDGE, "") + "…";
 }
 
@@ -29,7 +33,9 @@ export function clampTitle(s: unknown, width = TITLE_WIDTH): string {
 export function deriveTitle(text: unknown): string {
   const raw = String(text ?? "");
   const clean = raw.replace(URL_RE, " ").replace(PATH_RE, " ").replace(PAREN_RE, "");
-  const clauses = clean.split(CLAUSE_END).map((c) => c.replace(/\s+/g, " ").replace(EDGE, "")).filter(Boolean);
+  // an abbreviation's dot (Mr., e.g., etc.) does not end the clause: held as a one-dot leader while splitting
+  const held = clean.replace(ABBREV, (m) => m.replace(/\./g, "\u2024"));
+  const clauses = held.split(CLAUSE_END).map((c) => c.replace(/\u2024/g, ".").replace(/\s+/g, " ").replace(EDGE, "")).filter(Boolean);
   return clampTitle(clauses[0] ?? "");
 }
 
