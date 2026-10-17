@@ -245,7 +245,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const stopCard = (x: X, reason: string) => remoteStopCard(x, reason, engine);
   engine.beforeStart["github-reconcile"] = async x => {
     // an end node (closed, parked …) reads nothing on GitHub: a pull request closed there must not stop the close itself
-    if (x.ctx.pr?.adapter !== "github" || x.node.do === "pr.open" || !x.run.def.edges.some((e) => e.from === x.node.id)) return null;
+    if (x.ctx.pr?.adapter !== "github" || x.node.do === "pr.open" || (x.run.def && !x.run.def.edges.some((e) => e.from === x.node.id))) return null;
     const phase = remotePhase(x); phase.assert(); const a = selectedAdapter(x);
     try { if (!(a instanceof GitHubPrAdapter)) throw new Error(); if(x.ctx.remoteUpdatePending){const p=pendingUpdate(x,a);await a.verifyUpdateResult(p.old,p.next,phase.signal,phase.assert);}else await reconcile(a, x.ctx.pr, phase.signal); phase.assert(); return null; }
     // at remote-ready the reason keeps its class: GitHub unreachable or refusing access can be checked again there
