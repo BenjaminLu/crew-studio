@@ -79,7 +79,7 @@ export function runRender(dataDir: string, mode: "film" | "stills" | "crop" | "p
   (async () => { const d = new TextDecoder(); let buf = ""; for await (const c of p.stdout as any) { buf += d.decode(c, { stream: true }); let i; while ((i = buf.indexOf("\n")) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); try { const o = JSON.parse(l); if (typeof o.progress === "number") onProgress(o.progress); else last = o; } catch {} } } })();
   (async () => { try { err = await new Response(p.stderr as any).text(); } catch {} })();
   // an interaction smoke is bounded tightly (a page's own handler can hang the browser); a film may take long
-  const limit = mode === "interact" ? Number(process.env.CREW_INTERACT_TIMEOUT_MS ?? 90_000) : Number(process.env.CREW_RENDER_TIMEOUT_MS ?? 45 * 60_000);
+  const limit = mode === "interact" ? Number(process.env.CREW_INTERACT_TIMEOUT_MS ?? 90_000) : mode === "pdf" ? Number(process.env.CREW_PDF_TIMEOUT_MS ?? 60_000) : Number(process.env.CREW_RENDER_TIMEOUT_MS ?? 45 * 60_000);
   let timedOut = false; const timer = setTimeout(() => { timedOut = true; try { p.kill(); } catch {} }, limit);
   const done = p.exited.then(async (code) => {
     clearTimeout(timer); await Bun.sleep(30);

@@ -4,6 +4,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // M3 pin review, the writer's revision, approve. 1440 and 390, light and dark.   node tests/m8-ui.mjs
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,6 +61,17 @@ try {
     ok(await p.locator("a.btn", { hasText: "Word (.docx)" }).count() === 1 && await p.locator("a.btn", { hasText: "PDF" }).count() === 1, "the document page offers Markdown, HTML, Word and PDF exports");
     const dl = p.waitForEvent("download"); await p.locator("a.btn", { hasText: "Word (.docx)" }).click(); const f = await dl;
     ok(f.suggestedFilename() === "offsite-plan-v1.docx", "Word export downloads", f.suggestedFilename());
+    // the PDF is fetched first: a printed PDF downloads under its name; a refusal shows its reason, never a JSON "PDF"
+    const pdl = p.waitForEvent("download", { timeout: 60000 }); await p.locator("a.btn", { hasText: "PDF" }).click(); const pf = await pdl;
+    ok(pf.suggestedFilename() === "offsite-plan-v1.pdf" && (await readFile(await pf.path())).subarray(0, 5).toString() === "%PDF-", "PDF export downloads the printed PDF", pf.suggestedFilename());
+    const why = "PDF not exported: printed, but the text check failed: fixture reason.";
+    await p.route("**/export?format=pdf", (r) => r.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: why, code: "pdfRenderer" }) }));
+    let refusedDownload = false; const onDl = () => { refusedDownload = true; }; p.on("download", onDl);
+    await p.locator("a.btn", { hasText: "PDF" }).click();
+    const shown = await p.locator(".toast", { hasText: "fixture reason" }).first().waitFor({ timeout: 10000 }).then(() => true, () => false);
+    await sleep(300); p.off("download", onDl); await p.unroute("**/export?format=pdf");
+    for (let i = errors.length - 1; i >= 0; i--) if (/status of 409 \(Conflict\)/.test(errors[i])) errors.splice(i, 1); // the refusal this check asked for
+    ok(shown && !refusedDownload, "a refused PDF shows the server's reason and downloads nothing");
     await p.locator("a.btn", { hasText: "Annotate" }).click();
     await p.waitForFunction((re) => new RegExp(re).test(location.hash), "#\\/review\\/offsite-plan\\/1", { timeout: 90000 }); // a hash change has no load event
     const fr = p.frameLocator("iframe.a3-iframe");

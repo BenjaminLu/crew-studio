@@ -10,8 +10,7 @@ import { join } from "node:path";
 import { folderTools, type Agents } from "./agent";
 import type { ArtifactStore } from "./artifacts";
 import { mdToDocHtml, parseBlocks, toDocx } from "./docrender";
-import { docPdf } from "./docpdf";
-import { renderEnv } from "./render";
+import { cleanDocPdfWork, docPdf, pdfRendererReady } from "./docpdf";
 import type { StudioLog } from "./rawlog";
 import type { Skills } from "./skills";
 import type { Provider } from "./providers";
@@ -20,6 +19,7 @@ import { STARTUP_ACCEPT_ONLY, isStartupArtifact } from "./domain/startup-recursi
 const DRAFT_TAIL = `\n\nYou write ONE new document in doc.md with the doc_* tools only (no shell, no web): a # title, a short summary, then the sections the prompt needs. Answer in 2 short lines when done.`;
 
 export function createDocs(o: { dataDir: string; store: ArtifactStore; agents: Agents; skills: Skills; log: StudioLog; provider: (id?: string, model?: string) => Provider; send: (t: string, d: unknown) => void }) {
+  cleanDocPdfWork(o.dataDir);
   const drafts = new Map<string, { id: string; title: string; job: string | null; status: "drafting" | "done" | "failed"; error: string | null; startedAt: string }>();
   const writer = () => { try { return o.skills.text("documents", "writer"); } catch { return ""; } };
   const create = (id: string, title: string, md: string, by: { kind: "captain" | "agent"; provider?: string; model?: string; run?: string }) => {
@@ -83,7 +83,7 @@ export function createDocs(o: { dataDir: string; store: ArtifactStore; agents: A
     let b: any = {}; if (writing) { try { b = await req.json(); } catch {} }
     try {
       if (p === "/api/docs" && !writing) {
-        const re = renderEnv(), pdfRenderer = !re.stub && !!(re.node && re.playwright); const docs = o.store.view().filter((a: any) => a.source === "md").map((a: any) => { const last = a.versions.at(-1); let words = 0, lossy = false; // non-Latin text: only the page renderer can print it
+        const pdfRenderer = pdfRendererReady(); const docs = o.store.view().filter((a: any) => a.source === "md").map((a: any) => { const last = a.versions.at(-1); let words = 0, lossy = false; // non-Latin text: only the page renderer can print it
           try { const md = readFileSync(o.store.mdSource(a.id, last.n)!, "utf8"); words = md.split(/\s+/).filter(Boolean).length; lossy = /[^\u0000-ÿ“”‘’–—…•]/.test(md); } catch {}
           return { ...a, words, pdfUnavailable: lossy && !pdfRenderer, openNotes: o.store.notes(a.id, last.n).filter((x) => x.status === "open").length }; });
         return json({ docs, drafts: [...drafts.values()].filter((d) => d.status !== "done") });

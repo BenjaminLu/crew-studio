@@ -322,8 +322,10 @@ export function installDeliver(engine: Engine, d: Deps) {
   engine.actions["doc.export"] = async x => { const a = x.ctx.approved; if (!a) throw new Error("no approved document"); const md = readFileSync(st.file(a.artifact, a.version, "doc.md")!, "utf8"), title = docTitle(md, st.get(a.artifact)!.title); const out = join(x.dir, "exports"); mkdirSync(out, { recursive: true });
     // the PDF is the previewed page printed, or nothing (with the reason) when it could not show the document's text
     const pdf = await docPdf(d.dataDir, md, title);
+    if (x.cancelled() || !engine.owns(x)) throw new Error("export owner ended");
     const bodies: Record<string, any> = { md, html: mdToDocHtml(md, title), docx: toDocx(md, title), ...(pdf.pdf ? { pdf: pdf.pdf } : {}) };
     for (const [ext, body] of Object.entries(bodies)) writeFileSync(join(out, `${a.artifact}-v${a.version}.${ext}`), body);
+    if (!pdf.pdf) rmSync(join(out, `${a.artifact}-v${a.version}.pdf`), { force: true }); // an earlier export's PDF is not this one
     x.ctx.exports = Object.keys(bodies); x.ctx.exportWarnings = pdf.warning ? [pdf.warning] : []; x.rn.note = `exported ${Object.keys(bodies).join(", ")}${pdf.pdf ? "" : " (no PDF: see the export warning)"}`; return "ok";
   };
   const safePlan = (p: any) => {

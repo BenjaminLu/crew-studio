@@ -3,14 +3,14 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Type1 fonts). The PDF is now the previewed page printed by the page renderer and must show the document's own
 // words; without a renderer a lossy PDF is never written (the reason is returned instead); Word gets East Asian
 // font and language hints.   bun tests/doc-pdf-cjk.ts
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 let pass = 0, fail = 0;
 const ok = (c: boolean, name: string, extra = "") => { if (c) { pass++; console.log(`  ok    ${name}`); } else { fail++; console.log(`  FAIL  ${name} ${extra}`); } };
-const { docLang, mdToDocHtml, pdfProbe, pdfShows, pdfText, toDocx, toPdf } = await import("../src/docrender");
-const { docPdf } = await import("../src/docpdf");
+const { docLang, mdToDocHtml, pdfCovers, pdfProbe, pdfShows, pdfText, toDocx, toPdf } = await import("../src/docrender");
+const { cleanDocPdfWork, docPdf } = await import("../src/docpdf");
 const { renderEnv } = await import("../src/render");
 const data = mkdtempSync(join(tmpdir(), "crew-doc-pdf-cjk-"));
 const GUIDE = "# money-kit 專案上手指南\n\nmoney-kit 是小型 TypeScript 函式庫，以整數「分」處理金額。\n\n## 執行測試\n\n| 指令 | 用途 |\n| --- | --- |\n| `bun test` | 執行全部測試 |\n| `bun run lint` | 檢查風格規則 |\n\n1. **建立分支：**使用 `feature/<名稱>`。\n\n```\nbun test  # 全部測試\n```\n";
@@ -42,14 +42,30 @@ try {
     ok(!!r.pdf && /\/MediaBox\s*\[\s*0 0 59[45](\.\d+)? 84[12](\.\d+)?\s*\]/.test(r.pdf.toString("latin1")), "pages are A4");
     const l = await docPdf(data, LATIN, "Offsite plan");
     ok(l.via === "browser" && !!l.pdf && pdfShows(l.pdf, "Offsite plan"), "a Latin document is printed the same way");
+    // shaped and non-Latin scripts read back reordered, as ligature NULs or with look-alike letters: still printed
+    const SCRIPTS: Record<string, string> = { ru: "Руководство для новых сотрудников", he: "מדריך קליטה לעובדים חדשים", ar: "دليل الموظفين الجدد", hi: "नए कर्मचारियों के लिए मार्गदर्शिका", th: "คู่มือสำหรับพนักงานใหม่", el: "Οδηγός για νέους υπαλλήλους", ko: "신입 사원 안내서" };
+    const printed = await Promise.all(Object.entries(SCRIPTS).map(async ([k, h]) => [k, await docPdf(data, `# ${h}\n\n${h}.\n`, h)] as const));
+    for (const [k, r] of printed) ok(r.via === "browser" && !!r.pdf && !r.warning, `a ${k} document is printed by the page renderer (its heading passes the tolerant check)`, JSON.stringify((r as any).warning));
+    // a timed-out print is a renderer failure, not a missing renderer
+    const restore = env({ CREW_PDF_TIMEOUT_MS: "1" });
+    try { const t = await docPdf(data, GUIDE, "x"); ok(t.pdf === null && /could not print it: timed out/.test(t.warning) && !/install it from Doctor/.test(t.warning), "a print that fails says so, without telling the captain to install the renderer", t.warning ?? ""); }
+    finally { restore(); }
   }
+
+  // ---------- the tolerant check still refuses stand-in text ----------
+  const qs = toPdf("# ??? ??? ???\n\n???? ???\n", "x").pdf;
+  ok(!pdfCovers(qs, "專案上手指南", "# 專案上手指南\n").ok && /runs of "\?"/.test(pdfCovers(qs, "專案上手指南", "# 專案上手指南\n").why ?? ""), 'a PDF of "?" runs fails the browser check even before the letter count');
+  ok(!pdfCovers(toPdf("# Something else entirely\n", "x").pdf, "專案上手指南").ok, "a PDF that lacks the heading's letters fails the browser check");
+  ok(pdfCovers(toPdf("# What??? Really\n", "x").pdf, "What??? Really", "# What??? Really\n").ok, 'a "???" the document itself has is not a stand-in');
+  mkdirSync(join(data, "work", "docpdf-left"), { recursive: true }); mkdirSync(join(data, "work", "keep"), { recursive: true }); cleanDocPdfWork(data);
+  ok(!existsSync(join(data, "work", "docpdf-left")) && existsSync(join(data, "work", "keep")), "print folders a stopped Studio left behind are removed on start; nothing else is");
 
   // ---------- no renderer: never a "?" PDF ----------
   for (const [label, vars] of [["no node", { CREW_NODE_BIN: "/nonexistent/node", CREW_RENDER_STUB: undefined }], ["the test renderer", { CREW_RENDER_STUB: "1" }]] as const) {
     const restore = env(vars as any);
     try {
       const r = await docPdf(data, GUIDE, "money-kit 專案上手指南");
-      ok(r.pdf === null && /PDF not exported/.test(r.warning ?? "") && /page renderer/.test(r.warning ?? "") && /Doctor/.test(r.warning ?? "") && /Word/.test(r.warning ?? ""), `${label}: a CJK document gets no PDF and a warning naming the missing renderer`, JSON.stringify(r.warning));
+      ok(r.pdf === null && /PDF not exported/.test(r.warning ?? "") && /page renderer.*not installed here; install it from Doctor/.test(r.warning ?? "") && /Word/.test(r.warning ?? ""),`${label}: a CJK document gets no PDF and a warning naming the missing renderer`, JSON.stringify(r.warning));
       const l = await docPdf(data, LATIN, "Offsite plan");
       ok(l.via === "builtin" && !!l.pdf && pdfShows(l.pdf, "Offsite plan") && !l.warning, `${label}: a Latin document still gets the built-in PDF`);
     } finally { restore(); }

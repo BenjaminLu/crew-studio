@@ -200,7 +200,7 @@ export function toPdf(md: string, title: string): { pdf: Buffer; lossy: boolean 
 
 // ---------- PDF text (the export check) ----------
 type CMap = { bytes: number; map: Map<number, string> };
-const utf16 = (hex: string) => { const b = Buffer.from(hex.replace(/\s+/g, ""), "hex"); let t = ""; for (let i = 0; i + 1 < b.length; i += 2) t += String.fromCharCode(b.readUInt16BE(i)); return t; };
+const utf16 = (hex: string) => { const b = Buffer.from(hex.replace(/\s+/g, ""), "hex"); let t = ""; for (let i = 0; i + 1 < b.length; i += 2) t += String.fromCharCode(b.readUInt16BE(i)); return t.replace(/^﻿/, ""); };
 function parseCMap(src: string): CMap {
   const map = new Map<number, string>(); const cs = /begincodespacerange\s*<([0-9a-fA-F]+)>/.exec(src); const bytes = cs ? cs[1].length / 2 : 2;
   for (const blk of src.matchAll(/beginbfchar([\s\S]*?)endbfchar/g)) for (const m of blk[1].matchAll(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]*)>/g)) map.set(parseInt(m[1], 16), utf16(m[2]));
@@ -248,5 +248,18 @@ export function pdfText(pdf: Buffer): string {
 }
 /** The words an exported PDF must show: the document's first heading (or first block), as rendered. */
 export function pdfProbe(md: string): string { const bl = parseBlocks(md); const b = bl.find((x) => x.kind === "h") ?? bl.find((x) => x.kind !== "hr"); return b ? inlines(b.text).map((r) => r.text).join("").trim().slice(0, 60) : ""; }
-/** Whether a PDF shows the probe text (whitespace ignored: a heading may wrap or be split into runs). */
+/** Whether a PDF shows the probe text exactly and in order (whitespace ignored: a heading may wrap or be split
+ *  into runs). The check for the built-in writer, whose strings are the text itself. */
 export const pdfShows = (pdf: Buffer, probe: string) => { const squash = (s: string) => s.normalize("NFKC").replace(/\s+/g, ""); return squash(pdfText(pdf)).includes(squash(probe)); };
+/** The tolerant check for a PDF a browser printed, whose ToUnicode maps serve search, not round trips: shaped
+ *  scripts come back reordered (Hebrew, Arabic, Hindi), as ligature NULs (Arabic, Thai) or with a look-alike
+ *  letter (Russian к as ĸ). So at least half of the heading's distinct letters (after NFKC, which folds Arabic
+ *  presentation forms) appear anywhere in the text, and no "???" run or U+FFFD the document itself lacks stands in
+ *  for text (the R-073 failure). */
+export function pdfCovers(pdf: Buffer, probe: string, md = ""): { ok: boolean; why?: string } {
+  const text = pdfText(pdf).normalize("NFKC"), squash = (s: string) => s.replace(/\s+/g, "");
+  if (text.includes("�") && !md.includes("�")) return { ok: false, why: "it shows replacement characters (U+FFFD) for text" };
+  if (/\?{3,}/.test(squash(text)) && !/\?{3,}/.test(squash(md))) return { ok: false, why: 'it shows runs of "?" in place of text' };
+  const want = [...new Set([...probe.normalize("NFKC")].filter((c) => /[\p{L}\p{N}]/u.test(c)))], have = want.filter((c) => text.includes(c)).length;
+  return have * 2 >= want.length ? { ok: true } : { ok: false, why: `it shows ${have} of the ${want.length} letters of the heading "${probe.slice(0, 40)}"` };
+}

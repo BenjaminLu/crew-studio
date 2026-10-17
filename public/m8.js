@@ -47,7 +47,17 @@ function viewDoc(id) {
   const a = d.artifact, last = d.versions.at(-1), prev = d.versions.at(-2);
   const open = last.notes.filter((x) => x.status === "open").length;
   const bad = d.gates.filter((g) => g.state === "fail");
-  const exp = (f, label) => h("a", { class: "btn", href: `/api/docs/${a.id}/v/${last.n}/export?format=${f}`, download: "" }, icon("download", "ic sm"), label);
+  const exp = (f, label) => h("a", { class: "btn", href: `/api/docs/${a.id}/v/${last.n}/export?format=${f}`, download: "", onclick: f === "pdf" ? pdfExport : undefined }, icon("download", "ic sm"), label);
+  // a PDF can be refused (the text did not print faithfully): fetch it, and show the reason instead of saving an error
+  async function pdfExport(e) {
+    e.preventDefault(); const btn = e.currentTarget; if (btn.dataset.busy) return; btn.dataset.busy = "1";
+    try {
+      const r = await fetch(btn.href, { cache: "no-store" });
+      if (!r.ok) { let why = ""; try { why = (await r.json()).error; } catch {} return toast(why || T(`PDF export failed (${r.status})`, `PDF 匯出失敗（${r.status}）`)); }
+      const url = URL.createObjectURL(await r.blob()), dl = h("a", { href: url, download: /filename="([^"]+)"/.exec(r.headers.get("content-disposition") ?? "")?.[1] ?? `${a.id}-v${last.n}.pdf`, style: "display:none" });
+      document.body.append(dl); dl.click(); dl.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
+    } catch (err) { toast(String(err?.message ?? err)); } finally { delete btn.dataset.busy; }
+  }
   return h("div", { class: "page" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, h("a", { href: "#/docs", class: "a3-back" }, T("Documents", "文件")), " · ", a.title),
       h("p", { class: "run-s", style: "font-size:13px" }, vb(last.status), h("span", { class: "vbadge" }, `v${last.n}`), h("span", {}, by(last.createdBy)), open ? h("span", {}, T(`${open} open notes`, `${open} 個未解決標註`)) : null, h("span", { class: "faint" }, ago(last.createdAt)))),
