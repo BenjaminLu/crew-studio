@@ -21,6 +21,21 @@
 - `studio_answer_agent_question`: answer an agent's question; escalate only with a reason.
 - `studio_operating_rules`, `studio_list_workflows`, `studio_list_projects`, `studio_work_status`: read state.
 - `studio_propose_work` and the staffing tools: proposals the captain approves on a card.
+- `studio_workflow_draft_contract` lists the skill library (`library`: id, version, description, fits);
+  `studio_draft_workflow` and `studio_update_workflow_staffing` take a node's `skills` as ordered library ids.
+
+## Skills
+
+- A node runs its role skill first, then its library skills in the order listed. Pick library skills by their
+  description and fits (node kinds, role words, outputs); two or three focused skills beat a long list.
+- Studio ships a built-in library (Library → Skills, source "Built in"). The captain adds their own there with
+  Import skills: a folder holding a `SKILL.md`, a skills home (`~/.claude/skills` or `~/.codex/skills`) or a
+  public https git URL. In the workflow editor, a node's Skills panel has the same Import skills action.
+- An imported skill named like a built-in one becomes the captain's next version of it; a Studio update never
+  replaces it.
+- Changing the skills of a staffed workflow's node makes a new workflow version, so its crew is approved again: the
+  keep-crew card lists each node's skill changes.
+- A skill is text only. It never changes a node's tools, sandbox, network or credentials.
 
 ## Tests
 

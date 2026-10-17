@@ -6,7 +6,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // the run page's step showing name@v1. 1440 and 390, light and dark, no sideways scroll.
 //                                                             node tests/agent-skills-ui.mjs
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -65,6 +65,8 @@ const importFolder = async (p, path) => { await p.click('[data-import-kind="fold
   return done ? await p.textContent("[data-import-msg]") : null; };
 const selectNode = async (p, id) => { await p.focus(`[data-node="${id}"]`); await p.keyboard.press("Enter"); await p.waitForSelector(`.rt-panel [data-node-skills="${id}"]`, { timeout: 8000 }).catch(() => {}); };
 const order = (p) => p.$$eval("[data-node-skill]", (els) => els.map((e) => e.dataset.nodeSkill)).catch(() => []);
+/** turn a library skill on in the node panel: suggested skills are listed first, the rest under "Other skills" */
+const turnOn = async (p, id) => { await p.evaluate(() => document.querySelectorAll(".rt-panel .rt-skill-more").forEach((d) => { d.open = true; })).catch(() => {}); await p.click(`[data-skill-add="${id}"]`); };
 let runId = null;
 try {
   { const ctx = await browser.newContext({ viewport: { width: 1440, height: 1200 }, colorScheme: "light" }); const p = safe(await ctx.newPage());
@@ -108,8 +110,8 @@ try {
     await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="plan"]').catch(() => {});
     await selectNode(p, "plan");
     const v0 = (await (await fetch(`${base}/api/wf/code-firstmate`)).json()).def.version;
-    await p.selectOption("[data-skill-pick]", "alpha"); await p.click("[data-skill-on]");
-    await p.selectOption("[data-skill-pick]", "beta"); await p.click("[data-skill-on]");
+    await turnOn(p, "alpha");
+    await turnOn(p, "beta");
     const o1 = await order(p);
     await p.click('[data-skill-up="beta"]'); const o2 = await order(p);
     await p.fill("[data-save-note]", "skills on plan"); await p.click("[data-save]");
@@ -133,13 +135,13 @@ try {
     ok(up && upText.includes("plan: beta@v1, alpha@v2") && after2.version === after.version + 1, "moving to v2 in the editor is a new workflow version", upText);
     // done 6 in the panel
     await selectNode(p, "plan");
-    await p.selectOption("[data-skill-pick]", "greedy"); await p.click("[data-skill-on]");
+    await turnOn(p, "greedy");
     const ign = await wait(p, '[data-skill-ignored="greedy"]') ? await p.textContent('[data-skill-ignored="greedy"]') : "";
     ok(/allowed-tools/.test(ign) && /network/.test(ign) && /ignored/i.test(ign) && /tools/.test(ign) && /sandbox/.test(ign), "a skill cannot grant tools: the node panel says its request was ignored", ign);
     await p.click('[data-skill-off="greedy"]');
     ok(JSON.stringify(await order(p)) === '["beta","alpha"]', "turning a skill off removes it from the node's list");
     // r3: the wording (no "frontmatter"; the size and the ignored request in plain words)
-    await p.selectOption("[data-skill-pick]", "greedy"); await p.click("[data-skill-on]");
+    await turnOn(p, "greedy");
     const ign2 = await p.textContent('[data-skill-ignored="greedy"]'); const size2 = await p.textContent("[data-skill-size]");
     ok(ign2.includes("This skill asked for allowed-tools and network. Studio ignored the request: a skill is text only and never changes tools, sandbox, network or credentials.") && /^Skill text on this node: \d+ B of 96 KB$/.test(size2.trim())
       && !/frontmatter/i.test(await p.textContent("main")), "the panel's words: the ignored request and the skill text size, no 'frontmatter'", JSON.stringify([ign2, size2]));
@@ -151,7 +153,7 @@ try {
       "the Skills page's words: the size in bytes, 'not versioned' for a role with no version, no 'frontmatter'", await p.textContent('[data-skill="delta"] [data-skill-size]'));
     await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('[data-editor="code-firstmate"] [data-node="plan"]').catch(() => {});
     await p.click('[data-view-toggle="detail"]'); await selectNode(p, "plan");
-    await p.selectOption("[data-skill-pick]", "delta"); await p.click("[data-skill-on]"); await p.click("[data-save]"); await wait(p, '[data-diff-k="skills"]');
+    await turnOn(p, "delta"); await p.click("[data-save]"); await wait(p, '[data-diff-k="skills"]');
     writeFileSync(join(delta, "SKILL.md"), md("delta", "Delta: say what changed first", "DELTA TWO"));
     await p.goto(`${base}/#/library/skills`); await importFolder(p, delta);
     await p.waitForFunction(() => document.querySelector('[data-skill="delta"] [data-skill-version]')?.textContent.trim() === "v2", null, { timeout: 8000 }).catch(() => {});
@@ -161,6 +163,36 @@ try {
     const stepOk = await wait(p, '[data-step-skills="spec"]', 30000);
     ok(stepOk && (await p.textContent('[data-step-skills="spec"]')).includes("plain-writing@v1"), "the step shows name@v1 on the run page", stepOk ? await p.textContent('[data-step-skills="spec"]') : "no step");
     await p.evaluate(async (id) => fetch(`/api/wruns/${id}/cancel`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), runId);
+    // the built-in library in the node panel (captain: "這裡沒有多個skill可以選"): every skill with its description and fit, the reviewer's suggestions first
+    await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('[data-editor="code-firstmate"] [data-view-toggle="detail"]').catch(() => {});
+    await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="review"]').catch(() => {});
+    await selectNode(p, "review");
+    const avail = await p.evaluate(() => { const rows = [...document.querySelectorAll('[data-node-skills="review"] [data-skill-avail]')];
+      return { ids: rows.map((r) => r.dataset.skillAvail), sugg: rows.filter((r) => r.dataset.suggested).map((r) => r.dataset.skillAvail), described: rows.filter((r) => r.querySelector("[data-skill-desc]")?.textContent.trim() && r.querySelector("[data-skill-fit]")).length,
+        firstOther: rows.findIndex((r) => !r.dataset.suggested), lastSugg: rows.map((r) => !!r.dataset.suggested).lastIndexOf(true), folded: rows.filter((r) => !r.dataset.suggested).every((r) => r.closest(".rt-skill-more")) }; }).catch(() => ({}));
+    ok(avail.ids?.length >= 10 && ["code-review", "security-review", "visual-design-review"].every((s) => avail.sugg.includes(s)) && !avail.sugg.includes("film-direction") && avail.lastSugg < avail.firstOther && avail.described >= 10,
+      "the review node's panel lists the library with descriptions and fit, the reviewer's suggestions first", JSON.stringify(avail));
+    ok(avail.folded && /Other skills/.test(await p.textContent('[data-node-skills="review"] .rt-skill-more summary')), "the other skills wait under Other skills", JSON.stringify(avail));
+    // two library skills on the node, reordered, saved: the new version keeps that order
+    const rv0 = (await (await fetch(`${base}/api/wf/code-firstmate`)).json()).def.version;
+    const pre = await order(p); await turnOn(p, "code-review"); await turnOn(p, "security-review"); await p.click('[data-skill-up="security-review"]');
+    const ro = await order(p); const want = [...pre, "security-review", "code-review"];
+    await p.fill("[data-save-note]", "review skills"); await p.click("[data-save]"); await wait(p, '[data-diff-k="skills"]');
+    const rdef = (await (await fetch(`${base}/api/wf/code-firstmate`)).json()).def;
+    const rpins = rdef.nodes.find((n) => n.id === "review").skills ?? [];
+    ok(JSON.stringify(ro) === JSON.stringify(want) && rdef.version === rv0 + 1 && JSON.stringify(rpins.map((s) => s.id)) === JSON.stringify(want) && rpins.slice(-2).every((s) => s.v === 1),
+      "pinning two library skills on a node and reordering them persists the order in a new version", JSON.stringify({ ro, want, v: rdef.version, rv0 }));
+    // Import skills from the node panel: the import dialog, opened on the skills homes; the imported skill is then in the panel's list
+    mk(join(home, ".claude", "skills", "home-two"), { "SKILL.md": md("home-two", "A second skill in the claude skills home", "HOME TWO") });
+    if (!(await p.$('.rt-panel [data-node-skills="review"]'))) await selectNode(p, "review"); // Enter on the selected node would deselect it
+    await p.click('[data-node-skills="review"] [data-skill-import]');
+    const dlg = await wait(p, '[data-skill-import-dialog] [data-home-import="claude/home-two"]');
+    await p.click('[data-skill-import-dialog] [data-home-import="claude/home-two"]');
+    const imported = await p.waitForFunction(() => document.querySelector("[data-skill-import-dialog] [data-import-msg]")?.dataset.state === "ok", null, { timeout: IMPORT_WAIT_MS }).then(() => true, () => false);
+    await p.click("[data-skill-import-close]");
+    const gone = !(await p.$("[data-skill-import-dialog]")); await p.evaluate(() => document.querySelectorAll(".rt-panel .rt-skill-more").forEach((d) => { d.open = true; })).catch(() => {}); const listed = await wait(p, '[data-node-skills="review"] [data-skill-avail="home-two"]');
+    ok(dlg && imported && gone && listed, "Import skills in the node panel imports from ~/.claude/skills and lists the skill in the panel", JSON.stringify({ dlg, imported, gone, listed }));
+    rmSync(join(home, ".claude", "skills", "home-two"), { recursive: true, force: true }); // the captures below show the home with one skill
     await ctx.close(); }
   // done 8 (r3): every state the test reaches, at 1440 and 390, light and dark: agent-skills-<state>-<w>-<scheme>.png
   // a full page: at 1440 the page scrolls inside #main, so the viewport grows to the content for the capture, then goes back
@@ -182,7 +214,7 @@ try {
     covered[state] = { fab, prob, hit: overlap(fab, prob) };
     await p.locator(".rt-panel").screenshot({ path: join(shots, `agent-skills-${state}-${width}-${scheme}.png`) }).catch((e) => console.log(`  (panel shot: ${String(e.message).split("\n")[0]})`));
     await p.setViewportSize({ width, height: 900 }); };
-  const boxes = (p) => p.$$eval('[data-node-skills="plan"] .rt-skill-btn, [data-node-skills="plan"] [data-skill-on]', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return { k: Object.keys(e.dataset)[0] || e.textContent, w: Math.round(r.width), h: Math.round(r.height) }; })).catch(() => []);
+  const boxes = (p) => p.$$eval('[data-node-skills="plan"] .rt-skill-btn', (els) => els.filter((e) => e.getClientRects().length).map((e) => { const r = e.getBoundingClientRect(); return { k: Object.keys(e.dataset)[0] || e.textContent, w: Math.round(r.width), h: Math.round(r.height) }; })).catch(() => []);
   for (const width of [1440, 390]) for (const scheme of ["light", "dark"]) {
     const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: scheme }); const p = safe(await ctx.newPage()); p.on("pageerror", (e) => errors.push(e.message));
     const tag = `${width} ${scheme}`;
@@ -225,13 +257,13 @@ try {
     ok(dis.d === true && dis.a === "true" && /\bbtn\b/.test(dis.cls) && !/\bghost\b/.test(dis.cls), `the first row's up arrow is a disabled bordered button with aria-disabled at ${tag}`, JSON.stringify(dis));
     if (width === 390) { const b = await boxes(p);
       ok(b.length >= 10 && b.every((x) => x.w >= 44 && x.h >= 44), `at 390 every skills control (arrows, turn off, use v2, turn on) is at least 44×44`, JSON.stringify(b)); }
-    await p.selectOption("[data-skill-pick]", "greedy"); await p.click("[data-skill-on]"); // shows the ignored note too (not saved)
+    await turnOn(p, "greedy"); // shows the ignored note too (not saved)
     await shotPanel(p, "panel", width, scheme);
     const fits = await p.$eval('.rt-panel [data-node-skills="plan"]', (el) => { const r = el.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth + 1; }).catch(() => false);
     ok(fits && await noHScroll(p), `the node panel's skills at ${tag}: inside the page, no sideways scroll`);
     // a save over the per-node cap: refused with the total and the cap, shown in the panel
     const vBefore = (await (await fetch(`${base}/api/wf/code-firstmate`)).json()).def.version;
-    await p.selectOption("[data-skill-pick]", "big-a"); await p.click("[data-skill-on]"); await p.selectOption("[data-skill-pick]", "big-b"); await p.click("[data-skill-on]");
+    await turnOn(p, "big-a"); await turnOn(p, "big-b");
     await p.click("[data-save]"); await p.waitForFunction(() => /the cap is 96 KB/.test(document.querySelector(".rt-panel")?.textContent || ""), null, { timeout: 8000 }).catch(() => {});
     // scrolled to the end (the page and the panel), the floating firstmate button covers no part of the refusal
     await p.evaluate(() => { const pn = document.querySelector(".rt-panel"); if (pn) { pn.scrollTop = 1e9; pn.scrollIntoView({ block: "end" }); } }); // the panel scrolled to its end, its end at the bottom of the view

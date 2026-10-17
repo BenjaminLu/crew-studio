@@ -142,7 +142,7 @@ export class Skills {
   library(): LibSkill[] {
     this.seed(); const r = this.libRoot(); if (!existsSync(r)) return [];
     return readdirSync(r).filter((d) => SAFE.test(d)).sort().flatMap((id) => { const idx = this.libIndex(id); const cur = idx.at(-1); if (!cur) return [];
-      return [{ id, name: cur.name, description: cur.description, source: cur.source, sourceKind: cur.sourceKind, current: cur.n, sha256: cur.sha256, bytes: cur.bytes, files: cur.files, skipped: cur.skipped, ignored: cur.ignored,
+      return [{ id, name: cur.name, description: cur.description, fits: cur.fits ?? BUILTIN_FITS[id] ?? null, source: cur.source, sourceKind: cur.sourceKind, current: cur.n, sha256: cur.sha256, bytes: cur.bytes, files: cur.files, skipped: cur.skipped, ignored: cur.ignored,
         versions: idx.map((v) => ({ n: v.n, sha256: v.sha256, bytes: v.bytes, ignored: v.ignored, createdAt: v.createdAt, by: v.by })) }]; });
   }
   /** What a pin needs to be checked: the version's hash and the size of the text it adds to a prompt. */
@@ -222,10 +222,14 @@ export class Skills {
     const description = typeof fm.description === "string" ? fm.description.trim().slice(0, 1000) : "";
     const ignored = Object.keys(fm).filter((k) => !INFO_KEYS.has(k));
     const fileHashes = files.sort().map((f) => `${f}\0${sha(readFileSync(join(stage, "files", f)))}`);
+    const fits = readFits(fm.metadata);
     const rec: LibVersion = { n: 0, sha256: sha(text), filesSha256: sha(fileHashes.join("\n")), bytes: Buffer.byteLength(sp.body.trim()), files, skipped: skipped.filter((r) => !/^SKILL\.md:/.test(r)), ignored, name: id, description,
-      source: meta.source, sourceKind: meta.sourceKind, createdAt: new Date().toISOString(), by: meta.by };
+      ...(fits ? { fits } : {}), source: meta.source, sourceKind: meta.sourceKind, createdAt: new Date().toISOString(), by: meta.by };
     const idx = this.libIndex(id); const last = idx.at(-1);
-    if (last && last.source !== rec.source) throw new SkillImportError(`a skill named ${id} already comes from ${last.sourceKind === "builtin" ? last.source : `another source (${last.sourceKind})`}; rename this one in its frontmatter`);
+    // the captain's own copy of a built-in skill (imported under the same name) is the captain's edit: its next version.
+    // From then on the built-in never adds a version over it (seed skips it), so a pack update never overwrites the captain's text.
+    const captainOverBuiltin = last?.sourceKind === "builtin" && meta.sourceKind !== "builtin";
+    if (last && last.source !== rec.source && !captainOverBuiltin) throw new SkillImportError(`a skill named ${id} already comes from ${last.sourceKind === "builtin" ? last.source : `another source (${last.sourceKind})`}; rename this one in its frontmatter`);
     if (last && last.sha256 === rec.sha256 && last.filesSha256 === rec.filesSha256) return { skill: this.library().find((s) => s.id === id)!, version: last, created: false };
     rec.n = (last?.n ?? 0) + 1;
     const d = this.libDir(id); mkdirSync(d, { recursive: true });
@@ -240,6 +244,9 @@ export class Skills {
     for (const f of bundledList("packs/")) {
       const m = /^packs\/([a-z0-9-]+)\/skills\/([a-z0-9][a-z0-9-]*)\/SKILL\.md$/.exec(f); if (!m) continue;
       const text = bundledBytes(f)?.toString("utf8"); if (text == null) continue;
+      // the captain imported their own version of this skill: it stays current, the built-in never adds a version over it
+      const latest = (() => { try { return JSON.parse(readFileSync(join(this.libDir(m[2]), "index.json"), "utf8")).at(-1); } catch { return null; } })();
+      if (latest && latest.sourceKind !== "builtin") continue;
       const stage = join(this.libRoot(), `.stage-${randomBytes(6).toString("hex")}`); mkdirSync(join(stage, "files"), { recursive: true });
       try {
         const files: string[] = [];
@@ -277,13 +284,37 @@ export function insertRule(text: string, section: string | undefined, rule: stri
 
 
 // ---------- the skill library: types, caps, frontmatter, the import's checks ----------
-export type LibVersion = { n: number; sha256: string; filesSha256: string; bytes: number; files: string[]; skipped: string[]; ignored: string[]; name: string; description: string;
+export type LibVersion = { n: number; sha256: string; filesSha256: string; bytes: number; files: string[]; skipped: string[]; ignored: string[]; name: string; description: string; fits?: SkillFits;
   source: string; sourceKind: "folder" | "home" | "git" | "builtin"; createdAt: string; by: string };
-export type LibSkill = { id: string; name: string; description: string; source: string; sourceKind: LibVersion["sourceKind"]; current: number; sha256: string; bytes: number; files: string[]; skipped: string[]; ignored: string[];
+export type LibSkill = { id: string; name: string; description: string; fits: SkillFits | null; source: string; sourceKind: LibVersion["sourceKind"]; current: number; sha256: string; bytes: number; files: string[]; skipped: string[]; ignored: string[];
   versions: { n: number; sha256: string; bytes: number; ignored: string[]; createdAt: string; by: string }[] };
 /** An agent node's enabled skill: pinned by version and hash. */
 export type SkillPin = { id: string; v: number; sha256: string };
 export class SkillImportError extends Error {}
+/**
+ * Where a library skill fits (its frontmatter's metadata.fits): the node kinds it may go on, words naming the roles it
+ * suits (matched against a node's role id, label and role skill, and the node id) and the outputs it suits (args.format).
+ * The editor and Firstmate sort and suggest by it; Firstmate's drafts and node configuration refuse a kind outside `kinds`.
+ */
+export type SkillFits = { kinds?: string[]; roles?: string[]; formats?: string[] };
+/** fits for built-in skills whose text predates metadata.fits (new text would be a new version under every existing pin) */
+const BUILTIN_FITS: Record<string, SkillFits> = { "plain-writing": { kinds: ["agent", "loop"], roles: ["writer", "coordinator", "reviewer", "author"], formats: ["document"] } };
+const FIT_WORD = /^[a-z][a-z0-9-]{0,30}$/;
+function readFits(meta: unknown): SkillFits | null {
+  const f = meta && typeof meta === "object" ? (meta as any).fits : null; if (!f || typeof f !== "object" || Array.isArray(f)) return null;
+  const list = (v: unknown) => Array.isArray(v) ? [...new Set(v.filter((x) => typeof x === "string").map((x) => x.trim().toLowerCase()).filter((x) => FIT_WORD.test(x)))].slice(0, 12) : [];
+  const out: SkillFits = {}; for (const k of ["kinds", "roles", "formats"] as const) { const l = list(f[k]); if (l.length) out[k] = l; }
+  return Object.keys(out).length ? out : null;
+}
+/** How well a library skill fits a node: 0 the node's kind is outside the skill's kinds, 1 it may go there, 2 or more
+ *  suggested (one per matching role word, one for a matching output). public/skills.js crewSkillFit is the same rule. */
+export function skillFit(fits: SkillFits | null | undefined, n: { kind: string; id?: string; role?: { id?: string; label?: string; skill?: string } | null; format?: string | null }): number {
+  if (!fits) return 1;
+  if (fits.kinds?.length && !fits.kinds.includes(n.kind)) return 0;
+  // a role word matches a word of the node's role or id that it starts, or that starts it ("reviewer" and a "review" node)
+  const words = [n.role?.id, n.role?.label, n.role?.skill, n.id].filter(Boolean).join(" ").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4);
+  return 1 + (fits.roles ?? []).filter((r) => words.some((w) => w.startsWith(r) || r.startsWith(w))).length + (n.format && fits.formats?.includes(n.format) ? 1 : 0);
+}
 /** skillMd: one SKILL.md; folder/files/depth: everything an import copies; node: the enabled skills' text on one agent node. */
 export const SKILL_CAPS = { skillMd: 64 * 1024, folder: 1024 * 1024, files: 100, depth: 4, node: SKILL_NODE_CAP };
 export const SKILL_HOMES = [{ id: "claude", label: "~/.claude/skills", rel: ".claude/skills" }, { id: "codex", label: "~/.codex/skills", rel: ".codex/skills" }];

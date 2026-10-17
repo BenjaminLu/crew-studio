@@ -9,12 +9,13 @@ import { ArtifactStore } from "../src/artifacts";
 import { createFileOrg } from "../src/fileorg";
 import { Lane } from "../src/recipes";
 import { createRuntime } from "../src/runtime";
+import { Skills } from "../src/skills";
 import { StudioLog } from "../src/rawlog";
 import { dryStubProvider } from "../src/readiness/dryrun";
 for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) delete process.env[k];
 
 export type RepairRef = { draft: string; nonce: string };
-export function gateHarness(o: { login?: Record<string, "logged-in" | "not-logged-in" | "unknown">; ask?: (text: string, ref: RepairRef) => boolean; createRuntime?: (d: any) => any; repairWaitMs?: number } = {}) {
+export function gateHarness(o: { skills?: boolean; login?: Record<string, "logged-in" | "not-logged-in" | "unknown">; ask?: (text: string, ref: RepairRef) => boolean; createRuntime?: (d: any) => any; repairWaitMs?: number } = {}) {
   const data = mkdtempSync(join(tmpdir(), "crew-gate-")); const fm = join(data, "protected-fm"); mkdirSync(fm, { recursive: true });
   const log = new StudioLog(join(data, "events.jsonl")), store = new ArtifactStore(data), lane = new Lane(data, store);
   const agents = new Agents(data, () => "http://127.0.0.1:1");
@@ -28,7 +29,7 @@ export function gateHarness(o: { login?: Record<string, "logged-in" | "not-logge
   let ask = o.ask ?? ((t: string) => { asks.push(t); return true; });
   const make = o.createRuntime ?? createRuntime;
   const rt: any = createRuntime({ dataDir: data, agents, provider: () => live, defaultProvider: () => ({ provider: "codex", model: "fixture-model" }), selectProvider: async () => live, log, send() {}, fmRoot: fm, protectedRoots: [fm],
-    m3: { store, lane, runs: null }, fileorg, docs: {}, studioUrl: () => "http://127.0.0.1:1",
+    m3: { store, lane, runs: null }, fileorg, docs: {}, studioUrl: () => "http://127.0.0.1:1", ...(o.skills ? { skills: new Skills(data, { list: () => [], get: () => null, sourceSkill: () => null } as any) } : {}),
     readiness: { logins: async () => { loginReads++; return { ...login }; }, knownProviders: () => ["claude", "codex"], repoRoot: join(import.meta.dir, ".."), ask: (t: string, ref: RepairRef) => ask(t, ref), smokePollMs: 40, repairWaitMs: o.repairWaitMs, createRuntimeOverride: make } } as any);
   const who = { kind: "desktop" };
   const api = async (path: string, body?: any) => { const u = new URL("http://t.local" + path); const r: Response | null = await rt.handle(new Request(u, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }), u, who, body !== undefined); const j = r ? await r.json().catch(() => ({})) : {}; return { status: r?.status ?? 404, body: j as any }; };

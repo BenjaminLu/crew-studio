@@ -444,6 +444,8 @@ runtime.engine.deps.roleSkill = (wf, role, ref) => {
   return { text: cur.text, version: cur.n };
 };
 const skillRoutes = createSkillRoutes({ skills: improve.skills, defs: () => runtime.defs, session: sessionToken(DATA), log: studioLog });
+// the built-in skill library (packs/*/skills) is in data/skills/_library from startup, on a new data folder and an existing one
+try { improve.skills.library(); } catch (e: any) { console.warn(`crew-studio: the built-in skill library could not be seeded: ${e?.message ?? e}`); }
 m7.packs.nativePublished = () => packGenesis.pg.publishedSources();
 m7.useNativeGenesis((description, id, by) => { const task = packGenesis.pg.start(description, id, by); return { id: task.id, task, native: true, link: `#/tasks/${task.id}` }; });
 ctx.packs = { draft: (description: string) => m7.genesis(description, undefined, "captain (chat)") };

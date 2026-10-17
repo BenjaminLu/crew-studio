@@ -470,15 +470,30 @@ function buildEditor(ed) {
     const move = (i, d) => { const next = list.slice(); const [x] = next.splice(i, 1); next.splice(i + d, 0, x); set(next); say(T(`${x.id} moved ${d < 0 ? "up" : "down"}`, `${x.id} 已${d < 0 ? "上移" : "下移"}`)); };
     const verOf = (p) => lib.get(p.id)?.versions?.find((v) => v.n === p.v);
     const total = list.reduce((a, p) => a + (verOf(p)?.bytes || 0), 0);
-    const off = [...lib.values()].filter((x) => !list.some((p) => p.id === x.id));
-    const pick = h("select", { class: "select", "aria-label": T("Skill to turn on", "要開啟的技能"), "data-skill-pick": "1" }, off.map((x) => h("option", { value: x.id }, `${x.name} · v${x.current}`)));
+    // the library skills not on this node, the ones whose fits name this node's role or output first (src/skills.ts skillFit)
+    const roleId = n.role ?? (n.kind === "loop" ? n.args?.coordinator ?? "coordinator" : undefined); const role = ed.def.roles.find((r) => r.id === roleId);
+    const ctx = { kind: n.kind, id: n.id, role: role ? { id: role.id, label: role.label, skill: role.skill } : null, format: n.args?.format ?? null };
+    const avail = [...lib.values()].filter((x) => !list.some((p) => p.id === x.id)).map((x) => ({ x, fit: window.crewSkillFit(x.fits, ctx) })).filter((a) => a.fit > 0)
+      .sort((a, b) => (b.fit >= 2) - (a.fit >= 2) || b.fit - a.fit || a.x.id.localeCompare(b.x.id));
+    const turnOn = (x) => { const cur = x.versions.find((v) => v.n === x.current); set([...list, { id: x.id, v: cur.n, sha256: cur.sha256 }]); say(T(`${x.id} turned on`, `已開啟 ${x.id}`)); };
+    const availRow = ({ x, fit }) => h("li", { class: "rt-skill-avail", "data-skill-avail": x.id, "data-suggested": fit >= 2 ? "1" : null },
+      h("div", { class: "rt-skill-h" }, h("b", {}, x.name), h("span", { class: "faint" }, `v${x.current}`),
+        fit >= 2 ? h("span", { class: "badge run", "data-skill-suggested": x.id }, T("Suggested", "建議")) : null,
+        h("span", { class: "rt-skill-ctl" }, h("button", { class: "btn sm rt-skill-btn", type: "button", "data-skill-add": x.id, "aria-label": T(`Turn on ${x.id}`, `開啟 ${x.id}`), onclick: () => turnOn(x) }, T("Turn on", "開啟")))),
+      x.description ? h("p", { class: "rt-skill-desc", "data-skill-desc": x.id }, x.description) : null,
+      h("p", { class: "rt-skill-fit faint", "data-skill-fit": x.id }, window.crewSkillFitText(x.fits)));
+    const sugg = avail.filter((a) => a.fit >= 2), rest = avail.filter((a) => a.fit < 2);
+    const importBtn = h("button", { class: "btn sm rt-skill-btn", type: "button", "data-skill-import": "1", onclick: (e) => window.crewSkillImport(async () => {
+      try { const r = await api("/api/skills"); ed.lib = r.skills || []; ed.skillCap = r.caps?.node || ed.skillCap; drawPanel(); } catch {} }, e.currentTarget) }, icon("download", "ic sm"), T("Import skills", "匯入技能"));
     // a disabled arrow keeps its place, looks disabled and says so to a screen reader
     const arrow = (p, i, d) => { const dis = d < 0 ? i === 0 : i === list.length - 1;
       return h("button", { class: "btn sm rt-skill-btn", type: "button", "aria-label": T(`Move ${p.id} ${d < 0 ? "up" : "down"}`, `${d < 0 ? "上移" : "下移"} ${p.id}`), [d < 0 ? "data-skill-up" : "data-skill-down"]: p.id,
         disabled: dis || null, "aria-disabled": dis ? "true" : null, onclick: () => move(i, d) }, d < 0 ? "↑" : "↓"); };
     return h("div", { class: "rt-skills", "data-node-skills": n.id }, h("h4", {}, T("Skills", "技能")),
       h("p", { class: "faint sk-note" }, T("The role skill comes first, then these, in this order. A skill is text only: it never changes this node's tools, sandbox, network or credentials.", "角色技能排第一，接著依序是這些。技能只是文字，不會改變這個節點的工具、沙箱、網路或憑證。")),
-      list.length ? h("ol", { class: "rt-skill-list" }, list.map((p, i) => { const s = lib.get(p.id); const v = verOf(p); const newer = s && s.current > p.v ? s.current : null;
+      h("h5", { class: "rt-skill-sub" }, T(`On this node, in order (${list.length})`, `這個節點使用中，依序（${list.length}）`)),
+      !list.length ? h("p", { class: "faint sk-note", "data-skill-empty": "node" }, T("No library skill on this node: it runs with its role skill only.", "這個節點沒有開啟技能庫的技能：只用角色技能。")) : null,
+      list.length ? h("ol", { class: "rt-skill-list", "data-skill-pinned": "1" }, list.map((p, i) => { const s = lib.get(p.id); const v = verOf(p); const newer = s && s.current > p.v ? s.current : null;
         return h("li", { class: "rt-skill", "data-node-skill": p.id },
           h("div", { class: "rt-skill-h" }, h("span", { class: "rt-skill-n", "aria-hidden": "true" }, `${i + 1}.`), h("b", {}, `${p.id}@v${p.v}`),
             h("span", { class: "rt-skill-ctl" }, arrow(p, i, -1), arrow(p, i, 1),
@@ -488,8 +503,13 @@ function buildEditor(ed) {
             h("span", { class: "faint" }, T("Saving makes a new workflow version.", "儲存會產生新的流程版本。"))) : null,
           !s ? h("p", { class: "sk-ignored" }, T("Not in this Studio's library.", "這個 Studio 的技能庫裡沒有它。")) : null,
           v?.ignored?.length ? h("p", { class: "sk-ignored", "data-skill-ignored": p.id }, icon("shield", "ic sm"), h("span", {}, window.crewSkillsIgnored(v.ignored))) : null); })) : null,
-      off.length ? h("div", { class: "rt-row rt-skill-add" }, pick, h("button", { class: "btn sm rt-skill-btn", type: "button", "data-skill-on": "1", onclick: () => { const x = lib.get(pick.value); if (!x) return; const cur = x.versions.find((v) => v.n === x.current); set([...list, { id: x.id, v: cur.n, sha256: cur.sha256 }]); say(T(`${x.id} turned on`, `已開啟 ${x.id}`)); } }, T("Turn on", "開啟")))
-        : h("p", { class: "faint sk-note" }, lib.size ? T("Every library skill is on.", "技能庫的技能都已開啟。") : h("a", { href: "#/library/skills" }, T("Import a skill in Library → Skills", "到成品庫 → 技能匯入"))),
+      h("h5", { class: "rt-skill-sub" }, T(`Library (${avail.length} to turn on)`, `技能庫（可開啟 ${avail.length} 個）`)),
+      !lib.size ? h("p", { class: "faint sk-note", "data-skill-empty": "library" }, T("The skill library is empty. Import skills: from your Claude skills (~/.claude/skills), a folder or a git URL.", "技能庫是空的。匯入技能：從你的 Claude 技能（~/.claude/skills）、資料夾或 Git 網址。"))
+        : !avail.length ? h("p", { class: "faint sk-note", "data-skill-empty": "all-on" }, T("Every library skill that fits this node is on.", "適合這個節點的技能都已開啟。")) : null,
+      sugg.length ? h("ul", { class: "rt-skill-list rt-skill-avail-list", "data-skill-suggestions": "1", "aria-label": T("Suggested for this node", "建議這個節點使用") }, sugg.map(availRow)) : null,
+      rest.length ? (sugg.length ? h("details", { class: "rt-skill-more", open: ed.skillMore || null, ontoggle: (e) => { ed.skillMore = e.target.open; } }, h("summary", {}, T(`Other skills (${rest.length})`, `其他技能（${rest.length}）`)),
+        h("ul", { class: "rt-skill-list rt-skill-avail-list" }, rest.map(availRow))) : h("ul", { class: "rt-skill-list rt-skill-avail-list" }, rest.map(availRow))) : null,
+      h("div", { class: "rt-row rt-skill-add" }, importBtn, h("a", { class: "faint", href: "#/library/skills" }, T("Library → Skills", "成品庫 → 技能"))),
       list.length ? h("div", { class: `faint rt-skill-size${ed.skillCap && total > ed.skillCap ? " over" : ""}`, "data-skill-size": "1" },
         T(`Skill text on this node: ${window.crewSkillsSize(total)} of ${window.crewSkillsSize(ed.skillCap || 0)}`, `這個節點的技能文字：${window.crewSkillsSize(total)} / ${window.crewSkillsSize(ed.skillCap || 0)}`)) : null);
   };

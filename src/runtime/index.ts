@@ -113,6 +113,7 @@ export function classifyIntent(defs: WorkflowDefs, text: string, sensitive: { gl
 export function createRuntime(d: RuntimeDeps) {
   const defs = new WorkflowDefs(d.dataDir);
   if (d.skills) defs.skillInfo = (id, v) => d.skills!.pinInfo(id, v);
+  if (d.skills) defs.skillLibrary = () => d.skills!.library();
   const engine = new Engine({ dataDir: d.dataDir, agents: d.agents, provider: d.provider, defaultProvider: d.defaultProvider, selectProvider: d.selectProvider, log: d.log, send: d.send, skillText: skillTextFor(d.fmRoot), store: d.store, protectedRoots: d.protectedRoots ?? [d.fmRoot], library: d.skills ?? null }, defs);
   const projects = new Projects(d.dataDir);
   installHelloWeb(engine,d.m3?.store??new ArtifactStore(d.dataDir));

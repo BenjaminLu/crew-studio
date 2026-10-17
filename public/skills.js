@@ -25,6 +25,33 @@ const andList = (xs) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join("
 const ignoredText = (keys) => T(`This skill asked for ${andList(keys)}. Studio ignored the request: a skill is text only and never changes tools, sandbox, network or credentials.`,
   `這個技能要求了 ${keys.join("、")}。Studio 忽略了這個要求：技能只是文字，不會改變工具、沙箱、網路或憑證。`);
 window.crewSkillsSize = size; window.crewSkillsCount = count; window.crewSkillsIgnored = ignoredText;
+/** How well a skill fits a node (src/skills.ts skillFit, the same rule): 0 not this kind of node, 1 may go here, 2+ suggested. */
+window.crewSkillFit = (fits, n) => {
+  if (!fits) return 1;
+  if (fits.kinds?.length && !fits.kinds.includes(n.kind)) return 0;
+  const words = [n.role?.id, n.role?.label, n.role?.skill, n.id].filter(Boolean).join(" ").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4);
+  return 1 + (fits.roles || []).filter((r) => words.some((w) => w.startsWith(r) || r.startsWith(w))).length + (n.format && fits.formats?.includes(n.format) ? 1 : 0);
+};
+/** "For reviewer, judge · web output" — where a skill fits, in words */
+const fitText = (fits) => { const r = fits?.roles || [], f = fits?.formats || []; if (!r.length && !f.length) return T("For any agent node", "適用：任何 agent 節點");
+  return T(`For ${r.length ? r.join(", ") : "any role"}${f.length ? ` · ${f.join(", ")} output` : ""}`, `適用：${r.length ? r.join("、") : "任何角色"}${f.length ? `・產出 ${f.join("、")}` : ""}`); };
+window.crewSkillFitText = fitText;
+/** The workflow editor's Import skills: the same import form in a dialog, opened on the skills homes (~/.claude/skills);
+ *  after each import onImported() reloads the editor's library. Closing returns focus to the button that opened it. */
+window.crewSkillImport = (onImported, opener) => {
+  const root = document.getElementById("modalRoot"); const was = SK.kind;
+  SK.kind = "home"; SK.msg = null; SK.onImported = onImported;
+  const box = h("div", { class: "sk-dialog-body" });
+  const redraw = () => { box.replaceChildren(importCard(redraw)); hydrateIcons(box); };
+  const close = () => { root.replaceChildren(); SK.kind = was; SK.msg = null; SK.onImported = null; opener?.focus?.(); };
+  const back = h("div", { class: "modal-back", onclick: (e) => { if (e.target === back) close(); } },
+    h("div", { class: "modal sk-dialog", role: "dialog", "aria-modal": "true", "aria-label": T("Import skills", "匯入技能"), "data-skill-import-dialog": "1" }, box,
+      h("div", { class: "actions", style: "justify-content:flex-end" }, h("button", { class: "btn", type: "button", "data-skill-import-close": "1", onclick: close }, T("Done", "完成")))));
+  back.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  root.replaceChildren(back); redraw(); back.querySelector("[data-import-kind]")?.focus();
+  // the homes are read again on every open: a skill the captain just added to ~/.claude/skills is listed
+  getJ("/api/skills/homes").then((hm) => { SK.homes = hm.homes || []; if (back.isConnected) redraw(); }).catch(() => {});
+};
 
 function tabs(cur) {
   return h("div", { class: "seg sk-tabs", role: "group", "aria-label": T("Library section", "成品庫分區") },
@@ -32,38 +59,40 @@ function tabs(cur) {
       h("button", { type: "button", "aria-pressed": String(cur === k), "data-lib-tab": k, onclick: () => { location.hash = href; } }, h("span", { class: "keep" }, T(en, tw)))));
 }
 
-async function doImport(body) {
-  SK.busy = true; SK.msg = { state: "busy", text: T("Importing…", "匯入中…") }; soft();
+async function doImport(body, redraw = soft) {
+  SK.busy = true; SK.msg = { state: "busy", text: T("Importing…", "匯入中…") }; redraw();
   const r = await postJ("/api/skills/import", body);
   SK.busy = false;
   if (r.error) SK.msg = { state: "error", text: r.error };
   else SK.msg = { state: "ok", text: r.created ? T(`${r.skill.id} v${r.version.n} imported`, `已匯入 ${r.skill.id} v${r.version.n}`) : T(`${r.skill.id} is unchanged: still v${r.version.n}`, `${r.skill.id} 沒有變更：仍是 v${r.version.n}`) };
-  await load(); soft();
+  await load(); if (!r.error) await SK.onImported?.(); redraw();
 }
 
-function importCard() {
+/** The import form. redraw: the Skills page renders the route; the editor's Import skills dialog redraws only itself. */
+function importCard(redraw = render) {
+  const go = (body) => doImport(body, redraw === render ? soft : redraw);
   // the result (a refusal and its reason) sits right under the field it is about
   const msg = h("div", { class: `sk-msg ${SK.msg?.state || ""}`, role: "status", "aria-live": "polite", "data-import-msg": "1", "data-state": SK.msg?.state || "" }, SK.msg?.text || "");
   const seg = h("div", { class: "seg", role: "group", "aria-label": T("Import from", "匯入來源") },
-    [["folder", "Folder", "資料夾"], ["home", "Skills home", "技能目錄"], ["git", "Git URL", "Git 網址"]].map(([k, en, tw]) =>
-      h("button", { type: "button", "aria-pressed": String(SK.kind === k), "data-import-kind": k, onclick: () => { SK.kind = k; SK.msg = null; render(); } }, h("span", { class: "keep" }, T(en, tw)))));
+    [["folder", "Folder", "資料夾"], ["home", "From your Claude skills", "從你的 Claude 技能"], ["git", "Git URL", "Git 網址"]].map(([k, en, tw]) =>
+      h("button", { type: "button", "aria-pressed": String(SK.kind === k), "data-import-kind": k, onclick: () => { SK.kind = k; SK.msg = null; redraw(); } }, h("span", { class: "keep" }, T(en, tw)))));
   let body;
   if (SK.kind === "folder") {
     const path = h("input", { class: "input", placeholder: "/Users/you/skills/plain-writing", "aria-label": T("Folder path", "資料夾路徑"), "data-import-path": "1", value: SK.path, oninput: (e) => { SK.path = e.target.value; } });
     body = h("div", { class: "sk-form" }, h("label", { class: "sk-field" }, h("span", {}, T("A folder that holds a SKILL.md (absolute path)", "放著 SKILL.md 的資料夾（絕對路徑）")), path), msg,
-      h("div", { class: "actions" }, h("button", { class: "btn primary", "data-import-go": "1", disabled: SK.busy || null, onclick: () => doImport({ kind: "folder", path: path.value.trim() }) }, icon("download", "ic sm"), T("Import", "匯入"))));
+      h("div", { class: "actions" }, h("button", { class: "btn primary", "data-import-go": "1", disabled: SK.busy || null, onclick: () => go({ kind: "folder", path: path.value.trim() }) }, icon("download", "ic sm"), T("Import", "匯入"))));
   } else if (SK.kind === "home") {
     body = h("div", { class: "sk-homes" }, (SK.homes || []).map((hm) => h("div", { class: "sk-home", "data-home": hm.id },
       h("div", { class: "sk-home-h" }, h("b", { class: "mono" }, hm.label), h("span", { class: "faint" }, hm.exists ? T(count(hm.skills.length, "skill"), `${hm.skills.length} 個技能`) : T("not on this Mac", "這台 Mac 上沒有"))),
       hm.skills.length ? h("div", { class: "sk-home-list" }, hm.skills.map((s) => h("div", { class: "sk-home-row" },
         h("div", { class: "sk-home-t" }, h("b", {}, s.name), s.description ? h("span", { class: "faint" }, s.description) : null),
-        h("button", { class: "btn sm", "data-home-import": `${hm.id}/${s.dir}`, disabled: SK.busy || null, onclick: () => doImport({ kind: "home", home: hm.id, name: s.dir }) }, T("Import", "匯入"))))) : null)), msg);
+        h("button", { class: "btn sm", "data-home-import": `${hm.id}/${s.dir}`, disabled: SK.busy || null, onclick: () => go({ kind: "home", home: hm.id, name: s.dir }) }, T("Import", "匯入"))))) : null)), msg);
   } else {
     const url = h("input", { class: "input", placeholder: "https://github.com/owner/skills", "aria-label": T("Repository URL", "儲存庫網址"), "data-import-url": "1", value: SK.url, oninput: (e) => { SK.url = e.target.value; } });
     const sub = h("input", { class: "input", placeholder: T("folder inside it (optional)", "裡面的資料夾（可留空）"), "aria-label": T("Folder in the repository", "儲存庫內的資料夾"), "data-import-sub": "1", value: SK.sub, oninput: (e) => { SK.sub = e.target.value; } });
     body = h("div", { class: "sk-form" }, h("label", { class: "sk-field" }, h("span", {}, T("A public repository over https. No credentials: Studio clones it read-only, with no hooks.", "公開的 https 儲存庫。不帶任何憑證：Studio 唯讀複製，不執行任何 hook。")), url),
       h("label", { class: "sk-field" }, h("span", {}, T("Folder that holds the SKILL.md", "放 SKILL.md 的資料夾")), sub), msg,
-      h("div", { class: "actions" }, h("button", { class: "btn primary", "data-import-go": "1", disabled: SK.busy || null, onclick: () => doImport({ kind: "git", url: url.value.trim(), path: sub.value.trim() || undefined }) }, icon("download", "ic sm"), T("Import", "匯入"))));
+      h("div", { class: "actions" }, h("button", { class: "btn primary", "data-import-go": "1", disabled: SK.busy || null, onclick: () => go({ kind: "git", url: url.value.trim(), path: sub.value.trim() || undefined }) }, icon("download", "ic sm"), T("Import", "匯入"))));
   }
   return h("section", { class: "card sk-import", "aria-label": T("Import a skill", "匯入技能") },
     h("div", { class: "sk-import-h" }, h("h2", {}, T("Import a skill", "匯入技能")), seg),
@@ -79,6 +108,7 @@ function skillRow(s) {
       h("span", { class: `badge ${s.sourceKind === "builtin" ? "run" : ""}`, "data-skill-source": "1" }, kindLabel(s.sourceKind))),
     s.description ? h("p", { class: "sk-desc" }, s.description) : null,
     h("dl", { class: "sk-meta" },
+      h("dt", {}, T("Fits", "適用")), h("dd", { "data-skill-fits": "1" }, fitText(s.fits)),
       h("dt", {}, T("Source", "來源")), h("dd", { class: "mono" }, s.source),
       h("dt", {}, "sha256"), h("dd", { class: "mono", title: s.sha256, "data-skill-sha": "1" }, short(s.sha256)),
       h("dt", {}, T("Size", "大小")), h("dd", { "data-skill-size": "1" }, `${sizeWords(s.bytes)}${s.files?.length ? T(` · ${count(s.files.length, "supporting file")}`, ` · ${s.files.length} 個附加檔`) : ""}`),

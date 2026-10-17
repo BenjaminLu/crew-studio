@@ -69,6 +69,8 @@ export type DefDiff = {
 };
 /** What a skill pin is checked against: the library's record of that version (null when it has none). */
 export type SkillInfo = (id: string, v: number) => { sha256: string; bytes: number } | null;
+/** The skill library as Firstmate chooses from it: each skill's current version, what it is for and where it fits. */
+export type SkillCatalogue = () => { id: string; current: number; sha256: string; description: string; fits: { kinds?: string[]; roles?: string[]; formats?: string[] } | null }[];
 export const SKILL_NODE_CAP = 96 * 1024; // the enabled skills' text on one agent node (src/skills.ts SKILL_CAPS.node)
 /** The one size format for skill text, in the server's messages and in the page (public/skills.js keeps the same rule):
  *  under 1 KB in bytes, under 10 KB with one decimal, else whole KB. "120 KB", "5.7 KB", "19 B". */
@@ -217,6 +219,8 @@ export class WorkflowDefs {
   readonly dir: string;
   /** the skill library's record of a pinned version (set by the runtime): saves check every pin and the per-node cap against it */
   skillInfo: SkillInfo | null = null;
+  /** the library itself (set by the runtime): Firstmate drafts and configures node skills by id from it */
+  skillLibrary: SkillCatalogue | null = null;
   constructor(readonly dataDir: string, readonly bundled = defaultDefinitions, public known?: (ref: string) => boolean, public runners?: () => Set<string>) {
     this.dir = join(dataDir, "workflows"); mkdirSync(this.dir, { recursive: true });
     this.seed();
