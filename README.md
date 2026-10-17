@@ -12,7 +12,12 @@ curl -fsSL https://bun.com/install | bash
 cd crew-studio
 ```
 
-No `npm install`, database, firstmate v1 checkout or manual hook setup is needed for the first example below.
+When `bun install` is needed:
+
+- **To run Studio from source** (`bun run launch`): not needed. On the first start Bun fetches the one pinned package Studio imports (`opencc-js`) into its own cache, so that first start needs the network once.
+- **To build the binary** (`bun run build`) **or run the test suite** (`bun run test`): run `bun install` once in the clone first. It installs the pinned packages in `package.json`: `opencc-js`, which the build bundles, and the film toolchain (`hyperframes`, `gsap`, `node`) the tests and the coffee film use. Without it the build stops with `Could not resolve: "opencc-js/t2cn"`.
+
+No database, firstmate v1 checkout, `.env` file or manual hook setup is needed for the first example below.
 
 ## Start
 
@@ -22,9 +27,16 @@ bun run launch
 
 This starts Studio (or finds the verified running instance) and requests its authenticated Board in your browser. Keep this process running. No second terminal or copied session link is required. A browser accepting the request does not prove a visible window; retry with `bun run launch --browser Safari` if your default browser has no normal window.
 
-On the Board, connect Codex using your ChatGPT account, or sign in to Claude, then continue with Studio’s own Firstmate in its private workspace on the host you pick (Codex and Claude sit side by side; a Claude Firstmate signs in with the crew token and never falls back to Codex). No existing terminal session, repository, AGENTS file or handoff is required. The coffee-shop guided workflow starts with your explicit brief; Firstmate can propose native work, but only your approval of its dispatch card starts the pinned workflow. Account readiness and native worker/tool readiness remain separate.
+What you see first:
 
-Source and binary default to `~/.crew-studio/data`. Existing checkout-local stores are not moved or read automatically; select one explicitly with `CREW_DATA`. `bun run start` remains a headless server command.
+1. **The Board**, empty: no Tasks and no decisions waiting.
+2. **Settings → Doctor** (the gear) lists what this Mac has. Basic pages, workflows, cards and the Library need nothing else. A Claude or Codex CLI that is installed but signed out shows **Not signed in**; GitHub shows off until a project is connected. Nothing is installed or signed in for you.
+3. **Workflows** lists the shipped workflows, each with a line on what it makes. The Doctor page names what each optional install adds (the film renderer for Video, Git, Node.js and Python 3 for coding).
+4. **Firstmate**: connect Codex using your ChatGPT account, or sign in to Claude, then talk to Studio's own Firstmate in its private workspace on the host you pick (Codex and Claude sit side by side; a Claude Firstmate signs in with the crew token and never falls back to Codex). No existing terminal session, repository, AGENTS file or handoff is required. Firstmate can propose work, but only your approval of its dispatch card starts a Task. Account readiness and native worker/tool readiness remain separate.
+
+Two workflows run with no model account: **Hello Crew Studio** (below) and **File organization**. Leave its folder blank and Studio makes a sample folder in its own data to tidy; it never touches your files unless you name a folder.
+
+Source and binary default to `~/.crew-studio/data`. Existing checkout-local stores are not moved or read automatically; select one explicitly with `CREW_DATA`. `bun run start` remains a headless server command. The startup competition example is not in a fresh catalog; `CREW_EXAMPLE_WORKFLOWS=1` adds it.
 
 ## Your first workflow
 
@@ -44,6 +56,7 @@ Create your first website—no model account needed:
 
 - **AI and coding:** configure a provider in **Settings → Doctor**. Coding also needs Git, Node.js, Python 3 and a supported OS sandbox; the current check sandbox uses macOS `sandbox-exec`.
 - **Screenshots and video:** optionally install Playwright/Chromium and ffmpeg.
-- **Standalone binary:** `bun run build`, then run `./dist/crew-studio`; open its session separately with `./dist/crew-studio launch`.
+- **Standalone binary:** `bun install` (once), `bun run build`, then run `./dist/crew-studio`; open its session separately with `./dist/crew-studio launch`. The binary takes its configuration from environment variables only; it never reads a `.env` or `bunfig.toml` from the folder it starts in.
+- **Acceptance on a clean Mac:** `bun run acceptance:sandboxed` runs every workflow offline with the OS sandbox on, an empty `HOME` and no tool cache, and lists which workflow needs which install ([acceptance](docs/acceptance.md)).
 
 See [setup, dependencies, hooks and reference](docs/setup-and-reference.md) for installation commands and optional integrations, or [architecture](docs/architecture.md) for how Studio works.

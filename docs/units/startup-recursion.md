@@ -1,5 +1,6 @@
 # Startup recursion
 
+- An example, not a default: a fresh data folder does not seed it (it is not in a new captain's catalog and cannot catch a website request); `CREW_EXAMPLE_WORKFLOWS=1` seeds it. An install that already has it keeps it unchanged and startable, and its Tasks keep running (src/runtime/defs.ts `EXAMPLE_DEFAULTS`).
 - Native workflow: `startup-recursion` v1; no Git repository, install, PR, image or video needed.
 - Claude is the founder: complete proposal, then explicit responses to previous feedback.
 - Codex is the judge: constructive critique, score 0–100, `ready` or `revise`.

@@ -4,11 +4,23 @@ Build and run AI workflows, coordinate parallel agents, review changes, and appr
 
 ## Fresh clone: prerequisites and first start
 
-A source checkout needs **Git to clone and Bun to run/build**. The current root
-`package.json` declares no npm dependencies or install scripts: **do not run
-`npm install` or `bun install` as a prerequisite for basic Studio**. Optional tools
-below are separate installs. A compiled Studio binary needs neither Bun nor Node
-to serve its basic pages.
+A source checkout needs **Git to clone and Bun to run/build**. When to run
+`bun install` (never `npm install`):
+
+- **Running from source** (`bun run launch`, `bun run start`): not needed. Studio
+  imports one pinned package (`opencc-js`); on the first start Bun fetches it into
+  its own cache, so that first start needs the network once.
+- **Building the binary** (`bun run build`) or **running the tests**
+  (`bun run test`): run `bun install` once in the clone first. It installs the
+  pinned `package.json` packages: `opencc-js`, which the build bundles, and the
+  film toolchain (`hyperframes`, `gsap`, `node`) used by the tests and the coffee
+  film. There are no install scripts. Without it the build stops with
+  `Could not resolve: "opencc-js/t2cn". Maybe you need to "bun install"?`.
+
+Optional tools below are separate installs. A compiled Studio binary needs
+neither Bun nor Node to serve its basic pages, and takes its configuration from
+environment variables only: it never reads a `.env` or `bunfig.toml` from the
+folder it starts in.
 
 ### macOS quick start
 
@@ -26,18 +38,27 @@ using its Clone URL, then run these commands **from the clone's root**:
 
 ```sh
 cd crew-studio
-bun run start
-```
-
-Keep that terminal open. In a second terminal, in the same checkout, open Studio's
-authenticated browser session:
-
-```sh
 bun run launch
 ```
 
-Studio listens on `http://127.0.0.1:4210`. The `open` command establishes the local
+`launch` starts Studio (or finds the verified running instance) and requests its
+authenticated Board in your browser. Keep that terminal open; no second terminal
+is needed. (`bun run start` is the headless server alone; `bun run launch` in a
+second terminal then opens its session.)
+
+Studio listens on `http://127.0.0.1:4210`. The launch command establishes the local
 session required for writes; merely navigating to the URL is not a replacement.
+
+What a new captain sees on the first start: an empty Board; **Settings → Doctor**
+with basic web readiness ok and each optional install listed with what it adds (a
+CLI that is installed but signed out reads **Not signed in**; GitHub reads off
+until a project with GitHub is connected); and **Workflows** with the shipped
+workflows, each with a one-line description. **Hello Crew Studio** and **File
+organization** run with no model account. Leave File organization's folder blank
+to try it on a sample folder Studio makes in its own data
+(`data/fileorg-samples`); it changes your files only in a folder you name. The
+startup competition example is not in a fresh catalog (`CREW_EXAMPLE_WORKFLOWS=1`
+seeds it).
 No firstmate v1 checkout, migrated state, `.env` file or GitHub connection is
 required. Do not set `CREW_FM_STATE` unless you explicitly want the legacy adapter.
 If port 4210 is already occupied, use the same `CREW_PORT` for **both** commands.
@@ -49,7 +70,8 @@ server and `open` commands. Run only one server against that store.
 
 | Capability | Required before use | Installation / setup |
 | --- | --- | --- |
-| Source web server or build | Bun; Git for clone | Bun command above; `git --version` |
+| Source web server | Bun; Git for clone | Bun command above; `git --version` |
+| Binary build, test suite | Bun, then `bun install` once | `bun install` in the clone |
 | Compiled binary: pages, native cards, workflows, skills, storage | Binary and supported OS | No npm packages, provider, database or v1 install |
 | Coding workflows | Git, selected authenticated provider, supported OS sandbox, Node.js for built-in script checks, Python 3 for wording checks | macOS with Homebrew: `brew install git node python`; configure one provider below |
 | Screenshot / browser acceptance | Node.js, npm, Playwright and its Chromium browser | Renderer commands below |
@@ -176,7 +198,7 @@ paired phone can see or do anything, and requests on that listener are always
 treated as a phone (a phone cannot pose as the Mac). Tailscale adds encryption
 and access away from home.
 
-**Build it yourself.** `bun run build` writes `dist/crew-studio` for this machine
+**Build it yourself.** After `bun install` (once per clone), `bun run build` writes `dist/crew-studio` for this machine
 with every web asset (fonts included, OFL) embedded; `bun run build:all` also
 cross-compiles `darwin-x64`, `linux-x64` and `windows-x64`. The binary starts its
 own helpers (`crew-studio mcp`, `crew-studio permission-mcp`), so it needs nothing
@@ -198,7 +220,8 @@ and records the answer exactly as when you click it there.
 ```sh
 bun run dev        # from a checkout: http://127.0.0.1:4210, live reload of the server (development only; the live board runs a release, see Live release)
 bun run start      # same, without watch
-bun run build      # dist/crew-studio, the single binary
+bun install        # once per clone, before build and test (pinned packages, no install scripts)
+bun run build      # dist/crew-studio, the single binary (never reads a .env or bunfig.toml from its start folder)
 bun run test       # contract, host, out-of-the-box and smoke suites (installs mocked)
 bun run test:binary  # the built binary, run with no Bun on PATH
 ```
@@ -211,14 +234,15 @@ bun run test:binary  # the built binary, run with no Bun on PATH
 | `CREW_BOARD_URL` | `http://127.0.0.1:4173` | firstmate board that records answers |
 | `CREW_BOARD_SECRET` | `~/.config/firstmate/board-<port>.secret` | the board's secret file |
 | `CREW_READONLY` | unset | `1` never sends an answer |
-| `CREW_GH` | on | `0` stops polling GitHub |
+| `CREW_GH` | on when a GitHub repository is set (`CREW_GH_REPO` or a project with GitHub) | `0` stops polling GitHub; Doctor says which of the two turned it off |
 | `CREW_GITHUB_TOKEN` / `GITHUB_TOKEN` / `GH_TOKEN` | unset | GitHub token; else one pasted in Studio (`data/github-token`, 0600); else an installed `gh`'s |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `CREW_COMPAT_BASE_URL` | unset | direct-API chat providers (or paste keys in Doctor → API keys; `data/keys.json`, 0600) |
 | `CREW_INSTALL_RUNNER` | real | `mock` records installs instead of running them (tests); `CREW_NO_REAL_INSTALL=1` refuses real installs |
 | `CREW_GH_REPO` | the firstmate checkout's GitHub origin | repository for PR and check status |
 | `CREW_RECENT_DAYS` | `3` | how far back the board lists tasks |
 | `CREW_DATA` | `~/.crew-studio/data` | Studio's own store: intents, intent links, artifacts, settings |
-| `CREW_FILE_ALLOW` | `~/Desktop/firstmate-film` | colon-separated folders artifact files may be served from |
+| `CREW_FILE_ALLOW` | the main session's project folder (`CREW_DATA/workspace`) | colon-separated folders artifact files may be served from |
+| `CREW_EXAMPLE_WORKFLOWS` | unset | `1` also seeds the example workflows (the startup competition) on a fresh data folder; an install that already has them keeps them |
 | `CREW_CHAT_PROVIDER` | `claude` | chat model provider: `claude`, `codex` (or `stub` for tests); the chat header's settings save a choice that wins |
 | `CREW_CLAUDE_MODEL` / `CREW_CODEX_MODEL` | `claude-sonnet-5-5` / codex's default | model per provider |
 | `CREW_CLAUDE_BIN` / `CREW_CODEX_BIN` | `claude` / `codex` | CLI per provider (tests point these at stubs) |
