@@ -6,6 +6,7 @@ import { taskTitle } from "../task-title";
 import { PolicyUnreadable } from "./checks";
 import { failure, fromError, type FailureCode } from "./failures";
 import {installStartupRecursion} from '../domain/startup-recursion';
+import { deliverableOf, DELIVERABLE_WORKFLOW } from "../deliverables";
 import {installReadinessViews,readinessNodes} from './readiness-view';
 import {installGitHubReviewWorkflow} from '../domain/github-review-workflow';
 import {Onboarding} from '../onboarding';
@@ -92,7 +93,10 @@ export function skillTextFor(fmRoot: string) {
 /** Which workflow an intent belongs to: keyword scores over each definition's intent block, and a door hint from the paths and words it names. */
 export function classifyIntent(defs: WorkflowDefs, text: string, sensitive: { glob: string; why: string }[] = [], oneWayWords: string[] = []) {
   const t = ` ${text.toLowerCase()} `;
+  const want = deliverableOf(text);
   const scores = defs.catalog().map((d) => { const kw: string[] = d.intent?.keywords ?? []; const hits = kw.filter((k) => new RegExp(`[^a-z0-9]${k.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}s?[^a-z0-9]`).test(t));
+    // the deliverable the request names routes it to the workflow that makes it (a shop's website goes to web-prototype)
+    if (want && DELIVERABLE_WORKFLOW[want] === d.id && !hits.length) hits.push(`deliverable:${want}`);
     return { workflow: d.id, name: d.name, score: hits.length, hits }; }).sort((a, b) => b.score - a.score);
   const paths = [...text.matchAll(/(?:^|\s|`)((?:[\w.-]+\/)+[\w.-]+|[\w-]+\.(?:sql|env|pem|key|proto|ya?ml|json|js|ts|mjs|md))(?=$|\s|`|[,.;:])/g)].map((m) => ({ path: m[1], added: 1 }));
   // words that hint at a one-way change come from policy (intake.one_way_words), not from the runtime
