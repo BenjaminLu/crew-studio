@@ -9,7 +9,7 @@ import type {Engine} from './runtime/engine';
 const ROLE_NODE='role--';
 /** The definition with one virtual agent node per role: a role's own pick is what the team gives its seat (rules applied),
  *  whether or not an agent node of that role exists (coffee-kit's reviewer and designer judge from hooks). */
-function withRoleNodes(def:any){return{...def,nodes:[...def.nodes,...def.roles.map((r:any)=>({id:ROLE_NODE+r.id,kind:'agent',label:r.label,role:r.id,mode:'role'}))]};}
+export function withRoleNodes(def:any){return{...def,nodes:[...def.nodes,...def.roles.map((r:any)=>({id:ROLE_NODE+r.id,kind:'agent',label:r.label,role:r.id,mode:'role'}))]};}
 export type CrewDraft={draft:StaffingDraft;resolution:Resolution;sources:Record<string,string>}|{missing:string[];resolution:Resolution};
 /** The staffing a team gives a staffed workflow for one project. pins: a role's skill pins and source text (the live role text). */
 export function crewStaffingDraft(def:any,team:TeamConfig,project:StaffingProject,pins:(role:any)=>{pin:Pick<StaffingRole,'skill'|'skills'>;text:string}):CrewDraft{

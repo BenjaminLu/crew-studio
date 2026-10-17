@@ -21,7 +21,7 @@ const ROADMAP = [
   { id: "remote", routes: ["remote"], m: "M2.5", en: "Phone pairing: Studio on your phone over Wi-Fi or Tailscale.", tw: "手機配對：透過 Wi-Fi 或 Tailscale 在手機上用 Studio。" },
 ];
 const LABS = new Map(ROADMAP.flatMap((r) => r.routes.map((x) => [x, r])));
-const OWNED = { project: "projects", activity: "crew", intents: "inbox", review: "runs", compare: "runs", artifact: "library", run: "runs", workflow: "workflows", flow: "workflows", settings: "settings", doctor: "settings", roadmap: "settings", task: "crew", event: "crew" };
+const OWNED = { project: "projects", activity: "crew", team: "crew", intents: "inbox", review: "runs", compare: "runs", artifact: "library", run: "runs", workflow: "workflows", flow: "workflows", settings: "settings", doctor: "settings", roadmap: "settings", task: "crew", event: "crew" };
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch {} } };
 if (/[?&]labs=1\b/.test(location.search)) store.set("crew.labs", "1");
 const labsOn = () => store.get("crew.labs") === "1";

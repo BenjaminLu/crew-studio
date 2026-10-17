@@ -47,12 +47,14 @@ import a43 from "../public/skins.js" with { type: "file" };
 import a44 from "../public/styles.css" with { type: "file" };
 import a45 from "../public/takeover.css" with { type: "file" };
 import a46 from "../public/takeover.js" with { type: "file" };
-import a47 from "../public/transcripts.css" with { type: "file" };
-import a48 from "../public/transcripts.js" with { type: "file" };
-import a49 from "../public/vendor/opencc-js-1.4.2-t2cn.min.js" with { type: "file" };
-import a50 from "../public/vendor/opencc-js-LICENSE.txt" with { type: "file" };
-import a51 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
-import a52 from "../public/workflow-overview.js" with { type: "file" };
+import a47 from "../public/team.css" with { type: "file" };
+import a48 from "../public/team.js" with { type: "file" };
+import a49 from "../public/transcripts.css" with { type: "file" };
+import a50 from "../public/transcripts.js" with { type: "file" };
+import a51 from "../public/vendor/opencc-js-1.4.2-t2cn.min.js" with { type: "file" };
+import a52 from "../public/vendor/opencc-js-LICENSE.txt" with { type: "file" };
+import a53 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
+import a54 from "../public/workflow-overview.js" with { type: "file" };
 
 export const ASSETS: Record<string, string> = {
   "/app.css": a0,
@@ -102,10 +104,12 @@ export const ASSETS: Record<string, string> = {
   "/styles.css": a44,
   "/takeover.css": a45,
   "/takeover.js": a46,
-  "/transcripts.css": a47,
-  "/transcripts.js": a48,
-  "/vendor/opencc-js-1.4.2-t2cn.min.js": a49,
-  "/vendor/opencc-js-LICENSE.txt": a50,
-  "/vendor/qrcode-1.4.4.min.js": a51,
-  "/workflow-overview.js": a52,
+  "/team.css": a47,
+  "/team.js": a48,
+  "/transcripts.css": a49,
+  "/transcripts.js": a50,
+  "/vendor/opencc-js-1.4.2-t2cn.min.js": a51,
+  "/vendor/opencc-js-LICENSE.txt": a52,
+  "/vendor/qrcode-1.4.4.min.js": a53,
+  "/workflow-overview.js": a54,
 };

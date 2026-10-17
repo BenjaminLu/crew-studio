@@ -16,6 +16,7 @@ import {CrewStore} from '../domain/crew';
 import {installCrewGuard} from '../crew-guard';
 import {installCrewStaffing} from '../crew-staffing';
 import {migrateCrew} from '../crew-migrate';
+import {crewRoutes} from '../crew-routes';
 import {installFirstmateStaffing,staffingQuotaReady,type StaffingFacts,type StaffingAdmission} from '../firstmate-staffing';
 import {installFirstmate} from "../firstmate";
 import {WorkflowDrafts,installWorkflowDraftTools,draftRoute,ownStaffingPlan,ownWorkflow,checkNodeStaffing,ownBrief} from "../workflow-drafts";
@@ -146,6 +147,7 @@ export function createRuntime(d: RuntimeDeps) {
   const crewStaffing=installCrewStaffing(engine,staffing,crewStore);
   const staffingGuard=installStaffingGuard(engine,staffing,staffingProject,staffingCapability,(def,config)=>crewStaffing.verify(def,config));
   const crewGuard=installCrewGuard(engine,crewStore);
+  const crewApi=crewRoutes({defs,store:crewStore,facts:()=>staffingCapabilities,refreshFacts:staffingFacts,library:()=>engine.skillLibrary().library()});
   /** The project's staffing from the team, when the team covers this workflow (null: the per-project staffing flow applies). */
   const teamStaffing=(def:any,projectId:string)=>{if(!staffingApplies(def))return null;const project=def.kind==='coffee-kit'?coffeeStaffingProject(projectId):staffingProject(projectId);return crewStaffing.ensure(def,project);};
   /** The Start form's readiness of an approved crew, from free probes only (the Codex probe, Claude auth status).
@@ -213,12 +215,13 @@ export function createRuntime(d: RuntimeDeps) {
   const grantNonces = new Map<string, number>();
   async function handle(req: Request, url: URL, who: { kind: string }, writing: boolean): Promise<Response | null> {
     const p = url.pathname;
-    if (!/^\/api\/(wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review)(\/|$)/.test(p)) return null;
+    if (!/^\/api\/(wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review|team)(\/|$)/.test(p)) return null;
     let b: any = {}; if (writing) { try { b = await req.json(); } catch {} }
     const by = who.kind === "phone" ? "captain (phone)" : "captain";
     if(p==='/api/github-review/scan'||p==='/api/github-review/template'||p==='/api/github-review/community'){if(req.method!=='POST'||!writing)return json({error:'Authenticated POST required'},405);if(who.kind!=='desktop')return json({error:'Confirm GitHub reviewer configuration on desktop'},403);try{return json(p.endsWith('/community')?await githubReview.community(b.project,req.signal):p.endsWith('/scan')?await githubReview.scan(b.project,b.url,req.signal):await githubReview.save(b,req.signal));}catch{return json({error:'GitHub review discovery/configuration could not be verified. Check registered project grant, PR URL and current access; no GitHub write was performed.',code:'github_review_unverified'},409);}}
     if (writing && who.kind === "phone" && !/^\/api\/scards\//.test(p)) return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
     try {
+      {const r=await crewApi(p,url,req.method,writing,b,who);if(r)return r;}
       if(p==='/api/onboarding'){
         if(who.kind!=='desktop')return json({error:'Use onboarding on the authenticated desktop'},403);
         if(!writing)return json(onboarding.view());

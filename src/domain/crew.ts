@@ -115,7 +115,8 @@ export function resolveCrew(team:Team|null,def:any,run:RunOverride={},hash:strin
   const alt=[...BUILTIN_SEATS,...Object.keys(team.seats)].map(id=>team.members[id]).find(x=>x&&!theirs.has(keyOf(x)));
   const who=seatLabel(team,target,def),me=seatLabel(team,r.seat,def);
   if(alt){const was=`${r.provider} ${r.model}`;r.provider=alt.provider;r.model=alt.model;if(r.effort===null&&alt.provider==='codex')r.effort=alt.effort;r.fields.provider=r.fields.model='team';
-   r.notes.push({en:`${me.en} would use ${was}, the same model as ${who.en}; it runs on ${alt.provider} ${alt.model} instead, so the check is a second opinion.`,zh:`${me.zh}原本會用 ${was}，跟${who.zh}同一個模型；改用 ${alt.provider} ${alt.model}，才是第二意見。`});}
+   const why=reviewing(team,r.seat,def)?{en:'so the check is a second opinion',zh:'才是第二意見'}:{en:'so the two versions differ',zh:'兩個版本才會不一樣'};
+   r.notes.push({en:`${me.en} would use ${was}, the same model as ${who.en}; it runs on ${alt.provider} ${alt.model} instead, ${why.en}.`,zh:`${me.zh}原本會用 ${was}，跟${who.zh}同一個模型；改用 ${alt.provider} ${alt.model}，${why.zh}。`});}
   else r.notes.push({en:`${me.en} uses the same model as ${who.en} (${r.provider} ${r.model}) because the team has no other model: a fresh context, not an independent opinion.`,zh:`${me.zh}跟${who.zh}用同一個模型（${r.provider} ${r.model}），因為團隊沒有別的模型：是新的脈絡，不是獨立意見。`});}
  if(team)for(const r of rows){if(!reviewing(team,r.seat,def)||r.effort===null||!r.provider)continue;if(EFFORTS.indexOf(r.effort)>=EFFORTS.indexOf('medium'))continue;const me=seatLabel(team,r.seat,def);
   r.notes.push({en:`${me.en} judges work, so it thinks at medium effort, not ${r.effort}.`,zh:`${me.zh}要審別人的成果，effort 至少 medium，不用 ${r.effort}。`});r.effort='medium';}
@@ -136,7 +137,7 @@ export type CrewChange=
  |{kind:'seat';seat:SeatDecl;member:Member}
  |{kind:'preset';preset:'save'|'balanced'|'quality'};
 export const PRESETS:Record<string,{en:string;zh:string;effort:Record<string,string>}>={
- save:{en:'Save',zh:'省錢',effort:{coordinator:'low',maker:'low','alt-maker':'low',reviewer:'medium','design-reviewer':'medium'}},
+ save:{en:'Economy',zh:'省錢',effort:{coordinator:'low',maker:'low','alt-maker':'low',reviewer:'medium','design-reviewer':'medium'}},
  balanced:{en:'Balanced',zh:'均衡',effort:{coordinator:'medium',maker:'medium','alt-maker':'medium',reviewer:'medium','design-reviewer':'medium'}},
  quality:{en:'Quality',zh:'品質',effort:{coordinator:'high',maker:'high','alt-maker':'high',reviewer:'high','design-reviewer':'high'}}};
 export function validateChange(c:any):asserts c is CrewChange{
