@@ -261,7 +261,7 @@ for(const scenario of ['explicit','fallback','invalid-explicit-fallback','missin
   await e.answer(approval,{choice:'approve',by:'captain'});
   ok(await until(()=>['succeeded','failed'].includes(e.get(recovery.proposal)!.status)),scenario+': native recovery settles');
   if(scenario==='missing'){
-   ok(e.get(recovery.proposal)!.status==='failed'&&/Recovered node role is not configured/.test(e.get(recovery.proposal)!.error??''),'missing coordinator fails closed');
+   ok(e.get(recovery.proposal)!.status==='failed'&&/The approved crew has no role for node fix of R-\d+ \(the node names no role\)/.test(e.get(recovery.proposal)!.error??''),'missing coordinator fails closed');
    ok(!e.ledger(task.id).some(v=>v.record==='staffing-upgrade')&&e.deps.staffingBinding!(task)===initialConfig.hash,'missing coordinator creates no task authority');
   }else{
    ok(e.get(recovery.proposal)!.status==='succeeded',scenario+': native loop upgrade succeeds');

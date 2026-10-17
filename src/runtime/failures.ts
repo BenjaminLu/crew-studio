@@ -192,7 +192,7 @@ export const TEXT_RULES: { re: RegExp; code: FailureCode }[] = [
   { re: /^(owner_ended|cancelled)$/, code: "transient.interrupted" },
   { re: /^(captain_confirmation_required|staffing_wait_captain)$/, code: "env.staffing" },
   { re: /^(project_required|project_ambiguous)$/, code: "invalid-input.params" },
-  { re: /^(project_unregistered|project_disabled|project_revoked|workflow_missing|draft_missing)$/, code: "invalid-input.config" },
+  { re: /^(project_unregistered|project_disabled|project_revoked|workflow_missing|draft_missing|staffing_not_applicable)$/, code: "invalid-input.config" },
   { re: /^internal_error$/, code: "internal.bug" },
   { re: /requires (local )?(ffprobe|ffmpeg|git|node|python)|\bffprobe\b.*(missing|not found)/i, code: "env.tool-missing" },
   { re: /^git (commit|push|fetch|rebase)\b|Git common directory missing|could not take the worktree|worktree of \S+ is taken/i, code: "env.repository" },
