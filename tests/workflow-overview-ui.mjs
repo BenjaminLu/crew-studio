@@ -27,7 +27,11 @@ H.stop();mkdirSync(join(H.data,'fm','state'),{recursive:true});
 const root=join(import.meta.dir,'..'),port=await freePort(),base=`http://127.0.0.1:${port}`;process.env.CREW_SESSION_TOKEN='test-session';
 const app=spawn('bun',['src/server.ts'],{cwd:root,stdio:['ignore','pipe','pipe'],env:{...process.env,CREW_DATA:H.data,CREW_PORT:String(port),CREW_CHAT_PROVIDER:'stub',CREW_GH:'0',CREW_READONLY:'1',CREW_RETRO_AUTO:'0',CREW_SESSION_TOKEN:'test-session',CREW_FM_STATE:join(H.data,'fm','state'),CREW_CLAUDE_BIN:'/nonexistent',CREW_CODEX_BIN:'/nonexistent'}});
 const shots=join(root,'tests/out/workflow-overview');mkdirSync(shots,{recursive:true});let browser;
-try{await waitUp(base,app);browser=withSession(await chromium.launch({headless:true}),base);
+try{await waitUp(base,app);
+browser=withSession(await chromium.launch({headless:true}),base);
+// A fresh data dir auto-opens the first-project guide on Board (public/onboarding.js): it holds #main's height and covers the cue.
+// This suite is about a captain past onboarding, so every page starts with the guide hidden, as Hide guide leaves it (as chat-history-ui does).
+{const nc=browser.newContext.bind(browser);browser.newContext=async o=>{const c=await nc(o);await c.addInitScript(()=>{try{localStorage.setItem('crew.onboarding.journey.dismissed.v1','1');}catch{}});return c;};}
 // Pure presentation geometry probes use real persisted native Task inputs, never authorize work.
 {
  const ctx=await browser.newContext({viewport:{width:1440,height:900}}),p=await ctx.newPage();await p.goto(base+'/#/board');await p.waitForSelector('[data-workflow-overview]');
@@ -91,7 +95,9 @@ for(const width of [1440,390,320])for(const theme of ['light','dark'])for(const 
 }
 const p=live[0].p,mutate=async(path,body)=>p.evaluate(async({path,body})=>{const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});return {status:r.status,data:await r.json()};},{path,body});
 const cueClearance=async(page,tag)=>{const result=await page.evaluate(()=>{const cue=document.querySelector('.rt-cue'),fab=document.querySelector('#chatFab');if(!cue||!fab)return {clear:false};const a=cue.getBoundingClientRect(),b=fab.getBoundingClientRect();return {clear:a.bottom<=b.top-8||a.right<=b.left-8||a.left>=b.right+8,fits:a.left>=0&&a.right<=innerWidth&&a.top>=0&&a.bottom<=innerHeight&&b.left>=0&&b.right<=innerWidth&&b.top>=0&&b.bottom<=innerHeight,rects:{cue:a.toJSON(),fab:b.toJSON()}};});ok(result.clear&&result.fits,`live cue and whole Firstmate FAB clear viewport ${tag}`,JSON.stringify(result));};
-const nativeNotice=async(v,label)=>{const r=await mutate('/api/tasks',{workflow:'code-firstmate',version:a.version,text:label,title:label});if(r.status!==200)throw new Error('Native notice fixture creation failed');await v.p.waitForSelector('.rt-cue');};
+// The fixture's 'code-firstmate' id is staffing-guarded (src/domain/staffing.ts): a new Task there needs a signed captain staffing approval.
+// The notice only needs a real native Task with a captain card, so it is created on the unguarded 'notes' fixture workflow.
+const nativeNotice=async(v,label)=>{const r=await mutate('/api/tasks',{workflow:'notes',version:c.version,text:label,title:label});if(r.status!==200)throw new Error('Native notice fixture creation failed');await v.p.waitForSelector('.rt-cue');};
 const captures=async(state)=>{for(const v of live){
  await nativeNotice(v,`Notice ${state} ${v.tag}`);
  await fullCapture(v.p,join(shots,`${v.tag}-live-${state}.png`));await v.p.evaluate(()=>document.querySelector('#workflowOverview')?.scrollIntoView({block:'start'}));await cueClearance(v.p,`${state}-middle-${v.tag}`);await v.p.screenshot({path:join(shots,`${v.tag}-live-${state}-middle.png`)});
