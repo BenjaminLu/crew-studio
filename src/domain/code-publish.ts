@@ -11,14 +11,17 @@
 //                "Open this pull request?" shows the exact title and body; only its Open answer
 //                pushes the Task branch (force-with-lease, its own branch) and opens the pull request,
 //                then waits for its required remote CI; the merge card's seven gates follow
+//                later rounds move the open pull request's head: remote-ready fills the template again at the
+//                new head and offers "Update the text" (a diff against GitHub's text); only Update edits it
 import { createHash } from "node:crypto";
 import type { Engine, X, Result } from "../runtime/engine";
 import { GitHubPrAdapter, type PrAdapter } from "../adapters/github";
 import { applyPullTemplate, discoverGitHubCommunity, type CommunityBundle, type CommunityFile } from "./github-community";
-import { needsText, parsePullTemplate, renderPullBody, templateLanguage, templateShapeProblem, SESSION_LINK, withoutSessionLinks, type TestRow } from "./pull-template";
+import { acceptanceRow, needsText, parsePullTemplate, renderPullBody, templateLanguage, templateShapeProblem, SESSION_LINK, withoutSessionLinks, type TestRow } from "./pull-template";
 import { amendmentsSection } from "../runtime/refine";
 import { OperatingRules, jobInstructions } from "../operating-rules";
 import { git } from "../git";
+import { unified } from "../diff";
 import type { AgentTool } from "../agent";
 import type { Projects } from "../doors";
 
@@ -29,7 +32,6 @@ export type PublishDeps = {
   namingCard: (x: X, a: GitHubPrAdapter, h: string) => Promise<Result>; shellOk: (x: X) => string; head: (wt: string) => string; specMd: (s: any) => string;
 };
 const digest = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
-const TEST_PATH = /(tests?\/[\w./-]+|[\w./-]+\.test\.\w+)/;
 
 export function installCodePublish(engine: Engine, d: PublishDeps) {
   const readFailed = async (x: X, phase: Phase): Promise<Result> => {
@@ -66,7 +68,7 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     if (design?.verdict === "pass") ids.design = `the designer approved the before / after captures of ${h.slice(0, 8)}`;
     else if ((scope as any)?.data?.route === "none") ids.design = `no UI path changed at ${h.slice(0, 8)}`;
     const done: string[] = x.ctx.spec?.done ?? [];
-    const rows: TestRow[] = done.map((t, i) => ({ done: t.replace(TEST_PATH, "").replace(/\(\s*\)/g, "").replace(/\s{2,}/g, " ").replace(/[\s(:,–-]+$/, "").trim() || t, test: TEST_PATH.exec(t)?.[1] ?? "—",
+    const rows: TestRow[] = done.map((t, i) => ({ ...acceptanceRow(t),
       failsOnBase: ids["fail-first"] && ff!.proves.includes(i) ? `Yes (fail-first at ${h.slice(0, 8)})` : "Not proven" }));
     return { ids, rows };
   }
@@ -224,6 +226,61 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     return d.remoteWait(x, a);
   }
 
+  /** remote-ready after a later round moved the opened pull request's head: the template filled again at the new head
+   *  (fresh test table, ticks and text), offered to the captain as a diff against the text on GitHub. Nothing on GitHub
+   *  changes without the captain's Update answer; Keep leaves the text as it is. Null: nothing to offer. */
+  async function refresh(x: X): Promise<Result | null> {
+    const p = x.ctx.prText, pr = x.ctx.pr;
+    if (!pr || pr.adapter !== "github" || p?.version !== 1 || !p.hash || !p.template) return null;
+    if ((x.ctx.prRefresh?.head ?? p.head) === pr.head) return null;
+    const phase = d.remotePhase(x); phase.assert();
+    const a = d.selectedAdapter(x); if (!(a instanceof GitHubPrAdapter)) return null;
+    const h = pr.head; if (d.head(d.shellOk(x)) !== h) return null;
+    const skip = (why: string) => { x.ctx.prRefresh = { version: 1, head: h, decided: why, card: null }; x.log(`pull request text: not refreshed at ${h.slice(0, 8)} (${why})`); x.save(); return null; };
+    let bundle: CommunityBundle;
+    try { bundle = await discoverGitHubCommunity(a, phase.signal); } catch { return skip("the template could not be read on GitHub"); }
+    phase.assert();
+    const template = bundle.pulls.find((f) => f.path === p.template.path) ?? null;
+    if (!template) return skip("the template is gone");
+    const t = await writeText(x, a, bundle, template, null, h); phase.assert();
+    if (t.missing.length) return skip("the template asks for input the evidence does not give");
+    if (t.title === pr.title && t.body === pr.body) return skip("the text is unchanged");
+    if (SESSION_LINK.test(t.title) || SESSION_LINK.test(t.body)) return skip("the text carried a session link");
+    const text = { version: 1 as const, head: h, pr: pr.id, repository: a.grant.repository, title: t.title, body: t.body, from: digest({ title: pr.title, body: pr.body }) };
+    const hash = digest(text), diff = unified(String(pr.body ?? ""), t.body, "pull request text");
+    x.ctx.prRefresh = { ...text, hash, decided: null, card: null }; x.save();
+    const c = await engine.card(x, "question", { title: `Update the text of pull request #${pr.id}?`, zhTitle: `要更新 pull request #${pr.id} 的文字嗎？`, captainOnly: true,
+      en: { why: `Later rounds moved pull request #${pr.id} to ${h.slice(0, 8)}; its text still shows the evidence of ${String(x.ctx.prText.head).slice(0, 8)}. Studio filled the template again at the new head.`, how: "Update replaces the title and text on GitHub with the new text below; Keep leaves them as they are.",
+        scope: { in: [`Edit the title and text of pull request #${pr.id}`], out: ["No push of new commits", "No merge"] } },
+      zh: { why: `後續輪次把 pull request #${pr.id} 移到 ${h.slice(0, 8)}；它的文字還是 ${String(x.ctx.prText.head).slice(0, 8)} 的證據。Studio 已在新 head 重新填好範本。`, how: "更新：用下面的新文字取代 GitHub 上的標題和內文；保留：維持原樣。",
+        scope: { in: [`修改 pull request #${pr.id} 的標題和內文`], out: ["不推送新的 commit", "不合併"] } },
+      body: `Pull request #${pr.id}: ${pr.url}\nHead: ${String(x.ctx.prText.head).slice(0, 8)} → ${h.slice(0, 8)}\n${t.title !== pr.title ? `Title: ${pr.title} → ${t.title}\n` : `Title: ${t.title} (unchanged)\n`}\nChanges to the text:\n${diff || "(title only)"}\nNew text:\n${t.body}`,
+      links: pr.url ? [{ label: `Pull request #${pr.id}`, href: pr.url }] : [],
+      options: [{ id: "update-text", label: "Update the pull request text", labelZh: "更新 pull request 文字", primary: true }, { id: "keep-text", label: "Keep the current text", labelZh: "保留目前的文字" }] });
+    x.ctx.prRefresh.card = c.id; engine.record(x, "pr-text-refresh", { head: h, data: { version: 1, card: c.id, hash, pr: pr.id, repository: a.grant.repository } } as any); x.save();
+    return { wait: true };
+  }
+
+  /** The captain's answer on the refresh card: Update PATCHes exactly the shown title and text (the head stays), Keep records the choice. */
+  async function refreshAnswer(x: X, card: any): Promise<Result> {
+    const r = x.ctx.prRefresh, pr = x.ctx.pr, choice = card.answer?.choice, trusted = engine.trusted(x.run.id);
+    const { hash, decided: _d, card: _c, ...text } = r ?? {};
+    if (!r || r.card !== card.id || !card.captainOnly || digest(text) !== hash || !trusted.ok
+      || !trusted.entries.some((e) => e.record === "pr-text-refresh" && e.data?.card === card.id && e.data?.hash === hash)
+      || !trusted.entries.some((e) => e.record === "card-answer" && e.data?.card === card.id && e.data?.choice === choice)) throw new Error("the captain's pull request text answer no longer matches its card");
+    const again = async (): Promise<Result> => { const out = await engine.actions["remote.ready"](x); return typeof out === "string" ? { outcome: out } : out; };
+    if (choice === "keep-text") { x.ctx.prRefresh = { ...r, decided: "keep" }; x.save(); return again(); }
+    // the pull request moved or its text changed since the card: a fresh offer at the current head
+    if (!pr || pr.id !== r.pr || pr.head !== r.head || digest({ title: pr.title, body: pr.body }) !== r.from) { x.ctx.prRefresh = null; x.save(); return again(); }
+    const phase = d.remotePhase(x); phase.assert();
+    const a = d.selectedAdapter(x); if (!(a instanceof GitHubPrAdapter) || a.grant.repository !== r.repository) throw new Error("the pull request text update needs the project's approved GitHub grant");
+    const published = await a.update({ ...pr, title: r.title, body: r.body }, pr.head, x.dir, phase.signal, phase.assert); phase.assert();
+    x.ctx.pr = published; x.ctx.prRefresh = { ...r, decided: "update" };
+    engine.record(x, "pr-text-updated", { head: pr.head, data: { version: 1, card: card.id, hash, pr: pr.id, repository: r.repository } } as any);
+    x.rn.note = `pull request #${pr.id} text updated at ${pr.head.slice(0, 8)}`; x.save();
+    return again();
+  }
+
   /** remote-ready's answers while its pull request is not open yet. */
   const answer = async (x: X, card: any): Promise<Result> => {
     const choice = card.answer?.choice ?? "close", wrap = (r: Result | string): Result => typeof r === "string" ? { outcome: r } : r;
@@ -243,5 +300,5 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     if (choice === "open") return wrap(await open(x, card));
     return { outcome: choice };
   };
-  return { defer, publish, answer };
+  return { defer, publish, answer, refresh, refreshAnswer };
 }

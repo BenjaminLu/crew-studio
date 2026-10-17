@@ -42,6 +42,36 @@ export function parsePullTemplate(text: string): TemplateSection[] {
 /** A section the writer must fill: it is not only checkboxes or a Studio-filled test table. */
 export const needsText = (s: TemplateSection) => s.heading !== null && !(s.checkboxes.length && !s.guidance.length && !s.prose.length && !s.table) && !(s.table?.tests && !s.guidance.length && !s.prose.length && !s.checkboxes.length);
 
+/** A done line's test file: the first test path it names. */
+export const TEST_PATH = /(tests?\/[\w./-]+|[\w./-]+\.test\.\w+)/;
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const SHORT = 200;
+/** A done line as a reviewer reads it in the test table: the test file goes to its own column (the
+ *  "In `file`," lead and a "(file)" aside leave cleanly), the spec's fail-first plan goes (the
+ *  "Fails on" column says what Studio proved), code spans stay balanced, and a long line is cut at
+ *  a word outside a code span. */
+export function acceptanceRow(line: string): { done: string; test: string } {
+  const src = String(line ?? "").replace(/\s+/g, " ").trim(), test = TEST_PATH.exec(src)?.[1] ?? "";
+  let t = src;
+  if (test) {
+    const p = `\`?${esc(test)}\`?`;
+    t = t.replace(new RegExp(`^(?:in|per|from)\\s+${p}\\s*[,:]\\s*`, "i"), "").replace(new RegExp(`\\s*\\(\\s*(?:in\\s+)?${p}\\s*\\)`, "gi"), "").replace(new RegExp(`\\s*(?:—|–|-|:)\\s*${p}\\s*$`), "");
+  }
+  // the spec's fail-first plan: an aside, a clause or a sentence of its own
+  t = t.replace(/\s*\((?:planned\s+)?fail[- ]first\b[^)]*\)/gi, "")
+    .split(/;\s+|(?<=\.)\s+(?=[A-Z])/).filter((c) => !/^(?:planned\s+)?fail[- ]first\b/i.test(c.trim())).join("; ");
+  t = t.replace(/``/g, "").replace(/\s{2,}/g, " ").replace(/\(\s*\)/g, "").replace(/[\s;,:.–-]+$/, "").trim();
+  if ((t.match(/`/g) ?? []).length % 2) t = t.replace(/`/g, "");
+  if (t.length > SHORT) {
+    let cut = -1, open = false;
+    for (let i = 0; i < SHORT; i++) { if (t[i] === "`") open = !open; else if (t[i] === " " && !open) cut = i; }
+    t = t.slice(0, cut > 40 ? cut : SHORT).replace(/[\s;,:.–-]+$/, "") + "…";
+    if ((t.match(/`/g) ?? []).length % 2) t = t.replace(/`/g, "");
+  }
+  if (/^[a-z]/.test(t)) t = t[0].toUpperCase() + t.slice(1);
+  return { done: t || src, test: test || "—" };
+}
+
 const cell = (s: string) => String(s ?? "").replace(/\s+/g, " ").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").trim() || "—";
 function testRows(t: TemplateTable, rows: TestRow[]): string[] {
   const col = (h: string): keyof TestRow | null => /fail|red|broke|main|base/i.test(h) ? "failsOnBase" : /accept|done|criteri|requirement|behaviou?r|line|case/i.test(h) ? "done" : /test/i.test(h) ? "test" : null;

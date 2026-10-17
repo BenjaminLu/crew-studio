@@ -84,9 +84,10 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
     { id: "done", kind: "hook", label: "Done", x: 4, y: 0 }, { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 4, y: 1 }],
     edges: [["seed", "pr-open"], ["pr-open", "remote-ready", "ok"], ["pr-open", "closed", "close"], ["remote-ready", "done", "ok"], ["remote-ready", "closed", "close"]] });
   const update = Y({ id: "pr-update", name: "PR update", roles: [], nodes: [{ id: "copy", kind: "hook", do: "fixture.copy", label: "Copy", x: 0, y: 0 }, { id: "pr-open", kind: "hook", do: "pr.open", label: "Review request", x: 1, y: 0 }, { id: "done", kind: "hook", label: "Done", x: 2, y: 0 }], edges: [["copy", "pr-open"], ["pr-open", "done", "ok"]] });
+  const refreshFlow = Y({ id: "pr-refresh", name: "PR refresh", roles: [{ id: "coordinator", label: "Coordinator" }], nodes: [{ id: "copy", kind: "hook", do: "fixture.copy-proven", label: "Copy", x: 0, y: 0 }, { id: "remote-ready", kind: "hook", do: "remote.ready", label: "Ready", x: 1, y: 0 }, { id: "done", kind: "hook", label: "Done", x: 2, y: 0 }, { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 2, y: 1 }], edges: [["copy", "remote-ready"], ["remote-ready", "done", "ok"], ["remote-ready", "closed", "close"]] });
   const mergeView = Y({ id: "merge-view", name: "Merge view", roles: [], nodes: [{ id: "copy", kind: "hook", do: "fixture.copy", label: "Copy", x: 0, y: 0 }, { id: "merge-card", kind: "card", label: "Merge card", args: { body_from: "merge", card_kind: "merge" }, x: 1, y: 0 }, { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 2, y: 0 }], edges: [["copy", "merge-card"], ["merge-card", "closed", "close"]] });
   let source: any = null;
-  const H = await harness([flow, update, mergeView]), E = H.engine;
+  const H = await harness([flow, update, refreshFlow, mergeView]), E = H.engine;
   installCode(E, { dataDir: H.data, projects: new Projects(H.data), adapter: new GitHubPrAdapter(grant, () => "fake-token", 3000) });
   const done = ["Prices in euro format as €1,234.50 (test/format.test.ts)", "Unknown currencies keep the code prefix (test/codes.test.ts)"];
   E.actions["fixture.seed"] = (x) => {
@@ -99,6 +100,8 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
     return "ok";
   };
   E.actions["fixture.copy"] = (x) => { Object.assign(x.ctx, structuredClone(source)); return "ok"; };
+  // the later round's evidence: CI and fail-first pass at the new head
+  E.actions["fixture.copy-proven"] = (x) => { Object.assign(x.ctx, structuredClone(source)); E.record(x, "check", { check: "firstmate/ci", verdict: "pass", kind: "deterministic", data: { shards: [] } } as any); E.record(x, "check", { check: "firstmate/fail-first", verdict: "pass", kind: "deterministic", proves: [0], data: { applicable: true } } as any); return "ok"; };
   // the coordinator: scripted answers to pull_request_text; the prompt each time is kept
   const prompts: string[] = []; let answer: (n: number) => any = () => null;
   (E.deps.agents as any).run = async (job: any) => { prompts.push(job.text); const t = job.tools.find((t: any) => t.name === "pull_request_text"); const a = answer(prompts.length); if (t && a) t.run(a); return { status: "done" }; };
@@ -171,6 +174,23 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
     ok(upd.status === "succeeded" && sim.head("crew/euro") === head3 && patch?.body?.body === card3.pullRequest.body && patch?.body?.title === card3.pullRequest.title && E.trusted(upd.id).entries.some((e) => e.record === "remote-push" && e.data?.from === head2 && e.data?.to === head3 && e.data?.lease === head2),
       "after the pull request exists, a new round's head is pushed with the lease on the last pushed head, keeping the approved title and body", `${upd.status} ${patch?.body?.title}`);
 
+    // the later round left the opened text on head2's evidence: remote-ready offers the refreshed text as a diff; nothing changes on GitHub until Update
+    source = structuredClone(upd.ctx);
+    const patches = () => sim.calls.filter((c) => c.method === "PATCH").length, p0 = patches();
+    const rf = E.start({ workflow: "pr-refresh", text: "refresh" }); await until(() => !!openCard(rf) || ["succeeded", "failed"].includes(rf.status), 15000);
+    const rc = openCard(rf);
+    ok(rc?.title.en === `Update the text of pull request #${upd.ctx.pr.id}?` && rc.captainOnly && rc.options.map((o: any) => o.id).join() === "update-text,keep-text" && patches() === p0
+      && rc.body.includes("-| Prices in euro format as €1,234.50 | test/format.test.ts | Not proven |") && rc.body.includes(`+| Prices in euro format as €1,234.50 | test/format.test.ts | Yes (fail-first at ${head3.slice(0, 8)}) |`),
+      "a moved head offers 'Update the text' with a diff against the text on GitHub; nothing is edited before the captain answers", rc?.body?.slice(0, 900));
+    await E.answer(rc.id, { choice: "update-text", by: "captain" } as any); await until(() => ["succeeded", "failed"].includes(rf.status), 15000);
+    const edit = sim.calls.filter((c) => c.method === "PATCH").at(-1), shown = rc.body.split("\nNew text:\n")[1];
+    ok(rf.status === "succeeded" && patches() === p0 + 1 && edit?.body?.body === shown && rf.ctx.pr.body === shown && sim.head("crew/euro") === head3 && E.trusted(rf.id).entries.some((e) => e.record === "pr-text-updated" && e.data?.pr === upd.ctx.pr.id),
+      "Update PATCHes exactly the shown text (the head stays), records it, and remote-ready goes on", `${rf.status} ${patches() - p0}`);
+    // Keep: no edit, and no second offer for the same head
+    const rk = E.start({ workflow: "pr-refresh", text: "refresh keep" }); await until(() => !!openCard(rk) || ["succeeded", "failed"].includes(rk.status), 15000);
+    const kc = openCard(rk); await E.answer(kc.id, { choice: "keep-text", by: "captain" } as any); await until(() => ["succeeded", "failed"].includes(rk.status), 15000);
+    ok(kc?.title.en.startsWith("Update the text") && rk.status === "succeeded" && patches() === p0 + 1 && rk.ctx.prRefresh?.decided === "keep" && E.cards.list({ run: rk.id }).length === 1, "Keep leaves GitHub's text alone and is not asked again for the same head", `${rk.status} ${rk.ctx.prRefresh?.decided}`);
+
     // the merge card with no operations grant: the pull request is open; merge it on GitHub (with its link)
     source = structuredClone(upd.ctx);
     const mv = E.start({ workflow: "merge-view", text: "merge view" }); await until(() => !!openCard(mv) || ["succeeded", "failed"].includes(mv.status), 15000);
@@ -209,6 +229,31 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
     ok(hold?.title.en === "The pull request needs your input" && hold.captainOnly && hold.body.includes("Linked issue") && !hold.pullRequest && !sim.head("crew/held"), "a required field nobody can fill holds on a captain card", hold?.title?.en);
     await E.answer(hold.id, { choice: "close", by: "captain" } as any); await until(() => ["succeeded", "failed"].includes(held.status), 8000);
   } catch (e: any) { ok(false, "unexpected pull request flow error", e.stack); } finally { H.stop(); sim.stop(); }
+}
+
+// ---------- the test table renders each done line as clean text (R-069's done lines) ----------
+{ const { parsePullTemplate, renderPullBody, acceptanceRow } = await import("../src/domain/pull-template");
+  const done = [
+    "In `test/format.test.ts`, the EUR cent-formatting scenario asserts that `format(123456, \"EUR\")` equals `€1.234,56`; planned fail-first: base returns `$1234.56` instead of the requested euro display.",
+    "In `test/shop.test.ts`, the EUR conversion scenario asserts that a tea unit priced at 850 USD cents becomes 782 EUR cents at 1 USD = 0.92 EUR; planned fail-first: base leaves the amount at 850.",
+    "In `test/shop.test.ts`, the EUR rendering scenario asserts euro product prices, basket line amounts, and total for `tea:1,mug:2`, including tea at `€7,82`, the mug line at `€22,08`, and total at `€29,90`; planned fail-first: base renders dollar amounts.",
+    "In test/shop.test.ts, the static-build scenario observes a reachable euro page (planned fail-first: only USD and JPY pages).",
+    "Unknown currencies keep the code prefix (test/codes.test.ts)",
+    "Prices round half up. Planned fail-first: base truncates (test/round.test.ts)"];
+  const rows = done.map((t) => ({ ...acceptanceRow(t), failsOnBase: "Yes (fail-first at 235859c5)" }));
+  const b = renderPullBody(parsePullTemplate("## How it was tested\n\n| Acceptance line | Test | Fails on main |\n|---|---|---|\n|  |  |  |\n"), { text: {}, rows, proven: new Set() });
+  const want = [
+    "| The EUR cent-formatting scenario asserts that `format(123456, \"EUR\")` equals `€1.234,56` | test/format.test.ts | Yes (fail-first at 235859c5) |",
+    "| The EUR conversion scenario asserts that a tea unit priced at 850 USD cents becomes 782 EUR cents at 1 USD = 0.92 EUR | test/shop.test.ts | Yes (fail-first at 235859c5) |",
+    "| The EUR rendering scenario asserts euro product prices, basket line amounts, and total for `tea:1,mug:2`, including tea at `€7,82`, the mug line at `€22,08`, and total at `€29,90` | test/shop.test.ts | Yes (fail-first at 235859c5) |",
+    "| The static-build scenario observes a reachable euro page | test/shop.test.ts | Yes (fail-first at 235859c5) |",
+    "| Unknown currencies keep the code prefix | test/codes.test.ts | Yes (fail-first at 235859c5) |",
+    "| Prices round half up | test/round.test.ts | Yes (fail-first at 235859c5) |"];
+  const got = b.split("\n").filter((l) => l.startsWith("| ") && !l.startsWith("| Acceptance"));
+  ok(JSON.stringify(got) === JSON.stringify(want), "each done line renders as its clean row: no 'In ``,' lead, no planned fail-first clause, balanced code spans", got.join("\n"));
+  ok(got.every((l) => (l.match(/`/g) ?? []).length % 2 === 0) && !/``|planned fail-first|In `/i.test(b), "no empty or unbalanced code span and no spec wording is left in the table");
+  const long = acceptanceRow("In `test/a.test.ts`, " + "the scenario observes `x` and ".repeat(12) + "ends.");
+  ok(long.done.length <= 201 && long.done.endsWith("…") && (long.done.match(/`/g) ?? []).length % 2 === 0, "a long line is cut at a word outside a code span", long.done);
 }
 
 // ---------- table cells escape backslashes before pipes ----------

@@ -245,9 +245,18 @@ export class GitHubPrAdapter implements PrAdapter {
     let response:Response|null=null;
     try {
       response = await fetch(`${this.grant.apiOrigin}/repos/${this.grant.repository}${suffix}`, { headers: githubHeaders(token), redirect: "error", signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal });
-      if (!response.ok) throw new Error(`GitHub ${response.status}`);
+      if (!response.ok) {
+        // branch protection GitHub will not show: a private repository on a free plan (403 "Upgrade to GitHub Pro …")
+        // or a branch with no protection (404 "Branch not protected"); only the class leaves, never the vendor text
+        if (/\/protection(?:\/required_status_checks)?$/.test(suffix) && (response.status === 403 || response.status === 404)) {
+          let message = ""; try { message = String(JSON.parse(await boundedResponse(response, 64_000))?.message ?? ""); } catch {}
+          if (response.status === 403 && /upgrade to github pro|make this repository public/i.test(message)) throw new Error("GitHub 403 protection-plan");
+          if (response.status === 404 && /branch not protected/i.test(message)) throw new Error("GitHub 404 protection-none");
+        }
+        throw new Error(`GitHub ${response.status}`);
+      }
       return JSON.parse(await boundedResponse(response, 1_000_000));
-    } catch (e: any) { throw new Error(/^GitHub \d+$/.test(e?.message) ? e.message : "GitHub read failed or timed out"); }
+    } catch (e: any) { throw new Error(/^GitHub \d+(?: protection-(?:plan|none))?$/.test(e?.message) ? e.message : "GitHub read failed or timed out"); }
     finally { await disposeOwnedResponse(response,controller);clearTimeout(timer); }
   }
   async jobLog(id: number, start: number, end: number, signal?: AbortSignal): Promise<{ classification: string; text?: string; start?: number; end?: number; total?: number }> {
