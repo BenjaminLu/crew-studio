@@ -99,7 +99,7 @@ HB.stop();
   // a drafted workflow gets the readiness check in front of its acceptance card, and the R-044 cards gain their note boxes
   const { WorkflowDrafts } = await import("../src/workflow-drafts"); const { WorkflowDefs } = await import("../src/runtime/defs");
   const dd = join(HB.data, "drafts-data"); mkdirSync(dd, { recursive: true }); const defs = new WorkflowDefs(dd, () => []); defs.known = (ref: string) => /^core\//.test(ref); const drafts = new WorkflowDrafts(dd, defs);
-  const draft = (cards: any) => ({ goal: "A website", workflow: { name: "Site", roles: [{ id: "designer", label: "Designer", skill: "bundled:workflows/skills/v2/designer.md" }], nodes: [
+  const draft = (cards: any) => ({ goal: "A website", workflow: { name: "Site", roles: [{ id: "designer", label: "Designer", skill: "bundled:workflows/skills/v2/designer.md", seat: "maker" }], nodes: [
     { id: "confirm-brief", kind: "card", label: "Confirm", card: cards.confirm }, { id: "approve-design", kind: "card", label: "Approve design", card: cards.approve },
     { id: "make-a", kind: "agent", label: "Make A", role: "designer", mode: "deliver", args: { format: "web", variant: "A" } }, { id: "make-b", kind: "agent", label: "Make B", role: "designer", mode: "deliver", args: { format: "web", variant: "B" } },
     { id: "final", kind: "card", label: "Accept", accept: true }, { id: "done", kind: "hook", label: "Done" }, { id: "closed", kind: "hook", label: "Closed" }],

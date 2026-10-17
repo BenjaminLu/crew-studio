@@ -8,7 +8,7 @@ import {createHash,randomBytes} from 'node:crypto';
 import {existsSync,mkdirSync,readFileSync,readdirSync,renameSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {NativeToolFailure,type NativeMainTools} from './host/types';
-import {normalize,validate,type WDef,type WNode,type WorkflowDefs} from './runtime/defs';
+import {normalize,validate,TEAM_SEATS,type WDef,type WNode,type WorkflowDefs} from './runtime/defs';
 import {withLock} from './ids';
 import {intentStage,outcomesOf} from './readiness/stages';
 import {redactText} from './secure';
@@ -93,10 +93,11 @@ function draftDefinition(raw:any,defs:WorkflowDefs):WDef{
  if(!Array.isArray(raw.roles)||raw.roles.length>6)throw new DraftError('workflow.roles: up to 6 roles');
  if(!Array.isArray(raw.nodes)||!raw.nodes.length||raw.nodes.length>24)throw new DraftError('workflow.nodes: 1–24 nodes');
  if(!Array.isArray(raw.edges)||raw.edges.length>48)throw new DraftError('workflow.edges: up to 48 edges');
- const roles=raw.roles.map((r:any)=>{if(!plain(r)||Object.keys(r).some(k=>!['id','label','skill'].includes(k))||!/^[a-z][a-z0-9-]{0,39}$/.test(r.id)||!bounded(r.label,60)||!Object.hasOwn(DRAFT_SKILLS,r.skill))throw new DraftError(`role ${r?.id}: id, label and a bundled Studio role skill only`);return{id:r.id,label:r.label,skill:r.skill};});
+ const roles=raw.roles.map((r:any)=>{if(!plain(r)||Object.keys(r).some(k=>!['id','label','skill','seat'].includes(k))||!/^[a-z][a-z0-9-]{0,39}$/.test(r.id)||!bounded(r.label,60)||!Object.hasOwn(DRAFT_SKILLS,r.skill))throw new DraftError(`role ${r?.id}: id, label, a bundled Studio role skill and its team seat only`);
+  if(r.seat!==undefined&&!(TEAM_SEATS as readonly string[]).includes(r.seat))throw new DraftError(`role ${r.id}: seat must be one of the team seats: ${TEAM_SEATS.join(', ')}`);return{id:r.id,label:r.label,skill:r.skill,...(r.seat?{seat:r.seat}:{})};});
  const nodes=raw.nodes.map((n:any,i:number)=>{
   if(!plain(n))throw new DraftError('each node is an object');
-  for(const k of Object.keys(n))if(!['id','kind','label','detail','role','mode','args','card','accept','serves','provider','model','effort','skill','skills','x','y'].includes(k))throw new DraftError(`node ${n.id}: ${k} is not part of a draft`);
+  for(const k of Object.keys(n))if(!['id','kind','label','detail','role','seat','mode','args','card','accept','serves','provider','model','effort','skill','skills','x','y'].includes(k))throw new DraftError(`node ${n.id}: ${k} is not part of a draft`);
   if(n.serves!==undefined&&(!Array.isArray(n.serves)||n.serves.length>8||n.serves.some((v:any)=>!Number.isInteger(v)||v<1||v>8)))throw new DraftError(`node ${n.id}: serves lists intent line numbers`);
   if(n.accept!==undefined&&(n.accept!==true||n.kind!=='card'))throw new DraftError(`node ${n.id}: accept: true marks the captain's acceptance card`);
   if(!['agent','card','hook'].includes(n.kind))throw new DraftError(`node ${n.id}: a draft uses agent, card or hook nodes`);
@@ -106,10 +107,11 @@ function draftDefinition(raw:any,defs:WorkflowDefs):WDef{
    if(!DRAFT_MODES.has(n.mode))throw new DraftError(`node ${n.id}: agent nodes draft in deliver mode only`);
    if(!plain(n.args)||Object.keys(n.args).some(k=>!['format','variant'].includes(k))||!FORMATS.has(n.args.format)||n.args.variant!==undefined&&!/^[A-Z]$/.test(n.args.variant))throw new DraftError(`node ${n.id}: args are format (document or web) and an optional variant letter`);
    Object.assign(out,{role:n.role,mode:n.mode,args:{...n.args}});
+   if(n.seat!==undefined){if(!(TEAM_SEATS as readonly string[]).includes(n.seat))throw new DraftError(`node ${n.id}: seat must be one of the team seats: ${TEAM_SEATS.join(', ')}`);out.seat=n.seat;}
    for(const k of ['provider','model','effort','skill'])if(n[k]!==undefined)out[k]=n[k];
    // library skills by id, after the role skill, each pinned to its current version
    if(n.skills!==undefined){const pins=nodeSkillPins(n.skills,out,defs);if(pins.length)out.skills=pins;}
-  }else if(['role','mode','args','provider','model','effort','skill','skills'].some(k=>n[k]!==undefined))throw new DraftError(`node ${n.id}: only agent nodes have a role, mode, args or staffing`);
+  }else if(['role','seat','mode','args','provider','model','effort','skill','skills'].some(k=>n[k]!==undefined))throw new DraftError(`node ${n.id}: only agent nodes have a role, mode, args or staffing`);
   if(n.kind==='card'&&n.accept){
    // the captain's acceptance card: shows every delivered output and ticks each intent line before approving
    if(n.card!==undefined)throw new DraftError(`node ${n.id}: an acceptance card builds its own options`);
@@ -129,6 +131,8 @@ function draftDefinition(raw:any,defs:WorkflowDefs):WDef{
   checkNodeStaffing(out,`node ${n.id}`);
   return out;
  });
+ // every agent node names the team seat it runs as (on the node, or on its role): Studio staffs it from the team (docs/design/crew-seats.md)
+ for(const n of nodes)if(n.kind==='agent'&&!n.seat&&!roles.find((r:any)=>r.id===n.role)?.seat)throw new DraftError(`node ${n.id} ("${n.label}") has no team seat: set seat on its role ${n.role} or on the node (${TEAM_SEATS.join(', ')}), e.g. maker for the step that makes the output, reviewer for one that checks it`);
  const edges=raw.edges.map((e:any)=>{if(!plain(e)||Object.keys(e).some(k=>!['from','to','when'].includes(k))||typeof e.from!=='string'||typeof e.to!=='string'||e.when!==undefined&&!/^[a-z][a-z0-9-]{0,30}$/.test(e.when))throw new DraftError('each edge is {from,to,when?}');return{from:e.from,to:e.to,...(e.when?{when:e.when}:{})};});
  // every agent node carries its own assignment (what this node produces), never the whole design interview (R-044);
  // made from the node id, its output and the lines it serves, so a captain's label edit never changes it under a repair

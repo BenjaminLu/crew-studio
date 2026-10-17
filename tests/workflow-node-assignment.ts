@@ -21,7 +21,7 @@ const r044 = (lead = WRITER, dev = DESIGNER) => ({
   workflow: {
     name: "Hello Crew Studio 网页开发流程",
     intents: [{ text: "先和我讨论网站用途、标题和视觉风格", done: "设计方向文件写明网站用途、标题和视觉风格" }, { text: "制作 Hello Crew Studio 网页", done: "一个可在浏览器打开的自包含网页" }, { text: "审查网页", done: "设计角色对照设计方向审查网页" }],
-    roles: [{ id: "design-lead", label: "设计方向", skill: lead }, { id: "developer", label: "网页开发者", skill: dev }],
+    roles: [{ id: "design-lead", label: "设计方向", skill: lead, seat: "maker" }, { id: "developer", label: "网页开发者", skill: dev, seat: "maker" }],
     nodes: [
       { id: "design", kind: "agent", label: "设计方向", role: "design-lead", mode: "deliver", args: { format: "document" }, serves: [1] },
       { id: "build", kind: "agent", label: "制作网页", role: "developer", mode: "deliver", args: { format: "web" }, serves: [2] },
@@ -52,14 +52,14 @@ try {
   ok(asR044.code === "draft_invalid" && /design/i.test(asR044.reason?.en ?? asR044.message ?? JSON.stringify(asR044)), "R-044: a Writer on design direction and design review is refused", JSON.stringify(asR044).slice(0, 300));
   const writerWeb = await h.tool("studio_draft_workflow", r044(DESIGNER, WRITER));
   ok(writerWeb.code === "draft_invalid" && /web/.test(JSON.stringify(writerWeb)), "a Writer on a web page node is refused", JSON.stringify(writerWeb).slice(0, 300));
-  const reviewOnly = r044(DESIGNER, DESIGNER); reviewOnly.workflow.roles.push({ id: "copy", label: "Copy", skill: WRITER }); (reviewOnly.workflow.nodes[2] as any).role = "copy";
+  const reviewOnly = r044(DESIGNER, DESIGNER); reviewOnly.workflow.roles.push({ id: "copy", label: "Copy", skill: WRITER, seat: "reviewer" }); (reviewOnly.workflow.nodes[2] as any).role = "copy";
   const rv = await h.tool("studio_draft_workflow", reviewOnly);
   ok(typeof rv.draft === "string", "a Writer reviewing the page's copy is allowed: a review is not visual design work by itself", JSON.stringify(rv).slice(0, 300));
   const designerDoc = structuredClone(WORKFLOW_DRAFT_EXAMPLE) as any; designerDoc.workflow.nodes[1].args = { format: "document" }; designerDoc.workflow.nodes[1].label = "Write the newsletter";
   const dd = await h.tool("studio_draft_workflow", designerDoc);
   ok(typeof dd.draft === "string", "a Designer on a written document is allowed (a designer can write; only the format is strict)", JSON.stringify(dd).slice(0, 300));
   // no false refusals: "design" or "review" alone is not visual design work
-  const one = (skill: string, label: string, web = false) => { const w = structuredClone(WORKFLOW_DRAFT_EXAMPLE) as any; w.workflow.roles = [{ id: "maker", label: "Maker", skill }, { id: "web", label: "Web", skill: DESIGNER }];
+  const one = (skill: string, label: string, web = false) => { const w = structuredClone(WORKFLOW_DRAFT_EXAMPLE) as any; w.workflow.roles = [{ id: "maker", label: "Maker", skill, seat: "maker" }, { id: "web", label: "Web", skill: DESIGNER, seat: "maker" }];
     const make = w.workflow.nodes[1]; Object.assign(make, { role: "maker", args: { format: "document" }, label, detail: label });
     if (web) { w.workflow.nodes.splice(1, 0, { id: "page", kind: "agent", label: "Build the landing page", detail: "Build the landing page (index.html).", role: "web", mode: "deliver", args: { format: "web" }, serves: [1] });
       w.workflow.edges = [{ from: "confirm", to: "page", when: "begin" }, { from: "page", to: "make" }, ...w.workflow.edges.filter((e: any) => e.from !== "confirm")]; }

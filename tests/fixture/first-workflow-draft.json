@@ -12,8 +12,8 @@
       {"text": "A reviewer, then me, check it before it goes out", "done": "The reviewer has reviewed it and I approved it or asked for changes"}
     ],
     "roles": [
-      {"id": "writer", "label": "Writer", "skill": "bundled:workflows/skills/v2/writer.md"},
-      {"id": "reviewer", "label": "Reviewer", "skill": "bundled:workflows/skills/v2/writer.md"}
+      {"id": "writer", "label": "Writer", "skill": "bundled:workflows/skills/v2/writer.md", "seat": "maker"},
+      {"id": "reviewer", "label": "Reviewer", "skill": "bundled:workflows/skills/v2/writer.md", "seat": "reviewer"}
     ],
     "nodes": [
       {"id": "topics", "serves": [1], "kind": "card", "label": "Confirm this week's topics", "card": { "body": "Decide whether this step can go on.", "title": {"en": "Topics ready?"}, "options": [{"id": "continue", "label": "Continue", "labelZh": "Continue"}]}},
