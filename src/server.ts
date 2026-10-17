@@ -73,6 +73,7 @@ import { bundledText } from "./bundled";
 import { classify, orgDefaults } from "./doors";
 import { installPackGenesis } from "./pack-genesis";
 import { createRuntime, skillTextFor } from "./runtime";
+import { amendmentsNotice } from "./runtime/refine";
 import { EXEMPT, guardWrite, hasSession, hasSessionCookie, sessionCookie, sessionToken } from "./csrf";
 import { AttachmentStore, deliveryFor, uploadAttachment } from "./attachments";
 import { ChatLog } from "./host/chat-log";
@@ -406,7 +407,7 @@ nativeEngineForPolicy = runtime.engine;
 // an agent's question goes to Firstmate first: it answers through studio_answer_agent_question, or escalates to the captain with its reason
 runtime.engine.askFirstmate = (r, node, question, visit) => {
   if (main.view().state === "detached") return false;
-  main.enqueue("wake", `Agent question in Task ${r.id}, step ${node.id} (${node.label}): ${question}\nAnswer it yourself with studio_answer_agent_question {task:"${r.id}", node:"${node.id}", visit:${visit}, answer:"…"}. Escalate to the captain (escalate:"<your reason>") only for a one-way decision, a credential or permission, or a preference you cannot infer. / Task ${r.id} 的 agent 提問：請用 studio_answer_agent_question 自己回答；只有單向決定、憑證或權限、或無法推斷的偏好才轉交船長並寫明理由。`, "studio-native");
+  main.enqueue("wake", `Agent question in Task ${r.id}, step ${node.id} (${node.label}): ${question}\nAnswer it yourself with studio_answer_agent_question {task:"${r.id}", node:"${node.id}", visit:${visit}, answer:"…"}. Escalate to the captain (escalate:"<your reason>") only for a one-way decision, a credential or permission, or a preference you cannot infer. / Task ${r.id} 的 agent 提問：請用 studio_answer_agent_question 自己回答；只有單向決定、憑證或權限、或無法推斷的偏好才轉交船長並寫明理由。${amendmentsNotice(r.ctx)}`, "studio-native");
   return true;
 };
 gh.start();

@@ -213,6 +213,8 @@ function mountCard(el, card, opts = {}) {
     out.push(sec("scope", T("Scope", "範圍"), h("dl", { class: "cc-kv" },
       h("dt", {}, T("In", "範圍內")), h("dd", { class: "cc-mono" }, d.scope.in.join(", ") || "—"),
       h("dt", {}, T("Out", "範圍外")), h("dd", { class: "cc-mono" }, d.scope.out.join(", ") || T("everything else (the scope gate checks it)", "其他一切（由 scope gate 檢查）")))));
+    if (Array.isArray(d.amendments) && d.amendments.length) out.push(sec("amendments", T("The captain's binding changes (they outrank the done lines)", "船長的修改要求（優先於完成條件）"),
+      h("ul", {}, d.amendments.map((m) => h("li", { "data-amendment": m.n }, h("b", {}, `A${m.n}. `), String(m.note ?? ""))))));
     out.push(sec("done", T("Done lines and their proof", "完成條件與證明"), d.done.map((x, i) => h("div", { class: `cc-done ${x.proved ? "proved" : ""}`, "data-done": i },
       h("div", {}, h("span", { class: `cc-chip ${x.proved ? "ok" : "warn"}` }, x.proved ? T("proved", "已證明") : T("needs your eye", "需要你看")), h("b", {}, `${i + 1}. `), LL(x.text)),
       x.proofs.length ? x.proofs.map((p) => h("div", { class: "cc-proof", "data-proof": p.check },

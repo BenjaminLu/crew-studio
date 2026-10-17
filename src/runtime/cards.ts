@@ -51,6 +51,8 @@ export type CardDetail = {
   intent: L10n; intents: L10n[];
   why: L10n[]; how: L10n[]; scope: { in: string[]; out: string[] };
   /** each done line with its proof: the checks that proved it, their ledger entries, the head they ran on */
+  /** the captain's binding changes ("request changes" notes), cumulative; they outrank the done lines (a superseded line says so) */
+  amendments?: { n: number; note: string; card: string }[];
   done: { text: L10n; proved: boolean; proofs: { check: string; seq: number; verdict: string; head: string | null; detail: string; evidence: { label: string; href: string }[] }[] }[];
   beforeAfter: { text: L10n; stat: string; images: { label: string; href: string }[] };
   door: { kind: string | null; reason: L10n; rollback: L10n } | null;

@@ -18,25 +18,37 @@ const flow={id:'code-firstmate',name:'Question fixture',version:1,roles:[{id:'co
 {id:'build',kind:'agent',role:'worker',mode:'build',label:'Build',checks:[{use:'firstmate/report-schema'}]},
 {id:'done',kind:'hook',label:'Done'}],edges:[['prepare','spec'],['spec','dispatch'],['dispatch','build','dispatch'],['build','done','ok']]};
 
-for(const scenario of ['firstmate','captain']){
+for(const scenario of ['firstmate','captain','amendment']){
  const H=await harness([Y(flow)]);let E=H.engine;const repo=join(H.data,'repo');mkdirSync(repo);assertTempRepo(repo);must(repo,['init','-q','-b','main']);writeFileSync(join(repo,'README.md'),'initial\n');must(repo,['add','.']);must(repo,['commit','-qm','Initial']);
  const projects=new Projects(H.data);projects.add({id:'fixture',path:repo});
- const install=()=>{installCode(E,{dataDir:H.data,projects});E.policies.setProject('fixture',{install:false});E.askFirstmate=()=>true;E.deps.provider=()=>provider;};
+ let asked=0;const install=()=>{installCode(E,{dataDir:H.data,projects});E.policies.setProject('fixture',{install:false});E.askFirstmate=()=>{asked++;return true;};E.deps.provider=()=>provider;};
  const prompts:string[]=[],toolsSeen:any[]=[];
  const provider:any={id:'fixture',model:'offline',sandboxFree:true,start(_s:any,tools:any[],ctx:any){return{interrupt(){},async *send(text:string){
  const call=(name:string,args:any)=>H.agents.callTool(ctx.token,name,args);
  if(tools.some(t=>t.name==='spec_write'))await call('spec_write',{title:'Question fixture',what:'Color one file',why:['Test answer'],done:['test.txt proves the color'],scope:['result.txt','test.txt'],door:{kind:'two-way',reason:'Fixture'},explain:{en:'Fixture','zh-TW':'測試'},zh:{title:'測試',why:['測試']}});
  else if(tools.some(t=>t.name==='worker_report')){prompts.push(text);const report=tools.find(t=>t.name==='worker_report');toolsSeen.push((args:any)=>H.agents.callTool(ctx.token,"worker_report",args));
- await call('worker_report',{marker:'ASK',summary:'Which color should I use?'});
+ await call('worker_report',{marker:'ASK',summary:'Which color should I use?',...(scenario==='amendment'?{amendment:1}:{})});
  const duplicate:any=await call('worker_report',{marker:'WORKER_COMPLETE',summary:'Duplicate'});ok(!!duplicate.error,scenario+' rejects duplicate report');}
  yield{type:'turnEnd',status:'ok'};
  }}}};
  install();const r=E.start({workflow:'code-firstmate',params:{project:'fixture'}});
  try{
  ok(await until(()=>E.cards.list({run:r.id,open:true}).some(c=>c.node==='dispatch')&&!E.busy(r.id)),scenario+' dispatch ready');
- const dispatch=E.cards.list({run:r.id,open:true})[0];await E.answer(dispatch.id,{choice:'dispatch',by:'captain'});
+ const dispatch=E.cards.list({run:r.id,open:true})[0];
+ // a captain's binding change on the run (tests/captain-amendment.ts records one through a real merge card)
+ if(scenario==='amendment')r.ctx.amendments=[{n:1,card:'SC-0',node:'merge-card',note:'use indigo',by:'captain',at:new Date().toISOString(),seq:null,sig:null}];
+ await E.answer(dispatch.id,{choice:'dispatch',by:'captain'});
+ if(scenario==='amendment'){
+ // an ASK that touches a captain's change goes straight to the captain, never to Firstmate
+ ok(await until(()=>E.cards.list({run:r.id,open:true}).some(c=>c.kind==='failure')&&!E.busy(r.id)),'amendment ASK raises a captain card');
+ const c=E.cards.list({run:r.id,open:true}).find(c=>c.kind==='failure')!;
+ ok(asked===0&&!E.get(r.id)!.ctx.firstmateQuestion&&c.failure?.code==='ask.escalated'&&/binding change A1/.test(c.failure?.escalation?.reason??''),'amendment ASK skips Firstmate and names A1 to the captain',JSON.stringify([asked,c.failure?.escalation]));
+ ok(/CAPTAIN'S BINDING CHANGES[\s\S]*A1\. use indigo[\s\S]*Done when:/.test(prompts[0]),'build brief shows the captain change above the spec');
+ continue;}
  const waiting=()=>!!E.get(r.id)?.ctx.firstmateQuestion&&!E.busy(r.id);
  ok(await until(waiting),scenario+' ASK skips failing checks and waits for Firstmate');
+ // F25: a question waiting for Firstmate is a wait, not a failure
+ ok(E.get(r.id)!.status==='waiting'&&!E.get(r.id)!.error&&!E.timeline(r.id).some((e:any)=>e.type==='failed')&&!E.cards.list({run:r.id,open:true}).length,scenario+' run waits (not failed) while Firstmate answers',JSON.stringify([E.get(r.id)!.status,E.get(r.id)!.error]));
  const snapshot=JSON.stringify({spec:r.ctx.spec,def:r.def,head:r.ctx.head,admission:E.ledger(r.id).filter(e=>e.record==='scope-admission'),dispatch:E.cards.get(dispatch.id)});
  ok(rejects(()=>E.answerFromFirstmate(r.id,'build',{answer:'  '})),scenario+' blank Firstmate answer refused');
  const q=r.ctx.firstmateQuestion;r.ctx.firstmateQuestion={...q,visit:0};ok(rejects(()=>E.answerFromFirstmate(r.id,'build',{answer:'stale',visit:0})),scenario+' stale question refused');r.ctx.firstmateQuestion=q;
@@ -44,9 +56,10 @@ for(const scenario of ['firstmate','captain']){
  if(scenario==='captain'){
  // Restart from durable state, keeping the pending question and signed dispatch.
  const next=new Engine(E.deps,E.defs);E=next;install();E.load();const back=E.get(r.id)!;
- ok(back.ctx.firstmateQuestion?.question===q.question,'restart retains pending Firstmate question');
+ ok(back.ctx.firstmateQuestion?.question===q.question&&back.status==='waiting','restart retains pending Firstmate question and the waiting status');
  E.answerFromFirstmate(r.id,'build',{escalate:'Only the captain can pick a color',visit:q.visit});
  const c=E.cards.list({run:r.id,open:true}).find(c=>c.kind==='failure')!;
+ ok(!!c&&E.get(r.id)!.status==='failed','escalation raises the captain card and the run then shows the failure');
  let blank=false;try{await E.answer(c.id,{choice:'answer',note:' ',by:'captain'});}catch{blank=true;}
  ok(blank&&E.cards.get(c.id)?.status==='open','blank captain answer leaves card open');
  await E.answer(c.id,{choice:'answer',note:'CAPTAIN-ANSWER indigo',by:'captain'});

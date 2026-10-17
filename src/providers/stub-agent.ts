@@ -177,6 +177,14 @@ async function* runtimeAgent(text: string, call: Call, say: Say): AsyncGenerator
       const plan = /^Read plan [^\n]*: read (.*)$/m.exec(text)?.[1] ?? ""; const files = plan === "(nothing)" ? [] : plan.split(", ").filter(Boolean);
       for (const f of files) for (let s = 1; s <= 1600; s += 800) yield* call("fs_read", { path: f, start: s, lines: 800 });
     }
+    // STUB_AMENDED on an added line: a change the captain asked for after the spec. Like a real reviewer, the stub rejects it as
+    // unauthorized against the done lines unless the brief lists it as a captain's binding change (then done line 1 is superseded).
+    if (/^\+.*STUB_AMENDED/m.test(text) && !reject) {
+      const listed = /^CAPTAIN'S BINDING CHANGES/m.test(text);
+      yield* call("review_verdict", listed ? { verdict: "APPROVE", findings: [], followups: [], superseded: [{ done: 1, amendment: 1 }] }
+        : { verdict: "REJECT", findings: [{ path: "src/", line: 1, text: "unauthorized change: the approved done lines do not ask for it", tag: "must-fix", fix: "revert to what the done lines say" }], followups: [] });
+      yield* done(listed ? "APPROVE" : "REJECT"); return;
+    }
     yield* call("review_verdict", reject ? { verdict: "REJECT", findings: [{ text: "an added line still says STUB_REJECT", tag: "must-fix", fix: "replace it" }], followups: [] } : { verdict: "APPROVE", findings: [], followups: /STUB_FOLLOWUP/.test(text) ? ["a follow-up"] : [] });
     yield* done(reject ? "REJECT" : "APPROVE"); return;
   }

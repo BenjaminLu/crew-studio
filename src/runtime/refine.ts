@@ -176,6 +176,23 @@ export function briefSection(s: BriefState): string {
   return "";
 }
 
+/** A captain's "request changes" note on a card, kept on the run for every later round (the engine records it once per card,
+ *  cumulative, bound to the signed card-answer ledger entry). It outranks the spec: a conflicting done line is superseded. */
+export type Amendment = { n: number; card: string; node: string; note: string; by: string; at: string; seq: number | null; sig: string | null };
+export const AMEND_CHOICES = ["changes", "request"];
+export function amendmentsOf(ctx: any): Amendment[] { return Array.isArray(ctx?.amendments) ? ctx.amendments : []; }
+/** The prompt part that sits above the spec in every later brief: the captain's binding changes, in order. Empty without any. */
+export function amendmentsSection(ctx: any): string {
+  const a = amendmentsOf(ctx); if (!a.length) return "";
+  return `\nCAPTAIN'S BINDING CHANGES (the captain asked for these after the spec was approved; they outrank the spec below: where a done line or any other spec text conflicts with one, the change wins and that line is superseded; never undo or revert one)\n${a.map((m) => `A${m.n}. ${m.note} (card ${m.card}${m.seq != null ? `, ledger #${m.seq}` : ""})`).join("\n")}\n`;
+}
+
+/** What Firstmate's question notice adds when the run has captain changes: it never answers a question in a way that undoes one. */
+export function amendmentsNotice(ctx: any): string {
+  const a = amendmentsOf(ctx); if (!a.length) return "";
+  return `\nThe captain's binding changes on this Task (they outrank the spec): ${a.map((m) => `A${m.n}. ${m.note}`).join(" ")}\nIf the question, or your answer, would undo or change any of them, do not answer: escalate to the captain with that reason. / 這個 Task 有船長的修改要求（優先於 spec）；若問題或你的回答會推翻其中任何一條，不要自己回答，請轉交船長。`;
+}
+
 export function installRefine(engine: Engine) {
   // what brief-quality sees: the brief the loop node is about to send
   engine.artifacts.brief ??= (x) => ({ type: "brief", data: x.rn.data.brief ?? null });
@@ -185,7 +202,7 @@ export function installRefine(engine: Engine) {
       run: (a) => { x.rn.data.rootcause = { cause: String(a.cause ?? "").slice(0, 1200), expected: Array.isArray(a.expected) ? a.expected : [] }; x.save(); return { ok: true }; } } as AgentTool],
     maxTools: 4,
     system: (x, skill) => `${skill}\n\nYou are the coordinator. Diagnose before the next round: read the compiled brief and name the root cause behind its items, and the concrete expected change where an item lacks one ("<check> passes" is not an expected change). Never send the worker to hunt. Call root_cause once, then one line.`,
-    prompt: (x) => `ROOT CAUSE\nRun ${x.run.id}\n${x.rn.data.qualityFindings?.length ? `brief-quality refused this brief; give every item it names a concrete expected change (and a locator where it has none):\n${x.rn.data.qualityFindings.map((m: string) => `- ${m}`).join("\n")}\n\n` : ""}${x.rn.data.brief?.text ?? ""}`,
+    prompt: (x) => `ROOT CAUSE\nRun ${x.run.id}\n${amendmentsOf(x.ctx).length ? `${amendmentsSection(x.ctx)}An item that would undo one of these changes is wrong: its expected change keeps the captain's change (and the conflicting done line counts as superseded).\n\n` : ""}${x.rn.data.qualityFindings?.length ? `brief-quality refused this brief; give every item it names a concrete expected change (and a locator where it has none):\n${x.rn.data.qualityFindings.map((m: string) => `- ${m}`).join("\n")}\n\n` : ""}${x.rn.data.brief?.text ?? ""}`,
     after: (x) => { if (!x.rn.data.rootcause) throw new Error("the coordinator gave no root cause"); return "ok"; },
   };
   engine.kinds.loop = {
