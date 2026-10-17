@@ -66,6 +66,7 @@ export const FAILURE_CODES = {
   "deterministic.agent-result": { class: "deterministic", title: t("The agent's result was refused", "agent 的結果被拒絕"), meaning: t("The agent finished, but its result did not meet the step's rule.", "agent 做完了，但結果不符合這一步的規則。") },
   "deterministic.film": { class: "deterministic", title: t("The film did not pass its checks", "影片沒有通過檢查"), meaning: t("The film was made, but its checks failed on these inputs. No verified film was offered.", "影片做出來了，但在這組輸入上沒有通過檢查，所以沒有提供已驗證的影片。") },
   "deterministic.prepare-again": { class: "deterministic", title: t("The step needs a fresh preparation", "這一步需要重新準備"), meaning: t("Something changed after the gates or the card were prepared: the branch, its checks, or a confirmation the card did not get. Running this step again fails the same way.", "gate 或卡片準備好之後有東西改變了：branch、它的檢查，或卡片少了一個確認。直接重跑這一步會用同樣的方式失敗。") },
+  "deterministic.incomplete": { class: "deterministic", title: t("The result is incomplete", "結果不完整"), meaning: t("A round ended without the text it must submit, or the record of the rounds is incomplete. Nothing partial is offered for acceptance; this task cannot go on from it.", "有一輪結束時沒有交出必須提交的文字，或回合紀錄不完整。不完整的結果不會送去驗收；這個任務無法再從它繼續。") },
   "deterministic.new-task": { class: "deterministic", title: t("What was approved has changed", "已核准的內容改變了"), meaning: t("An approved plan, artifact or launched work changed or is gone after review. This task cannot go on from it.", "審查後，已核准的方案、作品或已派出的工作改變了或不見了。這個任務無法再從它繼續。") },
   "deterministic.unchanged": { class: "deterministic", title: t("Nothing changed since the last failure", "和上次失敗相比沒有任何改變"), meaning: t("The inputs are identical to the last failed attempt, so Studio did not run it again.", "輸入和上次失敗時完全相同，所以 Studio 沒有再跑一次。") },
   "invalid-input.params": { class: "invalid-input", title: t("A task parameter is invalid", "任務參數無效"), meaning: t("A parameter of this task has a value the workflow refuses.", "這個任務有參數的值被工作流程拒絕。") },
@@ -149,6 +150,8 @@ export const TEXT_RULES: { re: RegExp; code: FailureCode }[] = [
   // first: a change after approval or after the gates. Running the same step again never passes; the card offers what does
   { re: /moved since the ((six|seven) )?gates ran|remote checks changed before merge|needs the door confirmation|base moved after review|needs explicit recovery/i, code: "deterministic.prepare-again" },
   { re: /identity changed or predates pinning|prepare a new task|approved lane image changed|never replay/i, code: "deterministic.new-task" },
+  // a domain's typed stop for a partial result (startup-recursion's StartupRoundFailure), read from its code in the message
+  { re: /\bstartup_(?:no_submission|incomplete_transcript)\b|\btranscript is incomplete\b/i, code: "deterministic.incomplete" },
   { re: /\bdiverged: decide\b/i, code: "ask.one-way" },
   { re: /role skill \S+ changed since staffing approval/i, code: "env.skill-changed" },
   { re: /confirm a fresh proposal|requires confirmation|wait for the captain/i, code: "env.staffing" },
@@ -203,6 +206,8 @@ export const TEXT_RULES: { re: RegExp; code: FailureCode }[] = [
   { re: /\bunavailable\b|not installed|requires codex|needs (the )?(OS|codex|claude)|not configured/i, code: "env.tool-missing" },
   { re: /\binvalid\b|must (be|name|have)|is required|\brequired\b|\bunknown\b|unsupported|exceeds?|too (large|long|many)|no such/i, code: "invalid-input.config" },
 ];
+/** Codes whose only way on is a new task (the same request, prepared again). */
+const NEW_TASK = new Set<string>(["deterministic.new-task", "deterministic.incomplete"]);
 /** The code of a plain message, by its words; internal.unmapped when no rule matches. */
 export function codeOf(message: string): FailureCode {
   for (const r of TEXT_RULES) if (r.re.test(message)) return r.code;
@@ -217,7 +222,7 @@ export function fromError(e: unknown, o: { source?: FailureSource; run?: string 
   let code: FailureCode | null = err instanceof FailureError ? err.code : null;
   // a native tool's typed refusal (host/types.ts NativeToolFailure): its own code decides, then its words
   if (!code && typeof err?.publicFailure?.code === "string") { const byWords = codeOf(message), byCode = codeOf(err.publicFailure.code);
-    code = byWords === "deterministic.new-task" || byWords === "deterministic.prepare-again" ? byWords : byCode !== "internal.unmapped" ? byCode : null; }
+    code = NEW_TASK.has(byWords) || byWords === "deterministic.prepare-again" ? byWords : byCode !== "internal.unmapped" ? byCode : null; }
   if (!code && err?.providerRefusal) code = /quota/i.test(message) ? "env.quota" : /login|sign/i.test(message) ? "env.login" : /fallback chain|must be/i.test(message) ? "invalid-input.config" : "env.provider-unavailable";
   if (!code && err?.queueRefusal) code = /scope held|overlap/i.test(message) ? "scope.overlap" : codeOf(message) === "env.skill-changed" ? "env.skill-changed" : /staffing|confirmation/i.test(message) ? "env.staffing" : codeOf(message) === "internal.unmapped" ? "transient.interrupted" : codeOf(message);
   if (!code && err?.outcome === "blocked") code = codeOf(message);
@@ -257,13 +262,13 @@ export const PARK: FailureOption = { id: "park", label: "Park", labelZh: "暫停
 /** The actions each class offers. Park is always there. */
 export function failureActions(cls: FailureClass, code?: FailureCode, o: { ended?: boolean; newTaskAllowed?: boolean } = {}): FailureOption[] {
   // an internal or retired workflow cannot start a new task from its card: Park only
-  if ((o.ended || code === "deterministic.new-task") && o.newTaskAllowed === false) return [PARK];
+  if ((o.ended || NEW_TASK.has(code)) && o.newTaskAllowed === false) return [PARK];
   // a run that ended (succeeded) on a failed outcome is not revived: a new task is the way on
   if (o.ended) return [{ id: ACT.newTask, label: "Start a new task", labelZh: "開始新任務", primary: true }, PARK];
   if (code === "deterministic.brief-quality") return [{ id: ACT.rescope, label: "Correct brief and continue", labelZh: "修正說明並繼續", primary: true, note: true }, PARK];
   if (code === "deterministic.spec-missing") return [{ id: ACT.rescope, label: "Revise draft and continue", labelZh: "修訂草稿並繼續", primary: true, note: true }, PARK];
   if (code === "deterministic.prepare-again") return [{ id: ACT.prepareAgain, label: "Prepare again", labelZh: "重新準備", primary: true }, PARK];
-  if (code === "deterministic.new-task") return [{ id: ACT.newTask, label: "Start a new task", labelZh: "開始新任務", primary: true }, PARK];
+  if (NEW_TASK.has(code)) return [{ id: ACT.newTask, label: "Start a new task", labelZh: "開始新任務", primary: true }, PARK];
   const main: Record<FailureClass, FailureOption[]> = {
     ask: [{ id: "answer", label: "Answer and continue", labelZh: "回答並繼續", primary: true, note: true }],
     environment: [{ id: "fix-retry", label: "Fix and retry", labelZh: "修好後重試", primary: true }],
@@ -278,12 +283,12 @@ export function failureActions(cls: FailureClass, code?: FailureCode, o: { ended
 
 /** What the card says to do, per class. */
 export function failureHow(f: Failure, o: { ended?: boolean; newTaskAllowed?: boolean } = {}): FText {
-  if ((o.ended || f.code === "deterministic.new-task") && o.newTaskAllowed === false) return t("This workflow is internal or retired, so a new task cannot start from this card. Ask Firstmate to prepare the work again; Park closes this card.", "這個流程是內部或已退役的流程，無法從這張卡開始新任務。請 Firstmate 重新準備這項工作；Park 會關閉這張卡。");
+  if ((o.ended || NEW_TASK.has(f.code)) && o.newTaskAllowed === false) return t("This workflow is internal or retired, so a new task cannot start from this card. Ask Firstmate to prepare the work again; Park closes this card.", "這個流程是內部或已退役的流程，無法從這張卡開始新任務。請 Firstmate 重新準備這項工作；Park 會關閉這張卡。");
   if (o.ended) return t("This run ended on this result, so it does not run again. Start a new task: it gets the same request and params and runs from the start.", "這個 run 已經以這個結果結束，不會再跑。請開始新任務：它會用同樣的需求和參數從頭執行。");
   if (f.code === "deterministic.brief-quality") return t("Describe the concrete missing correction or verified runtime fix. The same refinement step regenerates and checks the brief; this does not approve implementation, tests or merge.", "請描述缺少的具體修訂或已驗證的 runtime 修正。同一個修復步驟會重新產生並檢查說明；此操作不代表核准實作、測試或合併。");
   if (f.code === "deterministic.spec-missing") return t("Write the concrete draft correction or source file in the note, then choose Revise draft and continue. The same spec step runs again; dispatch still needs its own approval.", "請在備註寫出具體草稿修訂或來源檔，再選「修訂草稿並繼續」。原規格步驟會重新執行；派工仍須另外核准。");
   if (f.code === "deterministic.prepare-again") return t("Prepare again: Studio goes back to the step before the card, runs the gates again and raises a new card. Nothing is merged before that card is answered.", "重新準備：Studio 回到卡片前一步，重跑 gate，再發一張新卡。新卡回答前不會合併任何東西。");
-  if (f.code === "deterministic.new-task") return t("Start a new task: it gets the same request and declared params and prepares everything again. This task stays as it is.", "開始新任務：它會用同樣的需求和已宣告的參數，重新準備一切。這個任務維持原狀。");
+  if (NEW_TASK.has(f.code)) return t("Start a new task: it gets the same request and declared params and prepares everything again. This task stays as it is.", "開始新任務：它會用同樣的需求和已宣告的參數，重新準備一切。這個任務維持原狀。");
   switch (f.class) {
     case "ask": if (f.code === "ask.one-way") return t("Write which version to keep in the note, then pick Answer and continue. The step runs again with your choice. The version you do not keep is discarded.", "請在備註寫下要保留哪個版本，再選「回答並繼續」；這一步會帶著你的選擇再跑一次，沒保留的版本會被捨棄。");
       return t("Firstmate did not answer this itself. Write your answer in the note and pick Answer and continue. The same step runs again with your answer.", "Firstmate 沒有自己回答這一題。請在備註寫下回答，再選「回答並繼續」；同一步會帶著你的回答再跑一次。");
