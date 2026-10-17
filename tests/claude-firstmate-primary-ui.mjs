@@ -30,6 +30,9 @@ const ok = (v, n) => { if (v) { console.log("ok " + n); pass++; } else { console
 const api = async (path, body) => { const r = await fetch(base + path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", "x-crew-session": token }, body: body === undefined ? undefined : JSON.stringify(body) }); return r.json(); };
 const seen = async (p, sel, timeout = 8000) => { try { await p.locator(sel).first().waitFor({ timeout }); return true; } catch { return false; } };
 const shot = async (p, name) => { if (!shots) return; mkdirSync(shots, { recursive: true }); await p.waitForTimeout(300); await p.screenshot({ path: join(shots, name + ".png") }); };
+// a fresh Firstmate's greeting: the stub echoes the first line of its opening message, which since 2cdb845 names the
+// captain's dashboard language and asks the Firstmate to greet in it (src/host/main.ts nativeFreshText)
+const greeting = (language) => `#chatLog :text("echo: The captain’s current dashboard language is ${language}")`;
 try {
   await waitUp(base, app);
   const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
@@ -71,7 +74,7 @@ try {
   rmSync(join(home, ".claude-login-marker"), { force: true }); await p.evaluate(() => window.dispatchEvent(new Event("crew:live"))); await seen(p, '[data-section="start-claude"][data-claude-account="signed-out"]');
   // signing in to Claude here continues into a fresh Claude Firstmate, which greets in the right-side chat
   await p.locator("[data-claude-signin]").first().click();
-  const greeted = await seen(p, '#chatLog :text("echo: Coffee onboarding")', 15000);
+  const greeted = await seen(p, greeting("English"), 15000);
   ok(greeted, "after Claude sign-in the right-side chat shows the fresh Claude Firstmate's greeting");
   const v = await api("/api/main");
   ok(v.state === "attached" && v.host === "claude" && v.drive?.path === "fresh", "the primary Studio started is Claude, fresh");
@@ -127,7 +130,7 @@ try {
   await p.locator("[data-claude-switch-confirm]").click();
   let switched = false; for (let i = 0; i < 200; i++) { const m = await api("/api/main"); if (m.state === "attached" && m.host === "claude") { switched = true; break; } await new Promise((r) => setTimeout(r, 50)); }
   ok(switched, "the confirmed switch stops Codex and starts a fresh Claude Firstmate");
-  ok(await seen(p, '#chatLog :text("echo: Coffee onboarding")', 15000), "after the switch the right-side chat shows the Claude greeting");
+  ok(await seen(p, greeting("English"), 15000), "after the switch the right-side chat shows the Claude greeting");
   await shot(p, "chat-after-switch");
   await api("/api/main/detach", {});
   // Claude did not enable auto: the card shows the effective mode and says so
@@ -145,7 +148,7 @@ try {
     await z.goto(base + "/#/firstmate"); await seen(z, '[data-section="start-claude"][data-claude-ready="true"] [data-claude-permission-mode]');
     const card = await z.locator('[data-section="start-claude"]').innerText().catch(() => "");
     ok(card.includes("Claude 權限模式：auto") && card.includes("船長的 auto mode 規則") && !/Claude permission mode|Captain auto-mode rules|built-in defaults/.test(card), "zh-TW: the Claude start card shows the mode and the auto-mode rules in Chinese");
-    await z.locator("#startClaudeBtn").click(); await seen(z, '#chatLog :text("echo: Coffee onboarding")', 15000);
+    await z.locator("#startClaudeBtn").click(); await seen(z, greeting("Traditional Chinese"), 15000);
     await z.goto(base + "/#/firstmate"); await seen(z, ".tk-drive [data-claude-permission-mode]");
     const run = await z.locator(".tk-drive").first().innerText().catch(() => "");
     ok(run.includes("Claude 權限模式：auto") && !/Claude permission mode|Captain auto-mode rules/.test(run), "zh-TW: the running card shows the effective mode in Chinese");
@@ -160,7 +163,7 @@ try {
       await m.goto(base + "/#/firstmate"); await seen(m, '[data-section="start-claude"][data-claude-ready="true"]'); await shot(m, `review-choice-${tag}`);
       await m.goto(base + "/#/doctor"); await seen(m, "[data-claude-account] [data-claude-start]"); await m.locator("[data-claude-account]").first().scrollIntoViewIfNeeded(); await shot(m, `review-card-${tag}`);
       await m.goto(base + "/#/firstmate"); await seen(m, "#startClaudeBtn:enabled"); await m.locator("#startClaudeBtn").click();
-      await seen(m, '#chatLog :text("echo: Coffee onboarding")', 15000); await shot(m, `review-chat-${tag}`);
+      await seen(m, greeting(o.lang === "zh-TW" ? "Traditional Chinese" : "English"), 15000); await shot(m, `review-chat-${tag}`);
       await api("/api/main/detach", {}); await c.close();
     }
   }
