@@ -5,7 +5,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // in a rehearsal, dropped when firstmate's hook delivered them, sent after the
 // grace otherwise), questions through the permission bridge, the door check.
 //   bun tests/takeover.ts
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, appendFileSync, utimesSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, appendFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -31,6 +31,8 @@ writeFileSync(origFile, [
   { type: "assistant", isSidechain: false, cwd: PROJ, sessionId: ORIG, message: { role: "assistant", model: "model-x", content: [{ type: "text", text: "hi" }] } },
 ].map((o) => JSON.stringify(o)).join("\n") + "\n");
 const ARGV = join(TMP, "argv.jsonl");
+// every CLI start appends one line; a start is awaited by its line (the stub can take a few hundred ms to boot), never by a fixed sleep
+const argvLines = () => existsSync(ARGV) ? readFileSync(ARGV, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
 process.env.STUB_ARGV_FILE = ARGV;
 const DATA = join(TMP, "data"); mkdirSync(DATA);
 let procs: { pid: number; command: string; cwd: string | null }[] = [{ pid: 999001, command: `claude --resume ${ORIG}`, cwd: PROJ }];
@@ -47,11 +49,12 @@ await section("rehearsal and release", async () => {
 // ---------- rehearsal: a copy, hooks standing down, wakes held ----------
 const m = mk(); await m.start();
 const origBefore = readFileSync(origFile, "utf8");
+const started0 = argvLines().length;
 const r = await m.takeover("claude", ORIG, "rehearsal");
 ok(r.ok, "takeover is allowed while the terminal holds the original (it forks)", JSON.stringify(r));
 ok(m.view().origin?.terminal && /names this session/.test(m.view().origin!.terminal!), "the view says the terminal still looks open");
-await Bun.sleep(300);
-const a0 = readFileSync(ARGV, "utf8").trim().split("\n").map((l) => JSON.parse(l)).at(-1);
+await until(() => argvLines().length > started0);
+const a0 = argvLines().at(-1);
 ok(a0.argv.includes("--fork-session") && a0.argv[a0.argv.indexOf("--model") + 1] === "model-x" && a0.argv[a0.argv.indexOf("--permission-mode") + 1] === "auto"
   && a0.argv.includes("--permission-prompt-tool") && !a0.argv.includes("--dangerously-skip-permissions"), "the CLI forks with the same model and permission mode, prompts to Studio", JSON.stringify(a0.argv));
 ok(a0.FM_IN_ROUND === "1", "a rehearsal runs with FM_IN_ROUND=1 so firstmate's hooks stand down");
@@ -100,9 +103,10 @@ m.stop();
 await section("takeover mode: hook turns and wakes", async () => {
 // ---------- takeover: hook turns followed, unacked wakes sent after the grace ----------
 const m2 = mk(400); await m2.start();
+const started2 = argvLines().length;
 ok((await m2.takeover("claude", ORIG, "takeover")).ok, "takeover mode starts");
-await Bun.sleep(200);
-ok(readFileSync(ARGV, "utf8").trim().split("\n").map((l) => JSON.parse(l)).at(-1).FM_IN_ROUND === null, "a real takeover keeps firstmate's hooks (no FM_IN_ROUND)");
+await until(() => argvLines().length > started2);
+ok(argvLines().at(-1)?.FM_IN_ROUND === null, "a real takeover keeps firstmate's hooks (no FM_IN_ROUND)");
 m2.enqueue("chat", "STUB_LATER", "desktop");
 await until(() => m2.view().log.some((x) => x.kind === "firstmate" && x.text === "woken by the hook"));
 ok(m2.view().log.some((x) => /a turn Studio did not send started/.test(x.text)) && m2.view().log.some((x) => x.text === "woken by the hook"), "a turn the session's own hook started is followed and shown");
