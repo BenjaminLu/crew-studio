@@ -21,7 +21,7 @@ export type MergeInput = {
 };
 /** what the coordinator agent returns (the card_detail tool's arguments) */
 export type Coordinator = {
-  intents?: string[]; why?: string[]; how?: string; done?: string[]; followups?: string[]; door_reason?: string; rollback?: string;
+  intents?: string[]; why?: string[]; how?: string; what?: string; done?: string[]; followups?: string[]; door_reason?: string; rollback?: string;
   walk?: { id: string; en: string; zh: string }[];
 };
 
@@ -151,7 +151,7 @@ export function validCoordinator(raw: unknown, shape?: CardDetail | null): { ok:
       : ids && !ids.has(w.id) ? `walk names an unknown hunk ${String(w.id).slice(0, 60)}` : null).find(Boolean) ?? null;
   const why = strs("intents", shape ? shape.intents.length : null, true) ?? strs("done", shape ? shape.done.length : null, true) ?? walkBad
     ?? strs("why", shape ? shape.why.length : null, false) ?? strs("followups", shape ? shape.review?.followups.length ?? 0 : null, false)
-    ?? str("how") ?? str("door_reason") ?? str("rollback");
+    ?? str("how") ?? str("what") ?? str("door_reason") ?? str("rollback");
   return why ? bad(why) : { ok: true, co: o as Coordinator };
 }
 /** The detail with the coordinator's answer when it is well formed, else the fallback; never throws on the answer. */
@@ -198,7 +198,7 @@ export function mergeDetail(i: MergeInput, co: Coordinator | null = null): CardD
     done: doneOut,
     // the change itself (the spec's what) beside the captures and the diff stat; never the spec's explain block,
     // which is the spec writer's reasoning, not what changed
-    beforeAfter: { text: loc(String(spec.what ?? ""), spec.zh?.what), stat: i.stat, images },
+    beforeAfter: { text: loc(String(spec.what ?? ""), spec.zh?.what ?? co?.what), stat: i.stat, images },
     door: kind || spec.door ? { kind, reason: loc(spec.door?.reason ?? (reasons.join("; ") || ""), co?.door_reason), rollback } : null,
     review: (i.ctx.reviews ?? []).length || followups.length ? { verdicts: (i.ctx.reviews ?? []).map((r: any) => ({ by: String(r.by ?? "reviewer"), verdict: String(r.verdict ?? "?") })), followups: followups.map((f, k) => loc(f, co?.followups?.[k])),
       mode: (i.ctx.reviews ?? []).at(-1)?.mode ?? null, notes: [...((i.ctx.reviews ?? []).at(-1)?.notCovered ?? [])] } : null,
@@ -218,6 +218,7 @@ export function coordinatorText(d: CardDetail): string {
     "", "Captain's intent lines:", ...d.intents.map((t, k) => `${k + 1}. ${t.en}`),
     "", "Why:", ...d.why.map((t, k) => `${k + 1}. ${t.en}`),
     "", `How (worker's report): ${d.how[0]?.en ?? ""}`,
+    "", `What changes (before and after): ${d.beforeAfter.text.en}`,
     "", "Done lines:", ...d.done.map((t, k) => `${k + 1}. ${t.text.en}`),
     "", "Follow-ups:", ...(d.review?.followups ?? []).map((t, k) => `${k + 1}. ${t.en}`),
     "", `Door reason: ${d.door?.reason.en ?? ""}`, d.door?.kind === "one-way" ? `Rollback: ${d.door?.rollback.en ?? ""}` : "",
@@ -227,7 +228,7 @@ export function coordinatorText(d: CardDetail): string {
 }
 export const COORDINATOR_TOOL_SCHEMA = { type: "object", properties: {
   intents: { type: "array", items: { type: "string" }, description: "zh-TW of each intent line, same order" },
-  why: { type: "array", items: { type: "string" } }, how: { type: "string" }, done: { type: "array", items: { type: "string" } },
+  why: { type: "array", items: { type: "string" } }, how: { type: "string" }, what: { type: "string", description: "zh-TW of What changes" }, done: { type: "array", items: { type: "string" } },
   followups: { type: "array", items: { type: "string" } }, door_reason: { type: "string" }, rollback: { type: "string" },
   walk: { type: "array", items: { type: "object", properties: { id: { type: "string" }, en: { type: "string" }, zh: { type: "string" } }, required: ["id", "en", "zh"] } },
 }, required: ["intents", "done", "walk"] };

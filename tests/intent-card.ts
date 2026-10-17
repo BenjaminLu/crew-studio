@@ -29,6 +29,7 @@ ok(d.why.length === 3 && d.why[0].en === input.spec.why[0], "why: the spec's thr
 ok(d.scope.in.join(",") === "src/money.ts,test/format.test.ts,test/money.test.ts,README.md" && Array.isArray(d.scope.out), "scope: in and out");
 ok(d.done.length === 4 && d.done.every((x) => x.proved), "done: four lines, every one proved");
 ok(d.beforeAfter.text.en === input.spec.what && d.beforeAfter.text.en !== input.spec.explain.en && /README\.md/.test(d.beforeAfter.stat) && /3 files changed/.test(d.beforeAfter.stat), "before/after: the change itself (the spec's what) and the diff stat, not the spec's explain block");
+ok(!d.beforeAfter.text.untranslated && d.beforeAfter.text["zh-TW"] === coord.what, "before/after in zh-TW: the coordinator's translation of the what");
 ok(d.how.length === 1 && /optional second argument/.test(d.how[0].en), "how: the worker's report");
 ok(d.door?.kind === "two-way" && /optional parameter/.test(d.door.reason.en) && /revert/.test(d.door.rollback.en) && CJK.test(d.door.rollback["zh-TW"]), "door and rollback");
 ok(d.review?.verdicts[0]?.verdict === "APPROVE" && d.review.followups.length === 2 && /src\/money\.ts:24/.test(d.review.followups[0].en), "reviewer verdict and its two follow-ups");

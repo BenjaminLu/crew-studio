@@ -21,7 +21,8 @@
   "src/money.ts:24：format(12.5, \"JPY\") 回傳 \"¥12.5\"，因為沒有任何地方檢查或四捨五入非整數的日圓。修法：JPY 遇到非整數金額就拒絕，或在文件寫明 JPY 金額必須是整數。",
   "src/money.ts:20：純 JS 的呼叫端傳入未知幣別（例如 \"EUR\"）時，會默默得到美元輸出。修法：幣別不在 Currency 聯集裡就丟出錯誤。"
  ],
- "door_reason": "只是在一個函式庫函式上加一個選填參數；沒有碰任何敏感路徑（.github、CODEOWNERS、gates），預設行為不變，所以很容易 revert。",
+ "what": "format() 多了選填的第二個參數 currency。傳 \"JPY\" 時金額是整數日圓、沒有小數：輸出是 ¥ 符號加上千位逗號的金額，負數前面加減號（format(1235, \"JPY\") 是 \"¥1,235\"，format(-1235, \"JPY\") 是 \"-¥1,235\"，format(0, \"JPY\") 是 \"¥0\"）。不傳幣別或傳 \"USD\" 時，輸出和 base 完全一樣，不加千位分隔（format(123456) 仍是 \"$1234.56\"）。",
+ "door_reason":"只是在一個函式庫函式上加一個選填參數；沒有碰任何敏感路徑（.github、CODEOWNERS、gates），預設行為不變，所以很容易 revert。",
  "walk": [
   { "id": "README.md:10", "en": "README gains a JPY example, so a reader sees the captain's \"¥1,235\" next to the USD ones.", "zh": "README 加上日圓範例，讀者會在美元範例旁看到船長要的 \"¥1,235\"。" },
   { "id": "src/money.ts:13", "en": "The change itself: a Currency type and an optional currency argument; JPY gets its own branch (whole yen, commas), USD keeps the old line untouched.", "zh": "改動本體：新增 Currency 型別和選填的 currency 參數；JPY 走自己的分支（整數日圓、千位逗號），USD 原本那一行完全沒動。" },
