@@ -36,11 +36,14 @@ let pass=0, fail=0; const ok=(condition,label,extra='')=>{ if(condition){pass++;
 // Read the first RGB pixel of a PNG, handling standard byte filters (no library).
 const firstPixel = p => { const b=readFileSync(p), chunks=[];let pos=8,width=0,channels=0;while(pos<b.length){const n=b.readUInt32BE(pos),k=b.subarray(pos+4,pos+8).toString();if(k==='IHDR'){width=b.readUInt32BE(pos+8);channels=b[pos+17]===6?4:3;if(b[pos+16]!==8)throw Error('8-bit PNG required')}if(k==='IDAT')chunks.push(b.subarray(pos+8,pos+8+n));pos+=12+n;}const raw=inflateSync(Buffer.concat(chunks)), f=raw[0];if(![0,1,2,3,4].includes(f)||!width||!channels)throw Error('bad PNG');return [...raw.subarray(1,4)]; };
 const script=process.env.CREW_TEST_RENDERER_SCRIPT || join(root,'src/render/render.mjs');
+// The renderer imports Playwright from the path it is given; without PLAYWRIGHT_MODULE use this checkout's own,
+// as the other page suites do (a bare run passed the string "undefined" and every mode failed to start).
+const playwrightModule=process.env.PLAYWRIGHT_MODULE || import.meta.resolve('playwright');
 for(const mode of ['crop','stills','film','page']){
  const out=join(tmp,mode==='stills'?'stills':`${mode}.${mode==='film'?'mp4':'png'}`);
  const args=[script,mode,...(mode==='page'?['--root',input,'--page','film.html']:['--html',join(input,'film.html')]),'--out',out,'--width','200',...(mode==='crop'?['--selector','#stage']:mode==='stills'?['--times','0']:mode==='film'?['--fps','30','--workers','1']:[])];
  const beforeConnections=accepted,beforeMessages=messages;
- const child=spawn(process.execPath,args,{env:{...process.env,CREW_PLAYWRIGHT_MODULE:process.env.PLAYWRIGHT_MODULE,CREW_FFMPEG:process.env.CREW_FFMPEG||'ffmpeg'},stdio:['ignore','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',x=>stdout+=x);child.stderr.on('data',x=>stderr+=x);const timer=setTimeout(()=>child.kill('SIGKILL'),30000);const status=await new Promise(resolve=>child.on('exit',resolve));clearTimeout(timer);const r={status,stdout,stderr};
+ const child=spawn(process.execPath,args,{env:{...process.env,CREW_PLAYWRIGHT_MODULE:playwrightModule,CREW_FFMPEG:process.env.CREW_FFMPEG||'ffmpeg'},stdio:['ignore','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',x=>stdout+=x);child.stderr.on('data',x=>stderr+=x);const timer=setTimeout(()=>child.kill('SIGKILL'),30000);const status=await new Promise(resolve=>child.on('exit',resolve));clearTimeout(timer);const r={status,stdout,stderr};
  let result=null; for(const line of r.stdout.split('\n'))try{const value=JSON.parse(line);if(value.ok!==undefined)result=value}catch{}
  ok(r.status===0&&result?.ok,`${mode}: outside image/frame/fetch/traversal/symlink inputs are blocked while legitimate local assets remain usable`,r.stderr.slice(-300));
  if(mode!=='page'){ok(accepted===beforeConnections&&messages===beforeMessages,`${mode}: planted outside and loopback WebSocket server receives zero connections and messages`);ok(result?.refused?.some(x=>x.startsWith('ws:')&&x.includes('artifact-origin'))&&result.refused.length<=128,`${mode}: WebSocket refusal evidence is bounded and includes artifact-origin sockets`);}
@@ -50,7 +53,7 @@ for(const mode of ['crop','stills','film','page']){
 }
 // Older optional Playwright tools must fail before a page is created, not run bare.
 const wrapper=join(tmp,'no-websocket-boundary.mjs');
-writeFileSync(wrapper, `import {chromium as real} from ${JSON.stringify(process.env.PLAYWRIGHT_MODULE)}; export const chromium={launch:async(...args)=>{const browser=await real.launch(...args);return new Proxy(browser,{get(target,key){if(key==='newContext')return async(...args)=>{const ctx=await target.newContext(...args);ctx.routeWebSocket=undefined;return ctx};const value=target[key];return typeof value==='function'?value.bind(target):value}})}};`);
+writeFileSync(wrapper, `import {chromium as real} from ${JSON.stringify(playwrightModule)}; export const chromium={launch:async(...args)=>{const browser=await real.launch(...args);return new Proxy(browser,{get(target,key){if(key==='newContext')return async(...args)=>{const ctx=await target.newContext(...args);ctx.routeWebSocket=undefined;return ctx};const value=target[key];return typeof value==='function'?value.bind(target):value}})}};`);
 const missing=spawn(process.execPath,[script,'crop','--html',join(input,'film.html'),'--out',join(tmp,'missing.png'),'--selector','#stage'],{env:{...process.env,CREW_PLAYWRIGHT_MODULE:wrapper},stdio:['ignore','pipe','pipe']});let missingError='';missing.stderr.on('data',x=>missingError+=x);const oldConnections=accepted;const missingCode=await new Promise(r=>missing.on('exit',r));
 ok(missingCode!==0&&/WebSocket isolation unavailable/.test(missingError)&&accepted===oldConnections,'unavailable WebSocket boundary fails closed before loading any artifact page');
 
@@ -59,7 +62,7 @@ ok(missingCode!==0&&/WebSocket isolation unavailable/.test(missingError)&&accept
 const shapes=join(tmp,'shapes');mkdirSync(shapes);
 const film=(css,body,extra='')=>`<!doctype html><html><head><style>html,body{margin:0}${css}</style></head><body>${body}<script>const DUR=0.2;let muted=true,startAt=0,ctx=null;function build(){}function schedule(){}function render(t){}${extra}</script></body></html>`;
 const shot=(name,html,args=[])=>{const f=join(shapes,`${name}.html`),out=join(shapes,`${name}.mp4`);writeFileSync(f,html);const t0=Date.now();
- const r=spawnSync(process.execPath,[script,'film',...args,'--html',f,'--out',out,'--fps','10','--workers','1'],{env:{...process.env,CREW_PLAYWRIGHT_MODULE:process.env.PLAYWRIGHT_MODULE,CREW_FFMPEG:process.env.CREW_FFMPEG||'ffmpeg'},encoding:'utf8',timeout:60000});
+ const r=spawnSync(process.execPath,[script,'film',...args,'--html',f,'--out',out,'--fps','10','--workers','1'],{env:{...process.env,CREW_PLAYWRIGHT_MODULE:playwrightModule,CREW_FFMPEG:process.env.CREW_FFMPEG||'ffmpeg'},encoding:'utf8',timeout:60000});
  let result=null;for(const line of String(r.stdout).split('\n'))try{const v=JSON.parse(line);if(v.ok!==undefined)result=v}catch{}
  const probe=spawnSync('ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=width,height','-of','csv=p=0',out],{encoding:'utf8'});const [w,h]=probe.status===0?probe.stdout.trim().split(',').map(Number):[0,0];
  const raw=w?spawnSync(process.env.CREW_FFMPEG||'ffmpeg',['-v','error','-i',out,'-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-'],{maxBuffer:64*1024*1024}).stdout:null;
