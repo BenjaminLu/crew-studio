@@ -44,13 +44,17 @@ export function lineageText(s:RefinementSnapshot,budget=LINEAGE_BUDGET):string{
  const dropped=lines.filter(l=>!keep.has(l.r)).map(l=>id(l.r));
  return`${head}\n${lines.filter(l=>keep.has(l.r)).map(l=>l.text).join('\n')}${dropped.length?`\n(${dropped.length} older requirements do not fit this brief: ${dropped.slice(0,40).join(', ')}${dropped.length>40?', ...':''}. They still bind as the current version shows them; ask the captain to consolidate them into one note.)`:''}`;
 }
-export function imageRefinement(store:ArtifactStore,o:LineageOpts):{snapshot:ImageRefinementSnapshot;reference?:CodexImageReference;prompt:string}{
+/** The image request's byte cap: the provider refuses a larger prompt (src/providers/codex-image.ts), so the whole request is checked here. */
+export const IMAGE_PROMPT_CAP=16000;
+/** lead: text that goes first in the request (the node's role skill); the cap counts it with the refinement. */
+export function imageRefinement(store:ArtifactStore,o:LineageOpts&{lead?:string}):{snapshot:ImageRefinementSnapshot;reference?:CodexImageReference;prompt:string}{
  let reference:CodexImageReference|undefined;
  const snapshot=requirementLineage(store,{...o,type:'image',noun:'Image'});
  if(o.old){const old=o.old,current=store.version(old.id,old.n)!;
   const path=store.file(old.id,old.n,current.primary??'');if(!path)throw new Error('Image refinement source missing');const bytes=readFileSync(path);verifyImagePng(bytes);const sha256=createHash('sha256').update(bytes).digest('hex');if(sha256!==old.sha256)throw new Error('Image reference hash changed');reference={bytes,sha256};
  }
  const prompt=`${reference?'Edit the attached CURRENT image; do not regenerate from the original description alone.':'Create the initial image.'}\nOriginal captain intent: ${o.intent}\nPreserve all active requirements and all other current-image details. Apply the latest requested changes. Later explicit conflicting changes override earlier intent only in the changed aspect. Opposite-side directions are relative to the attached current image; do not mirror unrelated content. Superseded records are history, not active requirements.\nActive captain requirements (exact words): ${JSON.stringify(snapshot.active)}\nAnnotation history (exact words and target versions): ${JSON.stringify(snapshot.history)}`;
- if(Buffer.byteLength(prompt)>16000)throw new Error('Image refinement context exceeds safe capacity; discuss consolidation with the captain');
- return{snapshot,reference,prompt};
+ const full=o.lead?.trim()?`${o.lead.trim()}\n\n${prompt}`:prompt;
+ if(Buffer.byteLength(full)>IMAGE_PROMPT_CAP)throw new Error('Image refinement context exceeds safe capacity; discuss consolidation with the captain');
+ return{snapshot,reference,prompt:full};
 }

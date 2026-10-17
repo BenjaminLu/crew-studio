@@ -1,7 +1,7 @@
 # Coffee kit: guided native creation, refinement and whole-site acceptance
 
 Implementation scope approved: src/domain/coffee-kit.ts,
-workflows/v2/coffee-kit.wf.yaml, workflows/skills/v2/coffee-kit.md,
+workflows/v2/coffee-kit.wf.yaml, workflows/skills/v2/coffee-kit.md (since removed: the roles now use packs/coffee-kit/skills),
 tests/native-coffee-kit.ts, src/runtime/index.ts, src/runtime/defs.ts,
 public/runtime.js, public/runtime.css, public/ootb.js,
 tests/beginner-coffee-kit-ui.mjs, package.json and this document.

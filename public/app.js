@@ -87,23 +87,26 @@ function render() {
 }
 // a live update never yanks focus out of a field being typed in; it renders once the field is left
 let deferred = false;
-// a pointer press in progress: the field is left by pressing a button, and that button must still be there when the press ends
+// a pointer press in progress: a render now would replace the pressed button before its click (mouseup on a new
+// element fires no click), so a live update waits until the press is over
 let pressing = false;
 addEventListener("pointerdown", () => { pressing = true; }, true);
 addEventListener("pointerup", () => { pressing = false; }, true);
 addEventListener("pointercancel", () => { pressing = false; }, true);
+/** Run go once the current press ends (now when nothing is pressed); after the click it ends in, not before. */
+function afterPress(go) {
+  if (!pressing) return go();
+  const after = () => { removeEventListener("pointerup", after, true); removeEventListener("pointercancel", after, true); setTimeout(go, 0); };
+  addEventListener("pointerup", after, true); addEventListener("pointercancel", after, true);
+}
 function soft() {
+  if (deferred) return updateNav();
   const a = document.activeElement;
   if (a && $("#view").contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) {
-    if (!deferred) { deferred = true; a.addEventListener("blur", () => {
-      const go = () => { deferred = false; render(); };
-      // rendering now would replace the pressed button before its click (mouseup on a new element: no click); render once the press is over
-      if (!pressing) return go();
-      const after = () => { removeEventListener("pointerup", after, true); removeEventListener("pointercancel", after, true); setTimeout(go, 0); };
-      addEventListener("pointerup", after, true); addEventListener("pointercancel", after, true);
-    }, { once: true }); }
+    deferred = true; a.addEventListener("blur", () => afterPress(() => { deferred = false; render(); }), { once: true });
     return updateNav();
   }
+  if (pressing) { deferred = true; afterPress(() => { deferred = false; render(); }); return updateNav(); }
   render();
 }
 function updateNav() {

@@ -31,3 +31,5 @@ the brief's TESTS section, and so on for the other five.
 - `video/editor`: an HTML film and the renderer contract.
 - `images/overview`: a PNG generated with Codex.
 - `documents/writer`: a Markdown document and its exports.
+- `coffee-kit/overview`: the coffee-shop kit: design plan, image, film, bundle judges, whole-site acceptance.
+- `coffee-kit/worker`: the coffee website page round.

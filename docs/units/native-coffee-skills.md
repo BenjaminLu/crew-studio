@@ -7,7 +7,7 @@ profiles under packs/coffee-kit/skills. Each coffee-kit role names two skills
 The role receives them joined in that order. Staffing snapshots pin the joined
 body's SHA256 and each named skill's SHA256; provider input and source receipts
 must bind that same body, not merely a display name. Procedure detail lives in
-the operating manual (manual/coffee-kit/notes.md), not in the skills. No installed global skill or Sites
+the operating manual (manual/coffee-kit/overview.md and worker.md), not in the skills. No installed global skill or Sites
 connector is assumed. The image profile adapts imagegen prompt/preservation
 principles to the real dedicated Codex adapter. The motion profile follows the
 HyperFrames core/animation contracts and the pinned local renderer version.

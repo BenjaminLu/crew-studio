@@ -2,8 +2,9 @@
 
 ## Briefing
 
-- No agent role: the `draft` step sends the captain's request (and, on a revision, the cumulative notes and the
-  parent image) to Codex image generation. The captain accepts or asks for changes.
+- The `draft` step runs as the `image-worker` role: its short image skill leads the request, then the captain's
+  request (and, on a revision, the cumulative notes and the parent image) goes to Codex image generation. The step
+  records the role skill it used. The captain accepts or asks for changes.
 
 ## Environment
 

@@ -81,6 +81,11 @@ try {
     const row = alphaRow ? await p.textContent('[data-skill="alpha"]') : "";
     ok(alphaRow && row.includes("Alpha: short sentences, one idea each") && row.includes(alpha) && (await p.textContent('[data-skill="alpha"] [data-skill-version]')).trim() === "v1"
       && (await p.getAttribute('[data-skill="alpha"] [data-skill-sha]', "title")) === sha(join(alpha, "SKILL.md")), "import from a folder in the page: name, description, source, v1 and sha256 shown", row + " msg=" + await p.textContent("[data-import-msg]").catch(() => "-"));
+    // a live update during a press waits for the press to end: the pressed button is still the one under the pointer when the click lands
+    { const kept = await p.evaluate(async () => { document.activeElement?.blur?.(); const before = document.querySelector("[data-import-go]");
+        window.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); soft(); const during = document.querySelector("[data-import-go]") === before;
+        window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); await new Promise((r) => setTimeout(r, 50)); return { during, after: document.querySelector("[data-import-go]") !== before }; });
+      ok(kept.during && kept.after, "a live update during a button press renders only after the press ends", JSON.stringify(kept)); }
     await p.click('[data-import-kind="home"]');
     ok(await wait(p, '[data-home-import="claude/home-skill"]'), "the skills home lists its skills to pick from");
     await p.click('[data-home-import="claude/home-skill"]');

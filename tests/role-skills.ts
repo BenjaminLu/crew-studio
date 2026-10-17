@@ -234,6 +234,8 @@ H.stop();
   ok(nd.roles[0].skill === "pack:a/contract.md+pack:b/profile.md" && nd.roles[1].skill === "pack:a/one.md", "a role's named skills become one joined ref, in order; a plain skill: stays as it was", JSON.stringify(nd.roles));
   const bad = normalize({ id: "multi", name: "Multi", version: 1, roles: [{ id: "worker", label: "Worker", skills: ["pack:a/x.md", "pack:a/x.md"] }], nodes: [], edges: [] });
   ok(validate(bad).some((p) => /role worker: skills is an ordered list of distinct skill refs/.test(p.text)), "a repeated named skill is refused");
+  const both = normalize({ id: "multi", name: "Multi", version: 1, roles: [{ id: "worker", label: "Worker", skill: "pack:a/other.md", skills: ["pack:a/x.md", "pack:b/y.md"] }], nodes: [], edges: [] });
+  ok(validate(both).some((p) => /role worker: name its skill once, as skill or as skills, not both/.test(p.text)) && !validate(nd).some((p) => /not both/.test(p.text)), "a role that names both skill and skills is refused at load; a normalized one is not");
   const { StaffingStore, installStaffingGuard, staffingHash, nativeStaffingSkillRef, coffeeStaffingProject, skillPartPins } = await import("../src/domain/staffing");
   const { roleSkillJoin } = await import("../src/runtime/defs");
   const { Y } = await import("./rt-harness");
@@ -296,10 +298,89 @@ H.stop();
   const { parseYaml } = await import("../src/bundled");
   const plainPinned = (file: string) => { const d = normalize(parseYaml(readFileSync(join(root, file), "utf8"))); return ["build", "review"].every((id) => (d.nodes.find((n: any) => n.id === id)?.skills ?? []).some((p: any) => p.id === "plain-writing")); };
   ok(plainPinned("packs/firstmate/workflows/code-firstmate.wf.yaml") && plainPinned("workflows/v2/github-review.wf.yaml"), "code-firstmate and github-review pin plain-writing on their build and review nodes");
+  { const { staffingApplies, staffingNodeOverrides } = await import("../src/domain/staffing");
+    const gr = normalize(parseYaml(readFileSync(join(root, "workflows/v2/github-review.wf.yaml"), "utf8"))), nodes = staffingNodeOverrides(gr) ?? {};
+    ok(staffingApplies(gr) && ["build", "review"].every((id) => nodes[id]?.skills?.some((p: any) => p.ref === "skill:plain-writing")), "github-review is staffed by kind, and its staffing carries the build and review nodes' plain-writing pins for the captain to approve", JSON.stringify(nodes)); }
   const video = normalize(JSON.parse(readFileSync(join(root, "workflows/v2/video.wf.yaml"), "utf8")));
   ok(video.roles.find((r: any) => r.id === "editor")?.skill === "bundled:workflows/skills/v2/film-editor.md", "the video editor runs on the film-editor skill, not the web designer's");
   const images = normalize(JSON.parse(readFileSync(join(root, "workflows/v2/images.wf.yaml"), "utf8")));
   ok(images.roles.some((r: any) => r.id === "image-worker" && r.skill === "bundled:workflows/skills/v2/image.md") && images.nodes.find((n: any) => n.id === "draft")?.role === "image-worker", "the images workflow's generating node has a role with an image skill");
+  { const { manualFor } = await import("../src/manual"); const { composeSkeleton } = await import("../src/runtime/brief-skeleton");
+    const coffee = normalize(JSON.parse(readFileSync(join(root, "workflows/v2/coffee-kit.wf.yaml"), "utf8"))), page = coffee.nodes.find((n: any) => n.id === "page")!;
+    const brief = composeSkeleton({ def: coffee, node: page, visit: 1, modeName: "coffee-page", tools: ["work_write"] });
+    ok(manualFor("coffee-kit", "worker") === "coffee-kit/worker" && manualFor("coffee-kit", "image-worker") === "coffee-kit/overview" && /Do not hide overflow/.test(brief) && /stable media aspect ratios/.test(brief) && /Manual: coffee-kit\/worker § Deliverable/.test(brief),
+      "the coffee website round's brief carries the manual's coffee-kit/worker page (overflow and aspect-ratio rules included); the other roles fall back to the overview", brief.slice(-1500)); }
   ok(!existsSync(join(root, "packs/documents/skills/writer.md")) && !existsSync(join(root, "workflows/skills/v2/coffee-kit.md")), "the orphaned duplicate skills are gone");
+}
+// ---------- a built-in workflow update (v8 → v9): one captain card keeps the approved crew, showing what changed ----------
+{
+  const { StaffingStore, installStaffingGuard, staffingHash } = await import("../src/domain/staffing");
+  const { installFirstmateStaffing } = await import("../src/firstmate-staffing");
+  const { bundledText } = await import("../src/bundled");
+  const { Y } = await import("./rt-harness");
+  const PW = { id: "plain-writing", v: 1, sha256: sha(readFileSync(join(root, "packs/core/skills/plain-writing/SKILL.md"), "utf8")) };
+  const flow = { id: "code-firstmate", name: "Update fixture", kind: "code", version: 8, roles: [{ id: "worker", label: "Worker", skill: "pack:firstmate/skills/worker.md" }, { id: "reviewer", label: "Reviewer", skill: "pack:firstmate/skills/reviewer.md" }],
+    nodes: [{ id: "wait", kind: "card", label: "Wait", x: 0, y: 0, card: { options: [{ id: "go", label: "Go" }] } }, { id: "build", kind: "agent", label: "Build", role: "worker", mode: "test", x: 1, y: 0 }, { id: "review", kind: "agent", label: "Review", role: "reviewer", mode: "test", x: 2, y: 0 }],
+    edges: [["wait", "build", "go"], ["build", "review"]] };
+  const h = await harness([Y(flow), bundledText("workflows/v2/firstmate-staffing.wf.yaml")!], { data: checkedTempDir("crew-role-skills-keep-") }), e = h.engine, store = new StaffingStore(h.data), project = { namespace: "git" as const, id: "p", identity: "keep-crew" };
+  try {
+    let worker = "# Worker v8\n";
+    e.deps.skillText = (r: string) => r.endsWith("worker.md") ? worker : "# Reviewer\n";
+    const facts = async () => [{ provider: "codex", support: "supported" as const, auth: "verified", quota: "available", expires: Date.now() + 30000, models: [{ id: "m", efforts: ["high"] }] }];
+    const guard = installStaffingGuard(e, store, () => project);
+    const tools = installFirstmateStaffing(e, store, () => project, facts, undefined, undefined, { verified: guard.verified, capability: () => {} });
+    const owner = (key: string) => ({ key, captain: true, text: "Fix the rounding in money.ts", live: () => true });
+    const v8 = e.defs.get(flow.id)!;
+    const pick = { provider: "codex" as const, model: "m", effort: "high" };
+    const c8 = store.approve({ schema: 1, algorithm: "sha256-canonical-v1", project, workflow: { id: v8.id, version: v8.version, sha256: staffingHash(v8) }, roles: { worker: { ...pick, skill: store.remember({ ref: v8.roles[0].skill, version: 1, text: worker }) }, reviewer: { ...pick, skill: store.remember({ ref: v8.roles[1].skill, version: 1, text: "# Reviewer\n" }) } }, review: { freshContexts: 3, distinctProviders: false } }, null, { run: "R-0", card: "SC-0", answerSeq: 1 });
+    // the update: a new worker skill text and plain-writing pinned on build and review
+    worker = "# Worker v9\n\n- The brief carries the lane's facts.\n";
+    const v9 = e.defs.save(flow.id, { base: v8.version, nodes: v8.nodes.map((n: any) => ["build", "review"].includes(n.id) ? { ...n, skills: [PW] } : n) } as any, "studio (built-in update)");
+    { let msg = ""; try { e.start({ workflow: flow.id, version: v9.version, text: "x", params: { project: project.id, _staffing: c8.hash } }); } catch (err: any) { msg = String(err?.message); }
+      ok(/Staffing approval missing or changed/.test(msg), "the v8 approval does not start a Task on v9 by itself", msg); }
+    const read = await tools.call("studio_staffing_interview", { project: project.id, workflow: flow.id, version: v9.version }, owner("read")) as any;
+    ok(read.approved?.valid === false && read.keepCrew?.available === true && read.keepCrew.from === v8.version && read.keepCrew.to === v9.version, "the interview offers to keep the crew instead of a new interview", JSON.stringify([read.approved, read.keepCrew]));
+    const kept = await tools.call("studio_keep_staffing", { project: project.id, workflow: flow.id, version: v9.version }, owner("keep")) as any;
+    await until(() => e.cards.list({ run: kept.proposal, open: true }).length === 1);
+    const card = e.cards.list({ run: kept.proposal, open: true })[0]; const body = JSON.parse(card.body);
+    ok(card.captainOnly && JSON.stringify(card.title).includes(`Workflow updated — keep the same crew on v${v9.version}?`) && body.upgrade.from === `v${v8.version}` && body.upgrade.to === `v${v9.version}` && v9.version > v8.version
+      && /Role worker/.test(body.upgrade.changes) && /\+- The brief carries the lane's facts\./.test(body.upgrade.changes) && /Node build skills: none → plain-writing@v1/.test(body.upgrade.changes) && !/Role reviewer/.test(body.upgrade.changes),
+      "one captain-only card: \"Workflow updated — keep the same crew on vN?\", with the skill diff and the node skill pins", JSON.stringify([card.title, body.upgrade]));
+    await e.answer(card.id, { choice: "approve", by: "captain" });
+    await until(() => e.get(kept.proposal)?.status === "succeeded");
+    const c9 = store.current(project);
+    ok(c9.version === c8.version + 1 && c9.previous === c8.hash && c9.workflow.version === v9.version && c9.workflow.sha256 === staffingHash(e.defs.get(flow.id, v9.version)) && c9.roles.worker.provider === "codex" && c9.roles.worker.model === "m" && c9.roles.worker.effort === "high"
+      && c9.roles.worker.skill.sha256 === sha(worker) && c9.nodes?.build?.skills?.[0]?.ref === "skill:plain-writing",
+      "approving writes a new staffing version for v9 with the same picks, the new skill pins and the node pins", JSON.stringify(c9));
+    const t = e.start({ workflow: flow.id, version: v9.version, text: "x", params: { project: project.id, _staffing: c9.hash } });
+    ok(!!t && t.version === v9.version, "a Task starts on v9 with the kept crew");
+    await e.cancel(t.id, "fixture cleanup");
+  } finally { for (const x of e.list()) if (!["succeeded", "failed", "cancelled"].includes(x.status)) await e.cancel(x.id, "fixture cleanup"); h.stop(); }
+}
+
+// ---------- a Task pinned to coffee-kit v1 (single profile refs) is not blocked by the new contract + profile policy ----------
+{
+  const { StaffingStore, installStaffingGuard, staffingHash, coffeeStaffingProject } = await import("../src/domain/staffing");
+  const { Y } = await import("./rt-harness");
+  const legacy = "pack:coffee-kit/skills/website.md";
+  const flow = { id: "coffee-kit", name: "Coffee v1 fixture", kind: "coffee-kit", version: 1, roles: [{ id: "worker", label: "Worker", skill: legacy }],
+    nodes: [{ id: "wait", kind: "card", label: "Wait", x: 0, y: 0, card: { options: [{ id: "go", label: "Go" }] } }, { id: "work", kind: "agent", label: "Work", role: "worker", mode: "test", x: 1, y: 0 }], edges: [["wait", "work", "go"]] };
+  const h = await harness([Y(flow)], { data: checkedTempDir("crew-role-skills-coffee-v1-") }), e = h.engine, store = new StaffingStore(h.data), project = coffeeStaffingProject("coffee-v1");
+  try {
+    let text = "# Coffee website profile, v1 text\n";
+    e.deps.skillText = () => text;
+    installStaffingGuard(e, store, () => project);
+    const def = e.defs.get(flow.id)!;
+    const c1 = store.approve({ schema: 1, algorithm: "sha256-canonical-v1", project, workflow: { id: def.id, version: def.version, sha256: staffingHash(def) }, roles: { worker: { provider: "codex", model: "m", effort: "high", skill: store.remember({ ref: legacy, version: 1, text }) } }, review: { freshContexts: 3, distinctProviders: false } }, null, { run: "R-0", card: "SC-0", answerSeq: 1 });
+    const task = e.start({ workflow: flow.id, text: "x", params: { project: project.id, _staffing: c1.hash } });
+    ok(!!task, "a coffee-kit v1 Task with the single profile ref still starts");
+    await until(() => task.nodes.wait.waiting === "card");
+    text = "# Coffee website profile — version 2\n";
+    await e.answer(task.nodes.wait.card!, { choice: "go", by: "captain" });
+    await until(() => task.nodes.work.waiting === "card" && !e.busy(task.id));
+    const card = e.cards.get(task.nodes.work.card!)!;
+    ok(card?.failure?.code === "env.skill-changed" && card.options.some((o: any) => o.id === "approve-skill") && !/differs from workflow policy/.test(JSON.stringify(card)),
+      "its profile text change goes to the one-click role skill approval, not the permanent policy refusal", JSON.stringify([card?.failure?.code, card?.failure?.message]));
+  } finally { for (const x of e.list()) if (!["succeeded", "failed", "cancelled"].includes(x.status)) await e.cancel(x.id, "fixture cleanup"); h.stop(); }
 }
 end();

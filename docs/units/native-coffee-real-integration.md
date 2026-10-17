@@ -33,7 +33,7 @@ artifact-specific comment, dependency rerender, whole-site approval and Done.
 ## Approved core design discovery addition
 
 Additional exact paths: src/domain/coffee-design.ts, tests/native-coffee-design.ts,
-public/runtime.js and public/runtime.css, workflows/skills/v2/coffee-kit.md,
+public/runtime.js and public/runtime.css, workflows/skills/v2/coffee-kit.md (since removed),
 src/firstmate.ts and src/host/main.ts. Integrate approved startup ca7f6cd;
 package.json conflicts use script/dependency union and bundled.gen.ts is
 regenerated from the clean union. Firstmate/main changes are limited to native

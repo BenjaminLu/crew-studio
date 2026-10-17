@@ -21,8 +21,16 @@ export function staffingApplies(def:any):boolean{
 }
 /** The skill a staffed role must carry: the source contract for code-firstmate and coffee-kit; a captain's own code
  * workflow keeps the skill its definition declares for that role. */
+/** coffee-kit v1's role skills: one profile file each. */
+const LEGACY_COFFEE_REFS:Record<string,string>={worker:'pack:coffee-kit/skills/website.md','image-worker':'pack:coffee-kit/skills/image.md',reviewer:'pack:coffee-kit/skills/reviewer.md',designer:'pack:coffee-kit/skills/designer.md'};
 export function staffingSkillRef(def:any,role:string):string{
- if(def?.kind==='coffee-kit')return nativeStaffingSkillRef(role,'coffee-kit');
+ if(def?.kind==='coffee-kit'){
+  // a Task pinned to coffee-kit v1 keeps that version's single profile ref (before roles named a contract and a profile):
+  // its text change still goes to the one-click role skill approval, never to a permanent policy refusal
+  const legacy=LEGACY_COFFEE_REFS[role],r=Array.isArray(def?.roles)?def.roles.find((x:any)=>x?.id===role):null;
+  if(Number(def.version)===1&&legacy&&r?.skill===legacy)return legacy;
+  return nativeStaffingSkillRef(role,'coffee-kit');
+ }
  if(def?.id==='code-firstmate')return nativeStaffingSkillRef(role,'code-firstmate');
  const r=Array.isArray(def?.roles)?def.roles.find((x:any)=>x?.id===role):null;
  if(typeof r?.skill!=='string'||!r.skill.trim())throw new Error('Unknown native staffing workflow or role');

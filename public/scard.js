@@ -324,7 +324,10 @@ function mountCard(el, card, opts = {}) {
       raw(T("Configuration details (hashes)", "配置細節（雜湊）"), body)];
   }
   function bodyView(c, body) {
-    let cfg = null; try { const j = JSON.parse(body); cfg = j?.configuration?.roles && typeof j.configuration.roles === "object" ? j.configuration : null; } catch {}
+    let cfg = null, up = null; try { const j = JSON.parse(body); cfg = j?.configuration?.roles && typeof j.configuration.roles === "object" ? j.configuration : null; up = j?.upgrade ?? null; } catch {}
+    // a workflow update that keeps the crew: what changed from the approved version, open, above the role table
+    if (cfg && up) return [sec("staffing-upgrade", T(`Workflow updated: ${up.from} → ${up.to}`, `流程已更新：${up.from} → ${up.to}`),
+      h("p", { class: "cc-count" }, T("Same roles, providers, models and efforts. What changed:", "角色、供應商、模型與推理強度都不變。變更如下：")), h("pre", { class: "cc-pre", "data-staffing-upgrade": "" }, String(up.changes ?? ""))), ...staffingView(cfg, body)];
     if (cfg) return staffingView(cfg, body);
     // a dispatch card: "Parameters / 參數:" carries the params, as JSON (older cards) or as "key: value" lines
     const pin = body.lastIndexOf("\n\nInternal pins / 內部鎖定:"), lines = (pin < 0 ? body : body.slice(0, pin)).split("\n"), at = lines.findIndex((l) => l.startsWith("Parameters / 參數:"));

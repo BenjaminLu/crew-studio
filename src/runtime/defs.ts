@@ -81,7 +81,8 @@ const now = () => new Date().toISOString();
 
 /** YAML edges may be [from, to, when?] or {from, to, when}; nodes get defaults. */
 export function normalize(raw: any): WDef {
-  const joined = (r: any) => Array.isArray(r?.skills) && r.skills.length && r.skills.every((x: any) => typeof x === "string") ? { ...r, skill: r.skills.join(ROLE_SKILL_JOIN) } : r;
+  // a role that names skills gets their joined ref as its skill; one that also names a different skill is refused by validate()
+  const joined = (r: any) => Array.isArray(r?.skills) && r.skills.length && r.skills.every((x: any) => typeof x === "string") && r.skill == null ? { ...r, skill: r.skills.join(ROLE_SKILL_JOIN) } : r;
   const d: WDef = { ...raw, version: Number(raw?.version ?? 1), roles: Array.isArray(raw?.roles) ? raw.roles.map(joined) : [], nodes: [], edges: [] };
   d.nodes = (Array.isArray(raw?.nodes) ? raw.nodes : []).map((n: any) => ({ ...n, id: String(n.id), kind: String(n.kind ?? "action"), label: String(n.label ?? n.id), x: Number(n.x ?? 0), y: Number(n.y ?? 0) }));
   const refs = (v: any) => (Array.isArray(v) ? v.filter((c: any) => c && typeof c.use === "string").map((c: any) => ({ ...c })) : undefined);
@@ -136,6 +137,7 @@ export function validate(d: WDef, known?: (ref: string) => boolean, runners?: Se
   }
   for (const r of d.roles) if (r.skills != null && (!Array.isArray(r.skills) || !r.skills.length || r.skills.some((x: any) => typeof x !== "string" || !x || x.includes(ROLE_SKILL_JOIN)) || new Set(r.skills).size !== r.skills.length))
     out.push({ level: "error", text: `role ${r.id}: skills is an ordered list of distinct skill refs` });
+  else if (r.skills != null && r.skill !== r.skills.join(ROLE_SKILL_JOIN)) out.push({ level: "error", text: `role ${r.id}: name its skill once, as skill or as skills, not both` });
   for (const e of d.edges) {
     if (!ids.has(e.from) || !ids.has(e.to)) out.push({ level: "error", edge: ekey(e), text: `edge ${ekey(e)} names a node that does not exist` });
     for (const c of e.checks ?? []) if (known && !known(c.use)) out.push({ level: "error", edge: ekey(e), text: `edge ${ekey(e)}: no check ${c.use}` });
