@@ -97,6 +97,8 @@ export type AgentMode = {
   handoffState?(x: X): string; /** a number, or one worked out for the round (a plan's size) */ maxTools?: number | ((x: X) => number);
   /** this round's facts for the brief's fixed sections (BRIEFING … DELIVERABLE): test command, dependency state, deliverable; the graph's facts and the manual are added by the engine */
   skeleton?(x: X): SkeletonFacts | null;
+  /** the mode's prompt already carries engine.briefSkeleton(x) (it keeps a durable brief that must equal what is sent) */
+  embedsSkeleton?: boolean;
   /** a round that runs in the OS sandbox (architecture §10): the folders the runtime materialized for it */
   sandbox?(x: X): { writes: string[]; reads?: string[]; cwd?: string } | null;
   /** before the round's agent starts (e.g. take its working folder, put it at its durable state); a throw fails the attempt */
@@ -1626,13 +1628,17 @@ export class Engine {
   }
   /** A text-only round's scratch folder: its cwd and the only place it may write. */
   roundScratch(x: X, label = "agent") { const d = this.roundDir(x, "round-scratch", { label }); return { writes: [d], cwd: d }; }
+  /** Each round's skeleton, computed once (its preflight facts read git and the repository configuration) and reused by its turns. */
+  private skeletons = new WeakMap<X, { key: string; text: string }>();
   /** The brief's six fixed sections for this round: the graph's facts, the mode's preflight facts and the operating manual page. */
   briefSkeleton(x: X, modeName = x.node.mode ?? ""): string {
     const mode = this.modes[modeName]; if (!mode) return "";
+    const key = `${modeName}|${x.visit}|${x.rn?.attempt ?? 0}`, had = this.skeletons.get(x); if (had?.key === key) return had.text;
     const maxTools = typeof mode.maxTools === "function" ? mode.maxTools(x) : mode.maxTools;
-    return composeSkeleton({ def: x.run.def, node: x.node, visit: x.visit, modeName, tools: mode.tools(x).map((t) => t.name), maxTools: maxTools ?? 60,
+    const text = composeSkeleton({ def: x.run.def, node: x.node, visit: x.visit, modeName, tools: mode.tools(x).map((t) => t.name), maxTools: maxTools ?? 60,
       timeoutS: Number(x.node.timeout_s ?? x.policy("round_timeout_s", 900)) || null, egress: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String).filter(Boolean),
       facts: mode.skeleton?.(x) ?? null, dataDir: this.deps.dataDir });
+    this.skeletons.set(x, { key, text }); return text;
   }
   /** An agent node: one turn of its mode on the picked provider; a swap stops it, writes a hand-off, and starts the new agent from it. */
   async runAgent(x: X, modeName = x.node.mode): Promise<string> {
@@ -1668,9 +1674,9 @@ export class Engine {
       const tools = mode.tools(x), maxTools = typeof mode.maxTools === "function" ? mode.maxTools(x) : mode.maxTools;
       // every brief ends with the same six sections (a mode that keeps a durable brief, like build, puts them in it itself)
       const skeleton = this.briefSkeleton(x, modeName), withAnswer = prompt + (answer && !prompt.endsWith(answer) ? answer : "");
-      const base = withAnswer.includes(skeleton) ? withAnswer : `${withAnswer}\n${skeleton}`;
+      const base = mode.embedsSkeleton ? withAnswer : `${withAnswer}\n${skeleton}`;
       const text = handoff ? `${base}\n\nHANDOFF\nAnother agent started this step and was stopped. Its hand-off follows; continue from the current state instead of starting over.\n${handoff}` : base;
-      x.ctx.lastPrompt = { ...(x.ctx.lastPrompt ?? {}), [x.node.id]: base.slice(0, 6000) };
+      x.ctx.lastPrompt = { ...(x.ctx.lastPrompt ?? {}), [x.node.id]: base.length <= 6000 + skeleton.length ? base : `${base.slice(0, 6000)}\n[…]\n${skeleton}` }; // the six sections are always kept
       const tl = Number(x.node.timeout_s ?? x.policy("round_timeout_s", 900));
       const system = mode.system(x, skill);
       const rules = new OperatingRules(this.deps.dataDir).section(x.run.params?.project || null); // read per round: an edit reaches the next round

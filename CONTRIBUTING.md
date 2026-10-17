@@ -12,7 +12,7 @@ Every change takes the same path, in this order:
 2. **Rebase** onto the current `origin/main`. Resolve conflicts yourself, keeping both sides' intent.
 3. **Core suites.** `bun run test:core` must pass on the rebased head: env-isolation, git-config-guard,
    firstmate-staffing, smoke-code, acceptance (its known-fail entries are listed in `tests/acceptance-known.ts`),
-   privacy, and the build. Also run the suites that cover the files you touched.
+   privacy, opencc-only, and the build. Also run the suites that cover the files you touched.
 4. **Push** your own branch only (never force-push a shared branch) and open the pull request.
 5. **Merge** on GitHub once review and CI agree.
 6. **Deploy** with `bun scripts/live-release.ts deploy`, and only when no Task is in flight

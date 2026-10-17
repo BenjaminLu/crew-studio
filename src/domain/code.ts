@@ -840,7 +840,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
         writeFileSync(join(x.dir, `plan-${x.visit}.json`), JSON.stringify(x.ctx.plan, null, 1)); x.save(); return { ok: true }; } }], maxTools: 30,
     system: (x, skill) => `${skill}\n\nThis is a PLAN round for a one-way change: you change no file. Read the code, then call plan_write once with every question in the questions block, the files you will change, and a row per done line. Answer in one line.`,
     prompt: (x) => { const b = roundBrief(x, "plan"); return `PLAN ROUND\nRun ${x.run.id} · round ${x.visit} · head ${x.ctx.head}\n${amendmentsSection(engine.amendments(x.run))}${specMd(x.ctx.spec)}\n${x.ctx.planDecision?.accept === false ? `\nFirstmate sent the last plan back: ${x.ctx.planDecision.note}\n` : ""}${briefSection(b)}\nStart with fs_list.`; },
-    skeleton: (x) => codeFacts(x, "worker", { deliverable: ["plan_write once (every question, the files you change, a row per done line); change no file."] }),
+    // a plan round runs nothing: it gets the test facts, never the run_tests procedure (it has no such tool)
+    skeleton: (x) => { const f = codeFacts(x, "worker", { deliverable: ["plan_write once (every question, the files you change, a row per done line); change no file."] });
+      return { ...f, omitManual: ["TOOLS", "TESTS"], TESTS: ["Plan round: no test runs here. Each row names the test for its done line, where it runs and how it fails on base.", ...(f.TESTS ?? [])] }; },
     after: (x) => { if (!x.ctx.plan || x.ctx.plan.round !== x.visit) throw new Error("the worker did not write a plan"); if (git(shellOk(x), ["status", "--porcelain"]).out) throw new Error("a plan round must not change files"); x.rn.note = `${x.ctx.plan.rows.length} rows, ${x.ctx.plan.questions.length} questions`; return "ok"; },
   };
   engine.modes["plan-accept"] = {
@@ -875,6 +877,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   };
   engine.modes.build = {
     maxTools: 180, // multi-file implementation needs room beyond discovery, tests and the final report
+    embedsSkeleton: true, // the durable round brief holds the six sections, so it equals what the worker receives
     ...roundHooks(true),
     sandbox: (x) => { const wt = x.ctx.worktree; return wt && existsSync(wt) ? { writes: [wt], cwd: wt } : null; }, // writes only its worktree
     tools: (x) => {

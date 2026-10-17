@@ -10,8 +10,9 @@ import type { WDef, WNode } from "./defs";
 
 export const SKELETON_SECTIONS = ["BRIEFING", "ENVIRONMENT", "TOOLS", "TESTS", "DEPENDENCIES", "DELIVERABLE"] as const;
 export type SkeletonKey = (typeof SKELETON_SECTIONS)[number];
-/** What a mode adds: facts per section, extra manual pages (a page's section `extra[KEY]` is appended too, e.g. the renderer contract). */
-export type SkeletonFacts = Partial<Record<SkeletonKey, string[]>> & { manual?: string[]; extra?: Partial<Record<SkeletonKey, string[]>> };
+/** What a mode adds: facts per section, extra manual pages (a page's section `extra[KEY]` is appended too, e.g. the renderer contract),
+ *  and the sections whose manual text does not apply to this mode (`omitManual`: only the facts and the pointer stay). */
+export type SkeletonFacts = Partial<Record<SkeletonKey, string[]>> & { manual?: string[]; extra?: Partial<Record<SkeletonKey, string[]>>; omitManual?: SkeletonKey[] };
 const TITLE: Record<SkeletonKey, string> = { BRIEFING: "Briefing", ENVIRONMENT: "Environment", TOOLS: "Tools", TESTS: "Tests", DEPENDENCIES: "Dependencies", DELIVERABLE: "Deliverable" };
 
 /** Absolute operator paths as placeholders: the dependency root, Studio's data folder, the home folder. */
@@ -59,7 +60,7 @@ export function composeSkeleton(o: { def: WDef; node: WNode; visit: number; mode
   for (const k of SKELETON_SECTIONS) {
     const lines = [...(f[k] ?? []), ...generic[k]];
     if (!lines.length && fallback[k]) lines.push(fallback[k]!);
-    const manual = pages.map((p) => [p, manualSection(p, TITLE[k])] as const).filter(([, t]) => t);
+    const manual = f.omitManual?.includes(k) ? [] : pages.map((p) => [p, manualSection(p, TITLE[k])] as const).filter(([, t]) => t);
     const extra = (f.extra?.[k] ?? []).flatMap((h) => pages.map((p) => [p, h, manualSection(p, h)] as const).filter(([, , t]) => t));
     parts.push("", `## ${k}`, ...lines.map((l) => `- ${l}`));
     for (const [, t] of manual) parts.push("", t!);

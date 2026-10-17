@@ -72,6 +72,14 @@ ok(manualFor("code-firstmate", "worker") === "code-firstmate/worker" && manualFo
   const { installCode } = await import("../src/domain/code"); const { Projects } = await import("../src/doors");
   const H = await harness([readFileSync(join(root, "packs/firstmate/workflows/code-firstmate.wf.yaml"), "utf8")], { data, checkRoots: [] }); const E = H.engine;
   installCode(E, { dataDir: data, projects: new Projects(data) });
+  // the skeleton's preflight facts (git, repository configuration) are read once per round, however often the brief is built
+  const calls: Record<string, number> = {}; for (const m of ["spec", "build", "review"]) { const orig = E.modes[m].skeleton!; E.modes[m].skeleton = (x: any) => { const k = `${m}/${x.visit}/${x.rn?.attempt ?? 0}`; calls[k] = (calls[k] ?? 0) + 1; return orig(x); }; }
+  // a plan round has no run_tests: its brief carries the test facts but not the run_tests procedure
+  { const { composeSkeleton } = await import("../src/runtime/brief-skeleton");
+    const def: any = { id: "code-firstmate", name: "code-firstmate", version: 1, roles: [], nodes: [{ id: "plan", kind: "agent", label: "Plan", role: "worker", mode: "plan", x: 0, y: 0 }], edges: [] };
+    const fx: any = { ctx: {}, run: { params: {} }, node: def.nodes[0], visit: 1, policy: () => undefined };
+    const t = composeSkeleton({ def, node: def.nodes[0], visit: 1, modeName: "plan", tools: ["fs_read", "plan_write"], facts: E.modes.plan.skeleton!(fx) }); const s = sectionsOf(t) ?? {};
+    ok(filled(t) && !/run_tests/.test(s.TESTS ?? "") && !/run_tests/.test(s.TOOLS ?? "") && /Plan round: no test runs here/.test(s.TESTS ?? "") && /plan_write/.test(s.DELIVERABLE ?? ""), "plan: the brief has the test facts and plan_write, never the run_tests procedure", `${s.TOOLS}\n${s.TESTS}`); }
   const intent = ["Add a percent function to money-kit",
     "STUB_FILE src/percent.ts :: // A percent of an amount in cents, rounded to the cent.\\nexport function percent(amount: number, pct: number): number {\\n  return Math.round((amount * pct) / 100); \\n}\\n",
     'STUB_FILE test/percent.test.ts :: import { expect, test } from "bun:test";\\ntest("percent rounds to the cent", async () => { expect(await Bun.file(new URL("../src/percent.ts", import.meta.url)).exists()).toBe(true); const { percent } = await import("../src/percent.ts"); expect(percent(1999, 15)).toBe(300); });\\n',
@@ -99,6 +107,11 @@ ok(manualFor("code-firstmate", "worker") === "code-firstmate/worker" && manualFo
   ok(/spec_write/.test(spec.DELIVERABLE ?? "") && /Test globs: /.test(spec.TESTS ?? "") && /code-firstmate\/coordinator/.test(spec.BRIEFING ?? ""), "spec: DELIVERABLE spec_write, TESTS the test globs, the coordinator page", spec.TESTS);
   const leaks = Object.entries(briefs).filter(([, t]) => t.includes(data) || PRIVATE.test(t.slice(t.indexOf("\n---\n")))).map(([k]) => k);
   ok(!leaks.length, "no brief carries an absolute path of the operator's data or home folder (the spec names the project, not its path)", leaks.join(","));
+  ok(Object.keys(calls).length >= 3 && Object.values(calls).every((n) => n === 1), "each round computes its skeleton once (build embeds it in its durable brief; the engine reuses it)", JSON.stringify(calls));
+  const builds = Object.entries(briefs).filter(([k]) => mode(k) === "build").map(([, t]) => t);
+  ok(builds.every((t) => (t.match(/\nBRIEF SECTIONS /g) ?? []).length === 1), "a build brief carries the six sections exactly once", builds.map((t) => (t.match(/\nBRIEF SECTIONS /g) ?? []).length).join(","));
+  const last = E.get(r.id)!.ctx.lastPrompt ?? {};
+  ok(["spec", "build", "review"].every((n) => filled(last[n] ?? "")), "the run's lastPrompt keeps every section, even past its length cap", Object.keys(last).join(","));
   H.stop(); }
 
 // ---------- 5. deliver producers: documents, web-prototype, video ----------
