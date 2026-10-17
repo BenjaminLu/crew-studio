@@ -15,10 +15,27 @@ import {redactText} from './secure';
 import {neutralizeMarkers} from './operating-rules';
 
 /** Role skills a drafted or inline-edited node may use: bundled text only, never a file path. */
-export const DRAFT_SKILLS:Record<string,{en:string;zh:string}>={
- 'bundled:workflows/skills/v2/writer.md':{en:'Writer',zh:'撰稿'},
- 'bundled:workflows/skills/v2/designer.md':{en:'Designer',zh:'設計'},
+/** The catalogue: what each skill makes. The builder refuses a node whose skill does not fit its work (R-044: a writer on design direction, design review). */
+export const DRAFT_SKILLS:Record<string,{en:string;zh:string;makes:string;formats:string[];design:boolean}>={
+ 'bundled:workflows/skills/v2/writer.md':{en:'Writer',zh:'撰稿',makes:'documents: copy, articles, plans, reports and reviews of written work',formats:['document'],design:false},
+ 'bundled:workflows/skills/v2/designer.md':{en:'Designer',zh:'設計',makes:'web pages, design direction and design review of a page',formats:['web','document'],design:true},
 };
+const DESIGN_WORK=/\b(?:design|visual|layout|style ?guide|mock-?ups?|wireframes?)\b|設計|设计|視覺|视觉|版面|排版/i,REVIEW_WORK=/\b(?:review|critique|audit)\b|審查|审查|審閱|审阅|檢查|检查|評審|评审/i;
+/** Design work: a node that names design, or a review of a web page an earlier node built. */
+function designWork(def:{nodes:any[];edges:{from:string;to:string}[]},n:any){
+ if(DESIGN_WORK.test(`${n.label} ${n.detail??''}`))return true;if(!REVIEW_WORK.test(`${n.label} ${n.detail??''}`))return false;
+ const seen=new Set<string>(),todo=[n.id];while(todo.length){const to=todo.pop()!;for(const e of def.edges)if(e.to===to&&!seen.has(e.from)){seen.add(e.from);todo.push(e.from);}}
+ return def.nodes.some(m=>seen.has(m.id)&&m.kind==='agent'&&m.args?.format==='web');
+}
+/** Why a node's skill does not fit its work, or null. strict: the model's draft also gets the work-kind check (a captain's inline choice only the format check). */
+export function skillMismatch(def:{nodes:any[];edges:{from:string;to:string}[];roles:{id:string;skill:string}[]},n:any,strict=true):string|null{
+ if(n.kind!=='agent')return null;const ref=n.skill??def.roles.find(r=>r.id===n.role)?.skill,s=ref&&DRAFT_SKILLS[ref];if(!s)return null;const f=n.args?.format;
+ if(f&&!s.formats.includes(f))return `node ${n.id}: the ${s.en} skill makes ${s.makes}, not a ${f} output; use ${Object.values(DRAFT_SKILLS).filter(o=>o.formats.includes(f)).map(o=>o.en).join(' or ')}`;
+ if(!strict||f!=='document')return null;const design=designWork(def,n);
+ if(design&&!s.design)return `node ${n.id}: design direction or design review is the Designer's work, not the ${s.en}'s`;
+ if(!design&&s.design)return `node ${n.id}: a written document that is not design work is the Writer's work, not the ${s.en}'s`;
+ return null;
+}
 export const DRAFT_PROVIDERS=['codex','claude'] as const;
 export const DRAFT_EFFORTS=['minimal','low','medium','high','xhigh'] as const;
 const DRAFT_MODES=new Set(['deliver']);
@@ -95,6 +112,10 @@ function draftDefinition(raw:any,defs:WorkflowDefs):WDef{
   return out;
  });
  const edges=raw.edges.map((e:any)=>{if(!plain(e)||Object.keys(e).some(k=>!['from','to','when'].includes(k))||typeof e.from!=='string'||typeof e.to!=='string'||e.when!==undefined&&!/^[a-z][a-z0-9-]{0,30}$/.test(e.when))throw new DraftError('each edge is {from,to,when?}');return{from:e.from,to:e.to,...(e.when?{when:e.when}:{})};});
+ // every agent node carries its own assignment (what this node produces), never the whole design interview (R-044);
+ // made from the node id, its output and the lines it serves, so a captain's label edit never changes it under a repair
+ for(const n of nodes)if(n.kind==='agent'&&!n.detail?.trim()){const lines=intents.filter((l:any)=>n.serves?.includes(l.n)).map((l:any)=>`${l.n}. ${l.text}`);n.detail=`Step ${n.id}: produce ${n.args.format==='web'?'the web page (index.html)':'the document (doc.md)'} for this step only.${lines.length?` It serves intent line${lines.length>1?'s':''} ${lines.join('; ')}`:''}`.slice(0,500);}
+ for(const n of nodes){const why=skillMismatch({nodes,edges,roles},n);if(why)throw new DraftError(why);}
  const def=normalize({id:'draft',name:raw.name.trim(),version:1,...(raw.description?{description:raw.description}:{}),...(intents.length?{intents}:{}),...(raw.params?{params:raw.params}:{}),...(raw.sample?{sample:raw.sample}:{}),roles,nodes,edges});
  layout(def);for(const n of def.nodes)delete (n as any)._i;
  const errors=validate(def,defs.known,defs.runners?.(),defs.skillInfo??undefined).filter(p=>p.level==='error');
@@ -158,6 +179,8 @@ export class WorkflowDrafts{
    const n=d.def.nodes.find(x=>x.id===node);if(!n)throw new DraftError('no such node',404);
    const next:any={...n},mine:any={...(d.captain?.[node]??{})};for(const k of ['provider','model','effort','skill'])if(body[k]!==undefined){if(body[k]===''){delete next[k];mine[k]=null;}else{next[k]=body[k];mine[k]=body[k];}}
    if(n.kind!=='agent')throw new DraftError('only agent nodes have model settings');checkNodeStaffing(next,node);
+   // the captain may pick any skill that can make the node's output; one that cannot (a writer on a web page) is refused
+   const unfit=skillMismatch(d.def as any,next,false);if(unfit)throw new DraftError(unfit);
    return this.write({...d,revision:d.revision+1,def:{...d.def,nodes:d.def.nodes.map(x=>x.id===node?next:x)},provenance:{...d.provenance,edited:true,last:'captain-edit'},captain:{...(d.captain??{}),[node]:mine},updatedAt:new Date().toISOString()});
   });
  }
@@ -205,7 +228,8 @@ export function ownStaffingPlan(def:WDef){
  const missing=plan.filter(p=>!p.provider||!p.model||p.provider==='codex'&&!p.effort).map(p=>p.node);
  return{plan,missing,hash:sha({workflow:def.id,version:def.version,plan})};
 }
-/** The Task brief for the captain's own workflow: what they asked for, plus the drafted goal and interview answers. */
+/** The Task brief for the captain's own workflow: what they asked for, the drafted goal, intent lines and Start inputs.
+ * The design interview (who makes, who reviews) shaped the graph: it is background, never a worker's assignment, which is its node's detail. */
 /** One line of the captain's input in a brief: no newline, no rules marker, no secret. */
 const briefLine=(v:unknown,max=300)=>redactText(neutralizeMarkers(String(v??'').replace(/[\r\n\u2028\u2029]+/g,' ').replace(/\s{2,}/g,' ').trim())).slice(0,max);
 export function ownBrief(def:any,text:string,params:Record<string,string>={}){
@@ -215,7 +239,7 @@ export function ownBrief(def:any,text:string,params:Record<string,string>={}){
  // the intent lines and Start inputs always fit: the free text (the Task text, goal, interview) is what gets cut
  const fixed=[...(intents.length?['Intent lines (the captain\'s words):',...intents.map((l:any)=>`${l.n}. ${briefLine(l.text)} — done means: ${briefLine(l.done)}${l.assumption?` (assumed: ${briefLine(l.assumption)})`:''}`)]:[]),
   ...(inputs.length?['Start inputs:',...inputs]:[])].join('\n');
- const free=[text.trim(),...(plain(b)&&typeof b.goal==='string'?[`Captain goal: ${b.goal}`,...(Array.isArray(b.interview)&&b.interview.length?['Interview:',...b.interview.map((q:any)=>`- ${q.question} — ${q.answer}`)]:[])]:[])].filter(Boolean).join('\n');
+ const free=[text.trim(),...(plain(b)&&typeof b.goal==='string'?[`Captain goal: ${b.goal}`,...(Array.isArray(b.interview)&&b.interview.length?['Background from the workflow design interview (not any step\'s assignment; each step\'s own assignment is in its brief):',...b.interview.map((q:any)=>`- ${q.question} — ${q.answer}`)]:[])]:[])].filter(Boolean).join('\n');
  const room=Math.max(0,3800-fixed.length-(fixed&&free?1:0));
  return [free.length>room?free.slice(0,Math.max(0,room-1))+'…':free,fixed].filter(Boolean).join('\n');}
 /** Only the captain's own workflows (a draft or the free starter) take the Run-time staffing gate. */
@@ -236,7 +260,7 @@ export function installWorkflowDraftTools(drafts:WorkflowDrafts,gate?:DraftGateT
  ],
  async call(name,args:any,owner){
   if(!owner.live())throw new NativeToolFailure('owner_ended','The primary request ended.','主要對話請求已結束。');
-  if(name==='studio_workflow_draft_contract')return{schema,skill:bundledText('workflows/skills/firstmate-workflow-design/SKILL.md'),example:structuredClone(WORKFLOW_DRAFT_EXAMPLE),limits:{staticValidationIsExecutionEvidence:false}};
+  if(name==='studio_workflow_draft_contract')return{schema,skill:bundledText('workflows/skills/firstmate-workflow-design/SKILL.md'),skills:Object.entries(DRAFT_SKILLS).map(([ref,l])=>({ref,label:l.en,makes:l.makes,formats:l.formats})),example:structuredClone(WORKFLOW_DRAFT_EXAMPLE),limits:{staticValidationIsExecutionEvidence:false}};
   if(name==='studio_validate_workflow_draft'){try{const def=drafts.preview(args);return{valid:true,stage:'static-contract',nodes:def.nodes.length,edges:def.edges.length,next:'studio_draft_workflow',runtimeVerified:false};}catch(e:any){return{valid:false,stage:'static-contract',problems:e.problems??[{text:e.message}],next:'Correct these exact problems using studio_workflow_draft_contract, then validate again.',runtimeVerified:false};}}
   if(name==='studio_read_workflow'){if(!plain(args)||Object.keys(args).some(k=>k!=='workflow')||typeof args.workflow!=='string')throw new NativeToolFailure('invalid_params','Pass workflow ID','請提供流程 ID。');const def=drafts.defs.get(args.workflow);if(!def)throw new NativeToolFailure('draft_missing','No such workflow','找不到這個流程。');return{workflow:def,editable:ownWorkflow(def),status:'read-only'};}
   if(name==='studio_workflow_gate'){if(!gate)throw new NativeToolFailure('invalid_params','The readiness gate is not available.','檢查閘門目前無法使用。');try{return gate.view(plain(args)?args:{});}catch(e:any){throw new NativeToolFailure('invalid_params',`Gate read refused: ${e?.message??e}`,`無法讀取檢查結果：${e?.message??e}`,'read_current_state');}}
