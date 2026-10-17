@@ -78,7 +78,8 @@ export class PackGenesis {
  constructor(readonly data:string,readonly artifacts:ArtifactStore){this.root=join(data,'pack-genesis');this.releases=join(data,'packs','releases');mkdirSync(this.root,{recursive:true});mkdirSync(this.releases,{recursive:true});}
  attach(engine:Engine){this.engine=engine;}
  file(run:string){if(!/^R-\d+$/.test(run))throw new Error('bad native Task id');return join(this.root,run+'.json');}
- get(run:string):Genesis{const file=this.file(run);if(!existsSync(file))throw new Error('no native pack genesis');return jsonRead(file);}
+ // taskState: the record is made by the Task's own first step; the readiness gate shows such a step as "after start", not broken
+ get(run:string):Genesis{const file=/^R-\d+$/.test(run)?this.file(run):null;if(!file||!existsSync(file))throw Object.assign(new Error('no native pack genesis'),{taskState:true});return jsonRead(file);}
  list():Genesis[]{return readdirSync(this.root).filter(f=>/^R-\d+\.json$/.test(f)).map(f=>jsonRead(join(this.root,f))).filter(g=>{const r=this.engine.get(g.run);return r&&!r.archived;});}
  save(g:Genesis){const r=this.engine.get(g.run);if((!r||terminal(r))&&!g.published)throw new Error('genesis Task is no longer active');g.revision++;atomic(this.file(g.run),g);this.engine.deps.send('packs',{run:g.run,revision:g.revision});}
  work(run:string){const g=this.get(run);return roundWorkPath(this.data,'pack-genesis',run,g.id);}

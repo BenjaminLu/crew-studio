@@ -69,7 +69,7 @@ export function engineEnv(d: EngineEnvDeps) {
       const notice=localExecutionNotice();
       const pathSystem=notice&&!sourceSystem.includes(notice)&&system.endsWith("\n\n"+notice)?system.slice(0,-notice.length):system;
       return sourceBoundBrief({ node: n.id, label: n.label, system, prompt, roundDir: sb.cwd ?? sb.writes[0] ?? roundWorkPath(d.dataDir, "round-scratch", "R-GATE", n.id), roleText, skills, rules: rules.text, error: null }, [pathSystem, sourceSystem, rules.text, roleText, ...skills.map(s=>s.body)].join("\n"));
-    } catch (e: any) { return { node: n.id, label: n.label, system: "", prompt: "", roundDir: "", roleText: "", skills: [], rules: "", error: String(e?.message ?? e) }; }
+    } catch (e: any) { return { node: n.id, label: n.label, system: "", prompt: "", roundDir: "", roleText: "", skills: [], rules: "", error: String(e?.message ?? e), ...(e?.staffingUnapproved ? { pending: "staffing" as const } : e?.taskState ? { pending: "task-state" as const } : {}) }; }
   });
   return { contract, briefs, sandboxOf };
 }

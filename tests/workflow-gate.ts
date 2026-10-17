@@ -117,8 +117,12 @@ try {
     // missing param (file-organization started without folder)
     const fo = normalize({ ...h.rt.defs.get("file-organization")!, origin: undefined }); const foNoParam = normalize({ ...fo, params: undefined });
     ok(at(foNoParam, "contract").problems.some((p: any) => p.code === "param-undeclared" && p.node === "plan" && /folder/.test(p.reason.en)), "7 an action reading an undeclared Start input is caught at stage 2");
-    ok(at(fo, "contract").problems.some((p: any) => p.code === "param-no-input" && /folder/.test(p.reason.en)), "7 a required Start input with no value is caught at stage 2");
-    ok(!at(normalize({ ...fo, sample: { params: { folder: "/tmp/x" } } } as any), "contract").problems.some((p: any) => p.code === "param-no-input"), "7 a sample value satisfies the Start input");
+    const foReq = normalize({ ...fo, params: { folder: { label: "Folder", required: true } } } as any);
+    ok(at(foReq, "contract").problems.some((p: any) => p.code === "param-no-input" && /folder/.test(p.reason.en)), "7 a required Start input with no value is caught at stage 2");
+    ok(!at(normalize({ ...foReq, sample: { params: { folder: "/tmp/x" } } } as any), "contract").problems.some((p: any) => p.code === "param-no-input"), "7 a sample value satisfies the Start input");
+    ok(!at(fo, "contract").problems.some((p: any) => p.code === "param-no-input"), "25 the shipped file-organization defaults its folder (blank = a sample folder Studio makes)");
+    const opt = normalize({ ...fo, params: { ...fo.params, note: { label: "Optional note" } } } as any);
+    ok(!at(opt, "contract").problems.some((p: any) => p.code === "param-no-input" && /note/.test(p.reason.en)), "25 an optional Start input no step reads (no required flag) is not flagged");
     // unknown skill and hash mismatch
     const sk = base(); sk.roles[0].skill = "bundled:workflows/skills/v2/nope.md";
     ok(at(sk, "contract").problems.some((p: any) => p.code === "skill-unknown" && p.node === "draft"), "7 an unknown role skill is caught at stage 2");
@@ -401,15 +405,31 @@ try {
     const base = (): WDef => normalize({ ...draftDef(h.rt.drafts.get(d.draft)), id: "r2" });
     const at = (def: WDef) => h.rt.readiness.gate.static(def, sampleOf(def), { ...h.login }).stages.find((x: any) => x.id === "contract").problems;
     const withEffect = (doName: string, guard: any = null, when = "publish") => { const w = base(); w.nodes.push({ id: "fx", kind: "hook", label: "Effect", do: doName, x: 0, y: 0, serves: [1] } as any); if (guard) Object.assign(w.nodes.find((n) => n.id === "approve")!, guard); w.edges = w.edges.filter((e) => !(e.from === "approve" && e.to === "done")).concat([{ from: "approve", to: "fx", when }, { from: "fx", to: "done" }]); return w; };
-    for (const a of ["repo.prepare", "fileorg.apply", "lane.recipe", "image.generate", "staffing.activate", "firstmate.dispatch", "brand.new.action"]) { E.actions[a] ??= () => "ok";
+    for (const a of ["git.merge", "repo.cleanup", "fileorg.apply", "lane.recipe", "staffing.activate", "firstmate.dispatch", "pack-genesis-publish", "brand.new.action"]) { E.actions[a] ??= () => "ok";
       ok(at(withEffect(a)).some((p: any) => p.code === "external-unguarded" && p.node === "fx"), `r2 deny by default: ${a} is an external or paid effect`); }
-    for (const a of ["library.publish", "github.review.wait", "deliver.render"]) { E.actions[a] ??= () => "ok"; ok(!at(withEffect(a)).some((p: any) => p.code === "external-unguarded"), `r2 ${a} is local or read-only`); }
-    const acc = (when: string) => { const w = withEffect("repo.prepare", null, when); const n = w.nodes.find((x) => x.id === "approve")! as any; n.args = { mode: "deliver-accept", card_kind: "acceptance" }; delete n.card; return w; };
+    for (const a of ["library.publish", "github.review.wait", "deliver.render", "hello.web"]) { E.actions[a] ??= () => "ok"; ok(!at(withEffect(a)).some((p: any) => p.code === "external-unguarded"), `r2 ${a} is local or read-only`); }
+    // 25: built-in steps that carry the captain's guard in their own code, each with its reason; anything else stays deny by default
+    const { GATE_SELF_GUARDED, GATE_MODEL_ACTIONS } = await import("../src/readiness/stages");
+    ok(Object.keys(GATE_SELF_GUARDED).sort().join() === "pr.open,remote.ready,repo.prepare" && Object.values(GATE_SELF_GUARDED).every((r) => r.length > 40), "25 only reviewed built-in steps are self-guarded, each naming its guard", JSON.stringify(GATE_SELF_GUARDED));
+    for (const a of Object.keys(GATE_SELF_GUARDED)) { E.actions[a] ??= () => "ok"; ok(!at(withEffect(a)).some((p: any) => p.code === "external-unguarded"), `25 ${a} is self-guarded (no card needed in the graph)`); }
+    // a paid job run as a hook (an image job) is checked like an agent node: its vendor must be signed in
+    E.actions["image.generate"] ??= () => "ok";
+    ok(GATE_MODEL_ACTIONS["image.generate"] === "codex" && !at(withEffect("image.generate")).some((p: any) => p.code === "external-unguarded"), "25 image.generate is a model job, not an unguarded external effect");
+    const imgOut = h.rt.readiness.gate.static(withEffect("image.generate"), sampleOf(withEffect("image.generate")), { ...h.login, codex: "not-logged-in" }).stages.find((x: any) => x.id === "contract").problems;
+    ok(imgOut.some((p: any) => p.code === "provider-not-logged-in" && p.node === "fx" && p.owner === "captain" && p.need === "sign-in"), "25 an image job with Codex signed out is a captain sign-in problem", JSON.stringify(imgOut.map((p: any) => [p.code, p.node])));
+    const acc = (when: string) => { const w = withEffect("git.merge", null, when); const n = w.nodes.find((x) => x.id === "approve")! as any; n.args = { mode: "deliver-accept", card_kind: "acceptance" }; delete n.card; return w; };
     ok(!at(acc("approved")).some((p: any) => p.code === "external-unguarded"), "r2 the acceptance card's approving edge guards the effect");
     ok(at(acc("changes")).some((p: any) => p.code === "external-unguarded"), "r2 an effect reached on 'changes' is unguarded");
     ok(at(acc("rejected")).some((p: any) => p.code === "external-unguarded"), "r2 an effect reached on 'rejected' is unguarded");
-    const merge = (when: string) => withEffect("repo.prepare", { args: { card_kind: "merge" } }, when);
+    const merge = (when: string) => withEffect("git.merge", { args: { card_kind: "merge" } }, when);
     ok(!at(merge("publish")).some((p: any) => p.code === "external-unguarded") && at(merge("revise")).some((p: any) => p.code === "external-unguarded"), "r2 a merge card guards only its approving option, not 'revise'");
+    // 25: code-firstmate's merge card has no static options (its body is built at run time): its "merge" answer guards the merge, "changes" does not
+    const bodyMerge = (when: string) => { const w = withEffect("git.merge", null, when); const n = w.nodes.find((x) => x.id === "approve")! as any; n.args = { body_from: "merge", card_kind: "merge" }; delete n.card; return w; };
+    E.cardBodies.merge ??= () => ({}) as any;
+    ok(!at(bodyMerge("merge")).some((p: any) => p.code === "external-unguarded") && at(bodyMerge("changes")).some((p: any) => p.code === "external-unguarded"), "25 a merge card body guards only its 'merge' answer");
+    // 25: mode outcome sets: plan-accept and design-gap rounds end with a decision, never "ok"
+    const { outcomesOf } = await import("../src/readiness/stages");
+    ok(outcomesOf({ id: "pa", kind: "agent", mode: "plan-accept", label: "x" } as any)!.join() === "accept,revise,escalate" && outcomesOf({ id: "dg", kind: "agent", mode: "design-gap", label: "x" } as any)!.join() === "recapture,escalate" && outcomesOf({ id: "b", kind: "agent", mode: "build", label: "x" } as any)!.join() === "ok", "25 decision modes report their own outcomes (no false outcome-unhandled for ok)");
     // the dry run stops at the acceptance card (a one-way guard), never answering it
     const accDraft = fx(); accDraft.workflow.nodes.splice(3, 1, { id: "approve", serves: [2], kind: "card", label: "Accept", accept: true });
     accDraft.workflow.edges = [{ from: "topics", to: "draft", when: "continue" }, { from: "draft", to: "review" }, { from: "review", to: "approve" }, { from: "approve", to: "done", when: "approved" }, { from: "approve", to: "draft", when: "changes" }, { from: "approve", to: "done", when: "rejected" }];

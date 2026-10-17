@@ -4,10 +4,12 @@
 // the scenario allows (plain question cards); it never answers a card the gate counts as a
 // one-way guard (acceptance, merge, door or one_way cards). A refusal, a sandbox/path/cwd problem, a stall or an outcome no edge takes
 // fails the stage with the step and the exact error.
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agents } from "../agent";
+import { bundledText, parseYaml } from "../bundled";
 import { ArtifactStore } from "../artifacts";
 import { createFileOrg } from "../fileorg";
 import { StudioLog } from "../rawlog";
@@ -39,7 +41,12 @@ export function dryStubProvider(call: (name: string, args: any, token: string) =
 export type DryRunOptions = { sample: Sample; protectedRoots: string[]; timeoutMs?: number; maxCards?: number;
   /** the runtime factory (src/runtime createRuntime): passed in so this module stays below the runtime */
   createRuntime: (deps: any) => any };
-export type DryRunResult = { status: "pass" | "fail"; problems: GateProblem[]; steps: DryStep[]; runStatus: string; stoppedAt: string | null };
+/** skipped: the throwaway engine does not have every step this workflow uses (the server's code and pack domains), or the
+ *  workflow starts only on staffing the captain approves first; the stub acceptance suite runs those end to end */
+export type DryRunResult = { status: "pass" | "fail" | "skipped"; problems: GateProblem[]; steps: DryStep[]; runStatus: string; stoppedAt: string | null; missing?: string[]; staffing?: string };
+/** The dry run's stand-in for the Codex image job: a 1x1 PNG, nothing spent. */
+const STUB_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP437DvPwAH/AM9TriEzAAAAABJRU5ErkJggg==", "base64");
+const stubImage = async (_prompt: string, authorize: () => void) => { authorize(); return { bytes: STUB_PNG, mime: "image/png" as const, width: 1, height: 1, sha256: createHash("sha256").update(STUB_PNG).digest("hex"), provider: "codex" as const, model: "dry-run", effort: "low" }; };
 
 /** Shortest number of edges from a node to an end (cards pick the option that finishes soonest). */
 function distances(def: WDef) {
@@ -64,11 +71,16 @@ export async function dryRun(def: WDef, o: DryRunOptions): Promise<DryRunResult>
     if (opts.sandbox) { const bad = roundPathRefusal(data, protect, opts.sandbox); if (bad) { const job = await run0({ ...opts, sandbox: null, provider: { ...provider, start: () => ({ interrupt() {}, async *send() { yield { type: "turnEnd", status: "error", message: `refused: a round may not reach ${bad} (only its worktree, never Studio's data or a protected root)` }; } }) } }); return job; } }
     return run0(opts);
   };
-  const fileorg = createFileOrg({ dataDir: data, refuse: [fm], rules: () => ({ categories: { Text: ["txt"] }, other: "Other" }) as any, gates: () => [], log, send() {} });
+  // the file-organization pack's own rules and gates (as the server's pack registry reads them), so its plan gates pass or fail for real
+  const fileorg = createFileOrg({ dataDir: data, refuse: [fm, data], rules: () => parseYaml(bundledText("packs/file-organization/rules.yaml") ?? "categories: {}") as any, gates: () => (parseYaml(bundledText("packs/file-organization/manifest.yaml") ?? "{}") as any)?.gates ?? [], log, send() {} });
   let rt: any = null;
   try {
     rt = o.createRuntime({ dataDir: data, agents, provider: () => provider, defaultProvider: () => ({ provider: "stub", model: "dry-run" }), selectProvider: async () => provider, log, send() {}, fmRoot: fm, protectedRoots: protect,
-      m3: { store, lane, runs: null }, fileorg, docs: {}, studioUrl: () => "http://127.0.0.1:1", readiness: false });
+      m3: { store, lane, runs: null }, fileorg, docs: {}, studioUrl: () => "http://127.0.0.1:1", readiness: false, generateImage: stubImage, startupModel: () => "dry-run" });
+    // a step only the live server installs (the code pipeline, pack genesis) cannot run here: say so, never pass or fail it
+    const E = rt.engine; const missing = [...new Set(def.nodes.flatMap((n) => [n.do && !E.actions[n.do] ? n.do : null, n.kind === "agent" && n.mode && !E.modes[n.mode] ? `mode ${n.mode}` : null,
+      n.kind === "card" && n.args?.mode && !E.cardModes[n.args.mode] ? `card ${n.args.mode}` : null, n.kind === "card" && n.args?.body_from && !E.cardBodies[n.args.body_from] ? `card ${n.args.body_from}` : null]).filter(Boolean) as string[])];
+    if (missing.length) return { status: "skipped", problems, steps, runStatus: "not-started", stoppedAt: null, missing };
     const who = { kind: "desktop" };
     const api = async (path: string, body?: any) => { const u = new URL("http://gate.local" + path); const req = new Request(u, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
       const r: Response | null = await rt.handle(req, u, who, body !== undefined); const j = r ? await r.json().catch(() => ({})) : { error: "no route" }; return { status: r?.status ?? 404, body: j }; };
@@ -79,6 +91,8 @@ export async function dryRun(def: WDef, o: DryRunOptions): Promise<DryRunResult>
     let start = await api("/api/wruns", { workflow: wid, text: o.sample.text, params: o.sample.params });
     // confirmed as Run is (the staffing hash and, for Claude-staffed nodes, the bounded Claude verification): in this throwaway folder every round is the stub, so nothing is spent
     if (start.status === 409 && start.body.staffing?.hash) start = await api("/api/wruns", { workflow: wid, text: o.sample.text, params: o.sample.params, staffingConfirm: start.body.staffing.hash, claudeVerification: start.body.staffing.claudeVerification ?? undefined });
+    // a workflow that starts only on staffing the captain approved first (coffee-kit's project roles): no stub can stand in for that approval
+    if (start.status !== 200 && start.body.failure?.code === "env.staffing") return { status: "skipped", problems, steps, runStatus: "not-started", stoppedAt: null, staffing: String(start.body.error ?? "") };
     if (start.status !== 200 || !start.body.id) { fail("dryrun-start", null, `The run did not start: ${start.body.error ?? start.status}`, `任務無法開始：${start.body.error ?? start.status}`, "Fix the Start inputs and staffing so Run can start the Task.", "修正開始輸入與配置，讓執行能開始任務。"); return { status: "fail", problems, steps, runStatus: "not-started", stoppedAt: null }; }
     const id = start.body.id as string; const dist = distances(staffed as WDef);
     const t0 = Date.now(); let answered = 0, stoppedAt: string | null = null; let r: any = null;

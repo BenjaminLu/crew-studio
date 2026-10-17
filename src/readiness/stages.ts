@@ -74,38 +74,59 @@ export type ContractEnv = {
 /** Params known actions read from the Start inputs. Interim registry until workflow params have one source. */
 export const ACTION_PARAM_READS: Record<string, string[]> = { "fileorg.plan": ["folder"], "lane.recipe": ["repo", "artifact"] };
 /** Outcomes a hook action can produce besides ok. */
-export const ACTION_OUTCOMES: Record<string, string[]> = { "deliver.render": ["ok", "unavailable"] };
+export const ACTION_OUTCOMES: Record<string, string[]> = { "deliver.render": ["ok", "unavailable"],
+  "coffee.page-needed": ["produce", "current"], "coffee.image-needed": ["produce", "current"], "coffee.video-needed": ["produce", "current"],
+  "coffee.image": ["ok", "unavailable"], "coffee.video": ["ok", "unavailable"] };
+/** Agent modes whose round ends with a decision instead of ok (the mode's after() returns one of these). */
+export const MODE_OUTCOMES: Record<string, string[]> = { "plan-accept": ["accept", "revise", "escalate"], "design-gap": ["recapture", "escalate"], "startup-judge": ["ready", "revise"] };
 const CARD_BODY_OUTCOMES: Record<string, string[]> = { fileorg: ["apply", "discard"], lane: ["merge", "close"] };
 const CARD_MODE_OUTCOMES: Record<string, string[]> = { "deliver-accept": ["approved", "changes", "rejected"] };
+/** Captain-only card bodies that decide a one-way step, and the answers that mean "go ahead". */
+const ONE_WAY_BODIES: Record<string, string[]> = { fileorg: ["apply"], lane: ["merge"], merge: ["merge"], "pack-publish": ["publish"] };
 /** Failures route by default: no edge means the run stops failed (engine FAILS). */
 const DEFAULT_ROUTED = new Set(["fail", "error", "cap", "cancel", "timeout"]);
 /**
  * Deny by default: an action is local only when it is on this list (it stays inside this Mac and Studio's own data
- * and spends nothing). Every other action (repo.prepare / repo.cleanup, fileorg.apply, lane.*, image.generate,
- * coffee image and video jobs, staffing.activate, firstmate.dispatch / launch, anything new) counts as an external,
- * paid or irreversible effect until it is reviewed onto this list. It follows the live-acceptance list
- * (scripts/acceptance/scenarios.ts LOCAL_ACTIONS) minus the paid image job, plus read-only waits.
+ * and spends nothing). Every other action (repo.cleanup, git.merge, fileorg.apply, lane.*, staffing.activate,
+ * firstmate.dispatch / launch, anything new) counts as an external, paid or irreversible effect until it is
+ * reviewed onto this list or onto GATE_SELF_GUARDED / GATE_MODEL_ACTIONS below. It follows the live-acceptance
+ * list (scripts/acceptance/scenarios.ts LOCAL_ACTIONS) minus the paid image job, plus read-only waits.
  */
 export const GATE_LOCAL_ACTIONS = new Set([
   "note", "deliver.intake", "deliver.round", "deliver.render", "doc.export", "library.publish",
   "coffee.ready", "coffee.page-needed", "coffee.image-needed", "coffee.video-needed", "coffee.assemble", "coffee.library",
   "fileorg.plan", "fileorg.discard", "intent.capture", "pack-genesis-init",
   "github.review.wait", // reads review state; writes nothing
+  "hello.web", // writes the built-in sample page into its own run folder and the Library; no model, no network
 ]);
-export const isExternalEffect = (n: WNode) => !!n.do && !GATE_LOCAL_ACTIONS.has(n.do);
-/** A captain-only card that names its one-way nature: an acceptance or merge card, a door confirmation, or an explicit one_way flag. */
-export const isOneWayCard = (n: WNode) => n.kind === "card" && (!!n.card?.confirm_door || !!n.card?.door_from || ["acceptance", "merge"].includes(String(n.args?.card_kind ?? "")) || n.args?.mode === "deliver-accept" || n.args?.one_way === true);
+/**
+ * Built-in actions that reach outside Studio but carry the captain's guard in their own code, so the graph
+ * needs no one-way card in front of them. Each entry names its guard; an action joins only after review.
+ */
+export const GATE_SELF_GUARDED: Record<string, string> = {
+  "repo.prepare": "makes only the Task's own worktree and branch under Studio's data; the captain's checkout and branches stay untouched, and cancel or delete removes it",
+  "pr.open": "locally writes only Studio's review record; on GitHub it pushes only the Task's own branch under the captain-approved project grant, and a branch outside the grant waits on a captain-only naming card",
+  "remote.ready": "locally does nothing; on GitHub a conflict or an update outside the grant waits on a captain-only card, and the push uses the captain-approved project grant",
+};
+/**
+ * Paid jobs run as a hook: they spend like an agent round, only in a Task the captain started (coffee's behind
+ * its captain-approved staffing, coffee-kit requireChoice). The gate checks the vendor login, as for an agent
+ * node, instead of asking for a one-way card. null: a local tool job (the film render) behind the same staffing.
+ */
+export const GATE_MODEL_ACTIONS: Record<string, string | null> = { "image.generate": "codex", "coffee.image": "codex", "coffee.video": null };
+export const isExternalEffect = (n: WNode) => !!n.do && !GATE_LOCAL_ACTIONS.has(n.do) && !Object.hasOwn(GATE_SELF_GUARDED, n.do) && !Object.hasOwn(GATE_MODEL_ACTIONS, n.do);
+/** A captain-only card that names its one-way nature: an acceptance or merge card, a door confirmation, a one-way card body, or an explicit one_way flag. */
+export const isOneWayCard = (n: WNode) => n.kind === "card" && (!!n.card?.confirm_door || !!n.card?.door_from || ["acceptance", "merge"].includes(String(n.args?.card_kind ?? "")) || n.args?.mode === "deliver-accept" || Object.hasOwn(ONE_WAY_BODIES, String(n.args?.body_from ?? "")) || n.args?.one_way === true);
 const HOLDING = /^(reject|rejected|changes|change|revise|close|discard|cancel|cancelled|hold|no|skip|stop|later|park)$/i;
 /** The outcomes of a one-way card that mean "yes, go ahead": only edges taken on these are guarded by it. */
 export function approvingOutcomes(n: WNode): string[] {
   if (n.args?.mode === "deliver-accept") return ["approved"];
-  if (n.args?.body_from === "fileorg") return ["apply"];
-  if (n.args?.body_from === "lane") return ["merge"];
+  const body = String(n.args?.body_from ?? ""); if (Object.hasOwn(ONE_WAY_BODIES, body)) return ONE_WAY_BODIES[body];
   return (n.card?.options ?? []).map((o) => o.id).filter((id) => !HOLDING.test(id));
 }
 /** The outcomes a node can produce (null: not knowable statically). */
 export function outcomesOf(n: WNode): string[] | null {
-  if (n.kind === "agent") return ["ok"];
+  if (n.kind === "agent") return MODE_OUTCOMES[n.mode ?? ""] ?? ["ok"];
   if (n.kind === "hook") return n.do ? ACTION_OUTCOMES[n.do] ?? ["ok"] : ["ok"];
   if (n.kind === "check") return n.args?.route_from ? null : ["pass", "fail"];
   if (n.kind === "card") {
@@ -137,7 +158,8 @@ export function contractStage(def: WDef, env: ContractEnv): GateProblem[] {
     for (const k of r) reads.set(k, [...(reads.get(k) ?? []), n.id]);
   }
   for (const [k, ids] of reads) if (!Object.hasOwn(declared, k)) { const n = def.nodes.find((x) => x.id === ids[0])!; add("param-undeclared", n, { en: `${n.label} reads the Start input "${k}", but the workflow does not declare it, so Run never asks for it.`, zh: `「${n.label}」需要開始輸入「${k}」，但流程沒有宣告，執行時不會詢問。` }, { en: `Declare params.${k} with a label so the Run form asks for it.`, zh: `宣告 params.${k}（附標籤），讓執行表單詢問它。` }); }
-  for (const [k, spec] of Object.entries(declared)) if ((spec as any)?.default === undefined && !String(env.startInputs[k] ?? "").trim()) {
+  // a Start input is needed when Run requires it (params.<k>.required) or a step reads it; any other declared input is optional
+  for (const [k, spec] of Object.entries(declared)) if (((spec as any)?.required || reads.has(k)) && (spec as any)?.default === undefined && !String(env.startInputs[k] ?? "").trim()) {
     const n = def.nodes.find((x) => (reads.get(k) ?? []).includes(x.id)) ?? null;
     add("param-no-input", n, { en: `The required Start input "${k}" (${(spec as any)?.label ?? k}) has no value in the sample input, so a run would start without it.`, zh: `必填的開始輸入「${k}」（${(spec as any)?.label ?? k}）在樣本輸入中沒有值，執行會在缺少它的情況下開始。` }, { en: `Give "${k}" a default or a sample value; the Run form asks the captain for it.`, zh: `為「${k}」設定預設值或樣本值；執行表單會向船長詢問。` });
   }
@@ -166,9 +188,15 @@ export function contractStage(def: WDef, env: ContractEnv): GateProblem[] {
         other ? { en: `Switch ${n.label} to ${other} (logged in), or the captain signs in to ${pick.provider}.`, zh: `把「${n.label}」改用已登入的 ${other}，或由船長登入 ${pick.provider}。` } : { en: `The captain signs in to ${pick.provider} in Settings; Studio never starts a sign-in by itself.`, zh: `請船長在設定中登入 ${pick.provider}；Studio 不會自行啟動登入。` },
         other ? {} : { owner: "captain", need: "sign-in", note: { en: `Sign in to ${pick.provider} in Settings so “${n.label}” can run. Studio never signs in for you.`, zh: `請在設定中登入 ${pick.provider}，「${n.label}」才能執行。Studio 不會替你登入。` } }); }
   }
+  // a paid job run as a hook (an image job) needs its vendor signed in, like an agent node; only the captain can sign in
+  for (const n of def.nodes) { const p = n.kind === "hook" && n.do ? GATE_MODEL_ACTIONS[n.do] : null;
+    if (p && env.login(p) === "not-logged-in") add("provider-not-logged-in", n, { en: `${n.label}: ${p} is not logged in on this Mac.`, zh: `「${n.label}」：這台 Mac 上的 ${p} 尚未登入。` },
+      { en: `The captain signs in to ${p} in Settings; Studio never starts a sign-in by itself.`, zh: `請船長在設定中登入 ${p}；Studio 不會自行啟動登入。` },
+      { owner: "captain", need: "sign-in", note: { en: `Sign in to ${p} in Settings so “${n.label}” can run. Studio never signs in for you.`, zh: `請在設定中登入 ${p}，「${n.label}」才能執行。Studio 不會替你登入。` } }); }
   // 5 the sandbox: every round writes only inside its own round folder; no node needs data/runs, the repo root or Studio data
   for (const n of def.nodes) {
-    const specs: RoundSandboxSpec[] = []; if (n.kind === "agent") { try { const s = env.sandbox(def, n); if (s) specs.push(s); } catch (e: any) { add("sandbox-path", n, { en: `${n.label}: its round folder cannot be prepared: ${e?.message ?? e}`, zh: `「${n.label}」：無法準備回合資料夾：${e?.message ?? e}` }, { en: "Use a mode that opens in its own round folder.", zh: "改用在自己回合資料夾中執行的模式。" }); } }
+    // taskState: the mode keeps its folder in state its own Task makes at start (pack genesis); there is none to show before that
+    const specs: RoundSandboxSpec[] = []; if (n.kind === "agent") { try { const s = env.sandbox(def, n); if (s) specs.push(s); } catch (e: any) { if (e?.taskState) { add("sandbox-after-start", n, { en: `${n.label}: its round folder comes from its Task's own state, made when the Task starts.`, zh: `「${n.label}」：回合資料夾來自任務自身狀態，任務開始時才建立。` }, { en: "Nothing to fix; the round's path check still runs on every real round.", zh: "不需修正；每個真實回合仍會做路徑檢查。" }, { level: "notice" }); } else add("sandbox-path", n, { en: `${n.label}: its round folder cannot be prepared: ${e?.message ?? e}`, zh: `「${n.label}」：無法準備回合資料夾：${e?.message ?? e}` }, { en: "Use a mode that opens in its own round folder.", zh: "改用在自己回合資料夾中執行的模式。" }); } }
     for (const s of specs) {
       const bad = env.pathRefusal(s) ?? [...s.writes, ...(s.cwd ? [s.cwd] : [])].find((p) => !inside(env.roundRoot, p)) ?? null;
       if (bad) add("sandbox-path", n, { en: `${n.label}: its round would open at ${bad}, outside its own round folder (the agent path check refuses it).`, zh: `「${n.label}」：回合會在 ${bad} 開啟，超出它自己的回合資料夾（代理路徑檢查會拒絕）。` }, { en: `Let ${n.label} work only in its round folder under ${env.roundRoot}.`, zh: `讓「${n.label}」只在 ${env.roundRoot} 下的回合資料夾中工作。` });
@@ -227,11 +255,15 @@ export function sourceBoundBrief<T extends RenderedBrief>(brief:T,source:string)
 }
 export const SAFETY_HEAD = "# Studio safety rules";
 const ABS_PATH = /(?<![\w:/.~-])(\/(?:[A-Za-z0-9._@-]+\/)*[A-Za-z0-9._@-]+)/g;
-export function briefStage(def: WDef, briefs: (RenderedBrief & { roleText?: string; skills?: { id: string; body: string }[]; rules?: string; error?: string | null })[], sample: Sample): GateProblem[] {
+export function briefStage(def: WDef, briefs: (RenderedBrief & { roleText?: string; skills?: { id: string; body: string }[]; rules?: string; error?: string | null; pending?: "staffing" | "task-state" })[], sample: Sample): GateProblem[] {
   const out: GateProblem[] = [];
   const add = (code: string, b: { node: string }, en: string, zh: string, fen: string, fzh: string) => out.push(P("brief", code, b.node, { en, zh }, { en: fen, zh: fzh }));
   for (const n of def.nodes.filter((x) => x.kind === "agent")) {
     const b = briefs.find((x) => x.node === n.id);
+    // the round's brief binds to the captain's approved staffing: before Run approves it there is no brief to show yet
+    if (b?.pending === "staffing") { out.push(P("brief", "brief-after-staffing", n.id, { en: `${n.label}: its brief is built after the captain approves staffing at Run.`, zh: `「${n.label}」：簡報在船長於執行時核准配置後才產生。` }, { en: "The captain approves who works on each node when clicking Run.", zh: "船長按下執行時核准各節點的人員配置。" },
+      { owner: "captain", need: "staffing", level: "notice", note: { en: `When you click Run, you approve who works on “${n.label}”; its brief is built then.`, zh: `按下執行時，由你核准「${n.label}」的人員配置，簡報隨後產生。` } })); continue; }
+    if (b?.pending === "task-state") { out.push(P("brief", "brief-after-start", n.id, { en: `${n.label}: its brief is built from its Task's own state, made when the Task starts.`, zh: `「${n.label}」：簡報來自任務自身狀態，任務開始時才產生。` }, { en: "Nothing to fix before the Task starts.", zh: "任務開始前不需修正。" }, { level: "notice" })); continue; }
     if (!b || b.error) { add("brief-render", { node: n.id }, `${n.label}: its brief could not be rendered: ${b?.error ?? "no brief"}`, `「${n.label}」：無法產生簡報：${b?.error ?? "沒有簡報"}`, "Fix the node's role, mode and skill so a round can build its brief.", "修正節點的角色、模式與技能，讓回合能產生簡報。"); continue; }
     const all = `${b.system}\n${b.prompt}`;
     if (!b.prompt.trim() || !b.system.trim()) add("brief-empty", b, `${n.label}: the brief is empty.`, `「${n.label}」：簡報是空的。`, "Give the node a role with a skill and an input to work on.", "為節點指定有技能的角色與要處理的輸入。");
