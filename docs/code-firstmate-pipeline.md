@@ -125,7 +125,7 @@ When no test command is declared, CI, covering suites and fail-first allow their
 
 - The card has the intent, the before/after and the check ledger: proved done lines and the human acceptance list.
 - A one-way merge needs the walk and the explicit door confirmation. Answers can come from the auth window.
-- One curated commit lands per Task, never the round commits: a Conventional subject within 72 characters (never cut mid-word, no "(round N)"), and a body with the spec's what and why and each done line with the checks that proved it, never the worker's raw report. A repository's CONTRIBUTING commit rules win. Locally it is the reviewed head's exact tree on the base tip; on GitHub a squash or merge commit carries the same title and message (a rebase merge lands the branch's own commits). The rounds stay on the Task branch and in the ledger (src/domain/commit-message.ts).
+- One curated commit lands per Task, never the round commits: a Conventional subject within 72 characters (never cut mid-word, no "(round N)"), and a body with the spec's what and why and each done line with the checks that proved it, never the worker's raw report. A repository's CONTRIBUTING commit rules win, including a DCO Signed-off-by. The author is the repository's own user.name and user.email, else the captain's git identity (read, never written); Crew Studio is the committer. Locally it is the reviewed head's exact tree on the base tip; on GitHub a squash or merge commit carries the same title and message (GitHub's rebase method lands every round commit instead, and the merge card says so: squash is the preferred method). The rounds stay on the Task branch and in the ledger (src/domain/commit-message.ts).
 
 ### 11. after-merge (hooks)
 
@@ -167,7 +167,7 @@ The same graph runs against an external repo. What changes is the pack and the p
 | company reviewers | bot and human review comments become findings with `file` locators. They feed the refine loop and drive the next round, and are watched even when the branch is not mapped |
 | approval | Studio's APPROVE stays local signed evidence and is never posted as a GitHub review |
 | privacy | D check on every artifact, card and committed Studio file: no external repo, org, private path or reviewer name leaves Studio |
-| merge | only through the merge card, with the repo's allowed merge method |
+| merge | only through the merge card, with the repo's allowed merge method; squash preferred (one curated commit), rebase lands every round commit |
 | PR body and issue | rendered from the detected templates; a template-fields check proves every required section is filled |
 
 Acceptance: an end-to-end run against a simulated GitHub (a local bare repo plus a stub REST server written from GitHub's documented responses), covering:

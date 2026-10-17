@@ -33,6 +33,26 @@ try {
     && m.message.includes("- formatMoney(1999, 'EUR') returns €19,99 (proved by firstmate/fail-first: pass, firstmate/ci: pass)") && m.message.includes("- The README says how (no check proved it)")
     && /Crew Studio Task R-058, reviewed head aaaaaaaaaaaa\./.test(m.message), "the body: what, why, each done line with its proof, the Task and reviewed head", m.message);
   ok(!/claude\.ai|session_/.test(m.message) && !/Claude-Session/i.test(taskCommitMessage({ run: "R-1", head: "b".repeat(40), title: "x", what: "Claude-Session: " + LINK + "X", done: [] }, def).message), "no claude.ai session link or trailer ever lands");
+  { const host = "claude" + ".ai"; const t = `See ${host}/code/session_9 and [the chat](https://${host}/code/session_8) or <https://${host}/x> today. Mail a@b.io.`;
+    const out = taskCommitMessage({ run: "R-2", head: "c".repeat(40), title: "x", what: t, done: [] }, def).message;
+    ok(!out.includes(host) && !out.includes("the chat") && !out.includes("session_") && out.includes("Mail a@b.io."), "scheme-less links, whole Markdown links and <links> to claude.ai are dropped", out); }
+  // ---------- who authors it: the repository's user, else the captain's, never a config write; Crew Studio commits ----------
+  { const { commitIdentity, commitTree } = await import("../src/domain/commit-message");
+    const home = join(temp, "home"), bare = join(temp, "home-bare"); mkdirSync(home); mkdirSync(bare);
+    writeFileSync(join(home, ".gitconfig"), "[user]\n\tname = Captain Ada\n\temail = ada@example.com\n");
+    const own = repoWith("own-user", {}); writeFileSync(join(own.repo, ".git", "config"), readFileSync(join(own.repo, ".git", "config"), "utf8") + "[user]\n\tname = Repo Bob\n\temail = bob@example.com\n");
+    const plainRepo = repoWith("no-user", {});
+    const a = commitIdentity(own.repo, home), b = commitIdentity(plainRepo.repo, home), c = commitIdentity(plainRepo.repo, bare);
+    ok(a.source === "repository" && a.name === "Repo Bob" && b.source === "captain" && b.email === "ada@example.com" && c.source === "studio" && c.name === "Crew Studio",
+      "the author: the repository's own user, else the captain's ~/.gitconfig, else Crew Studio", JSON.stringify([a, b, c]));
+    const before = readFileSync(join(own.repo, ".git", "config"), "utf8");
+    const sha = commitTree(own.repo, must(own.repo, ["rev-parse", "HEAD^{tree}"]), own.head, "feat: one\n\nbody\n", a);
+    ok(must(own.repo, ["log", "-1", "--format=%an <%ae>|%cn", sha]) === "Repo Bob <bob@example.com>|Crew Studio" && readFileSync(join(own.repo, ".git", "config"), "utf8") === before,
+      "the commit is authored by that identity and committed by Crew Studio; the repository's config is untouched", must(own.repo, ["log", "-1", "--format=%an <%ae>|%cn", sha])); }
+  { const dco = repoWith("dco", { "CONTRIBUTING.md": "# Contributing\n\n## Commits\n\nConventional Commits. Every commit carries a DCO sign-off (Signed-off-by).\n" });
+    const conv = commitConvention(dco.repo, dco.head); const msg = taskCommitMessage({ run: "R-3", head: "d".repeat(40), title: "Add x", done: [], author: { name: "Ada", email: "ada@example.com", source: "captain" } }, conv).message;
+    const none = taskCommitMessage({ run: "R-3", head: "d".repeat(40), title: "Add x", done: [], author: { name: "Ada", email: "ada@example.com", source: "captain" } }, def).message;
+    ok(conv.signoff === true && msg.trimEnd().endsWith("Signed-off-by: Ada <ada@example.com>") && !/Signed-off-by/.test(none), "Signed-off-by only when CONTRIBUTING asks for a DCO sign-off", msg); }
   // ---------- the repository's rules ----------
   const kit = repoWith("money-kit", { "CONTRIBUTING.md": readFileSync(join(import.meta.dir, "../templates/sandbox-repo/CONTRIBUTING.md"), "utf8") });
   const kc = commitConvention(kit.repo, kit.head);

@@ -2,11 +2,16 @@
 // stays in the Task's ledger; what lands on the base is one commit whose subject says what changed (Conventional style,
 // within the length limit, never cut mid-word, no "(round N)") and whose body is the spec's what and why plus each done
 // line with the checks that proved it, never the worker's raw report. A repository's CONTRIBUTING commit rules win.
-import { git } from "../git";
+// The author is the repository's own user (its config file), else the captain's git identity; Crew Studio commits it.
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
+import { git, gitArgv, gitEnv } from "../git";
 
-export type CommitConvention = { conventional: boolean; max: number; source: string | null };
+export type CommitConvention = { conventional: boolean; max: number; source: string | null; signoff?: boolean };
+export type CommitIdentity = { name: string; email: string; source: "repository" | "captain" | "studio" };
 export type DoneProof = { text: string; proofs: { check: string; verdict: string }[] };
-export type TaskCommitInput = { run: string; head: string; type?: string | null; title: string; what?: string | null; why?: string[]; done: DoneProof[] };
+export type TaskCommitInput = { run: string; head: string; type?: string | null; title: string; what?: string | null; why?: string[]; done: DoneProof[]; author?: CommitIdentity | null };
 
 const TYPES = ["feat", "fix", "docs", "test", "refactor", "chore", "perf", "build", "ci", "style", "revert"];
 const CONTRIBUTING = ["CONTRIBUTING.md", ".github/CONTRIBUTING.md", "docs/CONTRIBUTING.md", "CONTRIBUTING", "contributing.md"];
@@ -21,7 +26,9 @@ export function commitConvention(repo: string, at: string): CommitConvention {
     const conventional = /conventional\s+commits?/i.test(rules) || /`(?:feat|fix)(?:\([^)]*\))?:/.test(rules) || (!section && !/\bcommit/i.test(text));
     const m = /\b(under|fewer than|less than|below|at most|no more than|within|up to|max(?:imum)?(?: of)?|≤|<=?)\s*(\d{2,3})\s*(?:characters|chars?)\b/i.exec(rules);
     let max = DEFAULT_MAX; if (m) { const n = Number(m[2]); max = /^(under|fewer than|less than|below|<)$/i.test(m[1]) ? n - 1 : n; }
-    return { conventional, max: Math.max(30, Math.min(100, max)), source: path };
+    // a Developer Certificate of Origin rule asks for a Signed-off-by trailer (anywhere in the file)
+    const signoff = /\bDCO\b|Developer Certificate of Origin|Signed-off-by|\bsign[- ]?off\b/i.test(text);
+    return { conventional, max: Math.max(30, Math.min(100, max)), source: path, signoff };
   }
   return { conventional: true, max: DEFAULT_MAX, source: null };
 }
@@ -31,9 +38,11 @@ function commitSection(text: string): string | null {
   return lines.slice(start, end < 0 ? undefined : end).join("\n");
 }
 
-/** never on GitHub or in history: a claude.ai link, a session trailer */
-const clean = (t: string) => String(t ?? "").replace(/\r/g, "").split("\n").filter((l) => !/^\s*Claude-Session:/i.test(l))
-  .join("\n").replace(/https?:\/\/(?:[\w-]+\.)*claude\.ai\/\S*/gi, "").replace(/[ \t]+$/gm, "").trim();
+/** never on GitHub or in history: a claude.ai link (with or without a scheme, a whole Markdown link), a session trailer */
+const CLAUDE = String.raw`(?:https?:\/\/)?(?:[\w-]+\.)*claude\.ai(?:\/[^\s)\]>]*)?`;
+const clean = (t: string) => String(t ?? "").replace(/\r/g, "").split("\n").filter((l) => !/^\s*Claude-Session:/i.test(l)).join("\n")
+  .replace(new RegExp(String.raw`!?\[[^\]\n]*\]\(\s*<?${CLAUDE}>?[^)\n]*\)`, "gi"), "").replace(new RegExp(String.raw`<${CLAUDE}>`, "gi"), "")
+  .replace(new RegExp(String.raw`(?<![\w@.-])${CLAUDE}`, "gi"), "").replace(/[ \t]+$/gm, "").trim();
 const oneLine = (t: string) => clean(t).replace(/\s+/g, " ").trim();
 const TRAILING = /\s+(?:and|or|the|a|an|to|of|for|in|on|with|by|from|at|as|into|that|so|but)$/i;
 
@@ -63,6 +72,33 @@ export function taskCommitMessage(i: TaskCommitInput, conv: CommitConvention): {
   const done = i.done.map((d) => ({ text: oneLine(d.text), proofs: d.proofs.filter((p) => p.check) })).filter((d) => d.text);
   if (done.length) parts.push(["Done:", ...done.map((d) => `- ${d.text}${d.proofs.length ? ` (proved by ${d.proofs.map((p) => `${p.check}: ${p.verdict}`).join(", ")})` : " (no check proved it)"}`)].join("\n"));
   parts.push(`Crew Studio Task ${i.run}, reviewed head ${i.head.slice(0, 12)}. Its rounds stay on the Task branch and in its ledger.`);
-  const body = parts.join("\n\n").slice(0, 20_000);
+  let body = parts.join("\n\n").slice(0, 20_000);
+  if (conv.signoff && i.author) body += `\n\nSigned-off-by: ${i.author.name} <${i.author.email}>`;
   return { subject, body, message: `${subject}\n\n${body}\n` };
+}
+
+/** a user.name / user.email read from one git config file, never written; [include] files are not followed */
+function configUser(file: string): { name?: string; email?: string } {
+  if (!existsSync(file)) return {};
+  const r = Bun.spawnSync(gitArgv(["config", "--file", file, "--no-includes", "--get-regexp", "^user\\.(name|email)$"]), { stdout: "pipe", stderr: "pipe", env: gitEnv() });
+  const out: { name?: string; email?: string } = {};
+  for (const line of r.success ? r.stdout.toString().split("\n") : []) { const m = /^user\.(name|email) (.+)$/.exec(line.trim()); if (m) out[m[1] as "name" | "email"] = m[2].trim(); }
+  return out;
+}
+const sane = (v: string | undefined, max: number) => typeof v === "string" && v.trim().length > 0 && v.length <= max && !/[\u0000-\u001f<>]/.test(v);
+/** who authors the Task's commit: the repository's own user.name and user.email (its config file), else the captain's git
+ * identity (~/.gitconfig, then ~/.config/git/config), else Crew Studio. Read only: no git config is ever written. */
+export function commitIdentity(repo: string, home = homedir()): CommitIdentity {
+  const common = git(repo, ["rev-parse", "--git-common-dir"]).out; const dir = common ? (isAbsolute(common) ? common : join(repo, common)) : join(repo, ".git");
+  const xdg = home === homedir() && process.env.XDG_CONFIG_HOME ? join(process.env.XDG_CONFIG_HOME, "git", "config") : join(home, ".config", "git", "config");
+  const tries: [CommitIdentity["source"], { name?: string; email?: string }][] = [["repository", configUser(join(dir, "config"))], ["captain", { ...configUser(xdg), ...configUser(join(home, ".gitconfig")) }]];
+  for (const [source, u] of tries) if (sane(u.name, 200) && sane(u.email, 320)) return { name: u.name!.trim(), email: u.email!.trim(), source };
+  return { name: "Crew Studio", email: "crew-studio@localhost", source: "studio" };
+}
+/** the Task's one commit: `tree` on `parent`, authored by `author`, committed by Crew Studio */
+export function commitTree(repo: string, tree: string, parent: string, message: string, author: CommitIdentity): string {
+  const r = Bun.spawnSync(gitArgv(["commit-tree", tree, "-p", parent, "-F", "-"]), { cwd: repo, stdin: new TextEncoder().encode(message), stdout: "pipe", stderr: "pipe",
+    env: gitEnv({ GIT_AUTHOR_NAME: author.name, GIT_AUTHOR_EMAIL: author.email }) });
+  const sha = r.stdout.toString().trim(); if (!r.success || !/^[0-9a-f]{40}$/.test(sha)) throw new Error(`git commit-tree: ${r.stderr.toString().trim()}`.slice(0, 500));
+  return sha;
 }

@@ -39,7 +39,7 @@ import { COORDINATOR_TOOL_SCHEMA, coordinatorDetail, coordinatorText, designText
 import { RemoteWatchers, requiredPolicy, reconcile, inspectRemote, grantIdentity, registerRemoteWait, validRemoteWait, remoteStopBody } from "./remote-ci";
 import { stablePatch, proveCleanCarry, mergeOnce, updateOnce, assertMergeAvailable } from "./remote-gates";
 import type { CardDetail } from "../runtime/cards";
-import { commitConvention, commitSubject, taskCommitMessage } from "./commit-message";
+import { commitConvention, commitIdentity, commitSubject, commitTree, taskCommitMessage } from "./commit-message";
 import { unverifiedClaim } from "./report-verification";
 
 export { git, must };
@@ -659,8 +659,11 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const taskCommit = (x: X, h: string) => {
     const ledger = new Map(engine.ledger(x.run.id).map((e) => [e.seq, e]));
     const done = engine.doneLines(x.run).map((d: any) => ({ text: d.text, proofs: (d.by ?? []).map((b: any) => ({ check: b.check, verdict: (ledger.get(b.seq) as any)?.verdict ?? "?" })) }));
-    return taskCommitMessage({ run: x.run.id, head: h, type: x.ctx.spec?.type ?? null, title: x.ctx.spec?.title ?? x.run.title ?? "", what: x.ctx.spec?.what ?? null, why: x.ctx.spec?.why ?? [], done }, commitConvention(x.ctx.repo, h));
+    const author = commitIdentity(x.ctx.repo);
+    return { ...taskCommitMessage({ run: x.run.id, head: h, type: x.ctx.spec?.type ?? null, title: x.ctx.spec?.title ?? x.run.title ?? "", what: x.ctx.spec?.what ?? null, why: x.ctx.spec?.why ?? [], done, author }, commitConvention(x.ctx.repo, h)), author };
   };
+  /** the subject of the Task's one commit, for the merge card (null when it cannot be read yet) */
+  const landing = (x: X): string | null => { try { const h = String(x.ctx.gatedHead ?? x.ctx.head ?? ""); return /^[0-9a-f]{40}$/.test(h) && x.ctx.repo ? taskCommit(x, h).subject : null; } catch { return null; } };
   engine.actions["git.merge"] = async (x) => {
     if (x.ctx.pr?.adapter === "github") {
       const phase = remotePhase(x); phase.assert(); const a = selectedAdapter(x), h = head(shellOk(x));
@@ -697,8 +700,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     // one curated commit lands, never the round commits: the reviewed head's exact tree on the current base tip (the rounds
     // stay on the Task branch and in the ledger)
     const tip = must(repo, ["rev-parse", `refs/heads/${base}`]), tree = must(repo, ["rev-parse", `${h}^{tree}`]);
-    const msg = taskCommit(x, h).message; const made = git(repo, ["commit-tree", tree, "-p", tip, "-F", "-"], msg);
-    const squash = made.out.trim(); if (!made.ok || !/^[0-9a-f]{40}$/.test(squash)) throw new Error(`git commit-tree: ${made.err || made.out}`.slice(0, 500));
+    const curated = taskCommit(x, h); const squash = commitTree(repo, tree, tip, curated.message, curated.author);
     const cur = git(repo, ["symbolic-ref", "--short", "HEAD"]).out;
     if (cur === base) { if (git(repo, ["status", "--porcelain", "--untracked-files=no"]).out) throw new Error(`${repo} has uncommitted changes on ${base}`); must(repo, ["merge", "--ff-only", "-q", squash]); }
     else must(repo, ["update-ref", `refs/heads/${base}`, squash, tip]);
@@ -1376,13 +1378,13 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
 
     // the zh-TW sections read from the detail: a line the coordinator did not translate stays English and is marked
     const UNTR = "（未翻譯）"; const zl = (l: { en: string; "zh-TW": string; untranslated?: boolean }) => (l.untranslated ? `${l.en}${UNTR}` : l["zh-TW"]);
-    const b0 = base(x, x.ctx.spec?.why?.join(" ") ?? "", one ? `One-way: confirm the door to merge. Walk: ${walk}` : x.ctx.pr?.adapter === "github" ? "Merge the verified PR head remotely; the source checkout stays untouched." : "Merge fast-forwards the base branch locally.", detail.why.map(zl).join(" "), one ? `單向門：請確認門再合併。說明：${x.ctx.spec?.explain?.["zh-TW"] ?? ""}` : x.ctx.pr?.adapter === "github" ? "合併已驗證的遠端 PR 版本；來源工作目錄保持不變。" : "合併會在本地 fast-forward base branch。", { ba: stat });
+    const b0 = base(x, x.ctx.spec?.why?.join(" ") ?? "", one ? `One-way: confirm the door to merge. Walk: ${walk}` : x.ctx.pr?.adapter === "github" ? "Merge the verified PR head remotely; the source checkout stays untouched." : "Merge lands one curated commit on the base branch locally.", detail.why.map(zl).join(" "), one ? `單向門：請確認門再合併。說明：${x.ctx.spec?.explain?.["zh-TW"] ?? ""}` : x.ctx.pr?.adapter === "github" ? "合併已驗證的遠端 PR 版本；來源工作目錄保持不變。" : "合併會在本地 base branch 落下一個整理過的 commit。", { ba: stat });
     b0.zh.done = detail.done.map((d, i) => zl(d.text) + supZh(i));
     if (sup.size) { b0.en.done = b0.en.done.map((d: string, i: number) => d + supEn(i));
       detail.done = detail.done.map((d, i) => sup.has(i) ? { ...d, text: { ...d.text, en: d.text.en + supEn(i), "zh-TW": d.text["zh-TW"] + supZh(i) } } : d); }
     if (am.length) detail.amendments = am.map((m) => ({ n: m.n, note: m.note, card: m.card }));
     const body:Body = { title: `Merge: ${T(x)}`, zhTitle: `合併：${ZT(x)}`, ledger: { done: engine.doneLines(x.run) }, detail, captainOnly: true, captures, links: [...(cap?.app ? [{ label: "Open the app", href: cap.app }] : []), ...(x.ctx.pr?.adapter === "github" && x.ctx.pr.url ? [{ label: `Pull request #${x.ctx.pr.id}`, href: x.ctx.pr.url }] : [])], ...b0,
-      body: `Intent: ${x.run.text.split("\n")[0].slice(0, 300)}\n\n${one ? `ONE-WAY: a revert will not undo this (${(x.ctx.door?.reasons ?? []).filter((r: any) => r.list !== "trivial").map((r: any) => `${r.path}: ${r.why}`).join("; ")}). Walk: ${walk}\nTick the door confirmation to merge.\n\n` : ""}${x.ctx.pr?.adapter === "github" ? `Merge PR #${x.ctx.pr.id} (${x.ctx.pr.url}) in ${(selectedAdapter(x) as GitHubPrAdapter).grant.repository} at ${x.ctx.pr.head} into ${x.ctx.pr.base}. Method: ${(selectedAdapter(x) as GitHubPrAdapter).operationGrant().mergeMethod}.` : `Fast-forwards ${x.ctx.base} in ${x.ctx.repo} to ${String(x.ctx.gatedHead ?? x.ctx.head).slice(0, 8)} (branch ${x.ctx.branch}). Local only: nothing is pushed.`}\n\nBefore → after:\n${stat}\n\nSix gates:\n${gates}\n\n${amendText}Proved by checks:\n${sp.proved.map((d) => `✓ ${d.index + 1}. ${d.text} — ${d.by.map((b) => b.check).join(", ")}${supEn(d.index)}`).join("\n") || "(none)"}\n\nNeeds your eye:\n${sp.eye.map((d) => `· ${d.index + 1}. ${d.text}${d.note ? ` (${d.note})` : ""}${supEn(d.index)}`).join("\n") || "(nothing)"}${x.ctx.followups?.length ? `\n\nReviewer follow-ups:\n${x.ctx.followups.map((f: string) => `- ${f}`).join("\n")}` : ""}${seen}${designText(detail.design)}${(() => { const rv = (x.ctx.reviews ?? []).at(-1); if (!rv?.mode) return ""; return `\n\nReviewed in ${rv.mode} mode.${rv.notCovered?.length ? `\nNeeds your eye (the review did not cover):\n${rv.notCovered.map((n: string) => `· ${n}`).join("\n")}` : ""}`; })()}`,
+      body: `Intent: ${x.run.text.split("\n")[0].slice(0, 300)}\n\n${one ? `ONE-WAY: a revert will not undo this (${(x.ctx.door?.reasons ?? []).filter((r: any) => r.list !== "trivial").map((r: any) => `${r.path}: ${r.why}`).join("; ")}). Walk: ${walk}\nTick the door confirmation to merge.\n\n` : ""}${x.ctx.pr?.adapter === "github" ? `Merge PR #${x.ctx.pr.id} (${x.ctx.pr.url}) in ${(selectedAdapter(x) as GitHubPrAdapter).grant.repository} at ${x.ctx.pr.head} into ${x.ctx.pr.base}. Method: ${(selectedAdapter(x) as GitHubPrAdapter).operationGrant().mergeMethod}. ${(selectedAdapter(x) as GitHubPrAdapter).operationGrant().mergeMethod === "rebase" ? `GitHub's rebase method lands every round commit on ${x.ctx.pr.base}, not one curated commit; squash is the preferred method.` : `One curated commit lands: "${landing(x) ?? T(x)}".`}` : `Lands one curated commit on ${x.ctx.base} in ${x.ctx.repo} with the tree of ${String(x.ctx.gatedHead ?? x.ctx.head).slice(0, 8)} (branch ${x.ctx.branch}): "${landing(x) ?? T(x)}". The round commits stay on the branch. Local only: nothing is pushed.`}\n\nBefore → after:\n${stat}\n\nSix gates:\n${gates}\n\n${amendText}Proved by checks:\n${sp.proved.map((d) => `✓ ${d.index + 1}. ${d.text} — ${d.by.map((b) => b.check).join(", ")}${supEn(d.index)}`).join("\n") || "(none)"}\n\nNeeds your eye:\n${sp.eye.map((d) => `· ${d.index + 1}. ${d.text}${d.note ? ` (${d.note})` : ""}${supEn(d.index)}`).join("\n") || "(nothing)"}${x.ctx.followups?.length ? `\n\nReviewer follow-ups:\n${x.ctx.followups.map((f: string) => `- ${f}`).join("\n")}` : ""}${seen}${designText(detail.design)}${(() => { const rv = (x.ctx.reviews ?? []).at(-1); if (!rv?.mode) return ""; return `\n\nReviewed in ${rv.mode} mode.${rv.notCovered?.length ? `\nNeeds your eye (the review did not cover):\n${rv.notCovered.map((n: string) => `· ${n}`).join("\n")}` : ""}`; })()}`,
       options: [{ id: "merge", label: "Merge", labelZh: "合併", primary: true }, { id: "changes", label: "Request changes", labelZh: "要求修改", note: true, hold: true }, { id: "close", label: "Close without merging", labelZh: "不合併，關閉", hold: true }] };
     if(remoteIntent)preparedRemoteCards.set(detail,{intent:structuredClone(remoteIntent),assert:assertRemoteCard!});
     return body;

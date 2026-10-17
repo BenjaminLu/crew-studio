@@ -98,7 +98,8 @@ ok(starts.length === 2 && starts[0].data.brief === null && starts[1].data.brief 
   const reviewed = f.ctx.merged?.reviewed; const summary = String(f.ctx.rounds?.at(-1)?.report?.summary ?? "");
   ok(landed.length === 1 && /^feat: \S/.test(subject) && subject.length <= 72 && !/\(round \d+\)/.test(msg) && !/Crew-Round:/.test(msg) && /\nDone:\n- .*\(proved by firstmate\//.test(msg) && (!summary || !msg.includes(summary)) && !/claude\.ai/.test(msg)
     && git("rev-parse", "main^{tree}") === git("rev-parse", `${reviewed}^{tree}`) && git("rev-parse", "main^") === mainBefore,
-    "main gets one curated commit for the Task: its subject, what and why and the done line with its proof, the reviewed head's tree on the old main", JSON.stringify([landed.length, msg.slice(0, 600)])); }
+    "main gets one curated commit for the Task: its subject, what and why and the done line with its proof, the reviewed head's tree on the old main", JSON.stringify([landed.length, msg.slice(0, 600)]));
+  ok(merge!.body.includes(`Lands one curated commit on main`) && merge!.body.includes(`"${subject}"`) && /round commits stay on the branch/.test(merge!.body), "the merge card says one curated commit lands, with its subject", merge!.body.slice(0, 600)); }
 // one hand-back commit per round on the Task's branch, each with its own trailers
 { const per = (n: number) => git("log", "--format=%an|%B%x00", `feature/${r.id}`).split("\0").find((m) => new RegExp(`Crew-Round: ${n}\\b`).test(m)) ?? "";
   const ok1 = (m: string, n: number) => /^\s*Crew agent \(stub·no model\)\|/.test(m) && new RegExp(`Crew-Run: ${r.id}\\b`).test(m) && /Crew-Node: build\b/.test(m) && new RegExp(`Crew-Round: ${n}\\b`).test(m) && /Crew-Agent: stub·no model/.test(m);

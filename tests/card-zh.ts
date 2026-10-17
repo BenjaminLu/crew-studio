@@ -46,7 +46,7 @@ const literals = (src: string): string[] => { const out: string[] = []; let i = 
 // the zh-TW how / why texts: Chinese literals that are not a title prefix ("派工：" + the title) and not the marked fallback
 const zhLits = literals(bodies).filter((t) => /[\u4e00-\u9fff]/.test(t) && !/^[^。]*：lints$/.test(t) && !/（未翻譯）/.test(t));
 const zhBad = zhLits.filter((t) => ste([{ section: "zh-TW.how", text: t }]).findings.some((f: any) => f.class === "ste-locale"));
-ok(zhLits.includes("合併會在本地 fast-forward base branch。") && zhLits.some((t) => t.startsWith("單向門：請確認門再合併。")) && zhLits.includes("worker 在自己的 branch 上做；每一輪由檢查和全新的 reviewer 判定。") && zhLits.length >= 12 && !zhBad.length,
+ok(zhLits.includes("合併會在本地 base branch 落下一個整理過的 commit。") && zhLits.some((t) => t.startsWith("單向門：請確認門再合併。")) && zhLits.includes("worker 在自己的 branch 上做；每一輪由檢查和全新的 reviewer 判定。") && zhLits.length >= 12 && !zhBad.length,
   `Studio's own zh-TW card texts (dispatch, door, budget, step-back, stalled, scope, two-way merge: ${zhLits.length} literals) pass the zh rule with technical terms kept in English`, JSON.stringify(zhBad));
 ok(ste([{ section: "zh-TW.title", text: "派工：format() supports JPY, a currency without cents" }]).findings.some((f: any) => f.class === "ste-locale" && /is English/.test(f.message)), "R-002's English title behind 派工： is still refused");
 // the code-stripping pass removes only code
