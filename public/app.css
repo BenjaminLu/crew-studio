@@ -120,8 +120,20 @@
 .ib-back{display:none;justify-self:start;margin:-2px 0 2px -6px}
 .ib-detail > .card{margin:0}
 .ib-recorded{display:flex;gap:8px;align-items:center;margin:0;padding:8px 12px;border-radius:8px;background:var(--ok-soft);color:var(--ok);font-size:13px}
+/* 520–900px (desktop with the Firstmate panel open, 1280 wide included): a compact rail, kind + short title + age, beside the card */
 @container main (max-width:900px){
+  .ib{grid-template-columns:minmax(180px,220px) minmax(0,1fr);gap:12px}
+  .ib-row{grid-template-columns:minmax(0,1fr) auto;gap:6px;padding:8px 10px}
+  .ib-n,.ib-list-h .faint,.ib-row-d .ib-wf,.ib-row-d .mono{display:none}
+  .ib-row-t{font-size:13px;-webkit-line-clamp:1;overflow-wrap:normal;word-break:break-all}
+  .ib-list-h{padding:10px}
+}
+/* a phone: the list and the card take turns */
+@container main (max-width:519px){
   .ib{grid-template-columns:minmax(0,1fr)}
+  .ib-n{display:block}.ib-row-d .ib-wf{display:inline-flex}.ib-row-d .mono,.ib-list-h .faint{display:inline}
+  .ib-row{grid-template-columns:20px minmax(0,1fr) auto;padding:10px 14px}
+  .ib-row-t{font-size:14px;-webkit-line-clamp:2}
   .ib-list{position:static;max-height:none}
   .ib[data-ib-mode="list"] .ib-detail,.ib[data-ib-mode="card"] .ib-list{display:none}
   .ib-back{display:inline-flex}

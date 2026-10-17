@@ -194,9 +194,9 @@ function taskRow(t) {
 // One card at a time (unit inbox-focus). Every open card, firstmate's and Studio's, is one row of a list, oldest first:
 // the card waiting longest is on top, and a card that arrives later joins the bottom without moving the selection. Beside
 // the list, the selected card alone, under a sticky header naming its Task. #/inbox/<id> selects a card; ↑/↓ or j/k
-// move the selection; an answered card leaves and the card after it is selected, with "Recorded for <Task>". Narrower
-// than 900px (a phone, or the Firstmate panel open beside it) the list and the card take turns: a row opens its card
-// full width and Back returns to the list. Two full cards are never shown one under the other.
+// move the selection; an answered card leaves and the card after it is selected, with "Recorded for <Task>". With the
+// Firstmate panel open (520–900px) the list is a compact rail beside the card; below 520px (a phone) the list and the
+// card take turns: a row opens its card full width and Back returns to the list. Two full cards are never stacked.
 const IB = { sel: null, order: [], recorded: null, recT: null };
 function inboxItems() {
   const studio = (window.studioCards?.open() || []).map((c) => ({ source: "studio", id: c.id, kind: c.kind, task: c.runTitle || L(c.title), workflow: c.workflow, run: c.run, ts: c.createdAt, data: c }));
@@ -226,7 +226,7 @@ function viewInbox(id) {
   const cur = items.find((x) => x.id === want) || items[0] || null;
   const moved = !!cur && IB.sel !== cur.id;
   if (ready) { IB.sel = cur?.id || null; IB.order = ids; }
-  // narrow, the URL decides which one shows: #/inbox the list, #/inbox/<id> that card
+  // on a phone, the URL decides which one shows: #/inbox the list, #/inbox/<id> that card
   const mode = id && cur && cur.id === id ? "card" : "list";
   const rec = IB.recorded && Date.now() - IB.recorded.at < 8000 ? IB.recorded : null;
   // another card selected: its top shows, not the middle the previous card was scrolled to
@@ -246,7 +246,7 @@ function viewInbox(id) {
       h("div", { class: "ib-detail" }, inboxHead(cur, items), inboxCard(cur)))
     : h("div", { class: "card" }, h("div", { class: "empty" }, icon("inbox"), h("b", {}, T("Inbox zero", "沒有待處理的卡")), T("Cards show up here live.", "新卡會即時出現。"))));
 }
-const inboxRow = (x, i, on) => h("a", { class: `ib-row${on ? " on" : ""}`, href: ibHash(x.id), role: "option", "aria-selected": String(on), "data-inbox-row": x.id, "data-inbox-source": x.source },
+const inboxRow = (x, i, on) => h("a", { class: `ib-row${on ? " on" : ""}`, href: ibHash(x.id), role: "option", "aria-selected": String(on), title: x.task, "aria-label": [x.task, x.kind, x.workflow, x.run, ago(x.ts)].filter(Boolean).join(" · "), "data-inbox-row": x.id, "data-inbox-source": x.source },
   h("span", { class: "ib-n num", "aria-hidden": "true" }, String(i + 1)),
   h("span", { class: "ib-row-main" }, h("span", { class: "ib-row-t", title: x.task }, x.task),
     h("span", { class: "ib-row-d" }, h("span", { class: "vbadge ib-kind", "data-kind": x.kind }, x.kind), x.workflow ? h("span", { class: "ib-wf" }, icon("workflow", "ic sm"), x.workflow) : null, x.run ? h("span", { class: "mono" }, x.run) : null)),

@@ -117,13 +117,20 @@ try {
     const approve = (await p.textContent('[data-scard="SC-701"] [data-option="approve"]').catch(() => "")).trim();
     ok(approve === `核准 ${VIDEO} v1`, "zh-TW: the primary button reads 核准 <Task> v1", approve);
     await ctx.close(); }
-  // ---------- the Firstmate panel open beside it: the card gets the room, the list comes first ----------
-  { const { ctx, p } = await open(1280, "#/inbox", { chat: true });
-    const narrow = await p.evaluate(() => !document.body.classList.contains("chat-closed") && document.querySelector("#main").clientWidth < 900);
-    await shot(p, "1280-chat-open");
-    ok(narrow && await visible(p, "[data-scard]") === 0 && await visible(p, "[data-inbox-row]") === 4, "with the Firstmate panel open (the page under 900px), the list shows and no card is stacked under it");
-    await p.click('[data-inbox-row="SC-702"]'); await p.waitForTimeout(300);
-    ok(await visible(p, "[data-scard]") === 1 && await visible(p, "[data-inbox-row]") === 0 && await visible(p, "[data-inbox-back]") === 1, "with the panel open, a row opens its card alone, with Back to list");
+  // ---------- the Firstmate panel open beside it (the desktop default): a compact rail beside the oldest card, no click needed ----------
+  for (const width of [1440, 1280]) { const { ctx, p } = await open(width, "#/inbox", { chat: true });
+    const main = await p.evaluate(() => !document.body.classList.contains("chat-closed") ? document.querySelector("#main").clientWidth : 0);
+    await shot(p, `${width}-chat-open`);
+    ok(main > 0 && main < 900, `${width} with the panel open: the page is under 900px (${main})`);
+    ok(await visible(p, "[data-inbox-row]") === 4 && await visible(p, "[data-scard]") === 1 && await p.getAttribute("[data-scard]", "data-scard") === "SC-701" && await visible(p, "[data-inbox-back]") === 0,
+      `${width} with the panel open: the list rail and the oldest card show together at once`);
+    const rail = await p.evaluate(() => { const l = document.querySelector(".ib-list").getBoundingClientRect(), c = document.querySelector(".ib-detail").getBoundingClientRect(); return { l: l.width, side: c.left >= l.right - 1 }; });
+    const row = p.locator('[data-inbox-row="SC-702"]');
+    ok(rail.side && rail.l <= 240 && await visible(p, '[data-inbox-row="SC-702"] .ib-wf') === 0 && (await row.getAttribute("title")) === "Add a percent helper" && /Add a percent helper · dispatch · code-firstmate · R-702/.test(await row.getAttribute("aria-label")),
+      `${width} with the panel open: the rail is narrow (kind, title, age) and the full title is on hover and in its label`, JSON.stringify(rail));
+    await row.click(); await p.waitForTimeout(300);
+    ok(await p.getAttribute("[data-scard]", "data-scard") === "SC-702" && await visible(p, "[data-inbox-row]") === 4, `${width} with the panel open: a rail row selects its card, the rail stays`);
+    ok(!(await sideways(p)), `${width} with the panel open: nothing scrolls sideways`);
     await ctx.close(); }
   // ---------- phone: list first, then one card full width ----------
   { const { ctx, p } = await open(390);
