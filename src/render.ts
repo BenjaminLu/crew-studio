@@ -50,7 +50,7 @@ const script = (dataDir: string) => {
 export type RenderJob = { done: Promise<{ ok: boolean; error?: string; ms: number; info?: any }>; cancel(): void };
 
 /** Run one render mode; onProgress gets 0..1 for films. */
-export function runRender(dataDir: string, mode: "film" | "stills" | "crop" | "page", a: Record<string, string>, onProgress: (f: number) => void = () => {}): RenderJob {
+export function runRender(dataDir: string, mode: "film" | "stills" | "crop" | "page" | "interact", a: Record<string, string>, onProgress: (f: number) => void = () => {}): RenderJob {
   const env = renderEnv();
   const started = Date.now();
   if (env.stub) {
@@ -59,6 +59,7 @@ export function runRender(dataDir: string, mode: "film" | "stills" | "crop" | "p
       await Bun.sleep(150);
       if (mode === "film") { const sample = process.env.CREW_RENDER_STUB_MP4; if (a.copyFrom && existsSync(a.copyFrom)) copyFileSync(a.copyFrom, a.out); else if (sample && existsSync(sample)) copyFileSync(sample, a.out); else writeFileSync(a.out, "stub mp4"); onProgress(1); }
       else if (mode === "stills") { mkdirSync(a.out, { recursive: true }); for (const t of (a.times ?? "0").split(",")) writeFileSync(join(a.out, `t${Number(t).toFixed(2)}.png`), PNG1); }
+      else if (mode === "interact") return { ok: false, error: "the test renderer has no browser", ms: Date.now() - started };
       else writeFileSync(a.out, PNG1);
       return { ok: true, ms: Date.now() - started, info: mode === "page" ? { refused: [] } : undefined };
     })();

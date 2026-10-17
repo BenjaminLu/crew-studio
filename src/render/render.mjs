@@ -1,4 +1,4 @@
-// Studio's render helper, run with node (playwright needs it). Four modes:
+// Studio's render helper, run with node (playwright needs it). Five modes:
 //   film  --html F --out OUT.mp4 [--fps 30] [--width 1600] [--workers 4]
 //         an HTML film that defines DUR, render(t), build(), schedule() and #stage (the firstmate
 //         promo film's contract): frames by seeking render(t), audio rendered offline from the page's
@@ -8,6 +8,7 @@
 //         evidence carries a note saying so. No #stage fails fast with code "no-stage".
 //   stills --html F --out DIR --times 1.5,6 [--width 1600]      one PNG per time (A/B compare)
 //   crop  --html F --out OUT.png --selector S | --bbox x,y,w,h [--width 1280]   a web element crop
+//   interact --html F --actions JSON   click each named primary action on a fresh load; report whether the page changed
 //   page  --root DIR --page NAME --out OUT.png [--width 1280]   a whole page a change built (hostile): served from DIR over
 //         a local http origin (regular files only, real paths inside DIR), scripts off, every request outside that origin
 //         (file://, other hosts) refused; prints the refused URLs
@@ -72,6 +73,38 @@ const inputUrl = inputOrigin ? `${inputOrigin}/${encodeURIComponent(basename(htm
     if (outside.length) { log({ ok: false, error: `a frame loaded from outside the page's origin: ${outside.join(", ").slice(0, 200)}`, refused }); process.exit(3); }
     await p.screenshot({ path: out, fullPage: true });
     log({ ok: true, out, refused, frames: p.frames().map((f) => f.url().slice(0, 200)) });
+  } else if (mode === "interact") {
+    // a prototype's primary actions, named by the captain: load the page fresh for each, fill empty fields with
+    // plausible values, click the control, and report whether the page changed (DOM, another document or a dialog)
+    const actions = JSON.parse(opt("actions", "[]")).slice(0, 6), results = [];
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
+    await offline(ctx, inputOrigin);
+    const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    for (const a of actions) {
+      const p = await ctx.newPage(), errors = []; let dialog = null;
+      p.on("pageerror", (e) => errors.length < 5 && errors.push(String(e?.message ?? e).slice(0, 200)));
+      p.on("dialog", (d) => { dialog = d.message().slice(0, 200); d.dismiss().catch(() => {}); });
+      try {
+        await p.goto(inputUrl); await p.waitForTimeout(250);
+        const named = a.kind === "submit" ? /submit|send|sign up|subscribe|book|order|join|送出|提交|訂閱|報名/i : new RegExp(esc(a.text), "i");
+        let target = a.kind === "submit" ? p.locator("form button[type=submit], form input[type=submit], form button:not([type])") : p.getByRole("button", { name: named });
+        if (!(await target.count())) target = p.getByRole("button", { name: named }).or(p.getByRole("link", { name: named })).or(p.locator("input[type=submit], input[type=button]").filter({ hasText: named }));
+        if (!(await target.count())) { results.push({ ...a, found: false, changed: false, errors }); continue; }
+        target = target.first();
+        for (const f of await p.locator("input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]), textarea").all()) {
+          try { if (!(await f.isVisible()) || (await f.inputValue())) continue; const t = (await f.getAttribute("type")) ?? "text";
+            await f.fill(t === "email" ? "captain@example.com" : t === "number" ? "1" : t === "tel" ? "0912345678" : t === "url" ? "https://example.com" : t === "date" ? "2026-10-17" : "Captain"); } catch {}
+        }
+        const snap = () => p.evaluate(() => document.body ? document.body.innerHTML : "").catch(() => "");
+        const before = await snap(), path0 = new URL(p.url()).pathname;
+        await target.click({ timeout: 3000 }).catch((e) => errors.push(`click: ${String(e?.message ?? e).split("\n")[0].slice(0, 160)}`));
+        await p.waitForTimeout(600); await p.waitForLoadState().catch(() => {});
+        const after = await snap(), path1 = new URL(p.url()).pathname, text = await p.evaluate(() => document.body?.innerText ?? "").catch(() => "");
+        results.push({ ...a, found: true, changed: after !== before || path1 !== path0 || !!dialog, navigated: path1 !== path0, dialog, errors, text: text.replace(/\s+/g, " ").slice(0, 300) });
+      } catch (e) { results.push({ ...a, found: false, changed: false, errors: [...errors, String(e?.message ?? e).slice(0, 200)] }); }
+      finally { await p.close().catch(() => {}); }
+    }
+    log({ ok: true, results, refused });
   } else if (mode === "crop") {
     const ctx = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: "block" });
     await offline(ctx, inputOrigin);

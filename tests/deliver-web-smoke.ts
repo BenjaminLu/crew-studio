@@ -1,0 +1,47 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+// Web prototypes are interaction-tested (R-053: "submit does nothing" for three rounds). A headless
+// browser loads the page, performs the primary action the captain named and checks the DOM changed;
+// a dead action is a blocking finding for the refine loop, and no renderer is "not run", never a pass.
+import assert from 'node:assert/strict';
+import {harness,until,Y} from './rt-harness';
+import {ArtifactStore} from '../src/artifacts';
+import {installDeliver,primaryActions} from '../src/domain/deliver';
+import {renderEnv} from '../src/render';
+let pass=0;const ok=(v:unknown,name:string,detail='')=>{assert(v,`${name} ${detail}`);pass++;console.log('ok '+name);};
+const acts=primaryActions(['A signup page. The submit button must show a thank-you message.','Clicking the "Book now" button opens the booking form']);
+ok(acts.map(a=>`${a.kind}:${a.text}`).join(',')==='submit:submit,click:Book now'&&acts[0].said.includes('thank-you'),'primary actions come from the captain\'s words',JSON.stringify(acts));
+ok(!primaryActions(['A calm landing page about tea']).length,'a page with no named action has no smoke actions');
+const flow={id:'web-smoke',name:'Web smoke',version:1,roles:[{id:'designer',label:'Designer',skill:'fixture'}],nodes:[
+ {id:'intake',kind:'hook',label:'Intake',do:'deliver.intake',x:0,y:0},{id:'produce',kind:'hook',label:'Round',do:'deliver.round',x:1,y:0},
+ {id:'draft',kind:'agent',label:'Draft',role:'designer',mode:'deliver',args:{format:'web'},x:2,y:0},
+ {id:'checks',kind:'check',label:'Readiness',join:'all',checks:[{use:'core/artifact-ready',proves:[0]}],args:{producer:'all'},x:3,y:0},
+ {id:'accept',kind:'card',label:'Accept',args:{mode:'deliver-accept'},x:4,y:0},{id:'failed',kind:'hook',label:'Failed',x:4,y:1},{id:'closed',kind:'hook',label:'Closed',x:5,y:0}],
+ edges:[['intake','produce'],['produce','draft'],['draft','checks'],['checks','accept','pass'],['checks','failed','fail'],['accept','closed','rejected']]};
+const H=await harness([Y(flow)]),E=H.engine,store=new ArtifactStore(H.data);
+installDeliver(E,{dataDir:H.data,artifacts:store,lane:{},fileorg:{},docs:{}} as any);
+const form=(script:string)=>`<!doctype html><html><body><main><h1>Join the club</h1><form id="f"><label>Email <input type="email" name="email" required></label><button type="submit">Submit</button></form><p id="out"></p></main><script>${script}</script></body></html>`;
+const pages:Record<string,string>={dead:form("document.getElementById('f').addEventListener('submit',e=>e.preventDefault());"),
+ live:form("document.getElementById('f').addEventListener('submit',e=>{e.preventDefault();document.getElementById('out').textContent='Thank you for joining!';});")};
+let current='dead';
+E.deps.provider=()=>({id:'fixture',model:'offline',sandboxFree:true,start(_s:any,_t:any[],ctx:any){return{interrupt(){},async *send(){
+ const out:any=await H.agents.callTool(ctx.token,'work_write',{path:'index.html',content:pages[current]});assert(!out.error,JSON.stringify(out));
+ yield{type:'turnEnd',status:'ok'};}};}});
+const intent='A signup page. The submit button must show a thank-you message.';
+const end=async(page:string)=>{current=page;const run=E.start({workflow:flow.id,text:intent});assert(await until(()=>run.status!=='running'||E.cards.list({run:run.id,open:true}).length>0,60000),JSON.stringify(run.nodes));
+ const findings=E.ledger(run.id).filter(e=>e.check==='core/artifact-ready').flatMap(e=>e.findings??[]) as any[];return{run,findings,card:E.cards.list({run:run.id,open:true}).find(c=>c.node==='accept')};};
+try{
+ const env=renderEnv();
+ if(!env.canCrop)console.log('NOT RUN: real browser cases (no Node + Playwright here); the not-run path below still runs');
+ else{
+  const dead=await end('dead');const f=dead.findings.find(x=>x.class==='web-interaction');
+  ok(dead.run.nodes.failed?.state==='passed'&&!dead.card&&f?.severity==='blocking'&&/submit button.*changed nothing/.test(f.message)&&/thank-you/.test(f.expected),'a submit that does nothing is a blocking web-interaction finding the refine loop gets back (R-053)',JSON.stringify(dead.findings));
+  const live=await end('live');
+  ok(live.card&&!live.findings.length&&/Interaction smoke: submit changed the page/.test(live.card.body),'a submit that shows a thank-you passes and the accept card says what was clicked',JSON.stringify(live.findings)+(live.card?.body??''));
+  await E.answer(live.card!.id,{choice:'reject',by:'fixture captain'});
+ }
+ process.env.CREW_RENDER_STUB='1';
+ const stub=await end('dead');
+ ok(stub.card&&!stub.findings.some(x=>x.class==='web-interaction')&&/Interaction smoke not run: renderer unavailable/.test(stub.card.body)&&!/Proved by checks:[^]*interaction/i.test(stub.card.body.split('Needs your eye')[0]),'without a renderer the smoke is "not run" on the card, never a pass',stub.card?.body);
+ ok(stub.run.ctx.webSmoke&&Object.values(stub.run.ctx.webSmoke).every((s:any)=>s.status==='not-run'),'the run records the smoke as not run');
+ console.log(`deliver-web-smoke: ${pass} passed, 0 failed`);
+}finally{delete process.env.CREW_RENDER_STUB;for(const r of E.list())if(!['succeeded','failed','cancelled'].includes(r.status))await E.cancel(r.id);H.stop();}

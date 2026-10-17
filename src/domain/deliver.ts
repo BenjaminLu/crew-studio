@@ -26,6 +26,18 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 /** A document's title is its own # heading, never the raw prompt that asked for it. */
 export const docTitle = (md: string, fallback: string) => /^#\s+(.+?)\s*#*\s*$/m.exec(md)?.[1].trim() || fallback;
 const STUDIO_DOCS = join(import.meta.dir, "..", "..", "docs");
+/** The primary actions a web prototype must perform, named in the captain's words (intent and notes):
+ *  a submit, or a named button ("click Add to cart", "the 'Book now' button"). At most six. */
+export function primaryActions(texts: string[]): { kind: "submit" | "click"; text: string; said: string }[] {
+  const out: { kind: "submit" | "click"; text: string; said: string }[] = [], add = (kind: "submit" | "click", text: string, said: string) => { const t = text.trim().replace(/\s+/g, " "); if (t && !out.some(a => a.kind === kind && a.text.toLowerCase() === t.toLowerCase())) out.push({ kind, text: t, said: said.trim().slice(0, 200) }); };
+  for (const said of texts.map(t => String(t ?? ""))) {
+    if (/\bsubmit(?:s|ted|ting)?\b|送出|提交/i.test(said)) add("submit", "submit", said);
+    for (const m of said.matchAll(/\bclick(?:ing|s)?\s+(?:on\s+)?(?:the\s+)?["“'‘]?([A-Za-z][\w '-]{1,28}?)["”'’]?\s+button\b/gi)) add("click", m[1], said);
+    for (const m of said.matchAll(/["“'‘]([^"”'’]{2,30})["”'’]\s+button\b/gi)) add("click", m[1], said);
+    for (const m of said.matchAll(/\b(add to cart|sign up|subscribe|book now|buy now|place order|log ?in|send message)\b/gi)) add("click", m[1], said);
+  }
+  return out.slice(0, 6);
+}
 /** Sentences a reader stumbles on: longer than 30 words. Reported to the captain, never blocking. */
 export function readabilityFindings(md: string): { section: string; message: string }[] {
   const out: { section: string; message: string }[] = []; let fence = false;
@@ -128,6 +140,21 @@ export function installDeliver(engine: Engine, d: Deps) {
       if (a !== null && b !== null && !(a < 12 || a < b * 0.6)) out.push({ message: "the captain asked for a fade-out, but the last frame is still at full brightness", expected: "fade the film to black (opacity 0) over its last second", cls: "video-fade" }); }
     return out;
   };
+  // a web prototype's primary actions are clicked in a headless browser (the film renderer's Playwright): an action
+  // that changes nothing is a blocking finding the refine loop gets back; no renderer is "not run", never a pass
+  const smokeRuns = new Map<string, Promise<any>>();
+  const webSmoke = (x: X, r: any, v: any, file: string): Promise<any> => {
+    const actions = primaryActions([x.run.text, ...((v?.refinement?.active ?? []) as any[]).map(q => String(q.comment ?? ""))]);
+    const key = `${r.id}@${r.n}:${r.sha256}:${hash(actions)}`; if (smokeRuns.has(key)) return smokeRuns.get(key)!;
+    const run = (async () => {
+      if (!actions.length) return { status: "not-run", reason: "the captain named no primary action", actions };
+      const env = renderEnv(); if (env.stub || !env.canCrop) return { status: "not-run", reason: "renderer unavailable", actions };
+      const result = await runRender(d.dataDir, "interact", { html: file, actions: JSON.stringify(actions) }).done;
+      if (!result.ok || !Array.isArray(result.info?.results)) return { status: "not-run", reason: `renderer unavailable: ${String(result.error ?? "no result").slice(0, 160)}`, actions };
+      return { status: "ran", actions, results: result.info.results.slice(0, 6) };
+    })();
+    smokeRuns.set(key, run); return run;
+  };
   const readiness = async (x: X, r: any) => {
     const a = st.get(r.id), v = st.version(r.id, r.n); const findings: any[] = [];
     const bad = (message: string, expected: string, cls: string) => findings.push({ locator: r.format === "document" ? { type: "text", section: "source", start: 0, end: 1 } : r.format === "video" ? { type: "timeline", from: 0, to: 1 } : { type: "web", url: `#/review/${r.id}/${r.n}`, selector: "body", viewport: { width: 1280, height: 720 } }, message, expected, class: cls, severity: "blocking" });
@@ -136,6 +163,14 @@ export function installDeliver(engine: Engine, d: Deps) {
     if (r.format === "document") { if (!/^#\s+\S/m.test(s) || s.trim().split(/\s+/).length < 4) bad("document needs a title and content", "write a # title followed by document content", "document-content"); }
     else if (r.format === "image") { try { if (!file) throw new Error("missing image"); verifyImagePng(readFileSync(file)); } catch { bad("PNG is invalid", "produce a valid bounded PNG", "image-content"); } }
     else if (!/<(?:html|body|main|div|h1|p)\b/i.test(s)) bad("page has no content element", "write a self-contained HTML page", "html-content");
+    if (r.format === "web" && file && v && !findings.length) {
+      const smoke = await webSmoke(x, r, v, file); ((x.ctx.webSmoke ??= {}) as any)[`${r.id}@${r.n}`] = smoke;
+      for (const a of smoke.results ?? []) {
+        const label = a.kind === "submit" ? "the form's submit button" : `the "${a.text}" button`, err = a.errors?.length ? ` Page errors: ${a.errors.join("; ").slice(0, 200)}` : "";
+        if (!a.found) bad(`${label} is not on the page, so the captain's action cannot be tried`, `add ${label} and make it do what the captain asked: ${a.said}`, "web-interaction");
+        else if (!a.changed) bad(`clicking ${label} in a headless browser changed nothing on the page.${err}`, `make ${label} visibly respond as the captain asked: ${a.said}`, "web-interaction");
+      }
+    }
     if (!["document", "image"].includes(r.format) && /(?:src|href)\s*=\s*["'](?:https?:|\/\/)/i.test(s)) bad("external resource URL", "embed required resources locally", "external-resource");
     if (st.notes(r.id, r.n).some(n => n.status === "open")) bad("artifact has unresolved notes", "produce a new version addressing the annotations", "open-note");
     const mp4 = r.format === "video" ? st.file(r.id, r.n, "render.mp4") : null;
@@ -184,6 +219,10 @@ export function installDeliver(engine: Engine, d: Deps) {
       for (const f of e?.findings ?? []) found.push({ producer: r.producer, kind: "wording", section: (f.locator as any)?.section ?? null, message: f.message });
       for (const f of readabilityFindings(md)) found.push({ producer: r.producer, kind: "readability", ...f });
     }
+    for (const r of offered.filter(r => r.format === "web")) { const s = x.ctx.webSmoke?.[`${r.id}@${r.n}`], tag = offered.length > 1 ? `${r.producer} ` : "";
+      if (!s) lines.push(`· ${tag}Interaction smoke not run`);
+      else if (s.status === "not-run") lines.push(`· ${tag}Interaction smoke not run: ${s.reason}`);
+      else lines.push(`· ${tag}Interaction smoke: ${s.results.map((a: any) => `${a.kind === "submit" ? "submit" : `"${a.text}"`} ${a.changed ? "changed the page" : "did nothing"}`).join("; ")}. Check the result is what you asked for.`); }
     for (const f of found.slice(0, 10)) lines.push(`· ${offered.length > 1 ? `${f.producer} ` : ""}${f.kind === "wording" ? "Wording" : "Readability"} (${f.section}): ${f.message}`);
     if (found.length > 10) lines.push(`· and ${found.length - 10} more wording findings`);
     return { lines, found };
