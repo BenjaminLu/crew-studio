@@ -281,9 +281,10 @@
     const fpolys = [...shaped.values()].map((w) => ({ e: w.e, p: sample(w.out, 8) }));
     const backPoly = (x) => { const a = at.get(x.from), b = at.get(x.to); return [[a.x + a.w, ys.get(x)], [x.xout, ys.get(x)], [x.xout, x.arcY], [x.xin, x.arcY], [x.xin, ye.get(x)], [b.x, ye.get(x)]]; };
     const meets = (x, y) => x.from === y.from || x.from === y.to || x.to === y.from || x.to === y.to; // edges that share a node meet there: not a crossing
-    // the cost of a candidate for edge e: the forward middles it covers (each worth a whole step), and the edges it crosses
-    // that it did not have to (a third of one each: never at the cost of a middle)
-    const covered = (e, ...segs) => mids.filter((m) => segs.some(([p, q]) => segNear(m, p, q))).length
+    // the cost of a candidate for edge e: the forward middles it covers, and the edges it crosses that it did not have to
+    // (a third each). A middle outweighs any number of crossings: in a crowded channel several crossings once summed past
+    // one middle and a leg stayed on it (budget → build over step-back → parked once merge → build took a lane)
+    const covered = (e, ...segs) => mids.filter((m) => segs.some(([p, q]) => segNear(m, p, q))).length * 100
       + (fpolys.filter((f) => !meets(f.e, e) && segs.some(([p, q]) => f.p.some((r, i) => i > 0 && cross(f.p[i - 1], r, p, q)))).length
       + backs.filter((o) => o !== e && !e.group.includes(o) && !meets(o, e) && segs.some(([p, q]) => { const bp = backPoly(o); return bp.some((r, i) => i > 0 && cross(bp[i - 1], r, p, q)); })).length) / 3;
     // a leg, the stub to it or an arc over a forward edge's middle moves a lane (half an arc step for an arc) to the side that
