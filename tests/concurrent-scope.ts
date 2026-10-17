@@ -52,9 +52,9 @@ const code = { id: "concurrent-code", name: "Concurrent scope fixture", version:
   { id: "dispatch", kind: "card", label: "Dispatch", args: { card_kind: "dispatch" }, card: { title: "Approve fixture scope", body: "Review the fixture scope", options: [{ id: "dispatch", label: "Dispatch" }] }, x: 2, y: 0 },
   { id: "build", kind: "agent", role: "worker", mode: "build", label: "Build", x: 3, y: 0 },
   { id: "merge-card", kind: "card", label: "Merge", args: { card_kind: "merge" }, card: { title: "Merge checked fixture", body: "Merge only the pinned local fixture", options: [{ id: "merge", label: "Merge" }, { id: "close", label: "Close" }] }, x: 4, y: 0 },
-  { id: "scope-card", kind: "card", label: "Scope", args: { card_kind: "scope" }, card: { title: "Worker blocked", body: "The worker or Studio blocked the round", options: [{ id: "park", label: "Park" }] }, x: 4, y: 1 }, { id: "parked", kind: "hook", label: "Parked", args: { result: "parked" }, x: 5, y: 1 },
+  { id: "scope-card", kind: "card", label: "Scope", args: { card_kind: "scope" }, card: { title: "Worker blocked", body: "The worker or Studio blocked the round", options: [{ id: "rescope", label: "Rescope" }, { id: "park", label: "Park" }] }, x: 4, y: 1 }, { id: "parked", kind: "hook", label: "Parked", args: { result: "parked" }, x: 5, y: 1 },
   { id: "merge", kind: "hook", do: "git.merge", label: "Merge", x: 5, y: 0 }, { id: "done", kind: "hook", label: "Done", x: 6, y: 0 }, { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 6, y: 1 }],
-  edges: [{ from: "prepare", to: "spec" }, { from: "spec", to: "dispatch" }, { from: "dispatch", to: "build", when: "dispatch" }, { from: "build", to: "build", when: "rebase-more" }, { from: "build", to: "merge-card", when: "ok" }, { from: "build", to: "scope-card", when: "blocked" }, { from: "scope-card", to: "parked", when: "park" }, { from: "merge-card", to: "merge", when: "merge" }, { from: "merge-card", to: "closed", when: "close" }, { from: "merge", to: "build", when: "rebase" }, { from: "merge", to: "done" }] };
+  edges: [{ from: "prepare", to: "spec" }, { from: "spec", to: "dispatch" }, { from: "dispatch", to: "build", when: "dispatch" }, { from: "build", to: "build", when: "rebase-more" }, { from: "build", to: "merge-card", when: "ok" }, { from: "build", to: "scope-card", when: "blocked" }, { from: "scope-card", to: "parked", when: "park" }, { from: "scope-card", to: "spec", when: "rescope" }, { from: "merge-card", to: "merge", when: "merge" }, { from: "merge-card", to: "closed", when: "close" }, { from: "merge", to: "build", when: "rebase" }, { from: "merge", to: "done" }] };
 const defs = new WorkflowDefs(data, () => [Y(code)]);
 // what each dependency install saw: the worktree head and its bun.lock (no real install runs)
 const installs: { path: string; head: string; lock: string | null }[] = [];
@@ -143,11 +143,16 @@ await card(i1.id, "merge-card"); await card(i2.id, "merge-card");
 await answer(i1.id, "merge-card", "merge"); await merged(i1.id);
 await answer(i2.id, "merge-card", "merge"); const stuckCard = await card(i2.id, "scope-card");
 const stuckReport = E.get(i2.id)!.nodes.build.data.report;
-ok(!!stuckCard && builds(i2.id) === 4 && stuckReport?.marker === "SCOPE-BLOCKED" && /no progress in 3 rounds: stuck\.txt/.test(stuckReport.summary), "three rounds that leave the same conflict go to the scope card with a report", JSON.stringify({ builds: builds(i2.id), stuckReport }));
-await answer(i2.id, "scope-card", "park");
+ok(!!stuckCard && builds(i2.id) === 4 && stuckReport?.marker === "SCOPE-BLOCKED" && /no progress in 3 rounds: stuck\.txt/.test(stuckReport.summary) && /The rebase was aborted; the next build round rebases again\./.test(stuckReport.summary) && stuckReport.conflicts?.[0]?.path === "stuck.txt", "three rounds that leave the same conflict go to the scope card with a report that keeps the conflict list", JSON.stringify({ builds: builds(i2.id), stuckReport }));
+/** The scope card's rescope runs a spec round (read-only): it must start, on a worktree with no rebase in progress. */
+const rebaseState = (run: string) => { const wt = E.get(run)!.ctx.worktree, gitPath = Bun.spawnSync(["git", "rev-parse", "--path-format=absolute", "--git-path", "rebase-merge"], { cwd: wt, stdout: "pipe" }).stdout.toString().trim(); return { record: !!new Worktrees(data).get("concurrent-fixture", run)?.nativeRebase, dir: existsSync(gitPath), head: Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: wt, stdout: "pipe" }).stdout.toString().trim() }; };
+const rescoped = async (run: string) => { await answer(run, "scope-card", "rescope"); const d = await card(run, "dispatch"); return { dispatch: !!d, report: E.get(run)!.nodes.spec?.data?.report ?? null, status: E.get(run)!.status, ...rebaseState(run) }; };
+const i2After = await rescoped(i2.id);
+ok(i2After.dispatch && i2After.report?.marker !== "BLOCKED" && !i2After.record && !i2After.dir && i2After.head === E.get(i2.id)!.ctx.head, "rescope after a stalled rebase runs the spec round on a clean worktree (rebase aborted, no RoundBlocked)", JSON.stringify(i2After));
+E.cancel(i2.id);
 
 // 3e. A binary conflict is never resolved automatically (that would drop one side): the brief
-// lists it as binary with both sides, the rebase stays pending and the captain decides.
+// lists it as binary with both sides, the rebase is aborted (the Task keeps its own blob) and the captain decides.
 const j1 = startCode("asset.dat"), j2 = startCode("asset.dat");
 await answer(j1.id, "dispatch", "dispatch"); await answer(j2.id, "dispatch", "dispatch");
 await card(j1.id, "merge-card"); await card(j2.id, "merge-card");
@@ -155,9 +160,19 @@ await answer(j1.id, "merge-card", "merge"); await merged(j1.id);
 await answer(j2.id, "merge-card", "merge"); const binaryCard = await card(j2.id, "scope-card");
 const binaryBrief = briefs.get(j2.id)?.[1] ?? "", binaryReport = E.get(j2.id)!.nodes.build.data.report, j2Rec = new Worktrees(data).get("concurrent-fixture", j2.id);
 ok(/^- asset\.dat \(binary: base side [0-9a-f]{12}, task side [0-9a-f]{12}\)$/m.test(binaryBrief) && /cannot be resolved with the fs tools/.test(binaryBrief), "the brief lists the binary conflict with both sides' blobs", binaryBrief.slice(0, 600));
-ok(!!binaryCard && binaryReport?.marker === "SCOPE-BLOCKED" && /binary rebase conflict: asset\.dat/.test(binaryReport.summary) && !!j2Rec?.nativeRebase && builds(j2.id) === 2, "a binary conflict goes to the captain with the rebase still pending: nothing was auto-resolved", JSON.stringify({ binaryReport, rebase: j2Rec?.nativeRebase, builds: builds(j2.id) }));
+const j2Blob = Bun.spawnSync(["git", "show", `${E.get(j2.id)!.ctx.head}:asset.dat`], { cwd: repo, stdout: "pipe" }).stdout.toString();
+ok(!!binaryCard && binaryReport?.marker === "SCOPE-BLOCKED" && /binary rebase conflict: asset\.dat/.test(binaryReport.summary) && binaryReport.conflicts?.[0]?.binary === true && !j2Rec?.nativeRebase && j2Blob.includes(j2.id) && builds(j2.id) === 2, "a binary conflict goes to the captain: nothing was auto-resolved, the rebase was aborted and the Task keeps its own blob", JSON.stringify({ binaryReport, rebase: j2Rec?.nativeRebase, builds: builds(j2.id) }));
 ok(mainHas("asset.dat").includes(j1.id), "main keeps the first Task's binary; the second Task's blob was not overwritten by a silent resolution");
-await answer(j2.id, "scope-card", "park");
+const j2After = await rescoped(j2.id);
+ok(j2After.dispatch && j2After.report?.marker !== "BLOCKED" && !j2After.record && !j2After.dir, "rescope after a binary conflict runs the spec round on a clean worktree", JSON.stringify(j2After));
+// cleanup of a worktree with a rebase left in progress (a crash mid-rebase, then cancel): aborted, then removed
+{ const wt = E.get(j2.id)!.ctx.worktree, own = E.get(j2.id)!.ctx.head, recFile = join(data, "work", "wt", "concurrent-fixture", `${j2.id}.json`), rec = JSON.parse(readFileSync(recFile, "utf8"));
+  Bun.spawnSync(["chmod", "-R", "u+w", wt]); // the spec round left the worktree read-only
+  Bun.spawnSync(["git", "rebase", "--onto", "main", rec.baseCommit], { cwd: wt, stdout: "pipe", stderr: "pipe" });
+  rec.nativeRebase = { version: 1, from: own, base: rec.baseCommit, target: git(["rev-parse", "main"]) }; writeFileSync(recFile, JSON.stringify(rec, null, 1));
+  const midRebase = rebaseState(j2.id).dir;
+  E.cancel(j2.id); await until(() => !existsSync(wt), 10000);
+  ok(midRebase && !existsSync(wt) && !git(["worktree", "list"]).includes(j2.id) && git(["rev-parse", `crew/${j2.id}`]) === own, "cancelling a Task with a rebase in progress aborts it and removes the worktree; its branch keeps its own head", JSON.stringify({ midRebase, exists: existsSync(wt) })); }
 
 // 3f. A crash after recording the rebase intent but before git started it leaves no
 // rebase state: the next round clears the record and redoes the rebase.

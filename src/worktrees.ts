@@ -333,6 +333,20 @@ export class Worktrees {
     r.head=must(r.path,["rev-parse","HEAD"]);r.baseCommit=target;
     if(out.ok)delete r.nativeRebase; this.save(r); return {head:r.head,pending:!out.ok};
   }
+  /** Abort an in-progress native rebase: the worktree and record go back to the Task's own head
+   * and the base it was on, so any later round (a spec round after a rescope, or a build round
+   * that rebases again) starts from a clean, non-rebasing worktree. */
+  abortNativeRebase(project: string, task: string) {
+    if (!this.held.has(`${project}/${task}`)) throw new Error("task lock required for rebase abort");
+    const r = this.get(project, task); if (!r?.nativeRebase || r.nativeRebase.version !== 1) throw new Error("no native rebase to abort");
+    this.thaw(r);
+    const out = git(r.path, ["rebase", "--abort"]);
+    const now = must(r.path, ["rev-parse", "HEAD"]);
+    if (now !== r.nativeRebase.from) throw new Error(`native rebase abort left HEAD at ${now.slice(0, 8)}, not ${r.nativeRebase.from.slice(0, 8)}${out.ok ? "" : `: ${out.err}`}`);
+    r.head = r.nativeRebase.from; r.baseCommit = r.nativeRebase.base; delete r.nativeRebase;
+    this.note(r, "native rebase aborted; the next build round rebases again"); this.save(r);
+    return { head: r.head, baseCommit: r.baseCommit };
+  }
   continueNativeRebase(project: string, task: string, scope: (path:string)=>boolean) {
     if (!this.held.has(`${project}/${task}`)) throw new Error("task lock required for rebase continuation");
     const r=this.get(project,task); if(!r?.nativeRebase || r.nativeRebase.version!==1 || must(r.path,["rev-parse","HEAD"])!==r.head)throw new Error("native rebase state changed");
@@ -463,6 +477,11 @@ export class Worktrees {
   /** After a merge or a cancel: the worktree, its lock and its temporary trees go; kept refs older than keepDays go too. */
   remove(project: string, task: string, reason: string, keepDays = 7, extra: string[] = []) {
     const r = this.get(project, task); if (!r) return;
+    // a rebase left in progress (a parked or cancelled Task) is aborted first: the branch keeps its own commits
+    if (r.nativeRebase || existsSync(r.path) && existsSync(git(r.path, ["rev-parse", "--path-format=absolute", "--git-path", "rebase-merge"]).out.trim())) {
+      if (existsSync(r.path)) { this.thawPath(r.path); git(r.path, ["rebase", "--abort"]); }
+      if (r.nativeRebase) { r.head = r.nativeRebase.from; r.baseCommit = r.nativeRebase.base; delete r.nativeRebase; }
+    }
     for (const d of [r.path, ...extra]) { if (d && existsSync(d)) { this.thawPath(d); git(r.repo, ["worktree", "remove", "--force", d]); rmSync(d, { recursive: true, force: true }); } if (d !== r.path) rmSync(`${d}.marker`, { force: true }); }
     git(r.repo, ["worktree", "prune"]);
     rmSync(this.lockFile(project, task), { force: true });

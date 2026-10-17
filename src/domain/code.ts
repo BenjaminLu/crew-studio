@@ -919,9 +919,13 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       if(native){const result=W.continueNativeRebase(wkey(x).project,wkey(x).task,p=>inScope(x.ctx.spec?.scope??[],p));x.ctx.head=result.head;
         if(!result.pending)x.ctx.rebaseStall=null;
         else{
-          const stall=rebaseStall(x,result);x.save();W.freeze(W.get(wkey(x).project,wkey(x).task)!);
-          // binary conflicts or a rebase that does not move: the captain decides (scope card), never an endless rebase-more loop
-          if(stall){x.rn.data.report={marker:"SCOPE-BLOCKED",summary:stall,round:x.visit};x.rn.note=`SCOPE-BLOCKED · ${stall.slice(0,160)}`;x.save();return "blocked";}
+          const stall=rebaseStall(x,result);x.save();
+          // binary conflicts or a rebase that does not move: the captain decides (scope card), never an endless rebase-more loop.
+          // The rebase is aborted first, so rescope (a spec round) or park starts from the Task's own clean head.
+          if(stall){const back=W.abortNativeRebase(wkey(x).project,wkey(x).task);x.ctx.head=back.head;x.ctx.baseCommit=back.baseCommit;x.ctx.rebaseStall=null;
+            const summary=`${stall} The rebase was aborted; the next build round rebases again.`;
+            x.rn.data.report={marker:"SCOPE-BLOCKED",summary,round:x.visit,conflicts:result.binary.length?result.binary.map(c=>({path:c.path,binary:true,ours:c.ours,theirs:c.theirs})):result.unresolved.map(path=>({path}))};x.rn.note=`SCOPE-BLOCKED · ${summary.slice(0,160)}`;x.save();return "blocked";}
+          W.freeze(W.get(wkey(x).project,wkey(x).task)!);
           pendingRebaseChecks.add(x.rn);return "rebase-more";
         }
         x.save();}
