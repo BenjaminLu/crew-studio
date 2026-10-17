@@ -109,8 +109,10 @@ try{
  ok(ask.body.staffing?.plan?.find((p:any)=>p.node==='review')?.provider==='claude','confirmation lists each agent node provider/model/effort');
  const forged=await api('/api/wruns',{workflow:wf.id,text:'This week',params:{_ownStaffing:ask.body.staffing.hash}});ok(forged.status===409,'a client param cannot stand in for the confirmation');
  const wrong=await api('/api/wruns',{workflow:wf.id,text:'This week',staffingConfirm:'0'.repeat(64)});ok(wrong.status===409,'a stale or wrong confirmation is refused');
+ const unverified=await api('/api/wruns',{workflow:wf.id,text:'This week',staffingConfirm:ask.body.staffing.hash});ok(unverified.status===409&&unverified.body.code==='staffing_confirmation_required','the staffing hash alone does not authorize the Claude node verification');
  ok((await runs()).length===0,'no Task exists before the captain confirms staffing');
- const go=await api('/api/wruns',{workflow:wf.id,text:'This week',staffingConfirm:ask.body.staffing.hash});
+ // a Claude-staffed node also needs the captain's bounded Claude verification echoed back at Run (4efabd8)
+ const go=await api('/api/wruns',{workflow:wf.id,text:'This week',staffingConfirm:ask.body.staffing.hash,claudeVerification:ask.body.staffing.claudeVerification});
  ok(go.status===200&&typeof go.body.id==='string','confirmed staffing starts exactly one Task',JSON.stringify(go.body).slice(0,200));
  ok((await runs()).length===1,'one Task after confirmation');
  const task=go.body.id?(await api(`/api/wruns/${go.body.id}`)).body:null;
