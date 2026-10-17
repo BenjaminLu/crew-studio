@@ -370,7 +370,7 @@ out({ type: "item.completed", item: { id: "a1", type: "agent_message", text: "do
   const files = { "scripts/test-shard.ts": readFileSync(join(root, "templates/sandbox-repo/scripts/test-shard.ts"), "utf8"), "src/a.ts": "export const a = 1;\n",
     "test/a.test.ts": 'import { expect, test } from "bun:test";\ntest("a passes", () => expect(1).toBe(1));\n' };
   const said = (x: any, summary: string) => { x.run.nodes.build = { data: { report: { marker: "WORKER_COMPLETE", summary } } }; return x; };
-  const NOT_GREEN = "Corrected the matcher; final rerun unavailable because the test run limit was reached. Thus the final suite is NOT verified green.";
+  const NOT_GREEN = "Corrected the matcher. Thus the final suite is NOT verified green.";
   const readAll = async (T: any) => { for (const p of Object.keys(files)) await T.fs_read.run({ path: p }); };
   { const { repo, base } = repoWith(gates, files); const x = said(fakeX(repo, base, {}), NOT_GREEN); x.ctx.head = sh(repo, "git", "rev-parse", "HEAD"); const T = await toolsOf(x);
     ok(!!T.run_tests, "with no reviewer.mode set, the review runs in run mode (it has run_tests)");
@@ -390,6 +390,28 @@ out({ type: "item.completed", item: { id: "a1", type: "agent_message", text: "do
     ok(r.verdict === "fail" && r.findings.some((f: any) => f.class === "review-depth" && /an APPROVE over an unverified worker report/.test(f.message)), "review-depth fails an APPROVE recorded over the unverified report", JSON.stringify(r.findings));
     await mode.end?.(x, "done"); }
   { const { repo, base } = repoWith(gates, files); const x = said(fakeX(repo, base, { "reviewer.mode": "diff" }), "Full head declared run passed: 29 tests, no tests failed, exit 0."); const T = await toolsOf(x);
-    await readAll(T); const v = await verdict(T); ok(v.ok === true, "a worker report of a green run (\"no tests failed\") does not block an APPROVE", JSON.stringify(v)); await mode.end?.(x, "done"); } }
+    await readAll(T); const v = await verdict(T); ok(v.ok === true, "a worker report of a green run (\"no tests failed\") does not block an APPROVE", JSON.stringify(v)); await mode.end?.(x, "done"); }
+  // what the worker said, read one sentence at a time: fail-first wording and other things not run stay quiet
+  { const { unverifiedClaim } = await import("../src/domain/report-verification");
+    const yes = ["Thus final 28-test suite is NOT verified green.", "Corrected matcher; final rerun unavailable because tool reports test run limit reached.", "These are inspection findings, not executed tests.", "I could not run the test suite in the sandbox."];
+    const no = ["The new test fails on the base and passes on the head; all 28 tests pass.", "The test failed before the fix and passes now.", "The job is not run twice.", "Full head declared run passed: 29 tests, exit 0."];
+    ok(yes.every((s) => unverifiedClaim(s)) && no.every((s) => !unverifiedClaim(s)), "the worker's words: R-058's 'NOT verified green' and 'limit reached' count; fail-first wording and 'the job is not run twice' do not",
+      JSON.stringify([yes.map((s) => !!unverifiedClaim(s)), no.map((s) => unverifiedClaim(s))])); }
+  // no declared test command: nobody can run the tests, so the APPROVE stands and the merge card says what the worker said
+  { const { repo, base } = repoWith({}, { "src/a.ts": "export const a = 1;\n" }); const x = said(fakeX(repo, base, {}), NOT_GREEN); const T = await toolsOf(x);
+    await T.fs_read.run({ path: "src/a.ts" }); const v = await verdict(T); const r: any = await (E as any).natives["review-depth"]({}, { x });
+    ok(v.ok === true && v.notCovered.some((s: string) => /^not executed: the repository declares no test command; the worker said: ".*NOT verified green\."$/.test(s)) && r.verdict === "pass" && r.data.notes?.[0]?.startsWith("not executed: the repository declares no test command"),
+      "no test command: an APPROVE over an unverified report stands, with 'not executed: no test command; the worker said …' on the merge card and in the ledger", JSON.stringify([v, r.data.notes])); await mode.end?.(x, "done"); }
+  // a build round stopped at the time limit has no report, and is unverified
+  { const { repo, base } = repoWith(gates, files); const x = fakeX(repo, base, { "reviewer.mode": "diff" }); x.ctx.rounds = [{ round: 2, head: "h", report: { marker: "TIMEOUT", summary: "stopped at the round time limit", round: 2 } }]; x.run.nodes.build = { data: { report: null } };
+    const T = await toolsOf(x); await readAll(T); const a = await verdict(T);
+    ok(/Your APPROVE is refused \(diff mode\): .*build round 2 stopped at the round time limit/.test(a.error ?? ""), "a TIMEOUT build round counts as unverified: no APPROVE without the covering tests", String(a.error).slice(0, 300)); await mode.end?.(x, "done"); }
+  // no changed test file: only the whole declared command covers the change, not a file-scoped run of an old test
+  { const { repo, base } = repoWith(gates, { "src/a.ts": "export const a = 2;\n" }, { "scripts/test-shard.ts": files["scripts/test-shard.ts"], "test/a.test.ts": files["test/a.test.ts"] });
+    const x = said(fakeX(repo, base, {}), NOT_GREEN); x.ctx.head = sh(repo, "git", "rev-parse", "HEAD"); const T = await toolsOf(x); await T.fs_read.run({ path: "src/a.ts" });
+    const one = await T.run_tests.run({ files: ["test/a.test.ts"] }); const early = await verdict(T);
+    const all = await T.run_tests.run({}); const late = await verdict(T);
+    ok(one.exit === 0 && /Your APPROVE is refused \(run mode\)/.test(early.error ?? "") && /run_tests with no files\)/.test(early.error ?? "") && all.exit === 0 && late.ok === true,
+      "with no changed test file a file-scoped green run does not cover the change; the whole declared command does", JSON.stringify([one.exit, early.error?.slice(0, 200), all.exit, late])); await mode.end?.(x, "done"); } }
 H.stop();
 end();

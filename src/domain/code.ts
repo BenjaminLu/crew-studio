@@ -40,6 +40,7 @@ import { RemoteWatchers, requiredPolicy, reconcile, inspectRemote, grantIdentity
 import { stablePatch, proveCleanCarry, mergeOnce, updateOnce, assertMergeAvailable } from "./remote-gates";
 import type { CardDetail } from "../runtime/cards";
 import { commitConvention, commitSubject, taskCommitMessage } from "./commit-message";
+import { unverifiedClaim } from "./report-verification";
 
 export { git, must };
 
@@ -1030,15 +1031,11 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   // APPROVE over a worker report that says its tests were not run or not green unless the reviewer ran the covering tests
   // green itself (E2E F20). Untrusted files are read off the event loop, with caps (src/review-read.ts).
   const reviewMode = (x: X): "diff" | "run" => (x.policy("reviewer.mode") === "diff" ? "diff" : "run");
-  /** the worker's own words that its tests were not run, not rerun after a change, or not green (its last report's summary) */
-  const UNVERIFIED_REPORT = [
-    /\bnot\s+(?:been\s+|yet\s+)?(?:verified|executed|run|re-?run|green|passing)\b/i, /\bunverified\b/i,
-    /\b(?:could\s*not|couldn't|cannot|can't|unable\s+to|did\s+not|didn't|never)\s+(?:be\s+)?(?:verif(?:y|ied)|run|re-?run|execute)\b/i,
-    /\b(?:re-?run|verification|test\s+run)s?\s+(?:is\s+|was\s+)?(?:unavailable|blocked|skipped)\b/i,
-    /(?<!\bno\s)(?<!\b0\s)\btests?\s+(?:still\s+)?(?:fail(?:s|ed|ing)?|red)\b/i, /\blimit\s+reached\b/i];
-  const workerUnverified = (x: X): string | null => { const r = x.run.nodes?.build?.data?.report; const t = typeof r?.summary === "string" ? r.summary : "";
-    const m = UNVERIFIED_REPORT.map((re) => re.exec(t)).find(Boolean); if (!m) return null;
-    const at = m.index; const a = Math.max(0, t.lastIndexOf(".", at) + 1); const b = t.indexOf(".", at + m[0].length); return t.slice(a, b < 0 ? undefined : b + 1).trim().slice(0, 300) || m[0]; };
+  /** the worker's own words that its tests were not run or not green (src/domain/report-verification.ts), or a last build
+   * round stopped at the time limit (its report is gone; the round is never verified) */
+  const workerUnverified = (x: X): string | null => {
+    const last = (x.ctx.rounds ?? []).at(-1); if (last?.report?.marker === "TIMEOUT") return `build round ${last.round} stopped at the round time limit, so its last change was never tested`;
+    return unverifiedClaim(x.run.nodes?.build?.data?.report?.summary ?? last?.report?.summary); };
   const readBudget = (x: X) => Math.max(4, Number(x.policy("reviewer.read_budget") ?? 40) || 40);
   const escRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   /** a done line names a path: the path itself, not a longer one it is the start of (src/a.ts is not src/a.tsx) */
@@ -1094,18 +1091,20 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       ...(unread.length ? [`read (fs_read; text in ranges of ${LINES_PER_READ} lines until every line is read; images, PDFs and binaries once): ${unread.join(", ")}`] : [])];
     const read = plan.required.filter((p: string) => full(p)).map((p: string) => ({ path: p, view: d.viewed[p] ?? "text" }));
     // an APPROVE over a worker who said its tests were not run or not green needs the reviewer's own green run of the covering
-    // tests: the whole declared command, or every changed test file
+    // tests: the whole declared command, or every changed test file (with no changed test file, only the whole command). A
+    // repository that declares no test command cannot be run by anyone: the APPROVE stands and the merge card says so.
     const unverified = workerUnverified(x); const changedTests = plan.files.filter((p: string) => (cfg.tests ?? []).some((g: string) => matches(g, p)));
-    const covering = d.executed.some((e: any) => e.tests && !e.refused && e.exit === 0 && (e.tests === "all" || changedTests.every((p: string) => e.tests.includes(p))));
-    const approveGap = unverified && !covering ? `the worker reported its tests were not run or not green ("${unverified}"); ${mode === "run" ? `run the covering tests green yourself first (run_tests with no files, or with ${changedTests.length ? changedTests.join(", ") : "the tests that cover the change"})` : "diff mode cannot run them, so this change cannot be approved in this review"}` : null;
-    return { d, plan, mode, unread, missing, read, validPlan, unverified, approveGap };
+    const covering = d.executed.some((e: any) => e.tests && !e.refused && e.exit === 0 && (e.tests === "all" || (changedTests.length > 0 && changedTests.every((p: string) => e.tests.includes(p)))));
+    const unverifiedNote = unverified && !cfg.test ? `not executed: the repository declares no test command; the worker said: "${unverified}"` : null;
+    const approveGap = unverified && cfg.test && !covering ? `the worker reported its tests were not run or not green ("${unverified}"); ${mode === "run" ? `run the covering tests green yourself first (run_tests with no files${changedTests.length ? `, or with ${changedTests.join(", ")}` : ""})` : "diff mode cannot run them, so this change cannot be approved in this review"}` : null;
+    return { d, plan, mode, unread, missing, read, validPlan, unverified, approveGap, unverifiedNote };
   };
   engine.natives["review-depth"] = (_i, hp) => {
-    const x = hp.x as X; const v = x.rn.data.verdict; const { d, plan, mode, missing, read, validPlan, unverified, approveGap } = reviewDepth(x);
+    const x = hp.x as X; const v = x.rn.data.verdict; const { d, plan, mode, missing, read, validPlan, unverified, approveGap, unverifiedNote } = reviewDepth(x);
     const findings = !validPlan ? [{ locator: { type: "card", field: "review" }, message: "the review has no valid current-attempt plan bound to this head", expected: "prepare a fresh review plan before verification", class: "review-unverified", severity: "blocking" }] : x.rn.data.unverified ? [{ locator: { type: "card", field: "review" }, message: `the reviewer would not verify its claims: ${x.rn.data.unverified}`, expected: `a verdict after what ${mode} mode asks`, class: "review-unverified", severity: "blocking" }]
       : v && missing.length ? missing.map((m) => ({ locator: { type: "card", field: "review" }, message: `a verdict without its verification: ${m}`, expected: `the reviewer did what ${mode} mode asks before its verdict`, class: "review-depth", severity: "blocking" }))
       : v?.verdict === "APPROVE" && approveGap ? [{ locator: { type: "card", field: "review" }, message: `an APPROVE over an unverified worker report: ${approveGap}`, expected: "the covering tests run green by the reviewer, or no APPROVE", class: "review-depth", severity: "blocking" }] : [];
-    const data = { mode, read, unreadable: plan.unreadable, notRead: plan.notRead, executed: d.executed.map((e: any) => ({ command: e.command, exit: e.exit ?? null, refused: e.refused ?? null })), notExecuted: d.notExecuted, budget: plan.budget, ...(unverified ? { workerUnverified: unverified } : {}) };
+    const data = { mode, read, unreadable: plan.unreadable, notRead: plan.notRead, executed: d.executed.map((e: any) => ({ command: e.command, exit: e.exit ?? null, refused: e.refused ?? null })), notExecuted: d.notExecuted, budget: plan.budget, ...(unverified ? { workerUnverified: unverified } : {}), ...(unverifiedNote ? { notes: [unverifiedNote] } : {}) };
     x.ctx.reviewDepth = data;
     return { verdict: findings.length ? "fail" : "pass", score: findings.length ? 0 : 1, findings, data } as any;
   };
@@ -1236,7 +1235,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
         if (!depth.missing.length && a.verdict === "APPROVE" && depth.approveGap) { x.rn.data.refused = `Your APPROVE is refused (${depth.mode} mode): ${depth.approveGap}. Then call review_verdict again, or REJECT with a must-fix that names the missing verification.`; x.save(); return { error: x.rn.data.refused }; }
         if (depth.missing.length) { x.rn.data.refused = `Your verdict is refused (${depth.mode} mode): a verdict needs its verification first. Still missing: ${depth.missing.join("; ")}. Then call review_verdict again, and list under Executed each command you ran and under "Read, not run" each claim you only read.`; x.save(); return { error: x.rn.data.refused }; }
         // what the review could not cover is part of its verdict, and the merge card says so
-        const notCovered = [...depth.plan.notRead.map((n: any) => `not read (${n.reason}): ${n.path}`), ...depth.plan.unreadable.map((n: any) => `not readable (${n.reason}): ${n.path}`), ...(depth.d.notExecuted ? [`not executed: ${depth.d.notExecuted}`] : [])];
+        const notCovered = [...depth.plan.notRead.map((n: any) => `not read (${n.reason}): ${n.path}`), ...depth.plan.unreadable.map((n: any) => `not readable (${n.reason}): ${n.path}`), ...(depth.d.notExecuted && !depth.unverifiedNote ? [`not executed: ${depth.d.notExecuted}`] : []), ...(depth.unverifiedNote ? [depth.unverifiedNote] : [])];
         const am = engine.amendments(x.run), dn = (x.ctx.spec?.done ?? []).length;
         const superseded = (Array.isArray(a.superseded) ? a.superseded : []).map((y: any) => ({ done: Number(y?.done), amendment: Number(y?.amendment) })).filter((y: any) => Number.isSafeInteger(y.done) && y.done >= 1 && y.done <= dn && am.some((m) => m.n === y.amendment)).slice(0, 20);
         x.rn.data.verdict = { verdict: a.verdict === "APPROVE" ? "APPROVE" : "REJECT", findings: f, followups: (a.followups ?? []).map(String).slice(0, 8), mode: depth.mode, notCovered, ...(superseded.length ? { superseded } : {}) }; x.save(); return { ok: true, notCovered }; } }]; },
