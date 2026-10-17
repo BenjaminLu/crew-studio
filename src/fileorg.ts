@@ -4,7 +4,7 @@
 // leaves the chosen folder; firstmate's checkout and Studio's data are refused,
 // except the sample folders it makes itself (data/fileorg-samples) for a run with no folder.
 //   data/fileorg/<plan id>/plan.json    data/fileorg/<plan id>/undo.jsonl
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmdirSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, normalize, relative, resolve, sep } from "node:path";
 import type { StudioLog } from "./rawlog";
@@ -128,5 +128,12 @@ export function createFileOrg(o: { dataDir: string; refuse: string[]; rules: () 
     for (const [name, text] of SAMPLE_FILES) writeFileSync(join(d, name), text);
     return realpathSync(d);
   }
-  return { plan, setIncluded, apply, undo, discard, get, list, checkRoot, sampleFolder };
+  /** Remove every sample folder except those still in use (an open Task's own): they hold only Studio's sample files. */
+  function sweepSamples(keep: string[]) {
+    if (!existsSync(samples)) return [];
+    const kept = new Set(keep.map((k) => { try { return realpathSync(k); } catch { return k; } })), gone: string[] = [];
+    for (const name of readdirSync(samples)) { const d = join(samples, name); if (!/^S-\d+$/.test(name) || kept.has(realpathSync(d))) continue; rmSync(d, { recursive: true, force: true }); gone.push(d); }
+    return gone;
+  }
+  return { plan, setIncluded, apply, undo, discard, get, list, checkRoot, sampleFolder, sweepSamples };
 }

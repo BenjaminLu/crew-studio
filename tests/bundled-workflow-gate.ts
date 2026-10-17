@@ -26,6 +26,8 @@ try {
   ok(!ids.includes("startup-recursion"), "the startup competition example is not in a fresh catalog", ids.join(", "));
   for (const id of ids) {
     const { status, v, errors } = await gate(id);
+    const dry = v.gate?.stages?.find((x: any) => x.id === "dryrun"); if (dry?.note?.en) console.log(`        ${id} dry run: ${dry.note.en}`);
+    if (dry?.status === "skipped" && /staffing/.test(dry.note?.en ?? "")) ok(/^Not dry-run: (staffing not yet chosen; the captain picks who works on each node at Run|it starts only after the captain approves its staffing)\.$/.test(dry.note.en), `${id}: a staffing skip says it in captain terms, not the raw start refusal`, dry.note.en);
     ok(status === 200 && v.gate && !errors.length, `${id} passes its own gate on an empty install (no error-level findings)`, `HTTP ${status}\n      ${errors.join("\n      ")}`);
   }
   for (const w of list.held ?? []) ok(/^held: /.test(w.held?.en ?? ""), `${w.id} is held with its reason, so no Task starts on it (not gated here)`, JSON.stringify(w.held));

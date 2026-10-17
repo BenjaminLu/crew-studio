@@ -41,6 +41,14 @@ export const sampleOf = (def: WDef, goal?: string | null): Sample => {
   return { text: String(s.text ?? goal ?? def.origin?.brief?.goal ?? def.name ?? "").trim() || def.name, params };
 };
 
+/** The dry-run stage's plain line: where it stopped, or why it did not run (in the captain's terms, never a raw start refusal). */
+export const dryNote = (dry: Pick<DryRunResult, "status" | "stoppedAt" | "staffing" | "missing">): L2 | null =>
+  dry.stoppedAt ? { en: `Stopped before ${dry.stoppedAt}: a one-way decision the captain makes.`, zh: `停在 ${dry.stoppedAt} 之前：這是只有船長能做的單向決定。` }
+  : dry.status !== "skipped" ? null
+  : dry.staffing === "staffing_incomplete" ? { en: "Not dry-run: staffing not yet chosen; the captain picks who works on each node at Run.", zh: "未試跑：尚未選擇人員配置；船長執行時選擇各節點由誰負責。" }
+  : dry.staffing ? { en: "Not dry-run: it starts only after the captain approves its staffing.", zh: "未試跑：船長核准人員配置後才能開始。" }
+  : { en: `Not dry-run: ${dry.missing?.join(", ")} run only on the live engine (the stub acceptance suite runs this workflow end to end).`, zh: `未試跑：${dry.missing?.join("、")} 只在正式引擎上執行（替身驗收測試會完整跑這個流程）。` };
+
 export class Gate {
   readonly dir: string;
   private queue = new Map<string, Promise<GateResult>>();
@@ -86,9 +94,7 @@ export class Gate {
     if (!firstmateBlocked) {
       const t1 = Date.now(); let dry: DryRunResult;
       try { dry = await this.d.dry(def, sample); } catch (e: any) { dry = { status: "fail", problems: [P("dryrun", "dryrun-error", null, { en: `The dry run could not run: ${e?.message ?? e}`, zh: `試跑無法進行：${e?.message ?? e}` }, { en: "Retry the gate.", zh: "請重新檢查。" })], steps: [], runStatus: "error", stoppedAt: null }; }
-      r.stages[3] = { id: "dryrun", status: dry.status, problems: dry.problems, ms: Date.now() - t1, note: dry.stoppedAt ? { en: `Stopped before ${dry.stoppedAt}: a one-way decision the captain makes.`, zh: `停在 ${dry.stoppedAt} 之前：這是只有船長能做的單向決定。` }
-        : dry.status === "skipped" && dry.staffing ? { en: `Not dry-run: it starts only after the captain approves its staffing (${dry.staffing}).`, zh: `未試跑：船長核准人員配置後才能開始（${dry.staffing}）。` }
-        : dry.status === "skipped" ? { en: `Not dry-run: ${dry.missing?.join(", ")} run only on the live engine (the stub acceptance suite runs this workflow end to end).`, zh: `未試跑：${dry.missing?.join("、")} 只在正式引擎上執行（替身驗收測試會完整跑這個流程）。` } : null };
+      r.stages[3] = { id: "dryrun", status: dry.status, problems: dry.problems, ms: Date.now() - t1, note: dryNote(dry) };
       r.dry = { steps: dry.steps, status: dry.runStatus, stoppedAt: dry.stoppedAt };
     }
     if (r.verified) r.stages[4] = { id: "smoke", status: "pass", problems: [] };

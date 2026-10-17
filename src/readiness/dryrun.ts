@@ -43,7 +43,7 @@ export type DryRunOptions = { sample: Sample; protectedRoots: string[]; timeoutM
   createRuntime: (deps: any) => any };
 /** skipped: the throwaway engine does not have every step this workflow uses (the server's code and pack domains), or the
  *  workflow starts only on staffing the captain approves first; the stub acceptance suite runs those end to end */
-export type DryRunResult = { status: "pass" | "fail" | "skipped"; problems: GateProblem[]; steps: DryStep[]; runStatus: string; stoppedAt: string | null; missing?: string[]; staffing?: string };
+export type DryRunResult = { status: "pass" | "fail" | "skipped"; problems: GateProblem[]; steps: DryStep[]; runStatus: string; stoppedAt: string | null; missing?: string[]; /** the start refusal code: staffing_incomplete (not yet chosen) or one awaiting approval */ staffing?: string };
 /** The dry run's stand-in for the Codex image job: a 1x1 PNG, nothing spent. */
 const STUB_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP437DvPwAH/AM9TriEzAAAAABJRU5ErkJggg==", "base64");
 const stubImage = async (_prompt: string, authorize: () => void) => { authorize(); return { bytes: STUB_PNG, mime: "image/png" as const, width: 1, height: 1, sha256: createHash("sha256").update(STUB_PNG).digest("hex"), provider: "codex" as const, model: "dry-run", effort: "low" }; };
@@ -92,7 +92,7 @@ export async function dryRun(def: WDef, o: DryRunOptions): Promise<DryRunResult>
     // confirmed as Run is (the staffing hash and, for Claude-staffed nodes, the bounded Claude verification): in this throwaway folder every round is the stub, so nothing is spent
     if (start.status === 409 && start.body.staffing?.hash) start = await api("/api/wruns", { workflow: wid, text: o.sample.text, params: o.sample.params, staffingConfirm: start.body.staffing.hash, claudeVerification: start.body.staffing.claudeVerification ?? undefined });
     // a workflow that starts only on staffing the captain approved first (coffee-kit's project roles): no stub can stand in for that approval
-    if (start.status !== 200 && start.body.failure?.code === "env.staffing") return { status: "skipped", problems, steps, runStatus: "not-started", stoppedAt: null, staffing: String(start.body.error ?? "") };
+    if (start.status !== 200 && start.body.failure?.code === "env.staffing") return { status: "skipped", problems, steps, runStatus: "not-started", stoppedAt: null, staffing: String(start.body.code ?? "staffing") };
     if (start.status !== 200 || !start.body.id) { fail("dryrun-start", null, `The run did not start: ${start.body.error ?? start.status}`, `任務無法開始：${start.body.error ?? start.status}`, "Fix the Start inputs and staffing so Run can start the Task.", "修正開始輸入與配置，讓執行能開始任務。"); return { status: "fail", problems, steps, runStatus: "not-started", stoppedAt: null }; }
     const id = start.body.id as string; const dist = distances(staffed as WDef);
     const t0 = Date.now(); let answered = 0, stoppedAt: string | null = null; let r: any = null;

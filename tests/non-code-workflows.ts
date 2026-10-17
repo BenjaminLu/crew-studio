@@ -285,6 +285,18 @@ const folder = join(data, "folder"); mkdirSync(folder); writeFileSync(join(folde
 ok(!!pc && existsSync(join(folder, "a.txt")) && !existsSync(join(folder, "Text", "a.txt")), "native file organization waits on exact reviewed dry-run plan before mutation");
 if (pc) await E.answer(pc.id, { choice: "apply", by: "fixture captain", aligned: [0] }); await until(() => E.get(files.id)!.status === "succeeded", 10000);
 ok(existsSync(join(folder, "Text", "a.txt")) && E.get(files.id)!.ctx.applied?.moved === 1 && existsSync(join(data, "fileorg", E.get(files.id)!.ctx.plan.id, "undo.jsonl")), "native file organization applies checked plan and writes undo evidence");
+// No folder: a sample folder in Studio's own data, one per Task, kept while that Task is open; a new one clears those of ended Tasks.
+{
+  const s1 = E.start({ workflow: "file-organization", params: {}, text: "Tidy a sample folder" }); const c1 = await waiting(s1.id, "card"); const f1 = E.get(s1.id)!.ctx.sampleFolder;
+  ok(!!c1 && typeof f1 === "string" && f1.includes("/fileorg-samples/S-") && existsSync(join(f1, "meeting-notes.txt")), "a blank folder plans moves in a sample folder Studio made in its own data", String(f1));
+  const s2 = E.start({ workflow: "file-organization", params: {}, text: "Tidy another sample folder" }); const c2 = await waiting(s2.id, "card"); const f2 = E.get(s2.id)!.ctx.sampleFolder;
+  ok(!!c2 && f2 !== f1 && existsSync(f1) && existsSync(f2), "an open Task keeps its sample folder while another Task makes its own");
+  if (c1) await E.answer(c1.id, { choice: "apply", by: "fixture captain", aligned: [0] }); await until(() => E.get(s1.id)!.status === "succeeded", 10000);
+  ok(existsSync(join(f1, "Text", "meeting-notes.txt")), "the captain's apply moves the files inside the sample folder", JSON.stringify(E.get(s1.id)!.status));
+  const s3 = E.start({ workflow: "file-organization", params: {}, text: "Tidy a third sample folder" }); await waiting(s3.id, "card"); const f3 = E.get(s3.id)!.ctx.sampleFolder;
+  ok(!existsSync(f1) && existsSync(f2) && existsSync(f3), "a new sample folder clears the ended Task's, keeps the open Task's", JSON.stringify([existsSync(f1), existsSync(f2), existsSync(f3)]));
+  for (const t of [s2, s3]) E.cancel(t.id, "fixture", "sample lifecycle checked");
+}
 // Crash window: domain apply succeeded after acceptance, before native hook finish.
 const replayFolder = join(data, "replay-folder"); mkdirSync(replayFolder); writeFileSync(join(replayFolder, "r.txt"), "replay fixture"); const replay = E.start({ workflow: "file-organization", params: { folder: replayFolder }, text: "Replay applied plan fixture" }); const replayCard = await waiting(replay.id, "card");
 await until(() => E.get(replay.id)!.nodes.card.waiting === "card", 10000); E.pause(replay.id);

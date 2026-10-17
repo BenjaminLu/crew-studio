@@ -10,7 +10,7 @@ import { createRuntime } from "../src/runtime";
 import { normalize, type WDef } from "../src/runtime/defs";
 import { contractStage, briefStage, intentStage } from "../src/readiness/stages";
 import { dryRun } from "../src/readiness/dryrun";
-import { sampleOf, weakening } from "../src/readiness/service";
+import { sampleOf, weakening, dryNote } from "../src/readiness/service";
 import { draftDef } from "../src/readiness";
 import { gateHarness, until } from "./gate-harness";
 
@@ -428,6 +428,9 @@ try {
     E.cardBodies.merge ??= () => ({}) as any;
     ok(!at(bodyMerge("merge")).some((p: any) => p.code === "external-unguarded") && at(bodyMerge("changes")).some((p: any) => p.code === "external-unguarded"), "25 a merge card body guards only its 'merge' answer");
     // 25: mode outcome sets: plan-accept and design-gap rounds end with a decision, never "ok"
+    // a staffing skip reads in captain terms: not yet chosen vs waiting on approval, never the raw start refusal
+    const inc = dryNote({ status: "skipped", stoppedAt: null, staffing: "staffing_incomplete" })!, appr = dryNote({ status: "skipped", stoppedAt: null, staffing: "coffee-staffing-required" })!;
+    ok(/staffing not yet chosen/.test(inc.en) && !/Choose a provider/.test(inc.en) && /尚未選擇/.test(inc.zh) && /approves its staffing\.$/.test(appr.en), "25 a dry run skipped for staffing says 'staffing not yet chosen' or that it waits on approval", JSON.stringify([inc.en, appr.en]));
     const { outcomesOf } = await import("../src/readiness/stages");
     ok(outcomesOf({ id: "pa", kind: "agent", mode: "plan-accept", label: "x" } as any)!.join() === "accept,revise,escalate" && outcomesOf({ id: "dg", kind: "agent", mode: "design-gap", label: "x" } as any)!.join() === "recapture,escalate" && outcomesOf({ id: "b", kind: "agent", mode: "build", label: "x" } as any)!.join() === "ok", "25 decision modes report their own outcomes (no false outcome-unhandled for ok)");
     // the dry run stops at the acceptance card (a one-way guard), never answering it
