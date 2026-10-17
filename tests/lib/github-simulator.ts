@@ -1,10 +1,13 @@
 // Official documented PR shape, synthetic values; bare refs are authoritative.
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { git, must } from "../../src/git";
 const fixture = JSON.parse(readFileSync(new URL("../fixtures/github-foundation/provenance.json", import.meta.url), "utf8"));
 export function githubSimulator(bare: string, repository = "fixture/project") {
+  // the repository's community files (pull request templates, CONTRIBUTING) served by the contents API at the default branch head
+  const community = new Map<string, string>();
   const pulls = new Map<number, any>(), calls: { method: string; path: string; body: any }[] = [];
   let transform: { method: string; path?: string; map: (v: any) => any } | null = null;
   let held: { method: string; path: string; ready: () => void; gate: Promise<void>; release: () => void } | null = null;
@@ -28,6 +31,7 @@ export function githubSimulator(bare: string, repository = "fixture/project") {
       const last = Math.min(end, bytes.length - 1);
       return new Response(bytes.slice(start, last + 1), { status: log.status ?? 206, headers: { "content-range": log.contentRange ?? `bytes ${start}-${last}/${bytes.length}`, "accept-ranges": "bytes" } });
     }
+    if (u.pathname === `/repos/${repository.split("/")[0]}/.github` || u.pathname.startsWith(`/repos/${repository.split("/")[0]}/.github/`)) return json({ message: "Not Found" }, 404); // no owner defaults
     if (u.pathname !== prefix && !u.pathname.startsWith(prefix + "/")) return bad();
     const path = u.pathname.slice(prefix.length); let body: any = null;
     if (req.method !== "GET") { try { body = await req.json(); } catch { return bad(); } }
@@ -62,6 +66,15 @@ export function githubSimulator(bare: string, repository = "fixture/project") {
       if (req.method === "GET") response = json(shaped(p));
       else if (req.method === "PATCH" && keys(body, ["title", "body", "base"], ["title", "body", "base"]) && head(body.base)) { Object.assign(p, { title: body.title, body: body.body, base: { ref: body.base } }); response = json(shaped(p)); }
       else return bad();
+    } else if (req.method === "GET" && path === "" && !u.search && !expected.has("GET ")) {
+      response = json({ full_name: repository, default_branch: "main", private: true, visibility: "private" });
+    } else if (req.method === "GET" && path === "/commits/main" && !u.search) {
+      const value = head("main"); if (!value) return json({ message: "Not Found" }, 404); response = json({ sha: value });
+    } else if (req.method === "GET" && path.startsWith("/contents/")) {
+      if (u.searchParams.get("ref") !== head("main")) return bad();
+      const file = decodeURIComponent(path.slice("/contents/".length)), text = community.get(file);
+      if (text !== undefined) { const bytes = Buffer.from(text); response = json({ type: "file", path: file, size: bytes.length, encoding: "base64", content: bytes.toString("base64"), sha: createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex") }); }
+      else { const children = [...community.keys()].filter((k) => k.startsWith(file + "/") && !k.slice(file.length + 1).includes("/")).map((k) => ({ type: "file", path: k })); if (!children.length) return json({ message: "Not Found" }, 404); response = json(children); }
     } else {
       const exact = expected.get(req.method + " " + path + u.search);
       if (!exact || JSON.stringify(body) !== JSON.stringify(exact.body ?? null) || (req.headers.get("range") ?? undefined) !== exact.range) return bad();
@@ -93,13 +106,13 @@ export function githubSimulator(bare: string, repository = "fixture/project") {
         const start = Number(match[1]), end = Number(match[2]), bytes = new TextEncoder().encode(exact.value);
         if (start > end || end >= bytes.length) return json({ message: "Range Not Satisfiable" }, 416);
         response = new Response(bytes.slice(start, end + 1), { status: exact.status ?? 206, headers: { "content-range": `bytes ${start}-${end}/${bytes.length}`, "accept-ranges": "bytes" } });
-      } else response = json(exact.value, exact.status ?? 200);
+      } else response = json(req.method === "GET" && path === "" && exact.value && typeof exact.value === "object" ? { default_branch: "main", ...exact.value } : exact.value, exact.status ?? 200);
     }
     if (fail?.after) { if (fail.delay) await Bun.sleep(fail.delay); return json({ message: "fixture lost response" }, fail.status ?? 503); }
     if (transform?.method === req.method && (!transform.path || transform.path === path + u.search)) { const map = transform.map; transform = null; response = json(map(await response.json()), response.status); }
     return response;
   } });
-  return { origin: `http://127.0.0.1:${server.port}`, calls, pulls, head,
+  return { origin: `http://127.0.0.1:${server.port}`, calls, pulls, head, community,
     holdNext(method: "GET" | "POST" | "PATCH" | "PUT", path: string) {
       if (held || path !== "" && !path.startsWith("/")) throw new Error("invalid held fixture");
       let ready!: () => void, release!: () => void; const started = new Promise<void>(r => ready = r), gate = new Promise<void>(r => release = r);

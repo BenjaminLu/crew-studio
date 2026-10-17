@@ -1,0 +1,20 @@
+# Connect a project to GitHub: started only by Firstmate's studio_connect_github tool or the Projects page (internal).
+schema: 2
+workflow: firstmate-connect-github
+pin: { version: 1, sha256: "22c6e76f6ae529ef1d682c4d0d7253b10155c47b30f9f55ed2ee4a9bba897fe8" }   # bun scripts/acceptance/pin.ts firstmate-connect-github
+topic: "Acceptance: internal workflow"
+start: { provider: null, params: {} }
+providers: []
+approvals: { staffing: false }
+cards: []
+budget: { wall_minutes: 5, max_rounds: 1 }
+live: false
+expect: { status: succeeded, artifacts: [] }
+stub:
+  - name: approve
+    covers: "Firstmate proposes connecting a registered project whose origin is GitHub → captain-only card → approve writes the signed grant; the board cannot start it"
+    how: connect
+    setup: [github-origin, register]
+    board_refusal: { status: 409, error: "internal or retired" }
+    cards: [{ node: connect, answer: approve }]
+    expect: { status: succeeded, visited: [connect, write, done], not_visited: [closed] }

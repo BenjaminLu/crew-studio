@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { drive, verify, answerCard, type Decide } from "./drive";
 import type { Studio } from "./studio";
 
-export type Ctx = { s: Studio; vars: Record<string, string>; firstmate(marker: "NATIVE-PROPOSE " | "NATIVE-PROJECT ", args: unknown): Promise<any[]> };
+export type Ctx = { s: Studio; vars: Record<string, string>; firstmate(marker: "NATIVE-PROPOSE " | "NATIVE-PROJECT " | "NATIVE-TOOL ", args: unknown): Promise<any[]> };
 type Step = (h: Ctx, card?: any, view?: any) => Promise<void | { note?: string; choice?: string }>;
 const git = (cwd: string, ...a: string[]) => { const r = Bun.spawnSync(["git", "-c", "user.name=Acceptance", "-c", "user.email=acceptance@example.invalid", ...a], { cwd, stdout: "pipe", stderr: "pipe" }); if (r.exitCode) throw new Error(`git ${a.join(" ")}: ${r.stderr}`); };
 /** Captain-side folders live under the Studio's own temp root (outside its CREW_DATA), so close() removes them. */
@@ -39,6 +39,8 @@ export const STEPS: Record<string, Step> = {
   async folder(h) { const d = realpathSync(mkdtempSync(join(scratch(h), "folder-"))); for (const f of ["report.pdf", "photo.jpg", "notes.txt", "song.mp3"]) writeFileSync(join(d, f), `acceptance ${f}\n`); h.vars.folder = d; },
   /** a throwaway local git repository: {repo} */
   async repo(h) { const d = realpathSync(mkdtempSync(join(scratch(h), "repo-"))); git(d, "init", "-q", "-b", "main"); writeFileSync(join(d, "README.md"), "# Acceptance repo\n"); git(d, "add", "."); git(d, "commit", "-qm", "Initial"); h.vars.repo = d; },
+  /** {repo}'s origin is a github.com repository (nothing is fetched or pushed) */
+  async "github-origin"(h) { if (!h.vars.repo) await STEPS.repo(h); git(h.vars.repo, "remote", "add", "origin", "https://github.com/acceptance-fixture/acceptance-repo.git"); },
   /** register {repo} through Firstmate (NATIVE-PROJECT) and approve the registration card: {project} */
   async register(h) {
     if (!h.vars.repo) await STEPS.repo(h);

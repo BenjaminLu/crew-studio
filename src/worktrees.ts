@@ -25,6 +25,7 @@
 //   opens it again;
 // - after a merge or a cancel the worktree goes; kept refs stay `keep_days` days;
 // - at start, worktrees and locks no live run owns are swept, each with its reason.
+import { withoutSessionLinks } from "./domain/pull-template";
 import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { addPaths, changedPaths, git, gitArgv, gitEnv, must } from "./git";
@@ -431,7 +432,8 @@ export class Worktrees {
     const paths = changedPaths(r.path);
     if (paths.length) {
       addPaths(r.path, paths);
-      const msg = `${a.message.trim()}\n\nCrew-Run: ${a.run}\nCrew-Node: ${a.node}\nCrew-Round: ${a.round}\nCrew-Agent: ${a.agent}`;
+      // a claude.ai session link never reaches a commit Studio may push (domain/pull-template.ts)
+      const msg = `${withoutSessionLinks(a.message).trim()}\n\nCrew-Run: ${a.run}\nCrew-Node: ${a.node}\nCrew-Round: ${a.round}\nCrew-Agent: ${a.agent}`;
       const res = Bun.spawnSync(gitArgv(["commit", "-q", "-m", msg]), { cwd: r.path, stdout: "pipe", stderr: "pipe",
         env: gitEnv({ GIT_AUTHOR_NAME: `Crew agent (${a.agent})`.slice(0, 120), GIT_AUTHOR_EMAIL: "crew-agent@localhost" }) });
       if (!res.success) throw new Error(`git commit: ${res.stderr.toString().trim().slice(0, 300)}`);

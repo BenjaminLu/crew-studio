@@ -46,7 +46,7 @@ const servers: Record<string, Promise<Studio>> = {};
 const serverFor = (kind: StubRun["server"]) => servers[kind] ??= bootStudio(kind, { localUnrestricted: kind === "local-unrestricted" });
 const primaries = new Map<Studio, Promise<void>>();
 /** Firstmate's own chat on the codex primary (the stub app-server): one native tool call, as the model would make it. Returns the Tasks it created. */
-const firstmate = (s: Studio) => async (marker: "NATIVE-PROPOSE " | "NATIVE-PROJECT ", args: unknown) => {
+const firstmate = (s: Studio) => async (marker: "NATIVE-PROPOSE " | "NATIVE-PROJECT " | "NATIVE-TOOL ", args: unknown) => {
   if (!primaries.has(s)) primaries.set(s, (async () => { const r = await s.api("/api/main/start", { host: "codex", confirm: true }); if (r.status !== 200) throw new Error(`Firstmate primary did not start: ${r.status} ${JSON.stringify(r.body).slice(0, 300)}`); for (let i = 0; i < 300 && (await s.api("/api/main")).body.busy; i++) await Bun.sleep(50); })());
   await primaries.get(s);
   const before = new Set(((await s.api("/api/wruns")).body.runs ?? []).map((r: any) => r.id));
@@ -109,9 +109,10 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
     const version = (await s.api(`/api/wf/${target.workflow}`)).body.def?.version ?? 1;
     let created: any[];
     if (r.how === "register") { if (!h.vars.repo) await STEPS.repo(h); created = await h.firstmate("NATIVE-PROJECT ", { path: h.vars.repo, name: "Acceptance repo", workflow: target.workflow, version, text: r.topic, params: {} }); }
+    else if (r.how === "connect") created = await h.firstmate("NATIVE-TOOL ", { name: "studio_connect_github", args: { project: h.vars.project } });
     else if (r.how === "staffing") { const id = await approveStaffing(h, tparams.project ?? "sandbox", target.workflow); created = [{ id, workflow: "firstmate-staffing" }]; }
     else created = await h.firstmate("NATIVE-PROPOSE ", { workflow: target.workflow, version, text: r.topic, params: tparams });
-    const want = r.how === "firstmate" || r.how === "proposal" ? "firstmate-proposal" : r.how === "register" ? "firstmate-register-project" : "firstmate-staffing";
+    const want = r.how === "firstmate" || r.how === "proposal" ? "firstmate-proposal" : r.how === "register" ? "firstmate-register-project" : r.how === "connect" ? "firstmate-connect-github" : "firstmate-staffing";
     const own = created.find((x) => x.workflow === want);
     if (!own) return { failures: [...failures, `Firstmate created no ${want} Task (it created: ${created.map((x) => `${x.id} ${x.workflow}`).join(", ") || "nothing"})`] };
     if (r.how !== "firstmate") task = own.id;

@@ -346,6 +346,15 @@ function mountCard(el, card, opts = {}) {
   // the startup competition: a notice when its signed ledger does not verify; otherwise one collapsible
   // round each (the last one open), and inside it the proposal and the critique each collapsible
   // (the last round's proposal open), model text rendered as markdown made of text nodes only
+  // "Open this pull request?": where it goes and the exact title and body, the body rendered as markdown made of text nodes
+  function pullRequestView(c) {
+    const p = c.pullRequest; if (!p) return null;
+    return sec("pull-request", T("The pull request, exactly as it will open", "Pull request（開出去的樣子）"),
+      h("p", { "data-pr-target": "" }, h("code", {}, p.repository), " · ", h("code", {}, p.branch), " → ", h("code", {}, p.base), " · ", p.draft ? T("draft", "草稿") : T("ready for review", "可審查")),
+      h("h3", { "data-pr-title": "" }, p.title),
+      h("div", { class: "cc-md", "data-pr-body": "" }, mdView(p.body)),
+      p.unproven?.length ? h("p", { class: "cc-count", "data-pr-unproven": "" }, T(`Left unchecked (no evidence): ${p.unproven.join("; ")}`, `未勾選（沒有證據）：${p.unproven.join("；")}`)) : null);
+  }
   function competitionView(c) {
     const m = c.competition; if (!m) return null;
     if (m.untrusted) return sec("competition", T("The competition, round by round", "比賽全文（逐輪）"),
@@ -431,6 +440,7 @@ function mountCard(el, card, opts = {}) {
       failureView(c),
       ...(d ? (d.artifactAcceptance ? artifactDetailView(d, c) : detailView(d, c)) : plainView(c)),
       competitionView(c),
+      pullRequestView(c),
       // the competition already shows every round; its card text would repeat them, so it is not shown again
       body && !c.competition ? (d ? h("details", { class: "cc-sec", open: st.opened.has("#body"), ontoggle: (e) => { e.target.open ? st.opened.add("#body") : st.opened.delete("#body"); } }, h("summary", { class: "cc-count" }, T("Card text", "卡片全文")), h("pre", { class: "cc-pre rt-card-body" }, body)) : bodyView(c, body)) : null,
     ];

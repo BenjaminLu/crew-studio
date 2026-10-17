@@ -95,7 +95,8 @@ function viewIndex() {
     if (p.running) { en.push(`${p.running} running`); tw.push(`${p.running} 進行中`); }
     if (p.held) { en.push(`${p.held} held`); tw.push(`${p.held} 暫緩`); }
     const counts = en.length ? { en: en.join(" · "), tw: tw.join(" · ") } : null;
-    const line = p.kind === "external" ? T("External project: cannot dispatch yet. Its GitHub grant cannot be verified on this build.", "外部專案：暫時無法派工。目前版本無法驗證它的 GitHub 授權。")
+    const line = p.kind === "external" && p.connected ? T("Connected to GitHub. Pull requests open after your approval.", "已連到 GitHub。開 pull request 前會先問你。")
+      : p.kind === "external" ? T("External project: cannot dispatch yet. Its GitHub grant does not verify.", "外部專案：暫時無法派工。它的 GitHub 授權驗證不過。")
       : p.enabled === false ? T("Disabled. New tasks and rounds will not start.", "已停用。不會開始新任務或新的一輪。")
       : p.folderMissing ? T("Folder missing. The registered folder does not exist; Studio skips this registration.", "資料夾不存在。登錄的資料夾不存在；Studio 會略過這個登錄。")
       : p.kind !== "studio" && p.kind !== "external" && p.canStart === false ? T("No task can start. The project page says why.", "無法開始任何任務。專案頁會說明原因。")
@@ -166,7 +167,7 @@ function crewSection(d) {
   if (p.enabled === false) body = plain("Crew not checked: the project is disabled.", "未檢查船員：專案已停用。", "disabled");
   else if (failed(crew)) body = crew.error === "refused" ? plain(`No task can start: ${crew.detail?.en ?? ""}`, `無法開始任何任務：${crew.detail?.tw ?? ""}`, "refused")
     : sectionErr("The crew", "船員配置");
-  else if (p.kind === "external") body = h("div", { class: "pj-empty-row" }, T("External project: cannot dispatch yet. Its GitHub grant cannot be verified on this build.", "外部專案：暫時無法派工。目前版本無法驗證它的 GitHub 授權。"));
+  else if (p.kind === "external" && !p.connected && !crew) body = h("div", { class: "pj-empty-row" }, T("External project: cannot dispatch yet. Its GitHub grant does not verify.", "外部專案：暫時無法派工。它的 GitHub 授權驗證不過。"));
   else if (!crew) body = h("div", { class: "pj-empty-row", "data-crew-empty": "1" }, T("No crew approved yet. Tasks here will wait at their first round.", "還沒有核准的船員。這裡的任務會停在第一輪。"));
   else body = h("div", { class: "pj-crew-wf", "data-crew": crew.workflow },
     h("div", { class: "x-row wrap" }, h("b", {}, `${crew.workflow} v${crew.version}`), h("span", { class: "badge ok" }, h("span", { class: "d" }), T(`Approved · config v${crew.config}`, `已核准 · 配置 v${crew.config}`)),
@@ -247,7 +248,11 @@ function viewPage(id) {
         p.path ? h("span", {}, icon("folder", "ic sm"), h("code", { "data-project-path": "1" }, p.path), copyBtn(p.path, "btn ghost icon cp")) : null,
         p.base ? h("span", {}, icon("branch", "ic sm"), h("span", { class: "vbadge" }, p.base)) : null,
         h("span", { class: "faint" }, idLine))));
-  const notice = p.kind === "external" ? h("div", { class: "note pj-notice", "data-project-notice": "external" }, h("b", {}, T("External project: cannot dispatch yet.", "外部專案：暫時無法派工。")), " ", T("Its GitHub grant cannot be verified on this build.", "目前版本無法驗證它的 GitHub 授權。"))
+  const gh = failed(d.github) ? null : d.github;
+  const connectGitHub = async () => { try { const b = await postJ(`/api/projects/${encodeURIComponent(p.id)}/github/connect`, {}); location.hash = b.href; } catch (e) { alert(T(`Could not propose the connection: ${e.message}`, `無法提出連線：${e.message}`)); } };
+  const notice = gh?.connected && gh.verified ? h("div", { class: "note pj-notice", "data-project-notice": "github" }, h("b", {}, T(`Connected to GitHub ${gh.repository}.`, `已連到 GitHub ${gh.repository}。`)), " ", T("Studio pushes Task branches and opens pull requests only after your approval on a card. Merging on GitHub stays off.", "Studio 只在你於卡片上核准後才推送任務分支、開 pull request。在 GitHub 合併維持關閉。"))
+    : p.kind === "external" ? h("div", { class: "note pj-notice", "data-project-notice": "external" }, h("b", {}, T("External project: cannot dispatch yet.", "外部專案：暫時無法派工。")), " ", T("Its GitHub grant does not verify.", "它的 GitHub 授權驗證不過。"), gh?.connected ? [" ", h("button", { class: "btn", type: "button", "data-github-connect": p.id, onclick: connectGitHub }, T("Connect to GitHub again", "重新連到 GitHub"))] : null)
+    : gh && !gh.connected && gh.origin && p.enabled !== false ? h("div", { class: "note pj-notice", "data-project-notice": "github-origin" }, T(`Its origin is GitHub ${gh.origin}.`, `它的 origin 是 GitHub ${gh.origin}。`), " ", h("button", { class: "btn", type: "button", "data-github-connect": p.id, onclick: connectGitHub }, T(`Connect to GitHub ${gh.origin}…`, `連到 GitHub ${gh.origin}…`)))
     : p.enabled !== false && p.folderMissing ? h("div", { class: "note pj-notice", "data-project-notice": "folder" }, h("b", {}, T("Folder missing.", "資料夾不存在。")), " ", T("The registered folder does not exist. Studio skips this registration; no task can start here.", "登錄的資料夾不存在。Studio 會略過這個登錄；這裡無法開始任何任務。"))
     : p.enabled === false ? h("div", { class: "note pj-notice", "data-project-notice": "disabled" }, h("b", {}, T("Disabled.", "已停用。")), " ", T("New tasks and rounds will not start.", "不會開始新任務或新的一輪。")) : null;
   const studio = p.kind === "studio";

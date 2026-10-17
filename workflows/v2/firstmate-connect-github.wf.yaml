@@ -1,0 +1,11 @@
+{
+ "id":"firstmate-connect-github","name":"Connect project to GitHub","kind":"firstmate-connect-github","version":1,
+ "description":"The captain confirms a registered local project's GitHub repository before Studio pushes Task branches or opens pull requests there.",
+ "params":{"project":{"label":"Registered project"},"proposal":{"label":"Pinned GitHub grant proposal"}},
+ "roles":[],"nodes":[
+  {"id":"connect","kind":"hook","label":"Confirm GitHub repository","do":"github.connect-card","x":160,"y":140},
+  {"id":"write","kind":"hook","label":"Write the signed grant","do":"github.connect-write","x":440,"y":140},
+  {"id":"done","kind":"hook","label":"Connected to GitHub","x":720,"y":140},
+  {"id":"closed","kind":"hook","label":"Closed without connecting","args":{"result":"closed"},"x":440,"y":280}
+ ],"edges":[["connect","write","approve"],["connect","closed","close"],["write","done","ok"]]
+}

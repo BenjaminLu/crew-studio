@@ -40,6 +40,8 @@ export type GitHubProjectGrant = {
   mode: "github" | "simulator"; repository: string; localPath: string;
   pushUrl: string; apiOrigin: string; base: string; branchPrefix: string;
   approvedAt: string; approvalId: string; operations?: RemoteOperations;
+  /** Studio's signature over this grant and the project it was approved for (src/github-grant.ts) */
+  signature?: string;
 };
 // Ambient Git variables can redirect the repository or inject config/trace
 // helpers. Retain only Studio's deliberately constructed Git settings.

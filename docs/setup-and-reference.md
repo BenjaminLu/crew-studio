@@ -225,6 +225,33 @@ bun run test:binary  # the built binary, run with no Bun on PATH
 | `CREW_CHAT_TIMEOUT_MS` | `120000` | time limit per question |
 | `CREW_CLAUDE_PERMISSION_MODE` | `auto` | the fresh Claude Firstmate's permission mode: `auto` or `default` (manual); any other value refuses the start. Operator-only (env or `.env`); worker rounds are not affected |
 
+### Real pull requests on a project's GitHub repository
+
+A registered project stays local (its Tasks merge on the local base) until the captain connects it to GitHub:
+
+1. Its local repository's `origin` is a github.com repository (`https://github.com/<owner>/<repo>.git` or the SSH form).
+2. Ask Firstmate to connect it (its `studio_connect_github` tool), or open the project's page and click
+   **Connect to GitHub \<owner/repo\>…**. A captain-only card shows the repository, push URL, base, branch prefix and what the
+   grant allows: push Task branches (force-with-lease, each on its own branch) and open pull requests. Merging on GitHub stays
+   off (no operations grant). Only **Connect to GitHub** on that card writes the grant into `data/projects.json`, signed with
+   Studio's local key over that project, path and base. Before every Task, Studio verifies the signature, the path, the base
+   and that `origin` still names the granted repository; anything else refuses the project (`external_unverified`).
+3. Studio needs a token with write access to that repository: `CREW_GITHUB_TOKEN` (or `GITHUB_TOKEN` / `GH_TOKEN`), a token
+   pasted in Studio, or `gh auth login` once (Studio then reads `gh auth token` from the keychain; it also finds `gh` in
+   `/opt/homebrew/bin` and `/usr/local/bin` when it was started from the Dock without Homebrew on its `PATH`; `CREW_GH_BIN`
+   names another one).
+4. A code-firstmate Task on the project then: builds as usual; when the repository has a pull request template, the pull
+   request waits until CI, fail-first, review and design have run; Firstmate fills the template (every heading and checkbox
+   kept, the test table from the done lines and fail-first, boxes ticked only where Studio's evidence proves them; several
+   templates ask you to pick one, a required field nobody can fill holds on a card); the card **Open this pull request?**
+   shows the exact title and body; **Open pull request** pushes the Task branch and opens it (ready for review; policy
+   `github.draft_pr: true` opens drafts). **Change the text** sends your note back to Firstmate. The pull request's number and
+   link show on the run page and the merge card. A repository without a template keeps the old behaviour (the pull request
+   opens right after the build, with the spec, door and rollback).
+
+`CREW_GH=1` with `CREW_GH_PROJECT=<project id>` is only for the dashboard's PR and check poller on that project; it is not
+needed for pull requests.
+
 ## Live release
 
 The captain's live board runs from a fixed release, never from the development

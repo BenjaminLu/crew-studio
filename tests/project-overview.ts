@@ -129,7 +129,7 @@ staffingCalls = [];
 const ext = (await get("/api/projects/tidepool-docs/overview"))!.body;
 const ek = Object.fromEntries(ext.health.map((t: any) => [t.key, t]));
 ok(ext.project.kind === "external" && ext.project.repository === "acme/tidepool-docs", "an external project names its repository");
-ok(ek.registered.tone === "warn" && ek.registered.en === "External project: cannot dispatch yet" && ek.registered.detail.en === "Its GitHub grant cannot be verified on this build.", "its registration tile: cannot dispatch yet");
+ok(ek.registered.tone === "warn" && ek.registered.en === "External project: cannot dispatch yet" && ek.registered.detail.en === "Its GitHub grant does not verify. Connect it to GitHub again.", "its registration tile: cannot dispatch yet");
 ok(ext.crew === null && ek.crew.detail.en === "External project" && !staffingCalls.includes("tidepool-docs"), "staffing is not attempted for it", JSON.stringify(staffingCalls));
 ok(ek.test.detail.en === "No .crew/gates.json", "no .crew/gates.json says so");
 const sb = (await get("/api/projects/sandbox/overview"))!.body;

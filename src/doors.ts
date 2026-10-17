@@ -11,6 +11,7 @@ import { join, resolve, relative, isAbsolute } from "node:path";
 import {homedir} from "node:os";
 import { bundledText, parseYaml } from "./bundled";
 import { Policies, unreadableRule } from "./runtime/checks";
+import { verifyGitHubGrant } from "./github-grant";
 
 /**
  * The one exception to Studio's private data root: the source-owned sandbox repository,
@@ -123,6 +124,19 @@ export class Projects {
     const current=this.nativeSnapshot();if(current.exists!==expected.exists||current.digest!==expected.digest||current.records.some(r=>r.id===p.id))throw new Error("Project registry changed; fresh captain confirmation required");
     const tmp=this.file()+".native-"+randomUUID();try{writeFileSync(tmp,JSON.stringify([...current.records,p],null,1),{flag:"wx",mode:0o600});const last=this.nativeSnapshot();if(last.exists!==expected.exists||last.digest!==expected.digest)throw new Error("Project registry changed");renameSync(tmp,this.file());}finally{try{unlinkSync(tmp);}catch{}}
     return p;
+  }
+  /** The project's GitHub grant is the captain's signed one for this exact project, path, base and origin (src/github-grant.ts); throws why not. */
+  assertExecutable(target:{project:string;base:string},_o:Record<string,unknown>={}):true{
+    const p=this.nativeSnapshot().records.find(r=>r.id===target?.project);if(!p?.github)throw new Error("This project has no GitHub grant");
+    verifyGitHubGrant(this.dataDir,p,target.base);return true;
+  }
+  /** Writes one project's GitHub grant (the captain's Connect card only), compare-and-set on the registry bytes it was proposed from. */
+  setGitHubGrantCAS(expected:{exists:boolean;digest:string},id:string,grant:NonNullable<Project["github"]>):Project{
+    const current=this.nativeSnapshot();if(current.exists!==expected.exists||current.digest!==expected.digest)throw new Error("Project registry changed; fresh captain confirmation required");
+    const i=current.records.findIndex(r=>r.id===id);if(i<0)throw new Error("Registered project is missing");
+    const next=current.records.map((r,k)=>k===i?{...r,github:grant}:r);
+    const tmp=this.file()+".native-"+randomUUID();try{writeFileSync(tmp,JSON.stringify(next,null,1),{flag:"wx",mode:0o600});const last=this.nativeSnapshot();if(last.digest!==expected.digest)throw new Error("Project registry changed");renameSync(tmp,this.file());}finally{try{unlinkSync(tmp);}catch{}}
+    return next[i];
   }
   /** Stable source-only staffing identity. No Git commands, hooks or mutable HEAD authority. */
   staffingIdentity(id:string,protectedRoots:string[]=[]):{namespace:'git';id:string;identity:string}{

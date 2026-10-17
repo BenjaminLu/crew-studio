@@ -5,6 +5,8 @@ import { codeHandoffView } from "./code-handoff";
 import { installCodeRecovery } from "./code-recovery";
 import { installCodeQueue, scopeBlockers, type ScopeBlocker } from "./code-queue";
 import { installCodeDesign } from "./code-design";
+import { installCodePublish } from "./code-publish";
+import { withoutSessionLinks } from "./pull-template";
 import {GitHubPoller} from '../github-poller';
 // The coding pipeline's runtime side (packs/firstmate, docs/code-firstmate-pipeline.md):
 // a local git repository, a worktree on <branch_prefix><run>, the spec (what, why,
@@ -522,13 +524,18 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
         body: `${adapter.grant.repository}\n${x.ctx.branch}\n${pending ? pending.old.head + " → " : ""}${h}`, options: [{ id: "approve-name", label: pending ? "Approve new head" : "Approve name", labelZh: pending ? "核准新版本" : "核准名稱", primary: true }, { id: "close", label: "Stop publication", labelZh: "停止發布", hold: true }] });
       phase.assert(); x.ctx.remoteNaming = { version: 2, repository: adapter.grant.repository, grant: grantIdentity(adapter), branch: x.ctx.branch, head: h, card: c.id, node: x.node.id, ...(pending ? {version:3,sourceHead:pending.old.head,pendingHash:digest(pending)} : {}) }; engine.record(x,"naming-request",{head:h,data:{...x.ctx.remoteNaming}} as any); x.save(); return { wait: true };
   };
+  // a repository pull request template: the pull request waits for the evidence and opens at remote-ready (code-publish.ts)
+  const publication = installCodePublish(engine, { dataDir: o.dataDir, projects: o.projects, injected: !!o.adapter, selectedAdapter, remotePhase, remoteWait, namingCard, shellOk, head, specMd });
   engine.actions["pr.open"] = async (x) => {
     const phase = remotePhase(x); phase.assert(); const wt = shellOk(x); const h = head(wt);
     const adapter = selectedAdapter(x);
     if (adapter instanceof GitHubPrAdapter && !adapter.branchAllowed(x.ctx.branch,h)) return namingCard(x,adapter,h);
+    if (adapter instanceof GitHubPrAdapter && !x.ctx.pr) { const deferred = await publication.defer(x, adapter, phase); if (deferred) return deferred; }
+    // a pull request opened from the template keeps the text the captain approved; a new head only moves it
+    if (x.ctx.pr && x.ctx.prText?.version === 1 && x.ctx.pr.adapter === adapter.id) { const published = await adapter.update(x.ctx.pr, h, x.dir, phase.signal,phase.assert); phase.assert(); x.ctx.pr = published; x.rn.note = `pull request #${published.id} at ${h.slice(0, 8)}`; return remoteWait(x, adapter); }
     const title = x.ctx.spec?.title ?? x.run.title;
     const rollback = x.ctx.spec?.rollback ?? (x.ctx.door?.door === "one-way" ? "A revert does not undo this change; the approved plan must name the rollback." : "Revert the change to undo it.");
-    const body = specMd(x.ctx.spec) + `\n\n## Door\n${x.ctx.door?.door ?? "undecided"}\n\n## Rollback\n${rollback}`;
+    const body = withoutSessionLinks(specMd(x.ctx.spec) + `\n\n## Door\n${x.ctx.door?.door ?? "undecided"}\n\n## Rollback\n${rollback}`);
     if (x.ctx.pr && x.ctx.pr.adapter !== adapter.id) throw new Error("review adapter authority changed; resolve the existing review request before publishing");
     if (x.ctx.pr) {
       const old = x.ctx.pr; let published: any;
@@ -549,12 +556,14 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   };
   engine.actionAnswers ??= {};
   engine.actionAnswers["pr.open"] = async (x,card) => {
+    if (card.answer?.choice === "retry") { const result = await engine.actions["pr.open"](x); return typeof result === "string" ? { outcome: result } : result; }
     if (card.answer?.choice !== "approve-name") return { outcome: card.answer?.choice ?? "close" };
     const n = x.ctx.remoteNaming;
     if (n?.version !== 2 || n.card !== card.id || n.head !== head(shellOk(x)) || n.branch !== x.ctx.branch || !card.captainOnly) throw new Error("naming approval no longer matches publication");
     const result = await engine.actions["pr.open"](x); return typeof result === "string" ? { outcome: result } : result;
   };
   engine.actionAnswers["remote.ready"] = async (x,card) => {
+    if (!x.ctx.pr && x.ctx.prDeferred) return publication.answer(x, card);
     if(card.answer?.choice === "approve-name") {
       if(!x.ctx.remoteUpdatePending)return engine.actionAnswers["pr.open"](x,card);
       const phase=remotePhase(x);
@@ -572,6 +581,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     x.ctx.remoteRebaseApproved={...n};x.ctx.remoteCI=null;x.ctx.gatedHead=null;x.ctx.reviewUnverified="native rebase requires fresh review";x.save();return {outcome:"rebase"};
   };
   engine.actions["remote.ready"] = async (x) => {
+    if (!x.ctx.pr && x.ctx.prDeferred) return publication.publish(x); // the template's pull request opens now, with the evidence
     if (x.ctx.pr?.adapter !== "github") return "ok";
     const phase = remotePhase(x); phase.assert(); const a = selectedAdapter(x);
     if (!(a instanceof GitHubPrAdapter)) throw new Error("remote adapter changed");
@@ -1287,8 +1297,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (sup.size) { b0.en.done = b0.en.done.map((d: string, i: number) => d + supEn(i));
       detail.done = detail.done.map((d, i) => sup.has(i) ? { ...d, text: { ...d.text, en: d.text.en + supEn(i), "zh-TW": d.text["zh-TW"] + supZh(i) } } : d); }
     if (am.length) detail.amendments = am.map((m) => ({ n: m.n, note: m.note, card: m.card }));
-    const body:Body = { title: `Merge: ${T(x)}`, zhTitle: `合併：${ZT(x)}`, ledger: { done: engine.doneLines(x.run) }, detail, captainOnly: true, captures, links: cap?.app ? [{ label: "Open the app", href: cap.app }] : [], ...b0,
-      body: `Intent: ${x.run.text.split("\n")[0].slice(0, 300)}\n\n${one ? `ONE-WAY: a revert will not undo this (${(x.ctx.door?.reasons ?? []).filter((r: any) => r.list !== "trivial").map((r: any) => `${r.path}: ${r.why}`).join("; ")}). Walk: ${walk}\nTick the door confirmation to merge.\n\n` : ""}${x.ctx.pr?.adapter === "github" ? `Merge PR #${x.ctx.pr.id} in ${(selectedAdapter(x) as GitHubPrAdapter).grant.repository} at ${x.ctx.pr.head} into ${x.ctx.pr.base}. Method: ${(selectedAdapter(x) as GitHubPrAdapter).operationGrant().mergeMethod}.` : `Fast-forwards ${x.ctx.base} in ${x.ctx.repo} to ${String(x.ctx.gatedHead ?? x.ctx.head).slice(0, 8)} (branch ${x.ctx.branch}). Local only: nothing is pushed.`}\n\nBefore → after:\n${stat}\n\nSix gates:\n${gates}\n\n${amendText}Proved by checks:\n${sp.proved.map((d) => `✓ ${d.index + 1}. ${d.text} — ${d.by.map((b) => b.check).join(", ")}${supEn(d.index)}`).join("\n") || "(none)"}\n\nNeeds your eye:\n${sp.eye.map((d) => `· ${d.index + 1}. ${d.text}${d.note ? ` (${d.note})` : ""}${supEn(d.index)}`).join("\n") || "(nothing)"}${x.ctx.followups?.length ? `\n\nReviewer follow-ups:\n${x.ctx.followups.map((f: string) => `- ${f}`).join("\n")}` : ""}${seen}${designText(detail.design)}${(() => { const rv = (x.ctx.reviews ?? []).at(-1); if (!rv?.mode) return ""; return `\n\nReviewed in ${rv.mode} mode.${rv.notCovered?.length ? `\nNeeds your eye (the review did not cover):\n${rv.notCovered.map((n: string) => `· ${n}`).join("\n")}` : ""}`; })()}`,
+    const body:Body = { title: `Merge: ${T(x)}`, zhTitle: `合併：${ZT(x)}`, ledger: { done: engine.doneLines(x.run) }, detail, captainOnly: true, captures, links: [...(cap?.app ? [{ label: "Open the app", href: cap.app }] : []), ...(x.ctx.pr?.adapter === "github" && x.ctx.pr.url ? [{ label: `Pull request #${x.ctx.pr.id}`, href: x.ctx.pr.url }] : [])], ...b0,
+      body: `Intent: ${x.run.text.split("\n")[0].slice(0, 300)}\n\n${one ? `ONE-WAY: a revert will not undo this (${(x.ctx.door?.reasons ?? []).filter((r: any) => r.list !== "trivial").map((r: any) => `${r.path}: ${r.why}`).join("; ")}). Walk: ${walk}\nTick the door confirmation to merge.\n\n` : ""}${x.ctx.pr?.adapter === "github" ? `Merge PR #${x.ctx.pr.id} (${x.ctx.pr.url}) in ${(selectedAdapter(x) as GitHubPrAdapter).grant.repository} at ${x.ctx.pr.head} into ${x.ctx.pr.base}. Method: ${(selectedAdapter(x) as GitHubPrAdapter).operationGrant().mergeMethod}.` : `Fast-forwards ${x.ctx.base} in ${x.ctx.repo} to ${String(x.ctx.gatedHead ?? x.ctx.head).slice(0, 8)} (branch ${x.ctx.branch}). Local only: nothing is pushed.`}\n\nBefore → after:\n${stat}\n\nSix gates:\n${gates}\n\n${amendText}Proved by checks:\n${sp.proved.map((d) => `✓ ${d.index + 1}. ${d.text} — ${d.by.map((b) => b.check).join(", ")}${supEn(d.index)}`).join("\n") || "(none)"}\n\nNeeds your eye:\n${sp.eye.map((d) => `· ${d.index + 1}. ${d.text}${d.note ? ` (${d.note})` : ""}${supEn(d.index)}`).join("\n") || "(nothing)"}${x.ctx.followups?.length ? `\n\nReviewer follow-ups:\n${x.ctx.followups.map((f: string) => `- ${f}`).join("\n")}` : ""}${seen}${designText(detail.design)}${(() => { const rv = (x.ctx.reviews ?? []).at(-1); if (!rv?.mode) return ""; return `\n\nReviewed in ${rv.mode} mode.${rv.notCovered?.length ? `\nNeeds your eye (the review did not cover):\n${rv.notCovered.map((n: string) => `· ${n}`).join("\n")}` : ""}`; })()}`,
       options: [{ id: "merge", label: "Merge", labelZh: "合併", primary: true }, { id: "changes", label: "Request changes", labelZh: "要求修改", note: true, hold: true }, { id: "close", label: "Close without merging", labelZh: "不合併，關閉", hold: true }] };
     if(remoteIntent)preparedRemoteCards.set(detail,{intent:structuredClone(remoteIntent),assert:assertRemoteCard!});
     return body;

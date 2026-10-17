@@ -168,7 +168,7 @@ export function diff(a: WDef, b: WDef): DefDiff {
 export const diffEmpty = (d: DefDiff) => !d.nodesAdded.length && !d.nodesRemoved.length && !d.nodesChanged.length && !d.nodesMoved.length && !d.edgesAdded.length && !d.edgesRemoved.length && !(d.edgesChanged ?? []).length && !d.meta.length;
 
 const RETIRED_DEFAULTS=new Set(["refine-demo","trivial-lane"]);
-const INTERNAL_WORKFLOWS=new Set(["firstmate-proposal","firstmate-register-project","firstmate-staffing"]);
+const INTERNAL_WORKFLOWS=new Set(["firstmate-proposal","firstmate-register-project","firstmate-staffing","firstmate-connect-github"]);
 /** Kept and editable, but no new Task starts until its runtime is activated. The reason is shown in the catalog. */
 const HELD_REASON={en:"held: GitHub review runtime not activated yet",zh:"暫停：GitHub 審查執行尚未啟用"};
 function defaultDefinitions(){return [...bundledList("workflows/v2/"),...bundledList("packs/")].filter(f=>f.endsWith(".wf.yaml")).map(f=>bundledText(f)??"").filter(text=>{if(!text.trim())return false;return !RETIRED_DEFAULTS.has(normalize(parseYaml(text)).id);});}

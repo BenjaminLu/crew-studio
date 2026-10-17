@@ -11,6 +11,7 @@ import type {GitHubProjectGrant} from './adapters/github';
 //   CREW_GH_NO_CLI=1 never ask an installed gh for its token
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { registerSecretValues } from "./secure";
 
 export type Check = { name: string; state: string; bucket: string; link: string };
@@ -34,15 +35,18 @@ let tokenSeen: string | null = null;
 registerSecretValues(() => [tokenSeen]);
 const seen = (v: string) => { tokenSeen = v; return v; };
 /** Find a token without asking anyone: env, then Studio's saved token, then an installed gh's. */
+// A Studio started from the Dock or launchd may not have Homebrew on its PATH: an unset CREW_GH_BIN also tries gh's usual homes.
+const ghCandidates = (bin: string) => process.env.CREW_GH_BIN || bin !== "gh" ? [bin] : ["gh", "/opt/homebrew/bin/gh", "/usr/local/bin/gh"];
 export function findToken(dataDir: string, ghBin = process.env.CREW_GH_BIN ?? "gh"): { token: string | null; source: TokenSource } {
   for (const k of ["CREW_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"]) { const v = process.env[k]?.trim(); if (v) return { token: seen(v), source: "env" }; }
   try { const v = readFileSync(join(dataDir, "github-token"), "utf8").trim(); if (v) return { token: seen(v), source: "settings" }; } catch {}
   if (process.env.CREW_GH_NO_CLI !== "1") {
-    try {
-      const r = Bun.spawnSync([ghBin, "auth", "token"], { stdout: "pipe", stderr: "ignore" });
+    // gh keeps its token in the macOS keychain and reads it with the user's HOME; it never prompts here
+    for (const bin of ghCandidates(ghBin)) try {
+      const r = Bun.spawnSync([bin, "auth", "token", "--hostname", "github.com"], { stdout: "pipe", stderr: "ignore", stdin: "ignore", timeout: 10_000, env: { ...process.env, HOME: process.env.HOME || homedir(), GH_PROMPT_DISABLED: "1" } });
       const v = r.success ? r.stdout.toString().trim() : "";
       if (v) return { token: seen(v), source: "gh" };
-    } catch { /* gh is not installed: fine */ }
+    } catch { /* gh is not installed there: fine */ }
   }
   return { token: null, source: null };
 }

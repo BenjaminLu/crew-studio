@@ -105,6 +105,7 @@ export type Body = { title: string; zhTitle?: string; en: Partial<Sections>; zh?
   /** an authorization window never answers this card: only the captain does */
   captainOnly?: boolean;
   captures?: SCard["captures"];
+  pullRequest?: SCard["pullRequest"];
   /** the typed failure the card is about (a domain's own recovery card shows its class, message and log) */
   failure?: Failure | null };
 export type Deps = {
@@ -1478,7 +1479,7 @@ export class Engine {
     const zh = sec({ intent: en.intent, ...b.zh });
     const c = this.cards.create({ run: x.run.id, node: x.node.id, visit: x.rn.visits, kind, title: { en: b.title, "zh-TW": b.zhTitle ?? b.title }, sections: { en, "zh-TW": zh }, body: b.body ?? "",
       options: b.options ?? x.node.card?.options ?? [{ id: "approve", label: "Approve", primary: true }, { id: "reject", label: "Reject" }],
-      confirmDoor: !!x.node.card?.confirm_door, door: b.door ?? (x.node.card?.door_from ? (x.ctx[x.node.card.door_from]?.door ?? x.ctx[x.node.card.door_from] ?? null) : null), links: b.links ?? [], detail: b.detail ?? null, ...(b.captainOnly ? { captainOnly: true } : {}), workflow: x.run.workflow, runTitle: x.run.title, ledger: b.ledger ?? null, ste: null, captures: b.captures ?? null, ...(b.failure ? { failure: b.failure } : {}) });
+      confirmDoor: !!x.node.card?.confirm_door, door: b.door ?? (x.node.card?.door_from ? (x.ctx[x.node.card.door_from]?.door ?? x.ctx[x.node.card.door_from] ?? null) : null), links: b.links ?? [], detail: b.detail ?? null, ...(b.captainOnly ? { captainOnly: true } : {}), workflow: x.run.workflow, runTitle: x.run.title, ledger: b.ledger ?? null, ste: null, captures: b.captures ?? null, ...(b.pullRequest ? { pullRequest: b.pullRequest } : {}), ...(b.failure ? { failure: b.failure } : {}) });
     const staged=this.repreparing.get(`${x.run.id}/${x.node.id}`);if(staged){if(staged.prepared){this.cards.cancel(c.id);throw new Error("One replacement card per preparation");}staged.prepared=c.id;}else{x.rn.card = c.id; this.commit(x.run, `card ${c.id} raised`);}
     { let done!: () => void; const p = new Promise<void>((res) => (done = res)); this.raising.set(c.id, { done: p, resolve: () => { this.raising.delete(c.id); done(); } }); }
     this.emit(x.run, "card_raised", `${c.id} ${c.title.en}`, { node: x.node.id, card: c.id, kind });

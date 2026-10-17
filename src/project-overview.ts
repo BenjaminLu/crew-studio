@@ -8,6 +8,8 @@
 // writes: the registry is read with the strict reader (never the migrating one), git is never run (refs are read as
 // files, as staffingIdentity reads them), and <repo>/.crew/gates.json is read size-capped without following links.
 // A section that cannot be read carries {error} and the rest still renders. There are no cost fields.
+//   POST /api/projects/<id>/github/connect   (desktop) only proposes: it raises the captain-only "Connect to GitHub"
+//                                       card (src/github-connect.ts); the captain's answer on that card writes the grant.
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, join, relative, isAbsolute, resolve } from "node:path";
 import { hasSession } from "./csrf";
@@ -17,6 +19,8 @@ import { StaffingStore } from "./domain/staffing";
 import { roundsOf, waitsOn, type WaitsOn } from "./task-round";
 import type { Engine, Run } from "./runtime/engine";
 import type { WorktreeRecord } from "./worktrees";
+import { githubSlugOf, originOf, verifyGitHubGrant } from "./github-grant";
+import { startGitHubConnect } from "./github-connect";
 
 export type Line = { tone: "" | "ok" | "run" | "human" | "warn" | "bad"; en: string; tw: string };
 type Who = { kind: "desktop" | "phone" | "refused" | string };
@@ -121,16 +125,18 @@ export function createProjectOverview(d: OverviewDeps) {
    * Can tasks start here: the staffing check itself (Projects.staffingAssess, the same steps dispatch runs), as data.
    * `own` checks the project's own registration also when it is disabled (display only), for "Folder missing".
    */
+  /** the project's GitHub grant is the captain's signed one for it (github-grant.ts) */
+  const grantOk = (p: Project) => { if (!p.github) return false; try { verifyGitHubGrant(d.dataDir, p); return true; } catch { return false; } };
   function startState(p: Project) {
     const roots = d.protectedRoots ?? [];
-    // an external project is never put through the staffing check here (it cannot dispatch on this build)
-    if (kindOf(p) === "external") return { real: null, folderMissing: false, folderUnusable: false, canStart: false };
+    // an external project whose GitHub grant does not verify is never put through the staffing check here (it cannot dispatch)
+    if (kindOf(p) === "external" && !grantOk(p)) return { real: null, folderMissing: false, folderUnusable: false, canStart: false };
     let real: ReturnType<Projects["staffingAssess"]> | null = null, own: ReturnType<Projects["staffingAssess"]> | null = null;
     try { real = d.projects.staffingAssess(p.id, roots); } catch {}
     try { own = d.projects.staffingAssess(p.id, roots, { includeDisabled: true }); } catch {}
     const ownReason = own && !own.ok && own.record === p.id ? own.reason : null;
     const folderMissing = ownReason === "folder_missing", folderUnusable = ownReason === "folder_unusable";
-    const canStart = enabledOf(p) && kindOf(p) !== "external" && !!real?.ok;
+    const canStart = enabledOf(p) && !!real?.ok;
     return { real, folderMissing, folderUnusable, canStart };
   }
   /** fixed words per refusal reason, naming the registration (never a path, never exception text) */
@@ -145,7 +151,7 @@ export function createProjectOverview(d: OverviewDeps) {
       case "ambiguous_alias": return { en: `Registrations ${id} and ${al || "another"} point to the same repository.`, tw: `登錄的專案 ${id} 與 ${al || "另一個專案"} 指向同一個儲存庫。` };
       case "base_invalid": return { en: `Registration ${id}: its base branch name is invalid.`, tw: `登錄的專案 ${id}：主 branch 名稱無效。` };
       case "base_missing": return { en: `Registration ${id}: its base branch is missing.`, tw: `登錄的專案 ${id}：找不到主 branch。` };
-      case "external_unverified": return { en: `Registration ${id}: its GitHub grant cannot be verified on this build.`, tw: `登錄的專案 ${id}：目前版本無法驗證它的 GitHub 授權。` };
+      case "external_unverified": return { en: `Registration ${id}: its GitHub grant does not verify (connect it to GitHub again).`, tw: `登錄的專案 ${id}：它的 GitHub 授權驗證不過（請重新連到 GitHub）。` };
       case "registry_unreadable": return { en: "The project registry cannot be read.", tw: "無法讀取專案登錄資料。" };
       default: return { en: `Registration ${id}: the staffing check refused it.`, tw: `登錄的專案 ${id}：派工檢查未通過。` };
     }
@@ -175,7 +181,7 @@ export function createProjectOverview(d: OverviewDeps) {
     try { list = records(); } catch { error = { en: "Registry unreadable", tw: "無法讀取登錄資料" }; }
     const rows = list.map((p) => {
       const kind = kindOf(p), enabled = enabledOf(p), c = counts(by.get(p.id) ?? [], open), st = startState(p);
-      return { id: p.id, name: p.name || p.id, enabled, kind, folderMissing: st.folderMissing, canStart: st.canStart, ...c, status: statusLine(kind, enabled, c, st.folderMissing, st.canStart) };
+      return { id: p.id, name: p.name || p.id, enabled, kind, ...(kind === "external" ? { connected: grantOk(p) } : {}), folderMissing: st.folderMissing, canStart: st.canStart, ...c, status: statusLine(kind, enabled, c, st.folderMissing, st.canStart) };
     });
     const rank = (r: (typeof rows)[number]) => (r.kind === "builtin" ? 3 : r.attention ? 0 : r.running ? 1 : 2);
     rows.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
@@ -216,7 +222,7 @@ export function createProjectOverview(d: OverviewDeps) {
     return null;
   }
   function crewOf(p: Project, st: ReturnType<typeof startState>) {
-    if (kindOf(p) === "external" || !enabledOf(p) || !p.path) return null;
+    if ((kindOf(p) === "external" && !grantOk(p)) || !enabledOf(p) || !p.path) return null;
     // the staffing check refused: no task can start here, and the reply says which registration and why
     if (!st.real) return { error: "refused" as const, detail: { en: "The staffing check could not run.", tw: "無法執行派工檢查。" } };
     if (!st.real.ok) return { error: "refused" as const, record: st.real.record, detail: refusalText(st.real) };
@@ -234,7 +240,8 @@ export function createProjectOverview(d: OverviewDeps) {
       : enabled && st.canStart ? tile("enabled", "ok", "Enabled", "已啟用", { en: "New tasks can start", tw: "可以開始新任務" })
       : enabled ? tile("enabled", "warn", "Enabled", "已啟用", kind === "external" ? { en: "No task can start (see Registered)", tw: "無法開始任何任務（見「已註冊」）" } : { en: "No task can start (see Crew)", tw: "無法開始任何任務（見「船員」）" })
       : tile("enabled", "bad", "Disabled", "已停用", { en: "New tasks and rounds will not start.", tw: "不會開始新任務或新的一輪。" }));
-    out.push(kind === "external" ? tile("registered", "warn", "External project: cannot dispatch yet", "外部專案：暫時無法派工", { en: "Its GitHub grant cannot be verified on this build.", tw: "目前版本無法驗證它的 GitHub 授權。" })
+    out.push(kind === "external" && grantOk(p) ? tile("registered", "ok", "Connected to GitHub", "已連到 GitHub", { en: `${p.github!.repository}: Task branches are pushed and pull requests opened after your approval`, tw: `${p.github!.repository}：任務分支推送與開 pull request 都要你核准` })
+      : kind === "external" ? tile("registered", "warn", "External project: cannot dispatch yet", "外部專案：暫時無法派工", { en: "Its GitHub grant does not verify. Connect it to GitHub again.", tw: "它的 GitHub 授權驗證不過。請重新連到 GitHub。" })
       : kind === "builtin" ? tile("registered", "ok", "Built-in", "內建", { en: "Studio's own practice repository", tw: "Studio 內建的練習用儲存庫" })
       : tile("registered", "ok", "Registered", "已註冊", { en: "Local repository", tw: "本機儲存庫" }));
     const b = readBaseRef(p.path, p.base);
@@ -318,15 +325,26 @@ export function createProjectOverview(d: OverviewDeps) {
     const kind = kindOf(p);
     const st = startState(p);
     const crew = section(() => crewOf(p, st));
+    // the GitHub side: the grant (verified as staffing verifies it), or the origin a Connect card would propose
+    const github = section(() => { if (p.github) { try { verifyGitHubGrant(d.dataDir, p); return { connected: true, verified: true, repository: p.github.repository, branchPrefix: p.github.branchPrefix }; } catch (e: any) { return { connected: true, verified: false, repository: p.github.repository, error: String(e?.message ?? e) }; } }
+      let origin: string | null = null; try { origin = p.path ? githubSlugOf(originOf(p.path).url) : null; } catch {} return { connected: false, verified: false, origin }; });
     return {
       project: { id: p.id, name: p.name || p.id, path: p.path, base: p.base, kind, enabled: enabledOf(p), folderMissing: st.folderMissing, canStart: st.canStart, ...(p.github?.repository ? { repository: p.github.repository } : {}), registeredAt: section(() => registeredAt(p.id)) },
-      health: section(() => health(p, crew, st)), tasks, cards, crew,
+      health: section(() => health(p, crew, st)), tasks, cards, crew, github,
       sensitive: section(() => sensitive(p)), outputs: section(() => outputs(p.id, runs)), worktrees: section(() => worktreeRows(p.id, open)),
     };
   }
 
   async function handle(req: Request, url: URL, who: Who, writing: boolean): Promise<Response | null> {
     const p = url.pathname;
+    const connect = /^\/api\/projects\/([A-Za-z0-9][A-Za-z0-9_.-]{0,199})\/github\/connect$/.exec(p);
+    if (connect) {
+      if (!writing) return json({ error: "use POST" }, 405);
+      if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
+      if (!hasSession(req, d.session)) return json({ error: "Studio session required" }, 401);
+      try { const run = startGitHubConnect(d.engine, d.projects, connect[1], "captain (Projects page)"); return json({ ok: true, task: run.id, href: `#/run/${run.id}` }); }
+      catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
+    }
     const m = /^\/api\/projects\/([A-Za-z0-9][A-Za-z0-9_.-]{0,199})\/overview$/.exec(p);
     if (p !== "/api/projects/overview" && !m) return null;
     if (writing) return json({ error: "read only" }, 405);
