@@ -46,7 +46,8 @@ The skin runs below Studio's own bar, in an iframe it cannot leave. The
 - Snapshots replace the current view; events are a bounded notification stream,
   not a complete task history. Reconcile removals and terminal states on every snapshot.
 - `tasks` (at most 80): `id`, optional `rootTask`, `title`, `status`, `node`,
-  `door`, `round`, `pr`, `lastTs`. Native `waiting` becomes `needs-you`;
+  `door`, `round`, `pr`, `lastTs`. Native `waiting` becomes `needs-you`, except a task whose agent question
+  waits for Firstmate's answer: it stays `running` with `waitingOn: "firstmate"`;
   native `succeeded` and `cancelled` become `done`; `failed` remains `failed`.
   Do not infer success from `done`, or infer a live worker from task status.
 - `crew` (at most 60): `name`, `role`, `task`, `alive`, `activity` (text or null).

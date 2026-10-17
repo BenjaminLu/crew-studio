@@ -28,7 +28,7 @@ import { Grants } from "./grants";
 import { Cards, emptySections, type CardKind, type SCard, type Sections, type LocalRescope } from "./cards";
 import { CheckRegistry, Ledger, Policies, INPUT_HASH_ALGORITHM, coerce, doneMap, execAdapter, hashInput, inputPaths, jsRegex, parseOutput, sandboxed, schemaDefaults, schemaErrors,
   type CheckInput, type CheckManifest, type CheckOutput, type CheckRef, type LedgerEntry, type Native } from "./checks";
-import { AMEND_CHOICES, briefFor, installRefine } from "./refine";
+import { AMEND_CHOICES, briefFor, installRefine, verifiedAmendments, type Amendment } from "./refine";
 import { realInside, redactJSON, redactText } from "../secure";
 import { helperCommand, helperReads } from "../self";
 import { entryOf, validate, type WDef, type WEdge, type WNode, type WorkflowDefs } from "./defs";
@@ -364,6 +364,7 @@ export class Engine {
     for (const r of this.runs.values()) if (!TERMINAL.includes(r.status)) for (const [id, rn] of Object.entries(r.nodes)) if (rn.state === "running" && rn.waiting === "external") this.registerExternal(r, r.def.nodes.find(n => n.id === id)!, rn);
     for (const r of this.runs.values()) if (r.status === "running" || r.status === "waiting" || r.status === "queued") this.tick(r);
     for (const [r, id] of backoffs) this.scheduleBackoff(r, id);
+    this.resumeFirstmateQuestions(); // a no-op until askFirstmate is wired (server.ts calls it again then)
   }
 
   // ---------- starting ----------
@@ -1049,17 +1050,27 @@ export class Engine {
     await this.carryAnswer(r, node.id);
     return c;
   }
+  /** Record the captain's note on a card as a captain amendment (refine.ts Amendment), bound to the signed ledger entry of that answer. */
+  private addAmendment(r: Run, c: SCard, nodeId: string, rec: { seq: number; sig: string } | null) {
+    const note = String(c.answer?.note ?? "").trim(); if (!note || !rec) return;
+    const prev = Array.isArray(r.ctx.amendments) ? r.ctx.amendments : [];
+    r.ctx.amendments = [...prev, { n: prev.length + 1, card: c.id, node: nodeId, note: note.slice(0, 4000), by: c.answer!.by, at: c.answer!.at, seq: rec.seq, sig: rec.sig }];
+    this.emit(r, "captain_amendment", `A${prev.length + 1} from ${c.id}: ${note.slice(0, 200)}`, { node: nodeId, card: c.id });
+  }
+  private amendmentDrops = new Set<string>();
+  /** The run's captain amendments that still match their signed ledger entries; a tampered one is dropped and logged once. */
+  amendments(r: Run): Amendment[] {
+    if (!Array.isArray(r?.ctx?.amendments) || !r.ctx.amendments.length) return [];
+    return verifiedAmendments(r.ctx, this.trusted(r.id), (why) => { const k = `${r.id}:${why}`; if (this.amendmentDrops.has(k)) return; this.amendmentDrops.add(k); this.emit(r, "log", why); });
+  }
   /** Move a node on from its answered card (also after a restart that came between the answer and the move). */
   async carryAnswer(r: Run, nodeId: string) {
     const node = r.def.nodes.find((n) => n.id === nodeId)!; const rn = r.nodes[nodeId]; const c = this.cards.get(rn.card ?? "")!;
     r.ctx.answers = { ...(r.ctx.answers ?? {}), [node.id]: c.answer };
     // the answer goes into the ledger once, here, so an answer carried on after a crash is recorded too
     if (!r.ctx.answersRecorded?.includes(c.id)) { r.ctx.answersRecorded = [...(r.ctx.answersRecorded ?? []), c.id]; const rec = this.record(this.x(r, node, rn), "card-answer", { actor: c.answer!.by, data: { card: c.id, kind: c.kind, choice: c.answer!.choice, note: c.answer!.note, confirm: c.answer!.confirm, ...(c.answer!.localRescope?{localRescope:c.answer!.localRescope}:{}), ...(this.queueDomain?.answer(r, node, rn, c) ?? {}) } });
-      // a captain's "request changes" note binds every later round: kept cumulatively (never latest-only), bound to its signed card-answer entry
-      const note = String(c.answer!.note ?? "").trim();
-      if (note && AMEND_CHOICES.includes(c.answer!.choice)) { const prev = Array.isArray(r.ctx.amendments) ? r.ctx.amendments : [];
-        r.ctx.amendments = [...prev, { n: prev.length + 1, card: c.id, node: node.id, note: note.slice(0, 4000), by: c.answer!.by, at: c.answer!.at, seq: rec?.seq ?? null, sig: rec?.sig ?? null }];
-        this.emit(r, "captain_amendment", `A${prev.length + 1} from ${c.id}: ${note.slice(0, 200)}`, { node: node.id, card: c.id }); } }
+      // a captain's "request changes" (or rescope) note binds every later round: kept cumulatively (never latest-only), bound to its signed card-answer entry
+      if (AMEND_CHOICES.includes(c.answer!.choice)) this.addAmendment(r, c, node.id, rec); }
     // the card's effects, once per card (an answer carried on after a restart does not apply them twice)
     const eff = node.card?.effects?.[c.answer!.choice] as any;
     if (eff && !r.ctx.effectsApplied?.includes(c.id)) {
@@ -1222,7 +1233,37 @@ export class Engine {
     if (!sent) return false;
     r.failure = f; r.failures = [...(r.failures ?? []), f].slice(-20); r.failureCard = null; r.ctx.firstmateQuestion = { node: node.id, visit: r.nodes[node.id].visits, question: f.message, at: now() };
     this.commit(r, "question to Firstmate"); this.emit(r, "question_to_firstmate", `${node.label}: ${f.message.slice(0, 200)}`, { node: node.id });
+    this.watchFirstmate(r);
     return true;
+  }
+  /** How long a question waits for Firstmate before it goes to the captain as the failure card. */
+  firstmateAnswerMs = 15 * 60_000;
+  /** After a restart: send each pending question to Firstmate again (its wake notice died with the old process), or to the captain when Firstmate cannot take it. */
+  resumeFirstmateQuestions() {
+    for (const r of this.runs.values()) {
+      const q = r.ctx.firstmateQuestion; if (!q || r.failureCard || r.archived || r.parked || this.gone.has(r.id) || !["waiting", "failed"].includes(r.status)) continue;
+      const node = r.def.nodes.find((n) => n.id === q.node); if (!node) continue;
+      let sent = false; try { sent = !!this.askFirstmate?.(r, node, q.question, q.visit ?? r.nodes[node.id].visits); } catch { sent = false; }
+      if (!sent) { if (this.askFirstmate) this.escalateQuestion(r, node, "Firstmate is not running, so it could not answer this question."); continue; }
+      this.emit(r, "question_to_firstmate", `${node.label}: sent again after a restart`, { node: node.id }); this.watchFirstmate(r);
+    }
+  }
+  /** The bounded wait: a question Firstmate has not answered by its deadline goes to the captain (the same path as Firstmate's escalation). */
+  private watchFirstmate(r: Run) {
+    const q = r.ctx.firstmateQuestion; if (!q) return;
+    const left = Math.max(0, Date.parse(q.at) + this.firstmateAnswerMs - Date.now());
+    const t: any = setTimeout(() => {
+      const cur = this.runs.get(r.id); if (cur !== r || this.gone.has(r.id) || r.failureCard || r.ctx.firstmateQuestion?.at !== q.at || !["waiting", "failed"].includes(r.status)) return;
+      if (this.busy(r.id)) { setTimeout(() => this.watchFirstmate(r), 1000)?.unref?.(); return; }
+      const node = r.def.nodes.find((n) => n.id === q.node); if (!node) return;
+      this.escalateQuestion(r, node, `Firstmate did not answer within ${Math.round(this.firstmateAnswerMs / 60_000) || 1} min, so the question comes to you.`);
+    }, left); t?.unref?.();
+  }
+  /** The question goes to the captain: the run stops waiting and raises the failure card with the reason. */
+  private escalateQuestion(r: Run, node: WNode, reason: string) {
+    const q = r.ctx.firstmateQuestion; delete r.ctx.firstmateQuestion;
+    if (r.status === "waiting") { r.status = "failed"; r.endedAt = now(); r.error = `${node.label}: the agent's question went to the captain`; this.commit(r, "question escalated"); this.emit(r, "failed", r.error, { node: node.id }); }
+    return this.raiseFailure(r, node, failure("ask.escalated", q?.question ?? r.failure?.message ?? `${node.label} asks a question`, { source: "agent", run: r.id, node: node.id, visit: r.nodes[node.id].visits, escalation: reason.slice(0, 2000) }));
   }
   /** The brief an agent gets on the visit after a failure card: the captain's answer, or the rescope note. */
   failureBrief(x: X): string {
@@ -1283,7 +1324,9 @@ export class Engine {
     if (a.choice === ACT.answer) { delete rn.data.escalation; rn.data.failureAnswer = { kind: "answer", question: f.message, note, by: "captain" }; r.ctx.answers = { ...(r.ctx.answers ?? {}), [node.id]: ans.answer }; }
     else if (a.choice === ACT.rescope) { rn.data.failureAnswer = { kind: "rescope", question: f.message, note }; r.ctx.failureRescope = { node: node.id, note, at: now() }; }
     else delete rn.data.failureAnswer;
-    this.recordFailure(r, c, a.choice, params ? { params } : {});
+    const rec = this.recordFailure(r, ans, a.choice, params ? { params } : {});
+    // the captain's answer (or rescope) is the captain's latest word: it binds later rounds like a "request changes" note, and can override an earlier one
+    if (a.choice === ACT.answer || a.choice === ACT.rescope) this.addAmendment(r, ans, node.id, rec);
     return this.reopenAt(r, c, f, node, a, delay);
   }
   /** Firstmate answered an agent's question (studio_answer_agent_question), or escalated it to the captain with its reason. */
@@ -1298,10 +1341,9 @@ export class Engine {
     const f = r.failure!;
     if (q.visit !== undefined && o.visit !== q.visit) throw new Error("the answer must match the visit in the question notice");
     if (!f || f.code !== "ask.escalated" || f.node !== nodeId || f.visit !== r.nodes[nodeId].visits || (q.visit !== undefined && q.visit !== f.visit) || f.message !== q.question) throw new Error("the question no longer matches this failed round");
-    delete r.ctx.firstmateQuestion;
     // an escalation is the captain's failure card: the run stops waiting and fails as any other question for the captain does
-    if (escalate && r.status === "waiting") { r.status = "failed"; r.endedAt = now(); r.error = `${node.label}: Firstmate passed the agent's question to the captain`; this.commit(r, "question escalated"); this.emit(r, "failed", r.error, { node: node.id }); }
-    if (escalate) { const c = this.raiseFailure(r, node, failure("ask.escalated", q.question, { source: "agent", run: r.id, node: node.id, visit: r.nodes[node.id].visits, escalation: escalate.slice(0, 2000) })); return { escalated: true, card: c?.id ?? null }; }
+    if (escalate) { const c = this.escalateQuestion(r, node, escalate); return { escalated: true, card: c?.id ?? null }; }
+    delete r.ctx.firstmateQuestion;
     const rn = r.nodes[node.id]; rn.data.failureAnswer = { kind: "answer", question: q.question, note: answer.slice(0, 4000), by: "firstmate" };
     this.record(this.x(r, node, rn), "failure-answer", { actor: "firstmate", data: { class: f.class, code: f.code, choice: ACT.answer, note: answer.slice(0, 4000), by: "firstmate" } });
     this.reopenAt(r, { id: `firstmate:${r.id}:${node.id}` } as SCard, f, node, { choice: ACT.answer }, 0);
@@ -1346,8 +1388,8 @@ export class Engine {
     }, left);
   }
   private recordFailure(r: Run, c: SCard, choice: string, extra: Record<string, unknown> = {}) {
-    const node = r.def.nodes.find((n) => n.id === c.node) ?? r.def.nodes[0]; if (!node) return;
-    this.record(this.x(r, node, r.nodes[node.id]), "failure-answer", { actor: c.answer?.by ?? "captain", data: { card: c.id, class: c.failure?.class, code: c.failure?.code, choice, note: c.answer?.note ?? null, ...extra } });
+    const node = r.def.nodes.find((n) => n.id === c.node) ?? r.def.nodes[0]; if (!node) return null;
+    return this.record(this.x(r, node, r.nodes[node.id]), "failure-answer", { actor: c.answer?.by ?? "captain", data: { card: c.id, class: c.failure?.class, code: c.failure?.code, choice, note: c.answer?.note ?? null, ...extra } });
   }
   async card(x: X, kind: CardKind, b: Body): Promise<SCard> {
     if (!this.owns(x)) throw new Error("card owner ended before presentation");

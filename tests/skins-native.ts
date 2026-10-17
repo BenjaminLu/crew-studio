@@ -13,6 +13,11 @@ ok(!JSON.stringify(data).includes('DO_NOT_EXPOSE'), 'run context and private car
 run.nodes.draft.state = 'passed'; run.nodes.accept.state = 'running'; run.status = 'waiting';
 data = nativeSkinData([run], cards);
 ok(data.tasks[0].status === 'needs-you' && data.crew.length === 0 && data.pending[0].id === 'SC-101' && data.pending[0].title === '驗收', 'waiting task shows its native card without stale worker');
+// an agent's question waiting for Firstmate is Firstmate's turn: never "needs you"
+run.ctx.firstmateQuestion = { node: 'draft', question: 'which color?', at: 'now' };
+const fm = nativeSkinData([run], []);
+ok(fm.tasks[0].status === 'running' && (fm.tasks[0] as any).waitingOn === 'firstmate' && !JSON.stringify(fm).includes('which color'), 'a task waiting on Firstmate reads as waiting on Firstmate, not needs-you, and hides the question');
+delete run.ctx.firstmateQuestion;
 const denied = snapshotFor([], data);
 ok(!denied.tasks.length && !denied.pending.length && !denied.crew.length && denied.flow === null, 'skin permissions still hide ungranted snapshot sections');
 cards[0].status = 'answered'; run.status = 'succeeded'; run.nodes.accept.state = 'passed';

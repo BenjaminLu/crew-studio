@@ -36,8 +36,10 @@ export function nativeSkinData(runs: Run[], cards: any[], jobs?: Pick<AgentJob, 
   return {
     tasks: visible.map(r => {
       const current = r.def.nodes.find(n => r.nodes[n.id]?.state === "running" || r.nodes[n.id]?.state === "waiting");
-      return { id: r.id, rootTask: rootTask(r), title: r.title, status: r.status === "waiting" ? "needs-you" : ["succeeded", "cancelled"].includes(r.status) ? "done" : r.status,
-        node: current ? key(r, current.id) : null, round: current ? r.nodes[current.id].visits : 0, lastTs: r.updatedAt };
+      // an agent's question waiting for Firstmate's answer is Firstmate's turn, not the captain's: it never reads "needs you"
+      const firstmate = r.status === "waiting" && !!r.ctx?.firstmateQuestion && !r.failureCard;
+      return { id: r.id, rootTask: rootTask(r), title: r.title, status: firstmate ? "running" : r.status === "waiting" ? "needs-you" : ["succeeded", "cancelled"].includes(r.status) ? "done" : r.status,
+        ...(firstmate ? { waitingOn: "firstmate" } : {}), node: current ? key(r, current.id) : null, round: current ? r.nodes[current.id].visits : 0, lastTs: r.updatedAt };
     }),
     crew: visible.filter(r => !["succeeded", "cancelled", "failed"].includes(r.status)).flatMap(r => {
       const workers = r.def.nodes.filter(n => n.kind === "agent" && r.nodes[n.id]?.state === "running" && r.nodes[n.id]?.job && (!jobs || jobs.some(j => j.id === r.nodes[n.id].job && j.ref === r.id && j.status === "running"))).map(n => ({ name: `${r.id}/${n.id}`, role: n.role || "worker", task: r.id, alive: true, activity: { en: n.label } }));

@@ -6,7 +6,7 @@
 //   window.runStateBadge(run)                  → <span class="badge …" data-run-state="key">word</span>
 (() => {
 const WORDS = {
-  running: ["Running", "進行中", "run"], waiting: ["Waiting for you", "等你處理", "human"], paused: ["Paused", "已暫停", "warn"],
+  running: ["Running", "進行中", "run"], waiting: ["Waiting for you", "等你處理", "human"], firstmate: ["Waiting for Firstmate", "等 Firstmate 回答", "run"], paused: ["Paused", "已暫停", "warn"],
   merged: ["Merged", "已合併", "ok"], done: ["Done", "完成", "ok"], closed: ["Closed without merging", "未合併就關閉", "neutral"],
   dispatched: ["Proposal dispatched", "提案已派工", "neutral"],
   cancelled: ["Cancelled", "已取消", "neutral"], failed: ["Failed", "失敗", "bad"],
@@ -15,7 +15,7 @@ const FAILED_RESULTS = new Set(["fail", "error", "timeout", "cap"]);
 function key(r) {
   const s = r?.status;
   if (s === "queued" || s === "running") return "running";
-  if (s === "waiting") return "waiting";
+  if (s === "waiting") return r.ctx?.firstmateQuestion && !r.failureCard ? "firstmate" : "waiting"; // an agent's question is Firstmate's turn, not the captain's
   if (s === "paused") return "paused";
   if (s === "cancelled") return "cancelled";
   if (s === "failed") return "failed";

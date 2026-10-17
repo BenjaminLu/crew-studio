@@ -18,10 +18,10 @@ const flow={id:'code-firstmate',name:'Question fixture',version:1,roles:[{id:'co
 {id:'build',kind:'agent',role:'worker',mode:'build',label:'Build',checks:[{use:'firstmate/report-schema'}]},
 {id:'done',kind:'hook',label:'Done'}],edges:[['prepare','spec'],['spec','dispatch'],['dispatch','build','dispatch'],['build','done','ok']]};
 
-for(const scenario of ['firstmate','captain','amendment']){
+for(const scenario of ['firstmate','captain','amendment','timeout']){
  const H=await harness([Y(flow)]);let E=H.engine;const repo=join(H.data,'repo');mkdirSync(repo);assertTempRepo(repo);must(repo,['init','-q','-b','main']);writeFileSync(join(repo,'README.md'),'initial\n');must(repo,['add','.']);must(repo,['commit','-qm','Initial']);
  const projects=new Projects(H.data);projects.add({id:'fixture',path:repo});
- let asked=0;const install=()=>{installCode(E,{dataDir:H.data,projects});E.policies.setProject('fixture',{install:false});E.askFirstmate=()=>{asked++;return true;};E.deps.provider=()=>provider;};
+ let asked=0;const install=()=>{installCode(E,{dataDir:H.data,projects});E.policies.setProject('fixture',{install:false});E.askFirstmate=()=>{asked++;return true;};if(scenario==='timeout')E.firstmateAnswerMs=400;E.deps.provider=()=>provider;};
  const prompts:string[]=[],toolsSeen:any[]=[];
  const provider:any={id:'fixture',model:'offline',sandboxFree:true,start(_s:any,tools:any[],ctx:any){return{interrupt(){},async *send(text:string){
  const call=(name:string,args:any)=>H.agents.callTool(ctx.token,name,args);
@@ -36,7 +36,8 @@ for(const scenario of ['firstmate','captain','amendment']){
  ok(await until(()=>E.cards.list({run:r.id,open:true}).some(c=>c.node==='dispatch')&&!E.busy(r.id)),scenario+' dispatch ready');
  const dispatch=E.cards.list({run:r.id,open:true})[0];
  // a captain's binding change on the run (tests/captain-amendment.ts records one through a real merge card)
- if(scenario==='amendment')r.ctx.amendments=[{n:1,card:'SC-0',node:'merge-card',note:'use indigo',by:'captain',at:new Date().toISOString(),seq:null,sig:null}];
+ if(scenario==='amendment'){const node=r.def.nodes.find((n:any)=>n.id==='dispatch')!;const rec=E.record(E.x(r,node,r.nodes.dispatch),'card-answer',{actor:'captain',data:{card:'SC-0',choice:'changes',note:'use indigo'}})!;
+ r.ctx.amendments=[{n:1,card:'SC-0',node:'dispatch',note:'use indigo',by:'captain',at:new Date().toISOString(),seq:rec.seq,sig:rec.sig}];}
  await E.answer(dispatch.id,{choice:'dispatch',by:'captain'});
  if(scenario==='amendment'){
  // an ASK that touches a captain's change goes straight to the captain, never to Firstmate
@@ -49,14 +50,21 @@ for(const scenario of ['firstmate','captain','amendment']){
  ok(await until(waiting),scenario+' ASK skips failing checks and waits for Firstmate');
  // F25: a question waiting for Firstmate is a wait, not a failure
  ok(E.get(r.id)!.status==='waiting'&&!E.get(r.id)!.error&&!E.timeline(r.id).some((e:any)=>e.type==='failed')&&!E.cards.list({run:r.id,open:true}).length,scenario+' run waits (not failed) while Firstmate answers',JSON.stringify([E.get(r.id)!.status,E.get(r.id)!.error]));
+ if(scenario==='timeout'){
+ // the bounded wait: Firstmate never answers, so the question comes to the captain as the failure card
+ ok(await until(()=>E.cards.list({run:r.id,open:true}).some(c=>c.kind==='failure')&&!E.busy(r.id)),'unanswered question reaches the captain after the bounded wait');
+ const c=E.cards.list({run:r.id,open:true}).find(c=>c.kind==='failure')!;
+ ok(c.failure?.code==='ask.escalated'&&/did not answer within/.test(c.failure?.escalation?.reason??'')&&E.get(r.id)!.status==='failed'&&!E.get(r.id)!.ctx.firstmateQuestion,'the card says Firstmate did not answer in time',JSON.stringify(c.failure?.escalation));
+ continue;}
  const snapshot=JSON.stringify({spec:r.ctx.spec,def:r.def,head:r.ctx.head,admission:E.ledger(r.id).filter(e=>e.record==='scope-admission'),dispatch:E.cards.get(dispatch.id)});
  ok(rejects(()=>E.answerFromFirstmate(r.id,'build',{answer:'  '})),scenario+' blank Firstmate answer refused');
  const q=r.ctx.firstmateQuestion;r.ctx.firstmateQuestion={...q,visit:0};ok(rejects(()=>E.answerFromFirstmate(r.id,'build',{answer:'stale',visit:0})),scenario+' stale question refused');r.ctx.firstmateQuestion=q;
  const stale:any=await toolsSeen[0]({marker:'ASK',summary:'late'});ok(!!stale.error,scenario+' ended report owner refused');
  if(scenario==='captain'){
  // Restart from durable state, keeping the pending question and signed dispatch.
- const next=new Engine(E.deps,E.defs);E=next;install();E.load();const back=E.get(r.id)!;
+ const sentBefore=asked;const next=new Engine(E.deps,E.defs);E=next;install();E.load();const back=E.get(r.id)!;
  ok(back.ctx.firstmateQuestion?.question===q.question&&back.status==='waiting','restart retains pending Firstmate question and the waiting status');
+ ok(asked===sentBefore+1,'restart sends the pending question to Firstmate again',String(asked-sentBefore));
  E.answerFromFirstmate(r.id,'build',{escalate:'Only the captain can pick a color',visit:q.visit});
  const c=E.cards.list({run:r.id,open:true}).find(c=>c.kind==='failure')!;
  ok(!!c&&E.get(r.id)!.status==='failed','escalation raises the captain card and the run then shows the failure');

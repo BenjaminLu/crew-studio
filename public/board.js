@@ -173,7 +173,7 @@ function fmRow(t) {
       h("div", { class: "run-s" }, h("span", {}, T("code-firstmate · firstmate", "code-firstmate · firstmate")), doorBadge(t.door), t.pr ? h("a", { href: prUrl(t.pr), target: "_blank", rel: "noopener" }, `PR #${t.pr}`) : null,
         h("span", {}, T(`updated ${ago(t.lastTs)}`, `${ago(t.lastTs)}更新`)))),
     h("div", { class: "c-stage", style: "min-width:0" }, pipe(p), h("div", { class: "pipe-l" }, `${p.cur + 1}/${p.stages.length} ${stageLabel(st)}${t.round && st?.id === "build" ? T(` · round ${t.round}`, ` · 第 ${t.round} 回合`) : ""}`)),
-    h("div", {}, window.runStateBadge(t.status === "needs-you" ? { status: "waiting" } : t.status === "done" ? { status: "succeeded", merged: true } : { status: t.status })),
+    h("div", {}, window.runStateBadge(t.waitingOn === "firstmate" ? { status: "waiting", ctx: { firstmateQuestion: true } } : t.status === "needs-you" ? { status: "waiting" } : t.status === "done" ? { status: "succeeded", merged: true } : { status: t.status })),
     h("div", { class: "stack c-crew" }, crew.map((c) => { const a = avaFor(c.name); a.title = c.title; return a; })),
     h("div", { class: "c-cost" }, h("div", { class: "spend" }, h("div", { class: "kv num" }, h("span", { title: T("firstmate does not record spend", "firstmate 沒有記錄花費") }, "—")))),
     h("div", { class: "num faint c-el", "data-since": t.firstTs, "data-until": until || "" }, fmtEl((until ? Date.parse(until) : clock()) - Date.parse(t.firstTs))));

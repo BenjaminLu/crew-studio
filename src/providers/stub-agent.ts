@@ -153,6 +153,9 @@ async function* runtimeAgent(text: string, call: Call, say: Say): AsyncGenerator
     yield* call("fs_list", {});
     if (/REPORT ONLY/.test(text)) { yield* call("worker_report", { marker: "WORKER_COMPLETE", summary: "report rewritten; the code is kept (fixed: report)", swept: { searched: "the report", found: 1, fixed: 1 }, classes: ["report"] }); yield* done("Report only."); return; }
     if (/STUB_BLOCKED/.test(text)) { yield* call("worker_report", { marker: "SCOPE-BLOCKED", summary: "needs a path outside the scope" }); yield* done("SCOPE-BLOCKED"); return; }
+    // STUB_ASK_AFTER <text>: once the build brief contains <text> (and holds no answer yet), the worker asks about captain change A1
+    const askAfter = /STUB_ASK_AFTER (.+)$/m.exec(text)?.[1];
+    if (askAfter && text.replace(/^STUB_ASK_AFTER .*$/m, "").includes(askAfter) && !/^CAPTAIN'S ANSWER$/m.test(text)) { yield* call("worker_report", { marker: "ASK", summary: "Should A1 still hold?", amendment: 1 }); yield* done("ASK"); return; }
     if (round === 1 || !stubFixes(text).length) for (const f of stubFiles(text)) yield* call("fs_write", { path: f.path, content: f.content });
     else for (const f of stubFixes(text)) yield* call("fs_replace", { path: f.path, old: f.old, new: f.new, all: true });
     yield* call("run_tests", {});
