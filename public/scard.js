@@ -25,7 +25,7 @@ function artifactOptionLabel(c, o, T) {
   const r=Array.isArray(offers)&&offers.length>1&&offers.find(r=>r&&typeof r.producer==="string"&&o.id===`approve-${r.producer}`&&Number.isInteger(r.n)&&r.n>0);
   return r&&!/^design-[a-z]$/.test(r.producer) ? T(`Approve ${r.producer} v${r.n}`, `核准${r.producer} 版本 ${r.n}`) : T(o.label,o.labelZh||o.label);
 }
-const CSS = `
+const SCARD_CSS = `
 .cc { display: grid; gap: 12px; min-width: 0; }
 .cc * { min-width: 0; }
 .cc-h { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -113,7 +113,7 @@ const CSS = `
 .cc-kv dd { margin: 0; overflow-wrap: anywhere; }
 .cc-meta { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--text-2); }
 `;
-function css() { if (document.getElementById("crew-card-css")) return; const s = document.createElement("style"); s.id = "crew-card-css"; s.textContent = CSS; document.head.appendChild(s); }
+function css() { if (document.getElementById("crew-card-css")) return; const s = document.createElement("style"); s.id = "crew-card-css"; s.textContent = SCARD_CSS; document.head.appendChild(s); }
 function h(tag, attrs, ...kids) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) { if (v == null || v === false) continue; if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2), v); else if (k === "checked" || k === "disabled" || k === "open") e[k] = !!v; else e.setAttribute(k, v === true ? "" : String(v)); }
