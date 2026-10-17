@@ -11,7 +11,7 @@ import { harness, Y, until, suite } from "./rt-harness";
 import { installCode } from "../src/domain/code";
 import { Projects } from "../src/doors";
 import { GitHubPrAdapter } from "../src/adapters/github";
-import { RemoteMismatch, remoteStopBody, remoteStopReason, REMOTE_CHECK_LIMIT } from "../src/domain/remote-ci";
+import { RemoteMismatch, remoteStopBody, remoteStopReason, REMOTE_CHECK_LIMIT, REMOTE_BEHIND } from "../src/domain/remote-ci";
 import { cardContract } from "../src/runtime/card-contract";
 import { must, setGitHome } from "../src/git";
 import { githubSimulator } from "./lib/github-simulator";
@@ -46,9 +46,9 @@ const ready = Y({ id: "ready-flow", name: "Ready flow", roles: [], nodes: [
   { id: "merge-card", kind: "card", label: "Merge card", args: { body_from: "merge", card_kind: "merge" }, x: 4, y: 0 },
   { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 5, y: 1 }],
   edges: [["seed", "pr-open"], ["pr-open", "flip", "ok"], ["pr-open", "closed", "close"], ["flip", "remote-ready"], ["remote-ready", "merge-card", "ok"], ["remote-ready", "closed", "close"], ["merge-card", "closed", "close"]] });
-const install = async (data?: string) => {
+const install = async (data?: string, with_: GitHubPrAdapter = adapter) => {
   const H = await harness([flow, ready], data ? { data } : {}), E = H.engine;
-  installCode(E, { dataDir: H.data, projects: new Projects(H.data), adapter });
+  installCode(E, { dataDir: H.data, projects: new Projects(H.data), adapter: with_ });
   E.actions["fixture.flip"] = (x) => { sim.pulls.get(Number(x.ctx.pr.id)).mergeable = null; return "ok"; };
   E.actions["fixture.seed"] = (x) => {
     const branch = x.run.params.branch; must(repo, ["checkout", "-qb", branch, "main"]); const head = commit(branch); must(repo, ["checkout", "-q", "main"]);
@@ -73,6 +73,9 @@ try {
   ok(ids(remoteStopBody("GitHub could not be reached", { used: REMOTE_CHECK_LIMIT })) === "close" && /already checked again 5 times/.test(remoteStopBody("GitHub could not be reached", { used: REMOTE_CHECK_LIMIT }).en.how),
     "after the limit of checks, close is the only answer and the card says why");
   ok(ids(remoteStopBody("remote merge grant or CLEAN/non-draft state is unverified", { recover: false })) === "close", "a stop on a node with no check-again route (the merge card) keeps close alone");
+  const behind = remoteStopBody(REMOTE_BEHIND);
+  ok(ids(behind) === "update,check,close" && /Update the branch runs Studio's normal path/.test(behind.en.how) && /only reads GitHub/.test(behind.en.how) && /更新分支/.test(behind.zh.how) && !cardContract({ title: { en: behind.title, "zh-TW": behind.zhTitle }, sections: { en: behind.en, "zh-TW": behind.zh } as any, body: behind.body, options: behind.options }).length,
+    "a pull request behind its base: Update (the normal path's write, the captain's go-ahead), Check again (read only) or close, each said");
 
   // ---------- recoverable: refused access, the captain checks again, the observed policy reaches merge-on-GitHub ----------
   {
@@ -110,6 +113,34 @@ try {
       ok(t?.title.en === "The pull request was closed or moved on GitHub: close this task?" && ids(t) === "close", "a pull request closed on GitHub stops again with close alone", `${t?.title?.en} | ${ids(t)}`);
       await E.answer(t.id, { choice: "close", by: "captain" } as any); await until(() => ["succeeded", "failed"].includes(r.status), 8000);
       ok(r.status === "succeeded" && r.result === "closed", "close ends the Task closed", `${r.status} ${r.result} ${JSON.stringify(E.timeline(r.id).slice(-8).map((e: any) => e.summary ?? e.type))}`);
+      // the answer guard itself: below the limit the captain may check again, at the limit (signed answers) it refuses
+      const node = r.def.nodes.find((n: any) => n.id === "pr-open")!, x = E.x(r, node, r.nodes["pr-open"]), guard = (by = "captain") => { try { E.deps.authorizeAnswer!(r, c, { choice: "check", by } as any); return ""; } catch (e: any) { return e.message; } };
+      ok(guard() === "" && /Only the captain/.test(guard("auth window W-1")), "the guard lets the captain check again below the limit and refuses an authorization window");
+      for (let i = 1; i < REMOTE_CHECK_LIMIT; i++) E.record(x, "card-answer", { actor: "captain", data: { card: `SC-fixture-${i}`, kind: "step-back", choice: "check" } } as any);
+      ok(/already checked again 5 times/.test(guard()), `with ${REMOTE_CHECK_LIMIT} signed Check again answers on the node the guard refuses another`, guard());
+    } finally { H.stop(); }
+  }
+
+  // ---------- Check again never writes: remote-ready + a pull request behind its base + an operations grant ----------
+  {
+    const ops = new GitHubPrAdapter({ ...grant, operations: { version: 1, repository: "fixture/project", approvalId: "fixture-op", approvedAt: "2026-10-17T00:00:00Z", mergeMethod: "merge" } }, () => "fake-token", 3000);
+    const { H, E } = await install(undefined, ops);
+    try {
+      sim.expect("GET", POLICY, PLAN, undefined, 403);
+      const r = E.start({ workflow: "ready-flow", text: "stop", params: { branch: "crew/behind" } }); await settle(E, r);
+      const c = openCard(E, r); ok(c?.node === "remote-ready" && ids(c) === "check,close", "remote-ready stops first on unknown mergeability", `${c?.node} ${ids(c)}`);
+      // a reviewed head is on record, so the normal path would update the branch on GitHub
+      E.record(E.x(r, r.def.nodes.find((n: any) => n.id === "remote-ready")!, r.nodes["remote-ready"]), "fixture-review", { check: "firstmate/review-verdict", verdict: "pass", head: r.ctx.pr.head, data: { binding: { head: r.ctx.pr.head, base: baseCommit } } } as any);
+      Object.assign(sim.pulls.get(Number(r.ctx.pr.id)), { mergeable: true, mergeable_state: "behind" });
+      const before = sim.calls.length;
+      await E.answer(c.id, { choice: "check", by: "captain" } as any); await settle(E, r, c.id);
+      const b = openCard(E, r);
+      ok(!sim.calls.slice(before).some((k: any) => k.method !== "GET") && !E.trusted(r.id).entries.some((e: any) => e.record === "remote-update-request"), "Check again on a pull request behind its base sends no PUT, POST or push and starts no update round", JSON.stringify(sim.calls.slice(before).filter((k: any) => k.method !== "GET")));
+      ok(b?.node === "remote-ready" && ids(b) === "update,check,close" && b.title.en === "The pull request is behind its base branch: update it on GitHub, check again or close this task?" && /only reads GitHub/.test(b.body),
+        "it stops on a card that can still be resolved: update the branch (the normal path), check again, or close", `${b?.title?.en} | ${ids(b)}`);
+      let refused = ""; try { await E.answer(b.id, { choice: "update", by: "firstmate" } as any); } catch (e: any) { refused = e.message; }
+      ok(/Only the captain/.test(refused) && E.cards.get(b.id).status === "open", "only the captain gives the go-ahead to update the branch", refused);
+      E.cancel(r.id); await until(() => !E.busy(r.id), 5000);
     } finally { H.stop(); }
   }
 

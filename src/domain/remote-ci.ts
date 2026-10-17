@@ -133,8 +133,15 @@ const TERMINAL_STOP = /closed, retargeted|PR closed, target changed|head moved|m
 export const remoteStopRecoverable = (reason: string) => !TERMINAL_STOP.test(reason);
 /** How many times the captain may check one node's remote stop again in a Task; after that, close is the only answer. */
 export const REMOTE_CHECK_LIMIT = 5;
-/** The captain's "Check again" answers on this node's remote-stop cards (signed card-answer entries). */
-export const remoteChecksUsed = (x: X, engine: X["engine"] = x.engine) => (engine.ledger?.(x.run.id) ?? []).filter((e: any) => e.record === "card-answer" && e.node === x.node.id && e.data?.choice === "check").length;
+/** The captain's "Check again" (and "Update the branch") answers on this node's remote-stop cards, from the signature-verified
+ *  ledger; a ledger that does not verify counts as the limit reached (close only). */
+export const remoteChecksUsed = (x: X, engine: X["engine"] = x.engine) => {
+  if (!engine.trusted) return 0; // an engine fixture without a ledger
+  const t = engine.trusted(x.run.id); if (!t.ok) return REMOTE_CHECK_LIMIT;
+  return t.entries.filter((e: any) => e.record === "card-answer" && e.node === x.node.id && ["check", "update"].includes(e.data?.choice)).length;
+};
+/** remote-ready on Check again (read only): the pull request is behind its base, and only the captain's Update writes to GitHub. */
+export const REMOTE_BEHIND = "the pull request is behind its base branch on GitHub; checking again only reads GitHub, so the branch was not updated";
 /** The reason a remote-stop card names, read back from its body (an older release's card keeps no other record of it). */
 export const remoteStopReasonOf = (body: string) => /^Remote verification stopped: ([^]*)\. Nothing was merged\.$/.exec(String(body ?? ""))?.[1] ?? null;
 
@@ -150,6 +157,7 @@ export function remoteStopBody(reason: string, o: { recover?: boolean; used?: nu
     : /could not be reached/i.test(reason) ? "連不上 GitHub。"
     : /did not succeed/i.test(reason) ? "PR head 上有檢查沒有通過。"
     : /CI deadline expired/i.test(reason) ? "PR head 上的檢查沒有在等待期限內完成。"
+    : /behind its base branch/i.test(reason) ? "PR 落後 base 分支；「重新檢查」只讀取 GitHub，所以沒有更新分支。"
     : /merge refused|no longer matches/i.test(reason) ? "PR、head 或必要的 CI 已和核准時不同，所以拒絕合併。"
     : /grant|CLEAN|draft/i.test(reason) ? "無法確認合併授權，或 PR 不是可乾淨合併的非草稿狀態。"
     : /naming|deadline/i.test(reason) ? "待處理更新的目標、授權或期限改變了；保留給船長處理。"
@@ -165,10 +173,15 @@ export function remoteStopBody(reason: string, o: { recover?: boolean; used?: nu
     : /\(authorization\)/i.test(reason) ? ["GitHub refused the project's access", "GitHub 拒絕了專案的存取"]
     : /could not be reached/i.test(reason) ? ["GitHub could not be reached", "連不上 GitHub"]
     : /did not succeed/i.test(reason) ? ["Checks failed on the pull request", "PR 的檢查沒有通過"]
+    : /behind its base branch/i.test(reason) ? ["The pull request is behind its base branch", "PR 落後 base 分支"]
     : ["Remote verification stopped", "遠端驗證已停止"];
   const [title, zhTitle] = /only observed/i.test(reason) ? [`${what}: Studio will not merge this pull request`, `${zhWhat}：Studio 不合併這個 PR`]
+    : check && /behind its base branch/i.test(reason) ? [`${what}: update it on GitHub, check again or close this task?`, `${zhWhat}：要在 GitHub 更新、重新檢查，還是關閉這個任務？`]
     : check ? [`${what}: check again or close this task?`, `${zhWhat}：要重新檢查，還是關閉這個任務？`] : [`${what}: close this task?`, `${zhWhat}：要關閉這個任務嗎？`];
-  const how = check ? { en: `${fix[0]} Check again verifies the PR, its branch protection and its checks on GitHub again under the current release's rules, then waits for the checks on the PR head. It does not push or merge. Or close without merging.`,
+  const behind = /behind its base branch/i.test(reason);
+  const how = check && behind ? { en: "Update the branch runs Studio's normal path: GitHub merges the base into the Task branch at the reviewed head (update-branch), Studio imports the result, proves the reviewed change carried over cleanly and runs the checks again. Check again only reads GitHub and stops here while the PR is behind. Or close without merging.",
+      zh: "「更新分支」會走 Studio 的正常流程：GitHub 在已審查的 head 上把 base 合進任務分支（update-branch），Studio 匯入結果、證明審查過的改動乾淨帶過去，再重跑檢查。「重新檢查」只讀取 GitHub，PR 還落後時會停在這裡。或者不合併，直接關閉。" }
+    : check ? { en: `${fix[0]} Check again verifies the PR, its branch protection and its checks on GitHub again under the current release's rules, then waits for the checks on the PR head. It does not push or merge. Or close without merging.`,
       zh: `${fix[1]}「重新檢查」會用目前版本的規則，再到 GitHub 驗證一次 PR、分支保護和檢查，然後等 PR head 上的檢查；不會推送，也不會合併。或者不合併，直接關閉。` }
     : recoverable ? { en: `Studio already checked again ${used} times. Inspect the PR on GitHub, then close this task and start a fresh one if the change should go on. No merge is authorized.`,
       zh: `已經重新檢查 ${used} 次。請在 GitHub 核對 PR，關閉這個任務；如果改動要繼續，再開一個新任務。尚未授權合併。` }
@@ -176,7 +189,7 @@ export function remoteStopBody(reason: string, o: { recover?: boolean; used?: nu
   return { title, zhTitle, captainOnly: true, direct: true,
     en: { why: `Remote verification stopped: ${reason}. Nothing was merged.`, how: how.en },
     zh: { why: `遠端驗證已停止：${zh}沒有合併任何東西。`, how: how.zh }, body: `Remote verification stopped: ${reason}. Nothing was merged.`,
-    options: [...(check ? [{ id: "check", label: "Check again", labelZh: "重新檢查", primary: true }] : []), { id: "close", label: "Close without merging", labelZh: "不合併，關閉" }] };
+    options: [...(check && behind ? [{ id: "update", label: "Update the branch on GitHub", labelZh: "在 GitHub 更新分支", primary: true }] : []), ...(check ? [{ id: "check", label: "Check again", labelZh: "重新檢查", ...(behind ? {} : { primary: true }) }] : []), { id: "close", label: "Close without merging", labelZh: "不合併，關閉" }] };
 }
 /** The nodes whose answer handler checks a remote stop again (code.ts); a stop anywhere else is answered by close. */
 export const REMOTE_CHECK_NODES = ["pr.open", "remote.ready"];

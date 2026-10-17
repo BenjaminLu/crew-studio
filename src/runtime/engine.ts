@@ -407,8 +407,8 @@ export class Engine {
   /** A domain presents an open card that an older release raised again under the current rules (other options, other words):
    *  the body to show instead, or null to keep the card. A card is only ever replaced here, never answered. */
   cardUpgrades: ((r: Run, node: WNode, rn: NodeRun, c: SCard) => Body | null)[] = [];
-  /** On boot: replace each open card a node waits on when a domain upgrades it. The new card is created before the node points
-   *  at it and the old one is cancelled last, so a crash between the writes leaves an orphan the next boot's sweep cancels. */
+  /** On boot: replace each open card a node waits on when a domain upgrades it. The new card is created and recorded before the node
+   *  points at it, and the old one is cancelled last, so a crash between the writes leaves an orphan the next boot's sweep cancels. */
   private upgradeCards(r: Run) {
     if (!this.cardUpgrades.length) return;
     for (const [id, rn] of Object.entries(r.nodes)) {
@@ -421,8 +421,9 @@ export class Engine {
       const c = this.cards.create({ ...kept, title: { en: b.title, "zh-TW": b.zhTitle ?? b.title }, sections: { en: { ...old.sections.en, ...b.en }, "zh-TW": { ...old.sections["zh-TW"], ...b.zh } },
         body: b.body ?? old.body, options: b.options ?? old.options, ...(b.captainOnly ? { captainOnly: true } : {}), ledger: { upgradedFrom: old.id } as any, ste: null });
       const broken = cardContract(c); if (broken.length) { this.cards.cancel(c.id); this.emit(r, "log", `card contract: ${old.id} kept, its upgrade broke it: ${broken.join("; ").slice(0, 400)}`); continue; }
-      rn.card = c.id; this.commit(r, `card ${old.id} replaced by ${c.id} under the current release`); this.cards.cancel(old.id);
+      // the ledger names the replacement before the node points at it (a crash after the record leaves an orphan, swept and redone)
       this.record(this.x(r, node, rn), "card-upgraded", { data: { from: old.id, to: c.id, options: c.options.map((o) => o.id) } });
+      rn.card = c.id; this.commit(r, `card ${old.id} replaced by ${c.id} under the current release`); this.cards.cancel(old.id);
       this.emit(r, "card_raised", `${c.id} ${c.title.en} (replaces ${old.id})`, { node: id, card: c.id, kind: c.kind });
     }
   }

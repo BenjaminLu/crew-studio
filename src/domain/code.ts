@@ -36,7 +36,7 @@ import { runRender } from "../render";
 import { copyUntrusted } from "../secure";
 import { helper, kindOf, LINES_PER_READ, LIST_CAP, listTree, normPath, READ_CAP_BYTES, searchTree, typedRead } from "../review-read";
 import { COORDINATOR_TOOL_SCHEMA, coordinatorDetail, coordinatorText, designText, mergeDetail, type MergeInput } from "./mergecard";
-import { RemoteWatchers, requiredPolicy, reconcile, inspectRemote, grantIdentity, registerRemoteWait, validRemoteWait, remoteStopBody, remoteStopReason, remoteStopCard, remoteStopReasonOf, remoteChecksUsed, REMOTE_CHECK_LIMIT, REMOTE_CHECK_NODES, observedNotice, OBSERVED_REFUSAL, type RequiredPolicy } from "./remote-ci";
+import { RemoteWatchers, requiredPolicy, reconcile, inspectRemote, grantIdentity, registerRemoteWait, validRemoteWait, remoteStopBody, remoteStopReason, remoteStopCard, remoteStopReasonOf, remoteChecksUsed, REMOTE_CHECK_LIMIT, REMOTE_CHECK_NODES, REMOTE_BEHIND, observedNotice, OBSERVED_REFUSAL, type RequiredPolicy } from "./remote-ci";
 import { stablePatch, proveCleanCarry, mergeOnce, updateOnce, assertMergeAvailable } from "./remote-gates";
 import type { CardDetail } from "../runtime/cards";
 import { commitConvention, commitIdentity, commitSubject, commitTree, taskCommitMessage } from "./commit-message";
@@ -594,20 +594,21 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     x.rn.note = `review request on ${x.ctx.branch} (${adapter.id})`; return remoteWait(x, adapter);
   };
   engine.actionAnswers ??= {};
-  /** "Check again" on a remote-stop card: the captain's own signed answer, below the limit; the node verifies the pull request
-   *  on GitHub again under the current release's rules (again), and a fresh stop raises a fresh card. */
+  /** "Check again" (or, on a pull request behind its base, "Update the branch") on a remote-stop card: the captain's own signed
+   *  answer, below the limit; the node verifies the pull request on GitHub again under the current release's rules (again), and
+   *  a fresh stop raises a fresh card. */
   const checkAgain = async (x: X, card: any, again: () => Promise<Result | string>): Promise<Result> => {
-    const trusted = engine.trusted(x.run.id), used = remoteChecksUsed(x, engine);
-    if (!card.captainOnly || !card.options?.some((o: any) => o.id === "check") || !remoteStopReasonOf(card.body) || used > REMOTE_CHECK_LIMIT || !trusted.ok
-      || !trusted.entries.some((e: any) => e.record === "card-answer" && e.data?.card === card.id && e.data?.choice === "check" && /^captain\b/i.test(String(e.actor ?? "")))) throw new Error("check again needs the captain's own answer on a remote-stop card");
-    x.ctx.remoteCI = null; x.log(`remote CI: checking again under the current rules (${used} of ${REMOTE_CHECK_LIMIT}, card ${card.id})`); x.save();
+    const choice = card.answer?.choice, trusted = engine.trusted(x.run.id), used = remoteChecksUsed(x, engine);
+    if (!["check", "update"].includes(choice) || !card.captainOnly || !card.options?.some((o: any) => o.id === choice) || !remoteStopReasonOf(card.body) || used > REMOTE_CHECK_LIMIT || !trusted.ok
+      || !trusted.entries.some((e: any) => e.record === "card-answer" && e.data?.card === card.id && e.data?.choice === choice && /^captain\b/i.test(String(e.actor ?? "")))) throw new Error("check again needs the captain's own answer on a remote-stop card");
+    x.ctx.remoteCI = null; x.log(`remote CI: ${choice === "update" ? "updating the branch, then checking" : "checking again"} under the current rules (${used} of ${REMOTE_CHECK_LIMIT}, card ${card.id})`); x.save();
     const out = await again(); return typeof out === "string" ? { outcome: out } : out;
   };
   // only the captain checks a remote stop again (never Firstmate, never an authorization window), and only below the limit
   const answerGuard = engine.deps.authorizeAnswer;
   engine.deps.authorizeAnswer = (run: any, card: any, answer: any) => {
     answerGuard?.(run, card, answer);
-    if (answer?.choice !== "check" || !card.options?.some((o: any) => o.id === "check") || !remoteStopReasonOf(card.body)) return;
+    if (!["check", "update"].includes(answer?.choice) || !card.options?.some((o: any) => o.id === answer.choice) || !remoteStopReasonOf(card.body)) return;
     if (!card.captainOnly || !/^captain\b/i.test(String(answer.by ?? ""))) throw new Error("Only the captain checks a stopped remote verification again");
     const node = run.def.nodes.find((n: any) => n.id === card.node);
     if (!node || remoteChecksUsed(engine.x(run, node, run.nodes[node.id])) >= REMOTE_CHECK_LIMIT) throw new Error(`Studio already checked again ${REMOTE_CHECK_LIMIT} times; close this task instead`);
@@ -621,7 +622,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     return b.options.map((o) => o.id).join() === c.options.map((o) => o.id).join() ? null : b;
   });
   engine.actionAnswers["pr.open"] = async (x,card) => {
-    if (card.answer?.choice === "check") return checkAgain(x, card, async () => { const a = selectedAdapter(x); return x.ctx.pr && a instanceof GitHubPrAdapter ? remoteWait(x, a) : engine.actions["pr.open"](x); });
+    // checking again only reads GitHub: with no open GitHub pull request there is nothing to read, and publishing is never its job
+    if (card.answer?.choice === "check") return checkAgain(x, card, async () => { const a = selectedAdapter(x); if (!x.ctx.pr || !(a instanceof GitHubPrAdapter)) throw new Error("check again needs an open GitHub pull request; it never publishes one"); return remoteWait(x, a); });
     if (card.answer?.choice === "retry") { const result = await engine.actions["pr.open"](x); return typeof result === "string" ? { outcome: result } : result; }
     if (card.answer?.choice !== "approve-name") return { outcome: card.answer?.choice ?? "close" };
     const n = x.ctx.remoteNaming;
@@ -630,9 +632,11 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   };
   engine.actionAnswers["remote.ready"] = async (x,card) => {
     // remote readiness again from the top (a pending update, mergeability), then a fresh wait for the checks on the PR head
-    // when nothing else verified them (the stop cleared remoteCI)
-    if (x.ctx.pr && card.answer?.choice === "check") return checkAgain(x, card, async () => {
-      const out = await engine.actions["remote.ready"](x), a = selectedAdapter(x);
+    // when nothing else verified them (the stop cleared remoteCI). Check again only reads GitHub (readOnly: a pull request
+    // behind its base stops on its card); Update is the captain's go-ahead for the normal path's update-branch write.
+    if (x.ctx.pr && (card.answer?.choice === "check" || card.answer?.choice === "update")) return checkAgain(x, card, async () => {
+      if (card.answer.choice === "update" && !/behind its base branch/.test(remoteStopReasonOf(card.body) ?? "")) throw new Error("update is answered only on a pull request behind its base branch");
+      const out = await remoteReady(x, { readOnly: card.answer.choice === "check" }), a = selectedAdapter(x);
       return out === "ok" && x.ctx.pr?.adapter === "github" && a instanceof GitHubPrAdapter && x.ctx.remoteCI?.head !== x.ctx.pr.head ? remoteWait(x, a) : out;
     });
     if (!x.ctx.pr && x.ctx.prDeferred) return publication.answer(x, card);
@@ -653,7 +657,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const phase=remotePhase(x);await a.mutationState(x.ctx.pr,phase.signal,phase.assert);phase.assert();const imported=await a.importHeads(x.ctx.pr,phase.signal);phase.assert();if(imported.base!==n.base)throw new Error("rebase target moved; fresh captain decision required");
     x.ctx.remoteRebaseApproved={...n};x.ctx.remoteCI=null;x.ctx.gatedHead=null;x.ctx.reviewUnverified="native rebase requires fresh review";x.save();return {outcome:"rebase"};
   };
-  engine.actions["remote.ready"] = async (x) => {
+  /** readOnly (Check again): GitHub is only read; a pull request behind its base stops on a card instead of update-branch. */
+  const remoteReady = async (x: X, o: { readOnly?: boolean } = {}): Promise<Result | string> => {
     if (!x.ctx.pr && x.ctx.prDeferred) return publication.publish(x); // the template's pull request opens now, with the evidence
     if (x.ctx.pr?.adapter !== "github") return "ok";
     const phase = remotePhase(x); phase.assert(); const a = selectedAdapter(x);
@@ -672,6 +677,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       }
       if(p && p.mergeable !== true)throw new Error("remote mergeability remains unverified");
       if (p && p.mergeable_state !== "behind") return "ok";
+      if (p && o.readOnly) { await stopCard(x, REMOTE_BEHIND); return { wait: true }; }
       const trusted = engine.trusted(x.run.id), review: any = trusted.entries.filter(e => e.check === "firstmate/review-verdict").at(-1), b = review?.data?.binding;
       if (!trusted.ok || review?.verdict !== "pass" || b?.unverified || b?.head !== x.ctx.pr.head || x.ctx.reviewUnverified || (x.ctx.reviews ?? []).at(-1)?.verdict === "REJECT") throw new Error("bound review unavailable");
       const old = x.ctx.pr, key = wkey(x); const round = await W.startRound(key.project,key.task,`${x.run.id}/remote-ready#${x.visit}`,{write:true,install:x.policy("install") === false ? false : null,remote:()=>a.remoteGit()}); release=round.release;phase.assert();
@@ -700,6 +706,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       return remoteWait(x,a);
     } catch { if (!phase.live()) return { outcome: "cancel" }; await stopCard(x,"remote readiness/update could not be proved; no approval or merge allowed"); return { wait: true }; } finally { release?.(); }
   };
+  engine.actions["remote.ready"] = (x) => remoteReady(x);
   /** the Task's one curated commit message (src/domain/commit-message.ts): the spec's what and why, each done line with the
    * checks that proved it on the reviewed head, under the repository's CONTRIBUTING commit rules read at that head */
   const taskCommit = (x: X, h: string) => {
