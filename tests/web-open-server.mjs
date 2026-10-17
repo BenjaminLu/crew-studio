@@ -63,6 +63,7 @@ if (process.argv[2] === "--seed") {
   const waiting = E.start({ workflow: wf.id, text: "A Task still waiting at its acceptance card" }); await openCard(waiting.id);
   const archived = await closed("A closed Task archived before anyone continued it"); E.archive(archived, true, "captain");
   site("probe-site", "Probe website", { "index.html": PROBE_HTML(closedTask), "evil.html": EVIL_HTML, "order.html": ORDER_HTML });
+  site("order-site", "Order website", { "index.html": ORDER_HTML });
   console.log(JSON.stringify({ closed: closedTask, waiting: waiting.id, archived }));
   process.exit(0);
 }
@@ -204,17 +205,30 @@ try {
   const evilTop = await deskCtx.newPage(); await evilTop.goto(`${base}/af/probe-site/1/evil.html`);
   const ev = await evilTop.waitForFunction(() => document.body?.dataset.evil, null, { timeout: 8000 }).then((h) => h.jsonValue()).then(JSON.parse, () => ({}));
   ok(ev.origin === "null" && /framed-blocked/.test(ev.r ?? ""), "any other page of the site navigated to directly is sandboxed too", JSON.stringify(ev));
-  // R-071: the sandbox allows forms, so a prototype's own submit handler runs in the captain's tab (and in the
-  // interactive preview); form-action 'none' still sends nothing anywhere
-  for (const q of ["", "?interactive=1"]) {
+  // R-071: the sandbox allows forms, so a prototype's own submit handler runs in the captain's tab;
+  // form-action 'none' still sends nothing anywhere
+  await section("order form in a tab", async () => {
     const order = await deskCtx.newPage(); const posts = []; order.on("request", (r) => { if (r.method() === "POST") posts.push(r.url()); });
-    await order.goto(`${base}/af/probe-site/1/order.html${q}`); await order.click("#send");
+    await order.goto(`${base}/af/probe-site/1/order.html`); await order.click("#send");
     const summary = await order.waitForFunction(() => { const s = document.getElementById("summary"); return s && !s.hidden && s.textContent; }, null, { timeout: 5000 }).then((h) => h.jsonValue(), () => null);
-    ok(summary === "Summary: Captain", `an order form's own submit handler runs in the sandboxed preview${q ? " (interactive)" : " tab"} and shows its summary (R-071)`, String(summary));
+    ok(summary === "Summary: Captain", "an order form's own submit handler runs in the sandboxed preview tab and shows its summary (R-071)", String(summary));
     await order.evaluate(() => document.getElementById("bareSend").click()); await order.waitForTimeout(500);
-    ok(!posts.length && new URL(order.url()).pathname.endsWith("/order.html") && await order.evaluate(() => !!document.getElementById("order")), `a form with no handler still submits nowhere (form-action 'none')${q ? " (interactive)" : ""}`, JSON.stringify([posts, order.url()]));
+    ok(!posts.length && new URL(order.url()).pathname.endsWith("/order.html") && await order.evaluate(() => !!document.getElementById("order")), "a form with no handler still submits nowhere (form-action 'none')", JSON.stringify([posts, order.url()]));
     await order.close();
-  }
+  });
+  // ...and in Studio's own interactive preview dialog, where the iframe's sandbox attribute intersects the header's
+  await section("order form in the interactive preview", async () => {
+    const review = await deskCtx.newPage(); const posts = []; review.on("request", (r) => { if (r.method() === "POST" && r.url().includes("/af/")) posts.push(r.url()); });
+    await review.goto(`${base}/#/review/order-site/1`);
+    await review.getByRole("button", { name: "Interactive preview" }).click();
+    const frame = review.frameLocator("dialog iframe");
+    await frame.locator("#send").click();
+    const summary = await frame.locator("#summary:not([hidden])").textContent({ timeout: 5000 }).catch(() => null);
+    ok(summary === "Summary: Captain", "an order form's own submit handler runs inside Studio's interactive preview dialog and shows its summary (R-071)", String(summary));
+    await frame.locator("#bareSend").evaluate((b) => b.click()); await review.waitForTimeout(500);
+    ok(!posts.length && await frame.locator("#order").count() === 1, "inside the dialog a form with no handler still submits nowhere (form-action 'none')", JSON.stringify(posts));
+    await review.close();
+  });
   ok(await offers(closed) === before + 1, "the opened site created no continuation offer");
 
   // ---- the coffee site through the real Task link: CSS, image, poster and MP4 ----

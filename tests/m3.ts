@@ -8,6 +8,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { freePort, waitUp } from "./boot.mjs";
+import { PREVIEW_SANDBOX } from "../src/preview-csp";
 process.env.CREW_SESSION_TOKEN ??= "test-session"; // the server's write guard: a local client sends it as x-crew-session
 
 let pass = 0, fail = 0;
@@ -183,6 +184,7 @@ try {
   ok(af.ok && /connect-src 'none'/.test(af.headers.get("content-security-policy") ?? "") && /frame-ancestors 'self'/.test(af.headers.get("content-security-policy") ?? ""), "artifact pages are served with no network and Studio-only framing");
   const interactive = await fetch(`${base}/af/landing/1/index.html?interactive=1`);
   const interactiveCsp = interactive.headers.get("content-security-policy") || "";
+  ok(readFileSync(new URL("../public/m3.js", import.meta.url), "utf8").includes(`const PREVIEW_SANDBOX_FLAGS = "${PREVIEW_SANDBOX.replace(/^sandbox /, "")}";`), "the interactive dialog's iframe sandbox carries the same flags as the preview CSP's sandbox (the browser applies their intersection)");
   ok(interactive.ok && interactiveCsp.includes("sandbox allow-scripts allow-forms;") && !interactiveCsp.includes("allow-same-origin") && interactiveCsp.includes("connect-src 'none'") && interactiveCsp.includes("script-src 'unsafe-inline'") && !interactiveCsp.includes("script-src 'self'"), "interactive preview executes inline scripts in an opaque sandbox blocking fetch, external scripts and same-origin access");
   ok((await fetch(`${base}/af/landing/1/..%2F..%2F..%2Fartifacts.json`)).status === 404, "artifact file serving cannot leave the version folder");
   const pin = await post("/api/artifacts/landing/v/1/notes", { kind: "pin", selector: "#hero", bbox: { x: 8, y: 21, w: 300, h: 37 }, comment: "Make the title larger and add a tagline" });

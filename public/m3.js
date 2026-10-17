@@ -211,9 +211,13 @@ function reviewHead(d, v, extra) {
 const openNotes = (v) => v.notes.filter((x) => x.status === "open");
 let activePreview = null;
 addEventListener("hashchange", () => activePreview?.close());
+// The frame's sandbox must match the preview CSP's (PREVIEW_SANDBOX in src/preview-csp.ts; tests/m3.ts holds them
+// equal): the browser applies the intersection, so a flag missing here (allow-forms: a prototype's own submit
+// handler never fires without it, R-071) is missing in the dialog whatever the header allows.
+const PREVIEW_SANDBOX_FLAGS = "allow-scripts allow-forms";
 function interactivePreview(a, v, trigger) {
   activePreview?.close();
-  const frame = h("iframe", { title: T("Interactive prototype", "互動原型"), sandbox: "allow-scripts", referrerpolicy: "no-referrer",
+  const frame = h("iframe", { title: T("Interactive prototype", "互動原型"), sandbox: PREVIEW_SANDBOX_FLAGS, referrerpolicy: "no-referrer",
     src: `/af/${a.id}/${v.n}/${v.primary || a.entry || "index.html"}?interactive=1`, style: "display:block;width:100%;height:72vh;border:0;background:white;margin:auto" });
   const dialog = h("dialog", { "aria-label": T("Interactive preview", "互動預覽"), style: "width:min(1280px,96vw);max-width:96vw;border:1px solid var(--border);border-radius:12px;padding:16px;background:var(--bg);color:var(--text)" },
     h("div", { class: "actions", style: "margin-bottom:12px" },

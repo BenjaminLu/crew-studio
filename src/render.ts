@@ -68,7 +68,8 @@ export function runRender(dataDir: string, mode: "film" | "stills" | "crop" | "p
   }
   if (!(mode === "film" ? env.canFilm : env.canCrop)) return { done: Promise.resolve({ ok: false, error: "the renderer is not installed (see Doctor)", ms: 0 }), cancel() {} };
   // the interaction smoke serves the page under the captain's preview-tab policy (sandbox and CSP), so a
-  // control that policy kills is dead in the smoke too; `csp` overrides it only for tests
+  // control that policy kills is dead in the smoke too; `csp` overrides it only for tests. It vouches for the
+  // new-tab path: Studio's interactive dialog (INTERACTIVE_CSP) also refuses the page's own external scripts and images
   if (mode === "interact") a = { ...a, csp: a.csp ?? TAB_CSP };
   const argv = [env.node!, script(dataDir), mode, ...Object.entries(a).filter(([k]) => k !== "copyFrom").flatMap(([k, v]) => [`--${k}`, v])];
   // the browsers Playwright installed live in the account's cache (its documented default), whatever HOME a process runs with
