@@ -19,6 +19,8 @@ const rules: Rule[] = [
   ["a macOS home path", /\/Users\/(?!you\b|you\/|<)[A-Za-z0-9._-]+/],
   ["a Linux home path", /\/home\/(?!captain\b|you\b|runner\b|<)[a-z0-9._-]+\//],
   ["a home path encoded as a project key", /-Users-(?!you-)[A-Za-z0-9]+-/],
+  // a Claude session link names a private conversation: never in anything committed or pushed (CONTRIBUTING.md)
+  ["a claude.ai session link", /claude\.ai\/code\/session_|claude\.ai\/code\/session\b/i],
   ...(user && user.length > 2 && !["root", "runner", "you", "captain"].includes(user) ? [[`the local user's name (${user.length} letters)`, new RegExp(`\\b${user}`, "i"), "local-user"] as Rule] : []),
   ...deny.map((d) => [`a denylisted name (${d.length} letters)`, new RegExp(d.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")] as [string, RegExp]),
 ];
@@ -40,6 +42,9 @@ for(const [key] of publicAttribution){const split=key.lastIndexOf(":"),file=key.
  ok(violations(file,n,line+privatePath,[local,rules[0]]).length===2,`private path appended to attribution is refused: ${key}`);
  ok(violations(file,n,line,[["explicit denylist",/./]]).length===1,`explicit denylist overrides public attribution: ${key}`);
 }
+{ const link = ["https://claude", "ai/code/session_", "01ExampleExampleExample"].join(".").replace("ai/code/session_.", "ai/code/session_");
+  ok(violations("CONTRIBUTING.md", 1, `see ${link}`).some((v) => /session link/.test(v)) && violations("x.txt", 1, `Claude-Session: ${link}`).length > 0 && !violations("x.txt", 1, "claude.ai/settings").some((v) => /session link/.test(v)),
+    "a claude.ai session link is refused in any tracked file (a synthetic link, built at run time)"); }
 ok(secretFile("data/github-token")&&secretFile("private/ledger.key")&&!publicLine("data/github-token",1,text("skins/captain/LICENSE.txt")?.split("\n")[2]??""),"public attribution cannot exempt tracked token or key files");
 const hits: string[] = [];
 for (const f of files) { const t = text(f); if (t == null) continue;

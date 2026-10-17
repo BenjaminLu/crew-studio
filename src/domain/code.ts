@@ -30,7 +30,8 @@ import { locatorText } from "../runtime/locator";
 import { amendmentsSection, briefSection, briefState, type BriefState, type CarryCheck } from "../runtime/refine";
 import { sandboxed } from "../runtime/checks";
 import { EnvGapError, RoundBlocked, Worktrees, rebaseConflictList } from "../worktrees";
-import { envPreflight, isNpmTestPlaceholder, type EnvGap } from "../env-preflight";
+import { envPreflight, installPlan, isNpmTestPlaceholder, type EnvGap } from "../env-preflight";
+import type { SkeletonFacts } from "../runtime/brief-skeleton";
 import { runRender } from "../render";
 import { copyUntrusted } from "../secure";
 import { helper, kindOf, LINES_PER_READ, LIST_CAP, listTree, normPath, READ_CAP_BYTES, searchTree, typedRead } from "../review-read";
@@ -342,6 +343,35 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const recordEnvGaps = (x: X, gaps: EnvGap[], at: "dispatch" | "round") => {
     x.ctx.envGaps = gaps.map((g) => ({ ...g, at, spec: x.ctx.spec?.version ?? null })); x.save();
     for (const g of gaps) engine.emit(x.run, "env_gap", `${g.code} → ${g.route === "captain" ? "the captain (a permission)" : "Firstmate"}: ${g.message}`, { node: x.node.id, code: g.code, route: g.route, at });
+  };
+  /**
+   * A code round's facts for the brief's fixed sections (runtime/brief-skeleton.ts): the declared test and lint commands
+   * at the base, the test globs, the run budget, the dependency install and its state, the host browser library, the
+   * preflight's open gaps, and on a GitHub project the push facts. The manual pages hold the procedure.
+   */
+  const codeFacts = (x: X, role: "coordinator" | "worker" | "reviewer" | "designer", f: { runs?: number; deliverable: string[] }): SkeletonFacts => {
+    const manual = [`code-firstmate/${role}`];
+    const github = !!(x.ctx.project && o.projects.get(x.ctx.project)?.github); if (github) manual.push("code-firstmate/github");
+    let cfg: RepoCfg | null = null; try { cfg = cfgOf(x); } catch {}
+    const tests = !cfg ? ["Test command: unknown (the repository's configuration could not be read at the base)."]
+      : cfg.testError ? [`Test command: invalid (${cfg.testError}).`]
+      : cfg.test ? [`Test command: ${cfg.test.join(" ")} (from ${cfg.testSource ?? "the repository"}).`] : [`Test command: none declared${cfg.testSkipped ? ` (${cfg.testSkipped})` : ""}: tests are not-run, which is not a reason to HOLD.`];
+    if (cfg) tests.push(`Lint command: ${cfg.lint ? cfg.lint.join(" ") : "none declared"}.`, `Test globs: ${cfg.tests.join(", ")}.`);
+    if (f.runs) tests.push(`run_tests budget: ${f.runs} executed runs this round.`);
+    const deps: string[] = [];
+    const install = x.policy("install");
+    if (install === false) deps.push("Dependency install: off (project policy install: false).");
+    else { let plan: { argv: string[]; lockfile: string } | null = null;
+      try { if (Array.isArray(install) && install.length) plan = { argv: install.map(String), lockfile: "the project's install policy" };
+        else if (x.ctx.repo && x.ctx.baseCommit) { const top = new Set(git(x.ctx.repo, ["ls-tree", "--name-only", x.ctx.baseCommit]).out.split("\n").filter(Boolean)); plan = installPlan((p) => top.has(p), (p) => showAt(x.ctx.repo, x.ctx.baseCommit, p), { scripts: x.policy("install_scripts") === true }); } } catch {}
+      deps.push(plan ? `Dependency install: ${plan.argv.join(" ")} (${plan.lockfile}), run by Studio before the round.` : "Dependency install: none (no package.json with a lockfile at the base).");
+      const wt = x.ctx.worktree; if (plan && wt) deps.push(`Dependencies in the worktree: ${existsSync(join(wt, "node_modules")) ? "installed" : "not installed"}.`); }
+    deps.push(testEnvironment().PLAYWRIGHT_MODULE ? "Host browser library: available to tests through PLAYWRIGHT_MODULE." : "Host browser library: not available to tests here (no PLAYWRIGHT_MODULE); a browser test cannot run in this round.");
+    const gaps = (x.ctx.envGaps ?? []) as EnvGap[];
+    deps.push(gaps.length ? `Open preflight gaps: ${gaps.map((g) => `${g.code}: ${g.message}`).join("; ")}.` : "Environment preflight: no open gap.");
+    const env = [`Branch ${x.ctx.branch ?? "(not made yet)"} on base ${x.ctx.base ?? "(unknown)"}${x.ctx.baseCommit ? ` at ${String(x.ctx.baseCommit).slice(0, 12)}` : ""}${x.ctx.head ? `, head ${String(x.ctx.head).slice(0, 12)}` : ""}.`];
+    if (github) env.push("GitHub project: Studio rebases this branch every round and pushes only it, with a lease; you never push.");
+    return { manual, ENVIRONMENT: env, TESTS: tests, DEPENDENCIES: deps, DELIVERABLE: f.deliverable };
   };
   engine.natives["env-preflight"] = (_i, h) => {
     const x = h.x as X | undefined; if (!x) return { verdict: "pass", score: 1, findings: [] };
@@ -797,7 +827,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     tools: (x) => { submittedSpecs.delete(x); return [...READ_ONLY(shellOk(x)), specTool(x)]; }, maxTools: 60,
     system: (x, skill) => `${skill}\n\nYou write the spec for one change to a local repository. Read the code with the fs_* tools (read-only), then call spec_write once. Budget: use at most 40 read/search calls; reserve the remaining calls for spec_write and schema corrections. Stop exploring once the relevant callers and tests are known. Never finish without spec_write; record unverified details as explicit scope questions rather than spending the entire budget on exploration. Say WHAT and WHY; never HOW (no line numbers, no steps). Every done line names a concrete test file and scenario, with the literal marker "planned fail-first" followed by its expected semantic failure on base; planned tests are not executed evidence. Keep manual reviewer and captain release obligations in explain, not as testless done lines. Describe the final specification, not the revision conversation; never quote rejected wording merely to describe its removal. Keep write scope limited to intended edits. List exact existing read-only callers in verificationScope; these never grant write permission or become additional changed roots. Explain the verification obligation for those callers. Write in plain English: no will/should/could, no "ensure", "utilize", "via", "etc.". Answer in one line when done.`,
     prompt: (x) => { const b = roundBrief(x, "spec"); const note = x.ctx.answers?.dispatch?.choice === "rescope" ? x.ctx.answers.dispatch.note : x.ctx.answers?.["step-back"]?.choice === "rescope" ? x.ctx.answers["step-back"].note : x.ctx.answers?.["scope-card"]?.note;
-      return `SPEC DRAFT\nRun ${x.run.id} · draft ${x.visit}. Repository ${x.ctx.repo} (base ${x.ctx.base}).\nCaptain's intent:\n${x.run.text || x.run.title}\n${note ? `\nThe captain asked for changes: ${note}\n` : ""}${engine.amendments(x.run).length ? `${amendmentsSection(engine.amendments(x.run))}Write the spec so its done lines include these changes; drop or rewrite any done line they supersede.\n` : ""}${x.visit > 1 ? `${briefSection(b)}${x.ctx.spec ? `Previous draft for revision only; not approval or current-head verification evidence. Revalidate it against the current source and captain changes:\n${specMd(x.ctx.spec)}\n` : ""}` : ""}\nStart with fs_list.`; },
+      return `SPEC DRAFT\nRun ${x.run.id} · draft ${x.visit}. Repository ${x.ctx.project ?? x.run.params?.project ?? x.ctx.repo?.split("/").at(-1) ?? "(unknown)"} (base ${x.ctx.base}).\nCaptain's intent:\n${x.run.text || x.run.title}\n${note ? `\nThe captain asked for changes: ${note}\n` : ""}${engine.amendments(x.run).length ? `${amendmentsSection(engine.amendments(x.run))}Write the spec so its done lines include these changes; drop or rewrite any done line they supersede.\n` : ""}${x.visit > 1 ? `${briefSection(b)}${x.ctx.spec ? `Previous draft for revision only; not approval or current-head verification evidence. Revalidate it against the current source and captain changes:\n${specMd(x.ctx.spec)}\n` : ""}` : ""}\nStart with fs_list.`; },
+    skeleton: (x) => codeFacts(x, "coordinator", { deliverable: ["spec_write once (title, what, why, done lines, scope, verification scope, door, explain), then one line."] }),
     after: (x) => { if (!x.ctx.spec || !submittedSpecs.has(x)) throw new Error("the spec writer did not call spec_write"); x.rn.note = `${x.ctx.spec.title}: ${x.ctx.spec.done.length} done lines, scope ${x.ctx.spec.scope.join(", ")}`; return "ok"; },
   };
   engine.modes.plan = {
@@ -809,6 +840,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
         writeFileSync(join(x.dir, `plan-${x.visit}.json`), JSON.stringify(x.ctx.plan, null, 1)); x.save(); return { ok: true }; } }], maxTools: 30,
     system: (x, skill) => `${skill}\n\nThis is a PLAN round for a one-way change: you change no file. Read the code, then call plan_write once with every question in the questions block, the files you will change, and a row per done line. Answer in one line.`,
     prompt: (x) => { const b = roundBrief(x, "plan"); return `PLAN ROUND\nRun ${x.run.id} · round ${x.visit} · head ${x.ctx.head}\n${amendmentsSection(engine.amendments(x.run))}${specMd(x.ctx.spec)}\n${x.ctx.planDecision?.accept === false ? `\nFirstmate sent the last plan back: ${x.ctx.planDecision.note}\n` : ""}${briefSection(b)}\nStart with fs_list.`; },
+    skeleton: (x) => codeFacts(x, "worker", { deliverable: ["plan_write once (every question, the files you change, a row per done line); change no file."] }),
     after: (x) => { if (!x.ctx.plan || x.ctx.plan.round !== x.visit) throw new Error("the worker did not write a plan"); if (git(shellOk(x), ["status", "--porcelain"]).out) throw new Error("a plan round must not change files"); x.rn.note = `${x.ctx.plan.rows.length} rows, ${x.ctx.plan.questions.length} questions`; return "ok"; },
   };
   engine.modes["plan-accept"] = {
@@ -820,6 +852,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
         if (dec === "accept") writeFileSync(join(x.dir, "plan-accept.json"), JSON.stringify(x.ctx.planDecision, null, 1)); x.save(); return { ok: true }; } }], maxTools: 20,
     system: (x, skill) => `${skill}\n\nYou are the coordinator (firstmate). A worker sent a plan for a one-way change. Answer every question from the spec and the code, then accept it with plan_decision; send it back if a done line has no test that fails on base; escalate if an answer would change the spec's scope. Answer in one line.`,
     prompt: (x) => `PLAN DECISION\nRun ${x.run.id}\n${amendmentsSection(engine.amendments(x.run))}${specMd(x.ctx.spec)}\n\nThe plan (round ${x.ctx.plan?.round}, head ${x.ctx.head}):\n${JSON.stringify(x.ctx.plan, null, 1)}`,
+    skeleton: (x) => codeFacts(x, "coordinator", { deliverable: ["plan_decision once: accept with every answer, revise with what to change, or escalate when an answer changes scope; then one line."] }),
     after: (x, job) => { const d = x.ctx.planDecision; if (!d || d.round !== x.ctx.plan?.round) throw new Error("the coordinator did not decide on the plan"); d.by = `${job.provider}·${job.model}`;
       if (d.accept) writeFileSync(join(x.dir, "plan-accept.json"), JSON.stringify({ ...d, signed: `plan-accept round ${d.round} head ${d.head} by ${d.by}` }, null, 1));
       x.rn.note = d.accept ? `accepted (round ${d.round}, head ${String(d.head).slice(0, 8)}), ${d.answers.length} answers` : `${d.decision}: ${d.note}`; return d.decision; },
@@ -909,7 +942,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
             return { status:'executed',target,command,base:x.ctx.baseCommit,head:tree.head,dirty:tree.dirty,tree:tree.tree,exit: r.timedOut ? null : r.code, timedOut: r.timedOut, evidence:evidence?{seq:evidence.seq,sig:evidence.sig}:null,tail }; }
     },
     system: (x, skill) => workerRuntimeRules(x.ctx.reportOnly?.build ? `${skill}\n\nREPORT ONLY: your code from the last round is kept. Do not change any file. Read what you need and call worker_report once with a complete report, then one line.`
-      : `${skill}\n\nYou build ONE change in the run's worktree with the fs_* tools (no shell; run_tests runs the repository's tests). Stay inside the spec's scope. Each done line needs a test that fails without your change. Use run_tests({files:["test/x.test.ts"],target:"base"}) with repo-relative paths for candidate fail-first tests on base source (your candidate test files over base source) and target:"head" on the implementation; a run that executes no tests is reported as no-tests, never a pass. You get ${WORKER_TEST_RUNS} executed runs per round and each result says how many remain: keep one for the final check after your last fix. Use runner:"npm-test" when literal npm test evidence is required; it runs the whole unchanged base package.json test script and skips pre/post hooks. Use evidenceDir for screenshots inside approved validation paths. Tests can import the host browser library through PLAYWRIGHT_MODULE and write to CREW_TEST_OUTPUT_DIR. No test command means not-run, not a reason to HOLD. Studio commits your work; you never commit. Tool budget: 180 calls. Use at most 60 read/search calls before implementation; reserve calls for edits, verification and worker_report. Prefer targeted reads over whole files. Do not spend the full budget exploring. End with worker_report, then one line.`),
+      : `${skill}\n\nYou build ONE change in the run's worktree with the fs_* tools (no shell; run_tests runs the repository's tests). Stay inside the spec's scope. Each done line needs a test that fails without your change. How to test, the run budget, the browser library and the read caps: the brief's TOOLS, TESTS and DEPENDENCIES sections (operating manual, code-firstmate/worker). Studio commits your work; you never commit. End with worker_report, then one line.`),
     prompt: (x) => {
       const wt = shellOk(x); const h = head(wt); x.ctx.head = h;
       mkdirSync(join(x.dir, "briefs"), { recursive: true });
@@ -925,13 +958,14 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       const conflictNote = conflicts.length ? `REBASE CONFLICTS (resolve these before anything else)\nThe base moved and this task's branch is being rebased onto it. Resolve these files first (keep both sides' intent, remove every conflict marker), then continue the task. Studio finishes the rebase and commits.${conflicts.some(c => c.binary) ? " A binary conflict cannot be resolved with the fs tools: leave it as it is; Studio hands it to the captain." : ""}\n${conflicts.map(c => `- ${c.path}${c.binary ? ` (binary: base side ${String(c.ours ?? "deleted").slice(0, 12)}, task side ${String(c.theirs ?? "deleted").slice(0, 12)})` : ""}\n  base side: ${c.base.join("; ") || "(none listed)"}\n  task side: ${c.task.join("; ") || "(none listed)"}`).join("\n")}\n` : "";
       let notes: string[] = []; try { notes = overlapNotes(x.ctx.spec?.scope ?? [], scopeBlockers(engine, x.run)); } catch {} // informational: never stops a brief
       const overlap = notes.length ? `\nOTHER TASKS ON THESE PATHS (informational; nothing waits for them):\n${notes.map(n => `- ${n}`).join("\n")}\n` : "";
-      const text = `BUILD ROUND\nRun ${x.run.id} · round ${x.visit} · head ${h} · branch ${x.ctx.branch}\n${conflictNote}${amend}${specMd(x.ctx.spec)}${plan}${facts}${fix}${ro}${conflictNote ? "" : rebaseNote}${overlap}\nStart with fs_list.${x.run.text.includes("STUB_") ? `\n\nIntent notes:\n${x.run.text}` : ""}` + engine.failureBrief(x);
+      const text = `BUILD ROUND\nRun ${x.run.id} · round ${x.visit} · head ${h} · branch ${x.ctx.branch}\n${conflictNote}${amend}${specMd(x.ctx.spec)}${plan}${facts}${fix}${ro}${conflictNote ? "" : rebaseNote}${overlap}\nStart with fs_list.${x.run.text.includes("STUB_") ? `\n\nIntent notes:\n${x.run.text}` : ""}\n${engine.briefSkeleton(x, "build")}` + engine.failureBrief(x);
       let prev: any = null; try { prev = JSON.parse(readFileSync(briefFile(x), "utf8")); } catch {}
       if (prev && prev.head !== h) x.log(`round ${x.visit} brief rebound from ${String(prev.head).slice(0, 8)} to ${h.slice(0, 8)}`);
       writeFileSync(briefFile(x), JSON.stringify({ run: x.run.id, round: x.visit, head: h, branch: x.ctx.branch, brief: text }, null, 1));
       x.rn.data.report = null;
       return text;
     },
+    skeleton: (x) => codeFacts(x, "worker", { runs: x.ctx.reportOnly?.build ? undefined : WORKER_TEST_RUNS, deliverable: [x.ctx.reportOnly?.build ? "worker_report once with a complete report; change no file." : "The change in the worktree, inside the spec's scope; Studio commits it after the round.", "worker_report once (marker, each done line's test and what ran), then one line."] }),
     handoffState: (x) => { try { return "```\n" + git(shellOk(x), ["status", "--short"]).out + "\n" + git(x.ctx.worktree, ["diff", "--stat"]).out + "\n```"; } catch { return "(no worktree)"; } },
     after: (x, job) => {
       const b = JSON.parse(readFileSync(briefFile(x), "utf8"));
@@ -1169,6 +1203,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
         x.rn.data.verdict = { verdict: a.verdict === "APPROVE" ? "APPROVE" : "REJECT", findings: f, followups: (a.followups ?? []).map(String).slice(0, 8), mode: depth.mode, notCovered, ...(superseded.length ? { superseded } : {}) }; x.save(); return { ok: true, notCovered }; } }]; },
     // the tool budget follows the plan: every required read twice over (ranges), the run tools, the verdict, room to look around
     maxTools: (x: X) => 2 * (x.rn.data.plan?.requiredCost ?? readBudget(x)) + 30,
+    skeleton: (x: X) => { const f = codeFacts(x, "reviewer", { deliverable: ["Read every file the read plan lists, then review_verdict once (each finding with a file path and line).", `Last line: APPROVE:${x.run.id} or REJECT:${x.run.id}.`] });
+      return { ...f, TESTS: [`Review mode: ${reviewMode(x)}${reviewMode(x) === "run" ? " (run at least one verification before the verdict)" : " (nothing runs: judge by reading)"}; read budget ${readBudget(x)} reads.`, ...(f.TESTS ?? [])] }; },
     system: (x, skill) => `${skill}\n\nYou review one change with a fresh context in ${reviewMode(x)} mode: you get the spec, the diff, the CI and check results and the fail-first report, never the worker's reasoning, and read-only fs_* tools over a fresh checkout of the head (fs_read shows any file by its type: text, images, PDFs, binaries).${reviewMode(x) === "run" ? " In run mode you also check claims by running: run_tests (the repository's tests) or run_command (a small verification), on a throwaway copy of the head with its dependencies installed, in a sandbox with no network; run at least one before your verdict." : " Diff mode runs nothing: judge by reading."} Read every file the read plan below lists before your verdict; a verdict without that is refused. Call review_verdict once; give every finding a file path and line.${engine.amendments(x.run).length ? " Judge against the spec and the captain's binding changes listed above it: those changes are authorized, and between two the later one wins, so never reject an implementation of the captain's latest word. Where a done line conflicts with a captain change, that line is superseded: judge the change instead and name the line in review_verdict's superseded (done line number and change number)." : ""} Then answer with APPROVE:${x.run.id} or REJECT:${x.run.id} as your last line.`,
     prompt: (x) => {
       const wt = shellOk(x); const h = x.ctx.head ?? head(wt); const plan = x.rn.data.plan ?? { required: [], notRead: [], unreadable: [], budget: readBudget(x) };

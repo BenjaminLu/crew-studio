@@ -36,6 +36,7 @@ import { locatorText, parseFinding, type Finding } from "./locator";
 import { materializeRoundDir, roundWorkPath } from "./round-paths";
 import { composeInstructions, Skills } from "../skills";
 import { OperatingRules, jobInstructions } from "../operating-rules";
+import { composeSkeleton, type SkeletonFacts } from "./brief-skeleton";
 import { clampTitle, deriveTitle } from "../task-title";
 import { ACT, homeless, FailureError, FailureRefusal, changedInputs, codeOf, failure, failureActions, failureCardBody, fromError, inputsHash, parseParamEdit, rescopeRefusal, retryRefusal, type Failure, type FailureCode, type InputSnapshot } from "./failures";
 
@@ -94,6 +95,8 @@ export type AgentMode = {
   onTimeout?(x: X, job: AgentJob): Promise<void> | void;
   /** extra state for a hand-off file (e.g. what the agent changed so far) */
   handoffState?(x: X): string; /** a number, or one worked out for the round (a plan's size) */ maxTools?: number | ((x: X) => number);
+  /** this round's facts for the brief's fixed sections (BRIEFING … DELIVERABLE): test command, dependency state, deliverable; the graph's facts and the manual are added by the engine */
+  skeleton?(x: X): SkeletonFacts | null;
   /** a round that runs in the OS sandbox (architecture §10): the folders the runtime materialized for it */
   sandbox?(x: X): { writes: string[]; reads?: string[]; cwd?: string } | null;
   /** before the round's agent starts (e.g. take its working folder, put it at its durable state); a throw fails the attempt */
@@ -1623,6 +1626,14 @@ export class Engine {
   }
   /** A text-only round's scratch folder: its cwd and the only place it may write. */
   roundScratch(x: X, label = "agent") { const d = this.roundDir(x, "round-scratch", { label }); return { writes: [d], cwd: d }; }
+  /** The brief's six fixed sections for this round: the graph's facts, the mode's preflight facts and the operating manual page. */
+  briefSkeleton(x: X, modeName = x.node.mode ?? ""): string {
+    const mode = this.modes[modeName]; if (!mode) return "";
+    const maxTools = typeof mode.maxTools === "function" ? mode.maxTools(x) : mode.maxTools;
+    return composeSkeleton({ def: x.run.def, node: x.node, visit: x.visit, modeName, tools: mode.tools(x).map((t) => t.name), maxTools: maxTools ?? 60,
+      timeoutS: Number(x.node.timeout_s ?? x.policy("round_timeout_s", 900)) || null, egress: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String).filter(Boolean),
+      facts: mode.skeleton?.(x) ?? null, dataDir: this.deps.dataDir });
+  }
   /** An agent node: one turn of its mode on the picked provider; a swap stops it, writes a hand-off, and starts the new agent from it. */
   async runAgent(x: X, modeName = x.node.mode): Promise<string> {
     const mode = this.modes[modeName ?? ""]; if (!mode) throw new Error(`no agent mode ${modeName}`);
@@ -1654,15 +1665,18 @@ export class Engine {
         if (step) { step.skills = loaded; step.roleSkill = use.roleSkill; x.save(); }
         if (!hop && (loaded.length || use.roleSkill)) x.log(`skills loaded: ${[use.roleSkill ? roleSkillName(use.roleSkill) : null, ...loaded].filter(Boolean).join(", ")}`); }
       const prompt = mode.prompt(x), answer = this.failureBrief(x);
-      const base = prompt + (answer && !prompt.endsWith(answer) ? answer : "");
+      const tools = mode.tools(x), maxTools = typeof mode.maxTools === "function" ? mode.maxTools(x) : mode.maxTools;
+      // every brief ends with the same six sections (a mode that keeps a durable brief, like build, puts them in it itself)
+      const skeleton = this.briefSkeleton(x, modeName), withAnswer = prompt + (answer && !prompt.endsWith(answer) ? answer : "");
+      const base = withAnswer.includes(skeleton) ? withAnswer : `${withAnswer}\n${skeleton}`;
       const text = handoff ? `${base}\n\nHANDOFF\nAnother agent started this step and was stopped. Its hand-off follows; continue from the current state instead of starting over.\n${handoff}` : base;
       x.ctx.lastPrompt = { ...(x.ctx.lastPrompt ?? {}), [x.node.id]: base.slice(0, 6000) };
       const tl = Number(x.node.timeout_s ?? x.policy("round_timeout_s", 900));
       const system = mode.system(x, skill);
       const rules = new OperatingRules(this.deps.dataDir).section(x.run.params?.project || null); // read per round: an edit reaches the next round
       const admissionReceipt=this.deps.instructionReceipt?.(x, x.node.role ?? x.node.args?.role, jobInstructions(system, rules), prov);
-      const job = await this.deps.agents.run({ kind: `run:${modeName}`, title: `${x.run.id} ${x.node.label}${x.visit > 1 ? ` (visit ${x.visit})` : ""}`, system, text, admissionReceipt, tools: mode.tools(x), provider: prov,
-        ref: x.run.id, project: x.run.params?.project || null, rules, receiptFor: (r: any) => this.deps.instructionReceipt?.(x, x.node.role ?? x.node.args?.role, jobInstructions(system, r), prov), queueLease: true, signal: this.abortOf(x.run).signal, owns: () => this.owns(x) && hashInput(x.pick()) === pickIdentity, maxTools: (typeof mode.maxTools === "function" ? mode.maxTools(x) : mode.maxTools) ?? 60, timeoutMs: tl * 1000,
+      const job = await this.deps.agents.run({ kind: `run:${modeName}`, title: `${x.run.id} ${x.node.label}${x.visit > 1 ? ` (visit ${x.visit})` : ""}`, system, text, admissionReceipt, tools, provider: prov,
+        ref: x.run.id, project: x.run.params?.project || null, rules, receiptFor: (r: any) => this.deps.instructionReceipt?.(x, x.node.role ?? x.node.args?.role, jobInstructions(system, r), prov), queueLease: true, signal: this.abortOf(x.run).signal, owns: () => this.owns(x) && hashInput(x.pick()) === pickIdentity, maxTools: maxTools ?? 60, timeoutMs: tl * 1000,
         // a sandboxed round reaches its provider's API, plus the hosts policy egress.allow grants (e.g. a package registry)
         record: (() => { const b = briefFor(x); return { dir: join(this.root, x.run.id, "nodes", x.node.id, String(x.visit)), header: { run: x.run.id, node: x.node.id, round: x.visit, attempt: (x.rn.data.jobs ?? []).filter((j: any) => j.round === x.visit && !j.hop).length + (x.rn.data.interrupted ?? []).filter((j: any) => j.round === x.visit).length + (hop ? 0 : 1), head: x.ctx.head ?? null, brief: b?.id ?? null, ledger: b?.ledger ?? [], hop, mode: modeName, roleSkill: use.roleSkill, skills: use.skills } }; })(),
         sandbox: this.roundSandbox(x, mode.sandbox?.(x) ?? null), onStart: (jid: string) => { x.rn.job = jid; x.save(); this.emit(x.run, "agent_started", `${x.node.label}: ${prov.id} · ${prov.model}`, { node: x.node.id, job: jid, provider: prov.id, model: prov.model }); } } as any);

@@ -125,6 +125,11 @@ export function installCodeDesign(engine: Engine, d: Deps) {
           } } as AgentTool];
     },
     maxTools: (x: X) => designViews(d.dataDir, x, x.rn.data.design?.head ?? "").views.length + 12,
+    skeleton: (x: X) => { const diffOnly = !!x.rn.data.design?.diffOnly, views = diffOnly ? [] : designViews(d.dataDir, x, x.rn.data.design?.head ?? "").views;
+      return { manual: ["code-firstmate/designer"], ENVIRONMENT: [`Captures of head ${String(x.rn.data.design?.head ?? x.ctx.head ?? "").slice(0, 12)}: ${views.length} views${diffOnly ? " (diff only: the repository declares no app)" : ""}.`],
+        TESTS: [`See every listed view with design_view before the verdict: ${views.map((v) => `${v.page} ${v.side}`).join(", ") || "no views"}.`],
+        DEPENDENCIES: ["Studio's browser made the captures before this round; you need nothing installed."],
+        DELIVERABLE: ["design_verdict once: APPROVE, or REJECT with findings (page, element, problem, change).", `Last line: APPROVE:${x.run.id} or REJECT:${x.run.id}.`] }; },
     system: (x: X, skill: string) => `${skill}\n\nYou are the designer reviewer of one UI change, with a fresh context: you get the spec, the captain's notes, the UI diff and the before / after captures of the head, never the worker's reasoning. See every view the prompt lists with design_view (each comes back as a picture), then call design_verdict once: APPROVE, or REJECT with findings (page, element, what is wrong on screen, the exact change). Taste suggestions that do not block stay out of a REJECT. When the prompt says this is a diff-only review (the repository declares no app, so there are no pictures), judge from the diff and say in your last line that you saw no pictures. Then answer with APPROVE:${x.run.id} or REJECT:${x.run.id} as your last line.`,
     prompt: (x: X) => {
       const wt = d.shellOk(x); const h = x.rn.data.design?.head ?? d.head(wt); const sc = x.ctx.designScope ?? {}; const views = sc.diffOnly ? [] : designViews(d.dataDir, x, h).views;
@@ -191,6 +196,8 @@ export function installCodeDesign(engine: Engine, d: Deps) {
         if (route === "escalate" && !["credential-permission", "one-way", "preference"].includes(String(a.why))) return { error: "an escalation names why only the captain can answer: credential-permission, one-way or preference" };
         x.rn.data.gapRoute = { route, reason: String(a.reason ?? "").slice(0, 800), why: route === "escalate" ? String(a.why) : null }; x.save(); return { ok: true }; } } as AgentTool],
     maxTools: 4,
+    skeleton: (x: X) => ({ manual: ["code-firstmate/coordinator"], DEPENDENCIES: [`Capture gap ${x.ctx.designGap?.code ?? "(unknown)"}: ${x.ctx.designGap?.message ?? "no detail"}.`],
+      DELIVERABLE: ["design_gap_route once: recapture, or escalate naming why only the captain can unblock it; then one line."] }),
     system: (_x: X, skill: string) => `${skill}\n\nYou are the coordinator (firstmate). The designer review of a UI change cannot start: the app's captures are missing (a typed env gap). Decide where it goes with design_gap_route, once; the captain sees it only for a credential or permission, a one-way decision or a preference. Then one line.`,
     prompt: (x: X) => { const g = x.ctx.designGap ?? {}; return `DESIGN GAP\nRun ${x.run.id} · head ${g.head ?? x.ctx.head} · code ${g.code}\nFound: ${g.message}\nExpected: ${g.expected}\nMissing:\n${(g.missing ?? []).map((m: string) => `- ${m}`).join("\n")}\nUI paths changed: ${(g.ui ?? []).join(", ")}\n\nRoutes: recapture | escalate (why: credential-permission | one-way | preference)`; },
     after: (x: X) => { const r = x.rn.data.gapRoute; if (!r) throw new Error("firstmate gave no route for the capture gap");

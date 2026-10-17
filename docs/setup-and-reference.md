@@ -321,9 +321,13 @@ bun scripts/live-release.ts stop                   # stop the live release only
   removes the rest as git worktrees. A `releases/<sha>` entry is only used, written
   to or removed when it is a real folder that `git worktree list` registers at
   exactly that path; a symlink or a stray folder is left alone.
-- **"Merge and restart"** now means: merge the PR on GitHub, then
-  `bun scripts/live-release.ts deploy`. It deploys exactly the merged `origin/main`
-  commit, whatever the dev checkout holds.
+- **"Merge and restart"** is the last part of the path every change takes
+  (CONTRIBUTING.md): independent review, rebase onto `origin/main`, the core suites
+  (`bun run test:core`), push the branch, merge the PR on GitHub, then
+  `bun scripts/live-release.ts deploy` once no Task is in flight (`status` lists
+  them; deploy refuses while a step runs), then a live end-to-end check of the
+  workflow the change touches. Deploy uses exactly the merged `origin/main` commit,
+  whatever the dev checkout holds.
 - **Development instance.** The dev checkout can still run its own Studio, on another
   port and another data dir. Environment variables win over `.env`, so:
   `CREW_PORT=4211 CREW_DATA="$HOME/.crew-studio/dev-data" bun run dev`. Never start

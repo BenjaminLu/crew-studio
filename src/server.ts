@@ -46,6 +46,7 @@ import { FmState, type Card, type Ev } from "./fm";
 import { GitHub } from "./github";
 import { Store } from "./store";
 import { TOOLS, toolByName, type ToolCtx } from "./tools";
+import { manualFor } from "./manual";
 import { runChat, MAX_TOOL_CALLS, type Turn } from "./chat";
 import { makeProvider, PROVIDERS, CLI_PROVIDERS, type Provider } from "./providers";
 import { COMPILED, DEFAULT_DATA, SRC_ROOT, helperCommand } from "./self";
@@ -409,7 +410,7 @@ nativeEngineForPolicy = runtime.engine;
 // an agent's question goes to Firstmate first: it answers through studio_answer_agent_question, or escalates to the captain with its reason
 runtime.engine.askFirstmate = (r, node, question, visit) => {
   if (main.view().state === "detached") return false;
-  main.enqueue("wake", `Agent question in Task ${r.id}, step ${node.id} (${node.label}): ${question}\nAnswer it yourself with studio_answer_agent_question {task:"${r.id}", node:"${node.id}", visit:${visit}, answer:"…"}. Escalate to the captain (escalate:"<your reason>") only for a one-way decision, a credential or permission, or a preference you cannot infer. / Task ${r.id} 的 agent 提問：請用 studio_answer_agent_question 自己回答；只有單向決定、憑證或權限、或無法推斷的偏好才轉交船長並寫明理由。${amendmentsNotice(runtime.engine.amendments(r))}`, "studio-native");
+  main.enqueue("wake", `Agent question in Task ${r.id}, step ${node.id} (${node.label}): ${question}\nRead the step's operating manual section first (studio_manual section ${manualFor(r.workflow, node.role ?? node.args?.coordinator)}). Answer it yourself with studio_answer_agent_question {task:"${r.id}", node:"${node.id}", visit:${visit}, answer:"…"}. Escalate to the captain (escalate:"<your reason>") only for a one-way decision, a credential or permission, or a preference you cannot infer. / Task ${r.id} 的 agent 提問：請用 studio_answer_agent_question 自己回答；只有單向決定、憑證或權限、或無法推斷的偏好才轉交船長並寫明理由。${amendmentsNotice(runtime.engine.amendments(r))}`, "studio-native");
   return true;
 };
 runtime.engine.resumeFirstmateQuestions(); // questions pending at the restart: their wake notices died with the old process
