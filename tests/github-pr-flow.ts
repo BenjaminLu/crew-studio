@@ -193,7 +193,8 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
     await E.answer(kc.id, { choice: "close", by: "captain" } as any); await until(() => ["succeeded", "failed"].includes(rk.status), 15000);
 
     // the merge card with no operations grant: the pull request is open; merge it on GitHub (with its link)
-    source = structuredClone(upd.ctx); source.prText = null; // the text gate before the merge is pr-text-stale.ts's; this Task copies another's context
+    // the text gate before the merge is pr-text-stale.ts's; this Task copies another's context (no record of its text), so it is kept out
+    source = structuredClone(upd.ctx); source.prText = { version: 0 };
     const mv = E.start({ workflow: "merge-view", text: "merge view" }); await until(() => !!openCard(mv) || ["succeeded", "failed"].includes(mv.status), 15000);
     const mc = openCard(mv), url = upd.ctx.pr.url;
     ok(mc?.title.en === `Pull request #${upd.ctx.pr.id} is open: merge it on GitHub` && mc.body.includes(`PR #${upd.ctx.pr.id} is open at ${url}; merging from Studio is off, so merge it on GitHub.`) && mc.sections["zh-TW"].why.includes(url) && mc.links.some((l: any) => l.href === url) && !/Remote verification stopped/.test(mc.title.en),

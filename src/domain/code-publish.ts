@@ -287,7 +287,9 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
   const crlf = (v: unknown) => String(v ?? "").replace(/\r\n?/g, "\n");
   const liveDigest = (l: { title: string; body: string }) => digest({ title: l.title, body: l.body });
   /** A template pull request Studio published (its text is Studio's to keep current). */
-  const ours = (x: X) => x.ctx.pr?.adapter === "github" && ((x.ctx.prText?.version === 1 && !!x.ctx.prText.template) || x.ctx.prPlain?.version === 1);
+  // every GitHub pull request Studio opened: from a template, without one (prPlain), or without one by an older release (no
+  // prText, no markers: its text is checked as unmarked and rewritten through the update card, never kept)
+  const ours = (x: X) => x.ctx.pr?.adapter === "github" && ((x.ctx.prText?.version === 1 && !!x.ctx.prText.template) || x.ctx.prPlain?.version === 1 || !x.ctx.prText);
   const templated = (x: X) => x.ctx.prText?.version === 1 && !!x.ctx.prText.template;
   /** A pull request without a template: Studio's part is the spec, the door and the rollback, rendered from the final state. */
   function plainInner(x: X): string {
@@ -394,7 +396,9 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
 
   /** remote-ready: a round moved the head (or the text is from an older release, or edited): the same card, once per head. */
   async function refresh(x: X): Promise<Result | null> {
-    if (!ours(x) || x.ctx.remoteUpdatePending) return null;
+    // an older release's pull request without a template is checked before the merge (and on boot), not here: remote-ready
+    // verifies its readiness first
+    if (!ours(x) || !(templated(x) || x.ctx.prPlain?.version === 1) || x.ctx.remoteUpdatePending) return null;
     const pr = x.ctx.pr, r = x.ctx.prRefresh;
     if (r?.head === pr.head && r.decided) return null; // answered at this head; the merge card checks again
     const phase = d.remotePhase(x); phase.assert();

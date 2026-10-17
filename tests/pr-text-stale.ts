@@ -74,6 +74,10 @@ const readyFlow = Y({ id: "stale-ready", name: "Stale ready", roles: [{ id: "coo
 const plainFlow = Y({ id: "plain-flow", name: "Plain flow", roles: [{ id: "coordinator", label: "Coordinator" }],
   nodes: [...nodes.filter((n) => ["seed", "pr-open", "merge-card", "closed"].includes(n.id)), { id: "rescope", kind: "hook", do: "fixture.rescope", label: "Rescope", x: 4, y: 2 }],
   edges: [["seed", "pr-open"], ["pr-open", "merge-card", "ok"], ["pr-open", "closed", "close"], ["merge-card", "rescope", "changes"], ["merge-card", "closed", "close"], ["rescope", "merge-card"]] });
+// a pull request without a template that an older release opened (no markers, no record), whose door flipped to one-way since
+const legacyPlain = Y({ id: "legacy-plain", name: "Legacy plain", roles: [{ id: "coordinator", label: "Coordinator" }],
+  nodes: [...nodes.filter((n) => ["seed", "pr-open", "merge-card", "closed"].includes(n.id)), { id: "legacy", kind: "hook", do: "fixture.legacy-plain", label: "Older release", x: 2, y: 2 }],
+  edges: [["seed", "pr-open"], ["pr-open", "legacy", "ok"], ["pr-open", "closed", "close"], ["legacy", "merge-card"], ["merge-card", "closed", "close"], ["merge-card", "closed", "changes"]] });
 const studioMerge = Y({ id: "stale-studio-merge", name: "Stale Studio merge", roles: [{ id: "coordinator", label: "Coordinator" }],
   nodes: [...nodes.filter((n) => !["remote-ready", "round", "pr-push"].includes(n.id)), { id: "merged", kind: "hook", do: "fixture.merged", label: "Merge", x: 5, y: 0 }, { id: "done", kind: "hook", label: "Done", x: 6, y: 0 }],
   edges: [["seed", "pr-open"], ["pr-open", "r069", "ok"], ["pr-open", "closed", "close"], ["r069", "merge-card"], ["merge-card", "merged", "merge"], ["merge-card", "closed", "close"], ["merge-card", "closed", "changes"], ["merged", "done"]] });
@@ -88,7 +92,7 @@ const finalText = (head: string) => ({ title: "Add euro formatting and EUR switc
   { heading: "Screenshots", text: "The shop views now include the € EUR option." }, { heading: "Risk and rollback", text: "Incorrect amounts or links could show; the acceptance tests cover them." }] });
 
 const install = async (data?: string, with_: GitHubPrAdapter = adapter) => {
-  const H = await harness([flow, readyFlow, studioMerge, plainFlow], data ? { data } : {}), E = H.engine;
+  const H = await harness([flow, readyFlow, studioMerge, plainFlow, legacyPlain], data ? { data } : {}), E = H.engine;
   installCode(E, { dataDir: H.data, projects: new Projects(H.data), adapter: with_ });
   (E.deps.agents as any).run = async (job: any) => { const t = job.tools?.find((t: any) => t.name === "pull_request_text"); if (t) { prompts.push({ system: job.system, text: job.text }); t.run(finalText(/head ([a-f0-9]{40})/.exec(job.text)?.[1] ?? "")); } return { status: "done" }; };
   const evidenceAt = (x: any) => { E.record(x, "check", { check: "firstmate/ci", verdict: "pass", kind: "deterministic", data: { shards: [] } } as any); E.record(x, "check", { check: "firstmate/fail-first", verdict: "pass", kind: "deterministic", proves: R069.proves, data: { applicable: true } } as any); };
@@ -112,6 +116,13 @@ const install = async (data?: string, with_: GitHubPrAdapter = adapter) => {
   // a later round: a new head with its evidence; pr-open pushes it (the text on GitHub stays as it is)
   E.actions["fixture.round"] = (x) => { const h = commit(`${x.ctx.branch} round ${x.visit}`); green(h); x.ctx.head = h; evidenceAt(x); return "ok"; };
   // Studio's merge step, as far as this test goes: what GitHub shows when it runs
+  const OLD_PLAIN = "# Format euro prices\n\nWhat: Euro formatting.\n\n## Door\ntwo-way\n\n## Rollback\nRevert the change to undo it.";
+  E.actions["fixture.legacy-plain"] = (x) => {
+    delete x.ctx.prPlain; x.ctx.pr = { ...x.ctx.pr, body: OLD_PLAIN }; pullOf(x).body = OLD_PLAIN;
+    if (x.run.params.boot) x.ctx.prText = { version: 0 }; // the older release: no text check at all (undone before the restart)
+    x.ctx.door = { door: "one-way", tier: "one-way", reasons: [{ path: "db/migrate.sql", list: "org", glob: "db/**", why: "a schema migration drops a column" }], decidedBy: "classifier" };
+    return "ok";
+  };
   E.actions["fixture.rescope"] = (x) => { x.ctx.door = { door: "one-way", tier: "one-way", reasons: [{ path: "db/migrate.sql", list: "org", glob: "db/**", why: "a schema migration drops a column" }], decidedBy: "classifier" }; return "ok"; };
   E.actions["fixture.merged"] = (x) => { x.ctx.mergedBody = pullOf(x).body; return "ok"; };
   return { H, E };
@@ -285,6 +296,44 @@ try {
       const m2 = openCard(E, r);
       await E.answer(m2.id, { choice: "merge", confirm: "one-way", aligned: [0], by: "captain" } as any); await until(() => ["succeeded", "failed"].includes(r.status), 15000);
       ok(r.status === "succeeded" && /Captain confirmation: confirmed by the captain at \d{4}-/.test(r.ctx.mergedBody ?? "") && patches() === p0 + 1, "the captain's confirmation is in the text on GitHub before the merge step runs", `${r.status} ${patches() - p0} ${(r.ctx.mergedBody ?? "").match(/Captain confirmation: [^\n]*/)?.[0]}`);
+    } catch (e: any) { ok(false, "unexpected error", e.stack?.split("\n").slice(0, 2).join(" ")); } finally { H.stop(); }
+  }
+
+  // ---------- an older release's pull request without a template (no markers, no record): checked before the merge too ----------
+  {
+    const { H, E } = await install();
+    try {
+      const r = E.start({ workflow: "legacy-plain", text: "euro", params: { branch: "crew/legacy-plain" } }); await settle(E, r);
+      const c = openCard(E, r), p0 = patches();
+      ok(c?.title.en === STANDIN(r) && ids(c) === "update-text,changes,close" && /older release of Studio/.test(c.sections.en.why) && c.body.includes("-two-way") && c.body.includes("+one-way") && pullOf(r).body === "# Format euro prices\n\nWhat: Euro formatting.\n\n## Door\ntwo-way\n\n## Rollback\nRevert the change to undo it.",
+        "a pre-upgrade pull request without a template whose door flipped: no 'merge on GitHub', only the update (no Keep), with the door's diff", `${c?.title?.en} ${ids(c)}`);
+      await E.answer(c.id, { choice: "update-text", by: "captain" } as any); await settle(E, r, c.id);
+      const m = openCard(E, r), p = studioParts(pullOf(r).body);
+      ok(patches() === p0 + 1 && p.marked && p.head === r.ctx.head && /## Door\none-way/.test(p.inner) && /Captain confirmation: pending/.test(p.inner) && ids(m) === "confirm-door,changes,close",
+        "Update rewrites it as Studio's part (spec, one-way door, rollback), and the merge on GitHub then asks for the confirmation", ids(m));
+      await E.answer(m.id, { choice: "confirm-door", confirm: "one-way", by: "captain" } as any); await settle(E, r, m.id);
+      const ready = openCard(E, r);
+      ok(/Captain confirmation: confirmed by the captain at/.test(pullOf(r).body) && ready?.options[0]?.label === "Close here (I merge on GitHub)", "after the confirmation the text on GitHub says so, then the card says it is ready", ids(ready));
+      await close(E, r);
+    } catch (e: any) { ok(false, "unexpected error", e.stack?.split("\n").slice(0, 2).join(" ")); } finally { H.stop(); }
+  }
+  {
+    const first = await install(); const data = first.H.data; let runId = "", oldId = "";
+    try {
+      const r = first.E.start({ workflow: "legacy-plain", text: "euro", params: { branch: "crew/legacy-boot", boot: "1" } }); await settle(first.E, r); runId = r.id;
+      const c = openCard(first.E, r); oldId = c?.id;
+      ok(c?.title.en.endsWith("merge it on GitHub"), "the older release raised its merge card over the pre-upgrade text", c?.title?.en);
+      delete r.ctx.prText; first.E.commit(r, "test: a pull request without a template, as the older release left it");
+    } catch (e: any) { ok(false, "unexpected error", e.stack?.split("\n").slice(0, 2).join(" ")); } finally { first.H.stop(); }
+    const { H, E } = await install(data);
+    try {
+      E.load(); const r = E.get(runId)!; await until(() => !E.busy(r.id), 5000);
+      const c = openCard(E, r);
+      ok(c && c.id !== oldId && E.cards.get(oldId).status === "cancelled" && ids(c) === "render-text,changes,close" && c.title.en === STANDIN(r), "on restart that open merge card is replaced by the stand-in, unanswered", ids(c));
+      await E.answer(c.id, { choice: "render-text", by: "captain" } as any); await settle(E, r, c.id);
+      const s = openCard(E, r);
+      ok(ids(s) === "update-text,changes,close" && s.body.includes("+one-way"), "and its 'Write the text again' shows the update first", ids(s));
+      await close(E, r);
     } catch (e: any) { ok(false, "unexpected error", e.stack?.split("\n").slice(0, 2).join(" ")); } finally { H.stop(); }
   }
 
