@@ -50,7 +50,13 @@ export type NodeRun = {
 export type Step = { seq: number; node: string; kind: string; visit: number; state: "running" | "waiting" | "passed" | "failed" | "error" | "interrupted" | "skipped" | "superseded" | "swapped";
   outcome: string | null; startedAt: string; endedAt: string | null; error: string | null; job: string | null; provider: string | null; model: string | null; note: string | null; handoff?: string | null; checks?: { check: string; verdict: string; seq: number }[];
   /** the enabled skills an agent step loaded, as name@vN in order (unit agent-skills) */
-  skills?: string[] };
+  skills?: string[];
+  /** the role skill its latest agent turn received (ref, Studio version, sha256 of the text) */
+  roleSkill?: RoleSkillUse | null;
+  /** the judge calls made for this step's checks, each with the role skill it received */
+  judges?: { check: string; role: string | null; roleSkill: RoleSkillUse | null; skills: string[]; at: string }[] };
+/** Which role skill a turn received: the role, its source ref, Studio's version of it (null when no versioned copy) and the sha256 of the exact text. */
+export type RoleSkillUse = { role: string | null; ref: string | null; version: number | null; sha256: string | null };
 export type RunStatus = "queued" | "running" | "waiting" | "paused" | "succeeded" | "failed" | "cancelled";
 export type Run = {
   id: string; workflow: string; version: number; def: WDef; title: string; text: string; params: Record<string, string>; by: string;
@@ -72,6 +78,8 @@ export type Result = { outcome: string; note?: string | null; cause?: string; fa
 export type X = {
   edgeOwner?: symbol; run: Run; node: WNode; rn: NodeRun; visit: number; engine: Engine; deps: Deps; ctx: Record<string, any>; dir: string;
   log(text: string, data?: any): void; save(): void; cancelled(): boolean; provider(): Provider; pick(): AgentPick; skill(): string; policy(path: string, dflt?: any): any;
+  /** the same instructions as skill(), with which role skill and node skills they carry */
+  skillUse?(): { text: string; roleSkill: RoleSkillUse | null; skills: string[] };
 };
 export type KindHandler = { start(x: X): Promise<Result>; answer?(x: X, card: SCard): Promise<Result> };
 export type AgentMode = {
@@ -101,7 +109,10 @@ export type Body = { title: string; zhTitle?: string; en: Partial<Sections>; zh?
   failure?: Failure | null };
 export type Deps = {
   dataDir: string; agents: Agents; provider: (id?: string, model?: string) => Provider; log: StudioLog; send: (t: string, d: unknown) => void;
-  skillText: (ref: string) => string; defaultProvider: () => AgentPick; [k: string]: any;
+  skillText: (ref: string) => string; defaultProvider: () => AgentPick;
+  /** Studio's versioned copy of a role skill (src/skills.ts current): what the Improve page shows and edits. Null: the source text is used. */
+  roleSkill?: (workflow: string, role: string, ref: string) => { text: string; version: number } | null;
+  [k: string]: any;
 };
 
 const now = () => new Date().toISOString();
@@ -403,7 +414,7 @@ export class Engine {
     x.rn.data.nativeQueueCapability = { version: 1, reason, retryAction: "retry", closeAction: "close" };
     const scope = Array.isArray(x.ctx.spec?.scope) ? x.ctx.spec.scope.map(String) : [];
     const project = this.queueProject(x.run), repo = this.queueRepo(x.ctx.repo) || "artifact workflow"; let dependencies: string[] = []; try { dependencies = this.queueDependencies(x.run); } catch {}
-    const zhReason = /dependency (R-\d+)/.test(reason) ? `依賴 ${/dependency (R-\d+)/.exec(reason)![1]} 尚未取得可驗證的合併證據。` : /scope held by (R-\d+)/.test(reason) ? `範圍與 ${/scope held by (R-\d+)/.exec(reason)![1]} 重疊；必須等待該任務完成可驗證的合併。` : /capacity.*full/.test(reason) ? "目前的實際執行回合已達容量上限。" : /deadline/.test(reason) ? "等待時間已到，請核准重新準備或關閉任務。" : /historical|binding|scope pin|dispatch/.test(reason) ? "此回合缺少有效的核准範圍或依賴綁定；請重新確認範圍並核准準備。" : /capacity|wait_timeout/.test(reason) ? "排隊容量或等待期限設定無效；必須先修正設定。" : /model|effort/.test(reason) ? "已設定的模型或推理強度尚未驗證為可用；請保留設定並先完成驗證。" : /provider|capability|login|quota/.test(reason) ? "目前沒有登入、額度與模型皆完成驗證的可用供應商；回合尚未啟動。" : "回合的執行權或驗證資料尚未確認，不能開始工作。";
+    const zhReason = /dependency (R-\d+)/.test(reason) ? `依賴 ${/dependency (R-\d+)/.exec(reason)![1]} 尚未取得可驗證的合併證據。` : /scope held by (R-\d+)/.test(reason) ? `範圍與 ${/scope held by (R-\d+)/.exec(reason)![1]} 重疊；必須等待該任務完成可驗證的合併。` : /capacity.*full/.test(reason) ? "目前的實際執行回合已達容量上限。" : /deadline/.test(reason) ? "等待時間已到，請核准重新準備或關閉任務。" : /role skill \S+ changed since staffing approval/i.test(reason) ? "角色技能在派工核准後已變更；請先確認新的技能內容，再重新確認人員配置。" : /historical|binding|scope pin|dispatch/.test(reason) ? "此回合缺少有效的核准範圍或依賴綁定；請重新確認範圍並核准準備。" : /capacity|wait_timeout/.test(reason) ? "排隊容量或等待期限設定無效；必須先修正設定。" : /model|effort/.test(reason) ? "已設定的模型或推理強度尚未驗證為可用；請保留設定並先完成驗證。" : /provider|capability|login|quota/.test(reason) ? "目前沒有登入、額度與模型皆完成驗證的可用供應商；回合尚未啟動。" : "回合的執行權或驗證資料尚未確認，不能開始工作。";
     const c = await this.card(x, "scope", { captainOnly: true, title: "Round is not ready", zhTitle: "回合尚未就緒",
       en: { why: reason, how: "Resolve the readiness issue, then approve fresh preparation or close this task.", scope: { in: [...scope, `Project: ${project}`, `Repository: ${repo}`, ...dependencies.map(id => `Dependency: ${id}`)], out: [] } },
       zh: { why: zhReason, how: "先排除等待原因，再核准重新準備；也可以關閉任務。", scope: { in: [...scope, `專案：${project}`, `儲存庫：${repo === "artifact workflow" ? "產物工作流程" : repo}`, ...dependencies.map(id => `依賴：${id}`)], out: [] } },
@@ -509,17 +520,41 @@ export class Engine {
       pick, provider: () => { const p = pick(); return self.deps.provider(p.provider, p.model ?? undefined); },
       policy: (path, dflt) => self.policy(r, path, dflt),
       // the agent's instructions: Studio's safety rules, the role skill, then each enabled skill (pinned by version and hash) under its heading
-      skill: () => self.instructions(r, node.role ?? node.args?.role, node.kind === "agent" && Array.isArray(node.skills) ? node.skills : [], node.kind === "agent" ? node.skill : undefined) };
+      skill: () => self.instructions(r, node.role ?? node.args?.role, self.nodePins(r, node), node.kind === "agent" ? node.skill : undefined),
+      skillUse: () => self.instructionsUse(r, node.role ?? node.args?.role, self.nodePins(r, node), node.kind === "agent" ? node.skill : undefined) };
+  }
+  /** The skills a node's agent turns load: an agent node's own pins; a loop node's own, else those its role's agent nodes pin (its coordinator turns keep them). */
+  nodePins(r: Run, node: WNode): { id: string; v: number; sha256: string }[] {
+    if (Array.isArray(node.skills)) return node.kind === "agent" || node.kind === "loop" ? node.skills : [];
+    if (node.kind !== "loop") return [];
+    const role = node.role ?? node.args?.role; if (!role) return [];
+    return r.def.nodes.filter((n) => n.kind === "agent" && n.role === role).flatMap((n) => n.skills ?? []).filter((p, i, a) => a.findIndex((q) => q.id === p.id) === i);
+  }
+  /** A role's skill text: Studio's versioned copy (the text the Improve page shows and edits) when there is one, else its source. Null: no such role. */
+  roleSkillText(def: WDef, roleId: string | undefined, nodeSkill?: string): { text: string; ref: string; version: number | null } | null {
+    // a node may name its own bundled role skill (the captain's inline choice); never a file path
+    const role = def.roles.find((x) => x.id === roleId);
+    if (typeof nodeSkill === "string" && nodeSkill.startsWith("bundled:workflows/skills/v2/")) return { text: this.deps.skillText(nodeSkill), ref: nodeSkill, version: null };
+    if (!role?.skill) return null;
+    const stored = this.deps.roleSkill?.(def.id, role.id, role.skill);
+    return stored ? { text: stored.text, ref: role.skill, version: stored.version } : { text: this.deps.skillText(role.skill), ref: role.skill, version: null };
   }
   /** The one way an agent's instructions are built (architecture §5): the safety rules, the role's skill, then each pinned skill in order. */
   instructions(r: Run, roleId: string | undefined, pins: { id: string; v: number; sha256: string }[], nodeSkill?: string): string {
+    return this.instructionsUse(r, roleId, pins, nodeSkill).text;
+  }
+  /** The same instructions, with the role skill they carry (ref, version, sha256 of the exact role text) and the node skills as name@vN. */
+  instructionsUse(r: Run, roleId: string | undefined, pins: { id: string; v: number; sha256: string }[], nodeSkill?: string): { text: string; roleSkill: RoleSkillUse | null; skills: string[] } {
     const approved = this.deps.approvedSkill?.(r, roleId);
-    const role = r.def.roles.find((x) => x.id === roleId); let roleText = approved === undefined ? "" : `# Approved native role snapshot\n${approved}\n# End native role snapshot`; // a node may name its own bundled role skill (the captain's inline choice); never a file path
-    const roleSkill = typeof nodeSkill === "string" && nodeSkill.startsWith("bundled:workflows/skills/v2/") ? nodeSkill : role?.skill;
-    if (approved === undefined && roleSkill) { try { roleText = this.deps.skillText(roleSkill); } catch {} }
+    let roleText = approved === undefined ? "" : `# Approved native role snapshot\n${approved}\n# End native role snapshot`;
+    let src: { text: string; ref: string; version: number | null } | null = null;
+    if (approved === undefined) { try { src = this.roleSkillText(r.def, roleId, nodeSkill); roleText = src?.text ?? ""; } catch {} }
+    else { try { src = this.roleSkillText(r.def, roleId); } catch {} }
+    const text = approved ?? src?.text ?? "";
+    const roleSkill: RoleSkillUse | null = text.trim() ? { role: roleId ?? null, ref: src?.ref ?? null, version: src?.version ?? null, sha256: createHash("sha256").update(text).digest("hex") } : null;
     // the library is Studio's skill store under this data folder; an engine built without one (a test, a tool) opens the same store
     if (pins.length && !this.deps.library) this.deps.library = new Skills(this.deps.dataDir, { list: () => [], get: () => null, sourceSkill: () => null } as any);
-    return composeInstructions(roleText, pins.map((p) => ({ id: p.id, v: p.v, body: this.deps.library.body(p.id, p.v, p.sha256) })));
+    return { text: composeInstructions(roleText, pins.map((p) => ({ id: p.id, v: p.v, body: this.deps.library.body(p.id, p.v, p.sha256) }))), roleSkill, skills: pins.map((p) => `${p.id}@v${p.v}`) };
   }
   /** Policy resolution (§6): org → project → workflow version override → run override (only set by a card answer). auth.* never resolves here: see grants. */
   policy(r: Run, path: string, dflt?: any) {
@@ -883,30 +918,48 @@ export class Engine {
     const evidenceJSON=JSON.stringify({ ...input, out: undefined });
     if(evidenceJSON.length>(x.run.def.kind==='coffee-kit'?192000:64000))return {verdict:'error',score:null,findings:[],evidence:[],proves:[],error:'Complete judge evidence exceeds bounded capacity; refusing truncated review'};
     const prompt = `${ref.prompt ?? j.prompt}\n\nInput (JSON):\n${evidenceJSON}`;
+    const role = this.judgeRole(x, man);
     for (let i = votes.length; i < q.of; i++) {
-      const approvedJudge = this.deps.approvedPick?.(x.run, x.node, man.id.includes("designer") ? "designer" : "reviewer");
+      const approvedJudge = this.deps.approvedPick?.(x.run, x.node, role);
       const provider = approvedJudge?.provider ?? vendors[i % vendors.length]; const model = approvedJudge?.model ?? ref.model ?? j.model ?? null;
       let got: any = null;
       const tools: AgentTool[] = [{ name: "judge_report", description: `Your judgement, once: verdict pass, warn or fail, and findings. Every finding MUST carry a typed locator, e.g. {"type":"file","path":"index.html","line":1}, {"type":"text","section":"receipts.site"}, or {"type":"card","field":"staffing"}. type is mandatory. Invalid findings are rejected; correct the payload and call again.`,
         schema: { type: "object", properties: { verdict: { type: "string", enum: ["pass", "warn", "fail"] }, score: { type: "number" }, findings: { type: "array", items: { type: "object", properties: { locator: { type: "object", properties:{type:{type:"string",enum:["file","web","image","timeline","text","card"]},path:{type:"string"},line:{type:"number"},url:{type:"string"},bbox:{type:"array",items:{type:"number"},minItems:4,maxItems:4},from:{type:"number"},to:{type:"number"},section:{type:"string"},field:{type:"string"}},required:["type"] }, message: { type: "string" }, expected: { type: "string" }, class: { type: "string" }, severity: { type: "string", enum: ["blocking", "minor"] } }, required: ["locator", "message", "class"] } } }, required: ["verdict", "findings"] },
         run: (a) => { if(!['pass','warn','fail'].includes(a?.verdict)||!Array.isArray(a?.findings)||a.findings.some((f:any)=>!parseFinding(f,"judge",man.ref)?.locator))return {error:'Every finding needs a message and typed valid locator. Use {type:"file",path:"index.html",line:1} or {type:"text",section:"receipts.site"}; correct and resubmit.'};got = a; return { ok: true }; } }];
-      const selected = this.deps.selectProvider ? await this.deps.selectProvider(x, { provider, model, ...(approvedJudge ? {effort: approvedJudge.effort} : {}) }, { role: man.id.includes("designer") ? "designer" : "judge", explicit: true }) : this.deps.provider(provider, model ?? undefined);
+      const selected = this.deps.selectProvider ? await this.deps.selectProvider(x, { provider, model, ...(approvedJudge ? {effort: approvedJudge.effort} : {}) }, { role: role === "designer" ? "designer" : "judge", explicit: true }) : this.deps.provider(provider, model ?? undefined);
       if (j.distinct_providers && actual.has(selected.id)) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "distinct provider agreement resolved to a duplicate actual vendor", votes };
-      const system = `${this.deps.approvedSkill?.(x.run, man.id.includes("designer") ? "designer" : "reviewer") ?? ""}\n\nYou are a judge for the check "${man.title.en}". Judge only what the input shows. Submit one valid judge_report; if its payload is rejected, correct it before ending. Then answer in one line.`;
+      // a judge's instructions go through the same composer as any agent's: the safety rules, then its role's skill
+      const use = x.run?.def ? this.instructionsUse(x.run, role, []) : { text: composeInstructions("", []), roleSkill: null, skills: [] as string[] };
+      const system = `${use.text}\n\nYou are a judge for the check "${man.title.en}". Judge only what the input shows. Submit one valid judge_report; if its payload is rejected, correct it before ending. Then answer in one line.`;
       const rules = new OperatingRules(this.deps.dataDir).section(x.run?.params?.project || null);
-      const admissionReceipt=this.deps.instructionReceipt?.(x,man.id.includes("designer") ? "designer" : "reviewer",jobInstructions(system, rules),selected);
+      const admissionReceipt=this.deps.instructionReceipt?.(x,role,jobInstructions(system, rules),selected);
       const job = await this.deps.agents.run({ kind: `judge:${man.id}`, title: `${x.run?.id ?? "try"} judge ${man.id} #${i + 1}`, system,
-        text: `JUDGE ${man.id}\n${prompt}`, tools, admissionReceipt, provider: selected, ref: x.run?.id, project: x.run?.params?.project || null, rules, receiptFor: (r: any) => this.deps.instructionReceipt?.(x,man.id.includes("designer") ? "designer" : "reviewer",jobInstructions(system, r),selected), signal: x.run && x.run.id !== "try" ? this.abortOf(x.run).signal : undefined, owns: x.run && x.run.id !== "try" ? () => this.owns(x) : undefined, maxTools: 4, timeoutMs: man.timeout_s * 1000,
+        text: `JUDGE ${man.id}\n${prompt}`, tools, admissionReceipt, provider: selected, ref: x.run?.id, project: x.run?.params?.project || null, rules, receiptFor: (r: any) => this.deps.instructionReceipt?.(x,role,jobInstructions(system, r),selected), signal: x.run && x.run.id !== "try" ? this.abortOf(x.run).signal : undefined, owns: x.run && x.run.id !== "try" ? () => this.owns(x) : undefined, maxTools: 4, timeoutMs: man.timeout_s * 1000,
         sandbox: x.run ? this.roundSandbox(x, null, `judge-${man.id}-${i + 1}`) : { writes: [] } } as any);
       if (job.status !== "done" || !got) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: `tool error: judge ${provider} ${job.status === "done" ? "gave no judgement" : job.error}` };
       if (j.distinct_providers && actual.has(job.provider)) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "distinct provider agreement produced duplicate actual vendor", votes };
       actual.add(job.provider); take(got, `${job.provider}·${job.model}`, { provider: job.provider, model: job.model, job: job.id });
+      this.noteJudge(x, man, role, use);
     }
     const fails = votes.filter((v) => v.verdict === "fail").length;
     const verdict = fails >= q.n ? "fail" : fails > 0 || votes.some((v) => v.verdict === "warn") ? "warn" : "pass";
     const scores = votes.map((v) => v.score).filter((s): s is number => s != null);
     return { verdict, score: scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : verdict === "pass" ? 1 : verdict === "fail" ? 0 : 0.5, findings: votes.filter((v) => v.verdict !== "pass").flatMap((v) => v.findings), evidence: [], proves: [],
       dropped: votes.reduce((n, v) => n + v.dropped, 0), votes: votes.map((v) => ({ by: v.by, verdict: v.verdict, ...(v.provider ? { provider: v.provider, model: v.model, job: v.job } : {}) })) };
+  }
+  /** The role a judged check is judged as: the role its check.yaml names (judge.role), else the role of the node it sits on, else (a node with no role) the designer for a check named for one, else the reviewer. */
+  judgeRole(x: X, man: CheckManifest): string {
+    const declared = man.judge?.role; if (typeof declared === "string" && declared) return declared;
+    const own = x.node?.role ?? x.node?.args?.role;
+    if (own && x.run?.def?.roles?.some((r) => r.id === own)) return own;
+    return man.id.includes("designer") ? "designer" : "reviewer";
+  }
+  /** A judge call on the step it judges: which check, role, role skill and node skills (the run page's Agent rounds panel lists them). */
+  private noteJudge(x: X, man: CheckManifest, role: string, use: { roleSkill: RoleSkillUse | null; skills: string[] }) {
+    if (!x.run?.steps) return;
+    const step = [...x.run.steps].reverse().find((s) => s.node === x.node.id && s.visit === x.visit && s.state !== "superseded"); if (!step) return;
+    step.judges = [...(step.judges ?? []), { check: man.ref, role, roleSkill: use.roleSkill, skills: use.skills, at: now() }].slice(-20);
+    try { this.commit(x.run, "judge"); } catch {}
   }
   /** Workflow hooks at a lifecycle point (after:<node>, after_round, after_merge, on_cancel): reported, never moving the run. */
   async hooksAt(r: Run, node: WNode | null, at: string) {
@@ -1561,10 +1614,13 @@ export class Engine {
     let handoff: string | null = x.rn.data.handoff ?? null;
     for (let hop = 0; hop < 5; hop++) {
       const pickIdentity = !hop && initialPick ? initialPick : hashInput(x.pick());
-      const prov = !hop && initialProvider ? initialProvider : this.deps.selectProvider ? await this.deps.selectProvider(x, x.pick()) : x.provider(); const skill = x.skill();
-      { const loaded = (x.node.kind === "agent" && Array.isArray(x.node.skills) ? x.node.skills : []).map((p) => `${p.id}@v${p.v}`);
+      const prov = !hop && initialProvider ? initialProvider : this.deps.selectProvider ? await this.deps.selectProvider(x, x.pick()) : x.provider();
+      const use = x.skillUse ? x.skillUse() : { text: x.skill(), roleSkill: null, skills: [] }; const skill = use.text;
+      // the step (and the round record's header) names the role skill and the node skills this turn received
+      { const loaded = use.skills;
         const step = [...x.run.steps].reverse().find((s) => s.node === x.node.id && s.state === "running");
-        if (step && loaded.length) { step.skills = loaded; x.save(); if (!hop) x.log(`skills loaded: ${loaded.join(", ")}`); } }
+        if (step) { step.skills = loaded; step.roleSkill = use.roleSkill; x.save(); }
+        if (!hop && (loaded.length || use.roleSkill)) x.log(`skills loaded: ${[use.roleSkill ? roleSkillName(use.roleSkill) : null, ...loaded].filter(Boolean).join(", ")}`); }
       const prompt = mode.prompt(x), answer = this.failureBrief(x);
       const base = prompt + (answer && !prompt.endsWith(answer) ? answer : "");
       const text = handoff ? `${base}\n\nHANDOFF\nAnother agent started this step and was stopped. Its hand-off follows; continue from the current state instead of starting over.\n${handoff}` : base;
@@ -1576,7 +1632,7 @@ export class Engine {
       const job = await this.deps.agents.run({ kind: `run:${modeName}`, title: `${x.run.id} ${x.node.label}${x.visit > 1 ? ` (visit ${x.visit})` : ""}`, system, text, admissionReceipt, tools: mode.tools(x), provider: prov,
         ref: x.run.id, project: x.run.params?.project || null, rules, receiptFor: (r: any) => this.deps.instructionReceipt?.(x, x.node.role ?? x.node.args?.role, jobInstructions(system, r), prov), queueLease: true, signal: this.abortOf(x.run).signal, owns: () => this.owns(x) && hashInput(x.pick()) === pickIdentity, maxTools: (typeof mode.maxTools === "function" ? mode.maxTools(x) : mode.maxTools) ?? 60, timeoutMs: tl * 1000,
         // a sandboxed round reaches its provider's API, plus the hosts policy egress.allow grants (e.g. a package registry)
-        record: (() => { const b = briefFor(x); return { dir: join(this.root, x.run.id, "nodes", x.node.id, String(x.visit)), header: { run: x.run.id, node: x.node.id, round: x.visit, attempt: (x.rn.data.jobs ?? []).filter((j: any) => j.round === x.visit && !j.hop).length + (hop ? 0 : 1), head: x.ctx.head ?? null, brief: b?.id ?? null, ledger: b?.ledger ?? [], hop } }; })(),
+        record: (() => { const b = briefFor(x); return { dir: join(this.root, x.run.id, "nodes", x.node.id, String(x.visit)), header: { run: x.run.id, node: x.node.id, round: x.visit, attempt: (x.rn.data.jobs ?? []).filter((j: any) => j.round === x.visit && !j.hop).length + (hop ? 0 : 1), head: x.ctx.head ?? null, brief: b?.id ?? null, ledger: b?.ledger ?? [], hop, mode: modeName, roleSkill: use.roleSkill, skills: use.skills } }; })(),
         sandbox: this.roundSandbox(x, mode.sandbox?.(x) ?? null), onStart: (jid: string) => { x.rn.job = jid; x.save(); this.emit(x.run, "agent_started", `${x.node.label}: ${prov.id} · ${prov.model}`, { node: x.node.id, job: jid, provider: prov.id, model: prov.model }); } } as any);
       x.rn.data = { ...x.rn.data, jobs: [...(x.rn.data.jobs ?? []), { id: job.id, round: x.visit, hop, provider: job.provider, model: job.model, status: job.status, cost: job.cost, tools: job.tools, error: job.error, operatingRules: job.operatingRules?.hash ?? null }] };
       if (x.cancelled()) throw new Error("cancelled");
@@ -1616,3 +1672,7 @@ export class Engine {
   }
 }
 export { locatorText };
+/** A role skill as one short label: role (ref) vN · sha256 prefix. */
+export function roleSkillName(u: RoleSkillUse): string {
+  return `${u.role ?? "role"}${u.ref ? ` (${u.ref})` : ""}${u.version != null ? ` v${u.version}` : ""}${u.sha256 ? ` · ${u.sha256.slice(0, 12)}` : ""}`;
+}

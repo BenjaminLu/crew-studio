@@ -145,7 +145,10 @@ function viewSkill(arg) {
   const lines = s.text.split("\n");
   return h("div", { class: "page" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, h("a", { href: "#/improve", class: "a3-back" }, T("Improve", "改進")), " · ", `${s.workflow}/${s.role}`),
-      h("p", { class: "run-s", style: "font-size:13px" }, h("span", {}, `v${s.n}`), h("span", {}, T(`${lines.length} lines`, `${lines.length} 行`)), s.source ? h("code", { class: "a3-path" }, s.source) : null)),
+      h("p", { class: "run-s", style: "font-size:13px" }, h("span", {}, `v${s.n}`), s.sha256 ? h("code", { class: "faint" }, s.sha256.slice(0, 12)) : null,
+        s.current != null ? (s.n === s.current ? X.pill("ok", T("Agents receive this text", "agent 收到的就是這份")) : h("span", { class: "faint" }, T(`Agents receive v${s.current}`, `agent 收到的是 v${s.current}`))) : null,
+        h("span", {}, T(`${lines.length} lines`, `${lines.length} 行`)), s.source ? h("code", { class: "a3-path" }, s.source) : null),
+      s.sourceChanged ? h("p", { class: "faint", "data-skill-source-changed": "" }, T("The source changed after this edit was adopted. Agents keep receiving the adopted edit until you change it.", "這份修改採用後，來源又改了。在你改它之前，agent 仍然收到採用的版本。")) : null),
       h("div", { class: "actions" }, s.versions.length > 1 ? h("a", { class: "btn", href: `/api/improve/skills/${s.workflow}/${s.role}/patch`, download: "" }, icon("download", "ic sm"), T("Patch for the source", "給來源的 patch")) : null)),
     h("section", { class: "x-chat card x-pad" }, h("div", { class: "sec-head" }, h("h2", {}, T("Edit with chat", "用對話修改")), h("span", { class: "faint" }, T("An editor agent changes a copy; replay evals run before it is offered.", "編輯 agent 改的是副本；先跑重放評測再交給你。"))),
       h("div", { class: "x-bubbles" }, s.edits.slice(0, 8).reverse().map((e) => h("div", { class: "x-bub" }, h("div", { class: "x-me" }, e.kind === "proposal" ? T(`Retro ${e.retro}: ${e.title}`, `回顧 ${e.retro}：${e.title}`) : e.request),

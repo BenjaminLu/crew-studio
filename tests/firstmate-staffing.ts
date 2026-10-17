@@ -58,11 +58,18 @@ if(process.env.STAFFING_BASE_ENGINE){
   delete node.role;
   const picked=e.deps.approvedPick(run,{...node,role:'worker'});
   ok(picked.provider==='codex'&&picked.model==='chosen-model'&&picked.effort==='high','approved explicit role pick wins over default');
-  ok(e.instructions(run,'worker',[]).includes('# Test skill'),'actual instruction composer receives current workflow skill');e.deps.skillText=()=> '# Updated current skill';ok(e.instructions(run,'worker',[]).includes('# Updated current skill'),'installed skill update is used without staffing reapproval');
+  ok(e.instructions(run,'worker',[]).includes('# Test skill'),'actual instruction composer receives current workflow skill');
+  // A round runs only with the approved role text: a changed skill refuses at round start with a typed failure until staffing is confirmed again.
+  const approvedText=e.deps.skillText;e.deps.skillText=()=> '# Updated current skill';
+  {let thrown:any=null;try{e.instructions(run,'worker',[])}catch(error){thrown=error}
+   const {fromError}=await import('../src/runtime/failures');
+   ok(!!thrown&&/Role skill worker changed since staffing approval/.test(thrown.message)&&thrown.queueRefusal===true&&fromError(thrown).code==='env.skill-changed','changed role skill refuses the round: re-confirm staffing (typed env.skill-changed)',String(thrown?.message));
+   ok(fromError(new Error(String(thrown?.message))).code==='env.skill-changed','the refusal words classify as env.skill-changed too');}
+  e.deps.skillText=approvedText;ok(e.instructions(run,'worker',[]).includes('# Test skill'),'the approved text runs again once the live skill matches the pin');
   const nodeRun=run.nodes[node.id];nodeRun.agent={provider:'claude',model:'different'};
   ok(e.x(run,{...node,role:'worker'},nodeRun).pick().provider==='codex','raw node agent mutation cannot bypass approved role');
   writeFileSync(s.snapshotPath(p,skill.sha256),'altered');
-  ok(e.instructions(run,'worker',[]).includes('# Updated current skill'),'historical skill archive does not override current instructions');e.deps.skillText=()=> '';rejects(()=>e.instructions(run,'worker',[]),'missing current workflow skill refuses execution');
+  ok(e.instructions(run,'worker',[]).includes('# Test skill'),'historical skill archive does not override current instructions');e.deps.skillText=()=> '';rejects(()=>e.instructions(run,'worker',[]),'missing current workflow skill refuses execution');
   await e.cancel(run.id,'fixture complete');
  }finally{h.stop();rmSync(h.data,{recursive:true,force:true})}
  console.log(`staffing total: ${n} passed`);
@@ -356,8 +363,9 @@ if(process.env.STAFFING_CONVERSATION==='1'){
    await until(()=>h.agents.queue.snapshot().pending.length===1);ok(starts===0,`${kind}/${mode}/${drift}: queue blocks provider.start`);
    if(drift==='config')store.approve(draft,config.hash,{run:'source',card:'captain-new',answerSeq:2});if(drift==='skill')e.deps.skillText=()=> 'Changed native skill';if(drift==='snapshot')writeFileSync(store.snapshotPath(project,config.roles[role].skill.sha256),'Tampered approved snapshot');if(drift==='missing-source')e.deps.skillText=()=> '';if(drift==='project')validProject=false;if(drift==='provider')provider.model='wrong-model';
    unblock();const result=await pending;
-   if(drift==='none'||drift==='skill'||drift==='snapshot')ok(starts===1&&'job'in result&&result.job.status==='done'&&payloads[0]===jobInstructions(system,rules),`${kind}/${mode}: ${drift}: prepared invocation reaches actual start payload without historical skill pinning`);else ok(starts===0&&'error'in result,`${kind}/${mode}/${drift}: drift after queue produces zero provider.start`);
-   if(mode==='refreshed'&&(drift==='none'||drift==='skill'||drift==='during-refresh'))ok(refreshes===1,`${kind}/${drift}: actual expired certificate refresh path exercised`);
+   // a live role skill that drifts from the approved pin while the job waits refuses its launch (env.skill-changed), like any other drift
+   if(drift==='none'||drift==='snapshot')ok(starts===1&&'job'in result&&result.job.status==='done'&&payloads[0]===jobInstructions(system,rules),`${kind}/${mode}: ${drift}: prepared invocation reaches actual start payload without historical skill pinning`);else ok(starts===0&&'error'in result,`${kind}/${mode}/${drift}: drift after queue produces zero provider.start`);
+   if(mode==='refreshed'&&(drift==='none'||drift==='during-refresh'))ok(refreshes===1,`${kind}/${drift}: actual expired certificate refresh path exercised`);
    releaseOwner();await until(()=>run.status==='succeeded');
   }finally{releaseOwner();for(const run of e.list())if(!['succeeded','failed','cancelled'].includes(run.status))await e.cancel(run.id,'cleanup');h.stop();rmSync(h.data,{recursive:true,force:true});}
  }

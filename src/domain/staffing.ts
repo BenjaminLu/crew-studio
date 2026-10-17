@@ -5,6 +5,7 @@ import {join,resolve,relative,sep} from 'node:path';
 import {ledgerKey} from '../runtime/checks';
 import {QueueRefusal} from '../runtime/queue';
 import {jobInstructions} from '../operating-rules';
+import {failure} from '../runtime/failures';
 export function nativeStaffingSkillRef(role:string,workflow='code-firstmate'):string{
  const names:Record<string,string>=workflow==='coffee-kit'?{worker:'website','image-worker':'image',reviewer:'reviewer',designer:'designer'}:workflow==='code-firstmate'?{coordinator:'firstmate',worker:'worker',reviewer:'reviewer',designer:'designer'}:{};
  if(!Object.hasOwn(names,role))throw new Error('Unknown native staffing workflow or role');
@@ -101,16 +102,19 @@ export function signedStaffingBinding(engine:import('../runtime/engine').Engine,
 }
 export function installStaffingGuard(engine:import('../runtime/engine').Engine,store:StaffingStore,resolveProject:(id:string)=>StaffingProject,verifyCapability?:(config:StaffingConfig)=>void){
  const applies=(def:any)=>def?.id==='code-firstmate'||def?.kind==='coffee-kit';
- function currentSkill(def:any,id:string){const role=def.roles.find((r:any)=>r.id===id);const source=role&&engine.deps.skillText(role.skill);if(typeof source!=='string'||!source.trim())throw new Error('Current workflow role skill is missing');return source;}
+ // The role text agents receive now: Studio's versioned copy (what the Improve page shows and edits), else the source.
+ function currentSkill(def:any,id:string){const source=engine.roleSkillText(def,id)?.text;if(typeof source!=='string'||!source.trim())throw new Error('Current workflow role skill is missing');return source;}
+ // A round runs only with the role text the captain approved: a changed skill (a pack update, an adopted edit) refuses at round start until staffing is confirmed again.
+ function pinnedSkill(def:any,id:string,pin:SkillPin){const text=currentSkill(def,id),sha=createHash('sha256').update(text).digest('hex');if(sha!==pin.sha256)throw new SkillChanged(id,pin.sha256,sha);return text;}
  function verifyStored(def:any,params:Record<string,string>){
   const project=def.kind==='coffee-kit'?coffeeStaffingProject(params.project):resolveProject(params.project);const config=store.current(project);
   if(params._staffing!==config.hash||config.workflow.id!==def.id||config.workflow.version!==def.version||config.workflow.sha256!==staffingHash(def))throw new Error('Staffing approval missing or changed; confirm project role configuration / 派工配置尚未核准或已變更，請確認各角色配置');
   const required=def.roles.map((r:any)=>r.id);
   if(required.some((id:string)=>!config.roles[id]))throw new Error('Approve every workflow role before dispatch');
-  for(const[id,pick]of Object.entries(config.roles)){const role=def.roles.find((r:any)=>r.id===id);if(!role||role.skill!==nativeStaffingSkillRef(id,def.kind==='coffee-kit'?'coffee-kit':def.id)||role.skill!==pick.skill.ref)throw new Error('Approved role skill differs from workflow policy');currentSkill(def,id);}
+  for(const[id,pick]of Object.entries(config.roles)){const role=def.roles.find((r:any)=>r.id===id);if(!role||role.skill!==nativeStaffingSkillRef(id,def.kind==='coffee-kit'?'coffee-kit':def.id)||role.skill!==pick.skill.ref)throw new Error('Approved role skill differs from workflow policy');pinnedSkill(def,id,pick.skill);}
   return config;
  }
- function verified(def:any,params:Record<string,string>){try{return verifyStored(def,params)}catch(error){throw new QueueRefusal('Staffing approval requires confirmation: '+String((error as any)?.message??error));}}
+ function verified(def:any,params:Record<string,string>){try{return verifyStored(def,params)}catch(error){const refusal=new QueueRefusal('Staffing approval requires confirmation: '+String((error as any)?.message??error));if(error instanceof SkillChanged)(refusal as any).failure=failure('env.skill-changed',error.message,{source:'staffing'});throw refusal;}}
  const previousStart=engine.deps.authorizeStart;
  engine.deps.authorizeStart=(def:any,o:any)=>{previousStart?.(def,o);if(applies(def)){const config=verified(def,o.params??{});verifyCapability?.(config);}};
  const previousInitialize=engine.deps.initializeRun;
@@ -138,5 +142,7 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
  return{applies,verified};
 }
 
+/** The live role text no longer matches the sha256 the captain approved for that role. */
+export class SkillChanged extends Error{constructor(readonly role:string,readonly approved:string,readonly current:string){super(`Role skill ${role} changed since staffing approval (approved ${approved.slice(0,12)}, now ${current.slice(0,12)}); re-confirm staffing to approve the new text / 角色 ${role} 的技能在派工核准後已變更，請重新確認派工配置`);}}
 export type StaffingInterview={schema:1;project:StaffingProject;workflow:{id:string;version:number;sha256:string};roles:string[];choices:Record<string,{provider?:string;model?:string;effort?:string|null}>;round:number;lastTurn:string|null};
 export function staffingFrontier(interview:StaffingInterview){return interview.roles.flatMap(role=>{const choice=interview.choices[role]??{};return[{role,field:!choice.provider?'provider':!choice.model?'model':!Object.hasOwn(choice,'effort')?'effort':null}].filter(q=>q.field!==null);});}

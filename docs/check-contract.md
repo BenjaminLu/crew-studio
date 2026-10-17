@@ -69,6 +69,7 @@ A human pin or timeline box is stored in the same schema. A worker cannot tell m
 - It must return locators. A judged finding without a locator is dropped.
 - It is never the only blocking check for a done line. To block, it needs `quorum: {n: 2, of: 3}` across independent rounds or vendors.
 - Its prompt and model are pinned in the workflow version, like any param.
+- `judge.role` names the workflow role the judge works as (for example `designer`). Without it, the judge works as the role of the node the check sits on; a node with no role falls back to `designer` for a check named for one, else `reviewer`. The judge's instructions go through the same composer as an agent turn: Studio's safety rules, then that role's skill. Each judge call is listed on its step with the role skill it got (ref, version, sha256).
 - `judge.distinct_providers: true` explicitly requires distinct canonical, actually resolved provider identities. Each vote records `provider`, `model` and its independent owned `job`; aliases or different models of the same provider cannot count as two providers. Unknown/unavailable explicit judges refuse; worker fallback never supplies a judge vote. The flag defaults to false: a declared independent-context quorum can use three fresh rounds from one vendor. Historical votes without measured provider identity cannot satisfy an explicit diversity request.
 
 ## Adapters for existing scripts

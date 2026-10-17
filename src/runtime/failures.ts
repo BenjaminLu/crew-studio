@@ -45,6 +45,8 @@ export const FAILURE_CODES = {
     fix: t("Verify a provider, or pick a model the provider supports.", "請驗證一個供應商，或選一個供應商支援的模型。"), where: t("Settings → Doctor, and the task's staffing", "設定 → Doctor 檢查頁，以及任務的人員配置") },
   "env.staffing": { class: "environment", title: t("Staffing is not ready", "人員配置尚未就緒"), meaning: t("A role of this workflow has no approved provider or model.", "這個工作流程有角色沒有核准的供應商或模型。"),
     fix: t("Approve a provider and model for every role.", "請為每個角色核准供應商和模型。"), where: t("The task's staffing card, or Settings → Staffing", "任務的人員配置卡，或 設定 → 人員配置") },
+  "env.skill-changed": { class: "environment", title: t("A role skill changed after staffing approval", "派工核准後角色技能有變更"), meaning: t("The text of a role skill is not the text you approved for this role. Studio does not start a round with text you did not approve.", "角色技能的內容和你核准的不一樣。Studio 不會用你沒核准的內容開始回合。"),
+    fix: t("Read the new role skill, then confirm the staffing again.", "請先看新的角色技能，再重新確認人員配置。"), where: t("Improve → the role skill, then the task's staffing card", "改進 → 角色技能，再到任務的人員配置卡") },
   "env.renderer": { class: "environment", title: t("The film renderer is not available", "影片渲染工具無法使用"), meaning: t("HyperFrames or its browser is not installed at the pinned version.", "HyperFrames 或它的瀏覽器沒有安裝在指定版本。"),
     fix: t("Install the film renderer, then restart Studio.", "請安裝影片渲染工具，再重新啟動 Studio。"), where: t("Settings → Doctor (HyperFrames)", "設定 → Doctor 檢查頁（HyperFrames）") },
   "env.repository": { class: "environment", title: t("The repository is not usable", "儲存庫無法使用"), meaning: t("The repository, branch or worktree this step needs is missing or cannot be read.", "這一步需要的儲存庫、branch 或 worktree 不存在或無法讀取。"),
@@ -148,6 +150,7 @@ export const TEXT_RULES: { re: RegExp; code: FailureCode }[] = [
   { re: /moved since the (six )?gates ran|remote checks changed before merge|needs the door confirmation|base moved after review|needs explicit recovery/i, code: "deterministic.prepare-again" },
   { re: /identity changed or predates pinning|prepare a new task|approved lane image changed|never replay/i, code: "deterministic.new-task" },
   { re: /\bdiverged: decide\b/i, code: "ask.one-way" },
+  { re: /role skill \S+ changed since staffing approval/i, code: "env.skill-changed" },
   { re: /confirm a fresh proposal|requires confirmation|wait for the captain/i, code: "env.staffing" },
   { re: /\bSCOPE-BLOCKED\b|outside the (spec's )?scope|is outside the scope/i, code: "scope.blocked" },
   { re: /\bscope held by R-\d+|\boverlaps R-\d+/i, code: "scope.overlap" },
@@ -216,7 +219,7 @@ export function fromError(e: unknown, o: { source?: FailureSource; run?: string 
   if (!code && typeof err?.publicFailure?.code === "string") { const byWords = codeOf(message), byCode = codeOf(err.publicFailure.code);
     code = byWords === "deterministic.new-task" || byWords === "deterministic.prepare-again" ? byWords : byCode !== "internal.unmapped" ? byCode : null; }
   if (!code && err?.providerRefusal) code = /quota/i.test(message) ? "env.quota" : /login|sign/i.test(message) ? "env.login" : /fallback chain|must be/i.test(message) ? "invalid-input.config" : "env.provider-unavailable";
-  if (!code && err?.queueRefusal) code = /scope held|overlap/i.test(message) ? "scope.overlap" : /staffing|confirmation/i.test(message) ? "env.staffing" : codeOf(message) === "internal.unmapped" ? "transient.interrupted" : codeOf(message);
+  if (!code && err?.queueRefusal) code = /scope held|overlap/i.test(message) ? "scope.overlap" : codeOf(message) === "env.skill-changed" ? "env.skill-changed" : /staffing|confirmation/i.test(message) ? "env.staffing" : codeOf(message) === "internal.unmapped" ? "transient.interrupted" : codeOf(message);
   if (!code && err?.outcome === "blocked") code = codeOf(message);
   if (!code && err?.name === "HyperframesFailure") code = err.code === "unchanged-inputs" ? "deterministic.unchanged" : err.code === "timeout" ? "transient.timeout" : err.cleanupSafe === false ? "internal.bug" : err.code === "command-failed" || err.diagnostic ? "deterministic.film" : codeOf(message) === "internal.unmapped" ? "deterministic.film" : codeOf(message);
   if (!code) code = codeOf(message);

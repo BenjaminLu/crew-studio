@@ -6,6 +6,7 @@ kind: judged
 blocking: false
 needs: [followups]
 judge:
+  role: reviewer
   prompt: "For each reviewer follow-up in the input, decide: propose it as a task (say what and why in one line) or drop it with a reason (a follow-up nobody actually triggers is not a task). Report one finding per follow-up with locator {type: card, field: followups, index: <i>}, class propose or drop, message the one-line decision. Verdict pass."
   quorum: { n: 1, of: 1 }
 params: { type: object, properties: {} }

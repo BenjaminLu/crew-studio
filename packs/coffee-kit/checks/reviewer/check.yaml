@@ -6,6 +6,7 @@ kind: judged
 blocking: true
 needs: [artifact, coffee_review_snapshot]
 judge:
+  role: reviewer
   prompt: "Review HTML/CSS correctness, stated content, accessible controls and exact dependency bindings against the approved plan. This is TEXT-ONLY evidence: you have not seen rendered pages, image pixels or playback. Never certify visual quality or motion. Report grounded file/text locators. This check decides source correctness only, before the separate captain acceptance card. Missing rendered images, screenshots or playback is an expected scope limitation, not a blocking defect or a reason to fail this check. Report visual quality as unverified; never certify it. Apply generic role visual-inspection guidance only when visual inputs are actually supplied. Preserve historical findings, but classify a prior missing-visual-evidence hold as deferred to captain acceptance, not as a source defect. Concrete unresolved source, accessibility or dependency defects still block. Captain whole-site approval remains mandatory; a captain may explicitly defer visual inspection without claiming it passed."
   quorum: { n: 2, of: 3 }
 params: { type: object, properties: {} }

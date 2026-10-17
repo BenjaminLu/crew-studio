@@ -7,6 +7,7 @@ kind: judged
 blocking: false
 needs: [artifact, screenshots, diff_text]
 judge:
+  role: designer
   prompt: "You are the designer reviewer. For each changed page you get its SSIM between base and head screenshots (1.0 = identical) and the diff. Fail when a page changed visibly in a way the spec does not ask for, or broke (SSIM below 0.5 without a reason in the spec). Each finding needs a locator {type: web, url, selector?, viewport: {w, h}}."
   quorum: { n: 1, of: 1 }
 params:

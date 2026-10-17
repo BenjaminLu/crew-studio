@@ -73,7 +73,7 @@ import { Skins, snapshotFor, nativeSkinData } from "./skins";
 import { bundledText } from "./bundled";
 import { classify, orgDefaults } from "./doors";
 import { installPackGenesis } from "./pack-genesis";
-import { createRuntime, skillTextFor } from "./runtime";
+import { createRuntime } from "./runtime";
 import { amendmentsNotice } from "./runtime/refine";
 import { EXEMPT, guardWrite, hasSession, hasSessionCookie, sessionCookie, sessionToken } from "./csrf";
 import { AttachmentStore, deliveryFor, uploadAttachment } from "./attachments";
@@ -429,7 +429,14 @@ if (process.env.CREW_SANDBOX !== "0") { try { const repo = join(DATA, "demo-repo
   const live = () => runtime.engine.list().filter((r) => !["succeeded", "failed", "cancelled"].includes(r.status) && (r.ctx?.repo ? r.ctx.repo === repo : !r.params?.repo)).map((r) => r.id);
   applySandboxAddons(DATA, { live, log: (m) => studioLog.emit({ type: "sandbox_addition", workflow: "studio", summary: m }) }); } catch (e: any) { console.warn(`crew-studio: sandbox additions: ${e?.message ?? e}`); } }
 // the skill library (unit agent-skills): the v2 workflows' roles are versioned in the same store; its routes are the captain's (cookie + Origin for an import)
-improve.skills.extraSource = (wf, role) => { const r = runtime.defs.get(wf)?.roles.find((x) => x.id === role); if (!r) return null; try { return { text: skillTextFor(dirname(STATE))(r.skill), source: r.skill }; } catch { return null; } };
+improve.skills.extraSource = (wf, role) => { const r = runtime.defs.get(wf)?.roles.find((x) => x.id === role); if (!r) return null; try { return { text: runtime.engine.deps.skillText(r.skill), source: r.skill }; } catch { return null; } };
+// one source of truth for a role's text: rounds (and staffing pins) read Studio's current version, the same text the Improve page shows and edits;
+// a changed source (a pack update) becomes the next version there first, so the page never shows a stale copy
+runtime.engine.deps.roleSkill = (wf, role, ref) => {
+  if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(wf) || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(role)) return null;
+  const cur = improve.skills.current(wf, role, { text: runtime.engine.deps.skillText(ref), source: ref });
+  return { text: cur.text, version: cur.n };
+};
 const skillRoutes = createSkillRoutes({ skills: improve.skills, defs: () => runtime.defs, session: sessionToken(DATA), log: studioLog });
 m7.packs.nativePublished = () => packGenesis.pg.publishedSources();
 m7.useNativeGenesis((description, id, by) => { const task = packGenesis.pg.start(description, id, by); return { id: task.id, task, native: true, link: `#/tasks/${task.id}` }; });

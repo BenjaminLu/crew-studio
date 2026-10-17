@@ -28,7 +28,8 @@ export type CheckManifest = {
   params: Schema; policy_bind: Record<string, string>; timeout_s: number; network: boolean;
   adapter?: { command: string[]; optional?: boolean; pass_on?: number[]; findings_from?: { regex: string; class?: string; severity?: string } } | null;
   native?: string | null; run?: string | null; at?: string | null; proves?: number[] | null;
-  judge?: { prompt: string; provider?: string | null; model?: string | null; quorum?: { n: number; of: number } | null; vendors?: string[] | null; distinct_providers?: boolean; from_node?: string | null } | null;
+  /** role: the workflow role the judge works as (its skill is the judge's role skill); none: the role of the node the check sits on */
+  judge?: { prompt: string; role?: string | null; provider?: string | null; model?: string | null; quorum?: { n: number; of: number } | null; vendors?: string[] | null; distinct_providers?: boolean; from_node?: string | null } | null;
   sample?: any; dir: string; runtime?: "studio" | null;
 };
 export type CheckRef = { use: string; params?: Record<string, any>; blocking?: boolean; quorum?: { n: number; of: number }; proves?: number[]; prompt?: string; model?: string; provider?: string };

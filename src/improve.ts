@@ -253,7 +253,10 @@ export function createImprove(o: { dataDir: string; flows: Workflows; agents: Ag
         const idx = skills.ensure(m[1], m[2]);
         if (m[3]) return new Response(skills.patch(m[1], m[2]) || "# no change from the imported source\n", { headers: { "content-type": "text/plain; charset=utf-8", "content-disposition": `attachment; filename="${m[1]}-${m[2]}.patch"` } });
         const n = url.searchParams.get("v") ? Number(url.searchParams.get("v")) : idx.at(-1)!.n;
-        return json({ workflow: m[1], role: m[2], versions: idx, n, text: skills.text(m[1], m[2], n), source: o.flows.sourceSkill(m[1], m[2])?.source ?? null,
+        // the current version is the text agents receive (Skills.current); sourceChanged: an adopted edit is current and its source moved on since
+        const cur = skills.current(m[1], m[2]);
+        return json({ workflow: m[1], role: m[2], versions: idx, n, current: cur.n, sha256: idx.find((v) => v.n === n)?.sha256 ?? null, sourceChanged: cur.sourceChanged, text: skills.text(m[1], m[2], n),
+          source: o.flows.sourceSkill(m[1], m[2])?.source ?? skills.extraSource?.(m[1], m[2])?.source ?? null,
           edits: list().filter((e) => e.workflow === m![1] && e.role === m![2]).map((e) => view(e)), cases: evals.cases(m[1], m[2]) });
       }
       m = /^\/api\/improve\/evals\/([\w-]+)\/([\w-]+)$/.exec(p);

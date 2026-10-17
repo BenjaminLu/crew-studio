@@ -827,13 +827,19 @@ function buildRunGraph(r,v){
  panel.addEventListener("keydown",e=>{if(e.key==="Escape"&&expanded){e.preventDefault();toggle();}if(e.key==="Tab"&&expanded){const focusable=[...panel.querySelectorAll('button,a,[tabindex="0"]')];if(e.shiftKey&&document.activeElement===focusable[0]){e.preventDefault();focusable.at(-1)?.focus();}else if(!e.shiftKey&&document.activeElement===focusable.at(-1)){e.preventDefault();focusable[0]?.focus();}}});
  requestAnimationFrame(()=>{if(saved)set(saved);else fit();if(v.graphExpanded)toggle(true);});return panel;
 }
-// the agent steps of a run, each with the skills it loaded (name@vN, in order)
+// the agent steps of a run, each with the role skill it received (role, Studio version, short sha256; the ref on hover) and the
+// skills it loaded (name@vN, in order); a step's judge calls follow it, each with the role skill its judge received (a designer judge too)
+const roleSkillBadge = (u, key) => u ? h("span", { class: "vbadge", "data-role-skill": key, title: `${u.ref || ""}${u.sha256 ? ` sha256 ${u.sha256}` : ""}` },
+  `${u.role || T("role", "角色")}${u.ref ? ` · ${u.ref.replace(/^.*\//, "")}` : ""}${u.version != null ? ` v${u.version}` : ""}${u.sha256 ? ` · ${u.sha256.slice(0, 12)}` : ""}`) : h("span", { class: "faint", "data-role-skill": key }, T("no role skill", "沒有角色技能"));
 function stepsCard(r) {
-  const steps = (r.steps || []).filter((st) => st.kind === "agent" && st.state !== "superseded").slice(-30);
+  const steps = (r.steps || []).filter((st) => (st.kind === "agent" || st.roleSkill || (st.judges || []).length) && st.state !== "superseded").slice(-30);
   if (!steps.length) return null;
-  return h("div", { class: "card x-pad" }, h("h3", {}, T("Agent rounds", "Agent 回合")), h("div", { class: "rt-steps" }, steps.map((st) => h("div", { class: "rt-step", "data-step": st.node },
+  return h("div", { class: "card x-pad" }, h("h3", {}, T("Agent rounds", "Agent 回合")), h("div", { class: "rt-steps" }, steps.flatMap((st) => [h("div", { class: "rt-step", "data-step": st.node },
     h("b", {}, st.node), h("span", { class: "faint" }, T(`Round ${st.visit}`, `第 ${st.visit} 回合`)), h("span", { class: `rt-st st-${st.state}` }, st.state), st.provider ? h("span", { class: "faint" }, st.provider) : null,
-    (st.skills || []).length ? h("span", { class: "rt-step-skills", "data-step-skills": st.node, "aria-label": T("Skills loaded", "載入的技能") }, st.skills.map((x) => h("span", { class: "vbadge" }, x))) : null))));
+    st.kind === "agent" || st.roleSkill ? roleSkillBadge(st.roleSkill, st.node) : null,
+    (st.skills || []).length ? h("span", { class: "rt-step-skills", "data-step-skills": st.node, "aria-label": T("Skills loaded", "載入的技能") }, st.skills.map((x) => h("span", { class: "vbadge" }, x))) : null),
+    ...(st.judges || []).map((j) => h("div", { class: "rt-step", "data-step-judge": `${st.node}:${j.check}` }, h("span", { class: "faint" }, "↳"), h("b", {}, T(`Judge ${j.check}`, `評審 ${j.check}`)),
+      roleSkillBadge(j.roleSkill, `${st.node}:${j.check}`), (j.skills || []).length ? h("span", { class: "rt-step-skills" }, j.skills.map((x) => h("span", { class: "vbadge" }, x))) : null))])));
 }
 // one Studio card: the shared component (public/scard.js), mounted once per card and kept across re-renders so the
 // captain's ticks, note and door confirmation survive live updates; the same component serves the run view and the Inbox
