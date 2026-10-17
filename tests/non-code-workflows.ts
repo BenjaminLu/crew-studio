@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { Agents } from "../src/agent";
 import { ArtifactStore } from "../src/artifacts";
 import { probeVideo } from "../src/render";
+import { pdfProbe, pdfShows } from "../src/docrender";
 import { createFileOrg } from "../src/fileorg";
 import { createM3 } from "../src/m3";
 import { Lane } from "../src/recipes";
@@ -188,8 +189,9 @@ const cardId = card?.id; rt = createRuntime(deps); E = rt.engine; card = await w
 ok(card?.id === cardId && card?.detail?.artifactAcceptance?.offered[0].n === 2, "restart keeps the exact waiting acceptance card and offered artifact version");
 if (card) await E.answer(card.id, { choice: "approve-draft", by: "fixture captain", aligned: [0] });
 await until(() => E.get(doc.id)!.status === "succeeded", 10000);
-ok(E.get(doc.id)!.result !== "closed" && E.get(doc.id)!.ctx.library?.version === 2 && E.get(doc.id)!.ctx.exports?.length === 4 && existsSync(join(data, "runs", doc.id, "exports", `${dr.id}-v2.docx`)), "approval publishes only the offered document version and writes all four local exports");
-ok(E.get(doc.id)!.ctx.exportWarnings?.some((w: string) => /PDF.*non-Latin/.test(w)), "local PDF export explicitly reports its non-Latin character limitation instead of claiming faithful output");
+ok(E.get(doc.id)!.result !== "closed" && E.get(doc.id)!.ctx.library?.version === 2 && E.get(doc.id)!.ctx.exports?.slice(0, 3).join() === "md,html,docx" && existsSync(join(data, "runs", doc.id, "exports", `${dr.id}-v2.docx`)), "approval publishes only the offered document version and writes the local exports (the PDF is checked below)");
+{ const ex = E.get(doc.id)!.ctx, pdfFile = join(data, "runs", doc.id, "exports", `${dr.id}-v2.pdf`), md2 = readFileSync(store.file(dr.id, 2, "doc.md")!, "utf8");
+  ok(ex.exports?.includes("pdf") ? existsSync(pdfFile) && pdfShows(readFileSync(pdfFile), pdfProbe(md2)) && !ex.exportWarnings?.length : !existsSync(pdfFile) && ex.exportWarnings?.some((w: string) => /PDF not exported.*page renderer/.test(w)), "the exported PDF shows the document's own text, or there is none and the warning names the missing renderer (never a \"?\" PDF)", JSON.stringify([ex.exports, ex.exportWarnings])); }
 const web = E.start({ workflow: "web-prototype", params: {}, text: "Design fixture variants" }); const wc = await waiting(web.id); await destinations(wc, "web"); const outputs: any[] = Object.values(E.get(web.id)!.ctx.deliver ?? {});
 ok(!!wc && outputs.length === 2 && outputs[0].id !== outputs[1].id && outputs.every(r => store.latest(r.id)?.n === 1), "parallel web producers have isolated artifact identities and version histories");
 ok(outputs.some(r => /Variant A/.test(readFileSync(store.file(r.id, r.n, "index.html")!, "utf8"))) && outputs.some(r => /Variant B/.test(readFileSync(store.file(r.id, r.n, "index.html")!, "utf8"))), "parallel providers actually write their different bounded source files");

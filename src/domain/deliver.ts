@@ -9,7 +9,8 @@ import { folderTools, type AgentTool } from "../agent";
 import { redactText } from "../secure";
 import { websiteHref, type ArtifactStore } from "../artifacts";
 import { bundledList, bundledText } from "../bundled";
-import { mdToDocHtml, toDocx, toPdf } from "../docrender";
+import { mdToDocHtml, toDocx } from "../docrender";
+import { docPdf } from "../docpdf";
 import { frameLuma, probeVideo, requestedSeconds, runRender, renderEnv } from "../render";
 import { imageRefinement, lineageText, requirementLineage } from "./image-refinement";
 import { briefFor } from "../runtime/refine";
@@ -318,10 +319,12 @@ export function installDeliver(engine: Engine, d: Deps) {
       body: `${what[0]} is not installed, so the output cannot be rendered and checked. Install it from Doctor (the source stays; no approval is recorded).`,
       options: [{ id: "retry", label: "Installed: check again", labelZh: "已安裝：重新檢查", primary: true }, { id: "close", label: "Close the task", labelZh: "關閉任務", hold: true }] }; };
   engine.actions["library.publish"] = x => { const a = x.ctx.approved; if (!a || st.version(a.artifact, a.version)?.status !== "approved" || st.verify(a.artifact, a.version).length) throw new Error("no intact pinned approval"); x.ctx.library = { ...a, href: `#/artifact/${a.artifact}` }; return "ok"; };
-  engine.actions["doc.export"] = x => { const a = x.ctx.approved; if (!a) throw new Error("no approved document"); const md = readFileSync(st.file(a.artifact, a.version, "doc.md")!, "utf8"), title = docTitle(md, st.get(a.artifact)!.title); const out = join(x.dir, "exports"); mkdirSync(out, { recursive: true }); const pdf = toPdf(md, title);
-    const bodies: Record<string, any> = { md, html: mdToDocHtml(md, title), docx: toDocx(md, title), pdf: pdf.pdf };
+  engine.actions["doc.export"] = async x => { const a = x.ctx.approved; if (!a) throw new Error("no approved document"); const md = readFileSync(st.file(a.artifact, a.version, "doc.md")!, "utf8"), title = docTitle(md, st.get(a.artifact)!.title); const out = join(x.dir, "exports"); mkdirSync(out, { recursive: true });
+    // the PDF is the previewed page printed, or nothing (with the reason) when it could not show the document's text
+    const pdf = await docPdf(d.dataDir, md, title);
+    const bodies: Record<string, any> = { md, html: mdToDocHtml(md, title), docx: toDocx(md, title), ...(pdf.pdf ? { pdf: pdf.pdf } : {}) };
     for (const [ext, body] of Object.entries(bodies)) writeFileSync(join(out, `${a.artifact}-v${a.version}.${ext}`), body);
-    x.ctx.exports = Object.keys(bodies); x.ctx.exportWarnings = pdf.lossy ? ["PDF uses ? for non-Latin text; use HTML or DOCX to preserve it"] : []; x.rn.note = `exported md, html, docx, pdf${pdf.lossy ? " (PDF character limitation)" : ""}`; return "ok";
+    x.ctx.exports = Object.keys(bodies); x.ctx.exportWarnings = pdf.warning ? [pdf.warning] : []; x.rn.note = `exported ${Object.keys(bodies).join(", ")}${pdf.pdf ? "" : " (no PDF: see the export warning)"}`; return "ok";
   };
   const safePlan = (p: any) => {
     if (!p || p.status !== "planned") throw new Error("no current move plan"); d.fileorg.checkRoot(p.root);

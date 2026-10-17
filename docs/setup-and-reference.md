@@ -545,7 +545,7 @@ A pack is a way of working as data: `manifest.yaml` (id, name, version, descript
 
 ## Documents (M8): Documents page
 
-A document is an artifact whose versions hold `doc.md` and Studio's rendering `doc.html` (one id per block, so pins follow unchanged blocks). It reuses the M3 loop: pin a block, "Request changes" runs the writer (the documents pack's writer skill), compare, approve. A new document can be drafted by the writer from a sentence. Approval passes the pack's gates (a title; no open note). Exports, all written by Studio: Markdown, HTML, Word (.docx), PDF (built-in fonts: non-Latin text becomes "?" and Studio says so; use HTML → print for it).
+A document is an artifact whose versions hold `doc.md` and Studio's rendering `doc.html` (one id per block, so pins follow unchanged blocks). It reuses the M3 loop: pin a block, "Request changes" runs the writer (the documents pack's writer skill), compare, approve. A new document can be drafted by the writer from a sentence. Approval passes the pack's gates (a title; no open note). Exports, all written by Studio: Markdown, HTML, Word (.docx, with East Asian font and language hints for CJK text), PDF (the previewed page printed by the local page renderer, so CJK text prints with the system fonts; a PDF is kept only when it shows the document's first heading. Without the renderer, Latin-only text uses a built-in writer and anything else gets no PDF, with a warning that names the missing renderer, never a PDF of "?").
 
 ## Skins (M4/M5): Skins page
 

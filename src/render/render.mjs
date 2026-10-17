@@ -1,4 +1,4 @@
-// Studio's render helper, run with node (playwright needs it). Five modes:
+// Studio's render helper, run with node (playwright needs it). Six modes:
 //   film  --html F --out OUT.mp4 [--fps 30] [--width 1600] [--workers 4]
 //         an HTML film that defines DUR, render(t), build(), schedule() and #stage (the firstmate
 //         promo film's contract): frames by seeking render(t), audio rendered offline from the page's
@@ -8,6 +8,7 @@
 //         evidence carries a note saying so. No #stage fails fast with code "no-stage".
 //   stills --html F --out DIR --times 1.5,6 [--width 1600]      one PNG per time (A/B compare)
 //   crop  --html F --out OUT.png --selector S | --bbox x,y,w,h [--width 1280]   a web element crop
+//   pdf   --html F --out OUT.pdf      a document page printed to an A4 PDF (scripts off, the page's origin only)
 //   interact --html F --actions JSON [--csp POLICY]   click each named primary action on a fresh load; report whether
 //         the page changed. Its HTML is served with POLICY (the captain's preview-tab sandbox and CSP, from src/render.ts)
 //   page  --root DIR --page NAME --out OUT.png [--width 1280]   a whole page a change built (hostile): served from DIR over
@@ -134,6 +135,15 @@ const inputUrl = inputOrigin ? `${inputOrigin}/${encodeURIComponent(basename(htm
     const pad = 12;
     clip = { x: Math.max(0, clip.x - pad), y: Math.max(0, clip.y - pad), width: Math.max(8, clip.width + pad * 2), height: Math.max(8, clip.height + pad * 2) };
     await p.screenshot({ path: out, clip, fullPage: true });
+    log({ ok: true, out, refused });
+  } else if (mode === "pdf") {
+    // a document page printed as the captain previewed it: scripts off, nothing outside the page's own origin, the
+    // system's fonts (CJK included); the page's own @page rule sets A4 and its margins
+    const ctx = await browser.newContext({ javaScriptEnabled: false, serviceWorkers: "block" });
+    await offline(ctx, inputOrigin);
+    const p = await ctx.newPage();
+    await p.goto(inputUrl); await p.emulateMedia({ media: "print", colorScheme: "light" });
+    await p.pdf({ path: out, format: "A4", preferCSSPageSize: true, printBackground: true, margin: { top: "18mm", bottom: "18mm", left: "16mm", right: "16mm" } });
     log({ ok: true, out, refused });
   } else if (mode === "stills" || mode === "film") {
     const fps = Number(opt("fps", 30));

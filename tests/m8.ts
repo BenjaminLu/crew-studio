@@ -87,8 +87,11 @@ try {
   ok(edocx.type.includes("wordprocessingml") && edocx.buf.subarray(0, 2).toString() === "PK", "export Word (.docx)");
   ok(epdf.type === "application/pdf" && pdfOk(epdf.buf) && !epdf.lossy, "export PDF");
   await post("/api/docs", { id: "cjk-note", title: "Notes", md: "# 會議紀錄\n\n下週再談。\n" });
-  ok((await fetch(`${base}/api/docs/cjk-note/v/1/export?format=pdf`)).headers.get("x-crew-lossy") !== null, "a PDF of non-Latin text says it is lossy");
-  ok((await get("/api/docs")).docs.find((d: any) => d.id === "cjk-note")?.pdfLatinOnly === true, "the list warns before export");
+  // non-Latin text: the previewed page printed by the page renderer (R-073: the built-in fonts wrote "?" for every character)
+  const cjk = await fetch(`${base}/api/docs/cjk-note/v/1/export?format=pdf`), cjkPdf = Buffer.from(await cjk.arrayBuffer());
+  const { pdfShows } = await import("../src/docrender");
+  ok(cjk.status === 200 && cjk.headers.get("content-type") === "application/pdf" && pdfShows(cjkPdf, "會議紀錄") && pdfShows(cjkPdf, "下週再談"), "a PDF of non-Latin text shows that text (printed from the previewed page)", `${cjk.status}`);
+  ok((await get("/api/docs")).docs.find((d: any) => d.id === "cjk-note")?.pdfUnavailable === false, "the list offers the PDF while the page renderer is installed");
   const dr = await post("/api/docs", { id: "weekly-note", title: "Weekly note", prompt: "Summarise this week's shipped work for the team" });
   ok(dr.http === 200 && dr.status === "drafting", "draft a document from a prompt");
   ok(await until(async () => (await get("/api/artifacts/weekly-note")).versions?.length === 1), "the writer's draft becomes v1");

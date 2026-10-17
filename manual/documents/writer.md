@@ -19,7 +19,11 @@
 
 ## Dependencies
 
-- None. Studio renders HTML, DOCX and PDF exports itself after approval.
+- None. Studio renders HTML, DOCX and PDF exports itself after approval. The PDF is the previewed page printed by
+  the local page renderer (a Playwright browser, system fonts, so CJK prints); it is kept only when it shows the
+  document's first heading. Without the renderer, Latin-only text uses a built-in writer and other text gets no PDF
+  (the warning names the missing renderer; Markdown, HTML and Word keep every character).
+- Markdown supported: headings, paragraphs, lists, quotes, fenced code, rules and pipe tables.
 
 ## Deliverable
 

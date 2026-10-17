@@ -9,7 +9,9 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { folderTools, type Agents } from "./agent";
 import type { ArtifactStore } from "./artifacts";
-import { mdToDocHtml, parseBlocks, toDocx, toPdf } from "./docrender";
+import { mdToDocHtml, parseBlocks, toDocx } from "./docrender";
+import { docPdf } from "./docpdf";
+import { renderEnv } from "./render";
 import type { StudioLog } from "./rawlog";
 import type { Skills } from "./skills";
 import type { Provider } from "./providers";
@@ -59,7 +61,7 @@ export function createDocs(o: { dataDir: string; store: ArtifactStore; agents: A
     return [{ id: "has-title", label: "The document starts with a title", state: first?.kind === "h" && first.level === 1 ? "pass" : "fail", detail: first?.kind === "h" ? first.text : "no # title first" },
       { id: "no-open-notes", label: "No note is still open", state: open.length ? "fail" : "pass", detail: open.length ? `${open.length} open: ${open.map((x) => x.id).join(", ")}` : "none open" }];
   }
-  function exportDoc(id: string, n: number, format: string): Response {
+  async function exportDoc(id: string, n: number, format: string): Promise<Response> {
     const a = o.store.get(id); const v = o.store.version(id, n); if (!a || !v || a.source !== "md") return new Response("not found", { status: 404 });
     const md = readFileSync(o.store.mdSource(id, n)!, "utf8");
     const name = `${id}-v${n}`;
@@ -68,7 +70,8 @@ export function createDocs(o: { dataDir: string; store: ArtifactStore; agents: A
     if (format === "md") return send(md, "text/markdown; charset=utf-8", "md");
     if (format === "html") return send(mdToDocHtml(md, a.title), "text/html; charset=utf-8", "html");
     if (format === "docx") return send(new Uint8Array(toDocx(md, a.title)), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx");
-    if (format === "pdf") { const r = toPdf(md, a.title); return send(new Uint8Array(r.pdf), "application/pdf", "pdf", r.lossy ? { "x-crew-lossy": "non-Latin text shown as ?" } : {}); }
+    // the previewed page printed; never a PDF that cannot show the text (409 with the reason instead)
+    if (format === "pdf") { const r = await docPdf(o.dataDir, md, a.title); return r.pdf ? send(new Uint8Array(r.pdf), "application/pdf", "pdf") : new Response(JSON.stringify({ error: r.warning, code: "pdfRenderer" }), { status: 409, headers: { "content-type": "application/json" } }); }
     return new Response(JSON.stringify({ error: "format: md, html, docx or pdf" }), { status: 400, headers: { "content-type": "application/json" } });
   }
 
@@ -80,9 +83,9 @@ export function createDocs(o: { dataDir: string; store: ArtifactStore; agents: A
     let b: any = {}; if (writing) { try { b = await req.json(); } catch {} }
     try {
       if (p === "/api/docs" && !writing) {
-        const docs = o.store.view().filter((a: any) => a.source === "md").map((a: any) => { const last = a.versions.at(-1); let words = 0, lossy = false;
+        const re = renderEnv(), pdfRenderer = !re.stub && !!(re.node && re.playwright); const docs = o.store.view().filter((a: any) => a.source === "md").map((a: any) => { const last = a.versions.at(-1); let words = 0, lossy = false; // non-Latin text: only the page renderer can print it
           try { const md = readFileSync(o.store.mdSource(a.id, last.n)!, "utf8"); words = md.split(/\s+/).filter(Boolean).length; lossy = /[^\u0000-ÿ“”‘’–—…•]/.test(md); } catch {}
-          return { ...a, words, pdfLatinOnly: lossy, openNotes: o.store.notes(a.id, last.n).filter((x) => x.status === "open").length }; });
+          return { ...a, words, pdfUnavailable: lossy && !pdfRenderer, openNotes: o.store.notes(a.id, last.n).filter((x) => x.status === "open").length }; });
         return json({ docs, drafts: [...drafts.values()].filter((d) => d.status !== "done") });
       }
       if (p === "/api/docs" && writing) {
@@ -96,7 +99,7 @@ export function createDocs(o: { dataDir: string; store: ArtifactStore; agents: A
         const id = m[1], n = Number(m[2]); const a = o.store.get(id); if (!a || a.source !== "md" || !o.store.version(id, n)) return json({ error: "no such document version" }, 404);
         if (m[3] === "gates") return json(gates(id, n));
         if (m[3] === "source") return json({ md: readFileSync(o.store.mdSource(id, n)!, "utf8") });
-        if (m[3] === "export") return exportDoc(id, n, url.searchParams.get("format") ?? "md");
+        if (m[3] === "export") return await exportDoc(id, n, url.searchParams.get("format") ?? "md");
         // a startup competition write-up is accepted only on its Task's accept card (export and source stay open)
         if (m[3] === "approve" && writing && isStartupArtifact(id, a)) return json({ error: STARTUP_ACCEPT_ONLY.en, errorZh: STARTUP_ACCEPT_ONLY.zh, code: "startup-accept-card-only" }, 409);
         if (m[3] === "approve" && writing) {
