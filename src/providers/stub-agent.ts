@@ -9,7 +9,8 @@
 //                       text steers them: STUB_FILE <path> :: <content> (\n = newline) is written on
 //                       round 1, STUB_FIX <path> :: <old> => <new> on a fix round, STUB_REJECT in an
 //                       added line makes the reviewer reject, STUB_SLOW makes a build round slow,
-//                       STUB_BLOCKED makes the worker report SCOPE-BLOCKED
+//                       STUB_BLOCKED makes the worker report SCOPE-BLOCKED, STUB_RESOLVE <path> :: <content>
+//                       is what a build round writes to <path> when the brief lists it under REBASE CONFLICTS
 //   DELIVER             writes nothing; with STUB_LINGER in the intent it lists the folder and talks for a minute
 import type { NEvent } from "./types";
 type Call = (name: string, args: any) => AsyncGenerator<NEvent, any>;
@@ -122,6 +123,7 @@ export async function* stubAgent(text: string, call: Call, say: Say): AsyncGener
 }
 
 const stubFiles = (text: string) => [...text.matchAll(/STUB_FILE (\S+) :: (.*)$/gm)].map((m) => ({ path: m[1], content: m[2].replace(/\\n/g, "\n") }));
+const stubResolves = (text: string) => [...text.matchAll(/STUB_RESOLVE (\S+) :: (.*)$/gm)].map((m) => ({ path: m[1], content: m[2].replace(/\\n/g, "\n") }));
 const stubFixes = (text: string) => [...text.matchAll(/STUB_FIX (\S+) :: (.*?) => (.*)$/gm)].map((m) => ({ path: m[1], old: m[2], new: m[3] }));
 async function* runtimeAgent(text: string, call: Call, say: Say): AsyncGenerator<NEvent | "interrupted"> {
   const done = async function* (s: string): AsyncGenerator<NEvent | "interrupted"> { if (!(yield* say(s))) yield "interrupted"; };
@@ -165,6 +167,9 @@ async function* runtimeAgent(text: string, call: Call, say: Say): AsyncGenerator
     if (askAfter && text.replace(/^STUB_ASK_AFTER .*$/m, "").includes(askAfter) && !/^CAPTAIN'S ANSWER$/m.test(text)) { yield* call("worker_report", { marker: "ASK", summary: "Should A1 still hold?", amendment: 1 }); yield* done("ASK"); return; }
     if (round === 1 || !stubFixes(text).length) for (const f of stubFiles(text)) yield* call("fs_write", { path: f.path, content: f.content });
     else for (const f of stubFixes(text)) yield* call("fs_replace", { path: f.path, old: f.old, new: f.new, all: true });
+    // a rebase onto a moved base: write the steered resolution of every conflicting file the brief lists
+    const conflicts = /^REBASE CONFLICTS/m.test(text) ? [...(/^REBASE CONFLICTS[^\n]*\n[^\n]*\n((?:- .*\n(?:  .*\n)*)+)/m.exec(text)?.[1] ?? "").matchAll(/^- (\S+)$/gm)].map((m) => m[1]) : [];
+    for (const path of conflicts) { const r = stubResolves(text).find((f) => f.path === path); if (r) yield* call("fs_write", { path, content: r.content }); }
     yield* call("run_tests", {});
     const noSwept = /STUB_NO_SWEPT/.test(text);
     const classes = [...text.matchAll(/^\d+\. \[([\w.-]+)\]/gm)].map((m) => m[1]);

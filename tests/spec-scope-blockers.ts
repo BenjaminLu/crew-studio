@@ -7,6 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Ledger,hashInput,INPUT_HASH_ALGORITHM} from '../src/runtime/checks';
 import {scopeBlockers,installCodeQueue} from '../src/domain/code-queue';
+import {overlapNotes} from '../src/domain/code';
 import {must,setGitHome} from '../src/git';
 const data=checkedTempDir('crew-spec-blockers-');
 setGitHome(data);
@@ -27,14 +28,20 @@ try {
  let r=run();const missing=join(data,'removed-worktree');
  r.ctx.worktree=missing;r.status='cancelled';assert.deepEqual(blocked(),[],'normal cancelled never-admitted cleanup does not block');
  r.status='waiting';assert.equal(blocked()[0].identityUnavailable,true,'missing live never-admitted worktree fails closed');
- r.status='cancelled';add(r,'scope-admission',pin());assert.equal(blocked().length,1,'terminal cleanup never releases signed reservation');
+ r.status='cancelled';add(r,'scope-admission',pin());assert.deepEqual(blocked(),[],'a cancelled Task releases its signed reservation');
  r=run();assert.deepEqual(blocked(),[],'pristine spec-only peer has no reservation');
  runs=[r,target];target.ctx={...r.ctx};assert.deepEqual(scopeBlockers(engine,r),[],'pristine peer relation is symmetric');runs=[target,r];
  writeFileSync(join(repo,'untracked.txt'),'unexpected');assert.equal(blocked()[0].identityUnavailable,true,'unadmitted dirty worktree fails closed');rmSync(join(repo,'untracked.txt'));
  const reservation=pin();add(r,'scope-admission',reservation);assert.deepEqual(blocked()[0].scope,['file.txt'],'signed active reservation blocks');
- r.status='cancelled';assert.equal(blocked().length,1,'cancelled unmerged reservation is retained');r.status='failed';assert.equal(blocked().length,1,'failed unmerged reservation is retained');
- r.status='succeeded';r.result='done';assert.equal(blocked().length,1,'success cache alone cannot release');
- add(r,'native-merge',{version:1,repo:realpathSync(repo),project:'test',head,base:must(repo,['branch','--show-current'])});assert.deepEqual(blocked(),[],'verified signed merge releases');
+ r.status='cancelled';assert.deepEqual(blocked(),[],'cancelled unmerged Task releases (derived from its state, no release record)');
+ r.status='failed';assert.equal(blocked().length,1,'failed Task awaiting captain recovery keeps its scope');assert.equal(blocked()[0].retained,true,'and is marked as retained for recovery');
+ assert.match(overlapNotes(['file.txt'],blocked())[0],new RegExp(`${r.id} .*also edits file\\.txt; it failed and is kept for captain recovery \\(park or archive ${r.id} to drop it\\)`),'the overlap note says how to release a retained Task');
+ r.parked={by:'captain',at:'now',note:null};assert.deepEqual(blocked(),[],'parking the failed Task releases');r.parked=null;
+ r.archived=true;assert.deepEqual(blocked(),[],'archiving the failed Task releases');r.archived=false;
+ // a run closed without merging before this rule existed (legacy R-058): no release record, its state alone releases
+ r.status='succeeded';r.result='closed';assert.deepEqual(blocked(),[],'legacy closed-without-merge run holds nothing');
+ r.status='running';assert.equal(blocked().length,1,'a continued (reopened) Task counts again');assert.equal(blocked()[0].retained,undefined);
+ r.status='succeeded';r.result='done';add(r,'native-merge',{version:1,repo:realpathSync(repo),project:'test',head,base:must(repo,['branch','--show-current'])});assert.deepEqual(blocked(),[],'merged Task releases');
  r=run();r.ctx.nativeAdmission=pin();assert.equal(blocked()[0].identityUnavailable,true,'cache-only admission is not authority');
  r=run();add(r,'unrelated',{});appendFileSync(new Ledger(data,r.id).file(),'{bad tail\n');assert.equal(blocked()[0].identityUnavailable,true,'untrusted history without reservation anchor fails closed');assert.deepEqual(blocked()[0].scope,[]);
  r=run();const p=pin();const prior=add(r,'scope-admission',p);
@@ -51,5 +58,5 @@ try {
  r.ctx.repo='/forged/repo';r.ctx.project='forged';assert.deepEqual(blocked()[0].scope,['file.txt','extra.txt'],'mutable identity cannot hide trusted reservation');
  // A legitimate different project does not block this project.
  r=run();add(r,'scope-admission',{...pin(),project:'elsewhere'});assert.deepEqual(blocked(),[]);
- console.log('PASS spec-only coexistence, dirty hold, active/terminal scope, signed merge, cache rejection, corrupt-prefix union and identity isolation');
+ console.log('PASS spec-only coexistence, dirty hold, active scope, release on close/cancel/park/archive (legacy too), retained failure, signed merge, cache rejection, corrupt-prefix union and identity isolation');
 } finally {rmSync(data,{recursive:true,force:true});}

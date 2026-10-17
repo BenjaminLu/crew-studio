@@ -54,10 +54,10 @@ try{
  ok(starts.get(r.id)===2&&pin.version===3&&pin.specHash!==prior.specHash&&pin.scope.join()==='new.txt','fresh dispatch admits the new signed scope epoch');
  ok(pin.heldScope.join()==='old.txt,new.txt'&&readFileSync(join(F.H.data,'evidence',r.id,'ledger.jsonl'),'utf8').startsWith(history),'new epoch preserves old scope and signed history bytes');
  ok(trusted.entries.filter(e=>e.record==='local-rescope-request').length===1&&trusted.entries.filter(e=>e.record==='local-rescope-applied').length===1,'one captain decision produces one request and one applied record');
- // Competing native tasks cannot enter either the retired or current scope.
+ // Competing native tasks with the retired or current scope build alongside it: scope never holds.
  for(const scope of ['old.txt','new.txt']){const other=await F.start(false);scopes.set(other.id,scope);if(scope!=='old.txt'){await E.answer((await card(other.id,'dispatch')).id,{choice:'rescope',by:'fixture captain'});await card(other.id,'dispatch');}
-  await E.answer((await card(other.id,'dispatch')).id,{choice:'dispatch',by:'fixture captain'});await until(()=>!!other.nodes.build.data.nativeQueue?.reason,2000);
-  ok(!starts.has(other.id)&&other.nodes.build.data.nativeQueue?.reason?.includes(r.id),'competing '+scope+' remains held by the recovered task');await E.cancel(other.id);
+  await E.answer((await card(other.id,'dispatch')).id,{choice:'dispatch',by:'fixture captain'});await until(()=>starts.has(other.id),5000);
+  ok(starts.has(other.id),'competing '+scope+' is not held by the recovered task');await E.cancel(other.id);
  }
  // Even a correctly signed extra admission is not authorization for scope drift.
  const x=E.x(r,r.def.nodes.find(n=>n.id==='scope-card')!,r.nodes['scope-card']);
@@ -66,10 +66,10 @@ try{
   const altered=structuredClone(pin);if(mutation==='scope')altered.scope=['forged.txt'];else if(mutation==='dependencies')altered.dependencies=['R-999'];else if(mutation==='heldScope')altered.heldScope=['new.txt'];else altered[mutation]=0;
   E.record(x,'scope-admission',{data:altered});let refused=false;try{signedReservation(E,r,E.trusted(r.id));}catch{refused=true;}ok(E.trusted(r.id).ok&&refused,'signed '+mutation+' drift without a new recovery is rejected');writeFileSync(ledger,before);writeFileSync(eventsFile,eventsBefore);
  }
- // A corrupt later tail must not free any scope added by a valid epoch.
+ // A corrupt tail on another Task's ledger does not block an overlapping Task: scope never holds.
  E.record(x,'fixture-tail',{data:{fixture:true}});const corrupted=readFileSync(ledger,'utf8').trim().split('\n'),tail=JSON.parse(corrupted.at(-1)!);tail.sig='0'.repeat(64);corrupted[corrupted.length-1]=JSON.stringify(tail);writeFileSync(ledger,corrupted.join('\n')+'\n');
- const contender=await F.start(false);scopes.set(contender.id,'new.txt');await E.answer((await card(contender.id,'dispatch')).id,{choice:'rescope',by:'fixture captain'});await E.answer((await card(contender.id,'dispatch')).id,{choice:'dispatch',by:'fixture captain'});await until(()=>!!contender.nodes.build.data.nativeQueue?.reason,1000);
- ok(!starts.has(contender.id)&&contender.nodes.build.data.nativeQueue?.reason?.includes('scope identity unavailable'),'corrupt tail preserves verified prior epochs added scope');writeFileSync(ledger,before);writeFileSync(eventsFile,eventsBefore);await E.cancel(contender.id);
+ const contender=await F.start(false);scopes.set(contender.id,'new.txt');await E.answer((await card(contender.id,'dispatch')).id,{choice:'rescope',by:'fixture captain'});await E.answer((await card(contender.id,'dispatch')).id,{choice:'dispatch',by:'fixture captain'});await until(()=>starts.has(contender.id),5000);
+ ok(starts.has(contender.id),'another Task\'s corrupt ledger tail does not block an overlapping Task');writeFileSync(ledger,before);writeFileSync(eventsFile,eventsBefore);await E.cancel(contender.id);
  // Restart from the persisted real run/card/evidence without rebinding admission.
  const restored=new Engine({...E.deps},F.H.defs);installCode(restored,{dataDir:F.H.data,projects:new Projects(F.H.data)});restored.load();
  const restoredRun=restored.get(r.id)!;ok(restored.trusted(r.id).ok&&JSON.stringify(signedReservation(restored,restoredRun,restored.trusted(r.id)).signed)===JSON.stringify(pin)&&restored.cards.list({run:r.id,open:true}).some(c=>c.node==='scope-card'),'restart retains the signed epoch and pending captain handoff',JSON.stringify({trusted:restored.trusted(r.id).ok,pin:signedReservation(restored,restoredRun,restored.trusted(r.id)).signed,expected:pin,cards:restored.cards.list({run:r.id,open:true}),state:restoredRun.status}));

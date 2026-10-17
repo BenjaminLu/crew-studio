@@ -272,6 +272,7 @@ edges:
   - [merge-card, merge, merge]
   - [merge-card, fix, changes]
   - [merge-card, closed, close]
+  - [merge, build, rebase]
   - [merge, after-merge]
   - [after-merge, cleanup]
   - [cleanup, done]

@@ -1,7 +1,6 @@
 // Code admission is a domain adapter; the generic runtime owns job lifetimes.
 import { hashInput, INPUT_HASH_ALGORITHM } from "../runtime/checks";
 import { git } from "../git";
-import { scopesOverlap } from "../runtime/queue";
 import { existsSync } from "node:fs";
 import type { Engine, Run, X } from "../runtime/engine";
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));
@@ -115,23 +114,40 @@ function verifiedMerge(this: Engine, r: Run, expected?: { project: string; repo:
     const h = current.out.trim(); if (!current.ok || !/^[0-9a-f]{40}$/.test(h)) return false;
     return git(d.repo, ["merge-base", "--is-ancestor", d.head, h]).ok;
   }
-export type ScopeBlocker = { run: string; title: string; scope: string[]; identityUnavailable?: boolean };
-/** Read-only reservation projection shared by spec checks and build admission.
- * A spec is not a reservation. Terminal status is not proof of release either.
- * Unknown identity fails closed; only an authenticated prefix can narrow it.
+export type ScopeBlocker = { run: string; title: string; scope: string[]; identityUnavailable?: boolean; retained?: boolean };
+/** A Task's write scope counts as in use while the Task can still write to its
+ * branch. Derived from the run's current lifecycle, never from a record written
+ * at close time, so Tasks that ended before this rule drop out too:
+ * - in flight (queued, running, waiting, paused): in use;
+ * - failed, unarchived and unparked: retained for captain recovery (a retry
+ *   resumes the same worktree);
+ * - succeeded (merged or closed without merging), cancelled, or failed and then
+ *   parked or archived: released. A continuation reopens the run, which counts again.
+ */
+export function reservationLife(r: Run): "held" | "retained" | "released" {
+  if (r.status === "succeeded" || r.status === "cancelled") return "released";
+  if (r.status === "failed") return r.parked || r.archived ? "released" : "retained";
+  return "held";
+}
+/** Read-only projection of the other Tasks writing the same project, for the
+ * spec's overlap note and the build brief. It never holds a Task back: Tasks
+ * build concurrently and each build round rebases onto the current base.
+ * Unknown identity is reported as such; only an authenticated prefix narrows it.
  */
 export function scopeBlockers(engine: Engine, run: Run): ScopeBlocker[] {
   const repo = engine.queueRepo(run.ctx.repo), project = engine.queueProject(run);
   const blockers: ScopeBlocker[] = [];
   for (const other of engine.list()) {
     if (other.id === run.id) continue;
+    const life = reservationLife(other); if (life === "released") continue;
+    const retained = life === "retained" ? { retained: true } : {};
     const records = engine.trusted(other.id), rec = records.entries.filter(e => e.record === "scope-admission").at(-1);
     if (records.ok && !rec && !other.ctx.nativeAdmission) {
       // A clean, never-admitted spec may coexist. Unexpected worktree edits
       // cannot silently acquire or release write authority through this path.
       // Normal terminal cleanup removes a never-admitted worktree but keeps
       // its context for history. No signed reservation exists to retain here.
-      if (["succeeded", "failed", "cancelled"].includes(other.status) && other.ctx.worktree && !existsSync(other.ctx.worktree)) continue;
+      if (other.status === "failed" && other.ctx.worktree && !existsSync(other.ctx.worktree)) continue;
       if (other.ctx.worktree && engine.queueRepo(other.ctx.repo) === repo && engine.queueProject(other) === project) {
         let pristine = false;
         try {
@@ -139,7 +155,7 @@ export function scopeBlockers(engine: Engine, run: Run): ScopeBlocker[] {
           const status = git(other.ctx.worktree, ["--no-optional-locks", "status", "--porcelain=v1", "--untracked-files=all"]);
           pristine = head.ok && status.ok && !status.out && head.out === other.ctx.baseCommit && head.out === other.ctx.head;
         } catch {}
-        if (!pristine) blockers.push({ run: other.id, title: other.title, scope: [], identityUnavailable: true });
+        if (!pristine) blockers.push({ run: other.id, title: other.title, scope: [], identityUnavailable: true, ...retained });
       }
       continue;
     }
@@ -150,11 +166,11 @@ export function scopeBlockers(engine: Engine, run: Run): ScopeBlocker[] {
       if (first && (first.repo !== repo || first.project !== project)) continue;
       // An authenticated prefix bounds unknown authority to its held paths.
       // Preserve those paths rather than trusting a later mutable cache.
-      blockers.push({ run: other.id, title: other.title, scope: first?.scope ?? [], identityUnavailable: true });
+      blockers.push({ run: other.id, title: other.title, scope: first?.scope ?? [], identityUnavailable: true, ...retained });
       continue;
     }
     if (held.repo !== repo || held.project !== project || engine.verifiedMerge(other)) continue;
-    blockers.push({ run: other.id, title: other.title, scope: reservedScope(held) });
+    blockers.push({ run: other.id, title: other.title, scope: reservedScope(held), ...retained });
   }
   return blockers;
 }
@@ -179,10 +195,11 @@ function scopeState(this: Engine, x: X) {
     if (replacement && replacement.specHash !== specHash) throw new Error("accepted dependency/scope binding is unavailable or changed; fresh dispatch required");
     if (pin && !replacement && (!sameReservation || !upgradingLegacy && (![2,3].includes(pin.version) || pin.hashAlgorithm !== INPUT_HASH_ALGORITHM || pin.specHash !== specHash))) throw new Error("native scope pin changed or uses unknown hash algorithm; fresh preparation required");
     for (const id of deps) { const parent = this.get(id); if (!parent || !this.verifiedMerge(parent, { project, repo })) return { ready: false, reason: `dependency ${id} has no verified authoritative merge` }; }
-    for (const blocker of scopeBlockers(this, x.run)) {
-      if (blocker.identityUnavailable && (!blocker.scope.length || scopesOverlap(acceptance.scope, blocker.scope))) return { ready: false, reason: `scope identity unavailable for ${blocker.run}` };
-      if (scopesOverlap(acceptance.scope, blocker.scope)) return { ready: false, reason: `scope held by ${blocker.run} until verified merge` };
-    }
+    // Overlapping scopes never hold a Task back: Tasks on one project build
+    // concurrently like pull requests on one repository. Every build round first
+    // rebases onto the current base, the worker resolves any conflict in that
+    // round, and the merge still requires the head to contain the current base.
+    // Only declared dependencies (above) wait for a verified merge.
     return { ready: true };
   }
 

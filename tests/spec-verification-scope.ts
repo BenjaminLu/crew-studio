@@ -27,9 +27,13 @@ try {
  const native=h.engine.natives.overlap;
  const mine={artifact:{data:{scope:['src/changed.ts']}}};
  assert.equal((await native({...mine,inflight:[]},{} as any)).verdict,'pass');
- assert.equal((await native({...mine,inflight:[{run:'R-active',title:'active',scope:['src/changed.ts']}]},{} as any)).verdict,'fail');
- assert.equal((await native({...mine,inflight:[{run:'R-unknown',title:'unknown',scope:[],identityUnavailable:true}]},{} as any)).verdict,'fail');
- assert.equal((await native({...mine,inflight:[{run:'R-prefix',title:'prefix',scope:['other.ts'],identityUnavailable:true}]},{} as any)).verdict,'pass');
+ // Overlap is informational (Tasks run concurrently and rebase each round): it never fails the spec, it only notes the other Task.
+ const active=await native({...mine,inflight:[{run:'R-active',title:'active',scope:['src/changed.ts']}]},{} as any);
+ assert.equal(active.verdict,'pass');assert.ok(active.findings.length===1&&active.findings[0].severity==='minor'&&/R-active .*also edits src\/changed\.ts/.test(active.findings[0].message));
+ const unknown=await native({...mine,inflight:[{run:'R-unknown',title:'unknown',scope:[],identityUnavailable:true}]},{} as any);
+ assert.equal(unknown.verdict,'pass');assert.ok(unknown.findings.length===1&&unknown.findings[0].severity==='minor');
+ const prefix=await native({...mine,inflight:[{run:'R-prefix',title:'prefix',scope:['other.ts'],identityUnavailable:true}]},{} as any);
+ assert.equal(prefix.verdict,'pass');assert.equal(prefix.findings.length,0);
  // Failed attempts advance visits independently from successful spec versions.
  const retryX:any={...x,visit:8,rn:{},ctx:{...ctx,spec:{...ctx.spec,version:5}}};
  const mode=h.engine.modes.spec;

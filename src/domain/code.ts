@@ -3,7 +3,7 @@ import {selectTestCommand,packageTestCommand,prepareTestBase,testEnvironment,tes
 import {localUnrestricted} from "../local-execution";
 import { codeHandoffView } from "./code-handoff";
 import { installCodeRecovery } from "./code-recovery";
-import { installCodeQueue, scopeBlockers } from "./code-queue";
+import { installCodeQueue, scopeBlockers, type ScopeBlocker } from "./code-queue";
 import { installCodeDesign } from "./code-design";
 import {GitHubPoller} from '../github-poller';
 // The coding pipeline's runtime side (packs/firstmate, docs/code-firstmate-pipeline.md):
@@ -12,7 +12,7 @@ import {GitHubPoller} from '../github-poller';
 // and fix rounds with a local brief bound to round + head, and what the
 // firstmate pack's checks need: the diff, the base tree for fail-first, the
 // repository's declared commands, the gate state. Natives here are checks that
-// read Studio's own state (overlap, door, scope, the six gates). GitHub publication is opt-in through an approved project remote grant.
+// read Studio's own state (overlap, door, scope, the seven gates). GitHub publication is opt-in through an approved project remote grant.
 //   <repo>/.crew/gates.json  {"test": [argv], "lint": [argv], "shards": N, "tests": [globs], "fixture_lists": [paths]}
 //   <repo>/.crew/app.json    {"build": [argv with {out}], "pages": [{label, file}], "paths": [globs]}: an app whose pages
 //                            are captured on the base and the head of a change that touches its paths (before / after)
@@ -121,6 +121,17 @@ export function testFilesOf(wt: string, cfg: RepoCfg): string[] {
 }
 const isDoc = (p: string) => /\.md$/i.test(p) || p.startsWith("docs/");
 export const inScope = (scope: string[], p: string) => scope.some((s) => { const g = String(s).trim().replace(/^\.\//, ""); return !!g && (g === p || (g.endsWith("/") && p.startsWith(g)) || (/[*?]/.test(g) ? matches(g, p) : p.startsWith(g + "/"))); });
+/** "R-0xx also edits src/a.ts; …" for each other in-flight Task whose scope meets this one (informational only). */
+export const overlapNotes = (mine: string[], others: ScopeBlocker[]) => {
+  const out: string[] = [];
+  for (const r of others) {
+    const unknown = !!r.identityUnavailable && !r.scope.length;
+    const shared = unknown ? [] : mine.filter(p => r.scope.some((q: string) => inScope([q], p.replace(/\/$/, "/x")) || inScope([p], q.replace(/\/$/, "/x"))));
+    if (!shared.length && !unknown) continue;
+    out.push(`${r.run} (${r.title}) ${shared.length ? `also edits ${shared.join(", ")}` : "may edit the same files (its reservation history is unavailable)"}${r.retained ? `; it failed and is kept for captain recovery (park or archive ${r.run} to drop it)` : ""}: rebase onto the current base and resolve any conflict`);
+  }
+  return out;
+};
 /** Door: the spec's scope (or a diff) against the sensitive paths of the policy and the org list. */
 export function doorOf(paths: ChangedPath[], sensitive: { glob: string; why: string }[], topLevel?: Set<string>) {
   const d = loadDefaults();
@@ -333,16 +344,12 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       message: g.message, expected: g.expected, class: g.code, severity: "blocking" as const }));
     return { verdict: gaps.length ? "fail" : "pass", score: gaps.length ? 0 : 1, findings, data: { gaps, testing: (() => { const cfg=cfgOf(x); return cfg.testError ? {status:"invalid",reason:cfg.testError} : !cfg.test ? {status:"not-run",reason:cfg.testSkipped} : {status:"configured",command:cfg.test}; })() } } as any;
   };
+  /** Other Tasks writing the same paths, as an informational note only: Tasks build
+   * concurrently, each build round rebases onto the current base and the worker
+   * resolves any conflict there. It never fails the spec, refines it or steps back. */
   engine.natives.overlap = (i) => {
-    const mine: string[] = i.artifact?.data?.scope ?? []; const f: any[] = [];
-    for (const r of i.inflight ?? []) {
-      if (r.identityUnavailable && !r.scope.length) {
-        f.push(F({ type: "text", section: "scope" }, `scope identity for ${r.run} (${r.title}) is unavailable`, `inspect ${r.run}'s signed reservation and worktree; do not take its scope`, "scope-identity-unavailable"));
-        continue;
-      }
-      for (const p of mine) if (r.scope.some((q: string) => inScope([q], p.replace(/\/$/, "/x")) || inScope([p], q.replace(/\/$/, "/x")))) f.push(F({ type: "text", section: "scope" }, `${p} overlaps ${r.run} (${r.title})${r.identityUnavailable ? " (reservation history unavailable)" : ""}`, `wait for ${r.run} or narrow the write scope; read-only callers belong in verificationScope`, "scope-overlap"));
-    }
-    return { verdict: f.length ? "fail" : "pass", score: f.length ? 0 : 1, findings: f };
+    const notes = overlapNotes(i.artifact?.data?.scope ?? [], i.inflight ?? []);
+    return { verdict: "pass", score: 1, findings: notes.map(n => ({ ...F({ type: "text", section: "scope" }, n, "nothing to change: rebase onto the current base each round and resolve any conflict", "scope-overlap-note"), severity: "minor" as const })), data: { notes } } as any;
   };
   /** The door: the spec's scope (and, once code exists, the diff) against the sensitive paths; a captain's pick on the door card wins. data.route picks the edge. */
   engine.natives["door-classify"] = (i, h) => {
@@ -606,8 +613,15 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (x.ctx.project && o.projects.get(x.ctx.project)?.github) throw new Error("remote project has no verified PR; local merge disabled");
     const wt = shellOk(x); const h = head(wt); const repo = x.ctx.repo, base = x.ctx.base;
     if (x.ctx.door?.door === "one-way" && x.ctx.answers?.["merge-card"]?.confirm !== "one-way") throw new Error("a one-way change needs the door confirmation on the merge card");
-    if (x.ctx.gatedHead && h !== x.ctx.gatedHead) throw new Error("the branch moved since the six gates ran");
-    if (!git(repo, ["merge-base", "--is-ancestor", base, h]).ok) throw new Error(`${base} moved since the gates ran: it no longer fast-forwards`);
+    if (x.ctx.gatedHead && h !== x.ctx.gatedHead) throw new Error("the branch moved since the seven gates ran");
+    if (!git(repo, ["merge-base", "--is-ancestor", base, h]).ok) {
+      // The merge stays strict: the head must contain the current base. When the
+      // workflow routes it, a moved base sends the Task to a new build round that
+      // rebases onto it (the worker resolves any conflict), then through the
+      // checks, the gates and the merge card again.
+      if (!x.run.def.edges.some(e => e.from === x.node.id && e.when?.split("|").includes("rebase"))) throw new Error(`${base} moved since the gates ran: it no longer fast-forwards`);
+      x.ctx.gatedHead = null; x.rn.note = `${base} moved since the gates ran: a new build round rebases onto it`; x.save(); return "rebase";
+    }
     const cur = git(repo, ["symbolic-ref", "--short", "HEAD"]).out;
     if (cur === base) { if (git(repo, ["status", "--porcelain", "--untracked-files=no"]).out) throw new Error(`${repo} has uncommitted changes on ${base}`); must(repo, ["merge", "--ff-only", "-q", h]); }
     else must(repo, ["update-ref", `refs/heads/${base}`, h, must(repo, ["rev-parse", base])]);
@@ -654,10 +668,40 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       if(s.head!==rebase.head||x.ctx.pr?.head!==rebase.head)throw new Error("approved rebase head changed");
       const result=W.startNativeRebase(k.project,k.task,rebase.head,rebase.fromBase,rebase.base);rebase.started=true;x.ctx.head=result.head;x.ctx.baseCommit=rebase.base;x.save();
     }
+    const baseRefresh = write && x.node.mode === "build" ? refreshBase(x, s.head) : null;
     const bs = roundBrief(x);
-    engine.record(x, "round-start", { head: s.head, data: { round: x.visit, brief: bs.brief?.id ?? null, ledger: bs.brief?.ledger ?? [], carried: bs.carried, briefMissing: bs.missing, corrected: s.corrected, deps: s.deps.ran?.join(" ") ?? null } } as any);
+    engine.record(x, "round-start", { head: s.head, data: { round: x.visit, brief: bs.brief?.id ?? null, ledger: bs.brief?.ledger ?? [], carried: bs.carried, briefMissing: bs.missing, corrected: s.corrected, deps: s.deps.ran?.join(" ") ?? null, baseRefresh } } as any);
     if (s.corrected) x.log(`round ${x.visit}: ${s.corrected.reason}; ${s.corrected.kept ? `kept on ${s.corrected.kept}` : "nothing to keep"}`);
     } catch (e) { held.delete(holder(x)); s.release(); throw e; }
+  };
+  /**
+   * Every local build round starts on the current base, so Tasks on one project
+   * build concurrently like pull requests and no Task stays pinned to the base it
+   * started on. The task branch is rebased onto the base branch head through the
+   * native rebase (the same path a remote rebase round uses). A conflict neither
+   * fails the Task nor asks the captain: the rebase stays in progress, the brief
+   * opens with REBASE CONFLICTS, the worker resolves them in this round and Studio
+   * continues the rebase after it. A remote PR keeps its own remote rebase path.
+   */
+  const refreshBase = (x: X, start: string) => {
+    if (x.ctx.pr?.adapter === "github" || (x.ctx.project && o.projects.get(x.ctx.project)?.github) || x.ctx.reportOnly?.build) return null;
+    const k = wkey(x), rec = W.get(k.project, k.task);
+    if (!rec || rec.nativeRebase || rec.head !== start) return null;
+    const tip = git(x.ctx.repo, ["rev-parse", "--verify", `refs/heads/${x.ctx.base}`]).out.trim();
+    if (!/^[0-9a-f]{40}$/.test(tip) || git(rec.path, ["merge-base", "--is-ancestor", tip, start]).ok) return null;
+    const from = rec.baseCommit, result = W.startNativeRebase(k.project, k.task, start, from, tip);
+    x.ctx.head = result.head; x.ctx.baseCommit = tip; x.ctx.gatedHead = null;
+    const refresh = { round: x.visit, baseBefore: from, baseAfter: tip, headBefore: start, headAfter: result.head, conflicts: result.pending ? rebaseConflicts(x) : [] };
+    x.ctx.baseRefresh = refresh; x.save();
+    x.log(`round ${x.visit}: rebased onto ${x.ctx.base} ${from.slice(0, 8)} -> ${tip.slice(0, 8)}${refresh.conflicts.length ? `; ${refresh.conflicts.length} conflicting file(s) for the worker` : ""}`);
+    return refresh;
+  };
+  /** Conflicting files of an in-progress native rebase, with the commits on each side that touched them. */
+  const rebaseConflicts = (x: X) => {
+    const rec = W.get(wkey(x).project, wkey(x).task); if (!rec?.nativeRebase) return [];
+    const { from, base, target } = rec.nativeRebase, log = (range: string, p: string) => git(rec.path, ["log", "--format=%h %s", "--max-count=10", range, "--", p]).out.split("\n").filter(Boolean);
+    return git(rec.path, ["diff", "--name-only", "--diff-filter=U"]).out.split("\n").filter(Boolean).slice(0, 40)
+      .map(path => ({ path, base: log(`${base}..${target}`, path), task: log(`${base}..${from}`, path) }));
   };
   const endRound = (x: X, how: string) => {
     if (!x.ctx.wt) return; const k = wkey(x);
@@ -812,7 +856,11 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       // Round facts override the role skill's general wording (the skill text is pinned in approved staffing, so it is not edited here).
       const facts = plan || x.ctx.reportOnly?.build ? "" : "\nROUND FACTS: this is two-way work with no plan round, so the approved spec above is the plan. Staffing, rosters and role skills are Studio's job, not inputs you need. Hold only for an input this brief names that you cannot read. Where the spec is unclear, choose the reading that best fits it, implement it, and list the assumption in worker_report instead of asking.\n";
       const amend = engine.amendments(x.run).length ? `${amendmentsSection(engine.amendments(x.run))}Keep the captain's latest word on each of these (a later change overrides an earlier one it conflicts with). If a brief item, a finding or an answer below would undo the captain's latest word on one, do not do that part: finish the rest and report ASK with amendment set to that change's number, so the captain decides.\n` : "";
-      const text = `BUILD ROUND\nRun ${x.run.id} · round ${x.visit} · head ${h} · branch ${x.ctx.branch}\n${amend}${specMd(x.ctx.spec)}${plan}${facts}${fix}${ro}${rebaseNote}\nStart with fs_list.${x.run.text.includes("STUB_") ? `\n\nIntent notes:\n${x.run.text}` : ""}` + engine.failureBrief(x);
+      const conflicts = W.get(wkey(x).project, wkey(x).task)?.nativeRebase ? rebaseConflicts(x) : [];
+      const conflictNote = conflicts.length ? `REBASE CONFLICTS (resolve these before anything else)\nThe base moved and this task's branch is being rebased onto it. Resolve these files first (keep both sides' intent, remove every conflict marker), then continue the task. Studio finishes the rebase and commits.\n${conflicts.map(c => `- ${c.path}\n  base side: ${c.base.join("; ") || "(none listed)"}\n  task side: ${c.task.join("; ") || "(none listed)"}`).join("\n")}\n` : "";
+      let notes: string[] = []; try { notes = overlapNotes(x.ctx.spec?.scope ?? [], scopeBlockers(engine, x.run)); } catch {} // informational: never stops a brief
+      const overlap = notes.length ? `\nOTHER TASKS ON THESE PATHS (informational; nothing waits for them):\n${notes.map(n => `- ${n}`).join("\n")}\n` : "";
+      const text = `BUILD ROUND\nRun ${x.run.id} · round ${x.visit} · head ${h} · branch ${x.ctx.branch}\n${conflictNote}${amend}${specMd(x.ctx.spec)}${plan}${facts}${fix}${ro}${conflictNote ? "" : rebaseNote}${overlap}\nStart with fs_list.${x.run.text.includes("STUB_") ? `\n\nIntent notes:\n${x.run.text}` : ""}` + engine.failureBrief(x);
       let prev: any = null; try { prev = JSON.parse(readFileSync(briefFile(x), "utf8")); } catch {}
       if (prev && prev.head !== h) x.log(`round ${x.visit} brief rebound from ${String(prev.head).slice(0, 8)} to ${h.slice(0, 8)}`);
       writeFileSync(briefFile(x), JSON.stringify({ run: x.run.id, round: x.visit, head: h, branch: x.ctx.branch, brief: text }, null, 1));

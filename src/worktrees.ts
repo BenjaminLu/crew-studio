@@ -28,6 +28,8 @@
 import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { addPaths, changedPaths, git, gitArgv, gitEnv, must } from "./git";
+/** A line git writes into a conflicted file: <<<<<<< ours, =======, >>>>>>> theirs. */
+export const CONFLICT_MARKER = /^(<{7} |={7}$|>{7} )/m;
 import { realInside, realOf } from "./secure";
 import { roundExec } from "./runtime/checks";
 import { assertSharedGitConfig } from "./git-config-health";
@@ -306,7 +308,12 @@ export class Worktrees {
     if (!this.held.has(`${project}/${task}`)) throw new Error("task lock required for rebase continuation");
     const r=this.get(project,task); if(!r?.nativeRebase || r.nativeRebase.version!==1 || must(r.path,["rev-parse","HEAD"])!==r.head)throw new Error("native rebase state changed");
     const paths=changedPaths(r.path);if(paths.some(p=>!scope(p)))throw new Error("rebase resolution outside scope");
-    addPaths(r.path,paths);const out=git(r.path,["-c","core.editor=true","rebase","--continue"]);
+    // A path still carrying conflict markers is not resolved: keep the rebase
+    // pending (unstaged, still listed as conflicting) so another round resolves
+    // it, instead of committing the markers.
+    if(paths.some(p=>{try{return CONFLICT_MARKER.test(readFileSync(join(r.path,p),"utf8"));}catch{return false;}}))return {head:r.head,pending:true};
+    addPaths(r.path,paths);
+    const out=git(r.path,["-c","core.editor=true","rebase","--continue"]);
     if(!out.ok&&!git(r.path,["ls-files","-u"]).out)throw new Error("native rebase continuation failed");
     r.head=must(r.path,["rev-parse","HEAD"]);if(out.ok)delete r.nativeRebase;this.save(r);return {head:r.head,pending:!out.ok};
   }

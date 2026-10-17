@@ -68,10 +68,10 @@ try{
    ok(!again&&starts.get(r.id)===2,'approve fresh preparation re-pins and the build runs',again?String(E.cards.view(again).sections?.en?.why):'');
    ok(p?.specHash!==prior.specHash&&JSON.stringify(r.ctx.nativeAdmission)===JSON.stringify(p),'retry wrote the new signed pin',JSON.stringify(p));
   }finally{q.ready=real;}await E.cancel(r.id);}
- // A rescope that widens into another live Task's scope is decided by the normal admission, not the stale-pin card.
+ // A rescope that widens into another live Task's scope is admitted: Tasks run concurrently and rebase each round (no scope hold, no stale-pin card).
  {const holder=await start();
   const r=await start();await rescope(r,[own(r.id),own(holder.id)]);await settled(r.id);
-  ok(!readiness(r.id)&&starts.get(r.id)===1&&String(r.nodes.build.data.nativeQueue?.reason).includes(`scope held by ${holder.id}`),'widening into a live Task scope waits in the normal admission',JSON.stringify({reason:r.nodes.build.data.nativeQueue?.reason,card:readiness(r.id)&&E.cards.view(readiness(r.id)!).sections?.en?.why}));
+  ok(!readiness(r.id)&&starts.get(r.id)===2&&!r.nodes.build.data.nativeQueue?.reason,'widening into a live Task scope is admitted alongside it',JSON.stringify({reason:r.nodes.build.data.nativeQueue?.reason,card:readiness(r.id)&&E.cards.view(readiness(r.id)!).sections?.en?.why}));
   await E.cancel(r.id);await E.cancel(holder.id);}
  // Only a captain rescope grants a replacement: an auth-window answer leaves the stale pin refused.
  {const r=await start();await rescope(r,null,'auth window:fixture');await settled(r.id);const stuck=readiness(r.id);

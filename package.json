@@ -46,7 +46,7 @@
     "test:failures": "bun tests/failures.ts && node tests/failures-ui.mjs",
     "test:renderer-containment": "node tests/renderer-containment.mjs",
     "test:lane-pin": "bun tests/lane-pin.ts",
-    "test:native-queue": "bun tests/native-queue.ts && bun tests/code-rescope-repin.ts",
+    "test:native-queue": "bun tests/native-queue.ts && bun tests/code-rescope-repin.ts && bun tests/concurrent-scope.ts && bun tests/concurrent-code-firstmate.ts",
     "test:vendor-policy": "bun tests/vendor-policy.ts && bun tests/codex-capability.ts",
     "test:native-policy-r2": "bun tests/native-policy-r2.ts && bun tests/probe-process.ts",
     "test:pack-genesis": "bun tests/pack-genesis-native.ts && node tests/pack-genesis-native-ui.mjs",

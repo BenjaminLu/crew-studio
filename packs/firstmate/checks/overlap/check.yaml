@@ -1,9 +1,9 @@
 id: overlap
 version: 1.0.0
-title: { en: "The scope does not overlap another in-flight run", zh-TW: "範圍不與其他進行中的 run 重疊" }
+title: { en: "Note other in-flight runs that edit the same paths", zh-TW: "標出其他進行中、改同樣路徑的 run" }
 applies_to: [spec]
 kind: deterministic
-blocking: true
+blocking: false
 needs: [artifact, inflight]
 native: overlap
 params: { type: object, properties: {} }
