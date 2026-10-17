@@ -156,7 +156,13 @@ try {
   ok(/studio_list_workflows ok: \{"workflows":\[/.test(reply), "tools/call runs a native tool and returns its result");
   const listed = (/native tools: ([^|]*) \|/.exec(reply)?.[1] ?? "").split(",").filter(Boolean);
   const seed = existsSync(seedFile) ? JSON.parse(readFileSync(seedFile, "utf8").trim().split("\n")[0]).seed as string : "";
-  ok(listed.length >= 12 && listed.includes("studio_startup_workflow_contract") && listed.every((n) => seed.includes(n)), "the first message names every registered native tool (" + listed.length + ")");
+  // the startup contract is registered only where the startup example is installed; studio_manual and studio_connect_github always
+  const startupInstalled = /"id":"startup-recursion"/.test(reply);
+  ok(listed.length >= 12 && listed.includes("studio_manual") && listed.includes("studio_connect_github") && listed.includes("studio_startup_workflow_contract") === startupInstalled
+    && listed.every((n) => seed.includes(n)) && (startupInstalled || !seed.includes("studio_startup_workflow_contract")),
+    "the first message names every registered native tool, and no tool that is not registered (" + listed.length + (startupInstalled ? ", startup example installed" : ", no startup example") + ")");
+  { const { nativeFreshText } = await import("../src/host/main"); const fallback = nativeFreshText("workspace");
+    ok(fallback.includes("studio_manual") && fallback.includes("studio_connect_github") && !fallback.includes("studio_startup_workflow_contract"), "the fallback tool list names only tools that are always registered"); }
   const draftArgs = JSON.stringify(JSON.parse(readFileSync(join(import.meta.dir, "fixture/first-workflow-draft.json"), "utf8")));
   out = await say(`STUB_NATIVE studio_draft_workflow ${draftArgs}`);
   const drafted = out.find((l: any) => l.kind === "firstmate")?.text ?? "";
