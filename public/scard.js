@@ -96,6 +96,7 @@ const SCARD_CSS = `
 .cc-tick input { margin-top: 3px; flex: none; width: 16px; height: 16px; }
 .cc-count { font-size: 12px; color: var(--text-2); }
 .cc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.cc-actions .btn { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: center; } /* "Save all answers · <Task>" wraps inside a phone-wide card instead of pushing the page sideways */
 .cc-actions [data-ready="false"] { opacity: .55; }
 .cc-msg:empty { display: none; }
 .cc-msg { font-size: 13px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--bad); color: var(--bad); }
