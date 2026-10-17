@@ -70,6 +70,10 @@ const flow = Y({ id: "stale-flow", name: "Stale flow", roles: [{ id: "coordinato
     ["merge-card", "round", "changes"], ["merge-card", "closed", "close"], ["round", "pr-push"], ["pr-push", "merge-card", "ok"], ["pr-push", "closed", "close"]] });
 const readyFlow = Y({ id: "stale-ready", name: "Stale ready", roles: [{ id: "coordinator", label: "Coordinator" }], nodes: nodes.filter((n) => n.id !== "round" && n.id !== "pr-push"),
   edges: [["seed", "pr-open"], ["pr-open", "r069", "ok"], ["pr-open", "closed", "close"], ["r069", "remote-ready"], ["remote-ready", "merge-card", "ok"], ["remote-ready", "closed", "close"], ["merge-card", "closed", "close"]] });
+// a project without a pull request template: pr-open opens it at once; "changes" is a rescope that reclassifies the door (same head)
+const plainFlow = Y({ id: "plain-flow", name: "Plain flow", roles: [{ id: "coordinator", label: "Coordinator" }],
+  nodes: [...nodes.filter((n) => ["seed", "pr-open", "merge-card", "closed"].includes(n.id)), { id: "rescope", kind: "hook", do: "fixture.rescope", label: "Rescope", x: 4, y: 2 }],
+  edges: [["seed", "pr-open"], ["pr-open", "merge-card", "ok"], ["pr-open", "closed", "close"], ["merge-card", "rescope", "changes"], ["merge-card", "closed", "close"], ["rescope", "merge-card"]] });
 const studioMerge = Y({ id: "stale-studio-merge", name: "Stale Studio merge", roles: [{ id: "coordinator", label: "Coordinator" }],
   nodes: [...nodes.filter((n) => !["remote-ready", "round", "pr-push"].includes(n.id)), { id: "merged", kind: "hook", do: "fixture.merged", label: "Merge", x: 5, y: 0 }, { id: "done", kind: "hook", label: "Done", x: 6, y: 0 }],
   edges: [["seed", "pr-open"], ["pr-open", "r069", "ok"], ["pr-open", "closed", "close"], ["r069", "merge-card"], ["merge-card", "merged", "merge"], ["merge-card", "closed", "close"], ["merge-card", "closed", "changes"], ["merged", "done"]] });
@@ -84,7 +88,7 @@ const finalText = (head: string) => ({ title: "Add euro formatting and EUR switc
   { heading: "Screenshots", text: "The shop views now include the € EUR option." }, { heading: "Risk and rollback", text: "Incorrect amounts or links could show; the acceptance tests cover them." }] });
 
 const install = async (data?: string, with_: GitHubPrAdapter = adapter) => {
-  const H = await harness([flow, readyFlow, studioMerge], data ? { data } : {}), E = H.engine;
+  const H = await harness([flow, readyFlow, studioMerge, plainFlow], data ? { data } : {}), E = H.engine;
   installCode(E, { dataDir: H.data, projects: new Projects(H.data), adapter: with_ });
   (E.deps.agents as any).run = async (job: any) => { const t = job.tools?.find((t: any) => t.name === "pull_request_text"); if (t) { prompts.push({ system: job.system, text: job.text }); t.run(finalText(/head ([a-f0-9]{40})/.exec(job.text)?.[1] ?? "")); } return { status: "done" }; };
   const evidenceAt = (x: any) => { E.record(x, "check", { check: "firstmate/ci", verdict: "pass", kind: "deterministic", data: { shards: [] } } as any); E.record(x, "check", { check: "firstmate/fail-first", verdict: "pass", kind: "deterministic", proves: R069.proves, data: { applicable: true } } as any); };
@@ -101,13 +105,14 @@ const install = async (data?: string, with_: GitHubPrAdapter = adapter) => {
     // params.forged: a well-formed marker naming this head with the sha256 of its text, written by someone other than Studio
     const h = x.ctx.head, body = x.run.params.forged ? `${wrapStudioText("## Summary\n\nLooks current.\n", h)}\n` : mangled(h);
     x.ctx.prText = { version: 1, head: h, sources: "0".repeat(64), template: x.run.params.legacy ? null : TEMPLATE, title: R069.title, body, proven: [], proofs: {}, draft: false, repository: "fixture/project", branch: x.ctx.branch, base: "main", baseCommit, hash: "1".repeat(64), unproven: [], by: "coordinator", card: "SC-0" };
-    x.ctx.pr = { ...x.ctx.pr, title: R069.title, body };
+    x.ctx.pr = { ...x.ctx.pr, title: R069.title, body }; x.ctx.prPlain = null; // a template pull request, as that release opened it
     Object.assign(pullOf(x), { title: R069.title, body: x.run.params.edit ? `${body}\n\nReviewer note: the euro rows were checked by hand.` : body });
     return "ok";
   };
   // a later round: a new head with its evidence; pr-open pushes it (the text on GitHub stays as it is)
   E.actions["fixture.round"] = (x) => { const h = commit(`${x.ctx.branch} round ${x.visit}`); green(h); x.ctx.head = h; evidenceAt(x); return "ok"; };
   // Studio's merge step, as far as this test goes: what GitHub shows when it runs
+  E.actions["fixture.rescope"] = (x) => { x.ctx.door = { door: "one-way", tier: "one-way", reasons: [{ path: "db/migrate.sql", list: "org", glob: "db/**", why: "a schema migration drops a column" }], decidedBy: "classifier" }; return "ok"; };
   E.actions["fixture.merged"] = (x) => { x.ctx.mergedBody = pullOf(x).body; return "ok"; };
   return { H, E };
 };
@@ -209,10 +214,42 @@ try {
       let refused = ""; try { await E.answer(m.id, { choice: "confirm-door", by: "captain" } as any); } catch (e: any) { refused = e.message; }
       let fm = ""; try { await E.answer(m.id, { choice: "confirm-door", confirm: "one-way", by: "firstmate" } as any); } catch (e: any) { fm = e.message; }
       ok(/confirm the door first/.test(refused) && /Only the captain/.test(fm) && E.cards.get(m.id).status === "open", "the answer must carry the confirmation, and only the captain gives it", `${refused} | ${fm}`);
+      // GitHub refuses the write-back (not a compare-and-swap miss): the card does not say "ready" while GitHub still says pending
+      sim.fail({ method: "PATCH", status: 500, once: true });
       await E.answer(m.id, { choice: "confirm-door", confirm: "one-way", by: "captain" } as any); await settle(E, r, m.id);
+      const back = openCard(E, r);
+      ok(back?.title.en === STANDIN(r) && ids(back) === "update-text,changes,close" && /no longer states the change's current facts/.test(back.sections.en.why) && /Captain confirmation: pending/.test(pullOf(r).body) && back.body.includes("+**Door: one-way (單向門).**") && patches() === p0 + 1 && !/confirmed by the captain/.test(pullOf(r).body),
+        "a confirmation that could not be written: readiness reads GitHub's text, which still says pending, so the text card comes back instead of 'merge on GitHub'", `${ids(back)} ${back?.sections?.en?.why}`);
+      await E.answer(back.id, { choice: "update-text", by: "captain" } as any); await settle(E, r, back.id);
       const ready = openCard(E, r), body = pullOf(r).body;
-      ok(patches() === p0 + 1 && /Captain confirmation: confirmed by the captain at \d{4}-\d\d-\d\dT/.test(body) && !/Captain confirmation: pending/.test(body) && ready?.title.en.endsWith("merge it on GitHub") && ids(ready) === "close,changes" && ready.options[0].label === "Close here (I merge on GitHub)",
-        "after the confirmation Studio writes it into the text (compare and swap), then says it is ready to merge on GitHub", `${patches() - p0} ${ids(ready)}`);
+      ok(patches() === p0 + 2 && /Captain confirmation: confirmed by the captain at \d{4}-\d\d-\d\dT/.test(body) && !/Captain confirmation: pending/.test(body) && ready?.title.en.endsWith("merge it on GitHub") && ids(ready) === "close,changes" && ready.options[0].label === "Close here (I merge on GitHub)",
+        "once the text on GitHub states the confirmation, the card says it is ready to merge on GitHub", `${patches() - p0} ${ids(ready)}`);
+      // a new head needs a new confirmation: the one given at the earlier head does not carry over
+      await E.answer(ready.id, { choice: "changes", note: "Name the migration in the summary", by: "captain" } as any); await settle(E, r, ready.id);
+      const s = openCard(E, r), later = s?.body.split("\nNew text:\n")[1] ?? "";
+      ok(s?.title.en === STANDIN(r) && /Captain confirmation: pending/.test(later) && !/confirmed by the captain/.test(later), "after a round the text states the door's confirmation as pending again", later.match(/Captain confirmation: [^\n]*/)?.[0]);
+      await E.answer(s.id, { choice: "update-text", by: "captain" } as any); await settle(E, r, s.id);
+      const again = openCard(E, r);
+      ok(ids(again) === "confirm-door,changes,close" && E.trusted(r.id).entries.filter((e: any) => e.record === "door-confirmed").length === 1, "and the merge-on-GitHub card asks for the confirmation at the new head", ids(again));
+      await close(E, r);
+    } catch (e: any) { ok(false, "unexpected error", e.stack?.split("\n").slice(0, 2).join(" ")); } finally { H.stop(); }
+  }
+
+  // ---------- a pull request without a template: the same text check; a rescope that flips the door blocks the merge ----------
+  {
+    const { H, E } = await install();
+    try {
+      const r = E.start({ workflow: "plain-flow", text: "euro", params: { branch: "crew/plain" } }); await settle(E, r);
+      const m = openCard(E, r), p = studioParts(pullOf(r).body), p0 = patches();
+      ok(m?.title.en.endsWith("merge it on GitHub") && ids(m) === "close,changes" && p.marked && p.head === r.ctx.head && p.inner.includes("## Door\ntwo-way") && p.inner.includes("**Door: two-way (雙向門).**"),
+        "a pull request without a template opens with Studio's part between the markers, the door in it, and reaches the merge card", `${ids(m)} ${pullOf(r).body.slice(0, 160)}`);
+      await E.answer(m.id, { choice: "changes", note: "The migration drops a column", by: "captain" } as any); await settle(E, r, m.id);
+      const s = openCard(E, r);
+      ok(r.ctx.door.door === "one-way" && s?.title.en === STANDIN(r) && ids(s) === "update-text,changes,close" && s.body.includes("-two-way") && s.body.includes("+one-way") && patches() === p0,
+        "a rescope that flips the door to one-way (same head): the text no longer states the facts, so the merge waits for the update", `${ids(s)} ${s?.sections?.en?.why}`);
+      await E.answer(s.id, { choice: "update-text", by: "captain" } as any); await settle(E, r, s.id);
+      const c = openCard(E, r);
+      ok(patches() === p0 + 1 && /## Door\none-way/.test(pullOf(r).body) && /Captain confirmation: pending/.test(pullOf(r).body) && ids(c) === "confirm-door,changes,close", "after the update the text states the one-way door, and the merge on GitHub asks for its confirmation", ids(c));
       await close(E, r);
     } catch (e: any) { ok(false, "unexpected error", e.stack?.split("\n").slice(0, 2).join(" ")); } finally { H.stop(); }
   }
@@ -223,8 +260,8 @@ try {
     try {
       const r = E.start({ workflow: "stale-flow", text: "euro", params: { branch: "crew/forged", forged: "1" } }); await settle(E, r);
       const c = openCard(E, r), p = studioParts(pullOf(r).body);
-      ok(p.marked && p.head === r.ctx.head && p.hash === studioTextHash(p.inner) && c?.title.en === STANDIN(r) && ids(c) === "update-text,changes,close" && /no record of writing that text/.test(c.sections.en.why),
-        "a well-formed marker naming the head, with no signed record of Studio writing that text: the merge waits for the update, no Keep", `${ids(c)} ${c?.sections?.en?.why}`);
+      ok(p.marked && p.head === r.ctx.head && p.hash === studioTextHash(p.inner) && c?.title.en === STANDIN(r) && !c.options.some((o: any) => o.id === "merge" || /I merge on GitHub/.test(o.label)) && c.body.includes("-## Summary") === false && c.body.includes("-Looks current."),
+        "a well-formed marker naming the head (sha256 of its text) that Studio has no record of writing does not make the text current: the merge waits, the diff shows it going", `${ids(c)} ${c?.sections?.en?.why}`);
       await close(E, r);
     } catch (e: any) { ok(false, "unexpected error", e.stack?.split("\n").slice(0, 2).join(" ")); } finally { H.stop(); }
   }
@@ -247,7 +284,7 @@ try {
       await E.answer(back.id, { choice: "update-text", by: "captain" } as any); await settle(E, r, back.id);
       const m2 = openCard(E, r);
       await E.answer(m2.id, { choice: "merge", confirm: "one-way", aligned: [0], by: "captain" } as any); await until(() => ["succeeded", "failed"].includes(r.status), 15000);
-      ok(r.status === "succeeded" && /Captain confirmation: confirmed by the captain at \d{4}-/.test(r.ctx.mergedBody ?? "") && patches() === p0 + 2, "the captain's confirmation is in the text on GitHub before the merge step runs", `${r.status} ${patches() - p0} ${(r.ctx.mergedBody ?? "").match(/Captain confirmation: [^\n]*/)?.[0]}`);
+      ok(r.status === "succeeded" && /Captain confirmation: confirmed by the captain at \d{4}-/.test(r.ctx.mergedBody ?? "") && patches() === p0 + 1, "the captain's confirmation is in the text on GitHub before the merge step runs", `${r.status} ${patches() - p0} ${(r.ctx.mergedBody ?? "").match(/Captain confirmation: [^\n]*/)?.[0]}`);
     } catch (e: any) { ok(false, "unexpected error", e.stack?.split("\n").slice(0, 2).join(" ")); } finally { H.stop(); }
   }
 

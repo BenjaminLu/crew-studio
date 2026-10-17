@@ -84,10 +84,22 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
   const autoProof = (item: string): "lint" | "ci" | null => /\blint/i.test(item) ? "lint" : /\btests?\b/i.test(item) && /\bpass/i.test(item) ? "ci" : null;
 
   /** The captain's own signed confirmation of the one-way door (a card answer that carried it), or null. */
+  /** The door as confirmed: its kind and what makes it so (a different path or reason is a different door). */
+  const doorDigest = (x: X) => digest({ door: x.ctx.door?.door ?? null, reasons: (x.ctx.door?.reasons ?? []).filter((r: any) => r?.list !== "trivial").map((r: any) => [String(r.path), String(r.list ?? ""), String(r.why ?? "")]) });
+  /** The captain's own signed confirmation of this one-way door at this head (door-confirmed in the ledger), or null: a new head,
+   *  or a door with other paths or reasons, needs a new confirmation. */
   function doorConfirmation(x: X): { at: string; card: string } | null {
-    const t = engine.trusted(x.run.id); if (!t.ok) return null;
-    const e: any = t.entries.find((e: any) => e.record === "card-answer" && e.data?.confirm === "one-way" && /^captain\b/i.test(String(e.actor ?? "")));
+    const t = engine.trusted(x.run.id); if (!t.ok || x.ctx.door?.door !== "one-way") return null;
+    const door = doorDigest(x), e: any = t.entries.find((e: any) => e.record === "door-confirmed" && e.head === x.ctx.head && e.data?.door === door);
     return e ? { at: String(e.at ?? ""), card: String(e.data.card) } : null;
+  }
+  /** The captain's answer on a merge card carried the one-way confirmation (its signed card-answer): recorded for this head and door. */
+  function confirmDoor(x: X, card: any): boolean {
+    if (x.ctx.door?.door !== "one-way" || !card.captainOnly || card.door !== "one-way") return false;
+    const t = engine.trusted(x.run.id);
+    if (!t.ok || !t.entries.some((e: any) => e.record === "card-answer" && e.data?.card === card.id && e.data?.confirm === "one-way" && /^captain\b/i.test(String(e.actor ?? "")))) return false;
+    if (!doorConfirmation(x)) engine.record(x, "door-confirmed", { head: x.ctx.head, data: { version: 1, card: card.id, door: doorDigest(x) } } as any);
+    x.save(); return true;
   }
   /** The door of the change at its final state, facts only: one-way (單向門) with what makes it one-way and the captain's
    *  confirmation (pending until the captain's signed answer carries it), or two-way (雙向門) and why. */
@@ -270,12 +282,22 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
   // part in pr-opened / pr-text-updated), never by the marker alone: anyone can write a marker. Keep (a person's edit) is
   // offered only for Studio's text of this very head; a text that lags the head, carries no markers, or that Studio has no
   // record of is updated, never kept.
-  type Staged = { version: 1; kind: "final"; reason: "head" | "unmarked" | "foreign" | "edited"; stale: boolean; head: string; was: string | null; pr: string; repository: string; title: string; body: string; from: string };
+  type Staged = { version: 1; kind: "final"; reason: "head" | "unmarked" | "foreign" | "edited" | "facts"; stale: boolean; head: string; was: string | null; pr: string; repository: string; title: string; body: string; from: string };
   type Gate = ({ ok: true; reason: Staged["reason"]; staged: Staged; hash: string; diff: string; live: { title: string; body: string } } | { ok: false; why: string; reason: Staged["reason"] | "unread" });
   const crlf = (v: unknown) => String(v ?? "").replace(/\r\n?/g, "\n");
   const liveDigest = (l: { title: string; body: string }) => digest({ title: l.title, body: l.body });
   /** A template pull request Studio published (its text is Studio's to keep current). */
-  const ours = (x: X) => x.ctx.pr?.adapter === "github" && x.ctx.prText?.version === 1 && !!x.ctx.prText.template;
+  const ours = (x: X) => x.ctx.pr?.adapter === "github" && ((x.ctx.prText?.version === 1 && !!x.ctx.prText.template) || x.ctx.prPlain?.version === 1);
+  const templated = (x: X) => x.ctx.prText?.version === 1 && !!x.ctx.prText.template;
+  /** A pull request without a template: Studio's part is the spec, the door and the rollback, rendered from the final state. */
+  function plainInner(x: X): string {
+    const rollback = x.ctx.spec?.rollback ?? (x.ctx.door?.door === "one-way" ? "A revert does not undo this change; the approved plan must name the rollback." : "Revert the change to undo it.");
+    return withoutSessionLinks(`${d.specMd(x.ctx.spec)}\n\n## Door\n${x.ctx.door?.door ?? "undecided"}\n\n${doorLine(x)}\n\n## Rollback\n${rollback}`);
+  }
+  const DOOR = /^\*\*Door: .*$/m;
+  /** Studio's text states the current facts Studio owns without writing: the door line (and, without a template, the whole part). */
+  const factsOk = (x: X, inner: string) => templated(x) ? inner.split("\n").includes(doorLine(x)) : inner.trimEnd() === plainInner(x).trimEnd();
+  const withFacts = (x: X, inner: string) => !templated(x) ? plainInner(x) : DOOR.test(inner) ? inner.replace(DOOR, doorLine(x)) : `${inner.trimEnd()}\n\n${doorLine(x)}\n`;
   async function liveText(x: X, a: GitHubPrAdapter, phase: Phase) {
     const live = await reconcile(a, x.ctx.pr, phase.signal, true); phase.assert();
     return { title: crlf(live?.title), body: crlf(live?.body) };
@@ -297,9 +319,11 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     const pr = x.ctx.pr, live = await liveText(x, a, phase), parts = studioParts(live.body), from = liveDigest(live);
     const mark = parts.marked && !!parts.hash, own = mark ? recorded(x, parts.head) : new Set<string>(), innerHash = studioTextHash(parts.inner);
     const stale = !mark || parts.head !== pr.head;
-    if (!stale && own.has(innerHash)) return null;
-    const reason: Staged["reason"] = !mark ? "unmarked" : !own.size ? "foreign" : own.has(innerHash) ? "head" : "edited", r = x.ctx.prRefresh;
-    if (kept(x, from)) return null;
+    // current: Studio's recorded text of this head (or a person's edit of it the captain kept) that still states the current
+    // facts (the door and its confirmation; without a template, the spec as well); facts that changed are written in
+    const current = !stale && (own.has(innerHash) || kept(x, from));
+    if (current && factsOk(x, parts.inner)) return null;
+    const reason: Staged["reason"] = current ? "facts" : !mark ? "unmarked" : !own.size ? "foreign" : own.has(innerHash) ? "head" : "edited", r = x.ctx.prRefresh;
     // the same offer as last time (GitHub's text and the head unchanged): no second writing
     if (r?.kind === "final" && !r.decided && r.head === pr.head && r.from === from) {
       const { hash, decided: _d, card: _c, ...text } = r;
@@ -308,7 +332,9 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     // Studio's text for this head: the part it last published when that describes this head, otherwise written again now
     let title = pr.title, inner: string;
     const mine = studioParts(crlf(pr.body));
-    if (!stale && mine.marked && mine.head === pr.head && recorded(x, pr.head).has(studioTextHash(mine.inner))) inner = mine.inner;
+    if (reason === "facts") inner = withFacts(x, parts.inner);
+    else if (!stale && mine.marked && mine.head === pr.head && recorded(x, pr.head).has(studioTextHash(mine.inner))) inner = withFacts(x, mine.inner);
+    else if (!templated(x)) inner = plainInner(x);
     else {
       if (d.head(d.shellOk(x)) !== pr.head) return { ok: false, reason, why: "the Task's worktree is not at the pull request's head" };
       let bundle: CommunityBundle;
@@ -339,12 +365,14 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
       foreign: `The text of pull request #${pr.id} carries Studio's markers, but Studio has no record of writing that text, so it does not count as describing ${h}.`,
       edited: stale ? `Someone edited Studio's part of the text of pull request #${pr.id} on GitHub, and that text describes ${was}, not ${h}, the head ${mergeAt ? "being merged" : "now on GitHub"}: it can only be updated.`
         : `Someone edited Studio's part of the text of pull request #${pr.id} on GitHub. Studio does not overwrite it silently.`,
+      facts: `The text of pull request #${pr.id} describes ${h}, but no longer states the change's current facts (its door${templated(x) ? "" : " or its spec"}).`,
       unread: `Studio could not read the text of pull request #${pr.id} on GitHub, so it cannot tell whether the text matches ${h}.` }[g.reason];
     const leadZh = { head: `Pull request #${pr.id} 的文字描述的是較早的 head，不是${mergeAt ? "要合併的" : "目前的"} ${h}。`, unmarked: `Pull request #${pr.id} 的文字是舊版 Studio 寫的（或之後被改過），可能沒有描述${mergeAt ? "要合併的" : "目前的"} ${h}。`,
       foreign: `Pull request #${pr.id} 的文字帶有 Studio 的標記，但 Studio 沒有寫過這段文字的紀錄，所以不算描述 ${h}。`,
       edited: stale ? `有人在 GitHub 上改了 pull request #${pr.id} 裡 Studio 的那一段，而且那段描述的是較早的 head，不是 ${h}：只能更新。` : `有人在 GitHub 上改了 pull request #${pr.id} 裡 Studio 的那一段。Studio 不會默默覆蓋。`,
+      facts: `Pull request #${pr.id} 的文字描述的是 ${h}，但已不是這個改動目前的事實（單向門／雙向門${templated(x) ? "" : "或 spec"}）。`,
       unread: `Studio 讀不到 GitHub 上 pull request #${pr.id} 的文字，無法確認它和 ${h} 對得上。` }[g.reason];
-    const what = "Studio wrote it again from the final state: the diff at this head, the done lines and the captain's binding changes, the evidence recorded at this head, and the door.";
+    const what = g.reason === "facts" ? "Studio wrote the current facts into its part; nothing else in the text changes." : "Studio wrote it again from the final state: the diff at this head, the done lines and the captain's binding changes, the evidence recorded at this head, and the door.";
     const merge = mergeAt ? " The merge is not offered until the text matches the head." : "";
     const mergeZh = mergeAt ? "文字和 head 對上之前，不提供合併。" : "";
     const opts: any[] = g.ok
@@ -357,7 +385,7 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
       en: { why: `${lead} ${g.ok ? (keepable ? "Below is what changes if Studio's text replaces theirs; text outside Studio's part stays either way." : what) : `Studio could not write it again: ${g.why}.`}${merge}`,
         how: g.ok ? (keepable ? "Keep their text, or replace it with Studio's." : "Update replaces Studio's part of the text on GitHub with the text below (the diff shows what goes); the rest stays as it is.") : "Write the text again once the cause is fixed, or close.",
         scope: { in: [`Edit the text of pull request #${pr.id}`], out: ["No push of new commits", "No merge"] } },
-      zh: { why: `${leadZh}${g.ok ? (keepable ? "下面是改用 Studio 的文字會改動的地方；Studio 那段以外的文字都不動。" : "Studio 已依最終狀態重寫：這個 head 的 diff、完成條件和船長的修改、這個 head 上記錄的證據，以及單向門／雙向門。") : `Studio 無法重寫：${g.why}。`}${mergeZh}`,
+      zh: { why: `${leadZh}${g.ok ? (keepable ? "下面是改用 Studio 的文字會改動的地方；Studio 那段以外的文字都不動。" : (g.reason === "facts" ? "Studio 已把目前的事實寫進它的那一段；文字其他部分不變。" : "Studio 已依最終狀態重寫：這個 head 的 diff、完成條件和船長的修改、這個 head 上記錄的證據，以及單向門／雙向門。")) : `Studio 無法重寫：${g.why}。`}${mergeZh}`,
         how: g.ok ? (keepable ? "保留他們的文字，或改用 Studio 的文字。" : "更新：用下面的文字取代 GitHub 上 Studio 的那一段，其他不動。") : "原因排除後再寫一次，或關閉。",
         scope: { in: [`修改 pull request #${pr.id} 的內文`], out: ["不推送新的 commit", "不合併"] } },
       body: `Pull request #${pr.id}: ${pr.url}\nHead: ${h}${g.ok && g.staged.was && g.staged.was !== pr.head ? ` (the text described ${g.staged.was.slice(0, 8)})` : ""}\n${g.ok ? `${g.staged.title !== g.live.title ? `Title: ${g.live.title} → ${g.staged.title}` : `Title: ${g.staged.title} (unchanged)`}\n\nChanges to the text:\n${g.diff || "(title only)"}\nNew text:\n${g.staged.body}` : `Not written: ${g.why}`}`,
@@ -430,13 +458,11 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     const phase = d.remotePhase(x); phase.assert();
     const a = d.selectedAdapter(x); if (!(a instanceof GitHubPrAdapter)) return again();
     try {
-      if (await gate(x, a, phase)) return again();
-      if (x.ctx.door?.door !== "one-way") return null;
-      const live = await liveText(x, a, phase), parts = studioParts(live.body), line = doorLine(x);
-      const inner = /^\*\*Door: .*$/m.test(parts.inner) ? parts.inner.replace(/^\*\*Door: .*$/m, line) : `${parts.inner.trimEnd()}\n\n${line}\n`;
-      if (inner === parts.inner) return null;
-      const body = `${parts.before}${wrapStudioText(inner, x.ctx.pr.head)}${parts.after}`;
-      return (await write(x, a, phase, live.title, body, liveDigest(live), { reason: "door" })) ? null : again();
+      const g = await gate(x, a, phase);
+      if (!g) return null;
+      // only the facts Studio owns changed (the confirmation the captain just gave): written in, then read again
+      if (!g.ok || g.reason !== "facts" || !(await write(x, a, phase, g.staged.title, g.staged.body, g.staged.from, { reason: "facts", hash: g.hash }))) return again();
+      return (await gate(x, a, phase)) ? again() : null;
     } catch (e: any) { phase.assert(); x.log(`pull request text: not verified before the merge (${String(e?.message ?? e).slice(0, 200)})`); return again(); }
   }
 
@@ -499,5 +525,12 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     if (choice === "open") return wrap(await open(x, card));
     return { outcome: choice };
   };
-  return { defer, publish, answer, refresh, refreshAnswer, mergeGate, mergeTextAnswer, staleAtBoot, bootCard, beforeMerge, doorConfirmation };
+  /** A pull request without a template, as Studio opens it on GitHub: its part between the markers, recorded as Studio's own. */
+  const plainBody = (x: X, h: string) => `${wrapStudioText(plainInner(x), h)}\n`;
+  function plainOpened(x: X, a: GitHubPrAdapter) {
+    if (typeof (engine as any).record !== "function") return; // an engine without a ledger (a unit harness) has no record to keep
+    x.ctx.prPlain = { version: 1 };
+    engine.record(x, "pr-text-updated", { head: x.ctx.pr.head, data: { version: 1, reason: "opened", pr: x.ctx.pr.id, repository: a.grant.repository, text: studioTextHash(studioParts(crlf(x.ctx.pr.body)).inner) } } as any); x.save();
+  }
+  return { defer, publish, answer, refresh, refreshAnswer, mergeGate, mergeTextAnswer, staleAtBoot, bootCard, beforeMerge, doorConfirmation, confirmDoor, plainBody, plainOpened };
 }

@@ -600,7 +600,11 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       phase.assert(); x.ctx.pr = published;
       if (published.head !== old.head && adapter instanceof GitHubPrAdapter) engine.record(x, "remote-push", { head: published.head, data: { version: 1, repository: adapter.grant.repository, branch: old.branch, from: old.head, to: published.head, lease: old.head, rewritten: !git(x.ctx.repo, ["merge-base", "--is-ancestor", old.head, published.head]).ok } } as any);
       x.rn.note = `review request at ${h.slice(0, 8)}`; return remoteWait(x, adapter); }
-    const published = await adapter.open({ repo: x.ctx.repo, base: x.ctx.base, branch: x.ctx.branch, head: h, title, body }, x.dir, phase.signal,phase.assert); phase.assert(); x.ctx.pr = published;
+    // on GitHub the text is Studio's part between its markers (head and hash), recorded as its own: the text check before the
+    // merge keeps it on the final state like a template's
+    const github = adapter instanceof GitHubPrAdapter;
+    const published = await adapter.open({ repo: x.ctx.repo, base: x.ctx.base, branch: x.ctx.branch, head: h, title, body: github ? publication.plainBody(x, h) : body }, x.dir, phase.signal,phase.assert); phase.assert(); x.ctx.pr = published;
+    if (github) publication.plainOpened(x, adapter as GitHubPrAdapter);
     x.rn.note = `review request on ${x.ctx.branch} (${adapter.id})`; return remoteWait(x, adapter);
   };
   engine.actionAnswers ??= {};
@@ -650,6 +654,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   (engine.cardAnswers ??= {}).merge = async (x, card) => {
     const choice = card.answer?.choice ?? "", again = async () => engine.kinds.card.start(x) as Promise<Result>;
     if (["update-text", "keep-text", "render-text"].includes(choice)) return publication.mergeTextAnswer(x, card, again);
+    // the one-way door confirmed on this card (its signed answer): recorded for this head and this door
+    if (choice === "confirm-door" || choice === "merge") publication.confirmDoor(x, card);
     if (choice === "confirm-door") return (await publication.beforeMerge(x, again)) ?? again();
     if (choice === "merge" || (choice === "close" && card.options.some((o) => o.id === "close" && /I merge on GitHub/.test(o.label)))) return publication.beforeMerge(x, again);
     return null;
