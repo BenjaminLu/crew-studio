@@ -37,9 +37,12 @@ export function selectionEnv(files?:string[]):Record<string,string>{
  return{CREW_TEST_FILES:files.map(f=>f.split('/').at(-1)!).join(','),CREW_TEST_PATHS:files.join(',')};
 }
 
-/** A run whose output says it selected or ran no tests proves nothing, whatever its exit code. */
-export function ranNoTests(output:string):boolean{
- return /\bno test files\b|did not match any test files|\bno tests? (?:found|ran|were run|to run)\b|^\s*Ran 0 tests\b|^\s*(?:#|ℹ) tests 0\s*$|^\s*0 tests?,? (?:passed|run)\b/im.test(output);
+/** A green run whose output says it selected or ran no tests proves nothing. A nonzero exit is always a real result,
+ * and so is any line showing a test ran (Go prints "[no test files]" for empty packages next to real ones). */
+export function ranNoTests(output:string,exit:number|null):boolean{
+ if(exit!==0)return false;
+ if(/^(?:--- )?FAIL\b|^not ok\b|^ok\s|^\s*Ran [1-9]|^\s*(?:#|ℹ) (?:tests|pass|fail) [1-9]|\b[1-9]\d* (?:pass|passed|fail|failed|passing|failing)\b/im.test(output))return false;
+ return /\bno test files\b|did not match any test files|\bno tests? (?:found|ran|were run|to run)\b|^\s*Ran 0 tests\b|^\s*(?:#|ℹ) tests 0\s*$|^\s*0 tests?,? (?:passed|run)\b|^\s*0 passing\b/im.test(output);
 }
 
 /** The tree a test ran on: the commit, plus whether the worktree has uncommitted changes and the tree hash of what is on disk. */

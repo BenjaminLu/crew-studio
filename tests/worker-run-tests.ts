@@ -11,7 +11,11 @@ import {must} from '../src/git';
 process.env.CREW_TEST_IN_PROCESS='1';
 // R-058 regressions: a money-kit shaped repo (gates.json shard adapter that selects by basename, package.json "bun test",
 // a candidate test file that exists only on the head) and a worker that has to verify its own change with run_tests.
-assert(ranNoTests('shard 1/1: no test files')&&ranNoTests('Ran 0 tests across 0 files.')&&ranNoTests('# tests 0')&&!ranNoTests(' 0 fail\nRan 3 tests across 1 file.'));
+assert(ranNoTests('shard 1/1: no test files',0)&&ranNoTests('Ran 0 tests across 0 files.',0)&&ranNoTests('# tests 0',0)&&ranNoTests('\n  0 passing (2ms)\n',0)&&!ranNoTests(' 0 fail\nRan 3 tests across 1 file.',0));
+// a real failure is never hidden: Go mixes "[no test files]" packages with failing ones; any nonzero exit is a result
+assert(!ranNoTests('--- FAIL: TestF (0.00s)\nFAIL\nFAIL\tex/a\t0.01s\n?   \tex/b\t[no test files]\n',1));
+assert(!ranNoTests('ok  \tex/a\t0.01s\n?   \tex/b\t[no test files]\n',0));
+assert(!ranNoTests('No tests found, exiting with code 1',1)&&!ranNoTests('shard 1/1: no test files',null));
 assert.deepEqual(selectionEnv(['test/format.test.ts']),{CREW_TEST_FILES:'format.test.ts',CREW_TEST_PATHS:'test/format.test.ts'});
 const flow={id:'worker-run-tests',name:'Worker run tests',version:1,roles:[{id:'coordinator',label:'Coordinator',skill:'test'},{id:'worker',label:'Worker',skill:'test'}],params:{project:{label:'Project'}},nodes:[
  {id:'prepare',kind:'hook',do:'repo.prepare',label:'Prepare',x:0,y:0},
