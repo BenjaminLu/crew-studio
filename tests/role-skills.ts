@@ -355,6 +355,10 @@ H.stop();
     const t = e.start({ workflow: flow.id, version: v9.version, text: "x", params: { project: project.id, _staffing: c9.hash } });
     ok(!!t && t.version === v9.version, "a Task starts on v9 with the kept crew");
     await e.cancel(t.id, "fixture cleanup");
+    // a larger crew's draft fits: the staffing workflow declares its draft bound (32000), other parameters keep 4000
+    { const long = JSON.stringify({ pad: "d".repeat(9000) }), r = e.start({ workflow: "firstmate-staffing", text: "bound", params: { source: "s".repeat(9000), draft: long, previous: "" } });
+      ok(r.params.draft === long && r.params.source.length === 4000, "the staffing draft parameter keeps its declared 32000-character bound; an undeclared one stays at 4000", JSON.stringify([r.params.draft.length, r.params.source.length]));
+      await e.cancel(r.id, "fixture cleanup"); }
   } finally { for (const x of e.list()) if (!["succeeded", "failed", "cancelled"].includes(x.status)) await e.cancel(x.id, "fixture cleanup"); h.stop(); }
 }
 

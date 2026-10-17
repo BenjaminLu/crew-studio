@@ -86,6 +86,13 @@ try {
         window.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); soft(); const during = document.querySelector("[data-import-go]") === before;
         window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); await new Promise((r) => setTimeout(r, 50)); return { during, after: document.querySelector("[data-import-go]") !== before }; });
       ok(kept.during && kept.after, "a live update during a button press renders only after the press ends", JSON.stringify(kept)); }
+    // a field that deferred a live update and then leaves the page without a blur (an Enter submit that swaps the view) does not freeze the view
+    { const freed = await p.evaluate(async () => { const stop = (e) => e.stopImmediatePropagation(); window.addEventListener("blur", stop, true); window.addEventListener("focusout", stop, true);
+        const field = document.querySelector("[data-import-path]"); field.focus(); soft(); const held = document.querySelector("[data-import-path]") === field;
+        field.remove(); soft(); await new Promise((r) => setTimeout(r, 0));
+        window.removeEventListener("blur", stop, true); window.removeEventListener("focusout", stop, true);
+        const now = document.querySelector("[data-import-path]"); return { held, rendered: !!now && now !== field }; });
+      ok(freed.held && freed.rendered, "a live update deferred by a field that is removed without a blur renders on the next update", JSON.stringify(freed)); }
     await p.click('[data-import-kind="home"]');
     ok(await wait(p, '[data-home-import="claude/home-skill"]'), "the skills home lists its skills to pick from");
     await p.click('[data-home-import="claude/home-skill"]');

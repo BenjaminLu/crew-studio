@@ -1,7 +1,7 @@
 # Staffing confirmation: started by the captain's staffing interview (/api/intake/staffing, internal).
 schema: 2
 workflow: firstmate-staffing
-pin: { version: 1, sha256: "0fd2ee8dfbb81ab2093170f0e49eb070284f273331587e8c7220323fde823a10" }   # bun scripts/acceptance/pin.ts firstmate-staffing
+pin: { version: 1, sha256: "134246ce465bf61bfed9307fdaa6bc6b546ca7eeeab10ae1a0ca4aeb732b9acb" }   # bun scripts/acceptance/pin.ts firstmate-staffing
 topic: "Acceptance: internal workflow"
 start: { provider: null, params: {} }
 providers: []

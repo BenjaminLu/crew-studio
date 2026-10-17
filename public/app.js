@@ -99,14 +99,18 @@ function afterPress(go) {
   const after = () => { removeEventListener("pointerup", after, true); removeEventListener("pointercancel", after, true); setTimeout(go, 0); };
   addEventListener("pointerup", after, true); addEventListener("pointercancel", after, true);
 }
+// the field that deferred the render: a field removed without a blur (an Enter submit that swaps the view) releases it
+let deferredOn = null;
 function soft() {
-  if (deferred) return updateNav();
+  if (deferred && (!deferredOn || deferredOn.isConnected)) return updateNav();
+  deferred = false; deferredOn = null;
   const a = document.activeElement;
   if (a && $("#view").contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) {
-    deferred = true; a.addEventListener("blur", () => afterPress(() => { deferred = false; render(); }), { once: true });
+    deferred = true; deferredOn = a;
+    a.addEventListener("blur", () => afterPress(() => { if (deferredOn !== a) return; deferred = false; deferredOn = null; render(); }), { once: true });
     return updateNav();
   }
-  if (pressing) { deferred = true; afterPress(() => { deferred = false; render(); }); return updateNav(); }
+  if (pressing) { deferred = true; deferredOn = null; afterPress(() => { deferred = false; render(); }); return updateNav(); }
   render();
 }
 function updateNav() {

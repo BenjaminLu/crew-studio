@@ -405,7 +405,9 @@ export class Engine {
     mkdirSync(this.rdir(id), { recursive: true });
     const params: Record<string, string> = {};
     for (const [k, p] of Object.entries(def.params ?? {})) if (p.default != null) params[k] = String(p.default);
-    for (const [k, v] of Object.entries(o.params ?? {})) if (v != null && String(v) !== "") params[k] = String(v).slice(0, 4000);
+    // a parameter is at most 4000 characters, or the larger bound its definition declares (max, up to 64 KB)
+    const paramCap = (k: string) => Math.min(65536, Math.max(4000, Number((def.params as any)?.[k]?.max) || 0));
+    for (const [k, v] of Object.entries(o.params ?? {})) if (v != null && String(v) !== "") params[k] = String(v).slice(0, paramCap(k));
     const text = String(o.text ?? "").slice(0, 8000);
     const r: Run = { id, workflow: def.id, version: def.version, def, title: (o.title ? clampTitle(o.title) : deriveTitle(text)) || clampTitle(def.name), text, params, by: o.by ?? "captain",
       status: "queued", result: null, createdAt: now(), updatedAt: now(), endedAt: null, error: null, nodes: {}, queue: [], steps: [], ctx: { nativeQueueVersion: 1 }, classifier: o.classifier ?? null, events: 0, recovered: 0 };
