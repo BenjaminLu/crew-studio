@@ -1,10 +1,11 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // The reviewer's modes (unit review-modes; v1's config.yaml `reviewer: mode: diff|run`, bin/fm-review.sh and
-// skills/reviewer/SKILL.md). Diff mode (the default): read-only, type-aware reads of a fresh checkout of the head,
-// no execution; review-depth asks that every changed file be read (any type, within the read budget). Run mode
-// adds sandboxed test runs and verification commands (no network) and asks for one executed verification, unless it
-// cannot run here (recorded and flagged, never a loop). A review still unverified after its retry raises the
+// skills/reviewer/SKILL.md). Diff mode (opt-in): read-only, type-aware reads of a fresh checkout of the head,
+// no execution; review-depth asks that every changed file be read (any type, within the read budget). Run mode (the
+// default) adds sandboxed test runs and verification commands (no network) and asks for one executed verification, unless it
+// cannot run here (recorded and flagged, never a loop). No APPROVE stands over a worker who said its tests were not run or
+// not green, unless the reviewer ran the covering tests green itself. A review still unverified after its retry raises the
 // step-back card, never a failed run.      bun tests/review-depth.ts
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,8 +28,8 @@ const flow = (E: any) => {
   return { until2, dispatch };
 };
 
-// ---------- diff mode (the default): a shallow reviewer, then a reading one ----------
-{ const H = await boot(); const E = H.engine; const { until2, dispatch } = flow(E);
+// ---------- diff mode (opt-in; run is the default): a shallow reviewer, then a reading one ----------
+{ const H = await boot("reviewer:\n  mode: diff\n"); const E = H.engine; const { until2, dispatch } = flow(E);
   const shallow = E.start({ workflow: "code-firstmate", params: {}, text: intent("STUB_SHALLOW_REVIEW") }); await dispatch(shallow.id);
   await until2(shallow.id, () => E.cards.list({ run: shallow.id, open: true }).some((c: any) => c.node === "step-back"));
   const retry = E.timeline(shallow.id).find((e: any) => e.type === "retry" && e.node === "review");
@@ -361,5 +362,34 @@ out({ type: "item.completed", item: { id: "a1", type: "agent_message", text: "do
   const r2 = await T.run_tests.run({}), r3 = await T.run_tests.run({}), over = await T.run_tests.run({});
   ok(r2.exit === 1 && r3.runsRemaining === 0 && /test run limit reached: all 3 executed runs/.test(over.error ?? "") && over.runsRemaining === 0, "three executed runs with a countdown, then a limit message saying what to do", JSON.stringify([r2.runsRemaining, r3.runsRemaining, over]));
   await mode.end?.(x, "done"); }
+// run is the default mode (E2E F20: a diff-mode reviewer approved in 17 s and executed nothing), and no APPROVE stands over a
+// worker report that says its tests were not run or not green unless the reviewer ran the covering tests green itself
+{ const shipped = readFileSync(join(root, "packs/firstmate/policies.yaml"), "utf8");
+  ok(/^reviewer:\n  mode: run$/m.test(shipped), "the shipped policy's reviewer mode is run");
+  const gates = { test: ["bun", "scripts/test-shard.ts"], tests: ["test/**"] };
+  const files = { "scripts/test-shard.ts": readFileSync(join(root, "templates/sandbox-repo/scripts/test-shard.ts"), "utf8"), "src/a.ts": "export const a = 1;\n",
+    "test/a.test.ts": 'import { expect, test } from "bun:test";\ntest("a passes", () => expect(1).toBe(1));\n' };
+  const said = (x: any, summary: string) => { x.run.nodes.build = { data: { report: { marker: "WORKER_COMPLETE", summary } } }; return x; };
+  const NOT_GREEN = "Corrected the matcher; final rerun unavailable because the test run limit was reached. Thus the final suite is NOT verified green.";
+  const readAll = async (T: any) => { for (const p of Object.keys(files)) await T.fs_read.run({ path: p }); };
+  { const { repo, base } = repoWith(gates, files); const x = said(fakeX(repo, base, {}), NOT_GREEN); x.ctx.head = sh(repo, "git", "rev-parse", "HEAD"); const T = await toolsOf(x);
+    ok(!!T.run_tests, "with no reviewer.mode set, the review runs in run mode (it has run_tests)");
+    await readAll(T); await T.run_command.run({ argv: ["ls"] }); const early = await verdict(T);
+    ok(/Your APPROVE is refused \(run mode\): the worker reported its tests were not run or not green \(".*NOT verified green\."\); run the covering tests green yourself/.test(early.error ?? ""),
+      "run mode: an APPROVE over 'NOT verified green' is refused after a verification command alone, until the reviewer runs the covering tests", String(early.error).slice(0, 300));
+    const t = await T.run_tests.run({ files: ["test/a.test.ts"] }); const v = await verdict(T); const r: any = await (E as any).natives["review-depth"]({}, { x });
+    ok(t.exit === 0 && v.ok && r.verdict === "pass" && /NOT verified green/.test(r.data.workerUnverified ?? ""),
+      "…and stands once the reviewer ran the changed tests green itself; the ledger records the worker's words", JSON.stringify([t.exit, v, r.findings, r.data.workerUnverified]));
+    await mode.end?.(x, "done"); }
+  { const { repo, base } = repoWith(gates, files); const x = said(fakeX(repo, base, { "reviewer.mode": "diff" }), NOT_GREEN); const T = await toolsOf(x);
+    await readAll(T); const a = await verdict(T);
+    ok(/Your APPROVE is refused \(diff mode\): .*diff mode cannot run them/.test(a.error ?? ""), "diff mode: an APPROVE over an unverified worker report is refused (it cannot run the tests)", String(a.error).slice(0, 300));
+    const rej = await T.review_verdict.run({ verdict: "REJECT", findings: [{ path: "src/a.ts", line: 1, text: "the final suite was never run green", tag: "must-fix", fix: "run the suite green" }] });
+    ok(rej.ok === true, "…a REJECT naming the missing verification is accepted");
+    x.rn.data.verdict = { verdict: "APPROVE", findings: [], followups: [] }; const r: any = await (E as any).natives["review-depth"]({}, { x });
+    ok(r.verdict === "fail" && r.findings.some((f: any) => f.class === "review-depth" && /an APPROVE over an unverified worker report/.test(f.message)), "review-depth fails an APPROVE recorded over the unverified report", JSON.stringify(r.findings));
+    await mode.end?.(x, "done"); }
+  { const { repo, base } = repoWith(gates, files); const x = said(fakeX(repo, base, { "reviewer.mode": "diff" }), "Full head declared run passed: 29 tests, no tests failed, exit 0."); const T = await toolsOf(x);
+    await readAll(T); const v = await verdict(T); ok(v.ok === true, "a worker report of a green run (\"no tests failed\") does not block an APPROVE", JSON.stringify(v)); await mode.end?.(x, "done"); } }
 H.stop();
 end();

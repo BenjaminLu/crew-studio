@@ -19,10 +19,11 @@ branch_prefix: "crew/"
 ui_paths: ["**/*.html", "**/*.css", "public/**", "ui/**"]
 flaky:
   retry: 1
-# the reviewer's mode (v1's config.yaml reviewer: mode): diff reads (any file type, read-only, no execution); run also runs the
-# tests or small verification commands in the sandbox (no network). read_budget: reads a review may spend before it samples.
+# the reviewer's mode (v1's config.yaml reviewer: mode): run (the default) reads and also runs the tests or small verification
+# commands on the isolated head in the sandbox (no network); diff only reads (any file type, read-only, no execution).
+# read_budget: reads a review may spend before it samples.
 reviewer:
-  mode: diff
+  mode: run
   read_budget: 40
 file_size_cap: { glob: "tests/**", max: 1200 }
 
