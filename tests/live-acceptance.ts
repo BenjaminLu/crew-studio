@@ -51,6 +51,7 @@ seed({ id: "accept-wait", name: "Acceptance wait fixture", nodes: [
 const port = await freePort(), base = `http://127.0.0.1:${port}`;
 const env: any = { ...process.env, HOME: home, CODEX_HOME: join(home, ".codex"), USER: process.env.USER || "fixture-user", LOGNAME: process.env.LOGNAME || "fixture-user",
   CREW_DATA: data, CREW_RUNTIME_DIR: runtimeDir, CREW_PORT: String(port), CREW_SESSION_TOKEN: token, CREW_GH: "0", CREW_CHAT_PROVIDER: "stub", CREW_INSTALL_RUNNER: "mock", CREW_LOCAL_UNRESTRICTED: "0",
+  CREW_EXAMPLE_WORKFLOWS: "1", // like the operator's live Studio, which already has the startup competition example
   CREW_CLAUDE_BIN: claudeBin, CREW_HOST_CLAUDE_BIN: join(import.meta.dir, "stub-host-claude.mjs"),
   CREW_CODEX_BIN: codexBin, CREW_HOST_CODEX_BIN: join(import.meta.dir, "fixture/codex-account.mjs"), ACCOUNT_FIXTURE_LOG: codexLog };
 for (const k of ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "CREW_MAIN_PROJECT", "CREW_FM_STATE"]) delete env[k];
