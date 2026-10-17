@@ -54,6 +54,19 @@ where the workflow makes one, and no generic error text (`[object Object]`, `und
 the temporary Studio data and prints its path. The captain's throwaway folders and repositories are
 made under that same temporary root, so nothing is left in `$TMPDIR`.
 
+## Sandboxed profile
+
+`bun run acceptance:sandboxed` (`scripts/acceptance-sandboxed.ts`) runs the same suite as a new captain's Mac
+would: the OS sandbox and egress proxy on (never `CREW_LOCAL_UNRESTRICTED`), an empty `HOME`, no tool
+cache (no Playwright browsers, no `PLAYWRIGHT_MODULE` or `NODE_PATH`) and no stand-in renderer. Only the
+vendor CLIs stay stubs. What each workflow needs installed is read from its definition
+(`scripts/acceptance/installs.ts`: `repo.prepare` needs git, a check script needs its `#!` interpreter,
+`deliver.render` needs the renderer and ffmpeg) plus a run's own `needs: [renderer]` (the designer's
+captures of a UI change). The suite asks the sandboxed Studio's Doctor what is installed. A run that
+needs a missing install prints `SKIPPED` with the install named and does not count as passed. A
+local-unrestricted run is skipped too. The summary ends with a table of which workflow needs which install
+and whether this Mac has it. `tests/acceptance-sandboxed.ts` checks the profile itself.
+
 ## Known failures
 
 A run with `known_failure` is a product bug that breaks the workflow on the live board today. It

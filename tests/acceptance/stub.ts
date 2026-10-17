@@ -17,7 +17,7 @@
 //       expect: { status: succeeded, result: done, visited: [...], not_visited: [...], library: true,
 //                 outputs: 1, min_visits: { draft: 2 }, approved: "startup-{task}", waiting_on: node }
 //       board_refusal: { status: 409, error: "regex" }   # the board start must be refused this way
-//       needs: [ffmpeg]                    # local tools the run needs; without one it is SKIPPED (not passed)
+//       needs: [ffmpeg, renderer]          # local tools the run needs; without one it is SKIPPED (not passed)
 //       known_failure: { observed: …, match: "regex", root_cause: "file:line …", covered_by: … }
 //                                          # match: the run's failure text must match it, or the run is a FAIL
 import { decideCard, type RunContext, type Scenario } from "../../scripts/acceptance/scenarios";
@@ -34,7 +34,8 @@ const isObj = (v: unknown): v is Record<string, any> => !!v && typeof v === "obj
 const strings = (v: unknown, at: string): string[] => { if (v === undefined) return []; if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) throw new Error(`${at} must be a list of names`); return v; };
 
 /** The local tools a run may need (tests/acceptance/studio.ts provides them). */
-export const TOOLS = ["ffmpeg"];
+/** ffmpeg: a real sample film for the stub renderer; renderer: Playwright + Chromium (the designer's captures, a film render), checked only in the sandboxed profile (elsewhere the stand-in renderer serves) */
+export const TOOLS = ["ffmpeg", "renderer"];
 const needsOf = (v: unknown, at: string) => { const n = strings(v, `${at} needs`); for (const t of n) if (!TOOLS.includes(t)) throw new Error(`${at}: needs names an unknown tool ${t} (known: ${TOOLS.join(", ")})`); return n; };
 
 export function stubRuns(s: Scenario): StubRun[] {

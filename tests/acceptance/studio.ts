@@ -12,6 +12,8 @@ import { freePort, waitUp } from "../boot.mjs";
 
 const REPO = join(import.meta.dir, "../..");
 export const TERMINAL = ["succeeded", "failed", "cancelled"];
+/** ACCEPTANCE_PROFILE=sandboxed: the OS sandbox on, an empty HOME, no tool cache and no stand-in renderer (scripts/acceptance-sandboxed.ts) */
+export const SANDBOXED = process.env.ACCEPTANCE_PROFILE === "sandboxed";
 /** The CLI stubs (tests/fixture/codex-account.mjs, tests/fixture/claude-native.mjs) switch to the scripted agent on these logins. */
 const CODEX_AUTH = { auth_mode: "chatgpt", last_refresh: "2020-02-29T12:34:56.123+08:00", tokens: { access_token: "abcdefgh.abcdefgh.abcdefgh", id_token: "fixture-id-token", account_id: "fixture-acceptance", refresh_token: "acceptance-refresh-must-not-copy" } };
 const CLAUDE_TOKEN = "sk-ant-oat01-acceptance" + "0".repeat(40); // a fixture login of the official shape; not a credential
@@ -51,6 +53,14 @@ export async function bootStudio(name: string, o: { localUnrestricted?: boolean;
     CREW_RENDER_STUB: "1", ...(filmSample.path ? { CREW_RENDER_STUB_MP4: filmSample.path } : {}),
     CREW_LOCAL_UNRESTRICTED: o.localUnrestricted ? "1" : "0", ...(o.localUnrestricted ? { CREW_LOCAL_DEPENDENCY_ROOT: deps } : {}),
     CREW_EXAMPLE_WORKFLOWS: o.examples === false ? "0" : "1" };
+  // the sandboxed profile (scripts/acceptance-sandboxed.ts): no stand-in renderer and no tool cache, so a workflow that needs
+  // an install finds what a new captain's Mac has; never local-unrestricted
+  if (SANDBOXED) {
+    if (o.localUnrestricted) throw new Error("the sandboxed acceptance profile never starts a local-unrestricted Studio");
+    const browsers = join(root, "no-browsers"); mkdirSync(browsers, { recursive: true });
+    delete env.CREW_RENDER_STUB; delete env.CREW_RENDER_STUB_MP4; env.PLAYWRIGHT_BROWSERS_PATH = browsers;
+    for (const k of ["PLAYWRIGHT_MODULE", "CREW_PLAYWRIGHT_MODULE", "NODE_PATH", "CREW_LOCAL_DEPENDENCY_ROOT"]) delete env[k];
+  }
   for (const k of [...(filmSample.path ? [] : ["CREW_RENDER_STUB_MP4"]), "CREW_MAIN_PROJECT", "CREW_FM_STATE", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CODEX_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "CREW_CHAT_PROVIDER", "CLAUDE_CONFIG_DIR", "CREW_CODEX_MODEL", "CREW_CLAUDE_MODEL", "CREW_CLAUDE_BILLING", "CREW_TEST_IN_PROCESS"]) delete env[k];
   if (!o.localUnrestricted) delete env.CREW_LOCAL_DEPENDENCY_ROOT;
   await o.beforeStart?.(data);
