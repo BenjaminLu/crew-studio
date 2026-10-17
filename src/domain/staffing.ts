@@ -12,6 +12,20 @@ export function nativeStaffingSkillRef(role:string,workflow='code-firstmate'):st
  if(!Object.hasOwn(names,role))throw new Error('Unknown native staffing workflow or role');
  return workflow==='coffee-kit'?`pack:coffee-kit/skills/${names[role]}.md`:`pack:firstmate/skills/${names[role]}.md`;
 }
+/** Staffing is enforced by kind, never by workflow id: coffee-kit, and every code workflow with roles or agent nodes
+ * (code-firstmate, a captain's own code workflow, github-review). */
+export function staffingApplies(def:any):boolean{
+ return def?.kind==='coffee-kit'||def?.kind==='code'&&(Array.isArray(def.roles)&&def.roles.length>0||Array.isArray(def.nodes)&&def.nodes.some((n:any)=>n?.kind==='agent'||typeof n?.role==='string'));
+}
+/** The skill a staffed role must carry: the source contract for code-firstmate and coffee-kit; a captain's own code
+ * workflow keeps the skill its definition declares for that role. */
+export function staffingSkillRef(def:any,role:string):string{
+ if(def?.kind==='coffee-kit')return nativeStaffingSkillRef(role,'coffee-kit');
+ if(def?.id==='code-firstmate')return nativeStaffingSkillRef(role,'code-firstmate');
+ const r=Array.isArray(def?.roles)?def.roles.find((x:any)=>x?.id===role):null;
+ if(typeof r?.skill!=='string'||!r.skill.trim())throw new Error('Unknown native staffing workflow or role');
+ return r.skill;
+}
 /** Explicit artifact project names are a separate authority namespace from Git repositories. */
 export function coffeeStaffingProject(id:string):StaffingProject{
  if(typeof id!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,199}$/.test(id))throw new Error('Choose an explicit coffee artifact project');
@@ -169,7 +183,7 @@ export function signedStaffingBinding(engine:import('../runtime/engine').Engine,
  return current;
 }
 export function installStaffingGuard(engine:import('../runtime/engine').Engine,store:StaffingStore,resolveProject:(id:string)=>StaffingProject,verifyCapability?:(config:StaffingConfig)=>void){
- const applies=(def:any)=>def?.id==='code-firstmate'||def?.kind==='coffee-kit';
+ const applies=staffingApplies;
  // The role text agents receive now: Studio's versioned copy (what the Improve page shows and edits), else the source.
  function currentSkill(def:any,id:string){const source=engine.roleSkillText(def,id)?.text;if(typeof source!=='string'||!source.trim())throw new Error('Current workflow role skill is missing');return source;}
  // A round runs only with the role text the captain approved: a changed skill (a pack update, an adopted edit) refuses at round start until staffing is confirmed again.
@@ -197,7 +211,7 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
   if(Object.hasOwn(config,'nodes')?staffingHash(config.nodes)!==staffingHash(wanted??null):Object.values(wanted??{}).some(pickOverride))throw new Error('Approved node overrides differ from the workflow; confirm staffing again / 已核准的節點設定與流程不同，請重新確認派工配置');
   const required=def.roles.map((r:any)=>r.id);
   if(required.some((id:string)=>!config.roles[id]))throw new Error('Approve every workflow role before dispatch');
-  for(const[id,pick]of Object.entries(config.roles)){const role=def.roles.find((r:any)=>r.id===id);if(!role||role.skill!==nativeStaffingSkillRef(id,def.kind==='coffee-kit'?'coffee-kit':def.id)||role.skill!==pick.skill.ref)throw new Error('Approved role skill differs from workflow policy');pinnedSkill(def,id,pick.skill);}
+  for(const[id,pick]of Object.entries(config.roles)){const role=def.roles.find((r:any)=>r.id===id);if(!role||role.skill!==staffingSkillRef(def,id)||role.skill!==pick.skill.ref)throw new Error('Approved role skill differs from workflow policy');pinnedSkill(def,id,pick.skill);}
   return config;
  }
  function verified(def:any,params:Record<string,string>){try{return verifyStored(def,params)}catch(error){const refusal=new QueueRefusal('Staffing approval requires confirmation: '+String((error as any)?.message??error));if(error instanceof SkillChanged)(refusal as any).failure=failure('env.skill-changed',error.message,{source:'staffing'});throw refusal;}}

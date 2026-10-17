@@ -74,6 +74,29 @@ if(process.env.STAFFING_BASE_ENGINE){
  }finally{h.stop();rmSync(h.data,{recursive:true,force:true})}
  console.log(`staffing total: ${n} passed`);
 }
+// Staffing is enforced by kind: a captain's own code workflow and github-review are staffed like code-firstmate (retro 21).
+{
+ const {harness,Y}=await import('./rt-harness');const {installStaffingGuard,staffingApplies,staffingSkillRef}=await import('../src/domain/staffing');
+ const {bundledText,parseYaml}=await import('../src/bundled');const {normalize}=await import('../src/runtime/defs');
+ const review=normalize(parseYaml(bundledText('workflows/v2/github-review.wf.yaml')!));
+ ok(staffingApplies(review)&&review.roles.every((r:any)=>staffingSkillRef(review,r.id)===r.skill),'github-review is staffed by kind, with the skills its roles declare');
+ ok(!staffingApplies({id:'notes',kind:'documents',roles:[{id:'writer',skill:'x'}],nodes:[{id:'w',kind:'agent',role:'writer'}]})&&!staffingApplies({id:'empty',kind:'code',roles:[],nodes:[{id:'h',kind:'hook'}]}),'non-code workflows and code workflows without agents stay unstaffed');
+ const def={id:'my-code',name:'My code',kind:'code',version:1,roles:[{id:'worker',label:'Worker',skill:'pack:firstmate/skills/worker.md'}],nodes:[{id:'wait',kind:'card',label:'Wait',x:1,y:1,card:{options:[{id:'done',label:'Done'}]}}],edges:[]};
+ const h=await harness([Y(def)]),e=h.engine,s=new StaffingStore(h.data),p={namespace:'git' as const,id:'project-one',identity:'registered canonical project'};
+ try{
+  installStaffingGuard(e,s,id=>{if(id!==p.id)throw new Error('unregistered project');return p;});
+  const before=e.list().length;
+  rejects(()=>e.start({workflow:def.id,params:{project:p.id}}),'a personal code workflow without approved staffing refuses to start');
+  ok(e.list().length===before,'missing approval allocates no personal code run');
+  const actual=e.defs.get(def.id)!;const skill=s.remember({ref:def.roles[0].skill,version:1,text:e.deps.skillText(def.roles[0].skill)});
+  const c=s.approve({schema:1,algorithm:'sha256-canonical-v1',project:p,workflow:{id:actual.id,version:actual.version,sha256:staffingHash(actual)},roles:{worker:{provider:'codex',model:'chosen-model',effort:'high',skill}},review:{freshContexts:3,distinctProviders:false}},null,{run:'R-source',card:'SC-source',answerSeq:1});
+  const run=e.start({workflow:def.id,params:{project:p.id,_staffing:c.hash}});
+  const picked=e.deps.approvedPick(run,{...run.def.nodes[0],role:'worker'});
+  ok(picked.provider==='codex'&&picked.model==='chosen-model'&&picked.effort==='high','the approved staffing runs a personal code workflow');
+  await e.cancel(run.id,'fixture complete');
+ }finally{h.stop();rmSync(h.data,{recursive:true,force:true})}
+ console.log(`staffing by kind: ${n} passed`);
+}
 {
  const {harness,Y,until}=await import('./rt-harness');
  const {installStaffingGuard}=await import('../src/domain/staffing');
