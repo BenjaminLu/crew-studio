@@ -73,6 +73,10 @@ for (const wf of ["web-prototype", "video", "documents"]) {
 }
 HB.stop();
 
+// b2's captain-only "keep the same crew" staffing card (src/firstmate-staffing.ts) is a permission card: never Firstmate-decidable
+{ const { Engine } = await import("../src/runtime/engine"); const src = readFileSync(join(root, "src/firstmate-staffing.ts"), "utf8");
+  ok(Engine.CAPTAIN_KINDS.includes("permission") && /engine\.card\(x,'permission',\{captainOnly:true,title:from\?`Workflow updated — keep the same crew/.test(src), "the keep-the-same-crew card is a captain-only permission card, which never goes to Firstmate"); }
+
 // ---------- engine.card enforces the contract (tests run with CREW_CARD_CONTRACT=enforce) ----------
 { const H = await harness([Y({ id: "bad", name: "bad card", version: 1, roles: [], nodes: [{ id: "q", kind: "card", label: "Ship?", card: { title: { en: "Ship it?", "zh-TW": "出貨？" }, body: { en: "Ready.", "zh-TW": "好了。" }, options: [{ id: "rescope", label: "Rescope" }] }, x: 0, y: 0 }, { id: "done", kind: "hook", label: "Done", x: 1, y: 0 }], edges: [["q", "done", "rescope"]] }),
     Y({ id: "good", name: "good card", version: 1, roles: [], nodes: [{ id: "q", kind: "card", label: "Ship?", card: { title: { en: "Ship it?", "zh-TW": "出貨？" }, body: { en: "Ready.", "zh-TW": "好了。" }, options: [{ id: "ship", label: "Ship", labelZh: "出貨" }] }, x: 0, y: 0 }, { id: "done", kind: "hook", label: "Done", x: 1, y: 0 }], edges: [["q", "done", "ship"]] })]);

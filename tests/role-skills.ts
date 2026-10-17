@@ -246,7 +246,7 @@ H.stop();
   const contract = "# Contract\n\n- Shared rule.\n"; let profile = "# Profile\n\n- Domain rule.\n";
   const texts = (part: string) => part === "pack:firstmate/skills/worker.md" ? contract : part === "pack:coffee-kit/skills/website.md" ? profile : (() => { throw new Error(`no skill ${part}`); })();
   const flow = { id: "coffee-kit", name: "Named skills fixture", kind: "coffee-kit", version: 1, roles: [{ id: "worker", label: "Worker", skills: ref.split("+") }],
-    nodes: [{ id: "wait", kind: "card", label: "Wait", x: 0, y: 0, card: { options: [{ id: "go", label: "Go" }] } }, { id: "work", kind: "agent", label: "Work", role: "worker", mode: "test", x: 1, y: 0 }],
+    nodes: [{ id: "wait", kind: "card", label: "Wait", x: 0, y: 0, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "go", label: "Go", labelZh: "Go" }] } }, { id: "work", kind: "agent", label: "Work", role: "worker", mode: "test", x: 1, y: 0 }],
     edges: [["wait", "work", "go"]] };
   const h = await harness([Y(flow)], { data: checkedTempDir("crew-role-skills-named-") }), e = h.engine, staffing = new StaffingStore(h.data), project = coffeeStaffingProject("named-skills");
   try {
@@ -320,7 +320,7 @@ H.stop();
   const { Y } = await import("./rt-harness");
   const PW = { id: "plain-writing", v: 1, sha256: sha(readFileSync(join(root, "packs/core/skills/plain-writing/SKILL.md"), "utf8")) };
   const flow = { id: "code-firstmate", name: "Update fixture", kind: "code", version: 8, roles: [{ id: "worker", label: "Worker", skill: "pack:firstmate/skills/worker.md" }, { id: "reviewer", label: "Reviewer", skill: "pack:firstmate/skills/reviewer.md" }],
-    nodes: [{ id: "wait", kind: "card", label: "Wait", x: 0, y: 0, card: { options: [{ id: "go", label: "Go" }] } }, { id: "build", kind: "agent", label: "Build", role: "worker", mode: "test", x: 1, y: 0 }, { id: "review", kind: "agent", label: "Review", role: "reviewer", mode: "test", x: 2, y: 0 }],
+    nodes: [{ id: "wait", kind: "card", label: "Wait", x: 0, y: 0, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "go", label: "Go", labelZh: "Go" }] } }, { id: "build", kind: "agent", label: "Build", role: "worker", mode: "test", x: 1, y: 0 }, { id: "review", kind: "agent", label: "Review", role: "reviewer", mode: "test", x: 2, y: 0 }],
     edges: [["wait", "build", "go"], ["build", "review"]] };
   const h = await harness([Y(flow), bundledText("workflows/v2/firstmate-staffing.wf.yaml")!], { data: checkedTempDir("crew-role-skills-keep-") }), e = h.engine, store = new StaffingStore(h.data), project = { namespace: "git" as const, id: "p", identity: "keep-crew" };
   try {
@@ -368,7 +368,7 @@ H.stop();
   const { Y } = await import("./rt-harness");
   const legacy = "pack:coffee-kit/skills/website.md";
   const flow = { id: "coffee-kit", name: "Coffee v1 fixture", kind: "coffee-kit", version: 1, roles: [{ id: "worker", label: "Worker", skill: legacy }],
-    nodes: [{ id: "wait", kind: "card", label: "Wait", x: 0, y: 0, card: { options: [{ id: "go", label: "Go" }] } }, { id: "work", kind: "agent", label: "Work", role: "worker", mode: "test", x: 1, y: 0 }], edges: [["wait", "work", "go"]] };
+    nodes: [{ id: "wait", kind: "card", label: "Wait", x: 0, y: 0, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "go", label: "Go", labelZh: "Go" }] } }, { id: "work", kind: "agent", label: "Work", role: "worker", mode: "test", x: 1, y: 0 }], edges: [["wait", "work", "go"]] };
   const h = await harness([Y(flow)], { data: checkedTempDir("crew-role-skills-coffee-v1-") }), e = h.engine, store = new StaffingStore(h.data), project = coffeeStaffingProject("coffee-v1");
   try {
     let text = "# Coffee website profile, v1 text\n";

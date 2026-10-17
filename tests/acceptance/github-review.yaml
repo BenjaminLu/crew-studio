@@ -2,7 +2,7 @@
 # code-firstmate (docs/retro/2026-10-17-github-review-held.md): this scenario only proves it stays held.
 schema: 2
 workflow: github-review
-pin: { version: 1, sha256: "9dcb8118a23ab2aee3a83adaa7b9254248242873676245f66bc2498f59daaeee" }   # bun scripts/acceptance/pin.ts github-review
+pin: { version: 1, sha256: "9341efcd93418254b39abf851b7f03954a130476e88fd4ba3265ae2bd0dc1710" }   # bun scripts/acceptance/pin.ts github-review
 topic: "Add one sentence to the README that says how to run the offline tests."
 start: { provider: null, params: {}, required_params: [project] }
 providers: []

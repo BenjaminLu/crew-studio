@@ -2,7 +2,7 @@
 # checks and refine run, the captain's acceptance card approves. A missing renderer stops the run.
 schema: 2
 workflow: video
-pin: { version: 1, sha256: "62f6c65be20ea937257ce766ab8f56dfd8d5e070936e0e4ebdd066bcd70b36a5" }   # bun scripts/acceptance/pin.ts video
+pin: { version: 1, sha256: "919c2c9d58d82b686dee1c57a2395508b3913ddbe3f43c204af3ddc8d0729da5" }   # bun scripts/acceptance/pin.ts video
 topic: "A ten-second title card that says Live acceptance passed, with a short fade in and out."
 start: { provider: null, params: {} }
 providers: []

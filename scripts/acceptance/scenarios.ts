@@ -62,11 +62,11 @@ export const ALLOWED_CARD_EFFECTS: { workflow: string; node: string; option: str
 export const CAPTAIN_ONLY_ALLOW: { workflow: string; sha256: string; node: string; kind: string; option: string }[] = [
   // deliver acceptance cards (src/domain/deliver.ts finalCard): approve-<producer> puts the approved
   // artifact into Studio's local Library; changes and reject stay the captain's
-  { workflow: "documents", sha256: "63af62fcec510e63d89ab2dc3e746d2485b3e27c96982d6451627ac4bc455bbf", node: "accept", kind: "acceptance", option: "approve-draft" },
+  { workflow: "documents", sha256: "64c0fea5154d0255a4e251a976ef7e2fce46a99b34754ddb0533176faac03bc9", node: "accept", kind: "acceptance", option: "approve-draft" },
   { workflow: "images", sha256: "c53617d464637dc96e23bbc43ffea8c2f4ab5331f177bef996f187cfae8205fc", node: "accept", kind: "acceptance", option: "approve-draft" },
-  { workflow: "video", sha256: "62f6c65be20ea937257ce766ab8f56dfd8d5e070936e0e4ebdd066bcd70b36a5", node: "accept", kind: "acceptance", option: "approve-draft" },
-  { workflow: "web-prototype", sha256: "c3a939ff48c283bc43aff1bede54ff4915758902a9d4587f84651494351ec46c", node: "accept", kind: "acceptance", option: "approve-design-a" },
-  { workflow: "web-prototype", sha256: "c3a939ff48c283bc43aff1bede54ff4915758902a9d4587f84651494351ec46c", node: "accept", kind: "acceptance", option: "approve-design-b" },
+  { workflow: "video", sha256: "919c2c9d58d82b686dee1c57a2395508b3913ddbe3f43c204af3ddc8d0729da5", node: "accept", kind: "acceptance", option: "approve-draft" },
+  { workflow: "web-prototype", sha256: "d1258ae72600a73a3f1ee436e4b7d7c62fa920314dad2119aebdcb2cd3ccbba6", node: "accept", kind: "acceptance", option: "approve-design-a" },
+  { workflow: "web-prototype", sha256: "d1258ae72600a73a3f1ee436e4b7d7c62fa920314dad2119aebdcb2cd3ccbba6", node: "accept", kind: "acceptance", option: "approve-design-b" },
   // startup competition (src/domain/startup-recursion.ts): run the bundled template; accept the text result
   { workflow: "startup-recursion", sha256: "901c2e519c16c49348945b0283c3c7236c11f2c7079d3e5f01be8f1e3e694a29", node: "choose", kind: "question", option: "template" },
   { workflow: "startup-recursion", sha256: "901c2e519c16c49348945b0283c3c7236c11f2c7079d3e5f01be8f1e3e694a29", node: "accept", kind: "acceptance", option: "accept" },
