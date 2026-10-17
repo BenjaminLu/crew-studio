@@ -77,8 +77,14 @@ export const ACTION_PARAM_READS: Record<string, string[]> = { "fileorg.plan": ["
 export const ACTION_OUTCOMES: Record<string, string[]> = { "deliver.render": ["ok", "unavailable"],
   "coffee.page-needed": ["produce", "current"], "coffee.image-needed": ["produce", "current"], "coffee.video-needed": ["produce", "current"],
   "coffee.image": ["ok", "unavailable"], "coffee.video": ["ok", "unavailable"] };
-/** Agent modes whose round ends with a decision instead of ok (the mode's after() returns one of these). */
-export const MODE_OUTCOMES: Record<string, string[]> = { "plan-accept": ["accept", "revise", "escalate"], "design-gap": ["recapture", "escalate"], "startup-judge": ["ready", "revise"] };
+/**
+ * Every outcome an agent mode's round can end with besides the default-routed failures: what its after()
+ * returns, and "blocked" for a mode whose begin can stop the round before the agent starts (a worktree
+ * round's RoundBlocked: a remote it cannot read, a diverged branch). "ask" is not listed: an unrouted
+ * question waits for Firstmate's answer (engine route), it never stops the run.
+ */
+export const MODE_OUTCOMES: Record<string, string[]> = { "plan-accept": ["accept", "revise", "escalate", "blocked"], "design-gap": ["recapture", "escalate"], "startup-judge": ["ready", "revise"],
+  spec: ["ok", "blocked"], plan: ["ok", "blocked"], build: ["ok", "blocked", "door-change", "rebase-more"], review: ["ok", "blocked"] };
 const CARD_BODY_OUTCOMES: Record<string, string[]> = { fileorg: ["apply", "discard"], lane: ["merge", "close"], "deliver-escalation": ["retry", "changes", "close"], "render-capability": ["retry", "close"] };
 const CARD_MODE_OUTCOMES: Record<string, string[]> = { "deliver-accept": ["approved", "changes", "rejected"] };
 /** Captain-only card bodies that decide a one-way step, and the answers that mean "go ahead". */

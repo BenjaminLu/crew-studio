@@ -631,7 +631,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       if (p && p.mergeable_state !== "behind") return "ok";
       const trusted = engine.trusted(x.run.id), review: any = trusted.entries.filter(e => e.check === "firstmate/review-verdict").at(-1), b = review?.data?.binding;
       if (!trusted.ok || review?.verdict !== "pass" || b?.unverified || b?.head !== x.ctx.pr.head || x.ctx.reviewUnverified || (x.ctx.reviews ?? []).at(-1)?.verdict === "REJECT") throw new Error("bound review unavailable");
-      const old = x.ctx.pr, key = wkey(x); const round = await W.startRound(key.project,key.task,`${x.run.id}/remote-ready#${x.visit}`,{write:true,install:x.policy("install") === false ? false : null}); release=round.release;phase.assert();if(round.head!==old.head)throw new Error("task head moved before update");
+      const old = x.ctx.pr, key = wkey(x); const round = await W.startRound(key.project,key.task,`${x.run.id}/remote-ready#${x.visit}`,{write:true,install:x.policy("install") === false ? false : null,remote:()=>a.remoteGit()}); release=round.release;phase.assert();if(round.head!==old.head)throw new Error("task head moved before update");
       const request=pending?pending.request:engine.record(x,"remote-update-request",{head:old.head,data:{version:1,grant:grantIdentity(a),repository:a.grant.repository,pr:structuredClone(old),base:x.ctx.baseCommit}} as any)?.seq;
       const next = pending?pending.next:await updateOnce(a, old, x.dir, phase.signal, phase.assert); phase.assert();
       await a.verifyUpdateResult(old,next,phase.signal,phase.assert);phase.assert();
@@ -741,7 +741,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     // a remote (GitHub) Task rebases onto the fetched origin base, never onto a stale local ref
     const remoteTip = write && x.node.mode === "build" ? await remoteBaseTip(x) : null;
     const beforeInstall = write && x.node.mode === "build" ? (start: string) => { baseRefresh = refreshBase(x, start, remoteTip); return baseRefresh ? { pending: baseRefresh.conflicts.length > 0 } : null; } : undefined;
-    try { s = await W.startRound(k.project, k.task, holder(x), { write, skipInstall, beforeInstall, install: install === false ? false : Array.isArray(install) ? install.map(String) : null, scripts: x.policy("install_scripts") === true,
+    // a GitHub-connected project's branch head is read from the granted repository with the grant's token, never from origin
+    const remote = isRemote(x) ? () => (selectedAdapter(x) as GitHubPrAdapter).remoteGit() : null;
+    try { s = await W.startRound(k.project, k.task, holder(x), { write, skipInstall, beforeInstall, remote, install: install === false ? false : Array.isArray(install) ? install.map(String) : null, scripts: x.policy("install_scripts") === true,
       allow: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String) }); }
     catch (e: any) { if (e instanceof RoundBlocked) { x.rn.data.report = { marker: "BLOCKED", summary: e.message, round: x.visit }; x.save(); } if (e instanceof EnvGapError) recordEnvGaps(x, [e.gap], "round"); throw e; }
     held.set(holder(x), s.release);
@@ -753,9 +755,10 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       const result=W.startNativeRebase(k.project,k.task,rebase.head,rebase.fromBase,rebase.base);rebase.started=true;x.ctx.head=result.head;x.ctx.baseCommit=rebase.base;x.save();
     }
     const bs = roundBrief(x);
-    engine.record(x, "round-start", { head: s.head, data: { round: x.visit, brief: bs.brief?.id ?? null, ledger: bs.brief?.ledger ?? [], carried: bs.carried, briefMissing: bs.missing, corrected: s.corrected, deps: s.deps.ran?.join(" ") ?? null, depsDetail: s.deps.detail ?? null, baseRefresh } } as any);
+    engine.record(x, "round-start", { head: s.head, data: { round: x.visit, brief: bs.brief?.id ?? null, ledger: bs.brief?.ledger ?? [], carried: bs.carried, briefMissing: bs.missing, corrected: s.corrected, deps: s.deps.ran?.join(" ") ?? null, depsDetail: s.deps.detail ?? null, baseRefresh, ...(s.remoteNotice ? { remoteNotice: s.remoteNotice } : {}) } } as any);
     if (baseRefresh && remoteTip) engine.record(x, "remote-rebase", { head: (baseRefresh as any).headAfter, data: { version: 1, branch: x.ctx.branch, fromBase: (baseRefresh as any).baseBefore, toBase: (baseRefresh as any).baseAfter, headBefore: (baseRefresh as any).headBefore, headAfter: (baseRefresh as any).headAfter, lease: x.ctx.pr?.head ?? null, pending: (baseRefresh as any).conflicts.length > 0 } } as any);
     if (s.corrected) x.log(`round ${x.visit}: ${s.corrected.reason}; ${s.corrected.kept ? `kept on ${s.corrected.kept}` : "nothing to keep"}`);
+    if (s.remoteNotice) x.log(`round ${x.visit}: ${s.remoteNotice}`);
     } catch (e) { held.delete(holder(x)); s.release(); throw e; }
   };
   /**
@@ -1357,11 +1360,13 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
         ...base(x, `The worker stopped: the change needs work outside the approved scope (${scopeIn(x).join(", ") || "no paths"}). It said: ${String(rep.summary ?? "").slice(0, 400)}`, "Rescope the spec to include what it needs, or to drop that part; or park the run.",
           `worker 停下來了：這個改動需要動到核准範圍（${scopeIn(x).join("、") || "沒有路徑"}）以外的地方。`, "調整規格範圍，把需要的部分加進來或拿掉；或暫停這個 run。"),
         body: `The worker stopped on round ${from?.visit ?? "?"}: the change needs work outside the approved scope.\n\nThe worker said: ${String(rep.summary ?? "").slice(0, 1200)}${files.length ? `\n\nFiles: ${files.join(", ")}` : ""}`, options: rescopeOpts }; }
-    // the build round stopped before it could finish (a remote it cannot read, a conflict it cannot resolve …): its own words say why
-    if (from?.node === "build") { const said = String(rep?.summary ?? x.run.nodes.build?.error ?? x.run.nodes.build?.note ?? "").replace(/\s+/g, " ").trim().slice(0, 600) || "the round gave no reason";
-      return { title: `The build round is blocked: rescope or park? ${T(x)}`, zhTitle: `build 回合被擋住了：要調整範圍還是暫停？${ZT(x)}`,
-        ...base(x, `The build round stopped before it could finish: ${said}`, "Fix what blocks it, then rescope to prepare again; or park the run.", "build 回合在完成前停下來了。", "排除阻擋的原因後選「調整範圍」重新準備；或暫停這個 run。"),
-        body: `The build round (round ${from?.visit ?? "?"}) stopped before it could finish.
+    // a round stopped before it could finish (build, or any round blocked before its agent: a remote it cannot read,
+    // a conflict it cannot resolve …): its own words say why
+    if (from && (from.node === "build" || from.outcome === "blocked")) { const n = x.run.nodes[from.node], name = from.node === "plan-accept" ? "plan decision" : from.node;
+      const said = String(n?.data?.report?.summary ?? n?.error ?? n?.note ?? "").replace(/\s+/g, " ").trim().slice(0, 600) || "the round gave no reason";
+      return { title: `The ${name} round is blocked: rescope or park? ${T(x)}`, zhTitle: `${name} 回合被擋住了：要調整範圍還是暫停？${ZT(x)}`,
+        ...base(x, `The ${name} round stopped before it could finish: ${said}`, "Fix what blocks it, then rescope to prepare again; or park the run.", `${name} 回合在完成前停下來了。`, "排除阻擋的原因後選「調整範圍」重新準備；或暫停這個 run。"),
+        body: `The ${name} round (round ${from.visit ?? "?"}) stopped before it could finish.
 
 ${said}`, options: rescopeOpts }; }
     if (from?.node === "plan-accept" && x.ctx.planDecision) return { title: `The plan needs a decision the spec does not settle: ${T(x)}`, zhTitle: `計畫需要一個 spec 沒有決定的選擇：${ZT(x)}`,

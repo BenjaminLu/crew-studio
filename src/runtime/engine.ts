@@ -1314,7 +1314,8 @@ export class Engine {
     const rn = r.nodes[node.id]; const o = { source: "engine" as const, run: r.id, node: node.id, visit: rn.visits, inputs: this.failureInputs(r, node), log: rn.job ? { k: "job" as const, job: rn.job, run: r.id, node: node.id, round: String(rn.visits) } : null };
     const known = rn.data.failure as Failure | null;
     if (known && known.node === node.id) return { ...known, inputs: known.inputs ?? { hash: inputsHash(o.inputs), snapshot: o.inputs } };
-    const note = String(rn.note ?? rn.error ?? "");
+    // a round stopped before its agent (begin's RoundBlocked) keeps its reason on the report, not the step note
+    const note = String(rn.note || rn.error || (outcome === "blocked" ? rn.data.report?.summary : "") || "");
     if (outcome === "cap") return failure("deterministic.round-cap", `${node.label}: the round cap was reached${note ? ` (${note})` : ""}`, o);
     if (outcome === "timeout") return failure("transient.timeout", note || `${node.label} stopped at its time limit`, o);
     // an agent question reaches the captain only when Firstmate escalated it (rn.data.escalation: Firstmate's reason); a domain without that path escalates as is

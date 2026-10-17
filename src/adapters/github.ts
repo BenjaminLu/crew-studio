@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { gitArgv, gitEnv } from "../git";
 import { githubHeaders, findToken } from "../github";
+import type { RemoteGit } from "../worktrees";
 import { registerSecretValues, redactText } from "../secure";
 
 export type ReviewRequest = { id: string; adapter: "local" | "github"; repo: string; base: string; branch: string; head: string; title: string; body: string; openedAt: string; url: string | null };
@@ -159,6 +160,21 @@ export class GitHubPrAdapter implements PrAdapter {
   private credential() {
     const t = this.token()?.trim(); if (!t || /[\r\n]/.test(t)) throw new Error("GitHub authentication is required");
     this.tokenValue = t; return t;
+  }
+  /**
+   * Studio's one way to authenticate git against the granted repository: the grant's token as an
+   * http extraHeader for github.com, credential helpers off. It lives only in a git subprocess's
+   * environment (GIT_CONFIG_COUNT), never in a config file or argv, and is never logged.
+   */
+  private gitAuth(): Record<string, string> {
+    return this.grant.mode === "github" ? { GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "http.https://github.com/.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${this.credential()}`).toString("base64")}`, GIT_CONFIG_KEY_1: "credential.helper", GIT_CONFIG_VALUE_1: "" } : {};
+  }
+  /** Remote git reads of the granted repository from outside the adapter (a round's durable head):
+   * only the grant's pushUrl, never what the project's origin says, with the same authentication. */
+  remoteGit(): RemoteGit {
+    validateGitHubGrant(this.grant);
+    const env = publicationEnv(this.gitAuth());
+    return { url: this.grant.pushUrl, env, fileProtocol: this.grant.mode === "simulator", secrets: this.tokenValue && this.grant.mode === "github" ? [this.tokenValue, env.GIT_CONFIG_VALUE_0] : [] };
   }
   /** The complete allowlist; arbitrary URLs and generic request methods are not exposed. */
   private async api(method: "GET" | "POST" | "PATCH", suffix: string, body?: Record<string, any>, signal?: AbortSignal, assertOwner?: () => void) {
@@ -327,7 +343,7 @@ export class GitHubPrAdapter implements PrAdapter {
     const dir = mkdtempSync(join(tmpdir(), "crew-remote-import-")); let retain = false;
     try {
       localMust(dir, ["init", "--bare", "-q", "."]); const objects = localMust(this.grant.localPath, ["rev-parse", "--path-format=absolute", "--git-path", "objects"]); if (/[\r\n]/.test(objects)) throw new Error("invalid object path");
-      const extra = this.grant.mode === "github" ? { GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "http.https://github.com/.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${this.credential()}`).toString("base64")}`, GIT_CONFIG_KEY_1: "credential.helper", GIT_CONFIG_VALUE_1: "" } : {};
+      const extra = this.gitAuth();
       const env = publicationEnv({ ...extra, GIT_OBJECT_DIRECTORY: objects });
       await ownedGit(gitArgv(["fetch", "--no-tags", "--", this.grant.pushUrl, `+refs/heads/${pr.branch}:refs/crew/head`, `+refs/heads/${pr.base}:refs/crew/base`]), dir, env, this.timeoutMs, signal);
       const read = async (name: string) => ownedGit(gitArgv(["rev-parse", name]), dir, env, this.timeoutMs, signal);
@@ -340,7 +356,7 @@ export class GitHubPrAdapter implements PrAdapter {
     const dir = mkdtempSync(join(tmpdir(), "crew-remote-base-")); let retain = false;
     try {
       localMust(dir, ["init", "--bare", "-q", "."]); const objects = localMust(this.grant.localPath, ["rev-parse", "--path-format=absolute", "--git-path", "objects"]); if (/[\r\n]/.test(objects)) throw new Error("invalid object path");
-      const extra = this.grant.mode === "github" ? { GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "http.https://github.com/.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${this.credential()}`).toString("base64")}`, GIT_CONFIG_KEY_1: "credential.helper", GIT_CONFIG_VALUE_1: "" } : {};
+      const extra = this.gitAuth();
       const env = publicationEnv({ ...extra, GIT_OBJECT_DIRECTORY: objects });
       await ownedGit(gitArgv(["-c", "protocol.file.allow=" + (this.grant.mode === "simulator" ? "always" : "never"), "fetch", "--no-tags", "--", this.grant.pushUrl, `+refs/heads/${this.grant.base}:refs/crew/base`]), dir, env, this.timeoutMs, signal);
       const base = await ownedGit(gitArgv(["rev-parse", "refs/crew/base"]), dir, env, this.timeoutMs, signal); if (!sha.test(base)) throw new Error("remote base head is invalid"); return base;
@@ -371,8 +387,7 @@ export class GitHubPrAdapter implements PrAdapter {
       const objects = localMust(o.repo, ["rev-parse", "--path-format=absolute", "--git-path", "objects"]);
       if (/[\r\n]/.test(objects)) throw new Error("invalid repository object path");
       mkdirSync(join(dir, "objects", "info"), { recursive: true }); writeFileSync(join(dir, "objects", "info", "alternates"), objects + "\n");
-      const token = this.credential();
-      const extras = this.grant.mode === "github" ? { GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "http.https://github.com/.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`, GIT_CONFIG_KEY_1: "credential.helper", GIT_CONFIG_VALUE_1: "" } : {};
+      this.credential(); const extras = this.gitAuth(); // a push needs the token in every mode
       const command = async (args: string[]) => {assertOwner?.();const result=await ownedGit(gitArgv(["-c", "protocol.file.allow=" + (this.grant.mode === "simulator" ? "always" : "never"), ...args]), dir, publicationEnv(extras), this.timeoutMs, signal);assertOwner?.();return result;};
       const remote = await command(["ls-remote", "--refs", "--", this.grant.pushUrl, `refs/heads/${o.branch}`]);
       const lines = remote ? remote.split("\n") : []; if (lines.length > 1 || (lines.length && !new RegExp(`^[a-f0-9]{40}\\s+refs/heads/${o.branch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`).test(lines[0]))) throw new Error("invalid remote branch response");

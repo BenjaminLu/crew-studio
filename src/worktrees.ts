@@ -12,8 +12,11 @@
 // Rules:
 // - each round starts at the branch's durable head, checked before the agent starts:
 //   the newest of the remote branch's head and the head recorded at the last hand-back
-//   (an unpushed hand-back is not stale); a remote that cannot be read, or a remote and
-//   a hand-back that diverged, stops the round (never a silent fallback); a worktree that
+//   (an unpushed hand-back is not stale). The remote of a GitHub-connected project is the
+//   grant's repository, read with the grant's token (RemoteGit), never whatever origin says;
+//   that remote unreadable, or a remote and a hand-back that diverged, stops the round (never
+//   a silent fallback). A plain `origin` without a grant is optional: unreadable, the branch
+//   is local-only and the record says so (the local workflow never needed it); a worktree that
 //   drifted is put back, and what it held is kept on a kept ref, never reset silently;
 // - dependencies are installed before the agent starts (bun install --frozen-lockfile
 //   --ignore-scripts, or the project's `install` policy), in the round sandbox: lifecycle
@@ -26,9 +29,10 @@
 // - after a merge or a cancel the worktree goes; kept refs stay `keep_days` days;
 // - at start, worktrees and locks no live run owns are swept, each with its reason.
 import { withoutSessionLinks } from "./domain/pull-template";
-import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { addPaths, changedPaths, git, gitArgv, gitEnv, must } from "./git";
+import { tmpdir } from "node:os";
 /** A full conflict block as git writes it, in order: <<<<<<< ours, =======, >>>>>>> theirs
  * (a lone ======= line, such as a Markdown setext underline, is not one). */
 export const CONFLICT_BLOCK = /^<{7}(?: [^\n]*)?\n[\s\S]*?^={7}\r?\n[\s\S]*?^>{7}(?: |\r?$)/m;
@@ -67,7 +71,28 @@ export type WorktreeRecord = {
   history: { at: string; what: string }[];
   createdAt: string; removedAt: string | null;
 };
-export type RoundStart = { head: string; corrected: { from: string; kept: string | null; reason: string } | null; deps: { ran: string[] | null; ok: boolean; detail: string; gap?: EnvGap } };
+export type RoundStart = { head: string; corrected: { from: string; kept: string | null; reason: string } | null; deps: { ran: string[] | null; ok: boolean; detail: string; gap?: EnvGap };
+  /** set when an origin without a grant could not be read and the branch was taken as local-only */
+  remoteNotice?: string };
+/**
+ * The granted remote of a GitHub-connected project (GitHubPrAdapter.remoteGit): its URL (the grant's
+ * pushUrl) and the git environment that authenticates it. Credentials live only in `env`; `secrets`
+ * are cut from any git message before it is shown or recorded.
+ */
+export type RemoteGit = { url: string; env: Record<string, string>; fileProtocol: boolean; secrets: string[] };
+/** Remote git through a temporary bare client: no project config, remotes, helpers or URL rewrites;
+ * objects land in the repository's own object store. */
+export function grantedGit(auth: RemoteGit, repo: string, args: string[]): { ok: boolean; code: number | null; out: string; err: string } {
+  const dir = mkdtempSync(join(tmpdir(), "crew-remote-head-"));
+  try {
+    const objects = must(repo, ["rev-parse", "--path-format=absolute", "--git-path", "objects"]);
+    if (/[\r\n]/.test(objects)) throw new Error("invalid object path");
+    must(dir, ["init", "--bare", "-q", "."]);
+    const r = Bun.spawnSync(gitArgv(["-c", `protocol.file.allow=${auth.fileProtocol ? "always" : "never"}`, ...args]), { cwd: dir, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 60_000, env: { ...auth.env, GIT_OBJECT_DIRECTORY: objects } });
+    let err = r.stderr.toString().trim(); for (const v of auth.secrets) if (v) err = err.split(v).join("[redacted]");
+    return { ok: r.success, code: r.exitCode, out: r.stdout.toString().replace(/\s+$/, ""), err: err.replace(/authorization:[^\n]*/gi, "authorization: [redacted]") };
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
 
 const now = () => new Date().toISOString();
 /** An id that names a folder or a branch: refused, never rewritten, unless it is one safe segment (no ".", "..", "/", no collisions). */
@@ -176,7 +201,7 @@ export class Worktrees {
    * Start a round: take the lock, put the worktree at the durable head (keeping what
    * it held on a kept ref, with a record), install the dependencies, open it for writing.
    */
-  async startRound(project: string, task: string, holder: string, o: { install?: string[] | false | null; scripts?: boolean; allow?: string[]; write?: boolean; skipInstall?: boolean; beforeInstall?: (head: string) => { pending: boolean } | null } = {}): Promise<RoundStart & { release: () => void }> {
+  async startRound(project: string, task: string, holder: string, o: { install?: string[] | false | null; scripts?: boolean; allow?: string[]; write?: boolean; skipInstall?: boolean; beforeInstall?: (head: string) => { pending: boolean } | null; remote?: (() => RemoteGit) | null } = {}): Promise<RoundStart & { release: () => void }> {
     const r0 = this.get(project, task); if (!r0 || r0.removedAt || !existsSync(r0.path)) throw new Error(`no worktree for ${task}`);
     assertSharedGitConfig(r0.repo); // before the lock: a broken shared config stops the round with its reason
     const release0 = this.lock(project, task, holder); this.held.add(`${project}/${task}`);
@@ -195,7 +220,8 @@ export class Worktrees {
         if(o.write===false)throw new RoundBlocked("native rebase must finish before review");
         return {head:r.head,corrected:null,deps:{ran:null,ok:true,detail:"native rebase resolution round; dependency install deferred"},release};
       }
-      const durable = this.durableHead(r);
+      const notice: string[] = [];
+      const durable = this.durableHead(r, o.remote ?? null, notice);
       const cur = must(r.path, ["rev-parse", "HEAD"]); const branchNow = git(r.path, ["symbolic-ref", "--short", "HEAD"]).out;
       const dirty = !!changedPaths(r.path).length;
       let corrected: RoundStart["corrected"] = null;
@@ -214,7 +240,7 @@ export class Worktrees {
         : rebased?.pending ? { ran: null, ok: true, detail: "rebase conflicts pending; dependency install deferred until the rebase completes" }
         : await this.installDeps(now, o.install ?? null, { scripts: !!o.scripts, allow: o.allow ?? [] });
       if (o.write === false) this.freeze(now);
-      return { head: durable, corrected, deps, release };
+      return { head: durable, corrected, deps, release, ...(notice.length ? { remoteNotice: notice.join("; ") } : {}) };
     } catch (e) { release(); throw e; }
   }
 
@@ -369,19 +395,31 @@ export class Worktrees {
   /**
    * The head a round starts from: the newest of the remote branch's head and the head
    * recorded at the last hand-back. `ls-remote --exit-code`: 0 the branch is there, 2 it
-   * is not; any other answer is an error and stops the round, as do a failed fetch and a
-   * remote and a hand-back that diverged.
+   * is not. For a GitHub-connected project (`remote`: the grant's URL and token) any other
+   * answer, a failed fetch, or a remote and a hand-back that diverged stop the round. A
+   * plain `origin` without a grant is read as is; when it cannot be read or fetched the
+   * branch is local-only for this round, with a notice (never a silent fallback).
    */
-  durableHead(r: WorktreeRecord): string {
-    const remote = git(r.repo, ["remote"]).out.split("\n").filter(Boolean);
-    if (!remote.includes("origin")) return r.head;
-    const ls = git(r.repo, ["ls-remote", "--exit-code", "--heads", "origin", `refs/heads/${r.branch}`]);
+  durableHead(r: WorktreeRecord, remote: (() => RemoteGit) | null = null, notice: string[] = []): string {
+    let run: (args: string[]) => { ok: boolean; code: number | null; out: string; err: string }, url: string;
+    if (remote) {
+      let auth: RemoteGit; try { auth = remote(); } catch (e: any) { throw new RoundBlocked(`cannot read the remote head of ${r.branch}: ${String(e?.message ?? e).slice(0, 300)}`); }
+      run = (args) => grantedGit(auth, r.repo, args); url = auth.url;
+    } else {
+      if (!git(r.repo, ["remote"]).out.split("\n").filter(Boolean).includes("origin")) return r.head;
+      run = (args) => git(r.repo, args); url = "origin";
+    }
+    const localOnly = (why: string) => { const m = `origin could not be read (${why.replace(/\s+/g, " ").slice(0, 300)}): ${r.branch} is taken as local-only for this round`; this.note(r, m); notice.push(m); return r.head; };
+    const ls = run(["ls-remote", "--exit-code", "--heads", "--", url, `refs/heads/${r.branch}`]);
     const code = ls.ok ? 0 : ls.code ?? -1;
     if (code === 2) return r.head; // no remote branch yet: the hand-back head
-    if (code !== 0) throw new RoundBlocked(`cannot read the remote head of ${r.branch}: ${ls.err || `git ls-remote exited ${code}`}`);
+    if (code !== 0) { const why = ls.err || `git ls-remote exited ${code}`; if (!remote) return localOnly(why); throw new RoundBlocked(`cannot read the remote head of ${r.branch}: ${why}`); }
     const rh = ls.out.split(/\s+/)[0];
     if (!/^[0-9a-f]{40}$/.test(rh)) throw new RoundBlocked(`the remote answered no head for ${r.branch}`);
-    if (!git(r.repo, ["cat-file", "-e", `${rh}^{commit}`]).ok) { const f = git(r.repo, ["fetch", "-q", "origin", `refs/heads/${r.branch}`]); if (!f.ok || !git(r.repo, ["cat-file", "-e", `${rh}^{commit}`]).ok) throw new RoundBlocked(`cannot fetch the remote head of ${r.branch} (${rh.slice(0, 8)}): ${f.err}`); }
+    if (!git(r.repo, ["cat-file", "-e", `${rh}^{commit}`]).ok) {
+      const f = run(remote ? ["fetch", "-q", "--no-tags", "--", url, `+refs/heads/${r.branch}:refs/crew/head`] : ["fetch", "-q", "origin", `refs/heads/${r.branch}`]);
+      if (!f.ok || !git(r.repo, ["cat-file", "-e", `${rh}^{commit}`]).ok) { if (!remote) return localOnly(f.err || "fetch failed"); throw new RoundBlocked(`cannot fetch the remote head of ${r.branch} (${rh.slice(0, 8)}): ${f.err}`); }
+    }
     if (rh === r.head || git(r.repo, ["merge-base", "--is-ancestor", rh, r.head]).ok) return r.head;   // the hand-back is newer (not pushed yet): it is not stale
     if (git(r.repo, ["merge-base", "--is-ancestor", r.head, rh]).ok) return rh;                         // the remote moved on
     throw new RoundBlocked(`the remote ${r.branch} (${rh.slice(0, 8)}) and the last hand-back (${r.head.slice(0, 8)}) diverged: decide which work to keep`);

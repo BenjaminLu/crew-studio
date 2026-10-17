@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // the diverged origins live in a checked temp folder
 // The first smoke test of v2's coding workflow (unit code-firstmate-smoke): the
 // code-firstmate definition from packs/firstmate runs a two-way change on the
 // sandbox repository end to end with the stub provider:
@@ -108,16 +109,32 @@ ok(existsSync(join(data, "runs", r.id, "nodes", "build", "2", "prompt.md")) && /
 { const p1 = readFileSync(join(data, "runs", r.id, "nodes", "build", "1", "prompt.md"), "utf8");
   ok(/ROUND FACTS: this is two-way work with no plan round, so the approved spec above is the plan/.test(p1) && /Staffing, rosters and role skills are Studio's job/.test(p1) && !/Accepted plan:/.test(p1), "a two-way build round says the spec is the plan and that staffing is not the worker's input (no HOLD for a roster or plan)"); }
 ok(merge!.options.filter((o) => o.hold).map((o) => o.id).join(",") === "changes,close", "on the merge card, request changes and close are hold options (no door confirmation)");
-// a remote that cannot be read stops the build round before its agent starts, and code-firstmate routes it to the scope card
+// An origin whose Task branch diverged from the hand-back: the round cannot start safely (RoundBlocked before its agent).
+// An origin without a grant that merely cannot be read no longer blocks (tests/worktrees.ts: the branch is local-only).
+let origins = 0; const originsDir = checkedTempDir("crew-smoke-origin-");
+const divergedOrigin = (id: string) => { const bare = join(originsDir, `diverged-origin-${++origins}.git`);
+  const orphan = Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit-tree", "main^{tree}", "-m", `pushed elsewhere ${origins}`], { cwd: repo, stdout: "pipe" }).stdout.toString().trim();
+  git("branch", "-f", "smoke-diverged", orphan); Bun.spawnSync(["git", "clone", "-q", "--bare", repo, bare], { stdout: "pipe", stderr: "pipe" }); git("branch", "-D", "smoke-diverged");
+  assertTempRepo(bare); Bun.spawnSync(["git", "update-ref", `refs/heads/feature/${id}`, orphan], { cwd: bare }); git("remote", "add", "origin", bare); };
+// a build round whose remote branch diverged stops before its agent starts, and code-firstmate routes it to the scope card
 { const b = E.start({ workflow: "code-firstmate", text: intent, params: {} });
   await until(() => E.cards.list({ run: b.id, open: true }).some((k) => k.kind === "dispatch"), 120000);
-  git("remote", "add", "origin", join(data, "no-such-remote.git"))
+  divergedOrigin(b.id);
   await E.answer(E.cards.list({ run: b.id, open: true }).find((k) => k.kind === "dispatch")!.id, { choice: "dispatch", by: "captain" });
   await until(() => E.cards.list({ run: b.id, open: true }).some((k) => k.kind === "scope") || ["failed", "succeeded"].includes(E.get(b.id)!.status), 60000);
   const sc = E.cards.list({ run: b.id, open: true }).find((k) => k.kind === "scope");
   git("remote", "remove", "origin");
-  ok(!!sc && /cannot read the remote head/.test(sc.body) && E.get(b.id)!.nodes.build.outcome === "blocked" && !(E.get(b.id)!.nodes.build.data.jobs ?? []).length,
-    "a remote that cannot be read stops the build round before its agent starts (blocked), and code-firstmate's [build, scope-card, blocked] edge opens the scope card", JSON.stringify([E.get(b.id)!.status, E.get(b.id)!.error, sc?.body?.slice(0, 200), E.cards.list({ run: b.id, open: true }).map((k) => k.kind + ":" + k.node), Object.entries(E.get(b.id)!.nodes).filter(([, n]: any) => n.state !== "pending").map(([k, n]: any) => `${k}:${n.state}:${n.outcome}`)]));
+  ok(!!sc && /diverged/.test(sc.body) && /build round is blocked/.test(JSON.stringify(sc.title)) && E.get(b.id)!.nodes.build.outcome === "blocked" && !(E.get(b.id)!.nodes.build.data.jobs ?? []).length,
+    "a remote branch that diverged stops the build round before its agent starts (blocked), and code-firstmate's [build, scope-card, blocked] edge opens the scope card", JSON.stringify([E.get(b.id)!.status, E.get(b.id)!.error, sc?.title, sc?.body?.slice(0, 200), E.cards.list({ run: b.id, open: true }).map((k) => k.kind + ":" + k.node), Object.entries(E.get(b.id)!.nodes).filter(([, n]: any) => n.state !== "pending").map(([k, n]: any) => `${k}:${n.state}:${n.outcome}`)]));
+  await E.cancel(b.id, "captain"); }
+// R-066 H6: the spec round blocked before its agent takes [spec, scope-card, blocked] (Firstmate first), never an unclassified failure
+{ const b = E.start({ workflow: "code-firstmate", text: intent, params: {} });
+  divergedOrigin(b.id); // before any await: the spec round's start reads it
+  await until(() => E.cards.list({ run: b.id, open: true }).some((k) => k.kind === "scope") || ["failed", "succeeded"].includes(E.get(b.id)!.status), 120000);
+  const sc = E.cards.list({ run: b.id, open: true }).find((k) => k.kind === "scope"), run = E.get(b.id)!;
+  git("remote", "remove", "origin");
+  ok(!!sc && sc.node === "scope-card" && /spec round is blocked/.test(JSON.stringify(sc.title)) && /diverged/.test(sc.body) && run.nodes.spec.outcome === "blocked" && run.failure?.code !== "internal.unmapped",
+    "a spec round blocked before its agent opens the scope card through [spec, scope-card, blocked], with its cause, never internal.unmapped", JSON.stringify([run.status, run.error, run.failure?.code, sc?.title, run.nodes.spec?.outcome]));
   await E.cancel(b.id, "captain"); }
 // A worker escalation must reach the captain before build checks can mask it.
 { const b = E.start({ workflow: "code-firstmate", text: intent.replaceAll("percent", "blockedPercent") + "\nSTUB_BLOCKED", params: {} });

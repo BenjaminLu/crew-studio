@@ -29,6 +29,8 @@ W({ id: "pg", name: "prepare again", nodes: [{ id: "p", kind: "hook", label: "Pr
 // an internal workflow (its id is on the internal list): no new task from its card
 W({ id: "firstmate-proposal", name: "internal fixture", params: { mode: { default: "stale" } }, nodes: [{ id: "act", kind: "hook", label: "Act", do: "act", x: 0, y: 0 }, { id: "end", kind: "hook", label: "End", x: 1, y: 0 }], edges: [["act", "end", "ok"]] });
 W({ id: "endfail", name: "ends on fail", nodes: [{ id: "only", kind: "hook", label: "Only", do: "act", x: 0, y: 0 }], edges: [] });
+// an agent round stopped before its agent (a worktree round's RoundBlocked) with no "blocked" edge (R-066 H6)
+W({ id: "rb", name: "round blocked", nodes: [{ id: "spec", kind: "agent", label: "Spec", role: "worker", mode: "remote-blocked", x: 0, y: 0 }, { id: "end", kind: "hook", label: "End", x: 1, y: 0 }], edges: [["spec", "end", "ok"]] });
 const H = await harness(flows);
 const E = H.engine;
 let envFixed = false;
@@ -51,6 +53,8 @@ E.actions.act = (x) => {
   if (m === "internal") throw new Error("kaboom: the act step met a state nobody planned for sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
   return "ok";
 };
+E.modes["remote-blocked"] = { tools: () => [], system: () => "test", prompt: () => "TEST", begin: (x) => { const m = "cannot read the remote head of feature/R-1: fatal: could not read Username for 'https://github.com': terminal prompts disabled";
+  x.rn.data.report = { marker: "BLOCKED", summary: m, round: x.visit }; x.save(); throw Object.assign(new Error(m), { outcome: "blocked" }); }, after: () => "ok" } as any;
 E.modes.asker = { tools: () => [], system: () => "test", prompt: (x) => `TEST AGENT\n${x.run.text}`, after: (x) => (x.rn.data.failureAnswer?.kind === "answer" ? "ok" : (x.rn.data.report = { summary: "Should JPY have decimals?" }, "ask")) } as any;
 
 const start = (mode: string, extra: Record<string, string> = {}) => E.start({ workflow: "fx", text: `fixture ${mode}`, params: { mode, ...extra } });
@@ -346,5 +350,9 @@ const keep = (c: any) => { shown.push(c); shownViews.push(E.cards.view(E.cards.g
   const out = ste(texts);
   ok(out.verdict !== "fail", `all ${Object.keys(F.FAILURE_CODES).length} codes and 7 class instructions pass STE in en and zh-TW`, JSON.stringify(out.findings?.slice(0, 5)));
 }
+// ---------- a round blocked before its agent, with no edge: typed by its cause, never internal.unmapped ----------
+{ const r = E.start({ workflow: "rb", text: "fixture blocked", params: {} }); const run = await failed(r.id);
+  ok(run.failure?.code === "env.repository" && /cannot read the remote head/.test(run.failure.message) && run.failure.class === "environment",
+    "a round blocked before its agent (no blocked edge) is classified by the reason on its report: cannot read the remote head is env.repository, not internal.unmapped", JSON.stringify([run.failure?.code, run.failure?.message])); }
 H.stop();
 end();

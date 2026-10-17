@@ -14,8 +14,9 @@
 
   // the stages of the built-in workflows; a node may also name its own `stage`
   const BUILTIN = {
+    // code-firstmate: the scope card sits with the spec; every blocked round (spec, plan, build, review) escalates to it and it leads back to the spec
     "code-firstmate": [
-      { id: "intake", label: "Intake", label_tw: "接收", nodes: ["intake", "prepare", "spec", "spec-fix", "dispatch"] },
+      { id: "intake", label: "Intake", label_tw: "接收", nodes: ["intake", "prepare", "spec", "spec-fix", "dispatch", "scope-card"] },
       { id: "door", label: "Door", label_tw: "門", nodes: ["door", "door-pick"] },
       { id: "plan", label: "Plan (one-way)", label_tw: "計畫（單向）", nodes: ["plan", "plan-fix", "plan-accept"] },
       { id: "build", label: "Build loop", label_tw: "建置迴圈", nodes: ["build", "pr-open", "ci", "review", "design-scope", "designer", "remote-ready", "fix"] },
