@@ -34,7 +34,8 @@ export const filmSample: { path: string | null; reason: string | null } = (() =>
   return r.exitCode === 0 ? { path: f, reason: null } : { path: null, reason: `ffmpeg could not make the sample film: ${r.stderr.toString().trim().slice(0, 300)}` };
 })();
 
-export async function bootStudio(name: string, o: { localUnrestricted?: boolean; beforeStart?: (data:string)=>Promise<void> } = {}): Promise<Studio> {
+/** examples: seed the example workflows (CREW_EXAMPLE_WORKFLOWS, default on: the startup competition has its own scenario) */
+export async function bootStudio(name: string, o: { localUnrestricted?: boolean; examples?: boolean; beforeStart?: (data:string)=>Promise<void> } = {}): Promise<Studio> {
   const root = mkdtempSync(join(tmpdir(), `crew-acceptance-${name}-`)), home = join(root, "home"), data = join(root, "data"), deps = join(root, "deps");
   for (const d of [join(home, ".codex"), data, deps]) mkdirSync(d, { recursive: true });
   writeFileSync(join(home, ".codex", "config.toml"), 'model="fixture-model"\nmodel_reasoning_effort="low"\n');
@@ -48,7 +49,8 @@ export async function bootStudio(name: string, o: { localUnrestricted?: boolean;
     CLAUDE_CODE_OAUTH_TOKEN: CLAUDE_TOKEN,
     // the film renderer is a local tool, not a provider: its existing stub (src/render.ts) stands in for Playwright + ffmpeg
     CREW_RENDER_STUB: "1", ...(filmSample.path ? { CREW_RENDER_STUB_MP4: filmSample.path } : {}),
-    CREW_LOCAL_UNRESTRICTED: o.localUnrestricted ? "1" : "0", ...(o.localUnrestricted ? { CREW_LOCAL_DEPENDENCY_ROOT: deps } : {}) };
+    CREW_LOCAL_UNRESTRICTED: o.localUnrestricted ? "1" : "0", ...(o.localUnrestricted ? { CREW_LOCAL_DEPENDENCY_ROOT: deps } : {}),
+    CREW_EXAMPLE_WORKFLOWS: o.examples === false ? "0" : "1" };
   for (const k of [...(filmSample.path ? [] : ["CREW_RENDER_STUB_MP4"]), "CREW_MAIN_PROJECT", "CREW_FM_STATE", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CODEX_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "CREW_CHAT_PROVIDER", "CLAUDE_CONFIG_DIR", "CREW_CODEX_MODEL", "CREW_CLAUDE_MODEL", "CREW_CLAUDE_BILLING", "CREW_TEST_IN_PROCESS"]) delete env[k];
   if (!o.localUnrestricted) delete env.CREW_LOCAL_DEPENDENCY_ROOT;
   await o.beforeStart?.(data);
