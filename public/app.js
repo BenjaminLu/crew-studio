@@ -197,7 +197,7 @@ function taskRow(t) {
 // move the selection; an answered card leaves and the card after it is selected, with "Recorded for <Task>". With the
 // Firstmate panel open (520–900px) the list is a compact rail beside the card; below 520px (a phone) the list and the
 // card take turns: a row opens its card full width and Back returns to the list. Two full cards are never stacked.
-const IB = { sel: null, order: [], recorded: null, recT: null };
+const IB = { sel: null, order: [], recorded: null, recT: null, clickedCard: false };
 function inboxItems() {
   const studio = (window.studioCards?.open() || []).map((c) => ({ source: "studio", id: c.id, kind: c.kind, task: c.runTitle || L(c.title), workflow: c.workflow, run: c.run, ts: c.createdAt, data: c }));
   const fm = S.pending.map((c) => { const d = LD(c.details) || {};
@@ -214,30 +214,37 @@ const ibHash = (id) => (id ? `#/inbox/${encodeURIComponent(id)}` : "#/inbox");
 function viewInbox(id) {
   const items = inboxItems(), ids = items.map((x) => x.id);
   const ready = window.studioCards?.ready?.() !== false; // Studio's cards are read: a card missing now is really gone
-  let want = id || IB.sel, gone = null;
+  let want = id || IB.sel, gone = null, left = null;
   if (want && !ids.includes(want) && ready) {
     const at = IB.order.indexOf(want);
     if (at >= 0) { // it was in the list and left (answered, here or elsewhere, or withdrawn): the card after it is selected
       const next = IB.order.slice(at + 1).find((x) => ids.includes(x)) || IB.order.slice(0, at).reverse().find((x) => ids.includes(x)) || null;
       if (id) { history.replaceState(null, "", ibHash(next)); S.route.arg = id = next; }
-      want = next;
+      left = want; want = next;
     } else { if (id) gone = id; want = null; }
   }
   const cur = items.find((x) => x.id === want) || items[0] || null;
   const moved = !!cur && IB.sel !== cur.id;
-  if (ready) { IB.sel = cur?.id || null; IB.order = ids; }
+  // the list and the selection follow what is shown, firstmate's cards too while Studio's cannot be read (j/k keep working)
+  IB.sel = cur?.id || null; IB.order = ids;
   // on a phone, the URL decides which one shows: #/inbox the list, #/inbox/<id> that card
   const mode = id && cur && cur.id === id ? "card" : "list";
   const rec = IB.recorded && Date.now() - IB.recorded.at < 8000 ? IB.recorded : null;
-  // another card selected: its top shows, not the middle the previous card was scrolled to
-  if (moved) requestAnimationFrame(() => { const m = $("#main"), box = document.querySelector("[data-inbox-studio]"); if (!m || !box) return;
-    const top = box.getBoundingClientRect().top - m.getBoundingClientRect().top + m.scrollTop - 12; if (m.scrollTop > top) m.scrollTop = Math.max(0, top); });
+  const said = rec && cur ? T(`Recorded for ${rec.task}. Next: ${cur.task}.`, `已記錄「${rec.task}」的回答。下一張：${cur.task}。`) : rec ? T(`Recorded for ${rec.task}. Nothing else is waiting.`, `已記錄「${rec.task}」的回答。沒有其他等你的卡。`) : "";
+  const rowFocused = !!document.activeElement?.closest?.("[data-inbox-row]");
+  requestAnimationFrame(() => {
+    // another card selected: its top shows, not the middle the previous card was scrolled to
+    const m = $("#main"), box = document.querySelector("[data-inbox-studio]");
+    if (moved && m && box) { const top = box.getBoundingClientRect().top - m.getBoundingClientRect().top + m.scrollTop - 12; if (m.scrollTop > top) m.scrollTop = Math.max(0, top); }
+    if (left && rec?.id === left) { // the captain's answer took the card away: focus goes to the next card's header (or the page title) and the answer is announced
+      (document.querySelector("[data-inbox-head]") || document.querySelector(".ib-page h1"))?.focus({ preventScroll: true }); inboxAnnounce(said);
+    } else if (rowFocused) document.querySelector(`[data-inbox-row="${CSS.escape(IB.sel || "")}"]`)?.focus({ preventScroll: true }); // a row opened by click or keys keeps the keyboard
+  });
   return h("div", { class: "page ib-page" },
-    h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Inbox", "收件匣")),
+    h("div", { class: "phead" }, h("div", {}, h("h1", { tabindex: "-1" }, T("Inbox", "收件匣")),
       h("p", {}, S.board?.writable ? T("Answers go through the firstmate board, which records them.", "回答會經由 firstmate 看板送出並由它記錄。")
         : T(`Read-only: ${S.board?.readonlyReason || "board unavailable"}.`, `唯讀：${S.board?.readonlyReason || "看板無法連線"}。`)))),
-    rec ? h("p", { class: "ib-recorded", role: "status", "aria-live": "polite", "data-inbox-recorded": rec.id }, icon("check", "ic sm"),
-      h("span", {}, cur ? T(`Recorded for ${rec.task}. Next: ${cur.task}.`, `已記錄「${rec.task}」的回答。下一張：${cur.task}。`) : T(`Recorded for ${rec.task}. Nothing else is waiting.`, `已記錄「${rec.task}」的回答。沒有其他等你的卡。`))) : null,
+    rec ? h("p", { class: "ib-recorded", "data-inbox-recorded": rec.id }, icon("check", "ic sm"), h("span", {}, said)) : null,
     gone ? h("p", { class: "faint", "data-inbox-gone": gone }, items.length ? T(`${gone} is no longer waiting. The cards below still are.`, `${gone} 已經不在等待中。下面這些還在等。`) : T(`${gone} is no longer waiting.`, `${gone} 已經不在等待中。`)) : null,
     items.length ? h("section", { class: "ib", "data-inbox-studio": "1", "data-ib-mode": mode },
       h("div", { class: "ib-list card" },
@@ -252,16 +259,29 @@ const inboxRow = (x, i, on) => h("a", { class: `ib-row${on ? " on" : ""}`, href:
     h("span", { class: "ib-row-d" }, h("span", { class: "vbadge ib-kind", "data-kind": x.kind }, x.kind), x.workflow ? h("span", { class: "ib-wf" }, icon("workflow", "ic sm"), x.workflow) : null, x.run ? h("span", { class: "mono" }, x.run) : null)),
   h("span", { class: "ib-age faint num", title: x.ts || "" }, ago(x.ts)));
 // the selected card's header: which Task this is, kept on screen while the card scrolls (Back returns to the list when narrow)
-const inboxHead = (x, items) => h("div", { class: "ib-head", "data-inbox-head": x.id },
+const inboxHead = (x, items) => h("div", { class: "ib-head", tabindex: "-1", "aria-label": T(`${x.task}, ${x.kind}`, `${x.task}，${x.kind}`), "data-inbox-head": x.id },
   h("a", { class: "btn ghost ib-back", href: "#/inbox", "data-inbox-back": "" }, "← ", T("Back to list", "回到列表")),
   h("div", { class: "ib-head-t" }, h("b", {}, x.task), h("span", { class: "faint num" }, T(`${items.indexOf(x) + 1} of ${items.length}`, `第 ${items.indexOf(x) + 1} / ${items.length} 張`))),
   h("div", { class: "ib-head-d" }, h("span", { class: "vbadge" }, x.kind), x.workflow ? h("span", {}, x.workflow) : null,
     x.run ? h("a", { class: "mono", href: x.source === "studio" ? `#/run/${encodeURIComponent(x.run)}` : `#/activity/${encodeURIComponent(x.run)}` }, x.run) : null, h("span", { class: "mono" }, x.id)));
 const inboxCard = (x) => (x.source === "studio" ? window.studioCards.card(x.data, x.task) : cardView(x.data));
-// ↑/↓ and j/k move the selection while the list and the card are side by side (not while typing)
+// the Inbox's one live region: it stays in the page across renders and its text is set after the change, so a screen
+// reader announces it (a status inserted together with its text often is not)
+addEventListener("pointerdown", (e) => { IB.clickedCard = e.target instanceof Element && !!e.target.closest(".ib-detail"); }, true);
+function inboxAnnounce(text) {
+  let el = document.querySelector("[data-inbox-live]");
+  if (!el) { el = h("div", { class: "ib-live", role: "status", "aria-live": "polite", "data-inbox-live": "" }); document.body.append(el); }
+  el.textContent = ""; setTimeout(() => { el.textContent = text; }, 60);
+}
+// ↑/↓ move the selection from a row of the list; j/k anywhere but inside the card (its text, its buttons) or a field, so
+// arrow keys still scroll a long card. Only while the list and the card are side by side.
 addEventListener("keydown", (e) => {
   if (S.route?.name !== "inbox" || e.metaKey || e.ctrlKey || e.altKey || !["ArrowDown", "ArrowUp", "j", "k"].includes(e.key)) return;
-  const t = e.target; if (t instanceof Element && t.closest("input, textarea, select, [contenteditable], #chat, #modalRoot")) return;
+  const t = e.target instanceof Element ? e.target : null;
+  if (t?.closest("input, textarea, select, [contenteditable], #chat, #modalRoot")) return;
+  // a click in the card's text leaves the focus on the page (body or the main column): the captain is still in the card
+  const inCard = t?.closest(".ib-detail") || ((!t || t.contains(document.querySelector(".ib-detail"))) && IB.clickedCard);
+  if (e.key.startsWith("Arrow") ? !t?.closest("[data-inbox-row]") : inCard) return;
   const box = document.querySelector("[data-inbox-studio]"); if (!box || !box.querySelector(".ib-list").getClientRects().length || !box.querySelector(".ib-detail").getClientRects().length) return;
   const to = IB.order[IB.order.indexOf(IB.sel) + (e.key === "ArrowDown" || e.key === "j" ? 1 : -1)]; e.preventDefault(); if (!to) return;
   history.replaceState(null, "", ibHash(to)); S.route.arg = to; render();

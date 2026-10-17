@@ -202,7 +202,7 @@ function mountCard(el, card, opts = {}) {
   const targetLabel = (c, o) => { const label = artifactOptionLabel(c, o, T); const target = String(opts.target || "").trim();
     if (!target || !(o.primary || (!c.options.some((x) => x.primary) && o === c.options[0]))) return label;
     const offers = c.detail?.artifactAcceptance?.offered; const v = Array.isArray(offers) && offers.length === 1 && Number.isInteger(offers[0]?.n) ? ` v${offers[0].n}` : "";
-    return /(\bv|版本 )\d+$/.test(label) ? `${label} · ${target}` : `${label} ${target}${v}`; }; // "Approve design-b v2" names its version already
+    return `${label} · ${target}${/(\bv|版本 )\d+$/.test(label) ? "" : v}`; }; // "Approve · <Task> v1", "Warm · <Task>"; "Approve design-b v2 · <Task>" names its version already
   st.card = card; st.draw = () => render(); // the newest mount draws: an answer that settles after a remount shows on the card that is on screen
   const zh = () => st.lang !== "en";
   // the card's own language: zh-CN derives from the zh-TW text (i18n.js) unless the card or call carries zh-CN

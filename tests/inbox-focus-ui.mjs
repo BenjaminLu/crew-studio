@@ -6,7 +6,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // alone, with Back to list. The four cards are served to the page (its /api/scards calls), so the test owns them.
 //      node tests/inbox-focus-ui.mjs      (INBOX_FOCUS_SHOTS=<dir> also writes the 1440 and 390 screenshots there)
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -54,8 +54,9 @@ const serve = async (ctx) => { let cards = CARDS(); const answers = [];
     if (m) { const c = cards.find((x) => x.id === m[1]); return c ? r.fulfill({ json: c }) : r.fulfill({ status: 404, json: { error: "no such card" } }); }
     return r.fulfill({ json: { cards: u.searchParams.get("open") === "1" ? cards : cards } }); });
   return answers; };
-const open = async (width, hash = "#/inbox", { chat = false, zh = false } = {}) => {
-  const ctx = await browser.newContext({ viewport: { width, height: width < 600 ? 844 : 900 }, colorScheme: "light" }); const answers = await serve(ctx);
+const open = async (width, hash = "#/inbox", { chat = false, zh = false, scardsDown = false } = {}) => {
+  const ctx = await browser.newContext({ viewport: { width, height: width < 600 ? 844 : 900 }, colorScheme: "light" });
+  const answers = scardsDown ? (await ctx.route(/\/api\/scards/, (r) => r.fulfill({ status: 500, json: { error: "down" } })), []) : await serve(ctx);
   await ctx.addInitScript(([chat, zh]) => { try { localStorage.setItem("crew.chatOpen", chat ? "1" : "0"); localStorage.setItem("crew.lang", zh ? "zh-TW" : "en"); } catch {} }, [chat, zh]);
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width}: ${e.message}`));
   await p.goto(`${base}/${hash}`); await p.waitForSelector("[data-scard]", { timeout: 15000 }).catch(() => {}); await p.waitForTimeout(400);
@@ -82,16 +83,25 @@ try {
     const head = await p.textContent("[data-inbox-head]");
     ok([VIDEO, "promo-video", "R-701", "SC-701"].every((x) => head.includes(x)), "the card's header names the Task, workflow, run and card", head);
     const approve = (await p.textContent('[data-scard="SC-701"] [data-option="approve"]')).trim();
-    ok(approve === `Approve ${VIDEO} v1`, "the primary button carries its target: Approve <Task> v1", approve);
+    ok(approve === `Approve · ${VIDEO} v1`, "the primary button carries its target: Approve · <Task> v1", approve);
     ok(await visible(p, '[data-inbox-back]') === 0, "wide: no Back to list (the list is beside the card)");
     // the header stays on screen while the card scrolls
     await p.evaluate(() => { const c = document.querySelector("[data-scard]"); c.append(Object.assign(document.createElement("div"), { style: "height:2400px" })); document.querySelector("#main").scrollTop = 1500; });
     await p.waitForTimeout(100);
     ok(await p.evaluate(() => { const r = document.querySelector("[data-inbox-head]").getBoundingClientRect(), m = document.querySelector("#main").getBoundingClientRect(); return r.top >= m.top - 1 && r.top < m.top + 80; }), "the header stays visible while the card scrolls");
+    // the arrow keys read a long card: ↓ after a click in the card's text, and j/k on its buttons, leave the selection alone
+    await p.click('[data-scard="SC-701"] .cc-quote'); await p.keyboard.press("ArrowDown"); await p.keyboard.press("ArrowDown"); await p.keyboard.press("j"); await p.waitForTimeout(150);
+    ok(await p.getAttribute("[data-scard]", "data-scard") === "SC-701" && (await p.evaluate(() => location.hash)) === "#/inbox", "↓ and j inside the card's text do not switch the card",
+      JSON.stringify(await p.evaluate(() => [document.querySelector("[data-scard]")?.dataset.scard, location.hash, document.activeElement?.tagName])));
+    await p.focus('[data-scard="SC-701"] [data-option="reject"]'); await p.keyboard.press("k"); await p.keyboard.press("j"); await p.keyboard.press("ArrowDown"); await p.waitForTimeout(150);
+    ok(await p.getAttribute("[data-scard]", "data-scard") === "SC-701", "j, k and ↓ on one of the card's buttons do not switch the card");
     await p.evaluate(() => { document.querySelector("#main").scrollTop = 0; });
-    // keyboard
-    await p.locator("h1").first().click(); await p.keyboard.press("ArrowDown"); await p.waitForTimeout(150);
-    ok(await p.getAttribute("[data-scard]", "data-scard") === "SC-702" && (await p.evaluate(() => location.hash)) === "#/inbox/SC-702" && await p.getAttribute('[data-inbox-row="SC-702"]', "aria-selected") === "true", "↓ selects the next card");
+    // keyboard on the list
+    await p.click('[data-inbox-row="SC-701"]'); await p.waitForTimeout(150);
+    ok(await p.evaluate(() => document.activeElement?.dataset?.inboxRow) === "SC-701", "a clicked row keeps the keyboard focus");
+    await p.keyboard.press("ArrowDown"); await p.waitForTimeout(150);
+    ok(await p.getAttribute("[data-scard]", "data-scard") === "SC-702" && (await p.evaluate(() => location.hash)) === "#/inbox/SC-702" && await p.getAttribute('[data-inbox-row="SC-702"]', "aria-selected") === "true", "↓ on a row selects the next card");
+    ok(await p.evaluate(() => document.activeElement?.dataset?.inboxRow) === "SC-702", "the focus follows to the newly selected row");
     await p.keyboard.press("j"); await p.waitForTimeout(150);
     ok(await p.getAttribute("[data-scard]", "data-scard") === "SC-703", "j selects the next card");
     await p.keyboard.press("k"); await p.keyboard.press("ArrowUp"); await p.waitForTimeout(150);
@@ -102,8 +112,12 @@ try {
       "after the answer the card leaves the list and the next card is selected", JSON.stringify(await p.$$eval("[data-inbox-row]", (es) => es.map((e) => e.dataset.inboxRow))));
     ok(answers.length === 1 && answers[0].id === "SC-701" && answers[0].choice === "approve", "the answer went to the card on screen (SC-701 approve)", JSON.stringify(answers));
     const rec = await p.textContent("[data-inbox-recorded]").catch(() => "");
-    ok(rec.includes(`Recorded for ${VIDEO}`) && await p.getAttribute("[data-inbox-recorded]", "role") === "status", "a short status says which Task's answer was recorded", rec);
-    ok((await p.textContent('[data-scard="SC-702"] [data-option="dispatch"]')).trim() === "Dispatch Add a percent helper" && await p.getAttribute('[data-inbox-row="SC-702"]', "aria-selected") === "true", "the next card's button names its own Task");
+    ok(rec.includes(`Recorded for ${VIDEO}`), "a short line says which Task's answer was recorded", rec);
+    ok(await p.waitForFunction((v) => (document.querySelector("[data-inbox-live]")?.textContent || "").includes(`Recorded for ${v}. Next: Add a percent helper.`), VIDEO, { timeout: 3000 }).then(() => true, () => false)
+      && await p.evaluate(() => { const l = document.querySelector("[data-inbox-live]"); return l.getAttribute("role") === "status" && l.getAttribute("aria-live") === "polite" && !document.querySelector("#view").contains(l); }),
+      "a live region that stays outside the re-rendered page announces the answer and the next card", await p.textContent("[data-inbox-live]").catch(() => "none"));
+    ok(await p.evaluate(() => document.activeElement?.dataset?.inboxHead) === "SC-702", "the keyboard focus moves to the next card's header, not the page", await p.evaluate(() => `${document.activeElement?.tagName} ${document.activeElement?.className}`));
+    ok((await p.textContent('[data-scard="SC-702"] [data-option="dispatch"]')).trim() === "Dispatch · Add a percent helper" && await p.getAttribute('[data-inbox-row="SC-702"]', "aria-selected") === "true", "the next card's button names its own Task");
     await shot(p, "1440-after-answer");
     await ctx.close(); }
   // ---------- deep link ----------
@@ -115,7 +129,7 @@ try {
   // ---------- zh-TW ----------
   { const { ctx, p } = await open(1440, "#/inbox", { zh: true });
     const approve = (await p.textContent('[data-scard="SC-701"] [data-option="approve"]').catch(() => "")).trim();
-    ok(approve === `核准 ${VIDEO} v1`, "zh-TW: the primary button reads 核准 <Task> v1", approve);
+    ok(approve === `核准 · ${VIDEO} v1`, "zh-TW: the primary button reads 核准 · <Task> v1", approve);
     await ctx.close(); }
   // ---------- the Firstmate panel open beside it (the desktop default): a compact rail beside the oldest card, no click needed ----------
   for (const width of [1440, 1280]) { const { ctx, p } = await open(width, "#/inbox", { chat: true });
@@ -144,6 +158,15 @@ try {
     await shot(p, "390-card");
     await p.click("[data-inbox-back]"); await p.waitForTimeout(300);
     ok(await visible(p, "[data-inbox-row]") === 4 && await visible(p, "[data-scard]") === 0, "390: Back returns to the list");
+    await ctx.close(); }
+  // ---------- Studio's cards cannot be read: firstmate's cards still list, select and move with j/k ----------
+  for (const n of [1, 2]) writeFileSync(join(state, "pending", `D-focus-${n}.json`), JSON.stringify({ id: `D-focus-${n}`, purpose: "question", kind: "choice", title: `Firstmate question ${n}`, ts: `2026-10-17T07:0${n}:00.000Z`,
+    details: { en: { title: `Firstmate question ${n}`, options: { A: { description: "Yes" }, B: { description: "No" } } } } }));
+  { const { ctx, p } = await open(1440, "#/inbox", { scardsDown: true });
+    const listed = await p.waitForFunction(() => document.querySelectorAll("[data-inbox-row]").length === 2, null, { timeout: 15000 }).then(() => true, () => false);
+    ok(listed && await p.getAttribute("[data-card]", "data-card") === "D-focus-1", "with /api/scards failing, firstmate's cards list and the oldest is shown");
+    await p.locator("h1").first().click(); await p.keyboard.press("j"); await p.waitForTimeout(150);
+    ok(await p.getAttribute("[data-card]", "data-card") === "D-focus-2" && await p.getAttribute('[data-inbox-row="D-focus-2"]', "aria-selected") === "true", "with /api/scards failing, j still moves the selection");
     await ctx.close(); }
   ok(!errors.length, "no page errors", errors.join(" | "));
 } catch (e) { fail++; console.log(`  FAIL  ${e.stack || e}`); console.log(appLog.slice(-3000)); }

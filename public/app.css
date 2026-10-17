@@ -138,3 +138,5 @@
   .ib[data-ib-mode="list"] .ib-detail,.ib[data-ib-mode="card"] .ib-list{display:none}
   .ib-back{display:inline-flex}
 }
+.ib-live{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.ib-head:focus{outline:2px solid var(--accent);outline-offset:2px}
