@@ -441,7 +441,7 @@ function mountCard(el, card, opts = {}) {
       try {
         if(draft&&!o.hold)await saveDraft();else if(draft)clearTimeout(draft.timer);
         const note=draft&&!o.hold?JSON.stringify({schema:1,card:c.id,visit:c.visit,batchHash:draft.hash,answers:draft.answers}):noteOf(o)||null;
-        took(await post(`/api/scards/${encodeURIComponent(c.id)}/answer`, { choice: o.id, note, confirm: st.confirm ? "one-way" : null, aligned: n ? [...st.ticks].sort((a, b) => a - b) : undefined, ...(o.id === "rescope" && c.localRescope ? {localRescope:c.localRescope} : {}) }));
+        took(await post(`/api/scards/${encodeURIComponent(c.id)}/answer`, { choice: o.id, note, confirm: st.confirm ? "one-way" : null, aligned: n ? [...st.ticks].sort((a, b) => a - b) : undefined, ...(o.id === "rescope" && c.localRescope ? {localRescope:c.localRescope} : {}), ...(c.crew && !o.hold && st.crew && Object.keys(st.crew).length ? { crew: { ...st.crew } } : {}) }));
       } catch (e) {
         // answered already with this very choice: that is the answer, not a refusal
         let same = null; if (/answered exactly once/.test(e.message || "")) { try { const now = await get(`/api/scards/${encodeURIComponent(c.id)}`); if (now?.answer?.choice === o.id) same = now; } catch {} }
@@ -482,6 +482,18 @@ function mountCard(el, card, opts = {}) {
               h("option", { value: "" }, T("Pick one…", "請選一個…")), o.select.map((x) => h("option", { value: x.value, selected: st.notes[o.id] === x.value }, x.label)))
             : h("textarea", { class: "input", rows: 2, "data-card-note": c.id, "data-note-for": o.id, placeholder: noteLabel(o), "aria-label": label,
               oninput: (e) => { const had = !!String(st.notes[o.id] || "").trim(); st.notes[o.id] = e.target.value; if (had !== !!e.target.value.trim()) { const pos = e.target.selectionStart; render(); const t = el.querySelector(`[data-note-for="${CSS.escape(o.id)}"]`); if (t) { t.focus(); t.setSelectionRange(pos, pos); } } } }, st.notes[o.id] || ""))); }
+      // a dispatch card's crew (docs/design/crew-seats.md): one line; "adjust this run" opens each node's effort, for this run only
+      if (c.crew && Array.isArray(c.crew.nodes)) { st.crew = st.crew || {}; const changed = Object.keys(st.crew).length;
+        const tunable = c.crew.nodes.some((r) => Array.isArray(r.efforts) && r.efforts.length);
+        kids.push(h("section", { class: "cc-crew", "data-card-crew": c.id },
+          h("button", { type: "button", class: "btn ghost cc-crew-line", "aria-expanded": String(!!st.crewOpen), disabled: !tunable, onclick: () => { st.crewOpen = !st.crewOpen; render(); } },
+            h("span", {}, T(`Crew: ${c.crew.summary.en}${changed ? ` · ${changed} changed for this run` : ""}`, `人員：${c.crew.summary.zh}${changed ? ` · 這次改了 ${changed} 項` : ""}`)),
+            tunable ? h("span", { class: "cc-count" }, st.crewOpen ? T("Hide", "收起") : T("Adjust this run?", "這次要調整嗎？")) : null),
+          st.crewOpen ? h("div", { class: "cc-crew-rows" }, c.crew.nodes.map((r) => h("label", { class: "cc-crew-row", "data-crew-node": r.node },
+            h("span", {}, `${r.label} · ${T(r.seatLabel.en, r.seatLabel.zh)}`), h("span", { class: "cc-mono" }, `${r.provider} · ${r.model}`),
+            r.efforts.length ? h("select", { class: "input", "aria-label": T(`${r.label} effort for this run`, `${r.label} 這次的 effort`), onchange: (e) => { const v = e.target.value === "default" ? null : e.target.value; if (v === r.effort) delete st.crew[r.node]; else st.crew[r.node] = v; render(); } },
+              r.efforts.map((x) => h("option", { value: x ?? "default", selected: (Object.hasOwn(st.crew, r.node) ? st.crew[r.node] : r.effort) === x }, x ?? T("default", "預設")))) : h("span", { class: "cc-count" }, r.effort ?? T("default", "預設"))))
+            .concat(h("p", { class: "cc-count" }, T("Changes here apply to this run only. To change it every time, customise the workflow on the Crew page.", "這裡改的只用在這一次。要每次都這樣，到船員頁自訂這個 workflow。")))) : null)); }
       if (one) kids.push(h("label", { class: "cc-tick rt-row", for: `conf-${c.id}` }, h("input", { type: "checkbox", id: `conf-${c.id}`, "data-confirm-door": c.id, checked: st.confirm, onchange: (e) => { st.confirm = e.target.checked; render(); } }),
         h("span", {}, T("I confirm: this is one-way, a revert will not undo it", "我確認：這是單向門，revert 無法還原"))));
       kids.push(h("div", { class: "cc-actions actions" }, c.options.map((o) => { const why = missing(o);

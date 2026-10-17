@@ -109,7 +109,7 @@ export type AgentMode = {
   /** after the round, however it ended (done, timeout, failed, cancelled): release what begin took, keep what the round left */
   end?(x: X, how: "done" | "timeout" | "failed" | "cancelled"): Promise<void> | void;
 };
-export type Body = { title: string; zhTitle?: string; en: Partial<Sections>; zh?: Partial<Sections>; body?: string; links?: { label: string; href: string }[]; door?: string | null; options?: SCard["options"]; ledger?: any;
+export type Body = { crew?: import("./cards").CardCrew | null; title: string; zhTitle?: string; en: Partial<Sections>; zh?: Partial<Sections>; body?: string; links?: { label: string; href: string }[]; door?: string | null; options?: SCard["options"]; ledger?: any;
   /** optional structured detail of an intent-aligned card (cards.ts CardDetail; unit intent-merge-card) */
   detail?: import("./cards").CardDetail | null;
   /** an authorization window never answers this card: only the captain does */
@@ -1162,7 +1162,7 @@ export class Engine {
   private raising = new Map<string, { done: Promise<void>; resolve: () => void }>();
   /** How long an answer waits for a card that is still being raised. */
   cardReadyMs = 30_000;
-  async answer(cardId: string, a: { choice: string; note?: string | null; by: string; confirm?: string | null; aligned?: number[] | null; localRescope?: LocalRescope | null }) {
+  async answer(cardId: string, a: { choice: string; note?: string | null; by: string; confirm?: string | null; aligned?: number[] | null; localRescope?: LocalRescope | null; crew?: Record<string, string | null> | null }) {
     const c0 = this.cards.get(cardId); if (!c0) throw new Error("no such card");
     if (c0.kind === "failure") return this.answerFailure(c0, a);
     const r = this.must(c0.run);
@@ -1206,7 +1206,7 @@ export class Engine {
     const node = r.def.nodes.find((n) => n.id === nodeId)!; const rn = r.nodes[nodeId]; const c = this.cards.get(rn.card ?? "")!;
     r.ctx.answers = { ...(r.ctx.answers ?? {}), [node.id]: c.answer };
     // the answer goes into the ledger once, here, so an answer carried on after a crash is recorded too
-    if (!r.ctx.answersRecorded?.includes(c.id)) { r.ctx.answersRecorded = [...(r.ctx.answersRecorded ?? []), c.id]; const rec = this.record(this.x(r, node, rn), "card-answer", { actor: c.answer!.by, data: { card: c.id, kind: c.kind, choice: c.answer!.choice, note: c.answer!.note, confirm: c.answer!.confirm, ...(c.answer!.localRescope?{localRescope:c.answer!.localRescope}:{}), ...(this.queueDomain?.answer(r, node, rn, c) ?? {}) } });
+    if (!r.ctx.answersRecorded?.includes(c.id)) { r.ctx.answersRecorded = [...(r.ctx.answersRecorded ?? []), c.id]; const rec = this.record(this.x(r, node, rn), "card-answer", { actor: c.answer!.by, data: { card: c.id, kind: c.kind, choice: c.answer!.choice, note: c.answer!.note, confirm: c.answer!.confirm, ...(c.answer!.localRescope?{localRescope:c.answer!.localRescope}:{}), ...(c.answer!.crew?{crew:c.answer!.crew}:{}), ...(this.queueDomain?.answer(r, node, rn, c) ?? {}) } });
       // a captain's "request changes" (or rescope) note binds every later round: kept cumulatively (never latest-only), bound to its signed card-answer entry
       if (AMEND_CHOICES.includes(c.answer!.choice) && c.answer!.by !== "firstmate") this.addAmendment(r, c, node.id, rec); }
     // the card's effects, once per card (an answer carried on after a restart does not apply them twice)
@@ -1666,7 +1666,7 @@ export class Engine {
     const zh = sec({ intent: en.intent, ...b.zh });
     const c = this.cards.create({ run: x.run.id, node: x.node.id, visit: x.rn.visits, kind, title: { en: b.title, "zh-TW": b.zhTitle ?? b.title }, sections: { en, "zh-TW": zh }, body: b.body ?? "",
       options: b.options ?? x.node.card?.options ?? [{ id: "approve", label: "Approve", labelZh: "核准", primary: true }, { id: "reject", label: "Reject", labelZh: "不採用" }],
-      confirmDoor: !!x.node.card?.confirm_door, door: b.door ?? (x.node.card?.door_from ? (x.ctx[x.node.card.door_from]?.door ?? x.ctx[x.node.card.door_from] ?? null) : null), links: b.links ?? [], detail: b.detail ?? null, ...(b.captainOnly ? { captainOnly: true } : {}), workflow: x.run.workflow, runTitle: x.run.title, ledger: b.ledger ?? null, ste: null, captures: b.captures ?? null, ...(b.pullRequest ? { pullRequest: b.pullRequest } : {}), ...(b.failure ? { failure: b.failure } : {}) });
+      confirmDoor: !!x.node.card?.confirm_door, door: b.door ?? (x.node.card?.door_from ? (x.ctx[x.node.card.door_from]?.door ?? x.ctx[x.node.card.door_from] ?? null) : null), links: b.links ?? [], detail: b.detail ?? null, ...(b.captainOnly ? { captainOnly: true } : {}), workflow: x.run.workflow, runTitle: x.run.title, ledger: b.ledger ?? null, ste: null, captures: b.captures ?? null, ...(b.pullRequest ? { pullRequest: b.pullRequest } : {}), ...(b.failure ? { failure: b.failure } : {}), ...(b.crew ? { crew: b.crew } : {}) });
     // the card contract (card-contract.ts): a card that cannot answer its question is refused in tests and logged on the run otherwise
     const broken = cardContract(c);
     if (broken.length) { this.emit(x.run, "log", `card contract: ${c.id} (${kind}): ${broken.join("; ").slice(0, 600)}`);

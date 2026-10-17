@@ -33,7 +33,7 @@ export type SCard = {
   /** Firstmate decided this escalation within the spec (engine decideEscalation); the captain did not */
   decidedBy?: "firstmate";
   status: "open" | "answered" | "cancelled"; createdAt: string;
-  answer: { choice: string; note: string | null; by: string; at: string; confirm: string | null; aligned?: number[] | null; localRescope?: LocalRescope } | null;
+  answer: { choice: string; note: string | null; by: string; at: string; confirm: string | null; aligned?: number[] | null; localRescope?: LocalRescope; crew?: Record<string, string | null> } | null;
   workflow: string; runTitle: string;
   /** before / after captures of an app the change touches (a domain check fills them): image URLs and the visible text that changed */
   captures?: { label: string; before: string | null; after: string | null; changed?: { removed: string[]; added: string[] } | null }[] | null;
@@ -41,7 +41,10 @@ export type SCard = {
   competition?: import("../domain/startup-recursion").StartupCompetition | { untrusted: true };
   /** "Open this pull request?" (domain/code-publish.ts): the exact title and body Studio will open, and where */
   pullRequest?: PullRequestPreview | null;
+  /** a dispatch card's crew (docs/design/crew-seats.md): who runs each node, and the efforts the captain may change for this run only */
+  crew?: CardCrew | null;
 };
+export type CardCrew = { team: string; summary: { en: string; zh: string }; nodes: { node: string; label: string; seat: string; seatLabel: { en: string; zh: string }; provider: string | null; model: string | null; effort: string | null; efforts: (string | null)[] }[] };
 export type PullRequestPreview = { repository: string; branch: string; base: string; baseCommit?: string; head: string; draft: boolean; template: { repository: string; path: string; blob: string } | null; title: string; body: string; proven: string[]; proofs?: Record<string, string>; unproven: string[] };
 /**
  * The structured detail of an intent-aligned card (additive, optional; unit intent-merge-card). Older cards have none
@@ -97,7 +100,7 @@ export class Cards {
   }
   /** Record an answer, exactly once. One-way merge cards need the door confirmation. A card with intent lines
    *  (detail.intents) takes a non-hold answer only when every line is ticked (`aligned`), or with a note. */
-  answer(id: string, a: { choice: string; note?: string | null; by: string; confirm?: string | null; aligned?: number[] | null; localRescope?: LocalRescope | null }): SCard {
+  answer(id: string, a: { choice: string; note?: string | null; by: string; confirm?: string | null; aligned?: number[] | null; localRescope?: LocalRescope | null; crew?: Record<string, string | null> | null }): SCard {
     const c = this.get(id); if (!c) throw new Error("no such card");
     if (c.status !== "open") throw new Error(`this card is ${c.status}: a card is answered exactly once`);
     const opt = c.options.find((o) => o.id === a.choice); if (!opt) throw new Error(`choose one of ${c.options.map((o) => o.id).join(", ")}`);
@@ -108,7 +111,9 @@ export class Cards {
     const aligned = Array.isArray(a.aligned) ? [...new Set(a.aligned.filter((i) => Number.isInteger(i) && i >= 0 && i < n))].sort((x, y) => x - y) : [];
     if (n && !opt.hold && aligned.length !== n && !String(a.note ?? "").trim()) throw new Error(`tick every intent line as met (${aligned.length} of ${n}), or write a note`);
     if(a.localRescope!=null){const p=a.localRescope;if(a.choice!=="rescope"||p.version!==1||p.card!==c.id||p.visit!==c.visit||typeof p.base!=="string"||!/^[A-Za-z0-9][A-Za-z0-9/_-]*$/.test(p.base)||![p.from,p.target].every(h=>typeof h==="string"&&/^[a-f0-9]{40}$/.test(h))||(p.baseRelation!==undefined&&p.baseRelation!=="patch-equivalent-unadmitted")||(p.strategy!==undefined&&(p.strategy!=="preserve-commits"||p.baseRelation!==undefined||typeof p.originalBase!=="string"||!/^[a-f0-9]{40}$/.test(p.originalBase)))||Object.keys(p).sort().join()!==(p.strategy?"base,card,from,originalBase,strategy,target,version,visit":p.baseRelation?"base,baseRelation,card,from,target,version,visit":"base,card,from,target,version,visit"))throw new Error("invalid local rescope preview");}
-    c.status = "answered"; c.answer = { choice: a.choice, note: a.note ? String(a.note).slice(0, 4000) : null, by: a.by, at: new Date().toISOString(), confirm: a.confirm ?? null, ...(n ? { aligned } : {}), ...(a.localRescope ? {localRescope: structuredClone(a.localRescope)} : {}) };
+    // the captain's efforts for this run (a dispatch card's crew): only nodes the card shows, only efforts it offers, only with a non-hold answer
+    if (a.crew != null) { const nodes = c.crew?.nodes ?? []; if (!c.crew || opt.hold || typeof a.crew !== "object" || Array.isArray(a.crew) || Object.entries(a.crew).some(([n, e]) => !nodes.find((x) => x.node === n)?.efforts.includes(e as any))) throw new Error("choose an effort this card offers for each node you change"); }
+    c.status = "answered"; c.answer = { choice: a.choice, note: a.note ? String(a.note).slice(0, 4000) : null, by: a.by, at: new Date().toISOString(), confirm: a.confirm ?? null, ...(n ? { aligned } : {}), ...(a.localRescope ? {localRescope: structuredClone(a.localRescope)} : {}), ...(a.crew && Object.keys(a.crew).length ? { crew: { ...a.crew } } : {}) };
     this.save(c); return c;
   }
   /** A deleted run's cards go with it; returns their ids. */

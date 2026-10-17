@@ -17,6 +17,7 @@ import {installCrewGuard} from '../crew-guard';
 import {installCrewStaffing} from '../crew-staffing';
 import {migrateCrew} from '../crew-migrate';
 import {crewRoutes} from '../crew-routes';
+import {installCrewTools} from '../crew-tools';
 import {installFirstmateStaffing,staffingQuotaReady,type StaffingFacts,type StaffingAdmission} from '../firstmate-staffing';
 import {installFirstmate} from "../firstmate";
 import {WorkflowDrafts,installWorkflowDraftTools,draftRoute,ownStaffingPlan,ownWorkflow,checkNodeStaffing,ownBrief} from "../workflow-drafts";
@@ -143,10 +144,11 @@ export function createRuntime(d: RuntimeDeps) {
   // workflow; every other workflow's Task records the crew it started with
   const crewStore=new CrewStore(d.dataDir);
   // a Studio that already approved staffing gets its team seeded from it once (idempotent; src/crew-migrate.ts)
-  try{const m=migrateCrew(d.dataDir,defs);if(m.status==='seeded')d.log.emit({type:'crew_seeded',summary:`team seeded from ${m.from!.workflow} v${m.from!.version} (${m.from!.project}); ${m.overrides!.length} workflow overrides`});}catch(e:any){console.warn(`crew-studio: team migration: ${e?.message??e}`);}
+  try{const m=migrateCrew(d.dataDir,defs);if(m.status==='seeded')d.log.emit({type:'crew_seeded',summary:`team seeded from ${m.from!.workflow} v${m.from!.version} (${m.from!.project}); ${m.overrides!.length} workflow overrides`});}catch(e:any){console.warn(`crew-studio: team seeding: ${e?.message??e}`);}
   const crewStaffing=installCrewStaffing(engine,staffing,crewStore);
   const staffingGuard=installStaffingGuard(engine,staffing,staffingProject,staffingCapability,(def,config)=>crewStaffing.verify(def,config));
   const crewGuard=installCrewGuard(engine,crewStore);
+  const crewTools=installCrewTools(engine,crewStore,{facts:staffingFacts as any,send:d.send});
   const crewApi=crewRoutes({defs,store:crewStore,facts:()=>staffingCapabilities,refreshFacts:staffingFacts,library:()=>engine.skillLibrary().library()});
   /** The project's staffing from the team, when the team covers this workflow (null: the per-project staffing flow applies). */
   const teamStaffing=(def:any,projectId:string)=>{if(!staffingApplies(def))return null;const project=def.kind==='coffee-kit'?coffeeStaffingProject(projectId):staffingProject(projectId);return crewStaffing.ensure(def,project);};
@@ -169,12 +171,12 @@ export function createRuntime(d: RuntimeDeps) {
    return{state:'approved',hash:config.hash,version:config.version,roles:Object.fromEntries(Object.entries(config.roles).map(([id,r])=>[id,{provider:r.provider,model:r.model,effort:r.effort}]))};
   };
   const onboarding=new Onboarding(engine,d.m3?.store??new ArtifactStore(d.dataDir));
-  const originalFirstmate=installFirstmate(engine,projects,{prepareDispatch:async(workflow,version)=>{const def=engine.defs.get(workflow,version);if(staffingApplies(def))await staffingFacts();},onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending,teamStaffing});
+  const originalFirstmate=installFirstmate(engine,projects,{prepareDispatch:async(workflow,version)=>{const def=engine.defs.get(workflow,version);if(staffingApplies(def))await staffingFacts();},onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending,teamStaffing,crewSeatGate:(def,owner)=>crewTools.seatGate(def,owner),dispatchCrew:def=>crewTools.dispatchCrew(def)});
   // free drafting: its own store and tools, separate from proposals, staffing and execution
   const drafts=new WorkflowDrafts(d.dataDir,defs,(id,revision)=>{try{d.send('wfdraft',{id,revision});}catch{}});
   const readiness=d.readiness===false?null:installReadiness({engine,defs,drafts,dataDir:d.dataDir,protectedRoots:d.protectedRoots??[d.fmRoot],send:d.send,startOwn:(o:any,g:unknown)=>ownClaude.start(o,g),...(d.readiness??{}),createRuntime:(d.readiness as any)?.createRuntimeOverride??createRuntime});
   const draftTools=installWorkflowDraftTools(drafts,readiness?.tools,def=>{readiness?.versionSaved(def);try{d.send('wf',{id:def.id,version:def.version});}catch{}});
-  const firstmate={specs:[...originalFirstmate.specs,...staffingTools.specs,...draftTools.specs],call:(name:string,args:any,owner:any)=>draftTools.specs.some(spec=>spec.name===name)?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_keep_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
+  const firstmate={specs:[...originalFirstmate.specs,...staffingTools.specs,...draftTools.specs,...crewTools.specs],call:(name:string,args:any,owner:any)=>crewTools.specs.some(spec=>spec.name===name)?crewTools.call(name,args,owner):draftTools.specs.some(spec=>spec.name===name)?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_keep_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
   // the captain's own workflows start only with the staffing the captain confirmed at Run (never at drafting)
   const previousOwnStart=engine.deps.authorizeStart;
   engine.deps.authorizeStart=(def:any,o:any)=>{previousOwnStart?.(def,o);if(ownWorkflow(def)){const s=ownStaffingPlan(def);if(s.plan.length&&(s.missing.length||o.params?._ownStaffing!==s.hash))throw new Error('Confirm staffing for every agent node when you click Run / 請在按下執行時確認每個代理節點的配置');}};
@@ -429,7 +431,7 @@ export function createRuntime(d: RuntimeDeps) {
       m = /^\/api\/scards\/(SC-\d+)(?:\/(answer))?$/.exec(p);
       if (m) {
         if (!writing) { const c = engine.cards.get(m[1]); return c ? json(engine.cards.view(c)) : json({ error: "no such card" }, 404); }
-        const c = await engine.answer(m[1], { choice: String(b?.choice ?? ""), note: b?.note ?? null, by, confirm: b?.confirm ?? null, aligned: Array.isArray(b?.aligned) ? b.aligned : null, localRescope:b?.localRescope??null });
+        const c = await engine.answer(m[1], { choice: String(b?.choice ?? ""), note: b?.note ?? null, by, confirm: b?.confirm ?? null, aligned: Array.isArray(b?.aligned) ? b.aligned : null, localRescope:b?.localRescope??null, crew: b?.crew ?? null });
         return json(c);
       }
       return json({ error: "not found" }, 404);

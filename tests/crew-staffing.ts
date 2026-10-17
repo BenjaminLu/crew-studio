@@ -17,6 +17,7 @@ const { ok, end } = suite("crew-staffing");
 const { StaffingStore, installStaffingGuard, staffingHash } = await import("../src/domain/staffing");
 const C = await import("../src/domain/crew");
 const { installCrewStaffing } = await import("../src/crew-staffing");
+const { installFirstmateStaffing } = await import("../src/firstmate-staffing");
 const { bundledText } = await import("../src/bundled");
 const { parseYaml } = await import("../src/bundled");
 const pinOf = (id: string) => ({ id, v: 1, sha256: createHash("sha256").update(readFileSync(join(import.meta.dir, "..", `packs/core/skills/${id}/SKILL.md`), "utf8")).digest("hex") });
@@ -69,6 +70,17 @@ try {
   const c5 = cs.ensure(def2, project)!;
   ok(c5.project.identity === "github:acme/shop" && c5.version === 1 && (guard.verified(def2, { project: "shop", _staffing: c5.hash }) as any).hash === c5.hash, "a new project identity gets the team's staffing at once");
   ok(staffingHash(c5.roles.worker.model) === staffingHash("gpt-6.1-sol"), "with the same crew");
+  // the old staffing tools map cleanly: the interview says the team staffs it (approved and valid); proposing staffing points to a crew change
+  { const facts = [{ provider: "codex", support: "supported", auth: "verified", quota: "available", expires: Date.now() + 200000, models: [{ id: "gpt-6.1-sol", efforts: ["low", "medium", "high", "xhigh"] }, { id: "gpt-6-astra", efforts: ["low", "medium", "high"] }] },
+      { provider: "claude", support: "supported", auth: "verified", quota: "available", expires: Date.now() + 200000, models: [{ id: "opus-5.5", efforts: ["low", "medium", "high", "xhigh"] }, { id: "sonnet-5.5", efforts: ["medium", "high"] }] }];
+    const tools = installFirstmateStaffing(e, staffing, () => project, async () => facts as any, undefined, undefined, { verified: (d, p) => guard.verified(d, p), capability: () => {} }, (d) => cs.ensure(d, project));
+    const owner = { key: "crew-interview", captain: true, text: "use the team", live: () => true };
+    const r: any = await tools.call("studio_staffing_interview", { project: "shop", workflow: "code-firstmate", version: 2 }, owner);
+    ok(r.team?.staffs === true && r.approved?.valid === true && !r.keepCrew, "the staffing interview says the team staffs this workflow: propose the work directly, no card", JSON.stringify({ team: r.team, approved: r.approved }));
+    let refused: any = null; try { await tools.call("studio_propose_staffing", { project: "shop", workflow: "code-firstmate", version: 2, roles: {} }, owner); } catch (err: any) { refused = err; }
+    ok(refused?.publicFailure?.code === "crew_team" && /studio_propose_crew_change/.test(refused.message), "proposing per-project staffing points to a crew change instead", refused?.message);
+    refused = null; try { await tools.call("studio_keep_staffing", { project: "shop", workflow: "code-firstmate", version: 2 }, owner); } catch (err: any) { refused = err; }
+    ok(refused?.publicFailure?.code === "crew_team", "and so does keeping a crew on an upgrade: there is no keep-crew card"); }
 } catch (err: any) { ok(false, "crew-staffing threw", err?.stack ?? String(err)); }
 h.stop();
 end();
