@@ -86,6 +86,8 @@ try {
   ok(rebase?.data?.toBase === moved && rebase.data.lease === aPr.head && rebase.data.fromBase !== moved, "round 2 rebased onto the fetched GitHub base and recorded the rebase with its lease in the signed ledger", JSON.stringify(rebase?.data));
   ok(push?.data?.branch === branch && push.data.lease === aPr.head && push.data.from === aPr.head && push.data.to === head && push.data.rewritten === true && ra.ctx.pr.head === head, "the rebased head was pushed to the Task branch with --force-with-lease on the last pushed head, and recorded", JSON.stringify({ push: push?.data, head, pr: ra.ctx.pr.head }));
   ok(must(bare, ["merge-base", "--is-ancestor", moved, head]) === "" && bareRef("refs/heads/main") === moved && JSON.stringify(refs().filter(r => !r.startsWith(`refs/heads/${branch} `))) === JSON.stringify(before), "the Task branch now contains the new base; main and every other ref are untouched", JSON.stringify(refs()));
+  const aStart: any = E.trusted(a.id).entries.filter(e => e.record === "round-start" && e.node === "build").at(-1)?.data;
+  ok(aStart?.baseRefresh?.baseAfter === moved && aStart.baseRefresh.conflicts.length === 0 && /^BUILD ROUND\nRun .* · round 2 · head [0-9a-f]{40}/.test(briefs.get(a.id)?.[1] ?? "") && (briefs.get(a.id)?.[1] ?? "").includes(`head ${rebase?.data?.headAfter}`), "the round-start record carries the remote rebase and the round's brief is bound to the rebased head", JSON.stringify({ aStart, brief: (briefs.get(a.id)?.[1] ?? "").slice(0, 160) }));
   ok(E.trusted(a.id).ok, "the signed ledger verifies");
   await answer(a.id, "hold", "stop");
 
