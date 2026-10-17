@@ -531,11 +531,11 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const adapter = selectedAdapter(x);
     if (adapter instanceof GitHubPrAdapter && !adapter.branchAllowed(x.ctx.branch,h)) return namingCard(x,adapter,h);
     if (adapter instanceof GitHubPrAdapter && !x.ctx.pr) { const deferred = await publication.defer(x, adapter, phase); if (deferred) return deferred; }
-    // a pull request opened from the template keeps the text the captain approved; a new head only moves it
-    if (x.ctx.pr && x.ctx.prText?.version === 1 && x.ctx.pr.adapter === adapter.id) { const published = await adapter.update(x.ctx.pr, h, x.dir, phase.signal,phase.assert); phase.assert(); x.ctx.pr = published; x.rn.note = `pull request #${published.id} at ${h.slice(0, 8)}`; return remoteWait(x, adapter); }
-    const title = x.ctx.spec?.title ?? x.run.title;
+    // a pull request opened from the template keeps the text the captain approved: each round's rebased head only moves it (the same lease push)
+    const approved = x.ctx.pr && x.ctx.prText?.version === 1 && x.ctx.prText.hash ? x.ctx.pr : null;
+    const title = approved ? approved.title : x.ctx.spec?.title ?? x.run.title;
     const rollback = x.ctx.spec?.rollback ?? (x.ctx.door?.door === "one-way" ? "A revert does not undo this change; the approved plan must name the rollback." : "Revert the change to undo it.");
-    const body = withoutSessionLinks(specMd(x.ctx.spec) + `\n\n## Door\n${x.ctx.door?.door ?? "undecided"}\n\n## Rollback\n${rollback}`);
+    const body = approved ? approved.body : withoutSessionLinks(specMd(x.ctx.spec) + `\n\n## Door\n${x.ctx.door?.door ?? "undecided"}\n\n## Rollback\n${rollback}`);
     if (x.ctx.pr && x.ctx.pr.adapter !== adapter.id) throw new Error("review adapter authority changed; resolve the existing review request before publishing");
     if (x.ctx.pr) {
       const old = x.ctx.pr; let published: any;

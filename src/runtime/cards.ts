@@ -38,7 +38,7 @@ export type SCard = {
   /** "Open this pull request?" (domain/code-publish.ts): the exact title and body Studio will open, and where */
   pullRequest?: PullRequestPreview | null;
 };
-export type PullRequestPreview = { repository: string; branch: string; base: string; head: string; draft: boolean; template: { repository: string; path: string; blob: string } | null; title: string; body: string; proven: string[]; unproven: string[] };
+export type PullRequestPreview = { repository: string; branch: string; base: string; baseCommit?: string; head: string; draft: boolean; template: { repository: string; path: string; blob: string } | null; title: string; body: string; proven: string[]; unproven: string[] };
 /**
  * The structured detail of an intent-aligned card (additive, optional; unit intent-merge-card). Older cards have none
  * and render from `sections` and `body`. Every text is localized; zh-TW is a real translation (the coordinator writes

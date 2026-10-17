@@ -179,7 +179,7 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
       x.ctx.prText.card = c.id; x.save(); return { wait: true };
     }
     const draft = draftOf(x);
-    const text = { version: 1 as const, head: h, sources: bundle.sha256, template: template ? { repository: template.repository, path: template.path, blob: template.blob } : null, title: t.title, body: t.body, proven: t.proven, draft, repository: a.grant.repository, branch: x.ctx.branch, base: x.ctx.base };
+    const text = { version: 1 as const, head: h, sources: bundle.sha256, template: template ? { repository: template.repository, path: template.path, blob: template.blob } : null, title: t.title, body: t.body, proven: t.proven, draft, repository: a.grant.repository, branch: x.ctx.branch, base: x.ctx.base, baseCommit: x.ctx.baseCommit };
     const hash = digest(text);
     x.ctx.prText = { ...text, hash, unproven: t.unproven, by: t.by, card: null }; x.save();
     const kind = draft ? "draft" : "ready-for-review";
@@ -188,8 +188,8 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
         scope: { in: [`Push ${x.ctx.branch} (force-with-lease, this branch only)`, `Open a ${kind} pull request into ${x.ctx.base}`], out: ["No merge", "No other branch or repository"] } },
       zh: { why: `Studio 會把 ${x.ctx.branch} 推到 ${a.grant.repository}，並用這個標題和內文開一個${draft ? "草稿" : "可審查的"} pull request 到 ${x.ctx.base}。`, how: "開出去、在備註寫要改的文字，或關閉、不開。",
         scope: { in: [`推送 ${x.ctx.branch}（force-with-lease，只動這個分支）`, `開 pull request 到 ${x.ctx.base}`], out: ["不合併", "不動其他分支或儲存庫"] } },
-      body: `Repository: ${a.grant.repository}\nBranch: ${x.ctx.branch} → ${x.ctx.base}\nHead: ${h}\n${template ? `Template: ${template.repository}/${template.path} (${template.blob.slice(0, 8)})\n` : ""}Pull request: ${kind}\nTicked by evidence: ${t.proven.length ? t.proven.join("; ") : "none"}\nLeft unchecked (no evidence): ${t.unproven.length ? t.unproven.join("; ") : "none"}\n\nTitle: ${t.title}\n\n${t.body}`,
-      pullRequest: { repository: a.grant.repository, branch: x.ctx.branch, base: x.ctx.base, head: h, draft, template: text.template, title: t.title, body: t.body, proven: t.proven, unproven: t.unproven },
+      body: `Repository: ${a.grant.repository}\nBranch: ${x.ctx.branch} → ${x.ctx.base}\nHead: ${h} (the last round's head, rebased onto ${x.ctx.base} at ${String(x.ctx.baseCommit).slice(0, 8)})\n${template ? `Template: ${template.repository}/${template.path} (${template.blob.slice(0, 8)})\n` : ""}Pull request: ${kind}\nTicked by evidence: ${t.proven.length ? t.proven.join("; ") : "none"}\nLeft unchecked (no evidence): ${t.unproven.length ? t.unproven.join("; ") : "none"}\n\nTitle: ${t.title}\n\n${t.body}`,
+      pullRequest: { repository: a.grant.repository, branch: x.ctx.branch, base: x.ctx.base, baseCommit: x.ctx.baseCommit, head: h, draft, template: text.template, title: t.title, body: t.body, proven: t.proven, unproven: t.unproven },
       options: [{ id: "open", label: "Open pull request", labelZh: "開 pull request", primary: true }, { id: "changes", label: "Change the text", labelZh: "修改文字", note: true, hold: true }, { id: "close", label: "Close without opening", labelZh: "關閉，不開", hold: true }] });
     x.ctx.prText.card = c.id; engine.record(x, "pr-text", { head: h, data: { version: 1, card: c.id, hash, repository: a.grant.repository, branch: x.ctx.branch, base: x.ctx.base, template: text.template, draft } } as any); x.save();
     return { wait: true };
@@ -202,7 +202,7 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
       || !trusted.entries.some((e) => e.record === "pr-text" && e.data?.card === card.id && e.data?.hash === p.hash)
       || !trusted.entries.some((e) => e.record === "card-answer" && e.data?.card === card.id && e.data?.choice === "open")) throw new Error("the captain's pull request approval no longer matches its preview");
     const { hash, unproven: _u, by: _b, card: _c, ...text } = p;
-    if (digest(text) !== hash || p.head !== h || p.repository !== a.grant.repository || p.branch !== x.ctx.branch || p.base !== x.ctx.base) return publish(x); // the head or target moved: a fresh preview
+    if (digest(text) !== hash || p.head !== h || p.baseCommit !== x.ctx.baseCommit || p.repository !== a.grant.repository || p.branch !== x.ctx.branch || p.base !== x.ctx.base) return publish(x); // the head, its base or the target moved: a fresh preview of the new head
     if (!d.injected && x.ctx.project) d.projects.assertExecutable({ project: x.ctx.project, base: x.ctx.base });
     let bundle: CommunityBundle;
     try { bundle = await discoverGitHubCommunity(a, phase.signal); } catch { return readFailed(x, phase); }

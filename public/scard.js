@@ -350,7 +350,7 @@ function mountCard(el, card, opts = {}) {
   function pullRequestView(c) {
     const p = c.pullRequest; if (!p) return null;
     return sec("pull-request", T("The pull request, exactly as it will open", "Pull request（開出去的樣子）"),
-      h("p", { "data-pr-target": "" }, h("code", {}, p.repository), " · ", h("code", {}, p.branch), " → ", h("code", {}, p.base), " · ", p.draft ? T("draft", "草稿") : T("ready for review", "可審查")),
+      h("p", { "data-pr-target": "" }, h("code", {}, p.repository), " · ", h("code", {}, p.branch), " → ", h("code", {}, p.base), " · ", h("code", { "data-pr-head": "" }, String(p.head).slice(0, 8)), " · ", p.draft ? T("draft", "草稿") : T("ready for review", "可審查")),
       h("h3", { "data-pr-title": "" }, p.title),
       h("div", { class: "cc-md", "data-pr-body": "" }, mdView(p.body)),
       p.unproven?.length ? h("p", { class: "cc-count", "data-pr-unproven": "" }, T(`Left unchecked (no evidence): ${p.unproven.join("; ")}`, `未勾選（沒有證據）：${p.unproven.join("；")}`)) : null);

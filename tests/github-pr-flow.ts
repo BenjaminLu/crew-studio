@@ -83,7 +83,9 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
     { id: "remote-ready", kind: "hook", do: "remote.ready", label: "Ready", x: 2, y: 0 },
     { id: "done", kind: "hook", label: "Done", x: 4, y: 0 }, { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 4, y: 1 }],
     edges: [["seed", "pr-open"], ["pr-open", "remote-ready", "ok"], ["pr-open", "closed", "close"], ["remote-ready", "done", "ok"], ["remote-ready", "closed", "close"]] });
-  const H = await harness([flow]), E = H.engine;
+  const update = Y({ id: "pr-update", name: "PR update", roles: [], nodes: [{ id: "copy", kind: "hook", do: "fixture.copy", label: "Copy", x: 0, y: 0 }, { id: "pr-open", kind: "hook", do: "pr.open", label: "Review request", x: 1, y: 0 }, { id: "done", kind: "hook", label: "Done", x: 2, y: 0 }], edges: [["copy", "pr-open"], ["pr-open", "done", "ok"]] });
+  let source: any = null;
+  const H = await harness([flow, update]), E = H.engine;
   installCode(E, { dataDir: H.data, projects: new Projects(H.data), adapter: new GitHubPrAdapter(grant, () => "fake-token", 3000) });
   const done = ["Prices in euro format as €1,234.50 (test/format.test.ts)", "Unknown currencies keep the code prefix (test/codes.test.ts)"];
   E.actions["fixture.seed"] = (x) => {
@@ -95,6 +97,7 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
     E.record(x, "check", { check: "firstmate/review-verdict", verdict: "pass", kind: "judged" } as any);
     return "ok";
   };
+  E.actions["fixture.copy"] = (x) => { Object.assign(x.ctx, structuredClone(source)); return "ok"; };
   // the coordinator: scripted answers to pull_request_text; the prompt each time is kept
   const prompts: string[] = []; let answer: (n: number) => any = () => null;
   (E.deps.agents as any).run = async (job: any) => { prompts.push(job.text); const t = job.tools.find((t: any) => t.name === "pull_request_text"); const a = answer(prompts.length); if (t && a) t.run(a); return { status: "done" }; };
@@ -114,7 +117,7 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
 
     // one template
     sim.community.set(".github/pull_request_template.md", TEMPLATE);
-    answer = (n) => n === 1 ? fill() : fill({ title: "Format euro prices (euro sign, grouping)" });
+    answer = (n) => n === 1 ? fill() : fill({ title: "Format euro prices (euro sign, grouping)" }); // n 2: the captain's change; n 3: the rebased head
     const before = sim.calls.length;
     const run = await startRun("crew/euro");
     const card = openCard(run);
@@ -136,13 +139,28 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
     await E.answer(card.id, { choice: "changes", note: "Mention the grouping in the title", by: "captain" } as any);
     await until(() => !!openCard(run) && openCard(run).id !== card.id, 10000);
     const card2 = openCard(run);
-    ok(prompts.length === 2 && prompts[1].includes("Mention the grouping in the title") && card2?.pullRequest?.title === "Format euro prices (euro sign, grouping)" && !sim.head("crew/euro"), "Change the text: the coordinator revises with the captain's note; still nothing pushed", prompts[1]?.slice(-300));
+    ok(prompts.length >= 2 && prompts[1].includes("Mention the grouping in the title") && card2?.pullRequest?.title === "Format euro prices (euro sign, grouping)" && !sim.head("crew/euro"), "Change the text: the coordinator revises with the captain's note; still nothing pushed", prompts[1]?.slice(-300));
+    // the head moves under the card (a round rebased the Task): Open never pushes the head it did not show; a fresh card shows the rebased head
+    writeFileSync(join(repo, "file"), "rebased"); must(repo, ["commit", "-qam", "rebased"]); const head2 = must(repo, ["rev-parse", "HEAD"]); run.ctx.head = head2;
+    for (const h of [head2]) { sim.expect("GET", `/commits/${h}/check-runs?filter=all&per_page=100&page=1`, { total_count: 0, check_runs: [] }); sim.expect("GET", `/commits/${h}/status?per_page=100&page=1`, { sha: h, total_count: 0, statuses: [] }); }
     await E.answer(card2.id, { choice: "open", by: "captain" } as any);
+    await until(() => !!openCard(run) && openCard(run).id !== card2.id, 10000);
+    const card3 = openCard(run);
+    ok(card3?.title.en === "Open this pull request?" && card3.pullRequest.head === head2 && card3.body.includes(`Head: ${head2}`) && !sim.head("crew/euro"), "a moved (rebased) head gets a fresh card showing that head; nothing is pushed from the stale card", card3?.pullRequest?.head);
+    await E.answer(card3.id, { choice: "open", by: "captain" } as any);
     await until(() => ["succeeded", "failed"].includes(run.status), 15000);
     const opened = [...sim.pulls.values()].find((p) => p.head.ref === "crew/euro");
     const post = sim.calls.find((c) => c.method === "POST" && c.path === "/pulls" && c.body?.head === "crew/euro");
-    ok(sim.head("crew/euro") === head && post?.body?.body === card2.pullRequest.body && post?.body?.title === card2.pullRequest.title && post.body.draft === undefined && opened?.body === card2.pullRequest.body, "Open: the branch is pushed and POST /pulls carries exactly the card's title and body (ready for review)");
+    ok(sim.head("crew/euro") === head2 && post?.body?.body === card3.pullRequest.body && post?.body?.title === card3.pullRequest.title && post.body.draft === undefined && opened?.body === card3.pullRequest.body, "Open: the shown head is pushed and POST /pulls carries exactly the card's title and body (ready for review)");
     ok(run.status === "succeeded" && run.ctx.pr?.url === `https://github.com/fixture/project/pull/${opened?.number}` && E.trusted(run.id).entries.some((e) => e.record === "pr-opened" && e.data?.url === run.ctx.pr.url && e.data?.number === String(opened?.number)), "the pull request number and URL are in the run and its ledger", `${run.status} ${JSON.stringify(run.ctx.pr)}`);
+    // a later round (per-round rebase) moves the opened pull request: the same lease push, the approved text kept, a remote-push record
+    writeFileSync(join(repo, "file"), "next round"); must(repo, ["commit", "-qam", "next round"]); const head3 = must(repo, ["rev-parse", "HEAD"]);
+    sim.expect("GET", `/commits/${head3}/check-runs?filter=all&per_page=100&page=1`, { total_count: 0, check_runs: [] }); sim.expect("GET", `/commits/${head3}/status?per_page=100&page=1`, { sha: head3, total_count: 0, statuses: [] });
+    source = structuredClone(run.ctx); source.head = head3;
+    const upd = E.start({ workflow: "pr-update", text: "next round" }); await until(() => ["succeeded", "failed"].includes(upd.status), 15000);
+    const patch = sim.calls.filter((c) => c.method === "PATCH").at(-1);
+    ok(upd.status === "succeeded" && sim.head("crew/euro") === head3 && patch?.body?.body === card3.pullRequest.body && patch?.body?.title === card3.pullRequest.title && E.trusted(upd.id).entries.some((e) => e.record === "remote-push" && e.data?.from === head2 && e.data?.to === head3 && e.data?.lease === head2),
+      "after the pull request exists, a new round's head is pushed with the lease on the last pushed head, keeping the approved title and body", `${upd.status} ${patch?.body?.title}`);
 
     // several templates: the captain picks one
     sim.community.clear(); sim.community.set(".github/PULL_REQUEST_TEMPLATE/feature.md", TEMPLATE); sim.community.set(".github/PULL_REQUEST_TEMPLATE/fix.md", "## What broke\n\n<!-- the bug -->\n\n## Proof\n\n- [ ] A test reproduces it\n");
