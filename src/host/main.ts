@@ -35,7 +35,13 @@ export type Driver = { holder: "studio" | "terminal" | "none"; host: HostId | nu
   /** how Studio's session was made: a vendor fork, a new thread from a handoff (codex without a fork), or a fresh start */
   path?: SessionPath | null;
   /** the operating-rules section the live session last received (by session id): a takeover, a resume or an edit sends it again */
-  rulesSent?: { session: string; hash: string } | null };
+  rulesSent?: { session: string; hash: string } | null;
+  /** Studio's own fresh primary: how it was started, so a restart (a live release) can start it again the same way */
+  primary?: PrimarySettings | null;
+  /** Studio's shutdown stopped that primary (not the captain): the next boot starts it again */
+  restartOnBoot?: boolean };
+/** The settings a Studio-owned fresh primary ran with: a boot restart reuses them only when they still match. */
+export type PrimarySettings = { host: HostId; model: string | null; effort: string | null; permissionMode: "auto" | "default" | null; locale: "en" | "zh-TW" | "zh-CN" };
 export type TakeoverMode = "takeover" | "rehearsal";
 /** What a takeover started from and how the original terminal session looks now. */
 export type Origin = { id: string; host: HostId; file: string | null; cwd: string; mode: TakeoverMode; model: string | null; permissionMode: string | null;
@@ -125,9 +131,16 @@ export class MainSession {
     await this.bridge.listen();
     const d = this.driver();
     // Studio restarted while it held a session: its CLI died with it; keep the way back
-    if (d.holder === "studio") this.writeDriver({ holder: "none", host: d.host, sessionId: d.sessionId, pid: null, since: new Date().toISOString(),
-      resume: d.sessionId && !(this.o.nativeWorkspace && d.path === "fresh" && !d.forkedFrom && !d.mode) ? this.hosts[d.host ?? "claude"].resumeCommand(d.sessionId) : undefined, forkedFrom: d.forkedFrom ?? null, mode: d.mode ?? null, handoff: d.handoff ?? null, path: d.path ?? null });
+    const own = !!(this.o.nativeWorkspace && d.path === "fresh" && !d.forkedFrom && !d.mode);
+    // Studio's own primary was running when Studio stopped (its shutdown, or a crash): remember how, once, so boot starts it
+    // again (takeover's resumeOnBoot) instead of waiting for the captain's Start
+    if ((d.holder === "studio" || (d.holder === "none" && d.restartOnBoot)) && own && d.host && d.primary?.host === d.host) this.bootPrimary = d.primary;
+    if (d.holder === "studio" || d.restartOnBoot) this.writeDriver({ holder: "none", host: d.host, sessionId: d.sessionId, pid: null, since: d.holder === "studio" ? new Date().toISOString() : d.since,
+      resume: d.sessionId && !own ? this.hosts[d.host ?? "claude"].resumeCommand(d.sessionId) : d.holder === "studio" ? undefined : d.resume, forkedFrom: d.forkedFrom ?? null, mode: d.mode ?? null, handoff: d.handoff ?? null, path: d.path ?? null, primary: d.primary ?? null });
   }
+  private bootPrimary: PrimarySettings | null = null;
+  /** The primary that was running when Studio stopped (once): boot starts it again with the same settings, or says why not. */
+  takeBootPrimary(): PrimarySettings | null { const p = this.bootPrimary; this.bootPrimary = null; return p; }
   stop() { if (this.timer) clearInterval(this.timer); this.bridge.close(); }
 
   private get driverFile() { return join(this.o.dataDir, "driver.json"); }
@@ -342,7 +355,8 @@ export class MainSession {
     this.drive = { host, path: "fresh", statement, noFork: null, model: host === "claude" ? extra?.model ?? null : se.model, effort: host === "claude" ? extra?.effort ?? null : se.effort ?? null, approvalPolicy: se.approvalPolicy ?? null, sandbox: se.sandbox ?? null, permissionMode: host === "claude" ? extra?.permissionMode ?? "default" : null, effectivePermissionMode: null, autoMode: host === "claude" ? extra?.autoMode ?? null : null, executionMode: host === "claude" ? (localExecutionNotice() ? "local-unrestricted" : "default") : null,
       seededFrom: newest ? `state/${newest.name}` : null, handoff };
     this.sessionFile = se.file ?? null; this.lastSeenMtime = mtimeOf(this.sessionFile);
-    this.writeDriver({ holder: "studio", host, sessionId: se.id, pid: process.pid, since: at, forkedFrom: null, mode: null, handoff, path: "fresh" });
+    this.writeDriver({ holder: "studio", host, sessionId: se.id, pid: process.pid, since: at, forkedFrom: null, mode: null, handoff, path: "fresh",
+      primary: this.o.nativeWorkspace ? { host, model: host === "claude" ? extra?.model ?? null : se.model ?? null, effort: host === "claude" ? extra?.effort ?? null : se.effort ?? null, permissionMode: host === "claude" ? extra?.permissionMode ?? "default" : null, locale: extra?.locale ?? "en" } : null });
     this.state = "attached"; this.pausedReason = null; this.lastResume = null;
     this.wakes = new WakeReader(this.o.stateDir);
     this.seenWakes.clear();
@@ -559,7 +573,7 @@ export class MainSession {
   async interrupt() { this.nativeGeneration++;this.abortNativeCalls();await this.session?.interrupt(); }
 
   /** Hand the session back to a terminal: stop Studio's process, release the lock, show the resume command. */
-  async detach(): Promise<string | null> {
+  async detach(how: { shutdown?: boolean } = {}): Promise<string | null> {
     if (!this.session) return null;
     const s = this.session;
     this.nativeGeneration++;this.abortNativeCalls();
@@ -573,7 +587,9 @@ export class MainSession {
       if (s.pid) this.own.delete(s.pid);
       const dr = this.drive;
       this.session = null; this.state = "detached"; this.pausedReason = null; this.wakes = null; this.lastResume = null; this.sessionFile = null;
-      this.writeDriver({ holder: "none", host: s.host, sessionId: s.id, pid: null, since: new Date().toISOString(), forkedFrom: null, mode: null, handoff: dr?.handoff ?? null, path: "fresh" });
+      // Studio itself is stopping (a live release): the next boot starts this primary again; the captain's Stop leaves it stopped
+      this.writeDriver({ holder: "none", host: s.host, sessionId: s.id, pid: null, since: new Date().toISOString(), forkedFrom: null, mode: null, handoff: dr?.handoff ?? null, path: "fresh",
+        primary: how.shutdown ? this.driver().primary ?? null : null, restartOnBoot: how.shutdown ? true : undefined });
       if (dr?.handoff) { try { appendFileSync(join(this.handoffDir(), dr.handoff), `\n## Stopped ${new Date().toISOString()}\n\nStudio closed its own primary. No terminal owns it. Dispatched native Tasks remain independent.\n`); } catch {} }
       this.drive = null; this.origin = null;
       this.note({ kind: "status", text: "Firstmate stopped. Dispatched native Tasks keep their own lifecycle. / Firstmate 已停止；已派出的原生任務保持各自的生命週期。", i18n: { en: "Firstmate stopped. Dispatched native Tasks keep their own lifecycle.", "zh-TW": "Firstmate 已停止；已派出的原生任務保持各自的生命週期。" } });

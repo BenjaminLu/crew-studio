@@ -286,9 +286,25 @@ try {
   ok(!existsSync(priv2), "Studio's shutdown stops the primary and removes its private folder");
   ok(!readdirSync(tmpdir()).some((n) => n.startsWith(`crew-native-${oldPid}-`)), "no private folder of the stopped Studio remains");
   app = start(); await waitUp(base, app);
-  const rv = await view();
-  ok(rv.state === "detached" && rv.driver.holder === "none" && !rv.driver.resume, "after a Studio restart the Claude primary is released with no resume, like Codex");
-  ok(await until(() => !alive(pid2)), "the Studio restart leaves no Claude process behind");
+  ok(await until(() => !alive(pid2)), "the Studio restart leaves no Claude process of the old Studio behind");
+  // a live release restarts Studio: the primary that was running starts again on its own, same host, model and mode
+  ok(await until(async () => { const v = await view(); return v.state === "attached" && v.host === "claude"; }), "after a Studio restart the running Claude primary starts again without the captain pressing Start");
+  let rv = await view();
+  ok(rv.sessionId !== run2.argv[run2.argv.indexOf("--session-id") + 1] && rv.drive?.permissionMode === "auto" && rv.drive?.model === "claude-sonnet-5-5" && !rv.driver.resume, "the restarted primary is a new session on the same model and permission mode");
+  ok(rv.log.some((l: any) => /Firstmate was running before Studio restarted; Studio started it again on Claude/.test(l.text)), "a notice says Firstmate was started again after the restart");
+  await idle();
+  // not signed in at boot: nothing starts, no sign-in begins, a notice says why and that Start is the way on
+  signedIn(false); const runsSignedOut = claudeRuns().length, codexBefore = codexStarts();
+  await stop(); app = start(); await waitUp(base, app);
+  ok(await until(async () => (await view()).log.some((l: any) => /was not restarted/.test(l.text) && /Press Start/.test(l.text))), "not signed in after a restart: a notice says the primary was not restarted and to press Start");
+  rv = await view();
+  ok(rv.state === "detached" && claudeRuns().length === runsSignedOut && codexStarts() === codexBefore && (await ready()).code === "claudeNotSignedIn", "not signed in after a restart: no Claude process, no sign-in, no Codex fallback");
+  signedIn(true);
+  // a primary the captain stopped stays stopped across a restart
+  r = await api("/api/main/start", { host: "claude", confirm: true }); await idle();
+  await api("/api/main/detach", {});
+  await stop(); const runsStopped = claudeRuns().length; app = start(); await waitUp(base, app); await Bun.sleep(600);
+  ok((await view()).state === "detached" && claudeRuns().length === runsStopped, "a primary the captain stopped is not started again by a restart");
 
   // --- quota: typed at run time and at start, never Codex ---
   r = await api("/api/main/start", { host: "claude", confirm: true });

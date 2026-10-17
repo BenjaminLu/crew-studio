@@ -207,7 +207,7 @@ main.onEvent = (e: HostEvent) => {
 const codexAccount=new CodexAccount({cwd:PROJECT,busy:()=>main.view().state!=="detached",configured:()=>{const c=codexConfig(PROJECT);return{model:c.model,effort:c.effort};},changed:()=>send("codex-account",codexAccount.view())});
 const claudeLogin=new ClaudeLogin({loginMs:Number(process.env.CREW_CLAUDE_LOGIN_MS)||undefined,signedIn:()=>nativeClaude.signedIn(),changed:()=>send("claude-account",claudeLogin.view())});
 // Studio's own primary is stopped with Studio: its process ends and its private folder (tokens, socket) goes
-for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{void Promise.all([codexAccount.shutdown(),nativeClaude.cancel(),claudeLogin.shutdown(),(()=>{const v=main.view();return v.context==="studio"&&!v.origin&&v.drive?.path==="fresh"&&["attached","paused"].includes(v.state)?main.detach().catch(()=>null):null;})()]).then(()=>process.exit(0),()=>process.exit(1));});
+for(const sig of ["SIGTERM","SIGINT"] as const)process.once(sig,()=>{void Promise.all([codexAccount.shutdown(),nativeClaude.cancel(),claudeLogin.shutdown(),(()=>{const v=main.view();return v.context==="studio"&&!v.origin&&v.drive?.path==="fresh"&&["attached","paused"].includes(v.state)?main.detach({shutdown:true}).catch(()=>null):null;})()]).then(()=>process.exit(0),()=>process.exit(1));});
 // a fresh Claude primary: the model the Claude account card checks, Studio's own config folder, the crew token
 const claudePrimaryPair = () => { const model = chatSettings().models.claude || process.env.CREW_CLAUDE_MODEL || "claude-sonnet-5-5"; let effort: string | null = null; try { effort = configuredClaudeEffort(model); } catch {} return { model, effort }; };
 // a Studio that stopped without its shutdown handler leaves private folders behind: remove those whose Studio is gone
@@ -827,6 +827,8 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
 
 // Restore/start only after private media and native runtime callbacks exist.
 await main.start();
+// a live release restarted Studio while its own Firstmate ran: start it again with the same settings (signed-in only), or note why not
+void takeover.resumeOnBoot().catch((e) => console.warn(`crew-studio: Firstmate restart: ${e?.message ?? e}`));
 const server = Bun.serve({ port: PORT, hostname: "127.0.0.1", idleTimeout: 0, fetch: (req) => handle(req, "loopback") });
 if(localExecutionNotice())console.log(`crew-studio: ${localExecutionNotice()}`);
 console.log(`crew-studio: http://127.0.0.1:${server.port}  data=${DATA}  state=${STATE}  board=${board.url} (${board.status().writable ? "answers on" : "read-only"})  github=${gh.state.enabled ? gh.state.repo : "off"}`);
