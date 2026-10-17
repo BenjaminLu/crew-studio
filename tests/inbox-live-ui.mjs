@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { freePort, waitUp, withSession } from "./boot.mjs";
+import { approveStaffing, codexCrewEnv } from "./lib/codex-crew.mjs";
 const here = dirname(fileURLToPath(import.meta.url)), root = join(here, "..");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright").catch(() => {
   console.error("inbox-live-ui: Playwright not found; set PLAYWRIGHT_MODULE to its index.mjs or install it"); process.exit(2); });
@@ -19,13 +20,17 @@ const port = await freePort();
 const env = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) delete env[k];
 env.CREW_SESSION_TOKEN = process.env.CREW_SESSION_TOKEN ??= "test-session";
 const serverEnv = { ...env, CREW_FM_STATE: state, CREW_PORT: String(port), CREW_GH: "0", CREW_READONLY: "1", CREW_DATA: data,
-  CREW_CHAT_PROVIDER: "stub", CREW_RETRO_AUTO: "0", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_GH_NO_CLI: "1", CREW_CLAUDE_BIN: "/nonexistent/claude", CREW_CODEX_BIN: "/nonexistent/codex",
-  HOME: join(tmp, "home"), CREW_MAIN_PROJECT: join(tmp, "proj"), CREW_FILE_ALLOW: tmp };
+  CREW_CHAT_PROVIDER: "stub", CREW_RETRO_AUTO: "0", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_GH_NO_CLI: "1", CREW_CLAUDE_BIN: "/nonexistent/claude",
+  ...codexCrewEnv(join(tmp, "home")), CREW_MAIN_PROJECT: join(tmp, "proj"), CREW_FILE_ALLOW: tmp };
 let appLog = "";
 const startApp = () => { const a = spawn("bun", ["src/server.ts"], { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: serverEnv }); a.stdout.on("data", (d) => (appLog += d)); a.stderr.on("data", (d) => (appLog += d)); return a; };
 let app = startApp();
 const base = `http://127.0.0.1:${port}`;
 await waitUp(base, app);
+// code-firstmate starts only on a registered project with an approved crew (src/domain/staffing.ts): the built-in sandbox project,
+// its crew approved through the captain's staffing discussion on the fixture Codex account (tests/lib/codex-crew.mjs), before any
+// page opens, so its confirmation card has come and gone when the Inbox opens empty
+await approveStaffing(async (path, body) => { const r = await fetch(base + path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", "x-crew-session": env.CREW_SESSION_TOKEN }, body: body === undefined ? undefined : JSON.stringify(body) }); return { status: r.status, body: await r.json().catch(() => ({})) }; }, "sandbox", "code-firstmate");
 let pass = 0, fail = 0;
 const ok = (c, name, extra = "") => { if (c) { pass++; console.log(`  ok    ${name}`); } else { fail++; console.log(`  FAIL  ${name} ${extra}`); } };
 const browser = withSession(await chromium.launch(), base);
@@ -51,7 +56,7 @@ try {
   await C.evaluate(() => { window.__mark = "no-reload"; });
   const call = (u, b) => B.evaluate(async ([u, b]) => { const r = await fetch(u, b === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) }); return { status: r.status, j: await r.json().catch(() => ({})) }; }, [u, b]);
   // ---------- a card raised by the runtime while the Inbox is open ----------
-  const r1 = (await call("/api/wruns", { workflow: "code-firstmate", text: INTENT("Add a percent function to money-kit"), params: {} })).j;
+  const r1 = (await call("/api/wruns", { workflow: "code-firstmate", text: INTENT("Add a percent function to money-kit"), params: { project: "sandbox" } })).j;
   const appeared = await waitFor(A, () => !!document.querySelector("[data-inbox-studio] [data-scard]"), null, 120000);
   const c1 = (await call("/api/scards?open=1")).j.cards.find((c) => c.run === r1.id);
   ok(appeared && !!c1 && (await A.locator(`[data-inbox-studio] [data-scard="${c1.id}"]`).count()) === 1 && await A.evaluate(() => window.__mark === "no-reload"),
@@ -68,7 +73,7 @@ try {
   const sel = `[data-inbox-studio] [data-scard="${c1.id}"]`;
   await A.fill(`${sel} [data-card-note]`, "narrow it to percent() only"); await A.focus(`${sel} [data-card-note]`);
   await A.evaluate((s) => { document.querySelector(s).__keep = "same element"; }, sel);
-  const r2 = (await call("/api/wruns", { workflow: "code-firstmate", text: INTENT("Add a second percent helper"), params: {} })).j;
+  const r2 = (await call("/api/wruns", { workflow: "code-firstmate", text: INTENT("Add a second percent helper"), params: { project: "sandbox" } })).j;
   const second = await waitFor(A, () => document.querySelectorAll("[data-inbox-studio] [data-scard]").length === 2, null, 120000);
   const c2 = (await call("/api/scards?open=1")).j.cards.find((c) => c.run === r2.id);
   ok(second && await A.evaluate((s) => document.querySelector(s)?.__keep === "same element", sel) && (await A.inputValue(`${sel} [data-card-note]`)) === "narrow it to percent() only",
@@ -89,13 +94,13 @@ try {
     && await waitFor(C, (id) => !document.querySelector(`[data-need-scard="${id}"]`), c1.id, 10000),
     "a withdrawn card (its run cancelled) leaves the Inbox, the counts and the Board", JSON.stringify([await dom(A), await dom(C), (await call(`/api/scards/${c1.id}`)).j.status]));
   // ---------- the captain is on one card (#/inbox/<id>, the Board's Open link) and answers it; the next card still shows ----------
-  const r3 = (await call("/api/wruns", { workflow: "code-firstmate", text: INTENT("Add a third percent helper"), params: {} })).j;
+  const r3 = (await call("/api/wruns", { workflow: "code-firstmate", text: INTENT("Add a third percent helper"), params: { project: "sandbox" } })).j;
   let c3 = null; for (let i = 0; i < 240 && !c3; i++) { c3 = (await call("/api/scards?open=1")).j.cards.find((c) => c.run === r3.id && c.ste); if (!c3) await A.waitForTimeout(500); }
   await A.evaluate((id) => { location.hash = `#/inbox/${id}`; }, c3.id); await A.waitForSelector(`[data-inbox-studio] [data-scard="${c3.id}"]`, { timeout: 10000 });
   const opt = c3.options.find((o) => !o.note && o.id !== "dispatch") ?? c3.options.at(-1);
   await A.click(`[data-inbox-studio] [data-scard="${c3.id}"] [data-option="${opt.id}"]`);
   await waitFor(A, (id) => !document.querySelector(`[data-inbox-studio] [data-scard="${id}"] [data-option]`), c3.id, 10000);
-  const r4 = (await call("/api/wruns", { workflow: "code-firstmate", text: INTENT("Add a fourth percent helper"), params: {} })).j;
+  const r4 = (await call("/api/wruns", { workflow: "code-firstmate", text: INTENT("Add a fourth percent helper"), params: { project: "sandbox" } })).j;
   const c4seen = await waitFor(A, () => !!document.querySelector("[data-inbox-studio] [data-scard]") && [...document.querySelectorAll("[data-inbox-studio] [data-scard]")].some((e) => e.querySelector("[data-option]")), null, 120000);
   const c4 = (await call("/api/scards?open=1")).j.cards.find((c) => c.run === r4.id);
   ok(c4seen && !!c4 && (await A.locator(`[data-inbox-studio] [data-scard="${c4.id}"]`).count()) === 1 && (await A.evaluate(() => location.hash)).startsWith(`#/inbox/${c3.id}`) && (await A.locator(`[data-inbox-gone="${c3.id}"]`).count()) === 1,
@@ -113,7 +118,7 @@ try {
   for (let i = 0; i < 240 && !(await call(`/api/scards/${c4.id}`)).j.ste; i++) await B.waitForTimeout(500);
   await call(`/api/wruns/${r4.id}/cancel`, {});
   for (let i = 0; i < 40 && (await call(`/api/scards/${c4.id}`)).j.status === "open"; i++) await B.waitForTimeout(250);
-  const r5 = (await call("/api/wruns", { workflow: "code-firstmate", text: INTENT("Add a fifth percent helper"), params: {} })).j;
+  const r5 = (await call("/api/wruns", { workflow: "code-firstmate", text: INTENT("Add a fifth percent helper"), params: { project: "sandbox" } })).j;
   let c5 = null; for (let i = 0; i < 240 && !c5; i++) { c5 = (await call("/api/scards?open=1")).j.cards.find((c) => c.run === r5.id && c.ste); if (!c5) await B.waitForTimeout(500); } // settled: no scard event for it is left to arrive after the reconnect
   await B.waitForTimeout(1000);
   const before = await dom(A), beforeC = await dom(C);
