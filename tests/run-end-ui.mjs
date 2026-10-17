@@ -145,7 +145,8 @@ try {
   { const tl = await text(p, "[data-timeline]"); ok(/Unarchived/.test(tl) && (tl.match(/Archived/g) || []).length === 1, "the timeline says Archived once and Unarchived once", tl.slice(0, 200)); }
   { const lines = await p.$$eval("[data-timeline] .rt-ev", (es) => es.map((e) => e.textContent.replace(/^\S+\s/, "").trim()));
     ok(!lines.some((l) => /^Boom: Boom/.test(l)) && lines.some((l) => /^Boom: boom: the step failed$/.test(l)), "a failed node's line names the node once", JSON.stringify(lines));
-    ok(lines.filter((l) => /^Boom: .*fail/i.test(l)).length === 1 && lines.filter((l) => /^Task: Started/.test(l)).length === 1, "one failure row for the failed node, and one Task: Started row", JSON.stringify(lines)); }
+    ok(lines.filter((l) => /^Boom: .*fail/i.test(l)).length === 1 && lines.filter((l) => /^Task: Started/.test(l)).length === 1, "one failure row for the failed node, and one Task: Started row", JSON.stringify(lines));
+    ok(!lines.some((l) => /^Task: (\S+) → \1$/.test(l)), "no run row moves from a state to the same state", JSON.stringify(lines)); }
   ok(await text(p, "[data-ledger-state]") === "No entries yet", "an empty evidence ledger reads No entries yet", await text(p, "[data-ledger-state]"));
   await p.evaluate(() => setLang("zh-TW")); await p.waitForTimeout(200);
   { const tl = await text(p, "[data-timeline]"); ok(/已封存/.test(tl) && /已取消封存/.test(tl), "and in zh-TW", tl.slice(0, 200)); }

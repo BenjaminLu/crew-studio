@@ -663,10 +663,12 @@ function viewRuns() {
 const stateWord = (st, r) => { const s = window.runState(r ? { def: r.def, workflow: r.workflow, ctx: r.ctx, ...st } : st); return T(s.en, s.tw); };
 const NODE_WORDS = { skipped: ["skipped", "略過"], superseded: ["replaced", "被取代"], pending: ["reset", "重設"] };
 // node transitions a display event already says (node_started, node_done, node_failed, node_waiting) are left out of the Simple view
-// and so is the run's own "failed" note when the node's failure row already says it (one failure row per node), and the
-// run's first transition (the "started" row says it)
+// and so are the run's own "failed" note and its typed failure (class · code, the failure card's row) when the node's failure
+// row already says it (one failure row per node), the run's first transition (the "started" row says it), and a run
+// "transition" to the state it is already in (the failure taxonomy records failed → failed when it types the failure)
 const simpleShows = (e, all) => !(e.type === "node" && ["running", "passed", "failed", "error", "waiting"].includes(e.to))
-  && !(e.type === "failed" && e.node && all.some((x) => x.type === "node_failed" && x.node === e.node))
+  && !((e.type === "failed" || e.type === "failure") && e.node && all.some((x) => x.type === "node_failed" && x.node === e.node))
+  && !(e.type === "run" && e.from && e.from === e.to)
   && !(e.type === "run" && (!e.from || e.from === "queued") && all.some((x) => x.type === "started"));
 const VERDICT = { pass: ["passed", "通過"], fail: ["failed", "未通過"], warn: ["warned", "警告"], error: ["could not run", "無法執行"] };
 function timelineLine(e, r) {
