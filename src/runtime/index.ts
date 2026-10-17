@@ -322,7 +322,8 @@ export function createRuntime(d: RuntimeDeps) {
         const missing=Object.entries(chosenDef?.params??{}).filter(([key,spec])=>spec.required&&!(String(params[key]??spec.default??'').trim())).map(([key])=>key);
         if(missing.length)return refuse({error:`Required workflow inputs / 必須提供流程輸入: ${missing.join(', ')}`,code:'param_required',params:missing},400,'invalid-input.params');
         for(const [key,spec] of Object.entries(chosenDef?.params??{})){
-          if(params[key]===undefined||String(params[key]).trim()==='')continue;
+          if(params[key]===undefined)continue;
+          if(typeof params[key]==='string'&&params[key].trim()===''){params[key]='';continue;} // blank means the declared default (file-organization: a sample folder)
           if(typeof params[key]!=='string'||spec.pattern&&!new RegExp(spec.pattern).test(params[key]))return refuse({error:`Invalid workflow input / 流程輸入格式不正確: ${key}`,code:'param_invalid',params:[key]},400,'invalid-input.params');
         }
         if(ownWorkflow(chosenDef)&&ownStaffingPlan(chosenDef!).plan.length){ // nothing to staff: a card-only workflow just starts
