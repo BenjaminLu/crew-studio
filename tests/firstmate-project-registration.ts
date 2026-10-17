@@ -64,6 +64,11 @@ try{
   const propose=async(project:string,key:string)=>{try{return await tools.call('studio_propose_work',{workflow:'local-code',version:1,text:'Round the totals in src/money.ts',params:{project}},owner(key))as any;}catch(e:any){return{refused:/outside Studio private data/.test(String(e?.message??e)),message:String(e?.message??e)};}};
   writeFileSync(registry,JSON.stringify([record('sandbox',sandbox)]));
   const allowed=await propose('sandbox','sandbox-capture');ok(!!allowed?.proposal&&!allowed.code,'the registered built-in sandbox under data/ is captured for a coding proposal'+(!!allowed?.proposal&&!allowed.code?'':' '+JSON.stringify(allowed)));
+  // G4: a coding proposal that restates its project's registered base is accepted (base dropped); any other base, repo, branch or worktree is refused
+  const withParams=async(params:any,key:string)=>{try{return await tools.call('studio_propose_work',{workflow:'local-code',version:1,text:'Round the totals in src/money.ts',params},owner(key))as any;}catch(e:any){return{code:e?.publicFailure?.code??e?.code,message:String(e?.message??e)};}};
+  const sameBase=await withParams({project:'sandbox',base:'main'},'same-base');ok(!!sameBase?.proposal,'base equal to the registered project base is accepted on the first try'+(sameBase?.proposal?'':' '+JSON.stringify(sameBase)));
+  const otherBase=await withParams({project:'sandbox',base:'release'},'other-base');ok(!otherBase?.proposal&&/registered base \(main\)/.test(otherBase?.message??''),'a different base is refused and the refusal names the registered base '+JSON.stringify(otherBase));
+  const raw=await Promise.all([['repo','/elsewhere'],['branch','feature/x'],['worktree','/tmp/x']].map(([k,v])=>withParams({project:'sandbox',[k]:v},`raw-${k}`)));ok(raw.every(r=>!r?.proposal),'raw repo, branch and worktree stay refused');
   writeFileSync(registry,JSON.stringify([record('other',other)]));
   const refused=await propose('other','other-capture');ok(refused?.refused===true,'another repository under data/ stays refused'+(refused?.refused===true?'':' '+JSON.stringify(refused)));
   writeFileSync(registry,JSON.stringify([record('sandbox',other)]));
