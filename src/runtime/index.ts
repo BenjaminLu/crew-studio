@@ -144,7 +144,8 @@ export function createRuntime(d: RuntimeDeps) {
   // workflow; every other workflow's Task records the crew it started with
   const crewStore=new CrewStore(d.dataDir);
   // a Studio that already approved staffing gets its team seeded from it once (idempotent; src/crew-migrate.ts)
-  try{const m=migrateCrew(d.dataDir,defs);if(m.status==='seeded')d.log.emit({type:'crew_seeded',summary:`team seeded from ${m.from!.workflow} v${m.from!.version} (${m.from!.project}); ${m.overrides!.length} workflow overrides`});}catch(e:any){console.warn(`crew-studio: team seeding: ${e?.message??e}`);}
+  // CREW_TEAM_SEED=0 keeps per-project staffing only: no team is seeded (a Studio that has a team keeps it)
+  if(process.env.CREW_TEAM_SEED!=='0')try{const m=migrateCrew(d.dataDir,defs);if(m.status==='seeded')d.log.emit({type:'crew_seeded',summary:`team seeded from ${m.from!.workflow} v${m.from!.version} (${m.from!.project}); ${m.overrides!.length} workflow overrides`});}catch(e:any){console.warn(`crew-studio: team seeding: ${e?.message??e}`);}
   const crewStaffing=installCrewStaffing(engine,staffing,crewStore);
   const staffingGuard=installStaffingGuard(engine,staffing,staffingProject,staffingCapability,(def,config)=>crewStaffing.verify(def,config));
   const crewGuard=installCrewGuard(engine,crewStore);

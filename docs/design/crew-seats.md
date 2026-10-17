@@ -66,7 +66,8 @@ the selected workflow's editable table (member, model, effort, skills: member sk
 ## Migration
 
 The most recent approved code-firstmate staffing seeds the team; other approved workflows whose picks differ become
-workflow overrides. Idempotent (a marker plus a hash check); tested on fixture copies only.
+workflow overrides. Idempotent (a Studio that has a team is never touched); tested on fixture copies only.
+`CREW_TEAM_SEED=0` skips the seeding: per-project staffing stays as it was until the captain sets up a team.
 
 ## Deferred
 
