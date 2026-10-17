@@ -1,7 +1,7 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // A known failure covers only the failure it names. tests/acceptance.ts runs on copies of the
-// scenario list where file-organization:board is made a known failure of its own (it starts without
-// the required folder, so the board refuses it at start). In one copy the run also names a setup step
+// scenario list where file-organization:board is made a known failure of its own (it starts with a
+// relative folder, so the board refuses it at start). In one copy the run also names a setup step
 // that does not exist: that other failure must be a FAIL and fail the suite, not hide under the known
 // one. The copy with only the known failure stays KNOWN-FAIL with exit 0.
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -20,7 +20,7 @@ try {
   const same = join(root, "same"), broken = join(root, "broken");
   cpSync(SCENARIO_DIR, same, { recursive: true }); cpSync(SCENARIO_DIR, broken, { recursive: true });
   const board = '    setup: [folder]\n    params: { folder: "{folder}" }\n    cards: [{ node: card, answer: apply }]\n';
-  const known = (setup: string) => `    setup: [${setup}]\n    known_failure:\n      observed: "the board refuses a start without the folder"\n      match: "^the board start route refused: 400 Required workflow inputs / 必須提供流程輸入: folder"\n      root_cause: "fixture: the board run sends no folder"\n      covered_by: "tests/acceptance-known.ts"\n    cards: [{ node: card, answer: apply }]\n`;
+  const known = (setup: string) => `    setup: [${setup}]\n    params: { folder: "not-an-absolute-path" }\n    known_failure:\n      observed: "the board refuses a start with a relative folder"\n      match: "^the board start route refused: 400 Invalid workflow input / 流程輸入格式不正確: folder"\n      root_cause: "fixture: the board run sends a relative folder"\n      covered_by: "tests/acceptance-known.ts"\n    cards: [{ node: card, answer: apply }]\n`;
   const text = readFileSync(join(same, "file-organization.yaml"), "utf8");
   ok(text.includes(board), "the board run of file-organization.yaml is where this test expects it");
   writeFileSync(join(same, "file-organization.yaml"), text.replace(board, known("folder")));

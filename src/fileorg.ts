@@ -1,7 +1,8 @@
 // The file-organization pack's engine: a dry-run plan (no file moves), the
 // pack's gates, the captain's review (untick moves), then apply with a
 // write-ahead undo log, and undo. It never deletes, never overwrites and never
-// leaves the chosen folder; firstmate's checkout and Studio's data are refused.
+// leaves the chosen folder; firstmate's checkout and Studio's data are refused,
+// except the sample folders it makes itself (data/fileorg-samples) for a run with no folder.
 //   data/fileorg/<plan id>/plan.json    data/fileorg/<plan id>/undo.jsonl
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -14,10 +15,14 @@ export type Move = { id: number; from: string; to: string; category: string; siz
 export type Plan = { id: string; root: string; createdAt: string; status: "planned" | "applied" | "undone" | "discarded"; moves: Move[]; skipped: { name: string; why: string }[];
   gates: { id: string; label: string; state: "pass" | "fail"; detail: string }[]; appliedAt: string | null; undoneAt: string | null; summary: Record<string, number> };
 
+/** What a sample folder holds: a few loose files of different kinds, small text only. */
+const SAMPLE_FILES: [string, string][] = [["meeting-notes.txt", "Sample notes for Crew Studio's file organization.\n"], ["budget.csv", "item,amount\ncoffee,120\n"], ["summary.md", "# Sample summary\n"],
+  ["logo.svg", '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>\n'], ["script.py", "print('sample')\n"], ["misc.data", "sample\n"]];
 const BLOCKED = ["/", "/System", "/Library", "/Applications", "/usr", "/bin", "/sbin", "/etc", "/private", "/var", "/opt", "/Volumes"];
 
 export function createFileOrg(o: { dataDir: string; refuse: string[]; rules: () => Rules; gates: () => { id: string; builtin?: string; label?: string; args?: any }[]; log: StudioLog; send: (t: string, d: unknown) => void }) {
   const dir = join(o.dataDir, "fileorg"); mkdirSync(dir, { recursive: true });
+  const samples = join(o.dataDir, "fileorg-samples");
   const pdir = (id: string) => join(dir, id.replace(/[^\w-]/g, ""));
   const get = (id: string): Plan | null => { try { return JSON.parse(readFileSync(join(pdir(id), "plan.json"), "utf8")); } catch { return null; } };
   const save = (p: Plan) => { mkdirSync(pdir(p.id), { recursive: true }); writeFileSync(join(pdir(p.id), "plan.json"), JSON.stringify(p, null, 1)); o.send("fileorg", { id: p.id, status: p.status }); };
@@ -30,6 +35,8 @@ export function createFileOrg(o: { dataDir: string; refuse: string[]; rules: () 
     if (!p.startsWith("/")) throw new Error("give the folder's absolute path");
     if (!existsSync(p) || !statSync(p).isDirectory()) throw new Error(`no such folder: ${p}`);
     const real = realpathSync(p);
+    // Studio's own sample folders are the one place inside its data it tidies
+    if (existsSync(samples) && real.startsWith(realpathSync(samples) + "/")) return real;
     if (BLOCKED.some((b) => real === b || (b !== "/" && real.startsWith(b + "/") && !real.startsWith(realpathSync(homedir()) + "/") && !real.startsWith("/private/var/folders/") && !real.startsWith("/private/tmp/")))) throw new Error("a system folder is not tidied");
     if (real === realpathSync(homedir())) throw new Error("pick a folder inside your home, not the home folder itself");
     for (const r of o.refuse) { if (!existsSync(r)) continue; const rr = realpathSync(r); if (real === rr || real.startsWith(rr + "/")) throw new Error(`that folder is inside ${r}, which Studio never changes`); }
@@ -115,5 +122,11 @@ export function createFileOrg(o: { dataDir: string; refuse: string[]; rules: () 
     return p;
   }
   function discard(id: string) { const p = get(id); if (!p) throw new Error("no such plan"); if (p.status !== "planned") throw new Error(`this plan is ${p.status}`); p.status = "discarded"; save(p); return p; }
-  return { plan, setIncluded, apply, undo, discard, get, list, checkRoot };
+  /** A fresh sample folder Studio makes in its own data (data/fileorg-samples/S-<n>), so a first run never needs the captain's real files. */
+  function sampleFolder(): string {
+    mkdirSync(samples, { recursive: true }); const d = join(samples, allocate(samples, "S")); mkdirSync(d, { recursive: true });
+    for (const [name, text] of SAMPLE_FILES) writeFileSync(join(d, name), text);
+    return realpathSync(d);
+  }
+  return { plan, setIncluded, apply, undo, discard, get, list, checkRoot, sampleFolder };
 }

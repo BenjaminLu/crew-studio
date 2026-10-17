@@ -1,14 +1,15 @@
 # The file-organization pack as a run: a dry-run plan, the pack's gates, the
-# captain's card, then the moves with a write-ahead undo log.
+# captain's card, then the moves with a write-ahead undo log. With no folder, Studio
+# makes a sample folder in its own data (data/fileorg-samples), never the captain's files.
 id: file-organization
 name: File organization
 kind: files
 version: 1
-description: "Tidy a folder: dry-run plan → gates → captain's card → apply (undo log)."
+description: "Tidy a folder: dry-run plan → gates → captain's card → apply (undo log). Leave the folder blank to try it on a sample folder."
 intent:
   keywords: [tidy, organize, organise, sort, folder, files, downloads, desktop, clean, cleanup]
 params:
-  folder: { label: "Folder to tidy (absolute path)", labelZh: "要整理的資料夾（絕對路徑）", required: true, pattern: '^/' }
+  folder: { label: "Folder to tidy (absolute path; blank = a sample folder Studio makes)", labelZh: "要整理的資料夾（絕對路徑；留白 = Studio 建立的範例資料夾）", default: "", pattern: '^/' }
 roles: []
 nodes:
   - { id: intake, kind: hook, label: Capture intent, do: deliver.intake, x: 170, y: 100 }

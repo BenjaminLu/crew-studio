@@ -3,7 +3,7 @@
 # The captain names a throwaway folder: --params '{"folder": "<path>"}' in a JSON file.
 schema: 2
 workflow: file-organization
-pin: { version: 1, sha256: "2eff14faccf7066e236581263d6dc2f02294da0d96e60ede51b33c579cb2b1a5" }   # bun scripts/acceptance/pin.ts file-organization
+pin: { version: 1, sha256: "5af1a063a15180c04e35aaa0806d4902fba46432fe10a31b95733f262b4abc7e" }   # bun scripts/acceptance/pin.ts file-organization
 topic: "Sort the files in the acceptance folder by type."
 start: { provider: null, params: {}, required_params: [folder] }
 providers: []
@@ -18,6 +18,10 @@ stub:
     covers: "the board's Start form supplies the declared folder → plan → gates → captain applies the moves"
     setup: [folder]
     params: { folder: "{folder}" }
+    cards: [{ node: card, answer: apply }]
+    expect: { status: succeeded, result: done, visited: [intake, plan, gates, card, apply, done] }
+  - name: sample-folder
+    covers: "a first run with the folder left blank: Studio makes a sample folder in its own data → plan → gates → captain applies the moves there"
     cards: [{ node: card, answer: apply }]
     expect: { status: succeeded, result: done, visited: [intake, plan, gates, card, apply, done] }
   - name: firstmate-apply
