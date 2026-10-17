@@ -90,6 +90,9 @@ export function createTakeover(d: Deps) {
     let b: any = {};
     if (["/api/main/takeover", "/api/main/start", "/api/main/switch", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door"].includes(p)) { try { b = await req.json(); } catch {} }
     if(['/api/main/start','/api/main/switch'].includes(p)&&b?.locale!==undefined&&!['en','zh-TW','zh-CN'].includes(b.locale))return json({error:'Unsupported dashboard language',code:'locale'},400);
+    // The boot restart holds the account check and may be starting the primary: the captain's Start or switch waits for it,
+    // then sees the outcome (already running, or still stopped) instead of a misleading account refusal
+    if (["/api/main/start", "/api/main/switch"].includes(p) && booting) await booting.catch(() => {});
     if (p === "/api/main/takeover") {
       if(d.codexAccount?.blocking)return json({error:"Complete or cancel Codex account action first / 請先完成或取消 Codex 帳號操作"},409);
       const mode = b?.mode === "rehearsal" ? "rehearsal" : "takeover";
@@ -164,10 +167,16 @@ export function createTakeover(d: Deps) {
     }
     return null;
   }
+  // the boot restart while it runs (resumeOnBoot): Start and switch wait for it
+  let booting: Promise<unknown> | null = null;
   /** Boot after a restart (a live release): Studio's own primary was running, so start it again with the same host, model and
    *  permission mode. Only an account that is already signed in qualifies (the readiness reads never sign in); anything that
    *  differs or fails leaves Firstmate stopped with a notice saying why and that Start is the way on. */
-  async function resumeOnBoot(): Promise<{ resumed: boolean; reason?: string }> {
+  function resumeOnBoot(): Promise<{ resumed: boolean; reason?: string }> {
+    const run = resumeBootPrimary(); booting = run; void run.finally(() => { if (booting === run) booting = null; }).catch(() => {});
+    return run;
+  }
+  async function resumeBootPrimary(): Promise<{ resumed: boolean; reason?: string }> {
     const p = d.main.takeBootPrimary(); if (!p) return { resumed: false };
     const v = d.main.view();
     const stay = (en: string, zh: string) => { d.main.note({ kind: "status", text: `${en} / ${zh}`, i18n: { en, "zh-TW": zh } }); return { resumed: false, reason: en }; };
