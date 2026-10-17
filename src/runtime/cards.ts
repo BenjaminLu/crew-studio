@@ -60,8 +60,8 @@ export type CardDetail = {
   review: { verdicts: { by: string; verdict: string }[]; followups: L10n[]; mode?: string | null; notes?: string[] } | null;
   cost: { usd: number | null; rounds: number; minutes: number | null } | null;
   gates: { name: string; verdict: string; detail: string }[];
-  /** the designer round: not applicable (and why), or its verdicts, the last REJECT's findings, the captures it saw and designer-compare's warnings */
-  design?: { applicable: boolean; reason: string; verdicts: { by: string; verdict: string; head: string | null }[]; findings: { page: string | null; element: string | null; problem: string; change: string }[]; seen: number; compare: { verdict: string; warnings: string[] } | null } | null;
+  /** the designer round: not applicable (and why), what it looked at (captures), its gate, or its verdicts, the last REJECT's findings, the captures it saw and designer-compare's warnings */
+  design?: { applicable: boolean; reason: string; captures: "seen" | "none-env-gap" | "diff-only"; gate?: { verdict: string; detail: string } | null; verdicts: { by: string; verdict: string; head: string | null }[]; findings: { page: string | null; element: string | null; problem: string; change: string }[]; seen: number; compare: { verdict: string; warnings: string[] } | null } | null;
   /** the walk: key hunks of the diff, each serving intents or done lines (0-based indexes) */
   walk: { id: string; file: string; start: number; lines: string[]; note: L10n; serves: { intents: number[]; done: number[] } }[];
   run: string; head: string | null; base: string | null;

@@ -242,13 +242,16 @@ function mountCard(el, card, opts = {}) {
         d.review.mode ? h("span", { class: "cc-chip", "data-review-mode": d.review.mode }, d.review.mode === "run" ? T("Reviewed in run mode", "以 run 模式審查") : T("Reviewed in diff mode", "以 diff 模式審查")) : null),
       (d.review.notes || []).length ? h("div", { class: "cc-eye", "data-review-eye": "" }, h("b", {}, T("Needs your eye: the review did not cover", "需要你看：審查沒涵蓋")), h("ul", {}, d.review.notes.map((n) => h("li", {}, n)))) : null,
       d.review.followups.length ? h("ol", {}, d.review.followups.map((f) => h("li", { "data-followup": "" }, LL(f)))) : h("p", { class: "cc-count" }, T("No follow-ups.", "沒有後續事項。"))));
-    // the designer round (src/domain/code-design.ts): not applicable and why, or its verdicts and the last REJECT's findings
+    // the designer round (src/domain/code-design.ts): not applicable and why, or its verdicts, what it saw, its gate and the last REJECT's findings
     if (d.design) { const g = d.design, last = g.verdicts[g.verdicts.length - 1];
       out.push(sec("design", T("Designer verdict", "設計審查結論"),
         !g.applicable ? h("p", { class: "cc-count", "data-design": "not-applicable" }, T("Not applicable: ", "不適用："), g.reason.replace(/^not applicable: /, ""))
           : h("p", { "data-design": last ? last.verdict : "none" }, g.verdicts.map((v) => h("span", { class: `cc-chip ${/approve/i.test(v.verdict) ? "ok" : "bad"}` }, `${v.verdict} · ${v.by}`)),
             !last ? h("span", { class: "cc-chip bad" }, T("no verdict", "沒有結論")) : null,
-            h("span", { class: `cc-chip ${g.seen ? "" : "warn"}`, "data-design-seen": g.seen }, g.seen ? T(`saw ${g.seen} captures`, `看過 ${g.seen} 張截圖`) : T("no pictures: judged from the diff", "沒有截圖：只看 diff"))),
+            // what it looked at: the pictures, no captures of a declared app (an env gap), or a diff-only review (no app declared)
+            h("span", { class: `cc-chip ${g.captures === "seen" ? "" : g.captures === "none-env-gap" ? "bad" : "warn"}`, "data-design-captures": g.captures || "seen", "data-design-seen": g.seen },
+              g.captures === "none-env-gap" ? T("no captures", "沒有截圖") : g.captures === "diff-only" ? T("diff-only, no pictures", "只看 diff，沒有截圖") : T(`saw ${g.seen} captures`, `看過 ${g.seen} 張截圖`))),
+        g.gate ? h("p", { "data-design-gate": g.gate.verdict }, h("span", { class: `cc-chip ${g.gate.verdict === "pass" ? "ok" : "bad"}` }, g.gate.verdict), h("b", { class: "cc-mono" }, T(" design gate ", " 設計閘門 ")), g.gate.detail) : null,
         g.findings.length ? h("ol", {}, g.findings.map((f) => h("li", { "data-design-finding": "" }, h("b", { class: "cc-mono" }, `${f.page || ""}${f.element ? ` ${f.element}` : ""}`), " ", f.problem, h("div", { class: "cc-count" }, T("Change: ", "修改："), f.change)))) : null,
         g.compare && g.compare.warnings.length ? h("div", { class: "cc-eye", "data-design-compare": g.compare.verdict }, h("b", {}, T("Designer-compare warnings", "設計比對警告")), h("ul", {}, g.compare.warnings.map((w) => h("li", {}, w)))) : null)); }
     if (d.gates.length) out.push(sec("gates", T("Gates", "Gates"), h("ul", {}, d.gates.map((g) => h("li", {}, h("span", { class: `cc-chip ${g.verdict === "pass" ? "ok" : "bad"}` }, g.verdict), h("b", { class: "cc-mono" }, g.name), " ", g.detail)))));

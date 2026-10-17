@@ -2,7 +2,7 @@
 # point before work that opens a pull request, so the run stops there. The driver never answers dispatch cards.
 schema: 2
 workflow: code-firstmate
-pin: { version: 1, sha256: "7120cf5cc6835c79d34e49e35db227f391b4b9e010c58cc213c66727116d8913" }   # bun scripts/acceptance/pin.ts code-firstmate
+pin: { version: 1, sha256: "5840a357b22869a3a6e56ebecc0650c579d997f6345f2e0f27191fcff2737666" }   # bun scripts/acceptance/pin.ts code-firstmate
 topic: "Add one sentence to the README that says how to run the offline tests."
 start: { provider: null, params: {}, required_params: [project] }
 providers: []

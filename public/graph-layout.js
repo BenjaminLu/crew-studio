@@ -18,7 +18,7 @@
       { id: "intake", label: "Intake", label_tw: "接收", nodes: ["intake", "prepare", "spec", "spec-fix", "dispatch"] },
       { id: "door", label: "Door", label_tw: "門", nodes: ["door", "door-pick"] },
       { id: "plan", label: "Plan (one-way)", label_tw: "計畫（單向）", nodes: ["plan", "plan-fix", "plan-accept"] },
-      { id: "build", label: "Build loop", label_tw: "建置迴圈", nodes: ["build", "pr-open", "ci", "review", "remote-ready", "fix"] },
+      { id: "build", label: "Build loop", label_tw: "建置迴圈", nodes: ["build", "pr-open", "ci", "review", "design-scope", "designer", "design-gap", "design-gap-card", "remote-ready", "fix"] },
       { id: "gates", label: "Gates", label_tw: "關卡", nodes: ["merge-card"] },
       { id: "merge", label: "Merge", label_tw: "合併", nodes: ["merge"] },
       { id: "after", label: "After merge", label_tw: "合併後", nodes: ["after-merge", "cleanup", "done"] },

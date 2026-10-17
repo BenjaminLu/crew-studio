@@ -75,14 +75,14 @@ try {
   { const p = await page(1440, "light");
     await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('svg.rt-graph[data-view="simple"] [data-node="spec"]'); await p.waitForTimeout(300);
     const ids = await p.$$eval("svg.rt-graph [data-node]", (gs) => gs.map((g) => g.dataset.node));
-    ok(ids.length === 17 && ids.includes("pr-open") && !ids.some((x) => ["spec-fix", "fix", "plan-fix", "door-pick", "step-back", "stalled", "budget", "scope-card", "parked", "closed", "dropped"].includes(x)), "the simple view is the default and shows the main path with publication (17 nodes)", ids.join(","));
+    ok(ids.length === 19 && ids.includes("pr-open") && !ids.some((x) => ["spec-fix", "fix", "plan-fix", "door-pick", "step-back", "stalled", "budget", "scope-card", "parked", "closed", "dropped"].includes(x)), "the simple view is the default and shows the main path with publication and the designer round (19 nodes)", ids.join(","));
     ok(await p.locator("svg.rt-graph .rt-edge[data-back]").count() === 0 && await p.locator('svg.rt-graph .rt-edge[data-edge*="step-back"], svg.rt-graph .rt-edge[data-edge*="scope-card"], svg.rt-graph .rt-edge[data-edge*="→spec["]').count() === 0, "no back edges and no escalation edges in simple view");
     const bt = async (k) => (await p.textContent(`[data-badge="${k}"]`).catch(() => "")) || "";
-    ok(await bt("loop:spec") === "↻ refine ≤3" && await bt("loop:build") === "↻ fix ≤3" && await bt("ask:door") === "? asks you if unsure" && await bt("s:build:escalations") === "⚑ 6 escalations" && await bt("s:intake:escalations") === "⚑ 3 escalations",
+    ok(await bt("loop:spec") === "↻ refine ≤3" && await bt("loop:build") === "↻ fix ≤3" && await bt("ask:door") === "? asks you if unsure" && await bt("s:build:escalations") === "⚑ 8 escalations" && await bt("s:intake:escalations") === "⚑ 3 escalations",
       "the badges show the loops (with their cap), the door question and the escalation counts", [await bt("loop:spec"), await bt("loop:build"), await bt("ask:door"), await bt("s:build:escalations")].join(" | "));
     await p.locator('[data-badge="s:build:escalations"]').dispatchEvent("click"); await p.waitForTimeout(150);
     const esc = await p.$$eval('[data-badge-list="s:build:escalations"] .rt-badge-item', (xs) => xs.map((x) => x.textContent));
-    ok(esc.length === 6 && esc.includes("Step-back card"), "an escalation badge lists its escalations", esc.join(","));
+    ok(esc.length === 8 && esc.includes("Step-back card"), "an escalation badge lists its escalations", esc.join(","));
     await p.locator('[data-badge="s:build:escalations"]').dispatchEvent("click");
     const minFont = await p.evaluate(() => { const svg = document.querySelector("svg.rt-graph"); const k = svg.getScreenCTM().a; return Math.min(...[...svg.querySelectorAll("[data-node] .rt-label")].map((t) => parseFloat(getComputedStyle(t).fontSize) * k)); });
     ok(minFont >= 11, "node titles render at 11 px or more in the simple view at Fit (1440)", `${minFont.toFixed(1)} px`);
@@ -90,9 +90,9 @@ try {
     await p.screenshot({ path: join(shots, "editor-simple-1440-light.png") });
     await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="spec-fix"]');
     const detailIds = await p.$$eval("svg.rt-graph [data-node]", (gs) => gs.length);
-    ok(detailIds === 28 && await p.locator("svg.rt-graph .rt-edge[data-back]").count() >= 10 && await p.locator("[data-port]").count() === 28 && await p.locator('svg.rt-graph [data-node="pr-open"]').count() === 1, "toggling to Detail view restores every node, back edge and port", String(detailIds));
+    ok(detailIds === 32 && await p.locator("svg.rt-graph .rt-edge[data-back]").count() >= 10 && await p.locator("[data-port]").count() === 32 && await p.locator('svg.rt-graph [data-node="pr-open"]').count() === 1, "toggling to Detail view restores every node, back edge and port", String(detailIds));
     await p.click('[data-view-toggle="simple"]'); await p.waitForSelector('svg.rt-graph[data-view="simple"]');
-    ok(await p.locator("svg.rt-graph [data-node]").count() === 17 && await p.locator("[data-port]").count() === 0 && await p.isVisible("[data-palette-note]"), "back in the simple view: the main path again, editing points to Detail view");
+    ok(await p.locator("svg.rt-graph [data-node]").count() === 19 && await p.locator("[data-port]").count() === 0 && await p.isVisible("[data-palette-note]"), "back in the simple view: the main path again, editing points to Detail view");
     await p.context().close();
   }
   // ---------- a version dragged before graph-tidy opens in manual mode, and a drag keeps its other positions ----------

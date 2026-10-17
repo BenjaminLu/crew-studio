@@ -11,7 +11,7 @@
 // TODO(failure-taxonomy): map these env.* codes onto src/runtime/failures.ts once the failure-taxonomy branch is on main.
 import { matches } from "./doors";
 
-export type EnvGapCode = "env.test-command" | "env.test-path" | "env.tool-missing" | "env.permission";
+export type EnvGapCode = "env.test-command" | "env.test-path" | "env.tool-missing" | "env.permission" | "env.design-captures";
 export type EnvGap = { code: EnvGapCode; route: "firstmate" | "captain"; message: string; expected: string; tool?: string; path?: string; done?: number; hosts?: string[] };
 export type InstallPlan = { manager: "bun" | "npm" | "pnpm" | "yarn"; lockfile: string; argv: string[] };
 

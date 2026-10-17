@@ -116,23 +116,25 @@ const toMerge = async (text: string) => {
   // cancelled unmerged work in the previous scenario retains its scope.
   if(E.list().length){H.stop();data=checkedTempDir("crew-vis-run-");scenarioData.push(data);prepareSandbox(data);applySandboxAddons(data);registerSandbox(data);H=await harness([readFileSync(join(root,"packs/firstmate/workflows/code-firstmate.wf.yaml"),"utf8")],{data,checkRoots:[]});E=H.engine;installVisual();}
   const r = E.start({ workflow: "code-firstmate", params: {}, text }); const d = await waitCard(r.id, "dispatch"); if (d) await E.answer(d.id, { choice: "dispatch", by: "captain" });
-  const m = await waitCard(r.id, "merge"); const g = E.get(r.id)!;
-  if (!m) console.log("no merge card:", JSON.stringify(Object.fromEntries(Object.entries(g.nodes).filter(([, n]: any) => n.state !== "pending").map(([k, n]: any) => [k, `${n.state}:${n.outcome}:${n.error ?? ""}`]))), JSON.stringify(E.ledger(r.id).filter((e) => e.verdict !== "pass").map((e) => [e.check, e.findings.slice(0, 2).map((f: any) => f.message)])).slice(0, 800));
-  return { r, m, cap: E.ledger(r.id).filter((e) => e.check === "firstmate/ui-captures").at(-1) as any }; };
+  // a UI change whose app pages are not all captured stops at Firstmate's capture gap (the designer round), never at the merge card
+  await until(() => E.cards.list({ run: r.id, open: true }).some((c) => c.kind === "merge" || c.node === "design-gap-card") || ["succeeded", "failed"].includes(E.get(r.id)!.status), 180000);
+  const m = E.cards.list({ run: r.id, open: true }).find((c) => c.kind === "merge"); const gap = E.cards.list({ run: r.id, open: true }).find((c) => c.node === "design-gap-card"); const g = E.get(r.id)!;
+  if (!m && !gap) console.log("no merge card:", JSON.stringify(Object.fromEntries(Object.entries(g.nodes).filter(([, n]: any) => n.state !== "pending").map(([k, n]: any) => [k, `${n.state}:${n.outcome}:${n.error ?? ""}`]))), JSON.stringify(E.ledger(r.id).filter((e) => e.verdict !== "pass").map((e) => [e.check, e.findings.slice(0, 2).map((f: any) => f.message)])).slice(0, 800));
+  return { r, m, gap, cap: E.ledger(r.id).filter((e) => e.check === "firstmate/ui-captures").at(-1) as any }; };
 const filesUnder = (d: string): string[] => { const fs = require("node:fs") as typeof import("node:fs"); if (!fs.existsSync(d)) return []; return fs.readdirSync(d, { recursive: true }).map(String).map((f) => join(d, f)); };
 // (the app and the README call format(): caller coverage puts them in the scope, as R-002's spec did)
 const A = await toMerge(["Let format() handle currencies without cents, like JPY", "STUB_SCOPE app/", "STUB_SCOPE README.md", "STUB_SCOPE test/",
   `STUB_FILE src/money.ts :: ${esc(YEN_MONEY)}`,
   `STUB_FILE test/yen.test.ts :: ${esc('import { expect, test } from "bun:test";\nimport { format } from "../src/money";\n\ntest("yen have no cents", () => expect(format(1235, "JPY")).toBe("¥1,235"));\n')}`].join("\n"));
-ok(!!A.m && A.cap?.verdict === "warn" && A.cap.findings.some((f: any) => f.class === "renderer-missing") && A.cap.data?.captures?.length === 2 && A.cap.data.captures.every((c: any) => c.before === null && c.after === null),
+ok(!!A.gap && A.cap?.verdict === "warn" && A.cap.findings.some((f: any) => f.class === "renderer-missing") && A.cap.data?.captures?.length === 2 && A.cap.data.captures.every((c: any) => c.before === null && c.after === null),
   "with no headless browser the capture check warns (renderer-missing), and before / after are empty", JSON.stringify([A.cap?.verdict, A.cap?.findings, A.cap?.data?.captures]).slice(0, 500));
 const yen = A.cap?.data?.captures?.find((c: any) => c.label === "Shop in yen");
 ok(!!yen && yen.changed.removed.includes("$55.88") && yen.changed.added.includes("¥5,588"), "the visible text that changed is recorded all the same: the yen total went from $55.88 to ¥5,588", JSON.stringify(yen?.changed));
-ok(JSON.stringify(A.m?.captures?.map((c) => [c.label, c.before, c.after])) === '[["Shop in dollars",null,null],["Shop in yen",null,null]]' && /Shop in yen: \$12\.75.* → ¥1,275/.test(A.m!.body) && /Before \/ after \(the app, base → head\):/.test(A.m!.body)
-  && A.m!.links.some((l) => l.label === "Open the app" && /\/after\/index\.html$/.test(l.href)),
-  "the merge card carries the captures (label, no pictures), the changed text in its body and Open the app to the head's build", JSON.stringify([A.m?.captures, A.m?.links, A.m?.body.slice(-300)]).slice(0, 700));
-ok(E.get(A.r.id)!.ctx.captures?.app === A.m?.links.find((l) => l.label === "Open the app")?.href, "the run records the head's build link (the run page's Open the app)", JSON.stringify(E.get(A.r.id)!.ctx.captures?.app));
-if (A.m) { await E.answer(A.m.id, { choice: "merge", by: "captain", aligned: (A.m.detail?.intents ?? []).map((_, i) => i) /* unit intent-merge-card: the captain ticks every intent line */ }); await until(() => ["succeeded", "failed"].includes(E.get(A.r.id)!.status), 120000); }
+// the app is declared but its pages have no pictures: the designer round does not judge it from the diff; Firstmate gets the env gap first
+ok(!A.m && !!A.gap && /env\.design-captures/.test(A.gap.body) && /not shot: no headless browser/.test(A.gap.body) && !(E.get(A.r.id)!.ctx.designs ?? []).length,
+  "with no pictures of a declared app there is no diff-only design verdict and no merge card: the capture gap goes to Firstmate, then the captain", JSON.stringify([A.gap?.body, A.m?.id]).slice(0, 700));
+ok(/^\/api\/wruns\/R-\d+\/captures\/[0-9a-f]{12}\/after\/index\.html$/.test(E.get(A.r.id)!.ctx.captures?.app ?? ""), "the run records the head's build link (the run page's Open the app)", JSON.stringify(E.get(A.r.id)!.ctx.captures?.app));
+if (A.gap) E.cancel(A.r.id, "captain");
 
 // B: a change that does not touch the app: nothing captured, nothing on the card
 const B = await toMerge(["Say in the README that yen are supported",
@@ -179,8 +181,10 @@ ok(!!C.cap && C.cap.data?.refusedFiles?.some((f: string) => f === "after: jpy.ht
 { const h12 = String(C.cap?.data?.head ?? "").slice(0, 12);
   ok(["before/index.html.png", "before/jpy.html.png", "after/index.html.png"].every((f) => existsSync(join(cdir, h12, f))) && !existsSync(join(cdir, h12, "after", "jpy.html.png")),
     "the base and the head were each built (in the check sandbox) and shot; the refused page was not", JSON.stringify(filesUnder(join(cdir, h12)).map((f) => f.slice(cdir.length))));
-  ok(!!C.m && (C.m.captures ?? []).every((c) => c.before === null || new RegExp(`^/api/wruns/${C.r.id}/captures/${h12}/before/.+\\.png$`).test(c.before)) && (C.m.captures ?? []).some((c) => !!c.before) && C.m.captures!.find((c) => c.label === "Shop in dollars")?.after === `/api/wruns/${C.r.id}/captures/${h12}/after/index.html.png`,
-    "the merge card links each capture by its own URL (/api/wruns/<run>/captures/<head>/before|after/<page>.png)", JSON.stringify(C.m?.captures));
+  // the refused page has no picture, so the run stops at the capture gap (no merge card); the run's captures carry the URLs the card shows
+  const caps: any[] = C.cap?.data?.captures ?? [];
+  ok(!C.m && !!C.gap && caps.every((c) => c.before === null || new RegExp(`^/api/wruns/${C.r.id}/captures/${h12}/before/.+\\.png$`).test(c.before)) && caps.some((c) => !!c.before) && caps.find((c) => c.label === "Shop in dollars")?.after === `/api/wruns/${C.r.id}/captures/${h12}/after/index.html.png`,
+    "each capture is linked by its own URL (/api/wruns/<run>/captures/<head>/before|after/<page>.png); the refused page is a capture gap, not a merge", JSON.stringify(caps));
   ok(filesUnder(join(cdir, h12)).some((f) => f.endsWith("after/started.txt")) && !Bun.spawnSync(["/usr/bin/pgrep", "-f", `sleep ${LINGER}`]).stdout.toString().trim(),
     "a process the build left behind ran (it wrote started.txt) and is gone before Studio reads the output (the build's process group is killed)"); }
 {
@@ -189,7 +193,7 @@ ok(!!C.cap && C.cap.data?.refusedFiles?.some((f: string) => f === "after: jpy.ht
   ok(existsSync(png) && reqs.some((u) => u.includes("file:///etc/passwd")) && reqs.some((u) => u.includes("example.invalid")) && frames.length >= 1 && frames.every((u) => /: (http:\/\/127\.0\.0\.1:\d+\/|about:blank|chrome-error:|$)/.test(u)) && !frames.some((u) => u.includes(SECRET)),
     "the renderer serves the page from its copy over a local origin and refuses every other request (file:///etc/passwd, another host); no frame shows the secret file", JSON.stringify([reqs, frames]));
 }
-if (C.m) E.cancel(C.r.id, "captain");
+if (C.m || C.gap) E.cancel(C.r.id, "captain");
 H.stop();
 if (process.env.VIS_REAL) console.log(`kept ${data}`); else for (const x of [d1, ...scenarioData, secretDir]) try { Bun.spawnSync(["chmod", "-R", "u+w", x]); rmSync(x, { recursive: true, force: true }); } catch {}
 end();

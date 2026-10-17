@@ -8,7 +8,7 @@ id: code-firstmate
 name: code-firstmate
 kind: code
 version: 1
-description: "firstmate's coding pipeline: spec (refined until its checks pass) → dispatch → door → plan (one-way) → build ⇄ fix → CI, fail-first → fresh reviewer → designer (UI changes: the before / after captures) → the six gates on the edge into the merge card → local merge → after-merge hooks."
+description: "firstmate's coding pipeline: spec (refined until its checks pass) → dispatch → door → plan (one-way) → build ⇄ fix → CI, fail-first → fresh reviewer → designer (UI changes: the before / after captures) → the six gates and the design gate on the edge into the merge card → local merge → after-merge hooks."
 intent:
   keywords: [fix, bug, add, feature, refactor, code, function, test, tests, implement, change, migration, schema, endpoint, api, repo, repository, rename]
 params:
@@ -133,7 +133,15 @@ nodes:
       - { use: firstmate/designer-compare }
     x: 2070
     y: 40
-  - { id: fix, kind: loop, label: Fix (refine loop), detail: "brief · step-back · budget", args: { producer: build, coordinator: coordinator, route_classes: { door-change: door-change, review-unverified: step-back, design-unverified: step-back }, answer_routes: { "step-back:other-model": pass }, report_checks: [firstmate/report-schema] }, x: 1700, y: 460 }
+  # the app is declared but its captures are missing: a typed env gap, Firstmate first; only its escalation reaches the captain
+  - { id: design-gap, kind: agent, label: Capture gap, detail: "Firstmate routes the env gap", role: coordinator, mode: design-gap, retries: 1, timeout_s: 600, x: 2240, y: 40 }
+  - id: design-gap-card
+    kind: card
+    label: Capture gap card
+    args: { body_from: design-gap, card_kind: question }
+    x: 2410
+    y: 40
+  - { id: fix, kind: loop, label: Fix (refine loop), detail: "brief · step-back · budget", args: { producer: build, coordinator: coordinator, route_classes: { door-change: door-change, review-unverified: step-back, design-unverified: step-back, env.design-captures: design-gap }, answer_routes: { "step-back:other-model": pass }, report_checks: [firstmate/report-schema] }, x: 1700, y: 460 }
   - { id: remote-ready, kind: hook, do: remote.ready, label: Remote readiness, x: 1970, y: 220 }
   - id: merge-card
     kind: card
@@ -219,6 +227,13 @@ edges:
   - [review, design-scope, ok]
   - [design-scope, remote-ready, none]
   - [design-scope, designer, ui]
+  - [design-scope, design-gap, gap]
+  - [design-gap, design-scope, recapture]
+  - [design-gap, design-gap-card, escalate]
+  - [design-gap-card, design-scope, recapture]
+  - [design-gap-card, spec, rescope]
+  - [design-gap-card, parked, park]
+  - [fix, design-gap, design-gap]
   - [designer, remote-ready, ok]
   - [designer, fix, fail]
   - [remote-ready, build, rebase]
@@ -235,6 +250,7 @@ edges:
         - { use: firstmate/gate-failfirst }
         - { use: firstmate/gate-ci }
         - { use: firstmate/gate-approval }
+        - { use: firstmate/gate-design }
   - [review, fix, fail]
   - [step-back, fix, other-model]
   - [fix, build, retry|report]

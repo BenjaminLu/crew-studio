@@ -28,7 +28,8 @@ const expectedIds=["code-firstmate","coffee-kit","crew-onboarding-collab","docum
 ok(JSON.stringify(defs.map(d=>d.id).sort())===JSON.stringify(expectedIds) && defs.every((d) => d.nodes.length && d.edges.length), "exact nine built-in workflows plus the two retained four-agent fixtures to lay out, including native coffee-kit", defs.map((d) => d.id).join(","));
 
 // crossings measured on the new layout (and, for comparison, on the hand-placed one)
-const THRESHOLD: Record<string, number> = { "code-firstmate": 17, "refine-demo": 0, "pack-genesis": 3, "coffee-kit": 4, "crew-onboarding-collab": 0, "four-agent-proposals": 0, documents: 0, "file-organization": 0, "trivial-lane": 0, video: 0, "web-prototype": 0 };
+// code-firstmate: 45 since the designer round (design-scope, designer, the capture gap and its card in the Build loop), at half the hand layout's 90
+const THRESHOLD: Record<string, number> = { "code-firstmate": 45, "refine-demo": 0, "pack-genesis": 3, "coffee-kit": 4, "crew-onboarding-collab": 0, "four-agent-proposals": 0, documents: 0, "file-organization": 0, "trivial-lane": 0, video: 0, "web-prototype": 0 };
 
 const inside = (p: [number, number], r: any, m = 2) => p[0] > r.x + m && p[0] < r.x + r.w - m && p[1] > r.y + m && p[1] < r.y + r.h - m;
 const overlap = (a: any, b: any, m = 0) => a.x < b.x + b.w + m && b.x < a.x + a.w + m && a.y < b.y + b.h + m && b.y < a.y + a.h + m;
@@ -66,7 +67,7 @@ for (const def of defs) {
     ok(!lo.length, `no edge labels overlap: ${id}`, lo.slice(0, 5).join("; "));
     if (def.id === "code-firstmate" && tag === "expanded") {
       const st = g.stages;
-      ok(JSON.stringify(st.find((s: any) => s.id === "build")?.nodes) === JSON.stringify(["build", "pr-open", "ci", "review", "remote-ready", "fix"]), "review publication belongs to the named Build loop stage before CI and review");
+      ok(JSON.stringify(st.find((s: any) => s.id === "build")?.nodes) === JSON.stringify(["build", "pr-open", "ci", "review", "design-scope", "designer", "design-gap", "design-gap-card", "remote-ready", "fix"]), "review publication belongs to the named Build loop stage before CI and review");
       const wrong: string[] = [];
       for (const s of st) for (const r of rects) { const member = (s.nodes || []).includes(r.id); const inBox = overlap(s, r); if (member && !(r.x >= s.x && r.y >= s.y && r.x + r.w <= s.x + s.w && r.y + r.h <= s.y + s.h)) wrong.push(`${r.id} outside ${s.id}`); if (!member && inBox) wrong.push(`${r.id} inside ${s.id}`); }
       ok(st.length === 7 && !wrong.length, "every code-firstmate node of a named stage is inside its box, and no other node is", `${st.map((s: any) => s.id).join(",")} ${wrong.join("; ")}`);
@@ -94,13 +95,13 @@ await section("the simple view lays every built-in workflow out", () => { for (c
 } });
 await section("the simple view of code-firstmate", () => {
   const cf = defs[0]; const g = L.layoutSimple(cf, { wrap: 6 }); const ids = g.nodes.map((n: any) => n.id);
-  const main = ["intake", "prepare", "spec", "dispatch", "door", "plan", "plan-accept", "build", "pr-open", "ci", "review", "remote-ready", "merge-card", "merge", "after-merge", "cleanup", "done"];
-  ok(ids.length === 17 && main.every((x) => ids.includes(x)), "the simple view of code-firstmate holds only the main path through the stages (17 nodes)", ids.join(","));
+  const main = ["intake", "prepare", "spec", "dispatch", "door", "plan", "plan-accept", "build", "pr-open", "ci", "review", "design-scope", "designer", "remote-ready", "merge-card", "merge", "after-merge", "cleanup", "done"];
+  ok(ids.length === 19 && main.every((x) => ids.includes(x)), "the simple view of code-firstmate holds only the main path through the stages (19 nodes: the designer round is on it)", ids.join(","));
   ok(["spec-fix", "plan-fix", "fix", "door-pick", "step-back", "stalled", "budget", "scope-card", "parked", "closed", "dropped"].every((x) => g.hidden.includes(x)), "loop, door-question and escalation nodes are hidden in simple view", g.hidden.join(","));
   const b = g.badges, txt = (k: string, kind: string) => (b[k] || []).find((x: any) => x.kind === kind);
   ok(txt("node:spec", "loop")?.text === "↻ refine" && txt("node:spec", "loop")?.cap === 3 && txt("node:build", "loop")?.text === "↻ fix" && txt("node:plan", "loop")?.text === "↻ refine", "loops become ↻ badges with their round cap");
   ok(txt("node:door", "ask")?.text === "asks you if unsure", "Pick the door folds into the Door node's badge");
-  ok(txt("stage:build", "escalations")?.nodes.length === 6 && txt("stage:intake", "escalations")?.nodes.length === 3 && txt("stage:plan", "escalations")?.nodes.length === 2 && txt("stage:gates", "escalations")?.nodes.length === 1,
+  ok(txt("stage:build", "escalations")?.nodes.length === 8 && txt("stage:intake", "escalations")?.nodes.length === 3 && txt("stage:plan", "escalations")?.nodes.length === 2 && txt("stage:gates", "escalations")?.nodes.length === 1,
     "escalations become one badge per stage they leave from", JSON.stringify(Object.fromEntries(Object.entries(b).map(([k, v]: any) => [k, v.map((x: any) => x.text)]))));
   const door = g.edges.filter((e: any) => e.from === "door").map((e: any) => `${e.to}:${e.when}`).sort();
   ok(JSON.stringify(door) === '["build:two-way","plan:one-way"]' && g.edges.some((e: any) => e.from === "plan-accept" && e.to === "build"), "the door forks in two (one-way → Plan, two-way → Build) and rejoins at Build", JSON.stringify(door));

@@ -434,7 +434,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const wt = shellOk(x); const h = head(wt); const cfg = appCfg(wt);
     if (!cfg) return { skipped: "the repository declares no app (.crew/app.json)", pages: [], head: h, app: null, rendered: false };
     const touched = changedOf(wt, x.ctx.baseCommit).filter((p) => cfg.paths.some((g) => matches(g, p.path) || (!!p.from && matches(g, p.from))));
-    if (!touched.length) return { skipped: "no app path changed", pages: [], head: h, app: null, rendered: false };
+    // a change to the policy's UI paths outside the app's own paths is captured too: the designer reviews its pictures
+    if (!touched.length && !uiPathsOf(x, wt).length) return { skipped: "no app path changed", pages: [], head: h, app: null, rendered: false };
     const h8 = h.slice(0, 12); const dir = join(capturesOf(x.run.id), h8); rmSync(dir, { recursive: true, force: true });
     const baseTree = tmpTree(x.run.id, "capture-base"); git(x.ctx.repo, ["worktree", "remove", "--force", baseTree]); rmSync(baseTree, { recursive: true, force: true });
     addTree(x.ctx.repo, ["-q", "--detach", baseTree, x.ctx.baseCommit]);
@@ -478,7 +479,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   /** the changed paths that are UI as the repository classifies them: the policy's ui_paths, plus the paths its app declares */
   const uiPathsOf = (x: X, wt: string): string[] => { const globs = [...((x.policy("ui_paths") ?? []) as string[]), ...(appCfg(wt)?.paths ?? [])];
     return changedOf(wt, x.ctx.baseCommit).filter((p) => globs.some((g) => matches(g, p.path) || (!!p.from && matches(g, p.from)))).map((p) => p.path); };
-  installCodeDesign(engine, { dataDir: o.dataDir, shellOk, head, uiPathsOf, specMd });
+  installCodeDesign(engine, { dataDir: o.dataDir, shellOk, head, uiPathsOf, specMd, appDeclared: (wt) => !!appCfg(wt), capture: (x) => engine.natives["ui-captures"]({} as any, { x } as any),
+    recordEnvGaps: (x, gaps) => recordEnvGaps(x, gaps, "round") });
 
   // ---------- actions ----------
   engine.actions["intent.capture"] = (x) => {
@@ -912,7 +914,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   };
   // the step-back card's "another model" (provider/model in its note): the next review runs on it, set as the round begins
   // (the run's own agent pick for the node, between visits), once per answer
-  const reviewSwap = (x: X) => { const a = x.ctx.answers?.["step-back"]; if (a?.choice !== "other-model" || x.ctx.reviewSwapAt === a.at) return;
+  const reviewSwap = (x: X) => { const a = x.ctx.answers?.["step-back"]; if (a?.choice !== "other-model" || x.ctx.stepBackFor === "design" || x.ctx.reviewSwapAt === a.at) return;
     const [provider, ...rest] = String(a.note ?? "").trim().split("/").map((t: string) => t.trim()); x.ctx.reviewSwapAt = a.at;
     if (provider) { x.rn.agent = { provider, model: rest.join("/") || null }; x.log(`the step-back card's pick: this review runs on ${provider}${rest.length ? ` · ${rest.join("/")}` : ""}`); } };
   /** a fresh checkout of the head for the reviewer's reads (detached; removed when the review ends) */
@@ -1095,6 +1097,15 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     options: [{ id: "extend", label: "Continue: 2 more rounds", primary: true }, { id: "rescope", label: "Narrow the scope", note: true }, { id: "park", label: "Park the run" }] });
   engine.cardBodies["step-back"] = (x) => {
     // a review still without a verified verdict after its retry stops on the captain here too (architecture §3.3), never a failed run
+    // which round "another model" reruns (the designer's own swap reads this; the review's ignores a design step-back)
+    x.ctx.stepBackFor = x.ctx.reviewUnverified ? "review" : x.ctx.designUnverified ? "design" : "class";
+    // a designer still without a verdict after its retry (design-unverified): another model reruns the designer, never the review
+    if (!x.ctx.reviewUnverified && x.ctx.designUnverified) { const why = String(x.ctx.designUnverified);
+      return { title: `The designer gave no verdict: ${T(x)}`, zhTitle: `設計審查沒有給出結論：${ZT(x)}`,
+        ...base(x, `The designer review failed twice without a verdict: ${why.slice(0, 300)}`, "Retry the design review with another model, rescope the spec, or park the run.",
+          `設計審查連續兩次沒有給出結論：${why.slice(0, 300)}`, "換一個模型重新做設計審查、調整規格範圍，或暫停這個 run。"),
+        body: `The designer gave no verdict after its retry.\n\n${why}`,
+        options: [{ id: "other-model", label: "Retry the design review with another model (name it: provider/model)", labelZh: "換一個模型重新做設計審查（寫出 provider/model）", note: true, primary: true }, { id: "rescope", label: "Rescope the spec", labelZh: "調整規格範圍", note: true }, { id: "park", label: "Park the run", labelZh: "暫停這個 run" }] }; }
     if (x.ctx.reviewUnverified) { const refused = x.ctx.reviewUnverified; const err = refused;
       return { title: `${refused ? "The reviewer would not verify its claims" : "The reviewer gave no verdict"}: ${T(x)}`, zhTitle: `${refused ? "reviewer 不肯先驗證就下判定" : "reviewer 沒有給出判定"}：${ZT(x)}`,
         ...base(x, refused ? "Twice the reviewer gave a verdict without running the tests and reading every changed file, and the verdict was refused both times." : `The review failed twice: ${err.slice(0, 300)}`,
@@ -1106,6 +1117,13 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     return { title: `Step back: the same failure twice — ${T(x)}`, zhTitle: `退一步：同一類失敗連續兩次 — ${ZT(x)}`, ...base(x, `The class ${(last?.repeated ?? []).join(", ")} failed in two rounds in a row.`, "Question the design: rescope, or allow one more round.", `類別 ${(last?.repeated ?? []).join(", ")} 連續兩輪失敗。`, "重新思考設計：調整範圍，或再給一輪。"),
       body: `The class ${(last?.repeated ?? []).join(", ")} failed in two rounds in a row. A third try the same way is unlikely to work: question the design.\n\n${x.ctx.briefs?.build?.text ?? ""}`,
       options: [{ id: "rescope", label: "Rethink: rescope the spec", note: true, primary: true }, { id: "continue", label: "One more round as is" }, { id: "park", label: "Park the run" }] }; };
+  // the designer's capture gap, after Firstmate escalated it (design-gap → design-gap-card)
+  engine.cardBodies["design-gap"] = (x) => { const g = x.ctx.designGap ?? {}; const fm = g.firstmate ?? {};
+    return { title: `Design review has no captures: ${T(x)}`, zhTitle: `設計審查沒有截圖：${ZT(x)}`, captainOnly: true,
+      ...base(x, `${g.message ?? "The designer has no captures of this change."} Firstmate escalated it (${fm.why ?? "no reason"}): ${fm.reason ?? ""}`, "Capture again once it is fixed, rescope the spec, or park the run.",
+        `這個改動碰到 UI，repository 也宣告了 app，但設計審查沒有截圖，無法開始。Firstmate 轉給你（${fm.why ?? "沒有理由"}）：${fm.reason ?? ""}`, "修好後重新截圖、調整規格範圍，或暫停這個 run。"),
+      body: `${g.code}: ${g.message}\nExpected: ${g.expected}\nMissing:\n${(g.missing ?? []).map((m: string) => `- ${m}`).join("\n")}\nFirstmate (${fm.why}): ${fm.reason}`,
+      options: [{ id: "recapture", label: "Fixed: capture again", labelZh: "已修好：重新截圖", primary: true }, { id: "rescope", label: "Rescope the spec", labelZh: "調整規格範圍", note: true }, { id: "park", label: "Park the run", labelZh: "暫停這個 run" }] }; };
   engine.cardBodies.stalled = (x) => ({ title: `No progress for 2 rounds: ${T(x)}`, zhTitle: `兩輪沒有進展：${ZT(x)}`, ...base(x, "The checks' score did not rise for two rounds.", "Rescope, allow one more round, or park.", "檢查分數兩輪沒有上升。", "調整範圍、再給一輪，或暫停。"),
     body: `The checks' score did not improve for two rounds.\n\n${x.ctx.briefs?.build?.text ?? ""}`,
     options: [{ id: "rescope", label: "Rescope the spec", note: true, primary: true }, { id: "continue", label: "One more round" }, { id: "park", label: "Park the run" }] });
@@ -1130,7 +1148,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
 
     }
     const wt = x.ctx.worktree; const stat = wt && existsSync(wt) ? git(wt, ["diff", "--stat", `${x.ctx.baseCommit}..HEAD`]).out : "";
-    const gates = engine.ledger(x.run.id).filter((e) => e.check.startsWith("firstmate/gate-")).slice(-6).map((e) => `${e.verdict === "pass" ? "✓" : "✗"} ${e.check.replace("firstmate/gate-", "")}: ${(e as any).data?.detail ?? e.findings[0]?.message ?? ""}`).join("\n");
+    const gates = engine.ledger(x.run.id).filter((e) => e.check.startsWith("firstmate/gate-") && e.check !== "firstmate/gate-design").slice(-6).map((e) => `${e.verdict === "pass" ? "✓" : "✗"} ${e.check.replace("firstmate/gate-", "")}: ${(e as any).data?.detail ?? e.findings[0]?.message ?? ""}`).join("\n");
     const one = x.ctx.door?.door === "one-way"; const sp = ledgerSplit(x);
     // the captain's binding changes outrank the done lines; the review on this head names the lines they supersede
     const am = engine.amendments(x.run); const lastReview = (x.ctx.reviews ?? []).at(-1);

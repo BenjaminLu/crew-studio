@@ -201,13 +201,20 @@ async function* runtimeAgent(text: string, call: Call, say: Say): AsyncGenerator
   if (text.startsWith("DESIGN REVIEW")) {
     // every view the prompt lists, as a picture; then one verdict. STUB_DESIGN_REJECT on an added line of the UI diff: a REJECT
     // with one finding (gone once the fix removes that line); STUB_DESIGN_LAZY: a verdict before any view (refused), then the views
+    // STUB_DESIGN_SILENT: the first design review gives no verdict at all (design-unverified after its retry)
     const views = [...text.matchAll(/^View: page=(\S+) side=(before|after)/gm)].map((m) => ({ page: m[1], side: m[2] }));
+    if (/^\+.*STUB_DESIGN_SILENT/m.test(text) && /· design review 1 ·/.test(text)) { yield* done("No verdict."); return; }
     const marked = /^\+.*STUB_DESIGN_REJECT/m.test(text);
     if (/^\+.*STUB_DESIGN_LAZY/m.test(text)) yield* call("design_verdict", { verdict: "APPROVE" });
     for (const v of views) yield* call("design_view", v);
     const page = views.find((v) => v.side === "after")?.page;
     yield* call("design_verdict", marked ? { verdict: "REJECT", findings: [{ ...(page ? { page } : {}), element: "h1", problem: "the heading still reads STUB_DESIGN_REJECT", change: "h1 { text-transform: none; } and the heading text the spec asks for" }] } : { verdict: "APPROVE" });
     yield* done(marked ? "REJECT" : "APPROVE"); return;
+  }
+  if (text.startsWith("DESIGN GAP")) {
+    // Firstmate's route for a capture gap: the stub escalates it, naming why (the renderer is an install on this machine)
+    yield* call("design_gap_route", { route: "escalate", why: "credential-permission", reason: "the app's pages cannot be captured inside this round's permissions" });
+    yield* done("Routed."); return;
   }
   if (text.startsWith("TEST AGENT")) {
     // tests: "Call: <tool> <json>" lines are made in order; STUB_SLOW talks for ~3 s first (unless handed off)

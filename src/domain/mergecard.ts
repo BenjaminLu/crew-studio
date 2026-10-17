@@ -188,7 +188,7 @@ export function mergeDetail(i: MergeInput, co: Coordinator | null = null): CardD
   const rollback = one ? loc(rollbackEn, co?.rollback) : { en: rollbackEn, "zh-TW": `在 ${baseName} 上 revert 這次合併就能還原；repository 以外沒有任何改變。` };
   const images = i.ledger.filter((e) => !i.ctx.head || !e.head || e.head === i.ctx.head).flatMap((e) => (Array.isArray(e.evidence) ? e.evidence : []).filter((f) => /\.(png|jpe?g|webp)$/i.test(f)).map((f) => ({ label: `${e.check} · ${f}`, href: evidenceHref(i.run, e.seq, f) })));
   const lastReport = (i.ctx.rounds ?? []).at(-1)?.report?.summary ?? "";
-  const gates = i.ledger.filter((e) => e.check.startsWith("firstmate/gate-")).slice(-6).map((e: any) => ({ name: e.check.replace("firstmate/gate-", ""), verdict: e.verdict, detail: String(e.data?.detail ?? e.findings?.[0]?.message ?? "") }));
+  const gates = i.ledger.filter((e) => e.check.startsWith("firstmate/gate-") && e.check !== "firstmate/gate-design").slice(-6).map((e: any) => ({ name: e.check.replace("firstmate/gate-", ""), verdict: e.verdict, detail: String(e.data?.detail ?? e.findings?.[0]?.message ?? "") }));
   const followups: string[] = i.ctx.followups ?? [];
   const translated = !!co && [co.intents, co.why, co.done].some((a) => Array.isArray(a) && a.some(zhOk));
   return {
@@ -215,25 +215,31 @@ export function mergeDetail(i: MergeInput, co: Coordinator | null = null): CardD
 export function designDetail(i: MergeInput): CardDetail["design"] {
   const sc = i.ctx.designScope; const designs = i.ctx.designs ?? [];
   const compare = i.ledger.filter((e) => e.check === "firstmate/designer-compare").at(-1) as any;
+  const gate = i.ledger.filter((e) => e.check === "firstmate/gate-design").at(-1) as any;
   if (!sc && !designs.length && !compare) return null;
   const last = designs.at(-1);
   const warnings = compare && compare.verdict !== "pass" ? (compare.findings ?? []).map((f: any) => String(f.message ?? "")).filter(Boolean).slice(0, 8) : [];
+  // what the designer had to look at: the pictures, no captures of a declared app (an env gap), or a diff-only review (no app)
+  const captures: "seen" | "none-env-gap" | "diff-only" = sc?.route === "gap" ? "none-env-gap" : sc?.diffOnly || last?.diffOnly ? "diff-only" : "seen";
   return {
-    applicable: sc ? sc.route === "ui" : designs.length > 0, reason: String(sc?.reason ?? ""),
+    applicable: sc ? sc.route !== "none" : designs.length > 0, reason: String(sc?.reason ?? ""), captures,
     verdicts: designs.map((d: any) => ({ by: String(d.by ?? "designer"), verdict: String(d.verdict ?? "?"), head: d.head ?? null })),
     findings: last?.verdict === "REJECT" ? (last.findings ?? []).map((f: any) => ({ page: f.page ?? null, element: f.element ?? null, problem: String(f.problem ?? ""), change: String(f.change ?? "") })) : [],
     seen: Array.isArray(last?.seen) ? last.seen.length : 0,
     compare: compare ? { verdict: String(compare.verdict), warnings } : null,
+    gate: gate ? { verdict: String(gate.verdict), detail: String(gate.data?.detail ?? gate.findings?.[0]?.message ?? "") } : null,
   };
 }
 /** the design section of the merge card's text body */
 export function designText(d: CardDetail["design"]): string {
   if (!d) return "";
-  if (!d.applicable) return `\n\nDesigner: not applicable (${d.reason.replace(/^not applicable: /, "") || "no UI path changed"}).`;
+  const gate = d.gate ? `\nDesign gate: ${d.gate.verdict === "pass" ? "✓" : "✗"} ${d.gate.detail}` : "";
+  if (!d.applicable) return `\n\nDesigner: not applicable (${d.reason.replace(/^not applicable: /, "") || "no UI path changed"}).${gate}`;
   const last = d.verdicts.at(-1);
-  return `\n\nDesigner: ${last ? `${last.verdict} by ${last.by}${last.head ? ` at ${String(last.head).slice(0, 8)}` : ""}; saw ${d.seen} capture${d.seen === 1 ? "" : "s"}${d.seen ? "" : " (no pictures: judged from the diff)"}` : "no verdict"}${d.verdicts.length > 1 ? `\nEarlier: ${d.verdicts.slice(0, -1).map((v) => v.verdict).join(", ")}` : ""}`
+  const saw = d.captures === "none-env-gap" ? "no captures (an env gap: the app's pages were not captured)" : d.captures === "diff-only" ? "diff-only, no pictures (the repository declares no app)" : `saw ${d.seen} capture${d.seen === 1 ? "" : "s"}`;
+  return `\n\nDesigner: ${last ? `${last.verdict} by ${last.by}${last.head ? ` at ${String(last.head).slice(0, 8)}` : ""}; ${saw}` : `no verdict; ${saw}`}${d.verdicts.length > 1 ? `\nEarlier: ${d.verdicts.slice(0, -1).map((v) => v.verdict).join(", ")}` : ""}`
     + (d.findings.length ? `\n${d.findings.map((f, k) => `${k + 1}. ${f.page ?? "the UI"}${f.element ? ` ${f.element}` : ""}: ${f.problem} → ${f.change}`).join("\n")}` : "")
-    + (d.compare?.warnings.length ? `\nDesigner-compare (${d.compare.verdict}):\n${d.compare.warnings.map((w) => `- ${w}`).join("\n")}` : "");
+    + (d.compare?.warnings.length ? `\nDesigner-compare (${d.compare.verdict}):\n${d.compare.warnings.map((w) => `- ${w}`).join("\n")}` : "") + gate;
 }
 
 /** The coordinator's turn: what it reads (the fallback detail) and the one tool it calls. */

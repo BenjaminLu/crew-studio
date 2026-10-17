@@ -1,0 +1,12 @@
+id: gate-design
+version: 1.0.0
+title: { en: "Gate: design", zh-TW: "閘門：design" }
+description: "The merge needs, on the exact head, design-scope's none (no UI path changed) or a design APPROVE (or an APPROVE carried to it on a proven-identical patch). Anything else fails: a UI change with no designer verdict, a REJECT, or a verdict on another head."
+applies_to: [code-diff]
+kind: deterministic
+blocking: true
+needs: [artifact, gate_state]
+native: gate-design
+params: { type: object, properties: {} }
+timeout_s: 30
+network: false
