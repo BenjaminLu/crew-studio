@@ -29,5 +29,8 @@ await p.fill('[data-note-for="rescope"]','Limit it to src/a.ts');await p.fill('[
 await p.locator('[data-option="changes"]').click();ok(await p.evaluate(()=>requests.length===1&&requests[0].body.choice==='changes'&&requests[0].body.note==='Use the brand colors'),'an option sends its own note, not another option\'s');
 await p.evaluate(()=>{requests.length=0;ctl.update({...card,status:'open'});});await p.selectOption('[data-card-pick="other-model"]','codex/gpt-5');await p.locator('[data-option="other-model"]').click();
 ok(await p.evaluate(()=>requests.length===1&&requests[0].body.choice==='other-model'&&requests[0].body.note==='codex/gpt-5'),'the picked model is the answer\'s note');
+// a card Firstmate decided says so: never shown as the captain's answer
+await p.evaluate(()=>{document.querySelector('#cards').replaceChildren();const el=document.createElement('div');document.querySelector('#cards').append(el);crewCard.mountCard(el,{...card,id:'SC-004',status:'answered',decidedBy:'firstmate',answer:{choice:'rescope',note:'Limit it to src/a.ts',by:'firstmate'}},{lang:'en'});});
+ok(await p.evaluate(()=>/Decided by Firstmate/.test(document.querySelector('[data-decided-by="firstmate"]')?.textContent||'')),'a card Firstmate decided is marked as decided by Firstmate, not the captain');
 console.log(`${pass} passed, 0 failed`);
 }finally{await browser.close();}

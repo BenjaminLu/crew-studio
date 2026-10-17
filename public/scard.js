@@ -429,7 +429,7 @@ function mountCard(el, card, opts = {}) {
       if (st.busy || composing) return; // one answer in flight; never submit an unfinished composition
       const why=missing(o);if(expectsInterview&&why){st.msg=why;st.interviewAttempted=true;render();el.querySelector('[aria-invalid="true"]')?.focus();return;}
       // an option that needs text says so on the card, before anything is sent
-      if(!expectsInterview&&(o.note||o.select?.length)&&!noteOf(o)){st.msg=why;render();el.querySelector(`[data-note-for="${o.id}"],[data-card-pick="${o.id}"]`)?.focus();return;}
+      if(!expectsInterview&&(o.note||o.select?.length)&&!noteOf(o)){st.msg=why;render();el.querySelector(`[data-note-for="${CSS.escape(o.id)}"],[data-card-pick="${CSS.escape(o.id)}"]`)?.focus();return;}
       st.busy = true; st.msg = ""; render();
       const took = (got) => { st.card = got && got.id ? got : { ...c, status: "answered", answer: { choice: o.id } }; st.ok = true; st.msg = ""; try { opts.onAnswered && opts.onAnswered(st.card); } catch {} };
       try {
@@ -475,7 +475,7 @@ function mountCard(el, card, opts = {}) {
           o.select?.length ? h("select", { class: "input", "data-card-pick": o.id, "aria-label": label, onchange: (e) => { st.notes[o.id] = e.target.value; st.msg = ""; render(); } },
               h("option", { value: "" }, T("Pick one…", "請選一個…")), o.select.map((x) => h("option", { value: x.value, selected: st.notes[o.id] === x.value }, x.label)))
             : h("textarea", { class: "input", rows: 2, "data-card-note": c.id, "data-note-for": o.id, placeholder: noteLabel(o), "aria-label": label,
-              oninput: (e) => { const had = !!String(st.notes[o.id] || "").trim(); st.notes[o.id] = e.target.value; if (had !== !!e.target.value.trim()) { const pos = e.target.selectionStart; render(); const t = el.querySelector(`[data-note-for="${o.id}"]`); if (t) { t.focus(); t.setSelectionRange(pos, pos); } } } }, st.notes[o.id] || ""))); }
+              oninput: (e) => { const had = !!String(st.notes[o.id] || "").trim(); st.notes[o.id] = e.target.value; if (had !== !!e.target.value.trim()) { const pos = e.target.selectionStart; render(); const t = el.querySelector(`[data-note-for="${CSS.escape(o.id)}"]`); if (t) { t.focus(); t.setSelectionRange(pos, pos); } } } }, st.notes[o.id] || ""))); }
       if (one) kids.push(h("label", { class: "cc-tick rt-row", for: `conf-${c.id}` }, h("input", { type: "checkbox", id: `conf-${c.id}`, "data-confirm-door": c.id, checked: st.confirm, onchange: (e) => { st.confirm = e.target.checked; render(); } }),
         h("span", {}, T("I confirm: this is one-way, a revert will not undo it", "我確認：這是單向門，revert 無法還原"))));
       kids.push(h("div", { class: "cc-actions actions" }, c.options.map((o) => { const why = missing(o);
@@ -483,6 +483,8 @@ function mountCard(el, card, opts = {}) {
       const hint = c.options.map(missing).find(Boolean);
       if (hint && !st.msg) kids.push(h("p", { class: "cc-count", "data-card-hint": "" }, hint));
     } else if (c.answer) {
+      const byFirstmate = c.decidedBy === "firstmate" || c.answer.by === "firstmate";
+      if (byFirstmate) kids.push(h("p", { class: "cc-count", "data-decided-by": "firstmate" }, T("Decided by Firstmate within the spec, not by the captain.", "由 Firstmate 在 spec 內決定，不是船長的決定。")));
       kids.push(h("p", { class: "cc-msg ok", "data-card-answered": c.answer.choice }, T(`Answered: ${c.answer.choice}${c.answer.by ? ` by ${c.answer.by}` : ""}${c.answer.aligned ? ` · ${c.answer.aligned.length} of ${n} intent lines ticked` : ""}${c.answer.note ? ` · note: ${c.answer.note}` : ""}`,
         `已回覆：${c.answer.choice}${c.answer.by ? `（${c.answer.by}）` : ""}${c.answer.aligned ? ` · 意圖勾了 ${c.answer.aligned.length}/${n}` : ""}${c.answer.note ? ` · 備註：${c.answer.note}` : ""}`)));
     }

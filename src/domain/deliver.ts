@@ -119,7 +119,7 @@ export function installDeliver(engine: Engine, d: Deps) {
   const docsFor = (x: X) => aboutStudio(x) ? studioDocSource(d.studioDocs) : null;
   /** What the captain wrote on the workflow's own cards (card.ask: a purpose, a title, a style): the producer works from it (R-044). */
   const captainCardNotes = (x: X) => { const lines = x.run.def.nodes.filter(n => n.kind === "card" && !n.args?.mode && !n.args?.body_from).map(n => [n, x.ctx.answers?.[n.id]] as const)
-      .filter(([, a]) => a?.note && String(a.note).trim()).map(([n, a]) => `- ${n.label} (${a.choice}): ${String(a.note).trim().slice(0, 1000)}`);
+      .filter(([, a]) => a?.note && String(a.note).trim()).map(([n, a]) => `- ${n.label} (${a.choice}${a.by === "firstmate" ? ", decided by Firstmate" : ""}): ${String(a.note).trim().slice(0, 1000)}`);
     return lines.length ? `The captain's answers on this workflow's cards:\n${lines.join("\n")}\n` : ""; };
   engine.modes.deliver = {
     begin(x) {

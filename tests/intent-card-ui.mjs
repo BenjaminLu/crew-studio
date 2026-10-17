@@ -83,22 +83,20 @@ try {
     ok(sw && secs >= SECTIONS.length, `R-002's merge card renders at ${width} ${scheme} with no sideways scroll`);
     await ctx.close(); }
   // ---------- a live stub run: the server refuses a merge without the ticks ----------
+  // code-firstmate only starts for a registered project with an approved staffing configuration (src/domain/staffing.ts):
+  // the run goes on a Studio whose sandbox project has an approved code staffing (tests/lib/staffed-code-studio.ts)
+  const staffed = spawn("bun", [join(root, "tests/lib/staffed-code-studio.ts"), `intent-card-${port}`], { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env } });
+  let staffedOut = ""; staffed.stderr.on("data", (d) => (staffedOut += d));
+  const cs = await new Promise((res, rej) => { let buf = ""; staffed.stdout.on("data", (d) => { buf += d; const line = buf.split("\n").find((l) => l.startsWith("{")); if (line) res(JSON.parse(line)); }); staffed.once("exit", (c) => rej(new Error(`the staffed Studio stopped (${c}): ${staffedOut.slice(-2000)}`))); });
+  const browser2 = withSession(await chromium.launch(), cs.base, cs.token);
+  try { const base = cs.base, data = cs.data, browser = browser2;
   { const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, colorScheme: "light" }); const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
     await p.goto(`${base}/#/runs`);
     const INTENT = ["Add a percent function to money-kit, and keep the existing money functions unchanged",
       "STUB_FILE src/percent.ts :: // A percent of an amount in cents, rounded to the cent.\\nexport function percent(amount: number, pct: number): number {\\n  return Math.round((amount * pct) / 100);\\n}\\n",
       'STUB_FILE test/percent.test.ts :: import { expect, test } from "bun:test";\\ntest("percent rounds to the cent", async () => { expect(await Bun.file(new URL("../src/percent.ts", import.meta.url)).exists()).toBe(true); const { percent } = await import("../src/percent"); expect(percent(1999, 15)).toBe(300); });\\n'].join("\n");
     const call = (u, b) => p.evaluate(async ([u, b]) => { const r = await fetch(u, b === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) }); return { status: r.status, j: await r.json().catch(() => ({})) }; }, [u, b]);
-    // code-firstmate itself only starts for a registered project with an approved staffing configuration
-    // (src/domain/staffing.ts installStaffingGuard, tests/firstmate-staffing.ts); the merge card under test comes
-    // from the code domain, so the run uses the same graph under its own id, which the staffing guard does not
-    // cover, and runs on the stub provider over the built-in sandbox project
-    { const wdir = join(data, "workflows"), src = join(wdir, "code-firstmate");
-      const latest = readdirSync(src).filter((f) => /^v\d+\.json$/.test(f)).sort((a, b) => Number(a.slice(1, -5)) - Number(b.slice(1, -5))).at(-1);
-      const def = JSON.parse(readFileSync(join(src, latest), "utf8"));
-      mkdirSync(join(wdir, "code-intent-card"), { recursive: true });
-      writeFileSync(join(wdir, "code-intent-card", "v1.json"), JSON.stringify({ ...def, id: "code-intent-card", name: "Code (intent-card fixture)", version: 1, parent: null, by: "intent-card-ui test", note: "a copy of code-firstmate", diff: null, seed: undefined })); }
-    const run = (await call("/api/wruns", { workflow: "code-intent-card", text: INTENT, params: {} })).j; const rid = run.id;
+    const run = (await call("/api/wruns", { workflow: "code-firstmate", text: INTENT, params: { project: "sandbox" } })).j; const rid = run.id;
     const waitKind = async (kind, ms) => { const t = Date.now(); while (Date.now() - t < ms) { const cs = (await call("/api/scards?open=1")).j.cards || []; const c = cs.find((c) => c.run === rid && c.kind === kind); if (c && c.ste) return c; await p.waitForTimeout(500); } return null; };
     const disp = await waitKind("dispatch", 120000); ok(!!disp, "the stub run raises its dispatch card", rid);
     await call(`/api/scards/${disp.id}/answer`, { choice: "dispatch" });
@@ -149,6 +147,7 @@ try {
     const fr = await p.evaluate(async ([u]) => { const r = await fetch(u); return { status: r.status, text: await r.text() }; }, [`/api/wruns/${rid}/file?path=spec.md`]);
     ok(fr.status === 404 && !fr.text.includes("SECRET"), "the run's /file route refuses a symlink out of the run folder", JSON.stringify(fr));
     await ctx.close(); }
+  } finally { await browser2.close(); const done = new Promise((r) => staffed.once("exit", r)); staffed.kill("SIGTERM"); await Promise.race([done, new Promise((r) => setTimeout(r, 10000))]); }
   ok(!errors.length, "no page errors", errors.join(" | "));
 } catch (e) { fail++; console.log(`  FAIL  ${e.stack || e}`); console.log(appLog.slice(-3000)); }
 await browser.close(); app.kill();

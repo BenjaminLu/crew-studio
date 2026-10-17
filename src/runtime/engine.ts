@@ -358,12 +358,14 @@ export class Engine {
       const r = fold(this.events(d)); if (!r) continue;
       this.runs.set(r.id, r); this.committed.set(r.id, clone(r));
       if (TERMINAL.includes(r.status)) continue;
-      let n = 0; const reroute: string[] = []; const reanswer: string[] = [];
+      let n = 0; const reroute: string[] = []; const reanswer: string[] = []; const reescalate: string[] = [];
       for (const [id, rn] of Object.entries(r.nodes)) {
         if (rn.routing && rn.state !== "running") { reroute.push(id); continue; } // the result is durable, its routing was not done: do it again
         if (rn.state !== "running") continue;
         if (rn.waiting === "external") continue;
         if (rn.waiting === "firstmate" && r.ctx.firstmateQuestion?.card && r.ctx.firstmateQuestion.node === id) continue; // an escalation still with Firstmate
+        // Firstmate escalated, and Studio stopped before the captain's card was up: raise it now
+        if (rn.waiting === "firstmate" && rn.data.firstmateCard?.escalation && rn.data.firstmateCard.visit === rn.visits) { reescalate.push(id); continue; }
         // a retry that was waiting out its backoff (failure card): it never started, so it runs now with no visit taken back
         if ((rn as any).waiting === "backoff") { backoffs.push([r, id]); continue; } // it keeps waiting only the time still left
         if (rn.waiting === "card") {
@@ -393,6 +395,7 @@ export class Engine {
       this.emit(r, "recovered", `resumed after a restart from ${r.events} events${n ? `: ${n} interrupted node${n > 1 ? "s" : ""} run again` : ""}${reroute.length ? `; routing replayed for ${reroute.join(", ")}` : ""}${reanswer.length ? `; answers carried on for ${reanswer.join(", ")}` : ""}`, { interrupted: n, reroute, reanswer });
       for (const id of reroute) { const node = r.def.nodes.find((x) => x.id === id)!; if (r.def.edges.some((e) => e.from === id)) void this.track(r, `routing after ${id}`, this.route(r, node, r.nodes[id].routing!.outcome)); else this.end(r, node, r.nodes[id].outcome ?? "ok"); }
       for (const id of reanswer) void this.track(r, `the answer at ${id}`, this.carryAnswer(r, id));
+      for (const id of reescalate) void this.track(r, "escalation card", this.escalateCard(r, r.def.nodes.find((n) => n.id === id)!, r.nodes[id].data.firstmateCard.escalation));
     }
     for (const r of this.runs.values()) if (!TERMINAL.includes(r.status)) for (const [id, rn] of Object.entries(r.nodes)) if (rn.state === "running" && rn.waiting === "external") this.registerExternal(r, r.def.nodes.find(n => n.id === id)!, rn);
     for (const r of this.runs.values()) if (r.status === "running" || r.status === "waiting" || r.status === "queued") this.tick(r);
@@ -1486,11 +1489,19 @@ export class Engine {
     if (allowed) return options.filter((o) => allowed.includes(o.id));
     const ends = (id: string) => { const to = r.def.edges.filter((e) => e.from === node.id && e.when?.split("|").includes(id)).map((e) => r.def.nodes.find((n) => n.id === e.to));
       return !to.length || to.some((n) => !n || !r.def.edges.some((e) => e.from === n.id)); };
-    return options.filter((o) => !o.hold && !ends(o.id));
+    // another model: only the picks this run's staffing accepts (firstmatePicks), never free text; with none, the option is the captain's
+    const picks = new Set(this.firstmatePicks(r, node).map((p) => p.value));
+    return options.filter((o) => !o.hold && !ends(o.id)).flatMap((o) => o.id !== "other-model" ? [o] : (() => { const sel = (o.select ?? []).filter((s) => picks.has(s.value)); return sel.length ? [{ ...o, select: sel }] : []; })());
   }
+  /** The models Firstmate may pick for "another model" on this run: the configured ones by default; a staffed run narrows them (staffing.ts). */
+  firstmatePicks: (r: Run, node: WNode) => { value: string; label: string }[] = () => this.modelChoices();
+  /** Kinds that are the captain's decision by nature: they never go to Firstmate first, whatever the workflow says. */
+  static readonly CAPTAIN_KINDS: readonly string[] = ["merge", "dispatch", "permission", "acceptance"];
   /** An escalation card node asks Firstmate first: true when the question was sent (the node waits), else why it could not be. */
   private diagnoseFirst(x: X, kind: CardKind, b: Body, allowed: string[] | null = null): true | { en: string; zh: string } {
     // Firstmate decides an escalation at one step at most twice: still stuck after that, the captain decides
+    const door = b.door ?? (x.node.card?.door_from ? (x.ctx[x.node.card.door_from]?.door ?? x.ctx[x.node.card.door_from] ?? null) : null);
+    if (Engine.CAPTAIN_KINDS.includes(kind) || door === "one-way" || x.node.card?.confirm_door || (b.captainOnly && !allowed)) return { en: "Only the captain decides this card (its kind, a one-way door, or a captain-only decision), so it comes straight to you.", zh: "這張卡只能由船長決定（卡片種類、單向門或只限船長），所以直接交給你。" };
     const decided = Number(x.run.ctx.firstmateDecided?.[x.node.id] ?? 0);
     if (decided >= 2) return { en: `Firstmate already decided here ${decided} times and the run is still stuck, so this one is yours.`, zh: `Firstmate 在這裡已經決定過 ${decided} 次，仍然卡住，所以這次交給你。` };
     const options = b.options ?? x.node.card?.options ?? [];
@@ -1506,7 +1517,7 @@ export class Engine {
   }
   /** Firstmate answered an escalation: it decides within the spec (the run goes on), or escalates with its diagnosis (the captain's card). */
   private decideEscalation(r: Run, node: WNode, o: { answer?: string | null; escalate?: string | null; visit?: number; choice?: string | null; recommendation?: string | null }) {
-    const q = r.ctx.firstmateQuestion!; const rn = r.nodes[node.id]; const held = rn.data.firstmateCard as { visit: number; kind: CardKind; body: Body } | undefined;
+    const q = r.ctx.firstmateQuestion!; const rn = r.nodes[node.id]; const held = rn.data.firstmateCard as { visit: number; kind: CardKind; body: Body; allowed?: string[] | null; escalation?: any } | undefined;
     if (!this.trusted(r.id).ok) throw new Error("this run's evidence ledger does not verify: it cannot run again");
     if (r.archived || r.parked || TERMINAL.includes(r.status) || rn.state !== "running" || rn.waiting !== "firstmate" || !held || held.visit !== rn.visits || q.visit !== rn.visits) throw new Error("this escalation no longer waits for Firstmate");
     if (o.visit !== q.visit) throw new Error("the answer must match the visit in the escalation notice");
@@ -1514,8 +1525,9 @@ export class Engine {
     const escalate = String(o.escalate ?? "").trim(), choice = String(o.choice ?? "").trim(), note = String(o.answer ?? "").trim();
     if (!!escalate === !!choice) throw new Error("give either a choice (with your reason in answer) or a diagnosis to escalate");
     if (escalate) {
-      delete r.ctx.firstmateQuestion; this.commit(r, "escalation to the captain");
-      const work = this.escalateCard(r, node, { by: "firstmate", why: escalate.slice(0, 2000), recommendation: String(o.recommendation ?? "").trim().slice(0, 1000) || null });
+      const d = { by: "firstmate" as const, why: escalate.slice(0, 2000), recommendation: String(o.recommendation ?? "").trim().slice(0, 1000) || null };
+      held.escalation = d; delete r.ctx.firstmateQuestion; this.commit(r, "escalation to the captain"); // a restart from here raises the card (load)
+      const work = this.escalateCard(r, node, d);
       void this.track(r, "escalation card", work);
       return work.then((c) => ({ escalated: true, card: c?.id ?? null }));
     }
@@ -1531,8 +1543,10 @@ export class Engine {
     const intent = r.text.split("\n")[0].slice(0, 300) || r.title;
     const c = this.cards.create({ run: r.id, node: node.id, visit: rn.visits, kind: held.kind, title: { en: held.body.title, "zh-TW": held.body.zhTitle ?? held.body.title },
       sections: { en: sec(held.body.en, intent), "zh-TW": sec(held.body.zh, intent) }, body: `Firstmate decided: ${opt.label} — ${note}`, options, confirmDoor: false, door: null, links: held.body.links ?? [], detail: null,
-      captainOnly: true, workflow: r.workflow, runTitle: r.title, ledger: null, ste: null });
-    this.cards.answer(c.id, { choice, note, by: "firstmate" });
+      decidedBy: "firstmate", workflow: r.workflow, runTitle: r.title, ledger: null, ste: null });
+    // the same authorization as the captain's answer (staffing verification, approvals only the captain gives); a refusal leaves no card
+    try { this.deps.authorizeAnswer?.(r, c, { choice, note, by: "firstmate" }); this.cards.answer(c.id, { choice, note, by: "firstmate" }); }
+    catch (e) { this.cards.cancel(c.id); throw e; }
     delete r.ctx.firstmateQuestion; delete rn.data.firstmateCard; r.ctx.firstmateDecided = { ...(r.ctx.firstmateDecided ?? {}), [node.id]: Number(r.ctx.firstmateDecided?.[node.id] ?? 0) + 1 };
     rn.card = c.id; rn.waiting = "card"; this.commit(r, `Firstmate decided ${choice} on ${node.id}`);
     this.emit(r, "firstmate_decided", `${node.label}: Firstmate chose ${opt.label} — ${note.slice(0, 200)}`, { node: node.id, card: c.id, choice });
@@ -1544,10 +1558,9 @@ export class Engine {
     const rn = r.nodes[node.id]; const held = rn.data.firstmateCard as { visit: number; kind: CardKind; body: Body } | undefined;
     if (r.ctx.firstmateQuestion?.node === node.id) delete r.ctx.firstmateQuestion;
     if (!held || rn.state !== "running" || rn.waiting !== "firstmate" || TERMINAL.includes(r.status)) return null;
-    delete rn.data.firstmateCard;
     const x = this.x(r, node, rn);
     const c = await this.card(x, held.kind, diagnosedBody(held.body, d));
-    if (this.owns(x)) { rn.waiting = "card"; rn.cause = "waiting(card)"; this.commit(r, `escalated to the captain: ${c.id}`); this.raising.get(c.id)?.resolve(); this.settle(r); }
+    if (this.owns(x)) { delete rn.data.firstmateCard; rn.waiting = "card"; rn.cause = "waiting(card)"; this.commit(r, `escalated to the captain: ${c.id}`); this.raising.get(c.id)?.resolve(); this.settle(r); }
     return c;
   }
   /** The node a fresh preparation goes back to: the step before the card that led here, so that card's edge checks (gates) run again and a new card is raised. */

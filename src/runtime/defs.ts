@@ -164,6 +164,12 @@ export function validate(d: WDef, known?: (ref: string) => boolean, runners?: Se
   const canEnd = new Set(terms); let grew = true;
   while (grew) { grew = false; for (const n of d.nodes) if (!canEnd.has(n.id) && outs(n.id).some((t) => canEnd.has(t))) { canEnd.add(n.id); grew = true; } }
   for (const n of d.nodes) if (!canEnd.has(n.id) && ids.has(n.id)) out.push({ level: "error", node: n.id, text: `${n.label}: no path from here reaches an end` });
+  // Firstmate decides first only on escalation cards (step-back, round budget, scope), never on a card that acts, a mode, or a door
+  for (const n of d.nodes) if (n.args?.firstmate_first) {
+    const kind = n.args?.card_kind ?? "question";
+    if (n.kind !== "card" || !["step-back", "round-budget", "scope"].includes(kind) || n.do || n.args?.mode || (n.card as any)?.confirm_door || (n.card as any)?.door_from)
+      out.push({ level: "error", node: n.id, text: `${n.label}: firstmate_first is only for a step-back, round-budget or scope card with no action, mode or door` });
+  }
   // an acceptance card needs a readiness check on the way to it: without one it can only say "Proved by checks: None" (R-047)
   for (const n of d.nodes) if (n.kind === "card" && n.args?.mode === "deliver-accept") {
     const seen = new Set<string>([n.id]); const q = [n.id]; let checked = false;

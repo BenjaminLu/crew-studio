@@ -9,7 +9,7 @@ export type Locator =
   | { type: "text"; section: string; start?: number | null; end?: number | null }
   | { type: "card"; field: string; index?: number | null };
 export type Severity = "blocking" | "minor";
-export type Finding = { locator: Locator | null; message: string; expected?: string | null; class: string; severity: Severity; source?: "check" | "judge" | "human"; check?: string | null };
+export type Finding = { locator: Locator | null; message: string; expected?: string | null; class: string; severity: Severity; source?: "check" | "judge" | "human" | "firstmate"; check?: string | null };
 
 const num = (v: any) => (v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
 /** A locator from untrusted JSON, or null when it does not fit the schema. */

@@ -30,6 +30,8 @@ export type SCard = {
   detail?: CardDetail | null;
   /** an authorization window never answers this card (set by its body; the merge card sets it) */
   captainOnly?: boolean;
+  /** Firstmate decided this escalation within the spec (engine decideEscalation); the captain did not */
+  decidedBy?: "firstmate";
   status: "open" | "answered" | "cancelled"; createdAt: string;
   answer: { choice: string; note: string | null; by: string; at: string; confirm: string | null; aligned?: number[] | null; localRescope?: LocalRescope } | null;
   workflow: string; runTitle: string;

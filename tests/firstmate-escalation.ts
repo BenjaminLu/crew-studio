@@ -123,4 +123,85 @@ const rejects = async (f: () => unknown) => { try { await f(); return ""; } catc
   ok(other?.select?.map((s: any) => s.value).join() === "codex/gpt-5,claude" && !other.note, "the step-back card's \"another model\" is a model picker of the configured providers", JSON.stringify(other));
   H3.stop(); }
 
+// ---------- review r1: Firstmate's decision is authorized like the captain's (provider readiness: only retry, through authorizeAnswer) ----------
+{ const { ProviderRefusal } = await import("../src/providers/policy");
+  const H4 = await harness([Y({ id: "ready-fm", name: "readiness via Firstmate", version: 1, roles: [{ id: "worker", label: "Worker", skill: "x" }], nodes: [
+    { id: "work", kind: "agent", label: "Work", role: "worker", mode: "test", x: 0, y: 0 }, { id: "done", kind: "hook", label: "Done", x: 1, y: 0 }], edges: [["work", "done", "ok"]] })]);
+  const E4 = H4.engine; let providerOk = false, refuseAuth = false; const auth: any[] = [];
+  E4.deps.selectProvider = async () => { if (!providerOk) throw new ProviderRefusal("provider capability identity or freshness unavailable: stub"); return E4.deps.provider("stub"); };
+  E4.deps.authorizeAnswer = (_r: any, c: any, a: any) => { auth.push([c.kind, a.choice, a.by]); if (refuseAuth) throw new Error("staffing no longer verifies"); };
+  const sent: any[] = []; E4.askFirstmate = (_r, _n, _q, _v, o) => { sent.push(o); return true; };
+  const r = E4.start({ workflow: "ready-fm", text: "provider not ready" });
+  await until(() => !!E4.get(r.id)?.ctx.firstmateQuestion && !E4.busy(r.id)); const q = E4.get(r.id)!.ctx.firstmateQuestion;
+  ok(JSON.stringify(sent.at(-1)?.escalation?.options?.map((o: any) => o.id)) === '["retry"]' && !E4.cards.list({ run: r.id, open: true }).length, "a provider that is not verified asks Firstmate first, which may only prepare the round again", JSON.stringify(sent.at(-1)));
+  ok(/Firstmate may choose retry/.test(await rejects(() => E4.answerFromFirstmate(r.id, "work", { choice: "close", answer: "give up", visit: q.visit }))) && /Firstmate may choose retry/.test(await rejects(() => E4.answerFromFirstmate(r.id, "work", { choice: "approve-skill", answer: "fine", visit: q.visit }))),
+    "close and approve-skill are refused to Firstmate on the readiness card");
+  refuseAuth = true; const refused = await rejects(() => E4.answerFromFirstmate(r.id, "work", { choice: "retry", answer: "I checked the login", visit: q.visit }));
+  ok(/staffing no longer verifies/.test(refused) && auth.at(-1)?.join() === "scope,retry,firstmate" && E4.get(r.id)!.nodes.work.waiting === "firstmate" && E4.cards.list({ run: r.id }).every((c) => c.status !== "answered"),
+    "Firstmate's retry goes through the same authorization as the captain's; refused, it leaves no answered card and the step still waits", JSON.stringify([refused, auth]));
+  refuseAuth = false; providerOk = true; await E4.answerFromFirstmate(r.id, "work", { choice: "retry", answer: "I checked the login; the provider is back", visit: q.visit });
+  await until(() => E4.get(r.id)!.status === "succeeded");
+  const decided = E4.cards.list({ run: r.id }).find((c) => c.answer?.by === "firstmate");
+  ok(E4.get(r.id)!.status === "succeeded" && decided?.decidedBy === "firstmate" && !decided.captainOnly, "an authorized retry prepares the round again; its card is marked as decided by Firstmate, not captain-only", JSON.stringify(decided && { d: decided.decidedBy, c: decided.captainOnly }));
+  H4.stop(); }
+
+// ---------- review r1: only escalation cards go to Firstmate; captain kinds, one-way doors and captain-only bodies come straight to the captain ----------
+{ const { validate, normalize } = await import("../src/runtime/defs");
+  const wf = (node: any) => normalize({ id: "v", name: "v", version: 1, roles: [], nodes: [{ id: "s", kind: "hook", label: "S", do: "set", x: 0, y: 0 }, { id: "c", kind: "card", label: "C", x: 1, y: 0, ...node }, { id: "e", kind: "hook", label: "E", x: 2, y: 0 }], edges: [["s", "c"], ["c", "e", "go"]] });
+  const bad = (n: any) => validate(wf(n)).some((p) => p.level === "error" && /firstmate_first is only/.test(p.text));
+  ok(["merge", "dispatch", "permission", "acceptance", "question"].every((k) => bad({ args: { card_kind: k, firstmate_first: true } })) && bad({ args: { card_kind: "step-back", firstmate_first: true, mode: "deliver-accept" } }) && bad({ do: "git.merge", args: { card_kind: "scope", firstmate_first: true } })
+    && bad({ args: { card_kind: "scope", firstmate_first: true }, card: { confirm_door: true } }) && bad({ args: { card_kind: "scope", firstmate_first: true }, card: { door_from: "door" } }) && !bad({ args: { card_kind: "step-back", firstmate_first: true } }),
+    "workflow validation allows firstmate_first only on a step-back, round-budget or scope card with no action, mode or door");
+  let variant = "door"; const before = asked.length;
+  E.cardBodies["stuck-test"] = (() => ({ ...body(), ...(variant === "door" ? { door: "one-way" } : { captainOnly: true }) })) as any;
+  for (const v of ["door", "captain-only"]) { variant = v; const r = E.start({ workflow: "esc", text: `straight ${v}` }); await until(() => open(r.id).length === 1 && !E.busy(r.id));
+    ok(asked.length === before && /Only the captain decides this card/.test(open(r.id)[0]?.body ?? "") && !E.get(r.id)!.ctx.firstmateQuestion, `a ${v} escalation comes straight to the captain, never to Firstmate`, open(r.id)[0]?.body); E.cancel(r.id); }
+  E.cardBodies["stuck-test"] = body as any; }
+
+// ---------- review r1: "another model" is offered to Firstmate only as picks the run accepts, never as free text ----------
+{ const withModel = () => ({ ...body(), options: [{ id: "other-model", label: "Another model", labelZh: "換模型", select: [{ value: "codex/gpt-5", label: "codex" }, { value: "claude/opus", label: "claude" }] }, ...body().options] });
+  E.cardBodies["stuck-test"] = withModel as any; E.firstmatePicks = () => [{ value: "claude/opus", label: "claude" }];
+  const flow2 = { ...JSON.parse(flow), id: "esc-model", edges: [...JSON.parse(flow).edges, ["stuck", "again", "other-model"]] };
+  const H5 = await harness([Y(flow2)]); const E5 = H5.engine; E5.actions.set ??= setAction; E5.cardBodies["stuck-test"] = withModel as any; const got: any[] = []; E5.askFirstmate = (_r, _n, _q, _v, o) => { got.push(o); return true; };
+  E5.firstmatePicks = () => [{ value: "claude/opus", label: "claude" }];
+  const r = E5.start({ workflow: "esc-model", text: "model swap" }); await until(() => !!E5.get(r.id)?.ctx.firstmateQuestion && !E5.busy(r.id)); const q = E5.get(r.id)!.ctx.firstmateQuestion;
+  const om = got.at(-1)?.escalation?.options?.find((o: any) => o.id === "other-model");
+  ok(JSON.stringify(om?.select) === '["claude/opus"]', "Firstmate is offered only the models the run accepts", JSON.stringify(om));
+  ok(/pick one of claude\/opus/.test(await rejects(() => E5.answerFromFirstmate(r.id, "stuck", { choice: "other-model", answer: "codex/gpt-5", visit: q.visit }))), "a model outside the accepted picks is refused");
+  E5.cancel(r.id); E5.firstmatePicks = () => [];
+  const r2 = E5.start({ workflow: "esc-model", text: "no picks" }); await until(() => !!E5.get(r2.id)?.ctx.firstmateQuestion && !E5.busy(r2.id));
+  ok(!got.at(-1)?.escalation?.options?.some((o: any) => o.id === "other-model"), "with no accepted pick, another model is the captain's option only");
+  E5.cancel(r2.id); H5.stop(); E.cardBodies["stuck-test"] = body as any; E.firstmatePicks = () => E.modelChoices(); }
+
+// ---------- review r1: Studio stops between Firstmate's escalation and the captain's card: the restart raises the card ----------
+{ const r = E.start({ workflow: "esc", text: "crash after escalate" }); await until(() => waiting(r.id)); const before = asked.length;
+  const run = E.get(r.id)!; run.nodes.stuck.data.firstmateCard.escalation = { by: "firstmate", why: "The style guide and the lint rule disagree.", recommendation: "Rescope." }; delete run.ctx.firstmateQuestion; (E as any).commit(run, "fixture: escalation recorded, card not raised");
+  const deps = E.deps, defs = E.defs; E = new Engine(deps, defs); install(E); E.load();
+  await until(() => open(r.id).length === 1 && !E.busy(r.id));
+  ok(/Firstmate's diagnosis: The style guide and the lint rule disagree/.test(open(r.id)[0]?.body ?? "") && asked.length === before && E.get(r.id)!.nodes.stuck.waiting === "card", "a restart between Firstmate's escalation and the captain's card raises the card with the diagnosis", open(r.id)[0]?.body);
+  E.cancel(r.id);
+  const r2 = E.start({ workflow: "esc", text: "crash before the question" }); await until(() => waiting(r2.id)); const b2 = asked.length;
+  const run2 = E.get(r2.id)!; delete run2.ctx.firstmateQuestion; (E as any).commit(run2, "fixture: question lost");
+  E = new Engine(E.deps, E.defs); install(E); E.load(); await until(() => asked.length > b2 && !!E.get(r2.id)?.ctx.firstmateQuestion);
+  ok(asked.length > b2 && E.get(r2.id)!.nodes.stuck.waiting === "firstmate", "a step waiting on Firstmate with no question after a restart asks Firstmate again"); E.cancel(r2.id); }
+
+// ---------- review r1: Firstmate's change note reaches the producer as Firstmate's, never as the captain's ----------
+{ const { mkdtempSync } = await import("node:fs"); const { tmpdir } = await import("node:os"); const flag = join(mkdtempSync(join(tmpdir(), "fm-note-")), "never");
+  const H6 = await harness([Y({ id: "fm-note", name: "fm note", version: 1, roles: [{ id: "maker", label: "Maker", skill: "x" }], nodes: [
+    { id: "start", kind: "hook", label: "Start", do: "set", args: { key: "started", value: true }, x: 0, y: 0 },
+    { id: "make", kind: "agent", label: "Make", role: "maker", mode: "test", checks: [{ use: "t/failer", params: { cls: "missing-flag", flagfile: flag } }], x: 1, y: 0 },
+    { id: "fix", kind: "loop", label: "Fix", args: { producer: "make", round_cap: 1 }, x: 1, y: 1 },
+    { id: "budget", kind: "card", label: "Round budget", args: { card_kind: "round-budget", firstmate_first: true }, card: { title: { en: "Checks still fail: one more round or revise?", "zh-TW": "檢查仍未通過：再一輪還是修改？" }, body: { en: "The round cap is reached.", "zh-TW": "輪數上限已到。" },
+      options: [{ id: "changes", label: "Revise", labelZh: "修改", note: true }, { id: "park", label: "Park", labelZh: "暫停" }], effects: { changes: { policy: "round_cap", add: 1 } } }, x: 2, y: 1 },
+    { id: "done", kind: "hook", label: "Done", x: 2, y: 0 }, { id: "parked", kind: "hook", label: "Parked", args: { result: "closed" }, x: 3, y: 1 }],
+    edges: [["start", "make"], ["make", "done", "ok"], ["make", "fix", "fail"], ["fix", "make", "retry|report"], ["fix", "done", "pass"], ["fix", "budget", "cap|step-back|stalled"], ["budget", "fix", "changes"], ["budget", "parked", "park"]] })], { refine: true });
+  const E6 = H6.engine; E6.askFirstmate = () => true;
+  const r = E6.start({ workflow: "fm-note", text: "note attribution" }); await until(() => !!E6.get(r.id)?.ctx.firstmateQuestion && !E6.busy(r.id), 30000); const q = E6.get(r.id)!.ctx.firstmateQuestion;
+  await E6.answerFromFirstmate(r.id, "budget", { choice: "changes", answer: "Write the flag file the check reads", visit: q.visit });
+  await until(() => (E6.get(r.id)!.ctx.briefs?.make?.items ?? []).some((i: any) => i.source !== "check") || ["succeeded", "failed", "cancelled"].includes(E6.get(r.id)!.status), 30000);
+  const items: any[] = E6.get(r.id)!.ctx.briefs?.make?.items ?? [];
+  ok(items.some((i) => i.class === "firstmate-note" && /^Firstmate: Write the flag file/.test(i.message) && !/captain/.test(i.expected.replace("not the captain's word", ""))) && !items.some((i) => i.class === "captain-note") && !(E6.get(r.id)!.ctx.amendments ?? []).length,
+    "Firstmate's change note reaches the producer's brief as Firstmate's (firstmate-note), never as the captain's note or amendment", JSON.stringify(items.map((i) => [i.class, i.message, i.expected])));
+  if (!["succeeded", "failed", "cancelled"].includes(E6.get(r.id)!.status)) E6.cancel(r.id); H6.stop(); }
+
 H.stop(); end();

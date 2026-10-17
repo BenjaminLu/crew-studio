@@ -150,7 +150,7 @@ function taskRow(t) {
 const KIND_WORD = { merge: ["merge card", "合併卡"], scope: ["scope card", "範圍卡"], dispatch: ["dispatch card", "派工卡"], permission: ["permission card", "權限卡"], plan: ["plan card", "計畫卡"], question: ["question card", "問題卡"], acceptance: ["acceptance card", "驗收卡"], "round-budget": ["round budget card", "回合預算卡"], "step-back": ["step-back card", "退一步卡"], promote: ["promote card", "升級卡"], retro: ["retro card", "回顧卡"] };
 function cardRow(c) {
   const kw = KIND_WORD[c.kind] || [`${c.kind} card`, `${c.kind} 卡`];
-  const bits = [T(kw[0], kw[1]), c.captainOnly ? T("captain only", "只限船長") : null, c.door ? (c.door === "one-way" ? T("one-way", "單向門") : c.door === "two-way" ? T("two-way", "雙向門") : c.door) : null, c.run].filter(Boolean);
+  const bits = [T(kw[0], kw[1]), c.decidedBy === "firstmate" ? T("decided by Firstmate", "由 Firstmate 決定") : c.captainOnly ? T("captain only", "只限船長") : null, c.door ? (c.door === "one-way" ? T("one-way", "單向門") : c.door === "two-way" ? T("two-way", "雙向門") : c.door) : null, c.run].filter(Boolean);
   return h("div", { class: "pj-card", "data-project-card-row": c.id },
     h("span", { class: "need-ic" }, icon(c.kind === "merge" ? "pr" : c.kind === "scope" || c.kind === "permission" ? "crew" : "human")),
     h("div", {}, h("div", { class: "need-t" }, LX(c.title)), h("div", { class: "need-d" }, bits.join(" · "))),

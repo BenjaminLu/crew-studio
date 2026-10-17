@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { Ledger } from "../src/runtime/checks";
 import { freePort, waitUp } from "./boot.mjs";
 import { harness, sleep, suite, until, Y } from "./rt-harness";
+import { staffedCodeStudio } from "./lib/staffed-code-studio";
 const { ok, end } = suite("run-end");
 const root = join(import.meta.dir, "..");
 
@@ -236,36 +237,36 @@ try {
   ok(wrong.status === 400 && /type the run id/i.test(wrong.body.error ?? "") && (await ids()).includes(failed.id), "a wrong typed id is refused by the route", JSON.stringify(wrong));
 
   // 4 + 6. a code run on the sandbox repo: a worktree and a branch; cancel, merge its commit into main, delete.
-  // code-firstmate itself only starts for a registered project with an approved staffing configuration
-  // (src/domain/staffing.ts installStaffingGuard, tests/firstmate-staffing.ts); the clean-up under test is the
-  // code domain's (src/domain/code.ts onDelete), so the run uses the same graph under its own id, which the
-  // staffing guard does not cover, and runs on the stub provider over the built-in sandbox project.
-  { const wdir = join(data, "workflows"), src = join(wdir, "code-firstmate");
-    const latest = readdirSync(src).filter((f) => /^v\d+\.json$/.test(f)).sort((a, b) => Number(a.slice(1, -5)) - Number(b.slice(1, -5))).at(-1)!;
-    const def = JSON.parse(readFileSync(join(src, latest), "utf8"));
-    mkdirSync(join(wdir, "code-run-end"), { recursive: true });
-    writeFileSync(join(wdir, "code-run-end", "v1.json"), JSON.stringify({ ...def, id: "code-run-end", name: "Code (run-end fixture)", version: 1, parent: null, by: "run-end test", note: "a copy of code-firstmate", diff: null, seed: undefined })); }
-  const text = "Add a percent function\nSTUB_FILE src/percent.ts :: export const percent = (a: number, p: number) => Math.round((a * p) / 100);\\n";
-  const st = await call("POST", "/api/wruns", { text, workflow: "code-run-end" }); const rid = st.body.id;
-  let det: any = null; for (let i = 0; i < 240; i++) { det = (await call("GET", `/api/wruns/${rid}`)).body; if (det?.ctx?.branch && det.cards?.some((c: any) => c.status === "open")) break; await sleep(500); }
-  const repo = det?.ctx?.repo, branch = det?.ctx?.branch, mainBranch = det?.ctx?.base;
-  ok(!!repo && !!branch && existsSync(det.ctx.worktree), "the code run has its worktree and branch in the sandbox repo", JSON.stringify({ repo, branch, wt: det?.ctx?.worktree }));
-  const git = (...a: string[]) => { const r = Bun.spawnSync(["git", "-C", repo, ...a]); return { ok: r.exitCode === 0, out: r.stdout.toString().trim() }; };
-  // a commit on the run's branch, then merged into main (as a merge does)
-  const tip0 = git("rev-parse", branch).out;
-  const tree = git("rev-parse", `${tip0}^{tree}`).out;
-  const commit = Bun.spawnSync(["git", "-C", repo, "commit-tree", tree, "-p", tip0, "-m", "R merged work"], { env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } }).stdout.toString().trim();
-  git("update-ref", `refs/heads/${branch}`, commit); git("update-ref", `refs/heads/${mainBranch}`, commit);
-  ok((await call("POST", `/api/wruns/${rid}/cancel`, { reason: "testing delete" })).status === 200, "the code run is cancelled");
-  writeFileSync(join(data, "runs", rid, "probe.txt"), "x");
-  const cardsBefore = readdirSync(join(data, "cards")).filter((f) => JSON.parse(readFileSync(join(data, "cards", f), "utf8")).run === rid).length;
-  const del = await call("POST", `/api/wruns/${rid}/delete`, { confirm: rid });
-  const cardsAfter = readdirSync(join(data, "cards")).filter((f) => JSON.parse(readFileSync(join(data, "cards", f), "utf8")).run === rid).length;
-  ok(del.status === 200 && !existsSync(join(data, "runs", rid)) && !(await ids("?archived=1")).includes(rid) && cardsBefore > 0 && cardsAfter === 0, "delete with the typed id removes the run directory and its cards", JSON.stringify({ del, cardsBefore, cardsAfter }));
-  ok(!git("rev-parse", "--verify", `refs/heads/${branch}`).ok && !existsSync(det.ctx.worktree) && !git("worktree", "list").out.includes(det.ctx.worktree), "delete removes the run's worktree and branch in the sandbox repo");
-  ok(git("cat-file", "-e", commit).ok && git("merge-base", "--is-ancestor", commit, mainBranch).ok, "delete never removes a commit already merged into the sandbox repo's main");
-  const dl = new Ledger(data, rid);
-  ok(dl.verify().length === 0 && dl.all().at(-1)?.record === "deletion", "the deleted run's ledger verifies and ends with its deletion entry");
+  // code-firstmate only starts for a registered project with an approved staffing configuration
+  // (src/domain/staffing.ts installStaffingGuard): the run goes on a Studio whose sandbox project has an
+  // approved code staffing (tests/lib/staffed-code-studio.ts), through the board's own start route.
+  const cs = await staffedCodeStudio(`run-end-${port}`);
+  try {
+    const ccall = async (method: string, p: string, body?: any) => cs.api(p, method === "GET" ? undefined : body ?? {});
+    const text = "Add one sentence to the README that says how to run the offline tests.\nSTUB_FILE test/readme.test.ts :: import { test } from 'bun:test';\\n";
+    const st = await ccall("POST", "/api/wruns", { text, workflow: "code-firstmate", params: { project: "sandbox" } }); const rid = st.body.id;
+    let det: any = null; for (let i = 0; i < 240; i++) { det = (await ccall("GET", `/api/wruns/${rid}`)).body; if (det?.ctx?.branch && det.cards?.some((c: any) => c.status === "open")) break; await sleep(500); }
+    const repo = det?.ctx?.repo, branch = det?.ctx?.branch, mainBranch = det?.ctx?.base;
+    ok(!!repo && !!branch && existsSync(det.ctx.worktree), "the code run has its worktree and branch in the sandbox repo", JSON.stringify({ start: st.status, repo, branch, wt: det?.ctx?.worktree }));
+    const git = (...a: string[]) => { const r = Bun.spawnSync(["git", "-C", repo, ...a]); return { ok: r.exitCode === 0, out: r.stdout.toString().trim() }; };
+    // a commit on the run's branch, then merged into main (as a merge does)
+    const tip0 = git("rev-parse", branch).out;
+    const tree = git("rev-parse", `${tip0}^{tree}`).out;
+    const commit = Bun.spawnSync(["git", "-C", repo, "commit-tree", tree, "-p", tip0, "-m", "R merged work"], { env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } }).stdout.toString().trim();
+    git("update-ref", `refs/heads/${branch}`, commit); git("update-ref", `refs/heads/${mainBranch}`, commit);
+    ok((await ccall("POST", `/api/wruns/${rid}/cancel`, { reason: "testing delete" })).status === 200, "the code run is cancelled");
+    writeFileSync(join(cs.data, "runs", rid, "probe.txt"), "x");
+    const cardsOf = () => readdirSync(join(cs.data, "cards")).filter((f) => JSON.parse(readFileSync(join(cs.data, "cards", f), "utf8")).run === rid).length;
+    const cardsBefore = cardsOf();
+    const del = await ccall("POST", `/api/wruns/${rid}/delete`, { confirm: rid });
+    const cardsAfter = cardsOf();
+    const cids = async (q = "") => ((await ccall("GET", `/api/wruns${q}`)).body.runs ?? []).map((r: any) => r.id);
+    ok(del.status === 200 && !existsSync(join(cs.data, "runs", rid)) && !(await cids("?archived=1")).includes(rid) && cardsBefore > 0 && cardsAfter === 0, "delete with the typed id removes the run directory and its cards", JSON.stringify({ del, cardsBefore, cardsAfter }));
+    ok(!git("rev-parse", "--verify", `refs/heads/${branch}`).ok && !existsSync(det.ctx.worktree) && !git("worktree", "list").out.includes(det.ctx.worktree), "delete removes the run's worktree and branch in the sandbox repo");
+    ok(git("cat-file", "-e", commit).ok && git("merge-base", "--is-ancestor", commit, mainBranch).ok, "delete never removes a commit already merged into the sandbox repo's main");
+    const dl = new Ledger(cs.data, rid);
+    ok(dl.verify().length === 0 && dl.all().at(-1)?.record === "deletion", "the deleted run's ledger verifies and ends with its deletion entry");
+  } finally { await cs.close(); }
 } finally { app.kill(); }
 if (process.env.RUN_END_LOG) console.log(appLog.slice(-3000));
 end();

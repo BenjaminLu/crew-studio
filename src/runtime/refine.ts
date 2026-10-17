@@ -236,7 +236,8 @@ export function installRefine(engine: Engine) {
       const human: Finding[] = [];
       const consumedNotes: string[] = [];
       for (const [node, a] of Object.entries(x.ctx.answers ?? {}) as [string, any][]) if (a?.note && ["changes", "request"].includes(a.choice) && a.at >= since && !x.rn.data.used?.includes(`${node}@${a.at}`)) {
-        human.push({ locator: { type: "card", field: node }, message: a.note, expected: "what the captain asked", class: "captain-note", severity: "blocking", source: "human", check: `card:${node}` });
+        human.push(a.by === "firstmate" ? { locator: { type: "card", field: node }, message: `Firstmate: ${a.note}`, expected: "what Firstmate decided (not the captain's word)", class: "firstmate-note", severity: "blocking", source: "firstmate", check: `card:${node}` }
+          : { locator: { type: "card", field: node }, message: a.note, expected: "what the captain asked", class: "captain-note", severity: "blocking", source: "human", check: `card:${node}` });
         consumedNotes.push(`${node}@${a.at}`);
       }
       for (const f of x.ctx.humanFindings?.[producer] ?? []) human.push(f);
@@ -246,7 +247,7 @@ export function installRefine(engine: Engine) {
       if (!failing.length && !human.length) { st.history.push({ round, classes: [], score, head: x.ctx.head ?? null, outcome: "pass" }); x.save(); return { outcome: "pass", note: `round ${round}: every blocking check passes (score ${score.toFixed(2)})` }; }
       const brief = attachEvidence(compileBrief(producer, round, x.ctx.head ?? null, failing, human), { repo: sourceRoot(x), head: x.ctx.head ?? null, dataDir: x.deps.dataDir, entries: failing });
       const prev = st.history.at(-1);
-      const repeated = prev && prev.round === round - 1 ? brief.classes.filter((c) => prev.classes.includes(c) && c !== "captain-note") : [];
+      const repeated = prev && prev.round === round - 1 ? brief.classes.filter((c) => prev.classes.includes(c) && c !== "captain-note" && c !== "firstmate-note") : [];
       let outcome = "retry";
       // the cap: the loop's own, else policy; a card's run override adds to it
       const cap = (x.node.args?.round_cap != null ? Number(x.node.args.round_cap) + Number(x.run.ctx.policyAdds?.round_cap ?? 0) : Number(x.policy("round_cap", 3))) + (x.rn.extra ?? 0);
