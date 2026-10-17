@@ -10,6 +10,7 @@
 //                       round 1, STUB_FIX <path> :: <old> => <new> on a fix round, STUB_REJECT in an
 //                       added line makes the reviewer reject, STUB_SLOW makes a build round slow,
 //                       STUB_BLOCKED makes the worker report SCOPE-BLOCKED
+//   DELIVER             writes nothing; with STUB_LINGER in the intent it lists the folder and talks for a minute
 import type { NEvent } from "./types";
 type Call = (name: string, args: any) => AsyncGenerator<NEvent, any>;
 type Say = (s: string) => AsyncGenerator<NEvent, boolean>;
@@ -110,6 +111,12 @@ export async function* stubAgent(text: string, call: Call, say: Say): AsyncGener
     yield* call("doc_write", { path: "doc.md", content: `# ${title}\n\n${prompt ? `This draft answers: ${prompt}\n\n` : ""}## Summary\n\nA short first draft for review.\n\n## Details\n\n- The first point.\n- The second point.\n\n## Next steps\n\nReview this draft and leave notes.\n` });
     yield* done("Drafted doc.md.");
     return;
+  }
+  // the deliver mode (non-code and drafted workflows) with STUB_LINGER in the intent: one tool call, then about a minute of
+  // talk (a live agent to look at; tests cancel the run). Without it the stub writes nothing, as before (live-acceptance's failing fixture).
+  if (text.startsWith("DELIVER ") && /STUB_LINGER/.test(text) && !/^HANDOFF$/m.test(text)) {
+    yield* call("work_list", {}); if (!(yield* say(".".repeat(24 * 6000)))) { yield "interrupted"; return; }
+    yield* done("Still drafting."); return;
   }
   if (/^(SPEC DRAFT|PLAN ROUND|PLAN DECISION|BUILD ROUND|FIX BRIEF|CODE REVIEW|DESIGN DRAFT|JUDGE|ROOT CAUSE|FILM FIX|TEST AGENT)/.test(text)) { yield* runtimeAgent(text, call, say); return; }
 }

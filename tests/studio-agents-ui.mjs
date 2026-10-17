@@ -4,7 +4,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Prompt, Transcript and Report; a Studio card arriving or answered elsewhere updates the Inbox without a
 // reload; the Overview counts and lists Studio cards. 1440 light and 390 dark.      node tests/studio-agents-ui.mjs
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,18 @@ const here = dirname(fileURLToPath(import.meta.url)), root = join(here, "..");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright").catch(() => { console.error("studio-agents-ui: Playwright not found; set PLAYWRIGHT_MODULE"); process.exit(2); });
 const tmp = mkdtempSync(join(tmpdir(), "crew-saui-")); const state = join(tmp, "fm", "state"), data = join(tmp, "data");
 mkdirSync(join(state, "pending"), { recursive: true }); mkdirSync(data);
+// The Studio Task to watch: a small non-code workflow (a dispatch card, then one agent node in the deliver mode), installed
+// as a workflow version on disk. Until a6fd64f this suite ran code-firstmate on the stub provider; a code-firstmate Task
+// now needs a signed captain staffing approval naming a real provider (src/domain/staffing.ts), so the stub cannot run one.
+const FIXTURE = { id: "studio-agents", name: "Studio agents fixture", kind: "doc", roles: [{ id: "worker", label: "Worker", skill: "bundled:workflows/skills/v2/writer.md" }],
+  nodes: [{ id: "intake", kind: "hook", label: "Capture intent", do: "deliver.intake", x: 160, y: 140 },
+    { id: "dispatch", kind: "card", label: "Dispatch", card: { title: { en: "Dispatch the draft", "zh-TW": "派工草稿" }, options: [{ id: "dispatch", label: "Dispatch" }] }, x: 320, y: 140 },
+    { id: "produce", kind: "hook", label: "Begin artifact round", do: "deliver.round", x: 480, y: 140 },
+    { id: "build", kind: "agent", label: "Build round", role: "worker", mode: "deliver", args: { format: "document", variant: "A" }, retries: 0, timeout_s: 900, x: 640, y: 140 },
+    { id: "end", kind: "hook", label: "Done", x: 800, y: 140 }],
+  edges: [{ from: "intake", to: "dispatch" }, { from: "dispatch", to: "produce", when: "dispatch" }, { from: "produce", to: "build" }, { from: "build", to: "end" }] };
+mkdirSync(join(data, "workflows", FIXTURE.id), { recursive: true });
+writeFileSync(join(data, "workflows", FIXTURE.id, "v1.json"), JSON.stringify({ ...FIXTURE, version: 1, parent: null, createdAt: new Date().toISOString(), by: "test fixture", note: "fixture", diff: null, seed: null }));
 const port = await freePort();
 const env = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) delete env[k];
 env.CREW_SESSION_TOKEN = process.env.CREW_SESSION_TOKEN ??= "test-session";
@@ -23,9 +35,7 @@ let appLog = ""; app.stdout.on("data", (d) => (appLog += d)); app.stderr.on("dat
 const base = `http://127.0.0.1:${port}`; await waitUp(base, app);
 let pass = 0, fail = 0; const ok = (c, name, extra = "") => { if (c) { pass++; console.log(`  ok    ${name}`); } else { fail++; console.log(`  FAIL  ${name} ${extra}`); } };
 const browser = withSession(await chromium.launch(), base); const errors = []; const shots = join(root, "tests/out"); mkdirSync(shots, { recursive: true });
-const INTENT = ["Add a percent function to money-kit", "STUB_LINGER",
-  "STUB_FILE src/percent.ts :: // A percent of an amount in cents, rounded to the cent.\\nexport function percent(amount: number, pct: number): number {\\n  return Math.round((amount * pct) / 100);\\n}\\n",
-  'STUB_FILE test/percent.test.ts :: import { expect, test } from "bun:test";\\ntest("percent rounds to the cent", async () => { expect(await Bun.file(new URL("../src/percent.ts", import.meta.url)).exists()).toBe(true); const { percent } = await import("../src/percent"); expect(percent(1999, 15)).toBe(300); });\\n'].join("\n");
+const INTENT = "Write a note on the percent function STUB_LINGER";
 const post = (p, u, b) => p.evaluate(async ([u, b]) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) }); return { status: r.status, body: await r.json().catch(() => null) }; }, [u, b]);
 let runId = null;
 try {
@@ -40,7 +50,7 @@ try {
   const other = await ctx.newPage(); await other.goto(`${base}/#/runs`);
   // ---------- the Inbox updates live: a card arrives (no reload) ----------
   await p.goto(`${base}/#/inbox`); await p.waitForSelector("#navInbox", { state: "attached" }); await p.waitForTimeout(500); await p.evaluate(() => { window.__noReload = 1; });
-  const started = await post(other, "/api/wruns", { text: INTENT, workflow: "code-firstmate" }); runId = started.body?.id;
+  const started = await post(other, "/api/wruns", { text: INTENT, workflow: FIXTURE.id }); runId = started.body?.id;
   await p.waitForSelector('[data-inbox-studio] [data-option="dispatch"]', { timeout: 120000 });
   ok(!!runId && await p.evaluate(() => window.__noReload === 1) && (await p.textContent("#navInbox")).trim() === "1", "a Studio card that arrives shows in the open Inbox live (the page did not reload) and counts in the sidebar", JSON.stringify(started));
   // ---------- the Overview counts and lists it ----------
@@ -55,9 +65,9 @@ try {
   ok(ans.status === 200 && await p.evaluate(() => window.__noReload === 1) && !(await p.locator("[data-inbox-studio]").count()), "answered on another page, the card leaves the open Inbox live (no reload)", JSON.stringify(ans.status));
   // ---------- the Crew page shows the working agent ----------
   await p.goto(`${base}/#/crew`); await p.waitForSelector(`[data-agent-node^="${runId}/build/"]`, { timeout: 120000 });
-  await p.waitForFunction(() => /fs_list|tool/.test(document.querySelector("[data-agent-node] .rt-agent-act")?.textContent ?? ""), null, { timeout: 30000 }).catch(() => {});
+  await p.waitForFunction(() => /work_list|tool/.test(document.querySelector("[data-agent-node] .rt-agent-act")?.textContent ?? ""), null, { timeout: 30000 }).catch(() => {});
   const tile = await p.textContent(`[data-agent-node^="${runId}/build/"]`);
-  ok(tile.includes(runId) && /Build round/.test(tile) && /worker/.test(tile) && /round 1/.test(tile) && /up \d+[sm]/.test(tile) && /stub/.test(tile) && /code-firstmate/.test(tile) && /fs_list|tool/.test(tile) && Number((await p.textContent("#navCrew")).trim()) >= 1,
+  ok(tile.includes(runId) && /Build round/.test(tile) && /worker/.test(tile) && /round 1/.test(tile) && /up \d+[sm]/.test(tile) && /stub/.test(tile) && /studio-agents/.test(tile) && /work_list|tool/.test(tile) && Number((await p.textContent("#navCrew")).trim()) >= 1,
     "the Crew page shows the Studio agent working: run, node, role, model, round, elapsed time, last activity (and the sidebar counts it)", tile);
   await p.screenshot({ path: join(shots, "studio-agents-crew-1440-light.png") });
   const links = await p.$$eval(`[data-agent-node^="${runId}/build/"] [data-agent-link]`, (xs) => xs.map((a) => [a.dataset.agentLink, a.getAttribute("href")]));
@@ -65,8 +75,8 @@ try {
   await p.click(`[data-agent-node^="${runId}/build/"] [data-agent-link="transcript"]`); 
   ok(await p.waitForSelector('[data-tab="transcript"][aria-selected="true"]', { timeout: 15000 }).then(() => true, () => false) && p.url().endsWith(`#/runs/node/${runId}/build/1/transcript`), "Transcript opens the node's transcript tab");
   await p.goto(`${base}/#/runs/node/${runId}/build/1/prompt`); await p.waitForSelector('[data-tab="prompt"][aria-selected="true"]', { timeout: 15000 });
-  await p.waitForFunction(() => /BUILD ROUND/.test(document.querySelector("#view")?.textContent ?? ""), null, { timeout: 15000 }).catch(() => {});
-  ok(/BUILD ROUND/.test(await p.textContent("#view")), "Prompt opens the prompt the node was given");
+  await p.waitForFunction(() => /DELIVER document/.test(document.querySelector("#view")?.textContent ?? ""), null, { timeout: 15000 }).catch(() => {});
+  ok(/DELIVER document/.test(await p.textContent("#view")), "Prompt opens the prompt the node was given");
   // ---------- 390 dark ----------
   { const c2 = await browser.newContext({ viewport: { width: 390, height: 900 }, colorScheme: "dark" }); const q = await c2.newPage(); q.on("pageerror", (e) => errors.push(e.message));
     await q.goto(`${base}/#/crew`); await q.waitForSelector("[data-agent-node]", { timeout: 15000 }).catch(() => {});
