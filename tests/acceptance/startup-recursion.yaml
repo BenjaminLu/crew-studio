@@ -2,7 +2,7 @@
 # Both cards are captain-only; CAPTAIN_ONLY_ALLOW in scripts/acceptance/scenarios.ts lists them at this pin.
 schema: 2
 workflow: startup-recursion
-pin: { version: 1, sha256: "901c2e519c16c49348945b0283c3c7236c11f2c7079d3e5f01be8f1e3e694a29" }   # bun scripts/acceptance/pin.ts startup-recursion
+pin: { version: 1, sha256: "e5da7d4bcaf2b5865e12e04b8b7e73ab5421472e1bb03f523f4c0bd84183b92e" }   # bun scripts/acceptance/pin.ts startup-recursion
 topic: "A service that turns a team's meeting notes into a weekly risk list."
 start: { provider: null, params: {} }
 providers: [claude, codex]

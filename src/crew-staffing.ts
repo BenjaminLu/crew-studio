@@ -38,6 +38,9 @@ export function installCrewStaffing(engine:Engine,store:StaffingStore,crew:CrewS
   if(def.roles.some((r:any)=>{try{return r.skill!==staffingSkillRef(def,r.id);}catch{return true;}}))return null;
   const d=crewStaffingDraft(def,team,project,r=>live(def,r));if('missing' in d)return null;
   let current:StaffingConfig|null=null;try{current=store.current(project);}catch(e:any){if(e?.code!=='ENOENT')throw e;}
+  // a team only seeded from approved staffing (the captain has not changed it yet) keeps a project's own still-valid approval:
+  // deploying crew seats never restaffs a project behind the captain's back
+  if(current&&!current.crew&&team.approval.via==='migration'&&current.workflow.id===def.id&&current.workflow.version===def.version&&current.workflow.sha256===staffingHash(def))return current;
   if(current?.crew&&staffingHash(shape(current))===staffingHash(shape(d.draft))&&Object.entries(current.roles).every(([id,r])=>r.skill.sha256===d.draft.roles[id]?.skill.sha256&&staffingHash(r.skills??null)===staffingHash(d.draft.roles[id]?.skills??null)))return current;
   return store.approve(d.draft,current?.hash??null,{run:`crew-v${team.version}`,card:team.approval.card??`crew-team-v${team.version}`,answerSeq:team.approval.answerSeq??team.version},d.sources);
  }

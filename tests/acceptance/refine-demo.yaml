@@ -1,7 +1,7 @@
 # Retired built-in: not seeded for new Tasks (src/runtime/defs.ts RETIRED_DEFAULTS). The live driver skips it.
 schema: 2
 workflow: refine-demo
-pin: { version: 1, sha256: "9b0b560fdd5739a1fc1d5fd100ffb4c6274e083c4faffee554954ea8c21ee2b3" }   # bun scripts/acceptance/pin.ts refine-demo
+pin: { version: 1, sha256: "8f9cf51d64090991c2898ff6adbc843cd3b6ad5c62933582cbc8ff85db1f959c" }   # bun scripts/acceptance/pin.ts refine-demo
 topic: "Acceptance: internal workflow"
 start: { provider: null, params: {} }
 providers: []

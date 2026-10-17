@@ -2,7 +2,7 @@
 # needs the captain's own words, so the run is accepted when it reaches that card.
 schema: 2
 workflow: pack-genesis
-pin: { version: 1, sha256: "4b19c9fb23bf9127337b7eae4580e5c7b0905bd215346ca5050fc1b1c326f2c9" }   # bun scripts/acceptance/pin.ts pack-genesis
+pin: { version: 1, sha256: "a8c64fda1ae00b86800254aeecc90f08fc8256b537a49c3e08e23f3527f62cb4" }   # bun scripts/acceptance/pin.ts pack-genesis
 topic: "A pack that checks every button on a web page has a visible or accessible label."
 start: { provider: null, params: {} }
 providers: []

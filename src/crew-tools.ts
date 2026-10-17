@@ -54,7 +54,7 @@ export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Prom
   return engine.start({workflow:SOURCE,version:inst.version,title:reason==='change'?'Team change':'Team seat',text:reason==='change'?'Confirm a change to the Studio team':'Fill a team seat a workflow needs',params:{source:sourceKey,change:JSON.stringify(change),expected:now().cfg?.hash??'',reason,context:JSON.stringify(context).slice(0,4000)}});
  }
  engine.actions['crew.confirm']=async x=>{
-  const change=parse(x.run),{cfg,team}=now();if((cfg?.hash??'')!==x.run.params.expected)throw new NativeToolFailure('target_changed','The team changed after this card was prepared; ask Firstmate to propose it again','團隊在這張卡準備好之後改了；請 Firstmate 重新提出。','read_current_state');
+  const change=parse(x.run),{cfg,team}=now();if((cfg?.hash??'')!==(x.run.params.expected??""))throw new NativeToolFailure('target_changed','The team changed after this card was prepared; ask Firstmate to propose it again','團隊在這張卡準備好之後改了；請 Firstmate 重新提出。','read_current_state');
   const reason=x.run.params.reason,ctx=JSON.parse(x.run.params.context||'{}'),def=change.kind==='node'?engine.defs.get(change.workflow):ctx.workflow?engine.defs.get(ctx.workflow):undefined;
   const wfs=crewWorkflows(engine.defs);
   if(reason==='seat-unmet'){
@@ -87,7 +87,7 @@ export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Prom
   const answer=engine.trusted(x.run.id).entries.find(e=>e.record==='card-answer'&&e.data?.card===card?.id&&e.data?.choice==='approve');
   if(!card||!answer||!engine.trusted(x.run.id).ok||!engine.owns(x)||!/^captain\b/i.test(String(card.answer?.by??'')))throw new NativeToolFailure('captain_confirmation_required','The captain\'s approval of this team change is missing','需要船長核准這個團隊變更。','captain_review');
   const {cfg,team}=now();if(cfg?.approval.card===card.id&&cfg.approval.run===x.run.id)return'ok';
-  if((cfg?.hash??'')!==x.run.params.expected)throw new NativeToolFailure('target_changed','The team changed after this card was shown; ask Firstmate to propose it again','團隊在這張卡顯示之後改了；請 Firstmate 重新提出。','read_current_state');
+  if((cfg?.hash??'')!==(x.run.params.expected??""))throw new NativeToolFailure('target_changed','The team changed after this card was shown; ask Firstmate to propose it again','團隊在這張卡顯示之後改了；請 Firstmate 重新提出。','read_current_state');
   const def=change.kind==='node'?engine.defs.get(change.workflow):undefined;
   const written=store.write(applyChange(team,change,def),cfg?.hash??null,{by:'captain (card)',via:'card',card:card.id,run:x.run.id,answerSeq:answer.seq});
   engine.record(x,'crew-approved',{data:{schema:1,team:written.hash,version:written.version,card:card.id}});try{o.send?.('team',{version:written.version});}catch{}return'ok';};

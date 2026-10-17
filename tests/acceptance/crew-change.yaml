@@ -1,0 +1,21 @@
+# A team change: started only by Firstmate's studio_propose_crew_change tool or an empty seat a proposal needs (internal).
+schema: 2
+workflow: crew-change
+pin: { version: 1, sha256: "b394823a848f3b996031ae4558b9c79bf6874d607d6780d7ae29e22b47854606" }   # bun scripts/acceptance/pin.ts crew-change
+topic: "Acceptance: internal workflow"
+start: { provider: null, params: {} }
+providers: []
+approvals: { staffing: false }
+cards: []
+budget: { wall_minutes: 5, max_rounds: 1 }
+live: false
+expect: { status: succeeded, artifacts: [] }
+stub:
+  # the scenarios share one Studio: approving would give every later scenario a team, so this one closes the card
+  # (approving is covered by tests/crew-cards.ts)
+  - name: close
+    covers: "Firstmate proposes filling the maker seat → captain-only card showing what it reaches → Not now changes nothing; the board cannot start it"
+    how: crew
+    board_refusal: { status: 409, error: "internal or retired" }
+    cards: [{ node: confirm, answer: close }]
+    expect: { status: succeeded, visited: [confirm, closed], not_visited: [apply, done] }

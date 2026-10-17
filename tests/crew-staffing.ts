@@ -70,6 +70,14 @@ try {
   const c5 = cs.ensure(def2, project)!;
   ok(c5.project.identity === "github:acme/shop" && c5.version === 1 && (guard.verified(def2, { project: "shop", _staffing: c5.hash }) as any).hash === c5.hash, "a new project identity gets the team's staffing at once");
   ok(staffingHash(c5.roles.worker.model) === staffingHash("gpt-6.1-sol"), "with the same crew");
+  // a project's own approval made before crew seats: kept while the team is only the seeded one, replaced once the captain changes the team
+  { const legacy = { namespace: "git" as const, id: "legacy", identity: "local-legacy" };
+    const { version, previous, approval, hash, signature, crew: _c, ...body } = structuredClone(cs.ensure(def2, project)!) as any;
+    const own = staffing.approve({ ...body, project: legacy, roles: { ...body.roles, reviewer: { ...body.roles.reviewer, effort: "low" } } }, null, { run: "R-9", card: "SC-9", answerSeq: 1 });
+    const seeded = crew.write(C.teamBody(crew.current()!), crew.current()!.hash, { by: "migration", via: "migration" });
+    ok(cs.ensure(def2, legacy)!.hash === own.hash, "a seeded team keeps a project's own still-valid approval: deploying never restaffs it");
+    crew.write(C.teamBody(seeded), seeded.hash, { by: "captain", via: "page" });
+    ok(cs.ensure(def2, legacy)!.crew?.team === crew.current()!.hash, "once the captain changes the team, that project's staffing comes from the team"); }
   // the old staffing tools map cleanly: the interview says the team staffs it (approved and valid); proposing staffing points to a crew change
   { const facts = [{ provider: "codex", support: "supported", auth: "verified", quota: "available", expires: Date.now() + 200000, models: [{ id: "gpt-6.1-sol", efforts: ["low", "medium", "high", "xhigh"] }, { id: "gpt-6-astra", efforts: ["low", "medium", "high"] }] },
       { provider: "claude", support: "supported", auth: "verified", quota: "available", expires: Date.now() + 200000, models: [{ id: "opus-5.5", efforts: ["low", "medium", "high", "xhigh"] }, { id: "sonnet-5.5", efforts: ["medium", "high"] }] }];

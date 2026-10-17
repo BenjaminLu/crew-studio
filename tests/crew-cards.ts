@@ -39,7 +39,11 @@ try {
   // ---------- reading ----------
   let r: any = await crew.call("studio_crew_assignments", {}, captain("r0"));
   ok(r.team === null && /No team yet/.test(r.note), "with no team, the read says so");
-  store.write({ schema: 1, members: { coordinator: m("claude", "opus-5.5", null), maker: m("codex", "gpt-6.1-sol", "medium"), "alt-maker": m("claude", "opus-5.5", null), reviewer: m("claude", "opus-5.5", null) }, seats: {}, workflows: {} }, null, { by: "captain", via: "page" });
+  // the very first team comes from a card too (no team yet: the card was prepared against "no team")
+  const p0: any = await crew.call("studio_propose_crew_change", { change: { kind: "member", seat: "coordinator", set: { provider: "claude", model: "opus-5.5", effort: null } } }, captain("p-first"));
+  await E.answer((await cardOf(p0.proposal)).id, { choice: "approve", by: "captain" }); await done(p0.proposal);
+  ok(store.current()?.members.coordinator?.model === "opus-5.5" && E.get(p0.proposal)!.status === "succeeded", "the captain approves the first team on a card", E.get(p0.proposal)!.error ?? "");
+  store.write({ schema: 1, members: { coordinator: m("claude", "opus-5.5", null), maker: m("codex", "gpt-6.1-sol", "medium"), "alt-maker": m("claude", "opus-5.5", null), reviewer: m("claude", "opus-5.5", null) }, seats: {}, workflows: {} }, store.current()!.hash, { by: "captain", via: "page" });
   r = await crew.call("studio_crew_assignments", { workflow: "fixture-web" }, captain("r1"));
   ok(r.workflow.nodes.find((n: any) => n.node === "a").model === "gpt-6.1-sol" && r.workflow.nodes.find((n: any) => n.node === "b").model === "opus-5.5", "by workflow: each node's member, model and source", JSON.stringify(r.workflow.nodes));
   r = await crew.call("studio_crew_assignments", { member: "maker" }, captain("r2"));
@@ -60,7 +64,7 @@ try {
   const p2: any = await crew.call("studio_propose_crew_change", { change: { kind: "node", workflow: "fixture-web", node: "a", set: { effort: "high" } } }, captain("p2"));
   await E.answer((await cardOf(p2.proposal)).id, { choice: "approve", by: "captain" }); await done(p2.proposal);
   const after = store.current()!;
-  ok(after.version === 2 && after.approval.via === "card" && after.approval.run === p2.proposal && after.workflows["fixture-web"]?.nodes.a?.effort === "high", "the captain's approval writes the team, citing the card", JSON.stringify(after.approval));
+  ok(after.version === 3 && after.approval.via === "card" && after.approval.run === p2.proposal && after.workflows["fixture-web"]?.nodes.a?.effort === "high", "the captain's approval writes the team, citing the card", JSON.stringify(after.approval));
   // ---------- a seat no verified model can fill ----------
   refused = ""; try { await fm.call("studio_propose_work", { workflow: "fixture-music", version: 1, text: "a jingle" }, captain("w1")); } catch (e: any) { refused = e.message; }
   const unmet = E.list().find((x) => x.workflow === "crew-change" && x.params.reason === "seat-unmet")!;

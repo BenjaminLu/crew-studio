@@ -62,14 +62,14 @@ export const ALLOWED_CARD_EFFECTS: { workflow: string; node: string; option: str
 export const CAPTAIN_ONLY_ALLOW: { workflow: string; sha256: string; node: string; kind: string; option: string }[] = [
   // deliver acceptance cards (src/domain/deliver.ts finalCard): approve-<producer> puts the approved
   // artifact into Studio's local Library; changes and reject stay the captain's
-  { workflow: "documents", sha256: "64c0fea5154d0255a4e251a976ef7e2fce46a99b34754ddb0533176faac03bc9", node: "accept", kind: "acceptance", option: "approve-draft" },
-  { workflow: "images", sha256: "c53617d464637dc96e23bbc43ffea8c2f4ab5331f177bef996f187cfae8205fc", node: "accept", kind: "acceptance", option: "approve-draft" },
-  { workflow: "video", sha256: "919c2c9d58d82b686dee1c57a2395508b3913ddbe3f43c204af3ddc8d0729da5", node: "accept", kind: "acceptance", option: "approve-draft" },
-  { workflow: "web-prototype", sha256: "d1258ae72600a73a3f1ee436e4b7d7c62fa920314dad2119aebdcb2cd3ccbba6", node: "accept", kind: "acceptance", option: "approve-design-a" },
-  { workflow: "web-prototype", sha256: "d1258ae72600a73a3f1ee436e4b7d7c62fa920314dad2119aebdcb2cd3ccbba6", node: "accept", kind: "acceptance", option: "approve-design-b" },
+  { workflow: "documents", sha256: "10f45c7112d05ff10c2f6416322046e0904028267059c1f0325356f5b015d1ab", node: "accept", kind: "acceptance", option: "approve-draft" },
+  { workflow: "images", sha256: "1ff6044b93b46405600ff2bedbf402424679f70ce47df68585d7ea64b02c76bf", node: "accept", kind: "acceptance", option: "approve-draft" },
+  { workflow: "video", sha256: "ac2e69842b0dcfcd84585709c563a64b65a3561590f35c4fbcaa223d757451f1", node: "accept", kind: "acceptance", option: "approve-draft" },
+  { workflow: "web-prototype", sha256: "667dc15488bb3375d5c625e7457e5b52068df68e330e5306d01436272c074ae7", node: "accept", kind: "acceptance", option: "approve-design-a" },
+  { workflow: "web-prototype", sha256: "667dc15488bb3375d5c625e7457e5b52068df68e330e5306d01436272c074ae7", node: "accept", kind: "acceptance", option: "approve-design-b" },
   // startup competition (src/domain/startup-recursion.ts): run the bundled template; accept the text result
-  { workflow: "startup-recursion", sha256: "901c2e519c16c49348945b0283c3c7236c11f2c7079d3e5f01be8f1e3e694a29", node: "choose", kind: "question", option: "template" },
-  { workflow: "startup-recursion", sha256: "901c2e519c16c49348945b0283c3c7236c11f2c7079d3e5f01be8f1e3e694a29", node: "accept", kind: "acceptance", option: "accept" },
+  { workflow: "startup-recursion", sha256: "e5da7d4bcaf2b5865e12e04b8b7e73ab5421472e1bb03f523f4c0bd84183b92e", node: "choose", kind: "question", option: "template" },
+  { workflow: "startup-recursion", sha256: "e5da7d4bcaf2b5865e12e04b8b7e73ab5421472e1bb03f523f4c0bd84183b92e", node: "accept", kind: "acceptance", option: "accept" },
 ];
 
 export type CardRule = { node: string; kind?: string; action: "answer" | "wait" | "stop"; answer?: string; note?: string | null };
