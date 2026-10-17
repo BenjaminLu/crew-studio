@@ -59,9 +59,9 @@ export function installCodeRecovery(engine:Engine,W:Worktrees){
         (prior?hashInput(signed)!==hashInput(r.ctx.nativeAdmission):!!r.ctx.nativeAdmission)||
         must(rec.path,['rev-parse','HEAD'])!==rec.head||must(rec.path,['status','--porcelain=v1','--untracked-files=all']))return view;
       const target=must(rec.repo,['rev-parse',`refs/heads/${rec.base}`]);
-      // a refresh from X to X changes nothing: no refresh is offered, and the card says why (runtime/failures.ts)
-      const same=rescopeRefusal({note:null,from:rec.head,target,base:rec.base});
-      if(same)return {...view,...(view.detail?{detail:{...view.detail,how:[...view.detail.how,{en:same.en,'zh-TW':same['zh-TW']}]}}:{}),sections:{...view.sections,en:{...view.sections.en,how:view.sections.en.how+'\n'+same.en.replace('Rescope refused: it refreshes','A base refresh is not offered: it refreshes')},'zh-TW':{...view.sections['zh-TW'],how:view.sections['zh-TW'].how+'\n'+same['zh-TW'].replace('已拒絕重新界定範圍：','不提供基底更新：')}}};
+      // a refresh from X to X changes nothing: no refresh is offered and the card stays quiet about it;
+      // a forged one is still refused with the reason (runtime/failures.ts)
+      if(rescopeRefusal({note:null,from:rec.head,target,base:rec.base}))return view;
       const localRescope=descriptor(c,rec,target,recoveryRelation(rec,target,prior));
       const en=(localRescope.baseRelation?'This unadmitted task uses rewritten base history. Every old-side patch has a patch-id match on the selected target; this is not a semantic guarantee. Approval abandons the old base lineage. ':'')+`${localRescope.strategy?'This task has committed work. A conflict-free rebase preserves its changes and retains the original head as recovery evidence.':'This task has no changes.'} Rescope refreshes base ${rec.base} from ${rec.baseCommit} to ${target} (task head ${rec.head}), rewrites the spec, and waits for a new dispatch approval. Checks and review run again.`;
       const zh=(localRescope.baseRelation?'此任務尚未派工，基底歷史已改寫。舊側所有 patch 在目標都有 patch-id 對應，但不保證語義等價。核准會放棄舊基底的歷史連接。':'')+`${localRescope.strategy?'此任務已有成果 commit。無衝突 rebase 會保留修改並保存原 head 作為恢復證據；衝突時保持原任務不變。':'此任務尚未修改檔案。'}重新界定範圍會將基底 ${rec.base} 從 ${rec.baseCommit} 更新至 ${target}（任務 head ${rec.head}），重寫規格後再次等待派工核准；檢查與審查必須重跑。`;
