@@ -24,6 +24,7 @@ try {
   ok(!fresh.defs.get("startup-recursion"), "a fresh install has no startup competition");
   ok(!specs.some((s) => s.name === "studio_startup_workflow_contract") && !specs.some((s) => /startup-recursion|studio_startup_workflow_contract/.test(String(s.description))), "Firstmate gets no startup tool and no startup text on a fresh install", JSON.stringify(specs.find((s) => s.name === "studio_propose_work")?.description).slice(0, 300));
   ok(specs.some((s) => s.name === "studio_propose_work" && /coffee-kit/.test(s.description)), "the rest of the propose tool's guidance stays");
+  ok(specs.some((s) => s.name === "studio_list_workflows" && /website, landing page or web app goes to web-prototype/.test(s.description)), "routing by deliverable stays (a website goes to web-prototype)");
   let refused: any = null; try { await fresh.firstmate.call("studio_startup_workflow_contract", {}, owner); } catch (e) { refused = e; } ok(refused?.publicFailure?.code === "unknown_tool", "calling the startup tool anyway is refused", String(refused));
   const seeded = withExamples(true, () => runtime(join(root, "seeded")));
   const s2 = seeded.firstmate.specs as any[];

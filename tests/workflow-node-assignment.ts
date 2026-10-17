@@ -9,6 +9,8 @@ import { gateHarness } from "./gate-harness";
 import { WORKFLOW_DRAFT_EXAMPLE } from "../src/workflow-draft-contract";
 import { deliverableOf } from "../src/deliverables";
 
+// the startup competition is an example (src/runtime/defs.ts): install it, so the website-request refusal below is proven against it
+process.env.CREW_EXAMPLE_WORKFLOWS = "1";
 let pass = 0, fail = 0;
 const ok = (v: any, name: string, detail = "") => { console.log(`${v ? "  ok   " : "  FAIL "} ${name}${v ? "" : " " + detail}`); v ? pass++ : fail++; };
 const WRITER = "bundled:workflows/skills/v2/writer.md", DESIGNER = "bundled:workflows/skills/v2/designer.md";
