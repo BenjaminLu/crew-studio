@@ -7,16 +7,16 @@
 // captain staffing approval (src/domain/staffing.ts) that names a real provider, so a
 // page test can no longer start one with the stub provider.
 //   bun tests/lib/code-firstmate-run-seed.ts <data dir> [intent]   → prints {"id": ...}
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { harness, until } from "../rt-harness";
+import { checkedTempDir } from "./git-hygiene.mjs"; // the fixture repository only in a checked temp folder
 import { bundledText } from "../../src/bundled";
 
 export async function seedCodeFirstmateRun(data: string, text = "Add a percent function to money-kit") {
   const root = join(import.meta.dir, "..", "..");
   mkdirSync(data, { recursive: true });
-  const repo = mkdtempSync(join(tmpdir(), "crew-seed-repo-"));
+  const repo = checkedTempDir("crew-seed-repo-");
   for (const a of [["init", "-b", "main"], ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "init"]])
     if (Bun.spawnSync(["git", ...a], { cwd: repo, stdout: "pipe", stderr: "pipe" }).exitCode) throw new Error("fixture repository setup failed");
   const registry = join(data, "projects.json"); const projects = existsSync(registry) ? JSON.parse(readFileSync(registry, "utf8")) : [];
