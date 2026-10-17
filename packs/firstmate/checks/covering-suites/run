@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// covering-suites: the test files that import a changed file (or changed themselves) run with CREW_TEST_FILES.
+// covering-suites: the test files that import a changed file (or changed themselves) run with CREW_TEST_FILES (basenames) and CREW_TEST_PATHS (repo-relative).
 const fs = require("fs"), path = require("path"), { spawnSync } = require("child_process");
 let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
   const i = JSON.parse(s); const root = i.workdir; const cfg = i.repo_cfg ?? {}; const out = (v, f = [], data = undefined) => process.stdout.write(JSON.stringify({ verdict: v, score: v === "pass" ? 1 : 0, findings: f, evidence: ["out/covering.log"], proves: [], ...(data ? {data} : {}) }));
@@ -14,7 +14,7 @@ let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
   if (!tests.size) return process.stdout.write(JSON.stringify({verdict:"pass",score:1,findings:[],evidence:[],proves:[],data:{status:"not-run",reason:"no changed or importing test in the host inventory"}}));
   if(cfg.runner?.error)return out('fail',[{locator:{type:'file',path:[...tests][0]},message:cfg.runner.error,expected:'a supported test runner adapter',class:'runner-adapter',severity:'blocking'}]);
   const command=cfg.runner?.node?[cfg.runner.node,'--test',...[...tests].sort()]:cfg.test;
-  const r = spawnSync(command[0], command.slice(1), { cwd: root, env: { ...process.env, ...(cfg.testEnv||{}), CREW_TEST_OUTPUT_DIR:i.out, CREW_TEST_FILES: [...tests].map((t) => path.basename(t)).join(",") }, encoding: "utf8", timeout: 200000 });
+  const r = spawnSync(command[0], command.slice(1), { cwd: root, env: { ...process.env, ...(cfg.testEnv||{}), CREW_TEST_OUTPUT_DIR:i.out, CREW_TEST_FILES: [...tests].map((t) => path.basename(t)).join(","), CREW_TEST_PATHS: [...tests].join(",") }, encoding: "utf8", timeout: 200000 });
   const log = (r.stdout ?? "") + (r.stderr ?? ""); fs.writeFileSync(path.join(i.out, "covering.log"), log);
   const f = log.split("\n").filter((l) => /^FAIL\b/.test(l)).slice(0, 20).map((l) => { const m = /^FAIL\s+([^:]+):\s*(.*)$/.exec(l); return { locator: { type: "file", path: m ? `tests/${m[1]}` : [...tests][0] }, message: l.slice(0, 300), expected: "the covering test passes", class: "covering-test-fails", severity: "blocking" }; });
   if (r.status !== 0 && !f.length) f.push({ locator: { type: "file", path: [...tests][0] }, message: log.trim().split("\n").slice(-3).join(" | ").slice(0, 300), expected: "exit 0", class: "covering-test-fails", severity: "blocking" });

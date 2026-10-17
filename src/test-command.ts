@@ -2,7 +2,7 @@ import {homedir} from 'node:os';
 import {localUnrestricted} from './local-execution';
 import {cpSync,readFileSync,existsSync,lstatSync,mkdirSync,rmSync,writeFileSync,symlinkSync} from 'node:fs';
 import {join,dirname} from 'node:path';
-import {must,gitArgv,gitEnv} from './git';
+import {must,gitArgv,gitEnv,changedPaths} from './git';
 import {matches} from './doors';
 import {normPath} from './review-read';
 // One resolver for role tools: select files in known runners, never pretend an
@@ -45,10 +45,10 @@ export function ranNoTests(output:string):boolean{
 /** The tree a test ran on: the commit, plus whether the worktree has uncommitted changes and the tree hash of what is on disk. */
 export function treeState(wt:string,scratch:string):{head:string;dirty:boolean;tree:string}{
  const head=must(wt,['rev-parse','HEAD']);
- if(!must(wt,['status','--porcelain=v1','--untracked-files=all']).trim())return{head,dirty:false,tree:must(wt,['rev-parse','HEAD^{tree}'])};
+ const paths=changedPaths(wt);if(!paths.length)return{head,dirty:false,tree:must(wt,['rev-parse','HEAD^{tree}'])};
  mkdirSync(scratch,{recursive:true});const idx=join(scratch,'tree-state.index'),env=gitEnv({GIT_INDEX_FILE:idx});
  const run=(args:string[])=>{const r=Bun.spawnSync(gitArgv(args),{cwd:wt,stdout:'pipe',stderr:'pipe',env});if(!r.success)throw Error(`git ${args[0]}: ${r.stderr.toString().trim()}`);return r.stdout.toString().trim();};
- try{run(['read-tree',head]);run(['add','--all']);return{head,dirty:true,tree:run(['write-tree'])};}finally{rmSync(idx,{force:true});} // a private index: the worktree's own index is untouched
+ try{run(['read-tree',head]);run(['add','--all','--',...paths.map(p=>`:(literal)${p}`)]);return{head,dirty:true,tree:run(['write-tree'])};}finally{rmSync(idx,{force:true});} // a private index: the worktree's own index is untouched
 }
 
 /** Only operator-configured local browser capabilities, never credentials. */

@@ -90,6 +90,8 @@ export const changedOf = (wt: string, base: string): ChangedPath[] => {
 const head = (wt: string) => must(wt, ["rev-parse", "HEAD"]);
 /** Executed run_tests calls a worker gets per round; refused calls and runs that select no tests are not counted. */
 const WORKER_TEST_RUNS = 10;
+/** Executed run_tests calls a run-mode reviewer gets per review; refused calls and runs that select no tests are not counted. */
+const REVIEW_TEST_RUNS = 3;
 /** The base package.json scripts.test text, whatever source the declared test command came from (runner=npm-test runs it). */
 const baseTestScript = (wt: string, base: string) => { const raw = showAt(wt, base, "package.json"); if (raw === null) return null; try { const s = JSON.parse(raw)?.scripts?.test; return typeof s === "string" ? s : null; } catch { return null; } };
 /** A brief written for one head carries to the round's head only when the base alone moved (a merge of the base, or a rebase onto it):
@@ -955,7 +957,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     begin: async (x) => { await reviewHooks.begin?.(x); await prepareReview(x); },
     end: async (x, how) => { dropReviewTree(x); await reviewHooks.end?.(x, how); },
     sandbox: (x) => { const wt = x.ctx.worktree; const t = x.rn.data.tree; return wt && existsSync(wt) ? { writes: [], reads: [t ?? wt], cwd: t ?? wt } : null; }, // reads the checkout, writes nothing of it
-    tools: (x) => { const tree = x.rn.data.tree ?? shellOk(x); const cfg = cfgOf(x); const mode = reviewMode(x); let runs = 0, cmds = 0;
+    tools: (x) => { const tree = x.rn.data.tree ?? shellOk(x); const cfg = cfgOf(x); const mode = reviewMode(x); let runs = 0, attempts = 0, cmds = 0;
       // the listing and the search over the untrusted checkout: bounded and off the event loop like every read (src/review-read.ts)
       const others: AgentTool[] = [
         { name: "fs_list", description: `List the files of the head's checkout with their sizes (at most ${LIST_CAP}).`, schema: { type: "object", properties: {} }, run: async () => listTree(tree) },
@@ -968,7 +970,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
           else if (r?.view && r.view !== "none") d.viewed[r.path] = r.view;
           x.save(); return r; } };
       // both run tools: on a clone of the installed fresh checkout, in the sandbox (no network), the clone removed on every exit
-      const inCopy = async (label: string, argv: string[], timeoutS: number) => {
+      const inCopy = async (label: string, argv: string[], timeoutS: number, extraEnv: Record<string, string> = {}, tests = false) => {
         const d = reviewDepth(x).d; const box = join(runsDir(x), label); let base: string;
         try { base = await runBase(x); }
         catch (e: any) { const why = String(e?.message ?? e).slice(0, 300); if (!d.notExecuted) d.notExecuted = why; d.executed.push({ command: argv.join(" "), refused: why, at: new Date().toISOString() }); x.save();
@@ -978,16 +980,39 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
           const exe = resolveCmd(copy, argv[0]); if (!exe) return { error: `refused: ${argv[0]} is not a program on the fixed PATH (${fixedPath("<copy>").join(":")}) or a file inside the copy` };
           const cmd = [exe, ...argv.slice(1)]; mkdirSync(join(box, "tmp"), { recursive: true });
           const r = process.env.CREW_TEST_REVIEW_SANDBOX_REFUSE === "1" ? { refused: "the round sandbox is not available (test)" } as any
-            : await sandboxed(cmd, { cwd: copy, out: copy, tmp: join(box, "tmp"), timeoutS, network: false, dataDir: o.dataDir, argvRead: false, env: { PATH: fixedPath(copy).join(":"), ...testEnvironment(), CREW_TEST_OUTPUT_DIR:copy } });
+            : await sandboxed(cmd, { cwd: copy, out: copy, tmp: join(box, "tmp"), timeoutS, network: false, dataDir: o.dataDir, argvRead: false, env: { PATH: fixedPath(copy).join(":"), ...testEnvironment(), ...extraEnv, CREW_TEST_OUTPUT_DIR:copy } });
           if (r.refused) { d.executed.push({ command: argv.join(" "), refused: r.refused, at: new Date().toISOString() }); x.save(); return { error: `refused: ${r.refused} (recorded: the merge card flags that it could not run)` }; }
+          const tail = (r.stdout + r.stderr).trim().split("\n").slice(-25).join("\n");
+          // a test run that selected nothing proves nothing: never recorded as an executed verification
+          if (tests && ranNoTests(r.stdout + r.stderr)) return { status: "no-tests", error: `the run executed no tests, so it proves nothing and does not count against the limit.${extraEnv.CREW_TEST_FILES ? ` The adapter got CREW_TEST_FILES=${extraEnv.CREW_TEST_FILES} and CREW_TEST_PATHS=${extraEnv.CREW_TEST_PATHS}; check those name existing test files.` : " Check the declared command finds the test files."}`, exit: r.timedOut ? null : r.code, tail };
           d.executed.push({ command: argv.join(" "), exit: r.timedOut ? null : r.code, at: new Date().toISOString() }); x.save();
-          return { exit: r.timedOut ? null : r.code, timedOut: r.timedOut, tail: (r.stdout + r.stderr).trim().split("\n").slice(-25).join("\n") };
+          return { status: "executed", exit: r.timedOut ? null : r.code, timedOut: r.timedOut, tail };
         } catch (e: any) { return { error: String(e?.message ?? e) }; }
         finally { rmSync(box, { recursive: true, force: true }); } };
+      const reviewTests = async (a: any): Promise<any> => {
+        if (!cfg.test) return { error: "the repository declares no test command (recorded: the merge card flags that nothing ran); run_command can still check a claim" };
+        const files = a?.files; const isTest = (p: any) => typeof p === "string" && normPath(p) === p && !p.includes(",") && cfg.tests.some(g => matches(g, p));
+        if (files !== undefined) {
+          if (!Array.isArray(files) || !files.length || files.length > 12) return { error: 'files must be a nonempty list of at most 12 repo-relative test paths, e.g. run_tests({files:["test/example.test.ts"]}); omit files to run the whole declared command' };
+          const bad = files.filter((p: any) => !isTest(p));
+          if (bad.length) { // a bare basename names the repository test it ends, when exactly one does
+            const r = git(tree, ["ls-files"]); const known = r.ok ? r.out.split("\n").filter(Boolean) : [];
+            const fixed = files.map((p: any) => isTest(p) ? [p] : typeof p === "string" ? known.filter(k => k.endsWith(`/${p}`) && isTest(k)) : []);
+            const hint = fixed.every((f: string[]) => f.length === 1) ? ` Call run_tests(${JSON.stringify({ files: fixed.map((f: string[]) => f[0]) })}).` : ' Use repo-relative paths, e.g. "test/example.test.ts".';
+            return { error: `files must be repo-relative test paths (test globs: ${cfg.tests.join(", ")}); rejected ${JSON.stringify(bad)}.${hint}` };
+          }
+          const names = files.map((f: string) => f.split("/").at(-1)); const dup = names.find((v: string, i: number) => names.indexOf(v) !== i);
+          if (dup) return { error: `the runner adapter selects by basename and two selected files are named ${dup}; select them in separate run_tests calls` };
+        }
+        let command; try { command = selectTestCommand(cfg, files); } catch (e: any) { return { error: e.message }; }
+        if (runs >= REVIEW_TEST_RUNS) return { error: `test run limit reached: all ${REVIEW_TEST_RUNS} executed runs are used; judge by reading and say what is not verified` };
+        runs++; const r: any = await inCopy(`tests-${++attempts}`, command!, cfg.timeout_s, selectionEnv(files), true);
+        if (r.status !== "executed") runs--; // refused, could not run, or ran no tests
+        return r;
+      };
       const runTool: AgentTool[] = mode !== "run" ? [] : [
-        { name: "run_tests", description: "Run the repository's own test command on the head, in a throwaway copy of the head with its dependencies installed, in your sandbox (no network, at most 3 times). Returns the exit code and the last lines.", schema: { type: "object", properties: {files:{type:"array",items:{type:"string"},maxItems:12}} },
-          run: async (a) => { const files=a?.files;if(files!==undefined&&(!Array.isArray(files)||!files.length||files.length>12||files.some((p:any)=>typeof p!=="string"||normPath(p)!==p||!cfg.tests.some(g=>matches(g,p)))))return{error:"files must name repository tests"};if (!cfg.test) return { error: "the repository declares no test command (recorded: the merge card flags that nothing ran); run_command can still check a claim" }; if (++runs > 3) return { error: "test run limit reached" };
-            let command;try{command=selectTestCommand(cfg,files);}catch(e:any){return{error:e.message};}return inCopy(`tests-${runs}`, command!, cfg.timeout_s); } },
+        { name: "run_tests", description: `Run the repository's own test command on the head, in a throwaway copy of the head with its dependencies installed, in your sandbox (no network, at most ${REVIEW_TEST_RUNS} executed runs; refused calls and runs that select no tests do not count, and every result says how many remain). Optional files selects tests by repo-relative path (e.g. "test/format.test.ts"); the runner adapter receives basenames in CREW_TEST_FILES and the paths in CREW_TEST_PATHS. Returns the exit code and the last lines.`, schema: { type: "object", properties: {files:{type:"array",items:{type:"string"},maxItems:12}} },
+          run: async (a) => { const res: any = await reviewTests(a); return { ...res, runsRemaining: Math.max(0, REVIEW_TEST_RUNS - runs) }; } },
         { name: "run_command", description: "Run one small verification command (argv, no shell; a program from the system PATH, bun, or a path inside the copy) on a throwaway copy of the head in your sandbox: no network, no credentials, nothing written back. At most 4 times.",
           schema: { type: "object", properties: { argv: { type: "array", items: { type: "string" } } }, required: ["argv"] },
           run: async (a) => { const argv = (Array.isArray(a.argv) ? a.argv : []).map(String).slice(0, 40); if (!argv.length) return { error: "argv is required" }; if (++cmds > 4) return { error: "command limit reached" };

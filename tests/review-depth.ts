@@ -348,5 +348,18 @@ out({ type: "item.completed", item: { id: "a1", type: "agent_message", text: "do
     ok(x.rn.data.plan.required[0] === "src/a.ts", `longer path, suffix and child do not name a shorter file: ${line}`); await mode.end?.(x, "done");
   }
 }
+// run mode with a gates.json shard adapter that selects by basename (money-kit): files reach it, zero-test runs and refusals do not count
+{ const { repo, base } = repoWith({ test: ["bun", "scripts/test-shard.ts"], tests: ["test/**"] }, {
+    "scripts/test-shard.ts": readFileSync(join(root, "templates/sandbox-repo/scripts/test-shard.ts"), "utf8"),
+    "test/a.test.ts": 'import { expect, test } from "bun:test";\ntest("a passes", () => expect(1).toBe(1));\n',
+    "test/b.test.ts": 'import { expect, test } from "bun:test";\ntest("b fails", () => expect(1).toBe(2));\n' });
+  const x = fakeX(repo, base, { "reviewer.mode": "run" }); x.ctx.head = sh(repo, "git", "rev-parse", "HEAD"); const T = await toolsOf(x);
+  const sel = await T.run_tests.run({ files: ["test/a.test.ts"] }); const bare = await T.run_tests.run({ files: ["a.test.ts"] }); const none = await T.run_tests.run({ files: ["test/missing.test.ts"] });
+  ok(sel.status === "executed" && sel.exit === 0 && /Ran 1 test/.test(sel.tail) && sel.runsRemaining === 2, "the reviewer's selected test reaches the basename adapter: only test/a.test.ts runs, never the whole suite", JSON.stringify(sel).slice(0, 500));
+  ok(/Call run_tests\(\{"files":\["test\/a\.test\.ts"\]\}\)/.test(bare.error ?? "") && bare.runsRemaining === 2, "a bare basename is refused with the exact call to make, and does not count", JSON.stringify(bare));
+  ok(none.status === "no-tests" && none.runsRemaining === 2 && x.rn.data.depth.executed.length === 1, "a selection that runs no tests is not an executed verification and does not count", JSON.stringify([none, x.rn.data.depth.executed]).slice(0, 500));
+  const r2 = await T.run_tests.run({}), r3 = await T.run_tests.run({}), over = await T.run_tests.run({});
+  ok(r2.exit === 1 && r3.runsRemaining === 0 && /test run limit reached: all 3 executed runs/.test(over.error ?? "") && over.runsRemaining === 0, "three executed runs with a countdown, then a limit message saying what to do", JSON.stringify([r2.runsRemaining, r3.runsRemaining, over]));
+  await mode.end?.(x, "done"); }
 H.stop();
 end();

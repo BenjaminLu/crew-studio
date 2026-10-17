@@ -2,7 +2,7 @@
 // test as "FAIL <file>: <name>", the line format Crew Studio's CI check reads.
 import { readdirSync } from "node:fs";
 const shard = Number(process.env.CREW_SHARD ?? 0), shards = Number(process.env.CREW_SHARDS ?? 1);
-const only = (process.env.CREW_TEST_FILES ?? "").split(",").filter(Boolean);
+const only = (process.env.CREW_TEST_FILES ?? "").split(",").filter(Boolean); // basenames; Studio also sets CREW_TEST_PATHS (repo-relative)
 const files = readdirSync("test").filter((f) => f.endsWith(".test.ts") && (!only.length || only.includes(f))).sort().filter((_, i) => i % shards === shard).map((f) => `test/${f}`);
 if (!files.length) { console.log(`shard ${shard + 1}/${shards}: no test files`); process.exit(0); }
 // process.execPath: the bun running this script (a sandbox may hand bun an empty environment, so PATH is not relied on)
