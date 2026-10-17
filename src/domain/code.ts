@@ -637,7 +637,10 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       if (p && p.mergeable_state !== "behind") return "ok";
       const trusted = engine.trusted(x.run.id), review: any = trusted.entries.filter(e => e.check === "firstmate/review-verdict").at(-1), b = review?.data?.binding;
       if (!trusted.ok || review?.verdict !== "pass" || b?.unverified || b?.head !== x.ctx.pr.head || x.ctx.reviewUnverified || (x.ctx.reviews ?? []).at(-1)?.verdict === "REJECT") throw new Error("bound review unavailable");
-      const old = x.ctx.pr, key = wkey(x); const round = await W.startRound(key.project,key.task,`${x.run.id}/remote-ready#${x.visit}`,{write:true,install:x.policy("install") === false ? false : null,remote:()=>a.remoteGit()}); release=round.release;phase.assert();if(round.head!==old.head)throw new Error("task head moved before update");
+      const old = x.ctx.pr, key = wkey(x); const round = await W.startRound(key.project,key.task,`${x.run.id}/remote-ready#${x.visit}`,{write:true,install:x.policy("install") === false ? false : null,remote:()=>a.remoteGit()}); release=round.release;phase.assert();
+      // a pending update already moved the remote branch to its result before the restart: the round adopts that head from the
+      // remote, which is the pending result itself (verified against GitHub below), not a moved Task head
+      const adopted=!!pending&&round.head===pending.next.pr.head;if(round.head!==old.head&&!adopted)throw new Error("task head moved before update");
       const request=pending?pending.request:engine.record(x,"remote-update-request",{head:old.head,data:{version:1,grant:grantIdentity(a),repository:a.grant.repository,pr:structuredClone(old),base:x.ctx.baseCommit}} as any)?.seq;
       const next = pending?pending.next:await updateOnce(a, old, x.dir, phase.signal, phase.assert); phase.assert();
       await a.verifyUpdateResult(old,next,phase.signal,phase.assert);phase.assert();
@@ -649,8 +652,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       await a.importHeads(next.pr, phase.signal); phase.assert(); if(!git(x.ctx.repo,["merge-base","--is-ancestor",old.head,next.pr.head]).ok)throw new Error("accepted update head was replaced");
       const proof = proveCleanCarry(x.ctx.repo, b.base, old.head, next.baseHead, next.pr.head); phase.assert();
       const rec = W.get(wkey(x).project, wkey(x).task), wt = shellOk(x);
-      if (!rec || rec.path !== wt || rec.branch !== old.branch || wt === x.ctx.repo || head(wt) !== old.head || git(wt, ["status", "--porcelain"]).out || git(wt, ["symbolic-ref", "--short", "HEAD"]).out !== old.branch) throw new Error("owned clean task worktree required");
-      W.acceptHead(key.project,key.task,old.head,next.pr.head,next.baseHead);
+      if (!rec || rec.path !== wt || rec.branch !== old.branch || wt === x.ctx.repo || head(wt) !== round.head || git(wt, ["status", "--porcelain"]).out || git(wt, ["symbolic-ref", "--short", "HEAD"]).out !== old.branch) throw new Error("owned clean task worktree required");
+      W.acceptHead(key.project,key.task,round.head,next.pr.head,next.baseHead);
       x.ctx.pr = next.pr; x.ctx.head = next.pr.head; x.ctx.baseCommit = next.baseHead; x.ctx.remoteCI = null; x.ctx.remoteUpdatePending=null; phase.rebind();
       writeFileSync(join(x.dir,"pr.json"), JSON.stringify(next.pr), { mode: 0o600 });
       engine.record(x,"approval-carry",{ head: next.pr.head, data: { review: review.seq, proof } } as any); x.save();
