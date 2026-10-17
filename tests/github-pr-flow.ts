@@ -171,8 +171,8 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
     source = structuredClone(run.ctx); source.head = head3;
     const upd = E.start({ workflow: "pr-update", text: "next round" }); await until(() => ["succeeded", "failed"].includes(upd.status), 15000);
     const patch = sim.calls.filter((c) => c.method === "PATCH").at(-1);
-    ok(upd.status === "succeeded" && sim.head("crew/euro") === head3 && patch?.body?.body === card3.pullRequest.body && patch?.body?.title === card3.pullRequest.title && E.trusted(upd.id).entries.some((e) => e.record === "remote-push" && e.data?.from === head2 && e.data?.to === head3 && e.data?.lease === head2),
-      "after the pull request exists, a new round's head is pushed with the lease on the last pushed head, keeping the approved title and body", `${upd.status} ${patch?.body?.title}`);
+    ok(upd.status === "succeeded" && sim.head("crew/euro") === head3 && JSON.stringify(patch?.body) === JSON.stringify({ base: "main" }) && opened?.body === card3.pullRequest.body && upd.ctx.pr.body === card3.pullRequest.body && E.trusted(upd.id).entries.some((e) => e.record === "remote-push" && e.data?.from === head2 && e.data?.to === head3 && e.data?.lease === head2),
+      "after the pull request exists, a new round's head is pushed with the lease on the last pushed head, and the text on GitHub is left as it is (the PATCH sends the base alone)", `${upd.status} ${JSON.stringify(patch?.body)} ${upd.steps.map((s: any) => s.error).filter(Boolean).join(" | ")}`);
 
     // the later round left the opened text on head2's evidence: remote-ready offers the refreshed text as a diff; nothing changes on GitHub until Update
     source = structuredClone(upd.ctx);
@@ -186,12 +186,14 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
     const edit = sim.calls.filter((c) => c.method === "PATCH").at(-1), shown = rc.body.split("\nNew text:\n")[1];
     ok(rf.status === "succeeded" && patches() === p0 + 1 && edit?.body?.body === shown && rf.ctx.pr.body === shown && sim.head("crew/euro") === head3 && E.trusted(rf.id).entries.some((e) => e.record === "pr-text-updated" && e.data?.pr === upd.ctx.pr.id),
       "Update PATCHes exactly the shown text (the head stays), records it, and remote-ready goes on", `${rf.status} ${patches() - p0}`);
-    // the text on GitHub now names this head (its markers): no second offer, nothing edited
+    // markers alone do not make a text current: a Task with no signed record of having written it offers the update again
     const rk = E.start({ workflow: "pr-refresh", text: "refresh again" }); await until(() => !!openCard(rk) || ["succeeded", "failed"].includes(rk.status), 15000);
-    ok(rk.status === "succeeded" && patches() === p0 + 1 && E.cards.list({ run: rk.id }).length === 0, "a text whose markers name the head is not offered again", `${rk.status} ${E.cards.list({ run: rk.id }).length}`);
+    const kc = openCard(rk);
+    ok(kc?.title.en.startsWith("Update the text") && /no record of writing that text/.test(kc.sections.en.why) && patches() === p0 + 1, "a text whose markers name the head but that this Task has no record of is offered again, not trusted", `${rk.status} ${kc?.sections?.en?.why}`);
+    await E.answer(kc.id, { choice: "close", by: "captain" } as any); await until(() => ["succeeded", "failed"].includes(rk.status), 15000);
 
     // the merge card with no operations grant: the pull request is open; merge it on GitHub (with its link)
-    source = structuredClone(upd.ctx);
+    source = structuredClone(upd.ctx); source.prText = null; // the text gate before the merge is pr-text-stale.ts's; this Task copies another's context
     const mv = E.start({ workflow: "merge-view", text: "merge view" }); await until(() => !!openCard(mv) || ["succeeded", "failed"].includes(mv.status), 15000);
     const mc = openCard(mv), url = upd.ctx.pr.url;
     ok(mc?.title.en === `Pull request #${upd.ctx.pr.id} is open: merge it on GitHub` && mc.body.includes(`PR #${upd.ctx.pr.id} is open at ${url}; merging from Studio is off, so merge it on GitHub.`) && mc.sections["zh-TW"].why.includes(url) && mc.links.some((l: any) => l.href === url) && !/Remote verification stopped/.test(mc.title.en),

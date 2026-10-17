@@ -64,7 +64,8 @@ export function githubSimulator(bare: string, repository = "fixture/project") {
     } else if (/^\/pulls\/[1-9][0-9]*$/.test(path) && !u.search) {
       const p = pulls.get(Number(path.split("/")[2])); if (!p) return json({ message: "Not Found" }, 404);
       if (req.method === "GET") response = json(shaped(p));
-      else if (req.method === "PATCH" && keys(body, ["title", "body", "base"], ["title", "body", "base"]) && head(body.base)) { Object.assign(p, { title: body.title, body: body.body, base: { ref: body.base } }); response = json(shaped(p)); }
+      // GitHub's PATCH changes only the fields it is sent (a push that moves the head sends the base alone)
+      else if (req.method === "PATCH" && keys(body, ["title", "body", "base"], ["base"]) && ("title" in body) === ("body" in body) && (!("title" in body) || (typeof body.title === "string" && typeof body.body === "string")) && head(body.base)) { Object.assign(p, { ...("title" in body ? { title: body.title, body: body.body } : {}), base: { ref: body.base } }); response = json(shaped(p)); }
       else return bad();
     } else if (req.method === "GET" && path === "" && !u.search && !expected.has("GET ")) {
       response = json({ full_name: repository, default_branch: "main", private: true, visibility: "private" });

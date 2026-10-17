@@ -14,7 +14,12 @@ import { harness, Y, until, suite } from "./rt-harness";
 import { installCode } from "../src/domain/code";
 import { Projects } from "../src/doors";
 import { GitHubPrAdapter } from "../src/adapters/github";
-import { studioParts, studioTextHash, wrapStudioText } from "../src/domain/pull-template";
+import { createHash } from "node:crypto";
+// read loosely: on a release without Studio's markers the flows below still run and fail on what they do, not on an import
+const PT: any = await import("../src/domain/pull-template");
+const studioParts: (b: string) => { marked: boolean; before: string; inner: string; after: string; head: string | null; hash: string | null } = PT.studioParts ?? ((b: string) => ({ marked: false, before: "", inner: String(b ?? ""), after: "", head: null, hash: null }));
+const studioTextHash: (s: string) => string = PT.studioTextHash ?? ((s: string) => createHash("sha256").update(s).digest("hex"));
+const wrapStudioText: (t: string, h: string) => string = PT.wrapStudioText ?? ((t: string) => t);
 import { must, setGitHome } from "../src/git";
 import { githubSimulator } from "./lib/github-simulator";
 
@@ -45,8 +50,10 @@ const sim = githubSimulator(bare);
 sim.expect("GET", "/branches/main/protection/required_status_checks", { strict: true, checks: [], contexts: [] });
 const grant: any = { mode: "simulator", repository: "fixture/project", localPath: repo, pushUrl: bare, apiOrigin: sim.origin, base: "main", branchPrefix: "crew/", approvedAt: "2026-10-17T00:00:00Z", approvalId: "test" };
 const adapter = new GitHubPrAdapter(grant, () => "fake-token", 3000);
+// the same project with a captain-named repository operation grant: Studio merges (in this test, the merge step only records the text on GitHub)
+const operated = new GitHubPrAdapter({ ...grant, operations: { version: 1, repository: "fixture/project", approvalId: "fake-operations", approvedAt: "2026-10-17T00:00:00Z", mergeMethod: "squash" } }, () => "fake-token", 3000);
 const ids = (c: any) => (c?.options ?? []).map((o: any) => o.id).join();
-const patches = () => sim.calls.filter((c) => c.method === "PATCH" && /^\/pulls\/\d+$/.test(c.path)).length;
+const patches = () => sim.calls.filter((c) => c.method === "PATCH" && /^\/pulls\/\d+$/.test(c.path) && "body" in (c.body ?? {})).length; // edits of the text (a push sends the base alone)
 const mangled = (head: string) => R069.body.replaceAll("235859c5", head.slice(0, 8));
 const pullOf = (r: any) => sim.pulls.get(Number(r.ctx.pr.id));
 const green = (head: string) => { sim.expect("GET", `/commits/${head}/check-runs?filter=all&per_page=100&page=1`, { total_count: 1, check_runs: [{ id: 1, name: "test", app: { id: 15368 }, head_sha: head, status: "completed", conclusion: "success" }] }); sim.expect("GET", `/commits/${head}/status?per_page=100&page=1`, { sha: head, total_count: 0, statuses: [] }); };
@@ -63,6 +70,9 @@ const flow = Y({ id: "stale-flow", name: "Stale flow", roles: [{ id: "coordinato
     ["merge-card", "round", "changes"], ["merge-card", "closed", "close"], ["round", "pr-push"], ["pr-push", "merge-card", "ok"], ["pr-push", "closed", "close"]] });
 const readyFlow = Y({ id: "stale-ready", name: "Stale ready", roles: [{ id: "coordinator", label: "Coordinator" }], nodes: nodes.filter((n) => n.id !== "round" && n.id !== "pr-push"),
   edges: [["seed", "pr-open"], ["pr-open", "r069", "ok"], ["pr-open", "closed", "close"], ["r069", "remote-ready"], ["remote-ready", "merge-card", "ok"], ["remote-ready", "closed", "close"], ["merge-card", "closed", "close"]] });
+const studioMerge = Y({ id: "stale-studio-merge", name: "Stale Studio merge", roles: [{ id: "coordinator", label: "Coordinator" }],
+  nodes: [...nodes.filter((n) => !["remote-ready", "round", "pr-push"].includes(n.id)), { id: "merged", kind: "hook", do: "fixture.merged", label: "Merge", x: 5, y: 0 }, { id: "done", kind: "hook", label: "Done", x: 6, y: 0 }],
+  edges: [["seed", "pr-open"], ["pr-open", "r069", "ok"], ["pr-open", "closed", "close"], ["r069", "merge-card"], ["merge-card", "merged", "merge"], ["merge-card", "closed", "close"], ["merge-card", "closed", "changes"], ["merged", "done"]] });
 
 // the coordinator writes the final state it is shown (scripted); every prompt is kept
 const prompts: { system: string; text: string }[] = [];
@@ -73,9 +83,9 @@ const finalText = (head: string) => ({ title: "Add euro formatting and EUR switc
   { heading: "How it was tested", text: `The acceptance tests below fail on main and pass at ${head.slice(0, 8)}.` },
   { heading: "Screenshots", text: "The shop views now include the € EUR option." }, { heading: "Risk and rollback", text: "Incorrect amounts or links could show; the acceptance tests cover them." }] });
 
-const install = async (data?: string) => {
-  const H = await harness([flow, readyFlow], data ? { data } : {}), E = H.engine;
-  installCode(E, { dataDir: H.data, projects: new Projects(H.data), adapter });
+const install = async (data?: string, with_: GitHubPrAdapter = adapter) => {
+  const H = await harness([flow, readyFlow, studioMerge], data ? { data } : {}), E = H.engine;
+  installCode(E, { dataDir: H.data, projects: new Projects(H.data), adapter: with_ });
   (E.deps.agents as any).run = async (job: any) => { const t = job.tools?.find((t: any) => t.name === "pull_request_text"); if (t) { prompts.push({ system: job.system, text: job.text }); t.run(finalText(/head ([a-f0-9]{40})/.exec(job.text)?.[1] ?? "")); } return { status: "done" }; };
   const evidenceAt = (x: any) => { E.record(x, "check", { check: "firstmate/ci", verdict: "pass", kind: "deterministic", data: { shards: [] } } as any); E.record(x, "check", { check: "firstmate/fail-first", verdict: "pass", kind: "deterministic", proves: R069.proves, data: { applicable: true } } as any); };
   E.actions["fixture.seed"] = (x) => {
@@ -88,7 +98,8 @@ const install = async (data?: string) => {
   // what the older release left on the live Task: the text opened from the template, its mangled table, at this head
   E.actions["fixture.r069"] = (x) => {
     sim.community.set(TEMPLATE.path, TEMPLATE_TEXT); evidenceAt(x);
-    const h = x.ctx.head, body = mangled(h);
+    // params.forged: a well-formed marker naming this head with the sha256 of its text, written by someone other than Studio
+    const h = x.ctx.head, body = x.run.params.forged ? `${wrapStudioText("## Summary\n\nLooks current.\n", h)}\n` : mangled(h);
     x.ctx.prText = { version: 1, head: h, sources: "0".repeat(64), template: x.run.params.legacy ? null : TEMPLATE, title: R069.title, body, proven: [], proofs: {}, draft: false, repository: "fixture/project", branch: x.ctx.branch, base: "main", baseCommit, hash: "1".repeat(64), unproven: [], by: "coordinator", card: "SC-0" };
     x.ctx.pr = { ...x.ctx.pr, title: R069.title, body };
     Object.assign(pullOf(x), { title: R069.title, body: x.run.params.edit ? `${body}\n\nReviewer note: the euro rows were checked by hand.` : body });
@@ -96,6 +107,8 @@ const install = async (data?: string) => {
   };
   // a later round: a new head with its evidence; pr-open pushes it (the text on GitHub stays as it is)
   E.actions["fixture.round"] = (x) => { const h = commit(`${x.ctx.branch} round ${x.visit}`); green(h); x.ctx.head = h; evidenceAt(x); return "ok"; };
+  // Studio's merge step, as far as this test goes: what GitHub shows when it runs
+  E.actions["fixture.merged"] = (x) => { x.ctx.mergedBody = pullOf(x).body; return "ok"; };
   return { H, E };
 };
 const openCard = (E: any, r: any) => E.cards.list({ run: r.id, open: true })[0];
@@ -122,7 +135,7 @@ try {
       const m = openCard(E, r), body: string = pullOf(r).body, p = studioParts(body);
       ok(patches() === p0 + 1 && body === c.body.split("\nNew text:\n")[1] && p.marked && p.head === h0 && p.hash === studioTextHash(p.inner) && sim.head(r.ctx.branch) === h0,
         "Update PATCHes exactly the shown text, marked with the head and its hash (the head stays)", body.slice(0, 200));
-      ok(body.includes("Corner Shop offers EUR beside USD and JPY") && cleanRows(body, h0) && body.includes("**Door: two-way (雙向門).** Reverting this pull request undoes it.") && !/Studio recorded passing CI, lint/.test(body),
+      ok(body.includes("Corner Shop offers EUR beside USD and JPY") && cleanRows(body, h0) && body.includes("**Door: two-way (雙向門).** No changed path is on a one-way list: reverting this pull request undoes it.") && !/Studio recorded passing CI, lint/.test(body),
         "R-069 ends with a body that describes the final EUR change, with clean test rows and a door line", body.slice(body.indexOf("## How"), body.indexOf("## Checklist")));
       ok(m?.title.en === `Pull request #${r.ctx.pr.id} is open: merge it on GitHub` && ids(m) === "close,changes" && E.trusted(r.id).entries.some((e: any) => e.record === "pr-text-updated" && e.data?.card === c.id),
         "the update is recorded, and then the merge card comes", m?.title?.en);
@@ -130,9 +143,10 @@ try {
       // ---------- someone adds a note outside Studio's part; the captain asks for changes; a round moves the head ----------
       pullOf(r).body = `${body}\n\nReviewer note: checked the euro rows by hand.`;
       await E.answer(m.id, { choice: "changes", note: "Show the exchange rate under the basket total", by: "captain" } as any); await settle(E, r, m.id);
-      const s = openCard(E, r), h1 = r.ctx.head, p1 = patches();
+      const s = openCard(E, r), h1 = r.ctx.head, p1 = patches(), push = sim.calls.filter((c) => c.method === "PATCH").at(-1);
+      ok(JSON.stringify(push?.body) === JSON.stringify({ base: "main" }), "the round's push PATCHes the base alone: no title or text goes with it", JSON.stringify(push?.body));
       ok(h1 !== h0 && sim.head(r.ctx.branch) === h1 && /Reviewer note: checked the euro rows by hand\.$/.test(pullOf(r).body) && s?.title.en === STANDIN(r) && ids(s) === "update-text,changes,close",
-        "the round's push leaves GitHub's text as it is, and the merge waits for the text of the new head", `${s?.title?.en} ${ids(s)}`);
+        "the round's push leaves GitHub's text as it is, and the merge waits for the text of the new head", `${s?.title?.en} ${ids(s)} ${r.steps.map((x: any) => x.error).filter(Boolean).join(" | ")}`);
       const next = s.body.split("\nNew text:\n")[1] ?? "", q = studioParts(next);
       ok(q.head === h1 && cleanRows(next, h1) && !next.includes(`fail-first at ${h0.slice(0, 8)}`) && next.includes("A1. Show the exchange rate under the basket total") && !/\bround \d/i.test(next),
         "the new text is written from the final state: evidence at the new head, the captain's binding change, no history", next.slice(next.indexOf("## How"), next.indexOf("## Screenshots")));
@@ -140,16 +154,23 @@ try {
       await E.answer(s.id, { choice: "update-text", by: "captain" } as any); await settle(E, r, s.id);
       ok(patches() === p1 + 1 && pullOf(r).body === next && openCard(E, r)?.title.en.endsWith("merge it on GitHub"), "the update lands and the merge card follows");
 
-      // ---------- someone edits inside Studio's part: the captain sees the diff and keeps theirs ----------
-      const edited = pullOf(r).body.replace("Corner Shop offers EUR beside USD and JPY", "Corner Shop offers EUR (reviewed by Ana)");
-      pullOf(r).body = edited; const mc = openCard(E, r);
-      await E.answer(mc.id, { choice: "changes", note: "Keep the rate line short", by: "captain" } as any); await settle(E, r, mc.id);
+      // ---------- someone edits inside Studio's part of this head after the merge card: "I merge on GitHub" reads GitHub first ----------
+      pullOf(r).body = pullOf(r).body.replace("Corner Shop offers EUR beside USD and JPY", "Corner Shop offers EUR (reviewed by Ana)");
+      const mc = openCard(E, r);
+      await E.answer(mc.id, { choice: "close", by: "captain" } as any); await settle(E, r, mc.id);
       const k = openCard(E, r), p2 = patches();
-      ok(k?.title.en === STANDIN(r) && ids(k) === "update-text,keep-text,changes,close" && /Someone edited Studio's part/.test(k.sections.en.why) && k.body.includes("reviewed by Ana)") && /^-.*reviewed by Ana/m.test(k.body) && k.options[0].label === "Replace with Studio's text",
-        "an edit inside Studio's part is not clobbered: the card shows the diff, Keep their text or Replace", `${ids(k)} ${k?.sections?.en?.why}`);
+      ok(r.status === "waiting" && k?.title.en === STANDIN(r) && ids(k) === "update-text,keep-text,changes,close" && /Someone edited Studio's part/.test(k.sections.en.why) && /^-.*reviewed by Ana/m.test(k.body) && k.options[0].label === "Replace with Studio's text",
+        "the text is read again right before 'I merge on GitHub': an edit of this head's text brings the card back with the diff, Keep their text or Replace", `${r.status} ${ids(k)} ${k?.sections?.en?.why}`);
       await E.answer(k.id, { choice: "keep-text", by: "captain" } as any); await settle(E, r, k.id);
-      ok(patches() === p2 && /reviewed by Ana/.test(pullOf(r).body) && openCard(E, r)?.title.en.endsWith("merge it on GitHub") && E.trusted(r.id).entries.some((e: any) => e.record === "pr-text-kept" && e.data?.card === k.id),
+      const mk = openCard(E, r);
+      ok(patches() === p2 && /reviewed by Ana/.test(pullOf(r).body) && mk?.title.en.endsWith("merge it on GitHub") && E.trusted(r.id).entries.some((e: any) => e.record === "pr-text-kept" && e.data?.card === k.id),
         "Keep their text: nothing is PATCHed, it is recorded, and the merge card follows");
+
+      // ---------- the kept text, then a round moves the head: it lags the head now, so it can only be updated ----------
+      await E.answer(mk.id, { choice: "changes", note: "Keep the rate line short", by: "captain" } as any); await settle(E, r, mk.id);
+      const u = openCard(E, r);
+      ok(u?.title.en === STANDIN(r) && ids(u) === "update-text,changes,close" && /describes [0-9a-f]{8}, not [0-9a-f]{8}.*it can only be updated/.test(u.sections.en.why),
+        "an edited text that lags the head has no Keep: the card says it describes the older head", `${ids(u)} ${u?.sections?.en?.why}`);
       await close(E, r);
       ok(r.status === "succeeded" && r.result === "closed", "the Task closes as before", `${r.status} ${r.result}`);
     } catch (e: any) { ok(false, "unexpected error", e.stack?.split("\n").slice(0, 2).join(" ")); } finally { H.stop(); }
@@ -161,7 +182,7 @@ try {
     try {
       const r = E.start({ workflow: "stale-flow", text: "euro", params: { branch: "crew/edited", edit: "1" } }); await settle(E, r);
       const c = openCard(E, r), p0 = patches();
-      ok(ids(c) === "update-text,keep-text,changes,close" && c.body.includes("-Reviewer note: the euro rows were checked by hand.") && patches() === p0, "an edited body without markers: the diff shows what Replace removes", ids(c));
+      ok(ids(c) === "update-text,changes,close" && c.body.includes("-Reviewer note: the euro rows were checked by hand.") && patches() === p0, "an edited body without markers can only be updated (no Keep: it is not Studio's recorded text): the diff shows what goes", ids(c));
       pullOf(r).body = `${pullOf(r).body}\nAnother edit after the card.`;
       await E.answer(c.id, { choice: "update-text", by: "captain" } as any); await settle(E, r, c.id);
       const c2 = openCard(E, r);
@@ -179,9 +200,54 @@ try {
     try {
       const r = E.start({ workflow: "stale-flow", text: "euro", params: { branch: "crew/oneway", door: "one-way" } }); await settle(E, r);
       const c = openCard(E, r), next = c?.body.split("\nNew text:\n")[1] ?? "";
-      ok(next.includes("**Door: one-way (單向門).** A revert does not undo this change: `db/migrate.sql` (a schema migration drops a column). The captain confirms this one-way door on Studio's merge card before the merge.") && c.options.every((o: any) => o.hold),
-        "a one-way door names its reason and that the captain confirms it; the text card's answers need no door confirmation", next.slice(next.indexOf("## Risk"), next.indexOf("## Checklist")));
+      ok(next.includes("**Door: one-way (單向門).** A revert does not undo this change: `db/migrate.sql` (a schema migration drops a column). Captain confirmation: pending.") && c.options.every((o: any) => o.hold),
+        "a one-way door states the facts: what makes it one-way, and that the captain's confirmation is pending", next.slice(next.indexOf("## Risk"), next.indexOf("## Checklist")));
+      await E.answer(c.id, { choice: "update-text", by: "captain" } as any); await settle(E, r, c.id);
+      const m = openCard(E, r), p0 = patches();
+      ok(m?.title.en.endsWith("merge it on GitHub") && ids(m) === "confirm-door,changes,close" && !m.options.some((o: any) => /I merge on GitHub/.test(o.label)) && m.confirmDoor && m.door === "one-way" && /confirm the door here before you merge on GitHub/i.test(m.sections.en.why),
+        "merge on GitHub with a one-way door: the card asks for the door confirmation first, and does not yet say to merge on GitHub", `${ids(m)} ${m?.sections?.en?.why}`);
+      let refused = ""; try { await E.answer(m.id, { choice: "confirm-door", by: "captain" } as any); } catch (e: any) { refused = e.message; }
+      let fm = ""; try { await E.answer(m.id, { choice: "confirm-door", confirm: "one-way", by: "firstmate" } as any); } catch (e: any) { fm = e.message; }
+      ok(/confirm the door first/.test(refused) && /Only the captain/.test(fm) && E.cards.get(m.id).status === "open", "the answer must carry the confirmation, and only the captain gives it", `${refused} | ${fm}`);
+      await E.answer(m.id, { choice: "confirm-door", confirm: "one-way", by: "captain" } as any); await settle(E, r, m.id);
+      const ready = openCard(E, r), body = pullOf(r).body;
+      ok(patches() === p0 + 1 && /Captain confirmation: confirmed by the captain at \d{4}-\d\d-\d\dT/.test(body) && !/Captain confirmation: pending/.test(body) && ready?.title.en.endsWith("merge it on GitHub") && ids(ready) === "close,changes" && ready.options[0].label === "Close here (I merge on GitHub)",
+        "after the confirmation Studio writes it into the text (compare and swap), then says it is ready to merge on GitHub", `${patches() - p0} ${ids(ready)}`);
       await close(E, r);
+    } catch (e: any) { ok(false, "unexpected error", e.stack?.split("\n").slice(0, 2).join(" ")); } finally { H.stop(); }
+  }
+
+  // ---------- a marker anyone could write (head = the current head, hash = sha256 of the text) does not make a text current ----------
+  {
+    const { H, E } = await install();
+    try {
+      const r = E.start({ workflow: "stale-flow", text: "euro", params: { branch: "crew/forged", forged: "1" } }); await settle(E, r);
+      const c = openCard(E, r), p = studioParts(pullOf(r).body);
+      ok(p.marked && p.head === r.ctx.head && p.hash === studioTextHash(p.inner) && c?.title.en === STANDIN(r) && ids(c) === "update-text,changes,close" && /no record of writing that text/.test(c.sections.en.why),
+        "a well-formed marker naming the head, with no signed record of Studio writing that text: the merge waits for the update, no Keep", `${ids(c)} ${c?.sections?.en?.why}`);
+      await close(E, r);
+    } catch (e: any) { ok(false, "unexpected error", e.stack?.split("\n").slice(0, 2).join(" ")); } finally { H.stop(); }
+  }
+
+  // ---------- Studio's merge (an operations grant): the text is read again and the door confirmation written before the merge ----------
+  {
+    const { H, E } = await install(undefined, operated);
+    try {
+      const r = E.start({ workflow: "stale-studio-merge", text: "euro", params: { branch: "crew/studio-merge", door: "one-way" } }); await settle(E, r);
+      const c = openCard(E, r);
+      ok(c?.title.en === STANDIN(r) && !c.options.some((o: any) => o.id === "merge"), "with an operations grant too, the merge is not offered while the text lags the head", ids(c));
+      await E.answer(c.id, { choice: "update-text", by: "captain" } as any); await settle(E, r, c.id);
+      const m = openCard(E, r), p0 = patches();
+      ok(m?.options.some((o: any) => o.id === "merge") && m.confirmDoor && m.door === "one-way" && /Captain confirmation: pending/.test(pullOf(r).body), "then the merge card, whose merge needs the door confirmation", ids(m));
+      // someone edits Studio's part after the merge card: the merge answer reads GitHub first and brings the text card back
+      const was = pullOf(r).body; pullOf(r).body = was.replace("Corner Shop offers EUR beside USD and JPY", "Corner Shop offers EUR (edited)");
+      await E.answer(m.id, { choice: "merge", confirm: "one-way", aligned: [0], by: "captain" } as any); await settle(E, r, m.id);
+      const back = openCard(E, r);
+      ok(r.status === "waiting" && !r.ctx.mergedBody && back?.title.en === STANDIN(r) && ids(back) === "update-text,keep-text,changes,close", "the text is read right before Studio's merge: an edit since the card stops the merge and brings the text card back", `${r.status} ${ids(back)}`);
+      await E.answer(back.id, { choice: "update-text", by: "captain" } as any); await settle(E, r, back.id);
+      const m2 = openCard(E, r);
+      await E.answer(m2.id, { choice: "merge", confirm: "one-way", aligned: [0], by: "captain" } as any); await until(() => ["succeeded", "failed"].includes(r.status), 15000);
+      ok(r.status === "succeeded" && /Captain confirmation: confirmed by the captain at \d{4}-/.test(r.ctx.mergedBody ?? "") && patches() === p0 + 2, "the captain's confirmation is in the text on GitHub before the merge step runs", `${r.status} ${patches() - p0} ${(r.ctx.mergedBody ?? "").match(/Captain confirmation: [^\n]*/)?.[0]}`);
     } catch (e: any) { ok(false, "unexpected error", e.stack?.split("\n").slice(0, 2).join(" ")); } finally { H.stop(); }
   }
 

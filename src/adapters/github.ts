@@ -182,7 +182,7 @@ export class GitHubPrAdapter implements PrAdapter {
     const allowed = ["GET", "POST", "PATCH"].includes(method) && (method === "GET" ? /^\/(?:pulls\?[a-zA-Z0-9%=&_.+-]+|pulls\/[1-9][0-9]*)$/ : method === "POST" ? suffix === "/pulls" : /^\/pulls\/[1-9][0-9]*$/.test(suffix));
     if (!allowed) throw new Error("GitHub endpoint is not allowlisted");
     if (method !== "GET") {
-      const fields = method === "POST" ? ["title", "body", "head", "base"] : ["title", "body", "base"];
+      const fields = method === "POST" ? ["title", "body", "head", "base"] : !body || "title" in body || "body" in body ? ["title", "body", "base"] : ["base"]; // a PATCH sends the title and text together, or the base alone
       if (!body || Object.keys(body).length !== fields.length+Number(method==="POST"&&body.draft===true) || !fields.every(k => typeof body[k] === "string") || Object.keys(body).some(k => !fields.includes(k)&&!(method==="POST"&&k==="draft"&&body[k]===true))) throw new Error("GitHub request body is not allowlisted");
     } else if (body !== undefined) throw new Error("GitHub GET does not accept a body");
     const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -381,7 +381,7 @@ export class GitHubPrAdapter implements PrAdapter {
   }
   private response(p: any, o: OpenRequest, expectedId?: string, content = false) {
     if (!Number.isSafeInteger(p?.number) || p.number < 1 || p.state !== "open" || p.head?.ref !== o.branch || p.head?.sha !== o.head || p.head?.repo?.full_name !== this.grant.repository || p.base?.ref !== o.base || p.base?.repo?.full_name !== this.grant.repository || (expectedId && String(p.number) !== expectedId)) throw new Error("GitHub returned a mismatched pull request target or head");
-    if (p.html_url !== `https://github.com/${this.grant.repository}/pull/${p.number}` || typeof p.title !== "string" || typeof p.body !== "string") throw new Error("GitHub returned an invalid pull request record");
+    if (p.html_url !== `https://github.com/${this.grant.repository}/pull/${p.number}` || typeof p.title !== "string" || (typeof p.body !== "string" && p.body !== null)) throw new Error("GitHub returned an invalid pull request record");
     if(o.draft===true&&p.draft!==true)throw new Error("Requested Draft PR is not draft; no adoption or conversion was authorized");
     if (content && (p.title !== o.title || p.body !== o.body)) throw new Error("GitHub returned mismatched PR publication content");
     return p;
@@ -423,16 +423,30 @@ export class GitHubPrAdapter implements PrAdapter {
       signal?.throwIfAborted(); assertOwner?.();persist(runDir, pr); return pr;
     });
   }
-  async update(pr: ReviewRequest, head: string, runDir: string, signal?: AbortSignal, assertOwner?: () => void): Promise<ReviewRequest> {
+  /** opts.text false: the push moves the head only; the title and text on GitHub are left as they are (a person's edit there stays). */
+  async update(pr: ReviewRequest, head: string, runDir: string, signal?: AbortSignal, assertOwner?: () => void, opts: { text?: boolean } = {}): Promise<ReviewRequest> {
     pr=structuredClone(pr);assertOwner?.();signal?.throwIfAborted(); const o = { ...pr, head }; this.valid(o);
     if (pr.adapter !== "github" || !/^[1-9][0-9]*$/.test(pr.id) || !sha.test(pr.head) || pr.url !== `https://github.com/${this.grant.repository}/pull/${pr.id}`) throw new Error("invalid recorded GitHub PR identity");
+    const text = opts.text !== false;
     return this.locked(pr.branch, async () => {
       const before = await this.api("GET", `/pulls/${pr.id}`, undefined, signal, assertOwner);
       // A retry may observe the new head after a successful push and failed PATCH.
       this.response(before, { ...pr, head: before?.head?.sha === head ? head : pr.head }, pr.id);
       await this.push(o, pr.head, signal, assertOwner);
-      const p = this.response(await this.api("PATCH", `/pulls/${pr.id}`, { title: pr.title, body: pr.body, base: pr.base }, signal, assertOwner), o, pr.id, true);
+      const p = this.response(await this.api("PATCH", `/pulls/${pr.id}`, text ? { title: pr.title, body: pr.body, base: pr.base } : { base: pr.base }, signal, assertOwner), o, pr.id, text);
       const n = { ...pr, head, url: p.html_url }; signal?.throwIfAborted(); assertOwner?.();persist(runDir, n); return n;
+    });
+  }
+  /** Edit only the title and text of the open pull request at its recorded head (no push), and only when expect accepts the
+   *  title and text GitHub shows right before the PATCH (compare and swap as close as GitHub's API allows). */
+  async updateText(pr: ReviewRequest, title: string, body: string, expect: (live: { title: string; body: string }) => boolean, runDir: string, signal?: AbortSignal, assertOwner?: () => void): Promise<ReviewRequest> {
+    pr=structuredClone(pr);assertOwner?.();signal?.throwIfAborted(); const o = { ...pr, title, body }; this.valid(o);
+    if (pr.adapter !== "github" || !/^[1-9][0-9]*$/.test(pr.id) || !sha.test(pr.head) || pr.url !== `https://github.com/${this.grant.repository}/pull/${pr.id}`) throw new Error("invalid recorded GitHub PR identity");
+    return this.locked(pr.branch, async () => {
+      const before = this.response(await this.api("GET", `/pulls/${pr.id}`, undefined, signal, assertOwner), pr, pr.id);
+      if (!expect({ title: String(before.title ?? ""), body: String(before.body ?? "") })) throw new Error("GitHub's pull request text changed before the edit");
+      const p = this.response(await this.api("PATCH", `/pulls/${pr.id}`, { title, body, base: pr.base }, signal, assertOwner), o, pr.id, true);
+      const n = { ...pr, title, body, url: p.html_url }; signal?.throwIfAborted(); assertOwner?.();persist(runDir, n); return n;
     });
   }
 }

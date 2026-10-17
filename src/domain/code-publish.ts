@@ -83,16 +83,21 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
   /** A checkbox Studio can prove itself: a lint item by the lint check, a test-suite item by CI. Any other needs the coordinator to cite evidence. */
   const autoProof = (item: string): "lint" | "ci" | null => /\blint/i.test(item) ? "lint" : /\btests?\b/i.test(item) && /\bpass/i.test(item) ? "ci" : null;
 
-  /** The door of the change at its final state, in the pull request's words: one-way (單向門) with what makes it one-way and
-   *  whether the captain confirmed it, or two-way (雙向門). */
+  /** The captain's own signed confirmation of the one-way door (a card answer that carried it), or null. */
+  function doorConfirmation(x: X): { at: string; card: string } | null {
+    const t = engine.trusted(x.run.id); if (!t.ok) return null;
+    const e: any = t.entries.find((e: any) => e.record === "card-answer" && e.data?.confirm === "one-way" && /^captain\b/i.test(String(e.actor ?? "")));
+    return e ? { at: String(e.at ?? ""), card: String(e.data.card) } : null;
+  }
+  /** The door of the change at its final state, facts only: one-way (單向門) with what makes it one-way and the captain's
+   *  confirmation (pending until the captain's signed answer carries it), or two-way (雙向門) and why. */
   function doorLine(x: X): string {
     const door = x.ctx.door;
     if (door?.door !== "one-way" && door?.door !== "two-way") return "**Door: not classified yet (未分類).** Studio has not classified whether a revert undoes this change.";
-    if (door.door === "two-way") return "**Door: two-way (雙向門).** Reverting this pull request undoes it.";
+    if (door.door === "two-way") return "**Door: two-way (雙向門).** No changed path is on a one-way list: reverting this pull request undoes it.";
     const why = (door.reasons ?? []).filter((r: any) => r?.list !== "trivial").slice(0, 8).map((r: any) => `\`${String(r.path)}\` (${String(r.why ?? r.list ?? "").replace(/\s+/g, " ").slice(0, 200)})`).join("; ");
-    const t = engine.trusted(x.run.id);
-    const confirmed = door.decidedBy === "captain" || (t.ok && t.entries.some((e: any) => e.record === "card-answer" && e.data?.confirm === "one-way" && /^captain\b/i.test(String(e.actor ?? ""))));
-    return `**Door: one-way (單向門).** A revert does not undo this change: ${why || "the classifier marked it one-way"}. ${confirmed ? "The captain confirmed this one-way door in Studio." : "The captain confirms this one-way door on Studio's merge card before the merge."}`;
+    const ok = doorConfirmation(x);
+    return `**Door: one-way (單向門).** A revert does not undo this change: ${why || "the classifier marked it one-way"}. Captain confirmation: ${ok ? `confirmed by the captain at ${ok.at}` : "pending"}.`;
   }
 
   function fallbackText(x: X, heading: string, facts: { files: string[]; captures: string; rollback: string }) {
@@ -250,7 +255,7 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     if (p.template) applyPullTemplate(bundle, { path: p.template.path, blob: p.template.blob, title: p.title, body: p.body, requiredInputsConfirmed: true, sources: bundle.sha256, proven: p.proven });
     const published = await a.open({ repo: x.ctx.repo, base: x.ctx.base, branch: x.ctx.branch, head: h, title: p.title, body: p.body, ...(p.draft ? { draft: true as const } : {}) }, x.dir, phase.signal, phase.assert); phase.assert();
     x.ctx.pr = published; x.ctx.prDeferred = null;
-    engine.record(x, "pr-opened", { head: h, data: { version: 1, repository: a.grant.repository, number: published.id, url: published.url, branch: x.ctx.branch, base: x.ctx.base, card: card.id, hash } } as any);
+    engine.record(x, "pr-opened", { head: h, data: { version: 1, repository: a.grant.repository, number: published.id, url: published.url, branch: x.ctx.branch, base: x.ctx.base, card: card.id, hash, ...(p.template ? { text: studioTextHash(studioParts(p.body).inner) } : {}) } } as any);
     x.rn.note = `pull request #${published.id} opened: ${published.url}`; x.save();
     return d.remoteWait(x, a);
   }
@@ -261,7 +266,11 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
   // or a text an older release wrote without markers, is written again from the final state at the head; a part someone edited
   // is shown as a diff for the captain to keep or replace. Text outside the markers stays verbatim. Only the captain's answer
   // edits GitHub, bound to the staged text's hash, and the PATCH happens only while GitHub still shows what the card showed.
-  type Staged = { version: 1; kind: "final"; reason: "head" | "unmarked" | "edited"; head: string; was: string | null; pr: string; repository: string; title: string; body: string; from: string };
+  // Whether a text is current is decided against Studio's own signed record of what it published for a head (the hash of its
+  // part in pr-opened / pr-text-updated), never by the marker alone: anyone can write a marker. Keep (a person's edit) is
+  // offered only for Studio's text of this very head; a text that lags the head, carries no markers, or that Studio has no
+  // record of is updated, never kept.
+  type Staged = { version: 1; kind: "final"; reason: "head" | "unmarked" | "foreign" | "edited"; stale: boolean; head: string; was: string | null; pr: string; repository: string; title: string; body: string; from: string };
   type Gate = ({ ok: true; reason: Staged["reason"]; staged: Staged; hash: string; diff: string; live: { title: string; body: string } } | { ok: false; why: string; reason: Staged["reason"] | "unread" });
   const crlf = (v: unknown) => String(v ?? "").replace(/\r\n?/g, "\n");
   const liveDigest = (l: { title: string; body: string }) => digest({ title: l.title, body: l.body });
@@ -271,17 +280,26 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     const live = await reconcile(a, x.ctx.pr, phase.signal, true); phase.assert();
     return { title: crlf(live?.title), body: crlf(live?.body) };
   }
+  /** The hashes of the parts Studio published for a head, from its signed ledger. */
+  const recorded = (x: X, head: string | null): Set<string> => {
+    const t = engine.trusted(x.run.id);
+    return new Set(t.ok && head ? t.entries.filter((e: any) => (e.record === "pr-opened" || e.record === "pr-text-updated") && e.head === head && typeof e.data?.text === "string").map((e: any) => e.data.text) : []);
+  };
+  /** The captain kept a person's edit of exactly this text, at this head (in ctx and in the signed ledger). */
+  const kept = (x: X, from: string) => { const r = x.ctx.prRefresh, t = engine.trusted(x.run.id), head = x.ctx.pr.head;
+    return r?.kind === "final" && r.decided === "keep" && r.reason === "edited" && !r.stale && r.head === head && r.from === from
+      && t.ok && t.entries.some((e: any) => e.record === "pr-text-kept" && e.head === head && e.data?.from === from && e.data?.hash === r.hash); };
 
-  /** Whether GitHub's text matches the head, and if not the text Studio offers instead (staged in x.ctx.prRefresh). Null: current,
-   *  or the captain kept a person's edit of exactly this text at this head. */
+  /** Whether GitHub's text matches the head, and if not the text Studio offers instead (staged in x.ctx.prRefresh). Null: current
+   *  (Studio's recorded text of this head), or the captain kept a person's edit of exactly this text at this head. */
   async function gate(x: X, a: GitHubPrAdapter, phase: Phase): Promise<Gate | null> {
     if (!ours(x)) return null;
     const pr = x.ctx.pr, live = await liveText(x, a, phase), parts = studioParts(live.body), from = liveDigest(live);
-    const edited = parts.marked ? studioTextHash(parts.inner) !== parts.hash : live.body.trimEnd() !== crlf(pr.body).trimEnd();
-    const stale = !parts.marked || parts.head !== pr.head;
-    if (!edited && !stale) return null;
-    const reason: Staged["reason"] = edited ? "edited" : parts.marked ? "head" : "unmarked", r = x.ctx.prRefresh;
-    if (r?.kind === "final" && r.head === pr.head && r.from === from && r.decided === "keep" && r.reason === "edited") return null;
+    const mark = parts.marked && !!parts.hash, own = mark ? recorded(x, parts.head) : new Set<string>(), innerHash = studioTextHash(parts.inner);
+    const stale = !mark || parts.head !== pr.head;
+    if (!stale && own.has(innerHash)) return null;
+    const reason: Staged["reason"] = !mark ? "unmarked" : !own.size ? "foreign" : own.has(innerHash) ? "head" : "edited", r = x.ctx.prRefresh;
+    if (kept(x, from)) return null;
     // the same offer as last time (GitHub's text and the head unchanged): no second writing
     if (r?.kind === "final" && !r.decided && r.head === pr.head && r.from === from) {
       const { hash, decided: _d, card: _c, ...text } = r;
@@ -290,7 +308,7 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     // Studio's text for this head: the part it last published when that describes this head, otherwise written again now
     let title = pr.title, inner: string;
     const mine = studioParts(crlf(pr.body));
-    if (!stale && mine.marked && mine.head === pr.head && mine.hash && studioTextHash(mine.inner) === mine.hash) inner = mine.inner;
+    if (!stale && mine.marked && mine.head === pr.head && recorded(x, pr.head).has(studioTextHash(mine.inner))) inner = mine.inner;
     else {
       if (d.head(d.shellOk(x)) !== pr.head) return { ok: false, reason, why: "the Task's worktree is not at the pull request's head" };
       let bundle: CommunityBundle;
@@ -306,7 +324,7 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     const body = parts.marked && parts.hash ? `${parts.before}${wrapStudioText(inner, pr.head)}${parts.after}` : `${wrapStudioText(inner, pr.head)}\n`;
     const newTitle = live.title.trim() !== crlf(pr.title).trim() ? live.title : title;
     if (SESSION_LINK.test(body) || SESSION_LINK.test(newTitle)) return { ok: false, reason, why: "the text would carry a claude.ai session link" };
-    const staged: Staged = { version: 1, kind: "final", reason, head: pr.head, was: parts.head, pr: pr.id, repository: a.grant.repository, title: newTitle, body, from };
+    const staged: Staged = { version: 1, kind: "final", reason, stale, head: pr.head, was: parts.head, pr: pr.id, repository: a.grant.repository, title: newTitle, body, from };
     const hash = digest(staged);
     x.ctx.prRefresh = { ...staged, hash, decided: null, card: null }; x.save();
     return { ok: true, reason, staged, hash, diff: unified(live.body, body, "pull request text"), live };
@@ -314,28 +332,33 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
 
   /** The card that comes before the merge (or at remote-ready) while the text does not match the head. */
   function textCard(x: X, g: Gate, at: "merge" | "remote-ready"): Body {
-    const pr = x.ctx.pr, h = pr.head.slice(0, 8), mergeAt = at === "merge";
-    const lead = { head: `The text of pull request #${pr.id} describes ${g.ok && g.staged.was ? g.staged.was.slice(0, 8) : "an earlier head"}, not ${h}, the head ${mergeAt ? "being merged" : "now on GitHub"}.`,
-      unmarked: `The text of pull request #${pr.id} was written by an older release of Studio and may not describe ${h}, the head ${mergeAt ? "being merged" : "now on GitHub"}.`,
-      edited: `Someone edited Studio's part of the text of pull request #${pr.id} on GitHub. Studio does not overwrite it silently.`,
+    const pr = x.ctx.pr, h = pr.head.slice(0, 8), mergeAt = at === "merge", was = g.ok && g.staged.was ? g.staged.was.slice(0, 8) : "an earlier head";
+    const stale = g.ok && g.staged.stale, keepable = g.ok && g.reason === "edited" && !stale;
+    const lead = { head: `The text of pull request #${pr.id} describes ${was}, not ${h}, the head ${mergeAt ? "being merged" : "now on GitHub"}.`,
+      unmarked: `The text of pull request #${pr.id} was written by an older release of Studio (or edited since) and may not describe ${h}, the head ${mergeAt ? "being merged" : "now on GitHub"}.`,
+      foreign: `The text of pull request #${pr.id} carries Studio's markers, but Studio has no record of writing that text, so it does not count as describing ${h}.`,
+      edited: stale ? `Someone edited Studio's part of the text of pull request #${pr.id} on GitHub, and that text describes ${was}, not ${h}, the head ${mergeAt ? "being merged" : "now on GitHub"}: it can only be updated.`
+        : `Someone edited Studio's part of the text of pull request #${pr.id} on GitHub. Studio does not overwrite it silently.`,
       unread: `Studio could not read the text of pull request #${pr.id} on GitHub, so it cannot tell whether the text matches ${h}.` }[g.reason];
-    const leadZh = { head: `Pull request #${pr.id} 的文字描述的是較早的 head，不是${mergeAt ? "要合併的" : "目前的"} ${h}。`, unmarked: `Pull request #${pr.id} 的文字是舊版 Studio 寫的，可能沒有描述${mergeAt ? "要合併的" : "目前的"} ${h}。`,
-      edited: `有人在 GitHub 上改了 pull request #${pr.id} 裡 Studio 的那一段。Studio 不會默默覆蓋。`, unread: `Studio 讀不到 GitHub 上 pull request #${pr.id} 的文字，無法確認它和 ${h} 對得上。` }[g.reason];
+    const leadZh = { head: `Pull request #${pr.id} 的文字描述的是較早的 head，不是${mergeAt ? "要合併的" : "目前的"} ${h}。`, unmarked: `Pull request #${pr.id} 的文字是舊版 Studio 寫的（或之後被改過），可能沒有描述${mergeAt ? "要合併的" : "目前的"} ${h}。`,
+      foreign: `Pull request #${pr.id} 的文字帶有 Studio 的標記，但 Studio 沒有寫過這段文字的紀錄，所以不算描述 ${h}。`,
+      edited: stale ? `有人在 GitHub 上改了 pull request #${pr.id} 裡 Studio 的那一段，而且那段描述的是較早的 head，不是 ${h}：只能更新。` : `有人在 GitHub 上改了 pull request #${pr.id} 裡 Studio 的那一段。Studio 不會默默覆蓋。`,
+      unread: `Studio 讀不到 GitHub 上 pull request #${pr.id} 的文字，無法確認它和 ${h} 對得上。` }[g.reason];
     const what = "Studio wrote it again from the final state: the diff at this head, the done lines and the captain's binding changes, the evidence recorded at this head, and the door.";
     const merge = mergeAt ? " The merge is not offered until the text matches the head." : "";
     const mergeZh = mergeAt ? "文字和 head 對上之前，不提供合併。" : "";
     const opts: any[] = g.ok
-      ? [{ id: "update-text", label: g.reason === "edited" ? "Replace with Studio's text" : "Update the pull request text", labelZh: g.reason === "edited" ? "改用 Studio 的文字" : "更新 pull request 文字", primary: true, hold: true },
-         ...(g.reason === "edited" ? [{ id: "keep-text", label: "Keep their text", labelZh: "保留他們的文字", hold: true }] : mergeAt ? [] : [{ id: "keep-text", label: "Not now (asked again before the merge)", labelZh: "先不要（合併前會再問）", hold: true }])]
+      ? [{ id: "update-text", label: keepable ? "Replace with Studio's text" : "Update the pull request text", labelZh: keepable ? "改用 Studio 的文字" : "更新 pull request 文字", primary: true, hold: true },
+         ...(keepable ? [{ id: "keep-text", label: "Keep their text", labelZh: "保留他們的文字", hold: true }] : mergeAt ? [] : [{ id: "keep-text", label: "Not now (asked again before the merge)", labelZh: "先不要（合併前會再問）", hold: true }])]
       : [{ id: "render-text", label: "Write the text again", labelZh: "再寫一次文字", primary: true, hold: true }];
     if (mergeAt) opts.push({ id: "changes", label: "Request changes", labelZh: "要求修改", note: true, hold: true }, { id: "close", label: "Close without merging", labelZh: "不合併，關閉", hold: true });
     else opts.push({ id: "close", label: "Close without merging", labelZh: "不合併，關閉", hold: true });
     return { title: `Update the text of pull request #${pr.id}${mergeAt ? " before the merge" : ""}?`, zhTitle: `${mergeAt ? "合併前，" : ""}要更新 pull request #${pr.id} 的文字嗎？`, captainOnly: true,
-      en: { why: `${lead} ${g.ok ? (g.reason === "edited" ? "Below is what changes if Studio's text replaces theirs; text outside Studio's part stays either way." : what) : `Studio could not write it again: ${g.why}.`}${merge}`,
-        how: g.ok ? (g.reason === "edited" ? "Keep their text, or replace it with Studio's." : "Update replaces Studio's part of the text on GitHub with the text below; the rest stays as it is.") : "Write the text again once the cause is fixed, or close.",
+      en: { why: `${lead} ${g.ok ? (keepable ? "Below is what changes if Studio's text replaces theirs; text outside Studio's part stays either way." : what) : `Studio could not write it again: ${g.why}.`}${merge}`,
+        how: g.ok ? (keepable ? "Keep their text, or replace it with Studio's." : "Update replaces Studio's part of the text on GitHub with the text below (the diff shows what goes); the rest stays as it is.") : "Write the text again once the cause is fixed, or close.",
         scope: { in: [`Edit the text of pull request #${pr.id}`], out: ["No push of new commits", "No merge"] } },
-      zh: { why: `${leadZh}${g.ok ? (g.reason === "edited" ? "下面是改用 Studio 的文字會改動的地方；Studio 那段以外的文字都不動。" : "Studio 已依最終狀態重寫：這個 head 的 diff、完成條件和船長的修改、這個 head 上記錄的證據，以及單向門／雙向門。") : `Studio 無法重寫：${g.why}。`}${mergeZh}`,
-        how: g.ok ? (g.reason === "edited" ? "保留他們的文字，或改用 Studio 的文字。" : "更新：用下面的文字取代 GitHub 上 Studio 的那一段，其他不動。") : "原因排除後再寫一次，或關閉。",
+      zh: { why: `${leadZh}${g.ok ? (keepable ? "下面是改用 Studio 的文字會改動的地方；Studio 那段以外的文字都不動。" : "Studio 已依最終狀態重寫：這個 head 的 diff、完成條件和船長的修改、這個 head 上記錄的證據，以及單向門／雙向門。") : `Studio 無法重寫：${g.why}。`}${mergeZh}`,
+        how: g.ok ? (keepable ? "保留他們的文字，或改用 Studio 的文字。" : "更新：用下面的文字取代 GitHub 上 Studio 的那一段，其他不動。") : "原因排除後再寫一次，或關閉。",
         scope: { in: [`修改 pull request #${pr.id} 的內文`], out: ["不推送新的 commit", "不合併"] } },
       body: `Pull request #${pr.id}: ${pr.url}\nHead: ${h}${g.ok && g.staged.was && g.staged.was !== pr.head ? ` (the text described ${g.staged.was.slice(0, 8)})` : ""}\n${g.ok ? `${g.staged.title !== g.live.title ? `Title: ${g.live.title} → ${g.staged.title}` : `Title: ${g.staged.title} (unchanged)`}\n\nChanges to the text:\n${g.diff || "(title only)"}\nNew text:\n${g.staged.body}` : `Not written: ${g.why}`}`,
       links: pr.url ? [{ label: `Pull request #${pr.id}`, href: pr.url }] : [], options: opts };
@@ -382,15 +405,40 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     if (!pr || pr.id !== r.pr || pr.head !== r.head) { x.ctx.prRefresh = null; x.save(); return "moved"; }
     const phase = d.remotePhase(x); phase.assert();
     const a = d.selectedAdapter(x); if (!(a instanceof GitHubPrAdapter) || a.grant.repository !== r.repository) throw new Error("the pull request text update needs the project's approved GitHub grant");
-    if (liveDigest(await liveText(x, a, phase)) !== r.from) { x.ctx.prRefresh = null; x.log(`pull request text: #${pr.id} changed on GitHub after the card; not updated, asked again`); x.save(); return "changed"; }
     if (SESSION_LINK.test(r.title) || SESSION_LINK.test(r.body)) throw new Error("a pull request never carries a claude.ai session link");
-    const published = await a.update({ ...pr, title: r.title, body: r.body }, pr.head, x.dir, phase.signal, phase.assert); phase.assert();
-    x.ctx.pr = published; x.ctx.prRefresh = { ...r, decided: "update" };
-    engine.record(x, "pr-text-updated", { head: pr.head, data: { version: 1, card, hash: r.hash, reason: r.reason, pr: pr.id, repository: r.repository } } as any);
-    x.rn.note = `pull request #${pr.id} text updated at ${pr.head.slice(0, 8)}`; x.save();
+    if (!(await write(x, a, phase, r.title, r.body, r.from, { card, hash: r.hash, reason: r.reason }))) { x.ctx.prRefresh = null; x.log(`pull request text: #${pr.id} changed on GitHub after the card; not updated, asked again`); x.save(); return "changed"; }
+    x.ctx.prRefresh = { ...r, decided: "update" }; x.rn.note = `pull request #${pr.id} text updated at ${pr.head.slice(0, 8)}`; x.save();
     return "updated";
   }
-  const keep = (x: X, r: any, card: string) => { x.ctx.prRefresh = { ...r, decided: "keep" }; engine.record(x, "pr-text-kept", { head: r.head, data: { version: 1, card, hash: r.hash, reason: r.reason, pr: r.pr } } as any); x.save(); };
+  /** The one edit of the text on GitHub: GitHub's text is read right before the PATCH and must still be the one seen (from);
+   *  Studio's part of the new text is recorded as its own for this head (pr-text-updated). False: the text changed meanwhile. */
+  async function write(x: X, a: GitHubPrAdapter, phase: Phase, title: string, body: string, from: string, data: Record<string, unknown>): Promise<boolean> {
+    const pr = x.ctx.pr;
+    try { x.ctx.pr = await a.updateText(pr, title, body, (live) => liveDigest({ title: crlf(live.title), body: crlf(live.body) }) === from, x.dir, phase.signal, phase.assert); }
+    catch (e: any) { phase.assert(); if (/text changed before the edit/.test(String(e?.message))) return false; throw e; }
+    phase.assert();
+    engine.record(x, "pr-text-updated", { head: pr.head, data: { version: 1, ...data, pr: pr.id, repository: a.grant.repository, text: studioTextHash(studioParts(body).inner) } } as any); x.save();
+    return true;
+  }
+  const keep = (x: X, r: any, card: string) => { x.ctx.prRefresh = { ...r, decided: "keep" }; engine.record(x, "pr-text-kept", { head: r.head, data: { version: 1, card, hash: r.hash, reason: r.reason, from: r.from, pr: r.pr } } as any); x.save(); };
+
+  /** Right before the merge (Studio's merge, or the captain's "I merge on GitHub"), and after the captain confirms a one-way
+   *  door: GitHub's text is read again; a text that no longer matches the head brings the stand-in card back (again); the
+   *  captain's door confirmation is written into Studio's part first (the same compare-and-swap edit). Null: go on. */
+  async function beforeMerge(x: X, again: () => Promise<Result>): Promise<Result | null> {
+    if (!ours(x)) return null;
+    const phase = d.remotePhase(x); phase.assert();
+    const a = d.selectedAdapter(x); if (!(a instanceof GitHubPrAdapter)) return again();
+    try {
+      if (await gate(x, a, phase)) return again();
+      if (x.ctx.door?.door !== "one-way") return null;
+      const live = await liveText(x, a, phase), parts = studioParts(live.body), line = doorLine(x);
+      const inner = /^\*\*Door: .*$/m.test(parts.inner) ? parts.inner.replace(/^\*\*Door: .*$/m, line) : `${parts.inner.trimEnd()}\n\n${line}\n`;
+      if (inner === parts.inner) return null;
+      const body = `${parts.before}${wrapStudioText(inner, x.ctx.pr.head)}${parts.after}`;
+      return (await write(x, a, phase, live.title, body, liveDigest(live), { reason: "door" })) ? null : again();
+    } catch (e: any) { phase.assert(); x.log(`pull request text: not verified before the merge (${String(e?.message ?? e).slice(0, 200)})`); return again(); }
+  }
 
   /** The captain's answer on remote-ready's text card; remote-ready then goes on. */
   async function refreshAnswer(x: X, card: any): Promise<Result> {
@@ -406,7 +454,7 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     const choice = card.answer?.choice;
     if (choice === "render-text") return again();
     const r = bound(x, card, choice);
-    if (choice === "keep-text") { if (r.reason !== "edited") throw new Error("only a person's edit can be kept before the merge"); keep(x, r, card.id); return again(); }
+    if (choice === "keep-text") { if (r.reason !== "edited" || r.stale) throw new Error("only a person's edit of Studio's text of this head can be kept before the merge"); keep(x, r, card.id); return again(); }
     try { await applyText(x, r, card.id); } catch (e: any) { x.log(`pull request text: not updated (${String(e?.message ?? e).slice(0, 200)})`); }
     return again();
   }
@@ -416,8 +464,8 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
   function staleAtBoot(x: X): boolean {
     if (!ours(x)) return false;
     const pr = x.ctx.pr, r = x.ctx.prRefresh, m = studioParts(crlf(pr.body));
-    if (r?.kind === "final" && r.head === pr.head && r.decided === "keep" && r.reason === "edited") return false;
-    return !m.marked || m.head !== pr.head;
+    if (r?.kind === "final" && r.head === pr.head && r.decided === "keep" && r.reason === "edited" && !r.stale) return false;
+    return !m.marked || m.head !== pr.head || !recorded(x, pr.head).has(studioTextHash(m.inner));
   }
   function bootCard(x: X, old: any): Body {
     const pr = x.ctx.pr;
@@ -451,5 +499,5 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     if (choice === "open") return wrap(await open(x, card));
     return { outcome: choice };
   };
-  return { defer, publish, answer, refresh, refreshAnswer, mergeGate, mergeTextAnswer, staleAtBoot, bootCard };
+  return { defer, publish, answer, refresh, refreshAnswer, mergeGate, mergeTextAnswer, staleAtBoot, bootCard, beforeMerge, doorConfirmation };
 }

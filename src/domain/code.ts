@@ -585,13 +585,10 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (x.ctx.pr && x.ctx.pr.adapter !== adapter.id) throw new Error("review adapter authority changed; resolve the existing review request before publishing");
     if (x.ctx.pr) {
       const old = x.ctx.pr; let published: any;
-      // a template pull request's push sends GitHub's current title and text back as they are: a person's edit there stays, and
-      // Studio's part is brought to the new head only by the captain's answer on the text card (x.ctx.pr keeps Studio's text)
-      let text = { title, body };
-      try { if (approved && adapter instanceof GitHubPrAdapter) { const live = await adapter.remoteRead("pull", old.id, 1, phase.signal, true); phase.assert();
-          if (typeof live?.title === "string" && typeof live?.body === "string") text = { title: live.title, body: live.body }; }
-        published = await adapter.update({ ...old, ...text }, h, x.dir, phase.signal,phase.assert);
-        if (approved) published = { ...published, title: old.title, body: old.body }; }
+      // on GitHub the push moves the head only: the title and text there stay as they are (a person's edit included); Studio's
+      // part is brought to the new head only through the text card's compare-and-swap edit (x.ctx.pr keeps Studio's text)
+      try { published = adapter instanceof GitHubPrAdapter ? { ...await adapter.update(old, h, x.dir, phase.signal, phase.assert, { text: false }), title: old.title, body: old.body }
+          : await adapter.update({ ...old, title, body }, h, x.dir, phase.signal,phase.assert); }
       catch (e: any) {
         // the push is --force-with-lease=<Task branch>:<last pushed head>: someone else's push is never overwritten
         if (adapter instanceof GitHubPrAdapter && /lease mismatch|mismatched pull request target or head/.test(String(e?.message ?? e))) {
@@ -638,7 +635,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const textGuard = engine.deps.authorizeAnswer;
   engine.deps.authorizeAnswer = (run: any, card: any, answer: any) => {
     textGuard?.(run, card, answer);
-    const text = ["update-text", "keep-text", "render-text"];
+    const text = ["update-text", "keep-text", "render-text", "confirm-door"];
     if (text.includes(answer?.choice) && card.options?.some((o: any) => o.id === answer.choice) && (!card.captainOnly || !/^captain\b/i.test(String(answer.by ?? "")))) throw new Error("Only the captain decides the pull request text");
   };
   // an open merge card (merge on GitHub or in Studio) an older release raised over a text that does not describe the head (R-069):
@@ -648,8 +645,15 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (c.kind !== "merge" || !c.captainOnly || node.args?.body_from !== "merge" || c.options.some((o) => ["update-text", "render-text", "keep-text"].includes(o.id))) return null;
     const x = engine.x(r, node, rn); return publication.staleAtBoot(x) ? publication.bootCard(x, c) : null;
   });
-  engine.cardAnswers.merge = async (x, card) => !["update-text", "keep-text", "render-text"].includes(card.answer?.choice ?? "") ? null
-    : publication.mergeTextAnswer(x, card, async () => engine.kinds.card.start(x) as Promise<Result>);
+  // the merge card's own answers: the text card's, the one-way door's confirmation (written into the text, then the card
+  // again), and the merge itself (Studio's, or "I merge on GitHub"), which reads GitHub's text right before it goes on
+  (engine.cardAnswers ??= {}).merge = async (x, card) => {
+    const choice = card.answer?.choice ?? "", again = async () => engine.kinds.card.start(x) as Promise<Result>;
+    if (["update-text", "keep-text", "render-text"].includes(choice)) return publication.mergeTextAnswer(x, card, again);
+    if (choice === "confirm-door") return (await publication.beforeMerge(x, again)) ?? again();
+    if (choice === "merge" || (choice === "close" && card.options.some((o) => o.id === "close" && /I merge on GitHub/.test(o.label)))) return publication.beforeMerge(x, again);
+    return null;
+  };
   engine.actionAnswers["pr.open"] = async (x,card) => {
     // checking again only reads GitHub: with no open GitHub pull request there is nothing to read, and publishing is never its job
     if (card.answer?.choice === "check") return checkAgain(x, card, async () => { const a = selectedAdapter(x); if (!x.ctx.pr || !(a instanceof GitHubPrAdapter)) throw new Error("check again needs an open GitHub pull request; it never publishes one"); return remoteWait(x, a); });
@@ -1470,6 +1474,13 @@ ${said}`, options: rescopeOpts }; }
     body: [observed ? `PR #${pr.id} is open at ${pr.url}; ${OBSERVED_REFUSAL}, so merge it on GitHub.` : `PR #${pr.id} is open at ${pr.url}; merging from Studio is off, so merge it on GitHub.`, `PR #${pr.id} 已開在 ${pr.url}；Studio 不合併，請到 GitHub 合併。`, "", `Branch: ${pr.branch} → ${pr.base} at ${pr.head}`, ...(policy?.observed ? ["", observedNotice(policy)!.en, observedNotice(policy)!.zh] : [])].join("\n"),
     links: [{ label: `Pull request #${pr.id}`, href: pr.url }],
     options: [{ id: "close", label: "Close here (I merge on GitHub)", labelZh: "在這裡關閉（我到 GitHub 合併）", primary: true, hold: true }, { id: "changes", label: "Request changes", labelZh: "要求修改", note: true, hold: true }] });
+  /** A one-way door the captain has not confirmed: the merge-on-GitHub card asks for the confirmation first (the card's door
+   *  check makes the answer carry it), and says it is ready to merge on GitHub only after the text records it. */
+  const doorFirst = (x: X, b: Body): Body => x.ctx.door?.door !== "one-way" || publication.doorConfirmation(x) ? b : { ...b,
+    en: { ...b.en, why: `${b.en.why} This change has a one-way door: a revert does not undo it (${(x.ctx.door.reasons ?? []).filter((r: any) => r?.list !== "trivial").map((r: any) => r.path).slice(0, 6).join(", ") || "the classifier marked it one-way"}). Confirm the door here before you merge on GitHub.`, how: "Confirm the one-way door; Studio records it in the pull request text, then says it is ready to merge on GitHub. Or request changes, or close without merging." },
+    zh: { ...b.zh, why: `${b.zh?.why ?? ""}這個改動是單向門：revert 無法復原。到 GitHub 合併前，請先在這裡確認這扇門。`, how: "確認單向門；Studio 會把確認寫進 pull request 的文字，再告訴你可以到 GitHub 合併。或要求修改，或不合併直接關閉。" },
+    body: `${b.body ?? ""}\n\nOne-way door: confirm it here before merging on GitHub.\n單向門：到 GitHub 合併前，請先在這裡確認。`,
+    options: [{ id: "confirm-door", label: "Confirm the one-way door", labelZh: "確認單向門", primary: true }, { id: "changes", label: "Request changes", labelZh: "要求修改", note: true, hold: true }, { id: "close", label: "Close without merging", labelZh: "不合併，關閉", hold: true }] };
   engine.cardBodies.merge = async (x) => {
     let remoteIntent: RemoteMergeIntent | undefined;
     let assertRemoteCard: (() => void) | undefined;
@@ -1485,10 +1496,10 @@ ${said}`, options: rescopeOpts }; }
       if (text) return text;
       // no operations grant (merging from Studio is off by design): the pull request is open and merges on GitHub
       let mergeOff = false; try { (a as GitHubPrAdapter).operationGrant(); } catch { mergeOff = true; }
-      if (mergeOff) return mergeOnGitHubBody(x.ctx.pr, policy);
+      if (mergeOff) return doorFirst(x, mergeOnGitHubBody(x.ctx.pr, policy));
       // with an operations grant the required checks must be ones GitHub enforces: an observed policy (protection not shown)
       // proves only what Studio saw, so the merge stays on GitHub, and the green pull request is still the captain's to merge there
-      if (policy?.observed) return mergeOnGitHubBody(x.ctx.pr, policy, true);
+      if (policy?.observed) return doorFirst(x, mergeOnGitHubBody(x.ctx.pr, policy, true));
       try { (a as GitHubPrAdapter).operationGrant(); assertMergeAvailable(a as GitHubPrAdapter,x.ctx.pr,x.dir); const p = await (a as GitHubPrAdapter).mutationState(x.ctx.pr,phase.signal,phase.assert); phase.assert(); if (p.base?.sha !== x.ctx.baseCommit || p.draft !== false || p.mergeable !== true || p.mergeable_state !== "clean") throw new Error(); remoteIntent={version:1,grant:grantIdentity(a as GitHubPrAdapter),repository:(a as GitHubPrAdapter).grant.repository,pr:x.ctx.pr.id,branch:x.ctx.pr.branch,base:x.ctx.pr.base,baseHead:x.ctx.baseCommit,head:x.ctx.pr.head,method:(a as GitHubPrAdapter).operationGrant().mergeMethod,policyHash:x.ctx.remoteCI.policyHash}; }
       catch { phase.assert(); return remoteStopBody("remote merge grant or CLEAN/non-draft state is unverified", { recover: false }); }
 
