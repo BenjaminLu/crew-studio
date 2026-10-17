@@ -5,7 +5,12 @@ import {homedir} from 'node:os';import {join,resolve} from 'node:path';import {r
 type RecordV1={schema:1;boot:string;pid:number;origin:string;data:string};
 export type RunningInstance=RecordV1&{token:string};
 export const runtimeDir=()=>resolve(process.env.CREW_RUNTIME_DIR||join(homedir(),'.crew-studio','runtime'));
-function privatePath(path:string,dir=false){const s=lstatSync(path);if(s.isSymbolicLink()||(dir?!s.isDirectory():!s.isFile())||(s.mode&0o077)!==0||s.uid!==process.getuid?.())throw new Error('Studio launch file is not private and owned');if(!dir&&s.size>8192)throw new Error('Studio launch record too large');}
+/** A runtime folder or launch file Studio refuses; its message holds only the path and the fix, so the opener may print it. */
+export class RuntimePathError extends Error {}
+/** The refusal names the path and the fix: a mode the owner can repair with chmod, anything else is removed so Studio makes it again. */
+function privatePath(path:string,dir=false){const s=lstatSync(path),mode=dir?'700':'600',what=dir?'runtime folder':'launch file';
+ if(s.isSymbolicLink()||(dir?!s.isDirectory():!s.isFile())||s.uid!==process.getuid?.())throw new RuntimePathError(`Studio's ${what} ${path} must be a ${dir?'folder':'file'} you own, not a link. Remove it and start Studio again; Studio makes a new private one. (CREW_RUNTIME_DIR picks another place.)`);
+ if((s.mode&0o077)!==0)throw new RuntimePathError(`Studio's ${what} ${path} can be read by other users (mode ${(s.mode&0o777).toString(8)}). Fix: chmod ${mode} '${path}'`);if(!dir&&s.size>8192)throw new Error('Studio launch record too large');}
 function directory(create=false){const d=runtimeDir();if(create)mkdirSync(d,{recursive:true,mode:0o700});privatePath(d,true);return d;}
 function proof(token:string,boot:string,challenge:string){return createHmac('sha256',token).update(`crew-launch-v1\0${boot}\0${challenge}`).digest('hex');}
 export function registerInstance(port:number,data:string,token:string){const d=directory(true),boot=randomBytes(24).toString('hex');const record:RecordV1={schema:1,boot,pid:process.pid,origin:`http://127.0.0.1:${port}`,data:resolve(data)};

@@ -26,7 +26,8 @@ import {projectPrAdapter,GitHubPrAdapter,type GitHubProjectGrant} from './adapte
 //   CREW_RECENT_DAYS  how far back the board lists tasks (default 3)
 //   CREW_GH=0       do not poll GitHub;  CREW_GH_REPO  owner/name (default: the firstmate checkout's GitHub origin)
 //   CREW_DATA       Studio's own store: intents, intent links, artifacts (default ./data)
-//   CREW_FILE_ALLOW colon-separated directories artifact files may be served from (default ~/Desktop/firstmate-film)
+//   CREW_FILE_ALLOW colon-separated directories artifact files may be served from (default: the main session's project folder, CREW_DATA/workspace)
+//   CREW_EXAMPLE_WORKFLOWS=1  also seed the example workflows (the startup competition) on a fresh data folder
 //   main session (M2.5): CREW_MAIN_PROJECT  the firstmate repo whose sessions Studio may drive (default: Studio-owned workspace; an explicit legacy adapter keeps its project)
 //         CREW_HOST_CLAUDE_BIN, CREW_HOST_CODEX_BIN, CREW_HOST_CLAUDE_PROJECTS, CREW_PERMISSION_TIMEOUT_MS
 //   phone: CREW_TAILSCALE_LIVE=1 lets "Enable phone access" really run `tailscale serve` (default: a stub that only records the command)
@@ -672,7 +673,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     }
     if (p === "/api/memory") return json({ dir: memory.dir, notes: memory.list().map(({ body, ...n }) => n) });
     if (p === "/api/summary") {
-      return json({ state: STATE, chat: chatInfo(), tasks: tasks(), pending, crew: crewCache.slice(0, 40), github: gh.state, board: board.status(), flow,
+      return json({ state: STATE, legacy: startup.legacy, chat: chatInfo(), tasks: tasks(), pending, crew: crewCache.slice(0, 40), github: gh.state, board: board.status(), flow,
         events: fm.events.length, now: new Date().toISOString() });
     }
     if (p === "/api/pending") return json(pending);

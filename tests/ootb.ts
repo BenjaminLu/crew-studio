@@ -84,6 +84,17 @@ const withKey = Object.fromEntries(diagnose({ state: empty, board: { writable: t
   chatProvider: "anthropic", lanIp: "10.0.0.5", tailscale: { installed: true, running: false, dnsName: null }, claudeBin: "/nonexistent/claude", codexBin: "/nonexistent/codex", compiled: false }).map((i) => [i.id, i]));
 ok(withKey.chat.status === "ok" && withKey.keys.status === "ok", "an API key alone makes the status chat work without any CLI");
 ok(withKey.tailscale.status === "degraded" && withKey.tailscale.action.kind === "login", "Tailscale installed but signed out: Sign in");
+// a CLI that says it is signed out is not "ok"; GitHub off says why (retro finding 27)
+const signedOut = join(empty, "claude-signed-out"); writeFileSync(signedOut, '#!/bin/sh\ncase "$1" in --version) echo "2.1.0 (Claude Code)";; auth) echo \'{"loggedIn":false}\';; esac\nexit 0\n', { mode: 0o755 });
+const prevGh = process.env.CREW_GH; delete process.env.CREW_GH;
+const so = Object.fromEntries(diagnose({ state: empty, board: { writable: true }, gh: { connected: false, tokenSource: null, enabled: false }, keys: { anthropic: null, openai: null, compatBaseUrl: null }, chatProvider: "claude", lanIp: null,
+  tailscale: { installed: false, running: false, dnsName: null }, claudeBin: signedOut, codexBin: "/nonexistent/codex", compiled: false }).map((i) => [i.id, i]));
+ok(so.claude.authenticated === false && so.claude.status === "degraded" && so.claude.action.kind === "login" && /not logged in/.test(so.claude.detail), "a signed-out Claude CLI is degraded with Sign in, not ok", JSON.stringify([so.claude.status, so.claude.detail]));
+ok(so.github.status === "info" && !/CREW_GH=0/.test(so.github.detail) && /no GitHub repository/.test(so.github.detail), "GitHub off with CREW_GH unset says no repository is set up, not CREW_GH=0", so.github.detail);
+process.env.CREW_GH = "0";
+ok(/off \(CREW_GH=0\)/.test(diagnose({ state: empty, board: { writable: true }, gh: { connected: false, tokenSource: null, enabled: false }, keys: { anthropic: null, openai: null, compatBaseUrl: null }, chatProvider: "claude", lanIp: null,
+  tailscale: { installed: false, running: false, dnsName: null }, claudeBin: "/nonexistent/claude", codexBin: "/nonexistent/codex", compiled: false }).find((i) => i.id === "github")!.detail), "GitHub turned off with CREW_GH=0 says so");
+if (prevGh === undefined) delete process.env.CREW_GH; else process.env.CREW_GH = prevGh;
 ok(Object.keys(INSTALLERS).includes("linux") && Object.keys(INSTALLERS).includes("win32"), "the installer table is per OS (darwin, linux, win32)");
 const all = Object.values(INSTALLERS).flatMap((o) => Object.values(o).flat());
 ok(all.every((m) => !m.argv.includes("sudo") && !m.argv.join(" ").includes("sudo ")), "no installer uses sudo");

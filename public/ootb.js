@@ -41,7 +41,7 @@ function viewDoctor() {
       h("h2", {}, group==="basic"?T("Basic web readiness","基本網頁功能"):group==="coding"?T("Coding and checks","程式碼與檢查"):T("Optional integrations","選用整合")),
       h("div", { class: "card", style: "padding:0" }, items.filter(it=>(it.group||"coding")===group).map((it) => {
       const cliStatus = { available: ["ok", "Available", "可用"], missing: ["bad", "Not installed", "未安裝"], unusable: ["warn", "Cannot run", "無法執行"] };
-      const executableStatus = it.availability === "available" && it.authenticated === true ? ["ok", "Logged in", "已登入"] : cliStatus[it.availability];
+      const executableStatus = it.availability === "available" && it.authenticated === true ? ["ok", "Logged in", "已登入"] : it.availability === "available" && it.authenticated === false ? ["warn", "Not signed in", "尚未登入"] : cliStatus[it.availability];
       const detectedStatus = ["codex", "claude"].includes(it.id) && it.status === "ok" ? ["", "Detected", "已偵測"] : null;
       const [cls, en, zh] = executableStatus || detectedStatus || STATUS[it.status] || STATUS.info;
       return h("div", { class: "doc-row", "data-item": it.id, "data-status": it.status },
@@ -169,7 +169,7 @@ ghBar = function () {
 const _driverBanner = driverBanner;
 driverBanner = function (v) {
   const el = _driverBanner(v);
-  const noCli = DOC.data && !DOC.data.items.some((i) => (i.id === "claude" || i.id === "codex") && i.status === "ok");
+  const noCli = DOC.data && !DOC.data.items.some((i) => (i.id === "claude" || i.id === "codex") && i.availability === "available");
   if (v.state === "detached" && noCli) el.append(h("div", { class: "chat-err", "data-nocli": "1", style: "font-size:13px" },
     T("No Claude Code or Codex CLI on this Mac. The main session resumes that CLI's own session, so it needs one. The status chat works with any provider (API key or local model).",
       "這台 Mac 沒有 Claude Code 或 Codex CLI。主 session 要接續該 CLI 自己的 session，所以一定要有其中一個。狀態對話用任何提供者都可以（API 金鑰或本地模型）。"),

@@ -1,5 +1,5 @@
 // Explicit local launch authority, never obtained from an unauthenticated page.
-import {discoverInstance,type RunningInstance} from './instance';
+import {discoverInstance,RuntimePathError,type RunningInstance} from './instance';
 import {defaultHttpHandler} from './default-browser';
 function browserFlag(argv:string[]){const i=argv.indexOf('--browser');if(i>=0&&argv[i+1])return argv[i+1];return argv.find(a=>a.startsWith('--browser='))?.slice(10).trim()||process.env.CREW_BROWSER?.trim()||null;}
 export function requestBrowser(instance:RunningInstance){const url=`${instance.origin}/session?t=${encodeURIComponent(instance.token)}`,tool=process.env.CREW_OPEN_TOOL||'open';const run=(args:string[])=>{try{return Bun.spawnSync([tool,...args,url],{stdout:'ignore',stderr:'ignore',timeout:5000}).success}catch{return false}};
@@ -9,4 +9,4 @@ export function requestBrowser(instance:RunningInstance){const url=`${instance.o
  console.log(`Requested Studio's authenticated Board in ${used}. Browser dispatch was accepted; a visible window is not verified.`);return true;
 }
 export async function openStudio(start=false){let instance=await discoverInstance();if(!instance&&start){const {runningInstance}=await import('./server');instance=runningInstance;}if(!instance)throw new Error('No verified running Studio instance matches. Run the same binary with launch (or bun run launch); use CREW_DATA/CREW_PORT only to select a specific instance.');return requestBrowser(instance);}
-if(process.argv[2]==='open'||process.argv[2]==='launch'){try{if(!await openStudio(process.argv[2]==='launch'))process.exitCode=1}catch{console.error('Could not find or open a verified Studio instance. Run this binary with launch, or select the intended CREW_DATA and CREW_PORT. No session credential was created or printed.');process.exit(1)}}
+if(process.argv[2]==='open'||process.argv[2]==='launch'){try{if(!await openStudio(process.argv[2]==='launch'))process.exitCode=1}catch(e){if(e instanceof RuntimePathError)console.error(e.message);console.error('Could not find or open a verified Studio instance. Run this binary with launch, or select the intended CREW_DATA and CREW_PORT. No session credential was created or printed.');process.exit(1)}}

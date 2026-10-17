@@ -155,7 +155,8 @@ export function diagnose(i: DoctorInput): Item[] {
     ["codex", "Codex CLI", i.codexBin ?? process.env.CREW_CODEX_BIN ?? "codex", codexV],
   ] as const) {
     const found = present(bin), auth = v ? authenticated(id, bin) : null;
-    items.push({ id, title, status: v ? "ok" : found ? "degraded" : "missing", availability: v ? "available" : found ? "unusable" : "missing", authenticated: auth, version: v,
+    // a CLI that reports it is signed out is not ready: it cannot run a round until the captain signs in
+    items.push({ id, title, status: v ? (auth === false ? "degraded" : "ok") : found ? "degraded" : "missing", availability: v ? "available" : found ? "unusable" : "missing", authenticated: auth, version: v,
       detail: v ? `${v}; ${auth === true ? "CLI reports logged in" : auth === false ? "not logged in" : "login status unverified"}. Workflow execution is not verified.` : found ? "CLI found, but --version could not complete successfully." : "CLI not found at the configured path or on PATH.",
       detailZh: v ? `${v}；${auth === true ? "CLI 回報已登入" : auth === false ? "尚未登入" : "登入狀態未確認"}。工作流程執行能力尚未驗證。` : found ? "找到 CLI，但 --version 無法成功完成。" : "在指定路徑或 PATH 中找不到 CLI。",
       adds: "CLI availability and login status only; model access, quota and workflow execution require separate checks.",
@@ -172,7 +173,7 @@ export function diagnose(i: DoctorInput): Item[] {
     adds: "Asking firstmate how things stand, with cited sources.", fix: statusChatOk ? "" : "Install a CLI or add an API key.", action: statusChatOk ? { kind: "none" } : { kind: "keys" } });
   items.push({ id: "main", title: "firstmate main session", status: claudeV || codexV ? "info" : "degraded", detail: claudeV || codexV ? "CLI available; verify login and an actual native repository read before firstmate work." : "needs the Claude Code or Codex CLI", detailZh: claudeV || codexV ? "CLI 可用；開始 firstmate 工作前，請確認登入並完成一次實際的原生工具讀檔。" : "需要 Claude Code 或 Codex CLI",
     adds: "Driving the real firstmate from Studio and your phone. It resumes that CLI's own session, so it needs the CLI.", fix: claudeV || codexV ? "" : "Install Claude Code or Codex.", action: claudeV || codexV ? { kind: "none" } : { kind: "install", item: "claude" } });
-  items.push({ id: "github", title: "GitHub", status: !i.gh.enabled ? "info" : i.gh.connected ? "ok" : "degraded", detail: !i.gh.enabled ? "off (CREW_GH=0)" : i.gh.connected ? `connected (token from ${i.gh.tokenSource})` : "not connected",
+  items.push({ id: "github", title: "GitHub", status: !i.gh.enabled ? "info" : i.gh.connected ? "ok" : "degraded", detail: !i.gh.enabled ? (process.env.CREW_GH === "0" ? "off (CREW_GH=0)" : "off: no GitHub repository is set up (register a project with GitHub, or set CREW_GH_REPO)") : i.gh.connected ? `connected (token from ${i.gh.tokenSource})` : "not connected",
     adds: "PR and CI columns, merged work in the Library.", fix: i.gh.connected || !i.gh.enabled ? "" : "Paste a GitHub token (read access to the repository).", action: { kind: "github" } });
   items.push({ id: "lan", title: "Phone on the same Wi-Fi (built in)", status: i.lanIp ? "info" : "degraded", detail: i.lanIp ? `this Mac is ${i.lanIp}; LAN mode is off until you turn it on` : "no local network address found",
     adds: "Phone access with nothing to install. Plain HTTP on your local network, protected by pairing.", fix: "", action: { kind: "phone" } });
