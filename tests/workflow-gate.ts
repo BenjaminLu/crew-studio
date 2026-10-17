@@ -270,9 +270,14 @@ try {
     ok(runAnyway.status === 409 && runAnyway.body.code === "staffing_confirmation_required", "5 the captain may still Run an unverified version (only staffing is asked)");
     const ask = await h.api(`/api/wf/${wid}/gate/smoke`, {});
     ok(ask.status === 409 && ask.body.code === "staffing_confirmation_required", "5 Verify with a real run asks for the same staffing confirmation as Run");
-    const go = await h.api(`/api/wf/${wid}/gate/smoke`, { staffingConfirm: ask.body.staffing.hash });
+    // the review node is Claude: like Run, the verification run carries the captain's bounded Claude verification (else the node holds for a second authorization)
+    ok(!!ask.body.staffing?.claudeVerification?.nodes?.some((n: any) => n.node === "review"), "5 Verify with a real run lists the bounded Claude verification like Run", JSON.stringify(ask.body.staffing?.claudeVerification ?? null).slice(0, 200));
+    const hashOnly = await h.api(`/api/wf/${wid}/gate/smoke`, { staffingConfirm: ask.body.staffing.hash });
+    ok(hashOnly.status === 409 && hashOnly.body.code === "staffing_confirmation_required", "5 the staffing hash alone does not authorize the verification run's Claude node");
+    const go = await h.api(`/api/wf/${wid}/gate/smoke`, { staffingConfirm: ask.body.staffing.hash, claudeVerification: ask.body.staffing.claudeVerification });
     ok(go.status === 200 && /^R-\d+$/.test(go.body.task), "5 Verify with a real run starts exactly one Task", JSON.stringify(go.body).slice(0, 200));
-    const again = await h.api(`/api/wf/${wid}/gate/smoke`, { staffingConfirm: ask.body.staffing.hash });
+    ok(h.rt.engine.trusted(go.body.task).entries.some((e: any) => e.record === "own-claude-verification-grant" && e.data?.source === "run-confirmation"), "5 the verification run records the captain's Claude verification grant at start, as Run does");
+    const again = await h.api(`/api/wf/${wid}/gate/smoke`, { staffingConfirm: ask.body.staffing.hash, claudeVerification: ask.body.staffing.claudeVerification });
     ok(again.status === 409 && again.body.code === "smoke_running", "5 a second verification run is refused while one is going");
     // Studio answers none of the real run's cards: the captain does
     await until(() => h.rt.engine.cards.list({ run: go.body.task, open: true }).length > 0);
