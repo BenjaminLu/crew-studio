@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {harness,until,Y} from './rt-harness';
 import {ArtifactStore} from '../src/artifacts';
 import {installDeliver} from '../src/domain/deliver';
+import {lineageText,LINEAGE_BUDGET} from '../src/domain/image-refinement';
 const entry:Record<string,string>={document:'doc.md',web:'index.html',video:'film.html'};
 const flow=(format:string)=>({id:`lineage-${format}`,name:`Lineage ${format}`,version:1,roles:[{id:'maker',label:'Maker',skill:'fixture'}],nodes:[
  {id:'intake',kind:'hook',label:'Intake',do:'deliver.intake',x:0,y:0},{id:'produce',kind:'hook',label:'Round',do:'deliver.round',x:1,y:0},
@@ -33,12 +34,22 @@ try{
   assert(await until(()=>(prompts[f]?.length??0)===4&&E.cards.list({run:run.id,open:true}).some(c=>c.node==='accept')),JSON.stringify(run.nodes));
   const fourth=prompts[f][3];
   ok(notes.every(n=>fourth.includes(n)),`${f}: round 4 brief still carries the round 1, 2 and 3 captain notes`);
-  ok(fourth.indexOf('R1_NOTE')<fourth.indexOf('R3_NOTE')&&/v3 \S+ \[active, newest\]: "R3_NOTE/.test(fourth)&&/v1 \S+ \[active, from an earlier round: still binding\]: "R1_NOTE/.test(fourth),`${f}: lineage is oldest first and marks the newest note`);
+  ok(fourth.indexOf('R1_NOTE')<fourth.indexOf('R3_NOTE')&&/v3 \S+ \[active, newest\](?: \([^)]*\))?: "R3_NOTE/.test(fourth)&&/v1 \S+ \[active, from an earlier round: still binding\](?: \([^)]*\))?: "R1_NOTE/.test(fourth),`${f}: lineage is oldest first and marks the newest note`);
+  ok(notes.every(n=>fourth.split(n).length===2)&&!/Open annotations/.test(fourth),`${f}: each captain note appears once in the brief (no second copy of the parent's notes)`);
   ok(fourth.includes(`${entry[f]} in the work folder is v3`)&&!fourth.includes(`Write ${entry[f]}.`),`${f}: round 4 names the parent version it edits`);
   ok(prompts[f][0].includes(`Write ${entry[f]}.`)&&prompts[f][0].includes('Captain requirements so far: none yet.'),`${f}: round 1 writes fresh with no requirements`);
   const ref=run.ctx.deliver.draft,v4=store.version(ref.id,4) as any;
   ok(v4?.refinement?.active?.map((r:any)=>r.version).join(',')==='1,2,3',`${f}: v4 records the lineage snapshot it was built from`);
   await E.answer(E.cards.list({run:run.id,open:true}).find(c=>c.node==='accept')!.id,{choice:'reject',by:'fixture captain'});
  }
+ // a long lineage stays inside the brief budget: newest active requirements kept, superseded ones collapse to ids
+ { const req=(v:number,note:string,extra:any={})=>({key:`v${v}:${note}`,version:v,note,comment:`${note} `+'keep this exact long requirement wording '.repeat(8),locator:null,selector:null,bbox:null,box:null,t0:null,t1:null,status:'open',state:'active',supersedes:[],capturedFrom:'current-notes',...extra});
+   const history:any[]=[];for(let v=1;v<=300;v++)history.push(req(v,`N${v}`));history[0].state='superseded';history.push(req(301,'N301',{supersedes:[{version:1,note:'N1'}]}));
+   const text=lineageText({schema:1,run:'R',producer:'draft',round:302,attempt:1,intent:'',reference:null,history,active:history.filter(r=>r.state==='active')} as any);
+   ok(Buffer.byteLength(text)<=LINEAGE_BUDGET,'a 300-note lineage stays within the 16000-byte brief budget',String(Buffer.byteLength(text)));
+   ok(text.includes('N301 ')&&text.includes('N300 ')&&/older requirements do not fit this brief: .*v2 N2\b/.test(text)&&/consolidate/.test(text),'the newest requirements are kept and the rest are named for consolidation');
+   ok(/- v1 N1 \[superseded by v301 N301\]$/m.test(text)||/v1 N1/.test(text.split('do not fit')[1]??''),'a superseded requirement collapses to its id and what replaced it'); }
+ { const small=lineageText({schema:1,run:'R',producer:'d',round:3,attempt:1,intent:'',reference:null,history:[{key:'v1:A',version:1,note:'A',comment:'old colour',locator:null,bbox:null,box:null,t0:null,t1:null,status:'open',state:'superseded',supersedes:[],capturedFrom:'current-notes'},{key:'v2:B',version:2,note:'B',comment:'new colour',locator:null,bbox:null,box:null,t0:null,t1:null,status:'open',state:'active',supersedes:[{version:1,note:'A'}],capturedFrom:'current-notes'}],active:[]} as any);
+   ok(/- v1 A \[superseded by v2 B\]\n/.test(small)&&!small.includes('old colour'),'a superseded requirement keeps no words, only its id',small); }
  console.log(`deliver-lineage: ${pass} passed, 0 failed`);
 }finally{for(const r of E.list())if(!['succeeded','failed','cancelled'].includes(r.status))await E.cancel(r.id);H.stop();}

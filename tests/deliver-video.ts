@@ -14,7 +14,10 @@ import {diagnose} from '../src/doctor';
 import {contractStage} from '../src/readiness/stages';
 let pass=0;const ok=(v:unknown,name:string,detail='')=>{assert(v,`${name} ${detail}`);pass++;console.log('ok '+name);};
 ok(requestedSeconds(['Make a 10-second film'])===10&&requestedSeconds(['a 1 minute teaser'])===60&&requestedSeconds(['做一支 15 秒的影片'])===15,'the requested length is read from the captain\'s words');
-ok(requestedSeconds(['Make a 10-second film','make it 6 seconds instead'])===6&&requestedSeconds(['three steps, 1920x1080'])===null,'the latest length wins and unrelated numbers are not lengths');
+ok(requestedSeconds(['Make a 10-second film','make the film 6 seconds instead'])===6&&requestedSeconds(['three steps, 1920x1080'])===null,'the latest length wins and unrelated numbers are not lengths');
+ok(requestedSeconds(['A 30-second film with a 5-second intro'])===30&&requestedSeconds(['做一支 30 秒影片，片頭 5 秒'])===30,'a part\'s length (an intro) is not the film\'s length');
+ok(requestedSeconds(['Make a film; hold the logo for 3 seconds'])===null&&requestedSeconds(['A 1990s vibe film'])===null&&requestedSeconds(['a 10s film'])===null,'a hold time, a decade or a bare "10s" is no requested length: the check is skipped');
+ok(requestedSeconds(['A 30-second film, then a 15-second video cut'])===null,'two different film lengths in one text are ambiguous: the check is skipped');
 const flow={id:'film-fixture',name:'Film fixture',version:1,roles:[{id:'editor',label:'Editor',skill:'fixture'}],nodes:[
  {id:'intake',kind:'hook',label:'Intake',do:'deliver.intake',x:0,y:0},{id:'produce',kind:'hook',label:'Round',do:'deliver.round',x:1,y:0},
  {id:'draft',kind:'agent',label:'Draft',role:'editor',mode:'deliver',args:{format:'video'},x:2,y:0},
@@ -25,8 +28,8 @@ const flow={id:'film-fixture',name:'Film fixture',version:1,roles:[{id:'editor',
 const ffmpeg=Bun.which('ffmpeg');assert(ffmpeg,'ffmpeg is required for the rendered-MP4 checks');
 const H2=await harness([Y(flow)]),E=H2.engine,store=new ArtifactStore(H2.data),dir=join(H2.data,'mp4');mkdirSync(dir,{recursive:true});
 const mp4=(name:string,source:string,vf='')=>{const f=join(dir,`${name}.mp4`);const r=Bun.spawnSync([ffmpeg!,'-y','-loglevel','error','-f','lavfi','-i',source,...(vf?['-vf',vf]:[]),'-c:v','libx264','-pix_fmt','yuv420p',f]);assert.equal(r.exitCode,0,r.stderr.toString());return f;};
-const bright='color=c=0x80a0c0:s=1920x1080:d=2:r=10',files={bright:mp4('bright',bright),black:mp4('black','color=c=black:s=1920x1080:d=2:r=10'),fadeIn:mp4('fade-in',bright,'fade=t=in:st=0:d=1'),fadeOut:mp4('fade-out',bright,'fade=t=out:st=1:d=1')};
-ok((await frameLuma(files.black,1))!<6&&(await frameLuma(files.bright,1))!>60,'frame brightness is sampled from the MP4 with ffmpeg');
+const bright='color=c=0x80a0c0:s=1920x1080:d=2:r=10',files={title:mp4('title','color=c=black:s=1920x1080:d=2:r=10','drawbox=x=760:y=510:w=400:h=60:color=white:t=fill'),bright:mp4('bright',bright),black:mp4('black','color=c=black:s=1920x1080:d=2:r=10'),fadeIn:mp4('fade-in',bright,'fade=t=in:st=0:d=1'),fadeOut:mp4('fade-out',bright,'fade=t=out:st=1:d=1')};
+ok((await frameLuma(files.black,1))!.peak<16&&(await frameLuma(files.bright,1))!.mean>60,'frame brightness is sampled from the MP4 with ffmpeg');
 installDeliver(E,{dataDir:H2.data,artifacts:store,lane:{},fileorg:{},docs:{}} as any);
 E.deps.provider=()=>({id:'fixture',model:'offline',sandboxFree:true,start(_s:any,_t:any[],ctx:any){return{interrupt(){},async *send(){
  const out:any=await H2.agents.callTool(ctx.token,'work_write',{path:'film.html',content:'<!doctype html><div id="stage" style="width:960px;height:540px"></div><script>const DUR=2;function render(t){}</script>'});assert(!out.error,JSON.stringify(out));
@@ -38,6 +41,7 @@ try{
  let c=await classes('Make a 10-second film about coffee',files.bright);ok(c.includes('video-duration'),'a 2 s render for a 10-second request is a video-duration finding',c.join());
  c=await classes('Make a 2-second film about coffee',files.bright);ok(!c.length,'a 2 s render for a 2-second request passes',c.join());
  c=await classes('Make a film about coffee',files.black);ok(c.includes('video-black'),'an all-black render is a video-black finding',c.join());
+ c=await classes('Make a title card film about coffee',files.title);ok(!c.includes('video-black'),'a white title on a black background is not a black frame',c.join());
  c=await classes('Make a film that fades in from black',files.bright);ok(c.includes('video-fade'),'a requested fade-in that the render lacks is a video-fade finding',c.join());
  c=await classes('Make a film that fades in from black',files.fadeIn);ok(!c.includes('video-fade'),'a render that fades in passes the fade check',c.join());
  c=await classes('Make a film that fades out at the end',files.bright);ok(c.includes('video-fade'),'a requested fade-out that the render lacks is a video-fade finding',c.join());

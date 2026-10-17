@@ -73,9 +73,12 @@ export function runRender(dataDir: string, mode: "film" | "stills" | "crop" | "p
   let last: any = null, err = "";
   (async () => { const d = new TextDecoder(); let buf = ""; for await (const c of p.stdout as any) { buf += d.decode(c, { stream: true }); let i; while ((i = buf.indexOf("\n")) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); try { const o = JSON.parse(l); if (typeof o.progress === "number") onProgress(o.progress); else last = o; } catch {} } } })();
   (async () => { try { err = await new Response(p.stderr as any).text(); } catch {} })();
-  const timer = setTimeout(() => { try { p.kill(); } catch {} }, Number(process.env.CREW_RENDER_TIMEOUT_MS ?? 45 * 60_000));
+  // an interaction smoke is bounded tightly (a page's own handler can hang the browser); a film may take long
+  const limit = mode === "interact" ? Number(process.env.CREW_INTERACT_TIMEOUT_MS ?? 90_000) : Number(process.env.CREW_RENDER_TIMEOUT_MS ?? 45 * 60_000);
+  let timedOut = false; const timer = setTimeout(() => { timedOut = true; try { p.kill(); } catch {} }, limit);
   const done = p.exited.then(async (code) => {
     clearTimeout(timer); await Bun.sleep(30);
+    if (timedOut) return { ok: false, error: `timed out after ${Math.round(limit / 1000)} s`, ms: Date.now() - started, info: undefined };
     if (code === 0 && last?.ok) return { ok: true, ms: Date.now() - started, info: last };
     return { ok: false, error: last?.error ?? (err.trim().split("\n").slice(-2).join(" ").slice(0, 300) || `render exited ${code}`), ms: Date.now() - started, info: last ?? undefined };
   });
@@ -114,20 +117,38 @@ export async function probeVideo(file: string): Promise<VideoProbe> {
   }
   return { kind: "no-tool" };
 }
-/** Mean brightness (0-255) of the frame at t seconds, from a 16x9 grey scale-down; null without ffmpeg or a frame. */
-export async function frameLuma(file: string, t: number): Promise<number | null> {
+/** Brightness (0-255) of the frame at t seconds, from a 64x36 grey scale-down: its mean (fades) and its 99th
+ *  percentile (a frame is black only when even its brightest part is dark: a white title on black is not black).
+ *  null without ffmpeg or a frame. */
+export async function frameLuma(file: string, t: number): Promise<{ mean: number; peak: number } | null> {
   const ffmpeg = renderEnv().ffmpeg; if (!ffmpeg) return null;
   try {
-    const p = Bun.spawn([ffmpeg, "-v", "error", "-nostdin", "-ss", String(Math.max(0, t)), "-i", file, "-frames:v", "1", "-vf", "scale=16:9,format=gray", "-f", "rawvideo", "pipe:1"], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
+    const p = Bun.spawn([ffmpeg, "-v", "error", "-nostdin", "-ss", String(Math.max(0, t)), "-i", file, "-frames:v", "1", "-vf", "scale=64:36,format=gray", "-f", "rawvideo", "pipe:1"], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
     const timer = setTimeout(() => { try { p.kill(); } catch {} }, 10000);
     const [bytes, code] = await Promise.all([new Response(p.stdout as any).arrayBuffer(), p.exited]); clearTimeout(timer);
     const b = new Uint8Array(bytes); if (code !== 0 || !b.length) return null;
-    let sum = 0; for (const v of b) sum += v; return sum / b.length;
+    let sum = 0; for (const v of b) sum += v; const sorted = [...b].sort((x, y) => x - y);
+    return { mean: sum / b.length, peak: sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.99))] };
   } catch { return null; }
 }
-/** The film length the captain asked for, in seconds: the last "10 s", "10-second", "1 minute", "10 秒" in the texts given (latest word wins). */
+const FILM = String.raw`(?:film|video|movie|promo|clip|reel|teaser|trailer|spot|ad|animation)`, UNIT = String.raw`(seconds?|secs?|minutes?|mins?)`, NUM = String.raw`(\d{1,3}(?:\.\d+)?)(?!\d)`;
+// only a length tied to the film itself: "a 30-second film", "a film of 30 seconds", "make the video 20 seconds",
+// "30 秒影片"; a "5-second intro", "hold the logo for 3 seconds", "1990s" or a bare "10s" is not the film's length
+const LENGTH = [
+  new RegExp(String.raw`(?<![\d.])${NUM}[\s-]*${UNIT}[\s-]+(?:long\s+)?(?:[a-z]+\s+){0,2}?${FILM}s?\b`, "gi"),
+  new RegExp(String.raw`\b${FILM}\s+(?:that\s+(?:is|runs|lasts)\s+|(?:of|lasting|running|runs|lasts|should\s+(?:be|run|last))\s+)(?:about\s+|exactly\s+)?${NUM}\s*${UNIT}\b`, "gi"),
+  new RegExp(String.raw`\b(?:make|keep)\s+the\s+${FILM}\s+(?:about\s+|exactly\s+)?${NUM}\s*${UNIT}\b`, "gi"),
+  new RegExp(String.raw`(?<![\d.])${NUM}\s*(秒|分鐘|分钟)(?:的|長的|长的)?\s*(?:影片|短片|影像|視頻|视频|動畫|动画)`, "g"),
+  new RegExp(String.raw`(?:影片|短片|視頻|视频)(?:長度|长度|時長|时长)?\s*(?:為|为|是|約|约)?\s*${NUM}\s*(秒|分鐘|分钟)`, "g"),
+];
+/** The film length the captain asked for, in seconds, from phrases tied to the film; the latest text that names
+ *  one wins. null when nothing names the film's length unambiguously (the check is then skipped). */
 export function requestedSeconds(texts: string[]): number | null {
   let found: number | null = null;
-  for (const t of texts) for (const m of String(t ?? "").matchAll(/(\d+(?:\.\d+)?)\s*-?\s*(seconds?|secs?|s|minutes?|mins?|秒|分鐘)(?![a-z])/gi)) { const n = Number(m[1]); if (n > 0 && n <= 3600) found = /^(m|分)/i.test(m[2]) ? n * 60 : n; }
+  for (const t of texts) {
+    const values = new Set<number>();
+    for (const re of LENGTH) for (const m of String(t ?? "").matchAll(re)) { const n = Number(m[1]), unit = m[2]; if (n > 0 && n <= 600) values.add(/^(m|分)/i.test(unit) ? n * 60 : n); }
+    if (values.size === 1) found = [...values][0]; // two different film lengths in one text: ambiguous, not used
+  }
   return found;
 }

@@ -11,6 +11,8 @@ let pass=0;const ok=(v:unknown,name:string,detail='')=>{assert(v,`${name} ${deta
 const acts=primaryActions(['A signup page. The submit button must show a thank-you message.','Clicking the "Book now" button opens the booking form']);
 ok(acts.map(a=>`${a.kind}:${a.text}`).join(',')==='submit:submit,click:Book now'&&acts[0].said.includes('thank-you'),'primary actions come from the captain\'s words',JSON.stringify(acts));
 ok(!primaryActions(['A calm landing page about tea']).length,'a page with no named action has no smoke actions');
+ok(!primaryActions(['Remove the Book now button.','Make the submit button bigger and blue.']).length,'a note that removes or restyles a control asks no click of it');
+ok(primaryActions(['Remove the banner. The Book now button must open the booking form.']).map(a=>a.text).join()==='Book now','only the sentence that asks the control to work counts');
 const flow={id:'web-smoke',name:'Web smoke',version:1,roles:[{id:'designer',label:'Designer',skill:'fixture'}],nodes:[
  {id:'intake',kind:'hook',label:'Intake',do:'deliver.intake',x:0,y:0},{id:'produce',kind:'hook',label:'Round',do:'deliver.round',x:1,y:0},
  {id:'draft',kind:'agent',label:'Draft',role:'designer',mode:'deliver',args:{format:'web'},x:2,y:0},
@@ -20,7 +22,9 @@ const flow={id:'web-smoke',name:'Web smoke',version:1,roles:[{id:'designer',labe
 const H=await harness([Y(flow)]),E=H.engine,store=new ArtifactStore(H.data);
 installDeliver(E,{dataDir:H.data,artifacts:store,lane:{},fileorg:{},docs:{}} as any);
 const form=(script:string)=>`<!doctype html><html><body><main><h1>Join the club</h1><form id="f"><label>Email <input type="email" name="email" required></label><button type="submit">Submit</button></form><p id="out"></p></main><script>${script}</script></body></html>`;
-const pages:Record<string,string>={dead:form("document.getElementById('f').addEventListener('submit',e=>e.preventDefault());"),
+const clock="setInterval(()=>{document.getElementById('clock').textContent=String(Date.now());},50);";
+const pages:Record<string,string>={clock:form(clock+"document.getElementById('f').addEventListener('submit',e=>e.preventDefault());").replace('<p id="out">','<p id="clock"></p><p id="out">'),
+ hang:form("document.getElementById('f').addEventListener('submit',e=>{e.preventDefault();for(;;){}});"),dead:form("document.getElementById('f').addEventListener('submit',e=>e.preventDefault());"),
  live:form("document.getElementById('f').addEventListener('submit',e=>{e.preventDefault();document.getElementById('out').textContent='Thank you for joining!';});")};
 let current='dead';
 E.deps.provider=()=>({id:'fixture',model:'offline',sandboxFree:true,start(_s:any,_t:any[],ctx:any){return{interrupt(){},async *send(){
@@ -38,6 +42,17 @@ try{
   const live=await end('live');
   ok(live.card&&!live.findings.length&&/Interaction smoke: submit changed the page/.test(live.card.body),'a submit that shows a thank-you passes and the accept card says what was clicked',JSON.stringify(live.findings)+(live.card?.body??''));
   await E.answer(live.card!.id,{choice:'reject',by:'fixture captain'});
+  const clockRun=await end('clock');
+  ok(clockRun.findings.some(x=>x.class==='web-interaction'),'a page that changes on its own (a ticking clock) still fails a dead submit: only changes the click causes count',JSON.stringify(clockRun.findings));
+  process.env.CREW_INTERACT_TIMEOUT_MS='6000';const t0=Date.now(),hung=await end('hang');delete process.env.CREW_INTERACT_TIMEOUT_MS;
+  const s:any=Object.values(hung.run.ctx.webSmoke??{})[0];
+  ok(Date.now()-t0<60000&&s?.status==='not-run'&&/did not answer: the smoke timed out after 6 s/.test(s.reason)&&hung.card&&/Interaction smoke not run: the page did not answer/.test(hung.card.body),'a page whose handler hangs is stopped at the smoke limit and reported not run, never a pass',JSON.stringify(s));
+  await E.answer(hung.card!.id,{choice:'reject',by:'fixture captain'});
+  // cancelling the Task stops the browser at once
+  current='hang';process.env.CREW_INTERACT_TIMEOUT_MS='120000';const run=E.start({workflow:flow.id,text:intent});
+  const script=`${H.data}/tools/render.mjs`,alive=()=>Bun.spawnSync(['pgrep','-f',script]).stdout.toString().trim().length>0;
+  assert(await until(alive,30000),'the smoke browser starts');const t1=Date.now();await E.cancel(run.id,'fixture cancel');
+  ok(await until(()=>!alive(),10000)&&Date.now()-t1<10000,'cancelling the Task kills the smoke browser',String(Date.now()-t1));delete process.env.CREW_INTERACT_TIMEOUT_MS;
  }
  process.env.CREW_RENDER_STUB='1';
  const stub=await end('dead');

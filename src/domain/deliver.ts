@@ -2,12 +2,13 @@
 // check ledger and refine loop. No domain agent owns a human decision or a merge.
 import {captureDeliverInputs,deliverInputTools} from "./deliver-inputs";
 import { OperatingRules, type RulesSection } from "../operating-rules";
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join, relative } from "node:path";
-import { folderTools } from "../agent";
+import { folderTools, type AgentTool } from "../agent";
+import { redactText } from "../secure";
 import { websiteHref, type ArtifactStore } from "../artifacts";
-import { bundledText } from "../bundled";
+import { bundledList, bundledText } from "../bundled";
 import { mdToDocHtml, toDocx, toPdf } from "../docrender";
 import { frameLuma, probeVideo, requestedSeconds, runRender, renderEnv } from "../render";
 import { imageRefinement, lineageText, requirementLineage } from "./image-refinement";
@@ -17,20 +18,45 @@ import { verifyImagePng, type CodexImage } from "../providers/codex-image";
 import type { Engine, X } from "../runtime/engine";
 
 type Deps = { dataDir: string; artifacts: ArtifactStore; lane: any; fileorg: any; docs: any;
-  /** a registered project's checkout, so a document about that project can read its docs/ (R-032) */
-  projectPath?: (id: string) => string | null;
-  /** Studio's own docs/ folder, for a document about Crew Studio itself; absent in a build without it */
+  /** Studio's docs for a document about Crew Studio itself (R-032): a folder (tests), null for none, or by default
+   *  the docs bundled with Studio (the checkout's docs/, or the copies embedded in the binary) */
   studioDocs?: string | null; generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference, rules?: RulesSection) => Promise<CodexImage> };
 const hash = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 /** A document's title is its own # heading, never the raw prompt that asked for it. */
 export const docTitle = (md: string, fallback: string) => /^#\s+(.+?)\s*#*\s*$/m.exec(md)?.[1].trim() || fallback;
-const STUDIO_DOCS = join(import.meta.dir, "..", "..", "docs");
-/** The primary actions a web prototype must perform, named in the captain's words (intent and notes):
- *  a submit, or a named button ("click Add to cart", "the 'Book now' button"). At most six. */
+type DocSource = { label: string; list: () => string[]; text: (rel: string) => string | null };
+/** Studio's own docs as a read-only source: the bundled docs/ (dev checkout or binary), or a test folder. */
+export function studioDocSource(dir?: string | null): DocSource | null {
+  if (dir === null) return null;
+  if (dir === undefined) { const list = () => bundledList("docs/").filter(p => /^docs\/(?:[^/]+|units\/[^/]+)\.md$/.test(p)); // what the binary embeds (scripts/gen-assets.ts)
+    return list().length ? { label: "Crew Studio docs", list, text: rel => list().includes(rel) ? bundledText(rel) : null } : null; }
+  let root: string; try { root = realpathSync(dir); if (!lstatSync(dir).isDirectory()) return null; } catch { return null; }
+  const list = () => { const out: string[] = []; const walk = (d: string) => { for (const n of readdirSync(d).sort()) { const p = join(d, n), s = lstatSync(p); if (s.isSymbolicLink()) continue; if (s.isDirectory()) walk(p); else if (s.isFile() && n.endsWith(".md")) out.push(relative(root, p)); } }; walk(root); return out; };
+  return { label: "Crew Studio docs", list, text: rel => { if (!list().includes(rel)) return null; try { const p = join(root, rel); return lstatSync(p).isFile() && realpathSync(p).startsWith(root + "/") ? readFileSync(p, "utf8") : null; } catch { return null; } } };
+}
+/** Read-only tools over a doc source; every text the model sees is passed through the credential redactor. */
+export function productDocTools(src: DocSource): AgentTool[] {
+  const read = (rel: string) => { const t = src.text(String(rel ?? "")); return t === null ? null : redactText(t); };
+  return [
+    { name: "product_docs_list", description: `Read-only, ${src.label}: list the documents.`, schema: { type: "object", properties: {} }, run: () => src.list().slice(0, 400) },
+    { name: "product_docs_read", description: `Read-only, ${src.label}: read a document by line range (lines from 1; default 400, max 800).`, schema: { type: "object", properties: { path: { type: "string" }, start: { type: "number" }, lines: { type: "number" } }, required: ["path"] },
+      run: a => { const t = read(a.path); if (t === null) return { error: `no such document: ${a.path}` }; const all = t.split("\n"), s0 = Math.max(1, Number(a.start) || 1), n = Math.min(800, Math.max(1, Number(a.lines) || 400));
+        return { path: a.path, totalLines: all.length, start: s0, text: all.slice(s0 - 1, s0 - 1 + n).map((l, i) => `${s0 + i}\t${l}`).join("\n") }; } },
+    { name: "product_docs_search", description: `Read-only, ${src.label}: find lines containing a text (case-insensitive).`, schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+      run: a => { const q = String(a.text ?? "").toLowerCase(); if (!q) return { error: "text is required" }; const hits: any[] = [];
+        for (const rel of src.list()) { if (hits.length >= 50) break; (read(rel) ?? "").split("\n").forEach((l, i) => { if (hits.length < 50 && l.toLowerCase().includes(q)) hits.push({ path: rel, line: i + 1, text: l.slice(0, 300) }); }); } return hits; } },
+  ];
+}
+/** The primary actions a web prototype must perform: a submit or a named button that the captain's words (intent
+ *  and notes) ask to work ("the submit button must show a thank-you", "clicking Add to cart does nothing"). A
+ *  sentence that removes, hides or restyles a control asks nothing of it. At most six. */
+const REMOVE = /\b(remove|delete|drop|hide|get rid of|take out|take away|no longer|without|don'?t (?:need|want)|lose)\b|刪除|删除|移除|拿掉|去掉|不要/i;
+const WORKS = /\b(must|should|needs? to|has to|have to|does(?:n'?t| not)? (?:nothing|work)|do(?:es)?n'?t work|nothing happens|works?|working|broken|open|opens|show|shows|display|send|sends|take[s]? (?:me|you|the user|people) to|go(?:es)? to|lead[s]? to|navigate|respond|add[s]? (?:it|the|an?|items?)|when (?:i|you|the user|someone|people) (?:click|press|tap|submit))\b|要能|按下後|點了|點擊後|沒反應|没反应|送出後/i;
 export function primaryActions(texts: string[]): { kind: "submit" | "click"; text: string; said: string }[] {
   const out: { kind: "submit" | "click"; text: string; said: string }[] = [], add = (kind: "submit" | "click", text: string, said: string) => { const t = text.trim().replace(/\s+/g, " "); if (t && !out.some(a => a.kind === kind && a.text.toLowerCase() === t.toLowerCase())) out.push({ kind, text: t, said: said.trim().slice(0, 200) }); };
-  for (const said of texts.map(t => String(t ?? ""))) {
+  for (const said of texts.flatMap(t => String(t ?? "").split(/(?<=[.!?。！？;；\n])\s*/))) {
+    if (!said.trim() || REMOVE.test(said) || !WORKS.test(said)) continue;
     if (/\bsubmit(?:s|ted|ting)?\b|送出|提交/i.test(said)) add("submit", "submit", said);
     for (const m of said.matchAll(/\bclick(?:ing|s)?\s+(?:on\s+)?(?:the\s+)?["“'‘]?([A-Za-z][\w '-]{1,28}?)["”'’]?\s+button\b/gi)) add("click", m[1], said);
     for (const m of said.matchAll(/["“'‘]([^"”'’]{2,30})["”'’]\s+button\b/gi)) add("click", m[1], said);
@@ -83,30 +109,24 @@ export function installDeliver(engine: Engine, d: Deps) {
     if (source) for (const n of producers) (x.ctx.briefs ??= {})[n.id] = { ...source, producer: n.id, round: x.run.nodes[n.id].visits };
     return "ok";
   };
-  // a document about the product reads the product's own docs (read-only, host-side tools): a registered
-  // project's docs/ when the Task names one, Studio's docs/ when the intent is about Crew Studio itself
-  const productDocs = (x: X): { label: string; root: string } | null => {
-    if (kind(x) !== "document") return null;
-    const project = x.run.params?.project ? d.projectPath?.(String(x.run.params.project)) : null;
-    const studio = d.studioDocs === undefined ? STUDIO_DOCS : d.studioDocs;
-    const pick = project ? { label: `${x.run.params.project} docs/`, root: join(project, "docs") } : studio && /\bcrew[\s-]?studio\b/i.test(`${x.run.text} ${x.run.title}`) ? { label: "Crew Studio docs/", root: studio } : null;
-    try { return pick && existsSync(pick.root) && lstatSync(pick.root).isDirectory() ? { ...pick, root: realpathSync(pick.root) } : null; } catch { return null; }
-  };
-  const productDocTools = (x: X) => { const p = productDocs(x); return p ? folderTools(p.root, () => {}, "product_docs").filter(t => /_(list|read|search)$/.test(t.name)).map(t => ({ ...t, description: `Read-only, ${p.label}: ${t.description.replace(/ across the editable files/, "")}` })) : []; };
+  // a document about Crew Studio reads Studio's own docs (read-only, host-side, redacted tools); when this build
+  // has none, the brief says so instead of leaving the writer to invent product facts
+  const aboutStudio = (x: X) => kind(x) === "document" && /\bcrew[\s-]?studio\b/i.test(`${x.run.text} ${x.run.title}`);
+  const docsFor = (x: X) => aboutStudio(x) ? studioDocSource(d.studioDocs) : null;
   engine.modes.deliver = {
     begin(x) {
       const dir = engine.roundDir(x, "deliver");
       const old = x.ctx.deliver?.[x.node.id]; if (old) cpSync(st.filesDir(old.id, old.n), dir, { recursive: true });
       if (kind(x) === "video" && !old) { const tpl = bundledText("workflows/v2/templates/film.html"); if (!tpl) throw new Error("film template unavailable"); writeFileSync(join(dir, "film.html"), tpl.replaceAll(/\{\{(?:TITLE|LINE[123])\}\}/g, "Crew Studio")); }
-      x.rn.data.inputs = captureDeliverInputs(x,st); x.rn.data.productDocs = productDocs(x)?.label ?? null; engine.record(x,"deliver-inputs",{data:{inputs:x.rn.data.inputs}});
+      x.rn.data.inputs = captureDeliverInputs(x,st); x.rn.data.productDocs = aboutStudio(x) ? (docsFor(x)?.label ?? "unavailable") : null; engine.record(x,"deliver-inputs",{data:{inputs:x.rn.data.inputs}});
       x.rn.data.brief = briefFor(x); x.rn.data.dir = dir; x.rn.data.parent = old ?? null; x.rn.data.notes = old ? st.notes(old.id, old.n).filter(n => n.status === "open") : [];
       // every round carries the captain's notes from every earlier version, not only the parent's open ones (R-051, R-054)
       x.rn.data.lineage = requirementLineage(st, { run: x.run.id, producer: x.node.id, round: x.visit, attempt: (x.rn.attempt ?? 0) + 1, intent: x.run.text, old, type: artifactType(kind(x)) }); x.save();
     },
     sandbox: x => { const dir = engine.roundDirPath(x, "deliver"); return { writes: [dir], cwd: dir }; },
-    tools: x => [...folderTools(x.rn.data.dir, () => {}, "work").filter(t => t.name !== "work_search"),...deliverInputTools(st,x.run.id,x.rn.data.inputs??[],()=>engine.owns(x)),...productDocTools(x)], maxTools: 30,
+    tools: x => [...folderTools(x.rn.data.dir, () => {}, "work").filter(t => t.name !== "work_search"),...deliverInputTools(st,x.run.id,x.rn.data.inputs??[],()=>engine.owns(x)),...(x.rn.data.productDocs && x.rn.data.productDocs !== "unavailable" ? productDocTools(docsFor(x)!) : [])], maxTools: 30,
     system: (x, skill) => `${skill}\nProduce ${entry(kind(x))} in the isolated work folder using work_* tools. Read related fixed-version source documents with input_list/input_read before building on or reviewing them; input sources are read-only and are not in the work folder. No shell, network, browser inspection or external assets. Preserve existing content unless the brief changes it.${kind(x) === "video" ? " Keep the renderer contract: #stage, DUR, render(t), build() and schedule(). #stage must be a fixed 960x540 px box (16:9), or 540x960 when the intent asks for vertical; never vw/vh/%. The MP4 is rendered at exactly 1920x1080 (1080x1920 vertical) from that box." : ""}`,
-    prompt: x => `DELIVER ${kind(x)}\nNode: ${x.node.id} — ${x.node.label}\nAssignment: ${x.node.detail ?? "Produce the requested output for this step."}\nFixed Task inputs (use input_read with producer): ${JSON.stringify(x.rn.data.inputs??[])}\n${x.rn.data.productDocs ? `Product docs (read-only, product_docs_list/read/search): ${x.rn.data.productDocs}. Take every fact about the product from them; never invent one.\n` : ""}Variant: ${x.node.args?.variant ?? "A"}\nIntent: ${x.run.text || x.run.title}\n${x.rn.data.brief?.text ?? ""}\n${x.rn.data.lineage ? lineageText(x.rn.data.lineage) : ""}\nOpen annotations on the parent version: ${JSON.stringify(x.rn.data.notes ?? [])}\n${parentLine(x)}`,
+    prompt: x => `DELIVER ${kind(x)}\nNode: ${x.node.id} — ${x.node.label}\nAssignment: ${x.node.detail ?? "Produce the requested output for this step."}\nFixed Task inputs (use input_read with producer): ${JSON.stringify(x.rn.data.inputs??[])}\n${x.rn.data.productDocs === "unavailable" ? "Product docs: unavailable in this build. Do not invent facts about the product; say plainly which facts the captain must supply.\n" : x.rn.data.productDocs ? `Product docs (read-only, product_docs_list/read/search): ${x.rn.data.productDocs}. Take every fact about the product from them; never invent one.\n` : ""}Variant: ${x.node.args?.variant ?? "A"}\nIntent: ${x.run.text || x.run.title}\n${x.rn.data.brief?.text ?? ""}\n${x.rn.data.lineage ? lineageText(x.rn.data.lineage) : ""}\n${parentLine(x)}`,
     after(x, job) {
       if (x.cancelled()) throw new Error("cancelled");
       const f = kind(x), dir = x.rn.data.dir, e = entry(f); if (!existsSync(join(dir, e))) throw new Error(`the agent wrote no ${e}`);
@@ -133,11 +153,11 @@ export function installDeliver(engine: Engine, d: Deps) {
     if (want && dur !== null && Math.abs(dur - want) > Math.max(0.5, want * 0.1)) out.push({ message: `rendered MP4 runs ${dur.toFixed(1)} s; the captain asked for ${want} s`, expected: `set DUR to ${want} so the film runs ${want} s, and pace the beats to fill it`, cls: "video-duration" });
     const len = dur ?? 1, at = (t: number) => frameLuma(mp4, Math.max(0, Math.min(t, len - Math.min(0.2, len / 4))));
     const samples = await Promise.all([0.1, 0.5, 0.9].map(f => at(len * f)));
-    if (samples.every(l => l !== null && l < 6)) out.push({ message: "every sampled frame of the rendered MP4 is black", expected: "make the film's content visible on #stage: check opacity, colours and that render(t) draws each beat", cls: "video-black" });
+    if (samples.every(l => l !== null && l.peak < 16)) out.push({ message: "every sampled frame of the rendered MP4 is black", expected: "make the film's content visible on #stage: check opacity, colours and that render(t) draws each beat", cls: "video-black" });
     if (/\bfad(?:e|es|ed|ing)[\s-]?in\b|淡入/i.test(said)) { const [a, b] = await Promise.all([at(0), at(Math.min(1.5, len / 3))]);
-      if (a !== null && b !== null && !(a < 12 || a < b * 0.6)) out.push({ message: "the captain asked for a fade-in, but the first frame is already at full brightness", expected: "start the film from black (opacity 0) and fade it in over the first second", cls: "video-fade" }); }
+      if (a !== null && b !== null && !(a.mean < 12 || a.mean < b.mean * 0.6)) out.push({ message: "the captain asked for a fade-in, but the first frame is already at full brightness", expected: "start the film from black (opacity 0) and fade it in over the first second", cls: "video-fade" }); }
     if (/\bfad(?:e|es|ed|ing)[\s-]?out\b|淡出/i.test(said)) { const [a, b] = await Promise.all([at(len), at(len * 2 / 3)]);
-      if (a !== null && b !== null && !(a < 12 || a < b * 0.6)) out.push({ message: "the captain asked for a fade-out, but the last frame is still at full brightness", expected: "fade the film to black (opacity 0) over its last second", cls: "video-fade" }); }
+      if (a !== null && b !== null && !(a.mean < 12 || a.mean < b.mean * 0.6)) out.push({ message: "the captain asked for a fade-out, but the last frame is still at full brightness", expected: "fade the film to black (opacity 0) over its last second", cls: "video-fade" }); }
     return out;
   };
   // a web prototype's primary actions are clicked in a headless browser (the film renderer's Playwright): an action
@@ -149,8 +169,11 @@ export function installDeliver(engine: Engine, d: Deps) {
     const run = (async () => {
       if (!actions.length) return { status: "not-run", reason: "the captain named no primary action", actions };
       const env = renderEnv(); if (env.stub || !env.canCrop) return { status: "not-run", reason: "renderer unavailable", actions };
-      const result = await runRender(d.dataDir, "interact", { html: file, actions: JSON.stringify(actions) }).done;
-      if (!result.ok || !Array.isArray(result.info?.results)) return { status: "not-run", reason: `renderer unavailable: ${String(result.error ?? "no result").slice(0, 160)}`, actions };
+      // bounded by runRender's interact limit, and stopped as soon as the Task is cancelled
+      const job = runRender(d.dataDir, "interact", { html: file, actions: JSON.stringify(actions) }); let settled = false; job.done.finally(() => settled = true);
+      while (!settled) { if (x.cancelled()) { job.cancel(); await job.done; smokeRuns.delete(key); return { status: "not-run", reason: "cancelled", actions }; } await sleep(40); }
+      const result = await job.done;
+      if (!result.ok || !Array.isArray(result.info?.results)) { const e = String(result.error ?? "no result").slice(0, 160); return { status: "not-run", reason: /^timed out/.test(e) ? `the page did not answer: the smoke ${e}` : `renderer unavailable: ${e}`, actions }; }
       return { status: "ran", actions, results: result.info.results.slice(0, 6) };
     })();
     smokeRuns.set(key, run); return run;

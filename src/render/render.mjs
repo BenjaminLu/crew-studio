@@ -74,35 +74,49 @@ const inputUrl = inputOrigin ? `${inputOrigin}/${encodeURIComponent(basename(htm
     await p.screenshot({ path: out, fullPage: true });
     log({ ok: true, out, refused, frames: p.frames().map((f) => f.url().slice(0, 200)) });
   } else if (mode === "interact") {
-    // a prototype's primary actions, named by the captain: load the page fresh for each, fill empty fields with
-    // plausible values, click the control, and report whether the page changed (DOM, another document or a dialog)
+    // a prototype's primary actions, named by the captain. For each: a no-click baseline records which parts of the
+    // page change on their own (clocks, carousels) over the same interval; then a fresh load, empty fields filled
+    // with plausible values, the click, and only a change the baseline did not make (or another document, or a
+    // dialog) counts. Every Playwright wait is bounded; the caller kills the whole run after its own limit.
     const actions = JSON.parse(opt("actions", "[]")).slice(0, 6), results = [];
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
+    ctx.setDefaultTimeout(10000); ctx.setDefaultNavigationTimeout(10000);
     await offline(ctx, inputOrigin);
     const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    for (const a of actions) {
-      const p = await ctx.newPage(), errors = []; let dialog = null;
+    const WAIT = 600;
+    const open = async (errors) => {
+      const p = await ctx.newPage(); p.setDefaultTimeout(10000);
       p.on("pageerror", (e) => errors.length < 5 && errors.push(String(e?.message ?? e).slice(0, 200)));
-      p.on("dialog", (d) => { dialog = d.message().slice(0, 200); d.dismiss().catch(() => {}); });
+      await p.goto(inputUrl); await p.waitForTimeout(250);
+      for (const f of await p.locator("input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]), textarea").all()) {
+        try { if (!(await f.isVisible()) || (await f.inputValue())) continue; const t = (await f.getAttribute("type")) ?? "text";
+          await f.fill(t === "email" ? "captain@example.com" : t === "number" ? "1" : t === "tel" ? "0912345678" : t === "url" ? "https://example.com" : t === "date" ? "2026-10-17" : "Captain"); } catch {}
+      }
+      // every DOM mutation from here on, by the mutated element's path
+      await p.evaluate(() => { const path = (n) => { const parts = []; let e = n && n.nodeType === 1 ? n : n?.parentElement; while (e && e !== document.documentElement) { parts.unshift(`${e.tagName}:${e.parentElement ? [...e.parentElement.children].indexOf(e) : 0}`); e = e.parentElement; } return parts.join("/"); };
+        window.__crewMut = new Set(); new MutationObserver((ms) => { for (const m of ms) window.__crewMut.add(path(m.target)); }).observe(document, { subtree: true, childList: true, characterData: true, attributes: true }); });
+      return p;
+    };
+    const mutated = (p) => p.evaluate(() => window.__crewMut ? [...window.__crewMut] : null).catch(() => null);
+    for (const a of actions) {
+      const errors = []; let dialog = null, p = null;
       try {
-        await p.goto(inputUrl); await p.waitForTimeout(250);
+        const base = await open([]); await base.waitForTimeout(WAIT); const spontaneous = new Set((await mutated(base)) ?? []); await base.close().catch(() => {});
+        p = await open(errors); p.on("dialog", (d) => { dialog = d.message().slice(0, 200); d.dismiss().catch(() => {}); });
         const named = a.kind === "submit" ? /submit|send|sign up|subscribe|book|order|join|送出|提交|訂閱|報名/i : new RegExp(esc(a.text), "i");
         let target = a.kind === "submit" ? p.locator("form button[type=submit], form input[type=submit], form button:not([type])") : p.getByRole("button", { name: named });
         if (!(await target.count())) target = p.getByRole("button", { name: named }).or(p.getByRole("link", { name: named })).or(p.locator("input[type=submit], input[type=button]").filter({ hasText: named }));
         if (!(await target.count())) { results.push({ ...a, found: false, changed: false, errors }); continue; }
-        target = target.first();
-        for (const f of await p.locator("input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]), textarea").all()) {
-          try { if (!(await f.isVisible()) || (await f.inputValue())) continue; const t = (await f.getAttribute("type")) ?? "text";
-            await f.fill(t === "email" ? "captain@example.com" : t === "number" ? "1" : t === "tel" ? "0912345678" : t === "url" ? "https://example.com" : t === "date" ? "2026-10-17" : "Captain"); } catch {}
-        }
-        const snap = () => p.evaluate(() => document.body ? document.body.innerHTML : "").catch(() => "");
-        const before = await snap(), path0 = new URL(p.url()).pathname;
-        await target.click({ timeout: 3000 }).catch((e) => errors.push(`click: ${String(e?.message ?? e).split("\n")[0].slice(0, 160)}`));
-        await p.waitForTimeout(600); await p.waitForLoadState().catch(() => {});
-        const after = await snap(), path1 = new URL(p.url()).pathname, text = await p.evaluate(() => document.body?.innerText ?? "").catch(() => "");
-        results.push({ ...a, found: true, changed: after !== before || path1 !== path0 || !!dialog, navigated: path1 !== path0, dialog, errors, text: text.replace(/\s+/g, " ").slice(0, 300) });
+        const path0 = new URL(p.url()).pathname, doc0 = await p.evaluate(() => !!window.__crewMut);
+        await target.first().click({ timeout: 3000 }).catch((e) => errors.push(`click: ${String(e?.message ?? e).split("\n")[0].slice(0, 160)}`));
+        await p.waitForTimeout(WAIT); await p.waitForLoadState().catch(() => {});
+        const got = await mutated(p), path1 = new URL(p.url()).pathname, reloaded = doc0 && got === null;
+        const own = (got ?? []).filter((m) => !spontaneous.has(m));
+        const text = await p.evaluate(() => document.body?.innerText ?? "").catch(() => "");
+        // a reload of the same document (a form with no handler) is not a response; another document is
+        results.push({ ...a, found: true, changed: own.length > 0 || path1 !== path0 || !!dialog, navigated: path1 !== path0, reloaded, dialog, errors, ignored: spontaneous.size, text: text.replace(/\s+/g, " ").slice(0, 300) });
       } catch (e) { results.push({ ...a, found: false, changed: false, errors: [...errors, String(e?.message ?? e).slice(0, 200)] }); }
-      finally { await p.close().catch(() => {}); }
+      finally { await p?.close().catch(() => {}); }
     }
     log({ ok: true, results, refused });
   } else if (mode === "crop") {
