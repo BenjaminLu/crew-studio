@@ -78,7 +78,13 @@ export function boardFixture(now = Date.now()) {
     c.status = "answered"; c.answer = { choice: b.choice, note: b.note ?? null, by: "captain (desktop)", at: new Date().toISOString(), confirm: b.confirm ?? null };
     return [200, c];
   };
-  return { def, details, open, list, answer, calls: () => answerCalls, policies: { org: { round_cap: 3 }, projects: [] } };
+  // the agent node runs working now, as the runtime's /api/wruns/agents reads them off its runs (src/runtime/index.ts): read
+  // from the details at request time, so a test that moves a run on moves its crew too
+  const agents = () => ({ agents: Object.values(details).filter((r) => !["succeeded", "failed", "cancelled"].includes(r.status)).flatMap((r) => Object.entries(r.nodes)
+    .filter(([id, n]) => n.state === "running" && n.agent && def.nodes.find((x) => x.id === id)?.kind === "agent").map(([id, n]) => { const d = def.nodes.find((x) => x.id === id);
+      return { job: `J-${r.id}-${id}-${n.visits}`, run: r.id, runTitle: r.title, workflow: r.workflow, node: id, label: d.label ?? id, role: d.role ?? null, provider: n.agent.provider, model: n.agent.model,
+        round: n.visits, attempt: n.attempt, startedAt: n.startedAt, tools: 0, lastActivity: null }; })), localJobs: [] });
+  return { def, details, open, list, answer, agents, calls: () => answerCalls, policies: { org: { round_cap: 3 }, projects: [] } };
 }
 
 /** Serve the fixture on a Playwright context or page: the Studio run and card routes only; everything else goes to the real server. */
@@ -87,6 +93,7 @@ export async function routeBoardFixture(target, fx) {
     const req = route.request(); const u = new URL(req.url()); const p = u.pathname;
     const send = (status, body) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
     if (p === "/api/wruns" && req.method() === "GET") return send(200, fx.list());
+    if (p === "/api/wruns/agents" && req.method() === "GET") return send(200, fx.agents());
     let m = /^\/api\/wruns\/(R-\d+)$/.exec(p); if (m) return fx.details[m[1]] ? send(200, fx.details[m[1]]) : send(404, { error: "no such run" });
     if (p === "/api/scards") return send(200, { cards: u.searchParams.get("open") === "1" ? fx.open.filter((c) => c.status === "open") : fx.open });
     m = /^\/api\/scards\/(SC-\d+)$/.exec(p); if (m && req.method() === "GET") { const c = fx.open.find((x) => x.id === m[1]); return c ? send(200, c) : send(404, { error: "no such card" }); }

@@ -186,6 +186,8 @@ function patchRow(id) {
   patchOverview();
   const old = document.querySelector(`[data-run="${CSS.escape(id)}"]`); const row = studioRow(id); if (!old || !row) return;
   hydrateIcons(row); old.replaceWith(row); updateHead();
+  // the page now shows this run as it is: a later soft() with nothing else new (another stream's wrun listener) redraws nothing
+  BD.sig = boardSig();
 }
 
 // ---------- decisions ----------
@@ -274,11 +276,20 @@ function viewBoard() {
       h("div", { class: "card needs bd-ended" }, BD.ended.map((r) => h("a", { class: "need bd-ended-row", href: `#/run/${encodeURIComponent(r.id)}`, "data-ended-run": r.id },
         h("span", { class: "tid" }, r.id), h("div", { style: "min-width:0" }, h("div", { class: "need-t" }, r.title), h("div", { class: "need-d" }, `${r.workflow} v${r.version}${r.cancelReason ? ` · ${r.cancelReason}` : ""}`)),
         h("div", { class: "need-r" }, window.runStateBadge(r), h("span", { class: "faint num", style: "font-size:12px" }, ago(r.endedAt))))))) : null,
-    h("section", { "aria-labelledby": "crewH" },
+    crewSection(c));
+}
+// the crew on duty: every Studio agent working (public/runtime.js's /api/wruns/agents list) and firstmate's live rounds
+const crewSection = (c) => h("section", { "aria-labelledby": "crewH" },
       h("div", { class: "sec-head" }, h("h2", { id: "crewH" }, T("Crew on duty", "值班船員")), h("span", { class: "faint", id: "crewSum2" }, window.studioAgents?.ready() ? T(`${c.crew.length} working`, `${c.crew.length} 位工作中`) : window.studioAgents?.status())),
       h("div", { class: "card crewline" }, h("div", { class: "avas", "data-crew-strip": "1" }, c.crew.length ? c.crew.map((m) => { const a = h("a", { class: "ava lg", href: m.href, title: m.title, "aria-label": m.title, style: avaFor(m.name).getAttribute("style") }, m.name.slice(0, 2), h("span", { class: "sd pulse", style: "background:var(--accent);color:var(--accent)" })); return a; })
-        : h("span", { class: "faint" }, window.studioAgents?.ready() ? T("Nobody is working right now.", "目前沒有人在工作。") : window.studioAgents?.status())), h("a", { class: "btn ghost", href: "#/crew" }, T("Open crew", "打開船員")))));
+        : h("span", { class: "faint" }, window.studioAgents?.ready() ? T("Nobody is working right now.", "目前沒有人在工作。") : window.studioAgents?.status())), h("a", { class: "btn ghost", href: "#/crew" }, T("Open crew", "打開船員"))));
+// the agent list changed: patch the crew strip and the subtitle in place, as patchRow does a row (a full redraw between
+// a mouse-down and its mouse-up would swallow a click on another row); unchanged, nothing is touched
+function patchCrew() {
+  const old = document.querySelector('[aria-labelledby="crewH"]'); if (!old) return false;
+  const fresh = crewSection(counts()); hydrateIcons(fresh); if (fresh.outerHTML !== old.outerHTML) old.replaceWith(fresh); updateHead(); BD.sig = boardSig(); return true;
 }
+window.crewBoardAgentsChanged = () => S.route?.name === "board" && !S.route.arg && patchCrew();
 routes.board = viewBoard;
 // re-renders from live data (app.js's stream handlers and the loaders here) go through soft(): mark them as live
 // and a live update that changes nothing the Board shows does not redraw it (the crew's log tails move every few seconds;

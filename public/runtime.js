@@ -898,7 +898,8 @@ window.studioCards = { count: () => SCX.open.length,
 
 // ---------- Studio tasks' live agent node runs on the Crew page, beside firstmate's rounds ----------
 const SA = { local: [], list: [], t: null, pending: null, ready: false, error: false };
-function agentsChanged(){ updateNav(); if (["crew","board"].includes(S.route?.name) && !S.route.arg) soft(); }
+// the Board patches its crew strip in place (public/board.js); the Crew page redraws
+function agentsChanged(){ updateNav(); if (window.crewBoardAgentsChanged?.()) return; if (["crew","board"].includes(S.route?.name) && !S.route.arg) soft(); }
 async function loadAgents() {
   if(SA.pending)return SA.pending;
   SA.pending=(async()=>{try{const data=await api("/api/wruns/agents");SA.list=data.agents||[];SA.local=data.localJobs||[];SA.ready=true;SA.error=false;}catch{SA.error=true;}finally{SA.pending=null;agentsChanged();}})();
