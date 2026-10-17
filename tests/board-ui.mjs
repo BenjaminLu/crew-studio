@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { freePort, waitUp, withSession } from "./boot.mjs";
 import { boardFixture, routeBoardFixture } from "./fixture/board/studio.mjs";
+import { approveStaffing, codexCrewEnv } from "./lib/codex-crew.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url)), root = join(here, "..");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright").catch(() => {
@@ -53,8 +54,8 @@ const port = await freePort();
 const env = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) delete env[k];
 const app = spawn("bun", ["src/server.ts"], { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...env, CREW_FM_STATE: state, CREW_PORT: String(port), CREW_GH: "0", CREW_READONLY: "0", CREW_DATA: join(tmp, "data"),
   CREW_BOARD_URL: `http://127.0.0.1:${mock.address().port}`, CREW_BOARD_SECRET: join(tmp, "board.secret"), CREW_RECENT_DAYS: "3650",
-  CREW_CHAT_PROVIDER: "stub", CREW_RETRO_AUTO: "0", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_GH_NO_CLI: "1", CREW_CLAUDE_BIN: "/nonexistent/claude", CREW_CODEX_BIN: "/nonexistent/codex",
-  HOME: join(tmp, "home"), CREW_MAIN_PROJECT: join(tmp, "proj"), CREW_FILE_ALLOW: tmp } });
+  CREW_CHAT_PROVIDER: "stub", CREW_RETRO_AUTO: "0", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_GH_NO_CLI: "1", CREW_CLAUDE_BIN: "/nonexistent/claude",
+  ...codexCrewEnv(join(tmp, "home")), CREW_MAIN_PROJECT: join(tmp, "proj"), CREW_FILE_ALLOW: tmp } });
 let appLog = ""; app.stdout.on("data", (d) => (appLog += d)); app.stderr.on("data", (d) => (appLog += d));
 const base = `http://127.0.0.1:${port}`;
 await waitUp(base, app);
@@ -282,8 +283,14 @@ try {
     const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`real: ${e}`));
     await p.goto(`${base}/#/board`); await p.waitForTimeout(800);
     ok(/, — today$/.test((await p.textContent("#boardSub")).trim()), "no cost recorded at all: today's spend reads —", await p.textContent("#boardSub"));
-    const text = ["Add a percent function to money-kit", "STUB_FILE src/percent.ts :: export function percent(a: number, p: number): number {\\n  return Math.round((a * p) / 100);\\n}\\n"].join("\n");
-    const started = await p.evaluate((t) => fetch("/api/wruns", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: t, workflow: "code-firstmate" }) }).then((r) => r.json()), text);
+    // the change and its test: the spec's environment preflight (firstmate/env-preflight) needs the test its done line names
+    const text = ["Add a percent function to money-kit", "STUB_FILE src/percent.ts :: export function percent(a: number, p: number): number {\\n  return Math.round((a * p) / 100);\\n}\\n",
+      'STUB_FILE test/percent.test.ts :: import { expect, test } from "bun:test";\\ntest("percent rounds to the cent", async () => { expect(await Bun.file(new URL("../src/percent.ts", import.meta.url)).exists()).toBe(true); const { percent } = await import("../src/percent"); expect(percent(1999, 15)).toBe(300); });\\n'].join("\n");
+    // code-firstmate starts only on a registered project with an approved crew (src/domain/staffing.ts): the built-in sandbox
+    // project, its crew approved through the captain's staffing discussion on the fixture Codex account (tests/lib/codex-crew.mjs)
+    const api = async (path, body) => p.evaluate(async ([path, body]) => { const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json().catch(() => ({})) }; }, [path, body]);
+    await approveStaffing(api, "sandbox", "code-firstmate");
+    const started = await p.evaluate((t) => fetch("/api/wruns", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: t, workflow: "code-firstmate", params: { project: "sandbox" } }) }).then((r) => r.json()), text);
     const rid = started.id;
     ok(/^R-\d+$/.test(rid || ""), "a real run starts on the runtime (stub provider)", JSON.stringify(started).slice(0, 300));
     // the card is answerable once its own checks have raised it

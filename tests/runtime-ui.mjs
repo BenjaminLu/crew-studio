@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { freePort, waitUp, withSession } from "./boot.mjs";
+import { approveStaffing, codexCrewEnv } from "./lib/codex-crew.mjs";
 const here = dirname(fileURLToPath(import.meta.url)), root = join(here, "..");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright").catch(() => {
   console.error("runtime-ui: Playwright not found; set PLAYWRIGHT_MODULE to its index.mjs or install it"); process.exit(2); });
@@ -18,16 +19,14 @@ const PW_MODULE = process.env.PLAYWRIGHT_MODULE || (() => { try { return fileURL
 const tmp = mkdtempSync(join(tmpdir(), "crew-rtui-"));
 const state = join(tmp, "fm", "state"), data = join(tmp, "data");
 mkdirSync(join(state, "pending"), { recursive: true }); mkdirSync(data);
-// code-firstmate runs on an approved crew: a Codex login the stub CLI (tests/fixture/codex-account.mjs) hands to the
-// scripted agent (tests/acceptance/agent.mjs), so every round goes through the real native Codex path offline
-const codexHome = join(tmp, "home", ".codex"); mkdirSync(codexHome, { recursive: true });
-writeFileSync(join(codexHome, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", last_refresh: "2020-02-29T12:34:56.123+08:00", tokens: { access_token: "abcdefgh.abcdefgh.abcdefgh", id_token: "fixture-id-token", account_id: "fixture-acceptance", refresh_token: "acceptance-refresh-must-not-copy" } }), { mode: 0o600 });
+// code-firstmate runs on an approved crew: the fixture Codex login and scripted agent (tests/lib/codex-crew.mjs)
+const crew = codexCrewEnv(join(tmp, "home"));
 const port = await freePort();
 const env = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) delete env[k];
 env.CREW_SESSION_TOKEN = process.env.CREW_SESSION_TOKEN ??= "test-session";
 const app = spawn("bun", ["src/server.ts"], { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...env, CREW_FM_STATE: state, CREW_PORT: String(port), CREW_GH: "0", CREW_READONLY: "1", CREW_DATA: data,
-  CREW_CHAT_PROVIDER: "stub", CREW_RETRO_AUTO: "0", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_GH_NO_CLI: "1", CREW_CLAUDE_BIN: "/nonexistent/claude", CREW_CODEX_BIN: join(root, "tests/fixture/codex-account.mjs"), CODEX_HOME: codexHome,
-  HOME: join(tmp, "home"), CREW_MAIN_PROJECT: join(tmp, "proj"), CREW_FILE_ALLOW: tmp, ...(PW_MODULE ? { CREW_PLAYWRIGHT_MODULE: PW_MODULE } : {}) } }); // Studio's renderer (the app captures) uses the Playwright this test uses
+  CREW_CHAT_PROVIDER: "stub", CREW_RETRO_AUTO: "0", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_GH_NO_CLI: "1", CREW_CLAUDE_BIN: "/nonexistent/claude", ...crew,
+  CREW_MAIN_PROJECT: join(tmp, "proj"), CREW_FILE_ALLOW: tmp, ...(PW_MODULE ? { CREW_PLAYWRIGHT_MODULE: PW_MODULE } : {}) } }); // Studio's renderer (the app captures) uses the Playwright this test uses
 let appLog = ""; app.stdout.on("data", (d) => (appLog += d)); app.stderr.on("data", (d) => (appLog += d));
 const base = `http://127.0.0.1:${port}`;
 await waitUp(base, app);
@@ -43,17 +42,6 @@ const INTENT = ["Add a percent function to money-kit",
   "STUB_FIX src/percent.ts :: / 100);  => / 100);"].join("\n");
 let runId = null;
 const api = async (path, body) => { const r = await fetch(base + path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", "x-crew-session": env.CREW_SESSION_TOKEN }, body: body === undefined ? undefined : JSON.stringify(body) }); return { status: r.status, body: await r.json().catch(() => ({})) }; };
-// the captain's staffing discussion and its captain-only confirmation card, every role on the stub Codex account
-async function approveStaffing(project, workflow) {
-  const version = (await api(`/api/wf/${workflow}`)).body.def.version, target = { project, workflow, version };
-  let r = (await api(`/api/intake/staffing?project=${project}&workflow=${workflow}&version=${version}`)).body; if (r.error) throw new Error("staffing interview: " + r.error);
-  const roles = [...new Set((r.frontier ?? []).map((q) => q.role))];
-  for (const [field, value] of [["provider", "codex"], ["model", "fixture-model"], ["effort", "low"]]) { const a = await api("/api/intake/staffing", { ...target, answers: Object.fromEntries(roles.map((id) => [id, { [field]: value }])) }); if (a.status !== 200 || a.body.error) throw new Error(`staffing ${field}: ${a.status} ${a.body.error ?? ""}`); r = a.body; }
-  const conf = await api("/api/intake/staffing", { ...target, roles: r.choices, confirm: true }); if (!conf.body.proposal) throw new Error("staffing confirmation: " + JSON.stringify(conf.body).slice(0, 300));
-  for (let i = 0; i < 200; i++) { const card = (await api("/api/scards")).body.cards?.find((c) => c.run === conf.body.proposal); if (card) { await api(`/api/scards/${card.id}/answer`, { choice: "approve" }); break; } await new Promise((res) => setTimeout(res, 100)); }
-  for (let i = 0; i < 200; i++) { if ((await api(`/api/wruns/${conf.body.proposal}`)).body.status === "succeeded") return; await new Promise((res) => setTimeout(res, 100)); }
-  throw new Error("staffing approval did not finish");
-}
 try {
   // ---------- the editor, 1440 light: the full interaction ----------
   { const ctx = await browser.newContext({ viewport: { width: 1440, height: 1500 }, colorScheme: "light" }); const p = await ctx.newPage(); // tall enough for the canvas and the palette under it (drag and drop between them)
@@ -151,7 +139,7 @@ try {
     await p.screenshot({ path: join(shots, "runtime-editor-1440-light.png") });
     // ---------- a run: from the Runs page, end to end on the sandbox repository ----------
     await p.goto(`${base}/#/runs`); await p.waitForSelector("[data-run-text]");
-    await approveStaffing("sandbox", "code-firstmate");
+    await approveStaffing(api, "sandbox", "code-firstmate");
     await p.fill("[data-run-text]", INTENT); await p.selectOption("[data-run-wf]", "code-firstmate");
     await p.waitForSelector('[data-run-project="code-firstmate"] option[value="sandbox"]', { state: "attached" }); await p.selectOption('[data-run-project="code-firstmate"]', "sandbox");
     await p.waitForSelector('[data-run-crew="approved"]'); await p.click("[data-run-start]");
