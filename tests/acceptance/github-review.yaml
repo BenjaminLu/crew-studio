@@ -1,5 +1,5 @@
-# Live acceptance: GitHub review. Like code-firstmate up to the dispatch card; the steps after it
-# open a pull request and wait on GitHub, so the run stops at dispatch.
+# Live acceptance: GitHub review. Held, and out of the end-to-end set until it is rebuilt from
+# code-firstmate (docs/retro/2026-10-17-github-review-held.md): this scenario only proves it stays held.
 schema: 2
 workflow: github-review
 pin: { version: 1, sha256: "1f5e9b3f8a81a39bd5e16e89e455a311f3b2352927a28233c20b0901ebce40bb" }   # bun scripts/acceptance/pin.ts github-review
@@ -17,4 +17,4 @@ stub:
     covers: "github-review is held (kept for editing, not offered for a new Task): the board start route refuses it with the held reason"
     how: held
     params: { project: sandbox }
-    board_refusal: { status: 409, error: "held: GitHub review runtime not activated yet" }
+    board_refusal: { status: 409, error: "held: GitHub review does not run end to end until it is rebuilt from code-firstmate" }

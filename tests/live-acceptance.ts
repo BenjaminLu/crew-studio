@@ -230,7 +230,7 @@ try {
 
   // --- a held workflow: the driver stops before any start with the held reason, never reaching the start route's refusal ---
   const hd = await accept(["--scenario", join(repo, "tests/acceptance/github-review.yaml")]);
-  ok(/workflow github-review is held \(held: GitHub review runtime not activated yet\)/.test(hd.out + hd.mdText) && !/409/.test(hd.out + hd.mdText) && !hd.report?.start?.id,
+  ok(/workflow github-review is held \(held: GitHub review does not run end to end until it is rebuilt from code-firstmate\)/.test(hd.out + hd.mdText) && !/409/.test(hd.out + hd.mdText) && !hd.report?.start?.id,
     "a held workflow's scenario stops with an explicit held message and starts nothing", `${hd.code} ${hd.out.slice(-400)}`);
 
   // --- a stop_at point: reached, stopped by design, not complete ---

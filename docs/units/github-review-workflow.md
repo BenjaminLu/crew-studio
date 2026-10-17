@@ -1,6 +1,11 @@
 # GitHub coding and external review workflow
 
-Status: implementation in an isolated worktree from 31b284b9. No actual external
+Held: this workflow does not run end to end. It is kept for editing, no new Task
+starts from it, and it is not in the end-to-end set until its graph is rebuilt from
+code-firstmate (docs/retro/2026-10-17-github-review-held.md). For GitHub pull
+requests, run code-firstmate on a GitHub project.
+
+Unit status: implementation in an isolated worktree from 31b284b9. No actual external
 write, reviewer contact, account registration, paid model call or credential edit
 is authorized by this unit. The supplied real PR authorizes read-only discovery;
 company response content stays private evidence and never enters fixtures/docs.

@@ -171,7 +171,7 @@ export const diffEmpty = (d: DefDiff) => !d.nodesAdded.length && !d.nodesRemoved
 const RETIRED_DEFAULTS=new Set(["refine-demo","trivial-lane"]);
 const INTERNAL_WORKFLOWS=new Set(["firstmate-proposal","firstmate-register-project","firstmate-staffing","firstmate-connect-github"]);
 /** Kept and editable, but no new Task starts until its runtime is activated. The reason is shown in the catalog. */
-const HELD_REASON={en:"held: GitHub review runtime not activated yet",zh:"暫停：GitHub 審查執行尚未啟用"};
+const HELD_REASON={en:"held: GitHub review does not run end to end until it is rebuilt from code-firstmate",zh:"暫停：GitHub 審查改由 code-firstmate 重建前無法端到端執行"};
 /**
  * Examples: shipped but not seeded on a fresh install (CREW_EXAMPLE_WORKFLOWS=1 seeds them). The startup competition
  * (docs/units/startup-recursion.md) is a two-vendor demonstration, not a starting point a new captain needs. An install

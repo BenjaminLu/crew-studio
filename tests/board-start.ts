@@ -100,11 +100,11 @@ try{
  const wf=await call('/api/wf');
  ok(!wf.body.workflows.some((w:any)=>w.id==='github-review'),'the Start form list does not offer github-review');
  const held=wf.body.held?.find((w:any)=>w.id==='github-review');
- ok(held?.held?.en==='held: GitHub review runtime not activated yet'&&!!held.held.zh,'the workflow catalog lists github-review as held with its reason');
+ ok(held?.held?.en==='held: GitHub review does not run end to end until it is rebuilt from code-firstmate'&&!!held.held.zh,'the workflow catalog lists github-review as held with its reason');
  const detail=await call('/api/wf/github-review');
- ok(detail.status===200&&detail.body.selectable===false&&detail.body.held?.en==='held: GitHub review runtime not activated yet','the editor keeps github-review readable with its held reason');
+ ok(detail.status===200&&detail.body.selectable===false&&detail.body.held?.en==='held: GitHub review does not run end to end until it is rebuilt from code-firstmate','the editor keeps github-review readable with its held reason');
  const runs=E.list().length,refused=await call('/api/wruns',{workflow:'github-review',text:'Review a pull request',params:{project:'fixture'}});
- ok(refused.status===409&&refused.body.code==='workflow_held'&&refused.body.error.includes('not activated yet')&&E.list().length===runs,'a board start of github-review is a typed held refusal, not a template error');
+ ok(refused.status===409&&refused.body.code==='workflow_held'&&refused.body.error.includes('does not run end to end')&&E.list().length===runs,'a board start of github-review is a typed held refusal, not a template error');
  const heldOptions=await call('/api/wruns/start-options?workflow=github-review');
  ok(heldOptions.status===409,'start options are not offered for a held workflow');
  const tool:any=await rt.firstmate.call('studio_list_workflows',{},{key:'board-start',captain:true,text:'list',live:()=>true});
