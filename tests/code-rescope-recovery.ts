@@ -18,9 +18,9 @@ process.env.CREW_TEST_IN_PROCESS='1';
 const flow={id:'rescope-fixture',name:'Rescope fixture',version:1,roles:[{id:'coordinator',label:'Coordinator',skill:'test'},{id:'worker',label:'Worker',skill:'test'}],params:{project:{label:'Project'}},nodes:[
  {id:'prepare',kind:'hook',do:'repo.prepare',label:'Prepare',x:0,y:0},
  {id:'spec',kind:'agent',role:'coordinator',mode:'spec',retries:1,label:'Spec',x:1,y:0},
- {id:'dispatch',kind:'card',label:'Dispatch',args:{card_kind:'dispatch'},card:{title:'Dispatch',body:'Approve fixture',options:[{id:'dispatch',label:'Dispatch'},{id:'rescope',label:'Rescope'}]},x:2,y:0},
+ {id:'dispatch',kind:'card',label:'Dispatch',args:{card_kind:'dispatch'},card:{title:'Dispatch',body:'Approve fixture',options:[{id:'dispatch',label:'Dispatch', labelZh: 'Dispatch'},{id:'rescope',label:'Rescope', labelZh: 'Rescope', note: true }]},x:2,y:0},
  {id:'build',kind:'agent',role:'worker',mode:'build',label:'Build',x:3,y:0},
- {id:'scope-card',kind:'card',label:'Scope',args:{card_kind:'scope'},card:{title:'Scope',body:'Rescope pristine task',captainOnly:true,options:[{id:'rescope',label:'Rescope',note:true},{id:'park',label:'Park'}]},x:4,y:0},
+ {id:'scope-card',kind:'card',label:'Scope',args:{card_kind:'scope'},card:{title:'Scope',body:'Rescope pristine task',captainOnly:true,options:[{id:'rescope',label:'Rescope', labelZh: 'Rescope',note:true},{id:'park',label:'Park', labelZh: 'Park'}]},x:4,y:0},
  {id:'merge',kind:'hook',do:'git.merge',label:'Merge',x:5,y:0},
  {id:'done',kind:'hook',label:'Done',x:6,y:0}],edges:[['prepare','spec'],['spec','dispatch'],['dispatch','build','dispatch'],['dispatch','spec','rescope'],['build','scope-card'],['scope-card','spec','rescope'],['scope-card','done','park'],['scope-card','merge','merge'],['merge','done']]};
 async function fixture(){

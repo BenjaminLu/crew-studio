@@ -108,7 +108,7 @@ if(process.argv.includes('--fixture-server')){
    ok(first.ledgerOk&&first.cards.some(c=>c.node==='review'&&c.status==='open'),`actual engine bundle review reached ${tag}`);
    // Use the actual captain card HTTP API for targeted revision; the UI renders its new card.
    const card=first.cards.find(c=>c.node==='review'&&c.status==='open');
-   await page.locator('[data-card-note]').fill('Use softer light');await actionsCapture(page,tag+'-refine-feedback');await page.locator('[data-option="image"]').click();ok(true,`targeted revision uses actual note and card action ${tag}`);
+   await page.locator('[data-note-for="image"]').fill('Use softer light');await actionsCapture(page,tag+'-refine-feedback');await page.locator('[data-option="image"]').click();ok(true,`targeted revision uses actual note and card action ${tag}`);
    let revised,offer;const refineDeadline=Date.now()+30000;while(Date.now()<refineDeadline){revised=await ctx.request.get(base+'/api/wruns/'+rid).then(r=>r.json());offer=revised.cards.find(c=>c.node==='review'&&c.status==='open'&&c.id!==card.id);if(offer&&revised.ledger.some(e=>e.record==='coffee-offer-v1'&&e.data.card===offer.id))break;offer=null;await new Promise(resolve=>setTimeout(resolve,50));}if(!offer)throw new Error('No durable refined native offer: '+JSON.stringify(revised));
    await page.waitForSelector(`[data-scard="${offer.id}"]`);await page.locator(`[data-scard="${offer.id}"]`).evaluate(el=>el.scrollIntoView({block:'start'}));await controls(page,tag+' refined');await page.screenshot({path:join(shots,tag+'-refined.png'),fullPage:true});
    await actionsCapture(page,tag+'-refined-actions');await page.locator('[data-option="approve"]').click();ok(true,`whole website approval uses actual card action ${tag}`);

@@ -46,7 +46,7 @@ try{
  const fd=await send(good);await until(async()=>(await api(`/api/wf/drafts/${fd}/gate`)).body.passed);
  const fsaved=await api(`/api/wf/drafts/${fd}/save`,{revision:(await api(`/api/wf/drafts/${fd}`)).body.draft.revision});const fwid=fsaved.body.workflow;
  const fdef=(await api(`/api/wf/${fwid}`)).body.def;
- ok((await api(`/api/wf/${fwid}`,{base:1,nodes:fdef.nodes.map(n=>n.id==='approve'?{...n,card:{...n.card,options:[...n.card.options,{id:'skip',label:'Skip'}]}}:n),edges:fdef.edges,roles:fdef.roles})).status===200,'the captain saves a v2 with an option no edge takes');
+ ok((await api(`/api/wf/${fwid}`,{base:1,nodes:fdef.nodes.map(n=>n.id==='approve'?{...n,card:{ body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, ...n.card,options:[...n.card.options,{id:'skip',label:'Skip', labelZh: 'Skip'}]}}:n),edges:fdef.edges,roles:fdef.roles})).status===200,'the captain saves a v2 with an option no edge takes');
  ok(await until(async()=>{const v=(await api(`/api/wf/${fwid}/gate`)).body;return v.gate&&v.gate.stages.every(s=>s.status!=='running');}),'the gate runs on the new version');
  // a fresh, unsaved passing draft: its Save button sits clear of the floating Firstmate button
  const sd=await send(good);await until(async()=>(await api(`/api/wf/drafts/${sd}/gate`)).body.passed);

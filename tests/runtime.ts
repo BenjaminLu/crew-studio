@@ -99,7 +99,7 @@ F({ id: "par", name: "parallel", nodes: [
   edges: [["a", "p1"], ["a", "p2"], ["p1", "j"], ["p2", "j"], ["j", "end"]] });
 F({ id: "cardflow", name: "cards", nodes: [
   { id: "a", kind: "hook", label: "A", do: "set", args: { key: "door", value: { door: "one-way" } }, x: 0, y: 0 },
-  { id: "q", kind: "card", label: "Merge?", args: { card_kind: "merge" }, card: { title: { en: "Merge {{run.title}}", "zh-TW": "合併 {{run.title}}" }, body: { en: "It is ready.", "zh-TW": "已經準備好了。" }, confirm_door: true, door_from: "door", options: [{ id: "merge", label: "Merge" }, { id: "close", label: "Close", hold: true }] }, x: 1, y: 0 },
+  { id: "q", kind: "card", label: "Merge?", args: { card_kind: "merge" }, card: { title: { en: "Merge {{run.title}}", "zh-TW": "合併 {{run.title}}" }, body: { en: "It is ready.", "zh-TW": "已經準備好了。" }, confirm_door: true, door_from: "door", options: [{ id: "merge", label: "Merge", labelZh: "Merge" }, { id: "close", label: "Close", labelZh: "Close", hold: true }] }, x: 1, y: 0 },
   { id: "m", kind: "hook", label: "Merge", do: "merge-sim", x: 2, y: 0 }, { id: "end", kind: "hook", label: "Merged", x: 3, y: 0 }, { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 3, y: 1 }],
   edges: [["a", "q"], ["q", "m", "merge"], ["q", "closed", "close"], ["m", "end"]] });
 F({ id: "edgeck", name: "edge checks", nodes: [
@@ -120,7 +120,7 @@ F({ id: "hang", name: "hang", nodes: [
 F({ id: "levels", name: "policy levels", nodes: [
   { id: "a", kind: "hook", label: "A", do: "set", args: { key: "a", value: 1 }, x: 0, y: 0 },
   { id: "k1", kind: "check", label: "Before the card", checks: [{ use: "t/ok" }], x: 1, y: 0 },
-  { id: "q", kind: "card", label: "More", card: { title: { en: "Raise n", "zh-TW": "調高 n" }, options: [{ id: "more", label: "More" }], effects: { more: { policy: "test.n", add: 5 } } }, x: 2, y: 0 },
+  { id: "q", kind: "card", label: "More", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: { en: "Raise n", "zh-TW": "調高 n" }, options: [{ id: "more", label: "More", labelZh: "More" }], effects: { more: { policy: "test.n", add: 5 } } }, x: 2, y: 0 },
   { id: "k2", kind: "check", label: "After the card", checks: [{ use: "t/ok" }], x: 3, y: 0 }, { id: "end", kind: "hook", label: "End", x: 4, y: 0 }],
   edges: [["a", "k1"], ["k1", "q", "pass"], ["q", "k2", "more"], ["k2", "end", "pass"]] });
 F({ id: "hooky", name: "hooks", hooks: [{ at: "after:m", use: "t/hk" }], nodes: [

@@ -443,10 +443,19 @@
       "x": 2500,
       "y": 220,
       "card": {
+        "title": {
+          "en": "The PR passed review and CI: merge it on GitHub yourself, then close this task?",
+          "zh-TW": "PR 已通過審查和 CI：請自己在 GitHub 合併，再關閉這個任務？"
+        },
+        "body": {
+          "en": "The external reviewer approved the PR and its required checks passed. Studio never merges this workflow on its own: merge or decline the PR on GitHub, then close this task here.",
+          "zh-TW": "外部 reviewer 已核准這個 PR，必要的檢查也通過了。這個流程不會由 Studio 自動合併：請在 GitHub 上合併或拒絕 PR，再回來關閉這個任務。"
+        },
         "options": [
           {
             "id": "close",
-            "label": "Close without merge"
+            "label": "Close this task (no merge by Studio)",
+            "labelZh": "關閉任務（Studio 不合併）"
           }
         ]
       }

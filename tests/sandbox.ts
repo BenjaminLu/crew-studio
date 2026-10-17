@@ -16,7 +16,7 @@ import { harness, sleep, suite, Y } from "./rt-harness";
 const { ok, end } = suite("sandbox");
 const tmp = mkdtempSync(join(tmpdir(), "crew-sbx-"));
 // a run that stays live (it waits on a card) lends its context to the checks below
-const H = await harness([Y({ id: "one", name: "one", roles: [], nodes: [{ id: "a", kind: "card", label: "A", card: { title: "Wait", options: [{ id: "go", label: "Go" }] }, x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["a", "e", "go"]] })]);
+const H = await harness([Y({ id: "one", name: "one", roles: [], nodes: [{ id: "a", kind: "card", label: "A", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: "Wait", options: [{ id: "go", label: "Go", labelZh: "Go" }] }, x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["a", "e", "go"]] })]);
 const E = H.engine;
 const run = E.start({ workflow: "one", text: "x" });
 const x = E.x(run, run.def.nodes[0], run.nodes.a);

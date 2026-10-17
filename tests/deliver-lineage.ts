@@ -11,8 +11,8 @@ const entry:Record<string,string>={document:'doc.md',web:'index.html',video:'fil
 const flow=(format:string)=>({id:`lineage-${format}`,name:`Lineage ${format}`,version:1,roles:[{id:'maker',label:'Maker',skill:'fixture'}],nodes:[
  {id:'intake',kind:'hook',label:'Intake',do:'deliver.intake',x:0,y:0},{id:'produce',kind:'hook',label:'Round',do:'deliver.round',x:1,y:0},
  {id:'draft',kind:'agent',label:'Draft',role:'maker',mode:'deliver',args:{format},x:2,y:0},
- {id:'accept',kind:'card',label:'Accept',args:{mode:'deliver-accept'},x:3,y:0},{id:'closed',kind:'hook',label:'Closed',x:4,y:0}],
- edges:[['intake','produce'],['produce','draft'],['draft','accept'],['accept','produce','changes'],['accept','closed','rejected']]});
+ {id:'ready',kind:'check',label:'Readiness',checks:[{use:'core/artifact-ready',proves:[0]}],args:{producer:'all'},x:2.5,y:0},{id:'accept',kind:'card',label:'Accept',args:{mode:'deliver-accept'},x:3,y:0},{id:'closed',kind:'hook',label:'Closed',x:4,y:0}],
+ edges:[['intake','produce'],['produce','draft'],['draft','ready'],['ready','accept','pass'],['ready','accept','fail'],['accept','produce','changes'],['accept','closed','rejected']]});
 const formats=['document','web','video'];
 const H=await harness(formats.map(f=>Y(flow(f)))),E=H.engine,store=new ArtifactStore(H.data),prompts:Record<string,string[]>={};
 installDeliver(E,{dataDir:H.data,artifacts:store,lane:{},fileorg:{},docs:{}} as any);

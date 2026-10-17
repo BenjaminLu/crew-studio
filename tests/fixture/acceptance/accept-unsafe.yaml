@@ -1,7 +1,7 @@
 # Offline fixture: the scenario lists the merge card, but a merge card is never answered.
 schema: 2
 workflow: accept-unsafe
-pin: { sha256: "19534186b6024d138d035f2e86d763f3fb77ed4f2047754c016f30e1616ce7b5" }
+pin: { sha256: "4d105c52d83cc088e605ba1a86c5f4bfd131377963c19fd21791540f29390995" }
 topic: "fixture unsafe"
 start: { provider: null, params: {} }
 providers: []

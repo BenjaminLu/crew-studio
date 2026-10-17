@@ -227,7 +227,7 @@ if (process.env.GCG_INNER !== "1") {
   const { harness, until, Y } = await import("./rt-harness"); const { Projects } = await import("../src/doors"); const { installCode } = await import("../src/domain/code");
   const flow = { id: "gcg-blocked", name: "Blocked", version: 1, roles: [], params: { project: { label: "Project" } }, nodes: [
     { id: "prepare", kind: "hook", do: "repo.prepare", label: "Prepare", retries: 2, x: 0, y: 0 },
-    { id: "hold", kind: "card", label: "Hold", card: { title: "Hold", options: [{ id: "close", label: "Close" }] }, x: 1, y: 0 }], edges: [["prepare", "hold"]] };
+    { id: "hold", kind: "card", label: "Hold", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: "Hold", options: [{ id: "close", label: "Close", labelZh: "Close" }] }, x: 1, y: 0 }], edges: [["prepare", "hold"]] };
   const H = await harness([Y(flow)]); const c = checkout("code-flow");
   try {
     const projects = new Projects(H.data); projects.add({ id: "fixture", path: c.main } as any); installCode(H.engine, { dataDir: H.data, projects } as any);

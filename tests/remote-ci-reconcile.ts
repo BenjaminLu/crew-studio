@@ -66,10 +66,10 @@ try {
   const x: any = { ctx: { repo, worktree: repo, baseCommit: base, base: "main", branch: "crew/task", head, pr, remoteCI: { state: "pass", head, policyHash: policy.hash, grant: grantIdentity(adapter) } }, run: { id: "fixture" }, node: { id: "gates" }, rn: { data: {} }, policy: (_p: string, d: any) => d, cancelled: () => false };
   rows([good]); ok((await pipeline.natives["gate-ci"]({}, { x })).verdict === "pass", "pipeline remote CI gate accepts freshly re-read exact-head success");
   rows([{ ...good, status: "in_progress", conclusion: null }]); ok((await pipeline.natives["gate-ci"]({}, { x })).verdict === "fail", "later rerun/pending checks invalidate earlier green evidence before gates");
-  const mergeBody = await pipeline.cardBodies.merge(x); ok(mergeBody.zhTitle === "遠端驗證已停止" && mergeBody.options.every((o: any) => o.id !== "merge"), "pre-merge presentation rechecks current required checks and exposes no local merge");
+  const mergeBody = await pipeline.cardBodies.merge(x); ok(mergeBody.zhTitle === "遠端驗證已停止：要關閉這個任務嗎？" && mergeBody.options.every((o: any) => o.id !== "merge"), "pre-merge presentation rechecks current required checks and exposes no local merge");
   rows([good]); x.ctx.remoteCI = null; ok((await pipeline.natives["gate-ci"]({}, { x })).verdict === "fail", "passing local CI never substitutes for missing bound remote evidence");
   must(bare, ["update-ref", "refs/heads/crew/task", base]); const startGuard = await pipeline.beforeStart["github-reconcile"](x);
-  ok(startGuard?.wait && stoppedBody?.zhTitle === "遠端驗證已停止", "node-start reconciliation raises bilingual stop before continuing a force-pushed task"); must(bare, ["update-ref", "refs/heads/crew/task", head]);
+  ok(startGuard?.wait && stoppedBody?.zhTitle === "遠端驗證已停止：要關閉這個任務嗎？", "node-start reconciliation raises bilingual stop before continuing a force-pushed task"); must(bare, ["update-ref", "refs/heads/crew/task", head]);
   rows([]); watcher = new RemoteWatchers(15); const wait = () => ({ version: 1 as const, handler: "github-ci" as const, grant: grantIdentity(adapter), repository: grant.repository, pr, policy, startedAt: Date.now(), deadline: Date.now() + 2000, lastDigest: null });
   const w1 = wait(), w2 = wait(), events1: any[] = [], events2: any[] = [];
   const cancel1 = watcher.subscribe(adapter, "one", w1, (e: any) => events1.push(e)), cancel2 = watcher.subscribe(adapter, "two", w2, (e: any) => events2.push(e));
@@ -84,7 +84,7 @@ try {
   e = createEngine(); e.externalHandlers["github-ci"] = (x, d, wake) => registerRemoteWait(x, adapter, watcher, d, wake); e.load(); const recovered = e.get(run.id)!;
   ok(recovered.nodes.wait.data.external.deadline === deadline && recovered.nodes.wait.visits === 1 && watcher.size === 1, "restart re-registers durable wait without extending deadline or rerunning visit");
   await until(() => e.cards.list({ run: run.id, open: true }).length > 0); const card = e.cards.list({ run: run.id, open: true })[0];
-  ok(card?.title.en === "Remote verification stopped" && card?.title["zh-TW"] === "遠端驗證已停止", "original absolute deadline raises bilingual stop card after restart");
+  ok(card?.title.en === "Remote verification stopped: close this task?" && card?.title["zh-TW"] === "遠端驗證已停止：要關閉這個任務嗎？", "original absolute deadline raises bilingual stop card after restart");
   const before = e.events(run.id).length; e.cancel(run.id); await until(() => !e.busy(run.id)); const after = e.events(run.id).length; rows([good]); await sleep(80); ok(watcher.size === 0 && e.cards.list({ run: run.id, open: true }).length === 0 && e.events(run.id).length === after && after >= before, "cancel unregisters wait and refuses late event/card writes");
   // Cancel during a real held HTTP response, not only after a timeout card.
   rows([]); e.actions["remote.wait"] = () => ({ wait: true, external: wait() }); sim.fail({ method: "GET", delay: 350, status: 503 });
@@ -97,7 +97,7 @@ try {
   await until(() => unsupported.nodes.wait.waiting === "external"); e.disposeExternal(); unsupported.nodes.wait.data.external.version = 99; e.commit(unsupported, "fixture unsupported schema");
   e = createEngine(); e.externalHandlers["github-ci"] = (x, d, wake) => registerRemoteWait(x, adapter, watcher, d, wake); e.load();
   await until(() => e.cards.list({ run: unsupported.id, open: true }).length > 0);
-  ok(e.cards.list({ run: unsupported.id, open: true })[0]?.title["zh-TW"] === "遠端驗證已停止" && watcher.size === 0, "unsupported persisted wait schema stops bilingually on actual restart without a poller"); e.cancel(unsupported.id); await until(() => !e.busy(unsupported.id));
+  ok(e.cards.list({ run: unsupported.id, open: true })[0]?.title["zh-TW"] === "遠端驗證已停止：要關閉這個任務嗎？" && watcher.size === 0, "unsupported persisted wait schema stops bilingually on actual restart without a poller"); e.cancel(unsupported.id); await until(() => !e.busy(unsupported.id));
 } catch (e: any) { console.error(e.stack); fail++; }
 finally { for (const e of engines) e.disposeExternal?.(); watcher?.stop(); sim.stop(); rmSync(temp, { recursive: true, force: true }); }
 console.log(`${pass} passed / ${fail} failed`); process.exitCode = fail ? 1 : 0;

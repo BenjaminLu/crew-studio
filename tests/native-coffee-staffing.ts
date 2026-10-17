@@ -8,7 +8,7 @@ import {StaffingStore,nativeStaffingSkillRef,coffeeStaffingProject,staffingHash}
 import {roleSkillJoin} from '../src/runtime/defs';
 if(process.env.COFFEE_STAFFING_CONTROL_MODULE){
  const {harness,Y}=await import('./rt-harness');const {installStaffingGuard}=await import(process.env.COFFEE_STAFFING_CONTROL_MODULE);
- const h=await harness([Y({id:'coffee-kit',name:'Historical admission control',kind:'coffee-kit',version:1,roles:[],nodes:[{id:'direction',kind:'card',label:'Captain direction',x:1,y:1,card:{options:[{id:'confirm',label:'Confirm'}]}}],edges:[]})]);
+ const h=await harness([Y({id:'coffee-kit',name:'Historical admission control',kind:'coffee-kit',version:1,roles:[],nodes:[{id:'direction',kind:'card',label:'Captain direction',x:1,y:1,card:{ body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options:[{id:'confirm',label:'Confirm', labelZh: 'Confirm'}]}}],edges:[]})]);
  let refused=false;try{installStaffingGuard(h.engine,new StaffingStore(h.data),()=>({namespace:'artifact',id:'control',identity:'control'}));try{h.engine.start({workflow:'coffee-kit',params:{project:'control'}});}catch{refused=true;}console.log(`Actual missing-staffing boundary: refused=${refused}, allocated=${h.engine.list().length}`);if(!refused||h.engine.list().length)process.exitCode=1;}finally{for(const r of h.engine.list())await h.engine.cancel(r.id,'historical control cleanup');h.stop();rmSync(h.data,{recursive:true,force:true});}process.exit(process.exitCode??0);
 }
 let count=0;const ok=(name:string,f:()=>void)=>{f();count++;console.log('PASS '+name)};
@@ -34,7 +34,7 @@ try {
 {
  const {harness,Y}=await import('./rt-harness');
  const {installStaffingGuard}=await import('../src/domain/staffing');
- const def={id:'coffee-kit',name:'Coffee admission fixture',kind:'coffee-kit',version:1,roles:[{id:'worker',label:'Website',skill:nativeStaffingSkillRef('worker','coffee-kit')}],nodes:[{id:'direction',kind:'card',label:'Captain direction',x:1,y:1,card:{options:[{id:'confirm',label:'Confirm'}]}}],edges:[]};
+ const def={id:'coffee-kit',name:'Coffee admission fixture',kind:'coffee-kit',version:1,roles:[{id:'worker',label:'Website',skill:nativeStaffingSkillRef('worker','coffee-kit')}],nodes:[{id:'direction',kind:'card',label:'Captain direction',x:1,y:1,card:{ body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options:[{id:'confirm',label:'Confirm', labelZh: 'Confirm'}]}}],edges:[]};
  const h=await harness([Y(def)]),engine=h.engine,store=new StaffingStore(h.data),project=coffeeStaffingProject('explicit-project');
  try {
   installStaffingGuard(engine,store,()=>{throw new Error('Coffee must not borrow Git identity');});

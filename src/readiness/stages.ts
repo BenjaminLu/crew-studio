@@ -79,7 +79,7 @@ export const ACTION_OUTCOMES: Record<string, string[]> = { "deliver.render": ["o
   "coffee.image": ["ok", "unavailable"], "coffee.video": ["ok", "unavailable"] };
 /** Agent modes whose round ends with a decision instead of ok (the mode's after() returns one of these). */
 export const MODE_OUTCOMES: Record<string, string[]> = { "plan-accept": ["accept", "revise", "escalate"], "design-gap": ["recapture", "escalate"], "startup-judge": ["ready", "revise"] };
-const CARD_BODY_OUTCOMES: Record<string, string[]> = { fileorg: ["apply", "discard"], lane: ["merge", "close"] };
+const CARD_BODY_OUTCOMES: Record<string, string[]> = { fileorg: ["apply", "discard"], lane: ["merge", "close"], "deliver-escalation": ["retry", "changes", "close"], "render-capability": ["retry", "close"] };
 const CARD_MODE_OUTCOMES: Record<string, string[]> = { "deliver-accept": ["approved", "changes", "rejected"] };
 /** Captain-only card bodies that decide a one-way step, and the answers that mean "go ahead". */
 const ONE_WAY_BODIES: Record<string, string[]> = { fileorg: ["apply"], lane: ["merge"], merge: ["merge"], "pack-publish": ["publish"] };

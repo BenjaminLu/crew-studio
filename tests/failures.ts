@@ -23,7 +23,7 @@ W({ id: "par", name: "parallel join", nodes: [{ id: "a", kind: "hook", label: "A
   edges: [["a", "b"], ["a", "c"], ["b", "d"], ["c", "d"], ["d", "end"]] });
 // p → k (card) → m: m fails because something changed after the card; a fresh preparation goes back to p
 W({ id: "pg", name: "prepare again", nodes: [{ id: "p", kind: "hook", label: "Prepare", do: "set", args: { key: "prepared", value: true }, x: 0, y: 0 },
-  { id: "k", kind: "card", label: "Merge card", card: { title: "Merge?", body: "merge", options: [{ id: "merge", label: "Merge", primary: true }] }, x: 1, y: 0 },
+  { id: "k", kind: "card", label: "Merge card", card: { title: "Merge?", body: "merge", options: [{ id: "merge", label: "Merge", labelZh: "Merge", primary: true }] }, x: 1, y: 0 },
   { id: "m", kind: "hook", label: "Merge", do: "merge-once", x: 2, y: 0 }, { id: "end", kind: "hook", label: "End", x: 3, y: 0 }], edges: [["p", "k"], ["k", "m", "merge"], ["m", "end", "ok"]] });
 // a run whose last step fails ends "succeeded · fail": it is never revived
 // an internal workflow (its id is on the internal list): no new task from its card

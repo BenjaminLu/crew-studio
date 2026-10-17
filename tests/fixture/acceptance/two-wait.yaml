@@ -2,7 +2,7 @@
 # then runs out, and the driver stops and leaves the Task for the captain instead of cancelling it.
 schema: 2
 workflow: accept-two
-pin: { sha256: "2fc799999f4fb4cebb12ac1f9ad7f450a437aff280c1bf2c00f95c54a889bfd1" }
+pin: { sha256: "b16077ac237271a21ac13b5783fd3c0d9f3277f8fcdb40b7e6c5587d003cc253" }
 topic: "fixture round budget with a waiting card"
 start: { provider: null, params: {} }
 providers: []

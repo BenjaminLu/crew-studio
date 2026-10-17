@@ -50,7 +50,7 @@ export const REVIEWED_CARD_MODES = new Set(["deliver-accept", "startup-choice", 
  *  formats the card from the Task's context or a local store (src/domain/code.ts, deliver.ts,
  *  src/pack-genesis.ts). A card the walk reaches runs its builder when it opens, so any other
  *  builder stops; `merge`, for one, reads the pull request and its CI from GitHub. */
-export const REVIEWED_CARD_BODIES = new Set(["dispatch", "door", "budget", "step-back", "stalled", "scope", "fileorg", "lane", "pack-interview", "pack-publish"]);
+export const REVIEWED_CARD_BODIES = new Set(["dispatch", "door", "budget", "step-back", "stalled", "scope", "fileorg", "lane", "pack-interview", "pack-publish", "deliver-escalation", "render-capability"]);
 
 /** Card `effects` (e.g. {policy: round_cap, add: 2}) the driver may set off: none yet. */
 export const ALLOWED_CARD_EFFECTS: { workflow: string; node: string; option: string }[] = [];

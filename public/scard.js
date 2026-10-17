@@ -4,7 +4,8 @@
 // It renders the card's sections (with a detail: intent, why, scope, done lines with
 // their proof, before/after with the app's captures and the card's links such as Open the app, how, the walk of the diff, door and rollback, the
 // reviewer's verdict and follow-ups, gates, cost and time), the intent ticks, the door
-// confirmation, a note, the option buttons, and the server's answer or refusal inline.
+// confirmation, a note box (or a picker) for each option that needs text, the option buttons, and the
+// server's answer or refusal inline.
 // A card without a detail renders its sections and its text body. The server decides:
 // a button that is not ready says what is missing (and still asks: the answer route enforces it).
 // One answer is in flight per card (a second click does nothing); a card already answered with the
@@ -28,6 +29,7 @@ const CSS = `
 .cc { display: grid; gap: 12px; min-width: 0; }
 .cc * { min-width: 0; }
 .cc-h { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.cc-note { display: grid; gap: 4px; }
 .cc-h b { font-size: 15px; flex: 1 1 200px; }
 .cc-lang { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .cc-lang button { border: 0; background: transparent; color: var(--text-2); font: inherit; font-size: 12px; padding: 3px 9px; cursor: pointer; }
@@ -183,7 +185,7 @@ window.crewImageRefinementSnapshot=(snapshot,{lang="en",review=null}={})=>{
  */
 function mountCard(el, card, opts = {}) {
   css();
-  const fresh = { lang: opts.lang || pageLang(), ticks: new Set(), opened: new Set(), folds: new Map(), confirm: false, note: "", msg: "", ok: false, busy: false };
+  const fresh = { lang: opts.lang || pageLang(), ticks: new Set(), opened: new Set(), folds: new Map(), confirm: false, note: "", notes: {}, msg: "", ok: false, busy: false };
   const st = opts.state || {}; for (const [k, v] of Object.entries(fresh)) if (!(k in st)) st[k] = v;
   const expectsInterview=card.workflow==='pack-genesis'&&card.node==='interview-answers';const form=card.interview;let draft=null;
   if(form?.schema===1&&/^[a-f0-9]{64}$/.test(form.batchHash)&&/^R-\d+$/.test(card.run)&&/^SC-\d+$/.test(card.id)&&form.visit===card.visit&&Array.isArray(form.questions)&&form.questions.length===6){
@@ -194,7 +196,7 @@ function mountCard(el, card, opts = {}) {
   const composingField = e => e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement;
   el.addEventListener('compositionstart', e => { if(composingField(e)){ clearTimeout(compositionTimer); composing=e.target; } }, true);
   el.addEventListener('keydown', e => { if(composingField(e)&&(e.isComposing||e.keyCode===229||composing)){ if(e.key==='Enter'||e.keyCode===229)e.stopPropagation(); } }, true);
-  el.addEventListener('compositionend', e => { if(e.target!==composing)return;const field=composing;composing=null;compositionTimer=setTimeout(()=>{if(composing)return;if(field.matches('[data-card-note]'))st.note=field.value;else if(draft&&field.dataset.interview){draft.answers[field.dataset.interview]=field.value;draft.dirty=true;}if(pendingRender){pendingRender=false;render();}if(draft&&draft.dirty)saveDraft().catch(error=>{st.msg=error.message;st.draw();});},0); }, true);
+  el.addEventListener('compositionend', e => { if(e.target!==composing)return;const field=composing;composing=null;compositionTimer=setTimeout(()=>{if(composing)return;if(field.matches('[data-card-note]')){if(field.dataset.noteFor)st.notes[field.dataset.noteFor]=field.value;else st.note=field.value;}else if(draft&&field.dataset.interview){draft.answers[field.dataset.interview]=field.value;draft.dirty=true;}if(pendingRender){pendingRender=false;render();}if(draft&&draft.dirty)saveDraft().catch(error=>{st.msg=error.message;st.draw();});},0); }, true);
   st.card = card; st.draw = () => render(); // the newest mount draws: an answer that settles after a remount shows on the card that is on screen
   const zh = () => st.lang !== "en";
   // the card's own language: zh-CN derives from the zh-TW text (i18n.js) unless the card or call carries zh-CN
@@ -412,20 +414,27 @@ function mountCard(el, card, opts = {}) {
   }
   function render() {
     if(composing){pendingRender=true;return;}
-    const focused=document.activeElement;const keep=focused&&el.contains(focused)&&focused instanceof HTMLTextAreaElement?{key:focused.hasAttribute('data-card-note')?'data-card-note':focused.hasAttribute('data-interview')?'data-interview':null,value:focused.getAttribute('data-interview'),start:focused.selectionStart,end:focused.selectionEnd,direction:focused.selectionDirection}:null;
+    const focused=document.activeElement;const keep=focused&&el.contains(focused)&&focused instanceof HTMLTextAreaElement?{key:focused.hasAttribute('data-card-note')?'data-card-note':focused.hasAttribute('data-interview')?'data-interview':null,value:focused.getAttribute('data-interview'),noteFor:focused.getAttribute('data-note-for'),start:focused.selectionStart,end:focused.selectionEnd,direction:focused.selectionDirection}:null;
     const c = st.card; const d = detailOk(c.detail) ? c.detail : null; const open = c.status === "open";
     const n = d?.intents?.length || 0; const one = c.confirmDoor && c.door === "one-way";
-    const hasNote = !expectsInterview && (c.options.some((o) => o.note) || n > 0);
-    const missing = (o) => { if (o.hold) return null;if(expectsInterview&&!draft)return T("This interview version is unavailable. Reload the card; no answer was submitted.","這個訪談版本無法使用。請重新載入卡片；尚未送出回答。");if(draft&&form.questions.some(q=>!String(draft.answers[q.key]||" ").trim()))return T("Answer every question below", "請回答下方每個問題"); if (n && st.ticks.size < n && !st.note.trim()) return T(`Tick every intent line (${st.ticks.size} of ${n}) or write a note`, `請勾完每一條意圖（${st.ticks.size}/${n}），或寫備註`);
+    // every option that needs text has its own note box (labelled with what to write) or a picker; the shared box is the intent-alignment note
+    const noteOpts = expectsInterview ? [] : c.options.filter((o) => o.note || (Array.isArray(o.select) && o.select.length));
+    const hasNote = !expectsInterview && n > 0;
+    const noteLabel = (o) => o.noteLabel ? T(o.noteLabel, o.noteLabelZh || o.noteLabel) : o.select?.length ? T("Pick one", "請選一個") : T("What to change", "要改什麼");
+    const noteOf = (o) => String(((o.note || o.select?.length) && st.notes[o.id]) || st.note || "").trim();
+    const missing = (o) => { if (!expectsInterview && (o.note || o.select?.length) && !noteOf(o)) return T(`${o.label}: ${o.noteLabel || (o.select?.length ? "pick one first" : "write it first")}`, `${o.labelZh || o.label}：${o.noteLabelZh || o.noteLabel || (o.select?.length ? "請先選一個" : "請先寫下來")}`);
+      if (o.hold) return null;if(expectsInterview&&!draft)return T("This interview version is unavailable. Reload the card; no answer was submitted.","這個訪談版本無法使用。請重新載入卡片；尚未送出回答。");if(draft&&form.questions.some(q=>!String(draft.answers[q.key]||" ").trim()))return T("Answer every question below", "請回答下方每個問題"); if (n && st.ticks.size < n && !st.note.trim()) return T(`Tick every intent line (${st.ticks.size} of ${n}) or write a note`, `請勾完每一條意圖（${st.ticks.size}/${n}），或寫備註`);
       if (one && !st.confirm) return T("Confirm the door first", "請先確認門"); return null; };
     const answer = async (o) => {
       if (st.busy || composing) return; // one answer in flight; never submit an unfinished composition
       const why=missing(o);if(expectsInterview&&why){st.msg=why;st.interviewAttempted=true;render();el.querySelector('[aria-invalid="true"]')?.focus();return;}
+      // an option that needs text says so on the card, before anything is sent
+      if(!expectsInterview&&(o.note||o.select?.length)&&!noteOf(o)){st.msg=why;render();el.querySelector(`[data-note-for="${o.id}"],[data-card-pick="${o.id}"]`)?.focus();return;}
       st.busy = true; st.msg = ""; render();
       const took = (got) => { st.card = got && got.id ? got : { ...c, status: "answered", answer: { choice: o.id } }; st.ok = true; st.msg = ""; try { opts.onAnswered && opts.onAnswered(st.card); } catch {} };
       try {
         if(draft&&!o.hold)await saveDraft();else if(draft)clearTimeout(draft.timer);
-        const note=draft&&!o.hold?JSON.stringify({schema:1,card:c.id,visit:c.visit,batchHash:draft.hash,answers:draft.answers}):st.note.trim()||null;
+        const note=draft&&!o.hold?JSON.stringify({schema:1,card:c.id,visit:c.visit,batchHash:draft.hash,answers:draft.answers}):noteOf(o)||null;
         took(await post(`/api/scards/${encodeURIComponent(c.id)}/answer`, { choice: o.id, note, confirm: st.confirm ? "one-way" : null, aligned: n ? [...st.ticks].sort((a, b) => a - b) : undefined, ...(o.id === "rescope" && c.localRescope ? {localRescope:c.localRescope} : {}) }));
       } catch (e) {
         // answered already with this very choice: that is the answer, not a refusal
@@ -460,7 +469,13 @@ function mountCard(el, card, opts = {}) {
       if(expectsInterview&&!draft)kids.push(h("p",{class:"cc-msg",role:"alert"},T("The current interview questions could not be verified. Reload this card before answering.","目前訪談問題尚未驗證。請重新載入這張卡片後再回答。")));
       if(draft)kids.push(h("section",{class:"cc-interview",'data-interview-batch':draft.hash},h("h3",{},T("Answer this interview batch","回答這批訪談問題")),h("p",{class:"cc-count"},T("All six answers are required. Drafts are saved on this Mac; saving a draft does not answer the card.","六題都需要回答。草稿會儲存在這台 Mac；儲存草稿不會回覆卡片。")),form.questions.map((q,i)=>{const invalid=st.interviewAttempted&&!String(draft.answers[q.key]||'').trim(),id=`interview-${c.id}-${q.key}`;return h("div",{class:"cc-interview-field"},h("label",{for:id},`${i+1}. ${T(q.en,q.zh)}`),h("textarea",{id,rows:3,maxLength:500,'data-interview':q.key,'aria-required':'true','aria-invalid':String(!!invalid),'aria-describedby':id+'-error',oninput:e=>{draft.answers[q.key]=e.target.value;draft.dirty=true;clearTimeout(draft.timer);draft.timer=setTimeout(()=>saveDraft().catch(error=>{st.msg=error.message;st.draw();}),250);if(e.target.value.trim()){e.target.setAttribute('aria-invalid','false');const error=el.querySelector('#'+id+'-error');if(error)error.textContent='';}},onblur:()=>saveDraft().catch(error=>{st.msg=error.message;st.draw();})},draft.answers[q.key]||''),h("span",{id:id+'-error',class:'cc-field-error',role:invalid?'alert':null},invalid?T("Please answer this question.","請回答這個問題。"):''));})));
       if (hasNote) kids.push(h("textarea", { class: "input", rows: 2, "data-card-note": c.id, placeholder: T("Note (what to change, or why a line is not met)", "備註（要改什麼，或哪一條沒做到、為什麼）"), "aria-label": T("Note", "備註"),
-        oninput: (e) => { const had = !!st.note.trim(); st.note = e.target.value; if (had !== !!st.note.trim()) { const pos = e.target.selectionStart; render(); const t = el.querySelector("[data-card-note]"); if (t) { t.focus(); t.setSelectionRange(pos, pos); } } } }, st.note));
+        oninput: (e) => { const had = !!st.note.trim(); st.note = e.target.value; if (had !== !!st.note.trim()) { const pos = e.target.selectionStart; render(); const t = el.querySelector("[data-card-note]:not([data-note-for])"); if (t) { t.focus(); t.setSelectionRange(pos, pos); } } } }, st.note));
+      for (const o of noteOpts) { const label = `${T(o.label, o.labelZh || o.label)}: ${noteLabel(o)}`;
+        kids.push(h("label", { class: "cc-note", "data-note-box": o.id }, h("span", { class: "cc-count" }, label),
+          o.select?.length ? h("select", { class: "input", "data-card-pick": o.id, "aria-label": label, onchange: (e) => { st.notes[o.id] = e.target.value; st.msg = ""; render(); } },
+              h("option", { value: "" }, T("Pick one…", "請選一個…")), o.select.map((x) => h("option", { value: x.value, selected: st.notes[o.id] === x.value }, x.label)))
+            : h("textarea", { class: "input", rows: 2, "data-card-note": c.id, "data-note-for": o.id, placeholder: noteLabel(o), "aria-label": label,
+              oninput: (e) => { const had = !!String(st.notes[o.id] || "").trim(); st.notes[o.id] = e.target.value; if (had !== !!e.target.value.trim()) { const pos = e.target.selectionStart; render(); const t = el.querySelector(`[data-note-for="${o.id}"]`); if (t) { t.focus(); t.setSelectionRange(pos, pos); } } } }, st.notes[o.id] || ""))); }
       if (one) kids.push(h("label", { class: "cc-tick rt-row", for: `conf-${c.id}` }, h("input", { type: "checkbox", id: `conf-${c.id}`, "data-confirm-door": c.id, checked: st.confirm, onchange: (e) => { st.confirm = e.target.checked; render(); } }),
         h("span", {}, T("I confirm: this is one-way, a revert will not undo it", "我確認：這是單向門，revert 無法還原"))));
       kids.push(h("div", { class: "cc-actions actions" }, c.options.map((o) => { const why = missing(o);
@@ -473,7 +488,7 @@ function mountCard(el, card, opts = {}) {
     }
     kids.push(h("div", { class: "cc-msg", role: "status", "aria-live": "polite", "data-card-msg": "", tabindex: "-1" }, st.msg));
     el.replaceChildren(h("div", { class: "cc", "data-card-root": c.id }, kids));
-    if(keep?.key){const field=[...el.querySelectorAll(`[${keep.key}]`)].find(t=>keep.key!=='data-interview'||t.getAttribute(keep.key)===keep.value);if(field){field.focus({preventScroll:true});field.setSelectionRange(keep.start,keep.end,keep.direction);}}
+    if(keep?.key){const field=[...el.querySelectorAll(`[${keep.key}]`)].find(t=>keep.key==='data-interview'?t.getAttribute(keep.key)===keep.value:(t.getAttribute('data-note-for')||null)===(keep.noteFor||null));if(field){field.focus({preventScroll:true});field.setSelectionRange(keep.start,keep.end,keep.direction);}}
     el.classList.add("rt-card"); el.setAttribute("data-scard", c.id); el.setAttribute("data-card-status", c.status);
   }
   render();

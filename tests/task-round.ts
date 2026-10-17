@@ -18,7 +18,7 @@ const roles = [{ id: "w", label: "Builder", skill: "x" }];
 const H = await harness([Y({ id: "tr", name: "tr", roles, nodes: [
   { id: "a", kind: "agent", label: "Build", role: "w", mode: "test", x: 0, y: 0 },
   { id: "c", kind: "check", label: "Tests", checks: [{ use: "t/ok" }], x: 1, y: 0 },
-  { id: "k", kind: "card", label: "Ship card", card: { title: "Ship it?", options: [{ id: "go", label: "Go" }] }, x: 2, y: 0 },
+  { id: "k", kind: "card", label: "Ship card", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: "Ship it?", options: [{ id: "go", label: "Go", labelZh: "Go" }] }, x: 2, y: 0 },
   { id: "e", kind: "hook", label: "End", x: 3, y: 0 }], edges: [["a", "c"], ["c", "k", "pass"], ["k", "e", "go"]] })]);
 const E = H.engine as any;
 const api = createTasksApi({ list: () => E.list(), get: (id) => E.get(id), openCards: () => E.cards.list({ open: true }), runView: async (id) => ({ id, events: E.timeline(id) }) });

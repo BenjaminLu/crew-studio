@@ -26,11 +26,11 @@ export async function seedProjects() {
     Y({ id: "ship", name: "Ship a change", roles: [{ id: "worker", label: "Worker", skill: "x" }], nodes: [
       { id: "build", kind: "agent", label: "Build", role: "worker", mode: "test", x: 0, y: 0 },
       { id: "tests", kind: "check", label: "Tests", checks: [{ use: "t/ok" }], x: 1, y: 0 },
-      { id: "merge", kind: "card", label: "Merge", args: { card_kind: "merge" }, card: { title: { en: "Merge it into main?", "zh-TW": "要合併到 main 嗎？" }, options: [{ id: "go", label: "Merge" }] }, x: 2, y: 0 },
+      { id: "merge", kind: "card", label: "Merge", args: { card_kind: "merge" }, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: { en: "Merge it into main?", "zh-TW": "要合併到 main 嗎？" }, options: [{ id: "go", label: "Merge", labelZh: "Merge" }] }, x: 2, y: 0 },
       { id: "land", kind: "hook", label: "Land", do: "merge-sim", x: 3, y: 0 },
       { id: "done", kind: "hook", label: "Done", x: 4, y: 0 }], edges: [["build", "tests"], ["tests", "merge", "pass"], ["merge", "land", "go"], ["land", "done"]] }),
     Y({ id: "ask", name: "Ask the captain", roles: [], nodes: [
-      { id: "plan", kind: "card", label: "Plan", args: { card_kind: "plan" }, card: { title: { en: "Is this plan right?", "zh-TW": "這個計畫對嗎？" }, options: [{ id: "go", label: "Yes" }] }, x: 0, y: 0 },
+      { id: "plan", kind: "card", label: "Plan", args: { card_kind: "plan" }, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: { en: "Is this plan right?", "zh-TW": "這個計畫對嗎？" }, options: [{ id: "go", label: "Yes", labelZh: "Yes" }] }, x: 0, y: 0 },
       { id: "end", kind: "hook", label: "Done", x: 1, y: 0 }], edges: [["plan", "end", "go"]] })]);
   const E: any = H.engine, DATA = H.data;
   const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { cwd, stdio: "pipe", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } }).toString().trim();

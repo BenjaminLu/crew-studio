@@ -112,6 +112,8 @@ env.BUN_OPTIONS = [...kept, NO_ENV].join(" ");
 // a per-run token, so a .env line (even CREW_TEST_ENV_ISOLATED=1) never equals the mark a parent passes on
 if (!trusted) env[MARK] = `1-${process.pid}-${Math.random().toString(36).slice(2)}`;
 const gitGone = scrubGitEnv(env);
+// every card a test raises keeps the card contract (src/runtime/card-contract.ts): a violation throws instead of being logged
+if (env.CREW_CARD_CONTRACT === undefined) env.CREW_CARD_CONTRACT = "enforce";
 
 // Bun starts children with the environment it was launched with (plus its .env),
 // not with later process.env edits. So a bun entry that may have loaded a .env (one

@@ -164,7 +164,7 @@ try {
     ok(p.url().endsWith("#/board"), "expanding a card does not navigate", p.url());
     await p.screenshot({ path: join(shots, "board-card-open-1440-light.png"), fullPage: true });
     await p.click('[data-need-card="SC-201"] [data-option="changes"]');
-    ok(await p.waitForFunction(() => /say what to change/.test(document.querySelector('[data-need-card="SC-201"]')?.innerText || ""), null, { timeout: 4000 }).then(() => true, () => false), "a refusal shows inline (the server's reason)");
+    ok(await p.waitForFunction(() => /say what to change|write it first/.test(document.querySelector('[data-need-card="SC-201"]')?.innerText || ""), null, { timeout: 4000 }).then(() => true, () => false), "a refusal shows inline (the server's reason)");
     // the card was answered Merge elsewhere meanwhile (another tab): answering Merge again shows as answered, not refused
     Object.assign(fx.open[0], { status: "answered", answer: { choice: "merge", note: null, by: "captain (another tab)", at: new Date().toISOString(), confirm: null } });
     const calls0 = fx.calls();

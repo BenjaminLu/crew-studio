@@ -27,7 +27,7 @@ const plain = readFileSync(join(import.meta.dir, "..", "packs/core/skills/plain-
 const pin = { id: "plain-writing", v: 1, sha256: sha(plain) };
 const ref = "pack:firstmate/skills/worker.md";
 const flow = { id: "code-firstmate", name: "Node override fixture", kind: "code", version: 1, roles: [{ id: "worker", label: "Worker", skill: ref }],
-  nodes: [{ id: "wait", kind: "card", label: "Wait", x: 0, y: 0, card: { options: [{ id: "go", label: "Go" }] } },
+  nodes: [{ id: "wait", kind: "card", label: "Wait", x: 0, y: 0, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "go", label: "Go", labelZh: "Go" }] } },
     { id: "work", kind: "agent", label: "Work", role: "worker", mode: "test", provider: "codex", model: "node-model", effort: "xhigh", skills: [pin], x: 1, y: 0 },
     { id: "work2", kind: "agent", label: "Work 2", role: "worker", mode: "test", x: 2, y: 0 }],
   edges: [["wait", "work", "go"], ["work", "work2"]] };

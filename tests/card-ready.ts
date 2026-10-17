@@ -6,7 +6,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // clear error, and the same answer later goes through.      bun tests/card-ready.ts
 import { harness, suite, until, Y } from "./rt-harness";
 const { ok, end } = suite("card-ready");
-const flow = (id: string, extra: any = {}) => Y({ id, name: id, roles: [], nodes: [{ id: "c", kind: "card", label: "Q", ...extra, card: { title: "Ship it?", options: [{ id: "go", label: "Go" }] }, x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["c", "e", "go"]] });
+const flow = (id: string, extra: any = {}) => Y({ id, name: id, roles: [], nodes: [{ id: "c", kind: "card", label: "Q", ...extra, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: "Ship it?", options: [{ id: "go", label: "Go", labelZh: "Go" }] }, x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["c", "e", "go"]] });
 const H = await harness([flow("q"), flow("qr", { retries: 1 })]);
 const E = H.engine as any;
 // the card's STE check takes a while

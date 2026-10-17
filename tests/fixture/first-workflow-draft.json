@@ -16,10 +16,10 @@
       {"id": "reviewer", "label": "Reviewer", "skill": "bundled:workflows/skills/v2/writer.md"}
     ],
     "nodes": [
-      {"id": "topics", "serves": [1], "kind": "card", "label": "Confirm this week's topics", "card": {"title": {"en": "Topics ready?"}, "options": [{"id": "continue", "label": "Continue"}]}},
+      {"id": "topics", "serves": [1], "kind": "card", "label": "Confirm this week's topics", "card": { "body": "Decide whether this step can go on.", "title": {"en": "Topics ready?"}, "options": [{"id": "continue", "label": "Continue", "labelZh": "Continue"}]}},
       {"id": "draft", "serves": [1], "kind": "agent", "label": "Draft the newsletter", "role": "writer", "mode": "deliver", "args": {"format": "document"}, "provider": "codex", "model": "fixture-model", "effort": "low"},
       {"id": "review", "serves": [2], "kind": "agent", "label": "Review the draft", "role": "reviewer", "mode": "deliver", "args": {"format": "document"}},
-      {"id": "approve", "serves": [2], "kind": "card", "label": "Captain approval", "card": {"options": [{"id": "publish", "label": "Publish"}, {"id": "revise", "label": "Revise"}]}},
+      {"id": "approve", "serves": [2], "kind": "card", "label": "Captain approval", "card": { "body": "Decide whether this step can go on.", "options": [{"id": "publish", "label": "Publish", "labelZh": "Publish"}, {"id": "revise", "label": "Revise", "labelZh": "Revise", "note": true }]}},
       {"id": "done", "kind": "hook", "label": "Done"}
     ],
     "edges": [

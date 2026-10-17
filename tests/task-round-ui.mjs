@@ -15,7 +15,7 @@ const H=await harness([Y({id:'round-ui',name:'Rounds example',roles:[{id:'builde
 {id:'start',kind:'hook',label:'Start',do:'set',args:{key:'started',value:true},x:0,y:0},
 {id:'build',kind:'agent',label:'Build',role:'builder',mode:'test',x:0,y:0},
 {id:'test',kind:'check',label:'Tests',checks:[{use:'t/ok'}],x:1,y:0},
-{id:'ship',kind:'card',label:'Ship?',card:{title:{en:'Ship it?', 'zh-TW':'要出貨嗎？'},options:[{id:'go',label:'Ship'},{id:'redo',label:'Refine'}]},x:2,y:0},
+{id:'ship',kind:'card',label:'Ship?',card:{ body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title:{en:'Ship it?', 'zh-TW':'要出貨嗎？'},options:[{id:'go',label:'Ship', labelZh: 'Ship'},{id:'redo',label:'Refine', labelZh: 'Refine'}]},x:2,y:0},
 {id:'end',kind:'hook',label:'Done',x:3,y:0}],edges:[['start','build'],['build','test'],['test','ship','pass'],['ship','end','go'],['ship','build','redo']] }), Y({id:'empty-rounds',name:'Empty rounds',roles:[],nodes:[{id:'end',kind:'hook',label:'Done',x:0,y:0}],edges:[]})]);
 const run=H.engine.start({workflow:'round-ui',text:'Build the example',title:'Round history'});
 await until(()=>H.engine.get(run.id)?.status==='waiting',15000);

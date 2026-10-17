@@ -17,9 +17,9 @@ process.env.CREW_TEST_IN_PROCESS='1';
 const flow={id:'repin-fixture',name:'Repin fixture',version:1,roles:[{id:'coordinator',label:'Coordinator',skill:'test'},{id:'worker',label:'Worker',skill:'test'}],params:{project:{label:'Project'}},nodes:[
  {id:'prepare',kind:'hook',do:'repo.prepare',label:'Prepare',x:0,y:0},
  {id:'spec',kind:'agent',role:'coordinator',mode:'spec',retries:1,label:'Spec',x:1,y:0},
- {id:'dispatch',kind:'card',label:'Dispatch',args:{card_kind:'dispatch'},card:{title:'Dispatch',body:'Approve fixture',options:[{id:'dispatch',label:'Dispatch'},{id:'rescope',label:'Rescope'}]},x:2,y:0},
+ {id:'dispatch',kind:'card',label:'Dispatch',args:{card_kind:'dispatch'},card:{title:'Dispatch',body:'Approve fixture',options:[{id:'dispatch',label:'Dispatch', labelZh: 'Dispatch'},{id:'rescope',label:'Rescope', labelZh: 'Rescope', note: true }]},x:2,y:0},
  {id:'build',kind:'agent',role:'worker',mode:'build',label:'Build',x:3,y:0},
- {id:'scope-card',kind:'card',label:'Scope',args:{card_kind:'scope'},card:{title:'Scope',body:'Worker is blocked',captainOnly:true,options:[{id:'rescope',label:'Rescope',note:true},{id:'park',label:'Park'}]},x:4,y:0},
+ {id:'scope-card',kind:'card',label:'Scope',args:{card_kind:'scope'},card:{title:'Scope',body:'Worker is blocked',captainOnly:true,options:[{id:'rescope',label:'Rescope', labelZh: 'Rescope',note:true},{id:'park',label:'Park', labelZh: 'Park'}]},x:4,y:0},
  {id:'merge',kind:'hook',do:'git.merge',label:'Merge',x:5,y:0},
  {id:'done',kind:'hook',label:'Done',x:6,y:0}],edges:[['prepare','spec'],['spec','dispatch'],['dispatch','build','dispatch'],['dispatch','spec','rescope'],['build','scope-card'],['scope-card','spec','rescope'],['scope-card','done','park'],['scope-card','merge','merge'],['merge','done']]};
 const H=await harness([Y(flow)]),E=H.engine,repo=join(H.data,'repo');mkdirSync(repo);assertTempRepo(repo);must(repo,['init','-q','-b','main']);writeFileSync(join(repo,'README.md'),'initial\n');must(repo,['add','README.md']);must(repo,['commit','-qm','Initial']);
@@ -39,7 +39,7 @@ const provider:any={id:'fixture',model:'offline',sandboxFree:true,start(_s:any,t
 }}}};
 E.deps.provider=()=>provider;
 const card=async(run:string,node:string,ms=6000)=>{if(!await until(()=>E.cards.list({run,open:true}).some(c=>c.node===node&&E.get(run)!.nodes[node].waiting==='card'),ms))throw new Error('missing '+node+' '+JSON.stringify({status:E.get(run)?.status,open:E.cards.list({run,open:true}).map(c=>`${c.node}:${c.title.en}:${JSON.stringify(c.options.map(o=>o.id))}`),nodes:Object.fromEntries(Object.entries(E.get(run)!.nodes).map(([k,n])=>[k,`${n.state}:${n.outcome}:${n.waiting??''}:${n.note??''}`]))}));return E.cards.list({run,open:true}).find(c=>c.node===node)!;};
-const readiness=(run:string)=>E.cards.list({run,open:true}).find(c=>c.node==='build'&&c.title.en==='Round is not ready');
+const readiness=(run:string)=>E.cards.list({run,open:true}).find(c=>c.node==='build'&&c.title.en.startsWith('Round cannot start:'));
 // The second build either reports again (scope-card) or stops on a readiness card; wait for whichever comes.
 const settled=(run:string)=>until(()=>starts.get(run)===2&&E.get(run)!.nodes['scope-card'].waiting==='card'||!!readiness(run)||!!E.get(run)!.nodes.build.data.nativeQueue?.reason,6000);
 const start=async(o:{write?:boolean}={})=>{const r=E.start({workflow:flow.id,params:{project:'fixture'}});if(o.write)writes.set(r.id,own(r.id));await E.answer((await card(r.id,'dispatch')).id,{choice:'dispatch',by:'fixture captain'});await card(r.id,'scope-card');return r;};
@@ -62,7 +62,7 @@ try{
  // preparation" re-pins through the same signed rescope path and the build runs.
  {const r=await start(),prior=structuredClone(r.ctx.nativeAdmission),q=E.queueDomain!,real=q.ready;let once=true;
   q.ready=x=>{if(once&&x.run.id===r.id){once=false;throw new Error('native scope pin changed or uses unknown hash algorithm; fresh preparation required');}return real(x);};
-  try{await rescope(r,null);const stale=await card(r.id,'build');ok(stale.title.en==='Round is not ready'&&starts.get(r.id)===1,'fixture raises the stale-pin readiness card');
+  try{await rescope(r,null);const stale=await card(r.id,'build');ok(stale.title.en.startsWith('Round cannot start:')&&starts.get(r.id)===1,'fixture raises the stale-pin readiness card');
    await E.answer(stale.id,{choice:'retry',by:'fixture captain'});await settled(r.id);
    const again=readiness(r.id),p=pin(r);
    ok(!again&&starts.get(r.id)===2,'approve fresh preparation re-pins and the build runs',again?String(E.cards.view(again).sections?.en?.why):'');
@@ -75,7 +75,7 @@ try{
   await E.cancel(r.id);await E.cancel(holder.id);}
  // Only a captain rescope grants a replacement: an auth-window answer leaves the stale pin refused.
  {const r=await start();await rescope(r,null,'auth window:fixture');await settled(r.id);const stuck=readiness(r.id);
-  ok(!!stuck&&starts.get(r.id)===1&&String(E.cards.view(stuck).sections?.en?.why).includes('scope pin changed'),'an auth-window rescope cannot re-pin',JSON.stringify(r.nodes.build));await E.cancel(r.id);}
+  ok(!!stuck&&starts.get(r.id)===1&&String(E.cards.view(stuck).body).includes('scope pin changed')&&/no longer match/.test(String(E.cards.view(stuck).sections?.en?.why)),'an auth-window rescope cannot re-pin (the card says the approved scope no longer matches; the raw reason stays in its detail)',JSON.stringify(r.nodes.build));await E.cancel(r.id);}
 }catch(e){ok(false,'rescope repin fixture',String((e as any).stack??e));}
 finally{for(const r of E.list())if(!['succeeded','cancelled','failed'].includes(r.status))await E.cancel(r.id);H.stop();}
 end();

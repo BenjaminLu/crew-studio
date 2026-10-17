@@ -16,7 +16,7 @@ const flows = [
   Y({ id: "edgeck", name: "edge", roles: [], nodes: [{ id: "a", kind: "hook", label: "A", do: "set", args: { key: "k", value: 1 }, x: 0, y: 0 }, { id: "b", kind: "hook", label: "B", do: "set", args: { key: "k", value: 2 }, x: 1, y: 0 },
     { id: "end", kind: "hook", label: "End", x: 2, y: 0 }, { id: "blocked", kind: "hook", label: "Blocked", args: { result: "blocked" }, x: 2, y: 1 }],
     edges: [["a", "b"], { from: "b", to: "end", checks: [{ use: "t/nat", params: { want: "fail" } }] }, ["b", "blocked", "fail"]] }),
-  Y({ id: "ask", name: "ask", roles: [], nodes: [{ id: "a", kind: "hook", label: "A", do: "set", args: { key: "k", value: 1 }, x: 0, y: 0 }, { id: "q", kind: "card", label: "Q", card: { title: "Go?", options: [{ id: "go", label: "Go" }] }, x: 1, y: 0 },
+  Y({ id: "ask", name: "ask", roles: [], nodes: [{ id: "a", kind: "hook", label: "A", do: "set", args: { key: "k", value: 1 }, x: 0, y: 0 }, { id: "q", kind: "card", label: "Q", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: "Go?", options: [{ id: "go", label: "Go", labelZh: "Go" }] }, x: 1, y: 0 },
     { id: "e", kind: "hook", label: "E", args: { result: "went" }, x: 2, y: 0 }], edges: [["a", "q"], ["q", "e", "go"]] }),
 ];
 const H = await harness(flows);

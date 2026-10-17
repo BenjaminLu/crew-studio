@@ -117,6 +117,10 @@ export function installDeliver(engine: Engine, d: Deps) {
   // has none, the brief says so instead of leaving the writer to invent product facts
   const aboutStudio = (x: X) => kind(x) === "document" && /\bcrew[\s-]?studio\b/i.test(`${x.run.text} ${x.run.title}`);
   const docsFor = (x: X) => aboutStudio(x) ? studioDocSource(d.studioDocs) : null;
+  /** What the captain wrote on the workflow's own cards (card.ask: a purpose, a title, a style): the producer works from it (R-044). */
+  const captainCardNotes = (x: X) => { const lines = x.run.def.nodes.filter(n => n.kind === "card" && !n.args?.mode && !n.args?.body_from).map(n => [n, x.ctx.answers?.[n.id]] as const)
+      .filter(([, a]) => a?.note && String(a.note).trim()).map(([n, a]) => `- ${n.label} (${a.choice}): ${String(a.note).trim().slice(0, 1000)}`);
+    return lines.length ? `The captain's answers on this workflow's cards:\n${lines.join("\n")}\n` : ""; };
   engine.modes.deliver = {
     begin(x) {
       const dir = engine.roundDir(x, "deliver");
@@ -137,7 +141,7 @@ export function installDeliver(engine: Engine, d: Deps) {
       return { manual: f === "video" ? ["video/editor"] : [], extra: f === "video" ? { DELIVERABLE: ["Renderer contract"] } : {},
         TESTS: [`No test command: core/artifact-ready checks ${e} after this step${f === "video" ? " and the rendered MP4" : ""}.`],
         DEPENDENCIES: deps, DELIVERABLE: [`${e} in the work folder (format ${f}); Studio versions it.`] }; },
-    prompt: x => `DELIVER ${kind(x)}\nNode: ${x.node.id} — ${x.node.label}\nAssignment: ${x.node.detail ?? "Produce the requested output for this step."}\nFixed Task inputs (use input_read with producer): ${JSON.stringify(x.rn.data.inputs??[])}\n${x.rn.data.productDocs === "unavailable" ? "Product docs: unavailable in this build. Do not invent facts about the product; say plainly which facts the captain must supply.\n" : x.rn.data.productDocs ? `Product docs (read-only, product_docs_list/read/search): ${x.rn.data.productDocs}. Take every fact about the product from them; never invent one.\n` : ""}Variant: ${x.node.args?.variant ?? "A"}\nIntent: ${x.run.text || x.run.title}\n${x.rn.data.brief?.text ?? ""}\n${x.rn.data.lineage ? lineageText(x.rn.data.lineage) : ""}\n${parentLine(x)}`,
+    prompt: x => `DELIVER ${kind(x)}\nNode: ${x.node.id} — ${x.node.label}\nAssignment: ${x.node.detail ?? "Produce the requested output for this step."}\nFixed Task inputs (use input_read with producer): ${JSON.stringify(x.rn.data.inputs??[])}\n${x.rn.data.productDocs === "unavailable" ? "Product docs: unavailable in this build. Do not invent facts about the product; say plainly which facts the captain must supply.\n" : x.rn.data.productDocs ? `Product docs (read-only, product_docs_list/read/search): ${x.rn.data.productDocs}. Take every fact about the product from them; never invent one.\n` : ""}Variant: ${x.node.args?.variant ?? "A"}\nIntent: ${x.run.text || x.run.title}\n${captainCardNotes(x)}${x.rn.data.brief?.text ?? ""}\n${x.rn.data.lineage ? lineageText(x.rn.data.lineage) : ""}\n${parentLine(x)}`,
     after(x, job) {
       if (x.cancelled()) throw new Error("cancelled");
       const f = kind(x), dir = x.rn.data.dir, e = entry(f); if (!existsSync(join(dir, e))) throw new Error(`the agent wrote no ${e}`);
@@ -261,16 +265,27 @@ export function installDeliver(engine: Engine, d: Deps) {
     if (found.length > 10) lines.push(`· and ${found.length - 10} more wording findings`);
     return { lines, found };
   };
+  /** The readiness checks that ran on this run's output (check nodes, not card wording checks): an acceptance card needs at least one. */
+  const readinessRan = (x: X) => { const checkNodes = new Set(x.run.def.nodes.filter(n => n.kind === "check").map(n => n.id));
+    return engine.trusted(x.run.id).entries.filter(e => checkNodes.has(e.node) && !String(e.edge ?? "").startsWith("card:")); };
   const finalCard = async (x: X, error = "") => {
     const offered = refs(x); if (!offered.length) throw new Error("no output to accept");
+    // an acceptance card never says "Proved by checks: None": a workflow without a readiness check that ran stops here (workflow validation refuses such a graph)
+    const ran = readinessRan(x); if (!ran.length) throw new Error("no readiness check ran on this output, so nothing could prove it: the workflow needs a check node before its acceptance card");
     const done = engine.doneLines(x.run), proved = done.filter(l => l.proved), eye = done.filter(l => !l.proved), wording = await wordingEye(x, offered);
-    const c = await engine.card(x, "acceptance", { captainOnly: true, title: `Accept ${x.run.title}`, zhTitle: `驗收 ${x.run.title}`, body: `${error}\nProved by checks:\n${proved.map(l => `✓ ${l.text}`).join("\n") || "None"}\n\nNeeds your eye:\n${[...eye.map(l => `· ${l.text}`), ...wording.lines].join("\n") || "Content and presentation"}`, detail: { ...acceptanceDetail(x, offered), ...(wording.found.length ? { wording: wording.found } : {}) }, links: [...offered.flatMap(r=>{const href=websiteHref(st.get(r.id),st.version(r.id,r.n));return href?[{label:"Open website in new tab",href}]:[];}),...offered.map(r => ({ label: `${r.producer} v${r.n}`, href: `/#/review/${r.id}/${r.n}` }))], options: [...offered.map(r => ({ id: `approve-${r.producer}`, label: `Approve ${/^design-[a-z]$/.test(r.producer) ? `direction ${r.producer.slice(-1).toUpperCase()} ` : offered.length > 1 ? `${r.producer} ` : ""}v${r.n}`, labelZh: `核准${/^design-[a-z]$/.test(r.producer) ? `方向 ${r.producer.slice(-1).toUpperCase()} ` : offered.length > 1 ? `${r.producer} ` : ""}版本 ${r.n}`, primary: true })), { id: "changes", label: "Request changes", labelZh: "要求修改", note: true, hold: true }, { id: "reject", label: "Reject", labelZh: "不採用", hold: true }] });
+    const latest = new Map(ran.map(e => [e.check, e] as const)); const failing = [...latest.values()].filter(e => e.verdict !== "pass");
+    const provedText = proved.map(l => `✓ ${l.text}`).join("\n") || `No line is proved yet: ${failing.length ? failing.map(e => `${e.check} ${e.verdict}${e.findings?.[0]?.message ? ` (${e.findings[0].message})` : ""}`).join("; ") : "the checks passed but name no done line"}.`;
+    const c = await engine.card(x, "acceptance", { captainOnly: true, title: `Accept ${x.run.title}?`, zhTitle: `驗收 ${x.run.title}？`,
+      en: { why: `${offered.length > 1 ? `${offered.length} versions are` : "One version is"} ready for your review. ${[...latest.keys()].join(", ")} ran on ${offered.length > 1 ? "them" : "it"}${failing.length ? `; ${failing.length} did not pass` : " and passed"}.`, how: "Approve a version, request changes with a note, or reject it." },
+      zh: { why: `有 ${offered.length} 個版本等你審查。已執行的檢查：${[...latest.keys()].join("、")}${failing.length ? `；其中 ${failing.length} 個沒有通過` : "，全部通過"}。`, how: "核准一個版本、寫備註要求修改，或不採用。" },
+      body: `${error}\nProved by checks:\n${provedText}\n\nNeeds your eye:\n${[...eye.map(l => `· ${l.text}`), ...wording.lines].join("\n") || "Content and presentation"}`, detail: { ...acceptanceDetail(x, offered), ...(wording.found.length ? { wording: wording.found } : {}) }, links: [...offered.flatMap(r=>{const href=websiteHref(st.get(r.id),st.version(r.id,r.n));return href?[{label:"Open website in new tab",href}]:[];}),...offered.map(r => ({ label: `${r.producer} v${r.n}`, href: `/#/review/${r.id}/${r.n}` }))], options: [...offered.map(r => ({ id: `approve-${r.producer}`, label: `Approve ${/^design-[a-z]$/.test(r.producer) ? `direction ${r.producer.slice(-1).toUpperCase()} ` : offered.length > 1 ? `${r.producer} ` : ""}v${r.n}`, labelZh: `核准${/^design-[a-z]$/.test(r.producer) ? `方向 ${r.producer.slice(-1).toUpperCase()} ` : offered.length > 1 ? `${r.producer} ` : ""}版本 ${r.n}`, primary: true })), { id: "changes", label: "Request changes", labelZh: "要求修改", note: true, noteLabel: "What to change", noteLabelZh: "要改什麼", hold: true }, { id: "reject", label: "Reject", labelZh: "不採用", hold: true }] });
     x.rn.data.offered = offered; x.rn.data.offerVisit = x.visit; x.rn.data.offerCard = c.id; x.save(); return { wait: true, note: `final acceptance ${c.id}` };
   };
   engine.cardModes["deliver-accept"] = {
     start: x => finalCard(x),
     async answer(x, c) {
-      if (c.answer!.choice === "reject") return { outcome: "rejected" };
+      // a rejection ends the run closed, never succeeded (R-047), whatever the end node says
+      if (c.answer!.choice === "reject") { x.ctx.acceptRejected = { card: c.id, by: c.answer!.by, at: c.answer!.at }; x.save(); return { outcome: "rejected" }; }
       const offers = c.detail?.artifactAcceptance?.offered; const selected = Array.isArray(offers) && offers.find((r: any) => c.answer!.choice === `approve-${r.producer}`);
       // Old in-flight cards lack pins: never synthesize pins; require a fresh card.
       if (c.id !== x.rn.data.offerCard || c.visit !== x.rn.data.offerVisit || !Array.isArray(offers) || hash(offers) !== hash(refs(x))) return finalCard(x, "The output changed or this card predates pinned acceptance. Review a fresh card.");
@@ -281,6 +296,27 @@ export function installDeliver(engine: Engine, d: Deps) {
       st.approve(selected.id, selected.n, c.answer!.by); x.ctx.approved = { artifact: selected.id, version: selected.n, sha256: selected.sha256, by: c.answer!.by }; return { outcome: "approved" };
     },
   };
+  // the escalation after the refine loop stopped (cap, no progress, the same failure twice): it names the failing checks; Firstmate looks first
+  engine.cardBodies["deliver-escalation"] = x => {
+    const loop = x.run.def.nodes.find(n => n.kind === "loop" && x.run.def.edges.some(e => e.from === n.id && e.to === x.node.id));
+    const producer = String(loop?.args?.producer ?? "draft"), last = loop ? x.ctx.refine?.[loop.id]?.history?.at(-1) : null, rounds = x.run.nodes[producer]?.visits ?? 0;
+    const items: any[] = x.ctx.briefs?.[producer]?.items ?? []; const by = new Map<string, string>(); for (const it of items) if (it?.check && !by.has(it.check)) by.set(String(it.check), String(it.message ?? "").replace(/\s+/g, " ").slice(0, 160));
+    const checks = [...by.entries()].slice(0, 6);
+    const why = last?.outcome === "stalled" ? ["the checks made no progress for two rounds", "檢查連續兩輪沒有進展"] : last?.outcome === "step-back" ? ["the same check failed in two rounds in a row", "同一個檢查連續兩輪失敗"] : [`the round cap was reached after ${rounds} rounds`, `跑了 ${rounds} 輪，已到輪數上限`];
+    return { title: `Checks did not pass: one more round, revise, or close? ${x.run.title}`, zhTitle: `檢查沒有通過：再給一輪、修改方向，還是關閉？${x.run.title}`,
+      en: { why: `The output stopped because ${why[0]}. Still failing: ${checks.map(([c, m]) => `${c}${m ? ` (${m})` : ""}`).join("; ") || "no check named a failure"}.`, how: "Allow one more round, revise with a note the producer follows, or close the task." },
+      zh: { why: `產出停住了：${why[1]}。仍未通過的檢查：${checks.map(([c]) => c).join("、") || "沒有檢查列出失敗"}。`, how: "再給一輪、寫備註讓產出者照著修改，或關閉這個任務。" },
+      body: `Stopped: ${why[0]}.\n\nStill failing:\n${checks.map(([c, m]) => `- ${c}${m ? `: ${m}` : ""}`).join("\n") || "- (no check named a failure)"}`,
+      options: [{ id: "retry", label: "One more round", labelZh: "再給一輪", primary: true }, { id: "changes", label: "Revise: tell the producer what to change", labelZh: "修改方向：告訴產出者要改什麼", note: true, noteLabel: "What to change", noteLabelZh: "要改什麼" }, { id: "close", label: "Close the task", labelZh: "關閉任務", hold: true }] };
+  };
+  // the local renderer is missing (renderer-unavailable): install it, then check again; or close
+  engine.cardBodies["render-capability"] = x => { const video = x.run.def.nodes.some(n => n.do === "deliver.render");
+    const what = video ? ["the MP4 renderer (node, a Playwright browser and ffmpeg)", "MP4 轉檔工具（node、Playwright 瀏覽器和 ffmpeg）"] : ["the local page renderer (a Playwright browser)", "本機頁面轉檔工具（Playwright 瀏覽器）"];
+    return { title: `The renderer is missing: install it and check again, or close? ${x.run.title}`, zhTitle: `缺少轉檔工具：安裝後重新檢查，還是關閉？${x.run.title}`, direct: true,
+      en: { why: `The output cannot be verified on this machine: ${what[0]} is not installed. The source stays; nothing is approved.`, how: "Install it from Doctor, then check again; or close the task." },
+      zh: { why: `這台電腦無法驗證產出：沒有安裝${what[1]}。原始檔仍在；尚未核准任何東西。`, how: "在 Doctor 安裝後重新檢查，或關閉這個任務。" },
+      body: `${what[0]} is not installed, so the output cannot be rendered and checked. Install it from Doctor (the source stays; no approval is recorded).`,
+      options: [{ id: "retry", label: "Installed: check again", labelZh: "已安裝：重新檢查", primary: true }, { id: "close", label: "Close the task", labelZh: "關閉任務", hold: true }] }; };
   engine.actions["library.publish"] = x => { const a = x.ctx.approved; if (!a || st.version(a.artifact, a.version)?.status !== "approved" || st.verify(a.artifact, a.version).length) throw new Error("no intact pinned approval"); x.ctx.library = { ...a, href: `#/artifact/${a.artifact}` }; return "ok"; };
   engine.actions["doc.export"] = x => { const a = x.ctx.approved; if (!a) throw new Error("no approved document"); const md = readFileSync(st.file(a.artifact, a.version, "doc.md")!, "utf8"), title = docTitle(md, st.get(a.artifact)!.title); const out = join(x.dir, "exports"); mkdirSync(out, { recursive: true }); const pdf = toPdf(md, title);
     const bodies: Record<string, any> = { md, html: mdToDocHtml(md, title), docx: toDocx(md, title), pdf: pdf.pdf };

@@ -1,7 +1,7 @@
 import "./lib/isolated-env.mjs";
 import assert from 'node:assert/strict';import {rmSync} from 'node:fs';
 import {harness,Y} from './rt-harness';import {StaffingStore} from '../src/domain/staffing';import {installFirstmateStaffing} from '../src/firstmate-staffing';import {bundledText} from '../src/bundled';
-const flow={id:'code-firstmate',name:'Candidate choices',kind:'code',version:1,roles:[{id:'worker',label:'Worker',skill:'pack:firstmate/skills/worker.md'}],nodes:[{id:'wait',kind:'card',label:'Wait',card:{options:[{id:'done',label:'Done'}]}}],edges:[]};
+const flow={id:'code-firstmate',name:'Candidate choices',kind:'code',version:1,roles:[{id:'worker',label:'Worker',skill:'pack:firstmate/skills/worker.md'}],nodes:[{id:'wait',kind:'card',label:'Wait',card:{ body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options:[{id:'done',label:'Done', labelZh: 'Done'}]}}],edges:[]};
 const h=await harness([Y(flow),bundledText('workflows/v2/firstmate-staffing.wf.yaml')!]);
 try{
  const e=h.engine;e.deps.skillText=(ref:string)=>bundledText('packs/'+ref.slice(5))!;

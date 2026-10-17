@@ -8,7 +8,7 @@ import {installFirstmateStaffing} from '../../src/firstmate-staffing';
 import {rmSync} from 'node:fs';
 async function runVisualFixture(){
 const roles=['coordinator','worker','reviewer','designer'].map(id=>({id,label:id,skill:`pack:firstmate/skills/${id==='coordinator'?'firstmate':id}.md`}));
-const definition={id:'code-firstmate',name:'Synthetic visual staffing target',kind:'code',version:1,roles,nodes:[{id:'wait',kind:'card',label:'No work starts',x:1,y:1,card:{options:[{id:'done',label:'Done'}]}}],edges:[]};
+const definition={id:'code-firstmate',name:'Synthetic visual staffing target',kind:'code',version:1,roles,nodes:[{id:'wait',kind:'card',label:'No work starts',x:1,y:1,card:{ body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options:[{id:'done',label:'Done', labelZh: 'Done'}]}}],edges:[]};
 const h=await harness([Y(definition),bundledText('workflows/v2/firstmate-staffing.wf.yaml')!]),e=h.engine,store=new StaffingStore(h.data),project={namespace:'git' as const,id:'fixture-project',identity:'strict-synthetic-visual-fixture'};
 e.deps.skillText=(ref:string)=>bundledText('packs/'+ref.slice(5))!;
 const facts=async()=>[{provider:'codex',support:'supported' as const,auth:'verified',quota:'available',expires:Date.now()+30000,models:[{id:'fixture-model',efforts:['low','high']}]},{provider:'claude',support:'unsupported' as const,auth:'unverified',quota:'unknown',expires:Date.now()+30000,models:[]}];

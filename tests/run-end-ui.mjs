@@ -22,7 +22,7 @@ const ok = (c, name, extra = "") => { if (c) { pass++; console.log(`  ok    ${na
 const H = await harness([
   Y({ id: "cardy", name: "cardy", roles: [], nodes: [
     { id: "s", kind: "hook", label: "Start", do: "set", args: { key: "s", value: 1 }, x: 0, y: 0 },
-    { id: "q", kind: "card", label: "Ship?", card: { title: { en: "Ship it", "zh-TW": "出貨" }, options: [{ id: "ship", label: "Ship" }, { id: "close", label: "Close without merging", hold: true }] }, x: 1, y: 0 },
+    { id: "q", kind: "card", label: "Ship?", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: { en: "Ship it", "zh-TW": "出貨" }, options: [{ id: "ship", label: "Ship", labelZh: "Ship" }, { id: "close", label: "Close without merging", labelZh: "Close without merging", hold: true }] }, x: 1, y: 0 },
     { id: "done", kind: "hook", label: "Done", x: 2, y: 0 }, { id: "closed", kind: "hook", label: "Closed", args: { result: "closed", summary: "closed without merging" }, x: 2, y: 1 }],
     edges: [["s", "q"], ["q", "done", "ship"], ["q", "closed", "close"]] }),
   Y({ id: "faily", name: "faily", roles: [], nodes: [{ id: "b", kind: "hook", label: "Boom", do: "boom", x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["b", "e"]] }),

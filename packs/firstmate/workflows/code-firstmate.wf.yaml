@@ -3,7 +3,8 @@
 # the node produces) and on edges (they run before the edge is taken). The refine
 # nodes (spec-fix, plan-fix, fix) compile briefs from the findings and stop on
 # the same class twice, no progress, or the round cap. Humans: dispatch, the
-# escalation cards and the merge card.
+# escalation cards and the merge card. The escalation cards (firstmate_first) go
+# to Firstmate first: it decides within the spec or escalates with its diagnosis.
 id: code-firstmate
 name: code-firstmate
 kind: code
@@ -173,26 +174,26 @@ nodes:
     kind: card
     label: Step-back card
     detail: "same class twice · reviewer unverified"
-    args: { body_from: step-back, card_kind: step-back }
+    args: { body_from: step-back, card_kind: step-back, firstmate_first: true }
     x: 1870
     y: 640
   - id: stalled
     kind: card
     label: No-progress card
-    args: { body_from: stalled, card_kind: step-back }
+    args: { body_from: stalled, card_kind: step-back, firstmate_first: true }
     x: 1700
     y: 640
   - id: budget
     kind: card
     label: Round-budget card
-    args: { body_from: budget, card_kind: round-budget }
+    args: { body_from: budget, card_kind: round-budget, firstmate_first: true }
     card: { effects: { extend: { policy: round_cap, add: 2 } } }
     x: 1360
     y: 640
   - id: scope-card
     kind: card
     label: Scope card
-    args: { body_from: scope, card_kind: scope }
+    args: { body_from: scope, card_kind: scope, firstmate_first: true }
     x: 1190
     y: 40
   - { id: parked, kind: hook, label: Parked, args: { result: closed, summary: "parked by the captain" }, x: 2070, y: 640 }

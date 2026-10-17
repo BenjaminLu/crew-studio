@@ -26,7 +26,7 @@ const H = await harness([
   Y({ id: "ck", name: "ck", roles: [], nodes: [{ id: "k", kind: "check", label: "K", checks: [{ use: "t/skipper" }], x: 0, y: 0 }, { id: "ok", kind: "hook", label: "OK", x: 1, y: 0 }, { id: "no", kind: "hook", label: "No", args: { result: "blocked" }, x: 1, y: 1 }], edges: [["k", "ok", "pass"], ["k", "no", "fail"]] }),
   Y({ id: "ad", name: "ad", roles: [], nodes: [{ id: "k", kind: "check", label: "K", checks: [{ use: "t/undeclared" }], x: 0, y: 0 }, { id: "ok", kind: "hook", label: "OK", x: 1, y: 0 }, { id: "no", kind: "hook", label: "No", args: { result: "blocked" }, x: 1, y: 1 }], edges: [["k", "ok", "pass"], ["k", "no", "fail"]] }),
   Y({ id: "jq", name: "jq", roles: [], nodes: [{ id: "k", kind: "check", label: "K", checks: [{ use: "t/judge2", quorum: { n: 1, of: 2 } }, { use: "t/judge2" }], x: 0, y: 0 }, { id: "ok", kind: "hook", label: "OK", x: 1, y: 0 }, { id: "no", kind: "hook", label: "No", args: { result: "blocked" }, x: 1, y: 1 }], edges: [["k", "ok", "pass"], ["k", "no", "fail"]] }),
-  Y({ id: "card", name: "card", roles: [], nodes: [{ id: "q", kind: "card", label: "Q", card: { title: "Ship it?", options: [{ id: "go", label: "Go" }] }, x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["q", "e", "go"]] }),
+  Y({ id: "card", name: "card", roles: [], nodes: [{ id: "q", kind: "card", label: "Q", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: "Ship it?", options: [{ id: "go", label: "Go", labelZh: "Go" }] }, x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["q", "e", "go"]] }),
 ], { refine: true });
 const E = H.engine;
 const done = (id: string) => until(() => ["succeeded", "failed", "waiting"].includes(E.get(id)!.status), 30000);
@@ -53,7 +53,7 @@ H.stop();
 const tmp = mkdtempSync(join(tmpdir(), "crew-fid-"));
 const state = join(tmp, "fm", "state"), data = join(tmp, "data"); mkdirSync(join(state, "pending"), { recursive: true }); writeFileSync(join(state, "events.jsonl"), "");
 mkdirSync(join(data, "workflows", "ask"), { recursive: true });
-writeFileSync(join(data, "workflows", "ask", "v1.json"), JSON.stringify({ id: "ask", name: "Ask", version: 1, roles: [], nodes: [{ id: "q", kind: "card", label: "Q", x: 0, y: 0, card: { title: "Go?", options: [{ id: "go", label: "Go" }] } }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [{ from: "q", to: "e", when: "go" }] }));
+writeFileSync(join(data, "workflows", "ask", "v1.json"), JSON.stringify({ id: "ask", name: "Ask", version: 1, roles: [], nodes: [{ id: "q", kind: "card", label: "Q", x: 0, y: 0, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: "Go?", options: [{ id: "go", label: "Go", labelZh: "Go" }] } }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [{ from: "q", to: "e", when: "go" }] }));
 const port = await freePort();
 const env: any = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) delete env[k];
 const app = spawn("bun", ["src/server.ts"], { cwd: join(import.meta.dir, ".."), stdio: ["ignore", "pipe", "pipe"], env: { ...env, CREW_FM_STATE: state, CREW_PORT: String(port), CREW_GH: "0", CREW_READONLY: "1", CREW_DATA: data, CREW_CHAT_PROVIDER: "stub", CREW_RETRO_AUTO: "0", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_GH_NO_CLI: "1", HOME: join(tmp, "home"), CREW_MAIN_PROJECT: join(tmp, "proj"), CREW_FILE_ALLOW: tmp } });

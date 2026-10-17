@@ -58,11 +58,11 @@ const provider: any = { id: "fixture", model: "strict-local", sandboxFree: true,
 } }; } };
 const flow = { id: "remote-code", name: "Remote rebase fixture", version: 1, roles: [{ id: "coordinator", label: "Coordinator", skill: "test" }, { id: "worker", label: "Worker", skill: "test" }], params: { project: { label: "Project" }, file: { label: "File" } }, nodes: [
   { id: "prepare", kind: "hook", do: "repo.prepare", label: "Prepare", x: 0, y: 0 }, { id: "spec", kind: "agent", role: "coordinator", mode: "spec", label: "Spec", x: 1, y: 0 },
-  { id: "dispatch", kind: "card", label: "Dispatch", args: { card_kind: "dispatch" }, card: { title: "Approve fixture scope", body: "Review the fixture scope", options: [{ id: "dispatch", label: "Dispatch" }] }, x: 2, y: 0 },
+  { id: "dispatch", kind: "card", label: "Dispatch", args: { card_kind: "dispatch" }, card: { title: "Approve fixture scope", body: "Review the fixture scope", options: [{ id: "dispatch", label: "Dispatch", labelZh: "Dispatch" }] }, x: 2, y: 0 },
   { id: "build", kind: "agent", role: "worker", mode: "build", label: "Build", x: 3, y: 0 },
   { id: "pr-open", kind: "hook", do: "pr.open", label: "Publish", x: 4, y: 0 },
-  { id: "hold", kind: "card", label: "Hold", card: { title: "Another round?", body: "Run another build round", options: [{ id: "again", label: "Again" }, { id: "stop", label: "Stop" }] }, x: 5, y: 0 },
-  { id: "scope-card", kind: "card", label: "Scope", args: { card_kind: "scope" }, card: { title: "Blocked", body: "Blocked", options: [{ id: "park", label: "Park" }] }, x: 4, y: 1 },
+  { id: "hold", kind: "card", label: "Hold", card: { title: "Another round?", body: "Run another build round", options: [{ id: "again", label: "Again", labelZh: "Again" }, { id: "stop", label: "Stop", labelZh: "Stop" }] }, x: 5, y: 0 },
+  { id: "scope-card", kind: "card", label: "Scope", args: { card_kind: "scope" }, card: { title: "Blocked", body: "Blocked", options: [{ id: "park", label: "Park", labelZh: "Park" }] }, x: 4, y: 1 },
   { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 6, y: 0 }],
   edges: [{ from: "prepare", to: "spec" }, { from: "spec", to: "dispatch" }, { from: "dispatch", to: "build", when: "dispatch" }, { from: "build", to: "build", when: "rebase-more" }, { from: "build", to: "pr-open", when: "ok" }, { from: "build", to: "scope-card", when: "blocked" },
     { from: "pr-open", to: "hold", when: "ok" }, { from: "hold", to: "build", when: "again" }, { from: "hold", to: "closed", when: "stop" }, { from: "scope-card", to: "closed", when: "park" }] };

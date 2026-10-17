@@ -14,7 +14,7 @@ process.env.CREW_TEST_IN_PROCESS='1';
 const flow={id:'code-firstmate',name:'Question fixture',version:1,roles:[{id:'coordinator',label:'Coordinator',skill:'test'},{id:'worker',label:'Worker',skill:'test'}],params:{project:{label:'Project'}},nodes:[
 {id:'prepare',kind:'hook',do:'repo.prepare',label:'Prepare'},
 {id:'spec',kind:'agent',role:'coordinator',mode:'spec',label:'Spec'},
-{id:'dispatch',kind:'card',label:'Dispatch',args:{card_kind:'dispatch'},card:{title:'Dispatch',body:'Approve fixture',options:[{id:'dispatch',label:'Dispatch'}]}},
+{id:'dispatch',kind:'card',label:'Dispatch',args:{card_kind:'dispatch'},card:{title:'Dispatch',body:'Approve fixture',options:[{id:'dispatch',label:'Dispatch', labelZh: 'Dispatch'}]}},
 {id:'build',kind:'agent',role:'worker',mode:'build',label:'Build',checks:[{use:'firstmate/report-schema'}]},
 {id:'done',kind:'hook',label:'Done'}],edges:[['prepare','spec'],['spec','dispatch'],['dispatch','build','dispatch'],['build','done','ok']]};
 

@@ -11,9 +11,9 @@ process.env.CREW_TEST_IN_PROCESS='1';
 const flow={id:'worker-evidence',name:'Worker evidence',version:1,roles:[{id:'coordinator',label:'Coordinator',skill:'test'},{id:'worker',label:'Worker',skill:'test'}],params:{project:{label:'Project'}},nodes:[
  {id:'prepare',kind:'hook',do:'repo.prepare',label:'Prepare',x:0,y:0},
  {id:'spec',kind:'agent',role:'coordinator',mode:'spec',label:'Spec',x:1,y:0},
- {id:'dispatch',kind:'card',label:'Dispatch',args:{card_kind:'dispatch'},card:{title:'Dispatch',options:[{id:'dispatch',label:'Dispatch'}]},x:2,y:0},
+ {id:'dispatch',kind:'card',label:'Dispatch',args:{card_kind:'dispatch'},card:{ body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title:'Dispatch',options:[{id:'dispatch',label:'Dispatch', labelZh: 'Dispatch'}]},x:2,y:0},
  {id:'build',kind:'agent',role:'worker',mode:'build',label:'Build',x:3,y:0},
- {id:'hold',kind:'card',label:'Hold',card:{title:'Hold',options:[{id:'close',label:'Close'}]},x:4,y:0}],edges:[['prepare','spec'],['spec','dispatch'],['dispatch','build','dispatch'],['build','hold']]};
+ {id:'hold',kind:'card',label:'Hold',card:{ body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title:'Hold',options:[{id:'close',label:'Close', labelZh: 'Close'}]},x:4,y:0}],edges:[['prepare','spec'],['spec','dispatch'],['dispatch','build','dispatch'],['build','hold']]};
 const H=await harness([Y(flow)]),E=H.engine,repo=join(H.data,'repo');
 try{
  mkdirSync(join(repo,'.crew'),{recursive:true});mkdirSync(join(repo,'tests'));

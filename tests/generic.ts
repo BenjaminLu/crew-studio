@@ -19,7 +19,7 @@ const H = await harness([
   // a one-way door on a card whose option ids are its own: every option but a hold needs the confirmation
   Y({ id: "ownids", name: "ownids", roles: [], nodes: [
     { id: "d", kind: "hook", label: "Door", do: "set", args: { key: "gate", value: { door: "one-way" } }, x: 0, y: 0 },
-    { id: "q", kind: "card", label: "Ship?", card: { title: { en: "Ship", "zh-TW": "出貨" }, confirm_door: true, door_from: "gate", options: [{ id: "ship", label: "Ship" }, { id: "abandon", label: "Abandon", hold: true }] }, x: 1, y: 0 },
+    { id: "q", kind: "card", label: "Ship?", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: { en: "Ship", "zh-TW": "出貨" }, confirm_door: true, door_from: "gate", options: [{ id: "ship", label: "Ship", labelZh: "Ship" }, { id: "abandon", label: "Abandon", labelZh: "Abandon", hold: true }] }, x: 1, y: 0 },
     { id: "shipped", kind: "hook", label: "Shipped", args: { result: "shipped" }, x: 2, y: 0 }, { id: "abandoned", kind: "hook", label: "Abandoned", args: { result: "abandoned" }, x: 2, y: 1 }],
     edges: [["d", "q"], ["q", "shipped", "ship"], ["q", "abandoned", "abandon"]] }),
   // a loop that routes a class of its own choosing

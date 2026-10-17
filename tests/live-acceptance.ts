@@ -33,19 +33,19 @@ const claudeBin = wrap("claude", "fixture/claude-login.mjs"), codexBin = wrap("c
 const seed = (def: any) => { const dir = join(data, "workflows", def.id); mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "v1.json"), JSON.stringify({ ...normalize({ roles: [], params: {}, ...def }), version: 1, parent: null, createdAt: new Date().toISOString(), by: "fixture", note: "fixture", diff: null, seed: null })); };
 seed({ id: "accept-pass", name: "Acceptance pass fixture", nodes: [
-  { id: "ask", kind: "card", label: "Go ahead?", x: 1, y: 1, card: { options: [{ id: "continue", label: "Continue" }, { id: "close", label: "Close", hold: true }] } },
+  { id: "ask", kind: "card", label: "Go ahead?", x: 1, y: 1, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "continue", label: "Continue", labelZh: "Continue" }, { id: "close", label: "Close", labelZh: "Close", hold: true }] } },
   { id: "done", kind: "hook", label: "Done", x: 2, y: 1 }, { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 2, y: 2 }],
   edges: [["ask", "done", "continue"], ["ask", "closed", "close"]] });
 seed({ id: "accept-unsafe", name: "Acceptance unsafe fixture", nodes: [
-  { id: "gate", kind: "card", label: "Merge it?", x: 1, y: 1, args: { card_kind: "merge" }, card: { options: [{ id: "merge", label: "Merge" }, { id: "close", label: "Close", hold: true }] } },
+  { id: "gate", kind: "card", label: "Merge it?", x: 1, y: 1, args: { card_kind: "merge" }, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "merge", label: "Merge", labelZh: "Merge" }, { id: "close", label: "Close", labelZh: "Close", hold: true }] } },
   { id: "done", kind: "hook", label: "Done", x: 2, y: 1 }, { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 2, y: 2 }],
   edges: [["gate", "done", "merge"], ["gate", "closed", "close"]] });
 seed({ id: "accept-two", name: "Acceptance two-card fixture", nodes: [
-  { id: "ask", kind: "card", label: "Go ahead?", x: 1, y: 1, card: { options: [{ id: "continue", label: "Continue" }] } },
-  { id: "hold", kind: "card", label: "A person decides", x: 2, y: 1, card: { options: [{ id: "continue", label: "Continue" }] } },
+  { id: "ask", kind: "card", label: "Go ahead?", x: 1, y: 1, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "continue", label: "Continue", labelZh: "Continue" }] } },
+  { id: "hold", kind: "card", label: "A person decides", x: 2, y: 1, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "continue", label: "Continue", labelZh: "Continue" }] } },
   { id: "done", kind: "hook", label: "Done", x: 3, y: 1 }], edges: [["ask", "hold", "continue"], ["hold", "done", "continue"]] });
 seed({ id: "accept-wait", name: "Acceptance wait fixture", nodes: [
-  { id: "hold", kind: "card", label: "A person decides", x: 1, y: 1, card: { options: [{ id: "continue", label: "Continue" }] } },
+  { id: "hold", kind: "card", label: "A person decides", x: 1, y: 1, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "continue", label: "Continue", labelZh: "Continue" }] } },
   { id: "done", kind: "hook", label: "Done", x: 2, y: 1 }], edges: [["hold", "done", "continue"]] });
 
 const port = await freePort(), base = `http://127.0.0.1:${port}`;
@@ -132,7 +132,7 @@ try {
   ok(decide(pass, card({}), passDef).action === "answer" && decide(pass, card({ door: "one-way" }), passDef).action === "stop" && decide(pass, card({ detail: { door: { kind: "one-way" } } }), passDef).action === "stop" && decide(pass, card({ confirmDoor: true }), passDef).action === "stop",
     "3: a one-way door stops whether it is on door, detail.door.kind or confirmDoor");
   // 4: no names: an innocent-looking node with an external action stops; any action not reviewed as local stops
-  const syn = (doName: string, nodeName: string) => ({ id: "syn", kind: "x", roles: [], params: {}, nodes: [{ id: "ask", kind: "card", card: { options: [{ id: "continue" }] } }, { id: nodeName, kind: "hook", do: doName }, { id: "done", kind: "hook" }], edges: [{ from: "ask", to: nodeName, when: "continue" }, { from: nodeName, to: "done" }] });
+  const syn = (doName: string, nodeName: string) => ({ id: "syn", kind: "x", roles: [], params: {}, nodes: [{ id: "ask", kind: "card", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "continue" }] } }, { id: nodeName, kind: "hook", do: doName }, { id: "done", kind: "hook" }], edges: [{ from: "ask", to: nodeName, when: "continue" }, { from: nodeName, to: "done" }] });
   const names = ["tidy", "上線", "合併", "發布", "推送", "部署", "openPR", "createPr", "pull-request", "upload", "send", "submit", "commit", "tag", "rollout", "land", "promote-now"];
   const effects = ["fileorg.apply", "pr.open", "github.comment", "git.merge", "firstmate.dispatch", "pack-genesis-publish", "send.mail"];
   const allStop = names.every((n, i) => { const d = syn(effects[i % effects.length], n); return decide(scen(d, [{ node: "ask", kind: "question", answer: "continue" }]), card({ options: [{ id: "continue" }] }), d).action === "stop"; });
@@ -165,7 +165,7 @@ try {
   const f1b = { id: "f1b", kind: "x", roles: [], params: {}, nodes: [N("ask", "card"), N("a", "hook"), N("ok", "hook"), N("pub", "hook", { do: "git.merge" })], edges: [{ from: "ask", to: "a", when: "go" }, { from: "a", to: "ok", when: "ok", checks: [{ use: "core/x" }] }, { from: "a", to: "pub", when: "fail" }] };
   ok(decide(wq(f1), qc, f1).action === "stop" && decide(wq(f1b), qc, f1b).action === "stop", "F1: an edge whose checks can re-route the card as fail into pr.open stops, at the first step and later ones", JSON.stringify(decide(wq(f1), qc, f1)));
   // F7: card effects, workflow hooks, unreviewed card modes, open authorization windows
-  const eff = { id: "eff", kind: "x", roles: [], params: {}, nodes: [N("ask", "card", { card: { options: [{ id: "go" }], effects: { go: { policy: "round_cap", add: 2 } } } }), N("done", "hook")], edges: [{ from: "ask", to: "done" }] };
+  const eff = { id: "eff", kind: "x", roles: [], params: {}, nodes: [N("ask", "card", { card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "go" }], effects: { go: { policy: "round_cap", add: 2 } } } }), N("done", "hook")], edges: [{ from: "ask", to: "done" }] };
   const hk = { id: "hk", kind: "x", roles: [], params: {}, hooks: [{ at: "after:ask", use: "core/x" }], nodes: [N("ask", "card"), N("done", "hook")], edges: [{ from: "ask", to: "done" }] };
   const md = { id: "md", kind: "x", roles: [], params: {}, nodes: [N("ask", "card", { args: { mode: "pack-promote" } }), N("done", "hook")], edges: [{ from: "ask", to: "done" }] };
   const plain = { id: "pl", kind: "x", roles: [], params: {}, nodes: [N("ask", "card"), N("done", "hook")], edges: [{ from: "ask", to: "done" }] };

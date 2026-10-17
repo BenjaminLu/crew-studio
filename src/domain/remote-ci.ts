@@ -90,10 +90,17 @@ export class RemoteWatchers {
  stop(){for(const cancel of [...this.subscriptions.values()])cancel();}
 }
 
+/** The card when the remote PR stopped verification: what changed on GitHub (the reason), in both languages; nothing was merged. */
 export function remoteStopBody(reason: string) {
-  return { title: "Remote verification stopped", zhTitle: "遠端驗證已停止", captainOnly: true,
-    en: { why: reason, how: "Inspect the remote PR and start a fresh verification. No merge is authorized." },
-    zh: { why: "PR 已關閉、遠端 head 或目標改變，或 CI 驗證未能在期限內完成。", how: "請核對遠端 PR 並重新驗證。尚未授權合併。" }, body: reason, options: [{ id: "close", label: "Close without merging" }] };
+  const zh = /pushed|moved away|changed on GitHub|changed since/i.test(reason) ? "GitHub 上的 PR 或任務 branch 在 Studio 上次推送後被改動了（例如有人推送）；Studio 沒有覆蓋它。"
+    : /merge refused|no longer matches/i.test(reason) ? "PR、head 或必要的 CI 已和核准時不同，所以拒絕合併。"
+    : /grant|CLEAN|draft/i.test(reason) ? "無法確認合併授權，或 PR 不是可乾淨合併的非草稿狀態。"
+    : /naming|deadline/i.test(reason) ? "待處理更新的目標、授權或期限改變了；保留給船長處理。"
+    : "無法驗證遠端 PR 或它的必要檢查；這一輪已停止。";
+  return { title: "Remote verification stopped: close this task?", zhTitle: "遠端驗證已停止：要關閉這個任務嗎？", captainOnly: true, direct: true,
+    en: { why: `Remote verification stopped: ${reason}. Nothing was merged.`, how: "Inspect the PR on GitHub, then close this task and start a fresh one if the change should go on. No merge is authorized." },
+    zh: { why: `遠端驗證已停止：${zh}沒有合併任何東西。`, how: "請在 GitHub 核對 PR，關閉這個任務；如果改動要繼續，再開一個新任務。尚未授權合併。" }, body: `Remote verification stopped: ${reason}. Nothing was merged.`,
+    options: [{ id: "close", label: "Close without merging", labelZh: "不合併，關閉" }] };
 }
 export function registerRemoteWait(x: X, adapter: GitHubPrAdapter, watchers: RemoteWatchers, wait: any, wake: (r: Result) => void) {
   let active = true, stopping = false, unsubscribe = () => {};

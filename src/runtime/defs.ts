@@ -164,6 +164,12 @@ export function validate(d: WDef, known?: (ref: string) => boolean, runners?: Se
   const canEnd = new Set(terms); let grew = true;
   while (grew) { grew = false; for (const n of d.nodes) if (!canEnd.has(n.id) && outs(n.id).some((t) => canEnd.has(t))) { canEnd.add(n.id); grew = true; } }
   for (const n of d.nodes) if (!canEnd.has(n.id) && ids.has(n.id)) out.push({ level: "error", node: n.id, text: `${n.label}: no path from here reaches an end` });
+  // an acceptance card needs a readiness check on the way to it: without one it can only say "Proved by checks: None" (R-047)
+  for (const n of d.nodes) if (n.kind === "card" && n.args?.mode === "deliver-accept") {
+    const seen = new Set<string>([n.id]); const q = [n.id]; let checked = false;
+    while (q.length && !checked) { const at = q.shift()!; for (const e of d.edges.filter((e) => e.to === at)) { const m = d.nodes.find((x) => x.id === e.from); if (!m || seen.has(m.id)) continue; seen.add(m.id); if (m.kind === "check" && m.checks?.length) { checked = true; break; } q.push(m.id); } }
+    if (!checked) out.push({ level: "error", node: n.id, text: `${n.label}: an acceptance card needs a readiness check node before it, so its card can say what the checks proved` });
+  }
   for (const n of d.nodes) if (n.join === "all" && d.edges.filter((e) => e.to === n.id).length < 2) out.push({ level: "warn", node: n.id, text: `${n.label} waits for all inputs but has only one` });
   return out;
 }
@@ -308,7 +314,7 @@ export class WorkflowDefs {
         this.write(definition);return definition;
       }
       const definition:WDef={id,name:name.trim(),version:1,description:"",roles:[],nodes:[
-        {id:"start",kind:"card",label:zh?"開始":"Start",x:80,y:100,card:{title:{en:"Ready to continue?","zh-TW":"準備好繼續了嗎？"},body:{en:"This starter waits for your confirmation.","zh-TW":"此起始流程會等待你的確認。"},options:[{id:"continue",label:zh?"繼續":"Continue"}]}},
+        {id:"start",kind:"card",label:zh?"開始":"Start",x:80,y:100,card:{title:{en:"Ready to continue?","zh-TW":"準備好繼續了嗎？"},body:{en:"This starter waits for your confirmation.","zh-TW":"此起始流程會等待你的確認。"},options:[{id:"continue",label:zh?"繼續":"Continue",labelZh:"繼續"}]}},
         {id:"done",kind:"hook",label:zh?"完成":"Done",x:340,y:100}],edges:[{from:"start",to:"done",when:"continue"}],parent:null,createdAt:now(),by,note:null,diff:null,seed:null,...(origin==="starter"?{origin:{schema:1 as const,source:"starter" as const}}:{})};
       const errors=validate(definition,this.known,this.runners?.(),this.skillInfo??undefined).filter(p=>p.level==="error");if(errors.length)throw new Error(errors[0].text);
       this.write(definition);return definition;

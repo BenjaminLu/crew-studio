@@ -27,7 +27,7 @@ ok(projectOf({ workflow: "coffee-kit", def: { kind: "coffee-kit" }, ctx: {}, par
 ok(projectOf({ workflow: "images", def: { kind: "images" }, ctx: {}, params: {} } as any, reg) === "studio", "5. anything else is studio (no project)");
 
 // the engine reads data/projects.json, and every wrun live event carries the run's project
-const H = await harness([Y({ id: "po", name: "po", roles: [], nodes: [{ id: "s", kind: "hook", label: "Set", do: "set", args: { key: "x", value: 1 }, x: 0, y: 0 }, { id: "k", kind: "card", label: "Ask", card: { title: "Ok?", options: [{ id: "go", label: "Go" }] }, x: 1, y: 0 }], edges: [["s", "k"]] })]);
+const H = await harness([Y({ id: "po", name: "po", roles: [], nodes: [{ id: "s", kind: "hook", label: "Set", do: "set", args: { key: "x", value: 1 }, x: 0, y: 0 }, { id: "k", kind: "card", label: "Ask", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: "Ok?", options: [{ id: "go", label: "Go", labelZh: "Go" }] }, x: 1, y: 0 }], edges: [["s", "k"]] })]);
 const E = H.engine as any;
 mkdirSync(H.data, { recursive: true });
 writeFileSync(join(H.data, "projects.json"), JSON.stringify([{ id: "harbor-api", name: "harbor-api", path: null, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null }]));

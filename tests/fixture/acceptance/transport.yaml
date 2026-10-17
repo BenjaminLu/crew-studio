@@ -1,7 +1,7 @@
 # Offline fixture: the card is left for a person while reads of the Task fail; the driver must not cancel it.
 schema: 2
 workflow: accept-wait
-pin: { sha256: "5c176af4bcd70bfbc6773febfe8ce569ce62a2c640ecb89a5a8388fc15d01748" }
+pin: { sha256: "89619551f1d523389ee95e990ac6a4abbb6ecd0a286a145c6291d25f7cbd5822" }
 topic: "fixture transport error"
 start: { provider: null, params: {} }
 providers: []

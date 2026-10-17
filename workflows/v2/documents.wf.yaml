@@ -95,50 +95,37 @@
     {
       "id": "capability",
       "kind": "card",
-      "label": "Render unavailable",
-      "card": {
-        "title": {
-          "en": "MP4 not verified",
-          "zh-TW": "MP4 尚未驗證"
-        },
-        "body": {
-          "en": "Install the optional local renderer in Doctor, then start a new video task. HTML source remains available; no MP4 approval is recorded.",
-          "zh-TW": "可在 Doctor 安裝本機轉檔工具後再開始影片任務。HTML 原始檔仍在；目前未核准 MP4。"
-        },
-        "options": [
-          {
-            "id": "close",
-            "label": "Close",
-            "labelZh": "關閉"
-          }
-        ]
-      },
+      "label": "Renderer missing",
       "x": 1120,
-      "y": 440
+      "y": 440,
+      "args": {
+        "body_from": "render-capability",
+        "card_kind": "question"
+      }
     },
     {
       "id": "escalation",
       "kind": "card",
-      "label": "Artifact needs attention",
-      "card": {
-        "title": {
-          "en": "Artifact needs attention",
-          "zh-TW": "產物需要處理"
-        },
-        "body": {
-          "en": "Checks did not converge. Close this task and adjust its intent before trying again.",
-          "zh-TW": "檢查仍未通過。請關閉此任務，調整任務意圖後再試一次。"
-        },
-        "options": [
-          {
-            "id": "close",
-            "label": "Close",
-            "labelZh": "關閉"
-          }
-        ]
-      },
+      "label": "Checks did not pass",
       "x": 1120,
-      "y": 600
+      "y": 600,
+      "args": {
+        "body_from": "deliver-escalation",
+        "card_kind": "step-back",
+        "firstmate_first": true
+      },
+      "card": {
+        "effects": {
+          "retry": {
+            "policy": "round_cap",
+            "add": 1
+          },
+          "changes": {
+            "policy": "round_cap",
+            "add": 1
+          }
+        }
+      }
     },
     {
       "id": "library",
@@ -214,8 +201,18 @@
     ],
     [
       "capability",
+      "produce",
+      "retry"
+    ],
+    [
+      "capability",
       "closed",
       "close"
+    ],
+    [
+      "escalation",
+      "refine",
+      "retry|changes"
     ],
     [
       "escalation",

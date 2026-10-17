@@ -33,7 +33,7 @@ try{
 
 if(process.env.STAFFING_BASE_ENGINE){
  const {harness,Y}=await import('./rt-harness');const {installStaffingGuard}=await import('../src/domain/staffing');
- const flow={id:'code-firstmate',name:'Direct start control',kind:'code',version:1,roles:[],nodes:[{id:'wait',kind:'card',label:'Wait',x:1,y:1,card:{options:[{id:'done',label:'Done'}]}}],edges:[]};
+ const flow={id:'code-firstmate',name:'Direct start control',kind:'code',version:1,roles:[],nodes:[{id:'wait',kind:'card',label:'Wait',x:1,y:1,card:{ body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options:[{id:'done',label:'Done', labelZh: 'Done'}]}}],edges:[]};
  const h=await harness([Y(flow)]);const {Engine}=await import(process.env.STAFFING_BASE_ENGINE);const engine=new Engine(h.engine.deps,h.defs),store=new StaffingStore(h.data);let refused=false;
  try{installStaffingGuard(engine,store,()=>({namespace:'git',id:'p',identity:'control'}));try{engine.start({workflow:flow.id,params:{project:'p'}})}catch{refused=true}console.log(`actual Engine missing-config preallocation refusal=${refused}, allocated=${engine.list().length}`);if(!refused||engine.list().length)process.exitCode=1;}finally{for(const run of engine.list())await engine.cancel(run.id,'control cleanup');h.stop();rmSync(h.data,{recursive:true,force:true})}
  process.exit(process.exitCode??0);
@@ -43,7 +43,7 @@ if(process.env.STAFFING_BASE_ENGINE){
 {
  const {harness,Y}=await import('./rt-harness');
  const {installStaffingGuard}=await import('../src/domain/staffing');
- const def={id:'code-firstmate',name:'Staffed code',kind:'code',version:1,roles:[{id:'worker',label:'Worker',skill:'pack:firstmate/skills/worker.md'}],nodes:[{id:'wait',kind:'card',label:'Wait',x:1,y:1,card:{options:[{id:'done',label:'Done'}]}}],edges:[]};
+ const def={id:'code-firstmate',name:'Staffed code',kind:'code',version:1,roles:[{id:'worker',label:'Worker',skill:'pack:firstmate/skills/worker.md'}],nodes:[{id:'wait',kind:'card',label:'Wait',x:1,y:1,card:{ body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options:[{id:'done',label:'Done', labelZh: 'Done'}]}}],edges:[]};
  const h=await harness([Y(def)]),e=h.engine,s=new StaffingStore(h.data),p={namespace:'git' as const,id:'project-one',identity:'registered canonical project'};
  try{
   installStaffingGuard(e,s,id=>{if(id!==p.id)throw new Error('unregistered project');return p;});

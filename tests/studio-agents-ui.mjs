@@ -18,7 +18,7 @@ mkdirSync(join(state, "pending"), { recursive: true }); mkdirSync(data);
 // now needs a signed captain staffing approval naming a real provider (src/domain/staffing.ts), so the stub cannot run one.
 const FIXTURE = { id: "studio-agents", name: "Studio agents fixture", kind: "doc", roles: [{ id: "worker", label: "Worker", skill: "bundled:workflows/skills/v2/writer.md" }],
   nodes: [{ id: "intake", kind: "hook", label: "Capture intent", do: "deliver.intake", x: 160, y: 140 },
-    { id: "dispatch", kind: "card", label: "Dispatch", card: { title: { en: "Dispatch the draft", "zh-TW": "派工草稿" }, options: [{ id: "dispatch", label: "Dispatch" }] }, x: 320, y: 140 },
+    { id: "dispatch", kind: "card", label: "Dispatch", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: { en: "Dispatch the draft", "zh-TW": "派工草稿" }, options: [{ id: "dispatch", label: "Dispatch", labelZh: "Dispatch" }] }, x: 320, y: 140 },
     { id: "produce", kind: "hook", label: "Begin artifact round", do: "deliver.round", x: 480, y: 140 },
     { id: "build", kind: "agent", label: "Build round", role: "worker", mode: "deliver", args: { format: "document", variant: "A" }, retries: 0, timeout_s: 900, x: 640, y: 140 },
     { id: "end", kind: "hook", label: "Done", x: 800, y: 140 }],

@@ -246,7 +246,7 @@ try {
     ok(kept.goal === FX.goal && kept.interview.length === 2, "weak a repair cannot rewrite the captain's goal or interview answers", JSON.stringify({ goal: kept.goal, n: kept.interview.length }));
     ok(h.rt.readiness.gate.repair(d.draft).rounds.some((x: any) => /intent line 2/.test(x.refused ?? "")), "weak a refused repair is recorded on its round");
     // the other weakenings, on full definitions (the drafting vocabulary cannot even express them)
-    const W = (o: any): WDef => normalize({ id: "w", name: "w", version: 1, roles: [], intents: [{ n: 1, text: "Ship it", done: "Shipped" }], nodes: [{ id: "a", kind: "hook", label: "A", do: "note", serves: [1] }, { id: "gate", kind: "card", label: "Merge?", args: { card_kind: "merge" }, card: { options: [{ id: "go", label: "Go" }] }, serves: [1] }, { id: "push", kind: "hook", label: "Push", do: "remote.push", serves: [1] }, { id: "end", kind: "hook", label: "End" }], edges: [{ from: "a", to: "gate" }, { from: "gate", to: "push", when: "go" }, { from: "push", to: "end" }], ...o });
+    const W = (o: any): WDef => normalize({ id: "w", name: "w", version: 1, roles: [], intents: [{ n: 1, text: "Ship it", done: "Shipped" }], nodes: [{ id: "a", kind: "hook", label: "A", do: "note", serves: [1] }, { id: "gate", kind: "card", label: "Merge?", args: { card_kind: "merge" }, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "go", label: "Go", labelZh: "Go" }] }, serves: [1] }, { id: "push", kind: "hook", label: "Push", do: "remote.push", serves: [1] }, { id: "end", kind: "hook", label: "End" }], edges: [{ from: "a", to: "gate" }, { from: "gate", to: "push", when: "go" }, { from: "push", to: "end" }], ...o });
     const prev = W({}); const dropCard = W({ nodes: prev.nodes.filter((n) => n.id !== "gate"), edges: [{ from: "a", to: "push" }, { from: "push", to: "end" }] });
     ok(/the captain's card gate cannot be removed/.test(weakening(prev, dropCard) ?? ""), "weak dropping the one-way card before an external effect is refused");
     const cOf = (def: WDef) => contractStage(def, h.rt.readiness.gate.d.contract(def, sampleOf(def)));
@@ -461,7 +461,7 @@ try {
   }
   // pure stages never need the runtime (contract and intent are functions of the definition and a small environment)
   {
-    const def = normalize({ id: "p", name: "p", version: 1, roles: [], intents: [{ n: 1, text: "x", done: "y" }], nodes: [{ id: "a", kind: "card", label: "A", serves: [1], card: { options: [{ id: "go", label: "Go" }] } }, { id: "b", kind: "hook", label: "B" }], edges: [{ from: "a", to: "b", when: "go" }] } as any);
+    const def = normalize({ id: "p", name: "p", version: 1, roles: [], intents: [{ n: 1, text: "x", done: "y" }], nodes: [{ id: "a", kind: "card", label: "A", serves: [1], card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "go", label: "Go", labelZh: "Go" }] } }, { id: "b", kind: "hook", label: "B" }], edges: [{ from: "a", to: "b", when: "go" }] } as any);
     ok(intentStage(def).length === 0 && briefStage(def, [], { text: "x", params: {} }).length === 0, "pure stages run with no engine");
   }
 } catch (e: any) { fail++; console.log("  FAIL  exception", e?.stack ?? e); }

@@ -166,7 +166,7 @@ H.stop();
   const { Y } = await import("./rt-harness");
   const ref = "pack:firstmate/skills/worker.md";
   const flow = { id: "code-firstmate", name: "Skill change fixture", kind: "code", version: 1, roles: [{ id: "worker", label: "Worker", skill: ref }],
-    nodes: [{ id: "wait", kind: "card", label: "Wait", x: 0, y: 0, card: { options: [{ id: "go", label: "Go" }] } }, { id: "work", kind: "agent", label: "Work", role: "worker", mode: "test", x: 1, y: 0 }],
+    nodes: [{ id: "wait", kind: "card", label: "Wait", x: 0, y: 0, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "go", label: "Go", labelZh: "Go" }] } }, { id: "work", kind: "agent", label: "Work", role: "worker", mode: "test", x: 1, y: 0 }],
     edges: [["wait", "work", "go"]] };
   const h = await harness([Y(flow)], { data: checkedTempDir("crew-role-skills-staffing-") }), e = h.engine, staffing = new StaffingStore(h.data), project = { namespace: "git" as const, id: "p", identity: "isolated-skill-change" };
   try {

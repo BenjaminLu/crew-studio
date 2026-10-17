@@ -8,7 +8,7 @@ import {installDeliver} from '../src/domain/deliver';
 import {captureDeliverInputs,deliverInputTools,DELIVER_INPUT_MAX_BYTES} from '../src/domain/deliver-inputs';
 const flow={id:'handoff-fixture',name:'Three role handoff',version:1,roles:[{id:'writer',label:'Design and review',skill:'fixture'}],nodes:[
  {id:'design',kind:'agent',label:'Design direction',detail:'DESIGN_ASSIGNMENT: define the visual direction.',role:'writer',mode:'deliver',args:{format:'document'},x:0,y:0},
- {id:'approve',kind:'card',label:'Captain approves design',card:{options:[{id:'approve',label:'Approve'}]},x:1,y:0},
+ {id:'approve',kind:'card',label:'Captain approves design',card:{ body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options:[{id:'approve',label:'Approve', labelZh: 'Approve'}]},x:1,y:0},
  {id:'build',kind:'agent',label:'Build website',detail:'BUILD_ASSIGNMENT: use the approved design source.',role:'writer',mode:'deliver',args:{format:'web'},x:2,y:0},
  {id:'review',kind:'agent',label:'Review sources',detail:'REVIEW_ASSIGNMENT: compare design and HTML sources, not visual browser behavior.',role:'writer',mode:'deliver',args:{format:'document'},x:3,y:0},
  {id:'done',kind:'hook',label:'Done',x:4,y:0}],edges:[['design','approve'],['approve','build','approve'],['build','review'],['review','done']]};

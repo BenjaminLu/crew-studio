@@ -2,7 +2,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import assert from 'node:assert/strict';
 import {harness,Y,until} from './rt-harness';
 process.env.CREW_TEST_IN_PROCESS='1';
-const h=await harness(['coffee-kit','other'].map(kind=>Y({id:kind,name:kind,kind,version:1,roles:[],nodes:[{id:'hold',kind:'card',label:'Hold',x:0,y:0,card:{options:[{id:'close',label:'Close'}]}}],edges:[]})));
+const h=await harness(['coffee-kit','other'].map(kind=>Y({id:kind,name:kind,kind,version:1,roles:[],nodes:[{id:'hold',kind:'card',label:'Hold',x:0,y:0,card:{ body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options:[{id:'close',label:'Close', labelZh: 'Close'}]}}],edges:[]})));
 let launches=0,received=0;
 h.engine.deps.provider=()=>({id:'fixture',model:'offline',sandboxFree:true,start(_s:any,_t:any,ctx:any){launches++;return{interrupt(){},async *send(text:string){received=JSON.parse(text.split('Input (JSON):\n')[1]).payload.length;await h.agents.callTool(ctx.token,'judge_report',{verdict:'pass',findings:[]});yield{type:'turnEnd',status:'ok'};}};}} as any);
 try{for(const [kind,size,allowed] of [['coffee-kit',70000,true],['coffee-kit',170000,true],['coffee-kit',200000,false],['other',70000,false]] as const){

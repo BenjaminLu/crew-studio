@@ -10,7 +10,7 @@ import { harness, sleep, suite, until, Y } from "./rt-harness";
 const { ok, end } = suite("authority");
 const card = (id: string, door: string | null, extra: any = {}) => Y({ id, name: id, roles: [], ...extra, nodes: [
   { id: "a", kind: "hook", label: "A", do: "set", args: { key: "door", value: door ? { door } : null }, x: 0, y: 0 },
-  { id: "q", kind: "card", label: "Merge?", args: { card_kind: "merge" }, card: { title: "Merge", confirm_door: true, door_from: "door", auto_option: "merge", options: [{ id: "close", label: "Close", primary: true, hold: true }, { id: "merge", label: "Merge" }] }, x: 1, y: 0 },
+  { id: "q", kind: "card", label: "Merge?", args: { card_kind: "merge" }, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: "Merge", confirm_door: true, door_from: "door", auto_option: "merge", options: [{ id: "close", label: "Close", labelZh: "Close", primary: true, hold: true }, { id: "merge", label: "Merge", labelZh: "Merge" }] }, x: 1, y: 0 },
   { id: "m", kind: "hook", label: "Merged", args: { result: "merged" }, x: 2, y: 0 }, { id: "c", kind: "hook", label: "Closed", args: { result: "closed" }, x: 2, y: 1 }],
   edges: [["a", "q"], ["q", "m", "merge"], ["q", "c", "close"]] });
 const window = { auth: { window: { kinds: ["merge"], until: "2099-01-01T00:00:00Z", granted_by: "a pack", one_way: true } } };

@@ -848,8 +848,11 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     sandbox: (x) => { const wt = x.ctx.worktree; return wt && existsSync(wt) ? { writes: [], reads: [wt], cwd: wt } : null; }, // reads the worktree, writes nothing of it
     tools: (x) => { submittedSpecs.delete(x); return [...READ_ONLY(shellOk(x)), specTool(x)]; }, maxTools: 60,
     system: (x, skill) => `${skill}\n\nYou write the spec for one change to a local repository. Read the code with the fs_* tools (read-only), then call spec_write once. Budget: use at most 40 read/search calls; reserve the remaining calls for spec_write and schema corrections. Stop exploring once the relevant callers and tests are known. Never finish without spec_write; record unverified details as explicit scope questions rather than spending the entire budget on exploration. Say WHAT and WHY; never HOW (no line numbers, no steps). Every done line names a concrete test file and scenario, with the literal marker "planned fail-first" followed by its expected semantic failure on base; planned tests are not executed evidence. Keep manual reviewer and captain release obligations in explain, not as testless done lines. Describe the final specification, not the revision conversation; never quote rejected wording merely to describe its removal. Keep write scope limited to intended edits. List exact existing read-only callers in verificationScope; these never grant write permission or become additional changed roots. Explain the verification obligation for those callers. Write in plain English: no will/should/could, no "ensure", "utilize", "via", "etc.". Answer in one line when done.`,
-    prompt: (x) => { const b = roundBrief(x, "spec"); const note = x.ctx.answers?.dispatch?.choice === "rescope" ? x.ctx.answers.dispatch.note : x.ctx.answers?.["step-back"]?.choice === "rescope" ? x.ctx.answers["step-back"].note : x.ctx.answers?.["scope-card"]?.note;
-      return `SPEC DRAFT\nRun ${x.run.id} · draft ${x.visit}. Repository ${x.ctx.project ?? x.run.params?.project ?? x.ctx.repo?.split("/").at(-1) ?? "(unknown)"} (base ${x.ctx.base}).\nCaptain's intent:\n${x.run.text || x.run.title}\n${note ? `\nThe captain asked for changes: ${note}\n` : ""}${engine.amendments(x.run).length ? `${amendmentsSection(engine.amendments(x.run))}Write the spec so its done lines include these changes; drop or rewrite any done line they supersede.\n` : ""}${x.visit > 1 ? `${briefSection(b)}${x.ctx.spec ? `Previous draft for revision only; not approval or current-head verification evidence. Revalidate it against the current source and captain changes:\n${specMd(x.ctx.spec)}\n` : ""}` : ""}\nStart with fs_list.`; },
+    prompt: (x) => { const b = roundBrief(x, "spec");
+      // the latest rescope on any escalation card (the captain's, or Firstmate's own decision with its reason)
+      const rescope = ["dispatch", "step-back", "stalled", "budget", "scope-card", "design-gap-card"].map((k) => x.ctx.answers?.[k]).filter((a: any) => a?.choice === "rescope" && a.note).sort((a: any, z: any) => String(a.at).localeCompare(String(z.at))).at(-1) as any;
+      const note = rescope?.by === "firstmate" ? null : rescope?.note ?? x.ctx.answers?.["scope-card"]?.note; const fmNote = rescope?.by === "firstmate" ? rescope.note : null;
+      return `SPEC DRAFT\nRun ${x.run.id} · draft ${x.visit}. Repository ${x.ctx.project ?? x.run.params?.project ?? x.ctx.repo?.split("/").at(-1) ?? "(unknown)"} (base ${x.ctx.base}).\nCaptain's intent:\n${x.run.text || x.run.title}\n${note ? `\nThe captain asked for changes: ${note}\n` : ""}${fmNote ? `\nFirstmate rescoped the spec (the captain did not decide this): ${fmNote}\n` : ""}${engine.amendments(x.run).length ? `${amendmentsSection(engine.amendments(x.run))}Write the spec so its done lines include these changes; drop or rewrite any done line they supersede.\n` : ""}${x.visit > 1 ? `${briefSection(b)}${x.ctx.spec ? `Previous draft for revision only; not approval or current-head verification evidence. Revalidate it against the current source and captain changes:\n${specMd(x.ctx.spec)}\n` : ""}` : ""}\nStart with fs_list.`; },
     skeleton: (x) => codeFacts(x, "coordinator", { deliverable: ["spec_write once (title, what, why, done lines, scope, verification scope, door, explain), then one line."] }),
     after: (x) => { if (!x.ctx.spec || !submittedSpecs.has(x)) throw new Error("the spec writer did not call spec_write"); x.rn.note = `${x.ctx.spec.title}: ${x.ctx.spec.done.length} done lines, scope ${x.ctx.spec.scope.join(", ")}`; return "ok"; },
   };
@@ -1288,36 +1291,49 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const base = (x: X, why: string, how: string, zhWhy: string, zhHow: string, extra: any = {}) => ({
     en: { why, how, scope: { in: scopeIn(x), out: [] }, done: x.ctx.spec?.done ?? [], beforeAfter: extra.ba ?? "", glossary },
     zh: { why: zhWhy, how: zhHow, intent: x.ctx.spec?.explain?.["zh-TW"] || undefined, scope: { in: scopeIn(x), out: [] }, done: x.ctx.spec?.done ?? [], beforeAfter: extra.ba ?? "", glossary: zhGloss } });
+  // what an escalation names: the checks still failing on the last round (from its brief), never the brief itself
+  const failingOf = (x: X, producer: string) => { const items: any[] = x.ctx.briefs?.[producer]?.items ?? []; const by = new Map<string, string>();
+    for (const it of items) if (it?.check && !by.has(it.check)) by.set(String(it.check), String(it.message ?? "").replace(/\s+/g, " ").slice(0, 160)); return [...by.entries()].slice(0, 6); };
+  const failingEn = (x: X, producer = "build") => { const f = failingOf(x, producer); return f.length ? `Still failing: ${f.map(([c, m]) => `${c}${m ? ` (${m})` : ""}`).join("; ")}.` : "No check names a failure; the captain's or the reviewer's notes are still open."; };
+  const failingZh = (x: X, producer = "build") => { const f = failingOf(x, producer); return f.length ? `仍未通過的檢查：${f.map(([c]) => c).join("、")}。` : "沒有檢查列出失敗；船長或 reviewer 的意見仍未處理。"; };
+  const failingList = (x: X, producer = "build") => failingOf(x, producer).map(([c, m]) => `- ${c}${m ? `: ${m}` : ""}`).join("\n");
+  /** the "another model" picker: the providers and models Studio is set up with (engine.modelChoices) */
+  const modelPicker = () => { const c = engine.modelChoices(); return c.length ? { select: c } : { note: true, noteLabel: "provider/model, e.g. codex/gpt-5", noteLabelZh: "provider/model，例如 codex/gpt-5" }; };
+  /** the step this card came from (the last finished step before it): which escalation it is */
+  const cameFrom = (x: X) => [...x.run.steps].reverse().find((s) => s.node !== x.node.id && (s.state === "passed" || s.state === "failed" || s.state === "error"));
   engine.cardBodies.dispatch = (x) => ({ title: `Dispatch: ${T(x)}`, zhTitle: `派工：${ZT(x)}`, ...base(x, x.ctx.spec?.why?.join(" ") ?? "", "A worker builds it on its own branch. Checks and a fresh reviewer judge each round.", zhWhyOf(x), "worker 在自己的 branch 上做；每一輪由檢查和全新的 reviewer 判定。"),
     body: `${specMd(x.ctx.spec)}\nRepository: ${x.ctx.repo} (${x.ctx.base}) · branch ${x.ctx.branch}\nRollback: ${x.ctx.spec?.door?.kind === "one-way" ? "a revert does not undo a one-way change; the plan round names the rollback" : "a revert undoes it"}`,
-    options: [{ id: "dispatch", label: "A · Dispatch", primary: true }, { id: "rescope", label: "B · Rescope", note: true }, { id: "drop", label: "D · Drop" }] });
-  engine.cardBodies.door = (x) => ({ title: `Pick the door: ${T(x)}`, zhTitle: `選門：${ZT(x)}`, ...base(x, "No list can sort this scope.", "Pick one-way or two-way.", "沒有清單能分類這個範圍。", "選單向門或雙向門。"),
-    body: `No list can classify this scope:\n${(x.ctx.door?.reasons ?? []).map((r: any) => `- ${r.path}: ${r.why}`).join("\n")}`, options: [{ id: "two-way", label: "Two-way (a revert undoes it)" }, { id: "one-way", label: "One-way" }] });
-  engine.cardBodies.budget = (x) => ({ title: `Round budget reached: ${T(x)}`, zhTitle: `輪數預算用完：${ZT(x)}`, ...base(x, "The round cap is reached and checks still fail.", "Add 2 rounds, narrow the scope, or park the run.", "輪數上限已到，檢查仍未通過。", "多給 2 輪、縮小範圍，或暫停這個 run。"),
-    body: `${x.run.nodes.build?.visits ?? 0} rounds ran and it is still not green.\n\n${x.ctx.briefs?.build?.text ?? ""}`,
-    options: [{ id: "extend", label: "Continue: 2 more rounds", primary: true }, { id: "rescope", label: "Narrow the scope", note: true }, { id: "park", label: "Park the run" }] });
+    options: [{ id: "dispatch", label: "A · Dispatch", labelZh: "A · 派工", primary: true }, { id: "rescope", label: "B · Rescope", labelZh: "B · 調整範圍", note: true, noteLabel: "What the new scope adds or removes", noteLabelZh: "新範圍要加入或移除什麼" }, { id: "drop", label: "D · Drop", labelZh: "D · 放棄" }] });
+  engine.cardBodies.door = (x) => ({ title: `Pick the door: ${T(x)}`, zhTitle: `選門：${ZT(x)}`, ...base(x, `No list can sort this scope: ${(x.ctx.door?.reasons ?? []).map((r: any) => r.path).join(", ") || "the scope paths"}.`, "Pick one-way or two-way.", "沒有清單能分類這個範圍。", "選單向門或雙向門。"),
+    body: `No list can classify this scope:\n${(x.ctx.door?.reasons ?? []).map((r: any) => `- ${r.path}: ${r.why}`).join("\n")}`, options: [{ id: "two-way", label: "Two-way (a revert undoes it)", labelZh: "雙向門（revert 可以還原）" }, { id: "one-way", label: "One-way", labelZh: "單向門" }] });
+  engine.cardBodies.budget = (x) => { const n = x.run.nodes.build?.visits ?? 0;
+    return { title: `${n} rounds ran and checks still fail: more rounds or a smaller scope? ${T(x)}`, zhTitle: `跑了 ${n} 輪檢查仍未通過：要再給幾輪，還是縮小範圍？${ZT(x)}`,
+      ...base(x, `The round cap is reached after ${n} rounds. ${failingEn(x)}`, "Add 2 rounds, narrow the scope, or park the run.", `輪數上限已到，已跑 ${n} 輪。${failingZh(x)}`, "多給 2 輪、縮小範圍，或暫停這個 run。"),
+      body: `${n} rounds ran and it is still not green.\n\nStill failing:\n${failingList(x) || "- (no check named a failure)"}`,
+      options: [{ id: "extend", label: "Continue: 2 more rounds", labelZh: "繼續：再給 2 輪", primary: true }, { id: "rescope", label: "Narrow the scope", labelZh: "縮小範圍", note: true, noteLabel: "What to drop from the scope", noteLabelZh: "要從範圍拿掉什麼" }, { id: "park", label: "Park the run", labelZh: "暫停這個 run" }] }; };
   engine.cardBodies["step-back"] = (x) => {
     // a review still without a verified verdict after its retry stops on the captain here too (architecture §3.3), never a failed run
     // which round "another model" reruns (the designer's own swap reads this; the review's ignores a design step-back)
     x.ctx.stepBackFor = x.ctx.reviewUnverified ? "review" : x.ctx.designUnverified ? "design" : "class";
     // a designer still without a verdict after its retry (design-unverified): another model reruns the designer, never the review
     if (!x.ctx.reviewUnverified && x.ctx.designUnverified) { const why = String(x.ctx.designUnverified);
-      return { title: `The designer gave no verdict: ${T(x)}`, zhTitle: `設計審查沒有給出結論：${ZT(x)}`,
+      return { title: `The designer gave no verdict: retry on another model? ${T(x)}`, zhTitle: `設計審查沒有給出結論：換一個模型重來嗎？${ZT(x)}`,
         ...base(x, `The designer review failed twice without a verdict: ${why.slice(0, 300)}`, "Retry the design review with another model, rescope the spec, or park the run.",
           `設計審查連續兩次沒有給出結論：${why.slice(0, 300)}`, "換一個模型重新做設計審查、調整規格範圍，或暫停這個 run。"),
         body: `The designer gave no verdict after its retry.\n\n${why}`,
-        options: [{ id: "other-model", label: "Retry the design review with another model (name it: provider/model)", labelZh: "換一個模型重新做設計審查（寫出 provider/model）", note: true, primary: true }, { id: "rescope", label: "Rescope the spec", labelZh: "調整規格範圍", note: true }, { id: "park", label: "Park the run", labelZh: "暫停這個 run" }] }; }
+        options: [{ id: "other-model", label: "Retry the design review with another model", labelZh: "換一個模型重新做設計審查", ...modelPicker(), primary: true }, { id: "rescope", label: "Rescope the spec", labelZh: "調整規格範圍", note: true, noteLabel: "What the new scope adds or removes", noteLabelZh: "新範圍要加入或移除什麼" }, { id: "park", label: "Park the run", labelZh: "暫停這個 run" }] }; }
     if (x.ctx.reviewUnverified) { const refused = x.ctx.reviewUnverified; const err = refused;
-      return { title: `${refused ? "The reviewer would not verify its claims" : "The reviewer gave no verdict"}: ${T(x)}`, zhTitle: `${refused ? "reviewer 不肯先驗證就下判定" : "reviewer 沒有給出判定"}：${ZT(x)}`,
+      return { title: `${refused ? "The reviewer would not verify its claims" : "The reviewer gave no verdict"}: retry on another model? ${T(x)}`, zhTitle: `${refused ? "reviewer 不肯先驗證就下判定" : "reviewer 沒有給出判定"}：換一個模型重來嗎？${ZT(x)}`,
         ...base(x, refused ? "Twice the reviewer gave a verdict without running the tests and reading every changed file, and the verdict was refused both times." : `The review failed twice: ${err.slice(0, 300)}`,
           "Retry the review with another model, rescope the spec, or drop the run.",
           refused ? "reviewer 兩次都沒跑測試、也沒讀完改動的檔案就下判定，兩次都被拒絕。" : `審查連續失敗兩次：${err.slice(0, 300)}`, "換一個模型重新審查、調整規格範圍，或放棄這個 run。"),
         body: refused ? `The reviewer's verdict was refused after its retry.\n\n${refused}` : `The review failed after its retry: ${err}`,
-        options: [{ id: "other-model", label: "Retry the review with another model (name it: provider/model)", note: true, primary: true }, { id: "rescope", label: "Rescope the spec", note: true }, { id: "park", label: "Drop the run" }] }; }
-    const r = x.ctx.refine?.fix; const last = r?.history?.at(-1);
-    return { title: `Step back: the same failure twice — ${T(x)}`, zhTitle: `退一步：同一類失敗連續兩次 — ${ZT(x)}`, ...base(x, `The class ${(last?.repeated ?? []).join(", ")} failed in two rounds in a row.`, "Question the design: rescope, or allow one more round.", `類別 ${(last?.repeated ?? []).join(", ")} 連續兩輪失敗。`, "重新思考設計：調整範圍，或再給一輪。"),
-      body: `The class ${(last?.repeated ?? []).join(", ")} failed in two rounds in a row. A third try the same way is unlikely to work: question the design.\n\n${x.ctx.briefs?.build?.text ?? ""}`,
-      options: [{ id: "rescope", label: "Rethink: rescope the spec", note: true, primary: true }, { id: "continue", label: "One more round as is" }, { id: "park", label: "Park the run" }] }; };
+        options: [{ id: "other-model", label: "Retry the review with another model", labelZh: "換一個模型重新審查", ...modelPicker(), primary: true }, { id: "rescope", label: "Rescope the spec", labelZh: "調整規格範圍", note: true, noteLabel: "What the new scope adds or removes", noteLabelZh: "新範圍要加入或移除什麼" }, { id: "park", label: "Drop the run", labelZh: "放棄這個 run" }] }; }
+    const r = x.ctx.refine?.fix; const last = r?.history?.at(-1); const cls = (last?.repeated ?? []).join(", ") || "the same check";
+    return { title: `The same failure twice: rethink the scope or try once more? ${T(x)}`, zhTitle: `同一類失敗連續兩次：重新界定範圍，還是再試一次？${ZT(x)}`,
+      ...base(x, `${cls} failed in two rounds in a row; a third try the same way is unlikely to work. ${failingEn(x)}`, "Question the design: rescope, or allow one more round.", `${cls} 連續兩輪失敗，照原方式再試一次多半沒用。${failingZh(x)}`, "重新思考設計：調整範圍，或再給一輪。"),
+      body: `${cls} failed in two rounds in a row. A third try the same way is unlikely to work: question the design.\n\nStill failing:\n${failingList(x) || "- (no check named a failure)"}`,
+      options: [{ id: "rescope", label: "Rethink: rescope the spec", labelZh: "重新思考：調整規格範圍", note: true, noteLabel: "What the new scope adds or removes", noteLabelZh: "新範圍要加入或移除什麼", primary: true }, { id: "continue", label: "One more round as is", labelZh: "照原樣再給一輪" }, { id: "park", label: "Park the run", labelZh: "暫停這個 run" }] }; };
   // the designer's capture gap, after Firstmate escalated it (design-gap → design-gap-card)
   engine.cardBodies["design-gap"] = (x) => { const g = x.ctx.designGap ?? {}; const fm = g.firstmate ?? {};
     return { title: `Design review has no captures: ${T(x)}`, zhTitle: `設計審查沒有截圖：${ZT(x)}`, captainOnly: true,
@@ -1325,17 +1341,36 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
         `這個改動碰到 UI，repository 也宣告了 app，但設計審查沒有截圖，無法開始。Firstmate 轉給你（${fm.why ?? "沒有理由"}）：${fm.reason ?? ""}`, "修好後重新截圖、調整規格範圍，或暫停這個 run。"),
       body: `${g.code}: ${g.message}\nExpected: ${g.expected}\nMissing:\n${(g.missing ?? []).map((m: string) => `- ${m}`).join("\n")}\nFirstmate (${fm.why}): ${fm.reason}`,
       options: [{ id: "recapture", label: "Fixed: capture again", labelZh: "已修好：重新截圖", primary: true }, { id: "rescope", label: "Rescope the spec", labelZh: "調整規格範圍", note: true }, { id: "park", label: "Park the run", labelZh: "暫停這個 run" }] }; };
-  engine.cardBodies.stalled = (x) => ({ title: `No progress for 2 rounds: ${T(x)}`, zhTitle: `兩輪沒有進展：${ZT(x)}`, ...base(x, "The checks' score did not rise for two rounds.", "Rescope, allow one more round, or park.", "檢查分數兩輪沒有上升。", "調整範圍、再給一輪，或暫停。"),
-    body: `The checks' score did not improve for two rounds.\n\n${x.ctx.briefs?.build?.text ?? ""}`,
-    options: [{ id: "rescope", label: "Rescope the spec", note: true, primary: true }, { id: "continue", label: "One more round" }, { id: "park", label: "Park the run" }] });
+  engine.cardBodies.stalled = (x) => ({ title: `No progress for 2 rounds: rescope or one more round? ${T(x)}`, zhTitle: `兩輪沒有進展：調整範圍，還是再給一輪？${ZT(x)}`,
+    ...base(x, `The checks' score did not rise for two rounds. ${failingEn(x)}`, "Rescope, allow one more round, or park.", `檢查分數兩輪沒有上升。${failingZh(x)}`, "調整範圍、再給一輪，或暫停。"),
+    body: `The checks' score did not improve for two rounds.\n\nStill failing:\n${failingList(x) || "- (no check named a failure)"}`,
+    options: [{ id: "rescope", label: "Rescope the spec", labelZh: "調整規格範圍", note: true, noteLabel: "What the new scope adds or removes", noteLabelZh: "新範圍要加入或移除什麼", primary: true }, { id: "continue", label: "One more round", labelZh: "再給一輪" }, { id: "park", label: "Park the run", labelZh: "暫停這個 run" }] });
+  const rescopeOpts = [{ id: "rescope", label: "Rescope the spec", labelZh: "調整規格範圍", note: true, noteLabel: "What the new scope adds or removes", noteLabelZh: "新範圍要加入或移除什麼", primary: true }, { id: "park", label: "Park the run", labelZh: "暫停這個 run" }];
   engine.cardBodies.scope = (x) => { const perm = x.node.id === "scope-card" && !x.run.nodes.build?.data?.report ? (x.ctx.envGaps ?? []).filter((g: any) => g.route === "captain") : [];
-    // an environment gap only the captain can close: a permission (a host the round sandbox may reach), never an error
-    if (perm.length) return { title: `Permission needed: ${T(x)}`, zhTitle: `需要授權：${ZT(x)}`, ...base(x, "The build needs a permission only you can grant before it starts.", "Grant it in the project's policy, then rescope to check again; or park the run.", "開工前需要只有你能給的授權。", "在專案 policy 裡授權後選「調整範圍」重新檢查；或暫停這個 run。"),
-      body: perm.map((g: any) => `${g.code}: ${g.message}\n→ ${g.expected}`).join("\n\n"),
-      options: [{ id: "rescope", label: "Rescope the spec", note: true, primary: true }, { id: "park", label: "Park the run" }] };
-    return ({ title: `Scope question: ${T(x)}`, zhTitle: `範圍問題：${ZT(x)}`, ...base(x, "The work needs a decision on the scope.", "Rescope the spec, or park the run.", "工作需要決定範圍。", "調整規格範圍，或暫停這個 run。"),
-    body: `${x.run.nodes.build?.data?.report?.marker ?? x.ctx.planDecision?.decision ?? ""}: ${x.run.nodes.build?.data?.report?.summary ?? x.ctx.planDecision?.note ?? (x.ctx.briefs?.spec?.text ?? x.ctx.briefs?.plan?.text ?? "")}`,
-    options: [{ id: "rescope", label: "Rescope the spec", note: true, primary: true }, { id: "park", label: "Park the run" }] }); };
+    // an environment gap only the captain can close: a permission (a host the round sandbox may reach), never an error; Firstmate cannot grant it
+    if (perm.length) return { title: `Permission needed before the build starts: grant it? ${T(x)}`, zhTitle: `開工前需要授權：要授權嗎？${ZT(x)}`, direct: true, ...base(x, `The build needs a permission only you can grant before it starts: ${perm.map((g: any) => g.message).join("; ").slice(0, 400)}`, "Grant it in the project's policy, then rescope to check again; or park the run.", "開工前需要只有你能給的授權。", "在專案 policy 裡授權後選「調整範圍」重新檢查；或暫停這個 run。"),
+      body: perm.map((g: any) => `${g.code}: ${g.message}\n→ ${g.expected}`).join("\n\n"), options: rescopeOpts };
+    // which escalation this is: the worker stopped on its scope, the plan found an open decision, or the spec / plan did not converge
+    const from = cameFrom(x); const rep = from?.node === "build" ? x.run.nodes.build?.data?.report : null;
+    if (rep?.marker === "SCOPE-BLOCKED") { const files = (rep.conflicts ?? []).map((c: any) => c.path).filter(Boolean);
+      return { title: `The worker is blocked by the scope: widen it or narrow the change? ${T(x)}`, zhTitle: `worker 被範圍擋住：要放寬範圍，還是縮小改動？${ZT(x)}`,
+        ...base(x, `The worker stopped: the change needs work outside the approved scope (${scopeIn(x).join(", ") || "no paths"}). It said: ${String(rep.summary ?? "").slice(0, 400)}`, "Rescope the spec to include what it needs, or to drop that part; or park the run.",
+          `worker 停下來了：這個改動需要動到核准範圍（${scopeIn(x).join("、") || "沒有路徑"}）以外的地方。`, "調整規格範圍，把需要的部分加進來或拿掉；或暫停這個 run。"),
+        body: `The worker stopped on round ${from?.visit ?? "?"}: the change needs work outside the approved scope.\n\nThe worker said: ${String(rep.summary ?? "").slice(0, 1200)}${files.length ? `\n\nFiles: ${files.join(", ")}` : ""}`, options: rescopeOpts }; }
+    // the build round stopped before it could finish (a remote it cannot read, a conflict it cannot resolve …): its own words say why
+    if (from?.node === "build") { const said = String(rep?.summary ?? x.run.nodes.build?.error ?? x.run.nodes.build?.note ?? "").replace(/\s+/g, " ").trim().slice(0, 600) || "the round gave no reason";
+      return { title: `The build round is blocked: rescope or park? ${T(x)}`, zhTitle: `build 回合被擋住了：要調整範圍還是暫停？${ZT(x)}`,
+        ...base(x, `The build round stopped before it could finish: ${said}`, "Fix what blocks it, then rescope to prepare again; or park the run.", "build 回合在完成前停下來了。", "排除阻擋的原因後選「調整範圍」重新準備；或暫停這個 run。"),
+        body: `The build round (round ${from?.visit ?? "?"}) stopped before it could finish.
+
+${said}`, options: rescopeOpts }; }
+    if (from?.node === "plan-accept" && x.ctx.planDecision) return { title: `The plan needs a decision the spec does not settle: ${T(x)}`, zhTitle: `計畫需要一個 spec 沒有決定的選擇：${ZT(x)}`,
+      ...base(x, `The plan round found a decision the spec does not settle: ${String(x.ctx.planDecision.note ?? "").slice(0, 400)}`, "Rescope the spec to settle it, or park the run.", "計畫回合找到一個 spec 沒有決定的選擇。", "調整規格範圍把它定下來，或暫停這個 run。"),
+      body: `The plan round could not accept the plan: ${String(x.ctx.planDecision.note ?? "").slice(0, 1200)}`, options: rescopeOpts };
+    const loop = from?.node === "plan-fix" ? "plan" : "spec"; const why = from?.outcome === "door-change" ? "a change of door (one-way or two-way)" : from?.outcome === "cap" ? "the round cap" : from?.outcome === "stalled" ? "no progress for two rounds" : "the same failure twice";
+    return { title: `The ${loop} did not pass its checks: rescope it? ${T(x)}`, zhTitle: `${loop === "plan" ? "計畫" : "規格"}沒有通過檢查：要調整範圍嗎？${ZT(x)}`,
+      ...base(x, `The ${loop} stopped on ${why}. ${failingEn(x, loop)}`, "Rescope the spec, or park the run.", `${loop === "plan" ? "計畫" : "規格"}停住了。${failingZh(x, loop)}`, "調整規格範圍，或暫停這個 run。"),
+      body: `The ${loop} stopped on ${why}.\n\nStill failing:\n${failingList(x, loop) || "- (no check named a failure)"}`, options: rescopeOpts }; };
   /** The merge card of a GitHub Task whose project has no operations grant: the open pull request, merged by the captain on GitHub. */
   const mergeOnGitHubBody = (pr: any): Body => ({ title: `Pull request #${pr.id} is open: merge it on GitHub`, zhTitle: `Pull request #${pr.id} 已開：請到 GitHub 合併`, captainOnly: true,
     en: { why: `PR #${pr.id} is open at ${pr.url}. Merging from Studio is off for this project, so merge it on GitHub.`, how: "Merge the pull request on GitHub, then close this Task here; or request changes for another round." },

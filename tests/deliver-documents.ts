@@ -12,8 +12,8 @@ import {BUNDLED} from '../src/bundled.gen';
 const flow={id:'doc-fixture',name:'Doc fixture',version:1,roles:[{id:'writer',label:'Writer',skill:'fixture'}],nodes:[
  {id:'intake',kind:'hook',label:'Intake',do:'deliver.intake',x:0,y:0},{id:'produce',kind:'hook',label:'Round',do:'deliver.round',x:1,y:0},
  {id:'draft',kind:'agent',label:'Draft',role:'writer',mode:'deliver',args:{format:'document'},x:2,y:0},
- {id:'accept',kind:'card',label:'Accept',args:{mode:'deliver-accept'},x:3,y:0},{id:'closed',kind:'hook',label:'Closed',x:4,y:0}],
- edges:[['intake','produce'],['produce','draft'],['draft','accept'],['accept','closed','rejected']]};
+ {id:'ready',kind:'check',label:'Readiness',checks:[{use:'core/artifact-ready',proves:[0]}],args:{producer:'all'},x:2.5,y:0},{id:'accept',kind:'card',label:'Accept',args:{mode:'deliver-accept'},x:3,y:0},{id:'closed',kind:'hook',label:'Closed',x:4,y:0}],
+ edges:[['intake','produce'],['produce','draft'],['draft','ready'],['ready','accept','pass'],['ready','accept','fail'],['accept','closed','rejected']]};
 const H=await harness([Y(flow)]),E=H.engine,store=new ArtifactStore(H.data);
 const studioDocs=join(H.data,'..',`${H.data.split('/').pop()}-studio-docs`);mkdirSync(studioDocs,{recursive:true});writeFileSync(join(studioDocs,'live-acceptance.md'),`# Live acceptance\nIt runs DOCS_SENTINEL_CHECKS against a clean clone.\nExample token: ghp_${'a'.repeat(36)}\n`);
 const outside=join(H.data,'..',`${H.data.split('/').pop()}-outside.md`);writeFileSync(outside,'# Outside\nOUTSIDE_SECRET\n');symlinkSync(outside,join(studioDocs,'linked.md'));

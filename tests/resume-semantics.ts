@@ -17,7 +17,7 @@ const roles = [{ id: "w", label: "W", skill: "x" }];
 const H = await harness([
   Y({ id: "resume", name: "resume", roles, nodes: [
     { id: "a", kind: "agent", label: "Agent", role: "w", mode: "resume-test", x: 0, y: 0 },
-    { id: "q", kind: "card", label: "Merge?", card: { title: "Merge?", options: [{ id: "go", label: "Go" }] }, x: 1, y: 0 },
+    { id: "q", kind: "card", label: "Merge?", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: "Merge?", options: [{ id: "go", label: "Go", labelZh: "Go" }] }, x: 1, y: 0 },
     { id: "m", kind: "hook", label: "Merge", do: "count-merge", x: 2, y: 0 },
     { id: "e", kind: "hook", label: "End", x: 3, y: 0 }], edges: [["a", "q"], ["q", "m", "go"], ["m", "e"]] }),
 ]);

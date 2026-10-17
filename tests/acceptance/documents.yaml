@@ -2,7 +2,7 @@
 # the captain's acceptance card approves, the document is exported to Studio's own library.
 schema: 2
 workflow: documents
-pin: { version: 1, sha256: "63af62fcec510e63d89ab2dc3e746d2485b3e27c96982d6451627ac4bc455bbf" }   # bun scripts/acceptance/pin.ts documents
+pin: { version: 1, sha256: "64c0fea5154d0255a4e251a976ef7e2fce46a99b34754ddb0533176faac03bc9" }   # bun scripts/acceptance/pin.ts documents
 topic: "Write a one-page memo that explains what Crew Studio's live acceptance run checks, for a new teammate."
 start: { provider: null, params: {} }   # the board's Start form with "Default provider"
 providers: []                           # the default provider is added when the workflow has agent nodes

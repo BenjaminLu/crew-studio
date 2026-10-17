@@ -20,19 +20,19 @@ const root = join(import.meta.dir, "..");
 const H = await harness([
   Y({ id: "cardy", name: "cardy", roles: [], hooks: [{ at: "on_cancel", use: "t/hk" }], nodes: [
     { id: "s", kind: "hook", label: "Start", do: "set", args: { key: "s", value: 1 }, x: 0, y: 0 },
-    { id: "q", kind: "card", label: "Ship?", card: { title: { en: "Ship it", "zh-TW": "出貨" }, options: [{ id: "ship", label: "Ship" }, { id: "close", label: "Close without merging", hold: true }] }, x: 1, y: 0 },
+    { id: "q", kind: "card", label: "Ship?", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: { en: "Ship it", "zh-TW": "出貨" }, options: [{ id: "ship", label: "Ship", labelZh: "Ship" }, { id: "close", label: "Close without merging", labelZh: "Close without merging", hold: true }] }, x: 1, y: 0 },
     { id: "done", kind: "hook", label: "Done", x: 2, y: 0 }, { id: "closed", kind: "hook", label: "Closed", args: { result: "closed", summary: "closed without merging" }, x: 2, y: 1 }],
     edges: [["s", "q"], ["q", "done", "ship"], ["q", "closed", "close"]] }),
   // a slow on_cancel hook (t/slow runs until its 1 s timeout): delete must not race it
   Y({ id: "slowy", name: "slowy", roles: [], hooks: [{ at: "on_cancel", use: "t/slow" }], nodes: [
-    { id: "q", kind: "card", label: "Ship?", card: { title: { en: "Ship it", "zh-TW": "出貨" }, options: [{ id: "ship", label: "Ship" }] }, x: 0, y: 0 },
+    { id: "q", kind: "card", label: "Ship?", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: { en: "Ship it", "zh-TW": "出貨" }, options: [{ id: "ship", label: "Ship", labelZh: "Ship" }] }, x: 0, y: 0 },
     { id: "done", kind: "hook", label: "Done", x: 1, y: 0 }], edges: [["q", "done", "ship"]] }),
   // a node that is still busy after its run is cancelled (its action takes 1.2 s and ignores the cancel)
   Y({ id: "nodey", name: "nodey", roles: [], nodes: [{ id: "b", kind: "hook", label: "Busy", do: "slowact", x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["b", "e"]] }),
   // A held native presentation check: cancellation withdraws the raising owner,
   // while the underlying native promise and node remain owned until settled.
   Y({ id: "raisy", name: "raisy", roles: [], card_checks: ["t/nat"], nodes: [
-    { id: "q", kind: "card", label: "Ship?", card: { title: { en: "Ship it", "zh-TW": "出貨" }, options: [{ id: "ship", label: "Ship" }] }, x: 0, y: 0 },
+    { id: "q", kind: "card", label: "Ship?", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: { en: "Ship it", "zh-TW": "出貨" }, options: [{ id: "ship", label: "Ship", labelZh: "Ship" }] }, x: 0, y: 0 },
     { id: "done", kind: "hook", label: "Done", x: 1, y: 0 }], edges: [["q", "done", "ship"]] }),
   Y({ id: "faily", name: "faily", roles: [], nodes: [{ id: "b", kind: "hook", label: "Boom", do: "boom", x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["b", "e"]] }),
 ]);

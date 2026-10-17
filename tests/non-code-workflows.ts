@@ -174,7 +174,7 @@ await until(() => imageCalls === 3, 5000); E.cancel(cancelledImage.id);
 await until(() => imageAborted, 5000);
 ok(!E.get(cancelledImage.id)!.ctx.deliver && !store.get(`out-${cancelledImage.id.toLowerCase()}-draft`) && !E.cards.list({ run: cancelledImage.id, open: true }).length, "cancelled image generation aborts without artifact or acceptance card");
 const doc = E.start({ workflow: "documents", params: {}, text: "Write a fixture memo" }); let card = await waiting(doc.id);
-ok(!!card && E.get(doc.id)!.nodes.draft.visits === 2, "missing document title triggers automated refinement before any human acceptance");
+ok(!!card && E.get(doc.id)!.nodes.draft.visits === 2, "missing document title triggers automated refinement before any human acceptance", JSON.stringify([E.get(doc.id)!.status, E.get(doc.id)!.error, E.get(doc.id)!.nodes.draft.visits, card?.title, E.events(doc.id).filter((e: any) => /node_done|edge|log|failed|card|node_failed/.test(e.type)).map((e: any) => `${e.type}:${e.summary}`).slice(-14)]));
 ok(E.get(doc.id)!.nodes.draft.data.dir.startsWith(join(data, "work") + "/"), "deliver rounds use the sandbox-allowed work area, never the protected run store");
 await capture(card, "document-acceptance"); await destinations(card, "document");
 const dr = E.get(doc.id)!.ctx.deliver?.draft;
@@ -203,13 +203,16 @@ if (screenshots) { const permanent = E.start({ workflow: "web-prototype", params
 
 // Real stored old definition: localization upgrades must not rewrite in-flight or historical cards.
 const localDef = rt.defs.get("web-prototype")!, historicalDef = structuredClone(localDef);
-const historicalSpec: any = historicalDef.nodes.find(n => n.id === "escalation")!.card;
+// the stored definition predates the card contract (an English-only escalation card): it is kept as is, the contract only logs it
+const historicalNode: any = historicalDef.nodes.find(n => n.id === "escalation")!; delete historicalNode.args;
+const historicalSpec: any = historicalNode.card = { options: [{ id: "close", label: "Close" }] };
 historicalDef.description = "Historical English workflow fixture";
-historicalSpec.title = "Artifact needs attention"; historicalSpec.body = "Checks did not converge. Close this task and adjust its intent before trying again."; delete historicalSpec.options[0].labelZh;
+historicalSpec.title = "Artifact needs attention"; historicalSpec.body = "Checks did not converge. Close this task and adjust its intent before trying again.";
+process.env.CREW_CARD_CONTRACT = "log";
 const oldPinned = rt.defs.save("web-prototype", { ...historicalDef, base: localDef.version }, "fixture captain");
 const oldTask = E.start({ workflow: "web-prototype", params: {}, text: "FAIL_VARIANT_B PERMANENT historical English intent" });
 rt.defs.save("web-prototype", { ...localDef, base: oldPinned.version }, "fixture captain");
-const oldCard = await waiting(oldTask.id, "escalation"); await until(() => E.get(oldTask.id)!.nodes.escalation.waiting === "card", 10000); const oldSnapshot = readFileSync(join(data, "cards", `${oldCard!.id}.json`), "utf8");
+const oldCard = await waiting(oldTask.id, "escalation"); await until(() => E.get(oldTask.id)!.nodes.escalation.waiting === "card", 10000); process.env.CREW_CARD_CONTRACT = "enforce"; const oldSnapshot = readFileSync(join(data, "cards", `${oldCard!.id}.json`), "utf8");
 rt = createRuntime(deps); E = rt.engine;
 ok(E.get(oldTask.id)!.version === oldPinned.version && E.get(oldTask.id)!.def.nodes.find(n => n.id === "escalation")!.card!.title === "Artifact needs attention" && oldCard?.title["zh-TW"] === "Artifact needs attention" && readFileSync(join(data, "cards", `${oldCard!.id}.json`), "utf8") === oldSnapshot, "localization upgrade and restart preserve real historical English workflow, captain intent and card records without retroactive translation");
 cancelActive(oldTask.id);

@@ -171,7 +171,7 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
         en: { why: `${a.grant.repository} has ${bundle.pulls.length} pull request templates. Studio does not pick one for you.`, how: "Pick the template this pull request follows." },
         zh: { why: `${a.grant.repository} 有 ${bundle.pulls.length} 個 pull request 範本。Studio 不替你選。`, how: "選這個 pull request 要用的範本。" },
         body: bundle.pulls.map((f, i) => `${i + 1}. ${f.repository}/${f.path}\n${f.text.slice(0, 600)}`).join("\n\n"),
-        options: [...bundle.pulls.map((f, i) => ({ id: `tpl-${i + 1}`, label: f.path, primary: i === 0 })), { id: "close", label: "Close without a pull request", labelZh: "關閉，不開 pull request", hold: true }] });
+        options: [...bundle.pulls.map((f, i) => ({ id: `tpl-${i + 1}`, label: f.path, labelZh: f.path, primary: i === 0 })), { id: "close", label: "Close without a pull request", labelZh: "關閉，不開 pull request", hold: true }] });
       return { wait: true };
     }
     const t = await writeText(x, a, bundle, template, note, h); phase.assert();

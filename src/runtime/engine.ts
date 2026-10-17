@@ -26,6 +26,8 @@ import { ProviderRefusal } from "../providers/policy";
 import { QueueRefusal, capacity, type QueueRequest } from "./queue";
 import { Grants } from "./grants";
 import { Cards, emptySections, type CardKind, type SCard, type Sections, type LocalRescope } from "./cards";
+import { cardContract, cardContractMode } from "./card-contract";
+import { diagnosedBody, escalationQuestion, readinessCause } from "./escalation";
 import { CheckRegistry, Ledger, Policies, INPUT_HASH_ALGORITHM, coerce, doneMap, execAdapter, hashInput, inputPaths, jsRegex, parseOutput, sandboxed, schemaDefaults, schemaErrors,
   type CheckInput, type CheckManifest, type CheckOutput, type CheckRef, type LedgerEntry, type Native } from "./checks";
 import { AMEND_CHOICES, briefFor, installRefine, verifiedAmendments, type Amendment } from "./refine";
@@ -44,7 +46,7 @@ export type NState = "pending" | "running" | "passed" | "failed" | "error" | "sk
 export type AgentPick = { provider: string; model: string | null; effort?: string | null };
 export type NodeRun = {
   state: NState; visits: number; extra: number; attempt: number; outcome: string | null; cause: string | null; error: string | null; startedAt: string | null; endedAt: string | null;
-  inbox: string[]; agent: AgentPick | null; swap: AgentPick | null; job: string | null; card: string | null; waiting: "card" | "external" | null; data: Record<string, any>; note: string | null;
+  inbox: string[]; agent: AgentPick | null; swap: AgentPick | null; job: string | null; card: string | null; waiting: "card" | "external" | "firstmate" | null; data: Record<string, any>; note: string | null;
   /** the routing decision still to be carried out (set in the same durable step as the node's result, cleared when its tokens are delivered) */
   routing?: { outcome: string } | null;
 };
@@ -78,7 +80,7 @@ export type Run = {
   /** hidden from the default lists (an ended run only); an "archived" event records each change */
   archived?: boolean;
 };
-export type Result = { outcome: string; note?: string | null; cause?: string; failure?: Failure | null } | { wait: true; external?: { version: 1; handler: string; [key: string]: any }; note?: string | null };
+export type Result = { outcome: string; note?: string | null; cause?: string; failure?: Failure | null } | { wait: true; external?: { version: 1; handler: string; [key: string]: any }; note?: string | null; firstmate?: true };
 export type X = {
   edgeOwner?: symbol; run: Run; node: WNode; rn: NodeRun; visit: number; engine: Engine; deps: Deps; ctx: Record<string, any>; dir: string;
   log(text: string, data?: any): void; save(): void; cancelled(): boolean; provider(): Provider; pick(): AgentPick; skill(): string; policy(path: string, dflt?: any): any;
@@ -112,6 +114,8 @@ export type Body = { title: string; zhTitle?: string; en: Partial<Sections>; zh?
   detail?: import("./cards").CardDetail | null;
   /** an authorization window never answers this card: only the captain does */
   captainOnly?: boolean;
+  /** what only the captain can give (a credential, a permission, a one-way call): the card skips Firstmate's diagnosis */
+  direct?: boolean;
   captures?: SCard["captures"];
   pullRequest?: SCard["pullRequest"];
   /** the typed failure the card is about (a domain's own recovery card shows its class, message and log) */
@@ -359,6 +363,7 @@ export class Engine {
         if (rn.routing && rn.state !== "running") { reroute.push(id); continue; } // the result is durable, its routing was not done: do it again
         if (rn.state !== "running") continue;
         if (rn.waiting === "external") continue;
+        if (rn.waiting === "firstmate" && r.ctx.firstmateQuestion?.card && r.ctx.firstmateQuestion.node === id) continue; // an escalation still with Firstmate
         // a retry that was waiting out its backoff (failure card): it never started, so it runs now with no visit taken back
         if ((rn as any).waiting === "backoff") { backoffs.push([r, id]); continue; } // it keeps waiting only the time still left
         if (rn.waiting === "card") {
@@ -434,11 +439,17 @@ export class Engine {
     x.rn.data.nativeQueueCapability = { version: 1, reason, retryAction: "retry", closeAction: "close", ...(extra?.options.length ? { extraActions: extra.options.map((o) => o.id), extraData: extra.data ?? null } : {}) };
     const scope = Array.isArray(x.ctx.spec?.scope) ? x.ctx.spec.scope.map(String) : [];
     const project = this.queueProject(x.run), repo = this.queueRepo(x.ctx.repo) || "artifact workflow"; let dependencies: string[] = []; try { dependencies = this.queueDependencies(x.run); } catch {}
-    const zhReason = /dependency (R-\d+)/.test(reason) ? `依賴 ${/dependency (R-\d+)/.exec(reason)![1]} 尚未取得可驗證的合併證據。` : /scope held by (R-\d+)/.test(reason) ? `範圍與 ${/scope held by (R-\d+)/.exec(reason)![1]} 重疊；必須等待該任務完成可驗證的合併。` : /capacity.*full/.test(reason) ? "目前的實際執行回合已達容量上限。" : /deadline/.test(reason) ? "等待時間已到，請核准重新準備或關閉任務。" : /role skill \S+ changed since staffing approval/i.test(reason) ? "角色技能在派工核准後已變更；請先確認新的技能內容，再重新確認人員配置。" : /historical|binding|scope pin|dispatch/.test(reason) ? "此回合缺少有效的核准範圍或依賴綁定；請重新確認範圍並核准準備。" : /capacity|wait_timeout/.test(reason) ? "排隊容量或等待期限設定無效；必須先修正設定。" : /model|effort/.test(reason) ? "已設定的模型或推理強度尚未驗證為可用；請保留設定並先完成驗證。" : /provider|capability|login|quota/.test(reason) ? "目前沒有登入、額度與模型皆完成驗證的可用供應商；回合尚未啟動。" : "回合的執行權或驗證資料尚未確認，不能開始工作。";
-    const c = await this.card(x, "scope", { captainOnly: true, title: "Round is not ready", zhTitle: "回合尚未就緒",
-      en: { why: extra?.detail ? `${reason}\n\n${extra.detail}` : reason, how: "Resolve the readiness issue, then approve fresh preparation or close this task.", scope: { in: [...scope, `Project: ${project}`, `Repository: ${repo}`, ...dependencies.map(id => `Dependency: ${id}`)], out: [] } },
-      zh: { why: extra?.detail ? `${zhReason}\n\n${extra.detail}` : zhReason, how: "先排除等待原因，再核准重新準備；也可以關閉任務。", scope: { in: [...scope, `專案：${project}`, `儲存庫：${repo === "artifact workflow" ? "產物工作流程" : repo}`, ...dependencies.map(id => `依賴：${id}`)], out: [] } },
-      options: [...(extra?.options ?? []), { id: "retry", label: "Approve fresh preparation", labelZh: "核准重新準備" }, { id: "close", label: "Close task", labelZh: "關閉任務", hold: true }], failure: typed });
+    const plain = readinessCause(reason);
+    let body: Body = { captainOnly: true, title: `Round cannot start: ${plain.en.short}. Prepare again or close?`, zhTitle: `回合無法開始：${plain.zh.short}。要重新準備還是關閉？`,
+      en: { why: extra?.detail ? `${plain.en.cause}\n\n${extra.detail}` : plain.en.cause, how: plain.en.action, scope: { in: [...scope, `Project: ${project}`, `Repository: ${repo}`, ...dependencies.map(id => `Dependency: ${id}`)], out: [] } },
+      zh: { why: extra?.detail ? `${plain.zh.cause}\n\n${extra.detail}` : plain.zh.cause, how: plain.zh.action, scope: { in: [...scope, `專案：${project}`, `儲存庫：${repo === "artifact workflow" ? "產物工作流程" : repo}`, ...dependencies.map(id => `依賴：${id}`)], out: [] } },
+      body: `${plain.en.cause}\n\nWhat to do: ${plain.en.action}\n\nDetail: ${reason}`,
+      options: [...(extra?.options ?? []), { id: "retry", label: "Approve fresh preparation", labelZh: "核准重新準備" }, { id: "close", label: "Close task", labelZh: "關閉任務", hold: true }], failure: typed };
+    // a provider that is not verified (login, quota, model): Firstmate looks first and may prepare again once it checked; it never closes the task
+    if (plain.provider) { const asked = this.diagnoseFirst(x, "scope", body, ["retry"]);
+      if (asked === true) return { wait: true, firstmate: true, note: "Firstmate checks the provider first" };
+      body = diagnosedBody(body, { by: "studio", why: asked.en, zhWhy: asked.zh }); }
+    const c = await this.card(x, "scope", body);
     return { wait: true, note: `readiness recovery card ${c.id}` };
   }
 
@@ -674,6 +685,8 @@ export class Engine {
         this.emit(r, "node_waiting", `${node.label}: ${res.note ?? "waiting for external verification"}`, { node: node.id, waiting: "external" });
         this.registerExternal(r, node, rn); return this.settle(r);
       }
+      if (res.firstmate) { step.state = "waiting"; step.note = res.note ?? step.note; rn.waiting = "firstmate"; rn.cause = "waiting(firstmate)"; this.commit(r, "waiting(firstmate)");
+        this.emit(r, "node_waiting", `${node.label}: ${res.note ?? "Firstmate diagnoses this first"}`, { node: node.id, waiting: "firstmate" }); return this.settle(r); }
       step.state = "waiting"; step.note = res.note ?? step.note; rn.waiting = "card"; rn.cause = "waiting(card)"; this.commit(r, "waiting(card)");
       this.emit(r, "node_waiting", `${node.label}: ${res.note ?? "waiting for the captain"}`, { node: node.id, card: rn.card });
       return this.settle(r);
@@ -773,6 +786,7 @@ export class Engine {
   private stopAll(r: Run, cause: string) {
     for (const [key, owner] of this.externalOwners) if (key.startsWith(r.id + "/")) { owner.cancel(); this.externalOwners.delete(key); }
     this.abortOf(r).abort(); this.aborts.delete(r.id);
+    if (r.ctx.firstmateQuestion?.card) delete r.ctx.firstmateQuestion; // an escalation still with Firstmate ends with the run
     // what this stop interrupted: a failure card's retry puts these back (parallel siblings, queued nodes), so a join still gets every input
     r.ctx.stopped = { cause, nodes: Object.entries(r.nodes).filter(([, n]) => n.state === "running").map(([id]) => id), queue: [...r.queue] };
     for (const rn of Object.values(r.nodes)) {
@@ -784,7 +798,8 @@ export class Engine {
     for (const c of this.cards.list({ run: r.id, open: true })) { this.cards.cancel(c.id); this.raising.get(c.id)?.resolve(); }
   }
   private end(r: Run, node: WNode, outcome: string) {
-    r.status = "succeeded"; r.result = node.args?.result ?? (FAILED_OUTCOMES.has(outcome) ? outcome : "done"); r.endedAt = now();
+    // a run the captain rejected at its acceptance card ends closed whatever its end node says (R-047: a drafted "closed" hook had no result)
+    r.status = "succeeded"; r.result = node.args?.result ?? (r.ctx.acceptRejected ? "closed" : FAILED_OUTCOMES.has(outcome) ? outcome : "done"); r.endedAt = now();
     this.stopAll(r, "the run ended");
     this.commit(r, `ended at ${node.id}`); this.emit(r, r.result === "done" ? "done" : "closed", node.args?.summary ? fill(node.args.summary, r) : `${node.label}`, { result: r.result });
     if (FAILED_OUTCOMES.has(outcome) && !node.args?.result) this.raiseFailure(r, node, this.failureOf(r, node, outcome)); // a run that ends on a failed outcome is a failure too, never only a word in its result
@@ -1165,7 +1180,7 @@ export class Engine {
     // the answer goes into the ledger once, here, so an answer carried on after a crash is recorded too
     if (!r.ctx.answersRecorded?.includes(c.id)) { r.ctx.answersRecorded = [...(r.ctx.answersRecorded ?? []), c.id]; const rec = this.record(this.x(r, node, rn), "card-answer", { actor: c.answer!.by, data: { card: c.id, kind: c.kind, choice: c.answer!.choice, note: c.answer!.note, confirm: c.answer!.confirm, ...(c.answer!.localRescope?{localRescope:c.answer!.localRescope}:{}), ...(this.queueDomain?.answer(r, node, rn, c) ?? {}) } });
       // a captain's "request changes" (or rescope) note binds every later round: kept cumulatively (never latest-only), bound to its signed card-answer entry
-      if (AMEND_CHOICES.includes(c.answer!.choice)) this.addAmendment(r, c, node.id, rec); }
+      if (AMEND_CHOICES.includes(c.answer!.choice) && c.answer!.by !== "firstmate") this.addAmendment(r, c, node.id, rec); }
     // the card's effects, once per card (an answer carried on after a restart does not apply them twice)
     const eff = node.card?.effects?.[c.answer!.choice] as any;
     if (eff && !r.ctx.effectsApplied?.includes(c.id)) {
@@ -1232,7 +1247,7 @@ export class Engine {
   /** A domain adds what else its node reads (a coffee film adds its input digest). */
   failureInputExtra: (r: Run, node: WNode | null) => InputSnapshot = () => ({});
   /** An agent's question goes to Firstmate first (server.ts wakes it): true when it was sent. Firstmate answers or escalates through answerFromFirstmate. */
-  askFirstmate: ((r: Run, node: WNode, question: string, visit: number) => boolean) | null = null;
+  askFirstmate: ((r: Run, node: WNode, question: string, visit: number, o?: { escalation?: { options: { id: string; label: string; note?: boolean; select?: string[] }[] } }) => boolean) | null = null;
   private changedCache = new Map<string, { key: string; at: number; value: ReturnType<typeof changedInputs> }>();
   /** environment probes by code: a string says what is still broken (Fix and retry is refused), null says fixed or unknown */
   failureProbes: Partial<Record<FailureCode, (r: Run) => string | null>> = {};
@@ -1337,6 +1352,8 @@ export class Engine {
     this.firstmateSent.add(`${r.id}@${r.ctx.firstmateQuestion.at}`); this.watchFirstmate(r);
     return true;
   }
+  /** The models an escalation card's "another model" picker offers (server.ts sets them from Studio's provider settings). */
+  modelChoices: () => { value: string; label: string }[] = () => [];
   /** How long a question waits for Firstmate before it goes to the captain as the failure card. */
   firstmateAnswerMs = 15 * 60_000;
   /** After a restart: send each pending question to Firstmate again (its wake notice died with the old process), or to the captain when Firstmate cannot take it. */
@@ -1349,7 +1366,8 @@ export class Engine {
       const node = r.def.nodes.find((n) => n.id === q.node); if (!node) continue;
       this.watchFirstmate(r); // the bounded wait holds whether or not Firstmate can take the question now
       const key = `${r.id}@${q.at}`; if (this.firstmateSent.has(key)) continue;
-      let sent = false; try { sent = !!this.askFirstmate?.(r, node, q.question, q.visit ?? r.nodes[node.id].visits); } catch { sent = false; }
+      const held = q.card ? r.nodes[node.id].data.firstmateCard : null; const options = held ? this.firstmateOptions(r, node, held.body.options ?? node.card?.options ?? [], held.allowed ?? null) : null;
+      let sent = false; try { sent = !!this.askFirstmate?.(r, node, q.question, q.visit ?? r.nodes[node.id].visits, options ? { escalation: { options: options.map((o) => ({ id: o.id, label: o.label, ...(o.note ? { note: true } : {}), ...(o.select?.length ? { select: o.select.map((s) => s.value) } : {}) })) } } : undefined); } catch { sent = false; }
       if (!sent) continue; // Firstmate is not attached yet: sent when it attaches, or the deadline takes it to the captain
       this.firstmateSent.add(key); this.emit(r, "question_to_firstmate", `${node.label}: sent again after a restart`, { node: node.id });
     }
@@ -1365,7 +1383,9 @@ export class Engine {
       const cur = this.runs.get(r.id); if (cur !== r || this.gone.has(r.id) || r.failureCard || r.ctx.firstmateQuestion?.at !== q.at || !["waiting", "failed"].includes(r.status)) return;
       if (this.busy(r.id)) { setTimeout(() => this.watchFirstmate(r), 1000)?.unref?.(); return; }
       const node = r.def.nodes.find((n) => n.id === q.node); if (!node) return;
-      this.escalateQuestion(r, node, `Firstmate did not answer within ${Math.round(this.firstmateAnswerMs / 60_000) || 1} min, so the question comes to you.`);
+      const late = `Firstmate did not answer within ${Math.round(this.firstmateAnswerMs / 60_000) || 1} min, so the question comes to you.`;
+      if (q.card) { void this.track(r, "escalation card", this.escalateCard(r, node, { by: "studio", why: late, zhWhy: `Firstmate 沒有在 ${Math.round(this.firstmateAnswerMs / 60_000) || 1} 分鐘內回覆，所以交給你決定。` })); return; }
+      this.escalateQuestion(r, node, late);
     }, left); t?.unref?.();
   }
   /** The question goes to the captain: the run stops waiting and raises the failure card with the reason. */
@@ -1439,9 +1459,11 @@ export class Engine {
     return this.reopenAt(r, c, f, node, a, delay);
   }
   /** Firstmate answered an agent's question (studio_answer_agent_question), or escalated it to the captain with its reason. */
-  answerFromFirstmate(runId: string, nodeId: string, o: { answer?: string | null; escalate?: string | null; visit?: number }) {
+  answerFromFirstmate(runId: string, nodeId: string, o: { answer?: string | null; escalate?: string | null; visit?: number; choice?: string | null; recommendation?: string | null }): any {
     const r = this.must(runId); const q = r.ctx.firstmateQuestion; const node = r.def.nodes.find((n) => n.id === nodeId);
     if (!node || !q || q.node !== nodeId) throw new Error("no question from this step waits for Firstmate");
+    if (q.card) return this.decideEscalation(r, node, o);
+    if (o.choice) throw new Error("this is an agent's question: answer it or escalate it; choice is for an escalation card");
     if (!this.trusted(r.id).ok) throw new Error("this run's evidence ledger does not verify: it cannot run again");
     if (r.archived || r.parked || !["failed", "waiting"].includes(r.status) || r.failureCard) throw new Error("this run is not waiting for Firstmate's answer");
     const b = this.busy(r.id); if (b) throw new Error(`still finishing: ${b}. Answer again once that is done`);
@@ -1457,6 +1479,76 @@ export class Engine {
     this.record(this.x(r, node, rn), "failure-answer", { actor: "firstmate", data: { class: f.class, code: f.code, choice: ACT.answer, note: answer.slice(0, 4000), by: "firstmate" } });
     this.reopenAt(r, { id: `firstmate:${r.id}:${node.id}` } as SCard, f, node, { choice: ACT.answer }, 0);
     return { answered: true };
+  }
+  // ---------- escalations go to Firstmate first (retro 2026-10-17, finding 9) ----------
+  /** The options Firstmate may take on an escalation: never one that ends the run (park, close, drop) or holds it for the captain. */
+  private firstmateOptions(r: Run, node: WNode, options: SCard["options"], allowed?: string[] | null) {
+    if (allowed) return options.filter((o) => allowed.includes(o.id));
+    const ends = (id: string) => { const to = r.def.edges.filter((e) => e.from === node.id && e.when?.split("|").includes(id)).map((e) => r.def.nodes.find((n) => n.id === e.to));
+      return !to.length || to.some((n) => !n || !r.def.edges.some((e) => e.from === n.id)); };
+    return options.filter((o) => !o.hold && !ends(o.id));
+  }
+  /** An escalation card node asks Firstmate first: true when the question was sent (the node waits), else why it could not be. */
+  private diagnoseFirst(x: X, kind: CardKind, b: Body, allowed: string[] | null = null): true | { en: string; zh: string } {
+    // Firstmate decides an escalation at one step at most twice: still stuck after that, the captain decides
+    const decided = Number(x.run.ctx.firstmateDecided?.[x.node.id] ?? 0);
+    if (decided >= 2) return { en: `Firstmate already decided here ${decided} times and the run is still stuck, so this one is yours.`, zh: `Firstmate 在這裡已經決定過 ${decided} 次，仍然卡住，所以這次交給你。` };
+    const options = b.options ?? x.node.card?.options ?? [];
+    const open = this.firstmateOptions(x.run, x.node, options, allowed);
+    const question = escalationQuestion(x.node.label, b, options, open);
+    x.rn.data.firstmateCard = { visit: x.visit, kind, body: b, allowed };
+    let sent = false; try { sent = !!this.askFirstmate?.(x.run, x.node, question, x.visit, { escalation: { options: open.map((o) => ({ id: o.id, label: o.label, ...(o.note ? { note: true } : {}), ...(o.select?.length ? { select: o.select.map((s) => s.value) } : {}) })) } }); } catch { sent = false; }
+    if (!sent) { delete x.rn.data.firstmateCard; return { en: "Firstmate is not running, so this comes straight to you.", zh: "Firstmate 目前沒有在執行，所以直接交給你決定。" }; }
+    x.run.ctx.firstmateQuestion = { node: x.node.id, visit: x.visit, question, at: now(), card: true };
+    this.firstmateSent.add(`${x.run.id}@${x.run.ctx.firstmateQuestion.at}`); this.watchFirstmate(x.run);
+    this.emit(x.run, "question_to_firstmate", `${x.node.label}: Firstmate diagnoses this escalation first`, { node: x.node.id, escalation: true });
+    return true;
+  }
+  /** Firstmate answered an escalation: it decides within the spec (the run goes on), or escalates with its diagnosis (the captain's card). */
+  private decideEscalation(r: Run, node: WNode, o: { answer?: string | null; escalate?: string | null; visit?: number; choice?: string | null; recommendation?: string | null }) {
+    const q = r.ctx.firstmateQuestion!; const rn = r.nodes[node.id]; const held = rn.data.firstmateCard as { visit: number; kind: CardKind; body: Body } | undefined;
+    if (!this.trusted(r.id).ok) throw new Error("this run's evidence ledger does not verify: it cannot run again");
+    if (r.archived || r.parked || TERMINAL.includes(r.status) || rn.state !== "running" || rn.waiting !== "firstmate" || !held || held.visit !== rn.visits || q.visit !== rn.visits) throw new Error("this escalation no longer waits for Firstmate");
+    if (o.visit !== q.visit) throw new Error("the answer must match the visit in the escalation notice");
+    const b = this.busy(r.id); if (b) throw new Error(`still finishing: ${b}. Answer again once that is done`);
+    const escalate = String(o.escalate ?? "").trim(), choice = String(o.choice ?? "").trim(), note = String(o.answer ?? "").trim();
+    if (!!escalate === !!choice) throw new Error("give either a choice (with your reason in answer) or a diagnosis to escalate");
+    if (escalate) {
+      delete r.ctx.firstmateQuestion; this.commit(r, "escalation to the captain");
+      const work = this.escalateCard(r, node, { by: "firstmate", why: escalate.slice(0, 2000), recommendation: String(o.recommendation ?? "").trim().slice(0, 1000) || null });
+      void this.track(r, "escalation card", work);
+      return work.then((c) => ({ escalated: true, card: c?.id ?? null }));
+    }
+    const options = held.body.options ?? node.card?.options ?? [];
+    const mayTake = this.firstmateOptions(r, node, options, (held as any).allowed ?? null); const opt = mayTake.find((x) => x.id === choice);
+    if (!opt) throw new Error(`Firstmate may choose ${mayTake.map((x) => x.id).join(", ") || "nothing here"}; ending or holding the run is the captain's call: escalate instead`);
+    if (!note) throw new Error("say why in answer: the reason (or, for a picker, the value) goes on the record");
+    if (opt.select?.length && !opt.select.some((s) => s.value === note)) throw new Error(`pick one of ${opt.select.map((s) => s.value).join(", ")}`);
+    if (choice === ACT.rescope) { const last = Object.values(r.ctx.answers ?? {}).filter((x: any) => x?.choice === ACT.rescope && x.note).sort((x: any, y: any) => String(x.at).localeCompare(String(y.at))).at(-1) as any;
+      const no = rescopeRefusal({ note, previous: last?.note ?? null }); if (no) throw new FailureRefusal(no); }
+    // the decision is a card of its own, answered by Firstmate: the ledger, the card's effects and the routing are the captain's path
+    const sec = (p: Partial<Sections> | undefined, intent: string): Sections => ({ ...emptySections(), ...(p ?? {}), intent, scope: { in: p?.scope?.in ?? [], out: p?.scope?.out ?? [] } });
+    const intent = r.text.split("\n")[0].slice(0, 300) || r.title;
+    const c = this.cards.create({ run: r.id, node: node.id, visit: rn.visits, kind: held.kind, title: { en: held.body.title, "zh-TW": held.body.zhTitle ?? held.body.title },
+      sections: { en: sec(held.body.en, intent), "zh-TW": sec(held.body.zh, intent) }, body: `Firstmate decided: ${opt.label} — ${note}`, options, confirmDoor: false, door: null, links: held.body.links ?? [], detail: null,
+      captainOnly: true, workflow: r.workflow, runTitle: r.title, ledger: null, ste: null });
+    this.cards.answer(c.id, { choice, note, by: "firstmate" });
+    delete r.ctx.firstmateQuestion; delete rn.data.firstmateCard; r.ctx.firstmateDecided = { ...(r.ctx.firstmateDecided ?? {}), [node.id]: Number(r.ctx.firstmateDecided?.[node.id] ?? 0) + 1 };
+    rn.card = c.id; rn.waiting = "card"; this.commit(r, `Firstmate decided ${choice} on ${node.id}`);
+    this.emit(r, "firstmate_decided", `${node.label}: Firstmate chose ${opt.label} — ${note.slice(0, 200)}`, { node: node.id, card: c.id, choice });
+    const work = this.carryAnswer(r, node.id); void this.track(r, `the answer at ${node.id}`, work);
+    return work.then(() => ({ decided: true, choice, card: c.id }));
+  }
+  /** The escalation reaches the captain: the card's body is the diagnosis in captain terms (what is stuck, why, what to do), never a worker brief. */
+  private async escalateCard(r: Run, node: WNode, d: { by: "firstmate" | "studio"; why: string; zhWhy?: string; recommendation?: string | null }) {
+    const rn = r.nodes[node.id]; const held = rn.data.firstmateCard as { visit: number; kind: CardKind; body: Body } | undefined;
+    if (r.ctx.firstmateQuestion?.node === node.id) delete r.ctx.firstmateQuestion;
+    if (!held || rn.state !== "running" || rn.waiting !== "firstmate" || TERMINAL.includes(r.status)) return null;
+    delete rn.data.firstmateCard;
+    const x = this.x(r, node, rn);
+    const c = await this.card(x, held.kind, diagnosedBody(held.body, d));
+    if (this.owns(x)) { rn.waiting = "card"; rn.cause = "waiting(card)"; this.commit(r, `escalated to the captain: ${c.id}`); this.raising.get(c.id)?.resolve(); this.settle(r); }
+    return c;
   }
   /** The node a fresh preparation goes back to: the step before the card that led here, so that card's edge checks (gates) run again and a new card is raised. */
   preparationNode(r: Run, node: WNode): WNode {
@@ -1507,8 +1599,12 @@ export class Engine {
     const en = sec({ intent: x.run.text.split("\n")[0].slice(0, 300) || x.run.title, ...b.en });
     const zh = sec({ intent: en.intent, ...b.zh });
     const c = this.cards.create({ run: x.run.id, node: x.node.id, visit: x.rn.visits, kind, title: { en: b.title, "zh-TW": b.zhTitle ?? b.title }, sections: { en, "zh-TW": zh }, body: b.body ?? "",
-      options: b.options ?? x.node.card?.options ?? [{ id: "approve", label: "Approve", primary: true }, { id: "reject", label: "Reject" }],
+      options: b.options ?? x.node.card?.options ?? [{ id: "approve", label: "Approve", labelZh: "核准", primary: true }, { id: "reject", label: "Reject", labelZh: "不採用" }],
       confirmDoor: !!x.node.card?.confirm_door, door: b.door ?? (x.node.card?.door_from ? (x.ctx[x.node.card.door_from]?.door ?? x.ctx[x.node.card.door_from] ?? null) : null), links: b.links ?? [], detail: b.detail ?? null, ...(b.captainOnly ? { captainOnly: true } : {}), workflow: x.run.workflow, runTitle: x.run.title, ledger: b.ledger ?? null, ste: null, captures: b.captures ?? null, ...(b.pullRequest ? { pullRequest: b.pullRequest } : {}), ...(b.failure ? { failure: b.failure } : {}) });
+    // the card contract (card-contract.ts): a card that cannot answer its question is refused in tests and logged on the run otherwise
+    const broken = cardContract(c);
+    if (broken.length) { this.emit(x.run, "log", `card contract: ${c.id} (${kind}): ${broken.join("; ").slice(0, 600)}`);
+      if (cardContractMode() === "enforce") { this.cards.cancel(c.id); console.error(`card contract violated by ${x.run.workflow}#${x.node.id} (${kind} "${c.title.en}"): ${broken.join("; ")}`); throw new Error(`card contract: ${c.id} (${kind} "${c.title.en}"): ${broken.join("; ")}`); } }
     const staged=this.repreparing.get(`${x.run.id}/${x.node.id}`);if(staged){if(staged.prepared){this.cards.cancel(c.id);throw new Error("One replacement card per preparation");}staged.prepared=c.id;}else{x.rn.card = c.id; this.commit(x.run, `card ${c.id} raised`);}
     { let done!: () => void; const p = new Promise<void>((res) => (done = res)); this.raising.set(c.id, { done: p, resolve: () => { this.raising.delete(c.id); done(); } }); }
     this.emit(x.run, "card_raised", `${c.id} ${c.title.en}`, { node: x.node.id, card: c.id, kind });
@@ -1587,7 +1683,12 @@ export class Engine {
         const card = x.node.card ?? {};
         const b: Body = from ? await from(x) : { title: fill(loc(card.title, "en") || x.node.label, x.run), zhTitle: fill(loc(card.title, "zh-TW") || x.node.label, x.run),
           en: { why: fill(loc(card.body, "en"), x.run) }, zh: { why: fill(loc(card.body, "zh-TW"), x.run) }, body: fill(loc(card.body, "en"), x.run) };
-        const c = await self.card(x, (x.node.args?.card_kind ?? "question") as CardKind, { ...b, options: b.options ?? x.node.card?.options });
+        const kind = (x.node.args?.card_kind ?? "question") as CardKind; let body: Body = { ...b, options: b.options ?? x.node.card?.options };
+        // an escalation (args.firstmate_first) goes to Firstmate first: only its escalation, or its silence, reaches the captain
+        if (x.node.args?.firstmate_first && !body.direct) { const asked = self.diagnoseFirst(x, kind, body);
+          if (asked === true) return { wait: true, firstmate: true, note: "Firstmate diagnoses this first" };
+          body = diagnosedBody(body, { by: "studio", why: asked.en, zhWhy: asked.zh }); }
+        const c = await self.card(x, kind, body);
         return { wait: true, note: `card ${c.id}` };
       },
       async answer(x: X, c: SCard) { return { outcome: c.answer!.choice, note: c.answer!.note }; },

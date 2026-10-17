@@ -11,7 +11,7 @@ async function fullCapture(p,path){
  await p.locator('#chatFab').evaluate(e=>e.style.visibility='hidden');await p.screenshot({path,fullPage:true});await p.locator('#chatFab').evaluate(e=>e.style.visibility='');await p.evaluate(saved=>saved.forEach(x=>{if(x){const e=document.querySelector(x.s);x.old===null?e.removeAttribute('style'):e.setAttribute('style',x.old);}}),saved);
 }
 let pass=0,fail=0;const ok=(v,n,e='')=>{console.log(`${v?'ok':'FAIL'} ${n} ${e}`);v?pass++:fail++;};
-const card=id=>({id,kind:'card',label:id,card:{title:{en:`Decide ${id}`,'zh-TW':`決定 ${id}`},options:[{id:'go',label:'Continue'},{id:'hold',label:'Hold with a note',note:true,hold:true}]}});
+const card=id=>({id,kind:'card',label:id,card:{ body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title:{en:`Decide ${id}`,'zh-TW':`決定 ${id}`},options:[{id:'go',label:'Continue', labelZh: 'Continue'},{id:'hold',label:'Hold with a note', labelZh: 'Hold with a note',note:true,hold:true}]}});
 const H=await harness([Y({id:'code-firstmate',name:'Code firstmate',roles:[],nodes:[{id:'start',kind:'hook',do:'note',label:'Start'},card('q'),card('q2'),{id:'end',kind:'hook',do:'note',label:'Done'}],edges:[['start','q'],['q','q2','go'],['q2','end','go']]}),Y({id:'notes',name:'Parallel notes',roles:[],nodes:[{id:'start',kind:'hook',do:'note',label:'Start'},card('left'),card('right'),{id:'end',kind:'hook',do:'note',label:'Done'}],edges:[['start','left'],['start','right'],['left','end','go'],['right','end','go']]}),
 // 'code-firstmate' is staffing-guarded (src/domain/staffing.ts): a new Task there needs a signed captain staffing approval, so the
 // Tasks this suite creates live use the same one-card-at-a-time shape under an unguarded id.

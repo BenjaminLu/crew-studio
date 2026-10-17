@@ -408,11 +408,15 @@ const runtime = createRuntime({coffeeVideo:coffeeTools.ready?(request=>renderCof
   install: [(engine, c) => { installCode(engine, { dataDir: c.dataDir, projects: c.projects, improve, poller:githubPoller }); packGenesis = installPackGenesis(engine, { dataDir: c.dataDir, artifacts: m3.store }); }], skills: improve.skills });
 nativeEngineForPolicy = runtime.engine;
 // an agent's question goes to Firstmate first: it answers through studio_answer_agent_question, or escalates to the captain with its reason
-runtime.engine.askFirstmate = (r, node, question, visit) => {
+runtime.engine.askFirstmate = (r, node, question, visit, o) => {
   if (main.view().state === "detached") return false;
+  // an escalation (step-back, no progress, round budget, scope blocked …): Firstmate decides within the spec or escalates with its diagnosis
+  if (o?.escalation) { main.enqueue("wake", `Escalation in Task ${r.id}, step ${node.id} (${node.label}).\n${question}\nDecide with studio_answer_agent_question {task:"${r.id}", node:"${node.id}", visit:${visit}, choice:"<option id>", answer:"<your reason, or the picked value>"}, or escalate {task:"${r.id}", node:"${node.id}", visit:${visit}, escalate:"<what is stuck and why, in plain words>", recommendation:"<what the captain should pick>"}. / Task ${r.id} 卡住了：能在 spec 內決定就自己決定；只有單向決定、憑證或權限、或無法推斷的偏好才轉交船長，並寫清楚卡在哪、為什麼、建議怎麼選。${amendmentsNotice(runtime.engine.amendments(r))}`, "studio-native"); return true; }
   main.enqueue("wake", `Agent question in Task ${r.id}, step ${node.id} (${node.label}): ${question}\nRead the step's operating manual section first (studio_manual section ${manualFor(r.workflow, node.role ?? node.args?.coordinator)}). Answer it yourself with studio_answer_agent_question {task:"${r.id}", node:"${node.id}", visit:${visit}, answer:"…"}. Escalate to the captain (escalate:"<your reason>") only for a one-way decision, a credential or permission, or a preference you cannot infer. / Task ${r.id} 的 agent 提問：請用 studio_answer_agent_question 自己回答；只有單向決定、憑證或權限、或無法推斷的偏好才轉交船長並寫明理由。${amendmentsNotice(runtime.engine.amendments(r))}`, "studio-native");
   return true;
 };
+// the "another model" picker on step-back cards: each provider with its configured model, and with its default model
+runtime.engine.modelChoices = () => { const s = chatSettings(); return choices.filter((id) => id !== "stub").flatMap((id) => [...(s.models[id] ? [{ value: `${id}/${s.models[id]}`, label: `${id} · ${s.models[id]}` }] : []), { value: id, label: `${id} · default model` }]); };
 runtime.engine.resumeFirstmateQuestions(); // questions pending at the restart: their wake notices died with the old process
 gh.start();
 process.once("exit",()=>{gh.stop();githubPoller.stop();});

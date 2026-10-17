@@ -14,6 +14,7 @@ export type CardKind = (typeof CARD_KINDS)[number];
 export type Sections = { intent: string; why: string; scope: { in: string[]; out: string[] }; done: string[]; beforeAfter: string; how: string; glossary: { term: string; means: string }[] };
 export type InterviewBatch = {schema:1;visit:number;batchHash:string;questions:{key:string;en:string;zh:string}[];revision:number;answers:Record<string,string>};
 export type LocalRescope = {version:1;card:string;visit:number;base:string;from:string;target:string;baseRelation?:"patch-equivalent-unadmitted";strategy?:"preserve-commits";originalBase?:string};
+export type CardOption = { id: string; label: string; labelZh?: string; primary?: boolean; note?: boolean; noteLabel?: string; noteLabelZh?: string; select?: { value: string; label: string }[]; hold?: boolean };
 export type SCard = {
   /** Read-only code recovery preview; execution requires the same descriptor in the answer. */
   localRescope?: LocalRescope;
@@ -22,7 +23,8 @@ export type SCard = {
   id: string; run: string; node: string; visit: number; kind: CardKind; title: { en: string; "zh-TW": string }; sections: { en: Sections; "zh-TW": Sections }; body: string;
   interview?: InterviewBatch;
   /** hold: an option that does not go through the door (close, request changes); every other option needs the door confirmation when the card's door is one-way */
-  options: { id: string; label: string; labelZh?: string; primary?: boolean; note?: boolean; hold?: boolean }[];
+  /** note: the option opens its own note box (noteLabel says what to write there); select: a picker whose value becomes the note */
+  options: CardOption[];
   confirmDoor: boolean; door: string | null; links: { label: string; href: string }[]; ledger?: any; ste?: { verdict: string; findings: number; seq: number | null } | null;
   /** optional structured detail (intent sections, proofs, walk, alignment lines); see CardDetail */
   detail?: CardDetail | null;
@@ -97,7 +99,8 @@ export class Cards {
     const c = this.get(id); if (!c) throw new Error("no such card");
     if (c.status !== "open") throw new Error(`this card is ${c.status}: a card is answered exactly once`);
     const opt = c.options.find((o) => o.id === a.choice); if (!opt) throw new Error(`choose one of ${c.options.map((o) => o.id).join(", ")}`);
-    if (opt.note && !String(a.note ?? "").trim()) throw new Error("say what to change");
+    if (opt.note && !String(a.note ?? "").trim()) throw new Error(opt.noteLabel ? `write it first: ${opt.noteLabel}` : "say what to change");
+    if (opt.select?.length && !opt.select.some((s) => s.value === String(a.note ?? "").trim())) throw new Error(`pick one of ${opt.select.map((s) => s.value).join(", ")}`);
     if (c.confirmDoor && c.door === "one-way" && !opt.hold && a.confirm !== "one-way") throw new Error("a one-way change cannot be undone by a revert: confirm the door first");
     const n = c.detail?.intents?.length ?? 0;
     const aligned = Array.isArray(a.aligned) ? [...new Set(a.aligned.filter((i) => Number.isInteger(i) && i >= 0 && i < n))].sort((x, y) => x - y) : [];

@@ -19,9 +19,9 @@ const { ok, end } = suite("project-overview");
 const H = await harness([
   Y({ id: "code-ish", name: "code-ish", kind: "code", roles: [{ id: "worker", label: "Worker", skill: "x" }], nodes: [
     { id: "build", kind: "agent", label: "Build", role: "worker", mode: "test", x: 0, y: 0 },
-    { id: "merge", kind: "card", label: "Merge", card: { title: { en: "Merge it?", "zh-TW": "要合併嗎？" }, options: [{ id: "go", label: "Go" }] }, x: 1, y: 0 },
+    { id: "merge", kind: "card", label: "Merge", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: { en: "Merge it?", "zh-TW": "要合併嗎？" }, options: [{ id: "go", label: "Go", labelZh: "Go" }] }, x: 1, y: 0 },
     { id: "end", kind: "hook", label: "Done", x: 2, y: 0 }], edges: [["build", "merge"], ["merge", "end", "go"]] }),
-  Y({ id: "plain", name: "plain", roles: [], nodes: [{ id: "ask", kind: "card", label: "Ask", card: { title: "Ok?", options: [{ id: "go", label: "Go" }] }, x: 0, y: 0 }], edges: [] })]);
+  Y({ id: "plain", name: "plain", roles: [], nodes: [{ id: "ask", kind: "card", label: "Ask", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: "Ok?", options: [{ id: "go", label: "Go", labelZh: "Go" }] }, x: 0, y: 0 }], edges: [] })]);
 const E = H.engine as any, DATA = H.data;
 const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { cwd, stdio: "pipe", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } }).toString().trim();
 const repos = mkdtempSync(join(tmpdir(), "crew-po-repos-"));

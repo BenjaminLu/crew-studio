@@ -2,7 +2,7 @@
 # the captain's acceptance card approves one, it goes to Studio's own library.
 schema: 2
 workflow: web-prototype
-pin: { version: 1, sha256: "c3a939ff48c283bc43aff1bede54ff4915758902a9d4587f84651494351ec46c" }   # bun scripts/acceptance/pin.ts web-prototype
+pin: { version: 1, sha256: "d1258ae72600a73a3f1ee436e4b7d7c62fa920314dad2119aebdcb2cd3ccbba6" }   # bun scripts/acceptance/pin.ts web-prototype
 topic: "A single-page status board that lists three tasks with their state and a last-updated time."
 start: { provider: null, params: {} }
 providers: []

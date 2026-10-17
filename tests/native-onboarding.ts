@@ -6,7 +6,7 @@ import {harness,Y,until} from './rt-harness';import {bundledText} from '../src/b
 import {Onboarding} from '../src/onboarding';import {ArtifactStore} from '../src/artifacts';
 import {installFirstmate} from '../src/firstmate';import {Projects} from '../src/doors';
 import {StaffingStore,staffingHash,coffeeStaffingProject} from '../src/domain/staffing';
-const target={id:'onboarding-cancel',name:'Cancellation boundary only',kind:'coffee-kit',version:1,params:{project:{label:'Project'},coffeeDesignPlan:{label:'Discussed plan'}},roles:[{id:'worker',label:'Worker',skill:'pack:coffee-kit/skills/website.md'}],nodes:[{id:'direction',kind:'card',label:'Captain decision',x:1,y:1,card:{options:[{id:'confirm',label:'Confirm'}]}}],edges:[]};
+const target={id:'onboarding-cancel',name:'Cancellation boundary only',kind:'coffee-kit',version:1,params:{project:{label:'Project'},coffeeDesignPlan:{label:'Discussed plan'}},roles:[{id:'worker',label:'Worker',skill:'pack:coffee-kit/skills/website.md'}],nodes:[{id:'direction',kind:'card',label:'Captain decision',x:1,y:1,card:{ body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options:[{id:'confirm',label:'Confirm', labelZh: 'Confirm'}]}}],edges:[]};
 const h=await harness([Y(target),bundledText('workflows/v2/firstmate-proposal.wf.yaml')!]);let passed=0;const ok=(name:string,f:()=>void)=>{f();passed++;console.log('PASS '+name);};
 try {
  const artifacts=new ArtifactStore(h.data),journey=new Onboarding(h.engine,artifacts),store=new StaffingStore(h.data),project=coffeeStaffingProject('cancel-project'),def=h.defs.get(target.id)!;
