@@ -113,7 +113,12 @@ await section("the simple view of code-firstmate", () => {
 { const near = (m: number[], a: number[], b: number[]) => { const dx = b[0] - a[0], dy = b[1] - a[1], l = dx * dx + dy * dy; const u = l ? Math.max(0, Math.min(1, ((m[0] - a[0]) * dx + (m[1] - a[1]) * dy) / l)) : 0; return Math.hypot(m[0] - a[0] - u * dx, m[1] - a[1] - u * dy) < 7; };
   const midOf = (e: any) => { const ps = L.sample(e, 24); let len = 0; const acc = [0]; for (let i = 1; i < ps.length; i++) acc.push(len += Math.hypot(ps[i][0] - ps[i - 1][0], ps[i][1] - ps[i - 1][1])); return ps[Math.max(0, acc.findIndex((v: number) => v >= len / 2))]; };
   const r1 = { ...defs[0], id: "code-firstmate@review-modes-r1", edges: [...defs[0].edges.filter((e: any) => !(e.from === "step-back" && e.to === "fix")), { from: "review", to: "step-back", when: "error" }, { from: "step-back", to: "review", when: "other-model" }] };
-  for (const def of [...defs, r1]) { const stageIds = (L.stagesFor(def) || []).map((st: any) => st.id);
+  // pinned: the edge set concurrent Tasks shipped (3c783ae added merge → build "rebase"; no pr-open → closed), on r1. Its
+  // rebase arc crowded the escalation cards' channel and budget → build's leg sat on step-back → parked's middle; a later
+  // edge elsewhere hid that by chance, so this shape is kept as it was
+  const pinned = { ...r1, id: "code-firstmate@concurrent-tasks-r1", edges: [...r1.edges.filter((e: any) => !(e.from === "pr-open" && e.to === "closed") && !(e.from === "merge" && e.to === "build")), { from: "merge", to: "build", when: "rebase" }] };
+  ok(defs[0].edges.some((e: any) => e.from === "merge" && e.to === "build"), "code-firstmate still has the merge → build rebase edge the pinned shape keeps");
+  for (const def of [...defs, r1, pinned]) { const stageIds = (L.stagesFor(def) || []).map((st: any) => st.id);
     const views: [string, any][] = [["auto", L.layout(def, { collapsed: [] })], ["collapsed", L.layout(def, { collapsed: stageIds })], ["placed", L.place(def, { collapsed: [] })], ["simple", L.layoutSimple(def, { collapsed: [] })]];
     for (const [view, g] of views) { const bad: string[] = [];
       for (const f of g.edges.filter((e: any) => !e.back)) { const m = midOf(f);
