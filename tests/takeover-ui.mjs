@@ -139,7 +139,7 @@ try {
     // after the release above Studio drives nothing, so the page shows the released card with the
     // resume command (cutover steps only show while a taken-over copy is driven, checked above)
     for (const [view, sel] of [["takeover", "[data-released]"], ["crew", `[data-actor="${worker}"]`], ["inbox", '[data-card="D-ui-oneway"]']]) {
-      await q.goto(`${base}/#/${view}`);
+      await q.goto(`${base}/#/${view === "inbox" ? "inbox/D-ui-oneway" : view}`); // the Inbox shows one card at a time (unit inbox-focus)
       ok(await seen(q, sel), `${view} renders at ${width} ${scheme}`);
       ok(await noHScroll(q), `${view} has no sideways scroll at ${width} ${scheme}`);
       await q.screenshot({ path: join(shots, `${view}-${width}-${scheme}.png`), fullPage: true });
@@ -160,7 +160,7 @@ try {
 
   // ---- the intent card and the door ----
   const k = await page(1440, "light");
-  await k.goto(`${base}/#/inbox`);
+  await k.goto(`${base}/#/inbox/D-ui-oneway`); // the Inbox shows one card at a time (unit inbox-focus)
   const card = k.locator('[data-card="D-ui-oneway"]');
   await seen(k, '[data-card="D-ui-oneway"]');
   for (const s of ["intent", "why", "scope", "done", "before-after", "how", "glossary"]) ok(await card.locator(`[data-sec="${s}"]`).count() === 1, `the card shows its ${s} section`);

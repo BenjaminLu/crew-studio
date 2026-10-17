@@ -108,7 +108,7 @@ try {
   await new Promise((r) => setTimeout(r, 1500));
   for (const [width, scheme] of [[1280, "light"], [390, "dark"]]) {
     const c = await ctxFor({ width, scheme, lang: "zh-CN" });
-    for (const [name, hash, sel] of [["settings", "#/settings", "[data-settings-lang]"], ["doctor", "#/doctor", ".doc-t"], ["tasks", "#/runs", "h1"], ["card", "#/inbox", "[data-card]"], ["card-detail", "#/inbox/D-fixture-door-check", "[data-card]"], ["log", `#/crew/${encodeURIComponent(live)}`, ".tr-tabs"],
+    for (const [name, hash, sel] of [["settings", "#/settings", "[data-settings-lang]"], ["doctor", "#/doctor", ".doc-t"], ["tasks", "#/runs", "h1"], ["card", "#/inbox", "[data-card], [data-inbox-row]"], ["card-detail", "#/inbox/D-fixture-door-check", "[data-card]"], ["log", `#/crew/${encodeURIComponent(live)}`, ".tr-tabs"],
       ["firstmate", "#/firstmate", "#chatLog [data-main]"]]) {
       const p = await open(c, hash);
       if (name === "firstmate") await p.evaluate(() => { document.body.classList.remove("chat-closed"); window.openChat?.(true); });

@@ -264,14 +264,15 @@ try {
     await p.screenshot({ path: join(shots, "board-after-answer-1440-light.png"), fullPage: true });
 
     // the Inbox: decisions only, answered in place
-    await p.goto(`${base}/#/inbox`); await p.waitForTimeout(800);
+    // one card at a time (unit inbox-focus): open the one answered on the Board
+    await p.goto(`${base}/#/inbox${fm1 ? `/${fm1.id}` : ""}`); await p.waitForTimeout(800);
     ok(await p.locator(".trail, [data-inbox-intents], [data-intent-row]").count() === 0, "the Inbox has no progress trail");
     if (fm1) { const line = () => p.textContent(`[data-card="${fm1.id}"] [data-answer-result]`).catch(() => "");
       const before = await line();
       await p.evaluate((id) => window.onCardAnswered({ id }, false, "Refused: no such pending card"), fm1.id); await p.waitForTimeout(200);
       ok(/A recorded ✓/.test(before) && /A recorded ✓/.test(await line()), "a late refusal does not overwrite a recorded answer", `${before} → ${await line()}`); }
     const fm2 = summary.pending.find((c) => c.id === "D-firstmate-workflow-T304-2");
-    if (fm2) { const card = p.locator(`[data-card="${fm2.id}"]`); await card.locator('.opt:has(.letter:text-is("B"))').click(); await card.locator(".actions .btn.primary").click();
+    if (fm2) { await p.goto(`${base}/#/inbox/${fm2.id}`); const card = p.locator(`[data-card="${fm2.id}"]`); await card.locator('.opt:has(.letter:text-is("B"))').click(); await card.locator(".actions .btn.primary").click();
       ok(await p.waitForFunction((id) => /B recorded ✓/.test(document.querySelector(`[data-card="${id}"] [data-answer-result]`)?.textContent || "") && !document.querySelector(".modal"), fm2.id, { timeout: 5000 }).then(() => true, () => false)
         && received.some((r) => r.path === "/decisions" && r.body?.id === fm2.id && r.body?.chosen === "B"), "a firstmate card is answered inline from the Inbox (no dialog), through the board"); }
     await p.screenshot({ path: join(shots, "inbox-1440-light.png"), fullPage: true });

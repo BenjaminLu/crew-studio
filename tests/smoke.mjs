@@ -94,7 +94,7 @@ try {
   // every page renders at both widths in both themes, with no console error and no sideways scroll
   for (const width of [1440, 390]) for (const scheme of ["light", "dark"]) {
     const p = await page(width, scheme);
-    for (const [view, sel] of [["board", ".runs-table .rrow:not(.head)"], ["inbox", "[data-card]"], ["crew", ".tk-round"], ["activity", "#evlist .ev"], ["workflow", "svg.graph .gn"],
+    for (const [view, sel] of [["board", ".runs-table .rrow:not(.head)"], ["inbox", "[data-inbox-row]"], ["crew", ".tk-round"], ["activity", "#evlist .ev"], ["workflow", "svg.graph .gn"],
       ["intents", ".ilist"], ["library", "[data-pr]"], ["task/T-304", "[data-lineage]"], ["event/0", ".ev.hl"]]) {
       await p.goto(`${base}/#/${view}`);
       const found = await p.waitForSelector(sel, { timeout: 8000 }).then(() => true).catch(() => false);
@@ -137,14 +137,16 @@ try {
 
   // a new pending card appears live in the inbox
   await p.goto(`${base}/#/inbox`);
-  await p.waitForSelector("[data-card]");
-  const before = await p.locator("[data-card]").count();
+  await p.waitForSelector("[data-inbox-row]");
+  // the Inbox lists every card and shows one at a time (unit inbox-focus): count its rows
+  const before = await p.locator("[data-inbox-row]").count();
   const src = readdirSync(join(state, "pending")).find((f) => f !== "D-fixture-door-check.json");
   const card = JSON.parse(readFileSync(join(state, "pending", src), "utf8"));
   writeFileSync(join(state, "pending", "D-fixture-live.json"), JSON.stringify({ ...card, id: "D-fixture-live" }));
-  ok(await p.waitForFunction((n) => document.querySelectorAll("[data-card]").length === n + 1, before, { timeout: 6000 }).then(() => true).catch(() => false), "a new pending card appears live");
+  ok(await p.waitForFunction((n) => document.querySelectorAll("[data-inbox-row]").length === n + 1, before, { timeout: 6000 }).then(() => true).catch(() => false), "a new pending card appears live");
 
   // answering: pick A, confirm, and the board receives the card id, A, the secret and its own origin
+  await p.goto(`${base}/#/inbox/D-fixture-live`); await p.waitForSelector('[data-card="D-fixture-live"]');
   const c = p.locator('[data-card="D-fixture-live"]');
   await c.locator('.opt:has(.letter:text-is("A"))').click();
   await c.locator(".actions button.primary").click(); // sent from the card itself: no dialog
@@ -159,6 +161,7 @@ try {
     "every card question is answered yes by default");
 
   // a board-only card cannot be answered here, and the server refuses it too
+  await p.goto(`${base}/#/inbox/D-fixture-door-check`); await p.waitForSelector('[data-card="D-fixture-door-check"]');
   const bo = p.locator('[data-card="D-fixture-door-check"]');
   ok((await bo.locator(".banner").count()) === 0 && (await bo.locator(".opt[disabled]").count()) === 0, "a card with a check is answered in Studio too (the door confirmation is only needed for a one-way merge)");
   // the one-way door confirmation is covered end to end in tests/takeover-ui.mjs

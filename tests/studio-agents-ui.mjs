@@ -51,7 +51,7 @@ try {
   // ---------- the Inbox updates live: a card arrives (no reload) ----------
   await p.goto(`${base}/#/inbox`); await p.waitForSelector("#navInbox", { state: "attached" }); await p.waitForTimeout(500); await p.evaluate(() => { window.__noReload = 1; });
   const started = await post(other, "/api/wruns", { text: INTENT, workflow: FIXTURE.id }); runId = started.body?.id;
-  await p.waitForSelector('[data-inbox-studio] [data-option="dispatch"]', { timeout: 120000 });
+  await p.waitForSelector('[data-inbox-studio] [data-option="dispatch"]', { state: "attached", timeout: 120000 }); // attached: with the chat open the Inbox lists the card first (unit inbox-focus)
   ok(!!runId && await p.evaluate(() => window.__noReload === 1) && (await p.textContent("#navInbox")).trim() === "1", "a Studio card that arrives shows in the open Inbox live (the page did not reload) and counts in the sidebar", JSON.stringify(started));
   // ---------- the Overview counts and lists it ----------
   await other.goto(`${base}/#/board`); await other.waitForSelector("[data-need-scard]", { timeout: 15000 }).catch(() => {});

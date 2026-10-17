@@ -94,3 +94,35 @@
 .doc-act{display:flex;gap:6px;align-items:center}
 @media (max-width:640px){.doc-row{grid-template-columns:1fr}.doc-act{justify-content:flex-start}}
 .joblog{margin:0;max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#0d1117;color:#d6dde6;border-radius:8px;padding:10px 12px;font:12px/1.5 var(--f-mono)}
+/* the Inbox, one card at a time (unit inbox-focus): the list of open cards beside the selected card; narrow, they take turns */
+.ib{display:grid;grid-template-columns:minmax(240px,300px) minmax(0,1fr);gap:16px;align-items:start}
+.ib-list{position:sticky;top:0;max-height:calc(100vh - 48px);overflow:auto;padding:0}
+.ib-list-h{display:flex;gap:8px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--border);font-size:13px}
+.ib-list-h .faint{margin-left:auto;font-size:12px}
+.ib-row{display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:8px;align-items:start;padding:10px 14px;border-top:1px solid var(--border);color:inherit;text-decoration:none;border-left:3px solid transparent}
+.ib-row:first-child{border-top:0}
+.ib-row:hover{background:var(--surface-2)}
+.ib-row.on{background:var(--accent-soft);border-left-color:var(--accent)}
+.ib-row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.ib-n{font-size:12px;color:var(--text-3);padding-top:1px}
+.ib-row-main{display:grid;gap:4px;min-width:0}
+.ib-row-t{font-weight:600;font-size:14px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+.ib-row.on .ib-row-t{color:var(--accent-text)}
+.ib-row-d{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;font-size:12px;color:var(--text-2);min-width:0}
+.ib-wf{display:inline-flex;gap:3px;align-items:center;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ib-age{font-size:12px;white-space:nowrap}
+.ib-detail{display:grid;gap:12px;min-width:0}
+.ib-head{position:sticky;top:0;z-index:3;display:grid;gap:4px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:10px;box-shadow:var(--shadow-1)}
+.ib-head-t{display:flex;gap:10px;align-items:baseline;justify-content:space-between;min-width:0}
+.ib-head-t b{font-size:16px;line-height:1.3;overflow-wrap:anywhere;min-width:0}
+.ib-head-t .faint{font-size:12px;white-space:nowrap}
+.ib-head-d{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;font-size:12px;color:var(--text-2)}
+.ib-back{display:none;justify-self:start;margin:-2px 0 2px -6px}
+.ib-detail > .card{margin:0}
+.ib-recorded{display:flex;gap:8px;align-items:center;margin:0;padding:8px 12px;border-radius:8px;background:var(--ok-soft);color:var(--ok);font-size:13px}
+@container main (max-width:900px){
+  .ib{grid-template-columns:minmax(0,1fr)}
+  .ib-list{position:static;max-height:none}
+  .ib[data-ib-mode="list"] .ib-detail,.ib[data-ib-mode="card"] .ib-list{display:none}
+  .ib-back{display:inline-flex}
+}

@@ -214,7 +214,7 @@ function answered(id, text) {
 }
 // a firstmate card's answer, from the card itself (takeover.js confirmSend reports here)
 window.cardResults = new Map();
-window.onCardAnswered = (c, ok, text) => { if (!ok && window.cardResults.get(c.id)?.ok) return; window.cardResults.set(c.id, { ok, text }); if (ok) answered(c.id, text); else render(); };
+window.onCardAnswered = (c, ok, text) => { if (!ok && window.cardResults.get(c.id)?.ok) return; window.cardResults.set(c.id, { ok, text }); if (ok) { if (S.route?.name === "inbox") window.inboxRecorded?.(c.id); answered(c.id, text); } else render(); };
 { const base = cardView; cardView = function (c) { const el = base(c); const r = window.cardResults.get(c.id);
     const busy = window.answerInFlight?.has(c.id);
     const line = h("div", { class: `bd-result ${r ? (r.ok ? "ok" : "bad") : ""}`, role: "status", "data-answer-result": c.id }, busy ? T("Sending…", "送出中…") : r ? r.text : "");

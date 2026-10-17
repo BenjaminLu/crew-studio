@@ -874,7 +874,7 @@ function cardView(c, o = {}) {
   const sig = JSON.stringify(c);
   if (m && m.status === c.status) { if (m.sig !== sig) { m.ctl.update(c); m.sig = sig; } return m.el; }
   const el = h("div", { class: "card x-pad rt-card", "data-scard": c.id });
-  const ctl = window.crewCard.mountCard(el, c, { inbox: !!o.inbox, onAnswered: () => { RN.view && (RN.view.stale = true); loadRun(RN.view); loadOpenCards(); } });
+  const ctl = window.crewCard.mountCard(el, c, { inbox: !!o.inbox, target: o.target, onAnswered: (got) => { if (o.inbox) window.inboxRecorded?.(got?.id || c.id); RN.view && (RN.view.stale = true); loadRun(RN.view); loadOpenCards(); } });
   MOUNTS.set(key, { el, ctl, status: c.status, sig }); if (MOUNTS.size > 60) MOUNTS.delete(MOUNTS.keys().next().value);
   return el;
 }
@@ -894,9 +894,9 @@ addEventListener("hashchange", () => { if (!/^#\/(runs|tasks)(\/|$)/.test(locati
 // Board through the page's one stream; after the stream reconnects (a server restart, a laptop that slept) the cards
 // are read again, so an event missed meanwhile is never lost. A card that arrives while the page is open shows one
 // non-blocking cue (a status line outside the page view, never a dialog).
-const SCX = { open: [], t: null, seen: null, fresh: [], cueT: null };
+const SCX = { open: [], loaded: false, t: null, seen: null, fresh: [], cueT: null };
 async function loadOpenCards() {
-  try { SCX.open = (await api("/api/scards?open=1")).cards || []; } catch { return; }
+  try { SCX.open = (await api("/api/scards?open=1")).cards || []; SCX.loaded = true; } catch { return; }
   const ids = SCX.open.map((c) => c.id);
   if (SCX.seen) { const add = ids.filter((id) => !SCX.seen.has(id)); if (add.length) cueNew(add); for (const id of add) SCX.seen.add(id); }
   else SCX.seen = new Set(ids); // the cards already waiting when the page opened are not news
@@ -922,12 +922,10 @@ window.studioCards = { count: () => SCX.open.length,
   needRows: () => SCX.open.map((c) => h("div", { class: "need", "data-need-scard": c.id }, h("div", { class: "need-ic", style: "background:var(--human-soft);color:var(--human)" }, c.kind === "merge" ? "⇢" : "?"),
     h("div", {}, h("div", { class: "need-t" }, L(c.title)), h("div", { class: "need-d" }, [c.run, c.workflow, c.node].join(" · "))),
     h("div", { class: "need-r" }, h("a", { class: "btn", href: `#/inbox/${encodeURIComponent(c.id)}` }, T("Open", "打開"))))),
-  // #/inbox/<id> shows that card first and every other waiting card under it: a card that arrives while the captain
-  // is on one card (the Board's Open link) is never hidden; when that card is answered or withdrawn, the rest stay
-  section: (id) => { const focus = id ? SCX.open.find((c) => c.id === id) : null; const cs = focus ? [focus, ...SCX.open.filter((c) => c.id !== id)] : SCX.open; if (!cs.length) return null;
-    return h("section", { class: "rt-inbox", "data-inbox-studio": "1" }, h("div", { class: "sec-head" }, h("h2", {}, T("Studio tasks", "Studio 的任務")), h("span", { class: "badge human" }, String(cs.length))),
-      id && !focus ? h("p", { class: "faint", "data-inbox-gone": id }, T(`${id} is no longer waiting. The cards below still are.`, `${id} 已經不在等待中。下面這些還在等。`)) : null,
-      cs.map((c) => cardView(c, { inbox: true }))); } };
+  // the Inbox (public/app.js) lists these beside firstmate's and shows one at a time: the open cards, whether they were
+  // read yet, and the one selected card, its primary button naming the Task it answers
+  open: () => SCX.open, ready: () => SCX.loaded,
+  card: (c, target) => cardView(c, { inbox: true, target }) };
 
 // ---------- Studio tasks' live agent node runs on the Crew page, beside firstmate's rounds ----------
 const SA = { local: [], list: [], t: null, pending: null, ready: false, error: false };

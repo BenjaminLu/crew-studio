@@ -197,6 +197,12 @@ function mountCard(el, card, opts = {}) {
   el.addEventListener('compositionstart', e => { if(composingField(e)){ clearTimeout(compositionTimer); composing=e.target; } }, true);
   el.addEventListener('keydown', e => { if(composingField(e)&&(e.isComposing||e.keyCode===229||composing)){ if(e.key==='Enter'||e.keyCode===229)e.stopPropagation(); } }, true);
   el.addEventListener('compositionend', e => { if(e.target!==composing)return;const field=composing;composing=null;compositionTimer=setTimeout(()=>{if(composing)return;if(field.matches('[data-card-note]')){if(field.dataset.noteFor)st.notes[field.dataset.noteFor]=field.value;else st.note=field.value;}else if(draft&&field.dataset.interview){draft.answers[field.dataset.interview]=field.value;draft.dirty=true;}if(pendingRender){pendingRender=false;render();}if(draft&&draft.dirty)saveDraft().catch(error=>{st.msg=error.message;st.draw();});},0); }, true);
+  // opts.target (the Inbox: the card's Task) goes on its primary button, "Approve <Task> v1", so the captain sees
+  // which Task the click answers; a card with no primary option names it on its first option
+  const targetLabel = (c, o) => { const label = artifactOptionLabel(c, o, T); const target = String(opts.target || "").trim();
+    if (!target || !(o.primary || (!c.options.some((x) => x.primary) && o === c.options[0]))) return label;
+    const offers = c.detail?.artifactAcceptance?.offered; const v = Array.isArray(offers) && offers.length === 1 && Number.isInteger(offers[0]?.n) ? ` v${offers[0].n}` : "";
+    return /(\bv|版本 )\d+$/.test(label) ? `${label} · ${target}` : `${label} ${target}${v}`; }; // "Approve design-b v2" names its version already
   st.card = card; st.draw = () => render(); // the newest mount draws: an answer that settles after a remount shows on the card that is on screen
   const zh = () => st.lang !== "en";
   // the card's own language: zh-CN derives from the zh-TW text (i18n.js) unless the card or call carries zh-CN
@@ -479,7 +485,7 @@ function mountCard(el, card, opts = {}) {
       if (one) kids.push(h("label", { class: "cc-tick rt-row", for: `conf-${c.id}` }, h("input", { type: "checkbox", id: `conf-${c.id}`, "data-confirm-door": c.id, checked: st.confirm, onchange: (e) => { st.confirm = e.target.checked; render(); } }),
         h("span", {}, T("I confirm: this is one-way, a revert will not undo it", "我確認：這是單向門，revert 無法還原"))));
       kids.push(h("div", { class: "cc-actions actions" }, c.options.map((o) => { const why = missing(o);
-        return h("button", { class: `btn ${o.primary ? "primary" : ""}`, type: "button", "data-option": o.id, ...(draft&&o.id==="continue"?{"data-save-interview":""}:{}), "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy, onclick: () => answer(o) }, artifactOptionLabel(c, o, T)); })));
+        return h("button", { class: `btn ${o.primary ? "primary" : ""}`, type: "button", "data-option": o.id, ...(draft&&o.id==="continue"?{"data-save-interview":""}:{}), "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy, onclick: () => answer(o) }, targetLabel(c, o)); })));
       const hint = c.options.map(missing).find(Boolean);
       if (hint && !st.msg) kids.push(h("p", { class: "cc-count", "data-card-hint": "" }, hint));
     } else if (c.answer) {
