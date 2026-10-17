@@ -138,7 +138,7 @@ try {
   const projectData = dir("project-data");
   writeFileSync(join(projectData, "projects.json"), JSON.stringify([{ id: "fixture", name: "fixture", path: repo, base: "main", sensitive: [], proposed: null, approvedAt: null, proposedAt: null, github: grant }]));
   const projects = new Projects(projectData);
-  const E: any = { deps: { protectedRoots: [], agents: {} }, actions: {}, artifacts: {}, needs: {}, natives: {}, modes: {}, cardBodies: {}, expand: {}, doneLines: {}, instructions: {}, trusted: () => ({ ok: false, entries: [] }), onCancel: [], onDelete: [] };
+  const E: any = { deps: { protectedRoots: [], agents: {} }, cards: { view: (card: any) => card }, answer: async () => ({}), continuationEdges: {}, actions: {}, artifacts: {}, needs: {}, natives: {}, modes: {}, cardBodies: {}, expand: {}, doneLines: {}, instructions: {}, trusted: () => ({ ok: false, entries: [] }), onCancel: [], onDelete: [] };
   installCode(E, { dataDir: projectData, projects });
   const oldToken = process.env.CREW_GITHUB_TOKEN, oldCli = process.env.CREW_GH_NO_CLI;
   process.env.CREW_GITHUB_TOKEN = "fake-test-token-do-not-leak"; process.env.CREW_GH_NO_CLI = "1";
