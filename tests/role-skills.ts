@@ -185,7 +185,19 @@ H.stop();
     ok(card?.failure?.code === "env.skill-changed" && card.options.some((o: any) => o.id === "approve-skill") && card.captainOnly === true && !systems.length,
       "a changed role skill holds the round on a captain card (env.skill-changed) with \"Approve new role skill\"; nothing ran", JSON.stringify([card?.failure?.code, card?.options?.map((o: any) => o.id), systems.length]));
     { const shown = JSON.stringify(card); ok(/Worker skill, as approved/.test(shown) && /\+- A new rule\./.test(shown), "the card shows the change: the approved pin's text → the new text", shown.slice(0, 900)); }
-    await e.answer(card.id, { choice: "approve-skill", by: "captain" });
+    ok(JSON.stringify(card.sections?.zh ?? card).includes("+- A new rule."), "the zh-TW side shows the same diff", JSON.stringify(card.sections?.zh ?? {}).slice(0, 300));
+    { let msg = ""; try { await e.answer(card.id, { choice: "approve-skill", by: "firstmate" }); } catch (err: any) { msg = String(err?.message); }
+      ok(/Only the captain approves a role skill change/.test(msg) && staffing.current(project).version === 1, "only the captain can approve a role skill change", msg); }
+    // the text changes again after the card was shown: approving would approve text the captain never saw
+    text = text + "- An unseen rule.\n";
+    { let msg = ""; try { await e.answer(card.id, { choice: "approve-skill", by: "captain" }); } catch (err: any) { msg = String(err?.message); }
+      ok(/Role skill approval is stale: the text changed after this card was shown/.test(msg) && staffing.current(project).version === 1 && !systems.length && task.nodes.work.card === card.id,
+        "a text change after the card refuses the approval: no staffing version, no round", msg); }
+    await e.answer(card.id, { choice: "retry", by: "captain" });
+    await until(() => task.nodes.work.waiting === "card" && task.nodes.work.card !== card.id && !e.busy(task.id));
+    const fresh = e.cards.get(task.nodes.work.card!)!;
+    ok(fresh?.failure?.code === "env.skill-changed" && JSON.stringify(fresh).includes("+- An unseen rule.") && !systems.length, "retry raises a new card with the new diff", JSON.stringify([fresh?.failure?.code, task.status]));
+    await e.answer(fresh.id, { choice: "approve-skill", by: "captain" });
     await until(() => ["succeeded", "failed"].includes(task.status) && !e.busy(task.id));
     const c2 = staffing.current(project);
     ok(task.status === "succeeded" && systems.length === 1 && systems[0].includes("- A new rule.") && e.list().filter((x) => x.workflow === flow.id).length === 2,

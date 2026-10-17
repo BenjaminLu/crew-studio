@@ -412,15 +412,16 @@ export class Engine {
     // the readiness card keeps its retry / close actions; the typed failure says which class stopped the round (login, quota, overlap, staffing …)
     const typed = fromError(cause ?? new Error(reason), { source: "queue", run: x.run.id, node: x.node.id, visit: x.visit });
     // a domain may offer one more captain action for this failure (staffing: approve a changed role skill), with what the captain approves
-    let extra: { options: { id: string; label: string; labelZh: string }[]; detail?: string } | null = null;
+    // data: what the captain is shown, kept with the hold so the action can refuse when it changed before the click
+    let extra: { options: { id: string; label: string; labelZh: string }[]; detail?: string; data?: unknown } | null = null;
     try { extra = this.deps.readinessRecovery?.(x, typed) ?? null; } catch (e: any) { x.log(`readiness recovery option unavailable: ${e?.message ?? e}`); }
-    x.rn.data.nativeQueueCapability = { version: 1, reason, retryAction: "retry", closeAction: "close", ...(extra?.options.length ? { extraActions: extra.options.map((o) => o.id) } : {}) };
+    x.rn.data.nativeQueueCapability = { version: 1, reason, retryAction: "retry", closeAction: "close", ...(extra?.options.length ? { extraActions: extra.options.map((o) => o.id), extraData: extra.data ?? null } : {}) };
     const scope = Array.isArray(x.ctx.spec?.scope) ? x.ctx.spec.scope.map(String) : [];
     const project = this.queueProject(x.run), repo = this.queueRepo(x.ctx.repo) || "artifact workflow"; let dependencies: string[] = []; try { dependencies = this.queueDependencies(x.run); } catch {}
     const zhReason = /dependency (R-\d+)/.test(reason) ? `依賴 ${/dependency (R-\d+)/.exec(reason)![1]} 尚未取得可驗證的合併證據。` : /scope held by (R-\d+)/.test(reason) ? `範圍與 ${/scope held by (R-\d+)/.exec(reason)![1]} 重疊；必須等待該任務完成可驗證的合併。` : /capacity.*full/.test(reason) ? "目前的實際執行回合已達容量上限。" : /deadline/.test(reason) ? "等待時間已到，請核准重新準備或關閉任務。" : /role skill \S+ changed since staffing approval/i.test(reason) ? "角色技能在派工核准後已變更；請先確認新的技能內容，再重新確認人員配置。" : /historical|binding|scope pin|dispatch/.test(reason) ? "此回合缺少有效的核准範圍或依賴綁定；請重新確認範圍並核准準備。" : /capacity|wait_timeout/.test(reason) ? "排隊容量或等待期限設定無效；必須先修正設定。" : /model|effort/.test(reason) ? "已設定的模型或推理強度尚未驗證為可用；請保留設定並先完成驗證。" : /provider|capability|login|quota/.test(reason) ? "目前沒有登入、額度與模型皆完成驗證的可用供應商；回合尚未啟動。" : "回合的執行權或驗證資料尚未確認，不能開始工作。";
     const c = await this.card(x, "scope", { captainOnly: true, title: "Round is not ready", zhTitle: "回合尚未就緒",
       en: { why: extra?.detail ? `${reason}\n\n${extra.detail}` : reason, how: "Resolve the readiness issue, then approve fresh preparation or close this task.", scope: { in: [...scope, `Project: ${project}`, `Repository: ${repo}`, ...dependencies.map(id => `Dependency: ${id}`)], out: [] } },
-      zh: { why: zhReason, how: "先排除等待原因，再核准重新準備；也可以關閉任務。", scope: { in: [...scope, `專案：${project}`, `儲存庫：${repo === "artifact workflow" ? "產物工作流程" : repo}`, ...dependencies.map(id => `依賴：${id}`)], out: [] } },
+      zh: { why: extra?.detail ? `${zhReason}\n\n${extra.detail}` : zhReason, how: "先排除等待原因，再核准重新準備；也可以關閉任務。", scope: { in: [...scope, `專案：${project}`, `儲存庫：${repo === "artifact workflow" ? "產物工作流程" : repo}`, ...dependencies.map(id => `依賴：${id}`)], out: [] } },
       options: [...(extra?.options ?? []), { id: "retry", label: "Approve fresh preparation", labelZh: "核准重新準備" }, { id: "close", label: "Close task", labelZh: "關閉任務", hold: true }], failure: typed });
     return { wait: true, note: `readiness recovery card ${c.id}` };
   }

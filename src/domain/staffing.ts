@@ -145,20 +145,25 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
  const previousInitialize=engine.deps.initializeRun;
  engine.deps.initializeRun=(run:any)=>{previousInitialize?.(run);if(applies(run.def)){const c=verified(run.def,run.params),node=run.def.nodes[0];engine.record(engine.x(run,node,run.nodes[node.id]),'staffing-start',{data:{schema:1,config:c.hash,project:staffingHash(c.project),definition:c.workflow.sha256}});}};
  function verifyRun(run:any){const binding=signedStaffingBinding(engine,run);if(!binding)throw new QueueRefusal('Historical or changed staffing lacks task approval; propose an explicit configuration upgrade / 舊任務或已變更配置缺少任務核准，請提出配置升級');return verified(run.def,{...run.params,_staffing:binding});}
- const previousAnswer=engine.deps.authorizeAnswer;engine.deps.authorizeAnswer=(run:any,card:any,answer:any)=>{previousAnswer?.(run,card,answer);if(applies(run?.def)&&((card.kind==='scope'&&answer.choice==='retry')||(card.kind==='dispatch'&&answer.choice==='dispatch')))verifyRun(run);if(applies(run?.def)&&answer.choice==='approve-skill'&&!driftOf(run))throw new Error('Role skill approval is stale: read the current task state');};
+ const previousAnswer=engine.deps.authorizeAnswer;engine.deps.authorizeAnswer=(run:any,card:any,answer:any)=>{previousAnswer?.(run,card,answer);if(applies(run?.def)&&((card.kind==='scope'&&answer.choice==='retry')||(card.kind==='dispatch'&&answer.choice==='dispatch'))){try{verifyRun(run);}catch(error){/* a role skill change is shown again on a fresh card at round start, with its current diff */if(!(card.kind==='scope'&&(error as any)?.failure?.code==='env.skill-changed'))throw error;}}if(applies(run?.def)&&answer.choice==='approve-skill'){if(!/^captain\b/i.test(String(answer.by??'')))throw new Error('Only the captain approves a role skill change');approvedDrift(run,run.nodes[card.node]);}};
  // The readiness card's way out of env.skill-changed: the captain sees the change (approved pin → new text) and approves it with one click.
  // Only the changed skill pins are replaced (a new staffing version; providers, models and efforts unchanged), the task is rebound, and the round is prepared again.
  const SKILL_ACTION='approve-skill';
  function driftOf(run:any){const binding=signedStaffingBinding(engine,run);return binding?skillDrift(run.def,{...run.params,_staffing:binding}):null;}
+ /** What the card showed: per changed role, the approved pin and the exact new text's sha256. */
+ const shownOf=(d:any)=>d.changed.map((id:string)=>({role:id,from:d.bound.roles[id].skill.sha256,to:sha(d.live[id].text)}));
+ /** The change the captain approves must be exactly the change the card showed: same roles, same approved pins, same new text. */
+ function approvedDrift(run:any,rn:any){const shown=rn?.data?.nativeQueueCapability?.extraData?.skills,d=driftOf(run);
+  if(!d||!Array.isArray(shown)||staffingHash(shownOf(d))!==staffingHash(shown))throw new QueueRefusal('Role skill approval is stale: the text changed after this card was shown');return d;}
  const previousRecovery=engine.deps.readinessRecovery;
  engine.deps.readinessRecovery=(x:any,typed:any)=>{if(!applies(x.run?.def)||typed?.code!=='env.skill-changed')return previousRecovery?.(x,typed)??null;const d=driftOf(x.run);if(!d)return null;
   const detail=d.changed.map((id:string)=>{const pin=d.bound.roles[id].skill;let before:string|null=null;try{before=store.skill(pin,d.project);}catch{}
    const head=`Role ${id} (${pin.ref}): approved v${pin.version} · ${pin.sha256.slice(0,12)} → now v${d.live[id].version} · ${sha(d.live[id].text).slice(0,12)}`;
    return before==null?`${head}\n(the approved text is not archived; the new text is in Improve → ${id})`:`${head}\n${unified(before,d.live[id].text,`${id}.md`).slice(0,6000)}`;}).join('\n\n');
-  return{options:[{id:SKILL_ACTION,label:d.rebind?'Use the approved new role skill':'Approve new role skill',labelZh:d.rebind?'改用已核准的新角色技能':'核准新的角色技能'}],detail:`Role skill change / 角色技能變更:\n${detail}`};};
+  return{data:{skills:shownOf(d)},options:[{id:SKILL_ACTION,label:d.rebind?'Use the approved new role skill':'Approve new role skill',labelZh:d.rebind?'改用已核准的新角色技能':'核准新的角色技能'}],detail:`Role skill change / 角色技能變更:\n${detail}`};};
  const previousAction=engine.deps.readinessAction;
  engine.deps.readinessAction=(run:any,node:any,rn:any,card:any)=>{if(!applies(run?.def)||card.answer?.choice!==SKILL_ACTION)return previousAction?.(run,node,rn,card)??false;
-  if(!card.captainOnly)throw new Error('Only the captain approves a role skill change');const d=driftOf(run);if(!d)throw new QueueRefusal('Role skill approval is stale: read the current task state');
+  if(!card.captainOnly||!/^captain\b/i.test(String(card.answer?.by??'')))throw new Error('Only the captain approves a role skill change');const d=approvedDrift(run,rn);
   let approved:StaffingConfig=d.current;
   if(!d.rebind){const answer=engine.ledger(run.id).filter(e=>e.record==='card-answer'&&e.data?.card===card.id).at(-1);if(!answer)throw new Error('The captain answer is not recorded');
    const{version,previous,approval,hash,signature,...draft}=structuredClone(d.current);const sources:Record<string,string>={};
