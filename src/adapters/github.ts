@@ -329,6 +329,18 @@ export class GitHubPrAdapter implements PrAdapter {
       const head = await read("refs/crew/head"), base = await read("refs/crew/base"); if (head !== pr.head || !sha.test(base)) throw new Error("remote import head moved"); return { head, base };
     } catch (e: any) { retain = !!e.retainClient; throw e; } finally { if (!retain) rmSync(dir, { recursive: true, force: true }); }
   }
+  /** Fetch the granted base branch head into the local object store (read only); the per-round rebase target before a PR exists. */
+  async importBase(signal?: AbortSignal) {
+    validateGitHubGrant(this.grant); signal?.throwIfAborted();
+    const dir = mkdtempSync(join(tmpdir(), "crew-remote-base-")); let retain = false;
+    try {
+      localMust(dir, ["init", "--bare", "-q", "."]); const objects = localMust(this.grant.localPath, ["rev-parse", "--path-format=absolute", "--git-path", "objects"]); if (/[\r\n]/.test(objects)) throw new Error("invalid object path");
+      const extra = this.grant.mode === "github" ? { GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "http.https://github.com/.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${this.credential()}`).toString("base64")}`, GIT_CONFIG_KEY_1: "credential.helper", GIT_CONFIG_VALUE_1: "" } : {};
+      const env = publicationEnv({ ...extra, GIT_OBJECT_DIRECTORY: objects });
+      await ownedGit(gitArgv(["-c", "protocol.file.allow=" + (this.grant.mode === "simulator" ? "always" : "never"), "fetch", "--no-tags", "--", this.grant.pushUrl, `+refs/heads/${this.grant.base}:refs/crew/base`]), dir, env, this.timeoutMs, signal);
+      const base = await ownedGit(gitArgv(["rev-parse", "refs/crew/base"]), dir, env, this.timeoutMs, signal); if (!sha.test(base)) throw new Error("remote base head is invalid"); return base;
+    } catch (e: any) { retain = !!e.retainClient; throw e; } finally { if (!retain) rmSync(dir, { recursive: true, force: true }); }
+  }
   private valid(o: OpenRequest) {
     validateGitHubGrant(this.grant);
     if(o.draft!==undefined&&o.draft!==true)throw new Error("Draft publication flag must be explicitly true or omitted");

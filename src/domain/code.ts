@@ -126,12 +126,6 @@ export const inScope = (scope: string[], p: string) => scope.some((s) => { const
  * not the captain's operating rules, and only in code-workflow worker (build) jobs. */
 export const CONCURRENT_TASKS_RULE = "Code Tasks on one repository run concurrently, like pull requests. Other Tasks may change the same files as yours. Every build round starts on your branch rebased onto the current base; when the brief lists REBASE CONFLICTS, resolve them before anything else (keep both sides' intent, leave no conflict marker).";
 const workerRuntimeRules = (system: string) => `${system}\n\n## Studio runtime rules\n\n${CONCURRENT_TASKS_RULE}`;
-/** The base branch head (last fetched origin ref, else the local branch) when it moved past the commit a Task started on; null when not. */
-export function baseMovedSince(repo: string, base: string, baseCommit: string): { base: string; from: string; to: string } | null {
-  const ref = [`refs/remotes/origin/${base}`, `refs/heads/${base}`].map(r => git(repo, ["rev-parse", "--verify", "-q", r]).out.trim()).find(h => /^[0-9a-f]{40}$/.test(h));
-  if (!ref || ref === baseCommit || git(repo, ["merge-base", "--is-ancestor", ref, baseCommit]).ok) return null;
-  return { base, from: baseCommit, to: ref };
-}
 export const overlapNotes = (mine: string[], others: ScopeBlocker[]) => {
   const out: string[] = [];
   for (const r of others) {
@@ -247,7 +241,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (x.ctx.pr?.adapter !== "github" || x.node.do === "pr.open") return null;
     const phase = remotePhase(x); phase.assert(); const a = selectedAdapter(x);
     try { if (!(a instanceof GitHubPrAdapter)) throw new Error(); if(x.ctx.remoteUpdatePending){const p=pendingUpdate(x,a);await a.verifyUpdateResult(p.old,p.next,phase.signal,phase.assert);}else await reconcile(a, x.ctx.pr, phase.signal); phase.assert(); return null; }
-    catch { if (!phase.live()) return { outcome: "cancel" }; await engine.card(x, "step-back", remoteStopBody("authoritative PR/ref changed at node start; verification stopped")); return { wait: true }; }
+    catch { if (!phase.live()) return { outcome: "cancel" }; await engine.card(x, "step-back", remoteStopBody(x.node.mode === "build" ? "the PR or its Task branch changed on GitHub since Studio last pushed (for example someone else pushed); this round did not rebase or push anything" : "authoritative PR/ref changed at node start; verification stopped")); return { wait: true }; }
   };
   engine.externalValidators["github-ci"] = (x, descriptor) => { const a = selectedAdapter(x); return a instanceof GitHubPrAdapter && validRemoteWait(descriptor, a); };
   engine.externalHandlers["github-ci"] = (x, descriptor, wake) => {
@@ -536,7 +530,20 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const rollback = x.ctx.spec?.rollback ?? (x.ctx.door?.door === "one-way" ? "A revert does not undo this change; the approved plan must name the rollback." : "Revert the change to undo it.");
     const body = specMd(x.ctx.spec) + `\n\n## Door\n${x.ctx.door?.door ?? "undecided"}\n\n## Rollback\n${rollback}`;
     if (x.ctx.pr && x.ctx.pr.adapter !== adapter.id) throw new Error("review adapter authority changed; resolve the existing review request before publishing");
-    if (x.ctx.pr) { const published = await adapter.update({ ...x.ctx.pr, title, body }, h, x.dir, phase.signal,phase.assert); phase.assert(); x.ctx.pr = published; x.rn.note = `review request at ${h.slice(0, 8)}`; return remoteWait(x, adapter); }
+    if (x.ctx.pr) {
+      const old = x.ctx.pr; let published: any;
+      try { published = await adapter.update({ ...old, title, body }, h, x.dir, phase.signal,phase.assert); }
+      catch (e: any) {
+        // the push is --force-with-lease=<Task branch>:<last pushed head>: someone else's push is never overwritten
+        if (adapter instanceof GitHubPrAdapter && /lease mismatch|mismatched pull request target or head/.test(String(e?.message ?? e))) {
+          if (!phase.live()) return { outcome: "cancel" } as any;
+          await engine.card(x, "step-back", remoteStopBody(`the Task branch ${old.branch} on GitHub moved away from the last pushed head ${String(old.head).slice(0, 8)} (someone else pushed); Studio did not overwrite it`)); return { wait: true } as any;
+        }
+        throw e;
+      }
+      phase.assert(); x.ctx.pr = published;
+      if (published.head !== old.head && adapter instanceof GitHubPrAdapter) engine.record(x, "remote-push", { head: published.head, data: { version: 1, repository: adapter.grant.repository, branch: old.branch, from: old.head, to: published.head, lease: old.head, rewritten: !git(x.ctx.repo, ["merge-base", "--is-ancestor", old.head, published.head]).ok } } as any);
+      x.rn.note = `review request at ${h.slice(0, 8)}`; return remoteWait(x, adapter); }
     const published = await adapter.open({ repo: x.ctx.repo, base: x.ctx.base, branch: x.ctx.branch, head: h, title, body }, x.dir, phase.signal,phase.assert); phase.assert(); x.ctx.pr = published;
     x.rn.note = `review request on ${x.ctx.branch} (${adapter.id})`; return remoteWait(x, adapter);
   };
@@ -669,7 +676,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     let s: Awaited<ReturnType<typeof W.startRound>>;
     // a build round rebases onto the current base inside startRound, before dependencies install
     let baseRefresh: ReturnType<typeof refreshBase> = null;
-    const beforeInstall = write && x.node.mode === "build" ? (start: string) => { baseRefresh = refreshBase(x, start); return baseRefresh ? { pending: baseRefresh.conflicts.length > 0 } : null; } : undefined;
+    // a remote (GitHub) Task rebases onto the fetched origin base, never onto a stale local ref
+    const remoteTip = write && x.node.mode === "build" ? await remoteBaseTip(x) : null;
+    const beforeInstall = write && x.node.mode === "build" ? (start: string) => { baseRefresh = refreshBase(x, start, remoteTip); return baseRefresh ? { pending: baseRefresh.conflicts.length > 0 } : null; } : undefined;
     try { s = await W.startRound(k.project, k.task, holder(x), { write, skipInstall, beforeInstall, install: install === false ? false : Array.isArray(install) ? install.map(String) : null, scripts: x.policy("install_scripts") === true,
       allow: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String) }); }
     catch (e: any) { if (e instanceof RoundBlocked) { x.rn.data.report = { marker: "BLOCKED", summary: e.message, round: x.visit }; x.save(); } if (e instanceof EnvGapError) recordEnvGaps(x, [e.gap], "round"); throw e; }
@@ -681,9 +690,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       if(s.head!==rebase.head||x.ctx.pr?.head!==rebase.head)throw new Error("approved rebase head changed");
       const result=W.startNativeRebase(k.project,k.task,rebase.head,rebase.fromBase,rebase.base);rebase.started=true;x.ctx.head=result.head;x.ctx.baseCommit=rebase.base;x.save();
     }
-    const baseMoved = write && x.node.mode === "build" ? remoteBaseMoved(x) : null;
     const bs = roundBrief(x);
-    engine.record(x, "round-start", { head: s.head, data: { round: x.visit, brief: bs.brief?.id ?? null, ledger: bs.brief?.ledger ?? [], carried: bs.carried, briefMissing: bs.missing, corrected: s.corrected, deps: s.deps.ran?.join(" ") ?? null, depsDetail: s.deps.detail ?? null, baseRefresh, ...(baseMoved ? { remoteBaseMoved: baseMoved } : {}) } } as any);
+    engine.record(x, "round-start", { head: s.head, data: { round: x.visit, brief: bs.brief?.id ?? null, ledger: bs.brief?.ledger ?? [], carried: bs.carried, briefMissing: bs.missing, corrected: s.corrected, deps: s.deps.ran?.join(" ") ?? null, depsDetail: s.deps.detail ?? null, baseRefresh } } as any);
+    if (baseRefresh && remoteTip) engine.record(x, "remote-rebase", { head: (baseRefresh as any).headAfter, data: { version: 1, branch: x.ctx.branch, fromBase: (baseRefresh as any).baseBefore, toBase: (baseRefresh as any).baseAfter, headBefore: (baseRefresh as any).headBefore, headAfter: (baseRefresh as any).headAfter, lease: x.ctx.pr?.head ?? null, pending: (baseRefresh as any).conflicts.length > 0 } } as any);
     if (s.corrected) x.log(`round ${x.visit}: ${s.corrected.reason}; ${s.corrected.kept ? `kept on ${s.corrected.kept}` : "nothing to keep"}`);
     } catch (e) { held.delete(holder(x)); s.release(); throw e; }
   };
@@ -696,18 +705,41 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
    * opens with REBASE CONFLICTS, the worker resolves them in this round and Studio
    * continues the rebase after it. A remote PR keeps its own remote rebase path.
    */
-  const refreshBase = (x: X, start: string) => {
-    if (x.ctx.pr?.adapter === "github" || (x.ctx.project && o.projects.get(x.ctx.project)?.github) || x.ctx.reportOnly?.build) return null;
+  const refreshBase = (x: X, start: string, remoteTip: string | null = null) => {
+    if (x.ctx.reportOnly?.build || isRemote(x) && !remoteTip) return null;
+    // a captain-approved remote rebase (remote-ready card) starts its own native rebase this round
+    if (x.ctx.remoteRebaseApproved?.version === 1 && !x.ctx.remoteRebaseApproved.started) return null;
     const k = wkey(x), rec = W.get(k.project, k.task);
     if (!rec || rec.nativeRebase || rec.head !== start) return null;
-    const tip = git(x.ctx.repo, ["rev-parse", "--verify", `refs/heads/${x.ctx.base}`]).out.trim();
+    const tip = remoteTip ?? git(x.ctx.repo, ["rev-parse", "--verify", `refs/heads/${x.ctx.base}`]).out.trim();
     if (!/^[0-9a-f]{40}$/.test(tip) || git(rec.path, ["merge-base", "--is-ancestor", tip, start]).ok) return null;
     const from = rec.baseCommit, result = W.startNativeRebase(k.project, k.task, start, from, tip);
-    x.ctx.head = result.head; x.ctx.baseCommit = tip; x.ctx.gatedHead = null;
+    x.ctx.head = result.head; x.ctx.baseCommit = tip; x.ctx.gatedHead = null; if (remoteTip) x.ctx.remoteCI = null;
     const refresh = { round: x.visit, baseBefore: from, baseAfter: tip, headBefore: start, headAfter: result.head, conflicts: result.pending ? rebaseConflicts(x) : [] };
     x.ctx.baseRefresh = refresh; x.save();
     x.log(`round ${x.visit}: rebased onto ${x.ctx.base} ${from.slice(0, 8)} -> ${tip.slice(0, 8)}${refresh.conflicts.length ? `; ${refresh.conflicts.length} conflicting file(s) for the worker` : ""}`);
     return refresh;
+  };
+  const isRemote = (x: X) => { try { return selectedAdapter(x) instanceof GitHubPrAdapter; } catch { return false; } };
+  /**
+   * Remote (GitHub) Tasks rebase every round too (captain's standing rule). The base is
+   * fetched from the granted repository into the local object store; once the Task has a PR,
+   * the same fetch proves the remote Task branch is still at the last pushed head (the
+   * lease). Someone else's push stops the round on a clear card: nothing is overwritten.
+   * The rebased head is pushed by the publication step that follows the round, with
+   * --force-with-lease on the Task's own branch only (GitHubPrAdapter.update).
+   */
+  const remoteBaseTip = async (x: X): Promise<string | null> => {
+    if (x.ctx.reportOnly?.build || !isRemote(x)) return null;
+    if (x.ctx.remoteRebaseApproved?.version === 1 && !x.ctx.remoteRebaseApproved.started) return null;
+    const a = selectedAdapter(x) as GitHubPrAdapter;
+    try {
+      if (x.ctx.pr) return (await a.importHeads(x.ctx.pr)).base;
+      return await a.importBase();
+    } catch (e: any) {
+      if (x.ctx.pr && /remote import head moved/.test(String(e?.message ?? e))) throw new RoundBlocked(`the Task branch ${x.ctx.pr.branch} on ${a.grant.repository} is no longer at the last pushed head ${String(x.ctx.pr.head).slice(0, 8)}: someone else pushed to it. Studio did not rebase or overwrite it. Decide whether to keep their change (rescope) or park the Task.`);
+      throw new RoundBlocked(`cannot fetch ${a.grant.repository} ${a.grant.base} to rebase the Task onto it: ${String(e?.message ?? e).slice(0, 300)}`);
+    }
   };
   /** Conflicting files of an in-progress native rebase, with the commits on each side that touched them. */
   const rebaseConflicts = (x: X) => {
@@ -715,22 +747,6 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const { from, base, target } = rec.nativeRebase, log = (range: string, p: string) => git(rec.path, ["log", "--format=%h %s", "--max-count=10", range, "--", p]).out.split("\n").filter(Boolean);
     return rebaseConflictList(rec.path).slice(0, 40)
       .map(c => ({ path: c.path, binary: c.binary, ours: c.ours, theirs: c.theirs, base: log(`${base}..${target}`, c.path), task: log(`${base}..${from}`, c.path) }));
-  };
-  /**
-   * A remote (GitHub) Task is not rebased per round: rewriting its pushed branch is a
-   * remote write that needs the captain's rebase card at remote-ready. Instead each build
-   * round surfaces early that the base moved (from the last fetched base ref), in the round
-   * record, the log and the brief, so nobody learns it only at remote-ready.
-   */
-  const remoteBaseMoved = (x: X) => {
-    const remote = x.ctx.pr?.adapter === "github" || (x.ctx.project && o.projects.get(x.ctx.project)?.github);
-    if (!remote || !x.ctx.repo || !x.ctx.base || !/^[0-9a-f]{40}$/.test(x.ctx.baseCommit ?? "")) return null;
-    const moved = baseMovedSince(x.ctx.repo, x.ctx.base, x.ctx.baseCommit);
-    if (!moved) { x.ctx.remoteBaseMoved = null; return null; }
-    const ref = moved.to;
-    x.ctx.remoteBaseMoved = moved; x.save();
-    x.log(`round ${x.visit}: ${x.ctx.base} moved ${String(x.ctx.baseCommit).slice(0, 8)} -> ${ref.slice(0, 8)}; this remote Task needs a captain-approved rebase before it can merge`);
-    return moved;
   };
   /** Why a pending rebase goes to the captain now, or null to give the worker another round:
    * a binary conflict (no fs tool can pick a side), or round_cap consecutive rounds that left
@@ -897,11 +913,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       const amend = engine.amendments(x.run).length ? `${amendmentsSection(engine.amendments(x.run))}Keep the captain's latest word on each of these (a later change overrides an earlier one it conflicts with). If a brief item, a finding or an answer below would undo the captain's latest word on one, do not do that part: finish the rest and report ASK with amendment set to that change's number, so the captain decides.\n` : "";
       const conflicts = W.get(wkey(x).project, wkey(x).task)?.nativeRebase ? rebaseConflicts(x) : [];
       const conflictNote = conflicts.length ? `REBASE CONFLICTS (resolve these before anything else)\nThe base moved and this task's branch is being rebased onto it. Resolve these files first (keep both sides' intent, remove every conflict marker), then continue the task. Studio finishes the rebase and commits.${conflicts.some(c => c.binary) ? " A binary conflict cannot be resolved with the fs tools: leave it as it is; Studio hands it to the captain." : ""}\n${conflicts.map(c => `- ${c.path}${c.binary ? ` (binary: base side ${String(c.ours ?? "deleted").slice(0, 12)}, task side ${String(c.theirs ?? "deleted").slice(0, 12)})` : ""}\n  base side: ${c.base.join("; ") || "(none listed)"}\n  task side: ${c.task.join("; ") || "(none listed)"}`).join("\n")}\n` : "";
-      const moved = x.ctx.remoteBaseMoved;
-      const movedNote = moved ? `BASE MOVED: ${moved.base} moved ${String(moved.from).slice(0, 8)} -> ${String(moved.to).slice(0, 8)} since this remote Task started. Keep building; the merge needs a captain-approved rebase at remote-ready.\n` : "";
       let notes: string[] = []; try { notes = overlapNotes(x.ctx.spec?.scope ?? [], scopeBlockers(engine, x.run)); } catch {} // informational: never stops a brief
       const overlap = notes.length ? `\nOTHER TASKS ON THESE PATHS (informational; nothing waits for them):\n${notes.map(n => `- ${n}`).join("\n")}\n` : "";
-      const text = `BUILD ROUND\nRun ${x.run.id} · round ${x.visit} · head ${h} · branch ${x.ctx.branch}\n${conflictNote}${movedNote}${amend}${specMd(x.ctx.spec)}${plan}${facts}${fix}${ro}${conflictNote ? "" : rebaseNote}${overlap}\nStart with fs_list.${x.run.text.includes("STUB_") ? `\n\nIntent notes:\n${x.run.text}` : ""}` + engine.failureBrief(x);
+      const text = `BUILD ROUND\nRun ${x.run.id} · round ${x.visit} · head ${h} · branch ${x.ctx.branch}\n${conflictNote}${amend}${specMd(x.ctx.spec)}${plan}${facts}${fix}${ro}${conflictNote ? "" : rebaseNote}${overlap}\nStart with fs_list.${x.run.text.includes("STUB_") ? `\n\nIntent notes:\n${x.run.text}` : ""}` + engine.failureBrief(x);
       let prev: any = null; try { prev = JSON.parse(readFileSync(briefFile(x), "utf8")); } catch {}
       if (prev && prev.head !== h) x.log(`round ${x.visit} brief rebound from ${String(prev.head).slice(0, 8)} to ${h.slice(0, 8)}`);
       writeFileSync(briefFile(x), JSON.stringify({ run: x.run.id, round: x.visit, head: h, branch: x.ctx.branch, brief: text }, null, 1));

@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Agents } from "../src/agent";
 import { Projects } from "../src/doors";
-import { baseMovedSince, installCode } from "../src/domain/code";
+import { installCode } from "../src/domain/code";
 import { Worktrees } from "../src/worktrees";
 import { Engine } from "../src/runtime/engine";
 import { WorkflowDefs } from "../src/runtime/defs";
@@ -187,19 +187,6 @@ await card(k1.id, "merge-card");
 ok(builds(k1.id) === 2 && !new Worktrees(data).get("concurrent-fixture", k1.id)?.nativeRebase && E.get(k1.id)!.nodes.build.data.report?.marker !== "BLOCKED", "a rebase intent recorded before a crash is cleared and redone, not blocked forever", JSON.stringify({ builds: builds(k1.id), report: E.get(k1.id)!.nodes.build.data.report, status: E.get(k1.id)!.status }));
 await answer(k1.id, "merge-card", "merge"); await merged(k1.id);
 ok(E.verifiedMerge(E.get(k1.id)!) && mainHas("crash-other.txt").includes(k2.id) && mainHas("crash.txt").includes(k1.id), "the redone rebase merges on top of the other Task");
-
-// 3g. A remote (GitHub) Task is not rebased per round (rewriting its pushed branch needs the
-// captain's rebase card); each build round surfaces early that the base moved, from the last
-// fetched origin ref or the local base branch. (No GitHub build-round fixture exists, so the
-// detection is checked directly.)
-{ const before = git(["rev-parse", "main"]);
-  ok(baseMovedSince(repo, "main", before) === null, "a base that did not move is not reported");
-  writeFileSync(join(repo, "moved.txt"), "base moved\n"); git(["add", "moved.txt"]); git(["commit", "-qm", "Move the base"]);
-  const moved = baseMovedSince(repo, "main", before);
-  ok(moved?.from === before && moved.to === git(["rev-parse", "main"]), "a moved base is reported with both commits", JSON.stringify(moved));
-  git(["update-ref", "refs/remotes/origin/main", before]);
-  ok(baseMovedSince(repo, "main", before) === null, "the last fetched origin ref wins over the local branch");
-  git(["update-ref", "-d", "refs/remotes/origin/main"]); }
 
 // 4. Declared dependencies still gate.
 const parent = startCode("dep-parent.txt"); await answer(parent.id, "dispatch", "dispatch"); await card(parent.id, "merge-card");

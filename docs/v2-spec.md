@@ -24,7 +24,7 @@ Captain priorities, 2026-10-14:
 Standing rules:
 
 - Studio never modifies the firstmate repo and never answers firstmate cards on its own.
-- No GitHub writes without a repo the captain named.
+- No GitHub writes without a repo the captain named. Within a named repository, pushing a Task's own branch (with its lease) after a per-round rebase is authorized by the concurrent-Tasks rule below.
 - Out of the box, with no new external dependencies.
 - No real company or repo names in shared content.
-- Code Tasks on the same repository run concurrently, like pull requests: a scope overlap never blocks or serializes a Task; every build/fix round first rebases the Task branch onto the current base head and the worker resolves its own conflicts; no Task stays pinned to the base it started on. Only declared dependencies gate. Known gap: a remote (GitHub) Task is not rebased per round, because rewriting its pushed branch is a remote write that needs the captain's rebase card; its build rounds report "base moved" as soon as the last fetched base moved, and the rebase happens at remote-ready on the captain's card.
+- Code Tasks on the same repository run concurrently, like pull requests: a scope overlap never blocks or serializes a Task; every build/fix round first rebases the Task branch onto the current base head and the worker resolves its own conflicts; no Task stays pinned to the base it started on. Only declared dependencies gate. This holds for remote (GitHub) Tasks too: each round fetches the base, rebases the Task branch onto origin/<base>, and the publication step pushes only the Task's own branch with `--force-with-lease=<branch>:<last pushed head>`; that push is authorized by this rule, never any other ref, never the base, never without the lease.
