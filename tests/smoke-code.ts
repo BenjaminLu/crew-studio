@@ -92,8 +92,15 @@ const wtPath = join(data, "work", "wt", "sandbox", r.id);
 ok(f.ctx.worktree === wtPath && f.ctx.wt?.project === "sandbox" && !existsSync(wtPath), "the task's worktree was data/work/wt/sandbox/<run>, and it is gone after the merge", f.ctx.worktree);
 const starts = E.ledger(r.id).filter((e: any) => e.record === "round-start" && e.node === "build") as any[];
 ok(starts.length === 2 && starts[0].data.brief === null && starts[1].data.brief === `build@1:${String(f.ctx.rounds?.[0]?.head).slice(0, 12)}` && starts[1].data.ledger.length > 0 && starts[1].head === f.ctx.rounds?.[0]?.head, "each build round started at the durable head; round 2's brief is bound to round 1's head and its ledger entries", JSON.stringify(starts.map((e) => [e.head?.slice(0, 8), e.data])));
-// one hand-back commit per round, each with its own trailers
-{ const per = (n: number) => git("log", "--format=%an|%B%x00", "main").split("\0").find((m) => new RegExp(`Crew-Round: ${n}\\b`).test(m)) ?? "";
+// one curated commit per Task lands on main (retro 19): a Conventional subject within 72 characters, no "(round N)", the
+// spec's done line with its proof in the body, the reviewed head's exact tree; never a round commit or the worker's report
+{ const landed = git("rev-list", `${mainBefore}..main`).split("\n").filter(Boolean); const msg = git("log", "-1", "--format=%B", "main"), subject = msg.split("\n")[0];
+  const reviewed = f.ctx.merged?.reviewed; const summary = String(f.ctx.rounds?.at(-1)?.report?.summary ?? "");
+  ok(landed.length === 1 && /^feat: \S/.test(subject) && subject.length <= 72 && !/\(round \d+\)/.test(msg) && !/Crew-Round:/.test(msg) && /\nDone:\n- .*\(proved by firstmate\//.test(msg) && (!summary || !msg.includes(summary)) && !/claude\.ai/.test(msg)
+    && git("rev-parse", "main^{tree}") === git("rev-parse", `${reviewed}^{tree}`) && git("rev-parse", "main^") === mainBefore,
+    "main gets one curated commit for the Task: its subject, what and why and the done line with its proof, the reviewed head's tree on the old main", JSON.stringify([landed.length, msg.slice(0, 600)])); }
+// one hand-back commit per round on the Task's branch, each with its own trailers
+{ const per = (n: number) => git("log", "--format=%an|%B%x00", `feature/${r.id}`).split("\0").find((m) => new RegExp(`Crew-Round: ${n}\\b`).test(m)) ?? "";
   const ok1 = (m: string, n: number) => /^\s*Crew agent \(stub·no model\)\|/.test(m) && new RegExp(`Crew-Run: ${r.id}\\b`).test(m) && /Crew-Node: build\b/.test(m) && new RegExp(`Crew-Round: ${n}\\b`).test(m) && /Crew-Agent: stub·no model/.test(m);
   ok(ok1(per(1), 1) && ok1(per(2), 2), "each round handed back its own commit as the agent: round 1's and round 2's, each with run, node, round and agent trailers", JSON.stringify([per(1).slice(0, 200), per(2).slice(0, 200)])); }
 ok(existsSync(join(data, "runs", r.id, "nodes", "build", "2", "prompt.md")) && /BRIEF for round 2/.test(readFileSync(join(data, "runs", r.id, "nodes", "build", "2", "prompt.md"), "utf8")), "every agent round left its exact prompt (round 2's carries the brief)");

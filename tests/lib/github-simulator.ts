@@ -77,7 +77,9 @@ export function githubSimulator(bare: string, repository = "fixture/project") {
       else { const children = [...community.keys()].filter((k) => k.startsWith(file + "/") && !k.slice(file.length + 1).includes("/")).map((k) => ({ type: "file", path: k })); if (!children.length) return json({ message: "Not Found" }, 404); response = json(children); }
     } else {
       const exact = expected.get(req.method + " " + path + u.search);
-      if (!exact || JSON.stringify(body) !== JSON.stringify(exact.body ?? null) || (req.headers.get("range") ?? undefined) !== exact.range) return bad();
+      const loose = path.endsWith("/merge") && body && typeof body === "object" && exact?.body && !("commit_title" in exact.body) && Object.keys(body).every((k) => ["sha", "merge_method", "commit_title", "commit_message"].includes(k)) && ["commit_title", "commit_message"].every((k) => body[k] === undefined || typeof body[k] === "string")
+        ? Object.fromEntries(Object.entries(body).filter(([k]) => k !== "commit_title" && k !== "commit_message")) : body;
+      if (!exact || JSON.stringify(loose) !== JSON.stringify(exact.body ?? null) || (req.headers.get("range") ?? undefined) !== exact.range) return bad();
       if (req.method === "PUT") {
         const p = pulls.get(Number(path.split("/")[2])); if (!p || p.state !== "open") return json({ message: "Not Found" }, 404);
         const current = head(p.head.ref), base = head(p.base.ref);
@@ -93,7 +95,8 @@ export function githubSimulator(bare: string, repository = "fixture/project") {
           } else {
             const method = body.merge_method;
             if (method === "rebase") { must(dir, ["checkout", "-q", "-B", "fixture", current]); must(dir, ["rebase", base]); }
-            else { must(dir, ["checkout", "-q", "-B", "fixture", base]); must(dir, ["merge", method === "squash" ? "--squash" : "--no-ff", "--no-edit", current]); if (method === "squash") must(dir, ["commit", "-qm", "Squash fixture pull request"]); }
+            else { must(dir, ["checkout", "-q", "-B", "fixture", base]); must(dir, ["merge", method === "squash" ? "--squash" : "--no-ff", "--no-edit", ...(method === "merge" && body.commit_title ? ["-m", body.commit_title, ...(body.commit_message ? ["-m", body.commit_message] : [])] : []), current]);
+              if (method === "squash") must(dir, ["commit", "-q", "-m", body.commit_title ?? "Squash fixture pull request", ...(body.commit_message ? ["-m", body.commit_message] : [])]); }
             const next = must(dir, ["rev-parse", "HEAD"]);
             must(dir, ["push", `--force-with-lease=refs/heads/${p.base.ref}:${base}`, "origin", `${next}:refs/heads/${p.base.ref}`]);
             p.state = "closed"; p.merged = true; p.merge_commit_sha = next;

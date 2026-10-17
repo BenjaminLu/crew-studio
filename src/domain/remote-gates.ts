@@ -55,7 +55,7 @@ const claim = (adapter: GitHubPrAdapter, pr: ReviewRequest, dir: string, kind: "
   try { writeFileSync(store.path,JSON.stringify(value),{flag:"wx",mode:0o600}); } catch(e:any) { if(e.code==="EEXIST"){validateClaim(store.path,store.identity);throw new Error("remote operation is final for this head; shared attempt retained");}throw e; }
   return (state:string) => { value.state=state; const temp=store.path+`.${process.pid}.tmp`;writeFileSync(temp,JSON.stringify(value),{mode:0o600});renameSync(temp,store.path); };
 };
-export async function mergeOnce(adapter: GitHubPrAdapter, pr: ReviewRequest, dir: string, card: string, signal?: AbortSignal, expectedBase?: string, assertOwner?: () => void) {
+export async function mergeOnce(adapter: GitHubPrAdapter, pr: ReviewRequest, dir: string, card: string, signal?: AbortSignal, expectedBase?: string, assertOwner?: () => void, commit?: { title: string; message: string }) {
   pr=structuredClone(pr);if(!adapter.recordedIdentity(pr))throw new Error("invalid remote operation identity");assertOwner?.();signal?.throwIfAborted();
   const op = adapter.operationGrant();
   if (!card?.trim()) throw new Error("remote merge requires a bound captain card");
@@ -70,7 +70,7 @@ export async function mergeOnce(adapter: GitHubPrAdapter, pr: ReviewRequest, dir
     const attempt: MergeAttempt = { version: 1, repository: adapter.grant.repository, grant: adapter.grant.approvalId, pr: pr.id, branch: pr.branch, base: pr.base, head: pr.head, method: op.mergeMethod, card, state: "started", at: new Date().toISOString() };
     const finish=claim(adapter,pr,dir,"merge");
     history.push(attempt); write(path, history); // precedes every potentially mutating request
-    try { const result = await adapter.mergeHead(pr, signal, expectedBase, assertOwner); signal?.throwIfAborted(); assertOwner?.();attempt.result = result; attempt.state = "succeeded"; finish(attempt.state); write(path, history); return result; }
+    try { const result = await adapter.mergeHead(pr, signal, expectedBase, assertOwner, commit); signal?.throwIfAborted(); assertOwner?.();attempt.result = result; attempt.state = "succeeded"; finish(attempt.state); write(path, history); return result; }
     catch (e) { attempt.state = signal?.aborted || (e as any)?.code === "REMOTE_OWNER_CHANGED" ? "uncertain" : "failed"; finish(attempt.state); write(path, history); throw e; }
   } finally { owners.delete(key); }
 }

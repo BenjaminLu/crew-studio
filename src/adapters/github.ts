@@ -269,8 +269,9 @@ export class GitHubPrAdapter implements PrAdapter {
   private async put(pr: ReviewRequest, operation: "update-branch" | "merge", body: Record<string, string>, signal?: AbortSignal) {
     if(!["merge","update-branch"].includes(operation))throw new Error("remote mutation is not allowlisted");
     this.operationGrant(); signal?.throwIfAborted(); if (!this.recordedIdentity(pr)) throw new Error("invalid remote operation target");
-    const keys = operation === "merge" ? ["sha", "merge_method"] : ["expected_head_sha"];
-    if (Object.keys(body).length !== keys.length || !keys.every(k => typeof body[k] === "string") || (body.sha ?? body.expected_head_sha) !== pr.head || (operation === "merge" && body.merge_method !== this.operationGrant().mergeMethod)) throw new Error("remote mutation body is not allowlisted");
+    // a squash or merge commit may carry the Task's curated title and message (GitHub's optional commit_title, commit_message)
+    const keys = operation === "merge" ? ["sha", "merge_method", ...["commit_title", "commit_message"].filter(k => k in body)] : ["expected_head_sha"];
+    if (Object.keys(body).length !== keys.length || !keys.every(k => typeof body[k] === "string") || (operation === "merge" && ("commit_title" in body || "commit_message" in body) && body.merge_method === "rebase") || (body.sha ?? body.expected_head_sha) !== pr.head || (operation === "merge" && body.merge_method !== this.operationGrant().mergeMethod)) throw new Error("remote mutation body is not allowlisted");
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), this.timeoutMs);
     let response: Response | null = null;
     try { response = await fetch(`${this.grant.apiOrigin}/repos/${this.grant.repository}/pulls/${pr.id}/${operation}`, { method: "PUT", headers: { ...githubHeaders(this.credential()), "content-type": "application/json" }, body: JSON.stringify(body), redirect: "error", signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal });
@@ -299,7 +300,7 @@ export class GitHubPrAdapter implements PrAdapter {
     const r=await this.remoteRead("ref",old.branch,1,signal,this.branchAllowed(old.branch,old.head)?old.head:next.pr.head,true);assertOwner?.();
     if(p.number!==Number(old.id)||p.state!=="open"||p.head?.repo?.full_name!==this.grant.repository||p.base?.repo?.full_name!==this.grant.repository||p.head?.ref!==old.branch||p.base?.ref!==old.base||p.head?.sha!==next.pr.head||p.base?.sha!==next.baseHead||r.ref!==`refs/heads/${old.branch}`||r.object?.sha!==next.pr.head)throw new Error("owned update result changed; fresh captain recovery required");
   }
-  async mergeHead(pr: ReviewRequest, signal?: AbortSignal, expectedBase?: string, assertOwner?: () => void) {
+  async mergeHead(pr: ReviewRequest, signal?: AbortSignal, expectedBase?: string, assertOwner?: () => void, commit?: { title: string; message: string }) {
     pr=structuredClone(pr);assertOwner?.();
     const op = this.operationGrant(), p = await this.mutationState(pr, signal,assertOwner);assertOwner?.();const settings = await this.remoteRead("repository", this.grant.repository, 1, signal, true);assertOwner?.();
     if (expectedBase && p.base.sha !== expectedBase) throw new Error("remote base changed before merge");
@@ -313,7 +314,9 @@ export class GitHubPrAdapter implements PrAdapter {
       assertOwner?.();const bypass = protection.required_pull_request_reviews?.bypass_pull_request_allowances;
       if(protection.required_status_checks?.strict !== true || protection.enforce_admins?.enabled !== true || !protection.required_pull_request_reviews || !bypass || ![bypass.users,bypass.teams,bypass.apps].every(v=>Array.isArray(v)&&v.length===0))throw new Error("real merge requires verified strict up-to-date protection with no bypass");
     }
-    assertOwner?.();const result = await this.put(pr, "merge", { sha: pr.head, merge_method: op.mergeMethod }, signal);
+    // squash and merge land one commit with the Task's curated title and message; rebase lands the branch's own commits
+    const curated = commit && op.mergeMethod !== "rebase" && commit.title.trim() ? { commit_title: commit.title.slice(0, 250), commit_message: commit.message.slice(0, 20_000) } : {};
+    assertOwner?.();const result = await this.put(pr, "merge", { sha: pr.head, merge_method: op.mergeMethod, ...curated }, signal);
     assertOwner?.();if (result.merged !== true || !sha.test(result.sha)) throw new Error("GitHub did not confirm a merge");
     const merged = await this.remoteRead("pull", pr.id, 1, signal, true);assertOwner?.();
     if (merged.state !== "closed" || merged.merged !== true || merged.merge_commit_sha !== result.sha || merged.number !== Number(pr.id) || merged.head?.sha !== pr.head || merged.head?.repo?.full_name !== this.grant.repository || merged.base?.ref !== pr.base || merged.base?.repo?.full_name !== this.grant.repository) throw new Error("remote merge acknowledgement/target is inconsistent");

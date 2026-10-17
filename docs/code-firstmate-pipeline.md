@@ -125,6 +125,7 @@ When no test command is declared, CI, covering suites and fail-first allow their
 
 - The card has the intent, the before/after and the check ledger: proved done lines and the human acceptance list.
 - A one-way merge needs the walk and the explicit door confirmation. Answers can come from the auth window.
+- One curated commit lands per Task, never the round commits: a Conventional subject within 72 characters (never cut mid-word, no "(round N)"), and a body with the spec's what and why and each done line with the checks that proved it, never the worker's raw report. A repository's CONTRIBUTING commit rules win. Locally it is the reviewed head's exact tree on the base tip; on GitHub a squash or merge commit carries the same title and message (a rebase merge lands the branch's own commits). The rounds stay on the Task branch and in the ledger (src/domain/commit-message.ts).
 
 ### 11. after-merge (hooks)
 

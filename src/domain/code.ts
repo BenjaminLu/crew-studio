@@ -39,6 +39,7 @@ import { COORDINATOR_TOOL_SCHEMA, coordinatorDetail, coordinatorText, designText
 import { RemoteWatchers, requiredPolicy, reconcile, inspectRemote, grantIdentity, registerRemoteWait, validRemoteWait, remoteStopBody } from "./remote-ci";
 import { stablePatch, proveCleanCarry, mergeOnce, updateOnce, assertMergeAvailable } from "./remote-gates";
 import type { CardDetail } from "../runtime/cards";
+import { commitConvention, commitSubject, taskCommitMessage } from "./commit-message";
 
 export { git, must };
 
@@ -652,6 +653,13 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       return remoteWait(x,a);
     } catch { if (!phase.live()) return { outcome: "cancel" }; await engine.card(x,"step-back",remoteStopBody("remote readiness/update could not be proved; no approval or merge allowed")); return { wait: true }; } finally { release?.(); }
   };
+  /** the Task's one curated commit message (src/domain/commit-message.ts): the spec's what and why, each done line with the
+   * checks that proved it on the reviewed head, under the repository's CONTRIBUTING commit rules read at that head */
+  const taskCommit = (x: X, h: string) => {
+    const ledger = new Map(engine.ledger(x.run.id).map((e) => [e.seq, e]));
+    const done = engine.doneLines(x.run).map((d: any) => ({ text: d.text, proofs: (d.by ?? []).map((b: any) => ({ check: b.check, verdict: (ledger.get(b.seq) as any)?.verdict ?? "?" })) }));
+    return taskCommitMessage({ run: x.run.id, head: h, type: x.ctx.spec?.type ?? null, title: x.ctx.spec?.title ?? x.run.title ?? "", what: x.ctx.spec?.what ?? null, why: x.ctx.spec?.why ?? [], done }, commitConvention(x.ctx.repo, h));
+  };
   engine.actions["git.merge"] = async (x) => {
     if (x.ctx.pr?.adapter === "github") {
       const phase = remotePhase(x); phase.assert(); const a = selectedAdapter(x), h = head(shellOk(x));
@@ -664,13 +672,19 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       if (!["branch","rebase","scope","failfirst","ci","approval","design"].every(name => { const e = trusted.entries.filter(e => e.check === `firstmate/gate-${name}`).at(-1); return e?.head === h && e.verdict === "pass"; })) throw new Error("seven signed exact-head gates required (the six and gate-design)");
       const policy = await requiredPolicy(a,phase.signal); phase.assert();
       if ((await inspectRemote(a,x.ctx.pr,policy,phase.signal)).state !== "pass" || x.ctx.remoteCI?.head !== h || x.ctx.remoteCI?.policyHash !== policy.hash || x.ctx.remoteCI?.grant !== grantIdentity(a)) throw new Error("remote checks changed before merge"); phase.assert();
-      const result = await mergeOnce(a,x.ctx.pr,x.dir,answer.data.card,phase.signal,x.ctx.baseCommit,phase.assert); phase.assert();
+      const curated = taskCommit(x, h); const result = await mergeOnce(a,x.ctx.pr,x.dir,answer.data.card,phase.signal,x.ctx.baseCommit,phase.assert,{ title: curated.subject, message: curated.body }); phase.assert();
       await a.importHeads(x.ctx.pr,phase.signal); phase.assert(); x.ctx.merged = { ...result, adapter: "github", at: new Date().toISOString() }; x.save(); return "ok";
     }
     if (x.ctx.project && o.projects.get(x.ctx.project)?.github) throw new Error("remote project has no verified PR; local merge disabled");
     const wt = shellOk(x); const h = head(wt); const repo = x.ctx.repo, base = x.ctx.base;
     if (x.ctx.door?.door === "one-way" && x.ctx.answers?.["merge-card"]?.confirm !== "one-way") throw new Error("a one-way change needs the door confirmation on the merge card");
     if (x.ctx.gatedHead && h !== x.ctx.gatedHead) throw new Error("the branch moved since the seven gates ran");
+    // resume: this hook ran before a restart and its one commit is already the base tip (the reviewed head's tree, this Task)
+    { const tip = git(repo, ["rev-parse", `refs/heads/${base}`]).out, tree = git(repo, ["rev-parse", `${h}^{tree}`]).out;
+      if (tip && tree && git(repo, ["rev-parse", `${tip}^{tree}`]).out === tree && git(repo, ["log", "-1", "--format=%B", tip]).out.includes(`Crew Studio Task ${x.run.id}, reviewed head ${h.slice(0, 12)}.`)) {
+        x.ctx.merged = { base, head: tip, reviewed: h, at: x.ctx.merged?.at ?? new Date().toISOString() }; x.ctx.head = h;
+        engine.recordOnce(x, "native-merge", { head: tip, data: { version: 1, project: engine.queueProject(x.run), repo: engine.queueRepo(repo), base, head: tip, reviewed: h, tree } });
+        x.rn.note = `${base} already carries this Task's commit ${tip.slice(0, 8)} (resumed)`; return "ok"; } }
     if (!git(repo, ["merge-base", "--is-ancestor", base, h]).ok) {
       // The merge stays strict: the head must contain the current base. When the
       // workflow routes it, a moved base sends the Task to a new build round that
@@ -679,13 +693,18 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       if (!x.run.def.edges.some(e => e.from === x.node.id && e.when?.split("|").includes("rebase"))) throw new Error(`${base} moved since the gates ran: it no longer fast-forwards`);
       x.ctx.gatedHead = null; x.rn.note = `${base} moved since the gates ran: a new build round rebases onto it`; x.save(); return "rebase";
     }
+    // one curated commit lands, never the round commits: the reviewed head's exact tree on the current base tip (the rounds
+    // stay on the Task branch and in the ledger)
+    const tip = must(repo, ["rev-parse", `refs/heads/${base}`]), tree = must(repo, ["rev-parse", `${h}^{tree}`]);
+    const msg = taskCommit(x, h).message; const made = git(repo, ["commit-tree", tree, "-p", tip, "-F", "-"], msg);
+    const squash = made.out.trim(); if (!made.ok || !/^[0-9a-f]{40}$/.test(squash)) throw new Error(`git commit-tree: ${made.err || made.out}`.slice(0, 500));
     const cur = git(repo, ["symbolic-ref", "--short", "HEAD"]).out;
-    if (cur === base) { if (git(repo, ["status", "--porcelain", "--untracked-files=no"]).out) throw new Error(`${repo} has uncommitted changes on ${base}`); must(repo, ["merge", "--ff-only", "-q", h]); }
-    else must(repo, ["update-ref", `refs/heads/${base}`, h, must(repo, ["rev-parse", base])]);
-    x.ctx.merged = { base, head: h, at: new Date().toISOString() }; x.ctx.head = h;
-    if (must(repo, ["rev-parse", `refs/heads/${base}`]) !== h) throw new Error("actual local merge head does not match reviewed head");
-    engine.recordOnce(x, "native-merge", { head: h, data: { version: 1, project: engine.queueProject(x.run), repo: engine.queueRepo(repo), base, head: h } });
-    x.rn.note = `${base} fast-forwarded to ${h.slice(0, 8)} (local)`; return "ok";
+    if (cur === base) { if (git(repo, ["status", "--porcelain", "--untracked-files=no"]).out) throw new Error(`${repo} has uncommitted changes on ${base}`); must(repo, ["merge", "--ff-only", "-q", squash]); }
+    else must(repo, ["update-ref", `refs/heads/${base}`, squash, tip]);
+    x.ctx.merged = { base, head: squash, reviewed: h, at: new Date().toISOString() }; x.ctx.head = h;
+    if (must(repo, ["rev-parse", `refs/heads/${base}`]) !== squash || must(repo, ["rev-parse", `${squash}^{tree}`]) !== tree) throw new Error("actual local merge does not carry the reviewed head's tree");
+    engine.recordOnce(x, "native-merge", { head: squash, data: { version: 1, project: engine.queueProject(x.run), repo: engine.queueRepo(repo), base, head: squash, reviewed: h, tree } });
+    x.rn.note = `${base} fast-forwarded to ${squash.slice(0, 8)}: one commit with the reviewed head ${h.slice(0, 8)}'s tree (local)`; return "ok";
   };
   const keepDays = (x: X) => Number(x.policy("worktree.keep_days", 7));
   engine.actions["repo.cleanup"] = (x) => {
@@ -871,7 +890,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const commitRound = (x: X, rep: any, agent = "agent") => {
     shellOk(x); const k = wkey(x);
     const hb = W.handBack(k.project, k.task, { run: x.run.id, node: x.node.id, round: x.visit, agent,
-      message: `${x.ctx.spec?.type ?? "feat"}: ${(x.ctx.spec?.title ?? x.run.title).replace(/^\w+(\([^)]*\))?:\s*/, "").replace(/^./, (c: string) => c.toLowerCase()).slice(0, 64)}${x.visit > 1 ? ` (round ${x.visit})` : ""}\n\n${rep?.summary ?? ""}` });
+      message: `${commitSubject(x.ctx.spec?.type, x.ctx.spec?.title ?? x.run.title ?? "", { conventional: true, max: 72, source: null }, `Task ${x.run.id}`)}\n\nRound ${x.visit} of Crew Studio Task ${x.run.id}.\n\n${rep?.summary ?? ""}` });
     x.ctx.head = hb.head;
     x.ctx.rounds = [...(x.ctx.rounds ?? []), { round: x.visit, head: x.ctx.head, report: rep, ...(x.rn.data.failureAnswer ? { answer: { ...x.rn.data.failureAnswer } } : {}), at: new Date().toISOString() }];
   };
