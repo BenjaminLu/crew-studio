@@ -23,6 +23,12 @@
 ## Dependencies
 
 - A GitHub connection in Studio (token or an installed `gh`). Doctor shows its state.
+- Connecting a project to GitHub (the captain's connect card) changes the project's identity. The same approval
+  carries its approved crew over: same providers, models and effort, re-signed for the connected project and
+  recorded as `staffing-carried`. No new staffing interview is needed.
+- Firstmate raises the connect card first and a staffing or keep-crew card only after the captain answers it. A
+  staffing card raised before the connect is out of date once the project connects; its failure card offers
+  "Re-propose with the same picks", which raises a fresh card for the connected project (Retry cannot succeed).
 
 ## Deliverable
 

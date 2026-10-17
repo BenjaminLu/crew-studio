@@ -1254,6 +1254,8 @@ export class Engine {
   private changedCache = new Map<string, { key: string; at: number; value: ReturnType<typeof changedInputs> }>();
   /** environment probes by code: a string says what is still broken (Fix and retry is refused), null says fixed or unknown */
   failureProbes: Partial<Record<FailureCode, (r: Run) => string | null>> = {};
+  /** Per workflow: a failed proposal's "Re-propose" answer (deterministic.re-propose). It raises a fresh proposal for the current state and returns its run. */
+  reproposers: Record<string, (r: Run, by: string) => Run> = {};
   /** transient retries wait this long (failures.ts backoffMs); a test may shorten it */
   failureBackoff: (attempt: number) => number = (a) => [5_000, 30_000, 120_000, 600_000][Math.min(3, Math.max(0, a - 1))];
   /** A failure from blocking check entries, with the check's evidence as the log reference. */
@@ -1456,6 +1458,12 @@ export class Engine {
       next.ctx.follows = r.id; this.commit(next, `follows ${r.id}`); this.emit(next, "follows", `the same request as ${r.id}, started from its failure card`, { task: r.id, card: c.id });
       const ans = this.cards.answer(c.id, a); r.parked = { by: a.by, at: now(), note: `followed by ${next.id}` }; r.ctx.followedBy = next.id;
       this.recordFailure(r, c, ACT.newTask, { task: next.id }); this.commit(r, `followed by ${next.id}`); this.emit(r, "failure_new_task", `${f.code}: a new task ${next.id} starts from the same request`, { card: c.id, task: next.id }); return ans;
+    }
+    if (a.choice === ACT.repropose) {
+      const fresh = this.reproposers[r.workflow]; if (!fresh) refuse({ en: "Re-propose refused: this workflow has no fresh proposal. Ask Firstmate to propose it again.", "zh-TW": "已拒絕重新提出：這個流程無法重新提出。請 Firstmate 重新提案。" });
+      let next: Run; try { next = fresh!(r, a.by); } catch (e: any) { refuse({ en: `Re-propose refused: ${e?.message ?? e}`, "zh-TW": `已拒絕重新提出：${e?.publicFailure?.reason?.["zh-TW"] ?? e?.message ?? e}` }); throw e; }
+      const ans = this.cards.answer(c.id, a); r.parked = { by: a.by, at: now(), note: `followed by ${next.id}` }; r.ctx.followedBy = next.id;
+      this.recordFailure(r, c, ACT.repropose, { task: next.id }); this.commit(r, `followed by ${next.id}`); this.emit(r, "failure_new_task", `${f.code}: a fresh proposal ${next.id} replaces this one`, { card: c.id, task: next.id }); return ans;
     }
     if (!node) throw new Error("this failure has no step to run again: report it or park it");
     if (a.choice === ACT.retry || a.choice === ACT.fixRetry) {

@@ -67,6 +67,7 @@ export const FAILURE_CODES = {
   "deterministic.film": { class: "deterministic", title: t("The film did not pass its checks", "影片沒有通過檢查"), meaning: t("The film was made, but its checks failed on these inputs. No verified film was offered.", "影片做出來了，但在這組輸入上沒有通過檢查，所以沒有提供已驗證的影片。") },
   "deterministic.prepare-again": { class: "deterministic", title: t("The step needs a fresh preparation", "這一步需要重新準備"), meaning: t("Something changed after the gates or the card were prepared: the branch, its checks, or a confirmation the card did not get. Running this step again fails the same way.", "gate 或卡片準備好之後有東西改變了：branch、它的檢查，或卡片少了一個確認。直接重跑這一步會用同樣的方式失敗。") },
   "deterministic.incomplete": { class: "deterministic", title: t("The result is incomplete", "結果不完整"), meaning: t("A round ended without the text it must submit, or the record of the rounds is incomplete. Nothing partial is offered for acceptance; this task cannot go on from it.", "有一輪結束時沒有交出必須提交的文字，或回合紀錄不完整。不完整的結果不會送去驗收；這個任務無法再從它繼續。") },
+  "deterministic.re-propose": { class: "deterministic", title: t("The staffing proposal is out of date", "人員配置提案已過期"), meaning: t("The project or workflow this staffing proposal was pinned to changed after it was raised (for example, the project was connected to GitHub). Running it again fails the same way; the same picks need a fresh proposal for the current project.", "這份人員配置提案鎖定的專案或流程在提出後改變了（例如專案連上了 GitHub）。直接重跑會用同樣的方式失敗；同一組選擇需要針對目前的專案重新提出。") },
   "deterministic.new-task": { class: "deterministic", title: t("What was approved has changed", "已核准的內容改變了"), meaning: t("An approved plan, artifact or launched work changed or is gone after review. This task cannot go on from it.", "審查後，已核准的方案、作品或已派出的工作改變了或不見了。這個任務無法再從它繼續。") },
   "deterministic.unchanged": { class: "deterministic", title: t("Nothing changed since the last failure", "和上次失敗相比沒有任何改變"), meaning: t("The inputs are identical to the last failed attempt, so Studio did not run it again.", "輸入和上次失敗時完全相同，所以 Studio 沒有再跑一次。") },
   "invalid-input.params": { class: "invalid-input", title: t("A task parameter is invalid", "任務參數無效"), meaning: t("A parameter of this task has a value the workflow refuses.", "這個任務有參數的值被工作流程拒絕。") },
@@ -186,6 +187,7 @@ export const TEXT_RULES: { re: RegExp; code: FailureCode }[] = [
   { re: /^(invalid_params|draft_invalid|staffing_answer_invalid)$/, code: "invalid-input.params" },
   { re: /^(configuration_missing|native_adapter_unavailable|staffing_unverified|staffing_model_unavailable|unavailable|staffing_required)$/, code: "env.staffing" },
   { re: /^quota_exhausted$/, code: "env.quota" },
+  { re: /^staffing_stale$/, code: "deterministic.re-propose" },
   { re: /^(target_changed|registry_changed)$/, code: "transient.stale" },
   { re: /^(owner_ended|cancelled)$/, code: "transient.interrupted" },
   { re: /^(captain_confirmation_required|staffing_wait_captain)$/, code: "env.staffing" },
@@ -256,7 +258,7 @@ const secsZh = (ms: number) => (ms >= 60_000 ? `${Math.round(ms / 60_000)} 分�
 
 // ---------- the card and its actions ----------
 /** The action ids of failure cards: the runtime answers them by these names, never by a domain's words. */
-export const ACT = { answer: "answer", fixRetry: "fix-retry", retry: "retry", rescope: "rescope", editParams: "edit-params", report: "report", park: "park", prepareAgain: "prepare-again", newTask: "new-task" } as const;
+export const ACT = { answer: "answer", fixRetry: "fix-retry", retry: "retry", rescope: "rescope", editParams: "edit-params", report: "report", park: "park", prepareAgain: "prepare-again", newTask: "new-task", repropose: "re-propose" } as const;
 export type FailureOption = { id: string; label: string; labelZh: string; primary?: boolean; note?: boolean; hold?: boolean };
 export const PARK: FailureOption = { id: "park", label: "Park", labelZh: "暫停（Park）", hold: true };
 /** The actions each class offers. Park is always there. */
@@ -267,6 +269,7 @@ export function failureActions(cls: FailureClass, code?: FailureCode, o: { ended
   if (o.ended) return [{ id: ACT.newTask, label: "Start a new task", labelZh: "開始新任務", primary: true }, PARK];
   if (code === "deterministic.brief-quality") return [{ id: ACT.rescope, label: "Correct brief and continue", labelZh: "修正說明並繼續", primary: true, note: true }, PARK];
   if (code === "deterministic.spec-missing") return [{ id: ACT.rescope, label: "Revise draft and continue", labelZh: "修訂草稿並繼續", primary: true, note: true }, PARK];
+  if (code === "deterministic.re-propose") return [{ id: ACT.repropose, label: "Re-propose with the same picks", labelZh: "用同一組選擇重新提出", primary: true }, PARK];
   if (code === "deterministic.prepare-again") return [{ id: ACT.prepareAgain, label: "Prepare again", labelZh: "重新準備", primary: true }, PARK];
   if (NEW_TASK.has(code)) return [{ id: ACT.newTask, label: "Start a new task", labelZh: "開始新任務", primary: true }, PARK];
   const main: Record<FailureClass, FailureOption[]> = {
@@ -289,6 +292,7 @@ export function failureHow(f: Failure, o: { ended?: boolean; newTaskAllowed?: bo
   if (o.ended) return t("This run ended on this result, so it does not run again. Start a new task: it gets the same request and params and runs from the start.", "這個 run 已經以這個結果結束，不會再跑。請開始新任務：它會用同樣的需求和參數從頭執行。");
   if (f.code === "deterministic.brief-quality") return t("Describe the concrete missing correction or verified runtime fix. The same refinement step regenerates and checks the brief; this does not approve implementation, tests or merge.", "請描述缺少的具體修訂或已驗證的 runtime 修正。同一個修復步驟會重新產生並檢查說明；此操作不代表核准實作、測試或合併。");
   if (f.code === "deterministic.spec-missing") return t("Write the concrete draft correction or source file in the note, then choose Revise draft and continue. The same spec step runs again; dispatch still needs its own approval.", "請在備註寫出具體草稿修訂或來源檔，再選「修訂草稿並繼續」。原規格步驟會重新執行；派工仍須另外核准。");
+  if (f.code === "deterministic.re-propose") return t("Re-propose: Studio raises a new staffing card with the same providers, models and effort for the project as it is now. Nothing is approved until you approve that card; this run stays as it is.", "重新提出：Studio 用同樣的供應商、模型和推理強度，針對目前的專案發一張新的人員配置卡。你核准那張卡之前不會核准任何東西；這個 run 維持原狀。");
   if (f.code === "deterministic.prepare-again") return t("Prepare again: Studio goes back to the step before the card, runs the gates again and raises a new card. Nothing is merged before that card is answered.", "重新準備：Studio 回到卡片前一步，重跑 gate，再發一張新卡。新卡回答前不會合併任何東西。");
   if (NEW_TASK.has(f.code)) return t("Start a new task: it gets the same request and declared params and prepares everything again. This task stays as it is.", "開始新任務：它會用同樣的需求和已宣告的參數，重新準備一切。這個任務維持原狀。");
   const how = classHow(f, o);
