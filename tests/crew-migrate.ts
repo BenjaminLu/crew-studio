@@ -3,7 +3,7 @@ import { checkedTempDir } from "./lib/git-hygiene.mjs"; // temp folders only thr
 // Seeding the Studio team from approved staffing (docs/design/crew-seats.md), on a copy of a fixture data folder only:
 //   - the most recent approved code-firstmate staffing gives the members (worker → maker, reviewer, designer → design-reviewer)
 //   - the second maker takes an approved pick on another model than the maker's
-//   - another workflow whose approved picks differ becomes that workflow's overrides
+//   - another workflow whose approved picks differ becomes that workflow's overrides; a declared specialist seat takes its role's pick
 //   - running it again changes nothing (idempotent); an approval that does not verify seeds nothing; the fixture itself is never written
 //      bun tests/crew-migrate.ts
 import { cpSync, existsSync, readFileSync, writeFileSync, readdirSync, utimesSync } from "node:fs";
@@ -17,7 +17,7 @@ const { migrateCrew } = await import("../src/crew-migrate");
 const { CrewStore, resolveCrew, teamBody } = await import("../src/domain/crew");
 try {
   const fixture = checkedTempDir("crew-migrate-fixture-");
-  const defs = new WorkflowDefs(fixture, () => [bundledText("packs/firstmate/workflows/code-firstmate.wf.yaml")!, bundledText("workflows/v2/github-review.wf.yaml")!]);
+  const defs = new WorkflowDefs(fixture, () => [bundledText("packs/firstmate/workflows/code-firstmate.wf.yaml")!, bundledText("workflows/v2/github-review.wf.yaml")!, bundledText("workflows/v2/coffee-kit.wf.yaml")!]);
   const store = new StaffingStore(fixture);
   const skill = (ref: string) => store.remember({ ref, version: 1, text: `# ${ref}\n` });
   const approve = (workflow: string, project: string, picks: Record<string, [string, string, string | null]>, run: string, at: number) => {
@@ -28,6 +28,7 @@ try {
   };
   approve("code-firstmate", "old", { coordinator: ["claude", "old-c", null], worker: ["codex", "old-w", "low"], reviewer: ["claude", "old-r", null], designer: ["codex", "old-d", "low"] }, "R-1", 1000);
   approve("code-firstmate", "shop", { coordinator: ["claude", "opus-5.5", "high"], worker: ["codex", "gpt-6.1-sol", "medium"], reviewer: ["claude", "opus-5.5", "high"], designer: ["codex", "gpt-6-astra", "medium"] }, "R-7", 3000);
+  approve("coffee-kit", "cafe", { worker: ["codex", "gpt-6.1-sol", "medium"], "image-worker": ["codex", "gpt-image-fixture", "medium"], reviewer: ["claude", "opus-5.5", "high"], designer: ["codex", "gpt-6-astra", "medium"] }, "R-6", 2500);
   approve("github-review", "lib", { coordinator: ["claude", "opus-5.5", "high"], worker: ["claude", "sonnet-5.5", "high"], reviewer: ["claude", "opus-5.5", "high"], designer: ["codex", "gpt-6-astra", "medium"] }, "R-5", 2000);
   // a copy of the fixture: migration runs on the copy only
   const data = checkedTempDir("crew-migrate-copy-"); cpSync(fixture, data, { recursive: true });
@@ -41,6 +42,7 @@ try {
   ok(gr.build?.model === "sonnet-5.5" && gr.plan?.model === "sonnet-5.5" && gr.build?.provider === "claude" && !gr.review, "github-review's differing worker pick becomes overrides on its worker nodes only", JSON.stringify(gr));
   const res = resolveCrew(teamBody(team), defs.get("github-review"));
   ok(res.nodes.find((n) => n.node === "build")!.model === "sonnet-5.5" && res.nodes.find((n) => n.node === "build")!.source === "workflow", "the team gives github-review what was approved for it");
+  ok(team.seats["image-maker"]?.needs?.includes("image-generation") && team.members["image-maker"]?.model === "gpt-image-fixture", "coffee's approved image worker fills the image-maker specialist seat", JSON.stringify(team.seats));
   const m2 = migrateCrew(data, defs);
   ok(m2.status === "exists" && new CrewStore(data).current()!.version === 1, "a second run changes nothing (idempotent)");
   ok(!existsSync(join(fixture, "crew")) && readdirSync(fixture).sort().join() === before, "the fixture itself is never written");

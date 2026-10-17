@@ -42,7 +42,9 @@ export function installCrewGuard(engine:Engine,store:CrewStore){
   // the captain's own pick for this node on this Task (the run page) is a run override: it wins
   if(run.nodes?.[node?.id]?.agent)return prior;
   const own=nodeRole(run.def,node);
-  if(roleOverride&&roleOverride!==own||!rec.nodes[node?.id]){const j=rec.judges[judgeSeat(run.def,roleOverride)];return j?{provider:j.provider,model:j.model,effort:j.effort}:prior;}
+  // a judge turn (a check judging with a role) runs as a reviewing seat; a node the crew does not staff keeps the engine's own pick
+  if(roleOverride&&roleOverride!==own){const j=rec.judges[judgeSeat(run.def,roleOverride)];return j?{provider:j.provider,model:j.model,effort:j.effort}:prior;}
+  if(!rec.nodes[node?.id])return prior;
   const n=rec.nodes[node.id];return{provider:n.provider,model:n.model,effort:n.effort};};
  const previousPins=engine.deps.approvedNodePins;
  engine.deps.approvedNodePins=(run:any,node:any)=>{const prior=previousPins?.(run,node);if(prior!==undefined||!crewApplies(run?.def))return prior;const rec=recordOf(run),n=rec?.nodes[node?.id];return n?n.skills.map(p=>({id:p.id,v:p.v,sha256:p.sha256})):prior;};

@@ -142,6 +142,7 @@ try {
     ok(JSON.stringify(e.nodePins(run, run.def.nodes[0] as any).map((q: any) => q.id)) === JSON.stringify(["plain-writing", "accessible-ui"]), "the agent loads member skills then node skills");
     ok(e.instructionsUse(run, "designer", e.nodePins(run, run.def.nodes[0] as any)).skills.join() === "plain-writing@v1,accessible-ui@v1", "its instructions carry those pinned skills");
     ok(e.deps.approvedPick(run, run.def.nodes[0], "reviewer")?.model === "opus-5.5", "a judge turn runs as the reviewer seat");
+    ok(e.deps.approvedPick(run, { id: "elsewhere", kind: "loop" }, undefined) === undefined, "a node the crew does not staff keeps the engine's own pick");
     store.write({ ...C.teamBody(v1), members: { ...v1.members, maker: member("claude", "changed", "low", []) } }, v1.hash, { by: "captain", via: "page" });
     ok(x("a").pick().model === "gpt-6.1-sol", "a later team edit never changes a running Task");
     const t3 = C.teamBody(store.current()!); delete (t3.members as any)["alt-maker"]; store.write(t3, store.current()!.hash, { by: "captain", via: "page" });

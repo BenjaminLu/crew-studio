@@ -3,7 +3,7 @@
 // what that team would give become that workflow's overrides. Idempotent: a Studio that has a team is never touched.
 import {existsSync,readdirSync,readFileSync,statSync} from 'node:fs';
 import {join} from 'node:path';
-import {CrewStore,resolveCrew,slotsOf,type Team,type Member,type NodeOverride} from './domain/crew';
+import {CrewStore,resolveCrew,slotsOf,declaredSeats,type Team,type Member,type NodeOverride} from './domain/crew';
 import {StaffingStore,type StaffingConfig} from './domain/staffing';
 
 /** Which seat each staffed role seeds (code-firstmate and coffee-kit role ids). */
@@ -26,6 +26,10 @@ export function migrateCrew(dataDir:string,defs:{get(id:string,v?:number):any}):
  // the second maker: the first approved pick on another model than the maker's (A and B differ), else the maker's own
  if(members.maker&&!members['alt-maker']){const other=Object.values(c.roles).find(r=>r.model!==members.maker.model);members['alt-maker']=other?{...pickOf(other),effort:members.maker.effort}:{...members.maker};}
  const team:Team={schema:1,members,seats:{},workflows:{}},overrides:string[]=[];
+ // a specialist seat an approved workflow declares (coffee's image-maker): filled by the newest approved pick of the role on it
+ for(const{config}of all){const def=defs.get(config.workflow.id,config.workflow.version);if(!def)continue;
+  for(const role of def.roles??[]){const seat=role.seat,decl=declaredSeats(def).find(s=>s.id===seat),pick=config.roles[role.id];if(!seat||!decl||!pick||team.members[seat])continue;
+   team.seats[seat]=structuredClone(decl);team.members[seat]=pickOf(pick);}}
  // other approved workflows (newest first; one per workflow): a role pick the team would not give becomes an override on that role's nodes
  const seen=new Set<string>([`${c.workflow.id}`]);
  for(const{config}of all){if(seen.has(config.workflow.id))continue;seen.add(config.workflow.id);const def=defs.get(config.workflow.id,config.workflow.version);if(!def)continue;
