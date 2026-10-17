@@ -22,14 +22,15 @@ export type Studio = { name: string; base: string; data: string; root: string; a
 /**
  * The film the stub renderer copies into a render (CREW_RENDER_STUB_MP4, src/render.ts): a real
  * 1920x1080, 1 s H.264 MP4, made once per suite with the same ffmpeg command as
- * tests/non-code-workflows.ts (goodMp4), so the video readiness probe reads a real film. Without
+ * tests/non-code-workflows.ts (goodMp4) plus a short fade in and out (the video scenario asks for both, and
+ * readiness checks the fades on the rendered frames), so the video readiness probe reads a real film. Without
  * ffmpeg it is null with the reason, and the runs that need it are skipped, not passed.
  */
 export const filmSample: { path: string | null; reason: string | null } = (() => {
   const ffmpeg = Bun.which("ffmpeg"); if (!ffmpeg) return { path: null, reason: "ffmpeg is not on PATH: no real sample film for the stub renderer" };
   const dir = mkdtempSync(join(tmpdir(), "crew-acceptance-media-")), f = join(dir, "1920x1080.mp4");
   process.on("exit", () => { try { rmSync(dir, { recursive: true, force: true }); } catch {} });
-  const r = Bun.spawnSync([ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x102030:s=1920x1080:d=1:r=10", "-c:v", "libx264", "-pix_fmt", "yuv420p", f], { stdout: "pipe", stderr: "pipe" });
+  const r = Bun.spawnSync([ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x102030:s=1920x1080:d=1:r=10", "-vf", "fade=t=in:st=0:d=0.3,fade=t=out:st=0.7:d=0.3", "-c:v", "libx264", "-pix_fmt", "yuv420p", f], { stdout: "pipe", stderr: "pipe" });
   return r.exitCode === 0 ? { path: f, reason: null } : { path: null, reason: `ffmpeg could not make the sample film: ${r.stderr.toString().trim().slice(0, 300)}` };
 })();
 
