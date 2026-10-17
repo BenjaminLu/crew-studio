@@ -5,7 +5,7 @@ import { checkedTempDir } from "./lib/git-hygiene.mjs"; // repositories only in 
 // build, review, rootcause) run on the sandbox repository with the stub provider; every provider.start
 // is recorded with the text it was sent, and:
 //   - each mode's system text carries its role's pack skill body (coordinator, worker, reviewer);
-//   - the designer-compare judge gets the designer skill, spec judges the reviewer skill they declare (judge.role),
+//   - the designer round (a UI change) and its designer-compare judge get the designer skill, spec judges the reviewer skill they declare (judge.role),
 //     and every judge goes through the composer (Studio's safety rules first);
 //   - the refine loop's rootcause turns keep the coordinator nodes' skill pins (plain-writing);
 //   - the run's steps (the run page's Agent rounds panel) and each round record name the role skill
@@ -107,6 +107,8 @@ const intent = [
   "Add a percent function to money-kit",
   "STUB_FILE src/percent.ts :: // A percent of an amount in cents, rounded to the cent.\\nexport function percent(amount: number, pct: number): number {\\n  return Math.round((amount * pct) / 100); \\n}\\n",
   'STUB_FILE test/percent.test.ts :: import { expect, test } from "bun:test";\\ntest("percent rounds to the cent", async () => { const { percent } = await import("../src/percent"); expect(percent(1999, 15)).toBe(300); });\\n',
+  // a UI path too (policy ui_paths: **/*.html), so the designer round runs (diff-only: the sandbox declares no app)
+  "STUB_FILE public/percent.html :: <!doctype html><title>Percent</title><h1>15% of $19.99 is $3.00</h1>\\n",
   "STUB_FIX src/percent.ts :: / 100);  => / 100);",
 ].join("\n");
 const r = E.start({ workflow: "code-firstmate", text: intent, params: {} });
@@ -118,6 +120,7 @@ const merge = await waitCard("merge");
 ok(!!merge, "the run reaches the merge card (build ⇄ fix, review, judges)", `${E.get(r.id)!.status} ${E.get(r.id)!.error}`);
 const g = E.get(r.id)!;
 
+const L = (id: string, check: string) => E.ledger(id).filter((e: any) => e.check === check);
 const turns = (prefix: string) => starts.filter((s) => s.first.startsWith(prefix));
 const carries = (prefix: string, role: string) => { const t = turns(prefix); return t.length > 0 && t.every((s) => s.system.includes(pack(role).trim())); };
 const firstLines = JSON.stringify([...new Set(starts.map((s) => s.first))]);
@@ -129,7 +132,8 @@ ok(carries("ROOT CAUSE", "firstmate"), "rootcause: every provider.start carries 
 const plain = readFileSync(join(root, "packs/core/skills/plain-writing/SKILL.md"), "utf8");
 const plainBody = (await import("../src/skills")).splitFrontmatter(plain).body.trim();
 ok(turns("ROOT CAUSE").every((s) => s.system.includes("# Skill: plain-writing (v1)") && s.system.includes(plainBody)), "rootcause: the loop turn keeps the coordinator nodes' skill pin (plain-writing)");
-ok(carries("JUDGE designer-compare", "designer"), "the designer-compare judge gets the designer skill (packs/firstmate/skills/designer.md)", firstLines);
+ok(L(r.id, "firstmate/design-scope").at(-1)?.data?.route === "ui" && carries("DESIGN REVIEW", "designer"), "designer: the change touches UI, and every designer round's provider.start carries the designer skill (packs/firstmate/skills/designer.md)", firstLines);
+ok(carries("JUDGE designer-compare", "designer"), "the designer-compare judge (on the designer node) gets the designer skill (packs/firstmate/skills/designer.md)", firstLines);
 ok(carries("JUDGE no-impl-detail", "reviewer") && carries("JUDGE done-lines-observable", "reviewer") && !turns("JUDGE no-impl-detail").some((s) => s.system.includes(pack("firstmate").trim())),
   "spec judges work as the reviewer they declare (judge.role), never the coordinator judging its own spec", firstLines);
 ok(turns("JUDGE").length > 0 && turns("JUDGE").every((s) => s.system.startsWith(SAFETY_RULES)), "every judge's instructions go through the composer: Studio's safety rules first");
@@ -142,8 +146,9 @@ ok(step("build")?.roleSkill?.ref === "pack:firstmate/skills/worker.md" && step("
 ok(step("spec")?.roleSkill?.role === "coordinator" && step("spec").skills.join() === "plain-writing@v1", "the spec step names the coordinator skill and its node skill", JSON.stringify([step("spec")?.roleSkill, step("spec")?.skills]));
 ok(step("review")?.roleSkill?.sha256 === sha(pack("reviewer")), "the review step names the reviewer skill", JSON.stringify(step("review")?.roleSkill));
 ok(step("fix")?.roleSkill?.role === "coordinator" && step("fix").skills.includes("plain-writing@v1"), "the refine loop's step names its rootcause turn's role skill and kept pins", JSON.stringify([step("fix")?.roleSkill, step("fix")?.skills]));
-const dj = (step("review")?.judges ?? []).find((j: any) => j.check === "firstmate/designer-compare");
-ok(dj?.role === "designer" && dj.roleSkill?.ref === "pack:firstmate/skills/designer.md" && dj.roleSkill.sha256 === sha(pack("designer")), "the designer judge call is listed on the review step with the designer skill", JSON.stringify(step("review")?.judges));
+ok(step("designer")?.roleSkill?.role === "designer" && step("designer").roleSkill.ref === "pack:firstmate/skills/designer.md" && step("designer").roleSkill.sha256 === sha(pack("designer")), "the designer step names the designer skill", JSON.stringify(step("designer")?.roleSkill));
+const dj = (step("designer")?.judges ?? []).find((j: any) => j.check === "firstmate/designer-compare");
+ok(dj?.role === "designer" && dj.roleSkill?.ref === "pack:firstmate/skills/designer.md" && dj.roleSkill.sha256 === sha(pack("designer")), "the designer judge call is listed on the designer step with the designer skill", JSON.stringify(step("designer")?.judges));
 ok((step("spec")?.judges ?? []).some((j: any) => j.check === "firstmate/no-impl-detail" && j.role === "reviewer"), "the spec's judge calls are listed on its step with their role", JSON.stringify(step("spec")?.judges));
 const rec = join(data, "runs", r.id, "nodes", "build", "1", "prompt.md");
 ok(existsSync(rec) && readFileSync(rec, "utf8").includes(`"sha256":"${sha(pack("worker"))}"`) && /\nmode: "build"/.test(readFileSync(rec, "utf8")), "the round record's header names the mode and the role skill's sha256", existsSync(rec) ? readFileSync(rec, "utf8").slice(0, 600) : "no record");
