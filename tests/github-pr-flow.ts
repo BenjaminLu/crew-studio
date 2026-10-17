@@ -103,7 +103,7 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
   const prompts: string[] = []; let answer: (n: number) => any = () => null;
   (E.deps.agents as any).run = async (job: any) => { prompts.push(job.text); const t = job.tools.find((t: any) => t.name === "pull_request_text"); const a = answer(prompts.length); if (t && a) t.run(a); return { status: "done" }; };
   const fill = (extra: any = {}) => ({ title: "Format euro prices with the euro sign", sections: [
-    { heading: "Summary", text: "Euro prices now show the euro sign and thousands grouping." }, { heading: "Why", text: "Shoppers in the EU read prices wrongly.\nhttps://claude.ai/code/session_0123 should never reach GitHub" },
+    { heading: "Summary", text: "Euro prices now show the euro sign and thousands grouping." }, { heading: "Why", text: "Shoppers in the EU read prices wrongly.\nhttps://claude.ai/code/" + "session_0123 should never reach GitHub" },
     { heading: "Changes", text: "- Library: euro formatting" }, { heading: "How it was tested", text: "Fail-first tests on main, CI on the head." },
     { heading: "Screenshots", text: "No UI change" }, { heading: "Risk and rollback", text: "Low risk. Revert the pull request." }],
     ticks: [{ item: "Amounts stay integer cents end to end", evidence: "review" }, { item: "Docs and comments updated where behaviour changed", evidence: "made-up" }, { item: "`bun run lint` passes", evidence: "review" }], ...extra });
