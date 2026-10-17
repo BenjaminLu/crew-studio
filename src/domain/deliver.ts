@@ -9,7 +9,7 @@ import { folderTools } from "../agent";
 import { websiteHref, type ArtifactStore } from "../artifacts";
 import { bundledText } from "../bundled";
 import { mdToDocHtml, toDocx, toPdf } from "../docrender";
-import { probeVideo, runRender, renderEnv } from "../render";
+import { frameLuma, probeVideo, requestedSeconds, runRender, renderEnv } from "../render";
 import { imageRefinement, lineageText, requirementLineage } from "./image-refinement";
 import { briefFor } from "../runtime/refine";
 import { mergeDetail } from "./mergecard";
@@ -112,6 +112,22 @@ export function installDeliver(engine: Engine, d: Deps) {
   const previousRunInput = engine.artifacts.run;
   engine.artifacts.run = x => x.ctx.deliver ? ({ type: "run", data: refs(x), version: x.ctx.head }) : previousRunInput?.(x) ?? ({ type: "run", id: x.run.id });
   for (const t of ["web", "document", "video"]) engine.artifacts[t] = x => { const r = x.node.args?.producer === "all" ? refs(x)[0] : ref(x); return { type: t, path: st.file(r.id, r.n, entry(r.format)), version: r.n, data: r }; };
+  // what the captain asked of the film, checked on the rendered MP4 itself: its length (ffprobe/ffmpeg, else the
+  // renderer's own metadata), that it is not all black, and the fades the captain named (ffmpeg frame samples)
+  const filmFindings = async (x: X, v: any, mp4: string, probed: number | null) => {
+    const out: { message: string; expected: string; cls: string }[] = [];
+    const asked = [x.run.text, ...((v?.refinement?.active ?? []) as any[]).map(q => String(q.comment ?? ""))], said = asked.join("\n");
+    const want = requestedSeconds(asked), dur = probed ?? (typeof v?.render?.dur === "number" ? v.render.dur : null);
+    if (want && dur !== null && Math.abs(dur - want) > Math.max(0.5, want * 0.1)) out.push({ message: `rendered MP4 runs ${dur.toFixed(1)} s; the captain asked for ${want} s`, expected: `set DUR to ${want} so the film runs ${want} s, and pace the beats to fill it`, cls: "video-duration" });
+    const len = dur ?? 1, at = (t: number) => frameLuma(mp4, Math.max(0, Math.min(t, len - Math.min(0.2, len / 4))));
+    const samples = await Promise.all([0.1, 0.5, 0.9].map(f => at(len * f)));
+    if (samples.every(l => l !== null && l < 6)) out.push({ message: "every sampled frame of the rendered MP4 is black", expected: "make the film's content visible on #stage: check opacity, colours and that render(t) draws each beat", cls: "video-black" });
+    if (/\bfad(?:e|es|ed|ing)[\s-]?in\b|淡入/i.test(said)) { const [a, b] = await Promise.all([at(0), at(Math.min(1.5, len / 3))]);
+      if (a !== null && b !== null && !(a < 12 || a < b * 0.6)) out.push({ message: "the captain asked for a fade-in, but the first frame is already at full brightness", expected: "start the film from black (opacity 0) and fade it in over the first second", cls: "video-fade" }); }
+    if (/\bfad(?:e|es|ed|ing)[\s-]?out\b|淡出/i.test(said)) { const [a, b] = await Promise.all([at(len), at(len * 2 / 3)]);
+      if (a !== null && b !== null && !(a < 12 || a < b * 0.6)) out.push({ message: "the captain asked for a fade-out, but the last frame is still at full brightness", expected: "fade the film to black (opacity 0) over its last second", cls: "video-fade" }); }
+    return out;
+  };
   const readiness = async (x: X, r: any) => {
     const a = st.get(r.id), v = st.version(r.id, r.n); const findings: any[] = [];
     const bad = (message: string, expected: string, cls: string) => findings.push({ locator: r.format === "document" ? { type: "text", section: "source", start: 0, end: 1 } : r.format === "video" ? { type: "timeline", from: 0, to: 1 } : { type: "web", url: `#/review/${r.id}/${r.n}`, selector: "body", viewport: { width: 1280, height: 720 } }, message, expected, class: cls, severity: "blocking" });
@@ -131,6 +147,7 @@ export function installDeliver(engine: Engine, d: Deps) {
       else if (probe.kind === "no-video") bad("rendered MP4 has no video stream (audio only)", "keep DUR long enough for at least two frames and #stage visible so the render has video", "video-stream");
       else if (probe.kind === "unreadable") bad(`the rendered MP4 cannot be read by ${probe.tool}`, "re-render this exact film version with a working local renderer; the film itself needs no change", "renderer-unavailable");
       else if (!((probe.width === 1920 && probe.height === 1080) || (probe.width === 1080 && probe.height === 1920))) bad(`rendered MP4 is ${probe.width}x${probe.height}, not 1920x1080 or 1080x1920`, "make #stage a fixed 960x540 px box (540x960 vertical), never vw/vh/%, so the render is exactly 1920x1080 (1080x1920)", "video-size");
+      if (probe.kind === "size") for (const f of await filmFindings(x, v, mp4!, probe.duration ?? null)) bad(f.message, f.expected, f.cls);
     }
     return findings;
   };
@@ -144,7 +161,7 @@ export function installDeliver(engine: Engine, d: Deps) {
     const result = await job.done; if (x.cancelled()) throw new Error("cancelled");
     const notes = Array.isArray(result.info?.notes) ? result.info.notes.map(String).slice(0, 8) : [];
     const code = result.ok ? null : typeof result.info?.code === "string" ? result.info.code.slice(0, 40) : null;
-    st.setRender(r.id, r.n, { state: result.ok ? "done" : "failed", detail: result.error ?? (notes.join("; ") || null), ms: result.ms, ...(result.ok ? { orient: Number(result.info?.height) > Number(result.info?.width) ? "portrait" as const : "landscape" as const } : {}), ...(result.ok ? { normalized: !!result.info?.normalized, notes } : {}), ...(code ? { code } : {}) });
+    st.setRender(r.id, r.n, { state: result.ok ? "done" : "failed", detail: result.error ?? (notes.join("; ") || null), ms: result.ms, ...(result.ok ? { orient: Number(result.info?.height) > Number(result.info?.width) ? "portrait" as const : "landscape" as const } : {}), ...(result.ok ? { normalized: !!result.info?.normalized, notes, dur: Number.isFinite(Number(result.info?.dur)) ? Number(result.info.dur) : null, width: Number(result.info?.width) || null, height: Number(result.info?.height) || null } : {}), ...(code ? { code } : {}) });
     if (notes.length) x.rn.note = notes.join("; ");
     if (result.ok && existsSync(out)) st.attach(r.id, r.n, "render.mp4", out);
     return result.ok ? "ok" : "unavailable";

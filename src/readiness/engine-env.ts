@@ -7,6 +7,7 @@ import { localExecutionNotice } from "../local-execution";
 import { OperatingRules, jobInstructions } from "../operating-rules";
 import { roundPathRefusal, roundWorkPath } from "../runtime/round-paths";
 import { briefFor } from "../runtime/refine";
+import { renderEnv } from "../render";
 import type { Engine, Run } from "../runtime/engine";
 import type { WDef, WNode } from "../runtime/defs";
 import { sourceBoundBrief, type ContractEnv, type LoginState, type Sample } from "./stages";
@@ -46,6 +47,7 @@ export function engineEnv(d: EngineEnvDeps) {
     forbidden: [{ label: "Studio runs", path: join(d.dataDir, "runs") }, { label: "Studio data", path: d.dataDir }, ...(d.repoRoot ? [{ label: "the repository root", path: d.repoRoot }] : []), ...d.protectedRoots.map((p) => ({ label: "a protected root", path: p }))],
     egressAllow: (df) => ([] as any[]).concat(engine.policies.get("egress.allow", { project: null, workflow: df.policies ?? null }).value ?? []).map(String),
     startInputs: sample.params,
+    render: () => { const r = renderEnv(); return { canFilm: r.canFilm, missing: [!r.node && "Node.js", !r.playwright && "Playwright with Chromium", !r.ffmpeg && "ffmpeg"].filter(Boolean) as string[] }; },
   });
   /** Each agent node's exact brief for the sample input: the system text the round gets (safety rules, role, skills) and its prompt. */
   const briefs = (def: WDef, sample: Sample) => def.nodes.filter((n) => n.kind === "agent").map((n) => {

@@ -112,7 +112,7 @@
     "test:board-start": "bun tests/board-start.ts && node tests/board-start-ui.mjs && node tests/board-folder-ui.mjs",
     "test:hello-web": "bun tests/hello-web.ts && node tests/hello-web-ui.mjs",
     "test:workflow-complete": "bun tests/workflow-templates.ts && node tests/workflow-complete-ui.mjs",
-    "test:deliverables": "bun tests/deliver-lineage.ts && bun tests/deliver-documents.ts",
+    "test:deliverables": "bun tests/deliver-lineage.ts && bun tests/deliver-documents.ts && bun tests/deliver-video.ts",
     "test:deliver-inputs": "bun tests/deliver-role-inputs.ts && bun tests/workflow-design-skill.ts",
     "test:workflow-brief": "bun tests/own-workflow-brief.ts && node tests/own-workflow-brief-ui.mjs",
     "test:workflow-config": "bun tests/workflow-saved-staffing.ts && bun tests/staffing-candidate-models.ts && bun tests/workflow-design-skill.ts",

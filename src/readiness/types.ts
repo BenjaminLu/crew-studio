@@ -6,7 +6,7 @@
 export type StageId = "intent" | "contract" | "brief" | "dryrun" | "smoke";
 export const STAGES: StageId[] = ["intent", "contract", "brief", "dryrun", "smoke"];
 export type L2 = { en: string; zh: string };
-export type CaptainNeed = "sign-in" | "egress" | "staffing" | "one-way";
+export type CaptainNeed = "sign-in" | "egress" | "staffing" | "one-way" | "install";
 export type GateProblem = {
   stage: StageId; code: string; node: string | null;
   /** error fails the stage; notice is shown to the captain and never fails it (staffing confirmed at Run) */

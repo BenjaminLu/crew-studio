@@ -11,6 +11,7 @@ import { localExecutionNotice } from "./local-execution";
 import { accessSync, constants, existsSync } from "node:fs";
 import { homedir, platform, tmpdir } from "node:os";
 import { join } from "node:path";
+import { HYPERFRAMES_VERSION } from "./render/hyperframes";
 
 export type Status = "ok" | "degraded" | "missing" | "info";
 export type Action = { kind: "install"; item: string } | { kind: "login"; item: string } | { kind: "github" } | { kind: "keys" } | { kind: "phone" } | { kind: "none" };
@@ -110,6 +111,8 @@ export type DoctorInput = {
   keys: { anthropic: string | null; openai: string | null; compatBaseUrl: string | null }; chatProvider: string; lanIp: string | null;
   tailscale: { installed: boolean; running: boolean; dnsName: string | null }; claudeBin?: string; codexBin?: string; compiled: boolean;
   render?: { node: string | null; ffmpeg: string | null; ffprobe?: string | null; playwright: string | null };
+  /** the pinned HyperFrames film tools (src/render/coffee-film.ts discovery): ready, or why not */
+  film?: { ready: boolean; reason?: string | null };
   /** the egress proxy agent rounds go through */
   egress?: { running: boolean; port: number; rounds: number };
   /** how claude rounds sign in: the login Studio hands them (v1 option A) */
@@ -190,6 +193,14 @@ export function diagnose(i: DoctorInput): Item[] {
       detail: r.node && r.playwright ? `Node and Playwright detected; Chromium and actual capture execution are unverified.` : !r.node ? "node not installed" : "Playwright and Chromium not installed",
       adds: "Screenshot crops of web pins and the frames of a film render.", fix: r.node && r.playwright ? "" : !r.node ? "Install Node.js first, then the renderer." : "Install Playwright with Chromium (no admin rights).",
       action: r.node && r.playwright ? { kind: "none" } : { kind: "install", item: !r.node ? "node" : "renderer" } });
+    // one row answers "can a film be rendered?": the Video workflow's renderer (Node, Playwright + Chromium, ffmpeg) and the pinned HyperFrames tools
+    const video = !!(r.node && r.playwright && r.ffmpeg), hf = i.film?.ready === true, lacking = [!r.node && "Node.js", !r.playwright && "Playwright + Chromium", !r.ffmpeg && "ffmpeg"].filter(Boolean) as string[];
+    items.push({ id: "film-renderer", title: "Film renderer (Video workflow, HyperFrames)", titleZh: "影片轉檔（影片流程、HyperFrames）", status: video && (hf || !i.film) ? "ok" : video || hf ? "degraded" : "info",
+      detail: `Video workflow: ${video ? "ready (Chromium launch unverified until a render)" : `missing ${lacking.join(", ")}`}.${i.film ? ` HyperFrames ${HYPERFRAMES_VERSION}: ${hf ? "ready" : `not ready: ${String(i.film.reason ?? "tools not installed").slice(0, 200)}`}.` : ""}`,
+      detailZh: `影片流程：${video ? "可用（實際轉檔前未驗證 Chromium 能啟動）" : `缺少 ${lacking.join("、")}`}。${i.film ? `HyperFrames ${HYPERFRAMES_VERSION}：${hf ? "可用" : "尚未就緒"}。` : ""}`,
+      adds: "Rendering a film to MP4 and checking its size, length, frames and fades before acceptance.", addsZh: "把影片轉成 MP4，並在驗收前檢查尺寸、長度、畫面與淡入淡出。",
+      fix: video ? (i.film && !hf ? `For the coffee film, install the pinned tools: npm install --prefix ~/.crew-studio/tools hyperframes@${HYPERFRAMES_VERSION} node@22.22.0 gsap@3.14.2` : "") : `Install ${lacking.join(", ")} (the rows above).`,
+      action: video ? { kind: "none" } : { kind: "install", item: !r.node ? "node" : !r.playwright ? "renderer" : "ffmpeg" } } as any);
   }
   const lock = !!which("ps") && !!which("lsof");
   items.push({ id: "lock", title: "ps / lsof (driver lock)", status: lock ? "ok" : "degraded", detail: lock ? "built into the OS" : "missing: Studio cannot tell whether a terminal holds the session",
@@ -237,9 +248,10 @@ export function diagnose(i: DoctorInput): Item[] {
     if (item.id === "ffprobe") item.availability = i.render?.ffprobe ? "available" : "missing";
     // A detected Playwright module alone does not prove Chromium is installed or runnable.
     if (item.id === "renderer" && !(i.render?.node && i.render?.playwright)) item.availability = "missing";
+    if (item.id === "film-renderer") item.availability = i.render?.node && i.render?.playwright && i.render?.ffmpeg ? "available" : "missing";
     if (item.id === "lock") item.availability = lock ? "available" : "missing";
     if (item.id === "sandbox") item.availability = sb.ok ? "available" : present("/usr/bin/sandbox-exec") ? "unusable" : "missing";
-    item.group ??= ["native","assets"].includes(item.id)?"basic":["state","board","github","lan","tailscale","ffmpeg","ffprobe","renderer"].includes(item.id)?"optional":"coding";
+    item.group ??= ["native","assets"].includes(item.id)?"basic":["state","board","github","lan","tailscale","ffmpeg","ffprobe","renderer","film-renderer"].includes(item.id)?"optional":"coding";
   }
   return items;
 }

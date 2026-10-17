@@ -66,6 +66,8 @@ export type ContractEnv = {
   egressAllow: (def: WDef) => string[];
   /** the Start inputs: what the Run form collects (the gate's sample input) */
   startInputs: Record<string, string>;
+  /** the local film renderer (src/render.ts renderEnv): a video workflow cannot verify its MP4 without it */
+  render?: () => { canFilm: boolean; missing: string[] };
   /** params a registered action or mode reads (later: the single-source param contracts) */
   reads?: (doName: string) => string[];
 };
@@ -205,6 +207,13 @@ export function contractStage(def: WDef, env: ContractEnv): GateProblem[] {
       for (const e of def.edges) if (e.from === id && !(e.when && e.when.split("|").every((w) => ok.includes(w)))) q.push(e.to); }
     for (const n of def.nodes) if (isExternalEffect(n) && seen.has(n.id)) add("external-unguarded", n, { en: `${n.label} (${n.do}) changes something outside Studio, and a path reaches it without a one-way captain card first.`, zh: `「${n.label}」（${n.do}）會改動 Studio 以外的東西，但有路徑不經過船長的單向確認卡就能到達。` }, { en: `Put a captain-only one-way card (card_kind acceptance or merge) before ${n.label} on every path.`, zh: `在每條通往「${n.label}」的路徑上，先放一張只限船長的單向確認卡（acceptance 或 merge）。` });
   }
+  // 9 a video workflow renders its film: the render environment is checked here, not discovered at the render step
+  const films = def.nodes.filter((n) => n.do === "deliver.render" || (n.kind === "agent" && n.mode === "deliver" && n.args?.format === "video"));
+  const r = films.length ? env.render?.() : null;
+  if (r && !r.canFilm) { const n = films.find((x) => x.do === "deliver.render") ?? films[0];
+    add("renderer-missing", n, { en: `${n.label}: the local film renderer is missing (${r.missing.join(", ")}), so no MP4 can be rendered or checked.`, zh: `「${n.label}」：缺少本機影片轉檔工具（${r.missing.join("、")}），無法轉出或檢查 MP4。` },
+      { en: "Install the missing renderer parts from Doctor, then run the gate again.", zh: "在 Doctor 安裝缺少的轉檔元件後，再跑一次檢查。" },
+      { owner: "captain", need: "install", note: { en: `Install ${r.missing.join(", ")} from Doctor so the video workflow can render and check its MP4.`, zh: `請在 Doctor 安裝 ${r.missing.join("、")}，影片流程才能轉出並檢查 MP4。` } }); }
   return out;
 }
 

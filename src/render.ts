@@ -84,7 +84,7 @@ export function runRender(dataDir: string, mode: "film" | "stills" | "crop" | "p
 // a 1×1 transparent PNG
 const PNG1 = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
 
-export type VideoProbe = { kind: "size"; width: number; height: number; tool: "ffprobe" | "ffmpeg" } | { kind: "no-video"; tool: "ffprobe" | "ffmpeg" } | { kind: "unreadable"; tool: "ffprobe" | "ffmpeg" } | { kind: "no-tool" };
+export type VideoProbe = { kind: "size"; width: number; height: number; tool: "ffprobe" | "ffmpeg"; duration?: number | null } | { kind: "no-video"; tool: "ffprobe" | "ffmpeg" } | { kind: "unreadable"; tool: "ffprobe" | "ffmpeg" } | { kind: "no-tool" };
 const capture = async (argv: string[], ms: number) => {
   const p = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe", stdin: "ignore" }); const timer = setTimeout(() => { try { p.kill(); } catch {} }, ms);
   const [out, err, code] = await Promise.all([new Response(p.stdout as any).text(), new Response(p.stderr as any).text(), p.exited]); clearTimeout(timer);
@@ -95,10 +95,10 @@ export async function probeVideo(file: string): Promise<VideoProbe> {
   const env = renderEnv();
   if (env.ffprobe) {
     try {
-      const r = await capture([env.ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "json", file], 10000);
+      const r = await capture([env.ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height:format=duration", "-of", "json", file], 10000);
       if (r.code !== 0) return { kind: "unreadable", tool: "ffprobe" };
-      const s = JSON.parse(r.out).streams?.[0];
-      return s && Number.isInteger(s.width) && Number.isInteger(s.height) ? { kind: "size", width: s.width, height: s.height, tool: "ffprobe" } : { kind: "no-video", tool: "ffprobe" };
+      const j = JSON.parse(r.out), s = j.streams?.[0], d = Number(j.format?.duration);
+      return s && Number.isInteger(s.width) && Number.isInteger(s.height) ? { kind: "size", width: s.width, height: s.height, tool: "ffprobe", duration: Number.isFinite(d) ? d : null } : { kind: "no-video", tool: "ffprobe" };
     } catch { return { kind: "unreadable", tool: "ffprobe" }; }
   }
   if (env.ffmpeg) {
@@ -106,9 +106,27 @@ export async function probeVideo(file: string): Promise<VideoProbe> {
       // `ffmpeg -i` with no output lists the streams on stderr and exits 1
       const r = await capture([env.ffmpeg, "-hide_banner", "-nostdin", "-i", file], 10000);
       const v = /Stream #\d+:\d+[^\n]*?: Video: [^\n]*?\b(\d{2,5})x(\d{2,5})\b/.exec(r.err);
-      if (v) return { kind: "size", width: Number(v[1]), height: Number(v[2]), tool: "ffmpeg" };
+      const d = /Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/.exec(r.err);
+      if (v) return { kind: "size", width: Number(v[1]), height: Number(v[2]), tool: "ffmpeg", duration: d ? Number(d[1]) * 3600 + Number(d[2]) * 60 + Number(d[3]) : null };
       return /Input #0/.test(r.err) ? { kind: "no-video", tool: "ffmpeg" } : { kind: "unreadable", tool: "ffmpeg" };
     } catch { return { kind: "unreadable", tool: "ffmpeg" }; }
   }
   return { kind: "no-tool" };
+}
+/** Mean brightness (0-255) of the frame at t seconds, from a 16x9 grey scale-down; null without ffmpeg or a frame. */
+export async function frameLuma(file: string, t: number): Promise<number | null> {
+  const ffmpeg = renderEnv().ffmpeg; if (!ffmpeg) return null;
+  try {
+    const p = Bun.spawn([ffmpeg, "-v", "error", "-nostdin", "-ss", String(Math.max(0, t)), "-i", file, "-frames:v", "1", "-vf", "scale=16:9,format=gray", "-f", "rawvideo", "pipe:1"], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
+    const timer = setTimeout(() => { try { p.kill(); } catch {} }, 10000);
+    const [bytes, code] = await Promise.all([new Response(p.stdout as any).arrayBuffer(), p.exited]); clearTimeout(timer);
+    const b = new Uint8Array(bytes); if (code !== 0 || !b.length) return null;
+    let sum = 0; for (const v of b) sum += v; return sum / b.length;
+  } catch { return null; }
+}
+/** The film length the captain asked for, in seconds: the last "10 s", "10-second", "1 minute", "10 秒" in the texts given (latest word wins). */
+export function requestedSeconds(texts: string[]): number | null {
+  let found: number | null = null;
+  for (const t of texts) for (const m of String(t ?? "").matchAll(/(\d+(?:\.\d+)?)\s*-?\s*(seconds?|secs?|s|minutes?|mins?|秒|分鐘)(?![a-z])/gi)) { const n = Number(m[1]); if (n > 0 && n <= 3600) found = /^(m|分)/i.test(m[2]) ? n * 60 : n; }
+  return found;
 }

@@ -257,7 +257,7 @@ function setLan(on: boolean): { ok: boolean; error?: string } {
 const installs = new Installs(process.env.CREW_INSTALL_RUNNER === "mock" ? new MockRunner() : new RealRunner());
 let doctorCache: Item[] = [];
 const doctor = () => (doctorCache = diagnose({ state: STATE, legacy: startup.legacy, board: board.status(), gh: gh.state, keys: keyStatus() as any, chatProvider: chatInfo().provider, lanIp: lanIp(),
-  tailscale: ts, compiled: COMPILED, render: renderEnv(), egress: egress.status(), codexAccount:codexAccount.view(), operatingRules: (() => { const r = new OperatingRules(DATA); return { studio: r.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, ...r.project(x.id) })) }; })(), gitConfig: gitConfigNow(), roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined }));
+  tailscale: ts, compiled: COMPILED, render: renderEnv(), film: coffeeTools.ready ? { ready: true } : { ready: false, reason: coffeeTools.reason }, egress: egress.status(), codexAccount:codexAccount.view(), operatingRules: (() => { const r = new OperatingRules(DATA); return { studio: r.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, ...r.project(x.id) })) }; })(), gitConfig: gitConfigNow(), roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined }));
 installs.onChange = (j, line) => send("install", { id: j.id, item: j.item, state: j.state, code: j.code, line: line ?? null });
 installs.onFinished = () => { refreshTs(); send("doctor", doctor()); };
 
