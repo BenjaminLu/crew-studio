@@ -3,6 +3,7 @@
   "name": "Web Prototype",
   "kind": "web",
   "version": 1,
+  "description": "Two web page designs side by side from one brief, checked and revised, then you accept one into the Library.",
   "intent": {
     "keywords": [
       "web-prototype",

@@ -59,7 +59,10 @@ export function validate(src: PackSource): Validation & { manifest: Manifest | n
   for (const g of m.gates) gateOk(g, "gates");
   for (const t of m.artifactTypes) if (!t?.id || !t?.label) errors.push("artifactTypes: each needs id and label");
   for (const p of m.permissions) if (!PERMS.has(String(p))) errors.push(`permissions: ${p} is not allowed (allowed: ${[...PERMS].join(", ")})`);
-  if (!m.workflows.length) errors.push("workflows: a pack needs at least one workflow");
+  // a supplier pack has no workflow of its own: it carries the skills and checks of the native workflows it names (supplies: [coffee-kit])
+  const supplies = Array.isArray((m as any).supplies) ? (m as any).supplies.map(String) : [];
+  for (const id of supplies) if (bundledText(`workflows/v2/${id}.wf.yaml`) == null) errors.push(`supplies: ${id} is not a built-in workflow`);
+  if (!m.workflows.length && !supplies.length) errors.push("workflows: a pack needs at least one workflow (or supplies: the built-in workflows whose skills and checks it carries)");
   for (const wf of m.workflows) {
     const t = src.read(wf); if (t == null) { errors.push(`workflows: ${wf} is missing`); continue; }
     let f: Flow; try { f = parseYaml(t); } catch (e: any) { errors.push(`${wf} does not parse: ${e?.message ?? e}`); continue; }
@@ -79,7 +82,8 @@ export function validate(src: PackSource): Validation & { manifest: Manifest | n
       if (!roles.has(c.role)) warnings.push(`${ef}: case ${c.id} is for role ${c.role}, which has no skill`); cases.push({ ...c, file: ef }); }
   }
   for (const r of roles) if (!cases.some((c) => c.role === r)) warnings.push(`role ${r} has no eval case`);
-  if (!cases.length) errors.push("evals: a pack needs at least one eval case");
+  if (!cases.length && !supplies.length) errors.push("evals: a pack needs at least one eval case");
+  else if (!cases.length) warnings.push("evals: no eval case; the supplied workflows' own checks and acceptance runs cover its skills");
   return { ok: !errors.length, errors, warnings, manifest: m, flows, cases };
 }
 

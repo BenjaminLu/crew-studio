@@ -3,6 +3,7 @@
   "name": "Coffee Shop Kit",
   "kind": "coffee-kit",
   "version": 1,
+  "description": "A coffee shop's web page, image and short film from one approved design plan: each part is made, checked and reviewed together, then saved to the Library.",
   "intent": {
     "keywords": [
       "coffee-kit"

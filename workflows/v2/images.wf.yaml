@@ -3,6 +3,7 @@
   "name": "Images",
   "kind": "image",
   "version": 1,
+  "description": "One PNG image made with Codex from your description, checked, then accepted by you and saved to the Library.",
   "intent": {
     "keywords": [
       "image",

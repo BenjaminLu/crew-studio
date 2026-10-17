@@ -3,6 +3,7 @@
   "name": "Video",
   "kind": "video",
   "version": 1,
+  "description": "A short film: an editor writes it as HTML, Studio renders the MP4 (the renderer is an optional install), checks it, and you accept it into the Library.",
   "intent": {
     "keywords": [
       "video",

@@ -3,6 +3,7 @@
   "name": "Documents",
   "kind": "doc",
   "version": 1,
+  "description": "A written document: a writer drafts it, readiness checks and revision rounds follow, you accept it, and it is saved to the Library and exported.",
   "intent": {
     "keywords": [
       "documents",

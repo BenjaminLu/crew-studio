@@ -10,6 +10,8 @@ skills:
   - { role: video-renderer, file: skills/hyperframes.md }
 gates: []
 artifactTypes: []
+# no workflow of its own: the skills and checks of the built-in coffee-kit workflow (workflows/v2/coffee-kit.wf.yaml)
+supplies: [coffee-kit]
 workflows: []
 evals: []
 permissions: [agent]
