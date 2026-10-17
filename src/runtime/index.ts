@@ -15,6 +15,7 @@ import {StaffingStore,staffingHash,installStaffingGuard,coffeeStaffingProject,st
 import {CrewStore} from '../domain/crew';
 import {installCrewGuard} from '../crew-guard';
 import {installCrewStaffing} from '../crew-staffing';
+import {migrateCrew} from '../crew-migrate';
 import {installFirstmateStaffing,staffingQuotaReady,type StaffingFacts,type StaffingAdmission} from '../firstmate-staffing';
 import {installFirstmate} from "../firstmate";
 import {WorkflowDrafts,installWorkflowDraftTools,draftRoute,ownStaffingPlan,ownWorkflow,checkNodeStaffing,ownBrief} from "../workflow-drafts";
@@ -140,6 +141,8 @@ export function createRuntime(d: RuntimeDeps) {
   // the Studio-wide team (docs/design/crew-seats.md): a staffed workflow's project staffing is derived from it when it covers the
   // workflow; every other workflow's Task records the crew it started with
   const crewStore=new CrewStore(d.dataDir);
+  // a Studio that already approved staffing gets its team seeded from it once (idempotent; src/crew-migrate.ts)
+  try{const m=migrateCrew(d.dataDir,defs);if(m.status==='seeded')d.log.emit({type:'crew_seeded',summary:`team seeded from ${m.from!.workflow} v${m.from!.version} (${m.from!.project}); ${m.overrides!.length} workflow overrides`});}catch(e:any){console.warn(`crew-studio: team migration: ${e?.message??e}`);}
   const crewStaffing=installCrewStaffing(engine,staffing,crewStore);
   const staffingGuard=installStaffingGuard(engine,staffing,staffingProject,staffingCapability,(def,config)=>crewStaffing.verify(def,config));
   const crewGuard=installCrewGuard(engine,crewStore);
