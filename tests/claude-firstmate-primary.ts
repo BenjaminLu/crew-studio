@@ -120,7 +120,8 @@ try {
   ok(existsSync(join(data, "claude-firstmate", "projects")), "the transcript lives in Studio's config folder, apart from ~/.claude");
   const v1 = await view();
   ok(v1.host === "claude" && v1.sessionId === first && v1.drive?.path === "fresh" && v1.driver.holder === "studio" && v1.driver.sessionId === first && v1.driver.host === "claude", "the driver lock and view name the Claude primary and its id");
-  ok(v1.log.some((l: any) => l.kind === "firstmate" && /echo: Coffee onboarding/.test(l.text)), "the native Firstmate introduction is its first message");
+  // the introduction opens with the captain's dashboard language (2cdb845); the stub echoes its first line
+  ok(v1.log.some((l: any) => l.kind === "firstmate" && /^echo: The captain’s current dashboard language is English\. Greet the captain/.test(l.text)), "the native Firstmate introduction is its first message");
   ok(!a.includes("--dangerously-skip-permissions") && !a.includes("bypassPermissions") && a[a.indexOf("--permission-mode") + 1] === "auto" && a[a.indexOf("--permission-prompt-tool") + 1] === "mcp__studio_permission__approve" && !a.includes("--permission-prompts") && a.includes("--strict-mcp-config"), "auto permission mode by default; the permission bridge still answers whatever auto mode escalates; no bypass, only Studio's MCP servers");
   ok(v1.drive?.permissionMode === "auto" && okPre.permissionMode === "auto", "the view and the preflight both say the permission mode is auto");
   ok(v1.drive?.effectivePermissionMode === "auto", "the view records the mode Claude itself reported at init (effective), next to the requested one");
