@@ -134,7 +134,7 @@ nodes:
     x: 2070
     y: 40
   # the app is declared but its captures are missing: a typed env gap, Firstmate first; only its escalation reaches the captain
-  - { id: design-gap, kind: agent, label: Capture gap, detail: "Firstmate routes the env gap", role: coordinator, mode: design-gap, retries: 1, timeout_s: 600, x: 2240, y: 40 }
+  - { id: design-gap, kind: agent, label: Capture gap, detail: "Firstmate routes the env gap", role: coordinator, mode: design-gap, retries: 1, timeout_s: 600, skills: [{ id: plain-writing, v: 1, sha256: "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467" }], x: 2240, y: 40 }
   - id: design-gap-card
     kind: card
     label: Capture gap card
