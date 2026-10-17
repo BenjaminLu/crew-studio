@@ -1273,23 +1273,32 @@ export class Engine {
     if (r.status !== "failed" || r.archived || r.parked || r.ctx.firstmateQuestion || !this.trusted(id).ok) throw new Error("Only a trusted, unarchived failed task without a pending Firstmate question can be diagnosed");
     const old = r.failureCard ? this.cards.get(r.failureCard) : null;
     const intent = old && this.trusted(id).entries.find(e => e.record === "failure-reclassified" && e.data?.card === old.id);
-    const reclassify = !!old && (old.status === "open" || (old.status === "cancelled" && !!intent)) && old.failure?.code === "internal.unmapped" && codeOf(old.failure.message) === "deterministic.brief-quality";
-    if (r.failureCard && !reclassify) return old;
-    if (!reclassify && this.cards.list({run:id,open:true}).some(c => c.id !== old?.id)) throw new Error("Resolve the existing card first");
     const terminal = this.events(id).filter(e => e.type === "failed").at(-1);
     const node = r.def.nodes.find(n => n.id === terminal?.node), last = r.steps.at(-1);
     const rn = node && r.nodes[node.id];
-    if (!node || !rn || !last || last.node !== node.id || last.visit !== rn.visits || !rn.outcome || ["running", "pending", "waiting", "skipped"].includes(rn.state)) throw new Error("The failed source node is ambiguous; no recovery card was created");
-    if (reclassify && (node.kind !== "loop" || old!.node !== node.id || old!.visit !== rn.visits || codeOf(String(rn.error ?? "")) !== "deterministic.brief-quality")) throw new Error("The failed source node is ambiguous; no recovery card was created");
-    const f = reclassify ? failure("deterministic.brief-quality", rn.error, {source:"engine",run:id,node:node.id,visit:rn.visits,inputs:this.failureInputs(r,node),diagnostics:old!.failure!.diagnostics}) : this.failureOf(r, node, rn.outcome);
+    const unambiguous = !!node && !!rn && !!last && last.node === node.id && last.visit === rn.visits && !!rn.outcome && !["running", "pending", "waiting", "skipped"].includes(rn.state);
+    // a card an older release raised as a Studio bug is classified again with the current rules; it is replaced when its class or its actions changed
+    const reach = this.newTaskReach(r);
+    let fresh: Failure | null = null;
+    if (old && (old.status === "open" || (old.status === "cancelled" && !!intent)) && old.failure?.class === "internal" && unambiguous && old.node === node!.id && old.visit === rn!.visits) {
+      const cur = this.failureOf(r, node!, rn!.outcome!, { fresh: true });
+      const g = { ...cur, diagnostics: cur.diagnostics ?? old.failure.diagnostics ?? null };
+      const actions = failureCardBody(g, { label: node!.label, ...reach }).options.map(o => o.id).join();
+      if (intent || g.code !== old.failure.code || actions !== old.options.map(o => o.id).join()) fresh = g.code === "ask.escalated" ? { ...g, escalation: { by: "firstmate", reason: "A historical failure was recovered for captain review; no agent was started." } } : g;
+    }
+    const reclassify = !!fresh;
+    if (r.failureCard && !reclassify) return old;
+    if (!reclassify && this.cards.list({run:id,open:true}).some(c => c.id !== old?.id)) throw new Error("Resolve the existing card first");
+    if (!unambiguous) throw new Error("The failed source node is ambiguous; no recovery card was created");
+    const f = fresh ?? this.failureOf(r, node!, rn!.outcome!);
     if (reclassify) {
-      const b = failureCardBody(f, {label:node.label});
+      const b = failureCardBody(f, {label:node!.label, ...reach});
       const replacement = intent?.data?.replacement ?? {
-        run:id,node:node.id,visit:rn.visits,kind:"failure",title:{en:b.title,"zh-TW":b.zhTitle},
+        run:id,node:node!.id,visit:rn!.visits,kind:"failure",title:{en:b.title,"zh-TW":b.zhTitle},
         sections:{en:{...old!.sections.en,why:b.en.why,how:b.en.how},"zh-TW":{...old!.sections["zh-TW"],why:b.zh.why,how:b.zh.how}},
         body:b.body,options:b.options,confirmDoor:false,door:null,links:old!.links,detail:null,captainOnly:true,workflow:r.workflow,runTitle:r.title,ste:null,failure:f,
       };
-      if (replacement.run!==id || replacement.node!==node.id || replacement.visit!==rn.visits || replacement.failure?.code!==f.code || replacement.failure?.message!==f.message) throw new Error("Recovery intent differs from the failed node");
+      if (replacement.run!==id || replacement.node!==node!.id || replacement.visit!==rn!.visits || replacement.failure?.code!==f.code || replacement.failure?.message!==f.message) throw new Error("Recovery intent differs from the failed node");
       const matching = (c:SCard) => {
         const {id:_id,status:_status,createdAt:_at,answer:_answer,ledger,...body}=c;
         return !!intent && ledger?.reclassifiedFrom===old!.id && ledger?.request===intent.seq && hashInput(body)===hashInput(replacement);
@@ -1297,22 +1306,28 @@ export class Engine {
       const open=this.cards.list({run:id,open:true}).filter(c=>c.id!==old!.id);
       if(open.length>1 || open.some(c=>!matching(c)))throw new Error("Resolve the existing card first");
       // Persist the exact replacement before either card mutation; retries can finish both crash windows.
-      const request=intent ?? this.record(this.x(r,node,rn),"failure-reclassified",{data:{card:old!.id,from:old!.failure!.code,to:f.code,replacement}});
+      const request=intent ?? this.record(this.x(r,node!,rn!),"failure-reclassified",{data:{card:old!.id,from:old!.failure!.code,to:f.code,replacement}});
       if(!request)throw new Error("Recovery intent was not recorded");
       const card=open[0] ?? this.cards.create({...replacement,ledger:{reclassifiedFrom:old!.id,request:request.seq}});
       this.cards.cancel(old!.id);
-      r.failure=card.failure!;rn.data.failure=card.failure;r.failureCard=card.id;
+      r.failure=card.failure!;rn!.data.failure=card.failure;r.failureCard=card.id;
       r.failures=[...(r.failures??[]),card.failure!].slice(-20);
       this.commit(r,"failure diagnostics reclassified");
-      this.emit(r,"failure",`${f.class} · ${f.code}`,{node:node.id,card:card.id,class:f.class,code:f.code});
+      this.emit(r,"failure",`${f.class} · ${f.code}`,{node:node!.id,card:card.id,class:f.class,code:f.code});
       return card;
     }
     // Diagnosis only creates a captain card; it must never wake Firstmate.
-    return this.raiseFailure(r, node, f.code === "ask.escalated" ? { ...f, escalation: { by: "firstmate", reason: "A historical failure was recovered for captain review; no agent was started." } } : f);
+    return this.raiseFailure(r, node!, f.code === "ask.escalated" ? { ...f, escalation: { by: "firstmate", reason: "A historical failure was recovered for captain review; no agent was started." } } : f);
   }
-  failureOf(r: Run, node: WNode, outcome: string): Failure {
+  /** Whether a failure card can start a new task, and whether the current release has a newer version of the run's workflow (the run keeps its pinned routes). */
+  newTaskReach(r: Run): { newTaskAllowed: boolean; newerVersion: boolean } {
+    const latest = this.defs.get(r.workflow), current = !!latest && latest.version > r.version && this.defs.selectable(r.workflow, latest.version);
+    return { newTaskAllowed: current || this.defs.selectable(r.workflow, r.version), newerVersion: current };
+  }
+  /** fresh: classify again with the current rules, ignoring the failure the node recorded (a refresh of an old card). */
+  failureOf(r: Run, node: WNode, outcome: string, o2: { fresh?: boolean } = {}): Failure {
     const rn = r.nodes[node.id]; const o = { source: "engine" as const, run: r.id, node: node.id, visit: rn.visits, inputs: this.failureInputs(r, node), log: rn.job ? { k: "job" as const, job: rn.job, run: r.id, node: node.id, round: String(rn.visits) } : null };
-    const known = rn.data.failure as Failure | null;
+    const known = o2.fresh ? null : rn.data.failure as Failure | null;
     if (known && known.node === node.id) return { ...known, inputs: known.inputs ?? { hash: inputsHash(o.inputs), snapshot: o.inputs } };
     // a round stopped before its agent (begin's RoundBlocked) keeps its reason on the report, not the step note
     const note = String(rn.note || rn.error || (outcome === "blocked" ? rn.data.report?.summary : "") || "");
@@ -1337,7 +1352,7 @@ export class Engine {
     if (f.class === "transient" && node) { const attempt = (r.nodes[node.id].data.failureRetries ?? 0) + 1; f = { ...f, retry: { attempt, backoffMs: this.failureBackoff(attempt) } }; }
     r.failure = f; r.failures = [...(r.failures ?? []), f].slice(-20);
     const ended = r.status === "succeeded"; // a run that ended on a failed outcome: its card offers a new task, it is never revived
-    const b = failureCardBody(f, { label: node?.label, ended, newTaskAllowed: this.defs.selectable(r.workflow, r.version) });
+    const b = failureCardBody(f, { label: node?.label, ended, ...this.newTaskReach(r) });
     const sec = (p: { why: string; how: string }) => ({ ...emptySections(), intent: r.text.split("\n")[0].slice(0, 300) || r.title, ...p });
     let c: SCard | null = null;
     try { c = this.cards.create({ run: r.id, node: node?.id ?? "", visit: node ? r.nodes[node.id].visits : 0, kind: "failure", title: { en: b.title, "zh-TW": b.zhTitle }, sections: { en: sec(b.en), "zh-TW": sec(b.zh) }, body: b.body,
@@ -1430,11 +1445,15 @@ export class Engine {
       const ans = this.cards.answer(c.id, a); this.recordFailure(r, c, "report", { file: `failures/${r.id}-${c.id}.json` }); this.emit(r, "failure_reported", `${f.code}: diagnostics kept in failures/${r.id}-${c.id}.json`, { card: c.id }); return ans;
     }
     if (a.choice === ACT.newTask) {
-      if (!this.defs.selectable(r.workflow, r.version)) refuse({ en: "New task refused: this workflow is internal or retired. Ask Firstmate to prepare the work again.", "zh-TW": "已拒絕開始新任務：此流程為內部或已退役流程。請 Firstmate 重新準備這項工作。" });
+      const reach = this.newTaskReach(r);
+      if (!reach.newTaskAllowed) refuse({ en: "New task refused: this workflow is internal or retired. Ask Firstmate to prepare the work again.", "zh-TW": "已拒絕開始新任務：此流程為內部或已退役流程。請 Firstmate 重新準備這項工作。" });
       // the staffing pins travel with the task: start() checks them against the current staffing like any new task
       const params = Object.fromEntries(Object.entries(r.params).filter(([k]) => !k.startsWith("_") || k === "_staffing" || k === "_ownStaffing"));
-      let next: Run; try { next = this.start({ workflow: r.workflow, version: r.version, title: r.title, text: r.text, params, by: a.by }); }
+      // the new task runs the current release of the workflow (a run pinned to a replaced version keeps its old routes); the captain starts it, Firstmate is not involved
+      let next: Run; try { next = this.start({ workflow: r.workflow, version: reach.newerVersion ? undefined : r.version, title: r.title, text: r.text, params, by: a.by }); }
       catch (e: any) { refuse({ en: `New task refused: ${e?.message ?? e}`, "zh-TW": `已拒絕開始新任務：${e?.message ?? e}` }); throw e; }
+      // the link goes both ways: the old task names its follower, the new one names the task it repeats
+      next.ctx.follows = r.id; this.commit(next, `follows ${r.id}`); this.emit(next, "follows", `the same request as ${r.id}, started from its failure card`, { task: r.id, card: c.id });
       const ans = this.cards.answer(c.id, a); r.parked = { by: a.by, at: now(), note: `followed by ${next.id}` }; r.ctx.followedBy = next.id;
       this.recordFailure(r, c, ACT.newTask, { task: next.id }); this.commit(r, `followed by ${next.id}`); this.emit(r, "failure_new_task", `${f.code}: a new task ${next.id} starts from the same request`, { card: c.id, task: next.id }); return ans;
     }

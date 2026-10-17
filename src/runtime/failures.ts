@@ -260,7 +260,7 @@ export const ACT = { answer: "answer", fixRetry: "fix-retry", retry: "retry", re
 export type FailureOption = { id: string; label: string; labelZh: string; primary?: boolean; note?: boolean; hold?: boolean };
 export const PARK: FailureOption = { id: "park", label: "Park", labelZh: "暫停（Park）", hold: true };
 /** The actions each class offers. Park is always there. */
-export function failureActions(cls: FailureClass, code?: FailureCode, o: { ended?: boolean; newTaskAllowed?: boolean } = {}): FailureOption[] {
+export function failureActions(cls: FailureClass, code?: FailureCode, o: { ended?: boolean; newTaskAllowed?: boolean; newerVersion?: boolean } = {}): FailureOption[] {
   // an internal or retired workflow cannot start a new task from its card: Park only
   if ((o.ended || NEW_TASK.has(code)) && o.newTaskAllowed === false) return [PARK];
   // a run that ended (succeeded) on a failed outcome is not revived: a new task is the way on
@@ -278,17 +278,24 @@ export function failureActions(cls: FailureClass, code?: FailureCode, o: { ended
     "invalid-input": [{ id: "edit-params", label: "Edit params", labelZh: "修改參數", primary: true, note: true }],
     internal: [{ id: "report", label: "Report it (diagnostics kept)", labelZh: "回報問題（保留診斷資料）", primary: true, hold: true }],
   };
-  return [...main[cls], PARK];
+  // a Studio bug, or a run pinned to a workflow version a newer release replaced, cannot be fixed in place: a new task with the same request runs on the current release
+  const fresh = (cls === "internal" || o.newerVersion) && o.newTaskAllowed !== false ? [{ id: ACT.newTask, label: "Start a new Task with the same request", labelZh: "用同樣的需求開始新任務" }] : [];
+  return [...main[cls], ...fresh, PARK];
 }
 
 /** What the card says to do, per class. */
-export function failureHow(f: Failure, o: { ended?: boolean; newTaskAllowed?: boolean } = {}): FText {
+export function failureHow(f: Failure, o: { ended?: boolean; newTaskAllowed?: boolean; newerVersion?: boolean } = {}): FText {
   if ((o.ended || NEW_TASK.has(f.code)) && o.newTaskAllowed === false) return t("This workflow is internal or retired, so a new task cannot start from this card. Ask Firstmate to prepare the work again; Park closes this card.", "這個流程是內部或已退役的流程，無法從這張卡開始新任務。請 Firstmate 重新準備這項工作；Park 會關閉這張卡。");
   if (o.ended) return t("This run ended on this result, so it does not run again. Start a new task: it gets the same request and params and runs from the start.", "這個 run 已經以這個結果結束，不會再跑。請開始新任務：它會用同樣的需求和參數從頭執行。");
   if (f.code === "deterministic.brief-quality") return t("Describe the concrete missing correction or verified runtime fix. The same refinement step regenerates and checks the brief; this does not approve implementation, tests or merge.", "請描述缺少的具體修訂或已驗證的 runtime 修正。同一個修復步驟會重新產生並檢查說明；此操作不代表核准實作、測試或合併。");
   if (f.code === "deterministic.spec-missing") return t("Write the concrete draft correction or source file in the note, then choose Revise draft and continue. The same spec step runs again; dispatch still needs its own approval.", "請在備註寫出具體草稿修訂或來源檔，再選「修訂草稿並繼續」。原規格步驟會重新執行；派工仍須另外核准。");
   if (f.code === "deterministic.prepare-again") return t("Prepare again: Studio goes back to the step before the card, runs the gates again and raises a new card. Nothing is merged before that card is answered.", "重新準備：Studio 回到卡片前一步，重跑 gate，再發一張新卡。新卡回答前不會合併任何東西。");
   if (NEW_TASK.has(f.code)) return t("Start a new task: it gets the same request and declared params and prepares everything again. This task stays as it is.", "開始新任務：它會用同樣的需求和已宣告的參數，重新準備一切。這個任務維持原狀。");
+  const how = classHow(f, o);
+  // a run pinned to a replaced workflow version keeps its old routes: the card also offers the current release
+  return o.newerVersion && f.class !== "internal" && o.newTaskAllowed !== false ? t(`${how.en} This task runs an older version of its workflow; Start a new Task with the same request runs it on the current one.`, `${how["zh-TW"]}這個任務跑的是舊版流程；「用同樣的需求開始新任務」會用目前的版本重跑。`) : how;
+}
+function classHow(f: Failure, o: { newTaskAllowed?: boolean }): FText {
   switch (f.class) {
     case "ask": if (f.code === "ask.one-way") return t("Write which version to keep in the note, then pick Answer and continue. The step runs again with your choice. The version you do not keep is discarded.", "請在備註寫下要保留哪個版本，再選「回答並繼續」；這一步會帶著你的選擇再跑一次，沒保留的版本會被捨棄。");
       return t("Firstmate did not answer this itself. Write your answer in the note and pick Answer and continue. The same step runs again with your answer.", "Firstmate 沒有自己回答這一題。請在備註寫下回答，再選「回答並繼續」；同一步會帶著你的回答再跑一次。");
@@ -297,14 +304,14 @@ export function failureHow(f: Failure, o: { ended?: boolean; newTaskAllowed?: bo
     case "deterministic": return t("The same inputs give the same failure. Studio refuses Retry until an input changes: the params, the agent, the code head, the policy or the round budget. Edit params and retry changes the params.", "相同輸入會得到相同的失敗。在輸入改變前，Studio 會拒絕重試；輸入包含參數、agent、程式碼 head、policy 或回合預算。「修改參數後重試」會改變參數。");
     case "scope": return t("Write a concrete note: the files or the change the new scope adds or removes. Rescope refuses an empty note, a vague note and the same note again.", "請寫具體的備註：新範圍加入或移除哪些檔案或改動。空白、含糊或與上次相同的備註會被拒絕。");
     case "invalid-input": return t("Write one parameter per line as key=value in the note, then pick Edit params. Studio accepts only the parameters the workflow declares, checks each value against its declared options and pattern, and then runs the step again.", "請在備註每行寫一個參數，格式 key=value，再選「修改參數」。Studio 只接受工作流程宣告的參數，依宣告的選項和格式檢查每個值，再重跑這一步。");
-    case "internal": return t("This is a Studio bug. Report it: Studio keeps the diagnostics below with the task. The run stays failed.", "這是 Studio 的 bug。請回報：Studio 會把下方的診斷資料和任務一起保留。run 會維持失敗狀態。");
+    case "internal": return t(`This is a Studio bug. Report it: Studio keeps the diagnostics below with the task. The run stays failed.${o.newTaskAllowed === false ? "" : " Start a new Task with the same request to run it again on the current release; this task stays as it is and links to the new one."}`, `這是 Studio 的 bug。請回報：Studio 會把下方的診斷資料和任務一起保留。run 會維持失敗狀態。${o.newTaskAllowed === false ? "" : "也可以用同樣的需求開始新任務，在目前版本上重跑；這個任務維持原狀，並連到新任務。"}`);
   }
 }
 const CLASS_NAME: Record<FailureClass, FText> = { ask: t("Question", "提問"), environment: t("Environment", "環境"), scope: t("Scope", "範圍"), transient: t("Transient", "暫時性"), deterministic: t("Deterministic", "確定性"), "invalid-input": t("Invalid input", "輸入無效"), internal: t("Studio bug", "Studio bug") };
 export const className = (c: FailureClass) => CLASS_NAME[c];
 
 /** A card body for one failure: title, why (what failed), how (what to do), the exact message, and the class's actions. */
-export function failureCardBody(f: Failure, o: { label?: string; ended?: boolean; newTaskAllowed?: boolean } = {}) {
+export function failureCardBody(f: Failure, o: { label?: string; ended?: boolean; newTaskAllowed?: boolean; newerVersion?: boolean } = {}) {
   const how = failureHow(f, o);
   const where = o.label ? ` (${o.label})` : "";
   // the card's failure box (card.failure) shows the message, fix, where, log and diagnostics in the card's language: no second copy in the body

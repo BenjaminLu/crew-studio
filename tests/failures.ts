@@ -165,7 +165,7 @@ const keep = (c: any) => { shown.push(c); shownViews.push(E.cards.view(E.cards.g
 
 // ---------- internal ----------
 { const r = start("internal"); const run = await failed(r.id); const c = cardOf(r.id);
-  ok(run.failure?.class === "internal" && run.failure.code === "internal.unmapped" && ids(c) === "report,park", "internal: an unmapped failure is the internal class (never a generic string) with Report and Park", JSON.stringify([run.failure?.code, ids(c)]));
+  ok(run.failure?.class === "internal" && run.failure.code === "internal.unmapped" && ids(c) === "report,new-task,park", "internal: an unmapped failure is the internal class (never a generic string) with Report, Start a new Task with the same request, and Park", JSON.stringify([run.failure?.code, ids(c)]));
   ok(!c.failure!.message.includes("AAAAAAAAAAAAAAAA") && c.failure!.message.includes("kaboom") && !!c.failure!.diagnostics?.stack && c.failure!.diagnostics?.errorName === "Error", "internal: the exact message is kept with credentials removed, and the diagnostics hold the stack", JSON.stringify(c.failure!.diagnostics).slice(0, 300));
   keep(c);
   await E.answer(c.id, { choice: "report", by: "captain" });

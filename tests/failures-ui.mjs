@@ -20,7 +20,7 @@ const base = `http://127.0.0.1:${ready.port}`, cards = ready.cards;
 const shots = join(root, "tests/out/failures"); mkdirSync(shots, { recursive: true });
 let pass = 0, fail = 0;
 const ok = (c, name, extra = "") => { if (c) { pass++; console.log(`  ok    ${name}`); } else { fail++; console.log(`  FAIL  ${name} ${extra}`); } };
-const WANT = { ask: "answer,park", environment: "fix-retry,park", transient: "retry,park", deterministic: "retry,edit-params,park", scope: "rescope,park", "invalid-input": "edit-params,park", internal: "report,park" };
+const WANT = { ask: "answer,park", environment: "fix-retry,park", transient: "retry,park", deterministic: "retry,edit-params,park", scope: "rescope,park", "invalid-input": "edit-params,park", internal: "report,new-task,park" };
 const CHIP = { ask: ["Question", "提問"], environment: ["Environment", "環境"], scope: ["Scope", "範圍"], transient: ["Transient", "暫時性"], deterministic: ["Deterministic", "確定性"], "invalid-input": ["Invalid input", "輸入無效"], internal: ["Studio bug", "Studio bug"] };
 ok(cards.length === 7 && Object.keys(WANT).every((k) => cards.some((c) => c.failure?.class === k)), "the fixture has one real engine card per class", cards.map((c) => c.failure?.class).join(","));
 const browser = await chromium.launch({ headless: true });

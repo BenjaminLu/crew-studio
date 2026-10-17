@@ -81,3 +81,52 @@ try {
  }
  console.log('PASS failure reclassification survives card-create and card-cancel crashes after event replay');
 } finally {crash.stop();}
+
+// An older release raised a Studio-bug card for a round blocked before its agent (R-066: spec → blocked, no edge);
+// a refresh classifies it again with the current rules, and a terminal card can start the same request on the current release.
+const legacy=await harness([Y({id:'pinned-flow',name:'Pinned flow',nodes:[{id:'spec',kind:'hook',label:'Spec',do:'blocked',x:0,y:0},{id:'end',kind:'hook',label:'End',x:1,y:0}],edges:[['spec','end','ok']]})]);
+try {
+ const e=legacy.engine;
+ e.actions.blocked=(x:any)=>{x.rn.data.report={marker:'BLOCKED',summary:"cannot read the remote head of feature/R-066: fatal: could not read Username for 'https://github.com': terminal prompts disabled"};return 'blocked';};
+ const r=e.start({workflow:'pinned-flow',text:'format EUR amounts'});
+ await until(()=>!!r.failureCard&&!e.busy(r.id));
+ // Model the card the older release raised: unclassified, Report and Park only.
+ const first=e.cards.get(r.failureCard!)!;e.cards.cancel(first.id);r.failureCard=null;
+ const old=failure('internal.unmapped','Spec ended with "blocked" and no edge takes it',{source:'engine',run:r.id,node:'spec',visit:r.nodes.spec.visits});
+ r.nodes.spec.data.failure=old;
+ const oldCard=e.raiseFailure(r,r.def.nodes.find(n=>n.id==='spec')!,old)!;
+ e.cards.get(oldCard.id)!.options=[{id:'report',label:'Report it (diagnostics kept)',labelZh:'回報問題（保留診斷資料）',primary:true,hold:true},{id:'park',label:'Park',labelZh:'暫停（Park）',hold:true}] as any;
+ // The current release has a newer version of the workflow, with the route the old one lacked.
+ const v1=e.defs.get('pinned-flow')!;
+ const v2=e.defs.save('pinned-flow',{...v1,base:v1.version,edges:[...v1.edges,{from:'spec',to:'end',on:'blocked'}]},'captain','route blocked');
+ assert.ok(v2.version>v1.version,'a newer version exists');
+ const card=e.refreshFailure(r.id)!;
+ assert.notEqual(card.id,oldCard.id,'refresh replaces the stale card');
+ assert.equal(e.cards.get(oldCard.id)!.status,'cancelled');
+ assert.equal(card.failure!.code,'env.repository','refresh reclassifies with the current rules');
+ assert.equal(r.failure!.code,'env.repository');
+ assert.deepEqual(card.options.map(o=>o.id),['fix-retry','new-task','park'],'the refreshed card offers a new task on the current release');
+ assert.ok(card.options.some(o=>o.id==='new-task'&&o.label==='Start a new Task with the same request'));
+ assert.match(card.sections.en.how,/older version of its workflow/);
+ assert.equal(e.refreshFailure(r.id)!.id,card.id,'a second refresh keeps the refreshed card');
+ assert.equal(r.status,'failed');
+ let woke=0;e.askFirstmate=()=>{woke++;return true;};
+ await e.answer(card.id,{choice:'new-task',by:'captain'});
+ const next=e.get(r.ctx.followedBy)!;
+ assert.ok(next&&next.id!==r.id,'a new task started');
+ assert.equal(next.version,v2.version,'the new task runs the current version');
+ assert.equal(next.text,r.text);assert.equal(next.ctx.follows,r.id,'the new task links the old one');
+ assert.equal(r.parked?.note,`followed by ${next.id}`);
+ assert.equal(woke,0,'Firstmate is not involved');
+ assert.ok(e.events(next.id).some((v:any)=>v.type==='follows'&&v.task===r.id));
+ console.log('PASS an older release\'s unclassified card is reclassified on refresh and offers a new task on the current release, linked both ways');
+ // A card raised under the current rules is kept by refresh, and a Studio-bug card offers the new task too.
+ e.actions.blocked=()=>'blocked';
+ const r2=e.start({workflow:'pinned-flow',version:v1.version,text:'internal'});
+ await until(()=>!!r2.failureCard&&!e.busy(r2.id));
+ const c2=e.cards.get(r2.failureCard!)!;
+ assert.equal(c2.failure!.code,'internal.unmapped');
+ assert.deepEqual(c2.options.map(o=>o.id),['report','new-task','park']);
+ assert.equal(e.refreshFailure(r2.id)!.id,c2.id);
+ console.log('PASS a card raised under the current rules is kept by refresh; a Studio-bug card offers a new task');
+} finally {legacy.stop();}
