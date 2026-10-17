@@ -803,6 +803,13 @@ export class Engine {
     this.emit(x.run, "evidence", `${record} recorded (#${rec.seq})`, { node: x.node.id, record, seq: rec.seq, sig: rec.sig });
     return rec;
   }
+  /** A record a hook may write again when it runs again after a restart (resume semantics): kept once per node, visit and head. */
+  recordOnce(x: X, record: string, e: Partial<LedgerEntry>) {
+    const head = e.head !== undefined ? e.head : x.ctx.head ?? null;
+    const prior = this.ledger(x.run.id).find((l) => l.record === record && l.node === x.node.id && l.round === x.visit && (l.head ?? null) === head);
+    return prior ?? this.record(x, record, e);
+  }
+
   /**
    * The ledger as far as it can be trusted: every signature and chain link holds,
    * and it is not shorter than the run's own events say (a truncated tail is caught).

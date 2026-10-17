@@ -17,6 +17,10 @@ try{
  const atomic:any=await h.tool('studio_update_workflow_staffing',{workflow:id,base:2,nodes:[{...patch,model:'other'},{node:'missing',provider:'codex'}]});assert(atomic.error);assert.equal(h.rt.defs.get(id).version,2);
  const unchanged:any=await h.tool('studio_update_workflow_staffing',{workflow:id,base:2,nodes:[patch]});assert.equal(unchanged.status,'unchanged-no-task');
  const injected:any=await h.tool('studio_update_workflow_staffing',{workflow:id,base:2,nodes:[{...patch,args:{format:'web'}}]});assert(injected.error);
+ // a loop node takes provider/model/effort like an agent node (its coordinator turns run on them); a hook node does not
+ {const cur=h.rt.defs.get(id);const withLoop=h.rt.defs.save(id,{base:cur.version,nodes:[...cur.nodes,{id:'refine',kind:'loop',label:'Refine',args:{producer:agent.id},x:0,y:300}],edges:[...cur.edges,{from:agent.id,to:'refine',when:'fail'},{from:'refine',to:agent.id,when:'retry'}]},'test','add a loop');
+  const loop:any=await h.tool('studio_update_workflow_staffing',{workflow:id,base:withLoop.version,nodes:[{node:'refine',provider:'claude',model:'claude-opus-5-5',effort:'high'}]});assert.equal(loop.status,'saved-no-task',JSON.stringify(loop));assert.equal(h.rt.defs.get(id).nodes.find((n:any)=>n.id==='refine').effort,'high');
+  const hook=h.rt.defs.get(id).nodes.find((n:any)=>n.kind==='hook');const refused:any=await h.tool('studio_update_workflow_staffing',{workflow:id,base:loop.version,nodes:[{node:hook.id,provider:'codex'}]});assert(refused.error,JSON.stringify(refused));}
  assert.equal(h.rt.engine.list().length,0);assert.equal(h.agents.jobs.size,0);
  console.log('PASS saved configuration persists, preserves old versions and graph, refuses stale/noncaptain/invalid batch, idempotent, no tasks');
 }finally{h.rt.engine.disposeExternal();}

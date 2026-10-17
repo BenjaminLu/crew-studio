@@ -9,13 +9,18 @@ import { checkedTempDir } from "./lib/git-hygiene.mjs"; // temp folders only thr
 //   - a loop node's override applies to its coordinator turns only; a judge on an agent node keeps the reviewer's staffing
 //   - the role-skill one-click approval keeps the node overrides
 //   - a workflow role's effort is the default its nodes run at when nothing else says
+//   - an override naming a model that is not verified available is refused at proposal and at Task start
+//   - a loop node's override reaches its coordinator turn end to end (model, effort, named skills)
 //      bun tests/node-overrides.ts
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { harness, suite, until, Y } from "./rt-harness";
 const { ok, end } = suite("node-overrides");
-const { StaffingStore, installStaffingGuard, staffingHash, staffingNodeOverrides, nodeOverrideProblems, effectivePick } = await import("../src/domain/staffing");
+const { StaffingStore, installStaffingGuard, staffingHash, staffingNodeOverrides, nodeOverrideProblems, effectivePick, staffedCapability } = await import("../src/domain/staffing");
+const { installFirstmateStaffing } = await import("../src/firstmate-staffing");
+const { installRefine } = await import("../src/runtime/refine");
+const { bundledText } = await import("../src/bundled");
 const { roundsOf } = await import("../src/task-round");
 const sha = (t: string) => createHash("sha256").update(t).digest("hex");
 const plain = readFileSync(join(import.meta.dir, "..", "packs/core/skills/plain-writing/SKILL.md"), "utf8");
@@ -26,9 +31,12 @@ const flow = { id: "code-firstmate", name: "Node override fixture", kind: "code"
     { id: "work", kind: "agent", label: "Work", role: "worker", mode: "test", provider: "codex", model: "node-model", effort: "xhigh", skills: [pin], x: 1, y: 0 },
     { id: "work2", kind: "agent", label: "Work 2", role: "worker", mode: "test", x: 2, y: 0 }],
   edges: [["wait", "work", "go"], ["work", "work2"]] };
-const h = await harness([Y(flow)], { data: checkedTempDir("crew-node-overrides-") }), e = h.engine, staffing = new StaffingStore(h.data), project = { namespace: "git" as const, id: "p", identity: "isolated-node-overrides" };
+const h = await harness([Y(flow), bundledText("workflows/v2/firstmate-staffing.wf.yaml")!], { data: checkedTempDir("crew-node-overrides-") }), e = h.engine, staffing = new StaffingStore(h.data), project = { namespace: "git" as const, id: "p", identity: "isolated-node-overrides" };
 try {
-  installStaffingGuard(e, staffing, () => project);
+  // the models verified available now (the runtime's staffing facts); a Task start checks every role and node override pick against them
+  const available = new Set(["role-model", "node-model", "loop-model"]);
+  installStaffingGuard(e, staffing, () => project, (cfg) => staffedCapability(cfg, e.defs.get(cfg.workflow.id, cfg.workflow.version), (p) => available.has(p.model)));
+  installRefine(e);
   let text = "# Worker skill, as approved\n";
   e.deps.skillText = () => text;
   const def = e.defs.get(flow.id)!;
@@ -82,6 +90,30 @@ try {
   const receipt = e.ledger(task.id).filter((x: any) => x.record === "staffing-instructions" && x.data?.node === "work").at(-1);
   ok(receipt?.data?.model === "node-model" && receipt.data.effort === "xhigh" && receipt.data.config === c1.hash, "the signed staffing-instructions entry records the node's approved override", JSON.stringify(receipt?.data));
 
+  // ---------- an override whose model is not verified available: refused at start and at proposal ----------
+  available.delete("node-model");
+  { let msg = ""; try { e.start({ workflow: flow.id, text: "x", params: { project: project.id, _staffing: c1.hash } }); } catch (err: any) { msg = String(err?.message); }
+    ok(/Refresh staffing facts/.test(msg), "a Task start refuses a node override whose model is no longer verified available (the roles alone are)", msg); }
+  available.add("node-model");
+  {
+    const models = new Set(["role-model"]);
+    const facts = async () => [{ provider: "codex", support: "supported" as const, auth: "verified", quota: "available", expires: Date.now() + 30000, models: [...models].map((id) => ({ id, efforts: ["high", "xhigh"] })) }, { provider: "claude", support: "unsupported" as const, auth: "unverified", quota: "unknown", expires: Date.now() + 30000, models: [] }];
+    const tools = installFirstmateStaffing(e, staffing, () => project, facts as any);
+    const owner = (k: string) => ({ key: k, captain: true, text: "Use Codex role-model high for worker", live: () => true });
+    const base = { project: "p", workflow: flow.id, version: 1 };
+    await tools.call("studio_staffing_interview", base, owner("i1"));
+    await tools.call("studio_staffing_interview", { ...base, answers: { worker: { provider: "codex" } } }, owner("i2"));
+    await tools.call("studio_staffing_interview", { ...base, answers: { worker: { model: "role-model" } } }, owner("i3"));
+    await tools.call("studio_staffing_interview", { ...base, answers: { worker: { effort: "high" } } }, owner("i4"));
+    const runs = e.list().length; let code = "";
+    try { await tools.call("studio_propose_staffing", { ...base, roles: { worker: { provider: "codex", model: "role-model", effort: "high" } } }, owner("p1")); } catch (err: any) { code = String(err?.publicFailure?.code ?? err?.code ?? err?.message); }
+    ok(code === "staffing_unverified" && e.list().length === runs, "a proposal whose node override names an unverified model is refused like a role (no proposal card)", code);
+    models.add("node-model");
+    const proposal: any = await tools.call("studio_propose_staffing", { ...base, roles: { worker: { provider: "codex", model: "role-model", effort: "high" } } }, owner("p2"));
+    ok(!!proposal?.proposal && e.list().length === runs + 1, "with the node's model verified, the same proposal goes to the captain's staffing card", JSON.stringify(proposal));
+    if (proposal?.proposal) await e.cancel(proposal.proposal, "fixture");
+  }
+
   // ---------- the role-skill one-click approval keeps the node overrides ----------
   const t2 = e.start({ workflow: flow.id, text: "fixture 2", params: { project: project.id, _staffing: c1.hash } });
   await until(() => t2.nodes.wait.waiting === "card");
@@ -102,9 +134,29 @@ try {
   { let msg = ""; try { e.start({ workflow: flow.id, version: v2.version, text: "x", params: { project: project.id, _staffing: old.hash } }); } catch (err: any) { msg = String(err?.message); }
     ok(msg === "", "an approval without node overrides still covers nodes that only pin skills (bound by the definition hash)", msg); }
 
+  // ---------- a loop node's override, end to end: the coordinator turn runs on its model and effort and loads its skills ----------
+  {
+    const coordRef = "pack:firstmate/skills/firstmate.md", cur = e.defs.get(flow.id)!;
+    const v3 = e.defs.save(flow.id, { base: cur.version, roles: [{ id: "worker", label: "Worker", skill: ref }, { id: "coordinator", label: "Coordinator", skill: coordRef }],
+      nodes: [{ id: "start", kind: "hook", label: "Start", do: "set", args: { key: "s", value: 1 }, x: -1, y: 0 }, { id: "build", kind: "agent", label: "Build", role: "worker", mode: "test", checks: [{ use: "t/nat", params: { want: "fail" } }], x: 0, y: 0 },
+        { id: "fix", kind: "loop", label: "Fix", args: { producer: "build", coordinator: "coordinator", round_cap: 3 }, model: "loop-model", effort: "medium", skills: [pin], x: 1, y: 1 },
+        { id: "done", kind: "hook", label: "Done", x: 2, y: 0 }],
+      edges: [{ from: "start", to: "build" }, { from: "build", to: "done", when: "ok" }, { from: "build", to: "fix", when: "fail" }, { from: "fix", to: "build", when: "retry" }, { from: "fix", to: "done", when: "pass|cap|step-back|stalled|report" }] }, "test", "a loop with its own model");
+    const prior = staffing.current(project);
+    const roles = { worker: prior.roles.worker, coordinator: { provider: "codex" as const, model: "role-model", effort: "high", skill: staffing.remember({ ref: coordRef, version: 1, text }) } };
+    const c3 = staffing.approve({ schema: 1, algorithm: "sha256-canonical-v1", project, workflow: { id: v3.id, version: v3.version, sha256: staffingHash(v3) }, roles, review: { freshContexts: 3, distinctProviders: false }, nodes: staffingNodeOverrides(v3) }, prior.hash, { run: "R-src", card: "SC-4", answerSeq: 5 });
+    const before = started.length;
+    const t3 = e.start({ workflow: flow.id, version: v3.version, text: "loop fixture", params: { project: project.id, _staffing: c3.hash } });
+    await until(() => started.slice(before).some((s) => s.node === "fix") || ["succeeded", "failed", "cancelled"].includes(t3.status), 30000);
+    const turn = started.slice(before).find((s) => s.node === "fix"), build = started.slice(before).find((s) => s.node === "build");
+    ok(turn?.model === "loop-model" && turn.effort === "medium" && turn.system.includes("# Skill: plain-writing (v1)") && build?.model === "role-model" && !build.system.includes("# Skill: plain-writing"),
+      "the loop's coordinator turn runs on the loop's model and effort and loads its skill; the producer keeps the worker role's", JSON.stringify([t3.status, t3.error, started.slice(before).map((s) => [s.node, s.model, s.effort])]));
+    await until(() => !e.busy(t3.id), 10000);
+  }
+
   // ---------- a role's effort is its nodes' default ----------
   { const r = { id: "R-x", def: { ...def, id: "free", kind: "generic", roles: [{ id: "worker", label: "W", skill: ref, provider: "claude", model: "role-model", effort: "medium" }] }, params: {}, nodes: {}, ctx: {} } as any;
     const p = e.x(r, { id: "n", kind: "agent", label: "N", role: "worker", x: 0, y: 0 } as any, { agent: null } as any).pick();
     ok(p.provider === "claude" && p.model === "role-model" && p.effort === "medium", "a workflow role's effort is the default its nodes run at", JSON.stringify(p)); }
-} finally { for (const x of e.list()) if (!["succeeded", "failed", "cancelled"].includes(x.status)) await e.cancel(x.id, "fixture cleanup"); h.stop(); }
+} catch (err: any) { ok(false, "unexpected error", String(err?.stack ?? err).slice(0, 1500)); } finally { for (const x of e.list()) if (!["succeeded", "failed", "cancelled"].includes(x.status)) await e.cancel(x.id, "fixture cleanup"); h.stop(); }
 end();

@@ -10,10 +10,10 @@ import {installReadinessViews,readinessNodes} from './readiness-view';
 import {installGitHubReviewWorkflow} from '../domain/github-review-workflow';
 import {Onboarding} from '../onboarding';
 import {ArtifactStore,websiteHref} from '../artifacts';
-import {StaffingStore,staffingHash,installStaffingGuard,coffeeStaffingProject,type StaffingProject} from '../domain/staffing';
+import {StaffingStore,staffingHash,installStaffingGuard,coffeeStaffingProject,staffedCapability,type StaffingProject} from '../domain/staffing';
 import {installFirstmateStaffing,staffingQuotaReady,type StaffingFacts,type StaffingAdmission} from '../firstmate-staffing';
 import {installFirstmate} from "../firstmate";
-import {WorkflowDrafts,installWorkflowDraftTools,draftRoute,ownStaffingPlan,ownWorkflow,checkNodeStaffing,checkEffort,ownBrief} from "../workflow-drafts";
+import {WorkflowDrafts,installWorkflowDraftTools,draftRoute,ownStaffingPlan,ownWorkflow,checkNodeStaffing,ownBrief} from "../workflow-drafts";
 import {installReadiness} from "../readiness";
 // Studio's native runtime, wired: versioned workflow definitions, the engine,
 // the check runtime, Studio-owned cards, and the steps each workflow uses.
@@ -125,7 +125,8 @@ export function createRuntime(d: RuntimeDeps) {
   let staffingCapabilities:StaffingFacts[]=[];
   const staffingFacts=async()=>{staffingCapabilities=await(d.staffingFacts??(async()=>[]))();return staffingCapabilities;};
   const roleReady=(role:{provider:string;model:string;effort:string|null})=>{const cap=staffingCapabilities.find(c=>c.provider===role.provider),model=cap?.models.find(m=>m.id===role.model);return !(!cap||cap.support!=='supported'||cap.auth!=='verified'||!staffingQuotaReady(role as any,cap,d.staffingAdmission)||cap.expires<=Date.now()||!model||role.effort!==null&&!model.efforts.includes(role.effort));};
-  const staffingCapability=(config:{roles:Record<string,{provider:string;model:string;effort:string|null}>})=>{for(const role of Object.values(config.roles))if(!roleReady(role))throw new Error('Refresh staffing facts and confirm available role models before work / 請先更新派工能力並確認可用的角色模型');};
+  // each role's pick and each node override's effective pick (the definition the configuration names)
+  const staffingCapability=(config:any)=>staffedCapability(config,engine.defs.get(config.workflow.id,config.workflow.version),roleReady);
   const staffingGuard=installStaffingGuard(engine,staffing,staffingProject,staffingCapability);
   /** The Start form's readiness of an approved crew, from free probes only (the Codex probe, Claude auth status).
    *  A Claude role that is signed in but not verified by a bounded request cannot start: the form never pays for it. */
@@ -245,7 +246,8 @@ export function createRuntime(d: RuntimeDeps) {
           return json({ def, personal:defs.personal(id), trash:defs.trashState(id), selectable:defs.selectable(id,def.version), held:defs.held(id), coffeeFilmStatus:def.kind==="coffee-kit"?d.coffeeFilmStatus??{ready:false,reason:"Local film capability is unavailable"}:null, coffeeDesign:def.kind==="coffee-kit"?COFFEE_DESIGN_FIELDS:null, coffeeChoice:def.kind==="coffee-kit" ? d.coffeeChoice?.() ?? null : null, problems: validate(def, defs.known, undefined, defs.skillInfo ?? undefined), versions: defs.versions(id).map((x) => ({ version: x.version, createdAt: x.createdAt, by: x.by, note: x.note, parent: x.parent, diff: x.diff })),
             runs: engine.list().filter((r) => r.workflow === id).map((r) => ({ id: r.id, version: r.version, status: r.status, result: r.result, merged: !!r.ctx?.merged, title: r.title, createdAt: r.createdAt })) });
         }
-        {const own=ownWorkflow(defs.get(id));for(const n of Array.isArray(b?.nodes)?b.nodes:[]){try{if(own)checkNodeStaffing(n);else checkEffort(n);}catch(e:any){return json({error:e.message},400);}}}
+        // every workflow's node settings are checked the same way (provider, model, effort, agent or loop only); a role-skill ref a bundled node already had is kept as is
+        {const cur=defs.get(id);for(const n of Array.isArray(b?.nodes)?b.nodes:[]){try{const kept=!ownWorkflow(cur)&&n?.skill!==undefined&&cur?.nodes.find(x=>x.id===n.id)?.skill===n.skill;checkNodeStaffing(kept?{...n,skill:undefined}:n);}catch(e:any){return json({error:e.message},400);}}}
         if(readiness){const refusal=readiness.editRefusal(id,b);if(refusal)return json(refusal,400);}
         const saved = defs.save(id, b, by, b?.note);
         readiness?.versionSaved(saved);

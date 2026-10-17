@@ -74,6 +74,16 @@ export function effectivePick(config:Pick<StaffingDraft,'roles'|'nodes'>,def:any
  const provider=o!.provider??role.provider;
  return{provider,model:o!.model??role.model,effort:o!.effort!==undefined?o!.effort:role.effort};
 }
+/** Every pick a configuration runs: each role's, then each node override's effective pick (each must be verified available like a role). */
+export function staffedPicks(config:Pick<StaffingDraft,'roles'|'nodes'>,def:any):{provider:'codex'|'claude';model:string;effort:string|null}[]{
+ const out=Object.values(config.roles).map(r=>({provider:r.provider,model:r.model,effort:r.effort}));
+ for(const[id,o]of Object.entries(config.nodes??{})){if(!pickOverride(o))continue;const node=def?.nodes?.find((n:any)=>n.id===id);const p=node&&effectivePick(config,def,node,nodeRole(def,node));if(!p)throw new Error(`Node override ${id} has no staffed role`);out.push(p);}
+ return out;
+}
+/** A Task start's capability check: every role pick and node override pick must be ready (the definition the configuration names). */
+export function staffedCapability(config:StaffingConfig|StaffingDraft,def:any,ready:(pick:{provider:string;model:string;effort:string|null})=>boolean){
+ for(const pick of staffedPicks(config,def))if(!ready(pick))throw new Error('Refresh staffing facts and confirm available role models before work / 請先更新派工能力並確認可用的角色模型');
+}
 /** Problems with a definition's node overrides against its roles' picks (a provider change names its model; Codex names an effort). */
 export function nodeOverrideProblems(def:any,roles:Record<string,{provider:string;model:string;effort:string|null}>):string[]{
  const nodes=staffingNodeOverrides(def)??{},out:string[]=[];

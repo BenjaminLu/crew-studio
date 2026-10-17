@@ -7,6 +7,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   the next node gets the same context as in a run that was never interrupted
 //   every agent step's record (prompt, system, stream, report) is on disk before the next node starts
 //   a restart while the run waits on a card keeps that card (no second card)
+//   a hook's record written again after a restart is kept once (recordOnce)
 //   bun tests/resume-semantics.ts
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -89,5 +90,9 @@ ok(E3.get(r.id)!.status === "succeeded" && merges.get(r.id) === 1, "the resumed 
 ok(JSON.stringify(seen.get(r.id)) === JSON.stringify(seen.get(control.id)) && seen.get(r.id)?.made?.for === "a receipt", "the merge node gets the same context as in the uninterrupted run", JSON.stringify([seen.get(r.id), seen.get(control.id)]));
 ok(E3.get(r.id)!.steps.filter((s) => s.node === "a" && s.state === "passed").length === 1, "the agent node passed once (the interrupted turn is not counted as a result)");
 ok(!late.length, "every agent step's prompt, system, stream and report were on disk before the next node started", late.join("; "));
+// a hook that runs again after a restart records its side effect once per node, visit and head (the local merge's native-merge entry)
+{ const run = E3.get(r.id)!, x = E3.x(run, run.def.nodes.find((n) => n.id === "m")!, run.nodes.m);
+  const a = E3.recordOnce(x, "native-merge", { head: "f".repeat(40) } as any), b = E3.recordOnce(x, "native-merge", { head: "f".repeat(40) } as any);
+  ok(!!a && a.seq === b?.seq && E3.ledger(r.id).filter((e) => e.record === "native-merge").length === 1, "a hook's record written again after a restart stays one ledger entry (same node, visit and head)"); }
 H.stop();
 end();

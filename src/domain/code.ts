@@ -654,7 +654,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     else must(repo, ["update-ref", `refs/heads/${base}`, h, must(repo, ["rev-parse", base])]);
     x.ctx.merged = { base, head: h, at: new Date().toISOString() }; x.ctx.head = h;
     if (must(repo, ["rev-parse", `refs/heads/${base}`]) !== h) throw new Error("actual local merge head does not match reviewed head");
-    engine.record(x, "native-merge", { head: h, data: { version: 1, project: engine.queueProject(x.run), repo: engine.queueRepo(repo), base, head: h } });
+    engine.recordOnce(x, "native-merge", { head: h, data: { version: 1, project: engine.queueProject(x.run), repo: engine.queueRepo(repo), base, head: h } });
     x.rn.note = `${base} fast-forwarded to ${h.slice(0, 8)} (local)`; return "ok";
   };
   const keepDays = (x: X) => Number(x.policy("worktree.keep_days", 7));
