@@ -29,6 +29,12 @@ const empty = mk(join(tmp, "src", "not-a-skill"), { "README.md": "no skill here"
 const delta = mk(join(tmp, "src", "delta"), { "SKILL.md": md("delta", "Delta: say what changed first", "DELTA ONE") });
 const bigA = mk(join(tmp, "src", "big-a"), { "SKILL.md": md("big-a", "A long skill", "a".repeat(60 * 1024)) });
 const bigB = mk(join(tmp, "src", "big-b"), { "SKILL.md": md("big-b", "Another long skill", "b".repeat(60 * 1024)) });
+// the run page's step: a real code-firstmate Task, seeded before the server starts. Since a6fd64f one started through the
+// server needs a signed captain staffing approval naming a real provider (tests/lib/code-firstmate-run-seed.ts).
+const { spawnSync } = await import("node:child_process");
+const seeded = spawnSync("bun", ["tests/lib/code-firstmate-run-seed.ts", data, "Add a percent function to money-kit"], { cwd: root, encoding: "utf8" });
+const seededRun = (() => { try { return JSON.parse(seeded.stdout.trim().split("\n").at(-1)).id; } catch { return null; } })();
+if (!seededRun) { console.error(`agent-skills-ui: the code-firstmate Task could not be seeded\n${seeded.stdout}\n${seeded.stderr}`); process.exit(1); }
 const port = await freePort();
 const env = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) delete env[k];
 env.CREW_SESSION_TOKEN = process.env.CREW_SESSION_TOKEN ??= "test-session";
@@ -132,8 +138,7 @@ try {
     await p.goto(`${base}/#/library/skills`); await importFolder(p, delta);
     await p.waitForFunction(() => document.querySelector('[data-skill="delta"] [data-skill-version]')?.textContent.trim() === "v2", null, { timeout: 8000 }).catch(() => {});
     // done 4 on the run page: the step shows name@v1
-    const r = await p.evaluate(async () => (await fetch("/api/wruns", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ workflow: "code-firstmate", text: "Add a percent function to money-kit" }) })).json());
-    runId = r.id;
+    runId = seededRun;
     await p.goto(`${base}/#/run/${runId}`);
     const stepOk = await wait(p, '[data-step-skills="spec"]', 30000);
     ok(stepOk && (await p.textContent('[data-step-skills="spec"]')).includes("plain-writing@v1"), "the step shows name@v1 on the run page", stepOk ? await p.textContent('[data-step-skills="spec"]') : "no step");
