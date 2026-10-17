@@ -23,11 +23,12 @@ const defs: any[] = [
   normalize(parseYaml(bundledText("workflows/v2/coffee-kit.wf.yaml")!)),
   ...readdirSync(join(here, "fixture/workflows")).sort().map((f) => JSON.parse(readFileSync(join(here, "fixture/workflows", f), "utf8"))),
 ];
-const expectedIds=["code-firstmate","coffee-kit","documents","file-organization","pack-genesis","refine-demo","trivial-lane","video","web-prototype"];
-ok(JSON.stringify(defs.map(d=>d.id).sort())===JSON.stringify(expectedIds) && defs.every((d) => d.nodes.length && d.edges.length), "exact nine built-in workflows to lay out including native coffee-kit", defs.map((d) => d.id).join(","));
+// plus the two captain-made four-agent workflows kept as fixtures (6ad1e71): laid out and measured like the rest
+const expectedIds=["code-firstmate","coffee-kit","crew-onboarding-collab","documents","file-organization","four-agent-proposals","pack-genesis","refine-demo","trivial-lane","video","web-prototype"];
+ok(JSON.stringify(defs.map(d=>d.id).sort())===JSON.stringify(expectedIds) && defs.every((d) => d.nodes.length && d.edges.length), "exact nine built-in workflows plus the two retained four-agent fixtures to lay out, including native coffee-kit", defs.map((d) => d.id).join(","));
 
 // crossings measured on the new layout (and, for comparison, on the hand-placed one)
-const THRESHOLD: Record<string, number> = { "code-firstmate": 17, "refine-demo": 0, "pack-genesis": 3, "coffee-kit": 4, documents: 0, "file-organization": 0, "trivial-lane": 0, video: 0, "web-prototype": 0 };
+const THRESHOLD: Record<string, number> = { "code-firstmate": 17, "refine-demo": 0, "pack-genesis": 3, "coffee-kit": 4, "crew-onboarding-collab": 0, "four-agent-proposals": 0, documents: 0, "file-organization": 0, "trivial-lane": 0, video: 0, "web-prototype": 0 };
 
 const inside = (p: [number, number], r: any, m = 2) => p[0] > r.x + m && p[0] < r.x + r.w - m && p[1] > r.y + m && p[1] < r.y + r.h - m;
 const overlap = (a: any, b: any, m = 0) => a.x < b.x + b.w + m && b.x < a.x + a.w + m && a.y < b.y + b.h + m && b.y < a.y + a.h + m;
