@@ -28,8 +28,27 @@
 import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { addPaths, changedPaths, git, gitArgv, gitEnv, must } from "./git";
-/** A line git writes into a conflicted file: <<<<<<< ours, =======, >>>>>>> theirs. */
-export const CONFLICT_MARKER = /^(<{7} |={7}$|>{7} )/m;
+/** A full conflict block as git writes it, in order: <<<<<<< ours, =======, >>>>>>> theirs
+ * (a lone ======= line, such as a Markdown setext underline, is not one). */
+export const CONFLICT_BLOCK = /^<{7}(?: [^\n]*)?\n[\s\S]*?^={7}\r?\n[\s\S]*?^>{7}(?: |\r?$)/m;
+/** A text file that still carries a conflict block; a file with a NUL byte is binary and never matches. */
+export function hasConflictBlock(file: string): boolean {
+  let b: Buffer; try { b = readFileSync(file); } catch { return false; }
+  return !b.includes(0) && CONFLICT_BLOCK.test(b.toString("utf8"));
+}
+export type RebaseConflict = { path: string; binary: boolean; ours: string | null; theirs: string | null };
+/** The unmerged paths of an in-progress rebase. ours is the base side being rebased onto,
+ * theirs the Task's commit; a side whose blob holds a NUL byte (git's own test) makes it binary. */
+export function rebaseConflictList(cwd: string): RebaseConflict[] {
+  const out = git(cwd, ["ls-files", "-u", "-z"]).out, by = new Map<string, RebaseConflict>();
+  for (const line of out.split("\0").filter(Boolean)) {
+    const m = /^\d+ ([0-9a-f]{40}) ([123])\t(.+)$/s.exec(line); if (!m) continue;
+    const c = by.get(m[3]) ?? { path: m[3], binary: false, ours: null, theirs: null }; by.set(m[3], c);
+    if (m[2] === "2") c.ours = m[1]; if (m[2] === "3") c.theirs = m[1];
+    if (git(cwd, ["cat-file", "-p", m[1]]).out.slice(0, 8000).includes("\0")) c.binary = true;
+  }
+  return [...by.values()];
+}
 import { realInside, realOf } from "./secure";
 import { roundExec } from "./runtime/checks";
 import { assertSharedGitConfig } from "./git-config-health";
@@ -156,7 +175,7 @@ export class Worktrees {
    * Start a round: take the lock, put the worktree at the durable head (keeping what
    * it held on a kept ref, with a record), install the dependencies, open it for writing.
    */
-  async startRound(project: string, task: string, holder: string, o: { install?: string[] | false | null; scripts?: boolean; allow?: string[]; write?: boolean; skipInstall?: boolean } = {}): Promise<RoundStart & { release: () => void }> {
+  async startRound(project: string, task: string, holder: string, o: { install?: string[] | false | null; scripts?: boolean; allow?: string[]; write?: boolean; skipInstall?: boolean; beforeInstall?: (head: string) => { pending: boolean } | null } = {}): Promise<RoundStart & { release: () => void }> {
     const r0 = this.get(project, task); if (!r0 || r0.removedAt || !existsSync(r0.path)) throw new Error(`no worktree for ${task}`);
     assertSharedGitConfig(r0.repo); // before the lock: a broken shared config stops the round with its reason
     const release0 = this.lock(project, task, holder); this.held.add(`${project}/${task}`);
@@ -164,6 +183,12 @@ export class Worktrees {
     const release = () => { this.held.delete(`${project}/${task}`); release0(); };
     try {
       this.thaw(r);
+      // A crash between recording the rebase intent and starting git's rebase leaves no
+      // rebase-merge state and HEAD still at the recorded from: clear it, the round redoes it.
+      if (r.nativeRebase?.version === 1 && /^[a-f0-9]{40}$/.test(r.nativeRebase.from) && r.head === r.nativeRebase.from && must(r.path, ["rev-parse", "HEAD"]) === r.nativeRebase.from && !existsSync(must(r.path, ["rev-parse", "--git-path", "rebase-merge"])) && !changedPaths(r.path).length) {
+        this.note(r, `native rebase onto ${r.nativeRebase.target.slice(0, 8)} never started (no rebase state, HEAD at ${r.nativeRebase.from.slice(0, 8)}): cleared, the round redoes it`);
+        delete r.nativeRebase; this.save(r);
+      }
       if (r.nativeRebase) {
         if (r.nativeRebase.version !== 1 || ![r.nativeRebase.from,r.nativeRebase.base,r.nativeRebase.target].every(h=>/^[a-f0-9]{40}$/.test(h)) || must(r.path,["rev-parse","HEAD"]) !== r.head || !existsSync(must(r.path,["rev-parse","--git-path","rebase-merge"]))) throw new RoundBlocked("native rebase evidence/state requires captain recovery");
         if(o.write===false)throw new RoundBlocked("native rebase must finish before review");
@@ -182,8 +207,12 @@ export class Worktrees {
         this.note(r, `corrected: ${why}; ${kept ? `kept on ${kept}` : "nothing to keep"}`);
       }
       r.head = durable; this.save(r);
-      const deps = o.skipInstall ? { ran: null, ok: true, detail: "dependency installation skipped for source-only analysis" } : await this.installDeps(r, o.install ?? null, { scripts: !!o.scripts, allow: o.allow ?? [] });
-      if (o.write === false) this.freeze(r);
+      // the round's rebase onto the current base runs before the install, so dependencies match the rebased tree
+      const rebased = o.beforeInstall?.(durable) ?? null, now = this.get(project, task) ?? r;
+      const deps = o.skipInstall ? { ran: null, ok: true, detail: "dependency installation skipped for source-only analysis" }
+        : rebased?.pending ? { ran: null, ok: true, detail: "rebase conflicts pending; dependency install deferred until the rebase completes" }
+        : await this.installDeps(now, o.install ?? null, { scripts: !!o.scripts, allow: o.allow ?? [] });
+      if (o.write === false) this.freeze(now);
       return { head: durable, corrected, deps, release };
     } catch (e) { release(); throw e; }
   }
@@ -308,14 +337,19 @@ export class Worktrees {
     if (!this.held.has(`${project}/${task}`)) throw new Error("task lock required for rebase continuation");
     const r=this.get(project,task); if(!r?.nativeRebase || r.nativeRebase.version!==1 || must(r.path,["rev-parse","HEAD"])!==r.head)throw new Error("native rebase state changed");
     const paths=changedPaths(r.path);if(paths.some(p=>!scope(p)))throw new Error("rebase resolution outside scope");
-    // A path still carrying conflict markers is not resolved: keep the rebase
-    // pending (unstaged, still listed as conflicting) so another round resolves
-    // it, instead of committing the markers.
-    if(paths.some(p=>{try{return CONFLICT_MARKER.test(readFileSync(join(r.path,p),"utf8"));}catch{return false;}}))return {head:r.head,pending:true};
+    // Only the still-unmerged paths are checked, before anything is staged (auto-merged
+    // files are git's, not the worker's). A binary conflict is never resolved here:
+    // staging would silently keep one side and drop the Task's change.
+    const conflicts=rebaseConflictList(r.path),binary=conflicts.filter(c=>c.binary);
+    if(binary.length)return {head:r.head,pending:true,binary,unresolved:binary.map(c=>c.path)};
+    // A text file still carrying a full conflict block is not resolved: keep the rebase
+    // pending (unstaged, still listed) so another round resolves it, never commit the markers.
+    const unresolved=conflicts.filter(c=>hasConflictBlock(join(r.path,c.path))).map(c=>c.path);
+    if(unresolved.length)return {head:r.head,pending:true,binary:[] as RebaseConflict[],unresolved};
     addPaths(r.path,paths);
     const out=git(r.path,["-c","core.editor=true","rebase","--continue"]);
     if(!out.ok&&!git(r.path,["ls-files","-u"]).out)throw new Error("native rebase continuation failed");
-    r.head=must(r.path,["rev-parse","HEAD"]);if(out.ok)delete r.nativeRebase;this.save(r);return {head:r.head,pending:!out.ok};
+    r.head=must(r.path,["rev-parse","HEAD"]);if(out.ok)delete r.nativeRebase;this.save(r);return {head:r.head,pending:!out.ok,binary:[] as RebaseConflict[],unresolved:out.ok?[]:rebaseConflictList(r.path).map(c=>c.path)};
   }
   /**
    * The head a round starts from: the newest of the remote branch's head and the head

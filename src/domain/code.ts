@@ -27,7 +27,7 @@ import { LocalPrAdapter, GitHubPrAdapter, projectPrAdapter, type PrAdapter } fro
 import { locatorText } from "../runtime/locator";
 import { amendmentsSection, briefSection, briefState, type BriefState, type CarryCheck } from "../runtime/refine";
 import { sandboxed } from "../runtime/checks";
-import { EnvGapError, RoundBlocked, Worktrees } from "../worktrees";
+import { EnvGapError, RoundBlocked, Worktrees, rebaseConflictList } from "../worktrees";
 import { envPreflight, isNpmTestPlaceholder, type EnvGap } from "../env-preflight";
 import { runRender } from "../render";
 import { copyUntrusted } from "../secure";
@@ -122,6 +122,16 @@ export function testFilesOf(wt: string, cfg: RepoCfg): string[] {
 const isDoc = (p: string) => /\.md$/i.test(p) || p.startsWith("docs/");
 export const inScope = (scope: string[], p: string) => scope.some((s) => { const g = String(s).trim().replace(/^\.\//, ""); return !!g && (g === p || (g.endsWith("/") && p.startsWith(g)) || (/[*?]/.test(g) ? matches(g, p) : p.startsWith(g + "/"))); });
 /** "R-0xx also edits src/a.ts; …" for each other in-flight Task whose scope meets this one (informational only). */
+/** Studio v2 runtime rule for code workers (docs/v2-spec.md "Standing rules"): its own section,
+ * not the captain's operating rules, and only in code-workflow worker (build) jobs. */
+export const CONCURRENT_TASKS_RULE = "Code Tasks on one repository run concurrently, like pull requests. Other Tasks may change the same files as yours. Every build round starts on your branch rebased onto the current base; when the brief lists REBASE CONFLICTS, resolve them before anything else (keep both sides' intent, leave no conflict marker).";
+const workerRuntimeRules = (system: string) => `${system}\n\n## Studio runtime rules\n\n${CONCURRENT_TASKS_RULE}`;
+/** The base branch head (last fetched origin ref, else the local branch) when it moved past the commit a Task started on; null when not. */
+export function baseMovedSince(repo: string, base: string, baseCommit: string): { base: string; from: string; to: string } | null {
+  const ref = [`refs/remotes/origin/${base}`, `refs/heads/${base}`].map(r => git(repo, ["rev-parse", "--verify", "-q", r]).out.trim()).find(h => /^[0-9a-f]{40}$/.test(h));
+  if (!ref || ref === baseCommit || git(repo, ["merge-base", "--is-ancestor", ref, baseCommit]).ok) return null;
+  return { base, from: baseCommit, to: ref };
+}
 export const overlapNotes = (mine: string[], others: ScopeBlocker[]) => {
   const out: string[] = [];
   for (const r of others) {
@@ -657,20 +667,23 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if(x.node.mode==="spec")recoverLocalRescope(x);
     const k = wkey(x); const install = x.policy("install");
     let s: Awaited<ReturnType<typeof W.startRound>>;
-    try { s = await W.startRound(k.project, k.task, holder(x), { write, skipInstall, install: install === false ? false : Array.isArray(install) ? install.map(String) : null, scripts: x.policy("install_scripts") === true,
+    // a build round rebases onto the current base inside startRound, before dependencies install
+    let baseRefresh: ReturnType<typeof refreshBase> = null;
+    const beforeInstall = write && x.node.mode === "build" ? (start: string) => { baseRefresh = refreshBase(x, start); return baseRefresh ? { pending: baseRefresh.conflicts.length > 0 } : null; } : undefined;
+    try { s = await W.startRound(k.project, k.task, holder(x), { write, skipInstall, beforeInstall, install: install === false ? false : Array.isArray(install) ? install.map(String) : null, scripts: x.policy("install_scripts") === true,
       allow: ([] as any[]).concat(x.policy("egress.allow", []) ?? []).map(String) }); }
     catch (e: any) { if (e instanceof RoundBlocked) { x.rn.data.report = { marker: "BLOCKED", summary: e.message, round: x.visit }; x.save(); } if (e instanceof EnvGapError) recordEnvGaps(x, [e.gap], "round"); throw e; }
     held.set(holder(x), s.release);
-    try { x.ctx.head = s.head;
+    try { x.ctx.head = (baseRefresh as any)?.headAfter ?? s.head;
     const rebase=x.ctx.remoteRebaseApproved;
     if(write && x.node.id==="build" && rebase?.version===1 && !rebase.started){
       const trusted=engine.trusted(x.run.id);if(!trusted.ok||!trusted.entries.some(e=>e.record==="rebase-request"&&e.data?.card===rebase.card&&e.data?.base===rebase.base&&e.data?.fromBase===rebase.fromBase&&e.head===rebase.head)||!trusted.entries.some(e=>e.record==="card-answer"&&e.data?.card===rebase.card&&e.data?.choice==="rebase"))throw new Error("native rebase has no bound signed captain decision");
       if(s.head!==rebase.head||x.ctx.pr?.head!==rebase.head)throw new Error("approved rebase head changed");
       const result=W.startNativeRebase(k.project,k.task,rebase.head,rebase.fromBase,rebase.base);rebase.started=true;x.ctx.head=result.head;x.ctx.baseCommit=rebase.base;x.save();
     }
-    const baseRefresh = write && x.node.mode === "build" ? refreshBase(x, s.head) : null;
+    const baseMoved = write && x.node.mode === "build" ? remoteBaseMoved(x) : null;
     const bs = roundBrief(x);
-    engine.record(x, "round-start", { head: s.head, data: { round: x.visit, brief: bs.brief?.id ?? null, ledger: bs.brief?.ledger ?? [], carried: bs.carried, briefMissing: bs.missing, corrected: s.corrected, deps: s.deps.ran?.join(" ") ?? null, baseRefresh } } as any);
+    engine.record(x, "round-start", { head: s.head, data: { round: x.visit, brief: bs.brief?.id ?? null, ledger: bs.brief?.ledger ?? [], carried: bs.carried, briefMissing: bs.missing, corrected: s.corrected, deps: s.deps.ran?.join(" ") ?? null, depsDetail: s.deps.detail ?? null, baseRefresh, ...(baseMoved ? { remoteBaseMoved: baseMoved } : {}) } } as any);
     if (s.corrected) x.log(`round ${x.visit}: ${s.corrected.reason}; ${s.corrected.kept ? `kept on ${s.corrected.kept}` : "nothing to keep"}`);
     } catch (e) { held.delete(holder(x)); s.release(); throw e; }
   };
@@ -700,8 +713,34 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const rebaseConflicts = (x: X) => {
     const rec = W.get(wkey(x).project, wkey(x).task); if (!rec?.nativeRebase) return [];
     const { from, base, target } = rec.nativeRebase, log = (range: string, p: string) => git(rec.path, ["log", "--format=%h %s", "--max-count=10", range, "--", p]).out.split("\n").filter(Boolean);
-    return git(rec.path, ["diff", "--name-only", "--diff-filter=U"]).out.split("\n").filter(Boolean).slice(0, 40)
-      .map(path => ({ path, base: log(`${base}..${target}`, path), task: log(`${base}..${from}`, path) }));
+    return rebaseConflictList(rec.path).slice(0, 40)
+      .map(c => ({ path: c.path, binary: c.binary, ours: c.ours, theirs: c.theirs, base: log(`${base}..${target}`, c.path), task: log(`${base}..${from}`, c.path) }));
+  };
+  /**
+   * A remote (GitHub) Task is not rebased per round: rewriting its pushed branch is a
+   * remote write that needs the captain's rebase card at remote-ready. Instead each build
+   * round surfaces early that the base moved (from the last fetched base ref), in the round
+   * record, the log and the brief, so nobody learns it only at remote-ready.
+   */
+  const remoteBaseMoved = (x: X) => {
+    const remote = x.ctx.pr?.adapter === "github" || (x.ctx.project && o.projects.get(x.ctx.project)?.github);
+    if (!remote || !x.ctx.repo || !x.ctx.base || !/^[0-9a-f]{40}$/.test(x.ctx.baseCommit ?? "")) return null;
+    const moved = baseMovedSince(x.ctx.repo, x.ctx.base, x.ctx.baseCommit);
+    if (!moved) { x.ctx.remoteBaseMoved = null; return null; }
+    const ref = moved.to;
+    x.ctx.remoteBaseMoved = moved; x.save();
+    x.log(`round ${x.visit}: ${x.ctx.base} moved ${String(x.ctx.baseCommit).slice(0, 8)} -> ${ref.slice(0, 8)}; this remote Task needs a captain-approved rebase before it can merge`);
+    return moved;
+  };
+  /** Why a pending rebase goes to the captain now, or null to give the worker another round:
+   * a binary conflict (no fs tool can pick a side), or round_cap consecutive rounds that left
+   * the same unmerged files at the same head. */
+  const rebaseStall = (x: X, result: { head: string; binary: { path: string; ours: string | null; theirs: string | null }[]; unresolved: string[] }) => {
+    if (result.binary.length) return `binary rebase conflict: ${result.binary.map(c => `${c.path} (base side ${String(c.ours ?? "deleted").slice(0, 12)}, task side ${String(c.theirs ?? "deleted").slice(0, 12)})`).join(", ")}. A worker cannot pick a side with the fs tools and Studio never resolves it automatically (that would drop one side). Choose the content, then rescope or park.`;
+    const key = JSON.stringify([result.head, [...result.unresolved].sort()]), prev = x.ctx.rebaseStall;
+    const count = prev?.key === key ? prev.count + 1 : 1; x.ctx.rebaseStall = { key, count };
+    const cap = Math.max(1, Number(x.policy("round_cap", 3)) || 3);
+    return count >= cap ? `the rebase made no progress in ${count} rounds: ${result.unresolved.join(", ") || "(no file listed)"} still conflicting at ${result.head.slice(0, 8)}` : null;
   };
   const endRound = (x: X, how: string) => {
     if (!x.ctx.wt) return; const k = wkey(x);
@@ -843,8 +882,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
             const evidence=engine.record(x,'worker-test-execution',{head:tree.head,data:{command,target,base:x.ctx.baseCommit,files:files??null,dirty:tree.dirty,tree:tree.tree,exit:r.timedOut?null:r.code,timedOut:r.timedOut,executionMode:localUnrestricted()?'local-unrestricted':'default',outputSha256:createHash('sha256').update(output).digest('hex')}});
             return { status:'executed',target,command,base:x.ctx.baseCommit,head:tree.head,dirty:tree.dirty,tree:tree.tree,exit: r.timedOut ? null : r.code, timedOut: r.timedOut, evidence:evidence?{seq:evidence.seq,sig:evidence.sig}:null,tail }; }
     },
-    system: (x, skill) => x.ctx.reportOnly?.build ? `${skill}\n\nREPORT ONLY: your code from the last round is kept. Do not change any file. Read what you need and call worker_report once with a complete report, then one line.`
-      : `${skill}\n\nYou build ONE change in the run's worktree with the fs_* tools (no shell; run_tests runs the repository's tests). Stay inside the spec's scope. Each done line needs a test that fails without your change. Use run_tests({files:["test/x.test.ts"],target:"base"}) with repo-relative paths for candidate fail-first tests on base source (your candidate test files over base source) and target:"head" on the implementation; a run that executes no tests is reported as no-tests, never a pass. You get ${WORKER_TEST_RUNS} executed runs per round and each result says how many remain: keep one for the final check after your last fix. Use runner:"npm-test" when literal npm test evidence is required; it runs the whole unchanged base package.json test script and skips pre/post hooks. Use evidenceDir for screenshots inside approved validation paths. Tests can import the host browser library through PLAYWRIGHT_MODULE and write to CREW_TEST_OUTPUT_DIR. No test command means not-run, not a reason to HOLD. Studio commits your work; you never commit. Tool budget: 180 calls. Use at most 60 read/search calls before implementation; reserve calls for edits, verification and worker_report. Prefer targeted reads over whole files. Do not spend the full budget exploring. End with worker_report, then one line.`,
+    system: (x, skill) => workerRuntimeRules(x.ctx.reportOnly?.build ? `${skill}\n\nREPORT ONLY: your code from the last round is kept. Do not change any file. Read what you need and call worker_report once with a complete report, then one line.`
+      : `${skill}\n\nYou build ONE change in the run's worktree with the fs_* tools (no shell; run_tests runs the repository's tests). Stay inside the spec's scope. Each done line needs a test that fails without your change. Use run_tests({files:["test/x.test.ts"],target:"base"}) with repo-relative paths for candidate fail-first tests on base source (your candidate test files over base source) and target:"head" on the implementation; a run that executes no tests is reported as no-tests, never a pass. You get ${WORKER_TEST_RUNS} executed runs per round and each result says how many remain: keep one for the final check after your last fix. Use runner:"npm-test" when literal npm test evidence is required; it runs the whole unchanged base package.json test script and skips pre/post hooks. Use evidenceDir for screenshots inside approved validation paths. Tests can import the host browser library through PLAYWRIGHT_MODULE and write to CREW_TEST_OUTPUT_DIR. No test command means not-run, not a reason to HOLD. Studio commits your work; you never commit. Tool budget: 180 calls. Use at most 60 read/search calls before implementation; reserve calls for edits, verification and worker_report. Prefer targeted reads over whole files. Do not spend the full budget exploring. End with worker_report, then one line.`),
     prompt: (x) => {
       const wt = shellOk(x); const h = head(wt); x.ctx.head = h;
       mkdirSync(join(x.dir, "briefs"), { recursive: true });
@@ -857,10 +896,12 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       const facts = plan || x.ctx.reportOnly?.build ? "" : "\nROUND FACTS: this is two-way work with no plan round, so the approved spec above is the plan. Staffing, rosters and role skills are Studio's job, not inputs you need. Hold only for an input this brief names that you cannot read. Where the spec is unclear, choose the reading that best fits it, implement it, and list the assumption in worker_report instead of asking.\n";
       const amend = engine.amendments(x.run).length ? `${amendmentsSection(engine.amendments(x.run))}Keep the captain's latest word on each of these (a later change overrides an earlier one it conflicts with). If a brief item, a finding or an answer below would undo the captain's latest word on one, do not do that part: finish the rest and report ASK with amendment set to that change's number, so the captain decides.\n` : "";
       const conflicts = W.get(wkey(x).project, wkey(x).task)?.nativeRebase ? rebaseConflicts(x) : [];
-      const conflictNote = conflicts.length ? `REBASE CONFLICTS (resolve these before anything else)\nThe base moved and this task's branch is being rebased onto it. Resolve these files first (keep both sides' intent, remove every conflict marker), then continue the task. Studio finishes the rebase and commits.\n${conflicts.map(c => `- ${c.path}\n  base side: ${c.base.join("; ") || "(none listed)"}\n  task side: ${c.task.join("; ") || "(none listed)"}`).join("\n")}\n` : "";
+      const conflictNote = conflicts.length ? `REBASE CONFLICTS (resolve these before anything else)\nThe base moved and this task's branch is being rebased onto it. Resolve these files first (keep both sides' intent, remove every conflict marker), then continue the task. Studio finishes the rebase and commits.${conflicts.some(c => c.binary) ? " A binary conflict cannot be resolved with the fs tools: leave it as it is; Studio hands it to the captain." : ""}\n${conflicts.map(c => `- ${c.path}${c.binary ? ` (binary: base side ${String(c.ours ?? "deleted").slice(0, 12)}, task side ${String(c.theirs ?? "deleted").slice(0, 12)})` : ""}\n  base side: ${c.base.join("; ") || "(none listed)"}\n  task side: ${c.task.join("; ") || "(none listed)"}`).join("\n")}\n` : "";
+      const moved = x.ctx.remoteBaseMoved;
+      const movedNote = moved ? `BASE MOVED: ${moved.base} moved ${String(moved.from).slice(0, 8)} -> ${String(moved.to).slice(0, 8)} since this remote Task started. Keep building; the merge needs a captain-approved rebase at remote-ready.\n` : "";
       let notes: string[] = []; try { notes = overlapNotes(x.ctx.spec?.scope ?? [], scopeBlockers(engine, x.run)); } catch {} // informational: never stops a brief
       const overlap = notes.length ? `\nOTHER TASKS ON THESE PATHS (informational; nothing waits for them):\n${notes.map(n => `- ${n}`).join("\n")}\n` : "";
-      const text = `BUILD ROUND\nRun ${x.run.id} · round ${x.visit} · head ${h} · branch ${x.ctx.branch}\n${conflictNote}${amend}${specMd(x.ctx.spec)}${plan}${facts}${fix}${ro}${conflictNote ? "" : rebaseNote}${overlap}\nStart with fs_list.${x.run.text.includes("STUB_") ? `\n\nIntent notes:\n${x.run.text}` : ""}` + engine.failureBrief(x);
+      const text = `BUILD ROUND\nRun ${x.run.id} · round ${x.visit} · head ${h} · branch ${x.ctx.branch}\n${conflictNote}${movedNote}${amend}${specMd(x.ctx.spec)}${plan}${facts}${fix}${ro}${conflictNote ? "" : rebaseNote}${overlap}\nStart with fs_list.${x.run.text.includes("STUB_") ? `\n\nIntent notes:\n${x.run.text}` : ""}` + engine.failureBrief(x);
       let prev: any = null; try { prev = JSON.parse(readFileSync(briefFile(x), "utf8")); } catch {}
       if (prev && prev.head !== h) x.log(`round ${x.visit} brief rebound from ${String(prev.head).slice(0, 8)} to ${h.slice(0, 8)}`);
       writeFileSync(briefFile(x), JSON.stringify({ run: x.run.id, round: x.visit, head: h, branch: x.ctx.branch, brief: text }, null, 1));
@@ -875,7 +916,15 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       if (ro) { const k = wkey(x); const kept = W.endRound(k.project, k.task, `report-only round ${x.visit} touched files`); if (kept) x.log(`report-only round changed files: kept on ${kept}, the code stays at ${String(x.ctx.head).slice(0, 8)}`); x.ctx.reportOnly = { ...x.ctx.reportOnly, build: false }; }
       else if (!git(x.ctx.worktree, ["status", "--porcelain"]).out && (!rep || rep.marker === "WORKER_COMPLETE") && x.visit === 1) throw new Error("the worker changed nothing");
       const native=W.get(wkey(x).project,wkey(x).task)?.nativeRebase;
-      if(native){const result=W.continueNativeRebase(wkey(x).project,wkey(x).task,p=>inScope(x.ctx.spec?.scope??[],p));x.ctx.head=result.head;x.save();if(result.pending){pendingRebaseChecks.add(x.rn);W.freeze(W.get(wkey(x).project,wkey(x).task)!);return "rebase-more";}}
+      if(native){const result=W.continueNativeRebase(wkey(x).project,wkey(x).task,p=>inScope(x.ctx.spec?.scope??[],p));x.ctx.head=result.head;
+        if(!result.pending)x.ctx.rebaseStall=null;
+        else{
+          const stall=rebaseStall(x,result);x.save();W.freeze(W.get(wkey(x).project,wkey(x).task)!);
+          // binary conflicts or a rebase that does not move: the captain decides (scope card), never an endless rebase-more loop
+          if(stall){x.rn.data.report={marker:"SCOPE-BLOCKED",summary:stall,round:x.visit};x.rn.note=`SCOPE-BLOCKED · ${stall.slice(0,160)}`;x.save();return "blocked";}
+          pendingRebaseChecks.add(x.rn);return "rebase-more";
+        }
+        x.save();}
       if(x.ctx.remoteRebaseApproved){x.ctx.remoteRebaseApproved=null;x.ctx.remoteRebaseRequired=null;x.ctx.remoteCI=null;x.ctx.reviewUnverified="native rebase requires fresh review";}
       commitRound(x, rep, `${job.provider}·${job.model}`);
       x.rn.note = `${rep?.marker ?? "no report"} · ${x.ctx.head.slice(0, 8)}${rep?.summary ? ` · ${rep.summary.slice(0, 160)}` : ""}${ro ? " · report only" : ""}`;

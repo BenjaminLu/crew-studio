@@ -125,14 +125,15 @@ export function createRuntime(d: RuntimeDeps) {
   let staffingCapabilities:StaffingFacts[]=[];
   const staffingFacts=async()=>{staffingCapabilities=await(d.staffingFacts??(async()=>[]))();return staffingCapabilities;};
   const roleReady=(role:{provider:string;model:string;effort:string|null})=>{const cap=staffingCapabilities.find(c=>c.provider===role.provider),model=cap?.models.find(m=>m.id===role.model);return !(!cap||cap.support!=='supported'||cap.auth!=='verified'||!staffingQuotaReady(role as any,cap,d.staffingAdmission)||cap.expires<=Date.now()||!model||role.effort!==null&&!model.efforts.includes(role.effort));};
-  const staffingGuard=installStaffingGuard(engine,staffing,staffingProject,config=>{for(const role of Object.values(config.roles))if(!roleReady(role))throw new Error('Refresh staffing facts and confirm available role models before work / 請先更新派工能力並確認可用的角色模型');});
+  const staffingCapability=(config:{roles:Record<string,{provider:string;model:string;effort:string|null}>})=>{for(const role of Object.values(config.roles))if(!roleReady(role))throw new Error('Refresh staffing facts and confirm available role models before work / 請先更新派工能力並確認可用的角色模型');};
+  const staffingGuard=installStaffingGuard(engine,staffing,staffingProject,staffingCapability);
   /** The Start form's readiness of an approved crew, from free probes only (the Codex probe, Claude auth status).
    *  A Claude role that is signed in but not verified by a bounded request cannot start: the form never pays for it. */
   const crewReadiness=(roles:Record<string,{provider:string;model:string;effort:string|null}>)=>{for(const[id,role]of Object.entries(roles)){if(roleReady(role))continue;const cap=staffingCapabilities.find(c=>c.provider===role.provider);
     if(role.provider==='claude'&&cap?.support==='supported'&&cap.auth==='verified'&&cap.expires>Date.now())return{state:'blocked' as const,role:id,reason:{en:`The ${id} role's Claude ${role.model} is signed in but not verified by a bounded request. Verify it with Firstmate, then Start.`,zh:`${id} 角色的 Claude ${role.model} 已登入，但尚未經有限請求驗證；請先和 Firstmate 驗證，再按開始。`}};
     return{state:'blocked' as const,role:id,reason:{en:`The ${id} role's ${role.provider} ${role.model} is not available now${cap?.reason?` (${cap.reason})`:''}. Check the account, then refresh.`,zh:`${id} 角色的 ${role.provider} ${role.model} 目前不可用；請確認帳號後重新整理。`}};}
    return{state:'ready' as const};};
-  const staffingTools=installFirstmateStaffing(engine,staffing,staffingProject,staffingFacts,d.staffingAdmission,a=>d.staffingApproved?.(a));
+  const staffingTools=installFirstmateStaffing(engine,staffing,staffingProject,staffingFacts,d.staffingAdmission,a=>d.staffingApproved?.(a),{verified:(def,params)=>staffingGuard.verified(def,params),capability:staffingCapability});
   // Board start of a project-staffed workflow (code-firstmate): the approved configuration of the chosen registered
   // project, the same one Firstmate's dispatch binds. Never a bypass: the staffing guard still verifies it at start.
   const boardStaffed=(def:any)=>!!def&&staffingGuard.applies(def)&&def.kind!=='coffee-kit';

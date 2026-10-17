@@ -147,7 +147,7 @@ export const isFailure = (v: any): v is Failure => !!v && v.schema === 1 && (FAI
 export const TEXT_RULES: { re: RegExp; code: FailureCode }[] = [
   { re: /^ASK\b|\bworker (asks|asked)\b|\bneeds? (an )?answer\b/i, code: "ask.escalated" },
   // first: a change after approval or after the gates. Running the same step again never passes; the card offers what does
-  { re: /moved since the (six )?gates ran|remote checks changed before merge|needs the door confirmation|base moved after review|needs explicit recovery/i, code: "deterministic.prepare-again" },
+  { re: /moved since the ((six|seven) )?gates ran|remote checks changed before merge|needs the door confirmation|base moved after review|needs explicit recovery/i, code: "deterministic.prepare-again" },
   { re: /identity changed or predates pinning|prepare a new task|approved lane image changed|never replay/i, code: "deterministic.new-task" },
   { re: /\bdiverged: decide\b/i, code: "ask.one-way" },
   { re: /role skill \S+ changed since staffing approval/i, code: "env.skill-changed" },

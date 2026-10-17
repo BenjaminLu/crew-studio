@@ -5,11 +5,12 @@ import { checkedTempDir } from "./lib/git-hygiene.mjs"; // repositories only in 
 // merge sends the Task to a rebase round; conflicts go to the worker, never to
 // the captain; declared dependencies still wait for a verified merge.
 // Real native callers, signed captain answers and a temporary repository.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Agents } from "../src/agent";
 import { Projects } from "../src/doors";
-import { installCode } from "../src/domain/code";
+import { baseMovedSince, installCode } from "../src/domain/code";
+import { Worktrees } from "../src/worktrees";
 import { Engine } from "../src/runtime/engine";
 import { WorkflowDefs } from "../src/runtime/defs";
 import { StudioLog } from "../src/rawlog";
@@ -20,7 +21,7 @@ let port = 0; const agents = new Agents(data, () => `http://127.0.0.1:${port}`);
 const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: async req => { const t = req.headers.get("x-crew-tool-token") ?? "", u = new URL(req.url);
   if (u.pathname === "/api/tools") return Response.json(agents.toolList(t));
   return Response.json(await agents.callTool(t, decodeURIComponent(u.pathname.slice("/api/tools/".length)), await req.json())); } }); port = server.port;
-const started: string[] = [], briefs = new Map<string, string[]>(), leftMarkers = new Set<string>();
+const started: string[] = [], briefs = new Map<string, string[]>(), leftMarkers = new Set<string>(); let notesWriter = "";
 let running = 0, maxRunning = 0, gate: Promise<void> = Promise.resolve();
 const provider: any = { id: "fixture", model: "strict-local", sandboxFree: true, start(_system: string, tools: any[], ctx: any) { return { interrupt() {}, async *send(text: string) {
   const id = /Run (R-\d+)/.exec(text)?.[1] ?? "?";
@@ -33,9 +34,14 @@ const provider: any = { id: "fixture", model: "strict-local", sandboxFree: true,
       await gate;
       if (/^REBASE CONFLICTS/m.test(text)) { // resolve every listed file first, as the brief asks
         // marked.txt: the first resolving round leaves the conflict markers in, as a careless worker would
-        for (const m of text.matchAll(/^- (\S+)$/gm)) await call("fs_write", { path: m[1], content: m[1] === "marked.txt" && !leftMarkers.has(id) ? (leftMarkers.add(id), `<<<<<<< ours\n# ${id}\n=======\n# other\n>>>>>>> theirs\n`) : `# resolved by ${id}\n` });
+        // stuck.txt: never resolved, every round leaves the markers. A binary conflict line carries
+        // "(binary: …)" after the path, so it is not matched here: the worker cannot pick a side.
+        for (const m of text.matchAll(/^- (\S+)$/gm)) await call("fs_write", { path: m[1], content: m[1] === "stuck.txt" || m[1] === "marked.txt" && !leftMarkers.has(id) ? (leftMarkers.add(id), `<<<<<<< ours\n# ${id}\n=======\n# other\n>>>>>>> theirs\n`) : `# resolved by ${id}\n` });
       }
-      if (/ · round 1 · /.test(text)) await call("fs_write", { path: file, content: `# ${id} wrote ${file}\n` });
+      // a binary file: the fs tools edit text only, so the fixture writes it into the worktree directly (Studio commits it as the round's work)
+      if (/ · round 1 · /.test(text)) { if (file.endsWith(".dat")) writeFileSync(join(E.get(id)!.ctx.worktree, file), Buffer.from(`\0${id}\0binary\n`)); else await call("fs_write", { path: file, content: `# ${id} wrote ${file}\n` }); }
+      // a Markdown setext heading (a lone ======= line) beside the change: auto-merged, never a conflict
+      if (/ · round 1 · /.test(text) && file === "s/setext.txt" && id === notesWriter) await call("fs_write", { path: "s/notes.md", content: `Notes by ${id}\n=======\n\nPlain text.\n` });
       await call("worker_report", { marker: "WORKER_COMPLETE", summary: "Wrote the approved fixture file" });
     } finally { running--; }
   }
@@ -46,9 +52,13 @@ const code = { id: "concurrent-code", name: "Concurrent scope fixture", version:
   { id: "dispatch", kind: "card", label: "Dispatch", args: { card_kind: "dispatch" }, card: { title: "Approve fixture scope", body: "Review the fixture scope", options: [{ id: "dispatch", label: "Dispatch" }] }, x: 2, y: 0 },
   { id: "build", kind: "agent", role: "worker", mode: "build", label: "Build", x: 3, y: 0 },
   { id: "merge-card", kind: "card", label: "Merge", args: { card_kind: "merge" }, card: { title: "Merge checked fixture", body: "Merge only the pinned local fixture", options: [{ id: "merge", label: "Merge" }, { id: "close", label: "Close" }] }, x: 4, y: 0 },
+  { id: "scope-card", kind: "card", label: "Scope", args: { card_kind: "scope" }, card: { title: "Worker blocked", body: "The worker or Studio blocked the round", options: [{ id: "park", label: "Park" }] }, x: 4, y: 1 }, { id: "parked", kind: "hook", label: "Parked", args: { result: "parked" }, x: 5, y: 1 },
   { id: "merge", kind: "hook", do: "git.merge", label: "Merge", x: 5, y: 0 }, { id: "done", kind: "hook", label: "Done", x: 6, y: 0 }, { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 6, y: 1 }],
-  edges: [{ from: "prepare", to: "spec" }, { from: "spec", to: "dispatch" }, { from: "dispatch", to: "build", when: "dispatch" }, { from: "build", to: "build", when: "rebase-more" }, { from: "build", to: "merge-card", when: "ok" }, { from: "merge-card", to: "merge", when: "merge" }, { from: "merge-card", to: "closed", when: "close" }, { from: "merge", to: "build", when: "rebase" }, { from: "merge", to: "done" }] };
+  edges: [{ from: "prepare", to: "spec" }, { from: "spec", to: "dispatch" }, { from: "dispatch", to: "build", when: "dispatch" }, { from: "build", to: "build", when: "rebase-more" }, { from: "build", to: "merge-card", when: "ok" }, { from: "build", to: "scope-card", when: "blocked" }, { from: "scope-card", to: "parked", when: "park" }, { from: "merge-card", to: "merge", when: "merge" }, { from: "merge-card", to: "closed", when: "close" }, { from: "merge", to: "build", when: "rebase" }, { from: "merge", to: "done" }] };
 const defs = new WorkflowDefs(data, () => [Y(code)]);
+// what each dependency install saw: the worktree head and its bun.lock (no real install runs)
+const installs: { path: string; head: string; lock: string | null }[] = [];
+Worktrees.prototype.installDeps = async function (r: any) { installs.push({ path: r.path, head: Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: r.path, stdout: "pipe" }).stdout.toString().trim(), lock: existsSync(join(r.path, "bun.lock")) ? readFileSync(join(r.path, "bun.lock"), "utf8") : null }); return { ran: null, ok: true, detail: "fixture: install recorded" } as any; };
 const E = new Engine({ dataDir: data, agents, provider: () => provider, defaultProvider: () => ({ provider: "fixture", model: "strict-local" }), log: new StudioLog(join(data, "events.jsonl")), send() {}, skillText: () => "# Fixture skill" }, defs);
 const projects = new Projects(data);
 installCode(E, { dataDir: data, projects }); E.modes.spec.prompt = x => `Run ${x.run.id} file:${x.run.params.file} scope:${x.run.params.scope || x.run.params.file}`;
@@ -91,7 +101,11 @@ const c = startCode("docs/c.txt", "docs"), d = startCode("docs/d.txt", "docs");
 await answer(c.id, "dispatch", "dispatch"); await answer(d.id, "dispatch", "dispatch");
 await card(c.id, "merge-card"); await card(d.id, "merge-card");
 await answer(c.id, "merge-card", "merge"); await merged(c.id);
+// the base also changes its lockfile: the rebase round's install must see the rebased tree, not the old head
+writeFileSync(join(repo, "bun.lock"), "lockfile v2\n"); git(["add", "bun.lock"]); git(["commit", "-qm", "Bump the lockfile"]);
 await answer(d.id, "merge-card", "merge"); await until(() => builds(d.id) === 2, 15000); await card(d.id, "merge-card");
+const dInstall = installs.filter(i => i.path === E.get(d.id)!.ctx.worktree).at(-1);
+ok(dInstall?.lock === "lockfile v2\n" && dInstall.head === E.trusted(d.id).entries.filter(e => e.record === "round-start").at(-1)?.data?.baseRefresh?.headAfter, "the round rebases before installing dependencies: the install sees the base's new lockfile", JSON.stringify(dInstall));
 const cleanRefresh: any = E.trusted(d.id).entries.filter(e => e.record === "round-start").at(-1)?.data?.baseRefresh;
 ok(!!cleanRefresh && cleanRefresh.conflicts.length === 0 && !/^REBASE CONFLICTS/m.test(briefs.get(d.id)![1]), "clean rebase round lists no conflicts", JSON.stringify(cleanRefresh));
 await answer(d.id, "merge-card", "merge"); await merged(d.id);
@@ -110,6 +124,67 @@ ok(leftMarkers.has(f.id) && /^REBASE CONFLICTS/m.test(fBriefs[1] ?? "") && /^REB
 await answer(f.id, "merge-card", "merge"); await merged(f.id);
 const markedMain = mainHas("marked.txt");
 ok(E.verifiedMerge(E.get(f.id)!) && markedMain === `# resolved by ${f.id}` && !/^(<{7}|={7}|>{7})/m.test(git(["log", "-p", "main", "--", "marked.txt"])), "no commit on main ever carried the conflict markers", markedMain);
+
+// 3c. A lone ======= line (a Markdown setext underline) in an auto-merged file is not a
+// conflict marker: only unmerged files are checked, for a full ordered block.
+const g = startCode("s/setext.txt", "s"), hh = startCode("s/setext.txt", "s"); notesWriter = hh.id; // only the second Task adds the Markdown file, so it is auto-merged (staged), never a conflict
+await answer(g.id, "dispatch", "dispatch"); await answer(hh.id, "dispatch", "dispatch");
+await card(g.id, "merge-card"); await card(hh.id, "merge-card");
+await answer(g.id, "merge-card", "merge"); await merged(g.id);
+await answer(hh.id, "merge-card", "merge"); await until(() => builds(hh.id) === 2, 15000); await card(hh.id, "merge-card");
+ok(builds(hh.id) === 2 && !E.cards.list({ run: hh.id, open: true }).some(c => c.node === "scope-card"), "a setext ======= line in a file beside a real conflict does not keep the rebase pending", JSON.stringify(briefs.get(hh.id)?.map(b => b.slice(0, 100))));
+await answer(hh.id, "merge-card", "merge"); await merged(hh.id);
+ok(E.verifiedMerge(E.get(hh.id)!) && mainHas("s/setext.txt") === `# resolved by ${hh.id}`, "the rebase completed in one resolving round and merged");
+
+// 3d. A rebase that makes no progress goes to the captain after round_cap rounds, not round after round.
+const i1 = startCode("stuck.txt"), i2 = startCode("stuck.txt");
+await answer(i1.id, "dispatch", "dispatch"); await answer(i2.id, "dispatch", "dispatch");
+await card(i1.id, "merge-card"); await card(i2.id, "merge-card");
+await answer(i1.id, "merge-card", "merge"); await merged(i1.id);
+await answer(i2.id, "merge-card", "merge"); const stuckCard = await card(i2.id, "scope-card");
+const stuckReport = E.get(i2.id)!.nodes.build.data.report;
+ok(!!stuckCard && builds(i2.id) === 4 && stuckReport?.marker === "SCOPE-BLOCKED" && /no progress in 3 rounds: stuck\.txt/.test(stuckReport.summary), "three rounds that leave the same conflict go to the scope card with a report", JSON.stringify({ builds: builds(i2.id), stuckReport }));
+await answer(i2.id, "scope-card", "park");
+
+// 3e. A binary conflict is never resolved automatically (that would drop one side): the brief
+// lists it as binary with both sides, the rebase stays pending and the captain decides.
+const j1 = startCode("asset.dat"), j2 = startCode("asset.dat");
+await answer(j1.id, "dispatch", "dispatch"); await answer(j2.id, "dispatch", "dispatch");
+await card(j1.id, "merge-card"); await card(j2.id, "merge-card");
+await answer(j1.id, "merge-card", "merge"); await merged(j1.id);
+await answer(j2.id, "merge-card", "merge"); const binaryCard = await card(j2.id, "scope-card");
+const binaryBrief = briefs.get(j2.id)?.[1] ?? "", binaryReport = E.get(j2.id)!.nodes.build.data.report, j2Rec = new Worktrees(data).get("concurrent-fixture", j2.id);
+ok(/^- asset\.dat \(binary: base side [0-9a-f]{12}, task side [0-9a-f]{12}\)$/m.test(binaryBrief) && /cannot be resolved with the fs tools/.test(binaryBrief), "the brief lists the binary conflict with both sides' blobs", binaryBrief.slice(0, 600));
+ok(!!binaryCard && binaryReport?.marker === "SCOPE-BLOCKED" && /binary rebase conflict: asset\.dat/.test(binaryReport.summary) && !!j2Rec?.nativeRebase && builds(j2.id) === 2, "a binary conflict goes to the captain with the rebase still pending: nothing was auto-resolved", JSON.stringify({ binaryReport, rebase: j2Rec?.nativeRebase, builds: builds(j2.id) }));
+ok(mainHas("asset.dat").includes(j1.id), "main keeps the first Task's binary; the second Task's blob was not overwritten by a silent resolution");
+await answer(j2.id, "scope-card", "park");
+
+// 3f. A crash after recording the rebase intent but before git started it leaves no
+// rebase state: the next round clears the record and redoes the rebase.
+const k1 = startCode("crash.txt"), k2 = startCode("crash-other.txt", "crash-other.txt");
+await answer(k1.id, "dispatch", "dispatch"); await answer(k2.id, "dispatch", "dispatch");
+await card(k1.id, "merge-card"); await card(k2.id, "merge-card");
+await answer(k2.id, "merge-card", "merge"); await merged(k2.id);
+{ const recFile = join(data, "work", "wt", "concurrent-fixture", `${k1.id}.json`), rec = JSON.parse(readFileSync(recFile, "utf8"));
+  rec.nativeRebase = { version: 1, from: rec.head, base: rec.baseCommit, target: git(["rev-parse", "main"]) }; writeFileSync(recFile, JSON.stringify(rec, null, 1)); }
+await answer(k1.id, "merge-card", "merge"); await until(() => builds(k1.id) === 2 || E.cards.list({ run: k1.id, open: true }).some(c => c.node === "scope-card") || TERMINAL.includes(E.get(k1.id)!.status), 15000);
+await card(k1.id, "merge-card");
+ok(builds(k1.id) === 2 && !new Worktrees(data).get("concurrent-fixture", k1.id)?.nativeRebase && E.get(k1.id)!.nodes.build.data.report?.marker !== "BLOCKED", "a rebase intent recorded before a crash is cleared and redone, not blocked forever", JSON.stringify({ builds: builds(k1.id), report: E.get(k1.id)!.nodes.build.data.report, status: E.get(k1.id)!.status }));
+await answer(k1.id, "merge-card", "merge"); await merged(k1.id);
+ok(E.verifiedMerge(E.get(k1.id)!) && mainHas("crash-other.txt").includes(k2.id) && mainHas("crash.txt").includes(k1.id), "the redone rebase merges on top of the other Task");
+
+// 3g. A remote (GitHub) Task is not rebased per round (rewriting its pushed branch needs the
+// captain's rebase card); each build round surfaces early that the base moved, from the last
+// fetched origin ref or the local base branch. (No GitHub build-round fixture exists, so the
+// detection is checked directly.)
+{ const before = git(["rev-parse", "main"]);
+  ok(baseMovedSince(repo, "main", before) === null, "a base that did not move is not reported");
+  writeFileSync(join(repo, "moved.txt"), "base moved\n"); git(["add", "moved.txt"]); git(["commit", "-qm", "Move the base"]);
+  const moved = baseMovedSince(repo, "main", before);
+  ok(moved?.from === before && moved.to === git(["rev-parse", "main"]), "a moved base is reported with both commits", JSON.stringify(moved));
+  git(["update-ref", "refs/remotes/origin/main", before]);
+  ok(baseMovedSince(repo, "main", before) === null, "the last fetched origin ref wins over the local branch");
+  git(["update-ref", "-d", "refs/remotes/origin/main"]); }
 
 // 4. Declared dependencies still gate.
 const parent = startCode("dep-parent.txt"); await answer(parent.id, "dispatch", "dispatch"); await card(parent.id, "merge-card");

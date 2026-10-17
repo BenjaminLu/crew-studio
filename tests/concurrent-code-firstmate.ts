@@ -56,7 +56,8 @@ ok(!!aMerge && !!bMerge, "both Tasks build and reach their merge cards before ei
 const bBrief = readFileSync(join(data, "runs", b.id, "nodes", "build", "1", "prompt.md"), "utf8");
 ok(/OTHER TASKS ON THESE PATHS/.test(bBrief) && bBrief.includes(`${a.id}`), "the second Task's build brief names the first Task as informational", bBrief.slice(0, 600));
 const bSystem = readFileSync(join(data, "runs", b.id, "nodes", "build", "1", "system.md"), "utf8");
-ok(bSystem.includes("Studio runtime rule: code Tasks on one repository run concurrently") && bSystem.includes("REBASE CONFLICTS"), "every worker gets the concurrent-Tasks runtime rule with its operating rules");
+const reviewSystem = readFileSync(join(data, "runs", b.id, "nodes", "review", "1", "system.md"), "utf8");
+ok(/## Studio runtime rules\n\nCode Tasks on one repository run concurrently/.test(bSystem) && !/set by the captain[\s\S]*Code Tasks on one repository run concurrently[\s\S]*END OPERATING RULES/.test(bSystem) && !reviewSystem.includes("Code Tasks on one repository run concurrently"), "the build worker gets the concurrent-Tasks rule under its own Studio runtime rules heading; the reviewer does not");
 
 await answer(a.id, "merge", "merge");
 await until(() => TERMINAL.includes(E.get(a.id)!.status), 120000);
@@ -72,6 +73,10 @@ ok(!!refresh && refresh.conflicts?.some((c: any) => c.path === "src/shared.ts") 
 const conflictBrief = readFileSync(join(data, "runs", b.id, "nodes", "build", String(starts.at(-1).round), "prompt.md"), "utf8");
 ok(/^BUILD ROUND\nRun .*\nREBASE CONFLICTS/m.test(conflictBrief) && /^- src\/shared\.ts$/m.test(conflictBrief), "that round's brief opens with REBASE CONFLICTS and the file", conflictBrief.slice(0, 500));
 ok(E.cards.list({ run: b.id }).every((c) => c.kind === "dispatch" || c.kind === "merge"), "no captain card for the overlap or the conflict");
+// after the rebase the path runs design-scope and all seven gates again, bound to the rebased head
+{ const L = E.ledger(b.id), rebasedAt = starts.at(-1).seq, h = rb.ctx.head, after = (check: string) => L.filter((e: any) => e.check === check && e.seq > rebasedAt).at(-1);
+  const design = after("firstmate/design-scope"), gates = ["branch", "rebase", "scope", "failfirst", "ci", "approval", "design"].map((g) => after(`firstmate/gate-${g}`));
+  ok(!!h && h !== bMerge!.detail?.head && design?.head === h && design.verdict === "pass" && gates.every((g) => g?.head === h && g.verdict === "pass") && git("merge-base", "--is-ancestor", "main", h) === "" , "the second merge card's design-scope and seven gate records are fresh and bound to the rebased head", JSON.stringify({ h, design: design && [design.head, design.verdict], gates: gates.map((g) => g && [g.check, g.head, g.verdict]) })); }
 
 await answer(b.id, "merge", "merge");
 await until(() => TERMINAL.includes(E.get(b.id)!.status), 120000);

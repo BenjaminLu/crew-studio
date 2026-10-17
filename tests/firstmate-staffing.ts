@@ -86,8 +86,9 @@ if(process.env.STAFFING_BASE_ENGINE){
  let exhausted=false;
  const facts=async()=>[{provider:'codex',support:'supported' as const,auth:'verified',quota:exhausted?'exhausted':'available',expires:Date.now()+30000,models:[{id:'explicit-model',efforts:['high']}]},{provider:'claude',support:'unsupported' as const,auth:'unverified',quota:'unknown',expires:Date.now()+30000,models:[]}];
  try{
-  installStaffingGuard(e,store,()=>project);
-  const tools=installFirstmateStaffing(e,store,()=>project,facts);
+  const guard=installStaffingGuard(e,store,()=>project);
+  // the interview's approved.valid uses the same verifier a Task start uses
+  const tools=installFirstmateStaffing(e,store,()=>project,facts,undefined,undefined,{verified:guard.verified,capability:()=>{}});
   const owner={key:'captain-round-1',captain:true,text:'Use Codex explicit-model high for worker',live:()=>true};
   const absent=await tools.call('studio_staffing_facts',{},owner) as any;
   ok(absent.capabilities.find((c:any)=>c.provider==='claude').support==='unsupported','Claude unsupported is explicit before any paid work');
@@ -110,7 +111,13 @@ if(process.env.STAFFING_BASE_ENGINE){
     const valid=await read('approved-read');ok(valid?.valid===true&&valid.hash===config.hash&&valid.version===config.version,'G2: a current approval for this workflow version reads approved.valid true with its version and hash '+JSON.stringify(valid));
     const spec=tools.specs.find((s:any)=>s.name==='studio_staffing_interview') as any;ok(/approved\.valid is true/.test(spec.description)&&/skip staffing/.test(spec.description),'G2: the interview tool tells Firstmate to skip staffing when the approval is valid');
     exhausted=true;const quota=await read('approved-exhausted');exhausted=false;ok(quota?.valid===false&&/no longer verified/.test(quota.reason),'G2: a provider that is no longer verified makes the approval invalid '+JSON.stringify(quota));
-    const roleSkillText=e.roleSkillText.bind(e);e.roleSkillText=((def:any,id:string)=>({text:'# Changed worker skill',version:2})) as any;const changed=await read('approved-skill');e.roleSkillText=roleSkillText;ok(changed?.valid===false&&/skill changed/.test(changed.reason),'G2: a changed role skill makes the approval invalid '+JSON.stringify(changed)); }
+    const roleSkillText=e.roleSkillText.bind(e);e.roleSkillText=((def:any,id:string)=>({text:'# Changed worker skill',version:2})) as any;const changed=await read('approved-skill');e.roleSkillText=roleSkillText;ok(changed?.valid===false&&/skill changed/.test(changed.reason),'G2: a changed role skill makes the approval invalid '+JSON.stringify(changed));
+    // an approval whose skill text matches but whose skill ref is not the workflow's: the interview's own checks pass, the Task start refuses
+    const pointer=join(h.data,'projects',store.key(project),'staffing','current.json'),saved=readFileSync(pointer,'utf8');
+    const {hash,signature,version,previous,approval,...draft}=config;draft.roles={...draft.roles,worker:{...draft.roles.worker,skill:{...draft.roles.worker.skill,ref:'pack:firstmate/skills/reviewer.md'}}};
+    const odd=store.approve(draft as any,config.hash,{run:'R-odd',card:'SC-odd',answerSeq:1});let started=true;try{guard.verified(e.defs.get(flow.id,1),{project:project.id,_staffing:odd.hash});}catch{started=false;}
+    const refused=await read('approved-ref');ok(!started&&refused?.valid===false&&refused.hash===odd.hash&&/differs from workflow policy/.test(refused.reason),'G2: an approval the Task start would refuse reads valid false with the start refusal as reason '+JSON.stringify(refused));
+    writeFileSync(pointer,saved);rmSync(join(h.data,'projects',store.key(project),'staffing',`v${odd.version}.json`)); }
   e.deps.selectProvider=async(x,p)=>({id:p.provider,model:p.model!,reasoningEffort:p.effort,sandboxFree:true,start(system,tools,ctx){receipts.push({provider:p.provider,model:p.model,effort:p.effort,system});return{interrupt(){},async *send(){yield{type:'turnEnd' as const,status:'ok' as const}}}}});
   e.modes.receipt={system:(_x,skill)=>skill,prompt:()=> 'Offline staffing receipt',tools:()=>[],after:()=> 'ok'};
   const task=e.start({workflow:flow.id,params:{project:project.id,_staffing:config.hash}});

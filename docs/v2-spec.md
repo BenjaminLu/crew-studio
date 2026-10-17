@@ -27,4 +27,4 @@ Standing rules:
 - No GitHub writes without a repo the captain named.
 - Out of the box, with no new external dependencies.
 - No real company or repo names in shared content.
-- Code Tasks on the same repository run concurrently, like pull requests: a scope overlap never blocks or serializes a Task; every build/fix round first rebases the Task branch onto the current base head and the worker resolves its own conflicts; no Task stays pinned to the base it started on. Only declared dependencies gate.
+- Code Tasks on the same repository run concurrently, like pull requests: a scope overlap never blocks or serializes a Task; every build/fix round first rebases the Task branch onto the current base head and the worker resolves its own conflicts; no Task stays pinned to the base it started on. Only declared dependencies gate. Known gap: a remote (GitHub) Task is not rebased per round, because rewriting its pushed branch is a remote write that needs the captain's rebase card; its build rounds report "base moved" as soon as the last fetched base moved, and the rebase happens at remote-ready on the captain's card.

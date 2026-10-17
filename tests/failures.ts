@@ -36,7 +36,7 @@ E.failureBackoff = () => 60; // the real schedule is 5 s, 30 s, 2 min, 10 min: s
 E.failureProbes["env.test-command"] = () => (envFixed ? null : "package.json still has no scripts.test");
 E.actions.flaky = (x) => { x.run.ctx.flakyTries = (x.run.ctx.flakyTries ?? 0) + 1; if (x.run.ctx.netOk) return "ok"; throw new Error("fetch failed: ECONNRESET"); };
 E.actions.slow = async (x) => { x.run.ctx.slowRuns = (x.run.ctx.slowRuns ?? 0) + 1; await new Promise((res) => setTimeout(res, 300)); return "ok"; };
-E.actions["merge-once"] = (x) => { x.run.ctx.mergeTries = (x.run.ctx.mergeTries ?? 0) + 1; if (x.run.ctx.mergeTries > 1) return "ok"; throw new Error(x.run.params.mode === "door" ? "a one-way change needs the door confirmation on the merge card" : "the branch moved since the six gates ran"); };
+E.actions["merge-once"] = (x) => { x.run.ctx.mergeTries = (x.run.ctx.mergeTries ?? 0) + 1; if (x.run.ctx.mergeTries > 1) return "ok"; throw new Error(x.run.params.mode === "door" ? "a one-way change needs the door confirmation on the merge card" : "the branch moved since the seven gates ran"); };
 E.actions.act = (x) => {
   const m = x.run.params.mode, fa = x.rn.data.failureAnswer;
   if (m === "ask") { if (fa?.kind === "answer") return "ok"; x.rn.data.escalation = { reason: "The currency is a pricing choice only the captain sets." }; return { outcome: "ask", note: "Which currency does the total use?" }; }
@@ -246,7 +246,7 @@ const keep = (c: any) => { shown.push(c); shownViews.push(E.cards.view(E.cards.g
   H2.stop();
 }
 // (7) a change after the gates or after approval: the card offers what works, never Retry or Answer
-{ const codes = ["the branch moved since the six gates ran", "remote checks changed before merge", "a one-way change needs the door confirmation on the merge card", "reviewed move identity changed or predates pinning; prepare a new task", "approved lane image changed"].map((m) => F.fromError(new Error(m)).code);
+{ const codes = ["the branch moved since the seven gates ran", "remote checks changed before merge", "a one-way change needs the door confirmation on the merge card", "reviewed move identity changed or predates pinning; prepare a new task", "approved lane image changed"].map((m) => F.fromError(new Error(m)).code);
   const native = F.fromError(Object.assign(new Error("This proposal already dispatched work that was removed; never replay it"), { publicFailure: { code: "target_changed" } })).code;
   ok(JSON.stringify(codes) === JSON.stringify(["deterministic.prepare-again", "deterministic.prepare-again", "deterministic.prepare-again", "deterministic.new-task", "deterministic.new-task"]) && native === "deterministic.new-task", "classify: moved gates, changed checks and a missing door confirmation need a fresh preparation; a changed approval needs a new task", JSON.stringify([codes, native]));
   ok(F.failureActions("deterministic", "deterministic.prepare-again").map((o) => o.id).join() === "prepare-again,park" && F.failureActions("deterministic", "deterministic.new-task").map((o) => o.id).join() === "new-task,park", "classify: those cards offer Prepare again or Start a new task, and Park");
