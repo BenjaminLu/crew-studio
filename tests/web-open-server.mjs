@@ -34,6 +34,11 @@ const tryFetch = (u, o) => fetch(u, o).then((r) => "status " + r.status, (e) => 
 Promise.all([tryFetch("/api/wruns/${task}"), tryFetch("/api/wruns/${task}/continuation/offer", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })])
   .then(([get, post]) => { out.apiGet = get; out.apiPost = post; setTimeout(() => { try { out.frameDoc = f.contentDocument ? (f.contentDocument.body?.dataset.evil ?? "empty") : "no document"; } catch (e) { out.frameDoc = "blocked:" + e.name; } document.body.dataset.probe = JSON.stringify(out); }, 1500); });
 </script></body></html>`;
+// R-071: an order form whose own submit handler shows a summary, plus a bare form (no handler) that would post away.
+const ORDER_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>Order</title></head><body><h1>Order coffee</h1>
+<form id="order"><label>Name <input name="name" value="Captain"></label><button type="submit" id="send">Order</button></form><p id="summary" hidden></p>
+<form id="bare" action="/api/wruns" method="post"><input name="x" value="1"><button type="submit" id="bareSend">Post</button></form>
+<script>document.getElementById("order").addEventListener("submit", (e) => { e.preventDefault(); const s = document.getElementById("summary"); s.textContent = "Summary: " + new FormData(e.target).get("name"); s.hidden = false; });</script></body></html>`;
 const EVIL_HTML = `<!doctype html><html><body><script>let r; try { r = "framed-storage:" + Object.keys(localStorage).sort().join(","); } catch (e) { r = "framed-blocked:" + e.name; } try { parent.postMessage(r, "*"); } catch {}
 document.body.dataset.evil = JSON.stringify({ origin: self.origin, r });</script></body></html>`;
 
@@ -57,7 +62,7 @@ if (process.argv[2] === "--seed") {
   const closedTask = await closed("Build the Harbor Roast coffee website");
   const waiting = E.start({ workflow: wf.id, text: "A Task still waiting at its acceptance card" }); await openCard(waiting.id);
   const archived = await closed("A closed Task archived before anyone continued it"); E.archive(archived, true, "captain");
-  site("probe-site", "Probe website", { "index.html": PROBE_HTML(closedTask), "evil.html": EVIL_HTML });
+  site("probe-site", "Probe website", { "index.html": PROBE_HTML(closedTask), "evil.html": EVIL_HTML, "order.html": ORDER_HTML });
   console.log(JSON.stringify({ closed: closedTask, waiting: waiting.id, archived }));
   process.exit(0);
 }
@@ -100,8 +105,8 @@ try {
   const top = await raw("GET", "/af/coffee-site/1/index.html", { headers: { "sec-fetch-dest": "document" } });
   const framed = await raw("GET", "/af/coffee-site/1/index.html", { headers: { "sec-fetch-dest": "iframe" } });
   const bare = await raw("GET", "/af/coffee-site/1/index.html");
-  ok(/^sandbox allow-scripts;/.test(top.headers["content-security-policy"] ?? "") && !/allow-same-origin/.test(top.headers["content-security-policy"]), "a site opened as its own tab is served in an opaque-origin sandbox (sandbox allow-scripts, no allow-same-origin)", top.headers["content-security-policy"]);
-  ok(/^sandbox allow-scripts;/.test(bare.headers["content-security-policy"] ?? ""), "a request that does not say it is a frame is sandboxed too");
+  ok(/^sandbox allow-scripts allow-forms;/.test(top.headers["content-security-policy"] ?? "") && !/allow-same-origin/.test(top.headers["content-security-policy"]), "a site opened as its own tab is served in an opaque-origin sandbox (sandbox allow-scripts allow-forms, no allow-same-origin)", top.headers["content-security-policy"]);
+  ok(/^sandbox allow-scripts allow-forms;/.test(bare.headers["content-security-policy"] ?? ""), "a request that does not say it is a frame is sandboxed too");
   ok(framed.status === 200 && !/sandbox/.test(framed.headers["content-security-policy"] ?? "") && /frame-ancestors 'self'/.test(framed.headers["content-security-policy"] ?? ""), "Studio's own preview frames keep their CSP (frame-ancestors 'self'), unsandboxed by the header");
 
   // ---- continuation routes through the real server: CSRF, session, phone ----
@@ -199,6 +204,17 @@ try {
   const evilTop = await deskCtx.newPage(); await evilTop.goto(`${base}/af/probe-site/1/evil.html`);
   const ev = await evilTop.waitForFunction(() => document.body?.dataset.evil, null, { timeout: 8000 }).then((h) => h.jsonValue()).then(JSON.parse, () => ({}));
   ok(ev.origin === "null" && /framed-blocked/.test(ev.r ?? ""), "any other page of the site navigated to directly is sandboxed too", JSON.stringify(ev));
+  // R-071: the sandbox allows forms, so a prototype's own submit handler runs in the captain's tab (and in the
+  // interactive preview); form-action 'none' still sends nothing anywhere
+  for (const q of ["", "?interactive=1"]) {
+    const order = await deskCtx.newPage(); const posts = []; order.on("request", (r) => { if (r.method() === "POST") posts.push(r.url()); });
+    await order.goto(`${base}/af/probe-site/1/order.html${q}`); await order.click("#send");
+    const summary = await order.waitForFunction(() => { const s = document.getElementById("summary"); return s && !s.hidden && s.textContent; }, null, { timeout: 5000 }).then((h) => h.jsonValue(), () => null);
+    ok(summary === "Summary: Captain", `an order form's own submit handler runs in the sandboxed preview${q ? " (interactive)" : " tab"} and shows its summary (R-071)`, String(summary));
+    await order.evaluate(() => document.getElementById("bareSend").click()); await order.waitForTimeout(500);
+    ok(!posts.length && new URL(order.url()).pathname.endsWith("/order.html") && await order.evaluate(() => !!document.getElementById("order")), `a form with no handler still submits nowhere (form-action 'none')${q ? " (interactive)" : ""}`, JSON.stringify([posts, order.url()]));
+    await order.close();
+  }
   ok(await offers(closed) === before + 1, "the opened site created no continuation offer");
 
   // ---- the coffee site through the real Task link: CSS, image, poster and MP4 ----

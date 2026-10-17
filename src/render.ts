@@ -9,6 +9,7 @@ import { accessSync, constants, copyFileSync, existsSync, mkdirSync, writeFileSy
 import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import renderSrc from "./render/render.mjs" with { type: "text" };
+import { TAB_CSP } from "./preview-csp";
 
 const which = (bin: string): string | null => {
   if (bin.includes("/")) return existsSync(bin) ? bin : null;
@@ -66,6 +67,9 @@ export function runRender(dataDir: string, mode: "film" | "stills" | "crop" | "p
     return { done, cancel() {} };
   }
   if (!(mode === "film" ? env.canFilm : env.canCrop)) return { done: Promise.resolve({ ok: false, error: "the renderer is not installed (see Doctor)", ms: 0 }), cancel() {} };
+  // the interaction smoke serves the page under the captain's preview-tab policy (sandbox and CSP), so a
+  // control that policy kills is dead in the smoke too; `csp` overrides it only for tests
+  if (mode === "interact") a = { ...a, csp: a.csp ?? TAB_CSP };
   const argv = [env.node!, script(dataDir), mode, ...Object.entries(a).filter(([k]) => k !== "copyFrom").flatMap(([k, v]) => [`--${k}`, v])];
   // the browsers Playwright installed live in the account's cache (its documented default), whatever HOME a process runs with
   const browsers = process.env.PLAYWRIGHT_BROWSERS_PATH ?? (process.platform === "darwin" ? join(accountHome(), "Library", "Caches", "ms-playwright") : undefined);

@@ -183,7 +183,7 @@ try {
   ok(af.ok && /connect-src 'none'/.test(af.headers.get("content-security-policy") ?? "") && /frame-ancestors 'self'/.test(af.headers.get("content-security-policy") ?? ""), "artifact pages are served with no network and Studio-only framing");
   const interactive = await fetch(`${base}/af/landing/1/index.html?interactive=1`);
   const interactiveCsp = interactive.headers.get("content-security-policy") || "";
-  ok(interactive.ok && interactiveCsp.includes("sandbox allow-scripts;") && !interactiveCsp.includes("allow-same-origin") && interactiveCsp.includes("connect-src 'none'") && interactiveCsp.includes("script-src 'unsafe-inline'") && !interactiveCsp.includes("script-src 'self'"), "interactive preview executes inline scripts in an opaque sandbox blocking fetch, external scripts and same-origin access");
+  ok(interactive.ok && interactiveCsp.includes("sandbox allow-scripts allow-forms;") && !interactiveCsp.includes("allow-same-origin") && interactiveCsp.includes("connect-src 'none'") && interactiveCsp.includes("script-src 'unsafe-inline'") && !interactiveCsp.includes("script-src 'self'"), "interactive preview executes inline scripts in an opaque sandbox blocking fetch, external scripts and same-origin access");
   ok((await fetch(`${base}/af/landing/1/..%2F..%2F..%2Fartifacts.json`)).status === 404, "artifact file serving cannot leave the version folder");
   const pin = await post("/api/artifacts/landing/v/1/notes", { kind: "pin", selector: "#hero", bbox: { x: 8, y: 21, w: 300, h: 37 }, comment: "Make the title larger and add a tagline" });
   const pin2 = await post("/api/artifacts/landing/v/1/notes", { kind: "pin", selector: "a.cta", bbox: { x: 8, y: 120, w: 40, h: 18 }, comment: "Make the button stand out" });

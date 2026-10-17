@@ -10,6 +10,7 @@ import { Lane } from "./recipes";
 import { mdToDocHtml } from "./docrender";
 import { WorkRuns, filmScenes } from "./work";
 import { renderEnv, runRender } from "./render";
+import { CSP, INTERACTIVE_CSP, TAB_CSP } from "./preview-csp";
 import type { Provider } from "./providers";
 
 type Who = { kind: "desktop" } | { kind: "phone"; device: { id: string; name: string } } | { kind: string };
@@ -20,17 +21,7 @@ const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { sta
 const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
   ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".mp4": "video/mp4", ".json": "application/json",
   ".wav":"audio/wav", ".mp3":"audio/mpeg", ".m4a":"audio/mp4", ".ogg":"audio/ogg", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8" };
-// Restrict artifact subresources and API requests to the declared sources.
-// Interactive documents have an opaque sandbox origin; CSP does not block self-navigation.
-const CSP = "default-src 'none'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self' 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'";
-// A page the browser opens as its own tab (or any document that is not one of Studio's own
-// frames) runs in an opaque-origin sandbox: its scripts still run and its CSS, images, poster and
-// MP4 still load, but it cannot read Studio's storage, script a Studio window, open one, or call
-// /api as Studio. Studio's own previews are frames (Sec-Fetch-Dest: iframe) and keep CSP, whose
-// frame-ancestors 'self' also refuses a frame inside such a sandboxed page.
-const TAB_CSP = `sandbox allow-scripts; ${CSP}`;
 const framedByStudio = (req: Request) => ["iframe", "frame"].includes(req.headers.get("sec-fetch-dest") ?? "");
-const INTERACTIVE_CSP = "sandbox allow-scripts; default-src 'none'; img-src data: blob:; media-src blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'";
 
 export type ArtifactReviewPolicy = {readOnly:true; taskHref:string|null; reason:string; reasonZh?:string};
 export function createM3(d: M3Deps) {

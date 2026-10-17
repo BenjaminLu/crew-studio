@@ -84,8 +84,8 @@ try {
   // /af/: a page opened as its own tab is sandboxed; Studio's own frame is not
   const csp = async (dest: string | null) => (await get(`/af/nested-site/1/pages/home%20page.html`, desktop, dest ? { "sec-fetch-dest": dest } : {}))!.headers.get("content-security-policy") ?? "";
   const doc = await csp("document"), frame = await csp("iframe"), none = await csp(null);
-  ok(doc.startsWith("sandbox allow-scripts;") && !doc.includes("allow-same-origin") && doc.includes("connect-src 'none'"), "a top-level page gets an opaque-origin sandbox that still blocks network", doc);
-  ok(none.startsWith("sandbox allow-scripts;"), "a request without Sec-Fetch-Dest is sandboxed by default", none);
+  ok(doc.startsWith("sandbox allow-scripts allow-forms;") && !doc.includes("allow-same-origin") && doc.includes("connect-src 'none'"), "a top-level page gets an opaque-origin sandbox that still blocks network", doc);
+  ok(none.startsWith("sandbox allow-scripts allow-forms;"), "a request without Sec-Fetch-Dest is sandboxed by default", none);
   ok(!frame.includes("sandbox") && frame.includes("frame-ancestors 'self'"), "Studio's preview frame keeps its CSP", frame);
 } catch (e: any) { fail++; console.log(`  FAIL  ${e?.stack ?? e}`); }
 console.log(`web-open-links: ${pass} passed, ${fail} failed`);

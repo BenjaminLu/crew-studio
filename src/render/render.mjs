@@ -8,7 +8,8 @@
 //         evidence carries a note saying so. No #stage fails fast with code "no-stage".
 //   stills --html F --out DIR --times 1.5,6 [--width 1600]      one PNG per time (A/B compare)
 //   crop  --html F --out OUT.png --selector S | --bbox x,y,w,h [--width 1280]   a web element crop
-//   interact --html F --actions JSON   click each named primary action on a fresh load; report whether the page changed
+//   interact --html F --actions JSON [--csp POLICY]   click each named primary action on a fresh load; report whether
+//         the page changed. Its HTML is served with POLICY (the captain's preview-tab sandbox and CSP, from src/render.ts)
 //   page  --root DIR --page NAME --out OUT.png [--width 1280]   a whole page a change built (hostile): served from DIR over
 //         a local http origin (regular files only, real paths inside DIR), scripts off, every request outside that origin
 //         (file://, other hosts) refused; prints the refused URLs
@@ -34,7 +35,7 @@ const refusal = value => {
   let text = String(value); try { const u = new URL(text); u.username = ""; u.password = ""; u.search = ""; u.hash = ""; text = u.href; } catch { text = text.split(/[?#]/)[0]; }
   text = text.slice(0, 200); if (refused.length < 128 && !refused.includes(text)) refused.push(text);
 };
-const serveRoot = async rootInput => {
+const serveRoot = async (rootInput, csp) => {
   const root = realpathSync(rootInput);
   const srv = createServer((req, res) => {
     try {
@@ -43,7 +44,7 @@ const serveRoot = async rootInput => {
       const real = realpathSync(f), st = lstatSync(f);
       if (!real.startsWith(root + "/") || !st.isFile() || st.isSymbolicLink() || st.nlink > 1) throw new Error("refused");
       const types = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "application/javascript", ".png": "image/png", ".svg": "image/svg+xml", ".jpg": "image/jpeg", ".webp": "image/webp" };
-      const ext = rel.slice(rel.lastIndexOf(".")); res.writeHead(200, { "content-type": types[ext] ?? "application/octet-stream" }); res.end(readFileSync(real));
+      const ext = rel.slice(rel.lastIndexOf(".")); res.writeHead(200, { "content-type": types[ext] ?? "application/octet-stream", ...(csp && ext === ".html" ? { "content-security-policy": csp } : {}) }); res.end(readFileSync(real));
     } catch { refusal(req.url); res.writeHead(404); res.end(); }
   });
   await new Promise(r => srv.listen(0, "127.0.0.1", r)); servers.push(srv);
@@ -59,7 +60,7 @@ const offline = async (ctx, origin) => {
 
 const browser = await chromium.launch();
 try {
-  const inputOrigin = html && mode !== "page" ? await serveRoot(dirname(resolve(html))) : null;
+  const inputOrigin = html && mode !== "page" ? await serveRoot(dirname(resolve(html)), mode === "interact" ? opt("csp") : undefined) : null;
 const inputUrl = inputOrigin ? `${inputOrigin}/${encodeURIComponent(basename(html))}` : null;
   if (mode === "page") {
     const page = opt("page"), origin = await serveRoot(opt("root"));

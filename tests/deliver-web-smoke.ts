@@ -6,7 +6,9 @@ import assert from 'node:assert/strict';
 import {harness,until,Y} from './rt-harness';
 import {ArtifactStore} from '../src/artifacts';
 import {installDeliver,primaryActions} from '../src/domain/deliver';
-import {renderEnv} from '../src/render';
+import {renderEnv,runRender} from '../src/render';
+import {TAB_CSP} from '../src/preview-csp';
+import {mkdirSync,writeFileSync} from 'node:fs';
 let pass=0;const ok=(v:unknown,name:string,detail='')=>{assert(v,`${name} ${detail}`);pass++;console.log('ok '+name);};
 const acts=primaryActions(['A signup page. The submit button must show a thank-you message.','Clicking the "Book now" button opens the booking form']);
 ok(acts.map(a=>`${a.kind}:${a.text}`).join(',')==='submit:submit,click:Book now'&&acts[0].said.includes('thank-you'),'primary actions come from the captain\'s words',JSON.stringify(acts));
@@ -42,6 +44,16 @@ try{
   const live=await end('live');
   ok(live.card&&!live.findings.length&&/Interaction smoke: submit changed the page/.test(live.card.body),'a submit that shows a thank-you passes and the accept card says what was clicked',JSON.stringify(live.findings)+(live.card?.body??''));
   await E.answer(live.card!.id,{choice:'reject',by:'fixture captain'});
+  // R-071: the smoke runs the page under the captain's preview-tab sandbox and CSP. An order form whose submit
+  // handler reveals a summary works there (allow-forms); with allow-forms gone the browser never fires submit,
+  // and the smoke must say the submit is dead instead of passing a page the captain cannot use.
+  const orderDir=`${H.data}/fixture-order`;mkdirSync(orderDir,{recursive:true});
+  writeFileSync(`${orderDir}/index.html`,`<!doctype html><html><body><h1>巷口豆花</h1><form id="order"><label>Name <input name="name" required></label><select name="item"><option>花生豆花</option></select><button type="submit">送出訂單</button></form><section id="summary" hidden></section><script>document.getElementById('order').addEventListener('submit',e=>{e.preventDefault();const s=document.getElementById('summary');s.textContent='訂單摘要：'+new FormData(e.target).get('item');s.hidden=false;});</script></body></html>`);
+  const smoke=async(csp?:string)=>(await runRender(H.data,'interact',{html:`${orderDir}/index.html`,actions:JSON.stringify([{kind:'submit',text:'submit'}]),...(csp?{csp}:{})}).done).info?.results?.[0];
+  const underTab=await smoke();
+  ok(underTab?.found&&underTab.changed&&/訂單摘要/.test(underTab.text),'under the preview-tab policy (sandbox allow-forms, form-action none) an order form\'s own submit handler runs and shows its summary',JSON.stringify(underTab));
+  const noForms=await smoke(TAB_CSP.replace(' allow-forms',''));
+  ok(TAB_CSP.includes('allow-forms')&&noForms?.found&&!noForms.changed&&!/訂單摘要/.test(noForms.text??''),'with allow-forms removed from the sandbox the smoke reports the submit dead (the browser never fires it)',JSON.stringify(noForms));
   const clockRun=await end('clock');
   ok(clockRun.findings.some(x=>x.class==='web-interaction'),'a page that changes on its own (a ticking clock) still fails a dead submit: only changes the click causes count',JSON.stringify(clockRun.findings));
   process.env.CREW_INTERACT_TIMEOUT_MS='6000';const t0=Date.now(),hung=await end('hang');delete process.env.CREW_INTERACT_TIMEOUT_MS;
