@@ -70,5 +70,10 @@ workflow overrides. Idempotent (a marker plus a hash check); tested on fixture c
 
 ## Deferred
 
-Per-project team override; run override for staffed (code/coffee) Tasks; image hook nodes (the dedicated image adapter
-keeps its own Codex choice).
+- A per-project override of the team (the model leaves room for it: overrides are keyed by workflow today).
+- The run override (dispatch card effort) for staffed Tasks (code, coffee-kit): their signed staffing binding does not
+  carry a per-run effort yet; their dispatch card shows the crew line read-only.
+- Image hook nodes (images, coffee's image step) keep the dedicated image adapter's own Codex choice; coffee's
+  `image-maker` seat only decides whether the team covers coffee-kit.
+- The captain's own workflows still confirm node picks at Run (`_ownStaffing`); their node picks count as the
+  definition's own choice in resolution.
