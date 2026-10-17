@@ -231,7 +231,7 @@ export function createProjectOverview(d: OverviewDeps) {
     const c = store.current(identity);
     const card = E.cards.get(c.approval.card);
     return { workflow: c.workflow.id, version: c.workflow.version, config: c.version, approvedAt: card?.answer?.at ?? null, signed: true,
-      roles: Object.entries(c.roles).map(([role, x]) => ({ role, provider: x.provider, model: x.model, effort: x.effort, skill: basename(x.skill.ref) })) };
+      roles: Object.entries(c.roles).map(([role, x]) => ({ role, provider: x.provider, model: x.model, effort: x.effort, skill: x.skill.ref.split("+").map((p) => basename(p)).join(" + ") })) };
   }
   function health(p: Project, crew: ReturnType<typeof crewOf> | { error: string }, st: ReturnType<typeof startState>) {
     const kind = kindOf(p), enabled = enabledOf(p);

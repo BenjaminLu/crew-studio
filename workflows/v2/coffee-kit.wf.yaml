@@ -13,22 +13,22 @@
     {
       "id": "worker",
       "label": "Website worker",
-      "skill": "pack:coffee-kit/skills/website.md"
+      "skills": ["pack:firstmate/skills/worker.md", "pack:coffee-kit/skills/website.md"]
     },
     {
       "id": "image-worker",
       "label": "Image worker",
-      "skill": "pack:coffee-kit/skills/image.md"
+      "skills": ["pack:firstmate/skills/worker.md", "pack:coffee-kit/skills/image.md"]
     },
     {
       "id": "reviewer",
       "label": "Reviewer",
-      "skill": "pack:coffee-kit/skills/reviewer.md"
+      "skills": ["pack:firstmate/skills/reviewer.md", "pack:coffee-kit/skills/reviewer.md"]
     },
     {
       "id": "designer",
       "label": "Designer",
-      "skill": "pack:coffee-kit/skills/designer.md"
+      "skills": ["pack:firstmate/skills/designer.md", "pack:coffee-kit/skills/designer.md"]
     }
   ],
   "nodes": [

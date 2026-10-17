@@ -31,7 +31,7 @@ import { CheckRegistry, Ledger, Policies, INPUT_HASH_ALGORITHM, coerce, doneMap,
 import { AMEND_CHOICES, briefFor, installRefine, verifiedAmendments, type Amendment } from "./refine";
 import { realInside, redactJSON, redactText } from "../secure";
 import { helperCommand, helperReads } from "../self";
-import { entryOf, validate, type WDef, type WEdge, type WNode, type WorkflowDefs } from "./defs";
+import { entryOf, roleSkillParts, validate, type WDef, type WEdge, type WNode, type WorkflowDefs } from "./defs";
 import { locatorText, parseFinding, type Finding } from "./locator";
 import { materializeRoundDir, roundWorkPath } from "./round-paths";
 import { composeInstructions, Skills } from "../skills";
@@ -59,7 +59,8 @@ export type Step = { seq: number; node: string; kind: string; visit: number; sta
   /** the judge calls made for this step's checks, each with the role skill it received */
   judges?: { check: string; role: string | null; roleSkill: RoleSkillUse | null; skills: string[]; at: string }[] };
 /** Which role skill a turn received: the role, its source ref, Studio's version of it (null when no versioned copy) and the sha256 of the exact text. */
-export type RoleSkillUse = { role: string | null; ref: string | null; version: number | null; sha256: string | null };
+/** parts: a role with several named skills, each with the sha256 of its source text, in the order the role text joins them */
+export type RoleSkillUse = { role: string | null; ref: string | null; version: number | null; sha256: string | null; parts?: { ref: string; sha256: string | null }[] };
 export type RunStatus = "queued" | "running" | "waiting" | "paused" | "succeeded" | "failed" | "cancelled";
 export type Run = {
   id: string; workflow: string; version: number; def: WDef; title: string; text: string; params: Record<string, string>; by: string;
@@ -570,7 +571,9 @@ export class Engine {
     if (approved === undefined) { try { src = this.roleSkillText(r.def, roleId, nodeSkill); roleText = src?.text ?? ""; } catch {} }
     else { try { src = this.roleSkillText(r.def, roleId); } catch {} }
     const text = approved ?? src?.text ?? "";
-    const roleSkill: RoleSkillUse | null = text.trim() ? { role: roleId ?? null, ref: src?.ref ?? null, version: src?.version ?? null, sha256: createHash("sha256").update(text).digest("hex") } : null;
+    const parts = roleSkillParts(src?.ref);
+    const partUse = parts.length > 1 ? { parts: parts.map((ref) => { let sha256: string | null = null; try { sha256 = createHash("sha256").update(this.deps.skillText(ref)).digest("hex"); } catch {} return { ref, sha256 }; }) } : {};
+    const roleSkill: RoleSkillUse | null = text.trim() ? { role: roleId ?? null, ref: src?.ref ?? null, version: src?.version ?? null, sha256: createHash("sha256").update(text).digest("hex"), ...partUse } : null;
     // the library is Studio's skill store under this data folder; an engine built without one (a test, a tool) opens the same store
     if (pins.length && !this.deps.library) this.deps.library = new Skills(this.deps.dataDir, { list: () => [], get: () => null, sourceSkill: () => null } as any);
     return { text: composeInstructions(roleText, pins.map((p) => ({ id: p.id, v: p.v, body: this.deps.library.body(p.id, p.v, p.sha256) }))), roleSkill, skills: pins.map((p) => `${p.id}@v${p.v}`) };
@@ -1726,5 +1729,5 @@ export class Engine {
 export { locatorText };
 /** A role skill as one short label: role (ref) vN · sha256 prefix. */
 export function roleSkillName(u: RoleSkillUse): string {
-  return `${u.role ?? "role"}${u.ref ? ` (${u.ref})` : ""}${u.version != null ? ` v${u.version}` : ""}${u.sha256 ? ` · ${u.sha256.slice(0, 12)}` : ""}`;
+  return `${u.role ?? "role"}${u.ref ? ` (${u.ref})` : ""}${u.version != null ? ` v${u.version}` : ""}${u.sha256 ? ` · ${u.sha256.slice(0, 12)}` : ""}${u.parts?.length ? ` [${u.parts.map((p) => `${p.ref}${p.sha256 ? ` · ${p.sha256.slice(0, 12)}` : ""}`).join(", ")}]` : ""}`;
 }

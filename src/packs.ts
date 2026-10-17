@@ -53,7 +53,9 @@ export function validate(src: PackSource): Validation & { manifest: Manifest | n
     return { ok: !errors.length, errors, warnings, manifest: m, flows, cases };
   }
   const roles = new Set<string>();
-  for (const s of m.skills) { if (!s?.role || !s?.file) { errors.push("skills: each needs role and file"); continue; } roles.add(s.role); if (src.read(s.file) == null) errors.push(`skills: ${s.file} is missing`); }
+  // a built-in pack may name a Studio role skill (bundled:<path>) instead of keeping its own copy of it
+  const shared = (ref: string) => src.kind === "builtin" && ref.startsWith("bundled:workflows/skills/") && bundledText(ref.slice(8)) != null;
+  for (const s of m.skills) { if (!s?.role || !s?.file) { errors.push("skills: each needs role and file"); continue; } roles.add(s.role); if (!shared(s.file) && src.read(s.file) == null) errors.push(`skills: ${s.file} is missing`); }
   const gateOk = (g: any, where: string) => { if (!g?.id) errors.push(`${where}: a gate needs an id`); else if (g.builtin) { if (!BUILTINS[g.builtin] && !ENGINE_BUILTINS.has(g.builtin)) errors.push(`${where}: unknown builtin gate ${g.builtin}`); }
     else if (!Array.isArray(g.run) || !g.run.length) errors.push(`${where}: gate ${g.id} needs builtin or run`); else if (g.run.some((a: any) => /curl|wget|https?:/.test(String(a)))) errors.push(`${where}: gate ${g.id} reaches the network`); };
   for (const g of m.gates) gateOk(g, "gates");
@@ -70,7 +72,7 @@ export function validate(src: PackSource): Validation & { manifest: Manifest | n
     const ids = new Set(f.nodes.map((n) => n.id));
     for (const n of f.nodes) { if (!n.id || !n.label || typeof n.x !== "number" || typeof n.y !== "number") errors.push(`${wf}: node ${n.id ?? "?"} needs id, label, x, y`); for (const g of n.gates ?? []) gateOk(g, `${wf} node ${n.id}`); }
     for (const e of f.edges) if (!Array.isArray(e) || !ids.has(e[0]) || !ids.has(e[1])) errors.push(`${wf}: edge ${JSON.stringify(e)} names a node that does not exist`);
-    for (const r of f.roles ?? []) { const pre = `pack:${m.id}/`; if (!r.skill?.startsWith(pre)) errors.push(`${wf}: role ${r.id} skill must start with ${pre}`); else if (src.read(r.skill.slice(pre.length)) == null) errors.push(`${wf}: role ${r.id} skill ${r.skill} is missing`); }
+    for (const r of f.roles ?? []) { const pre = `pack:${m.id}/`; if (r.skill && shared(r.skill)) continue; if (!r.skill?.startsWith(pre)) errors.push(`${wf}: role ${r.id} skill must start with ${pre}`); else if (src.read(r.skill.slice(pre.length)) == null) errors.push(`${wf}: role ${r.id} skill ${r.skill} is missing`); }
     f.pack = m.id; f.roles ??= []; flows.push(f);
   }
   for (const ef of m.evals) {

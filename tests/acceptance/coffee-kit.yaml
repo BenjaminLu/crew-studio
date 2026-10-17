@@ -3,7 +3,7 @@
 # direction card confirms paid generation: the run is accepted when it reaches that card.
 schema: 2
 workflow: coffee-kit
-pin: { version: 1, sha256: "8b5b6d241e0b1553f89fdf14d37e7307d1f1e76e597563ecc737ea76f2f1a2b2" }   # bun scripts/acceptance/pin.ts coffee-kit
+pin: { version: 1, sha256: "9bc2157207c66507b0d0cbd62f0f09a710573e01994a7920ef11fd6c030b9f8c" }   # bun scripts/acceptance/pin.ts coffee-kit
 topic: "A small coffee shop's opening week kit."
 start: { provider: null, params: {}, required_params: [project, coffeeDesignPlan] }
 providers: [codex]

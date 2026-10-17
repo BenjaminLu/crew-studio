@@ -15,7 +15,7 @@ import { imageRefinement, lineageText, requirementLineage } from "./image-refine
 import { briefFor } from "../runtime/refine";
 import { mergeDetail } from "./mergecard";
 import { verifyImagePng, type CodexImage } from "../providers/codex-image";
-import type { Engine, X } from "../runtime/engine";
+import { roleSkillName, type Engine, type X } from "../runtime/engine";
 
 type Deps = { dataDir: string; artifacts: ArtifactStore; lane: any; fileorg: any; docs: any;
   /** Studio's docs for a document about Crew Studio itself (R-032): a folder (tests), null for none, or by default
@@ -94,7 +94,11 @@ export function installDeliver(engine: Engine, d: Deps) {
     const timer = setInterval(() => { if (x.cancelled() || !engine.owns(x)) controller.abort(); }, 100);
     try {
       const rules = new OperatingRules(d.dataDir).section(x.run.params.project || null); x.rn.data = { ...x.rn.data, operatingRules: rules.hash };
-      const image = await d.generateImage(refinement.prompt, authorize, controller.signal, refinement.reference, rules);
+      // the node's role skill leads the image request, and the step records it (ref, version, sha256) like an agent round's
+      const role = x.node.role ? engine.roleSkillText(x.run.def, x.node.role) : null, use = role && x.skillUse ? x.skillUse() : null;
+      if (use?.roleSkill) { const step = [...x.run.steps].reverse().find(s => s.node === x.node.id && s.state === "running"); if (step) { step.roleSkill = use.roleSkill; step.skills = use.skills; } x.log(`skills loaded: ${roleSkillName(use.roleSkill)}`); x.save(); }
+      const prompt = role?.text.trim() ? `${role.text.trim()}\n\n${refinement.prompt}` : refinement.prompt;
+      const image = await d.generateImage(prompt, authorize, controller.signal, refinement.reference, rules);
       authorize(); verifyImagePng(image.bytes);
       mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "image.png"), image.bytes);
       const id = old?.id ?? `out-${x.run.id.toLowerCase()}-draft`;

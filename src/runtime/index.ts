@@ -49,7 +49,7 @@ import { classify, loadDefaults, Projects } from "../doors";
 import type { Provider } from "../providers";
 import type { StudioLog } from "../rawlog";
 import { schemaDefaults } from "./checks";
-import { validate, normalize as normDef, WorkflowDefs } from "./defs";
+import { validate, normalize as normDef, WorkflowDefs, roleSkillJoin } from "./defs";
 import { Engine, type AgentPick } from "./engine";
 import {COFFEE_DESIGN_FIELDS,validateCoffeeDesign,coffeeDesignJSON} from "../domain/coffee-design";
 import { installCoffeeKit } from "../domain/coffee-kit";
@@ -82,12 +82,14 @@ export type RuntimeDeps = {
 };
 
 export function skillTextFor(fmRoot: string) {
-  return (ref: string): string => {
+  // a role with several named skills has one joined ref: its text is each skill's text, in order
+  const one = (ref: string): string => {
     if (ref.startsWith("pack:")) { const t = bundledText(`packs/${ref.slice(5)}`); if (t == null) throw new Error(`no skill ${ref}`); return t; }
     if (ref.startsWith("bundled:")) { const t = bundledText(ref.slice(8)); if (t == null) throw new Error(`no skill ${ref}`); return t; }
     if (ref.startsWith("fm:")) return readFileSync(join(fmRoot, ref.slice(3)), "utf8");
     throw new Error(`unknown skill source ${ref}`);
   };
+  return (ref: string): string => roleSkillJoin(ref, one);
 }
 
 /** Which workflow an intent belongs to: keyword scores over each definition's intent block, and a door hint from the paths and words it names. */

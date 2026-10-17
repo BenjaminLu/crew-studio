@@ -148,7 +148,7 @@ try {
     const {StaffingStore:JourneyStaffing,coffeeStaffingProject:journeyProject,staffingHash:journeyHash,installStaffingGuard:journeyGuard}=await import('../src/domain/staffing');
     const {skillTextFor}=await import('../src/runtime');H.engine.deps.skillText=skillTextFor(join(H.data,'protected'));
     const journeyStore=new JourneyStaffing(H.data),journeyDef=H.defs.get('coffee-kit')!,journeyRoles:any={};
-    for(const role of journeyDef.roles){journeyRoles[role.id]={provider:'codex',model:'fixture-model',effort:'low',skill:journeyStore.remember({ref:role.skill,version:1,text:H.engine.deps.skillText(role.skill)})};}
+    for(const role of journeyDef.roles){journeyRoles[role.id]={provider:'codex',model:'fixture-model',effort:'low',...journeyStore.rolePins(role.skill,(r:string)=>H.engine.deps.skillText(r))};}
     const journeyConfig=journeyStore.approve({schema:1,algorithm:'sha256-canonical-v1',project:journeyProject('journey-coffee'),workflow:{id:journeyDef.id,version:journeyDef.version,sha256:journeyHash(journeyDef)},roles:journeyRoles,review:{freshContexts:3,distinctProviders:false}},null,{run:'fixture-captain-staffing',card:'fixture-confirmation',answerSeq:1});
     journeyGuard(H.engine,journeyStore,()=>{throw new Error('Coffee cannot borrow Git project identity');});
     const staffedParams={project:'journey-coffee',_staffing:journeyConfig.hash};
@@ -290,7 +290,7 @@ try {
     check('missing confirmed staffing refuses before Task allocation',()=>{assert.equal(mismatched?.status,409);assert.equal(runtime.engine.list().length,beforeCreate);});
     const {StaffingStore,coffeeStaffingProject,staffingHash}=await import('../src/domain/staffing');
     const staffingStore=new StaffingStore(H.data),artifactProject=coffeeStaffingProject('captain-coffee-fixture'),roles:any={};
-    for(const role of createdBody.def.roles){roles[role.id]={provider:'codex',model:'fixture-model',effort:'low',skill:staffingStore.remember({ref:role.skill,version:1,text:runtime.engine.deps.skillText(role.skill)})};}
+    for(const role of createdBody.def.roles){roles[role.id]={provider:'codex',model:'fixture-model',effort:'low',...staffingStore.rolePins(role.skill,(r:string)=>runtime.engine.deps.skillText(r))};}
     staffingStore.approve({schema:1,algorithm:'sha256-canonical-v1',project:artifactProject,workflow:{id:createdBody.def.id,version:createdBody.def.version,sha256:staffingHash(createdBody.def)},roles,review:{freshContexts:3,distinctProviders:false}},null,{run:'explicit-fixture-approval',card:'explicit-fixture-card',answerSeq:1});
     await runtime.firstmate.call('studio_staffing_facts',{}, {key:'fixture',captain:true,text:'Read verified offline facts',live:()=>true,signal:new AbortController().signal});
     const started=await request('/api/wruns',{workflow:'my-coffee-fixture',version:1,title:'Native API coffee fixture',text:'Coffee fixture',params:{project:'captain-coffee-fixture',coffeeDesignPlan:JSON.stringify(fixtureDesignPlan),provider:'codex',model:'fixture-model',effort:'low'}});

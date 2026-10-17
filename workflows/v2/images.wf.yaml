@@ -12,7 +12,13 @@
       "氣球"
     ]
   },
-  "roles": [],
+  "roles": [
+    {
+      "id": "image-worker",
+      "label": "Image maker",
+      "skill": "bundled:workflows/skills/v2/image.md"
+    }
+  ],
   "nodes": [
     {
       "id": "intake",
@@ -27,6 +33,7 @@
       "kind": "hook",
       "label": "Generate PNG with Codex",
       "do": "image.generate",
+      "role": "image-worker",
       "timeout_s": 240,
       "x": 300,
       "y": 140

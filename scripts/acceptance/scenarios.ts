@@ -63,8 +63,8 @@ export const CAPTAIN_ONLY_ALLOW: { workflow: string; sha256: string; node: strin
   // deliver acceptance cards (src/domain/deliver.ts finalCard): approve-<producer> puts the approved
   // artifact into Studio's local Library; changes and reject stay the captain's
   { workflow: "documents", sha256: "63af62fcec510e63d89ab2dc3e746d2485b3e27c96982d6451627ac4bc455bbf", node: "accept", kind: "acceptance", option: "approve-draft" },
-  { workflow: "images", sha256: "1105379109c7470bf5f9d194f32b3d3c34c5e6379cdeb8f0784f4d3b388e47bb", node: "accept", kind: "acceptance", option: "approve-draft" },
-  { workflow: "video", sha256: "db7af80433b67b2769d5ceab8fbac05775e7be29ea763fe6ad6853e1613f711f", node: "accept", kind: "acceptance", option: "approve-draft" },
+  { workflow: "images", sha256: "c53617d464637dc96e23bbc43ffea8c2f4ab5331f177bef996f187cfae8205fc", node: "accept", kind: "acceptance", option: "approve-draft" },
+  { workflow: "video", sha256: "62f6c65be20ea937257ce766ab8f56dfd8d5e070936e0e4ebdd066bcd70b36a5", node: "accept", kind: "acceptance", option: "approve-draft" },
   { workflow: "web-prototype", sha256: "c3a939ff48c283bc43aff1bede54ff4915758902a9d4587f84651494351ec46c", node: "accept", kind: "acceptance", option: "approve-design-a" },
   { workflow: "web-prototype", sha256: "c3a939ff48c283bc43aff1bede54ff4915758902a9d4587f84651494351ec46c", node: "accept", kind: "acceptance", option: "approve-design-b" },
   // startup competition (src/domain/startup-recursion.ts): run the bundled template; accept the text result

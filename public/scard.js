@@ -314,7 +314,8 @@ function mountCard(el, card, opts = {}) {
       h("div", { style: "overflow-x:auto" }, h("table", { class: "cc-table", "data-staffing-table": "" },
         h("thead", {}, h("tr", {}, [T("Role", "角色"), T("Provider", "供應商"), T("Model", "模型"), T("Effort", "推理強度"), T("Skill", "技能")].map((x) => h("th", {}, x)))),
         h("tbody", {}, roles.map(([id, r]) => h("tr", { "data-staffing-role": id }, h("td", {}, id), h("td", {}, r.provider), h("td", { class: "cc-mono" }, r.model), h("td", {}, r.effort ?? T("default", "預設")),
-          h("td", { class: "cc-mono" }, r.skill?.ref ? `${r.skill.ref.replace(/^pack:[^/]+\/skills\//, "")} v${r.skill.version}` : "—"))),
+          // a role with several named skills lists each one as its pins name it (the same "name vN" a node's skills show)
+          h("td", { class: "cc-mono" }, r.skill?.ref ? (r.skills || []).length ? r.skills.map((p) => `${String(p.ref).replace(/^(pack|bundled):([^/]+\/)*/, "")} v${p.version}`).join(" + ") : `${r.skill.ref.replace(/^pack:[^/]+\/skills\//, "")} v${r.skill.version}` : "—"))),
           // per-node overrides: what differs from the node's role (an empty cell keeps the role's choice)
           Object.entries(cfg.nodes || {}).map(([id, n]) => h("tr", { "data-staffing-node": id }, h("td", {}, T(`node ${id}`, `節點 ${id}`)), h("td", {}, n.provider || T("role", "依角色")), h("td", { class: "cc-mono" }, n.model || T("role", "依角色")),
             h("td", {}, n.effort === undefined ? T("role", "依角色") : n.effort ?? T("default", "預設")), h("td", { class: "cc-mono" }, (n.skills || []).map((p) => `${String(p.ref).replace(/^skill:/, "")} v${p.version}`).join(", ") || T("role", "依角色"))))))),

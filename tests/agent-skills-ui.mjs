@@ -87,34 +87,34 @@ try {
     ok(/allowed-tools/.test(await p.textContent('[data-skill="greedy"] [data-skill-ignored]')), "the Skills page says which frontmatter keys were ignored");
     // done 3: two skills on one node, ordered, saved as a new version whose diff names both in order
     await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('[data-editor="code-firstmate"] [data-node="spec"]').catch(() => {});
-    await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="build"]').catch(() => {});
-    await selectNode(p, "build");
+    await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="plan"]').catch(() => {});
+    await selectNode(p, "plan");
     const v0 = (await (await fetch(`${base}/api/wf/code-firstmate`)).json()).def.version;
     await p.selectOption("[data-skill-pick]", "alpha"); await p.click("[data-skill-on]");
     await p.selectOption("[data-skill-pick]", "beta"); await p.click("[data-skill-on]");
     const o1 = await order(p);
     await p.click('[data-skill-up="beta"]'); const o2 = await order(p);
-    await p.fill("[data-save-note]", "skills on build"); await p.click("[data-save]");
+    await p.fill("[data-save-note]", "skills on plan"); await p.click("[data-save]");
     const saved = await wait(p, '[data-diff-k="skills"]');
     const diffText = saved ? await p.textContent('[data-diff-k="skills"]') : "";
     const after = (await (await fetch(`${base}/api/wf/code-firstmate`)).json()).def;
-    ok(JSON.stringify(o1) === '["alpha","beta"]' && JSON.stringify(o2) === '["beta","alpha"]' && saved && diffText.includes("build: beta@v1, alpha@v1") && after.version === v0 + 1
-      && JSON.stringify((after.nodes.find((n) => n.id === "build").skills ?? []).map((s) => `${s.id}@v${s.v}`)) === '["beta@v1","alpha@v1"]',
+    ok(JSON.stringify(o1) === '["alpha","beta"]' && JSON.stringify(o2) === '["beta","alpha"]' && saved && diffText.includes("plan: beta@v1, alpha@v1") && after.version === v0 + 1
+      && JSON.stringify((after.nodes.find((n) => n.id === "plan").skills ?? []).map((s) => `${s.id}@v${s.v}`)) === '["beta@v1","alpha@v1"]',
       "two skills on one node make a new version whose diff names both, in order (editor)", JSON.stringify({ o1, o2, diffText, v0, v: after.version }));
     ok(await noHScroll(p), "the editor has no sideways scroll at 1440");
     // done 5 in the editor: v2 exists, moving to it is a new version
     writeFileSync(join(alpha, "SKILL.md"), md("alpha", "Alpha: short sentences, one idea each", "ALPHA TWO"));
     await p.goto(`${base}/#/library/skills`); await importFolder(p, alpha);
     await p.waitForFunction(() => document.querySelector('[data-skill="alpha"] [data-skill-version]')?.textContent.trim() === "v2", null, { timeout: 8000 }).catch(() => {});
-    await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('[data-editor="code-firstmate"] [data-node="build"]').catch(() => {});
-    await p.click('[data-view-toggle="detail"]'); await selectNode(p, "build");
+    await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('[data-editor="code-firstmate"] [data-node="plan"]').catch(() => {});
+    await p.click('[data-view-toggle="detail"]'); await selectNode(p, "plan");
     ok(await wait(p, '[data-skill-newer="alpha"]') && /v2/.test(await p.textContent('[data-skill-newer="alpha"]')) && (await p.textContent('[data-node-skill="alpha"]')).includes("alpha@v1"), "re-import makes v2; the editor shows that v2 exists while the node keeps v1");
     await p.click('[data-skill-upgrade="alpha"]'); await p.click("[data-save]");
     const up = await wait(p, '[data-diff-k="skills"]'); const upText = up ? await p.textContent('[data-diff-k="skills"]') : "";
     const after2 = (await (await fetch(`${base}/api/wf/code-firstmate`)).json()).def;
-    ok(up && upText.includes("build: beta@v1, alpha@v2") && after2.version === after.version + 1, "moving to v2 in the editor is a new workflow version", upText);
+    ok(up && upText.includes("plan: beta@v1, alpha@v2") && after2.version === after.version + 1, "moving to v2 in the editor is a new workflow version", upText);
     // done 6 in the panel
-    await selectNode(p, "build");
+    await selectNode(p, "plan");
     await p.selectOption("[data-skill-pick]", "greedy"); await p.click("[data-skill-on]");
     const ign = await wait(p, '[data-skill-ignored="greedy"]') ? await p.textContent('[data-skill-ignored="greedy"]') : "";
     ok(/allowed-tools/.test(ign) && /network/.test(ign) && /ignored/i.test(ign) && /tools/.test(ign) && /sandbox/.test(ign), "a skill cannot grant tools: the node panel says its request was ignored", ign);
@@ -131,8 +131,8 @@ try {
     await importFolder(p, bigA); await wait(p, '[data-skill="big-a"]'); await importFolder(p, bigB); await wait(p, '[data-skill="big-b"]');
     ok(/^9 bytes$/.test((await p.textContent('[data-skill="delta"] [data-skill-size]')).trim()) && !/frontmatter/i.test(await p.textContent("main")) && (await p.textContent('[data-role-skill="code/worker"]').catch(() => "")).includes("not versioned"),
       "the Skills page's words: the size in bytes, 'not versioned' for a role with no version, no 'frontmatter'", await p.textContent('[data-skill="delta"] [data-skill-size]'));
-    await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('[data-editor="code-firstmate"] [data-node="build"]').catch(() => {});
-    await p.click('[data-view-toggle="detail"]'); await selectNode(p, "build");
+    await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('[data-editor="code-firstmate"] [data-node="plan"]').catch(() => {});
+    await p.click('[data-view-toggle="detail"]'); await selectNode(p, "plan");
     await p.selectOption("[data-skill-pick]", "delta"); await p.click("[data-skill-on]"); await p.click("[data-save]"); await wait(p, '[data-diff-k="skills"]');
     writeFileSync(join(delta, "SKILL.md"), md("delta", "Delta: say what changed first", "DELTA TWO"));
     await p.goto(`${base}/#/library/skills`); await importFolder(p, delta);
@@ -164,7 +164,7 @@ try {
     covered[state] = { fab, prob, hit: overlap(fab, prob) };
     await p.locator(".rt-panel").screenshot({ path: join(shots, `agent-skills-${state}-${width}-${scheme}.png`) }).catch((e) => console.log(`  (panel shot: ${String(e.message).split("\n")[0]})`));
     await p.setViewportSize({ width, height: 900 }); };
-  const boxes = (p) => p.$$eval('[data-node-skills="build"] .rt-skill-btn, [data-node-skills="build"] [data-skill-on]', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return { k: Object.keys(e.dataset)[0] || e.textContent, w: Math.round(r.width), h: Math.round(r.height) }; })).catch(() => []);
+  const boxes = (p) => p.$$eval('[data-node-skills="plan"] .rt-skill-btn, [data-node-skills="plan"] [data-skill-on]', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return { k: Object.keys(e.dataset)[0] || e.textContent, w: Math.round(r.width), h: Math.round(r.height) }; })).catch(() => []);
   for (const width of [1440, 390]) for (const scheme of ["light", "dark"]) {
     const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: scheme }); const p = safe(await ctx.newPage()); p.on("pageerror", (e) => errors.push(e.message));
     const tag = `${width} ${scheme}`;
@@ -194,22 +194,22 @@ try {
     // the node panel
     await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('[data-editor="code-firstmate"] [data-view-toggle="detail"]').catch(() => {});
     await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"]').catch(() => {});
-    if (!(await p.locator('[data-node="build"]').count())) { await p.locator('[data-stage-node="build"]').dispatchEvent("click").catch(() => {}); await p.waitForSelector('[data-node="build"]').catch(() => {}); } // a phone starts with the stages collapsed
-    await selectNode(p, "build");
+    if (!(await p.locator('[data-node="plan"]').count())) { await p.locator('[data-stage-node="plan"]').dispatchEvent("click").catch(() => {}); await p.waitForSelector('[data-node="plan"]').catch(() => {}); } // a phone starts with the stages collapsed
+    await selectNode(p, "plan");
     const newer = await wait(p, '[data-skill-newer="delta"]') && await wait(p, '[data-skill-upgrade="delta"]');
     await shotPanel(p, "newer", width, scheme);
     ok(newer, `the "v2 available" notice and its control at ${tag}`);
-    const nums = await p.$$eval('[data-node-skills="build"] .rt-skill-n', (els) => els.map((e) => e.textContent)).catch(() => []);
-    const bw = await p.$eval('[data-node-skills="build"]', (el) => el.getBoundingClientRect().width).catch(() => 9999);
+    const nums = await p.$$eval('[data-node-skills="plan"] .rt-skill-n', (els) => els.map((e) => e.textContent)).catch(() => []);
+    const bw = await p.$eval('[data-node-skills="plan"]', (el) => el.getBoundingClientRect().width).catch(() => 9999);
     ok(JSON.stringify(nums) === '["1.","2.","3."]' && (width < 700 || bw <= 641), `the skills are numbered 1, 2, 3 and the block is at most 640 px wide at ${tag}`, JSON.stringify({ nums, bw }));
-    const firstUp = await p.$('[data-node-skills="build"] [data-skill-up]').catch(() => null);
+    const firstUp = await p.$('[data-node-skills="plan"] [data-skill-up]').catch(() => null);
     const dis = firstUp ? await firstUp.evaluate((e) => ({ d: e.disabled, a: e.getAttribute("aria-disabled"), cls: e.className })) : {};
     ok(dis.d === true && dis.a === "true" && /\bbtn\b/.test(dis.cls) && !/\bghost\b/.test(dis.cls), `the first row's up arrow is a disabled bordered button with aria-disabled at ${tag}`, JSON.stringify(dis));
     if (width === 390) { const b = await boxes(p);
       ok(b.length >= 10 && b.every((x) => x.w >= 44 && x.h >= 44), `at 390 every skills control (arrows, turn off, use v2, turn on) is at least 44×44`, JSON.stringify(b)); }
     await p.selectOption("[data-skill-pick]", "greedy"); await p.click("[data-skill-on]"); // shows the ignored note too (not saved)
     await shotPanel(p, "panel", width, scheme);
-    const fits = await p.$eval('.rt-panel [data-node-skills="build"]', (el) => { const r = el.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth + 1; }).catch(() => false);
+    const fits = await p.$eval('.rt-panel [data-node-skills="plan"]', (el) => { const r = el.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth + 1; }).catch(() => false);
     ok(fits && await noHScroll(p), `the node panel's skills at ${tag}: inside the page, no sideways scroll`);
     // a save over the per-node cap: refused with the total and the cap, shown in the panel
     const vBefore = (await (await fetch(`${base}/api/wf/code-firstmate`)).json()).def.version;
@@ -226,7 +226,7 @@ try {
     await shotPanel(p, "cap", width, scheme);
     ok(!!covered.cap?.prob && !covered.cap.hit, `in the cap capture (the panel whole, the page at its end) the floating button covers no part of the refusal at ${tag}`, JSON.stringify(covered.cap));
     const vAfter = (await (await fetch(`${base}/api/wf/code-firstmate`)).json()).def.version;
-    ok(/build: the enabled skills total \d+ KB; the cap is 96 KB/.test(await p.textContent(".rt-panel")) && vAfter === vBefore && /over/.test(await p.getAttribute("[data-skill-size]", "class")), `a save over the per-node cap is refused in the panel with the total and the cap at ${tag}`);
+    ok(/plan: the enabled skills total \d+ KB; the cap is 96 KB/.test(await p.textContent(".rt-panel")) && vAfter === vBefore && /over/.test(await p.getAttribute("[data-skill-size]", "class")), `a save over the per-node cap is refused in the panel with the total and the cap at ${tag}`);
     // the run step's name@v1
     await p.goto(`${base}/#/run/${runId}`); const st = await wait(p, '[data-step-skills="spec"]', 30000);
     await p.evaluate(() => { document.scrollingElement.scrollTop = 0; document.querySelector("#main").scrollTop = 0; }); // a full-page capture from the top (the phone's header stays where it belongs)

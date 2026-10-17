@@ -25,4 +25,4 @@ edges:
   - [check, approve]
   - [approve, export]
 roles:
-  - { id: writer, label: Writer, skill: "pack:documents/skills/writer.md" }
+  - { id: writer, label: Writer, skill: "bundled:workflows/skills/v2/writer.md" }

@@ -4,7 +4,7 @@ version: 1.0.0
 description: "Draft a document, pin notes on its paragraphs, let the writer revise it (a new version each time), approve it once no note is open, and export it as Markdown, HTML, Word or PDF."
 engine: documents
 skills:
-  - { role: writer, file: skills/writer.md }
+  - { role: writer, file: "bundled:workflows/skills/v2/writer.md" }   # the documents workflow's writer skill: one source
 gates:
   - { id: has-title, builtin: doc-has-title, label: "The document starts with a title" }
   - { id: no-open-notes, builtin: doc-no-open-notes, label: "No note is still open" }

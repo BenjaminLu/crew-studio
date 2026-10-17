@@ -5,6 +5,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {StaffingStore,nativeStaffingSkillRef,coffeeStaffingProject,staffingHash} from '../src/domain/staffing';
+import {roleSkillJoin} from '../src/runtime/defs';
 if(process.env.COFFEE_STAFFING_CONTROL_MODULE){
  const {harness,Y}=await import('./rt-harness');const {installStaffingGuard}=await import(process.env.COFFEE_STAFFING_CONTROL_MODULE);
  const h=await harness([Y({id:'coffee-kit',name:'Historical admission control',kind:'coffee-kit',version:1,roles:[],nodes:[{id:'direction',kind:'card',label:'Captain direction',x:1,y:1,card:{options:[{id:'confirm',label:'Confirm'}]}}],edges:[]})]);
@@ -18,9 +19,10 @@ try {
  ok('missing or filesystem-shaped project names refuse',()=>{for(const value of ['',undefined,'../repo','a/b'])assert.throws(()=>coffeeStaffingProject(value as any));});
  const roles:any={};
  for(const role of ['worker','image-worker','reviewer','designer']) {
-  const ref=nativeStaffingSkillRef(role,'coffee-kit'),body=readFileSync(join(import.meta.dir,'..','packs',ref.slice(5)),'utf8'),skill=store.remember({ref,version:1,text:body});
-  roles[role]={provider:'codex',model:'fixture-model',effort:'low',skill};
-  ok(`${role} pins actual specialized source body`,()=>{assert.equal(skill.sha256,createHash('sha256').update(body).digest('hex'));assert(body.length>1000);assert.equal(store.skill(skill),body);assert(ref.startsWith('pack:coffee-kit/skills/'));});
+  // a coffee role names the shared native contract, then its coffee profile: the role text joins both, in order
+  const ref=nativeStaffingSkillRef(role,'coffee-kit'),part=(r:string)=>readFileSync(join(import.meta.dir,'..','packs',r.slice(5)),'utf8'),body=roleSkillJoin(ref,part),pins=store.rolePins(ref,r=>roleSkillJoin(r,part)),skill=pins.skill;
+  roles[role]={provider:'codex',model:'fixture-model',effort:'low',...pins};
+  ok(`${role} pins actual specialized source body`,()=>{const [contract,profile]=ref.split('+');assert.equal(skill.sha256,createHash('sha256').update(body).digest('hex'));assert(body.length>1000);assert.equal(store.skill(skill),body);assert(contract.startsWith('pack:firstmate/skills/')&&profile.startsWith('pack:coffee-kit/skills/'));assert(body.indexOf(part(contract).trim())===0&&body.includes(part(profile).trim()));assert.deepEqual(pins.skills?.map(p=>[p.ref,p.sha256]),[contract,profile].map(r=>[r,createHash('sha256').update(part(r)).digest('hex')]));});
  }
  const config=store.approve({schema:1,algorithm:'sha256-canonical-v1',project,workflow:{id:'coffee-kit',version:1,sha256:staffingHash({fixture:true})},roles,review:{freshContexts:3,distinctProviders:false}},null,{run:'fixture',card:'fixture-card',answerSeq:1});
  ok('all role skill snapshots survive a fresh store read',()=>{const reload=new StaffingStore(data),current=reload.current(project);assert.equal(current.hash,config.hash);for(const role of Object.keys(roles))assert.equal(reload.skill(current.roles[role].skill,project),store.skill(roles[role].skill));});
@@ -37,8 +39,8 @@ try {
  try {
   installStaffingGuard(engine,store,()=>{throw new Error('Coffee must not borrow Git identity');});
   ok('actual direct Engine start refuses missing staffing before allocation',()=>{assert.throws(()=>engine.start({workflow:def.id,params:{project:project.id}}));assert.equal(engine.list().length,0);});
-  const skill=store.remember({ref:def.roles[0].skill,version:1,text:engine.deps.skillText(def.roles[0].skill)}),installed=h.defs.get(def.id)!;
-  const config=store.approve({schema:1,algorithm:'sha256-canonical-v1',project,workflow:{id:def.id,version:installed.version,sha256:staffingHash(installed)},roles:{worker:{provider:'codex',model:'fixture-model',effort:'low',skill}},review:{freshContexts:3,distinctProviders:false}},null,{run:'fixture',card:'fixture-card',answerSeq:1});
+  const pins=store.rolePins(def.roles[0].skill,(r:string)=>engine.deps.skillText(r)),skill=pins.skill,installed=h.defs.get(def.id)!;
+  const config=store.approve({schema:1,algorithm:'sha256-canonical-v1',project,workflow:{id:def.id,version:installed.version,sha256:staffingHash(installed)},roles:{worker:{provider:'codex',model:'fixture-model',effort:'low',...pins}},review:{freshContexts:3,distinctProviders:false}},null,{run:'fixture',card:'fixture-card',answerSeq:1});
   const run=engine.start({workflow:def.id,params:{project:project.id,_staffing:config.hash}});
   ok('actual start binds captain config before first node',()=>{const trust=engine.trusted(run.id);assert(trust.ok);assert(trust.entries.some(e=>e.record==='staffing-start'&&e.data?.config===config.hash));assert.deepEqual(engine.deps.approvedPick!(run,installed.nodes[0],'worker'),{provider:'codex',model:'fixture-model',effort:'low'});});
   ok('actual source snapshot is delivered by approvedSkill',()=>assert.equal(engine.deps.approvedSkill!(run,'worker'),store.skill(skill,project)));

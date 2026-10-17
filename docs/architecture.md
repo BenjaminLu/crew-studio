@@ -117,6 +117,7 @@ Every check result, review verdict, plan acceptance and card answer is stored wi
 
 - A workflow is a versioned file: nodes, edges, node config, attached checks and policy overrides.
 - Editing creates a new version with a diff. A task pins its version.
+- A role names one skill (`skill:`) or several (`skills: [contract, profile]`); several are joined in order into the one role text that is versioned and pinned, and approved staffing also pins each named skill's sha256.
 - An agent node keeps its role skill and carries an ordered list of enabled skills, each pinned by version and hash. Turning a skill on or off, reordering, or moving to a newer version is an edit (a new version whose diff names the skills). The agent's instructions are Studio's safety rules, then the role skill, then each enabled skill under its own heading, in order, within a per-node size cap.
 - The editor is a draggable SVG graph: move, pan, zoom, connect, a palette of node kinds and checks, a params form generated from schema, try-on-sample and validation (no orphans, a reachable end, gates attached). The live task overlay uses the same graph.
 

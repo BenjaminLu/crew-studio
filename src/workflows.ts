@@ -33,7 +33,8 @@ export class Workflows {
   sourceSkill(wf: string, role: string): { text: string; source: string } | null {
     const w = this.get(wf); const r = w?.flow.roles.find((x) => x.id === role); if (!w || !r) return null;
     if (r.skill.startsWith("fm:")) { const p = join(this.fmRoot, r.skill.slice(3)); return existsSync(p) ? { text: readFileSync(p, "utf8"), source: p } : null; }
-    const rel = r.skill.replace(/^(bundled|pack):/, "");
+    if (r.skill.startsWith("bundled:")) { const t = bundledText(r.skill.slice(8)); return t == null ? null : { text: t, source: r.skill }; } // a Studio role skill, for a pack's flow too
+    const rel = r.skill.replace(/^pack:/, "");
     const t = w.read(rel); return t == null ? null : { text: t, source: r.skill };
   }
   retro(wf: string): RetroConfig | null {

@@ -831,8 +831,10 @@ function buildRunGraph(r,v){
 }
 // the agent steps of a run, each with the role skill it received (role, Studio version, short sha256; the ref on hover) and the
 // skills it loaded (name@vN, in order); a step's judge calls follow it, each with the role skill its judge received (a designer judge too)
-const roleSkillBadge = (u, key) => u ? h("span", { class: "vbadge", "data-role-skill": key, title: `${u.ref || ""}${u.sha256 ? ` sha256 ${u.sha256}` : ""}` },
-  `${u.role || T("role", "角色")}${u.ref ? ` · ${u.ref.replace(/^.*\//, "")}` : ""}${u.version != null ? ` v${u.version}` : ""}${u.sha256 ? ` · ${u.sha256.slice(0, 12)}` : ""}`) : h("span", { class: "faint", "data-role-skill": key }, T("no role skill", "沒有角色技能"));
+// a role with several named skills shows each one (name · sha256 prefix) after the role's joined text
+const roleSkillBadge = (u, key) => u ? h("span", { class: "rt-step-skills" }, [h("span", { class: "vbadge", "data-role-skill": key, title: `${u.ref || ""}${u.sha256 ? ` sha256 ${u.sha256}` : ""}` },
+  `${u.role || T("role", "角色")}${u.ref && !(u.parts || []).length ? ` · ${u.ref.replace(/^.*\//, "")}` : ""}${u.version != null ? ` v${u.version}` : ""}${u.sha256 ? ` · ${u.sha256.slice(0, 12)}` : ""}`),
+  ...(u.parts || []).map((p) => h("span", { class: "vbadge", "data-role-skill-part": `${key}:${p.ref.replace(/^.*\//, "")}`, title: `${p.ref}${p.sha256 ? ` sha256 ${p.sha256}` : ""}` }, `${p.ref.replace(/^.*\//, "")}${p.sha256 ? ` · ${p.sha256.slice(0, 12)}` : ""}`))]) : h("span", { class: "faint", "data-role-skill": key }, T("no role skill", "沒有角色技能"));
 function stepsCard(r) {
   const steps = (r.steps || []).filter((st) => (st.kind === "agent" || st.roleSkill || (st.judges || []).length) && st.state !== "superseded").slice(-30);
   if (!steps.length) return null;

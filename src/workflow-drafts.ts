@@ -19,6 +19,7 @@ import {neutralizeMarkers} from './operating-rules';
 export const DRAFT_SKILLS:Record<string,{en:string;zh:string;makes:string;formats:string[];design:boolean}>={
  'bundled:workflows/skills/v2/writer.md':{en:'Writer',zh:'撰稿',makes:'documents: copy, articles, plans, reports and reviews of written work',formats:['document'],design:false},
  'bundled:workflows/skills/v2/designer.md':{en:'Designer',zh:'設計',makes:'web pages, design direction and design review of a page',formats:['web','document'],design:true},
+ 'bundled:workflows/skills/v2/film-editor.md':{en:'Film editor',zh:'影片剪輯',makes:'films: a timed stage of beats rendered to video, and revisions of one',formats:['video'],design:false},
 };
 // Visual design work only: "design" alone (a design doc, a meal-plan design, a system design) is not visual work.
 const VISUAL_WORK=/\b(?:visual(?:\s+(?:design|direction|style))?|layout|mock-?ups?|wireframes?|style ?guide|look and feel|UI|UX|design direction|design review|art direction)\b|視覺|视觉|版面|排版|設計方向|设计方向|設計審查|设计审查|視覺風格|视觉风格/i,NOT_VISUAL=/\bdesign\s+(?:doc|document|plan|spec|proposal)s?\b|系統設計|系统设计/i;

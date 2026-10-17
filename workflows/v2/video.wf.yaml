@@ -14,7 +14,7 @@
     {
       "id": "editor",
       "label": "Editor",
-      "skill": "bundled:workflows/skills/v2/designer.md"
+      "skill": "bundled:workflows/skills/v2/film-editor.md"
     }
   ],
   "nodes": [

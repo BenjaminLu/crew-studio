@@ -83,6 +83,8 @@ nodes:
     role: worker
     mode: build
     retries: 1
+    # the worker's report and the reviewer's findings are read by people: the built-in plain-writing skill
+    skills: [{ id: plain-writing, v: 1, sha256: "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467" }]
     checks:
       - { use: firstmate/scope }
       - { use: firstmate/lints }
@@ -111,6 +113,8 @@ nodes:
     role: reviewer
     mode: review
     retries: 1
+    # the worker's report and the reviewer's findings are read by people: the built-in plain-writing skill
+    skills: [{ id: plain-writing, v: 1, sha256: "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467" }]
     timeout_s: 900
     checks:
       - { use: firstmate/review-depth }

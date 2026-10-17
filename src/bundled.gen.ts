@@ -14,51 +14,51 @@ import b10 from "../workflows/skills/pack-genesis-author.md" with { type: "file"
 import b11 from "../workflows/skills/pack-genesis-coordinator.md" with { type: "file" };
 import b12 from "../workflows/skills/startup-founder.md" with { type: "file" };
 import b13 from "../workflows/skills/startup-judge.md" with { type: "file" };
-import b14 from "../workflows/skills/v2/coffee-kit.md" with { type: "file" };
-import b15 from "../workflows/skills/v2/designer.md" with { type: "file" };
-import b16 from "../workflows/skills/v2/writer.md" with { type: "file" };
-import b17 from "../workflows/v2/coffee-kit.wf.yaml" with { type: "file" };
-import b18 from "../workflows/v2/documents.wf.yaml" with { type: "file" };
-import b19 from "../workflows/v2/file-organization.wf.yaml" with { type: "file" };
-import b20 from "../workflows/v2/firstmate-connect-github.wf.yaml" with { type: "file" };
-import b21 from "../workflows/v2/firstmate-proposal.wf.yaml" with { type: "file" };
-import b22 from "../workflows/v2/firstmate-register-project.wf.yaml" with { type: "file" };
-import b23 from "../workflows/v2/firstmate-staffing.wf.yaml" with { type: "file" };
-import b24 from "../workflows/v2/github-review.wf.yaml" with { type: "file" };
-import b25 from "../workflows/v2/hello-crew-studio.wf.yaml" with { type: "file" };
-import b26 from "../workflows/v2/images.wf.yaml" with { type: "file" };
-import b27 from "../workflows/v2/pack-genesis.wf.yaml" with { type: "file" };
-import b28 from "../workflows/v2/startup-recursion.wf.yaml" with { type: "file" };
-import b29 from "../workflows/v2/templates/film.html" with { type: "file" };
-import b30 from "../workflows/v2/trivial-lane.wf.yaml" with { type: "file" };
-import b31 from "../workflows/v2/video.wf.yaml" with { type: "file" };
-import b32 from "../workflows/v2/web-prototype.wf.yaml" with { type: "file" };
-import b33 from "../packs/coffee-kit/checks/bundle-ready/check.yaml" with { type: "file" };
-import b34 from "../packs/coffee-kit/checks/designer/check.yaml" with { type: "file" };
-import b35 from "../packs/coffee-kit/checks/reviewer/check.yaml" with { type: "file" };
-import b36 from "../packs/coffee-kit/manifest.yaml" with { type: "file" };
-import b37 from "../packs/coffee-kit/skills/designer.md" with { type: "file" };
-import b38 from "../packs/coffee-kit/skills/hyperframes.md" with { type: "file" };
-import b39 from "../packs/coffee-kit/skills/image.md" with { type: "file" };
-import b40 from "../packs/coffee-kit/skills/reviewer.md" with { type: "file" };
-import b41 from "../packs/coffee-kit/skills/website.md" with { type: "file" };
-import b42 from "../packs/core/checks/artifact-ready/check.yaml" with { type: "file" };
-import b43 from "../packs/core/checks/brief-quality/check.yaml" with { type: "file" };
-import b44 from "../packs/core/checks/brief-quality/run" with { type: "file" };
-import b45 from "../packs/core/checks/lane-ready/check.yaml" with { type: "file" };
-import b46 from "../packs/core/checks/pack-genesis-measure/check.yaml" with { type: "file" };
-import b47 from "../packs/core/checks/pack-genesis-preview/check.yaml" with { type: "file" };
-import b48 from "../packs/core/checks/ste-wording/check.yaml" with { type: "file" };
-import b49 from "../packs/core/checks/ste-wording/run" with { type: "file" };
-import b50 from "../packs/core/evals/coordinator.json" with { type: "file" };
-import b51 from "../packs/core/manifest.yaml" with { type: "file" };
-import b52 from "../packs/core/skills/coordinator.md" with { type: "file" };
-import b53 from "../packs/core/skills/plain-writing/NOTICE.md" with { type: "file" };
-import b54 from "../packs/core/skills/plain-writing/SKILL.md" with { type: "file" };
-import b55 from "../packs/core/workflows/refine-demo.wf.yaml" with { type: "file" };
-import b56 from "../packs/documents/evals/writer.json" with { type: "file" };
-import b57 from "../packs/documents/manifest.yaml" with { type: "file" };
-import b58 from "../packs/documents/skills/writer.md" with { type: "file" };
+import b14 from "../workflows/skills/v2/designer.md" with { type: "file" };
+import b15 from "../workflows/skills/v2/film-editor.md" with { type: "file" };
+import b16 from "../workflows/skills/v2/image.md" with { type: "file" };
+import b17 from "../workflows/skills/v2/writer.md" with { type: "file" };
+import b18 from "../workflows/v2/coffee-kit.wf.yaml" with { type: "file" };
+import b19 from "../workflows/v2/documents.wf.yaml" with { type: "file" };
+import b20 from "../workflows/v2/file-organization.wf.yaml" with { type: "file" };
+import b21 from "../workflows/v2/firstmate-connect-github.wf.yaml" with { type: "file" };
+import b22 from "../workflows/v2/firstmate-proposal.wf.yaml" with { type: "file" };
+import b23 from "../workflows/v2/firstmate-register-project.wf.yaml" with { type: "file" };
+import b24 from "../workflows/v2/firstmate-staffing.wf.yaml" with { type: "file" };
+import b25 from "../workflows/v2/github-review.wf.yaml" with { type: "file" };
+import b26 from "../workflows/v2/hello-crew-studio.wf.yaml" with { type: "file" };
+import b27 from "../workflows/v2/images.wf.yaml" with { type: "file" };
+import b28 from "../workflows/v2/pack-genesis.wf.yaml" with { type: "file" };
+import b29 from "../workflows/v2/startup-recursion.wf.yaml" with { type: "file" };
+import b30 from "../workflows/v2/templates/film.html" with { type: "file" };
+import b31 from "../workflows/v2/trivial-lane.wf.yaml" with { type: "file" };
+import b32 from "../workflows/v2/video.wf.yaml" with { type: "file" };
+import b33 from "../workflows/v2/web-prototype.wf.yaml" with { type: "file" };
+import b34 from "../packs/coffee-kit/checks/bundle-ready/check.yaml" with { type: "file" };
+import b35 from "../packs/coffee-kit/checks/designer/check.yaml" with { type: "file" };
+import b36 from "../packs/coffee-kit/checks/reviewer/check.yaml" with { type: "file" };
+import b37 from "../packs/coffee-kit/manifest.yaml" with { type: "file" };
+import b38 from "../packs/coffee-kit/skills/designer.md" with { type: "file" };
+import b39 from "../packs/coffee-kit/skills/hyperframes.md" with { type: "file" };
+import b40 from "../packs/coffee-kit/skills/image.md" with { type: "file" };
+import b41 from "../packs/coffee-kit/skills/reviewer.md" with { type: "file" };
+import b42 from "../packs/coffee-kit/skills/website.md" with { type: "file" };
+import b43 from "../packs/core/checks/artifact-ready/check.yaml" with { type: "file" };
+import b44 from "../packs/core/checks/brief-quality/check.yaml" with { type: "file" };
+import b45 from "../packs/core/checks/brief-quality/run" with { type: "file" };
+import b46 from "../packs/core/checks/lane-ready/check.yaml" with { type: "file" };
+import b47 from "../packs/core/checks/pack-genesis-measure/check.yaml" with { type: "file" };
+import b48 from "../packs/core/checks/pack-genesis-preview/check.yaml" with { type: "file" };
+import b49 from "../packs/core/checks/ste-wording/check.yaml" with { type: "file" };
+import b50 from "../packs/core/checks/ste-wording/run" with { type: "file" };
+import b51 from "../packs/core/evals/coordinator.json" with { type: "file" };
+import b52 from "../packs/core/manifest.yaml" with { type: "file" };
+import b53 from "../packs/core/skills/coordinator.md" with { type: "file" };
+import b54 from "../packs/core/skills/plain-writing/NOTICE.md" with { type: "file" };
+import b55 from "../packs/core/skills/plain-writing/SKILL.md" with { type: "file" };
+import b56 from "../packs/core/workflows/refine-demo.wf.yaml" with { type: "file" };
+import b57 from "../packs/documents/evals/writer.json" with { type: "file" };
+import b58 from "../packs/documents/manifest.yaml" with { type: "file" };
 import b59 from "../packs/documents/workflows/document.flow.yaml" with { type: "file" };
 import b60 from "../packs/file-organization/checks/plan-gates/check.yaml" with { type: "file" };
 import b61 from "../packs/file-organization/evals/organizer.json" with { type: "file" };
@@ -322,51 +322,51 @@ export const BUNDLED: Record<string, string> = {
   "workflows/skills/pack-genesis-coordinator.md": b11,
   "workflows/skills/startup-founder.md": b12,
   "workflows/skills/startup-judge.md": b13,
-  "workflows/skills/v2/coffee-kit.md": b14,
-  "workflows/skills/v2/designer.md": b15,
-  "workflows/skills/v2/writer.md": b16,
-  "workflows/v2/coffee-kit.wf.yaml": b17,
-  "workflows/v2/documents.wf.yaml": b18,
-  "workflows/v2/file-organization.wf.yaml": b19,
-  "workflows/v2/firstmate-connect-github.wf.yaml": b20,
-  "workflows/v2/firstmate-proposal.wf.yaml": b21,
-  "workflows/v2/firstmate-register-project.wf.yaml": b22,
-  "workflows/v2/firstmate-staffing.wf.yaml": b23,
-  "workflows/v2/github-review.wf.yaml": b24,
-  "workflows/v2/hello-crew-studio.wf.yaml": b25,
-  "workflows/v2/images.wf.yaml": b26,
-  "workflows/v2/pack-genesis.wf.yaml": b27,
-  "workflows/v2/startup-recursion.wf.yaml": b28,
-  "workflows/v2/templates/film.html": b29,
-  "workflows/v2/trivial-lane.wf.yaml": b30,
-  "workflows/v2/video.wf.yaml": b31,
-  "workflows/v2/web-prototype.wf.yaml": b32,
-  "packs/coffee-kit/checks/bundle-ready/check.yaml": b33,
-  "packs/coffee-kit/checks/designer/check.yaml": b34,
-  "packs/coffee-kit/checks/reviewer/check.yaml": b35,
-  "packs/coffee-kit/manifest.yaml": b36,
-  "packs/coffee-kit/skills/designer.md": b37,
-  "packs/coffee-kit/skills/hyperframes.md": b38,
-  "packs/coffee-kit/skills/image.md": b39,
-  "packs/coffee-kit/skills/reviewer.md": b40,
-  "packs/coffee-kit/skills/website.md": b41,
-  "packs/core/checks/artifact-ready/check.yaml": b42,
-  "packs/core/checks/brief-quality/check.yaml": b43,
-  "packs/core/checks/brief-quality/run": b44,
-  "packs/core/checks/lane-ready/check.yaml": b45,
-  "packs/core/checks/pack-genesis-measure/check.yaml": b46,
-  "packs/core/checks/pack-genesis-preview/check.yaml": b47,
-  "packs/core/checks/ste-wording/check.yaml": b48,
-  "packs/core/checks/ste-wording/run": b49,
-  "packs/core/evals/coordinator.json": b50,
-  "packs/core/manifest.yaml": b51,
-  "packs/core/skills/coordinator.md": b52,
-  "packs/core/skills/plain-writing/NOTICE.md": b53,
-  "packs/core/skills/plain-writing/SKILL.md": b54,
-  "packs/core/workflows/refine-demo.wf.yaml": b55,
-  "packs/documents/evals/writer.json": b56,
-  "packs/documents/manifest.yaml": b57,
-  "packs/documents/skills/writer.md": b58,
+  "workflows/skills/v2/designer.md": b14,
+  "workflows/skills/v2/film-editor.md": b15,
+  "workflows/skills/v2/image.md": b16,
+  "workflows/skills/v2/writer.md": b17,
+  "workflows/v2/coffee-kit.wf.yaml": b18,
+  "workflows/v2/documents.wf.yaml": b19,
+  "workflows/v2/file-organization.wf.yaml": b20,
+  "workflows/v2/firstmate-connect-github.wf.yaml": b21,
+  "workflows/v2/firstmate-proposal.wf.yaml": b22,
+  "workflows/v2/firstmate-register-project.wf.yaml": b23,
+  "workflows/v2/firstmate-staffing.wf.yaml": b24,
+  "workflows/v2/github-review.wf.yaml": b25,
+  "workflows/v2/hello-crew-studio.wf.yaml": b26,
+  "workflows/v2/images.wf.yaml": b27,
+  "workflows/v2/pack-genesis.wf.yaml": b28,
+  "workflows/v2/startup-recursion.wf.yaml": b29,
+  "workflows/v2/templates/film.html": b30,
+  "workflows/v2/trivial-lane.wf.yaml": b31,
+  "workflows/v2/video.wf.yaml": b32,
+  "workflows/v2/web-prototype.wf.yaml": b33,
+  "packs/coffee-kit/checks/bundle-ready/check.yaml": b34,
+  "packs/coffee-kit/checks/designer/check.yaml": b35,
+  "packs/coffee-kit/checks/reviewer/check.yaml": b36,
+  "packs/coffee-kit/manifest.yaml": b37,
+  "packs/coffee-kit/skills/designer.md": b38,
+  "packs/coffee-kit/skills/hyperframes.md": b39,
+  "packs/coffee-kit/skills/image.md": b40,
+  "packs/coffee-kit/skills/reviewer.md": b41,
+  "packs/coffee-kit/skills/website.md": b42,
+  "packs/core/checks/artifact-ready/check.yaml": b43,
+  "packs/core/checks/brief-quality/check.yaml": b44,
+  "packs/core/checks/brief-quality/run": b45,
+  "packs/core/checks/lane-ready/check.yaml": b46,
+  "packs/core/checks/pack-genesis-measure/check.yaml": b47,
+  "packs/core/checks/pack-genesis-preview/check.yaml": b48,
+  "packs/core/checks/ste-wording/check.yaml": b49,
+  "packs/core/checks/ste-wording/run": b50,
+  "packs/core/evals/coordinator.json": b51,
+  "packs/core/manifest.yaml": b52,
+  "packs/core/skills/coordinator.md": b53,
+  "packs/core/skills/plain-writing/NOTICE.md": b54,
+  "packs/core/skills/plain-writing/SKILL.md": b55,
+  "packs/core/workflows/refine-demo.wf.yaml": b56,
+  "packs/documents/evals/writer.json": b57,
+  "packs/documents/manifest.yaml": b58,
   "packs/documents/workflows/document.flow.yaml": b59,
   "packs/file-organization/checks/plan-gates/check.yaml": b60,
   "packs/file-organization/evals/organizer.json": b61,

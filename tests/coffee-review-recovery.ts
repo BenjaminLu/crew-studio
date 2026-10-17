@@ -17,7 +17,7 @@ const png=execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','color=c=tan:s=1
 const film=execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','color=c=tan:s=160x90:r=1:d=12','-c:v','libx264','-pix_fmt','yuv420p','-movflags','frag_keyframe+empty_moov','-f','mp4','pipe:1']);
 let pages=0,images=0,videos=0,judges=0,fail=true,failImage=true,snapshots:any[]=[];
 H.engine.deps.skillText=skillTextFor(join(H.data,'protected'));
-const staffing=new StaffingStore(H.data),def=H.defs.get('coffee-kit')!,roles:any={};for(const role of def.roles)roles[role.id]={provider:'codex',model:'fixture-model',effort:'low',skill:staffing.remember({ref:role.skill,version:1,text:H.engine.deps.skillText(role.skill)})};
+const staffing=new StaffingStore(H.data),def=H.defs.get('coffee-kit')!,roles:any={};for(const role of def.roles)roles[role.id]={provider:'codex',model:'fixture-model',effort:'low',...staffing.rolePins(role.skill,(r:string)=>H.engine.deps.skillText(r))};
 const config=staffing.approve({schema:1,algorithm:'sha256-canonical-v1',project:coffeeStaffingProject('review-fixture'),workflow:{id:def.id,version:def.version,sha256:staffingHash(def)},roles,review:{freshContexts:3,distinctProviders:false}},null,{run:'fixture-staffing',card:'fixture-card',answerSeq:1});
 const guard=installStaffingGuard(H.engine,staffing,()=>{throw new Error('No borrowed project');});
 H.engine.deps.provider=()=>({id:'codex',model:'fixture-model',reasoningEffort:'low',sandboxFree:true,start(_s:any,tools:any[],ctx:any){return{interrupt(){},async *send(text:string){

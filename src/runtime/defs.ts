@@ -33,8 +33,16 @@ export type WNode = {
   skills?: { id: string; v: number; sha256: string }[];
 };
 export type WEdge = { from: string; to: string; when?: string; checks?: CheckRef[] };
-/** A role's defaults: its skill, and the provider, model and reasoning effort its nodes run on unless a node (or approved staffing) says otherwise. */
-export type WRole = { id: string; label: string; skill: string; provider?: string; model?: string; effort?: string };
+/** A role's defaults: its skill, and the provider, model and reasoning effort its nodes run on unless a node (or approved staffing) says otherwise.
+ *  skills: several named skills (a shared contract, then a domain profile), in order; normalize() then sets skill to their joined ref,
+ *  the one text the role receives, versions and pins. */
+export type WRole = { id: string; label: string; skill: string; skills?: string[]; provider?: string; model?: string; effort?: string };
+/** The separator of a role's joined skill ref. */
+export const ROLE_SKILL_JOIN = "+";
+/** A role skill ref's named parts, in order (one part for a plain ref). */
+export const roleSkillParts = (ref: string | undefined | null): string[] => (typeof ref === "string" && ref ? ref.split(ROLE_SKILL_JOIN) : []);
+/** A joined ref's text: each named skill's text in the listed order (the contract first, then the profile). */
+export const roleSkillJoin = (ref: string, one: (part: string) => string): string => { const parts = roleSkillParts(ref); return parts.length > 1 ? parts.map((p) => one(p).trim()).join("\n\n") + "\n" : one(ref); };
 export type WDef = {
   id: string; name: string; version: number; description?: string; kind?: string;
   intent?: { keywords?: string[]; examples?: string[] };
@@ -73,7 +81,8 @@ const now = () => new Date().toISOString();
 
 /** YAML edges may be [from, to, when?] or {from, to, when}; nodes get defaults. */
 export function normalize(raw: any): WDef {
-  const d: WDef = { ...raw, version: Number(raw?.version ?? 1), roles: Array.isArray(raw?.roles) ? raw.roles : [], nodes: [], edges: [] };
+  const joined = (r: any) => Array.isArray(r?.skills) && r.skills.length && r.skills.every((x: any) => typeof x === "string") ? { ...r, skill: r.skills.join(ROLE_SKILL_JOIN) } : r;
+  const d: WDef = { ...raw, version: Number(raw?.version ?? 1), roles: Array.isArray(raw?.roles) ? raw.roles.map(joined) : [], nodes: [], edges: [] };
   d.nodes = (Array.isArray(raw?.nodes) ? raw.nodes : []).map((n: any) => ({ ...n, id: String(n.id), kind: String(n.kind ?? "action"), label: String(n.label ?? n.id), x: Number(n.x ?? 0), y: Number(n.y ?? 0) }));
   const refs = (v: any) => (Array.isArray(v) ? v.filter((c: any) => c && typeof c.use === "string").map((c: any) => ({ ...c })) : undefined);
   d.edges = (Array.isArray(raw?.edges) ? raw.edges : []).map((e: any) => Array.isArray(e) ? { from: String(e[0]), to: String(e[1]), ...(e[2] ? { when: String(e[2]) } : {}), ...(e[3]?.checks ? { checks: refs(e[3].checks) } : {}) }
@@ -125,6 +134,8 @@ export function validate(d: WDef, known?: (ref: string) => boolean, runners?: Se
       }
     }
   }
+  for (const r of d.roles) if (r.skills != null && (!Array.isArray(r.skills) || !r.skills.length || r.skills.some((x: any) => typeof x !== "string" || !x || x.includes(ROLE_SKILL_JOIN)) || new Set(r.skills).size !== r.skills.length))
+    out.push({ level: "error", text: `role ${r.id}: skills is an ordered list of distinct skill refs` });
   for (const e of d.edges) {
     if (!ids.has(e.from) || !ids.has(e.to)) out.push({ level: "error", edge: ekey(e), text: `edge ${ekey(e)} names a node that does not exist` });
     for (const c of e.checks ?? []) if (known && !known(c.use)) out.push({ level: "error", edge: ekey(e), text: `edge ${ekey(e)}: no check ${c.use}` });

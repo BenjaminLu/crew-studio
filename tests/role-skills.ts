@@ -226,4 +226,80 @@ H.stop();
       ok(/judges as role "designer", which workflow code-firstmate does not define \(roles: worker\)/.test(msg) && e.judgeRole(jx, { id: "x", ref: "t/x", judge: { prompt: "" } } as any) === "worker", "an undefined judge.role is refused by name; without one the judge works as the node's role", msg); }
   } finally { for (const x of e.list()) if (!["succeeded", "failed", "cancelled"].includes(x.status)) await e.cancel(x.id, "fixture cleanup"); h.stop(); }
 }
+
+// ---------- a role with several named skills (a shared contract, then a domain profile): joined in order, each one pinned ----------
+{
+  const { normalize, validate } = await import("../src/runtime/defs");
+  const nd = normalize({ id: "multi", name: "Multi", version: 1, roles: [{ id: "worker", label: "Worker", skills: ["pack:a/contract.md", "pack:b/profile.md"] }, { id: "plain", label: "Plain", skill: "pack:a/one.md" }], nodes: [], edges: [] });
+  ok(nd.roles[0].skill === "pack:a/contract.md+pack:b/profile.md" && nd.roles[1].skill === "pack:a/one.md", "a role's named skills become one joined ref, in order; a plain skill: stays as it was", JSON.stringify(nd.roles));
+  const bad = normalize({ id: "multi", name: "Multi", version: 1, roles: [{ id: "worker", label: "Worker", skills: ["pack:a/x.md", "pack:a/x.md"] }], nodes: [], edges: [] });
+  ok(validate(bad).some((p) => /role worker: skills is an ordered list of distinct skill refs/.test(p.text)), "a repeated named skill is refused");
+  const { StaffingStore, installStaffingGuard, staffingHash, nativeStaffingSkillRef, coffeeStaffingProject, skillPartPins } = await import("../src/domain/staffing");
+  const { roleSkillJoin } = await import("../src/runtime/defs");
+  const { Y } = await import("./rt-harness");
+  const ref = nativeStaffingSkillRef("worker", "coffee-kit");
+  ok(ref === "pack:firstmate/skills/worker.md+pack:coffee-kit/skills/website.md", "the coffee website worker names the shared worker contract, then the coffee website profile", ref);
+  const coffee = JSON.parse(readFileSync(join(root, "workflows/v2/coffee-kit.wf.yaml"), "utf8"));
+  ok(normalize(coffee).roles.every((r: any) => r.skill === nativeStaffingSkillRef(r.id, "coffee-kit")), "every shipped coffee-kit role names its contract and its profile", JSON.stringify(normalize(coffee).roles));
+  const contract = "# Contract\n\n- Shared rule.\n"; let profile = "# Profile\n\n- Domain rule.\n";
+  const texts = (part: string) => part === "pack:firstmate/skills/worker.md" ? contract : part === "pack:coffee-kit/skills/website.md" ? profile : (() => { throw new Error(`no skill ${part}`); })();
+  const flow = { id: "coffee-kit", name: "Named skills fixture", kind: "coffee-kit", version: 1, roles: [{ id: "worker", label: "Worker", skills: ref.split("+") }],
+    nodes: [{ id: "wait", kind: "card", label: "Wait", x: 0, y: 0, card: { options: [{ id: "go", label: "Go" }] } }, { id: "work", kind: "agent", label: "Work", role: "worker", mode: "test", x: 1, y: 0 }],
+    edges: [["wait", "work", "go"]] };
+  const h = await harness([Y(flow)], { data: checkedTempDir("crew-role-skills-named-") }), e = h.engine, staffing = new StaffingStore(h.data), project = coffeeStaffingProject("named-skills");
+  try {
+    installStaffingGuard(e, staffing, () => project);
+    e.deps.skillText = (r: string) => roleSkillJoin(r, texts);
+    const def = e.defs.get(flow.id)!;
+    const draft = (skills: any) => ({ schema: 1 as const, algorithm: "sha256-canonical-v1" as const, project, workflow: { id: def.id, version: def.version, sha256: staffingHash(def) }, roles: { worker: { provider: "codex" as const, model: "m", effort: "high", skill: staffing.remember({ ref, version: 1, text: e.deps.skillText(ref) }), ...skills } }, review: { freshContexts: 3, distinctProviders: false } });
+    // an approval that pins only the joined text (no per-skill pins) does not cover a role with several named skills
+    const c0 = staffing.approve(draft({}), null, { run: "R-0", card: "SC-0", answerSeq: 1 });
+    { let msg = ""; try { e.start({ workflow: flow.id, text: "x", params: { project: project.id, _staffing: c0.hash } }); } catch (err: any) { msg = String(err?.message); }
+      ok(/Approved role skill differs from workflow policy/.test(msg), "an approval without each named skill's pin is refused at start", msg); }
+    const parts = skillPartPins(ref, e.deps.skillText)!;
+    const c1 = staffing.approve(draft({ skills: parts }), c0.hash, { run: "R-1", card: "SC-1", answerSeq: 1 });
+    ok(c1.roles.worker.skills?.length === 2 && c1.roles.worker.skills[0].sha256 === sha(contract) && c1.roles.worker.skills[1].sha256 === sha(profile), "staffing pins each named skill's sha256", JSON.stringify(c1.roles.worker.skills));
+    const systems: string[] = [];
+    e.modes.test.system = (_x: any, skill: string) => skill;
+    e.deps.selectProvider = async (_x: any, p: any) => { const base = e.deps.provider(p.provider, p.model); return { ...base, reasoningEffort: p.effort, start: (sys: string, tools: any, ctx: any) => { systems.push(sys); return base.start(sys, tools, ctx); } }; };
+    const task = e.start({ workflow: flow.id, text: "fixture", params: { project: project.id, _staffing: c1.hash } });
+    await until(() => task.nodes.wait.waiting === "card");
+    // only the profile changes (a pack update): the round holds on the one-click card, which names the changed skill
+    profile = "# Profile\n\n- Domain rule.\n- A new domain rule.\n";
+    await e.answer(task.nodes.wait.card!, { choice: "go", by: "captain" });
+    await until(() => task.nodes.work.waiting === "card" && !e.busy(task.id));
+    const card = e.cards.get(task.nodes.work.card!)!;
+    ok(card?.failure?.code === "env.skill-changed" && card.options.some((o: any) => o.id === "approve-skill") && JSON.stringify(card).includes(`skill pack:coffee-kit/skills/website.md: approved ${sha("# Profile\n\n- Domain rule.\n").slice(0, 12)}`) && !JSON.stringify(card).includes("skill pack:firstmate/skills/worker.md: approved") && !systems.length,
+      "a changed profile holds the round on the env.skill-changed card, naming only the skill that changed", JSON.stringify(card).slice(0, 1200));
+    await e.answer(card.id, { choice: "approve-skill", by: "captain" });
+    await until(() => ["succeeded", "failed"].includes(task.status) && !e.busy(task.id));
+    const c2 = staffing.current(project);
+    ok(task.status === "succeeded" && c2.roles.worker.skills?.[0].sha256 === sha(contract) && c2.roles.worker.skills?.[1].sha256 === sha(profile) && c2.roles.worker.skill.sha256 === sha(e.deps.skillText(ref)),
+      "one click re-pins the joined text and the changed skill; the contract's pin stays", JSON.stringify([task.status, task.error, c2.roles.worker.skills]));
+    ok(systems.length === 1 && systems[0].indexOf("- Shared rule.") >= 0 && systems[0].indexOf("- Shared rule.") < systems[0].indexOf("- A new domain rule."), "the round receives the contract, then the profile", systems[0]?.slice(0, 600));
+    const st = task.steps.filter((s: any) => s.node === "work" && s.state !== "superseded").at(-1) as any;
+    ok(st?.roleSkill?.parts?.map((p: any) => p.ref).join() === "pack:firstmate/skills/worker.md,pack:coffee-kit/skills/website.md" && st.roleSkill.parts[1].sha256 === sha(profile),
+      "the run page's step lists every named skill with its sha256", JSON.stringify(st?.roleSkill));
+  } finally { for (const x of e.list()) if (!["succeeded", "failed", "cancelled"].includes(x.status)) await e.cancel(x.id, "fixture cleanup"); h.stop(); }
+}
+
+// ---------- the shipped skill texts and pins (retro 2026-10-17 findings 5 to 8) ----------
+{
+  const worker = pack("worker"), reviewer = pack("reviewer"), firstmate = pack("firstmate");
+  ok(!/Missing pins mean HOLD/i.test(worker) && !/implements only the approved plan/.test(worker) && /accepted plan, or the approved spec when the round has no plan/.test(worker),
+    "the worker skill carries no lane rule that contradicts the brief: a build round follows the plan or, without one, the spec");
+  ok(/REJECT carries the complete must-fix list/.test(reviewer) && /file:line/.test(reviewer) && /exact required change \(a diff where practical\)/.test(reviewer), "a reviewer's REJECT carries every must-fix item with file:line and the exact change");
+  ok(/Escalate to the captain only for a one-way decision, a credential or permission, or a preference nobody can infer/.test(firstmate) && /Never invent a requirement the captain did not state/.test(firstmate) && /is a question for the captain/.test(firstmate) && /Brief each role from the operating manual/.test(firstmate),
+    "Firstmate's skill: when to escalate, never invent a requirement (an unstated choice is a question), brief each role from the operating manual");
+  ok(/never quote or describe the run instructions/.test(readFileSync(join(root, "workflows/skills/v2/writer.md"), "utf8")), "the documents writer never quotes the run instructions in the deliverable");
+  const { normalize } = await import("../src/runtime/defs");
+  const { parseYaml } = await import("../src/bundled");
+  const plainPinned = (file: string) => { const d = normalize(parseYaml(readFileSync(join(root, file), "utf8"))); return ["build", "review"].every((id) => (d.nodes.find((n: any) => n.id === id)?.skills ?? []).some((p: any) => p.id === "plain-writing")); };
+  ok(plainPinned("packs/firstmate/workflows/code-firstmate.wf.yaml") && plainPinned("workflows/v2/github-review.wf.yaml"), "code-firstmate and github-review pin plain-writing on their build and review nodes");
+  const video = normalize(JSON.parse(readFileSync(join(root, "workflows/v2/video.wf.yaml"), "utf8")));
+  ok(video.roles.find((r: any) => r.id === "editor")?.skill === "bundled:workflows/skills/v2/film-editor.md", "the video editor runs on the film-editor skill, not the web designer's");
+  const images = normalize(JSON.parse(readFileSync(join(root, "workflows/v2/images.wf.yaml"), "utf8")));
+  ok(images.roles.some((r: any) => r.id === "image-worker" && r.skill === "bundled:workflows/skills/v2/image.md") && images.nodes.find((n: any) => n.id === "draft")?.role === "image-worker", "the images workflow's generating node has a role with an image skill");
+  ok(!existsSync(join(root, "packs/documents/skills/writer.md")) && !existsSync(join(root, "workflows/skills/v2/coffee-kit.md")), "the orphaned duplicate skills are gone");
+}
 end();
