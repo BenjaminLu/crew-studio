@@ -10,7 +10,7 @@ import { websiteHref, type ArtifactStore } from "../artifacts";
 import { bundledText } from "../bundled";
 import { mdToDocHtml, toDocx, toPdf } from "../docrender";
 import { probeVideo, runRender, renderEnv } from "../render";
-import {imageRefinement} from "./image-refinement";
+import { imageRefinement, lineageText, requirementLineage } from "./image-refinement";
 import { briefFor } from "../runtime/refine";
 import { mergeDetail } from "./mergecard";
 import { verifyImagePng, type CodexImage } from "../providers/codex-image";
@@ -26,6 +26,9 @@ export function installDeliver(engine: Engine, d: Deps) {
   const ref = (x: X) => { const p = String(x.node.args?.producer ?? "draft"); const r = x.ctx.deliver?.[p]; if (!r || !st.version(r.id, r.n)) throw new Error("no pinned artifact output"); return r; };
   const kind = (x: X) => String(x.node.args?.format ?? "web");
   const entry = (f: string) => f === "image" ? "image.png" : f === "document" ? "doc.md" : f === "video" ? "film.html" : "index.html";
+  const artifactType = (f: string) => f === "document" ? "doc" : f === "video" ? "video" : f === "image" ? "image" : "web";
+  // the brief names the version this round edits, so a later round builds on it instead of starting over
+  const parentLine = (x: X) => { const e = entry(kind(x)), p = x.rn.data.parent; return p ? `${e} in the work folder is v${p.n}, the version the captain last saw. Edit it in place: keep every earlier change${kind(x) === "video" ? " and beat" : ""} unless a newer requirement above changes it, then apply the newest requirements. Do not start over.` : `Write ${e}.`; };
   engine.actions["image.generate"] = async x => {
     if (!d.generateImage) throw new Error("sandboxed image generation unavailable");
     if (x.run.params.provider && x.run.params.provider !== "codex") throw new Error("image generation requires Codex");
@@ -60,19 +63,21 @@ export function installDeliver(engine: Engine, d: Deps) {
       const old = x.ctx.deliver?.[x.node.id]; if (old) cpSync(st.filesDir(old.id, old.n), dir, { recursive: true });
       if (kind(x) === "video" && !old) { const tpl = bundledText("workflows/v2/templates/film.html"); if (!tpl) throw new Error("film template unavailable"); writeFileSync(join(dir, "film.html"), tpl.replaceAll(/\{\{(?:TITLE|LINE[123])\}\}/g, "Crew Studio")); }
       x.rn.data.inputs = captureDeliverInputs(x,st); engine.record(x,"deliver-inputs",{data:{inputs:x.rn.data.inputs}});
-      x.rn.data.brief = briefFor(x); x.rn.data.dir = dir; x.rn.data.parent = old ?? null; x.rn.data.notes = old ? st.notes(old.id, old.n).filter(n => n.status === "open") : []; x.save();
+      x.rn.data.brief = briefFor(x); x.rn.data.dir = dir; x.rn.data.parent = old ?? null; x.rn.data.notes = old ? st.notes(old.id, old.n).filter(n => n.status === "open") : [];
+      // every round carries the captain's notes from every earlier version, not only the parent's open ones (R-051, R-054)
+      x.rn.data.lineage = requirementLineage(st, { run: x.run.id, producer: x.node.id, round: x.visit, attempt: (x.rn.attempt ?? 0) + 1, intent: x.run.text, old, type: artifactType(kind(x)) }); x.save();
     },
     sandbox: x => { const dir = engine.roundDirPath(x, "deliver"); return { writes: [dir], cwd: dir }; },
     tools: x => [...folderTools(x.rn.data.dir, () => {}, "work").filter(t => t.name !== "work_search"),...deliverInputTools(st,x.run.id,x.rn.data.inputs??[],()=>engine.owns(x))], maxTools: 30,
     system: (x, skill) => `${skill}\nProduce ${entry(kind(x))} in the isolated work folder using work_* tools. Read related fixed-version source documents with input_list/input_read before building on or reviewing them; input sources are read-only and are not in the work folder. No shell, network, browser inspection or external assets. Preserve existing content unless the brief changes it.${kind(x) === "video" ? " Keep the renderer contract: #stage, DUR, render(t), build() and schedule(). #stage must be a fixed 960x540 px box (16:9), or 540x960 when the intent asks for vertical; never vw/vh/%. The MP4 is rendered at exactly 1920x1080 (1080x1920 vertical) from that box." : ""}`,
-    prompt: x => `DELIVER ${kind(x)}\nNode: ${x.node.id} — ${x.node.label}\nAssignment: ${x.node.detail ?? "Produce the requested output for this step."}\nFixed Task inputs (use input_read with producer): ${JSON.stringify(x.rn.data.inputs??[])}\nVariant: ${x.node.args?.variant ?? "A"}\nIntent: ${x.run.text || x.run.title}\n${x.rn.data.brief?.text ?? ""}\nOpen annotations: ${JSON.stringify(x.rn.data.notes ?? [])}\nWrite ${entry(kind(x))}.`,
+    prompt: x => `DELIVER ${kind(x)}\nNode: ${x.node.id} — ${x.node.label}\nAssignment: ${x.node.detail ?? "Produce the requested output for this step."}\nFixed Task inputs (use input_read with producer): ${JSON.stringify(x.rn.data.inputs??[])}\nVariant: ${x.node.args?.variant ?? "A"}\nIntent: ${x.run.text || x.run.title}\n${x.rn.data.brief?.text ?? ""}\n${x.rn.data.lineage ? lineageText(x.rn.data.lineage) : ""}\nOpen annotations on the parent version: ${JSON.stringify(x.rn.data.notes ?? [])}\n${parentLine(x)}`,
     after(x, job) {
       if (x.cancelled()) throw new Error("cancelled");
       const f = kind(x), dir = x.rn.data.dir, e = entry(f); if (!existsSync(join(dir, e))) throw new Error(`the agent wrote no ${e}`);
       const id = x.ctx.deliver?.[x.node.id]?.id ?? `out-${x.run.id.toLowerCase()}-${x.node.id}`;
-      if (!st.get(id)) st.create({ id, title: `${x.run.title} ${x.node.args?.variant ?? ""}`.trim(), type: f === "document" ? "doc" : f === "video" ? "video" : "web", source: f === "document" ? "md" : f === "video" ? "film" : "html", entry: e });
+      if (!st.get(id)) st.create({ id, title: `${x.run.title} ${x.node.args?.variant ?? ""}`.trim(), type: artifactType(f) as any, source: f === "document" ? "md" : f === "video" ? "film" : "html", entry: e });
       if (f === "document") writeFileSync(join(dir, "doc.html"), mdToDocHtml(readFileSync(join(dir, e), "utf8"), x.run.title));
-      const v = st.addVersion(id, { from: dir, primary: e, parent: x.rn.data.parent?.n ?? null, annotations: (x.rn.data.notes ?? []).map((n: any) => n.id), createdBy: { kind: "agent", provider: job.provider, model: job.model, run: job.id }, source: { run: x.run.id }, cost: job.cost, summary: job.said.slice(0, 300) });
+      const v = st.addVersion(id, { from: dir, primary: e, parent: x.rn.data.parent?.n ?? null, ...(x.rn.data.lineage ? { refinement: x.rn.data.lineage } : {}), annotations: (x.rn.data.notes ?? []).map((n: any) => n.id), createdBy: { kind: "agent", provider: job.provider, model: job.model, run: job.id }, source: { run: x.run.id }, cost: job.cost, summary: job.said.slice(0, 300) });
       (x.ctx.deliver ??= {})[x.node.id] = { id, n: v.n, sha256: v.sha256, format: f, producer: x.node.id };
       // Approval evidence binds to the complete set, not a mutable global latest pointer.
       x.ctx.head = hash(refs(x)); x.ctx.spec ??= { done: ["Every delivered source passes its deterministic readiness check", "The content and presentation match the captain's intent"] };
