@@ -16,9 +16,23 @@ import { mergeDetail } from "./mergecard";
 import { verifyImagePng, type CodexImage } from "../providers/codex-image";
 import type { Engine, X } from "../runtime/engine";
 
-type Deps = { dataDir: string; artifacts: ArtifactStore; lane: any; fileorg: any; docs: any; generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference, rules?: RulesSection) => Promise<CodexImage> };
+type Deps = { dataDir: string; artifacts: ArtifactStore; lane: any; fileorg: any; docs: any;
+  /** a registered project's checkout, so a document about that project can read its docs/ (R-032) */
+  projectPath?: (id: string) => string | null;
+  /** Studio's own docs/ folder, for a document about Crew Studio itself; absent in a build without it */
+  studioDocs?: string | null; generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference, rules?: RulesSection) => Promise<CodexImage> };
 const hash = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+/** A document's title is its own # heading, never the raw prompt that asked for it. */
+export const docTitle = (md: string, fallback: string) => /^#\s+(.+?)\s*#*\s*$/m.exec(md)?.[1].trim() || fallback;
+const STUDIO_DOCS = join(import.meta.dir, "..", "..", "docs");
+/** Sentences a reader stumbles on: longer than 30 words. Reported to the captain, never blocking. */
+export function readabilityFindings(md: string): { section: string; message: string }[] {
+  const out: { section: string; message: string }[] = []; let fence = false;
+  md.split(/\n\s*\n/).forEach((para, i) => { if (/^\s*```/.test(para)) fence = !fence; if (fence || /^\s*(```|#|\|)/.test(para)) return;
+    for (const sentence of para.replace(/\s+/g, " ").split(/(?<=[.!?。！？])\s+/)) { const words = sentence.split(" ").filter(Boolean).length; if (words > 30) out.push({ section: `paragraph ${i + 1}`, message: `a ${words}-word sentence: "${sentence.slice(0, 90)}…"` }); } });
+  return out;
+}
 export function installDeliver(engine: Engine, d: Deps) {
   const st = d.artifacts;
   engine.actions["deliver.intake"] = x => { x.ctx.intent = { text: x.run.text, workflow: x.run.workflow }; x.ctx.spec ??= { done: [x.run.workflow === "trivial-lane" ? "The local image recipe passes its deterministic checks" : x.run.workflow === "file-organization" ? "The planned moves stay inside the folder without overwrite" : "Every delivered source passes its deterministic readiness check", "The content and presentation match the captain's intent"] }; return "ok"; };
@@ -57,26 +71,36 @@ export function installDeliver(engine: Engine, d: Deps) {
     if (source) for (const n of producers) (x.ctx.briefs ??= {})[n.id] = { ...source, producer: n.id, round: x.run.nodes[n.id].visits };
     return "ok";
   };
+  // a document about the product reads the product's own docs (read-only, host-side tools): a registered
+  // project's docs/ when the Task names one, Studio's docs/ when the intent is about Crew Studio itself
+  const productDocs = (x: X): { label: string; root: string } | null => {
+    if (kind(x) !== "document") return null;
+    const project = x.run.params?.project ? d.projectPath?.(String(x.run.params.project)) : null;
+    const studio = d.studioDocs === undefined ? STUDIO_DOCS : d.studioDocs;
+    const pick = project ? { label: `${x.run.params.project} docs/`, root: join(project, "docs") } : studio && /\bcrew[\s-]?studio\b/i.test(`${x.run.text} ${x.run.title}`) ? { label: "Crew Studio docs/", root: studio } : null;
+    try { return pick && existsSync(pick.root) && lstatSync(pick.root).isDirectory() ? { ...pick, root: realpathSync(pick.root) } : null; } catch { return null; }
+  };
+  const productDocTools = (x: X) => { const p = productDocs(x); return p ? folderTools(p.root, () => {}, "product_docs").filter(t => /_(list|read|search)$/.test(t.name)).map(t => ({ ...t, description: `Read-only, ${p.label}: ${t.description.replace(/ across the editable files/, "")}` })) : []; };
   engine.modes.deliver = {
     begin(x) {
       const dir = engine.roundDir(x, "deliver");
       const old = x.ctx.deliver?.[x.node.id]; if (old) cpSync(st.filesDir(old.id, old.n), dir, { recursive: true });
       if (kind(x) === "video" && !old) { const tpl = bundledText("workflows/v2/templates/film.html"); if (!tpl) throw new Error("film template unavailable"); writeFileSync(join(dir, "film.html"), tpl.replaceAll(/\{\{(?:TITLE|LINE[123])\}\}/g, "Crew Studio")); }
-      x.rn.data.inputs = captureDeliverInputs(x,st); engine.record(x,"deliver-inputs",{data:{inputs:x.rn.data.inputs}});
+      x.rn.data.inputs = captureDeliverInputs(x,st); x.rn.data.productDocs = productDocs(x)?.label ?? null; engine.record(x,"deliver-inputs",{data:{inputs:x.rn.data.inputs}});
       x.rn.data.brief = briefFor(x); x.rn.data.dir = dir; x.rn.data.parent = old ?? null; x.rn.data.notes = old ? st.notes(old.id, old.n).filter(n => n.status === "open") : [];
       // every round carries the captain's notes from every earlier version, not only the parent's open ones (R-051, R-054)
       x.rn.data.lineage = requirementLineage(st, { run: x.run.id, producer: x.node.id, round: x.visit, attempt: (x.rn.attempt ?? 0) + 1, intent: x.run.text, old, type: artifactType(kind(x)) }); x.save();
     },
     sandbox: x => { const dir = engine.roundDirPath(x, "deliver"); return { writes: [dir], cwd: dir }; },
-    tools: x => [...folderTools(x.rn.data.dir, () => {}, "work").filter(t => t.name !== "work_search"),...deliverInputTools(st,x.run.id,x.rn.data.inputs??[],()=>engine.owns(x))], maxTools: 30,
+    tools: x => [...folderTools(x.rn.data.dir, () => {}, "work").filter(t => t.name !== "work_search"),...deliverInputTools(st,x.run.id,x.rn.data.inputs??[],()=>engine.owns(x)),...productDocTools(x)], maxTools: 30,
     system: (x, skill) => `${skill}\nProduce ${entry(kind(x))} in the isolated work folder using work_* tools. Read related fixed-version source documents with input_list/input_read before building on or reviewing them; input sources are read-only and are not in the work folder. No shell, network, browser inspection or external assets. Preserve existing content unless the brief changes it.${kind(x) === "video" ? " Keep the renderer contract: #stage, DUR, render(t), build() and schedule(). #stage must be a fixed 960x540 px box (16:9), or 540x960 when the intent asks for vertical; never vw/vh/%. The MP4 is rendered at exactly 1920x1080 (1080x1920 vertical) from that box." : ""}`,
-    prompt: x => `DELIVER ${kind(x)}\nNode: ${x.node.id} — ${x.node.label}\nAssignment: ${x.node.detail ?? "Produce the requested output for this step."}\nFixed Task inputs (use input_read with producer): ${JSON.stringify(x.rn.data.inputs??[])}\nVariant: ${x.node.args?.variant ?? "A"}\nIntent: ${x.run.text || x.run.title}\n${x.rn.data.brief?.text ?? ""}\n${x.rn.data.lineage ? lineageText(x.rn.data.lineage) : ""}\nOpen annotations on the parent version: ${JSON.stringify(x.rn.data.notes ?? [])}\n${parentLine(x)}`,
+    prompt: x => `DELIVER ${kind(x)}\nNode: ${x.node.id} — ${x.node.label}\nAssignment: ${x.node.detail ?? "Produce the requested output for this step."}\nFixed Task inputs (use input_read with producer): ${JSON.stringify(x.rn.data.inputs??[])}\n${x.rn.data.productDocs ? `Product docs (read-only, product_docs_list/read/search): ${x.rn.data.productDocs}. Take every fact about the product from them; never invent one.\n` : ""}Variant: ${x.node.args?.variant ?? "A"}\nIntent: ${x.run.text || x.run.title}\n${x.rn.data.brief?.text ?? ""}\n${x.rn.data.lineage ? lineageText(x.rn.data.lineage) : ""}\nOpen annotations on the parent version: ${JSON.stringify(x.rn.data.notes ?? [])}\n${parentLine(x)}`,
     after(x, job) {
       if (x.cancelled()) throw new Error("cancelled");
       const f = kind(x), dir = x.rn.data.dir, e = entry(f); if (!existsSync(join(dir, e))) throw new Error(`the agent wrote no ${e}`);
       const id = x.ctx.deliver?.[x.node.id]?.id ?? `out-${x.run.id.toLowerCase()}-${x.node.id}`;
       if (!st.get(id)) st.create({ id, title: `${x.run.title} ${x.node.args?.variant ?? ""}`.trim(), type: artifactType(f) as any, source: f === "document" ? "md" : f === "video" ? "film" : "html", entry: e });
-      if (f === "document") writeFileSync(join(dir, "doc.html"), mdToDocHtml(readFileSync(join(dir, e), "utf8"), x.run.title));
+      if (f === "document") { const md = readFileSync(join(dir, e), "utf8"); writeFileSync(join(dir, "doc.html"), mdToDocHtml(md, docTitle(md, x.run.title))); }
       const v = st.addVersion(id, { from: dir, primary: e, parent: x.rn.data.parent?.n ?? null, ...(x.rn.data.lineage ? { refinement: x.rn.data.lineage } : {}), annotations: (x.rn.data.notes ?? []).map((n: any) => n.id), createdBy: { kind: "agent", provider: job.provider, model: job.model, run: job.id }, source: { run: x.run.id }, cost: job.cost, summary: job.said.slice(0, 300) });
       (x.ctx.deliver ??= {})[x.node.id] = { id, n: v.n, sha256: v.sha256, format: f, producer: x.node.id };
       // Approval evidence binds to the complete set, not a mutable global latest pointer.
@@ -132,10 +156,25 @@ export function installDeliver(engine: Engine, d: Deps) {
     ...mergeDetail({ run: x.run.id, intent: x.run.text, spec: x.ctx.spec, ctx: x.ctx, ledger: engine.trusted(x.run.id).entries, doneMap: engine.doneLines(x.run), diff: "", stat: "", cost: null }, { intents: [], walk: [], done: (x.ctx.spec?.done ?? []).map((_: string, i: number) => i ? "內容和呈現方式符合船長的意圖" : kind === "file-plan" ? "搬移不出資料夾且不覆寫檔案" : kind === "lane" ? "本機修改通過必要檢查" : "作品原始檔與必要輸出通過完整性檢查") }),
     artifactAcceptance: { kind, offered, review:{node:x.node.id,round:x.visit,attempt:(x.rn.attempt??0)+1}, refinements:offered.filter(r=>r.format==="image").map(r=>({artifact:r.id,version:r.n,snapshot:st.version(r.id,r.n)?.refinement??null,recorded:!!st.version(r.id,r.n)?.refinement})) },
   });
+  // a document's plain-wording (core/ste-wording) and readability findings, for the captain's eye: never blocking
+  const wordingEye = async (x: X, offered: any[]) => {
+    const lines: string[] = [], found: any[] = [];
+    for (const r of offered.filter(r => r.format === "document")) {
+      const file = st.file(r.id, r.n, "doc.md"); if (!file) continue; const md = readFileSync(file, "utf8");
+      const texts = md.split(/\n\s*\n/).map((text, i) => ({ section: `paragraph ${i + 1}`, text: text.trim() })).filter(t => t.text && !/^(```|\|)/.test(t.text));
+      const e = await engine.runCheck(x, { use: "core/ste-wording", blocking: false } as any, `accept:${r.id}@${r.n}`, { texts }).catch(() => null);
+      if (!e || e.verdict === "error") lines.push(`· ${offered.length > 1 ? `${r.producer} ` : ""}Wording check not run${e?.error ? `: ${String(e.error).slice(0, 80)}` : ""}`);
+      for (const f of e?.findings ?? []) found.push({ producer: r.producer, kind: "wording", section: (f.locator as any)?.section ?? null, message: f.message });
+      for (const f of readabilityFindings(md)) found.push({ producer: r.producer, kind: "readability", ...f });
+    }
+    for (const f of found.slice(0, 10)) lines.push(`· ${offered.length > 1 ? `${f.producer} ` : ""}${f.kind === "wording" ? "Wording" : "Readability"} (${f.section}): ${f.message}`);
+    if (found.length > 10) lines.push(`· and ${found.length - 10} more wording findings`);
+    return { lines, found };
+  };
   const finalCard = async (x: X, error = "") => {
     const offered = refs(x); if (!offered.length) throw new Error("no output to accept");
-    const done = engine.doneLines(x.run), proved = done.filter(l => l.proved), eye = done.filter(l => !l.proved);
-    const c = await engine.card(x, "acceptance", { captainOnly: true, title: `Accept ${x.run.title}`, zhTitle: `驗收 ${x.run.title}`, body: `${error}\nProved by checks:\n${proved.map(l => `✓ ${l.text}`).join("\n") || "None"}\n\nNeeds your eye:\n${eye.map(l => `· ${l.text}`).join("\n") || "Content and presentation"}`, detail: acceptanceDetail(x, offered), links: [...offered.flatMap(r=>{const href=websiteHref(st.get(r.id),st.version(r.id,r.n));return href?[{label:"Open website in new tab",href}]:[];}),...offered.map(r => ({ label: `${r.producer} v${r.n}`, href: `/#/review/${r.id}/${r.n}` }))], options: [...offered.map(r => ({ id: `approve-${r.producer}`, label: `Approve ${/^design-[a-z]$/.test(r.producer) ? `direction ${r.producer.slice(-1).toUpperCase()} ` : offered.length > 1 ? `${r.producer} ` : ""}v${r.n}`, labelZh: `核准${/^design-[a-z]$/.test(r.producer) ? `方向 ${r.producer.slice(-1).toUpperCase()} ` : offered.length > 1 ? `${r.producer} ` : ""}版本 ${r.n}`, primary: true })), { id: "changes", label: "Request changes", labelZh: "要求修改", note: true, hold: true }, { id: "reject", label: "Reject", labelZh: "不採用", hold: true }] });
+    const done = engine.doneLines(x.run), proved = done.filter(l => l.proved), eye = done.filter(l => !l.proved), wording = await wordingEye(x, offered);
+    const c = await engine.card(x, "acceptance", { captainOnly: true, title: `Accept ${x.run.title}`, zhTitle: `驗收 ${x.run.title}`, body: `${error}\nProved by checks:\n${proved.map(l => `✓ ${l.text}`).join("\n") || "None"}\n\nNeeds your eye:\n${[...eye.map(l => `· ${l.text}`), ...wording.lines].join("\n") || "Content and presentation"}`, detail: { ...acceptanceDetail(x, offered), ...(wording.found.length ? { wording: wording.found } : {}) }, links: [...offered.flatMap(r=>{const href=websiteHref(st.get(r.id),st.version(r.id,r.n));return href?[{label:"Open website in new tab",href}]:[];}),...offered.map(r => ({ label: `${r.producer} v${r.n}`, href: `/#/review/${r.id}/${r.n}` }))], options: [...offered.map(r => ({ id: `approve-${r.producer}`, label: `Approve ${/^design-[a-z]$/.test(r.producer) ? `direction ${r.producer.slice(-1).toUpperCase()} ` : offered.length > 1 ? `${r.producer} ` : ""}v${r.n}`, labelZh: `核准${/^design-[a-z]$/.test(r.producer) ? `方向 ${r.producer.slice(-1).toUpperCase()} ` : offered.length > 1 ? `${r.producer} ` : ""}版本 ${r.n}`, primary: true })), { id: "changes", label: "Request changes", labelZh: "要求修改", note: true, hold: true }, { id: "reject", label: "Reject", labelZh: "不採用", hold: true }] });
     x.rn.data.offered = offered; x.rn.data.offerVisit = x.visit; x.rn.data.offerCard = c.id; x.save(); return { wait: true, note: `final acceptance ${c.id}` };
   };
   engine.cardModes["deliver-accept"] = {
@@ -153,7 +192,7 @@ export function installDeliver(engine: Engine, d: Deps) {
     },
   };
   engine.actions["library.publish"] = x => { const a = x.ctx.approved; if (!a || st.version(a.artifact, a.version)?.status !== "approved" || st.verify(a.artifact, a.version).length) throw new Error("no intact pinned approval"); x.ctx.library = { ...a, href: `#/artifact/${a.artifact}` }; return "ok"; };
-  engine.actions["doc.export"] = x => { const a = x.ctx.approved; if (!a) throw new Error("no approved document"); const md = readFileSync(st.file(a.artifact, a.version, "doc.md")!, "utf8"), title = st.get(a.artifact)!.title; const out = join(x.dir, "exports"); mkdirSync(out, { recursive: true }); const pdf = toPdf(md, title);
+  engine.actions["doc.export"] = x => { const a = x.ctx.approved; if (!a) throw new Error("no approved document"); const md = readFileSync(st.file(a.artifact, a.version, "doc.md")!, "utf8"), title = docTitle(md, st.get(a.artifact)!.title); const out = join(x.dir, "exports"); mkdirSync(out, { recursive: true }); const pdf = toPdf(md, title);
     const bodies: Record<string, any> = { md, html: mdToDocHtml(md, title), docx: toDocx(md, title), pdf: pdf.pdf };
     for (const [ext, body] of Object.entries(bodies)) writeFileSync(join(out, `${a.artifact}-v${a.version}.${ext}`), body);
     x.ctx.exports = Object.keys(bodies); x.ctx.exportWarnings = pdf.lossy ? ["PDF uses ? for non-Latin text; use HTML or DOCX to preserve it"] : []; x.rn.note = `exported md, html, docx, pdf${pdf.lossy ? " (PDF character limitation)" : ""}`; return "ok";

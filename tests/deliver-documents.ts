@@ -1,0 +1,43 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+// Documents (R-032): doc.html's <title> is the document's own H1, not the raw prompt; the accept
+// card lists plain-wording and readability findings under "Needs your eye"; a document about the
+// product reads the product's docs/ read-only, and one that is not about it gets no such tool.
+import assert from 'node:assert/strict';
+import {mkdirSync,readFileSync,writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+import {harness,until,Y} from './rt-harness';
+import {ArtifactStore} from '../src/artifacts';
+import {installDeliver} from '../src/domain/deliver';
+const flow={id:'doc-fixture',name:'Doc fixture',version:1,roles:[{id:'writer',label:'Writer',skill:'fixture'}],nodes:[
+ {id:'intake',kind:'hook',label:'Intake',do:'deliver.intake',x:0,y:0},{id:'produce',kind:'hook',label:'Round',do:'deliver.round',x:1,y:0},
+ {id:'draft',kind:'agent',label:'Draft',role:'writer',mode:'deliver',args:{format:'document'},x:2,y:0},
+ {id:'accept',kind:'card',label:'Accept',args:{mode:'deliver-accept'},x:3,y:0},{id:'closed',kind:'hook',label:'Closed',x:4,y:0}],
+ edges:[['intake','produce'],['produce','draft'],['draft','accept'],['accept','closed','rejected']]};
+const H=await harness([Y(flow)]),E=H.engine,store=new ArtifactStore(H.data);
+const studioDocs=join(H.data,'..',`${H.data.split('/').pop()}-studio-docs`);mkdirSync(studioDocs,{recursive:true});writeFileSync(join(studioDocs,'live-acceptance.md'),'# Live acceptance\nIt runs DOCS_SENTINEL_CHECKS against a clean clone.\n');
+installDeliver(E,{dataDir:H.data,artifacts:store,lane:{},fileorg:{},docs:{},studioDocs} as any);
+const seen:{text:string;tools:string[];read?:any}[]=[];
+const memo='# Live acceptance for new teammates\n\nWe will utilize the cache to ensure speed.\n\nThis sentence goes on and on with many words so that a new teammate who reads it has to hold far too much in their head before the full stop finally arrives at the very end here.\n';
+E.deps.provider=()=>({id:'fixture',model:'offline',sandboxFree:true,start(_s:any,tools:any[],ctx:any){return{interrupt(){},async *send(text:string){
+ const entry:any={text,tools:tools.map((t:any)=>t.name)};seen.push(entry);
+ if(entry.tools.includes('product_docs_read'))entry.read=await H.agents.callTool(ctx.token,'product_docs_read',{path:'live-acceptance.md'});
+ const out:any=await H.agents.callTool(ctx.token,'work_write',{path:'doc.md',content:memo});assert(!out.error,JSON.stringify(out));
+ yield{type:'turnEnd',status:'ok'};}};}});
+let pass=0;const ok=(v:unknown,name:string,detail='')=>{assert(v,`${name} ${detail}`);pass++;console.log('ok '+name);};
+const card=async(id:string)=>{assert(await until(()=>E.cards.list({run:id,open:true}).some(c=>c.node==='accept')&&!E.busy(id)),JSON.stringify(E.get(id)?.nodes));return E.cards.list({run:id,open:true}).find(c=>c.node==='accept')!;};
+try{
+ const prompt='ACCEPT 2026-10-16 Write a one-page memo that explains what Crew Studio\'s live acceptance run checks, for a new teammate.';
+ const run=E.start({workflow:flow.id,text:prompt}),c=await card(run.id),ref=run.ctx.deliver.draft;
+ const html=readFileSync(store.file(ref.id,ref.n,'doc.html')!,'utf8');
+ ok(html.includes('<title>Live acceptance for new teammates</title>')&&!html.includes('<title>ACCEPT'),'doc.html title is the document H1, not the raw prompt',/<title>[^<]*/.exec(html)?.[0]);
+ const eye=c.body.split('Needs your eye:')[1]??'';
+ ok(/Wording \(paragraph 2\): R5 will/.test(eye)&&/R6 utilize/.test(eye),'accept card shows the plain-wording findings under Needs your eye',eye);
+ ok(/Readability \(paragraph 3\): a \d+-word sentence/.test(eye),'accept card shows the long-sentence readability finding',eye);
+ ok(Array.isArray(c.detail?.wording)&&c.detail.wording.some((f:any)=>f.kind==='wording'),'card detail carries the wording findings');
+ ok(seen[0].tools.includes('product_docs_read')&&!seen[0].tools.some(t=>/product_docs_(write|replace)/.test(t)),'a document about Crew Studio gets read-only product docs tools',seen[0].tools.join(','));
+ ok(/DOCS_SENTINEL_CHECKS/.test(seen[0].read?.text??'')&&/Product docs \(read-only/.test(seen[0].text),'the writer reads the product docs and its brief says so',JSON.stringify(seen[0].read));
+ await E.answer(c.id,{choice:'reject',by:'fixture captain'});
+ const other=E.start({workflow:flow.id,text:'Write a memo about the office picnic'});await card(other.id);
+ ok(!seen[1].tools.some(t=>t.startsWith('product_docs'))&&!/Product docs/.test(seen[1].text),'a document not about the product gets no product docs');
+ console.log(`deliver-documents: ${pass} passed, 0 failed`);
+}finally{for(const r of E.list())if(!['succeeded','failed','cancelled'].includes(r.status))await E.cancel(r.id);H.stop();}
