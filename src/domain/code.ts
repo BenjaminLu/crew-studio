@@ -254,6 +254,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const sensitive = (x: X) => (x.policy("sensitive_paths") ?? []) as { glob: string; why: string }[];
 
   // ---------- what checks see ----------
+  engine.sourceRoots.code = (x) => x.ctx.worktree ?? null; // the round brief reads file evidence at the head of the task's worktree
   engine.artifacts["code-diff"] = (x) => x.ctx.worktree && existsSync(x.ctx.worktree) ? ({ type: "code-diff", workdir: x.ctx.worktree, repo: x.ctx.repo, base: x.ctx.base, baseCommit: x.ctx.baseCommit, head: head(x.ctx.worktree), branch: x.ctx.branch, door: x.ctx.door?.door ?? null, scope: x.ctx.spec?.scope ?? [] }) : null;
   engine.checkBindings ??= {};
   engine.checkBindings["firstmate/review-verdict"] = (_x, input) => {

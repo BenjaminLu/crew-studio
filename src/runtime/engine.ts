@@ -189,6 +189,8 @@ export class Engine {
   actions: Record<string, (x: X) => Promise<string | Result> | string | Result> = {};
   beforeNodeChecks: Record<string, (x: X, result: Result) => boolean> = {};
   continuationEdges: Record<string,(run:Run,node:WNode,outcome:string)=>WEdge[]> = {};
+  /** Where a round's source lives (the directory whose head a brief's file evidence is read from); a domain registers it, the first answer wins. */
+  sourceRoots: Record<string,(x:X)=>string|null> = {};
   cardPrepared: Record<string, (x: X, card: SCard, body: Body) => void> = {};
   beforeStart: Record<string, (x: X) => Promise<Result | null> | Result | null> = {};
   externalValidators: Record<string, (x: X, descriptor: any) => boolean> = {};

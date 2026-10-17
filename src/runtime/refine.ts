@@ -205,6 +205,7 @@ export function amendmentsNotice(a: Amendment[]): string {
 }
 
 export function installRefine(engine: Engine) {
+  const sourceRoot = (x: X) => Object.values(engine.sourceRoots).map((f) => f(x)).find(Boolean) ?? null;
   // what brief-quality sees: the brief the loop node is about to send
   engine.artifacts.brief ??= (x) => ({ type: "brief", data: x.rn.data.brief ?? null });
   engine.modes.rootcause = {
@@ -241,7 +242,7 @@ export function installRefine(engine: Engine) {
       const blockingEntries = entries.filter((e) => e.blocking);
       const score = blockingEntries.length ? blockingEntries.reduce((s, e) => s + (e.score != null && Number.isFinite(e.score) ? Math.max(0, Math.min(1, e.score)) : e.verdict === "pass" ? 1 : 0), 0) / blockingEntries.length : 1;
       if (!failing.length && !human.length) { st.history.push({ round, classes: [], score, head: x.ctx.head ?? null, outcome: "pass" }); x.save(); return { outcome: "pass", note: `round ${round}: every blocking check passes (score ${score.toFixed(2)})` }; }
-      const brief = attachEvidence(compileBrief(producer, round, x.ctx.head ?? null, failing, human), { repo: x.ctx.worktree ?? null, head: x.ctx.head ?? null, dataDir: x.deps.dataDir, entries: failing });
+      const brief = attachEvidence(compileBrief(producer, round, x.ctx.head ?? null, failing, human), { repo: sourceRoot(x), head: x.ctx.head ?? null, dataDir: x.deps.dataDir, entries: failing });
       const prev = st.history.at(-1);
       const repeated = prev && prev.round === round - 1 ? brief.classes.filter((c) => prev.classes.includes(c) && c !== "captain-note") : [];
       let outcome = "retry";
@@ -272,7 +273,7 @@ export function installRefine(engine: Engine) {
           if (rc) { for (const e of rc.expected ?? []) { const it = brief.items.find((i) => i.n === Number(e.n)); if (!it) continue;
               if (placeholderExpected(it) && String(e.expected ?? "").trim()) it.expected = String(e.expected).slice(0, 600);
               if (!it.locator) { const l = parseLocator(e.locator); if (l) { it.locator = l; it.where = locatorText(l);
-                if (l.type === "file" && l.line) it.evidence = { ...it.evidence, source: sourceAt(x.ctx.worktree ?? null, x.ctx.head ?? null, l.path, Number(l.line)) }; } } }
+                if (l.type === "file" && l.line) it.evidence = { ...it.evidence, source: sourceAt(sourceRoot(x), x.ctx.head ?? null, l.path, Number(l.line)) }; } } }
             brief.rootCause = rc.cause || brief.rootCause; brief.text = renderBrief(brief); }
         } catch (err: any) { if (err instanceof QueueRefusal || err instanceof ProviderRefusal) throw err; x.log(`no root cause: ${err?.message ?? err}`); }
       };

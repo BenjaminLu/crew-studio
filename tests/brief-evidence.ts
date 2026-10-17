@@ -50,6 +50,8 @@ const flows = [
 ];
 const H = await harness(flows, { refine: true });
 const E = H.engine;
+// the fixture workflows keep their checkout in ctx.worktree (the set hook above); the domain names it, never the generic runtime
+E.sourceRoots.fixture = (x) => x.ctx.worktree ?? null;
 const settle = (id: string, ms = 30000) => until(() => ["succeeded", "failed", "cancelled", "waiting"].includes(E.get(id)!.status), ms);
 
 // ---------- 1. evidence: source at the exact head, log pointer and lines, redacted ----------
