@@ -14,10 +14,12 @@ const canonical = (v: any): string => v && typeof v === "object" ? Array.isArray
 
 export type GrantProject = { id: string; path: string | null; base: string; github?: GitHubProjectGrant };
 
+/** A key of its own for grants, derived from Studio's ledger key: a grant signature is never a valid ledger signature, nor the reverse. */
+const grantKey = (dataDir: string) => createHmac("sha256", ledgerKey(dataDir)).update("crew-studio github-grant v1").digest();
 /** The signature over the grant and the project it was approved for; the signature field itself is left out. */
 export function grantSignature(dataDir: string, project: { id: string; path: string | null; base: string }, grant: GitHubProjectGrant): string {
   const { signature: _, ...g } = grant as GitHubProjectGrant & { signature?: string };
-  return createHmac("sha256", ledgerKey(dataDir)).update(canonical({ schema: 1, project: project.id, path: project.path, base: project.base, grant: g })).digest("hex");
+  return createHmac("sha256", grantKey(dataDir)).update(canonical({ schema: 1, project: project.id, path: project.path, base: project.base, grant: g })).digest("hex");
 }
 
 /** owner/repo of a github.com remote URL (https, ssh or scp form), or null. */

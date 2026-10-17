@@ -219,6 +219,7 @@ edges:
   - [plan-accept, scope-card, escalate]
   - [build, pr-open, ok]
   - [pr-open, ci, ok]
+  - [pr-open, closed, close]
   - [build, fix, fail]
   - [build, scope-card, blocked]
   - [build, door, door-change]

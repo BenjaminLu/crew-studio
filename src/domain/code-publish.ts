@@ -15,7 +15,7 @@ import { createHash } from "node:crypto";
 import type { Engine, X, Result } from "../runtime/engine";
 import { GitHubPrAdapter, type PrAdapter } from "../adapters/github";
 import { applyPullTemplate, discoverGitHubCommunity, type CommunityBundle, type CommunityFile } from "./github-community";
-import { needsText, parsePullTemplate, renderPullBody, templateLanguage, SESSION_LINK, withoutSessionLinks, type TestRow } from "./pull-template";
+import { needsText, parsePullTemplate, renderPullBody, templateLanguage, templateShapeProblem, SESSION_LINK, withoutSessionLinks, type TestRow } from "./pull-template";
 import { amendmentsSection } from "../runtime/refine";
 import { OperatingRules, jobInstructions } from "../operating-rules";
 import { git } from "../git";
@@ -129,17 +129,24 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     const by: Record<string, string> = {};
     for (const s of Array.isArray(got?.sections) ? got.sections : []) if (typeof s?.heading === "string" && typeof s?.text === "string" && s.text.length <= 8000) by[s.heading.replace(/^#+\s*/, "").trim()] = withoutSessionLinks(s.text).trim();
     const text: Record<string, string> = {}, missing: { field: string; why: string }[] = [];
-    for (const s of sections) if (s.heading !== null && needsText(s)) { text[s.heading] = by[s.heading] || fallbackText(x, s.heading, facts); if (!text[s.heading]) missing.push({ field: s.heading, why: "nothing in the spec or the evidence fills it" }); }
+    // text Studio inserts never carries a checkbox (a box is ticked only by evidence, below) nor a second copy of a template heading
+    const headingLines = new Set(sections.flatMap((t) => t.headingLine ? [t.headingLine] : [])), headingNames = new Set(sections.flatMap((t) => t.heading !== null ? [t.heading.toLowerCase()] : []));
+    const plainText = (v: string) => v.split("\n").filter((l) => { const h = /^\s*#{1,6}\s+(.+?)\s*#*\s*$/.exec(l); return !headingLines.has(l.trim()) && !(h && headingNames.has(h[1].trim().toLowerCase())); }).map((l) => l.replace(/^(\s*[-*+]\s+)\[[ xX]\]\s*/, "$1")).join("\n").trim();
+    for (const s of sections) if (s.heading !== null && needsText(s)) { text[s.heading] = plainText(by[s.heading] || fallbackText(x, s.heading, facts)); if (!text[s.heading]) missing.push({ field: s.heading, why: "nothing in the spec or the evidence fills it" }); }
     for (const m of Array.isArray(got?.missing) ? got.missing.slice(0, 10) : []) if (typeof m?.field === "string" && m.field.trim()) missing.push({ field: m.field.slice(0, 200), why: String(m.why ?? "").slice(0, 400) });
     // a tick stands only on Studio's evidence: lint and test-suite items on their own checks, any other on the evidence the coordinator cites
     const cited = new Map<string, string>(); for (const t of Array.isArray(got?.ticks) ? got.ticks : []) if (typeof t?.item === "string" && typeof t?.evidence === "string") cited.set(t.item.trim(), t.evidence.trim());
-    const proven = new Set<string>(), unproven: string[] = [];
+    const proven = new Set<string>(), unproven: string[] = [], proofs: Record<string, string> = {};
     for (const s of sections) for (const c of s.checkboxes) { const auto = autoProof(c.text), cite = cited.get(c.text);
-      if (auto ? !!ids[auto] : !!cite && !!ids[cite] && cite !== "lint") proven.add(c.text); else unproven.push(c.text); }
+      const id = auto ? (ids[auto] ? auto : null) : cite && ids[cite] && cite !== "lint" ? cite : null;
+      if (id) { proven.add(c.text); proofs[c.text] = `${id}: ${ids[id]}`; } else unproven.push(c.text); }
     const title = typeof got?.title === "string" && got.title.trim() && got.title.length <= 200 && !/[\r\n]/.test(got.title) && !SESSION_LINK.test(got.title) ? got.title.trim() : String(x.ctx.spec?.title ?? x.run.title).slice(0, 200);
     const body = withoutSessionLinks(template ? renderPullBody(sections, { text, rows, proven })
       : `${d.specMd(x.ctx.spec)}\n\n## Door\n${x.ctx.door?.door ?? "undecided"}\n\n## Rollback\n${rollback}`);
-    return { title, body, proven: [...proven], unproven, missing, by: got ? "coordinator" : "studio" };
+    // the rendered body keeps the template (every heading, every box, ticked only where proven); otherwise no preview is raised
+    const shape = template ? templateShapeProblem(template.text, body, [...proven]) : null;
+    if (shape) missing.push({ field: "template shape", why: `the text does not keep the template: ${shape}` });
+    return { title, body, proven: [...proven], proofs, unproven, missing, by: got ? "coordinator" : "studio" };
   }
 
   const draftOf = (x: X) => x.policy("github.draft_pr") === true;
@@ -179,7 +186,7 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
       x.ctx.prText.card = c.id; x.save(); return { wait: true };
     }
     const draft = draftOf(x);
-    const text = { version: 1 as const, head: h, sources: bundle.sha256, template: template ? { repository: template.repository, path: template.path, blob: template.blob } : null, title: t.title, body: t.body, proven: t.proven, draft, repository: a.grant.repository, branch: x.ctx.branch, base: x.ctx.base, baseCommit: x.ctx.baseCommit };
+    const text = { version: 1 as const, head: h, sources: bundle.sha256, template: template ? { repository: template.repository, path: template.path, blob: template.blob } : null, title: t.title, body: t.body, proven: t.proven, proofs: t.proofs, draft, repository: a.grant.repository, branch: x.ctx.branch, base: x.ctx.base, baseCommit: x.ctx.baseCommit };
     const hash = digest(text);
     x.ctx.prText = { ...text, hash, unproven: t.unproven, by: t.by, card: null }; x.save();
     const kind = draft ? "draft" : "ready-for-review";
@@ -188,8 +195,8 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
         scope: { in: [`Push ${x.ctx.branch} (force-with-lease, this branch only)`, `Open a ${kind} pull request into ${x.ctx.base}`], out: ["No merge", "No other branch or repository"] } },
       zh: { why: `Studio 會把 ${x.ctx.branch} 推到 ${a.grant.repository}，並用這個標題和內文開一個${draft ? "草稿" : "可審查的"} pull request 到 ${x.ctx.base}。`, how: "開出去、在備註寫要改的文字，或關閉、不開。",
         scope: { in: [`推送 ${x.ctx.branch}（force-with-lease，只動這個分支）`, `開 pull request 到 ${x.ctx.base}`], out: ["不合併", "不動其他分支或儲存庫"] } },
-      body: `Repository: ${a.grant.repository}\nBranch: ${x.ctx.branch} → ${x.ctx.base}\nHead: ${h} (the last round's head, rebased onto ${x.ctx.base} at ${String(x.ctx.baseCommit).slice(0, 8)})\n${template ? `Template: ${template.repository}/${template.path} (${template.blob.slice(0, 8)})\n` : ""}Pull request: ${kind}\nTicked by evidence: ${t.proven.length ? t.proven.join("; ") : "none"}\nLeft unchecked (no evidence): ${t.unproven.length ? t.unproven.join("; ") : "none"}\n\nTitle: ${t.title}\n\n${t.body}`,
-      pullRequest: { repository: a.grant.repository, branch: x.ctx.branch, base: x.ctx.base, baseCommit: x.ctx.baseCommit, head: h, draft, template: text.template, title: t.title, body: t.body, proven: t.proven, unproven: t.unproven },
+      body: `Repository: ${a.grant.repository}\nBranch: ${x.ctx.branch} → ${x.ctx.base}\nHead: ${h} (the last round's head, rebased onto ${x.ctx.base} at ${String(x.ctx.baseCommit).slice(0, 8)})\n${template ? `Template: ${template.repository}/${template.path} (${template.blob.slice(0, 8)})\n` : ""}Pull request: ${kind}\nTicked by evidence:${t.proven.length ? t.proven.map((p) => `\n  [x] ${p} (${t.proofs[p]})`).join("") : " none"}\nLeft unchecked (no evidence): ${t.unproven.length ? t.unproven.join("; ") : "none"}\n\nTitle: ${t.title}\n\n${t.body}`,
+      pullRequest: { repository: a.grant.repository, branch: x.ctx.branch, base: x.ctx.base, baseCommit: x.ctx.baseCommit, head: h, draft, template: text.template, title: t.title, body: t.body, proven: t.proven, proofs: t.proofs, unproven: t.unproven },
       options: [{ id: "open", label: "Open pull request", labelZh: "開 pull request", primary: true }, { id: "changes", label: "Change the text", labelZh: "修改文字", note: true, hold: true }, { id: "close", label: "Close without opening", labelZh: "關閉，不開", hold: true }] });
     x.ctx.prText.card = c.id; engine.record(x, "pr-text", { head: h, data: { version: 1, card: c.id, hash, repository: a.grant.repository, branch: x.ctx.branch, base: x.ctx.base, template: text.template, draft } } as any); x.save();
     return { wait: true };

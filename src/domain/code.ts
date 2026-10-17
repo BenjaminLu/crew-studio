@@ -1260,6 +1260,13 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     return ({ title: `Scope question: ${T(x)}`, zhTitle: `範圍問題：${ZT(x)}`, ...base(x, "The work needs a decision on the scope.", "Rescope the spec, or park the run.", "工作需要決定範圍。", "調整規格範圍，或暫停這個 run。"),
     body: `${x.run.nodes.build?.data?.report?.marker ?? x.ctx.planDecision?.decision ?? ""}: ${x.run.nodes.build?.data?.report?.summary ?? x.ctx.planDecision?.note ?? (x.ctx.briefs?.spec?.text ?? x.ctx.briefs?.plan?.text ?? "")}`,
     options: [{ id: "rescope", label: "Rescope the spec", note: true, primary: true }, { id: "park", label: "Park the run" }] }); };
+  /** The merge card of a GitHub Task whose project has no operations grant: the open pull request, merged by the captain on GitHub. */
+  const mergeOnGitHubBody = (pr: any): Body => ({ title: `Pull request #${pr.id} is open: merge it on GitHub`, zhTitle: `Pull request #${pr.id} 已開：請到 GitHub 合併`, captainOnly: true,
+    en: { why: `PR #${pr.id} is open at ${pr.url}. Merging from Studio is off for this project, so merge it on GitHub.`, how: "Merge the pull request on GitHub, then close this Task here; or request changes for another round." },
+    zh: { why: `PR #${pr.id} 已在 ${pr.url} 開好。這個專案在 Studio 裡合併是關閉的，請到 GitHub 合併。`, how: "到 GitHub 合併這個 pull request，再回來關閉這個任務；或要求修改，再跑一輪。" },
+    body: `PR #${pr.id} is open at ${pr.url}; merging from Studio is off, so merge it on GitHub.\nPR #${pr.id} 已開在 ${pr.url}；Studio 不合併，請到 GitHub 合併。\n\nBranch: ${pr.branch} → ${pr.base} at ${pr.head}`,
+    links: [{ label: `Pull request #${pr.id}`, href: pr.url }],
+    options: [{ id: "close", label: "Close here (I merge on GitHub)", labelZh: "在這裡關閉（我到 GitHub 合併）", primary: true, hold: true }, { id: "changes", label: "Request changes", labelZh: "要求修改", note: true, hold: true }] });
   engine.cardBodies.merge = async (x) => {
     let remoteIntent: RemoteMergeIntent | undefined;
     let assertRemoteCard: (() => void) | undefined;
@@ -1268,6 +1275,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       try { if (!(a instanceof GitHubPrAdapter)) throw new Error(); await reconcile(a, x.ctx.pr, phase.signal); phase.assert(); const policy = await requiredPolicy(a, phase.signal); phase.assert(); if (x.ctx.remoteCI?.head !== x.ctx.pr.head || x.ctx.remoteCI?.policyHash !== policy.hash || x.ctx.remoteCI?.grant !== grantIdentity(a) || (await inspectRemote(a, x.ctx.pr, policy, phase.signal)).state !== "pass") throw new Error(); }
       catch { phase.assert(); return remoteStopBody("authoritative PR, head or required CI no longer matches; merge refused"); }
       phase.assert();
+      // no operations grant (merging from Studio is off by design): the pull request is open and merges on GitHub
+      let mergeOff = false; try { (a as GitHubPrAdapter).operationGrant(); } catch { mergeOff = true; }
+      if (mergeOff) return mergeOnGitHubBody(x.ctx.pr);
       try { (a as GitHubPrAdapter).operationGrant(); assertMergeAvailable(a as GitHubPrAdapter,x.ctx.pr,x.dir); const p = await (a as GitHubPrAdapter).mutationState(x.ctx.pr,phase.signal,phase.assert); phase.assert(); if (p.base?.sha !== x.ctx.baseCommit || p.draft !== false || p.mergeable !== true || p.mergeable_state !== "clean") throw new Error(); remoteIntent={version:1,grant:grantIdentity(a as GitHubPrAdapter),repository:(a as GitHubPrAdapter).grant.repository,pr:x.ctx.pr.id,branch:x.ctx.pr.branch,base:x.ctx.pr.base,baseHead:x.ctx.baseCommit,head:x.ctx.pr.head,method:(a as GitHubPrAdapter).operationGrant().mergeMethod,policyHash:x.ctx.remoteCI.policyHash}; }
       catch { phase.assert(); return remoteStopBody("remote merge grant or CLEAN/non-draft state is unverified"); }
 

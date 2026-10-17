@@ -42,7 +42,7 @@ export function parsePullTemplate(text: string): TemplateSection[] {
 /** A section the writer must fill: it is not only checkboxes or a Studio-filled test table. */
 export const needsText = (s: TemplateSection) => s.heading !== null && !(s.checkboxes.length && !s.guidance.length && !s.prose.length && !s.table) && !(s.table?.tests && !s.guidance.length && !s.prose.length && !s.checkboxes.length);
 
-const cell = (s: string) => String(s ?? "").replace(/\s+/g, " ").replace(/\|/g, "\\|").trim() || "—";
+const cell = (s: string) => String(s ?? "").replace(/\s+/g, " ").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").trim() || "—";
 function testRows(t: TemplateTable, rows: TestRow[]): string[] {
   const col = (h: string): keyof TestRow | null => /fail|red|broke|main|base/i.test(h) ? "failsOnBase" : /accept|done|criteri|requirement|behaviou?r|line|case/i.test(h) ? "done" : /test/i.test(h) ? "test" : null;
   const map = t.header.map(col);

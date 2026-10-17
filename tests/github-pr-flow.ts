@@ -84,12 +84,13 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
     { id: "done", kind: "hook", label: "Done", x: 4, y: 0 }, { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 4, y: 1 }],
     edges: [["seed", "pr-open"], ["pr-open", "remote-ready", "ok"], ["pr-open", "closed", "close"], ["remote-ready", "done", "ok"], ["remote-ready", "closed", "close"]] });
   const update = Y({ id: "pr-update", name: "PR update", roles: [], nodes: [{ id: "copy", kind: "hook", do: "fixture.copy", label: "Copy", x: 0, y: 0 }, { id: "pr-open", kind: "hook", do: "pr.open", label: "Review request", x: 1, y: 0 }, { id: "done", kind: "hook", label: "Done", x: 2, y: 0 }], edges: [["copy", "pr-open"], ["pr-open", "done", "ok"]] });
+  const mergeView = Y({ id: "merge-view", name: "Merge view", roles: [], nodes: [{ id: "copy", kind: "hook", do: "fixture.copy", label: "Copy", x: 0, y: 0 }, { id: "merge-card", kind: "card", label: "Merge card", args: { body_from: "merge", card_kind: "merge" }, x: 1, y: 0 }, { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 2, y: 0 }], edges: [["copy", "merge-card"], ["merge-card", "closed", "close"]] });
   let source: any = null;
-  const H = await harness([flow, update]), E = H.engine;
+  const H = await harness([flow, update, mergeView]), E = H.engine;
   installCode(E, { dataDir: H.data, projects: new Projects(H.data), adapter: new GitHubPrAdapter(grant, () => "fake-token", 3000) });
   const done = ["Prices in euro format as €1,234.50 (test/format.test.ts)", "Unknown currencies keep the code prefix (test/codes.test.ts)"];
   E.actions["fixture.seed"] = (x) => {
-    Object.assign(x.ctx, { repo, worktree: repo, base: "main", baseCommit, head, branch: x.run.params.branch, door: { door: "two-way" },
+    Object.assign(x.ctx, { repo, worktree: repo, base: "main", baseCommit, head: must(repo, ["rev-parse", "HEAD"]), branch: x.run.params.branch, door: { door: "two-way" },
       spec: { title: "Format euro prices", what: "Show euro prices with the euro sign and grouping.", why: ["Shoppers in the EU read prices wrongly."], done, scope: ["file"], rollback: "Revert the pull request." } });
     // Studio's own evidence at this head: CI and fail-first pass (fail-first proves done line 1), the reviewer approved
     E.record(x, "check", { check: "firstmate/ci", verdict: "pass", kind: "deterministic", data: { shards: [] } } as any);
@@ -109,6 +110,14 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
   const startRun = async (branch: string) => { const r = E.start({ workflow: "pr-flow", text: "Format euro prices", params: { branch } }); await until(() => !!E.cards.list({ run: r.id, open: true }).length || ["succeeded", "failed"].includes(r.status), 15000); return r; };
   const openCard = (r: any) => E.cards.list({ run: r.id, open: true })[0];
   try {
+    // GitHub refuses the template read: a hold card on pr-open, never "no template"; closing it ends the Task closed
+    sim.fail({ method: "GET", status: 403 });
+    const unread = await startRun("crew/unread"); const uc = openCard(unread);
+    sim.fail(null);
+    ok(uc?.node === "pr-open" && uc.title.en === "GitHub contribution files could not be read" && !sim.head("crew/unread"), "a refused template read holds on pr-open; nothing pushed", uc?.title?.en);
+    await E.answer(uc.id, { choice: "close", by: "captain" } as any); await until(() => ["succeeded", "failed"].includes(unread.status), 8000);
+    ok(unread.status === "succeeded" && unread.result === "closed", "Close without a pull request ends the Task closed (pr-open close edge)", `${unread.status} ${unread.result}`);
+
     // no template: the old publication right after the build (spec, Door, Rollback), no card
     const plain = await startRun("crew/plain");
     await until(() => ["succeeded", "failed"].includes(plain.status), 15000);
@@ -162,6 +171,23 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
     ok(upd.status === "succeeded" && sim.head("crew/euro") === head3 && patch?.body?.body === card3.pullRequest.body && patch?.body?.title === card3.pullRequest.title && E.trusted(upd.id).entries.some((e) => e.record === "remote-push" && e.data?.from === head2 && e.data?.to === head3 && e.data?.lease === head2),
       "after the pull request exists, a new round's head is pushed with the lease on the last pushed head, keeping the approved title and body", `${upd.status} ${patch?.body?.title}`);
 
+    // the merge card with no operations grant: the pull request is open; merge it on GitHub (with its link)
+    source = structuredClone(upd.ctx);
+    const mv = E.start({ workflow: "merge-view", text: "merge view" }); await until(() => !!openCard(mv) || ["succeeded", "failed"].includes(mv.status), 15000);
+    const mc = openCard(mv), url = upd.ctx.pr.url;
+    ok(mc?.title.en === `Pull request #${upd.ctx.pr.id} is open: merge it on GitHub` && mc.body.includes(`PR #${upd.ctx.pr.id} is open at ${url}; merging from Studio is off, so merge it on GitHub.`) && mc.sections["zh-TW"].why.includes(url) && mc.links.some((l: any) => l.href === url) && !/Remote verification stopped/.test(mc.title.en),
+      "no operations grant: the merge card says the pull request is open and to merge it on GitHub, with its link (en and zh-TW)", `${mc?.title?.en} | ${mc?.body?.slice(0, 200)}`);
+    await E.answer(mc.id, { choice: "close", by: "captain" } as any); await until(() => ["succeeded", "failed"].includes(mv.status), 8000);
+
+    // checkbox honesty: boxes the coordinator writes into a section become plain bullets (a template box or not); a copied heading is dropped
+    sim.community.clear(); sim.community.set(".github/pull_request_template.md", TEMPLATE);
+    answer = () => { const f = fill(); f.sections[0] = { heading: "Summary", text: "Euro prices.\n- [x] `bun run lint` passes\n- [X] Security audited\n## Checklist\n* [ ] Amounts stay integer cents end to end" }; return f; };
+    const honest = await startRun("crew/honest"); const hc = openCard(honest), hb: string = hc?.pullRequest?.body ?? "";
+    ok(hc?.title.en === "Open this pull request?" && hb.includes("- `bun run lint` passes") && hb.includes("- Security audited") && hb.includes("* Amounts stay integer cents end to end") && (hb.match(/^## Checklist$/gm) ?? []).length === 1
+      && hb.includes("- [ ] `bun run lint` passes") && !/\[[xX]\] (`bun run lint`|Security)/.test(hb), "checkboxes inside section text become plain bullets; the template's lint box stays unchecked; a duplicated heading is dropped", hb.slice(0, 400));
+    ok(/\[x\] `bun test` passes \(ci: firstmate\/ci passed at /.test(hc.body) && hc.pullRequest.proofs?.["`bun test` passes"]?.startsWith("ci:"), "the card names each tick's evidence id", hc.body.slice(0, 600));
+    await E.answer(hc.id, { choice: "close", by: "captain" } as any); await until(() => ["succeeded", "failed"].includes(honest.status), 8000);
+
     // several templates: the captain picks one
     sim.community.clear(); sim.community.set(".github/PULL_REQUEST_TEMPLATE/feature.md", TEMPLATE); sim.community.set(".github/PULL_REQUEST_TEMPLATE/fix.md", "## What broke\n\n<!-- the bug -->\n\n## Proof\n\n- [ ] A test reproduces it\n");
     answer = () => ({ title: "Fix it", sections: [{ heading: "What broke", text: "Euro prices." }] });
@@ -185,8 +211,13 @@ const repoAt = (name: string, origin: string) => { const r = join(temp, name); m
   } catch (e: any) { ok(false, "unexpected pull request flow error", e.stack); } finally { H.stop(); sim.stop(); }
 }
 
+// ---------- table cells escape backslashes before pipes ----------
+{ const { parsePullTemplate, renderPullBody } = await import("../src/domain/pull-template");
+  const b = renderPullBody(parsePullTemplate("## Tests\n\n| Done | Test | Fails on main |\n|---|---|---|\n|  |  |  |\n"), { text: {}, rows: [{ done: "a \\| b", test: "t|u", failsOnBase: "x" }], proven: new Set() });
+  ok(b.includes("| a \\\\\\| b | t\\|u | x |"), "a backslash before a pipe cannot unescape it in the test table", b); }
+
 // ---------- 3. the code-firstmate graph is unchanged: pr-open after the build, remote-ready before the merge card ----------
 const yaml = readFileSync(join(import.meta.dir, "../packs/firstmate/workflows/code-firstmate.wf.yaml"), "utf8");
-ok(["[build, pr-open, ok]", "[pr-open, ci, ok]", "[remote-ready, closed, close]", "do: remote.ready"].every((s) => yaml.includes(s)), "code-firstmate: pr-open after the build, remote-ready (where a template's pull request opens) before the merge card");
+ok(["[build, pr-open, ok]", "[pr-open, ci, ok]", "[pr-open, closed, close]", "[remote-ready, closed, close]", "do: remote.ready"].every((s) => yaml.includes(s)), "code-firstmate: pr-open after the build, remote-ready (where a template's pull request opens) before the merge card");
 rmSync(temp, { recursive: true, force: true });
 end();
