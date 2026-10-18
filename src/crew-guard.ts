@@ -110,6 +110,6 @@ export function installCrewGuard(engine:Engine,store:CrewStore){
   if((n.seat==='reviewer'||n.seat==='design-reviewer'||team?.seats[n.seat]?.reviews)&&typeof pick.effort==='string'&&EFFORTS.indexOf(pick.effort)<EFFORTS.indexOf('medium'))notes.push({en:`${me.en} judges work at ${pick.effort} effort, under the team's medium minimum.`,zh:`${me.zh}用 ${pick.effort} 審查，低於團隊要求的 medium。`});
   engine.record(engine.x(run,node,run.nodes[node.id]),'crew-run-override',{data:{schema:1,team:rec.team,node:node.id,seat:n.seat,from:{provider:n.provider,model:n.model,effort:n.effort},to:{provider:pick.provider,model:pick.model??null,effort:pick.effort??null},notes}});};
  const previousPins=engine.deps.approvedNodePins;
- engine.deps.approvedNodePins=(run:any,node:any)=>{const prior=previousPins?.(run,node);if(prior!==undefined||!crewApplies(run?.def))return prior;const rec=recordOf(run),n=rec?.nodes[node?.id];return n?n.skills.map(p=>({id:p.id,v:p.v,sha256:p.sha256})):prior;};
+ engine.deps.approvedNodePins=(run:any,node:any)=>{const prior=previousPins?.(run,node);if(prior!==undefined||!crewApplies(run?.def))return prior;const rec=recordOf(run),n=rec?.nodes[node?.id];return n?n.skills.map(p=>({id:p.id,v:p.v,sha256:p.sha256,...((p as any).filesSha256?{filesSha256:(p as any).filesSha256}:{})})):prior;};
  return{recordOf,resolve};
 }
