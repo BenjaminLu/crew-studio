@@ -43,7 +43,7 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
   ok(['fixture','unstaffed','stale'].every(id=>values.includes(id)),'the picker lists every registered project '+tag);
   ok(await p.locator('[data-run-start]').isDisabled(),'Start waits for a project '+tag);
   await p.locator('[data-run-project="code-firstmate"]').selectOption('unstaffed');await p.locator('[data-run-crew="missing"]').waitFor();
-  ok(await p.locator('[data-run-crew-link]').getAttribute('href')==='#/firstmate'&&(await p.locator('[data-run-crew-link]').textContent()).length>0&&await p.locator('[data-run-start]').isDisabled(),'a project without a crew links to choosing it and cannot start '+tag);
+  ok(await p.locator('[data-run-crew-link]').getAttribute('href')==='#/team?staffing=unstaffed&workflow=code-firstmate'&&(await p.locator('[data-run-crew-link]').textContent()).length>0&&await p.locator('[data-run-start]').isDisabled(),'a project without a crew links to choosing it and cannot start '+tag);
   await p.screenshot({path:join(shots,`missing-${width}-${theme}-${lang}.png`),fullPage:true});
   await p.locator('[data-run-project="code-firstmate"]').selectOption('stale');await p.locator('[data-run-crew="blocked"]').waitFor();
   ok(await p.locator('[data-run-crew="blocked"]').getAttribute('data-run-crew-code')==='staffing_changed'&&await p.locator('[data-run-start]').isDisabled(),'a crew approved for another definition says why it cannot start '+tag);
