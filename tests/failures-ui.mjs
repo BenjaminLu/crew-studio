@@ -27,7 +27,11 @@ const browser = await chromium.launch({ headless: true });
 try {
   for (const [w, h, scheme, langs] of [[1280, 900, "light", ["en", "zh-TW"]], [390, 844, "dark", ["zh-TW"]]]) {
     const ctx = await browser.newContext({ viewport: { width: w, height: h }, colorScheme: scheme, deviceScaleFactor: 1 });
-    const p = await ctx.newPage(); const errors = []; p.on("pageerror", (e) => errors.push(String(e)));
+    const p = await ctx.newPage();
+    // Keep the real answer route and response; simulate a slow network so the
+    // assertion cannot accidentally depend on a response arriving within 60 ms.
+    await p.route("**/api/scards/*/answer", async route => { const response = await route.fetch(); await new Promise(resolve => setTimeout(resolve, 150)); await route.fulfill({ response }); });
+    const errors = []; p.on("pageerror", (e) => errors.push(String(e)));
     for (const lang of langs) for (const card of cards) {
       const cls = card.failure.class, zh = lang === "zh-TW";
       await p.goto(`${base}/?card=${encodeURIComponent(card.id)}&lang=${lang}`); await p.waitForFunction(() => window.mounted === true && !!document.querySelector("[data-failure-class]"));
@@ -46,7 +50,10 @@ try {
       if (cls === "transient") ok(zh ? /第 1 次重試/.test(v.backoff) : /Retry 1: waits/.test(v.backoff ?? ""), `${tag}: the backoff is shown`, v.backoff);
       if (cls === "deterministic") {
         ok(zh ? /目前沒有任何輸入改變/.test(v.changed ?? "") : /Nothing changed yet/.test(v.changed ?? ""), `${tag}: what changed since the failure (nothing yet) is shown`, v.changed);
-        await p.locator('[data-option="retry"]').click(); await p.waitForTimeout(60);
+        const refused = p.waitForResponse(response => response.url() === `${base}/api/scards/${card.id}/answer` && response.request().method() === "POST");
+        await p.locator('[data-option="retry"]').click();
+        await refused;
+        await p.waitForFunction(() => !!document.querySelector("[data-card-msg]")?.textContent?.trim());
         const msg = await p.evaluate(() => document.querySelector("[data-card-msg]")?.textContent);
         const still = await (await fetch(`${base}/api/scards/${card.id}`)).json();
         ok((zh ? /^已拒絕重試：失敗之後沒有任何輸入改變（比對了：agent, base, budget, head, params, policy, spec, workflow）/.test(msg ?? "") : /^Retry refused: nothing changed since the failure \(compared: agent, base, budget, head, params, policy, spec, workflow\)/.test(msg ?? "")) && still.status === "open",
