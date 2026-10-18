@@ -248,8 +248,10 @@ function viewInbox(id) {
   });
   return h("div", { class: "page ib-page" },
     h("div", { class: "phead" }, h("div", {}, h("h1", { tabindex: "-1" }, T("Inbox", "收件匣")),
-      h("p", {}, S.board?.writable ? T("Answers go through the firstmate board, which records them.", "回答會經由 firstmate 看板送出並由它記錄。")
-        : T(`Read-only: ${S.board?.readonlyReason || "board unavailable"}.`, `唯讀：${S.board?.readonlyReason || "看板無法連線"}。`)))),
+      // what the page is for; the legacy firstmate board is named only when one of its cards is here
+      h("p", { "data-inbox-sub": "" }, T("Decisions waiting on you, one card at a time.", "等你決定的事，一次一張。"),
+        !items.some((x) => x.source === "firstmate") ? null : " " + (S.board?.writable ? T("Firstmate board cards are answered through that board.", "firstmate 看板的卡片經由該看板回答。")
+          : T(`Firstmate board cards are read-only here (${S.board?.readonlyReason || "board unavailable"}).`, `firstmate 看板的卡片在這裡唯讀（${S.board?.readonlyReason || "看板無法連線"}）。`))))),
     rec ? h("p", { class: "ib-recorded", "data-inbox-recorded": rec.id }, icon("check", "ic sm"), h("span", {}, said)) : null,
     gone ? h("p", { class: "faint", "data-inbox-gone": gone }, items.length ? T(`${gone} is no longer waiting. The cards below still are.`, `${gone} 已經不在等待中。下面這些還在等。`) : T(`${gone} is no longer waiting.`, `${gone} 已經不在等待中。`)) : null,
     items.length ? h("section", { class: "ib", "data-inbox-studio": "1", "data-ib-mode": mode },

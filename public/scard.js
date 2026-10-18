@@ -333,6 +333,13 @@ function mountCard(el, card, opts = {}) {
         `不是獨立審查：${same.join("、")} 和 worker 用同一個供應商與模型，因為目前沒有其他已驗證的配置。它是新的對話脈絡，不是另一個模型的第二意見。`)) : null),
       raw(T("Configuration details (hashes)", "配置細節（雜湊）"), body)];
   }
+  // the card shows its intent above, in the captain's words: a paragraph of the body that only repeats it is left out
+  const flat = (x) => String(x ?? "").replace(/\s+/g, " ").trim();
+  function notIntent(c, text) {
+    const said = ["en", "zh-TW"].map((l) => flat(c.sections?.[l]?.intent)).filter(Boolean);
+    if (!said.length) return text.trim();
+    return text.split(/\n{2,}/).filter((para) => { const f = flat(para); return !f || !said.some((x) => x === f || (f.length >= 12 && x.includes(f))); }).join("\n\n").trim();
+  }
   function bodyView(c, body) {
     let cfg = null, up = null; try { const j = JSON.parse(body); cfg = j?.configuration?.roles && typeof j.configuration.roles === "object" ? j.configuration : null; up = j?.upgrade ?? null; } catch {}
     // a workflow update that keeps the crew: what changed from the approved version, open, above the role table
@@ -343,11 +350,12 @@ function mountCard(el, card, opts = {}) {
     const pin = body.lastIndexOf("\n\nInternal pins / 內部鎖定:"), lines = (pin < 0 ? body : body.slice(0, pin)).split("\n"), at = lines.findIndex((l) => l.startsWith("Parameters / 參數:"));
     const pinsView = pin < 0 && at < 0 ? null : raw(T("Studio's internal pins and full text", "Studio 內部鎖定與全文"), body);
     let params = null; const inline = at < 0 ? "" : lines[at].slice("Parameters / 參數:".length).trim(), end = at < 0 ? at : inline ? at + 1 : (() => { let k = at + 1; while (k < lines.length && /^ {2}\S/.test(lines[k])) k++; return k; })();
-    if (at >= 0 && inline) { try { const j = JSON.parse(inline); if (j && typeof j === "object" && !Array.isArray(j)) params = Object.entries(j).map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]); } catch {} }
+    if (at >= 0 && /^[—-]?$/.test(inline) && end === at + 1) params = []; // "Parameters / 參數: —": none
+    else if (at >= 0 && inline) { try { const j = JSON.parse(inline); if (j && typeof j === "object" && !Array.isArray(j)) params = Object.entries(j).map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]); } catch {} }
     else if (at >= 0) params = lines.slice(at + 1, end).map((l) => { const i = l.indexOf(":"); return [l.slice(0, i).trim(), l.slice(i + 1).trim()]; });
-    if (!params) return [h("pre", { class: "cc-pre rt-card-body" }, lines.join("\n")), pin < 0 ? null : pinsView];
-    const shown = params.filter(([k]) => !k.startsWith("_")), rest = [...lines.slice(0, at), ...lines.slice(end)].join("\n").trim();
-    return [sec("params", T("Parameters", "參數"), shown.length ? h("dl", { class: "cc-kv", "data-card-params": "" }, shown.flatMap(([k, v]) => [h("dt", {}, k), h("dd", { class: "cc-mono" }, v)])) : h("p", { class: "cc-count" }, "—")),
+    if (!params) { const text = notIntent(c, lines.join("\n")); return [text ? h("pre", { class: "cc-pre rt-card-body" }, text) : null, pin < 0 ? null : pinsView]; }
+    const shown = params.filter(([k]) => !k.startsWith("_")), rest = notIntent(c, [...lines.slice(0, at), ...lines.slice(end)].join("\n"));
+    return [shown.length ? sec("params", T("Parameters", "參數"), h("dl", { class: "cc-kv", "data-card-params": "" }, shown.flatMap(([k, v]) => [h("dt", {}, k), h("dd", { class: "cc-mono" }, v)]))) : null,
       rest ? h("pre", { class: "cc-pre rt-card-body" }, rest) : null, pinsView];
   }
   function plainView(c) {

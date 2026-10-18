@@ -16,6 +16,7 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright")
 const tmp = mkdtempSync(join(tmpdir(), "crew-fmcard-"));
 const state = join(tmp, "fm", "state"), data = join(tmp, "data");
 mkdirSync(join(state, "pending"), { recursive: true }); mkdirSync(join(data, "cards"), { recursive: true });
+const P1 = "寫一份文件：「Crew Studio 新手三分鐘上手」，給第一次打開 Studio 的同事看。", P2 = "內容照先前草稿的方向：開頭點出「Studio 的工作都要你按確認才會開始」。";
 const HASH = "c89c8e781426d0af49059d9ae785ffd44f26e401a82edd9cb4e3daf48645ba45";
 const sec = (intent, why, how) => ({ intent, why, scope: { in: [], out: [] }, done: [], beforeAfter: "", how, glossary: [] });
 const card = (id, run, kind, title, body, intent) => ({ id, run, node: kind === "permission" ? "confirm" : "dispatch", visit: 1, kind, title: { en: title, "zh-TW": title },
@@ -33,6 +34,8 @@ const cards = [
   card("SC-902", "R-902", "dispatch", "Start this work?", `Workflow / 工作流程: code-firstmate v8\nParameters / 參數: {"project":"sandbox","base":"main","_staffing":"${HASH}"}\nProject / 專案: sandbox\n\nAdd EUR to format()\n\nOnly your approval starts this exact pinned work. / 只有你的核准會啟動這項已鎖定的工作。`, "Add EUR to format()"),
   // the body src/firstmate.ts writes now: key/value lines, the internal pins last
   card("SC-903", "R-903", "dispatch", "Start this work?", `Workflow / 工作流程: code-firstmate v8\nParameters / 參數:\n  project: sandbox\n  base: main\nProject / 專案: sandbox\n\nAdd EUR to format()\n\nOnly your approval starts this exact pinned work. / 只有你的核准會啟動這項已鎖定的工作。\n\nInternal pins / 內部鎖定:\n  _staffing: ${HASH}`, "Add EUR to format()"),
+  // S6: a Documents dispatch whose body repeats the captain's intent (two paragraphs) under "Parameters / 參數: —"
+  card("SC-904", "R-904", "dispatch", "Start this work?", `Workflow / 工作流程: documents v5\nParameters / 參數: —\n\n${P1}\n\n${P2}`, `${P1} ${P2}`),
 ];
 for (const c of cards) writeFileSync(join(data, "cards", `${c.id}.json`), JSON.stringify(c, null, 1));
 const port = await freePort();
@@ -73,6 +76,13 @@ try {
       ok(!visible.includes(HASH) && !visible.includes("_staffing") && !visible.includes('{"project"'), `${lang} ${id}: no raw JSON or internal hash on the card face`, visible.slice(0, 400));
       ok(await p.$eval(`${at(id)} [data-card-raw]`, (d, h) => !d.open && d.textContent.includes(`_staffing`) && d.textContent.includes(h), HASH), `${lang} ${id}: the internal pin stays readable in a closed details`);
     }
+    // ---------- S6: the intent shows once; no empty parameters section ----------
+    await p.goto(`${base}/#/inbox/SC-904`); await p.waitForSelector(`${at("SC-904")} [data-sec="intent"]`, { timeout: 15000 });
+    const face = await p.$eval(at("SC-904"), (el) => [...el.querySelectorAll("[data-card-root] > *")].filter((x) => !x.matches("details")).map((x) => x.innerText).join("\n"));
+    const times = (t) => face.split(t).length - 1;
+    ok(times(P1.slice(0, 20)) === 1 && times(P2.slice(0, 20)) === 1, `${lang} SC-904: the dispatch card shows the captain's intent once, not again in the body box`, face.slice(0, 600));
+    ok(face.includes("documents v5") && await p.locator(`${at("SC-904")} [data-sec="params"]`).count() === 0, `${lang} SC-904: the workflow line stays; a dispatch with no parameters shows no empty Parameters section`, face.slice(0, 600));
+    ok(!/legacy adapter|Read-only:|唯讀：/.test(await p.locator("[data-inbox-sub]").innerText()) && (await p.locator("[data-inbox-sub]").innerText()).includes(lang === "en" ? "Decisions waiting on you" : "等你決定的事"), `${lang}: the Inbox subtitle says what the page is for, not an internal adapter state`, await p.locator("[data-inbox-sub]").innerText());
     // ---------- F1: the chat box has an accessible name ----------
     const name = lang === "en" ? "Message Firstmate" : "傳訊息給 Firstmate";
     ok(await p.getByRole("textbox", { name }).count() === 1, `${lang}: the Firstmate chat box is a textbox named "${name}" in the accessibility tree`);
