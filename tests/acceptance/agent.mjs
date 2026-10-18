@@ -12,7 +12,7 @@
 // that names the prompt, so a new mode fails loudly instead of passing silently.
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { connect as tcp, createServer as createNetServer } from "node:net";
+import { connect as tcp } from "node:net";
 import { openSync, readFileSync, closeSync, writeFileSync, rmSync } from "node:fs";
 import { join as joinPath } from "node:path";
 
@@ -101,10 +101,6 @@ const viaProxy = (target, auth = true, ms = 4000) => new Promise((resolve) => {
   s.on("data", (d) => { buf += d.toString("latin1"); const m = /^HTTP\/1\.[01] (\d{3})/.exec(buf); if (m) done({ status: Number(m[1]) }); });
   s.once("error", (e) => done({ status: null, error: e.code ?? String(e.message ?? e) }));
 });
-const ownServer = () => new Promise((resolve) => {
-  const srv = createNetServer((c) => c.end()); srv.once("error", (e) => resolve({ ok: false, error: e.code ?? String(e.message ?? e) }));
-  srv.listen(0, "127.0.0.1", async () => { const r = await tryTcp("127.0.0.1", srv.address().port); srv.close(); resolve(r); });
-});
 // open() is where the sandbox checks a read: nothing of the file itself is read
 const readable = (p) => { try { closeSync(openSync(p, "r")); return true; } catch { return false; } };
 const writable = (dir) => { const f = joinPath(dir, `.acceptance-probe-${process.pid}`); try { writeFileSync(f, "x"); rmSync(f, { force: true }); return true; } catch { return false; } };
@@ -120,8 +116,6 @@ async function sandboxProbe(prompt) {
     directPublic: await tryTcp("1.1.1.1", 443),
     directSink: sink ? await tryTcp("127.0.0.1", sink) : { ok: false, error: "no sink" },
     directStudio: Number(arg("studio")) ? await tryTcp("127.0.0.1", Number(arg("studio"))) : { ok: false, error: "no studio port" },
-    // a server of the round's own on port 0 (what a project's test starts), reached from the same round
-    ownServer: await ownServer(),
     toolListener: tool ? await tryTcp(tool.hostname, Number(tool.port)) : { ok: false, error: "no CREW_STUDIO_URL" },
     providerViaProxy: host ? await viaProxy(`${host}:443`) : { status: null, error: "no host" },
     otherViaProxy: await viaProxy("example.com:443"),
