@@ -156,7 +156,21 @@ export class MainSession {
   /** The Board's language as the captain last showed it (data/board-language.json): Firstmate's first message after a restart
    *  greets in it, never in the language a stopped primary once started with. null: the Board never said. */
   boardLocale(): PrimarySettings["locale"] | null { try { const l = JSON.parse(readFileSync(join(this.o.dataDir, "board-language.json"), "utf8"))?.locale; return l === "en" || l === "zh-TW" || l === "zh-CN" ? l : null; } catch { return null; } }
-  setBoardLocale(l: PrimarySettings["locale"]) { if (this.boardLocale() === l) return; const f = join(this.o.dataDir, "board-language.json"); writeFileSync(f + ".tmp", JSON.stringify({ schema: 1, locale: l }), { mode: 0o600 }); renameSync(f + ".tmp", f); }
+  setBoardLocale(l: PrimarySettings["locale"]) {
+    for (const w of this.boardLocaleWaiters.splice(0)) w(l);
+    if (this.boardLocale() === l) return; const f = join(this.o.dataDir, "board-language.json"); writeFileSync(f + ".tmp", JSON.stringify({ schema: 1, locale: l }), { mode: 0o600 }); renameSync(f + ".tmp", f); }
+  private boardLocaleWaiters: ((l: PrimarySettings["locale"]) => void)[] = [];
+  /** The language of a restart's greeting (live S26): the Board's, as it last said; else the first an open Board says within `ms`
+   *  (it says so as its stream connects); else English, the Board's own default. Never the locale driver.json kept for the stopped
+   *  primary: that is the language some earlier Start greeted in, not what the captain's Board shows now. */
+  greetingLocale(ms: number): Promise<PrimarySettings["locale"]> {
+    const known = this.boardLocale(); if (known) return Promise.resolve(known);
+    return new Promise((res) => {
+      const done = (l: PrimarySettings["locale"]) => { clearTimeout(t); this.boardLocaleWaiters = this.boardLocaleWaiters.filter((w) => w !== done); res(l); };
+      const t = setTimeout(() => done("en"), ms);
+      this.boardLocaleWaiters.push(done);
+    });
+  }
   stop() { if (this.timer) clearInterval(this.timer); this.bridge.close(); }
 
   private get driverFile() { return join(this.o.dataDir, "driver.json"); }

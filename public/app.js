@@ -522,7 +522,7 @@ function connect() {
   // every (re)connect: modules read their state again, so an event missed while the stream was down is not lost (unit inbox-live)
   // firstmate's open cards too: a card that landed after the page read its summary but before this stream connected was
   // announced to nobody (the server reads the cards fresh on each summary; the stream only says what changes after it)
-  es.addEventListener("hello", () => { conn("live"); dispatchEvent(new Event("crew:live"));
+  es.addEventListener("hello", () => { conn("live"); dispatchEvent(new Event("crew:live")); tellLang();
     fetch("/api/summary").then((r) => r.json()).then((s) => { if (!Array.isArray(s?.pending) || JSON.stringify(s.pending) === JSON.stringify(S.pending)) return;
       S.pending = s.pending; S.tasks = s.tasks ?? S.tasks; if (["board", "inbox"].includes(S.route?.name)) soft(); else updateNav(); }).catch(() => {}); });
   es.onerror = () => conn("down");
@@ -549,10 +549,13 @@ function connect() {
 // ---------- shell: theme, language, sidebar ----------
 function setTheme(t) { if (t === "system") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t; store.set("crew.theme", t);
   $$("#themeSeg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.themeSet === t))); }
+// Studio learns the Board's language: Firstmate's first message (a Start, a switch, a restart) greets in it. Said on every
+// language change and on every stream hello, so a Studio that restarted (and may be waiting to greet) hears it from a Board
+// that was already open
+function tellLang() { fetch("/api/main/locale", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ locale: lang }) }).catch(() => {}); }
 // persist = false keeps a first-run (browser) language unstored until the captain picks one in Settings
 function setLang(l, persist = true) { l = I18N.LANGS.includes(l) ? l : "en"; lang = l; if (l !== "en") lastZh = l; if (persist) store.set("crew.lang", l); document.documentElement.lang = l;
-  // Studio learns the Board's language: Firstmate's first message (a Start, a switch, a restart) greets in it
-  fetch("/api/main/locale", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ locale: l }) }).catch(() => {});
+  tellLang();
   $$("[data-lang-set]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.langSet === l)));
   const names = { board: ["Board", "看板"], inbox: ["Inbox", "收件匣"], crew: ["Crew", "船員"], activity: ["Activity", "事件"], workflow: ["Workflow", "流程"], intents: ["Intents", "意圖"], library: ["Library", "成品庫"], remote: ["Phone", "手機"], doctor: ["Doctor", "健康檢查"], changes: ["Changes", "變更"] };
   $$(".nav-item").forEach((b) => { const n = names[b.dataset.view]; if (!n) return; b.querySelector(".nl").textContent = T(...n); b.dataset.tip = T(...n); });

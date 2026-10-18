@@ -302,6 +302,34 @@ try {
   const restartSeed = seedOf(claudeRuns().at(-1).pid);
   ok(/The captain’s current dashboard language is Traditional Chinese \(繁體中文\)\. Greet the captain in Traditional Chinese/.test(restartSeed) && !/Greet the captain in Simplified/.test(restartSeed) && rv.driver.primary?.locale === "zh-TW",
     "after a restart the greeting uses the Board's current language (繁體中文), not the one the stopped primary started with", restartSeed.split("\n")[0].slice(0, 160));
+  // live S26: driver.json kept zh-CN from an earlier Start, but Studio never heard the Board's language (no board-language.json:
+  // the release that added it had just gone live). The greeting never takes driver.json's language: with no Board saying, it is English
+  await api("/api/main/detach", {});
+  r = await api("/api/main/start", { host: "claude", confirm: true, locale: "zh-CN" }); await idle();
+  ok(JSON.parse(readFileSync(join(data, "driver.json"), "utf8")).primary?.locale === "zh-CN", "driver.json keeps the zh-CN the stopped primary greeted in");
+  rmSync(join(data, "board-language.json"));
+  await stop(); app = start({ CREW_BOARD_LOCALE_WAIT_MS: "300" }); await waitUp(base, app);
+  ok(await until(async () => (await view()).state === "attached"), "the primary starts again after the restart");
+  await idle();
+  const silentSeed = seedOf(claudeRuns().at(-1).pid);
+  ok(/The captain’s current dashboard language is English\. Greet the captain in English\./.test(silentSeed) && !/Simplified/.test(silentSeed.slice(0, 200)),
+    "board never said + driver.json zh-CN: the restart greets in English, never in driver.json's language", silentSeed.slice(0, 160));
+  // an open Board says its language as its stream connects: the restart's greeting waits for it and greets in it
+  const runsBeforeWait = claudeRuns().length;
+  await stop(); app = start({ CREW_BOARD_LOCALE_WAIT_MS: "20000" }); await waitUp(base, app); await Bun.sleep(800);
+  ok(claudeRuns().length === runsBeforeWait, "with no Board language known the restart's greeting waits for an open Board to say it");
+  ok((await api("/api/main/locale", { locale: "zh-TW" })).body.ok === true, "the open Board says 繁體中文 as its stream connects");
+  ok(await until(async () => (await view()).state === "attached"), "the primary starts once the Board said its language");
+  await idle();
+  ok(/Greet the captain in Traditional Chinese \(繁體中文\)/.test(seedOf(claudeRuns().at(-1).pid)), "the restart greets in the language the open Board said (繁體中文)");
+  // after the greeting the conversation's language rules: a captain writing Traditional Chinese gets the Traditional note on the turn
+  { const run = claudeRuns().at(-1), sid = run.argv[run.argv.indexOf("--session-id") + 1];
+    await say("我們來做一張海報");
+    const tx = join(run.CLAUDE_CONFIG_DIR, "projects"), files = readdirSync(tx).flatMap((d) => readdirSync(join(tx, d)).filter((f) => f === `${sid}.jsonl`).map((f) => join(tx, d, f)));
+    const { TRADITIONAL_NOTE } = await import("../src/captain-script");
+    ok(files.length === 1 && readFileSync(files[0], "utf8").includes(`我們來做一張海報\\n\\n[Studio note: `) && readFileSync(files[0], "utf8").includes(JSON.stringify(TRADITIONAL_NOTE).slice(1, -1)),
+      "a captain message in Traditional Chinese after the greeting reaches Firstmate with the follow-the-captain notes", files.join(","));
+  }
   // not signed in at boot: nothing starts, no sign-in begins, a notice says why and that Start is the way on
   signedIn(false); const runsSignedOut = claudeRuns().length, codexBefore = codexStarts();
   await stop(); app = start(); await waitUp(base, app);

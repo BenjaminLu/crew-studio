@@ -180,6 +180,8 @@ export function createTakeover(d: Deps) {
     const run = resumeBootPrimary(); booting = run; void run.finally(() => { if (booting === run) booting = null; }).catch(() => {});
     return run;
   }
+  // how long a restart's greeting waits for an open Board to say its language when Studio never heard one
+  const greetingLocale = () => d.main.greetingLocale(Number(process.env.CREW_BOARD_LOCALE_WAIT_MS) || 8000);
   async function resumeBootPrimary(): Promise<{ resumed: boolean; reason?: string }> {
     const p = d.main.takeBootPrimary(); if (!p) return { resumed: false };
     const v = d.main.view();
@@ -194,20 +196,22 @@ export function createTakeover(d: Deps) {
         if (ready.model !== p.model || ready.permissionMode !== p.permissionMode)
           return stay(`Firstmate was running on Claude ${p.model ?? "(default)"} (${p.permissionMode ?? "default"} mode) before Studio restarted; the configuration is now ${ready.model} (${ready.permissionMode} mode), so it was not restarted. Press Start to begin with the new configuration.`,
             `Studio 重啟前 Firstmate 在 Claude ${p.model ?? "（預設）"}（${p.permissionMode ?? "default"} 模式）上執行；設定已改成 ${ready.model}（${ready.permissionMode} 模式），所以沒有自動重開。請按 Start 用新設定開始。`);
+        const locale = await greetingLocale();
         if (d.main.view().state !== "detached") return { resumed: false };
-        const r = await d.main.startFresh("claude", undefined, { locale: d.main.boardLocale?.() ?? p.locale, env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode });
+        const r = await d.main.startFresh("claude", undefined, { locale, env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode });
         if (!r.ok) return stay(`Firstmate could not be restarted on Claude after Studio restarted: ${r.reason}. Press Start to try again.`, `Studio 重啟後無法在 Claude 上重開 Firstmate：${r.reason}。請按 Start 再試一次。`);
       } else {
         if (!d.codexAccount) return stay("Firstmate was running on Codex before Studio restarted, but the Codex account cannot be verified now. Press Start to begin again.", "Studio 重啟前 Firstmate 在 Codex 上執行，但現在無法驗證 Codex 帳號。請按 Start 重新開始。");
         let verified: any;
         try { verified = await d.codexAccount.ensureReady(); } catch (e: any) { return stay(`Firstmate was running on Codex before Studio restarted and was not restarted: ${String(e?.message ?? e).slice(0, 200)}. Press Start once that is fixed.`, `Studio 重啟前 Firstmate 在 Codex 上執行，這次沒有自動重開。處理好後請按 Start。`); }
         if (verified.model !== p.model) return stay(`Firstmate was running on Codex ${p.model ?? "(default)"} before Studio restarted; the configuration is now ${verified.model}, so it was not restarted. Press Start to begin with the new configuration.`, `Studio 重啟前 Firstmate 在 Codex ${p.model ?? "（預設）"} 上執行；設定已改成 ${verified.model}，所以沒有自動重開。請按 Start 用新設定開始。`);
+        const locale = await greetingLocale();
         if (d.main.view().state !== "detached") return { resumed: false };
         const r = await d.main.startFresh("codex", (opened) => {
           const current = codexConfig(d.main.view().project);
           if (verified.state !== "ready" || !verified.authenticated || verified.quota !== "available" || !verified.expires || verified.expires <= Date.now() || current.model !== verified.model || current.effort !== verified.effort || opened.model !== verified.model || opened.effort !== verified.effort) throw new Error("Codex main model/effort changed or is unverified");
           return true;
-        }, { locale: d.main.boardLocale?.() ?? p.locale });
+        }, { locale });
         if (!r.ok) return stay(`Firstmate could not be restarted on Codex after Studio restarted: ${r.reason}. Press Start to try again.`, `Studio 重啟後無法在 Codex 上重開 Firstmate：${r.reason}。請按 Start 再試一次。`);
       }
     } catch (e: any) { return stay(`Firstmate could not be restarted on ${vendor} after Studio restarted: ${String(e?.message ?? e).slice(0, 200)}. Press Start to try again.`, `Studio 重啟後無法在 ${vendor} 上重開 Firstmate。請按 Start 再試一次。`); }

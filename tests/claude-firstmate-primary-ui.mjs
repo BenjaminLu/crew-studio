@@ -3,7 +3,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Claude Firstmate that greets in the right-side chat, and the chat's own Start on Claude. Offline: stub CLIs only.
 //   CLAUDE_PRIMARY_SHOTS=<dir>  also write screenshots there
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,14 @@ try {
 
   // signed out: Claude is shown beside Codex, but cannot start
   await p.goto(base + "/#/firstmate");
+  // live S26: a Board already open when Studio restarts says its language again on the stream's hello, so the restart's
+  // greeting (which waits for it when Studio never heard one) uses the Board's language, not driver.json's
+  { const bl = join(data, "board-language.json");
+    for (let i = 0; i < 100 && !existsSync(bl); i++) await p.waitForTimeout(50);
+    rmSync(bl, { force: true });
+    await p.evaluate(() => LIVE.es.dispatchEvent(new Event("hello")));
+    for (let i = 0; i < 100 && !existsSync(bl); i++) await p.waitForTimeout(50);
+    ok(existsSync(bl) && JSON.parse(readFileSync(bl, "utf8")).locale === "en", "an open Board tells Studio its language again on the stream's hello"); }
   ok(await seen(p, '[data-section="start-firstmate"] [data-section="start-codex"]') && await seen(p, '[data-section="start-firstmate"] [data-section="start-claude"]'), "the Firstmate page offers Codex and Claude together");
   ok(await seen(p, '[data-section="start-claude"][data-claude-account="signed-out"]', 20000) && await p.locator("#startClaudeBtn").isDisabled(), "Claude cannot start before its card shows signed in");
   await p.waitForTimeout(500);
