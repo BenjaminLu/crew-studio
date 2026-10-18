@@ -77,7 +77,7 @@ export function readEnv(dataDir: string, key: string): EnvRecord | null { try { 
 
 /** Run one prepare step in the sandbox: writes only the env and the cache, the lock's hosts only. Exported for its tests. */
 export async function prepareExec(argv: string[], c: PrepareCtx & { cwd: string; writes: string[]; tmp: string; hosts: string[]; env?: Record<string, string>; reads?: string[] }) {
-  return roundExec(argv, { cwd: c.cwd, writes: c.writes, tmp: c.tmp, dataDir: c.dataDir, protect: c.protect, timeoutS: c.timeoutS ?? 900, egress: c.egress, hosts: c.hosts, env: c.env, reads: c.reads,
+  return roundExec(argv, { cwd: c.cwd, writes: c.writes, tmp: c.tmp, dataDir: c.dataDir, protect: c.protect, timeoutS: c.timeoutS ?? 900, egress: c.egress, hosts: c.hosts, env: c.env, reads: c.reads, readOnly: c.reads,
     egressMeta: { purpose: "prepare", strict: true }, signal: c.signal, stdoutCap: 64 * 1024 });
 }
 const inflight = new Map<string, Promise<EnvRecord>>();

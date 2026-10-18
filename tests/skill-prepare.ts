@@ -44,6 +44,12 @@ const pk = new SkillPackages({ dataDir: data, skills, egress: () => egress, brew
     { dataDir: data, egress, cwd: env, writes: [env, cache], tmp: join(cache, "tmp"), hosts: [REGISTRY] });
   ok(existsSync(join(env, "inside")) && !existsSync(join(data, "outside")) && !existsSync(join(tmp, "outside2")), "a prepare writes only its env folder and its cache: nothing else in Studio's data, nothing outside it", r.stderr);
   ok(/no-secret/.test(r.stdout) && !/SECRET-KEY/.test(r.stdout), "a prepare reads none of the user's secrets (~/.ssh)", r.stdout);
+  const runtime = join(data, "runtimes", "python", "cpython-fixture"); mkdirSync(runtime, { recursive: true });
+  writeFileSync(join(runtime, "stdlib.txt"), "managed-runtime"); writeFileSync(join(data, "runtime-secret"), "NEVER-READ");
+  const managed = await prepareExec(["/bin/sh", "-c", `cat ${runtime}/stdlib.txt; echo changed > ${runtime}/stdlib.txt 2>/dev/null; cat ${data}/runtime-secret 2>/dev/null || echo data-closed`],
+    { dataDir: data, egress, cwd: env, writes: [env, cache], tmp: join(cache, "tmp"), hosts: [], reads: [runtime] });
+  ok(managed.stdout.includes("managed-runtime") && managed.stdout.includes("data-closed") && !managed.stdout.includes("NEVER-READ") && readFileSync(join(runtime, "stdlib.txt"), "utf8") === "managed-runtime",
+    "a runtime installed under data is readable during prepare, remains read-only, and does not expose sibling data", JSON.stringify(managed));
   const curl = (url: string, hosts: string[]) => prepareExec(["/usr/bin/curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", url], { dataDir: data, egress, cwd: env, writes: [env, cache], tmp: join(cache, "tmp"), hosts });
   const okHost = await curl(`http://${REGISTRY}/fixture-dep`, [REGISTRY]), other = await curl("http://other.fixture.test/fixture-dep", [REGISTRY]);
   const direct = await prepareExec(["/usr/bin/curl", "-s", "--noproxy", "*", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "5", `http://127.0.0.1:${fx.port}/fixture-dep`], { dataDir: data, egress, cwd: env, writes: [env, cache], tmp: join(cache, "tmp"), hosts: [REGISTRY] });
@@ -78,6 +84,15 @@ ok(a.created && !!a.version.pkg && a.version.pkg.npm?.files[1] === "package-lock
   ok(!readdirSync(join(data, "envs")).some((d) => d.startsWith(".cache-") && d !== ".cache-probe"), "the prepare's own cache is removed after it");
   const st = JSON.parse(readFileSync(join(data, "skillpkg", "status", "pkg-a@v1.json"), "utf8"));
   ok(st.state === "ready" && st.envKey === s.envKey, "the outcome is recorded in Studio's status file for the version"); }
+
+// The managed-runtime path must work for real venv/pip preparation too, not only a profile string.
+{ const st = pk.status("pkg-a", 1), lv = skills.libVersion("pkg-a", 1)!, pkg = skills.pkg("pkg-a", 1)!;
+  const runtime = join(data, "runtimes", "python", "cpython-wrapper"), bin = join(runtime, "bin", "python3"); mkdirSync(join(runtime, "bin"), { recursive: true });
+  writeFileSync(join(runtime, "ready"), "ready");
+  writeFileSync(bin, `#!/bin/sh\ncat '${runtime}/ready' >/dev/null || exit 91\nexec '${st.runtimes.python!.bin}' "$@"\n`, { mode: 0o755 });
+  const prepared = await prepareEnv({ ...pkg, npm: null }, join(lv.dir, "files"), { python: { ...st.runtimes.python!, bin, dir: runtime, version: "managed-fixture" } }, "managed-python@v1", { dataDir: data, egress, timeoutS: 60 });
+  ok(prepared.python && existsSync(join(data, "envs", prepared.key, "py", "venv", "bin", "python")),
+    "a Python entrypoint under data/runtimes can read its runtime files and create a real venv with pinned wheel dependencies"); }
 
 // ---------- content-addressed: same locks, same env; the key moves with the lock ----------
 { const b = skills.importFolder(skillFolder(src, fx, { name: "pkg-b" }), "captain");

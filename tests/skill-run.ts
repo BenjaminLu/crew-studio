@@ -45,6 +45,8 @@ h.engine.modes.srtest = { tools: () => [{ name: "own_fetch", description: "the a
 
 const src = mkdtempSync(join(tmpdir(), "skill-src-"));
 const folder = skillFolder(src, fx, { name: "pkg-run", hosts: ["api.fixture.test", "meta.fixture.test", "lan.fixture.test"] });
+writeFileSync(join(folder, "scripts", "esm-helper.mjs"), "import dep from 'fixture-dep'; export default dep;\n");
+writeFileSync(join(folder, "scripts", "use-dep.mjs"), "import dep from './esm-helper.mjs'; import fs from 'node:fs'; fs.writeFileSync('skill-esm-output.txt', dep('esm')); try { fs.writeFileSync(new URL('./esm-helper.mjs', import.meta.url), 'changed'); } catch { console.log('copy-read-only'); } try { fs.writeFileSync(process.env.NODE_PATH + '/fixture-dep/index.js', 'changed'); } catch { console.log('env-read-only'); }\n");
 const imp = lib.importFolder(folder, "captain");
 const pin = { id: "pkg-run", v: 1, sha256: imp.version.sha256, filesSha256: imp.version.filesSha256 };
 const withPins = (pins: any[]) => { const b = h.defs.get("sr")!; return h.defs.save("sr", { base: b.version, nodes: b.nodes.map((n: any) => n.id === "make" ? { ...n, skills: pins } : n), edges: b.edges }, "captain"); };
@@ -70,6 +72,7 @@ const calls = [
   ["skill_read", { skill: "pkg-run", path: "SKILL.md" }],
   ["skill_run", { skill: "pkg-run", script: "scripts/use-dep.js", args: ["hello"] }],
   ["skill_run", { skill: "pkg-run", script: "scripts/use-py.py", args: ["hello"] }],
+  ["skill_run", { skill: "pkg-run", script: "scripts/use-dep.mjs", args: [] }],
   ["skill_run", { skill: "pkg-run", script: "scripts/fetch.js", args: ["http://api.fixture.test/fixture-dep"] }],
   ["skill_run", { skill: "pkg-run", script: "scripts/fetch.js", args: ["http://other.fixture.test/fixture-dep"] }],
   ["skill_run", { skill: "pkg-run", script: "scripts/fetch.js", args: ["http://meta.fixture.test/latest"] }],
@@ -86,6 +89,7 @@ ok(r1.status === "succeeded" && ["skill_files", "skill_read", "skill_run", "own_
 ok(/# Skill files: pkg-run \(v1\)/.test(sys) && /skill_run\("pkg-run"/.test(sys) && /never install packages/.test(sys), "the instructions say where the skill's files are and how to run its scripts", sys.slice(-600));
 const by = (script: string, arg?: string) => runs.find((x) => x.script === script && (arg === undefined || x.argv[0] === arg));
 ok(by("scripts/use-dep.js")?.exit === 0 && readFileSync(join(box, "skill-output.txt"), "utf8") === "dep:hello", "skill_run runs the script offline with its dependency from the prepared env (NODE_PATH), writing where the round writes", JSON.stringify(by("scripts/use-dep.js")));
+ok(by("scripts/use-dep.mjs")?.exit === 0 && existsSync(join(box, "skill-esm-output.txt")) && readFileSync(join(box, "skill-esm-output.txt"), "utf8") === "dep:esm" && /copy-read-only/.test(by("scripts/use-dep.mjs")?.stdoutTail ?? "") && /env-read-only/.test(by("scripts/use-dep.mjs")?.stdoutTail ?? ""), "an offline .mjs script imports its prepared dependency through a relative ESM helper, keeping copy and env read-only", JSON.stringify(by("scripts/use-dep.mjs")));
 ok(by("scripts/use-py.py")?.exit === 0 && /py:HELLO/.test(by("scripts/use-py.py")?.stdoutTail ?? ""), "a Python script runs in the prepared venv with its hash-pinned package", JSON.stringify(by("scripts/use-py.py")));
 ok(/^200 /.test(by("scripts/fetch.js", "http://api.fixture.test/fixture-dep")?.stdoutTail ?? "") && by("scripts/fetch.js", "http://api.fixture.test/fixture-dep")?.egress.allowed.includes("api.fixture.test"), "skill_run reaches a host its approval names, through a credential of its own", JSON.stringify(by("scripts/fetch.js", "http://api.fixture.test/fixture-dep")));
 const other = by("scripts/fetch.js", "http://other.fixture.test/fixture-dep");

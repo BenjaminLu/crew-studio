@@ -117,7 +117,8 @@ hashed again; the prompt gets a footer naming the folder and the three tools.
 
 - `skill_files(skill)`, `skill_read(skill, path)`: the copy's files; relative paths only, no link, text only, 256 KiB a call.
 - `skill_run(skill, script, args)`: `script` must be one of the version's detected scripts; Python runs in the prepared venv
-  (else the resolved python), JavaScript on the resolved node with `NODE_PATH` = the env's node_modules, shell with
+  (else the resolved python), JavaScript on the resolved node with `NODE_PATH` = the env's node_modules for CommonJS
+  and a trusted read-only Node loader resolving ESM bare imports from the same pinned env, shell with
   /bin/bash. Args: up to 64 strings. Timeout ≤ 300 s, output cut to its last 64 KiB, 30 calls a round. It runs under the
   round profile with the round's own cwd and writes (nothing more); the copy, the env, the runtimes' installs and Studio's
   tools are read and executed but **write-denied** (`roundProfile` `readOnly`). PATH starts with shims for npm, npx, pnpm,

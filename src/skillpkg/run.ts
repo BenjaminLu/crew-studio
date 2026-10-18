@@ -8,8 +8,9 @@
 //                                       credential of its own (the agent's other commands never get them)
 // skill_run exists only for an approved script skill; package managers fail with a clear error (an install at run time
 // would be code nobody approved); each call is recorded with the skill, version, both hashes, the script and its hash.
-import { lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { roundExec } from "../runtime/checks";
 import type { EgressEvent } from "../egress";
 import type { SkillPackages, SkillStatus } from "./index";
@@ -61,8 +62,19 @@ export function skillTools(o: { skills: RoundSkill[]; packages: SkillPackages; r
       const st = s.status, env = st.envKey ? envDir(o.round.dataDir, st.envKey) : null;
       const venv = env && st.env?.python ? join(env, "py", "venv") : null, nodeModules = env && st.env?.npm ? join(env, "node", "node_modules") : null;
       const path = join(s.dir, script.path);
+      // Node ESM ignores NODE_PATH. A trusted read-only hook resolves bare imports from the
+      // pinned env without adding node_modules to (or changing) the approved skill copy.
+      const loader = nodeModules && script.lang === "node" ? join(shims, `esm-${calls}.mjs`) : null;
+      if (loader) writeFileSync(loader, `const skill = ${JSON.stringify(pathToFileURL(realpathSync(s.dir) + "/").href)};
+const parentURL = ${JSON.stringify(pathToFileURL(join(realpathSync(join(nodeModules!, "..")), "package.json")).href)};
+export async function resolve(specifier, context, nextResolve) {
+  if (context.parentURL?.startsWith(skill) && !/^(?:[./]|[a-zA-Z][a-zA-Z0-9+.-]*:)/.test(specifier))
+    return nextResolve(specifier, { ...context, parentURL });
+  return nextResolve(specifier, context);
+}
+`);
       const argv = script.lang === "python" ? [venv ? join(venv, "bin", "python") : st.runtimes.python?.bin ?? "", path, ...args]
-        : script.lang === "node" ? [st.runtimes.node?.bin ?? "", path, ...args] : script.lang === "shell" ? ["/bin/bash", path, ...args] : [];
+        : script.lang === "node" ? [st.runtimes.node?.bin ?? "", ...(loader ? ["--experimental-loader", loader] : []), path, ...args] : script.lang === "shell" ? ["/bin/bash", path, ...args] : [];
       if (!argv[0]) throw new Error(`${script.path}: Studio runs Python, Node and shell scripts; this one is ${script.lang}${script.lang !== "other" ? " and its runtime is missing" : ""}`);
       const binDirs = [...new Set(st.bins.filter((b) => b.path && b.state !== "missing").map((b) => dirname(b.path!)))];
       const PATH = [shims, venv ? join(venv, "bin") : null, nodeModules ? join(nodeModules, ".bin") : null, st.runtimes.node ? dirname(st.runtimes.node.bin) : null, st.runtimes.python ? dirname(st.runtimes.python.bin) : null, ...binDirs, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].filter(Boolean).join(":");
