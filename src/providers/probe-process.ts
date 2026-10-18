@@ -18,6 +18,7 @@ export function probeProcess(argv: string[], cwd: string, env: Record<string,str
   const exited=new Promise<number|null>((yes,no)=>{resolve=yes;reject=no;});
   // The probe caller may be waiting on a RPC rather than process completion.
   exited.catch(()=>{});
+  const closed=new Promise<void>(resolve=>child.once('close',()=>resolve()));
   let stopping:Promise<void>|null=null;
   const group=():'gone'|'live'|'zombie'|null=>{if(!child.pid)return 'gone';
     const rows=spawnSync('/bin/ps',['-ax','-o','pgid=,pid=,ppid=,stat='],{encoding:'utf8',maxBuffer:512*1024,timeout:2000});
@@ -25,14 +26,17 @@ export function probeProcess(argv: string[], cwd: string, env: Record<string,str
     return probeGroupState(rows.stdout,child.pid,process.pid);
   };
   const stop=()=>stopping??(stopping=(async()=>{
-    ended=true;clearTimeout(timer);
+    clearTimeout(timer);
     // EPERM: macOS refuses to signal a group whose members have all exited but are not reaped yet; ps below decides
     if(child.pid){try{process.kill(-child.pid,'SIGKILL');}catch(e:any){if(e.code!=='ESRCH'&&e.code!=='EPERM')throw new Error('probe group stop unavailable: '+e.code);}}
     // zombies are usually reaped within moments; one still unreaped at the deadline (its reaper is busy) counts as gone
     const until=Date.now()+2000;let state=group();while(state!=='gone'&&Date.now()<until){await new Promise(r=>setTimeout(r,10));state=group();}
     if(state===null)throw new Error('probe group liveness unavailable');
     if(state==='live')throw new Error('probe group death unverified');
-    child.stdin.destroy();child.stdout.destroy();child.stderr.destroy();
+    // Killing the owned group does not consume stdout already queued in its
+    // pipes. Keep delivering frames until close verifies that both pipes drained.
+    await new Promise<void>((resolve,reject)=>{const drain=setTimeout(()=>reject(new Error('probe output drain unverified')),2000);closed.then(()=>{clearTimeout(drain);resolve();});});
+    ended=true;child.stdin.destroy();child.stdout.destroy();child.stderr.destroy();
     resolve(code);
   })().catch(e=>{reject(e);throw e;}));
   const refuse=(why:string)=>{failure??=why;void stop().catch(()=>{});};
@@ -49,5 +53,5 @@ export function probeProcess(argv: string[], cwd: string, env: Record<string,str
     let i;while((i=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,i);buffer=buffer.slice(i+1);if(Buffer.byteLength(line)>lineMax){refuse('probe line limit exceeded');return;}if(!line.trim())continue;try{onLine(JSON.parse(line));}catch{}}
   };
   child.stdout.on('data',b=>consume(b,false));child.stderr.on('data',b=>consume(b,true));
-  return {pid:child.pid,exited,stop,write(value:unknown){if(!ended)try{child.stdin.write(JSON.stringify(value)+'\n');}catch{refuse('probe input closed');}},output:()=>({out,err,failure}),kill(){void stop().catch(()=>{});}};
+  return {pid:child.pid,exited,stop,write(value:unknown){if(!ended&&!stopping)try{child.stdin.write(JSON.stringify(value)+'\n');}catch{refuse('probe input closed');}},output:()=>({out,err,failure}),kill(){void stop().catch(()=>{});}};
 }
