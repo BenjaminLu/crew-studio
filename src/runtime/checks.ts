@@ -196,15 +196,31 @@ export function sandboxInfo() {
 const q = (p: string) => JSON.stringify(p);
 const SYSTEM_READ = ["/usr", "/bin", "/sbin", "/System", "/Library", "/opt", "/private/etc", "/etc", "/dev", "/private/var/db/timezone", "/private/var/db/dyld", "/var/db/timezone", "/Applications/Xcode.app", "/private/var/select"];
 /** Folders whose files must never reach a check, even as an input. */
+const HOME_SECRETS = [".ssh", ".aws", ".gnupg", ".netrc", ".config", ".claude", ".claude.json", ".codex", ".docker", ".kube", ".npmrc", ".git-credentials", "Library/Keychains"];
 export const SECRET_DIRS = (dataDir?: string | null) => { const h = homedir(); return [...(dataDir ? [join(dataDir, "ledger.key"), join(dataDir, "keys.json"), join(dataDir, "github-token"), join(dataDir, "policies"), join(dataDir, "remote-devices.json")] : []),
-  ...[".ssh", ".aws", ".gnupg", ".netrc", ".config", ".claude", ".claude.json", ".codex", ".docker", ".kube", ".npmrc", ".git-credentials", "Library/Keychains"].map((x) => join(h, x))]; };
+  ...HOME_SECRETS.map((x) => join(h, x))]; };
+/** The deny list a profile ends with: SECRET_DIRS, and the same folders of the account's own home when Studio runs with another
+ *  HOME (the acceptance harness, a launcher that sets HOME): those hold the real logins. */
+const denyList = (dataDir?: string | null) => { const a = accountHomeDir(); return [...SECRET_DIRS(dataDir), ...(a !== homedir() ? HOME_SECRETS.map((x) => join(a, x)) : [])]; };
 const realIf = (p: string) => { try { return realpathSync(p); } catch { return null; } };
-/** The folders the interpreters on PATH live in (node under a version manager, python, ffmpeg), so a check's shebang works. */
+/** The folders the interpreters on PATH live in (node under a version manager, python, ffmpeg), so a check's shebang works.
+ *  A bin folder's parent is added only when it is an install prefix (it has lib/: node's and python's own modules live
+ *  there). Any other parent is a tool's private folder (~/.orbstack holds ssh keys, ~/.cache/lm-studio credentials,
+ *  ~/.local/share and ~/.foundry caches): its bin stays runnable, the rest is not the round's. Never a home folder. */
 function interpreterDirs(): string[] {
-  const out = new Set<string>();
-  for (const d of (process.env.PATH ?? "").split(":")) { const r = realIf(d); if (!r || r === homedir()) continue; out.add(r);
-    if (/\/bin$/.test(r)) { const parent = r.slice(0, -4); if (parent && parent !== homedir() && parent !== "/") out.add(parent); } }
+  const out = new Set<string>(), homes = new Set([homedir(), accountHomeDir()].map((h) => realIf(h) ?? h));
+  for (const d of (process.env.PATH ?? "").split(":")) { const r = realIf(d); if (!r || homes.has(r)) continue; out.add(r);
+    if (/\/bin$/.test(r)) { const parent = r.slice(0, -4); if (parent && !homes.has(parent) && parent !== "/" && existsSync(join(parent, "lib"))) out.add(parent); } }
   return [...out];
+}
+/** The account's own home from the directory service (Studio may run with another HOME, as the acceptance harness does). */
+let acctHome: string | null = null;
+export function accountHomeDir(): string {
+  if (acctHome) return acctHome;
+  try { const user = Bun.spawnSync(["/usr/bin/id", "-un"], { stdout: "pipe" }).stdout.toString().trim();
+    const r = Bun.spawnSync(["/usr/bin/dscl", ".", "-read", `/Users/${user}`, "NFSHomeDirectory"], { stdout: "pipe", stderr: "ignore" });
+    const m = /NFSHomeDirectory:\s*(\S+)/.exec(r.stdout.toString()); if (m) return (acctHome = m[1]); } catch {}
+  return (acctHome = homedir());
 }
 export function profileFor(o: { out: string; tmp: string; reads: string[]; network: boolean; dataDir?: string | null; cwd?: string | null }) {
   const reads = [...SYSTEM_READ, ...interpreterDirs(), ...o.reads].map((p) => realIf(p) ?? p);
@@ -225,7 +241,7 @@ ${ancestors.length ? `(allow file-read-data ${ancestors.map((p) => `(literal ${q
 (allow file-write* (subpath ${q(o.out)}) (subpath ${q(o.tmp)}) (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (literal "/dev/dtracehelper") (regex #"^/dev/fd/"))
 ${o.network ? '(allow network-outbound (remote ip))\n(allow network-inbound (local ip))\n(allow system-socket)' : "(deny network*)"}
 (deny appleevent-send)
-(deny file-read* ${SECRET_DIRS(o.dataDir).map((p) => `(subpath ${q(realIf(p) ?? p)})`).join(" ")})
+(deny file-read* ${denyList(o.dataDir).map((p) => `(subpath ${q(realIf(p) ?? p)})`).join(" ")})
 `;
 }
 /**
@@ -246,7 +262,7 @@ export function roundProfile(o: { cwd: string; tmp: string; writes: string[]; re
   const reads = [...SYSTEM_READ, ...interpreterDirs(), ...o.reads, ...o.writes, o.cwd].map(R);
   const opened = [...writes, R(o.cwd)];
   const ancestors = new Set<string>(); for (const p of opened) { let d = p; while (d && d !== "/") { d = dirname(d); ancestors.add(d); } }
-  const deny = SECRET_DIRS(o.dataDir).map(R); // the login keychain included: a round never reaches it (v1 option A)
+  const deny = denyList(o.dataDir).map(R); // the login keychain included: a round never reaches it (v1 option A)
   // a worktree's .git (a file naming its git folder) is never the round's: Studio's own git reads it outside the sandbox
   const gitLinks = o.writes.map((p) => join(R(p), ".git"));
   const sub = (ps: string[]) => ps.map((p) => `(subpath ${q(p)})`).join(" ");
