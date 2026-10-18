@@ -1,7 +1,7 @@
 // A Task of a workflow staffed by the team directly (web, documents, video, the captain's own …) runs what the team said
 // when it started: the resolution is recorded once in the signed run ledger (crew-resolved) and every agent turn reads
 // that record, so a later team edit never changes a running Task (docs/design/crew-seats.md).
-import {CrewStore,resolveCrew,parseRunOverride,teamBody,slotsOf,withJudges,seatLabel,EFFORTS,type Resolution,type JudgeSlot} from './domain/crew';
+import {CrewStore,resolveCrew,parseRunOverride,teamBody,slotsOf,withJudges,seatLabel,overrideFor,reviewingSeat,emptyTeam,EFFORTS,type Resolution,type JudgeSlot,type RunOverride,type Team} from './domain/crew';
 import {staffingApplies,staffingHash,nodeRole} from './domain/staffing';
 import {QueueRefusal} from './runtime/queue';
 import type {Engine} from './runtime/engine';
@@ -33,12 +33,30 @@ export function crewRecordOf(res:Resolution,team:{hash:string;version:number;mem
  const judges:CrewRecord['judges']={};for(const seat of ['reviewer','design-reviewer']){const row=res.nodes.find(r=>r.seat===seat),m=team.members[seat];const p=row?{provider:row.provider!,model:row.model!,effort:row.effort}:m?{provider:m.provider,model:m.model,effort:m.effort}:null;if(!p)continue;if(p.effort!==null&&EFFORTS.indexOf(p.effort)<EFFORTS.indexOf('medium'))p.effort='medium';judges[seat]=p;}
  return{schema:1,team:team.hash,teamVersion:team.version,workflow:def.id,version:def.version,definition:staffingHash(def),run,project:res.project??null,nodes,judges};
 }
+/** This run's efforts with every reviewing seat at medium or more (the team rule a run override never breaks). */
+export function floorRunEffort(team:Team|null,def:any,run:RunOverride):RunOverride{
+ const t=team??emptyTeam(),slots=slotsOf(def);
+ return Object.fromEntries(Object.entries(run).map(([n,o])=>{const s=slots.find(x=>x.node===n),seat=s?overrideFor(t,def,s)?.seat??s.seat:null;
+  const low=o.effort!==null&&EFFORTS.indexOf(o.effort)<EFFORTS.indexOf('medium');return[n,{effort:seat&&low&&reviewingSeat(t,seat,def)?'medium':o.effort}];}));}
 /** The project a Task's crew is resolved for (its project layer): the Task's project parameter, when it names one. */
 export const crewProject=(params:Record<string,unknown>|undefined)=>typeof params?.project==='string'&&params.project.trim()?params.project:null;
 export function installCrewGuard(engine:Engine,store:CrewStore){
  const resolve=(def:any,params:Record<string,string>|undefined)=>{const team=store.current();if(!team)return null;const run=parseRunOverride(params?._crewRun);
   for(const n of Object.keys(run))if(!slotsOf(def).some(s=>s.node===n))throw new Error(`The run override names ${n}, which is not an agent node of ${def.id}`);
   const res=resolveCrew(teamBody(team),withJudges(def,judgeSlots(engine,def)),run,team.hash,crewProject(params));return{team,res,run};};
+ /** A staffed Task's efforts for this run (code, coffee-kit): exactly what the captain answered on the dispatch card that started it,
+  *  read from that proposal's signed ledger. null: the Task names none. Its signed staffing stays as approved; these sit on top. */
+ function staffedRunEffort(def:any,params:Record<string,string>|undefined){
+  const run=parseRunOverride(params?._crewRun);if(!Object.keys(run).length)return null;
+  for(const n of Object.keys(run))if(!slotsOf(def).some(s=>s.node===n))throw new Error(`The run override names ${n}, which is not an agent node of ${def.id}`);
+  const id=params?._firstmateProposal,p=typeof id==='string'?engine.get(id):null,t=p?engine.trusted(p.id):null;
+  const answer=t?.ok?t.entries.filter(e=>e.record==='card-answer'&&e.data?.kind==='dispatch'&&e.data?.choice==='approve').at(-1):undefined,crew=answer?.data?.crew;
+  const approved=crew&&typeof crew==='object'?Object.fromEntries(Object.entries(crew).map(([n,v])=>[n,{effort:v}])):null;
+  if(!approved||staffingHash(approved)!==staffingHash(run))throw new Error('This run\'s efforts are not the efforts the captain approved on its dispatch card / 這次的 effort 不是船長在派工卡上核准的');
+  return{run,card:String(answer!.data.card),proposal:String(id)};}
+ /** A staffed Task's recorded efforts for this run (crew-run-effort), from its signed ledger. */
+ function runEffortOf(run:any):RunOverride|null{const t=engine.trusted(run.id),e=t.entries.filter(x=>x.record==='crew-run-effort').at(-1);if(!e)return null;
+  if(!t.ok)throw new QueueRefusal('This run\'s efforts are in an untrusted ledger');const d=e.data as any;if(d?.schema!==1||d.workflow!==run.def.id||d.version!==run.def.version)throw new QueueRefusal('This run\'s efforts differ from its workflow');return parseRunOverride(d.nodes);}
  /** The crew a Task started with, from its signed ledger; null for a Task started before the team existed. */
  function recordOf(run:any):CrewRecord|null{
   const t=engine.trusted(run.id);const e=t.entries.filter(x=>x.record==='crew-resolved').at(-1);if(!e)return null;
@@ -48,13 +66,22 @@ export function installCrewGuard(engine:Engine,store:CrewStore){
  engine.deps.authorizeStart=(def:any,o:any)=>{previousStart?.(def,o);
   // a dispatch card showed the crew of one team version: a Task starts only on that version (a team changed since is shown again)
   const shown=o?.params?._crewTeam;if(typeof shown==='string'&&shown!==(store.current()?.hash??'none'))throw Object.assign(new Error('The team changed after the dispatch card showed its crew; Studio shows the crew again before this work starts / 派工卡顯示人員之後團隊改了；開始前會重新顯示人員'),{crewChanged:true});
+  if(staffingApplies(def)){staffedRunEffort(def,o?.params);return;}
   if(!crewApplies(def))return;const r=resolve(def,o?.params);if(r?.res.missing.length)throw missingSeatsError(r.res);};
  const previousInit=engine.deps.initializeRun;
- engine.deps.initializeRun=(run:any,o:any)=>{previousInit?.(run,o);if(!crewApplies(run.def))return;const r=resolve(run.def,run.params);if(!r)return;if(r.res.missing.length)throw missingSeatsError(r.res);
+ engine.deps.initializeRun=(run:any,o:any)=>{previousInit?.(run,o);
+  // a staffed Task: the captain's efforts for this run, floored for reviewing seats, next to its signed staffing binding
+  if(staffingApplies(run.def)){const r=staffedRunEffort(run.def,run.params);if(!r)return;const team=store.current(),node=run.def.nodes[0];
+   engine.record(engine.x(run,node,run.nodes[node.id]),'crew-run-effort',{data:{schema:1,workflow:run.def.id,version:run.def.version,staffing:run.params._staffing??null,proposal:r.proposal,card:r.card,nodes:floorRunEffort(team?teamBody(team):null,run.def,r.run)}});return;}
+  if(!crewApplies(run.def))return;const r=resolve(run.def,run.params);if(!r)return;if(r.res.missing.length)throw missingSeatsError(r.res);
   const node=run.def.nodes[0];engine.record(engine.x(run,node,run.nodes[node.id]),'crew-resolved',{data:crewRecordOf(r.res,r.team,run.def,r.run)});};
  const previousPick=engine.deps.approvedPick;
  engine.deps.approvedPick=(run:any,node:any,roleOverride?:string)=>{
-  const prior=previousPick?.(run,node,roleOverride);if(prior||!crewApplies(run?.def))return prior;
+  const prior=previousPick?.(run,node,roleOverride);
+  // a staffed Task: its staffed pick, at this run's effort for the node's own turns (a judge turn keeps the reviewer's staffing)
+  if(prior&&staffingApplies(run?.def)){const eff=runEffortOf(run)?.[node?.id],own=nodeRole(run.def,run.def.nodes.find((n:any)=>n.id===node?.id)??node);
+   return eff&&(!roleOverride||roleOverride===own)?{...prior,effort:eff.effort}:prior;}
+  if(prior||!crewApplies(run?.def))return prior;
   const rec=recordOf(run);if(!rec)return prior;
   // the captain's own pick for this node on this Task (the run page) is a run override: it wins
   if(run.nodes?.[node?.id]?.agent)return prior;

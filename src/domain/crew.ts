@@ -99,6 +99,8 @@ export const declaredSeats=(def:any):SeatDecl[]=>Array.isArray(def?.seats)?def.s
 export const seatLabel=(team:Team|null,id:string,def?:any):{en:string;zh:string}=>{const b=SEAT_LABELS[id];if(b)return b;const s=team?.seats[id]??declaredSeats(def).find(x=>x.id===id);return s?{en:s.label,zh:s.labelZh}:{en:id,zh:id};};
 const reviewsOf=(team:Team,seat:string,def?:any)=>BUILTIN_REVIEWS[seat]??team.seats[seat]?.reviews??declaredSeats(def).find(s=>s.id===seat)?.reviews;
 const reviewing=(team:Team,seat:string,def?:any)=>BUILTIN_REVIEWING.has(seat)||!!(team.seats[seat]?.reviews??declaredSeats(def).find(s=>s.id===seat)?.reviews);
+/** A seat that judges another's work (its effort is medium or more). */
+export const reviewingSeat=reviewing;
 /** Model capability tags (a fact's model tags win). */
 export function capabilitiesOf(provider:string,model:string,facts?:{provider:string;models:{id:string;tags?:string[]}[]}[]):string[]{const m=facts?.find(f=>f.provider===provider)?.models.find(x=>x.id===model);return Array.isArray(m?.tags)?m!.tags!:PROVIDER_CAPS[provider]??[];}
 

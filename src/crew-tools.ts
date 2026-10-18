@@ -4,7 +4,7 @@
 // added), with a suggestion filtered by the capabilities the seat needs; when no model qualifies, the card says which
 // capability is missing and where to add an account, and offers nothing to approve.
 import {createHash} from 'node:crypto';
-import {withJudges,CrewStore,resolveCrew,applyChange,validateChange,changeImpact,crewBadge,teamBody,emptyTeam,slotsOf,declaredSeats,seatLabel,seatUses,capabilitiesOf,projectLayer,CAP_LABELS,BUILTIN_SEATS,EFFORTS,type CrewChange,type Team,type SeatDecl,type Member} from './domain/crew';
+import {withJudges,CrewStore,resolveCrew,applyChange,validateChange,changeImpact,crewBadge,teamBody,emptyTeam,slotsOf,declaredSeats,seatLabel,seatUses,capabilitiesOf,projectLayer,reviewingSeat,CAP_LABELS,BUILTIN_SEATS,EFFORTS,type CrewChange,type Team,type SeatDecl,type Member} from './domain/crew';
 import {staffingApplies,staffingHash} from './domain/staffing';
 import {crewApplies,judgeSlots} from './crew-guard';
 import {crewWorkflows} from './crew-routes';
@@ -115,14 +115,15 @@ export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Prom
    run=propose(decl&&!(BUILTIN_SEATS as readonly string[]).includes(id)?{kind:'seat',seat:structuredClone(decl),member}:{kind:'member',seat:id,set:{provider:c.provider,model:c.model,effort}},added?'new-role':'seat',owner.key,ctx);}
   throw new NativeToolFailure('crew_seat_missing',`${def.name} needs the team seat “${lab.en}”, which nobody fills yet. Studio raised card ${run.id} for the captain${cands.length?` (suggesting ${cands[0].provider} ${cands[0].model})`:' (no verified model can do it; it says which account to add)'}; propose the work again once the captain approves it. Do not propose staffing.`,`${def.name} 需要團隊的「${lab.zh}」位置，目前沒有人。Studio 已開卡 ${run.id} 給船長${cands.length?`（建議 ${cands[0].provider} ${cands[0].model}）`:'（目前沒有模型做得到，卡上會說要加哪個帳號）'}；船長核准後再重新提出這項工作。`,'captain_review');
  }
- /** The crew line a dispatch card shows (in the work's project, its project layer included), and the efforts the captain may change for this run only (non-staffed workflows). */
+ /** The crew line a dispatch card shows (in the work's project, its project layer included), and the efforts the captain may change for
+  *  this run only (staffed workflows too: on top of their signed staffing). A reviewing seat is offered medium or more only. */
  function dispatchCrew(def:any,project?:string|null){
   const cfg=store.current();if(!cfg||!(crewApplies(def)||staffingApplies(def)))return null;const team=teamBody(cfg),res=resolveCrew(team,def,{},cfg.hash,project||null);if(res.missing.length)return null;
   const rows=res.nodes,makers=rows.filter(r=>r.seat==='maker'||r.seat==='alt-maker'),models=new Set(makers.map(r=>`${r.provider}/${r.model}`)),reviewers=rows.filter(r=>r.seat==='reviewer'||r.seat==='design-reviewer');
   const en=[`${rows.length} agent${rows.length===1?'':'s'}`,makers.length>1&&models.size>1?'A and B on different models':'',reviewers.length&&reviewers.every(r=>!models.has(`${r.provider}/${r.model}`))?'review independent':''].filter(Boolean),zh=[`${rows.length} 個 agent`,makers.length>1&&models.size>1?'A、B 不同模型':'',reviewers.length&&reviewers.every(r=>!models.has(`${r.provider}/${r.model}`))?'審查獨立':''].filter(Boolean);
   const custom=rows.filter(r=>r.custom).length;
   return{team:cfg.hash,summary:{en:`Team${custom?` (${custom} custom here)`:''} · ${en.join(' · ')}`,zh:`團隊${custom?`（這裡自訂 ${custom} 項）`:''} · ${zh.join(' · ')}`},
-   nodes:rows.map(r=>({node:r.node,label:r.label,seat:r.seat,seatLabel:seatLabel(team,r.seat,def),provider:r.provider,model:r.model,effort:r.effort,efforts:crewApplies(def)?(r.provider==='claude'?[null,...EFFORTS.slice(2,6)]:EFFORTS.slice(2,6)):[]}))};
+   nodes:rows.map(r=>({node:r.node,label:r.label,seat:r.seat,seatLabel:seatLabel(team,r.seat,def),provider:r.provider,model:r.model,effort:r.effort,efforts:(()=>{const list=reviewingSeat(team,r.seat,def)?EFFORTS.slice(3,6):EFFORTS.slice(2,6);return r.provider==='claude'?[null,...list]:list;})()}))};
  }
  const ID=/^[a-z0-9][a-z0-9-]{0,40}$/;
  const view=(r:any,team:Team)=>({node:r.node,label:r.label,member:seatLabel(team,r.seat).en,seat:r.seat,provider:r.provider,model:r.model,effort:r.effort,skills:r.skills.map((p:any)=>`${p.id}@v${p.v}${p.from==='member'?' (member)':''}`),source:r.source,...(r.notes.length?{notes:r.notes.map((n:any)=>n.en)}:{})});

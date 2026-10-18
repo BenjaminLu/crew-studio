@@ -44,6 +44,11 @@ GitHub connect orphaned the approval (H2/H3), and nothing showed who finally run
   writes the project's staffing version derived from the team and that project's layer (`crew: {team}` in the draft, approval cites the team
   version). The staffing guard re-derives it from the signed team version and refuses any difference; role skill pins,
   hashes and CAS are unchanged. No team → the old per-project staffing flow, unchanged.
+- Run override on a staffed Task: the dispatch card offers each node's effort for this run, like any workflow. The
+  child Task carries `_crewRun`; at start Studio requires it to equal the captain's signed `card-answer` on that
+  proposal's dispatch card (else refused), records `crew-run-effort` (efforts, staffing hash, card) in the Task's
+  ledger, and the staffed pick takes that effort for the node's own turns (judge turns and the signed staffing are
+  untouched). Reviewing seats are offered, and run at, medium or more.
 
 - What the captain approves is what runs: the dispatch card carries the team version it showed (`_crewTeam`); a team
   change before the start refuses it and raises the card again. A captain's own workflow confirms the full resolution
@@ -84,7 +89,5 @@ workflow overrides. Idempotent (a Studio that has a team is never touched); test
 
 ## Deferred
 
-- The run override (dispatch card effort) for staffed Tasks (code, coffee-kit): their signed staffing binding does not
-  carry a per-run effort yet; their dispatch card shows the crew line read-only.
 - Image hook nodes (images, coffee's image step) keep the dedicated image adapter's own Codex choice; coffee's
   `image-maker` seat only decides whether the team covers coffee-kit.
