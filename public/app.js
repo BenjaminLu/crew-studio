@@ -298,6 +298,8 @@ addEventListener("keydown", (e) => {
   const row = document.querySelector(`[data-inbox-row="${CSS.escape(to)}"]`); row?.focus({ preventScroll: true }); row?.scrollIntoView({ block: "nearest" });
 });
 const sel = new Map(); // card id -> { chosen, answers: Map(index -> {ok,text}) }
+// a firstmate card's pick and answers not yet sent are unsent state for a reload (pageDirty, below)
+const fmCardsDirty = () => [...sel].some(([id, st]) => (st.chosen || st.answers.size) && (S.pending || []).some((c) => c.id === id));
 function cardView(c) {
   const d = LD(c.details) || {};
   const en = c.details?.en || {};
@@ -344,7 +346,7 @@ function confirmSend(c, st) {
         body: JSON.stringify({ id: c.id, chosen: st.chosen, answers: answers.length ? answers : undefined }) }).then((x) => x.json()).catch((e) => ({ error: String(e) }));
       close();
       if (r.error) toast(T(`Refused: ${r.error}`, `被拒：${r.error}`));
-      else { toast(T(`${c.id}: ${st.chosen} recorded`, `${c.id}：已記錄 ${st.chosen}`)); sel.delete(c.id); }
+      else { toast(T(`${c.id}: ${st.chosen} recorded`, `${c.id}：已記錄 ${st.chosen}`)); sel.delete(c.id); window.pageDirty.clean(); }
     });
 }
 function modal(title, body, onOk) {
@@ -515,21 +517,62 @@ async function load() {
 const LIVE = { es: null, queue: [] };
 // a deploy (live S25): an open tab kept the old page JS until a manual reload. The page knows the release it is (index.html's
 // crew-release meta, src/page-release.ts); when the stream's hello names another, it reloads itself if that loses nothing (no
-// unsent text in a field, no request still being sent), else it shows a small bar to reload. true: the page is reloading
-const RELEASE = { mine: document.querySelector('meta[name="crew-release"]')?.content || null, sending: 0 };
-{ const _f = window.fetch; window.fetch = (input, init) => { const send = !!init?.method && init.method !== "GET" && !String(typeof input === "string" ? input : input?.url).includes("/api/main/locale");
-  if (send) RELEASE.sending++; const r = _f(input, init); if (send) r.finally(() => { RELEASE.sending--; }).catch(() => {}); return r; }; }
-function unsentText() {
-  return [...document.querySelectorAll("textarea, input:not([type]), input[type=text], input[type=search], input[type=url], input[type=email], [contenteditable=true], [contenteditable='']")]
-    .some((e) => { const v = "value" in e ? e.value : e.textContent; return !!v?.trim() && v !== e.defaultValue && !e.readOnly && !e.disabled; });
+// unsent state anywhere, no request in flight), else it shows a small bar to reload
+const RELEASE = { mine: document.querySelector('meta[name="crew-release"]')?.content || null, inflight: 0 };
+{ const _f = window.fetch; window.fetch = (input, init) => { const own = String(typeof input === "string" ? input : input?.url).includes("/api/main/locale");
+  if (!own) RELEASE.inflight++; const r = _f(input, init); if (!own) r.finally(() => { RELEASE.inflight--; }).catch(() => {}); return r; }; }
+// What a reload would lose, asked of the modules that own it rather than guessed from the DOM: each module that holds unsent
+// state (the chat draft and its attachments, a mounted card's ticks, picks, notes and acknowledgement, a firstmate card's
+// choice, the Start form's draft) provides a check. As a safety net any input, change or composition on the page marks it
+// touched until a module says its state was sent or cleared (pageDirty.clean()); an open dialog or preview counts too.
+window.pageDirty = {
+  checks: new Map(), touched: false,
+  /** name → () => true while it holds unsent state; a check that throws counts as unsent */
+  provide(name, check) { this.checks.set(name, check); },
+  drop(name) { this.checks.delete(name); },
+  /** a module sent or cleared what it held: the page is clean again unless a check still says otherwise */
+  clean() { this.touched = false; },
+  why() {
+    for (const [name, check] of this.checks) { let d = true; try { d = !!check(); } catch {} if (d) return name; }
+    if (this.touched) return "input";
+    const shown = (e) => e.getClientRects().length > 0;
+    if ([...document.querySelectorAll("dialog[open], [role=dialog], [aria-modal=true], #modalRoot > *, .lightbox, [data-preview-open]")].some(shown)) return "dialog";
+    // fields no module claims: any typed text or secret, and any tick or pick that differs from what the page drew
+    for (const e of document.querySelectorAll("textarea, input, select, [contenteditable=true], [contenteditable='']")) {
+      if (e.disabled || e.readOnly || e.closest("[data-no-unsent], [data-unsent-owner]")) continue; // an owned field: its module says
+      const t = (e.type || "").toLowerCase();
+      if (e.tagName === "SELECT") { if ([...e.options].some((o) => o.selected !== o.defaultSelected) && [...e.options].some((o) => o.defaultSelected)) return "pick"; continue; }
+      if (t === "checkbox" || t === "radio") { if (e.checked !== e.defaultChecked) return "tick"; continue; }
+      if (["button", "submit", "reset", "hidden", "range", "color", "image"].includes(t)) continue;
+      if (t === "file") { if (e.files?.length) return "file"; continue; }
+      const v = "value" in e ? e.value : e.textContent; if (String(v ?? "").trim()) return "text";
+    }
+    return null;
+  },
+};
+window.pageDirty.provide("firstmate-cards", fmCardsDirty);
+for (const ev of ["input", "change", "compositionstart"]) document.addEventListener(ev, (e) => { if (!e.target?.closest?.("[data-no-unsent]")) window.pageDirty.touched = true; }, true);
+function releaseBar(said) {
+  const bar = $("#releaseBar") || document.body.appendChild(h("div", { id: "releaseBar", role: "status", "data-release": said }));
+  const ask = () => bar.replaceChildren(h("span", {}, T("There is unsent content. Reload anyway?", "有未送出的內容，仍要重新載入？")),
+    h("button", { class: "btn sm", "data-release-confirm": "1", onclick: () => location.reload() }, T("Reload", "重新載入")),
+    h("button", { class: "btn ghost sm", "data-release-cancel": "1", onclick: () => releaseBar(said) }, T("Cancel", "取消")));
+  bar.replaceChildren(h("span", {}, T("Studio was updated", "Studio 已更新")),
+    h("button", { class: "btn sm", "data-release-reload": "1", onclick: () => (window.pageDirty.why() ? ask() : location.reload()) }, T("Reload", "重新載入")));
 }
+// true: the page is reloading. Requests in flight get a moment to settle (a reconnect fires a few reads) before they count
 function checkRelease(said) {
   if (!said) return false;
   if (!RELEASE.mine) { RELEASE.mine = said; return false; }
   if (said === RELEASE.mine) return false;
-  if (!unsentText() && !RELEASE.sending) { location.reload(); return true; }
-  if (!$("#releaseBar")) document.body.append(h("div", { id: "releaseBar", role: "status", "data-release": said },
-    h("span", {}, T("Studio was updated", "Studio 已更新")), h("button", { class: "btn sm", onclick: () => location.reload() }, T("Reload", "重新載入"))));
+  const decide = (tries) => {
+    if (window.pageDirty.why()) return releaseBar(said);
+    if (RELEASE.inflight > 0 && tries > 0) return setTimeout(() => decide(tries - 1), 100);
+    if (RELEASE.inflight > 0) return releaseBar(said);
+    location.reload();
+  };
+  if (!window.pageDirty.why() && !RELEASE.inflight) { location.reload(); return true; }
+  decide(30);
   return false;
 }
 window.liveListen = (type, fn) => { if (LIVE.es) LIVE.es.addEventListener(type, fn); else LIVE.queue.push([type, fn]); };

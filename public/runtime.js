@@ -631,10 +631,12 @@ function buildEditor(ed) {
 
 // ---------- Runs ----------
 const RN = { list: null, prefill: null, view: null };
+// the Start form's draft is unsent state for a reload (a new release, app.js pageDirty); the example Studio fills in is not
+window.pageDirty?.provide("start-form", () => { const d = String(RN.draft || "").trim(); return !!d && d !== RN.exampleDraft; });
 // The tour seeds only an untouched form; revisiting never replaces the captain's draft.
 window.crewPrefillFirstTask = () => {
   if (RN.draft || RN.prefill || RN.provider) return;
-  RN.draft = T("Generate an image of a cute puppy.", "產生一張可愛小狗的圖片。");
+  RN.draft = RN.exampleDraft = T("Generate an image of a cute puppy.", "產生一張可愛小狗的圖片。");
   RN.prefill = "images";
   RN.provider = "codex";
   rerender();
@@ -650,7 +652,7 @@ function viewRuns() {
   window.crewTaskFilter = () => (RN.pf ? RN.pIds || null : null); // null while the project's Task ids load
   const runs = (Array.isArray(RN.list) ? RN.list.slice().reverse() : []).filter((r) => !pf || (RN.pIds && RN.pIds.has(r.id)));
   // the form keeps what was typed across re-renders (the list loads, a run moves)
-  const text = h("textarea", { class: "input", rows: 3, placeholder: T("Say what you want done", "說你要做什麼"), "aria-label": T("Intent", "意圖"), "data-run-text": "1", oninput: (e) => { RN.draft = e.target.value; } });
+  const text = h("textarea", { class: "input", rows: 3, placeholder: T("Say what you want done", "說你要做什麼"), "aria-label": T("Intent", "意圖"), "data-run-text": "1", "data-unsent-owner": "start-form", oninput: (e) => { RN.draft = e.target.value; } });
   text.value = RN.draft || "";
   const wf = h("select", { class: "select", "aria-label": T("Workflow", "流程"), "data-run-wf": "1", onchange: (e) => { RN.prefill = e.target.value; RN.startError = ""; rerender(); } }, h("option", { value: "" }, T("Let Studio pick", "讓 Studio 選")), (RN.wfs || []).map((w) => h("option", { value: w.id, selected: RN.prefill === w.id || null }, w.name)));
   const provider = h("select", { class: "select", "aria-label": T("Provider", "模型供應商"), "data-run-provider": "1", onchange: (e) => { RN.provider = e.target.value; } },
@@ -666,7 +668,7 @@ function viewRuns() {
           if(!choice.workflow||!choice.confident){RN.startError=T("Choose a workflow below; your request is still saved.","請選擇流程；你輸入的需求已保留。");rerender();(document.querySelector("[data-run-wf]")||wf).focus();return;}
           RN.prefill=choice.workflow;RN.startError=T("Workflow selected. Review its inputs, then press Start.","已選好流程，確認輸入後按「開始」。");rerender();return;
         }
-        const r = await startOwnRun({ text: text.value, workflow: wf.value || undefined, params: { ...(provider.value ? { provider: provider.value } : {}), ...startParamValues(wf.value), ...startProjectValue(wf.value) }, ...startStaffingExpected(wf.value) }); if (!r) return; RN.list = null; RN.draft = ""; RN.startError = ""; location.hash = `#/run/${r.id}`; }
+        const r = await startOwnRun({ text: text.value, workflow: wf.value || undefined, params: { ...(provider.value ? { provider: provider.value } : {}), ...startParamValues(wf.value), ...startProjectValue(wf.value) }, ...startStaffingExpected(wf.value) }); window.pageDirty?.clean(); if (!r) return; RN.list = null; RN.draft = ""; RN.startError = ""; location.hash = `#/run/${r.id}`; }
       catch (e) { msg.textContent = RN.startError = e.message; if (/^(staffing_|project_)/.test(e.code || "") && RN.startOptions) { delete RN.startOptions[wf.value]; rerender(); } } } }, T("Start", "開始"))), startProjectPicker(wf.value), startParamInputs(wf.value), msg),
     // one word per state (public/runstate.js); archived runs only with "Show archived", each with Unarchive
     h("label", { class: "rt-row rt-archived-toggle" }, h("input", { type: "checkbox", "data-show-archived": "1", checked: RN.archived || null, onchange: (e) => { RN.archived = e.target.checked; RN.list = null; rerender(); } }), T("Show archived", "顯示已封存")),

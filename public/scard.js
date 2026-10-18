@@ -203,10 +203,16 @@ window.crewImageRefinementSnapshot=(snapshot,{lang="en",review=null}={})=>{
  * opts.onAnswered(card) runs after the server took the answer; opts.inbox adds the run/workflow/node line;
  * opts.lang ("en" | "zh-TW" | "zh-CN") picks the first language (default: the page's). Returns { el, update(card) }.
  */
+let mountSeq = 0;
 function mountCard(el, card, opts = {}) {
   css();
   const fresh = { lang: opts.lang || pageLang(), ticks: new Set(), opened: new Set(), folds: new Map(), confirm: false, ack: false, note: "", notes: {}, msg: "", ok: false, busy: false };
   const st = opts.state || {}; for (const [k, v] of Object.entries(fresh)) if (!(k in st)) st[k] = v;
+  // a reload (a new release, app.js pageDirty) would lose what the captain set on this card and has not sent
+  { const key = `scard:${++mountSeq}`, pd = window.pageDirty;
+    pd?.provide(key, () => { if (!el.isConnected) { pd.drop(key); return false; } if (st.ok || (st.card || card).status !== "open") return false;
+      return st.ticks.size > 0 || st.confirm || st.ack || !!String(st.note || "").trim() || Object.values(st.notes || {}).some((v) => String(v ?? "").trim())
+        || Object.keys(st.specAnswers || {}).length > 0 || !!draft?.dirty; }); }
   const expectsInterview=card.workflow==='pack-genesis'&&card.node==='interview-answers';const form=card.interview;let draft=null;
   if(form?.schema===1&&/^[a-f0-9]{64}$/.test(form.batchHash)&&/^R-\d+$/.test(card.run)&&/^SC-\d+$/.test(card.id)&&form.visit===card.visit&&Array.isArray(form.questions)&&form.questions.length===6){
     draft=interviewDrafts.get(card.id);if(!draft||draft.hash!==form.batchHash){draft={hash:form.batchHash,revision:form.revision,answers:{...form.answers},dirty:false,timer:null,saving:Promise.resolve()};interviewDrafts.set(card.id,draft);}else if(!draft.dirty&&form.revision>draft.revision){draft.revision=form.revision;draft.answers={...form.answers};}
@@ -596,7 +602,7 @@ function mountCard(el, card, opts = {}) {
     st.busy = true; st.msg = ""; const root = el.querySelector("[data-card-root]");
     if (root && root.getAttribute("data-card-root") === c.id) { for (const b of root.querySelectorAll(".cc-actions [data-option], [data-direction-approve]")) b.disabled = true;
       const s = root.querySelector("[data-card-sending]"); if (s) s.textContent = T("Sending…", "送出中…"); const m = root.querySelector("[data-card-msg]"); if (m) m.textContent = ""; } else render();
-    const took = (got) => { st.card = got && got.id ? got : { ...c, status: "answered", answer: { choice: o.id } }; st.ok = true; st.msg = ""; try { opts.onAnswered && opts.onAnswered(st.card); } catch {} };
+    const took = (got) => { st.card = got && got.id ? got : { ...c, status: "answered", answer: { choice: o.id } }; st.ok = true; st.msg = ""; window.pageDirty?.clean(); try { opts.onAnswered && opts.onAnswered(st.card); } catch {} };
     try {
       if(draft&&!o.hold)await saveDraft();else if(draft)clearTimeout(draft.timer);
       const note=draft&&!o.hold?JSON.stringify({schema:1,card:c.id,visit:c.visit,batchHash:draft.hash,answers:draft.answers}):noteOf(o)||null;

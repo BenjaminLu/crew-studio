@@ -201,7 +201,10 @@ ask = async function (text) {
   if (r.error) { restoreDraft(text); localNotice({ source: "studio", class: r.status === 0 ? "network" : /^(attachment|claude)/.test(r.code || "") ? "attachment" : "api", code: r.code || `http_${r.status}`, message: r.reason ? `${r.reason.en}${r.reason["zh-TW"] ? ` / ${r.reason["zh-TW"]}` : ""}` : r.error, reason: { en: "The message was not sent.", "zh-TW": "訊息沒有送出。" } }); return; }
   MS.notices = [];
   if (att.length) clearAtt();
+  window.pageDirty?.clean(); // the draft went out
 };
+// a reload (a new release, app.js) would lose a draft: its text or a staged attachment
+window.pageDirty?.provide("chat", () => !!String($("#chatIn")?.value || "").trim() || MS.att.length > 0);
 /** An error this page met itself (the send or an upload did not reach Studio, or Studio refused it): shown in the chat until the next send. */
 function localNotice(n) { MS.notices = [...(MS.notices || []).slice(-4), { schema: 1, ...n }]; renderChat(); }
 const restoreDraft = (text) => { const el = $("#chatIn"); if (el && text && !el.value) el.value = text; };

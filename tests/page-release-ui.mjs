@@ -57,11 +57,44 @@ try {
     ok(await p.evaluate(() => window.__oldPage === true) && await p.locator("#chatIn").inputValue() === "half-written message", `${tag}: the typed text and the page stay`);
     const box = await p.locator("#releaseBar").boundingBox();
     ok(!!box && box.x >= 0 && box.x + box.width <= width && await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${tag}: the bar fits the screen`);
-    await p.locator("#chatIn").fill("");
-    await p.locator("#releaseBar button").click();
-    ok(await until(async () => await mine() === `v${n}`), `${tag}: Reload opens the new release`);
+    // Reload with the text still there asks once, in the page (never window.confirm); Cancel keeps everything
+    let dialogs = 0; p.on("dialog", (d) => { dialogs++; d.dismiss().catch(() => {}); });
+    await p.locator("[data-release-reload]").click();
+    const asked = (await p.locator("#releaseBar").innerText().catch(() => "")) || "";
+    ok(lang === "en" ? /There is unsent content\. Reload anyway\?/.test(asked) : /有未送出的內容，仍要重新載入？/.test(asked), `${tag}: Reload with unsent content asks once, in the page`, asked);
+    await p.locator("[data-release-cancel]").click();
+    ok(await p.evaluate(() => window.__oldPage === true) && await p.locator("#chatIn").inputValue() === "half-written message" && await p.locator("[data-release-reload]").count() === 1, `${tag}: Cancel keeps the page and the text`);
+    await p.locator("[data-release-reload]").click(); await p.locator("[data-release-confirm]").click();
+    ok(await until(async () => await mine() === `v${n}` && !(await p.evaluate(() => window.__oldPage === true).catch(() => false))) && dialogs === 0, `${tag}: confirming opens the new release; no browser dialog was used`);
     await ctx.close();
   }
+  // every kind of unsent state a reload would lose keeps the page and shows the bar (W34 review): set without any input
+  // event, the way a redraw or a programmatic stage leaves it, so the modules' own checks decide, not the keystroke net
+  { const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await ctx.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.chatOpen", "1"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} });
+    const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`cases: ${e}`));
+    const mine = () => p.evaluate(() => document.querySelector('meta[name="crew-release"]')?.content);
+    const card = { id: "SC-990", run: "R-990", node: "ask", visit: 1, kind: "question", status: "open", workflow: "fixture", title: { en: "Pick one", "zh-TW": "選一個" },
+      body: "Pick one", options: [{ id: "a", label: "A", primary: true }, { id: "b", label: "B", note: true }], createdAt: new Date().toISOString(), answer: null };
+    const cases = [
+      ["a chat draft with only an attachment", () => { MS.att.push({ key: "k1", name: "poster.png", state: "ready", ref: { id: "a1", name: "poster.png" } }); }],
+      ["a ticked card", (c) => { const box = document.body.appendChild(document.createElement("div")); window.mountCard(box, c, { state: { ticks: new Set([0]) } }); }],
+      ["a card note the card drew anew", (c) => { const box = document.body.appendChild(document.createElement("div")); window.mountCard(box, c, { state: { note: "half a note" } }); }],
+      ["a typed password field", () => { const i = document.createElement("input"); i.type = "password"; document.body.append(i); i.value = "ghp_partial"; }],
+      ["an open dialog", () => { const d = document.createElement("dialog"); d.textContent = "preview"; document.body.append(d); d.show(); }],
+    ];
+    for (const [name, setup] of cases) {
+      await p.goto("about:blank"); await p.goto(base + "/#/board"); await until(async () => (await p.locator("#conn.ok").count()) === 1);
+      await p.evaluate(setup, card); await p.evaluate(() => { window.__oldPage = true; });
+      await stop(); n++; await start(`v${n}`);
+      ok(await until(async () => (await p.locator("#releaseBar").count()) === 1) && await p.evaluate(() => window.__oldPage === true), `${name}: the page is kept and the update bar shows`);
+    }
+    // and the clean page still reloads by itself
+    await p.goto("about:blank"); await p.goto(base + "/#/board"); await until(async () => (await p.locator("#conn.ok").count()) === 1);
+    await p.evaluate(() => { window.__oldPage = true; });
+    await stop(); n++; await start(`v${n}`);
+    ok(await until(async () => await mine() === `v${n}` && !(await p.evaluate(() => window.__oldPage === true).catch(() => false))), "a clean page still reloads by itself");
+    await ctx.close(); }
   ok(!errors.length, "no page errors", errors.join(" | "));
 } catch (e) { ok(false, "the UI run finished", String(e?.stack ?? e).slice(0, 800)); }
 finally { await browser?.close().catch(() => {}); await stop().catch(() => {}); }
