@@ -74,13 +74,19 @@ function route() {
   S.route = { name: v, arg: rest.map(decodeURIComponent).join("/") || null, query };
   render();
 }
+const fieldKey = (el) => { if (el.id) return `#${CSS.escape(el.id)}`; const d = [...el.attributes].find((x) => x.name.startsWith("data-"));
+  return d ? `${el.tagName.toLowerCase()}[${d.name}="${CSS.escape(d.value)}"]` : null; };
 function render() {
   const root = $("#view");
   const scroll = $("#main").scrollTop;
   // a field the captain is typing in that the new view keeps (a mounted card is reused, unit inbox-live) keeps its focus and caret
-  const a = document.activeElement; const keep = a && root.contains(a) && /^(INPUT|TEXTAREA)$/.test(a.tagName) ? { a, s: a.selectionStart, e: a.selectionEnd } : null;
+  // a field the view draws anew (the Start form's request field) is found again by its stable key (id, else its first data-
+  // attribute) on the same page, and takes the focus and caret, so the next keys land in it
+  const a = document.activeElement; const keep = a && root.contains(a) && /^(INPUT|TEXTAREA)$/.test(a.tagName) ? { a, s: a.selectionStart, e: a.selectionEnd, key: fieldKey(a), at: render.at } : null;
   root.replaceChildren(...[routes[S.route.name](S.route.arg)].flat().filter(Boolean));
-  if (keep && keep.a.isConnected && document.activeElement !== keep.a) { try { keep.a.focus({ preventScroll: true }); keep.a.setSelectionRange(keep.s, keep.e); } catch {} }
+  render.at = `${S.route.name}/${S.route.arg ?? ""}`;
+  const again = keep && (keep.a.isConnected ? keep.a : keep.key && keep.at === render.at ? (() => { const m = root.querySelectorAll(keep.key); return m.length === 1 && m[0].tagName === keep.a.tagName ? m[0] : null; })() : null);
+  if (again && document.activeElement !== again) { try { again.focus({ preventScroll: true }); const n = again.value.length; again.setSelectionRange(Math.min(keep.s ?? n, n), Math.min(keep.e ?? n, n)); } catch {} }
   hydrateIcons(root);
   $("#main").scrollTop = scroll;
   updateNav();
