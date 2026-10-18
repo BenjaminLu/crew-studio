@@ -194,13 +194,13 @@ await section("retained input follows the first-message handoff", async () => {
   await m.startFresh("codex"); await until(() => sent("turn/start").length >= 3);
   const starts = sent("turn/start");
   ok(starts[0]?.params.input[0].text.includes("NEWEST-HANDOFF-MARKER"), "fresh handoff is turn one ahead of retained chat and wake");
-  ok(starts.slice(1).some(t => t.params.input[0].text === "RETAINED-CAPTAIN-INPUT"), "retained captain input is preserved after the seed");
+  ok(starts.slice(1).some(t => t.params.input[0].text.replace(/\n\n\[Studio note: [^\n]*\]$/, "") === "RETAINED-CAPTAIN-INPUT"), "retained captain input is preserved after the seed");
   await until(() => !m.view().busy); await m.detach();
   m.queue.push("chat", "RETAINED-AFTER-RELEASE", "desktop");
   process.env.STUB_CODEX_NO_FORK = "1"; reset();
   await m.takeover("codex", LIVE, "takeover"); await until(() => sent("turn/start").length >= 2);
   const again = sent("turn/start");
-  ok(again[0]?.params.input[0].text.includes("NEWEST-HANDOFF-MARKER") && again[1]?.params.input[0].text === "RETAINED-AFTER-RELEASE", "release then no-fork takeover seeds before retained captain input");
+  ok(again[0]?.params.input[0].text.includes("NEWEST-HANDOFF-MARKER") && again[1]?.params.input[0].text.replace(/\n\n\[Studio note: [^\n]*\]$/, "") === "RETAINED-AFTER-RELEASE", "release then no-fork takeover seeds before retained captain input");
   await m.detach();m.stop();delete process.env.STUB_CODEX_NO_FORK;
 });
 

@@ -537,6 +537,8 @@ function setTheme(t) { if (t === "system") delete document.documentElement.datas
   $$("#themeSeg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.themeSet === t))); }
 // persist = false keeps a first-run (browser) language unstored until the captain picks one in Settings
 function setLang(l, persist = true) { l = I18N.LANGS.includes(l) ? l : "en"; lang = l; if (l !== "en") lastZh = l; if (persist) store.set("crew.lang", l); document.documentElement.lang = l;
+  // Studio learns the Board's language: Firstmate's first message (a Start, a switch, a restart) greets in it
+  fetch("/api/main/locale", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ locale: l }) }).catch(() => {});
   $$("[data-lang-set]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.langSet === l)));
   const names = { board: ["Board", "看板"], inbox: ["Inbox", "收件匣"], crew: ["Crew", "船員"], activity: ["Activity", "事件"], workflow: ["Workflow", "流程"], intents: ["Intents", "意圖"], library: ["Library", "成品庫"], remote: ["Phone", "手機"], doctor: ["Doctor", "健康檢查"], changes: ["Changes", "變更"] };
   $$(".nav-item").forEach((b) => { const n = names[b.dataset.view]; if (!n) return; b.querySelector(".nl").textContent = T(...n); b.dataset.tip = T(...n); });

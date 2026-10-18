@@ -88,8 +88,12 @@ export function createTakeover(d: Deps) {
     }
     if (!writing) return null;
     let b: any = {};
-    if (["/api/main/takeover", "/api/main/start", "/api/main/switch", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door"].includes(p)) { try { b = await req.json(); } catch {} }
-    if(['/api/main/start','/api/main/switch'].includes(p)&&b?.locale!==undefined&&!['en','zh-TW','zh-CN'].includes(b.locale))return json({error:'Unsupported dashboard language',code:'locale'},400);
+    if (["/api/main/takeover", "/api/main/start", "/api/main/switch", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door", "/api/main/locale"].includes(p)) { try { b = await req.json(); } catch {} }
+    if(['/api/main/start','/api/main/switch','/api/main/locale'].includes(p)&&b?.locale!==undefined&&!['en','zh-TW','zh-CN'].includes(b.locale))return json({error:'Unsupported dashboard language',code:'locale'},400);
+    // the Board's language, as the captain shows it now: Firstmate's first message (a Start, a switch, a restart) greets in it
+    if(['/api/main/start','/api/main/switch','/api/main/locale'].includes(p)&&b?.locale!==undefined)d.main.setBoardLocale?.(b.locale);
+    if(p==='/api/main/locale')return b?.locale===undefined?json({error:'Say the dashboard language',code:'locale'},400):json({ok:true,locale:b.locale});
+    const boardLocale=():"en"|"zh-TW"|"zh-CN"=>b?.locale??d.main.boardLocale?.()??"en";
     // The boot restart holds the account check and may be starting the primary: the captain's Start or switch waits for it,
     // then sees the outcome (already running, or still stopped) instead of a misleading account refusal
     if (["/api/main/start", "/api/main/switch"].includes(p) && booting) await booting.catch(() => {});
@@ -115,7 +119,7 @@ export function createTakeover(d: Deps) {
       const now = d.main.view();
       if (now.host !== "codex" || !["attached", "paused"].includes(now.state)) return json({ error: "The Firstmate changed while Claude was checked; review it first / 檢查 Claude 期間 Firstmate 已變更，請先確認", code: "changed" }, 409);
       await d.main.detach();
-      const r = await d.main.startFresh("claude", undefined, { locale:b?.locale??"en", env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode });
+      const r = await d.main.startFresh("claude", undefined, { locale:boardLocale(), env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode });
       return json(r, r.ok ? 200 : 409);
     }
     if (p === "/api/main/start" && b?.host === "claude") {
@@ -125,7 +129,7 @@ export function createTakeover(d: Deps) {
       if (!d.claudePrimary) return json({ ok: false, code: "claudeUnavailable", reason: "Claude is not available to Studio / Studio 無法使用 Claude" }, 409);
       const ready = await d.claudePrimary();
       if (!ready.ok) return json(ready, 409);
-      const r = await d.main.startFresh("claude", undefined, { locale:b?.locale??"en", env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode });
+      const r = await d.main.startFresh("claude", undefined, { locale:boardLocale(), env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode });
       return json(r, r.ok ? 200 : 409);
     }
     if (p === "/api/main/start") {
@@ -139,7 +143,7 @@ export function createTakeover(d: Deps) {
         const current=codexConfig(d.main.view().project);
         if(verified.state!=="ready"||!verified.authenticated||verified.quota!=="available"||!verified.expires||verified.expires<=Date.now()||typeof verified.model!=="string"||!verified.model||typeof verified.effort!=="string"||!verified.effort||current.model!==verified.model||current.effort!==verified.effort||opened.model!==verified.model||opened.effort!==verified.effort)throw new Error("Codex main model/effort changed or is unverified. Recheck the vendor configuration before retrying / Codex 主對話模型或推理強度已變更或尚未驗證；請重新檢查廠商設定後再試");
         return true;
-      },{locale:b?.locale??"en"});
+      },{locale:boardLocale()});
       return json(r, r.ok ? 200 : 409);
     }
     if (p === "/api/main/question") {
@@ -191,7 +195,7 @@ export function createTakeover(d: Deps) {
           return stay(`Firstmate was running on Claude ${p.model ?? "(default)"} (${p.permissionMode ?? "default"} mode) before Studio restarted; the configuration is now ${ready.model} (${ready.permissionMode} mode), so it was not restarted. Press Start to begin with the new configuration.`,
             `Studio 重啟前 Firstmate 在 Claude ${p.model ?? "（預設）"}（${p.permissionMode ?? "default"} 模式）上執行；設定已改成 ${ready.model}（${ready.permissionMode} 模式），所以沒有自動重開。請按 Start 用新設定開始。`);
         if (d.main.view().state !== "detached") return { resumed: false };
-        const r = await d.main.startFresh("claude", undefined, { locale: p.locale, env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode });
+        const r = await d.main.startFresh("claude", undefined, { locale: d.main.boardLocale?.() ?? p.locale, env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode });
         if (!r.ok) return stay(`Firstmate could not be restarted on Claude after Studio restarted: ${r.reason}. Press Start to try again.`, `Studio 重啟後無法在 Claude 上重開 Firstmate：${r.reason}。請按 Start 再試一次。`);
       } else {
         if (!d.codexAccount) return stay("Firstmate was running on Codex before Studio restarted, but the Codex account cannot be verified now. Press Start to begin again.", "Studio 重啟前 Firstmate 在 Codex 上執行，但現在無法驗證 Codex 帳號。請按 Start 重新開始。");
@@ -203,7 +207,7 @@ export function createTakeover(d: Deps) {
           const current = codexConfig(d.main.view().project);
           if (verified.state !== "ready" || !verified.authenticated || verified.quota !== "available" || !verified.expires || verified.expires <= Date.now() || current.model !== verified.model || current.effort !== verified.effort || opened.model !== verified.model || opened.effort !== verified.effort) throw new Error("Codex main model/effort changed or is unverified");
           return true;
-        }, { locale: p.locale });
+        }, { locale: d.main.boardLocale?.() ?? p.locale });
         if (!r.ok) return stay(`Firstmate could not be restarted on Codex after Studio restarted: ${r.reason}. Press Start to try again.`, `Studio 重啟後無法在 Codex 上重開 Firstmate：${r.reason}。請按 Start 再試一次。`);
       }
     } catch (e: any) { return stay(`Firstmate could not be restarted on ${vendor} after Studio restarted: ${String(e?.message ?? e).slice(0, 200)}. Press Start to try again.`, `Studio 重啟後無法在 ${vendor} 上重開 Firstmate。請按 Start 再試一次。`); }

@@ -9,7 +9,7 @@ Use this skill when the captain designs a workflow, asks for a graph preview, or
 
 ## Ground the design
 
-Discuss the desired output, audience, review responsibility and captain decision. Ask one short question at a time only for missing choices. Preserve answers already given, model choices and the current dashboard language. For Hello Crew Studio, discuss the website heading and visual direction before drawing its workflow.
+Discuss the desired output, audience, review responsibility and captain decision. Ask one short question at a time only for missing choices. Preserve answers already given and model choices. Language: your first message uses the Board's language; afterwards, the captain's language and script, for titles and drafts too. For Hello Crew Studio, discuss the website heading and visual direction before drawing its workflow.
 
 Read `studio_workflow_draft_contract` before composing a graph. Its schema and example are the current executable contract; do not infer the draft format from a full installed workflow YAML. Use `studio_validate_workflow_draft` for a non-mutating format/static check, then `studio_draft_workflow` for the live preview. A valid format is not runtime or quality acceptance: read `studio_workflow_gate` after preview and repair its typed problems.
 

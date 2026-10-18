@@ -276,9 +276,15 @@ try {
   await stop(); app = start(); await waitUp(base, app);
 
   // --- restart behaves like the Codex primary ---
-  r = await api("/api/main/start", { host: "claude", confirm: true });
+  // started while the Board showed 简体中文: the greeting turn names Simplified Chinese
+  r = await api("/api/main/start", { host: "claude", confirm: true, locale: "zh-CN" });
   ok(r.status === 200 && UUID.test(r.body.id) && r.body.id !== first, "a second fresh Claude primary gets another new UUID");
   await idle();
+  const seedOf = (pid: number) => (readFileSync(seedFile, "utf8").trim().split("\n").map((l) => JSON.parse(l)).find((x: any) => x.pid === pid)?.seed ?? "") as string;
+  ok(/The captain’s current dashboard language is Simplified Chinese \(简体中文\)\. Greet the captain in Simplified Chinese/.test(seedOf(claudeRuns().at(-1).pid)), "a Start from a 简体中文 Board greets in Simplified Chinese");
+  // the captain then switches the Board to 繁體中文: a restart greets in it, not in the language the stopped primary started with
+  ok((await api("/api/main/locale", { locale: "zh-TW" })).body.ok === true && JSON.parse(readFileSync(join(data, "board-language.json"), "utf8")).locale === "zh-TW", "the Board tells Studio its language");
+  ok((await api("/api/main/locale", { locale: "fr" })).status === 400, "an unknown Board language is refused");
   const oldPid = app.pid;
   const run2 = claudeRuns().at(-1), pid2 = run2.pid, priv2 = dirname(run2.argv[run2.argv.indexOf("--mcp-config") + 1]);
   ok(existsSync(priv2), "the running primary has its private folder");
@@ -293,6 +299,9 @@ try {
   ok(rv.sessionId !== run2.argv[run2.argv.indexOf("--session-id") + 1] && rv.drive?.permissionMode === "auto" && rv.drive?.model === "claude-sonnet-5-5" && !rv.driver.resume, "the restarted primary is a new session on the same model and permission mode");
   ok(rv.log.some((l: any) => /Firstmate was running before Studio restarted; Studio started it again on Claude/.test(l.text)), "a notice says Firstmate was started again after the restart");
   await idle();
+  const restartSeed = seedOf(claudeRuns().at(-1).pid);
+  ok(/The captain’s current dashboard language is Traditional Chinese \(繁體中文\)\. Greet the captain in Traditional Chinese/.test(restartSeed) && !/Greet the captain in Simplified/.test(restartSeed) && rv.driver.primary?.locale === "zh-TW",
+    "after a restart the greeting uses the Board's current language (繁體中文), not the one the stopped primary started with", restartSeed.split("\n")[0].slice(0, 160));
   // not signed in at boot: nothing starts, no sign-in begins, a notice says why and that Start is the way on
   signedIn(false); const runsSignedOut = claudeRuns().length, codexBefore = codexStarts();
   await stop(); app = start(); await waitUp(base, app);

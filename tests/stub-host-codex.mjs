@@ -50,6 +50,8 @@ async function runTurn(turnId, text, input = []) {
   note("turn/started", { turn: turnObj(turnId, "inProgress") });
   // a turn that opens with the captain's operating rules: the model answers the message after them, as a real one would
   if (text.startsWith("# Operating rules (set by the captain)") && text.includes("The message follows.\n\n")) text = text.slice(text.indexOf("The message follows.\n\n") + "The message follows.\n\n".length);
+  // Studio's one-line note after the captain's words (reply in their language and script): the model reads it, it is not the message
+  text = text.replace(/\n\n\[Studio note: [^\n]*\]$/, "");
   let say = `echo: ${text.slice(0, 80)}`;
   // chat attachments: localImage items name a file the app-server reads, as codex does
   const imgs = input.filter((i) => i.type === "localImage");

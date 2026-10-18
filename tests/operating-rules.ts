@@ -152,7 +152,8 @@ const sectionOf = (s: string) => { const i = s.indexOf(OPERATING_RULES_HEADING);
     main.enqueue("chat", "TURN-THREE", "desktop"); await idle();
     (main as any).writeDriver({ ...main.driver(), rulesSent: null }); // what a takeover, a restart or a resume leaves: a session with no record of the rules
     main.enqueue("chat", "TURN-FOUR", "desktop"); await idle();
-    const by = (k: string) => sent.find((t) => t.includes(k)) ?? "";
+    // the captain's words come back without Studio's one-line language note (src/captain-script.ts)
+    const by = (k: string) => (sent.find((t) => t.includes(k)) ?? "").replace(/\n\n\[Studio note: [^\n]*\]$/, "");
     ok(sent.length === 4 && by("TURN-ONE") === "TURN-ONE" && by("TURN-TWO").startsWith("# Operating rules (set by the captain)") && /FM-STUDIO-RULE-EDITED/.test(by("TURN-TWO")) && /changed the operating rules/.test(by("TURN-TWO")) && by("TURN-THREE") === "TURN-THREE"
       && by("TURN-FOUR").startsWith("# Operating rules (set by the captain)") && /FM-STUDIO-RULE-EDITED/.test(by("TURN-FOUR")) && main.driver().rulesSent?.hash === rules.section(null).hash,
       "after the seed a turn carries the rules only when they changed, or when the session has no record of them (takeover, restart, resume)", JSON.stringify(sent.map((t) => t.slice(0, 60))));

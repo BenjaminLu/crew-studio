@@ -66,6 +66,8 @@ async function turn(text, files = []) {
   if (!inited && process.env.STUB_SEED_FILE) appendFileSync(process.env.STUB_SEED_FILE, JSON.stringify({ seed: text, pid: process.pid }) + "\n");
   if (!inited) { inited = true; out({ type: "system", subtype: "init", session_id: id, model: "stub-opus", tools: [], permissionMode: effectiveMode() }); }
   touch({ type: "user", message: { role: "user", content: text } });
+  // Studio's one-line note after the captain's words (reply in their language and script): the model reads it, it is not the message
+  text = text.replace(/\n\n\[Studio note: [^\n]*\]$/, "");
   if (text.includes("STUB_NATIVE ")) {
     // STUB_NATIVE <tool> <json args>: list Studio's tools over its MCP helper, then call one, as the CLI would for mcp__studio__<tool>
     const rest = text.slice(text.indexOf("STUB_NATIVE ") + 12), sp = rest.indexOf(" "), tool = sp < 0 ? rest : rest.slice(0, sp);

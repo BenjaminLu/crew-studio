@@ -10,7 +10,7 @@ import { harness, until } from "./rt-harness";
 import { installFirstmate, staffingInIntent } from "../src/firstmate";
 import { Projects } from "../src/doors";
 import { clampTitle, deriveTitle, titleWidth, taskTitle } from "../src/task-title";
-import { captainScript, withScriptNote, TRADITIONAL_NOTE } from "../src/captain-script";
+import { captainScript, withScriptNote, TRADITIONAL_NOTE, LANGUAGE_NOTE } from "../src/captain-script";
 import { nativeFreshText, REPLY_LANGUAGE } from "../src/host/main";
 process.env.CREW_TEST_IN_PROCESS = "1";
 let pass = 0, fail = 0;
@@ -35,10 +35,18 @@ ok(staffingInIntent(REQUEST) === null && staffingInIntent("Show the Claude staff
 
 // ---- F2: the captain's script ----
 ok(captainScript("已批准配置卡，請提交派工卡") === "traditional" && captainScript("我已经把默认配置记下来") === "chinese" && captainScript("approved, please propose") === null, "Traditional Chinese is told apart through opencc-js");
-ok(captainScript("日本語の文章です。設定を確認してください") === null && withScriptNote("日本語の文章です。設定を確認してください", "日本語の文章です。設定を確認してください") === "日本語の文章です。設定を確認してください", "Japanese (kana) gets no note, though opencc-js would change its kanji");
+const JA = "日本語の文章です。設定を確認してください";
+ok(captainScript(JA) === null && withScriptNote(JA, JA) === `${JA}\n\n${LANGUAGE_NOTE}`, "Japanese (kana) gets only the language rule, no Traditional note, though opencc-js would change its kanji");
 ok(withScriptNote("fix the bug in 台灣 build", "fix the bug in 台灣 build").endsWith(TRADITIONAL_NOTE) && /when you reply in Chinese, use Traditional/.test(TRADITIONAL_NOTE) && !/Reply in Traditional/.test(TRADITIONAL_NOTE), "English with a Traditional proper noun gets a note that only binds a Chinese reply");
-ok(withScriptNote("我已经把默认配置记下来", "我已经把默认配置记下来") === "我已经把默认配置记下来", "a Simplified captain gets no note");
-ok(withScriptNote("1，用預設配置", "1，用預設配置").endsWith(TRADITIONAL_NOTE) && withScriptNote("use defaults", "use defaults") === "use defaults", "a Traditional Chinese turn carries the note; an English one is unchanged");
+// every captain turn after the greeting carries the conversation-language rule (the Board's language set only the greeting)
+ok(/reply in the language and script the captain writes in/.test(LANGUAGE_NOTE) && /titles/.test(LANGUAGE_NOTE), "the language rule follows the captain's language and script, titles included");
+ok(withScriptNote("我已经把默认配置记下来", "我已经把默认配置记下来") === `我已经把默认配置记下来\n\n${LANGUAGE_NOTE}`, "a Simplified captain gets the language rule and no Traditional note");
+ok(withScriptNote("1，用預設配置", "1，用預設配置") === `1，用預設配置\n\n${LANGUAGE_NOTE} ${TRADITIONAL_NOTE}` && withScriptNote("use defaults", "use defaults") === `use defaults\n\n${LANGUAGE_NOTE}`, "a Traditional Chinese turn carries the rule and the Traditional note; an English one the rule only");
+// Studio never converts Firstmate's text: the captain's own words go out unchanged, before the note
+ok(withScriptNote("我已经把默认配置记下来", "我已经把默认配置记下来").startsWith("我已经把默认配置记下来\n\n"), "the captain's words are sent as written (no conversion)");
+for (const [loc, name] of [["en", "English"], ["zh-TW", "Traditional Chinese \\(繁體中文\\)"], ["zh-CN", "Simplified Chinese \\(简体中文\\)"]] as const)
+  ok(new RegExp(`^The captain’s current dashboard language is ${name}\\. Greet the captain in ${name}\\.`).test(nativeFreshText("/tmp/ws", undefined, loc)), `the greeting turn names the Board's language (${loc})`);
+ok(/first message uses the Board's language; afterwards, the captain's language and script/.test(readFileSync(new URL("../workflows/skills/firstmate-workflow-design/SKILL.md", import.meta.url), "utf8")), "Firstmate's skill says: first message in the Board's language, then the captain's language and script");
 const seed = nativeFreshText("/tmp/ws", undefined, "zh-CN");
 ok(seed.includes(REPLY_LANGUAGE) && !/converse in Simplified/.test(seed) && /Greet the captain in Simplified Chinese/.test(seed), "the seed names the dashboard language for the greeting only, and the captain's script for every reply");
 ok(/text is only the captain's request/.test(seed) && /Never put staffing/.test(seed), "the seed tells Firstmate the intent is only the captain's request");
