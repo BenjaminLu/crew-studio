@@ -239,8 +239,8 @@ function interpreterDirs(): string[] {
 let acctHome: string | null = null;
 export function accountHomeDir(): string {
   if (acctHome) return acctHome;
-  try { const user = Bun.spawnSync(["/usr/bin/id", "-un"], { stdout: "pipe" }).stdout.toString().trim();
-    const r = Bun.spawnSync(["/usr/bin/dscl", ".", "-read", `/Users/${user}`, "NFSHomeDirectory"], { stdout: "pipe", stderr: "ignore" });
+  try { const user = Bun.spawnSync(["/usr/bin/id", "-un"], { env: {PATH:"/usr/bin:/bin"}, stdout: "pipe" }).stdout.toString().trim();
+    const r = Bun.spawnSync(["/usr/bin/dscl", ".", "-read", `/Users/${user}`, "NFSHomeDirectory"], { env: {PATH:"/usr/bin:/bin"}, stdout: "pipe", stderr: "ignore" });
     const m = /NFSHomeDirectory:\s*(\S+)/.exec(r.stdout.toString()); if (m) return (acctHome = m[1]); } catch {}
   return (acctHome = homedir());
 }
@@ -414,7 +414,7 @@ export function inputPaths(v: any, out: Set<string> = new Set(), depth = 0): str
 export function reapMarked(marker: string) {
   if (!marker || process.platform !== "darwin") return;
   try {
-    const r = Bun.spawnSync(["/bin/ps", "-Aww", "-E", "-o", "pid=", "-o", "command="], { stdout: "pipe", stderr: "ignore" });
+    const r = Bun.spawnSync(["/bin/ps", "-Aww", "-E", "-o", "pid=", "-o", "command="], { env: {PATH:"/usr/bin:/bin"}, stdout: "pipe", stderr: "ignore" });
     for (const line of r.stdout.toString().split("\n")) {
       const m = /^\s*(\d+)\s+(.*)$/.exec(line); if (!m || !m[2].includes(`CREW_RUN_KILL=${marker}`)) continue;
       const pid = Number(m[1]); if (pid > 1 && pid !== process.pid) { try { process.kill(pid, "SIGKILL"); } catch {} }

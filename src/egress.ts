@@ -79,7 +79,7 @@ export class Egress {
           if (!("refused" in checked) || !token) return checked;
           const policy = this.localPolicies.get(token); let origin = "";
           try { origin = new URL(`${protocol}//${host.includes(":") && !host.startsWith("[") ? `[${host}]` : host}:${port}`).origin; } catch { return checked; }
-          if (!policy?.origins.has(origin) || policy.blocked.has(port)) return checked;
+          if (!policy?.origins.has(origin) || policy.blocked.has(port) || port === this.port) return checked;
           try {
             const addresses = await lookup(host, {all: true}), mine = localAddresses();
             const to = addresses.find(a => isLoopbackAddress(a.address) || mine.includes(a.address));
@@ -101,7 +101,7 @@ export class Egress {
           }
           client.pipe(up); up.pipe(client); client.resume();
         });
-        state.upstream = up; up.setTimeout(10000, () => up.destroy()); up.once("close", () => client.destroy());
+        state.upstream = up; up.setTimeout(10000, () => up.destroy()); up.once("close", () => { if (!client.destroyed && !client.writableEnded) client.end(); });
         up.on("error", () => { try { client.end("HTTP/1.1 502 Bad Gateway\r\n\r\n"); } catch {} });
         client.on("error", () => up.destroy());
         });

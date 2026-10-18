@@ -3,7 +3,8 @@
 // reserved range, including listeners created after the test profile was compiled.
 import { randomBytes } from 'node:crypto';
 import { createServer, connect, type Socket } from 'node:net';
-export const BROKER_PORTS = Object.freeze(Array.from({length:64},(_,i)=>43000+i));
+import { BROKER_PORTS } from "./loopback-ports";
+export { BROKER_PORTS } from "./loopback-ports";
 export type ProxyAuthority={port:number;open(t:string,hosts:string[]):void;close(t:string):void};
 export async function openScopedProxy(egress:ProxyAuthority,hosts:string[]) {
   if(!Number.isInteger(egress.port)||egress.port<1)throw new Error('egress upstream is unavailable');
@@ -24,7 +25,7 @@ export async function openScopedProxy(egress:ProxyAuthority,hosts:string[]) {
       const clean=lines.filter(line=>!/^proxy-authorization\s*:/i.test(line));
       clean.push(`Proxy-Authorization: Basic ${Buffer.from('round:'+token).toString('base64')}`);
       const up=connect(egress.port,'127.0.0.1');own(up);up.setTimeout(10000,()=>up.destroy());
-      const destroy=()=>{client.destroy();up.destroy();};client.once('close',()=>up.destroy());up.once('close',()=>client.destroy());
+      const destroy=()=>{client.destroy();up.destroy();};client.once('close',()=>up.destroy());up.once('close',()=>{if(!client.destroyed&&!client.writableEnded)client.end();});
       up.once('error',destroy);client.once('error',destroy);
       up.once('connect',()=>{
         if(closed){destroy();return;}

@@ -35,8 +35,8 @@ export function renderEnv() {
 let acct: string | null = null;
 export function accountHome(): string {
   if (acct) return acct;
-  try { const user = Bun.spawnSync(["/usr/bin/id", "-un"], { stdout: "pipe" }).stdout.toString().trim();
-    const r = Bun.spawnSync(["/usr/bin/dscl", ".", "-read", `/Users/${user}`, "NFSHomeDirectory"], { stdout: "pipe", stderr: "ignore" });
+  try { const user = Bun.spawnSync(["/usr/bin/id", "-un"], { env: scrubEnv(), stdout: "pipe" }).stdout.toString().trim();
+    const r = Bun.spawnSync(["/usr/bin/dscl", ".", "-read", `/Users/${user}`, "NFSHomeDirectory"], { env: scrubEnv(), stdout: "pipe", stderr: "ignore" });
     const m = /NFSHomeDirectory:\s*(\S+)/.exec(r.stdout.toString()); if (m) return (acct = m[1]); } catch {}
   return (acct = userInfo().homedir);
 }
@@ -95,7 +95,7 @@ const PNG1 = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQV
 
 export type VideoProbe = { kind: "size"; width: number; height: number; tool: "ffprobe" | "ffmpeg"; duration?: number | null } | { kind: "no-video"; tool: "ffprobe" | "ffmpeg" } | { kind: "unreadable"; tool: "ffprobe" | "ffmpeg" } | { kind: "no-tool" };
 const capture = async (argv: string[], ms: number) => {
-  const p = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe", stdin: "ignore" }); const timer = setTimeout(() => { try { p.kill(); } catch {} }, ms);
+  const p = Bun.spawn(argv, { env: scrubEnv(), stdout: "pipe", stderr: "pipe", stdin: "ignore" }); const timer = setTimeout(() => { try { p.kill(); } catch {} }, ms);
   const [out, err, code] = await Promise.all([new Response(p.stdout as any).text(), new Response(p.stderr as any).text(), p.exited]); clearTimeout(timer);
   return { out: out.slice(0, 65536), err: err.slice(0, 65536), code };
 };
@@ -128,7 +128,7 @@ export async function probeVideo(file: string): Promise<VideoProbe> {
 export async function frameLuma(file: string, t: number): Promise<{ mean: number; peak: number } | null> {
   const ffmpeg = renderEnv().ffmpeg; if (!ffmpeg) return null;
   try {
-    const p = Bun.spawn([ffmpeg, "-v", "error", "-nostdin", "-ss", String(Math.max(0, t)), "-i", file, "-frames:v", "1", "-vf", "scale=64:36,format=gray", "-f", "rawvideo", "pipe:1"], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
+    const p = Bun.spawn([ffmpeg, "-v", "error", "-nostdin", "-ss", String(Math.max(0, t)), "-i", file, "-frames:v", "1", "-vf", "scale=64:36,format=gray", "-f", "rawvideo", "pipe:1"], { env: scrubEnv(), stdout: "pipe", stderr: "ignore", stdin: "ignore" });
     const timer = setTimeout(() => { try { p.kill(); } catch {} }, 10000);
     const [bytes, code] = await Promise.all([new Response(p.stdout as any).arrayBuffer(), p.exited]); clearTimeout(timer);
     const b = new Uint8Array(bytes); if (code !== 0 || !b.length) return null;

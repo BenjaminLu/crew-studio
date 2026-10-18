@@ -1,4 +1,4 @@
-import './lib/isolated-env.mjs';
+import "./lib/isolated-env.mjs";
 import { strict as assert } from 'node:assert';
 import { profileFor, parseListeningPorts } from '../src/runtime/checks';
 const p = profileFor({out:'/private/tmp/out',tmp:'/private/tmp/tmp',reads:[],network:false,localBinding:true,blockedPorts:[43210]} as any);

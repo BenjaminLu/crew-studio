@@ -24,7 +24,7 @@ const TOKEN = "toolToken-" + "a1b2c3d4e5f6a7b8c9d0e1f2";
 async function recorded(provider: any, label: string) {
   const rec = join(root, `rec-${label}.json`); const cwd = join(root, `cwd-${label}`); const tmp = join(cwd, "tmp"); mkdirSync(tmp, { recursive: true });
   const tokenFile = join(tmp, "tool-token"); writeFileSync(tokenFile, TOKEN, { mode: 0o600 });
-  const env = { PATH: process.env.PATH ?? "", CREW_ARGV_REC: rec, CREW_TOOL_TOKEN_FILE: tokenFile, ...(label === "claude" ? { CLAUDE_CODE_OAUTH_TOKEN: "dummy-oauth-login", ANTHROPIC_API_KEY: "dummy-api-login" } : {}) };
+  const env = { PATH: process.env.PATH ?? "", CREW_ARGV_REC: rec, CREW_TOOL_TOKEN_FILE: tokenFile, ...(label === "claude" ? { CLAUDE_CODE_OAUTH_TOKEN: "dummy-oauth-login", ANTHROPIC_API_KEY: "dummy-api-login" } : { OPENAI_API_KEY: "sk-" + "dummy-direct-api-key".repeat(3) }) };
   const session = provider.start("sys", [{ name: "review_verdict", description: "d", inputSchema: { type: "object" } }],
     { studioUrl: "http://127.0.0.1:1", token: TOKEN, tokenFile, cwd, env, mcpCommand: [recorder], sandbox: null, proxy: null });
   try { const it = session.send("hi")[Symbol.asyncIterator](); for (let i = 0; i < 20 && !existsSync(rec); i++) await it.next(); } catch {}
@@ -35,6 +35,10 @@ async function recorded(provider: any, label: string) {
   if(label === "claude") {
     ok(!argv.includes("dummy-oauth-login") && !env2.includes("dummy-oauth-login") && !env2.includes("dummy-api-login"), "Claude login credentials never reach exec argv/environment");
     ok(r.credentials?.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR === "dummy-oauth-login" && r.credentials?.CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR === "dummy-api-login", "Claude receives OAuth and API credentials through inherited file descriptors");
+  }
+  if(label === "codex") {
+    const key = "sk-" + "dummy-direct-api-key".repeat(3);
+    ok(!argv.includes(key) && !env2.includes(key) && r.codexAuth?.OPENAI_API_KEY === key, "direct Codex API key is consumed from its private auth.json without appearing in actual CLI argv/env");
   }
   ok(argv.includes(tokenFile) || env2.includes("CREW_TOOL_TOKEN_FILE=" + tokenFile), `${label}: the CLI carries only the 0600 token-file path`, "");
 }

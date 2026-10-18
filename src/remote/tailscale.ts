@@ -1,3 +1,4 @@
+import { scrubEnv } from "../secure";
 // Tailscale, behind an interface. Reading `tailscale status --json` is safe
 // and shows what the phone URL WOULD be. Changing Tailscale state (serve on or
 // off) goes through a runner the captain confirms; tests use a stub runner,
@@ -11,7 +12,7 @@ export const serveOffCommand = () => ["tailscale", "serve", `--https=${SERVE_POR
 
 export function readStatus(bin = process.env.CREW_TAILSCALE_BIN ?? "tailscale"): TsStatus {
   try {
-    const r = Bun.spawnSync([bin, "status", "--json"], { stdout: "pipe", stderr: "pipe" });
+    const r = Bun.spawnSync([bin, "status", "--json"], { env: scrubEnv(), stdout: "pipe", stderr: "pipe" });
     if (!r.success) return { installed: true, running: false, dnsName: null, url: null, error: r.stderr.toString().trim().slice(0, 200) || "tailscale is not running" };
     const s = JSON.parse(r.stdout.toString());
     const dns = String(s?.Self?.DNSName ?? "").replace(/\.$/, "") || null;
@@ -30,5 +31,5 @@ export class StubRunner implements TsRunner {
 
 export class LiveRunner implements TsRunner {
   readonly live = true;
-  run(argv: string[]) { const r = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe" }); return { ok: r.success, out: (r.stdout.toString() + r.stderr.toString()).trim().slice(0, 600) }; }
+  run(argv: string[]) { const r = Bun.spawnSync(argv, { env: scrubEnv(), stdout: "pipe", stderr: "pipe" }); return { ok: r.success, out: (r.stdout.toString() + r.stderr.toString()).trim().slice(0, 600) }; }
 }

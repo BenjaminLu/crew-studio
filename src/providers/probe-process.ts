@@ -24,7 +24,7 @@ export function probeProcess(argv: string[], cwd: string, env: Record<string,str
   const closed=new Promise<void>(resolve=>child.once('close',()=>resolve()));
   let stopping:Promise<void>|null=null;
   const group=():'gone'|'live'|'zombie'|null=>{if(!child.pid)return 'gone';
-    const rows=spawnSync('/bin/ps',['-ax','-o','pgid=,pid=,ppid=,stat='],{encoding:'utf8',maxBuffer:512*1024,timeout:2000});
+    const rows=spawnSync('/bin/ps',['-ax','-o','pgid=,pid=,ppid=,stat='],{env:{PATH:'/usr/bin:/bin'},encoding:'utf8',maxBuffer:512*1024,timeout:2000});
     if(rows.status!==0||rows.error)return null; // ps could not answer this time (a busy machine): asked again until the deadline
     return probeGroupState(rows.stdout,child.pid,process.pid);
   };

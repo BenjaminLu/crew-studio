@@ -101,7 +101,7 @@ export function prepareTestBase(wt:string,dest:string,base:string,globs:string[]
  for(const p of new Set([...baseFiles,...currentFiles])){
   if(!normPath(p)||globs.some(g=>matches(g,p)))continue;
   const file=join(dest,p);if(existsSync(file))rmSync(file,{recursive:true,force:true});
-  if(baseFiles.includes(p)){const raw=Bun.spawnSync(gitArgv(['show',`${base}:${p}`]),{cwd:wt,stdout:'pipe',stderr:'pipe'});if(!raw.success)throw Error(`cannot read base file ${p}`);mkdirSync(dirname(file),{recursive:true});writeFileSync(file,raw.stdout);}
+  if(baseFiles.includes(p)){const raw=Bun.spawnSync(gitArgv(['show',`${base}:${p}`]),{cwd:wt,stdout:'pipe',stderr:'pipe',env:gitEnv()});if(!raw.success)throw Error(`cannot read base file ${p}`);mkdirSync(dirname(file),{recursive:true});writeFileSync(file,raw.stdout);}
  }
  if(existsSync(join(wt,'node_modules')))symlinkSync(join(wt,'node_modules'),join(dest,'node_modules'),'dir');
  return dest;

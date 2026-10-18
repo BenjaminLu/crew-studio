@@ -1,4 +1,4 @@
-import './lib/isolated-env.mjs';
+import "./lib/isolated-env.mjs";
 import { strict as assert } from 'node:assert';
 import { createServer } from 'node:net';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';

@@ -36,3 +36,24 @@ try{
  await Promise.race([closed,new Promise((_,reject)=>setTimeout(()=>reject(new Error('revoked tunnel survived')),2000))]);
  assert.equal(central.status().rounds,0);console.log('egress-client: central revocation tears down an already-open tunnel');
 }finally{live.destroy();central.stop();await new Promise<void>(r=>destination.close(()=>r()));}
+
+const localApi=Bun.serve({port:0,hostname:'127.0.0.1',fetch:()=>new Response('configured local model')});
+const blockedApi=Bun.serve({port:0,hostname:'127.0.0.1',fetch:()=>new Response('must not reach Studio')});
+const localProxy=new Egress();await localProxy.start();
+const localRequest=(token:string,port:number)=>new Promise<string>((resolve,reject)=>{let out='';const socket=connect(localProxy.port,'127.0.0.1',()=>socket.write(`GET http://127.0.0.1:${port}/v1 HTTP/1.1\r\nHost: 127.0.0.1\r\nProxy-Authorization: Basic ${Buffer.from('round:'+token).toString('base64')}\r\nConnection: close\r\n\r\n`));socket.on('data',b=>out+=b);socket.on('end',()=>resolve(out));socket.on('error',reject);});
+try{
+ localProxy.open('generic',['127.0.0.1']);
+ assert.match(await localRequest('generic',localApi.port),/403 Forbidden/);
+ localProxy.open('configured',['127.0.0.1'],{localOrigins:[`http://127.0.0.1:${localApi.port}`],blockedPorts:[blockedApi.port]});
+ assert.match(await localRequest('configured',localApi.port),/configured local model/);
+ assert.match(await localRequest('configured',blockedApi.port),/403 Forbidden/);
+ localProxy.open('bad-config',['127.0.0.1'],{localOrigins:[`http://127.0.0.1:${blockedApi.port}`],blockedPorts:[blockedApi.port]});
+ assert.match(await localRequest('bad-config',blockedApi.port),/403 Forbidden/);
+ console.log('egress-client: exact configured local model works; generic grant, other port, and protected port are denied');
+}finally{localProxy.stop();localApi.stop(true);blockedApi.stop(true);}
+
+const reservations:Awaited<ReturnType<typeof openScopedProxy>>[]=[];
+try{
+ let exhausted=false;for(let i=0;i<=BROKER_PORTS.length;i++){try{const lease=await openScopedProxy(eg,['example.test']);assert(BROKER_PORTS.includes(lease.port));reservations.push(lease);}catch(error){assert.match(String(error),/reservation exhausted/);exhausted=true;break;}}
+ assert(exhausted);assert(reservations.length>0);console.log('egress-client: exhausted reservation fails closed without an arbitrary-port fallback');
+}finally{for(const lease of reservations)lease.close();}

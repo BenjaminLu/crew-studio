@@ -75,9 +75,9 @@ const service = await new Promise<number>((r) => { const s = createServer((c) =>
     ["evil.example", "64:ff9b::7f00:1", false], ["evil.example", "2002:7f00:1::", false], ["evil.example", "0.0.0.0", false], ["evil.example", "169.254.169.254", false], ["evil.example", "168.63.129.16", false],
     ["evil.example", "192.168.7.9", false], ["evil.example", "::ffff:192.168.7.9", false], ["evil.example", "1.1.1.1", true], ["evil.example", "2606:4700:4700::1111", true],
     ["evil.example", "10.1.2.3", false], ["evil.example", "172.16.5.6", false], ["evil.example", "192.168.1.1", false], ["evil.example", "100.64.1.2", false], ["evil.example", "::ffff:10.1.2.3", false], ["evil.example", "fd12::1", false],
-    ["localhost", "127.0.0.1", true], ["localhost", "1.1.1.1", false], ["127.0.0.1", "127.0.0.1", true]];
+    ["localhost", "127.0.0.1", false], ["localhost", "1.1.1.1", false], ["127.0.0.1", "127.0.0.1", false]];
   const bad = cases.filter(([h, a, want]) => (denial(h, a, local) === null) !== want);
-  ok(!bad.length, "the guard refuses a name resolving to loopback, unspecified, link-local, metadata, a private / CGNAT / tailnet range or this host's own address, in every IPv6 spelling of it; a public address passes; localhost resolves to loopback only; an IP literal is not judged", JSON.stringify(bad));
+  ok(!bad.length, "the guard refuses a name resolving to loopback, unspecified, link-local, metadata, a private / CGNAT / tailnet range or this host's own address, in every IPv6 spelling of it; a public address passes; localhost and IP literals cannot bypass the guard", JSON.stringify(bad));
   const fake = (addrs: string[]) => ((_h: string, _o: any, cb: any) => cb(null, addrs.map((address) => ({ address, family: address.includes(":") ? 6 : 4 })))) as any;
   const a = await guardedLookup("mixed.example", fake(["127.0.0.1", "1.1.1.1"])), b = await guardedLookup("only-local.example", fake(["127.0.0.1"]));
   ok((a as any).address === "1.1.1.1" && /resolved to a loopback address/.test((b as any).refused ?? ""), "the proxy dials the address that passed (never re-resolving) and refuses a name with none left", JSON.stringify([a, b])); }

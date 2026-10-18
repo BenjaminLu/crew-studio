@@ -1,3 +1,4 @@
+import { scrubEnv } from "./secure";
 import {GitHubPoller,readAuthority,grantReadScope,boundedGitHubJSON,type ReadAuthority} from './github-poller';
 import type {GitHubProjectGrant} from './adapters/github';
 // Open pull requests and their checks for one repository, read with GitHub's
@@ -43,7 +44,7 @@ export function findToken(dataDir: string, ghBin = process.env.CREW_GH_BIN ?? "g
   if (process.env.CREW_GH_NO_CLI !== "1") {
     // gh keeps its token in the macOS keychain and reads it with the user's HOME; it never prompts here
     for (const bin of ghCandidates(ghBin)) try {
-      const r = Bun.spawnSync([bin, "auth", "token", "--hostname", "github.com"], { stdout: "pipe", stderr: "ignore", stdin: "ignore", timeout: 10_000, env: { ...process.env, HOME: process.env.HOME || homedir(), GH_PROMPT_DISABLED: "1" } });
+      const r = Bun.spawnSync([bin, "auth", "token", "--hostname", "github.com"], { stdout: "pipe", stderr: "ignore", stdin: "ignore", timeout: 10_000, env: { ...scrubEnv(process.env, ["GH_CONFIG_DIR", "GH_HOST"]), HOME: process.env.HOME || homedir(), GH_PROMPT_DISABLED: "1" } });
       const v = r.success ? r.stdout.toString().trim() : "";
       if (v) return { token: seen(v), source: "gh" };
     } catch { /* gh is not installed there: fine */ }

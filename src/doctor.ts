@@ -1,3 +1,4 @@
+import { scrubEnv } from "./secure";
 import {localUnrestricted} from "./local-execution";
 // The Doctor: what Studio can use on this machine, what is degraded, and the one
 // action that fixes each item. Studio itself needs nothing but its binary and a
@@ -25,13 +26,13 @@ const which = (bin: string): string | null => {
 };
 const version = (bin: string, flag = "--version"): string | null => {
   if (!which(bin)) return null;
-  try { const r = Bun.spawnSync([bin, flag], { stdout: "pipe", stderr: "pipe", timeout: 8000 }); const v = (r.stdout.toString() || r.stderr.toString()).trim().split("\n")[0]; return r.success ? v.slice(0, 80) : null; } catch { return null; }
+  try { const r = Bun.spawnSync([bin, flag], { env: scrubEnv(), stdout: "pipe", stderr: "pipe", timeout: 8000 }); const v = (r.stdout.toString() || r.stderr.toString()).trim().split("\n")[0]; return r.success ? v.slice(0, 80) : null; } catch { return null; }
 };
 const present = (bin: string) => bin.includes("/") ? existsSync(bin) : (process.env.PATH ?? "").split(":").some(d => existsSync(join(d, bin)));
 /** Read the vendor's login status only: never start a conversation or login flow. */
 function authenticated(id: "claude" | "codex", bin: string): boolean | null {
   try {
-    const r = Bun.spawnSync([bin, ...(id === "claude" ? ["auth", "status", "--json"] : ["login", "status"])], { stdout: "pipe", stderr: "pipe", timeout: 8000 });
+    const r = Bun.spawnSync([bin, ...(id === "claude" ? ["auth", "status", "--json"] : ["login", "status"])], { env: scrubEnv(), stdout: "pipe", stderr: "pipe", timeout: 8000 });
     if (id === "claude") { const v = JSON.parse(r.stdout.toString()); return typeof v.loggedIn === "boolean" && (r.success || v.loggedIn === false) ? v.loggedIn : null; }
     const text = r.stdout.toString() + r.stderr.toString();
     if (/not logged in/i.test(text)) return false;
