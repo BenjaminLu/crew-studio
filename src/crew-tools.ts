@@ -13,6 +13,7 @@ import {NativeToolFailure,type NativeMainTools} from './host/types';
 import {normalize,defBody,installedSource} from './runtime/defs';
 import {bundledText} from './bundled';
 import type {Engine} from './runtime/engine';
+import {defPins,pendingScripts,pendingText,teamPins,SKILL_CHOICES} from './skillpkg/crew';
 
 type Fact={id:string;efforts:string[];tags?:string[]};
 type Facts={provider:string;support?:string;auth?:string;models:Fact[];candidates?:Fact[];detectedAt?:number}[];
@@ -79,6 +80,9 @@ export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Prom
   const project=change.kind==='project'||change.kind==='project-restore'?change.project:null;
   const impact=changeImpact(team,after,wfs,project),said=describeChange(change,team,def);
   const notes=wfs.flatMap(d=>resolveCrew(after,d,{},null,project).nodes.filter(n=>impact.some(i=>i.workflow===d.id&&i.node===n.node)).flatMap(n=>n.notes.map(m=>`${d.id} · ${n.node}: ${m.en} / ${m.zh}`)));
+  // the script skills this change brings that the captain never decided: shown here, decided by the same answer (src/skillpkg/crew.ts)
+  const pending=pendingScripts(engine.deps.skillPackages,[...teamPins(after),...wfs.filter(d=>impact.some(i=>i.workflow===d.id)||change.kind==='node'&&change.workflow===d.id).flatMap(defPins)]);
+  x.run.ctx.skillPending=pending.map(p=>({id:p.id,v:p.v,sha256:p.sha256,filesSha256:p.filesSha256}));
   const reach=impact.length?impact.map(i=>`  ${i.workflow} · ${i.label}: ${i.before} → ${i.after}`).join('\n'):'  (no node changes)';
   let title=`Change the team: ${said.en}?`,zhTitle=`改團隊：${said.zh}？`,head='';
   if(change.kind==='seat'||reason==='seat'||reason==='new-role'){
@@ -90,15 +94,20 @@ export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Prom
    head=[decl?.reviews?`Reviews: ${seatLabel(team,decl.reviews,def).en} (so it runs on another model) / 審查誰：${seatLabel(team,decl.reviews,def).zh}（所以要跟它用不同模型）`:'',decl?.needs?.length?`Needs: ${decl.needs.map((t:string)=>`${(CAP_LABELS[t]??{en:t}).en} ✓`).join(', ')} / 需要能力：${decl.needs.map((t:string)=>`${(CAP_LABELS[t]??{zh:t}).zh} ✓`).join('、')}`:'',
     `Suggested (only models with these capabilities): ${pickLine(member as any)} / 建議人選（只列出有這些能力的模型）：${pickLine(member as any)}`,ctx.others?.length?`Also possible / 也可以：${ctx.others.join(', ')}`:''].filter(Boolean).join('\n')+'\n\n';}
   await engine.card(x,'permission',{captainOnly:true,title,zhTitle,
-   body:`${head}Change / 變更: ${said.en} / ${said.zh}\n\nWhat it reaches / 會影響:\n${reach}${notes.length?`\n\nAdjusted by the team rules / 團隊規則自動調整:\n${notes.map(n=>'  '+n).join('\n')}`:''}\n\nOnly your approval changes the team; a running Task keeps the crew it started with. / 只有你的核准會改團隊；已經在跑的任務維持原本的人員。`,
+   body:`${head}Change / 變更: ${said.en} / ${said.zh}\n\nWhat it reaches / 會影響:\n${reach}${notes.length?`\n\nAdjusted by the team rules / 團隊規則自動調整:\n${notes.map(n=>'  '+n).join('\n')}`:''}${pendingText(pending)}\n\nOnly your approval changes the team; a running Task keeps the crew it started with. / 只有你的核准會改團隊；已經在跑的任務維持原本的人員。`,
    en:{intent:`Change the Studio team: ${said.en}`,why:`${impact.length} node${impact.length===1?'':'s'} change. Firstmate proposed this; nothing changes until you approve.`,scope:{in:impact.length?impact.slice(0,12).map(i=>`${i.workflow} · ${i.label}`):['No node changes'],out:['Running Tasks','Accounts and global settings']},how:'Approve to change the team, or keep it as it is.'},
    zh:{intent:`改 Studio 團隊：${said.zh}`,why:`${impact.length} 個節點會變。這是 Firstmate 提出的；你核准前什麼都不會變。`,scope:{in:impact.length?impact.slice(0,12).map(i=>`${i.workflow} · ${i.label}`):['沒有節點會變'],out:['已經在跑的任務','帳號與全域設定']},how:'核准就改團隊，或維持現狀。'},
-   options:[{id:'approve',label:change.kind==='seat'?`Add “${change.seat.label}”`:'Approve team change',labelZh:change.kind==='seat'?`新增「${change.seat.labelZh}」`:'核准團隊變更',primary:true},{id:'close',label:'Not now',labelZh:'先不用',hold:true}]});
+   options:[{id:'approve',label:change.kind==='seat'?`Add “${change.seat.label}”`:'Approve team change',labelZh:change.kind==='seat'?`新增「${change.seat.labelZh}」`:'核准團隊變更',primary:true,...(pending.length?{select:SKILL_CHOICES,noteLabel:'How the new script skills are used',noteLabelZh:'新的 script skill 怎麼用'}:{})},{id:'close',label:'Not now',labelZh:'先不用',hold:true}]});
   return{wait:true};};
  engine.actions['crew.apply']=async x=>{
   const change=parse(x.run),card=engine.cards.list({run:x.run.id}).find(c=>c.node==='confirm'&&c.captainOnly&&c.status==='answered'&&c.answer?.choice==='approve');
   const answer=engine.trusted(x.run.id).entries.find(e=>e.record==='card-answer'&&e.data?.card===card?.id&&e.data?.choice==='approve');
   if(!card||!answer||!engine.trusted(x.run.id).ok||!engine.owns(x)||!/^captain\b/i.test(String(card.answer?.by??'')))throw new NativeToolFailure('captain_confirmation_required','The captain\'s approval of this team change is missing','需要船長核准這個團隊變更。','captain_review');
+  // the script skills the card listed: decided by this answer (with scripts, or text only), each bound to both hashes it showed
+  const pend:any[]=Array.isArray(x.run.ctx.skillPending)?x.run.ctx.skillPending:[],how=String(answer.data?.note??'').trim(),pk=engine.deps.skillPackages;
+  if(pend.length&&pk){if(how!=='scripts'&&how!=='text-only')throw new NativeToolFailure('captain_confirmation_required','The card lists script skills: the captain picks “Approve with scripts” or “Text only”','卡片上有 script skill：船長要選「核准（含 script）」或「只當文字」。','captain_review');
+   for(const p of pend){const lv=pk.o.skills.libVersion(p.id,p.v);if(!lv||lv.rec.sha256!==p.sha256||lv.rec.filesSha256!==p.filesSha256)throw new NativeToolFailure('target_changed',`Skill ${p.id}@v${p.v} is not the version the card showed`,`skill ${p.id}@v${p.v} 不是卡片上顯示的版本。`,'read_current_state');
+    if(!pk.decision(p.id,p.v))pk.decide(p.id,p.v,how==='text-only'?'text-only':'approved','captain (card)','card',{card:card.id,run:x.run.id});}}
   const {cfg,team}=now();if(cfg?.approval.card===card.id&&cfg.approval.run===x.run.id)return'ok';
   if((cfg?.hash??'')!==(x.run.params.expected??""))throw new NativeToolFailure('target_changed','The team changed after this card was shown; ask Firstmate to propose it again','團隊在這張卡顯示之後改了；請 Firstmate 重新提出。','read_current_state');
   const def=change.kind==='node'?engine.defs.get(change.workflow):undefined;

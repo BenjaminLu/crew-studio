@@ -27,11 +27,14 @@ async function load(facts) {
 }
 // opening the page detects the models again (leaving it re-arms that)
 window.addEventListener("hashchange", () => { if (!/^#\/team\b/.test(location.hash)) TM.opened = false; });
-async function change(c) {
+async function change(c, skillDecisions) {
   if (TM.busy) return; TM.busy = true;
   try {
-    const r = await fetch("/api/team/change", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ change: c, expected: TM.data?.team?.hash ?? null, project: TM.project || null }) });
+    const r = await fetch("/api/team/change", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ change: c, expected: TM.data?.team?.hash ?? null, project: TM.project || null, ...(skillDecisions ? { skillDecisions } : {}) }) });
     const j = await r.json().catch(() => ({}));
+    // a script skill the captain never decided: nothing saved yet; the page shows its scripts and hosts and asks (decidePanel)
+    if (r.status === 409 && j.code === "skillDecision") { TM.decide = { change: c, skills: j.skills || [] }; TM.busy = false; return render(); }
+    TM.decide = null;
     if (r.status === 409) { toast(T(j.error || "The team changed; reloaded.", j.tw || "團隊已經改了；已重新整理。")); TM.ask = null; TM.busy = false; return load(); }
     if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
     TM.data = j; TM.ask = null; TM.notes = j.changed?.notes ?? [];
@@ -83,8 +86,33 @@ function staleNote() {
     T(`Unavailable now: ${stale.map((m) => `${PROVIDER_NAME[m.provider] || m.provider} ${m.model}`).join(", ")}. The team still assigns ${stale.length === 1 ? "it" : "them"}, but ${stale.length === 1 ? "it was" : "they were"} not detected on this machine; a run on ${stale.length === 1 ? "it" : "them"} waits until it is available again. Pick a detected model, or sign in and detect again.`,
       `目前不可用：${stale.map((m) => `${PROVIDER_NAME[m.provider] || m.provider} ${m.model}`).join("、")}。團隊仍指派這些模型，但這台機器沒有偵測到；用到它的執行會等到它再次可用。請改選偵測到的模型，或登入後重新偵測。`)) : null;
 }
+// a pin as the team keeps it: version and both hashes (filesSha256 when the library gave it)
+const pinOf = ({ id, v, sha256, filesSha256 }) => ({ id, v, sha256, ...(filesSha256 ? { filesSha256 } : {}) });
+// a script skill's readiness after its chip (src/skillpkg: approved and prepared, text only, not approved, or what is missing)
+const READY_MARK = { ready: "✓", "text-only": "T", preparing: "…", "needs-approval": "?", "not-ready": "!" };
+function readyMark(p) {
+  const b = TM.data?.skillStatus?.[`${p.id}@v${p.v}`]; if (!b) return null;
+  return h("span", { class: `tm-ready ${b.state}`, "data-skill-ready": b.state, title: T(b.en, b.zh), "aria-label": T(b.en, b.zh) }, READY_MARK[b.state] || "");
+}
+// the captain's decision on a script skill a change brings: its scripts (with flags) and the hosts approving it allows
+function decidePanel() {
+  const d = TM.decide; if (!d) return null;
+  const all = (how) => Object.fromEntries(d.skills.map((x) => [`${x.id}@v${x.v}`, how]));
+  return h("section", { class: "card tm-decide", role: "dialog", "aria-label": T("Script skills in this change", "這個變更裡的 script skill"), "data-skill-decide": "" },
+    h("h2", {}, T("This change brings skills that run scripts", "這個變更帶來會跑 script 的 skill")),
+    d.skills.map((x) => h("div", { class: "tm-decide-skill", "data-decide-skill": `${x.id}@v${x.v}` },
+      h("b", {}, `${x.id}@v${x.v}`), " ", h("span", { class: "faint mono" }, `${String(x.sha256).slice(0, 12)} / ${String(x.filesSha256).slice(0, 12)}`),
+      h("ul", {}, x.scripts.slice(0, 12).map((sc) => h("li", { class: "mono" }, sc.path, sc.flags.length ? h("span", { class: "faint" }, ` · ${sc.flags.join(", ")}`) : null))),
+      h("div", {}, T("Network when it runs: ", "執行時可連："), x.hosts.length ? x.hosts.join(", ") : T("none", "不連網")),
+      x.bins?.length ? h("div", { class: "faint" }, T(`Programs: ${x.bins.join(", ")}`, `會用到的程式：${x.bins.join("、")}`)) : null)),
+    h("p", { class: "faint" }, T("Approving covers exactly these versions, Studio-wide. Text only: agents get the skill's text and never run its scripts.", "核准只適用於這些版本（全 Studio）。只當文字：agent 只拿到文字，不跑 script。")),
+    h("div", { class: "actions" },
+      h("button", { class: "btn primary", "data-decide": "scripts", disabled: TM.busy, onclick: () => change(d.change, all("scripts")) }, T("Approve with scripts", "核准（含 script）")),
+      h("button", { class: "btn", "data-decide": "text-only", disabled: TM.busy, onclick: () => change(d.change, all("text-only")) }, T("Text only", "只當文字")),
+      h("button", { class: "btn ghost", "data-decide": "cancel", onclick: () => { TM.decide = null; render(); } }, T("Don't add", "不搭載"))));
+}
 function skillAdd(label, have, onpick) {
-  const sel = h("select", { "aria-label": label, class: "tm-add", onchange: (e) => { const s = TM.data.library.find((x) => x.id === e.target.value); if (s) onpick({ id: s.id, v: s.v, sha256: s.sha256 }); } },
+  const sel = h("select", { "aria-label": label, class: "tm-add", onchange: (e) => { const s = TM.data.library.find((x) => x.id === e.target.value); if (s) onpick({ id: s.id, v: s.v, sha256: s.sha256, ...(s.filesSha256 ? { filesSha256: s.filesSha256 } : {}) }); } },
     h("option", { value: "" }, T("+ skill", "＋ skill")), (TM.data?.library ?? []).filter((s) => !have.includes(s.id)).map((s) => h("option", { value: s.id, title: s.description }, s.name || s.id)));
   sel.value = ""; return sel;
 }
@@ -142,8 +170,8 @@ function nodeRow(wf, row) {
   const model = modelSelect(T(`${row.label}'s model`, `${row.label} 的模型`), cur, (v) => { TM.ask = { workflow: wf.id, node: row.node, field: "model", value: v }; render(); }, { "data-custom": row.fields.model === "workflow" || row.fields.model === "project" ? "1" : null });
   const effort = effortSelect(T(`${row.label}'s effort`, `${row.label} 的 effort`), asking?.field === "effort" ? asking.value : row.effort, row.provider, (v) => { TM.ask = { workflow: wf.id, node: row.node, field: "effort", value: v }; render(); }, { "data-custom": ["workflow", "run", "project"].includes(row.fields.effort) ? "1" : null }, row.model);
   const skills = h("div", { class: "tm-skills" }, roleChip(row, wf),
-    row.skills.filter((p) => p.from === "member").map((p) => h("span", { class: "tm-skill base", title: T(`Comes with ${seatName(row.seat)}`, `來自成員「${seatName(row.seat)}」`) }, skillName(p, `${p.name || p.id}`))),
-    row.skills.filter((p) => p.from === "node").map((p) => h("span", { class: "tm-skill own" }, skillName(p, `${p.name || p.id}@v${p.v}`),
+    row.skills.filter((p) => p.from === "member").map((p) => h("span", { class: "tm-skill base", title: T(`Comes with ${seatName(row.seat)}`, `來自成員「${seatName(row.seat)}」`) }, skillName(p, `${p.name || p.id}`), readyMark(p))),
+    row.skills.filter((p) => p.from === "node").map((p) => h("span", { class: "tm-skill own" }, skillName(p, `${p.name || p.id}@v${p.v}`), readyMark(p),
       h("button", { class: "tm-x", "aria-label": T(`Remove ${p.name || p.id}`, `移除 ${p.name || p.id}`), onclick: () => change({ kind: "node", workflow: wf.id, node: row.node, set: {}, removeSkill: p.id }) }, "×"))),
     skillAdd(T(`Add a skill to ${row.label}`, `${row.label} 加 skill`), row.skills.map((p) => p.id), (pin) => change({ kind: "node", workflow: wf.id, node: row.node, set: {}, addSkill: pin })));
   const src = SOURCE[row.source] || [row.source, row.source];
@@ -174,9 +202,9 @@ function memberEditor() {
         modelSelect(T(`${L(s.label)}'s model`, `${L(s.label)} 的模型`), m, (v) => { if (!v) return; const [provider, ...rest] = v.split("/");
           change(specialist && !m ? { kind: "seat", seat: s.declared, member: { provider, model: rest.join("/"), effort: provider === "codex" ? "medium" : null, skills: [] } } : { kind: "member", seat: s.id, set: { provider, model: rest.join("/"), ...(m ? {} : { effort: provider === "codex" ? "medium" : null }) } }); }),
         m ? effortSelect(T(`${L(s.label)}'s effort`, `${L(s.label)} 的 effort`), m.effort, m.provider, (v) => change({ kind: "member", seat: s.id, set: { effort: v } }), {}, m.model) : h("span", { class: "tm-missing" }, T("Nobody yet", "還沒有人")),
-        m ? h("div", { class: "tm-skills" }, m.skills.map((p) => h("span", { class: "tm-skill own" }, skillName(p, `${p.name || p.id}@v${p.v}`),
-            h("button", { class: "tm-x", "aria-label": T(`Remove ${p.name || p.id} from ${L(s.label)}`, `從「${L(s.label)}」移除 ${p.name || p.id}`), onclick: () => change({ kind: "member", seat: s.id, set: { skills: m.skills.filter((q) => q.id !== p.id).map(({ id, v, sha256 }) => ({ id, v, sha256 })) } }) }, "×"))),
-          skillAdd(T(`Add a skill to ${L(s.label)}`, `「${L(s.label)}」加 skill`), m.skills.map((p) => p.id), (pin) => change({ kind: "member", seat: s.id, set: { skills: [...m.skills.map(({ id, v, sha256 }) => ({ id, v, sha256 })), pin] } }))) : h("span"));
+        m ? h("div", { class: "tm-skills" }, m.skills.map((p) => h("span", { class: "tm-skill own" }, skillName(p, `${p.name || p.id}@v${p.v}`), readyMark(p),
+            h("button", { class: "tm-x", "aria-label": T(`Remove ${p.name || p.id} from ${L(s.label)}`, `從「${L(s.label)}」移除 ${p.name || p.id}`), onclick: () => change({ kind: "member", seat: s.id, set: { skills: m.skills.filter((q) => q.id !== p.id).map(pinOf) } }) }, "×"))),
+          skillAdd(T(`Add a skill to ${L(s.label)}`, `「${L(s.label)}」加 skill`), m.skills.map((p) => p.id), (pin) => change({ kind: "member", seat: s.id, set: { skills: [...m.skills.map(pinOf), pin] } }))) : h("span"));
     }));
 }
 // ---------- the page ----------
@@ -221,7 +249,7 @@ function view() {
     h("div", { class: "phead" }, h("div", {}, h("span", { class: "tm-eyebrow" }, T("Crew · one team for every workflow", "船員 · 一個團隊負責所有 workflow")), h("h1", {}, T("Who runs each workflow", "每個 workflow 由誰在做")),
       h("p", {}, T("Pick a card, then change the model, effort or skills right in the table. Each change asks: only here, or the whole member.", "點一張卡，在下面直接改模型、effort、skills。每次改都會問：只改這裡，還是改整個成員。"))), h("div", { class: "tm-tools" }, projectPicker(), legend())),
     !TM.data.team ? h("div", { class: "card x-pad tm-empty", "data-team-empty": "" }, T("No team yet: every workflow uses Studio's default model. Fill the seats in the member editor.", "還沒有團隊：每個 workflow 都用 Studio 的預設模型。請在成員編輯裡補上各個位置。")) : null,
-    detection(), staleNote(),
+    detection(), staleNote(), decidePanel(),
     TM.editing ? memberEditor() : null,
     h("div", { class: "tm-cards" }, TM.data.workflows.map(card)),
     wf ? h("section", { class: "card tm-detail", "data-team-detail": wf.id, "aria-label": T(`${wf.name}: final crew`, `${wf.name}：最後的人員配置`) },
