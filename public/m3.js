@@ -302,7 +302,10 @@ function cssPath(el) {
 }
 function framed(src, o = {}) {
   // an artifact page at VIRT px wide, scaled to the column; scripts off (sandbox without allow-scripts), same origin so Studio can read it
-  const iframe = h("iframe", { src, sandbox: "allow-same-origin", title: o.title || "artifact", class: "a3-iframe", scrolling: "no" });
+  // the src goes through the capability helper: deliverables need Studio's session or a per-version capability, and the
+  // path-capability form also keeps the page's own relative subresources authorized
+  const iframe = h("iframe", { sandbox: "allow-same-origin", title: o.title || "artifact", class: "a3-iframe", scrolling: "no" });
+  setAfSrc(iframe, src);
   const over = h("div", { class: "a3-over" });
   const wrap = h("div", { class: "a3-fwrap" }, iframe, over);
   const fit = () => { const w = wrap.clientWidth || 600; const doc = iframe.contentDocument; const hh = Math.min(4000, Math.max(400, doc?.documentElement?.scrollHeight || 800));

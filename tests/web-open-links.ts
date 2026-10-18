@@ -38,7 +38,9 @@ E.actions["fixture.output"] = (x: any) => { const plain = x.run.text === "Plain 
 const until = async (fn: () => boolean) => { for (let i = 0; i < 500; i++) { if (fn()) return true; await Bun.sleep(20); } return false; };
 const desktop = { kind: "desktop" };
 const get = async (path: string, who: any = desktop, headers: Record<string, string> = {}) => { const req = new Request("http://127.0.0.1" + path, { headers: { "x-crew-session": "wol-session", ...headers } }); const url = new URL(req.url);
-  return (await m3.handle(req, url, who, false)) ?? (await runtime.handle(req, url, who, false)); };
+  let res = (await m3.handle(req, url, who, false)) ?? (await runtime.handle(req, url, who, false));
+  if (res && res.status === 302) { const loc = res.headers.get("location"); const r2 = new Request("http://127.0.0.1" + loc, { headers: { "x-crew-session": "wol-session", ...headers } }); res = (await m3.handle(r2, new URL(r2.url), who, false)) ?? res; }
+  return res; };
 try {
   // the shared builder
   const href = (artifacts as any).websiteHref;

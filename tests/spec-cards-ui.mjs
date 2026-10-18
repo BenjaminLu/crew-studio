@@ -85,7 +85,8 @@ try {
     if (width === 1440) { const [a, b] = [await tiles.nth(0).boundingBox(), await tiles.nth(1).boundingBox()]; ok(Math.abs(a.y - b.y) < 2 && b.x > a.x + a.width - 2, `S11 the two directions sit side by side ${tag}`, JSON.stringify([a, b])); }
     await p.locator(`${at("SC-959")} [data-direction-preview="design-b"]`).click();
     const dialog = p.locator("dialog[open]"); await dialog.waitFor();
-    ok((await dialog.locator("iframe").getAttribute("src")) === "/af/shop-b/1/index.html?interactive=1", `S11 互動預覽 opens direction B's interactive preview in the page ${tag}`);
+    await dialog.locator('iframe[src^="/afc/"]').waitFor();
+    ok(/^\/afc\/[^/]+\/shop-b\/1\/index\.html\?interactive=1$/.test(await dialog.locator("iframe").getAttribute("src") ?? ""), `S11 互動預覽 opens direction B's interactive preview (path-capability form) in the page ${tag}`);
     await dialog.locator("button").last().click(); await dialog.waitFor({ state: "detached" });
     // the tile's approve is the card's own option, shown only there: not ready without the ticks, and a click says why and sends nothing
     ok(await p.locator(`${at("SC-959")} .cc-actions [data-option^="approve-design"]`).count() === 0 && await p.locator(`${at("SC-959")} [data-option^="approve-design"]`).count() === 2, `S11 the approve buttons for A and B are on their tiles only ${tag}`);
