@@ -689,7 +689,11 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (choice === "confirm-door") return (await publication.beforeMerge(x, again)) ?? again();
     // the observed-policy merge: the acknowledgement recorded, the text read again, then the merge hook (it checks it all again)
     if (choice === OBSERVED_MERGE) { recordMergeAck(x, card); return (await publication.beforeMerge(x, again)) ?? { outcome: "merge", note: "the captain merges on Studio's own verification (GitHub does not enforce the required checks)" }; }
-    if (choice === "merge" || (choice === "close" && card.options.some((o) => o.id === "close" && /I merge on GitHub/.test(o.label)))) return publication.beforeMerge(x, again);
+    const onGitHub = choice === "close" && card.options.some((o) => o.id === "close" && /I merge on GitHub/.test(o.label));
+    // the card's own order: merge on GitHub, then close here. GitHub is read now rather than at the merge watch's next tick: a pull
+    // request it shows merged (or closed) is settled as the watch would settle it, never stopped as a remote that moved
+    if (onGitHub) { const settled = await closedOnGitHub(x); if (settled) return settled; }
+    if (choice === "merge" || onGitHub) return publication.beforeMerge(x, again);
     return null;
   };
   engine.actionAnswers["pr.open"] = async (x,card) => {
@@ -816,29 +820,47 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       const seen = JSON.stringify([p?.state, p?.merged, p?.merge_commit_sha, p?.head?.sha, p?.base?.ref, p?.updated_at]);
       if (seen !== lastSeen) { lastSeen = seen; lastChange = Date.now(); }
       nextAt = Date.now() - lastChange > 3600_000 ? Date.now() + 300_000 : 0;
-      if (p?.number !== Number(pr.id) || p.state !== "closed" || p.head?.repo?.full_name !== a.grant.repository || p.base?.repo?.full_name !== a.grant.repository || p.head?.ref !== pr.branch) return;
-      // merged but GitHub does not name the merge commit yet: inconclusive, read again on the next tick
-      if (p.merged === true && !SHA.test(String(p.merge_commit_sha ?? ""))) return;
+      if (!closedPull(a, pr, p)) return;
       // settled outside the polling generation: the merge hook that follows reads GitHub as its own owner
       stop(); poller.withoutGeneration(() => observeClosed(x, a, pr, p));
     }, { interval: o.mergeWatchMs ?? remoteWatchers.intervalMs });
   });
   const SHA = /^[a-f0-9]{40}$/;
-  /** The fact read on GitHub, recorded in the ledger (Studio's observation, not an answer), then the stale card settled with it. */
-  const observeClosed = (x: X, a: GitHubPrAdapter, pr: any, p: any) => {
+  /** GitHub's pull request p is this Task's, closed, and conclusive (a merge names its merge commit). */
+  const closedPull = (a: GitHubPrAdapter, pr: any, p: any) => p?.number === Number(pr.id) && p.state === "closed" && p.head?.repo?.full_name === a.grant.repository && p.base?.repo?.full_name === a.grant.repository && p.head?.ref === pr.branch
+    && !(p.merged === true && !SHA.test(String(p.merge_commit_sha ?? "")));
+  /** The captain's "I merge on GitHub" answer: GitHub read once, now; the merge (or close) recorded as the watch records it. */
+  const closedOnGitHub = async (x: X): Promise<Result | null> => {
+    if (x.ctx.pr?.adapter !== "github") return null;
+    const phase = remotePhase(x); phase.assert(); const a = selectedAdapter(x); if (!(a instanceof GitHubPrAdapter) || !a.recordedIdentity(x.ctx.pr)) return null;
+    const pr = structuredClone(x.ctx.pr);
+    let p: any; try { p = await a.withReadOwner(remoteWatchers.poller, () => a.remoteRead("pull", pr.id, 1, phase.signal, true)); } catch { phase.assert(); return null; } phase.assert();
+    if (!closedPull(a, pr, p)) return null;
+    const r = recordClosed(x, a, pr, p); if (!r) return null;
+    mergeWatches.get(`${x.run.id}/${x.node.id}`)?.();
+    x.log(`merge card: ${r.note}`); x.save(); return r;
+  };
+  /** The fact read on GitHub, recorded in the ledger (Studio's observation, not an answer): the outcome it routes to, or null. */
+  const recordClosed = (x: X, a: GitHubPrAdapter, pr: any, p: any): { outcome: "merge" | "close"; note: string } | null => {
     const card = x.rn.card, intoOther = typeof p.base?.ref === "string" && p.base.ref !== pr.base;
     const mergedAnywhere = p.merged === true && SHA.test(String(p.merge_commit_sha ?? "")), merged = mergedAnywhere && !intoOther;
     const fact = { version: 1, card, repository: a.grant.repository, pr: pr.id, branch: pr.branch, base: pr.base, actualBase: String(p.base?.ref ?? ""), reviewed: pr.head, head: SHA.test(String(p.head?.sha ?? "")) ? p.head.sha : null,
       merged, sha: mergedAnywhere ? p.merge_commit_sha : null, at: String((mergedAnywhere ? p.merged_at : p.closed_at) ?? ""), observedAt: new Date().toISOString() };
-    if (!card || !engine.owns(x)) return;
+    if (!card || !engine.owns(x)) return null;
     // merged into another branch (the pull request was retargeted on GitHub): not a merge into the base; the Task ends closed and says so
     engine.record(x, merged ? "detected-merge" : "detected-close", { head: pr.head, actor: "studio (observed on GitHub)", data: { ...fact, ...(intoOther ? { retargeted: true, mergedElsewhere: mergedAnywhere } : {}) } } as any);
     const other = merged && fact.head !== pr.head ? ` at ${String(fact.head ?? "an unknown head").slice(0, 8)}, not the head Studio verified (${pr.head.slice(0, 8)})` : "";
     const note = merged ? `pull request #${pr.id} was merged on GitHub as ${fact.sha!.slice(0, 8)}${other}`
       : intoOther ? `pull request #${pr.id} was retargeted to ${fact.actualBase} on GitHub and ${mergedAnywhere ? `merged there as ${fact.sha!.slice(0, 8)}` : "closed"}, not into ${pr.base}; the Task ends without merging into ${pr.base}`
       : `pull request #${pr.id} was closed on GitHub without merging`;
-    x.ctx.mergeDetected = merged ? fact : null; x.log(`merge card: ${note}; the card is cancelled, nothing was answered for the captain`); x.save();
-    if (!engine.observeCard(x, card, { outcome: merged ? "merge" : "close", note })) { x.ctx.mergeDetected = null; x.save(); }
+    x.ctx.mergeDetected = merged ? fact : null; x.save();
+    return { outcome: merged ? "merge" : "close", note };
+  };
+  /** The fact recorded, then the stale card settled with it. */
+  const observeClosed = (x: X, a: GitHubPrAdapter, pr: any, p: any) => {
+    const card = x.rn.card, r = recordClosed(x, a, pr, p); if (!r) return;
+    x.log(`merge card: ${r.note}; the card is cancelled, nothing was answered for the captain`); x.save();
+    if (!engine.observeCard(x, card!, r)) { x.ctx.mergeDetected = null; x.save(); }
   };
   /** The merge hook after a merge observed on GitHub: Studio's signed record of it, read again on GitHub, ends the Task as merged. */
   const detectedMerge = async (x: X) => {
