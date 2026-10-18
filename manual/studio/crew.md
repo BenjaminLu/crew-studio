@@ -1,6 +1,7 @@
 # The crew: one Studio team
 
-Who runs every workflow's agent nodes. The captain sets it on the Crew page (`#/team`); you read it and propose
+Who runs every workflow's agent nodes. The captain sets it on the Crew page (`#/team`, the sidebar's Crew; its second tab,
+`#/crew`, lists live rounds and activity); you read it and propose
 changes. Design: `docs/design/crew-seats.md`.
 
 ## Briefing

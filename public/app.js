@@ -564,7 +564,8 @@ hydrateIcons(document);
 setTheme(store.get("crew.theme", "system"));
 if (document.documentElement.classList.contains("pre-collapsed")) document.body.classList.add("side-collapsed");
 $$("#themeSeg button").forEach((b) => b.addEventListener("click", () => setTheme(b.dataset.themeSet)));
-$$(".nav-item").forEach((b) => b.addEventListener("click", () => { location.hash = `#/${b.dataset.view}`; }));
+// a nav item may open another route than its own name (Crew opens the team page, #/team)
+$$(".nav-item").forEach((b) => b.addEventListener("click", () => { location.hash = b.dataset.href || `#/${b.dataset.view}`; }));
 $("#sideTog").addEventListener("click", () => setSide(!document.body.classList.contains("side-collapsed")));
 addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); setSide(!document.body.classList.contains("side-collapsed")); } });
 addEventListener("hashchange", route);

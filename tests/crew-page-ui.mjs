@@ -60,6 +60,16 @@ try {
     await detected;
     await p.locator("[data-team-page]").waitFor();
     ok(/#\/team$/.test(p.url()), `the Crew page links to who runs each workflow ${tag}`);
+    // the sidebar's Crew opens the team page; the rounds and activity are its second tab, and #/crew deep links still open them
+    await p.goto(`${base}/#/board`); await p.evaluate(() => document.querySelector('.nav-item[data-view="crew"]').click());
+    await p.locator("[data-team-page]").waitFor();
+    ok(/#\/team$/.test(p.url()) && await p.locator('.nav-item[data-view="crew"][aria-current="page"]').count() === 1, `the sidebar's Crew opens the team page and stays marked current ${tag}`, p.url());
+    ok(await p.locator('[data-crew-tabs="team"] [data-crew-tab="team"][aria-current="page"]').count() === 1 && (await p.locator("[data-crew-tabs]").innerText()).includes(lang === "en" ? "Rounds & activity" : "回合與紀錄"), `the team page shows Crew's two tabs, Team current ${tag}`, await p.locator("[data-crew-tabs]").innerText());
+    await p.locator('[data-crew-tab="rounds"]').click(); await p.locator('[data-crew-tabs="rounds"]').waitFor();
+    ok(/#\/crew$/.test(p.url()) && await p.locator('.nav-item[data-view="crew"][aria-current="page"]').count() === 1 && await p.locator('[data-crew-tab="rounds"][aria-current="page"]').count() === 1, `the Rounds tab opens #/crew under the same sidebar item ${tag}`, p.url());
+    ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Crew's tabs fit the width ${tag}`);
+    if (process.env.CREW_SHOTS) await p.screenshot({ path: join(process.env.CREW_SHOTS, `crew-tabs-${lang}-${width}.png`) });
+    await p.locator('[data-crew-tab="team"]').click(); await p.locator("[data-team-page]").waitFor();
     // ---------- detected models ----------
     const claudeStatus = p.locator('[data-provider-status="claude"]'), codexStatus = p.locator('[data-provider-status="codex"]');
     await p.waitForFunction(() => document.querySelector('[data-provider-status="claude"]')?.dataset.state === "detected" && document.querySelector('[data-provider-status="codex"]')?.dataset.state === "detected", null, { timeout: 30000 });

@@ -230,10 +230,14 @@ function view() {
       wf.nodes.map((n) => nodeRow(wf, n)),
       TM.notes.length ? h("div", { class: "tm-adjust", role: "status", "data-team-notes": "" }, h("b", {}, T("Adjusted by the team rules:", "團隊規則自動調整：")), h("ul", {}, TM.notes.map((n) => h("li", {}, `${n.workflow} · ${n.node}: ${L(n)}`)))) : null) : null);
 }
-routes.team = view;
-// the Crew page (live agents) links here: who runs each workflow is set up on this page
-{ const base = routes.crew; routes.crew = (arg) => { const v = base(arg); const head = !arg && v?.querySelector?.(".phead");
-  if (head && !head.querySelector("[data-team-link]")) head.append(h("a", { class: "btn", href: "#/team", "data-team-link": "" }, icon("crew", "ic sm"), T("Who runs each workflow", "每個 workflow 由誰在做"))); return v; }; }
+// Crew (the sidebar item) is two tabs: the team (#/team, where the sidebar opens) and its rounds and activity (#/crew,
+// whose deep links #/crew/<actor> keep working)
+const crewTabs = (on) => h("nav", { class: "tm-tabs", "aria-label": T("Crew", "船員"), "data-crew-tabs": on },
+  h("a", { href: "#/team", "data-crew-tab": "team", "aria-current": on === "team" ? "page" : null, ...(on === "team" ? {} : { "data-team-link": "" }) }, icon("crew", "ic sm"), T("Team", "團隊")),
+  h("a", { href: "#/crew", "data-crew-tab": "rounds", "aria-current": on === "rounds" ? "page" : null }, icon("activity", "ic sm"), T("Rounds & activity", "回合與紀錄")));
+routes.team = () => { const v = view(); v.prepend(crewTabs("team")); return v; };
+{ const base = routes.crew; routes.crew = (arg) => { const v = base(arg);
+  if (!arg && v?.prepend && !v.querySelector?.("[data-crew-tabs]")) v.prepend(crewTabs("rounds")); return v; }; }
 // a team change elsewhere (a captain card answer) refreshes an open page
 window.liveListen?.("team", () => { TM.data = null; if (S.route?.name === "team") load(); });
 })();

@@ -84,3 +84,9 @@
 .tm-prov.unavailable b,.tm-prov.unread b{color:var(--bad)}
 .tm-prov-why{border-left:2px solid var(--warn);padding-left:6px;flex-basis:100%;overflow-wrap:anywhere}
 .tm-detect [data-redetect]{margin-left:auto}
+/* Crew's two tabs: the team and its rounds and activity */
+.tm-tabs{display:flex;width:max-content;max-width:100%;gap:2px;padding:2px;margin-bottom:12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px}
+.tm-tabs a{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:4px 12px;border-radius:6px;font-size:13px;color:var(--text-2);text-decoration:none;white-space:nowrap}
+.tm-tabs a:hover{color:var(--text)}
+.tm-tabs a[aria-current="page"]{background:var(--surface);color:var(--text);box-shadow:var(--shadow-1)}
+@media (max-width:480px){.tm-tabs a{min-height:44px}}

@@ -364,7 +364,7 @@ function viewBoard() {
     : list.map((x) => row(x, x.id === BD.sel, x.id === tabbable, BD.mode === "narrow" && x.id === BD.sel ? detail(x) : null));
   return h("div", { class: `page bd-page tb-${BD.mode}`, "data-board": "1" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Board", "看板")), h("p", { id: "boardSub" }, BD.list === null ? T("Loading tasks…", "載入中…") : subtitle(c))),
-      h("div", { class: "actions" }, ghBar(), h("a", { class: "btn", href: "#/crew" }, icon("crew"), T("Crew", "船員")), h("a", { class: "btn primary", href: "#/runs" }, icon("plus"), T("New task", "新任務")))),
+      h("div", { class: "actions" }, ghBar(), h("a", { class: "btn", href: "#/team" }, icon("crew"), T("Crew", "船員")), h("a", { class: "btn primary", href: "#/runs" }, icon("plus"), T("New task", "新任務")))),
     // the operator turned the OS sandbox and egress proxy off (CREW_LOCAL_UNRESTRICTED=1): said above everything else
     BD.pol?.execution === "local-unrestricted" && window.crewUnrestrictedNotice ? window.crewUnrestrictedNotice() : null,
     BD.mode === "narrow" && waiting ? h("a", { class: "tb-waitbar", href: "#/inbox", "data-tb-waitbar": String(waiting) }, h("span", {}, T(`${waiting} task${waiting === 1 ? "" : "s"} waiting for you`, `${waiting} 個任務在等你`)), h("span", {}, T("Go to Inbox →", "去收件匣 →"))) : null,
