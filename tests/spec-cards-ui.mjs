@@ -33,7 +33,7 @@ const base = (id, run, kind, node, workflow, title, zhTitle, en, zh, extra = {})
 const offered = [{ id: "shop-a", n: 1, producer: "design-a", format: "web" }, { id: "shop-b", n: 1, producer: "design-b", format: "web" }];
 const proof = { check: "core/artifact-ready", evidence: [], seq: 6 };
 const accept = base("SC-959", "R-082", "acceptance", "accept", "web-prototype", "Accept 轉角書店單頁網站?", "驗收 轉角書店單頁網站？", { intent: "A one-page bookshop site with a booking form." }, { intent: "一間叫轉角書店的單頁網站，有預約取書表單。" }, {
-  detail: { intent: { en: "A one-page bookshop site with a booking form." }, intents: ["A one-page bookshop site with a booking form."], why: [], how: [], scope: { in: [], out: [] }, beforeAfter: { text: "", images: [] }, walk: [], gates: [],
+  runTitle: "轉角書店單頁網站", detail: { intent: { en: "A one-page bookshop site with a booking form." }, intents: ["A one-page bookshop site with a booking form."], why: [], how: [], scope: { in: [], out: [] }, beforeAfter: { text: "", images: [] }, walk: [], gates: [],
     done: [{ text: "Every delivered source passes its deterministic readiness check", proved: true, proofs: [proof] }, { text: "The content and presentation match the captain's intent", proved: false, proofs: [] }],
     artifactAcceptance: { kind: "artifact", offered, review: { node: "accept", round: 1, attempt: 1 }, refinements: [] } },
   links: [{ label: "Open website in new tab", href: "/af/shop-a/1/index.html", for: "shop-a@1" }, { label: "Open website in new tab", href: "/af/shop-b/1/index.html", for: "shop-b@1" }, { label: "design-a v1", href: "/#/review/shop-a/1", for: "shop-a@1" }, { label: "design-b v1", href: "/#/review/shop-b/1", for: "shop-b@1" }],
@@ -43,7 +43,7 @@ const DONE = ["test/percent.test.ts: percent(1999, 15) returns 300 (planned fail
 const spec = base("SC-960", "R-087", "dispatch", "dispatch", "code-firstmate", "Approve the spec: Add percent()", "核准規格：新增 percent()",
   { intent: "Add percent(amount, pct) rounded to integer cents.", why: "Shops need discounts.", how: "A worker builds it on its own branch. Checks and a fresh reviewer judge each round.", done: DONE, scope: { in: ["src/money.ts", "test/percent.test.ts"], out: [] } },
   { intent: "新增 percent(amount, pct)，四捨五入到整數分。", why: "商店需要折扣。", how: "worker 在自己的 branch 上做；每一輪由檢查和全新的 reviewer 判定。", done: DONE, scope: { in: ["src/money.ts", "test/percent.test.ts"], out: [] } },
-  { body: "# Add percent()\n\nWhat: percent helper\n\nDone when:\n1. ...\nRepository: /tmp/money-kit (main) · branch crew/R-087",
+  { runTitle: "Add percent()", body: "# Add percent()\n\nWhat: percent helper\n\nDone when:\n1. ...\nRepository: /tmp/money-kit (main) · branch crew/R-087",
     spec: { scope: ["src/money.ts", "test/percent.test.ts"], verification: ["app/server.ts"], questions: [{ q: "Negative half-cent ties: which way?", choices: ["Away from zero", "Banker's", "Not supported yet"] }, { q: "Fractional percentages?", choices: [] }] },
     options: [{ id: "dispatch", label: "Approve the spec and start", labelZh: "核准規格並開工", primary: true }, { id: "rescope", label: "Adjust the scope", labelZh: "調整範圍", note: true, noteLabel: "What the new scope adds or removes", noteLabelZh: "新範圍要加入或移除什麼" }, { id: "drop", label: "Drop", labelZh: "放棄" }] });
 // the same spec raised again after a rescope: what changed since the spec the captain approved
@@ -67,6 +67,9 @@ try {
     const ctx = await browser.newContext({ viewport: { width, height: 1000 } }); const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
     await p.addInitScript(([l, open]) => { try { localStorage.setItem("crew.lang", l); localStorage.setItem("crew.chatOpen", open); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} }, [lang, width > 760 ? "1" : "0"]);
     const fits = async () => p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1);
+    const posts = [], fixture = Object.fromEntries(cards.map((c) => [c.id, c]));
+    await p.route("**/api/scards/*/answer", async (r) => { const body = r.request().postDataJSON(), id = decodeURIComponent(r.request().url().split("/").at(-2)); posts.push({ id, ...body });
+      await r.fulfill({ json: { ...fixture[id], status: "answered", answer: { choice: body.choice, note: body.note ?? null, by: "captain", at: new Date().toISOString(), confirm: null } } }); });
 
     // ---------- S11: the web directions, side by side ----------
     await p.goto(`${url}/#/inbox/SC-959`); await p.waitForSelector(`${at("SC-959")} [data-directions]`, { timeout: 15000 });
@@ -84,9 +87,15 @@ try {
     const dialog = p.locator("dialog[open]"); await dialog.waitFor();
     ok((await dialog.locator("iframe").getAttribute("src")) === "/af/shop-b/1/index.html?interactive=1", `S11 互動預覽 opens direction B's interactive preview in the page ${tag}`);
     await dialog.locator("button").last().click(); await dialog.waitFor({ state: "detached" });
-    // the tile's approve is the card's own option: with no intent ticked it says what is missing, and nothing is sent
-    await p.locator(`${at("SC-959")} [data-direction-approve="design-a"]`).click(); await p.waitForTimeout(150);
-    ok(await p.locator(`${at("SC-959")} [data-card-msg], ${at("SC-959")} [data-card-hint]`).count() > 0 && (await (await fetch(`${url}/api/scards/SC-959`, { headers: { "x-crew-session": token } })).json()).status === "open", `S11 a tile's approve runs the card's own option and its checks ${tag}`);
+    // the tile's approve is the card's own option, shown only there: not ready without the ticks, and a click says why and sends nothing
+    ok(await p.locator(`${at("SC-959")} .cc-actions [data-option^="approve-design"]`).count() === 0 && await p.locator(`${at("SC-959")} [data-option^="approve-design"]`).count() === 2, `S11 the approve buttons for A and B are on their tiles only ${tag}`);
+    const approveA = p.locator(`${at("SC-959")} [data-direction-approve="design-a"]`);
+    ok(await approveA.getAttribute("data-ready") === "false", `S11 a tile's approve is not ready while the intent line is unticked ${tag}`);
+    await approveA.click(); await p.waitForTimeout(200);
+    const msg11 = await p.locator(`${at("SC-959")} [data-card-msg]`).innerText();
+    ok(msg11 === L("Tick every intent line (0 of 1) or write a note", "請勾完每一條意圖（0/1），或寫備註") && !posts.length && await p.evaluate(() => document.activeElement?.matches("[data-intent-tick]")), `S11 clicking it says what is missing, moves to the tick, and sends nothing ${tag}`, JSON.stringify([msg11, posts]));
+    await p.locator(`${at("SC-959")} [data-intent-tick="0"]`).check();
+    ok(await approveA.getAttribute("data-ready") === "true" && await p.evaluate(() => document.activeElement?.matches("[data-intent-tick]")), `S11 ticking the line makes the tile's approve ready in place ${tag}`);
     await p.locator(`${at("SC-959")} [data-directions]`).scrollIntoViewIfNeeded(); await p.waitForTimeout(400);
     ok(await fits(), `S11 no horizontal scroll ${tag}`);
     await p.screenshot({ path: join(shots, `s11-directions-${lang}-${width}.png`) });
@@ -98,22 +107,43 @@ try {
     ok((await p.locator(`${at("SC-960")} .cc-h b`).innerText()).startsWith(L("Approve the spec: ", "核准規格：")) && (await p.locator(`${at("SC-960")} [data-option]`).allInnerTexts()).map((t) => t.split(" · ")[0]).join("|") === L("Approve the spec and start|Adjust the scope|Drop", "核准規格並開工|調整範圍|放棄"),
       `S13 titled as approving the spec, options in plain names ${tag}`, (await p.locator(`${at("SC-960")} [data-option]`).allInnerTexts()).join("|"));
     ok(await fits(), `S13 no horizontal scroll ${tag}`);
+    await p.screenshot({ path: join(shots, `s13-spec-${lang}-${width}.png`) });
+    ok((await p.locator(`[data-inbox-row="SC-960"]`).innerText()).includes(L("Add percent()", "新增 percent()")), `S13 the Inbox row names the spec card's Task in the page language ${tag}`, await p.locator(`[data-inbox-row="SC-960"]`).innerText());
     // ---------- S14: the open scope questions are a question block that fills the rescope note ----------
     const qs = p.locator(`${at("SC-960")} [data-spec-question]`);
     ok(await qs.count() === 2 && await qs.nth(0).locator("[data-spec-choice]").count() === 3 && await qs.nth(1).locator("[data-spec-choice]").count() === 0 && await qs.nth(1).locator("[data-spec-answer]").count() === 1, `S14 each question with its quick choices and an answer box ${tag}`);
     ok((await p.locator(`${at("SC-960")} [data-spec-questions-state="open"]`).innerText()).includes(L("stay out of scope", "不在範圍內")), `S14 unanswered, the card says the questions stay out of scope ${tag}`);
     ok((await p.locator(`${at("SC-960")} [data-sec="spec-scope"]`).innerText()).includes("src/money.ts") && (await p.locator(`${at("SC-960")} [data-sec="spec-scope"]`).innerText()).includes("app/server.ts"), `S14 the spec's scope and read-only verification paths show ${tag}`);
     ok(!(await p.locator(`${at("SC-960")} .rt-card-body`).isVisible()), `S14 the full spec text is folded away under the parts shown ${tag}`);
-    await qs.nth(0).locator('[data-spec-choice="Banker\'s"]').click();
-    await qs.nth(1).locator("[data-spec-answer]").fill(L("Not supported yet", "先不支援"));
-    const note = await p.locator(`${at("SC-960")} [data-note-for="rescope"]`).inputValue();
-    ok(await qs.nth(0).locator('[data-spec-choice="Banker\'s"]').getAttribute("aria-pressed") === "true" && note.includes("1. Negative half-cent ties: which way? → Banker's") && note.includes(`2. Fractional percentages? → ${L("Not supported yet", "先不支援")}`), `S14 a quick choice and a typed answer fill the Adjust the scope note ${tag}`, note);
+    const box = p.locator(`${at("SC-960")} [data-note-for="rescope"]`), rescope = p.locator(`${at("SC-960")} [data-option="rescope"]`);
+    await box.fill("Keep the API small.");
+    const banker = qs.nth(0).locator('[data-spec-choice="Banker\'s"]');
+    await banker.focus(); await p.keyboard.press("Enter");
+    ok(await banker.getAttribute("aria-pressed") === "true" && await p.evaluate(() => document.activeElement?.dataset.specChoice === "Banker's"), `S14 a quick choice is pressed in place and keeps the keyboard focus ${tag}`);
+    await qs.nth(1).locator("[data-spec-answer]").pressSequentially(L("Not supported yet", "先不支援"));
+    ok(await p.evaluate(() => document.activeElement?.matches("[data-spec-answer]")) && await rescope.getAttribute("data-ready") === "true" && (await p.locator(`${at("SC-960")} [data-spec-questions-state]`).innerText()).includes(L("2 of 2 answered", "已回答 2/2")),
+      `S14 typing an answer keeps the focus, makes Adjust the scope ready and updates the count line ${tag}`);
+    // the captain adds a line after the answers block: changing an answer replaces the block only
+    await box.evaluate((t) => { t.value += "\n\nAlso update the README."; t.dispatchEvent(new Event("input", { bubbles: true })); });
+    await qs.nth(0).locator('[data-spec-choice="Away from zero"]').click();
+    const note = await box.inputValue();
+    ok(note.startsWith("Keep the API small.\n\n") && note.trimEnd().endsWith("Also update the README.") && note.includes("1. Negative half-cent ties: which way? → Away from zero") && !note.includes("Banker's") && note.includes(`2. Fractional percentages? → ${L("Not supported yet", "先不支援")}`),
+      `S14 the answers fill one block of the Adjust the scope note; the captain's text before and after it stays ${tag}`, note);
     await p.locator(`${at("SC-960")} [data-sec="questions"]`).scrollIntoViewIfNeeded(); await p.screenshot({ path: join(shots, `s14-questions-${lang}-${width}.png`) });
-    let sent = null; await p.route(`**/api/scards/SC-960/answer`, async (r) => { sent = r.request().postDataJSON(); await r.fulfill({ json: { ...spec, status: "answered", answer: { choice: "rescope", note: sent.note, by: "captain", at: new Date().toISOString(), confirm: null } } }); });
-    await p.locator(`${at("SC-960")} [data-option="rescope"]`).click(); await p.waitForTimeout(300);
-    ok(sent?.choice === "rescope" && /Banker's/.test(sent.note) && /Fractional percentages\?/.test(sent.note), `S14 choosing Adjust the scope sends the answers as its note ${tag}`, JSON.stringify(sent));
-    await p.unroute(`**/api/scards/SC-960/answer`);
-    await p.screenshot({ path: join(shots, `s13-spec-${lang}-${width}.png`) });
+    // approving the spec with answers on the card would drop them: blocked, with why, and nothing sent
+    await p.locator(`${at("SC-960")} [data-option="dispatch"]`).click(); await p.waitForTimeout(200);
+    const msg14 = await p.locator(`${at("SC-960")} [data-card-msg]`).innerText();
+    ok(msg14 === L('You answered 2 questions: press "Adjust the scope" so the spec takes your answers, or clear the answers and then approve.', "你回答了 2 題：按「調整範圍」讓規格帶入回答；或清除回答後再核准") && !posts.length
+      && await p.evaluate(() => document.activeElement?.matches("[data-card-msg]")) && await p.locator(`${at("SC-960")} [data-spec-clear]`).isVisible(), `S14 approving with answers is blocked: it says why, moves the focus there, offers 清除回答, sends nothing ${tag}`, JSON.stringify([msg14, posts]));
+    await p.screenshot({ path: join(shots, `s14-blocked-${lang}-${width}.png`) });
+    await p.locator(`${at("SC-960")} [data-spec-clear]`).click();
+    const cleared = await box.inputValue();
+    ok(cleared === "Keep the API small.\n\nAlso update the README." && await p.locator(`${at("SC-960")} [data-spec-questions-state="open"]`).count() === 1 && await p.locator(`${at("SC-960")} [aria-pressed="true"][data-spec-choice]`).count() === 0 && await p.locator(`${at("SC-960")} [data-option="dispatch"]`).getAttribute("data-ready") === "true",
+      `S14 清除回答 removes the answers block only; the out-of-scope line is back and approving is ready ${tag}`, cleared);
+    await qs.nth(0).locator('[data-spec-choice="Banker\'s"]').click();
+    await rescope.click(); await p.waitForTimeout(300);
+    const sent = posts.at(-1);
+    ok(posts.length === 1 && sent?.choice === "rescope" && /Banker's/.test(sent.note) && sent.note.startsWith("Keep the API small."), `S14 choosing Adjust the scope sends the answers with the captain's own text as its note ${tag}`, JSON.stringify(posts));
     // ---------- S20: a spec raised again says what changed since the approved one ----------
     await p.goto(`${url}/#/inbox/SC-961`); await p.waitForSelector(`${at("SC-961")} [data-sec="spec-changed"]`, { timeout: 15000 });
     const secs2 = await p.$$eval(`${at("SC-961")} [data-sec]`, (es) => es.map((e) => e.dataset.sec));

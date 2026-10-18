@@ -99,6 +99,7 @@ const SCARD_CSS = `
 .cc-sec ol.cc-qs { display: grid; gap: 10px; list-style: none; padding-left: 0; }
 .cc-qs li { display: grid; gap: 6px; }
 .cc-qchoices { display: flex; flex-wrap: wrap; gap: 6px; }
+.cc-sec > [data-spec-clear] { justify-self: start; }
 .cc-sec ul.cc-delta { list-style: none; padding-left: 0; gap: 2px; }
 .cc-delta li { padding: 2px 6px; border-radius: 4px; overflow-wrap: anywhere; }
 .cc-delta li.add { background: color-mix(in srgb, var(--ok) 10%, transparent); }
@@ -377,13 +378,40 @@ function mountCard(el, card, opts = {}) {
   }
   // a spec card carries its spec as data (cards.ts CardSpec): the scope, what it reads to verify, its open questions
   const specCard = (c) => c.kind === "dispatch" && !!c.spec && Array.isArray(c.spec.questions) && Array.isArray(c.spec.scope);
-  const ANSWERS = "Scope answers / 範圍問題的回答:";
-  // the answers to the spec's open questions, as the "Adjust the scope" note: what the captain typed above them stays
+  // the answers to the spec's open questions become one block of the "Adjust the scope" note, between two marker lines:
+  // the captain's own text before and after the block stays as written; only the block is replaced (or removed)
+  const ANSWERS = "Scope answers / 範圍問題的回答:", ANSWERS_END = "(end of scope answers / 範圍回答結束)";
+  const answeredCount = (c) => specCard(c) ? c.spec.questions.filter((_, i) => String(st.specAnswers?.[i] ?? "").trim()).length : 0;
   function answersNote(c) {
     const qs = c.spec.questions, a = st.specAnswers || {};
     const lines = qs.map((q, i) => String(a[i] ?? "").trim() ? `${i + 1}. ${q.q} → ${String(a[i]).trim()}` : null).filter(Boolean);
-    const own = String(st.notes.rescope || "").split(ANSWERS)[0].trim();
-    return [own, lines.length ? `${ANSWERS}\n${lines.join("\n")}` : ""].filter(Boolean).join("\n\n");
+    const note = String(st.notes.rescope || ""), at = note.indexOf(ANSWERS), end = at < 0 ? -1 : note.indexOf(ANSWERS_END, at);
+    const before = (at < 0 ? note : note.slice(0, at)).trim(), after = at < 0 ? "" : end < 0 ? "" : note.slice(end + ANSWERS_END.length).trim();
+    return [before, lines.length ? `${ANSWERS}\n${lines.join("\n")}\n${ANSWERS_END}` : "", after].filter(Boolean).join("\n\n");
+  }
+  // the question block follows an answer in place (like sync): the pressed choice keeps the focus, the note box, the
+  // count line and the clear control update, then sync() updates the buttons and the hint
+  function specSync(c) {
+    const root = el.querySelector(`[data-card-root="${CSS.escape(c.id)}"]`); if (!root) return;
+    const box = root.querySelector('[data-note-for="rescope"]'); if (box && box.value !== (st.notes.rescope || "")) box.value = st.notes.rescope || "";
+    for (const li of root.querySelectorAll("[data-spec-question]")) { const i = Number(li.dataset.specQuestion), v = st.specAnswers?.[i] ?? "";
+      for (const b of li.querySelectorAll("[data-spec-choice]")) b.setAttribute("aria-pressed", String(b.dataset.specChoice === v));
+      const input = li.querySelector("[data-spec-answer]"); if (input && document.activeElement !== input) input.value = c.spec.questions[i].choices.includes(v) ? "" : v; }
+    const n = answeredCount(c), state = root.querySelector("[data-spec-questions-state]");
+    if (state) { state.dataset.specQuestionsState = n ? "answered" : "open"; state.textContent = questionsLine(c, n); }
+    const clear = root.querySelector("[data-spec-clear]"); if (clear) clear.hidden = !n;
+  }
+  const questionsLine = (c, n) => n
+    ? T(`${n} of ${c.spec.questions.length} answered: the answers are in "Adjust the scope" below; choose it and the spec is rewritten with them. Unanswered ones stay out of scope.`, `已回答 ${n}/${c.spec.questions.length}：回答已放進下方「調整範圍」；選它就會照回答重寫規格。沒回答的不在範圍內。`)
+    : T("Unanswered, these stay out of scope: approving the spec builds without them. Answer one to adjust the scope instead.", "沒回答的問題不在範圍內：核准規格就照不含它們的範圍做。要納入，就回答它再調整範圍。");
+  function setAnswer(c, i, v) {
+    const box = el.querySelector('[data-note-for="rescope"]'); if (box) st.notes.rescope = box.value; // what the captain typed there stays
+    st.specAnswers = st.specAnswers || {}; st.specAnswers[i] = v; st.notes.rescope = answersNote(c); st.msg = ""; specSync(c); sync();
+  }
+  function clearAnswers(c) {
+    const box = el.querySelector('[data-note-for="rescope"]'); if (box) st.notes.rescope = box.value;
+    st.specAnswers = {}; st.notes.rescope = answersNote(c); st.msg = ""; specSync(c); sync();
+    el.querySelector("[data-spec-question] [data-spec-choice], [data-spec-question] [data-spec-answer]")?.focus();
   }
   // a spec raised again: what changed since the last spec card, line by line (+ added, − removed)
   function changedView(ch) {
@@ -401,17 +429,13 @@ function mountCard(el, card, opts = {}) {
       sp.verification.length ? h("p", {}, h("span", { class: "cc-count" }, T("Reads to verify (no changes): ", "只讀來驗證（不改）：")), h("span", { class: "cc-mono" }, sp.verification.join(", "))) : null));
     if (!sp.questions.length) return out;
     st.specAnswers = st.specAnswers || {};
-    const answered = sp.questions.filter((_, i) => String(st.specAnswers[i] ?? "").trim()).length;
-    const set = (i, v, redraw) => { st.specAnswers[i] = v; st.notes.rescope = answersNote(c); st.msg = "";
-      if (redraw) return render(); const box = el.querySelector('[data-note-for="rescope"]'); if (box) box.value = st.notes.rescope; };
     out.push(sec("questions", T("Open scope questions", "範圍上的問題"), h("ol", { class: "cc-qs", "data-spec-questions": "" }, sp.questions.map((q, i) => h("li", { "data-spec-question": i },
       h("p", {}, `${i + 1}. ${q.q}`),
-      open && q.choices.length ? h("div", { class: "cc-qchoices", role: "group", "aria-label": q.q }, q.choices.map((ch) => h("button", { type: "button", class: "btn sm", "data-spec-choice": ch, "aria-pressed": String(st.specAnswers[i] === ch), onclick: () => set(i, st.specAnswers[i] === ch ? "" : ch, true) }, ch))) : null,
+      open && q.choices.length ? h("div", { class: "cc-qchoices", role: "group", "aria-label": q.q }, q.choices.map((ch) => h("button", { type: "button", class: "btn sm", "data-spec-choice": ch, "aria-pressed": String(st.specAnswers[i] === ch), onclick: () => setAnswer(c, i, st.specAnswers[i] === ch ? "" : ch) }, ch))) : null,
       open ? h("input", { class: "input", type: "text", "data-spec-answer": i, value: q.choices.includes(st.specAnswers[i]) ? "" : st.specAnswers[i] || "", placeholder: q.choices.length ? T("Or write your own answer", "或寫你自己的回答") : T("Your answer", "你的回答"), "aria-label": `${i + 1}. ${q.q}`,
-        oninput: (e) => set(i, e.target.value, false) }) : null))),
-      h("p", { class: "cc-count", "data-spec-questions-state": answered ? "answered" : "open" }, answered
-        ? T(`${answered} of ${sp.questions.length} answered: the answers are in "Adjust the scope" below; choose it and the spec is rewritten with them. Unanswered ones stay out of scope.`, `已回答 ${answered}/${sp.questions.length}：回答已放進下方「調整範圍」；選它就會照回答重寫規格。沒回答的不在範圍內。`)
-        : T("Unanswered, these stay out of scope: approving the spec builds without them. Answer one to adjust the scope instead.", "沒回答的問題不在範圍內：核准規格就照不含它們的範圍做。要納入，就回答它再調整範圍。"))));
+        oninput: (e) => setAnswer(c, i, e.target.value) }) : null))),
+      h("p", { class: "cc-count", "data-spec-questions-state": answeredCount(c) ? "answered" : "open" }, questionsLine(c, answeredCount(c))),
+      open ? h("button", { type: "button", class: "btn sm ghost", "data-spec-clear": "", hidden: !answeredCount(c), onclick: () => clearAnswers(c) }, T("Clear the answers", "清除回答")) : null));
     return out;
   }
   function plainView(c) {
@@ -480,6 +504,8 @@ function mountCard(el, card, opts = {}) {
   // two or more website directions side by side: each its label, a still thumbnail (scripts off), its interactive
   // preview, the website in a new tab, and the approve button for that direction (the card's own option, so its
   // ticks and note rules apply). The card's links these tiles already carry are not repeated under them.
+  // the options a web A/B card shows on its direction tiles instead of in the options row
+  const directionOptions = (c, d) => { const off = d?.artifactAcceptance?.offered; return Array.isArray(off) && off.length > 1 && off.every((r) => r && r.format === "web") ? off.map((r) => `approve-${r.producer}`).filter((id) => c.options.some((o) => o.id === id)) : []; };
   function directionsView(c, offered, shown) {
     const links = Array.isArray(c.links) ? c.links.filter((l) => l && typeof l.href === "string") : [];
     const sites = links.filter((l) => l.label === "Open website in new tab" && /^\//.test(l.href));
@@ -496,7 +522,8 @@ function mountCard(el, card, opts = {}) {
         h("div", { class: "cc-dir-actions" },
           href ? h("button", { class: "btn", type: "button", "data-direction-preview": r.producer, onclick: (e) => window.crewInteractivePreview ? window.crewInteractivePreview(href, e.currentTarget) : (location.hash = own) }, T("Interactive preview", "互動預覽")) : h("a", { class: "btn", href: review, "data-direction-preview": r.producer }, T("Review", "審閱")),
           href ? h("a", { class: "btn", href, target: "_blank", rel: "noopener", "data-direction-open": r.producer }, T("Open in new tab", "新分頁開啟")) : null,
-          opt && c.status === "open" ? h("button", { class: "btn primary", type: "button", "data-direction-approve": r.producer, onclick: () => el.querySelector(`[data-option="${CSS.escape(opt.id)}"]`)?.click() }, artifactOptionLabel(c, opt, T)) : null));
+          // this direction's approve is the card's own option, here only (the buttons below leave it out); sync() keeps its readiness
+          opt && c.status === "open" ? (() => { const why = needs().missing(opt); return h("button", { class: "btn primary", type: "button", "data-option": opt.id, "data-direction-approve": r.producer, "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy, onclick: () => answer(opt) }, artifactOptionLabel(c, opt, T)); })() : null));
     })));
   }
   function artifactDetailView(d, c) {
@@ -526,6 +553,8 @@ function mountCard(el, card, opts = {}) {
     // why option o cannot be sent yet, and the field the captain fills to fix it (null when it can be sent)
     const lack = (o) => { const why = (text, field) => ({ text, field }); if (!expectsInterview && (o.note || o.select?.length) && !noteOf(o)) return why(T(`${o.label}: ${o.noteLabel || (o.select?.length ? "pick one first" : "write it first")}`, `${o.labelZh || o.label}：${o.noteLabelZh || o.noteLabel || (o.select?.length ? "請先選一個" : "請先寫下來")}`), `[data-note-for="${CSS.escape(o.id)}"],[data-card-pick="${CSS.escape(o.id)}"]`);
       if (o.hold) return null;if(expectsInterview&&!draft)return why(T("This interview version is unavailable. Reload the card; no answer was submitted.","這個訪談版本無法使用。請重新載入卡片；尚未送出回答。"));if(draft&&form.questions.some(q=>!String(draft.answers[q.key]||" ").trim()))return why(T("Answer every question below", "請回答下方每個問題"),'[data-interview][aria-invalid="true"]'); if (n && st.ticks.size < n && !st.note.trim()) return why(T(`Tick every intent line (${st.ticks.size} of ${n}) or write a note`, `請勾完每一條意圖（${st.ticks.size}/${n}），或寫備註`), "[data-intent-tick]:not(:checked)");
+      // answers on a spec card go with "Adjust the scope": approving the unchanged spec would drop them without a word
+      if (o.id === "dispatch" && answeredCount(c)) { const k = answeredCount(c); return why(T(`You answered ${k} question${k === 1 ? "" : "s"}: press "Adjust the scope" so the spec takes your answers, or clear the answers and then approve.`, `你回答了 ${k} 題：按「調整範圍」讓規格帶入回答；或清除回答後再核准`), null); }
       if (one && !st.confirm) return why(T("Confirm the door first", "請先確認門"), "[data-confirm-door]");
       if (ackOk && c.acknowledge.option === o.id && !st.ack) return why(T("Tick the acknowledgement first", "請先勾選確認"), "[data-acknowledge]"); return null; };
     const missing = (o) => lack(o)?.text || null;
@@ -540,11 +569,12 @@ function mountCard(el, card, opts = {}) {
     if (composing) { if (!pendingRender) pendingRender = "sync"; return; } // a rebuild asked for meanwhile still wins
     const root = el.querySelector("[data-card-root]"); if (!root || root.getAttribute("data-card-root") !== st.card.id) return render();
     const { c, missing, tickCount } = needs();
-    for (const b of root.querySelectorAll(".cc-actions [data-option]")) { const o = c.options.find((x) => x.id === b.dataset.option); const why = o ? missing(o) : null;
+    for (const b of root.querySelectorAll(".cc-actions [data-option], [data-direction-approve]")) { const o = c.options.find((x) => x.id === b.dataset.option); const why = o ? missing(o) : null;
       b.dataset.ready = why ? "false" : "true"; if (why) b.title = why; else b.removeAttribute("title"); }
     const count = root.querySelector("[data-tick-count]"); if (count) count.textContent = tickCount();
     const hint = root.querySelector("[data-card-hint]"); if (hint) { hint.textContent = st.msg ? "" : c.options.map(missing).find(Boolean) || ""; hint.hidden = !hint.textContent; }
     const msg = root.querySelector("[data-card-msg]"); if (msg) msg.textContent = st.msg;
+    if (specCard(c)) specSync(c);
   }
   // One answer, for this card only: the note is read from this card's own fields when the button is pressed (what the
   // captain sees in the box is what is sent, even a value put there without an input event), and a click that cannot
@@ -564,7 +594,7 @@ function mountCard(el, card, opts = {}) {
     // in flight: the buttons are disabled in place and the status line, already on the card, says Sending… (a screen
     // reader announces a status whose text changes, not one inserted with its text)
     st.busy = true; st.msg = ""; const root = el.querySelector("[data-card-root]");
-    if (root && root.getAttribute("data-card-root") === c.id) { for (const b of root.querySelectorAll(".cc-actions [data-option]")) b.disabled = true;
+    if (root && root.getAttribute("data-card-root") === c.id) { for (const b of root.querySelectorAll(".cc-actions [data-option], [data-direction-approve]")) b.disabled = true;
       const s = root.querySelector("[data-card-sending]"); if (s) s.textContent = T("Sending…", "送出中…"); const m = root.querySelector("[data-card-msg]"); if (m) m.textContent = ""; } else render();
     const took = (got) => { st.card = got && got.id ? got : { ...c, status: "answered", answer: { choice: o.id } }; st.ok = true; st.msg = ""; try { opts.onAnswered && opts.onAnswered(st.card); } catch {} };
     try {
@@ -631,7 +661,8 @@ function mountCard(el, card, opts = {}) {
         h("span", {}, T("I confirm: this is one-way, a revert will not undo it", "我確認：這是單向門，revert 無法還原"))));
       if (ackOk) kids.push(h("label", { class: "cc-tick rt-row", for: `ack-${c.id}` }, h("input", { type: "checkbox", id: `ack-${c.id}`, "data-acknowledge": c.id, checked: st.ack, onchange: (e) => { st.ack = e.target.checked; st.msg = ""; sync(); } }),
         h("span", {}, T(c.acknowledge.en, c.acknowledge.zh || c.acknowledge.en))));
-      kids.push(h("div", { class: "cc-actions actions" }, c.options.map((o) => { const why = missing(o);
+      const onTiles = new Set(directionOptions(c, d));
+      kids.push(h("div", { class: "cc-actions actions" }, c.options.filter((o) => !onTiles.has(o.id)).map((o) => { const why = missing(o);
         return h("button", { class: `btn ${o.primary ? "primary" : ""}`, type: "button", "data-option": o.id, ...(draft&&o.id==="continue"?{"data-save-interview":""}:{}), "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy, onclick: () => answer(o) }, targetLabel(c, o)); })));
       const hint = st.msg ? "" : c.options.map(missing).find(Boolean) || "";
       kids.push(h("p", { class: "cc-count", "data-card-hint": "", hidden: !hint }, hint));
