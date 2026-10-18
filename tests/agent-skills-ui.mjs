@@ -109,7 +109,10 @@ try {
     await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('[data-editor="code-firstmate"] [data-node="spec"]').catch(() => {});
     await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="plan"]').catch(() => {});
     await selectNode(p, "plan");
-    const v0 = (await (await fetch(`${base}/api/wf/code-firstmate`)).json()).def.version;
+    const v0def = (await (await fetch(`${base}/api/wf/code-firstmate`)).json()).def; const v0 = v0def.version;
+    // plan already pins its duty skills (plain-writing, technical-writing); a captain's skills come after them, in the order picked
+    const planPre = await order(p); const planPins = (v0def.nodes.find((n) => n.id === "plan").skills ?? []).map((s) => `${s.id}@v${s.v}`);
+    const planHead = planPins.length ? planPins.join(", ") + ", " : "";
     await turnOn(p, "alpha");
     await turnOn(p, "beta");
     const o1 = await order(p);
@@ -118,9 +121,9 @@ try {
     const saved = await wait(p, '[data-diff-k="skills"]');
     const diffText = saved ? await p.textContent('[data-diff-k="skills"]') : "";
     const after = (await (await fetch(`${base}/api/wf/code-firstmate`)).json()).def;
-    ok(JSON.stringify(o1) === '["alpha","beta"]' && JSON.stringify(o2) === '["beta","alpha"]' && saved && diffText.includes("plan: beta@v1, alpha@v1") && after.version === v0 + 1
-      && JSON.stringify((after.nodes.find((n) => n.id === "plan").skills ?? []).map((s) => `${s.id}@v${s.v}`)) === '["beta@v1","alpha@v1"]',
-      "two skills on one node make a new version whose diff names both, in order (editor)", JSON.stringify({ o1, o2, diffText, v0, v: after.version }));
+    ok(JSON.stringify(o1) === JSON.stringify([...planPre, "alpha", "beta"]) && JSON.stringify(o2) === JSON.stringify([...planPre, "beta", "alpha"]) && saved && diffText.includes(`plan: ${planHead}beta@v1, alpha@v1`) && after.version === v0 + 1
+      && JSON.stringify((after.nodes.find((n) => n.id === "plan").skills ?? []).map((s) => `${s.id}@v${s.v}`)) === JSON.stringify([...planPins, "beta@v1", "alpha@v1"]),
+      "two skills on one node make a new version whose diff names both, in order (editor)", JSON.stringify({ planPre, o1, o2, diffText, v0, v: after.version }));
     ok(await noHScroll(p), "the editor has no sideways scroll at 1440");
     // done 5 in the editor: v2 exists, moving to it is a new version
     writeFileSync(join(alpha, "SKILL.md"), md("alpha", "Alpha: short sentences, one idea each", "ALPHA TWO"));
@@ -132,18 +135,18 @@ try {
     await p.click('[data-skill-upgrade="alpha"]'); await p.click("[data-save]");
     const up = await wait(p, '[data-diff-k="skills"]'); const upText = up ? await p.textContent('[data-diff-k="skills"]') : "";
     const after2 = (await (await fetch(`${base}/api/wf/code-firstmate`)).json()).def;
-    ok(up && upText.includes("plan: beta@v1, alpha@v2") && after2.version === after.version + 1, "moving to v2 in the editor is a new workflow version", upText);
+    ok(up && upText.includes(`plan: ${planHead}beta@v1, alpha@v2`) && after2.version === after.version + 1, "moving to v2 in the editor is a new workflow version", upText);
     // done 6 in the panel
     await selectNode(p, "plan");
     await turnOn(p, "greedy");
     const ign = await wait(p, '[data-skill-ignored="greedy"]') ? await p.textContent('[data-skill-ignored="greedy"]') : "";
     ok(/allowed-tools/.test(ign) && /network/.test(ign) && /ignored/i.test(ign) && /tools/.test(ign) && /sandbox/.test(ign), "a skill cannot grant tools: the node panel says its request was ignored", ign);
     await p.click('[data-skill-off="greedy"]');
-    ok(JSON.stringify(await order(p)) === '["beta","alpha"]', "turning a skill off removes it from the node's list");
+    { const left = await order(p); ok(JSON.stringify(left) === JSON.stringify([...planPre, "beta", "alpha"]), "turning a skill off removes it from the node's list", JSON.stringify(left)); }
     // r3: the wording (no "frontmatter"; the size and the ignored request in plain words)
     await turnOn(p, "greedy");
     const ign2 = await p.textContent('[data-skill-ignored="greedy"]'); const size2 = await p.textContent("[data-skill-size]");
-    ok(ign2.includes("This skill asked for allowed-tools and network. Studio ignored the request: a skill is text only and never changes tools, sandbox, network or credentials.") && /^Skill text on this node: \d+ B of 96 KB$/.test(size2.trim())
+    ok(ign2.includes("This skill asked for allowed-tools and network. Studio ignored the request: a skill is text only and never changes tools, sandbox, network or credentials.") && /^Skill text on this node: [\d.]+ (B|KB) of 96 KB$/.test(size2.trim())
       && !/frontmatter/i.test(await p.textContent("main")), "the panel's words: the ignored request and the skill text size, no 'frontmatter'", JSON.stringify([ign2, size2]));
     await p.click('[data-skill-off="greedy"]');
     // a node pinned to delta v1 while v2 exists (the "v2 available" state the captures show)
@@ -170,13 +173,15 @@ try {
     const avail = await p.evaluate(() => { const rows = [...document.querySelectorAll('[data-node-skills="review"] [data-skill-avail]')];
       return { ids: rows.map((r) => r.dataset.skillAvail), sugg: rows.filter((r) => r.dataset.suggested).map((r) => r.dataset.skillAvail), described: rows.filter((r) => r.querySelector("[data-skill-desc]")?.textContent.trim() && r.querySelector("[data-skill-fit]")).length,
         firstOther: rows.findIndex((r) => !r.dataset.suggested), lastSugg: rows.map((r) => !!r.dataset.suggested).lastIndexOf(true), folded: rows.filter((r) => !r.dataset.suggested).every((r) => r.closest(".rt-skill-more")) }; }).catch(() => ({}));
-    ok(avail.ids?.length >= 10 && ["code-review", "security-review", "visual-design-review"].every((s) => avail.sugg.includes(s)) && !avail.sugg.includes("film-direction") && avail.lastSugg < avail.firstOther && avail.described >= 10,
+    // the reviewer pins code-review and security-review by duty, so they are in its list, not offered again; the rest of its fits are suggested first
+    const reviewPinned = await order(p);
+    ok(avail.ids?.length >= 10 && ["code-review", "security-review"].every((s) => reviewPinned.includes(s) && !avail.ids.includes(s)) && avail.sugg.includes("visual-design-review") && !avail.sugg.includes("film-direction") && avail.lastSugg < avail.firstOther && avail.described >= 10,
       "the review node's panel lists the library with descriptions and fit, the reviewer's suggestions first", JSON.stringify(avail));
     ok(avail.folded && /Other skills/.test(await p.textContent('[data-node-skills="review"] .rt-skill-more summary')), "the other skills wait under Other skills", JSON.stringify(avail));
     // two library skills on the node, reordered, saved: the new version keeps that order
     const rv0 = (await (await fetch(`${base}/api/wf/code-firstmate`)).json()).def.version;
-    const pre = await order(p); await turnOn(p, "code-review"); await turnOn(p, "security-review"); await p.click('[data-skill-up="security-review"]');
-    const ro = await order(p); const want = [...pre, "security-review", "code-review"];
+    const pre = await order(p); await turnOn(p, "visual-design-review"); await turnOn(p, "accessible-ui"); await p.click('[data-skill-up="accessible-ui"]');
+    const ro = await order(p); const want = [...pre, "accessible-ui", "visual-design-review"];
     await p.fill("[data-save-note]", "review skills"); await p.click("[data-save]"); await wait(p, '[data-diff-k="skills"]');
     const rdef = (await (await fetch(`${base}/api/wf/code-firstmate`)).json()).def;
     const rpins = rdef.nodes.find((n) => n.id === "review").skills ?? [];
@@ -251,7 +256,8 @@ try {
     ok(newer, `the "v2 available" notice and its control at ${tag}`);
     const nums = await p.$$eval('[data-node-skills="plan"] .rt-skill-n', (els) => els.map((e) => e.textContent)).catch(() => []);
     const bw = await p.$eval('[data-node-skills="plan"]', (el) => el.getBoundingClientRect().width).catch(() => 9999);
-    ok(JSON.stringify(nums) === '["1.","2.","3."]' && (width < 700 || bw <= 641), `the skills are numbered 1, 2, 3 and the block is at most 640 px wide at ${tag}`, JSON.stringify({ nums, bw }));
+    const planN = await p.$$eval('[data-node-skills="plan"] [data-node-skill]', (els) => els.length).catch(() => 0);
+    ok(planN >= 3 && JSON.stringify(nums) === JSON.stringify(Array.from({ length: planN }, (_, i) => `${i + 1}.`)) && (width < 700 || bw <= 641), `the skills are numbered 1, 2, 3… and the block is at most 640 px wide at ${tag}`, JSON.stringify({ nums, bw }));
     const firstUp = await p.$('[data-node-skills="plan"] [data-skill-up]').catch(() => null);
     const dis = firstUp ? await firstUp.evaluate((e) => ({ d: e.disabled, a: e.getAttribute("aria-disabled"), cls: e.className })) : {};
     ok(dis.d === true && dis.a === "true" && /\bbtn\b/.test(dis.cls) && !/\bghost\b/.test(dis.cls), `the first row's up arrow is a disabled bordered button with aria-disabled at ${tag}`, JSON.stringify(dis));
