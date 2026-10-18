@@ -27,6 +27,9 @@ changes. Design: `docs/design/crew-seats.md`.
   again. A pick changed on the run page is recorded next to the crew, with any rule it breaks. A staffed Task
   (code-firstmate, coffee-kit) takes this run's efforts too, on top of its approved staffing; reviewing seats stay at
   medium or more.
+- **Image steps.** An image hook (`image.generate`) runs on the crew too: its seat's member if that model can
+  generate images, else the `image-maker`. With nobody who can, the work is refused and the seat card names the
+  missing capability (`image-generation`).
 - **Checks.** A judged check runs as its reviewing seat (`reviewer` or `design-reviewer`) and shows on the Crew page.
 - **Staffed workflows** (code-firstmate, coffee-kit): when the team fills every seat the workflow needs, Studio
   derives the project's signed staffing from the team. No staffing card, no keep-crew card on an upgrade, and a

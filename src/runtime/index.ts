@@ -73,7 +73,7 @@ export type RuntimeDeps = {
   coffeeChoice?:()=>{provider:"codex";model:string;effort:string|null}|null;
   /** Studio's configured model per provider (chat settings, env, Codex config): the startup workflow's default when no exact model param was given. */
   startupModel?:(provider:"claude"|"codex")=>string|null|undefined;
-  generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference, rules?: import("../operating-rules").RulesSection) => Promise<import("../providers/codex-image").CodexImage>;
+  generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference, rules?: import("../operating-rules").RulesSection, crew?: { model: string; effort: string | null }) => Promise<import("../providers/codex-image").CodexImage>;
   staffingFacts?: () => Promise<StaffingFacts[]>;
   staffingAdmission?: StaffingAdmission;
   staffingProject?: (id:string) => StaffingProject;

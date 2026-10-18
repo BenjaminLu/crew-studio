@@ -399,10 +399,11 @@ const runtime = createRuntime({coffeeVideo:coffeeTools.ready?(request=>renderCof
   // repair turns go only to Studio's own Firstmate conversation (like staffingPending), never a takeover terminal session
   readiness: { logins: gateLogins, knownProviders: () => [...choices], repoRoot: ROOT, ...(Number(process.env.CREW_GATE_REPAIR_WAIT_MS) > 0 ? { repairWaitMs: Number(process.env.CREW_GATE_REPAIR_WAIT_MS) } : {}), ask: (text: string, repair: { draft: string; nonce: string }) => { const v = main.view(); if (v.context !== "studio" || v.state === "detached") return false; main.enqueue("card", text, "studio-gate", undefined, repair); return true; } },
   log: studioLog, send, fmRoot: dirname(STATE), protectedRoots: PROTECTED, store, m3: { store: m3.store, runs: m3.runs, lane: m3.lane,useArtifactReviewPolicy:m3.useArtifactReviewPolicy }, fileorg: m7.fileorg, docs, improve, studioUrl: () => `http://127.0.0.1:${PORT}`,
-  generateImage: (prompt, authorize, signal, reference, rules) => {
-    const config = codexConfig(PROJECT), model = chatSettings().models.codex || process.env.CREW_CODEX_MODEL || config.model;
+  // the crew's pick for the image step when the Studio team staffs it; else Studio's configured Codex model
+  generateImage: (prompt, authorize, signal, reference, rules, crew) => {
+    const config = codexConfig(PROJECT), model = crew?.model || chatSettings().models.codex || process.env.CREW_CODEX_MODEL || config.model;
     if (!model) throw new Error("Configure a Codex model before generating images");
-    return generateCodexImage({ prompt, authorize, signal, reference, rules: rules ?? new OperatingRules(DATA).section(null), approved: { model, effort: config.effort } });
+    return generateCodexImage({ prompt, authorize, signal, reference, rules: rules ?? new OperatingRules(DATA).section(null), approved: { model, effort: crew ? crew.effort : config.effort } });
   },
   // domain packs' runtime steps: the firstmate coding pipeline (packs/firstmate)
   install: [(engine, c) => { installCode(engine, { dataDir: c.dataDir, projects: c.projects, improve, poller:githubPoller }); packGenesis = installPackGenesis(engine, { dataDir: c.dataDir, artifacts: m3.store }); }], skills: improve.skills });

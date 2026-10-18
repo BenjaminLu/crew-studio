@@ -78,14 +78,20 @@ export function validateTeam(t:any):asserts t is Team{
 /** The seat a role falls back to when neither the node nor the role names one (a workflow written before seats). */
 export function fallbackSeat(def:any,roleId:string|null|undefined):string{
  const r=String(roleId??'');if(r==='coordinator')return'coordinator';if(r==='reviewer'||r==='judge')return'reviewer';if(r==='designer'&&def?.kind==='code')return'design-reviewer';return'maker';}
-/** A node the crew staffs: an agent node, or a loop that runs agent turns of its own (its coordinator role). */
-export type Slot={node:string;label:string;kind:string;role:string|null;seat:string;declared:boolean;skills:Pin[];def:{provider?:string;model?:string;effort?:string|null}};
+/** Hook steps that run a model the crew picks: the image adapter (image.generate) runs on a member that can generate images. */
+export const IMAGE_HOOKS=new Set(['image.generate']);
+export const IMAGE_CAP='image-generation';
+/** The seat an image hook falls back to (declared by a workflow like images and coffee-kit; this is its shape when none does). */
+export const IMAGE_SEAT:SeatDecl={id:'image-maker',label:'Image maker',labelZh:'圖像產出',needs:[IMAGE_CAP],suggest:{provider:'codex'}};
+/** A node the crew staffs: an agent node, a loop that runs agent turns of its own (its coordinator role), or an image hook.
+ *  needs: the capability tags its member must have (an image hook: image generation). */
+export type Slot={node:string;label:string;kind:string;role:string|null;seat:string;declared:boolean;skills:Pin[];def:{provider?:string;model?:string;effort?:string|null};needs?:string[]};
 export function slotsOf(def:any):Slot[]{
  const out:Slot[]=[];
- for(const n of def?.nodes??[]){if(n.kind!=='agent'&&n.kind!=='loop')continue;const role=nodeRole(def,n)??null;if(n.kind==='loop'&&!role)continue;
+ for(const n of def?.nodes??[]){const hook=n.kind==='hook'&&IMAGE_HOOKS.has(String(n.do??''));if(n.kind!=='agent'&&n.kind!=='loop'&&!hook)continue;const role=nodeRole(def,n)??null;if(n.kind==='loop'&&!role)continue;
   const r=def.roles?.find((x:any)=>x.id===role),declared=typeof n.seat==='string'?n.seat:typeof r?.seat==='string'?r.seat:null;
   const d:Slot['def']={};if(n.provider)d.provider=n.provider;if(n.model)d.model=n.model;if(n.effort)d.effort=n.effort;
-  out.push({node:n.id,label:String(n.label??n.id),kind:n.kind,role,seat:declared??fallbackSeat(def,role),declared:!!declared,skills:Array.isArray(n.skills)?n.skills.map((p:any)=>({id:String(p.id),v:Number(p.v),sha256:String(p.sha256)})):[],def:d});}
+  out.push({node:n.id,label:String(n.label??n.id),kind:n.kind,role,seat:declared??(hook?IMAGE_SEAT.id:fallbackSeat(def,role)),declared:!!declared,skills:Array.isArray(n.skills)?n.skills.map((p:any)=>({id:String(p.id),v:Number(p.v),sha256:String(p.sha256)})):[],def:d,...(hook?{needs:[IMAGE_CAP]}:{})});}
  return out;
 }
 /** A judged check (a model judges a node's work) occupies a reviewing seat too: shown and resolved like a node. */
@@ -125,7 +131,14 @@ export function resolveCrew(team:Team|null,def:any,run:RunOverride={},hash:strin
  const slots=slotsOf(def),missing=new Set<string>(),notes:Note[]=[],projectSkills=new Set<string>();
  const memberOf=(seat:string)=>projectMember(team,project,seat)?.member;
  const rows:Resolved[]=slots.map(s=>{
-  const o=overrideFor(team,def,s),seat=o?.seat??s.seat,pm=projectMember(team,project,seat),m=pm?.member;
+  const o=overrideFor(team,def,s),hookNotes:Note[]=[];let seat=o?.seat??s.seat,pm=projectMember(team,project,seat);
+  // a slot that needs a capability (an image hook) runs on a member that has it: its seat's, else the image maker's (said in a note);
+  // with neither, the image-maker seat is missing. A model written on the node or its workflow override is taken as is.
+  if(s.needs?.length&&!(s.def.provider&&s.def.model)&&!(o?.provider&&o?.model)){const can=(p:typeof pm)=>!!p&&s.needs!.every(t=>capabilitiesOf(p.member.provider,p.member.model).includes(t));
+   if(!can(pm)){const img=projectMember(team,project,IMAGE_SEAT.id);
+    if(pm&&can(img)){const me=seatLabel(team,seat,def);hookNotes.push({en:`${me.en} (${pm.member.provider} ${pm.member.model}) cannot generate images; ${s.label} runs as the image maker (${img!.member.provider} ${img!.member.model}).`,zh:`${me.zh}（${pm.member.provider} ${pm.member.model}）不能產生圖片；${s.label}改由圖像產出（${img!.member.provider} ${img!.member.model}）來做。`});}
+    seat=IMAGE_SEAT.id;pm=can(img)?img:null;}}
+  const m=pm?.member;
   const from=(k:'provider'|'model'|'effort'):Source=>pm?.from.has(k)?'project':'team';if(pm?.from.has('skills'))projectSkills.add(s.node);
   const f:Resolved['fields']={seat:o?.seat?'workflow':'team',provider:from('provider'),model:from('model'),effort:from('effort')};
   let provider:Resolved['provider']=m?.provider??null,model=m?.model??null,effort:string|null=m?m.effort:null;
@@ -136,7 +149,7 @@ export function resolveCrew(team:Team|null,def:any,run:RunOverride={},hash:strin
   const removed=(o?.remove??[]).filter(id=>s.skills.some(p=>p.id===id));
   const member=(m?.skills??[]).map(p=>({...p,from:'member' as const}));
   const nodeSkills=[...s.skills.filter(p=>!removed.includes(p.id)),...(o?.add??[])].filter((p,i,a)=>a.findIndex(q=>q.id===p.id)===i&&!member.some(q=>q.id===p.id)).map(p=>({...p,from:'node' as const}));
-  return{node:s.node,label:s.label,kind:s.kind,role:s.role,seat,provider,model,effort,skills:[...member,...nodeSkills],source:'team',fields:f,custom:false,notes:[],removed};});
+  return{node:s.node,label:s.label,kind:s.kind,role:s.role,seat,provider,model,effort,skills:[...member,...nodeSkills],source:'team',fields:f,custom:false,notes:hookNotes,removed};});
  // the rules: never silent. A reviewing seat (and alt-maker) does not run on the model of the seat it reviews; a reviewing seat thinks at medium or more.
  if(team)for(const r of rows){if(!r.provider||!r.model)continue;const target=reviewsOf(team,r.seat,def);if(!target)continue;
   const theirs=new Set(rows.filter(x=>x.seat===target&&x.provider&&x.model).map(keyOf));if(!theirs.size&&memberOf(target))theirs.add(keyOf(memberOf(target)!));

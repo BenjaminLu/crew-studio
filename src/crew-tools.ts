@@ -4,7 +4,7 @@
 // added), with a suggestion filtered by the capabilities the seat needs; when no model qualifies, the card says which
 // capability is missing and where to add an account, and offers nothing to approve.
 import {createHash} from 'node:crypto';
-import {withJudges,CrewStore,resolveCrew,applyChange,validateChange,changeImpact,crewBadge,teamBody,emptyTeam,slotsOf,declaredSeats,seatLabel,seatUses,capabilitiesOf,projectLayer,reviewingSeat,CAP_LABELS,BUILTIN_SEATS,EFFORTS,type CrewChange,type Team,type SeatDecl,type Member} from './domain/crew';
+import {withJudges,CrewStore,resolveCrew,applyChange,validateChange,changeImpact,crewBadge,teamBody,emptyTeam,slotsOf,declaredSeats,seatLabel,seatUses,capabilitiesOf,projectLayer,reviewingSeat,IMAGE_SEAT,CAP_LABELS,BUILTIN_SEATS,EFFORTS,type CrewChange,type Team,type SeatDecl,type Member} from './domain/crew';
 import {staffingApplies,staffingHash} from './domain/staffing';
 import {crewApplies,judgeSlots} from './crew-guard';
 import {crewWorkflows} from './crew-routes';
@@ -102,7 +102,7 @@ export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Prom
  async function seatGate(def:any,owner:{key:string}){
   const cfg=store.current();if(!cfg||!(crewApplies(def)||staffingApplies(def)))return;const team=teamBody(cfg);
   const res=resolveCrew(team,staffingApplies(def)?withRoleNodes(def):def,{},cfg.hash);if(!res.missing.length)return;
-  const id=res.missing[0],decl=team.seats[id]??declaredSeats(def).find(s=>s.id===id)??null,lab=seatLabel(team,id,def);
+  const id=res.missing[0],decl=team.seats[id]??declaredSeats(def).find(s=>s.id===id)??(id===IMAGE_SEAT.id?IMAGE_SEAT:null),lab=seatLabel(team,id,def);
   const facts=await o.facts().catch(()=>[] as Facts),need:SeatDecl=decl??{id,label:lab.en,labelZh:lab.zh};
   const cands=seatCandidates(need,facts),unmet=unmetCapabilities(need,facts);
   // a role a workflow upgrade added: name it and the versions

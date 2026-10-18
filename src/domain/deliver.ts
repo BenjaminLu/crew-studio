@@ -21,7 +21,9 @@ import { roleSkillName, type Engine, type X } from "../runtime/engine";
 type Deps = { dataDir: string; artifacts: ArtifactStore; lane: any; fileorg: any; docs: any;
   /** Studio's docs for a document about Crew Studio itself (R-032): a folder (tests), null for none, or by default
    *  the docs bundled with Studio (the checkout's docs/, or the copies embedded in the binary) */
-  studioDocs?: string | null; generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference, rules?: RulesSection) => Promise<CodexImage> };
+  studioDocs?: string | null;
+  /** crew: the model and effort the Studio team gives the image step (its Task's signed crew record); absent, the adapter's own Codex choice */
+  generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference, rules?: RulesSection, crew?: { model: string; effort: string | null }) => Promise<CodexImage> };
 const hash = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 /** A document's title is its own # heading, never the raw prompt that asked for it. */
@@ -85,6 +87,9 @@ export function installDeliver(engine: Engine, d: Deps) {
   engine.actions["image.generate"] = async x => {
     if (!d.generateImage) throw new Error("sandboxed image generation unavailable");
     if (x.run.params.provider && x.run.params.provider !== "codex") throw new Error("image generation requires Codex");
+    // the image step runs the crew's pick for this node (recorded at the Task's start, like an agent node's), on the Codex image adapter
+    const crew = engine.deps.approvedPick?.(x.run, x.node) ?? null;
+    if (crew && (crew.provider !== "codex" || !crew.model)) throw new Error(`The image step needs a model that can generate images; the crew gives it ${crew.provider} ${crew.model ?? ""}. Put a Codex image model on the image maker seat.`);
     const authorize = () => { if (x.cancelled() || !engine.owns(x)) throw new Error("image owner ended"); };
     authorize();
     const old = x.ctx.deliver?.draft;
@@ -99,7 +104,8 @@ export function installDeliver(engine: Engine, d: Deps) {
       const rules = new OperatingRules(d.dataDir).section(x.run.params.project || null); x.rn.data = { ...x.rn.data, operatingRules: rules.hash };
       const use = role && x.skillUse ? x.skillUse() : null;
       if (use?.roleSkill) { const step = [...x.run.steps].reverse().find(s => s.node === x.node.id && s.state === "running"); if (step) { step.roleSkill = use.roleSkill; step.skills = use.skills; } x.log(`skills loaded: ${roleSkillName(use.roleSkill)}`); x.save(); }
-      const image = await d.generateImage(refinement.prompt, authorize, controller.signal, refinement.reference, rules);
+      if (crew) { x.rn.data = { ...x.rn.data, crewPick: { provider: crew.provider, model: crew.model, effort: crew.effort ?? null } }; x.save(); }
+      const image = await d.generateImage(refinement.prompt, authorize, controller.signal, refinement.reference, rules, crew ? { model: crew.model!, effort: crew.effort ?? null } : undefined);
       authorize(); verifyImagePng(image.bytes);
       mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "image.png"), image.bytes);
       const id = old?.id ?? `out-${x.run.id.toLowerCase()}-draft`;

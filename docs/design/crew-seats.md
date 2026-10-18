@@ -15,6 +15,12 @@ GitHub connect orphaned the approval (H2/H3), and nothing showed who finally run
   `{provider, model, effort, skills[]}`; the member's skills are library skills pinned `{id, v, sha256}` and go with the
   member everywhere. Built-in seats: `coordinator` (Firstmate's turns in a workflow), `maker`, `alt-maker`, `reviewer`,
   `design-reviewer`. Specialist seats are declared by a workflow: `{id, label, labelZh, reviews?, needs?, suggest?}`.
+- **Image hooks.** An `image.generate` hook is a crew slot: its seat is `node.seat`, else its role's, else
+  `image-maker`, and it needs `image-generation`. It runs its seat's member when that model can generate images, else
+  the `image-maker` member (with a note); with neither, `image-maker` is missing (the seat card names the capability).
+  The Task records the hook's pick in `crew-resolved`; the image adapter runs that model and effort (no team: its own
+  Codex choice, as before). Coffee's image step already runs its signed staffing's `image-worker`, which the team
+  derives from `image-maker`.
 - **Seat of a node.** `node.seat`, else its role's `seat`, else a fallback by role id. Every built-in agent role has one
   (web-prototype design-b → `alt-maker`; reviewers → `reviewer`; designer reviews → `design-reviewer`).
 - **Skills of a node** = member skills (read-only on the node) + the node's own skills (pinned, as before), minus the
@@ -86,8 +92,3 @@ project: `{kind:"project",project,seat,set}`, `{kind:"project-restore",project,s
 The most recent approved code-firstmate staffing seeds the team; other approved workflows whose picks differ become
 workflow overrides. Idempotent (a Studio that has a team is never touched); tested on fixture copies only.
 `CREW_TEAM_SEED=0` skips the seeding: per-project staffing stays as it was until the captain sets up a team.
-
-## Deferred
-
-- Image hook nodes (images, coffee's image step) keep the dedicated image adapter's own Codex choice; coffee's
-  `image-maker` seat only decides whether the team covers coffee-kit.
