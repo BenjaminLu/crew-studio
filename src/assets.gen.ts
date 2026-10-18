@@ -54,7 +54,6 @@ import a50 from "../public/transcripts.js" with { type: "file" };
 import a51 from "../public/vendor/opencc-js-1.4.2-t2cn.min.js" with { type: "file" };
 import a52 from "../public/vendor/opencc-js-LICENSE.txt" with { type: "file" };
 import a53 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
-import a54 from "../public/workflow-overview.js" with { type: "file" };
 
 export const ASSETS: Record<string, string> = {
   "/app.css": a0,
@@ -111,5 +110,4 @@ export const ASSETS: Record<string, string> = {
   "/vendor/opencc-js-1.4.2-t2cn.min.js": a51,
   "/vendor/opencc-js-LICENSE.txt": a52,
   "/vendor/qrcode-1.4.4.min.js": a53,
-  "/workflow-overview.js": a54,
 };

@@ -54,10 +54,10 @@ try {
   await p.waitForSelector('[data-inbox-studio] [data-option="dispatch"]', { timeout: 120000 });
   ok(!!runId && await p.evaluate(() => window.__noReload === 1) && (await p.textContent("#navInbox")).trim() === "1", "a Studio card that arrives shows in the open Inbox live (the page did not reload) and counts in the sidebar", JSON.stringify(started));
   // ---------- the Overview counts and lists it ----------
-  await other.goto(`${base}/#/board`); await other.waitForSelector("[data-need-scard]", { timeout: 15000 }).catch(() => {});
+  await other.goto(`${base}/#/board`); await other.waitForSelector("[data-task] [data-inbox-link]", { timeout: 15000 }).catch(() => {});
   const ov = await other.textContent("#view");
-  // the Board (unit board) replaced the old Overview at #/board: Needs you counts the Studio card and lists it
-  ok((await other.textContent("#needsCount").catch(() => "")).trim() === "1" && await other.locator("[data-need-scard]").count() === 1, "the Board counts the Studio card under Needs you and lists it", ov.slice(0, 300));
+  // the Board (unit board) replaced the old Overview at #/board: it counts the Task waiting on the Studio card and links to the card
+  ok((await other.textContent('[data-tb-tab="you"] .tb-count').catch(() => "")).trim() === "1" && await other.locator("[data-task] [data-inbox-link]").count() === 1, "the Board counts the Task waiting on the Studio card and links to the card", ov.slice(0, 300));
   // ---------- answered elsewhere: it leaves the open Inbox live ----------
   const card = await p.getAttribute("[data-inbox-studio] [data-scard]", "data-scard");
   const ans = await post(other, `/api/scards/${card}/answer`, { choice: "dispatch" });

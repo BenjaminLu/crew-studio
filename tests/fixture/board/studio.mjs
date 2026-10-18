@@ -1,11 +1,16 @@
-// Three Studio runs in parallel, shaped like the runtime's own /api/wruns, /api/wruns/<id> and
+// Studio runs in parallel, shaped like the runtime's own /api/wruns, /api/wruns/<id> and
 // /api/scards answers (src/runtime/index.ts): R-101 in build round 2, R-102 waiting on its merge
-// card, R-103 failed at CI. The definition is code-firstmate v2 as the runtime serves it.
+// card, R-103 failed at CI, R-104 waiting on its door card (its scope meets R-101's: both change
+// src/money.ts), R-105 waiting while Firstmate decides an escalation first. The definition is
+// code-firstmate v2 as the runtime serves it.
 // Used by tests/board-ui.mjs (served through Playwright routes) and for the Board screenshots.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 const def = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "code-firstmate.def.json"), "utf8"));
+// the agent rounds' roles and seats, as packs/firstmate/workflows/code-firstmate.wf.yaml declares them (the Board names the seat)
+def.roles ??= [{ id: "worker", label: "Worker", seat: "maker" }, { id: "reviewer", label: "Reviewer", seat: "reviewer" }];
+for (const n of def.nodes) if (["build", "fix"].includes(n.id)) n.role ??= "worker"; else if (n.id === "review") n.role ??= "reviewer";
 
 export function boardFixture(now = Date.now()) {
   const at = (min) => new Date(now - min * 60000).toISOString();
@@ -41,6 +46,12 @@ export function boardFixture(now = Date.now()) {
   n4.door = { ...n4.door, outcome: "one-way" };
   const s4 = [step(1, "door", "check", "passed", 6), step(2, "door-pick", "card", "waiting", 4)];
 
+  // R-105: review asked a question; Firstmate diagnoses it first (an escalation pending with Firstmate, no captain card)
+  const n5 = base(blank());
+  pass(n5, "build"); pass(n5, "ci");
+  Object.assign(n5.review, { state: "running", visits: 1, waiting: "firstmate", startedAt: at(3) });
+  const s5 = [step(1, "build", "agent", "passed", 15), step(2, "review", "agent", "waiting", 3)];
+
   const card = (id, run, node, kind, title, why, options, o = {}) => ({ id, run, node, visit: 1, kind, title: { en: title, "zh-TW": title }, sections: { en: { intent: title, why }, "zh-TW": { intent: title, why } },
     body: `Intent: ${title}\n\n${why}`, options, confirmDoor: true, door: "two-way", links: [], workflow: "code-firstmate", runTitle: o.runTitle, status: "open", createdAt: at(12), answer: null, ...o });
   const SC201 = card("SC-201", "R-102", "merge-card", "merge", "Merge: format() supports JPY, a currency without cents",
@@ -52,12 +63,14 @@ export function boardFixture(now = Date.now()) {
     [{ id: "approve", label: "Go one-way", primary: true }, { id: "changes", label: "Request changes", note: true, hold: true }], { door: "one-way", runTitle: "Migrate the price table", createdAt: at(4) });
 
   const run = (id, title, status, nodes, steps, min, o = {}) => ({ id, workflow: "code-firstmate", version: 2, def, title, text: title, params: {}, by: "captain", status, result: null, createdAt: at(min), updatedAt: o.endedAt ?? at(1),
-    endedAt: o.endedAt ?? null, error: o.error ?? null, nodes, queue: [], steps, ctx: {}, classifier: null, events: [], recovered: 0, cards: o.cards ?? [], ledger: [], ledgerOk: true, done: [] });
+    endedAt: o.endedAt ?? null, error: o.error ?? null, nodes, queue: [], steps, ctx: o.ctx ?? {}, classifier: null, events: o.events ?? [], recovered: 0, cards: o.cards ?? [], ledger: [], ledgerOk: true, done: [] });
   const details = {
-    "R-101": run("R-101", "Add a percent function to money-kit", "running", n1, s1, 45),
+    "R-101": run("R-101", "Add a percent function to money-kit", "running", n1, s1, 45, { ctx: { project: "money-kit", spec: { scope: ["src/money.ts", "tests/money.test.ts"] } },
+      events: [{ seq: 1, ts: at(30), type: "node_started", node: "build", visit: 1 }, { seq: 2, ts: at(20), type: "node_done", node: "review", outcome: "again" }, { seq: 3, ts: at(6), type: "node_started", node: "build", visit: 2 }] }),
     "R-102": run("R-102", "Format zero-decimal currencies", "waiting", n2, s2, 52, { cards: [SC201] }),
     "R-103": run("R-103", "Round half to even in format()", "failed", n3, s3, 30, { endedAt: at(21), error: "CI failed: 2 of 14 tests fail (test/round.test.ts)" }),
-    "R-104": run("R-104", "Migrate the price table", "waiting", n4, s4, 8, { cards: [SC202] }),
+    "R-104": run("R-104", "Migrate the price table", "waiting", n4, s4, 8, { cards: [SC202], ctx: { project: "money-kit", spec: { scope: ["src/money.ts", "src/price/"] } } }),
+    "R-105": run("R-105", "Explain the rounding rule", "waiting", n5, s5, 16, { ctx: { firstmateQuestion: { node: "review", visit: 1, question: "Should the review accept a docs-only change?", at: at(3), card: true } } }),
     // finished today: not in flight, off the Board, but its spend is today's
     "R-091": (() => { const n = base(blank()); for (const k of ["build", "ci", "review", "merge-card", "merge", "after-merge", "cleanup", "done"]) pass(n, k);
       n.build.data = { jobs: [job("J-b9", 1, "claude", "claude-opus-5-5", 1.0)] }; n.spec.data = { jobs: [] };
@@ -87,14 +100,15 @@ export function boardFixture(now = Date.now()) {
   return { def, details, open, list, answer, agents, calls: () => answerCalls, policies: { org: { round_cap: 3 }, projects: [] } };
 }
 
-/** Serve the fixture on a Playwright context or page: the Studio run and card routes only; everything else goes to the real server. */
+/** Serve the fixture on a Playwright context or page: the Studio run, Task and card routes only; everything else goes to the real server. */
 export async function routeBoardFixture(target, fx) {
-  await target.route(/\/api\/(wruns|scards|policies)(\/|\?|$)/, async (route) => {
+  await target.route(/\/api\/(wruns|scards|policies|tasks)(\/|\?|$)/, async (route) => {
     const req = route.request(); const u = new URL(req.url()); const p = u.pathname;
     const send = (status, body) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
     if (p === "/api/wruns" && req.method() === "GET") return send(200, fx.list());
     if (p === "/api/wruns/agents" && req.method() === "GET") return send(200, fx.agents());
     let m = /^\/api\/wruns\/(R-\d+)$/.exec(p); if (m) return fx.details[m[1]] ? send(200, fx.details[m[1]]) : send(404, { error: "no such run" });
+    m = /^\/api\/tasks\/(R-\d+)$/.exec(p); if (m && req.method() === "GET") return fx.details[m[1]] ? send(200, { ...fx.details[m[1]], rounds: [] }) : send(404, { error: "no such task" }); // the Task page reads the same run
     if (p === "/api/scards") return send(200, { cards: u.searchParams.get("open") === "1" ? fx.open.filter((c) => c.status === "open") : fx.open });
     m = /^\/api\/scards\/(SC-\d+)$/.exec(p); if (m && req.method() === "GET") { const c = fx.open.find((x) => x.id === m[1]); return c ? send(200, c) : send(404, { error: "no such card" }); }
     m = /^\/api\/scards\/(SC-\d+)\/answer$/.exec(p); if (m && req.method() === "POST") { await new Promise((r) => setTimeout(r, 400)); const [s, b] = fx.answer(m[1], JSON.parse(req.postData() || "{}")); return send(s, b); }

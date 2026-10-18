@@ -17,10 +17,10 @@ try{
   mode='running';release();await p.locator('[data-agent-node="R-fixture/build/1"]').waitFor();
   ok(!/No crew round is running|目前沒有船員在跑|Nobody is working|目前沒有人在工作/.test(await p.locator('#view').innerText()),'Studio worker with no Firstmate has no global empty state '+lang);
   ok(await p.locator('#navCrew').innerText()==='1','nav includes Studio worker '+lang);
-  await p.goto(base+'/#/board');await p.waitForFunction(()=>document.querySelector('#crewSum2')?.textContent.match(/^1 /));
+  await p.goto(base+'/#/board');await p.waitForFunction(()=>/(^|, )1 crew on duty|、1 位船員值班/.test(document.querySelector('#boardSub')?.textContent||''));
   ok(!/No crew round is running|目前沒有船員在跑|Nobody is working|目前沒有人在工作/.test(await p.locator('#view').innerText()),'board includes Studio worker '+lang);
   mode='empty';await p.waitForFunction(()=>!document.querySelector('#navCrew')?.textContent,{},{timeout:10000});
-  ok(/No crew round is running|目前沒有船員在跑|Nobody is working|目前沒有人在工作/.test(await p.locator('#view').innerText()),'missed end event converges through polling '+lang);
+  ok(await p.waitForFunction(()=>/(^|, )0 crew on duty|、0 位船員值班/.test(document.querySelector('#boardSub')?.textContent||''),{},{timeout:10000}).then(()=>true,()=>false),'missed end event converges through polling '+lang);
   mode='running';await p.waitForFunction(()=>document.querySelector('#navCrew')?.textContent==='1',{},{timeout:10000});
   ok(!/No crew round is running|目前沒有船員在跑|Nobody is working|目前沒有人在工作/.test(await p.locator('#view').innerText()),'missed start event refreshes board '+lang);
   mode='error';await p.waitForFunction(()=>/unavailable|無法取得/.test(document.querySelector('#view')?.textContent),{},{timeout:10000});

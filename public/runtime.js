@@ -693,6 +693,8 @@ const simpleShows = (e, all) => !(e.type === "node" && ["running", "passed", "fa
   && !(e.type === "run" && e.from && e.from === e.to)
   && !(e.type === "run" && (!e.from || e.from === "queued") && all.some((x) => x.type === "started"));
 const VERDICT = { pass: ["passed", "通過"], fail: ["failed", "未通過"], warn: ["warned", "警告"], error: ["could not run", "無法執行"] };
+// the Board's detail panel tells a Task's recent events in the same words
+window.crewTimeline = { line: (e, r) => timelineLine(e, r), shows: (e, all) => simpleShows(e, all) };
 function timelineLine(e, r) {
   const node = (n) => r.def?.nodes?.find((x) => x.id === n); const label = (n) => node(n)?.label || n;
   // an outcome in words: ok is Finished; a card's choice by its option's label
@@ -773,6 +775,8 @@ function viewRun(id) {
   const graphPanel=buildRunGraph(r,v);
   // #/run/<id>?card=<cardId> (a deep link, e.g. from a project page): bring that card into view once
   const want = S.route?.query?.get("card");
+  // #/run/<id>?graph=1 (the Board's "Full graph"): bring the graph into view once
+  if (S.route?.query?.get("graph") && v.graphShown !== id) { v.graphShown = id; requestAnimationFrame(() => document.querySelector("[data-run-graph-navigation]")?.scrollIntoView({ block: "start" })); }
   if (want && v.cardShown !== want) { v.cardShown = want; requestAnimationFrame(() => { const el = document.querySelector(`[data-scard="${CSS.escape(want)}"]`);
     if (el) { el.classList.add("rt-card-linked"); el.setAttribute("data-card-linked", "1"); el.scrollIntoView({ block: "start" }); el.querySelector("[data-option]:not([disabled])")?.focus({ preventScroll: true }); }
     else toast(T("That card is no longer waiting: it was answered or withdrawn.", "這張卡片已不在等待：已回答或撤回。")); }); }

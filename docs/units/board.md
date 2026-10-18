@@ -94,3 +94,39 @@ The mutation check, run again after the rebase. Each change was applied alone, b
 18. A decision that is no longer open leaves nothing behind on the Board. That covers a card answered here or elsewhere, a cancelled card, and a card whose run ended. Its open flag, its Studio card state and its mounted card go. The open card list (`/api/scards?open=1`) and firstmate's pending list decide this (board.js `prune`). — "a Studio card answered elsewhere leaves Needs you and the Board drops its open flag, state and mounted card", "a Studio card cancelled elsewhere leaves Needs you …". Red on efbbc99: the entries stayed. Firstmate side (follow-up 11 of r5): "a firstmate decision that leaves firstmate's pending list elsewhere leaves Needs you and the Board drops its open flag and mounted card". A guard: green on 92642da, where prune already reads `S.pending`; red under a mutation where prune keeps ids that are not Studio cards.
 
 This doc was also swept for code and assertion names that rounds 4 and 5 removed or renamed.
+
+## Round 6: task overview (captain-approved redesign)
+
+Why: Needs you repeated the Inbox's cards in full, every workflow drew a full graph ("Live workflows") so several parallel Tasks tangled into one picture, and the task table sat at the bottom of the page. The approved prototype (Main.dc.html at 1440, Phone.dc.html at 390) replaces all three sections with one task overview. Needs you, Live workflows (public/workflow-overview.js, removed), Ended and Crew on duty are gone; the subtitle keeps the counts and today's spend.
+
+What the Board shows:
+
+- **Filter tabs** with counts: All, Waiting for you, Running, Stuck, Done today (全部 / 等你 / 進行中 / 卡住 / 今天完成).
+- **One row per Task**, Studio runs and firstmate tasks alike, ordered Waiting for you, Stuck, Running, Done today (newest first within a group): status; title with run, workflow and project; the milestone track with the current milestone marked, its round and position ("Build loop · round 2/3 · 4/7"); **Now**; the overlap badge; elapsed.
+- **Now**: on a running Task, who works: the node, its crew seat (the node's seat, else its role's; the workflow's own seat label, else the built-in seat names of src/domain/crew.ts) and the provider and model the run resolved (the node's agent, else its latest step). On a waiting Task, "Waiting for you: <card title>" and a "Go to Inbox →" link to `#/inbox/<card>`; the card is the run's oldest open card of the node's current visit (a card from an earlier visit never counts). On a stuck Task, why it is stuck, with a link to its card when it has one (a failure card). On a Task done today, its run state's word (Merged, Done, Closed without merging, Cancelled), in that word's tone.
+- **Overlap badge** "↻ will rebase" / "↻ 會 rebase": another open Task's `ctx.spec.scope` meets this one's (one path holds the other, a glob by its static prefix, test paths never count; the same reading as src/runtime/queue.ts scopesOverlap). Its title names the other Tasks.
+- **Detail panel** for the selected row, and nothing else: this Task's visited path from its steps (vertical; a revisit reads "round N ↺"; a step retried within one visit is one stop; bookkeeping hooks without a role are left out unless they failed or are current), every current node ringed (parallel branches each ringed; Firstmate when it is deciding an escalation), the four latest events in the Task page's own words (runtime.js `crewTimeline`), and **Full graph** (`#/run/<id>?graph=1`, the Task page scrolls its graph into view) and **Open task**.
+- No card body and no workflow graph on the Board. A footnote says so.
+
+Milestones (board.js `milestones(def)`, deterministic per definition):
+1. the definition's stages when it has any (`crewLayout.stagesFor`: the nodes' own `stage`, else the built-in grouping, e.g. code-firstmate's seven stages);
+2. otherwise its main path: from the entry node (the first with no incoming edge), follow at each node the first outgoing edge to a node not yet on the path, an unconditioned or forward edge (ok, pass, go, approve, accept, merge, done, yes, dispatch, next, continue) before any other, in definition order. The milestones are the path's work nodes: agents, checks, cards, loops, and hooks that run a role. A node off the main path belongs to no milestone; the track marks the milestone after the last one reached.
+
+Groups, from the run's own state:
+- **Stuck**: the run failed (a run ended by its round cap fails too, result `cap`); or a node reached its round cap (`outcome: "cap"`) and no node has run since (the cap's own route, a card or an end, is pending); or Firstmate is deciding an escalation first (`ctx.firstmateQuestion`: an agent's question, or a card Firstmate diagnoses before the captain). A firstmate task: `failed`.
+- **Waiting for you**: not stuck, and the run has an open card or a node waiting on one. A firstmate task: `needs-you`.
+- **Done today**: ended today and not failed (succeeded, closed, cancelled). A firstmate task: merged today.
+- **Running**: the rest (queued, running, paused, waiting on an external event).
+- Failed runs stay on the Board for a day, as before; archived ones never show.
+
+Layout follows the main column's width (the Firstmate panel takes room from it), re-chosen when that width crosses a threshold: ≥ 1080 px a table with the panel beside it; 640–1080 px compact rows with the panel beside it; < 640 px (a phone) cards with the panel opened under the chosen card (tapping it again folds it) and a top bar "N tasks waiting for you · Go to Inbox →" linking to `#/inbox`. No sideways scroll at any width.
+
+Live: rows follow the page's one stream as before (the same membership and stale-detail rules). A redraw keeps the selected Task, the focused row and the scroll, including the panel's own. Keyboard: ↑/↓ move the selection along the rows (focus follows, the panel follows), Enter opens the Task.
+
+Data: the existing APIs only (`/api/wruns`, `/api/wruns/<id>`, `/api/scards?open=1`, `/api/policies`, firstmate's summary). No server endpoint was added.
+
+Tests:
+- tests/board-overview-ui.mjs (new): 1440 with the Firstmate panel closed (table) and open (compact list, panel beside), and 390 in zh-TW (cards). No card body, no workflow graph, row order and groups, every filter with its count, the milestone track and label, Now (seat and model; the card and its Inbox link; why stuck), the overlap badge, the detail path with "round 2 ↺" and the current node ringed, Firstmate ringed on an escalation, recent events, Full graph and Open task, ↑/↓ and Enter, a live update keeping the selection, focus and scroll, the Inbox deep link, the phone bar, the main-path milestone rule, no sideways scroll. Screenshots in tests/out/board-overview (or `BOARD_SHOTS`).
+- tests/board-ui.mjs: the parallel runs and their milestone states, labels, subtitle and spend, live updates and one stream, and the waiting decisions' links. The answering checks that ran in Needs you (refusal inline, one answer in flight, the door tick, note and tick kept across a re-render, a late refusal, the firstmate door confirmation, answers through the board) now run in the Inbox, where the cards are answered. The Board's per-card state checks (`crewBoard.held`) went with the code they tested.
+- tests/workflow-overview-ui.mjs, -races.mjs, -fold-ui.mjs: ported from the graph to the rows on the real engine. They cover card identity per Task, a stale-visit card, failure cards, parallel waits ringed, done today, archive/unarchive/delete live, stale details that cannot bring back a left card, the first viewport, a live move with the viewer's scroll and selection kept, storage blocked, and the live cue captures.
+- run-end-ui, smoke, inbox-live-ui, studio-agents-ui, task-round-ui, crew-visibility-ui: their selectors follow the new rows.

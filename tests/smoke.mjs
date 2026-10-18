@@ -94,7 +94,7 @@ try {
   // every page renders at both widths in both themes, with no console error and no sideways scroll
   for (const width of [1440, 390]) for (const scheme of ["light", "dark"]) {
     const p = await page(width, scheme);
-    for (const [view, sel] of [["board", ".runs-table .rrow:not(.head)"], ["inbox", "[data-inbox-row]"], ["crew", ".tk-round"], ["activity", "#evlist .ev"], ["workflow", "svg.graph .gn"],
+    for (const [view, sel] of [["board", "[data-task]"], ["inbox", "[data-inbox-row]"], ["crew", ".tk-round"], ["activity", "#evlist .ev"], ["workflow", "svg.graph .gn"],
       ["intents", ".ilist"], ["library", "[data-pr]"], ["task/T-304", "[data-lineage]"], ["event/0", ".ev.hl"]]) {
       await p.goto(`${base}/#/${view}`);
       const found = await p.waitForSelector(sel, { timeout: 8000 }).then(() => true).catch(() => false);
@@ -116,7 +116,7 @@ try {
       // sidebar collapse is remembered
       await p.goto(`${base}/#/board`);
       await p.click("#sideTog");
-      await p.reload(); await p.waitForSelector(".rrow:not(.head)");
+      await p.reload(); await p.waitForSelector("[data-task]");
       ok(await p.evaluate(() => document.body.classList.contains("side-collapsed")), "collapsed sidebar is remembered after reload");
       await p.click("#sideTog");
     }
@@ -131,9 +131,9 @@ try {
   appendFileSync(join(state, "events.jsonl"), JSON.stringify({ ts: new Date().toISOString(), actor: "firstmate", type: "crew_status", task: "T-999", summary: { en: marker, "zh-TW": marker } }) + "\n");
   ok(await p.waitForSelector(`text=${marker}`, { timeout: 6000 }).then(() => true).catch(() => false), "an appended event appears live on the activity page");
   await p.goto(`${base}/#/board`);
-  await p.waitForSelector(".rrow:not(.head)");
+  await p.waitForSelector("[data-task]");
   await p.waitForTimeout(1500);
-  ok(await p.locator('[data-run="T-999"]').count() === 0 && await p.locator('.runs-table [data-run]').count() > 0, "an idle task (no crew, no card) stays off the Board, which lists the runs in flight (docs/units/board.md)");
+  ok(await p.locator('[data-task="T-999"]').count() === 0 && await p.locator("[data-task]").count() > 0, "an idle task (no crew, no card) stays off the Board, which lists the runs in flight (docs/units/board.md)");
 
   // a new pending card appears live in the inbox
   await p.goto(`${base}/#/inbox`);
@@ -210,7 +210,7 @@ try {
   }
   for (const [width, scheme] of [[1440, "light"], [1440, "dark"], [390, "light"], [390, "dark"]]) {
     const q = await page(width, scheme);
-    await q.goto(`${base}/#/board`); await q.waitForSelector(".rrow:not(.head)");
+    await q.goto(`${base}/#/board`); await q.waitForSelector("[data-task]");
     if (width < 1100) { ok(await q.locator("#chatFab").isVisible(), `chat opens from a button on a phone (${width} ${scheme})`); await q.click("#chatFab"); }
     ok(await q.locator("#chatIn").isVisible(), `the chat panel is on screen at ${width} ${scheme}`);
     ok(await q.waitForFunction(() => { const t = document.querySelector("#chatSub")?.textContent ?? ""; return t && t !== "…"; }, null, { timeout: 6000 }).then(() => true).catch(() => false), `the chat header says where the Firstmate conversation stands at ${width} ${scheme}`);
@@ -291,7 +291,7 @@ try {
   // page (covered by tests/takeover-ui.mjs). Here the session is attached through the same API.
   {
     const q = await page(1440, "light");
-    await q.goto(`${base}/#/board`); await q.waitForSelector(".rrow:not(.head)");
+    await q.goto(`${base}/#/board`); await q.waitForSelector("[data-task]");
     ok(await q.waitForSelector('[data-banner="detached"]', { timeout: 5000 }).then(() => true).catch(() => false), "the Firstmate chat shows that no session is attached");
     ok(/Connect your account to begin/.test(await q.locator("#chatSub").textContent()) && await q.locator("#chatSend").isDisabled(), "the header says to connect first and sending is off");
     const sessions = (await raw("GET", "/api/main/sessions?host=claude")).body?.sessions ?? [];
@@ -344,7 +344,7 @@ try {
     const q = await page(1440, "light");
     const blocked = [];
     await q.route("**/*", (r) => { const u = new URL(r.request().url()); if (["127.0.0.1", "localhost"].includes(u.hostname)) return r.continue(); blocked.push(u.href); return r.abort(); });
-    for (const [view, sel] of [["board", ".runs-table .rrow:not(.head)"], ["doctor", "[data-item]"], ["remote", '[data-section="pair"]'], ["library", "[data-pr]"]]) {
+    for (const [view, sel] of [["board", "[data-task]"], ["doctor", "[data-item]"], ["remote", '[data-section="pair"]'], ["library", "[data-pr]"]]) {
       await q.goto(`${base}/#/${view}`);
       ok(await q.waitForSelector(sel, { timeout: 8000 }).then(() => true).catch(() => false), `${view} works with the network blocked`);
     }
@@ -469,7 +469,7 @@ try {
         const q = await page(width, scheme);
         await q.goto(`${b2}/#/board`);
         ok(await q.waitForSelector('[data-gh="disconnected"]', { timeout: 8000 }).then(() => true).catch(() => false), `the board shows GitHub not connected at ${width} ${scheme}`);
-        ok(await q.locator(".runs-table .rrow:not(.head)").count() > 0, "and still lists the tasks");
+        ok(await q.waitForSelector("[data-task]", { timeout: 8000 }).then(() => true, () => false), "and still lists the tasks");
         await q.screenshot({ path: join(shots, `smoke-board-nogh-${width}-${scheme}.png`) });
         if (width === 1440) {
           await q.locator('[data-gh="disconnected"] .btn').click();

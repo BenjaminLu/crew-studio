@@ -1,11 +1,11 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
-// Board "Live workflows": the graph must show real graph content on first open, without scrolling.
-// The fixture has the built-in code-firstmate topology (28 nodes, its stage boxes, its back edges):
-// its canvas is several times the frame in both directions and its top-left corner is empty, so a
-// frame opened at 0,0 showed no node at all (captain report, 2026-10-16). Three Tasks wait on
-// different nodes (dispatch is the topmost, then leftmost). Until the viewer scrolls, the frame
-// follows the current node, also through partial renders and live moves; a graph that already fits
-// its frame stays at 0,0 with no added room.
+// The Board above the fold, on real-size workflows. The Board once drew a graph per workflow, and on the built-in
+// code-firstmate topology (28 nodes, stage boxes, back edges) a frame opened at 0,0 showed no node at all (captain
+// report, 2026-10-16). The Board is now a task overview (docs/units/board.md round 6): the task rows and the
+// waiting Task's link to its card are in the first viewport; each row's milestone track follows the definition's
+// stages (code-firstmate) or its main path (a long chain of cards); a live move updates the row while a viewer's own
+// scroll and selection stay; storage that throws does not break the page. Three code-firstmate Tasks wait on
+// scope-card, dispatch and merge-card; a chain Task waits at q6 and jumps to q10; a fan Task waits at three branches.
 import {spawn} from 'node:child_process';
 import {mkdirSync} from 'node:fs';
 import {join} from 'node:path';
@@ -24,8 +24,7 @@ const fan={id:'fan',name:'Fan',roles:[],nodes:[hook('start','Start'),card('b1','
 const H=await harness([Y({id:'code-firstmate',name:'Code firstmate',roles:[],nodes,edges})]);
 const ROUTES={scope:{spec:'fail','spec-fix':'step-back'},merge:{door:'two-way',ci:'pass'}};
 H.engine.actions.route=x=>ROUTES[x.run.text]?.[x.node.id]??'ok';
-// zlive and fan run on a second server, so the first keeps a realistic Needs-you list above the overview: the three
-// waiting cards. (A failing Task here raised a fourth row, its failure card, once d3bca0d gave every failure a card.)
+// zlive and fan run on a second server, so the first holds exactly the three code-firstmate Tasks waiting on cards.
 const H2=await harness([Y(zlive),Y(fan)]);H2.engine.actions.route=()=>'ok';
 const settled=(r,E=H.engine)=>!E.busy(r.id)&&['waiting','failed'].includes(E.get(r.id)?.status);
 const openCard=(r,node,E=H.engine)=>E.cards.list({run:r.id,open:true}).find(c=>c.node===node);
@@ -42,82 +41,60 @@ const serve=async H=>{H.stop();mkdirSync(join(H.data,'fm','state'),{recursive:tr
  return {app,base:`http://127.0.0.1:${port}`};};
 const one=await serve(H),two=await serve(H2),base=one.base,app=one.app;
 const shots=join(root,'tests/out/workflow-overview-fold');mkdirSync(shots,{recursive:true});let browser;
-// What the viewer sees without scrolling: graph nodes and Task tokens inside the frame, the scroll area and the viewport.
-const seen=(p,wf='code-firstmate',task=top.id)=>p.evaluate(({wf,task})=>{const art=document.querySelector(`[data-wo-workflow="${wf}"]`),fr=art?.querySelector('.wo-frame');if(!fr)return {frame:false};
- const f=fr.getBoundingClientRect(),m=document.querySelector('#main').getBoundingClientRect(),c={t:Math.max(f.top,m.top,0),b:Math.min(f.bottom,m.bottom,innerHeight),l:Math.max(f.left,m.left,0),r:Math.min(f.right,m.right,innerWidth)};
- const rects=s=>[...fr.querySelectorAll(s)].map(e=>e.getBoundingClientRect());
- return {frame:true,frameTop:Math.round(f.top),nodes:rects('.wo-node-label').filter(n=>n.top>=c.t&&n.bottom<=c.b&&n.left>=c.l&&n.right<=c.r).length,tokens:rects('.wo-token').filter(n=>n.top>=c.t&&n.bottom<=c.b&&n.left>=c.l&&n.right<=c.r).length,scroll:[fr.scrollLeft,fr.scrollTop],want:rects(`.wo-token[data-wo-task="${task}"]`).some(n=>n.top>=c.t&&n.bottom<=c.b&&n.left>=c.l&&n.right<=c.r),inFrame:rects(`.wo-token[data-wo-task="${task}"]`).some(n=>n.top>=f.top&&n.bottom<=f.bottom&&n.left>=f.left&&n.right<=f.right),margin:fr.querySelector('.wo-canvas').style.marginBottom||'',fits:fr.scrollWidth<=fr.clientWidth&&fr.scrollHeight<=fr.clientHeight};},{wf,task});
+// What the viewer sees without scrolling: the Task rows inside #main and the viewport.
+const seen=(p,task=top.id)=>p.evaluate(task=>{const m=document.querySelector('#main').getBoundingClientRect(),c={t:Math.max(m.top,0),b:Math.min(m.bottom,innerHeight)};
+ const inView=e=>{const r=e.getBoundingClientRect();return r.top>=c.t&&r.bottom<=c.b&&r.left>=0&&r.right<=innerWidth;};
+ const row=document.querySelector(`[data-task="${task}"]`),list=document.querySelector('.tb-list');
+ return {list:!!list,listTop:list?Math.round(list.getBoundingClientRect().top):null,rows:[...document.querySelectorAll('[data-task]')].filter(inView).length,want:!!row&&inView(row),link:!!row?.querySelector('[data-inbox-link]')&&inView(row.querySelector('[data-inbox-link]')),scroll:document.querySelector('#main').scrollTop};},task);
 // The captain's board runs with Firstmate attached, so no first-run welcome panel sits above the overview;
 // this fixture server has no attached session, so the page is told what an attached one shows (no welcome).
-// The chat panel is closed with its own control, which this browser remembers: a bare class would reopen it on the
-// reload below, narrowing the board so the Needs-you rows wrap and push the graph frame past the fold.
 const attached=ctx=>ctx.addInitScript(()=>Object.defineProperty(window,'crewFirstmateWelcome',{configurable:true,get:()=>()=>null,set(){}}));
-const open=async(ctx,width,b=base,wf='code-firstmate')=>{await attached(ctx);const p=await ctx.newPage();await p.goto(`${b}/#/board`);await p.waitForSelector(`[data-wo-workflow="${wf}"] .wo-frame [data-wo-task]`);await p.locator('#chatClose').evaluate(b=>b.click());const hide=p.getByRole('button',{name:'Hide guide'});if(await hide.count())await hide.first().click();await p.waitForTimeout(400);return p;};
+const open=async(ctx,width,b=base,task=top.id)=>{await attached(ctx);const p=await ctx.newPage();await p.goto(`${b}/#/board`);await p.waitForSelector(`[data-task="${task}"] .tb-track i`);await p.locator('#chatClose').evaluate(b=>b.click());const hide=p.getByRole('button',{name:'Hide guide'});if(await hide.count())await hide.first().click();await p.waitForTimeout(400);return p;};
+const stage=(p,id)=>p.textContent(`[data-task="${id}"] .tb-stage`).then(t=>t.trim());
 try{await waitUp(base,app);await waitUp(two.base,two.app);browser=withSession(await chromium.launch({headless:true}),base);
 for(const [width,height] of [[1280,800],[1440,900]]){
  const ctx=await browser.newContext({viewport:{width,height}}),p=await open(ctx,width),s=await seen(p);await p.screenshot({path:join(shots,`${width}x${height}-first-open.png`)});
- ok(s.frame&&s.frameTop<height,`graph frame starts inside the first viewport at ${width}x${height}`,JSON.stringify(s));
- ok(s.nodes>=1,`graph nodes are visible on first open without scrolling at ${width}x${height}`,JSON.stringify(s));
- ok(s.want,`the topmost waiting Task's token (dispatch, of three Tasks) is visible on first open at ${width}x${height}`,JSON.stringify(s));
+ ok(s.list&&s.listTop<height,`the task list starts inside the first viewport at ${width}x${height}`,JSON.stringify(s));
+ ok(s.rows>=3,`the three waiting Tasks' rows are visible on first open without scrolling at ${width}x${height}`,JSON.stringify(s));
+ ok(s.want&&s.link,`the dispatch Task's row and its link to its card are visible on first open at ${width}x${height}`,JSON.stringify(s));
+ ok(await p.locator('#view [data-wo-workflow], #view .wo-frame, #view svg.graph').count()===0,`no workflow graph on the Board at ${width}x${height}`);
  if(width===1280){
-  // a viewer's own scroll still wins over the first-open focus across live re-renders
-  await p.locator('[data-wo-workflow="code-firstmate"] .wo-frame').evaluate(e=>{e.scrollLeft=7;e.scrollTop=5;});await p.waitForTimeout(150);
-  await p.evaluate(()=>setLang('zh-TW'));await p.waitForTimeout(300);const kept=await seen(p);ok(kept.scroll[0]===7&&kept.scroll[1]===5,'a re-render keeps the viewer scroll',JSON.stringify(kept));await p.evaluate(()=>setLang('en'));
-  // the graph/list choice is remembered per viewer, in this browser only
-  await p.locator('[data-wo-toggle="code-firstmate"]').click();await p.reload();await p.waitForSelector('[data-wo-workflow="code-firstmate"]');
-  ok(await p.locator('[data-wo-workflow="code-firstmate"] .wo-list').isVisible()&&!await p.locator('[data-wo-workflow="code-firstmate"] .wo-frame').isVisible(),'list choice survives a reload');
-  await p.locator('[data-wo-toggle="code-firstmate"]').click();await p.waitForTimeout(300);const back=await seen(p);await p.screenshot({path:join(shots,'1280x800-back-to-graph.png')});ok(back.nodes>=1&&back.want,'back to graph opens on the current node',JSON.stringify(back));
-  await p.reload();await p.waitForSelector('[data-wo-workflow="code-firstmate"]');ok(await p.locator('[data-wo-workflow="code-firstmate"] .wo-frame').isVisible(),'graph choice survives a reload');
+  // the built-in code-firstmate stages are the track: dispatch and scope-card are Intake, merge-card is Gates
+  ok(/^Intake · /.test(await stage(p,top.id))&&/^Intake · /.test(await stage(p,a.id))&&/^Gates · /.test(await stage(p,late.id)),'a real-size definition\'s track is its stages, the current one named',JSON.stringify([await stage(p,top.id),await stage(p,a.id),await stage(p,late.id)]));
+  // a re-render (a language switch) keeps the viewer's selection
+  await p.locator(`[data-task="${late.id}"] .tb-title`).click();await p.evaluate(()=>setLang('zh-TW'));await p.waitForTimeout(300);
+  ok(await p.locator(`[data-task-detail="${late.id}"]`).count()===1,'a re-render keeps the selected Task');await p.evaluate(()=>setLang('en'));
  }
  await ctx.close();
 }
-{ // phone: the frame starts in the first viewport (three Needs-you rows above it); the token is reached by scrolling the page only
+{ // phone: the list starts in the first viewport, with the bar that counts the Tasks waiting
  const ctx=await browser.newContext({viewport:{width:390,height:844}}),p=await open(ctx,390),s=await seen(p);await p.screenshot({path:join(shots,'390x844-first-open.png')});
- ok(s.frame&&s.frameTop<844,'phone graph frame starts inside the first viewport',JSON.stringify(s));
- await p.locator('[data-wo-workflow="code-firstmate"] .wo-frame').evaluate(e=>e.scrollIntoView({block:'start'}));await p.waitForTimeout(150);const t=await seen(p);await p.screenshot({path:join(shots,'390x844-frame.png')});
- ok(t.nodes>=1&&t.want,'phone frame opens on the current node',JSON.stringify(t));
+ ok(s.list&&s.listTop<844&&s.rows>=1,'phone task list starts inside the first viewport',JSON.stringify(s));
+ ok((await p.textContent('[data-tb-waitbar]')).includes('3 tasks waiting for you'),'phone bar counts the three waiting Tasks',await p.textContent('[data-tb-waitbar]').catch(()=>''));
  ok(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'phone page has no sideways scroll');
  await ctx.close();
 }
-{ // storage that throws (private window, blocked site data) must not break the overview
+{ // storage that throws (private window, blocked site data) must not break the Board
  const ctx=await browser.newContext({viewport:{width:1280,height:800}});await ctx.addInitScript(()=>{for(const k of ['getItem','setItem'])Storage.prototype[k]=function(){throw new Error('blocked storage');};});
- const p=await open(ctx,1280),s=await seen(p);ok(s.nodes>=1&&s.want,'graph opens on the current node with storage blocked',JSON.stringify(s));
- await p.locator('[data-wo-toggle="code-firstmate"]').click();ok(await p.locator('[data-wo-workflow="code-firstmate"] .wo-list').isVisible(),'toggle still works with storage blocked');
+ const p=await open(ctx,1280),s=await seen(p);ok(s.rows>=3&&s.want,'the Board opens with storage blocked',JSON.stringify(s));
+ await p.locator('[data-tb-tab="you"]').click();ok(await p.locator('[data-task]').count()===3&&await p.getAttribute('[data-tb-tab="you"]','aria-selected')==='true','filters still work with storage blocked');
  await ctx.close();
 }
-{ // a graph that already fits its frame stays at 0,0 with no added room
- const ctx=await browser.newContext({viewport:{width:1280,height:800}}),p=await open(ctx,1280,two.base,'fan');await p.locator('[data-wo-workflow="fan"] .wo-frame').scrollIntoViewIfNeeded();await p.waitForTimeout(200);
- const s=await seen(p,'fan',fa.id);ok(s.scroll[0]===0&&s.scroll[1]===0&&!s.margin&&s.inFrame,'a graph that fits its frame opens at 0,0 with no margin',JSON.stringify(s));
+{ // a fan: one Task waiting at three branches is one row, its three cards ringed on its path
+ const ctx=await browser.newContext({viewport:{width:1280,height:800}}),p=await open(ctx,1280,two.base,fa.id);await p.locator(`[data-task="${fa.id}"] .tb-title`).click();
+ ok(await p.locator(`[data-task="${fa.id}"]`).count()===1&&await p.locator(`[data-task-path="${fa.id}"] li.cur`).count()===3,'a Task waiting at three parallel branches is one row with three current nodes on its path');
  await ctx.close();
 }
-{ // partial-load race: a first render with one Task (bottom-most) then the full three must land on the topmost
- const ctx=await browser.newContext({viewport:{width:1280,height:800}}),p=await open(ctx,1280);
- const r=await p.evaluate(async({ids,topId})=>{
-  const runs=await Promise.all(ids.map(id=>fetch('/api/tasks/'+id).then(x=>x.json()))),cards=(await fetch('/api/scards?open=1').then(x=>x.json())).cards;
-  for(const run of runs)run.workflow='race-probe';
-  const box=document.createElement('div');box.style.cssText='position:absolute;left:0;top:0;width:700px;z-index:99;background:var(--bg)';document.body.append(box);
-  const frames=()=>new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(res,120))));
-  box.replaceChildren(crewWorkflowOverview.render([runs[0]],cards));await frames();
-  const first=box.querySelector('.wo-frame');first.dispatchEvent(new Event('scroll'));await frames();
-  box.replaceChildren(crewWorkflowOverview.render(runs,cards));await frames();
-  const fr=box.querySelector('.wo-frame'),f=fr.getBoundingClientRect(),t=box.querySelector(`.wo-frame .wo-token[data-wo-task="${topId}"]`)?.getBoundingClientRect();
-  const visible=!!t&&t.top>=f.top&&t.bottom<=f.bottom&&t.left>=f.left&&t.right<=f.right;const out={visible,scroll:[fr.scrollLeft,fr.scrollTop],frame:[fr.clientWidth,fr.clientHeight],token:t&&[Math.round(t.left-f.left),Math.round(t.top-f.top)]};box.remove();return out;
- },{ids:[a.id,late.id,top.id],topId:top.id});
- ok(r.visible,'after a partial first render the frame follows the topmost Task',JSON.stringify(r));
- await ctx.close();
-}
-{ // live move: an untouched frame follows the Task; a frame the viewer scrolled keeps its place
- const ca=await browser.newContext({viewport:{width:1280,height:800}}),pa=await open(ca,1280,two.base,'zlive'),cb=await browser.newContext({viewport:{width:1280,height:800}}),pb=await open(cb,1280,two.base,'zlive');
- for(const p of [pa,pb])await p.locator('[data-wo-workflow="zlive"] .wo-frame').scrollIntoViewIfNeeded();
- const before=await seen(pa,'zlive',zl.id);ok(before.inFrame,'live chain frame opens on q6',JSON.stringify(before));
- const fb=pb.locator('[data-wo-workflow="zlive"] .wo-frame'),box=await fb.boundingBox();await pb.mouse.move(box.x+box.width/2,box.y+box.height/2);await pb.mouse.wheel(-160,0);await pb.waitForTimeout(300);
- const mine=(await seen(pb,'zlive',zl.id)).scroll;
+{ // live move: the row follows the Task from q6 to q10; a viewer's scroll and selection stay
+ const ca=await browser.newContext({viewport:{width:1280,height:500}}),pa=await open(ca,1280,two.base,zl.id);
+ ok(/^Step 6 · 7\/13$/.test(await stage(pa,zl.id)),'a chain\'s track is its main path: the Task is at Step 6, 7 of 13',await stage(pa,zl.id));
+ await pa.locator(`[data-task="${zl.id}"] .tb-title`).click();await pa.evaluate(()=>{document.querySelector('#main').scrollTop=40;});await pa.waitForTimeout(150);const mine=(await seen(pa,zl.id)).scroll;
  const q6=await pa.evaluate(async run=>(await fetch('/api/scards?open=1').then(x=>x.json())).cards.find(c=>c.run===run&&c.node==='q6')?.id,zl.id);
  const answered=await pa.evaluate(async id=>(await fetch(`/api/scards/${id}/answer`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({choice:'jump',by:'captain'})})).status,q6);ok(answered===200,'answer q6 with jump through the real server',String(answered));
- for(const p of [pa,pb])await p.waitForSelector(`[data-wo-workflow="zlive"] .wo-frame [data-wo-task="${zl.id}"][data-wo-node="q10"]`);await pa.waitForTimeout(300);await pb.waitForTimeout(300);
- const after=await seen(pa,'zlive',zl.id);await pa.screenshot({path:join(shots,'1280x800-live-follow.png')});ok(after.inFrame,'an untouched frame follows the Task from q6 to q10',JSON.stringify({before,after}));
- const kept=await seen(pb,'zlive',zl.id);ok(kept.scroll[0]===mine[0]&&kept.scroll[1]===mine[1],'a frame the viewer scrolled keeps its position through the live move',JSON.stringify({mine,kept}));
- await ca.close();await cb.close();
+ const moved=await pa.waitForFunction(id=>/^Step 10 · 11\/13$/.test(document.querySelector(`[data-task="${id}"] .tb-stage`)?.textContent||''),zl.id,{timeout:10000}).then(()=>true,()=>false);
+ await pa.screenshot({path:join(shots,'1280x500-live-follow.png')});ok(moved,'the row follows the Task from q6 to q10, live',await stage(pa,zl.id));
+ const kept=await seen(pa,zl.id);ok(mine>0&&kept.scroll===mine&&await pa.locator(`[data-task-detail="${zl.id}"]`).count()===1,'the viewer\'s scroll and selection stay through the live move',JSON.stringify({mine,kept}));
+ await ca.close();
 }
 }finally{await browser?.close();for(const s of [one,two]){s.app.kill();await new Promise(r=>s.app.exitCode!==null?r():s.app.once('exit',r));}}
 console.log(`workflow-overview-fold-ui: ${pass} passed, ${fail} failed`);process.exit(fail?1:0);

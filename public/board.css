@@ -1,13 +1,86 @@
-/* The Board (public/board.js): the prototype's .need / .rrow / .pipe / .crewline live in styles.css; these are the Board's additions */
-.bd-row{cursor:pointer}
-.bd-row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;border-radius:6px}
-.pipe i.running.pulse{color:var(--accent);animation:bdpipe 1.6s ease-in-out infinite}
-@keyframes bdpipe{0%,100%{opacity:1}50%{opacity:.45}}
-.need .need-t .tid{margin-right:2px}
-.need.open{background:var(--surface-2)}
-.need-x{border-top:1px solid var(--border);padding:12px 16px 16px;background:var(--surface-2);min-width:0}
-.need-x > .card{box-shadow:none}
-.need-x .icard{margin:0}
+/* The Board (public/board.js): a task overview. The page carries its layout as a class from the main column's width:
+   .tb-wide a table with the detail panel beside it, .tb-mid a compact list with the panel beside it, .tb-narrow cards
+   with the panel opened under the selected card. Status colours: waiting for you amber, stuck red, running blue, done green. */
+.bd-page{--tb-you:var(--warn);--tb-stuck:var(--bad);--tb-run:var(--accent);--tb-done:var(--ok);--tb-all:var(--text-3);max-width:1400px;gap:14px}
+.bd-page .g-you,.bd-page .t-you{--tb-c:var(--tb-you)}.bd-page .g-stuck,.bd-page .t-stuck{--tb-c:var(--tb-stuck)}.bd-page .g-run,.bd-page .t-run{--tb-c:var(--tb-run)}.bd-page .g-done,.bd-page .t-done{--tb-c:var(--tb-done)}.bd-page .t-all{--tb-c:var(--tb-all)}
+.tb-dot{width:8px;height:8px;border-radius:4px;background:var(--tb-c);flex:none;display:inline-block}
+.tb-tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tb-tab{display:inline-flex;align-items:center;gap:8px;min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--border-strong);background:transparent;color:var(--text);font:inherit;font-size:13px;cursor:pointer}
+.tb-tab[aria-selected="true"]{border-color:var(--text);background:var(--surface);font-weight:600}
+.tb-tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tb-count{font-size:12px;color:var(--text-3)}
+.tb-body{display:grid;gap:16px;align-items:start;min-width:0}
+.tb-wide .tb-body{grid-template-columns:minmax(0,1fr) 340px}
+.tb-mid .tb-body{grid-template-columns:minmax(0,1fr) 300px}
+.tb-listwrap{display:grid;gap:8px;min-width:0}
+.tb-list{padding:0;overflow:hidden;min-width:0}
+.tb-foot{margin:0;font-size:12px}
+.tb-head,.tb-wide .tb-row{display:grid;grid-template-columns:104px minmax(0,1.5fr) minmax(150px,200px) minmax(0,1.4fr) 52px;gap:12px;align-items:center;padding:10px 16px}
+.tb-head{font-size:11px;color:var(--text-3);letter-spacing:.04em;border-bottom:1px solid var(--border)}
+.tb-head .r,.tb-el{text-align:right}
+.tb-row{border-top:1px solid var(--border);background:var(--surface);cursor:pointer;min-width:0}
+.tb-rows>.tb-row:first-child{border-top:0}
+.tb-wide .tb-row{min-height:64px;padding:12px 16px}
+.tb-row:hover{background:var(--surface-2)}
+.tb-row.on{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+.tb-row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.tb-st{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--tb-c);min-width:0}
+/* a Task done today reads in its own run state's tone: closed without merging or cancelled is neutral, never the success green */
+.bd-page .tb-st.tone-neutral{--tb-c:var(--text-2)}.bd-page .tb-st.tone-bad{--tb-c:var(--bad)}.bd-page .tb-st.tone-warn{--tb-c:var(--warn)}
+.tb-task{display:flex;flex-direction:column;gap:2px;min-width:0}
+.tb-title{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-meta,.tb-stage{font-size:12px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-stage{font-size:11px}
+.tb-prog{display:flex;flex-direction:column;gap:5px;min-width:0}
+.tb-track{display:flex;gap:3px}
+.tb-track i{flex:1;height:6px;border-radius:3px;background:var(--surface-3)}
+.tb-track i.past{background:color-mix(in srgb,var(--accent) 38%,var(--surface-3))}
+.tb-track i.cur{background:var(--tb-c);box-shadow:0 0 0 2px color-mix(in srgb,var(--tb-c) 22%,transparent)}
+.tb-track i.done{background:var(--tb-done)}
+.tb-now{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-width:0;font-size:13px}
+.tb-now-t{flex:1 1 120px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tb-inbox{flex:none;font-size:12px;font-weight:600;padding:5px 10px;border-radius:999px;background:var(--warn-soft);color:var(--warn);text-decoration:none;white-space:nowrap}
+.tb-inbox:hover{text-decoration:underline}
+.tb-inbox:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tb-overlap{flex:none;font-size:11px;padding:2px 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent-text);white-space:nowrap}
+.tb-el{font-size:12px;color:var(--text-3)}
+/* compact rows (mid and narrow): status and age on top, then the title, the track, and Now */
+.tb-mid .tb-row,.tb-narrow .tb-row{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"st el" "task task" "prog prog" "now now";gap:6px 10px;padding:12px 14px}
+.tb-mid .tb-st,.tb-narrow .tb-st{grid-area:st}.tb-mid .tb-el,.tb-narrow .tb-el{grid-area:el}.tb-mid .tb-task,.tb-narrow .tb-task{grid-area:task}.tb-mid .tb-prog,.tb-narrow .tb-prog{grid-area:prog}.tb-mid .tb-now,.tb-narrow .tb-now{grid-area:now;flex-wrap:wrap}
+.tb-narrow .tb-title{font-size:15px;white-space:normal}
+.tb-narrow .tb-now-t{white-space:normal}
+.tb-skel{display:grid;gap:8px;padding:16px;cursor:default}
+/* the phone's "N tasks waiting for you" bar */
+.tb-waitbar{display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:48px;padding:0 14px;border-radius:10px;background:var(--warn-soft);color:var(--warn);text-decoration:none;font-size:14px;font-weight:600}
+.tb-waitbar:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* the detail panel: this Task's own path */
+.tb-detail{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.tb-wide .tb-detail,.tb-mid .tb-detail{position:sticky;top:0;max-height:calc(100dvh - 48px);overflow:auto}
+.tb-narrow .tb-detail{border-radius:0;border-width:1px 0 0;background:var(--surface-2);padding:16px 14px}
+.tb-detail.empty{justify-content:center;min-height:200px;text-align:center}
+.tb-d-head{display:flex;flex-direction:column;gap:4px;align-items:flex-start}
+.tb-d-head h2{margin:0;font-size:18px;line-height:1.35;overflow-wrap:anywhere}
+.tb-d-meta{font-size:12px;color:var(--text-3);overflow-wrap:anywhere}
+.tb-d-status{font-size:13px;font-weight:600;color:var(--tb-c)}
+.tb-d-sec{display:flex;flex-direction:column;gap:6px}
+.tb-d-sec h3{margin:0 0 4px;font-size:12px;font-weight:500;color:var(--text-3)}
+.tb-d-ev{border-top:1px solid var(--border);padding-top:14px}
+.tb-path{list-style:none;margin:0;padding:0}
+.tb-path li{display:grid;grid-template-columns:20px minmax(0,1fr);gap:10px;position:relative;padding-bottom:10px}
+.tb-path li::before{content:"";position:absolute;left:9px;top:18px;bottom:0;width:2px;background:var(--border)}
+.tb-path li:last-child::before{display:none}
+.tb-pdot{width:12px;height:12px;border-radius:6px;margin:4px 0 0 4px;background:color-mix(in srgb,var(--accent) 38%,var(--surface-3))}
+.tb-path li.s-failed .tb-pdot,.tb-path li.s-error .tb-pdot{background:var(--bad)}
+.tb-path li.cur .tb-pdot{background:var(--surface);box-shadow:0 0 0 3px var(--tb-c)}
+.tb-path li>span{display:flex;flex-direction:column;gap:1px;min-width:0}
+.tb-path b{font-size:14px;font-weight:500}
+.tb-path li.cur b{font-weight:700;color:var(--tb-c)}
+.tb-path small{font-size:12px;color:var(--text-3);overflow-wrap:anywhere}
+.tb-ev{display:grid;grid-template-columns:48px minmax(0,1fr);gap:8px;font-size:13px}
+.tb-ev>span:last-child{min-width:0;overflow-wrap:anywhere}
+.tb-d-act{display:flex;gap:8px;flex-wrap:wrap}
+.tb-d-act .btn{flex:1;justify-content:center;min-height:40px}
+/* a firstmate card's answer on the card itself (the Inbox) */
 .bd-result{font-size:13px;min-height:0}
 .bd-result:empty{display:none}
 .bd-result.ok{color:var(--ok);font-weight:500}
@@ -15,13 +88,3 @@
 .bd-answered{grid-template-columns:auto minmax(0,1fr) auto}
 .bd-answered .need-d{color:var(--ok);font-weight:500}
 .bd-inbox-answered{margin-bottom:16px}
-.crewline .avas a.ava{text-decoration:none}
-@media (prefers-reduced-motion: reduce){.pipe i.running.pulse{animation:none}}
-
-.bd-ended-row{color:var(--text);text-decoration:none}
-.bd-ended-row:hover{background:var(--surface-2)}
-.bd-ended-row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-/* Native live workflow graphs share the editor layout and own their scroll. */
-.wo-workflow{margin-bottom:16px;overflow:hidden;min-width:0;padding:16px}.wo-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.wo-head h3,.wo-head p{margin:0}.wo-head p{font-size:12px;margin-top:5px}.wo-head .btn{min-height:44px;flex-shrink:0}.wo-frame{overflow:auto;max-width:100%;border:1px solid var(--border);border-radius:8px;max-height:min(620px,72vh)}.wo-frame:focus-visible,.wo-token:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.wo-canvas{position:relative}.wo-lines{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}.wo-lines path{fill:none;stroke:var(--text-3);stroke-width:1.5}.wo-node{position:absolute}.wo-node-label{height:52px;border:1px solid var(--border);border-radius:8px;background:var(--surface);display:flex;flex-direction:column;justify-content:center;padding:8px;font-size:12px}.wo-node-label small{color:var(--text-3)}.wo-stack-meta{font-size:11px;display:flex;flex-direction:column;margin:5px 0}.wo-token{display:flex;flex-direction:column;min-height:68px;gap:2px;padding:6px 8px;margin:5px 0;border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:6px;background:var(--surface);color:var(--text);text-decoration:none;font-size:12px}.wo-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wo-token small{font-size:11px}.wo-human{border-left-color:var(--accent)}.wo-failed,.wo-blocked{border-left-color:var(--bad)}.wo-token:hover{background:var(--surface-2)}.wo-list-node{padding:12px 0;border-top:1px solid var(--border)}.wo-list .wo-token{max-width:100%}.wo-note,.wo-unplaced{font-size:12px;padding:12px;display:block}.wo-frame[hidden],.wo-list[hidden]{display:none}@media(max-width:600px){.wo-workflow{padding:12px}.wo-head{align-items:flex-start}.wo-head p{max-width:180px;overflow-wrap:anywhere}.wo-frame{max-height:min(480px,60vh)}}
-#workflowOverview,#workflowOverview>section{min-width:0}.wo-head>div{min-width:0}.wo-head h3{overflow-wrap:anywhere}
-.wo-stage{position:absolute;border:1px dashed var(--border-strong);border-radius:8px;background:var(--surface-2)}.wo-stage>span{font-size:11px;color:var(--text-2);padding:4px 8px;display:block}.wo-edge-label{position:absolute;background:var(--surface);color:var(--text-2);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

@@ -104,20 +104,20 @@ try {
   ok(await text(p, "[data-runview] [data-run-state]") === "Closed without merging" && await color(p, "[data-runview] [data-run-state]") !== green, "the run page reads Closed without merging, not in the success colour");
   await p.goto(`${base}/#/workflows/cardy`); await seen(p, `[data-overlay-run="${CLOSED}"]`, 10000, "attached");
   { const o = await text(p, `[data-overlay-run="${CLOSED}"]`); ok(/Closed without merging/.test(o) && !/succeeded/.test(o), "the workflow's run picker names the run's state in the same words (no raw status)", o); }
-  await p.goto(`${base}/#/board`); await seen(p, `[data-ended-run="${CLOSED}"]`, 10000);
-  ok(await text(p, `[data-ended-run="${CLOSED}"] [data-run-state]`) === "Closed without merging" && await color(p, `[data-ended-run="${CLOSED}"] [data-run-state]`) !== green, "the Board lists the closed run under Ended with the same word, not green");
-  ok(await text(p, `[data-run="${WAIT}"] .badge`) === "Waiting for you", "the Board's badge for a run at its card reads Waiting for you", await text(p, `[data-run="${WAIT}"] .badge`));
+  await p.goto(`${base}/#/board`); await seen(p, `[data-task="${CLOSED}"]`, 10000);
+  ok(await p.getAttribute(`[data-task="${CLOSED}"]`, "data-group") === "done" && await text(p, `[data-task="${CLOSED}"] [data-run-state]`) === "Closed without merging" && await color(p, `[data-task="${CLOSED}"] [data-run-state]`) !== green, "the Board lists the closed run under Done today with the same word, not green");
+  ok(await text(p, `[data-task="${WAIT}"] [data-run-state]`) === "Waiting for you", "the Board's status for a run at its card reads Waiting for you", await text(p, `[data-task="${WAIT}"] [data-run-state]`));
   await p.evaluate(() => setLang("zh-TW")); await p.waitForTimeout(300);
-  const zhB = await text(p, `[data-ended-run="${CLOSED}"] [data-run-state]`);
+  const zhB = await text(p, `[data-task="${CLOSED}"] [data-run-state]`);
   await p.goto(`${base}/#/runs`); await seen(p, `[data-run="${CLOSED}"] [data-run-state]`); const zhR = await text(p, `[data-run="${CLOSED}"] [data-run-state]`);
   await p.goto(`${base}/#/run/${CLOSED}`); await seen(p, "[data-run-state]"); const zhP = await text(p, "[data-runview] [data-run-state]");
   ok(zhB === "未合併就關閉" && zhR === zhB && zhP === zhB, "zh-TW: the same word on the Board, Runs and the run page", JSON.stringify([zhB, zhR, zhP]));
   ok(/未合併就關閉/.test(await text(p, "[data-timeline]")), "zh-TW: the timeline uses the same word");
   await p.evaluate(() => setLang("en"));
 
-  // ---------- 2. cancel at a card, with a reason: the card leaves Needs you and the Inbox ----------
+  // ---------- 2. cancel at a card, with a reason: the card leaves the Board and the Inbox ----------
   const wcard = card(WAIT)?.id;
-  await p.goto(`${base}/#/board`); ok(await seen(p, `[data-need="${wcard}"]`, 10000), "before: the waiting run's card is in Needs you");
+  await p.goto(`${base}/#/board`); ok(await seen(p, `[data-task="${WAIT}"] [data-inbox-link="${wcard}"]`, 10000), "before: the waiting run's row links to its card");
   await p.goto(`${base}/#/run/${WAIT}`); await seen(p, "[data-run-cancel]");
   await p.click("[data-run-cancel]"); await seen(p, "[data-cancel-reason]");
   await p.fill("[data-cancel-reason]", "the captain changed course"); await p.click("[data-cancel-confirm]");
@@ -126,7 +126,7 @@ try {
   { const m = await p.$eval('[data-runview] [data-run-state="cancelled"] .d', (d) => getComputedStyle(d, "::before").content).catch(() => "none");
     ok(m && m !== "none" && m !== "normal", "Cancelled has its own mark", m); }
   await p.goto(`${base}/#/board`); await p.waitForTimeout(800);
-  ok(await p.locator(`[data-need="${wcard}"]`).count() === 0, "its card left the Board's Needs you");
+  ok(await p.locator(`[data-inbox-link="${wcard}"]`).count() === 0 && await p.getAttribute(`[data-task="${WAIT}"]`, "data-group") === "done" && await text(p, `[data-task="${WAIT}"] [data-run-state]`) === "Cancelled", "its card left the Board: the run is under Done today, Cancelled");
   await p.goto(`${base}/#/inbox`); await p.waitForTimeout(800);
   ok(await p.locator(`[data-scard="${wcard}"]`).count() === 0, "its card left the Inbox");
 
@@ -136,7 +136,7 @@ try {
   await p.goto(`${base}/#/runs`); await seen(p, `[data-run="${CLOSED}"]`);
   ok(await p.locator(`[data-run="${FAILED}"]`).count() === 0, "Archive hides the failed run from the default Runs list");
   await p.goto(`${base}/#/board`); await p.waitForTimeout(800);
-  ok(await p.locator(`[data-run="${FAILED}"], [data-ended-run="${FAILED}"]`).count() === 0 && await p.locator(`[data-run="${FAILED2}"]`).count() === 1, "and from the Board (another failed run stays)");
+  ok(await p.locator(`[data-task="${FAILED}"]`).count() === 0 && await p.locator(`[data-task="${FAILED2}"]`).count() === 1, "and from the Board (another failed run stays)");
   await p.goto(`${base}/#/runs`); await seen(p, "[data-show-archived]"); await p.check("[data-show-archived]");
   ok(await seen(p, `[data-run="${FAILED}"] [data-archived]`), "Show archived lists it, marked archived");
   await p.click(`[data-run="${FAILED}"] [data-run-unarchive]`); await p.waitForTimeout(400); await p.uncheck("[data-show-archived]"); await p.waitForTimeout(400);
@@ -220,7 +220,7 @@ try {
     await q.fill("[data-delete-confirm-id]", FAILED); ok(!(await q.isDisabled("[data-delete-confirm]")), `delete confirm at ${tag}: typed, Delete for good is enabled`);
     ok(await contrast(q, "[data-delete-confirm]") >= 4.5, `delete confirm at ${tag}: the enabled Delete for good reaches AA (4.5:1)`, String(await contrast(q, "[data-delete-confirm]")));
     await shot("run-delete-confirm-typed");
-    for (const [name, hash, sel] of [["board", "#/board", "#needs"], ["inbox", "#/inbox", ".page"]]) { await q.goto(`${base}/${hash}`); await seen(q, sel); await q.evaluate(() => document.body.classList.add("chat-closed")); await q.waitForTimeout(400);
+    for (const [name, hash, sel] of [["board", "#/board", "#tasks"], ["inbox", "#/inbox", ".page"]]) { await q.goto(`${base}/${hash}`); await seen(q, sel); await q.evaluate(() => document.body.classList.add("chat-closed")); await q.waitForTimeout(400);
       ok(await fabClear(q), `${name} at ${tag}: the firstmate button covers nothing at the bottom`); }
     await q.context().close();
   }

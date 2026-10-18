@@ -1,26 +1,28 @@
-// The Board (docs/units/board.md), ported from the approved prototype's Board view:
-//   Needs you   the decisions waiting on the captain, Studio's and firstmate's, each answered
-//               in place: Answer expands the card (a Studio card is the shared component, public/scard.js;
-//               a firstmate card is the Inbox's card view) and the result shows inline
-//   Runs        every run in flight, Studio tasks and firstmate tasks, one row each with a
-//               stage pipeline (crewLayout.stagesFor), stage and round, status, crew, spend,
-//               elapsed; rows follow the page's one stream (window.liveListen)
-//   Crew        the agents working right now, across every run
-// It also shows a firstmate card's answer on the card itself (the Inbox and Needs you).
+// The Board (docs/units/board.md): a task overview. One row per Task, Studio runs and firstmate tasks alike,
+// ordered Waiting for you, Stuck, Running, Done today, with filter tabs and their counts:
+//   status · title with run, workflow and project · a milestone track (the workflow's main path, see milestones())
+//   with the current milestone marked and its round · Now (who is working: seat and model; or which card waits,
+//   with a link to it in the Inbox) · an overlap badge when another open Task touches the same files · elapsed
+// Selecting a row opens a detail panel with only that Task's visited path (loops as "round N ↺", the current
+// node ringed), its recent events, and links to its full graph and its page. The Board shows no card and no
+// workflow graph: a decision card lives in the Inbox only, a graph on the Task's page.
+// Rows follow the page's one stream (window.liveListen); a live redraw keeps the selected row, the focus and the scroll.
+// It also shows a firstmate card's answer on the card itself (the Inbox).
 (() => {
-const BD = { members: new Set(), life: 0, refresh: 0, refreshPending: false, revisions: new Map(), sequences: new Map(), detailLife: new Map(), requests: new Map(), cardRevision: 0, cardRequest: 0, overviewIds: [], ended: [], mounted: new Map(), cstate: new Map(), live: false, list: null, det: new Map(), cards: null, pol: null, loading: false, open: new Set(), hidden: new Set(), answered: [], t: new Map() };
+const BD = { members: new Set(), life: 0, refresh: 0, refreshPending: false, revisions: new Map(), sequences: new Map(), detailLife: new Map(), requests: new Map(), cardRevision: 0, cardRequest: 0, ended: [], live: false, list: null, det: new Map(), cards: null, pol: null, loading: false, hidden: new Set(), answered: [], t: new Map(), tab: "all", sel: null, picked: false, mode: null };
 const api = async (u, signal) => { const r = await fetch(u, { signal }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; };
 const DAY = 86400000;
 const ranToday = (r) => today(r.updatedAt) || today(r.endedAt);
 const inFlight = (r) => ["queued", "running", "waiting", "paused"].includes(r.status) || (r.status === "failed" && clock() - Date.parse(r.endedAt || r.updatedAt) < DAY);
-const zhOn = () => zh();
 const loc = (x) => L(x);
-const oneLine = (t) => { const s = String(t || "").replace(/\s+/g, " ").trim(); const m = /^(.{20,}?[.!?。])(\s|$)/.exec(s); const one = m ? m[1] : s; return one.length > 160 ? one.slice(0, 157) + "…" : one; };
-const fmtEl = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); const m = Math.floor(s / 60), hh = Math.floor(m / 60); return hh ? `${hh}h ${String(m % 60).padStart(2, "0")}m` : `${m}m ${String(s % 60).padStart(2, "0")}s`; };
+const oneLine = (t, n = 140) => { const s = String(t || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
+// elapsed, compact: 41m, 14h, 3d
+const fmtEl = (ms) => { const m = Math.max(0, Math.floor(ms / 60000)), hh = Math.floor(m / 60); return hh >= 24 ? `${Math.floor(hh / 24)}d` : hh ? `${hh}h` : `${m}m`; };
 const usd = (n) => `$${n.toFixed(2)}`;
 // the Board's clock: one seam for every "today" and elapsed figure (the tests pin the page's clock)
 const clock = () => (typeof window.crewClock === "function" ? window.crewClock() : Date.now());
 const today = (iso) => { if (!iso) return false; const d = new Date(iso), n = new Date(clock()); return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate(); };
+const hhmm = (iso) => { const d = new Date(iso); return isNaN(d) ? "" : `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 
 // ---------- data ----------
 const revision = id => BD.revisions.get(id) || 0;
@@ -41,17 +43,16 @@ async function loadStudio(request = true) {
       try {
         const [l, c, pol] = await Promise.all([api("/api/wruns", controller.signal), api("/api/scards?open=1", controller.signal), BD.pol ? Promise.resolve(BD.pol) : api("/api/policies", controller.signal).catch(() => ({ org: {} }))]);
         if (generation !== BD.refresh || life !== BD.life || S.route?.name !== "board") continue;
-        BD.pol = pol; if (cardRevision === BD.cardRevision && S.conn !== "down") { BD.cards = c.cards || []; prune(true); }
+        BD.pol = pol; if (cardRevision === BD.cardRevision && S.conn !== "down") BD.cards = c.cards || [];
         const all = l.runs || []; const members = new Set(all.map(r => r.id));
         for (const id of BD.members) if (!members.has(id)) { invalidateRun(id); BD.det.delete(id); }
         BD.members = members;
         // Only this accepted default list decides membership. Detail requests never add IDs.
-        BD.overviewIds = all.filter(window.crewWorkflowOverview.active).map(r => r.id);
         BD.list = all.filter(inFlight).map(r => r.id);
-        BD.ended = all.filter(r => !inFlight(r) && r.endedAt && clock() - Date.parse(r.endedAt) < DAY);
+        BD.ended = all.filter(r => !inFlight(r) && r.status !== "failed" && r.endedAt && today(r.endedAt)).map(r => r.id);
         for (const r of all) {
           const old = BD.det.get(r.id); BD.det.set(r.id, old ? { ...old, ...r } : { ...r, nodes: {}, def: null, steps: [] });
-          if ((!old?.def || BD.detailLife.get(r.id) !== BD.life || old.updatedAt !== r.updatedAt) && (inFlight(r) || ranToday(r) || BD.overviewIds.includes(r.id))) void loadRun(r.id);
+          if ((!old?.def || BD.detailLife.get(r.id) !== BD.life || old.updatedAt !== r.updatedAt) && (inFlight(r) || ranToday(r))) void loadRun(r.id);
         }
         soft();
       } catch { if (life === BD.life) { BD.list ??= []; BD.cards ??= []; } }
@@ -69,146 +70,344 @@ async function loadRun(id) {
     const sequence = Math.max(0, ...(r.events || []).map(e => e.seq || 0));
     if (sequence < (BD.sequences.get(id) || 0)) return;
     BD.sequences.set(id, sequence);
-    BD.detailLife.set(id, life); BD.det.set(id, r); patchRow(id);
+    BD.detailLife.set(id, life); BD.det.set(id, r); soft();
   } catch {} finally { if (BD.requests.get(id) === controller) BD.requests.delete(id); }
 }
 async function loadCards() {
   if (S.conn === "down") return;
   const generation = BD.cardRevision, request = ++BD.cardRequest, life = BD.life;
   try { const c = await api("/api/scards?open=1"); if (generation !== BD.cardRevision || request !== BD.cardRequest || life !== BD.life || S.route?.name !== "board" || S.conn === "down") return; BD.cards = c.cards || []; }
-  catch { return; } prune(true); soft();
-}
-// a decision that is no longer open (answered here or elsewhere, cancelled, its run ended) leaves nothing behind:
-// its open flag, its Studio card state and its mounted card go; the open list is the authority
-// A field still focused inside a card that left is let go (data loads only, not a render in progress): otherwise the
-// Board's soft redraw waits for its blur and keeps showing the card that left, and the captain's next click (the blur)
-// redraws the page between mousedown and mouseup, so the click is lost.
-function prune(release = false) {
-  const live = new Set([...(BD.cards || []).filter((c) => c.status === "open").map((c) => c.id), ...S.pending.map((c) => c.id)]);
-  if (release) { const a = document.activeElement; for (const [id, m] of BD.mounted) if (!live.has(id) && a && m.box?.contains(a)) a.blur(); }
-  for (const m of [BD.open, BD.cstate, BD.mounted]) for (const id of [...m.keys()]) if (!live.has(id)) m.delete(id);
+  catch { return; } soft();
 }
 
-// ---------- stages ----------
-// a firstmate task's node, placed on the code-firstmate definition's node ids (public/graph-layout.js holds the grouping)
-const FM_NODE = { dispatch: "dispatch", door: "door", plan: "plan", failfirst: "plan", build: "build", ci: "ci", review: "review", gates: "merge-card", merge: "merge-card", done: "done" }; // fm's "merge" is its merge card raised
-const FM_DEF = { id: "code-firstmate", nodes: [...new Set([...Object.values(FM_NODE), "merge"])].map((id) => ({ id })) };
-const stagesFor = (def) => { const st = window.crewLayout?.stagesFor(def) || [];
-  return st.length ? st : def.nodes.filter((n) => n.kind !== "card").map((n) => ({ id: n.id, label: n.label || n.id, nodes: [n.id] })); };
-const stageLabel = (st) => window.crewI18n.zhField(lang, st.label, st.label_tw);
-const SEGN = { done: () => T("done", "完成"), running: () => T("running", "進行中"), human: () => T("waiting on you", "等你"), failed: () => T("failed", "失敗"), "": () => T("not started", "未開始") };
-function studioStages(r) {
-  if (!r.def) return { stages: [], segs: [], cur: -1 };
-  const stages = stagesFor(r.def), nodes = r.nodes || {};
-  const segs = stages.map((st) => { const ns = st.nodes.map((m) => nodes[m]).filter(Boolean);
+// ---------- milestones ----------
+// A Task's milestone track comes from its workflow definition alone, so every Task of one definition has the same track:
+//  1. the definition's stages when it has any (crewLayout.stagesFor: the nodes' own `stage`, else the built-in grouping,
+//     such as code-firstmate's Intake, Door, Plan, Build loop, Gates, Merge, After merge);
+//  2. otherwise its main path: from the entry node (the first with no incoming edge), follow at each node the first
+//     outgoing edge to a node not yet on the path, an edge with no condition or a forward one (ok, pass, go, approve,
+//     accept, merge, done, yes, dispatch) before any other, in definition order. The milestones are the path's work
+//     nodes, in order: agents, checks, cards, loops, and hooks that run a role. Bookkeeping hooks (intake, publish,
+//     done) are not milestones. A node off the main path (a fix round, an escalation card) is in no milestone: the
+//     track then marks the milestone after the last one reached.
+const FORWARD = /^(ok|pass|passed|go|approve|approved|accept|accepted|merge|done|yes|dispatch|next|continue)$/i;
+const edgeOf = (e) => (Array.isArray(e) ? { from: e[0], to: e[1], when: e[2] ?? null } : e);
+function milestones(def) {
+  if (!def?.nodes?.length) return [];
+  const st = window.crewLayout?.stagesFor(def) || [];
+  if (st.length) return st.map((s) => ({ id: s.id, label: window.crewI18n.zhField(lang, s.label, s.label_tw), nodes: s.nodes }));
+  const edges = (def.edges || []).map(edgeOf), into = new Set(edges.map((e) => e.to));
+  const entry = def.nodes.find((n) => !into.has(n.id)) || def.nodes[0];
+  const path = [entry.id], on = new Set(path);
+  for (let at = entry.id; ;) {
+    const next = edges.filter((e) => e.from === at && !on.has(e.to) && def.nodes.some((n) => n.id === e.to))
+      .map((e, i) => ({ e, i, rank: !e.when || FORWARD.test(String(e.when)) ? 0 : 1 })).sort((a, b) => a.rank - b.rank || a.i - b.i)[0];
+    if (!next) break; at = next.e.to; path.push(at); on.add(at);
+  }
+  const work = (n) => ["agent", "check", "card", "loop"].includes(n.kind) || (n.kind === "hook" && !!n.role);
+  const list = path.map((id) => def.nodes.find((n) => n.id === id)).filter((n) => n && work(n));
+  return (list.length ? list : path.map((id) => def.nodes.find((n) => n.id === id))).map((n) => ({ id: n.id, label: loc(n.label) || n.id, nodes: [n.id] }));
+}
+// each milestone's state from the run's node states, and the current one
+function track(r) {
+  const ms = milestones(r.def), nodes = r.nodes || {};
+  const segs = ms.map((m) => { const ns = m.nodes.map((id) => nodes[id]).filter(Boolean);
     if (ns.some((n) => n.state === "running" && n.waiting === "card")) return "human";
     if (ns.some((n) => n.state === "running")) return "running";
     if (ns.some((n) => n.state === "failed" || n.state === "error")) return "failed";
     if (ns.some((n) => n.state === "passed" || n.state === "skipped")) return "done";
     return ""; });
-  if (r.status === "succeeded") return { stages, segs: segs.map(() => "done"), cur: stages.length - 1 };
+  if (r.status === "succeeded") return { ms, segs: segs.map(() => "done"), cur: ms.length - 1 };
   let cur = -1; segs.forEach((s, i) => { if (s === "running" || s === "human" || s === "failed") cur = i; });
-  if (cur < 0) { segs.forEach((s, i) => { if (s === "done") cur = i; }); cur = Math.min(stages.length - 1, cur + 1); }
-  for (let i = 0; i < cur; i++) if (!segs[i]) segs[i] = "done"; // a stage the run's branch went around (Plan on a two-way change)
-  return { stages, segs, cur };
+  if (cur < 0) { segs.forEach((s, i) => { if (s === "done") cur = i; }); cur = Math.min(ms.length - 1, cur + 1); }
+  for (let i = 0; i < cur; i++) if (!segs[i]) segs[i] = "done"; // a milestone the run's branch went around
+  return { ms, segs, cur };
 }
-function roundOf(r, st) {
-  if (!st || !r.def) return null;
-  const loops = r.def.nodes.filter((n) => n.kind === "loop" && n.args?.producer && st.nodes.includes(n.args.producer));
+// the current milestone's round: a refine loop's producer visits against its cap; else the busiest node's visits when above one
+function roundOf(r, m) {
+  if (!m || !r.def) return null;
+  const loops = r.def.nodes.filter((n) => n.kind === "loop" && n.args?.producer && m.nodes.includes(n.args.producer));
   for (const lp of loops) { const v = r.nodes?.[lp.args.producer]?.visits || 0; if (!v) continue;
     const cap = (lp.args.round_cap != null ? Number(lp.args.round_cap) : Number(BD.pol?.org?.round_cap ?? 3)) + Number(r.ctx?.policyAdds?.round_cap ?? 0) + Number(r.nodes?.[lp.id]?.extra ?? 0);
     return { n: v, cap }; }
-  return null;
+  const v = Math.max(0, ...m.nodes.map((id) => r.nodes?.[id]?.visits || 0));
+  return v > 1 ? { n: v, cap: null } : null;
 }
-function fmStages(t) {
-  const stages = stagesFor(FM_DEF); const at = FM_NODE[t.node] || "dispatch";
-  const cur = Math.max(0, stages.findIndex((s) => s.nodes.includes(at)));
+// a firstmate task's node, placed on the code-firstmate definition's node ids (public/graph-layout.js holds the grouping)
+const FM_NODE = { dispatch: "dispatch", door: "door", plan: "plan", failfirst: "plan", build: "build", ci: "ci", review: "review", gates: "merge-card", merge: "merge-card", done: "done" }; // fm's "merge" is its merge card raised
+const FM_DEF = { id: "code-firstmate", nodes: [...new Set([...Object.values(FM_NODE), "merge"])].map((id) => ({ id })) };
+function fmTrack(t) {
+  const ms = milestones(FM_DEF), at = FM_NODE[t.node] || "dispatch";
+  const cur = Math.max(0, ms.findIndex((s) => s.nodes.includes(at)));
   const now = t.status === "failed" ? "failed" : t.status === "needs-you" ? "human" : t.status === "done" ? "done" : "running";
-  return { stages, segs: stages.map((_, i) => (i < cur ? "done" : i === cur ? now : "")), cur };
+  return { ms, segs: ms.map((_, i) => (i < cur ? "done" : i === cur ? now : "")), cur: t.status === "done" ? ms.length - 1 : cur };
 }
 
-// ---------- rows ----------
-const pipe = (p) => h("div", { class: "pipe", role: "img", "aria-label": p.stages.map((st, i) => `${stageLabel(st)}: ${SEGN[p.segs[i]]()}`).join(", ") },
-  p.stages.map((st, i) => h("i", { class: `${p.segs[i]}${p.segs[i] === "running" ? " pulse" : ""}`, title: `${stageLabel(st)}: ${SEGN[p.segs[i]]()}${p.notes?.[i] ? ` · ${p.notes[i]}` : ""}` })));
-function studioCrew(r) {
+// ---------- one Task, as the Board shows it ----------
+// Stuck, from the run's own state: the run failed (the round cap ending a run is a failure too: result "cap"), or a
+// node hit its round cap and nothing has run since (the cap's own route, a card or an end), or Firstmate is deciding
+// an escalation first (ctx.firstmateQuestion: an agent's question or a card Firstmate diagnoses before the captain).
+// Waiting for you: not stuck, and a card of the run waits on the captain. Done today: it ended today, not failed.
+const GROUPS = { you: ["Waiting for you", "等你"], stuck: ["Stuck", "卡住"], run: ["Running", "進行中"], done: ["Done today", "今天完成"] };
+const ORDER = { you: 0, stuck: 1, run: 2, done: 3 };
+const capped = (r) => Object.entries(r.nodes || {}).some(([, n]) => n?.outcome === "cap") && !Object.values(r.nodes || {}).some((n) => n?.state === "running" && !n.waiting);
+function stuckWhy(r) {
+  const q = r.ctx?.firstmateQuestion;
+  if (q) return T(`Firstmate is deciding first: ${oneLine(q.question, 90)}`, `已交給 Firstmate 判斷：${oneLine(q.question, 60)}`);
+  const cap = Object.entries(r.nodes || {}).find(([, n]) => n?.outcome === "cap");
+  if (cap) { const label = loc(r.def?.nodes?.find((n) => n.id === cap[0])?.label) || cap[0]; return T(`${label}: round cap reached`, `${label}：達到回合上限`); }
+  if (r.status === "failed") return oneLine(r.error || loc(r.failure?.title) || T("Failed", "失敗"), 120);
+  return null;
+}
+// a node's crew seat: its own seat, else its role's; named as the workflow declares it, else as the built-in seats are
+// (src/domain/crew.ts SEAT_LABELS), else by the role's label
+const SEATS = { coordinator: ["Coordinator", "協調"], maker: ["Maker", "產出"], "alt-maker": ["Second maker", "第二產出"], reviewer: ["Reviewer", "審查"], "design-reviewer": ["Design reviewer", "設計審查"] };
+function seatOf(def, node) {
+  const role = def?.roles?.find((x) => x.id === node?.role), id = node?.seat || role?.seat, seat = id && def?.seats?.find((s) => s.id === id);
+  if (seat) return (zh() ? seat.labelZh || seat.label : seat.label) || seat.id;
+  if (SEATS[id]) return T(...SEATS[id]);
+  return role ? loc(role.label) || role.id : id || null;
+}
+// who works now: the running agent rounds, each "node · seat · provider model", from the run's own crew resolution
+function workers(r) {
   const out = []; if (!r.def) return out;
-  for (const n of r.def.nodes) { const rn = r.nodes?.[n.id];
-    if (n.kind !== "agent" || rn?.state !== "running" || rn.waiting) continue;
+  for (const n of r.def.nodes) { const rn = r.nodes?.[n.id]; if (rn?.state !== "running" || rn.waiting) continue;
     const st = (r.steps || []).filter((s) => s.node === n.id).at(-1);
-    const prov = rn.agent?.provider || st?.provider || null, model = rn.agent?.model || st?.model || null;
-    out.push({ key: `${r.id}:${n.id}`, name: n.id, title: [`${n.label || n.id} (${r.id})`, prov, model].filter(Boolean).join(" · "), href: `#/run/${encodeURIComponent(r.id)}` }); }
+    const model = [rn.agent?.provider || st?.provider, rn.agent?.model || st?.model].filter(Boolean).join(" ");
+    out.push([loc(n.label) || n.id, n.kind === "agent" ? seatOf(r.def, n) : null, n.kind === "agent" ? model || null : null].filter(Boolean).join(" · ")); }
   return out;
 }
-const fmCrew = (t) => S.crew.filter((c) => c.alive && (!t || c.task === t.id)).map((c) => ({ key: c.actor, name: c.name, title: [c.actor, c.vendor, c.model].filter(Boolean).join(" · "), href: `#/crew/${encodeURIComponent(c.actor)}` }));
+const cardTitle = (c) => oneLine(String(loc(c.title) || c.kind || "").replace(/^[A-Z][A-Z ]+ — /, ""), 60);
+const studioItem = (id, group) => { const r = BD.det.get(id); return r ? studioView(r, BD.cards || [], group) : null; };
+// the card a run waits on now: its oldest open card, never one raised on an earlier visit of its node
+const currentCard = (r, cards) => cards.filter((c) => c.status === "open" && c.run === r.id && (!c.node || !c.visit || !r.nodes?.[c.node] || (r.nodes[c.node].visits || 0) === c.visit))
+  .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))[0] || null;
+function studioView(r, cards, group) {
+  const id = r.id, card = currentCard(r, cards);
+  if (!group) group = r.status === "failed" || r.ctx?.firstmateQuestion || (r.status !== "succeeded" && capped(r)) ? "stuck" : card || Object.values(r.nodes || {}).some((n) => n?.waiting === "card") ? "you" : "run";
+  const tr = track(r), m = tr.ms[tr.cur];
+  const workers0 = workers(r);
+  const now = group === "done" ? null : group === "stuck" ? stuckWhy(r)
+    : group === "you" ? null
+    : r.status === "paused" ? T("Paused", "已暫停") : r.status === "queued" ? T("Queued", "排隊中")
+    : workers0.length ? workers0[0] + (workers0.length > 1 ? ` +${workers0.length - 1}` : "")
+    : Object.entries(r.nodes || {}).filter(([, n]) => n?.waiting === "external").map(([k]) => T(`Waiting on ${loc(r.def?.nodes?.find((n) => n.id === k)?.label) || k}`, `等待 ${loc(r.def?.nodes?.find((n) => n.id === k)?.label) || k}`))[0] || T("Between steps", "準備下一步");
+  return { id, kind: "studio", group, title: r.title, workflow: loc(r.def?.name) || r.workflow, project: r.ctx?.project || r.params?.project || null, tr, round: roundOf(r, m),
+    card: card ? { id: card.id, title: cardTitle(card) } : null, now, state: window.runState({ ...r, merged: !!r.ctx?.merged }), scope: r.ctx?.spec?.scope || [],
+    since: r.createdAt, until: r.endedAt || null, href: `#/run/${encodeURIComponent(id)}`, graph: `#/run/${encodeURIComponent(id)}?graph=1`, r };
+}
+function fmItem(t) {
+  const group = t.status === "needs-you" ? "you" : t.status === "failed" ? "stuck" : t.status === "done" ? "done" : "run";
+  const tr = fmTrack(t), pend = S.pending.filter((c) => c.task === t.id).sort((a, b) => String(a.ts).localeCompare(String(b.ts)))[0];
+  const crew = S.crew.filter((c) => c.alive && c.task === t.id);
+  const now = group === "stuck" ? (t.failure ? `${t.failure.type}: ${oneLine(L(t.failure.summary), 100)}` : T("Failed", "失敗"))
+    : group === "run" ? (crew.length ? crew.map((c) => [c.name, [c.vendor, c.model].filter(Boolean).join(" ")].filter(Boolean).join(" · ")).join(", ") : oneLine(L(t.lastSummary), 90) || T("Working", "工作中")) : null;
+  const d = pend ? LD(pend.details) || {} : null;
+  return { id: t.id, kind: "firstmate", group, title: t.title || oneLine(L(t.lastSummary), 80), workflow: "code-firstmate", project: t.project, tr,
+    round: t.round && ["build", "ci", "review"].includes(t.node) ? { n: t.round, cap: null } : null,
+    card: pend ? { id: pend.id, title: oneLine(String(d.title || pend.title || pend.kind || "").replace(/^[A-Z][A-Z ]+ — /, ""), 60) } : null, now,
+    state: window.runState(t.status === "needs-you" ? { status: "waiting" } : t.status === "done" ? { status: "succeeded", merged: true } : { status: t.status }), scope: [],
+    since: t.firstTs, until: t.status === "failed" || t.status === "done" ? t.lastTs : null, href: `#/task/${encodeURIComponent(t.id)}`, graph: `#/task/${encodeURIComponent(t.id)}`, t };
+}
+// two scopes meet when one path holds the other (a glob by its static prefix); test paths never count
+const scopePaths = (xs) => xs.map((p) => String(p).trim().replace(/^\.\//, "").replace(/\/+$/, "").replace(/\/?[^/]*[*?[].*$/, "")).filter((p) => p !== "tests" && !p.startsWith("tests/"));
+const meets = (a, b) => { const x = scopePaths(a), y = scopePaths(b); return x.some((p) => y.some((q) => !p || !q || p === q || p.startsWith(q + "/") || q.startsWith(p + "/"))); };
+function items() {
+  const studio = [...(BD.list || []).map((id) => studioItem(id)), ...(BD.ended || []).map((id) => studioItem(id, "done"))].filter(Boolean);
+  const fm = S.tasks.filter((t) => t.status !== "idle" && (t.status !== "done" || today(t.mergedTs || t.lastTs))).map(fmItem);
+  const all = [...studio, ...fm];
+  const open = all.filter((x) => x.group !== "done" && x.scope.length);
+  for (const x of all) x.overlap = x.group === "done" || !x.scope.length ? [] : open.filter((o) => o !== x && meets(x.scope, o.scope)).map((o) => o.id);
+  return all.sort((a, b) => ORDER[a.group] - ORDER[b.group] || String(b.since || "").localeCompare(String(a.since || "")));
+}
+
+// ---------- the row ----------
+const groupWord = (g) => T(...GROUPS[g]);
+const stageText = (x) => { const m = x.tr.ms[x.tr.cur]; if (!m) return "—";
+  const rd = x.round ? T(` · round ${x.round.n}${x.round.cap ? `/${x.round.cap}` : ""}`, ` · 第 ${x.round.n}${x.round.cap ? `/${x.round.cap}` : ""} 輪`) : "";
+  return `${x.group === "done" ? T("Done", "完成") : m.label}${rd} · ${x.tr.cur + 1}/${x.tr.ms.length}`; };
+const SEGN = { done: () => T("done", "完成"), running: () => T("running", "進行中"), human: () => T("waiting on you", "等你"), failed: () => T("failed", "失敗"), "": () => T("not started", "未開始") };
+const trackEl = (x) => h("span", { class: "tb-track", role: "img", "aria-label": x.tr.ms.map((m, i) => `${m.label}: ${SEGN[x.tr.segs[i]]()}`).join(", ") },
+  x.tr.ms.map((m, i) => h("i", { class: `${x.group === "done" ? "done" : i < x.tr.cur ? "past" : i === x.tr.cur ? "cur" : ""}${x.tr.segs[i] ? ` s-${x.tr.segs[i]}` : ""}`, "data-ms": m.id, title: `${m.label}: ${SEGN[x.tr.segs[i]]()}` })));
+const inboxLink = (x) => h("a", { class: "tb-inbox", href: `#/inbox/${encodeURIComponent(x.card.id)}`, "data-inbox-link": x.card.id, onclick: (e) => e.stopPropagation() }, T("Go to Inbox →", "去收件匣 →"));
+const nowText = (x) => x.group === "you" ? (x.card ? T(`Waiting for you: ${x.card.title}`, `等你：${x.card.title}`) : T("Waiting for you", "等你")) : x.group === "done" ? T(x.state.en, x.state.tw) : x.now || "—";
+const overlapEl = (x) => x.overlap.length ? h("span", { class: "tb-overlap", "data-overlap": x.overlap.join(" "), title: T(`Changes the same files as ${x.overlap.join(", ")}: it rebases onto the current base each round`, `和 ${x.overlap.join("、")} 改到同一個檔案：每輪都會 rebase 到最新的 base`) }, T("↻ will rebase", "↻ 會 rebase")) : null;
+const elapsed = (x) => x.since ? fmtEl((x.until ? Date.parse(x.until) : clock()) - Date.parse(x.since)) : "—";
+function row(x, on) {
+  return h("div", { class: `tb-row g-${x.group}${on ? " on" : ""}`, role: "option", "aria-selected": String(on), tabindex: on ? 0 : -1, id: `tb-${x.id}`,
+    "data-task": x.id, "data-kind": x.kind, "data-group": x.group, "aria-label": `${groupWord(x.group)}, ${x.id} ${x.title}`,
+    onclick: (e) => { if (e.target.closest("a")) return; pick(x.id, true); } },
+    h("span", { class: `tb-st${x.group === "done" ? ` tone-${x.state.tone}` : ""}`, "data-run-state": x.state.key }, h("i", { class: "tb-dot" }), x.group === "done" ? T(x.state.en, x.state.tw) : groupWord(x.group)),
+    h("span", { class: "tb-task" }, h("b", { class: "tb-title", title: x.title, "data-task-title": x.id }, x.title), h("span", { class: "tb-meta" }, [x.id, x.workflow, x.project || "—"].join(" · "))),
+    h("span", { class: "tb-prog" }, trackEl(x), h("span", { class: "tb-stage" }, stageText(x))),
+    h("span", { class: "tb-now" }, x.card && x.group !== "done" ? inboxLink(x) : null, h("span", { class: "tb-now-t", title: nowText(x) }, BD.mode !== "wide" && x.group === "you" && x.card ? x.card.title : nowText(x)), overlapEl(x)),
+    h("span", { class: "tb-el num", "data-since": x.since || "", "data-until": x.until || "" }, elapsed(x)));
+}
+
+// ---------- the detail panel: this Task's own path ----------
+const STEPW = { passed: ["passed", "通過"], failed: ["failed", "失敗"], error: ["error", "錯誤"], skipped: ["skipped", "略過"], superseded: ["replaced", "已取代"], interrupted: ["interrupted", "中斷"] };
+function visited(x) {
+  if (x.kind === "firstmate") return x.tr.ms.slice(0, x.tr.cur + 1).map((m, i) => ({ node: m.id, name: m.label, visit: 1, note: i < x.tr.cur || x.group === "done" ? T("done", "完成") : x.group === "you" ? T("waiting for you", "等你") : x.group === "stuck" ? T("failed", "失敗") : T("in progress", "進行中"), cur: i === x.tr.cur && x.group !== "done", state: i < x.tr.cur ? "passed" : x.t.status }));
+  const r = x.r; if (!r.def) return null;
+  const node = (id) => r.def.nodes.find((n) => n.id === id);
+  // a bookkeeping hook (no role) is no step of the path unless it failed or is where the Task is now
+  const steps = (r.steps || []).filter((s) => { const n = node(s.node); return n && (n.kind !== "hook" || n.role || ["failed", "error", "running", "waiting"].includes(s.state)); });
+  const out = [];
+  for (const s of steps) { const last = out.at(-1); if (last && last.node === s.node && last.visit === (s.visit || 1)) out.pop(); // a step retried within one visit is one stop
+    const n = node(s.node), rn = r.nodes?.[s.node];
+    const live = s.state === "running" || s.state === "waiting";
+    const what = live && rn?.waiting === "firstmate" ? T("handed to Firstmate", "交給 Firstmate") : live ? (rn?.waiting === "card" || s.state === "waiting" ? T("waiting for you", "等你") : [T("in progress", "進行中"), [s.provider, s.model].filter(Boolean).join(" ")].filter(Boolean).join(" · "))
+      : n.kind === "card" && s.outcome && s.outcome !== "ok" ? T(`chose “${n.card?.options?.find((o) => o.id === s.outcome)?.label || s.outcome}”`, `選了「${n.card?.options?.find((o) => o.id === s.outcome)?.label || s.outcome}」`)
+      : s.outcome === "cap" ? T("round cap reached", "達到回合上限") : s.outcome && !["ok", "pass"].includes(s.outcome) && s.state === "passed" ? T(`passed (${s.outcome})`, `通過（${s.outcome}）`)
+      : T(...(STEPW[s.state] || [s.state, s.state]));
+    const loop = (s.visit || 1) > 1 ? T(`round ${s.visit} ↺ · `, `第 ${s.visit} 輪 ↺ · `) : "";
+    out.push({ node: s.node, name: loc(n.label) || s.node, visit: s.visit || 1, note: loop + what, state: s.state, cur: false }); }
+  // the current node: ringed (Firstmate while it decides an escalation, else the step running or waiting now, else the failed one)
+  // (a Task waiting at parallel nodes has each of them ringed)
+  const live = out.filter((p) => p.state === "running" || p.state === "waiting");
+  if (r.ctx?.firstmateQuestion) out.push({ node: "firstmate", name: "Firstmate", visit: 1, note: stuckWhy(r), state: "running", cur: true });
+  else if (live.length) for (const p of live) p.cur = true;
+  else if (x.group === "stuck" && out.length) out[out.length - 1].cur = true;
+  return out;
+}
+function events(x) {
+  if (x.kind === "firstmate") return x.t.lastTs ? [{ t: x.t.lastTs, text: [L(x.t.lastSummary) || x.t.lastType] }] : [];
+  const tl = window.crewTimeline, r = x.r; if (!tl || !r.events) return [];
+  return r.events.filter((e) => tl.shows(e, r.events) && e.type !== "node").slice(-4).reverse().map((e) => ({ t: e.ts, text: [tl.line(e, r)].flat() }));
+}
+function detail(x) {
+  if (!x) return h("aside", { class: "tb-detail empty", "aria-label": T("Task details", "任務細節") }, h("p", { class: "faint" }, T("Select a Task to see the path it took.", "選一個任務，看它走過的路。")));
+  const path = visited(x), ev = events(x);
+  return h("aside", { class: `tb-detail g-${x.group}`, "aria-label": T("Task details", "任務細節"), "data-task-detail": x.id },
+    h("div", { class: "tb-d-head" }, h("span", { class: "tb-d-meta mono" }, [x.id, x.workflow, x.project || "—"].join(" · ")), h("h2", {}, x.title),
+      h("span", { class: "tb-d-status" }, `${x.group === "done" ? T(x.state.en, x.state.tw) : groupWord(x.group)} · ${nowText(x)}`), x.card && x.group !== "done" ? inboxLink(x) : null),
+    h("section", { class: "tb-d-sec" }, h("h3", {}, T("The path this Task took", "這個任務走過的路")),
+      path === null ? h("div", { class: "skel", style: "height:80px" }) : !path.length ? h("p", { class: "faint" }, T("No step has run yet.", "還沒有跑過任何一步。"))
+        : h("ol", { class: "tb-path", "data-task-path": x.id }, path.map((p) => h("li", { class: `${p.cur ? "cur" : ""} s-${p.state}`, "data-path-node": p.node, "data-visit": p.visit, ...(p.cur ? { "aria-current": "step" } : {}) },
+          h("i", { class: "tb-pdot" }), h("span", {}, h("b", {}, p.name), h("small", {}, p.note)))))),
+    h("section", { class: "tb-d-sec tb-d-ev" }, h("h3", {}, T("Recent events", "最近動態")),
+      ev.length ? ev.map((e) => h("div", { class: "tb-ev" }, h("span", { class: "mono faint" }, hhmm(e.t)), h("span", {}, e.text))) : h("p", { class: "faint" }, T("Nothing yet.", "還沒有。"))),
+    h("div", { class: "tb-d-act" }, h("a", { class: "btn", href: x.graph, "data-full-graph": x.id }, T("Full graph", "完整流程圖")), h("a", { class: "btn primary", href: x.href, "data-open-task": x.id }, T("Open task", "打開任務"))));
+}
+
+// ---------- the page ----------
+// the layout follows the main column's width (the Firstmate panel takes room from it): a table with the panel beside it,
+// a compact list with the panel beside it, or (narrow, a phone) cards with the panel opened under the selected card
+const modeFor = (w) => (w >= 1080 ? "wide" : w >= 640 ? "mid" : "narrow");
+const mainWidth = () => { const m = document.getElementById("main"); if (!m) return innerWidth; const cs = getComputedStyle(m); return m.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight); };
+const TABS = [["all", "All", "全部"], ["you", "Waiting for you", "等你"], ["run", "Running", "進行中"], ["stuck", "Stuck", "卡住"], ["done", "Done today", "今天完成"]];
+function pick(id, open = false) {
+  BD.sel = id; BD.picked = true;
+  if (BD.mode === "narrow" && open) { const was = document.querySelector("[data-task-detail]")?.dataset.taskDetail; if (was === id) BD.sel = null; }
+  render(); document.getElementById(`tb-${id}`)?.focus({ preventScroll: true });
+}
+function onKeys(e, list) {
+  const at = e.target.closest?.("[data-task]"); if (!at || e.target.closest("a") || e.metaKey || e.ctrlKey || e.altKey) return;
+  const ids = list.map((x) => x.id), i = ids.indexOf(at.dataset.task);
+  if (e.key === "Enter") { e.preventDefault(); location.hash = list[i].href; return; }
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  e.preventDefault(); const to = ids[Math.max(0, Math.min(ids.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))]; if (!to || to === ids[i]) return;
+  pick(to); document.getElementById(`tb-${to}`)?.scrollIntoView({ block: "nearest" });
+}
+function counts(all) {
+  const crew = [...(window.studioAgents?.members() || []), ...S.crew.filter((c) => c.alive)];
+  const ran = [...BD.det.values()].filter(ranToday);
+  const spend = ran.reduce((a, r) => a + spendToday(r), 0), costed = [...BD.det.values()].some((r) => jobsOf(r).some((j) => j.cost?.usd != null));
+  return { open: all.filter((x) => x.group !== "done").length, crew: crew.length, spend: costed ? spend : null };
+}
 const jobsOf = (r) => Object.values(r.nodes || {}).flatMap((n) => n?.data?.jobs || []);
-const spendOf = (r) => { const js = jobsOf(r).filter((j) => j.cost?.usd != null); return js.length ? js.reduce((a, j) => a + j.cost.usd, 0) : null; };
 // a job is dated by its step, else by its node's start or end; a job with neither is not dated, so not counted as today's
 const spendToday = (r) => { const at = new Map((r.steps || []).filter((s) => s.job).map((s) => [s.job, s.startedAt]));
   return Object.values(r.nodes || {}).flatMap((n) => (n?.data?.jobs || []).map((j) => [j, at.get(j.id) || n.startedAt || n.endedAt]))
     .filter(([j, when]) => j.cost?.usd != null && today(when)).reduce((a, [j]) => a + j.cost.usd, 0); };
-function studioRow(id) {
-  const r = BD.det.get(id); if (!r) return null;
-  const p = studioStages(r); const st = p.stages[p.cur];
-  p.notes = p.stages.map((s) => s.nodes.filter((m) => ["running", "failed", "error"].includes(r.nodes?.[m]?.state)).map((m) => r.def.nodes.find((n) => n.id === m)?.label || m).join(", "));
-  const rd = roundOf(r, st); const crew = studioCrew(r); const sp = spendOf(r);
-  const go = () => { location.hash = `#/run/${encodeURIComponent(id)}`; };
-  const row = h("div", { class: "rrow bd-row", "data-run": id, "data-kind": "studio", tabindex: 0, role: "link", "aria-label": `${r.title}, ${r.workflow}`, onclick: (e) => { if (!e.target.closest("a")) go(); }, onkeydown: (e) => { if (e.key === "Enter") go(); } },
-    h("div", { style: "min-width:0" }, h("div", { class: "run-t" }, h("span", { class: "tid" }, r.id), h("span", { title: r.request || r.title, "data-task-title": id }, r.title)),
-      h("div", { class: "run-s" }, h("span", {}, `${r.workflow} v${r.version}`), h("span", {}, T(`updated ${ago(r.updatedAt)}`, `${ago(r.updatedAt)}更新`)))),
-    h("div", { class: "c-stage", style: "min-width:0" }, pipe(p), h("div", { class: "pipe-l" }, st ? `${p.cur + 1}/${p.stages.length} ${stageLabel(st)}${rd ? T(` · round ${rd.n}/${rd.cap}`, ` · 第 ${rd.n}/${rd.cap} 回合`) : ""}` : "—")),
-    h("div", {}, window.runStateBadge({ ...r, merged: !!r.ctx?.merged })),
-    h("div", { class: "stack c-crew" }, crew.map((c) => { const a = avaFor(c.name); a.title = c.title; return a; })),
-    h("div", { class: "c-cost" }, h("div", { class: "spend" }, h("div", { class: "kv num" }, h("span", {}, sp == null ? "—" : usd(sp)), h("span", { class: "faint" }, T("no cap", "無上限"))))),
-    h("div", { class: "num faint c-el", "data-since": r.createdAt, "data-until": r.endedAt || "" }, fmtEl((r.endedAt ? Date.parse(r.endedAt) : clock()) - Date.parse(r.createdAt))));
-  if (r.status === "failed" && r.error) row.append(h("div", { class: "err" }, icon("alert"), h("span", { class: "mono", style: "flex:1;min-width:0;overflow-wrap:anywhere" }, r.error),
-    h("a", { class: "btn", href: `#/run/${encodeURIComponent(id)}` }, T("Open task", "打開任務"))));
-  return row;
-}
-function fmRow(t) {
-  const p = fmStages(t); const st = p.stages[p.cur]; const crew = fmCrew(t);
-  const go = () => { location.hash = `#/task/${encodeURIComponent(t.id)}`; };
-  const until = t.status === "failed" ? t.lastTs : null;
-  const row = h("div", { class: "rrow bd-row", "data-run": t.id, "data-kind": "firstmate", tabindex: 0, role: "link", "aria-label": `${t.id} ${t.title || ""}`, onclick: (e) => { if (!e.target.closest("a")) go(); }, onkeydown: (e) => { if (e.key === "Enter") go(); } },
-    h("div", { style: "min-width:0" }, h("div", { class: "run-t" }, h("span", { class: "tid" }, t.id), h("span", { title: t.title }, t.title || L(t.lastSummary))),
-      h("div", { class: "run-s" }, h("span", {}, T("code-firstmate · firstmate", "code-firstmate · firstmate")), doorBadge(t.door), t.pr ? h("a", { href: prUrl(t.pr), target: "_blank", rel: "noopener" }, `PR #${t.pr}`) : null,
-        h("span", {}, T(`updated ${ago(t.lastTs)}`, `${ago(t.lastTs)}更新`)))),
-    h("div", { class: "c-stage", style: "min-width:0" }, pipe(p), h("div", { class: "pipe-l" }, `${p.cur + 1}/${p.stages.length} ${stageLabel(st)}${t.round && st?.id === "build" ? T(` · round ${t.round}`, ` · 第 ${t.round} 回合`) : ""}`)),
-    h("div", {}, window.runStateBadge(t.waitingOn === "firstmate" ? { status: "waiting", ctx: { firstmateQuestion: true } } : t.status === "needs-you" ? { status: "waiting" } : t.status === "done" ? { status: "succeeded", merged: true } : { status: t.status })),
-    h("div", { class: "stack c-crew" }, crew.map((c) => { const a = avaFor(c.name); a.title = c.title; return a; })),
-    h("div", { class: "c-cost" }, h("div", { class: "spend" }, h("div", { class: "kv num" }, h("span", { title: T("firstmate does not record spend", "firstmate 沒有記錄花費") }, "—")))),
-    h("div", { class: "num faint c-el", "data-since": t.firstTs, "data-until": until || "" }, fmtEl((until ? Date.parse(until) : clock()) - Date.parse(t.firstTs))));
-  if (t.status === "failed" && t.failure) row.append(h("div", { class: "err" }, icon("alert"), h("span", { class: "mono", style: "flex:1;min-width:0;overflow-wrap:anywhere" }, `${t.failure.type}: ${L(t.failure.summary)}`)));
-  return row;
-}
-// one run changed: replace its row (and its error line) only
-function patchOverview() { const box = document.getElementById("workflowOverview"); if (box) box.replaceChildren(window.crewWorkflowOverview.render(BD.overviewIds.map(id => BD.det.get(id)).filter(Boolean), BD.cards || [])); }
-function patchRow(id) {
-  patchOverview();
-  const old = document.querySelector(`[data-run="${CSS.escape(id)}"]`); const row = studioRow(id); if (!old || !row) return;
-  hydrateIcons(row); old.replaceWith(row); updateHead();
-  // the page now shows this run as it is: a later soft() with nothing else new (another stream's wrun listener) redraws nothing
+const subtitle = (c) => !window.studioAgents?.ready() ? window.studioAgents?.status() || T("Checking crew status…", "正在確認船員狀態…") : T(`${c.open} tasks, ${c.crew} crew on duty, ${c.spend == null ? "—" : usd(c.spend)} today`, `${c.open} 個任務、${c.crew} 位船員值班、今天 ${c.spend == null ? "—" : usd(c.spend)}`);
+function viewBoard() {
+  if (BD.list === null) loadStudio();
+  BD.mode = modeFor(mainWidth());
+  const all = BD.list === null ? [] : items(), c = counts(all);
+  const n = (k) => (k === "all" ? all.length : all.filter((x) => x.group === k).length);
+  const list = all.filter((x) => BD.tab === "all" || x.group === BD.tab);
+  // the selection stays on its Task through live updates; on a wide page the first row is selected until the captain picks one
+  if (BD.sel && !all.some((x) => x.id === BD.sel)) BD.sel = null;
+  if (!BD.sel && !BD.picked && BD.mode !== "narrow" && list.length) BD.sel = list[0].id;
+  const sel = all.find((x) => x.id === BD.sel) || null;
   BD.sig = boardSig();
+  const waiting = n("you");
+  const rows = BD.list === null ? [1, 2, 3].map(() => h("div", { class: "tb-row tb-skel" }, h("div", { class: "skel", style: "height:12px;width:70%" }), h("div", { class: "skel", style: "height:8px" })))
+    : !all.length ? h("div", { class: "empty" }, icon("workflow"), h("b", {}, T("No task yet", "還沒有任務")), h("a", { href: "#/runs" }, T("Start one", "開始一個")))
+    : !list.length ? h("div", { class: "empty", "data-tb-empty": BD.tab }, h("b", {}, T("No task under this filter", "這個篩選下沒有任務")))
+    : list.flatMap((x) => [row(x, x.id === BD.sel), BD.mode === "narrow" && x.id === BD.sel ? detail(x) : null]);
+  return h("div", { class: `page bd-page tb-${BD.mode}`, "data-board": "1" },
+    h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Board", "看板")), h("p", { id: "boardSub" }, BD.list === null ? T("Loading tasks…", "載入中…") : subtitle(c))),
+      h("div", { class: "actions" }, ghBar(), h("a", { class: "btn", href: "#/crew" }, icon("crew"), T("Crew", "船員")), h("a", { class: "btn primary", href: "#/runs" }, icon("plus"), T("New task", "新任務")))),
+    // the operator turned the OS sandbox and egress proxy off (CREW_LOCAL_UNRESTRICTED=1): said above everything else
+    BD.pol?.execution === "local-unrestricted" && window.crewUnrestrictedNotice ? window.crewUnrestrictedNotice() : null,
+    BD.mode === "narrow" && waiting ? h("a", { class: "tb-waitbar", href: "#/inbox", "data-tb-waitbar": String(waiting) }, h("span", {}, T(`${waiting} task${waiting === 1 ? "" : "s"} waiting for you`, `${waiting} 個任務在等你`)), h("span", {}, T("Go to Inbox →", "去收件匣 →"))) : null,
+    h("div", { class: "tb-tabs", role: "tablist", "aria-label": T("Filter", "篩選") }, TABS.map(([k, en, tw]) => h("button", { type: "button", role: "tab", class: `tb-tab t-${k}`, "aria-selected": String(BD.tab === k), "data-tb-tab": k,
+      onclick: () => { BD.tab = k; render(); } }, h("i", { class: "tb-dot" }), T(en, tw), h("span", { class: "tb-count num" }, String(n(k)))))),
+    h("div", { class: "tb-body" },
+      h("div", { class: "tb-listwrap" },
+        h("div", { class: "card tb-list", id: "tasks" },
+          BD.mode === "wide" ? h("div", { class: "tb-head", "aria-hidden": "true" }, h("span", {}, T("Status", "狀態")), h("span", {}, T("Task", "任務")), h("span", {}, T("Progress", "進度")), h("span", {}, T("Now", "現在")), h("span", { class: "r" }, T("Elapsed", "經過"))) : null,
+          h("div", { role: "listbox", "aria-label": T("Tasks", "任務"), class: "tb-rows", onkeydown: (e) => onKeys(e, list) }, rows)),
+        h("p", { class: "tb-foot faint" }, T("Decision cards live in the Inbox only: the Board tells you which Task is waiting, without a second copy of the card.", "要你做決定的卡片只放在收件匣；看板只告訴你「哪個任務在等你」，不再重複一份卡。"))),
+      BD.mode !== "narrow" ? detail(sel) : null));
 }
+routes.board = viewBoard;
+window.crewBoardAgentsChanged = () => S.route?.name === "board" && !S.route.arg && soft();
+// the Board's own derivations, for tests and other pages: the rows as shown and a definition's milestone track
+window.crewBoard = { items: () => items().map(({ r, t, ...x }) => x), task: (r, cards = []) => { const { r: _, ...x } = studioView(r, cards); return x; }, milestones };
+// the main column changes width (the Firstmate panel opens or closes, the window resizes): the layout follows
+{ const m = document.getElementById("main"); if (m && typeof ResizeObserver === "function") new ResizeObserver(() => { if (S.route?.name === "board" && BD.mode && modeFor(mainWidth()) !== BD.mode) render(); }).observe(m); }
+// re-renders from live data (app.js's stream handlers and the loaders here) go through soft(): mark them as live
+// and a live update that changes nothing the Board shows does not redraw it (the crew's log tails move every few seconds;
+// a redraw between a mouse-down and its mouse-up would swallow the captain's click). A redraw keeps the focused row
+// focused and the detail panel's own scroll.
+const boardSig = () => JSON.stringify([lang, BD.tab, BD.sel, BD.mode, window.studioAgents?.ready(), window.studioAgents?.status(), window.studioAgents?.members(), window.crewFirstmateWelcomeSignature?.(), S.tasks.filter((t) => t.status !== "idle").map((t) => [t.id, t.status, t.node, t.round, t.title, t.lastTs, t.failure?.type]),
+  S.pending.map((c) => [c.id, c.ts, c.task]), S.crew.filter((c) => c.alive).map((c) => [c.actor, c.task, c.vendor, c.model]), BD.list, BD.ended, (BD.cards || []).map((c) => [c.id, c.status, c.run]), [...BD.det.values()].map((r) => [r.id, r.status, r.updatedAt, r.nodes, (r.steps || []).length, (r.events || []).length, !!r.def])]);
+{ const baseSoft = soft; soft = function () {
+    if (S.route?.name !== "board") return baseSoft();
+    if (boardSig() === BD.sig) return updateNav();
+    const focused = document.activeElement?.closest?.("[data-task]")?.dataset.task, panel = document.querySelector(".tb-detail")?.scrollTop || 0;
+    BD.live = true; try { return baseSoft(); } finally { BD.live = false;
+      if (focused) document.getElementById(`tb-${focused}`)?.focus({ preventScroll: true });
+      const p = document.querySelector(".tb-detail"); if (p) p.scrollTop = panel; } }; }
 
-// ---------- decisions ----------
-function decisions() {
-  const studio = (BD.cards || []).filter((c) => c.status === "open" && !BD.hidden.has(c.id)).map((c) => ({ source: "studio", id: c.id, data: c, ts: c.createdAt, run: c.run, kind: c.kind, title: loc(c.title), why: oneLine(loc(c.sections)?.why || c.body) }));
-  const fm = S.pending.filter((c) => !BD.hidden.has(c.id)).map((c) => { const d = LD(c.details) || {};
-    return { source: "firstmate", id: c.id, data: c, ts: c.ts, run: c.task, kind: c.purpose || c.kind || T("decision", "決定"), title: d.title || c.title, why: oneLine(d.explanation || (Array.isArray(d.why) ? (typeof d.why[0] === "string" ? d.why[0] : d.why[0]?.text) : d.why)) }; });
-  return [...studio, ...fm].sort((a, b) => String(b.ts || "").localeCompare(String(a.ts || "")));
-}
-// a decision, mounted in place. A Studio card is the shared card component (public/scard.js); its state (ticks, note,
-// door tick, refusal, answer in flight) lives in BD.cstate by card id until it is answered, so Close and Answer again keep it.
-// A firstmate card is the Inbox's card view (its state lives in app.js's sel and takeover.js's doorSel).
-const studioState = (id) => { if (!BD.cstate.has(id)) BD.cstate.set(id, {}); return BD.cstate.get(id); };
-function mountDecision(el, dc) {
-  if (dc.source === "studio") return window.crewCard.mountCard(el, dc.data, { inbox: true, state: studioState(dc.id),
-    onAnswered: (c) => { BD.cstate.delete(c.id); answered(c.id, `${c.options?.find((o) => o.id === c.answer?.choice)?.label || c.answer?.choice || ""} ✓`); } });
-  el.replaceChildren(cardView(dc.data)); hydrateIcons(el); return null;
-}
-window.crewBoard = { mountDecision, held: () => ({ open: [...BD.open], cstate: [...BD.cstate.keys()], mounted: [...BD.mounted.keys()] }) }; // held: what the Board keeps per card (tests)
+// ---------- live: the page's one stream ----------
+window.liveListen("wrun", (m) => { let d; try { d = JSON.parse(m.data); } catch { return; }
+  const sequence = d.event?.seq;
+  if (sequence && sequence <= (BD.sequences.get(d.id) || 0)) return;
+  if (sequence) BD.sequences.set(d.id, sequence);
+  const previous = BD.det.get(d.id);
+  const refreshList = BD.loading || !BD.members.has(d.id) || d.deleted || d.archived !== undefined || (previous && d.status && (inFlight(previous) !== inFlight({ ...previous, status: d.status }) || previous.status !== d.status));
+  invalidateRun(d.id);
+  if (d.deleted || d.archived === true) {
+    BD.members.delete(d.id); BD.det.delete(d.id);
+    BD.list = (BD.list || []).filter(id => id !== d.id); BD.ended = BD.ended.filter(id => id !== d.id);
+    if (S.route?.name === "board") soft();
+  } else {
+    const r = BD.det.get(d.id);
+    if (r && BD.members.has(d.id) && d.nodes) { if (d.event) { r.events ??= []; if (!r.events.some(e => e.seq === d.event.seq)) r.events.push(d.event); } r.status = d.status || r.status; for (const [k, n] of Object.entries(d.nodes)) r.nodes[k] = { ...(r.nodes[k] || {}), ...n }; if (S.route?.name === "board") soft(); }
+    if (BD.members.has(d.id) && S.route?.name === "board") BD.t.set(d.id, setTimeout(() => { BD.t.delete(d.id); void loadRun(d.id); }, 250));
+  }
+  // archived:false means refresh for an unarchive; membership still comes only from the list.
+  if (S.route?.name === "board" && refreshList) requestStudio();
+});
+window.liveListen("scard", () => { BD.cardRevision++; clearTimeout(BD.ct); if (S.route?.name === "board") void loadCards(); });
+addEventListener("crew:live", () => { if (S.route?.name === "board") { BD.cardRevision++; void loadCards(); requestStudio(); } });
+// elapsed ticks without re-rendering
+setInterval(() => { if (S.route?.name !== "board") return; document.querySelectorAll(".tb-row .tb-el[data-since]").forEach((el) => { if (el.dataset.since && !el.dataset.until) el.textContent = fmtEl(clock() - Date.parse(el.dataset.since)); }); }, 15000);
+// coming back to the Board shows fresh runs
+addEventListener("hashchange", () => {
+  const board = (location.hash.replace(/^#\/?/, "") || "board").startsWith("board");
+  BD.life++; BD.refresh++; clearTimeout(BD.ct); BD.cardRequest++;
+  BD.listRequest?.abort(); for (const id of [...BD.requests.keys(), ...BD.t.keys()]) invalidateRun(id);
+  if (board) void loadStudio(); else BD.refreshPending = false;
+});
+
+// ---------- the Inbox: a card answered there says so at the top ----------
 function answered(id, text) {
-  BD.hidden.add(id); BD.open.delete(id); BD.answered = [{ id, text, at: Date.now() }, ...BD.answered.filter((a) => a.id !== id)].slice(0, 8);
+  BD.hidden.add(id); BD.answered = [{ id, text, at: Date.now() }, ...BD.answered.filter((a) => a.id !== id)].slice(0, 8);
   if (["board", "inbox"].includes(S.route?.name)) render();
   setTimeout(loadCards, 200);
 }
@@ -221,119 +420,7 @@ window.onCardAnswered = (c, ok, text) => { if (!ok && window.cardResults.get(c.i
     (el.querySelector(".actions") || el).after(line);
     if (r?.ok || busy) el.querySelectorAll(".actions .btn, .opt, input, [data-check-answer]").forEach((b) => (b.disabled = true));
     return el; }; }
-function needRow(dc) {
-  const isOpen = BD.open.has(dc.id); const merge = /merge/i.test(dc.kind || "");
-  const toggle = () => { isOpen ? BD.open.delete(dc.id) : BD.open.add(dc.id); render(); };
-  const rows = [h("div", { class: `need${isOpen ? " open" : ""}`, "data-need": dc.id, "data-source": dc.source, "data-need-scard": dc.source === "studio" ? dc.id : null },
-    h("div", { class: "need-ic", style: `background:var(--${merge ? "ok" : "human"}-soft);color:var(--${merge ? "ok" : "human"})` }, icon(merge ? "pr" : "human")),
-    h("div", { style: "min-width:0" }, h("div", { class: "need-t" }, dc.run ? h("span", { class: "tid" }, dc.run) : null, " ", dc.title),
-      h("div", { class: "need-d" }, `${dc.kind}${dc.why ? ". " + dc.why : ""}`)),
-    h("div", { class: "need-r" }, h("span", { class: "faint num", style: "font-size:12px" }, ago(dc.ts)),
-      h("button", { class: "btn", "data-need-open": dc.id, "aria-expanded": String(isOpen), onclick: toggle }, isOpen ? T("Close", "收合") : T("Answer", "回答"))))];
-  if (isOpen) { // a live re-render keeps the mounted card as it is (the same elements, mid-click included); the captain's own actions redraw it
-    const key = JSON.stringify(dc.data) + lang; const m = BD.mounted.get(dc.id);
-    if (m && dc.source === "studio") { if (m.key !== key) { m.ctl?.update(dc.data); m.key = key; } rows.push(m.box); } // the component redraws itself
-    else if (BD.live && m && m.key === key) rows.push(m.box);
-    else { const box = h("div", { class: "need-x", "data-need-card": dc.id }); const ctl = mountDecision(box, dc); BD.mounted.set(dc.id, { key, box, ctl }); rows.push(box); } }
-  else BD.mounted.delete(dc.id);
-  return rows;
-}
 const answeredRows = () => BD.answered.filter((a) => Date.now() - a.at < 10 * 60000).map((a) => h("div", { class: "need bd-answered", "data-answered": a.id }, h("div", { class: "need-ic", style: "background:var(--ok-soft);color:var(--ok)" }, icon("check")),
   h("div", { class: "need-d" }, h("span", { class: "tid" }, a.id), " ", a.text), h("span", { class: "faint", style: "font-size:12px" }, ago(new Date(a.at).toISOString()))));
-
-// ---------- the page ----------
-function counts() {
-  const studio = (BD.list || []).map((id) => BD.det.get(id)).filter(Boolean);
-  const fm = S.tasks.filter((t) => t.status !== "done" && t.status !== "idle");
-  const crew = [...(window.studioAgents?.members() || []), ...fmCrew(null)];
-  const ran = [...BD.det.values()].filter(ranToday);
-  const spend = ran.reduce((a, r) => a + spendToday(r), 0), costed = [...BD.det.values()].some((r) => jobsOf(r).some((j) => j.cost?.usd != null));
-  return { studio, fm, crew, spend: costed ? spend : null };
-}
-function updateHead() { const c = counts(); const el = document.getElementById("boardSub"); if (el) el.textContent = subtitle(c); }
-const subtitle = (c) => !window.studioAgents?.ready() ? window.studioAgents?.status() || T("Checking crew status…","正在確認船員狀態…") : T(`${c.studio.length + c.fm.length} tasks, ${c.crew.length} crew on duty, ${c.spend == null ? "—" : usd(c.spend)} today`, `${c.studio.length + c.fm.length} 個任務、${c.crew.length} 位船員值班、今天 ${c.spend == null ? "—" : usd(c.spend)}`);
-function viewBoard() {
-  if (BD.list === null) loadStudio();
-  if (BD.cards !== null) prune();
-  BD.sig = boardSig();
-  const c = counts(); const ds = decisions();
-  const ans = answeredRows();
-  return h("div", { class: "page bd-page", "data-board": "1" },
-    h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Board", "看板")), h("p", { id: "boardSub" }, BD.list === null ? T("Loading tasks…", "載入中…") : subtitle(c))),
-      h("div", { class: "actions" }, ghBar(), h("a", { class: "btn", href: "#/crew" }, icon("crew"), T("Crew", "船員")), h("a", { class: "btn primary", href: "#/runs" }, icon("plus"), T("New task", "新任務")))),
-    // the operator turned the OS sandbox and egress proxy off (CREW_LOCAL_UNRESTRICTED=1): said above everything else
-    BD.pol?.execution === "local-unrestricted" && window.crewUnrestrictedNotice ? window.crewUnrestrictedNotice() : null,
-    h("section", { "aria-labelledby": "needsH" },
-      h("div", { class: "sec-head" }, h("h2", { id: "needsH" }, T("Needs you", "等你處理")), h("span", { class: "badge human", id: "needsCount" }, String(ds.length))),
-      h("div", { class: "card needs", id: "needs" }, ds.length ? ds.flatMap(needRow) : h("div", { class: "empty" }, icon("inbox"), h("b", {}, T("Nothing needs you", "沒有等你的事")), T("Decisions and reviews land here the moment they are raised.", "一有決定或審查就會出現在這裡。")), ans)),
-    h("div", { id: "workflowOverview" }, window.crewWorkflowOverview.render(BD.overviewIds.map(id => BD.det.get(id)).filter(Boolean), BD.cards || [])),
-    h("section", { "aria-labelledby": "runsH" },
-      h("div", { class: "sec-head" }, h("h2", { id: "runsH" }, T("Tasks", "任務")), h("span", { class: "faint", id: "runsCount" }, T(`${c.studio.length + c.fm.length} in flight`, `${c.studio.length + c.fm.length} 個進行中`))),
-      h("div", { class: "card runs-table", id: "runs" },
-        h("div", { class: "rrow head" }, h("span", {}, T("Task", "任務")), h("span", {}, T("Stage", "階段")), h("span", {}, T("Status", "狀態")), h("span", { class: "c-crew" }, T("Crew", "船員")), h("span", { class: "c-cost" }, T("Spend", "花費")), h("span", { class: "c-el" }, T("Elapsed", "經過"))),
-        BD.list === null ? [1, 2, 3].map(() => h("div", { class: "rrow" }, h("div", { class: "skel", style: "height:12px;width:70%" }), h("div", { class: "skel", style: "height:8px" }), h("div", { class: "skel", style: "height:18px;width:80px" }), h("div"), h("div"), h("div")))
-          : c.studio.length + c.fm.length ? [...c.studio.map((r) => studioRow(r.id)), ...c.fm.map(fmRow)] : h("div", { class: "empty" }, icon("workflow"), h("b", {}, T("No task in flight", "沒有進行中的任務")), h("a", { href: "#/runs" }, T("Start one", "開始一個"))))),
-    (BD.ended || []).length ? h("section", { "aria-labelledby": "endedH" },
-      h("div", { class: "sec-head" }, h("h2", { id: "endedH" }, T("Ended", "已結束")), h("span", { class: "faint" }, T("in the last day", "最近一天"))),
-      h("div", { class: "card needs bd-ended" }, BD.ended.map((r) => h("a", { class: "need bd-ended-row", href: `#/run/${encodeURIComponent(r.id)}`, "data-ended-run": r.id },
-        h("span", { class: "tid" }, r.id), h("div", { style: "min-width:0" }, h("div", { class: "need-t" }, r.title), h("div", { class: "need-d" }, `${r.workflow} v${r.version}${r.cancelReason ? ` · ${r.cancelReason}` : ""}`)),
-        h("div", { class: "need-r" }, window.runStateBadge(r), h("span", { class: "faint num", style: "font-size:12px" }, ago(r.endedAt))))))) : null,
-    crewSection(c));
-}
-// the crew on duty: every Studio agent working (public/runtime.js's /api/wruns/agents list) and firstmate's live rounds
-const crewSection = (c) => h("section", { "aria-labelledby": "crewH" },
-      h("div", { class: "sec-head" }, h("h2", { id: "crewH" }, T("Crew on duty", "值班船員")), h("span", { class: "faint", id: "crewSum2" }, window.studioAgents?.ready() ? T(`${c.crew.length} working`, `${c.crew.length} 位工作中`) : window.studioAgents?.status())),
-      h("div", { class: "card crewline" }, h("div", { class: "avas", "data-crew-strip": "1" }, c.crew.length ? c.crew.map((m) => { const a = h("a", { class: "ava lg", href: m.href, title: m.title, "aria-label": m.title, style: avaFor(m.name).getAttribute("style") }, m.name.slice(0, 2), h("span", { class: "sd pulse", style: "background:var(--accent);color:var(--accent)" })); return a; })
-        : h("span", { class: "faint" }, window.studioAgents?.ready() ? T("Nobody is working right now.", "目前沒有人在工作。") : window.studioAgents?.status())), h("a", { class: "btn ghost", href: "#/crew" }, T("Open crew", "打開船員"))));
-// the agent list changed: patch the crew strip and the subtitle in place, as patchRow does a row (a full redraw between
-// a mouse-down and its mouse-up would swallow a click on another row); unchanged, nothing is touched
-function patchCrew() {
-  const old = document.querySelector('[aria-labelledby="crewH"]'); if (!old) return false;
-  const fresh = crewSection(counts()); hydrateIcons(fresh); if (fresh.outerHTML !== old.outerHTML) old.replaceWith(fresh); updateHead(); BD.sig = boardSig(); return true;
-}
-window.crewBoardAgentsChanged = () => S.route?.name === "board" && !S.route.arg && patchCrew();
-routes.board = viewBoard;
-// re-renders from live data (app.js's stream handlers and the loaders here) go through soft(): mark them as live
-// and a live update that changes nothing the Board shows does not redraw it (the crew's log tails move every few seconds;
-// a redraw between a mouse-down and its mouse-up would swallow the captain's click)
-const boardSig = () => JSON.stringify([lang, window.studioAgents?.ready(), window.studioAgents?.status(), window.studioAgents?.members(), window.crewFirstmateWelcomeSignature?.(), S.tasks.filter((t) => t.status !== "done" && t.status !== "idle").map((t) => [t.id, t.status, t.node, t.round, t.title, t.door, t.pr, t.failure?.type]),
-  S.pending.map((c) => [c.id, c.ts]), S.crew.filter((c) => c.alive).map((c) => [c.actor, c.task, c.vendor, c.model]), BD.list, BD.overviewIds, BD.cards, (BD.ended || []).map((r) => [r.id, r.status, r.result, r.endedAt]), [...BD.det.values()].map((r) => [r.id, r.status, r.updatedAt, r.nodes]), BD.answered.length, [...BD.open], [...BD.hidden]]);
-{ const baseSoft = soft; soft = function () {
-    if (S.route?.name === "board" && boardSig() === BD.sig) return updateNav();
-    BD.live = true; try { return baseSoft(); } finally { BD.live = false; } }; }
-
-// ---------- live: the page's one stream ----------
-window.liveListen("wrun", (m) => { let d; try { d = JSON.parse(m.data); } catch { return; }
-  const sequence = d.event?.seq;
-  if (sequence && sequence <= (BD.sequences.get(d.id) || 0)) return;
-  if (sequence) BD.sequences.set(d.id, sequence);
-  const previous = BD.det.get(d.id);
-  const refreshList = BD.loading || !BD.members.has(d.id) || d.deleted || d.archived !== undefined || (previous && d.status && inFlight(previous) !== inFlight({ ...previous, status: d.status }));
-  invalidateRun(d.id);
-  if (d.deleted || d.archived === true) {
-    BD.members.delete(d.id); BD.det.delete(d.id); BD.overviewIds = BD.overviewIds.filter(id => id !== d.id);
-    BD.list = (BD.list || []).filter(id => id !== d.id); BD.ended = BD.ended.filter(r => r.id !== d.id);
-    if (S.route?.name === "board") { patchOverview(); soft(); }
-  } else {
-    const r = BD.det.get(d.id);
-    if (r && BD.members.has(d.id) && d.nodes) { if (d.event) { r.events ??= []; if (!r.events.some(e => e.seq === d.event.seq)) r.events.push(d.event); } r.status = d.status || r.status; for (const [k, n] of Object.entries(d.nodes)) r.nodes[k] = { ...(r.nodes[k] || {}), ...n }; if (S.route?.name === "board") patchRow(d.id); }
-    if (BD.members.has(d.id) && S.route?.name === "board") BD.t.set(d.id, setTimeout(() => { BD.t.delete(d.id); void loadRun(d.id); }, 250));
-  }
-  // archived:false means refresh for an unarchive; membership still comes only from the list.
-  if (S.route?.name === "board" && refreshList) requestStudio();
-});
-window.liveListen("scard", () => { BD.cardRevision++; clearTimeout(BD.ct); if (S.route?.name === "board") void loadCards(); });
-addEventListener("crew:live", () => { if (S.route?.name === "board") { BD.cardRevision++; void loadCards(); requestStudio(); } });
-// elapsed ticks without re-rendering
-setInterval(() => { if (S.route?.name !== "board") return; document.querySelectorAll(".bd-row .c-el[data-since]").forEach((el) => { if (!el.dataset.until) el.textContent = fmtEl(clock() - Date.parse(el.dataset.since)); }); }, 1000);
-// coming back to the Board shows fresh runs
-addEventListener("hashchange", () => {
-  const board = (location.hash.replace(/^#\/?/, "") || "board").startsWith("board");
-  BD.life++; BD.refresh++; clearTimeout(BD.ct); BD.cardRequest++;
-  BD.listRequest?.abort(); for (const id of [...BD.requests.keys(), ...BD.t.keys()]) invalidateRun(id);
-  if (board) void loadStudio(); else BD.refreshPending = false;
-});
-
-// the Inbox: decisions only; a card answered here says so at the top too
 { const orig = routes.inbox; routes.inbox = (id) => { const ans = answeredRows(); return [ans.length ? h("div", { class: "page bd-inbox-answered" }, h("div", { class: "card needs" }, ans)) : null, orig(id)]; }; }
 })();
