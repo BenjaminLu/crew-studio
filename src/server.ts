@@ -162,11 +162,17 @@ const pendingSignature = () => {
     .map(f => { try { return f + ":" + statSync(join(dir, f)).mtimeMs; } catch { return f; } }).join("|");
 };
 pendingSig = pendingSignature();
+// firstmate's open cards as they are on disk now: the poll tick and every summary read go through here, so a summary read
+// right after a card file lands holds it (a page that read the summary before the tick and connected after it saw nothing)
+const syncPending = () => {
+  const sig = pendingSignature();
+  if (sig !== pendingSig) { pendingSig = sig; pending = fm.pending(); send("pending", { pending, tasks: tasks() }); }
+  return pending;
+};
 setInterval(() => {
   const fresh = fm.pollEvents();
   if (fresh.length) send("events", { events: fresh.slice(-100), tasks: tasks() });
-  const sig = pendingSignature();
-  if (sig !== pendingSig) { pendingSig = sig; pending = fm.pending(); send("pending", { pending, tasks: tasks() }); }
+  syncPending();
 }, 700);
 setInterval(() => {
   crewCache = fm.crew(8);
@@ -691,6 +697,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     }
     if (p === "/api/memory") return json({ dir: memory.dir, notes: memory.list().map(({ body, ...n }) => n) });
     if (p === "/api/summary") {
+      syncPending();
       return json({ state: STATE, legacy: startup.legacy, chat: chatInfo(), tasks: tasks(), pending, crew: crewCache.slice(0, 40), github: gh.state, board: board.status(), flow,
         events: fm.events.length, now: new Date().toISOString() });
     }

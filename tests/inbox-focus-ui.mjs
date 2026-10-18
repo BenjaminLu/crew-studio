@@ -162,6 +162,10 @@ try {
   // ---------- Studio's cards cannot be read: firstmate's cards still list, select and move with j/k ----------
   for (const n of [1, 2]) writeFileSync(join(state, "pending", `D-focus-${n}.json`), JSON.stringify({ id: `D-focus-${n}`, purpose: "question", kind: "choice", title: `Firstmate question ${n}`, ts: `2026-10-17T07:0${n}:00.000Z`,
     details: { en: { title: `Firstmate question ${n}`, options: { A: { description: "Yes" }, B: { description: "No" } } } } }));
+  // the summary a page loads right after a card file lands holds that card (it no longer waits for the next poll tick: a page
+  // that read the summary before the tick and connected its live events after it never saw the card)
+  const fresh = await fetch(`${base}/api/summary`, { headers: { "x-crew-session": process.env.CREW_SESSION_TOKEN } }).then((r) => r.json());
+  ok(["D-focus-1", "D-focus-2"].every((id) => fresh.pending?.some((c) => c.id === id)), "the summary read right after firstmate writes its cards already holds them", JSON.stringify(fresh.pending?.map((c) => c.id)));
   { const { ctx, p } = await open(1440, "#/inbox", { scardsDown: true });
     const listed = await p.waitForFunction(() => document.querySelectorAll("[data-inbox-row]").length === 2, null, { timeout: 15000 }).then(() => true, () => false);
     ok(listed && await p.getAttribute("[data-card]", "data-card") === "D-focus-1", "with /api/scards failing, firstmate's cards list and the oldest is shown");
