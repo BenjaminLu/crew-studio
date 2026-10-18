@@ -54,8 +54,10 @@ const serve = async (ctx) => { let cards = CARDS(); const answers = [];
     if (m) { const c = cards.find((x) => x.id === m[1]); return c ? r.fulfill({ json: c }) : r.fulfill({ status: 404, json: { error: "no such card" } }); }
     return r.fulfill({ json: { cards: u.searchParams.get("open") === "1" ? cards : cards } }); });
   return answers; };
-const open = async (width, hash = "#/inbox", { chat = false, zh = false, scardsDown = false } = {}) => {
+const open = async (width, hash = "#/inbox", { chat = false, zh = false, scardsDown = false, staleSummary = false } = {}) => {
   const ctx = await browser.newContext({ viewport: { width, height: width < 600 ? 844 : 900 }, colorScheme: "light" });
+  // staleSummary: the page's first summary is from before firstmate wrote its cards (no pending ones); later reads are real
+  if (staleSummary) { let first = true; await ctx.route(/\/api\/summary$/, async (r) => { if (!first) return r.continue(); first = false; const res = await r.fetch(); return r.fulfill({ response: res, json: { ...(await res.json()), pending: [] } }); }); }
   const answers = scardsDown ? (await ctx.route(/\/api\/scards/, (r) => r.fulfill({ status: 500, json: { error: "down" } })), []) : await serve(ctx);
   await ctx.addInitScript(([chat, zh]) => { try { localStorage.setItem("crew.chatOpen", chat ? "1" : "0"); localStorage.setItem("crew.lang", zh ? "zh-TW" : "en"); } catch {} }, [chat, zh]);
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width}: ${e.message}`));
@@ -171,6 +173,12 @@ try {
     ok(listed && await p.getAttribute("[data-card]", "data-card") === "D-focus-1", "with /api/scards failing, firstmate's cards list and the oldest is shown");
     await p.locator("h1").first().click(); await p.keyboard.press("j"); await p.waitForTimeout(150);
     ok(await p.getAttribute("[data-card]", "data-card") === "D-focus-2" && await p.getAttribute('[data-inbox-row="D-focus-2"]', "aria-selected") === "true", "with /api/scards failing, j still moves the selection");
+    await ctx.close(); }
+  // the page read its summary before the cards landed and its stream connected after the server announced them: the
+  // stream's hello reads the cards again, so they still list
+  { const { ctx, p } = await open(1440, "#/inbox", { scardsDown: true, staleSummary: true });
+    const listed = await p.waitForFunction(() => document.querySelectorAll("[data-inbox-row]").length === 2, null, { timeout: 10000 }).then(() => true, () => false);
+    ok(listed, "a summary read before firstmate's cards landed: the stream's hello reads them again and they list");
     await ctx.close(); }
   ok(!errors.length, "no page errors", errors.join(" | "));
 } catch (e) { fail++; console.log(`  FAIL  ${e.stack || e}`); console.log(appLog.slice(-3000)); }

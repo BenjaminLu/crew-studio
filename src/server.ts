@@ -163,7 +163,9 @@ const pendingSignature = () => {
 };
 pendingSig = pendingSignature();
 // firstmate's open cards as they are on disk now: the poll tick and every summary read go through here, so a summary read
-// right after a card file lands holds it (a page that read the summary before the tick and connected after it saw nothing)
+// right after a card file lands holds it. A card that lands after a page read its summary but before its stream connected
+// is still announced to nobody (the "pending" event went out before that page listened): the page reads the cards again
+// on the stream's hello (public/app.js)
 const syncPending = () => {
   const sig = pendingSignature();
   if (sig !== pendingSig) { pendingSig = sig; pending = fm.pending(); send("pending", { pending, tasks: tasks() }); }

@@ -516,7 +516,11 @@ function connect() {
   const conn = (state) => { S.conn = state; const c = $("#conn"); c.className = `conn ${state === "live" ? "ok" : state === "down" ? "bad" : ""}`;
     c.querySelector("span").textContent = state === "live" ? T("Live", "即時") : state === "down" ? T("Reconnecting…", "重新連線中…") : T("Connecting…", "連線中…"); };
   // every (re)connect: modules read their state again, so an event missed while the stream was down is not lost (unit inbox-live)
-  es.addEventListener("hello", () => { conn("live"); dispatchEvent(new Event("crew:live")); });
+  // firstmate's open cards too: a card that landed after the page read its summary but before this stream connected was
+  // announced to nobody (the server reads the cards fresh on each summary; the stream only says what changes after it)
+  es.addEventListener("hello", () => { conn("live"); dispatchEvent(new Event("crew:live"));
+    fetch("/api/summary").then((r) => r.json()).then((s) => { if (!Array.isArray(s?.pending) || JSON.stringify(s.pending) === JSON.stringify(S.pending)) return;
+      S.pending = s.pending; S.tasks = s.tasks ?? S.tasks; if (["board", "inbox"].includes(S.route?.name)) soft(); else updateNav(); }).catch(() => {}); });
   es.onerror = () => conn("down");
   es.addEventListener("events", (m) => {
     const d = JSON.parse(m.data); S.tasks = d.tasks; S.events += d.events.length;
