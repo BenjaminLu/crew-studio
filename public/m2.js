@@ -2,8 +2,36 @@
 // the Intents and Library pages, and the task and event pages answers link to.
 // Loaded after app.js and uses its helpers (h, icon, T, L, S, route, render…).
 
-// ---------- tiny safe markdown: links to Studio pages or GitHub, **bold**, `code` ----------
+// ---------- tiny safe markdown: links to Studio pages or GitHub, **bold**, `code`, and pipe tables ----------
+// A Firstmate reply often carries a status table; it showed as raw pipes (live E2E S24). A table is a header row with
+// pipes, a separator row (---, :--, --:) and its body rows; each cell is inline markdown. CJK cells need no special case.
+const TABLE_SEP = /^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+const tableCells = (line) => { const t = line.trim().replace(/^\|/, "").replace(/(?<!\\)\|$/, ""); return t.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|")); };
 function md(text) {
+  const lines = String(text ?? "").split("\n"), out = document.createDocumentFragment();
+  let i = 0, plain = [];
+  const flush = () => { if (plain.length) { out.append(mdInline(plain.join("\n"))); plain = []; } };
+  while (i < lines.length) {
+    if (lines[i].includes("|") && i + 1 < lines.length && TABLE_SEP.test(lines[i + 1]) && lines[i + 1].includes("-")) {
+      const head = tableCells(lines[i]), aligns = tableCells(lines[i + 1]).map((c) => (/^:-+:$/.test(c) ? "center" : /-+:$/.test(c) ? "right" : null));
+      const rows = []; i += 2;
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()) rows.push(tableCells(lines[i++]));
+      // the newline before the table belongs to the text above it; the table is its own block
+      if (plain.length && plain[plain.length - 1] === "") plain.pop();
+      flush();
+      const cell = (tag, c, k) => h(tag, aligns[k] ? { style: `text-align:${aligns[k]}` } : {}, mdInline(c ?? ""));
+      out.append(h("div", { class: "md-table-wrap" }, h("table", { class: "md-table" },
+        h("thead", {}, h("tr", {}, head.map((c, k) => cell("th", c, k)))),
+        h("tbody", {}, rows.map((r) => h("tr", {}, head.map((_, k) => cell("td", r[k], k))))))));
+      if (i < lines.length && !lines[i].trim()) i++; // one blank line after the table is its margin
+      continue;
+    }
+    plain.push(lines[i++]);
+  }
+  flush();
+  return out;
+}
+function mdInline(text) {
   const out = document.createDocumentFragment();
   const re = /\[([^\]]{1,120})\]\(([^)\s]{1,300})\)|\*\*([^*]{1,200})\*\*|`([^`]{1,200})`/g;
   let last = 0, m;
