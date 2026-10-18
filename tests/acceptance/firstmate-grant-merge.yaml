@@ -1,6 +1,6 @@
 # Grant (or revoke) Studio merge for one connected GitHub repository: started only by Firstmate's studio_connect_github tool
-# (merge: true) or the project's GitHub settings (internal). Offline: Studio has no GitHub token here, so the read-only token
-# check reports what is missing and nothing is granted (tests/merge-grant.ts covers the grant itself on the GitHub simulator).
+# (merge: true) or the project's GitHub settings (internal). Offline cases use no token or a fake token
+# on a loopback GitHub simulator; only the captain card writes the signed operations grant.
 schema: 2
 workflow: firstmate-grant-merge
 pin: { version: 1, sha256: "74451da530547ec83f78c7682bffb9ab8ab2ae0ddf943eb34e0b4f9c0a60bb65" }   # bun scripts/acceptance/pin.ts firstmate-grant-merge
@@ -20,3 +20,19 @@ stub:
     board_refusal: { status: 409, error: "internal or retired" }
     cards: [{ node: card, answer: close }]
     expect: { status: succeeded, result: closed, visited: [card, closed], not_visited: [write] }
+  - name: approve-squash
+    covers: "a simulator-connected project → read-only access probe → captain grants squash → signed scoped grant → done"
+    how: grant-merge
+    setup: [github-sim, merge-access]
+    proves: [merge-granted]
+    board_refusal: { status: 409, error: "internal or retired" }
+    cards: [{ node: card, answer: grant-squash, before: merge-ungranted }]
+    expect: { status: succeeded, visited: [card, write, done], not_visited: [closed] }
+  - name: close-authorized
+    covers: "a simulator-connected project with merge access → captain closes without granting → closed, no operations grant"
+    how: grant-merge
+    setup: [github-sim, merge-access]
+    proves: [merge-closed]
+    board_refusal: { status: 409, error: "internal or retired" }
+    cards: [{ node: card, answer: close, before: merge-ungranted }]
+    expect: { status: succeeded, result: closed, visited: [card, closed], not_visited: [write, done] }

@@ -10,7 +10,8 @@ import type { Studio } from "./studio";
 
 export type Ctx = { s: Studio; vars: Record<string, string>; firstmate(marker: "NATIVE-PROPOSE " | "NATIVE-PROJECT " | "NATIVE-TOOL ", args: unknown): Promise<any[]>;
   /** connections the probe's sink port took (setup step probe): any is a round that went around the proxy */
-  sinkHits?: () => number };
+  sinkHits?: () => number;
+  github?: { origin: string; calls: { method: string; path: string }[] } };
 type Step = (h: Ctx, card?: any, view?: any) => Promise<void | { note?: string; choice?: string }>;
 const git = (cwd: string, ...a: string[]) => { const r = Bun.spawnSync(["git", "-c", "user.name=Acceptance", "-c", "user.email=acceptance@example.invalid", ...a], { cwd, stdout: "pipe", stderr: "pipe" }); if (r.exitCode) throw new Error(`git ${a.join(" ")}: ${r.stderr}`); };
 /** Captain-side folders live under the Studio's own temp root (outside its CREW_DATA), so close() removes them. */
@@ -80,11 +81,23 @@ async function githubSim(h: Ctx, ops: boolean) {
   // the token Studio sends the simulator (a fixture, never a real one: the acceptance Studio never asks gh or the keychain)
   writeFileSync(join(h.s.data, "github-token"), "fake-acceptance-token", { mode: 0o600 });
   simulators.set(h.vars.project, sim);
+  h.github = { origin: sim.origin, calls: sim.calls };
 }
 
 export const STEPS: Record<string, Step> = {
   /** a registered money-kit project on the GitHub simulator, merging off (the Connect card's default): {repo}, {project} */
   async "github-sim"(h) { await githubSim(h, false); },
+  /** Read-only repository permission fixture: the real grant workflow must still ask its captain card. */
+  async "merge-access"(h) {
+    const sim = simulators.get(h.vars.project); if (!sim) throw new Error("merge-access needs github-sim");
+    sim.expect("GET", "", { full_name: "fixture/project", private: true, allow_merge_commit: true, allow_squash_merge: true, allow_rebase_merge: false,
+      permissions: { admin: false, maintain: false, push: true, triage: true, pull: true } });
+  },
+  /** Before answering a merge card, the registry must still have no operations permission. */
+  async "merge-ungranted"(h) {
+    const project = JSON.parse(readFileSync(join(h.s.data, "projects.json"), "utf8")).find((p: any) => p.id === h.vars.project);
+    if (!project?.github || project.github.operations) throw new Error("merge permission changed before captain approval");
+  },
   /** the same with the operations grant: Studio merges the pull request on GitHub itself */
   async "github-sim-ops"(h) { await githubSim(h, true); },
   /** the captain merges the open pull request on GitHub's own page, then answers the card */

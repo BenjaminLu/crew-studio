@@ -14,8 +14,9 @@ import { join } from "node:path";
 import type { Studio } from "./studio";
 import { CrewStore } from "../../src/domain/crew";
 import { Ledger } from "../../src/runtime/checks";
+import { verifyGitHubGrant } from "../../src/github-grant";
 
-export const PROVES = ["pdf-chromium", "captures", "film", "web-smoke", "fail-first", "sandbox-probe", "crew-applied"];
+export const PROVES = ["pdf-chromium", "captures", "film", "web-smoke", "fail-first", "sandbox-probe", "crew-applied", "merge-granted", "merge-closed"];
 /** the proofs only a real renderer can give */
 export const RENDERER_PROVES = ["pdf-chromium", "captures", "film", "web-smoke"];
 
@@ -57,8 +58,30 @@ export function probeProblems(r: any): string[] {
   return bad;
 }
 
-export async function prove(s: Studio, view: any, what: string, o: { sinkHits?: () => number } = {}): Promise<string[]> {
+export async function prove(s: Studio, view: any, what: string, o: { sinkHits?: () => number; github?: { origin: string; calls: { method: string; path: string }[] } } = {}): Promise<string[]> {
   const task = String(view?.id ?? ""), run = join(s.data, "runs", task), lower = task.toLowerCase();
+  if (what === "merge-granted" || what === "merge-closed") {
+    const bad: string[] = [], project = JSON.parse(readFileSync(join(s.data, "projects.json"), "utf8")).find((p: any) => p.id === view.params?.project);
+    if (!project) return ["the Task's registered project is missing"];
+    try { verifyGitHubGrant(s.data, project); } catch (e: any) { bad.push(`the project grant does not verify: ${e.message}`); }
+    const grant = project.github, card = view.cards?.find((c: any) => c.node === "card" && c.status === "answered" && c.captainOnly);
+    if (!o.github || grant?.mode !== "simulator" || grant.apiOrigin !== o.github.origin || grant.repository !== "fixture/project" || grant.base !== "main" || grant.branchPrefix !== "crew/") bad.push("the grant scope differs from the isolated simulator project");
+    if (!o.github?.calls.some(c => c.method === "GET" && c.path === "") || o.github.calls.some(c => c.method !== "GET")) bad.push("expected a read-only simulator access probe and no remote writes");
+    const ledger = new Ledger(s.data, task).authenticatedPrefix();
+    if (ledger.bad.length || ledger.malformed) bad.push("the merge approval evidence does not authenticate");
+    const answer = ledger.prefix.find(e => e.record === "card-answer" && e.data?.card === card?.id);
+    const receipts = ledger.prefix.filter(e => e.record === "grant-merge");
+    if (!card || !answer || !/^captain\b/i.test(String(card.answer?.by ?? ""))) bad.push("a signed captain answer is missing");
+    if (!card?.options.some((c: any) => c.id === "grant-squash")) bad.push("the permission card did not offer the authorized squash grant");
+    if (what === "merge-closed") {
+      if (card?.answer?.choice !== "close" || grant?.operations || receipts.length) bad.push("closing the card must not persist merge permission or a grant receipt");
+    } else {
+      const ops = grant?.operations, receipt = receipts[0];
+      if (card?.answer?.choice !== "grant-squash" || ops?.version !== 1 || ops.repository !== "fixture/project" || ops.mergeMethod !== "squash" || ops.enableRealWrites !== true || ops.approvalId !== `${task}/${card?.id}` || ops.approvedAt !== card?.answer?.at) bad.push("the approved squash permission is not bound to this repository and card");
+      if (receipts.length !== 1 || receipt?.data?.project !== project.id || receipt.data.repository !== "fixture/project" || receipt.data.method !== "squash" || receipt.data.card !== card?.id || receipt.data.answerSeq !== answer?.seq || receipt.data.approvalId !== ops?.approvalId || !/^captain\b/i.test(String(receipt?.actor ?? "")) || (receipt?.seq ?? 0) <= (answer?.seq ?? 0)) bad.push("the grant receipt is not bound to the captain answer and scoped permission");
+    }
+    return bad;
+  }
   if (what === "crew-applied") {
     const bad: string[] = [], team = new CrewStore(s.data).current();
     if (!team) return ["no approved team was persisted"];
