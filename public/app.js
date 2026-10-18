@@ -615,7 +615,11 @@ function setTheme(t) { if (t === "system") delete document.documentElement.datas
 // Studio learns the Board's language: Firstmate's first message (a Start, a switch, a restart) greets in it. Said on every
 // language change and on every stream hello, so a Studio that restarted (and may be waiting to greet) hears it from a Board
 // that was already open
-function tellLang() { fetch("/api/main/locale", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ locale: lang }) }).catch(() => {}); }
+// It also says whether this tab is the one on screen and whether the captain chose the language (Settings) or it is only this
+// browser's default: a restart greets in the language of the Board the captain is looking at, not of a tab left in the back
+function tellLang() { fetch("/api/main/locale", { method: "POST", headers: { "content-type": "application/json" },
+  body: JSON.stringify({ locale: lang, visible: document.visibilityState !== "hidden", explicit: store.get("crew.lang", null) != null }) }).catch(() => {}); }
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") tellLang(); });
 // persist = false keeps a first-run (browser) language unstored until the captain picks one in Settings
 function setLang(l, persist = true) { l = I18N.LANGS.includes(l) ? l : "en"; lang = l; if (l !== "en") lastZh = l; if (persist) store.set("crew.lang", l); document.documentElement.lang = l;
   tellLang();

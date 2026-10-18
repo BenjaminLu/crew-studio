@@ -59,11 +59,14 @@ const codexStarts = () => codexCalls().filter((r) => r.method === "thread/start"
 
 const port = await freePort(), base = `http://127.0.0.1:${port}`, token = "claude-primary-fixture-session";
 const start = (extra: Record<string, string> = {}) => {
-  const env: any = { ...process.env, ...extra, USER: process.env.USER || "fixture-user", LOGNAME: process.env.LOGNAME || "fixture-user", HOME: home, CODEX_HOME: join(home, ".codex"),
+  // a restart's greeting waits for an open Board to say its language (src/takeover.ts): short here, unless a step sets it.
+  // __entry: the file to boot (the live release boots src/main.ts)
+  const { __entry = "src/server.ts", ...rest } = extra;
+  const env: any = { ...process.env, CREW_BOARD_LOCALE_WAIT_MS: "300", ...rest, USER: process.env.USER || "fixture-user", LOGNAME: process.env.LOGNAME || "fixture-user", HOME: home, CODEX_HOME: join(home, ".codex"),
     CREW_DATA: data, CREW_RUNTIME_DIR: join(root, "runtime"), CREW_PORT: String(port), CREW_SESSION_TOKEN: token, CREW_GH: "0", CREW_CHAT_PROVIDER: "stub", CREW_INSTALL_RUNNER: "mock",
     CREW_CLAUDE_BIN: join(import.meta.dir, "fixture/claude-login.mjs"), CREW_HOST_CLAUDE_BIN: join(import.meta.dir, "stub-host-claude.mjs"), CREW_KEYCHAIN_TOOL: keychain,
     CREW_HOST_CODEX_BIN: join(import.meta.dir, "fixture/codex-account.mjs"), ACCOUNT_FIXTURE_LOG: codexLog, STUB_ARGV_FILE: argvFile, STUB_SEED_FILE: seedFile, STUB_EXPECT_CREW: CREW, CREW_WAKE_GRACE_MS: "60000" };
-  const p = spawn("bun", ["src/server.ts"], { cwd: join(import.meta.dir, ".."), env, stdio: ["ignore", "pipe", "pipe"] });
+  const p = spawn("bun", [__entry], { cwd: join(import.meta.dir, ".."), env, stdio: ["ignore", "pipe", "pipe"] });
   p.stdout.resume(); p.stderr.resume(); return p;
 };
 // a private folder a Studio that is gone left behind: the next Studio sweeps it at boot
@@ -330,6 +333,32 @@ try {
     ok(files.length === 1 && readFileSync(files[0], "utf8").includes(`我們來做一張海報\\n\\n[Studio note: `) && readFileSync(files[0], "utf8").includes(JSON.stringify(TRADITIONAL_NOTE).slice(1, -1)),
       "a captain message in Traditional Chinese after the greeting reaches Firstmate with the follow-the-captain notes", files.join(","));
   }
+  // live S26 again (dae6ede8): the live release boots `bun src/main.ts`, and the restart greeted in Simplified Chinese 1.4 s after
+  // boot because board-language.json still said zh-CN (the last tab that spoke before the restart), while the captain's open Board
+  // was English and said so 7 s later. Same path here: main.ts, the Claude primary restarted on boot, driver.json zh-CN
+  await api("/api/main/detach", {});
+  r = await api("/api/main/start", { host: "claude", confirm: true, locale: "zh-CN" }); await idle();
+  ok(JSON.parse(readFileSync(join(data, "driver.json"), "utf8")).primary?.locale === "zh-CN" && JSON.parse(readFileSync(join(data, "board-language.json"), "utf8")).locale === "zh-CN", "driver.json and the stored Board language both say zh-CN");
+  const runsBeforeLive = claudeRuns().length;
+  await stop(); app = start({ CREW_BOARD_LOCALE_WAIT_MS: "20000", __entry: "src/main.ts" }); await waitUp(base, app); await Bun.sleep(800);
+  ok(claudeRuns().length === runsBeforeLive, "the restart does not greet from the stored language while open Boards may still say theirs");
+  ok((await api("/api/main/locale", { locale: "zh-CN", visible: false, explicit: true })).body.ok === true && (await Bun.sleep(400), claudeRuns().length === runsBeforeLive), "a tab in the background saying 简体中文 does not decide the greeting");
+  ok((await api("/api/main/locale", { locale: "en", visible: true, explicit: true })).body.ok === true, "the captain's Board on screen says English as its stream connects");
+  ok(await until(async () => (await view()).state === "attached"), "the primary starts once the Board on screen said its language");
+  await idle();
+  const liveSeed = seedOf(claudeRuns().at(-1).pid);
+  ok(/The captain’s current dashboard language is English\. Greet the captain in English\./.test(liveSeed) && !/Simplified|简体/.test(liveSeed.slice(0, 300)),
+    "board en on screen + stored zh-CN + driver.json zh-CN, booted as the live release boots: the greeting prompt is English", liveSeed.slice(0, 160));
+  // a browser's default language never overwrites the language the captain chose
+  await api("/api/main/locale", { locale: "zh-CN", visible: true, explicit: false });
+  ok(JSON.parse(readFileSync(join(data, "board-language.json"), "utf8")).locale === "en", "a tab showing only its browser's default does not overwrite the captain's chosen Board language");
+  // no Board open at all: the stored Board language (en), never driver.json's zh-CN
+  ok(JSON.parse(readFileSync(join(data, "driver.json"), "utf8")).primary?.locale === "en", "driver.json now records the English greeting");
+  { const d = JSON.parse(readFileSync(join(data, "driver.json"), "utf8")); d.primary.locale = "zh-CN"; writeFileSync(join(data, "driver.json"), JSON.stringify(d)); }
+  await stop(); app = start({ CREW_BOARD_LOCALE_WAIT_MS: "300", __entry: "src/main.ts" }); await waitUp(base, app);
+  ok(await until(async () => (await view()).state === "attached"), "the primary starts again with no Board open");
+  await idle();
+  ok(/Greet the captain in English\./.test(seedOf(claudeRuns().at(-1).pid)), "no Board open: board en + driver.json zh-CN greets in English");
   // not signed in at boot: nothing starts, no sign-in begins, a notice says why and that Start is the way on
   signedIn(false); const runsSignedOut = claudeRuns().length, codexBefore = codexStarts();
   await stop(); app = start(); await waitUp(base, app);

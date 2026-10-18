@@ -91,7 +91,7 @@ export function createTakeover(d: Deps) {
     if (["/api/main/takeover", "/api/main/start", "/api/main/switch", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door", "/api/main/locale"].includes(p)) { try { b = await req.json(); } catch {} }
     if(['/api/main/start','/api/main/switch','/api/main/locale'].includes(p)&&b?.locale!==undefined&&!['en','zh-TW','zh-CN'].includes(b.locale))return json({error:'Unsupported dashboard language',code:'locale'},400);
     // the Board's language, as the captain shows it now: Firstmate's first message (a Start, a switch, a restart) greets in it
-    if(['/api/main/start','/api/main/switch','/api/main/locale'].includes(p)&&b?.locale!==undefined)d.main.setBoardLocale?.(b.locale);
+    if(['/api/main/start','/api/main/switch','/api/main/locale'].includes(p)&&b?.locale!==undefined)d.main.setBoardLocale?.(b.locale,p==='/api/main/locale'?{visible:b.visible!==false,explicit:b.explicit!==false}:{});
     if(p==='/api/main/locale')return b?.locale===undefined?json({error:'Say the dashboard language',code:'locale'},400):json({ok:true,locale:b.locale});
     const boardLocale=():"en"|"zh-TW"|"zh-CN"=>b?.locale??d.main.boardLocale?.()??"en";
     // The boot restart holds the account check and may be starting the primary: the captain's Start or switch waits for it,
@@ -181,7 +181,7 @@ export function createTakeover(d: Deps) {
     return run;
   }
   // how long a restart's greeting waits for an open Board to say its language when Studio never heard one
-  const greetingLocale = () => d.main.greetingLocale(Number(process.env.CREW_BOARD_LOCALE_WAIT_MS) || 8000);
+  const greetingLocale = () => d.main.greetingLocale(Number(process.env.CREW_BOARD_LOCALE_WAIT_MS) || 10000);
   async function resumeBootPrimary(): Promise<{ resumed: boolean; reason?: string }> {
     const p = d.main.takeBootPrimary(); if (!p) return { resumed: false };
     const v = d.main.view();

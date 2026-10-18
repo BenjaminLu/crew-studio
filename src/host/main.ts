@@ -158,22 +158,34 @@ export class MainSession {
   private bootPrimary: PrimarySettings | null = null;
   /** The primary that was running when Studio stopped (once): boot starts it again with the same settings, or says why not. */
   takeBootPrimary(): PrimarySettings | null { const p = this.bootPrimary; this.bootPrimary = null; return p; }
-  /** The Board's language as the captain last showed it (data/board-language.json): Firstmate's first message after a restart
-   *  greets in it, never in the language a stopped primary once started with. null: the Board never said. */
-  boardLocale(): PrimarySettings["locale"] | null { try { const l = JSON.parse(readFileSync(join(this.o.dataDir, "board-language.json"), "utf8"))?.locale; return l === "en" || l === "zh-TW" || l === "zh-CN" ? l : null; } catch { return null; } }
-  setBoardLocale(l: PrimarySettings["locale"]) {
-    for (const w of this.boardLocaleWaiters.splice(0)) w(l);
-    if (this.boardLocale() === l) return; const f = join(this.o.dataDir, "board-language.json"); writeFileSync(f + ".tmp", JSON.stringify({ schema: 1, locale: l }), { mode: 0o600 }); renameSync(f + ".tmp", f); }
-  private boardLocaleWaiters: ((l: PrimarySettings["locale"]) => void)[] = [];
-  /** The language of a restart's greeting (live S26): the Board's, as it last said; else the first an open Board says within `ms`
-   *  (it says so as its stream connects); else English, the Board's own default. Never the locale driver.json kept for the stopped
-   *  primary: that is the language some earlier Start greeted in, not what the captain's Board shows now. */
+  /** The Board's language as a Board last said it (data/board-language.json), and whether the captain chose it (Settings) or
+   *  it was only a first-run browser default. null: no Board ever said. Never the locale driver.json kept for a stopped primary. */
+  boardLanguage(): { locale: PrimarySettings["locale"]; explicit: boolean } | null {
+    try { const o = JSON.parse(readFileSync(join(this.o.dataDir, "board-language.json"), "utf8")); const l = o?.locale;
+      return l === "en" || l === "zh-TW" || l === "zh-CN" ? { locale: l, explicit: o.explicit !== false } : null; } catch { return null; }
+  }
+  boardLocale(): PrimarySettings["locale"] | null { return this.boardLanguage()?.locale ?? null; }
+  /** A Board says its language: `visible` whether its tab is the one on screen, `explicit` whether the captain chose the language.
+   *  A browser default never overwrites a language the captain chose. */
+  setBoardLocale(l: PrimarySettings["locale"], o: { visible?: boolean; explicit?: boolean } = {}) {
+    const said = { locale: l, visible: o.visible !== false, explicit: o.explicit !== false };
+    for (const w of this.boardLocaleWaiters.slice()) w(said);
+    const now = this.boardLanguage();
+    if (now && (now.locale === l && now.explicit === said.explicit || now.explicit && !said.explicit)) return;
+    const f = join(this.o.dataDir, "board-language.json"); writeFileSync(f + ".tmp", JSON.stringify({ schema: 1, locale: l, explicit: said.explicit }), { mode: 0o600 }); renameSync(f + ".tmp", f); }
+  private boardLocaleWaiters: ((s: { locale: PrimarySettings["locale"]; visible: boolean; explicit: boolean }) => void)[] = [];
+  /** The language of a restart's greeting (live S26). What a Board says now beats what the file kept: the file is whichever tab
+   *  spoke last before the restart (live, dae6ede8: it still said zh-CN, the restart greeted in Simplified Chinese 1.4 s after
+   *  boot, and the captain's English Board said "en" 7 s later, as it reconnected). So the restart waits up to `ms` for an
+   *  open Board's stream to say its language, and takes the first tab on screen; failing that, the last hidden tab that spoke,
+   *  then the file, then English, the Board's own default. */
   greetingLocale(ms: number): Promise<PrimarySettings["locale"]> {
-    const known = this.boardLocale(); if (known) return Promise.resolve(known);
     return new Promise((res) => {
-      const done = (l: PrimarySettings["locale"]) => { clearTimeout(t); this.boardLocaleWaiters = this.boardLocaleWaiters.filter((w) => w !== done); res(l); };
-      const t = setTimeout(() => done("en"), ms);
-      this.boardLocaleWaiters.push(done);
+      let hidden: PrimarySettings["locale"] | null = null;
+      const finish = (l: PrimarySettings["locale"]) => { clearTimeout(t); this.boardLocaleWaiters = this.boardLocaleWaiters.filter((w) => w !== heard); res(l); };
+      const heard = (s: { locale: PrimarySettings["locale"]; visible: boolean }) => { if (s.visible) finish(s.locale); else hidden = s.locale; };
+      const t = setTimeout(() => finish(hidden ?? this.boardLocale() ?? "en"), ms);
+      this.boardLocaleWaiters.push(heard);
     });
   }
   stop() { if (this.timer) clearInterval(this.timer); this.bridge.close(); }
