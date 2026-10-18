@@ -881,10 +881,15 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   // GitHub. Its signed ledger cannot be rewritten, so Studio reads the pull request again (read-only, with the project's grant)
   // on boot and when the run page asks; a merge into the Task's base becomes one signed `reconciled-merge` entry and the Task
   // reads Merged (reconciled). An observed fact: no captain answer, nothing done on GitHub, past entries untouched, once per Task.
-  const endedAdapter = (r: any): GitHubPrAdapter | null => {
-    if (o.adapter) return o.adapter instanceof GitHubPrAdapter ? o.adapter : null;
-    const project = r.ctx.project ? o.projects.get(r.ctx.project) : null; if (!project?.github) return null;
-    try { const a = projectPrAdapter(project, o.dataDir, o.poller); return a instanceof GitHubPrAdapter ? a : null; } catch { return null; }
+  // the project's grant passes the same gate as every other GitHub use (enabled, the captain's signed grant for this project,
+  // path, base and origin) before anything is read with it; an injected adapter (tests) has none
+  const endedAdapter = (r: any): { a: GitHubPrAdapter } | { skip: string } => {
+    if (o.adapter) return o.adapter instanceof GitHubPrAdapter ? { a: o.adapter } : { skip: "no GitHub adapter" };
+    const project: any = r.ctx.project ? o.projects.get(r.ctx.project) : null;
+    if (!project?.github) return { skip: "the project has no GitHub grant to read the pull request with" };
+    if (project.enabled !== undefined && project.enabled !== true) return { skip: `project ${project.id} is disabled` };
+    try { o.projects.assertExecutable({ project: project.id, base: r.ctx.pr.base }); } catch (e: any) { return { skip: `the project's GitHub grant does not verify: ${String(e?.message ?? e).slice(0, 200)}` }; }
+    try { const a = projectPrAdapter(project, o.dataDir, o.poller); return a instanceof GitHubPrAdapter ? { a } : { skip: "no GitHub adapter" }; } catch (e: any) { return { skip: String(e?.message ?? e).slice(0, 200) }; }
   };
   const reconcilable = (r: any) => !!r && ["succeeded", "cancelled"].includes(r.status) && (r.status === "cancelled" || r.result === "closed") && !r.reconciled && !r.ctx?.merged
     && r.ctx?.pr?.adapter === "github" && /^[1-9][0-9]*$/.test(String(r.ctx.pr.id ?? "")) && typeof r.ctx.pr.base === "string" && typeof r.ctx.pr.branch === "string";
@@ -894,16 +899,20 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const run = (async (): Promise<{ state: "merged" | "not-merged" | "skipped"; reason?: string; reconciled?: Record<string, any> }> => {
       const r = engine.get(id); if (r?.reconciled) return { state: "merged", reconciled: r.reconciled };
       if (!reconcilable(r)) return { state: "skipped", reason: "not an ended Task with a GitHub pull request that ended closed or cancelled" };
-      const a = endedAdapter(r), pr = structuredClone(r!.ctx.pr);
-      if (!a) return { state: "skipped", reason: "the project has no GitHub grant to read the pull request with" };
+      const got = endedAdapter(r), pr = structuredClone(r!.ctx.pr);
+      if ("skip" in got) return { state: "skipped", reason: got.skip };
+      const a = got.a;
       if (pr.url !== `https://github.com/${a.grant.repository}/pull/${pr.id}`) return { state: "skipped", reason: "the pull request is not in the project's granted repository" };
       const p = await a.withReadOwner(remoteWatchers.poller, () => a.remoteRead("pull", pr.id, 1, undefined, true));
       const repository = a.grant.repository;
       const merged = p?.number === Number(pr.id) && p.state === "closed" && p.merged === true && SHA.test(String(p.merge_commit_sha ?? "")) && p.base?.repo?.full_name === repository && p.base?.ref === pr.base
         && p.head?.repo?.full_name === repository && p.head?.ref === pr.branch;
       if (!merged) return { state: "not-merged", reason: p?.merged === true && p.base?.ref !== pr.base ? `merged into ${p.base?.ref}, not into ${pr.base}` : `pull request #${pr.id} is ${p?.state ?? "unreadable"} and not merged` };
-      const now = engine.get(id)!; if (!reconcilable(now)) return now.reconciled ? { state: "merged", reconciled: now.reconciled } : { state: "skipped", reason: "the Task changed while GitHub was read" };
-      const fact = { version: 1, repository, pr: pr.id, url: pr.url, branch: pr.branch, base: pr.base, reviewed: pr.head, head: SHA.test(String(p.head?.sha ?? "")) ? p.head.sha : null,
+      const now = engine.get(id); if (!now) return { state: "skipped", reason: "the Task was deleted while GitHub was read" };
+      if (!reconcilable(now)) return now.reconciled ? { state: "merged", reconciled: now.reconciled } : { state: "skipped", reason: "the Task changed while GitHub was read" };
+      // the head GitHub merged may not be the head Studio verified (pushed to after): recorded and said, as the detected merge does
+      const head = SHA.test(String(p.head?.sha ?? "")) ? p.head.sha : null;
+      const fact = { version: 1, repository, pr: pr.id, url: pr.url, branch: pr.branch, base: pr.base, reviewed: pr.head, head, verifiedHead: head === pr.head,
         sha: p.merge_commit_sha, mergedAt: String(p.merged_at ?? ""), observedAt: new Date().toISOString(), original: { status: now.status, result: now.result, endedAt: now.endedAt } };
       return { state: "merged", reconciled: engine.reconcileMerge(id, fact) };
     })().finally(() => reconciling.delete(id));
@@ -914,7 +923,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   // on boot: every ended Task that could be one, read once, one after another (a read that fails leaves the Task as it was)
   engine.loaded.push(() => { void (async () => {
     for (const r of engine.list()) if (reconcilable(r)) {
-      try { const res = await reconcileFromGitHub(r.id); if (res.state === "merged") console.log(`crew-studio: ${r.id}: pull request #${r.ctx.pr.id} was merged on GitHub; recorded as reconciled`); }
+      try { const res = await reconcileFromGitHub(r.id); if (res.state === "merged") console.log(`crew-studio: ${r.id}: pull request #${r.ctx.pr.id} was merged on GitHub; recorded as reconciled`);
+        else if (res.state === "skipped") console.warn(`crew-studio: ${r.id}: not checked on GitHub: ${res.reason}`); }
       catch (e: any) { console.warn(`crew-studio: ${r.id}: reading pull request #${r.ctx.pr?.id} on GitHub to reconcile: ${String(e?.message ?? e).slice(0, 200)}`); }
     }
   })(); });

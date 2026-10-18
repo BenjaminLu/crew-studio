@@ -351,7 +351,7 @@ export function createRuntime(d: RuntimeDeps) {
       }
       if (p === "/api/wruns" && !writing) return json({ runs: engine.list().filter((r) => url.searchParams.get("archived") === "1" || !r.archived).map((r) => ({ id: r.id, workflow: r.workflow, version: r.version, title: taskTitle(r), request: r.text, status: r.status, result: r.result, createdAt: r.createdAt, updatedAt: r.updatedAt, endedAt: r.endedAt, error: r.error,
         childRun: (() => { const child = engine.get(r.ctx?.childRun); return child?.params?._firstmateProposal === r.id ? child.id : null; })(),
-        archived: !!r.archived, merged: !!r.ctx?.merged, reconciled: r.reconciled ?? null, cancelReason: r.cancelReason ?? null,
+        archived: !!r.archived, merged: !!r.ctx?.merged, reconciled: r.reconciled && (() => { const t = engine.trusted(r.id); return t.ok && t.entries.some((e) => e.record === "reconciled-merge" && e.seq === r.reconciled!.ledger); })() ? r.reconciled : null, cancelReason: r.cancelReason ?? null,
         current: Object.entries(r.nodes).filter(([, n]) => ["running", "waiting"].includes(n.state)).map(([k, n]) => ({ node: k, state: n.state, waiting: n.waiting ?? null, label: r.def.nodes.find((x) => x.id === k)?.label ?? k })), door: engine.cards.list({ run: r.id }).find((c) => c.door)?.door ?? null, recovered: r.recovered })),
         cards: engine.cards.list({ open: true }).map(c=>engine.cards.view(c)) });
       if (p === "/api/wruns" && writing) {
@@ -449,7 +449,7 @@ export function createRuntime(d: RuntimeDeps) {
         if (m[2] === "reconcile-merge") {
           if (who.kind !== "desktop") return json({ error: "only the desktop captain can ask Studio to check GitHub" }, 403);
           if (!engine.reconcileFromGitHub) return json({ error: "no code workflow is installed" }, 409);
-          try { const res = await engine.reconcileFromGitHub(id); return json({ ...res, run: runView(id, who) }); }
+          try { const res = await engine.reconcileFromGitHub(id); if (!engine.get(id)) return json({ ...res, error: "no such run" }, 404); return json({ ...res, run: runView(id, who) }); }
           catch (e: any) { return json({ state: "error", error: `GitHub could not be read: ${String(e?.message ?? e).slice(0, 200)}` }, 502); }
         }
         // archive and delete: an ended run only (409 for a live one); delete needs the typed id (400)

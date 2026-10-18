@@ -36,6 +36,11 @@ const RECON = await startAt("Closed, merged on GitHub after all"); await E.answe
 await until(() => E.get(RECON).status === "succeeded" && !E.busy(RECON), 8000);
 E.reconcileMerge(RECON, { version: 1, repository: "fixture/project", pr: "1", url: "https://github.com/fixture/project/pull/1", branch: "crew/r", base: "main", reviewed: "a".repeat(40), head: "a".repeat(40),
   sha: "22a61f4f" + "0".repeat(32), mergedAt: "2026-10-18T01:08:19Z", observedAt: "2026-10-18T02:00:00Z", original: { status: "succeeded", result: "closed", endedAt: E.get(RECON).endedAt } });
+// the same, but GitHub merged a newer head than the one Studio verified
+const RECON2 = await startAt("Closed, merged on GitHub at another head"); await E.answer(card(RECON2).id, { choice: "close", by: "captain" });
+await until(() => E.get(RECON2).status === "succeeded" && !E.busy(RECON2), 8000);
+E.reconcileMerge(RECON2, { version: 1, repository: "fixture/project", pr: "2", url: "https://github.com/fixture/project/pull/2", branch: "crew/r2", base: "main", reviewed: "a".repeat(40), head: "b".repeat(40), verifiedHead: false,
+  sha: "c".repeat(40), mergedAt: "2026-10-18T01:08:19Z", observedAt: "2026-10-18T02:00:00Z", original: { status: "succeeded", result: "closed", endedAt: E.get(RECON2).endedAt } });
 const DONE = await startAt("Shipped"); await E.answer(card(DONE).id, { choice: "ship", by: "captain" });
 const WAIT = await startAt("Waiting at its card");
 const WAIT2 = await startAt("Also waiting");
@@ -128,6 +133,14 @@ try {
   ok(await text(p, "[data-runview] [data-run-state]") === "Merged (reconciled)" && await color(p, "[data-runview] [data-run-state]") === green && /ended “Closed without merging”, but GitHub shows pull request #1 merged into main as 22a61f4f/.test(await text(p, "[data-reconciled-merge]"))
     && /ledger entry #\d+/.test(await text(p, "[data-reconciled-merge]")) && await p.locator("[data-reconcile-merge]").count() === 0,
     "en: the run page reads Merged (reconciled) in the success colour and names the ledger entry; no check is offered again", await text(p, "[data-reconciled-merge]"));
+  // merged at a head Studio did not verify: said on the run page and the Board row, never in the success colour
+  await p.goto(`${base}/#/run/${RECON2}`); await seen(p, "[data-reconciled-unverified]");
+  ok(await text(p, "[data-runview] [data-run-state]") === "Merged (reconciled, unverified head)" && await color(p, "[data-runview] [data-run-state]") !== green
+    && /GitHub merged bbbbbbbb, not the head Studio verified \(aaaaaaaa\)/.test(await text(p, "[data-reconciled-unverified]")),
+    "a merge at another head than the one Studio verified: the run page says so, not in the success colour", await text(p, "[data-reconciled-merge]"));
+  await p.goto(`${base}/#/board`); await seen(p, `[data-task="${RECON2}"]`, 10000);
+  ok(await text(p, `[data-task="${RECON2}"] [data-run-state]`) === "Merged (reconciled, unverified head)" && await p.locator(`[data-task="${RECON2}"] .tb-st.tone-warn`).count() === 1 && await color(p, `[data-task="${RECON2}"] [data-run-state]`) !== green,
+    "the Board row says it too, in the warning tone", await text(p, `[data-task="${RECON2}"] [data-run-state]`));
 
   // ---------- 2. cancel at a card, with a reason: the card leaves the Board and the Inbox ----------
   const wcard = card(WAIT)?.id;

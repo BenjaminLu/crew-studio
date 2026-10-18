@@ -15,7 +15,10 @@ What:
   pull request again, read-only with the project's grant, on boot and from the run page's
   "Check GitHub for a merge"; a merge into the Task's base becomes one signed
   `reconciled-merge` ledger entry (pull request, merge commit, when observed, the original end).
-  Earlier entries and the recorded end stay as they were; nothing is done on GitHub.
+  Earlier entries and the recorded end stay as they were; nothing is done on GitHub. The grant
+  passes the same gate as every other GitHub use (enabled project, signed grant) or nothing is
+  read. A merge of another head than the one Studio verified reads "Merged (reconciled,
+  unverified head)" in the warning colour and names both heads.
 - Cancel works from any non-ended state, including a run waiting at a card. Cancelling
   withdraws its open cards (they leave the Inbox and the Board's Needs you), stops its agents
   and runs its `on_cancel` hooks. The run ends `cancelled` with the captain's optional reason.

@@ -14,6 +14,7 @@ import { Projects } from "../src/doors";
 import { GitHubPrAdapter } from "../src/adapters/github";
 import { GitHubPoller } from "../src/github-poller";
 import { must, setGitHome } from "../src/git";
+import { grantSignature } from "../src/github-grant";
 import { githubSimulator } from "./lib/github-simulator";
 
 const { ok, end } = suite("reconciled-merge");
@@ -35,9 +36,10 @@ const flow = Y({ id: "reconcile-flow", name: "Reconcile", roles: [], nodes: [
   { id: "done", kind: "hook", label: "Merged", args: { summary: "merged {{ctx.merged.head}}" }, x: 4, y: 0 },
   { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 3, y: 1 }],
   edges: [["seed", "pr-open"], ["pr-open", "merge-card", "ok"], ["pr-open", "closed", "close"], ["merge-card", "merge", "merge"], ["merge-card", "closed", "close"], ["merge", "done"]] });
-const install = async (o: { data?: string } = {}) => {
+// adapter null: no injected adapter, the project's own grant is used (and gated) as in Studio
+const install = async (o: { data?: string; adapter?: null } = {}) => {
   const H = await harness([flow], o.data ? { data: o.data } : {}), E = H.engine, poller = new GitHubPoller();
-  installCode(E, { dataDir: H.data, projects: new Projects(H.data), adapter, poller, mergeWatchMs: 600_000 });
+  installCode(E, { dataDir: H.data, projects: new Projects(H.data), adapter: o.adapter === null ? undefined : adapter, poller, mergeWatchMs: 600_000 });
   E.actions["fixture.seed"] = (x) => {
     const branch = x.run.params.branch; must(repo, ["fetch", "-q", bare, "main"]); const tip = must(repo, ["rev-parse", "FETCH_HEAD"]); must(repo, ["checkout", "-qb", branch, tip]); const head = commit(branch); must(repo, ["checkout", "-q", "main"]);
     Object.assign(x.ctx, { repo, worktree: repo, base: "main", baseCommit: tip, head, gatedHead: head, branch, door: { door: "two-way" }, spec: { title: "Reconcile", what: "w", why: ["y"], done: ["d"], scope: ["file"] } });
@@ -67,7 +69,7 @@ const runState = (() => { const w: any = {}; new Function("window", "h", "T", re
 try {
   sim.expect("GET", "/branches/main/protection/required_status_checks", { message: "Upgrade to GitHub Pro", documentation_url: "https://docs.github.com/rest/branches/branch-protection" }, undefined, 403);
   sim.expect("GET", "", { full_name: "fixture/project", allow_merge_commit: true });
-  let data = "", runId = "", sha = "", bootId = "", bootSha = "";
+  let data = "", runId = "", sha = "", bootId = "", bootSha = "", gateId = "", gateSha = "";
   {
     const { H, E, stop } = await install(); data = H.data;
     try {
@@ -84,7 +86,8 @@ try {
       res = await E.reconcileFromGitHub!(r.id);
       const all = entries(E, r), rec = all.filter((e: any) => e.record === "reconciled-merge");
       ok(res.state === "merged" && rec.length === 1 && all.length === before + 1 && rec[0].data?.pr === String(pr) && rec[0].data?.sha === sha && rec[0].data?.base === "main" && !!Date.parse(rec[0].data?.observedAt)
-        && rec[0].data?.original?.status === "succeeded" && rec[0].data?.original?.result === "closed" && rec[0].data?.mergedAt === "2026-10-18T01:08:19Z" && !/^captain/.test(String(rec[0].actor)),
+        && rec[0].data?.original?.status === "succeeded" && rec[0].data?.original?.result === "closed" && rec[0].data?.mergedAt === "2026-10-18T01:08:19Z" && !/^captain/.test(String(rec[0].actor))
+        && rec[0].data?.verifiedHead === true && rec[0].data?.head === r.ctx.pr.head,
         "GitHub shows it merged into the base: one signed reconciled-merge entry with the pull request, the merge commit, when it was observed and the original end", JSON.stringify(rec));
       ok(E.trusted(r.id).ok && JSON.stringify(all.slice(0, before).map((e: any) => [e.seq, e.sig])) === JSON.stringify(past), "the earlier ledger entries are unchanged and the ledger still verifies");
       ok(r.status === "succeeded" && r.result === "closed" && !r.ctx.merged && r.reconciled?.sha === sha && r.reconciled?.ledger === rec[0].seq, "the recorded end stays closed; the Task carries the reconciled merge", JSON.stringify(r.reconciled));
@@ -103,6 +106,21 @@ try {
       // closed unmerged on GitHub: it was really closed
       const shut = await closedTask(E, "crew/shut"); Object.assign(sim.pulls.get(Number(shut.ctx.pr.id)), { state: "closed", merged: false, merge_commit_sha: null, closed_at: "2026-10-18T02:00:00Z" });
       ok((await E.reconcileFromGitHub!(shut.id)).state === "not-merged" && !shut.reconciled, "closed unmerged on GitHub: nothing is recorded");
+      // the branch moved after Studio verified it, and GitHub merged the newer head: recorded and shown, not in the success colour
+      const moved = await closedTask(E, "crew/moved"), was = moved.ctx.pr.head;
+      const newer = must(bare, ["commit-tree", `${was}^{tree}`, "-p", was, "-m", "pushed after Studio's checks"]); must(bare, ["update-ref", "refs/heads/crew/moved", newer, was]);
+      mergeOnGitHub(Number(moved.ctx.pr.id), "crew/moved");
+      const mv = await E.reconcileFromGitHub!(moved.id), ms = runState(moved);
+      ok(mv.state === "merged" && moved.reconciled?.verifiedHead === false && moved.reconciled?.head === newer && moved.reconciled?.reviewed === was
+        && ms.key === "reconciled-unverified" && ms.tone === "warn" && ms.en === "Merged (reconciled, unverified head)" && /非 Studio 驗證/.test(ms.tw),
+        "GitHub merged another head than the one Studio verified: recorded (verifiedHead false, both heads) and read as Merged (reconciled, unverified head), in the warning colour", JSON.stringify([moved.reconciled, ms]));
+      // deleted while GitHub is read: no error, nothing recorded
+      const gone = await closedTask(E, "crew/gone"); mergeOnGitHub(Number(gone.ctx.pr.id), "crew/gone");
+      const reading = E.reconcileFromGitHub!(gone.id); E.remove(gone.id, gone.id);
+      const gr = await reading.then((x: any) => x, (e: any) => ({ state: "threw", reason: String(e?.message ?? e) }));
+      ok(gr.state === "skipped" && /deleted/.test(gr.reason ?? "") && !E.ledger(gone.id).some((e: any) => e.record === "reconciled-merge"), "a Task deleted while GitHub is read: skipped, no error, nothing recorded", JSON.stringify(gr));
+      // the grant gate (checked with Studio's own adapter below)
+      gateId = (await closedTask(E, "crew/gate")).id; // merged on GitHub only once the injected adapter is gone (below)
       // merged on GitHub while Studio is down: the next boot finds it
       const b = await closedTask(E, "crew/boot"); bootId = b.id; bootSha = mergeOnGitHub(Number(b.ctx.pr.id), b.ctx.pr.branch);
     } finally { stop(); }
@@ -118,6 +136,28 @@ try {
       ok(r.reconciled?.sha === sha && r.result === "closed" && entries(E, r).filter((e: any) => e.record === "reconciled-merge").length === 1, "after a restart the reconciled Task still reads Merged (reconciled), recorded once");
       ok(b.reconciled?.sha === bootSha && b.result === "closed" && entries(E, b).filter((e: any) => e.record === "reconciled-merge").length === 1 && E.trusted(b.id).ok, "on boot Studio reads the ended Task's pull request and reconciles the merge it finds", JSON.stringify(b.reconciled));
       ok(!writes(calls).length, "the boot check only read GitHub");
+    } finally { stop(); }
+  }
+  // ---------- the project's own grant: read only with a grant that passes the same gate as every other GitHub use ----------
+  {
+    process.env.CREW_GH_NO_CLI = "1"; writeFileSync(join(data, "github-token"), "fake-token"); // never the gh CLI, never real GitHub
+    const local = join(temp, "granted"); must(temp, ["clone", "-q", bare, local]); assertTempRepo(local); // origin: the simulator's repository
+    const project = { id: "gp", name: "gp", path: local, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null };
+    const signed = (extra: any = {}) => { const gr: any = { ...grant, localPath: local }; gr.signature = grantSignature(data, project, gr); return [{ ...project, github: gr, ...extra }]; };
+    const { E, stop } = await install({ data, adapter: null });
+    try {
+      E.load(); await Bun.sleep(500); // the boot check passes over every Task (none has a project here)
+      const t = E.get(gateId)!; t.ctx.project = "gp"; // as a Task started on the registered project
+      gateSha = mergeOnGitHub(Number(t.ctx.pr.id), "crew/gate");
+      const tries = async (records: any, label: string, re: RegExp) => { writeFileSync(join(data, "projects.json"), JSON.stringify(records)); const calls = sim.calls.length;
+        const res = await E.reconcileFromGitHub!(t.id);
+        ok(res.state === "skipped" && re.test(res.reason ?? "") && sim.calls.length === calls && !t.reconciled && !E.ledger(t.id).some((e: any) => e.record === "reconciled-merge"), `${label}: GitHub is not read and nothing is recorded`, JSON.stringify(res)); };
+      await tries(signed().map((p: any) => ({ ...p, github: { ...p.github, signature: "0".repeat(64) } })), "a tampered (unsigned) grant", /does not verify/);
+      await tries(signed().map((p: any) => ({ ...p, github: { ...p.github, apiOrigin: "http://127.0.0.1:1" } })), "a grant edited after it was signed", /does not verify/);
+      await tries(signed({ enabled: false }), "a disabled project", /disabled|no GitHub grant/);
+      writeFileSync(join(data, "projects.json"), JSON.stringify(signed()));
+      const res = await E.reconcileFromGitHub!(t.id);
+      ok(res.state === "merged" && t.reconciled?.sha === gateSha && E.trusted(t.id).ok, "the captain's signed grant passes the gate: the merge is read and reconciled", JSON.stringify(res));
     } finally { stop(); }
   }
 } catch (e: any) { ok(false, "unexpected error", e.stack); } finally { sim.stop(); }

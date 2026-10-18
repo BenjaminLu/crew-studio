@@ -799,9 +799,12 @@ function viewRun(id) {
         // Delete stands apart from the other actions (a divider), so it is never tapped by mistake
         ended ? h("span", { class: "rt-danger", "data-danger-zone": id }, h("button", { class: "btn danger", "data-run-delete": id, "aria-expanded": String(v.panel === "delete"), onclick: () => { v.panel = v.panel === "delete" ? null : "delete"; v.delMsg = ""; v.confirm = ""; rerender(); } }, T("Delete…", "刪除…"))) : null)),
     // Merged (reconciled): the end the Task recorded, and the merge Studio observed on GitHub afterwards (its signed ledger entry)
-    r.reconciled ? h("section", { class: "card x-pad rt-reconciled", "data-reconciled-merge": r.id }, h("h3", {}, T("Merged (reconciled)", "已合併（事後核對）")),
+    r.reconciled ? h("section", { class: "card x-pad rt-reconciled", "data-reconciled-merge": r.id }, h("h3", {}, T(window.runState(r).en, window.runState(r).tw)),
       h("p", {}, T(`This Task ended “${r.reconciled.original?.status === "cancelled" ? "Cancelled" : "Closed without merging"}”, but GitHub shows pull request #${r.reconciled.pr} merged into ${r.reconciled.base} as ${String(r.reconciled.sha).slice(0, 8)}${r.reconciled.mergedAt ? ` (${r.reconciled.mergedAt})` : ""}.`,
         `這個任務原本以「${r.reconciled.original?.status === "cancelled" ? "已取消" : "未合併就關閉"}」結束，但 GitHub 顯示 PR #${r.reconciled.pr} 已合併進 ${r.reconciled.base}（${String(r.reconciled.sha).slice(0, 8)}${r.reconciled.mergedAt ? `，${r.reconciled.mergedAt}` : ""}）。`)),
+      // the merged head is not the head Studio verified (the branch moved after Studio's checks): said plainly, as a detected merge says it
+      r.reconciled.verifiedHead === false ? h("p", { style: "color:var(--warn)", "data-reconciled-unverified": r.id }, T(`GitHub merged ${String(r.reconciled.head || "an unknown head").slice(0, 8)}, not the head Studio verified (${String(r.reconciled.reviewed).slice(0, 8)}): Studio's checks did not run on what was merged.`,
+        `GitHub 合併的是 ${String(r.reconciled.head || "未知的版本").slice(0, 8)}，不是 Studio 驗證過的 head（${String(r.reconciled.reviewed).slice(0, 8)}）：Studio 的檢查沒有跑在被合併的內容上。`)) : null,
       h("p", { class: "faint" }, T(`Studio read this on GitHub at ${r.reconciled.observedAt} and recorded it as ledger entry #${r.reconciled.ledger}. The earlier entries and the recorded end stay as they were; nothing was changed on GitHub.`,
         `Studio 於 ${r.reconciled.observedAt} 在 GitHub 讀到這件事，記為帳本第 #${r.reconciled.ledger} 筆。先前的紀錄和原本的結束狀態都不變；GitHub 上沒有任何變更。`))) : null,
     // the captain's full request: the title above is only its short name
