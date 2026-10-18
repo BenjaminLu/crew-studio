@@ -12,10 +12,10 @@ import {installReadinessViews,readinessNodes} from './readiness-view';
 import {installGitHubReviewWorkflow} from '../domain/github-review-workflow';
 import {Onboarding} from '../onboarding';
 import {ArtifactStore,websiteHref} from '../artifacts';
-import {StaffingStore,staffingHash,installStaffingGuard,coffeeStaffingProject,staffingApplies,staffedCapability,type StaffingProject} from '../domain/staffing';
+import {StaffingStore,staffingHash,coffeeStaffingProject,staffingApplies,staffedCapability,type StaffingProject} from '../domain/staffing';
 import {CrewStore,resolveCrew,teamBody,withJudges,seatLabel} from '../domain/crew';
 import {installCrewGuard,judgeSlots} from '../crew-guard';
-import {installCrewStaffing} from '../crew-staffing';
+import {installTeamStaffingGuard} from '../crew-staffing';
 import {migrateCrew} from '../crew-migrate';
 import {crewRoutes} from '../crew-routes';
 import {installCrewTools} from '../crew-tools';
@@ -147,8 +147,7 @@ export function createRuntime(d: RuntimeDeps) {
   // a Studio that already approved staffing gets its team seeded from it once (idempotent; src/crew-migrate.ts)
   // CREW_TEAM_SEED=0 keeps per-project staffing only: no team is seeded (a Studio that has a team keeps it)
   if(process.env.CREW_TEAM_SEED!=='0')try{const m=migrateCrew(d.dataDir,defs);if(m.status==='seeded')d.log.emit({type:'crew_seeded',summary:`team seeded from ${m.from!.workflow} v${m.from!.version} (${m.from!.project}); ${m.overrides!.length} workflow overrides`});}catch(e:any){console.warn(`crew-studio: team seeding: ${e?.message??e}`);}
-  const crewStaffing=installCrewStaffing(engine,staffing,crewStore);
-  const staffingGuard=installStaffingGuard(engine,staffing,staffingProject,staffingCapability,(def,config)=>crewStaffing.verify(def,config));
+  const {crewStaffing,guard:staffingGuard}=installTeamStaffingGuard(engine,staffing,crewStore,staffingProject,staffingCapability);
   const crewGuard=installCrewGuard(engine,crewStore);
   // a captain's own workflow confirms at Run exactly the crew its Task will record (the guard's own resolution, judges included)
   defs.ownCrew=(def:any)=>{const t=crewStore.current();return t?resolveCrew(teamBody(t),withJudges(def,judgeSlots(engine,def)),{},t.hash):null;};

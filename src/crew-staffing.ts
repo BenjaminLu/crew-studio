@@ -3,7 +3,7 @@
 // every check it had (role skill pins, node skill pins, definition hash, capability, CAS) and re-derives a crew-derived
 // version from its own signed team version, refusing any difference (docs/design/crew-seats.md).
 import {CrewStore,resolveCrew,teamBody,type TeamConfig,type Resolution} from './domain/crew';
-import {StaffingStore,staffingHash,skillPartPins,staffingSkillRef,type StaffingDraft,type StaffingProject,type StaffingConfig,type StaffingNode,type StaffingRole} from './domain/staffing';
+import {StaffingStore,installStaffingGuard,staffingHash,skillPartPins,staffingSkillRef,type StaffingDraft,type StaffingProject,type StaffingConfig,type StaffingNode,type StaffingRole} from './domain/staffing';
 import type {Engine} from './runtime/engine';
 
 const ROLE_NODE='role--';
@@ -34,6 +34,12 @@ const shape=(c:Pick<StaffingDraft,'project'|'workflow'|'roles'|'review'|'nodes'|
 export function crewApproval(team:TeamConfig):{run:string;card:string;answerSeq:number}{
  if(team.approval.via==='card'&&team.approval.card&&team.approval.run)return{run:team.approval.run,card:team.approval.card,answerSeq:team.approval.answerSeq??team.version};
  return{run:`crew-${team.approval.via}`,card:`crew-team-v${team.version}-${team.hash.slice(0,12)}`,answerSeq:team.version};
+}
+/** The staffing guard as the runtime installs it: crew-derived versions are re-derived from their signed team (src/runtime/index.ts). */
+export function installTeamStaffingGuard(engine:Engine,store:StaffingStore,crew:CrewStore,resolveProject:(id:string)=>StaffingProject,verifyCapability?:(config:StaffingConfig)=>void){
+ const crewStaffing=installCrewStaffing(engine,store,crew);
+ const guard=installStaffingGuard(engine,store,resolveProject,verifyCapability,(def,config)=>crewStaffing.verify(def,config));
+ return{crewStaffing,guard};
 }
 export function installCrewStaffing(engine:Engine,store:StaffingStore,crew:CrewStore){
  const live=(def:any,role:any)=>{const t=engine.roleSkillText(def,role.id);const text=t?.text??engine.deps.skillText(role.skill),version=t?.version??1;const parts=skillPartPins(role.skill,engine.deps.skillText);return{pin:{skill:store.remember({ref:role.skill,version,text}),...(parts?{skills:parts}:{})},text};};

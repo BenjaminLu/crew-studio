@@ -141,7 +141,9 @@ ok(workflows >= 12 && agents >= 20 && judges >= 8, "the sweep covered the built-
 // ---------- a Task in flight keeps its own staffing approval when the workflow moves to a new definition ----------
 // (new pins change a built-in's definition, so Studio stores it as the next version and staffing is approved again for it)
 {
-  const { StaffingStore, installStaffingGuard, staffingHash } = await import("../src/domain/staffing");
+  const { StaffingStore, staffingHash } = await import("../src/domain/staffing");
+  // the guard exactly as the runtime installs it (with the crew re-derivation check): src/runtime/index.ts
+  const { installTeamStaffingGuard } = await import("../src/crew-staffing");
   const ref = "pack:firstmate/skills/worker.md";
   const flow = { id: "code-firstmate", name: "Duty skills upgrade fixture", kind: "code", version: 1, roles: [{ id: "worker", label: "Worker", skill: ref }],
     nodes: [{ id: "wait", kind: "card", label: "Wait", x: 0, y: 0, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "go", label: "Go", labelZh: "Go" }] } }, { id: "work", kind: "agent", label: "Work", role: "worker", mode: "test", x: 1, y: 0 }],
@@ -149,7 +151,7 @@ ok(workflows >= 12 && agents >= 20 && judges >= 8, "the sweep covered the built-
   const h = await harness([Y(flow)], { data: checkedTempDir("crew-duty-staffing-") }), e = h.engine, staffing = new StaffingStore(h.data), project = { namespace: "git" as const, id: "p", identity: "duty-skills-upgrade" };
   const { until } = await import("./rt-harness");
   try {
-    installStaffingGuard(e, staffing, () => project);
+    installTeamStaffingGuard(e, staffing, new C.CrewStore(h.data), () => project);
     const text = "# Worker skill\n"; e.deps.skillText = () => text;
     // the provider each turn runs on is the approved pick (provider, model, effort), as the server selects it
     e.deps.selectProvider = async (_x: any, p: any) => ({ ...e.deps.provider(p.provider, p.model), reasoningEffort: p.effort });
@@ -178,7 +180,7 @@ ok(workflows >= 12 && agents >= 20 && judges >= 8, "the sweep covered the built-
     // a superseded v1 approval never staffs again after the upgrade: v1 approval A replaced by A', then v2 regenerated
     {
       const p2 = { ...project, identity: "duty-skills-superseded" }, s2 = new StaffingStore(h.data);
-      const guard = installStaffingGuard(e, s2, () => p2), d2 = (def: any, model: string) => ({ ...draft(def, model), project: p2 });
+      const guard = installTeamStaffingGuard(e, s2, new C.CrewStore(h.data), () => p2).guard, d2 = (def: any, model: string) => ({ ...draft(def, model), project: p2 });
       const a = s2.approve(d2(v1, "a-model"), null, { run: "R-a", card: "SC-a", answerSeq: 1 });
       const a2 = s2.approve(d2(v1, "a2-model"), a.hash, { run: "R-a2", card: "SC-a2", answerSeq: 2 });
       s2.approve(d2(v2, "v2-model"), a2.hash, { run: "R-v2", card: "SC-v2", answerSeq: 3 });

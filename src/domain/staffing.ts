@@ -180,18 +180,25 @@ export class StaffingStore{
  skill(pin:SkillPin,project?:StaffingProject){if(!project){const pending=this.pendingSkills.get(pin.sha256);if(pending!==undefined)return pending;throw new Error('Project identity required for skill');}const body=this.read(this.snapshotPath(project,pin.sha256));if(createHash('sha256').update(body).digest('hex')!==pin.sha256)throw new Error('Approved skill changed');return body;}
  /** An earlier approved version by its hash (a task bound before a newer approval), verified like the current one; null when none matches. */
  byHash(project:StaffingProject,hash:string):StaffingConfig|null{
-  digest(hash);const dir=this.dir(project);if(!existsSync(dir))return null;
-  for(const file of readdirSync(dir).filter(f=>/^v[1-9][0-9]*\.json$/.test(f))){let c:any;try{c=JSON.parse(this.read(join(dir,file)));}catch{continue;}if(c?.hash!==hash)continue;
-   withNodes(c,['schema','algorithm','project','workflow','roles','review','version','previous','approval','hash','signature']);const{version,previous,approval,hash:h,signature,...draft}=c;validateStaffingDraft(draft);
-   const expected=createHmac('sha256',ledgerKey(this.dataDir)).update(h).digest('hex');if(staffingHash({...draft,version,previous,approval})!==h||staffingHash(project)!==staffingHash(c.project)||typeof signature!=='string'||signature.length!==expected.length||!timingSafeEqual(Buffer.from(signature),Buffer.from(expected)))throw new Error('Staffing approval verification failed');
-   return c as StaffingConfig;}
-  return null;
+  digest(hash);const c=this.records(project).get(hash);return c?this.verifyRecord(project,c):null;
+ }
+ /** Every stored version's record by its hash, read once (unverified: verifyRecord checks the one used). */
+ private records(project:StaffingProject):Map<string,any>{
+  const out=new Map<string,any>(),dir=this.dir(project);if(!existsSync(dir))return out;
+  for(const file of readdirSync(dir).filter(f=>/^v[1-9][0-9]*\.json$/.test(f))){let c:any;try{c=JSON.parse(this.read(join(dir,file)));}catch{continue;}if(typeof c?.hash==='string'&&!out.has(c.hash))out.set(c.hash,c);}
+  return out;
+ }
+ private verifyRecord(project:StaffingProject,c:any):StaffingConfig{
+  withNodes(c,['schema','algorithm','project','workflow','roles','review','version','previous','approval','hash','signature']);const{version,previous,approval,hash:h,signature,...draft}=c;validateStaffingDraft(draft);
+  const expected=createHmac('sha256',ledgerKey(this.dataDir)).update(h).digest('hex');if(staffingHash({...draft,version,previous,approval})!==h||staffingHash(project)!==staffingHash(c.project)||typeof signature!=='string'||signature.length!==expected.length||!timingSafeEqual(Buffer.from(signature),Buffer.from(expected)))throw new Error('Staffing approval verification failed');
+  return c as StaffingConfig;
  }
  /** The last approval recorded for exactly this definition, walking the signed chain back from the current version
   *  (each step verified by hash, as byHash does); null when no approval in the chain is for it. */
  latestFor(project:StaffingProject,workflow:{id:string;version:number;sha256:string}):StaffingConfig|null{
-  const seen=new Set<string>();
-  for(let c:StaffingConfig|null=this.current(project);c&&!seen.has(c.hash);c=c.previous?this.byHash(project,c.previous):null){seen.add(c.hash);
+  // the version files are read once for the whole walk; each step is verified like byHash
+  const seen=new Set<string>(),records=this.records(project),at=(hash:string)=>{const r=records.get(hash);return r?this.verifyRecord(project,r):null;};
+  for(let c:StaffingConfig|null=this.current(project);c&&!seen.has(c.hash);c=c.previous?at(c.previous):null){seen.add(c.hash);
    if(c.workflow.id===workflow.id&&c.workflow.version===workflow.version&&c.workflow.sha256===workflow.sha256)return c;}
   return null;
  }
@@ -251,11 +258,14 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
  function verifyStored(def:any,params:Record<string,string>){
   const project=def.kind==='coffee-kit'?coffeeStaffingProject(params.project):resolveProject(params.project);let config=store.current(project);
   // a Task bound to an earlier crew-derived version keeps it when the team changed since (each version re-derives from its own signed team)
-  if(verifyCrew&&params._staffing&&params._staffing!==config.hash&&/^[a-f0-9]{64}$/.test(params._staffing)){const earlier=store.byHash(project,params._staffing);if(earlier?.crew&&config.crew)config=earlier;}
   // and a Task on an earlier definition (the workflow moved to a new version since) keeps its approval, the project's own or
-  // crew-derived, only while it is the last one the signed chain records for exactly that definition: a superseded one never staffs again
-  else if(params._staffing&&params._staffing!==config.hash&&/^[a-f0-9]{64}$/.test(params._staffing)&&(config.workflow.id!==def.id||config.workflow.version!==def.version||config.workflow.sha256!==staffingHash(def))){
-   const last=store.latestFor(project,{id:def.id,version:def.version,sha256:staffingHash(def)});if(last?.hash===params._staffing)config=last;}
+  // crew-derived, only while it is the last one the signed chain records for exactly that definition: a superseded one never staffs again.
+  // The two fallbacks are separate: the crew one applies only between two crew-derived versions, this one to any kind.
+  if(params._staffing&&params._staffing!==config.hash&&/^[a-f0-9]{64}$/.test(params._staffing)){
+   const earlier=verifyCrew&&config.crew?store.byHash(project,params._staffing):null;
+   if(earlier?.crew)config=earlier;
+   else if(config.workflow.id!==def.id||config.workflow.version!==def.version||config.workflow.sha256!==staffingHash(def)){
+    const last=store.latestFor(project,{id:def.id,version:def.version,sha256:staffingHash(def)});if(last?.hash===params._staffing)config=last;}}
   // a newer approval that only re-pinned role skills (another task approved the new text): this task's own skill is what changed
   if(params._staffing&&params._staffing!==config.hash){const d=(()=>{try{return skillDrift(def,params)}catch{return null}})();if(d){const id=d.changed[0];throw new SkillChanged(id,d.bound.roles[id].skill.sha256,sha(d.live[id].text));}}
   if(params._staffing!==config.hash||config.workflow.id!==def.id||config.workflow.version!==def.version||config.workflow.sha256!==staffingHash(def))throw new Error('Staffing approval missing or changed; confirm project role configuration / 派工配置尚未核准或已變更，請確認各角色配置');
