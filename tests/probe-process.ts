@@ -34,4 +34,23 @@ if(timeout){await Promise.race([pending,new Promise(r=>setTimeout(r,1200))]);}
  try{await p.exited;await p.stop();}catch(e:any){error=e.message;}
  ok(/probe group death unverified/.test(error)&&p.output().out.trim()==='{"ok":true}','a group whose only zombie has a parent that escaped the group and still runs fails closed (death unverified)',error);
  const h=existsSync(hpid)?Number(readFileSync(hpid,'utf8')):0;if(h)try{process.kill(h,'SIGKILL');}catch{}}
+// The producer confirms that a second stdout frame is already in the pipe
+// before stop begins, while the first frame's callback still owns this tick.
+// This separates delivery into two chunks without relying on scheduler timing.
+{
+ const {probeProcess}=await import('../src/providers/probe-process');
+ const ack=join(dir,'drain-ack'),written=join(dir,'drain-written'),fixture=join(dir,'drain.mjs');
+ writeFileSync(fixture,String.raw`import{existsSync,writeFileSync,writeSync}from'node:fs';writeSync(1,JSON.stringify({frame:'completed'})+'\n');const timer=setInterval(()=>{if(!existsSync(${JSON.stringify(ack)}))return;clearInterval(timer);writeSync(1,JSON.stringify({frame:'duplicate'})+'\n');writeFileSync(${JSON.stringify(written)},'ready');},1);setInterval(()=>{},1000);`);
+ const frames:string[]=[];let writtenBeforeStop=false;
+ const p=probeProcess([process.execPath,fixture],dir,{PATH:process.env.PATH??'/usr/bin:/bin'},value=>{
+  frames.push(value.frame);
+  if(value.frame==='completed'){
+   writeFileSync(ack,'continue');const deadline=Date.now()+1000;
+   while(!existsSync(written)&&Date.now()<deadline)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,1);
+   writtenBeforeStop=existsSync(written);void p.stop().catch(()=>{});
+  }
+ },{timeoutMs:3000});
+ await p.exited;await p.stop();
+ ok(writtenBeforeStop&&frames.join(',')==='completed,duplicate','verified stop drains a later chunk already written after the completion frame',JSON.stringify(frames));
+}
 rmSync(dir,{recursive:true,force:true});end();

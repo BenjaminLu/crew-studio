@@ -37,14 +37,17 @@ const seen=(p,s)=>p.waitForSelector(s,{timeout:8000}).then(()=>true).catch(()=>f
 const shots=join(root,"tests/out/codex-toolchain"); mkdirSync(shots,{recursive:true});
 async function captureCodex(p, width, scheme, lang) {
   const row=p.locator('[data-item="codex"]');
-  await row.evaluate(el=>el.scrollIntoView({block:"center",inline:"nearest"}));
   const badge=row.locator('.doc-t .badge');
   ok(await badge.innerText()===(lang==="zh"?"可用":"Available") && (await badge.getAttribute('class')).split(/\s+/).includes('ok'),`Codex badge describes installation only ${width} ${scheme} ${lang}`);
-  ok(await row.evaluate(el=>{
+  // Doctor refreshes and language changes replace rows; scroll and inspect one DOM revision.
+  const reachable=await p.waitForFunction(()=>{
+    const el=document.querySelector('[data-item="codex"]');if(!el)return false;
+    el.scrollIntoView({block:"center",inline:"nearest",behavior:"instant"});
     const r=el.getBoundingClientRect(), main=document.querySelector('.main').getBoundingClientRect();
-    const login=el.querySelector('[data-login="codex"]'), a=login.getBoundingClientRect();
+    const login=el.querySelector('[data-login="codex"]');if(!login)return false;const a=login.getBoundingClientRect();
     return r.top>=main.top && r.bottom<=main.bottom && a.top>=0 && a.bottom<=innerHeight && document.elementFromPoint(a.left+a.width/2,a.top+a.height/2)?.closest('[data-login="codex"]')===login;
-  }),`entire Codex row and login action visible and reachable ${width} ${scheme} ${lang}`);
+  },null,{timeout:8000}).then(()=>true).catch(e=>{if(e.name!=="TimeoutError")throw e;return false;});
+  ok(reachable,`entire Codex row and login action visible and reachable ${width} ${scheme} ${lang}`);
   await p.screenshot({path:join(shots,`doctor-${lang==="zh"?"zh-":""}${width}-${scheme}.png`)});
 }
 try {
