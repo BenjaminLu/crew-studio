@@ -335,6 +335,32 @@ await section("S23 escalation summary in the chat", async () => {
   } finally { t.done(); }
 });
 
+// ---------- S26: a restart greets in the language of the Board on screen ----------
+// The Board that reconnects while the restart is still checking the account (before the greeting starts waiting) is heard:
+// every report since boot is kept. The tab on screen wins, over a background tab and over the captain's choice in the file.
+await section("S26 greeting locale", async () => {
+  const session = () => { const dir = mkdtempSync(join(tmpdir(), "crew-greet-")); for (const d of ["data", "state"]) mkdirSync(join(dir, d));
+    return { dir, m: new MainSession({ dataDir: join(dir, "data"), projectDir: dir, stateDir: join(dir, "state"), hosts: { claude: {}, codex: {} } as any, pollMs: 200, permissionMcp: () => ({ command: ["true"], env: {} }) } as any) }; };
+  { const { dir, m } = session();
+    m.setBoardLocale("zh-CN", { visible: false, explicit: true }); // a background tab, the captain's chosen 简体中文: the file says zh-CN
+    m.setBoardLocale("en", { visible: true, explicit: false });    // the captain's Board on screen (browser default) reconnects first
+    const t0 = Date.now(), l = await m.greetingLocale(5000);
+    ok(l === "en" && Date.now() - t0 < 200, "a Board on screen that spoke before the greeting started waiting decides it at once", `${l} after ${Date.now() - t0} ms`);
+    ok(m.boardLocale() === "zh-CN", "the file keeps the captain's chosen language; only the greeting follows the screen");
+    m.stop(); rmSync(dir, { recursive: true, force: true }); }
+  { const { dir, m } = session();
+    m.setBoardLocale("zh-TW", { visible: false, explicit: true });
+    const t0 = Date.now(), wait = m.greetingLocale(5000);
+    setTimeout(() => m.setBoardLocale("en", { visible: true }), 150);
+    const l = await wait;
+    ok(l === "en" && Date.now() - t0 < 1000, "with only a background tab heard, the greeting waits for the tab on screen", `${l} after ${Date.now() - t0} ms`);
+    m.stop(); rmSync(dir, { recursive: true, force: true }); }
+  { const { dir, m } = session();
+    m.setBoardLocale("zh-TW", { visible: false });
+    ok(await m.greetingLocale(200) === "zh-TW", "no tab on screen within the wait: the latest background tab's language");
+    m.stop(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 // ---------- S27: a tool call is one human activity line, never raw JSON ----------
 await section("S27 activity lines", async () => {
   const QUOTE = "給我一張轉角書店的方形社群海報", SECRET = "ghp_" + "A1b2C3d4".repeat(5);

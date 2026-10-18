@@ -11,7 +11,7 @@ import { freePort, waitUp } from "./boot.mjs";
 import { captainAutoMode } from "../src/host/claude-primary";
 for (const k of ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "CREW_CLAUDE_BILLING", "CREW_MAIN_PROJECT", "CREW_FM_STATE", "CREW_CLAUDE_PERMISSION_MODE", "CREW_LOCAL_UNRESTRICTED", "CREW_LOCAL_DEPENDENCY_ROOT", "STUB_EFFECTIVE_MODE"]) delete process.env[k];
 let pass = 0, fail = 0;
-const ok = (v: any, n: string) => { console.log(`${v ? "ok" : "FAIL"} ${n}`); v ? pass++ : fail++; };
+const ok = (v: any, n: string, extra = "") => { console.log(`${v ? "ok" : "FAIL"} ${n}${v || !extra ? "" : " " + extra}`); v ? pass++ : fail++; };
 const until = async (f: () => Promise<boolean> | boolean, n = 200) => { for (let i = 0; i < n; i++) { if (await f()) return true; await Bun.sleep(30); } return false; };
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -77,7 +77,17 @@ const stop = async () => { if (app.exitCode === null && app.signalCode === null)
 const api = async (path: string, body?: any) => { const r = await fetch(base + path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", "x-crew-session": token }, body: body === undefined ? undefined : JSON.stringify(body) }); return { status: r.status, body: await r.json() as any }; };
 const view = async () => (await api("/api/main")).body;
 const idle = () => until(async () => { const v = await view(); return v.state === "attached" && !v.busy && v.queue.length === 0; });
-const say = async (text: string) => { const before = (await view()).log.length; await api("/api/main/send", { text }); await until(async () => { const v = await view(); return !v.busy && v.queue.length === 0 && v.log.length > before && v.log.slice(before).some((l: any) => l.kind === "firstmate" || l.status === "failed"); }); return (await view()).log.slice(before); };
+// a captain turn and the lines it added: picked by identity, not by index (the view is sorted by time and capped, so a line
+// written for an earlier turn can land after `before`), waiting long enough for a loaded machine; a turn that never finished fails
+const lineKey = (l: any) => `${l.at}|${l.kind}|${l.source ?? ""}|${String(l.text ?? "").slice(0, 200)}`;
+const say = async (text: string) => {
+  const seen = new Set(((await view()).log as any[]).map(lineKey));
+  await api("/api/main/send", { text });
+  const fresh = (v: any) => (v.log as any[]).filter((l) => !seen.has(lineKey(l)));
+  const done = await until(async () => { const v = await view(); return !v.busy && v.queue.length === 0 && fresh(v).some((l: any) => l.kind === "firstmate" || l.status === "failed"); }, 1000);
+  if (!done) console.log(`note: the turn "${text.slice(0, 40)}" did not finish within 30 s`);
+  return fresh(await view());
+};
 
 try {
   await waitUp(base, app);
@@ -171,7 +181,7 @@ try {
   const drafted = out.find((l: any) => l.kind === "firstmate")?.text ?? "";
   ok(/studio_draft_workflow ok: \{"draft":"[^"]+","revision":1,"source":"model","status":"draft-preview"/.test(drafted), "a captain message drafts a workflow graph with studio_draft_workflow from the Claude primary");
   out = await say('STUB_NATIVE studio_propose_work {"workflow":"missing","version":1,"text":"x"}');
-  ok(/studio_propose_work error: .*"failure":\{"schema":1,"code":"/.test(out.find((l: any) => l.kind === "firstmate")?.text ?? "") && out.some((l: any) => l.nativeFailure?.code), "a refused native call is a typed tool error, recorded for the captain");
+  ok(/studio_propose_work error: .*"failure":\{"schema":1,"code":"/.test(out.find((l: any) => l.kind === "firstmate")?.text ?? "") && out.some((l: any) => l.nativeFailure?.code), "a refused native call is a typed tool error, recorded for the captain", JSON.stringify(out.map((l: any) => [l.at, l.kind, l.source, String(l.text).slice(0, 80), !!l.nativeFailure])));
   ok((await api("/api/wruns")).body.runs.length === 0, "the refused proposal allocated no work");
   const sock = studio.env.CREW_STUDIO_SOCKET;
   ok((await fetch("http://localhost/api/tools", { unix: sock, headers: { "x-crew-tool-token": "wrong" } } as any)).status === 403, "the native socket refuses a wrong token");
