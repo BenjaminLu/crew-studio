@@ -119,6 +119,14 @@ env.BUN_OPTIONS = [...kept, NO_ENV].join(" ");
 // a per-run token, so a .env line (even CREW_TEST_ENV_ISOLATED=1) never equals the mark a parent passes on
 if (!trusted) env[MARK] = `1-${process.pid}-${Math.random().toString(36).slice(2)}`;
 const gitGone = scrubGitEnv(env);
+// A suite must never create launch records/probe files in the operator's runtime.
+// Nested entries share their parent's explicit runtime; independent suites do not.
+const ownRuntime = !trusted ? mkdtempSync(join(tmpdir(), "crew-test-runtime-")) : null;
+if (ownRuntime) {
+  env.CREW_RUNTIME_DIR = ownRuntime;
+  process.on("exit", () => rmSync(ownRuntime, { recursive: true, force: true }));
+}
+
 // 6. the real-CLI sentinel: installed once, by the outermost entry; nested entries share it (and its record)
 const SENTINEL = "CREW_TEST_CLI_SENTINEL";
 // a child started with a trimmed env still has the PATH: the sentinel folder first on it is the one to share
