@@ -15,7 +15,7 @@ export function routingNote(text: string, workflowOf: (kind: string) => string |
   const routes = routeRequest(text, workflowOf).map(({ asks, workflow }) => ({ asks, workflow }));
   if (!routes.length) return null;
   const list = routes.map((r) => `${r.asks} → ${r.workflow}`).join("; ");
-  return { routes, text: `[Studio note: this message asks for ${list}. Each deliverable becomes a proposal on its workflow (studio_propose_work; the captain approves the card). Do the work hands-on yourself only if the captain explicitly asks you to.]` };
+  return { routes, text: `[Studio note: if the captain is asking for something new here (${list}), each deliverable becomes a proposal on its workflow (studio_propose_work; the captain approves the card). Do the work hands-on yourself only if the captain explicitly asks you to.]` };
 }
 
 const STATUS_SHOWN = 8;

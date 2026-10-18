@@ -51,9 +51,23 @@ export function deliverableKinds(text: string): string[] {
   if (files) found.add("files");
   return DELIVERABLE_ROUTES.map((r) => r.kind).filter((k) => found.has(k));
 }
+// Naming a deliverable is not asking for one: "explain this document", 「這份報告寫了什麼？」, 「那個影片任務進度如何」 read,
+// explain or ask about one. A turn routes only when it asks to make, write, produce, draft or dispatch something new.
+const MAKE = /\b(?:make|create|write|draft|produce|build|design|generate|render|draw|shoot|compose|prepare|dispatch|organi[sz]e|tidy|sort|clean up|put together)\b|寫|做|製作|產出|生成|畫|拍|剪輯|設計|建立|派|起草|撰寫|產生|整理|弄一?[個份張支]/i;
+/** Phrases about what exists (what it says, what a task made): their verb is not a request to make. */
+const ABOUT = /\bdid\b[^?.!\n]*\b(?:make|create|write|produce|build|generate)\b|\b(?:made|written|created|produced|built|generated)\b|(?:寫|做|講|說)了(?:什麼|甚麼|啥|哪些)|在(?:講|說|寫)什麼/gi;
+/** Reading, explaining, summarising, or asking about progress: no request to make, unless the turn also says to make one. */
+const ASK = /\b(?:explain|summari[sz]e|summary|read|translate|review|look at|check|what(?:'s| is) in|progress|status)\b|看一下|看看|解釋|摘要|總結|翻譯|進度|狀態|有哪些/i;
+const IMPERATIVE = /\b(?:make|create|write|draft|produce|build|design|generate)\b\s+(?:me\s+|us\s+)?(?:a|an|the|new|some|another|\d)\b|(?:幫我|幫忙|請|再|來|要)(?:寫|做|製作|產出|生成|畫|拍|設計|建立|派|起草|撰寫|整理)|^\s*(?:寫|做|製作|產出|生成|畫|設計|建立|派)|派[一二三四五六七八九十兩\d]+個/i;
+/** The captain asks to make something new (not to read, explain or check on something that exists). */
+export function asksToMake(text: string): boolean {
+  const t = String(text ?? "");
+  if (!MAKE.test(t.replace(ABOUT, " "))) return false;
+  return !ASK.test(t) || IMPERATIVE.test(t);
+}
 /** The deliverables a captain turn asks for, each with the installed workflow that makes it; none when the captain asked for hands-on work. */
 export function routeRequest(text: string, workflowOf: (kind: string) => string | null): { asks: string; kind: string; workflow: string }[] {
-  if (HANDS_ON.test(String(text ?? ""))) return [];
+  if (HANDS_ON.test(String(text ?? "")) || !asksToMake(text)) return [];
   return deliverableKinds(text).flatMap((kind) => { const workflow = workflowOf(kind), asks = DELIVERABLE_ROUTES.find((r) => r.kind === kind)!.asks; return workflow ? [{ asks, kind, workflow }] : []; });
 }
 /** A file a deliverable workflow makes (a document, a page, an image, a film): Firstmate writing one itself for a routed request is the S3 slip. */

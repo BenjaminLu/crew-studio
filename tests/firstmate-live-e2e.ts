@@ -69,6 +69,11 @@ await section("S3 routing", async () => {
   ok(deliverableKinds("用檔案整理流程，整理它內建的示範資料夾，依類型分類。").join() === "files", "tidying a folder is file organisation, not a document");
   ok(routeRequest("你自己幫我寫一份文件，直接存在你的工作區就好", of).length === 0, "an explicit hands-on request routes nothing");
   ok(routeRequest("再派三個工作：1) 網頁原型：單頁網站 2) 圖片：主視覺 3) 短片：15 秒宣傳短片", of).map((r) => r.workflow).join() === "web-prototype,images,video", "several deliverables in one message each get their workflow");
+  // naming a deliverable is not asking for one: reading, explaining, summarising, progress and questions about attachments route nothing
+  for (const t of ["explain this document", "幫我看一下這份文件在講什麼", "這份報告寫了什麼？", "summarize the attached report", "那個影片任務進度如何", "what images did the last task make?", "read this file", "what's in the attached image?"])
+    ok(routeRequest(t, of).length === 0, `no route for a request that does not ask to make something: ${t}`, JSON.stringify(routeRequest(t, of)));
+  for (const t of ["幫我寫一份文件介紹咖啡", "Write a one-page report on our Q3 sales", "Build a landing page for the bakery", "用檔案整理流程，整理它內建的示範資料夾，依類型分類。", "summarize the attached report, then write a document for the team from it"])
+    ok(routeRequest(t, of).length > 0, `a request to make something routes: ${t}`);
   ok(/deliverable[^.]*becomes a proposal[^.]*hands-on yourself only when the captain explicitly asks/.test(nativeFreshText("/ws")), "Firstmate's standing text says a deliverable is a proposal, hands-on only on request");
   const note = routingNote(DOC, of);
   ok(!!note && note.routes[0]?.workflow === "documents" && /a document, report or article → documents/.test(note.text) && /hands-on yourself only if the captain explicitly asks/.test(note.text), "the turn note names the deliverable, its workflow and the hands-on rule", note?.text);
@@ -86,7 +91,7 @@ await section("S3 routing", async () => {
   const t = await mainWith({ turnNote: (x) => routingNote(x, of), script: (text, turn) => { if (text.includes("新手三分鐘")) turn.emit({ type: "toolStart", id: "w1", name: "Write", summary: "/ws/Crew-Studio-新手三分鐘上手.md" }); } });
   try {
     const first = await t.say(DOC);
-    ok(first.startsWith(DOC) && /\[Studio note: this message asks for a document, report or article → documents/.test(first), "the captain's document request reaches Firstmate with the route", first.slice(-300));
+    ok(first.startsWith(DOC) && /\[Studio note: if the captain is asking for something new here \(a document, report or article → documents\)/.test(first), "the captain's document request reaches Firstmate with the route", first.slice(-300));
     const shown = t.m.view().log.find((l) => l.kind === "system" && /writing \/ws\/Crew-Studio-新手三分鐘上手\.md itself/.test(l.text));
     ok(!!shown && /documents workflow/.test(shown.text) && /文件|document/.test(shown.i18n?.["zh-TW"] ?? ""), "writing the document itself is shown to the captain, naming the workflow", JSON.stringify(t.m.view().log.slice(-3)));
     const next = await t.say("好");
@@ -94,17 +99,22 @@ await section("S3 routing", async () => {
     const after = await t.say("謝謝");
     ok(!/in your last turn you wrote/.test(after), "the reminder rides along once");
     const card = await t.say("card: SC-1 answered A (in Crew Studio)", "card", "desktop");
-    ok(!/\[Studio note: this message asks for/.test(card), "a card notice carries no route");
+    ok(!/\[Studio note: if the captain is asking for something new/.test(card), "a card notice carries no route");
   } finally { t.done(); }
   const proposed = await mainWith({ turnNote: (x) => routingNote(x, of), script: async (text, turn) => { if (text.includes("新手三分鐘")) { await turn.call("studio_propose_work", {}); turn.emit({ type: "toolStart", id: "w2", name: "Write", summary: "/ws/notes.md" }); } } });
   try {
     await proposed.say(DOC);
     ok(!proposed.m.view().log.some((l) => l.kind === "system" && /itself, but you asked/.test(l.text)), "after proposing the workflow, a file Firstmate writes is not flagged");
   } finally { proposed.done(); }
+  const asking = await mainWith({ turnNote: (x) => routingNote(x, of), script: (text, turn) => { turn.emit({ type: "toolStart", id: "w4", name: "Write", summary: "/ws/summary.md" }); } });
+  try {
+    const sent = await asking.say("幫我看一下這份文件在講什麼");
+    ok(!/\[Studio note: if the captain is asking for something new/.test(sent) && !asking.m.view().log.some((l) => l.kind === "system" && /itself, but you asked/.test(l.text)), "a question about a document gets no route note and no guard notice, even when Firstmate writes a file");
+  } finally { asking.done(); }
   const own = await mainWith({ turnNote: (x) => routingNote(x, of), script: (text, turn) => { turn.emit({ type: "toolStart", id: "w3", name: "Write", summary: "/ws/draft.md" }); } });
   try {
     const sent = await own.say("你自己幫我寫一份文件，存在你的工作區");
-    ok(!/\[Studio note: this message asks for/.test(sent) && !own.m.view().log.some((l) => l.kind === "system" && /itself, but you asked/.test(l.text)), "a hands-on request gets no route and no flag");
+    ok(!/\[Studio note: if the captain is asking for something new/.test(sent) && !own.m.view().log.some((l) => l.kind === "system" && /itself, but you asked/.test(l.text)), "a hands-on request gets no route and no flag");
   } finally { own.done(); }
 });
 
