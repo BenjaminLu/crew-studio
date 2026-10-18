@@ -14,8 +14,9 @@ const seed = await seedProjects();
 const root = join(import.meta.dir, '..'), port = await freePort(), base = `http://127.0.0.1:${port}`;
 mkdirSync(join(seed.data, 'fm', 'state'), { recursive: true });
 process.env.CREW_SESSION_TOKEN = 'test-session';
+// This fixture exercises per-project staffing; global team migration has its own suite.
 const app = spawn('bun', ['src/server.ts'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CREW_DATA: seed.data, CREW_PORT: String(port), CREW_CHAT_PROVIDER: 'stub', CREW_GH: '0', CREW_READONLY: '1', CREW_RETRO_AUTO: '0',
-  CREW_SESSION_TOKEN: 'test-session', CREW_FM_STATE: join(seed.data, 'fm', 'state'), CREW_CLAUDE_BIN: '/nonexistent', CREW_CODEX_BIN: '/nonexistent' } });
+  CREW_SESSION_TOKEN: 'test-session', CREW_FM_STATE: join(seed.data, 'fm', 'state'), CREW_CLAUDE_BIN: '/nonexistent', CREW_CODEX_BIN: '/nonexistent', CREW_CODEX_MODEL: '', CODEX_HOME: join(seed.data, 'codex-config'), CREW_TEAM_SEED: '0' } });
 const shots = join(root, 'tests/out/projects'); mkdirSync(shots, { recursive: true });
 let browser;
 const COST = /\$\s?\d|\bcost\b|\bUSD\b|\bprice\b|成本|費用|花費/i;
