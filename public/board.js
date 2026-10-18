@@ -282,12 +282,15 @@ function events(x) {
   const tl = window.crewTimeline, r = x.r; if (!tl || !r.events) return [];
   return r.events.filter((e) => tl.shows(e, r.events) && e.type !== "node").slice(-4).reverse().map((e) => ({ t: e.ts, text: [tl.line(e, r)].flat() }));
 }
+// the panel's status line: how an ended Task ended, a waiting Task's card (Now already starts "Waiting for you"), else the
+// group and what happens now; never one phrase twice
+const statusLine = (x) => x.group === "done" || x.group === "you" ? nowText(x) : [groupWord(x.group), nowText(x)].filter((s, i, a) => s && a.indexOf(s) === i).join(" · ");
 function detail(x) {
   if (!x) return h("aside", { class: "tb-detail empty", "aria-label": T("Task details", "任務細節") }, h("p", { class: "faint" }, T("Select a Task to see the path it took.", "選一個任務，看它走過的路。")));
   const path = visited(x), ev = events(x);
   return h("aside", { class: `tb-detail g-${x.group}`, "aria-label": T("Task details", "任務細節"), "data-task-detail": x.id },
     h("div", { class: "tb-d-head" }, h("span", { class: "tb-d-meta mono" }, [x.id, x.workflow, x.project || "—"].join(" · ")), h("h2", {}, x.title),
-      h("span", { class: "tb-d-status" }, `${x.group === "done" ? T(x.state.en, x.state.tw) : groupWord(x.group)} · ${nowText(x)}`), x.card && x.group !== "done" ? inboxLink(x) : null),
+      h("span", { class: "tb-d-status" }, statusLine(x)), x.card && x.group !== "done" ? inboxLink(x) : null),
     h("section", { class: "tb-d-sec" }, h("h3", {}, T("The path this Task took", "這個任務走過的路")),
       path === null ? h("div", { class: "skel", style: "height:80px" }) : !path.length ? h("p", { class: "faint" }, T("No step has run yet.", "還沒有跑過任何一步。"))
         : h("ol", { class: "tb-path", "data-task-path": x.id }, path.map((p) => h("li", { class: `${p.cur ? "cur" : ""} s-${p.state}`, "data-path-node": p.node, "data-visit": p.visit, ...(p.cur ? { "aria-current": "step" } : {}) },

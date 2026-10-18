@@ -193,6 +193,12 @@ try {
     ok(await ariaOk(p) && (await tabRows(p)).length === 1, "1440 open: a list of list items, one row in the tab order");
     await p.click('[data-tb-tab="done"]');
     ok(await p.getAttribute("[data-task-detail]", "data-task-detail") === "R-091" && JSON.stringify(await tabRows(p)) === JSON.stringify(["R-091"]), "1440 open: a filter that hides the selected Task moves the selection and the panel to its first row");
+    // an ended Task's panel names its end once (it read "Merged · Merged", "Closed without merging · Closed without merging")
+    const endLine = (await p.textContent("[data-task-detail] .tb-d-status")).trim(), endRow = (await p.textContent('[data-task="R-091"] .tb-st')).trim();
+    ok(endLine === endRow && !/ · /.test(endLine), "an ended Task's panel says how it ended once, as its row does", JSON.stringify([endLine, endRow]));
+    await p.click('[data-tb-tab="you"]'); await p.click('[data-task="R-102"] .tb-title');
+    const youLine = (await p.textContent("[data-task-detail] .tb-d-status")).trim();
+    ok(youLine === "Waiting for you: Merge: format() supports JPY, a currency without cents", "a waiting Task's panel says Waiting for you once, with its card", youLine);
     await p.click('[data-tb-tab="all"]');
     ok(await p.getAttribute('[data-task="R-102"] [data-inbox-link]', "href") === "#/inbox/SC-201", "1440 open: the waiting Task links to its card in the Inbox");
     ok(await noSideways(p), "1440 open: no sideways scroll");
