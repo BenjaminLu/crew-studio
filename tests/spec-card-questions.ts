@@ -1,7 +1,7 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The spec card (code-firstmate's dispatch) carries its spec as data (live E2E S14, S20): the spec writer records open
 // scope questions as data, with the choices it proposes; the card lists them (unanswered, they stay out of scope) with
-// the spec's scope and what it reads to verify; a spec raised again shows what changed since the last spec card.
+// the spec's scope and what it reads to verify; a spec raised again shows what changed since the last approved spec (or the last spec card, before any approval).
 //      bun tests/spec-card-questions.ts
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -45,12 +45,24 @@ ok(again.body.startsWith("Changed since spec v1 (the one you approved):\n+ Done 
 const same = await E.cardBodies.dispatch(at(2));
 ok(JSON.stringify(same.spec.changed) === JSON.stringify(ch), "raising the same card again (same visit) compares with the same earlier spec");
 ctx.answers = { dispatch: { choice: "rescope", note: "x", by: "captain", at: "2026-10-18T11:00:00Z" } };
-const reworded = await E.cardBodies.dispatch(at(3));
-ok(reworded.spec.changed === null, "a spec card at the same spec version as the last one shows no change");
-ctx.spec = { ...ctx.spec, version: 3, explain: { en: "Reworded.", "zh-TW": "改寫。" } };
-const words = await E.cardBodies.dispatch(at(4));
-ok(words.spec.changed?.approved === false && words.spec.changed.since === 2 && !words.spec.changed.done.added.length && /the wording changed/.test(words.body), "after a rescope of an unapproved spec: compared with the last spec, not approved, and only its wording changed", JSON.stringify(words.spec.changed));
-ok(Object.keys(ctx.specCards).join() === "2,3,4", "only the last three spec cards' specs are kept", Object.keys(ctx.specCards).join());
+// v2's card was rescoped, not approved: the baseline stays v1, the spec the captain approved
+ctx.spec = { ...ctx.spec, version: 3, explain: { en: "Reworded.", "zh-TW": "改寫。" }, scope: [...ctx.spec.scope, "app/cart.ts"] };
+const v3 = await E.cardBodies.dispatch(at(3)), c3 = v3.spec.changed;
+ok(c3?.since === 1 && c3.approved === true && c3.done.added.length === 2 && c3.done.removed.join() === spec.done[0] && c3.scope.added.join() === "app/shop.ts,app/cart.ts" && c3.verification.removed.join() === "app/server.ts",
+  "v1 approved, v2 rescoped, v3: the v3 card compares with v1, the last approved spec, not with v2", JSON.stringify(c3));
+ok(v3.body.startsWith("Changed since spec v1 (the one you approved):"), "its card text names v1 as the approved spec", v3.body.slice(0, 120));
+ctx.spec = { ...ctx.spec, version: 4 }; await E.cardBodies.dispatch(at(4));
+ctx.spec = { ...ctx.spec, version: 5 }; const v5 = await E.cardBodies.dispatch(at(5));
+ok(Object.keys(ctx.specCards).join() === "3,4,5" && ctx.specApproved?.version === 1 && v5.spec.changed?.since === 1, "only the last three cards' specs are kept, and the approved spec outlives them", JSON.stringify([Object.keys(ctx.specCards), ctx.specApproved?.version, v5.spec.changed?.since]));
+// a run whose spec was never approved compares with the spec on the last card, and says so
+const ctx2: any = { spec: { ...spec, version: 1 }, repo: "/r", base: "main", branch: "crew/R-8" };
+const at2 = (visit: number) => ({ ctx: ctx2, run: { id: "R-8", title: "t", text: "t", nodes: {} }, rn: { visits: visit }, visit, node: { id: "dispatch" }, save() {} } as any);
+await E.cardBodies.dispatch(at2(1)); ctx2.answers = { dispatch: { choice: "rescope", note: "y", by: "captain", at: "2026-10-18T12:00:00Z" } };
+ctx2.spec = { ...ctx2.spec, version: 2, explain: { en: "Reworded.", "zh-TW": "改寫。" } };
+const words = await E.cardBodies.dispatch(at2(2));
+ok(words.spec.changed?.approved === false && words.spec.changed.since === 1 && !words.spec.changed.done.added.length && /the wording changed/.test(words.body) && !ctx2.specApproved, "never approved: compared with the last spec card, not called approved, and only its wording changed", JSON.stringify(words.spec.changed));
+const same2 = await E.cardBodies.dispatch(at2(3));
+ok(same2.spec.changed === null, "a spec card at the same spec version as the last one, with nothing approved, shows no change");
 
 H.stop();
 console.log(`\nspec-card-questions: ${pass} passed, ${fail} failed`);

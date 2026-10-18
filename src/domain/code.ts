@@ -1631,15 +1631,19 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const modelPicker = () => { const c = engine.modelChoices(); return c.length ? { select: c } : { note: true, noteLabel: "provider/model, e.g. codex/gpt-5", noteLabelZh: "provider/model，例如 codex/gpt-5" }; };
   /** the step this card came from (the last finished step before it): which escalation it is */
   const cameFrom = (x: X) => [...x.run.steps].reverse().find((s) => s.node !== x.node.id && (s.state === "passed" || s.state === "failed" || s.state === "error"));
-  // a spec raised again (after a rescope) says what changed since the spec on the last spec card, and whether the captain
-  // approved that one: its done lines, scope and read-only verification paths. Each card's spec is kept by visit.
+  // a spec raised again (after a rescope) says what changed since the last spec the captain APPROVED (kept once per run,
+  // x.ctx.specApproved), or, before any approval, since the spec on the last spec card: its done lines, scope and
+  // read-only verification paths. Each card's spec is kept by visit (the last three) to know what the captain approved.
   const specChange = (x: X) => {
-    const cur = x.ctx.spec, visit = x.visit ?? x.rn?.visits ?? 1, kept = (x.ctx.specCards ??= {}) as Record<string, { spec: any; approved: boolean }>;
+    const cur = x.ctx.spec, visit = x.visit ?? x.rn?.visits ?? 1, kept = (x.ctx.specCards ??= {}) as Record<string, { spec: any }>;
     const last = Object.keys(kept).map(Number).filter((v) => v < visit).sort((a, b) => a - b).at(-1);
-    const before = last === undefined ? null : { ...kept[last], approved: x.ctx.answers?.dispatch?.choice === "dispatch" };
-    kept[visit] = { spec: cur ? JSON.parse(JSON.stringify(cur)) : null, approved: false };
+    // the last card was answered "dispatch": its spec is the approved one from now on
+    if (last !== undefined && kept[last]?.spec && x.ctx.answers?.dispatch?.choice === "dispatch") x.ctx.specApproved = kept[last].spec;
+    const approved = x.ctx.specApproved ?? null, base = approved ?? (last === undefined ? null : kept[last]?.spec ?? null);
+    kept[visit] = { spec: cur ? JSON.parse(JSON.stringify(cur)) : null };
     for (const v of Object.keys(kept).map(Number).sort((a, b) => a - b).slice(0, -3)) delete kept[v];
-    if (!before?.spec || !cur || before.spec.version === cur.version) return null;
+    const before = base ? { spec: base, approved: !!approved } : null;
+    if (!before || !cur || before.spec.version === cur.version) return null;
     const delta = (a: unknown, b: unknown) => { const was = (Array.isArray(a) ? a : []).map(String), now = (Array.isArray(b) ? b : []).map(String); return { added: now.filter((s) => !was.includes(s)), removed: was.filter((s) => !now.includes(s)) }; };
     return { since: Number(before.spec.version) || 0, approved: before.approved, done: delta(before.spec.done, cur.done), scope: delta(before.spec.scope, cur.scope), verification: delta(before.spec.verificationScope, cur.verificationScope) };
   };
