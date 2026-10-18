@@ -5,12 +5,14 @@
 (() => {
 const A = { list: null, render: null, detail: new Map(), lane: null, chat: null, thumbs: new Map() };
 const get = (u) => fetch(u).then((r) => r.json());
-// A sandboxed preview iframe has an opaque origin, so Studio's session cookie is not sent with its /af/ request. This page
-// has the session, so it mints a short-lived per-version capability (GET /af-cap/<id>/<n>) and puts it on the iframe's src.
-// Same-origin uses (img/video/audio, allow-same-origin frames, opening in a tab) keep sending the cookie and need none.
+// A sandboxed preview iframe has an opaque origin, so Studio's session cookie is not sent with its /af/ request — and
+// neither is it sent with the iframe's relative subresources. This page has the session, so it mints a short-lived
+// per-version capability (GET /af-cap/<id>/<n>) and rewrites the /af/<id>/<n>/… src to the path-capability form
+// /afc/<cap>/<id>/<n>/…, so every relative subresource of the opaque document inherits the capability in its path.
+// Same-origin uses (img/video/audio, allow-same-origin frames) keep sending the cookie and need none.
 async function afCapFor(href) {
-  const m = /^\/af\/([^/]+)\/(\d+)\//.exec(href); if (!m) return href;
-  try { const r = await fetch(`/af-cap/${m[1]}/${m[2]}`); if (r.ok) { const cap = (await r.json()).cap; if (cap) return href + (href.includes("?") ? "&" : "?") + "cap=" + encodeURIComponent(cap); } } catch {}
+  const m = /^\/af\/([^/]+)\/(\d+)\/(.*)$/.exec(href); if (!m) return href;
+  try { const r = await fetch(`/af-cap/${m[1]}/${m[2]}`); if (r.ok) { const cap = (await r.json()).cap; if (cap) return `/afc/${encodeURIComponent(cap)}/${m[1]}/${m[2]}/${m[3]}`; } } catch {}
   return href;
 }
 const setAfSrc = (iframe, href) => { afCapFor(href).then((s) => { iframe.src = s; }); };

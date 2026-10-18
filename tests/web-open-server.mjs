@@ -103,14 +103,18 @@ try {
   const { closed, waiting, archived } = ids;
 
   // ---- the new-tab route: top-level pages sandboxed, Studio's own frames not ----
-  const top = await raw("GET", "/af/coffee-site/1/index.html", { headers: { ...desk, "sec-fetch-dest": "document" } });
+  const topRedirect = await raw("GET", "/af/coffee-site/1/index.html", { headers: { ...desk, "sec-fetch-dest": "document" } });
+  ok(topRedirect.status === 302 && /^\/afc\/[^/]+\/coffee-site\/1\/index\.html/.test(topRedirect.headers["location"] ?? ""), "opening a deliverable page with the session redirects to the path-capability form", JSON.stringify([topRedirect.status, topRedirect.headers["location"]]));
+  const topCapBody = (await raw("GET", "/af-cap/coffee-site/1", { headers: desk })).body; const topCap = encodeURIComponent(topCapBody?.cap ?? "");
+  const top = await raw("GET", `/afc/${topCap}/coffee-site/1/index.html`, { headers: { "sec-fetch-dest": "document" } });
+  ok(top.status === 200, "a per-version path capability serves a cookieless (sandboxed) request", String(top.status));
+  ok((await raw("GET", "/afc/not-a-real-cap/coffee-site/1/index.html")).status === 401, "the path-capability form with an invalid capability is refused (401)");
   const framed = await raw("GET", "/af/coffee-site/1/index.html", { headers: { ...desk, "sec-fetch-dest": "iframe" } });
-  const bare = await raw("GET", "/af/coffee-site/1/index.html", { headers: desk });
+  const bare = await raw("GET", `/afc/${topCap}/coffee-site/1/index.html`);
   const afNoSession = await raw("GET", "/af/coffee-site/1/index.html");
   ok(afNoSession.status === 401, "a deliverable read without Studio's session or a capability is refused (401)", String(afNoSession.status));
-  const capBody = (await raw("GET", "/af-cap/coffee-site/1", { headers: desk })).body;
-  const afCap = await raw("GET", `/af/coffee-site/1/index.html?cap=${encodeURIComponent(capBody?.cap ?? "")}`);
-  ok(afCap.status === 200, "a per-version capability from a session-authenticated page serves the deliverable to a cookieless (sandboxed-iframe) request", String(afCap.status));
+  const afQueryCap = await raw("GET", `/af/coffee-site/1/index.html?cap=${topCap}`);
+  ok(afQueryCap.status === 200, "the query-capability form also serves a cookieless request", String(afQueryCap.status));
   ok(/^sandbox allow-scripts allow-forms;/.test(top.headers["content-security-policy"] ?? "") && !/allow-same-origin/.test(top.headers["content-security-policy"]), "a site opened as its own tab is served in an opaque-origin sandbox (sandbox allow-scripts allow-forms, no allow-same-origin)", top.headers["content-security-policy"]);
   ok(/^sandbox allow-scripts allow-forms;/.test(bare.headers["content-security-policy"] ?? ""), "a request that does not say it is a frame is sandboxed too");
   ok(framed.status === 200 && !/sandbox/.test(framed.headers["content-security-policy"] ?? "") && /frame-ancestors 'self'/.test(framed.headers["content-security-policy"] ?? ""), "Studio's own preview frames keep their CSP (frame-ancestors 'self'), unsandboxed by the header");

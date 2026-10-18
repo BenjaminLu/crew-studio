@@ -78,7 +78,7 @@ export function createM3(d: M3Deps) {
 
   async function handle(req: Request, url: URL, who: Who, writing: boolean): Promise<Response | null> {
     const p = url.pathname;
-    if (!p.startsWith("/api/artifacts") && !p.startsWith("/api/runs") && !p.startsWith("/api/lane") && !p.startsWith("/af/") && !p.startsWith("/af-cap/") && p !== "/api/render") return null;
+    if (!p.startsWith("/api/artifacts") && !p.startsWith("/api/runs") && !p.startsWith("/api/lane") && !p.startsWith("/af/") && !p.startsWith("/afc/") && !p.startsWith("/af-cap/") && p !== "/api/render") return null;
     // a session-authenticated page mints a short-lived capability for one artifact version, to hand to its sandboxed preview iframe
     if (p.startsWith("/af-cap/") && !writing) {
       if (!hasSession(req, d.session())) return json({ error: "Studio session required" }, 401);
@@ -99,23 +99,26 @@ export function createM3(d: M3Deps) {
       const managedTarget=/^\/api\/artifacts\/([^/]+)/.exec(p);
       if(writing&&managedTarget&&media.owns(decodeURIComponent(managedTarget[1])))return json({error:"Workflow-owned media requires its bound Task",code:"managedMedia"},409);
       // --- version files, served with no network and Studio-only framing ---
-      if (p.startsWith("/af/")) {
-        const [, , id, nStr, ...rest] = p.split("/");
-        // a deliverable is served only to a request carrying Studio's session (a same-origin page, top-level open, img/video/audio)
-        // or a valid per-version capability (a sandboxed preview iframe, which sends no cookie); the ids are guessable, so neither is optional
-        if (!hasSession(req, d.session()) && !afCapOk(d.session(), decodeURIComponent(id), Number(nStr), url.searchParams.get("cap")))
-          return new Response("Studio session or capability required", { status: 401 });
-        const file = store.file(decodeURIComponent(id), Number(nStr), decodeURIComponent(rest.join("/")));
-        // a document version written without its rendered page (the startup competition's first versions hold only
-        // competition.md, sha-pinned): render doc.html from its Markdown on the fly, read only, never stored
-        if (!file && decodeURIComponent(rest.join("/")) === "doc.html") {
-          const src = store.mdSource(decodeURIComponent(id), Number(nStr));
-          if (src) return new Response(mdToDocHtml(readFileSync(src, "utf8"), store.get(decodeURIComponent(id))?.title), { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": framedByStudio(req) ? CSP : TAB_CSP, "x-content-type-options": "nosniff", "cache-control": "no-cache" } });
+      // Two URL shapes reach the same file. `/af/<id>/<n>/<file>` carries the capability (if any) on the query and is used by
+      // same-origin requests that send Studio's session cookie (a top-level open, an <img>/<video>, an allow-same-origin
+      // preview frame). `/afc/<cap>/<id>/<n>/<file>` carries the capability in the PATH, so a sandboxed (opaque-origin) page's
+      // relative subresources inherit it — the only place on http an opaque document's subresource requests carry any
+      // credential (no cookie, no usable Referer). A sandboxed preview iframe and "open as its own tab" use this form.
+      const serveAf = (idD: string, n: number, relPath: string, capPrefix: string): Response => {
+        const file = store.file(idD, n, relPath);
+        const headersFor = (ct: string, extra: Record<string, string> = {}) => ({ "content-type": ct,
+          "content-security-policy": url.searchParams.get("interactive") === "1" ? INTERACTIVE_CSP : framedByStudio(req) ? CSP : TAB_CSP,
+          "x-content-type-options": "nosniff", "cache-control": "no-cache", ...extra });
+        // a document version written without its rendered page (competition.md only): render doc.html from its Markdown, read only
+        if (!file && relPath === "doc.html") {
+          const src = store.mdSource(idD, n);
+          if (src) return new Response(mdToDocHtml(readFileSync(src, "utf8"), store.get(idD)?.title), { headers: headersFor("text/html; charset=utf-8") });
         }
         if (!file) return new Response("not found", { status: 404 });
         const type = TYPES[extname(file).toLowerCase()] ?? "application/octet-stream";
+        void capPrefix;
         const f = Bun.file(file), size = f.size;
-        const base = { "content-type": type, "content-security-policy": url.searchParams.get("interactive") === "1" ? INTERACTIVE_CSP : framedByStudio(req) ? CSP : TAB_CSP, "x-content-type-options": "nosniff", "cache-control": "no-cache", "accept-ranges": "bytes" };
+        const base = headersFor(type, { "accept-ranges": "bytes" });
         const r = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get("range") ?? ""); // players seek with byte ranges
         if (r) {
           const start = r[1] ? Number(r[1]) : Math.max(0, size - Number(r[2])), end = r[1] && r[2] ? Math.min(size - 1, Number(r[2])) : size - 1;
@@ -123,6 +126,27 @@ export function createM3(d: M3Deps) {
           return new Response(f.slice(start, end + 1), { status: 206, headers: { ...base, "content-range": `bytes ${start}-${end}/${size}`, "content-length": String(end - start + 1) } });
         }
         return new Response(f, { headers: { ...base, "content-length": String(size) } });
+      };
+      if (p.startsWith("/afc/")) {
+        const [, , cap, id, nStr, ...rest] = p.split("/");
+        const idD = decodeURIComponent(id), n = Number(nStr);
+        if (!afCapOk(d.session(), idD, n, decodeURIComponent(cap ?? ""))) return new Response("invalid or expired capability", { status: 401 });
+        return serveAf(idD, n, decodeURIComponent(rest.join("/")), `/afc/${cap}/${id}/${nStr}/`);
+      }
+      if (p.startsWith("/af/")) {
+        const [, , id, nStr, ...rest] = p.split("/");
+        const idD = decodeURIComponent(id), n = Number(nStr), relPath = decodeURIComponent(rest.join("/"));
+        // the ids are guessable, so a deliverable needs Studio's session (the cookie, sent same-origin) or a query capability
+        const session = hasSession(req, d.session());
+        if (!session && !afCapOk(d.session(), idD, n, url.searchParams.get("cap"))) return new Response("Studio session or capability required", { status: 401 });
+        // a session-authenticated open of a sandboxed page (opaque origin, so its subresources will send no cookie) is
+        // redirected to the path-capability form, whose relative subresources carry the capability
+        const isHtml = /\.html?$/.test(relPath) || relPath === "doc.html";
+        if (session && isHtml && req.method === "GET" && !framedByStudio(req) && !url.searchParams.get("cap")) {
+          const cap = mintAfCap(d.session(), idD, n); const to = new URL(url);
+          return new Response(null, { status: 302, headers: { location: `/afc/${encodeURIComponent(cap)}/${id}/${nStr}/${rest.join("/")}${to.search}`, "cache-control": "no-store" } });
+        }
+        return serveAf(idD, n, relPath, `/af/${id}/${nStr}/`);
       }
       if (p === "/api/render") return json(renderEnv());
       if (p === "/api/artifacts" && !writing) return json({ artifacts: store.view(), runs: runs.list().slice(0, 30).map(slim), render: renderEnv() });
