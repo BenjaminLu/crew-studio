@@ -49,7 +49,7 @@ if (process.argv[2] === "--seed") {
   const { WorkflowDefs } = await import("../src/runtime/defs.ts"); const { Agents } = await import("../src/agent.ts"); const { StudioLog } = await import("../src/rawlog.ts");
   const wf = { id: "website-continuation-fixture", name: "Website captain review", version: 1, roles: [], nodes: [{ id: "produce", kind: "hook", label: "Pinned website", do: "fixture.output", x: 0, y: 0 }, { id: "ready", kind: "check", label: "Readiness", checks: [{ use: "core/artifact-ready", proves: [0] }], args: { producer: "all" }, x: 100, y: 0 }, { id: "accept", kind: "card", label: "Final acceptance", args: { mode: "deliver-accept" }, x: 200, y: 0 }, { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 400, y: 100 }, { id: "done", kind: "hook", label: "Approved", x: 400, y: 0 }], edges: [["produce", "ready"], ["ready", "accept", "pass"], ["ready", "accept", "fail"], ["accept", "closed", "rejected"], ["accept", "done", "approved"]] };
   new WorkflowDefs(data, () => [JSON.stringify(wf)]);
-  const m3 = createM3({ dataDir: data, fileAllow: [data], studioUrl: () => "http://127.0.0.1:9", provider: () => { throw new Error("No provider calls"); }, send() {}, allowDrive: () => true });
+  const m3 = createM3({ dataDir: data, fileAllow: [data], studioUrl: () => "http://127.0.0.1:9", session: () => "web-open-setup-session", provider: () => { throw new Error("No provider calls"); }, send() {}, allowDrive: () => true });
   const site = (id, title, files) => { const dir = join(data, "src-" + id); for (const [p, body] of Object.entries(files)) { mkdirSync(dirname(join(dir, p)), { recursive: true }); typeof body === "string" ? writeFileSync(join(dir, p), body) : copyFileSync(body.copy, join(dir, p)); }
     m3.store.create({ id, title, type: "web", source: "html", entry: "index.html" }); return m3.store.addVersion(id, { from: dir, primary: "index.html", createdBy: { kind: "captain" } }); };
   const coffee = site("coffee-site", "Harbor Roast website", { "index.html": COFFEE_HTML, "site.css": COFFEE_CSS, "assets/coffee.png": { copy: join(media, "coffee.png") }, "assets/coffee.mp4": { copy: join(media, "coffee.mp4") }, "assets/coffee-poster.png": { copy: join(media, "coffee-poster.png") } });
@@ -103,9 +103,14 @@ try {
   const { closed, waiting, archived } = ids;
 
   // ---- the new-tab route: top-level pages sandboxed, Studio's own frames not ----
-  const top = await raw("GET", "/af/coffee-site/1/index.html", { headers: { "sec-fetch-dest": "document" } });
-  const framed = await raw("GET", "/af/coffee-site/1/index.html", { headers: { "sec-fetch-dest": "iframe" } });
-  const bare = await raw("GET", "/af/coffee-site/1/index.html");
+  const top = await raw("GET", "/af/coffee-site/1/index.html", { headers: { ...desk, "sec-fetch-dest": "document" } });
+  const framed = await raw("GET", "/af/coffee-site/1/index.html", { headers: { ...desk, "sec-fetch-dest": "iframe" } });
+  const bare = await raw("GET", "/af/coffee-site/1/index.html", { headers: desk });
+  const afNoSession = await raw("GET", "/af/coffee-site/1/index.html");
+  ok(afNoSession.status === 401, "a deliverable read without Studio's session or a capability is refused (401)", String(afNoSession.status));
+  const capBody = (await raw("GET", "/af-cap/coffee-site/1", { headers: desk })).body;
+  const afCap = await raw("GET", `/af/coffee-site/1/index.html?cap=${encodeURIComponent(capBody?.cap ?? "")}`);
+  ok(afCap.status === 200, "a per-version capability from a session-authenticated page serves the deliverable to a cookieless (sandboxed-iframe) request", String(afCap.status));
   ok(/^sandbox allow-scripts allow-forms;/.test(top.headers["content-security-policy"] ?? "") && !/allow-same-origin/.test(top.headers["content-security-policy"]), "a site opened as its own tab is served in an opaque-origin sandbox (sandbox allow-scripts allow-forms, no allow-same-origin)", top.headers["content-security-policy"]);
   ok(/^sandbox allow-scripts allow-forms;/.test(bare.headers["content-security-policy"] ?? ""), "a request that does not say it is a frame is sandboxed too");
   ok(framed.status === 200 && !/sandbox/.test(framed.headers["content-security-policy"] ?? "") && /frame-ancestors 'self'/.test(framed.headers["content-security-policy"] ?? ""), "Studio's own preview frames keep their CSP (frame-ancestors 'self'), unsandboxed by the header");

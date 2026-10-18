@@ -38,7 +38,7 @@ ok(JSON.stringify(parseFinding(JSON.parse(JSON.stringify(fs[0])), "human")!.loca
 ok(/h1/.test(locatorText(fs[0].locator)) && /0:02\.0–0:03\.5/.test(locatorText(st.findings("clip", 1)[0].locator)), "both print the same way in a brief (locatorText)");
 st.updateNote("page", 1, pin.id, { status: "resolved" });
 ok(st.findings("page", 1).length === 1 && st.findings("page", 1, false).length === 2, "resolved notes leave the open findings");
-const m3 = createM3({ dataDir: data, fileAllow: [], studioUrl: () => "http://127.0.0.1:1", provider: () => ({}) as any, send: () => {}, allowDrive: () => true });
+const m3 = createM3({ dataDir: data, fileAllow: [], studioUrl: () => "http://127.0.0.1:1", session: () => "loc-session", provider: () => ({}) as any, send: () => {}, allowDrive: () => true });
 const res = await m3.handle(new Request("http://x/api/artifacts/clip/v/1/findings"), new URL("http://x/api/artifacts/clip/v/1/findings"), { kind: "desktop" }, false);
 const body = await res!.json();
 ok(Array.isArray(body) && body[0]?.locator?.type === "timeline" && body[0].source === "human", "GET /api/artifacts/<id>/v/<n>/findings returns the notes as findings");
