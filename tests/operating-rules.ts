@@ -173,7 +173,7 @@ const sectionOf = (s: string) => { const i = s.indexOf(OPERATING_RULES_HEADING);
   const { Projects } = await import("../src/doors");
   const fdata = mkdtempSync(join(tmp, "fmtool-")); const pr = new Projects(fdata); pr.add({ id: "p9", name: "Nine", path: null, base: "main" } as any);
   new OperatingRules(fdata).set({ project: "p9" }, "P9-RULE", "captain");
-  const fakeEngine: any = { deps: { dataDir: fdata }, actions: {}, defs: { get: () => null, catalog: () => [] }, list: () => [], cards: { list: () => [] } };
+  const fakeEngine: any = { deps: { dataDir: fdata }, actions: {}, actionAnswers: {}, defs: { get: () => null, catalog: () => [] }, list: () => [], cards: { list: () => [] } };
   let tools: any = null; try { tools = installFirstmate(fakeEngine, pr); } catch (e: any) { ok(false, "installFirstmate builds", String(e?.message)); }
   if (tools) {
     const spec = tools.specs.find((s: any) => s.name === "studio_operating_rules");
@@ -205,7 +205,7 @@ const sectionOf = (s: string) => { const i = s.indexOf(OPERATING_RULES_HEADING);
   ok(imageSites.length >= 2 && imageSites.every(([, c]) => /rules/.test(c)), "every Codex image job (deliver's generateImage, coffee's jobs.image) passes the rules", JSON.stringify(imageSites.map(([f]) => f)));
   ok(/\\n\\n'\+o\.rules\.text/.test(src(join(root, "src/providers/codex-image.ts"))) && /Codex image operating rules missing/.test(src(join(root, "src/providers/codex-image.ts"))), "the Codex image job puts the rules in its base instructions and refuses a job without them");
   const deliver = src(join(root, "src/domain/deliver.ts"));
-  ok(/d\.generateImage\([^)]*rules\)/.test(deliver), "deliver's image step hands the rules to the image job");
+  ok(/d\.generateImage\([^;]*\brules\b[,)]/.test(deliver), "deliver's image step hands the rules to the image job");
 }
 
 // ---------- 3e. a fresh primary on an explicit project (not the native workspace) gets the rules in its first message ----------
