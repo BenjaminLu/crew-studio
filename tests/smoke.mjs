@@ -264,6 +264,7 @@ try {
   ok((await raw("GET", "/api/summary", { host: TAILNET, token: ptok })).status === 200, "a paired phone can read");
   ok((await raw("POST", "/api/main/send", { host: TAILNET, token: ptok, body: { text: "hi" } })).body?.code === "noDrive", "driving is refused until it is allowed on the Mac");
   ok((await raw("POST", "/api/answer", { host: TAILNET, token: ptok, body: { id: "x", chosen: "A" } })).body?.code === "noDrive", "answering a card from the phone also needs the drive setting");
+  ok((await raw("POST", "/api/main/locale", { host: TAILNET, token: ptok, body: { locale: "zh-CN" } })).body?.code === "noDrive" && !(existsSync(join(data, "board-language.json")) && readFileSync(join(data, "board-language.json"), "utf8").includes("zh-CN")), "changing the Board language Firstmate greets in also needs the drive setting");
   ok((await raw("POST", "/api/main/interrupt", { host: TAILNET, token: ptok })).status === 200, "a phone may always interrupt");
   ok((await raw("POST", "/api/remote/settings", { host: TAILNET, token: ptok, body: { allowDrive: true } })).body?.code === "desktopOnly", "a phone cannot allow itself to drive");
   ok((await raw("POST", "/api/remote/settings", { body: { allowDrive: true } })).body?.allowDrive === true, "the Mac allows phone driving");

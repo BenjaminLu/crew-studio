@@ -159,6 +159,15 @@ const sectionOf = (s: string) => { const i = s.indexOf(OPERATING_RULES_HEADING);
       "after the seed a turn carries the rules only when they changed, or when the session has no record of them (takeover, restart, resume)", JSON.stringify(sent.map((t) => t.slice(0, 60))));
     (main as any).hostEvent({ type: "compacted" }); main.enqueue("chat", "TURN-FIVE", "desktop"); await idle(); main.enqueue("chat", "TURN-SIX", "desktop"); await idle();
     ok(by("TURN-FIVE").startsWith("# Operating rules (set by the captain)") && by("TURN-SIX") === "TURN-SIX", "after the host reports a compaction the next turn carries the rules again, once", JSON.stringify(sent.slice(-2).map((t) => t.slice(0, 60))));
+    // the language rule, on what actually reaches the CLI: the greeting names the Board's language; every captain chat turn after it
+    // ends with the "follow the captain's language" note (Traditional adds its own); Studio's card and wake turns carry no note
+    const { LANGUAGE_NOTE, TRADITIONAL_NOTE } = await import("../src/captain-script");
+    main.enqueue("card", "CARD-TURN", "studio-native"); await idle(); main.enqueue("chat", "1，用預設配置", "desktop"); await idle();
+    const raw = (k: string) => sent.find((t) => t.includes(k)) ?? "";
+    ok(/The captain’s current dashboard language is English\. Greet the captain in English\./.test(seeds[0] ?? ""), "the greeting turn names the Board's language");
+    ok(raw("TURN-ONE").endsWith(`\n\n${LANGUAGE_NOTE}`) && raw("TURN-SIX").endsWith(`\n\n${LANGUAGE_NOTE}`) && raw("TURN-FOUR").endsWith(`\n\n${LANGUAGE_NOTE}`), "every captain chat turn reaches the CLI ending with the follow-the-captain's-language note", JSON.stringify(sent.map((t) => t.slice(-80))));
+    ok(raw("1，用預設配置").endsWith(`1，用預設配置\n\n${LANGUAGE_NOTE} ${TRADITIONAL_NOTE}`), "a Traditional Chinese captain turn reaches the CLI unconverted, with the language note and the Traditional note", raw("1，用預設配置").slice(-200));
+    ok(!!raw("CARD-TURN") && !raw("CARD-TURN").includes("[Studio note:"), "a Studio card turn carries no language note", raw("CARD-TURN").slice(-120));
   } finally { try { await main.stop?.(); } catch {} try { await (main as any).release?.(); } catch {} if (oldHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = oldHome; }
   const { installFirstmate } = await import("../src/firstmate");
   const { Projects } = await import("../src/doors");
