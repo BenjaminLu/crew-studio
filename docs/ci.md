@@ -30,9 +30,10 @@ parser and its tests before relying on CI coverage.
 ## Local reproduction
 
 Install the locked dependencies with `bun install --frozen-lockfile`, use Bun
-1.3.11 and Node 22.22.0, and make Playwright 1.64.1 and Chromium available. Set
-`PLAYWRIGHT_MODULE` to Playwright's absolute `index.mjs` path if it is installed
-outside the repository. macOS core/full also needs ffmpeg and a host that permits
+1.3.11 and Node 22.22.0. Playwright 1.64.1 is a locked dev dependency; install
+Chromium with `node node_modules/playwright/cli.js install chromium`. Keep the
+module inside the repository: sandboxed acceptance deliberately clears module
+path overrides and uses the repository renderer dependency. macOS core/full also needs ffmpeg and a host that permits
 `sandbox-exec` and ephemeral loopback sockets.
 
 ```sh

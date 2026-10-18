@@ -59,9 +59,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Install browser and renderer prerequisites
         run: |
-          npm install --prefix "$RUNNER_TEMP/ci-tools" --no-audit --no-fund playwright@1.64.1
-          echo "PLAYWRIGHT_MODULE=$RUNNER_TEMP/ci-tools/node_modules/playwright/index.mjs" >> "$GITHUB_ENV"
-          node "$RUNNER_TEMP/ci-tools/node_modules/playwright/cli.js" install chromium
+          node node_modules/playwright/cli.js install chromium
           brew install ffmpeg
       - run: node scripts/ci-tests.mjs --mode core
       - name: Publish test summary
@@ -95,9 +93,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Install browser and renderer prerequisites
         run: |
-          npm install --prefix "$RUNNER_TEMP/ci-tools" --no-audit --no-fund playwright@1.64.1
-          echo "PLAYWRIGHT_MODULE=$RUNNER_TEMP/ci-tools/node_modules/playwright/index.mjs" >> "$GITHUB_ENV"
-          node "$RUNNER_TEMP/ci-tools/node_modules/playwright/cli.js" install chromium
+          node node_modules/playwright/cli.js install chromium
           brew install ffmpeg
       - run: node scripts/ci-tests.mjs --mode full --shard '${{ matrix.shard }}/4'
       - name: Publish test summary
