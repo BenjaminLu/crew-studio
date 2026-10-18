@@ -202,11 +202,10 @@ export function sandboxInfo(testRun = false) {
     : "no OS sandbox on this platform: checks and rounds are refused (they need read-only inputs, out/ only and no network)" };
 }
 const q = (p: string) => JSON.stringify(p);
-// sysctl a sandboxed process may read: an allowlist, never the blanket (allow sysctl-read). The blanket let a process read
-// kern.procargs2 of any same-uid pid (KERN_PROCARGS2, MIB 1.49.<pid>), which exposed another round's or the reviewer CLI's
-// argv and environment — and a round's tool token was on that argv, so a worker test could steal it and act as the
-// reviewer. These names are what node, bun, python, git and npm read for CPU, memory and OS facts (measured by running each
-// under this list); none names another process. KERN_PROCARGS* and kern.proc.* have no name here, so they are denied.
+// Named sysctl allowlist for runtime OS/CPU facts. This is defense in depth only:
+// macOS KERN_PROCARGS2 (MIB 1.49.<pid>) bypasses Seatbelt's named sysctl filter,
+// even with deny sysctl-read, and exposes another same-uid process's argv/env.
+// No secret may rely on this filter for confidentiality; see worker-isolation.md.
 const SYSCTL_READ = `(allow sysctl-read
   (sysctl-name-prefix "hw.")
   (sysctl-name "kern.ostype") (sysctl-name "kern.osrelease") (sysctl-name "kern.osrevision") (sysctl-name "kern.version") (sysctl-name "kern.osversion") (sysctl-name "kern.osproductversion") (sysctl-name "kern.iossupportversion")
@@ -425,7 +424,7 @@ export async function sandboxed(argv: string[], o: { cwd: string; out: string; t
     full = linuxBwrapArgv(argv, { cwd: o.cwd, reads: [...SYSTEM_READ, ...interpreterDirs(), ...reads], writes: [out, tmp], deny: denyList(o.dataDir) }) ?? argv;
   }
   const sandbox = (seatbelt || bwrap) && o.testRun ? { enforced: TEST_RUN_ENFORCES, notEnforced: bwrap ? "another same-uid process's argv and environment are readable via /proc, so no secret is on a round's argv or in its env (the loopback itself is private under bwrap)" : TEST_RUN_DOES_NOT } : undefined;
-  const marker = randomBytes(12).toString("hex"); env.CREW_RUN_KILL = marker; // every process this run starts carries it, so a setsid escapee is reaped at the end
+  const marker = randomBytes(12).toString("hex"); env.CREW_RUN_KILL = marker; // best effort only: descendants can re-exec without this marker
   return await new Promise((resolveP) => {
     let stdout = "", stderr = "", done = false, timedOut = false, aborted = false;
     const p = spawnChild(full[0], full.slice(1), { cwd: o.cwd, env, detached: true, stdio: [o.stdin != null ? "pipe" : "ignore", "pipe", "pipe"] });

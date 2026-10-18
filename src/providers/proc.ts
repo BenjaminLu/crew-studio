@@ -16,7 +16,7 @@ export function processSession(cmd: () => string[], cwd: string, env: Record<str
   let pid: number | null = null;
   let interrupted = false;
   let wake: (() => void) | null = null;
-  const marker = randomBytes(12).toString("hex"); // tags the round's processes; a setsid escapee is reaped when the turn ends
+  const marker = randomBytes(12).toString("hex"); // best-effort cleanup only; setsid + clean-environment re-exec can escape
   const killGroup = () => { try { if (pid) process.kill(-pid, "SIGKILL"); } catch {} reapMarked(marker); };
   return {
     interrupt() { interrupted = true; killGroup(); wake?.(); },
