@@ -27,6 +27,7 @@ import { deliverableKinds, routeRequest } from "../src/deliverables";
 import { routingNote, firstmateTurnNote, escalationShown, questionShown } from "../src/firstmate-turn";
 import { studioManual, manualSection, manualPage } from "../src/manual";
 import { MainSession, nativeFreshText, type TurnNote } from "../src/host/main";
+import { ChatLog } from "../src/host/chat-log";
 process.env.CREW_TEST_IN_PROCESS = "1";
 let pass = 0, fail = 0;
 const ok = (v: unknown, n: string, extra = "") => { console.log(`${v ? "ok" : "FAIL"} ${n}${v ? "" : " " + extra}`); v ? pass++ : fail++; };
@@ -49,11 +50,11 @@ function fakeHost(script: (text: string, t: Turn) => Promise<void> | void = () =
     } };
   return { host, sent };
 }
-async function mainWith(o: { script?: Parameters<typeof fakeHost>[0]; turnNote?: (t: string) => TurnNote | null; tools?: any }) {
+async function mainWith(o: { script?: Parameters<typeof fakeHost>[0]; turnNote?: (t: string) => TurnNote | null; tools?: any; chatLog?: (dataDir: string) => any }) {
   const dir = mkdtempSync(join(tmpdir(), "crew-fm-live-")), state = join(dir, "state"); mkdirSync(state, { recursive: true });
   const f = fakeHost(o.script);
   const m = new MainSession({ dataDir: join(dir, "data"), projectDir: join(dir, "workspace"), stateDir: state, hosts: { codex: f.host, claude: f.host } as any, pollMs: 50, wakeGraceMs: 0,
-    nativeWorkspace: true, permissionMcp: () => ({ command: ["true"], env: {} }), nativeTools: () => o.tools ?? { specs: [], call: async () => ({ proposal: "R-1" }) }, turnNote: o.turnNote });
+    nativeWorkspace: true, permissionMcp: () => ({ command: ["true"], env: {} }), nativeTools: () => o.tools ?? { specs: [], call: async () => ({ proposal: "R-1" }) }, turnNote: o.turnNote, chatLog: o.chatLog?.(join(dir, "data")) });
   mkdirSync(join(dir, "data"), { recursive: true }); mkdirSync(join(dir, "workspace"), { recursive: true });
   await m.start(); const r = await m.startFresh("codex"); if (!r.ok) throw new Error(`fresh start: ${r.reason}`);
   await until(() => f.sent.length >= 1 && !m.view().busy, 5000); // the seed turn
@@ -336,8 +337,9 @@ await section("S23 escalation summary in the chat", async () => {
 
 // ---------- S27: a tool call is one human activity line, never raw JSON ----------
 await section("S27 activity lines", async () => {
-  const QUOTE = "給我一張轉角書店的方形社群海報";
-  const t = await mainWith({ script: (text, turn) => {
+  const QUOTE = "給我一張轉角書店的方形社群海報", SECRET = "ghp_" + "A1b2C3d4".repeat(5);
+  let logDir = "";
+  const t = await mainWith({ chatLog: (d) => { logDir = d; return new ChatLog(d); }, script: (text, turn) => {
     if (!text.includes("海報")) return;
     turn.emit({ type: "toolStart", id: "u1", name: "ToolSearch", summary: '{"query":"select:mcp__studio__studio_propose_work"}', input: { query: "select:mcp__studio__studio_propose_work" } });
     turn.emit({ type: "toolStart", id: "u2", name: "mcp__studio__studio_list_workflows", summary: "{}", input: {} });
@@ -347,6 +349,7 @@ await section("S27 activity lines", async () => {
     turn.emit({ type: "toolEnd", id: "u3", ok: true, result: '{"proposal":"R-093","cards":[],"status":"captain-approval-required","href":"#/run/R-093"}' });
     // Codex names the item type; the called tool comes as `tool`
     turn.emit({ type: "toolStart", id: "u4", name: "dynamicToolCall", tool: "studio_manual", summary: "studio_manual", input: { section: "studio/pages" } });
+    turn.emit({ type: "toolStart", id: "u6", name: "mcp__studio__studio_read_workflow", summary: "{}", input: { workflow: SECRET } });
     turn.emit({ type: "toolStart", id: "u5", name: "Bash", summary: "ls -la", input: { command: "ls -la" } });
   } });
   const events: any[] = []; t.m.onEvent = (e) => events.push(e);
@@ -361,7 +364,12 @@ await section("S27 activity lines", async () => {
     ok(by("Bash")?.activity?.["zh-TW"] === "使用工具：Bash" && by("Bash")?.activity?.en === "Using a tool: Bash", "any other tool says only its short name", JSON.stringify(by("Bash")));
     ok(/^mcp__studio__studio_propose_work \{"workflow":"images"/.test(by("studio_propose_work")?.text ?? ""), "the line keeps the raw call for the folded detail and the log");
     const starts = events.filter((e) => e.type === "toolStart");
-    ok(starts.length === 5 && starts.every((e) => !("input" in e)) && starts.find((e) => e.id === "u3")?.activity?.["zh-TW"] === "提出派工：轉角書店方形社群海報",
+    ok(!JSON.stringify(t.m.view().log).includes(SECRET) && !JSON.stringify(events).includes(SECRET) && /credential removed/.test(by("studio_read_workflow")?.activity?.en ?? ""),
+      "an activity line is redacted like the line's text, in the view and the live event", JSON.stringify(by("studio_read_workflow")?.activity));
+    const disk = new ChatLog(logDir).load().filter((l: any) => l.kind === "tool");
+    ok(disk.find((l: any) => l.tool === "studio_propose_work")?.activity?.["zh-TW"] === "提出派工：轉角書店方形社群海報 → R-093" && disk.length === tools.length && !JSON.stringify(disk).includes(SECRET),
+      "the chat log on disk keeps the proposal's line with the run it raised (it survives a restart)", JSON.stringify(disk.map((l: any) => [l.tool, l.activity])));
+    ok(starts.length === 6 && starts.every((e) => !("input" in e)) && starts.find((e) => e.id === "u3")?.activity?.["zh-TW"] === "提出派工：轉角書店方形社群海報",
       "the page's live event carries the activity line and never the call's full input", JSON.stringify(starts.map((e) => [e.id, e.activity])));
   } finally { t.done(); }
 });

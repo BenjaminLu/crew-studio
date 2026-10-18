@@ -27,7 +27,9 @@ import { claudeVendorMessage, externalError, type ExternalError } from "./extern
 import { redactText } from "../secure";
 import { withScriptNote } from "../captain-script";
 import { DELIVERABLE_FILE } from "../deliverables";
-import { toolActivity, toolActivityDone } from "../tool-activity";
+import { refinesOnDone, toolActivity, toolActivityDone, type Activity } from "../tool-activity";
+/** an activity line goes through the same redaction as the line's text, live and on disk */
+const redactActivity = (a: Activity | null): Activity | null => a && { en: redactText(a.en), "zh-TW": redactText(a["zh-TW"]) };
 /** What captain-only native tools see as the captain's words: the text, or for a files-only message the files line. */
 const captainText = (input: QItem | null) => input ? (input.text.trim() ? input.text : input.attachments?.length ? filesLine(input.attachments) : input.text) : "";
 
@@ -192,15 +194,19 @@ export class MainSession {
     if (this.session) this.lastLabel = { host: this.session.host, id: this.session.id, model: this.session.model && this.session.model !== this.session.host ? this.session.model : this.lastLabel?.id === this.session.id ? this.lastLabel.model : null };
     return this.lastLabel;
   }
-  note(i: Omit<LogItem, "at">): LogItem {
+  /** `persist` false: the item is written to the chat log later (a proposal's tool line, once it names its run) */
+  note(i: Omit<LogItem, "at">, persist = true): LogItem {
     const item: LogItem = { at: Date.now(), ...i, text: redactText(i.text), session: this.sessionLabel() };
     if (item.external && !item.failure) item.failure = fromExternal(item.external); // every failed notice carries its class and code
     this.log.push(item); if (this.log.length > 400) this.log.splice(0, this.log.length - 400);
-    this.o.chatLog?.append(item);
+    if (persist) this.o.chatLog?.append(item);
     return item;
   }
   /** tool lines still waiting for their call's answer (toolEnd), by call id: a proposal's line then names its run */
   private openTools = new Map<string, LogItem>();
+  /** tool lines held back from the chat log until their answer (toolEnd), so the line on disk names the run too */
+  private unwritten = new Set<LogItem>();
+  private writeTools() { for (const it of this.unwritten) this.o.chatLog?.append(it); this.unwritten.clear(); }
   /** A failed turn or a vendor refusal, as a typed notice with the CLI's own words. */
   private external(source: HostId, raw: unknown, o: Parameters<typeof externalError>[2] = {}, extra: Partial<LogItem> = {}) {
     const ext = externalError(source, raw, o);
@@ -538,7 +544,7 @@ export class MainSession {
 
   private hostEvent(e: HostEvent) {
     // a tool call goes out (to the page and the log) with its human line; its full input stays here
-    if (e.type === "toolStart") { const t = toolActivity(e.tool ?? e.name, e.input); e.tool = t.tool; e.activity = t.activity; delete e.input; }
+    if (e.type === "toolStart") { const t = toolActivity(e.tool ?? e.name, e.input); e.tool = t.tool; e.activity = redactActivity(t.activity); delete e.input; }
     this.onEvent(e);
     // a compacted conversation may have summarised the rules away: the next turn carries them again
     if (e.type === "compacted") { this.compactions++; if (this.driver().rulesSent) this.writeDriver({ ...this.driver(), rulesSent: null }); }
@@ -546,6 +552,7 @@ export class MainSession {
     if (e.type === "turnStart") this.refusedThisTurn = false; // a turn Studio did not send starts clean
     if (e.type === "hostRefusal") { this.refusedThisTurn = true; this.note({ kind: "status", text: `${e.reason.en} / ${e.reason["zh-TW"]}`, i18n: e.reason, status: "failed", refusal: e.code,
       external: { ...externalError("claude", claudeVendorMessage(e.raw) || e.reason.en, { cls: e.code === "claudeQuotaExhausted" ? "quota" : e.code === "claudeNotSignedIn" ? "auth" : undefined, code: e.code }), reason: e.reason } }); }
+    if (e.type === "exit" || e.type === "turnEnd") this.writeTools(); // a call that never answered keeps its line on disk as it was
     if (e.type === "exit") {
       this.lastExit = { code: e.code, stderr: e.stderr ?? "" };
       // a CLI that stops while nothing runs and Studio did not stop it: say so, with its own last words
@@ -562,15 +569,18 @@ export class MainSession {
     }
     if (e.type === "delta") this.reply += e.text;
     else if (e.type === "toolStart") {
-      const item = this.note({ kind: "tool", text: `${e.name} ${e.summary}`.trim(), tool: e.tool, activity: e.activity ?? null });
+      const later = !!e.activity && refinesOnDone(e.tool ?? "");
+      const item = this.note({ kind: "tool", text: `${e.name} ${e.summary}`.trim(), tool: e.tool, activity: e.activity ?? null }, !later);
+      if (later) this.unwritten.add(item);
       if (item.activity) { this.openTools.set(e.id, item); if (this.openTools.size > 50) this.openTools.delete(this.openTools.keys().next().value!); }
       this.guardHandsOn(e.name, e.summary);
     }
     else if (e.type === "toolEnd") {
       const item = this.openTools.get(e.id); this.openTools.delete(e.id);
-      if (item && e.ok && item.tool) item.activity = toolActivityDone({ tool: item.tool, activity: item.activity ?? null }, e.result).activity;
+      if (item && e.ok && item.tool) item.activity = redactActivity(toolActivityDone({ tool: item.tool, activity: item.activity ?? null }, e.result).activity);
+      if (item && this.unwritten.delete(item)) this.o.chatLog?.append(item);
     }
-    else if (e.type === "message") { this.note({ kind: "firstmate", text: e.text || this.reply }); this.reply = ""; }
+    else if (e.type === "message") { this.writeTools(); this.note({ kind: "firstmate", text: e.text || this.reply }); this.reply = ""; }
     else if (e.type === "forked") {
       this.note({ kind: "status", ...bi(`The session was re-identified: ${e.oldId} → ${e.newId}; Studio follows the new id`, `session 換了 id：${e.oldId} → ${e.newId}；Studio 跟著新的 id`) });
       if (this.state !== "attaching") this.followCopy(e.oldId, e.newId, e.file ?? null); // while attaching, takeover() follows it once the note exists

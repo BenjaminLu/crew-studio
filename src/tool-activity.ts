@@ -57,9 +57,12 @@ export function toolActivity(name: string, input?: unknown): ToolActivity {
   return { tool, activity: pair(`Using a tool: ${tool}`, `使用工具：${tool}`) };
 }
 
+const REFINES = new Set(["studio_propose_work", "studio_prepare_project_work"]);
+/** A call whose line changes once it answered (it names the run): the chat log writes it then. */
+export const refinesOnDone = (tool: string) => REFINES.has(tool);
 /** The line once the call answered: a proposal names the run it raised (`提出派工：… → R-093`). Unchanged otherwise. */
 export function toolActivityDone(t: ToolActivity, result: string | undefined): ToolActivity {
-  if (!t.activity || !result || !["studio_propose_work", "studio_prepare_project_work"].includes(t.tool)) return t;
+  if (!t.activity || !result || !REFINES.has(t.tool)) return t;
   let id = ""; try { const o = JSON.parse(result); id = typeof o?.proposal === "string" ? o.proposal : ""; } catch {}
   if (!/^R-\d{1,6}$/.test(id)) return t;
   return { tool: t.tool, activity: pair(`${t.activity.en} → ${id}`, `${t.activity["zh-TW"]} → ${id}`) };
