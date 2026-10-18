@@ -46,7 +46,10 @@ export type SCard = {
   pullRequest?: PullRequestPreview | null;
   /** a dispatch card's crew (docs/design/crew-seats.md): who runs each node, and the efforts the captain may change for this run only */
   crew?: CardCrew | null;
+  /** a spec card (code-firstmate's dispatch): the spec's scope, what it reads to verify, its open scope questions */
+  spec?: CardSpec | null;
 };
+export type CardSpec = { scope: string[]; verification: string[]; questions: { q: string; choices: string[] }[] };
 export type Acknowledge = { option: string; id: string; en: string; zh: string };
 export type CardCrew = { team: string; summary: { en: string; zh: string }; nodes: { node: string; label: string; seat: string; seatLabel: { en: string; zh: string }; provider: string | null; model: string | null; effort: string | null; efforts: (string | null)[] }[] };
 export type PullRequestPreview = { repository: string; branch: string; base: string; baseCommit?: string; head: string; draft: boolean; template: { repository: string; path: string; blob: string } | null; title: string; body: string; proven: string[]; proofs?: Record<string, string>; unproven: string[] };

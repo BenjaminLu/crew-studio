@@ -44,6 +44,7 @@ const spec = base("SC-960", "R-087", "dispatch", "dispatch", "code-firstmate", "
   { intent: "Add percent(amount, pct) rounded to integer cents.", why: "Shops need discounts.", how: "A worker builds it on its own branch. Checks and a fresh reviewer judge each round.", done: DONE, scope: { in: ["src/money.ts", "test/percent.test.ts"], out: [] } },
   { intent: "新增 percent(amount, pct)，四捨五入到整數分。", why: "商店需要折扣。", how: "worker 在自己的 branch 上做；每一輪由檢查和全新的 reviewer 判定。", done: DONE, scope: { in: ["src/money.ts", "test/percent.test.ts"], out: [] } },
   { body: "# Add percent()\n\nWhat: percent helper\n\nDone when:\n1. ...\nRepository: /tmp/money-kit (main) · branch crew/R-087",
+    spec: { scope: ["src/money.ts", "test/percent.test.ts"], verification: ["app/server.ts"], questions: [{ q: "Negative half-cent ties: which way?", choices: ["Away from zero", "Banker's", "Not supported yet"] }, { q: "Fractional percentages?", choices: [] }] },
     options: [{ id: "dispatch", label: "Approve the spec and start", labelZh: "核准規格並開工", primary: true }, { id: "rescope", label: "Adjust the scope", labelZh: "調整範圍", note: true, noteLabel: "What the new scope adds or removes", noteLabelZh: "新範圍要加入或移除什麼" }, { id: "drop", label: "Drop", labelZh: "放棄" }] });
 const cards = [accept, spec];
 for (const c of cards) writeFileSync(join(data, "cards", `${c.id}.json`), JSON.stringify(c, null, 1));
@@ -94,6 +95,21 @@ try {
     ok((await p.locator(`${at("SC-960")} .cc-h b`).innerText()).startsWith(L("Approve the spec: ", "核准規格：")) && (await p.locator(`${at("SC-960")} [data-option]`).allInnerTexts()).map((t) => t.split(" · ")[0]).join("|") === L("Approve the spec and start|Adjust the scope|Drop", "核准規格並開工|調整範圍|放棄"),
       `S13 titled as approving the spec, options in plain names ${tag}`, (await p.locator(`${at("SC-960")} [data-option]`).allInnerTexts()).join("|"));
     ok(await fits(), `S13 no horizontal scroll ${tag}`);
+    // ---------- S14: the open scope questions are a question block that fills the rescope note ----------
+    const qs = p.locator(`${at("SC-960")} [data-spec-question]`);
+    ok(await qs.count() === 2 && await qs.nth(0).locator("[data-spec-choice]").count() === 3 && await qs.nth(1).locator("[data-spec-choice]").count() === 0 && await qs.nth(1).locator("[data-spec-answer]").count() === 1, `S14 each question with its quick choices and an answer box ${tag}`);
+    ok((await p.locator(`${at("SC-960")} [data-spec-questions-state="open"]`).innerText()).includes(L("stay out of scope", "不在範圍內")), `S14 unanswered, the card says the questions stay out of scope ${tag}`);
+    ok((await p.locator(`${at("SC-960")} [data-sec="spec-scope"]`).innerText()).includes("src/money.ts") && (await p.locator(`${at("SC-960")} [data-sec="spec-scope"]`).innerText()).includes("app/server.ts"), `S14 the spec's scope and read-only verification paths show ${tag}`);
+    ok(!(await p.locator(`${at("SC-960")} .rt-card-body`).isVisible()), `S14 the full spec text is folded away under the parts shown ${tag}`);
+    await qs.nth(0).locator('[data-spec-choice="Banker\'s"]').click();
+    await qs.nth(1).locator("[data-spec-answer]").fill(L("Not supported yet", "先不支援"));
+    const note = await p.locator(`${at("SC-960")} [data-note-for="rescope"]`).inputValue();
+    ok(await qs.nth(0).locator('[data-spec-choice="Banker\'s"]').getAttribute("aria-pressed") === "true" && note.includes("1. Negative half-cent ties: which way? → Banker's") && note.includes(`2. Fractional percentages? → ${L("Not supported yet", "先不支援")}`), `S14 a quick choice and a typed answer fill the Adjust the scope note ${tag}`, note);
+    await p.locator(`${at("SC-960")} [data-sec="questions"]`).scrollIntoViewIfNeeded(); await p.screenshot({ path: join(shots, `s14-questions-${lang}-${width}.png`) });
+    let sent = null; await p.route(`**/api/scards/SC-960/answer`, async (r) => { sent = r.request().postDataJSON(); await r.fulfill({ json: { ...spec, status: "answered", answer: { choice: "rescope", note: sent.note, by: "captain", at: new Date().toISOString(), confirm: null } } }); });
+    await p.locator(`${at("SC-960")} [data-option="rescope"]`).click(); await p.waitForTimeout(300);
+    ok(sent?.choice === "rescope" && /Banker's/.test(sent.note) && /Fractional percentages\?/.test(sent.note), `S14 choosing Adjust the scope sends the answers as its note ${tag}`, JSON.stringify(sent));
+    await p.unroute(`**/api/scards/SC-960/answer`);
     await p.screenshot({ path: join(shots, `s13-spec-${lang}-${width}.png`) });
     await ctx.close();
   }

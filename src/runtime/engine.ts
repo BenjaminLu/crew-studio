@@ -112,7 +112,7 @@ export type AgentMode = {
   /** after the round, however it ended (done, timeout, failed, cancelled): release what begin took, keep what the round left */
   end?(x: X, how: "done" | "timeout" | "failed" | "cancelled"): Promise<void> | void;
 };
-export type Body = { crew?: import("./cards").CardCrew | null; title: string; zhTitle?: string; en: Partial<Sections>; zh?: Partial<Sections>; body?: string; links?: { label: string; href: string; for?: string }[]; door?: string | null; options?: SCard["options"]; ledger?: any;
+export type Body = { crew?: import("./cards").CardCrew | null; spec?: import("./cards").CardSpec | null; title: string; zhTitle?: string; en: Partial<Sections>; zh?: Partial<Sections>; body?: string; links?: { label: string; href: string; for?: string }[]; door?: string | null; options?: SCard["options"]; ledger?: any;
   /** optional structured detail of an intent-aligned card (cards.ts CardDetail; unit intent-merge-card) */
   detail?: import("./cards").CardDetail | null;
   /** an authorization window never answers this card: only the captain does */
@@ -1752,7 +1752,7 @@ export class Engine {
     const zh = sec({ intent: en.intent, ...b.zh });
     const c = this.cards.create({ run: x.run.id, node: x.node.id, visit: x.rn.visits, kind, title: { en: b.title, "zh-TW": b.zhTitle ?? b.title }, sections: { en, "zh-TW": zh }, body: b.body ?? "",
       options: b.options ?? x.node.card?.options ?? [{ id: "approve", label: "Approve", labelZh: "核准", primary: true }, { id: "reject", label: "Reject", labelZh: "不採用" }],
-      confirmDoor: !!x.node.card?.confirm_door, door: b.door ?? (x.node.card?.door_from ? (x.ctx[x.node.card.door_from]?.door ?? x.ctx[x.node.card.door_from] ?? null) : null), links: b.links ?? [], detail: b.detail ?? null, ...(b.captainOnly ? { captainOnly: true } : {}), workflow: x.run.workflow, runTitle: x.run.title, ledger: b.ledger ?? null, ste: null, captures: b.captures ?? null, ...(b.pullRequest ? { pullRequest: b.pullRequest } : {}), ...(b.failure ? { failure: b.failure } : {}), ...(b.crew ? { crew: b.crew } : {}), ...(b.acknowledge ? { acknowledge: b.acknowledge } : {}) });
+      confirmDoor: !!x.node.card?.confirm_door, door: b.door ?? (x.node.card?.door_from ? (x.ctx[x.node.card.door_from]?.door ?? x.ctx[x.node.card.door_from] ?? null) : null), links: b.links ?? [], detail: b.detail ?? null, ...(b.captainOnly ? { captainOnly: true } : {}), workflow: x.run.workflow, runTitle: x.run.title, ledger: b.ledger ?? null, ste: null, captures: b.captures ?? null, ...(b.pullRequest ? { pullRequest: b.pullRequest } : {}), ...(b.failure ? { failure: b.failure } : {}), ...(b.crew ? { crew: b.crew } : {}), ...(b.spec ? { spec: b.spec } : {}), ...(b.acknowledge ? { acknowledge: b.acknowledge } : {}) });
     // the card contract (card-contract.ts): a card that cannot answer its question is refused in tests and logged on the run otherwise
     const broken = cardContract(c);
     if (broken.length) { this.emit(x.run, "log", `card contract: ${c.id} (${kind}): ${broken.join("; ").slice(0, 600)}`);

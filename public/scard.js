@@ -96,6 +96,10 @@ const SCARD_CSS = `
 .cc-tick input { margin-top: 3px; flex: none; width: 16px; height: 16px; }
 .cc-count { font-size: 12px; color: var(--text-2); }
 .cc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.cc-sec ol.cc-qs { display: grid; gap: 10px; list-style: none; padding-left: 0; }
+.cc-qs li { display: grid; gap: 6px; }
+.cc-qchoices { display: flex; flex-wrap: wrap; gap: 6px; }
+.cc-qchoices .btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text, var(--text)); }
 .cc-dirs { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
 .cc-dir { margin: 0; display: grid; gap: 8px; align-content: start; border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
 .cc-dir figcaption { font-weight: 600; font-size: 14px; }
@@ -366,6 +370,36 @@ function mountCard(el, card, opts = {}) {
     return [shown.length ? sec("params", T("Parameters", "參數"), h("dl", { class: "cc-kv", "data-card-params": "" }, shown.flatMap(([k, v]) => [h("dt", {}, k), h("dd", { class: "cc-mono" }, v)]))) : null,
       rest ? h("pre", { class: "cc-pre rt-card-body" }, rest) : null, pinsView];
   }
+  // a spec card carries its spec as data (cards.ts CardSpec): the scope, what it reads to verify, its open questions
+  const specCard = (c) => c.kind === "dispatch" && !!c.spec && Array.isArray(c.spec.questions) && Array.isArray(c.spec.scope);
+  const ANSWERS = "Scope answers / 範圍問題的回答:";
+  // the answers to the spec's open questions, as the "Adjust the scope" note: what the captain typed above them stays
+  function answersNote(c) {
+    const qs = c.spec.questions, a = st.specAnswers || {};
+    const lines = qs.map((q, i) => String(a[i] ?? "").trim() ? `${i + 1}. ${q.q} → ${String(a[i]).trim()}` : null).filter(Boolean);
+    const own = String(st.notes.rescope || "").split(ANSWERS)[0].trim();
+    return [own, lines.length ? `${ANSWERS}\n${lines.join("\n")}` : ""].filter(Boolean).join("\n\n");
+  }
+  function specView(c) {
+    const sp = c.spec, out = [], open = c.status === "open";
+    if (sp.scope.length || sp.verification.length) out.push(sec("spec-scope", T("Scope", "範圍"),
+      sp.scope.length ? h("p", {}, h("span", { class: "cc-count" }, T("Changes: ", "會改：")), h("span", { class: "cc-mono" }, sp.scope.join(", "))) : null,
+      sp.verification.length ? h("p", {}, h("span", { class: "cc-count" }, T("Reads to verify (no changes): ", "只讀來驗證（不改）：")), h("span", { class: "cc-mono" }, sp.verification.join(", "))) : null));
+    if (!sp.questions.length) return out;
+    st.specAnswers = st.specAnswers || {};
+    const answered = sp.questions.filter((_, i) => String(st.specAnswers[i] ?? "").trim()).length;
+    const set = (i, v, redraw) => { st.specAnswers[i] = v; st.notes.rescope = answersNote(c); st.msg = "";
+      if (redraw) return render(); const box = el.querySelector('[data-note-for="rescope"]'); if (box) box.value = st.notes.rescope; };
+    out.push(sec("questions", T("Open scope questions", "範圍上的問題"), h("ol", { class: "cc-qs", "data-spec-questions": "" }, sp.questions.map((q, i) => h("li", { "data-spec-question": i },
+      h("p", {}, `${i + 1}. ${q.q}`),
+      open && q.choices.length ? h("div", { class: "cc-qchoices", role: "group", "aria-label": q.q }, q.choices.map((ch) => h("button", { type: "button", class: "btn sm", "data-spec-choice": ch, "aria-pressed": String(st.specAnswers[i] === ch), onclick: () => set(i, st.specAnswers[i] === ch ? "" : ch, true) }, ch))) : null,
+      open ? h("input", { class: "input", type: "text", "data-spec-answer": i, value: q.choices.includes(st.specAnswers[i]) ? "" : st.specAnswers[i] || "", placeholder: q.choices.length ? T("Or write your own answer", "或寫你自己的回答") : T("Your answer", "你的回答"), "aria-label": `${i + 1}. ${q.q}`,
+        oninput: (e) => set(i, e.target.value, false) }) : null))),
+      h("p", { class: "cc-count", "data-spec-questions-state": answered ? "answered" : "open" }, answered
+        ? T(`${answered} of ${sp.questions.length} answered: the answers are in "Adjust the scope" below; choose it and the spec is rewritten with them. Unanswered ones stay out of scope.`, `已回答 ${answered}/${sp.questions.length}：回答已放進下方「調整範圍」；選它就會照回答重寫規格。沒回答的不在範圍內。`)
+        : T("Unanswered, these stay out of scope: approving the spec builds without them. Answer one to adjust the scope instead.", "沒回答的問題不在範圍內：核准規格就照不含它們的範圍做。要納入，就回答它再調整範圍。"))));
+    return out;
+  }
   function plainView(c) {
     const s = cardI18n().deep(st.lang, c.sections); const out = [];
     // a spec card (code-firstmate's dispatch): what the captain approves is the done lines, so they come first
@@ -374,6 +408,7 @@ function mountCard(el, card, opts = {}) {
     if (s?.intent) out.push(sec("intent", T("Intent", "意圖"), h("p", { class: "cc-quote" }, s.intent)));
     if (s?.why) out.push(sec("why", T("Why", "為什麼"), h("p", {}, s.why)));
     if (s?.how) out.push(sec("how", T("How", "怎麼做"), h("p", {}, s.how)));
+    if (specCard(c)) out.push(...specView(c));
     const caps = capturesView(c), links = linksView(c), ba = typeof s?.beforeAfter === "string" && s.beforeAfter.trim() ? h("p", { "data-before-after": "" }, s.beforeAfter) : null;
     if (caps || links || ba) out.push(sec("before-after", T("Before and after", "改動前後"), ba, caps, links));
     return out;
@@ -548,7 +583,7 @@ function mountCard(el, card, opts = {}) {
       competitionView(c),
       pullRequestView(c),
       // the competition already shows every round; its card text would repeat them, so it is not shown again
-      body && !c.competition ? (d ? h("details", { class: "cc-sec", open: st.opened.has("#body"), ontoggle: (e) => { e.target.open ? st.opened.add("#body") : st.opened.delete("#body"); } }, h("summary", { class: "cc-count" }, T("Card text", "卡片全文")), h("pre", { class: "cc-pre rt-card-body" }, body)) : bodyView(c, body)) : null,
+      body && !c.competition ? (d || specCard(c) ? h("details", { class: "cc-sec", open: st.opened.has("#body"), ontoggle: (e) => { e.target.open ? st.opened.add("#body") : st.opened.delete("#body"); } }, h("summary", { class: "cc-count" }, T("Card text", "卡片全文")), h("pre", { class: "cc-pre rt-card-body" }, body)) : bodyView(c, body)) : null,
     ];
     if (open) {
       if (n) kids.push(h("section", { class: "cc-align", "data-align": c.id },
