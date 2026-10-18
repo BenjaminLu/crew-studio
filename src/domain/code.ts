@@ -796,12 +796,19 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     let cancel = () => {};
     const stop = () => { cancel(); if (mergeWatches.get(key) === stop) mergeWatches.delete(key); };
     mergeWatches.set(key, stop);
+    // a pull request that does not change for an hour is read every five minutes, not every interval
+    let lastSeen = "", lastChange = Date.now(), nextAt = 0;
     cancel = poller.subscribe(a.readAuthority(), `merge-watch:${key}`, async (signal) => {
       if (ended()) { stop(); return; }
-      if (!waiting()) return;
+      if (!waiting() || Date.now() < nextAt) return;
       const p = await a.withReadOwner(poller, () => a.remoteRead("pull", pr.id, 1, signal, true));
       if (signal.aborted || !waiting()) return;
-      if (p?.number !== Number(pr.id) || p.state !== "closed" || p.head?.repo?.full_name !== a.grant.repository || p.base?.repo?.full_name !== a.grant.repository || p.head?.ref !== pr.branch || p.base?.ref !== pr.base) return;
+      const seen = JSON.stringify([p?.state, p?.merged, p?.merge_commit_sha, p?.head?.sha, p?.base?.ref, p?.updated_at]);
+      if (seen !== lastSeen) { lastSeen = seen; lastChange = Date.now(); }
+      nextAt = Date.now() - lastChange > 3600_000 ? Date.now() + 300_000 : 0;
+      if (p?.number !== Number(pr.id) || p.state !== "closed" || p.head?.repo?.full_name !== a.grant.repository || p.base?.repo?.full_name !== a.grant.repository || p.head?.ref !== pr.branch) return;
+      // merged but GitHub does not name the merge commit yet: inconclusive, read again on the next tick
+      if (p.merged === true && !SHA.test(String(p.merge_commit_sha ?? ""))) return;
       // settled outside the polling generation: the merge hook that follows reads GitHub as its own owner
       stop(); poller.withoutGeneration(() => observeClosed(x, a, pr, p));
     }, { interval: o.mergeWatchMs ?? remoteWatchers.intervalMs });
@@ -809,13 +816,17 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const SHA = /^[a-f0-9]{40}$/;
   /** The fact read on GitHub, recorded in the ledger (Studio's observation, not an answer), then the stale card settled with it. */
   const observeClosed = (x: X, a: GitHubPrAdapter, pr: any, p: any) => {
-    const card = x.rn.card, merged = p.merged === true && SHA.test(String(p.merge_commit_sha ?? ""));
-    const fact = { version: 1, card, repository: a.grant.repository, pr: pr.id, branch: pr.branch, base: pr.base, reviewed: pr.head, head: SHA.test(String(p.head?.sha ?? "")) ? p.head.sha : null,
-      merged, sha: merged ? p.merge_commit_sha : null, at: String((merged ? p.merged_at : p.closed_at) ?? ""), observedAt: new Date().toISOString() };
+    const card = x.rn.card, intoOther = typeof p.base?.ref === "string" && p.base.ref !== pr.base;
+    const mergedAnywhere = p.merged === true && SHA.test(String(p.merge_commit_sha ?? "")), merged = mergedAnywhere && !intoOther;
+    const fact = { version: 1, card, repository: a.grant.repository, pr: pr.id, branch: pr.branch, base: pr.base, actualBase: String(p.base?.ref ?? ""), reviewed: pr.head, head: SHA.test(String(p.head?.sha ?? "")) ? p.head.sha : null,
+      merged, sha: mergedAnywhere ? p.merge_commit_sha : null, at: String((mergedAnywhere ? p.merged_at : p.closed_at) ?? ""), observedAt: new Date().toISOString() };
     if (!card || !engine.owns(x)) return;
-    engine.record(x, merged ? "detected-merge" : "detected-close", { head: pr.head, actor: "studio (observed on GitHub)", data: fact } as any);
+    // merged into another branch (the pull request was retargeted on GitHub): not a merge into the base; the Task ends closed and says so
+    engine.record(x, merged ? "detected-merge" : "detected-close", { head: pr.head, actor: "studio (observed on GitHub)", data: { ...fact, ...(intoOther ? { retargeted: true, mergedElsewhere: mergedAnywhere } : {}) } } as any);
     const other = merged && fact.head !== pr.head ? ` at ${String(fact.head ?? "an unknown head").slice(0, 8)}, not the head Studio verified (${pr.head.slice(0, 8)})` : "";
-    const note = merged ? `pull request #${pr.id} was merged on GitHub as ${fact.sha.slice(0, 8)}${other}` : `pull request #${pr.id} was closed on GitHub without merging`;
+    const note = merged ? `pull request #${pr.id} was merged on GitHub as ${fact.sha!.slice(0, 8)}${other}`
+      : intoOther ? `pull request #${pr.id} was retargeted to ${fact.actualBase} on GitHub and ${mergedAnywhere ? `merged there as ${fact.sha!.slice(0, 8)}` : "closed"}, not into ${pr.base}; the Task ends without merging into ${pr.base}`
+      : `pull request #${pr.id} was closed on GitHub without merging`;
     x.ctx.mergeDetected = merged ? fact : null; x.log(`merge card: ${note}; the card is cancelled, nothing was answered for the captain`); x.save();
     if (!engine.observeCard(x, card, { outcome: merged ? "merge" : "close", note })) { x.ctx.mergeDetected = null; x.save(); }
   };
@@ -826,6 +837,10 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     if (!(a instanceof GitHubPrAdapter) || !t.ok || !e || JSON.stringify(e.data) !== JSON.stringify(d) || d.merged !== true || !SHA.test(String(d.sha)) || d.pr !== x.ctx.pr.id || d.repository !== a.grant.repository || d.reviewed !== x.ctx.pr.head) throw new Error("the merge observed on GitHub is not in Studio's own signed record");
     const p = await a.withReadOwner(remoteWatchers.poller, () => a.remoteRead("pull", d.pr, 1, phase.signal, true)); phase.assert();
     if (p?.number !== Number(d.pr) || p.state !== "closed" || p.merged !== true || p.merge_commit_sha !== d.sha || p.base?.repo?.full_name !== a.grant.repository || p.base?.ref !== x.ctx.pr.base) throw new Error("the merge observed on GitHub no longer reads the same there");
+    // the merge commit exists only on GitHub: the base branch is fetched into the local object store (the steps after the merge
+    // read its tree), and the commit must be there and on the base
+    const base = await a.importBase(phase.signal); phase.assert();
+    if (!git(x.ctx.repo, ["cat-file", "-e", `${d.sha}^{commit}`]).ok || !git(x.ctx.repo, ["merge-base", "--is-ancestor", d.sha, base]).ok) throw new Error(`the merge commit ${d.sha.slice(0, 8)} observed on GitHub is not on ${x.ctx.pr.base} after fetching it`);
     x.ctx.merged = { head: d.sha, sourceHead: d.head, reviewed: d.reviewed, base: x.ctx.pr.base, method: null, adapter: "github", detected: true, at: d.at || d.observedAt };
     x.rn.note = `pull request #${d.pr} was merged on GitHub as ${d.sha.slice(0, 8)} (observed by Studio)`; x.save(); return "ok";
   };

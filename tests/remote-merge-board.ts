@@ -13,13 +13,14 @@ import { installCode } from "../src/domain/code";
 import { Projects } from "../src/doors";
 import { GitHubPrAdapter } from "../src/adapters/github";
 import { GitHubPoller } from "../src/github-poller";
-import { requiredPolicy, grantIdentity, OBSERVED_MERGE } from "../src/domain/remote-ci";
+import { requiredPolicy, grantIdentity } from "../src/domain/remote-ci";
 import { Cards } from "../src/runtime/cards";
 import { cardContract } from "../src/runtime/card-contract";
 import { must, setGitHome } from "../src/git";
 import { githubSimulator } from "./lib/github-simulator";
 
 const { ok, end } = suite("remote-merge-board");
+const OBSERVED_MERGE = "merge-observed"; // the option id (spelled out, so this file loads on a release without it and fails by assertion)
 const temp = checkedTempDir("remote-merge-board-"); setGitHome(join(temp, "git-home"));
 const repo = join(temp, "source"), bare = join(temp, "remote.git"); mkdirSync(repo); assertTempRepo(repo);
 must(repo, ["init", "-qb", "main"]); writeFileSync(join(repo, "file"), "base"); must(repo, ["add", "."]); must(repo, ["commit", "-qm", "base"]); must(repo, ["remote", "add", "origin", "https://github.com/fixture/project.git"]);
@@ -41,7 +42,7 @@ const puts = (from: number) => sim.calls.slice(from).filter((k: any) => k.method
 const flow = Y({ id: "board-flow", name: "Board merge", roles: [], nodes: [
   { id: "seed", kind: "hook", do: "fixture.seed", label: "Seed", x: 0, y: 0 }, { id: "pr-open", kind: "hook", do: "pr.open", label: "Review request", x: 1, y: 0 },
   { id: "merge-card", kind: "card", label: "Merge card", args: { body_from: "merge", card_kind: "merge" }, card: { confirm_door: true, door_from: "door" }, x: 2, y: 0 },
-  { id: "merge", kind: "hook", do: "git.merge", label: "Merge", x: 3, y: 0 }, { id: "after", kind: "hook", do: "note", args: { text: "after the merge" }, label: "After merge", x: 4, y: 0 },
+  { id: "merge", kind: "hook", do: "git.merge", label: "Merge", x: 3, y: 0 }, { id: "after", kind: "hook", do: "fixture.after", label: "After merge", x: 4, y: 0 },
   { id: "done", kind: "hook", label: "Merged", args: { summary: "merged {{ctx.merged.head}}" }, x: 4, y: 0 },
   { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 3, y: 1 }],
   edges: [["seed", "pr-open"], ["pr-open", "merge-card", "ok"], ["pr-open", "closed", "close"], ["merge-card", "merge", "merge"], ["merge-card", "closed", "close"], ["merge", "after"], ["after", "done"]] });
@@ -55,6 +56,8 @@ const install = async (adapter: GitHubPrAdapter, o: { data?: string; gates?: str
     for (const name of o.gates ?? GATES) E.record(x, "fixture-gate", { check: `firstmate/gate-${name}`, head, verdict: "pass" } as any);
     dirOf[branch] = x.dir; must(repo, ["checkout", "-q", branch]); rows(head); return "ok";
   };
+  // after the merge, as code-firstmate's main-ci does: a worktree of the merged base (main_tree), which needs the merge commit locally
+  E.actions["fixture.after"] = (x) => { const tree = E.needs.main_tree(x); x.ctx.afterTree = tree ? must(tree, ["rev-parse", "HEAD"]) : null; return "ok"; };
   return { H, E, poller, stop: () => { poller.stop(); H.stop(); } };
 };
 const openCard = (E: any, r: any) => E.cards.list({ run: r.id, open: true })[0];
@@ -62,6 +65,10 @@ const start = async (E: any, branch: string) => { const r = E.start({ workflow: 
 const ended = (r: any) => until(() => ["succeeded", "failed"].includes(r.status), 15000);
 const all = (c: any) => Array.from({ length: c?.detail?.intents?.length ?? 0 }, (_, i) => i);
 const ledger = (E: any, r: any, record: string) => E.trusted(r.id).entries.filter((e: any) => e.record === record);
+/** GitHub's merge of a pull request: a merge commit made on the remote only (never in the local repository), the base moved to it. */
+const remoteMerge = (branch: string, base = "main") => { const tip = must(bare, ["rev-parse", base]), head = must(bare, ["rev-parse", branch]);
+  const sha = must(bare, ["commit-tree", `${head}^{tree}`, "-p", tip, "-p", head, "-m", "Merge pull request (GitHub)"]); must(bare, ["update-ref", `refs/heads/${base}`, sha, tip]);
+  ok(!Bun.spawnSync(["git", "-C", repo, "cat-file", "-e", `${sha}^{commit}`]).success, "the merge commit exists only on GitHub, not in the local repository"); return sha; };
 
 try {
   sim.expect("GET", POLICY, PLAN, undefined, 403);
@@ -185,12 +192,17 @@ try {
     try {
       const r = await start(E, "crew/detect"); const c = openCard(E, r), h = r.ctx.pr?.head;
       ok(c?.title.en.endsWith("merge it on GitHub"), "the merge-on-GitHub card is open", c?.title?.en);
-      const p = sim.pulls.get(Number(r.ctx.pr.id)); Object.assign(p, { state: "closed", merged: true, merge_commit_sha: baseCommit, merged_at: "2026-10-18T01:00:00Z" });
+      // GitHub says merged but names no merge commit yet: inconclusive, the card stays open and Studio reads again
+      const p = sim.pulls.get(Number(r.ctx.pr.id)); Object.assign(p, { state: "closed", merged: true, merge_commit_sha: null, merged_at: "2026-10-18T01:00:00Z" });
+      await Bun.sleep(600);
+      ok(E.cards.get(c.id).status === "open" && r.status === "waiting" && !ledger(E, r, "detected-close").length && !ledger(E, r, "detected-merge").length, "merged without a merge commit is inconclusive: nothing settled, the card stays open", `${E.cards.get(c.id).status} ${r.status}`);
+      const sha = remoteMerge(r.ctx.pr.branch); p.merge_commit_sha = sha;
       await ended(r);
       const d = ledger(E, r, "detected-merge")[0];
-      ok(r.status === "succeeded" && r.ctx.merged?.head === baseCommit && r.ctx.merged?.detected === true && E.cards.get(c.id).status === "cancelled" && E.cards.get(c.id).answer == null,
-        "the pull request merged on GitHub ends the Task as merged; the stale card is cancelled, not answered", `${r.status} ${JSON.stringify(r.ctx.merged)} ${E.cards.get(c.id).status}`);
-      ok(d?.data?.sha === baseCommit && d.data.merged === true && d.data.reviewed === h && d.data.card === c.id && !/^captain/.test(String(d.actor)) && !ledger(E, r, "card-answer").some((e: any) => e.data?.card === c.id),
+      ok(r.status === "succeeded" && r.ctx.merged?.head === sha && r.ctx.merged?.detected === true && E.cards.get(c.id).status === "cancelled" && E.cards.get(c.id).answer == null,
+        "the pull request merged on GitHub ends the Task as merged; the stale card is cancelled, not answered", `${r.status} ${JSON.stringify(r.ctx.merged)} ${E.cards.get(c.id).status} ${JSON.stringify(Object.values(r.nodes).map((n: any) => n.error).filter(Boolean))}`);
+      ok(r.ctx.afterTree === sha, "the merge commit is fetched from GitHub: the step after the merge checks out the merged base (main_tree)", String(r.ctx.afterTree));
+      ok(d?.data?.sha === sha && d.data.merged === true && d.data.reviewed === h && d.data.card === c.id && !/^captain/.test(String(d.actor)) && !ledger(E, r, "card-answer").some((e: any) => e.data?.card === c.id),
         "the ledger records detected-merge with the merge commit; no card-answer exists for the card", JSON.stringify(d));
     } finally { stop(); }
   }
@@ -208,16 +220,31 @@ try {
     } finally { stop(); }
   }
 
+  // ---------- retargeted on GitHub to another branch, then merged there: not a merge into the base; the Task ends closed and says so ----------
+  {
+    must(bare, ["branch", "-f", "release", "main"]);
+    const { E, stop } = await install(plain, { watchMs: 100 });
+    try {
+      const r = await start(E, "crew/retarget"); const c = openCard(E, r);
+      const sha = remoteMerge(r.ctx.pr.branch, "release");
+      Object.assign(sim.pulls.get(Number(r.ctx.pr.id)), { base: { ref: "release" }, state: "closed", merged: true, merge_commit_sha: sha, merged_at: "2026-10-18T03:00:00Z" });
+      await ended(r); const d = ledger(E, r, "detected-close")[0];
+      ok(r.status === "succeeded" && r.result === "closed" && !r.ctx.merged && E.cards.get(c.id).status === "cancelled" && d?.data?.retargeted === true && d.data.actualBase === "release" && d.data.mergedElsewhere === true && d.data.sha === sha && !ledger(E, r, "detected-merge").length
+        && /retargeted to release on GitHub and merged there/.test(r.nodes["merge-card"].note ?? ""),
+        "a pull request retargeted to another branch and merged there is recorded with that branch and ends the Task closed, with the reason", `${r.status} ${r.result} ${r.nodes["merge-card"]?.note}`);
+    } finally { stop(); }
+  }
+
   // ---------- after a restart: an open merge card whose pull request was merged meanwhile ----------
   {
     const first = await install(plain), data = first.H.data; let runId = "", cardId = "", prId = 0;
     try { const r = await start(first.E, "crew/restart"); runId = r.id; cardId = openCard(first.E, r)?.id; prId = Number(r.ctx.pr.id); } finally { first.stop(); }
     ok(!!cardId, "the merge card was open when Studio stopped");
-    Object.assign(sim.pulls.get(prId), { state: "closed", merged: true, merge_commit_sha: baseCommit, merged_at: "2026-10-18T02:00:00Z" });
+    const restartSha = remoteMerge("crew/restart"); Object.assign(sim.pulls.get(prId), { state: "closed", merged: true, merge_commit_sha: restartSha, merged_at: "2026-10-18T02:00:00Z" });
     const second = await install(plain, { data, watchMs: 100 });
     try {
       second.E.load(); const r = second.E.get(runId)!; await ended(r);
-      ok(r.status === "succeeded" && r.ctx.merged?.detected === true && second.E.cards.get(cardId).status === "cancelled" && ledger(second.E, r, "detected-merge")[0]?.data?.sha === baseCommit,
+      ok(r.status === "succeeded" && r.ctx.merged?.detected === true && second.E.cards.get(cardId).status === "cancelled" && ledger(second.E, r, "detected-merge")[0]?.data?.sha === restartSha && r.ctx.afterTree === restartSha,
         "on restart the open merge card is reconciled the same way: the Task ends merged", `${r?.status}`);
     } finally { second.stop(); }
   }
