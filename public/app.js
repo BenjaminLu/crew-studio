@@ -83,10 +83,15 @@ function render() {
   // a field the view draws anew (the Start form's request field) is found again by its stable key (id, else its first data-
   // attribute) on the same page, and takes the focus and caret, so the next keys land in it
   const a = document.activeElement; const keep = a && root.contains(a) && /^(INPUT|TEXTAREA)$/.test(a.tagName) ? { a, s: a.selectionStart, e: a.selectionEnd, key: fieldKey(a), at: render.at } : null;
+  // Live refresh detaches even reused cards. Keep only the exact still-valid card action;
+  // never transfer focus to a replacement, a different page, or over another focus target.
+  const card = a?.closest('[data-scard][data-card-status="open"]');
+  const action = a && root.contains(a) && card && a.matches('button,a[href]') && fieldKey(a) ? { card, id: card.dataset.scard, key: fieldKey(a), hash: location.hash, option: a.getAttribute('data-option'), href: a.getAttribute('href'), page: `${S.route.name}/${S.route.arg ?? ""}` } : null;
   root.replaceChildren(...[routes[S.route.name](S.route.arg)].flat().filter(Boolean));
   render.at = `${S.route.name}/${S.route.arg ?? ""}`;
   const again = keep && (keep.a.isConnected ? keep.a : keep.key && keep.at === render.at ? (() => { const m = root.querySelectorAll(keep.key); return m.length === 1 && m[0].tagName === keep.a.tagName ? m[0] : null; })() : null);
   if (again && document.activeElement !== again) { try { again.focus({ preventScroll: true }); const n = again.value.length; again.setSelectionRange(Math.min(keep.s ?? n, n), Math.min(keep.e ?? n, n)); } catch {} }
+  if (action && action.page === render.at && action.hash === location.hash && root.contains(a) && a.closest('[data-scard][data-card-status="open"]') === action.card && action.card.dataset.scard === action.id && fieldKey(a) === action.key && a.getAttribute('data-option') === action.option && a.getAttribute('href') === action.href && !a.matches(':disabled,[aria-disabled="true"]') && a.getClientRects().length && getComputedStyle(a).visibility !== 'hidden' && document.activeElement === document.body) a.focus({ preventScroll: true });
   hydrateIcons(root);
   $("#main").scrollTop = scroll;
   updateNav();

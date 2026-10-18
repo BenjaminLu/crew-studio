@@ -74,6 +74,7 @@ if(process.argv.includes('--fixture-server')){
    const card=page.locator('[data-scard][data-card-status="open"]').first();
    ok(await card.evaluate(el=>[...el.querySelectorAll('button,a.btn,input,textarea')].filter(e=>e.getBoundingClientRect().width>0).every(e=>e.getBoundingClientRect().height>=44)),`human controls and feedback targets >=44px ${tag}`);
    const first=card.locator('button,a.btn,input,textarea').first();await first.focus();await page.keyboard.press('Tab');
+   if(tag.endsWith(' capability'))await page.evaluate(()=>render());
    ok(await card.evaluate(el=>el.contains(document.activeElement)&&document.activeElement.matches(':focus-visible')&&getComputedStyle(document.activeElement).outlineStyle!=='none'),`keyboard focus remains visible on actual captain controls ${tag}`);
   };
   const actionsCapture=async(page,tag)=>{
@@ -131,7 +132,22 @@ if(process.argv.includes('--fixture-server')){
    const holdId=new URL(page.url()).hash.split('/').at(-1);
    let held,heldCard;const deadline=Date.now()+30000;while(Date.now()<deadline){held=await ctx.request.get(base+'/api/wruns/'+holdId).then(r=>r.json());heldCard=held.cards.find(c=>c.node==='capability'&&c.status==='open');if(heldCard)break;await new Promise(resolve=>setTimeout(resolve,50));}if(!heldCard)throw new Error('Missing actual capability card: '+JSON.stringify(held));await page.waitForSelector(`[data-scard="${heldCard.id}"]`);
    ok(heldCard.links.length===2&&heldCard.options.every(o=>o.id==='close')&&!held.ctx.library,`real missing renderer card keeps previews and refuses whole-site approval ${tag}`);
-   await page.locator(`[data-scard="${heldCard.id}"]`).evaluate(el=>el.scrollIntoView({block:'start'}));await controls(page,tag+' capability');await page.screenshot({path:join(shots,tag+'-capability.png'),fullPage:true});await actionsCapture(page,tag+'-capability-actions');await page.locator('[data-option="close"]').click();
+   await page.locator(`[data-scard="${heldCard.id}"]`).evaluate(el=>el.scrollIntoView({block:'start'}));await controls(page,tag+' capability');
+   if(tag==='320-en-light'){
+    const safe=await page.evaluate(()=>{
+     const priorHash=location.hash,priorRoute=S.route,name=S.route.name,original=routes[name],getAction=()=>document.querySelector('[data-scard][data-card-status="open"] a.btn, [data-scard][data-card-status="open"] button:not([disabled])');
+     const probe=(change,restore=()=>{})=>{const a=getAction();a.focus();routes[name]=arg=>{const view=original(arg);change(a);return view;};try{render();return document.activeElement!==a;}finally{routes[name]=original;restore(a);}};
+     const disabled=probe(a=>a.setAttribute('aria-disabled','true'),a=>a.removeAttribute('aria-disabled'));
+     let oldHref;const changedAction=probe(a=>{oldHref=a.getAttribute('href');a.setAttribute('href','#changed-action');},a=>oldHref===null?a.removeAttribute('href'):a.setAttribute('href',oldHref));
+     const otherFocus=probe(()=>document.querySelector('#main').focus())&&document.activeElement===document.querySelector('#main');
+     let card,parent,next;const removed=probe(a=>{card=a.closest('[data-scard]');parent=card.parentNode;next=card.nextSibling;card.remove();},()=>parent.insertBefore(card,next));
+     const changedHash=probe(()=>history.replaceState(null,'','#/run/another-task'),()=>history.replaceState(null,'',priorHash));
+     const changedPage=probe(()=>S.route={...S.route,arg:'another-task'},()=>S.route=priorRoute);render();
+     return{disabled,changedAction,otherFocus,removed,changedHash,changedPage};
+    });
+    for(const [name,passed]of Object.entries(safe))ok(passed,'refresh never restores invalid or superseded focus: '+name);
+   }
+   await page.screenshot({path:join(shots,tag+'-capability.png'),fullPage:true});await actionsCapture(page,tag+'-capability-actions');await page.locator('[data-option="close"]').click();
    await ctx.request.post(base+'/api/fixture/render',{data:{available:true}});
    await ctx.close();
   }
