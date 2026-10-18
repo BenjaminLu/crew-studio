@@ -48,8 +48,8 @@ const E = H.engine;
   await E.answer(E.cards.list({ run: r2.id })[0].id, { choice: "abandon", by: "captain" }); await until(() => E.get(r2.id)!.status === "succeeded", 8000);
   ok(E.get(r2.id)!.result === "abandoned", "a hold option needs no confirmation"); }
 H.stop();
-// no domain literal in the generic runtime
-const generic = ["engine.ts", "refine.ts", "checks.ts", "defs.ts", "cards.ts", "grants.ts", "locator.ts", "index.ts"];
+// Domain installers belong in index.ts, the composition root; the reusable engine modules stay generic.
+const generic = ["engine.ts", "refine.ts", "checks.ts", "defs.ts", "cards.ts", "grants.ts", "locator.ts"];
 const banned = [/firstmate\//, /git\.merge/, /mode === "build"/, /report-schema/, /door-change/, /\bmigration\b/, /\bworktree\b/i, /\bfail-first\b/, /choice === "/, /=== "(merge|dispatch|close|approve)"/, /ctx\.door\b/];
 const hits: string[] = [];
 for (const f of generic) { const t = readFileSync(join(import.meta.dir, "..", "src", "runtime", f), "utf8").split("\n");

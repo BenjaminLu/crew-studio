@@ -142,7 +142,7 @@ try {
   const signedGrant = { ...grant, signature: grantSignature(projectData, { id: "fixture", path: repo, base: "main" }, grant) };
   writeFileSync(join(projectData, "projects.json"), JSON.stringify([{ id: "fixture", name: "fixture", path: repo, base: "main", sensitive: [], proposed: null, approvedAt: null, proposedAt: null, github: signedGrant }]));
   const projects = new Projects(projectData);
-  const E: any = { deps: { protectedRoots: [], agents: {} }, cards: { view: (card: any) => card }, answer: async () => ({}), continuationEdges: {}, sourceRoots: {}, actions: {}, artifacts: {}, needs: {}, natives: {}, modes: {}, cardBodies: {}, expand: {}, doneLines: {}, instructions: {}, trusted: () => ({ ok: false, entries: [] }), onCancel: [], onDelete: [] };
+  const E: any = { deps: { protectedRoots: [], agents: {} }, loaded: [], cards: { view: (card: any) => card }, answer: async () => ({}), continuationEdges: {}, sourceRoots: {}, actions: {}, artifacts: {}, needs: {}, natives: {}, modes: {}, cardBodies: {}, expand: {}, doneLines: {}, instructions: {}, trusted: () => ({ ok: false, entries: [] }), onCancel: [], onDelete: [] };
   installCode(E, { dataDir: projectData, projects });
   const oldToken = process.env.CREW_GITHUB_TOKEN, oldCli = process.env.CREW_GH_NO_CLI;
   process.env.CREW_GITHUB_TOKEN = "fake-test-token-do-not-leak"; process.env.CREW_GH_NO_CLI = "1";
