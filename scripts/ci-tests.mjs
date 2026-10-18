@@ -13,6 +13,7 @@ export function commands(scripts, mode, stack = []) {
     return alias ? commands(scripts, alias[1], [...stack, key]) : [command];
   });
 }
+export const artifactName = mode => mode.replace(/[^A-Za-z0-9._-]/g, '-');
 export function testEnv(source) {
   const keep = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'TERM',
     'PLAYWRIGHT_MODULE', 'PLAYWRIGHT_BROWSERS_PATH'];
@@ -55,7 +56,7 @@ async function main() {
   const selected = all.map((command, i) => ({ command, i })).filter(({ i }) => i % total === index - 1);
   if (!selected.length) throw new Error('Empty shard');
   if (args.includes('--list')) { console.log(selected.map(x => x.command).join('\n')); return; }
-  const out = resolve(option('--output', `ci-results/${mode}-${index}`));
+  const out = resolve(option('--output', `ci-results/${artifactName(mode)}-${index}`));
   mkdirSync(out, { recursive: true });
   const results = [];
   const save = () => writeFileSync(`${out}/results.json`, JSON.stringify({ mode, shard, inventory: all.length, results }, null, 2));
