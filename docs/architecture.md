@@ -212,11 +212,15 @@ Covered by the same graph plus a generated conventions pack: GitHub adapter, con
       to every port of 127.0.0.1, so the Origin check is what stops a page served by a test server: its Origin is another
       port;
     - deliverables (`/af/<id>/<n>/<file>`, guessable ids): a top-level open, an `<img>`/`<video>`/`<audio>` or an
-      `allow-same-origin` preview frame carries the session cookie and is served. A sandboxed preview iframe (`sandbox`
-      without `allow-same-origin`) has an opaque origin whose site-for-cookies is null, so no cookie is sent; the
-      session-authenticated page mints a short-lived per-version capability (`GET /af-cap/<id>/<n>`, signed with the
-      session token, ten minutes) and puts it on the iframe's `?cap=`. `/af/` with neither the session nor a valid
-      capability is 401;
+      `allow-same-origin` preview frame carries the session cookie and is served; `/af/` with neither the session nor a
+      valid `?cap=` is 401. A sandboxed preview frame or a page opened as its own tab (`sandbox` without
+      `allow-same-origin`) has an opaque origin whose site-for-cookies is null, so it sends no cookie — and, on http, no
+      cookie or usable `Referer` reaches its relative subresources either. So the capability travels in the URL **path**:
+      the session-authenticated page mints a short-lived per-version capability (`GET /af-cap/<id>/<n>`, signed with the
+      session token, ten minutes) and loads `/afc/<cap>/<id>/<n>/<file>`, whose relative subresources resolve under the
+      same `/afc/<cap>/<id>/<n>/` prefix and so carry the capability. A session-authenticated open of an HTML page under
+      `/af/` without a capability is redirected to its `/afc/<cap>/…` form. `/afc/` with an invalid or expired capability
+      is 401;
     - LAN board: a paired phone's device token (pairing needs the code shown on the Mac), Origin and JSON on writes;
     - tools-only listener: each round's own tool token, `/api/tools` only;
     - egress proxy: each round's own credential (407 without), its host list, and the resolved-address guard ported from
