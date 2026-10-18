@@ -58,11 +58,13 @@ const MAKE = /\b(?:make|create|write|draft|produce|build|design|generate|render|
 const ABOUT = /\bdid\b[^?.!\n]*\b(?:make|create|write|produce|build|generate)\b|\b(?:made|written|created|produced|built|generated)\b|(?:寫|做|講|說)了(?:什麼|甚麼|啥|哪些)|在(?:講|說|寫)什麼/gi;
 /** Reading, explaining, summarising, or asking about progress: no request to make, unless the turn also says to make one. */
 const ASK = /\b(?:explain|summari[sz]e|summary|read|translate|review|look at|check|what(?:'s| is) in|progress|status)\b|看一下|看看|解釋|摘要|總結|翻譯|進度|狀態|有哪些/i;
+/** Asking to be given something new: 「給我一張海報」, 「我想要一支短片」, "I need a landing page", "can I get a poster". */
+const WANT = /(?:給我|我想要|我要|需要)(?:一|兩|幾|\d+)?\s*[個份張支部篇段套組]|\b(?:I (?:want|need|'d like)|give me|can I (?:get|have))\s+(?:a|an|some|\d+|new|another)\b(?!\s+(?:summary|explanation|update|status|look)\b)/i;
 const IMPERATIVE = /\b(?:make|create|write|draft|produce|build|design|generate)\b\s+(?:me\s+|us\s+)?(?:a|an|the|new|some|another|\d)\b|(?:幫我|幫忙|請|再|來|要)(?:寫|做|製作|產出|生成|畫|拍|設計|建立|派|起草|撰寫|整理)|^\s*(?:寫|做|製作|產出|生成|畫|設計|建立|派)|派[一二三四五六七八九十兩\d]+個/i;
 /** The captain asks to make something new (not to read, explain or check on something that exists). */
 export function asksToMake(text: string): boolean {
   const t = String(text ?? "");
-  if (!MAKE.test(t.replace(ABOUT, " "))) return false;
+  if (!MAKE.test(t.replace(ABOUT, " ")) && !WANT.test(t)) return false;
   return !ASK.test(t) || IMPERATIVE.test(t);
 }
 /** The deliverables a captain turn asks for, each with the installed workflow that makes it; none when the captain asked for hands-on work. */

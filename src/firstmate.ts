@@ -57,10 +57,14 @@ const namesWork=(t:string)=>deliverableKinds(t).length>0||WORK_NOUN.test(t);
 export function captainWords(text:string):string{const t=String(text??'');if(/^\(The captain sent (?:a file|\d+ files) without text\.\)$/.test(t.trim()))return'';const m=/^Captain requests new work in Studio: ([^]*?)\nUse studio_list_workflows/.exec(t);return m?m[1]:t;}
 type Quoted={part:number;from:number;to:number};
 /** Where a quote sits in the captain's words, or why it cannot be used; `kind`: the proposal's workflow kind. */
-export function placeQuote(captain:string,quote:string,kind:string|undefined):Quoted|{en:string;zh:string}{
+export function placeQuote(captain:string,quote:string,kind:string|undefined,avoid:{from:number;to:number}[]=[]):Quoted|{en:string;zh:string}{
  const words=captainWords(captain),all=quoteNorm(words),q=quoteNorm(quote);
  if([...q].length<4)return{en:'captain_quote is too short: quote the whole item the captain named, in their words.',zh:'captain_quote 太短：請用船長原話引用整個項目。'};
- const from=all.indexOf(q);if(from<0)return{en:'captain_quote is not in the captain\'s message: copy the item exactly from their words (Studio notes, attachments and earlier messages do not count).',zh:'captain_quote 不在船長這則訊息裡：請從船長原話逐字複製那一項（Studio 註記、附件與先前訊息都不算）。'};
+ // the first occurrence no other proposal's quote holds: two items with the same text are two items
+ let from=all.indexOf(q);const held=(f:number)=>avoid.some(a=>f<a.to&&a.from<f+q.length);
+ while(from>=0&&held(from))from=all.indexOf(q,from+1);
+ if(from<0&&all.includes(q))return{en:'captain_quote overlaps another proposal\'s quote in this turn: each proposal delivers a different item of the message.',zh:'captain_quote 和本回合另一份提案的引用重疊：每份提案要交付訊息裡不同的一項。'};
+ if(from<0)return{en:'captain_quote is not in the captain\'s message: copy the item exactly from their words (Studio notes, attachments and earlier messages do not count).',zh:'captain_quote 不在船長這則訊息裡：請從船長原話逐字複製那一項（Studio 註記、附件與先前訊息都不算）。'};
  const parts=requestParts(words);let at=-1,start=0;
  for(let i=0,pos=0;i<parts.length;i++){const n=quoteNorm(parts[i]),p=all.indexOf(n,pos);if(p<0)continue;pos=p+n.length;if(from>=p&&from+q.length<=p+n.length){at=i;start=p;break;}}
  if(at<0)return{en:'captain_quote spans more than one item of the captain\'s message: quote one item.',zh:'captain_quote 跨了船長訊息裡的好幾項：請只引用一項。'};
@@ -68,13 +72,15 @@ export function placeQuote(captain:string,quote:string,kind:string|undefined):Qu
  if(!namesWork(part)||!namesWork(quote))return{en:`captain_quote must name what to make (a document, website, image, video, code change, workflow …); "${part.slice(0,80)}" names none.`,zh:`captain_quote 必須寫出要做的東西（文件、網站、圖片、影片、程式變更、流程…）；「${part.slice(0,80)}」沒有。`};
  if(q.length*2<quoteNorm(part).length)return{en:`captain_quote covers less than half of the item it is in; quote the item: "${part.slice(0,120)}"`,zh:`captain_quote 不到所在項目的一半；請引用整項：「${part.slice(0,120)}」`};
  const kinds=deliverableKinds(part);
- if(kind&&['doc','web','image','video','files'].includes(kind)&&kinds.length===1&&kinds[0]!==kind)return{en:`captain_quote is an item for a ${kinds[0]} workflow, not this ${kind} one: propose it on the workflow that makes it.`,zh:`captain_quote 那一項屬於 ${kinds[0]} 類的流程，不是這個 ${kind} 流程：請用做這種東西的流程提出。`};
+ if(kinds.length===1&&kinds[0]!==kind&&(!kind||kind==='code'||['doc','web','image','video','files'].includes(kind)))return{en:`captain_quote is an item for a ${kinds[0]} workflow, not this ${kind??'other'} one: propose it on the workflow that makes it.`,zh:`captain_quote 那一項屬於 ${kinds[0]} 類的流程，不是這個 ${kind??'其他'} 流程：請用做這種東西的流程提出。`};
  void start;return{part:at,from,to:from+q.length};
 }
 /** The turn contract: a quote, when given, must place; a turn's second proposal needs quotes on both, distinct and not overlapping. */
 function turnContract(captain:string,quote:string|undefined,kind:string|undefined,taken:{id:string;quote?:string;kind?:string}[],big:boolean){
  const refuse=(en:string,zh:string)=>{throw new NativeToolFailure('invalid_params',en,zh,'captain_review');};
- const mine=quote===undefined?null:placeQuote(captain,quote,kind);
+ // the turn's quotes in order, each on the first occurrence the earlier ones leave free; then this one
+ const placed:(Quoted&{id:string})[]=[];for(const t of taken){if(t.quote===undefined)continue;const p=placeQuote(captain,t.quote,t.kind,placed);if('part' in p)placed.push({...p,id:t.id});}
+ const mine=quote===undefined?null:placeQuote(captain,quote,kind,placed);
  if(mine&&!('part' in mine))refuse(mine.en,mine.zh);
  if(!taken.length)return;
  if(big)refuse('This captain turn already has another pinned proposal; a coffee-kit or startup proposal is the only one in its turn.','此船長回合已有另一份已鎖定提案；coffee-kit 或創業提案在同一回合只能有一份。');
@@ -82,8 +88,8 @@ function turnContract(captain:string,quote:string|undefined,kind:string|undefine
  const bare=taken.find(t=>t.quote===undefined);
  if(bare)refuse(`This captain turn already has proposal ${bare.id} without captain_quote, so no further proposal can join it. When one message names several deliverables, every proposal carries captain_quote; ask the captain for the next one.`,`此船長回合的提案 ${bare.id} 沒有 captain_quote，所以不能再加提案。一則訊息列出好幾項時，每份提案都要帶 captain_quote；請問船長下一項。`);
  if(!mine)refuse('A further proposal in the same captain turn needs captain_quote: the item it delivers, copied from the captain\'s words.','同一則船長訊息的其他提案需要 captain_quote：從船長原話逐字複製它要交付的那一項。');
- for(const t of taken){const theirs=placeQuote(captain,t.quote!,t.kind) as Quoted;if(!('part' in theirs))continue;
-  if(theirs.part===(mine as Quoted).part||theirs.from<(mine as Quoted).to&&(mine as Quoted).from<theirs.to)refuse(`captain_quote overlaps proposal ${t.id}'s quote: each proposal delivers a different item of the message.`,`captain_quote 和提案 ${t.id} 的引用重疊：每份提案要交付訊息裡不同的一項。`);}
+ for(const t of placed){
+  if(t.part===(mine as Quoted).part||t.from<(mine as Quoted).to&&(mine as Quoted).from<t.to)refuse(`captain_quote overlaps proposal ${t.id}'s quote: each proposal delivers a different item of the message.`,`captain_quote 和提案 ${t.id} 的引用重疊：每份提案要交付訊息裡不同的一項。`);}
 }
 /** What Firstmate (and, in short, the captain) hears after a seat card resumed the proposals it held (S8); null when it held none. */
 export function heldNotice(seatRun:string,done:{proposal?:string;title:string;workflow:string;error?:string}[]):{text:string;summary:{en:string;zh:string}}|null{

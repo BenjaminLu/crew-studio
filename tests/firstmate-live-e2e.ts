@@ -73,6 +73,10 @@ await section("S3 routing", async () => {
   // naming a deliverable is not asking for one: reading, explaining, summarising, progress and questions about attachments route nothing
   for (const t of ["explain this document", "幫我看一下這份文件在講什麼", "這份報告寫了什麼？", "summarize the attached report", "那個影片任務進度如何", "what images did the last task make?", "read this file", "what's in the attached image?"])
     ok(routeRequest(t, of).length === 0, `no route for a request that does not ask to make something: ${t}`, JSON.stringify(routeRequest(t, of)));
+  for (const t of ["給我一張海報", "我想要一支短片", "I need a landing page for the bakery", "can I get a poster for the sale?", "give me a short video about the shop"])
+    ok(routeRequest(t, of).length > 0, `asking to be given something new routes: ${t}`, JSON.stringify(routeRequest(t, of)));
+  for (const t of ["給我看一下那份報告的進度", "我想要知道那個影片任務進度如何", "I need a summary of the attached report", "give me the status of the video task", "我要看一下這份文件在講什麼"])
+    ok(routeRequest(t, of).length === 0, `wanting to read or check something routes nothing: ${t}`, JSON.stringify(routeRequest(t, of)));
   for (const t of ["幫我寫一份文件介紹咖啡", "Write a one-page report on our Q3 sales", "Build a landing page for the bakery", "用檔案整理流程，整理它內建的示範資料夾，依類型分類。", "summarize the attached report, then write a document for the team from it"])
     ok(routeRequest(t, of).length > 0, `a request to make something routes: ${t}`);
   ok(/request to make a deliverable becomes a proposal on its workflow, hands-on only when the captain asks/.test(nativeFreshText("/ws")) && /\*\*Routing\.\*\*[^]*explicitly asks you to/.test(manualPage("studio/firstmate") ?? ""), "Firstmate's standing text says a deliverable is a proposal, hands-on only on request; the manual has the detail");
@@ -159,7 +163,7 @@ await section("S7 several proposals per turn", async () => {
     ok(await refusedWith(() => call("q", two, "fix-image", "y", "再派兩個", "再派兩個"), /must name what to make/), "a lead-in such as 「再派兩個：」 is not an item");
     ok(await refusedWith(() => call("three", THREE, "fix-video", "z", "三個都直接提出派工卡", "三個都直接提出派工卡，不用再問我"), /must name what to make/), "a closing line such as 「三個都直接提出派工卡」 is not an item");
     ok(await refusedWith(() => call("q", two, "fix-web", "網站二", "圖片：轉角書店社群主視覺，方形。", "圖片：轉角書店社群主視覺，方形"), /item for a image workflow, not this web one/), "a web proposal cannot be filed from the image item");
-    ok(await refusedWith(() => call("q", two, "fix-web", "網站三", "網頁原型：轉角書店單頁網站", "網頁原型：轉角書店單頁網站，有營業時間"), /overlaps proposal/), "a second proposal on the same item is refused");
+    ok(await refusedWith(() => call("q", two, "fix-web", "網站三", "網頁原型：轉角書店單頁網站", "網頁原型：轉角書店單頁網站，有營業時間"), /overlaps/), "a second proposal on the same item is refused");
     ok(await refusedWith(() => call("q2", two, "fix-image", "a", "x", "Studio note: live status at this message"), /not in the captain's message/), "a quote from Studio's notes rather than the captain's words is refused");
     ok(await refusedWith(() => call("q3", "(The captain sent a file without text.)", "fix-image", "a", "x", "The captain sent a file without text"), /not in the captain's message/), "a files-only message has no captain words to quote");
     const q2 = await call("q", two, "fix-image", "主視覺", "圖片：轉角書店社群主視覺，方形。", "圖片：轉角書店社群主視覺，方形");
@@ -168,6 +172,14 @@ await section("S7 several proposals per turn", async () => {
     await call("one", one, "turn-fixture", "EUR", one);
     ok(await refusedWith(() => call("one", one, "turn-fixture", "EUR 2", "Add euro formatting to the totals"), /without captain_quote/), "a message with one deliverable still yields one proposal");
     const { placeQuote } = await import("../src/firstmate");
+    ok(!("part" in placeQuote(two, "圖片：轉角書店社群主視覺，方形", "code")) && !("part" in placeQuote(two, "圖片：轉角書店社群主視覺，方形", undefined)), "an image item is refused for a code workflow or one of no kind", JSON.stringify(placeQuote(two, "圖片：轉角書店社群主視覺，方形", "code")));
+    ok(await refusedWith(() => call("code", two, "turn-fixture", "x", "圖片：轉角書店社群主視覺，方形。", "圖片：轉角書店社群主視覺，方形"), /item for a image workflow, not this other one/), "a proposal on a workflow of another kind cannot be filed from the image item");
+    // two items with the same text are two items: the second quote takes the occurrence the first left free
+    const twins = "再派兩個：1) 圖片：轉角書店社群主視覺，方形。2) 圖片：轉角書店社群主視覺，方形。";
+    const t1 = await call("twins", twins, "fix-image", "主視覺一", "圖片：轉角書店社群主視覺，方形。", "圖片：轉角書店社群主視覺，方形");
+    const t2 = await call("twins", twins, "fix-image", "主視覺二", "圖片：轉角書店社群主視覺，方形。（第二張）", "圖片：轉角書店社群主視覺，方形");
+    ok(!!t1.proposal && !!t2.proposal && t1.proposal !== t2.proposal, "two identical items each get their proposal", JSON.stringify([t1, t2]));
+    ok(await refusedWith(() => call("twins", twins, "fix-image", "主視覺三", "圖片：轉角書店社群主視覺，方形。（第三張）", "圖片：轉角書店社群主視覺，方形"), /overlaps/), "a third quote of the same text has no free item left");
     const wrapped = `Captain requests new work in Studio: ${two}\nUse studio_list_workflows and studio_propose_work to raise a native captain dispatch card.`;
     ok("part" in placeQuote(wrapped, "圖片：轉角書店社群主視覺，方形", "image") && !("part" in placeQuote(wrapped, "Use studio_list_workflows and studio_propose_work to raise", "image")), "Studio's wrapper around a new-work request is not the captain's words");
   } finally { for (const r of E.list()) if (!["succeeded", "cancelled", "failed"].includes(r.status)) await E.cancel(r.id, "fixture cleanup"); H.stop(); rmSync(H.data, { recursive: true, force: true }); }
