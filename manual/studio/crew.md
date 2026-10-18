@@ -72,7 +72,8 @@ changes. Design: `docs/design/crew-seats.md`.
 ## Deliverable
 
 - **An empty seat.** `studio_propose_work` answers `crew_seat_missing` naming the seat and the card Studio raised.
-  Tell the captain in one line; propose the work again after they approve it. When no verified model can do what the
+  Tell the captain in one line. Once they approve it, Studio proposes the held work again by itself (its dispatch
+  card goes to the Inbox) and tells you: say so in one line, never propose it a second time. When no verified model can do what the
   seat needs, the card says which capability is missing and where to add an account: say so, do not guess a model.
 - After a crew card is approved, the next proposal uses the new team. Never say a change is made before the card is
   approved.

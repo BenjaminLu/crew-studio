@@ -20,7 +20,7 @@ import {migrateCrew} from '../crew-migrate';
 import {crewRoutes} from '../crew-routes';
 import {installCrewTools} from '../crew-tools';
 import {installFirstmateStaffing,staffingQuotaReady,type StaffingFacts,type StaffingAdmission} from '../firstmate-staffing';
-import {installFirstmate} from "../firstmate";
+import {installFirstmate,heldNotice} from "../firstmate";
 import {WorkflowDrafts,installWorkflowDraftTools,draftRoute,ownStaffingPlan,ownWorkflow,checkNodeStaffing,ownBrief} from "../workflow-drafts";
 import {installReadiness} from "../readiness";
 // Studio's native runtime, wired: versioned workflow definitions, the engine,
@@ -155,7 +155,8 @@ export function createRuntime(d: RuntimeDeps) {
   const crewGuard=installCrewGuard(engine,crewStore);
   // a captain's own workflow confirms at Run exactly the crew its Task will record (the guard's own resolution, judges included)
   defs.ownCrew=(def:any)=>{const t=crewStore.current();return t?resolveCrew(teamBody(t),withJudges(def,judgeSlots(engine,def)),{},t.hash):null;};
-  const crewTools=installCrewTools(engine,crewStore,{facts:staffingFacts as any,cached:()=>staffingCapabilities as any,send:d.send});
+  let seatFilled=(_run:string)=>{}; // set once Firstmate's tools exist: a seat card the captain approved resumes the proposals it held (S8)
+  const crewTools=installCrewTools(engine,crewStore,{facts:staffingFacts as any,cached:()=>staffingCapabilities as any,send:d.send,onApproved:run=>seatFilled(run)});
   // no image pick to seed the image maker from: raise the seat card now, so the captain sees why image work waits (never a silent block)
   if(imageSeatUnfilled){const def=engine.defs.get('images');if(def)void crewTools.seatGate(def,{key:'crew-migration'}).catch(()=>{});}
   const crewApi=crewRoutes({judges:def=>judgeSlots(engine,def),roleSkill:(def,role)=>engine.roleSkillUse(def,role) as any,defs,store:crewStore,projects:()=>projects.list().map(p=>({id:p.id,name:p.name})),facts:()=>staffingCapabilities,refreshFacts:()=>staffingFacts({fresh:true}),...process.env.CREW_DETECT_FORCE_MIN_MS!==undefined?{forceMinMs:Number(process.env.CREW_DETECT_FORCE_MIN_MS)}:{}, // tests: 0 lets 重新偵測 run back to back
@@ -182,6 +183,7 @@ export function createRuntime(d: RuntimeDeps) {
   };
   const onboarding=new Onboarding(engine,d.m3?.store??new ArtifactStore(d.dataDir));
   const originalFirstmate=installFirstmate(engine,projects,{prepareDispatch:async(workflow,version)=>{const def=engine.defs.get(workflow,version);if(staffingApplies(def))await staffingFacts();},onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending,teamStaffing,crewSeatGate:(def,owner,project)=>crewTools.seatGate(def,owner,project),dispatchCrew:(def,project)=>crewTools.dispatchCrew(def,project)});
+  seatFilled=run=>{void originalFirstmate.resumeHeld(run).then(done=>{const n=heldNotice(run,done);if(n)engine.notifyFirstmate?.(n.text,n.summary);}).catch(()=>{});};
   // free drafting: its own store and tools, separate from proposals, staffing and execution
   const drafts=new WorkflowDrafts(d.dataDir,defs,(id,revision)=>{try{d.send('wfdraft',{id,revision});}catch{}});
   const readiness=d.readiness===false?null:installReadiness({engine,defs,drafts,dataDir:d.dataDir,protectedRoots:d.protectedRoots??[d.fmRoot],send:d.send,startOwn:(o:any,g:unknown)=>ownClaude.start(o,g),...(d.readiness??{}),createRuntime:(d.readiness as any)?.createRuntimeOverride??createRuntime});

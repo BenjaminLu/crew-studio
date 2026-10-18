@@ -1323,6 +1323,8 @@ export class Engine {
   failureInputExtra: (r: Run, node: WNode | null) => InputSnapshot = () => ({});
   /** An agent's question goes to Firstmate first (server.ts wakes it): true when it was sent. Firstmate answers or escalates through answerFromFirstmate. */
   askFirstmate: ((r: Run, node: WNode, question: string, visit: number, o?: { escalation?: { options: { id: string; label: string; note?: boolean; select?: string[] }[] } }) => boolean) | null = null;
+  /** Tell Firstmate something Studio did for it (a held proposal raised again): the full text goes to its turn, the summary to the captain's chat. */
+  notifyFirstmate: ((text: string, summary: { en: string; zh: string }) => boolean) | null = null;
   private changedCache = new Map<string, { key: string; at: number; value: ReturnType<typeof changedInputs> }>();
   /** environment probes by code: a string says what is still broken (Fix and retry is refused), null says fixed or unknown */
   failureProbes: Partial<Record<FailureCode, (r: Run) => string | null>> = {};

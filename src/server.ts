@@ -424,6 +424,8 @@ runtime.engine.askFirstmate = (r, node, question, visit, o) => {
 };
 // the "another model" picker on step-back cards: each provider with its configured model, and with its default model
 runtime.engine.modelChoices = () => { const s = chatSettings(); return choices.filter((id) => id !== "stub").flatMap((id) => [...(s.models[id] ? [{ value: `${id}/${s.models[id]}`, label: `${id} · ${s.models[id]}` }] : []), { value: id, label: `${id} · default model` }]); };
+// Studio did something for Firstmate (a proposal a seat held, raised again once the captain filled the seat): it hears it on its next turn
+runtime.engine.notifyFirstmate = (text) => { if (main.view().state === "detached") return false; main.enqueue("wake", text, "studio-native"); return true; };
 runtime.engine.resumeFirstmateQuestions(); // questions pending at the restart: their wake notices died with the old process
 gh.start();
 process.once("exit",()=>{gh.stop();githubPoller.stop();});

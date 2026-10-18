@@ -48,7 +48,9 @@ export function seatCandidates(seat:Pick<SeatDecl,'needs'|'suggest'>,facts:Facts
 /** What a seat needs that no verified model has. */
 export function unmetCapabilities(seat:Pick<SeatDecl,'needs'>,facts:Facts){return(seat.needs??[]).filter(t=>!facts.some(f=>(f.provider==='codex'||f.provider==='claude')&&(!f.auth||f.auth==='verified')&&offered(f).some(m=>capabilitiesOf(f.provider,m.id,facts as any).includes(t))));}
 
-export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Promise<Facts>;cached?:()=>Facts;send?:(t:string,d:unknown)=>void}){
+export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Promise<Facts>;cached?:()=>Facts;send?:(t:string,d:unknown)=>void;
+ /** the captain approved a team card and the team was written (a seat card resumes the proposal it held: src/firstmate.ts) */
+ onApproved?:(run:string)=>void}){
  // the models studio_crew_assignments reports: the same live list as the Crew page, detected again when older than the page reuses it
  const liveModels=async(team:Team)=>{let facts=o.cached?.()??[];if(!facts.length||facts.some(f=>!f.detectedAt||Date.now()-f.detectedAt>DETECT_REUSE_MS))facts=await o.facts().catch(()=>facts);return crewModels(facts as any,team);};
  const source=normalize(JSON.parse(bundledText(`workflows/v2/${SOURCE}.wf.yaml`)||'null'));
@@ -101,7 +103,7 @@ export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Prom
   if((cfg?.hash??'')!==(x.run.params.expected??""))throw new NativeToolFailure('target_changed','The team changed after this card was shown; ask Firstmate to propose it again','團隊在這張卡顯示之後改了；請 Firstmate 重新提出。','read_current_state');
   const def=change.kind==='node'?engine.defs.get(change.workflow):undefined;
   const written=store.write(applyChange(team,change,def),cfg?.hash??null,{by:'captain (card)',via:'card',card:card.id,run:x.run.id,answerSeq:answer.seq});
-  engine.record(x,'crew-approved',{data:{schema:1,team:written.hash,version:written.version,card:card.id}});try{o.send?.('team',{version:written.version});}catch{}return'ok';};
+  engine.record(x,'crew-approved',{data:{schema:1,team:written.hash,version:written.version,card:card.id}});try{o.send?.('team',{version:written.version});}catch{}try{o.onApproved?.(x.run.id);}catch{}return'ok';};
  /** A workflow that needs a seat the team does not fill: raise its card (once) and refuse the proposal, naming the seat and the card.
   *  Nothing for a Studio without a team (the per-project staffing flow applies) or a workflow the team covers. Read in the work's project. */
  async function seatGate(def:any,owner:{key:string},project?:string|null){
@@ -118,7 +120,7 @@ export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Prom
   else{const c=cands[0],effort=need.suggest?.effort!==undefined&&need.suggest.effort!==null&&c.efforts.includes(need.suggest.effort)?need.suggest.effort:c.efforts.includes('medium')?'medium':c.provider==='claude'?null:c.efforts[0]??'medium';
    const member:Member={provider:c.provider,model:c.model,effort,skills:[]};
    run=propose(decl&&!(BUILTIN_SEATS as readonly string[]).includes(id)?{kind:'seat',seat:structuredClone(decl),member}:{kind:'member',seat:id,set:{provider:c.provider,model:c.model,effort}},added?'new-role':'seat',owner.key,ctx);}
-  throw new NativeToolFailure('crew_seat_missing',`${def.name} needs the team seat “${lab.en}”, which nobody fills yet. Studio raised card ${run.id} for the captain${cands.length?` (suggesting ${cands[0].provider} ${cands[0].model})`:' (no verified model can do it; it says which account to add)'}; propose the work again once the captain approves it. Do not propose staffing.`,`${def.name} 需要團隊的「${lab.zh}」位置，目前沒有人。Studio 已開卡 ${run.id} 給船長${cands.length?`（建議 ${cands[0].provider} ${cands[0].model}）`:'（目前沒有模型做得到，卡上會說要加哪個帳號）'}；船長核准後再重新提出這項工作。`,'captain_review');
+  throw Object.assign(new NativeToolFailure('crew_seat_missing',`${def.name} needs the team seat “${lab.en}”, which nobody fills yet. Studio raised card ${run.id} for the captain${cands.length?` (suggesting ${cands[0].provider} ${cands[0].model})`:' (no verified model can do it; it says which account to add)'}; once the captain approves it, Studio proposes this work again by itself and tells you. Do not propose staffing.`,`${def.name} 需要團隊的「${lab.zh}」位置，目前沒有人。Studio 已開卡 ${run.id} 給船長${cands.length?`（建議 ${cands[0].provider} ${cands[0].model}）`:'（目前沒有模型做得到，卡上會說要加哪個帳號）'}；船長核准後 Studio 會自動重新提出這項工作。`,'captain_review'),{seatRun:run.id});
  }
  /** The crew line a dispatch card shows (in the work's project, its project layer included), and the efforts the captain may change for
   *  this run only (staffed workflows too: on top of their signed staffing). A reviewing seat is offered medium or more only. */
