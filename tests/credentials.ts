@@ -37,6 +37,26 @@ const leaked = (env: Record<string, string> | undefined, allow: string[] = []) =
   ok((claudeProvider() as any).envKeys?.includes("ANTHROPIC_API_KEY") && !(claudeProvider() as any).envKeys?.includes("OPENAI_API_KEY") && (codexProvider() as any).envKeys?.includes("OPENAI_API_KEY"), "each CLI provider declares only its own key");
   const { scrubEnv } = await import("../src/secure");
   ok(leaked(scrubEnv()).length === 0 && scrubEnv().PATH, "child tools (git, the renderer) get the environment without credentials");
+  const proxySecret = "dummy-proxy-credential";
+  const proxyBase = { PATH: "/bin", HTTPS_PROXY: `http://round:${proxySecret}@127.0.0.1:1234`, http_proxy: `http://${proxySecret}@127.0.0.1:1234`, ALL_PROXY: `socks5://round:${proxySecret}@127.0.0.1:1234`, FTP_PROXY: `ftp://round:${proxySecret}@127.0.0.1:1234`, HTTP_PROXY: "http://127.0.0.1:1234", NO_PROXY: "localhost" };
+  const childEnv = scrubEnv(proxyBase);
+  ok(!JSON.stringify(childEnv).includes(proxySecret) && !("HTTPS_PROXY" in childEnv) && !("http_proxy" in childEnv) && !("ALL_PROXY" in childEnv), "child tools never inherit credential-bearing proxy URLs");
+  ok(childEnv.HTTP_PROXY === proxyBase.HTTP_PROXY && childEnv.NO_PROXY === "localhost", "child tools retain noncredential proxy configuration");
+  const keychainEnv = join(tmp, "keychain-env.txt"), keychainTool = join(tmp, "keychain-fixture.sh");
+  writeFileSync(keychainTool, `#!/bin/sh\nenv >> "${keychainEnv}"\nexit 44\n`, { mode: 0o755 });
+  const loginModule = join(import.meta.dir, "../src/providers/login.ts");
+  const keychainProbe = Bun.spawnSync([process.execPath, "--no-env-file", "-e", `const m = await import(${JSON.stringify(loginModule)}); m.claudeLogin(); m.claudeLoginStatus(); await m.claudeLoginPresenceAsync();`], { env: { PATH: process.env.PATH ?? "/bin", HOME: join(tmp, "empty-home"), CREW_KEYCHAIN_TOOL: keychainTool, GITHUB_TOKEN: "dummy-keychain-child-secret", HTTPS_PROXY: `http://round:${proxySecret}@127.0.0.1:1234` }, stdout: "pipe", stderr: "pipe" });
+  const keychainOutput = existsSync(keychainEnv) ? readFileSync(keychainEnv, "utf8") : "";
+  ok(keychainProbe.success && keychainOutput.includes("PATH=") && !keychainOutput.includes("dummy-keychain-child-secret") && !keychainOutput.includes(proxySecret), "sync and async keychain helpers receive an explicit credential-free environment");
+  const { codexLogin } = await import("../src/providers/login");
+  const codexKey = "sk-" + "dummy-credential".repeat(3), codexHome = join(tmp, "codex-key-home");
+  process.env.CODEX_API_KEY = codexKey;
+  const codexAuth = codexLogin(codexHome);
+  delete process.env.CODEX_API_KEY;
+  const codexAuthFile = join(codexHome, "auth.json");
+  ok(codexAuth.ok && !JSON.stringify(codexAuth.env).includes(codexKey) && codexAuth.env.CODEX_HOME === codexHome && existsSync(codexAuthFile), "Codex API-key login hands child processes only a private auth-file directory");
+  const { statSync } = await import("node:fs");
+  ok(existsSync(codexAuthFile) && (statSync(codexAuthFile).mode & 0o777) === 0o600 && JSON.parse(readFileSync(codexAuthFile, "utf8")).OPENAI_API_KEY === codexKey, "Codex API-key auth.json has the existing native schema and mode 0600");
   // a check sees no credential either
   const { sandboxed } = await import("../src/runtime/checks");
   const r = await sandboxed(["/bin/sh", "-c", "env"], { cwd: tmp, out: join(tmp, "a1c", "out"), tmp: join(tmp, "a1c", "tmp"), timeoutS: 10, network: false });

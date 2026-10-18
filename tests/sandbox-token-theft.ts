@@ -58,11 +58,18 @@ await recorded(codexProvider("m", join(import.meta.dir, "fixture", "argv-recorde
   const attacker = join(root, "git-attacker"); mkdirSync(attacker);
   const denied = await sandboxed(["/bin/cat", config], { cwd: attacker, out: join(attacker, "out"), tmp: join(attacker, "tmp"), timeoutS: 10, network: false, dataDir: data, testRun: true });
   ok(denied.code !== 0 && !denied.stdout.includes(encoded), "a sandboxed test cannot read the GitHub credential-config file");
+  const { codexLogin } = await import("../src/providers/login");
+  const codexKey = "sk-" + "dummy-codex-key".repeat(3), codexHome = join(data, "rounds", "codex", "home", ".codex");
+  const oldKey = process.env.CODEX_API_KEY;
+  process.env.CODEX_API_KEY = codexKey;
+  try { codexLogin(codexHome); } finally { if (oldKey === undefined) delete process.env.CODEX_API_KEY; else process.env.CODEX_API_KEY = oldKey; }
+  const codexDenied = await sandboxed(["/bin/cat", join(codexHome, "auth.json")], { cwd: attacker, out: join(attacker, "codex-out"), tmp: join(attacker, "codex-tmp"), timeoutS: 10, network: false, dataDir: data, testRun: true });
+  ok(codexDenied.code !== 0 && !codexDenied.stdout.includes(codexKey), "a sandboxed test cannot read another round's Codex API-key auth.json");
 }
 
 // ---- 2. the sandbox cannot block KERN_PROCARGS2 (documented limitation), so a victim with a token in argv/env WOULD leak ----
 // a victim process that carries a token both ways, to show the read is possible at all (the pre-fix shape)
-const victim = Bun.spawn(["/bin/sh", "-c", "sleep 30", "victim", "--secret=" + TOKEN], { env: { ...process.env, VICTIM_TOKEN: TOKEN } });
+const victim = Bun.spawn(["/usr/bin/python3", "-I", "-c", "import time;time.sleep(30)", "--secret=" + TOKEN], { env: { PATH: "/usr/bin:/bin", VICTIM_TOKEN: TOKEN } });
 await Bun.sleep(300);
 const scanner = join(root, "scan.py");
 writeFileSync(scanner, `import ctypes,ctypes.util,re,sys
@@ -70,14 +77,27 @@ libc=ctypes.CDLL(ctypes.util.find_library("c"))
 def pa(pid):
     mib=(ctypes.c_int*3)(1,49,pid);sz=ctypes.c_size_t(1<<18);buf=ctypes.create_string_buffer(1<<18)
     return buf.raw[:sz.value] if libc.sysctl(mib,3,buf,ctypes.byref(sz),None,0)==0 else b""
-needle=sys.argv[1].encode();hit=0
-for pid in range(1,99999):
-    if needle in pa(pid): hit=pid;break
-print("procargs_hit",hit)
+needle=sys.argv[1].encode();pid=int(sys.argv[2]);value=pa(pid)
+print("procargs_bytes",len(value))
+print("procargs_hit",pid if needle in value else 0)
 `);
-const r2 = await sandboxed(["/usr/bin/python3", "-I", scanner, TOKEN], { cwd: root, out: join(root, "o2"), tmp: join(root, "t2"), timeoutS: 30, network: false, dataDir: root, testRun: true });
+const r2 = await sandboxed(["/usr/bin/python3", "-I", scanner, TOKEN, String(victim.pid)], { cwd: root, out: join(root, "o2"), tmp: join(root, "t2"), timeoutS: 30, network: false, dataDir: root, testRun: true });
 victim.kill();
-ok(/procargs_hit [1-9]/.test(r2.stdout), "a test run CAN read another same-uid process's argv/env via KERN_PROCARGS2 (the sandbox cannot block it; a token there would leak)", JSON.stringify([r2.stdout.trim(), r2.refused]));
+ok(r2.stdout.includes(`procargs_hit ${victim.pid}\n`), "a test run CAN read another same-uid process's argv/env via KERN_PROCARGS2 (the sandbox cannot block it; a token there would leak)", JSON.stringify([r2.stdout.trim(), r2.refused]));
+
+// Read a known live FD-only victim, rather than scanning unrelated user processes.
+{
+  const { spawn } = await import("node:child_process");
+  const { claudeCredentialFds } = await import("../src/providers/credential-fds");
+  const auth = claudeCredentialFds({ PATH: "/usr/bin:/bin", TMPDIR: root, CLAUDE_CODE_OAUTH_TOKEN: TOKEN });
+  const fdVictim = spawn("/usr/bin/python3", ["-I", "-c", "import os,time;assert os.read(int(os.environ['CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR']),4096);print('ready',flush=True);time.sleep(30)"], { env: auth.env, stdio: ["ignore", "pipe", "pipe", ...auth.fds] });
+  auth.close();
+  try {
+    await new Promise<void>((resolve, reject) => { fdVictim.stdout!.once("data", () => resolve()); fdVictim.once("error", reject); fdVictim.once("exit", () => reject(new Error("FD victim exited before readiness"))); });
+    const checked = await sandboxed(["/usr/bin/python3", "-I", scanner, TOKEN, String(fdVictim.pid)], { cwd: root, out: join(root, "o2-fd"), tmp: join(root, "t2-fd"), timeoutS: 10, network: false, dataDir: root, testRun: true });
+    ok(/procargs_bytes [1-9]/.test(checked.stdout) && /procargs_hit 0\n/.test(checked.stdout), "KERN_PROCARGS2 can read the FD-only victim but reveals no credential (not an unreadable-process false pass)", checked.refused ?? "");
+  } finally { fdVictim.kill("SIGKILL"); }
+}
 
 // ---- 3. the token file lives under the round's data dir, which another round's / test run's sandbox denies ----
 // Studio's data dir is its own tree, never under a round's worktree; the attacker's cwd is its worktree
