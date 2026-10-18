@@ -7,7 +7,7 @@ import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repos
 // cannot run here (recorded and flagged, never a loop). No APPROVE stands over a worker who said its tests were not run or
 // not green, unless the reviewer ran the covering tests green itself. A review still unverified after its retry raises the
 // step-back card, never a failed run.      bun tests/review-depth.ts
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
@@ -240,7 +240,9 @@ const depRepo = (extra: Record<string, string> = {}) => repoWith({ test: ["bun",
   // the CLIs (claude, codex) as the vendors answer: each asks Studio's MCP server for the tool, which hands the picture as an
   // MCP image block; claude prints it as an Anthropic image block, codex as the MCP block itself. Their events keep a note only.
   const cliDir = checkedTempDir("crew-cli-img-");
-  const mcpCall = `const { spawn } = await import("node:child_process"); const cmd = JSON.parse(process.env.STUB_MCP);
+  const tokenFile=join(cliDir,"tool-token"),toolToken="review-depth-private-tool-fixture";writeFileSync(tokenFile,toolToken,{mode:0o600});
+  ok((statSync(tokenFile).mode&0o777)===0o600,"CLI image fixture uses private tool credential file");
+  const mcpCall = `if(process.env.CREW_TOOL_TOKEN||process.argv.some(a=>a.includes(${JSON.stringify(toolToken)})))throw new Error("tool token leaked into CLI env or argv"); const { spawn } = await import("node:child_process"); const cmd = JSON.parse(process.env.STUB_MCP);
 const srv = spawn(cmd[0], cmd.slice(1), { stdio: ["pipe", "pipe", "inherit"], env: process.env }); let buf = ""; const waiting = new Map();
 srv.stdout.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n")) >= 0) { const m = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1); waiting.get(m.id)?.(m); } });
 const rpc = (id, method, params) => new Promise((r) => { waiting.set(id, r); srv.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\\n"); });
@@ -255,7 +257,8 @@ out({ type: "item.started", item: { id: "m1", type: "mcp_tool_call", tool: "img"
 out({ type: "item.completed", item: { id: "m1", type: "mcp_tool_call", tool: "img", result: { content: res.content } } });
 out({ type: "item.completed", item: { id: "a1", type: "agent_message", text: "done" } }); out({ type: "turn.completed", usage: {} });\n`);
   const { claudeProvider } = await import("../src/providers/claude"); const { codexProvider } = await import("../src/providers/codex");
-  const mcpCommand = [process.execPath, join(root, "src/mcp.ts")]; const cliCtx: any = { ...ctx, cwd: cliDir, mcpCommand, env: { ...process.env, STUB_MCP: JSON.stringify(mcpCommand), CREW_STUDIO_URL: base, CREW_TOOL_TOKEN: "t" } };
+  const cliEnv={...process.env};for(const key of ["ANTHROPIC_API_KEY","ANTHROPIC_AUTH_TOKEN","OPENAI_API_KEY","CODEX_API_KEY"])delete cliEnv[key];
+  const mcpCommand = [process.execPath, join(root, "src/mcp.ts")]; const cliCtx: any = { ...ctx, tokenFile, cwd: cliDir, mcpCommand, env: { ...cliEnv, STUB_MCP: JSON.stringify(mcpCommand), CREW_STUDIO_URL: base, CREW_TOOL_TOKEN_FILE: tokenFile } };
   const driveCli = async (p: any) => { const evs: any[] = []; for await (const e of p.start("sys", tools, cliCtx).send("go")) evs.push(e); return evs; };
   const ecl = await driveCli(claudeProvider("m", join(cliDir, "claude.mjs"))), ecx = await driveCli(codexProvider("m", join(cliDir, "codex.mjs")));
   const endOf = (evs: any[]) => evs.find((e) => e.type === "toolEnd");
