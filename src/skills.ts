@@ -158,6 +158,38 @@ export class Skills {
     if (sha(t) !== pinned) throw new Error(`skill ${id} v${v} changed on disk since it was pinned`);
     return splitFrontmatter(t).body.trim();
   }
+  /** A version's SKILL.md exactly as stored, for the captain's read-only viewer; refused unless it still has the recorded hash. */
+  libText(id: string, v: number): { rec: LibVersion; text: string } | null {
+    if (!SAFE.test(String(id))) return null; const rec = this.libIndex(id).find((x) => x.n === Number(v)); if (!rec) return null;
+    const f = join(this.libDir(id), `v${rec.n}`, "SKILL.md"); if (lstatSync(f, { throwIfNoEntry: false })?.isFile() !== true) return null;
+    const text = readFileSync(f, "utf8"); if (sha(text) !== rec.sha256) throw new SkillViewError(`skill ${id} v${rec.n} changed on disk since it was recorded`, 409);
+    return { rec, text };
+  }
+  /** A version's supporting files as the viewer lists them: whether each can be opened as text (a text name, under the cap). */
+  libFiles(id: string, v: number): { path: string; bytes: number; viewable: boolean }[] {
+    const rec = this.libIndex(id).find((x) => x.n === Number(v)); if (!rec) return [];
+    return rec.files.map((path) => { const st = lstatSync(join(this.libDir(id), `v${rec.n}`, "files", path), { throwIfNoEntry: false });
+      const bytes = st?.isFile() ? st.size : 0; return { path, bytes, viewable: !!st?.isFile() && bytes <= SKILL_VIEW_FILE_CAP && textName(path) }; });
+  }
+  /** One supporting file as text for the viewer: only a file the version recorded, a regular file with no link anywhere on its
+   *  path, a text name, under the cap, UTF-8 with no NUL. Anything else is refused with the reason. */
+  libFile(id: string, v: number, rel: string): { path: string; bytes: number; sha256: string; text: string } {
+    if (!SAFE.test(String(id))) throw new SkillViewError("no such skill", 404);
+    const rec = this.libIndex(id).find((x) => x.n === Number(v)); if (!rec) throw new SkillViewError(`skill ${id} has no version ${v}`, 404);
+    const parts = String(rel).split("/");
+    if (!rel || rel.length > 400 || parts.some((x) => !x || x === "." || x === ".." || !/^[^\0\\]+$/.test(x))) throw new SkillViewError("a supporting file is a relative path inside the skill, with no ..", 400);
+    if (!rec.files.includes(rel)) throw new SkillViewError(`skill ${id} v${rec.n} has no supporting file ${rel}`, 404);
+    let at = join(this.libDir(id), `v${rec.n}`, "files");
+    for (const x of parts) { at = join(at, x); const st = lstatSync(at, { throwIfNoEntry: false });
+      if (!st) throw new SkillViewError(`${rel} is missing on disk`, 404);
+      if (st.isSymbolicLink()) throw new SkillViewError(`${rel} is a link; links are never opened`, 403); }
+    const st = lstatSync(at)!; if (!st.isFile()) throw new SkillViewError(`${rel} is not a regular file`, 403);
+    if (!textName(rel)) throw new SkillViewError(`${rel} is not a text file Studio shows`, 415);
+    if (st.size > SKILL_VIEW_FILE_CAP) throw new SkillViewError(`${rel} is ${fmtSize(st.size)}; the viewer shows files up to ${fmtSize(SKILL_VIEW_FILE_CAP)}`, 413);
+    const b = readFileSync(at); let text: string;
+    try { if (b.includes(0)) throw new Error(); text = new TextDecoder("utf-8", { fatal: true }).decode(b); } catch { throw new SkillViewError(`${rel} is not UTF-8 text`, 415); }
+    return { path: rel, bytes: b.length, sha256: sha(b), text };
+  }
   /** The skills homes Studio can import from, each with the skill folders in it. */
   homes(home = process.env.HOME ?? "") {
     return SKILL_HOMES.map((hm) => { const dir = join(home, hm.rel); let skills: { dir: string; name: string; description: string }[] = [];
@@ -291,6 +323,14 @@ export type LibSkill = { id: string; name: string; description: string; fits: Sk
 /** An agent node's enabled skill: pinned by version and hash. */
 export type SkillPin = { id: string; v: number; sha256: string };
 export class SkillImportError extends Error {}
+/** A refusal of the read-only viewer (src/skill-routes.ts), with the HTTP status it answers. */
+export class SkillViewError extends Error { constructor(message: string, readonly status: number) { super(message); } }
+/** The largest supporting file the viewer shows (a skill folder is at most SKILL_CAPS.folder). */
+export const SKILL_VIEW_FILE_CAP = 256 * 1024;
+const TEXT_EXT = new Set(["md", "markdown", "txt", "text", "rst", "adoc", "json", "jsonl", "yaml", "yml", "toml", "ini", "cfg", "conf", "csv", "tsv", "xml", "html", "htm", "css", "svg",
+  "js", "mjs", "cjs", "ts", "tsx", "jsx", "py", "rb", "go", "rs", "java", "kt", "swift", "c", "h", "cc", "cpp", "hpp", "cs", "php", "pl", "lua", "r", "sql", "sh", "bash", "zsh", "fish", "ps1", "tex", "diff", "patch"]);
+/** A supporting file the viewer opens as text: a known text extension, or a plain name like LICENSE or Makefile. */
+const textName = (rel: string) => { const n = rel.split("/").pop() ?? ""; const i = n.lastIndexOf("."); return i <= 0 ? /^[A-Za-z][\w-]{0,40}$/.test(n) : TEXT_EXT.has(n.slice(i + 1).toLowerCase()); };
 /**
  * Where a library skill fits (its frontmatter's metadata.fits): the node kinds it may go on, words naming the roles it
  * suits (matched against a node's role id, label and role skill, and the node id) and the outputs it suits (args.format).

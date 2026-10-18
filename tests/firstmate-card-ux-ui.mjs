@@ -62,6 +62,15 @@ try {
     ok(rows.length === 4 && rows.find((r) => r[0] === "reviewer")?.join("|") === "reviewer|codex|gpt-6.1-sol|medium|reviewer.md v1", `${lang}: the staffing card shows one row per role: provider, model, effort, skill and version`, JSON.stringify(rows));
     const nodeRows = await p.$$eval(`${at("SC-901")} [data-staffing-node]`, (trs) => trs.map((tr) => [...tr.querySelectorAll("td")].map((td) => td.textContent)));
     ok(nodeRows.length === 1 && nodeRows[0].slice(2).join("|") === "gpt-6.1-max|high|plain-writing v1" && nodeRows[0][0].includes("build"), `${lang}: a node override is a row in the role table: its model, effort and named skills`, JSON.stringify(nodeRows));
+    // a named skill opens the read-only skill viewer at the pinned version (public/skills.js)
+    const views = await p.$$eval(`${at("SC-901")} [data-staffing-table] [data-skill-view]`, (bs) => bs.map((b) => [b.tagName, b.dataset.skillView, b.dataset.skillPinned, b.getAttribute("aria-label")]));
+    ok(views.some(([t, k, v, l]) => t === "BUTTON" && k === "role:code-firstmate/reviewer" && v === "1" && l === (lang === "en" ? "View skill: reviewer.md v1" : "查看技能：reviewer.md v1"))
+      && views.some(([t, k, v]) => t === "BUTTON" && k === "plain-writing" && v === "1"), `${lang}: each skill in the role table is a button that opens the skill viewer at its pin`, JSON.stringify(views));
+    await p.click(`${at("SC-901")} [data-staffing-node] [data-skill-view="plain-writing"]`);
+    ok(await p.waitForFunction(() => document.querySelector('[role="dialog"][data-skill-viewer="plain-writing"]')?.getAttribute("data-skv-shown") === "1", null, { timeout: 8000 }).then(() => true, () => false),
+      `${lang}: the node's skill opens plain-writing v1 in the viewer`);
+    await p.keyboard.press("Escape");
+    ok(await p.evaluate(() => !document.querySelector("[data-skill-viewer]") && document.activeElement?.getAttribute("data-skill-view") === "plain-writing"), `${lang}: Esc closes it and the focus returns to the card's skill`);
     const shown = await p.$eval(at("SC-901"), (el) => [...el.querySelectorAll("[data-card-root] > *")].filter((x) => !x.matches("details")).map((x) => x.innerText).join("\n"));
     ok(!/sha256|"configuration"|aaaaaaaa/.test(shown), `${lang}: no hash or raw JSON outside the closed details`, shown.slice(0, 300));
     ok(await p.$eval(`${at("SC-901")} [data-card-raw]`, (d) => !d.open && d.textContent.includes('"sha256"')), `${lang}: the configuration hashes stay in a closed details`);

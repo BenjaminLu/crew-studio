@@ -108,14 +108,18 @@ function askPanel(wf, row) {
 }
 // ---------- one node row ----------
 // the role skill every turn of this node receives first (from the workflow's role, not editable here): name, Studio version, sha256
-function roleChip(row) {
+// A role skill Studio versions opens the skill viewer at that version (the text this node's turns receive)
+function roleChip(row, wf) {
   const r = row.roleSkill; if (!r) return null;
   const sha = String(r.sha256 || "").slice(0, 8);
-  return h("span", { class: "tm-skill role", "data-role-skill": r.ref || "", title: T(`Role skill ${r.ref || ""} · sha256 ${r.sha256 || ""}`, `角色 skill ${r.ref || ""} · sha256 ${r.sha256 || ""}`) },
-    h("span", { class: "tm-rk" }, T("Role", "角色")), `${r.name || r.ref}${r.version != null ? ` v${r.version}` : ""}${sha ? ` · ${sha}` : ""}`);
+  const attrs = { class: "tm-skill role", "data-role-skill": r.ref || "", title: T(`Role skill ${r.ref || ""} · sha256 ${r.sha256 || ""}`, `角色 skill ${r.ref || ""} · sha256 ${r.sha256 || ""}`) };
+  const kids = [h("span", { class: "tm-rk" }, T("Role", "角色")), `${r.name || r.ref}${r.version != null ? ` v${r.version}` : ""}${sha ? ` · ${sha}` : ""}`];
+  return wf && r.role && r.version != null && window.crewSkillView ? window.crewSkillView.button({ kind: "role", workflow: wf.id, role: r.role, v: r.version, pinned: r.version, name: r.name || r.ref }, r.name || r.ref, attrs, ...kids) : h("span", attrs, ...kids);
 }
+// A library skill chip: its name opens the skill viewer at the version this node or seat pins (clicking changes nothing here)
+const skillName = (p, text, cls = "tm-skill-open") => window.crewSkillView ? window.crewSkillView.button({ kind: "lib", id: p.id, v: p.v, pinned: p.v, name: p.name || p.id }, p.name || p.id, { class: cls }, text) : text;
 // a judged check runs as its reviewing seat: shown so the captain sees who reviews; it follows that member (change it there)
-function judgeRow(row) {
+function judgeRow(wf, row) {
   return h("div", { class: `tm-row tm-judge${row.source === "missing" ? " missing" : ""}`, "data-team-row": row.node, "data-team-judge": "" },
     h("div", { class: "tm-grid" },
       h("span", { class: "tm-node" }, h("b", {}, row.label), h("span", { class: "faint" }, T("check", "檢查"))),
@@ -123,13 +127,13 @@ function judgeRow(row) {
       h("span", { class: "tm-cell mono" }, h("span", { class: "tm-k" }, T("Model", "模型")), row.provider ? `${row.provider} · ${row.model}` : T("— unassigned", "— 未指派")),
       h("span", { class: "tm-cell" }, h("span", { class: "tm-k" }, "Effort"), row.effort ?? T("default", "預設")),
       h("span", { class: "tm-cell tm-wide" }, h("span", { class: "tm-k" }, "Skills"),
-        h("span", { class: "tm-skills" }, roleChip(row), (row.duty ?? []).map((p) => h("span", { class: "tm-skill own", title: T("This check's own skill", "這個檢查自己的 skill") }, `${p.name || p.id}@v${p.v}`))),
+        h("span", { class: "tm-skills" }, roleChip(row, wf), (row.duty ?? []).map((p) => h("span", { class: "tm-skill own duty", title: T("This check's own skill", "這個檢查自己的 skill") }, skillName(p, `${p.name || p.id}@v${p.v}`)))),
         h("span", { class: "faint", "data-judge-order": "" }, T(`Follows “${seatName(row.seat)}”; change it on the member. Loads its role skill, then this check's skills, not the member's.`, `跟著「${seatName(row.seat)}」；要改請改成員。載入角色 skill，再載入這個檢查的 skill，不含成員的。`))),
       h("span", { class: `tm-src ${row.source}`, "data-source": row.source }, T(...(SOURCE[row.source] || [row.source, row.source])))),
     row.notes.length ? h("ul", { class: "tm-notes" }, row.notes.map((n) => h("li", {}, L(n)))) : null);
 }
 function nodeRow(wf, row) {
-  if (row.judge) return judgeRow(row);
+  if (row.judge) return judgeRow(wf, row);
   const asking = TM.ask?.workflow === wf.id && TM.ask?.node === row.node ? TM.ask : null;
   const member = h("select", { "aria-label": T(`${row.label}'s member`, `${row.label} 的成員`), class: "tm-sel", onchange: (e) => change({ kind: "node", workflow: wf.id, node: row.node, set: { seat: e.target.value } }) },
     (TM.data.seats ?? []).map((s) => h("option", { value: s.id }, L(s.label))));
@@ -137,9 +141,9 @@ function nodeRow(wf, row) {
   const cur = asking?.field === "model" ? (() => { const [provider, ...m] = asking.value.split("/"); return { provider, model: m.join("/") }; })() : { provider: row.provider, model: row.model };
   const model = modelSelect(T(`${row.label}'s model`, `${row.label} 的模型`), cur, (v) => { TM.ask = { workflow: wf.id, node: row.node, field: "model", value: v }; render(); }, { "data-custom": row.fields.model === "workflow" || row.fields.model === "project" ? "1" : null });
   const effort = effortSelect(T(`${row.label}'s effort`, `${row.label} 的 effort`), asking?.field === "effort" ? asking.value : row.effort, row.provider, (v) => { TM.ask = { workflow: wf.id, node: row.node, field: "effort", value: v }; render(); }, { "data-custom": ["workflow", "run", "project"].includes(row.fields.effort) ? "1" : null }, row.model);
-  const skills = h("div", { class: "tm-skills" }, roleChip(row),
-    row.skills.filter((p) => p.from === "member").map((p) => h("span", { class: "tm-skill base", title: T(`Comes with ${seatName(row.seat)}`, `來自成員「${seatName(row.seat)}」`) }, `${p.name || p.id}`)),
-    row.skills.filter((p) => p.from === "node").map((p) => h("span", { class: "tm-skill own" }, `${p.name || p.id}@v${p.v}`,
+  const skills = h("div", { class: "tm-skills" }, roleChip(row, wf),
+    row.skills.filter((p) => p.from === "member").map((p) => h("span", { class: "tm-skill base", title: T(`Comes with ${seatName(row.seat)}`, `來自成員「${seatName(row.seat)}」`) }, skillName(p, `${p.name || p.id}`))),
+    row.skills.filter((p) => p.from === "node").map((p) => h("span", { class: "tm-skill own" }, skillName(p, `${p.name || p.id}@v${p.v}`),
       h("button", { class: "tm-x", "aria-label": T(`Remove ${p.name || p.id}`, `移除 ${p.name || p.id}`), onclick: () => change({ kind: "node", workflow: wf.id, node: row.node, set: {}, removeSkill: p.id }) }, "×"))),
     skillAdd(T(`Add a skill to ${row.label}`, `${row.label} 加 skill`), row.skills.map((p) => p.id), (pin) => change({ kind: "node", workflow: wf.id, node: row.node, set: {}, addSkill: pin })));
   const src = SOURCE[row.source] || [row.source, row.source];
@@ -170,7 +174,7 @@ function memberEditor() {
         modelSelect(T(`${L(s.label)}'s model`, `${L(s.label)} 的模型`), m, (v) => { if (!v) return; const [provider, ...rest] = v.split("/");
           change(specialist && !m ? { kind: "seat", seat: s.declared, member: { provider, model: rest.join("/"), effort: provider === "codex" ? "medium" : null, skills: [] } } : { kind: "member", seat: s.id, set: { provider, model: rest.join("/"), ...(m ? {} : { effort: provider === "codex" ? "medium" : null }) } }); }),
         m ? effortSelect(T(`${L(s.label)}'s effort`, `${L(s.label)} 的 effort`), m.effort, m.provider, (v) => change({ kind: "member", seat: s.id, set: { effort: v } }), {}, m.model) : h("span", { class: "tm-missing" }, T("Nobody yet", "還沒有人")),
-        m ? h("div", { class: "tm-skills" }, m.skills.map((p) => h("span", { class: "tm-skill own" }, `${p.name || p.id}@v${p.v}`,
+        m ? h("div", { class: "tm-skills" }, m.skills.map((p) => h("span", { class: "tm-skill own" }, skillName(p, `${p.name || p.id}@v${p.v}`),
             h("button", { class: "tm-x", "aria-label": T(`Remove ${p.name || p.id} from ${L(s.label)}`, `從「${L(s.label)}」移除 ${p.name || p.id}`), onclick: () => change({ kind: "member", seat: s.id, set: { skills: m.skills.filter((q) => q.id !== p.id).map(({ id, v, sha256 }) => ({ id, v, sha256 })) } }) }, "×"))),
           skillAdd(T(`Add a skill to ${L(s.label)}`, `「${L(s.label)}」加 skill`), m.skills.map((p) => p.id), (pin) => change({ kind: "member", seat: s.id, set: { skills: [...m.skills.map(({ id, v, sha256 }) => ({ id, v, sha256 })), pin] } }))) : h("span"));
     }));

@@ -340,6 +340,8 @@ function mountCard(el, card, opts = {}) {
   // A card's text body, readable: a staffing configuration (JSON) becomes a role table, a dispatch card's
   // parameters become key/value lines; Studio's internal pins (_-prefixed params, hashes) stay in a closed details.
   const raw = (label, text) => h("details", { class: "cc-sec", "data-card-raw": "" }, h("summary", { class: "cc-count" }, label), h("pre", { class: "cc-pre rt-card-body" }, text));
+  // a skill named in the table opens Studio's skill viewer at the pinned version (public/skills.js), when the page has it
+  const viewSkill = (ref, label, text) => window.crewSkillView ? window.crewSkillView.button(ref, label, { class: "tm-skill-open cc-mono" }, text) : text;
   function staffingView(cfg, body) {
     const roles = Object.entries(cfg.roles), worker = cfg.roles.worker;
     const same = worker ? roles.filter(([id, r]) => id !== "worker" && ["reviewer", "designer"].includes(id) && r.provider === worker.provider && r.model === worker.model).map(([id]) => id) : [];
@@ -349,10 +351,12 @@ function mountCard(el, card, opts = {}) {
         h("thead", {}, h("tr", {}, [T("Role", "角色"), T("Provider", "供應商"), T("Model", "模型"), T("Effort", "推理強度"), T("Skill", "技能")].map((x) => h("th", {}, x)))),
         h("tbody", {}, roles.map(([id, r]) => h("tr", { "data-staffing-role": id }, h("td", {}, id), h("td", {}, r.provider), h("td", { class: "cc-mono" }, r.model), h("td", {}, r.effort ?? T("default", "預設")),
           // a role with several named skills lists each one as its pins name it (the same "name vN" a node's skills show)
-          h("td", { class: "cc-mono" }, r.skill?.ref ? (r.skills || []).length ? r.skills.map((p) => `${String(p.ref).replace(/^(pack|bundled):([^/]+\/)*/, "")} v${p.version}`).join(" + ") : `${r.skill.ref.replace(/^pack:[^/]+\/skills\//, "")} v${r.skill.version}` : "—"))),
+          h("td", { class: "cc-mono" }, r.skill?.ref ? (() => { const text = (r.skills || []).length ? r.skills.map((p) => `${String(p.ref).replace(/^(pack|bundled):([^/]+\/)*/, "")} v${p.version}`).join(" + ") : `${r.skill.ref.replace(/^pack:[^/]+\/skills\//, "")} v${r.skill.version}`;
+            return cfg.workflow?.id && r.skill.version != null ? viewSkill({ kind: "role", workflow: cfg.workflow.id, role: id, v: r.skill.version, pinned: r.skill.version, name: text }, text, text) : text; })() : "—"))),
           // per-node overrides: what differs from the node's role (an empty cell keeps the role's choice)
           Object.entries(cfg.nodes || {}).map(([id, n]) => h("tr", { "data-staffing-node": id }, h("td", {}, T(`node ${id}`, `節點 ${id}`)), h("td", {}, n.provider || T("role", "依角色")), h("td", { class: "cc-mono" }, n.model || T("role", "依角色")),
-            h("td", {}, n.effort === undefined ? T("role", "依角色") : n.effort ?? T("default", "預設")), h("td", { class: "cc-mono" }, (n.skills || []).map((p) => `${String(p.ref).replace(/^skill:/, "")} v${p.version}`).join(", ") || T("role", "依角色"))))))),
+            h("td", {}, n.effort === undefined ? T("role", "依角色") : n.effort ?? T("default", "預設")), h("td", { class: "cc-mono" }, (n.skills || []).length ? (n.skills || []).flatMap((p, i) => { const name = String(p.ref).replace(/^skill:/, ""), text = `${name} v${p.version}`;
+              return [i ? ", " : null, /^skill:[a-z0-9][a-z0-9-]{0,40}$/.test(String(p.ref)) ? viewSkill({ kind: "lib", id: name, v: p.version, pinned: p.version, name }, name, text) : text]; }) : T("role", "依角色"))))))),
       same.length ? h("p", { class: "cc-msg", "data-staffing-independence": "same" }, T(`Not independent: ${same.join(", ")} uses the same provider and model as the worker, because no other verified configuration is available. Its review is a fresh context, not a second opinion from another model.`,
         `不是獨立審查：${same.join("、")} 和 worker 用同一個供應商與模型，因為目前沒有其他已驗證的配置。它是新的對話脈絡，不是另一個模型的第二意見。`)) : null),
       raw(T("Configuration details (hashes)", "配置細節（雜湊）"), body)];

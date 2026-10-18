@@ -98,6 +98,7 @@ import { createTasksApi, taskAlias } from "./tasks-api";
 import { createCompare } from "./compare";
 import { createGraphMode } from "./graphmode";
 import { createSkillRoutes } from "./skill-routes";
+import { CrewStore, teamBody } from "./domain/crew";
 import { startupPaths } from "./startup";
 import { encodeCwd } from "./host/claude";
 
@@ -461,7 +462,8 @@ runtime.engine.deps.roleSkill = (wf, role, ref) => {
   const cur = improve.skills.current(wf, role, { text: runtime.engine.deps.skillText(ref), source: ref });
   return { text: cur.text, version: cur.n };
 };
-const skillRoutes = createSkillRoutes({ skills: improve.skills, defs: () => runtime.defs, session: sessionToken(DATA), log: studioLog });
+const viewerCrew = new CrewStore(DATA);
+const skillRoutes = createSkillRoutes({ skills: improve.skills, defs: () => runtime.defs, session: sessionToken(DATA), log: studioLog, team: () => { const t = viewerCrew.exists() ? viewerCrew.current() : null; return t ? teamBody(t) : null; } });
 // the built-in skill library (packs/*/skills) is in data/skills/_library from startup, on a new data folder and an existing one
 try { improve.skills.library(); } catch (e: any) { console.warn(`crew-studio: the built-in skill library could not be seeded: ${e?.message ?? e}`); }
 m7.packs.nativePublished = () => packGenesis.pg.publishedSources();

@@ -16,7 +16,7 @@ export type CrewViewDeps={defs:WorkflowDefs;store:CrewStore;
  /** the registered projects the page can choose ("only this project") */
  projects?:()=>{id:string;name:string}[]};
 const PROJECT=/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,199}$/;
-export type RoleSkillView={ref:string|null;version:number|null;sha256:string;parts?:{ref:string;sha256:string|null}[]};
+export type RoleSkillView={role?:string|null;ref:string|null;version:number|null;sha256:string;parts?:{ref:string;sha256:string|null}[]};
 /** A role skill's short name: the file of its ref (worker.md), each part's for a role of several named skills. */
 export const roleSkillLabel=(r:RoleSkillView)=>(r.parts?.length?r.parts.map(p=>p.ref):[r.ref??'']).map(x=>x.split(/[/:]/).pop()||x).join(' + ');
 /** A judged check's own duty skills: the pins on its ref, on the node it sits on or on an edge into that node. */

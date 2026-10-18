@@ -1,8 +1,8 @@
 // Library → Skills (unit agent-skills): the skill library and the role skills, and the
 // import form (a local folder, a skills home, a public https git URL). Routes:
-// #/library (Artifacts, the existing page, with the tabs above it) and #/library/skills.
-// The page shows a skill's name, description, source, version and hash, never its text:
-// skill text goes only into a run's provider prompt.
+// #/library (Artifacts, the existing page, with the tabs above it), #/library/skills and
+// #/skills/<id>[@v] (the read-only skill viewer over the Library). A row shows a skill's name,
+// description, source, version and hash; Read opens the viewer with its exact text.
 (() => {
 const SK = { data: null, homes: null, kind: "folder", msg: null, busy: false, path: "", url: "", sub: "" };
 window.crewSkills = SK; // the workflow editor reads the same library
@@ -105,7 +105,8 @@ function skillRow(s) {
   const used = s.usedBy || [];
   return h("article", { class: "sk-row", "data-skill": s.id },
     h("div", { class: "sk-row-h" }, h("b", { class: "sk-name" }, s.name), h("span", { class: "vbadge", "data-skill-version": "1" }, `v${s.current}`),
-      h("span", { class: `badge ${s.sourceKind === "builtin" ? "run" : ""}`, "data-skill-source": "1" }, kindLabel(s.sourceKind))),
+      h("span", { class: `badge ${s.sourceKind === "builtin" ? "run" : ""}`, "data-skill-source": "1" }, kindLabel(s.sourceKind)),
+      skillButton({ kind: "lib", id: s.id, v: null, pinned: null, name: s.name }, s.name, { class: "btn sm sk-read" }, icon("eye", "ic sm"), T("Read", "查看內容"))),
     s.description ? h("p", { class: "sk-desc" }, s.description) : null,
     h("dl", { class: "sk-meta" },
       h("dt", {}, T("Fits", "適用")), h("dd", { "data-skill-fits": "1" }, fitText(s.fits)),
@@ -118,7 +119,8 @@ function skillRow(s) {
 function roleRow(r) {
   return h("div", { class: "sk-role", "data-role-skill": r.id },
     h("div", { class: "sk-row-h" }, h("b", {}, r.name),
-      h("span", { class: "sk-role-id" }, h("span", { class: "faint mono" }, r.id), r.current ? h("span", { class: "vbadge" }, `v${r.current}`) : h("span", { class: "faint sk-plain", "data-role-unversioned": "1" }, T("not versioned", "沒有版本")))),
+      h("span", { class: "sk-role-id" }, h("span", { class: "faint mono" }, r.id), r.current ? h("span", { class: "vbadge" }, `v${r.current}`) : h("span", { class: "faint sk-plain", "data-role-unversioned": "1" }, T("not versioned", "沒有版本"))),
+      r.current ? skillButton({ kind: "role", workflow: r.workflow, role: r.role, v: null, pinned: null, name: r.name }, r.name, { class: "btn sm sk-read" }, icon("eye", "ic sm"), T("Read", "查看內容")) : null),
     h("div", { class: "sk-role-m" }, h("span", { class: "mono" }, r.source), r.sha256 ? h("span", { class: "mono faint", title: r.sha256 }, short(r.sha256)) : h("span", { class: "faint" }, T("its source is not on this Mac", "這台 Mac 上沒有它的來源"))));
 }
 function viewSkills() {
@@ -135,6 +137,164 @@ function viewSkills() {
       h("p", { class: "faint sk-note" }, T("Each workflow role's own skill. It always comes first in the agent's instructions, before the skills a node turns on.", "每個流程角色自己的技能。它在 agent 指示裡永遠排在節點開啟的技能之前。")),
       h("div", { class: "card sk-list" }, roles.map(roleRow))));
 }
+
+// ---------- the skill viewer (read-only) ----------
+// Every skill chip (the Crew page's rows and seat editor, a staffing card) and every Library row opens this dialog: the
+// skill's name, the version shown (the one the seat pins first; a switcher when there are several), source, what it fits
+// and where it is used, then its SKILL.md as markdown made of text nodes (the chat's md(): links only to Studio pages or
+// the GitHub repository) or as the exact stored text (原文), and its supporting files, each opened inline as text.
+// #/skills/<id>[@v] opens it over the Library; a role skill is #/skills/role:<workflow>/<role>[@v].
+// ref: { kind: "lib", id } | { kind: "role", workflow, role }, with v (the version to show) and pinned (the one in use there).
+const SKV = { ref: null, d: null, v: null, raw: false, files: {}, err: null, opener: null, back: null, route: null, seq: 0 };
+const refKey = (r) => (r.kind === "role" ? `role:${r.workflow}/${r.role}` : r.id);
+const refHash = (r, v) => `#/skills/${refKey(r).split("/").map(encodeURIComponent).join("/")}${v ? `@${v}` : ""}`;
+const parseRef = (arg) => { const m = /^(?:role:([a-z0-9][a-z0-9-]{0,40})\/([a-z0-9][a-z0-9-]{0,40})|([a-z0-9][a-z0-9-]{0,40}))(?:@([1-9]\d{0,5}))?$/.exec(arg || ""); if (!m) return null;
+  const v = m[4] ? Number(m[4]) : null; return m[3] ? { kind: "lib", id: m[3], v, pinned: v } : { kind: "role", workflow: m[1], role: m[2], v, pinned: v }; };
+/** A role skill as the viewer shows it, from the Improve page's route (the same versioned text rounds receive). */
+const roleView = (r, j) => ({ name: r.name || `${r.workflow} · ${r.role}`, version: j.n, latest: j.current, versions: (j.versions || []).map((x) => ({ n: x.n, sha256: x.sha256, createdAt: x.createdAt, by: x.by })),
+  sha256: j.sha256, text: j.text, source: j.source || `${r.workflow}/${r.role}`, sourceKind: "role", frontmatter: null, ignored: [], files: [], usedBy: [], usedBySeats: [], fits: null });
+async function skvLoad(v) {
+  const r = SKV.ref, seq = ++SKV.seq; SKV.err = null; SKV.files = {}; SKV.loading = true; skvDraw();
+  try {
+    const res = await fetch(r.kind === "role" ? `/api/improve/skills/${r.workflow}/${r.role}${v ? `?v=${v}` : ""}` : `/api/skills/${encodeURIComponent(r.id)}${v ? `?version=${v}` : ""}`);
+    const j = await res.json().catch(() => ({})); if (seq !== SKV.seq) return;
+    if (!res.ok || j.error) throw new Error(j.error || `HTTP ${res.status}`);
+    SKV.d = r.kind === "role" ? roleView(r, j) : j; SKV.v = SKV.d.version;
+  } catch (e) { if (seq === SKV.seq) { SKV.err = String(e.message || e); SKV.d = null; } }
+  if (seq === SKV.seq) { SKV.loading = false; skvDraw(); }
+}
+const FM = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+/** SKILL.md as blocks: headings, lists, quotes, fences and paragraphs; inline text through md() (text nodes, whitelisted links). */
+function skillMarkdown(text) {
+  const out = []; let para = [], fence = null;
+  const end = () => { if (para.length) { out.push(h("div", { class: "skv-p" }, md(para.join("\n")))); para = []; } };
+  for (const line of String(text).replace(/\r\n?/g, "\n").split("\n")) {
+    let m;
+    if (fence) { if (/^\s*(```|~~~)/.test(line)) { out.push(h("pre", { class: "skv-pre" }, h("code", {}, fence.join("\n")))); fence = null; } else fence.push(line); continue; }
+    if (/^\s*(```|~~~)/.test(line)) { end(); fence = []; }
+    else if ((m = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line))) { end(); out.push(h("div", { class: `skv-h skv-h${Math.min(m[1].length, 4)}`, role: "heading", "aria-level": String(Math.min(m[1].length + 2, 6)) }, md(m[2]))); }
+    else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { end(); out.push(h("hr", { class: "skv-hr" })); }
+    else if ((m = /^\s*>\s?(.*)$/.exec(line))) { end(); out.push(h("blockquote", { class: "skv-q" }, md(m[1]))); }
+    else if ((m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(line))) { end(); out.push(h("div", { class: "skv-li", style: `padding-left:${14 + Math.min(m[1].length, 8) * 6}px` }, h("span", { class: "skv-bullet", "aria-hidden": "true" }, /\d/.test(m[2]) ? m[2] : "•"), h("span", {}, md(m[3])))); }
+    else if (!line.trim()) end();
+    else para.push(line);
+  }
+  if (fence) out.push(h("pre", { class: "skv-pre" }, h("code", {}, fence.join("\n"))));
+  end(); return out;
+}
+const fmValue = (v) => (v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
+const useText = (u) => (u.workflow && u.node ? `${u.workflow} · ${u.node}` : u.project ? T(`${u.project} · seat ${u.seat}`, `${u.project} · 位置 ${u.seat}`) : T(`seat ${u.seat}`, `位置 ${u.seat}`));
+function skvFiles(d) {
+  if (!d.files?.length) return null;
+  return h("section", { class: "skv-files", "data-skv-files": "" }, h("h3", {}, T("Supporting files", "附加檔案")),
+    h("ul", {}, d.files.map((f) => { const st = SKV.files[f.path];
+      return h("li", { "data-skv-file-row": f.path },
+        h("button", { type: "button", class: "skv-file", "data-skv-file": f.path, "aria-expanded": String(!!st), disabled: !f.viewable || null,
+          onclick: () => skvFile(f.path) }, icon("doc", "ic sm"), h("span", { class: "mono" }, f.path), h("span", { class: "faint" }, size(f.bytes))),
+        !f.viewable ? h("span", { class: "faint skv-file-why" }, f.bytes > (d.fileCap || Infinity) ? T("too large to show here", "太大，這裡不顯示") : T("not a text file", "不是文字檔")) : null,
+        st ? st.error ? h("p", { class: "bad", role: "alert", "data-skv-file-error": f.path }, st.error) : st.text == null ? h("p", { class: "faint" }, T("Loading…", "載入中…"))
+          : h("pre", { class: "skv-pre skv-raw", "data-skv-file-text": f.path, tabindex: "0", "aria-label": f.path }, st.text) : null); })));
+}
+async function skvFile(path) {
+  if (SKV.files[path]) { delete SKV.files[path]; return skvDraw(); }
+  SKV.files[path] = { text: null }; skvDraw(); const r = SKV.ref;
+  try { const res = await fetch(`/api/skills/${encodeURIComponent(r.id)}/files/${path.split("/").map(encodeURIComponent).join("/")}?version=${SKV.v}`); const j = await res.json().catch(() => ({}));
+    if (!SKV.files[path]) return; SKV.files[path] = res.ok && !j.error ? { text: j.text } : { error: j.error || `HTTP ${res.status}` }; }
+  catch (e) { if (SKV.files[path]) SKV.files[path] = { error: String(e.message || e) }; }
+  skvDraw();
+}
+function skvBody() {
+  const d = SKV.d, r = SKV.ref;
+  if (SKV.err) return [h("p", { class: "bad", role: "alert", "data-skv-error": "" }, SKV.err)];
+  if (!d) return [h("p", { class: "faint", role: "status" }, T("Loading…", "載入中…"))];
+  const pinned = r.pinned, older = pinned != null && pinned < d.latest;
+  const ver = d.versions?.length > 1 ? h("select", { class: "select skv-ver", "aria-label": T("Version", "版本"), "data-skv-version": "", onchange: (e) => skvLoad(Number(e.target.value)) },
+    [...d.versions].reverse().map((x) => h("option", { value: String(x.n) }, `v${x.n}${x.n === d.latest ? T(" · latest", " · 最新") : ""}${x.n === pinned ? T(" · used here", " · 這裡用的") : ""}`)))
+    : h("span", { class: "vbadge", "data-skv-version": "" }, `v${d.version}`);
+  if (ver.tagName === "SELECT") ver.value = String(d.version);
+  const used = [...(d.usedBy || []), ...(d.usedBySeats || [])];
+  const body = d.text.replace(FM, "");
+  return [
+    h("dl", { class: "sk-meta skv-meta" },
+      h("dt", {}, T("Version", "版本")), h("dd", {}, ver, d.version === pinned ? h("span", { class: "badge", "data-skv-used-here": "" }, T("used here", "這裡用的")) : null, d.version === d.latest ? h("span", { class: "faint" }, T("latest", "最新")) : null),
+      h("dt", {}, T("Source", "來源")), h("dd", {}, h("span", { class: `badge ${d.sourceKind === "builtin" ? "run" : ""}`, "data-skv-source": d.sourceKind }, d.sourceKind === "role" || d.sourceKind === "builtin" ? kindLabel(d.sourceKind) : T(`Imported · ${kindLabel(d.sourceKind)}`, `匯入 · ${kindLabel(d.sourceKind)}`)), h("span", { class: "mono" }, d.source)),
+      r.kind === "lib" ? [h("dt", {}, T("Fits", "適用")), h("dd", { "data-skv-fits": "" }, fitText(d.fits))] : null,
+      h("dt", {}, "sha256"), h("dd", { class: "mono", title: d.sha256 || "", "data-skv-sha": d.sha256 || "" }, short(d.sha256)),
+      r.kind === "lib" ? [h("dt", {}, T("Used by", "使用中")), h("dd", { "data-skv-used": String(used.length) }, used.length ? used.map((u) => h("span", { class: "vbadge" }, `${useText(u)} · v${u.v}`)) : h("span", { class: "faint" }, T("no node or seat yet", "還沒有節點或位置")))] : null),
+    older ? h("p", { class: "skv-pinned", role: "note", "data-skv-pinned": String(pinned) },
+      d.version === pinned ? T(`This seat uses v${pinned}, an older version. The latest is v${d.latest}.`, `這個位置用的是 v${pinned}（舊版）。最新是 v${d.latest}。`) : T(`Showing v${d.version}. This seat uses v${pinned}.`, `正在看 v${d.version}。這個位置用的是 v${pinned}。`),
+      d.version === pinned ? h("button", { type: "button", class: "btn sm", "data-skv-latest": "", onclick: () => skvLoad(d.latest) }, T(`View the latest (v${d.latest})`, `看最新版（v${d.latest}）`))
+        : h("button", { type: "button", class: "btn sm", "data-skv-back": "", onclick: () => skvLoad(pinned) }, T(`Back to v${pinned} (used here)`, `回到 v${pinned}（這裡用的）`))) : null,
+    d.ignored?.length ? h("p", { class: "sk-ignored" }, icon("shield", "ic sm"), h("span", {}, ignoredText(d.ignored))) : null,
+    h("div", { class: "skv-bar" }, h("b", {}, "SKILL.md"), h("span", { class: "faint" }, sizeWords(new TextEncoder().encode(d.text).length)),
+      h("button", { type: "button", class: "btn sm", "aria-pressed": String(SKV.raw), "data-skv-raw": "", onclick: () => { SKV.raw = !SKV.raw; skvDraw(); } }, T("Raw text", "原文"))),
+    SKV.raw ? h("pre", { class: "skv-pre skv-raw", "data-skv-raw-text": "", tabindex: "0", "aria-label": T("SKILL.md, exact text", "SKILL.md 原文") }, d.text)
+      : h("div", { class: "skv-doc", "data-skv-rendered": "" },
+        d.frontmatter && Object.keys(d.frontmatter).length ? h("dl", { class: "sk-meta skv-fm", "data-skv-frontmatter": "" }, Object.entries(d.frontmatter).flatMap(([k, v]) => [h("dt", { class: "mono" }, k), h("dd", {}, fmValue(v))])) : null,
+        skillMarkdown(body)),
+    skvFiles(d)];
+}
+const FOCUSABLE = 'button:not([disabled]), select:not([disabled]), a[href], input:not([disabled]), [tabindex]:not([tabindex="-1"])';
+function skvDraw() {
+  const dlg = SKV.back?.querySelector("[data-skill-viewer]"); if (!dlg) return;
+  // the control that had the focus keeps it across the redraw (the version switcher, 原文, a file)
+  const a = document.activeElement, key = a && dlg.contains(a) ? [...a.attributes].find((x) => x.name.startsWith("data-skv")) : null;
+  const name = SKV.d?.name || SKV.ref.name || refKey(SKV.ref);
+  dlg.setAttribute("data-skill-viewer", refKey(SKV.ref)); dlg.setAttribute("data-skv-shown", SKV.d ? String(SKV.d.version) : "");
+  // replaceChildren would write a null as the text "null": only the parts that exist
+  dlg.replaceChildren(...[
+    h("div", { class: "skv-head" }, h("div", { class: "skv-title" }, h("span", { class: "tm-rk" }, SKV.ref.kind === "role" ? T("Role skill", "角色技能") : T("Skill", "技能")), h("h2", { id: "skvTitle" }, name)),
+      h("button", { type: "button", class: "btn ghost skv-x", "aria-label": T("Close", "關閉"), "data-skv-close": "", onclick: () => skvClose() }, icon("x", "ic sm"))),
+    SKV.d?.description ? h("p", { class: "sk-desc" }, SKV.d.description) : null,
+    ...skvBody()].filter(Boolean));
+  hydrateIcons(dlg);
+  if (key) (dlg.querySelector(`[${key.name}="${CSS.escape(key.value)}"]`) || dlg.querySelector("[data-skv-close]"))?.focus();
+}
+/** Where the focus goes back: the chip that opened the dialog, or, after the page drew it anew, the same chip in the same row. */
+function openerKey(el) {
+  if (!el?.closest) return null;
+  const scope = el.closest("[data-team-row],[data-seat-editor],[data-skill],[data-role-skill-row],[data-staffing-role],[data-staffing-node]");
+  const sa = scope && [...scope.attributes].find((x) => ["data-team-row", "data-seat-editor", "data-skill", "data-role-skill-row", "data-staffing-role", "data-staffing-node"].includes(x.name));
+  return { el, sel: `${sa ? `[${sa.name}="${CSS.escape(sa.value)}"] ` : ""}[data-skill-view="${CSS.escape(el.getAttribute("data-skill-view") || "")}"]` };
+}
+function skvOpen(ref, opener) {
+  if (SKV.back?.isConnected) skvClose(false);
+  Object.assign(SKV, { route: null, ref: { ...ref }, d: null, raw: false, files: {}, err: null, opener: openerKey(opener) });
+  const root = document.getElementById("modalRoot");
+  const dlg = h("div", { class: "modal wide skv", role: "dialog", "aria-modal": "true", "aria-labelledby": "skvTitle", "data-skill-viewer": refKey(ref) });
+  // a link in the skill's text (a Studio page) leaves the dialog for that page
+  const back = h("div", { class: "modal-back", "data-skv-back-drop": "", onclick: (e) => { if (e.target === back) skvClose(); else if (e.target.closest?.("a[href^='#/']")) skvClose(false); } }, dlg);
+  back.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); return skvClose(); }
+    if (e.key !== "Tab") return;
+    // the focus stays in the dialog: Tab from the last control goes to the first, Shift+Tab from the first to the last
+    const f = [...dlg.querySelectorAll(FOCUSABLE)].filter((x) => x.getClientRects().length); if (!f.length) return;
+    if (e.shiftKey && (document.activeElement === f[0] || !dlg.contains(document.activeElement))) { e.preventDefault(); f.at(-1).focus(); }
+    else if (!e.shiftKey && document.activeElement === f.at(-1)) { e.preventDefault(); f[0].focus(); }
+  });
+  SKV.back = back; root.replaceChildren(back); skvDraw(); dlg.querySelector("[data-skv-close]")?.focus();
+  skvLoad(ref.v);
+}
+function skvClose(restore = true) {
+  const back = SKV.back; if (!back) return; SKV.back = null; SKV.seq++; back.remove();
+  if (!restore) return;
+  const o = SKV.opener, fromRoute = SKV.route; SKV.route = null;
+  if (fromRoute && /^#\/skills\//.test(location.hash)) { location.hash = "#/library/skills"; requestAnimationFrame(() => document.querySelector(`[data-skill-view="${CSS.escape(refKey(SKV.ref))}"]`)?.focus()); return; }
+  const el = o?.el?.isConnected ? o.el : o?.sel ? document.querySelector(o.sel) : null; el?.focus();
+}
+/** A skill chip as a button that opens the viewer (the chip's own look stays its class). Clicking it changes nothing on the page. */
+function skillButton(ref, label, attrs = {}, ...kids) {
+  return h("button", { type: "button", ...attrs, class: `skv-open ${attrs.class || ""}`.trim(), "data-skill-view": refKey(ref), "data-skill-pinned": ref.pinned ?? null,
+    "aria-label": T(`View skill: ${label}`, `查看技能：${label}`), "aria-haspopup": "dialog", onclick: (e) => { e.stopPropagation(); skvOpen(ref, e.currentTarget); } }, ...kids);
+}
+window.crewSkillView = { open: skvOpen, button: skillButton, close: skvClose, hash: refHash };
+// a hash that leaves the viewer's deep link (Back) closes it; the Crew page never changes the hash, so its dialog stays
+addEventListener("hashchange", () => { if (SKV.back && SKV.route && !/^#\/skills\//.test(location.hash)) { SKV.route = null; skvClose(false); } });
+routes.skills = (arg) => {
+  const ref = parseRef(arg);
+  if (ref && SKV.route !== arg) { SKV.route = arg; requestAnimationFrame(() => { skvOpen(ref, null); SKV.route = arg; }); }
+  return viewSkills();
+};
 
 const base = routes.library;
 routes.library = (arg) => {
