@@ -27,6 +27,7 @@ import { claudeVendorMessage, externalError, type ExternalError } from "./extern
 import { redactText } from "../secure";
 import { withScriptNote } from "../captain-script";
 import { DELIVERABLE_FILE } from "../deliverables";
+import { toolActivity, toolActivityDone } from "../tool-activity";
 /** What captain-only native tools see as the captain's words: the text, or for a files-only message the files line. */
 const captainText = (input: QItem | null) => input ? (input.text.trim() ? input.text : input.attachments?.length ? filesLine(input.attachments) : input.text) : "";
 
@@ -62,6 +63,8 @@ export type MainView = {
 const bi = (en: string, tw: string): { text: string; i18n: { en: string; "zh-TW": string } } => ({ text: en, i18n: { en, "zh-TW": tw } });
 const TURN_ZH: Record<string, string> = { failed: "失敗", interrupted: "已中斷", cancelled: "已取消", timeout: "逾時" };
 export type LogItem = { at: number; kind: "captain" | "card" | "wake" | "firstmate" | "tool" | "status" | "system"; text: string; /** the same note for the UI in each language; text stays the English line */ i18n?: { en: string; "zh-TW": string }; source?: string; status?: string; refusal?: import("./types").HostRefusalCode; nativeFailure?:NativeFailure; /** the failure's class and code (runtime/failures.ts) */ failure?: import("../runtime/failures").Failure; links?:{label:string;href:string}[];
+  /** a tool call (kind "tool"): its short name and the human line the chat shows (null: not shown); `text` keeps the raw call */
+  tool?: string; activity?: import("../tool-activity").Activity | null;
   /** a captain message's attachments (ids and labels; served from /api/main/attachments/<id>) */
   attachments?: import("../attachments").AttachmentRef[];
   /** why the attachments of a captain message could not be sent: typed, never a silent drop */
@@ -189,12 +192,15 @@ export class MainSession {
     if (this.session) this.lastLabel = { host: this.session.host, id: this.session.id, model: this.session.model && this.session.model !== this.session.host ? this.session.model : this.lastLabel?.id === this.session.id ? this.lastLabel.model : null };
     return this.lastLabel;
   }
-  note(i: Omit<LogItem, "at">) {
+  note(i: Omit<LogItem, "at">): LogItem {
     const item: LogItem = { at: Date.now(), ...i, text: redactText(i.text), session: this.sessionLabel() };
     if (item.external && !item.failure) item.failure = fromExternal(item.external); // every failed notice carries its class and code
     this.log.push(item); if (this.log.length > 400) this.log.splice(0, this.log.length - 400);
     this.o.chatLog?.append(item);
+    return item;
   }
+  /** tool lines still waiting for their call's answer (toolEnd), by call id: a proposal's line then names its run */
+  private openTools = new Map<string, LogItem>();
   /** A failed turn or a vendor refusal, as a typed notice with the CLI's own words. */
   private external(source: HostId, raw: unknown, o: Parameters<typeof externalError>[2] = {}, extra: Partial<LogItem> = {}) {
     const ext = externalError(source, raw, o);
@@ -531,6 +537,8 @@ export class MainSession {
   }
 
   private hostEvent(e: HostEvent) {
+    // a tool call goes out (to the page and the log) with its human line; its full input stays here
+    if (e.type === "toolStart") { const t = toolActivity(e.tool ?? e.name, e.input); e.tool = t.tool; e.activity = t.activity; delete e.input; }
     this.onEvent(e);
     // a compacted conversation may have summarised the rules away: the next turn carries them again
     if (e.type === "compacted") { this.compactions++; if (this.driver().rulesSent) this.writeDriver({ ...this.driver(), rulesSent: null }); }
@@ -553,7 +561,15 @@ export class MainSession {
       this.changed();
     }
     if (e.type === "delta") this.reply += e.text;
-    else if (e.type === "toolStart") { this.note({ kind: "tool", text: `${e.name} ${e.summary}`.trim() }); this.guardHandsOn(e.name, e.summary); }
+    else if (e.type === "toolStart") {
+      const item = this.note({ kind: "tool", text: `${e.name} ${e.summary}`.trim(), tool: e.tool, activity: e.activity ?? null });
+      if (item.activity) { this.openTools.set(e.id, item); if (this.openTools.size > 50) this.openTools.delete(this.openTools.keys().next().value!); }
+      this.guardHandsOn(e.name, e.summary);
+    }
+    else if (e.type === "toolEnd") {
+      const item = this.openTools.get(e.id); this.openTools.delete(e.id);
+      if (item && e.ok && item.tool) item.activity = toolActivityDone({ tool: item.tool, activity: item.activity ?? null }, e.result).activity;
+    }
     else if (e.type === "message") { this.note({ kind: "firstmate", text: e.text || this.reply }); this.reply = ""; }
     else if (e.type === "forked") {
       this.note({ kind: "status", ...bi(`The session was re-identified: ${e.oldId} → ${e.newId}; Studio follows the new id`, `session 換了 id：${e.oldId} → ${e.newId}；Studio 跟著新的 id`) });

@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { binArgv, spawnJsonl, type JsonProc } from "./jsonl";
 import { claudeContent, readAttachment } from "../attachments";
 import { nativeToolError } from "./native-errors";
-import { NativeToolFailure, cleanEnv, shortSummary, type AttachOpts, type AttachedSession, type Host, type HostEvent, type HostRefusalCode, type SessionInfo } from "./types";
+import { NativeToolFailure, cleanEnv, resultText, shortSummary, type AttachOpts, type AttachedSession, type Host, type HostEvent, type HostRefusalCode, type SessionInfo } from "./types";
 
 const QUOTA = /rate.?limit|usage.?limit|quota|insufficient_quota|credit balance|spend.?limit|billing|payment/i;
 const AUTH = /not logged in|please run \/login|authentication|invalid.*(?:token|key)|unauthori[sz]ed|oauth token|credential/i;
@@ -221,11 +221,11 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
           } else if (m.type === "assistant") {
             external();
             for (const c of m.message?.content ?? []) {
-              if (c.type === "tool_use") emit({ type: "toolStart", id: String(c.id), name: String(c.name), summary: shortSummary(c.input) });
+              if (c.type === "tool_use") emit({ type: "toolStart", id: String(c.id), name: String(c.name), summary: shortSummary(c.input), input: c.input });
               else if (c.type === "text" && c.text) emit({ type: "progress", text: String(c.text) });
             }
           } else if (m.type === "user") {
-            for (const c of m.message?.content ?? []) if (c.type === "tool_result") emit({ type: "toolEnd", id: String(c.tool_use_id), ok: !c.is_error });
+            for (const c of m.message?.content ?? []) if (c.type === "tool_result") emit({ type: "toolEnd", id: String(c.tool_use_id), ok: !c.is_error, result: resultText(c.content) });
           } else if (m.type === "result") {
             const text = String(m.result ?? "");
             if (text) emit({ type: "message", text });

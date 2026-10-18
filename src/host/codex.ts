@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { binArgv, spawnJsonl, type JsonProc } from "./jsonl";
 import { codexInput, deliveryFor } from "../attachments";
-import { cleanEnv, shortSummary, type AttachOpts, type AttachedSession, type Host, type HostEvent, type SessionInfo } from "./types";
+import { cleanEnv, resultText, shortSummary, type AttachOpts, type AttachedSession, type Host, type HostEvent, type SessionInfo } from "./types";
 
 type Rpc = { proc: JsonProc; call(method: string, params?: unknown, ms?: number): Promise<any>; notify(method: string, params?: unknown): void; close(): void };
 
@@ -144,7 +144,8 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
         }
         else if (m.method === "item/agentMessage/delta" && p.delta) { text += p.delta; emit({ type: "delta", text: String(p.delta) }); }
         else if (m.method === "item/started" && p.item && p.item.type !== "agentMessage" && p.item.type !== "userMessage" && p.item.type !== "reasoning")
-          emit({ type: "toolStart", id: String(p.item.id), name: String(p.item.type), summary: p.item.type==="imageGeneration"?"Generating image":shortSummary(p.item.command ?? p.item.tool ?? p.item.changes ?? p.item) });
+          emit({ type: "toolStart", id: String(p.item.id), name: String(p.item.type), summary: p.item.type==="imageGeneration"?"Generating image":shortSummary(p.item.command ?? p.item.tool ?? p.item.changes ?? p.item),
+            ...(/^(?:mcp|dynamic)ToolCall$/.test(p.item.type) && typeof p.item.tool === "string" ? { tool: p.item.tool, input: p.item.arguments } : {}) });
         else if (m.method === "item/completed" && p.item) {
           if(finishing)return;
           if(p.item.type==="imageGeneration"){
@@ -154,7 +155,7 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
             toolFailure = "Codex code-mode tool execution failed. Repository reads are not verified; check the Codex runtime before continuing.";
             emit({ type: "toolEnd", id: String(p.item.id), ok: false });
           } else if (p.item.type === "agentMessage") { if (!text && p.item.text) { text = String(p.item.text); emit({ type: "delta", text }); } }
-          else if (p.item.type !== "userMessage" && p.item.type !== "reasoning") emit({ type: "toolEnd", id: String(p.item.id), ok: !/fail|declin|error/i.test(String(p.item.status ?? "")) });
+          else if (p.item.type !== "userMessage" && p.item.type !== "reasoning") emit({ type: "toolEnd", id: String(p.item.id), ok: !/fail|declin|error/i.test(String(p.item.status ?? "")), result: resultText(p.item.contentItems ?? p.item.result?.content) });
         } else if (m.method === "turn/completed") {
           const st = String(p.turn?.status ?? "completed");
           if([...images.values()].some(item=>item.status!=="completed"))toolFailure="Image generation incomplete; Library import refused.";

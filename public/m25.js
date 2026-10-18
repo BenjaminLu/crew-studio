@@ -24,7 +24,7 @@ getJ("/api/remote/me").then((m) => { MS.me = m; if (isMain()) renderChat(false);
   es.addEventListener("mainEvent", (m) => {
     const e = JSON.parse(m.data);
     if (e.type === "delta") MS.live += e.text;
-    else if (e.type === "toolStart") MS.liveTools.push(`${e.name} ${e.summary}`.trim());
+    else if (e.type === "toolStart") { const a = toolActivity(e); if (a) MS.liveTools.push(a.label); }
     if (isMain()) { const el = $("#mainLive"); if (el && e.type === "delta") paintLive(); else renderChat(false); }
   });
 })();
@@ -128,13 +128,33 @@ const noteText = (it) => (it.i18n ? (lang === "zh-CN" ? it.i18n["zh-CN"] || I18N
 let liveFrame = 0;
 const liveText = () => I18N.chatText(lang, MS.live, { live: true });
 function paintLive() { if (liveFrame) return; liveFrame = requestAnimationFrame(() => { liveFrame = 0; const el = $("#mainLive"); if (!el) return; el.textContent = liveText(); const log = $("#chatLog"); log.scrollTop = log.scrollHeight; }); }
+// a tool call as one human line in the Board's language (live S27; src/tool-activity.ts writes it), never the raw call: that
+// stays folded under the line. A line from before Studio wrote one says only the tool's short name; ToolSearch is not shown
+const HIDDEN_TOOLS = new Set(["ToolSearch"]);
+const toolShort = (name) => (/^mcp__[^_]+(?:_[^_]+)*?__(.+)$/.exec(name)?.[1] ?? name).slice(0, 60);
+function toolActivity(it) {
+  const short = it.tool || toolShort(String(it.name ?? it.text ?? "").split(" ")[0]);
+  if (it.activity === null || HIDDEN_TOOLS.has(short)) return null;
+  const a = it.activity || { en: `Using a tool: ${short}`, "zh-TW": `使用工具：${short}` };
+  return { short, label: lang === "zh-CN" ? I18N.displayCN(a["zh-TW"]) : L(a) };
+}
+// the lines the captain unfolded stay unfolded when the chat draws itself again
+const openTools = new Set();
+function toolLine(it) {
+  const a = toolActivity(it); if (!a) return null;
+  const key = `${it.at}|${it.text.slice(0, 80)}`;
+  return h("details", { class: "toolrow", "data-main": "tool", "data-tool": a.short, style: "padding:2px 6px;font-size:12.5px", open: openTools.has(key) || null,
+    ontoggle: (ev) => { if (ev.currentTarget.open) openTools.add(key); else openTools.delete(key); } },
+    h("summary", { class: "faint", "data-tool-activity": "" }, a.label),
+    h("code", { "data-tool-raw": "", style: "display:block;font-size:11.5px;white-space:pre-wrap;word-break:break-all;margin-top:2px" }, it.text.slice(0, 600)));
+}
 function logItem(it, i) {
   if(it.source === "studio:native-outcome")return h("div",{class:"card x-pad","data-native-outcome":it.id},h("p",{},it.text),...(it.links||[]).filter(l=>/^#\/(run|review)\//.test(l.href)).map(l=>h("a",{class:"btn",href:l.href},l.label)));
   if (it.kind === "captain") return h("div", { class: "msg me", "data-main": "captain" }, it.text ? h("div", { class: "bub" }, it.text) : null, it.attachments?.length ? attView(it.attachments) : null, it.source && it.source !== "desktop" ? h("div", { class: "faint", style: "font-size:11px;text-align:right" }, it.source) : null);
   if (it.external) return externalView(it.external);
   if (it.attachmentRefusal) return externalView({ source: "studio", class: "attachment", code: it.attachmentRefusal, message: it.text.replace(/^Not sent: /, ""), reason: { en: "An attachment could not be sent.", "zh-TW": "附件無法送出。" } });
   if (it.kind === "firstmate") return h("div", { class: "msg fm", "data-main": "firstmate" }, h("div", { class: "meta" }, "Firstmate", (it.session?.host || MS.view?.host) ? h("span", { class: "vbadge" }, it.session?.host || MS.view.host) : null), h("div", { class: "bub" }, md(I18N.chatText(lang, it.text))));
-  if (it.kind === "tool") return h("div", { class: "toolrow", "data-main": "tool", style: "padding:2px 6px" }, h("code", { style: "font-size:12px" }, it.text.slice(0, 160)));
+  if (it.kind === "tool") return toolLine(it);
   // a wake Studio wrote (an escalation, an agent question): its human summary; the raw prompt stays in the log on disk (S23)
   if (it.kind === "wake" && it.shown?.length) return h("div", { class: "faint", "data-main": "wake", "data-wake-shown": it.shown.length, style: "font-size:12.5px;padding:4px 8px;border-left:2px solid var(--line);white-space:pre-wrap" }, h("b", {}, T("Sent to Firstmate", "交給 Firstmate") + " · "), it.shown.map((x) => L(x)).join("\n"));
   const lab = KLABEL[it.kind]?.();
@@ -149,7 +169,7 @@ renderChat = function (stick = true) {
   else {
     kids.push(driverBanner(v));
     v.approvals.forEach((a) => kids.push(approvalCard(a)));
-    v.log.filter((x) => !(v.context==="studio"&&x.source==="studio:handoff") && (x.kind !== "status" || x.attachmentRefusal || x.external || /Paused|Handed|Attached|re-identified|Turn (failed|interrupted)/.test(x.text))).slice(-80).forEach((x, i, all) => { const sep = sessionSep(x, all[i - 1], all, v); if (sep) kids.push(sep); kids.push(logItem(x, i)); });
+    v.log.filter((x) => !(v.context==="studio"&&x.source==="studio:handoff") && (x.kind !== "status" || x.attachmentRefusal || x.external || /Paused|Handed|Attached|re-identified|Turn (failed|interrupted)/.test(x.text))).slice(-80).forEach((x, i, all) => { const sep = sessionSep(x, all[i - 1], all, v); if (sep) kids.push(sep); const el = logItem(x, i); if (el) kids.push(el); });
     if (v.busy) kids.push(h("div", { class: "msg fm", "data-main": "live" }, h("div", { class: "meta" }, "Firstmate", h("span", { class: "faint" }, T("working…", "處理中…"))),
       MS.liveTools.length ? h("div", { class: "faint", style: "font-size:12px" }, MS.liveTools.slice(-3).join(" · ")) : null,
       MS.live ? h("div", { class: "bub", id: "mainLive" }, liveText()) : h("div", { class: "typing" }, h("i"), h("i"), h("i"))));

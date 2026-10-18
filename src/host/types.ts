@@ -24,8 +24,11 @@ export type HostEvent =
   | {type:"nativeToolFailure";failure:NativeFailure}
   | { type: "delta"; text: string }
   | { type: "progress"; text: string }
-  | { type: "toolStart"; id: string; name: string; summary: string }
-  | { type: "toolEnd"; id: string; ok: boolean }
+  /** `tool`: the called tool's own name when `name` is a vendor item type (Codex mcpToolCall/dynamicToolCall); `input`: its
+   *  arguments, read by Studio for the chat's activity line (src/tool-activity.ts) and dropped before the event leaves Studio */
+  | { type: "toolStart"; id: string; name: string; summary: string; tool?: string; input?: unknown; activity?: import("../tool-activity").Activity | null }
+  /** `result`: the call's answer text, when the vendor reports it (a proposal names its run) */
+  | { type: "toolEnd"; id: string; ok: boolean; result?: string }
   | { type: "permissionRequest"; request: PermissionRequest }
   | { type: "message"; text: string }
   | { type: "turnEnd"; status: "completed" | "interrupted" | "failed"; message?: string; external?: boolean }
@@ -117,6 +120,11 @@ export function cleanEnv(base: Record<string, string | undefined> = process.env)
   return out;
 }
 
+/** A tool result's text (a string, or the text blocks of a content array), capped: only Studio reads it, for the activity line. */
+export const resultText = (content: unknown, n = 2000): string | undefined => {
+  const s = typeof content === "string" ? content : Array.isArray(content) ? content.map((b: any) => typeof b?.text === "string" ? b.text : "").join("") : "";
+  return s ? s.slice(0, n) : undefined;
+};
 export const shortSummary = (input: unknown, n = 160): string => {
   if (input == null) return "";
   if (typeof input === "string") return input.slice(0, n);

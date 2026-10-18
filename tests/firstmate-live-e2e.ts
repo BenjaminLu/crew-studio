@@ -334,5 +334,37 @@ await section("S23 escalation summary in the chat", async () => {
   } finally { t.done(); }
 });
 
+// ---------- S27: a tool call is one human activity line, never raw JSON ----------
+await section("S27 activity lines", async () => {
+  const QUOTE = "給我一張轉角書店的方形社群海報";
+  const t = await mainWith({ script: (text, turn) => {
+    if (!text.includes("海報")) return;
+    turn.emit({ type: "toolStart", id: "u1", name: "ToolSearch", summary: '{"query":"select:mcp__studio__studio_propose_work"}', input: { query: "select:mcp__studio__studio_propose_work" } });
+    turn.emit({ type: "toolStart", id: "u2", name: "mcp__studio__studio_list_workflows", summary: "{}", input: {} });
+    turn.emit({ type: "toolEnd", id: "u2", ok: true, result: '{"workflows":[]}' });
+    turn.emit({ type: "toolStart", id: "u3", name: "mcp__studio__studio_propose_work", summary: `{"workflow":"images","version":4,"title":"轉角書店方形社群海報","captain_quote":"${QUOTE}"}`,
+      input: { workflow: "images", version: 4, title: "轉角書店方形社群海報", text: QUOTE + "。", captain_quote: QUOTE } });
+    turn.emit({ type: "toolEnd", id: "u3", ok: true, result: '{"proposal":"R-093","cards":[],"status":"captain-approval-required","href":"#/run/R-093"}' });
+    // Codex names the item type; the called tool comes as `tool`
+    turn.emit({ type: "toolStart", id: "u4", name: "dynamicToolCall", tool: "studio_manual", summary: "studio_manual", input: { section: "studio/pages" } });
+    turn.emit({ type: "toolStart", id: "u5", name: "Bash", summary: "ls -la", input: { command: "ls -la" } });
+  } });
+  const events: any[] = []; t.m.onEvent = (e) => events.push(e);
+  try {
+    await t.say(QUOTE);
+    const tools = t.m.view().log.filter((l) => l.kind === "tool"), by = (tool: string) => tools.find((l) => l.tool === tool);
+    ok(by("ToolSearch")?.activity === null, "ToolSearch is not shown in the chat (its line has no activity)", JSON.stringify(by("ToolSearch")));
+    ok(by("studio_list_workflows")?.activity?.["zh-TW"] === "查看工作流程清單" && by("studio_list_workflows")?.activity?.en === "Looking at the workflow list", "a Studio tool says what it does, in English and Traditional Chinese", JSON.stringify(by("studio_list_workflows")));
+    ok(by("studio_propose_work")?.activity?.["zh-TW"] === "提出派工：轉角書店方形社群海報 → R-093" && by("studio_propose_work")?.activity?.en === "Proposing work: 轉角書店方形社群海報 → R-093",
+      "a proposal names its title and, once Studio answered, the run it raised", JSON.stringify(by("studio_propose_work")));
+    ok(by("studio_manual")?.activity?.["zh-TW"] === "查閱操作手冊：studio/pages", "a Codex tool item is named by the tool it called", JSON.stringify(by("studio_manual")));
+    ok(by("Bash")?.activity?.["zh-TW"] === "使用工具：Bash" && by("Bash")?.activity?.en === "Using a tool: Bash", "any other tool says only its short name", JSON.stringify(by("Bash")));
+    ok(/^mcp__studio__studio_propose_work \{"workflow":"images"/.test(by("studio_propose_work")?.text ?? ""), "the line keeps the raw call for the folded detail and the log");
+    const starts = events.filter((e) => e.type === "toolStart");
+    ok(starts.length === 5 && starts.every((e) => !("input" in e)) && starts.find((e) => e.id === "u3")?.activity?.["zh-TW"] === "提出派工：轉角書店方形社群海報",
+      "the page's live event carries the activity line and never the call's full input", JSON.stringify(starts.map((e) => [e.id, e.activity])));
+  } finally { t.done(); }
+});
+
 console.log(`firstmate-live-e2e: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
