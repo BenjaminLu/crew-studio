@@ -76,13 +76,13 @@ A later line for the same hashes supersedes; an edited or forged line is ignored
 After a version is approved with scripts, Studio prepares it by itself (src/skillpkg/index.ts `decide` → `prepareSoon`;
 again at start for every approved version in use; a round waits for one in flight). No human in the loop, no card.
 
-- **Env**: `data/envs/<key>/`, key = sha256(lockfile bytes + platform + arch + runtime versions). Content-addressed:
-  two skills with the same locks on the same runtimes share one env; `env.json` is written last (a folder without it is a
+- **Env**: `data/envs/<key>/`, key = sha256(lockfile bytes + platform + arch + runtime versions + approved install-script names). Content-addressed:
+  two skills with the same locks, runtimes and install-script approval share one env; `env.json` is written last (a folder without it is a
   prepare that did not finish and is redone) and names every `<id>@v<N>` using it. GC removes an env no approved, in-use
   version names (the team's pins and every workflow's latest version); a per-prepare cache `data/envs/.cache-<rand>` is
   removed after each prepare.
 - **npm**: `npm ci --ignore-scripts --no-audit --no-fund` in `env/node` (package.json + package-lock.json copied there), with
-  empty user and global npmrc (no token, no other registry). Lockfile v2/v3 only; every entry must be a registry tarball
+  empty user and global npmrc (no token, no other registry). Lockfile v2/v3 only; linked entries and entries without a resolved URL are refused; every dependency must be a registry tarball
   with an integrity hash. A package with `hasInstallScript` is recorded on the env and shown as a warning: its script is
   unreviewed code from the registry, so it never runs, unless the captain's approval names that package
   (`installScripts`): then `npm rebuild <names>` runs in the same sandbox with no network.

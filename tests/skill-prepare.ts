@@ -14,7 +14,7 @@ const ok = (c: boolean, name: string, extra = "") => { if (c) { pass++; console.
 const { Skills } = await import("../src/skills");
 const { SkillPackages } = await import("../src/skillpkg/index");
 const { Egress } = await import("../src/egress");
-const { prepareExec, npmPlan, envKey } = await import("../src/skillpkg/prepare");
+const { prepareExec, prepareEnv, npmPlan, envKey } = await import("../src/skillpkg/prepare");
 
 const tmp = mkdtempSync(join(tmpdir(), "crew-prepare-")); const data = join(tmp, "data"); mkdirSync(data);
 const fx = startRegistry();
@@ -31,7 +31,11 @@ const pk = new SkillPackages({ dataDir: data, skills, egress: () => egress, brew
   let refused = ""; try { npmPlan(JSON.stringify({ lockfileVersion: 3, packages: { "": {}, "node_modules/x": { resolved: "git+ssh://git@github.com/x/x.git", integrity: "sha512-x" } } })); } catch (e: any) { refused = e.message; }
   ok(/only registry tarballs/.test(refused), "a lock entry that is not a registry tarball (git, file) is refused", refused);
   try { npmPlan(JSON.stringify({ lockfileVersion: 3, packages: { "": {}, "node_modules/x": { resolved: "https://registry.npmjs.org/x/-/x-1.tgz" } } })); refused = ""; } catch (e: any) { refused = e.message; }
-  ok(/no integrity hash/.test(refused), "a lock entry with no integrity hash is refused", refused); }
+  ok(/no integrity hash/.test(refused), "a lock entry with no integrity hash is refused", refused);
+  for (const entry of [{ version: "1.0.0", hasInstallScript: true }, { link: true, resolved: "../local" }]) {
+    refused = ""; try { npmPlan(JSON.stringify({ lockfileVersion: 3, packages: { "": {}, "node_modules/x": entry } })); } catch (e: any) { refused = e.message; }
+    ok(/registry tarball/.test(refused), "a missing resolved URL or linked dependency cannot bypass the pinned registry-only plan", refused);
+  } }
 
 // ---------- the prepare sandbox ----------
 { const env = join(data, "envs", "probe"), cache = join(data, "envs", ".cache-probe"); mkdirSync(join(cache, "tmp"), { recursive: true }); mkdirSync(env, { recursive: true });
@@ -85,6 +89,18 @@ ok(a.created && !!a.version.pkg && a.version.pkg.npm?.files[1] === "package-lock
   const lv = skills.libVersion("pkg-a", 1)!, pkg = skills.pkg("pkg-a", 1)!;
   const k1 = envKey(pkg, join(lv.dir, "files"), sa.runtimes), k2 = envKey(pkg, join(lv.dir, "files"), { ...sa.runtimes, node: { ...sa.runtimes.node!, version: "99.0.0" } });
   ok(k1 === sa.envKey && k2 !== k1, "the env key is the lockfiles plus platform and runtime versions: another node version is another env"); }
+
+// An install-script approval changes the env; its effects cannot reach a skill that did not approve it.
+{ const lv = skills.libVersion("pkg-a", 1)!, pkg = skills.pkg("pkg-a", 1)!, rt = pk.status("pkg-a", 1).runtimes;
+  const approved = await prepareEnv(pkg, join(lv.dir, "files"), rt, "pkg-script-approved@v1", { dataDir: data, egress, allowScripts: ["fixture-scripted"] });
+  const ordinary = await prepareEnv(pkg, join(lv.dir, "files"), rt, "pkg-no-scripts@v1", { dataDir: data, egress });
+  ok(approved.key !== ordinary.key && approved.ranScripts.includes("fixture-scripted") && existsSync(join(data, "envs", approved.key, "node", "node_modules", "fixture-scripted", "POSTINSTALL_RAN")),
+    "approved install scripts run in a separate env from the same locks without that approval");
+  ok(!ordinary.ranScripts.length && !existsSync(join(data, "envs", ordinary.key, "node", "node_modules", "fixture-scripted", "POSTINSTALL_RAN")),
+    "reusing ordinary locks never inherits another version's install-script side effects");
+  ok(envKey(pkg, join(lv.dir, "files"), rt, process.platform, process.arch, ["b", "a", "a"]) === envKey(pkg, join(lv.dir, "files"), rt, process.platform, process.arch, ["a", "b"]),
+    "install-script approval ordering and duplicates do not change the env key");
+}
 
 // ---------- gc ----------
 { inUse.clear(); inUse.add("pkg-b@v1"); const keep = pk.gc();

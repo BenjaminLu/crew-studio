@@ -98,6 +98,18 @@ const cardOf = async (run: string) => { await until(() => E.cards.list({ run, op
   await E.answer(card.id, { choice: "approve", note: "text-only", by: "captain" }); await done(p.proposal);
   ok(pk.decision("tx", 1)?.scripts === "text-only" && pk.status("tx", 1).state === "text-only" && JSON.stringify(pk.decision("tx", 1)?.hosts) === "[]", "text only is the captain's choice on the same card, recorded with no hosts", JSON.stringify(pk.decision("tx", 1))); }
 
+// A stale team-change card cannot grant a global script approval before its team CAS fails.
+{ const v = lib.importFolder(mk(join(tmp, "stale"), { "SKILL.md": md("stale"), "scripts/go.sh": "#!/bin/sh\necho hi\n" }), "captain").version;
+  const stalePin = { id: "stale", v: 1, sha256: v.sha256, filesSha256: v.filesSha256 };
+  const p: any = await crew.call("studio_propose_crew_change", { change: { kind: "member", seat: "reviewer", set: { skills: [stalePin] } } }, captain("stale"));
+  const card = await cardOf(p.proposal);
+  const before = store.current()!;
+  store.write(C.applyChange(C.teamBody(before), { kind: "member", seat: "coordinator", set: { effort: "high" } }), before.hash, { by: "captain", via: "page" });
+  await E.answer(card.id, { choice: "approve", note: "scripts", by: "captain" }); await done(p.proposal);
+  ok(E.get(p.proposal)!.status === "failed" && !pk.decision("stale", 1) && !store.current()!.members.reviewer.skills.some((s: any) => s.id === "stale"),
+    "a stale team-change card fails before recording any Studio-wide script approval");
+}
+
 // ---------- the Crew page asks the same before it saves ----------
 { const pg = lib.importFolder(mk(join(tmp, "pg"), { "SKILL.md": md("pg"), "scripts/a.py": "print('a')\n" }), "captain").version;
   const ppin = { id: "pg", v: 1, sha256: pg.sha256, filesSha256: pg.filesSha256 };

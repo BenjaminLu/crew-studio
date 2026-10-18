@@ -103,15 +103,16 @@ export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Prom
   const change=parse(x.run),card=engine.cards.list({run:x.run.id}).find(c=>c.node==='confirm'&&c.captainOnly&&c.status==='answered'&&c.answer?.choice==='approve');
   const answer=engine.trusted(x.run.id).entries.find(e=>e.record==='card-answer'&&e.data?.card===card?.id&&e.data?.choice==='approve');
   if(!card||!answer||!engine.trusted(x.run.id).ok||!engine.owns(x)||!/^captain\b/i.test(String(card.answer?.by??'')))throw new NativeToolFailure('captain_confirmation_required','The captain\'s approval of this team change is missing','需要船長核准這個團隊變更。','captain_review');
+  const {cfg,team}=now();if(cfg?.approval.card===card.id&&cfg.approval.run===x.run.id)return'ok';
+  if((cfg?.hash??'')!==(x.run.params.expected??""))throw new NativeToolFailure('target_changed','The team changed after this card was shown; ask Firstmate to propose it again','團隊在這張卡顯示之後改了；請 Firstmate 重新提出。','read_current_state');
+  const def=change.kind==='node'?engine.defs.get(change.workflow):undefined;
+  const next=applyChange(team,change,def);
   // the script skills the card listed: decided by this answer (with scripts, or text only), each bound to both hashes it showed
   const pend:any[]=Array.isArray(x.run.ctx.skillPending)?x.run.ctx.skillPending:[],how=String(answer.data?.note??'').trim(),pk=engine.deps.skillPackages;
   if(pend.length&&pk){if(how!=='scripts'&&how!=='text-only')throw new NativeToolFailure('captain_confirmation_required','The card lists script skills: the captain picks “Approve with scripts” or “Text only”','卡片上有 script skill：船長要選「核准（含 script）」或「只當文字」。','captain_review');
    for(const p of pend){const lv=pk.o.skills.libVersion(p.id,p.v);if(!lv||lv.rec.sha256!==p.sha256||lv.rec.filesSha256!==p.filesSha256)throw new NativeToolFailure('target_changed',`Skill ${p.id}@v${p.v} is not the version the card showed`,`skill ${p.id}@v${p.v} 不是卡片上顯示的版本。`,'read_current_state');
     if(!pk.decision(p.id,p.v))pk.decide(p.id,p.v,how==='text-only'?'text-only':'approved','captain (card)','card',{card:card.id,run:x.run.id});}}
-  const {cfg,team}=now();if(cfg?.approval.card===card.id&&cfg.approval.run===x.run.id)return'ok';
-  if((cfg?.hash??'')!==(x.run.params.expected??""))throw new NativeToolFailure('target_changed','The team changed after this card was shown; ask Firstmate to propose it again','團隊在這張卡顯示之後改了；請 Firstmate 重新提出。','read_current_state');
-  const def=change.kind==='node'?engine.defs.get(change.workflow):undefined;
-  const written=store.write(applyChange(team,change,def),cfg?.hash??null,{by:'captain (card)',via:'card',card:card.id,run:x.run.id,answerSeq:answer.seq});
+  const written=store.write(next,cfg?.hash??null,{by:'captain (card)',via:'card',card:card.id,run:x.run.id,answerSeq:answer.seq});
   engine.record(x,'crew-approved',{data:{schema:1,team:written.hash,version:written.version,card:card.id}});try{o.send?.('team',{version:written.version});}catch{}try{o.onApproved?.(x.run.id);}catch{}return'ok';};
  /** A workflow that needs a seat the team does not fill: raise its card (once) and refuse the proposal, naming the seat and the card.
   *  Nothing for a Studio without a team (the per-project staffing flow applies) or a workflow the team covers. Read in the work's project. */

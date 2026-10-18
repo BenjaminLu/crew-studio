@@ -29,8 +29,10 @@ export function npmPlan(lockText: string): { hosts: string[]; installScripts: st
   if (!lock?.packages || typeof lock.packages !== "object" || Number(lock.lockfileVersion) < 2) throw new PrepareError("package-lock.json must be lockfileVersion 2 or 3 (npm 7 or later)", "package-lock.json 需要 lockfileVersion 2 或 3（npm 7 以後）");
   const hosts = new Set<string>(), scripts = new Set<string>(); let n = 0;
   for (const [path, p] of Object.entries<any>(lock.packages)) {
-    if (!path || p?.link) continue; n++;
-    if (typeof p.resolved !== "string") { hosts.add("registry.npmjs.org"); continue; }
+    if (!path) continue;
+    if (p?.link) throw new PrepareError(`${path}: linked dependencies are not registry tarballs`, `${path}：連結依賴不是套件庫 tarball`);
+    n++;
+    if (typeof p.resolved !== "string") throw new PrepareError(`${path}: no resolved registry tarball URL`, `${path}：缺少套件庫 tarball 的 resolved 網址`);
     let u: URL; try { u = new URL(p.resolved); } catch { throw new PrepareError(`${path}: resolved is not a URL`, `${path}：resolved 不是網址`); }
     if (!/^https?:$/.test(u.protocol)) throw new PrepareError(`${path} resolves to a ${u.protocol} URL; only registry tarballs are installed`, `${path} 不是從套件庫下載；只裝套件庫的 tarball`);
     if (typeof p.integrity !== "string" || !/^sha(256|384|512)-/.test(p.integrity)) throw new PrepareError(`${path} has no integrity hash in package-lock.json`, `${path} 在 package-lock.json 裡沒有 integrity 雜湊`);
@@ -63,9 +65,9 @@ export function pythonPlan(kind: "uv" | "requirements" | "pep723", text: string)
 const indexHosts = (idx: string) => { const h = new URL(idx).hostname.toLowerCase(); return h === "pypi.org" ? ["pypi.org", "files.pythonhosted.org"] : [h]; };
 
 /** The env key of a version's locks on these runtimes; null when it has no lockfile (nothing to install). */
-export function envKey(pkg: PackageInfo, files: string, rt: { node?: Runtime | null; python?: Runtime | null }, platform = process.platform, arch = process.arch): string | null {
+export function envKey(pkg: PackageInfo, files: string, rt: { node?: Runtime | null; python?: Runtime | null }, platform = process.platform, arch = process.arch, allowScripts: string[] = []): string | null {
   if (!pkg.npm && !pkg.python) return null;
-  const parts = [`schema:1`, `platform:${platform}`, `arch:${arch}`];
+  const parts = [`schema:2`, `platform:${platform}`, `arch:${arch}`, `installScripts:${JSON.stringify([...new Set(allowScripts)].sort())}`];
   if (pkg.npm) { parts.push(`node:${rt.node?.version ?? "-"}`, `npm:${rt.node?.npmVersion ?? "-"}`); for (const f of pkg.npm.files) parts.push(`${f.replace(/^.*\//, "")}:${sha(readFileSync(join(files, f)))}`); }
   if (pkg.python) { parts.push(`python:${rt.python?.version ?? "-"}`, `pykind:${pkg.python.kind}`); for (const f of pkg.python.files) parts.push(`pylock:${sha(readFileSync(join(files, f)))}`); }
   return sha(parts.join("\n"));
@@ -84,7 +86,7 @@ const inflight = new Map<string, Promise<EnvRecord>>();
  * allowScripts: packages whose install scripts the captain's approval named (run after the install, with no network).
  */
 export function prepareEnv(pkg: PackageInfo, files: string, rt: { node?: Runtime | null; python?: Runtime | null }, ref: string, c: PrepareCtx & { allowScripts?: string[] }): Promise<EnvRecord> {
-  const key = envKey(pkg, files, rt); if (!key) throw new PrepareError("nothing to prepare", "沒有要準備的東西");
+  const key = envKey(pkg, files, rt, process.platform, process.arch, c.allowScripts); if (!key) throw new PrepareError("nothing to prepare", "沒有要準備的東西");
   const had = readEnv(c.dataDir, key);
   if (had) { if (!had.refs.includes(ref)) { had.refs = [...had.refs, ref].sort(); writeFileSync(join(envDir(c.dataDir, key), "env.json"), JSON.stringify(had, null, 1)); } return Promise.resolve(had); }
   const running = inflight.get(key); if (running) return running.then((e) => prepareEnv(pkg, files, rt, ref, c).then(() => e));
