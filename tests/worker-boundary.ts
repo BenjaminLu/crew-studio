@@ -3,7 +3,7 @@ import { strict as assert } from "node:assert";
 import { workerManifest, WorkerLease } from "../src/worker-boundary";
 let passed = 0;
 const test = (name: string, f: () => void) => { f(); passed++; console.log(`ok ${name}`); };
-const policy = { controllerUid: 501, workerUid: 502, workerGid: 502, workerHome: "/Users/crew-worker", stagingRoot: "/private/var/crew-worker", path: "/usr/bin:/bin" };
+const policy = { controllerUid: 501, workerUid: 502, workerGid: 502, workerHome: "/private/var/crew-worker/home", stagingRoot: "/private/var/crew-worker", path: "/usr/bin:/bin" };
 const request = { run: "R-123", argv: ["node", "tests/run.js"], cwd: "worktree", timeoutS: 60 };
 test("broker selects OS identity and never inherits controller env", () => {
   const m = workerManifest(request, policy);
@@ -11,7 +11,7 @@ test("broker selects OS identity and never inherits controller env", () => {
   assert.deepEqual(Object.keys(m.env).sort(), ["CI", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "HOME", "HOST", "LANG", "PATH"]);
 });
 for (const field of ["uid", "gid", "env", "home", "stagingRoot", "protocol"]) test(`request cannot supply ${field}`, () => assert.throws(() => workerManifest({ ...request, [field]: "injected" }, policy)));
-for (const cwd of ["/Users/operator", "../secret", "a/../b", "a/./b", "a//b", "a\\b", "a\0b", ""]) test(`reject cwd ${JSON.stringify(cwd)}`, () => assert.throws(() => workerManifest({ ...request, cwd }, policy)));
+for (const cwd of ["/private/operator", "../secret", "a/../b", "a/./b", "a//b", "a\\b", "a\0b", ""]) test(`reject cwd ${JSON.stringify(cwd)}`, () => assert.throws(() => workerManifest({ ...request, cwd }, policy)));
 test("reject same uid and root", () => {
   assert.throws(() => workerManifest(request, { ...policy, workerUid: 501 }));
   assert.throws(() => workerManifest(request, { ...policy, workerUid: 0 }));
