@@ -15,7 +15,8 @@ import { Projects } from "../src/doors";
 import { GitHubPoller } from "../src/github-poller";
 import { OBSERVED_MERGE } from "../src/domain/remote-ci";
 import { grantSignature, verifyGitHubGrant } from "../src/github-grant";
-import { installMergeGrant, startMergeGrant, proposeMergeGrant, MERGE_GRANT_WORKFLOW } from "../src/github-merge-grant";
+import { installFirstmate } from "../src/firstmate";
+import { startMergeGrant, proposeMergeGrant, MERGE_GRANT_WORKFLOW } from "../src/github-merge-grant";
 import { mergeAccessOf } from "../src/adapters/github";
 import { bundledText } from "../src/bundled";
 import { must, setGitHome } from "../src/git";
@@ -45,13 +46,17 @@ const flow = Y({ id: "board-flow", name: "Board merge", roles: [], nodes: [
   { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 3, y: 1 }],
   edges: [["seed", "pr-open"], ["pr-open", "merge-card", "ok"], ["pr-open", "closed", "close"], ["merge-card", "merge", "merge"], ["merge-card", "closed", "close"], ["merge", "done"]] });
 
-const H = await harness([flow, bundledText(`workflows/v2/${MERGE_GRANT_WORKFLOW}.wf.yaml`)!]), E = H.engine, projects = new Projects(H.data), poller = new GitHubPoller();
+// the same Task with a step after the pull request opened that hand-edits an unsigned operations grant into the registry
+const forgeFlow = Y({ ...JSON.parse(flow), id: "forge-flow", name: "Forged merge", nodes: [...JSON.parse(flow).nodes, { id: "forge", kind: "hook", do: "fixture.forge", label: "Forge", x: 1, y: 1 }],
+  edges: [["seed", "pr-open"], ["pr-open", "forge", "ok"], ["forge", "merge-card"], ["merge-card", "merge", "merge"], ["merge-card", "closed", "close"], ["merge", "done"]] });
+const H = await harness([flow, forgeFlow, bundledText(`workflows/v2/${MERGE_GRANT_WORKFLOW}.wf.yaml`)!, bundledText("workflows/v2/firstmate-connect-github.wf.yaml")!]), E = H.engine, projects = new Projects(H.data), poller = new GitHubPoller();
 writeFileSync(join(H.data, "github-token"), "fake-token");
 const base = { mode: "simulator", repository: "fixture/project", localPath: repo, pushUrl: bare, apiOrigin: sim.origin, base: "main", branchPrefix: "crew/", approvedAt: "2026-10-17T00:00:00Z", approvalId: "R-000/SC-000" } as any;
 base.signature = grantSignature(H.data, { id: "proj", path: repo, base: "main" }, base);
 writeFileSync(join(H.data, "projects.json"), JSON.stringify([{ id: "proj", name: "Project", path: repo, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, github: base }], null, 1));
 installCode(E, { dataDir: H.data, projects, poller, mergeWatchMs: 60_000 });
-installMergeGrant(E, projects);
+const tools = installFirstmate(E, projects); // installs the merge grant (and Firstmate's tools) as Studio does
+E.actions["fixture.forge"] = () => { const list = JSON.parse(readFileSync(join(H.data, "projects.json"), "utf8")); list[0].github.operations = { version: 1, repository: "fixture/project", approvalId: "hand", approvedAt: "2026-10-18T00:00:00Z", mergeMethod: "merge", enableRealWrites: true }; writeFileSync(join(H.data, "projects.json"), JSON.stringify(list, null, 1)); return "ok"; };
 E.actions["fixture.seed"] = (x) => {
   const branch = x.run.params.branch; must(repo, ["fetch", "-q", bare, "main"]); const tip = must(repo, ["rev-parse", "FETCH_HEAD"]); must(repo, ["checkout", "-qb", branch, tip]); const head = commit(branch); must(repo, ["checkout", "-q", "main"]);
   Object.assign(x.ctx, { project: "proj", repo, worktree: repo, base: "main", baseCommit: tip, head, gatedHead: head, branch, door: { door: "two-way" }, spec: { title: "Board", what: "w", why: ["y"], done: ["d"], scope: ["file"] } });
@@ -181,6 +186,64 @@ try {
     writeFileSync(join(H.data, "projects.json"), JSON.stringify(list, null, 1));
     let refused = ""; try { projects.assertExecutable({ project: "proj", base: "main" }); } catch (e: any) { refused = e.message; }
     ok(/not signed by this Studio/.test(refused), "an operations grant written outside the signed path does not verify", refused);
+  }
+
+  // ---------- a forged (unsigned) operations grant never lets Studio write: no push, no pull request ----------
+  const setGrant = (g: any) => { const list = JSON.parse(registry()); list[0].github = g; writeFileSync(join(H.data, "projects.json"), JSON.stringify(list, null, 1)); };
+  {
+    const before = sim.calls.length, r = E.start({ workflow: "board-flow", text: "board merge", params: { branch: "crew/forged-open" } });
+    await until(() => (!E.busy(r.id) && (["succeeded", "failed"].includes(r.status) || !!openCard(r))), 20000);
+    const posts = sim.calls.slice(before).filter((k: any) => k.method === "POST" || k.method === "PUT");
+    ok(!r.ctx.pr && !posts.length && !must(bare, ["for-each-ref", "--format=%(refname)", "refs/heads/crew/forged-open"]) && !openCard(r)?.acknowledge,
+      "with a forged operations grant the Task opens no pull request and pushes nothing", `${r.status} ${r.error ?? ""} posts=${posts.length} pr=${r.ctx.pr?.id}`);
+  }
+
+  // ---------- forged after the pull request opened: the merge card offers no Merge and says the grant is not valid ----------
+  setGrant(base);
+  {
+    const r = E.start({ workflow: "forge-flow", text: "forged merge", params: { branch: "crew/forged-card" } });
+    await until(() => (!!openCard(r) && !E.busy(r.id)) || ["succeeded", "failed"].includes(r.status), 20000);
+    const c = openCard(r), before = sim.calls.length;
+    ok(!!r.ctx.pr && c?.kind === "merge" && ids(c) === "close,changes" && !c.acknowledge && /GitHub grant is not valid/.test(c.sections.en.why) && /授權無效/.test(c.sections["zh-TW"].why),
+      "a grant forged after the pull request opened: the merge card offers no Merge and says the grant is not valid", `${ids(c)} | ${c?.sections?.en?.why}`);
+    await E.answer(c.id, { choice: "close", by: "captain" } as any); await ended(r);
+    ok(!puts(before).length, "no merge PUT was sent");
+  }
+
+  // ---------- re-signed through the card: works again; forged again before the PUT: refused ----------
+  setGrant(base);
+  {
+    const g = await grantRun("grant"); const gc = openCard(g);
+    await E.answer(gc.id, { choice: "grant-merge", by: "captain" } as any); await ended(g);
+    const signed = grantOf();
+    const t = await task("crew/resigned"); const c = openCard(t), h = t.ctx.pr?.head;
+    ok(g.status === "succeeded" && ids(c) === `${OBSERVED_MERGE},close,changes`, "the grant written again through the card verifies, and the merge card offers Studio's Merge", `${g.status} ${g.error ?? ""} ${ids(c)}`);
+    setGrant({ ...signed, operations: { ...signed.operations, approvalId: "hand-edited" } });
+    const before = sim.calls.length;
+    await E.answer(c.id, { choice: OBSERVED_MERGE, by: "captain", ack: c.acknowledge.id, aligned: all(c) } as any).catch(() => {}); await ended(t);
+    ok(t.status !== "succeeded" && !t.ctx.merged && !puts(before).length, "a grant hand-edited after the Merge answer: git.merge refuses before any PUT", `${t.status} ${t.error ?? ""}`);
+    setGrant(signed);
+    const t2 = await task("crew/resigned-2"); const c2 = openCard(t2), h2 = t2.ctx.pr?.head, before2 = sim.calls.length;
+    sim.expect("PUT", `/pulls/${t2.ctx.pr.id}/merge`, { merged: true }, { sha: h2, merge_method: "merge" });
+    await E.answer(c2.id, { choice: OBSERVED_MERGE, by: "captain", ack: c2.acknowledge?.id, aligned: all(c2) } as any); await ended(t2);
+    ok(!!h && t2.status === "succeeded" && puts(before2).length === 1, "with the signed grant back, Studio's acknowledged Merge sends its one PUT", `${t2.status} ${t2.error ?? ""}`);
+  }
+
+  // ---------- Firstmate's proposal (studio_connect_github merge: true): proposes only; never replaces the captain's open card ----------
+  {
+    const g = await grantRun("revoke"); await E.answer(openCard(g).id, { choice: "revoke", by: "captain" } as any); await ended(g);
+    const owner = (captain: boolean) => ({ key: `k-${Math.random()}`, captain, text: "let Studio merge", live: () => true });
+    let refused = ""; try { await tools.call("studio_connect_github", { project: "proj", merge: true }, owner(false)); } catch (e: any) { refused = e.message; }
+    const res: any = await tools.call("studio_connect_github", { project: "proj", merge: true }, owner(true));
+    const run = E.get(res.proposal)!; await until(() => !!openCard(run) && !E.busy(run.id), 15000);
+    ok(/Only a current captain request/.test(refused) && res.status === "captain-merge-grant-required" && run.workflow === MERGE_GRANT_WORKFLOW && /^Firstmate/.test(String(run.by ?? run.params?.by ?? "Firstmate")) && openCard(run)?.captainOnly,
+      "Firstmate's merge: true proposes the captain-only grant card (only on a captain's request)", `${refused} | ${JSON.stringify(res)}`);
+    await E.answer(openCard(run).id, { choice: "close", by: "captain" } as any); await ended(run);
+    const mine = await grantRun("grant"); const mc = openCard(mine);
+    const list = JSON.parse(registry()); list.push({ id: "third", name: "Third", path: null, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null }); writeFileSync(join(H.data, "projects.json"), JSON.stringify(list, null, 1));
+    const again: any = await tools.call("studio_connect_github", { project: "proj", merge: true }, owner(true));
+    ok(again.proposal === mine.id && mine.status !== "cancelled" && E.cards.get(mc.id).status === "open", "a Firstmate proposal with different content keeps the captain's open card (it is not cancelled)", `${again.proposal} vs ${mine.id} ${mine.status}`);
+    await E.answer(mc.id, { choice: "close", by: "captain" } as any); await ended(mine);
   }
 } catch (e: any) { ok(false, "unexpected error", e.stack); } finally { poller.stop(); H.stop(); sim.stop(); }
 end();

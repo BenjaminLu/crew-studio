@@ -50,6 +50,9 @@ export function startMergeGrant(engine: Engine, projects: Projects, id: string, 
   const params = { project: id, action, proposal: JSON.stringify(proposal) };
   const open = engine.list().find((r) => r.workflow === MERGE_GRANT_WORKFLOW && r.params.project === id && !["succeeded", "failed", "cancelled"].includes(r.status));
   if (open && open.params.proposal === params.proposal) return open;
+  // only the captain replaces an open card with a different proposal; Firstmate's proposal leaves the open one as it is (a card
+  // proposed on an older registry refuses its own write and says to propose it again)
+  if (open && !CAPTAIN.test(by)) return open;
   if (open) engine.cancel(open.id);
   const verb = action === "grant" ? "Grant" : "Revoke";
   return engine.start({ workflow: MERGE_GRANT_WORKFLOW, version: def.version, text: `${verb} Studio merge for ${proposal.repository}`, title: `${verb} Studio merge for ${id}`, params, by } as any);
@@ -116,9 +119,9 @@ export function installMergeGrant(engine: Engine, projects: Projects) {
     const roleZh = `GitHub 顯示這個權杖對 ${repo} 有 ${got.role} 權限${got.scopes ? `（scope：${got.scopes.join("、")}）` : ""}。`;
     const c = await engine.card(x, "permission", { captainOnly: true, title: `Grant Studio merge for ${repo}?`, zhTitle: `授權 Studio 合併 ${repo} 嗎？`,
       en: { why: `Studio then merges pull requests it opened in ${repo}, only after every Studio gate passed at the pull request's head and you confirm that merge on its own merge card. ${role}`, how: "Pick the merge method to grant it, or close without granting. You can revoke it any time from the project's GitHub settings.",
-        scope: { in: [`Merge pull requests Studio opened in ${repo}, after every gate passed at the head and you confirm each merge on its card`, `With the merge method you pick (${order.join(", ")})`], out: ["Merging without your confirmation on each pull request's merge card", `Pushing to ${p.base}, or to any branch outside ${p.branchPrefix}`, "Changing branch protection or repository settings", "Any other repository"] } },
+        scope: { in: [`Merge pull requests Studio opened in ${repo}, after every gate passed at the head and you confirm each merge on its card`, `With the merge method you pick (${order.join(", ")})`], out: ["Merging without your confirmation on each pull request's merge card", `Pushing to ${p.base}, or pushing anything new: pushes stay as Connect granted them (Task branches under ${p.branchPrefix}, or a branch name you approve on its card)`, "Changing branch protection or repository settings", "Any other repository"] } },
       zh: { why: `之後 Studio 會合併它在 ${repo} 開的 pull request，但只在 Studio 的每一道關卡都在該 PR 的 head 通過、並且你在那張合併卡片上確認之後。${roleZh}`, how: "選一個合併方式來授權，或關閉、不授權。之後隨時可以在專案的 GitHub 設定撤銷。",
-        scope: { in: [`合併 Studio 在 ${repo} 開的 pull request：每道關卡在 head 通過，且你在每張合併卡片上確認`, `使用你選的合併方式（${order.join("、")}）`], out: ["沒有你在每個 pull request 合併卡片上的確認就合併", `推送到 ${p.base}，或 ${p.branchPrefix} 以外的任何分支`, "更改分支保護或儲存庫設定", "任何其他儲存庫"] } },
+        scope: { in: [`合併 Studio 在 ${repo} 開的 pull request：每道關卡在 head 通過，且你在每張合併卡片上確認`, `使用你選的合併方式（${order.join("、")}）`], out: ["沒有你在每個 pull request 合併卡片上的確認就合併", `推送到 ${p.base}，或任何新的推送：推送維持「連到 GitHub」授權的範圍（${p.branchPrefix} 下的任務分支，或你在卡片上核准的分支名稱）`, "更改分支保護或儲存庫設定", "任何其他儲存庫"] } },
       body: [`Project / 專案: ${p.project} (${p.name})`, `GitHub repository / GitHub 儲存庫: ${repo}`, "",
         `Studio will: merge pull requests it opened in ${repo}, after every gate passed at the head and your confirmation on that pull request's merge card.`, `Studio 會：合併它在 ${repo} 開的 pull request，條件是每道關卡在 head 通過，並且你在該 pull request 的合併卡片上確認。`, "",
         `Studio never: merges without your confirmation on each merge card; pushes to ${p.base}; changes branch protection.`, `Studio 不會：沒有你在每張合併卡片上的確認就合併；推送到 ${p.base}；更改分支保護。`, "",

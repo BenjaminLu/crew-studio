@@ -209,6 +209,14 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     }
     return a;
   };
+  /** The project's GitHub grant is the captain's signed one (github-grant.ts: signature, path, base, origin), checked right before
+   *  Studio writes with it: the push and pull request, the merge card's Merge, the merge PUT, a card prepared again after a grant
+   *  change. A hand-edited grant (an unsigned operations grant among them) is refused. An injected adapter (tests) has none. */
+  const assertGrant = (x: X) => {
+    if (o.adapter || !x.ctx.project) return;
+    const p = o.projects.get(x.ctx.project); if (!p?.github) return;
+    o.projects.assertExecutable({ project: x.ctx.project, base: x.ctx.base ?? p.base });
+  };
   const selectedAdapter = (x: X): PrAdapter => {
     if(o.adapter)return restoreNaming(x,o.adapter);
     const project=x.ctx.project?o.projects.get(x.ctx.project):null;if(!project?.github)return new LocalPrAdapter();
@@ -578,6 +586,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   engine.actions["pr.open"] = async (x) => {
     const phase = remotePhase(x); phase.assert(); const wt = shellOk(x); const h = head(wt);
     const adapter = selectedAdapter(x);
+    // every path that pushes or opens (with a template or without) runs on the captain's signed grant only
+    if (adapter instanceof GitHubPrAdapter) assertGrant(x);
     if (adapter instanceof GitHubPrAdapter && !adapter.branchAllowed(x.ctx.branch,h)) return namingCard(x,adapter,h);
     if (adapter instanceof GitHubPrAdapter && !x.ctx.pr) { const deferred = await publication.defer(x, adapter, phase); if (deferred) return deferred; }
     // a pull request opened from the template keeps the text the captain approved: each round's rebased head only moves it (the same lease push)
@@ -852,6 +862,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   // Merge with its acknowledgement; revoked, the merge goes back to GitHub. Nothing is answered for the captain, and a card
   // whose checks do not pass again is left as it was (its merge hook refuses a grant that changed).
   const regrantRemote = async (x: X) => {
+    assertGrant(x);
     const a = selectedAdapter(x), ci = x.ctx.remoteCI;
     if (!(a instanceof GitHubPrAdapter) || ci?.state !== "pass" || ci.head !== x.ctx.pr?.head) throw new Error("the pull request's remote checks are not verified at its head");
     if (ci.grant === grantIdentity(a)) return;
@@ -871,8 +882,16 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
         const rn = r.nodes[node.id], c = rn?.card ? engine.cards.get(rn.card) : null;
         if (node.args?.body_from !== "merge" || rn?.state !== "running" || rn.waiting !== "card" || c?.status !== "open" || c.kind !== "merge") continue;
         const x = engine.x(r, node, rn);
-        try { await regrantRemote(x); const fresh = await engine.reprepareCard(x, () => engine.kinds.card.start(x) as Promise<unknown>); out.push(`${r.id}: merge card ${c.id} prepared again as ${fresh.id}`); }
-        catch (e: any) { out.push(`${r.id}: merge card ${c.id} kept (${String(e?.message ?? e).slice(0, 200)})`); }
+        const again = async (why: string) => { const fresh = await engine.reprepareCard(x, () => engine.kinds.card.start(x) as Promise<unknown>); out.push(`${r.id}: merge card ${c.id} prepared again as ${fresh.id}${why}`); };
+        try { await regrantRemote(x); await again(""); }
+        catch (e: any) {
+          const why = String(e?.message ?? e).slice(0, 200);
+          // merge revoked (or the grant does not verify): a card that still offers Studio's Merge is replaced even when the checks
+          // could not be verified again (the fresh card offers no Merge then), so its words stay true
+          let merges = false; try { assertGrant(x); const a = selectedAdapter(x); merges = a instanceof GitHubPrAdapter && !!a.operationGrant(); } catch {}
+          if (!merges && c.options.some((op) => op.id === OBSERVED_MERGE || op.id === "merge")) { try { await again(` without Studio's Merge (${why})`); continue; } catch (e2: any) { out.push(`${r.id}: merge card ${c.id} not replaced (${String(e2?.message ?? e2).slice(0, 200)})`); continue; } }
+          out.push(`${r.id}: merge card ${c.id} kept (${why})`);
+        }
       }
     }
     return out;
@@ -903,6 +922,8 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       if ((await inspectRemote(a,x.ctx.pr,policy,phase.signal)).state !== "pass" || x.ctx.remoteCI?.head !== h || x.ctx.remoteCI?.policyHash !== policy.hash || x.ctx.remoteCI?.grant !== grantIdentity(a)) throw new Error("remote checks changed before merge"); phase.assert();
       // the observed merge's read-only checks (head, base, CLEAN, method, protection still unreadable) before the attempt is recorded
       if (observedAnswer) { await a.mergeReady(x.ctx.pr, phase.signal, x.ctx.baseCommit, phase.assert, { observed: true }); phase.assert(); }
+      // the grant that carries the operations is the captain's signed one, right before the PUT
+      assertGrant(x);
       const curated = taskCommit(x, h); const result = await mergeOnce(a,x.ctx.pr,x.dir,answer.data.card,phase.signal,x.ctx.baseCommit,phase.assert,{ title: curated.subject, message: curated.body },{ observed: observedAnswer }); phase.assert();
       engine.record(x, "merged", { head: result.head, data: { version: 1, sha: result.head, sourceHead: result.sourceHead, pr: x.ctx.pr.id, repository: a.grant.repository, base: result.base, method: result.method, card: answer.data.card, ...(observedAnswer ? { policy: "observed", observed: policy.observed } : {}) } } as any);
       await a.importHeads(x.ctx.pr,phase.signal); phase.assert(); x.ctx.merged = { ...result, adapter: "github", at: new Date().toISOString() }; x.save(); return "ok";
@@ -1649,6 +1670,14 @@ ${said}`, options: rescopeOpts }; }
     if (x.ctx.pr?.adapter === "github") {
       const phase = remotePhase(x); phase.assert(); const a = selectedAdapter(x); assertRemoteCard=phase.assert;
       let policy: RequiredPolicy | undefined;
+      // the project's grant must be the captain's signed one: a grant that does not verify (a hand-edited operations grant) never
+      // offers Studio's Merge; the card says the grant is not valid and the merge stays on GitHub
+      let invalid: string | null = null; try { assertGrant(x); } catch (e: any) { invalid = String(e?.message ?? e).slice(0, 300); }
+      if (invalid && a instanceof GitHubPrAdapter) { const b = mergeOnGitHubBody(x.ctx.pr, undefined, false, { repository: a.grant.repository }), pr = x.ctx.pr;
+        return doorFirst(x, { ...b, links: [{ label: `Pull request #${pr.id}`, href: pr.url }],
+          en: { ...b.en, why: `PR #${pr.id} is open at ${pr.url}. The project's GitHub grant is not valid (${invalid}), so Studio does not merge it: merge it on GitHub, and connect the project again (or grant merge again) on the captain's card.` },
+          zh: { ...b.zh, why: `PR #${pr.id} 已在 ${pr.url} 開好。這個專案的 GitHub 授權無效，所以 Studio 不合併：請到 GitHub 合併，並在船長卡片上重新連線（或重新授權合併）。` },
+          body: [`PR #${pr.id} is open at ${pr.url}; the project's GitHub grant is not valid (${invalid}), so Studio does not merge it: merge it on GitHub.`, `PR #${pr.id} 已開在 ${pr.url}；專案的 GitHub 授權無效，Studio 不合併，請到 GitHub 合併。`, "", `Branch: ${pr.branch} → ${pr.base} at ${pr.head}`].join("\n") }); }
       try { if (!(a instanceof GitHubPrAdapter)) throw new Error(); await reconcile(a, x.ctx.pr, phase.signal); phase.assert(); policy = await requiredPolicy(a, phase.signal); phase.assert(); if (x.ctx.remoteCI?.head !== x.ctx.pr.head || x.ctx.remoteCI?.policyHash !== policy.hash || x.ctx.remoteCI?.grant !== grantIdentity(a) || (await inspectRemote(a, x.ctx.pr, policy, phase.signal)).state !== "pass") throw new Error(); }
       // the merge card has no route back to remote-ready: its stops are answered by close
       catch { phase.assert(); return remoteStopBody("authoritative PR, head or required CI no longer matches; merge refused", { recover: false }); }
