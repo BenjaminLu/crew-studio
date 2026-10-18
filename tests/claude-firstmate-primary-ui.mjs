@@ -51,6 +51,20 @@ try {
     await p.evaluate(() => LIVE.es.dispatchEvent(new Event("hello")));
     for (let i = 0; i < 100 && !existsSync(bl); i++) await p.waitForTimeout(50);
     ok(existsSync(bl) && JSON.parse(readFileSync(bl, "utf8")).locale === "en", "an open Board tells Studio its language again on the stream's hello"); }
+  // live e8205157: `explicit` is true only after the captain picks a language in the UI. A browser that never picked one (the
+  // deploy opens the Board in the captain's default browser) reports its browser default as not chosen
+  { const fresh = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "zh-CN" });
+    await fresh.addInitScript(() => { try { localStorage.removeItem("crew.lang"); localStorage.setItem("crew.chatOpen", "0"); } catch {} });
+    const fp = await fresh.newPage(), said = [];
+    fp.on("request", (r) => { if (r.url().endsWith("/api/main/locale") && r.method() === "POST") { try { said.push(JSON.parse(r.postData() || "{}")); } catch {} } });
+    await fp.goto(base + "/#/settings"); await seen(fp, '[data-lang-set="en"]');
+    for (let i = 0; i < 60 && said.length < 2; i++) await fp.waitForTimeout(50);
+    ok(said.length >= 2 && said.every((s) => s.locale === "zh-CN" && s.explicit === false && s.visible === true && /^[a-z0-9]{1,16}$/.test(s.tab)) && new Set(said.map((s) => s.tab)).size === 1,
+      "a Board that never had a language picked reports its browser default as not chosen, with its tab id", JSON.stringify(said));
+    const n = said.length; await fp.locator('[data-lang-set="en"]').click();
+    for (let i = 0; i < 60 && said.length === n; i++) await fp.waitForTimeout(50);
+    ok(said.slice(n).some((s) => s.locale === "en" && s.explicit === true), "after the captain picks a language in Settings it is reported as chosen", JSON.stringify(said.slice(n)));
+    await fresh.close(); }
   ok(await seen(p, '[data-section="start-firstmate"] [data-section="start-codex"]') && await seen(p, '[data-section="start-firstmate"] [data-section="start-claude"]'), "the Firstmate page offers Codex and Claude together");
   ok(await seen(p, '[data-section="start-claude"][data-claude-account="signed-out"]', 20000) && await p.locator("#startClaudeBtn").isDisabled(), "Claude cannot start before its card shows signed in");
   await p.waitForTimeout(500);

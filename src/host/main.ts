@@ -165,36 +165,41 @@ export class MainSession {
       return l === "en" || l === "zh-TW" || l === "zh-CN" ? { locale: l, explicit: o.explicit !== false } : null; } catch { return null; }
   }
   boardLocale(): PrimarySettings["locale"] | null { return this.boardLanguage()?.locale ?? null; }
-  /** A Board says its language: `visible` whether its tab is the one on screen, `explicit` whether the captain chose the language.
+  /** A Board says its language: `visible` whether its tab is the one on screen, `explicit` whether the captain chose the language
+   *  in the UI. Both count only when said: a report without them (a page from before them) is a background tab's browser default.
    *  A browser default never overwrites a language the captain chose in the file. Every report since boot is also kept here,
    *  so a restart's greeting hears a Board that spoke before the greeting started waiting (greetingLocale). */
-  setBoardLocale(l: PrimarySettings["locale"], o: { visible?: boolean; explicit?: boolean } = {}) {
-    const said = { locale: l, visible: o.visible !== false, explicit: o.explicit !== false, at: Date.now() };
+  setBoardLocale(l: PrimarySettings["locale"], o: { visible?: boolean; explicit?: boolean; tab?: string | null } = {}) {
+    const said = { locale: l, visible: o.visible === true, explicit: o.explicit === true, tab: o.tab ?? null, at: Date.now() };
     this.boardHeard.push(said); if (this.boardHeard.length > 50) this.boardHeard.shift();
     for (const w of this.boardLocaleWaiters.slice()) w(said);
     const now = this.boardLanguage();
     if (now && (now.locale === l && now.explicit === said.explicit || now.explicit && !said.explicit)) return;
     const f = join(this.o.dataDir, "board-language.json"); writeFileSync(f + ".tmp", JSON.stringify({ schema: 1, locale: l, explicit: said.explicit }), { mode: 0o600 }); renameSync(f + ".tmp", f); }
   /** what the Boards said since this Studio booted, oldest first */
-  private boardHeard: { locale: PrimarySettings["locale"]; visible: boolean; explicit: boolean; at: number }[] = [];
-  private boardLocaleWaiters: ((s: { locale: PrimarySettings["locale"]; visible: boolean; explicit: boolean }) => void)[] = [];
+  private boardHeard: { locale: PrimarySettings["locale"]; visible: boolean; explicit: boolean; tab: string | null; at: number }[] = [];
+  private boardLocaleWaiters: ((s: { locale: PrimarySettings["locale"]; visible: boolean; explicit: boolean; tab: string | null; at: number }) => void)[] = [];
   /** The language of a restart's greeting (live S26). The rule, in order:
-   *   1. the Board the captain is looking at: the latest language a tab on screen said since boot, whether the captain chose it
-   *      or it is that browser's default. It wins over everything else, the file's explicit choice included: the greeting is for
-   *      the captain reading that Board now;
+   *   1. the Board the captain is looking at: the FIRST language a tab on screen said since boot, whether the captain chose it or
+   *      it is that browser's default. It wins over everything else, the file's explicit choice included: the greeting is for the
+   *      captain reading that Board now. Two tabs on screen in different languages: the first report Studio received decides,
+   *      the same every time for the same order (a later tab never changes a greeting already decided, nor starts another one);
    *   2. if no tab on screen spoke yet, wait up to `ms` for one (an open Board says its language as its stream reconnects);
    *   3. then the latest language a background tab said since boot;
    *   4. then the file (the last language any Board said before the restart), then English, the Board's own default.
    *  Never driver.json's locale. Why not the file first (live, dae6ede8): it still said zh-CN, the restart greeted in Simplified
    *  Chinese 1.4 s after boot, and the captain's English Board said "en" 7 s later, as it reconnected. Reports are kept from
-   *  boot (setBoardLocale), so a Board that spoke while the restart was still checking the account is not missed. */
+   *  boot (setBoardLocale), so a Board that spoke while the restart was still checking the account is not missed. The decision
+   *  and the report it took are logged. */
   greetingLocale(ms: number): Promise<PrimarySettings["locale"]> {
-    const onScreen = this.boardHeard.filter((s) => s.visible).at(-1);
-    if (onScreen) return Promise.resolve(onScreen.locale);
+    const decided = (l: PrimarySettings["locale"], why: string) => { console.log(`crew-studio: restart greeting language ${l} (${why})`); return l; };
+    const first = this.boardHeard.find((s) => s.visible);
+    if (first) return Promise.resolve(decided(first.locale, `first tab on screen since boot: tab=${first.tab ?? "-"} at=${new Date(first.at).toISOString()}`));
     return new Promise((res) => {
-      const finish = (l: PrimarySettings["locale"]) => { clearTimeout(t); this.boardLocaleWaiters = this.boardLocaleWaiters.filter((w) => w !== heard); res(l); };
-      const heard = (s: { locale: PrimarySettings["locale"]; visible: boolean }) => { if (s.visible) finish(s.locale); };
-      const t = setTimeout(() => finish(this.boardHeard.at(-1)?.locale ?? this.boardLocale() ?? "en"), ms);
+      const finish = (l: PrimarySettings["locale"], why: string) => { clearTimeout(t); this.boardLocaleWaiters = this.boardLocaleWaiters.filter((w) => w !== heard); res(decided(l, why)); };
+      const heard = (s: { locale: PrimarySettings["locale"]; visible: boolean; tab: string | null; at: number }) => { if (s.visible) finish(s.locale, `first tab on screen, heard while waiting: tab=${s.tab ?? "-"} at=${new Date(s.at).toISOString()}`); };
+      const t = setTimeout(() => { const bg = this.boardHeard.at(-1), file = this.boardLocale();
+        finish(bg?.locale ?? file ?? "en", bg ? `no tab on screen within ${ms} ms; latest background tab=${bg.tab ?? "-"}` : file ? `no Board spoke within ${ms} ms; the stored Board language` : `no Board language known; English`); }, ms);
       this.boardLocaleWaiters.push(heard);
     });
   }

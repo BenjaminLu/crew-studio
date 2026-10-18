@@ -58,6 +58,8 @@ const codexCalls = () => existsSync(codexLog) ? readFileSync(codexLog, "utf8").t
 const codexStarts = () => codexCalls().filter((r) => r.method === "thread/start").length;
 
 const port = await freePort(), base = `http://127.0.0.1:${port}`, token = "claude-primary-fixture-session";
+// what every Studio this test started printed (its live log): the Board language reports and the greeting decisions
+let appOut = "";
 const start = (extra: Record<string, string> = {}) => {
   // a restart's greeting waits for an open Board to say its language (src/takeover.ts): short here, unless a step sets it.
   // __entry: the file to boot (the live release boots src/main.ts)
@@ -67,7 +69,7 @@ const start = (extra: Record<string, string> = {}) => {
     CREW_CLAUDE_BIN: join(import.meta.dir, "fixture/claude-login.mjs"), CREW_HOST_CLAUDE_BIN: join(import.meta.dir, "stub-host-claude.mjs"), CREW_KEYCHAIN_TOOL: keychain,
     CREW_HOST_CODEX_BIN: join(import.meta.dir, "fixture/codex-account.mjs"), ACCOUNT_FIXTURE_LOG: codexLog, STUB_ARGV_FILE: argvFile, STUB_SEED_FILE: seedFile, STUB_EXPECT_CREW: CREW, CREW_WAKE_GRACE_MS: "60000" };
   const p = spawn("bun", [__entry], { cwd: join(import.meta.dir, ".."), env, stdio: ["ignore", "pipe", "pipe"] });
-  p.stdout.resume(); p.stderr.resume(); return p;
+  p.stdout.on("data", (b) => { appOut += String(b); }); p.stderr.resume(); return p;
 };
 // a private folder a Studio that is gone left behind: the next Studio sweeps it at boot
 const deadPid = await new Promise<number>((r) => { const c = spawn("true"); c.once("exit", () => r(c.pid!)); });
@@ -296,7 +298,7 @@ try {
   const seedOf = (pid: number) => (readFileSync(seedFile, "utf8").trim().split("\n").map((l) => JSON.parse(l)).find((x: any) => x.pid === pid)?.seed ?? "") as string;
   ok(/The captain’s current dashboard language is Simplified Chinese \(简体中文\)\. Greet the captain in Simplified Chinese/.test(seedOf(claudeRuns().at(-1).pid)), "a Start from a 简体中文 Board greets in Simplified Chinese");
   // the captain then switches the Board to 繁體中文: a restart greets in it, not in the language the stopped primary started with
-  ok((await api("/api/main/locale", { locale: "zh-TW" })).body.ok === true && JSON.parse(readFileSync(join(data, "board-language.json"), "utf8")).locale === "zh-TW", "the Board tells Studio its language");
+  ok((await api("/api/main/locale", { locale: "zh-TW", visible: true, explicit: true })).body.ok === true && JSON.parse(readFileSync(join(data, "board-language.json"), "utf8")).locale === "zh-TW", "the Board tells Studio its language");
   ok((await api("/api/main/locale", { locale: "fr" })).status === 400, "an unknown Board language is refused");
   const oldPid = app.pid;
   const run2 = claudeRuns().at(-1), pid2 = run2.pid, priv2 = dirname(run2.argv[run2.argv.indexOf("--mcp-config") + 1]);
@@ -331,7 +333,7 @@ try {
   const runsBeforeWait = claudeRuns().length;
   await stop(); app = start({ CREW_BOARD_LOCALE_WAIT_MS: "20000" }); await waitUp(base, app); await Bun.sleep(800);
   ok(claudeRuns().length === runsBeforeWait, "with no Board language known the restart's greeting waits for an open Board to say it");
-  ok((await api("/api/main/locale", { locale: "zh-TW" })).body.ok === true, "the open Board says 繁體中文 as its stream connects");
+  ok((await api("/api/main/locale", { locale: "zh-TW", visible: true, explicit: true, tab: "tw1" })).body.ok === true, "the open Board says 繁體中文 as its stream connects");
   ok(await until(async () => (await view()).state === "attached"), "the primary starts once the Board said its language");
   await idle();
   ok(/Greet the captain in Traditional Chinese \(繁體中文\)/.test(seedOf(claudeRuns().at(-1).pid)), "the restart greets in the language the open Board said (繁體中文)");
@@ -369,6 +371,21 @@ try {
   ok(await until(async () => (await view()).state === "attached"), "the primary starts again with no Board open");
   await idle();
   ok(/Greet the captain in English\./.test(seedOf(claudeRuns().at(-1).pid)), "no Board open: board en + driver.json zh-CN greets in English");
+  // live e8205157: one greeting per boot. A tab opened after the restart greeted (the deploy opens the Board in the captain's
+  // browser) says its language; that never starts another session, only the captain's Start or switch does
+  { const runs = claudeRuns().length, sid = (await view()).sessionId;
+    ok((await api("/api/main/locale", { locale: "zh-CN", visible: true, explicit: true, tab: "late1" })).body.ok === true, "a tab opened after the greeting says 简体中文");
+    await Bun.sleep(1000);
+    ok(claudeRuns().length === runs && (await view()).sessionId === sid && (await view()).state === "attached", "a later tab starts no second session and no second greeting"); }
+  // every report and the greeting's decision are in the live log: who said what, and which report decided
+  ok(/crew-studio: board language en visible=true explicit=true tab=- via=locale at=\S+Z/.test(appOut) && /crew-studio: board language zh-CN visible=true explicit=true tab=late1 via=locale at=/.test(appOut)
+    && /crew-studio: board language zh-TW visible=true explicit=true tab=tw1 via=locale/.test(appOut), "each Board language report is logged with its tab, whether it is on screen and chosen, and when");
+  ok(/crew-studio: restart greeting language zh-TW \(first tab on screen, heard while waiting: tab=tw1 at=/.test(appOut) && /crew-studio: restart greeting language en \(no Board spoke within 300 ms; the stored Board language\)/.test(appOut),
+    "the live log says which language each restart greeted in and why", appOut.split("\n").filter((l) => /greeting language/.test(l)).join(" | "));
+  // a page from before these fields (an open tab still on the previous release's JS) says only its language: a background tab's default
+  await api("/api/main/locale", { locale: "zh-TW" });
+  ok(/crew-studio: board language zh-TW visible=false explicit=false tab=- via=locale/.test(appOut) && JSON.parse(readFileSync(join(data, "board-language.json"), "utf8")).locale === "zh-CN",
+    "a report without visible/explicit counts as a background tab's browser default: it neither decides a greeting nor overwrites a chosen language");
   // not signed in at boot: nothing starts, no sign-in begins, a notice says why and that Start is the way on
   signedIn(false); const runsSignedOut = claudeRuns().length, codexBefore = codexStarts();
   await stop(); app = start(); await waitUp(base, app);

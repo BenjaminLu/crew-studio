@@ -91,7 +91,14 @@ export function createTakeover(d: Deps) {
     if (["/api/main/takeover", "/api/main/start", "/api/main/switch", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door", "/api/main/locale"].includes(p)) { try { b = await req.json(); } catch {} }
     if(['/api/main/start','/api/main/switch','/api/main/locale'].includes(p)&&b?.locale!==undefined&&!['en','zh-TW','zh-CN'].includes(b.locale))return json({error:'Unsupported dashboard language',code:'locale'},400);
     // the Board's language, as the captain shows it now: Firstmate's first message (a Start, a switch, a restart) greets in it
-    if(['/api/main/start','/api/main/switch','/api/main/locale'].includes(p)&&b?.locale!==undefined)d.main.setBoardLocale?.(b.locale,p==='/api/main/locale'?{visible:b.visible!==false,explicit:b.explicit!==false}:{});
+    // A Board report counts as on screen, or as the captain's own choice, only when it says so: a page from before these fields
+    // (an open tab still on the previous release's JS) is a background tab with a browser default. A Start or a switch is the
+    // captain acting on a Board they look at. Each report is logged, so a live check can tell which tab said what
+    if(['/api/main/start','/api/main/switch','/api/main/locale'].includes(p)&&b?.locale!==undefined){
+      const said={visible:p==='/api/main/locale'?b.visible===true:true,explicit:p==='/api/main/locale'?b.explicit===true:true,tab:typeof b.tab==='string'&&/^[A-Za-z0-9-]{1,32}$/.test(b.tab)?b.tab:null};
+      console.log(`crew-studio: board language ${b.locale} visible=${said.visible} explicit=${said.explicit} tab=${said.tab??'-'} via=${p.slice(10)} at=${new Date().toISOString()}`);
+      d.main.setBoardLocale?.(b.locale,said);
+    }
     if(p==='/api/main/locale')return b?.locale===undefined?json({error:'Say the dashboard language',code:'locale'},400):json({ok:true,locale:b.locale});
     const boardLocale=():"en"|"zh-TW"|"zh-CN"=>b?.locale??d.main.boardLocale?.()??"en";
     // The boot restart holds the account check and may be starting the primary: the captain's Start or switch waits for it,

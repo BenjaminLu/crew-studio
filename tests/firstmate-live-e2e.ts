@@ -359,6 +359,24 @@ await section("S26 greeting locale", async () => {
     m.setBoardLocale("zh-TW", { visible: false });
     ok(await m.greetingLocale(200) === "zh-TW", "no tab on screen within the wait: the latest background tab's language");
     m.stop(); rmSync(dir, { recursive: true, force: true }); }
+  // two tabs on screen in different languages: the first report Studio received decides, every time (live e8205157)
+  for (const [a, b] of [["en", "zh-CN"], ["zh-CN", "en"]] as const) {
+    const { dir, m } = session();
+    m.setBoardLocale(a, { visible: true, explicit: false, tab: "first" }); m.setBoardLocale(b, { visible: true, explicit: true, tab: "second" });
+    ok(await m.greetingLocale(200) === a, `two tabs on screen (${a} then ${b}): the first one decides, chosen or not`);
+    m.stop(); rmSync(dir, { recursive: true, force: true }); }
+  { const { dir, m } = session(), wait = m.greetingLocale(5000);
+    setTimeout(() => { m.setBoardLocale("en", { visible: true, tab: "a" }); m.setBoardLocale("zh-CN", { visible: true, explicit: true, tab: "b" }); }, 100);
+    ok(await wait === "en", "two tabs on screen heard while waiting: the first one decides");
+    m.stop(); rmSync(dir, { recursive: true, force: true }); }
+  // a report that does not say it is on screen or chosen (a page from before those fields) is a background tab's default
+  { const { dir, m } = session();
+    m.setBoardLocale("en", { visible: true, explicit: true }); const t0 = Date.now();
+    const fresh = session(); fresh.m.setBoardLocale("zh-CN");
+    ok(await fresh.m.greetingLocale(150) === "zh-CN" && Date.now() - t0 >= 140, "an old-format report never decides at once: the greeting still waits for a tab on screen");
+    m.setBoardLocale("zh-CN");
+    ok(m.boardLocale() === "en", "an old-format report does not overwrite the captain's chosen language");
+    for (const s of [m, fresh.m]) s.stop(); for (const d of [dir, fresh.dir]) rmSync(d, { recursive: true, force: true }); }
 });
 
 // ---------- S27: a tool call is one human activity line, never raw JSON ----------
