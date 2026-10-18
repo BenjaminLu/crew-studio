@@ -1265,6 +1265,9 @@ export class Engine {
   /** Domain watchers of an open card (the merge card's watch for a pull request merged or closed on GitHub): called when the
    *  card is raised and again after a restart for every card a node still waits on. */
   cardWatchers: ((x: X, c: SCard) => void)[] = [];
+  /** Domain refreshers after the captain changed a project's signed GitHub grant (merge granted or revoked): each prepares its
+   *  open cards on that project again under the new grant, and returns one line per card for the run's note. */
+  grantChanged: ((project: string) => Promise<string[]>)[] = [];
   private watchCard(x: X, c: SCard) { for (const w of this.cardWatchers) { try { w(x, c); } catch (e: any) { this.emit(x.run, "log", `${c.id}: card watch not started (${String(e?.message ?? e).slice(0, 200)})`); } } }
   /**
    * A fact observed outside Studio settles the node's open card (the pull request was merged or closed on GitHub): the card is

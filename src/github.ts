@@ -1,4 +1,4 @@
-import {GitHubPoller,readAuthority,boundedGitHubJSON,type ReadAuthority} from './github-poller';
+import {GitHubPoller,readAuthority,grantReadScope,boundedGitHubJSON,type ReadAuthority} from './github-poller';
 import type {GitHubProjectGrant} from './adapters/github';
 // Open pull requests and their checks for one repository, read with GitHub's
 // REST API over fetch: no `gh` CLI needed. GitHub is optional: without a token
@@ -97,7 +97,7 @@ export class GitHub {
       error: t.token ? null : NOT_CONNECTED, backoffUntil: null, rateLimited: false, prs: t.token ? this.state.prs : [] };
     if (!t.token) this.merged = [];
     this.onChange(this.state);
-    if(t.token){const authority=readAuthority(this.api,this.state.repo,this.binding?.grant?{kind:'grant',grant:this.binding.grant}:{kind:'dashboard'},t.token);this.authority=authority;try{this.unsubscribe=this.poller.subscribe(authority,'dashboard',signal=>this.pollOnce(signal),{interval:BASE_MS});}catch{this.authority=null;this.state={...this.state,ok:false,error:'unsupported conflicting GitHub repository authority'};this.onChange(this.state);}}
+    if(t.token){const authority=readAuthority(this.api,this.state.repo,this.binding?.grant?grantReadScope(this.binding.grant):{kind:'dashboard'},t.token);this.authority=authority;try{this.unsubscribe=this.poller.subscribe(authority,'dashboard',signal=>this.pollOnce(signal),{interval:BASE_MS});}catch{this.authority=null;this.state={...this.state,ok:false,error:'unsupported conflicting GitHub repository authority'};this.onChange(this.state);}}
   }
 
   /** Save a pasted token (0600) after checking it can read the repository. */

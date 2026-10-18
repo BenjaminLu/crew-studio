@@ -93,7 +93,7 @@ try {
     try {
       const r = await start(E, "crew/no-grant"); const c = openCard(E, r);
       ok(c?.title.en === `Pull request #${r.ctx.pr?.id} is open: merge it on GitHub` && ids(c) === "close,changes" && !c.acknowledge
-        && /needs the merge permission: an operations grant on that GitHub grant, for fixture\/project, with a merge method/.test(c.sections.en.why) && /Studio has no card that grants it yet/.test(c.sections.en.why)
+        && /needs the merge permission: an operations grant on that GitHub grant, for fixture\/project, with a merge method/.test(c.sections.en.why) && /opens the card where you can grant it/.test(c.sections.en.why)
         && c.body.includes("Missing permission: merge") && /合併權限/.test(c.sections["zh-TW"].why) && /ends this Task as merged by itself/.test(c.sections.en.how),
         "no operations grant: the card names the missing merge permission (an operations grant), says where it would come from, offers only close / request changes", `${ids(c)} | ${c?.sections?.en?.why}`);
       await E.answer(c.id, { choice: "close", by: "captain" } as any); await ended(r);

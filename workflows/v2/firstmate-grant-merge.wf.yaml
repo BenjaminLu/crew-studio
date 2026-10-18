@@ -1,0 +1,11 @@
+{
+ "id":"firstmate-grant-merge","name":"Grant or revoke Studio merge","kind":"firstmate-grant-merge","version":1,
+ "description":"The captain grants (or revokes) Studio's permission to merge, for one connected GitHub repository, the pull requests it opened, each only after its own merge card's confirmation.",
+ "params":{"project":{"label":"Connected project"},"action":{"label":"grant or revoke"},"proposal":{"label":"Pinned merge grant proposal"}},
+ "roles":[],"nodes":[
+  {"id":"card","kind":"hook","label":"Grant or revoke Studio merge","do":"github.merge-grant-card","x":160,"y":140},
+  {"id":"write","kind":"hook","label":"Write the signed grant","do":"github.merge-grant-write","x":440,"y":140},
+  {"id":"done","kind":"hook","label":"Merge permission written","x":720,"y":140},
+  {"id":"closed","kind":"hook","label":"Closed without a change","args":{"result":"closed"},"x":440,"y":280}
+ ],"edges":[["card","write","grant"],["card","write","revoke"],["card","closed","close"],["write","done","ok"]]
+}

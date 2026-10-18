@@ -10,6 +10,8 @@
 // A section that cannot be read carries {error} and the rest still renders. There are no cost fields.
 //   POST /api/projects/<id>/github/connect   (desktop) only proposes: it raises the captain-only "Connect to GitHub"
 //                                       card (src/github-connect.ts); the captain's answer on that card writes the grant.
+//   POST /api/projects/<id>/github/merge[/revoke]   (desktop) only proposes: the captain-only card that grants
+//                                       or revokes Studio's merge for that repository (src/github-merge-grant.ts).
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, join, relative, isAbsolute, resolve } from "node:path";
 import { hasSession } from "./csrf";
@@ -21,6 +23,7 @@ import type { Engine, Run } from "./runtime/engine";
 import type { WorktreeRecord } from "./worktrees";
 import { githubSlugOf, originOf, verifyGitHubGrant } from "./github-grant";
 import { startGitHubConnect } from "./github-connect";
+import { startMergeGrant } from "./github-merge-grant";
 
 export type Line = { tone: "" | "ok" | "run" | "human" | "warn" | "bad"; en: string; tw: string };
 type Who = { kind: "desktop" | "phone" | "refused" | string };
@@ -326,7 +329,7 @@ export function createProjectOverview(d: OverviewDeps) {
     const st = startState(p);
     const crew = section(() => crewOf(p, st));
     // the GitHub side: the grant (verified as staffing verifies it), or the origin a Connect card would propose
-    const github = section(() => { if (p.github) { try { verifyGitHubGrant(d.dataDir, p); return { connected: true, verified: true, repository: p.github.repository, branchPrefix: p.github.branchPrefix }; } catch (e: any) { return { connected: true, verified: false, repository: p.github.repository, error: String(e?.message ?? e) }; } }
+    const github = section(() => { if (p.github) { try { verifyGitHubGrant(d.dataDir, p); return { connected: true, verified: true, repository: p.github.repository, branchPrefix: p.github.branchPrefix, merge: p.github.operations ? { method: p.github.operations.mergeMethod, approvedAt: p.github.operations.approvedAt } : null }; } catch (e: any) { return { connected: true, verified: false, repository: p.github.repository, error: String(e?.message ?? e) }; } }
       let origin: string | null = null; try { origin = p.path ? githubSlugOf(originOf(p.path).url) : null; } catch {} return { connected: false, verified: false, origin }; });
     return {
       project: { id: p.id, name: p.name || p.id, path: p.path, base: p.base, kind, enabled: enabledOf(p), folderMissing: st.folderMissing, canStart: st.canStart, ...(p.github?.repository ? { repository: p.github.repository } : {}), registeredAt: section(() => registeredAt(p.id)) },
@@ -343,6 +346,14 @@ export function createProjectOverview(d: OverviewDeps) {
       if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
       if (!hasSession(req, d.session)) return json({ error: "Studio session required" }, 401);
       try { const run = startGitHubConnect(d.engine, d.projects, connect[1], "captain (Projects page)"); return json({ ok: true, task: run.id, href: `#/run/${run.id}` }); }
+      catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
+    }
+    const merge = /^\/api\/projects\/([A-Za-z0-9][A-Za-z0-9_.-]{0,199})\/github\/merge(\/revoke)?$/.exec(p);
+    if (merge) {
+      if (!writing) return json({ error: "use POST" }, 405);
+      if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
+      if (!hasSession(req, d.session)) return json({ error: "Studio session required" }, 401);
+      try { const run = startMergeGrant(d.engine, d.projects, merge[1], merge[2] ? "revoke" : "grant", "captain (Projects page)"); return json({ ok: true, task: run.id, href: `#/run/${run.id}` }); }
       catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); }
     }
     const m = /^\/api\/projects\/([A-Za-z0-9][A-Za-z0-9_.-]{0,199})\/overview$/.exec(p);

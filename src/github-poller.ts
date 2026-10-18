@@ -4,6 +4,9 @@ import {createHash} from 'node:crypto';
 export type ReadAuthority={origin:string;repository:string;identity:string};
 export const authorityHash=(value:unknown)=>createHash('sha256').update(JSON.stringify(value,(_k,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b))):v)).digest('hex');
 export const readAuthority=(origin:string,repository:string,scope:unknown,credential:string):ReadAuthority=>({origin,repository,identity:authorityHash({scope,credential:authorityHash(credential)})});
+/** A project grant's read scope: what it reads with, not what it may write. The merge permission (operations) and the signature
+ *  over it change when the captain grants or revokes merging (src/github-merge-grant.ts); reads stay the same authority. */
+export const grantReadScope=(grant:any)=>{const{operations:_o,signature:_s,...read}=grant??{};return{kind:'grant',grant:read};};
 type Subscriber={run:(signal:AbortSignal)=>Promise<void>;interval:number;abort:AbortController;deadlineTimer:ReturnType<typeof setTimeout>|null};
 type Owner={authority:ReadAuthority;subscribers:Map<string,Subscriber>;abort:AbortController;timer:ReturnType<typeof setTimeout>|null;batch:Promise<void>|null;pending:boolean;failures:number;notBefore:number};
 type Generation={owner:Owner;reads:Map<string,Promise<any>>};

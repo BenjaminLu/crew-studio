@@ -1,0 +1,22 @@
+# Grant (or revoke) Studio merge for one connected GitHub repository: started only by Firstmate's studio_connect_github tool
+# (merge: true) or the project's GitHub settings (internal). Offline: Studio has no GitHub token here, so the read-only token
+# check reports what is missing and nothing is granted (tests/merge-grant.ts covers the grant itself on the GitHub simulator).
+schema: 2
+workflow: firstmate-grant-merge
+pin: { version: 1, sha256: "74451da530547ec83f78c7682bffb9ab8ab2ae0ddf943eb34e0b4f9c0a60bb65" }   # bun scripts/acceptance/pin.ts firstmate-grant-merge
+topic: "Acceptance: internal workflow"
+start: { provider: null, params: {} }
+providers: []
+approvals: { staffing: false }
+cards: []
+budget: { wall_minutes: 5, max_rounds: 1 }
+live: false
+expect: { status: succeeded, artifacts: [] }
+stub:
+  - name: no-token
+    covers: "Firstmate proposes the merge grant for a connected project → captain-only card; without a GitHub token the read-only check says what is missing, close writes nothing; the board cannot start it"
+    how: grant-merge
+    setup: [github-origin, register, connect]
+    board_refusal: { status: 409, error: "internal or retired" }
+    cards: [{ node: card, answer: close }]
+    expect: { status: succeeded, result: closed, visited: [card, closed], not_visited: [write] }

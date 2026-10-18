@@ -111,10 +111,11 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
     let created: any[];
     if (r.how === "register") { if (!h.vars.repo) await STEPS.repo(h); created = await h.firstmate("NATIVE-PROJECT ", { path: h.vars.repo, name: "Acceptance repo", workflow: target.workflow, version, text: r.topic, params: {} }); }
     else if (r.how === "connect") created = await h.firstmate("NATIVE-TOOL ", { name: "studio_connect_github", args: { project: h.vars.project } });
+    else if (r.how === "grant-merge") created = await h.firstmate("NATIVE-TOOL ", { name: "studio_connect_github", args: { project: h.vars.project, merge: true } });
     else if (r.how === "crew") created = await h.firstmate("NATIVE-TOOL ", { name: "studio_propose_crew_change", args: { change: { kind: "member", seat: "maker", set: { provider: "codex", model: "acceptance-model", effort: "medium" } } } });
     else if (r.how === "staffing") { const id = await approveStaffing(h, tparams.project ?? "sandbox", target.workflow); created = [{ id, workflow: "firstmate-staffing" }]; }
     else created = await h.firstmate("NATIVE-PROPOSE ", { workflow: target.workflow, version, text: r.topic, params: tparams });
-    const want = r.how === "firstmate" || r.how === "proposal" ? "firstmate-proposal" : r.how === "register" ? "firstmate-register-project" : r.how === "connect" ? "firstmate-connect-github" : r.how === "crew" ? "crew-change" : "firstmate-staffing";
+    const want = r.how === "firstmate" || r.how === "proposal" ? "firstmate-proposal" : r.how === "register" ? "firstmate-register-project" : r.how === "connect" ? "firstmate-connect-github" : r.how === "grant-merge" ? "firstmate-grant-merge" : r.how === "crew" ? "crew-change" : "firstmate-staffing";
     const own = created.find((x) => x.workflow === want);
     if (!own) return { failures: [...failures, `Firstmate created no ${want} Task (it created: ${created.map((x) => `${x.id} ${x.workflow}`).join(", ") || "nothing"})`] };
     if (r.how !== "firstmate") task = own.id;

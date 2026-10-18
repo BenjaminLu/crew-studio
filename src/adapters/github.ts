@@ -1,5 +1,5 @@
 import {AsyncLocalStorage} from 'node:async_hooks';
-import {GitHubPoller,readAuthority} from '../github-poller';
+import {GitHubPoller,readAuthority,grantReadScope} from '../github-poller';
 // Local review remains the default. GitHub publication requires a trusted,
 // exact project grant; this interface exposes no review/comment/merge endpoint.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -59,6 +59,35 @@ function localMust(cwd: string, args: string[]) { const r = localGit(cwd, args);
 const slug = /^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 const sha = /^[a-f0-9]{40}$/;
 const ref = (s: string) => typeof s === "string" && s.length < 240 && !s.startsWith("-") && localGit(process.cwd(), ["check-ref-format", "--branch", s]).ok;
+export type MergeMethod = "merge" | "squash" | "rebase";
+export const MERGE_METHODS: MergeMethod[] = ["squash", "merge", "rebase"];
+/** What the read-only probe before a merge grant found: what is missing (empty: nothing GitHub shows is missing), the merge
+ *  methods the repository allows (null: GitHub did not show them), the one Studio offers first, and what GitHub cannot show. */
+export type MergeAccess = { missing: { en: string; zh: string }[]; methods: MergeMethod[] | null; preferred: MergeMethod; role: string | null;
+  token: "classic" | "fine-grained" | "app" | "oauth" | "other"; scopes: string[] | null; unseen: { en: string; zh: string } | null };
+/** The probe's verdict from GitHub's repository answer as the token sees it (GET /repos/<owner/repo>), its X-OAuth-Scopes header
+ *  (classic and OAuth tokens only) and the token's kind (by its prefix; the token itself never leaves). Merging a pull request
+ *  needs write access to the repository: the role (push, maintain or admin), and for a classic token the repo scope (public_repo
+ *  on a public repository). A fine-grained token or a GitHub App shows its role, not its own permissions: Contents and Pull
+ *  requests write stay GitHub's to enforce at the merge, and the card says so. */
+export function mergeAccessOf(repository: string, repo: any, scopesHeader: string | null, token: MergeAccess["token"]): MergeAccess {
+  if (!repo || typeof repo !== "object" || String(repo.full_name ?? "").toLowerCase() !== repository.toLowerCase()) throw new Error("GitHub showed another repository than the granted one");
+  const missing: MergeAccess["missing"] = [], p = repo.permissions;
+  const role = p && typeof p === "object" ? (p.admin === true ? "admin" : p.maintain === true ? "maintain" : p.push === true ? "push" : p.triage === true ? "triage" : p.pull === true ? "pull" : "none") : null;
+  if (!role) missing.push({ en: `GitHub does not show this token's permissions on ${repository}; merging needs write access (Contents and Pull requests: write)`, zh: `GitHub 沒有顯示這個權杖在 ${repository} 的權限；合併需要寫入權限（Contents 與 Pull requests：write）` });
+  else if (!["admin", "maintain", "push"].includes(role)) missing.push({ en: `write access to ${repository}: the token's account or app has ${role} access only; merging needs Contents and Pull requests: write`, zh: `${repository} 的寫入權限：這個權杖的帳號或 app 只有 ${role} 權限；合併需要 Contents 與 Pull requests：write` });
+  const scopes = typeof scopesHeader === "string" ? scopesHeader.split(",").map((s) => s.trim()).filter(Boolean) : null;
+  if (scopes && !scopes.includes("repo") && !(repo.private === false && scopes.includes("public_repo"))) missing.push({ en: `the token's ${repo.private === false ? "repo or public_repo" : "repo"} scope (it has ${scopes.join(", ") || "no scope"})`, zh: `權杖的 ${repo.private === false ? "repo 或 public_repo" : "repo"} scope（目前是 ${scopes.join("、") || "沒有 scope"}）` });
+  const flags: Record<MergeMethod, string> = { merge: "allow_merge_commit", squash: "allow_squash_merge", rebase: "allow_rebase_merge" };
+  const shown = MERGE_METHODS.every((m) => typeof repo[flags[m]] === "boolean"), methods = shown ? MERGE_METHODS.filter((m) => repo[flags[m]] === true) : null;
+  if (methods && !methods.length) missing.push({ en: `a merge method: ${repository} allows none of merge, squash or rebase`, zh: `合併方式：${repository} 不允許 merge、squash 或 rebase 任何一種` });
+  const unseen = token === "fine-grained" || token === "app" ? { en: `GitHub shows the ${token === "app" ? "app's" : "token's account"} role on ${repository} (${role ?? "unknown"}), not a ${token === "app" ? "GitHub App installation's" : "fine-grained token's"} own permissions: it needs Contents: write and Pull requests: write, or GitHub refuses the merge (Studio records the refusal; nothing else is written).`,
+    zh: `GitHub 只顯示${token === "app" ? " app " : "權杖帳號"}在 ${repository} 的角色（${role ?? "未知"}），不顯示${token === "app" ? " GitHub App 安裝" : "細粒度權杖"}本身的權限：它需要 Contents：write 與 Pull requests：write，否則 GitHub 會拒絕合併（Studio 會記下拒絕，不會寫入其他東西）。` } : null;
+  return { missing, methods, preferred: (methods ?? MERGE_METHODS).find((m) => m === "squash") ?? (methods ?? MERGE_METHODS)[0] ?? "squash", role, token, scopes, unseen };
+}
+/** The token's kind by its documented prefix (classic ghp_, fine-grained github_pat_, app installation ghs_, OAuth gho_). */
+export const tokenKind = (t: string): MergeAccess["token"] => t.startsWith("github_pat_") ? "fine-grained" : t.startsWith("ghp_") ? "classic" : t.startsWith("ghs_") ? "app" : t.startsWith("gho_") ? "oauth" : "other";
+
 export function validateGitHubGrant(g: GitHubProjectGrant) {
   if (!g || !["github", "simulator"].includes(g.mode) || !slug.test(g.repository) || !g.approvalId?.trim() || !Number.isFinite(Date.parse(g.approvedAt))) throw new Error("GitHub requires an explicit approved project remote grant");
   if (!g.localPath?.startsWith("/") || !existsSync(join(g.localPath, ".git")) || !ref(g.base) || !g.branchPrefix?.endsWith("/") || !ref(g.branchPrefix + "probe")) throw new Error("invalid GitHub project repository, base or branch prefix");
@@ -156,7 +185,7 @@ export class GitHubPrAdapter implements PrAdapter {
     this.grant = Object.freeze({ ...grant, ...(grant.operations ? { operations: Object.freeze({ ...grant.operations }) } : {}) });
     registerSecretValues(() => [this.tokenValue]);
   }
-  readAuthority(){return readAuthority(this.grant.apiOrigin,this.grant.repository,{kind:'grant',grant:this.grant},this.credential());}
+  readAuthority(){return readAuthority(this.grant.apiOrigin,this.grant.repository,grantReadScope(this.grant),this.credential());}
   private credential() {
     const t = this.token()?.trim(); if (!t || /[\r\n]/.test(t)) throw new Error("GitHub authentication is required");
     this.tokenValue = t; return t;
@@ -239,7 +268,7 @@ export class GitHubPrAdapter implements PrAdapter {
     else throw new Error("GitHub read target is not allowlisted");
     return this.readResponse(suffix, signal,fresh);
   }
-  private async readResponse(suffix:string,signal?:AbortSignal,fresh=false):Promise<any>{const token=this.credential(),authority=readAuthority(this.grant.apiOrigin,this.grant.repository,{kind:'grant',grant:this.grant},token);const poller=this.poller??this.readOwners.getStore();return poller?poller.read(authority,`/repos/${this.grant.repository}${suffix}`,s=>this.readResponseOwned(suffix,token,s),signal,fresh):this.readResponseOwned(suffix,token,signal);}
+  private async readResponse(suffix:string,signal?:AbortSignal,fresh=false):Promise<any>{const token=this.credential(),authority=readAuthority(this.grant.apiOrigin,this.grant.repository,grantReadScope(this.grant),token);const poller=this.poller??this.readOwners.getStore();return poller?poller.read(authority,`/repos/${this.grant.repository}${suffix}`,s=>this.readResponseOwned(suffix,token,s),signal,fresh):this.readResponseOwned(suffix,token,signal);}
   private async readResponseOwned(suffix: string, token:string, signal?: AbortSignal) {
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), this.timeoutMs);
     let response:Response|null=null;
@@ -258,6 +287,19 @@ export class GitHubPrAdapter implements PrAdapter {
       return JSON.parse(await boundedResponse(response, 1_000_000));
     } catch (e: any) { throw new Error(/^GitHub \d+(?: protection-(?:plan|none))?$/.test(e?.message) ? e.message : "GitHub read failed or timed out"); }
     finally { await disposeOwnedResponse(response,controller);clearTimeout(timer); }
+  }
+  /** The read-only probe before the captain grants merging (src/github-merge-grant.ts): one GET of the granted repository with
+   *  the grant's token, read fresh (its scopes header is part of the answer), never through the shared poller's cache. */
+  async mergeAccess(signal?: AbortSignal): Promise<MergeAccess> {
+    const token = this.credential(), controller = new AbortController(), timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    let response: Response | null = null;
+    try {
+      response = await fetch(`${this.grant.apiOrigin}/repos/${this.grant.repository}`, { headers: githubHeaders(token), redirect: "error", signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal });
+      if (!response.ok) throw new Error(`GitHub ${response.status}`);
+      const scopes = response.headers.get("x-oauth-scopes"), repo = JSON.parse(await boundedResponse(response, 1_000_000));
+      return mergeAccessOf(this.grant.repository, repo, scopes, tokenKind(token));
+    } catch (e: any) { throw new Error(/^GitHub (\d+|showed another)/.test(e?.message) ? e.message : "GitHub read failed or timed out"); }
+    finally { await disposeOwnedResponse(response, controller); clearTimeout(timer); }
   }
   async jobLog(id: number, start: number, end: number, signal?: AbortSignal): Promise<{ classification: string; text?: string; start?: number; end?: number; total?: number }> {
     signal?.throwIfAborted();

@@ -256,8 +256,8 @@ A registered project stays local (its Tasks merge on the local base) until the c
 1. Its local repository's `origin` is a github.com repository (`https://github.com/<owner>/<repo>.git` or the SSH form).
 2. Ask Firstmate to connect it (its `studio_connect_github` tool), or open the project's page and click
    **Connect to GitHub \<owner/repo\>…**. A captain-only card shows the repository, push URL, base, branch prefix and what the
-   grant allows: push Task branches (force-with-lease, each on its own branch) and open pull requests. Merging on GitHub stays
-   off (no operations grant). Only **Connect to GitHub** on that card writes the grant into `data/projects.json`, signed with
+   grant allows: push Task branches (force-with-lease, each on its own branch) and open pull requests. Merging stays off (no
+   operations grant; the separate Grant Studio merge card below grants it). Only **Connect to GitHub** on that card writes the grant into `data/projects.json`, signed with
    Studio's local key over that project, path and base. Before every Task, Studio verifies the signature, the path, the base
    and that `origin` still names the granted repository; anything else refuses the project (`external_unverified`).
 3. Studio needs a token with write access to that repository: `CREW_GITHUB_TOKEN` (or `GITHUB_TOKEN` / `GH_TOKEN`), a token
@@ -274,7 +274,12 @@ A registered project stays local (its Tasks merge on the local base) until the c
    (no operations grant), so once its remote CI passes the merge card says "PR #N is open at <link>; merge it on GitHub" and
    names the missing merge permission: merge it there and Studio, which watches the pull request while the card is open,
    ends the Task as merged by itself (closed unmerged on GitHub ends it closed); or close the Task on that card, or request
-   changes for another round. With an operations grant on a repository whose branch protection GitHub does not show (a free
+   changes for another round. To let Studio merge, click **Grant Studio merge for \<owner/repo\>…** on that card or on the
+   project's page (or ask Firstmate, which can only propose it): Studio first checks the token with one read-only request
+   (write access, a classic token's `repo` scope, the allowed merge methods) and says what is missing, granting nothing; else a
+   captain-only card says what Studio then does and never does, offers the allowed merge methods and writes the signed
+   operations grant when you pick one. **Revoke Studio merge…** on the project's page takes it back the same way.
+   With an operations grant on a repository whose branch protection GitHub does not show (a free
    private repository), the card offers **Merge** once every Studio check passed at the head; it needs the acknowledgement
    that GitHub does not enforce the required checks there and that Studio verified them at that head. A repository without a template keeps the old behaviour (the pull request
    opens right after the build, with the spec, door and rollback).

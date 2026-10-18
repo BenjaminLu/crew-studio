@@ -11,7 +11,7 @@ import { join, resolve, relative, isAbsolute } from "node:path";
 import {homedir} from "node:os";
 import { bundledText, parseYaml } from "./bundled";
 import { Policies, unreadableRule } from "./runtime/checks";
-import { verifyGitHubGrant } from "./github-grant";
+import { grantSignature, verifyGitHubGrant } from "./github-grant";
 
 /**
  * The one exception to Studio's private data root: the source-owned sandbox repository,
@@ -192,7 +192,12 @@ export class Projects {
     if(project.github){const assert=(this as any).assertExecutable;if(typeof assert!=='function')throw new Error("External project grant verification is unavailable");assert.call(this,{project:id,base:project.base},{});}
     stage='unsupported_value';
     const canonical=(v:any):string=>v===null||typeof v==='string'||typeof v==='boolean'?JSON.stringify(v):typeof v==='number'&&Number.isFinite(v)?JSON.stringify(v):Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&Object.getPrototypeOf(v)===Object.prototype?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':(()=>{throw new Error("Unsupported project authority value")})();
-    return{ok:true,identity:{namespace:'git',id,identity:createHash('sha256').update(canonical({schema:1,id,root:repository.root,common:repository.common,base:project.base,enabled:project.enabled??true,grant:project.github??null})).digest('hex')}};
+    // the merge permission (the grant's operations, src/github-merge-grant.ts) is not part of who staffs the project: granting
+    // or revoking it keeps the approved crew. The identity reads the grant as Connect signed it: without the operations, with
+    // the signature over exactly that (the stored one when there are none; assertExecutable above verified the stored one)
+    const{operations:_operations,signature:_signature,...unsigned}=(project.github??{}) as any;
+    const grant=project.github?.operations?{...unsigned,signature:grantSignature(this.dataDir,{id:project.id,path:project.path,base:project.base},unsigned)}:project.github;
+    return{ok:true,identity:{namespace:'git',id,identity:createHash('sha256').update(canonical({schema:1,id,root:repository.root,common:repository.common,base:project.base,enabled:project.enabled??true,grant:project.github?grant:null})).digest('hex')}};
     }catch(error:any){
       // folder_missing only when the root itself is not there (lstat ENOENT, the same test as the skip rule); a root that
       // exists but cannot be used (a file, a dangling link, EACCES, a file on the way: ENOTDIR) is folder_unusable

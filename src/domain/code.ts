@@ -844,6 +844,39 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     x.ctx.merged = { head: d.sha, sourceHead: d.head, reviewed: d.reviewed, base: x.ctx.pr.base, method: null, adapter: "github", detected: true, at: d.at || d.observedAt };
     x.rn.note = `pull request #${d.pr} was merged on GitHub as ${d.sha.slice(0, 8)} (observed by Studio)`; x.save(); return "ok";
   };
+  // ---------- the project's merge permission granted or revoked while its merge card is open ----------
+  // The captain's grant card (src/github-merge-grant.ts) changed the project's signed grant, and an open merge card was prepared
+  // under the old one (merge on GitHub, or Studio's Merge bound to the old grant's identity). The remote checks are verified
+  // again, read only, at the same head and policy under the new grant (the verification is bound to the grant's identity), then
+  // the card is prepared again: merge granted, a Task on an observed policy with every gate green now offers the captain-only
+  // Merge with its acknowledgement; revoked, the merge goes back to GitHub. Nothing is answered for the captain, and a card
+  // whose checks do not pass again is left as it was (its merge hook refuses a grant that changed).
+  const regrantRemote = async (x: X) => {
+    const a = selectedAdapter(x), ci = x.ctx.remoteCI;
+    if (!(a instanceof GitHubPrAdapter) || ci?.state !== "pass" || ci.head !== x.ctx.pr?.head) throw new Error("the pull request's remote checks are not verified at its head");
+    if (ci.grant === grantIdentity(a)) return;
+    const phase = remotePhase(x); phase.assert();
+    const policy = await requiredPolicy(a, phase.signal); phase.assert();
+    if (policy.hash !== ci.policyHash) throw new Error("the required-check policy changed; the checks run again first");
+    const evidence = await inspectRemote(a, x.ctx.pr, policy, phase.signal); phase.assert();
+    if (evidence.state !== "pass") throw new Error(`the remote checks do not pass under the new grant: ${evidence.reason}`);
+    engine.record(x, "external-ci", { check: "firstmate/remote-ci", verdict: "pass", head: evidence.head, kind: "deterministic", blocking: true, data: { ...evidence, regranted: true }, findings: [] } as any);
+    x.ctx.remoteCI = { ...ci, ...evidence, grant: grantIdentity(a), verifiedAt: Date.now() }; x.save();
+  };
+  (engine.grantChanged ??= []).push(async (project) => {
+    const out: string[] = [];
+    for (const r of engine.list()) {
+      if (r.status !== "waiting" || r.ctx.project !== project || r.ctx.pr?.adapter !== "github") continue;
+      for (const node of r.def.nodes) {
+        const rn = r.nodes[node.id], c = rn?.card ? engine.cards.get(rn.card) : null;
+        if (node.args?.body_from !== "merge" || rn?.state !== "running" || rn.waiting !== "card" || c?.status !== "open" || c.kind !== "merge") continue;
+        const x = engine.x(r, node, rn);
+        try { await regrantRemote(x); const fresh = await engine.reprepareCard(x, () => engine.kinds.card.start(x) as Promise<unknown>); out.push(`${r.id}: merge card ${c.id} prepared again as ${fresh.id}`); }
+        catch (e: any) { out.push(`${r.id}: merge card ${c.id} kept (${String(e?.message ?? e).slice(0, 200)})`); }
+      }
+    }
+    return out;
+  });
   engine.actions["git.merge"] = async (x) => {
     if (x.ctx.pr?.adapter === "github") {
       // merged on GitHub while the merge card was open (observed, never answered for the captain): the Task ends as merged
@@ -1576,12 +1609,12 @@ ${said}`, options: rescopeOpts }; }
   /** The merge card of a GitHub Task that Studio does not merge itself: the open pull request, merged by the captain on GitHub
    *  (Studio watches it and ends the Task as merged when it sees the merge).
    *  no operations grant: the card names the missing permission (merge, an operations grant on the project's GitHub grant) and
-   *  where it would be granted; observed (an operations grant, but GitHub does not show the base branch's protection) and
+   *  links to where it is granted (src/github-merge-grant.ts); observed (an operations grant, but GitHub does not show the base branch's protection) and
    *  Studio's own verification at the head is not complete (`unready` says why): the merge stays on GitHub (OBSERVED_REFUSAL). */
-  const mergeOnGitHubBody = (pr: any, policy?: RequiredPolicy, observed = false, o: { repository?: string; unready?: string } = {}): Body => {
+  const mergeOnGitHubBody = (pr: any, policy?: RequiredPolicy, observed = false, o: { repository?: string; unready?: string; project?: string } = {}): Body => {
     const repo = o.repository ?? "the repository", watch = "Studio watches the pull request: when it is merged on GitHub, Studio ends this Task as merged by itself.", watchZh = "Studio 會盯著這個 pull request：在 GitHub 合併後，Studio 會自己把這個任務結束為已合併。";
-    const grantEn = `Studio cannot merge for this project: its GitHub grant (from Connect to GitHub) lets Studio push Task branches and open pull requests, not merge. Merging from Studio needs the merge permission: an operations grant on that GitHub grant, for ${repo}, with a merge method (merge, squash or rebase) and real writes on, approved by you. Connect to GitHub never grants it, and Studio has no card that grants it yet, so merge on GitHub.`;
-    const grantZh = `Studio 不能替這個專案合併：它的 GitHub 授權（來自「連到 GitHub」）只允許推送任務分支和開 pull request，不能合併。要從 Studio 合併，需要合併權限：在這個 GitHub 授權上加一份針對 ${repo} 的操作授權（operations grant），指定合併方式（merge、squash 或 rebase）並開啟實際寫入，由你核准。「連到 GitHub」不會給這個權限，Studio 目前也還沒有能授權它的卡片，所以請到 GitHub 合併。`;
+    const grantEn = `Studio cannot merge for this project: its GitHub grant (from Connect to GitHub) lets Studio push Task branches and open pull requests, not merge. Merging from Studio needs the merge permission: an operations grant on that GitHub grant, for ${repo}, with a merge method (merge, squash or rebase) and real writes on, approved by you. Connect to GitHub never grants it. "Grant Studio merge for ${repo}…" on this card (or the project's GitHub settings) opens the card where you can grant it; until then, merge on GitHub.`;
+    const grantZh = `Studio 不能替這個專案合併：它的 GitHub 授權（來自「連到 GitHub」）只允許推送任務分支和開 pull request，不能合併。要從 Studio 合併，需要合併權限：在這個 GitHub 授權上加一份針對 ${repo} 的操作授權（operations grant），指定合併方式（merge、squash 或 rebase）並開啟實際寫入，由你核准。「連到 GitHub」不會給這個權限。這張卡片上的「授權 Studio 合併 ${repo}…」（或專案的 GitHub 設定）會開出授權卡片；在那之前，請到 GitHub 合併。`;
     const obsEn = `PR #${pr.id} is open at ${pr.url} and every check on its head passed. GitHub does not show branch protection for the base branch, so Studio does not merge it${o.unready ? ` (${o.unready})` : ""}: merge it on GitHub.`;
     const obsZh = `PR #${pr.id} 已在 ${pr.url} 開好，head 上的檢查全部通過。GitHub 沒有顯示 base 分支的分支保護${o.unready ? "，而且 Studio 自己在這個 head 上的驗證還不完整" : ""}，所以 Studio 不合併：請到 GitHub 合併。`;
     return { title: `Pull request #${pr.id} is open: merge it on GitHub`, zhTitle: `Pull request #${pr.id} 已開：請到 GitHub 合併`, captainOnly: true,
@@ -1589,9 +1622,10 @@ ${said}`, options: rescopeOpts }; }
       zh: { why: observed ? obsZh : `PR #${pr.id} 已在 ${pr.url} 開好。${grantZh}`, how: `到 GitHub 合併這個 pull request。${watchZh}或在這裡關閉這個任務，或要求修改，再跑一輪。` },
       // each language its own line (and literal): the zh rule reads the Chinese line alone
       body: [observed ? `PR #${pr.id} is open at ${pr.url}; ${OBSERVED_REFUSAL}, so merge it on GitHub.` : `PR #${pr.id} is open at ${pr.url}; merging from Studio is off, so merge it on GitHub.`, `PR #${pr.id} 已開在 ${pr.url}；Studio 不合併，請到 GitHub 合併。`, "",
-        ...(observed ? (o.unready ? [`Studio's own merge is not offered: ${o.unready}.`, ""] : []) : [`Missing permission: merge (an operations grant on the project's GitHub grant for ${repo}: a merge method and real writes, approved by the captain). Connect to GitHub grants pushing Task branches and opening pull requests only; no Studio card grants merging yet.`, `缺少的權限：合併（專案 GitHub 授權上針對 ${repo} 的操作授權：合併方式與實際寫入，由船長核准）。「連到 GitHub」只授權推送任務分支和開 pull request；Studio 目前沒有授權合併的卡片。`, ""]),
+        ...(observed ? (o.unready ? [`Studio's own merge is not offered: ${o.unready}.`, ""] : []) : [`Missing permission: merge (an operations grant on the project's GitHub grant for ${repo}: a merge method and real writes, approved by the captain). Connect to GitHub grants pushing Task branches and opening pull requests only; the captain-only "Grant Studio merge" card grants merging.`, `缺少的權限：合併（專案 GitHub 授權上針對 ${repo} 的操作授權：合併方式與實際寫入，由船長核准）。「連到 GitHub」只授權推送任務分支和開 pull request；合併由只有船長能回答的「授權 Studio 合併」卡片授權。`, ""]),
         `Branch: ${pr.branch} → ${pr.base} at ${pr.head}`, ...(policy?.observed ? ["", observedNotice(policy)!.en, observedNotice(policy)!.zh] : []), "", watch, watchZh].join("\n"),
-      links: [{ label: `Pull request #${pr.id}`, href: pr.url }],
+      // the missing grant: a link to the project's GitHub settings, where one click proposes the captain-only grant card
+      links: [{ label: `Pull request #${pr.id}`, href: pr.url }, ...(!observed && o.project ? [{ label: `Grant Studio merge for ${repo}…`, href: `#/project/${encodeURIComponent(o.project)}?github=merge` }] : [])],
       options: [{ id: "close", label: "Close here (I merge on GitHub)", labelZh: "在這裡關閉（我到 GitHub 合併）", primary: true, hold: true }, { id: "changes", label: "Request changes", labelZh: "要求修改", note: true, hold: true }] };
   };
   /** What Studio verified itself at the head, for an observed-policy merge (GitHub enforces none of it): the seven signed gates
@@ -1624,7 +1658,7 @@ ${said}`, options: rescopeOpts }; }
       if (text) return text;
       // no operations grant (merging from Studio is off by design): the pull request is open and merges on GitHub
       let mergeOff = false; try { (a as GitHubPrAdapter).operationGrant(); } catch { mergeOff = true; }
-      if (mergeOff) return doorFirst(x, mergeOnGitHubBody(x.ctx.pr, policy, false, { repository: (a as GitHubPrAdapter).grant.repository }));
+      if (mergeOff) return doorFirst(x, mergeOnGitHubBody(x.ctx.pr, policy, false, { repository: (a as GitHubPrAdapter).grant.repository, project: o.adapter ? undefined : x.ctx.project }));
       // with an operations grant and an observed policy (GitHub does not show branch protection), the required checks are only
       // what Studio verified itself: Studio offers its merge only when all of it passed at this head, and then only on the
       // captain's acknowledgement (below); otherwise the green pull request is the captain's to merge on GitHub

@@ -52,6 +52,13 @@ export const STEPS: Record<string, Step> = {
     const raw = JSON.parse(readFileSync(join(h.s.data, "projects.json"), "utf8")); const p = raw.find((x: any) => x.path && realpathSync(x.path) === h.vars.repo);
     if (!p || !projects.some((x: any) => x.id === p.id)) throw new Error("the registered project is not listed"); h.vars.project = p.id;
   },
+  /** connect {project} to its GitHub origin through Firstmate (studio_connect_github) and approve the connect card (nothing is pushed) */
+  async connect(h) {
+    const runs = await h.firstmate("NATIVE-TOOL ", { name: "studio_connect_github", args: { project: h.vars.project } });
+    const run = runs.find((r) => r.workflow === "firstmate-connect-github"); if (!run) throw new Error("Firstmate proposed no GitHub connection");
+    const d = await drive(h.s, run.id, approveOnly, { timeoutMs: 30_000 }); const bad = await verify(h.s, d, { status: "succeeded", visited: ["connect", "write", "done"] });
+    if (bad.length) throw new Error(`connect: ${bad.join("; ")}`);
+  },
   /** staffing for code-firstmate on {project} (default: the built-in sandbox project), approved on its card */
   async "staffing-code"(h) { h.vars.project ??= "sandbox"; const key = `${h.s.base} ${h.vars.project}`; staffed[key] ??= approveCode(h); return staffed[key]; },
 
