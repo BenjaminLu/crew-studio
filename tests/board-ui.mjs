@@ -184,8 +184,9 @@ try {
     // a one-way Studio card in the Inbox: the note and tick survive a re-render; without the tick the answer is refused, with it the answer goes
     await p.goto(`${base}/#/inbox/SC-202`); await seen(p, '[data-scard="SC-202"] [data-confirm-door="SC-202"]');
     await p.fill('[data-scard="SC-202"] textarea', "keep the old column for a week");
-    await p.click('[data-scard="SC-202"] [data-option="approve"]');
-    ok(await p.waitForFunction(() => /confirm the door first/.test(document.querySelector('[data-scard="SC-202"]')?.innerText || ""), null, { timeout: 4000 }).then(() => true, () => false), "a one-way Studio card refuses an answer without the door tick");
+    const calls1 = fx.calls(); await p.click('[data-scard="SC-202"] [data-option="approve"]');
+    ok(await p.waitForFunction(() => /confirm the door first/i.test(document.querySelector('[data-scard="SC-202"]')?.innerText || ""), null, { timeout: 4000 }).then(() => true, () => false) && fx.calls() === calls1,
+      "a one-way Studio card refuses an answer without the door tick, on the card, before anything is sent", String(fx.calls() - calls1));
     await p.check('[data-confirm-door="SC-202"]');
     await p.evaluate(() => window.__es.dispatchEvent(new MessageEvent("scard", { data: JSON.stringify({ id: "SC-201", status: "answered" }) }))); await p.waitForTimeout(800);
     ok(await p.inputValue('[data-scard="SC-202"] textarea') === "keep the old column for a week" && await p.isChecked('[data-confirm-door="SC-202"]'), "an open card keeps its note and its door tick across a re-render (an scard event)");

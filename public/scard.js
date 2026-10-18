@@ -99,6 +99,7 @@ const SCARD_CSS = `
 .cc-actions .btn { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: center; } /* "Save all answers · <Task>" wraps inside a phone-wide card instead of pushing the page sideways */
 .cc-actions [data-ready="false"] { opacity: .55; }
 .cc-msg:empty { display: none; }
+.cc-sending:empty { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .cc-msg { font-size: 13px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--bad); color: var(--bad); }
 .cc-msg.ok { border-color: var(--ok); color: var(--ok); }
 .cc-kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: 13px; }
@@ -197,7 +198,7 @@ function mountCard(el, card, opts = {}) {
   const composingField = e => e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement;
   el.addEventListener('compositionstart', e => { if(composingField(e)){ clearTimeout(compositionTimer); composing=e.target; } }, true);
   el.addEventListener('keydown', e => { if(composingField(e)&&(e.isComposing||e.keyCode===229||composing)){ if(e.key==='Enter'||e.keyCode===229)e.stopPropagation(); } }, true);
-  el.addEventListener('compositionend', e => { if(e.target!==composing)return;const field=composing;composing=null;compositionTimer=setTimeout(()=>{if(composing)return;if(field.matches('[data-card-note]')){if(field.dataset.noteFor)st.notes[field.dataset.noteFor]=field.value;else st.note=field.value;}else if(draft&&field.dataset.interview){draft.answers[field.dataset.interview]=field.value;draft.dirty=true;}if(pendingRender){pendingRender=false;render();}if(draft&&draft.dirty)saveDraft().catch(error=>{st.msg=error.message;st.draw();});},0); }, true);
+  el.addEventListener('compositionend', e => { if(e.target!==composing)return;const field=composing;composing=null;compositionTimer=setTimeout(()=>{if(composing)return;if(field.matches('[data-card-note]')){if(field.dataset.noteFor)st.notes[field.dataset.noteFor]=field.value;else st.note=field.value;}else if(draft&&field.dataset.interview){draft.answers[field.dataset.interview]=field.value;draft.dirty=true;}if(pendingRender){const how=pendingRender;pendingRender=false;how==="sync"?sync():render();}if(draft&&draft.dirty)saveDraft().catch(error=>{st.msg=error.message;st.draw();});},0); }, true);
   // opts.target (the Inbox: the card's Task) goes on its primary button, "Approve <Task> v1", so the captain sees
   // which Task the click answers; a card with no primary option names it on its first option
   const targetLabel = (c, o) => { const label = artifactOptionLabel(c, o, T); const target = String(opts.target || "").trim();
@@ -444,7 +445,7 @@ function mountCard(el, card, opts = {}) {
   // ends on a new element and makes no click) and left a reference held to the old button acting on nothing, so a
   // click went nowhere and said nothing.
   function sync() {
-    if (composing) { pendingRender = true; return; }
+    if (composing) { if (!pendingRender) pendingRender = "sync"; return; } // a rebuild asked for meanwhile still wins
     const root = el.querySelector("[data-card-root]"); if (!root || root.getAttribute("data-card-root") !== st.card.id) return render();
     const { c, missing, tickCount } = needs();
     for (const b of root.querySelectorAll(".cc-actions [data-option]")) { const o = c.options.find((x) => x.id === b.dataset.option); const why = o ? missing(o) : null;
@@ -468,7 +469,11 @@ function mountCard(el, card, opts = {}) {
     if (block) { st.msg = block.text; if (expectsInterview) { st.interviewAttempted = true; render(); } else sync();
       const msg = el.querySelector("[data-card-msg]"); msg?.scrollIntoView({ block: "nearest" });
       ((block.field && el.querySelector(block.field)) || msg)?.focus(); return; }
-    st.busy = true; st.msg = ""; render();
+    // in flight: the buttons are disabled in place and the status line, already on the card, says Sending… (a screen
+    // reader announces a status whose text changes, not one inserted with its text)
+    st.busy = true; st.msg = ""; const root = el.querySelector("[data-card-root]");
+    if (root && root.getAttribute("data-card-root") === c.id) { for (const b of root.querySelectorAll(".cc-actions [data-option]")) b.disabled = true;
+      const s = root.querySelector("[data-card-sending]"); if (s) s.textContent = T("Sending…", "送出中…"); const m = root.querySelector("[data-card-msg]"); if (m) m.textContent = ""; } else render();
     const took = (got) => { st.card = got && got.id ? got : { ...c, status: "answered", answer: { choice: o.id } }; st.ok = true; st.msg = ""; try { opts.onAnswered && opts.onAnswered(st.card); } catch {} };
     try {
       if(draft&&!o.hold)await saveDraft();else if(draft)clearTimeout(draft.timer);
@@ -538,7 +543,7 @@ function mountCard(el, card, opts = {}) {
         return h("button", { class: `btn ${o.primary ? "primary" : ""}`, type: "button", "data-option": o.id, ...(draft&&o.id==="continue"?{"data-save-interview":""}:{}), "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy, onclick: () => answer(o) }, targetLabel(c, o)); })));
       const hint = st.msg ? "" : c.options.map(missing).find(Boolean) || "";
       kids.push(h("p", { class: "cc-count", "data-card-hint": "", hidden: !hint }, hint));
-      if (st.busy) kids.push(h("p", { class: "cc-count", role: "status", tabindex: "-1", "data-card-sending": "" }, T("Sending…", "送出中…")));
+      kids.push(h("p", { class: "cc-count cc-sending", role: "status", "aria-live": "polite", tabindex: "-1", "data-card-sending": "" }, st.busy ? T("Sending…", "送出中…") : ""));
     } else if (c.answer) {
       const byFirstmate = c.decidedBy === "firstmate" || c.answer.by === "firstmate";
       if (byFirstmate) kids.push(h("p", { class: "cc-count", "data-decided-by": "firstmate" }, T("Decided by Firstmate within the spec, not by the captain.", "由 Firstmate 在 spec 內決定，不是船長的決定。")));

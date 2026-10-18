@@ -144,9 +144,11 @@ try {
     ok(await p.waitForFunction(() => /run has moved on/.test(document.querySelector('[data-scard="SC-180"] [data-card-msg]')?.textContent || ""), null, { timeout: 5000 }).then(() => true, () => false)
       && (await visibleMsg(p, "SC-180"))?.near && await shown(p) === "SC-180", "a refused answer shows the server's reason on the card, under the buttons, and the card stays", await msgOf(p, "SC-180"));
     await p.click('[data-inbox-row="SC-181"]'); await p.waitForTimeout(300);
+    const sending = await p.$(sel("SC-181", '[data-card-sending][role="status"]'));
+    ok(!!sending && await sending.textContent() === "", "the card's Sending status is on the card before any click, empty (so a screen reader announces it when it fills)");
     await p.click(sel("SC-181", '[data-option="cool"]'));
-    ok(await p.waitForSelector(sel("SC-181", "[data-card-sending]"), { timeout: 1000 }).then(() => true, () => false) && /送出中/.test(await p.textContent(sel("SC-181", "[data-card-sending]"))),
-      "while the answer is in flight the card says Sending…");
+    ok(await p.waitForFunction((s) => s.isConnected && /送出中/.test(s.textContent), sending, { timeout: 1000 }).then(() => true, () => false)
+      && await p.$$eval(sel("SC-181", ".cc-actions [data-option]"), (bs) => bs.every((b) => b.disabled)), "while the answer is in flight that same status says Sending… and the buttons are disabled");
     await p.click(sel("SC-181", '[data-option="warm"]'), { force: true, timeout: 1000 }).catch(() => {});
     await p.waitForTimeout(1800);
     ok(answers.filter((a) => a.id === "SC-181").length === 1 && answers.find((a) => a.id === "SC-181").choice === "cool", "a second click while one answer is in flight sends nothing", JSON.stringify(answers));
