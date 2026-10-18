@@ -186,7 +186,7 @@ window.crewImageRefinementSnapshot=(snapshot,{lang="en",review=null}={})=>{
  */
 function mountCard(el, card, opts = {}) {
   css();
-  const fresh = { lang: opts.lang || pageLang(), ticks: new Set(), opened: new Set(), folds: new Map(), confirm: false, note: "", notes: {}, msg: "", ok: false, busy: false };
+  const fresh = { lang: opts.lang || pageLang(), ticks: new Set(), opened: new Set(), folds: new Map(), confirm: false, ack: false, note: "", notes: {}, msg: "", ok: false, busy: false };
   const st = opts.state || {}; for (const [k, v] of Object.entries(fresh)) if (!(k in st)) st[k] = v;
   const expectsInterview=card.workflow==='pack-genesis'&&card.node==='interview-answers';const form=card.interview;let draft=null;
   if(form?.schema===1&&/^[a-f0-9]{64}$/.test(form.batchHash)&&/^R-\d+$/.test(card.run)&&/^SC-\d+$/.test(card.id)&&form.visit===card.visit&&Array.isArray(form.questions)&&form.questions.length===6){
@@ -424,6 +424,8 @@ function mountCard(el, card, opts = {}) {
     const focused=document.activeElement;const keep=focused&&el.contains(focused)&&focused instanceof HTMLTextAreaElement?{key:focused.hasAttribute('data-card-note')?'data-card-note':focused.hasAttribute('data-interview')?'data-interview':null,value:focused.getAttribute('data-interview'),noteFor:focused.getAttribute('data-note-for'),start:focused.selectionStart,end:focused.selectionEnd,direction:focused.selectionDirection}:null;
     const c = st.card; const d = detailOk(c.detail) ? c.detail : null; const open = c.status === "open";
     const n = d?.intents?.length || 0; const one = c.confirmDoor && c.door === "one-way";
+    // an acknowledgement the captain ticks for one option (the observed-policy merge): its id goes with that answer only
+    const ackOk = !!(c.acknowledge && typeof c.acknowledge.id === "string" && typeof c.acknowledge.en === "string" && c.options.some((o) => o.id === c.acknowledge.option));
     // every option that needs text has its own note box (labelled with what to write) or a picker; the shared box is the intent-alignment note
     const noteOpts = expectsInterview ? [] : c.options.filter((o) => o.note || (Array.isArray(o.select) && o.select.length));
     const hasNote = !expectsInterview && n > 0;
@@ -431,7 +433,8 @@ function mountCard(el, card, opts = {}) {
     const noteOf = (o) => String(((o.note || o.select?.length) && st.notes[o.id]) || st.note || "").trim();
     const missing = (o) => { if (!expectsInterview && (o.note || o.select?.length) && !noteOf(o)) return T(`${o.label}: ${o.noteLabel || (o.select?.length ? "pick one first" : "write it first")}`, `${o.labelZh || o.label}：${o.noteLabelZh || o.noteLabel || (o.select?.length ? "請先選一個" : "請先寫下來")}`);
       if (o.hold) return null;if(expectsInterview&&!draft)return T("This interview version is unavailable. Reload the card; no answer was submitted.","這個訪談版本無法使用。請重新載入卡片；尚未送出回答。");if(draft&&form.questions.some(q=>!String(draft.answers[q.key]||" ").trim()))return T("Answer every question below", "請回答下方每個問題"); if (n && st.ticks.size < n && !st.note.trim()) return T(`Tick every intent line (${st.ticks.size} of ${n}) or write a note`, `請勾完每一條意圖（${st.ticks.size}/${n}），或寫備註`);
-      if (one && !st.confirm) return T("Confirm the door first", "請先確認門"); return null; };
+      if (one && !st.confirm) return T("Confirm the door first", "請先確認門");
+      if (ackOk && c.acknowledge.option === o.id && !st.ack) return T("Tick the acknowledgement first", "請先勾選確認"); return null; };
     const answer = async (o) => {
       if (st.busy || composing) return; // one answer in flight; never submit an unfinished composition
       const why=missing(o);if(expectsInterview&&why){st.msg=why;st.interviewAttempted=true;render();el.querySelector('[aria-invalid="true"]')?.focus();return;}
@@ -442,7 +445,7 @@ function mountCard(el, card, opts = {}) {
       try {
         if(draft&&!o.hold)await saveDraft();else if(draft)clearTimeout(draft.timer);
         const note=draft&&!o.hold?JSON.stringify({schema:1,card:c.id,visit:c.visit,batchHash:draft.hash,answers:draft.answers}):noteOf(o)||null;
-        took(await post(`/api/scards/${encodeURIComponent(c.id)}/answer`, { choice: o.id, note, confirm: st.confirm ? "one-way" : null, aligned: n ? [...st.ticks].sort((a, b) => a - b) : undefined, ...(o.id === "rescope" && c.localRescope ? {localRescope:c.localRescope} : {}), ...(c.crew && !o.hold && st.crew && Object.keys(st.crew).length ? { crew: { ...st.crew } } : {}) }));
+        took(await post(`/api/scards/${encodeURIComponent(c.id)}/answer`, { choice: o.id, note, confirm: st.confirm ? "one-way" : null, ...(ackOk && st.ack && c.acknowledge.option === o.id ? { ack: c.acknowledge.id } : {}), aligned: n ? [...st.ticks].sort((a, b) => a - b) : undefined, ...(o.id === "rescope" && c.localRescope ? {localRescope:c.localRescope} : {}), ...(c.crew && !o.hold && st.crew && Object.keys(st.crew).length ? { crew: { ...st.crew } } : {}) }));
       } catch (e) {
         // answered already with this very choice: that is the answer, not a refusal
         let same = null; if (/answered exactly once/.test(e.message || "")) { try { const now = await get(`/api/scards/${encodeURIComponent(c.id)}`); if (now?.answer?.choice === o.id) same = now; } catch {} }
@@ -497,6 +500,8 @@ function mountCard(el, card, opts = {}) {
             .concat(h("p", { class: "cc-count" }, T("Changes here apply to this run only. To change it every time, customise the workflow on the Crew page.", "這裡改的只用在這一次。要每次都這樣，到船員頁自訂這個 workflow。")))) : null)); }
       if (one) kids.push(h("label", { class: "cc-tick rt-row", for: `conf-${c.id}` }, h("input", { type: "checkbox", id: `conf-${c.id}`, "data-confirm-door": c.id, checked: st.confirm, onchange: (e) => { st.confirm = e.target.checked; render(); } }),
         h("span", {}, T("I confirm: this is one-way, a revert will not undo it", "我確認：這是單向門，revert 無法還原"))));
+      if (ackOk) kids.push(h("label", { class: "cc-tick rt-row", for: `ack-${c.id}` }, h("input", { type: "checkbox", id: `ack-${c.id}`, "data-acknowledge": c.id, checked: st.ack, onchange: (e) => { st.ack = e.target.checked; render(); } }),
+        h("span", {}, T(c.acknowledge.en, c.acknowledge.zh || c.acknowledge.en))));
       kids.push(h("div", { class: "cc-actions actions" }, c.options.map((o) => { const why = missing(o);
         return h("button", { class: `btn ${o.primary ? "primary" : ""}`, type: "button", "data-option": o.id, ...(draft&&o.id==="continue"?{"data-save-interview":""}:{}), "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy, onclick: () => answer(o) }, targetLabel(c, o)); })));
       const hint = c.options.map(missing).find(Boolean);

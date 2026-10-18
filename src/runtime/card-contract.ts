@@ -20,7 +20,7 @@ const INTERNAL = /\b(QueueRefusal|ProviderRefusal|FailureError|FailureRefusal|Ty
 
 const text = (v: unknown) => (typeof v === "string" ? v : "");
 /** Every violation of the card contract, in plain words (empty: the card keeps the contract). */
-export function cardContract(c: Pick<SCard, "title" | "sections" | "body" | "options"> & { kind?: string; links?: SCard["links"] }): string[] {
+export function cardContract(c: Pick<SCard, "title" | "sections" | "body" | "options"> & { kind?: string; links?: SCard["links"]; acknowledge?: SCard["acknowledge"] }): string[] {
   const out: string[] = [];
   const en = c.sections?.en, zh = c.sections?.["zh-TW"];
   const title = { en: text(c.title?.en).trim(), zh: text(c.title?.["zh-TW"]).trim() };
@@ -53,6 +53,11 @@ export function cardContract(c: Pick<SCard, "title" | "sections" | "body" | "opt
     if (!s) continue;
     if ([...(s.scope?.in ?? []), ...(s.scope?.out ?? []), ...(s.done ?? [])].some((v) => !text(v).trim())) out.push(`the ${l} scope or done list has an empty line`);
   }
+  // an acknowledgement the captain ticks: its statement in both languages, for an option the card offers
+  if (c.acknowledge != null) { const a = c.acknowledge;
+    if (!text(a.id).trim() || !text(a.en).trim() || !text(a.zh).trim()) out.push("the acknowledgement has no id or no statement (en, zh-TW)");
+    if (!opts.some((o) => o?.id === a.option)) out.push(`the acknowledgement names option "${text(a.option)}", which the card does not offer`);
+    else if (opts.find((o) => o?.id === a.option)?.hold) out.push("the acknowledgement guards an option that does not act"); }
   for (const k of c.links ?? []) if (!text(k?.label).trim() || !text(k?.href).trim()) out.push("a link has no label or no address");
   return [...new Set(out)];
 }

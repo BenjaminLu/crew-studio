@@ -271,8 +271,12 @@ A registered project stays local (its Tasks merge on the local base) until the c
    shows the exact title and body; **Open pull request** pushes the Task branch and opens it (ready for review; policy
    `github.draft_pr: true` opens drafts). **Change the text** sends your note back to Firstmate; the card lists each ticked box
    with the evidence that proves it. The pull request's number and link show on the run page. Merging from Studio is off
-   (no operations grant), so once its remote CI passes the merge card says "PR #N is open at <link>; merge it on GitHub":
-   merge it there, then close the Task on that card (or request changes for another round). A repository without a template keeps the old behaviour (the pull request
+   (no operations grant), so once its remote CI passes the merge card says "PR #N is open at <link>; merge it on GitHub" and
+   names the missing merge permission: merge it there and Studio, which watches the pull request while the card is open,
+   ends the Task as merged by itself (closed unmerged on GitHub ends it closed); or close the Task on that card, or request
+   changes for another round. With an operations grant on a repository whose branch protection GitHub does not show (a free
+   private repository), the card offers **Merge** once every Studio check passed at the head; it needs the acknowledgement
+   that GitHub does not enforce the required checks there and that Studio verified them at that head. A repository without a template keeps the old behaviour (the pull request
    opens right after the build, with the spec, door and rollback).
 
 `CREW_GH=1` with `CREW_GH_PROJECT=<project id>` is only for the dashboard's PR and check poller on that project; it is not

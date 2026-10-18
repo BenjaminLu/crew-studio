@@ -325,7 +325,11 @@ export class GitHubPrAdapter implements PrAdapter {
     const r=await this.remoteRead("ref",old.branch,1,signal,this.branchAllowed(old.branch,old.head)?old.head:next.pr.head,true);assertOwner?.();
     if(p.number!==Number(old.id)||p.state!=="open"||p.head?.repo?.full_name!==this.grant.repository||p.base?.repo?.full_name!==this.grant.repository||p.head?.ref!==old.branch||p.base?.ref!==old.base||p.head?.sha!==next.pr.head||p.base?.sha!==next.baseHead||r.ref!==`refs/heads/${old.branch}`||r.object?.sha!==next.pr.head)throw new Error("owned update result changed; fresh captain recovery required");
   }
-  async mergeHead(pr: ReviewRequest, signal?: AbortSignal, expectedBase?: string, assertOwner?: () => void, commit?: { title: string; message: string }) {
+  /** The read-only checks before a merge PUT, in order: the PR at its recorded head, the base, the repository's settings and
+   *  branch protection. observed: GitHub does not show the base branch's protection (a private repository on a free plan, or
+   *  none), so the merge rests on the captain's acknowledgement of Studio's own verification: protection must still be
+   *  unreadable here (a readable one is GitHub's to enforce, on the normal path), in simulator and real mode alike. */
+  async mergeReady(pr: ReviewRequest, signal?: AbortSignal, expectedBase?: string, assertOwner?: () => void, o: { observed?: boolean } = {}) {
     pr=structuredClone(pr);assertOwner?.();
     const op = this.operationGrant(), p = await this.mutationState(pr, signal,assertOwner);assertOwner?.();const settings = await this.remoteRead("repository", this.grant.repository, 1, signal, true);assertOwner?.();
     if (expectedBase && p.base.sha !== expectedBase) throw new Error("remote base changed before merge");
@@ -334,11 +338,20 @@ export class GitHubPrAdapter implements PrAdapter {
     if (p.draft !== false || p.mergeable !== true || p.mergeable_state !== "clean") throw new Error("merge requires CLEAN, MERGEABLE and not draft");
     const flag = op.mergeMethod === "merge" ? "allow_merge_commit" : op.mergeMethod === "squash" ? "allow_squash_merge" : "allow_rebase_merge";
     if (settings.full_name !== this.grant.repository || settings[flag] !== true) throw new Error("repository does not allow the configured merge method");
-    if(this.grant.mode === "github") {
+    if (o.observed) {
+      let readable = true;
+      try { await this.remoteRead("policy", pr.base, 1, signal, true); } catch (e: any) { if (!/^GitHub \d+ protection-(plan|none)$/.test(String(e?.message ?? ""))) throw e; readable = false; }
+      assertOwner?.(); if (readable) throw new Error("branch protection is readable on GitHub now; an observed-policy merge is refused");
+    } else if(this.grant.mode === "github") {
       const protection = await this.remoteRead("protection",pr.base,1,signal,true);
       assertOwner?.();const bypass = protection.required_pull_request_reviews?.bypass_pull_request_allowances;
       if(protection.required_status_checks?.strict !== true || protection.enforce_admins?.enabled !== true || !protection.required_pull_request_reviews || !bypass || ![bypass.users,bypass.teams,bypass.apps].every(v=>Array.isArray(v)&&v.length===0))throw new Error("real merge requires verified strict up-to-date protection with no bypass");
     }
+    return op;
+  }
+  async mergeHead(pr: ReviewRequest, signal?: AbortSignal, expectedBase?: string, assertOwner?: () => void, commit?: { title: string; message: string }, o: { observed?: boolean } = {}) {
+    pr=structuredClone(pr);assertOwner?.();
+    const op = await this.mergeReady(pr, signal, expectedBase, assertOwner, o);assertOwner?.();
     // squash and merge land one commit with the Task's curated title and message; rebase lands the branch's own commits
     const curated = commit && op.mergeMethod !== "rebase" && commit.title.trim() ? { commit_title: commit.title.slice(0, 250), commit_message: commit.message.slice(0, 20_000) } : {};
     assertOwner?.();const result = await this.put(pr, "merge", { sha: pr.head, merge_method: op.mergeMethod, ...curated }, signal);

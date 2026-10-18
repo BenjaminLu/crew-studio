@@ -119,7 +119,9 @@ export type Body = { crew?: import("./cards").CardCrew | null; title: string; zh
   captures?: SCard["captures"];
   pullRequest?: SCard["pullRequest"];
   /** the typed failure the card is about (a domain's own recovery card shows its class, message and log) */
-  failure?: Failure | null };
+  failure?: Failure | null;
+  /** a statement the captain ticks before answering with its option (cards.ts Acknowledge) */
+  acknowledge?: SCard["acknowledge"] };
 export type Deps = {
   dataDir: string; agents: Agents; provider: (id?: string, model?: string) => Provider; log: StudioLog; send: (t: string, d: unknown) => void;
   skillText: (ref: string) => string; defaultProvider: () => AgentPick;
@@ -405,6 +407,11 @@ export class Engine {
       for (const id of reescalate) void this.track(r, "escalation card", this.escalateCard(r, r.def.nodes.find((n) => n.id === id)!, r.nodes[id].data.firstmateCard.escalation));
     }
     for (const r of this.runs.values()) if (!TERMINAL.includes(r.status)) for (const [id, rn] of Object.entries(r.nodes)) if (rn.state === "running" && rn.waiting === "external") this.registerExternal(r, r.def.nodes.find(n => n.id === id)!, rn);
+    // the cards nodes still wait on are watched again (a fact observed while Studio was down settles them now)
+    for (const r of this.runs.values()) if (!TERMINAL.includes(r.status)) for (const [id, rn] of Object.entries(r.nodes)) {
+      const node = r.def.nodes.find(n => n.id === id), c = rn.card ? this.cards.get(rn.card) : null;
+      if (node && rn.state === "running" && rn.waiting === "card" && c?.status === "open") this.watchCard(this.x(r, node, rn), c);
+    }
     for (const r of this.runs.values()) if (r.status === "running" || r.status === "waiting" || r.status === "queued") this.tick(r);
     for (const [r, id] of backoffs) this.scheduleBackoff(r, id);
     this.resumeFirstmateQuestions(); // a no-op until askFirstmate is wired (server.ts calls it again then)
@@ -425,7 +432,7 @@ export class Engine {
       if (!b) continue;
       const { id: _id, status: _status, createdAt: _at, answer: _answer, ...kept } = old;
       const c = this.cards.create({ ...kept, title: { en: b.title, "zh-TW": b.zhTitle ?? b.title }, sections: { en: { ...old.sections.en, ...b.en }, "zh-TW": { ...old.sections["zh-TW"], ...b.zh } },
-        body: b.body ?? old.body, options: b.options ?? old.options, ...(b.captainOnly ? { captainOnly: true } : {}), ledger: { ...(old.ledger ?? {}), upgradedFrom: old.id } as any, ste: null });
+        body: b.body ?? old.body, options: b.options ?? old.options, acknowledge: b.acknowledge ?? null, ...(b.captainOnly ? { captainOnly: true } : {}), ledger: { ...(old.ledger ?? {}), upgradedFrom: old.id } as any, ste: null });
       const broken = cardContract(c); if (broken.length) { this.cards.cancel(c.id); this.emit(r, "log", `card contract: ${old.id} kept, its upgrade broke it: ${broken.join("; ").slice(0, 400)}`); continue; }
       // the ledger names the replacement before the node points at it (a crash after the record leaves an orphan, swept and redone)
       this.record(this.x(r, node, rn), "card-upgraded", { data: { from: old.id, to: c.id, options: c.options.map((o) => o.id) } });
@@ -1168,7 +1175,7 @@ export class Engine {
   private raising = new Map<string, { done: Promise<void>; resolve: () => void }>();
   /** How long an answer waits for a card that is still being raised. */
   cardReadyMs = 30_000;
-  async answer(cardId: string, a: { choice: string; note?: string | null; by: string; confirm?: string | null; aligned?: number[] | null; localRescope?: LocalRescope | null; crew?: Record<string, string | null> | null }) {
+  async answer(cardId: string, a: { choice: string; note?: string | null; by: string; confirm?: string | null; ack?: string | null; aligned?: number[] | null; localRescope?: LocalRescope | null; crew?: Record<string, string | null> | null }) {
     const c0 = this.cards.get(cardId); if (!c0) throw new Error("no such card");
     if (c0.kind === "failure") return this.answerFailure(c0, a);
     const r = this.must(c0.run);
@@ -1212,7 +1219,7 @@ export class Engine {
     const node = r.def.nodes.find((n) => n.id === nodeId)!; const rn = r.nodes[nodeId]; const c = this.cards.get(rn.card ?? "")!;
     r.ctx.answers = { ...(r.ctx.answers ?? {}), [node.id]: c.answer };
     // the answer goes into the ledger once, here, so an answer carried on after a crash is recorded too
-    if (!r.ctx.answersRecorded?.includes(c.id)) { r.ctx.answersRecorded = [...(r.ctx.answersRecorded ?? []), c.id]; const rec = this.record(this.x(r, node, rn), "card-answer", { actor: c.answer!.by, data: { card: c.id, kind: c.kind, choice: c.answer!.choice, note: c.answer!.note, confirm: c.answer!.confirm, ...(c.answer!.localRescope?{localRescope:c.answer!.localRescope}:{}), ...(c.answer!.crew?{crew:c.answer!.crew}:{}), ...(this.queueDomain?.answer(r, node, rn, c) ?? {}) } });
+    if (!r.ctx.answersRecorded?.includes(c.id)) { r.ctx.answersRecorded = [...(r.ctx.answersRecorded ?? []), c.id]; const rec = this.record(this.x(r, node, rn), "card-answer", { actor: c.answer!.by, data: { card: c.id, kind: c.kind, choice: c.answer!.choice, note: c.answer!.note, confirm: c.answer!.confirm, ...(c.answer!.ack ? { ack: c.answer!.ack } : {}), ...(c.answer!.localRescope?{localRescope:c.answer!.localRescope}:{}), ...(c.answer!.crew?{crew:c.answer!.crew}:{}), ...(this.queueDomain?.answer(r, node, rn, c) ?? {}) } });
       // a captain's "request changes" (or rescope) note binds every later round: kept cumulatively (never latest-only), bound to its signed card-answer entry
       if (AMEND_CHOICES.includes(c.answer!.choice) && c.answer!.by !== "firstmate") this.addAmendment(r, c, node.id, rec); }
     // the card's effects, once per card (an answer carried on after a restart does not apply them twice)
@@ -1255,6 +1262,25 @@ export class Engine {
    * (recorded in the ledger). Inside an open authorization window (a signed grant the
    * captain opened in Studio) the runtime answers the listed kinds, never a one-way door.
    */
+  /** Domain watchers of an open card (the merge card's watch for a pull request merged or closed on GitHub): called when the
+   *  card is raised and again after a restart for every card a node still waits on. */
+  cardWatchers: ((x: X, c: SCard) => void)[] = [];
+  private watchCard(x: X, c: SCard) { for (const w of this.cardWatchers) { try { w(x, c); } catch (e: any) { this.emit(x.run, "log", `${c.id}: card watch not started (${String(e?.message ?? e).slice(0, 200)})`); } } }
+  /**
+   * A fact observed outside Studio settles the node's open card (the pull request was merged or closed on GitHub): the card is
+   * cancelled, never answered, and the node goes on with the observed outcome. The caller records the fact in the ledger first.
+   * False when the card is no longer the open one its node waits on (an answer came first).
+   */
+  observeCard(x: X, cardId: string, result: { outcome: string; note?: string }): boolean {
+    const { run: r, node, rn } = x, c = this.cards.get(cardId);
+    if (!this.owns(x) || rn.waiting !== "card" || rn.card !== cardId || c?.status !== "open" || this.repreparing.has(`${r.id}/${node.id}`)) return false;
+    const step = [...r.steps].reverse().find((s) => s.node === node.id && s.state === "waiting");
+    this.cards.cancel(cardId); this.raising.get(cardId)?.resolve(); rn.waiting = null;
+    this.commit(r, `card ${cardId} settled by an observed fact: ${result.outcome}`);
+    this.emit(r, "card_observed", `${cardId}: ${result.note ?? result.outcome}`, { node: node.id, card: cardId, outcome: result.outcome });
+    this.finish(r, node, rn, step ?? { seq: r.steps.length + 1, node: node.id, kind: node.kind, visit: rn.visits, state: "waiting", outcome: null, startedAt: now(), endedAt: null, error: null, job: null, provider: null, model: null, note: null }, result, null);
+    return true;
+  }
   private repreparing = new Map<string,{previous:string;prepared:string|null}>();
   /** Stage a fresh captain card; the durable waiting pointer remains on the old hold until preparation succeeds. */
   async reprepareCard(x:X,prepare:()=>Promise<unknown>):Promise<SCard>{
@@ -1672,7 +1698,7 @@ export class Engine {
     const zh = sec({ intent: en.intent, ...b.zh });
     const c = this.cards.create({ run: x.run.id, node: x.node.id, visit: x.rn.visits, kind, title: { en: b.title, "zh-TW": b.zhTitle ?? b.title }, sections: { en, "zh-TW": zh }, body: b.body ?? "",
       options: b.options ?? x.node.card?.options ?? [{ id: "approve", label: "Approve", labelZh: "核准", primary: true }, { id: "reject", label: "Reject", labelZh: "不採用" }],
-      confirmDoor: !!x.node.card?.confirm_door, door: b.door ?? (x.node.card?.door_from ? (x.ctx[x.node.card.door_from]?.door ?? x.ctx[x.node.card.door_from] ?? null) : null), links: b.links ?? [], detail: b.detail ?? null, ...(b.captainOnly ? { captainOnly: true } : {}), workflow: x.run.workflow, runTitle: x.run.title, ledger: b.ledger ?? null, ste: null, captures: b.captures ?? null, ...(b.pullRequest ? { pullRequest: b.pullRequest } : {}), ...(b.failure ? { failure: b.failure } : {}), ...(b.crew ? { crew: b.crew } : {}) });
+      confirmDoor: !!x.node.card?.confirm_door, door: b.door ?? (x.node.card?.door_from ? (x.ctx[x.node.card.door_from]?.door ?? x.ctx[x.node.card.door_from] ?? null) : null), links: b.links ?? [], detail: b.detail ?? null, ...(b.captainOnly ? { captainOnly: true } : {}), workflow: x.run.workflow, runTitle: x.run.title, ledger: b.ledger ?? null, ste: null, captures: b.captures ?? null, ...(b.pullRequest ? { pullRequest: b.pullRequest } : {}), ...(b.failure ? { failure: b.failure } : {}), ...(b.crew ? { crew: b.crew } : {}), ...(b.acknowledge ? { acknowledge: b.acknowledge } : {}) });
     // the card contract (card-contract.ts): a card that cannot answer its question is refused in tests and logged on the run otherwise
     const broken = cardContract(c);
     if (broken.length) { this.emit(x.run, "log", `card contract: ${c.id} (${kind}): ${broken.join("; ").slice(0, 600)}`);
@@ -1698,6 +1724,7 @@ export class Engine {
     if (g && !c.captainOnly && choice && c.options.some((o) => o.id === choice) && c.door !== "one-way") {
       setTimeout(() => { if (!this.owns(x)) return; void this.answer(c.id, { choice, by: `auth window ${g.id} (granted by ${g.granted_by} at ${g.at}, until ${g.until})` }).catch((e) => this.emit(x.run, "log", `auth window could not answer ${c.id}: ${e?.message ?? e}`)); }, 10);
     }
+    this.watchCard(x, c);
     return this.cards.get(c.id)!;
   }
 

@@ -126,6 +126,8 @@ export function remoteStopReason(e: any, fallback: string) {
 }
 
 /** Why Studio will not merge on an observed policy: the required checks are what Studio saw on the head, not what GitHub enforces. */
+/** The merge card's option on an observed policy: the captain merges on Studio's own verification, acknowledging that GitHub does not enforce the required checks. */
+export const OBSERVED_MERGE = "merge-observed";
 export const OBSERVED_REFUSAL = "required checks are only observed (GitHub does not show branch protection for the base branch); Studio merge refused";
 /** A stop that only someone's change on GitHub explains: the pull request closed or retargeted, its head or Task branch moved
  *  (someone else pushed). Studio never adopts that change, so a fresh check stops the same way: close is the only answer. */

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { GitHubPrAdapter } from "../adapters/github";
 import type { ReviewRequest } from "../adapters/github";
 const owners = new Set<string>();
-export type MergeAttempt = { version: 1; repository: string; grant: string; pr: string; branch: string; base: string; head: string; method: string; card: string; state: "started" | "succeeded" | "failed" | "uncertain"; at: string; result?: any };
+export type MergeAttempt = { version: 1; repository: string; grant: string; pr: string; branch: string; base: string; head: string; method: string; card: string; state: "started" | "succeeded" | "failed" | "uncertain"; at: string; result?: any; observed?: true };
 const read = (path: string): MergeAttempt[] => {
   if (!existsSync(path)) return [];
   let value: any; try { value = JSON.parse(readFileSync(path, "utf8")); } catch { throw new Error("remote merge history malformed; retained for captain review"); }
@@ -55,7 +55,7 @@ const claim = (adapter: GitHubPrAdapter, pr: ReviewRequest, dir: string, kind: "
   try { writeFileSync(store.path,JSON.stringify(value),{flag:"wx",mode:0o600}); } catch(e:any) { if(e.code==="EEXIST"){validateClaim(store.path,store.identity);throw new Error("remote operation is final for this head; shared attempt retained");}throw e; }
   return (state:string) => { value.state=state; const temp=store.path+`.${process.pid}.tmp`;writeFileSync(temp,JSON.stringify(value),{mode:0o600});renameSync(temp,store.path); };
 };
-export async function mergeOnce(adapter: GitHubPrAdapter, pr: ReviewRequest, dir: string, card: string, signal?: AbortSignal, expectedBase?: string, assertOwner?: () => void, commit?: { title: string; message: string }) {
+export async function mergeOnce(adapter: GitHubPrAdapter, pr: ReviewRequest, dir: string, card: string, signal?: AbortSignal, expectedBase?: string, assertOwner?: () => void, commit?: { title: string; message: string }, o: { observed?: boolean } = {}) {
   pr=structuredClone(pr);if(!adapter.recordedIdentity(pr))throw new Error("invalid remote operation identity");assertOwner?.();signal?.throwIfAborted();
   const op = adapter.operationGrant();
   if (!card?.trim()) throw new Error("remote merge requires a bound captain card");
@@ -67,10 +67,10 @@ export async function mergeOnce(adapter: GitHubPrAdapter, pr: ReviewRequest, dir
     if (history.some(a => a.repository !== adapter.grant.repository || a.grant !== adapter.grant.approvalId || a.pr !== pr.id || a.branch !== pr.branch || a.base !== pr.base)) throw new Error("remote merge history target mismatch");
     if (history.some(a => a.head === pr.head)) throw new Error("remote merge is final for this head; reconcile before a new head and card");
     if (history.some(a => a.card === card)) throw new Error("replacement head requires a new captain card");
-    const attempt: MergeAttempt = { version: 1, repository: adapter.grant.repository, grant: adapter.grant.approvalId, pr: pr.id, branch: pr.branch, base: pr.base, head: pr.head, method: op.mergeMethod, card, state: "started", at: new Date().toISOString() };
+    const attempt: MergeAttempt = { version: 1, repository: adapter.grant.repository, grant: adapter.grant.approvalId, pr: pr.id, branch: pr.branch, base: pr.base, head: pr.head, method: op.mergeMethod, card, state: "started", at: new Date().toISOString(), ...(o.observed ? { observed: true } : {}) };
     const finish=claim(adapter,pr,dir,"merge");
     history.push(attempt); write(path, history); // precedes every potentially mutating request
-    try { const result = await adapter.mergeHead(pr, signal, expectedBase, assertOwner, commit); signal?.throwIfAborted(); assertOwner?.();attempt.result = result; attempt.state = "succeeded"; finish(attempt.state); write(path, history); return result; }
+    try { const result = await adapter.mergeHead(pr, signal, expectedBase, assertOwner, commit, o); signal?.throwIfAborted(); assertOwner?.();attempt.result = result; attempt.state = "succeeded"; finish(attempt.state); write(path, history); return result; }
     catch (e) { attempt.state = signal?.aborted || (e as any)?.code === "REMOTE_OWNER_CHANGED" ? "uncertain" : "failed"; finish(attempt.state); write(path, history); throw e; }
   } finally { owners.delete(key); }
 }

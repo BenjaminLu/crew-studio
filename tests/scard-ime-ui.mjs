@@ -32,5 +32,13 @@ ok(await p.evaluate(()=>requests.length===1&&requests[0].body.choice==='other-mo
 // a card Firstmate decided says so: never shown as the captain's answer
 await p.evaluate(()=>{document.querySelector('#cards').replaceChildren();const el=document.createElement('div');document.querySelector('#cards').append(el);crewCard.mountCard(el,{...card,id:'SC-004',status:'answered',decidedBy:'firstmate',answer:{choice:'rescope',note:'Limit it to src/a.ts',by:'firstmate'}},{lang:'en'});});
 ok(await p.evaluate(()=>/Decided by Firstmate/.test(document.querySelector('[data-decided-by="firstmate"]')?.textContent||'')),'a card Firstmate decided is marked as decided by Firstmate, not the captain');
+// an acknowledgement the captain ticks (the observed-policy merge): Merge is not ready until it is ticked, and only then carries its id
+await p.evaluate(()=>{requests.length=0;document.querySelector('#cards').replaceChildren();window.card={id:'SC-005',run:'R-005',workflow:'code-firstmate',node:'merge-card',visit:1,kind:'merge',status:'open',captainOnly:true,title:{en:'Merge?','zh-TW':'合併？'},body:'b',sections:{en:{},'zh-TW':{}},confirmDoor:false,door:null,links:[],
+ options:[{id:'merge-observed',label:'Merge',labelZh:'合併',primary:true},{id:'close',label:'Close here (I merge on GitHub)',labelZh:'在這裡關閉（我到 GitHub 合併）',hold:true}],acknowledge:{option:'merge-observed',id:'observed-merge:abc',en:'GitHub does not enforce required checks on fixture/project.',zh:'GitHub 不會強制必要檢查。'}};
+ window.latestCard=card;const el=document.createElement('div');document.querySelector('#cards').append(el);window.ctl=crewCard.mountCard(el,card,{lang:'en'});});
+ok(await p.evaluate(()=>/GitHub does not enforce required checks/.test(document.querySelector('[data-acknowledge="SC-005"]')?.closest('label')?.textContent||'')&&document.querySelector('[data-option="merge-observed"]').dataset.ready==='false'&&document.querySelector('[data-option="close"]').dataset.ready==='true'),'the acknowledgement shows as a tick box; Merge is not ready until it is ticked, close is');
+await p.locator('[data-option="close"]').click();ok(await p.evaluate(()=>requests.length===1&&requests[0].body.choice==='close'&&!('ack' in requests[0].body)),'close never carries the acknowledgement');
+await p.evaluate(()=>{requests.length=0;ctl.update({...card,status:'open'});});await p.check('[data-acknowledge="SC-005"]');await p.locator('[data-option="merge-observed"]').click();
+ok(await p.evaluate(()=>requests.length===1&&requests[0].body.choice==='merge-observed'&&requests[0].body.ack==='observed-merge:abc'),'ticked, Merge sends the acknowledgement\'s exact id');
 console.log(`${pass} passed, 0 failed`);
 }finally{await browser.close();}

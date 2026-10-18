@@ -36,7 +36,7 @@ import { runRender } from "../render";
 import { copyUntrusted } from "../secure";
 import { helper, kindOf, LINES_PER_READ, LIST_CAP, listTree, normPath, READ_CAP_BYTES, searchTree, typedRead } from "../review-read";
 import { COORDINATOR_TOOL_SCHEMA, coordinatorDetail, coordinatorText, designText, mergeDetail, type MergeInput } from "./mergecard";
-import { RemoteWatchers, requiredPolicy, reconcile, inspectRemote, grantIdentity, registerRemoteWait, validRemoteWait, remoteStopBody, remoteStopReason, remoteStopCard, remoteStopReasonOf, remoteChecksUsed, REMOTE_CHECK_LIMIT, REMOTE_CHECK_NODES, REMOTE_BEHIND, observedNotice, OBSERVED_REFUSAL, type RequiredPolicy } from "./remote-ci";
+import { RemoteWatchers, requiredPolicy, reconcile, inspectRemote, grantIdentity, registerRemoteWait, validRemoteWait, remoteStopBody, remoteStopReason, remoteStopCard, remoteStopReasonOf, remoteChecksUsed, REMOTE_CHECK_LIMIT, REMOTE_CHECK_NODES, REMOTE_BEHIND, observedNotice, OBSERVED_MERGE, OBSERVED_REFUSAL, type RequiredPolicy } from "./remote-ci";
 import { stablePatch, proveCleanCarry, mergeOnce, updateOnce, assertMergeAvailable } from "./remote-gates";
 import type { CardDetail } from "../runtime/cards";
 import { commitConvention, commitIdentity, commitSubject, commitTree, taskCommitMessage } from "./commit-message";
@@ -149,7 +149,7 @@ export function doorOf(paths: ChangedPath[], sensitive: { glob: string; why: str
 }
 const scopePaths = (scope: string[]): ChangedPath[] => scope.map((p) => ({ path: String(p).replace(/\/$/, "/x").replace(/\*\*?/g, "x"), added: 1 }));
 
-export function installCode(engine: Engine, o: { dataDir: string; projects: Projects; adapter?: PrAdapter; poller?:GitHubPoller; improve?: { checkTriggers?: () => Promise<any> } | null;
+export function installCode(engine: Engine, o: { dataDir: string; projects: Projects; adapter?: PrAdapter; poller?:GitHubPoller; mergeWatchMs?: number; improve?: { checkTriggers?: () => Promise<any> } | null;
   /** test-only seams; production never sets them. afterBuildExit: called once the app build has exited and before its output is read (it models a writer still holding the build's folder) */
   seams?: { afterBuildExit?: (rawDir: string, side: "before" | "after") => void | Promise<void> } }) {
   installCodeQueue(engine);
@@ -167,7 +167,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       || (result.outcome === "door-change" && report.marker === "DOOR-CHANGE");
   };
   const pendingRebaseChecks = new WeakSet<object>();
-  type RemoteMergeIntent = {version:1;grant:string;repository:string;pr:string;branch:string;base:string;baseHead:string;head:string;method:string;policyHash:string};
+  type RemoteMergeIntent = {version:1;grant:string;repository:string;pr:string;branch:string;base:string;baseHead:string;head:string;method:string;policyHash:string;observed?:"plan"|"none"};
   const preparedRemoteCards = new WeakMap<object,{intent:RemoteMergeIntent;assert:()=>void}>();
   engine.beforeNodeChecks["native-rebase"]=(x,result)=>{
     if(!pendingRebaseChecks.has(x.rn))return false;
@@ -246,6 +246,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   engine.beforeStart["github-reconcile"] = async x => {
     // an end node (closed, parked …) reads nothing on GitHub: a pull request closed there must not stop the close itself
     if (x.ctx.pr?.adapter !== "github" || x.node.do === "pr.open" || (x.run.def && !x.run.def.edges.some((e) => e.from === x.node.id))) return null;
+    // the pull request is merged (by Studio, or on GitHub as Studio observed): it is closed by design, so the nodes after the merge
+    // (and the merge hook of an observed merge, which reads the merge itself) do not reconcile it as an open one
+    if (x.ctx.merged || (x.ctx.mergeDetected && x.node.do === "git.merge")) return null;
     const phase = remotePhase(x); phase.assert(); const a = selectedAdapter(x);
     try { if (!(a instanceof GitHubPrAdapter)) throw new Error(); if(x.ctx.remoteUpdatePending){const p=pendingUpdate(x,a);await a.verifyUpdateResult(p.old,p.next,phase.signal,phase.assert);}else await reconcile(a, x.ctx.pr, phase.signal); phase.assert(); return null; }
     // at remote-ready the reason keeps its class: GitHub unreachable or refusing access can be checked again there
@@ -641,6 +644,23 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     textGuard?.(run, card, answer);
     const text = ["update-text", "keep-text", "render-text", "confirm-door"];
     if (text.includes(answer?.choice) && card.options?.some((o: any) => o.id === answer.choice) && (!card.captainOnly || !/^captain\b/i.test(String(answer.by ?? "")))) throw new Error("Only the captain decides the pull request text");
+    // the observed-policy merge: only the captain's own answer (never Firstmate, never an authorization window), with the
+    // acknowledgement this card showed, ticked
+    if (answer?.choice === OBSERVED_MERGE && (card.kind !== "merge" || !card.captainOnly || !/^captain\b/i.test(String(answer.by ?? "")) || card.acknowledge?.option !== OBSERVED_MERGE))
+      throw new Error("Only the captain merges a pull request whose required checks GitHub does not enforce");
+    if (answer?.choice === OBSERVED_MERGE && answer.ack !== card.acknowledge.id) throw new Error(`tick the acknowledgement first: ${card.acknowledge.en}`);
+  };
+  /** The observed-policy merge's acknowledgement, bound to the head and the policy it was shown for. */
+  const observedAckId = (h: string, policyHash: string) => `observed-merge:${h}:${String(policyHash).slice(0, 16)}`;
+  /** merge-ack: the captain's answer on an observed-policy merge card, checked against Studio's own signed records (the answer
+   *  with its acknowledgement, the card's merge request at this head), recorded once for this card. */
+  const recordMergeAck = (x: X, card: any) => {
+    const t = engine.trusted(x.run.id), h = x.ctx.pr?.head, answer: any = t.entries.filter((e: any) => e.record === "card-answer" && e.data?.card === card.id).at(-1);
+    const intent: any = t.entries.filter((e: any) => e.record === "remote-merge-request" && e.data?.card === card.id).at(-1);
+    if (!t.ok || !card.captainOnly || card.acknowledge?.option !== OBSERVED_MERGE || !h || answer?.data?.choice !== OBSERVED_MERGE || !/^captain\b/i.test(String(answer.actor ?? ""))
+      || !intent?.data?.observed || intent.head !== h || answer.data.ack !== observedAckId(h, intent.data.policyHash) || card.acknowledge.id !== answer.data.ack) throw new Error("the captain's acknowledgement of an observed-policy merge is unavailable");
+    if (!t.entries.some((e: any) => e.record === "merge-ack" && e.data?.card === card.id))
+      engine.record(x, "merge-ack", { head: h, actor: String(answer.actor), data: { version: 1, card: card.id, head: h, policy: "observed", observed: intent.data.observed, policyHash: intent.data.policyHash, ack: answer.data.ack } } as any);
   };
   // an open merge card (merge on GitHub or in Studio) an older release raised over a text that does not describe the head (R-069):
   // replaced by the card that stands in for it, without the merge; nothing is answered, and "Write the text again" reads GitHub
@@ -655,8 +675,10 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     const choice = card.answer?.choice ?? "", again = async () => engine.kinds.card.start(x) as Promise<Result>;
     if (["update-text", "keep-text", "render-text"].includes(choice)) return publication.mergeTextAnswer(x, card, again);
     // the one-way door confirmed on this card (its signed answer): recorded for this head and this door
-    if (choice === "confirm-door" || choice === "merge") publication.confirmDoor(x, card);
+    if (choice === "confirm-door" || choice === "merge" || choice === OBSERVED_MERGE) publication.confirmDoor(x, card);
     if (choice === "confirm-door") return (await publication.beforeMerge(x, again)) ?? again();
+    // the observed-policy merge: the acknowledgement recorded, the text read again, then the merge hook (it checks it all again)
+    if (choice === OBSERVED_MERGE) { recordMergeAck(x, card); return (await publication.beforeMerge(x, again)) ?? { outcome: "merge", note: "the captain merges on Studio's own verification (GitHub does not enforce the required checks)" }; }
     if (choice === "merge" || (choice === "close" && card.options.some((o) => o.id === "close" && /I merge on GitHub/.test(o.label)))) return publication.beforeMerge(x, again);
     return null;
   };
@@ -756,19 +778,85 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   };
   /** the subject of the Task's one commit, for the merge card (null when it cannot be read yet) */
   const landing = (x: X): string | null => { try { const h = String(x.ctx.gatedHead ?? x.ctx.head ?? ""); return /^[0-9a-f]{40}$/.test(h) && x.ctx.repo ? taskCommit(x, h).subject : null; } catch { return null; } };
+  // ---------- a pull request merged or closed on GitHub while its merge card is open ----------
+  // The open merge card (merge on GitHub, Studio's merge, or a card standing in for it) is watched with the remote watchers'
+  // polling owner: a pull request merged on GitHub ends the Task as merged, one closed unmerged ends it closed. Studio answers
+  // nothing for the captain: it records the observed fact (detected-merge / detected-close, with the merge commit) and cancels
+  // the stale card. On restart the engine watches every open card again, so a merge while Studio was down is found the same way.
+  const mergeWatches = new Map<string, () => void>();
+  (engine.cardWatchers ??= []).push((x, c) => {
+    if (c.kind !== "merge" || x.node.args?.body_from !== "merge" || x.ctx.pr?.adapter !== "github") return;
+    const a = selectedAdapter(x); if (!(a instanceof GitHubPrAdapter) || !a.recordedIdentity(x.ctx.pr)) return;
+    const key = `${x.run.id}/${x.node.id}`, pr = structuredClone(x.ctx.pr), poller = remoteWatchers.poller;
+    mergeWatches.get(key)?.();
+    // ended: the run, the card or the pull request moved on (the watch stops); waiting: the node waits on its open card (a
+    // card still being raised is not settled yet)
+    const ended = () => !engine.owns(x) || !x.rn.card || engine.cards.get(x.rn.card)?.status !== "open" || x.ctx.pr?.id !== pr.id || x.ctx.pr?.head !== pr.head;
+    const waiting = () => !ended() && x.rn.waiting === "card";
+    let cancel = () => {};
+    const stop = () => { cancel(); if (mergeWatches.get(key) === stop) mergeWatches.delete(key); };
+    mergeWatches.set(key, stop);
+    cancel = poller.subscribe(a.readAuthority(), `merge-watch:${key}`, async (signal) => {
+      if (ended()) { stop(); return; }
+      if (!waiting()) return;
+      const p = await a.withReadOwner(poller, () => a.remoteRead("pull", pr.id, 1, signal, true));
+      if (signal.aborted || !waiting()) return;
+      if (p?.number !== Number(pr.id) || p.state !== "closed" || p.head?.repo?.full_name !== a.grant.repository || p.base?.repo?.full_name !== a.grant.repository || p.head?.ref !== pr.branch || p.base?.ref !== pr.base) return;
+      // settled outside the polling generation: the merge hook that follows reads GitHub as its own owner
+      stop(); poller.withoutGeneration(() => observeClosed(x, a, pr, p));
+    }, { interval: o.mergeWatchMs ?? remoteWatchers.intervalMs });
+  });
+  const SHA = /^[a-f0-9]{40}$/;
+  /** The fact read on GitHub, recorded in the ledger (Studio's observation, not an answer), then the stale card settled with it. */
+  const observeClosed = (x: X, a: GitHubPrAdapter, pr: any, p: any) => {
+    const card = x.rn.card, merged = p.merged === true && SHA.test(String(p.merge_commit_sha ?? ""));
+    const fact = { version: 1, card, repository: a.grant.repository, pr: pr.id, branch: pr.branch, base: pr.base, reviewed: pr.head, head: SHA.test(String(p.head?.sha ?? "")) ? p.head.sha : null,
+      merged, sha: merged ? p.merge_commit_sha : null, at: String((merged ? p.merged_at : p.closed_at) ?? ""), observedAt: new Date().toISOString() };
+    if (!card || !engine.owns(x)) return;
+    engine.record(x, merged ? "detected-merge" : "detected-close", { head: pr.head, actor: "studio (observed on GitHub)", data: fact } as any);
+    const other = merged && fact.head !== pr.head ? ` at ${String(fact.head ?? "an unknown head").slice(0, 8)}, not the head Studio verified (${pr.head.slice(0, 8)})` : "";
+    const note = merged ? `pull request #${pr.id} was merged on GitHub as ${fact.sha.slice(0, 8)}${other}` : `pull request #${pr.id} was closed on GitHub without merging`;
+    x.ctx.mergeDetected = merged ? fact : null; x.log(`merge card: ${note}; the card is cancelled, nothing was answered for the captain`); x.save();
+    if (!engine.observeCard(x, card, { outcome: merged ? "merge" : "close", note })) { x.ctx.mergeDetected = null; x.save(); }
+  };
+  /** The merge hook after a merge observed on GitHub: Studio's signed record of it, read again on GitHub, ends the Task as merged. */
+  const detectedMerge = async (x: X) => {
+    const phase = remotePhase(x); phase.assert(); const a = selectedAdapter(x), d = x.ctx.mergeDetected, t = engine.trusted(x.run.id);
+    const e: any = t.entries.filter((e: any) => e.record === "detected-merge").at(-1);
+    if (!(a instanceof GitHubPrAdapter) || !t.ok || !e || JSON.stringify(e.data) !== JSON.stringify(d) || d.merged !== true || !SHA.test(String(d.sha)) || d.pr !== x.ctx.pr.id || d.repository !== a.grant.repository || d.reviewed !== x.ctx.pr.head) throw new Error("the merge observed on GitHub is not in Studio's own signed record");
+    const p = await a.withReadOwner(remoteWatchers.poller, () => a.remoteRead("pull", d.pr, 1, phase.signal, true)); phase.assert();
+    if (p?.number !== Number(d.pr) || p.state !== "closed" || p.merged !== true || p.merge_commit_sha !== d.sha || p.base?.repo?.full_name !== a.grant.repository || p.base?.ref !== x.ctx.pr.base) throw new Error("the merge observed on GitHub no longer reads the same there");
+    x.ctx.merged = { head: d.sha, sourceHead: d.head, reviewed: d.reviewed, base: x.ctx.pr.base, method: null, adapter: "github", detected: true, at: d.at || d.observedAt };
+    x.rn.note = `pull request #${d.pr} was merged on GitHub as ${d.sha.slice(0, 8)} (observed by Studio)`; x.save(); return "ok";
+  };
   engine.actions["git.merge"] = async (x) => {
     if (x.ctx.pr?.adapter === "github") {
+      // merged on GitHub while the merge card was open (observed, never answered for the captain): the Task ends as merged
+      if (x.ctx.mergeDetected) return detectedMerge(x);
       const phase = remotePhase(x); phase.assert(); const a = selectedAdapter(x), h = head(shellOk(x));
-      const answer: any = engine.trusted(x.run.id).entries.filter(e => e.record === "card-answer" && e.data?.kind === "merge" && e.data?.choice === "merge").at(-1);
+      const answer: any = engine.trusted(x.run.id).entries.filter(e => e.record === "card-answer" && e.data?.kind === "merge" && (e.data?.choice === "merge" || e.data?.choice === OBSERVED_MERGE)).at(-1);
       if (!(a instanceof GitHubPrAdapter) || !engine.trusted(x.run.id).ok || !answer?.data?.card || answer.head !== h || h !== x.ctx.gatedHead || h !== x.ctx.pr.head || (x.ctx.door?.door === "one-way" && answer.data.confirm !== "one-way")) throw new Error("bound captain merge intent required");
+      const observedAnswer = answer.data.choice === OBSERVED_MERGE;
       const trusted = engine.trusted(x.run.id);
       const intent:any=trusted.entries.filter(e=>e.record==="remote-merge-request"&&e.data?.card===answer.data.card).at(-1);
       if(!intent||intent.head!==h||intent.data.head!==h||intent.data.version!==1||intent.data.grant!==grantIdentity(a)||intent.data.repository!==a.grant.repository||intent.data.pr!==x.ctx.pr.id||intent.data.branch!==x.ctx.pr.branch||intent.data.base!==x.ctx.pr.base||intent.data.baseHead!==x.ctx.baseCommit||intent.data.method!==a.operationGrant().mergeMethod||intent.data.policyHash!==x.ctx.remoteCI?.policyHash)throw new Error("remote captain card target/grant/method changed; fresh intent required");
 
       if (!["branch","rebase","scope","failfirst","ci","approval","design"].every(name => { const e = trusted.entries.filter(e => e.check === `firstmate/gate-${name}`).at(-1); return e?.head === h && e.verdict === "pass"; })) throw new Error("seven signed exact-head gates required (the six and gate-design)");
-      const policy = await requiredPolicy(a,phase.signal); phase.assert(); if (policy.observed) throw new Error(OBSERVED_REFUSAL);
+      const policy = await requiredPolicy(a,phase.signal); phase.assert();
+      // an observed policy (GitHub does not show branch protection) merges only on the captain's own acknowledgement of Studio's
+      // verification at this head; every refusal here comes before any merge attempt is recorded, so no head is locked by it
+      if (policy.observed && !observedAnswer) throw new Error(OBSERVED_REFUSAL);
+      if (!policy.observed && observedAnswer) throw new Error("GitHub shows branch protection for the base branch now; the observed-policy acknowledgement no longer applies, so a fresh merge card is needed");
+      if (observedAnswer) {
+        const ack: any = trusted.entries.filter(e => e.record === "merge-ack" && e.data?.card === answer.data.card).at(-1);
+        if (!/^captain\b/i.test(String(answer.actor ?? "")) || answer.data.ack !== observedAckId(h, policy.hash) || intent.data.observed !== policy.observed || intent.data.policyHash !== policy.hash
+          || !ack || ack.head !== h || ack.data?.head !== h || ack.data?.ack !== answer.data.ack || ack.data?.policyHash !== policy.hash || !/^captain\b/i.test(String(ack.actor ?? ""))) throw new Error("the captain's acknowledgement of this observed-policy merge does not match the head and policy; Studio merge refused");
+      }
       if ((await inspectRemote(a,x.ctx.pr,policy,phase.signal)).state !== "pass" || x.ctx.remoteCI?.head !== h || x.ctx.remoteCI?.policyHash !== policy.hash || x.ctx.remoteCI?.grant !== grantIdentity(a)) throw new Error("remote checks changed before merge"); phase.assert();
-      const curated = taskCommit(x, h); const result = await mergeOnce(a,x.ctx.pr,x.dir,answer.data.card,phase.signal,x.ctx.baseCommit,phase.assert,{ title: curated.subject, message: curated.body }); phase.assert();
+      // the observed merge's read-only checks (head, base, CLEAN, method, protection still unreadable) before the attempt is recorded
+      if (observedAnswer) { await a.mergeReady(x.ctx.pr, phase.signal, x.ctx.baseCommit, phase.assert, { observed: true }); phase.assert(); }
+      const curated = taskCommit(x, h); const result = await mergeOnce(a,x.ctx.pr,x.dir,answer.data.card,phase.signal,x.ctx.baseCommit,phase.assert,{ title: curated.subject, message: curated.body },{ observed: observedAnswer }); phase.assert();
+      engine.record(x, "merged", { head: result.head, data: { version: 1, sha: result.head, sourceHead: result.sourceHead, pr: x.ctx.pr.id, repository: a.grant.repository, base: result.base, method: result.method, card: answer.data.card, ...(observedAnswer ? { policy: "observed", observed: policy.observed } : {}) } } as any);
       await a.importHeads(x.ctx.pr,phase.signal); phase.assert(); x.ctx.merged = { ...result, adapter: "github", at: new Date().toISOString() }; x.save(); return "ok";
     }
     if (x.ctx.project && o.projects.get(x.ctx.project)?.github) throw new Error("remote project has no verified PR; local merge disabled");
@@ -1470,16 +1558,35 @@ ${said}`, options: rescopeOpts }; }
     return { title: `The ${loop} did not pass its checks: rescope it? ${T(x)}`, zhTitle: `${loop === "plan" ? "計畫" : "規格"}沒有通過檢查：要調整範圍嗎？${ZT(x)}`,
       ...base(x, `The ${loop} stopped on ${why}. ${failingEn(x, loop)}`, "Rescope the spec, or park the run.", `${loop === "plan" ? "計畫" : "規格"}停住了。${failingZh(x, loop)}`, "調整規格範圍，或暫停這個 run。"),
       body: `The ${loop} stopped on ${why}.\n\nStill failing:\n${failingList(x, loop) || "- (no check named a failure)"}`, options: rescopeOpts }; };
-  /** The merge card of a GitHub Task whose project has no operations grant: the open pull request, merged by the captain on GitHub.
-   *  observed: an operations grant, but GitHub does not show the base branch's protection, so Studio does not merge (OBSERVED_REFUSAL)
-   *  and the green pull request is the captain's to merge on GitHub just the same. */
-  const mergeOnGitHubBody = (pr: any, policy?: RequiredPolicy, observed = false): Body => ({ title: `Pull request #${pr.id} is open: merge it on GitHub`, zhTitle: `Pull request #${pr.id} 已開：請到 GitHub 合併`, captainOnly: true,
-    en: { why: observed ? `PR #${pr.id} is open at ${pr.url} and every check on its head passed. GitHub does not show branch protection for the base branch, so Studio does not merge it: merge it on GitHub.` : `PR #${pr.id} is open at ${pr.url}. Merging from Studio is off for this project, so merge it on GitHub.`, how: "Merge the pull request on GitHub, then close this Task here; or request changes for another round." },
-    zh: { why: observed ? `PR #${pr.id} 已在 ${pr.url} 開好，head 上的檢查全部通過。GitHub 沒有顯示 base 分支的分支保護，所以 Studio 不合併：請到 GitHub 合併。` : `PR #${pr.id} 已在 ${pr.url} 開好。這個專案在 Studio 裡合併是關閉的，請到 GitHub 合併。`, how: "到 GitHub 合併這個 pull request，再回來關閉這個任務；或要求修改，再跑一輪。" },
-    // each language its own line (and literal): the zh rule reads the Chinese line alone
-    body: [observed ? `PR #${pr.id} is open at ${pr.url}; ${OBSERVED_REFUSAL}, so merge it on GitHub.` : `PR #${pr.id} is open at ${pr.url}; merging from Studio is off, so merge it on GitHub.`, `PR #${pr.id} 已開在 ${pr.url}；Studio 不合併，請到 GitHub 合併。`, "", `Branch: ${pr.branch} → ${pr.base} at ${pr.head}`, ...(policy?.observed ? ["", observedNotice(policy)!.en, observedNotice(policy)!.zh] : [])].join("\n"),
-    links: [{ label: `Pull request #${pr.id}`, href: pr.url }],
-    options: [{ id: "close", label: "Close here (I merge on GitHub)", labelZh: "在這裡關閉（我到 GitHub 合併）", primary: true, hold: true }, { id: "changes", label: "Request changes", labelZh: "要求修改", note: true, hold: true }] });
+  /** The merge card of a GitHub Task that Studio does not merge itself: the open pull request, merged by the captain on GitHub
+   *  (Studio watches it and ends the Task as merged when it sees the merge).
+   *  no operations grant: the card names the missing permission (merge, an operations grant on the project's GitHub grant) and
+   *  where it would be granted; observed (an operations grant, but GitHub does not show the base branch's protection) and
+   *  Studio's own verification at the head is not complete (`unready` says why): the merge stays on GitHub (OBSERVED_REFUSAL). */
+  const mergeOnGitHubBody = (pr: any, policy?: RequiredPolicy, observed = false, o: { repository?: string; unready?: string } = {}): Body => {
+    const repo = o.repository ?? "the repository", watch = "Studio watches the pull request: when it is merged on GitHub, Studio ends this Task as merged by itself.", watchZh = "Studio 會盯著這個 pull request：在 GitHub 合併後，Studio 會自己把這個任務結束為已合併。";
+    const grantEn = `Studio cannot merge for this project: its GitHub grant (from Connect to GitHub) lets Studio push Task branches and open pull requests, not merge. Merging from Studio needs the merge permission: an operations grant on that GitHub grant, for ${repo}, with a merge method (merge, squash or rebase) and real writes on, approved by you. Connect to GitHub never grants it, and Studio has no card that grants it yet, so merge on GitHub.`;
+    const grantZh = `Studio 不能替這個專案合併：它的 GitHub 授權（來自「連到 GitHub」）只允許推送任務分支和開 pull request，不能合併。要從 Studio 合併，需要合併權限：在這個 GitHub 授權上加一份針對 ${repo} 的操作授權（operations grant），指定合併方式（merge、squash 或 rebase）並開啟實際寫入，由你核准。「連到 GitHub」不會給這個權限，Studio 目前也還沒有能授權它的卡片，所以請到 GitHub 合併。`;
+    const obsEn = `PR #${pr.id} is open at ${pr.url} and every check on its head passed. GitHub does not show branch protection for the base branch, so Studio does not merge it${o.unready ? ` (${o.unready})` : ""}: merge it on GitHub.`;
+    const obsZh = `PR #${pr.id} 已在 ${pr.url} 開好，head 上的檢查全部通過。GitHub 沒有顯示 base 分支的分支保護${o.unready ? "，而且 Studio 自己在這個 head 上的驗證還不完整" : ""}，所以 Studio 不合併：請到 GitHub 合併。`;
+    return { title: `Pull request #${pr.id} is open: merge it on GitHub`, zhTitle: `Pull request #${pr.id} 已開：請到 GitHub 合併`, captainOnly: true,
+      en: { why: observed ? obsEn : `PR #${pr.id} is open at ${pr.url}. ${grantEn}`, how: `Merge the pull request on GitHub. ${watch} Or close this Task here, or request changes for another round.` },
+      zh: { why: observed ? obsZh : `PR #${pr.id} 已在 ${pr.url} 開好。${grantZh}`, how: `到 GitHub 合併這個 pull request。${watchZh}或在這裡關閉這個任務，或要求修改，再跑一輪。` },
+      // each language its own line (and literal): the zh rule reads the Chinese line alone
+      body: [observed ? `PR #${pr.id} is open at ${pr.url}; ${OBSERVED_REFUSAL}, so merge it on GitHub.` : `PR #${pr.id} is open at ${pr.url}; merging from Studio is off, so merge it on GitHub.`, `PR #${pr.id} 已開在 ${pr.url}；Studio 不合併，請到 GitHub 合併。`, "",
+        ...(observed ? (o.unready ? [`Studio's own merge is not offered: ${o.unready}.`, ""] : []) : [`Missing permission: merge (an operations grant on the project's GitHub grant for ${repo}: a merge method and real writes, approved by the captain). Connect to GitHub grants pushing Task branches and opening pull requests only; no Studio card grants merging yet.`, `缺少的權限：合併（專案 GitHub 授權上針對 ${repo} 的操作授權：合併方式與實際寫入，由船長核准）。「連到 GitHub」只授權推送任務分支和開 pull request；Studio 目前沒有授權合併的卡片。`, ""]),
+        `Branch: ${pr.branch} → ${pr.base} at ${pr.head}`, ...(policy?.observed ? ["", observedNotice(policy)!.en, observedNotice(policy)!.zh] : []), "", watch, watchZh].join("\n"),
+      links: [{ label: `Pull request #${pr.id}`, href: pr.url }],
+      options: [{ id: "close", label: "Close here (I merge on GitHub)", labelZh: "在這裡關閉（我到 GitHub 合併）", primary: true, hold: true }, { id: "changes", label: "Request changes", labelZh: "要求修改", note: true, hold: true }] };
+  };
+  /** What Studio verified itself at the head, for an observed-policy merge (GitHub enforces none of it): the seven signed gates
+   *  at this head (CI, fail-first, review, design among them); null when all passed, else what is missing. */
+  const observedUnready = (x: X): string | null => {
+    const t = engine.trusted(x.run.id), h = x.ctx.pr?.head; if (!t.ok) return "Studio's ledger does not verify";
+    if (h !== x.ctx.gatedHead) return "the gates did not run on the pull request's head";
+    const missing = ["branch", "rebase", "scope", "failfirst", "ci", "approval", "design"].filter((name) => { const e = t.entries.filter((e) => e.check === `firstmate/gate-${name}`).at(-1); return e?.head !== h || e.verdict !== "pass"; });
+    return missing.length ? `Studio's own checks did not all pass at ${String(h).slice(0, 8)}: ${missing.join(", ")}` : null;
+  };
   /** A one-way door the captain has not confirmed: the merge-on-GitHub card asks for the confirmation first (the card's door
    *  check makes the answer carry it), and says it is ready to merge on GitHub only after the text records it. */
   const doorFirst = (x: X, b: Body): Body => x.ctx.door?.door !== "one-way" || publication.doorConfirmation(x) ? b : { ...b,
@@ -1502,12 +1609,17 @@ ${said}`, options: rescopeOpts }; }
       if (text) return text;
       // no operations grant (merging from Studio is off by design): the pull request is open and merges on GitHub
       let mergeOff = false; try { (a as GitHubPrAdapter).operationGrant(); } catch { mergeOff = true; }
-      if (mergeOff) return doorFirst(x, mergeOnGitHubBody(x.ctx.pr, policy));
-      // with an operations grant the required checks must be ones GitHub enforces: an observed policy (protection not shown)
-      // proves only what Studio saw, so the merge stays on GitHub, and the green pull request is still the captain's to merge there
-      if (policy?.observed) return doorFirst(x, mergeOnGitHubBody(x.ctx.pr, policy, true));
-      try { (a as GitHubPrAdapter).operationGrant(); assertMergeAvailable(a as GitHubPrAdapter,x.ctx.pr,x.dir); const p = await (a as GitHubPrAdapter).mutationState(x.ctx.pr,phase.signal,phase.assert); phase.assert(); if (p.base?.sha !== x.ctx.baseCommit || p.draft !== false || p.mergeable !== true || p.mergeable_state !== "clean") throw new Error(); remoteIntent={version:1,grant:grantIdentity(a as GitHubPrAdapter),repository:(a as GitHubPrAdapter).grant.repository,pr:x.ctx.pr.id,branch:x.ctx.pr.branch,base:x.ctx.pr.base,baseHead:x.ctx.baseCommit,head:x.ctx.pr.head,method:(a as GitHubPrAdapter).operationGrant().mergeMethod,policyHash:x.ctx.remoteCI.policyHash}; }
-      catch { phase.assert(); return remoteStopBody("remote merge grant or CLEAN/non-draft state is unverified", { recover: false }); }
+      if (mergeOff) return doorFirst(x, mergeOnGitHubBody(x.ctx.pr, policy, false, { repository: (a as GitHubPrAdapter).grant.repository }));
+      // with an operations grant and an observed policy (GitHub does not show branch protection), the required checks are only
+      // what Studio verified itself: Studio offers its merge only when all of it passed at this head, and then only on the
+      // captain's acknowledgement (below); otherwise the green pull request is the captain's to merge on GitHub
+      const unready = policy?.observed ? observedUnready(x) : null;
+      if (unready) return doorFirst(x, mergeOnGitHubBody(x.ctx.pr, policy, true, { unready }));
+      try { (a as GitHubPrAdapter).operationGrant(); assertMergeAvailable(a as GitHubPrAdapter,x.ctx.pr,x.dir); const p = await (a as GitHubPrAdapter).mutationState(x.ctx.pr,phase.signal,phase.assert); phase.assert(); if (p.base?.sha !== x.ctx.baseCommit || p.draft !== false || p.mergeable !== true || p.mergeable_state !== "clean") throw new Error(); remoteIntent={version:1,grant:grantIdentity(a as GitHubPrAdapter),repository:(a as GitHubPrAdapter).grant.repository,pr:x.ctx.pr.id,branch:x.ctx.pr.branch,base:x.ctx.pr.base,baseHead:x.ctx.baseCommit,head:x.ctx.pr.head,method:(a as GitHubPrAdapter).operationGrant().mergeMethod,policyHash:x.ctx.remoteCI.policyHash,...(policy?.observed ? { observed: policy.observed } : {})}; }
+      catch { phase.assert();
+        // the observed merge's state does not allow Studio's merge (a head already tried, not CLEAN): the merge stays on GitHub
+        if (policy?.observed) return doorFirst(x, mergeOnGitHubBody(x.ctx.pr, policy, true, { unready: "GitHub does not show the pull request as cleanly mergeable for Studio, or Studio already tried a merge at this head" }));
+        return remoteStopBody("remote merge grant or CLEAN/non-draft state is unverified", { recover: false }); }
 
     }
     const wt = x.ctx.worktree; const stat = wt && existsSync(wt) ? git(wt, ["diff", "--stat", `${x.ctx.baseCommit}..HEAD`]).out : "";
@@ -1538,6 +1650,20 @@ ${said}`, options: rescopeOpts }; }
     const body:Body = { title: `Merge: ${T(x)}`, zhTitle: `合併：${ZT(x)}`, ledger: { done: engine.doneLines(x.run) }, detail, captainOnly: true, captures, links: [...(cap?.app ? [{ label: "Open the app", href: cap.app }] : []), ...(x.ctx.pr?.adapter === "github" && x.ctx.pr.url ? [{ label: `Pull request #${x.ctx.pr.id}`, href: x.ctx.pr.url }] : [])], ...b0,
       body: `Intent: ${x.run.text.split("\n")[0].slice(0, 300)}\n\n${one ? `ONE-WAY: a revert will not undo this (${(x.ctx.door?.reasons ?? []).filter((r: any) => r.list !== "trivial").map((r: any) => `${r.path}: ${r.why}`).join("; ")}). Walk: ${walk}\nTick the door confirmation to merge.\n\n` : ""}${x.ctx.pr?.adapter === "github" ? `Merge PR #${x.ctx.pr.id} (${x.ctx.pr.url}) in ${(selectedAdapter(x) as GitHubPrAdapter).grant.repository} at ${x.ctx.pr.head} into ${x.ctx.pr.base}. Method: ${(selectedAdapter(x) as GitHubPrAdapter).operationGrant().mergeMethod}. ${(selectedAdapter(x) as GitHubPrAdapter).operationGrant().mergeMethod === "rebase" ? `GitHub's rebase method lands every round commit on ${x.ctx.pr.base}, not one curated commit; squash is the preferred method.` : `One curated commit lands: "${landing(x) ?? T(x)}".`}` : `Lands one curated commit on ${x.ctx.base} in ${x.ctx.repo} with the tree of ${String(x.ctx.gatedHead ?? x.ctx.head).slice(0, 8)} (branch ${x.ctx.branch}): "${landing(x) ?? T(x)}". The round commits stay on the branch. Local only: nothing is pushed.`}\n\nBefore → after:\n${stat}\n\nSix gates:\n${gates}\n\n${amendText}Proved by checks:\n${sp.proved.map((d) => `✓ ${d.index + 1}. ${d.text} — ${d.by.map((b) => b.check).join(", ")}${supEn(d.index)}`).join("\n") || "(none)"}\n\nNeeds your eye:\n${sp.eye.map((d) => `· ${d.index + 1}. ${d.text}${d.note ? ` (${d.note})` : ""}${supEn(d.index)}`).join("\n") || "(nothing)"}${x.ctx.followups?.length ? `\n\nReviewer follow-ups:\n${x.ctx.followups.map((f: string) => `- ${f}`).join("\n")}` : ""}${seen}${designText(detail.design)}${(() => { const rv = (x.ctx.reviews ?? []).at(-1); if (!rv?.mode) return ""; return `\n\nReviewed in ${rv.mode} mode.${rv.notCovered?.length ? `\nNeeds your eye (the review did not cover):\n${rv.notCovered.map((n: string) => `· ${n}`).join("\n")}` : ""}`; })()}`,
       options: [{ id: "merge", label: "Merge", labelZh: "合併", primary: true }, { id: "changes", label: "Request changes", labelZh: "要求修改", note: true, hold: true }, { id: "close", label: "Close without merging", labelZh: "不合併，關閉", hold: true }] };
+    // an observed policy: GitHub enforces no required check on this repository, so Studio's Merge rests on the captain's own
+    // acknowledgement of Studio's verification at this head (ticked on the card, carried by the answer, bound to head and policy);
+    // merging on GitHub stays the other way
+    if (remoteIntent?.observed) {
+      const repo = remoteIntent.repository, h = remoteIntent.head, h12 = h.slice(0, 12), notice = observedNotice({ observed: remoteIntent.observed } as RequiredPolicy)!;
+      const door = one ? ", and you confirm the one-way door" : "", doorZh = one ? "，並由你確認單向門" : "";
+      body.acknowledge = { option: OBSERVED_MERGE, id: observedAckId(h, remoteIntent.policyHash),
+        en: `GitHub does not enforce required checks on ${repo}: it does not show branch protection for ${remoteIntent.base}. Studio verified them itself at ${h12}: every check reported on the head, fail-first, a fresh review, the designer and the pull request text${door}. I merge on that verification.`,
+        zh: `GitHub 不會在 ${repo} 強制必要檢查：它沒有顯示 ${remoteIntent.base} 的分支保護。Studio 已自己在 ${h12} 驗證：head 上回報的每個檢查、fail-first、新的審查、設計審查和 pull request 文字${doorZh}。我依這份驗證合併。` };
+      body.en = { ...body.en, how: `Merge sends GitHub's merge for exactly ${h12} (a moved head is refused); tick the acknowledgement first. Or close here and merge on GitHub yourself (Studio watches the pull request and ends this Task as merged), or request changes.` };
+      body.zh = { ...body.zh, how: `「合併」只會請 GitHub 合併 ${h12} 這個 head（head 移動了就會被拒絕）；請先勾選確認。或在這裡關閉、自己到 GitHub 合併（Studio 會盯著這個 PR，合併後把任務結束為已合併），或要求修改。` };
+      body.body = `${notice.en}\n${notice.zh}\nGitHub does not enforce these checks: Studio's Merge needs your acknowledgement that Studio verified them itself at ${h12}.\nGitHub 不強制這些檢查：Studio 的「合併」需要你確認 Studio 已自己在 ${h12} 驗證過。\n\n${body.body}`;
+      body.options = [{ id: OBSERVED_MERGE, label: "Merge", labelZh: "合併", primary: true }, { id: "close", label: "Close here (I merge on GitHub)", labelZh: "在這裡關閉（我到 GitHub 合併）", hold: true }, { id: "changes", label: "Request changes", labelZh: "要求修改", note: true, hold: true }];
+    }
     if(remoteIntent)preparedRemoteCards.set(detail,{intent:structuredClone(remoteIntent),assert:assertRemoteCard!});
     return body;
   };
