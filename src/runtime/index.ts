@@ -196,6 +196,8 @@ export function createRuntime(d: RuntimeDeps) {
   const githubReview=installGitHubReviewWorkflow(engine,projects,d.dataDir,d.protectedRoots??[]);
   installReadinessViews(engine);
   engine.load();
+  // a seat card approved just before Studio stopped: propose the work it held now (S8)
+  void originalFirstmate.resumePending().then(all=>{for(const{seatRun,done}of all){const n=heldNotice(seatRun,done);if(n)engine.notifyFirstmate?.(n.text,n.summary);}}).catch(()=>{});
 
   const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
   // Whether a bound site is intact is cached per version under a fingerprint of its manifest files

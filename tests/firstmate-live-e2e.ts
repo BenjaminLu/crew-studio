@@ -8,7 +8,8 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //      captain named, each with captain_quote (an exact item of their words) and its own card; the review's bypasses
 //      (paraphrase then quote, lead-ins, short quotes, the wrong kind, Studio's notes) are refused.
 //  S8  After the captain approved the image seat card, the images proposal waited for the captain to ask again: Studio
-//      proposes the held work again by itself and tells Firstmate; held proposals are on disk, so a restart keeps them.
+//      proposes the held work again by itself and tells Firstmate; held proposals are on disk, so a restart (even one
+//      right after the approval) still proposes them, once.
 //  S10 Firstmate listed answered cards as still waiting: every captain turn carries the live open-card and Task line,
 //      and status claims come from it or studio_work_status in the same turn.
 //  S23 An escalation Studio sent Firstmate showed in the chat as its raw English prompt with tool syntax: the chat line
@@ -179,7 +180,7 @@ const pics = { id: "fixture-pics", name: "Pictures", kind: "image", version: 1, 
   nodes: [{ ...fixture.nodes[0], card: { ...fixture.nodes[0].card, options: [{ id: "go", label: "Go", labelZh: "Go" }] } }, { id: "draw", kind: "agent", label: "DRAW", role: "maker", mode: "test", seat: "image-maker", x: 1, y: 0 }], edges: [["wait", "draw", "go"]] };
 const PICS_TEXT = "圖片：轉角書店的社群貼文主視覺，方形";
 /** One Studio over `data` (a restart is a second one over the same folder): the team without an image maker, the crew tools wired as src/runtime/index.ts wires them. */
-async function seatStudio(data?: string) {
+async function seatStudio(data?: string, o: { crashOnApprove?: boolean } = {}) {
   const H = await harness([bundledText("workflows/v2/firstmate-proposal.wf.yaml")!, bundledText("workflows/v2/crew-change.wf.yaml")!, JSON.stringify(pics)], data ? { data } : {}); const E = H.engine;
   const facts = [{ provider: "codex", support: "supported", auth: "verified", models: [{ id: "gpt-6.1-sol", efforts: ["low", "medium", "high"] }] }];
   const m = (provider: string, model: string, effort: string | null) => ({ provider, model, effort, skills: [] });
@@ -188,15 +189,16 @@ async function seatStudio(data?: string) {
   installCrewGuard(E, store);
   let fm: any; const told: { text: string; summary: any }[] = [];
   E.notifyFirstmate = (text, summary) => { told.push({ text, summary }); return true; };
-  const crew = installCrewTools(E, store, { facts: async () => facts as any, onApproved: (run) => { void fm.resumeHeld(run).then((done: any[]) => { const n = heldNotice(run, done); if (n) E.notifyFirstmate!(n.text, n.summary); }); } });
+  const crew = installCrewTools(E, store, { facts: async () => facts as any, onApproved: (run) => { if (o.crashOnApprove) return; void fm.resumeHeld(run).then((done: any[]) => { const n = heldNotice(run, done); if (n) E.notifyFirstmate!(n.text, n.summary); }); } });
   fm = installFirstmate(E, new Projects(H.data), { crewSeatGate: (d, o) => crew.seatGate(d, o), dispatchCrew: (d) => crew.dispatchCrew(d) });
   E.load();
+  const booted: any[] = await fm.resumePending(); for (const { seatRun, done } of booted) { const n = heldNotice(seatRun, done); if (n) E.notifyFirstmate!(n.text, n.summary); } // as src/runtime/index.ts boots
   const captain = { key: "pics-turn", captain: true, text: PICS_TEXT, live: () => true };
   const propose = () => fm.call("studio_propose_work", { workflow: "fixture-pics", version: 1, title: "轉角書店主視覺", text: PICS_TEXT }, captain) as Promise<any>;
   const approveSeat = async () => { const seatRun = E.list().find((x) => x.workflow === "crew-change")!; await until(() => E.cards.list({ run: seatRun.id, open: true }).length > 0, 5000); await E.answer(E.cards.list({ run: seatRun.id, open: true })[0].id, { choice: "approve", by: "captain" } as any); return seatRun.id; };
   const proposal = async () => { await until(() => E.list().some((x) => x.workflow === "firstmate-proposal") && told.length > 0, 8000); return E.list().find((x) => x.workflow === "firstmate-proposal"); };
   const stop = async (remove = true) => { if (remove) for (const r of E.list()) if (!["succeeded", "cancelled", "failed"].includes(r.status)) await E.cancel(r.id, "fixture cleanup"); H.stop(); if (remove) rmSync(H.data, { recursive: true, force: true }); };
-  return { H, E, told, propose, approveSeat, proposal, stop };
+  return { H, E, fm, told, booted, propose, approveSeat, proposal, stop };
 }
 const heldFile = (data: string) => join(data, "firstmate", "held-proposals.json");
 await section("S8 seat card resumes the held proposal", async () => {
@@ -232,19 +234,41 @@ await section("S8 held proposals survive a restart", async () => {
       ok(!JSON.parse(readFileSync(heldFile(data), "utf8")).held[seatRun], "a resumed proposal leaves the file");
     } finally { await after.stop(); }
   } catch (e) { rmSync(data, { recursive: true, force: true }); throw e; }
+  // Studio stops after the captain approved the seat card but before the held work was proposed again: boot proposes it, once
+  const crashed = await seatStudio(undefined, { crashOnApprove: true }); const cdata = crashed.H.data;
+  try {
+    try { await crashed.propose(); } catch {}
+    const seatRun = await crashed.approveSeat();
+    await until(() => crashed.E.get(seatRun)?.status === "succeeded", 5000);
+    ok(!crashed.E.list().some((x) => x.workflow === "firstmate-proposal") && !!JSON.parse(readFileSync(heldFile(cdata), "utf8")).held[seatRun], "approved, then stopped before resuming: the held proposal is still on disk");
+    await crashed.stop(false);
+    const boot = await seatStudio(cdata);
+    try {
+      const made = boot.E.list().filter((x) => x.workflow === "firstmate-proposal");
+      ok(made.length === 1 && JSON.parse(made[0].params.target).text === PICS_TEXT && boot.booted.length === 1 && boot.told.some((t) => t.text.includes(made[0].id)), "boot proposes the work an approved seat card held", JSON.stringify(boot.booted));
+      ok((await boot.fm.resumePending()).length === 0 && !JSON.parse(readFileSync(heldFile(cdata), "utf8")).held[seatRun], "and drops it: a second boot proposes nothing");
+      ok((await boot.fm.resumeHeld(seatRun)).length === 0 && (await boot.propose()).proposal === made[0].id && boot.E.list().filter((x) => x.workflow === "firstmate-proposal").length === 1, "resuming is idempotent: never a second card");
+    } finally { await boot.stop(); }
+  } catch (e) { rmSync(cdata, { recursive: true, force: true }); throw e; }
+  // a crash between the "resuming" mark and the proposal: boot finds the mark
+  { const d = mkdtempSync(join(tmpdir(), "crew-held-mark-")); try {
+    const st = new HeldProposals(d, () => true); st.hold("R-9", { args: { text: "x" }, owner: { key: "k", text: "x" } });
+    ok(new HeldProposals(d, () => true).mark("R-9").length === 1 && new HeldProposals(d, () => false).pending().join() === "R-9", "a marked entry outlives its card and is pending at boot");
+  } finally { rmSync(d, { recursive: true, force: true }); } }
   // a seat card closed without approval drops what it held; a corrupt or missing file is no held proposals, and says so
   const dir = mkdtempSync(join(tmpdir(), "crew-held-")), warned: string[] = [];
   try {
     let open = true; const store = new HeldProposals(dir, (run) => run !== "R-1" || open, (m) => warned.push(m));
-    ok(store.take("R-1").length === 0 && !warned.length, "a missing file is no held proposals, without a warning");
+    ok(store.mark("R-1").length === 0 && !warned.length, "a missing file is no held proposals, without a warning");
     store.hold("R-1", { args: { text: "a" }, owner: { key: "k", text: "a" } }); store.hold("R-1", { args: { text: "a" }, owner: { key: "k", text: "a" } });
     ok(JSON.parse(readFileSync(heldFile(dir), "utf8")).held["R-1"].length === 1, "the same captain turn and text is held once");
     open = false; store.hold("R-2", { args: { text: "b" }, owner: { key: "k2", text: "b" } });
-    ok(!JSON.parse(readFileSync(heldFile(dir), "utf8")).held["R-1"] && store.take("R-1").length === 0, "a seat card that closed without approval drops what it held");
+    ok(!JSON.parse(readFileSync(heldFile(dir), "utf8")).held["R-1"] && store.mark("R-1").length === 0, "a seat card that closed without approval drops what it held");
     writeFileSync(heldFile(dir), "{not json");
-    ok(store.take("R-2").length === 0 && warned.some((m) => /corrupt/.test(m)), "a corrupt file is no held proposals, and the log says so", warned.join(" | "));
+    ok(store.mark("R-2").length === 0 && warned.some((m) => /corrupt/.test(m)), "a corrupt file is no held proposals, and the log says so", warned.join(" | "));
     store.hold("R-3", { args: { text: "c" }, owner: { key: "k3", text: "c" } });
-    ok(store.take("R-3").length === 1, "holding again after a corrupt file works");
+    ok(store.mark("R-3").length === 1 && store.pending().includes("R-3"), "holding again after a corrupt file works; a marked entry is pending until done");
+    store.done("R-3"); ok(!store.pending().length && store.mark("R-3").length === 0, "done drops it");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
