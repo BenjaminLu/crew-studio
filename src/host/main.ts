@@ -185,7 +185,8 @@ export class MainSession {
    *      captain reading that Board now. Two tabs on screen in different languages: the first report Studio received decides,
    *      the same every time for the same order (a later tab never changes a greeting already decided, nor starts another one);
    *   2. if no tab on screen spoke yet, wait up to `ms` for one (an open Board says its language as its stream reconnects);
-   *   3. then the latest language a background tab said since boot;
+   *   3. then the latest language a background tab said since boot, when the captain chose it, or when the file holds no choice
+   *      of the captain's: a background tab's browser default never beats a language the captain chose;
    *   4. then the file (the last language any Board said before the restart), then English, the Board's own default.
    *  Never driver.json's locale. Why not the file first (live, dae6ede8): it still said zh-CN, the restart greeted in Simplified
    *  Chinese 1.4 s after boot, and the captain's English Board said "en" 7 s later, as it reconnected. Reports are kept from
@@ -198,8 +199,10 @@ export class MainSession {
     return new Promise((res) => {
       const finish = (l: PrimarySettings["locale"], why: string) => { clearTimeout(t); this.boardLocaleWaiters = this.boardLocaleWaiters.filter((w) => w !== heard); res(decided(l, why)); };
       const heard = (s: { locale: PrimarySettings["locale"]; visible: boolean; tab: string | null; at: number }) => { if (s.visible) finish(s.locale, `first tab on screen, heard while waiting: tab=${s.tab ?? "-"} at=${new Date(s.at).toISOString()}`); };
-      const t = setTimeout(() => { const bg = this.boardHeard.at(-1), file = this.boardLocale();
-        finish(bg?.locale ?? file ?? "en", bg ? `no tab on screen within ${ms} ms; latest background tab=${bg.tab ?? "-"}` : file ? `no Board spoke within ${ms} ms; the stored Board language` : `no Board language known; English`); }, ms);
+      const t = setTimeout(() => { const last = this.boardHeard.at(-1), stored = this.boardLanguage();
+        const bg = last && (last.explicit || !stored?.explicit) ? last : null;
+        finish(bg?.locale ?? stored?.locale ?? "en", bg ? `no tab on screen within ${ms} ms; latest background tab=${bg.tab ?? "-"} explicit=${bg.explicit}`
+          : stored ? `no tab on screen within ${ms} ms; the stored Board language (explicit=${stored.explicit})${last ? `, over a background tab's browser default` : ""}` : `no Board language known; English`); }, ms);
       this.boardLocaleWaiters.push(heard);
     });
   }

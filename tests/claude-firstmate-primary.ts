@@ -383,7 +383,7 @@ try {
   // every report and the greeting's decision are in the live log: who said what, and which report decided
   ok(/crew-studio: board language en visible=true explicit=true tab=- via=locale at=\S+Z/.test(appOut) && /crew-studio: board language zh-CN visible=true explicit=true tab=late1 via=locale at=/.test(appOut)
     && /crew-studio: board language zh-TW visible=true explicit=true tab=tw1 via=locale/.test(appOut), "each Board language report is logged with its tab, whether it is on screen and chosen, and when");
-  ok(/crew-studio: restart greeting language zh-TW \(first tab on screen, heard while waiting: tab=tw1 at=/.test(appOut) && /crew-studio: restart greeting language en \(no Board spoke within 300 ms; the stored Board language\)/.test(appOut),
+  ok(/crew-studio: restart greeting language zh-TW \(first tab on screen, heard while waiting: tab=tw1 at=/.test(appOut) && /crew-studio: restart greeting language en \(no tab on screen within 300 ms; the stored Board language \(explicit=true\)\)/.test(appOut),
     "the live log says which language each restart greeted in and why", appOut.split("\n").filter((l) => /greeting language/.test(l)).join(" | "));
   // a page from before these fields (an open tab still on the previous release's JS) says only its language: a background tab's default
   await api("/api/main/locale", { locale: "zh-TW" });

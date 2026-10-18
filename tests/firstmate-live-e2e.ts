@@ -359,6 +359,17 @@ await section("S26 greeting locale", async () => {
     m.setBoardLocale("zh-TW", { visible: false });
     ok(await m.greetingLocale(200) === "zh-TW", "no tab on screen within the wait: the latest background tab's language");
     m.stop(); rmSync(dir, { recursive: true, force: true }); }
+  // no tab on screen: a background tab beats the stored language only when it is the captain's choice, or the stored one is not
+  { const stored = (dir: string, locale: string, explicit: boolean) => writeFileSync(join(dir, "data", "board-language.json"), JSON.stringify({ schema: 1, locale, explicit }));
+    let s = session(); stored(s.dir, "en", true); s.m.setBoardLocale("zh-CN", { visible: false, explicit: false, tab: "bg" });
+    ok(await s.m.greetingLocale(150) === "en", "a background tab's browser default does not beat the language the captain chose");
+    s.m.stop(); rmSync(s.dir, { recursive: true, force: true });
+    s = session(); stored(s.dir, "en", true); s.m.setBoardLocale("zh-TW", { visible: false, explicit: true, tab: "bg" });
+    ok(await s.m.greetingLocale(150) === "zh-TW", "a background tab's own chosen language beats the stored one");
+    s.m.stop(); rmSync(s.dir, { recursive: true, force: true });
+    s = session(); stored(s.dir, "en", false); s.m.setBoardLocale("zh-CN", { visible: false, explicit: false, tab: "bg" });
+    ok(await s.m.greetingLocale(150) === "zh-CN", "with no chosen language stored, the latest background tab's default beats the stored default");
+    s.m.stop(); rmSync(s.dir, { recursive: true, force: true }); }
   // two tabs on screen in different languages: the first report Studio received decides, every time (live e8205157)
   for (const [a, b] of [["en", "zh-CN"], ["zh-CN", "en"]] as const) {
     const { dir, m } = session();
