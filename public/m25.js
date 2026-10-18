@@ -87,7 +87,7 @@ function queueView(v) {
   return h("details", { class: "tools", open: true, "data-queue": v.queue.length },
     h("summary", {}, icon("clock", "ic sm"), T(`${v.queue.length} waiting for the next turn`, `${v.queue.length} 則等下一回合`)),
     v.queue.map((q) => h("div", { class: "toolrow", "data-q": q.kind },
-      h("span", {}, h("span", { class: "vbadge" }, q.kind), " ", q.kind === "wake" ? q.lines.join(" · ") : q.text.slice(0, 120), q.attachments?.length ? h("span", { class: "faint", "data-q-att": q.attachments.length }, ` · ${T(`${q.attachments.length} file${q.attachments.length > 1 ? "s" : ""}`, `${q.attachments.length} 個檔案`)}`) : null),
+      h("span", {}, h("span", { class: "vbadge" }, q.kind), " ", q.kind === "wake" ? q.lines.map((l) => (q.shown?.[l] ? L(q.shown[l]) : l)).join(" · ") : q.text.slice(0, 120), q.attachments?.length ? h("span", { class: "faint", "data-q-att": q.attachments.length }, ` · ${T(`${q.attachments.length} file${q.attachments.length > 1 ? "s" : ""}`, `${q.attachments.length} 個檔案`)}`) : null),
       h("button", { class: "btn ghost icon", "aria-label": T("Remove", "移除"), onclick: () => postJ("/api/main/queue/remove", { id: q.id }) }, icon("x", "ic sm")))));
 }
 function approvalCard(a) {
@@ -135,6 +135,8 @@ function logItem(it, i) {
   if (it.attachmentRefusal) return externalView({ source: "studio", class: "attachment", code: it.attachmentRefusal, message: it.text.replace(/^Not sent: /, ""), reason: { en: "An attachment could not be sent.", "zh-TW": "附件無法送出。" } });
   if (it.kind === "firstmate") return h("div", { class: "msg fm", "data-main": "firstmate" }, h("div", { class: "meta" }, "Firstmate", (it.session?.host || MS.view?.host) ? h("span", { class: "vbadge" }, it.session?.host || MS.view.host) : null), h("div", { class: "bub" }, md(I18N.chatText(lang, it.text))));
   if (it.kind === "tool") return h("div", { class: "toolrow", "data-main": "tool", style: "padding:2px 6px" }, h("code", { style: "font-size:12px" }, it.text.slice(0, 160)));
+  // a wake Studio wrote (an escalation, an agent question): its human summary; the raw prompt stays in the log on disk (S23)
+  if (it.kind === "wake" && it.shown?.length) return h("div", { class: "faint", "data-main": "wake", "data-wake-shown": it.shown.length, style: "font-size:12.5px;padding:4px 8px;border-left:2px solid var(--line);white-space:pre-wrap" }, h("b", {}, T("Sent to Firstmate", "交給 Firstmate") + " · "), it.shown.map((x) => L(x)).join("\n"));
   const lab = KLABEL[it.kind]?.();
   return h("div", { class: "faint", "data-main": it.kind, style: "font-size:12.5px;padding:4px 8px;border-left:2px solid var(--line);white-space:pre-wrap" }, lab ? h("b", {}, lab + " · ") : null, it.kind === "wake" ? it.text.split("\n").slice(1, -1).join("\n") : noteText(it));
 }

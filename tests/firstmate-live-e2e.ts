@@ -10,6 +10,8 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //      proposes the held work again by itself and tells Firstmate.
 //  S10 Firstmate listed answered cards as still waiting: every captain turn carries the live open-card and Task line,
 //      and status claims come from it or studio_work_status in the same turn.
+//  S23 An escalation Studio sent Firstmate showed in the chat as its raw English prompt with tool syntax: the chat line
+//      carries a short summary (Task, what is stuck, Firstmate is looking); Firstmate still gets the full prompt.
 // No model is called: a fake in-process host stands in for the CLI, and the tools run on the real engine.
 //      bun tests/firstmate-live-e2e.ts
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -20,7 +22,7 @@ import { bundledText } from "../src/bundled";
 import { installFirstmate, heldNotice } from "../src/firstmate";
 import { Projects } from "../src/doors";
 import { deliverableKinds, routeRequest } from "../src/deliverables";
-import { routingNote, firstmateTurnNote } from "../src/firstmate-turn";
+import { routingNote, firstmateTurnNote, escalationShown, questionShown } from "../src/firstmate-turn";
 import { studioManual, manualSection, manualPage } from "../src/manual";
 import { MainSession, nativeFreshText, type TurnNote } from "../src/host/main";
 process.env.CREW_TEST_IN_PROCESS = "1";
@@ -204,6 +206,29 @@ await section("S10 live status on every captain turn", async () => {
       ok(!/live status at this message/.test(notice), "a card notice carries no status line");
     } finally { t.done(); }
   } finally { for (const r of E.list()) if (!["succeeded", "cancelled", "failed"].includes(r.status)) await E.cancel(r.id, "fixture cleanup"); H.stop(); rmSync(H.data, { recursive: true, force: true }); }
+});
+
+// ---------- S23: a wake Studio writes shows the captain a summary; the raw prompt stays the turn ----------
+await section("S23 escalation summary in the chat", async () => {
+  const question = "Escalation at Round-budget card: 3 rounds ran and checks still fail: more rounds or a smaller scope?\nWhat is stuck: The round cap is reached after 3 rounds.";
+  const shown = escalationShown({ id: "R-088", title: "新增 percent()" }, "Round-budget card", question);
+  ok(/^Task R-088 “新增 percent\(\)” is stuck at Round-budget card: 3 rounds ran and checks still fail/.test(shown.en) && /Firstmate is looking at it/.test(shown.en) && !/studio_|\{task/.test(shown.en), "the escalation summary names the Task, what is stuck and that Firstmate is looking", shown.en);
+  ok(/任務 R-088/.test(shown["zh-TW"]) && /卡住了/.test(shown["zh-TW"]) && /Firstmate 正在判斷/.test(shown["zh-TW"]), "and says it in Traditional Chinese", shown["zh-TW"]);
+  ok(/R-061/.test(questionShown({ id: "R-061" }, "Build").en) && /Firstmate 正在回答/.test(questionShown({ id: "R-061" }, "Build")["zh-TW"]), "an agent question has its own summary");
+  const t = await mainWith({});
+  try {
+    const raw = `Escalation in Task R-088, step budget (Round-budget card).\n${question}\nDecide with studio_answer_agent_question {task:"R-088", node:"budget", visit:1, choice:"<option id>"}`;
+    const n = t.sent.length; t.m.enqueue("wake", raw, "studio-native", undefined, undefined, shown);
+    const queued = t.m.view().queue.find((q) => q.kind === "wake");
+    ok(!queued || queued.shown?.[raw]?.en === shown.en, "the waiting wake carries its summary for the queue view");
+    await until(() => t.sent.length > n && !t.m.view().busy, 5000);
+    ok(t.sent.at(-1)!.includes('studio_answer_agent_question {task:"R-088"'), "Firstmate still receives the full prompt");
+    const line = t.m.view().log.filter((l) => l.kind === "wake").at(-1);
+    ok(!!line && line.shown?.[0]?.en === shown.en && line.text.includes("studio_answer_agent_question"), "the chat line carries the summary; its text keeps the raw prompt for the log", JSON.stringify(line));
+    t.m.enqueue("wake", "fm: task T-12 finished", "firstmate");
+    await until(() => t.m.view().log.filter((l) => l.kind === "wake").length === 2, 5000);
+    ok(!t.m.view().log.filter((l) => l.kind === "wake").at(-1)!.shown, "a wake firstmate wrote itself has no summary: its own line shows");
+  } finally { t.done(); }
 });
 
 console.log(`firstmate-live-e2e: ${pass} passed, ${fail} failed`);

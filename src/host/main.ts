@@ -69,7 +69,9 @@ export type LogItem = { at: number; kind: "captain" | "card" | "wake" | "firstma
   /** the primary session this line belongs to (kept on disk, so earlier sessions show as their own blocks) */
   session?: SessionLabel | null;
   /** an error from outside Studio (vendor, CLI, network, process, attachment), typed, with the exact external message */
-  external?: ExternalError };
+  external?: ExternalError;
+  /** a wake Studio wrote: the short summaries the chat shows in place of the raw turn (live E2E S23) */
+  shown?: import("./queue").Shown[] };
 export type SessionLabel = { host: HostId; id: string; model: string | null };
 
 export type MainOpts = {
@@ -410,8 +412,9 @@ export class MainSession {
     try { return readdirSync(this.handoffDir()).filter((f) => f.endsWith(".md")).sort().reverse().slice(0, 10).map((name) => ({ name, text: readFileSync(join(this.handoffDir(), name), "utf8") })); } catch { return []; }
   }
 
-  enqueue(kind: QKind, text: string, source: string, attachments?: import("../attachments").AttachmentRef[], repair?: { draft: string; nonce: string }) {
-    const item = this.queue.push(kind, text, source, undefined, attachments, repair);
+  /** `shown`: for a wake Studio writes (an escalation, an agent question), the short summary the captain's chat shows instead of the raw turn. */
+  enqueue(kind: QKind, text: string, source: string, attachments?: import("../attachments").AttachmentRef[], repair?: { draft: string; nonce: string }, shown?: import("./queue").Shown) {
+    const item = this.queue.push(kind, text, source, undefined, attachments, repair, shown);
     this.changed();
     void this.pump();
     return item;
@@ -453,7 +456,9 @@ export class MainSession {
         this.pruneWakes();
         const item = this.queue.take((i) => this.ready(i));
         if (!item) break;
-        this.note({ kind: item.kind === "chat" ? "captain" : item.kind, text: item.text, source: item.source, ...(item.attachments?.length ? { attachments: item.attachments } : {}) });
+        // a wake Studio wrote shows its human summary in the chat; the raw turn stays the line's text (the chat log on disk keeps it)
+        const shown = item.kind === "wake" && item.shown ? (item.lines ?? []).map((l) => item.shown![l]).filter(Boolean) : [];
+        this.note({ kind: item.kind === "chat" ? "captain" : item.kind, text: item.text, source: item.source, ...(item.attachments?.length ? { attachments: item.attachments } : {}), ...(shown.length ? { shown } : {}) });
         // the captain's files go with this turn, or the turn is not sent: a typed refusal, never a silent drop
         let files: import("../attachments").AttachmentFile[] = [];
         if (item.attachments?.length) {

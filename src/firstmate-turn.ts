@@ -41,3 +41,18 @@ export function firstmateTurnNote(engine: Engine): (text: string) => TurnNote | 
     return parts.length ? { text: parts.join("\n\n"), routes: route?.routes ?? [] } : null;
   };
 }
+
+// What the captain's chat shows for a turn Studio sends Firstmate on its own (live E2E S23): the escalation prompt is English
+// with tool syntax ("studio_answer_agent_question {task:…}"), so the chat showed it raw. The chat shows the Task, what is
+// stuck and that Firstmate is looking; the raw prompt stays the turn's text (the chat log on disk, the Task's activity).
+const named = (r: { id: string; title?: string }) => (r.title ? `${r.id} “${String(r.title).replace(/\s+/g, " ").slice(0, 60)}”` : r.id);
+/** An escalation sent to Firstmate first, as the captain reads it. */
+export function escalationShown(r: { id: string; title?: string }, label: string, question: string): { en: string; "zh-TW": string } {
+  const what = /^Escalation at [^:\n]*: ([^\n]+)/.exec(question)?.[1]?.trim().slice(0, 160) ?? "";
+  return { en: `Task ${named(r)} is stuck at ${label}${what ? `: ${what}` : ""}. Firstmate is looking at it and opens a card for you only if it needs you.`,
+    "zh-TW": `任務 ${named(r)} 在「${label}」卡住了${what ? `（${what}）` : ""}。Firstmate 正在判斷，需要你決定時才會開卡給你。` };
+}
+/** An agent's question sent to Firstmate first, as the captain reads it. */
+export function questionShown(r: { id: string; title?: string }, label: string): { en: string; "zh-TW": string } {
+  return { en: `An agent in Task ${named(r)} asked a question at ${label}. Firstmate is answering it.`, "zh-TW": `任務 ${named(r)} 的 agent 在「${label}」提問，Firstmate 正在回答。` };
+}
