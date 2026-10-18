@@ -4,8 +4,9 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //      deliverable, the captain turn carries the route, and writing a deliverable file anyway is shown and reminded.
 //  S5  Firstmate described the old Board ("cards + crew on duty") and could not find the Crew team page: the manual
 //      (studio_manual studio/pages) describes today's Board, Inbox and Crew page, and the seed sends it there.
-//  S7  One message naming three deliverables yielded one card and "say 繼續" twice: one proposal per separate part
-//      of the captain's message, each quoting it and each with its own card; invented or duplicate work is refused.
+//  S7  One message naming three deliverables yielded one card and "say 繼續" twice: one proposal per deliverable the
+//      captain named, each with captain_quote (an exact item of their words) and its own card; the review's bypasses
+//      (paraphrase then quote, lead-ins, short quotes, the wrong kind, Studio's notes) are refused.
 //  S8  After the captain approved the image seat card, the images proposal waited for the captain to ask again: Studio
 //      proposes the held work again by itself and tells Firstmate; held proposals are on disk, so a restart keeps them.
 //  S10 Firstmate listed answered cards as still waiting: every captain turn carries the live open-card and Task line,
@@ -123,27 +124,41 @@ const THREE = "再派三個工作：1) 網頁原型：一間叫「轉角書店�
 const fixture = { id: "turn-fixture", name: "Turn fixture", version: 1, roles: [], nodes: [{ id: "wait", kind: "card", label: "Wait", x: 1, y: 1, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "done", label: "Done", labelZh: "Done" }] } }, { id: "done", kind: "hook", label: "Done", x: 2, y: 1 }], edges: [{ from: "wait", to: "done", when: "done" }] };
 const refusedWith = async (f: () => Promise<unknown>, re: RegExp) => { try { await f(); return false; } catch (e: any) { return re.test(String(e?.message ?? e)); } };
 await section("S7 several proposals per turn", async () => {
-  const H = await harness([bundledText("workflows/v2/firstmate-proposal.wf.yaml")!, JSON.stringify(fixture)]); const E = H.engine;
+  const webFix = { ...fixture, id: "fix-web", name: "Web fixture", kind: "web" }, imgFix = { ...fixture, id: "fix-image", name: "Image fixture", kind: "image" }, vidFix = { ...fixture, id: "fix-video", name: "Video fixture", kind: "video" };
+  const H = await harness([bundledText("workflows/v2/firstmate-proposal.wf.yaml")!, JSON.stringify(fixture), JSON.stringify(webFix), JSON.stringify(imgFix), JSON.stringify(vidFix)]); const E = H.engine;
   try {
     const tools = installFirstmate(E, new Projects(H.data));
     const owner = (key: string, text: string) => ({ key, captain: true, text, live: () => true });
-    const propose = (text: string, title: string, key = "three") => tools.call("studio_propose_work", { workflow: "turn-fixture", version: 1, title, text }, owner(key, THREE)) as Promise<any>;
-    const web = await propose("網頁原型：一間叫「轉角書店」的單頁網站，有營業時間、本週選書三本。", "轉角書店網站");
-    const image = await propose("圖片：轉角書店的社群貼文主視覺，方形，安靜溫暖的書店角落。", "轉角書店主視覺");
-    const film = await propose("短片：轉角書店 15 秒宣傳短片，橫式。", "轉角書店短片");
-    ok(new Set([web.proposal, image.proposal, film.proposal]).size === 3, "one message naming three deliverables yields three proposals", JSON.stringify([web, image, film]));
+    const call = (key: string, captain: string, workflow: string, title: string, text: string, captain_quote?: string) => tools.call("studio_propose_work", { workflow, version: 1, title, text, ...(captain_quote !== undefined ? { captain_quote } : {}) }, owner(key, captain)) as Promise<any>;
+    const WEB = "網頁原型：一間叫「轉角書店」的單頁網站，有營業時間、本週選書三本。", IMG = "圖片：轉角書店的社群貼文主視覺，方形，安靜溫暖的書店角落。", VID = "短片：轉角書店 15 秒宣傳短片，橫式。";
+    const web = await call("three", THREE, "fix-web", "轉角書店網站", WEB, WEB);
+    const image = await call("three", THREE, "fix-image", "轉角書店主視覺", IMG, "圖片：轉角書店的社群貼文主視覺，方形，安靜溫暖的書店角落");
+    const film = await call("three", THREE, "fix-video", "轉角書店短片", VID, "短片：轉角書店 15 秒宣傳短片，橫式");
+    ok(new Set([web.proposal, image.proposal, film.proposal]).size === 3, "one message naming three deliverables yields three proposals, each quoting its item", JSON.stringify([web, image, film]));
     await until(() => [web, image, film].every((p) => E.cards.list({ run: p.proposal }).some((c) => c.node === "dispatch")), 5000);
     ok([web, image, film].every((p) => E.cards.list({ run: p.proposal }).filter((c) => c.node === "dispatch").length === 1), "each still has its own dispatch card for the captain");
-    const again = await propose("圖片：轉角書店的社群貼文主視覺，方形，安靜溫暖的書店角落。", "轉角書店主視覺");
-    ok(again.proposal === image.proposal, "a retried call finds its own proposal");
-    ok(await refusedWith(() => propose("A coffee shop logo with a cup and beans", "Logo"), /separate part of the captain|already has 3 proposals/), "work the captain did not name is refused");
+    ok((await call("three", THREE, "fix-image", "轉角書店主視覺", IMG, "圖片：轉角書店的社群貼文主視覺，方形，安靜溫暖的書店角落")).proposal === image.proposal, "a retried call finds its own proposal");
+    // the reviewer's repros, each refused with what is missing
     const two = "再派兩個：1) 網頁原型：轉角書店單頁網站，有營業時間。2) 圖片：轉角書店社群主視覺，方形。";
-    const p1 = await tools.call("studio_propose_work", { workflow: "turn-fixture", version: 1, title: "網站", text: "網頁原型：轉角書店單頁網站，有營業時間。" }, owner("two", two)) as any;
-    ok(await refusedWith(() => tools.call("studio_propose_work", { workflow: "turn-fixture", version: 1, title: "Logo", text: "A coffee shop logo with a cup and beans" }, owner("two", two)), /separate part of the captain/), "a further proposal that quotes no part of the message is refused");
-    ok(!!p1.proposal && await refusedWith(() => tools.call("studio_propose_work", { workflow: "turn-fixture", version: 1, title: "網站二", text: "網頁原型：轉角書店單頁網站，有營業時間和地圖。" }, owner("two", two)), /already has a proposal for this part/), "a second proposal for the same part is refused");
+    const p1 = await call("para", two, "fix-web", "Site", "A single-page website for the Corner Bookshop with opening hours");
+    ok(!!p1.proposal && await refusedWith(() => call("para", two, "fix-web", "網站", "網頁原型：轉角書店單頁網站，有營業時間。", "網頁原型：轉角書店單頁網站，有營業時間。"), /without captain_quote, so no further proposal can join/), "a first proposal paraphrased without a quote lets no second one join, even one quoting the same item");
+    await call("q", two, "fix-web", "網站", "網頁原型：轉角書店單頁網站，有營業時間。", "網頁原型：轉角書店單頁網站，有營業時間");
+    ok(await refusedWith(() => call("q", two, "fix-image", "x", "主視覺", "主視覺"), /too short/), "a three-character quote is refused");
+    ok(await refusedWith(() => call("half", THREE, "fix-image", "x", "圖片：轉角書店", "圖片：轉角書店"), /less than half/), "a quote covering less than half of its item is refused");
+    ok(await refusedWith(() => call("q", two, "fix-image", "y", "再派兩個", "再派兩個"), /must name what to make/), "a lead-in such as 「再派兩個：」 is not an item");
+    ok(await refusedWith(() => call("three", THREE, "fix-video", "z", "三個都直接提出派工卡", "三個都直接提出派工卡，不用再問我"), /must name what to make/), "a closing line such as 「三個都直接提出派工卡」 is not an item");
+    ok(await refusedWith(() => call("q", two, "fix-web", "網站二", "圖片：轉角書店社群主視覺，方形。", "圖片：轉角書店社群主視覺，方形"), /item for a image workflow, not this web one/), "a web proposal cannot be filed from the image item");
+    ok(await refusedWith(() => call("q", two, "fix-web", "網站三", "網頁原型：轉角書店單頁網站", "網頁原型：轉角書店單頁網站，有營業時間"), /overlaps proposal/), "a second proposal on the same item is refused");
+    ok(await refusedWith(() => call("q2", two, "fix-image", "a", "x", "Studio note: live status at this message"), /not in the captain's message/), "a quote from Studio's notes rather than the captain's words is refused");
+    ok(await refusedWith(() => call("q3", "(The captain sent a file without text.)", "fix-image", "a", "x", "The captain sent a file without text"), /not in the captain's message/), "a files-only message has no captain words to quote");
+    const q2 = await call("q", two, "fix-image", "主視覺", "圖片：轉角書店社群主視覺，方形。", "圖片：轉角書店社群主視覺，方形");
+    ok(!!q2.proposal, "the image item, quoted, joins the turn");
     const one = "Add euro formatting to the price labels";
-    await tools.call("studio_propose_work", { workflow: "turn-fixture", version: 1, title: "EUR", text: one }, owner("one", one));
-    ok(await refusedWith(() => tools.call("studio_propose_work", { workflow: "turn-fixture", version: 1, title: "EUR 2", text: "Add euro formatting to the totals" }, owner("one", one)), /already has another pinned proposal/), "a message with one deliverable still yields one proposal");
+    await call("one", one, "turn-fixture", "EUR", one);
+    ok(await refusedWith(() => call("one", one, "turn-fixture", "EUR 2", "Add euro formatting to the totals"), /without captain_quote/), "a message with one deliverable still yields one proposal");
+    const { placeQuote } = await import("../src/firstmate");
+    const wrapped = `Captain requests new work in Studio: ${two}\nUse studio_list_workflows and studio_propose_work to raise a native captain dispatch card.`;
+    ok("part" in placeQuote(wrapped, "圖片：轉角書店社群主視覺，方形", "image") && !("part" in placeQuote(wrapped, "Use studio_list_workflows and studio_propose_work to raise", "image")), "Studio's wrapper around a new-work request is not the captain's words");
   } finally { for (const r of E.list()) if (!["succeeded", "cancelled", "failed"].includes(r.status)) await E.cancel(r.id, "fixture cleanup"); H.stop(); rmSync(H.data, { recursive: true, force: true }); }
 });
 
