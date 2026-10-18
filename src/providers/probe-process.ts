@@ -1,6 +1,15 @@
 // Metadata probes own one detached process group and every pipe byte. Their
 // disposable credential home can be removed only after this group is gone.
 import { spawn, spawnSync } from 'node:child_process';
+/** A probe's process group as `ps -o pgid=,pid=,ppid=,stat=` lists it: gone; zombie when every member has exited and waits
+ *  only for Studio (its parent) or launchd (pid 1) to reap it (it holds no file, pipe or credential); live when a member runs,
+ *  or when a zombie's parent is any other process: that parent left the group and still runs, so the group's teardown
+ *  cannot be verified (fail closed). */
+export function probeGroupState(ps:string,pgid:number,self:number):'gone'|'live'|'zombie'{
+  const members=ps.split('\n').map(line=>line.trim().split(/\s+/)).filter(f=>Number(f[0])===pgid);
+  if(!members.length)return 'gone';
+  return members.every(f=>/^Z/.test(f[3]??'')&&(Number(f[2])===self||Number(f[2])===1))?'zombie':'live';
+}
 export function probeProcess(argv: string[], cwd: string, env: Record<string,string>, onLine?: (value:any)=>void, limits: { timeoutMs?:number; bytes?:number; lineBytes?:number } = {}) {
   const child=spawn(argv[0],argv.slice(1),{cwd,env,detached:true,stdio:['pipe','pipe','pipe']});
   const max=limits.bytes??1024*1024,lineMax=limits.lineBytes??128*1024;
@@ -10,13 +19,10 @@ export function probeProcess(argv: string[], cwd: string, env: Record<string,str
   // The probe caller may be waiting on a RPC rather than process completion.
   exited.catch(()=>{});
   let stopping:Promise<void>|null=null;
-  // the group: gone, live (a member runs), zombie (every member exited, some not reaped yet: they hold no file, pipe or
-  // credential), or null when ps could not answer this time (a busy machine; asked again until the deadline)
   const group=():'gone'|'live'|'zombie'|null=>{if(!child.pid)return 'gone';
-    const rows=spawnSync('/bin/ps',['-ax','-o','pgid=,pid=,stat='],{encoding:'utf8',maxBuffer:512*1024,timeout:2000});
-    if(rows.status!==0||rows.error)return null;
-    const members=rows.stdout.split('\n').map(line=>line.trim().split(/\s+/)).filter(f=>Number(f[0])===child.pid);
-    return !members.length?'gone':members.some(f=>!/^Z/.test(f[2]??''))?'live':'zombie';
+    const rows=spawnSync('/bin/ps',['-ax','-o','pgid=,pid=,ppid=,stat='],{encoding:'utf8',maxBuffer:512*1024,timeout:2000});
+    if(rows.status!==0||rows.error)return null; // ps could not answer this time (a busy machine): asked again until the deadline
+    return probeGroupState(rows.stdout,child.pid,process.pid);
   };
   const stop=()=>stopping??(stopping=(async()=>{
     ended=true;clearTimeout(timer);
