@@ -10,16 +10,22 @@ export function probeProcess(argv: string[], cwd: string, env: Record<string,str
   // The probe caller may be waiting on a RPC rather than process completion.
   exited.catch(()=>{});
   let stopping:Promise<void>|null=null;
-  const alive=()=>{if(!child.pid)return false;
-    const rows=spawnSync('/bin/ps',['-ax','-o','pgid=,pid=,stat='],{encoding:'utf8',maxBuffer:512*1024,timeout:500});
-    if(rows.status!==0||rows.error)throw new Error('probe group liveness unavailable');
-    return rows.stdout.split('\n').some(line=>{const fields=line.trim().split(/\s+/);return Number(fields[0])===child.pid;});
+  // the group: gone, live (a member runs), zombie (every member exited, some not reaped yet: they hold no file, pipe or
+  // credential), or null when ps could not answer this time (a busy machine; asked again until the deadline)
+  const group=():'gone'|'live'|'zombie'|null=>{if(!child.pid)return 'gone';
+    const rows=spawnSync('/bin/ps',['-ax','-o','pgid=,pid=,stat='],{encoding:'utf8',maxBuffer:512*1024,timeout:2000});
+    if(rows.status!==0||rows.error)return null;
+    const members=rows.stdout.split('\n').map(line=>line.trim().split(/\s+/)).filter(f=>Number(f[0])===child.pid);
+    return !members.length?'gone':members.some(f=>!/^Z/.test(f[2]??''))?'live':'zombie';
   };
   const stop=()=>stopping??(stopping=(async()=>{
     ended=true;clearTimeout(timer);
-    if(child.pid){try{process.kill(-child.pid,'SIGKILL');}catch(e:any){if(e.code!=='ESRCH')throw new Error('probe group stop unavailable: '+e.code);}}
-    const until=Date.now()+2000;while(alive()&&Date.now()<until)await new Promise(r=>setTimeout(r,10));
-    if(alive())throw new Error('probe group death unverified');
+    // EPERM: macOS refuses to signal a group whose members have all exited but are not reaped yet; ps below decides
+    if(child.pid){try{process.kill(-child.pid,'SIGKILL');}catch(e:any){if(e.code!=='ESRCH'&&e.code!=='EPERM')throw new Error('probe group stop unavailable: '+e.code);}}
+    // zombies are usually reaped within moments; one still unreaped at the deadline (its reaper is busy) counts as gone
+    const until=Date.now()+2000;let state=group();while(state!=='gone'&&Date.now()<until){await new Promise(r=>setTimeout(r,10));state=group();}
+    if(state===null)throw new Error('probe group liveness unavailable');
+    if(state==='live')throw new Error('probe group death unverified');
     child.stdin.destroy();child.stdout.destroy();child.stderr.destroy();
     resolve(code);
   })().catch(e=>{reject(e);throw e;}));

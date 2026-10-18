@@ -15,4 +15,16 @@ const home=existsSync(join(dir,'home'))?readFileSync(join(dir,'home'),'utf8'):''
 for(const pid of pids)if(alive(pid))try{process.kill(pid,'SIGKILL')}catch{}
 if(timeout){await Promise.race([pending,new Promise(r=>setTimeout(r,1200))]);}
 }
+// A group whose members have all exited but are not reaped yet (zombies) is gone: macOS refuses to signal it (EPERM) and ps
+// still lists it. Under load a probe's own leader is such a zombie for a moment; the probe once called that an unverified
+// cleanup, and the Claude auth status then stayed "cleanup unverified; restart Studio" for the rest of the run (the Start
+// form's flaky "claude claude-sonnet-5-5 目前不可用"). Here the leader exits after a member of its group exited unreaped
+// (its parent sits in another group and never reaps it), so the group holds only a zombie when the probe stops.
+{const hpid=join(dir,'h.pid');
+ const script=`my $L=$$; my $h=fork(); if(!$h){ setpgrp(0,0); open(STDOUT,'>/dev/null'); open(STDERR,'>/dev/null'); my $m=fork(); if(!$m){ setpgrp(0,$L) or exit 3; exit 0 } open(my $f,'>',$ARGV[0]); print $f "$$\\n"; close $f; sleep 30; exit 0 } select(undef,undef,undef,0.5); print "{\\"ok\\":true}\\n"; exit 0`;
+ const {probeProcess}=await import('../src/providers/probe-process');
+ const p=probeProcess(['/usr/bin/perl','-e',script,hpid],dir,{PATH:'/usr/bin:/bin'},undefined,{timeoutMs:8000});let error='';
+ try{await p.exited;await p.stop();}catch(e:any){error=e.message;}
+ ok(!error&&p.output().out.trim()==='{"ok":true}','a probe whose group holds only an unreaped zombie stops cleanly and keeps its output',error);
+ const h=existsSync(hpid)?Number(readFileSync(hpid,'utf8')):0;if(h)try{process.kill(h,'SIGKILL');}catch{}}
 rmSync(dir,{recursive:true,force:true});end();
