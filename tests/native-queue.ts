@@ -5,6 +5,7 @@ import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repos
 import { cpSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { NativeQueue, type QueueRequest } from "../src/runtime/queue";
 import { Agents } from "../src/agent";
 import { Projects } from "../src/doors";
 import { installCode } from "../src/domain/code";
@@ -15,6 +16,21 @@ import { probeProcess } from "../src/providers/probe-process";
 import { INPUT_HASH_ALGORITHM } from "../src/runtime/checks";
 import { suite, until, Y } from "./rt-harness";
 const { ok, end } = suite("native-queue");
+// A waiting observer can save engine state, which wakes the queue again. An
+// unchanged wait must not repeatedly notify it and starve the I/O releasing slots.
+{
+ const q=new NativeQueue();let notices=0,reason="not ready",ready=false;
+ const request=(key:string):QueueRequest=>({key,task:key,project:"fixture",deadline:Date.now()+5000,limits:()=>({global:1,project:1}),ready:()=>({ready:key==="owner"||ready,reason}),waiting:()=>{notices++;if(notices<20)q.wake();},admitted(){}});
+ const release=await q.acquire(request("owner"));const next=q.acquire(request("waiting"));
+ await Bun.sleep(0);
+ ok(notices===1,"a waiting callback that wakes the queue receives an unchanged reason once");
+ reason="changed readiness";q.wake();await Bun.sleep(0);
+ ok(notices===2,"a changed readiness reason notifies the waiting observer");
+ ready=true;q.wake();await Bun.sleep(0);
+ ok(notices===3,"capacity wait replaces the prior readiness reason once");
+ release();const releaseNext=await next;
+ ok(q.snapshot().active[0]?.key==="waiting","I/O can release capacity and admit the waiting round");releaseNext();
+}
 const binaryCommands=JSON.parse(readFileSync(join(import.meta.dir,"../package.json"),"utf8")).scripts["test:binary"].split(" && ");
 const parentBinaryCommands=[...new Set(["dd8276f86da48df60e341b118e3a92bdffffbf8e","1aef6ea8030011032e7f3a8019bb31a1ea7a8bc8"].flatMap(sha=>{const r=Bun.spawnSync(["git","show",sha+":package.json"],{cwd:join(import.meta.dir,".."),stdout:"pipe",stderr:"pipe"});if(r.exitCode)throw new Error("approved parent binary contract unavailable");return JSON.parse(r.stdout.toString()).scripts["test:binary"].split(" && ");}))];
 ok(parentBinaryCommands.every(command=>binaryCommands.filter(c=>c===command).length===1)&&binaryCommands.length===parentBinaryCommands.length,"aggregate binary alias retains both approved parents' suites exactly once");

@@ -7,7 +7,7 @@ export type QueueRequest = {
   limits(): { global: number; project: number };
   ready(): QueueReady; waiting(reason: string): void; admitted(): void;
 };
-type Pending = QueueRequest & { seq: number; resolve(release: () => void): void; reject(e: Error): void; timer: ReturnType<typeof setTimeout>; abort(): void };
+type Pending = QueueRequest & { seq: number; resolve(release: () => void): void; reject(e: Error): void; timer: ReturnType<typeof setTimeout>; waitingReason?: string; abort(): void };
 export function capacity(value: unknown, name: string): number {
   if (!Number.isInteger(value) || Number(value) < 1 || Number(value) > 64) throw new Error(`${name} must be an explicit integer from 1 to 64`);
   return Number(value);
@@ -31,6 +31,13 @@ export class NativeQueue {
   }
   private remove(p:Pending) { clearTimeout(p.timer); p.signal?.removeEventListener("abort",p.abort); this.pending.delete(p.key); }
   wake() { if(this.scheduled)return; this.scheduled=true; queueMicrotask(() => { this.scheduled=false; this.fill(); }); }
+  // Observers may persist state and wake us again. Notify transitions only so
+  // an unchanged wait cannot keep microtasks spinning ahead of slot-release I/O.
+  private notifyWaiting(p: Pending, reason: string) {
+    if (p.waitingReason === reason) return;
+    p.waitingReason = reason;
+    p.waiting(reason);
+  }
   private fill() {
     while(true) {
       const candidates=[...this.pending.values()].sort((a,b) => this.live(a.project)-this.live(b.project)||a.project.localeCompare(b.project)||a.seq-b.seq);
@@ -41,8 +48,8 @@ export class NativeQueue {
           const lim=p.limits(), global=capacity(lim.global,"queue.global_capacity"), project=capacity(lim.project,"queue.project_capacity");
           const check=p.ready();
           if (p.deadline <= Date.now()) throw new QueueRefusal("readiness deadline expired; fresh preparation required");
-          if(!check.ready) { p.waiting(check.reason??"readiness unavailable"); continue; }
-          if(this.owned.size>=global || this.live(p.project)>=project) { p.waiting("live owned-round capacity is full"); continue; }
+          if(!check.ready) { this.notifyWaiting(p,check.reason??"readiness unavailable"); continue; }
+          if(this.owned.size>=global || this.live(p.project)>=project) { this.notifyWaiting(p,"live owned-round capacity is full"); continue; }
           selected=p; break;
         } catch(e:any) { this.remove(p); p.reject(new QueueRefusal(e?.message??String(e))); }
       }
