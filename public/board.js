@@ -186,6 +186,16 @@ const studioItem = (id, group) => { const r = BD.det.get(id); return r ? studioV
 // the card a run waits on now: its oldest open card, never one raised on an earlier visit of its node
 const currentCard = (r, cards) => cards.filter((c) => c.status === "open" && c.run === r.id && (!c.node || !c.visit || !r.nodes?.[c.node] || (r.nodes[c.node].visits || 0) === c.visit))
   .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))[0] || null;
+// live S29: a Firstmate proposal is a run of its own (firstmate-proposal) that starts the Task the captain approved. Once it
+// started one it is folded into it: no row and no count of its own, and that Task names it ("from Firstmate's proposal
+// R-093"). It shows as a row only while it waits for approval, or when it closed without starting anything. Its params
+// are hashes (project authority, definition): a row never shows one
+const isProposal = (r) => r?.workflow === "firstmate-proposal" || r?.def?.kind === "firstmate-proposal";
+const HASHY = /^[0-9a-f]{16,}$/i;
+function proposalProject(r) { try { const p = JSON.parse(r.params?.target || "null")?.project; return typeof p === "string" && !HASHY.test(p) ? p : null; } catch { return null; } }
+const runProject = (r) => { const p = isProposal(r) ? proposalProject(r) : r.ctx?.project || r.params?.project || null; return typeof p === "string" && !HASHY.test(p) ? p : null; };
+const fromProposal = (r) => { const f = r.params?._firstmateProposal; return typeof f === "string" && /^R-\d+$/.test(f) ? f : null; };
+const metaLine = (x) => [x.id, x.workflow, x.project || "—", x.from ? T(`from Firstmate's proposal ${x.from}`, `來自 Firstmate 的提案 ${x.from}`) : null].filter(Boolean).join(" · ");
 function studioView(r, cards, group) {
   const id = r.id, card = currentCard(r, cards);
   if (!group) group = r.status === "failed" || r.ctx?.firstmateQuestion || (r.status !== "succeeded" && !!capStep(r)) ? "stuck" : card || Object.values(r.nodes || {}).some((n) => n?.waiting === "card") ? "you" : "run";
@@ -196,7 +206,7 @@ function studioView(r, cards, group) {
     : r.status === "paused" ? T("Paused", "已暫停") : r.status === "queued" ? T("Queued", "排隊中")
     : workers0.length ? workers0[0] + (workers0.length > 1 ? ` +${workers0.length - 1}` : "")
     : Object.entries(r.nodes || {}).filter(([, n]) => n?.waiting === "external").map(([k]) => T(`Waiting on ${loc(r.def?.nodes?.find((n) => n.id === k)?.label) || k}`, `等待 ${loc(r.def?.nodes?.find((n) => n.id === k)?.label) || k}`))[0] || T("Between steps", "準備下一步");
-  return { id, kind: "studio", group, title: r.title, workflow: loc(r.def?.name) || r.workflow, project: r.ctx?.project || r.params?.project || null, tr, round: roundOf(r, m),
+  return { id, kind: "studio", group, title: r.title, workflow: loc(r.def?.name) || r.workflow, project: runProject(r), from: fromProposal(r), tr, round: roundOf(r, m),
     card: card ? { id: card.id, title: cardTitle(card) } : null, now, state: window.runState({ ...r, merged: !!r.ctx?.merged }), scope: r.ctx?.spec?.scope || [],
     since: r.createdAt, until: r.endedAt || null, href: `#/run/${encodeURIComponent(id)}`, graph: `#/run/${encodeURIComponent(id)}?graph=1`, r };
 }
@@ -217,7 +227,9 @@ function fmItem(t) {
 const scopePaths = (xs) => xs.map((p) => String(p).trim().replace(/^\.\//, "").replace(/\/+$/, "").replace(/\/?[^/]*[*?[].*$/, "")).filter((p) => p !== "tests" && !p.startsWith("tests/"));
 const meets = (a, b) => { const x = scopePaths(a), y = scopePaths(b); return x.some((p) => y.some((q) => !p || !q || p === q || p.startsWith(q + "/") || q.startsWith(p + "/"))); };
 function items() {
-  const studio = [...(BD.list || []).map((id) => studioItem(id)), ...(BD.ended || []).map((id) => studioItem(id, "done"))].filter(Boolean);
+  const studio0 = [...(BD.list || []).map((id) => studioItem(id)), ...(BD.ended || []).map((id) => studioItem(id, "done"))].filter(Boolean);
+  const started = new Set(studio0.map((x) => x.from).filter(Boolean));
+  const studio = studio0.filter((x) => !(isProposal(x.r) && (x.r.ctx?.childRun || started.has(x.id))));
   const fm = S.tasks.filter((t) => t.status !== "idle" && (t.status !== "done" || today(t.mergedTs || t.lastTs))).map(fmItem);
   const all = [...studio, ...fm];
   const open = all.filter((x) => x.group !== "done" && x.scope.length);
@@ -245,7 +257,7 @@ function row(x, on, tab, panel) {
     "data-task": x.id, "data-kind": x.kind, "data-group": x.group, "aria-label": `${groupWord(x.group)}, ${x.id} ${x.title}`,
     onclick: (e) => { if (e.target.closest("a, button, .tb-detail")) return; pick(x.id, true); } },
     h("span", { class: `tb-st${x.group === "done" ? ` tone-${x.state.tone}` : ""}`, "data-run-state": x.state.key }, h("i", { class: "tb-dot" }), x.group === "done" ? T(x.state.en, x.state.tw) : groupWord(x.group)),
-    h("span", { class: "tb-task" }, h("b", { class: "tb-title", title: x.title, "data-task-title": x.id }, x.title), h("span", { class: "tb-meta" }, [x.id, x.workflow, x.project || "—"].join(" · "))),
+    h("span", { class: "tb-task" }, h("b", { class: "tb-title", title: x.title, "data-task-title": x.id }, x.title), h("span", { class: "tb-meta" }, metaLine(x))),
     h("span", { class: "tb-prog" }, trackEl(x), h("span", { class: "tb-stage" }, stageText(x))),
     h("span", { class: "tb-now" }, x.card && x.group !== "done" ? inboxLink(x) : null, h("span", { class: "tb-now-t", title: nowText(x) }, BD.mode !== "wide" && x.group === "you" && x.card ? x.card.title : nowText(x)), overlapEl(x)),
     h("span", { class: "tb-el num", "data-since": x.since || "", "data-until": x.until || "" }, elapsed(x)), panel);
@@ -289,7 +301,7 @@ function detail(x) {
   if (!x) return h("aside", { class: "tb-detail empty", "aria-label": T("Task details", "任務細節") }, h("p", { class: "faint" }, T("Select a Task to see the path it took.", "選一個任務，看它走過的路。")));
   const path = visited(x), ev = events(x);
   return h("aside", { class: `tb-detail g-${x.group}`, "aria-label": T("Task details", "任務細節"), "data-task-detail": x.id },
-    h("div", { class: "tb-d-head" }, h("span", { class: "tb-d-meta mono" }, [x.id, x.workflow, x.project || "—"].join(" · ")), h("h2", {}, x.title),
+    h("div", { class: "tb-d-head" }, h("span", { class: "tb-d-meta mono" }, metaLine(x)), h("h2", {}, x.title),
       h("span", { class: "tb-d-status" }, statusLine(x)), x.card && x.group !== "done" ? inboxLink(x) : null),
     h("section", { class: "tb-d-sec" }, h("h3", {}, T("The path this Task took", "這個任務走過的路")),
       path === null ? h("div", { class: "skel", style: "height:80px" }) : !path.length ? h("p", { class: "faint" }, T("No step has run yet.", "還沒有跑過任何一步。"))
