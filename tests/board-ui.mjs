@@ -236,7 +236,7 @@ try {
     await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
     const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`real: ${e}`));
     await p.goto(`${base}/#/board`); await p.waitForTimeout(800);
-    ok(/, — today$/.test((await p.textContent("#boardSub")).trim()), "no cost recorded at all: today's spend reads —", await p.textContent("#boardSub"));
+    ok(/crew on duty$/.test((await p.textContent("#boardSub")).trim()) && !/today|—/.test(await p.textContent("#boardSub")), "no cost recorded at all: the line ends at the crew, no \"— today\" (live S28)", await p.textContent("#boardSub"));
     // the change and its test: the spec's environment preflight (firstmate/env-preflight) needs the test its done line names
     const text = ["Add a percent function to money-kit", "STUB_FILE src/percent.ts :: export function percent(a: number, p: number): number {\\n  return Math.round((a * p) / 100);\\n}\\n",
       'STUB_FILE test/percent.test.ts :: import { expect, test } from "bun:test";\\ntest("percent rounds to the cent", async () => { expect(await Bun.file(new URL("../src/percent.ts", import.meta.url)).exists()).toBe(true); const { percent } = await import("../src/percent"); expect(percent(1999, 15)).toBe(300); });\\n'].join("\n");

@@ -341,7 +341,9 @@ const jobsOf = (r) => Object.values(r.nodes || {}).flatMap((n) => n?.data?.jobs 
 const spendToday = (r) => { const at = new Map((r.steps || []).filter((s) => s.job).map((s) => [s.job, s.startedAt]));
   return Object.values(r.nodes || {}).flatMap((n) => (n?.data?.jobs || []).map((j) => [j, at.get(j.id) || n.startedAt || n.endedAt]))
     .filter(([j, when]) => j.cost?.usd != null && today(when)).reduce((a, [j]) => a + j.cost.usd, 0); };
-const subtitle = (c) => !window.studioAgents?.ready() ? window.studioAgents?.status() || T("Checking crew status…", "正在確認船員狀態…") : T(`${c.open} tasks, ${c.crew} crew on duty, ${c.spend == null ? "—" : usd(c.spend)} today`, `${c.open} 個任務、${c.crew} 位船員值班、今天 ${c.spend == null ? "—" : usd(c.spend)}`);
+// today's spend only when a job reported a cost (live S28: "— today" read as broken); otherwise the line ends at the crew
+const subtitle = (c) => !window.studioAgents?.ready() ? window.studioAgents?.status() || T("Checking crew status…", "正在確認船員狀態…")
+  : T(`${c.open} task${c.open === 1 ? "" : "s"}, ${c.crew} crew on duty${c.spend == null ? "" : `, ${usd(c.spend)} today`}`, `${c.open} 個任務、${c.crew} 位船員值班${c.spend == null ? "" : `、今天 ${usd(c.spend)}`}`);
 function viewBoard() {
   if (BD.list === null) loadStudio();
   BD.mode = modeFor(mainWidth());
@@ -388,7 +390,7 @@ window.crewBoard = { items: () => items().map(({ r, t, ...x }) => x), task: (r, 
 // and a live update that changes nothing the Board shows does not redraw it (the crew's log tails move every few seconds;
 // a redraw between a mouse-down and its mouse-up would swallow the captain's click). A redraw keeps the focused row
 // focused and the detail panel's own scroll.
-const boardSig = () => JSON.stringify([lang, BD.tab, BD.sel, BD.focus, BD.mode, window.studioAgents?.ready(), window.studioAgents?.status(), window.studioAgents?.members(), window.crewFirstmateWelcomeSignature?.(), S.tasks.filter((t) => t.status !== "idle").map((t) => [t.id, t.status, t.node, t.round, t.title, t.lastTs, t.failure?.type]),
+const boardSig = () => JSON.stringify([lang, ghBar()?.textContent ?? null, BD.tab, BD.sel, BD.focus, BD.mode, window.studioAgents?.ready(), window.studioAgents?.status(), window.studioAgents?.members(), window.crewFirstmateWelcomeSignature?.(), S.tasks.filter((t) => t.status !== "idle").map((t) => [t.id, t.status, t.node, t.round, t.title, t.lastTs, t.failure?.type]),
   S.pending.map((c) => [c.id, c.ts, c.task]), S.crew.filter((c) => c.alive).map((c) => [c.actor, c.task, c.vendor, c.model]), BD.list, BD.ended, (BD.cards || []).map((c) => [c.id, c.status, c.run]), [...BD.det.values()].map((r) => [r.id, r.status, r.updatedAt, r.nodes, (r.steps || []).length, (r.events || []).length, !!r.def])]);
 { const baseSoft = soft; soft = function () {
     if (S.route?.name !== "board") return baseSoft();

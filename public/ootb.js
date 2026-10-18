@@ -170,8 +170,15 @@ async function openKeys() {
 
 // GitHub not connected: the bar says so and offers Connect, instead of an error
 const _ghBar = ghBar;
+// live S28: the chip said "GitHub off" while a project was connected to GitHub and its grant verified. Studio's own poller
+// being off is not GitHub being off: the chip counts the projects whose grant verifies (the sidebar's data, projects.js),
+// and with neither it is not shown at all
+const ghProjects = () => { try { return (window.crewProjects?.state?.side?.projects || []).filter((p) => p.kind === "external" && p.connected).length; } catch { return 0; } };
 ghBar = function () {
-  const g = S.github;
+  const g = S.github, linked = ghProjects();
+  if ((!g || !g.enabled) && linked) return h("span", { class: "ghbar", "data-gh": "projects", "data-gh-projects": linked }, icon("github", "ic sm"),
+    T(`GitHub · ${linked} project${linked === 1 ? "" : "s"}`, `GitHub · ${linked} 個專案`));
+  if (!g || !g.enabled) return null;
   if (g && g.enabled && g.connected === false) return h("span", { class: "ghbar", "data-gh": "disconnected" }, icon("github", "ic sm"), T("GitHub not connected", "GitHub 未連接"),
     h("button", { class: "btn ghost", style: "padding:0 6px;height:22px", onclick: openGithub }, T("Connect", "連接")));
   return _ghBar();

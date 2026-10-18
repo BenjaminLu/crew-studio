@@ -66,10 +66,13 @@ async function loadSide(force = false) {
   if (!force && wait > 0) { if (!PJ.sideNext) PJ.sideNext = setTimeout(() => { PJ.sideNext = null; loadSide(true); }, wait); return; }
   if (PJ.sideBusy) { PJ.sideAgain = true; return; }
   PJ.sideBusy = true; PJ.sideAt = Date.now();
+  const linked = () => (PJ.side?.projects || []).filter((p) => p.kind === "external" && p.connected).map((p) => p.id).join();
+  const before = linked();
   try { PJ.side = await getJ("/api/projects/overview"); PJ.sideErr = null; } catch (e) { PJ.sideErr = e; }
   finally { PJ.sideBusy = false; }
   drawSide();
-  if (S.route?.name === "projects" || (S.route?.name === "project" && !S.route.arg)) soft();
+  // the Board's GitHub chip counts the connected projects (ootb.js ghBar): it follows when that changes
+  if (S.route?.name === "projects" || (S.route?.name === "project" && !S.route.arg) || (S.route?.name === "board" && linked() !== before)) soft();
   if (PJ.sideAgain) { PJ.sideAgain = false; loadSide(); }
 }
 
