@@ -1,3 +1,4 @@
+import { firstmateTurnNote } from "./firstmate-turn";
 import {refreshOwnWorkflowClaude} from './providers/own-workflow-claude-refresh';
 import {refreshStartupClaude} from './providers/startup-claude-refresh';
 import {imageOutcomeProof} from "./domain/image-proof";
@@ -191,6 +192,8 @@ const chatLog = new ChatLog(DATA);
 const sweepChatFiles = () => { try { const referenced = chatLog.referencedIds(); for (const q of main.queue.list()) for (const a of q.attachments ?? []) referenced.add(a.id); return chatFiles.sweep({ referenced }); } catch { return 0; } };
 const main = new MainSession({ dataDir: DATA, projectDir: PROJECT, stateDir: STATE, nativeWorkspace: !startup.legacy && !process.env.CREW_MAIN_PROJECT,
   nativeTools:()=>runtime.firstmate,
+  // each captain turn carries Studio's note: the deliverables it routes to a workflow (src/firstmate-turn.ts)
+  turnNote:(text)=>firstmateTurnNote(runtime.engine)(text),
   // the active project's rules: the registered project at this checkout (explicit project), else the Studio-wide ones only
   operatingRules:()=>new OperatingRules(DATA).section(runtime.projects.list().find(p=>p.path===PROJECT)?.id ?? null).text,
   onNativeProposal:(origin,result)=>nativeOutcomes.bind(origin,result),
