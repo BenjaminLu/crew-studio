@@ -75,7 +75,7 @@ jobs:
           retention-days: 7
   full:
     name: macOS full (${{ matrix.shard }}/4)
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full)
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full) || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/chore/github-ci-'))
     runs-on: macos-15
     timeout-minutes: 120
     strategy:
