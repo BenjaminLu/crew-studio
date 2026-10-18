@@ -10,6 +10,12 @@ What:
   Closed without merging, Cancelled, Failed. `succeeded` with result `closed` shows as
   "Closed without merging" (neutral colour, never the success green). Runs, the Board
   (home) and the run page use the same words in en and zh-TW.
+- A code Task that ended closed or cancelled although its pull request was merged on GitHub
+  (an older release closed it) reads "Merged (reconciled)" / 已合併（事後核對）. Studio reads the
+  pull request again, read-only with the project's grant, on boot and from the run page's
+  "Check GitHub for a merge"; a merge into the Task's base becomes one signed
+  `reconciled-merge` ledger entry (pull request, merge commit, when observed, the original end).
+  Earlier entries and the recorded end stay as they were; nothing is done on GitHub.
 - Cancel works from any non-ended state, including a run waiting at a card. Cancelling
   withdraws its open cards (they leave the Inbox and the Board's Needs you), stops its agents
   and runs its `on_cancel` hooks. The run ends `cancelled` with the captain's optional reason.

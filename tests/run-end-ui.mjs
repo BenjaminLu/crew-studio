@@ -31,6 +31,11 @@ const E = H.engine; E.actions.boom = () => { throw new Error("boom: the step fai
 const card = (run) => E.cards.list({ run, open: true })[0] ?? null;
 const startAt = async (title) => { const r = E.start({ workflow: "cardy", text: title, title }); await until(() => !!card(r.id), 8000); return r.id; };
 const CLOSED = await startAt("Abandoned at the merge card"); await E.answer(card(CLOSED).id, { choice: "close", by: "captain" });
+// closed at its card, then found merged on GitHub (src/domain/code.ts reads it; here its observation is recorded directly)
+const RECON = await startAt("Closed, merged on GitHub after all"); await E.answer(card(RECON).id, { choice: "close", by: "captain" });
+await until(() => E.get(RECON).status === "succeeded" && !E.busy(RECON), 8000);
+E.reconcileMerge(RECON, { version: 1, repository: "fixture/project", pr: "1", url: "https://github.com/fixture/project/pull/1", branch: "crew/r", base: "main", reviewed: "a".repeat(40), head: "a".repeat(40),
+  sha: "22a61f4f" + "0".repeat(32), mergedAt: "2026-10-18T01:08:19Z", observedAt: "2026-10-18T02:00:00Z", original: { status: "succeeded", result: "closed", endedAt: E.get(RECON).endedAt } });
 const DONE = await startAt("Shipped"); await E.answer(card(DONE).id, { choice: "ship", by: "captain" });
 const WAIT = await startAt("Waiting at its card");
 const WAIT2 = await startAt("Also waiting");
@@ -113,7 +118,16 @@ try {
   await p.goto(`${base}/#/run/${CLOSED}`); await seen(p, "[data-run-state]"); const zhP = await text(p, "[data-runview] [data-run-state]");
   ok(zhB === "未合併就關閉" && zhR === zhB && zhP === zhB, "zh-TW: the same word on the Board, Runs and the run page", JSON.stringify([zhB, zhR, zhP]));
   ok(/未合併就關閉/.test(await text(p, "[data-timeline]")), "zh-TW: the timeline uses the same word");
-  await p.evaluate(() => setLang("en"));
+  // a closed Task GitHub shows merged after all: Merged (reconciled) on the Board, Runs and the run page, which says what was recorded and observed
+  await p.goto(`${base}/#/board`); await seen(p, `[data-task="${RECON}"]`, 10000); const zhRb = await text(p, `[data-task="${RECON}"] [data-run-state]`);
+  await p.goto(`${base}/#/runs`); await seen(p, `[data-run="${RECON}"] [data-run-state]`); const zhRr = await text(p, `[data-run="${RECON}"] [data-run-state]`);
+  await p.goto(`${base}/#/run/${RECON}`); await seen(p, "[data-reconciled-merge]"); const zhRp = await text(p, "[data-runview] [data-run-state]"), zhNote = await text(p, "[data-reconciled-merge]");
+  ok(zhRb === "已合併（事後核對）" && zhRr === zhRb && zhRp === zhRb && /未合併就關閉/.test(zhNote) && /PR #1 已合併進 main（22a61f4f/.test(zhNote) && /GitHub 上沒有任何變更/.test(zhNote),
+    "zh-TW: a closed Task found merged on GitHub reads 已合併（事後核對） on the Board, Runs and the run page, which says how it ended and what GitHub shows", JSON.stringify([zhRb, zhRr, zhRp, zhNote]));
+  await p.evaluate(() => setLang("en")); await p.waitForTimeout(200);
+  ok(await text(p, "[data-runview] [data-run-state]") === "Merged (reconciled)" && await color(p, "[data-runview] [data-run-state]") === green && /ended “Closed without merging”, but GitHub shows pull request #1 merged into main as 22a61f4f/.test(await text(p, "[data-reconciled-merge]"))
+    && /ledger entry #\d+/.test(await text(p, "[data-reconciled-merge]")) && await p.locator("[data-reconcile-merge]").count() === 0,
+    "en: the run page reads Merged (reconciled) in the success colour and names the ledger entry; no check is offered again", await text(p, "[data-reconciled-merge]"));
 
   // ---------- 2. cancel at a card, with a reason: the card leaves the Board and the Inbox ----------
   const wcard = card(WAIT)?.id;

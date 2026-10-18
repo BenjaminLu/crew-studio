@@ -79,6 +79,9 @@ export type Run = {
   parked?: { by: string; at: string; note: string | null } | null;
   /** hidden from the default lists (an ended run only); an "archived" event records each change */
   archived?: boolean;
+  /** an ended Task whose pull request GitHub shows merged into its base after all (Studio's observation, its signed
+   *  `reconciled-merge` ledger entry at `ledger`): the end result stays as recorded, the Task reads Merged (reconciled) */
+  reconciled?: Record<string, any> | null;
 };
 export type Result = { outcome: string; note?: string | null; cause?: string; failure?: Failure | null } | { wait: true; external?: { version: 1; handler: string; [key: string]: any }; note?: string | null; firstmate?: true };
 export type X = {
@@ -165,6 +168,7 @@ export function fold(events: any[]): Run | null {
     else if (e.type === "queue") r.queue = e.queue;
     else if (e.type === "archived") r.archived = e.archived !== false;
     else if (e.type === "unarchived") r.archived = false;
+    else if (e.type === "reconciled") r.reconciled = e.reconciled ?? null;
     else if (e.type === "ctx") { for (const [k, v] of Object.entries(e.set ?? {})) r.ctx[k] = v; for (const k of e.del ?? []) delete r.ctx[k]; }
     else if (e.type === "step") { const i = r.steps.findIndex((s) => s.seq === e.step.seq); if (i >= 0) r.steps[i] = e.step; else r.steps.push(e.step); }
   }
@@ -415,7 +419,10 @@ export class Engine {
     for (const r of this.runs.values()) if (r.status === "running" || r.status === "waiting" || r.status === "queued") this.tick(r);
     for (const [r, id] of backoffs) this.scheduleBackoff(r, id);
     this.resumeFirstmateQuestions(); // a no-op until askFirstmate is wired (server.ts calls it again then)
+    for (const f of this.loaded) { try { f(); } catch (e: any) { console.warn(`crew-studio: after load: ${e?.message ?? e}`); } }
   }
+  /** A domain's work once every run is loaded (the code domain reconciles ended Tasks with GitHub then); never blocks the boot. */
+  loaded: (() => void)[] = [];
 
   /** A domain presents an open card that an older release raised again under the current rules (other options, other words):
    *  the body to show instead, or null to keep the card. A card is only ever replaced here, never answered. */
@@ -1141,6 +1148,36 @@ export class Engine {
     r.continuation={token,previousCard:card.id,node:node.id,visit:rn.visits+1};r.status='running';r.result=null;r.endedAt=null;r.error=null;r.cancelReason=null;r.queue=[node.id];rn.state='pending';rn.waiting=null;rn.card=null;rn.attempt=0;rn.routing=null;if(node.max_visits&&rn.visits>=node.max_visits+(rn.extra??0))rn.extra=(rn.extra??0)+1;
     this.aborts.delete(id);this.commit(r,'captain continued original task');this.emit(r,'continued','Captain reopened the original unapproved task / 船長接續原本尚未核准的任務',{node:node.id,previousCard:card.id});this.tick(r);return r;
   }
+  /**
+   * An ended Task whose pull request GitHub shows merged into its base after all (an older release closed it): Studio's
+   * observation becomes one signed `reconciled-merge` ledger entry and a "reconciled" event. The end result and every earlier
+   * entry stay as they are; nothing acts on GitHub. Once per run: a second call returns the first observation (a ledger
+   * entry written before a crash is not written again, only its event).
+   */
+  reconcileMerge(id: string, fact: Record<string, any>) {
+    const r = this.must(id); this.ended(r, "reconciled");
+    if (r.reconciled) return r.reconciled;
+    if (r.ctx.merged) throw new Error("the Task ended merged: nothing to reconcile");
+    const t = this.trusted(id); if (!t.ok) throw new Error("the Task's evidence ledger does not verify: nothing is reconciled");
+    let rec: any = t.entries.find((e) => e.record === "reconciled-merge");
+    if (!rec) {
+      rec = new Ledger(this.deps.dataDir, r.id).add({ run: r.id, node: "", edge: null, round: 0, head: fact.head ?? null, check: "run/reconciled-merge", version: "1", kind: "record", attempt: 0, record: "reconciled-merge",
+        actor: "studio (observed on GitHub)", verdict: "pass", score: null, findings: [], evidence: [], proves: [], blocking: false, inputHash: "", params: {}, ms: 0, dir: null, data: fact } as any);
+      this.emit(r, "evidence", `reconciled-merge recorded (#${rec.seq})`, { node: "", record: "reconciled-merge", seq: rec.seq, sig: rec.sig });
+    }
+    const d = rec.data ?? {}, reconciled = { ...d, ledger: rec.seq };
+    r.reconciled = reconciled; r.updatedAt = now();
+    this.append(r, { type: "reconciled", summary: `pull request #${d.pr} was merged on GitHub into ${d.base} as ${String(d.sha).slice(0, 8)}; the Task had ended ${d.original?.result ?? d.original?.status} (reconciled, recorded in the ledger as #${rec.seq})`, reconciled });
+    const c = this.committed.get(r.id); if (c) c.reconciled = reconciled;
+    const f = join(this.rdir(r.id), "run.json"); writeFileSync(f + ".tmp", JSON.stringify(r)); renameSync(f + ".tmp", f);
+    this.deps.log.emit({ type: "run_reconciled", workflow: r.workflow, task: r.id, summary: `${r.id}: pull request #${d.pr} merged on GitHub (reconciled)`, data: { pr: d.pr, sha: d.sha, ledger: rec.seq } });
+    this.deps.send("wrun", { id: r.id, project: this.projectOf(r), status: r.status, reconciled, event: { type: "reconciled" }, nodes: this.nodeStates(r) });
+    return reconciled;
+  }
+  /** Set by the code domain: read an ended Task's pull request on GitHub and reconcile a merge it finds (src/domain/code.ts). */
+  reconcileFromGitHub?: (id: string) => Promise<{ state: "merged" | "not-merged" | "skipped"; reason?: string; reconciled?: Record<string, any> }>;
+  /** Set by the code domain: whether an ended Task is one reconcileFromGitHub reads (the run page offers the check then). */
+  reconcilable?: (r: Run) => boolean;
   /** Hide an ended run from the default lists, or bring it back. An event in the run and in Studio's log. */
   archive(id: string, on: boolean, by = "captain") {
     const r = this.must(id); this.ended(r, on ? "archived" : "unarchived");

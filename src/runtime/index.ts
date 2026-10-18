@@ -231,7 +231,9 @@ export function createRuntime(d: RuntimeDeps) {
     if(t.ok)for(const e of t.entries.filter(e=>e.record==='startup-artifact')){const p=e.data,v=d.m3?.store.version(p?.artifact,p?.version);if(v&&v.sha256===p.sha256&&siteIntact(p.artifact,p.version,v))outputMap.set(p.artifact,{artifact:p.artifact,version:p.version,href:`#/review/${encodeURIComponent(p.artifact)}/${p.version}`,kind:'doc',label:'competition'});}
     // the run page offers "Continue original task…" only to the desktop captain, and only when the engine would make an offer
     const continuable = who?.kind === "desktop" && engine.continuable(id);
-    return { ...r, title: taskTitle(r), request: r.text, claudeVerificationAvailable:ownClaude.available(id), nodes: readinessNodes(r, id=>engine.cards.get(id)), outputs:[...outputMap.values()], continuable, walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, crew: crewOf(r, t), roundCap: engine.policy(r, "round_cap", 3), ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };
+    // Merged (reconciled) only while the ledger verifies and holds the entry it names
+    const reconciled = r.reconciled && t.ok && t.entries.some((e) => e.record === "reconciled-merge" && e.seq === r.reconciled!.ledger) ? r.reconciled : null;
+    return { ...r, reconciled, reconcilable: who?.kind === "desktop" && !!engine.reconcilable?.(r), title: taskTitle(r), request: r.text, claudeVerificationAvailable:ownClaude.available(id), nodes: readinessNodes(r, id=>engine.cards.get(id)), outputs:[...outputMap.values()], continuable, walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, crew: crewOf(r, t), roundCap: engine.policy(r, "round_cap", 3), ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };
   };
   const checkView = (m: any) => { const p = engine.params(m, null, {}); return { ref: m.ref, id: m.id, pack: m.pack, version: m.version, title: m.title, description: m.description, applies_to: m.applies_to, kind: m.kind, blocking: m.blocking, needs: m.needs,
     params: m.params, policy_bind: m.policy_bind, effective: p.params, from: p.from, timeout_s: m.timeout_s, network: m.network, impl: m.native ? "native" : m.adapter ? "adapter" : m.kind === "judged" ? "judge" : "executable", quorum: m.judge?.quorum ?? null, hasSample: !!m.sample, at: m.at }; };
@@ -349,7 +351,7 @@ export function createRuntime(d: RuntimeDeps) {
       }
       if (p === "/api/wruns" && !writing) return json({ runs: engine.list().filter((r) => url.searchParams.get("archived") === "1" || !r.archived).map((r) => ({ id: r.id, workflow: r.workflow, version: r.version, title: taskTitle(r), request: r.text, status: r.status, result: r.result, createdAt: r.createdAt, updatedAt: r.updatedAt, endedAt: r.endedAt, error: r.error,
         childRun: (() => { const child = engine.get(r.ctx?.childRun); return child?.params?._firstmateProposal === r.id ? child.id : null; })(),
-        archived: !!r.archived, merged: !!r.ctx?.merged, cancelReason: r.cancelReason ?? null,
+        archived: !!r.archived, merged: !!r.ctx?.merged, reconciled: r.reconciled ?? null, cancelReason: r.cancelReason ?? null,
         current: Object.entries(r.nodes).filter(([, n]) => ["running", "waiting"].includes(n.state)).map(([k, n]) => ({ node: k, state: n.state, waiting: n.waiting ?? null, label: r.def.nodes.find((x) => x.id === k)?.label ?? k })), door: engine.cards.list({ run: r.id }).find((c) => c.door)?.door ?? null, recovered: r.recovered })),
         cards: engine.cards.list({ open: true }).map(c=>engine.cards.view(c)) });
       if (p === "/api/wruns" && writing) {
@@ -421,7 +423,7 @@ export function createRuntime(d: RuntimeDeps) {
       }
       m = CAPTURE_PATH.exec(p);
       if (m && !writing) return engine.get(m[1]) ? captureResponse(engine.rdir(m[1]), m[2], m[3], m[4]) : json({ error: "no such run" }, 404);
-      m = /^\/api\/wruns\/(R-\d+)(?:\/(pause|resume|cancel|file|events|evidence|archive|delete)|\/nodes\/([a-z0-9-]+)\/agent)?$/.exec(p);
+      m = /^\/api\/wruns\/(R-\d+)(?:\/(pause|resume|cancel|file|events|evidence|archive|delete|reconcile-merge)|\/nodes\/([a-z0-9-]+)\/agent)?$/.exec(p);
       if (m) {
         const id = m[1]; if (!engine.get(id)) return json({ error: "no such run" }, 404);
         if (m[3] && writing) return json(engine.setAgent(id, m[3], { provider: String(b?.provider ?? ""), model: b?.model ? String(b.model) : null, ...(b?.effort!==undefined?{effort:b.effort===null?null:String(b.effort)}:{}) }) && runView(id, who));
@@ -443,6 +445,13 @@ export function createRuntime(d: RuntimeDeps) {
         if (m[2] === "pause") return json(engine.pause(id) && runView(id, who));
         if (m[2] === "resume") return json(engine.resume(id) && runView(id, who));
         if (m[2] === "cancel") return json(engine.cancel(id, by, b?.reason ? String(b.reason) : null) && runView(id, who));
+        // read the ended Task's pull request on GitHub again: a merge into its base is recorded as reconciled (read-only on GitHub)
+        if (m[2] === "reconcile-merge") {
+          if (who.kind !== "desktop") return json({ error: "only the desktop captain can ask Studio to check GitHub" }, 403);
+          if (!engine.reconcileFromGitHub) return json({ error: "no code workflow is installed" }, 409);
+          try { const res = await engine.reconcileFromGitHub(id); return json({ ...res, run: runView(id, who) }); }
+          catch (e: any) { return json({ state: "error", error: `GitHub could not be read: ${String(e?.message ?? e).slice(0, 200)}` }, 502); }
+        }
         // archive and delete: an ended run only (409 for a live one); delete needs the typed id (400)
         if (m[2] === "archive" || m[2] === "delete") {
           try { if (m[2] === "archive") return json(engine.archive(id, b?.archived !== false, by) && runView(id, who)); return json(engine.remove(id, String(b?.confirm ?? ""), by)); }

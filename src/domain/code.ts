@@ -876,6 +876,48 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     x.ctx.merged = { head: d.sha, sourceHead: d.head, reviewed: d.reviewed, base: x.ctx.pr.base, method: null, adapter: "github", detected: true, at: d.at || d.observedAt };
     x.rn.note = `pull request #${d.pr} was merged on GitHub as ${d.sha.slice(0, 8)} (observed by Studio)`; x.save(); return "ok";
   };
+  // ---------- an ended Task whose pull request was merged on GitHub after all ----------
+  // An older release could end a Task "closed without merging" (or cancelled) after the captain had merged its pull request on
+  // GitHub. Its signed ledger cannot be rewritten, so Studio reads the pull request again (read-only, with the project's grant)
+  // on boot and when the run page asks; a merge into the Task's base becomes one signed `reconciled-merge` entry and the Task
+  // reads Merged (reconciled). An observed fact: no captain answer, nothing done on GitHub, past entries untouched, once per Task.
+  const endedAdapter = (r: any): GitHubPrAdapter | null => {
+    if (o.adapter) return o.adapter instanceof GitHubPrAdapter ? o.adapter : null;
+    const project = r.ctx.project ? o.projects.get(r.ctx.project) : null; if (!project?.github) return null;
+    try { const a = projectPrAdapter(project, o.dataDir, o.poller); return a instanceof GitHubPrAdapter ? a : null; } catch { return null; }
+  };
+  const reconcilable = (r: any) => !!r && ["succeeded", "cancelled"].includes(r.status) && (r.status === "cancelled" || r.result === "closed") && !r.reconciled && !r.ctx?.merged
+    && r.ctx?.pr?.adapter === "github" && /^[1-9][0-9]*$/.test(String(r.ctx.pr.id ?? "")) && typeof r.ctx.pr.base === "string" && typeof r.ctx.pr.branch === "string";
+  const reconciling = new Map<string, Promise<any>>();
+  const reconcileFromGitHub = (id: string) => {
+    const busy = reconciling.get(id); if (busy) return busy;
+    const run = (async (): Promise<{ state: "merged" | "not-merged" | "skipped"; reason?: string; reconciled?: Record<string, any> }> => {
+      const r = engine.get(id); if (r?.reconciled) return { state: "merged", reconciled: r.reconciled };
+      if (!reconcilable(r)) return { state: "skipped", reason: "not an ended Task with a GitHub pull request that ended closed or cancelled" };
+      const a = endedAdapter(r), pr = structuredClone(r!.ctx.pr);
+      if (!a) return { state: "skipped", reason: "the project has no GitHub grant to read the pull request with" };
+      if (pr.url !== `https://github.com/${a.grant.repository}/pull/${pr.id}`) return { state: "skipped", reason: "the pull request is not in the project's granted repository" };
+      const p = await a.withReadOwner(remoteWatchers.poller, () => a.remoteRead("pull", pr.id, 1, undefined, true));
+      const repository = a.grant.repository;
+      const merged = p?.number === Number(pr.id) && p.state === "closed" && p.merged === true && SHA.test(String(p.merge_commit_sha ?? "")) && p.base?.repo?.full_name === repository && p.base?.ref === pr.base
+        && p.head?.repo?.full_name === repository && p.head?.ref === pr.branch;
+      if (!merged) return { state: "not-merged", reason: p?.merged === true && p.base?.ref !== pr.base ? `merged into ${p.base?.ref}, not into ${pr.base}` : `pull request #${pr.id} is ${p?.state ?? "unreadable"} and not merged` };
+      const now = engine.get(id)!; if (!reconcilable(now)) return now.reconciled ? { state: "merged", reconciled: now.reconciled } : { state: "skipped", reason: "the Task changed while GitHub was read" };
+      const fact = { version: 1, repository, pr: pr.id, url: pr.url, branch: pr.branch, base: pr.base, reviewed: pr.head, head: SHA.test(String(p.head?.sha ?? "")) ? p.head.sha : null,
+        sha: p.merge_commit_sha, mergedAt: String(p.merged_at ?? ""), observedAt: new Date().toISOString(), original: { status: now.status, result: now.result, endedAt: now.endedAt } };
+      return { state: "merged", reconciled: engine.reconcileMerge(id, fact) };
+    })().finally(() => reconciling.delete(id));
+    reconciling.set(id, run); return run;
+  };
+  engine.reconcileFromGitHub = reconcileFromGitHub;
+  engine.reconcilable = reconcilable;
+  // on boot: every ended Task that could be one, read once, one after another (a read that fails leaves the Task as it was)
+  engine.loaded.push(() => { void (async () => {
+    for (const r of engine.list()) if (reconcilable(r)) {
+      try { const res = await reconcileFromGitHub(r.id); if (res.state === "merged") console.log(`crew-studio: ${r.id}: pull request #${r.ctx.pr.id} was merged on GitHub; recorded as reconciled`); }
+      catch (e: any) { console.warn(`crew-studio: ${r.id}: reading pull request #${r.ctx.pr?.id} on GitHub to reconcile: ${String(e?.message ?? e).slice(0, 200)}`); }
+    }
+  })(); });
   // ---------- the project's merge permission granted or revoked while its merge card is open ----------
   // The captain's grant card (src/github-merge-grant.ts) changed the project's signed grant, and an open merge card was prepared
   // under the old one (merge on GitHub, or Studio's Merge bound to the old grant's identity). The remote checks are verified
