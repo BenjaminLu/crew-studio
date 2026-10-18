@@ -172,6 +172,46 @@ Covered by the same graph plus a generated conventions pack: GitHub adapter, con
   - the network: only `localhost:<egress proxy>` (with the round's own credential and host list: its provider's API
     hosts plus what policy `egress.allow` grants) and `localhost:<tool listener>`; `NO_PROXY` is loopback only. Every
     other address, the rest of loopback included, is refused by the OS;
+  - loopback for test runs only (`run_tests`, and the checks that run the project's tests: CI, fail-first, main CI; a
+    manifest says `test_run: true`), so a project test that starts its own server on port 0 and connects to it passes
+    (R-088: money-kit's `test/shop.test.ts` spawns `app/server.ts`). The rules are Anthropic sandbox-runtime's
+    `allowLocalBinding`, verbatim (0.0.78, Apache-2.0, THIRD_PARTY_NOTICES.md): bind and inbound on `*:*`, outbound to
+    `localhost:*`; the test env adds `HOST=127.0.0.1` and an IPv4-only Java option. What that means, stated as it is:
+    - every local service on this machine is reachable from a test run, Studio's own ports included. Seatbelt cannot
+      keep "all of loopback except port N": a per-port deny after a `localhost` allow holds or not depending on
+      undocumented profile shape (measured on macOS 15: it held in Studio's profiles, which import `system.sb`, and did
+      not in the same rules without that import; v1 measured it failing in 2026-09 and moved the protection into its
+      server). Studio does the same (next item);
+    - in Seatbelt `localhost` means every address of this machine (127.0.0.1, ::1, its LAN and VPN addresses), and it
+      checks neither the bind address nor an accepted peer, so a test server bound to every interface is reachable from
+      the LAN while it runs, as far as the macOS firewall lets it: a residual risk on macOS (`HOST=127.0.0.1` keeps most
+      dev servers on loopback). On Linux a test run runs under bwrap with v1's layout (its own pid, ipc, uts and network
+      namespaces, reads bound read-only, denied paths covered, a fresh /tmp): its loopback is private;
+    - nothing leaves the machine: a test run has no proxy and no remote rule;
+    - every other check, and every agent round, keeps loopback closed.
+    Before each test run the self-probe (v1) tries the profile on itself: a shell under it tries to read every existing
+    path of the deny list (Studio's keys, session token and launch token folder among them) and to connect to
+    1.1.1.1:443. If anything gets through, the run is refused with the reason ("the sandbox self-probe failed: …"), never
+    run on a weaker sandbox. The run's result carries what was enforced and what was not.
+  - Studio protects itself in its server (v1's board trust boundary), since a test run reaches its ports:
+    - main port: every write needs Studio's session (the HttpOnly SameSite=Strict cookie, or `x-crew-session` from
+      `data/session-token`, 0600, denied to every sandbox), an Origin equal to Studio's own and a JSON body; every `/api`
+      and `/files` read needs the session too; only `/api/instance` (the launch challenge, whose proof needs the token)
+      answers without one. The cookie is sent to every port of 127.0.0.1, so the Origin check is what stops a page served
+      by a test server: its Origin is another port;
+    - LAN board: a paired phone's device token (pairing needs the code shown on the Mac), Origin and JSON on writes;
+    - tools-only listener: each round's own tool token, `/api/tools` only;
+    - egress proxy: each round's own credential (407 without), its host list, and the resolved-address guard ported from
+      sandbox-runtime (`src/egress-guard.ts`): an allowed name that resolves to loopback, this host's own addresses,
+      link-local, multicast or a cloud metadata endpoint is refused, in every IPv6 spelling of the address;
+    - the renderer's static origin and the HyperFrames preview serve read-only files of the page being captured, without
+      a token, while a capture runs: reachable from a test run running at the same time (a follow-up).
+    A project test that still cannot run inside (it needs Docker, whose socket is never reachable) is never dropped
+    silently, and there is no gate exemption and no global unrestricted fallback: Studio's CI and fail-first run the
+    same command in the same sandbox, so it blocks the gate. `run_tests` marks it `needs-outside-sandbox` ("couldn't run
+    inside the sandbox: <reason>"), the run keeps the mark (`sandboxBlocked`) until a later `run_tests` of the same tests
+    or CI at the current head passes, and the escalation card the run stops on names it with the reason.
+    `tests/sandbox-loopback.ts` proves each part;
   - last, a deny over Studio's data (except what the runtime made for the round) and the user's secret folders
     (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`, `~/.config`, `~/.claude*`, `~/.codex`, `~/.docker`, `~/.kube`, `~/.npmrc`,
     `~/.git-credentials`, the keychains), for Studio's HOME and for the account's own home when Studio runs with another

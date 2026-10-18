@@ -4,11 +4,14 @@
 // env) and its own host list: its provider's API hosts plus what policy
 // `egress.allow` grants that round (e.g. a package registry). The list lives only as
 // long as the round; a request with no credential, an unknown one, or a host off that
-// round's list is refused and logged.
+// round's list is refused and logged. A host on the list is dialed only at an address the resolved-address guard allows
+// (src/egress-guard.ts): never loopback, this host's own addresses, link-local or a metadata endpoint, so an allowed name
+// pointed at 127.0.0.1 cannot reach Studio or another local service through the proxy.
 //   data/egress.log   one JSON line per refused connection
 import { appendFileSync, mkdirSync } from "node:fs";
 import { createServer, connect, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
+import { guardedLookup } from "./egress-guard";
 
 export type EgressEvent = { at: string; host: string; port: number; allowed: boolean; method: string; round: string | null; why?: string };
 export class Egress {
@@ -55,7 +58,11 @@ export class Egress {
         const ok = !!host && this.allowed(host, token);
         this.record(host, port, ok, method, round, ok ? undefined : "not on the round's list");
         if (!ok) { client.end(`HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\nconnection: close\r\n\r\nStudio's egress proxy refuses ${host}: not on this round's list (its provider's hosts and policy egress.allow)\n`); return; }
-        const up = connect(port, host, () => {
+        void guardedLookup(host).then((to) => {
+        if ("unresolved" in to) { try { client.end("HTTP/1.1 502 Bad Gateway\r\n\r\n"); } catch {} return; }
+        if ("refused" in to) { this.record(host, port, false, method, round, to.refused);
+          client.end(`HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\nconnection: close\r\n\r\nStudio's egress proxy refuses ${host}: ${to.refused}\n`); return; }
+        const up = connect(port, to.address, () => {
           if (method === "CONNECT") { client.write("HTTP/1.1 200 Connection Established\r\n\r\n"); const rest = head.slice(end + 4); if (rest.length) up.write(rest); }
           else { // a plain request: send it on as origin-form
             const u = new URL(target); lines[0] = `${method} ${u.pathname}${u.search} ${lines[0].split(" ")[2] ?? "HTTP/1.1"}`;
@@ -65,6 +72,7 @@ export class Egress {
         });
         up.on("error", () => { try { client.end("HTTP/1.1 502 Bad Gateway\r\n\r\n"); } catch {} });
         client.on("error", () => up.destroy());
+        });
       };
       client.on("data", onData); client.on("error", () => {});
     });

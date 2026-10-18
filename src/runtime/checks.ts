@@ -11,12 +11,13 @@ import {localUnrestricted} from "../local-execution";
 //   data/evidence/<R-id>/ledger.jsonl                  one signed line per check result, verdict, plan acceptance and card answer
 //   data/evidence/<R-id>/<seq>-<id>/out/               what a check wrote (its evidence)
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { spawn as spawnChild } from "node:child_process";
 import { bundledBytes, bundledList, bundledText, parseYaml } from "../bundled";
 import { withLock } from "../ids";
+import { runtimeDir } from "../instance";
 import type { AgentTool } from "../agent";
 import { parseFinding, type Finding } from "./locator";
 
@@ -25,7 +26,7 @@ export type Schema = { type?: string; properties?: Record<string, Schema & { def
 export type CheckManifest = {
   id: string; pack: string; ref: string; version: string; title: { en: string; "zh-TW"?: string }; description?: string;
   applies_to: string[]; kind: "deterministic" | "judged" | "hook"; blocking: boolean; needs: string[];
-  params: Schema; policy_bind: Record<string, string>; timeout_s: number; network: boolean;
+  params: Schema; policy_bind: Record<string, string>; timeout_s: number; network: boolean; /** the check runs the project's tests: a test run's loopback (architecture §10) */ test_run: boolean;
   adapter?: { command: string[]; optional?: boolean; pass_on?: number[]; findings_from?: { regex: string; class?: string; severity?: string } } | null;
   native?: string | null; run?: string | null; at?: string | null; proves?: number[] | null;
   /** role: the workflow role the judge works as (its skill is the judge's role skill); none: the role of the node the check sits on */
@@ -158,7 +159,7 @@ export class CheckRegistry {
       if (!y || y.id !== id) continue;
       const man: CheckManifest = { id, pack, ref: `${pack}/${id}`, version: String(y.version ?? "1.0.0"), title: typeof y.title === "string" ? { en: y.title } : (y.title ?? { en: id }), description: y.description ?? "",
         applies_to: y.applies_to ?? [], kind: y.kind === "judged" ? "judged" : y.kind === "hook" ? "hook" : "deterministic", blocking: y.blocking !== false && y.kind !== "hook", needs: y.needs ?? [],
-        params: y.params ?? { type: "object", properties: {} }, policy_bind: y.policy_bind ?? {}, timeout_s: Number(y.timeout_s ?? 120), network: y.network === true,
+        params: y.params ?? { type: "object", properties: {} }, policy_bind: y.policy_bind ?? {}, timeout_s: Number(y.timeout_s ?? 120), network: y.network === true, test_run: y.test_run === true,
         adapter: y.adapter ?? null, native: y.native ?? null, run: y.native || y.adapter ? null : (y.run ?? "run"), at: y.at ?? null, proves: Array.isArray(y.proves) ? y.proves : null, judge: y.judge ?? null, sample: y.sample ?? null,
         dir: disk ?? f.slice(0, -"/check.yaml".length), runtime: y.runtime === "studio" ? "studio" : null };
       m.set(man.ref, man);
@@ -184,8 +185,8 @@ export class CheckRegistry {
 // A check (and a legacy `run` gate) runs under macOS sandbox-exec with a profile that
 // starts from (deny default) and allows only: reading the system, the interpreters on
 // PATH, the check's own directory and the paths its input names; writing out/ and its
-// tmp/; no network (unless the manifest asks), no unix sockets, no LaunchServices or
-// AppleEvents. Studio's data (ledger.key, keys, policies) and the user's secret folders
+// tmp/; no network (unless the manifest asks; a test run gets loopback, see below), no unix sockets, no LaunchServices or
+// AppleEvents. Studio's data (ledger.key, keys, policies, session token), its launch token folder and the user's secret folders
 // are denied last, so even an input inside them is not readable. Off macOS there is no
 // equivalent sandbox: a check is refused, and the Doctor says so.
 export function sandboxInfo() {
@@ -197,7 +198,7 @@ const q = (p: string) => JSON.stringify(p);
 const SYSTEM_READ = ["/usr", "/bin", "/sbin", "/System", "/Library", "/opt", "/private/etc", "/etc", "/dev", "/private/var/db/timezone", "/private/var/db/dyld", "/var/db/timezone", "/Applications/Xcode.app", "/private/var/select"];
 /** Folders whose files must never reach a check, even as an input. */
 const HOME_SECRETS = [".ssh", ".aws", ".gnupg", ".netrc", ".config", ".claude", ".claude.json", ".codex", ".docker", ".kube", ".npmrc", ".git-credentials", "Library/Keychains"];
-export const SECRET_DIRS = (dataDir?: string | null) => { const h = homedir(); return [...(dataDir ? [join(dataDir, "ledger.key"), join(dataDir, "keys.json"), join(dataDir, "github-token"), join(dataDir, "policies"), join(dataDir, "remote-devices.json")] : []),
+export const SECRET_DIRS = (dataDir?: string | null) => { const h = homedir(); return [...(dataDir ? [join(dataDir, "ledger.key"), join(dataDir, "keys.json"), join(dataDir, "github-token"), join(dataDir, "policies"), join(dataDir, "remote-devices.json"), join(dataDir, "session-token")] : []), runtimeDir(),
   ...HOME_SECRETS.map((x) => join(h, x))]; };
 /** The deny list a profile ends with: SECRET_DIRS, and the same folders of the account's own home when Studio runs with another
  *  HOME (the acceptance harness, a launcher that sets HOME): those hold the real logins. */
@@ -222,7 +223,59 @@ export function accountHomeDir(): string {
     const m = /NFSHomeDirectory:\s*(\S+)/.exec(r.stdout.toString()); if (m) return (acctHome = m[1]); } catch {}
   return (acctHome = homedir());
 }
-export function profileFor(o: { out: string; tmp: string; reads: string[]; network: boolean; dataDir?: string | null; cwd?: string | null }) {
+// ---------- loopback for test runs (architecture §10 "Loopback") ----------
+// A project test may start a server of its own (Bun.serve({port:0}), app.listen(0)) and connect to it. A test run
+// (run_tests, and the checks that run the project's tests: CI, fail-first, main CI) gets loopback with Anthropic
+// sandbox-runtime's allowLocalBinding rules, verbatim (@anthropic-ai/sandbox-runtime 0.0.78,
+// dist/sandbox/macos-sandbox-utils.js, Apache-2.0; THIRD_PARTY_NOTICES.md). Loopback is all or nothing on macOS: Seatbelt
+// cannot keep "every loopback port except N" (a per-port deny after a localhost allow holds or not depending on
+// undocumented profile shape, measured on macOS 15 and by v1 in 2026-09), so a test run reaches every local service on
+// this machine, Studio's own ports included. Studio protects itself in its server instead (a session or tool token the
+// sandbox cannot read, Origin and JSON on every write; architecture §10), and "localhost" in Seatbelt also covers this
+// machine's LAN and VPN addresses. A test server bound to every interface is reachable from the LAN while it runs: a
+// residual risk on macOS (the test env sets HOST=127.0.0.1, which most dev servers honour). Every other check, and every
+// agent round, keeps loopback closed (a round reaches only its egress proxy and tool listener).
+export const LOCAL_BINDING_RULES = `(allow network-bind (local ip "*:*"))
+(allow network-inbound (local ip "*:*"))
+(allow network-outbound (remote ip "localhost:*"))`;
+/** The env a test run gets on top of its own: bind dev servers to loopback, and keep Java on IPv4 (sandbox-runtime does the
+ *  same: an IPv4-mapped ::ffff:127.0.0.1 connect does not match "localhost"). */
+export const LOCAL_BINDING_ENV: Record<string, string> = { HOST: "127.0.0.1", JAVA_TOOL_OPTIONS: "-Djava.net.preferIPv4Stack=true" };
+/** Linux: no Seatbelt. A test command runs under bwrap with v1's linux() layout (firstmate fm_sandbox_policy.py): its own
+ *  pid, ipc, uts and network namespaces (a private loopback: its own servers answer, nothing of the host's does), the
+ *  reads bound read-only, the writes bound read-write, every denied path under them covered (a folder by an empty tmpfs, a
+ *  file by /dev/null), a fresh /tmp; a round's proxy socket, when given, bound in. null: bwrap is not installed. */
+export function linuxBwrapArgv(argv: string[], o: { cwd: string; reads: string[]; writes: string[]; deny: string[]; sock?: string | null },
+  which: (cmd: string) => string | null = (c) => Bun.which(c), exists: (p: string) => "dir" | "file" | null = (p) => { try { return statSync(p).isDirectory() ? "dir" : "file"; } catch { return null; } }): string[] | null {
+  const bwrap = which("bwrap"); if (!bwrap) return null;
+  const a = ["--die-with-parent", "--new-session", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-net", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"];
+  for (const r of o.reads) if (!["/dev", "/proc"].some((m) => r === m || r.startsWith(m + "/"))) a.push("--ro-bind-try", r, r);
+  for (const w of o.writes) a.push("--bind", w, w);
+  const bound = [...o.reads, ...o.writes], under = (x: string) => bound.some((b) => x === b || x.startsWith(b.replace(/\/$/, "") + "/"));
+  for (const n of o.deny.filter(under)) { const k = exists(n); if (k === "dir") a.push("--tmpfs", n); else if (k === "file") a.push("--ro-bind", "/dev/null", n); }
+  if (o.sock) a.push("--bind", o.sock, o.sock);
+  return [bwrap, ...a, "--chdir", o.cwd, "--", ...argv];
+}
+/** What a sandboxed test run's profile is checked to enforce before the run (the self-probe), and what it does not. */
+export const TEST_RUN_ENFORCES = "Studio's data keys, session token and launch token folder are unreadable; no connection leaves this machine";
+export const TEST_RUN_DOES_NOT = "every local service on this machine is reachable on loopback (Studio's own server refuses a request without its token); a test server bound to every interface is reachable from the LAN while it runs";
+/**
+ * v1's self-probe: before a test run, try the profile on itself. Under the same profile a shell tries to read each existing
+ * protected path (the deny list, Studio's runtime folder among them) and to open a connection off this machine (1.1.1.1:443,
+ * by IP: no DNS). Anything that gets through means the profile does not enforce what Studio claims: the run is refused with
+ * the reason, never run on a weaker sandbox. null: the profile holds.
+ */
+export function selfProbe(profile: string, protectedPaths: string[]): string | null {
+  if (process.env.CREW_TEST_SELF_PROBE_LEAK === "1") return "the sandbox self-probe failed (test): the profile let the probe read a protected path";
+  const paths = protectedPaths.filter((p) => existsSync(p)).slice(0, 40);
+  const script = `for p in "$@"; do if [ -d "$p" ]; then /bin/ls "$p" >/dev/null 2>&1 && echo "READ $p"; else /bin/cat "$p" >/dev/null 2>&1 && echo "READ $p"; fi; done
+/usr/bin/nc -z -G 2 1.1.1.1 443 >/dev/null 2>&1 && echo "EGRESS 1.1.1.1:443"; exit 0`;
+  const r = Bun.spawnSync(["/usr/bin/sandbox-exec", "-f", profile, "/bin/sh", "-c", script, "probe", ...paths], { stdout: "pipe", stderr: "pipe", env: { PATH: "/usr/bin:/bin" } });
+  const leaks = r.stdout.toString().split("\n").filter((l) => /^(READ|EGRESS) /.test(l));
+  if (!r.success && !leaks.length) return `the sandbox self-probe could not run (exit ${r.exitCode}: ${r.stderr.toString().trim().slice(0, 200)})`;
+  return leaks.length ? `the sandbox self-probe failed: the profile let a test run ${leaks.map((l) => l.startsWith("READ") ? `read ${l.slice(5)}` : `connect to ${l.slice(7)}`).join(", ")}` : null;
+}
+export function profileFor(o: { out: string; tmp: string; reads: string[]; network: boolean; dataDir?: string | null; cwd?: string | null; localBinding?: boolean }) {
   const reads = [...SYSTEM_READ, ...interpreterDirs(), ...o.reads].map((p) => realIf(p) ?? p);
   // the listings (not the files) of the folders above the working folder: bun reads them while it loads its environment
   const ancestors: string[] = []; { let d = o.cwd ? realIf(o.cwd) ?? o.cwd : null; while (d && d !== "/") { d = dirname(d); ancestors.push(d); } }
@@ -240,6 +293,7 @@ export function profileFor(o: { out: string; tmp: string; reads: string[]; netwo
 ${ancestors.length ? `(allow file-read-data ${ancestors.map((p) => `(literal ${q(p)})`).join(" ")})` : ""}
 (allow file-write* (subpath ${q(o.out)}) (subpath ${q(o.tmp)}) (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (literal "/dev/dtracehelper") (regex #"^/dev/fd/"))
 ${o.network ? '(allow network-outbound (remote ip))\n(allow network-inbound (local ip))\n(allow system-socket)' : "(deny network*)"}
+${o.localBinding ? LOCAL_BINDING_RULES : ""}
 (deny appleevent-send)
 (deny file-read* ${denyList(o.dataDir).map((p) => `(subpath ${q(realIf(p) ?? p)})`).join(" ")})
 `;
@@ -310,21 +364,31 @@ export function inputPaths(v: any, out: Set<string> = new Set(), depth = 0): str
  */
 export async function sandboxed(argv: string[], o: { cwd: string; out: string; tmp: string; stdin?: string; timeoutS: number; network: boolean; env?: Record<string, string>; reads?: string[]; dataDir?: string | null; signal?: AbortSignal;
   /** false: argv is untrusted (a reviewer's command), so its program's folder is never added to the reads; the caller resolved it on a fixed PATH */
-  argvRead?: boolean }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; ms: number; refused?: string; aborted?: boolean }> {
+  argvRead?: boolean;
+  /** a run of the project's tests: loopback with sandbox-runtime's allowLocalBinding rules, HOST=127.0.0.1, and the self-probe first */
+  testRun?: boolean }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; ms: number; refused?: string; aborted?: boolean;
+  /** a test run's sandbox, as the self-probe checked it: what it enforces and what it does not */
+  sandbox?: { enforced: string; notEnforced: string } }> {
   const t0 = Date.now();
   const info = sandboxInfo();
   if (!info.ok && !localUnrestricted()) return { code: null, stdout: "", stderr: "", timedOut: false, ms: 0, refused: info.detail };
   mkdirSync(o.out, { recursive: true }); mkdirSync(o.tmp, { recursive: true });
   const out = realpathSync(o.out), tmp = realpathSync(o.tmp);
-  const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: tmp, TMPDIR: tmp, LANG: "C.UTF-8", CI: "1", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", PYTHONDONTWRITEBYTECODE: "1", ...(o.env ?? {}) };
+  const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: tmp, TMPDIR: tmp, LANG: "C.UTF-8", CI: "1", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", PYTHONDONTWRITEBYTECODE: "1", ...(o.testRun ? LOCAL_BINDING_ENV : {}), ...(o.env ?? {}) };
   const prof = join(tmp, "..", "profile.sb");
-  writeFileSync(prof, profileFor({ out, tmp, reads: [o.cwd, ...(o.reads ?? []), ...(o.argvRead !== false && argv[0]?.startsWith("/") ? [dirname(argv[0])] : [])], network: o.network, dataDir: o.dataDir ?? null, cwd: o.cwd }));
-  const full = localUnrestricted()?argv:["/usr/bin/sandbox-exec", "-f", prof, ...argv];
+  const seat = !localUnrestricted(), reads = [o.cwd, ...(o.reads ?? []), ...(o.argvRead !== false && argv[0]?.startsWith("/") ? [dirname(argv[0])] : [])];
+  writeFileSync(prof, profileFor({ out, tmp, reads, network: o.network, dataDir: o.dataDir ?? null, cwd: o.cwd, localBinding: !!o.testRun }));
+  // a test run is checked first: the profile must hold what Studio claims for it, or the run is refused with the reason
+  if (seat && o.testRun) { const leak = selfProbe(prof, denyList(o.dataDir).map((p) => realIf(p) ?? p)); if (leak) return { code: null, stdout: "", stderr: "", timedOut: false, ms: Date.now() - t0, refused: leak }; }
+  // Linux has no Seatbelt: a test run without network runs under bwrap (v1's layout: a private loopback, read-only reads)
+  const full = seat ? ["/usr/bin/sandbox-exec", "-f", prof, ...argv]
+    : process.platform === "linux" && o.testRun && !o.network ? linuxBwrapArgv(argv, { cwd: o.cwd, reads: [...SYSTEM_READ, ...interpreterDirs(), ...reads], writes: [out, tmp], deny: denyList(o.dataDir) }) ?? argv : argv;
+  const sandbox = seat && o.testRun ? { enforced: TEST_RUN_ENFORCES, notEnforced: TEST_RUN_DOES_NOT } : undefined;
   return await new Promise((resolveP) => {
     let stdout = "", stderr = "", done = false, timedOut = false, aborted = false;
     const p = spawnChild(full[0], full.slice(1), { cwd: o.cwd, env, detached: true, stdio: [o.stdin != null ? "pipe" : "ignore", "pipe", "pipe"] });
     const killGroup = () => { try { if (p.pid) process.kill(-p.pid, "SIGKILL"); } catch {} };
-    const finish = (code: number | null) => { if (done) return; done = true; clearTimeout(timer); killGroup(); try { p.stdout?.destroy(); p.stderr?.destroy(); } catch {} resolveP({ code: timedOut ? null : code, stdout, stderr, timedOut, ms: Date.now() - t0, aborted }); };
+    const finish = (code: number | null) => { if (done) return; done = true; clearTimeout(timer); killGroup(); try { p.stdout?.destroy(); p.stderr?.destroy(); } catch {} resolveP({ code: timedOut ? null : code, stdout, stderr, timedOut, ms: Date.now() - t0, aborted, ...(sandbox ? { sandbox } : {}) }); };
     const timer = setTimeout(() => { timedOut = true; finish(null); }, o.timeoutS * 1000);
     if (o.signal) { if (o.signal.aborted) { timedOut = true; setTimeout(() => finish(null), 0); } else o.signal.addEventListener("abort", () => { aborted = true; timedOut = true; finish(null); }, { once: true }); }
     p.stdout?.on("data", (d) => { if (stdout.length < 4_000_000) stdout += d; });
@@ -373,8 +437,8 @@ export async function roundExec(argv: string[], o: { cwd: string; writes: string
  * The one executor for adapter checks and for a workflow's or project's `run` gates.
  */
 export async function execAdapter(argv: string[], o: { cwd: string; out: string; tmp: string; timeoutS: number; network?: boolean; passOn?: number[]; regex?: string | null; cls?: string; severity?: string;
-  ref: string; env?: Record<string, string>; reads?: string[]; dataDir?: string | null; stdin?: string; signal?: AbortSignal }): Promise<CheckOutput & { log: string }> {
-  const r = await sandboxed(argv, { cwd: o.cwd, out: o.out, tmp: o.tmp, timeoutS: o.timeoutS, network: !!o.network, env: o.env, reads: o.reads, dataDir: o.dataDir, stdin: o.stdin, signal: o.signal });
+  ref: string; env?: Record<string, string>; reads?: string[]; dataDir?: string | null; stdin?: string; signal?: AbortSignal; testRun?: boolean }): Promise<CheckOutput & { log: string }> {
+  const r = await sandboxed(argv, { cwd: o.cwd, out: o.out, tmp: o.tmp, timeoutS: o.timeoutS, network: !!o.network, env: o.env, reads: o.reads, dataDir: o.dataDir, stdin: o.stdin, signal: o.signal, testRun: o.testRun });
   if (r.aborted) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "stopped: the run ended", log: r.stdout + r.stderr };
   const log = r.stdout + r.stderr;
   if (r.refused) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: `refused: ${r.refused}`, log };

@@ -45,6 +45,31 @@ export function ranNoTests(output:string,exit:number|null):boolean{
  return /\bno test files\b|did not match any test files|\bno tests? (?:found|ran|were run|to run)\b|^\s*Ran 0 tests\b|^\s*(?:#|ℹ) tests 0\s*$|^\s*0 tests?,? (?:passed|run)\b|^\s*0 passing\b/im.test(output);
 }
 
+/** A line that says why a test failed: bun's "(fail)" and "error:", jest/vitest "✕"/"FAIL", TAP "not ok", node's assert, Go's "--- FAIL", pytest "E ". */
+const FAIL_LINE=/^\s*(?:\(fail\)|FAIL\b|--- FAIL|not ok\b|[✕✗×]|error\b|\w*Error\b|E\s{2,}|Expected\b|Received\b|AssertionError)/;
+/** What a test run hands back: its last lines and, ahead of them, every failing test's lines from earlier in the output
+ * (each failure line with the lines around it), so a long run never cuts away the assertion or exception that says why. */
+export function testTail(output:string,lines=80,max=16000):string{
+ const all=output.trim().split("\n");if(all.length<=lines)return all.join("\n").slice(-max);
+ const head=all.slice(0,-lines),keep=new Set<number>();
+ for(let i=0;i<head.length&&keep.size<60;i++)if(FAIL_LINE.test(head[i]))for(let k=Math.max(0,i-2);k<=Math.min(head.length-1,i+4);k++)keep.add(k);
+ const tail=all.slice(-lines).join("\n");if(!keep.size)return tail.slice(-max);
+ const picked:string[]=[];let last=-1;for(const k of [...keep].sort((a,b)=>a-b).slice(0,80)){if(k!==last+1)picked.push('…');picked.push(head[k]);last=k;}
+ const early=`${picked.join("\n")}\n… (${head.length} earlier lines; the failing ones above) …\n`;
+ const first=early.slice(0,max/2);return first+tail.slice(-(max-first.length)); // at most half the room for the earlier failures
+}
+
+/** Why a failed run looks like the sandbox stopped it rather than the change (architecture §10 "Loopback"), or null: the
+ * output names a Docker daemon (its socket is never reachable from a sandbox) or a socket the OS refused to open. There is
+ * no gate exemption: Studio's CI and fail-first run the same command in the same sandbox, so such a test blocks the gate;
+ * the run_tests result, the run (sandboxBlocked) and the escalation card name the reason instead. */
+export function needsOutsideSandbox(output:string,exit:number|null):string|null{
+ if(exit===0)return null;
+ if(/Cannot connect to the Docker daemon|docker\.sock/i.test(output))return'the test needs the Docker daemon, which the sandbox does not reach';
+ if(/\bFailedToOpenSocket\b|\bEPERM\b[^\n]*(?:connect|socket|listen|bind)|(?:connect|socket|listen|bind)[^\n]*Operation not permitted/i.test(output))return'the OS sandbox refused a network socket the test opened (a test run reaches loopback only: no host off this machine)';
+ return null;
+}
+
 /** The tree a test ran on: the commit, plus whether the worktree has uncommitted changes and the tree hash of what is on disk. */
 export function treeState(wt:string,scratch:string):{head:string;dirty:boolean;tree:string}{
  const head=must(wt,['rev-parse','HEAD']);

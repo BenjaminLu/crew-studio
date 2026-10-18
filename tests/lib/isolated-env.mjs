@@ -30,6 +30,7 @@
 //    and `codex` record the call and fail (exit 97), and defaults CREW_CLAUDE_BIN, CREW_CODEX_BIN,
 //    CREW_HOST_CLAUDE_BIN and CREW_HOST_CODEX_BIN to a path that does not exist (no CLI installed); a test that
 //    needs a CLI points them at its stub. When the run ends, any recorded call fails it (exit 1) and names it.
+// 7. Studio's session for the test's own reads: see below.
 // Production (bun src/main.ts, bun run start) never imports this file.
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -146,6 +147,29 @@ const sentinelVerdict = (code) => {
 };
 // every card a test raises keeps the card contract (src/runtime/card-contract.ts): a violation throws instead of being logged
 if (env.CREW_CARD_CONTRACT === undefined) env.CREW_CARD_CONTRACT = "enforce";
+// 7. Studio's session for the test's own reads (architecture §10 "Loopback"): every /api and /files read of a Studio needs its
+// session, as a sandboxed test run may reach its port. A test plays the captain's own scripts, which hold the token
+// (data/session-token): the run gets one session token (inherited by every Studio it starts unless the test sets its own),
+// and a GET or HEAD this process sends to a loopback address without x-crew-session, a cookie, a tool token or an
+// Authorization header carries the current CREW_SESSION_TOKEN. Writes are untouched: a test sends their session itself, so
+// the refusal of a write without one stays tested; a test that checks a read is refused sends x-crew-session: "" itself.
+if (env.CREW_SESSION_TOKEN === undefined) env.CREW_SESSION_TOKEN = `crew-test-session-${process.pid}-${Math.random().toString(36).slice(2)}`;
+if (typeof globalThis.fetch === "function" && !globalThis.fetch.__crewSession) {
+  const realFetch = globalThis.fetch;
+  const withSession = (input, init) => {
+    try {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      const method = String(init?.method ?? (typeof input === "object" && !(input instanceof URL) ? input.method : "GET") ?? "GET").toUpperCase();
+      if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) || !["GET", "HEAD"].includes(method) || !process.env.CREW_SESSION_TOKEN) return realFetch(input, init);
+      const headers = new Headers(init?.headers ?? (typeof input === "object" && !(input instanceof URL) ? input.headers : undefined));
+      if (["x-crew-session", "cookie", "x-crew-tool-token", "authorization"].some((h) => headers.has(h))) return realFetch(input, init);
+      headers.set("x-crew-session", process.env.CREW_SESSION_TOKEN);
+      return realFetch(input, { ...(init ?? {}), headers });
+    } catch { return realFetch(input, init); }
+  };
+  withSession.__crewSession = true;
+  globalThis.fetch = withSession;
+}
 
 // Bun starts children with the environment it was launched with (plus its .env),
 // not with later process.env edits. So a bun entry that may have loaded a .env (one

@@ -986,7 +986,7 @@ export class Engine {
       }
       // reads widen only to paths the runtime itself put in the input (never a check's params), real paths, never a protected root or Studio's own state
       const reads = inputPaths({ ...input, params: undefined }).filter((p) => p !== input.out && this.readable(p, x.run?.id ?? null));
-      const sb = { out: input.out, tmp: join(cdir, "tmp"), timeoutS: man.timeout_s, network: man.network, reads, dataDir: this.deps.dataDir, signal };
+      const sb = { out: input.out, tmp: join(cdir, "tmp"), timeoutS: man.timeout_s, network: man.network, testRun: man.test_run, reads, dataDir: this.deps.dataDir, signal };
       if (man.adapter) {
         const argv = man.adapter.command.flatMap((a) => { const m = /^\{([\w.]+)\}$/.exec(a); if (m) return this.expand[m[1]]?.(x) ?? []; return [a.replace(/\{param\.(\w+)\}/g, (_, k) => String(input.params[k] ?? "")).replace(/\{workdir\}/g, input.workdir ?? "")]; });
         if (!argv.length) {

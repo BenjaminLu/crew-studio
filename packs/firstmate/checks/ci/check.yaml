@@ -12,3 +12,4 @@ params:
     shards: { type: integer, default: 0, minimum: 0, maximum: 8, description: "0 = the repository's own setting" }
 timeout_s: 600
 network: false
+test_run: true   # it runs the project's tests: loopback for their own servers (architecture §10 "Loopback")

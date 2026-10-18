@@ -40,11 +40,12 @@ ok(/Installs per workflow \(sandboxed profile/.test(out) && /\n  video\s+rendere
 // the sandbox probe's verdict (tests/acceptance/proves.ts): exactly what a sandboxed round may do passes; each way around it is named
 {
   const { probeProblems } = await import("./acceptance/proves");
-  const good = { proxyEnv: true, noProxyLoopbackOnly: true, directPublic: { ok: false, error: "EPERM" }, directSink: { ok: false, error: "EPERM" }, toolListener: { ok: true }, providerViaProxy: { status: 200 }, otherViaProxy: { status: 403 }, noCredentialViaProxy: { status: 407 }, ownLogin: "env:CLAUDE_CODE_OAUTH_TOKEN", ownLoginRefresh: null, otherCredentials: [], denied: { "/x/ledger.key": false }, tmpWritable: true, nowrite: { "/x/data": false } };
+  const good = { proxyEnv: true, noProxyLoopbackOnly: true, directPublic: { ok: false, error: "EPERM" }, directSink: { ok: false, error: "EPERM" }, directStudio: { ok: false, error: "EPERM" }, ownServer: { ok: true }, toolListener: { ok: true }, providerViaProxy: { status: 200 }, otherViaProxy: { status: 403 }, noCredentialViaProxy: { status: 407 }, ownLogin: "env:CLAUDE_CODE_OAUTH_TOKEN", ownLoginRefresh: null, otherCredentials: [], denied: { "/x/ledger.key": false }, tmpWritable: true, nowrite: { "/x/data": false } };
   ok(probeProblems(good).length === 0, "probe: a round that reaches only its provider through the proxy and reads only its own login passes", JSON.stringify(probeProblems(good)));
-  const open = { ...good, proxyEnv: false, directPublic: { ok: true }, directSink: { ok: true }, otherViaProxy: { status: 200 }, ownLoginRefresh: "refresh", otherCredentials: ["GITHUB_TOKEN"], denied: { "/x/ledger.key": true }, nowrite: { "/x/data": true } };
+  const open = { ...good, proxyEnv: false, directPublic: { ok: true }, directSink: { ok: true }, directStudio: { ok: true }, otherViaProxy: { status: 200 }, ownLoginRefresh: "refresh", otherCredentials: ["GITHUB_TOKEN"], denied: { "/x/ledger.key": true }, nowrite: { "/x/data": true } };
   const bad = probeProblems(open).join(" | ");
-  ok(["no egress proxy", "public address went out", "sink", "host off the round's list", "refresh token", "GITHUB_TOKEN", "could read /x/ledger.key", "could write into /x/data"].every((w) => bad.includes(w)), "probe: an unsandboxed round fails, naming each way out", bad);
+  ok(["no egress proxy", "public address went out", "sink", "Studio's own port", "host off the round's list", "refresh token", "GITHUB_TOKEN", "could read /x/ledger.key", "could write into /x/data"].every((w) => bad.includes(w)), "probe: an unsandboxed round fails, naming each way out", bad);
+  ok(probeProblems({ ...good, ownServer: { ok: false, error: "EPERM" } }).some((p) => /server of its own on loopback/.test(p)), "probe: a round that cannot reach a test server it started itself fails");
   ok(probeProblems({ ...good, providerViaProxy: { status: 403 } }).some((p) => /provider's API host/.test(p)), "probe: a proxy that refuses the round's own provider fails");
 }
 console.log(`\nacceptance-sandboxed: ${passed} passed, ${failed} failed`);

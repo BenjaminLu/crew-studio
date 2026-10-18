@@ -9,3 +9,4 @@ needs: [artifact, repo_cfg, base_tree]
 params: { type: object, properties: {} }
 timeout_s: 600
 network: false
+test_run: true   # it runs the project's tests: loopback for their own servers (architecture §10 "Loopback")

@@ -99,7 +99,7 @@ ok(prepareSandbox(data).committed === null && run(repo, ["git", "rev-parse", "HE
   // code-firstmate and coffee-kit refuse to start without an approved staffing configuration
   // (src/domain/staffing.ts installStaffingGuard); the classifier under test runs before any
   // workflow starts, so this uses the first catalog workflow that needs no staffing approval
-  const wf = (await fetch(`http://127.0.0.1:${s1.port}/api/wf`).then((x) => x.json())).workflows?.find((w: any) => w.id !== "code-firstmate" && w.kind !== "coffee-kit")?.id;
+  const wf = (await fetch(`http://127.0.0.1:${s1.port}/api/wf`, { headers: H2 }).then((x) => x.json())).workflows?.find((w: any) => w.id !== "code-firstmate" && w.kind !== "coffee-kit")?.id;
   const run1 = await fetch(`http://127.0.0.1:${s1.port}/api/wruns`, { method: "POST", headers: H2, body: JSON.stringify({ text: "round the totals in src/money.ts", workflow: wf, params: { project: "sandbox" } }) }).then((x) => x.json()).catch(() => null);
   if (run1?.id) await fetch(`http://127.0.0.1:${s1.port}/api/wruns/${run1.id}/cancel`, { method: "POST", headers: H2, body: "{}" });
   // the staffing check resolves the project's repository identity (private roots) before it asks for an approval

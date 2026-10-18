@@ -181,8 +181,10 @@ egress.stop(); main.stop(); tools.stop();
   const port = await freePort();
   const app = spawn("bun", ["src/server.ts"], { cwd: join(import.meta.dir, ".."), stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CREW_DATA: join(tmp, "data"), CREW_PORT: String(port), CREW_FM_STATE: join(tmp, "state"), CREW_GH: "0", CREW_READONLY: "1", CREW_CHAT_PROVIDER: "stub", CREW_RETRO_AUTO: "0", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_GH_NO_CLI: "1", CREW_SANDBOX: "0", HOME: join(tmp, "home"), CREW_MAIN_PROJECT: join(tmp, "proj"), CREW_FILE_ALLOW: tmp, CREW_SESSION_TOKEN: "boot-session" } });
   const base = `http://127.0.0.1:${port}`;
-  await waitUp(base, app); const items: any[] = (await (await fetch(`${base}/api/doctor`)).json()).items;
+  await waitUp(base, app); const items: any[] = (await (await fetch(`${base}/api/doctor`, { headers: { "x-crew-session": "boot-session" } })).json()).items;
   const page = await fetch(`${base}/`); const bad = await fetch(`${base}/session?t=wrong`, { redirect: "manual" }); const good = await fetch(`${base}/session?t=boot-session`, { redirect: "manual" });
+  // defence in depth behind the loopback rule (architecture §10): a local process without the session cannot answer a card
+  const answer = await fetch(`${base}/api/scards/x/answer`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ choice: "approve" }) });
   app.kill();
   const it = items.find((i) => i.id === "round-sandbox"), kc = items.find((i) => i.id === "round-login");
   ok(it?.status === "ok" && /proxy on 127\.0\.0\.1:\d+/.test(it.detail), "Studio starts the egress proxy with itself, and its Doctor shows the round sandbox", JSON.stringify(it));
@@ -191,14 +193,15 @@ egress.stop(); main.stop(); tools.stop();
   ok(calls.length > 0 && calls.every((c) => !/(^| )-w( |$)/.test(c)), "the Doctor's status never decrypts a login: it asks the keychain whether the item exists (no -w)", JSON.stringify(calls));
   ok(kc?.title === "Vendor token handed to rounds; keychain not reachable" && kc.status === "degraded" && /crew-studio-claude-token/.test(kc.detail) && /checked when a round starts/.test(kc.detail), "the Doctor says rounds get the vendor token Studio hands them, and no keychain; an untried crew keychain item is a warn", JSON.stringify(kc));
   ok(page.status === 200 && !page.headers.get("set-cookie") && bad.status === 403 && !bad.headers.get("set-cookie") && good.status === 303 && /crew_session=boot-session; .*HttpOnly.*SameSite=Strict/.test(good.headers.get("set-cookie") ?? ""),
-    "Studio's page hands out no session; only its session link (`crew-studio open`) starts one", JSON.stringify([page.headers.get("set-cookie"), bad.status, good.status])); }
+    "Studio's page hands out no session; only its session link (`crew-studio open`) starts one", JSON.stringify([page.headers.get("set-cookie"), bad.status, good.status]));
+  ok(answer.status === 403, "Studio refuses a card answer without its session (POST /api/scards/x/answer → 403), so a local process that reached its port still could not answer for the captain", String(answer.status)); }
 // a captain who chose API billing with the earlier switch keeps it
 { const { spawn } = await import("node:child_process");
   const tmp = mkdtempSync(join(tmpdir(), "crew-billing-")); for (const x of ["state", "home", "proj", "data"]) mkdirSync(join(tmp, x));
   writeFileSync(join(tmp, "data", "round-auth.json"), JSON.stringify({ claude: "api-key", by: "captain (desktop)" })); writeFileSync(join(tmp, "data", "keys.json"), JSON.stringify({ anthropic: "sk-ant-api03-billing-fixture-0123456789" }));
   const port = await freePort(); const env: any = { ...process.env }; delete env.ANTHROPIC_API_KEY;
-  const app = spawn("bun", ["src/server.ts"], { cwd: join(import.meta.dir, ".."), stdio: ["ignore", "pipe", "pipe"], env: { ...env, CREW_DATA: join(tmp, "data"), CREW_PORT: String(port), CREW_FM_STATE: join(tmp, "state"), CREW_GH: "0", CREW_READONLY: "1", CREW_CHAT_PROVIDER: "stub", CREW_RETRO_AUTO: "0", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_GH_NO_CLI: "1", CREW_SANDBOX: "0", HOME: join(tmp, "home"), CREW_MAIN_PROJECT: join(tmp, "proj"), CREW_FILE_ALLOW: tmp } });
-  await waitUp(`http://127.0.0.1:${port}`, app); const items: any[] = (await (await fetch(`http://127.0.0.1:${port}/api/doctor`)).json()).items; app.kill();
+  const app = spawn("bun", ["src/server.ts"], { cwd: join(import.meta.dir, ".."), stdio: ["ignore", "pipe", "pipe"], env: { ...env, CREW_DATA: join(tmp, "data"), CREW_PORT: String(port), CREW_FM_STATE: join(tmp, "state"), CREW_GH: "0", CREW_READONLY: "1", CREW_CHAT_PROVIDER: "stub", CREW_RETRO_AUTO: "0", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_GH_NO_CLI: "1", CREW_SANDBOX: "0", HOME: join(tmp, "home"), CREW_MAIN_PROJECT: join(tmp, "proj"), CREW_FILE_ALLOW: tmp, CREW_SESSION_TOKEN: "billing-session" } });
+  await waitUp(`http://127.0.0.1:${port}`, app); const items: any[] = (await (await fetch(`http://127.0.0.1:${port}/api/doctor`, { headers: { "x-crew-session": "billing-session" } })).json()).items; app.kill();
   const rl = items.find((i) => i.id === "round-login");
   ok(rl?.status === "ok" && /API key \(API billing\)/.test(rl.detail) && !existsSync(join(tmp, "data", "round-auth.json")) && JSON.parse(readFileSync(join(tmp, "data", "claude-billing.json"), "utf8")).billing === "api-key",
     "a captain who chose API billing with the earlier switch keeps it (moved to data/claude-billing.json), never switched silently", JSON.stringify(rl)); }

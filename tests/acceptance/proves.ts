@@ -39,6 +39,8 @@ export function probeProblems(r: any): string[] {
   if (!r.noProxyLoopbackOnly) bad.push("NO_PROXY is not loopback only");
   if (r.directPublic?.ok) bad.push("a direct connection to a public address went out around the proxy");
   if (r.directSink?.ok) bad.push("a direct connection to another loopback port (the harness's sink) went out");
+  if (r.directStudio?.ok) bad.push("a direct connection to Studio's own port went out");
+  if (!r.ownServer?.ok) bad.push(`the round could not connect to a server of its own on loopback (${r.ownServer?.error})`);
   if (!r.toolListener?.ok) bad.push(`Studio's tool listener was not reachable (${r.toolListener?.error})`);
   if ([403, 407].includes(r.providerViaProxy?.status) || (r.providerViaProxy?.status === null && !/still connecting/.test(r.providerViaProxy?.error ?? ""))) bad.push(`the proxy did not let the round reach its provider's API host (${JSON.stringify(r.providerViaProxy)})`);
   if (r.otherViaProxy?.status !== 403) bad.push(`the proxy did not refuse a host off the round's list (${JSON.stringify(r.otherViaProxy)})`);
