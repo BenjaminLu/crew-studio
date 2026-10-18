@@ -1,11 +1,16 @@
 // Named captain steps a stub run names in `setup:` (before its start) or `before:` (before it answers a
 // card). Each is something the captain does on the board, through the same HTTP route.
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync, readdirSync, existsSync, statSync } from "node:fs";
+import { createServer } from "node:net";
+import { dirname, join } from "node:path";
+import { accountHomeDir } from "../../src/runtime/checks";
+import { assertTempRepo } from "../lib/git-hygiene.mjs"; // repositories only in checked temp folders
 import { drive, verify, answerCard, type Decide } from "./drive";
 import type { Studio } from "./studio";
 
-export type Ctx = { s: Studio; vars: Record<string, string>; firstmate(marker: "NATIVE-PROPOSE " | "NATIVE-PROJECT " | "NATIVE-TOOL ", args: unknown): Promise<any[]> };
+export type Ctx = { s: Studio; vars: Record<string, string>; firstmate(marker: "NATIVE-PROPOSE " | "NATIVE-PROJECT " | "NATIVE-TOOL ", args: unknown): Promise<any[]>;
+  /** connections the probe's sink port took (setup step probe): any is a round that went around the proxy */
+  sinkHits?: () => number };
 type Step = (h: Ctx, card?: any, view?: any) => Promise<void | { note?: string; choice?: string }>;
 const git = (cwd: string, ...a: string[]) => { const r = Bun.spawnSync(["git", "-c", "user.name=Acceptance", "-c", "user.email=acceptance@example.invalid", ...a], { cwd, stdout: "pipe", stderr: "pipe" }); if (r.exitCode) throw new Error(`git ${a.join(" ")}: ${r.stderr}`); };
 /** Captain-side folders live under the Studio's own temp root (outside its CREW_DATA), so close() removes them. */
@@ -32,13 +37,67 @@ export async function approveStaffing(h: Ctx, project: string, workflow: string)
 const staffed: Record<string, Promise<void>> = {};
 async function approveCode(h: Ctx) { const id = await approveStaffing(h, h.vars.project, "code-firstmate"); const d = await drive(h.s, id, approveOnly, { timeoutMs: 30_000 }); const bad = await verify(h.s, d, { status: "succeeded", visited: ["confirm", "activate", "done"] }); if (bad.length) throw new Error(`staffing: ${bad.join("; ")}`); }
 
+/** The sandbox probe's arguments ({probe} in the topic, read by tests/acceptance/agent.mjs): the provider's API host, a loopback
+ *  sink the harness listens on (no round may connect to it), files a round must not read and folders it must not write. */
+async function probeSetup(h: Ctx, host: string) {
+  let hits = 0; const sink = createServer((c) => { hits++; c.destroy(); }); await new Promise<void>((r) => sink.listen(0, "127.0.0.1", () => r()));
+  const closeStudio = h.s.close; h.s.close = async () => { sink.close(); await closeStudio(); };
+  h.sinkHits = () => hits;
+  const home = join(h.s.root, "home"), acct = accountHomeDir();
+  // a file beside each bin folder on PATH whose parent is a tool's private folder (no lib/): the round runs the tool, never reads the rest
+  const beside = (process.env.PATH ?? "").split(":").filter((d) => /\/bin$/.test(d) && d.startsWith(acct + "/")).map(dirname).filter((p) => existsSync(p) && !existsSync(join(p, "lib")))
+    .flatMap((p) => { try { return readdirSync(p).map((f) => join(p, f)).filter((f) => !/[\s,]/.test(f) && statSync(f).isFile()).slice(0, 1); } catch { return []; } });
+  const own = [".ssh/known_hosts", ".ssh/config", ".gitconfig", ".zshrc", ".zsh_history"].map((f) => join(acct, f)).filter(existsSync);
+  const deny = [join(home, ".codex", "auth.json"), join(h.s.data, "ledger.key"), join(h.s.data, "projects.json"), ...own, ...beside];
+  const nowrite = [h.s.data, home]; // never the account home: a probe that could write there would leave a file behind
+  h.vars.probe = `ACCEPT_PROBE host=${host} sink=${(sink.address() as any).port} deny=${deny.join(",")} nowrite=${nowrite.join(",")}`;
+}
+
+/** The GitHub simulator of each project a github-sim step connected (tests/lib/github-simulator.ts, in this process). */
+const simulators = new Map<string, any>();
+/** A money-kit repository (Studio's own sandbox template) whose origin is a bare repository that the GitHub simulator serves as
+ *  fixture/project: registered through Firstmate, then connected with the signed simulator grant the captain's Connect card
+ *  writes for a simulator (as tests/github-pr-flow.ts writes it); ops adds the operations grant (Studio merges on GitHub). */
+async function githubSim(h: Ctx, ops: boolean) {
+  const { prepareSandbox } = await import("../../src/sandbox-repo");
+  const { githubSimulator } = await import("../lib/github-simulator");
+  const { grantSignature } = await import("../../src/github-grant");
+  const root = realpathSync(mkdtempSync(join(scratch(h), "github-"))); assertTempRepo(root);
+  const repo = prepareSandbox(root).path, bare = join(root, "remote.git");
+  git(root, "clone", "--bare", "-q", repo, bare); git(repo, "remote", "add", "origin", bare);
+  const sim = githubSimulator(bare); sim.autoCi("ci");
+  // GitHub serves the repository's own pull request template (its contents API), so Studio fills it and asks the captain first
+  sim.community.set(".github/pull_request_template.md", readFileSync(join(repo, ".github", "pull_request_template.md"), "utf8"));
+  const closeStudio = h.s.close; h.s.close = async () => { sim.stop(); await closeStudio(); };
+  h.vars.repo = repo; await STEPS.register(h);
+  const file = join(h.s.data, "projects.json"), all = JSON.parse(readFileSync(file, "utf8")), p = all.find((x: any) => x.id === h.vars.project);
+  const at = new Date().toISOString();
+  p.github = { mode: "simulator", repository: "fixture/project", localPath: repo, pushUrl: bare, apiOrigin: sim.origin, base: "main", branchPrefix: "crew/", approvedAt: at, approvalId: "acceptance-simulator",
+    ...(ops ? { operations: { version: 1, repository: "fixture/project", approvalId: "acceptance-operations", approvedAt: at, mergeMethod: "squash" } } : {}) };
+  p.github.signature = grantSignature(h.s.data, p, p.github);
+  writeFileSync(file, JSON.stringify(all, null, 2));
+  // the token Studio sends the simulator (a fixture, never a real one: the acceptance Studio never asks gh or the keychain)
+  writeFileSync(join(h.s.data, "github-token"), "fake-acceptance-token", { mode: 0o600 });
+  simulators.set(h.vars.project, sim);
+}
+
 export const STEPS: Record<string, Step> = {
+  /** a registered money-kit project on the GitHub simulator, merging off (the Connect card's default): {repo}, {project} */
+  async "github-sim"(h) { await githubSim(h, false); },
+  /** the same with the operations grant: Studio merges the pull request on GitHub itself */
+  async "github-sim-ops"(h) { await githubSim(h, true); },
+  /** the captain merges the open pull request on GitHub's own page, then answers the card */
+  async "github-merge"(h) { const sim = simulators.get(h.vars.project); if (!sim) throw new Error("github-merge needs the github-sim step"); const open = [...sim.pulls.values()].filter((p: any) => p.state === "open"); if (open.length !== 1) throw new Error(`${open.length} open pull requests on the simulator`); sim.mergeOnGitHub(open[0].number); },
+  /** the sandbox probe for a Codex round: {probe} (its API host api.openai.com) */
+  async probe(h) { await probeSetup(h, "api.openai.com"); },
+  /** the sandbox probe for a Claude round: {probe} (its API host api.anthropic.com) */
+  async "probe-claude"(h) { await probeSetup(h, "api.anthropic.com"); },
   /** the Claude account card's Verify (one bounded request on the exact configured model); its receipt admits Claude rounds for 30 s */
   async "verify-claude"(h) { const r = await h.s.api("/api/claude/native/verify", { model: "claude-sonnet-5-5", effort: null, confirm: true }); if (r.status !== 200 || r.body.admission !== "verified-execution") throw new Error(`Claude verify: ${r.status} ${JSON.stringify(r.body).slice(0, 300)}`); },
   /** a throwaway folder with a few files to tidy: {folder} */
   async folder(h) { const d = realpathSync(mkdtempSync(join(scratch(h), "folder-"))); for (const f of ["report.pdf", "photo.jpg", "notes.txt", "song.mp3"]) writeFileSync(join(d, f), `acceptance ${f}\n`); h.vars.folder = d; },
   /** a throwaway local git repository: {repo} */
-  async repo(h) { const d = realpathSync(mkdtempSync(join(scratch(h), "repo-"))); git(d, "init", "-q", "-b", "main"); writeFileSync(join(d, "README.md"), "# Acceptance repo\n"); git(d, "add", "."); git(d, "commit", "-qm", "Initial"); h.vars.repo = d; },
+  async repo(h) { const d = realpathSync(mkdtempSync(join(scratch(h), "repo-"))); assertTempRepo(d); git(d, "init", "-q", "-b", "main"); writeFileSync(join(d, "README.md"), "# Acceptance repo\n"); git(d, "add", "."); git(d, "commit", "-qm", "Initial"); h.vars.repo = d; },
   /** {repo}'s origin is a github.com repository (nothing is fetched or pushed) */
   async "github-origin"(h) { if (!h.vars.repo) await STEPS.repo(h); git(h.vars.repo, "remote", "add", "origin", "https://github.com/acceptance-fixture/acceptance-repo.git"); },
   /** register {repo} through Firstmate (NATIVE-PROJECT) and approve the registration card: {project} */

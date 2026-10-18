@@ -13,7 +13,11 @@ import { freePort, waitUp } from "../boot.mjs";
 const REPO = join(import.meta.dir, "../..");
 export const TERMINAL = ["succeeded", "failed", "cancelled"];
 /** ACCEPTANCE_PROFILE=sandboxed: the OS sandbox on, an empty HOME, no tool cache and no stand-in renderer (scripts/acceptance-sandboxed.ts) */
-export const SANDBOXED = process.env.ACCEPTANCE_PROFILE === "sandboxed";
+export const SANDBOXED = process.env.ACCEPTANCE_PROFILE === "sandboxed" || process.env.ACCEPTANCE_PROFILE === "sandboxed-e2e";
+/** ACCEPTANCE_PROFILE=sandboxed-e2e: the same sandbox, empty HOME and stripped env, but with this Mac's installed tools (the account's
+ *  Playwright browsers, read by Studio's renderer only; ffmpeg; node) as the live board has them: every run must pass, none is skipped
+ *  (scripts/acceptance-sandboxed.ts --e2e, bun run test:sandboxed-e2e) */
+export const SANDBOXED_E2E = process.env.ACCEPTANCE_PROFILE === "sandboxed-e2e";
 /** The CLI stubs (tests/fixture/codex-account.mjs, tests/fixture/claude-native.mjs) switch to the scripted agent on these logins. */
 const CODEX_AUTH = { auth_mode: "chatgpt", last_refresh: "2020-02-29T12:34:56.123+08:00", tokens: { access_token: "abcdefgh.abcdefgh.abcdefgh", id_token: "fixture-id-token", account_id: "fixture-acceptance", refresh_token: "acceptance-refresh-must-not-copy" } };
 const CLAUDE_TOKEN = "sk-ant-oat01-acceptance" + "0".repeat(40); // a fixture login of the official shape; not a credential
@@ -57,7 +61,7 @@ export async function bootStudio(name: string, o: { localUnrestricted?: boolean;
   // an install finds what a new captain's Mac has; never local-unrestricted
   if (SANDBOXED) {
     if (o.localUnrestricted) throw new Error("the sandboxed acceptance profile never starts a local-unrestricted Studio");
-    const browsers = join(root, "no-browsers"); mkdirSync(browsers, { recursive: true });
+    const browsers = SANDBOXED_E2E && process.env.CREW_E2E_BROWSERS ? process.env.CREW_E2E_BROWSERS : join(root, "no-browsers"); if (!SANDBOXED_E2E) mkdirSync(browsers, { recursive: true });
     delete env.CREW_RENDER_STUB; delete env.CREW_RENDER_STUB_MP4; env.PLAYWRIGHT_BROWSERS_PATH = browsers;
     for (const k of ["PLAYWRIGHT_MODULE", "CREW_PLAYWRIGHT_MODULE", "NODE_PATH", "CREW_LOCAL_DEPENDENCY_ROOT"]) delete env[k];
   }

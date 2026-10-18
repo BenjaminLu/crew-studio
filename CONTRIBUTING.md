@@ -12,11 +12,16 @@ Every change takes the same path, in this order:
 2. **Rebase** onto the current `origin/main`. Resolve conflicts yourself, keeping both sides' intent.
 3. **Core suites.** `bun run test:core` must pass on the rebased head: env-isolation, git-config-guard,
    firstmate-staffing, smoke-code, acceptance (its known-fail entries are listed in `tests/acceptance-known.ts`),
-   privacy, opencc-only, and the build. Also run the suites that cover the files you touched.
+   the fast subset of the sandboxed end-to-end gate (`test:sandboxed-e2e:fast`: needs Playwright's Chromium,
+   `npx playwright install chromium`), privacy, opencc-only, and the build. Also run the suites that cover the files
+   you touched.
 4. **Push** your own branch only (never force-push a shared branch) and open the pull request.
 5. **Merge** on GitHub once review and CI agree.
 6. **Deploy** with `bun scripts/live-release.ts deploy`, and only when no Task is in flight
-   (`bun scripts/live-release.ts status` lists them; deploy refuses while a step runs).
+   (`bun scripts/live-release.ts status` lists them; deploy refuses while a step runs). Before it, the pre-deploy
+   gate `bun run test:sandboxed-e2e` must pass on the merged head: every bundled workflow to its end with the OS
+   sandbox and egress proxy on (never `CREW_LOCAL_UNRESTRICTED`), this Mac's real renderer, stub providers
+   (docs/acceptance.md, "Sandboxed end-to-end gate"). A run it cannot finish is a failure, never a skip.
 7. **Live end-to-end check** on the deployed release: run the workflow the change touches and confirm the result.
 
 ## Tests

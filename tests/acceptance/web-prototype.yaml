@@ -21,6 +21,12 @@ stub:
     covers: "two designer rounds → checks → captain approves direction A → Library"
     provider: codex
     expect: { status: succeeded, visited: [intake, produce, design-a, design-b, checks, refine, accept, library, done], library: true, outputs: 2 }
+  - name: smoke
+    covers: "the captain names a primary action: the designers' pages are clicked in headless Chromium under the preview-tab CSP and the button works → approve → Library"
+    provider: codex
+    topic: "A single-page task list. Clicking the \"Add task\" button must add a new task row to the list."
+    proves: [web-smoke]
+    expect: { status: succeeded, visited: [design-a, design-b, checks, accept, library, done], library: true }
   - name: reject
     covers: "captain rejects both directions → closed, nothing in the Library"
     provider: codex

@@ -156,6 +156,30 @@ Covered by the same graph plus a generated conventions pack: GitHub adapter, con
 
 - Agent sandbox: worktree-only writes, no credentials in rounds, network by policy.
 - Check sandbox: read-only inputs, `out/` only, no network by default.
+- What both profiles open (`src/runtime/checks.ts`, `roundProfile` and `profileFor`), and why. There is no other allowance;
+  `bun run test:sandboxed-e2e` proves every bundled workflow finishes inside them, and its sandbox probe proves the limits:
+  - the system folders (`/usr`, `/bin`, `/System`, `/Library`, `/opt`, `/etc`, `/dev`, the timezone and dyld caches,
+    Xcode): binaries and their libraries. `/opt` holds Homebrew, so git, bun, node, python and ffmpeg run from it;
+  - each folder on PATH, and its parent only when that parent is an install prefix (it has `lib/`: a node or python
+    under a version manager needs its own modules). A tool's private folder whose `bin` is on PATH (`~/.orbstack`,
+    `~/.cache/lm-studio`, `~/.local`, `~/.cargo`) stays closed: its binaries run, its keys, caches and credentials do not
+    reach a round. A home folder is never opened this way;
+  - the provider CLI's own install (the real path of its binary and the folder above), read-only;
+  - the round's worktree (read and write, except the worktree's `.git` link: Studio commits outside the sandbox), its
+    `tmp` (also `TMPDIR` and the CLI's own temp variable) and a throwaway home where the CLI keeps its config, sessions
+    and caches. Its login is a copy Studio made outside the sandbox: the vendor's token in the env (Claude) or a login
+    file without its refresh token in the throwaway home (Codex). No keychain, no source login file;
+  - the network: only `localhost:<egress proxy>` (with the round's own credential and host list: its provider's API
+    hosts plus what policy `egress.allow` grants) and `localhost:<tool listener>`; `NO_PROXY` is loopback only. Every
+    other address, the rest of loopback included, is refused by the OS;
+  - last, a deny over Studio's data (except what the runtime made for the round) and the user's secret folders
+    (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`, `~/.config`, `~/.claude*`, `~/.codex`, `~/.docker`, `~/.kube`, `~/.npmrc`,
+    `~/.git-credentials`, the keychains), for Studio's HOME and for the account's own home when Studio runs with another
+    HOME.
+- Not in the agent sandbox, and why: Studio's own renderer (headless Chromium for captures, film frames, PDF prints and
+  the interaction smoke) and ffmpeg run as Studio's tools, outside sandbox-exec. A page they load is served from one
+  local origin with scripts off (captures, PDF) or under the captain's preview-tab CSP (the smoke), and every request off
+  that origin and every WebSocket is refused (`src/render/render.mjs`).
 - Skins are sandboxed iframes with a read-only snapshot.
 - Secrets are 0600 files.
 - Board calls carry Bearer plus Origin.

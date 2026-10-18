@@ -67,6 +67,51 @@ needs a missing install prints `SKIPPED` with the install named and does not cou
 local-unrestricted run is skipped too. The summary ends with a table of which workflow needs which install
 and whether this Mac has it. `tests/acceptance-sandboxed.ts` checks the profile itself.
 
+## Sandboxed end-to-end gate
+
+`bun run test:sandboxed-e2e` (`scripts/acceptance-sandboxed.ts --e2e`) is the pre-deploy gate: every bundled workflow to
+its terminal state with the OS sandbox and egress proxy on. It is the sandboxed profile (never `CREW_LOCAL_UNRESTRICTED`,
+an empty `HOME`, the environment stripped), but with this Mac's installed tools as the live board has them: Playwright's
+Chromium from the account's cache (read by Studio's own renderer only; no round reaches it), ffmpeg and node on PATH,
+and no stand-in renderer. So every capture, PDF print, interaction smoke and film render is real. A run it cannot finish
+is a `FAIL`, never `SKIPPED`; without a Chromium cache it refuses to start and names the install. A local-unrestricted
+run is not part of it. `bun run test:sandboxed-e2e:fast` (in `test:core`) runs five of its runs: documents (Codex and
+Claude), the web interaction smoke, the film, and code-firstmate's local merge.
+
+A stub run can name what its real side effects must show (`proves:`, `tests/acceptance/proves.ts`). The proofs that need
+the real renderer are checked in this profile only:
+
+- `pdf-chromium`: the exported PDF was printed by headless Chromium (not the built-in writer);
+- `captures`: the designer's before and after captures are real PNGs of a rendered page;
+- `film`: the rendered MP4 is a real H.264 film (the video workflow's Playwright + ffmpeg render; the coffee kit's
+  HyperFrames render);
+- `web-smoke`: the captain's named button was clicked in headless Chromium under the preview-tab CSP and changed the page;
+- `fail-first`: the worker's test failed on the base and passed on the head, and CI passed;
+- `sandbox-probe`: see below.
+
+`profiles: [default, sandboxed, sandboxed-e2e]` limits a run to some profiles: the coffee kit's film goes to the
+capability card where no browser exists (`confirm-film-unavailable`) and is rendered and approved where one does
+(`film-approve`).
+
+The sandbox probe: a run whose intent carries `{probe}` (setup step `probe`, or `probe-claude` for a Claude round) has the
+scripted agent try, from inside its sandboxed CLI process, everything a real `codex` or `claude` could: a direct
+connection to a public address and to a loopback port the harness listens on (both refused by the OS), Studio's tool
+listener (reachable), a CONNECT through the egress proxy to its provider's API host (allowed; closed as soon as the proxy
+answers, before any TLS byte, so no request reaches the provider), to another host (403) and without the round's
+credential (407), its own login (readable; Codex's copy has no refresh token), the source login, Studio's ledger key and
+projects, the account's own dotfiles and the private folders beside each tool on PATH (none readable), and writes into
+Studio's data and HOME (refused). The result is one `ACCEPT_PROBE_RESULT` line in the round record; the harness fails the
+run on any way out.
+
+The GitHub path runs against the GitHub simulator (`tests/lib/github-simulator.ts`, in the harness process, its
+`autoCi` mode: one required check green on every head, merges of the exact head accepted). Setup step `github-sim`
+makes a money-kit repository whose origin is a bare repository the simulator serves, registers it through Firstmate,
+and writes the signed simulator grant the captain's Connect card writes (`github-sim-ops` adds the operations grant);
+Studio pushes there, opens the pull request from the repository's own template text on the captain's card, waits for
+GitHub's required check, and merges (`github-merge-from-studio`) or finds the pull request the captain merged on
+GitHub (`github-merge-on-github`, step `github-merge`). The acceptance Studio never asks `gh` or the keychain for a
+token (`CREW_GH_NO_CLI=1`; a fixture token in its data).
+
 ## Known failures
 
 A run with `known_failure` is a product bug that breaks the workflow on the live board today. It

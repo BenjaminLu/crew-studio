@@ -12,6 +12,9 @@
 // that names the prompt, so a new mode fails loudly instead of passing silently.
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { connect as tcp } from "node:net";
+import { openSync, readFileSync, closeSync, writeFileSync, rmSync } from "node:fs";
+import { join as joinPath } from "node:path";
 
 /** One stdio MCP session with the server the CLI was told to start. */
 function mcpSession(server) {
@@ -30,8 +33,17 @@ async function* acceptanceScript(text, call, say) {
     const kind = /^DELIVER (\w+)/.exec(text)[1], intent = (/^Intent: (.*)$/m.exec(text)?.[1] ?? "Acceptance").slice(0, 80);
     const variant = /^Variant: (.*)$/m.exec(text)?.[1] ?? "A";
     if (kind === "document") yield* call("work_write", { path: "doc.md", content: `# ${intent}\n\nThis acceptance draft answers the captain's intent in a few plain sentences.\n\n## Details\n\n- One point.\n- Another point.\n` });
-    else if (kind === "video") { const files = (yield* call("work_list", {})) ?? []; if (!files.some?.((f) => f.path === "film.html")) throw new Error("the film template is missing"); yield* call("work_read", { path: "film.html", start: 1, lines: 20 }); }
-    else yield* call("work_write", { path: "index.html", content: `<!doctype html><html><head><meta charset="utf-8"><title>${intent}</title></head><body><main><h1>${intent}</h1><p>Variant ${variant}</p></main></body></html>` });
+    else if (kind === "video") {
+      const files = (yield* call("work_list", {})) ?? []; if (!files.some?.((f) => f.path === "film.html")) throw new Error("the film template is missing"); yield* call("work_read", { path: "film.html", start: 1, lines: 20 });
+      // like an editor: the fades the captain named, on the whole stage (a real render's first and last frames are then dark)
+      if (/fade/i.test(text)) { const r = yield* call("work_replace", { path: "film.html", old: "function render(t){renderAt(t-OFF)}", new: "function render(t){renderAt(t-OFF);document.getElementById('stage').style.opacity=Math.max(0,Math.min(1,t/0.8,(DUR-t)/0.8))}" }); if (r?.error) throw new Error(`work_replace refused: ${r.error}`); }
+    }
+    else {
+      // a button the captain named ("Add task" button) works: an inline handler (the preview CSP allows inline script) adds a row
+      const button = /["“]([^"”\n]{2,30})["”]\s+button/.exec(text)?.[1];
+      const control = button ? `<button id="act" type="button">${button}</button><ul id="rows"><li>First task</li></ul><script>document.getElementById("act").addEventListener("click",()=>{const li=document.createElement("li");li.textContent="New task "+(document.querySelectorAll("#rows li").length+1);document.getElementById("rows").appendChild(li);});</script>` : "";
+      yield* call("work_write", { path: "index.html", content: `<!doctype html><html><head><meta charset="utf-8"><title>${intent}</title></head><body><main><h1>${intent}</h1><p>Variant ${variant}</p>${control}</main></body></html>` });
+    }
     yield* say(`Delivered ${kind} variant ${variant}.`); return true;
   }
   if (text.startsWith("STARTUP COMPETITION")) {
@@ -48,6 +60,15 @@ async function* acceptanceScript(text, call, say) {
     yield* call("work_write", { path: "index.html", content: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name}</title><style>body{margin:0;font:18px Georgia,serif;background:#f5efe3;color:#35261f}main{max-width:960px;margin:auto;padding:24px}.hero{aspect-ratio:16/9;width:100%}img,video{width:100%;height:auto}</style></head><body><main><h1>${name}</h1><video class="hero" controls src="assets/coffee.mp4"></video><img src="assets/coffee.png" alt="A cup of coffee and a croissant"><section id="story"><h2>A little pause</h2><p>Coffee, warm light and room to breathe.</p></section><a href="#story">Our story</a></main></body></html>` });
     yield* say("Wrote index.html."); return true;
   }
+  // the coordinator fills the repository's pull request template: one plain text per section it is asked for, no ticks
+  if (text.startsWith("PULL REQUEST TEXT")) {
+    const list = /^SECTIONS TO WRITE[^\n]*\n([\s\S]*?)\n\n/m.exec(text)?.[1] ?? "";
+    const headings = [...list.matchAll(/^- (.+?)(?: — guidance: .*)?$/gm)].map((m) => m[1].trim());
+    const title = (/^Spec: (.+)$/m.exec(text)?.[1] ?? /^#+ (.+)$/m.exec(text.split("TEST TABLE ROWS")[1] ?? "")?.[1] ?? "The requested change").slice(0, 72).replace(/\.$/, "");
+    const r = yield* call("pull_request_text", { title, sections: headings.map((heading) => ({ heading, text: `${heading}: written from the spec and Studio's evidence for this head.` })), ticks: [] });
+    if (r?.error) throw new Error(`pull_request_text refused: ${r.error}`);
+    yield* say("Pull request text written."); return true;
+  }
   // a code worker with a question for the captain (ACCEPT_ASK), until the captain's answer (ACCEPT_ANSWERED) reaches its prompt
   if (text.startsWith("BUILD ROUND") && /ACCEPT_ASK/.test(text) && !/ACCEPT_ANSWERED/.test(text)) {
     yield* call("fs_list", {});
@@ -56,6 +77,57 @@ async function* acceptanceScript(text, call, say) {
     yield* say("ASK: should the discount be 10% or 15%?"); return true;
   }
   return false;
+}
+
+// ---------- the sandbox probe (ACCEPT_PROBE in the captain's intent) ----------
+// What a real vendor CLI could do from inside its round, tried from the same process (the stub CLI runs under the round's
+// sandbox-exec profile, env and proxy credential): the network only through the egress proxy and only to its provider's
+// API hosts, its own login readable, the source logins and Studio's data not. No request is ever sent to a provider: an
+// allowed CONNECT is closed as soon as the proxy answers (or after a short wait), before any byte of TLS.
+// The intent carries what to try: ACCEPT_PROBE host=<api host> sink=<loopback port> deny=<path>,<path> nowrite=<path>,<path>
+// The result is one line the harness reads from the round record: ACCEPT_PROBE_RESULT {json}
+const tryTcp = (host, port, ms = 1500) => new Promise((resolve) => {
+  const s = tcp({ host, port }); const done = (v) => { clearTimeout(t); s.destroy(); resolve(v); };
+  const t = setTimeout(() => done({ ok: false, error: "timeout" }), ms);
+  s.once("connect", () => done({ ok: true })); s.once("error", (e) => done({ ok: false, error: e.code ?? String(e.message ?? e) }));
+});
+/** One CONNECT through the round's proxy: the proxy's status line (403 refused, 407 no credential), or what happened. */
+const viaProxy = (target, auth = true, ms = 4000) => new Promise((resolve) => {
+  let u; try { u = new URL(process.env.HTTPS_PROXY ?? ""); } catch { return resolve({ status: null, error: "no HTTPS_PROXY in the round's env" }); }
+  const s = tcp({ host: u.hostname, port: Number(u.port) }); let buf = "";
+  const done = (v) => { clearTimeout(t); s.destroy(); resolve(v); };
+  const t = setTimeout(() => done({ status: null, error: "no answer (the proxy is still connecting upstream: allowed)" }), ms);
+  s.once("connect", () => s.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n${auth ? `Proxy-Authorization: Basic ${Buffer.from(`${decodeURIComponent(u.username)}:${decodeURIComponent(u.password)}`).toString("base64")}\r\n` : ""}\r\n`));
+  s.on("data", (d) => { buf += d.toString("latin1"); const m = /^HTTP\/1\.[01] (\d{3})/.exec(buf); if (m) done({ status: Number(m[1]) }); });
+  s.once("error", (e) => done({ status: null, error: e.code ?? String(e.message ?? e) }));
+});
+// open() is where the sandbox checks a read: nothing of the file itself is read
+const readable = (p) => { try { closeSync(openSync(p, "r")); return true; } catch { return false; } };
+const writable = (dir) => { const f = joinPath(dir, `.acceptance-probe-${process.pid}`); try { writeFileSync(f, "x"); rmSync(f, { force: true }); return true; } catch { return false; } };
+async function sandboxProbe(prompt) {
+  const arg = (k) => (new RegExp(`ACCEPT_PROBE[^\\n]*\\b${k}=(\\S+)`).exec(prompt)?.[1] ?? "");
+  const list = (k) => arg(k).split(",").filter(Boolean);
+  const host = arg("host"), sink = Number(arg("sink")), proxy = (() => { try { return new URL(process.env.HTTPS_PROXY); } catch { return null; } })();
+  const tool = (() => { try { return new URL(process.env.CREW_STUDIO_URL); } catch { return null; } })();
+  const r = {
+    proxyEnv: !!proxy && ["127.0.0.1", "localhost"].includes(proxy.hostname) && !!proxy.password,
+    noProxyLoopbackOnly: (process.env.NO_PROXY ?? "") === "localhost,127.0.0.1,::1",
+    // straight out, around the proxy: an IP (no DNS needed) and the sink the harness listens on
+    directPublic: await tryTcp("1.1.1.1", 443),
+    directSink: sink ? await tryTcp("127.0.0.1", sink) : { ok: false, error: "no sink" },
+    toolListener: tool ? await tryTcp(tool.hostname, Number(tool.port)) : { ok: false, error: "no CREW_STUDIO_URL" },
+    providerViaProxy: host ? await viaProxy(`${host}:443`) : { status: null, error: "no host" },
+    otherViaProxy: await viaProxy("example.com:443"),
+    noCredentialViaProxy: await viaProxy(`${host || "example.com"}:443`, false),
+    // its own login (what Studio handed the round), and nothing else
+    ownLogin: process.env.CLAUDE_CODE_OAUTH_TOKEN ? "env:CLAUDE_CODE_OAUTH_TOKEN" : readable(joinPath(process.env.HOME ?? "/nonexistent", ".codex", "auth.json")) ? "file:$HOME/.codex/auth.json" : null,
+    ownLoginRefresh: (() => { try { return JSON.parse(readFileSync(joinPath(process.env.HOME, ".codex", "auth.json"), "utf8")).tokens?.refresh_token ?? null; } catch { return null; } })(),
+    otherCredentials: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN"].filter((k) => process.env[k]),
+    denied: Object.fromEntries(list("deny").map((p) => [p, readable(p)])),
+    tmpWritable: writable(process.env.TMPDIR ?? "/nonexistent"),
+    nowrite: Object.fromEntries(list("nowrite").map((p) => [p, writable(p)])),
+  };
+  return r;
 }
 
 /**
@@ -79,6 +151,8 @@ export async function runTurn({ prompt, server, emit }) {
       try { return JSON.parse(body); } catch { return null; }
     };
     const say = async function* (s) { emit({ text: s }); return true; };
+    // first, before any tool call: what this sandboxed process can reach (read back from the round record by the harness)
+    if (/ACCEPT_PROBE\b/.test(prompt)) emit({ text: `ACCEPT_PROBE_RESULT ${JSON.stringify(await sandboxProbe(prompt))}\n` });
     const script = async () => {
       const own = acceptanceScript(prompt, call, say);
       let r; while (!(r = await own.next()).done) {}

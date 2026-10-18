@@ -19,11 +19,12 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // ACCEPTANCE_SCENARIO_DIR=<dir> reads the scenario files from another folder (tests/acceptance-known.ts)
 import { bundledList, bundledText, parseYaml } from "../src/bundled";
 import { loadScenario, openWindowIds, scenarioFiles, type Scenario } from "../scripts/acceptance/scenarios";
-import { bootStudio, filmSample, SANDBOXED, type Studio } from "./acceptance/studio";
+import { bootStudio, filmSample, SANDBOXED, SANDBOXED_E2E, type Studio } from "./acceptance/studio";
 import { installsFor, type Install } from "../scripts/acceptance/installs";
 import { drive, verify, type Expect } from "./acceptance/drive";
 import { stubRuns, stubDecision, verdictOf, type StubRun } from "./acceptance/stub";
 import { STEPS, approveStaffing, type Ctx } from "./acceptance/steps";
+import { prove, RENDERER_PROVES } from "./acceptance/proves";
 
 const t0 = Date.now(), problems: string[] = [];
 // what the runtime seeds (workflows/v2 and packs/ *.wf.yaml, retired ones included), and the packs' legacy v1 flow files
@@ -41,7 +42,8 @@ for (const id of bundled) {
 for (const s of scenarios) if (!bundled.includes(s.workflow)) problems.push(`${s.file} names ${s.workflow}, which is not a bundled workflow`);
 
 const only = (process.env.ACCEPTANCE_ONLY ?? "").split(",").map((x) => x.trim()).filter(Boolean);
-const picked = only.length ? runs.filter((r) => only.includes(r.workflow) || only.includes(`${r.workflow}:${r.name}`)) : runs;
+const profile = SANDBOXED_E2E ? "sandboxed-e2e" : SANDBOXED ? "sandboxed" : "default";
+const picked = (only.length ? runs.filter((r) => only.includes(r.workflow) || only.includes(`${r.workflow}:${r.name}`)) : runs).filter((r) => r.profiles.includes(profile));
 
 const servers: Record<string, Promise<Studio>> = {};
 const serverFor = (kind: StubRun["server"]) => servers[kind] ??= bootStudio(kind, { localUnrestricted: kind === "local-unrestricted" });
@@ -77,7 +79,8 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
   const s = await serverFor(r.server), h: Ctx = { s, vars: {}, firstmate: firstmate(s) }, failures: string[] = [];
   for (const step of r.setup) { const f = STEPS[step]; if (!f) return { failures: [`no setup step ${step} (tests/acceptance/steps.ts)`] }; await f(h); }
   const params: Record<string, string> = { ...Object.fromEntries(Object.entries(r.shared.start.params).map(([k, v]) => [k, fill(v, h.vars)])), ...(r.provider ? { provider: r.provider } : {}), ...Object.fromEntries(Object.entries(r.params).map(([k, v]) => [k, fill(v, h.vars)])) };
-  const body = { text: r.topic, workflow: r.workflow, params };
+  // the sandbox probe's arguments (setup step probe) go into the intent, where the scripted agent reads them
+  const body = { text: r.topic.replaceAll("{probe}", h.vars.probe ?? ""), workflow: r.workflow, params };
   if (r.board_refusal) {
     const st = await s.api("/api/wruns", body);
     if (st.status === 200) failures.push(`the board started ${st.body.id}; expected a refusal ${r.board_refusal.status}`);
@@ -114,7 +117,7 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
     else if (r.how === "grant-merge") created = await h.firstmate("NATIVE-TOOL ", { name: "studio_connect_github", args: { project: h.vars.project, merge: true } });
     else if (r.how === "crew") created = await h.firstmate("NATIVE-TOOL ", { name: "studio_propose_crew_change", args: { change: { kind: "member", seat: "maker", set: { provider: "codex", model: "acceptance-model", effort: "medium" } } } });
     else if (r.how === "staffing") { const id = await approveStaffing(h, tparams.project ?? "sandbox", target.workflow); created = [{ id, workflow: "firstmate-staffing" }]; }
-    else created = await h.firstmate("NATIVE-PROPOSE ", { workflow: target.workflow, version, text: r.topic, params: tparams });
+    else created = await h.firstmate("NATIVE-PROPOSE ", { workflow: target.workflow, version, text: body.text, params: tparams });
     const want = r.how === "firstmate" || r.how === "proposal" ? "firstmate-proposal" : r.how === "register" ? "firstmate-register-project" : r.how === "connect" ? "firstmate-connect-github" : r.how === "grant-merge" ? "firstmate-grant-merge" : r.how === "crew" ? "crew-change" : "firstmate-staffing";
     const own = created.find((x) => x.workflow === want);
     if (!own) return { failures: [...failures, `Firstmate created no ${want} Task (it created: ${created.map((x) => `${x.id} ${x.workflow}`).join(", ") || "nothing"})`] };
@@ -129,6 +132,8 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
   const exp = expectFor(r);
   const d = await drive(s, task, decide, { timeoutMs: r.timeout_s * 1000, until: exp.status === "waiting" ? (v) => (v.cards ?? []).some((c: any) => c.status === "open" && c.node === exp.waitingOn) : undefined });
   failures.push(...await verify(s, d, exp));
+  // the real side effects: a proof that needs the real renderer only where the renderer is real (the e2e profile)
+  for (const p of r.proves) if (SANDBOXED_E2E || !RENDERER_PROVES.includes(p)) failures.push(...(await prove(s, d.view, p, { sinkHits: h.sinkHits })).map((x) => `proves ${p}: ${x}`));
   // a run checked while it waits on a card (stopped by design) is cancelled afterwards: left open, it would still hold its
   // project, and a later run on the same project would meet it as overlapping work (a scope card) instead of its own path
   if (exp.status === "waiting") { const c = await s.api(`/api/wruns/${task}/cancel`, {}); if (c.status !== 200) failures.push(`could not cancel the waiting Task ${task} after its check: ${c.status} ${JSON.stringify(c.body).slice(0, 200)}`); }
@@ -142,19 +147,25 @@ type Row = { r: StubRun; verdict: "pass" | "FAIL" | "known-fail" | "UNEXPECTED P
 const defOf = new Map(files.map((f) => parseYaml(bundledText(f) ?? "") as any).filter((d) => d?.id).map((d) => [String(d.id), d]));
 let doctorItems: Promise<Record<string, any>> | null = null;
 const doctor = () => doctorItems ??= serverFor("sandbox").then(async (s) => Object.fromEntries(((await s.api("/api/doctor")).body.items ?? []).map((i: any) => [i.id, i])));
-const lacking = async (workflow: string): Promise<Install[]> => { const by = await doctor(); return installsFor(defOf.get(workflow)).filter((i) => by[i.id]?.status !== "ok"); };
+// the renderer row stays "info" (Chromium is unverified until a capture); the e2e profile counts it installed when Node and Playwright are
+// there, and a capture that then cannot launch Chromium fails its run (never a skip)
+const installed = (by: Record<string, any>, id: string) => by[id]?.status === "ok" || SANDBOXED_E2E && id === "renderer" && !!by[id] && by[id].availability !== "missing";
+const lacking = async (workflow: string): Promise<Install[]> => { const by = await doctor(); return installsFor(defOf.get(workflow)).filter((i) => !installed(by, i.id)); };
 async function missing(r: StubRun): Promise<string | null> {
   if (r.needs.includes("ffmpeg") && !filmSample.path) return filmSample.reason;
   if (!SANDBOXED) return null;
   if (r.server === "local-unrestricted") return "the sandboxed profile runs only with the OS sandbox on (this run needs local-unrestricted mode)";
   const lack = await lacking(r.target?.workflow ?? r.workflow);
-  if (r.needs.includes("renderer") && !lack.some((i) => i.id === "renderer") && (await doctor()).renderer?.status !== "ok") lack.push({ id: "renderer", why: "this run's change is captured or rendered with Playwright" });
+  if (r.needs.includes("renderer") && !lack.some((i) => i.id === "renderer") && !installed(await doctor(), "renderer")) lack.push({ id: "renderer", why: "this run's change is captured or rendered with Playwright" });
   return lack.length ? `needs ${lack.map((i) => `${i.id} (${i.why})`).join(", ")}: not installed on this Mac (install it from Settings → Doctor)` : null;
 }
 const rows: Row[] = [];
 async function record(r: StubRun) {
   const t = Date.now(); let out: { failures: string[]; task?: string };
-  const skip = await missing(r); if (skip) { rows.push({ r, verdict: "SKIPPED", ms: 0, detail: skip }); console.log(`${"SKIPPED".padEnd(15)} ${r.workflow}:${r.name}\n    ${skip}`); return; }
+  const skip = await missing(r);
+  // the e2e profile is the pre-deploy gate: a run that cannot run with the sandbox on is a failure, never a skip
+  if (skip && SANDBOXED_E2E && r.server !== "local-unrestricted") { rows.push({ r, verdict: "FAIL", ms: 0, detail: skip }); console.log(`${"FAIL".padEnd(15)} ${r.workflow}:${r.name}\n    ${skip}`); return; }
+  if (skip) { rows.push({ r, verdict: "SKIPPED", ms: 0, detail: skip }); console.log(`${"SKIPPED".padEnd(15)} ${r.workflow}:${r.name}\n    ${skip}`); return; }
   try { out = await runOne(r); } catch (e: any) { out = { failures: [`scenario threw: ${String(e?.message ?? e).slice(0, 500)}`] }; }
   const failed = out.failures.length > 0, verdict: Row["verdict"] = verdictOf(r, out.failures);
   const row: Row = { r, verdict, ms: Date.now() - t, task: out.task, detail: failed ? out.failures.join(" | ") : r.covers }; rows.push(row);
@@ -181,11 +192,11 @@ const skipped = rows.filter((x) => x.verdict === "SKIPPED");
 if (SANDBOXED) {
   // which workflow needs which install, and whether this Mac has it (the Doctor of the sandboxed Studio)
   const by: Record<string, any> = doctorItems ? await doctorItems.catch(() => ({})) : {}; // read while the servers ran; never boot one now
-  console.log(`\nInstalls per workflow (sandboxed profile: OS sandbox on, empty HOME, no tool cache):`);
+  console.log(`\nInstalls per workflow (${SANDBOXED_E2E ? "sandboxed e2e profile: OS sandbox on, empty HOME, this Mac's tools" : "sandboxed profile: OS sandbox on, empty HOME, no tool cache"}):`);
   for (const id of [...new Set(rows.map((x) => x.r.workflow))].sort()) {
     const need = installsFor(defOf.get(id)).map((i) => i.id as string);
     const some = rows.some((x) => x.r.workflow === id && x.r.needs.includes("renderer")) && !need.includes("renderer") ? ["renderer"] : [];
-    const say = (n: string, extra = "") => `${n}${extra} ${by[n]?.status === "ok" ? "installed" : "MISSING"}`;
+    const say = (n: string, extra = "") => `${n}${extra} ${installed(by, n) ? "installed" : "MISSING"}`;
     console.log(`  ${id.padEnd(28)} ${need.length || some.length ? [...need.map((n) => say(n)), ...some.map((n) => say(n, " (some runs: UI captures)"))].join(", ") : "nothing beyond Studio"}`);
   }
 }

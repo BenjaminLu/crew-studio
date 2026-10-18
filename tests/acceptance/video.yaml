@@ -21,4 +21,5 @@ stub:
     covers: "editor round on the film template → render (the renderer's own stub copies a real 1920x1080 sample film) → checks → approve → Library"
     provider: codex
     needs: [ffmpeg]
+    proves: [film]   # in the e2e profile the film is rendered by Playwright's Chromium and ffmpeg, its fades read from the real frames
     expect: { status: succeeded, visited: [intake, produce, draft, render, checks, refine, accept, library, done], library: true }

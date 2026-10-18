@@ -24,5 +24,16 @@ stub:
     setup: [coffee]
     params: { project: "{project}", coffeeDesignPlan: "{coffeeDesignPlan}" }
     timeout_s: 180
+    profiles: [default, sandboxed]   # neither has a browser for HyperFrames; the e2e profile renders the film (film-approve)
     cards: [{ node: direction, answer: confirm }, { node: capability, answer: close }]
     expect: { status: succeeded, visited: [direction, round, page, image, video, capability, closed], not_visited: [library] }
+  - name: film-approve
+    covers: "with the sandbox on and this Mac's tools: direction → page round (sandboxed worker) → image (Codex image stub) → the real HyperFrames film render → whole-site review → captain approves"
+    profiles: [sandboxed-e2e]
+    setup: [coffee]
+    params: { project: "{project}", coffeeDesignPlan: "{coffeeDesignPlan}" }
+    needs: [renderer]
+    proves: [film]
+    timeout_s: 300
+    cards: [{ node: direction, answer: confirm }, { node: review, answer: approve }]
+    expect: { status: succeeded, visited: [direction, round, page, image, video, review], not_visited: [capability] }

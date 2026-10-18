@@ -18,8 +18,11 @@ expect:
 budget: { wall_minutes: 30, max_rounds: 14 }
 stub:
   - name: approve
-    covers: "codex writer round in the OS sandbox → checks → captain approves → export → Library"
+    covers: "codex writer round in the OS sandbox → checks → captain approves → export (the PDF printed by headless Chromium) → Library; the round's sandbox probe"
     provider: codex
+    setup: [probe]
+    topic: "Write a one-page memo that explains what Crew Studio's live acceptance run checks, for a new teammate.\n{probe}"
+    proves: [pdf-chromium, sandbox-probe]
     expect: { status: succeeded, result: done, visited: [intake, produce, draft, checks, refine, accept, export, library, done], not_visited: [closed], library: true, outputs: 1 }
   - name: changes-then-approve
     covers: "captain asks for changes with a note → a second draft round → approve"
@@ -27,12 +30,15 @@ stub:
     cards: [{ node: accept, answers: [changes, approve-draft], note: "Make the title shorter." }]
     expect: { status: succeeded, visited: [draft, accept, export, library, done], library: true, min_visits: { draft: 2, accept: 2 } }
   - name: claude
-    covers: "the same Task on the board's Claude provider: claude stream-json through the verified native receipt"
+    covers: "the same Task on the board's Claude provider: claude stream-json through the verified native receipt; the Claude round's sandbox probe"
     provider: claude
-    setup: [verify-claude]
+    setup: [verify-claude, probe-claude]
+    topic: "Write a one-page memo that explains what Crew Studio's live acceptance run checks, for a new teammate.\n{probe}"
+    proves: [pdf-chromium, sandbox-probe]
     expect: { status: succeeded, visited: [draft, checks, accept, export, library, done], library: true }
   - name: local-unrestricted
     covers: "the same Task with Studio in local-unrestricted mode (no OS sandbox, no egress proxy)"
     server: local-unrestricted
+    profiles: [default, sandboxed]   # the e2e gate is sandbox-only: nothing to prove here there
     provider: codex
     expect: { status: succeeded, visited: [draft, checks, accept, export, library, done], library: true }

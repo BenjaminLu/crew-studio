@@ -332,7 +332,9 @@ bun scripts/live-release.ts stop                   # stop the live release only
   exactly that path; a symlink or a stray folder is left alone.
 - **"Merge and restart"** is the last part of the path every change takes
   (CONTRIBUTING.md): independent review, rebase onto `origin/main`, the core suites
-  (`bun run test:core`), push the branch, merge the PR on GitHub, then
+  (`bun run test:core`), push the branch, merge the PR on GitHub, the pre-deploy
+  gate `bun run test:sandboxed-e2e` (every bundled workflow end to end with the OS
+  sandbox and egress proxy on), then
   `bun scripts/live-release.ts deploy` once no Task is in flight (`status` lists
   them; deploy refuses while a step runs), then a live end-to-end check of the
   workflow the change touches. Deploy uses exactly the merged `origin/main` commit,

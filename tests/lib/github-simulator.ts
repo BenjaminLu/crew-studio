@@ -19,6 +19,32 @@ export function githubSimulator(bare: string, repository = "fixture/project") {
   const shaped = (p: any) => ({ ...p, head: { ref: p.head.ref, sha: head(p.head.ref), repo: { full_name: repository } }, base: { ref: p.base.ref, sha: head(p.base.ref), repo: { full_name: repository } } });
   const logs = new Map<number, { text: string; range: string; location?: string; status?: number; contentRange?: string }>();
   const expected = new Map<string, { body?: any; value: any; status?: number; range?: string }>();
+  // autoCi: a repository whose base requires one check that GitHub reports green on every head, with no reviews or comments,
+  // and that accepts a merge of the exact head (the acceptance harness drives a whole Task against it, heads unknown upfront)
+  let auto: { check: string } | null = null;
+  const autoRead = (path: string, search: string): any => {
+    if (path === "/branches/main/protection/required_status_checks" && !search) return { strict: false, checks: [{ context: auto!.check, app_id: -1 }], contexts: [] };
+    if (path === "/branches/main/protection" && !search) return { required_status_checks: { strict: false, checks: [{ context: auto!.check, app_id: -1 }], contexts: [] } };
+    let m = /^\/commits\/([a-f0-9]{40})\/check-runs$/.exec(path); if (m && search === "?filter=all&per_page=100&page=1") return { total_count: 1, check_runs: [{ id: 1, name: auto!.check, head_sha: m[1], status: "completed", conclusion: "success", app: { id: 15368 }, details_url: null }] };
+    m = /^\/commits\/([a-f0-9]{40})\/status$/.exec(path); if (m && search === "?per_page=100&page=1") return { sha: m[1], total_count: 0, statuses: [] };
+    if (/^\/(?:pulls\/[1-9][0-9]*\/(?:reviews|comments)|issues\/[1-9][0-9]*\/comments)$/.test(path) && /^\?per_page=100&page=[1-9][0-9]*$/.test(search)) return [];
+    return undefined;
+  };
+  /** Merge pull request p into its base as GitHub does (a merge commit, a squash or a rebase); returns the new base head. */
+  const mergePull = (p: any, method: string, title?: string, message?: string) => {
+    const current = head(p.head.ref), base = head(p.base.ref); if (!current || !base) throw new Error("no head");
+    const dir = mkdtempSync(join(tmpdir(), "github-simulator-merge-"));
+    try {
+      must(dir, ["clone", "-q", "--no-local", bare, "."]);
+      if (method === "rebase") { must(dir, ["checkout", "-q", "-B", "fixture", current]); must(dir, ["rebase", base]); }
+      else { must(dir, ["checkout", "-q", "-B", "fixture", base]); must(dir, ["merge", method === "squash" ? "--squash" : "--no-ff", "--no-edit", ...(method === "merge" && title ? ["-m", title, ...(message ? ["-m", message] : [])] : []), current]);
+        if (method === "squash") must(dir, ["commit", "-q", "-m", title ?? "Squash fixture pull request", ...(message ? ["-m", message] : [])]); }
+      const next = must(dir, ["rev-parse", "HEAD"]);
+      must(dir, ["push", `--force-with-lease=refs/heads/${p.base.ref}:${base}`, "origin", `${next}:refs/heads/${p.base.ref}`]);
+      p.state = "closed"; p.merged = true; p.merge_commit_sha = next; p.merged_at = new Date().toISOString();
+      return next;
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  };
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     const u = new URL(req.url), prefix = `/repos/${repository}`;
     if (/^\/fixture-job-logs\/[1-9][0-9]*$/.test(u.pathname)) {
@@ -68,7 +94,7 @@ export function githubSimulator(bare: string, repository = "fixture/project") {
       else if (req.method === "PATCH" && keys(body, ["title", "body", "base"], ["base"]) && ("title" in body) === ("body" in body) && (!("title" in body) || (typeof body.title === "string" && typeof body.body === "string")) && head(body.base)) { Object.assign(p, { ...("title" in body ? { title: body.title, body: body.body } : {}), base: { ref: body.base } }); response = json(shaped(p)); }
       else return bad();
     } else if (req.method === "GET" && path === "" && !u.search && !expected.has("GET ")) {
-      response = json({ full_name: repository, default_branch: "main", private: true, visibility: "private" });
+      response = json({ full_name: repository, default_branch: "main", private: true, visibility: "private", ...(auto ? { allow_merge_commit: true, allow_squash_merge: true, allow_rebase_merge: true } : {}) });
     } else if (req.method === "GET" && path === "/commits/main" && !u.search) {
       const value = head("main"); if (!value) return json({ message: "Not Found" }, 404); response = json({ sha: value });
     } else if (req.method === "GET" && path.startsWith("/contents/")) {
@@ -76,7 +102,12 @@ export function githubSimulator(bare: string, repository = "fixture/project") {
       const file = decodeURIComponent(path.slice("/contents/".length)), text = community.get(file);
       if (text !== undefined) { const bytes = Buffer.from(text); response = json({ type: "file", path: file, size: bytes.length, encoding: "base64", content: bytes.toString("base64"), sha: createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex") }); }
       else { const children = [...community.keys()].filter((k) => k.startsWith(file + "/") && !k.slice(file.length + 1).includes("/")).map((k) => ({ type: "file", path: k })); if (!children.length) return json({ message: "Not Found" }, 404); response = json(children); }
+    } else if (auto && req.method === "GET" && autoRead(path, u.search) !== undefined) {
+      response = json(autoRead(path, u.search));
     } else {
+      // autoCi accepts a merge of the pull request's exact current head (the checks below still refuse a moved head)
+      if (auto && req.method === "PUT" && /^\/pulls\/[1-9][0-9]*\/merge$/.test(path) && !u.search && !expected.has(`PUT ${path}`) && body && typeof body.sha === "string" && ["merge", "squash", "rebase"].includes(body.merge_method))
+        expected.set(`PUT ${path}`, { value: { merged: true, message: "Pull Request successfully merged" }, body: { sha: body.sha, merge_method: body.merge_method } });
       const exact = expected.get(req.method + " " + path + u.search);
       const loose = path.endsWith("/merge") && body && typeof body === "object" && exact?.body && !("commit_title" in exact.body) && Object.keys(body).every((k) => ["sha", "merge_method", "commit_title", "commit_message"].includes(k)) && ["commit_title", "commit_message"].every((k) => body[k] === undefined || typeof body[k] === "string")
         ? Object.fromEntries(Object.entries(body).filter(([k]) => k !== "commit_title" && k !== "commit_message")) : body;
@@ -94,13 +125,7 @@ export function githubSimulator(bare: string, repository = "fixture/project") {
             must(dir, ["push", `--force-with-lease=refs/heads/${p.head.ref}:${current}`, "origin", `${next}:refs/heads/${p.head.ref}`]);
             response = json(exact.value, exact.status ?? 202);
           } else {
-            const method = body.merge_method;
-            if (method === "rebase") { must(dir, ["checkout", "-q", "-B", "fixture", current]); must(dir, ["rebase", base]); }
-            else { must(dir, ["checkout", "-q", "-B", "fixture", base]); must(dir, ["merge", method === "squash" ? "--squash" : "--no-ff", "--no-edit", ...(method === "merge" && body.commit_title ? ["-m", body.commit_title, ...(body.commit_message ? ["-m", body.commit_message] : [])] : []), current]);
-              if (method === "squash") must(dir, ["commit", "-q", "-m", body.commit_title ?? "Squash fixture pull request", ...(body.commit_message ? ["-m", body.commit_message] : [])]); }
-            const next = must(dir, ["rev-parse", "HEAD"]);
-            must(dir, ["push", `--force-with-lease=refs/heads/${p.base.ref}:${base}`, "origin", `${next}:refs/heads/${p.base.ref}`]);
-            p.state = "closed"; p.merged = true; p.merge_commit_sha = next;
+            const next = mergePull(p, body.merge_method, body.commit_title, body.commit_message);
             response = json({ ...exact.value, sha: next }, exact.status ?? 200);
           }
         } catch { response = json({ message: "Fixture merge conflict or lease mismatch" }, 409); }
@@ -133,6 +158,10 @@ export function githubSimulator(bare: string, repository = "fixture/project") {
       if (mutation && (!/^[a-f0-9]{40}$/.test(body.sha ?? body.expected_head_sha) || (path.endsWith("merge") && !["merge", "squash", "rebase"].includes(body.merge_method)))) throw new Error("unsupported simulator mutation arguments");
       expected.set(`${method} ${path}`, { value, body, status, range });
     },
+    /** GitHub reports one required check, green on every head, and accepts a merge of the exact head (see autoRead) */
+    autoCi(check = "ci") { auto = { check }; },
+    /** The captain merges pull request n on GitHub's own page (not through Studio). Returns the new base head. */
+    mergeOnGitHub(n: number, method: "merge" | "squash" | "rebase" = "squash") { const p = pulls.get(n); if (!p || p.state !== "open") throw new Error(`no open pull request #${n}`); return mergePull(p, method, `${p.title} (#${n})`); },
     stop() { held?.release(); server.stop(true); }
   };
 }

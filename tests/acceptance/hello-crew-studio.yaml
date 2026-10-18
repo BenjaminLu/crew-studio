@@ -14,3 +14,7 @@ stub:
   - name: preview
     covers: "built-in source generates a real website without models, then waits for the captain to preview and approve"
     expect: { status: waiting, visited: [build, preview], not_visited: [done], waiting_on: preview }
+  - name: approve
+    covers: "the same website, previewed and approved by the captain → done"
+    cards: [{ node: preview, answer: approve }]
+    expect: { status: succeeded, visited: [build, preview, done] }

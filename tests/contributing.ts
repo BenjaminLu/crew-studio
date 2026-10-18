@@ -14,8 +14,10 @@ const order = ["Independent review", "Rebase", "Core suites", "Push", "Merge", "
 ok(order.every((i, n) => i > 0 && (n === 0 || i > order[n - 1])), "CONTRIBUTING.md: review → rebase → core suites → push → merge → deploy → live check, in that order", JSON.stringify(order));
 ok(/no Task is in flight/.test(doc) && /isolated-env\.mjs/.test(doc) && /checkedTempDir/.test(doc) && /opencc-js/.test(doc) && /No session links/.test(doc) && /git stash/.test(doc) && /git add -A/.test(doc),
   "CONTRIBUTING.md names deploy-only-when-idle, the test entry guard, the git-config guard, opencc-js only, no session links and the git prohibitions");
-for (const s of ["tests/env-isolation.ts", "tests/git-config-guard.ts", "test:firstmate-staffing", "tests/smoke-code.ts", "test:acceptance", "tests/privacy.ts", "tests/opencc-only.ts", "run build"])
+for (const s of ["tests/env-isolation.ts", "tests/git-config-guard.ts", "test:firstmate-staffing", "tests/smoke-code.ts", "test:acceptance", "test:sandboxed-e2e:fast", "tests/privacy.ts", "tests/opencc-only.ts", "run build"])
   ok(core.includes(s), `test:core runs ${s}`, core);
 ok(/privacy, opencc-only, and the build/.test(doc) && /bun run test:core/.test(doc) && /bun run test:core/.test(setup) && /no Task is in flight/.test(setup) && /live end-to-end check/.test(setup), "the setup guide's merge text follows the same path");
+ok(/bun run test:sandboxed-e2e`/.test(doc) && /bun run test:sandboxed-e2e`/.test(setup) && /--e2e/.test(JSON.parse(readFileSync(join(root, "package.json"), "utf8")).scripts["test:sandboxed-e2e"] ?? ""),
+  "the pre-deploy gate (every bundled workflow with the sandbox on) is named before deploy in CONTRIBUTING.md and the setup guide");
 console.log(`\ncontributing: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

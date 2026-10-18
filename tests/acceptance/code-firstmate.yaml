@@ -21,11 +21,12 @@ stub:
     topic: "Add one sentence to the README that says how to run the offline tests.\nSTUB_FILE test/readme.test.ts :: import { test } from 'bun:test';\\n"
     expect: { waiting_on: dispatch, visited: [intake, prepare, spec] }
   - name: firstmate-merge
-    covers: "Firstmate proposes on the sandbox project → dispatch → spec → build (worker writes the change and its test) → CI → review → local merge"
+    covers: "Firstmate proposes on the sandbox project → dispatch → spec → build (worker writes the change and its test; bun test fails on the base, passes on the head) → CI → review → designer captures → local merge; every round's sandbox probe"
     how: firstmate
-    setup: [staffing-code]
+    setup: [staffing-code, probe]
     params: { project: sandbox }
-    topic: "Add a 10% discount helper\nSTUB_FILE src/discount.ts :: export const discount = (p: number) => Math.round(p * 90) / 100;\\n\nSTUB_FILE test/discount.test.ts :: import { test, expect } from 'bun:test';\\ntest('ten percent off', async () => { expect(await Bun.file(new URL('../src/discount.ts', import.meta.url)).exists()).toBe(true); const { discount } = await import('../src/discount'); expect(discount(100)).toBe(90); });\\n"
+    proves: [fail-first, captures, sandbox-probe]
+    topic: "Add a 10% discount helper\n{probe}\nSTUB_FILE src/discount.ts :: export const discount = (p: number) => Math.round(p * 90) / 100;\\n\nSTUB_FILE test/discount.test.ts :: import { test, expect } from 'bun:test';\\ntest('ten percent off', async () => { expect(await Bun.file(new URL('../src/discount.ts', import.meta.url)).exists()).toBe(true); const { discount } = await import('../src/discount'); expect(discount(100)).toBe(90); });\\n"
     needs: [renderer]   # src/ is a UI path in the sandbox project: the designer captures the change
     cards: [{ node: dispatch, answer: dispatch }, { node: merge-card, answer: merge }]
     timeout_s: 240
@@ -52,3 +53,23 @@ stub:
       - { node: merge-card, answer: merge }
     timeout_s: 240
     expect: { status: succeeded, result: done, visited: [spec, dispatch, build, merge, done], not_visited: [scope-card, parked], min_visits: { build: 2 } }
+  - name: github-merge-on-github
+    covers: "a project on the GitHub simulator (merging from Studio off): spec → build → push → pull request opened from the repository's template text on the captain's card → CI and GitHub's required check → review → designer → merge card says merge it on GitHub → the captain merges there and closes the card → Studio finds it merged at the gated head → after-merge → done"
+    how: firstmate
+    setup: [github-sim, staffing-code]
+    params: { project: "{project}" }
+    needs: [renderer]
+    topic: "Add a 10% discount helper\nSTUB_FILE src/discount.ts :: export const discount = (p: number) => Math.round(p * 90) / 100;\\n\nSTUB_FILE test/discount.test.ts :: import { test, expect } from 'bun:test';\\ntest('ten percent off', async () => { expect(await Bun.file(new URL('../src/discount.ts', import.meta.url)).exists()).toBe(true); const { discount } = await import('../src/discount'); expect(discount(100)).toBe(90); });\\n"
+    cards: [{ node: dispatch, answer: dispatch }, { node: remote-ready, answer: open }, { node: merge-card, answer: close, before: github-merge }]
+    timeout_s: 300
+    expect: { status: succeeded, result: done, visited: [spec, dispatch, build, pr-open, ci, review, remote-ready, merge-card, merge, after-merge, done], not_visited: [closed] }
+  - name: github-merge-from-studio
+    covers: "the same with the operations grant: the captain merges on the merge card and Studio merges the pull request on GitHub (the simulator's squash) → after-merge → done"
+    how: firstmate
+    setup: [github-sim-ops, staffing-code]
+    params: { project: "{project}" }
+    needs: [renderer]
+    topic: "Add a 10% discount helper\nSTUB_FILE src/discount.ts :: export const discount = (p: number) => Math.round(p * 90) / 100;\\n\nSTUB_FILE test/discount.test.ts :: import { test, expect } from 'bun:test';\\ntest('ten percent off', async () => { expect(await Bun.file(new URL('../src/discount.ts', import.meta.url)).exists()).toBe(true); const { discount } = await import('../src/discount'); expect(discount(100)).toBe(90); });\\n"
+    cards: [{ node: dispatch, answer: dispatch }, { node: remote-ready, answer: open }, { node: merge-card, answer: merge }]
+    timeout_s: 300
+    expect: { status: succeeded, result: done, visited: [spec, dispatch, build, pr-open, ci, review, remote-ready, merge-card, merge, after-merge, done] }

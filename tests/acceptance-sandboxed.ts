@@ -21,5 +21,31 @@ ok(/PASS\s+documents:approve/.test(out), "a run that needs no install passes wit
 ok(/SKIPPED\s+documents:local-unrestricted\n\s+the sandboxed profile runs only with the OS sandbox on/.test(out), "a local-unrestricted run is skipped, even with CREW_LOCAL_UNRESTRICTED=1 in the caller's environment", out);
 ok(/SKIPPED\s+video:approve\n\s+needs renderer \(render renders the film to MP4\)/.test(out), "video is skipped naming the renderer: no stand-in renderer and no browser cache in this profile", out);
 ok(/Installs per workflow \(sandboxed profile/.test(out) && /\n  video\s+renderer MISSING, ffmpeg (installed|MISSING)/.test(out) && /\n  documents\s+nothing beyond Studio/.test(out), "the summary lists which workflow needs which install", out);
+
+// --e2e (bun run test:sandboxed-e2e): the pre-deploy gate never skips. No Chromium at all refuses to start; a Chromium cache with
+// nothing in it fails the film run (the renderer is real there: no stand-in), never skips it
+{
+  const { mkdtempSync, rmSync } = await import("node:fs"); const { tmpdir } = await import("node:os");
+  const none = Bun.spawnSync(["bun", join(import.meta.dir, "../scripts/acceptance-sandboxed.ts"), "--e2e"], { env: { ...(process.env as Record<string, string>), PLAYWRIGHT_BROWSERS_PATH: "/nonexistent/ms-playwright", ACCEPTANCE_ONLY: "video:approve" }, stdout: "pipe", stderr: "pipe" });
+  ok(none.exitCode === 1 && /sandboxed e2e needs Playwright's Chromium/.test(none.stdout.toString()), "e2e: no Playwright browser cache is a failure that names the install", none.stdout.toString());
+  const empty = mkdtempSync(join(tmpdir(), "crew-e2e-no-chromium-"));
+  try {
+    const r = Bun.spawnSync(["bun", join(import.meta.dir, "../scripts/acceptance-sandboxed.ts"), "--e2e"], { env: { ...(process.env as Record<string, string>), PLAYWRIGHT_BROWSERS_PATH: empty, ACCEPTANCE_ONLY: "video:approve,documents:local-unrestricted" }, stdout: "pipe", stderr: "pipe" });
+    const o = r.stdout.toString() + r.stderr.toString();
+    ok(r.exitCode === 1 && /FAIL\s+video:approve/.test(o) && !/SKIPPED\s+video:approve/.test(o), "e2e: a film that cannot render with the sandbox on fails the gate (never skipped)", o.slice(-1500));
+    ok(!/documents:local-unrestricted/.test(o), "e2e: a local-unrestricted run is not part of the sandbox-only gate", o.slice(-800));
+  } finally { rmSync(empty, { recursive: true, force: true }); }
+}
+
+// the sandbox probe's verdict (tests/acceptance/proves.ts): exactly what a sandboxed round may do passes; each way around it is named
+{
+  const { probeProblems } = await import("./acceptance/proves");
+  const good = { proxyEnv: true, noProxyLoopbackOnly: true, directPublic: { ok: false, error: "EPERM" }, directSink: { ok: false, error: "EPERM" }, toolListener: { ok: true }, providerViaProxy: { status: 200 }, otherViaProxy: { status: 403 }, noCredentialViaProxy: { status: 407 }, ownLogin: "env:CLAUDE_CODE_OAUTH_TOKEN", ownLoginRefresh: null, otherCredentials: [], denied: { "/x/ledger.key": false }, tmpWritable: true, nowrite: { "/x/data": false } };
+  ok(probeProblems(good).length === 0, "probe: a round that reaches only its provider through the proxy and reads only its own login passes", JSON.stringify(probeProblems(good)));
+  const open = { ...good, proxyEnv: false, directPublic: { ok: true }, directSink: { ok: true }, otherViaProxy: { status: 200 }, ownLoginRefresh: "refresh", otherCredentials: ["GITHUB_TOKEN"], denied: { "/x/ledger.key": true }, nowrite: { "/x/data": true } };
+  const bad = probeProblems(open).join(" | ");
+  ok(["no egress proxy", "public address went out", "sink", "host off the round's list", "refresh token", "GITHUB_TOKEN", "could read /x/ledger.key", "could write into /x/data"].every((w) => bad.includes(w)), "probe: an unsandboxed round fails, naming each way out", bad);
+  ok(probeProblems({ ...good, providerViaProxy: { status: 403 } }).some((p) => /provider's API host/.test(p)), "probe: a proxy that refuses the round's own provider fails");
+}
 console.log(`\nacceptance-sandboxed: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

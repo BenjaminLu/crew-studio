@@ -18,16 +18,20 @@
 //                 outputs: 1, min_visits: { draft: 2 }, approved: "startup-{task}", waiting_on: node }
 //       board_refusal: { status: 409, error: "regex" }   # the board start must be refused this way
 //       needs: [ffmpeg, renderer]          # local tools the run needs; without one it is SKIPPED (not passed)
+//       proves: [captures, fail-first]    # real side effects the Task must leave behind (tests/acceptance/proves.ts)
+//       profiles: [sandboxed-e2e]          # the harness profiles the run belongs to (default: every profile); a run whose path
+//                                          # depends on an install one profile has and another lacks names its profiles
 //       known_failure: { observed: …, match: "regex", root_cause: "file:line …", covered_by: … }
 //                                          # match: the run's failure text must match it, or the run is a FAIL
 import { decideCard, type RunContext, type Scenario } from "../../scripts/acceptance/scenarios";
+import { PROVES } from "./proves";
 
 export type StubCard = { node: string; answers: string[]; note: string | null; before: string | null };
 export type StubExpect = { status?: "succeeded" | "failed" | "cancelled"; result?: string | null; visited: string[]; not_visited: string[]; library: boolean; outputs?: number; min_visits: Record<string, number>; approved?: string; waiting_on?: string };
 export type KnownFailure = { observed: string; match: RegExp; root_cause: string; covered_by?: string };
 export type StubRun = { workflow: string; name: string; covers: string; how: "board" | "firstmate" | "proposal" | "register" | "staffing" | "connect" | "grant-merge" | "crew" | "retired" | "held"; server: "sandbox" | "local-unrestricted";
   provider: string | null; topic: string; params: Record<string, string>; setup: string[]; cards: StubCard[]; expect: StubExpect | null; board_refusal: { status: number; error: RegExp } | null;
-  known_failure: KnownFailure | null; target: { workflow: string; params: Record<string, string> } | null; timeout_s: number; needs: string[]; shared: Scenario };
+  known_failure: KnownFailure | null; target: { workflow: string; params: Record<string, string> } | null; timeout_s: number; needs: string[]; profiles: string[]; proves: string[]; shared: Scenario };
 
 const HOWS = ["board", "firstmate", "proposal", "register", "staffing", "connect", "grant-merge", "crew", "retired", "held"];
 const isObj = (v: unknown): v is Record<string, any> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -36,13 +40,15 @@ const strings = (v: unknown, at: string): string[] => { if (v === undefined) ret
 /** The local tools a run may need (tests/acceptance/studio.ts provides them). */
 /** ffmpeg: a real sample film for the stub renderer; renderer: Playwright + Chromium (the designer's captures, a film render), checked only in the sandboxed profile (elsewhere the stand-in renderer serves) */
 export const TOOLS = ["ffmpeg", "renderer"];
+/** default: the stand-in renderer (bun run test:acceptance); sandboxed: no tool cache; sandboxed-e2e: this Mac's tools (scripts/acceptance-sandboxed.ts) */
+export const PROFILES = ["default", "sandboxed", "sandboxed-e2e"];
 const needsOf = (v: unknown, at: string) => { const n = strings(v, `${at} needs`); for (const t of n) if (!TOOLS.includes(t)) throw new Error(`${at}: needs names an unknown tool ${t} (known: ${TOOLS.join(", ")})`); return n; };
 
 export function stubRuns(s: Scenario): StubRun[] {
   const where = `${s.file ?? s.workflow} stub`; const seen = new Set<string>();
   return (s.stub ?? []).map((raw: any, i) => {
     const at = `${where}[${i}]`;
-    const known = ["name", "covers", "how", "server", "provider", "topic", "params", "setup", "cards", "expect", "board_refusal", "known_failure", "target", "timeout_s", "needs"];
+    const known = ["name", "covers", "how", "server", "provider", "topic", "params", "setup", "cards", "expect", "board_refusal", "known_failure", "target", "timeout_s", "needs", "profiles", "proves"];
     for (const k of Object.keys(raw)) if (!known.includes(k)) throw new Error(`${at}: unknown field ${k}`);
     if (typeof raw.name !== "string" || !raw.name || seen.has(raw.name)) throw new Error(`${at}: needs a unique name`); seen.add(raw.name);
     if (typeof raw.covers !== "string" || !raw.covers.trim()) throw new Error(`${at}: covers says what the run proves`);
@@ -67,11 +73,13 @@ export function stubRuns(s: Scenario): StubRun[] {
     if (kf) for (const k of Object.keys(kf)) if (!["observed", "match", "root_cause", "covered_by"].includes(k)) throw new Error(`${at} known_failure: unknown field ${k}`);
     const br = raw.board_refusal; if (br !== undefined && (!isObj(br) || !Number.isInteger(br.status) || typeof br.error !== "string")) throw new Error(`${at}: board_refusal needs status and error`);
     const tg = raw.target; if (tg !== undefined && (!isObj(tg) || typeof tg.workflow !== "string")) throw new Error(`${at}: target needs a workflow`);
+    const profiles = raw.profiles === undefined ? PROFILES : strings(raw.profiles, `${at} profiles`); for (const p of profiles) if (!PROFILES.includes(p)) throw new Error(`${at}: profiles names an unknown profile ${p} (known: ${PROFILES.join(", ")})`);
+    const proves = strings(raw.proves, `${at} proves`); for (const p of proves) if (!PROVES.includes(p)) throw new Error(`${at}: proves names an unknown proof ${p} (known: ${PROVES.join(", ")})`);
     if (["proposal", "register", "staffing"].includes(how) && !tg) throw new Error(`${at}: how ${how} needs a target workflow`);
     return { workflow: s.workflow, name: raw.name, covers: raw.covers.trim(), how, server, provider: raw.provider === undefined ? s.start.provider : raw.provider, topic: raw.topic ?? s.topic,
       params: raw.params ?? {}, setup: strings(raw.setup, `${at} setup`), cards, expect, board_refusal: br ? { status: br.status, error: new RegExp(br.error) } : null,
       known_failure: kf ? { observed: kf.observed, match: new RegExp(kf.match), root_cause: kf.root_cause, ...(kf.covered_by ? { covered_by: kf.covered_by } : {}) } : null,
-      target: tg ? { workflow: tg.workflow, params: tg.params ?? {} } : null, timeout_s: Number(raw.timeout_s ?? 120), needs: needsOf(raw.needs, at), shared: s };
+      target: tg ? { workflow: tg.workflow, params: tg.params ?? {} } : null, timeout_s: Number(raw.timeout_s ?? 120), needs: needsOf(raw.needs, at), profiles, proves, shared: s };
   });
 }
 
