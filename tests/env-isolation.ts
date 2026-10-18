@@ -6,7 +6,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // first, and every bun child a test starts inherits --no-env-file.
 // This suite fails when a hostile .env reaches a test or a child it starts, or when
 // a test entry lacks the guard.     bun tests/env-isolation.ts
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 let pass = 0, fail = 0;
@@ -116,6 +116,36 @@ const OPERATOR = ["CREW_LOCAL_UNRESTRICTED", "CREW_LOCAL_DEPENDENCY_ROOT", "CREW
   ok(forged.code !== 0 && /restarted test run still has/.test(forged.err) && !forged.self, "a forged restart mark with the .env loaded stops the run with a clear message (exit 1)", JSON.stringify(forged));
   const forgedGit = run(setup({}), ["sh", "-c", "CREW_TEST_RESTARTED_BY=$$ GIT_DIR=/nonexistent/.git BUN_OPTIONS=--no-env-file bun guarded.ts; exit $?"]);
   ok(forgedGit.code !== 0 && /GIT_DIR/.test(forgedGit.err), "a forged restart mark with GIT_DIR set stops the run too", JSON.stringify(forgedGit));
+}
+
+// ---------- no test reaches the real Claude or Codex CLI ----------
+{
+  const dir = mkdtempSync(join(tmpdir(), "crew-env-isolation-cli-"));
+  // an operator shell: the real PATH (no sentinel), no guard marks, no CLI overrides
+  const sentinel = process.env.CREW_TEST_CLI_SENTINEL!;
+  const fresh: Record<string, string> = { ...(process.env as any), PATH: (process.env.PATH || "").split(":").filter((d) => d !== sentinel).join(":") };
+  for (const k of ["BUN_OPTIONS", "CREW_TEST_ENV_ISOLATED", "CREW_TEST_RESTARTED_BY", "CREW_TEST_CLI_SENTINEL", "CREW_CLAUDE_BIN", "CREW_CODEX_BIN", "CREW_HOST_CLAUDE_BIN", "CREW_HOST_CODEX_BIN"]) delete fresh[k];
+  // a fake "real" CLI on the operator's PATH: if the sentinel let a call through, it would answer 0
+  const real = join(dir, "real-bin"); mkdirSync(real);
+  for (const b of ["claude", "codex"]) { writeFileSync(join(real, b), `#!/bin/sh\necho REAL-${b}\nexit 0\n`); chmodSync(join(real, b), 0o755); }
+  fresh.PATH = `${real}:${fresh.PATH}`;
+  const body = (head: string, call: string) => `${head}\nimport { spawnSync } from "node:child_process";\n${call}\nconsole.log(JSON.stringify({ bins: ["CREW_CLAUDE_BIN","CREW_CODEX_BIN","CREW_HOST_CLAUDE_BIN","CREW_HOST_CODEX_BIN"].map(k => process.env[k]) }));\n`;
+  const runs = `const r = spawnSync("claude", ["auth", "status", "--json"], { encoding: "utf8", env: { PATH: process.env.PATH } }); console.log("child exit " + r.status + " " + (r.stdout || "").trim());`;
+  writeFileSync(join(dir, "leaks.ts"), body(`import ${JSON.stringify(guard)};`, runs));
+  writeFileSync(join(dir, "leaks.mjs"), body(`import ${JSON.stringify(guard)};`, runs.replace('"claude"', '"codex"')));
+  writeFileSync(join(dir, "clean.ts"), body(`import ${JSON.stringify(guard)};`, ""));
+  writeFileSync(join(dir, "nests.ts"), `import ${JSON.stringify(guard)};\nimport { spawnSync } from "node:child_process";\nconst r = spawnSync("bun", ["leaks.ts"], { cwd: ${JSON.stringify(dir)}, encoding: "utf8" });\nconsole.log("nested exit " + r.status);\n`);
+  const run = (cmd: string, file: string) => { const r = Bun.spawnSync([cmd, file], { cwd: dir, env: fresh, stdout: "pipe", stderr: "pipe" }); return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() }; };
+  const leak = run("bun", "leaks.ts");
+  ok(leak.code === 1 && /child exit 97/.test(leak.out) && !/REAL-claude/.test(leak.out) && /FAIL 1 call\(s\) reached the real CLI/.test(leak.err) && /claude auth status --json/.test(leak.err), "a bun test whose child runs `claude` from PATH never reaches the real CLI and fails, naming the call", JSON.stringify(leak));
+  const nodeLeak = run("node", "leaks.mjs");
+  ok(nodeLeak.code === 1 && /child exit 97/.test(nodeLeak.out) && /codex auth status --json/.test(nodeLeak.err), "a node test entry is caught the same way (codex too)", JSON.stringify(nodeLeak));
+  const nested = run("bun", "nests.ts");
+  ok(nested.code === 1 && /nested exit 0/.test(nested.out) && /claude auth status/.test(nested.err), "a test entry another test starts shares the sentinel: its call fails the outermost run", JSON.stringify(nested));
+  const clean = run("bun", "clean.ts");
+  let bins: string[] = []; try { bins = JSON.parse(clean.out.trim().split("\n").at(-1)!).bins; } catch {}
+  ok(clean.code === 0 && bins.length === 4 && bins.every((b) => b.startsWith("/nonexistent/crew-test-cli/")), "a test that runs no CLI passes; the CLI settings default to a CLI that is not installed", JSON.stringify(clean));
+  ok(!readdirSync(tmpdir()).some((n) => n.startsWith("crew-test-cli-sentinel-") && readFileSync(join(tmpdir(), n, "calls.log"), "utf8").includes(dir)), "each run removes its sentinel folder");
 }
 
 console.log(`\nenv-isolation: ${pass} passed, ${fail} failed`);

@@ -4,7 +4,11 @@ const root=dirname(process.argv[1]),mode=basename(process.argv[1]).replace('.mjs
 const put=x=>process.stdout.write(JSON.stringify(x)+'\n');
 // the acceptance harness's login (tests/acceptance.ts) leaves no trace next to this file: its rounds cannot write here
 const acceptance=/^sk-ant-oat01-acceptance/.test(process.env.CLAUDE_CODE_OAUTH_TOKEN??'');
-if(!acceptance)appendFileSync(trace,JSON.stringify({mode,phase:args[0]==='auth'?'auth':'model',home:process.env.HOME,config:process.env.CLAUDE_CONFIG_DIR,credentialKeys:['CLAUDE_CODE_OAUTH_TOKEN','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN'].filter(k=>process.env[k]),effort:args[args.indexOf('--effort')+1],settings:args.includes('--settings')?JSON.parse(args[args.indexOf('--settings')+1]):null})+'\n');
+// the free model list (src/providers/claude-native.ts models()): print mode over stream-json with no prompt, answered on initialize
+const listing=args[0]==='-p'&&args[1]==='--input-format'&&args[2]==='stream-json',has=(k,v)=>args.includes(k)&&(v===undefined||args[args.indexOf(k)+1]===v);
+// a listing only with the discovery's authority: no prompt, no tools, no MCP, no settings, no session file, restricted
+if(listing&&!(has('--output-format','stream-json')&&has('--tools','')&&has('--setting-sources','')&&has('--strict-mcp-config')&&has('--mcp-config','{"mcpServers":{}}')&&has('--no-session-persistence')&&has('--restricted')&&has('--permission-prompts','none')&&!has('--dangerously-skip-permissions')&&!has('--bare')&&!has('--model')))throw Error('listing authority widened');
+if(!acceptance)appendFileSync(trace,JSON.stringify({mode,phase:args[0]==='auth'?'auth':listing?'models':'model',home:process.env.HOME,config:process.env.CLAUDE_CONFIG_DIR,credentialKeys:['CLAUDE_CODE_OAUTH_TOKEN','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN'].filter(k=>process.env[k]),effort:args[args.indexOf('--effort')+1],settings:args.includes('--settings')?JSON.parse(args[args.indexOf('--settings')+1]):null})+'\n');
 if(JSON.stringify(args)==='["auth","status","--json"]'){
  if(mode==='auth-unknown'){put({loggedIn:'true',authMethod:'oauth_token',apiProvider:'firstParty'});process.exit(0);}
  // macOS Keychain lookup needs the login user: without USER/LOGNAME the real CLI reports no login
@@ -12,6 +16,12 @@ if(JSON.stringify(args)==='["auth","status","--json"]'){
  if(mode==='missing'){put({loggedIn:false,authMethod:'none',apiProvider:'firstParty',configDirectory:root});process.exit(1);}
  put({loggedIn:true,authMethod:'claude.ai',apiProvider:mode==='third-party'?'bedrock':'firstParty',configDirectory:root,email:'PRIVATE_ACCOUNT_DO_NOT_RETURN'});process.exit(0);
 }
+if(listing){const{createInterface}=await import('node:readline');const all=['low','medium','high','xhigh','max'];
+ createInterface({input:process.stdin}).on('line',line=>{let m;try{m=JSON.parse(line);}catch{return;}
+  // anything but the initialize request is a turn, traced as a model request so a test forbidding those catches it
+  if(m.type!=='control_request'||m.request?.subtype!=='initialize'){if(!acceptance)appendFileSync(trace,JSON.stringify({mode,phase:'model',listingTurn:m.type})+'\n');process.exit(3);}
+  if(m.type==='control_request'&&m.request?.subtype==='initialize')put({type:'control_response',response:{subtype:'success',request_id:m.request_id,response:{models:['claude-opus-5-5','claude-sonnet-5-5','claude-haiku-5-5'].map(id=>({value:id,resolvedModel:id,displayName:id,supportsEffort:true,supportedEffortLevels:all}))}}});}).on('close',()=>process.exit(0));
+ await new Promise(()=>{});}
 if(args[0]!=='-p'||args[2]!=='--output-format'||args[3]!=='stream-json'||!args.includes('--restricted')||args.includes('--dangerously-skip-permissions')||args.includes('--bare'))throw Error('unsupported invocation');
 const model=args[args.indexOf('--model')+1],get=k=>args[args.indexOf(k)+1];
 const canary=args.includes('--max-turns');

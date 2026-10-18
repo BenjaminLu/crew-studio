@@ -12,7 +12,7 @@ export type CrewViewDeps={defs:WorkflowDefs;store:CrewStore;
  /** the judged checks of a definition, on their reviewing seats (src/crew-guard.ts judgeSlots): shown and counted like nodes */
  judges?:(def:any)=>JudgeSlot[];
  /** a role's skill as agents receive it (src/runtime/engine.ts roleSkillUse): ref, Studio's version, sha256 of the exact text */
- roleSkill?:(def:any,role:string|null)=>RoleSkillView|null;facts:()=>{provider:string;models:{id:string;efforts:string[]}[]}[];library:()=>{id:string;name:string;description?:string;current:number;sha256:string}[];
+ roleSkill?:(def:any,role:string|null)=>RoleSkillView|null;facts:()=>CrewFacts[];library:()=>{id:string;name:string;description?:string;current:number;sha256:string}[];
  /** the registered projects the page can choose ("only this project") */
  projects?:()=>{id:string;name:string}[]};
 const PROJECT=/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,199}$/;
@@ -21,6 +21,25 @@ export type RoleSkillView={ref:string|null;version:number|null;sha256:string;par
 export const roleSkillLabel=(r:RoleSkillView)=>(r.parts?.length?r.parts.map(p=>p.ref):[r.ref??'']).map(x=>x.split(/[/:]/).pop()||x).join(' + ');
 /** A judged check's own duty skills: the pins on its ref, on the node it sits on or on an edge into that node. */
 export const checkPins=(def:any,node:string,check:string)=>{const n=def.nodes.find((x:any)=>x.id===node);const refs=[...(n?.checks??[]),...def.edges.filter((e:any)=>e.to===node).flatMap((e:any)=>e.checks??[])];return(refs.find((c:any)=>c.use===check&&Array.isArray(c.skills))?.skills??[]) as {id:string;v:number;sha256:string}[];};
+/** A provider's staffing facts as the Crew page reads them (src/firstmate-staffing.ts StaffingFacts). */
+export type CrewFacts={provider:string;models:{id:string;efforts:string[]}[];candidates?:{id:string;efforts:string[]}[];auth?:string;reason?:string;
+ detectedAt?:number;inventory?:'detected'|'unverified-fallback'|'unavailable';inventoryReason?:string;login?:'logged-in'|'not-logged-in'|'unknown'};
+export type CrewModel={provider:string;model:string;efforts:string[];available:boolean;unverified?:true};
+/** The models to choose from: every model a provider reports on this machine right now (the Codex probe's list, the Claude
+ * CLI's own list), each with the efforts it reported; nothing else. A model the team still uses that is no longer reported
+ * stays, marked unavailable, so the page can show it. Per provider: login, how many models, when they were read, and why not. */
+export function crewModels(facts:CrewFacts[],team:Team){
+ const models:CrewModel[]=[];const add=(m:CrewModel)=>{if(!models.some(x=>x.provider===m.provider&&x.model===m.model))models.push(m);};
+ for(const f of facts)for(const m of[...f.models,...f.candidates??[]])add({provider:f.provider,model:m.id,efforts:m.efforts,available:true,...f.inventory==='unverified-fallback'?{unverified:true as const}:{}});
+ for(const m of Object.values(team.members))add({provider:m.provider,model:m.model,efforts:[],available:false});
+ for(const w of Object.values(team.workflows))for(const o of Object.values(w.nodes))if(o.model)add({provider:o.provider??'codex',model:o.model,efforts:[],available:false});
+ for(const pr of Object.values(team.projects??{}))for(const [seat,o] of Object.entries(pr.seats))if(o.model)add({provider:o.provider??team.members[seat]?.provider??'codex',model:o.model,efforts:[],available:false});
+ const providers=(['codex','claude'] as const).map(id=>{const f=facts.find(x=>x.provider===id),count=models.filter(m=>m.provider===id&&m.available).length;
+  if(!f)return{provider:id,state:'unread' as const,login:'unknown' as const,count,detectedAt:null,reason:null};
+  const state=f.inventory??(count?'detected':'unavailable');
+  return{provider:id,state,login:f.login??(f.auth==='verified'?'logged-in' as const:'unknown' as const),count,detectedAt:f.detectedAt??null,reason:f.inventoryReason??(state==='detected'?null:f.reason??null)};});
+ return{models,providers};
+}
 /** The workflows the team staffs: every selectable workflow with an agent node (the startup competition keeps its own pick). */
 export const crewWorkflows=(defs:WorkflowDefs)=>defs.catalog().map(w=>defs.get(w.id,w.version)).filter((d:any)=>d&&d.kind!=='startup-recursion'&&slotsOf(d).length>0) as any[];
 export function crewView(d:CrewViewDeps,project:string|null=null){
@@ -48,18 +67,23 @@ export function crewView(d:CrewViewDeps,project:string|null=null){
  // the projects to choose from: the registered ones, then any the team already overrides
  const projects:{id:string;name:string;custom:boolean}[]=[];for(const p of (()=>{try{return d.projects?.()??[];}catch{return [];}})())projects.push({id:p.id,name:p.name,custom:!!team.projects?.[p.id]});
  for(const id of Object.keys(team.projects??{}))if(!projects.some(p=>p.id===id))projects.push({id,name:id,custom:true});
- // models to choose from: the verified facts, then every model the team already uses
- const models:{provider:string;model:string;efforts:string[]}[]=[];const add=(provider:string,model:string,efforts:string[])=>{if(!models.some(m=>m.provider===provider&&m.model===model))models.push({provider,model,efforts});};
- for(const f of d.facts())for(const m of f.models)add(f.provider,m.id,m.efforts);
- for(const m of Object.values(team.members))add(m.provider,m.model,m.provider==='claude'?[]:EFFORTS.slice(2,6));
- for(const w of Object.values(team.workflows))for(const o of Object.values(w.nodes))if(o.model)add(o.provider??'codex',o.model,EFFORTS.slice(2,6));
- return{team:cfg?{version:cfg.version,hash:cfg.hash,approval:cfg.approval}:null,project,projects,workflows,seats,models,efforts:EFFORTS.slice(2,6),library:lib.map(s=>({id:s.id,name:s.name,v:s.current,sha256:s.sha256,description:s.description??''})),presets:Object.entries(PRESETS).map(([id,p])=>({id,en:p.en,zh:p.zh}))};
+ const {models,providers}=crewModels(d.facts(),team);
+ return{team:cfg?{version:cfg.version,hash:cfg.hash,approval:cfg.approval}:null,project,projects,workflows,seats,models,providers,efforts:EFFORTS.slice(2,6),library:lib.map(s=>({id:s.id,name:s.name,v:s.current,sha256:s.sha256,description:s.description??''})),presets:Object.entries(PRESETS).map(([id,p])=>({id,en:p.en,zh:p.zh}))};
 }
-export function crewRoutes(d:CrewViewDeps&{refreshFacts?:()=>Promise<unknown>}){
+/** How long a model detection is reused when the page opens again (the 重新偵測 button always detects afresh). */
+export const DETECT_REUSE_MS=60_000;
+/** 重新偵測 within this long of the last detection reuses it: repeated clicks never stack probes. */
+export const DETECT_FORCE_MIN_MS=10_000;
+export function crewRoutes(d:CrewViewDeps&{refreshFacts?:()=>Promise<unknown>;reuseMs?:number;forceMinMs?:number}){
  const json=(v:unknown,status=200)=>new Response(JSON.stringify(v),{status,headers:{'content-type':'application/json','cache-control':'no-store'}});
+ // GET /api/team?facts=1 (the page opening) detects the models again unless a detection finished within reuseMs;
+ // &force=1 (重新偵測) does unless one finished within forceMinMs. Concurrent requests share one detection: the probes are free but not instant.
+ let detectedAt=0,detecting:Promise<unknown>|null=null;
+ const detect=(force:boolean)=>{if(!d.refreshFacts)return null;if(detecting)return detecting;if(Date.now()-detectedAt<(force?d.forceMinMs??DETECT_FORCE_MIN_MS:d.reuseMs??DETECT_REUSE_MS))return null;
+  const run=detecting=d.refreshFacts().catch(()=>{}).finally(()=>{detectedAt=Date.now();if(detecting===run)detecting=null;});return run;};
  return async function handle(p:string,url:URL,method:string,writing:boolean,b:any,who:{kind:string}):Promise<Response|null>{
   const projectOf=(v:unknown)=>typeof v==='string'&&PROJECT.test(v)?v:null;
-  if(p==='/api/team'&&!writing){if(url.searchParams.get('facts')==='1')try{await d.refreshFacts?.();}catch{}return json(crewView(d,projectOf(url.searchParams.get('project'))));}
+  if(p==='/api/team'&&!writing){if(url.searchParams.get('facts')==='1')await detect(url.searchParams.get('force')==='1');return json({...crewView(d,projectOf(url.searchParams.get('project'))),detection:{at:detectedAt||null}});}
   if(p==='/api/team/change'){
    if(!writing||method!=='POST')return json({error:'POST required'},405);if(who.kind!=='desktop')return json({error:'Change the team on the desktop',code:'desktopOnly'},403);
    const cfg=d.store.current(),before:Team=cfg?teamBody(cfg):emptyTeam();

@@ -6,7 +6,7 @@
 // one project's crew (its own seat changes applied) and adds "only this project" to the scope question. The server is the
 // only authority: every change is one POST /api/team/change with the version the page last read (compare-and-swap).
 (() => {
-const TM = { data: null, loading: false, sel: null, ask: null, editing: false, notes: [], err: null, busy: false, project: "" };
+const TM = { data: null, loading: false, sel: null, ask: null, editing: false, notes: [], err: null, busy: false, project: "", opened: false, detecting: false };
 const getJson = async (u) => { const r = await fetch(u); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; };
 // seat colours: the palette tokens (both themes)
 const SEAT_COLOR = { coordinator: "var(--a6t)", maker: "var(--a1t)", "alt-maker": "var(--a2t)", reviewer: "var(--a5t)", "design-reviewer": "var(--a3t)" };
@@ -15,14 +15,18 @@ const L = (o) => (o ? T(o.en, o.zh) : "");
 const seatOf = (id) => TM.data?.seats.find((s) => s.id === id);
 const seatName = (id) => L(seatOf(id)?.label) || id;
 const SOURCE = { team: ["Team", "跟團隊"], project: ["◆ This project", "◆ 這個專案"], workflow: ["★ Custom here", "★ 這裡自訂"], definition: ["Workflow sets it", "流程設定"], run: ["This run", "這次"], missing: ["Missing", "缺人"] };
+// facts: true detects the models again unless the server did so within its reuse window (the page opening);
+// "force" detects again (重新偵測)
 async function load(facts) {
-  if (TM.loading) return; TM.loading = true;
-  const q = new URLSearchParams(); if (facts) q.set("facts", "1"); if (TM.project) q.set("project", TM.project);
+  if (TM.loading) return; TM.loading = true; TM.detecting = !!facts; if (facts && TM.data) soft();
+  const q = new URLSearchParams(); if (facts) q.set("facts", "1"); if (facts === "force") q.set("force", "1"); if (TM.project) q.set("project", TM.project);
   try { TM.data = await getJson(`/api/team${q.size ? `?${q}` : ""}`); TM.err = null; if (!TM.sel || !TM.data.workflows.some((w) => w.id === TM.sel)) TM.sel = TM.data.workflows.find((w) => w.badge.state !== "team")?.id ?? TM.data.workflows[0]?.id ?? null; }
   catch (e) { TM.err = String(e.message || e); }
-  finally { TM.loading = false; }
+  finally { TM.loading = false; TM.detecting = false; }
   if (S.route?.name === "team") soft();
 }
+// opening the page detects the models again (leaving it re-arms that)
+window.addEventListener("hashchange", () => { if (!/^#\/team\b/.test(location.hash)) TM.opened = false; });
 async function change(c) {
   if (TM.busy) return; TM.busy = true;
   try {
@@ -37,22 +41,47 @@ async function change(c) {
   finally { TM.busy = false; if (S.route?.name === "team") render(); }
 }
 const modelKey = (p, m) => (p && m ? `${p}/${m}` : "");
-function modelOptions(current) {
-  const opts = [...(TM.data?.models ?? [])];
-  if (current?.provider && current?.model && !opts.some((m) => m.provider === current.provider && m.model === current.model)) opts.unshift({ provider: current.provider, model: current.model, efforts: [] });
-  return opts;
-}
+const PROVIDER_NAME = { codex: "Codex", claude: "Claude" };
+const modelOf = (provider, model) => TM.data?.models?.find((m) => m.provider === provider && m.model === model);
+// only the models detected on this machine, grouped by provider; the current model, when no longer detected, stays marked
 function modelSelect(label, cur, onchange, extra = {}) {
-  const sel = h("select", { "aria-label": label, class: "tm-sel mono", onchange: (e) => onchange(e.target.value), ...extra },
+  const detected = (TM.data?.models ?? []).filter((m) => m.available), stale = cur?.provider && cur?.model && !modelOf(cur.provider, cur.model)?.available;
+  const groups = [...new Set([...detected.map((m) => m.provider), ...(stale ? [cur.provider] : [])])];
+  const sel = h("select", { "aria-label": label, class: "tm-sel mono", onchange: (e) => onchange(e.target.value), "data-unavailable": stale ? "1" : null, ...extra },
     h("option", { value: "" }, T("— unassigned", "— 未指派")),
-    modelOptions(cur).map((m) => h("option", { value: modelKey(m.provider, m.model) }, `${m.provider === "codex" ? "Codex" : m.provider === "claude" ? "Claude" : m.provider} · ${m.model}`)));
+    groups.map((p) => h("optgroup", { label: PROVIDER_NAME[p] || p, "data-provider-group": p },
+      stale && cur.provider === p ? h("option", { value: modelKey(cur.provider, cur.model), "data-unavailable": "" }, `${cur.model} · ${T("unavailable now", "目前不可用")}`) : null,
+      detected.filter((m) => m.provider === p).map((m) => h("option", { value: modelKey(m.provider, m.model), "data-efforts": m.efforts.join(" ") }, m.unverified ? `${m.model} · ${T("unverified", "未驗證")}` : m.model)))));
   sel.value = modelKey(cur?.provider, cur?.model); return sel;
 }
-function effortSelect(label, cur, provider, onchange, extra = {}) {
-  const efforts = TM.data?.efforts ?? ["low", "medium", "high", "xhigh"];
+// the efforts the model reported; a model no longer detected keeps the general list (its own is unknown)
+function effortSelect(label, cur, provider, onchange, extra = {}, model = null) {
+  const own = modelOf(provider, model), efforts = own?.available ? own.efforts : TM.data?.efforts ?? ["low", "medium", "high", "xhigh"];
+  const list = cur && !efforts.includes(cur) ? [...efforts, cur] : efforts;
   const sel = h("select", { "aria-label": label, class: "tm-sel", onchange: (e) => onchange(e.target.value === "default" ? null : e.target.value), ...extra },
-    provider !== "codex" ? h("option", { value: "default" }, T("default", "預設")) : null, efforts.map((x) => h("option", { value: x }, x)));
+    provider !== "codex" ? h("option", { value: "default" }, T("default", "預設")) : null, list.map((x) => h("option", { value: x }, efforts.includes(x) ? x : `${x} · ${T("not offered", "此模型不提供")}`)));
   sel.value = cur ?? "default"; return sel;
+}
+// ---------- what was detected ----------
+const LOGIN = { "logged-in": ["signed in", "已登入"], "not-logged-in": ["not signed in", "未登入"], unknown: ["sign-in unknown", "登入狀態不明"] };
+function detection() {
+  const at = (t) => (t ? new Date(t).toLocaleTimeString() : T("not yet", "尚未偵測"));
+  return h("section", { class: "card tm-detect", "data-model-detection": "", "aria-label": T("Models detected on this machine", "這台機器偵測到的模型"), "aria-busy": TM.detecting ? "true" : "false" },
+    (TM.data.providers ?? []).map((p) => h("div", { class: `tm-prov ${p.state}`, "data-provider-status": p.provider, "data-state": p.state, "data-login": p.login },
+      h("b", {}, PROVIDER_NAME[p.provider] || p.provider),
+      h("span", { "data-login-label": "" }, T(...(LOGIN[p.login] || LOGIN.unknown))),
+      h("span", { "data-model-count": String(p.count) }, p.state === "unread" ? T("not detected yet", "尚未偵測") : p.state === "unavailable" ? T("no models detected", "沒有偵測到模型") : T(`${p.count} model${p.count === 1 ? "" : "s"}`, `${p.count} 個模型`)),
+      h("span", { class: "faint", "data-detected-at": p.detectedAt ?? "" }, `${T("detected at", "偵測時間")} ${at(p.detectedAt)}`),
+      p.state === "unverified-fallback" ? h("span", { class: "tm-prov-why", "data-unverified": "" }, T(`Unverified list: ${p.reason || "the CLI's model list could not be read"}`, `未驗證的清單：${p.reason || "讀不到 CLI 的模型清單"}`)) :
+        p.reason && p.state !== "detected" ? h("span", { class: "tm-prov-why" }, p.reason) : null)),
+    h("button", { class: "btn ghost", "data-redetect": "", disabled: TM.detecting, onclick: () => load("force") }, TM.detecting ? T("Detecting…", "偵測中…") : T("Detect again", "重新偵測")));
+}
+// an assigned model the providers no longer report: the rules keep it, the page says so
+function staleNote() {
+  const stale = (TM.data.models ?? []).filter((m) => !m.available);
+  return stale.length ? h("div", { class: "tm-adjust", role: "note", "data-models-note": "" },
+    T(`Unavailable now: ${stale.map((m) => `${PROVIDER_NAME[m.provider] || m.provider} ${m.model}`).join(", ")}. The team still assigns ${stale.length === 1 ? "it" : "them"}, but ${stale.length === 1 ? "it was" : "they were"} not detected on this machine; a run on ${stale.length === 1 ? "it" : "them"} waits until it is available again. Pick a detected model, or sign in and detect again.`,
+      `目前不可用：${stale.map((m) => `${PROVIDER_NAME[m.provider] || m.provider} ${m.model}`).join("、")}。團隊仍指派這些模型，但這台機器沒有偵測到；用到它的執行會等到它再次可用。請改選偵測到的模型，或登入後重新偵測。`)) : null;
 }
 function skillAdd(label, have, onpick) {
   const sel = h("select", { "aria-label": label, class: "tm-add", onchange: (e) => { const s = TM.data.library.find((x) => x.id === e.target.value); if (s) onpick({ id: s.id, v: s.v, sha256: s.sha256 }); } },
@@ -107,7 +136,7 @@ function nodeRow(wf, row) {
   member.value = row.seat;
   const cur = asking?.field === "model" ? (() => { const [provider, ...m] = asking.value.split("/"); return { provider, model: m.join("/") }; })() : { provider: row.provider, model: row.model };
   const model = modelSelect(T(`${row.label}'s model`, `${row.label} 的模型`), cur, (v) => { TM.ask = { workflow: wf.id, node: row.node, field: "model", value: v }; render(); }, { "data-custom": row.fields.model === "workflow" || row.fields.model === "project" ? "1" : null });
-  const effort = effortSelect(T(`${row.label}'s effort`, `${row.label} 的 effort`), asking?.field === "effort" ? asking.value : row.effort, row.provider, (v) => { TM.ask = { workflow: wf.id, node: row.node, field: "effort", value: v }; render(); }, { "data-custom": ["workflow", "run", "project"].includes(row.fields.effort) ? "1" : null });
+  const effort = effortSelect(T(`${row.label}'s effort`, `${row.label} 的 effort`), asking?.field === "effort" ? asking.value : row.effort, row.provider, (v) => { TM.ask = { workflow: wf.id, node: row.node, field: "effort", value: v }; render(); }, { "data-custom": ["workflow", "run", "project"].includes(row.fields.effort) ? "1" : null }, row.model);
   const skills = h("div", { class: "tm-skills" }, roleChip(row),
     row.skills.filter((p) => p.from === "member").map((p) => h("span", { class: "tm-skill base", title: T(`Comes with ${seatName(row.seat)}`, `來自成員「${seatName(row.seat)}」`) }, `${p.name || p.id}`)),
     row.skills.filter((p) => p.from === "node").map((p) => h("span", { class: "tm-skill own" }, `${p.name || p.id}@v${p.v}`,
@@ -131,7 +160,6 @@ function memberEditor() {
   return h("section", { class: "card tm-members", "data-member-editor": "", "aria-label": T("Team members", "團隊成員") },
     h("div", { class: "tm-mhead" }, h("h2", {}, T("Team members", "團隊成員")),
       h("div", { class: "tm-presets", role: "group", "aria-label": T("Presets", "預設組合") }, (TM.data.presets ?? []).map((p) => h("button", { class: "btn", "data-preset": p.id, disabled: TM.busy || !TM.data.team, onclick: () => change({ kind: "preset", preset: p.id }) }, T(p.en, p.zh)))),
-      h("button", { class: "btn ghost", onclick: () => load(true) }, T("Refresh models", "重新讀取模型")),
       h("button", { class: "btn ghost", onclick: () => { TM.editing = false; render(); } }, T("Close", "關閉"))),
     h("p", { class: "faint" }, T("A change here reaches every node that follows the team. A node a workflow customised keeps its own choice.", "這裡的改動會套用到所有跟團隊走的節點；workflow 自訂過的節點維持自己的選擇。")),
     seats.map((s) => {
@@ -141,7 +169,7 @@ function memberEditor() {
           h("span", { class: "faint" }, T(` · ${s.uses} node${s.uses === 1 ? "" : "s"}`, ` · ${s.uses} 個節點`))),
         modelSelect(T(`${L(s.label)}'s model`, `${L(s.label)} 的模型`), m, (v) => { if (!v) return; const [provider, ...rest] = v.split("/");
           change(specialist && !m ? { kind: "seat", seat: s.declared, member: { provider, model: rest.join("/"), effort: provider === "codex" ? "medium" : null, skills: [] } } : { kind: "member", seat: s.id, set: { provider, model: rest.join("/"), ...(m ? {} : { effort: provider === "codex" ? "medium" : null }) } }); }),
-        m ? effortSelect(T(`${L(s.label)}'s effort`, `${L(s.label)} 的 effort`), m.effort, m.provider, (v) => change({ kind: "member", seat: s.id, set: { effort: v } })) : h("span", { class: "tm-missing" }, T("Nobody yet", "還沒有人")),
+        m ? effortSelect(T(`${L(s.label)}'s effort`, `${L(s.label)} 的 effort`), m.effort, m.provider, (v) => change({ kind: "member", seat: s.id, set: { effort: v } }), {}, m.model) : h("span", { class: "tm-missing" }, T("Nobody yet", "還沒有人")),
         m ? h("div", { class: "tm-skills" }, m.skills.map((p) => h("span", { class: "tm-skill own" }, `${p.name || p.id}@v${p.v}`,
             h("button", { class: "tm-x", "aria-label": T(`Remove ${p.name || p.id} from ${L(s.label)}`, `從「${L(s.label)}」移除 ${p.name || p.id}`), onclick: () => change({ kind: "member", seat: s.id, set: { skills: m.skills.filter((q) => q.id !== p.id).map(({ id, v, sha256 }) => ({ id, v, sha256 })) } }) }, "×"))),
           skillAdd(T(`Add a skill to ${L(s.label)}`, `「${L(s.label)}」加 skill`), m.skills.map((p) => p.id), (pin) => change({ kind: "member", seat: s.id, set: { skills: [...m.skills.map(({ id, v, sha256 }) => ({ id, v, sha256 })), pin] } }))) : h("span"));
@@ -179,7 +207,9 @@ function legend() {
     h("button", { class: "btn", "data-open-members": "", onclick: () => { TM.editing = !TM.editing; render(); } }, T("Edit team", "編輯團隊")));
 }
 function view() {
-  if (!TM.data) { if (!TM.err) load(); return h("div", { class: "page tm" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Who runs each workflow", "每個 workflow 由誰在做")))), TM.err ? h("div", { class: "card x-pad bad" }, TM.err) : h("div", { class: "skel", style: "height:180px" })); }
+  // the page opens on what the server already knows, then detects again
+  if (!TM.opened && !TM.loading) { TM.opened = true; (TM.data || TM.err ? load(true) : load().then(() => load(true))); }
+  if (!TM.data) { return h("div", { class: "page tm" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Who runs each workflow", "每個 workflow 由誰在做")))), TM.err ? h("div", { class: "card x-pad bad" }, TM.err) : h("div", { class: "skel", style: "height:180px" })); }
   const wf = TM.data.workflows.find((w) => w.id === TM.sel) ?? null;
   const custom = wf?.nodes.some((n) => n.custom && n.source !== "project");
   const projectCustom = !!TM.project && TM.data.seats.some((s) => s.project);
@@ -187,6 +217,7 @@ function view() {
     h("div", { class: "phead" }, h("div", {}, h("span", { class: "tm-eyebrow" }, T("Crew · one team for every workflow", "船員 · 一個團隊負責所有 workflow")), h("h1", {}, T("Who runs each workflow", "每個 workflow 由誰在做")),
       h("p", {}, T("Pick a card, then change the model, effort or skills right in the table. Each change asks: only here, or the whole member.", "點一張卡，在下面直接改模型、effort、skills。每次改都會問：只改這裡，還是改整個成員。"))), h("div", { class: "tm-tools" }, projectPicker(), legend())),
     !TM.data.team ? h("div", { class: "card x-pad tm-empty", "data-team-empty": "" }, T("No team yet: every workflow uses Studio's default model. Fill the seats in the member editor.", "還沒有團隊：每個 workflow 都用 Studio 的預設模型。請在成員編輯裡補上各個位置。")) : null,
+    detection(), staleNote(),
     TM.editing ? memberEditor() : null,
     h("div", { class: "tm-cards" }, TM.data.workflows.map(card)),
     wf ? h("section", { class: "card tm-detail", "data-team-detail": wf.id, "aria-label": T(`${wf.name}: final crew`, `${wf.name}：最後的人員配置`) },

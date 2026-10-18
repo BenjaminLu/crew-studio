@@ -61,6 +61,6 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
   ok((await p.locator('[data-wf-held-reason="github-review"]').textContent()).length>0&&await p.locator('[data-wf="github-review"]').count()===0,'the catalog shows github-review as held with its reason '+tag);
   await p.goto(base+'/#/workflows/github-review');await p.locator('[data-workflow-held]').waitFor();ok(await p.locator('[data-ed-run]').count()===0,'the held editor offers no Run '+tag);
   await p.close();}
- const trace=join(dirname(claudeBin),'trace.jsonl');ok(existsSync(trace)&&readFileSync(trace,'utf8').trim().split('\n').every(l=>JSON.parse(l).phase==='auth'),'the Start form only ever ran the free Claude auth status, never a model request');
+ const trace=join(dirname(claudeBin),'trace.jsonl');ok(existsSync(trace)&&readFileSync(trace,'utf8').trim().split('\n').every(l=>['auth','models'].includes(JSON.parse(l).phase)),'the Start form only ever ran the free Claude auth status and model list, never a model request');
  console.log(`board-start-ui: ${pass} passed, 0 failed`);
 }catch(e){console.log(output.slice(-4000));throw e;}finally{await browser?.close();if(app.exitCode===null&&app.signalCode===null){const end=new Promise(r=>app.once('exit',r));app.kill('SIGTERM');await end;}thaw(tmp);rmSync(tmp,{recursive:true,force:true});}

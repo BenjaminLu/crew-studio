@@ -25,8 +25,14 @@
 //    ignored. A restarted run that still sees a GIT_* variable, a .env value or an --env-file flag (a forged
 //    mark, or something that put them back) exits 1: removing them from process.env would not reach its
 //    children.
+// 6. No test reaches the real Claude or Codex CLI (2026-10-18: discovery and auth reads ran the dev machine's
+//    `claude` with its keychain login). The outermost entry puts a sentinel folder first on PATH whose `claude`
+//    and `codex` record the call and fail (exit 97), and defaults CREW_CLAUDE_BIN, CREW_CODEX_BIN,
+//    CREW_HOST_CLAUDE_BIN and CREW_HOST_CODEX_BIN to a path that does not exist (no CLI installed); a test that
+//    needs a CLI points them at its stub. When the run ends, any recorded call fails it (exit 1) and names it.
 // Production (bun src/main.ts, bun run start) never imports this file.
-import { readdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { constants as osConstants } from "node:os";
@@ -112,6 +118,32 @@ env.BUN_OPTIONS = [...kept, NO_ENV].join(" ");
 // a per-run token, so a .env line (even CREW_TEST_ENV_ISOLATED=1) never equals the mark a parent passes on
 if (!trusted) env[MARK] = `1-${process.pid}-${Math.random().toString(36).slice(2)}`;
 const gitGone = scrubGitEnv(env);
+// 6. the real-CLI sentinel: installed once, by the outermost entry; nested entries share it (and its record)
+const SENTINEL = "CREW_TEST_CLI_SENTINEL";
+// a child started with a trimmed env still has the PATH: the sentinel folder first on it is the one to share
+const firstOnPath = (env.PATH || "").split(":")[0];
+const sentinelOn = /crew-test-cli-sentinel-/.test(firstOnPath) && existsSync(join(firstOnPath, "calls.log"));
+if (sentinelOn) env[SENTINEL] = firstOnPath;
+const ownSentinel = !sentinelOn && !restarted ? mkdtempSync(join(tmpdir(), "crew-test-cli-sentinel-")) : null;
+if (ownSentinel) {
+  writeFileSync(join(ownSentinel, "calls.log"), "");
+  for (const bin of ["claude", "codex"]) {
+    const f = join(ownSentinel, bin);
+    writeFileSync(f, `#!/bin/sh\nprintf '%s\\n' "${bin} $* (cwd $PWD)" >> '${join(ownSentinel, "calls.log")}'\necho "isolated-env: a test ran the real ${bin} CLI from PATH; point CREW_${bin.toUpperCase()}_BIN or CREW_HOST_${bin.toUpperCase()}_BIN at a stub" >&2\nexit 97\n`);
+    chmodSync(f, 0o755);
+  }
+  env.PATH = `${ownSentinel}:${env.PATH || "/usr/bin:/bin"}`; env[SENTINEL] = ownSentinel;
+}
+for (const k of ["CREW_CLAUDE_BIN", "CREW_CODEX_BIN", "CREW_HOST_CLAUDE_BIN", "CREW_HOST_CODEX_BIN"])
+  if (env[k] === undefined) env[k] = `/nonexistent/crew-test-cli/${k.includes("CLAUDE") ? "claude" : "codex"}`;
+/** The calls the sentinel recorded: each one is a test that ran a real CLI. */
+export const sentinelCalls = (dir = env[SENTINEL]) => { try { return readFileSync(join(dir, "calls.log"), "utf8").split("\n").filter(Boolean); } catch { return []; } };
+const sentinelVerdict = (code) => {
+  const calls = sentinelCalls(ownSentinel); try { rmSync(ownSentinel, { recursive: true, force: true }); } catch {}
+  if (!calls.length) return code;
+  process.stderr.write(`isolated-env: FAIL ${calls.length} call(s) reached the real CLI through PATH:\n${calls.slice(0, 20).map((c) => `  ${c}`).join("\n")}\n`);
+  return code || 1;
+};
 // every card a test raises keeps the card contract (src/runtime/card-contract.ts): a violation throws instead of being logged
 if (env.CREW_CARD_CONTRACT === undefined) env.CREW_CARD_CONTRACT = "enforce";
 
@@ -120,9 +152,13 @@ if (env.CREW_CARD_CONTRACT === undefined) env.CREW_CARD_CONTRACT = "enforce";
 // exists in the working directory or the repository root), or that had
 // values to drop, runs itself again in the cleaned environment and passes on its
 // exit (signals forwarded); nothing else in the test has run yet. Node children follow process.env.
-if (isBun && !restarted && (loaded || dropped || strippedEnvFile || gitGone.length)) {
+// (the outermost Bun entry always runs again: its children must see the sentinel PATH, and it reads the record at the end)
+if (isBun && !restarted && (loaded || dropped || strippedEnvFile || gitGone.length || ownSentinel)) {
   const child = globalThis.Bun.spawn([process.execPath, ...(process.execArgv || []), ...process.argv.slice(1)], { env: { ...env, [RESTART]: String(process.pid) }, stdio: ["inherit", "inherit", "inherit"] });
   for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, () => { try { child.kill(sig); } catch {} });
   const code = await child.exited;
-  process.exit(child.signalCode ? 128 + (osConstants.signals[child.signalCode] ?? 1) : code);
+  const exit = child.signalCode ? 128 + (osConstants.signals[child.signalCode] ?? 1) : code;
+  process.exit(ownSentinel ? sentinelVerdict(exit) : exit);
 }
+// a Node entry's children follow process.env: it reads the record when it exits
+if (ownSentinel) process.on("exit", (code) => { process.exitCode = sentinelVerdict(process.exitCode ?? code); });

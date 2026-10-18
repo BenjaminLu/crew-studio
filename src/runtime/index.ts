@@ -75,7 +75,8 @@ export type RuntimeDeps = {
   /** Studio's configured model per provider (chat settings, env, Codex config): the startup workflow's default when no exact model param was given. */
   startupModel?:(provider:"claude"|"codex")=>string|null|undefined;
   generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference, rules?: import("../operating-rules").RulesSection, crew?: { model: string; effort: string | null }) => Promise<import("../providers/codex-image").CodexImage>;
-  staffingFacts?: () => Promise<StaffingFacts[]>;
+  /** fresh: read every model list again now (the Crew page's detection), not a reading the provider reuses */
+  staffingFacts?: (o?:{fresh?:boolean}) => Promise<StaffingFacts[]>;
   staffingAdmission?: StaffingAdmission;
   staffingProject?: (id:string) => StaffingProject;
   staffingPending?: (intent:any) => void;
@@ -137,7 +138,7 @@ export function createRuntime(d: RuntimeDeps) {
   const staffing=new StaffingStore(d.dataDir);
   const staffingProject=(id:string)=>d.staffingProject?d.staffingProject(id):projects.staffingIdentity(id,d.protectedRoots??[]);
   let staffingCapabilities:StaffingFacts[]=[];
-  const staffingFacts=async()=>{staffingCapabilities=await(d.staffingFacts??(async()=>[]))();return staffingCapabilities;};
+  const staffingFacts=async(o?:{fresh?:boolean})=>{staffingCapabilities=await(d.staffingFacts??(async()=>[]))(o);return staffingCapabilities;};
   const roleReady=(role:{provider:string;model:string;effort:string|null})=>{const cap=staffingCapabilities.find(c=>c.provider===role.provider),model=cap?.models.find(m=>m.id===role.model);return !(!cap||cap.support!=='supported'||cap.auth!=='verified'||!staffingQuotaReady(role as any,cap,d.staffingAdmission)||cap.expires<=Date.now()||!model||role.effort!==null&&!model.efforts.includes(role.effort));};
   // each role's pick and each node override's effective pick (the definition the configuration names)
   const staffingCapability=(config:any)=>staffedCapability(config,engine.defs.get(config.workflow.id,config.workflow.version),roleReady);
@@ -151,8 +152,9 @@ export function createRuntime(d: RuntimeDeps) {
   const crewGuard=installCrewGuard(engine,crewStore);
   // a captain's own workflow confirms at Run exactly the crew its Task will record (the guard's own resolution, judges included)
   defs.ownCrew=(def:any)=>{const t=crewStore.current();return t?resolveCrew(teamBody(t),withJudges(def,judgeSlots(engine,def)),{},t.hash):null;};
-  const crewTools=installCrewTools(engine,crewStore,{facts:staffingFacts as any,send:d.send});
-  const crewApi=crewRoutes({judges:def=>judgeSlots(engine,def),roleSkill:(def,role)=>engine.roleSkillUse(def,role) as any,defs,store:crewStore,projects:()=>projects.list().map(p=>({id:p.id,name:p.name})),facts:()=>staffingCapabilities,refreshFacts:staffingFacts,library:()=>engine.skillLibrary().library()});
+  const crewTools=installCrewTools(engine,crewStore,{facts:staffingFacts as any,cached:()=>staffingCapabilities as any,send:d.send});
+  const crewApi=crewRoutes({judges:def=>judgeSlots(engine,def),roleSkill:(def,role)=>engine.roleSkillUse(def,role) as any,defs,store:crewStore,projects:()=>projects.list().map(p=>({id:p.id,name:p.name})),facts:()=>staffingCapabilities,refreshFacts:()=>staffingFacts({fresh:true}),...process.env.CREW_DETECT_FORCE_MIN_MS!==undefined?{forceMinMs:Number(process.env.CREW_DETECT_FORCE_MIN_MS)}:{}, // tests: 0 lets 重新偵測 run back to back
+  library:()=>engine.skillLibrary().library()});
   /** The project's staffing from the team, when the team covers this workflow (null: the per-project staffing flow applies). */
   const teamStaffing=(def:any,projectId:string)=>{if(!staffingApplies(def))return null;const project=def.kind==='coffee-kit'?coffeeStaffingProject(projectId):staffingProject(projectId);return crewStaffing.ensure(def,project);};
   /** The Start form's readiness of an approved crew, from free probes only (the Codex probe, Claude auth status).

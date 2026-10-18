@@ -4,7 +4,9 @@ import {StaffingStore,signedStaffingBinding,staffingHash,staffingFrontier,native
 import {normalize,defBody,installedSource} from './runtime/defs';
 import {bundledText} from './bundled';
 import {unified} from './diff';
-export type StaffingFacts={provider:string;support:'supported'|'unsupported';auth:string;quota:string;expires:number;models:{id:string;efforts:string[]}[];default?:{model:string;effort:string|null};candidates?:{id:string;efforts:string[]}[];reason?:string};
+export type StaffingFacts={provider:string;support:'supported'|'unsupported';auth:string;quota:string;expires:number;models:{id:string;efforts:string[]}[];default?:{model:string;effort:string|null};candidates?:{id:string;efforts:string[]}[];reason?:string;
+ /** when the model list was read, whether it came from the provider itself, and the account's login state (the Crew page shows them) */
+ detectedAt?:number;inventory?:'detected'|'unverified-fallback'|'unavailable';inventoryReason?:string;login?:'logged-in'|'not-logged-in'|'unknown'};
 export type StaffingAdmission=(role:Pick<StaffingRole,'provider'|'model'|'effort'>,facts:StaffingFacts)=>boolean;
 export const staffingQuotaReady=(role:Pick<StaffingRole,'provider'|'model'|'effort'>,facts:StaffingFacts,admission?:StaffingAdmission)=>facts.quota==='available'||(role.provider==='claude'&&facts.quota==='unknown'&&admission?.(role,facts)===true);
 // The roles that judge the worker's work (E2E F3/F20: a reviewer at low effort, on the worker's own model, approved in 17 s

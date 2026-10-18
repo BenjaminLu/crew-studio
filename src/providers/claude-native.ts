@@ -6,6 +6,10 @@ import {probeProcess} from './probe-process';import{claudeLogin,claudeBilling,CL
 import{claudeProvider}from'./claude';import{claudeSettings}from'./needs';
 import type{ProviderCapability}from'./policy';
 export type ClaudePair={model:string;effort:string|null};
+/** The models Studio can choose for Claude: read from the installed CLI, or (only when that is impossible) a fixed list marked unverified with the reason. */
+export type ClaudeModelInventory={source:'cli'|'unverified-fallback';models:{id:string;efforts:string[];label:string|null}[];at:number;version:string|null;reason?:string};
+/** Last resort only: shown as unverified, never as detected. */
+export const CLAUDE_FALLBACK_MODELS=['claude-opus-5-5','claude-sonnet-5-5','claude-haiku-5-5'];
 export type ClaudeCapability=ProviderCapability&{loginState:'logged-in'|'not-logged-in'|'unknown';resetAt:number|null;admission:'verified-execution'|'none';guidance:string;context:{executable:string|null;configDirectory:string|null;version:string|null}};
 type Entry={valid:boolean;pair:ClaudePair;expires:number;login:Extract<Login,{ok:true}>;owner:ClaudeNative;binary:string};
 const receipts=new WeakMap<object,Entry>();
@@ -61,7 +65,7 @@ export class ClaudeNative{
    if(signal?.aborted)return this.base(p,{reason:'Claude status owner ended'});
    // Official read-only command in the selected ordinary account/config context.
    // Output is parsed privately; email/account details never leave this method.
-   const env={PATH:process.env.PATH||'/usr/bin:/bin',HOME:process.env.HOME||homedir(),LANG:'en_US.UTF-8',...loginUser(),...(process.env.CLAUDE_CODE_OAUTH_TOKEN?{CLAUDE_CODE_OAUTH_TOKEN:process.env.CLAUDE_CODE_OAUTH_TOKEN}:{}),...(claudeBilling()==='api-key'&&process.env.ANTHROPIC_API_KEY?{ANTHROPIC_API_KEY:process.env.ANTHROPIC_API_KEY}:{}),...this.options.authEnv?.(),...process.env.CLAUDE_CONFIG_DIR?{CLAUDE_CONFIG_DIR:process.env.CLAUDE_CONFIG_DIR}:{}};
+   const env=this.accountEnv();
    proc=probeProcess(argv(binary,['auth','status','--json']),root,env,undefined,{timeoutMs:8000,bytes:32768});const abort=()=>proc?.kill();signal?.addEventListener('abort',abort,{once:true});let code;try{code=await proc.exited;await proc.stop();}finally{signal?.removeEventListener('abort',abort);}
    if(signal?.aborted||proc.output().failure)return this.base(p,{reason:'Claude auth metadata is unavailable in this context'});
    let j:any;try{j=JSON.parse(proc.output().out);}catch{return this.base(p,{reason:'Claude auth metadata schema is unsupported'});}
@@ -73,6 +77,40 @@ export class ClaudeNative{
    const cached=this.admitted.get(pairKey(p));if(cached&&isClaudeExecutionAdmission(cached,p))return cached;
    return this.base(p,{auth:'verified',loginState:'logged-in',context,reason:'Signed in; remaining quota and actual selected model execution are unverified. Explicit Verify is required.'});
   }catch{return this.base(p,{reason:'Claude auth metadata is unavailable in this context'});}finally{if(proc)try{await proc.stop();}catch{clean=false;this.unknownProcess=proc;}if(clean)rmSync(root,{recursive:true,force:true});}
+ }
+ private accountEnv():Record<string,string>{return{PATH:process.env.PATH||'/usr/bin:/bin',HOME:process.env.HOME||homedir(),LANG:'en_US.UTF-8',...loginUser(),...(process.env.CLAUDE_CODE_OAUTH_TOKEN?{CLAUDE_CODE_OAUTH_TOKEN:process.env.CLAUDE_CODE_OAUTH_TOKEN}:{}),...(claudeBilling()==='api-key'&&process.env.ANTHROPIC_API_KEY?{ANTHROPIC_API_KEY:process.env.ANTHROPIC_API_KEY}:{}),...this.options.authEnv?.(),...process.env.CLAUDE_CONFIG_DIR?{CLAUDE_CONFIG_DIR:process.env.CLAUDE_CONFIG_DIR}:{}};}
+ private inventory:{at:number;done:Promise<ClaudeModelInventory>}|null=null;
+ /** The models the installed CLI offers this account: the stream-json `initialize` control request (the Agent SDK's
+  * supportedModels()). Only that request is written and the process is stopped on its reply, so no user turn and no model
+  * request exists; like `auth status`, it reads the ordinary account context. Shared while running, reused for 60 seconds. */
+ models(o:{signal?:AbortSignal;fresh?:boolean}={}):Promise<ClaudeModelInventory>{
+  if(this.inventory&&!o.fresh&&Date.now()-this.inventory.at<60000)return this.inventory.done;
+  const entry={at:Date.now(),done:this.readModels(o.signal)};this.inventory=entry;
+  entry.done.then(r=>{if(r.source!=='cli'&&this.inventory===entry)this.inventory=null;});return entry.done;
+ }
+ private async readModels(signal?:AbortSignal):Promise<ClaudeModelInventory>{
+  const at=Date.now(),failed=(reason:string):ClaudeModelInventory=>({source:'unverified-fallback',models:CLAUDE_FALLBACK_MODELS.map(id=>({id,efforts:claudeEfforts(id),label:null})),at,version:null,reason});
+  const binary=this.currentBinary();if(!binary)return failed('The Claude CLI is not installed or not on PATH, so its model list cannot be read');
+  if(this.unknownProcess||this.cleanupBlocked)return failed('Owned Claude process cleanup is unverified; restart Studio');
+  const root=mkdtempSync(join(tmpdir(),'crew-claude-models-'));let proc:ReturnType<typeof probeProcess>|null=null,clean=true,reply:any=null;
+  try{
+   if(signal?.aborted)return failed('Claude model discovery was cancelled');
+   const args=['-p','--input-format','stream-json','--output-format','stream-json','--verbose','--no-session-persistence','--tools','','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--setting-sources','','--permission-mode','dontAsk','--permission-prompts','none','--disable-slash-commands','--no-chrome','--safe-mode','--restricted'];
+   // CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC is left unset here on purpose: with it the CLI skips its own free
+   // account model listing and reports only its built-in aliases (2.1.302: 4 models instead of 12)
+   proc=probeProcess(argv(binary,args),root,{...this.accountEnv(),DISABLE_AUTOUPDATER:'1'},m=>{if(m?.type==='control_response'&&m.response?.request_id==='models'&&!reply){reply=m.response;proc?.kill();}},{timeoutMs:15000,bytes:512*1024,lineBytes:256*1024});
+   const abort=()=>proc?.kill();signal?.addEventListener('abort',abort,{once:true});
+   try{proc.write({type:'control_request',request_id:'models',request:{subtype:'initialize'}});await proc.exited;await proc.stop();}finally{signal?.removeEventListener('abort',abort);}
+   if(signal?.aborted)return failed('Claude model discovery was cancelled');
+   if(!reply)return failed(proc.output().failure==='probe deadline expired'?'The Claude CLI did not answer the model list request in time':'This Claude CLI version does not answer the model list request');
+   const list=reply.subtype==='success'?reply.response?.models:null;if(!Array.isArray(list))return failed('This Claude CLI version does not report its models');
+   const models:ClaudeModelInventory['models']=[];
+   for(const m of list){const id=typeof m?.resolvedModel==='string'?m.resolvedModel:m?.value;if(typeof id!=='string'||!validClaudePair({model:id,effort:null})||models.some(x=>x.id===id))continue;
+    // Studio's own effort table decides what it can run; the CLI can only narrow it (a model without effort support has none)
+    const cli=m.supportsEffort===true&&Array.isArray(m.supportedEffortLevels)?m.supportedEffortLevels:[];models.push({id,efforts:claudeEfforts(id).filter(e=>cli.includes(e)),label:typeof m.displayName==='string'?m.displayName.slice(0,80):null});}
+   if(!models.length)return failed('The Claude CLI reported no models Studio can run');
+   return{source:'cli',models,at,version:typeof reply.response?.claude_code_version==='string'?reply.response.claude_code_version.slice(0,40):null};
+  }catch{return failed('Claude model discovery failed');}finally{if(proc)try{await proc.stop();}catch{clean=false;this.unknownProcess=proc;}if(clean)rmSync(root,{recursive:true,force:true});}
  }
  async verify(p:ClaudePair,o:{confirm:boolean;signal?:AbortSignal;timeoutMs?:number;}):Promise<ClaudeCapability>{
   if(o.confirm!==true||!validClaudePair(p))return this.base(p,{reason:'Explicit confirmation of the exact configured Claude model/effort is required'});
@@ -101,7 +139,7 @@ export class ClaudeNative{
   let proc:ReturnType<typeof probeProcess>|null=null,clean=true;const deadline=Date.now()+timeoutMs;const abort=()=>proc?.kill();signal.addEventListener('abort',abort,{once:true});
   try{
    if(signal.aborted)throw 0;const binary=this.currentBinary();if(!binary)throw 0;
-   const env={PATH:process.env.PATH||'/usr/bin:/bin',HOME:home,...loginUser(),CLAUDE_CONFIG_DIR:config,TMPDIR:temp,CLAUDE_CODE_TMPDIR:temp,LANG:'en_US.UTF-8',DISABLE_NONESSENTIAL_TRAFFIC:'1',DISABLE_AUTOUPDATER:'1',...login.env,...p.effort?{CLAUDE_CODE_EFFORT_LEVEL:p.effort}:{}};
+   const env={PATH:process.env.PATH||'/usr/bin:/bin',HOME:home,...loginUser(),CLAUDE_CONFIG_DIR:config,TMPDIR:temp,CLAUDE_CODE_TMPDIR:temp,LANG:'en_US.UTF-8',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1',DISABLE_AUTOUPDATER:'1',...login.env,...p.effort?{CLAUDE_CODE_EFFORT_LEVEL:p.effort}:{}};
    let init=false,result=false,assistant=false,invalid=false;
    const args=['-p','Reply with OK only. Do not use any tools.','--output-format','stream-json','--verbose','--include-partial-messages','--model',p.model,...p.effort?['--effort',p.effort]:[],'--tools','','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--permission-mode','dontAsk','--permission-prompts','none','--setting-sources','','--settings',JSON.stringify(claudeSettings(p)),'--safe-mode','--no-chrome','--disable-slash-commands','--no-session-persistence','--restricted','--max-turns','1','--max-budget-usd','0.05'];
    proc=probeProcess(argv(binary,args),work,env,m=>{

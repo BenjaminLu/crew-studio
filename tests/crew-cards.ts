@@ -39,6 +39,8 @@ try {
   // ---------- reading ----------
   let r: any = await crew.call("studio_crew_assignments", {}, captain("r0"));
   ok(r.team === null && /No team yet/.test(r.note), "with no team, the read says so");
+  ok(JSON.stringify(r.models?.choices.map((m: any) => `${m.provider}/${m.model}:${m.efforts.join(",")}`)) === '["codex/gpt-6.1-sol:low,medium,high","codex/gpt-6-astra:low,medium,high","claude/opus-5.5:"]' && r.models.unavailable.length === 0 && r.models.providers.length === 2,
+    "the read carries the same live model list as the Crew page: the detected models with their efforts", JSON.stringify(r.models));
   // the very first team comes from a card too (no team yet: the card was prepared against "no team")
   const p0: any = await crew.call("studio_propose_crew_change", { change: { kind: "member", seat: "coordinator", set: { provider: "claude", model: "opus-5.5", effort: null } } }, captain("p-first"));
   await E.answer((await cardOf(p0.proposal)).id, { choice: "approve", by: "captain" }); await done(p0.proposal);

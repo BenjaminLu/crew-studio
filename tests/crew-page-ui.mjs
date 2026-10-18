@@ -5,11 +5,15 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   - a model or effort change asks "only this workflow" or "the whole member (affects N nodes)", and changes only those nodes
 //   - adding and removing a node skill; restore to team; the member editor (presets, a member's model); the rules' notes
 //   - the project selector: one project's crew, "only this project" in the scope question, restore the project to the team
+//   - the model choices are the models detected on this machine (stub Codex app-server and stub Claude CLI): opening the page
+//     detects them, each provider shows its login, model count and detection time, 重新偵測 detects again; the select is
+//     grouped by provider with only detected models and their own efforts; an assigned model no longer detected shows
+//     「目前不可用」 and the note says why; a provider without a login says so
 //   - English and 繁體中文; no horizontal scroll at 390; no browser errors. No accounts, no model calls.
 //      bun tests/crew-page-ui.mjs
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { freePort, waitUp, withSession } from "./boot.mjs";
@@ -17,6 +21,15 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright")
 const { CrewStore } = await import("../src/domain/crew.ts");
 const root = join(import.meta.dir, ".."), dir = mkdtempSync(join(tmpdir(), "crew-page-ui-")), data = join(dir, "data"), home = join(dir, "home"), token = "crew-page-fixture";
 mkdirSync(home); mkdirSync(data);
+// the detected models: a stub Codex app-server (its login is the strict offline fixture's) and a stub Claude CLI
+const CODEX_MODELS = [["gpt-6.1-sol", ["low", "medium", "high", "xhigh"]], ["gpt-6-astra", ["low", "medium", "high", "xhigh"]], ["gpt-6.2-nova", ["medium", "high"]]];
+mkdirSync(join(home, ".codex"));
+writeFileSync(join(home, ".codex", "auth.json"), JSON.stringify({ auth_mode: "chatgpt", last_refresh: "2020-02-29T12:34:56.123+08:00", tokens: { access_token: "abcdefgh.abcdefgh.abcdefgh", id_token: "fixture-id-token", account_id: "fixture-native-staffing", refresh_token: "source-fixture-refresh-must-not-copy" } }), { mode: 0o600 });
+// the probe hands the CLI a clean environment, so a wrapper in the temp folder carries the model list into the fixture
+writeFileSync(join(dir, "codex.mjs"), `process.env.ACCOUNT_FIXTURE_MODELS=${JSON.stringify(JSON.stringify(CODEX_MODELS))};await import(${JSON.stringify(join(root, "tests/fixture/codex-account.mjs"))});\n`);
+writeFileSync(join(home, ".claude-models.json"), JSON.stringify([{ value: "opus", resolvedModel: "claude-opus-4-8", displayName: "Opus 4.8", supportsEffort: true, supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"] }, { value: "claude-haiku-4-5-20251001", resolvedModel: "claude-haiku-4-5-20251001", displayName: "Haiku 4.5" }]));
+writeFileSync(join(home, ".claude-models-login"), "1");
+const claudeReads = () => existsSync(join(home, ".claude-models-trace.jsonl")) ? readFileSync(join(home, ".claude-models-trace.jsonl"), "utf8").split("\n").filter((l) => l.includes('"initialize"')).length : 0;
 let pass = 0, fail = 0;
 const ok = (c, name, extra = "") => { if (c) { pass++; console.log(`  ok    ${name}`); } else { fail++; console.log(`  FAIL  ${name} ${extra}`); } };
 const pin = (id) => ({ id, v: 1, sha256: createHash("sha256").update(readFileSync(join(root, `packs/core/skills/${id}/SKILL.md`), "utf8")).digest("hex") });
@@ -27,8 +40,9 @@ seed();
 // a registered project to choose on the page (no repository: the page only lists it)
 writeFileSync(join(data, "projects.json"), JSON.stringify([{ id: "shop", name: "Shop", path: null, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null }]));
 const port = await freePort(), base = `http://127.0.0.1:${port}`;
-const env = { ...process.env, HOME: home, CODEX_HOME: join(home, ".codex"), CREW_DATA: data, CREW_PORT: String(port), CREW_SESSION_TOKEN: token, CREW_GH: "0", CREW_CHAT_PROVIDER: "stub", CREW_INSTALL_RUNNER: "mock", CREW_HOST_CODEX_BIN: "/nonexistent/codex", CREW_HOST_CLAUDE_BIN: "/nonexistent/claude", CREW_SANDBOX: "0" };
-delete env.CREW_MAIN_PROJECT; delete env.CREW_FM_STATE;
+const env = { ...process.env, HOME: home, CODEX_HOME: join(home, ".codex"), CREW_DATA: data, CREW_PORT: String(port), CREW_SESSION_TOKEN: token, CREW_GH: "0", CREW_CHAT_PROVIDER: "stub", CREW_INSTALL_RUNNER: "mock", CREW_HOST_CODEX_BIN: "/nonexistent/codex", CREW_HOST_CLAUDE_BIN: "/nonexistent/claude", CREW_SANDBOX: "0",
+  USER: process.env.USER || "fixture-user", LOGNAME: process.env.LOGNAME || "fixture-user", CREW_CODEX_BIN: join(dir, "codex.mjs"), CREW_CLAUDE_BIN: join(root, "tests/fixture/claude-models.mjs"), CREW_DETECT_FORCE_MIN_MS: "0" };
+delete env.CREW_MAIN_PROJECT; delete env.CREW_FM_STATE; delete env.CODEX_API_KEY;
 const app = spawn("bun", ["src/server.ts"], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] }); let browser;
 const api = async () => (await fetch(`${base}/api/team`, { headers: { cookie: `crew_session=${token}` } })).json();
 try {
@@ -39,9 +53,18 @@ try {
     const p = await browser.newPage({ viewport: { width, height } }); const errors = []; p.on("pageerror", (e) => errors.push(String(e)));
     const tag = `${lang} ${width}`;
     await p.goto(`${base}/#/crew`); await p.evaluate((l) => setLang(l), lang);
+    const readsBefore = claudeReads();
     await p.locator("[data-team-link]").click();
     await p.locator("[data-team-page]").waitFor();
     ok(/#\/team$/.test(p.url()), `the Crew page links to who runs each workflow ${tag}`);
+    // ---------- detected models ----------
+    const claudeStatus = p.locator('[data-provider-status="claude"]'), codexStatus = p.locator('[data-provider-status="codex"]');
+    await p.waitForFunction(() => document.querySelector('[data-provider-status="claude"]')?.dataset.state === "detected" && document.querySelector('[data-provider-status="codex"]')?.dataset.state === "detected", null, { timeout: 30000 });
+    if (lang === "en") ok(claudeReads() > readsBefore, `opening the page detects the models (the Claude CLI's list was read) ${tag}`, `${readsBefore} → ${claudeReads()}`);
+    ok(await codexStatus.locator("[data-model-count]").getAttribute("data-model-count") === "3" && await claudeStatus.locator("[data-model-count]").getAttribute("data-model-count") === "2", `each provider shows how many models were detected ${tag}`);
+    ok(await claudeStatus.getAttribute("data-login") === "logged-in" && (await claudeStatus.innerText()).includes(lang === "en" ? "signed in" : "已登入"), `each provider shows its login ${tag}`, await claudeStatus.innerText());
+    ok(Number(await claudeStatus.locator("[data-detected-at]").getAttribute("data-detected-at")) > 0 && (await claudeStatus.innerText()).includes(lang === "en" ? "detected at" : "偵測時間"), `each provider shows when it was detected ${tag}`);
+    const opts = async (row) => row.locator("select").nth(1).evaluate((s) => [...s.querySelectorAll("optgroup")].map((g) => ({ group: g.dataset.providerGroup, options: [...g.querySelectorAll("option")].map((o) => ({ value: o.value, text: o.textContent, stale: o.hasAttribute("data-unavailable"), efforts: o.dataset.efforts })) })));
     const card = p.locator('[data-team-card="web-prototype"]');
     ok(await card.count() === 1 && await p.locator('[data-team-card="documents"]').count() === 1 && await p.locator('[data-team-card="code-firstmate"]').count() === 1, `one card per workflow with agents ${tag}`);
     ok((await card.innerText()).includes(lang === "en" ? "Follows team" : "跟團隊"), `a workflow that follows the team says so ${tag}`, await card.innerText());
@@ -50,6 +73,16 @@ try {
     await rowA.waitFor();
     const modelOf = async (row) => row.locator("select").nth(1).inputValue();
     ok(await modelOf(rowA) === "codex/gpt-6.1-sol" && await modelOf(rowB) === "claude/sonnet-5.5", `design A and B show different members' models ${tag}`);
+    const groupsB = await opts(rowB);
+    ok(JSON.stringify(groupsB.map((g) => g.group)) === '["codex","claude"]' && JSON.stringify(groupsB[0].options.map((o) => o.value)) === JSON.stringify(CODEX_MODELS.map(([m]) => `codex/${m}`)),
+      `the model select is grouped by provider and lists only the detected models ${tag}`, JSON.stringify(groupsB));
+    const claudeOpts = groupsB[1].options;
+    ok(claudeOpts.length === 3 && claudeOpts[0].value === "claude/sonnet-5.5" && claudeOpts[0].stale && claudeOpts[0].text.includes(lang === "en" ? "unavailable now" : "目前不可用") && claudeOpts.slice(1).map((o) => o.value).join() === "claude/claude-opus-4-8,claude/claude-haiku-4-5-20251001" && !claudeOpts.some((o) => /opus-5-5|opus-5\.5/.test(o.value)),
+      `the current model no longer detected stays, marked unavailable; Claude's choices are its CLI's list ${tag}`, JSON.stringify(claudeOpts));
+    ok(claudeOpts[1].efforts === "low medium high xhigh max" && claudeOpts[2].efforts === "" && groupsB[0].options[2].efforts === "medium high", `each model carries its own efforts ${tag}`);
+    ok(JSON.stringify(await rowA.locator("select").nth(2).evaluate((s) => [...s.options].map((o) => o.value))) === '["low","medium","high","xhigh"]', `the effort select offers the model's own efforts ${tag}`);
+    const note = p.locator("[data-models-note]");
+    ok(await note.count() === 1 && /sonnet-5\.5/.test(await note.innerText()) && (await note.innerText()).includes(lang === "en" ? "not detected on this machine" : "沒有偵測到"), `the note names the unavailable models and explains ${tag}`, await note.innerText().catch(() => ""));
     ok(await rowA.locator(".tm-skill.base").innerText() === "plain-writing", `the member's skill shows grey on the node ${tag}`);
     { const role = await rowA.locator("[data-role-skill]").textContent().catch(() => "") ?? "";
       ok(role.includes(lang === "en" ? "Role" : "角色") && role.includes("designer.md") && /· [0-9a-f]{8}/.test(role) && await rowA.locator(".tm-skill.own", { hasText: "web-interaction" }).count() === 1,
@@ -100,6 +133,12 @@ try {
     await p.locator('[data-seat-editor="alt-maker"] select').first().selectOption("codex/gpt-6-astra");
     await p.waitForFunction(() => document.querySelector('[data-team-row="design-b"] .tm-notes'));
     ok(/same model as Maker|同一個模型/.test(await rowB.locator(".tm-notes").innerText()) && await modelOf(rowB) !== "codex/gpt-6-astra", `the rule moves B off the maker's model and says so ${tag}`, await rowB.locator(".tm-notes").innerText());
+    // 重新偵測 reads the lists again; a provider without a login says so
+    const readsNow = claudeReads(); rmSync(join(home, ".claude-models-login"));
+    const redetect = async (login) => { await p.locator("[data-redetect]:not([disabled])").click(); await p.waitForFunction((l) => document.querySelector('[data-provider-status="claude"]')?.dataset.login === l && document.querySelector("[data-model-detection]")?.getAttribute("aria-busy") === "false", login, { timeout: 30000 }); };
+    await redetect("not-logged-in");
+    ok(claudeReads() > readsNow && (await claudeStatus.innerText()).includes(lang === "en" ? "not signed in" : "未登入"), `重新偵測 detects again, and a provider without a login says so ${tag}`, await claudeStatus.innerText());
+    writeFileSync(join(home, ".claude-models-login"), "1"); await redetect("logged-in");
     if (width === 390) ok(await p.evaluate(() => document.scrollingElement.scrollWidth <= innerWidth + 1), `no horizontal scroll at 390 ${tag}`, String(await p.evaluate(() => document.scrollingElement.scrollWidth)));
     if (process.env.CREW_UI_SHOTS) { await p.screenshot({ path: join(process.env.CREW_UI_SHOTS, `team-${width}.png`) }); await p.locator("[data-team-detail]").screenshot({ path: join(process.env.CREW_UI_SHOTS, `team-detail-${width}.png`) }); }
     ok(errors.length === 0, `no browser errors ${tag}`, errors.join(" | "));

@@ -86,6 +86,15 @@ the selected workflow's editable table (member, model, effort, skills: member sk
 restored to the team. Restore to team. The member legend opens the member editor (model, effort, own skills; presets
 省錢 / 均衡 / 品質).
 
+Model choices are detected on this machine, never a fixed list: Codex from its app-server's `model/list` (efforts per
+model from the same reply), Claude from the installed CLI's own list (the stream-json `initialize` request the Agent SDK's
+`supportedModels()` uses; only that request is written, so there is no user turn and no model request), efforts from
+Studio's table narrowed by what the CLI reports. Opening the page detects again unless a detection finished within a
+minute; 重新偵測 always does. Per provider the page shows the login, the model count and the detection time. The select
+lists only detected models, grouped by provider; an assigned model no longer detected stays, marked 目前不可用, and a
+note says why. Only when the Claude CLI is missing or does not answer does the page offer a fixed list, marked
+unverified with the reason. `studio_crew_assignments` and the staffing facts read the same list.
+
 ## Firstmate
 
 `studio_crew_assignments` (read: by workflow, by member, diff vs team, the project layer, any of these in one project,

@@ -7,14 +7,17 @@ import {createHash} from 'node:crypto';
 import {withJudges,isJudgeRow,type JudgeSlot,CrewStore,resolveCrew,applyChange,validateChange,changeImpact,crewBadge,teamBody,emptyTeam,slotsOf,declaredSeats,seatLabel,seatUses,capabilitiesOf,projectLayer,reviewingSeat,IMAGE_SEAT,CAP_LABELS,BUILTIN_SEATS,EFFORTS,type CrewChange,type Team,type SeatDecl,type Member} from './domain/crew';
 import {staffingApplies,staffingHash} from './domain/staffing';
 import {crewApplies,judgeSlots} from './crew-guard';
-import {crewWorkflows,roleSkillLabel,checkPins} from './crew-routes';
+import {crewWorkflows,roleSkillLabel,checkPins,crewModels,DETECT_REUSE_MS} from './crew-routes';
 import {withRoleNodes} from './crew-staffing';
 import {NativeToolFailure,type NativeMainTools} from './host/types';
 import {normalize,defBody,installedSource} from './runtime/defs';
 import {bundledText} from './bundled';
 import type {Engine} from './runtime/engine';
 
-type Facts={provider:string;support?:string;auth?:string;models:{id:string;efforts:string[];tags?:string[]}[]}[];
+type Fact={id:string;efforts:string[];tags?:string[]};
+type Facts={provider:string;support?:string;auth?:string;models:Fact[];candidates?:Fact[];detectedAt?:number}[];
+/** every model a provider offers: the ones verified to run, then the rest of its detected list (Claude's CLI list) */
+const offered=(f:Facts[number])=>[...f.models,...(f.candidates??[]).filter(c=>!f.models.some(m=>m.id===c.id))];
 const SOURCE='crew-change';
 const sha=(v:unknown)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const pickLine=(m:{provider:string|null;model:string|null;effort:string|null}|null|undefined)=>m?.provider?`${m.provider} ${m.model} · ${m.effort??'default'}`:'—';
@@ -39,13 +42,15 @@ export function describeChange(c:CrewChange,team:Team,def?:any):{en:string;zh:st
 /** The verified models that can do everything a seat needs (its suggestion first). */
 export function seatCandidates(seat:Pick<SeatDecl,'needs'|'suggest'>,facts:Facts){
  const out:{provider:'codex'|'claude';model:string;efforts:string[]}[]=[];
- for(const f of facts){if(f.support&&f.support!=='supported'||f.auth&&f.auth!=='verified')continue;if(f.provider!=='codex'&&f.provider!=='claude')continue;for(const m of f.models)if((seat.needs??[]).every(t=>capabilitiesOf(f.provider,m.id,facts as any).includes(t)))out.push({provider:f.provider,model:m.id,efforts:m.efforts});}
+ for(const f of facts){if(f.support&&f.support!=='supported'||f.auth&&f.auth!=='verified')continue;if(f.provider!=='codex'&&f.provider!=='claude')continue;for(const m of offered(f))if((seat.needs??[]).every(t=>capabilitiesOf(f.provider,m.id,facts as any).includes(t)))out.push({provider:f.provider,model:m.id,efforts:m.efforts});}
  const s=seat.suggest;return out.sort((a,b)=>Number(!!s&&(b.provider===s.provider)&&(!s.model||b.model===s.model))-Number(!!s&&(a.provider===s.provider)&&(!s.model||a.model===s.model)));
 }
 /** What a seat needs that no verified model has. */
-export function unmetCapabilities(seat:Pick<SeatDecl,'needs'>,facts:Facts){return(seat.needs??[]).filter(t=>!facts.some(f=>(f.provider==='codex'||f.provider==='claude')&&(!f.auth||f.auth==='verified')&&f.models.some(m=>capabilitiesOf(f.provider,m.id,facts as any).includes(t))));}
+export function unmetCapabilities(seat:Pick<SeatDecl,'needs'>,facts:Facts){return(seat.needs??[]).filter(t=>!facts.some(f=>(f.provider==='codex'||f.provider==='claude')&&(!f.auth||f.auth==='verified')&&offered(f).some(m=>capabilitiesOf(f.provider,m.id,facts as any).includes(t))));}
 
-export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Promise<Facts>;send?:(t:string,d:unknown)=>void}){
+export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Promise<Facts>;cached?:()=>Facts;send?:(t:string,d:unknown)=>void}){
+ // the models studio_crew_assignments reports: the same live list as the Crew page, detected again when older than the page reuses it
+ const liveModels=async(team:Team)=>{let facts=o.cached?.()??[];if(!facts.length||facts.some(f=>!f.detectedAt||Date.now()-f.detectedAt>DETECT_REUSE_MS))facts=await o.facts().catch(()=>facts);return crewModels(facts as any,team);};
  const source=normalize(JSON.parse(bundledText(`workflows/v2/${SOURCE}.wf.yaml`)||'null'));
  const installed=()=>installedSource(engine.defs,source,(a,b)=>staffingHash(a)===staffingHash(b));
  const bound=(def:any)=>{if(staffingHash(defBody(def))!==staffingHash(defBody(source)))throw new NativeToolFailure('target_changed','The team change workflow changed; restart Studio so it installs its built-in workflows','團隊變更流程已改變；請重新啟動 Studio 以安裝內建流程。','read_current_state');};
@@ -132,7 +137,7 @@ export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Prom
   return{node:r.node,label:r.label,member:seatLabel(team,r.seat).en,seat:r.seat,provider:r.provider,model:r.model,effort:r.effort,roleSkill:roleLine(def,j?j.role??null:r.role),
    skills:j?checkPins(def,j.node,j.check).map(p=>`${p.id}@v${p.v} (check)`):r.skills.map((p:any)=>`${p.id}@v${p.v}${p.from==='member'?' (member)':''}`),source:r.source,...(r.notes.length?{notes:r.notes.map((n:any)=>n.en)}:{})};};
  const tools:NativeMainTools={specs:[
-  {type:'function',name:'studio_crew_assignments',description:'Read who runs each workflow\'s agent nodes (the Studio team, docs: studio_manual section crew). No arguments: the members, the project layer (team.projects: each project\'s own seat changes) and each workflow\'s badge. workflow: that workflow\'s final crew per node (member, provider, model, effort, its role skill (name, Studio version, sha256 prefix), skills with versions in the order agents load them (the member\'s, then the node\'s own; a judge row: its check\'s), source: team / project / workflow / definition / missing, and any rule notes). member: every node that member runs. diff: true lists only what differs from the team, and empty seats. project: read all of the above in that project (its project layer applied). change: a hypothetical change (the same shape studio_propose_crew_change takes) answers which nodes it would change, without changing anything. Read-only.',
+  {type:'function',name:'studio_crew_assignments',description:'Read who runs each workflow\'s agent nodes (the Studio team, docs: studio_manual section crew). No arguments: the members, the project layer (team.projects: each project\'s own seat changes) and each workflow\'s badge. Every answer has models: the models detected on this machine now per provider (choices, with efforts) and any assigned model no longer detected (unavailable); propose only choices. workflow: that workflow\'s final crew per node (member, provider, model, effort, its role skill (name, Studio version, sha256 prefix), skills with versions in the order agents load them (the member\'s, then the node\'s own; a judge row: its check\'s), source: team / project / workflow / definition / missing, and any rule notes). member: every node that member runs. diff: true lists only what differs from the team, and empty seats. project: read all of the above in that project (its project layer applied). change: a hypothetical change (the same shape studio_propose_crew_change takes) answers which nodes it would change, without changing anything. Read-only.',
    inputSchema:{type:'object',properties:{workflow:{type:'string'},member:{type:'string'},diff:{type:'boolean'},project:{type:'string'},change:{type:'object'}},additionalProperties:false}},
   {type:'function',name:'studio_propose_crew_change',description:'Propose one change to the Studio team; it opens one captain card that shows the change and every node it reaches. You never apply it: only the captain\'s approval writes the team. change is one of: {kind:"member",seat,set:{provider?,model?,effort?,skills?}} (the whole member, every node that follows the team); {kind:"node",workflow,node,set:{seat?,provider?,model?,effort?},addSkill?:{id,v,sha256},removeSkill?:id} (only this workflow\'s node); {kind:"project",project,seat,set:{provider?,model?,effort?,skills?}} (only this project: that seat\'s member in every workflow of the project); {kind:"restore",workflow,node?}; {kind:"project-restore",project,seat?}; {kind:"seat",seat:{id,label,labelZh,reviews?,needs?},member}; {kind:"preset",preset:"save"|"balanced"|"quality"}. Read studio_crew_assignments first; library skill pins come from it.',
    inputSchema:{type:'object',properties:{change:{type:'object'}},required:['change'],additionalProperties:false}}],
@@ -143,7 +148,8 @@ export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Prom
     if(!args||typeof args!=='object'||Object.keys(args).some(k=>!['workflow','member','diff','project','change'].includes(k)))throw new NativeToolFailure('invalid_params','Use workflow, member, diff, project or change.','請使用 workflow、member、diff、project 或 change。','read_current_state');
     if(args.project!==undefined&&(typeof args.project!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,199}$/.test(args.project)))throw new NativeToolFailure('invalid_params','project is a project id (studio_list_projects).','project 是專案 id。','list_projects');
     const project:string|null=args.project??null;
-    const base={team:cfg?{version:cfg.version,members:Object.fromEntries(Object.entries(team.members).map(([id,m])=>[id,{label:seatLabel(team,id).en,provider:m.provider,model:m.model,effort:m.effort,skills:m.skills.map(p=>`${p.id}@v${p.v}`)}])),projects:projectLayer(team)}:null,...(project?{project}:{}),...(cfg?{}:{note:'No team yet: workflows run on Studio\'s default model. Propose seats with studio_propose_crew_change ({kind:"member",seat,set:{provider,model,effort}}).'})};
+    const live=await liveModels(team),models={providers:live.providers,choices:live.models.filter(m=>m.available).map(m=>({provider:m.provider,model:m.model,efforts:m.efforts,...m.unverified?{unverified:true}:{}})),unavailable:live.models.filter(m=>!m.available).map(m=>`${m.provider} ${m.model}`),note:'choices are the models detected on this machine now; propose only these. A model in unavailable is still assigned but no longer detected.'};
+    const base={team:cfg?{version:cfg.version,members:Object.fromEntries(Object.entries(team.members).map(([id,m])=>[id,{label:seatLabel(team,id).en,provider:m.provider,model:m.model,effort:m.effort,skills:m.skills.map(p=>`${p.id}@v${p.v}`)}])),projects:projectLayer(team)}:null,models,...(project?{project}:{}),...(cfg?{}:{note:'No team yet: workflows run on Studio\'s default model. Propose seats with studio_propose_crew_change ({kind:"member",seat,set:{provider,model,effort}}).'})};
     if(args.change!==undefined){let c:CrewChange;try{validateChange(args.change);c=args.change;}catch(e:any){throw new NativeToolFailure('crew_change_invalid',`This change is malformed: ${e?.message??e}`,'這個變更格式不對。','read_current_state');}
      let after:Team;try{after=applyChange(team,c,c.kind==='node'?engine.defs.get(c.workflow):undefined);}catch(e:any){throw new NativeToolFailure('crew_change_invalid',`This change does not apply: ${e?.message??e}`,'這個變更無法套用。','read_current_state');}
      const impact=changeImpact(team,after,wfs,c.kind==='project'||c.kind==='project-restore'?c.project:project);return{...base,hypothetical:true,change:describeChange(c,team,c.kind==='node'?engine.defs.get(c.workflow):undefined).en,reaches:impact,count:impact.length,note:'Nothing changed. To make it, call studio_propose_crew_change with the same change (the captain approves it on a card).'};}
