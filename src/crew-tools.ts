@@ -98,10 +98,10 @@ export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Prom
   const written=store.write(applyChange(team,change,def),cfg?.hash??null,{by:'captain (card)',via:'card',card:card.id,run:x.run.id,answerSeq:answer.seq});
   engine.record(x,'crew-approved',{data:{schema:1,team:written.hash,version:written.version,card:card.id}});try{o.send?.('team',{version:written.version});}catch{}return'ok';};
  /** A workflow that needs a seat the team does not fill: raise its card (once) and refuse the proposal, naming the seat and the card.
-  *  Nothing for a Studio without a team (the per-project staffing flow applies) or a workflow the team covers. */
- async function seatGate(def:any,owner:{key:string}){
+  *  Nothing for a Studio without a team (the per-project staffing flow applies) or a workflow the team covers. Read in the work's project. */
+ async function seatGate(def:any,owner:{key:string},project?:string|null){
   const cfg=store.current();if(!cfg||!(crewApplies(def)||staffingApplies(def)))return;const team=teamBody(cfg);
-  const res=resolveCrew(team,staffingApplies(def)?withRoleNodes(def):def,{},cfg.hash);if(!res.missing.length)return;
+  const res=resolveCrew(team,staffingApplies(def)?withRoleNodes(def):def,{},cfg.hash,project||null);if(!res.missing.length)return;
   const id=res.missing[0],decl=team.seats[id]??declaredSeats(def).find(s=>s.id===id)??(id===IMAGE_SEAT.id?IMAGE_SEAT:null),lab=seatLabel(team,id,def);
   const facts=await o.facts().catch(()=>[] as Facts),need:SeatDecl=decl??{id,label:lab.en,labelZh:lab.zh};
   const cands=seatCandidates(need,facts),unmet=unmetCapabilities(need,facts);

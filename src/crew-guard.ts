@@ -3,6 +3,7 @@
 // that record, so a later team edit never changes a running Task (docs/design/crew-seats.md).
 import {CrewStore,resolveCrew,parseRunOverride,teamBody,slotsOf,withJudges,seatLabel,overrideFor,reviewingSeat,emptyTeam,EFFORTS,type Resolution,type JudgeSlot,type RunOverride,type Team} from './domain/crew';
 import {staffingApplies,staffingHash,nodeRole} from './domain/staffing';
+import {createHash} from 'node:crypto';
 import {QueueRefusal} from './runtime/queue';
 import type {Engine} from './runtime/engine';
 
@@ -33,6 +34,9 @@ export function crewRecordOf(res:Resolution,team:{hash:string;version:number;mem
  const judges:CrewRecord['judges']={};for(const seat of ['reviewer','design-reviewer']){const row=res.nodes.find(r=>r.seat===seat),m=team.members[seat];const p=row?{provider:row.provider!,model:row.model!,effort:row.effort}:m?{provider:m.provider,model:m.model,effort:m.effort}:null;if(!p)continue;if(p.effort!==null&&EFFORTS.indexOf(p.effort)<EFFORTS.indexOf('medium'))p.effort='medium';judges[seat]=p;}
  return{schema:1,team:team.hash,teamVersion:team.version,workflow:def.id,version:def.version,definition:staffingHash(def),run,project:res.project??null,nodes,judges};
 }
+/** The definition hash a Firstmate proposal pins (src/firstmate.ts: sha256 of the key-sorted JSON). */
+function stable(v:any):string{return v&&typeof v==='object'?Array.isArray(v)?'['+v.map(stable).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+stable(v[k])).join(',')+'}':JSON.stringify(v);}
+export const proposalHash=(v:unknown)=>createHash('sha256').update(stable(v)).digest('hex');
 /** This run's efforts with every reviewing seat at medium or more (the team rule a run override never breaks). */
 export function floorRunEffort(team:Team|null,def:any,run:RunOverride):RunOverride{
  const t=team??emptyTeam(),slots=slotsOf(def);
@@ -45,14 +49,21 @@ export function installCrewGuard(engine:Engine,store:CrewStore){
   for(const n of Object.keys(run))if(!slotsOf(def).some(s=>s.node===n))throw new Error(`The run override names ${n}, which is not an agent node of ${def.id}`);
   const res=resolveCrew(teamBody(team),withJudges(def,judgeSlots(engine,def)),run,team.hash,crewProject(params));return{team,res,run};};
  /** A staffed Task's efforts for this run (code, coffee-kit): exactly what the captain answered on the dispatch card that started it,
-  *  read from that proposal's signed ledger. null: the Task names none. Its signed staffing stays as approved; these sit on top. */
- function staffedRunEffort(def:any,params:Record<string,string>|undefined){
+  *  read from that proposal's signed ledger. null: the Task names none. Its signed staffing stays as approved; these sit on top.
+  *  The answer starts one Task only: the proposal is a Firstmate proposal for this exact workflow, version and definition, and no
+  *  other Task carries it (self: the Task being initialized). */
+ function staffedRunEffort(def:any,params:Record<string,string>|undefined,self?:string){
   const run=parseRunOverride(params?._crewRun);if(!Object.keys(run).length)return null;
   for(const n of Object.keys(run))if(!slotsOf(def).some(s=>s.node===n))throw new Error(`The run override names ${n}, which is not an agent node of ${def.id}`);
-  const id=params?._firstmateProposal,p=typeof id==='string'?engine.get(id):null,t=p?engine.trusted(p.id):null;
+  const refuse=()=>{throw new Error('This run\'s efforts are not the efforts the captain approved on its dispatch card / 這次的 effort 不是船長在派工卡上核准的');};
+  const id=params?._firstmateProposal,p=typeof id==='string'?engine.get(id):null;
+  if(!p||p.workflow!=='firstmate-proposal'||typeof p.params.definition!=='string'||p.params.definition!==params?._firstmateDefinition||p.params.definition!==proposalHash(def))refuse();
+  {let target:any=null;try{target=typeof p!.params.target==='string'&&p!.params.target.trim().startsWith('{')?JSON.parse(p!.params.target):null;}catch{}if(target&&(target.workflow!==def.id||target.version!==def.version))refuse();}
+  if(engine.list().some(r=>r.id!==self&&r.params?._firstmateProposal===id))refuse();
+  const t=engine.trusted(p!.id);if(t.entries.some(e=>e.record==='native-dispatch'&&e.data?.child!==self))refuse();
   const answer=t?.ok?t.entries.filter(e=>e.record==='card-answer'&&e.data?.kind==='dispatch'&&e.data?.choice==='approve').at(-1):undefined,crew=answer?.data?.crew;
   const approved=crew&&typeof crew==='object'?Object.fromEntries(Object.entries(crew).map(([n,v])=>[n,{effort:v}])):null;
-  if(!approved||staffingHash(approved)!==staffingHash(run))throw new Error('This run\'s efforts are not the efforts the captain approved on its dispatch card / 這次的 effort 不是船長在派工卡上核准的');
+  if(!approved||staffingHash(approved)!==staffingHash(run))refuse();
   return{run,card:String(answer!.data.card),proposal:String(id)};}
  /** A staffed Task's recorded efforts for this run (crew-run-effort), from its signed ledger. */
  function runEffortOf(run:any):RunOverride|null{const t=engine.trusted(run.id),e=t.entries.filter(x=>x.record==='crew-run-effort').at(-1);if(!e)return null;
@@ -71,7 +82,7 @@ export function installCrewGuard(engine:Engine,store:CrewStore){
  const previousInit=engine.deps.initializeRun;
  engine.deps.initializeRun=(run:any,o:any)=>{previousInit?.(run,o);
   // a staffed Task: the captain's efforts for this run, floored for reviewing seats, next to its signed staffing binding
-  if(staffingApplies(run.def)){const r=staffedRunEffort(run.def,run.params);if(!r)return;const team=store.current(),node=run.def.nodes[0];
+  if(staffingApplies(run.def)){const r=staffedRunEffort(run.def,run.params,run.id);if(!r)return;const team=store.current(),node=run.def.nodes[0];
    engine.record(engine.x(run,node,run.nodes[node.id]),'crew-run-effort',{data:{schema:1,workflow:run.def.id,version:run.def.version,staffing:run.params._staffing??null,proposal:r.proposal,card:r.card,nodes:floorRunEffort(team?teamBody(team):null,run.def,r.run)}});return;}
   if(!crewApplies(run.def))return;const r=resolve(run.def,run.params);if(!r)return;if(r.res.missing.length)throw missingSeatsError(r.res);
   const node=run.def.nodes[0];engine.record(engine.x(run,node,run.nodes[node.id]),'crew-resolved',{data:crewRecordOf(r.res,r.team,run.def,r.run)});};

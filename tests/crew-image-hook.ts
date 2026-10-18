@@ -39,6 +39,14 @@ try {
     ok(onMaker.seat === "image-maker" && onMaker.model === "gpt-image-2" && onMaker.notes.some((n) => /cannot generate images/.test(n.en) && /不能產生圖片/.test(n.zh)), "a hook on a seat whose model cannot generate images runs on the image maker instead, with a note", JSON.stringify(onMaker));
     const onAlt = C.resolveCrew(t, hookOn("alt-maker")).nodes.find((n) => n.node === "draw")!;
     ok(onAlt.seat === "alt-maker" && onAlt.model === "gpt-6.1-sol", "a hook on a seat that can generate images keeps that seat's member");
+    // a reviewer moved off the maker's model never lands on the image maker's model
+    { const tr = structuredClone(t); tr.members.reviewer = member("claude", "sonnet-5.5", "medium"); tr.members["alt-maker"] = member("claude", "sonnet-5.5", "medium"); tr.members["design-reviewer"] = member("claude", "sonnet-5.5", "medium"); tr.members.coordinator = member("claude", "sonnet-5.5", "medium");
+      const rev = { id: "fixture-rev", name: "Rev", kind: "web", version: 1, roles: [{ id: "w", label: "W", skill: "bundled:x", seat: "maker" }, { id: "r", label: "R", skill: "bundled:x", seat: "reviewer" }], nodes: [{ id: "m", kind: "agent", label: "M", role: "w", x: 0, y: 0 }, { id: "c", kind: "agent", label: "C", role: "r", x: 1, y: 0 }], edges: [["m", "c"]] };
+      const c = C.resolveCrew(tr, rev).nodes.find((n) => n.node === "c")!;
+      ok(c.model !== "gpt-image-2" && c.notes.some((n) => /not an independent opinion/.test(n.en)), "the reviewer rule never swaps in an image model", JSON.stringify(c)); }
+    { const { crewView } = await import("../src/crew-routes"); const d = hookOn();
+      const v: any = crewView({ defs: { catalog: () => [{ id: d.id, version: 1 }], get: () => d } as any, store: new C.CrewStore(checkedTempDir("crew-image-view-")), facts: () => [], library: () => [] });
+      ok(v.seats.some((s: any) => s.id === "image-maker" && s.declared?.needs?.includes("image-generation")), "an image hook on no declared seat shows the image maker on the Crew page, so it can be filled"); }
     const solo = base(); const res = C.resolveCrew(solo, hookOn("maker"));
     ok(res.missing.join() === "image-maker", "no member that can generate images: the image-maker seat is missing", JSON.stringify(res.missing));
   }

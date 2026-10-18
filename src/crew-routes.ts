@@ -3,7 +3,7 @@
 //                           ?project=<id> resolves every workflow in that project (its project layer applied)
 //   POST /api/team/change   {change, expected}: the captain's change from the page (desktop only); compare-and-swap on expected
 // Firstmate never calls these: it proposes a change on a captain card (src/crew-tools.ts).
-import {withJudges,type JudgeSlot,CrewStore,resolveCrew,crewBadge,changeImpact,applyChange,teamBody,emptyTeam,slotsOf,declaredSeats,seatLabel,seatUses,BUILTIN_SEATS,PRESETS,EFFORTS,type Team} from './domain/crew';
+import {withJudges,type JudgeSlot,CrewStore,resolveCrew,crewBadge,changeImpact,applyChange,teamBody,emptyTeam,slotsOf,declaredSeats,seatLabel,seatUses,projectUses,IMAGE_SEAT,BUILTIN_SEATS,PRESETS,EFFORTS,type Team} from './domain/crew';
 import {staffingApplies} from './domain/staffing';
 import {withRoleNodes} from './crew-staffing';
 import type {WorkflowDefs} from './runtime/defs';
@@ -27,11 +27,13 @@ export function crewView(d:CrewViewDeps,project:string|null=null){
   return{id:def.id,name:def.name,version:def.version,kind:def.kind??null,staffed,badge:missing.length?{state:'missing',count:missing.length}:crewBadge(res),missing,missingRoles,
    nodes:res.nodes.sort((a,b)=>Number(order.get(a.node))-Number(order.get(b.node))).map(n=>({...n,judge:n.node.startsWith('judge--'),skills:n.skills.map(p=>({...p,name:name(p.id)}))}))};});
  const declared=new Map<string,any>();for(const def of wfs)for(const s of declaredSeats(def))if(!declared.has(s.id))declared.set(s.id,structuredClone(s));
+ // an image hook on no declared seat runs as the image maker: shown so it can be filled
+ if(!declared.has(IMAGE_SEAT.id)&&!team.seats[IMAGE_SEAT.id]&&wfs.some(def=>slotsOf(def).some(s=>s.seat===IMAGE_SEAT.id)))declared.set(IMAGE_SEAT.id,structuredClone(IMAGE_SEAT));
  const ids=[...BUILTIN_SEATS,...Object.keys(team.seats),...[...declared.keys()].filter(id=>!team.seats[id])];
  const seats=ids.map(id=>({id,label:seatLabel(team,id,[...declared.values()].find(s=>s.id===id)?{seats:[declared.get(id)]}:undefined),builtin:(BUILTIN_SEATS as readonly string[]).includes(id),declared:team.seats[id]??declared.get(id)??null,
   member:team.members[id]?{...team.members[id],skills:team.members[id].skills.map(p=>({...p,name:name(p.id)}))}:null,uses:seatUses(team,id,wfs).length,usesModel:seatUses(team,id,wfs,'model').length,usesEffort:seatUses(team,id,wfs,'effort').length,
-  // in a project: what that project changed on the seat, and how many of its nodes a project change reaches
-  ...(project?{project:team.projects?.[project]?.seats[id]??null,usesProject:seatUses(team,id,wfs,undefined,project).length}:{})}));
+  // in a project: what that project changed on the seat, and how many of its nodes a project change of the model or effort reaches
+  ...(project?{project:team.projects?.[project]?.seats[id]??null,usesProjectModel:projectUses(team,id,wfs,project,'model').length,usesProjectEffort:projectUses(team,id,wfs,project,'effort').length}:{})}));
  // the projects to choose from: the registered ones, then any the team already overrides
  const projects:{id:string;name:string;custom:boolean}[]=[];for(const p of (()=>{try{return d.projects?.()??[];}catch{return [];}})())projects.push({id:p.id,name:p.name,custom:!!team.projects?.[p.id]});
  for(const id of Object.keys(team.projects??{}))if(!projects.some(p=>p.id===id))projects.push({id,name:id,custom:true});

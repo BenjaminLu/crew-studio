@@ -63,7 +63,10 @@ function validateProjects(t:any){
   for(const[seat,o]of Object.entries<any>(v.seats)){const what=`project ${id} seat ${seat}`;onlyKeys(o,['provider','model','effort','skills'],what);if(!Object.keys(o).length)bad(`${what}: an override changes something`);
    if(!t.members[seat])bad(`${what}: the team has no member on this seat (fill it for the whole team first)`);
    if(o.provider!==undefined&&!PROVIDERS.includes(o.provider))bad(`${what}: provider`);if(o.model!==undefined)text(o.model,`${what} model`);if(o.skills!==undefined)validatePins(o.skills,`${what} skills`);
-   validateMember(projectMember(t,id,seat)!.member,what);}}}
+   const pm=projectMember(t,id,seat)!.member;validateMember(pm,what);
+   // a project never leaves a seat without what it needs (an image maker that cannot generate images would dead-end the work)
+   const lack=(t.seats[seat]?.needs??[]).filter((n:string)=>!capabilitiesOf(pm.provider,pm.model).includes(n));
+   if(lack.length)bad(`${what}: ${pm.provider} ${pm.model} cannot ${lack.map((n:string)=>CAP_LABELS[n]?.en??n).join(' and ')}, which this seat needs; choose a model that can`);}}}
 export function validateTeam(t:any):asserts t is Team{
  onlyKeys(t,['schema','members','seats','workflows','projects'],'team');if(t.schema!==1)bad('unknown schema');
  if(!plain(t.members)||Object.keys(t.members).length>24)bad('members');for(const[id,m]of Object.entries(t.members)){if(!ID.test(id))bad(`seat id ${id}`);validateMember(m,`member ${id}`);}
@@ -154,7 +157,8 @@ export function resolveCrew(team:Team|null,def:any,run:RunOverride={},hash:strin
  if(team)for(const r of rows){if(!r.provider||!r.model)continue;const target=reviewsOf(team,r.seat,def);if(!target)continue;
   const theirs=new Set(rows.filter(x=>x.seat===target&&x.provider&&x.model).map(keyOf));if(!theirs.size&&memberOf(target))theirs.add(keyOf(memberOf(target)!));
   if(!theirs.has(keyOf(r)))continue;
-  const alt=[...BUILTIN_SEATS,...Object.keys(team.seats)].map(id=>memberOf(id)).find(x=>x&&!theirs.has(keyOf(x)));
+  // the replacement is another member's model, never an image seat's (an image model cannot review or make text)
+  const alt=[...BUILTIN_SEATS,...Object.keys(team.seats).filter(id=>id!==IMAGE_SEAT.id&&!team.seats[id].needs?.includes(IMAGE_CAP))].map(id=>memberOf(id)).find(x=>x&&!theirs.has(keyOf(x)));
   const who=seatLabel(team,target,def),me=seatLabel(team,r.seat,def);
   if(alt){const was=`${r.provider} ${r.model}`;r.provider=alt.provider;r.model=alt.model;if(r.effort===null&&alt.provider==='codex')r.effort=alt.effort;r.fields.provider=r.fields.model='team';
    const why=reviewing(team,r.seat,def)?{en:'so the check is a second opinion',zh:'才是第二意見'}:{en:'so the two versions differ',zh:'兩個版本才會不一樣'};
@@ -237,6 +241,9 @@ export function changeImpact(before:Team,after:Team,defs:any[],project:string|nu
 }
 /** The nodes of other workflows a member change reaches: those that follow the team for that field. */
 export function seatUses(team:Team,seat:string,defs:any[],field?:'model'|'effort',project:string|null=null):{workflow:string;node:string}[]{return defs.flatMap(def=>resolveCrew(team,def,{},null,project).nodes.filter(r=>r.seat===seat&&(!field||r.fields[field]==='team'&&(field!=='model'||r.fields.provider==='team'))).map(r=>({workflow:def.id,node:r.node})));}
+/** The nodes a project change of this seat reaches in that project ("only this project", per field like the member's count):
+ *  those that follow the seat for that field, whether the team or the project set it. */
+export function projectUses(team:Team,seat:string,defs:any[],project:string,field?:'model'|'effort'):{workflow:string;node:string}[]{const follows=(s:Source)=>s==='team'||s==='project';return defs.flatMap(def=>resolveCrew(team,def,{},null,project).nodes.filter(r=>r.seat===seat&&(!field||follows(r.fields[field])&&(field!=='model'||follows(r.fields.provider)))).map(r=>({workflow:def.id,node:r.node})));}
 /** The projects whose crew differs from the team, and on which seats (Firstmate's read of the project layer). */
 export const projectLayer=(team:Team)=>Object.entries(team.projects??{}).map(([id,p])=>({project:id,seats:Object.fromEntries(Object.entries(p.seats).map(([seat,o])=>[seat,{...o,...(o.skills?{skills:o.skills.map(s=>`${s.id}@v${s.v}`)}:{})}]))}));
 

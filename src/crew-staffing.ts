@@ -57,6 +57,6 @@ export function installCrewStaffing(engine:Engine,store:StaffingStore,crew:CrewS
   if('missing' in d||staffingHash(shape(d.draft))!==staffingHash(shape(config)))throw new Error('Staffing derived from the Studio team differs from what that team gives this workflow; it is refused');
  }
  /** Whether the team covers this workflow (for the interview and the board): the seats it lacks, else none. */
- function coverage(def:any):{team:boolean;missing:string[]}{const team=crew.current();if(!team)return{team:false,missing:[]};const res=resolveCrew(teamBody(team),withRoleNodes(def),{},team.hash);return{team:true,missing:res.missing};}
+ function coverage(def:any,project?:string|null):{team:boolean;missing:string[]}{const team=crew.current();if(!team)return{team:false,missing:[]};const res=resolveCrew(teamBody(team),withRoleNodes(def),{},team.hash,project||null);return{team:true,missing:res.missing};}
  return{ensure,verify,coverage};
 }

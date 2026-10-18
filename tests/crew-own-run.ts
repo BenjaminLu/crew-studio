@@ -35,8 +35,11 @@ try {
   const make = plan.plan.find((r: any) => r.node === "make"), check = plan.plan.find((r: any) => r.node === "check");
   ok(make.provider === "claude" && make.model === "sonnet-5.5" && make.effort === "high" && make.skills.some((p: any) => p.id === "plain-writing" && p.from === "member" && p.v === 1), "the make row shows what runs: the definition's model, the team's effort, the member's skill with its version", JSON.stringify(make));
   ok(check.model !== "sonnet-5.5" && check.notes.some((n: any) => /same model as Maker/.test(n.en)), "the check row shows the model the rule moved it to, and the rule's note", JSON.stringify(check));
-  const started = await post({ workflow: own.id, text: "this week's issue", staffingConfirm: plan.hash, claudeVerification: plan.claudeVerification });
+  // a caller's "_" params (Studio's own pins: run efforts, proposal bindings) are dropped, never taken as the captain's
+  const started = await post({ workflow: own.id, text: "this week's issue", staffingConfirm: plan.hash, claudeVerification: plan.claudeVerification, params: { _crewRun: JSON.stringify({ make: { effort: "low" } }), _firstmateProposal: "R-0001", _crewTeam: "x" } });
   ok(started.status === 200 && !!started.j.id, "confirming that exact plan starts the Task", JSON.stringify(started.j).slice(0, 300));
+  { const params = rt.engine.get(started.j.id)?.params ?? {};
+    ok(!Object.keys(params).some((k) => ["_crewRun", "_firstmateProposal", "_crewTeam"].includes(k)), "a caller's internal params are dropped at the Task API", JSON.stringify(Object.keys(params))); }
   const rec = rt.engine.trusted(started.j.id).entries.find((e: any) => e.record === "crew-resolved")?.data;
   ok(rec?.team === t1.hash && ["make", "check"].every((id) => { const r = plan.plan.find((x: any) => x.node === id), n = rec.nodes[id]; return n.provider === r.provider && n.model === r.model && n.effort === r.effort && JSON.stringify(n.skills) === JSON.stringify(r.skills); }),
     "the Task records exactly the crew the captain confirmed", JSON.stringify(rec?.nodes));

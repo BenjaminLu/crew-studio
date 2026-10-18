@@ -27,7 +27,8 @@ GitHub connect orphaned the approval (H2/H3), and nothing showed who finally run
   node skills a workflow override removed, plus those it added. The team never removes a node skill.
 - **Project override** ("only this project"): per project, per seat, any of provider, model, effort, skills — the
   seat's member as that project sees it. Kept in the signed team (`projects`, absent while empty, so older team hashes
-  stay valid); it changes only a seat the team fills. A Task's project is its `project` parameter (a staffed
+  stay valid); it changes only a seat the team fills, and never leaves a seat without a capability it needs (an image
+  maker that cannot generate images is refused). A Task's project is its `project` parameter (a staffed
   workflow's: its staffing project id).
 - **Resolution** per node: run override (dispatch card: effort only, this run only) > workflow override (seat, provider,
   model, effort, added/removed node skills; kept on the next version while the node's role and kind are unchanged) >
@@ -52,7 +53,8 @@ GitHub connect orphaned the approval (H2/H3), and nothing showed who finally run
   hashes and CAS are unchanged. No team → the old per-project staffing flow, unchanged.
 - Run override on a staffed Task: the dispatch card offers each node's effort for this run, like any workflow. The
   child Task carries `_crewRun`; at start Studio requires it to equal the captain's signed `card-answer` on that
-  proposal's dispatch card (else refused), records `crew-run-effort` (efforts, staffing hash, card) in the Task's
+  proposal's dispatch card, the proposal to be a `firstmate-proposal` for this workflow, version and definition, and no
+  other Task to carry that proposal (else refused; a caller's `_` params never pass the Task API), records `crew-run-effort` (efforts, staffing hash, card) in the Task's
   ledger, and the staffed pick takes that effort for the node's own turns (judge turns and the signed staffing are
   untouched). Reviewing seats are offered, and run at, medium or more.
 

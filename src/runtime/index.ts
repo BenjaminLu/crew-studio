@@ -174,7 +174,7 @@ export function createRuntime(d: RuntimeDeps) {
    return{state:'approved',hash:config.hash,version:config.version,roles:Object.fromEntries(Object.entries(config.roles).map(([id,r])=>[id,{provider:r.provider,model:r.model,effort:r.effort}]))};
   };
   const onboarding=new Onboarding(engine,d.m3?.store??new ArtifactStore(d.dataDir));
-  const originalFirstmate=installFirstmate(engine,projects,{prepareDispatch:async(workflow,version)=>{const def=engine.defs.get(workflow,version);if(staffingApplies(def))await staffingFacts();},onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending,teamStaffing,crewSeatGate:(def,owner)=>crewTools.seatGate(def,owner),dispatchCrew:(def,project)=>crewTools.dispatchCrew(def,project)});
+  const originalFirstmate=installFirstmate(engine,projects,{prepareDispatch:async(workflow,version)=>{const def=engine.defs.get(workflow,version);if(staffingApplies(def))await staffingFacts();},onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending,teamStaffing,crewSeatGate:(def,owner,project)=>crewTools.seatGate(def,owner,project),dispatchCrew:(def,project)=>crewTools.dispatchCrew(def,project)});
   // free drafting: its own store and tools, separate from proposals, staffing and execution
   const drafts=new WorkflowDrafts(d.dataDir,defs,(id,revision)=>{try{d.send('wfdraft',{id,revision});}catch{}});
   const readiness=d.readiness===false?null:installReadiness({engine,defs,drafts,dataDir:d.dataDir,protectedRoots:d.protectedRoots??[d.fmRoot],send:d.send,startOwn:(o:any,g:unknown)=>ownClaude.start(o,g),...(d.readiness??{}),createRuntime:(d.readiness as any)?.createRuntimeOverride??createRuntime});
@@ -341,7 +341,8 @@ export function createRuntime(d: RuntimeDeps) {
         const wf = b?.workflow || cls.workflow; if (!wf) return refuse({ error: "Choose a workflow below; your request is still saved. / 請從下方選擇流程；你輸入的需求已保留。", code: "workflow_required", classifier: cls }, 409, "invalid-input.params");
         {const held=defs.held(wf);if(held)return refuse({error:`This workflow is ${held.en}. It stays in the catalog for editing. / 此流程${held.zh}，仍可在流程目錄中編輯。`,code:"workflow_held",held},409,"invalid-input.config");}
         if(!defs.selectable(wf,b?.version?Number(b.version):undefined))return refuse({error:"This workflow is internal or retired. Choose an available workflow. / 此流程為內部或已退役流程，請選擇可用流程。",code:"workflow_unavailable"},409,"invalid-input.config");
-        let params={...(b?.params??{})};delete params._ownStaffing;
+        // "_" params are Studio's own pins (staffing, crew, proposal bindings): never taken from a caller, only set below
+        let params=Object.fromEntries(Object.entries(b?.params??{}).filter(([k])=>!k.startsWith('_'))) as Record<string,any>;
         const chosenDef=defs.get(wf,b?.version?Number(b.version):undefined);
         // Validate the selected version's declared inputs before allocating a Task or checking staffing.
         const missing=Object.entries(chosenDef?.params??{}).filter(([key,spec])=>spec.required&&!(String(params[key]??spec.default??'').trim())).map(([key])=>key);

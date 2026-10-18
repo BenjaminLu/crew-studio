@@ -70,8 +70,9 @@ function askPanel(wf, row) {
     h("span", { class: "tm-ask-t" }, T(`Change ${row.label}'s ${what} to ${shown}:`, `把「${row.label}」的${what}改成 ${shown}：`)),
     h("button", { class: "btn primary", "data-scope-here": "", disabled: TM.busy, onclick: () => change({ kind: "node", workflow: wf.id, node: row.node, set }) }, T("Only this workflow", "只改這個 workflow")),
     // in a project: the seat's member for every workflow of this project only
-    TM.project ? h("button", { class: "btn", "data-scope-project": "", disabled: TM.busy || !seatOf(row.seat)?.member, onclick: () => change({ kind: "project", project: TM.project, seat: row.seat, set }) },
-      T(`Only this project (${projectName()}: affects ${seatOf(row.seat)?.usesProject ?? 0} node${seatOf(row.seat)?.usesProject === 1 ? "" : "s"})`, `只改這個專案（${projectName()}：影響 ${seatOf(row.seat)?.usesProject ?? 0} 個節點）`)) : null,
+    TM.project ? (() => { const n = (a.field === "model" ? seatOf(row.seat)?.usesProjectModel : seatOf(row.seat)?.usesProjectEffort) ?? 0;
+      return h("button", { class: "btn", "data-scope-project": "", disabled: TM.busy || !seatOf(row.seat)?.member, onclick: () => change({ kind: "project", project: TM.project, seat: row.seat, set }) },
+        T(`Only this project (${projectName()}: affects ${n} node${n === 1 ? "" : "s"})`, `只改這個專案（${projectName()}：影響 ${n} 個節點）`)); })() : null,
     h("button", { class: "btn", "data-scope-team": "", disabled: TM.busy || !seatOf(row.seat)?.member && a.field !== "model", onclick: () => change({ kind: "member", seat: row.seat, set }) },
       T(`The whole “${seatName(row.seat)}” (affects ${uses} node${uses === 1 ? "" : "s"})`, `改整個「${seatName(row.seat)}」（影響 ${uses} 個節點）`)),
     h("button", { class: "btn ghost", onclick: () => { TM.ask = null; render(); } }, T("Cancel", "取消")));

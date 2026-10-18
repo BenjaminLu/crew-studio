@@ -57,6 +57,13 @@ try {
     ok(chk.model !== "gpt-6.1-sol" && chk.notes.some((n: any) => /same model as Maker/.test(n.en)), "the rules read the project's members: its reviewer leaves the maker's model, with a note", JSON.stringify(chk));
     const impact = C.changeImpact(t, p, [def], "shop" as any), wide = C.changeImpact(t, p, [def]);
     ok(impact.map((x) => x.node).join() === "a" && wide.length === 0, "a project change reaches that project's nodes only", JSON.stringify({ impact, wide }));
+    // "only this project" counts per field, like the member's count: a node whose model its definition pins is not reached
+    { const pinned = { ...def, id: "fixture-pinned", nodes: [{ id: "n1", kind: "agent", label: "N1", role: "designer", provider: "codex", model: "pinned-x", mode: "test", x: 0, y: 0 }, { id: "n2", kind: "agent", label: "N2", role: "designer", mode: "test", x: 1, y: 0 }], edges: [] };
+      ok((C as any).projectUses(p, "maker", [pinned], "shop", "model").length === 1 && (C as any).projectUses(p, "maker", [pinned], "shop", "effort").length === 2, "only this project counts the nodes each field reaches"); }
+    // a project never leaves a seat without the capability it needs
+    { const img = team(); img.seats["image-maker"] = { id: "image-maker", label: "Image maker", labelZh: "圖像產出", needs: ["image-generation"] }; img.members["image-maker"] = member("codex", "gpt-image-2", "low");
+      let refused = ""; try { C.applyChange(img, { kind: "project", project: "shop", seat: "image-maker", set: { provider: "claude", model: "opus-5.5" } } as any); } catch (e: any) { refused = e.message; }
+      ok(/cannot generate images, which this seat needs/.test(refused), "a project change that leaves the image maker unable to generate images is refused", refused); }
     ok(C.seatUses(p, "maker", [def], "model", "shop" as any).length === 0 && C.seatUses(p, "maker", [def], "model").length === 1 && C.seatUses(p, "maker", [def], undefined, "shop" as any).length === 1, "in the project, a member's model change skips the nodes whose model the project set itself");
   }
   // ---------- the store ----------
@@ -119,6 +126,8 @@ try {
       ok((store.current() as any).projects?.shop?.seats?.maker?.effort === "xhigh" && store.current()!.approval.run === p.proposal, "the captain's approval writes the project override", JSON.stringify((store.current() as any).projects));
       // the Crew page's view for one project
       const view: any = crewView({ defs: H.defs as any, store, facts: () => [], library: () => [], projects: () => [{ id: "shop", name: "Shop" }] } as any, "shop");
+      ok(view.seats.find((s: any) => s.id === "maker").usesProjectEffort === 1 && view.seats.find((s: any) => s.id === "maker").usesProjectModel === 1, "the page's project counts are per field", JSON.stringify(view.seats.find((s: any) => s.id === "maker")));
+      ok(await crew.seatGate(E.defs.get("fixture-web"), { key: "g1" }, "shop") === undefined, "the seat gate reads the work's project (a covered project raises nothing)");
       ok(view.project === "shop" && view.projects.some((x: any) => x.id === "shop") && view.workflows.find((w: any) => w.id === "fixture-web").nodes.find((n: any) => n.node === "a").source === "project", "the Crew page shows a project's crew and lists the projects", JSON.stringify({ project: view.project, projects: view.projects }));
     } finally { for (const x of E.list()) if (!["failed", "cancelled", "succeeded"].includes(x.status)) { try { await E.cancel(x.id); } catch {} } H.stop(); }
   }
