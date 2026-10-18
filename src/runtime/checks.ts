@@ -1,4 +1,5 @@
 import { openScopedProxy } from "../egress-client";
+import { BROKER_PORTS, DEFAULT_STUDIO_PORT } from "../loopback-ports";
 import {localUnrestricted} from "../local-execution";
 // The check runtime (docs/check-contract.md). Every script that judges a step's
 // output is a check: a manifest (check.yaml) plus an executable, a native
@@ -243,21 +244,38 @@ export function accountHomeDir(): string {
     const m = /NFSHomeDirectory:\s*(\S+)/.exec(r.stdout.toString()); if (m) return (acctHome = m[1]); } catch {}
   return (acctHome = homedir());
 }
-// ---------- loopback for test runs (architecture §10 "Loopback") ----------
-// A project test may start a server of its own (Bun.serve({port:0}), app.listen(0)) and connect to it. A test run
-// (run_tests, and the checks that run the project's tests: CI, fail-first, main CI) gets loopback with Anthropic
-// sandbox-runtime's allowLocalBinding rules, verbatim (@anthropic-ai/sandbox-runtime 0.0.78,
-// dist/sandbox/macos-sandbox-utils.js, Apache-2.0; THIRD_PARTY_NOTICES.md). Loopback is all or nothing on macOS: Seatbelt
-// cannot keep "every loopback port except N" (a per-port deny after a localhost allow holds or not depending on
-// undocumented profile shape, measured on macOS 15 and by v1 in 2026-09), so a test run reaches every local service on
-// this machine, Studio's own ports included. Studio protects itself in its server instead (a session or tool token the
-// sandbox cannot read, Origin and JSON on every write; architecture §10), and "localhost" in Seatbelt also covers this
-// machine's LAN and VPN addresses. A test server bound to every interface is reachable from the LAN while it runs: a
-// residual risk on macOS (the test env sets HOST=127.0.0.1, which most dev servers honour). Every other check, and every
-// agent round, keeps loopback closed (a round reaches only its egress proxy and tool listener).
-export const LOCAL_BINDING_RULES = `(allow network-bind (local ip "*:*"))
-(allow network-inbound (local ip "*:*"))
+// ---------- loopback for test runs ----------
+// Test servers can bind ephemeral local ports. Explicit denies carve out existing
+// listeners, the Studio port and the entire reserved capability-listener range.
+// The snapshot is not isolation against unrelated host applications started later.
+export const LOCAL_BINDING_RULES = `(allow network-bind (local ip "localhost:*"))
+(allow network-inbound (local ip "localhost:*"))
 (allow network-outbound (remote ip "localhost:*"))`;
+export function parseListeningPorts(output: string): number[] {
+  if (!/^Proto\s+Recv-Q\s+Send-Q\s+Local Address\s+Foreign Address\s+\(state\)/m.test(output)) throw new Error("listener inspection returned an unrecognized netstat header");
+  const ports = new Set<number>();
+  for (const line of output.split("\n")) {
+    if (!/\bLISTEN\s*$/.test(line)) continue;
+    const fields = line.trim().split(/\s+/), m = /\.(\d+)$/.exec(fields[3] ?? "");
+    if (!/^tcp(?:4|6|46)?$/.test(fields[0] ?? "") || !m || +m[1] < 1 || +m[1] > 65535) throw new Error("listener inspection could not parse a listening address");
+    ports.add(+m[1]);
+  }
+  return [...ports].sort((a,b)=>a-b);
+}
+export function inspectListeningPorts(): number[] {
+  const r = Bun.spawnSync(["/usr/sbin/netstat", "-an", "-p", "tcp"], { stdout:"pipe", stderr:"pipe", env:{PATH:"/usr/bin:/bin:/usr/sbin"} });
+  if (!r.success) throw new Error(`listener inspection unavailable (netstat exit ${r.exitCode})`);
+  return parseListeningPorts(r.stdout.toString());
+}
+function closedTestPorts(snapshot: number[]): number[] {
+  const configured = Number(process.env.CREW_PORT ?? DEFAULT_STUDIO_PORT);
+  if (!Number.isInteger(configured) || configured < 1 || configured > 65535) throw new Error("invalid Studio listener port");
+  if (snapshot.some(n=>!Number.isInteger(n)||n<1||n>65535)) throw new Error("invalid listener snapshot port");
+  return [...new Set([...snapshot, DEFAULT_STUDIO_PORT, configured, ...BROKER_PORTS])].sort((a,b)=>a-b);
+}
+function closedPortRules(snapshot: number[]) {
+  return closedTestPorts(snapshot).map(n=>`(deny network-outbound (remote ip "localhost:${n}"))\n(deny network-bind network-inbound (local ip "localhost:${n}"))`).join("\n");
+}
 /** The env a test run gets on top of its own: bind dev servers to loopback, and keep Java on IPv4 (sandbox-runtime does the
  *  same: an IPv4-mapped ::ffff:127.0.0.1 connect does not match "localhost"). */
 export const LOCAL_BINDING_ENV: Record<string, string> = { HOST: "127.0.0.1", JAVA_TOOL_OPTIONS: "-Djava.net.preferIPv4Stack=true" };
@@ -277,25 +295,31 @@ export function linuxBwrapArgv(argv: string[], o: { cwd: string; reads: string[]
   return [bwrap, ...a, "--chdir", o.cwd, "--", ...argv];
 }
 /** What a sandboxed test run's profile is checked to enforce before the run (the self-probe), and what it does not. */
-export const TEST_RUN_ENFORCES = "Studio's data keys, session token and launch token folder are unreadable; no connection leaves this machine";
-export const TEST_RUN_DOES_NOT = "every local service on this machine is reachable on loopback (Studio's own server refuses a request without its token); a test server bound to every interface is reachable from the LAN while it runs; and another same-uid process's argv and environment are readable via KERN_PROCARGS2, which the OS sandbox cannot block (so no secret is ever placed on a round's argv or in its env)";
+export const TEST_RUN_ENFORCES = "Studio's data keys, session token and launch token folder are unreadable; no connection leaves this machine; Studio, existing listeners and reserved broker ports are inaccessible";
+export const TEST_RUN_DOES_NOT = "unrelated host services started after the listener snapshot may be reachable; a test server bound to every interface is reachable from the LAN while it runs; and another same-uid process's argv and environment are readable via KERN_PROCARGS2, which the OS sandbox cannot block (so no secret is ever placed on a round's argv or in its env)";
 /**
  * v1's self-probe: before a test run, try the profile on itself. Under the same profile a shell tries to read each existing
  * protected path (the deny list, Studio's runtime folder among them) and to open a connection off this machine (1.1.1.1:443,
  * by IP: no DNS). Anything that gets through means the profile does not enforce what Studio claims: the run is refused with
  * the reason, never run on a weaker sandbox. null: the profile holds.
  */
-export function selfProbe(profile: string, protectedPaths: string[]): string | null {
+export function selfProbe(profile: string, protectedPaths: string[], blockedPorts: number[] = []): string | null {
   if (process.env.CREW_TEST_SELF_PROBE_LEAK === "1") return "the sandbox self-probe failed (test): the profile let the probe read a protected path";
   const paths = protectedPaths.filter((p) => existsSync(p)).slice(0, 40);
-  const script = `for p in "$@"; do if [ -d "$p" ]; then /bin/ls "$p" >/dev/null 2>&1 && echo "READ $p"; else /bin/cat "$p" >/dev/null 2>&1 && echo "READ $p"; fi; done
-/usr/bin/nc -z -G 2 1.1.1.1 443 >/dev/null 2>&1 && echo "EGRESS 1.1.1.1:443"; exit 0`;
+  const script = `echo PROBE_STARTED; for p in "$@"; do if [ -d "$p" ]; then /bin/ls "$p" >/dev/null 2>&1 && echo "READ $p"; else /bin/cat "$p" >/dev/null 2>&1 && echo "READ $p"; fi; done
+/usr/bin/nc -z -G 2 1.1.1.1 443 >/dev/null 2>&1 && echo "EGRESS 1.1.1.1:443";\n${closedTestPorts(blockedPorts).filter(n=>n!==DEFAULT_STUDIO_PORT).map(n=>`/usr/bin/nc -z -G 1 127.0.0.1 ${n} >/dev/null 2>&1 && echo "EGRESS 127.0.0.1:${n}"`).join("\n")}\nexit 0`;
   const r = Bun.spawnSync(["/usr/bin/sandbox-exec", "-f", profile, "/bin/sh", "-c", script, "probe", ...paths], { stdout: "pipe", stderr: "pipe", env: { PATH: "/usr/bin:/bin" } });
   const leaks = r.stdout.toString().split("\n").filter((l) => /^(READ|EGRESS) /.test(l));
-  if (!r.success && !leaks.length) return `the sandbox self-probe could not run (exit ${r.exitCode}: ${r.stderr.toString().trim().slice(0, 200)})`;
-  return leaks.length ? `the sandbox self-probe failed: the profile let a test run ${leaks.map((l) => l.startsWith("READ") ? `read ${l.slice(5)}` : `connect to ${l.slice(7)}`).join(", ")}` : null;
+  if ((!r.success || !r.stdout.toString().includes("PROBE_STARTED")) && !leaks.length) return `the sandbox self-probe could not run (exit ${r.exitCode}: ${r.stderr.toString().trim().slice(0, 200)})`;
+  if (leaks.length) return `the sandbox self-probe failed: the profile let a test run ${leaks.map((l) => l.startsWith("READ") ? `read ${l.slice(5)}` : `connect to ${l.slice(7)}`).join(", ")}`;
+  // A sandbox that never starts (or denies all networking) is not a successful
+  // negative probe. Require real HTTP request/response inside the same profile.
+  const positive = `const http=require('node:http');(async()=>{for(const host of ['127.0.0.1','::1']){const s=http.createServer((q,r)=>r.end('loopback-ok'));await new Promise((r,j)=>{s.once('error',j);s.listen(0,host,r)});const url='http://'+(host.includes(':')?'['+host+']':host)+':'+s.address().port;const body=await new Promise((r,j)=>http.get(url,x=>{let b='';x.on('data',c=>b+=c);x.on('end',()=>r(b))}).on('error',j));await new Promise(r=>s.close(r));if(body!=='loopback-ok')throw Error('bad response')}console.log('LOOPBACK_POSITIVE_OK')})().catch(e=>{console.error(e);process.exit(1)});setTimeout(()=>process.exit(2),5000).unref();`;
+  const control = Bun.spawnSync(["/usr/bin/sandbox-exec", "-f", profile, process.execPath, "-e", positive], {stdout:"pipe",stderr:"pipe",env:{PATH:"/usr/bin:/bin"}, cwd:"/", timeout:7000});
+  return control.success && control.stdout.toString().includes("LOOPBACK_POSITIVE_OK") ? null : `the sandbox self-probe positive loopback control failed (exit ${control.exitCode}: ${control.stderr.toString().slice(0,200)})`;
 }
-export function profileFor(o: { out: string; tmp: string; reads: string[]; network: boolean; dataDir?: string | null; cwd?: string | null; localBinding?: boolean }) {
+export function profileFor(o: { out: string; tmp: string; reads: string[]; network: boolean; dataDir?: string | null; cwd?: string | null; localBinding?: boolean; blockedPorts?: number[] | null }) {
+  const ports = o.localBinding ? (o.blockedPorts === null ? (()=>{throw new Error("listener inspection unavailable");})() : o.blockedPorts ?? inspectListeningPorts()) : [];
   const reads = [...SYSTEM_READ, ...interpreterDirs(), ...o.reads].map((p) => realIf(p) ?? p);
   // the listings (not the files) of the folders above the working folder: bun reads them while it loads its environment
   const ancestors: string[] = []; { let d = o.cwd ? realIf(o.cwd) ?? o.cwd : null; while (d && d !== "/") { d = dirname(d); ancestors.push(d); } }
@@ -313,7 +337,7 @@ ${SYSCTL_READ}
 ${ancestors.length ? `(allow file-read-data ${ancestors.map((p) => `(literal ${q(p)})`).join(" ")})` : ""}
 (allow file-write* (subpath ${q(o.out)}) (subpath ${q(o.tmp)}) (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (literal "/dev/dtracehelper") (regex #"^/dev/fd/"))
 ${o.network ? '(allow network-outbound (remote ip))\n(allow network-inbound (local ip))\n(allow system-socket)' : "(deny network*)"}
-${o.localBinding ? LOCAL_BINDING_RULES : ""}
+${o.localBinding ? LOCAL_BINDING_RULES + "\n" + closedPortRules(ports) : ""}
 (deny appleevent-send)
 (deny file-read* ${denyList(o.dataDir).map((p) => `(subpath ${q(realIf(p) ?? p)})`).join(" ")})
 `;
@@ -416,9 +440,13 @@ export async function sandboxed(argv: string[], o: { cwd: string; out: string; t
   const reads = [o.cwd, ...(o.reads ?? []), ...(o.argvRead !== false && argv[0]?.startsWith("/") ? [dirname(argv[0])] : [])];
   let full = argv;
   if (seatbelt) {
-    writeFileSync(prof, profileFor({ out, tmp, reads, network: o.network, dataDir: o.dataDir ?? null, cwd: o.cwd, localBinding: !!o.testRun }));
+    let ports: number[] = [];
+    try {
+      ports = o.testRun ? inspectListeningPorts() : [];
+      writeFileSync(prof, profileFor({ out, tmp, reads, network: o.network, dataDir: o.dataDir ?? null, cwd: o.cwd, localBinding: !!o.testRun, blockedPorts: ports }));
+    } catch (e) { return { code: null, stdout:"", stderr:"", timedOut:false, ms:Date.now()-t0, refused:`test sandbox listener inspection failed: ${String(e)}` }; }
     // a test run is checked first: the profile must hold what Studio claims for it, or the run is refused with the reason
-    if (o.testRun) { const leak = selfProbe(prof, denyList(o.dataDir).map((p) => realIf(p) ?? p)); if (leak) return { code: null, stdout: "", stderr: "", timedOut: false, ms: Date.now() - t0, refused: leak }; }
+    if (o.testRun) { const leak = selfProbe(prof, denyList(o.dataDir).map((p) => realIf(p) ?? p), ports); if (leak) return { code: null, stdout: "", stderr: "", timedOut: false, ms: Date.now() - t0, refused: leak }; }
     full = ["/usr/bin/sandbox-exec", "-f", prof, ...argv];
   } else if (bwrap) {
     // Linux has no Seatbelt: a test run without network runs under bwrap (v1's layout: private pid/net namespaces, read-only reads)

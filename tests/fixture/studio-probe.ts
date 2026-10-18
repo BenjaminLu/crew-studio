@@ -6,7 +6,7 @@ const out: Record<string, number | string> = {};
 for (const r of routes) {
   const [method, path] = [r.slice(0, r.indexOf(":")), r.slice(r.indexOf(":") + 1)];
   try { const res = await fetch(origin + path, { method, headers: { "content-type": "application/json", origin }, ...(method === "GET" ? {} : { body: JSON.stringify({ choice: "approve", text: "x", workflow: "x" }) }), signal: AbortSignal.timeout(5000) });
-    out[`${method} ${path}`] = res.status; } catch (e) { out[`${method} ${path}`] = String(e).slice(0, 80); }
+    out[`${method} ${path}`] = res.status; } catch (e) { out[`${method} ${path}`] = String((e as any)?.code ?? e).slice(0, 80); }
 }
 // the egress proxy without a round credential
 out.egress = await new Promise<number | string>((res) => {

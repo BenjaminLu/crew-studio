@@ -1,13 +1,7 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
-// Loopback in the OS sandbox (architecture §10 "Loopback"). A test run (run_tests, Studio's CI) gets sandbox-runtime's
-// allowLocalBinding rules: a project test that starts its own server on port 0 and connects to it passes, HOST=127.0.0.1
-// is set, and, stated as it is, every other local service on this machine is reachable too. Studio protects itself in its
-// server: from inside a test run, every state-changing route and every read of a real Studio is refused without its token,
-// and its egress proxy refuses a request without a round credential. Any other check and every agent round keep loopback
-// closed. Before each test run the self-probe checks the profile holds what Studio claims (Studio's keys, session token
-// and launch token folder unreadable, nothing leaves the machine) and refuses the run otherwise. The egress proxy's
-// resolved-address guard refuses an allowed name that resolves to loopback, this host or metadata. On Linux bwrap gives a
-// test run a private loopback (the live part runs on Linux only).   bun tests/sandbox-loopback.ts
+// macOS test loopback: own ephemeral servers work, preexisting listeners and
+// reserved Studio capability ports do not. Negative probes require a successful
+// sandbox start and own-server controls. Linux uses a private bwrap loopback.
 import { mkdirSync, mkdtempSync, copyFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -24,13 +18,13 @@ const parse = (out: string) => { try { return JSON.parse(out.trim().split("\n").
 // a local service that was up before the run (another app's, or Studio's own port)
 const service = await new Promise<number>((r) => { const s = createServer((c) => c.end("service")); s.listen(0, "127.0.0.1", () => r((s.address() as any).port)); });
 
-// 1. a test run: its own server answers; every local service is reachable (the documented truth on macOS)
+// 1. own servers answer; preexisting services are blocked
 { const r = await sandboxed([process.execPath, "probe.ts", `service=${service}`], { cwd: work, out: join(root, "out-test"), tmp: join(root, "tmp-test"), timeoutS: 60, network: false, dataDir: data, testRun: true });
   const p = parse(r.stdout);
   ok(p?.own4 === true && p?.own6 === true && p?.child === true, "a test run: a test server of its own on port 0 (IPv4, IPv6, and spawned as a child process like app/server.ts) answers its test", JSON.stringify([p, r.refused, r.stderr.slice(0, 300)]));
   ok(p?.host === "127.0.0.1", "a test run gets HOST=127.0.0.1, so a dev server binds loopback rather than every interface", JSON.stringify(p?.host));
-  ok(p?.reach.service === true, "a test run reaches a local service that was already listening: loopback is all or nothing on macOS, and the docs say so", JSON.stringify(p?.reach));
-  ok(/unreadable/.test(r.sandbox?.enforced ?? "") && /every local service on this machine is reachable/.test(r.sandbox?.notEnforced ?? "") && /LAN/.test(r.sandbox?.notEnforced ?? ""), "a test run reports what its sandbox enforces and what it does not", JSON.stringify(r.sandbox)); }
+  ok(p?.reach.service === false && !r.refused && r.code === 0, "a running test sandbox blocks a preexisting local listener", JSON.stringify(p?.reach));
+  ok(/unreadable/.test(r.sandbox?.enforced ?? "") && /started after the listener snapshot/.test(r.sandbox?.notEnforced ?? "") && /LAN/.test(r.sandbox?.notEnforced ?? ""), "a test run reports what its sandbox enforces and what it does not", JSON.stringify(r.sandbox)); }
 // 2. any other check and an agent round keep loopback closed
 { const r = await sandboxed([process.execPath, "probe.ts", `service=${service}`], { cwd: work, out: join(root, "out-check"), tmp: join(root, "tmp-check"), timeoutS: 60, network: false, dataDir: data });
   const p = parse(r.stdout);
@@ -68,9 +62,9 @@ const service = await new Promise<number>((r) => { const s = createServer((c) =>
     const routes = ["POST:/api/scards/x/answer", "POST:/api/wruns", "POST:/api/operating-rules", "POST:/api/main/detach", "POST:/api/tools/fs_read", "GET:/api/agents", "GET:/api/doctor", "GET:/api/wruns", "GET:/api/scards"];
     const r = await sandboxed([process.execPath, "studio-probe.ts", base, String(egress), ...routes], { cwd: work, out: join(root, "out-studio"), tmp: join(root, "tmp-studio"), timeoutS: 60, network: false, dataDir: data, testRun: true });
     const p = parse(r.stdout) ?? {};
-    const refused = routes.every((x) => { const s = p[x.replace(":", " ")]; return s === 401 || s === 403; });
-    ok(egress > 0 && refused, "from inside a test run, a real Studio refuses every state-changing route and every read without its token (401/403), its Origin and JSON notwithstanding", JSON.stringify([p, r.stderr.slice(0, 200)]));
-    ok(p.egress === 407, "and its egress proxy refuses a request without a round credential (407)", String(p.egress));
+    const refused = routes.every((x) => typeof p[x.replace(":", " ")] === "string" && /ECONNREFUSED|EPERM|FailedToOpenSocket/.test(p[x.replace(":", " ")]));
+    ok(!r.refused && r.code === 0 && egress > 0 && refused, "a running test sandbox cannot connect to any isolated Studio route", JSON.stringify([p, r.stderr.slice(0, 200)]));
+    ok(!r.refused && r.code === 0 && ["EPERM", "ECONNREFUSED"].includes(p.egress), "and its existing egress proxy is unreachable", String(p.egress));
     const withSession = await fetch(`${base}/api/agents`, { headers: { "x-crew-session": "loopback-session" } });
     ok(withSession.status === 200 && (await fetch(`${base}/api/instance`)).status === 200, "the same read answers with Studio's session; only the launch challenge answers without one", String(withSession.status));
   } finally { app.kill(); } }
