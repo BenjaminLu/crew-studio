@@ -195,7 +195,7 @@ try {
   ok(sent.length === 1 && m.view().log.some((x: any) => x.attachmentRefusal === "attachmentMissing"), "a file that vanished before its turn is a typed refusal (attachmentMissing)");
   resolveAs = "store"; (m as any).enqueue("chat", "plain text", "desktop");
   await until(() => sent.length === 2);
-  ok(sent[1]?.text.replace(/\n\n\[Studio note: [^\n]*\]$/, "") === "plain text" && sent[1].files.length === 0, "the queue goes on: a plain message after a refusal is sent as before");
+  ok(sent[1]?.text.replace(/(?:\n\n\[Studio note: [^\n]*\])+$/, "") === "plain text" && sent[1].files.length === 0, "the queue goes on: a plain message after a refusal is sent as before");
   m.stop();
 
   // 2: a files-only captain message is captain input for captain-only native tools
@@ -321,7 +321,7 @@ try {
     const s2 = await raw("POST", "/api/main/send", { body: { text: "Read these", attachments: [{ id: sha(PNG), name: "label-one.png" }, sha(PDF)] } });
     ok(s2.status === 200 && await until(() => existsSync(claudeInput) && readFileSync(claudeInput, "utf8").includes("Read these")), "the Claude send is queued and reaches the CLI");
     // the first turn on an attached session carries the operating rules section ahead of the captain's text (09bb57a): the files ride the same message
-    const cin = readFileSync(claudeInput, "utf8").trim().split("\n").map((l) => JSON.parse(l)).map((x) => ({ ...x, text: x.text?.replace(/\n\n\[Studio note: [^\n]*\]$/, "") })).find((x) => x.text === "Read these" || (x.text?.startsWith("# Operating rules") && x.text.endsWith("The message follows.\n\nRead these")));
+    const cin = readFileSync(claudeInput, "utf8").trim().split("\n").map((l) => JSON.parse(l)).map((x) => ({ ...x, text: x.text?.replace(/(?:\n\n\[Studio note: [^\n]*\])+$/, "") })).find((x) => x.text === "Read these" || (x.text?.startsWith("# Operating rules") && x.text.endsWith("The message follows.\n\nRead these")));
     ok(cin?.files?.map((f: any) => `${f.type}:${f.media_type}:${f.bytes}`).join() === `image:image/png:${PNG.length},document:application/pdf:${PDF.length}`, "through the server, Claude gets an image block and a document block", JSON.stringify(cin?.files));
     await until(async () => !(await raw("GET", "/api/main")).body?.busy);
     await up(PNG, "renamed-later.png");

@@ -8,6 +8,8 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //      of the captain's message, each quoting it and each with its own card; invented or duplicate work is refused.
 //  S8  After the captain approved the image seat card, the images proposal waited for the captain to ask again: Studio
 //      proposes the held work again by itself and tells Firstmate.
+//  S10 Firstmate listed answered cards as still waiting: every captain turn carries the live open-card and Task line,
+//      and status claims come from it or studio_work_status in the same turn.
 // No model is called: a fake in-process host stands in for the CLI, and the tools run on the real engine.
 //      bun tests/firstmate-live-e2e.ts
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -18,7 +20,7 @@ import { bundledText } from "../src/bundled";
 import { installFirstmate, heldNotice } from "../src/firstmate";
 import { Projects } from "../src/doors";
 import { deliverableKinds, routeRequest } from "../src/deliverables";
-import { routingNote } from "../src/firstmate-turn";
+import { routingNote, firstmateTurnNote } from "../src/firstmate-turn";
 import { studioManual, manualSection, manualPage } from "../src/manual";
 import { MainSession, nativeFreshText, type TurnNote } from "../src/host/main";
 process.env.CREW_TEST_IN_PROCESS = "1";
@@ -174,6 +176,33 @@ await section("S8 seat card resumes the held proposal", async () => {
     ok(told.some((t) => t.text.includes(proposal!.id) && /do not propose it again/.test(t.text) && /轉角書店主視覺/.test(t.summary.zh)), "Firstmate is told the seat is filled and the proposal raised");
     const again: any = await fm.call("studio_propose_work", { workflow: "fixture-pics", version: 1, title: "轉角書店主視覺", text: "圖片：轉角書店的社群貼文主視覺，方形" }, captain);
     ok(again.proposal === proposal!.id, "Firstmate proposing it once more finds the same proposal, never a second card");
+  } finally { for (const r of E.list()) if (!["succeeded", "cancelled", "failed"].includes(r.status)) await E.cancel(r.id, "fixture cleanup"); H.stop(); rmSync(H.data, { recursive: true, force: true }); }
+});
+
+// ---------- S10: each captain turn carries the live status ----------
+await section("S10 live status on every captain turn", async () => {
+  const H = await harness([bundledText("workflows/v2/firstmate-proposal.wf.yaml")!, JSON.stringify(fixture)]); const E = H.engine;
+  try {
+    const tools = installFirstmate(E, new Projects(H.data));
+    const t = await mainWith({ turnNote: firstmateTurnNote(E) });
+    try {
+      const idle = await t.say("目前有什麼在等我？");
+      ok(/\[Studio note: live status at this message: nothing waits for the captain\. Nothing is running\./.test(idle) && /never from earlier turns/.test(idle), "a captain turn says nothing waits when nothing does", idle.slice(-400));
+      const p: any = await tools.call("studio_propose_work", { workflow: "turn-fixture", version: 1, title: "轉角書店網站", text: "Make the bookshop site" }, { key: "s10", captain: true, text: "Make the bookshop site", live: () => true });
+      await until(() => E.cards.list({ run: p.proposal, open: true }).some((c) => c.node === "dispatch"), 5000);
+      const card = E.cards.list({ run: p.proposal, open: true }).find((c) => c.node === "dispatch")!;
+      const waiting = await t.say("還有什麼要我決定？");
+      ok(new RegExp(`waiting for the captain: ${p.proposal} firstmate-proposal "轉角書店網站" \\(dispatch card ${card.id}`).test(waiting), "an open card is listed as waiting, with its Task and card", waiting.slice(-500));
+      await E.answer(card.id, { choice: "approve", by: "captain" } as any);
+      await until(() => !E.cards.list({ open: true }).some((c) => c.id === card.id) && !!E.get(p.proposal)?.ctx.childRun, 5000);
+      const child = E.get(p.proposal)!.ctx.childRun as string;
+      await until(() => E.cards.list({ run: child, open: true }).length > 0, 5000);
+      const after = await t.say("R-080 還在等我核准嗎？");
+      ok(!new RegExp(`card ${card.id}`).test(after) && new RegExp(`waiting for the captain: ${child} turn-fixture`).test(after), "once answered, the next turn no longer lists that card; the Task it started is what waits now", after.slice(-500));
+      ok(/never from memory of earlier turns/.test(nativeFreshText("/ws")) && /studio_work_status read in the same turn/.test(nativeFreshText("/ws")), "Firstmate's standing text says status comes from the live line or studio_work_status in the same turn");
+      const notice = await t.say("card: SC-1 answered A (in Crew Studio)", "card");
+      ok(!/live status at this message/.test(notice), "a card notice carries no status line");
+    } finally { t.done(); }
   } finally { for (const r of E.list()) if (!["succeeded", "cancelled", "failed"].includes(r.status)) await E.cancel(r.id, "fixture cleanup"); H.stop(); rmSync(H.data, { recursive: true, force: true }); }
 });
 
