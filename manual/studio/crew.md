@@ -15,7 +15,8 @@ changes. Design: `docs/design/crew-seats.md`.
 - **What a node finally runs**, highest first: this run's effort (the dispatch card, this run only), the workflow's
   override (member, model, effort, added or removed node skills; kept on the next version while the node keeps its
   role and kind), the node's own definition, the project's override, the team member. Skills = the member's skills,
-  then the node's own.
+  then the node's own; the agent receives its role skill before both. A judge turn receives its role skill, then the
+  skills pinned on its check, never the member's.
 - **Projects.** A project can change a seat's member (model, effort, skills) for its own work only ("只改這個專案").
   A Task's project is its `project` parameter; a staffed workflow's derived staffing carries its project's layer.
 - **Rules, never silent.** A reviewing seat never runs on the model of the seat it reviews; `alt-maker` never runs

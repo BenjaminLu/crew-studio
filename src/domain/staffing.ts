@@ -243,7 +243,11 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
  function verifyStored(def:any,params:Record<string,string>){
   const project=def.kind==='coffee-kit'?coffeeStaffingProject(params.project):resolveProject(params.project);let config=store.current(project);
   // a Task bound to an earlier crew-derived version keeps it when the team changed since (each version re-derives from its own signed team)
-  if(verifyCrew&&params._staffing&&params._staffing!==config.hash&&/^[a-f0-9]{64}$/.test(params._staffing)){const earlier=store.byHash(project,params._staffing);if(earlier?.crew&&config.crew)config=earlier;}
+  // and a Task on an earlier definition (the workflow moved to a new version since) keeps the signed approval it is bound to, the
+  // project's own or crew-derived, when that approval is for exactly the Task's definition; on the same definition only the current staffs
+  if(params._staffing&&params._staffing!==config.hash&&/^[a-f0-9]{64}$/.test(params._staffing)){const earlier=store.byHash(project,params._staffing);
+   const forDef=(c:StaffingConfig)=>c.workflow.id===def.id&&c.workflow.version===def.version&&c.workflow.sha256===staffingHash(def);
+   if(earlier&&((verifyCrew&&earlier.crew&&config.crew)||(forDef(earlier)&&!forDef(config))))config=earlier;}
   // a newer approval that only re-pinned role skills (another task approved the new text): this task's own skill is what changed
   if(params._staffing&&params._staffing!==config.hash){const d=(()=>{try{return skillDrift(def,params)}catch{return null}})();if(d){const id=d.changed[0];throw new SkillChanged(id,d.bound.roles[id].skill.sha256,sha(d.live[id].text));}}
   if(params._staffing!==config.hash||config.workflow.id!==def.id||config.workflow.version!==def.version||config.workflow.sha256!==staffingHash(def))throw new Error('Staffing approval missing or changed; confirm project role configuration / 派工配置尚未核准或已變更，請確認各角色配置');

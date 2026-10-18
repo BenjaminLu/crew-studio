@@ -95,7 +95,7 @@ function judgeRow(row) {
       h("span", { class: "tm-cell" }, h("span", { class: "tm-k" }, "Effort"), row.effort ?? T("default", "預設")),
       h("span", { class: "tm-cell tm-wide" }, h("span", { class: "tm-k" }, "Skills"),
         h("span", { class: "tm-skills" }, roleChip(row), (row.duty ?? []).map((p) => h("span", { class: "tm-skill own", title: T("This check's own skill", "這個檢查自己的 skill") }, `${p.name || p.id}@v${p.v}`))),
-        h("span", { class: "faint" }, T(`Follows “${seatName(row.seat)}”; change it on the member.`, `跟著「${seatName(row.seat)}」；要改請改成員。`))),
+        h("span", { class: "faint", "data-judge-order": "" }, T(`Follows “${seatName(row.seat)}”; change it on the member. Loads its role skill, then this check's skills, not the member's.`, `跟著「${seatName(row.seat)}」；要改請改成員。載入角色 skill，再載入這個檢查的 skill，不含成員的。`))),
       h("span", { class: `tm-src ${row.source}`, "data-source": row.source }, T(...(SOURCE[row.source] || [row.source, row.source])))),
     row.notes.length ? h("ul", { class: "tm-notes" }, row.notes.map((n) => h("li", {}, L(n)))) : null);
 }

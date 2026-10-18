@@ -25,6 +25,9 @@ GitHub connect orphaned the approval (H2/H3), and nothing showed who finally run
   (web-prototype design-b → `alt-maker`; reviewers → `reviewer`; designer reviews → `design-reviewer`).
 - **Skills of a node** = member skills (read-only on the node) + the node's own skills (pinned, as before), minus the
   node skills a workflow override removed, plus those it added. The team never removes a node skill.
+- **Order an agent receives them**: the role skill first, then the member's skills, then the node's own. A judged
+  check's judge turn receives its role skill, then the skills pinned on that check; it does not take the member's
+  skills (the Crew page's judge row shows exactly those two).
 - **Project override** ("only this project"): per project, per seat, any of provider, model, effort, skills — the
   seat's member as that project sees it. Kept in the signed team (`projects`, absent while empty, so older team hashes
   stay valid); it changes only a seat the team fills, and never leaves a seat without a capability it needs (an image

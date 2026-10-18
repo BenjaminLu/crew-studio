@@ -6,7 +6,7 @@ import { checkedTempDir } from "./lib/git-hygiene.mjs"; // temp folders only thr
 //     duty skill beyond plain-writing, each pin matching the built-in library text (packs/core/skills/<id>/SKILL.md, v1);
 //   - a code workflow's reviewer nodes pin code-review; design reviewers (agent nodes and judged checks) pin visual-design-review;
 //   - the system text a stub agent receives carries its role skill, then the member's skills, then the node's, in that order;
-//     a judge receives its check's duty skills; the pull request text and the image request carry their hook's skills;
+//     a judge receives its role skill, then its check's duty skills, never the member's (as the docs and the judge row say); the pull request text and the image request carry their hook's skills;
 //   - the Crew page (#/team) and studio_crew_assignments name each node's role skill (ref, version, sha256), and a judge row its duty skills.
 //      bun tests/duty-skills.ts
 import { createHash } from "node:crypto";
@@ -102,7 +102,7 @@ ok(workflows >= 12 && agents >= 20 && judges >= 8, "the sweep covered the built-
     const judge = systems.find((s) => s.first.startsWith("JUDGE judge1"));
     ok(!!judge && judge.system.includes("# Skill: visual-design-review (v1)") && judge.system.includes(body("visual-design-review")) && judge.system.indexOf(roleText) < judge.system.indexOf(body("visual-design-review")),
       "the judge's system text carries its role skill, then its check's duty skill", judge?.system.slice(0, 400));
-    ok(!judge?.system.includes(body("web-interaction")), "the judge does not inherit the maker node's skills");
+    ok(!judge?.system.includes(body("web-interaction")) && !judge?.system.includes(body("plain-writing")) && !judge?.system.includes(body("code-review")), "the judge takes neither the maker node's skills nor any member's", "");
     const step = e.get(run.id)!.steps.find((s: any) => s.node === "a") as any;
     ok(step?.judges?.[0]?.skills?.join() === "visual-design-review@v1", "the step lists the judge call's duty skills", JSON.stringify(step?.judges));
     const rec = e.trusted(run.id).entries.find((x: any) => x.record === "crew-resolved")?.data as any;
@@ -136,5 +136,44 @@ ok(workflows >= 12 && agents >= 20 && judges >= 8, "the sweep covered the built-
   ok(/const view=[\s\S]{0,400}roleSkill:roleLine/.test(tools), "studio_crew_assignments's per-node view names the role skill");
   const ui = readFileSync(join(root, "public/team.js"), "utf8");
   ok(/data-role-skill/.test(ui) && /"角色"/.test(ui), "the Crew page shows the role skill, labelled 角色", "");
+  ok(/data-judge-order[^\n]*then this check's skills, not the member's/.test(ui), "the judge row says what a judge loads: its role skill, then its check's, not the member's");
+}
+// ---------- a Task in flight keeps its own staffing approval when the workflow moves to a new definition ----------
+// (new pins change a built-in's definition, so Studio stores it as the next version and staffing is approved again for it)
+{
+  const { StaffingStore, installStaffingGuard, staffingHash } = await import("../src/domain/staffing");
+  const ref = "pack:firstmate/skills/worker.md";
+  const flow = { id: "code-firstmate", name: "Duty skills upgrade fixture", kind: "code", version: 1, roles: [{ id: "worker", label: "Worker", skill: ref }],
+    nodes: [{ id: "wait", kind: "card", label: "Wait", x: 0, y: 0, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "go", label: "Go", labelZh: "Go" }] } }, { id: "work", kind: "agent", label: "Work", role: "worker", mode: "test", x: 1, y: 0 }],
+    edges: [["wait", "work", "go"]] };
+  const h = await harness([Y(flow)], { data: checkedTempDir("crew-duty-staffing-") }), e = h.engine, staffing = new StaffingStore(h.data), project = { namespace: "git" as const, id: "p", identity: "duty-skills-upgrade" };
+  const { until } = await import("./rt-harness");
+  try {
+    installStaffingGuard(e, staffing, () => project);
+    const text = "# Worker skill\n"; e.deps.skillText = () => text;
+    // the provider each turn runs on is the approved pick (provider, model, effort), as the server selects it
+    e.deps.selectProvider = async (_x: any, p: any) => ({ ...e.deps.provider(p.provider, p.model), reasoningEffort: p.effort });
+    e.modes.test.system = (_x: any, skill: string) => skill;
+    const v1 = e.defs.get(flow.id)!, v2: any = { ...structuredClone(v1), version: 2, nodes: v1.nodes.map((n: any) => n.id === "work" ? { ...n, skills: [pin("fail-first-testing")] } : n) };
+    const pinned = staffing.remember({ ref, version: 1, text });
+    const draft = (def: any, model: string) => ({ schema: 1 as const, algorithm: "sha256-canonical-v1" as const, project, workflow: { id: def.id, version: def.version, sha256: staffingHash(def) }, roles: { worker: { provider: "codex" as const, model, effort: "high", skill: pinned } }, review: { freshContexts: 3, distinctProviders: false } });
+    // the project's own approval (the captain's, not derived from the team) for v1
+    const c1 = staffing.approve(draft(v1, "v1-model"), null, { run: "R-src", card: "SC-src", answerSeq: 1 });
+    const inFlight = e.start({ workflow: flow.id, text: "in flight", params: { project: project.id, _staffing: c1.hash } });
+    await until(() => inFlight.nodes.wait.waiting === "card");
+    // the definition moves to v2 and staffing is approved again for it (the Start form or a dispatch regenerates it): a new current
+    const c2 = staffing.approve(draft(v2, "v2-model"), c1.hash, { run: "R-new", card: "SC-new", answerSeq: 2 });
+    ok(staffing.current(project).hash === c2.hash, "the v2 approval is now the project's current staffing");
+    await e.answer(inFlight.nodes.wait.card!, { choice: "go", by: "captain" });
+    await until(() => ["succeeded", "failed"].includes(e.get(inFlight.id)!.status) || inFlight.nodes.work.waiting === "card", 60000);
+    ok(e.get(inFlight.id)!.status === "succeeded", "the Task in flight on v1 continues on its own signed v1 approval", `${e.get(inFlight.id)!.status} ${e.get(inFlight.id)!.error ?? ""} ${JSON.stringify(e.cards.get(inFlight.nodes.work.card ?? "")?.title ?? "")}`);
+    const startOk = (def: any, binding: string) => { try { e.deps.authorizeStart(def, { params: { project: project.id, _staffing: binding } }); return ""; } catch (err: any) { return String(err?.message ?? err); } };
+    ok(startOk(v2, c2.hash) === "", "a new Task on v2 starts on the new staffing", startOk(v2, c2.hash));
+    ok(/Staffing approval missing or changed/.test(startOk(v2, c1.hash)), "a Task on v2 is never staffed by the v1 approval", startOk(v2, c1.hash));
+    // the same definition re-approved with other picks: a Task bound to the earlier approval still asks again (unchanged rule)
+    const c1b = staffing.approve(draft(v1, "other-model"), c2.hash, { run: "R-again", card: "SC-again", answerSeq: 3 });
+    const c1c = staffing.approve(draft(v1, "third-model"), c1b.hash, { run: "R-third", card: "SC-third", answerSeq: 4 });
+    ok(/Staffing approval missing or changed/.test(startOk(v1, c1b.hash)) && startOk(v1, c1c.hash) === "", "on the same definition only the current approval staffs a Task", startOk(v1, c1b.hash));
+  } finally { for (const r of e.list()) if (!["succeeded", "failed", "cancelled"].includes(r.status)) await e.cancel(r.id, "cleanup"); h.stop(); }
 }
 end();
