@@ -17,6 +17,12 @@ try {
   check('nonzero exit and exact log survive', () => { assert.equal(failed.code,7); assert.equal(readFileSync(join(temp,'failed.log'),'utf8'),'fixture-output'); });
   const timed = await run('sleep 20', join(temp,'timeout.log'), 50, env);
   check('hung command times out with a failing result', () => { assert(timed.timedOut); assert.notEqual(timed.code,0); assert(timed.durationMs < 5000); });
+  const detachedLog = join(temp, 'detached.log');
+  const escaped = await run(`node -e 'const p=require("node:child_process").spawn(process.execPath,["-e","setTimeout(()=>{},20000)"],{detached:true,stdio:"inherit"}); console.log(p.pid); p.unref()'`, detachedLog, 1000, env);
+  const escapedPid = Number(readFileSync(detachedLog, 'utf8').trim());
+  try {
+    check('detached fixture holding pipes cannot defeat the timeout', () => { assert(escaped.timedOut); assert(escaped.durationMs < 5000); assert(Number.isInteger(escapedPid) && escapedPid > 1); });
+  } finally { if (Number.isInteger(escapedPid) && escapedPid > 1) try { process.kill(-escapedPid, 'SIGKILL'); } catch {} }
   const after = await run('exit 0', join(temp,'after.log'), 2000, env);
   check('later command still runs after a failure', () => assert.equal(after.code,0));
   console.log(`ci-runner: ${passed} passed, 0 failed`);

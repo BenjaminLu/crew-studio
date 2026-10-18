@@ -26,7 +26,12 @@ export async function run(command, logPath, timeoutMs, env) {
   child.stdout.pipe(log, { end: false }); child.stderr.pipe(log, { end: false });
   const kill = signal => { try { process.kill(-child.pid, signal); } catch {} };
   let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; kill('SIGKILL'); }, timeoutMs);
+  const timer = setTimeout(() => {
+    timedOut = true; kill('SIGKILL');
+    // A detached fixture can retain its parent's pipes after that parent exits.
+    // Closing our pipe handles bounds the wait; this is not an escaped-process reaper.
+    child.stdout.destroy(); child.stderr.destroy();
+  }, timeoutMs);
   const result = await new Promise(resolve => {
     child.on('error', error => resolve({ code: null, error: error.message }));
     child.on('close', (code, signal) => resolve({ code, signal }));
