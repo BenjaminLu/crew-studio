@@ -22,7 +22,7 @@ export function judgeSlots(engine:Pick<Engine,'registry'>,def:any):JudgeSlot[]{
  const out:JudgeSlot[]=[];const add=(node:any,refs:any[]|undefined)=>{for(const ref of refs??[]){let man:any=null;try{man=engine.registry.get(ref.use);}catch{}if(!man||man.kind!=='judged')continue;
   const own=node?nodeRole(def,node):undefined,declared=typeof man.judge?.role==='string'&&man.judge.role?man.judge.role:undefined,role=declared??(own&&def.roles?.some((r:any)=>r.id===own)?own:man.id?.includes('designer')?'designer':'reviewer');
   if(node&&role===own&&(node.kind==='agent'||node.kind==='loop'))continue;
-  const at=node??def.nodes.find((n:any)=>n.id===ref.__to);out.push({node:at?.id??'edge',check:ref.use,label:`${at?.label??''} · ${man.title?.en??ref.use}`.replace(/^ · /,''),seat:judgeSeat(def,role)});}};
+  const at=node??def.nodes.find((n:any)=>n.id===ref.__to);out.push({node:at?.id??'edge',check:ref.use,label:`${at?.label??''} · ${man.title?.en??ref.use}`.replace(/^ · /,''),seat:judgeSeat(def,role),role});}};
  for(const n of def?.nodes??[])add(n,n.checks);
  for(const e of def?.edges??[])add(def.nodes.find((n:any)=>n.id===e.to),e.checks);
  return out.filter((j,i,a)=>a.findIndex(x=>x.node===j.node&&x.check===j.check)===i);

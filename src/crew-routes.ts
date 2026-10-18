@@ -10,22 +10,33 @@ import type {WorkflowDefs} from './runtime/defs';
 
 export type CrewViewDeps={defs:WorkflowDefs;store:CrewStore;
  /** the judged checks of a definition, on their reviewing seats (src/crew-guard.ts judgeSlots): shown and counted like nodes */
- judges?:(def:any)=>JudgeSlot[];facts:()=>{provider:string;models:{id:string;efforts:string[]}[]}[];library:()=>{id:string;name:string;description?:string;current:number;sha256:string}[];
+ judges?:(def:any)=>JudgeSlot[];
+ /** a role's skill as agents receive it (src/runtime/engine.ts roleSkillUse): ref, Studio's version, sha256 of the exact text */
+ roleSkill?:(def:any,role:string|null)=>RoleSkillView|null;facts:()=>{provider:string;models:{id:string;efforts:string[]}[]}[];library:()=>{id:string;name:string;description?:string;current:number;sha256:string}[];
  /** the registered projects the page can choose ("only this project") */
  projects?:()=>{id:string;name:string}[]};
 const PROJECT=/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,199}$/;
+export type RoleSkillView={ref:string|null;version:number|null;sha256:string;parts?:{ref:string;sha256:string|null}[]};
+/** A role skill's short name: the file of its ref (worker.md), each part's for a role of several named skills. */
+export const roleSkillLabel=(r:RoleSkillView)=>(r.parts?.length?r.parts.map(p=>p.ref):[r.ref??'']).map(x=>x.split(/[/:]/).pop()||x).join(' + ');
+/** A judged check's own duty skills: the pins on its ref, on the node it sits on or on an edge into that node. */
+export const checkPins=(def:any,node:string,check:string)=>{const n=def.nodes.find((x:any)=>x.id===node);const refs=[...(n?.checks??[]),...def.edges.filter((e:any)=>e.to===node).flatMap((e:any)=>e.checks??[])];return(refs.find((c:any)=>c.use===check&&Array.isArray(c.skills))?.skills??[]) as {id:string;v:number;sha256:string}[];};
 /** The workflows the team staffs: every selectable workflow with an agent node (the startup competition keeps its own pick). */
 export const crewWorkflows=(defs:WorkflowDefs)=>defs.catalog().map(w=>defs.get(w.id,w.version)).filter((d:any)=>d&&d.kind!=='startup-recursion'&&slotsOf(d).length>0) as any[];
 export function crewView(d:CrewViewDeps,project:string|null=null){
  const cfg=d.store.current(),team:Team=cfg?teamBody(cfg):emptyTeam(),wfs=crewWorkflows(d.defs).map(def=>withJudges(def,d.judges?.(def)??[]));
  const lib=(()=>{try{return d.library();}catch{return [];}})(),name=(id:string)=>lib.find(s=>s.id===id)?.name??id;
+ const role=(def:any,id:string|null)=>{try{const r=d.roleSkill?.(def,id);return r?{...r,name:roleSkillLabel(r)}:null;}catch{return null;}};
  const workflows=wfs.map(def=>{const res=resolveCrew(team,def,{},cfg?.hash??null,project);const order=new Map(def.nodes.map((n:any,i:number)=>[n.id,i]));
+  // a judge row: the role it judges as (its role skill) and its check's own duty skills, which its judge turns load
+  const slots=d.judges?.(def)??[],judgeOf=(id:string)=>{const m=/^judge--.+--(\d+)$/.exec(id);return m?slots[Number(m[1])]??null:null;};
   // a staffed workflow also needs the seats of roles no agent node shows (coffee's image worker): its staffing derives from every role
   const staffed=staffingApplies(def),roles=staffed?resolveCrew(team,withRoleNodes(def),{},null,project):null,missing=roles?roles.missing:res.missing;
   // which seat is empty, and for which role: a staffed role no node shows (coffee's image worker) is named, not just counted
   const missingRoles=(roles?.nodes??[]).filter(n=>n.source==='missing'&&n.node.startsWith('role--')).map(n=>({role:n.role,label:n.label,seat:n.seat,seatLabel:seatLabel(team,n.seat,def)}));
   return{id:def.id,name:def.name,version:def.version,kind:def.kind??null,staffed,badge:missing.length?{state:'missing',count:missing.length}:crewBadge(res),missing,missingRoles,
-   nodes:res.nodes.sort((a,b)=>Number(order.get(a.node))-Number(order.get(b.node))).map(n=>({...n,judge:n.node.startsWith('judge--'),skills:n.skills.map(p=>({...p,name:name(p.id)}))}))};});
+   nodes:res.nodes.sort((a,b)=>Number(order.get(a.node))-Number(order.get(b.node))).map(n=>{const j=n.node.startsWith('judge--')?judgeOf(n.node):null;
+    return{...n,judge:n.node.startsWith('judge--'),roleSkill:role(def,j?j.role??null:n.role),skills:n.skills.map(p=>({...p,name:name(p.id)})),...(j?{duty:checkPins(def,j.node,j.check).map(p=>({...p,name:name(p.id)}))}:{})};})};});
  const declared=new Map<string,any>();for(const def of wfs)for(const s of declaredSeats(def))if(!declared.has(s.id))declared.set(s.id,structuredClone(s));
  // an image hook on no declared seat runs as the image maker: shown so it can be filled
  if(!declared.has(IMAGE_SEAT.id)&&!team.seats[IMAGE_SEAT.id]&&wfs.some(def=>slotsOf(def).some(s=>s.seat===IMAGE_SEAT.id)))declared.set(IMAGE_SEAT.id,structuredClone(IMAGE_SEAT));

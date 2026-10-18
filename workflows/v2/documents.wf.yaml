@@ -41,6 +41,23 @@
       "label": "Produce draft",
       "role": "writer",
       "mode": "deliver",
+      "skills": [
+        {
+          "id": "technical-writing",
+          "v": 1,
+          "sha256": "7bad12825f2a2a990841a4952f2d53861ceb6892838182179bb680d0ebd34fd4"
+        },
+        {
+          "id": "plain-writing",
+          "v": 1,
+          "sha256": "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467"
+        },
+        {
+          "id": "translation-zh-tw",
+          "v": 1,
+          "sha256": "07957e374f5d6a43fb750bedd5b6f5f11af54f9e222ac4b785a1bc6148da3bdb"
+        }
+      ],
       "args": {
         "format": "document",
         "variant": "A"

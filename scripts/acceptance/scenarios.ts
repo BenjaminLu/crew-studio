@@ -62,11 +62,11 @@ export const ALLOWED_CARD_EFFECTS: { workflow: string; node: string; option: str
 export const CAPTAIN_ONLY_ALLOW: { workflow: string; sha256: string; node: string; kind: string; option: string }[] = [
   // deliver acceptance cards (src/domain/deliver.ts finalCard): approve-<producer> puts the approved
   // artifact into Studio's local Library; changes and reject stay the captain's
-  { workflow: "documents", sha256: "10f45c7112d05ff10c2f6416322046e0904028267059c1f0325356f5b015d1ab", node: "accept", kind: "acceptance", option: "approve-draft" },
-  { workflow: "images", sha256: "1ff6044b93b46405600ff2bedbf402424679f70ce47df68585d7ea64b02c76bf", node: "accept", kind: "acceptance", option: "approve-draft" },
-  { workflow: "video", sha256: "ac2e69842b0dcfcd84585709c563a64b65a3561590f35c4fbcaa223d757451f1", node: "accept", kind: "acceptance", option: "approve-draft" },
-  { workflow: "web-prototype", sha256: "667dc15488bb3375d5c625e7457e5b52068df68e330e5306d01436272c074ae7", node: "accept", kind: "acceptance", option: "approve-design-a" },
-  { workflow: "web-prototype", sha256: "667dc15488bb3375d5c625e7457e5b52068df68e330e5306d01436272c074ae7", node: "accept", kind: "acceptance", option: "approve-design-b" },
+  { workflow: "documents", sha256: "688585e39d1aa2f22e5ed6e60f1d7bb1a4cde24188a8de81a3d5a78221b06e6d", node: "accept", kind: "acceptance", option: "approve-draft" },
+  { workflow: "images", sha256: "44906e97aaa39844b23ec8397964eeb2b8627d185b1174df2c2d08fde5dcd1dd", node: "accept", kind: "acceptance", option: "approve-draft" },
+  { workflow: "video", sha256: "94e2604c0eef113c33bb812c1598366144f6734f7bf6313d1357e40b129fb185", node: "accept", kind: "acceptance", option: "approve-draft" },
+  { workflow: "web-prototype", sha256: "6a6a532393a166f189e246acafc489119582aa2fec86cd579e7f3870cfe2ba5c", node: "accept", kind: "acceptance", option: "approve-design-a" },
+  { workflow: "web-prototype", sha256: "6a6a532393a166f189e246acafc489119582aa2fec86cd579e7f3870cfe2ba5c", node: "accept", kind: "acceptance", option: "approve-design-b" },
   // startup competition (src/domain/startup-recursion.ts): run the bundled template; accept the text result
   { workflow: "startup-recursion", sha256: "e5da7d4bcaf2b5865e12e04b8b7e73ab5421472e1bb03f523f4c0bd84183b92e", node: "choose", kind: "question", option: "template" },
   { workflow: "startup-recursion", sha256: "e5da7d4bcaf2b5865e12e04b8b7e73ab5421472e1bb03f523f4c0bd84183b92e", node: "accept", kind: "acceptance", option: "accept" },

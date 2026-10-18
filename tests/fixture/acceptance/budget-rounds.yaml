@@ -1,7 +1,7 @@
 # Offline fixture: documents makes two draft rounds; the budget allows one.
 schema: 2
 workflow: documents
-pin: { sha256: "10f45c7112d05ff10c2f6416322046e0904028267059c1f0325356f5b015d1ab" }
+pin: { sha256: "688585e39d1aa2f22e5ed6e60f1d7bb1a4cde24188a8de81a3d5a78221b06e6d" }
 topic: "fixture round budget"
 start: { provider: null, params: {} }
 providers: [stub]

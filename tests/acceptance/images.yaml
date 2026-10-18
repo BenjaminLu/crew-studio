@@ -1,7 +1,7 @@
 # Live acceptance: Images. One Codex image generation, checks, the captain's acceptance card, library.
 schema: 2
 workflow: images
-pin: { version: 1, sha256: "1ff6044b93b46405600ff2bedbf402424679f70ce47df68585d7ea64b02c76bf" }   # bun scripts/acceptance/pin.ts images
+pin: { version: 1, sha256: "44906e97aaa39844b23ec8397964eeb2b8627d185b1174df2c2d08fde5dcd1dd" }   # bun scripts/acceptance/pin.ts images
 topic: "A flat, friendly illustration of a small crew of robots reviewing a checklist, square, light background."
 start: { provider: null, params: {} }
 providers: [codex]                      # image.generate always uses the configured Codex image model

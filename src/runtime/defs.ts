@@ -15,7 +15,12 @@ import { compareProblem } from "../compare";
 
 export const NODE_KINDS = ["agent", "check", "card", "loop", "hook"] as const; // a closed set (architecture §3.1)
 export type NodeKind = (typeof NODE_KINDS)[number];
-export type CheckRef = { use: string; params?: Record<string, any>; blocking?: boolean; quorum?: { n: number; of: number }; proves?: number[]; prompt?: string; model?: string; provider?: string };
+export type CheckRef = { use: string; params?: Record<string, any>; blocking?: boolean; quorum?: { n: number; of: number }; proves?: number[]; prompt?: string; model?: string; provider?: string;
+  /** a judged check's duty skills, pinned like a node's: its judge turns load them after the role skill */
+  skills?: { id: string; v: number; sha256: string }[] };
+/** Hook actions that run a model turn of their own (the pull request text, the image request): such a hook may pin skills too. */
+export const MODEL_HOOK_ACTIONS = ["pr.open", "image.generate"] as const;
+export const pinsSkills = (n: Pick<WNode, "kind" | "do">) => n.kind === "agent" || n.kind === "loop" || (n.kind === "hook" && (MODEL_HOOK_ACTIONS as readonly string[]).includes(String(n.do)));
 export type GateSpec = { id: string; label?: string; builtin?: string; run?: string[]; args?: Record<string, any>; when?: { door?: string[] }; timeout_s?: number };
 export type CardSpec = { title?: string | { en: string; "zh-TW"?: string }; body?: string | { en: string; "zh-TW"?: string }; auto_option?: string;
   /** the context key a door node stored its result in; the card declares that door (one-way cards need the confirmation) */
@@ -116,6 +121,21 @@ export const entryOf = (d: WDef) => { const ins = new Set(d.edges.map((e) => e.t
 export const terminalsOf = (d: WDef) => { const outs = new Set(d.edges.map((e) => e.from)); return d.nodes.filter((n) => !outs.has(n.id)); };
 
 /** Problems that stop a definition from being saved (errors) or that the editor shows (warnings). */
+/** A list of skill pins (a node's, or a judged check's): each {id, v, sha256} once, in the library at that hash, within the node cap. */
+function checkPins(out: Problem[], node: string, label: string, pins: unknown, skillInfo?: SkillInfo) {
+  if (!Array.isArray(pins)) { out.push({ level: "error", node, text: `${label}: skills is an ordered list of {id, v, sha256}` }); return; }
+  let total = 0; const seen = new Set<string>();
+  for (const p of pins as any[]) {
+    if (!p || typeof p.id !== "string" || !Number.isInteger(Number(p.v)) || typeof p.sha256 !== "string") { out.push({ level: "error", node, text: `${label}: each skill is pinned as {id, v, sha256}` }); continue; }
+    if (seen.has(p.id)) out.push({ level: "error", node, text: `${label}: ${p.id} is enabled twice` }); seen.add(p.id);
+    if (!skillInfo) continue;
+    const info = skillInfo(p.id, Number(p.v));
+    if (!info) out.push({ level: "error", node, text: `${label}: no skill ${p.id} v${p.v} in the library` });
+    else if (info.sha256 !== p.sha256) out.push({ level: "error", node, text: `${label}: ${p.id} v${p.v}: the hash does not match the stored version` });
+    else total += info.bytes;
+  }
+  if (total > SKILL_NODE_CAP) out.push({ level: "error", node, text: `${node}: the enabled skills total ${fmtSize(total)}; the cap is ${fmtSize(SKILL_NODE_CAP)}` });
+}
 export function validate(d: WDef, known?: (ref: string) => boolean, runners?: Set<string>, skillInfo?: SkillInfo): Problem[] {
   const out: Problem[] = [];
   const ids = new Set<string>();
@@ -136,22 +156,10 @@ export function validate(d: WDef, known?: (ref: string) => boolean, runners?: Se
     if (n.max_visits != null && !(Number(n.max_visits) >= 1)) out.push({ level: "error", node: n.id, text: `${n.label}: max_visits must be 1 or more` });
     for (const c of n.checks ?? []) if (known && !known(c.use)) out.push({ level: "error", node: n.id, text: `${n.label}: no check ${c.use}` });
     if (n.skills != null) {
-      if (n.kind !== "agent" && n.kind !== "loop") out.push({ level: "error", node: n.id, text: `${n.label}: only an agent or loop node enables skills` });
-      else if (!Array.isArray(n.skills)) out.push({ level: "error", node: n.id, text: `${n.label}: skills is an ordered list of {id, v, sha256}` });
-      else {
-        let total = 0; const seen = new Set<string>();
-        for (const p of n.skills as any[]) {
-          if (!p || typeof p.id !== "string" || !Number.isInteger(Number(p.v)) || typeof p.sha256 !== "string") { out.push({ level: "error", node: n.id, text: `${n.label}: each skill is pinned as {id, v, sha256}` }); continue; }
-          if (seen.has(p.id)) out.push({ level: "error", node: n.id, text: `${n.label}: ${p.id} is enabled twice` }); seen.add(p.id);
-          if (!skillInfo) continue;
-          const info = skillInfo(p.id, Number(p.v));
-          if (!info) out.push({ level: "error", node: n.id, text: `${n.label}: no skill ${p.id} v${p.v} in the library` });
-          else if (info.sha256 !== p.sha256) out.push({ level: "error", node: n.id, text: `${n.label}: ${p.id} v${p.v}: the hash does not match the stored version` });
-          else total += info.bytes;
-        }
-        if (total > SKILL_NODE_CAP) out.push({ level: "error", node: n.id, text: `${n.id}: the enabled skills total ${fmtSize(total)}; the cap is ${fmtSize(SKILL_NODE_CAP)}` });
-      }
+      if (!pinsSkills(n)) out.push({ level: "error", node: n.id, text: `${n.label}: only an agent or loop node, or a hook that runs a model turn (${MODEL_HOOK_ACTIONS.join(", ")}), enables skills` });
+      else checkPins(out, n.id, n.label, n.skills, skillInfo);
     }
+    for (const c of n.checks ?? []) if (c?.skills != null) checkPins(out, n.id, `${n.label} · ${c.use}`, c.skills, skillInfo);
   }
   // team seats: a role's or node's seat is a built-in seat or one this workflow declares (docs/design/crew-seats.md)
   const declared = Array.isArray(d.seats) ? d.seats : d.seats == null ? [] : (out.push({ level: "error", text: "seats is a list of {id, label, labelZh}" }), []);
@@ -163,6 +171,7 @@ export function validate(d: WDef, known?: (ref: string) => boolean, runners?: Se
   for (const r of d.roles) if (r.skills != null && (!Array.isArray(r.skills) || !r.skills.length || r.skills.some((x: any) => typeof x !== "string" || !x || x.includes(ROLE_SKILL_JOIN)) || new Set(r.skills).size !== r.skills.length))
     out.push({ level: "error", text: `role ${r.id}: skills is an ordered list of distinct skill refs` });
   else if (r.skills != null && r.skill !== r.skills.join(ROLE_SKILL_JOIN)) out.push({ level: "error", text: `role ${r.id}: name its skill once, as skill or as skills, not both` });
+  for (const e of d.edges) for (const c of e.checks ?? []) if (c?.skills != null) checkPins(out, e.to, `${e.from} → ${e.to} · ${c.use}`, c.skills, skillInfo);
   for (const e of d.edges) {
     if (!ids.has(e.from) || !ids.has(e.to)) out.push({ level: "error", edge: ekey(e), text: `edge ${ekey(e)} names a node that does not exist` });
     for (const c of e.checks ?? []) if (known && !known(c.use)) out.push({ level: "error", edge: ekey(e), text: `edge ${ekey(e)}: no check ${c.use}` });

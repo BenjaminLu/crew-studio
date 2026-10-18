@@ -98,7 +98,7 @@ export function slotsOf(def:any):Slot[]{
  return out;
 }
 /** A judged check (a model judges a node's work) occupies a reviewing seat too: shown and resolved like a node. */
-export type JudgeSlot={node:string;check:string;label:string;seat:string};
+export type JudgeSlot={node:string;check:string;label:string;seat:string;role?:string};
 export const JUDGE_NODE='judge--';
 export const isJudgeRow=(id:string)=>id.startsWith(JUDGE_NODE);
 /** The definition with one virtual agent node per judged check, on the seat it judges as (its rows resolve and follow the rules like any node). */

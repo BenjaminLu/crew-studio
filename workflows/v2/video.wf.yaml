@@ -41,6 +41,13 @@
       "label": "Produce draft",
       "role": "editor",
       "mode": "deliver",
+      "skills": [
+        {
+          "id": "film-direction",
+          "v": 1,
+          "sha256": "49ca5660b66cf2c5941adefcff0d3be3e11533fc831320e060b11201c43a905a"
+        }
+      ],
       "args": {
         "format": "video",
         "variant": "A"

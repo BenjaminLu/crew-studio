@@ -41,6 +41,18 @@
       "label": "Produce design-a",
       "role": "designer",
       "mode": "deliver",
+      "skills": [
+        {
+          "id": "web-interaction",
+          "v": 1,
+          "sha256": "ec37230c4d2d5731347228961767a6d327eb547d588fce69f9172a720354b3b1"
+        },
+        {
+          "id": "accessible-ui",
+          "v": 1,
+          "sha256": "6e910784ba33844814cbd05e476cfc25a5c47321b2c796ecb6436ff10692ddb0"
+        }
+      ],
       "args": {
         "format": "web",
         "variant": "A"
@@ -57,6 +69,18 @@
       "role": "designer",
       "seat": "alt-maker",
       "mode": "deliver",
+      "skills": [
+        {
+          "id": "web-interaction",
+          "v": 1,
+          "sha256": "ec37230c4d2d5731347228961767a6d327eb547d588fce69f9172a720354b3b1"
+        },
+        {
+          "id": "accessible-ui",
+          "v": 1,
+          "sha256": "6e910784ba33844814cbd05e476cfc25a5c47321b2c796ecb6436ff10692ddb0"
+        }
+      ],
       "args": {
         "format": "web",
         "variant": "B"

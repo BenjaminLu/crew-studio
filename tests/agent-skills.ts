@@ -258,7 +258,7 @@ finally { app.kill(); }
   ok(o.every((v, i) => v >= 0 && (i === 0 || v > o[i - 1])), "a code-firstmate run's coordinator prompt contains plain-writing after the role skill", JSON.stringify({ o, run: r.id, err: H.engine.get(r.id)?.error }));
   ok(!!ssys && !/Copyright|MIT License|Permission is hereby granted/.test(ssys), "the credit and MIT notices are never in the coordinator prompt");
   const run = H.engine.get(r.id)!;
-  ok((run.steps ?? []).some((s: any) => s.node === "spec" && JSON.stringify(s.skills) === JSON.stringify(["plain-writing@v1"])), "the run's spec step shows plain-writing@v1", JSON.stringify((run.steps ?? []).map((s: any) => [s.node, s.skills])));
+  ok((run.steps ?? []).some((s: any) => s.node === "spec" && JSON.stringify(s.skills) === JSON.stringify(["plain-writing@v1", "technical-writing@v1"])), "the run's spec step shows plain-writing@v1, then its duty skill technical-writing@v1", JSON.stringify((run.steps ?? []).map((s: any) => [s.node, s.skills])));
   try { H.engine.cancel(r.id, "t"); } catch {}
   H.stop(); }
 

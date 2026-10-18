@@ -51,6 +51,9 @@ try {
     const modelOf = async (row) => row.locator("select").nth(1).inputValue();
     ok(await modelOf(rowA) === "codex/gpt-6.1-sol" && await modelOf(rowB) === "claude/sonnet-5.5", `design A and B show different members' models ${tag}`);
     ok(await rowA.locator(".tm-skill.base").innerText() === "plain-writing", `the member's skill shows grey on the node ${tag}`);
+    { const role = await rowA.locator("[data-role-skill]").textContent().catch(() => "") ?? "";
+      ok(role.includes(lang === "en" ? "Role" : "角色") && role.includes("designer.md") && /· [0-9a-f]{8}/.test(role) && await rowA.locator(".tm-skill.own", { hasText: "web-interaction" }).count() === 1,
+        `the node shows its role skill (labelled, with its hash) and its own duty skills ${tag}`, role); }
     // effort, only this workflow
     await rowA.locator("select").nth(2).selectOption("high");
     const ask = p.locator('[data-scope-ask="design-a"]'); await ask.waitFor();
@@ -76,12 +79,12 @@ try {
     await p.locator('[data-team-card="code-firstmate"]').click(); await p.locator('[data-team-detail="code-firstmate"]').waitFor();
     ok(await p.locator('[data-team-judge]').count() > 0 && (await p.locator('[data-team-card="code-firstmate"] .tm-step.judge').count()) > 0, `judged checks show on the card and in the table, on their reviewing seat ${tag}`);
     await card.click(); await rowB.waitFor();
-    // skills: add one, remove it
-    await rowB.locator(".tm-add").selectOption("accessible-ui");
-    await p.waitForFunction(() => [...document.querySelectorAll('[data-team-row="design-b"] .tm-skill.own')].some((e) => e.textContent.includes("accessible-ui")));
+    // skills: add one, remove it (design-b already pins web-interaction and accessible-ui by duty)
+    await rowB.locator(".tm-add").selectOption("data-viz");
+    await p.waitForFunction(() => [...document.querySelectorAll('[data-team-row="design-b"] .tm-skill.own')].some((e) => e.textContent.includes("data-viz")));
     ok(true, `a skill from the library is added to one node ${tag}`);
-    await rowB.locator(".tm-skill.own", { hasText: "accessible-ui" }).locator(".tm-x").click();
-    await p.waitForFunction(() => ![...document.querySelectorAll('[data-team-row="design-b"] .tm-skill.own')].some((e) => e.textContent.includes("accessible-ui")));
+    await rowB.locator(".tm-skill.own", { hasText: "data-viz" }).locator(".tm-x").click();
+    await p.waitForFunction(() => ![...document.querySelectorAll('[data-team-row="design-b"] .tm-skill.own')].some((e) => e.textContent.includes("data-viz")));
     ok(true, `and removed again ${tag}`);
     // restore
     await p.locator('[data-restore="web-prototype"]').click();

@@ -79,6 +79,18 @@
       "y": 100,
       "role": "worker",
       "mode": "coffee-page",
+      "skills": [
+        {
+          "id": "web-interaction",
+          "v": 1,
+          "sha256": "ec37230c4d2d5731347228961767a6d327eb547d588fce69f9172a720354b3b1"
+        },
+        {
+          "id": "accessible-ui",
+          "v": 1,
+          "sha256": "6e910784ba33844814cbd05e476cfc25a5c47321b2c796ecb6436ff10692ddb0"
+        }
+      ],
       "retries": 0,
       "timeout_s": 600
     },
@@ -162,11 +174,35 @@
         },
         {
           "use": "coffee-kit/reviewer",
-          "blocking": true
+          "blocking": true,
+          "skills": [
+            {
+              "id": "code-review",
+              "v": 1,
+              "sha256": "fa2160d6efbe11758074c2c736414335970d087420509cf10eac72d9a08efd20"
+            },
+            {
+              "id": "accessible-ui",
+              "v": 1,
+              "sha256": "6e910784ba33844814cbd05e476cfc25a5c47321b2c796ecb6436ff10692ddb0"
+            }
+          ]
         },
         {
           "use": "coffee-kit/designer",
-          "blocking": true
+          "blocking": true,
+          "skills": [
+            {
+              "id": "visual-design-review",
+              "v": 1,
+              "sha256": "0243bc65903c94c57dd3edc2bf032414e3206eb54a5cc2a340932278c858a055"
+            },
+            {
+              "id": "accessible-ui",
+              "v": 1,
+              "sha256": "6e910784ba33844814cbd05e476cfc25a5c47321b2c796ecb6436ff10692ddb0"
+            }
+          ]
         }
       ]
     },

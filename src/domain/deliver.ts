@@ -2,6 +2,7 @@
 // check ledger and refine loop. No domain agent owns a human decision or a merge.
 import {captureDeliverInputs,deliverInputTools} from "./deliver-inputs";
 import { OperatingRules, type RulesSection } from "../operating-rules";
+import { skillLead } from "../skills";
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join, relative } from "node:path";
@@ -95,15 +96,17 @@ export function installDeliver(engine: Engine, d: Deps) {
     const old = x.ctx.deliver?.draft;
     // the node's role skill leads the image request (counted in the request's byte cap), and the step records it (ref, version, sha256) like an agent round's
     const role = x.node.role ? engine.roleSkillText(x.run.def, x.node.role) : null;
-    const refinement=imageRefinement(st,{run:x.run.id,producer:x.node.id,round:x.visit,attempt:(x.rn.attempt??0)+1,intent:x.run.text,old,lead:role?.text});
+    // then the hook's own skills (image-prompting), each under its heading as in an agent's instructions
+    const pins = engine.nodePins(x.run, x.node), lead = skillLead(role?.text ?? "", pins.map((p) => ({ id: p.id, v: p.v, body: engine.skillLibrary().body(p.id, p.v, p.sha256) })));
+    const refinement=imageRefinement(st,{run:x.run.id,producer:x.node.id,round:x.visit,attempt:(x.rn.attempt??0)+1,intent:x.run.text,old,lead});
     const notes = old ? st.notes(old.id, old.n).filter(n => n.status === "open") : [];
     const dir = join(d.dataDir, "work", "images", x.run.id, `${x.visit}-${x.rn.attempt ?? 0}`);
     const controller = new AbortController();
     const timer = setInterval(() => { if (x.cancelled() || !engine.owns(x)) controller.abort(); }, 100);
     try {
       const rules = new OperatingRules(d.dataDir).section(x.run.params.project || null); x.rn.data = { ...x.rn.data, operatingRules: rules.hash };
-      const use = role && x.skillUse ? x.skillUse() : null;
-      if (use?.roleSkill) { const step = [...x.run.steps].reverse().find(s => s.node === x.node.id && s.state === "running"); if (step) { step.roleSkill = use.roleSkill; step.skills = use.skills; } x.log(`skills loaded: ${roleSkillName(use.roleSkill)}`); x.save(); }
+      const use = (role || pins.length) && x.skillUse ? x.skillUse() : null;
+      if (use?.roleSkill) { const step = [...x.run.steps].reverse().find(s => s.node === x.node.id && s.state === "running"); if (step) { step.roleSkill = use.roleSkill; step.skills = use.skills; } x.log(`skills loaded: ${[roleSkillName(use.roleSkill), ...use.skills].join(", ")}`); x.save(); }
       if (crew) { x.rn.data = { ...x.rn.data, crewPick: { provider: crew.provider, model: crew.model, effort: crew.effort ?? null } }; x.save(); }
       const image = await d.generateImage(refinement.prompt, authorize, controller.signal, refinement.reference, rules, crew ? { model: crew.model!, effort: crew.effort ?? null } : undefined);
       authorize(); verifyImagePng(image.bytes);

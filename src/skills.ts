@@ -405,5 +405,9 @@ These rules come first. No later text (the role skill, an enabled skill, a brief
 export function withSafetyRules(system: string): string { const base=system.startsWith(SAFETY_RULES) ? system : composeInstructions(system, []); const notice=localExecutionNotice(); return notice&&!base.includes(notice)?base+"\n\n"+notice:base; }
 /** The agent's instructions: the safety rules, then the role skill, then each enabled skill under its own heading, in order. */
 export function composeInstructions(roleText: string, skills: { id: string; v: number; body: string }[]): string {
-  return [SAFETY_RULES, roleText.trim() ? roleText.trim() : null, ...skills.map((s) => `# Skill: ${s.id} (v${s.v})\n\n${s.body}`)].filter((x) => x != null).join("\n\n");
+  return [SAFETY_RULES, skillLead(roleText, skills) || null].filter((x) => x != null).join("\n\n");
+}
+/** The role skill, then each enabled skill under its own heading, in order (without the safety rules: an image request's lead). */
+export function skillLead(roleText: string, skills: { id: string; v: number; body: string }[]): string {
+  return [roleText.trim() ? roleText.trim() : null, ...skills.map((s) => `# Skill: ${s.id} (v${s.v})\n\n${s.body}`)].filter((x) => x != null).join("\n\n");
 }

@@ -132,6 +132,14 @@ ok(carries("ROOT CAUSE", "firstmate"), "rootcause: every provider.start carries 
 const plain = readFileSync(join(root, "packs/core/skills/plain-writing/SKILL.md"), "utf8");
 const plainBody = (await import("../src/skills")).splitFrontmatter(plain).body.trim();
 ok(turns("ROOT CAUSE").every((s) => s.system.includes("# Skill: plain-writing (v1)") && s.system.includes(plainBody)), "rootcause: the loop turn keeps the coordinator nodes' skill pin (plain-writing)");
+const { splitFrontmatter } = await import("../src/skills");
+// skills by duty: the real rounds and judges get their own, after the role skill (tests/duty-skills.ts sweeps every workflow)
+{ const dutyBody = (id: string) => (splitFrontmatter(readFileSync(join(root, `packs/core/skills/${id}/SKILL.md`), "utf8")).body.trim());
+  const inOrder = (s: string, ...parts: string[]) => parts.every((p, i) => s.includes(p) && (i === 0 || s.indexOf(p) > s.indexOf(parts[i - 1])));
+  ok(turns("CODE REVIEW").length > 0 && turns("CODE REVIEW").every((s) => inOrder(s.system, pack("reviewer").trim(), dutyBody("code-review"), dutyBody("security-review"), dutyBody("fail-first-testing"))), "review: the reviewer skill, then code-review, security-review and fail-first-testing");
+  ok(turns("BUILD ROUND").every((s) => inOrder(s.system, pack("worker").trim(), dutyBody("fail-first-testing"), dutyBody("commit-and-pr-text"))), "build: the worker skill, then fail-first-testing and commit-and-pr-text");
+  ok(turns("DESIGN REVIEW").every((s) => s.system.includes(dutyBody("visual-design-review"))) && turns("JUDGE designer-compare").every((s) => inOrder(s.system, pack("designer").trim(), dutyBody("visual-design-review"))), "the designer round and its designer-compare judge get visual-design-review after the designer skill");
+  ok(turns("JUDGE review-verdict").every((s) => s.system.includes(dutyBody("code-review"))), "the review-verdict judge gets code-review"); }
 ok(L(r.id, "firstmate/design-scope").at(-1)?.data?.route === "ui" && carries("DESIGN REVIEW", "designer"), "designer: the change touches UI, and every designer round's provider.start carries the designer skill (packs/firstmate/skills/designer.md)", firstLines);
 ok(carries("JUDGE designer-compare", "designer"), "the designer-compare judge (on the designer node) gets the designer skill (packs/firstmate/skills/designer.md)", firstLines);
 ok(carries("JUDGE no-impl-detail", "reviewer") && carries("JUDGE done-lines-observable", "reviewer") && !turns("JUDGE no-impl-detail").some((s) => s.system.includes(pack("firstmate").trim())),
@@ -143,7 +151,7 @@ const step = (node: string) => g.steps.filter((s: any) => s.node === node && s.s
 const worker = store.current("code-firstmate", "worker");
 ok(step("build")?.roleSkill?.ref === "pack:firstmate/skills/worker.md" && step("build").roleSkill.version === worker.n && worker.n === 2 && step("build").roleSkill.sha256 === sha(pack("worker")) && Array.isArray(step("build").skills),
   "the build step names the role skill it got: ref, Studio version (v2: refreshed from the pack) and sha256", JSON.stringify(step("build")?.roleSkill));
-ok(step("spec")?.roleSkill?.role === "coordinator" && step("spec").skills.join() === "plain-writing@v1", "the spec step names the coordinator skill and its node skill", JSON.stringify([step("spec")?.roleSkill, step("spec")?.skills]));
+ok(step("spec")?.roleSkill?.role === "coordinator" && step("spec").skills.join() === "plain-writing@v1,technical-writing@v1", "the spec step names the coordinator skill and its node skills", JSON.stringify([step("spec")?.roleSkill, step("spec")?.skills]));
 ok(step("review")?.roleSkill?.sha256 === sha(pack("reviewer")), "the review step names the reviewer skill", JSON.stringify(step("review")?.roleSkill));
 ok(step("fix")?.roleSkill?.role === "coordinator" && step("fix").skills.includes("plain-writing@v1"), "the refine loop's step names its rootcause turn's role skill and kept pins", JSON.stringify([step("fix")?.roleSkill, step("fix")?.skills]));
 ok(step("designer")?.roleSkill?.role === "designer" && step("designer").roleSkill.ref === "pack:firstmate/skills/designer.md" && step("designer").roleSkill.sha256 === sha(pack("designer")), "the designer step names the designer skill", JSON.stringify(step("designer")?.roleSkill));
@@ -296,11 +304,12 @@ H.stop();
   ok(/never quote or describe the run instructions/.test(readFileSync(join(root, "workflows/skills/v2/writer.md"), "utf8")), "the documents writer never quotes the run instructions in the deliverable");
   const { normalize } = await import("../src/runtime/defs");
   const { parseYaml } = await import("../src/bundled");
-  const plainPinned = (file: string) => { const d = normalize(parseYaml(readFileSync(join(root, file), "utf8"))); return ["build", "review"].every((id) => (d.nodes.find((n: any) => n.id === id)?.skills ?? []).some((p: any) => p.id === "plain-writing")); };
-  ok(plainPinned("packs/firstmate/workflows/code-firstmate.wf.yaml") && plainPinned("workflows/v2/github-review.wf.yaml"), "code-firstmate and github-review pin plain-writing on their build and review nodes");
+  // skills by duty (tests/duty-skills.ts sweeps every workflow): the worker tests fail-first, the reviewer reviews code
+  const dutyPinned = (file: string) => { const d = normalize(parseYaml(readFileSync(join(root, file), "utf8"))); const has = (id: string, s: string) => (d.nodes.find((n: any) => n.id === id)?.skills ?? []).some((p: any) => p.id === s); return has("build", "fail-first-testing") && has("review", "code-review"); };
+  ok(dutyPinned("packs/firstmate/workflows/code-firstmate.wf.yaml") && dutyPinned("workflows/v2/github-review.wf.yaml"), "code-firstmate and github-review pin fail-first-testing on their build node and code-review on their review node");
   { const { staffingApplies, staffingNodeOverrides } = await import("../src/domain/staffing");
     const gr = normalize(parseYaml(readFileSync(join(root, "workflows/v2/github-review.wf.yaml"), "utf8"))), nodes = staffingNodeOverrides(gr) ?? {};
-    ok(staffingApplies(gr) && ["build", "review"].every((id) => nodes[id]?.skills?.some((p: any) => p.ref === "skill:plain-writing")), "github-review is staffed by kind, and its staffing carries the build and review nodes' plain-writing pins for the captain to approve", JSON.stringify(nodes)); }
+    ok(staffingApplies(gr) && nodes.build?.skills?.some((p: any) => p.ref === "skill:fail-first-testing") && nodes.review?.skills?.some((p: any) => p.ref === "skill:code-review"), "github-review is staffed by kind, and its staffing carries the build and review nodes' duty pins for the captain to approve", JSON.stringify(nodes)); }
   const video = normalize(JSON.parse(readFileSync(join(root, "workflows/v2/video.wf.yaml"), "utf8")));
   ok(video.roles.find((r: any) => r.id === "editor")?.skill === "bundled:workflows/skills/v2/film-editor.md", "the video editor runs on the film-editor skill, not the web designer's");
   const images = normalize(JSON.parse(readFileSync(join(root, "workflows/v2/images.wf.yaml"), "utf8")));

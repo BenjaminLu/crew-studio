@@ -43,7 +43,19 @@
       "x": 200,
       "y": 100,
       "role": "coordinator",
-      "mode": "pack-interview"
+      "mode": "pack-interview",
+      "skills": [
+        {
+          "id": "plain-writing",
+          "v": 1,
+          "sha256": "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467"
+        },
+        {
+          "id": "technical-writing",
+          "v": 1,
+          "sha256": "7bad12825f2a2a990841a4952f2d53861ceb6892838182179bb680d0ebd34fd4"
+        }
+      ]
     },
     {
       "id": "interview-answers",
@@ -62,7 +74,19 @@
       "x": 600,
       "y": 100,
       "role": "coordinator",
-      "mode": "pack-samples"
+      "mode": "pack-samples",
+      "skills": [
+        {
+          "id": "plain-writing",
+          "v": 1,
+          "sha256": "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467"
+        },
+        {
+          "id": "technical-writing",
+          "v": 1,
+          "sha256": "7bad12825f2a2a990841a4952f2d53861ceb6892838182179bb680d0ebd34fd4"
+        }
+      ]
     },
     {
       "id": "label",
@@ -81,7 +105,19 @@
       "x": 1000,
       "y": 100,
       "role": "author",
-      "mode": "pack-author"
+      "mode": "pack-author",
+      "skills": [
+        {
+          "id": "technical-writing",
+          "v": 1,
+          "sha256": "7bad12825f2a2a990841a4952f2d53861ceb6892838182179bb680d0ebd34fd4"
+        },
+        {
+          "id": "plain-writing",
+          "v": 1,
+          "sha256": "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467"
+        }
+      ]
     },
     {
       "id": "measure",
@@ -118,6 +154,18 @@
       "y": 100,
       "role": "author",
       "mode": "pack-refine",
+      "skills": [
+        {
+          "id": "technical-writing",
+          "v": 1,
+          "sha256": "7bad12825f2a2a990841a4952f2d53861ceb6892838182179bb680d0ebd34fd4"
+        },
+        {
+          "id": "plain-writing",
+          "v": 1,
+          "sha256": "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467"
+        }
+      ],
       "max_visits": 6
     },
     {
@@ -182,6 +230,18 @@
       "kind": "agent",
       "label": "Propose measured changes",
       "mode": "pack-propose",
+      "skills": [
+        {
+          "id": "technical-writing",
+          "v": 1,
+          "sha256": "7bad12825f2a2a990841a4952f2d53861ceb6892838182179bb680d0ebd34fd4"
+        },
+        {
+          "id": "plain-writing",
+          "v": 1,
+          "sha256": "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467"
+        }
+      ],
       "role": "author",
       "x": 1400,
       "y": 260,

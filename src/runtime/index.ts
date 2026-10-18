@@ -153,7 +153,7 @@ export function createRuntime(d: RuntimeDeps) {
   // a captain's own workflow confirms at Run exactly the crew its Task will record (the guard's own resolution, judges included)
   defs.ownCrew=(def:any)=>{const t=crewStore.current();return t?resolveCrew(teamBody(t),withJudges(def,judgeSlots(engine,def)),{},t.hash):null;};
   const crewTools=installCrewTools(engine,crewStore,{facts:staffingFacts as any,send:d.send});
-  const crewApi=crewRoutes({judges:def=>judgeSlots(engine,def),defs,store:crewStore,projects:()=>projects.list().map(p=>({id:p.id,name:p.name})),facts:()=>staffingCapabilities,refreshFacts:staffingFacts,library:()=>engine.skillLibrary().library()});
+  const crewApi=crewRoutes({judges:def=>judgeSlots(engine,def),roleSkill:(def,role)=>engine.roleSkillUse(def,role) as any,defs,store:crewStore,projects:()=>projects.list().map(p=>({id:p.id,name:p.name})),facts:()=>staffingCapabilities,refreshFacts:staffingFacts,library:()=>engine.skillLibrary().library()});
   /** The project's staffing from the team, when the team covers this workflow (null: the per-project staffing flow applies). */
   const teamStaffing=(def:any,projectId:string)=>{if(!staffingApplies(def))return null;const project=def.kind==='coffee-kit'?coffeeStaffingProject(projectId):staffingProject(projectId);return crewStaffing.ensure(def,project);};
   /** The Start form's readiness of an approved crew, from free probes only (the Codex probe, Claude auth status).

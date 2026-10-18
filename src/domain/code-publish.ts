@@ -138,8 +138,10 @@ export function installCodePublish(engine: Engine, d: PublishDeps) {
     if (template) try {
       const role = x.run.def.roles.find((r: any) => r.id === "coordinator");
       const p = engine.deps.approvedPick?.(x.run, { ...x.node, role: "coordinator" }, "coordinator") ?? (role?.provider ? { provider: role.provider, model: role.model ?? null } : x.run.params.provider ? { provider: x.run.params.provider, model: x.run.params.model || null } : engine.deps.defaultProvider());
-      // the coordinator's instructions, as for its agent nodes: its role skill, then the skills its nodes enable (plain-writing)
-      const pins = x.run.def.nodes.filter((n: any) => n.kind === "agent" && n.role === "coordinator").flatMap((n: any) => n.skills ?? []).filter((q: any, i: number, all: any[]) => all.findIndex((r: any) => r.id === q.id) === i);
+      // the coordinator's instructions: its role skill, then the pr.open hook's own skills (commit-and-pr-text, plain-writing);
+      // a definition whose hook pins none keeps the skills its coordinator nodes enable
+      const own = engine.textPins(x.run, "pr.open");
+      const pins = own.length ? own : x.run.def.nodes.filter((n: any) => n.kind === "agent" && n.role === "coordinator").flatMap((n: any) => n.skills ?? []).filter((q: any, i: number, all: any[]) => all.findIndex((r: any) => r.id === q.id) === i);
       const skill = engine.instructions(x.run, role?.id, pins);
       const tools: AgentTool[] = [{ name: "pull_request_text", description: "The pull request's title and the text of each template section, once.",
         schema: { type: "object", properties: { title: { type: "string" }, sections: { type: "array", items: { type: "object", properties: { heading: { type: "string" }, text: { type: "string" } }, required: ["heading", "text"] } },

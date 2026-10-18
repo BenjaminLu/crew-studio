@@ -81,6 +81,11 @@
           "id": "plain-writing",
           "v": 1,
           "sha256": "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467"
+        },
+        {
+          "id": "technical-writing",
+          "v": 1,
+          "sha256": "7bad12825f2a2a990841a4952f2d53861ceb6892838182179bb680d0ebd34fd4"
         }
       ],
       "checks": [
@@ -100,10 +105,34 @@
           "use": "core/ste-wording"
         },
         {
-          "use": "firstmate/no-impl-detail"
+          "use": "firstmate/no-impl-detail",
+          "skills": [
+            {
+              "id": "technical-writing",
+              "v": 1,
+              "sha256": "7bad12825f2a2a990841a4952f2d53861ceb6892838182179bb680d0ebd34fd4"
+            },
+            {
+              "id": "plain-writing",
+              "v": 1,
+              "sha256": "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467"
+            }
+          ]
         },
         {
-          "use": "firstmate/done-lines-observable"
+          "use": "firstmate/done-lines-observable",
+          "skills": [
+            {
+              "id": "technical-writing",
+              "v": 1,
+              "sha256": "7bad12825f2a2a990841a4952f2d53861ceb6892838182179bb680d0ebd34fd4"
+            },
+            {
+              "id": "plain-writing",
+              "v": 1,
+              "sha256": "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467"
+            }
+          ]
         }
       ],
       "x": 510,
@@ -170,6 +199,18 @@
       "detail": "one-way: no file changes",
       "role": "worker",
       "mode": "plan",
+      "skills": [
+        {
+          "id": "plain-writing",
+          "v": 1,
+          "sha256": "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467"
+        },
+        {
+          "id": "technical-writing",
+          "v": 1,
+          "sha256": "7bad12825f2a2a990841a4952f2d53861ceb6892838182179bb680d0ebd34fd4"
+        }
+      ],
       "lane": "one-way",
       "retries": 1,
       "timeout_s": 900,
@@ -210,6 +251,11 @@
           "id": "plain-writing",
           "v": 1,
           "sha256": "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467"
+        },
+        {
+          "id": "technical-writing",
+          "v": 1,
+          "sha256": "7bad12825f2a2a990841a4952f2d53861ceb6892838182179bb680d0ebd34fd4"
         }
       ],
       "x": 1190,
@@ -228,9 +274,14 @@
       "retries": 1,
       "skills": [
         {
-          "id": "plain-writing",
+          "id": "fail-first-testing",
           "v": 1,
-          "sha256": "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467"
+          "sha256": "0b93df9b6342081edfee0d0618bf2e3b682a4e27584fb6bde2167d08bc19574b"
+        },
+        {
+          "id": "commit-and-pr-text",
+          "v": 1,
+          "sha256": "e92ab61a72b282dbc38f65065e699c303d1ad7727d26221ef8d5faba7c5dd0bd"
         }
       ],
       "checks": [
@@ -260,6 +311,18 @@
       "id": "pr-open",
       "kind": "hook",
       "do": "pr.open",
+      "skills": [
+        {
+          "id": "commit-and-pr-text",
+          "v": 1,
+          "sha256": "e92ab61a72b282dbc38f65065e699c303d1ad7727d26221ef8d5faba7c5dd0bd"
+        },
+        {
+          "id": "plain-writing",
+          "v": 1,
+          "sha256": "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467"
+        }
+      ],
       "label": "Review request",
       "x": 1530,
       "y": 220
@@ -296,6 +359,21 @@
       "retries": 1,
       "skills": [
         {
+          "id": "code-review",
+          "v": 1,
+          "sha256": "fa2160d6efbe11758074c2c736414335970d087420509cf10eac72d9a08efd20"
+        },
+        {
+          "id": "security-review",
+          "v": 1,
+          "sha256": "fab0ac443e5c3fd66ed27ee8f933aea4b6ffcc86a3a3a14e9ffe798616b1f16d"
+        },
+        {
+          "id": "fail-first-testing",
+          "v": 1,
+          "sha256": "0b93df9b6342081edfee0d0618bf2e3b682a4e27584fb6bde2167d08bc19574b"
+        },
+        {
           "id": "plain-writing",
           "v": 1,
           "sha256": "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467"
@@ -307,10 +385,34 @@
           "use": "firstmate/review-depth"
         },
         {
-          "use": "firstmate/review-verdict"
+          "use": "firstmate/review-verdict",
+          "skills": [
+            {
+              "id": "code-review",
+              "v": 1,
+              "sha256": "fa2160d6efbe11758074c2c736414335970d087420509cf10eac72d9a08efd20"
+            },
+            {
+              "id": "security-review",
+              "v": 1,
+              "sha256": "fab0ac443e5c3fd66ed27ee8f933aea4b6ffcc86a3a3a14e9ffe798616b1f16d"
+            }
+          ]
         },
         {
-          "use": "firstmate/designer-compare"
+          "use": "firstmate/designer-compare",
+          "skills": [
+            {
+              "id": "visual-design-review",
+              "v": 1,
+              "sha256": "0243bc65903c94c57dd3edc2bf032414e3206eb54a5cc2a340932278c858a055"
+            },
+            {
+              "id": "accessible-ui",
+              "v": 1,
+              "sha256": "6e910784ba33844814cbd05e476cfc25a5c47321b2c796ecb6436ff10692ddb0"
+            }
+          ]
         }
       ],
       "x": 1870,

@@ -47,6 +47,13 @@
       "kind": "hook",
       "label": "Generate PNG with Codex",
       "do": "image.generate",
+      "skills": [
+        {
+          "id": "image-prompting",
+          "v": 1,
+          "sha256": "7bb1522478f41c18c98d8e7c8af60a58077d8774bb417012673036d8dd2f0436"
+        }
+      ],
       "role": "image-worker",
       "timeout_s": 240,
       "x": 300,

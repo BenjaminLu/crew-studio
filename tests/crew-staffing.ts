@@ -42,7 +42,7 @@ try {
   ok(c1?.crew?.team === t1.hash && c1.roles.worker.model === "gpt-6.1-sol" && c1.roles.reviewer.model === "opus-5.5" && c1.roles.designer.model === "gpt-6-astra" && c1.roles.coordinator.provider === "claude",
     "the team covers code-firstmate: the project's staffing is derived (roles take their seats' members)", JSON.stringify(c1?.roles && Object.fromEntries(Object.entries(c1.roles).map(([k, r]: any) => [k, r.model]))));
   ok(c1.approval.run === "crew-page" && c1.approval.card === `crew-team-v${t1.version}-${t1.hash.slice(0, 12)}` && c1.version === 1, "a team changed on the Crew page: the derived version cites that team version, no card", JSON.stringify(c1.approval));
-  ok(c1.nodes?.build?.skills?.map((p: any) => p.ref).join() === "skill:plain-writing" && c1.nodes?.review?.skills?.map((p: any) => p.ref).join() === "skill:code-review,skill:plain-writing", "member skills reach their nodes as pinned node skills", JSON.stringify(c1.nodes));
+  ok(c1.nodes?.build?.skills?.map((p: any) => p.ref).join() === "skill:plain-writing,skill:fail-first-testing,skill:commit-and-pr-text" && c1.nodes?.review?.skills?.map((p: any) => p.ref).join() === "skill:code-review,skill:security-review,skill:fail-first-testing,skill:plain-writing", "member skills reach their nodes as pinned node skills, before the node's own duty skills (a skill both name once)", JSON.stringify(c1.nodes));
   ok(cs.ensure(def, project)!.hash === c1.hash, "deriving again with nothing changed writes nothing");
   ok((guard.verified(def, { project: "shop", _staffing: c1.hash }) as any).hash === c1.hash, "the staffing guard accepts the derived version (it re-derives it from the signed team)");
   // a forged crew-derived version: the right team, another model

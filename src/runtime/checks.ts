@@ -32,7 +32,7 @@ export type CheckManifest = {
   judge?: { prompt: string; role?: string | null; provider?: string | null; model?: string | null; quorum?: { n: number; of: number } | null; vendors?: string[] | null; distinct_providers?: boolean; from_node?: string | null } | null;
   sample?: any; dir: string; runtime?: "studio" | null;
 };
-export type CheckRef = { use: string; params?: Record<string, any>; blocking?: boolean; quorum?: { n: number; of: number }; proves?: number[]; prompt?: string; model?: string; provider?: string };
+export type CheckRef = { use: string; params?: Record<string, any>; blocking?: boolean; quorum?: { n: number; of: number }; proves?: number[]; prompt?: string; model?: string; provider?: string; skills?: { id: string; v: number; sha256: string }[] };
 export type CheckOutput = { data?: any; verdict: Verdict; score: number | null; findings: Finding[]; evidence: string[]; proves: number[]; error?: string | null; dropped?: number; votes?: { by: string; verdict: Verdict; provider?: string; model?: string; job?: string }[] };
 export type LedgerEntry = CheckOutput & { seq: number; at: string; run: string; node: string; edge?: string | null; round: number; head: string | null; check: string; version: string; kind: string;
   blocking: boolean; inputHash: string; inputHashAlgorithm?: string; params: Record<string, any>; ms: number; dir: string | null; attempt: number; retried?: string | null; actor?: string | null; record?: string | null; data?: any; sig?: string; prev?: string | null };

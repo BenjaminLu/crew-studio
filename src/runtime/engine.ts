@@ -33,7 +33,7 @@ import { CheckRegistry, Ledger, Policies, INPUT_HASH_ALGORITHM, coerce, doneMap,
 import { AMEND_CHOICES, briefFor, installRefine, verifiedAmendments, type Amendment } from "./refine";
 import { realInside, redactJSON, redactText } from "../secure";
 import { helperCommand, helperReads } from "../self";
-import { entryOf, roleSkillParts, validate, type WDef, type WEdge, type WNode, type WorkflowDefs } from "./defs";
+import { entryOf, MODEL_HOOK_ACTIONS, pinsSkills, roleSkillParts, validate, type WDef, type WEdge, type WNode, type WorkflowDefs } from "./defs";
 import { locatorText, parseFinding, type Finding } from "./locator";
 import { materializeRoundDir, roundWorkPath } from "./round-paths";
 import { composeInstructions, Skills } from "../skills";
@@ -599,10 +599,15 @@ export class Engine {
   nodePins(r: Run, node: WNode): { id: string; v: number; sha256: string }[] {
     // a staffed workflow's node loads the skills its approved configuration names for it (src/domain/staffing.ts)
     const approved = this.deps.approvedNodePins?.(r, node); if (approved !== undefined) return approved;
-    if (Array.isArray(node.skills)) return node.kind === "agent" || node.kind === "loop" ? node.skills : [];
+    if (Array.isArray(node.skills)) return pinsSkills(node) ? node.skills : [];
     if (node.kind !== "loop") return [];
     const role = node.role ?? node.args?.role; if (!role) return [];
     return r.def.nodes.filter((n) => n.kind === "agent" && n.role === role).flatMap((n) => n.skills ?? []).filter((p, i, a) => a.findIndex((q) => q.id === p.id) === i);
+  }
+  /** The skills a hook action's own model turn loads (the pull request text, the image request): the pins of the hook that runs it. */
+  textPins(r: Run, action: (typeof MODEL_HOOK_ACTIONS)[number]): { id: string; v: number; sha256: string }[] {
+    const hook = r.def.nodes.find((n) => n.kind === "hook" && n.do === action);
+    return hook ? this.nodePins(r, hook) : [];
   }
   /** A role's skill text: Studio's versioned copy (the text the Improve page shows and edits) when there is one, else its source. Null: no such role. */
   roleSkillText(def: WDef, roleId: string | undefined, nodeSkill?: string): { text: string; ref: string; version: number | null } | null {
@@ -624,11 +629,18 @@ export class Engine {
     let src: { text: string; ref: string; version: number | null } | null = null;
     if (approved === undefined) { try { src = this.roleSkillText(r.def, roleId, nodeSkill); roleText = src?.text ?? ""; } catch {} }
     else { try { src = this.roleSkillText(r.def, roleId); } catch {} }
-    const text = approved ?? src?.text ?? "";
+    const roleSkill = this.roleSkillOf(roleId, src, approved ?? src?.text ?? "");
+    return { text: composeInstructions(roleText, pins.map((p) => ({ id: p.id, v: p.v, body: this.skillLibrary().body(p.id, p.v, p.sha256) }))), roleSkill, skills: pins.map((p) => `${p.id}@v${p.v}`) };
+  }
+  /** Which role skill a text is (ref, Studio version, sha256 of the exact text, and its parts' hashes for a role of several named skills). */
+  private roleSkillOf(roleId: string | undefined | null, src: { ref: string; version: number | null } | null, text: string): RoleSkillUse | null {
     const parts = roleSkillParts(src?.ref);
     const partUse = parts.length > 1 ? { parts: parts.map((ref) => { let sha256: string | null = null; try { sha256 = createHash("sha256").update(this.deps.skillText(ref)).digest("hex"); } catch {} return { ref, sha256 }; }) } : {};
-    const roleSkill: RoleSkillUse | null = text.trim() ? { role: roleId ?? null, ref: src?.ref ?? null, version: src?.version ?? null, sha256: createHash("sha256").update(text).digest("hex"), ...partUse } : null;
-    return { text: composeInstructions(roleText, pins.map((p) => ({ id: p.id, v: p.v, body: this.skillLibrary().body(p.id, p.v, p.sha256) }))), roleSkill, skills: pins.map((p) => `${p.id}@v${p.v}`) };
+    return text.trim() ? { role: roleId ?? null, ref: src?.ref ?? null, version: src?.version ?? null, sha256: createHash("sha256").update(text).digest("hex"), ...partUse } : null;
+  }
+  /** The role skill a role's agents receive in this definition, as the Crew page names it; null when the role has none. */
+  roleSkillUse(def: WDef, roleId: string | null | undefined): RoleSkillUse | null {
+    const src = this.roleSkillText(def, roleId ?? undefined); return src ? this.roleSkillOf(roleId, src, src.text) : null;
   }
   /** Studio's skill library under this data folder; an engine built without one (a test, a tool) opens the same store. */
   skillLibrary(): Skills {
@@ -1018,8 +1030,8 @@ export class Engine {
         run: (a) => { if(!['pass','warn','fail'].includes(a?.verdict)||!Array.isArray(a?.findings)||a.findings.some((f:any)=>!parseFinding(f,"judge",man.ref)?.locator))return {error:'Every finding needs a message and typed valid locator. Use {type:"file",path:"index.html",line:1} or {type:"text",section:"receipts.site"}; correct and resubmit.'};got = a; return { ok: true }; } }];
       const selected = this.deps.selectProvider ? await this.deps.selectProvider(x, { provider, model, ...(approvedJudge ? {effort: approvedJudge.effort} : {}) }, { role: role === "designer" ? "designer" : "judge", explicit: true }) : this.deps.provider(provider, model ?? undefined);
       if (j.distinct_providers && actual.has(selected.id)) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "distinct provider agreement resolved to a duplicate actual vendor", votes };
-      // a judge's instructions go through the same composer as any agent's: the safety rules, then its role's skill
-      const use = x.run?.def ? this.instructionsUse(x.run, role, []) : { text: composeInstructions("", []), roleSkill: null, skills: [] as string[] };
+      // a judge's instructions go through the same composer as any agent's: the safety rules, its role's skill, then its check's duty skills
+      const use = x.run?.def ? this.instructionsUse(x.run, role, Array.isArray(ref.skills) ? ref.skills : []) : { text: composeInstructions("", []), roleSkill: null, skills: [] as string[] };
       const system = `${use.text}\n\nYou are a judge for the check "${man.title.en}". Judge only what the input shows. Submit one valid judge_report; if its payload is rejected, correct it before ending. Then answer in one line.`;
       const rules = new OperatingRules(this.deps.dataDir).section(x.run?.params?.project || null);
       const admissionReceipt=this.deps.instructionReceipt?.(x,role,jobInstructions(system, rules),selected);

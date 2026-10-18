@@ -40,6 +40,7 @@
 .tm-skills{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
 .tm-skill{display:inline-flex;align-items:center;gap:2px;font-size:11px;padding:3px 7px;border-radius:6px}
 .tm-skill.base{background:var(--surface-3);color:var(--text-2)}
+.tm-skill.role{border:1px dashed var(--border-strong);color:var(--text-2);gap:5px}.tm-rk{font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em}
 .tm-skill.own{background:var(--surface);border:1px solid var(--border-strong);padding:2px 2px 2px 7px}
 .tm-x{border:0;background:transparent;color:var(--text-3);min-width:24px;min-height:24px;font-size:13px;border-radius:4px}
 .tm-x:hover{background:var(--surface-2);color:var(--bad)}

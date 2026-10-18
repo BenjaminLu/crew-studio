@@ -7,7 +7,8 @@ roles:
   - { id: coordinator, label: Coordinator, seat: maker, skill: "pack:core/skills/coordinator.md" }
 nodes:
   - { id: intake, kind: hook, label: Capture intent, do: intent.capture, x: 0, y: 100 }
-  - { id: produce, kind: agent, label: Produce, role: coordinator, mode: draft, checks: [{ use: core/brief-quality, blocking: false }], x: 180, y: 100 }
+  # the coordinator drafts a technical text for people: skills by duty from the built-in library, pinned by version and hash
+  - { id: produce, kind: agent, label: Produce, role: coordinator, mode: draft, skills: [{ id: technical-writing, v: 1, sha256: "7bad12825f2a2a990841a4952f2d53861ceb6892838182179bb680d0ebd34fd4" }, { id: plain-writing, v: 1, sha256: "4eca3a4b795e005bd31f614a0eace04a2bc81a740132374b2dabcd4ee3d11467" }], checks: [{ use: core/brief-quality, blocking: false }], x: 180, y: 100 }
   - { id: refine, kind: loop, label: Refine, args: { producer: produce }, x: 180, y: 260 }
   - { id: stepback, kind: card, label: Step back, args: { card_kind: step-back }, card: { title: { en: "The loop stopped: park the run?", zh-TW: "迴圈停住了：要暫停這個 run 嗎？" }, body: { en: "The refine loop stopped: the same failure twice, no progress, or the round cap. Park the run and start again with a clearer intent.", zh-TW: "精修迴圈停住了：同一類失敗連續兩次、沒有進展，或到了輪數上限。請暫停這個 run，用更清楚的意圖重新開始。" }, options: [{ id: park, label: Park, labelZh: 暫停 }] }, x: 360, y: 260 }
   - { id: done, kind: hook, label: Done, x: 360, y: 100 }
