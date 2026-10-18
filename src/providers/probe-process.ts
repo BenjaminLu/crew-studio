@@ -38,7 +38,7 @@ export function probeProcess(argv: string[], cwd: string, env: Record<string,str
     await new Promise<void>((resolve,reject)=>{const drain=setTimeout(()=>reject(new Error('probe output drain unverified')),2000);closed.then(()=>{clearTimeout(drain);resolve();});});
     ended=true;child.stdin.destroy();child.stdout.destroy();child.stderr.destroy();
     resolve(code);
-  })().catch(e=>{reject(e);throw e;}));
+  })().catch(e=>{ended=true;reject(e);throw e;}));
   const refuse=(why:string)=>{failure??=why;void stop().catch(()=>{});};
   const timer=setTimeout(()=>refuse('probe deadline expired'),limits.timeoutMs??30000);
   child.on('error',()=>refuse('probe spawn refused'));
