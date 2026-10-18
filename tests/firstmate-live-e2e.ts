@@ -7,14 +7,14 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //  S7  One message naming three deliverables yielded one card and "say 繼續" twice: one proposal per separate part
 //      of the captain's message, each quoting it and each with its own card; invented or duplicate work is refused.
 //  S8  After the captain approved the image seat card, the images proposal waited for the captain to ask again: Studio
-//      proposes the held work again by itself and tells Firstmate.
+//      proposes the held work again by itself and tells Firstmate; held proposals are on disk, so a restart keeps them.
 //  S10 Firstmate listed answered cards as still waiting: every captain turn carries the live open-card and Task line,
 //      and status claims come from it or studio_work_status in the same turn.
 //  S23 An escalation Studio sent Firstmate showed in the chat as its raw English prompt with tool syntax: the chat line
 //      carries a short summary (Task, what is stuck, Firstmate is looking); Firstmate still gets the full prompt.
 // No model is called: a fake in-process host stands in for the CLI, and the tools run on the real engine.
 //      bun tests/firstmate-live-e2e.ts
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { harness, until } from "./rt-harness";
@@ -147,38 +147,80 @@ await section("S7 several proposals per turn", async () => {
   } finally { for (const r of E.list()) if (!["succeeded", "cancelled", "failed"].includes(r.status)) await E.cancel(r.id, "fixture cleanup"); H.stop(); rmSync(H.data, { recursive: true, force: true }); }
 });
 
-// ---------- S8: approving a seat card resumes the proposal it held ----------
-await section("S8 seat card resumes the held proposal", async () => {
-  const C = await import("../src/domain/crew"), { installCrewGuard } = await import("../src/crew-guard"), { installCrewTools } = await import("../src/crew-tools");
-  const pics = { id: "fixture-pics", name: "Pictures", kind: "image", version: 1, roles: [{ id: "maker", label: "Maker", skill: "bundled:x", seat: "maker" }], seats: [{ id: "image-maker", label: "Image maker", labelZh: "圖像產出", needs: ["image-generation"], suggest: { provider: "codex" } }],
-    nodes: [{ ...fixture.nodes[0], card: { ...fixture.nodes[0].card, options: [{ id: "go", label: "Go", labelZh: "Go" }] } }, { id: "draw", kind: "agent", label: "DRAW", role: "maker", mode: "test", seat: "image-maker", x: 1, y: 0 }], edges: [["wait", "draw", "go"]] };
-  const H = await harness([bundledText("workflows/v2/firstmate-proposal.wf.yaml")!, bundledText("workflows/v2/crew-change.wf.yaml")!, JSON.stringify(pics)]); const E = H.engine;
+// ---------- S8: approving a seat card resumes the proposal it held, also across a restart ----------
+const C8 = await import("../src/domain/crew"), { installCrewGuard } = await import("../src/crew-guard"), { installCrewTools } = await import("../src/crew-tools");
+const { HeldProposals } = await import("../src/firstmate-held");
+const pics = { id: "fixture-pics", name: "Pictures", kind: "image", version: 1, roles: [{ id: "maker", label: "Maker", skill: "bundled:x", seat: "maker" }], seats: [{ id: "image-maker", label: "Image maker", labelZh: "圖像產出", needs: ["image-generation"], suggest: { provider: "codex" } }],
+  nodes: [{ ...fixture.nodes[0], card: { ...fixture.nodes[0].card, options: [{ id: "go", label: "Go", labelZh: "Go" }] } }, { id: "draw", kind: "agent", label: "DRAW", role: "maker", mode: "test", seat: "image-maker", x: 1, y: 0 }], edges: [["wait", "draw", "go"]] };
+const PICS_TEXT = "圖片：轉角書店的社群貼文主視覺，方形";
+/** One Studio over `data` (a restart is a second one over the same folder): the team without an image maker, the crew tools wired as src/runtime/index.ts wires them. */
+async function seatStudio(data?: string) {
+  const H = await harness([bundledText("workflows/v2/firstmate-proposal.wf.yaml")!, bundledText("workflows/v2/crew-change.wf.yaml")!, JSON.stringify(pics)], data ? { data } : {}); const E = H.engine;
   const facts = [{ provider: "codex", support: "supported", auth: "verified", models: [{ id: "gpt-6.1-sol", efforts: ["low", "medium", "high"] }] }];
   const m = (provider: string, model: string, effort: string | null) => ({ provider, model, effort, skills: [] });
+  const store = new C8.CrewStore(H.data);
+  if (!store.current()) store.write({ schema: 1, members: { coordinator: m("codex", "gpt-6.1-sol", "medium"), maker: m("codex", "gpt-6.1-sol", "medium"), "alt-maker": m("codex", "gpt-6.1-sol", "high"), reviewer: m("codex", "gpt-6.1-sol", "high") }, seats: {}, workflows: {} } as any, null, { by: "captain", via: "page" } as any);
+  installCrewGuard(E, store);
+  let fm: any; const told: { text: string; summary: any }[] = [];
+  E.notifyFirstmate = (text, summary) => { told.push({ text, summary }); return true; };
+  const crew = installCrewTools(E, store, { facts: async () => facts as any, onApproved: (run) => { void fm.resumeHeld(run).then((done: any[]) => { const n = heldNotice(run, done); if (n) E.notifyFirstmate!(n.text, n.summary); }); } });
+  fm = installFirstmate(E, new Projects(H.data), { crewSeatGate: (d, o) => crew.seatGate(d, o), dispatchCrew: (d) => crew.dispatchCrew(d) });
+  E.load();
+  const captain = { key: "pics-turn", captain: true, text: PICS_TEXT, live: () => true };
+  const propose = () => fm.call("studio_propose_work", { workflow: "fixture-pics", version: 1, title: "轉角書店主視覺", text: PICS_TEXT }, captain) as Promise<any>;
+  const approveSeat = async () => { const seatRun = E.list().find((x) => x.workflow === "crew-change")!; await until(() => E.cards.list({ run: seatRun.id, open: true }).length > 0, 5000); await E.answer(E.cards.list({ run: seatRun.id, open: true })[0].id, { choice: "approve", by: "captain" } as any); return seatRun.id; };
+  const proposal = async () => { await until(() => E.list().some((x) => x.workflow === "firstmate-proposal") && told.length > 0, 8000); return E.list().find((x) => x.workflow === "firstmate-proposal"); };
+  const stop = async (remove = true) => { if (remove) for (const r of E.list()) if (!["succeeded", "cancelled", "failed"].includes(r.status)) await E.cancel(r.id, "fixture cleanup"); H.stop(); if (remove) rmSync(H.data, { recursive: true, force: true }); };
+  return { H, E, told, propose, approveSeat, proposal, stop };
+}
+const heldFile = (data: string) => join(data, "firstmate", "held-proposals.json");
+await section("S8 seat card resumes the held proposal", async () => {
+  const S = await seatStudio(); const E = S.E;
   try {
-    const store = new C.CrewStore(H.data);
-    store.write({ schema: 1, members: { coordinator: m("codex", "gpt-6.1-sol", "medium"), maker: m("codex", "gpt-6.1-sol", "medium"), "alt-maker": m("codex", "gpt-6.1-sol", "high"), reviewer: m("codex", "gpt-6.1-sol", "high") }, seats: {}, workflows: {} } as any, null, { by: "captain", via: "page" } as any);
-    installCrewGuard(E, store);
-    let fm: any; const told: { text: string; summary: any }[] = [];
-    E.notifyFirstmate = (text, summary) => { told.push({ text, summary }); return true; };
-    const crew = installCrewTools(E, store, { facts: async () => facts as any, onApproved: (run) => { void fm.resumeHeld(run).then((done: any[]) => { const n = heldNotice(run, done); if (n) E.notifyFirstmate!(n.text, n.summary); }); } }); // as src/runtime/index.ts wires it
-    fm = installFirstmate(E, new Projects(H.data), { crewSeatGate: (d, o) => crew.seatGate(d, o), dispatchCrew: (d) => crew.dispatchCrew(d) });
-    const captain = { key: "pics-turn", captain: true, text: "圖片：轉角書店的社群貼文主視覺，方形", live: () => true };
-    let refused = ""; try { await fm.call("studio_propose_work", { workflow: "fixture-pics", version: 1, title: "轉角書店主視覺", text: "圖片：轉角書店的社群貼文主視覺，方形" }, captain); } catch (e: any) { refused = e.message; }
+    let refused = ""; try { await S.propose(); } catch (e: any) { refused = e.message; }
     ok(/Studio proposes this work again by itself/.test(refused), "the seat refusal says Studio proposes the work again once the seat is filled", refused);
-    const seatRun = E.list().find((x) => x.workflow === "crew-change")!;
-    await until(() => E.cards.list({ run: seatRun.id, open: true }).length > 0, 5000);
     ok(!E.list().some((x) => x.workflow === "firstmate-proposal"), "nothing is proposed while the seat is empty");
-    await E.answer(E.cards.list({ run: seatRun.id, open: true })[0].id, { choice: "approve", by: "captain" } as any);
-    const back = await until(() => E.list().some((x) => x.workflow === "firstmate-proposal") && told.length > 0, 8000);
-    const proposal = E.list().find((x) => x.workflow === "firstmate-proposal");
-    ok(back && !!proposal && JSON.parse(proposal.params.target).text === "圖片：轉角書店的社群貼文主視覺，方形", "approving the seat card proposes the held work again, with the captain's words", JSON.stringify({ told, runs: E.list().map((x) => `${x.id}:${x.workflow}:${x.status}`) }));
+    await S.approveSeat();
+    const proposal = await S.proposal();
+    ok(!!proposal && JSON.parse(proposal.params.target).text === PICS_TEXT, "approving the seat card proposes the held work again, with the captain's words", JSON.stringify({ told: S.told, runs: E.list().map((x) => `${x.id}:${x.workflow}:${x.status}`) }));
     await until(() => !!proposal && E.cards.list({ run: proposal.id }).some((c) => c.node === "dispatch"), 5000);
     ok(!!proposal && E.cards.list({ run: proposal.id }).some((c) => c.node === "dispatch" && c.status === "open"), "it waits for the captain on its own dispatch card");
-    ok(told.some((t) => t.text.includes(proposal!.id) && /do not propose it again/.test(t.text) && /轉角書店主視覺/.test(t.summary.zh)), "Firstmate is told the seat is filled and the proposal raised");
-    const again: any = await fm.call("studio_propose_work", { workflow: "fixture-pics", version: 1, title: "轉角書店主視覺", text: "圖片：轉角書店的社群貼文主視覺，方形" }, captain);
-    ok(again.proposal === proposal!.id, "Firstmate proposing it once more finds the same proposal, never a second card");
-  } finally { for (const r of E.list()) if (!["succeeded", "cancelled", "failed"].includes(r.status)) await E.cancel(r.id, "fixture cleanup"); H.stop(); rmSync(H.data, { recursive: true, force: true }); }
+    ok(S.told.some((t) => t.text.includes(proposal!.id) && /do not propose it again/.test(t.text) && /轉角書店主視覺/.test(t.summary.zh)), "Firstmate is told the seat is filled and the proposal raised");
+    ok((await S.propose()).proposal === proposal!.id, "Firstmate proposing it once more finds the same proposal, never a second card");
+  } finally { await S.stop(); }
+});
+await section("S8 held proposals survive a restart", async () => {
+  const before = await seatStudio(); const data = before.H.data;
+  try {
+    try { await before.propose(); } catch {}
+    const seatRun = before.E.list().find((x) => x.workflow === "crew-change")!.id;
+    await until(() => before.E.cards.list({ run: seatRun, open: true }).length > 0, 5000);
+    const saved = JSON.parse(readFileSync(heldFile(data), "utf8"));
+    ok(saved.schema === 1 && saved.held[seatRun]?.[0]?.args?.text === PICS_TEXT && saved.held[seatRun][0].owner.key === "pics-turn", "the held proposal is on disk, under its seat card's Task", JSON.stringify(saved));
+    ok((statSync(heldFile(data)).mode & 0o777) === 0o600 && !readdirSync(join(data, "firstmate")).some((f) => f.endsWith(".tmp")), "written whole (no temp file left), readable by Studio only");
+    await before.stop(false); // Studio stops with the seat card open
+    const after = await seatStudio(data);
+    try {
+      await after.approveSeat();
+      const proposal = await after.proposal();
+      ok(!!proposal && JSON.parse(proposal.params.target).text === PICS_TEXT && after.told.some((t) => t.text.includes(proposal.id)), "after the restart, approving the seat card still proposes the held work and tells Firstmate", JSON.stringify(after.E.list().map((x) => `${x.id}:${x.workflow}:${x.status}`)));
+      ok(!JSON.parse(readFileSync(heldFile(data), "utf8")).held[seatRun], "a resumed proposal leaves the file");
+    } finally { await after.stop(); }
+  } catch (e) { rmSync(data, { recursive: true, force: true }); throw e; }
+  // a seat card closed without approval drops what it held; a corrupt or missing file is no held proposals, and says so
+  const dir = mkdtempSync(join(tmpdir(), "crew-held-")), warned: string[] = [];
+  try {
+    let open = true; const store = new HeldProposals(dir, (run) => run !== "R-1" || open, (m) => warned.push(m));
+    ok(store.take("R-1").length === 0 && !warned.length, "a missing file is no held proposals, without a warning");
+    store.hold("R-1", { args: { text: "a" }, owner: { key: "k", text: "a" } }); store.hold("R-1", { args: { text: "a" }, owner: { key: "k", text: "a" } });
+    ok(JSON.parse(readFileSync(heldFile(dir), "utf8")).held["R-1"].length === 1, "the same captain turn and text is held once");
+    open = false; store.hold("R-2", { args: { text: "b" }, owner: { key: "k2", text: "b" } });
+    ok(!JSON.parse(readFileSync(heldFile(dir), "utf8")).held["R-1"] && store.take("R-1").length === 0, "a seat card that closed without approval drops what it held");
+    writeFileSync(heldFile(dir), "{not json");
+    ok(store.take("R-2").length === 0 && warned.some((m) => /corrupt/.test(m)), "a corrupt file is no held proposals, and the log says so", warned.join(" | "));
+    store.hold("R-3", { args: { text: "c" }, owner: { key: "k3", text: "c" } });
+    ok(store.take("R-3").length === 1, "holding again after a corrupt file works");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 // ---------- S10: each captain turn carries the live status ----------
