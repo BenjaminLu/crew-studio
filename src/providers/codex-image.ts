@@ -93,7 +93,7 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
   const abort = () => stop(new Error('Codex image cancelled'));
   try {
     const login = needs.login(home); if (!login.ok) throw new Error('Codex image login unavailable'); guard();
-    if(!localUnrestricted()){await egress.start(); guard(); lease = await openScopedProxy(egress, needs.hosts);}
+    if(!localUnrestricted()){await egress.start(); guard(); lease = await openScopedProxy(egress, needs.hosts); guard();}
     const profile = join(root,'image.sb'); writeFileSync(profile, roundProfile({ cwd:work,tmp:temp,writes:[home,work],reads:needs.reads,proxyPort:lease?.port??1,toolPort:1 }));
     const proxy = lease?.url ?? "";
     const env:Record<string,string> = { PATH:process.env.PATH ?? '/usr/bin:/bin', HOME:home,TMPDIR:temp,LANG:'en_US.UTF-8',...login.env,CODEX_HOME:join(home,'.codex'),HTTPS_PROXY:proxy,HTTP_PROXY:proxy,https_proxy:proxy,http_proxy:proxy,ALL_PROXY:proxy,all_proxy:proxy,NO_PROXY:'',no_proxy:'',XDG_CACHE_HOME:join(home,'.cache'),XDG_CONFIG_HOME:join(home,'.config'),XDG_DATA_HOME:join(home,'.local/share') };

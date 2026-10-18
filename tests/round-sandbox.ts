@@ -81,6 +81,14 @@ ok(r.proxyNoCred !== undefined && r.proxyNoCred !== 407, "the admitted round's s
   ok(!(r.envKeys ?? []).includes("CREW_TOOL_TOKEN") && r.toolTokenEnv == null && r.toolTokenFileIsPath === true, "the tool token is not anywhere in the round's environment; CREW_TOOL_TOKEN_FILE names a 0600 file, and the token lives only there", JSON.stringify([r.toolTokenEnv, r.toolTokenFileIsPath])); }
 ok(r.claudeTmp === r.tmpdir && /\/rounds\/J\w+\/tmp$/.test(r.tmpdir ?? ""), "the CLI's own temporary folder is the round's tmp, never a shared /tmp folder", `${r.claudeTmp} ${r.tmpdir}`);
 ok(!existsSync(join(data, "rounds", job.id, "home")) && egress.status().rounds === 0, "after the round its throwaway home and its proxy credential are gone");
+// Scoped listener creation yields to the event loop: cancellation must be checked again.
+{ const abort = new AbortController(); let launches = 0;
+  agents.egress = { port: egress.port, open(t, h) { egress.open(t, h); abort.abort(); }, close(t) { egress.close(t); } };
+  const p = {...provider, start() { launches++; throw new Error("cancelled owner must not launch"); }};
+  const stopped = await agents.run({kind:"t",title:"cancel during relay setup",system:"s",text:"x",tools:[],provider:p,signal:abort.signal,sandbox:{writes:[wt],cwd:wt}});
+  agents.egress = egress;
+  ok(launches === 0 && stopped.status === "failed" && egress.status().rounds === 0, "cancellation during scoped listener setup refuses before provider launch and revokes the listener");
+}
 // the host list belongs to one round
 { const g = await agents.run({ kind: "t", title: "granted", system: "s", text: `PROBE ${JSON.stringify({ granted: "registry.example.test" })}`, tools: [], provider, timeoutMs: 30000, sandbox: { writes: [wt], allow: ["registry.example.test"] } });
   let a: any = {}; try { a = JSON.parse(g.said); } catch {}

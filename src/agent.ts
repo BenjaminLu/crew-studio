@@ -131,6 +131,7 @@ export class Agents {
       Object.assign(roundEnvAdd, login.env); envKeys = [];
       const lease = localUnrestricted() ? null : await openScopedProxy(this.egress!, [...needs.hosts, ...(o.sandbox.allow ?? [])]);
       if (lease) { const rmBox = cleanup; cleanup = () => { lease.close(); rmBox(); }; }
+      if (o.signal?.aborted || o.owns && !o.owns()) throw new QueueRefusal("round owner ended during sandbox setup");
       studioUrl = this.toolUrl();
       cwd = o.sandbox.cwd ?? tmp;
       const prof = join(box, "round.sb");
