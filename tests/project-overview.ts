@@ -13,6 +13,7 @@ import { Projects } from "../src/doors";
 import { createProjectOverview, readGatesTest } from "../src/project-overview";
 import { prepareSandbox, registerSandbox } from "../src/sandbox-repo";
 import { StaffingStore } from "../src/domain/staffing";
+import { grantSignature } from "../src/github-grant";
 import { harness, suite, until, Y } from "./rt-harness";
 const { ok, end } = suite("project-overview");
 
@@ -26,7 +27,8 @@ const E = H.engine as any, DATA = H.data;
 const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { cwd, stdio: "pipe", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } }).toString().trim();
 const repos = mkdtempSync(join(tmpdir(), "crew-po-repos-"));
 const mkRepo = (name: string) => { const d = join(repos, name); mkdirSync(d); git(d, "init", "-q", "-b", "main"); writeFileSync(join(d, "README.md"), name); git(d, "add", "README.md"); git(d, "commit", "-q", "-m", "start"); return d; };
-const harbor = mkRepo("harbor-api"), tide = mkRepo("tidepool-docs");
+const harbor = mkRepo("harbor-api"), tide = mkRepo("tidepool-docs"), reef = mkRepo("reef-api");
+git(reef, "remote", "add", "origin", "https://github.com/acme/reef-api.git");
 mkdirSync(join(harbor, ".crew")); writeFileSync(join(harbor, ".crew", "gates.json"), JSON.stringify({ test: ["bun", "test"] }));
 const head = git(harbor, "rev-parse", "HEAD");
 prepareSandbox(DATA); registerSandbox(DATA);
@@ -34,6 +36,10 @@ const reg = JSON.parse(readFileSync(join(DATA, "projects.json"), "utf8"));
 reg.push({ id: "harbor-api", name: "harbor-api", path: harbor, base: "main", sensitive: [], proposed: [{ glob: "infra/terraform/**", why: "cloud resources" }], proposedAt: "2026-10-01T00:00:00Z", approvedAt: null });
 reg.push({ id: "tidepool-docs", name: "tidepool-docs", path: tide, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null,
   github: { mode: "github", repository: "acme/tidepool-docs", localPath: tide, pushUrl: "https://github.com/acme/tidepool-docs.git", apiOrigin: "https://api.github.com", base: "main", branchPrefix: "crew/", approvedAt: "2026-10-02T00:00:00Z", approvalId: "x" } });
+// a connected external project: its grant is signed by this Studio for it, and its origin is the granted repository
+const reefGrant: any = { mode: "github", repository: "acme/reef-api", localPath: reef, pushUrl: "https://github.com/acme/reef-api.git", apiOrigin: "https://api.github.com", base: "main", branchPrefix: "crew/", approvedAt: "2026-10-02T00:00:00Z", approvalId: "y" };
+reefGrant.signature = grantSignature(DATA, { id: "reef-api", path: reef, base: "main" }, reefGrant);
+reg.push({ id: "reef-api", name: "reef-api", path: reef, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, github: reefGrant });
 reg.push({ id: "old-off", name: "old-off", path: tide, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: false });
 writeFileSync(join(DATA, "projects.json"), JSON.stringify(reg));
 mkdirSync(join(DATA, "policies"), { recursive: true });
@@ -96,10 +102,11 @@ ok((await ov.handle(desk(), new URL("http://127.0.0.1/api/projects"), { kind: "d
 // ---- the sidebar ----
 const side = (await get("/api/projects/overview"))!.body;
 const row = (id: string) => side.projects.find((p: any) => p.id === id);
-ok(side.projects.map((p: any) => p.id).join() === "harbor-api,old-off,tidepool-docs,sandbox,studio", "order: projects with cards, then the rest, the sandbox, and Studio last", side.projects.map((p: any) => p.id).join());
+ok(side.projects.map((p: any) => p.id).join() === "harbor-api,old-off,reef-api,tidepool-docs,sandbox,studio", "order: projects with cards, then the rest, the sandbox, and Studio last", side.projects.map((p: any) => p.id).join());
 ok(row("harbor-api").attention === 1 && row("harbor-api").held === 1 && row("harbor-api").kind === "local", "harbor-api: one card waits, one Task is held", JSON.stringify(row("harbor-api")));
 ok(row("harbor-api").status.en === "1 held" && row("harbor-api").status.tw === "1 暫緩" && row("harbor-api").status.tone === "human", "its status line does not repeat the card count", JSON.stringify(row("harbor-api").status));
-ok(row("tidepool-docs").kind === "external" && row("tidepool-docs").status.en === "External: cannot dispatch yet" && row("tidepool-docs").status.tw === "外部專案：暫無法派工", "an external project: cannot dispatch yet");
+ok(row("tidepool-docs").kind === "external" && row("tidepool-docs").status.tone === "warn" && row("tidepool-docs").status.en === "GitHub: grant not signed by this Studio" && row("tidepool-docs").status.tw === "GitHub：授權不是這個 Studio 簽的", "an external project whose grant fails: a warning that says why", JSON.stringify(row("tidepool-docs").status));
+ok(row("reef-api").kind === "external" && row("reef-api").connected === true && row("reef-api").status.tone !== "warn" && row("reef-api").status.en.startsWith("GitHub · acme/reef-api · ") && !/cannot dispatch/.test(row("reef-api").status.en), "a connected external project whose grant verifies: GitHub · owner/repo · what it is doing, no warning", JSON.stringify(row("reef-api")));
 ok(row("old-off").enabled === false && row("old-off").status.en === "Disabled", "a disabled project says so");
 ok(row("sandbox").kind === "builtin" && row("sandbox").status.en === "Built-in · idle" && row("sandbox").status.tw === "內建 · 閒置", "the sandbox: built-in, idle");
 ok(row("studio").kind === "studio" && row("studio").attention === 1 && row("studio").status.en === "No project · Waiting for you", "the Studio row carries the run with no project", JSON.stringify(row("studio")));
@@ -129,7 +136,7 @@ staffingCalls = [];
 const ext = (await get("/api/projects/tidepool-docs/overview"))!.body;
 const ek = Object.fromEntries(ext.health.map((t: any) => [t.key, t]));
 ok(ext.project.kind === "external" && ext.project.repository === "acme/tidepool-docs", "an external project names its repository");
-ok(ek.registered.tone === "warn" && ek.registered.en === "External project: cannot dispatch yet" && ek.registered.detail.en === "Its GitHub grant does not verify. Connect it to GitHub again.", "its registration tile: cannot dispatch yet");
+ok(ek.registered.tone === "warn" && ek.registered.en === "External project: cannot dispatch yet" && ek.registered.detail.en === "Its GitHub grant does not verify: grant not signed by this Studio. Connect it to GitHub again.", "its registration tile: cannot dispatch yet");
 ok(ext.crew === null && ek.crew.detail.en === "External project" && !staffingCalls.includes("tidepool-docs"), "staffing is not attempted for it", JSON.stringify(staffingCalls));
 ok(ek.test.detail.en === "No .crew/gates.json", "no .crew/gates.json says so");
 const sb = (await get("/api/projects/sandbox/overview"))!.body;

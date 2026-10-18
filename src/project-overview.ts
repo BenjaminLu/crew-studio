@@ -129,7 +129,20 @@ export function createProjectOverview(d: OverviewDeps) {
    * `own` checks the project's own registration also when it is disabled (display only), for "Folder missing".
    */
   /** the project's GitHub grant is the captain's signed one for it (github-grant.ts) */
-  const grantOk = (p: Project) => { if (!p.github) return false; try { verifyGitHubGrant(d.dataDir, p); return true; } catch { return false; } };
+  const grantOk = (p: Project) => grantProblem(p) === null;
+  /** why the project's GitHub grant does not verify, in fixed words (never exception text or a path); null when it verifies */
+  function grantProblem(p: Project): { en: string; tw: string } | null {
+    if (!p.github) return { en: "not connected", tw: "尚未連線" };
+    try { verifyGitHubGrant(d.dataDir, p); return null; } catch (e: any) {
+      const m = String(e?.message ?? "");
+      if (/not signed by this Studio/.test(m)) return { en: "grant not signed by this Studio", tw: "授權不是這個 Studio 簽的" };
+      if (/local repository is unavailable|names no local repository/.test(m)) return { en: "local repository unavailable", tw: "本機儲存庫無法使用" };
+      if (/another local repository/.test(m)) return { en: "grant names another folder", tw: "授權指向別的資料夾" };
+      if (/\bbase\b/.test(m)) return { en: "base branch changed", tw: "主 branch 變了" };
+      if (/origin|Git config|Git directory/.test(m)) return { en: "repository origin does not match", tw: "儲存庫 origin 不符" };
+      return { en: "grant does not verify", tw: "授權驗證不過" };
+    }
+  }
   function startState(p: Project) {
     const roots = d.protectedRoots ?? [];
     // an external project whose GitHub grant does not verify is never put through the staffing check here (it cannot dispatch)
@@ -159,9 +172,19 @@ export function createProjectOverview(d: OverviewDeps) {
       default: return { en: `Registration ${id}: the staffing check refused it.`, tw: `登錄的專案 ${id}：派工檢查未通過。` };
     }
   }
-  function statusLine(kind: string, enabled: boolean, c: ReturnType<typeof counts>, folderMissing = false, canStart = true): Line {
+  function statusLine(kind: string, enabled: boolean, c: ReturnType<typeof counts>, folderMissing = false, canStart = true, p?: Project): Line {
     if (!enabled) return { tone: "", en: "Disabled", tw: "已停用" };
-    if (kind === "external") return { tone: "warn", en: "External: cannot dispatch yet", tw: "外部專案：暫無法派工" };
+    if (kind === "external") {
+      // a connected project names its repository and what it is doing; only a grant that fails warns, and says why
+      const why = p ? grantProblem(p) : { en: "grant does not verify", tw: "授權驗證不過" };
+      if (why || !p?.github) return { tone: "warn", en: `GitHub: ${why?.en}`, tw: `GitHub：${why?.tw}` };
+      const gh = `GitHub · ${p.github.repository} · `;
+      if (!canStart) return { tone: "warn", en: gh + "no task can start", tw: gh + "無法開始任務" };
+      if (c.attention) return { tone: "human", en: gh + "waiting for you", tw: gh + "等你處理" };
+      if (c.running) return { tone: "run", en: gh + `${c.running} running`, tw: gh + `${c.running} 進行中` };
+      if (c.held) return { tone: "warn", en: gh + `${c.held} held`, tw: gh + `${c.held} 暫緩` };
+      return { tone: "", en: gh + "idle", tw: gh + "閒置" };
+    }
     if (folderMissing) return { tone: "warn", en: "Folder missing", tw: "資料夾不存在" };
     if (!canStart && kind !== STUDIO) return { tone: "warn", en: "No task can start", tw: "無法開始任何任務" };
     if (c.failed24h) return { tone: "bad", en: `${c.failed24h} failed in the last 24 h`, tw: `近 24 小時 ${c.failed24h} 個失敗` };
@@ -184,7 +207,7 @@ export function createProjectOverview(d: OverviewDeps) {
     try { list = records(); } catch { error = { en: "Registry unreadable", tw: "無法讀取登錄資料" }; }
     const rows = list.map((p) => {
       const kind = kindOf(p), enabled = enabledOf(p), c = counts(by.get(p.id) ?? [], open), st = startState(p);
-      return { id: p.id, name: p.name || p.id, enabled, kind, ...(kind === "external" ? { connected: grantOk(p) } : {}), folderMissing: st.folderMissing, canStart: st.canStart, ...c, status: statusLine(kind, enabled, c, st.folderMissing, st.canStart) };
+      return { id: p.id, name: p.name || p.id, enabled, kind, ...(kind === "external" ? { connected: grantOk(p) } : {}), folderMissing: st.folderMissing, canStart: st.canStart, ...c, status: statusLine(kind, enabled, c, st.folderMissing, st.canStart, p) };
     });
     const rank = (r: (typeof rows)[number]) => (r.kind === "builtin" ? 3 : r.attention ? 0 : r.running ? 1 : 2);
     rows.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
@@ -244,7 +267,7 @@ export function createProjectOverview(d: OverviewDeps) {
       : enabled ? tile("enabled", "warn", "Enabled", "已啟用", kind === "external" ? { en: "No task can start (see Registered)", tw: "無法開始任何任務（見「已註冊」）" } : { en: "No task can start (see Crew)", tw: "無法開始任何任務（見「船員」）" })
       : tile("enabled", "bad", "Disabled", "已停用", { en: "New tasks and rounds will not start.", tw: "不會開始新任務或新的一輪。" }));
     out.push(kind === "external" && grantOk(p) ? tile("registered", "ok", "Connected to GitHub", "已連到 GitHub", { en: `${p.github!.repository}: Task branches are pushed and pull requests opened after your approval`, tw: `${p.github!.repository}：任務分支推送與開 pull request 都要你核准` })
-      : kind === "external" ? tile("registered", "warn", "External project: cannot dispatch yet", "外部專案：暫時無法派工", { en: "Its GitHub grant does not verify. Connect it to GitHub again.", tw: "它的 GitHub 授權驗證不過。請重新連到 GitHub。" })
+      : kind === "external" ? tile("registered", "warn", "External project: cannot dispatch yet", "外部專案：暫時無法派工", { en: `Its GitHub grant does not verify: ${grantProblem(p)?.en}. Connect it to GitHub again.`, tw: `它的 GitHub 授權驗證不過：${grantProblem(p)?.tw}。請重新連到 GitHub。` })
       : kind === "builtin" ? tile("registered", "ok", "Built-in", "內建", { en: "Studio's own practice repository", tw: "Studio 內建的練習用儲存庫" })
       : tile("registered", "ok", "Registered", "已註冊", { en: "Local repository", tw: "本機儲存庫" }));
     const b = readBaseRef(p.path, p.base);
