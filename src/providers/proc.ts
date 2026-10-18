@@ -4,6 +4,7 @@
 // cancel, a hot swap) kills the whole group, so no child outlives its round. When
 // the context carries a sandbox profile, the process runs under it (an agent round:
 // architecture §10).
+import { claudeCredentialFds } from "./credential-fds";
 import { spawn,spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { reapMarked } from "../runtime/checks";
@@ -11,7 +12,7 @@ import { LOGIN_RE, type NEvent, type Session } from "./types";
 
 export type LineParser = { line(o: any): NEvent[]; exit(code: number, stderr: string): NEvent | null };
 
-export function processSession(cmd: () => string[], cwd: string, env: Record<string, string>, makeParser: () => LineParser, sandbox?: { profile: string } | null,options:{requireSuccessfulExit?:boolean}={}): Session {
+export function processSession(cmd: () => string[], cwd: string, env: Record<string, string>, makeParser: () => LineParser, sandbox?: { profile: string } | null,options:{requireSuccessfulExit?:boolean;credentialFds?:boolean}={}): Session {
   let pid: number | null = null;
   let interrupted = false;
   let wake: (() => void) | null = null;
@@ -28,7 +29,11 @@ export function processSession(cmd: () => string[], cwd: string, env: Record<str
       const inner = cmd().map((a) => (a === "{TEXT}" ? text : a));
       const argv = sandbox ? ["/usr/bin/sandbox-exec", "-f", sandbox.profile, ...inner] : inner;
       let p: ReturnType<typeof spawn>;
-      try { p = spawn(argv[0], argv.slice(1), { cwd, env: { ...env, CREW_RUN_KILL: marker }, detached: true, stdio: ["ignore", "pipe", "pipe"] }); pid = p.pid ?? null; }
+      try {
+        const auth=options.credentialFds?claudeCredentialFds(env):{env,fds:[] as number[],close(){}};
+        try { p = spawn(argv[0], argv.slice(1), { cwd, env: { ...auth.env, CREW_RUN_KILL: marker }, detached: true, stdio: ["ignore", "pipe", "pipe", ...auth.fds] }); pid = p.pid ?? null; }
+        finally {auth.close();}
+      }
       catch (e: any) { yield { type: "turnEnd", status: "error", code: "cliUnavailable", message: `${inner[0]} could not start: ${e?.message ?? e}` }; return; }
       if(interrupted)killGroup();
       let buf = "";

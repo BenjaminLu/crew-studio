@@ -17,11 +17,13 @@ const leaked = (env: Record<string, string> | undefined, allow: string[] = []) =
   Object.assign(process.env, SECRETS);
   const { Agents } = await import("../src/agent");
   const seen: any[] = [];
-  const recorder = (id: string, envKeys?: string[]) => ({ id, model: "rec", envKeys, start: (_s: string, _t: any, ctx: any) => { seen.push({ id, env: ctx.env }); return { interrupt() {}, async *send() { yield { type: "turnEnd", status: "ok" } as any; } }; } });
+  const recorder = (id: string, envKeys?: string[]) => ({ id, model: "rec", envKeys, start: (_s: string, _t: any, ctx: any) => { seen.push({ id, env: ctx.env, tokenFile: ctx.tokenFile, token: ctx.tokenFile ? readFileSync(ctx.tokenFile, "utf8") : null }); return { interrupt() {}, async *send() { yield { type: "turnEnd", status: "ok" } as any; } }; } });
   const agents = new Agents(join(tmp, "a1"), () => "http://127.0.0.1:1");
   await agents.run({ kind: "t", title: "t", system: "s", text: "x", tools: [], provider: recorder("plain") as any });
   await agents.run({ kind: "t", title: "t", system: "s", text: "x", tools: [], provider: recorder("claude-like", ["ANTHROPIC_API_KEY"]) as any });
-  ok(leaked(seen[0].env).length === 0 && seen[0].env.PATH && seen[0].env.CREW_TOOL_TOKEN, "an agent round's environment carries no credential (only the login basics and its tool token)", leaked(seen[0].env).join(","));
+  ok(leaked(seen[0].env).length === 0 && seen[0].env.PATH && seen[0].env.CREW_TOOL_TOKEN_FILE && !seen[0].env.CREW_TOOL_TOKEN, "an agent round's environment carries only a file path for its tool credential", leaked(seen[0].env).join(","));
+  ok(typeof seen[0].token === "string" && seen[0].token.length > 20 && !JSON.stringify(seen[0].env).includes(seen[0].token), "a non-sandboxed agent also keeps its tool token out of exec environment");
+  ok(!existsSync(seen[0].tokenFile) && !existsSync(seen[1].tokenFile), "agent credential files are removed when their jobs end");
   ok(leaked(seen[1].env, ["ANTHROPIC_API_KEY"]).length === 0 && seen[1].env.ANTHROPIC_API_KEY === "sk-ant-x", "a provider gets only the key it declares for itself");
   const { runChat } = await import("../src/chat");
   await runChat({ provider: recorder("chat") as any, message: "hi", history: [], lang: "en", studioUrl: "http://127.0.0.1:1", token: "t", dataDir: join(tmp, "a1"), onEvent: () => {} });

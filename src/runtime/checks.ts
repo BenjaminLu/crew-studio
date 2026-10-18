@@ -385,8 +385,8 @@ export function inputPaths(v: any, out: Set<string> = new Set(), depth = 0): str
 // The marker env var that tags every process a sandboxed run starts (its descendants inherit it). killGroup kills the
 // process group, but a child that calls setsid() makes its own group and escapes it (esc.ts). So when a run ends, Studio —
 // unsandboxed, so it can still read other same-uid processes' env — finds every process still carrying this run's marker and
-// kills it. The marker is fresh per run, so only that run's descendants match. Inside the sandbox KERN_PROCARGS2 is denied,
-// so a round cannot use the marker to find anything.
+// kills it. This is best-effort cleanup, not a security boundary: an escapee can re-exec without the marker.
+// macOS KERN_PROCARGS2 also exposes argv/env despite the seatbelt sysctl rule; credentials must never be placed there.
 export function reapMarked(marker: string) {
   if (!marker || process.platform !== "darwin") return;
   try {

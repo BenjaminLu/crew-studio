@@ -23,7 +23,7 @@ export function claudeProvider(model = process.env.CREW_CLAUDE_MODEL ?? "claude-
       if(approved)args.push('--setting-sources','','--settings',JSON.stringify(claudeSettings(approved)),'--permission-mode','dontAsk','--permission-prompts','none','--no-chrome',...(approved.effort?['--effort',approved.effort]:[]));
       const cmd = () => (/\.(mjs|js|ts)$/.test(bin) ? [process.execPath, bin, ...args] : [bin, ...args]);
       const env={...ctx.env};if(approved){for(const k of['ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_EFFORT_LEVEL'])delete env[k];const login=approved.login();if(!login.ok)throw new Error('Claude isolated login unavailable');Object.assign(env,login.env,approved.effort?{CLAUDE_CODE_EFFORT_LEVEL:approved.effort}:{});}
-      const session=processSession(cmd, ctx.cwd, env,()=>parser(approved,tools),ctx.sandbox,{requireSuccessfulExit:!!approved});
+      const session=processSession(cmd, ctx.cwd, env,()=>parser(approved,tools),ctx.sandbox,{requireSuccessfulExit:!!approved,credentialFds:true});
       return {interrupt:()=>session.interrupt(),async *send(text:string){try{yield* session.send(text);}finally{session.interrupt();}}};
     },
   };

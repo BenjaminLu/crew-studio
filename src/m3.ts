@@ -81,7 +81,7 @@ export function createM3(d: M3Deps) {
     if (!p.startsWith("/api/artifacts") && !p.startsWith("/api/runs") && !p.startsWith("/api/lane") && !p.startsWith("/af/") && !p.startsWith("/afc/") && !p.startsWith("/af-cap/") && p !== "/api/render") return null;
     // a session-authenticated page mints a short-lived capability for one artifact version, to hand to its sandboxed preview iframe
     if (p.startsWith("/af-cap/") && !writing) {
-      if (!hasSession(req, d.session())) return json({ error: "Studio session required" }, 401);
+      if (!hasSession(req, d.session()) && who.kind !== "phone") return json({ error: "Studio session required" }, 401);
       const [, , idRaw, nRaw] = p.split("/"); const id = decodeURIComponent(idRaw ?? ""), n = Number(nRaw);
       if (!id || !Number.isInteger(n) || !store.version(id, n)) return json({ error: "no such artifact version" }, 404);
       return json({ cap: mintAfCap(d.session(), id, n) });
@@ -137,7 +137,7 @@ export function createM3(d: M3Deps) {
         const [, , id, nStr, ...rest] = p.split("/");
         const idD = decodeURIComponent(id), n = Number(nStr), relPath = decodeURIComponent(rest.join("/"));
         // the ids are guessable, so a deliverable needs Studio's session (the cookie, sent same-origin) or a query capability
-        const session = hasSession(req, d.session());
+        const session = hasSession(req, d.session()) || who.kind === "phone"; // a paired phone carries its bearer token (remote.who checked it)
         if (!session && !afCapOk(d.session(), idD, n, url.searchParams.get("cap"))) return new Response("Studio session or capability required", { status: 401 });
         // a session-authenticated open of a sandboxed page (opaque origin, so its subresources will send no cookie) is
         // redirected to the path-capability form, whose relative subresources carry the capability

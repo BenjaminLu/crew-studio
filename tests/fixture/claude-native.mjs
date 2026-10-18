@@ -1,5 +1,7 @@
 // Strict offline installed-CLI stand-in. Never contains a real credential.
 import{appendFileSync,readFileSync,writeFileSync}from'node:fs';import{dirname,join,basename}from'node:path';
+// Stand in for Claude's descriptor transport; credentials become process-local after exec.
+for(const [key,descriptor]of[['CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR'],['ANTHROPIC_API_KEY','CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR']])if(process.env[descriptor])process.env[key]=readFileSync(Number(process.env[descriptor]),'utf8').trim();
 const root=dirname(process.argv[1]),mode=basename(process.argv[1]).replace('.mjs',''),args=process.argv.slice(2),trace=join(root,'trace.jsonl');
 const put=x=>process.stdout.write(JSON.stringify(x)+'\n');
 // the acceptance harness's login (tests/acceptance.ts) leaves no trace next to this file: its rounds cannot write here

@@ -237,11 +237,13 @@ export class WorkRuns {
   cancel(id: string) { const stop = this.live.get(id); if (!stop) return false; stop(); return true; }
 
   private async drive(run: WorkRun, token: string, dir: string, text: string, system: string, provider: Provider, timeoutMs: number, studioUrl: string) {
-    const env = roundEnv(provider.envKeys ?? [], { CREW_STUDIO_URL: studioUrl, CREW_TOOL_TOKEN: token, CREW_HTTP_MAX_ROUNDS: "40" });
     const cwd = join(this.dataDir, "work-cwd"); mkdirSync(cwd, { recursive: true }); // empty: the agent reaches files only through the work tools
-    const tokenFile = join(cwd, ".crew-tool-token"); writeFileSync(tokenFile, token, { mode: 0o600 }); // never on the CLI's argv (CREW_TOOL_TOKEN_FILE)
+    const tokenFile = join(cwd, `.crew-tool-token-${run.id}`); writeFileSync(tokenFile, token, { mode: 0o600 });
+    const env = roundEnv(provider.envKeys ?? [], { CREW_STUDIO_URL: studioUrl, CREW_TOOL_TOKEN_FILE: tokenFile, CREW_HTTP_MAX_ROUNDS: "40" });
     const rules = new OperatingRules(this.dataDir).section(null); run.operatingRules = rules.hash; // a library artifact belongs to no project: the Studio-wide rules
-    const session = provider.start(withOperatingRules(withSafetyRules(system), rules), WORK_TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.schema })), { studioUrl, token, tokenFile, cwd, env, mcpCommand: helperCommand("mcp") });
+    let session: ReturnType<Provider["start"]>;
+    try { session = provider.start(withOperatingRules(withSafetyRules(system), rules), WORK_TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.schema })), { studioUrl, token, tokenFile, cwd, env, mcpCommand: helperCommand("mcp") }); }
+    catch (error) { rmSync(tokenFile, { force: true }); this.tokens.delete(token); throw error; }
     let why: string | null = null;
     const stop = (reason: string) => { if (!why) { why = reason; session.interrupt(); } };
     this.live.set(run.id, () => stop("cancelled"));
@@ -263,7 +265,7 @@ export class WorkRuns {
         }
       }
     } catch (err: any) { run.status = "failed"; run.error = String(err?.message ?? err); }
-    finally { clearTimeout(timer); this.live.delete(run.id); this.tokens.delete(token); }
+    finally { clearTimeout(timer); this.live.delete(run.id); this.tokens.delete(token); rmSync(tokenFile, { force: true }); }
     if (run.status === "running") this.finish(run, dir, said);
     else { run.ended = now(); this.log(run, "error", run.error ?? run.status); }
   }

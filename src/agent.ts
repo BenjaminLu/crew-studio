@@ -147,13 +147,14 @@ export class Agents {
       }
     }
     try {
+      if (!tokenFile) {
+        const dir = join(this.dataDir, "agent-tokens"); mkdirSync(dir, { recursive: true, mode: 0o700 });
+        tokenFile = join(dir, id); writeFileSync(tokenFile, token, { mode: 0o600 });
+        const previous = cleanup, path = tokenFile; cleanup = () => { try { previous(); } finally { rmSync(path, { force: true }); } };
+      }
       this.tokens.set(token, { job: id, tools: o.tools, calls: 0, max: o.maxTools ?? Number(process.env.CREW_AGENT_MAX_TOOLS ?? 60), expires: Date.now() + timeoutMs + 60_000 });
-      // the login basics and the provider's own declared key only: no other credential reaches a round. A sandboxed CLI round's
-      // env carries CREW_TOOL_TOKEN_FILE (a 0600 path in its own tmp), never the token itself: KERN_PROCARGS2 exposes a
-      // same-uid process's argv AND env to any other same-uid process (the seatbelt sysctl filter does not cover it), so a
-      // token in the CLI's env would be as stealable as one on its argv. The in-process and stub paths (no tokenFile) use
-      // ctx.token directly and spawn nothing, so the raw token stays only in Studio's own process.
-      const tokenEnv = tokenFile ? { CREW_TOOL_TOKEN_FILE: tokenFile } : { CREW_TOOL_TOKEN: token };
+      // Every provider gets a protected file path; spawned CLIs never receive the tool credential in argv/env.
+      const tokenEnv = { CREW_TOOL_TOKEN_FILE: tokenFile };
       const env = { ...roundEnv(envKeys, { CREW_STUDIO_URL: studioUrl, ...tokenEnv, CREW_HTTP_MAX_ROUNDS: "40" }), ...roundEnvAdd };
       // a credential never goes into a prompt (so it is never written into a round's record either)
       // the captain's operating rules, read now (an edit between two rounds reaches the next one), right after the safety rules

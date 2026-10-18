@@ -129,19 +129,20 @@ const h2 = W.get("demo", "R-001")!.head;
   sh(repo, "git", "remote", "remove", "origin");
   const again = await W.startRound("demo", "R-001", "build round 12"); again.release();
   ok(again.head === aheadHead, "the lock is released after every blocked start", again.head);
-  // the auth reaches only the spawned git's environment, and git's words never carry the secret
+  // Only a private config path reaches the spawned git, and git's words never carry the secret
   { const { grantedGit } = await import("../src/worktrees"); const secret = "c2VjcmV0LXRva2Vu";
-    const env = { ...process.env, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.https://github.com/.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${secret}` } as Record<string, string>;
+    const config = join(data, "test-git-auth.config"); writeFileSync(config, `[http "https://github.com/"]\nextraHeader = Authorization: Basic ${secret}\n`, { mode: 0o600 });
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: config } as Record<string, string>;
     const seen = grantedGit({ url: granted, repo, env, fileProtocol: true, secrets: [secret] }, repo, ["config", "--get", "http.https://github.com/.extraHeader"]);
     const leak = grantedGit({ url: granted, repo, env, fileProtocol: true, secrets: [secret] }, repo, ["ls-remote", "--", `https://127.0.0.1:9/${secret}.git`]);
     ok(seen.out === `Authorization: Basic ${secret}` && !sh(repo, "git", "config", "--list").out.includes(secret) && !leak.err.includes(secret) && !leak.ok,
-      "the grant's auth header reaches the remote git through its environment only (no config file), and is cut from git's messages", JSON.stringify([seen.out, leak.err.slice(0, 200)])); }
-  // the adapter's one auth helper: the grant's pushUrl, the token as an extraHeader in the environment, helpers off
+      "the grant's auth header reaches remote git through a private config file, and is cut from git's messages", JSON.stringify([seen.out, leak.err.slice(0, 200)])); }
+  // The adapter authenticates with a protected config file; only its path reaches exec.
   { const { GitHubPrAdapter } = await import("../src/adapters/github");
-    const a = new GitHubPrAdapter({ mode: "github", repository: "acme/app", localPath: repo, pushUrl: "https://github.com/acme/app.git", apiOrigin: "https://api.github.com", base: "main", branchPrefix: "feature/", approvedAt: "2026-10-17T00:00:00Z", approvalId: "A-1" }, () => "tok-123");
+    const a = new GitHubPrAdapter({ mode: "github", repository: "acme/app", localPath: repo, pushUrl: "https://github.com/acme/app.git", apiOrigin: "https://api.github.com", base: "main", branchPrefix: "feature/", approvedAt: "2026-10-17T00:00:00Z", approvalId: "A-1" }, () => "tok-123", 15000, data);
     const rg = a.remoteGit();
-    ok(rg.url === "https://github.com/acme/app.git" && rg.repo === repo && rg.env.GIT_CONFIG_VALUE_0 === `Authorization: Basic ${Buffer.from("x-access-token:tok-123").toString("base64")}` && rg.env.GIT_CONFIG_KEY_1 === "credential.helper" && rg.env.GIT_CONFIG_VALUE_1 === "" && rg.env.GIT_TERMINAL_PROMPT === "0" && !rg.fileProtocol && rg.secrets.includes("tok-123"),
-      "GitHubPrAdapter.remoteGit: only the grant's pushUrl, the grant's token as an http extraHeader in the git environment, credential helpers off", JSON.stringify({ url: rg.url, keys: Object.keys(rg.env).filter((k) => k.startsWith("GIT_CONFIG")) }));
+    ok(rg.url === "https://github.com/acme/app.git" && rg.repo === repo && !JSON.stringify(rg.env).includes(Buffer.from("x-access-token:tok-123").toString("base64")) && !JSON.stringify(rg.env).includes("tok-123") && readFileSync(rg.env.GIT_CONFIG_GLOBAL, "utf8").includes("\thelper =") && rg.env.GIT_TERMINAL_PROMPT === "0" && !rg.fileProtocol && rg.secrets.includes("tok-123"),
+      "GitHubPrAdapter.remoteGit: only the grant's pushUrl, the grant's token in a protected config file, credential helpers off", JSON.stringify({ url: rg.url, keys: Object.keys(rg.env).filter((k) => k.startsWith("GIT_CONFIG")) }));
     let ne = ""; try { new GitHubPrAdapter({ mode: "github", repository: "acme/app", localPath: repo, pushUrl: "https://github.com/acme/app.git", apiOrigin: "https://api.github.com", base: "main", branchPrefix: "feature/", approvedAt: "2026-10-17T00:00:00Z", approvalId: "A-1" }, () => null).remoteGit(); } catch (x: any) { ne = x.message; }
     ok(/GitHub authentication is required/.test(ne), "a grant without a token gives no remote git (the round stops with that cause)", ne); } }
 // lifecycle scripts run only when policy grants them, and then in the round sandbox

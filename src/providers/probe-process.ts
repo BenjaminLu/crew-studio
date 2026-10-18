@@ -1,5 +1,6 @@
 // Metadata probes own one detached process group and every pipe byte. Their
 // disposable credential home can be removed only after this group is gone.
+import { claudeCredentialFds } from './credential-fds';
 import { spawn, spawnSync } from 'node:child_process';
 /** A probe's process group as `ps -o pgid=,pid=,ppid=,stat=` lists it: gone; zombie when every member has exited and waits
  *  only for Studio (its parent) or launchd (pid 1) to reap it (it holds no file, pipe or credential); live when a member runs,
@@ -11,7 +12,9 @@ export function probeGroupState(ps:string,pgid:number,self:number):'gone'|'live'
   return members.every(f=>/^Z/.test(f[3]??'')&&(Number(f[2])===self||Number(f[2])===1))?'zombie':'live';
 }
 export function probeProcess(argv: string[], cwd: string, env: Record<string,string>, onLine?: (value:any)=>void, limits: { timeoutMs?:number; bytes?:number; lineBytes?:number } = {}) {
-  const child=spawn(argv[0],argv.slice(1),{cwd,env,detached:true,stdio:['pipe','pipe','pipe']});
+  const auth=claudeCredentialFds(env);
+  let child:ReturnType<typeof spawn>;
+  try {child=spawn(argv[0],argv.slice(1),{cwd,env:auth.env,detached:true,stdio:['pipe','pipe','pipe',...auth.fds]});}finally{auth.close();}
   const max=limits.bytes??1024*1024,lineMax=limits.lineBytes??128*1024;
   let total=0,out='',err='',buffer='',ended=false,code:number|null=null,failure:string|null=null;
   let resolve:(n:number|null)=>void=()=>{},reject:(e:Error)=>void=()=>{};
