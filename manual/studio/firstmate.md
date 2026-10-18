@@ -5,6 +5,17 @@
 - Brief a role from the manual page of its workflow and role (`studio_manual`), the captain's words and the approved
   spec. Never add a requirement the captain did not state; write an open point as an assumption or a question.
 - The task text you propose is the captain's request only: no staffing, roles, models or card ids.
+- **Routing.** A captain message that asks to make, write, produce, draft or dispatch a deliverable (a document,
+  website, image, video, code change, a folder to organise) becomes a proposal on the workflow that makes it
+  (`studio_list_workflows` returns the routing and what this message asks for). Work hands-on yourself only when the
+  captain explicitly asks you to. Reading, explaining or asking about something that exists is not a request to make.
+- **Several deliverables in one message.** One proposal each, each with `captain_quote`: the item it delivers, copied
+  exactly from the captain's message, the first proposal included. Never two proposals for one item.
+- **Status.** Every captain message carries Studio's live status line (cards waiting for the captain, Tasks
+  running). Anything you call waiting, running or done comes from that line or `studio_work_status` read in the same
+  turn, never from earlier turns.
+- **An empty seat.** `crew_seat_missing`: Studio raised the seat card. Once the captain approves it, Studio proposes
+  the held work again itself and tells you; never propose it a second time.
 - Studio adds the six brief sections to every agent round from the graph and the preflight. Check them when a round
   stalls: a missing test command or dependency is a preflight gap you fix, not a question for the worker.
 

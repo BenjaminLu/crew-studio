@@ -75,7 +75,7 @@ await section("S3 routing", async () => {
     ok(routeRequest(t, of).length === 0, `no route for a request that does not ask to make something: ${t}`, JSON.stringify(routeRequest(t, of)));
   for (const t of ["幫我寫一份文件介紹咖啡", "Write a one-page report on our Q3 sales", "Build a landing page for the bakery", "用檔案整理流程，整理它內建的示範資料夾，依類型分類。", "summarize the attached report, then write a document for the team from it"])
     ok(routeRequest(t, of).length > 0, `a request to make something routes: ${t}`);
-  ok(/deliverable[^.]*becomes a proposal[^.]*hands-on yourself only when the captain explicitly asks/.test(nativeFreshText("/ws")), "Firstmate's standing text says a deliverable is a proposal, hands-on only on request");
+  ok(/request to make a deliverable becomes a proposal on its workflow, hands-on only when the captain asks/.test(nativeFreshText("/ws")) && /\*\*Routing\.\*\*[^]*explicitly asks you to/.test(manualPage("studio/firstmate") ?? ""), "Firstmate's standing text says a deliverable is a proposal, hands-on only on request; the manual has the detail");
   const note = routingNote(DOC, of);
   ok(!!note && note.routes[0]?.workflow === "documents" && /a document, report or article → documents/.test(note.text) && /hands-on yourself only if the captain explicitly asks/.test(note.text), "the turn note names the deliverable, its workflow and the hands-on rule", note?.text);
 
@@ -127,7 +127,7 @@ await section("S5 manual pages", async () => {
   ok(/\*\*Board\*\* \(`#\/board`[^)]*\): a task overview/.test(brief) && /no decision card, no crew on duty/.test(brief), "the Board is a task overview with no cards and no crew on duty", brief.slice(0, 300));
   ok(/\*\*Inbox\*\* \(`#\/inbox`\)[^\n]*one card at a time/.test(brief), "the Inbox shows one card at a time");
   ok(/\*\*Crew\*\* \(`#\/team`\): the Studio team/.test(brief) && /only this workflow/.test(brief), "the Crew team page is #/team, where the captain edits the team");
-  ok(!!page.text && /never from memory/.test(page.text) && /never from memory/.test(manualPage("studio/firstmate") ?? "") && /studio_manual section studio\/pages, never from memory/.test(nativeFreshText("/ws")), "Firstmate is told to describe pages from the manual, not memory");
+  ok(!!page.text && /never from memory/.test(page.text) && /never from memory/.test(manualPage("studio/firstmate") ?? "") && /Describe Studio's pages from studio_manual studio\/pages/.test(nativeFreshText("/ws")), "Firstmate is told to describe pages from the manual, not memory");
 });
 
 // ---------- S7: one captain message naming several deliverables yields one card each ----------
@@ -292,7 +292,7 @@ await section("S10 live status on every captain turn", async () => {
       await until(() => E.cards.list({ run: child, open: true }).length > 0, 5000);
       const after = await t.say("R-080 還在等我核准嗎？");
       ok(!new RegExp(`card ${card.id}`).test(after) && new RegExp(`waiting for the captain: ${child} turn-fixture`).test(after), "once answered, the next turn no longer lists that card; the Task it started is what waits now", after.slice(-500));
-      ok(/never from memory of earlier turns/.test(nativeFreshText("/ws")) && /studio_work_status read in the same turn/.test(nativeFreshText("/ws")), "Firstmate's standing text says status comes from the live line or studio_work_status in the same turn");
+      ok(/Report status only from the turn's live status line or studio_work_status, never from memory/.test(nativeFreshText("/ws")) && /studio_work_status` read in the same\s+turn/.test(manualPage("studio/firstmate") ?? ""), "Firstmate's standing text says status comes from the live line or studio_work_status in the same turn");
       const notice = await t.say("card: SC-1 answered A (in Crew Studio)", "card");
       ok(!/live status at this message/.test(notice), "a card notice carries no status line");
     } finally { t.done(); }
