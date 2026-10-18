@@ -18,7 +18,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // See docs/acceptance.md.   ACCEPTANCE_ONLY=<workflow|workflow:run>[,…]   ACCEPTANCE_KEEP=1 keeps temp data
 // ACCEPTANCE_SCENARIO_DIR=<dir> reads the scenario files from another folder (tests/acceptance-known.ts)
 import { bundledList, bundledText, parseYaml } from "../src/bundled";
-import { loadScenario, openWindowIds, scenarioFiles, type Scenario } from "../scripts/acceptance/scenarios";
+import { defHash, loadScenario, openWindowIds, scenarioFiles, type Scenario } from "../scripts/acceptance/scenarios";
 import { bootStudio, filmSample, SANDBOXED, SANDBOXED_E2E, type Studio } from "./acceptance/studio";
 import { installsFor, type Install } from "../scripts/acceptance/installs";
 import { drive, verify, type Expect } from "./acceptance/drive";
@@ -46,7 +46,7 @@ const profile = SANDBOXED_E2E ? "sandboxed-e2e" : SANDBOXED ? "sandboxed" : "def
 const picked = (only.length ? runs.filter((r) => only.includes(r.workflow) || only.includes(`${r.workflow}:${r.name}`)) : runs).filter((r) => r.profiles.includes(profile));
 
 const servers: Record<string, Promise<Studio>> = {};
-const serverFor = (kind: StubRun["server"]) => servers[kind] ??= bootStudio(kind, { localUnrestricted: kind === "local-unrestricted" });
+const serverFor = (kind: StubRun["server"], scope = "") => servers[`${kind}:${scope}`] ??= bootStudio(scope || kind, { localUnrestricted: kind === "local-unrestricted" });
 const primaries = new Map<Studio, Promise<void>>();
 /** Firstmate's own chat on the codex primary (the stub app-server): one native tool call, as the model would make it. Returns the Tasks it created. */
 const firstmate = (s: Studio) => async (marker: "NATIVE-PROPOSE " | "NATIVE-PROJECT " | "NATIVE-TOOL ", args: unknown) => {
@@ -76,7 +76,8 @@ function expectFor(r: StubRun): Expect {
 }
 
 async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }> {
-  const s = await serverFor(r.server), h: Ctx = { s, vars: {}, firstmate: firstmate(s) }, failures: string[] = [];
+  // A real team approval changes global staffing, so crew scenarios must not share another scenario's Studio.
+  const s = await serverFor(r.server, r.how === "crew" ? `${r.workflow}-${r.name}` : ""), h: Ctx = { s, vars: {}, firstmate: firstmate(s) }, failures: string[] = [];
   for (const step of r.setup) { const f = STEPS[step]; if (!f) return { failures: [`no setup step ${step} (tests/acceptance/steps.ts)`] }; await f(h); }
   const params: Record<string, string> = { ...Object.fromEntries(Object.entries(r.shared.start.params).map(([k, v]) => [k, fill(v, h.vars)])), ...(r.provider ? { provider: r.provider } : {}), ...Object.fromEntries(Object.entries(r.params).map(([k, v]) => [k, fill(v, h.vars)])) };
   // the sandbox probe's arguments (setup step probe) go into the intent, where the scripted agent reads them
@@ -132,6 +133,7 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
   const exp = expectFor(r);
   const d = await drive(s, task, decide, { timeoutMs: r.timeout_s * 1000, until: exp.status === "waiting" ? (v) => (v.cards ?? []).some((c: any) => c.status === "open" && c.node === exp.waitingOn) : undefined });
   failures.push(...await verify(s, d, exp));
+  if (r.how === "crew" && defHash(d.view?.def) !== r.shared.pin.sha256) failures.push("the crew Task definition differs from the reviewed scenario pin");
   // the real side effects: a proof that needs the real renderer only where the renderer is real (the e2e profile)
   for (const p of r.proves) if (SANDBOXED_E2E || !RENDERER_PROVES.includes(p)) failures.push(...(await prove(s, d.view, p, { sinkHits: h.sinkHits })).map((x) => `proves ${p}: ${x}`));
   // a run checked while it waits on a card (stopped by design) is cancelled afterwards: left open, it would still hold its

@@ -12,8 +12,10 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Studio } from "./studio";
+import { CrewStore } from "../../src/domain/crew";
+import { Ledger } from "../../src/runtime/checks";
 
-export const PROVES = ["pdf-chromium", "captures", "film", "web-smoke", "fail-first", "sandbox-probe"];
+export const PROVES = ["pdf-chromium", "captures", "film", "web-smoke", "fail-first", "sandbox-probe", "crew-applied"];
 /** the proofs only a real renderer can give */
 export const RENDERER_PROVES = ["pdf-chromium", "captures", "film", "web-smoke"];
 
@@ -57,6 +59,21 @@ export function probeProblems(r: any): string[] {
 
 export async function prove(s: Studio, view: any, what: string, o: { sinkHits?: () => number } = {}): Promise<string[]> {
   const task = String(view?.id ?? ""), run = join(s.data, "runs", task), lower = task.toLowerCase();
+  if (what === "crew-applied") {
+    const bad: string[] = [], team = new CrewStore(s.data).current();
+    if (!team) return ["no approved team was persisted"];
+    const member = team.members.maker;
+    if (member?.provider !== "codex" || member.model !== "acceptance-model" || member.effort !== "medium") bad.push("the approved maker assignment was not persisted");
+    const card = view.cards?.find((c: any) => c.node === "confirm" && c.status === "answered" && c.answer?.choice === "approve" && c.captainOnly);
+    const ledger = new Ledger(s.data, task).authenticatedPrefix();
+    if (ledger.bad.length || ledger.malformed) bad.push("the approval evidence does not authenticate");
+    const answers = ledger.prefix.filter(e => e.record === "card-answer" && e.data?.card === card?.id && e.data?.choice === "approve");
+    const receipts = ledger.prefix.filter(e => e.record === "crew-approved" && e.data?.card === card?.id && e.data?.team === team.hash && e.data?.version === team.version);
+    if (!card || !/^captain\b/i.test(String(card.answer?.by ?? "")) || answers.length !== 1 || receipts.length !== 1) bad.push("expected one captain approval and one matching crew-approved receipt");
+    if (team.approval.run !== task || team.approval.card !== card?.id || team.approval.answerSeq !== answers[0]?.seq || team.approval.via !== "card") bad.push("the persisted team is not bound to this Task's card approval");
+    if (answers[0] && receipts[0] && answers[0].seq >= receipts[0].seq) bad.push("the team receipt precedes its approval");
+    return bad;
+  }
   if (what === "pdf-chromium") {
     const pdfs = walk(join(run, "exports")).filter((f) => f.endsWith(".pdf"));
     if (!pdfs.length) return ["no PDF was exported"];
