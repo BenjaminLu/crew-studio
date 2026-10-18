@@ -16,6 +16,9 @@ const app=spawn('bun',['src/server.ts'],{cwd:process.env.BOARD_START_UI_BASELINE
 // a started Task's worktree is frozen read-only between rounds: make it writable again before removing the temp folder
 const thaw=p=>{try{const st=lstatSync(p);if(st.isSymbolicLink())return;if(st.isDirectory()){chmodSync(p,st.mode|0o700);for(const e of readdirSync(p))thaw(join(p,e));}else chmodSync(p,st.mode|0o600);}catch{}};
 let browser,pass=0;const ok=(v,n)=>{if(!v)throw new Error(n);pass++;console.log('ok '+n);};
+// the page may redraw (a live event) while Playwright fills the request field, which then fills a field no longer on the page:
+// fill again until the field on the page holds the text
+const fillDraft=async(p,t)=>{for(let i=0;i<3;i++){await p.locator('[data-run-text]').fill(t);await p.waitForTimeout(100);if(await p.locator('[data-run-text]').inputValue()===t)return;}};
 const api=async(path)=>{const r=await fetch(base+path,{headers:{'x-crew-session':token}});return{status:r.status,body:await r.json()};};
 try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright');browser=withSession(await chromium.launch({headless:true}),base,token);
  for(const width of[1440,390])for(const theme of['light','dark'])for(const lang of['en','zh-TW']){const tag=`${width} ${theme} ${lang}`,p=await browser.newPage({viewport:{width,height:1000},colorScheme:theme});
@@ -26,12 +29,12 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
    // the page redraws (a live event) while intake is still answering: the picker it then focuses is the one on the page
    let answerIntake;const intakeHeld=new Promise(r=>answerIntake=r),intakeAsked=p.waitForRequest(r=>new URL(r.url()).pathname==='/api/intake');
    await p.route('**/api/intake',async route=>{await intakeHeld;await route.continue();});
-   await p.locator('[data-run-text]').fill('zzzxqv ambiguous request');await p.locator('[data-run-start]').click();
+   await fillDraft(p,'zzzxqv ambiguous request');await p.locator('[data-run-start]').click();
    await intakeAsked;await p.evaluate(()=>render());answerIntake();
    await p.waitForFunction(()=>document.activeElement?.matches('[data-run-wf]'),null,{timeout:10000});await p.unroute('**/api/intake');
    ok(/Choose a workflow/.test(await p.locator('.rt-start [role=status]').textContent()),'unknown intent says to choose a workflow on the page as it is now');
    ok(starts===0&&await p.locator('[data-run-text]').inputValue()==='zzzxqv ambiguous request','unknown intent focuses workflow picker, retains prompt and allocates no Task');
-   await p.locator('[data-run-text]').fill('coffee-kit');await p.locator('[data-run-start]').click();await p.waitForFunction(()=>document.querySelector('[data-run-wf]')?.value==='coffee-kit');
+   await fillDraft(p,'coffee-kit');await p.locator('[data-run-start]').click();await p.waitForFunction(()=>document.querySelector('[data-run-wf]')?.value==='coffee-kit');
    ok(starts===0&&await p.locator('[data-run-text]').inputValue()==='coffee-kit','recognized workflow shows declared inputs before allocating a Task');p.off('request',listener);
   }
   await p.locator('[data-run-wf]').selectOption('code-firstmate');await p.locator('[data-run-project="code-firstmate"]').waitFor();
