@@ -49,7 +49,10 @@ export type SCard = {
   /** a spec card (code-firstmate's dispatch): the spec's scope, what it reads to verify, its open scope questions */
   spec?: CardSpec | null;
 };
-export type CardSpec = { scope: string[]; verification: string[]; questions: { q: string; choices: string[] }[] };
+export type CardSpec = { scope: string[]; verification: string[]; questions: { q: string; choices: string[] }[];
+  /** a spec raised again: what changed since the spec on the last spec card (`approved`: the captain approved that one) */
+  changed?: { since: number; approved: boolean; done: SpecDelta; scope: SpecDelta; verification: SpecDelta } | null };
+export type SpecDelta = { added: string[]; removed: string[] };
 export type Acknowledge = { option: string; id: string; en: string; zh: string };
 export type CardCrew = { team: string; summary: { en: string; zh: string }; nodes: { node: string; label: string; seat: string; seatLabel: { en: string; zh: string }; provider: string | null; model: string | null; effort: string | null; efforts: (string | null)[] }[] };
 export type PullRequestPreview = { repository: string; branch: string; base: string; baseCommit?: string; head: string; draft: boolean; template: { repository: string; path: string; blob: string } | null; title: string; body: string; proven: string[]; proofs?: Record<string, string>; unproven: string[] };

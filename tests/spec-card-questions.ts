@@ -31,6 +31,27 @@ ok(!!tool?.schema?.properties?.questions && tool.schema.properties.questions.ite
 await tool.run({ ...spec, questions: [{ q: "Negative ties?", choices: ["away from zero", "banker's"] }, { q: "  " }] });
 ok(JSON.stringify(wx.ctx.spec.questions) === JSON.stringify([{ q: "Negative ties?", choices: ["away from zero", "banker's"] }]), "the written spec keeps the questions as data", JSON.stringify(wx.ctx.spec?.questions));
 
+// ---- S20: a spec raised again says what changed since the last spec card ----
+const ctx: any = { spec, repo: "/r", base: "main", branch: "crew/R-9" };
+const at = (visit: number) => ({ ctx, run: { id: "R-9", title: "t", text: "t", nodes: {} }, rn: { visits: visit }, visit, node: { id: "dispatch" }, save() {} } as any);
+const first = await E.cardBodies.dispatch(at(1));
+ok(first.spec.changed === null && !/Changed since/.test(first.body), "the first spec card has nothing to compare with", JSON.stringify(first.spec.changed));
+ctx.answers = { dispatch: { choice: "dispatch", by: "captain", at: "2026-10-18T10:00:00Z" } };
+ctx.spec = { ...spec, version: 2, done: [spec.done[0].replace("300", "300 (rounded half away from zero)"), "test/percent.test.ts: percent(-1, 50) is -1 (planned fail-first)"], scope: [...spec.scope, "app/shop.ts"], verificationScope: [] };
+const again = await E.cardBodies.dispatch(at(2)), ch = again.spec.changed;
+ok(ch?.since === 1 && ch.approved === true && ch.done.added.length === 2 && ch.done.removed.join() === spec.done[0] && ch.scope.added.join() === "app/shop.ts" && !ch.scope.removed.length && ch.verification.removed.join() === "app/server.ts",
+  "after a rescope the spec card lists the done lines, scope and verification paths added and removed since the spec the captain approved", JSON.stringify(ch));
+ok(again.body.startsWith("Changed since spec v1 (the one you approved):\n+ Done lines: ") && again.body.includes("+ Scope: app/shop.ts") && again.body.includes("- Read to verify: app/server.ts"), "the card text says the same, first", again.body.slice(0, 400));
+const same = await E.cardBodies.dispatch(at(2));
+ok(JSON.stringify(same.spec.changed) === JSON.stringify(ch), "raising the same card again (same visit) compares with the same earlier spec");
+ctx.answers = { dispatch: { choice: "rescope", note: "x", by: "captain", at: "2026-10-18T11:00:00Z" } };
+const reworded = await E.cardBodies.dispatch(at(3));
+ok(reworded.spec.changed === null, "a spec card at the same spec version as the last one shows no change");
+ctx.spec = { ...ctx.spec, version: 3, explain: { en: "Reworded.", "zh-TW": "改寫。" } };
+const words = await E.cardBodies.dispatch(at(4));
+ok(words.spec.changed?.approved === false && words.spec.changed.since === 2 && !words.spec.changed.done.added.length && /the wording changed/.test(words.body), "after a rescope of an unapproved spec: compared with the last spec, not approved, and only its wording changed", JSON.stringify(words.spec.changed));
+ok(Object.keys(ctx.specCards).join() === "2,3,4", "only the last three spec cards' specs are kept", Object.keys(ctx.specCards).join());
+
 H.stop();
 console.log(`\nspec-card-questions: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

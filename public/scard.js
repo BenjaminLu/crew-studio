@@ -99,6 +99,11 @@ const SCARD_CSS = `
 .cc-sec ol.cc-qs { display: grid; gap: 10px; list-style: none; padding-left: 0; }
 .cc-qs li { display: grid; gap: 6px; }
 .cc-qchoices { display: flex; flex-wrap: wrap; gap: 6px; }
+.cc-sec ul.cc-delta { list-style: none; padding-left: 0; gap: 2px; }
+.cc-delta li { padding: 2px 6px; border-radius: 4px; overflow-wrap: anywhere; }
+.cc-delta li.add { background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.cc-delta li.del { background: color-mix(in srgb, var(--bad) 8%, transparent); color: var(--text-2); }
+.cc-delta .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .cc-qchoices .btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text, var(--text)); }
 .cc-dirs { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
 .cc-dir { margin: 0; display: grid; gap: 8px; align-content: start; border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
@@ -380,6 +385,15 @@ function mountCard(el, card, opts = {}) {
     const own = String(st.notes.rescope || "").split(ANSWERS)[0].trim();
     return [own, lines.length ? `${ANSWERS}\n${lines.join("\n")}` : ""].filter(Boolean).join("\n\n");
   }
+  // a spec raised again: what changed since the last spec card, line by line (+ added, − removed)
+  function changedView(ch) {
+    const part = (key, en, zh) => { const d = ch[key] || { added: [], removed: [] }; if (!d.added?.length && !d.removed?.length) return null;
+      return h("div", { "data-spec-changed": key }, h("b", {}, T(en, zh)), h("ul", { class: "cc-delta" }, (d.added || []).map((x) => h("li", { class: "add" }, h("span", { "aria-hidden": "true" }, "+ "), h("span", { class: "sr" }, T("Added: ", "新增：")), x)),
+        (d.removed || []).map((x) => h("li", { class: "del" }, h("span", { "aria-hidden": "true" }, "− "), h("span", { class: "sr" }, T("Removed: ", "移除：")), h("s", {}, x))))); };
+    const parts = [part("done", "Done lines", "完成條件"), part("scope", "Scope", "範圍"), part("verification", "Reads to verify", "只讀來驗證")].filter(Boolean);
+    return sec("spec-changed", ch.approved ? T(`What changed since the spec you approved (v${ch.since})`, `和你核准的規格（v${ch.since}）相比改了什麼`) : T(`What changed since the last spec (v${ch.since})`, `和上一版規格（v${ch.since}）相比改了什麼`),
+      parts.length ? parts : h("p", { class: "cc-count", "data-spec-changed": "none" }, T("Done lines, scope and verification are the same; only the wording changed.", "完成條件、範圍和驗證都一樣；只有文字改了。")));
+  }
   function specView(c) {
     const sp = c.spec, out = [], open = c.status === "open";
     if (sp.scope.length || sp.verification.length) out.push(sec("spec-scope", T("Scope", "範圍"),
@@ -403,6 +417,7 @@ function mountCard(el, card, opts = {}) {
   function plainView(c) {
     const s = cardI18n().deep(st.lang, c.sections); const out = [];
     // a spec card (code-firstmate's dispatch): what the captain approves is the done lines, so they come first
+    if (specCard(c) && c.spec.changed) out.push(changedView(c.spec.changed));
     if (c.kind === "dispatch" && c.node === "dispatch" && Array.isArray(s?.done) && s.done.length && c.workflow !== "firstmate-proposal")
       out.push(sec("done", T("Done when", "完成條件"), h("ol", { "data-spec-done": "" }, s.done.map((x) => h("li", {}, x)))));
     if (s?.intent) out.push(sec("intent", T("Intent", "意圖"), h("p", { class: "cc-quote" }, s.intent)));

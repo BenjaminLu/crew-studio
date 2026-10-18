@@ -1631,12 +1631,26 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const modelPicker = () => { const c = engine.modelChoices(); return c.length ? { select: c } : { note: true, noteLabel: "provider/model, e.g. codex/gpt-5", noteLabelZh: "provider/model，例如 codex/gpt-5" }; };
   /** the step this card came from (the last finished step before it): which escalation it is */
   const cameFrom = (x: X) => [...x.run.steps].reverse().find((s) => s.node !== x.node.id && (s.state === "passed" || s.state === "failed" || s.state === "error"));
+  // a spec raised again (after a rescope) says what changed since the spec on the last spec card, and whether the captain
+  // approved that one: its done lines, scope and read-only verification paths. Each card's spec is kept by visit.
+  const specChange = (x: X) => {
+    const cur = x.ctx.spec, visit = x.visit ?? x.rn?.visits ?? 1, kept = (x.ctx.specCards ??= {}) as Record<string, { spec: any; approved: boolean }>;
+    const last = Object.keys(kept).map(Number).filter((v) => v < visit).sort((a, b) => a - b).at(-1);
+    const before = last === undefined ? null : { ...kept[last], approved: x.ctx.answers?.dispatch?.choice === "dispatch" };
+    kept[visit] = { spec: cur ? JSON.parse(JSON.stringify(cur)) : null, approved: false };
+    for (const v of Object.keys(kept).map(Number).sort((a, b) => a - b).slice(0, -3)) delete kept[v];
+    if (!before?.spec || !cur || before.spec.version === cur.version) return null;
+    const delta = (a: unknown, b: unknown) => { const was = (Array.isArray(a) ? a : []).map(String), now = (Array.isArray(b) ? b : []).map(String); return { added: now.filter((s) => !was.includes(s)), removed: was.filter((s) => !now.includes(s)) }; };
+    return { since: Number(before.spec.version) || 0, approved: before.approved, done: delta(before.spec.done, cur.done), scope: delta(before.spec.scope, cur.scope), verification: delta(before.spec.verificationScope, cur.verificationScope) };
+  };
+  const changeText = (c: ReturnType<typeof specChange>) => !c ? "" : `Changed since spec v${c.since}${c.approved ? " (the one you approved)" : ""}:\n${([["Done lines", c.done], ["Scope", c.scope], ["Read to verify", c.verification]] as const)
+    .flatMap(([k, d]) => [...d.added.map((s) => `+ ${k}: ${s}`), ...d.removed.map((s) => `- ${k}: ${s}`)]).join("\n") || "Done lines, scope and verification are the same; the wording changed."}\n\n`;
   // the spec card: the captain approves the spec (its done lines first), and approving it starts the work
-  engine.cardBodies.dispatch = (x) => ({ title: `Approve the spec: ${T(x)}`, zhTitle: `核准規格：${ZT(x)}`, ...base(x, x.ctx.spec?.why?.join(" ") ?? "", "A worker builds it on its own branch. Checks and a fresh reviewer judge each round.", zhWhyOf(x), "worker 在自己的 branch 上做；每一輪由檢查和全新的 reviewer 判定。"),
-    body: `${specMd(x.ctx.spec)}\nRepository: ${x.ctx.repo} (${x.ctx.base}) · branch ${x.ctx.branch}\nRollback: ${x.ctx.spec?.door?.kind === "one-way" ? "a revert does not undo a one-way change; the plan round names the rollback" : "a revert undoes it"}`,
+  engine.cardBodies.dispatch = (x) => { const changed = specChange(x); return { title: `Approve the spec: ${T(x)}`, zhTitle: `核准規格：${ZT(x)}`, ...base(x, x.ctx.spec?.why?.join(" ") ?? "", "A worker builds it on its own branch. Checks and a fresh reviewer judge each round.", zhWhyOf(x), "worker 在自己的 branch 上做；每一輪由檢查和全新的 reviewer 判定。"),
+    body: `${changeText(changed)}${specMd(x.ctx.spec)}\nRepository: ${x.ctx.repo} (${x.ctx.base}) · branch ${x.ctx.branch}\nRollback: ${x.ctx.spec?.door?.kind === "one-way" ? "a revert does not undo a one-way change; the plan round names the rollback" : "a revert undoes it"}`,
     // the spec as data for the card: its scope, what it reads to verify, and its open questions (answered on the card, they feed "Adjust the scope")
-    spec: { scope: scopeIn(x), verification: (x.ctx.spec?.verificationScope ?? []).map(String), questions: x.ctx.spec?.questions ?? [] },
-    options: [{ id: "dispatch", label: "Approve the spec and start", labelZh: "核准規格並開工", primary: true }, { id: "rescope", label: "Adjust the scope", labelZh: "調整範圍", note: true, noteLabel: "What the new scope adds or removes", noteLabelZh: "新範圍要加入或移除什麼" }, { id: "drop", label: "Drop", labelZh: "放棄" }] });
+    spec: { scope: scopeIn(x), verification: (x.ctx.spec?.verificationScope ?? []).map(String), questions: x.ctx.spec?.questions ?? [], changed },
+    options: [{ id: "dispatch", label: "Approve the spec and start", labelZh: "核准規格並開工", primary: true }, { id: "rescope", label: "Adjust the scope", labelZh: "調整範圍", note: true, noteLabel: "What the new scope adds or removes", noteLabelZh: "新範圍要加入或移除什麼" }, { id: "drop", label: "Drop", labelZh: "放棄" }] }; };
   engine.cardBodies.door = (x) => ({ title: `Pick the door: ${T(x)}`, zhTitle: `選門：${ZT(x)}`, ...base(x, `No list can sort this scope: ${(x.ctx.door?.reasons ?? []).map((r: any) => r.path).join(", ") || "the scope paths"}.`, "Pick one-way or two-way.", "沒有清單能分類這個範圍。", "選單向門或雙向門。"),
     body: `No list can classify this scope:\n${(x.ctx.door?.reasons ?? []).map((r: any) => `- ${r.path}: ${r.why}`).join("\n")}`, options: [{ id: "two-way", label: "Two-way (a revert undoes it)", labelZh: "雙向門（revert 可以還原）" }, { id: "one-way", label: "One-way", labelZh: "單向門" }] });
   engine.cardBodies.budget = (x) => { const n = x.run.nodes.build?.visits ?? 0;

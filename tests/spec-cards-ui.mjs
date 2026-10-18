@@ -46,7 +46,10 @@ const spec = base("SC-960", "R-087", "dispatch", "dispatch", "code-firstmate", "
   { body: "# Add percent()\n\nWhat: percent helper\n\nDone when:\n1. ...\nRepository: /tmp/money-kit (main) · branch crew/R-087",
     spec: { scope: ["src/money.ts", "test/percent.test.ts"], verification: ["app/server.ts"], questions: [{ q: "Negative half-cent ties: which way?", choices: ["Away from zero", "Banker's", "Not supported yet"] }, { q: "Fractional percentages?", choices: [] }] },
     options: [{ id: "dispatch", label: "Approve the spec and start", labelZh: "核准規格並開工", primary: true }, { id: "rescope", label: "Adjust the scope", labelZh: "調整範圍", note: true, noteLabel: "What the new scope adds or removes", noteLabelZh: "新範圍要加入或移除什麼" }, { id: "drop", label: "Drop", labelZh: "放棄" }] });
-const cards = [accept, spec];
+// the same spec raised again after a rescope: what changed since the spec the captain approved
+const respec = { ...spec, id: "SC-961", visit: 2, title: { en: "Approve the spec: Add percent() without the shop test", "zh-TW": "核准規格：新增 percent()（不含商店測試）" }, runTitle: "Add percent() without the shop test",
+  spec: { ...spec.spec, questions: [], changed: { since: 2, approved: true, done: { added: ["Studio CI on GitHub runs test/shop.test.ts"], removed: ["test/shop.test.ts passes in the round"] }, scope: { added: [], removed: [] }, verification: { added: [], removed: ["app/server.ts"] } } } };
+const cards = [accept, spec, respec];
 for (const c of cards) writeFileSync(join(data, "cards", `${c.id}.json`), JSON.stringify(c, null, 1));
 
 const port = await freePort(), url = `http://127.0.0.1:${port}`, token = "spec-cards-fixture";
@@ -111,6 +114,16 @@ try {
     ok(sent?.choice === "rescope" && /Banker's/.test(sent.note) && /Fractional percentages\?/.test(sent.note), `S14 choosing Adjust the scope sends the answers as its note ${tag}`, JSON.stringify(sent));
     await p.unroute(`**/api/scards/SC-960/answer`);
     await p.screenshot({ path: join(shots, `s13-spec-${lang}-${width}.png`) });
+    // ---------- S20: a spec raised again says what changed since the approved one ----------
+    await p.goto(`${url}/#/inbox/SC-961`); await p.waitForSelector(`${at("SC-961")} [data-sec="spec-changed"]`, { timeout: 15000 });
+    const secs2 = await p.$$eval(`${at("SC-961")} [data-sec]`, (es) => es.map((e) => e.dataset.sec));
+    const changed = p.locator(`${at("SC-961")} [data-sec="spec-changed"]`);
+    ok(secs2[0] === "spec-changed" && secs2[1] === "done", `S20 what changed comes first, then the done lines ${tag}`, secs2.join());
+    ok((await changed.locator("h4").innerText()).toLowerCase() === L("What changed since the spec you approved (v2)", "和你核准的規格（v2）相比改了什麼").toLowerCase(), `S20 it names the spec version the captain approved ${tag}`, await changed.locator("h4").innerText());
+    ok(await changed.locator('[data-spec-changed="done"] li.add').count() === 1 && await changed.locator('[data-spec-changed="done"] li.del s').count() === 1 && await changed.locator('[data-spec-changed="verification"] li.del').count() === 1 && await changed.locator('[data-spec-changed="scope"]').count() === 0,
+      `S20 added and removed done lines and verification paths, nothing for an unchanged scope ${tag}`);
+    ok(await fits(), `S20 no horizontal scroll ${tag}`);
+    await changed.scrollIntoViewIfNeeded(); await p.screenshot({ path: join(shots, `s20-changed-${lang}-${width}.png`) });
     await ctx.close();
   }
   ok(!errors.length, "no page errors", errors.join(" | "));
