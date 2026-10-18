@@ -90,3 +90,7 @@
 .tm-tabs a:hover{color:var(--text)}
 .tm-tabs a[aria-current="page"]{background:var(--surface);color:var(--text);box-shadow:var(--shadow-1)}
 @media (max-width:480px){.tm-tabs a{min-height:44px}}
+/* a project's own crew approval (public/takeover.js's panel), folded under the team */
+.tm-staffing{margin-top:12px;padding:12px 16px;min-width:0}
+.tm-staffing summary{cursor:pointer;min-height:32px;line-height:1.5}
+.tm-staffing .tk-staffing{border:0;box-shadow:none;background:none;padding:8px 0 0}

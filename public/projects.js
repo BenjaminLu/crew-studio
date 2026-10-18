@@ -161,7 +161,7 @@ function crewSection(d) {
   // the crew link only where tasks can start (the staffing check passes); otherwise the panel could not staff it
   const canLink = p.kind !== "studio" && p.canStart === true;
   const head = h("div", { class: "sec-head" }, h("h2", { id: "hCrew" }, T("Crew", "船員")), h("span", { class: "faint" }, T("read only", "唯讀")), h("span", { class: "x-grow" }),
-    canLink ? h("a", { class: "btn", href: `#/firstmate?staffing=${encodeURIComponent(p.id)}`, "data-crew-link": p.id }, icon("message", "ic sm"), h("span", {}, T("Choose your crew together", "一起決定代理配置"))) : null);
+    canLink ? h("a", { class: "btn", href: `#/team?staffing=${encodeURIComponent(p.id)}`, "data-crew-link": p.id }, icon("crew", "ic sm"), h("span", {}, T("Approve this project's crew", "核准這個專案的人員"))) : null);
   let body;
   const plain = (en, tw, attr) => h("div", { class: "pj-empty-row", "data-crew-state": attr }, T(en, tw));
   if (p.enabled === false) body = plain("Crew not checked: the project is disabled.", "未檢查船員：專案已停用。", "disabled");
@@ -174,7 +174,7 @@ function crewSection(d) {
       h("span", { class: "faint" }, [crew.approvedAt ? dateOf(crew.approvedAt) : null, crew.signed ? T("signed", "已簽章") : null].filter(Boolean).join(" · "))),
     h("div", { class: "pj-roles" }, crew.roles.map((r) => h("div", { class: "pj-role" }, h("span", { class: "rn" }, r.role),
       h("span", { class: "rc" }, [r.provider, r.model, r.effort].filter(Boolean).map((x) => h("span", { class: "vbadge" }, x))), h("span", { class: "pj-src" }, r.skill)))),
-    h("div", { class: "faint", style: "font-size:12px" }, T("One approved crew covers the project. To change it, use Choose your crew together on the Firstmate page.", "一份核准的船員配置涵蓋整個專案。要修改，請到 Firstmate 頁的「一起決定代理配置」。")));
+    h("div", { class: "faint", style: "font-size:12px" }, T("One approved crew covers the project. To change it, approve a new one on the Crew page.", "一份核准的船員配置涵蓋整個專案。要修改，請到船員頁核准新的一份。")));
   return h("section", { id: "s-crew", "aria-labelledby": "hCrew" }, head, h("div", { class: "card" }, body));
 }
 function sensitiveSection(d, id) {

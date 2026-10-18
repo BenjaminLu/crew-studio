@@ -54,7 +54,7 @@ try{
  // the Start form's view of the workflow: registered projects and each one's crew state
  const options=await call('/api/wruns/start-options?workflow=code-firstmate');
  const byId=Object.fromEntries((options.body.projects??[]).map((p:any)=>[p.id,p]));
- ok(options.status===200&&options.body.projectScoped===true&&options.body.staffing===true&&options.body.crewHref==='#/firstmate','start options mark code-firstmate as project-scoped and staffed',JSON.stringify(options.body));
+ ok(options.status===200&&options.body.projectScoped===true&&options.body.staffing===true&&options.body.crewHref==='#/team','start options mark code-firstmate as project-scoped and staffed',JSON.stringify(options.body));
  ok(byId.fixture?.staffing?.state==='approved'&&byId.fixture.staffing.hash===approved.hash&&byId.fixture.staffing.roles.worker.model==='fixture-model','an approved project shows its approved crew');
  ok(byId.unstaffed?.staffing?.state==='missing'&&byId.unstaffed.staffing.code==='staffing_missing','a project without a crew shows missing');
 

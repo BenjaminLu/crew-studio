@@ -1049,11 +1049,13 @@ function startProjectPicker(id) {
   const sel = h("select", { class: "select", "data-run-project": id, "aria-label": T("Project", "專案"), onchange: (e) => { vals.project = e.target.value; RN.startError = ""; rerender(); } },
     h("option", { value: "" }, T("Choose a registered project", "選擇已登錄專案")), o.projects.map((p) => h("option", { value: p.id, selected: vals.project === p.id || null }, p.name || p.id)));
   const s = o.staffing && chosen ? chosen.staffing : null;
+  // a project's crew is approved on the Crew page, opened on this project and workflow
+  const crewLink = chosen && o.crewHref ? `${o.crewHref}?staffing=${encodeURIComponent(chosen.id)}&workflow=${encodeURIComponent(o.workflow)}` : o.crewHref;
   const crew = !o.projects.length ? h("span", { class: "faint", "data-run-crew": "no-project" }, T("No registered project yet. Ask Firstmate to register one.", "尚無已登錄專案；請請 Firstmate 登錄專案。"))
     : !s ? null
     : s.state === "approved" ? h("span", { class: "badge ok", "data-run-crew": "approved" }, T(`Crew approved · v${s.version}`, `代理配置已核准 · v${s.version}`))
-    : s.state === "missing" ? h("span", { class: "rt-crew", "data-run-crew": "missing" }, T("No crew approved for this project. ", "此專案尚未核准代理配置。"), h("a", { href: o.crewHref, "data-run-crew-link": "1" }, T("Choose your crew together", "一起決定代理配置")))
-    : h("span", { class: "rt-crew", role: "alert", "data-run-crew": "blocked", "data-run-crew-code": s.code }, h("b", {}, T("Cannot start", "無法開始")), ` · ${s.code} · `, T(s.reason.en, s.reason.zh), s.code === "staffing_changed" ? h("a", { href: o.crewHref, "data-run-crew-link": "1" }, " ", T("Choose your crew again", "重新決定代理配置")) : null);
+    : s.state === "missing" ? h("span", { class: "rt-crew", "data-run-crew": "missing" }, T("No crew approved for this project. ", "此專案尚未核准代理配置。"), h("a", { href: crewLink, "data-run-crew-link": "1" }, T("Approve its crew on the Crew page", "到船員頁核准人員")))
+    : h("span", { class: "rt-crew", role: "alert", "data-run-crew": "blocked", "data-run-crew-code": s.code }, h("b", {}, T("Cannot start", "無法開始")), ` · ${s.code} · `, T(s.reason.en, s.reason.zh), s.code === "staffing_changed" ? h("a", { href: crewLink, "data-run-crew-link": "1" }, " ", T("Choose your crew again", "重新決定代理配置")) : null);
   return h("div", { class: "rt-row rt-start-project", "data-run-project-row": id }, h("span", { class: "lbl" }, T("Project", "專案")), sel, crew);
 }
 function startProjectValue(id) { const v = ((RN.params || {})[id] || {}).project; return v ? { project: v } : {}; }

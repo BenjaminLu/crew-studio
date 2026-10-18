@@ -235,7 +235,16 @@ function view() {
 const crewTabs = (on) => h("nav", { class: "tm-tabs", "aria-label": T("Crew", "船員"), "data-crew-tabs": on },
   h("a", { href: "#/team", "data-crew-tab": "team", "aria-current": on === "team" ? "page" : null, ...(on === "team" ? {} : { "data-team-link": "" }) }, icon("crew", "ic sm"), T("Team", "團隊")),
   h("a", { href: "#/crew", "data-crew-tab": "rounds", "aria-current": on === "rounds" ? "page" : null }, icon("activity", "ic sm"), T("Rounds & activity", "回合與紀錄")));
-routes.team = () => { const v = view(); v.prepend(crewTabs("team")); return v; };
+// code-firstmate and coffee-kit run on a crew the captain approves for each project (public/takeover.js's panel): it
+// lives here, folded, and opens by itself for a link that asks for it (#/team?staffing=<project>&workflow=<id>)
+function staffingSection() {
+  const q = S.route?.query, asked = !!(q?.get("staffing") || q?.get("workflow"));
+  const panel = window.crewStaffingPanel?.(); if (!panel) return null;
+  return h("details", { class: "card tm-staffing", "data-team-staffing": "", open: asked || TM.staffingOpen || null, ontoggle: (e) => { TM.staffingOpen = e.target.open; } },
+    h("summary", {}, h("b", {}, T("A project's own approved crew", "專案自己核准的人員")), " ",
+      h("span", { class: "faint" }, T("code-firstmate and coffee-kit run on a crew you approve for each project.", "code-firstmate 和 coffee-kit 用你按專案核准的人員。"))), panel);
+}
+routes.team = () => { const v = view(); v.prepend(crewTabs("team")); if (v.hasAttribute("data-team-page")) v.append(staffingSection() ?? ""); return v; };
 { const base = routes.crew; routes.crew = (arg) => { const v = base(arg);
   if (!arg && v?.prepend && !v.querySelector?.("[data-crew-tabs]")) v.prepend(crewTabs("rounds")); return v; }; }
 // a team change elsewhere (a captain card answer) refreshes an open page

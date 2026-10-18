@@ -168,7 +168,7 @@ try {
     if (width <= 760) ok(await pg.locator('.pj-h-sum').isVisible() && (await pg.locator('.pj-h-sum b').textContent()).includes('4') && await pg.locator('.pj-h.ok[data-health="enabled"]').isHidden(), `on a phone passing tiles fold into one row (${tag})`);
     const tasks = await pg.locator('[data-project-task]').evaluateAll((es) => es.map((e) => [e.dataset.projectTask, e.querySelector('[data-waits-on]').dataset.waitsOn, e.querySelector('[data-waits-on]').textContent]));
     ok(tasks.length === 2 && tasks.every((t) => t[1] === 'captain') && tasks.some((t) => t[2].includes(L('at Merge', '在「Merge」'))), `active tasks with who each waits on (${tag})`, JSON.stringify(tasks));
-    ok(await pg.locator('[data-crew="code-firstmate"] .pj-role').count() === 4 && (await pg.locator('[data-crew-link]').getAttribute('href')) === '#/firstmate?staffing=harbor-api', `crew read only, with the Choose your crew together link (${tag})`);
+    ok(await pg.locator('[data-crew="code-firstmate"] .pj-role').count() === 4 && (await pg.locator('[data-crew-link]').getAttribute('href')) === '#/team?staffing=harbor-api', `crew read only, with the Choose your crew together link (${tag})`);
     ok(await pg.locator('[data-proposed] [data-approve-list]').count() === 1 && (await pg.locator('#s-paths').textContent()).includes('migrations/**'), `sensitive paths with the proposed list (${tag})`);
     ok(await pg.locator('[data-output="web"] a[target="_blank"]').count() === 1, `outputs: the website opens its preview (${tag})`);
     ok(await pg.locator(`[data-worktree="${seed.runs.rate}"] [data-copy]`).count() === 1, `worktrees with a Copy button (${tag})`);
