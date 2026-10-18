@@ -144,3 +144,5 @@
 }
 .ib-live{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .ib-head:focus{outline:2px solid var(--accent);outline-offset:2px}
+/* a newer Studio release is live and this tab could not reload by itself (unsent text): public/app.js checkRelease */
+#releaseBar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:1000;display:flex;align-items:center;gap:10px;max-width:calc(100vw - 32px);padding:6px 8px 6px 14px;border-radius:999px;background:var(--surface);color:var(--text);border:1px solid var(--border-strong);box-shadow:0 4px 18px rgba(0,0,0,.18);font-size:13px}

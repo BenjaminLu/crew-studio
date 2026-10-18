@@ -53,6 +53,7 @@ import { runChat, MAX_TOOL_CALLS, type Turn } from "./chat";
 import { makeProvider, PROVIDERS, CLI_PROVIDERS, type Provider } from "./providers";
 import { COMPILED, DEFAULT_DATA, SRC_ROOT, helperCommand } from "./self";
 import { ASSETS } from "./assets.gen";
+import { pageRelease, withRelease } from "./page-release";
 import { keyStatus, keys, saveKeys, setKeysDir } from "./keys";
 import { diagnose, Installs, LOGINS, methodsFor, MockRunner, RealRunner, type Item } from "./doctor";
 import { lanIp } from "./remote/lan";
@@ -473,9 +474,14 @@ const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { sta
 const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".json": "application/json" };
 Object.assign(TYPES, { ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8", ".png": "image/png" });
 const pub = join(ROOT, "public");
+const PAGE_RELEASE = pageRelease({ compiled: COMPILED, assets: ASSETS, publicDir: pub });
 // the source checkout serves public/ from disk; the binary serves the copies embedded in it
 const serveStatic = (path: string) => {
   const rel = path === "/" || path === "/remote" || path === "/remote/" ? "/index.html" : path;
+  if (rel === "/index.html") { // the page names the release it is (src/page-release.ts)
+    const f = COMPILED ? ASSETS[rel] : join(pub, rel);
+    try { return new Response(withRelease(readFileSync(f, "utf8"), PAGE_RELEASE), { headers: { "content-type": TYPES[".html"], "cache-control": "no-cache" } }); } catch { return null; }
+  }
   if (COMPILED) {
     const f = ASSETS[rel];
     return f ? new Response(Bun.file(f), { headers: { "content-type": TYPES[extname(rel)] ?? "application/octet-stream", "cache-control": "no-cache" } }) : null;
@@ -828,7 +834,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     if (p === "/api/stream") {
       let ctl: ReadableStreamDefaultController<Uint8Array>;
       const stream = new ReadableStream<Uint8Array>({
-        start(c) { ctl = c; clients.add(c); if (who.kind === "phone") clientDevice.set(c, who.device.id); c.enqueue(enc.encode(`event: hello\ndata: ${JSON.stringify({ events: fm.events.length })}\n\n`)); },
+        start(c) { ctl = c; clients.add(c); if (who.kind === "phone") clientDevice.set(c, who.device.id); c.enqueue(enc.encode(`event: hello\ndata: ${JSON.stringify({ events: fm.events.length, release: PAGE_RELEASE })}\n\n`)); },
         cancel() { clients.delete(ctl); clientDevice.delete(ctl); },
       });
       return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" } });

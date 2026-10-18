@@ -513,6 +513,25 @@ async function load() {
 // the page's one event stream: every module listens on it (window.liveListen), none opens its own;
 // a browser keeps 6 connections per host, and each extra stream starves the page's requests
 const LIVE = { es: null, queue: [] };
+// a deploy (live S25): an open tab kept the old page JS until a manual reload. The page knows the release it is (index.html's
+// crew-release meta, src/page-release.ts); when the stream's hello names another, it reloads itself if that loses nothing (no
+// unsent text in a field, no request still being sent), else it shows a small bar to reload. true: the page is reloading
+const RELEASE = { mine: document.querySelector('meta[name="crew-release"]')?.content || null, sending: 0 };
+{ const _f = window.fetch; window.fetch = (input, init) => { const send = !!init?.method && init.method !== "GET" && !String(typeof input === "string" ? input : input?.url).includes("/api/main/locale");
+  if (send) RELEASE.sending++; const r = _f(input, init); if (send) r.finally(() => { RELEASE.sending--; }).catch(() => {}); return r; }; }
+function unsentText() {
+  return [...document.querySelectorAll("textarea, input:not([type]), input[type=text], input[type=search], input[type=url], input[type=email], [contenteditable=true], [contenteditable='']")]
+    .some((e) => { const v = "value" in e ? e.value : e.textContent; return !!v?.trim() && v !== e.defaultValue && !e.readOnly && !e.disabled; });
+}
+function checkRelease(said) {
+  if (!said) return false;
+  if (!RELEASE.mine) { RELEASE.mine = said; return false; }
+  if (said === RELEASE.mine) return false;
+  if (!unsentText() && !RELEASE.sending) { location.reload(); return true; }
+  if (!$("#releaseBar")) document.body.append(h("div", { id: "releaseBar", role: "status", "data-release": said },
+    h("span", {}, T("Studio was updated", "Studio 已更新")), h("button", { class: "btn sm", onclick: () => location.reload() }, T("Reload", "重新載入"))));
+  return false;
+}
 window.liveListen = (type, fn) => { if (LIVE.es) LIVE.es.addEventListener(type, fn); else LIVE.queue.push([type, fn]); };
 function connect() {
   const es = new EventSource("/api/stream");
@@ -522,7 +541,8 @@ function connect() {
   // every (re)connect: modules read their state again, so an event missed while the stream was down is not lost (unit inbox-live)
   // firstmate's open cards too: a card that landed after the page read its summary but before this stream connected was
   // announced to nobody (the server reads the cards fresh on each summary; the stream only says what changes after it)
-  es.addEventListener("hello", () => { conn("live"); dispatchEvent(new Event("crew:live")); tellLang();
+  es.addEventListener("hello", (m) => { let said = null; try { said = JSON.parse(m.data)?.release ?? null; } catch {} if (checkRelease(said)) return;
+    conn("live"); dispatchEvent(new Event("crew:live")); tellLang();
     fetch("/api/summary").then((r) => r.json()).then((s) => { if (!Array.isArray(s?.pending) || JSON.stringify(s.pending) === JSON.stringify(S.pending)) return;
       S.pending = s.pending; S.tasks = s.tasks ?? S.tasks; if (["board", "inbox"].includes(S.route?.name)) soft(); else updateNav(); }).catch(() => {}); });
   es.onerror = () => conn("down");
