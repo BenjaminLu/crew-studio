@@ -11,9 +11,9 @@ const ROLE_NODE='role--';
  *  whether or not an agent node of that role exists (coffee-kit's reviewer and designer judge from hooks). */
 export function withRoleNodes(def:any){return{...def,nodes:[...def.nodes,...def.roles.map((r:any)=>({id:ROLE_NODE+r.id,kind:'agent',label:r.label,role:r.id,mode:'role'}))]};}
 export type CrewDraft={draft:StaffingDraft;resolution:Resolution;sources:Record<string,string>}|{missing:string[];resolution:Resolution};
-/** The staffing a team gives a staffed workflow for one project. pins: a role's skill pins and source text (the live role text). */
+/** The staffing a team gives a staffed workflow for one project (its project layer included). pins: a role's skill pins and source text (the live role text). */
 export function crewStaffingDraft(def:any,team:TeamConfig,project:StaffingProject,pins:(role:any)=>{pin:Pick<StaffingRole,'skill'|'skills'>;text:string}):CrewDraft{
- const res=resolveCrew(teamBody(team),withRoleNodes(def),{},team.hash);
+ const res=resolveCrew(teamBody(team),withRoleNodes(def),{},team.hash,project.id);
  const real={...res,nodes:res.nodes.filter(n=>!n.node.startsWith(ROLE_NODE))};
  if(res.missing.length)return{missing:res.missing,resolution:real};
  const roles:StaffingDraft['roles']={},sources:Record<string,string>={};

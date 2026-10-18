@@ -14,7 +14,10 @@ changes. Design: `docs/design/crew-seats.md`.
   makes the output, `reviewer` for a step that checks it.
 - **What a node finally runs**, highest first: this run's effort (the dispatch card, this run only), the workflow's
   override (member, model, effort, added or removed node skills; kept on the next version while the node keeps its
-  role and kind), the node's own definition, the team member. Skills = the member's skills, then the node's own.
+  role and kind), the node's own definition, the project's override, the team member. Skills = the member's skills,
+  then the node's own.
+- **Projects.** A project can change a seat's member (model, effort, skills) for its own work only ("只改這個專案").
+  A Task's project is its `project` parameter; a staffed workflow's derived staffing carries its project's layer.
 - **Rules, never silent.** A reviewing seat never runs on the model of the seat it reviews; `alt-maker` never runs
   on `maker`'s model; reviewing seats think at medium effort or more. When one applies, the node shows a note.
 - **Tasks.** A Task records the crew it started with in its signed ledger (`crew-resolved`): a later team change
@@ -34,14 +37,18 @@ changes. Design: `docs/design/crew-seats.md`.
 
 ## Tools
 
-- `studio_crew_assignments`: no arguments gives the members and each workflow's badge; `{workflow}` each node's
-  member, model, effort, skills and source; `{member}` every node that member runs; `{diff:true}` only what differs
-  from the team and empty seats; `{change}` which nodes a change would reach, changing nothing.
+- `studio_crew_assignments`: no arguments gives the members, the project layer (`team.projects`) and each workflow's
+  badge; `{workflow}` each node's member, model, effort, skills and source; `{member}` every node that member runs;
+  `{diff:true}` only what differs from the team and empty seats; `{project}` any of these in that project;
+  `{change}` which nodes a change would reach, changing nothing.
 - `studio_propose_crew_change {change}`: one captain card showing the change and every node it reaches. You never
   apply it. Changes: `{kind:"member",seat,set:{provider?,model?,effort?,skills?}}` (the whole member),
   `{kind:"node",workflow,node,set:{seat?,provider?,model?,effort?},addSkill?,removeSkill?}` (only this workflow),
-  `{kind:"restore",workflow,node?}`, `{kind:"seat",seat:{…},member}`, `{kind:"preset",preset:"save"|"balanced"|"quality"}`.
-- When the captain asks for a change, ask whether it is for this workflow only or the whole member, unless they said.
+  `{kind:"project",project,seat,set:{provider?,model?,effort?,skills?}}` (only this project),
+  `{kind:"restore",workflow,node?}`, `{kind:"project-restore",project,seat?}`, `{kind:"seat",seat:{…},member}`,
+  `{kind:"preset",preset:"save"|"balanced"|"quality"}`.
+- When the captain asks for a change, ask whether it is for this workflow only, this project only, or the whole
+  member, unless they said.
 - The old staffing tools still work for a Studio without a team. With a team, `studio_staffing_interview` reports
   `team.staffs` and `approved.valid`: propose the work directly. `studio_propose_staffing` and `studio_keep_staffing`
   answer `crew_team`: use `studio_propose_crew_change` instead.

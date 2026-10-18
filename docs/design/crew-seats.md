@@ -11,7 +11,7 @@ GitHub connect orphaned the approval (H2/H3), and nothing showed who finally run
 
 ## Model
 
-- **Team** (one, Studio-wide; a per-project override can be added later). Seats → member
+- **Team** (one, Studio-wide). Seats → member
   `{provider, model, effort, skills[]}`; the member's skills are library skills pinned `{id, v, sha256}` and go with the
   member everywhere. Built-in seats: `coordinator` (Firstmate's turns in a workflow), `maker`, `alt-maker`, `reviewer`,
   `design-reviewer`. Specialist seats are declared by a workflow: `{id, label, labelZh, reviews?, needs?, suggest?}`.
@@ -19,9 +19,14 @@ GitHub connect orphaned the approval (H2/H3), and nothing showed who finally run
   (web-prototype design-b → `alt-maker`; reviewers → `reviewer`; designer reviews → `design-reviewer`).
 - **Skills of a node** = member skills (read-only on the node) + the node's own skills (pinned, as before), minus the
   node skills a workflow override removed, plus those it added. The team never removes a node skill.
+- **Project override** ("only this project"): per project, per seat, any of provider, model, effort, skills — the
+  seat's member as that project sees it. Kept in the signed team (`projects`, absent while empty, so older team hashes
+  stay valid); it changes only a seat the team fills. A Task's project is its `project` parameter (a staffed
+  workflow's: its staffing project id).
 - **Resolution** per node: run override (dispatch card: effort only, this run only) > workflow override (seat, provider,
   model, effort, added/removed node skills; kept on the next version while the node's role and kind are unchanged) >
-  the node's definition (provider/model/effort written on the node) > team seat. Result per node:
+  the node's definition (provider/model/effort written on the node) > project override > team seat. The rules read
+  the project's members. Result per node:
   `{seat, provider, model, effort, skills, source, notes}`.
 - **Rules** (applied at resolution, deterministic, each with a note — never silent): a reviewing seat does not use the
   model of the seat it reviews; `alt-maker` ≠ `maker`; reviewing seats run at medium effort or more. The replacement
@@ -32,11 +37,11 @@ GitHub connect orphaned the approval (H2/H3), and nothing showed who finally run
 - `CrewStore` (`data/crew/`): versioned team files, an HMAC-signed `current.json` pointer (same ledger key as staffing),
   compare-and-swap on the previous hash. Writes come from the captain only: the Crew page (desktop session), a captain
   answer on a crew card, or the one-time migration. Firstmate proposes; it never writes.
-- Non-staffed workflows: a Task start resolves the crew and records `crew-resolved` (team hash, per-node provider,
+- Non-staffed workflows: a Task start resolves the crew (in its project) and records `crew-resolved` (team hash, project, per-node provider,
   model, effort, skills with pins, source, notes) in the signed run ledger; the engine's `approvedPick` /
   `approvedNodePins` read that record, so a later team edit never changes a running Task.
 - Staffed workflows (code, coffee-kit): the signed staffing binding stays. When the team covers every role, Studio
-  writes the project's staffing version derived from the team (`crew: {team}` in the draft, approval cites the team
+  writes the project's staffing version derived from the team and that project's layer (`crew: {team}` in the draft, approval cites the team
   version). The staffing guard re-derives it from the signed team version and refuses any difference; role skill pins,
   hashes and CAS are unchanged. No team → the old per-project staffing flow, unchanged.
 
@@ -60,14 +65,16 @@ No per-project staffing card when the team covers the workflow, no keep-crew car
 
 `#/team`: workflow cards (mini pipeline, member colour dots, ★ custom, red missing; badge 跟團隊 / N 項自訂 / 缺人) and
 the selected workflow's editable table (member, model, effort, skills: member skills grey, node skills removable,
-"+ skill" from the library; source column). Each model/effort change asks "only this workflow" or "the whole member
-(affects N nodes)". Restore to team. The member legend opens the member editor (model, effort, own skills; presets
+"+ skill" from the library; source column). A project selector shows one project's crew. Each model/effort change asks
+"only this workflow", "the whole member (affects N nodes)" or, with a project selected, "只改這個專案"; a project can be
+restored to the team. Restore to team. The member legend opens the member editor (model, effort, own skills; presets
 省錢 / 均衡 / 品質).
 
 ## Firstmate
 
-`studio_crew_assignments` (read: by workflow, by member, diff vs team, impact of a hypothetical change) and
-`studio_propose_crew_change` (opens a captain card; never applies). The skill stays short; detail in the manual.
+`studio_crew_assignments` (read: by workflow, by member, diff vs team, the project layer, any of these in one project,
+impact of a hypothetical change) and `studio_propose_crew_change` (opens a captain card; never applies; can target a
+project: `{kind:"project",project,seat,set}`, `{kind:"project-restore",project,seat?}`). The skill stays short; detail in the manual.
 
 ## Migration
 
@@ -77,7 +84,6 @@ workflow overrides. Idempotent (a Studio that has a team is never touched); test
 
 ## Deferred
 
-- A per-project override of the team (the model leaves room for it: overrides are keyed by workflow today).
 - The run override (dispatch card effort) for staffed Tasks (code, coffee-kit): their signed staffing binding does not
   carry a per-run effort yet; their dispatch card shows the crew line read-only.
 - Image hook nodes (images, coffee's image step) keep the dedicated image adapter's own Codex choice; coffee's

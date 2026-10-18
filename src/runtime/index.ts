@@ -152,7 +152,7 @@ export function createRuntime(d: RuntimeDeps) {
   // a captain's own workflow confirms at Run exactly the crew its Task will record (the guard's own resolution, judges included)
   defs.ownCrew=(def:any)=>{const t=crewStore.current();return t?resolveCrew(teamBody(t),withJudges(def,judgeSlots(engine,def)),{},t.hash):null;};
   const crewTools=installCrewTools(engine,crewStore,{facts:staffingFacts as any,send:d.send});
-  const crewApi=crewRoutes({judges:def=>judgeSlots(engine,def),defs,store:crewStore,facts:()=>staffingCapabilities,refreshFacts:staffingFacts,library:()=>engine.skillLibrary().library()});
+  const crewApi=crewRoutes({judges:def=>judgeSlots(engine,def),defs,store:crewStore,projects:()=>projects.list().map(p=>({id:p.id,name:p.name})),facts:()=>staffingCapabilities,refreshFacts:staffingFacts,library:()=>engine.skillLibrary().library()});
   /** The project's staffing from the team, when the team covers this workflow (null: the per-project staffing flow applies). */
   const teamStaffing=(def:any,projectId:string)=>{if(!staffingApplies(def))return null;const project=def.kind==='coffee-kit'?coffeeStaffingProject(projectId):staffingProject(projectId);return crewStaffing.ensure(def,project);};
   /** The Start form's readiness of an approved crew, from free probes only (the Codex probe, Claude auth status).
@@ -174,7 +174,7 @@ export function createRuntime(d: RuntimeDeps) {
    return{state:'approved',hash:config.hash,version:config.version,roles:Object.fromEntries(Object.entries(config.roles).map(([id,r])=>[id,{provider:r.provider,model:r.model,effort:r.effort}]))};
   };
   const onboarding=new Onboarding(engine,d.m3?.store??new ArtifactStore(d.dataDir));
-  const originalFirstmate=installFirstmate(engine,projects,{prepareDispatch:async(workflow,version)=>{const def=engine.defs.get(workflow,version);if(staffingApplies(def))await staffingFacts();},onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending,teamStaffing,crewSeatGate:(def,owner)=>crewTools.seatGate(def,owner),dispatchCrew:def=>crewTools.dispatchCrew(def)});
+  const originalFirstmate=installFirstmate(engine,projects,{prepareDispatch:async(workflow,version)=>{const def=engine.defs.get(workflow,version);if(staffingApplies(def))await staffingFacts();},onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending,teamStaffing,crewSeatGate:(def,owner)=>crewTools.seatGate(def,owner),dispatchCrew:(def,project)=>crewTools.dispatchCrew(def,project)});
   // free drafting: its own store and tools, separate from proposals, staffing and execution
   const drafts=new WorkflowDrafts(d.dataDir,defs,(id,revision)=>{try{d.send('wfdraft',{id,revision});}catch{}});
   const readiness=d.readiness===false?null:installReadiness({engine,defs,drafts,dataDir:d.dataDir,protectedRoots:d.protectedRoots??[d.fmRoot],send:d.send,startOwn:(o:any,g:unknown)=>ownClaude.start(o,g),...(d.readiness??{}),createRuntime:(d.readiness as any)?.createRuntimeOverride??createRuntime});

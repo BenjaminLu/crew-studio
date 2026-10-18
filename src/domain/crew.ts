@@ -28,7 +28,10 @@ export type SeatDecl={id:string;label:string;labelZh:string;reviews?:string;need
 /** One node's workflow override: what the captain changed "only in this workflow". at: the node's role and kind when it was
  *  set, so the override carries to a later version only while that node is still the same role and kind. */
 export type NodeOverride={at:{role:string|null;kind:string};seat?:string;provider?:'codex'|'claude';model?:string;effort?:string|null;add?:Pin[];remove?:string[]};
-export type Team={schema:1;members:Record<string,Member>;seats:Record<string,SeatDecl>;workflows:Record<string,{nodes:Record<string,NodeOverride>}>};
+/** One project's change to a seat's member, on top of the team ("only this project"): any of provider, model, effort, skills. */
+export type ProjectSeat={provider?:'codex'|'claude';model?:string;effort?:string|null;skills?:Pin[]};
+/** projects: absent while no project overrides anything, so a team written before project overrides keeps its hash. */
+export type Team={schema:1;members:Record<string,Member>;seats:Record<string,SeatDecl>;workflows:Record<string,{nodes:Record<string,NodeOverride>}>;projects?:Record<string,{seats:Record<string,ProjectSeat>}>};
 export type TeamApproval={by:string;via:'page'|'card'|'migration';card?:string;run?:string;answerSeq?:number};
 export type TeamConfig=Team&{version:number;previous:string|null;approval:TeamApproval;hash:string;signature:string};
 export const emptyTeam=():Team=>({schema:1,members:{},seats:{},workflows:{}});
@@ -36,6 +39,8 @@ export const emptyTeam=():Team=>({schema:1,members:{},seats:{},workflows:{}});
 // ---------- validation (strict keys, like staffing) ----------
 const plain=(x:any)=>!!x&&typeof x==='object'&&!Array.isArray(x)&&Object.getPrototypeOf(x)===Object.prototype;
 const ID=/^[a-z0-9][a-z0-9-]{0,40}$/;
+/** A project key: a registered project id, or a coffee artifact project. */
+const PROJECT=/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,199}$/;
 function bad(m:string):never{throw new Error(`Crew team: ${m}`);}
 function onlyKeys(x:any,allowed:string[],what:string){if(!plain(x))bad(`${what} is not an object`);for(const k of Object.keys(x))if(!allowed.includes(k))bad(`${what} has an unknown field ${k}`);}
 function text(x:any,what:string,max=200){if(typeof x!=='string'||!x.trim()||x.length>max||/[\u0000-\u001f]/.test(x))bad(`${what} is malformed`);}
@@ -47,13 +52,26 @@ function validateOverride(o:any,what:string){onlyKeys(o,['at','seat','provider',
  if(o.seat!==undefined&&!ID.test(o.seat))bad(`${what}: seat`);if(o.provider!==undefined&&!PROVIDERS.includes(o.provider))bad(`${what}: provider`);if(o.model!==undefined)text(o.model,`${what} model`);if(o.effort!==undefined&&o.effort!==null&&!EFFORTS.includes(o.effort))bad(`${what}: effort`);
  if(o.add!==undefined)validatePins(o.add,`${what} added skills`);if(o.remove!==undefined&&(!Array.isArray(o.remove)||o.remove.length>8||o.remove.some((x:any)=>!ID.test(String(x)))))bad(`${what}: removed skills are skill ids`);
  if(Object.keys(o).length===1)bad(`${what}: an override changes something`);}
+/** A seat's member in one project: the team's member with that project's changes (null: the team has no member on the seat). */
+export function projectMember(team:Team|null,project:string|null|undefined,seat:string):{member:Member;from:Set<'provider'|'model'|'effort'|'skills'>}|null{
+ const base=team?.members[seat];if(!base)return null;const p=project?team!.projects?.[project]?.seats[seat]:undefined,from=new Set<'provider'|'model'|'effort'|'skills'>();if(!p)return{member:base,from};
+ const m:Member={provider:p.provider??base.provider,model:p.model??base.model,effort:Object.hasOwn(p,'effort')?p.effort??null:base.effort,skills:p.skills??base.skills};
+ for(const k of ['provider','model','effort','skills'] as const)if(Object.hasOwn(p,k))from.add(k);return{member:m,from};}
+function validateProjects(t:any){
+ if(t.projects===undefined)return;if(!plain(t.projects)||!Object.keys(t.projects).length||Object.keys(t.projects).length>100)bad('projects');
+ for(const[id,v]of Object.entries<any>(t.projects)){if(!PROJECT.test(id))bad(`project id ${id}`);onlyKeys(v,['seats'],`project ${id}`);if(!plain(v.seats)||!Object.keys(v.seats).length||Object.keys(v.seats).length>24)bad(`project ${id} seats`);
+  for(const[seat,o]of Object.entries<any>(v.seats)){const what=`project ${id} seat ${seat}`;onlyKeys(o,['provider','model','effort','skills'],what);if(!Object.keys(o).length)bad(`${what}: an override changes something`);
+   if(!t.members[seat])bad(`${what}: the team has no member on this seat (fill it for the whole team first)`);
+   if(o.provider!==undefined&&!PROVIDERS.includes(o.provider))bad(`${what}: provider`);if(o.model!==undefined)text(o.model,`${what} model`);if(o.skills!==undefined)validatePins(o.skills,`${what} skills`);
+   validateMember(projectMember(t,id,seat)!.member,what);}}}
 export function validateTeam(t:any):asserts t is Team{
- onlyKeys(t,['schema','members','seats','workflows'],'team');if(t.schema!==1)bad('unknown schema');
+ onlyKeys(t,['schema','members','seats','workflows','projects'],'team');if(t.schema!==1)bad('unknown schema');
  if(!plain(t.members)||Object.keys(t.members).length>24)bad('members');for(const[id,m]of Object.entries(t.members)){if(!ID.test(id))bad(`seat id ${id}`);validateMember(m,`member ${id}`);}
  if(!plain(t.seats)||Object.keys(t.seats).length>16)bad('seats');for(const[id,s]of Object.entries(t.seats))validateSeat(s,id);
  for(const id of Object.keys(t.members))if(!(BUILTIN_SEATS as readonly string[]).includes(id)&&!t.seats[id])bad(`member ${id} fills an undeclared seat`);
  if(!plain(t.workflows)||Object.keys(t.workflows).length>200)bad('workflows');
  for(const[w,v]of Object.entries<any>(t.workflows)){if(!ID.test(w))bad(`workflow id ${w}`);onlyKeys(v,['nodes'],`workflow ${w}`);if(!plain(v.nodes)||Object.keys(v.nodes).length>60)bad(`workflow ${w} nodes`);for(const[n,o]of Object.entries(v.nodes)){if(!ID.test(n))bad(`node id ${n}`);validateOverride(o,`${w}/${n}`);}}
+ validateProjects(t);
 }
 
 // ---------- seats of a workflow ----------
@@ -86,10 +104,10 @@ export function capabilitiesOf(provider:string,model:string,facts?:{provider:str
 
 // ---------- resolution ----------
 export type Note={en:string;zh:string};
-export type Source='team'|'workflow'|'definition'|'run'|'missing';
+export type Source='team'|'project'|'workflow'|'definition'|'run'|'missing';
 export type Resolved={node:string;label:string;kind:string;role:string|null;seat:string;provider:'codex'|'claude'|null;model:string|null;effort:string|null;
  skills:(Pin&{from:'member'|'node'})[];source:Source;fields:{seat:Source;provider:Source;model:Source;effort:Source};custom:boolean;notes:Note[];removed:string[]};
-export type Resolution={workflow:string;version:number;team:string|null;nodes:Resolved[];missing:string[];notes:Note[]};
+export type Resolution={workflow:string;version:number;team:string|null;project:string|null;nodes:Resolved[];missing:string[];notes:Note[]};
 /** The override that applies to a node of this definition: one set while the node had this role and kind (kept across versions). */
 export function overrideFor(team:Team|null,def:any,slot:Pick<Slot,'node'|'role'|'kind'>):NodeOverride|null{const o=team?.workflows[def?.id]?.nodes[slot.node];return o&&o.at.role===slot.role&&o.at.kind===slot.kind?o:null;}
 /** A run override: effort only, per node, for one Task (the dispatch card). */
@@ -99,12 +117,15 @@ export function parseRunOverride(raw:unknown):RunOverride{
  if(!plain(v)||Object.keys(v).length>60)bad('the run override is per node');for(const[n,o]of Object.entries<any>(v)){if(!ID.test(n))bad('run override node');onlyKeys(o,['effort'],`run override ${n}`);if(o.effort!==null&&!EFFORTS.includes(o.effort))bad(`run override ${n}: effort`);}
  return v;}
 const keyOf=(p:{provider:string|null;model:string|null})=>`${p.provider}/${p.model}`;
-/** Who runs each node of this definition. Pure: the same team, definition and run override always give the same answer. */
-export function resolveCrew(team:Team|null,def:any,run:RunOverride={},hash:string|null=null):Resolution{
- const slots=slotsOf(def),missing=new Set<string>(),notes:Note[]=[];
+/** Who runs each node of this definition. Pure: the same team, definition, run override and project always give the same answer.
+ *  Precedence: run override (effort) > workflow override > the node's definition > project override > team seat. */
+export function resolveCrew(team:Team|null,def:any,run:RunOverride={},hash:string|null=null,project:string|null=null):Resolution{
+ const slots=slotsOf(def),missing=new Set<string>(),notes:Note[]=[],projectSkills=new Set<string>();
+ const memberOf=(seat:string)=>projectMember(team,project,seat)?.member;
  const rows:Resolved[]=slots.map(s=>{
-  const o=overrideFor(team,def,s),seat=o?.seat??s.seat,m=team?.members[seat];
-  const f:Resolved['fields']={seat:o?.seat?'workflow':'team',provider:'team',model:'team',effort:'team'};
+  const o=overrideFor(team,def,s),seat=o?.seat??s.seat,pm=projectMember(team,project,seat),m=pm?.member;
+  const from=(k:'provider'|'model'|'effort'):Source=>pm?.from.has(k)?'project':'team';if(pm?.from.has('skills'))projectSkills.add(s.node);
+  const f:Resolved['fields']={seat:o?.seat?'workflow':'team',provider:from('provider'),model:from('model'),effort:from('effort')};
   let provider:Resolved['provider']=m?.provider??null,model=m?.model??null,effort:string|null=m?m.effort:null;
   if(s.def.provider){provider=s.def.provider as any;f.provider='definition';}if(s.def.model){model=s.def.model;f.model='definition';}if(s.def.effort!==undefined){effort=s.def.effort;f.effort='definition';}
   if(o?.provider){provider=o.provider;f.provider='workflow';}if(o?.model){model=o.model;f.model='workflow';}if(o&&Object.hasOwn(o,'effort')){effort=o.effort??null;f.effort='workflow';}
@@ -116,9 +137,9 @@ export function resolveCrew(team:Team|null,def:any,run:RunOverride={},hash:strin
   return{node:s.node,label:s.label,kind:s.kind,role:s.role,seat,provider,model,effort,skills:[...member,...nodeSkills],source:'team',fields:f,custom:false,notes:[],removed};});
  // the rules: never silent. A reviewing seat (and alt-maker) does not run on the model of the seat it reviews; a reviewing seat thinks at medium or more.
  if(team)for(const r of rows){if(!r.provider||!r.model)continue;const target=reviewsOf(team,r.seat,def);if(!target)continue;
-  const theirs=new Set(rows.filter(x=>x.seat===target&&x.provider&&x.model).map(keyOf));if(!theirs.size&&team.members[target])theirs.add(keyOf(team.members[target]));
+  const theirs=new Set(rows.filter(x=>x.seat===target&&x.provider&&x.model).map(keyOf));if(!theirs.size&&memberOf(target))theirs.add(keyOf(memberOf(target)!));
   if(!theirs.has(keyOf(r)))continue;
-  const alt=[...BUILTIN_SEATS,...Object.keys(team.seats)].map(id=>team.members[id]).find(x=>x&&!theirs.has(keyOf(x)));
+  const alt=[...BUILTIN_SEATS,...Object.keys(team.seats)].map(id=>memberOf(id)).find(x=>x&&!theirs.has(keyOf(x)));
   const who=seatLabel(team,target,def),me=seatLabel(team,r.seat,def);
   if(alt){const was=`${r.provider} ${r.model}`;r.provider=alt.provider;r.model=alt.model;if(r.effort===null&&alt.provider==='codex')r.effort=alt.effort;r.fields.provider=r.fields.model='team';
    const why=reviewing(team,r.seat,def)?{en:'so the check is a second opinion',zh:'才是第二意見'}:{en:'so the two versions differ',zh:'兩個版本才會不一樣'};
@@ -126,9 +147,9 @@ export function resolveCrew(team:Team|null,def:any,run:RunOverride={},hash:strin
   else r.notes.push({en:`${me.en} uses the same model as ${who.en} (${r.provider} ${r.model}) because the team has no other model: a fresh context, not an independent opinion.`,zh:`${me.zh}跟${who.zh}用同一個模型（${r.provider} ${r.model}），因為團隊沒有別的模型：是新的脈絡，不是獨立意見。`});}
  if(team)for(const r of rows){if(!reviewing(team,r.seat,def)||r.effort===null||!r.provider)continue;if(EFFORTS.indexOf(r.effort)>=EFFORTS.indexOf('medium'))continue;const me=seatLabel(team,r.seat,def);
   r.notes.push({en:`${me.en} judges work, so it thinks at medium effort, not ${r.effort}.`,zh:`${me.zh}要審別人的成果，effort 至少 medium，不用 ${r.effort}。`});r.effort='medium';}
- for(const r of rows){const vals=Object.values(r.fields);r.source=vals.includes('missing')?'missing':vals.includes('run')?'run':vals.includes('workflow')||r.removed.length||r.skills.some(p=>p.from==='node'&&!slots.find(s=>s.node===r.node)!.skills.some(q=>q.id===p.id))?'workflow':vals.includes('definition')?'definition':'team';
-  r.custom=r.source==='workflow'||r.source==='run';notes.push(...r.notes);}
- return{workflow:def?.id,version:Number(def?.version),team:hash,nodes:rows,missing:[...missing],notes};
+ for(const r of rows){const vals=Object.values(r.fields);r.source=vals.includes('missing')?'missing':vals.includes('run')?'run':vals.includes('workflow')||r.removed.length||r.skills.some(p=>p.from==='node'&&!slots.find(s=>s.node===r.node)!.skills.some(q=>q.id===p.id))?'workflow':vals.includes('definition')?'definition':vals.includes('project')||projectSkills.has(r.node)?'project':'team';
+  r.custom=r.source==='workflow'||r.source==='run'||r.source==='project';notes.push(...r.notes);}
+ return{workflow:def?.id,version:Number(def?.version),team:hash,project,nodes:rows,missing:[...missing],notes};
 }
 /** A badge for a workflow card: missing seats first, then the number of custom nodes. */
 export function crewBadge(res:Resolution):{state:'missing'|'custom'|'team';count:number}{if(res.missing.length)return{state:'missing',count:res.missing.length};const c=res.nodes.filter(n=>n.custom).length;return c?{state:'custom',count:c}:{state:'team',count:0};}
@@ -140,6 +161,8 @@ export type CrewChange=
  |{kind:'member';seat:string;set:{provider?:'codex'|'claude';model?:string;effort?:string|null;skills?:Pin[]}}
  |{kind:'node';workflow:string;node:string;set:{seat?:string;provider?:'codex'|'claude';model?:string;effort?:string|null};addSkill?:Pin;removeSkill?:string}
  |{kind:'restore';workflow:string;node?:string}
+ |{kind:'project';project:string;seat:string;set:{provider?:'codex'|'claude';model?:string;effort?:string|null;skills?:Pin[]}}
+ |{kind:'project-restore';project:string;seat?:string}
  |{kind:'seat';seat:SeatDecl;member:Member}
  |{kind:'preset';preset:'save'|'balanced'|'quality'};
 export const PRESETS:Record<string,{en:string;zh:string;effort:Record<string,string>}>={
@@ -151,6 +174,8 @@ export function validateChange(c:any):asserts c is CrewChange{
  if(c.kind==='member'){onlyKeys(c,['kind','seat','set'],'change');if(!ID.test(c.seat))bad('change seat');onlyKeys(c.set,['provider','model','effort','skills'],'change set');if(!Object.keys(c.set).length)bad('a member change sets something');if(c.set.skills!==undefined)validatePins(c.set.skills,'member skills');return;}
  if(c.kind==='node'){onlyKeys(c,['kind','workflow','node','set','addSkill','removeSkill'],'change');if(!ID.test(c.workflow)||!ID.test(c.node))bad('change node');onlyKeys(c.set??{},['seat','provider','model','effort'],'change set');if(c.addSkill!==undefined)validatePins([c.addSkill],'added skill');if(c.removeSkill!==undefined&&!ID.test(c.removeSkill))bad('removed skill');if(!Object.keys(c.set??{}).length&&!c.addSkill&&!c.removeSkill)bad('a node change sets something');return;}
  if(c.kind==='restore'){onlyKeys(c,['kind','workflow','node'],'change');if(!ID.test(c.workflow)||c.node!==undefined&&!ID.test(c.node))bad('restore target');return;}
+ if(c.kind==='project'){onlyKeys(c,['kind','project','seat','set'],'change');if(!PROJECT.test(String(c.project))||!ID.test(c.seat))bad('change project seat');onlyKeys(c.set,['provider','model','effort','skills'],'change set');if(!Object.keys(c.set).length)bad('a project change sets something');if(c.set.skills!==undefined)validatePins(c.set.skills,'project skills');return;}
+ if(c.kind==='project-restore'){onlyKeys(c,['kind','project','seat'],'change');if(!PROJECT.test(String(c.project))||c.seat!==undefined&&!ID.test(c.seat))bad('restore project target');return;}
  if(c.kind==='seat'){onlyKeys(c,['kind','seat','member'],'change');validateSeat(c.seat,c.seat?.id);validateMember(c.member,'seat member');return;}
  if(c.kind==='preset'){onlyKeys(c,['kind','preset'],'change');if(!Object.hasOwn(PRESETS,c.preset))bad('preset');return;}
  bad('unknown change');
@@ -173,18 +198,32 @@ export function applyChange(team:Team,c:CrewChange,def?:any):Team{
   const w=t.workflows[c.workflow]??{nodes:{}};if(Object.keys(cur).length>1)w.nodes[c.node]=cur;else delete w.nodes[c.node];
   if(Object.keys(w.nodes).length)t.workflows[c.workflow]=w;else delete t.workflows[c.workflow];}
  else if(c.kind==='restore'){const w=t.workflows[c.workflow];if(w){if(c.node)delete w.nodes[c.node];else w.nodes={};if(!Object.keys(w.nodes).length)delete t.workflows[c.workflow];}}
+ else if(c.kind==='project'){const base=t.members[c.seat];if(!base)bad(`seat ${c.seat} has no team member yet: fill it for the whole team first`);
+  const projects=t.projects??{},p=projects[c.project]??{seats:{}},cur:ProjectSeat=structuredClone(p.seats[c.seat]??{});
+  for(const k of ['provider','model'] as const)if(c.set[k]!==undefined)(cur as any)[k]=c.set[k];if(Object.hasOwn(c.set,'effort'))cur.effort=c.set.effort??null;if(c.set.skills!==undefined)cur.skills=structuredClone(c.set.skills);
+  // a Codex model needs an effort: a project that moves a seat to Codex without one runs it at medium
+  if((cur.provider??base.provider)==='codex'&&(Object.hasOwn(cur,'effort')?cur.effort:base.effort)===null)cur.effort='medium';
+  // back to what the team says is no override at all
+  if((cur.provider??base.provider)===base.provider&&(cur.model??base.model)===base.model){delete cur.provider;delete cur.model;}
+  if(Object.hasOwn(cur,'effort')&&cur.effort===base.effort)delete cur.effort;if(cur.skills&&JSON.stringify(cur.skills)===JSON.stringify(base.skills))delete cur.skills;
+  if(Object.keys(cur).length)p.seats[c.seat]=cur;else delete p.seats[c.seat];
+  if(Object.keys(p.seats).length)projects[c.project]=p;else delete projects[c.project];
+  if(Object.keys(projects).length)t.projects=projects;else delete t.projects;}
+ else if(c.kind==='project-restore'){const p=t.projects?.[c.project];if(p){if(c.seat)delete p.seats[c.seat];else p.seats={};if(!Object.keys(p.seats).length)delete t.projects![c.project];if(!Object.keys(t.projects!).length)delete t.projects;}}
  else if(c.kind==='seat'){t.seats[c.seat.id]=structuredClone(c.seat);t.members[c.seat.id]=structuredClone(c.member);}
  else if(c.kind==='preset'){for(const[id,m]of Object.entries(t.members)){const e=PRESETS[c.preset].effort[id]??PRESETS[c.preset].effort.maker;m.effort=e;}}
  validateTeam(t);return t;
 }
 /** What a change does to every workflow: the nodes whose provider, model, effort or skills change (the scope question's N). */
-export function changeImpact(before:Team,after:Team,defs:any[]):{workflow:string;node:string;label:string;before:string;after:string}[]{
+export function changeImpact(before:Team,after:Team,defs:any[],project:string|null=null):{workflow:string;node:string;label:string;before:string;after:string}[]{
  const out:{workflow:string;node:string;label:string;before:string;after:string}[]=[];const line=(r:Resolved)=>`${r.provider??'—'} ${r.model??'—'} · ${r.effort??'default'} · ${r.skills.map(p=>`${p.id}@v${p.v}`).join(', ')||'no skills'}`;
- for(const def of defs){const a=resolveCrew(before,def),b=resolveCrew(after,def);for(const r of b.nodes){const was=a.nodes.find(x=>x.node===r.node);if(!was||line(was)!==line(r)||was.seat!==r.seat)out.push({workflow:def.id,node:r.node,label:r.label,before:was?line(was):'—',after:line(r)});}}
+ for(const def of defs){const a=resolveCrew(before,def,{},null,project),b=resolveCrew(after,def,{},null,project);for(const r of b.nodes){const was=a.nodes.find(x=>x.node===r.node);if(!was||line(was)!==line(r)||was.seat!==r.seat)out.push({workflow:def.id,node:r.node,label:r.label,before:was?line(was):'—',after:line(r)});}}
  return out;
 }
 /** The nodes of other workflows a member change reaches: those that follow the team for that field. */
-export function seatUses(team:Team,seat:string,defs:any[],field?:'model'|'effort'):{workflow:string;node:string}[]{return defs.flatMap(def=>resolveCrew(team,def).nodes.filter(r=>r.seat===seat&&(!field||r.fields[field]==='team'&&(field!=='model'||r.fields.provider==='team'))).map(r=>({workflow:def.id,node:r.node})));}
+export function seatUses(team:Team,seat:string,defs:any[],field?:'model'|'effort',project:string|null=null):{workflow:string;node:string}[]{return defs.flatMap(def=>resolveCrew(team,def,{},null,project).nodes.filter(r=>r.seat===seat&&(!field||r.fields[field]==='team'&&(field!=='model'||r.fields.provider==='team'))).map(r=>({workflow:def.id,node:r.node})));}
+/** The projects whose crew differs from the team, and on which seats (Firstmate's read of the project layer). */
+export const projectLayer=(team:Team)=>Object.entries(team.projects??{}).map(([id,p])=>({project:id,seats:Object.fromEntries(Object.entries(p.seats).map(([seat,o])=>[seat,{...o,...(o.skills?{skills:o.skills.map(s=>`${s.id}@v${s.v}`)}:{})}]))}));
 
 // ---------- the store ----------
 export class CrewStore{
@@ -194,7 +233,7 @@ export class CrewStore{
  private safe(){mkdirSync(this.dir,{recursive:true,mode:0o700});if(lstatSync(this.dir).isSymbolicLink())bad('crew folder is a symlink');}
  exists(){return existsSync(join(this.dir,'current.json'));}
  private verify(c:any):TeamConfig{
-  onlyKeys(c,['schema','members','seats','workflows','version','previous','approval','hash','signature'],'team version');const{version,previous,approval,hash,signature,...team}=c;validateTeam(team);
+  onlyKeys(c,['schema','members','seats','workflows','projects','version','previous','approval','hash','signature'],'team version');const{version,previous,approval,hash,signature,...team}=c;validateTeam(team);
   if(!Number.isSafeInteger(version)||version<1||previous!==null&&!/^[a-f0-9]{64}$/.test(previous))bad('version chain');onlyKeys(approval,['by','via','card','run','answerSeq'],'approval');
   const expected=this.sign(hash);if(staffingHash({...team,version,previous,approval})!==hash||typeof signature!=='string'||signature.length!==expected.length||!timingSafeEqual(Buffer.from(signature),Buffer.from(expected)))bad('the team version does not verify');
   return c as TeamConfig;}
@@ -215,4 +254,4 @@ export class CrewStore{
   finally{rmSync(lock,{recursive:true});}}
 }
 /** A team config's body (without the version record): what resolution reads. */
-export const teamBody=(c:TeamConfig|Team):Team=>({schema:1,members:c.members,seats:c.seats,workflows:c.workflows});
+export const teamBody=(c:TeamConfig|Team):Team=>({schema:1,members:c.members,seats:c.seats,workflows:c.workflows,...(c.projects?{projects:c.projects}:{})});

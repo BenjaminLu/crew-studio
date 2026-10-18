@@ -4,11 +4,12 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   - the selected workflow's table: member, model, effort, skills (member's grey, node's removable, "+ skill"), source
 //   - a model or effort change asks "only this workflow" or "the whole member (affects N nodes)", and changes only those nodes
 //   - adding and removing a node skill; restore to team; the member editor (presets, a member's model); the rules' notes
+//   - the project selector: one project's crew, "only this project" in the scope question, restore the project to the team
 //   - English and 繁體中文; no horizontal scroll at 390; no browser errors. No accounts, no model calls.
 //      bun tests/crew-page-ui.mjs
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { freePort, waitUp, withSession } from "./boot.mjs";
@@ -23,6 +24,8 @@ const m = (provider, model, effort, skills = []) => ({ provider, model, effort, 
 const seed = () => { rmSync(join(data, "crew"), { recursive: true, force: true }); new CrewStore(data).write({ schema: 1, members: { coordinator: m("claude", "opus-5.5", "high"), maker: m("codex", "gpt-6.1-sol", "medium", [pin("plain-writing")]),
   "alt-maker": m("claude", "sonnet-5.5", "medium"), reviewer: m("claude", "opus-5.5", "high", [pin("code-review")]), "design-reviewer": m("codex", "gpt-6-astra", "medium") }, seats: {}, workflows: {} }, null, { by: "captain", via: "page" }); };
 seed();
+// a registered project to choose on the page (no repository: the page only lists it)
+writeFileSync(join(data, "projects.json"), JSON.stringify([{ id: "shop", name: "Shop", path: null, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null }]));
 const port = await freePort(), base = `http://127.0.0.1:${port}`;
 const env = { ...process.env, HOME: home, CODEX_HOME: join(home, ".codex"), CREW_DATA: data, CREW_PORT: String(port), CREW_SESSION_TOKEN: token, CREW_GH: "0", CREW_CHAT_PROVIDER: "stub", CREW_INSTALL_RUNNER: "mock", CREW_HOST_CODEX_BIN: "/nonexistent/codex", CREW_HOST_CLAUDE_BIN: "/nonexistent/claude", CREW_SANDBOX: "0" };
 delete env.CREW_MAIN_PROJECT; delete env.CREW_FM_STATE;
@@ -97,6 +100,33 @@ try {
     if (width === 390) ok(await p.evaluate(() => document.scrollingElement.scrollWidth <= innerWidth + 1), `no horizontal scroll at 390 ${tag}`, String(await p.evaluate(() => document.scrollingElement.scrollWidth)));
     if (process.env.CREW_UI_SHOTS) { await p.screenshot({ path: join(process.env.CREW_UI_SHOTS, `team-${width}.png`) }); await p.locator("[data-team-detail]").screenshot({ path: join(process.env.CREW_UI_SHOTS, `team-detail-${width}.png`) }); }
     ok(errors.length === 0, `no browser errors ${tag}`, errors.join(" | "));
+    await p.close();
+  }
+  // one project's crew: "only this project" changes that project's nodes and nothing else
+  {
+    seed();
+    const p = await browser.newPage({ viewport: { width: 1440, height: 940 } }); const errors = []; p.on("pageerror", (e) => errors.push(String(e)));
+    await p.goto(`${base}/#/team`); await p.evaluate(() => setLang("en")); await p.locator("[data-team-page]").waitFor();
+    const read = async (q) => p.evaluate(async (u) => (await fetch(u)).json(), `/api/team${q}`);
+    await p.locator("[data-team-project]").selectOption("shop");
+    await p.waitForFunction(() => document.querySelector("[data-team-project]")?.value === "shop" && document.querySelector('[data-team-card="web-prototype"]'));
+    await p.locator('[data-team-card="web-prototype"]').click();
+    const rowA = p.locator('[data-team-row="design-a"]'); await rowA.waitFor();
+    await rowA.locator("select").nth(2).selectOption("xhigh");
+    const ask = p.locator('[data-scope-ask="design-a"]'); await ask.waitFor();
+    const projBtn = ask.locator("[data-scope-project]");
+    ok(await projBtn.count() === 1 && /Only this project \(Shop/.test(await projBtn.innerText()), "in a project the scope question offers only this project", await projBtn.innerText().catch(() => ""));
+    await projBtn.click();
+    await p.waitForFunction(() => document.querySelector('[data-team-row="design-a"] [data-source]')?.dataset.source === "project");
+    const shop = await read("?project=shop"), wide = await read("");
+    const at = (v, w, n) => v.workflows.find((x) => x.id === w).nodes.find((x) => x.node === n);
+    ok(at(shop, "web-prototype", "design-a").effort === "xhigh" && at(shop, "documents", "draft").effort === "xhigh" && at(wide, "web-prototype", "design-a").effort === "medium" && at(wide, "documents", "draft").effort === "medium",
+      "only this project: the seat's nodes change in that project, the Studio-wide team does not", JSON.stringify({ shop: at(shop, "web-prototype", "design-a").effort, wide: at(wide, "web-prototype", "design-a").effort }));
+    ok(shop.projects.find((x) => x.id === "shop")?.custom === true && /◆/.test(await p.locator("[data-team-project] option[value=shop]").innerText()), "the selector marks a project with its own crew");
+    await p.locator('[data-restore-project="shop"]').click();
+    await p.waitForFunction(() => document.querySelector('[data-team-row="design-a"] [data-source]')?.dataset.source === "team");
+    ok(!(await read("?project=shop")).projects.find((x) => x.id === "shop").custom, "restore puts the project back on the team");
+    ok(errors.length === 0, "no browser errors (project)", errors.join(" | "));
     await p.close();
   }
   // a stale page never overwrites a newer team

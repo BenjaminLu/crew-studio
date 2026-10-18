@@ -9,7 +9,7 @@ import type {Engine} from './runtime/engine';
 /** Workflows whose agents the team staffs directly. Staffed workflows (code, coffee-kit) derive their signed project staffing
  *  from the team instead (src/crew-staffing.ts); the startup competition keeps its own two-vendor pick. */
 export const crewApplies=(def:any)=>!!def&&!staffingApplies(def)&&def.kind!=='startup-recursion'&&slotsOf(def).length>0;
-export type CrewRecord={schema:1;team:string;teamVersion:number;workflow:string;version:number;definition:string;run:Record<string,{effort:string|null}>;
+export type CrewRecord={schema:1;team:string;teamVersion:number;workflow:string;version:number;definition:string;run:Record<string,{effort:string|null}>;project?:string|null;
  nodes:Record<string,{seat:string;provider:string;model:string;effort:string|null;skills:{id:string;v:number;sha256:string;from:'member'|'node'}[];source:string;notes:{en:string;zh:string}[]}>;
  judges:Record<string,{provider:string;model:string;effort:string|null}>};
 /** The seats a judge turn runs as, by the role a check judges with (code workflows keep their staffed reviewer and designer). */
@@ -31,12 +31,14 @@ export function crewRecordOf(res:Resolution,team:{hash:string;version:number;mem
  const nodes:CrewRecord['nodes']={};for(const r of res.nodes)nodes[r.node]={seat:r.seat,provider:r.provider!,model:r.model!,effort:r.effort,skills:r.skills.map(p=>({id:p.id,v:p.v,sha256:p.sha256,from:p.from})),source:r.source,notes:r.notes};
  // judge turns (a judged check on these nodes): the reviewing seats' picks, at medium effort or more
  const judges:CrewRecord['judges']={};for(const seat of ['reviewer','design-reviewer']){const row=res.nodes.find(r=>r.seat===seat),m=team.members[seat];const p=row?{provider:row.provider!,model:row.model!,effort:row.effort}:m?{provider:m.provider,model:m.model,effort:m.effort}:null;if(!p)continue;if(p.effort!==null&&EFFORTS.indexOf(p.effort)<EFFORTS.indexOf('medium'))p.effort='medium';judges[seat]=p;}
- return{schema:1,team:team.hash,teamVersion:team.version,workflow:def.id,version:def.version,definition:staffingHash(def),run,nodes,judges};
+ return{schema:1,team:team.hash,teamVersion:team.version,workflow:def.id,version:def.version,definition:staffingHash(def),run,project:res.project??null,nodes,judges};
 }
+/** The project a Task's crew is resolved for (its project layer): the Task's project parameter, when it names one. */
+export const crewProject=(params:Record<string,unknown>|undefined)=>typeof params?.project==='string'&&params.project.trim()?params.project:null;
 export function installCrewGuard(engine:Engine,store:CrewStore){
  const resolve=(def:any,params:Record<string,string>|undefined)=>{const team=store.current();if(!team)return null;const run=parseRunOverride(params?._crewRun);
   for(const n of Object.keys(run))if(!slotsOf(def).some(s=>s.node===n))throw new Error(`The run override names ${n}, which is not an agent node of ${def.id}`);
-  const res=resolveCrew(teamBody(team),withJudges(def,judgeSlots(engine,def)),run,team.hash);return{team,res,run};};
+  const res=resolveCrew(teamBody(team),withJudges(def,judgeSlots(engine,def)),run,team.hash,crewProject(params));return{team,res,run};};
  /** The crew a Task started with, from its signed ledger; null for a Task started before the team existed. */
  function recordOf(run:any):CrewRecord|null{
   const t=engine.trusted(run.id);const e=t.entries.filter(x=>x.record==='crew-resolved').at(-1);if(!e)return null;

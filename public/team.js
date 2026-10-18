@@ -2,10 +2,11 @@
 // each dot the colour of the member who runs it, ★ for a node this workflow customised, red where a seat is empty) and the
 // selected workflow's editable table: member, model, effort, skills (the member's in grey, the node's own removable,
 // "+ skill" from the library) and where each value comes from. A model or effort change asks "only this workflow" or
-// "the whole member"; the legend opens the member editor (model, effort, own skills, presets). The server is the only
-// authority: every change is one POST /api/team/change with the version the page last read (compare-and-swap).
+// "the whole member"; the legend opens the member editor (model, effort, own skills, presets). The project selector shows
+// one project's crew (its own seat changes applied) and adds "only this project" to the scope question. The server is the
+// only authority: every change is one POST /api/team/change with the version the page last read (compare-and-swap).
 (() => {
-const TM = { data: null, loading: false, sel: null, ask: null, editing: false, notes: [], err: null, busy: false };
+const TM = { data: null, loading: false, sel: null, ask: null, editing: false, notes: [], err: null, busy: false, project: "" };
 const getJson = async (u) => { const r = await fetch(u); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; };
 // seat colours: the palette tokens (both themes)
 const SEAT_COLOR = { coordinator: "var(--a6t)", maker: "var(--a1t)", "alt-maker": "var(--a2t)", reviewer: "var(--a5t)", "design-reviewer": "var(--a3t)" };
@@ -13,10 +14,11 @@ const seatColor = (id) => SEAT_COLOR[id] || "var(--a4t)";
 const L = (o) => (o ? T(o.en, o.zh) : "");
 const seatOf = (id) => TM.data?.seats.find((s) => s.id === id);
 const seatName = (id) => L(seatOf(id)?.label) || id;
-const SOURCE = { team: ["Team", "跟團隊"], workflow: ["★ Custom here", "★ 這裡自訂"], definition: ["Workflow sets it", "流程設定"], run: ["This run", "這次"], missing: ["Missing", "缺人"] };
+const SOURCE = { team: ["Team", "跟團隊"], project: ["◆ This project", "◆ 這個專案"], workflow: ["★ Custom here", "★ 這裡自訂"], definition: ["Workflow sets it", "流程設定"], run: ["This run", "這次"], missing: ["Missing", "缺人"] };
 async function load(facts) {
   if (TM.loading) return; TM.loading = true;
-  try { TM.data = await getJson(`/api/team${facts ? "?facts=1" : ""}`); TM.err = null; if (!TM.sel || !TM.data.workflows.some((w) => w.id === TM.sel)) TM.sel = TM.data.workflows.find((w) => w.badge.state !== "team")?.id ?? TM.data.workflows[0]?.id ?? null; }
+  const q = new URLSearchParams(); if (facts) q.set("facts", "1"); if (TM.project) q.set("project", TM.project);
+  try { TM.data = await getJson(`/api/team${q.size ? `?${q}` : ""}`); TM.err = null; if (!TM.sel || !TM.data.workflows.some((w) => w.id === TM.sel)) TM.sel = TM.data.workflows.find((w) => w.badge.state !== "team")?.id ?? TM.data.workflows[0]?.id ?? null; }
   catch (e) { TM.err = String(e.message || e); }
   finally { TM.loading = false; }
   if (S.route?.name === "team") soft();
@@ -24,7 +26,7 @@ async function load(facts) {
 async function change(c) {
   if (TM.busy) return; TM.busy = true;
   try {
-    const r = await fetch("/api/team/change", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ change: c, expected: TM.data?.team?.hash ?? null }) });
+    const r = await fetch("/api/team/change", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ change: c, expected: TM.data?.team?.hash ?? null, project: TM.project || null }) });
     const j = await r.json().catch(() => ({}));
     if (r.status === 409) { toast(T(j.error || "The team changed; reloaded.", j.tw || "團隊已經改了；已重新整理。")); TM.ask = null; TM.busy = false; return load(); }
     if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
@@ -67,6 +69,9 @@ function askPanel(wf, row) {
   return h("div", { class: "tm-ask", role: "group", "aria-label": T("Where to apply this change", "這個改動要套用到哪裡"), "data-scope-ask": row.node },
     h("span", { class: "tm-ask-t" }, T(`Change ${row.label}'s ${what} to ${shown}:`, `把「${row.label}」的${what}改成 ${shown}：`)),
     h("button", { class: "btn primary", "data-scope-here": "", disabled: TM.busy, onclick: () => change({ kind: "node", workflow: wf.id, node: row.node, set }) }, T("Only this workflow", "只改這個 workflow")),
+    // in a project: the seat's member for every workflow of this project only
+    TM.project ? h("button", { class: "btn", "data-scope-project": "", disabled: TM.busy || !seatOf(row.seat)?.member, onclick: () => change({ kind: "project", project: TM.project, seat: row.seat, set }) },
+      T(`Only this project (${projectName()}: affects ${seatOf(row.seat)?.usesProject ?? 0} node${seatOf(row.seat)?.usesProject === 1 ? "" : "s"})`, `只改這個專案（${projectName()}：影響 ${seatOf(row.seat)?.usesProject ?? 0} 個節點）`)) : null,
     h("button", { class: "btn", "data-scope-team": "", disabled: TM.busy || !seatOf(row.seat)?.member && a.field !== "model", onclick: () => change({ kind: "member", seat: row.seat, set }) },
       T(`The whole “${seatName(row.seat)}” (affects ${uses} node${uses === 1 ? "" : "s"})`, `改整個「${seatName(row.seat)}」（影響 ${uses} 個節點）`)),
     h("button", { class: "btn ghost", onclick: () => { TM.ask = null; render(); } }, T("Cancel", "取消")));
@@ -91,8 +96,8 @@ function nodeRow(wf, row) {
     (TM.data.seats ?? []).map((s) => h("option", { value: s.id }, L(s.label))));
   member.value = row.seat;
   const cur = asking?.field === "model" ? (() => { const [provider, ...m] = asking.value.split("/"); return { provider, model: m.join("/") }; })() : { provider: row.provider, model: row.model };
-  const model = modelSelect(T(`${row.label}'s model`, `${row.label} 的模型`), cur, (v) => { TM.ask = { workflow: wf.id, node: row.node, field: "model", value: v }; render(); }, { "data-custom": row.fields.model === "workflow" ? "1" : null });
-  const effort = effortSelect(T(`${row.label}'s effort`, `${row.label} 的 effort`), asking?.field === "effort" ? asking.value : row.effort, row.provider, (v) => { TM.ask = { workflow: wf.id, node: row.node, field: "effort", value: v }; render(); }, { "data-custom": row.fields.effort === "workflow" || row.fields.effort === "run" ? "1" : null });
+  const model = modelSelect(T(`${row.label}'s model`, `${row.label} 的模型`), cur, (v) => { TM.ask = { workflow: wf.id, node: row.node, field: "model", value: v }; render(); }, { "data-custom": row.fields.model === "workflow" || row.fields.model === "project" ? "1" : null });
+  const effort = effortSelect(T(`${row.label}'s effort`, `${row.label} 的 effort`), asking?.field === "effort" ? asking.value : row.effort, row.provider, (v) => { TM.ask = { workflow: wf.id, node: row.node, field: "effort", value: v }; render(); }, { "data-custom": ["workflow", "run", "project"].includes(row.fields.effort) ? "1" : null });
   const skills = h("div", { class: "tm-skills" },
     row.skills.filter((p) => p.from === "member").map((p) => h("span", { class: "tm-skill base", title: T(`Comes with ${seatName(row.seat)}`, `來自成員「${seatName(row.seat)}」`) }, `${p.name || p.id}`)),
     row.skills.filter((p) => p.from === "node").map((p) => h("span", { class: "tm-skill own" }, `${p.name || p.id}@v${p.v}`,
@@ -148,6 +153,15 @@ function missingLine(w) {
   return roles.length ? h("span", { class: "tm-missing-line", "data-missing-roles": w.id }, h("i", { class: "tm-dot", style: "background:var(--bad)" }),
     T(`Missing: ${roles.map((r) => `${r.seatLabel.en} (${r.label})`).join(", ")}`, `缺人：${roles.map((r) => `${r.seatLabel.zh}（${r.label}）`).join("、")}`)) : null;
 }
+const projectName = () => TM.data?.projects?.find((p) => p.id === TM.project)?.name || TM.project;
+// which crew the page shows: the Studio-wide team, or one project's (the team with that project's own seat changes)
+function projectPicker() {
+  const list = TM.data?.projects ?? [];
+  if (!list.length) return null;
+  const sel = h("select", { class: "tm-sel", "data-team-project": "", "aria-label": T("Show the crew of", "顯示哪裡的人員"), onchange: (e) => { TM.project = e.target.value; TM.ask = null; TM.notes = []; TM.data = null; load(); } },
+    h("option", { value: "" }, T("Studio-wide team", "整個 Studio 的團隊")), list.map((p) => h("option", { value: p.id }, `${p.name}${p.custom ? " ◆" : ""}`)));
+  sel.value = TM.project; return h("label", { class: "tm-project" }, h("span", { class: "tm-k" }, T("Project", "專案")), sel);
+}
 function legend() {
   return h("div", { class: "tm-legend", role: "group", "aria-label": T("Team members (open the member editor)", "團隊成員（打開成員編輯）") },
     TM.data.seats.filter((s) => s.builtin || s.member).map((s) => h("button", { class: `tm-leg${s.member ? "" : " empty"}`, "data-legend": s.id, onclick: () => { TM.editing = true; render(); requestAnimationFrame(() => document.querySelector(`[data-seat-editor="${s.id}"] select`)?.focus()); } },
@@ -157,17 +171,19 @@ function legend() {
 function view() {
   if (!TM.data) { if (!TM.err) load(); return h("div", { class: "page tm" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Who runs each workflow", "每個 workflow 由誰在做")))), TM.err ? h("div", { class: "card x-pad bad" }, TM.err) : h("div", { class: "skel", style: "height:180px" })); }
   const wf = TM.data.workflows.find((w) => w.id === TM.sel) ?? null;
-  const custom = wf?.nodes.some((n) => n.custom);
+  const custom = wf?.nodes.some((n) => n.custom && n.source !== "project");
+  const projectCustom = !!TM.project && TM.data.seats.some((s) => s.project);
   return h("div", { class: "page tm", "data-team-page": "" },
     h("div", { class: "phead" }, h("div", {}, h("span", { class: "tm-eyebrow" }, T("Crew · one team for every workflow", "船員 · 一個團隊負責所有 workflow")), h("h1", {}, T("Who runs each workflow", "每個 workflow 由誰在做")),
-      h("p", {}, T("Pick a card, then change the model, effort or skills right in the table. Each change asks: only here, or the whole member.", "點一張卡，在下面直接改模型、effort、skills。每次改都會問：只改這裡，還是改整個成員。"))), legend()),
+      h("p", {}, T("Pick a card, then change the model, effort or skills right in the table. Each change asks: only here, or the whole member.", "點一張卡，在下面直接改模型、effort、skills。每次改都會問：只改這裡，還是改整個成員。"))), h("div", { class: "tm-tools" }, projectPicker(), legend())),
     !TM.data.team ? h("div", { class: "card x-pad tm-empty", "data-team-empty": "" }, T("No team yet: every workflow uses Studio's default model. Fill the seats in the member editor.", "還沒有團隊：每個 workflow 都用 Studio 的預設模型。請在成員編輯裡補上各個位置。")) : null,
     TM.editing ? memberEditor() : null,
     h("div", { class: "tm-cards" }, TM.data.workflows.map(card)),
     wf ? h("section", { class: "card tm-detail", "data-team-detail": wf.id, "aria-label": T(`${wf.name}: final crew`, `${wf.name}：最後的人員配置`) },
       h("div", { class: "tm-dhead" }, h("h2", {}, T(`${wf.name}: who finally runs it`, `${wf.name}：最後的人員配置`)),
         h("span", { class: "faint" }, T("Grey skills come with the member; white ones are this node's.", "灰色 skill＝成員本身帶的；白色＝這個節點加的")),
-        custom ? h("button", { class: "btn", "data-restore": wf.id, disabled: TM.busy, onclick: () => change({ kind: "restore", workflow: wf.id }) }, T("Restore to team", "恢復成團隊設定")) : null),
+        custom ? h("button", { class: "btn", "data-restore": wf.id, disabled: TM.busy, onclick: () => change({ kind: "restore", workflow: wf.id }) }, T("Restore to team", "恢復成團隊設定")) : null,
+        projectCustom ? h("button", { class: "btn", "data-restore-project": TM.project, disabled: TM.busy, onclick: () => change({ kind: "project-restore", project: TM.project }) }, T(`Restore ${projectName()} to the team`, `${projectName()} 恢復成團隊設定`)) : null),
       h("div", { class: "tm-grid tm-head", "aria-hidden": "true" }, [T("Node", "節點"), T("Member", "成員"), T("Model", "模型"), "Effort", "Skills", T("Source", "來源")].map((x) => h("span", {}, x))),
       missingLine(wf),
       wf.nodes.map((n) => nodeRow(wf, n)),
