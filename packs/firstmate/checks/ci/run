@@ -13,7 +13,10 @@ let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", async () => {
   const rs = await Promise.all(Array.from({ length: n*commands.length }, (_, k) => run(k)));
   rs.forEach((r) => fs.writeFileSync(path.join(i.out, `shard-${r.shard}.log`), r.log));
   const f = [];
-  for (const r of rs) for (const l of r.log.split("\n")) { const m = /^FAIL\s+([^:\s]+):\s*(.*)$/.exec(l); if (m) f.push({ locator: { type: "file", path: m[1].includes("/") ? m[1] : `tests/${m[1]}` }, message: `${m[1]}: ${m[2]}`.slice(0, 400), expected: "the test passes", class: "test-failure", severity: "blocking" }); }
+  // a FAIL line's indented lines after it are its assertion or exception text: they go into the finding, so the worker sees why
+  for (const r of rs) { const ls = r.log.split("\n"); ls.forEach((l, k) => { const m = /^FAIL\s+([^:\s]+):\s*(.*)$/.exec(l); if (!m) return;
+    const why = []; for (let j = k + 1; j < ls.length && /^\s{2}/.test(ls[j]) && why.length < 12; j++) if (ls[j].trim()) why.push(ls[j].trim());
+    f.push({ locator: { type: "file", path: m[1].includes("/") ? m[1] : `tests/${m[1]}` }, message: `${m[1]}: ${m[2]}${why.length ? `\n${why.join("\n")}` : ""}`.slice(0, 1200), expected: "the test passes", class: "test-failure", severity: "blocking" }); }); }
   const bad = rs.filter((r) => r.code !== 0);
   if (bad.length && !f.length) for (const r of bad) f.push({ locator: { type: "file", path: ".crew/gates.json" }, message: `shard ${r.shard}/${n} exit ${r.code}: ${r.log.trim().split("\n").slice(-3).join(" | ").slice(0, 300)}`, expected: "exit 0", class: "ci-crash", severity: "blocking" });
   const proves = []; if (!bad.length) (i.spec?.done ?? []).forEach((d, k) => { const m = /(tests?\/[\w./-]+|[\w./-]+\.test\.\w+)/.exec(d); if (m && fs.existsSync(path.join(i.workdir, m[1]))) proves.push(k); });

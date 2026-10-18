@@ -1,3 +1,4 @@
+import { scrubEnv } from "./secure";
 // A reviewer's read-only view of any changed file, by its type (unit review-modes): the reviewer is not limited to
 // text. Every view counts as "read" for review-depth; "not readable" only when a type truly has no view or a cap is
 // hit, always with the reason.
@@ -24,7 +25,7 @@ export const HELPER_TIMEOUT_MS = 15_000;
 /** run a helper without blocking Studio's event loop, killed at the timeout; its stdout as bytes, or null */
 export async function helper(argv: string[], o: { cwd?: string; timeoutMs?: number; maxBytes?: number; env?: Record<string, string> } = {}): Promise<Buffer | null> {
   try {
-    const p = Bun.spawn(argv, { cwd: o.cwd, stdout: "pipe", stderr: "ignore", ...(o.env ? { env: o.env } : {}) }); const timer = setTimeout(() => { try { p.kill(9); } catch {} }, o.timeoutMs ?? HELPER_TIMEOUT_MS);
+    const p = Bun.spawn(argv, { cwd: o.cwd, stdout: "pipe", stderr: "ignore", env: scrubEnv(o.env ?? process.env) }); const timer = setTimeout(() => { try { p.kill(9); } catch {} }, o.timeoutMs ?? HELPER_TIMEOUT_MS);
     const chunks: Buffer[] = []; let n = 0; const cap = o.maxBytes ?? READ_CAP_BYTES + 1;
     for await (const c of p.stdout as any) { n += c.length; if (n > cap) { try { p.kill(9); } catch {} break; } chunks.push(Buffer.from(c)); }
     const code = await p.exited; clearTimeout(timer); return code === 0 && n <= cap ? Buffer.concat(chunks) : null;

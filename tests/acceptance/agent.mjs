@@ -84,14 +84,14 @@ async function* acceptanceScript(text, call, say) {
 // sandbox-exec profile, env and proxy credential): the network only through the egress proxy and only to its provider's
 // API hosts, its own login readable, the source logins and Studio's data not. No request is ever sent to a provider: an
 // allowed CONNECT is closed as soon as the proxy answers (or after a short wait), before any byte of TLS.
-// The intent carries what to try: ACCEPT_PROBE host=<api host> sink=<loopback port> deny=<path>,<path> nowrite=<path>,<path>
+// The intent carries what to try: ACCEPT_PROBE host=<api host> sink=<loopback port> studio=<Studio's port> deny=<path>,<path> nowrite=<path>,<path>
 // The result is one line the harness reads from the round record: ACCEPT_PROBE_RESULT {json}
 const tryTcp = (host, port, ms = 1500) => new Promise((resolve) => {
   const s = tcp({ host, port }); const done = (v) => { clearTimeout(t); s.destroy(); resolve(v); };
   const t = setTimeout(() => done({ ok: false, error: "timeout" }), ms);
   s.once("connect", () => done({ ok: true })); s.once("error", (e) => done({ ok: false, error: e.code ?? String(e.message ?? e) }));
 });
-/** One CONNECT through the round's proxy: the proxy's status line (403 refused, 407 no credential), or what happened. */
+/** One CONNECT through the admitted round's scoped relay; central authentication stays inside Studio. */
 const viaProxy = (target, auth = true, ms = 4000) => new Promise((resolve) => {
   let u; try { u = new URL(process.env.HTTPS_PROXY ?? ""); } catch { return resolve({ status: null, error: "no HTTPS_PROXY in the round's env" }); }
   const s = tcp({ host: u.hostname, port: Number(u.port) }); let buf = "";
@@ -110,11 +110,13 @@ async function sandboxProbe(prompt) {
   const host = arg("host"), sink = Number(arg("sink")), proxy = (() => { try { return new URL(process.env.HTTPS_PROXY); } catch { return null; } })();
   const tool = (() => { try { return new URL(process.env.CREW_STUDIO_URL); } catch { return null; } })();
   const r = {
-    proxyEnv: !!proxy && ["127.0.0.1", "localhost"].includes(proxy.hostname) && !!proxy.password,
+    proxyEnv: !!proxy && proxy.protocol === "http:" && proxy.hostname === "127.0.0.1" && Number(proxy.port) >= 43000 && Number(proxy.port) <= 43063,
+    proxyCredentialFree: !!proxy && !proxy.username && !proxy.password,
     noProxyLoopbackOnly: (process.env.NO_PROXY ?? "") === "localhost,127.0.0.1,::1",
     // straight out, around the proxy: an IP (no DNS needed) and the sink the harness listens on
     directPublic: await tryTcp("1.1.1.1", 443),
     directSink: sink ? await tryTcp("127.0.0.1", sink) : { ok: false, error: "no sink" },
+    directStudio: Number(arg("studio")) ? await tryTcp("127.0.0.1", Number(arg("studio"))) : { ok: false, error: "no studio port" },
     toolListener: tool ? await tryTcp(tool.hostname, Number(tool.port)) : { ok: false, error: "no CREW_STUDIO_URL" },
     providerViaProxy: host ? await viaProxy(`${host}:443`) : { status: null, error: "no host" },
     otherViaProxy: await viaProxy("example.com:443"),

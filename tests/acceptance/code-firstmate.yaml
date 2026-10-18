@@ -31,6 +31,17 @@ stub:
     cards: [{ node: dispatch, answer: dispatch }, { node: merge-card, answer: merge }]
     timeout_s: 240
     expect: { status: succeeded, result: done, visited: [intake, prepare, spec, dispatch, door, build, pr-open, ci, review, remote-ready, merge-card, merge, after-merge, cleanup, done] }
+  - name: firstmate-loopback
+    covers: "a project test that spawns its own server on port 0 and connects to it (as money-kit's test/shop.test.ts spawns app/server.ts) passes with the sandbox on: the worker's run_tests, the fail-first gate and CI run it in the check sandbox → review → merge"
+    how: firstmate
+    setup: [staffing-code]
+    params: { project: sandbox }
+    proves: [fail-first]
+    topic: "Add a ping server for the health check\nSTUB_FILE src/ping-server.ts :: const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('pong') });\\nprocess.stdout.write(`ping: http://127.0.0.1:${server.port}\\n`);\\n\nSTUB_FILE test/ping.test.ts :: import { test, expect } from 'bun:test';\\ntest('the ping server answers on the port it picked', async () => { const p = Bun.spawn([process.execPath, 'src/ping-server.ts'], { stdout: 'pipe', stderr: 'pipe' }); try { const r = p.stdout.getReader(); let o = ''; while (!/http:\\S+\\s/.test(o)) { const c = await r.read(); expect(c.done).toBe(false); if (c.done) return; o += new TextDecoder().decode(c.value); } const url = /http:\\S+/.exec(o)![0]; expect(await (await fetch(url)).text()).toBe('pong'); } finally { p.kill(); await p.exited; } });\\n"
+    needs: [renderer]   # src/ is a UI path in the sandbox project, as in firstmate-merge
+    cards: [{ node: dispatch, answer: dispatch }, { node: merge-card, answer: merge }]
+    timeout_s: 240
+    expect: { status: succeeded, result: done, visited: [spec, dispatch, build, ci, review, merge-card, merge, done] }
   - name: firstmate-blocked
     covers: "the worker reports SCOPE-BLOCKED → scope card → captain parks the Task"
     how: firstmate

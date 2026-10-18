@@ -2,6 +2,7 @@
 // A stand-in for a provider CLI inside a sandboxed round: it tries each way out the
 // prompt names and answers with what worked, in claude's stream-json result shape.
 const fs = require("fs"), net = require("net"), http = require("http"), { spawn } = require("child_process");
+const TOOL_TOKEN = process.env.CREW_TOOL_TOKEN_FILE ? fs.readFileSync(process.env.CREW_TOOL_TOKEN_FILE, "utf8").trim() : process.env.CREW_TOOL_TOKEN;
 const text = process.argv[process.argv.indexOf("-p") + 1] || "";
 const m = /PROBE (\{.*\})/s.exec(text); const p = m ? JSON.parse(m[1]) : {};
 const out = (o) => { process.stdout.write(JSON.stringify({ type: "result", subtype: "success", result: JSON.stringify(o), usage: {} }) + "\n"); };
@@ -24,12 +25,14 @@ const viaProxy = (host, withCred = true) => new Promise((res) => { const u = new
   r.secretReads = (p.secrets || []).map((f) => { try { fs.readFileSync(f, "utf8"); return f; } catch { return null; } }).filter(Boolean);
   r.direct = await new Promise((res) => { const c = net.connect(80, "example.com", () => { c.end(); res(true); }); c.on("error", () => res(false)); setTimeout(() => res(false), 3000); });
   if (p.mainUrl) { r.mainPage = await get(p.mainUrl + "/"); r.mainApi = await get(p.mainUrl + "/api/agents"); }
-  r.tools = (await get(process.env.CREW_STUDIO_URL + "/api/tools", { "x-crew-tool-token": process.env.CREW_TOOL_TOKEN })).status;
-  r.toolsOther = (await get(process.env.CREW_STUDIO_URL + "/", { "x-crew-tool-token": process.env.CREW_TOOL_TOKEN })).status;
+  r.tools = (await get(process.env.CREW_STUDIO_URL + "/api/tools", { "x-crew-tool-token": TOOL_TOKEN })).status;
+  r.toolsOther = (await get(process.env.CREW_STUDIO_URL + "/", { "x-crew-tool-token": TOOL_TOKEN })).status;
   if (process.env.HTTPS_PROXY) { r.proxyRefused = await viaProxy(p.badHost || "evil.example"); r.proxyNoCred = await viaProxy("api.anthropic.com", false); if (p.granted) r.proxyGranted = await viaProxy(p.granted); }
   r.envKeys = Object.keys(process.env);
-  r.proxyEnv = process.env.HTTPS_PROXY ? process.env.HTTPS_PROXY.replace(/\/\/[^@]*@/, "//") : null;
-  r.oauth = process.env.CLAUDE_CODE_OAUTH_TOKEN || null;
+  r.toolTokenEnv = process.env.CREW_TOOL_TOKEN ?? null; // must be absent: the token is never in the round's env
+  r.toolTokenFileIsPath = !!process.env.CREW_TOOL_TOKEN_FILE && process.env.CREW_TOOL_TOKEN_FILE !== TOOL_TOKEN && /\//.test(process.env.CREW_TOOL_TOKEN_FILE);
+  r.proxyEnv = process.env.HTTPS_PROXY ? process.env.HTTPS_PROXY : null;
+  r.oauth = process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR ? fs.readFileSync(Number(process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR), "utf8").trim() : process.env.CLAUDE_CODE_OAUTH_TOKEN || null;
   r.claudeTmp = process.env.CLAUDE_CODE_TMPDIR || null; r.tmpdir = process.env.TMPDIR || null; r.home = process.env.HOME || null;
   out(r);
 })();

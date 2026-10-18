@@ -1,3 +1,4 @@
+import { scrubEnv } from "../secure";
 // Who else may be driving a session: running claude/codex processes, their
 // working directories, and how recently a session file was written. Studio
 // uses it twice: to mark sessions "possibly open" and to hold the driver lock.
@@ -17,7 +18,7 @@ export function isVendorProcess(command:string):boolean {
 }
 
 const run = (argv: string[]): string => {
-  try { const r = Bun.spawnSync(argv, { stdout: "pipe", stderr: "ignore" }); return r.success || r.exitCode === 1 ? r.stdout.toString() : ""; } catch { return ""; }
+  try { const r = Bun.spawnSync(argv, { env: scrubEnv(), stdout: "pipe", stderr: "ignore" }); return r.success || r.exitCode === 1 ? r.stdout.toString() : ""; } catch { return ""; }
 };
 
 /** Real processes from `ps`, with cwd from `lsof` (macOS) or /proc (Linux). Studio's own children are excluded by the caller. */

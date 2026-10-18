@@ -8,3 +8,4 @@ needs: [artifact, diff, repo_cfg]
 params: { type: object, properties: {} }
 timeout_s: 240
 network: false
+test_run: true   # it runs the project's tests: loopback for their own servers (architecture §10 "Loopback")

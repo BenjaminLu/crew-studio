@@ -48,7 +48,7 @@ network: false
 
 - `proves`: the indexes of the spec's done lines this check proves when it passes.
 - Exit code 0 means the JSON was written. A crash, a timeout or bad JSON is `error`, never `pass`.
-- Sandbox: inputs read-only, writes only to `out/`, no network unless the manifest says so, killed at `timeout_s`.
+- Sandbox: inputs read-only, writes only to `out/`, no network unless the manifest says so (a check with `test_run: true`, one that runs the project's tests, gets loopback: architecture §10), killed at `timeout_s`.
 
 ## Locator: one schema for machine findings and human annotations
 

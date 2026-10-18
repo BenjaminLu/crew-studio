@@ -6,7 +6,7 @@
 const argv = process.argv.slice(2);
 const prompt = argv[argv.indexOf("-p") + 1] ?? "";
 const msg = /Captain's new message: ([^\n]*)/.exec(prompt)?.[1] ?? prompt;
-const URL_ = process.env.CREW_STUDIO_URL, TOKEN = process.env.CREW_TOOL_TOKEN;
+const URL_ = process.env.CREW_STUDIO_URL, TOKEN = process.env.CREW_TOOL_TOKEN_FILE ? (await import("node:fs")).readFileSync(process.env.CREW_TOOL_TOKEN_FILE, "utf8").trim() : process.env.CREW_TOOL_TOKEN;
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let n = 0;

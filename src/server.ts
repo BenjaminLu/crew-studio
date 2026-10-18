@@ -301,7 +301,7 @@ const MAX_CHATS = 2;
 // --- M3: artifacts, review loops, agent work runs, the trivial lane ---
 const m3 = createM3({ dataDir: DATA, fileAllow: store.fileAllow, studioUrl: () => `http://127.0.0.1:${PORT}`, send,
   provider: (id, model) => { const s = chatSettings(); if (id && !(choices as readonly string[]).includes(id)) throw new Error(`unknown provider identity: ${id}`); const pid = id || s.provider; return makeProvider(pid, model || s.models[pid] || undefined); },
-  allowDrive: () => remote.allowDrive });
+  allowDrive: () => remote.allowDrive, session: () => SESSION });
 
 // --- M6+: one agent runner, the raw event logs, every workflow, self-improvement ---
 const agents = new Agents(DATA, () => `http://127.0.0.1:${PORT}`);
@@ -496,6 +496,8 @@ const serveStatic = (path: string) => {
 const SESSION = sessionToken(DATA);
 // the sidebar's Projects section and each project's page: read only (src/project-overview.ts)
 const projectOverview = createProjectOverview({ dataDir: DATA, projects: new Projects(DATA), engine: runtime.engine, session: SESSION, worktrees, artifacts: m3.store, protectedRoots: PROTECTED });
+/** The only reads that answer without Studio's session: the launch challenge (its proof needs the token anyway). */
+const PUBLIC_READS = new Set(["/api/instance", "/api/session"]);
 async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> {
     const url = new URL(req.url);
     // /api/tasks is the new name of /api/wruns: a path the run routes serve is handed to them under its old name
@@ -518,6 +520,11 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     if (who.kind === "refused" && who.status === 401 && !p.startsWith("/api/") && !p.startsWith("/files/")) return serveStatic(p) ?? new Response("not found", { status: 404 });
     if (who.kind === "refused") return json({ error: who.error, code: who.status === 401 ? "pair" : "host" }, who.status);
     const writing = req.method !== "GET" && req.method !== "HEAD";
+    // reads carry Studio's session too (architecture §10 "Loopback"): a sandboxed test run reaches every loopback port, this one
+    // included, so on this Mac every /api and /files read needs the session cookie or x-crew-session (a token the sandbox cannot
+    // read); a paired phone carries its device token instead. Only the launch challenge answers without one.
+    if (!writing && who.kind === "desktop" && (p.startsWith("/api/") || p.startsWith("/files/")) && !PUBLIC_READS.has(p) && !EXEMPT(p) && !hasSession(req, SESSION))
+      return json({ error: "this request carries no Studio session: open Studio with its session link (`crew-studio open`), or send x-crew-session", code: "session" }, 401);
     // the one guard in front of every mutating route: same site, a Studio session (or a paired phone), JSON
     if (writing && !EXEMPT(p)) { const g = guardWrite(req, url, SESSION, who.kind === "phone"); if (g) return json({ error: g.error, code: g.code }, g.status); }
     if (who.kind === "phone" && writing) {

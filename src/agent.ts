@@ -1,3 +1,4 @@
+import { openScopedProxy } from "./egress-client";
 import {localUnrestricted} from "./local-execution";
 // One agent job runner for every M6+ feature: skill edits, replay evals, pack
 // genesis, gate fix/review cycles and document drafting. A job runs one turn on
@@ -53,7 +54,7 @@ export class Agents {
   cancel(id: string) { const s = this.live.get(id); if (!s) return false; s(); return true; }
 
   /** Studio's egress proxy: a sandboxed round reaches the network only through it, with a credential of its own and its own host list */
-  egress: { port: number; open(token: string, hosts: string[]): void; close(token: string): void } | null = null;
+  egress: { port: number; open(token: string, hosts: string[], options?: {localOrigins?: string[]; blockedPorts?: number[]}): void; close(token: string): void } | null = null;
   /** the tools-only listener a sandboxed round reaches Studio through (never Studio's main port, its page or its API) */
   toolUrl: (() => string) | null = null;
   /** roots a round never reads or writes (firstmate's checkout); one source, set by the server */
@@ -101,7 +102,7 @@ export class Agents {
     this.log(job, "start", `${o.provider.id} · ${o.provider.model}: ${o.title}`);
     if(localUnrestricted())this.log(job,"start","Local unrestricted execution: OS sandbox and outbound restrictions disabled; dependencies repository-local only");
     // a sandboxed round: a profile of its own, a throwaway home, its own proxy credential; refused (never run bare) when any of it is missing
-    let sandbox: { profile: string } | null = null; let roundEnvAdd: Record<string, string> = {}; let cleanup = () => {}; let proxyUrl: string | null = null;
+    let sandbox: { profile: string } | null = null; let roundEnvAdd: Record<string, string> = {}; let cleanup = () => {}; let proxyUrl: string | null = null; let tokenFile: string | null = null;
     let envKeys = o.provider.envKeys ?? []; // a sandboxed CLI round gets no key from Studio's environment: only the login handed to it
     if (o.sandbox && !o.provider.sandboxFree) {
       if (!o.provider.sandboxNeeds) return refuse(`the provider ${o.provider.id} cannot run in the round sandbox (it declares no sandbox needs)`);
@@ -116,7 +117,7 @@ export class Agents {
       if (needs.inProcess) {
         // a provider in Studio's own process (direct HTTP): nothing to spawn; its requests go through the proxy with this round's credential, to its API host (and what policy grants) only
         studioUrl = this.toolUrl();
-        if(!localUnrestricted()){const ptok = randomBytes(18).toString("hex"); const eg = this.egress; eg.open(ptok, [...needs.hosts, ...(o.sandbox.allow ?? [])]); cleanup = () => eg.close(ptok); proxyUrl = `http://round:${ptok}@127.0.0.1:${eg.port}`;}
+        if(!localUnrestricted()){const ptok = randomBytes(18).toString("hex"); const eg = this.egress; eg.open(ptok, [...needs.hosts, ...(o.sandbox.allow ?? [])], {localOrigins: needs.localOrigins, blockedPorts: [4210, Number(new URL(this.studioUrl()).port), Number(new URL(this.toolUrl!()).port)]}); cleanup = () => eg.close(ptok); proxyUrl = `http://round:${ptok}@127.0.0.1:${eg.port}`;}
       } else {
       const box = join(this.dataDir, "rounds", id); const tmp = join(box, "tmp"), home = join(box, "home");
       cleanup = () => { try { rmSync(home, { recursive: true, force: true }); rmSync(tmp, { recursive: true, force: true }); } catch {} };
@@ -128,26 +129,34 @@ export class Agents {
       const login = needs.login(home); if (!login.ok) { cleanup(); return refuse(`${o.provider.id} has no login for a round: ${login.error}`); }
       if (login.warn) this.log(job, "start", `${o.provider.id} signs in with ${login.source}: ${login.warn}`);
       Object.assign(roundEnvAdd, login.env); envKeys = [];
-      const ptok = randomBytes(18).toString("hex");
+      const lease = localUnrestricted() ? null : await openScopedProxy(this.egress!, [...needs.hosts, ...(o.sandbox.allow ?? [])]);
+      if (lease) { const rmBox = cleanup; cleanup = () => { lease.close(); rmBox(); }; }
+      if (o.signal?.aborted || o.owns && !o.owns()) throw new QueueRefusal("round owner ended during sandbox setup");
       studioUrl = this.toolUrl();
       cwd = o.sandbox.cwd ?? tmp;
       const prof = join(box, "round.sb");
-      writeFileSync(prof, roundProfile({ cwd, tmp, writes: [...o.sandbox.writes, home], reads: [...needs.reads, ...helperReads(), ...(o.sandbox.reads ?? [])], proxyPort: this.egress?.port??1, toolPort: Number(new URL(studioUrl).port),
+      writeFileSync(prof, roundProfile({ cwd, tmp, writes: [...o.sandbox.writes, home], reads: [...needs.reads, ...helperReads(), ...(o.sandbox.reads ?? [])], proxyPort: lease?.port??1, toolPort: Number(new URL(studioUrl).port),
         dataDir: this.dataDir, protect: this.protect() }));
-      const proxy = `http://round:${ptok}@127.0.0.1:${this.egress?.port??1}`;
+      const proxy = lease?.url ?? "";
       if(!localUnrestricted())Object.assign(roundEnvAdd, { HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy, ALL_PROXY: proxy, all_proxy: proxy, NO_PROXY: "localhost,127.0.0.1,::1", no_proxy: "localhost,127.0.0.1,::1", NODE_USE_ENV_PROXY: "1", TMPDIR: tmp });
+      // the tool token in a 0600 file inside the round's tmp (readable only in this round's sandbox), never on the CLI's argv
+      tokenFile = join(tmp, "tool-token"); writeFileSync(tokenFile, token, { mode: 0o600 });
       roundEnvAdd.TMPDIR=tmp;
       for (const k of needs.tmpEnv) roundEnvAdd[k] = tmp; // the CLI's own temporary folder is the round's tmp, never a shared one
       sandbox = localUnrestricted()?null:{ profile: prof };
-      // the credential opens last, and closes with everything else, however the round ends
-      if(!localUnrestricted()){const eg = this.egress!; eg.open(ptok, [...needs.hosts, ...(o.sandbox.allow ?? [])]); const rmBox = cleanup; cleanup = () => { eg.close(ptok); rmBox(); };}
       } catch (e: any) { cleanup(); return refuse(`the round's sandbox could not be set up: ${e?.message ?? e}`); }
       }
     }
     try {
+      if (!tokenFile) {
+        const dir = join(this.dataDir, "agent-tokens"); mkdirSync(dir, { recursive: true, mode: 0o700 });
+        tokenFile = join(dir, id); writeFileSync(tokenFile, token, { mode: 0o600 });
+        const previous = cleanup, path = tokenFile; cleanup = () => { try { previous(); } finally { rmSync(path, { force: true }); } };
+      }
       this.tokens.set(token, { job: id, tools: o.tools, calls: 0, max: o.maxTools ?? Number(process.env.CREW_AGENT_MAX_TOOLS ?? 60), expires: Date.now() + timeoutMs + 60_000 });
-      // the login basics and the provider's own declared key only: no other credential reaches a round
-      const env = { ...roundEnv(envKeys, { CREW_STUDIO_URL: studioUrl, CREW_TOOL_TOKEN: token, CREW_HTTP_MAX_ROUNDS: "40" }), ...roundEnvAdd };
+      // Every provider gets a protected file path; spawned CLIs never receive the tool credential in argv/env.
+      const tokenEnv = { CREW_TOOL_TOKEN_FILE: tokenFile };
+      const env = { ...roundEnv(envKeys, { CREW_STUDIO_URL: studioUrl, ...tokenEnv, CREW_HTTP_MAX_ROUNDS: "40" }), ...roundEnvAdd };
       // a credential never goes into a prompt (so it is never written into a round's record either)
       // the captain's operating rules, read now (an edit between two rounds reaches the next one), right after the safety rules
       const rules = o.rules!; job.operatingRules = { hash: rules.hash, project: rules.project }; // read in admit(), once the queue slot is held
@@ -156,7 +165,7 @@ export class Agents {
       try { rec = o.record ? roundRecord(o.record.dir, { ...o.record.header, job: id, operatingRules: rules.hash, provider: o.provider.id, model: o.provider.model, reasoningEffort: o.provider.reasoningEffort ?? null, executionMode:job.executionMode }, text, system) : null; }
       catch (e: any) { return refuse(`the round's record could not be written: ${e?.message ?? e}`); }
       let session: ReturnType<Provider["start"]>;
-      try { session = o.provider.start(system, o.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.schema })), { studioUrl, token, cwd, env, mcpCommand: helperCommand("mcp"), sandbox, proxy: proxyUrl }); }
+      try { session = o.provider.start(system, o.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.schema })), { studioUrl, token, tokenFile, cwd, env, mcpCommand: helperCommand("mcp"), sandbox, proxy: proxyUrl }); }
       catch (e: any) { job.status = "failed"; job.error = `the provider could not start: ${e?.message ?? e}`; job.ended = now(); this.log(job, "error", job.error); rec?.end(job); return job; }
       let why: string | null = null;
       const stop = (r: string) => { if (!why) { why = r; session.interrupt(); } };

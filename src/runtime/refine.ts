@@ -1,3 +1,4 @@
+import { gitEnv } from "../git";
 // The refine loop node (docs/check-contract.md, runtime duties): produce → run
 // checks → compile a brief from the findings → produce again. The node sits
 // after the producer and its checks. It reads the ledger since the producer's
@@ -85,7 +86,7 @@ export function sourceAt(repo: string | null, head: string | null, path: string,
   if (isAbsolute(path) || path.startsWith("-") || path.split(/[\\/]/).includes("..")) return `Source refused: ${path} is outside the repository`;
   if (!repo || !head || !existsSync(repo)) return `Source unavailable: ${path}:${line} (this round has no repository head to read it from)`;
   if (!/^[0-9a-f]{7,64}$/.test(head)) return `Source unavailable: ${path}:${line} (the round head is not a commit id)`;
-  const r = spawnSync("git", ["-C", repo, "show", "--no-textconv", `${head}:${path.replace(/^\.\//, "")}`], { maxBuffer: 16 * 1024 * 1024, timeout: 20000 });
+  const r = spawnSync("git", ["-C", repo, "show", "--no-textconv", `${head}:${path.replace(/^\.\//, "")}`], { env: gitEnv(), maxBuffer: 16 * 1024 * 1024, timeout: 20000 });
   if (r.status !== 0) return `Source unavailable: ${path}:${line} at ${head.slice(0, 8)} (${String(r.stderr || r.error?.message || "git show failed").trim().split("\n")[0].slice(0, 200)})`;
   const raw = r.stdout as Buffer; if (raw.subarray(0, 8000).includes(0)) return `Source not shown: ${path} is a binary file at ${head.slice(0, 8)}`;
   const lines = raw.toString("utf8").split("\n"); if (lines.at(-1) === "") lines.pop();

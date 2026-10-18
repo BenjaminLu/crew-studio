@@ -35,14 +35,17 @@ export function probeResults(s: Studio, task: string): { round: string; r: any }
 /** What one probe result breaks, in plain words (empty: the round could do exactly what it should). */
 export function probeProblems(r: any): string[] {
   const bad: string[] = [];
-  if (!r.proxyEnv) bad.push("no egress proxy (with a round credential) in the round's env");
+  if (!r.proxyEnv) bad.push("no egress proxy (reserved scoped listener) in the round's env");
+  if (!r.proxyCredentialFree) bad.push("the round proxy URL carries a credential in exec environment");
   if (!r.noProxyLoopbackOnly) bad.push("NO_PROXY is not loopback only");
   if (r.directPublic?.ok) bad.push("a direct connection to a public address went out around the proxy");
   if (r.directSink?.ok) bad.push("a direct connection to another loopback port (the harness's sink) went out");
+  if (r.directStudio?.ok) bad.push("a direct connection to Studio's own port went out");
   if (!r.toolListener?.ok) bad.push(`Studio's tool listener was not reachable (${r.toolListener?.error})`);
-  if ([403, 407].includes(r.providerViaProxy?.status) || (r.providerViaProxy?.status === null && !/still connecting/.test(r.providerViaProxy?.error ?? ""))) bad.push(`the proxy did not let the round reach its provider's API host (${JSON.stringify(r.providerViaProxy)})`);
+  const admitted = (v: any) => [200, 502].includes(v?.status) || v?.status === null && /still connecting/.test(v?.error ?? "");
+  if (!admitted(r.providerViaProxy)) bad.push(`the proxy did not let the round reach its provider's API host (${JSON.stringify(r.providerViaProxy)})`);
   if (r.otherViaProxy?.status !== 403) bad.push(`the proxy did not refuse a host off the round's list (${JSON.stringify(r.otherViaProxy)})`);
-  if (r.noCredentialViaProxy?.status !== 407) bad.push(`the proxy did not refuse a request without the round's credential (${JSON.stringify(r.noCredentialViaProxy)})`);
+  if (!admitted(r.noCredentialViaProxy)) bad.push(`the round's admitted scoped relay required client credentials or refused its provider (${JSON.stringify(r.noCredentialViaProxy)})`);
   if (!r.ownLogin) bad.push("the round could not read its own login");
   if (r.ownLoginRefresh) bad.push("the round's login copy carries a refresh token");
   if (r.otherCredentials?.length) bad.push(`the round's env carries other credentials: ${r.otherCredentials.join(", ")}`);

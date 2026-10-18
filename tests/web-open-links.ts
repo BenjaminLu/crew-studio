@@ -19,7 +19,7 @@ const ok = (c: unknown, name: string, extra = "") => { if (c) { pass++; console.
 const data = mkdtempSync(join(tmpdir(), "crew-web-open-links-"));
 const wf = { id: "website-link-fixture", name: "Website link fixture", version: 1, roles: [], nodes: [{ id: "produce", kind: "hook", label: "Pinned website", do: "fixture.output", x: 0, y: 0 }, { id: "ready", kind: "check", label: "Readiness", checks: [{ use: "core/artifact-ready", proves: [0] }], args: { producer: "all" }, x: 100, y: 0 }, { id: "accept", kind: "card", label: "Final acceptance", args: { mode: "deliver-accept" }, x: 200, y: 0 }, { id: "closed", kind: "hook", label: "Closed", args: { result: "closed" }, x: 400, y: 100 }, { id: "done", kind: "hook", label: "Approved", x: 400, y: 0 }], edges: [["produce", "ready"], ["ready", "accept", "pass"], ["ready", "accept", "fail"], ["accept", "closed", "rejected"], ["accept", "done", "approved"]] };
 new WorkflowDefs(data, () => [JSON.stringify(wf)]);
-const m3 = createM3({ dataDir: data, fileAllow: [data], studioUrl: () => "http://127.0.0.1:9", provider: () => { throw new Error("No provider calls"); }, send() {}, allowDrive: () => true });
+const m3 = createM3({ dataDir: data, fileAllow: [data], studioUrl: () => "http://127.0.0.1:9", session: () => "wol-session", provider: () => { throw new Error("No provider calls"); }, send() {}, allowDrive: () => true });
 // a site whose entry is not index.html and needs encoding
 const src = join(data, "nested-src"); mkdirSync(join(src, "pages"), { recursive: true });
 writeFileSync(join(src, "pages", "home page.html"), '<!doctype html><link rel="stylesheet" href="../site.css"><h1>Nested</h1><video src="../film.mp4"></video>');
@@ -37,8 +37,10 @@ const E = runtime.engine;
 E.actions["fixture.output"] = (x: any) => { const plain = x.run.text === "Plain site"; x.ctx.deliver = { draft: plain ? { id: "plain-site", n: pv.n, sha256: pv.sha256, format: "web", producer: "draft" } : { id: "nested-site", n: v.n, sha256: v.sha256, format: "web", producer: "draft" } }; x.ctx.spec = { done: ["The site opens"] }; return "ok"; };
 const until = async (fn: () => boolean) => { for (let i = 0; i < 500; i++) { if (fn()) return true; await Bun.sleep(20); } return false; };
 const desktop = { kind: "desktop" };
-const get = async (path: string, who: any = desktop, headers: Record<string, string> = {}) => { const req = new Request("http://127.0.0.1" + path, { headers }); const url = new URL(req.url);
-  return (await m3.handle(req, url, who, false)) ?? (await runtime.handle(req, url, who, false)); };
+const get = async (path: string, who: any = desktop, headers: Record<string, string> = {}) => { const req = new Request("http://127.0.0.1" + path, { headers: { "x-crew-session": "wol-session", ...headers } }); const url = new URL(req.url);
+  let res = (await m3.handle(req, url, who, false)) ?? (await runtime.handle(req, url, who, false));
+  if (res && res.status === 302) { const loc = res.headers.get("location"); const r2 = new Request("http://127.0.0.1" + loc, { headers: { "x-crew-session": "wol-session", ...headers } }); res = (await m3.handle(r2, new URL(r2.url), who, false)) ?? res; }
+  return res; };
 try {
   // the shared builder
   const href = (artifacts as any).websiteHref;

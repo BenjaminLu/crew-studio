@@ -76,7 +76,7 @@ export type RoundStart = { head: string; corrected: { from: string; kept: string
   remoteNotice?: string };
 /**
  * The granted remote of a GitHub-connected project (GitHubPrAdapter.remoteGit): its URL (the grant's
- * pushUrl) and the git environment that authenticates it. Credentials live only in `env`; `secrets`
+ * pushUrl) and the git environment that authenticates it. The environment carries only a private credential-config path; `secrets`
  * are cut from any git message before it is shown or recorded.
  */
 export type RemoteGit = { url: string; repo: string; env: Record<string, string>; fileProtocol: boolean; secrets: string[] };

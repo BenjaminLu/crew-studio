@@ -25,7 +25,7 @@ const realVideo = process.env.CREW_NATIVE_REAL_VIDEO === "1";
 let port = 0, hold = false, boundedWriteRefused = false, rounds = 0;
 const agents = new Agents(data, () => `http://127.0.0.1:${port}`);
 let activeAgents = agents;
-const artifactHttp = createM3({ dataDir: data, fileAllow: [data], studioUrl: () => `http://127.0.0.1:${port}`, provider: () => fixture, send() {}, allowDrive: () => true });
+const artifactHttp = createM3({ dataDir: data, fileAllow: [data], studioUrl: () => `http://127.0.0.1:${port}`, session: () => process.env.CREW_SESSION_TOKEN ?? "", provider: () => fixture, send() {}, allowDrive: () => true });
 const srv = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: async req => {
   const t = req.headers.get("x-crew-tool-token") ?? "", u = new URL(req.url);
   if (u.pathname === "/api/tools") return Response.json(activeAgents.toolList(t));

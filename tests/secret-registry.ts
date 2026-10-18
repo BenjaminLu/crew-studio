@@ -270,7 +270,7 @@ ok(sec.redactText("call with tok-7f3a9c2e5b8d1f40aa here", ["tok-7f3a9c2e5b8d1f4
   const port = await freePort(); const env: any = { ...process.env }; delete env.CREW_SESSION_TOKEN; delete env.CREW_GITHUB_TOKEN;
   const app = spawn("bun", ["src/server.ts"], { cwd: join(import.meta.dir, ".."), stdio: ["ignore", "pipe", "pipe"], env: { ...env, CREW_DATA: data, CREW_PORT: String(port), CREW_FM_STATE: join(tmp, "state"), CREW_GH: "0", CREW_READONLY: "1", CREW_CHAT_PROVIDER: "stub", CREW_RETRO_AUTO: "0", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_GH_NO_CLI: "1", CREW_SANDBOX: "0", HOME: join(tmp, "home"), CREW_MAIN_PROJECT: join(tmp, "proj"), CREW_FILE_ALLOW: tmp } });
   const base = `http://127.0.0.1:${port}`; await waitUp(base, app);
-  const body = await (await fetch(`${base}/api/node-runs/R-001/make/1`)).text(); app.kill();
+  const body = await (await fetch(`${base}/api/node-runs/R-001/make/1`, { headers: { "x-crew-session": ST } })).text(); app.kill();
   ok(body.length > 50 && ![GH, LK, ST].some((v) => body.includes(v)) && body.includes(M), "the server registers its file-held secrets (GitHub token file, ledger key, session token): a record naming them is served without them", body.slice(0, 300)); }
 console.log(`\nsecret-registry: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

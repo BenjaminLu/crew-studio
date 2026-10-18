@@ -6,7 +6,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // first, and every bun child a test starts inherits --no-env-file.
 // This suite fails when a hostile .env reaches a test or a child it starts, or when
 // a test entry lacks the guard.     bun tests/env-isolation.ts
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, statSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 let pass = 0, fail = 0;
@@ -146,6 +146,23 @@ const OPERATOR = ["CREW_LOCAL_UNRESTRICTED", "CREW_LOCAL_DEPENDENCY_ROOT", "CREW
   let bins: string[] = []; try { bins = JSON.parse(clean.out.trim().split("\n").at(-1)!).bins; } catch {}
   ok(clean.code === 0 && bins.length === 4 && bins.every((b) => b.startsWith("/nonexistent/crew-test-cli/")), "a test that runs no CLI passes; the CLI settings default to a CLI that is not installed", JSON.stringify(clean));
   ok(!readdirSync(tmpdir()).some((n) => n.startsWith("crew-test-cli-sentinel-") && readFileSync(join(tmpdir(), n, "calls.log"), "utf8").includes(dir)), "each run removes its sentinel folder");
+}
+
+
+// Each suite owns a private runtime even after an earlier suite polluted HOME.
+{
+ const dir=mkdtempSync(join(tmpdir(), "crew-runtime-isolation-")), home=join(dir,"home"), shared=join(home,".crew-studio","runtime");
+ mkdirSync(shared,{recursive:true,mode:0o755}); chmodSync(shared,0o755);
+ const probe=join(dir,"probe.mjs");
+ writeFileSync(probe,`import ${JSON.stringify(guard)}; import {spawnSync} from 'node:child_process'; import {statSync} from 'node:fs'; const runtime=process.env.CREW_RUNTIME_DIR; const child=spawnSync(process.execPath,['-e','console.log(process.env.CREW_RUNTIME_DIR)'],{encoding:'utf8'}); console.log(JSON.stringify({runtime,mode:runtime?statSync(runtime).mode&511:null,child:child.stdout.trim()}));`);
+ const fresh={...process.env,HOME:home}; for(const k of ["CREW_RUNTIME_DIR","CREW_TEST_ENV_ISOLATED","CREW_TEST_RESTARTED_BY","CREW_TEST_CLI_SENTINEL"])delete fresh[k];
+ const run=()=>{const r=Bun.spawnSync(['node',probe],{env:fresh,stdout:'pipe',stderr:'pipe'});return JSON.parse(r.stdout.toString().trim().split('\n').at(-1)!)};
+ const a=run(),b=run();
+ ok(a.runtime&&a.runtime!==shared&&a.mode===0o700,'fresh test entry gets private runtime despite polluted HOME',JSON.stringify(a));
+ ok(a.runtime&&a.child===a.runtime,'test children inherit the suite runtime');
+ ok(a.runtime&&b.runtime&&a.runtime!==b.runtime,'separate suites never share runtime');
+ ok(statSync(shared).mode%512===0o755,'guard never repairs or changes shared operator runtime');
+ ok(a.runtime&&!existsSync(a.runtime),'suite-owned runtime is removed at exit');
 }
 
 console.log(`\nenv-isolation: ${pass} passed, ${fail} failed`);

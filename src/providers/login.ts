@@ -21,7 +21,7 @@
 //   the value is ever logged or shown). An error at one source (a keychain
 //   prompt denied, an empty item, an expired login) moves on to the next; the round is refused only
 //   when every source fails, and the refusal lists why each one did.
-// codex: CODEX_API_KEY in Studio's environment, as is; else a copy of ~/.codex/auth.json
+// codex: CODEX_API_KEY is materialized in the private auth.json; else a copy of ~/.codex/auth.json
 //   with its refresh token dropped, in the round's CODEX_HOME (refused if a refresh
 //   token remains).
 // One resolver serves both a round (it reads the token) and the Doctor (it probes: variables
@@ -30,10 +30,10 @@
 // expired own login): the Doctor says so ("present, but its content is checked when a round
 // starts") and, once a round has tried it, shows that round's outcome (data/login-outcomes.json).
 //   CREW_KEYCHAIN_TOOL   the security(1) to read the keychain with (tests point it at a stand-in)
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
-import { registerSecretValues } from "../secure";
+import { registerSecretValues, scrubEnv } from "../secure";
 import { keptKeys } from "../keys";
 
 /** Which kind of credential a login is, for code to decide on (the source text is for people). */
@@ -50,7 +50,7 @@ const keychainOn = () => process.env.CREW_KEYCHAIN_TOOL === "none" ? false : pro
 function keychainRead(service: string, account: string): { found: string | null; error: string | null } {
   if (!keychainOn()) return { found: null, error: null };
   const tool = process.env.CREW_KEYCHAIN_TOOL || "/usr/bin/security";
-  const r = Bun.spawnSync([tool, "find-generic-password", "-s", service, "-a", account, "-w"], { stdout: "pipe", stderr: "pipe", timeout: 5000 });
+  const r = Bun.spawnSync([tool, "find-generic-password", "-s", service, "-a", account, "-w"], { env: scrubEnv(), stdout: "pipe", stderr: "pipe", timeout: 5000 });
   if (r.exitCode === 44) return { found: null, error: null };
   if (!r.success) return { found: null, error: `the keychain item '${service}' could not be read (${r.stderr.toString().trim().slice(0, 120) || `exit ${r.exitCode}`}); macOS may be asking to allow it` };
   const v = r.stdout.toString().replace(/\n$/, ""); return v ? { found: v, error: null } : { found: null, error: `the keychain item '${service}' is empty` };
@@ -66,7 +66,7 @@ function privateFile(path: string): { found: string | null; error: string | null
 function keychainHas(service: string, account: string): boolean {
   if (!keychainOn()) return false;
   const tool = process.env.CREW_KEYCHAIN_TOOL || "/usr/bin/security";
-  return Bun.spawnSync([tool, "find-generic-password", "-s", service, "-a", account], { stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+  return Bun.spawnSync([tool, "find-generic-password", "-s", service, "-a", account], { env: scrubEnv(), stdout: "ignore", stderr: "ignore" }).exitCode === 0;
 }
 /** The captain's billing choice for claude rounds: CREW_CLAUDE_BILLING, else the setting Studio keeps (data/claude-billing.json). */
 let billingFile: string | null = null;
@@ -166,7 +166,7 @@ export function claudeLoginPresence(): { ok: boolean; kind?: LoginKind } { const
 export async function claudeLoginPresenceAsync(): Promise<{ ok: boolean; kind?: LoginKind }> {
   const found = new Map<string, boolean>();
   if (keychainOn()) { const tool = process.env.CREW_KEYCHAIN_TOOL || "/usr/bin/security";
-    await Promise.all(["crew-studio-claude-token", "Claude Code-credentials"].map(async (service) => { try { const p = Bun.spawn([tool, "find-generic-password", "-s", service, "-a", user()], { stdout: "ignore", stderr: "ignore" }); found.set(service, (await p.exited) === 0); } catch { found.set(service, false); } })); }
+    await Promise.all(["crew-studio-claude-token", "Claude Code-credentials"].map(async (service) => { try { const p = Bun.spawn([tool, "find-generic-password", "-s", service, "-a", user()], { env: scrubEnv(), stdout: "ignore", stderr: "ignore" }); found.set(service, (await p.exited) === 0); } catch { found.set(service, false); } })); }
   const r = resolveClaude(true, false, false, (service) => found.get(service) ?? false); return r.ok ? { ok: true, kind: r.kind } : { ok: false };
 }
 /** What the Doctor shows: the same resolver, reading no keychain secret. */
@@ -185,13 +185,19 @@ function codexTimestamp(value:unknown):value is string {
   const [year,month,day,hour,minute,second]=m.slice(1,7).map(Number),leap=year%4===0&&(year%100!==0||year%400===0),days=[31,leap?29:28,31,30,31,30,31,31,30,31,30,31];
   return month>=1&&month<=12&&day>=1&&day<=days[month-1]&&hour<24&&minute<60&&second<60&&(!m[7]||Number(m[8])<24&&Number(m[9])<60)&&Number.isFinite(Date.parse(value));
 }
-/** A copy of codex's login file for the round's CODEX_HOME, without its refresh token; or CODEX_API_KEY as is.
+/** A copy of codex's login file for the round's CODEX_HOME, without its refresh token; or CODEX_API_KEY in a private auth.json.
  *  Same rule as claude: an error at one source moves on to the next; refused only when every source fails, saying why each did. */
 export function codexLogin(codexHome: string): Login {
   const failed: string[] = [];
   if (process.env.CODEX_API_KEY !== undefined && !process.env.CODEX_API_KEY.trim()) failed.push("CODEX_API_KEY: it is set but empty");
   const k = process.env.CODEX_API_KEY?.trim();
-  if (k && CODEX_KEY_SHAPE.test(k)) return { ok: true, env: { CODEX_API_KEY: seen(k) }, source: "CODEX_API_KEY in Studio's environment", warn: null };
+  if (k && CODEX_KEY_SHAPE.test(k)) {
+    mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+    const path = join(codexHome, "auth.json");
+    writeFileSync(path, JSON.stringify({ auth_mode: "api_key", OPENAI_API_KEY: seen(k) }), { mode: 0o600 });
+    chmodSync(path, 0o600);
+    return { ok: true, env: { CODEX_HOME: codexHome }, source: "CODEX_API_KEY in Studio's environment", warn: null };
+  }
   if (k) failed.push("CODEX_API_KEY: it is not an OpenAI API key (expected sk-…)");
   const p = join(process.env.CODEX_HOME || join(home(), ".codex"), "auth.json");
   const file = ((): Login | null => {

@@ -1,3 +1,5 @@
+import { dirname } from "node:path";
+import { codexCredentialFiles } from "./credential-fds";
 import {localUnrestricted} from "../local-execution";
 // Codex provider: `codex exec --json`, with its shell, image and web tools off,
 // the user's config and rules ignored, a read-only sandbox, and only the Studio
@@ -19,7 +21,9 @@ export function codexProvider(model = process.env.CREW_CODEX_MODEL ?? "", bin = 
     id: "codex", model: model || "codex default", reasoningEffort: approved?.effort ?? null, envKeys: ["OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_HOME"],
     sandboxNeeds: () => codexNeeds(bin, ["api.openai.com", "chatgpt.com", "auth.openai.com"], approved),
     start(systemPrompt: string, tools: ToolSpec[], ctx: ProviderCtx) {
-      const env = Object.entries({ CREW_STUDIO_URL: ctx.studioUrl, CREW_TOOL_TOKEN: ctx.token }).map(([k, v]) => `${k}=${toml(v)}`).join(",");
+      if (!ctx.tokenFile) throw new Error("Codex provider requires a private tool-token file");
+      // the token reaches the MCP server through a 0600 file, never this -c value (which is on the CLI's argv): see ProviderCtx.tokenFile
+      const env = Object.entries({ CREW_STUDIO_URL: ctx.studioUrl, CREW_TOOL_TOKEN_FILE: ctx.tokenFile }).map(([k, v]) => `${k}=${toml(v)}`).join(",");
       const args = ["exec", "--json", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "--ignore-rules", "-s", localUnrestricted()?"danger-full-access":"read-only",
         "--disable", "shell_tool", "--disable", "image_generation", "-c", `web_search=${toml("disabled")}`, "-c", `approval_policy=${toml("never")}`,
         "-c", `developer_instructions=${toml(systemPrompt)}`,
@@ -28,7 +32,9 @@ export function codexProvider(model = process.env.CREW_CODEX_MODEL ?? "", bin = 
         "-c", `mcp_servers.studio.enabled_tools=[${tools.map((t) => toml(t.name)).join(",")}]`,
         ...(approved ? ["-p", "crew-native"] : []), ...(model ? ["-m", model] : []), "{TEXT}"];
       const cmd = () => (/\.(mjs|js|ts)$/.test(bin) ? [process.execPath, bin, ...args] : [bin, ...args]);
-      return processSession(cmd, ctx.cwd, ctx.env, parser, ctx.sandbox);
+      const auth = codexCredentialFiles(ctx.env, dirname(ctx.tokenFile));
+      const session = processSession(cmd, ctx.cwd, auth.env, parser, ctx.sandbox);
+      return { interrupt() { session.interrupt(); auth.close(); }, async *send(text: string) { try { yield* session.send(text); } finally { auth.close(); } } };
     },
   };
 }

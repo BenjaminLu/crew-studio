@@ -1,5 +1,5 @@
 import {OperatingRules,jobInstructions} from "../operating-rules";
-import {selectTestCommand,packageTestCommand,prepareTestBase,testEnvironment,testRunner,selectionEnv,ranNoTests,treeState} from "../test-command";
+import {selectTestCommand,packageTestCommand,prepareTestBase,testEnvironment,testRunner,selectionEnv,ranNoTests,testTail,needsOutsideSandbox,treeState} from "../test-command";
 import {localUnrestricted} from "../local-execution";
 import { codeHandoffView } from "./code-handoff";
 import { installCodeRecovery } from "./code-recovery";
@@ -96,6 +96,16 @@ export const changedOf = (wt: string, base: string): ChangedPath[] => {
 const head = (wt: string) => must(wt, ["rev-parse", "HEAD"]);
 /** Executed run_tests calls a worker gets per round; refused calls and runs that select no tests are not counted. */
 const WORKER_TEST_RUNS = 10;
+/** A run_tests of the whole declared command, as the run's sandboxBlocked list names it. */
+export const WHOLE = "the whole test command";
+/** The run's sandboxBlocked list (architecture §10 "Loopback"): a run the sandbox stopped adds its tests with the reason and the
+ *  tree it ran on; a passing run clears the tests it ran (a pass of the whole command clears them all). */
+export function markSandboxBlocked(x: any, tests: string[], reason: string | null, passed: boolean, tree: string) {
+  const before: any[] = x.ctx.sandboxBlocked ?? [];
+  let list = passed ? before.filter((b) => !tests.includes(WHOLE) && !tests.includes(b.test)) : before.slice();
+  if (reason) { list = list.filter((b) => !tests.includes(b.test)); for (const t of tests) list.push({ test: t, reason, tree }); }
+  if (list.length !== before.length || reason) { x.ctx.sandboxBlocked = list; x.save(); }
+}
 /** Executed run_tests calls a run-mode reviewer gets per review; refused calls and runs that select no tests are not counted. */
 const REVIEW_TEST_RUNS = 3;
 /** The base package.json scripts.test text, whatever source the declared test command came from (runner=npm-test runs it). */
@@ -1290,14 +1300,18 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
             const env:Record<string,string>={...selectionEnv(files), CREW_TEST_OUTPUT_DIR:outputDir};
             Object.assign(env,testEnvironment());
             runs++;
-            const r = await sandboxed(command, { cwd, out: outputDir, tmp: join(box, "tmp"), timeoutS: cfg.timeout_s, network: false, dataDir: o.dataDir,env });
+            const r = await sandboxed(command, { cwd, out: outputDir, tmp: join(box, "tmp"), timeoutS: cfg.timeout_s, network: false, dataDir: o.dataDir,env, testRun: true });
             if (r.refused) { runs--; return { error: `refused: ${r.refused}` }; }
             if(!engine.owns(x))return{error:'round owner ended during tests'};
             const output=r.stdout+r.stderr;writeFileSync(join(box,'output.log'),output);
-            const tail=output.trim().split("\n").slice(-80).join("\n").slice(-16000);
+            const tail=testTail(output); // the failing tests' assertion text survives a long run
             if(!r.timedOut&&ranNoTests(output,r.code)){runs--;return{status:'no-tests',error:`the run executed no tests, so it proves nothing and does not count against the limit. ${files?.length?`The adapter got CREW_TEST_FILES=${env.CREW_TEST_FILES} and CREW_TEST_PATHS=${env.CREW_TEST_PATHS}; check those name existing test files.`:'Check the declared command finds the test files.'}`,target,command,files:files??null,exit:r.timedOut?null:r.code,tail};}
             const evidence=engine.record(x,'worker-test-execution',{head:tree.head,data:{command,target,base:x.ctx.baseCommit,files:files??null,dirty:tree.dirty,tree:tree.tree,exit:r.timedOut?null:r.code,timedOut:r.timedOut,executionMode:localUnrestricted()?'local-unrestricted':'default',outputSha256:createHash('sha256').update(output).digest('hex')}});
-            return { status:'executed',target,command,base:x.ctx.baseCommit,head:tree.head,dirty:tree.dirty,tree:tree.tree,exit: r.timedOut ? null : r.code, timedOut: r.timedOut, evidence:evidence?{seq:evidence.seq,sig:evidence.sig}:null,tail }; }
+            // a failure the sandbox caused (Docker, a refused socket) is marked on the run with its reason, and a later
+            // passing run of the same tests clears it. No gate exemption: CI runs the same command in the same sandbox and blocks
+            const outside=r.timedOut?null:needsOutsideSandbox(output,r.code);
+            markSandboxBlocked(x,files?.length?files:[WHOLE],outside,r.code===0&&!r.timedOut,tree.tree);
+            return { status:outside?'needs-outside-sandbox':'executed',...(outside?{needsOutsideSandbox:`couldn't run inside the sandbox: ${outside}. Studio's CI runs the same command in the same sandbox, so this blocks the gate; the escalation card shows the captain this reason. Say so in worker_report; never drop, skip or loosen the test.`}:{}),...(r.loopback?.closedReason?{loopbackClosed:r.loopback.closedReason}:{}),target,command,base:x.ctx.baseCommit,head:tree.head,dirty:tree.dirty,tree:tree.tree,exit: r.timedOut ? null : r.code, timedOut: r.timedOut, evidence:evidence?{seq:evidence.seq,sig:evidence.sig}:null,tail,...(r.sandbox?{sandbox:r.sandbox}:{}) }; }
     },
     system: (x, skill) => workerRuntimeRules(x.ctx.reportOnly?.build ? `${skill}\n\nREPORT ONLY: your code from the last round is kept. Do not change any file. Read what you need and call worker_report once with a complete report, then one line.`
       : `${skill}\n\nYou build ONE change in the run's worktree with the fs_* tools (no shell; run_tests runs the repository's tests). Stay inside the spec's scope. Each done line needs a test that fails without your change. How to test, the run budget, the browser library and the read caps: the brief's TOOLS, TESTS and DEPENDENCIES sections (operating manual, code-firstmate/worker). Studio commits your work; you never commit. End with worker_report, then one line.`),
@@ -1523,13 +1537,14 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
           const exe = resolveCmd(copy, argv[0]); if (!exe) return { error: `refused: ${argv[0]} is not a program on the fixed PATH (${fixedPath("<copy>").join(":")}) or a file inside the copy` };
           const cmd = [exe, ...argv.slice(1)]; mkdirSync(join(box, "tmp"), { recursive: true });
           const r = process.env.CREW_TEST_REVIEW_SANDBOX_REFUSE === "1" ? { refused: "the round sandbox is not available (test)" } as any
-            : await sandboxed(cmd, { cwd: copy, out: copy, tmp: join(box, "tmp"), timeoutS, network: false, dataDir: o.dataDir, argvRead: false, env: { PATH: fixedPath(copy).join(":"), ...testEnvironment(), ...extraEnv, CREW_TEST_OUTPUT_DIR:copy } });
+            : await sandboxed(cmd, { cwd: copy, out: copy, tmp: join(box, "tmp"), timeoutS, network: false, dataDir: o.dataDir, argvRead: false, testRun: !!tests, env: { PATH: fixedPath(copy).join(":"), ...testEnvironment(), ...extraEnv, CREW_TEST_OUTPUT_DIR:copy } });
           if (r.refused) { d.executed.push({ command: argv.join(" "), refused: r.refused, at: new Date().toISOString() }); x.save(); return { error: `refused: ${r.refused} (recorded: the merge card flags that it could not run)` }; }
-          const tail = (r.stdout + r.stderr).trim().split("\n").slice(-25).join("\n");
+          const tail = testTail(r.stdout + r.stderr, 25);
           // a test run that selected nothing proves nothing: never recorded as an executed verification
           if (tests && !r.timedOut && ranNoTests(r.stdout + r.stderr, r.code)) return { status: "no-tests", error: `the run executed no tests, so it proves nothing and does not count against the limit.${extraEnv.CREW_TEST_FILES ? ` The adapter got CREW_TEST_FILES=${extraEnv.CREW_TEST_FILES} and CREW_TEST_PATHS=${extraEnv.CREW_TEST_PATHS}; check those name existing test files.` : " Check the declared command finds the test files."}`, exit: r.timedOut ? null : r.code, tail };
           d.executed.push({ command: argv.join(" "), exit: r.timedOut ? null : r.code, at: new Date().toISOString(), ...(tests ? { tests } : {}) }); x.save();
-          return { status: "executed", exit: r.timedOut ? null : r.code, timedOut: r.timedOut, tail };
+          const outside = tests && !r.timedOut ? needsOutsideSandbox(r.stdout + r.stderr, r.code) : null;
+          return { status: outside ? "needs-outside-sandbox" : "executed", exit: r.timedOut ? null : r.code, timedOut: r.timedOut, ...(outside ? { needsOutsideSandbox: `couldn't run inside the sandbox: ${outside} (no gate exemption: CI runs the same command in the same sandbox)` } : {}), tail };
         } catch (e: any) { return { error: String(e?.message ?? e) }; }
         finally { rmSync(box, { recursive: true, force: true }); } };
       const reviewTests = async (a: any): Promise<any> => {
@@ -1550,7 +1565,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
         let command; try { command = selectTestCommand(cfg, files); } catch (e: any) { return { error: e.message }; }
         if (runs >= REVIEW_TEST_RUNS) return { error: `test run limit reached: all ${REVIEW_TEST_RUNS} executed runs are used; judge by reading and say what is not verified` };
         runs++; const r: any = await inCopy(`tests-${++attempts}`, command!, cfg.timeout_s, selectionEnv(files), files?.length ? files.map(String) : "all");
-        if (r.status !== "executed") runs--; // refused, could not run, or ran no tests
+        if (r.status !== "executed" && r.status !== "needs-outside-sandbox") runs--; // refused, could not run, or ran no tests; a run the sandbox stopped still counts, as for the worker
         return r;
       };
       const runTool: AgentTool[] = mode !== "run" ? [] : [
@@ -1622,11 +1637,18 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     en: { why, how, scope: { in: scopeIn(x), out: [] }, done: x.ctx.spec?.done ?? [], beforeAfter: extra.ba ?? "", glossary },
     zh: { why: zhWhy, how: zhHow, intent: x.ctx.spec?.explain?.["zh-TW"] || undefined, scope: { in: scopeIn(x), out: [] }, done: x.ctx.spec?.done ?? [], beforeAfter: extra.ba ?? "", glossary: zhGloss } });
   // what an escalation names: the checks still failing on the last round (from its brief), never the brief itself
+  /** The tests a worker's run_tests found the sandbox stopped (architecture §10 "Loopback"), still open: not passed since by a
+   *  later run_tests of the same tests or by CI at the current head. No gate exemption: they block, and the card says why. */
+  const sandboxBlocked = (x: X): { test: string; reason: string }[] => {
+    const l: any[] = x.ctx.sandboxBlocked ?? []; if (!l.length) return [];
+    const ci = engine.ledger(x.run.id).filter((e: any) => e.check === "firstmate/ci" && (!e.record || e.record === "check")).at(-1);
+    return ci?.verdict === "pass" && ci.head && ci.head === x.ctx.head ? [] : l; };
+  const sandboxLines = (x: X) => sandboxBlocked(x).map((b) => `- couldn't run inside the sandbox: ${b.test}: ${b.reason}`);
   const failingOf = (x: X, producer: string) => { const items: any[] = x.ctx.briefs?.[producer]?.items ?? []; const by = new Map<string, string>();
     for (const it of items) if (it?.check && !by.has(it.check)) by.set(String(it.check), String(it.message ?? "").replace(/\s+/g, " ").slice(0, 160)); return [...by.entries()].slice(0, 6); };
-  const failingEn = (x: X, producer = "build") => { const f = failingOf(x, producer); return f.length ? `Still failing: ${f.map(([c, m]) => `${c}${m ? ` (${m})` : ""}`).join("; ")}.` : "No check names a failure; the captain's or the reviewer's notes are still open."; };
-  const failingZh = (x: X, producer = "build") => { const f = failingOf(x, producer); return f.length ? `仍未通過的檢查：${f.map(([c]) => c).join("、")}。` : "沒有檢查列出失敗；船長或 reviewer 的意見仍未處理。"; };
-  const failingList = (x: X, producer = "build") => failingOf(x, producer).map(([c, m]) => `- ${c}${m ? `: ${m}` : ""}`).join("\n");
+  const failingEn = (x: X, producer = "build") => { const f = failingOf(x, producer), sb = sandboxBlocked(x); return (f.length ? `Still failing: ${f.map(([c, m]) => `${c}${m ? ` (${m})` : ""}`).join("; ")}.` : "No check names a failure; the captain's or the reviewer's notes are still open.") + (sb.length ? ` Couldn't run inside the sandbox: ${sb.map((b) => `${b.test} (${b.reason})`).join("; ")}.` : ""); };
+  const failingZh = (x: X, producer = "build") => { const f = failingOf(x, producer), sb = sandboxBlocked(x); return (f.length ? `仍未通過的檢查：${f.map(([c]) => c).join("、")}。` : "沒有檢查列出失敗；船長或 reviewer 的意見仍未處理。") + (sb.length ? `在 sandbox 裡跑不起來：${sb.map((b) => b.test).join("、")}。` : ""); };
+  const failingList = (x: X, producer = "build") => [...failingOf(x, producer).map(([c, m]) => `- ${c}${m ? `: ${m}` : ""}`), ...sandboxLines(x)].join("\n");
   /** the "another model" picker: the providers and models Studio is set up with (engine.modelChoices) */
   const modelPicker = () => { const c = engine.modelChoices(); return c.length ? { select: c } : { note: true, noteLabel: "provider/model, e.g. codex/gpt-5", noteLabelZh: "provider/model，例如 codex/gpt-5" }; };
   /** the step this card came from (the last finished step before it): which escalation it is */
@@ -1707,7 +1729,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
       return { title: `The worker is blocked by the scope: widen it or narrow the change? ${T(x)}`, zhTitle: `worker 被範圍擋住：要放寬範圍，還是縮小改動？${ZT(x)}`,
         ...base(x, `The worker stopped: the change needs work outside the approved scope (${scopeIn(x).join(", ") || "no paths"}). It said: ${String(rep.summary ?? "").slice(0, 400)}`, "Rescope the spec to include what it needs, or to drop that part; or park the run.",
           `worker 停下來了：這個改動需要動到核准範圍（${scopeIn(x).join("、") || "沒有路徑"}）以外的地方。`, "調整規格範圍，把需要的部分加進來或拿掉；或暫停這個 run。"),
-        body: `The worker stopped on round ${from?.visit ?? "?"}: the change needs work outside the approved scope.\n\nThe worker said: ${String(rep.summary ?? "").slice(0, 1200)}${files.length ? `\n\nFiles: ${files.join(", ")}` : ""}`, options: rescopeOpts }; }
+        body: `The worker stopped on round ${from?.visit ?? "?"}: the change needs work outside the approved scope.\n\nThe worker said: ${String(rep.summary ?? "").slice(0, 1200)}${files.length ? `\n\nFiles: ${files.join(", ")}` : ""}${sandboxLines(x).length ? `\n\n${sandboxLines(x).join("\n")}` : ""}`, options: rescopeOpts }; }
     // a round stopped before it could finish (build, or any round blocked before its agent: a remote it cannot read,
     // a conflict it cannot resolve …): its own words say why
     if (from && (from.node === "build" || from.outcome === "blocked")) { const n = x.run.nodes[from.node], name = from.node === "plan-accept" ? "plan decision" : from.node;

@@ -27,7 +27,16 @@ export function roundEnv(providerKeys: string[] = [], add: Record<string, string
 /** The environment of a non-agent child tool (git, the renderer): everything except credentials. */
 export function scrubEnv(base: Record<string, string | undefined> = process.env, keep: string[] = []): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(base)) if (v !== undefined && (keep.includes(k) || !SECRET_NAME.test(k))) out[k] = v;
+  for (const [k, v] of Object.entries(base)) {
+    if (v === undefined) continue;
+    // Proxy variable names do not match SECRET_NAME, but URL userinfo is a credential.
+    // Drop the whole setting: stripping userinfo would silently change proxy authority.
+    if (/^(?:https?|all|ftp|socks)_proxy$/i.test(k)) {
+      try { const url = new URL(v); if (url.username || url.password) continue; }
+      catch { if (v.includes("@")) continue; }
+    }
+    if (keep.includes(k) || !SECRET_NAME.test(k)) out[k] = v;
+  }
   return out;
 }
 

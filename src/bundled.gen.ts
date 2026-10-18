@@ -325,6 +325,7 @@ import b321 from "../docs/units/web-open-task-reopen.md" with { type: "file" };
 import b322 from "../docs/units/workflow-overview.md" with { type: "file" };
 import b323 from "../docs/units/worktrees.md" with { type: "file" };
 import b324 from "../docs/v2-spec.md" with { type: "file" };
+import b325 from "../docs/w29-local-sandbox.md" with { type: "file" };
 
 export const BUNDLED: Record<string, string> = {
   "workflows/change.flow.yaml": b0,
@@ -652,4 +653,5 @@ export const BUNDLED: Record<string, string> = {
   "docs/units/workflow-overview.md": b322,
   "docs/units/worktrees.md": b323,
   "docs/v2-spec.md": b324,
+  "docs/w29-local-sandbox.md": b325,
 };

@@ -166,7 +166,7 @@ const app = spawn("bun", ["src/server.ts"], { cwd: root, stdio: ["ignore", "pipe
 let appLog = ""; app.stdout!.on("data", (d) => (appLog += d)); app.stderr!.on("data", (d) => (appLog += d));
 try {
   await waitUp(base, app);
-  const get = async (p: string) => { const r = await fetch(base + p); try { return await r.json(); } catch { return { status: r.status }; } };
+  const get = async (p: string) => { const r = await fetch(base + p, { headers: { "x-crew-session": TOKEN } }); try { return await r.json(); } catch { return { status: r.status }; } };
   const imp = async (body: any, headers: Record<string, string> = { cookie: `crew_session=${TOKEN}`, origin: base }) => {
     const r = await fetch(`${base}/api/skills/import`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
     let j: any = {}; try { j = await r.json(); } catch {} return { status: r.status, ...j };

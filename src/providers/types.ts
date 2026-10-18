@@ -16,7 +16,10 @@ export type NEvent =
 export type Usage = { usd: number | null; inTokens: number | null; outTokens: number | null };
 
 /** Where a provider reaches Studio's tools: an MCP stdio server that calls Studio with a per-question token. */
-export type ProviderCtx = { studioUrl: string; token: string; cwd: string; mcpCommand: string[]; env: Record<string, string>;
+export type ProviderCtx = { studioUrl: string; token: string;
+  /** a 0600 file holding the tool token, readable only inside this round's sandbox: the CLI providers hand the MCP server
+   *  CREW_TOOL_TOKEN_FILE=this instead of putting the token on their argv, where any same-uid process could read it */
+  tokenFile?: string | null; cwd: string; mcpCommand: string[]; env: Record<string, string>;
   /** an agent round: the process runs under this sandbox profile (architecture §10) */
   sandbox?: { profile: string } | null;
   /** an in-process provider in a sandboxed round: its requests go through this proxy URL (with the round's credential) */

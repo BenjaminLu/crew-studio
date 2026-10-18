@@ -23,8 +23,8 @@ const COST = /\$\s?\d|\bcost\b|\bUSD\b|\bprice\b|成本|費用|花費/i;
 try {
   await waitUp(base, app);
   // auth over HTTP: no session, a 401; the session header reads
-  ok((await fetch(`${base}/api/projects/overview`)).status === 401, 'GET /api/projects/overview without a session: 401');
-  ok((await fetch(`${base}/api/projects/harbor-api/overview`)).status === 401, 'GET /api/projects/<id>/overview without a session: 401');
+  ok((await fetch(`${base}/api/projects/overview`, { headers: { 'x-crew-session': '' } })).status === 401, 'GET /api/projects/overview without a session: 401');
+  ok((await fetch(`${base}/api/projects/harbor-api/overview`, { headers: { 'x-crew-session': '' } })).status === 401, 'GET /api/projects/<id>/overview without a session: 401');
   const side = await (await fetch(`${base}/api/projects/overview`, { headers: { 'x-crew-session': 'test-session' } })).json();
   ok(side.projects?.map((p) => p.id).join() === 'harbor-api,tidepool-docs,sandbox,studio', 'the sidebar payload lists the three projects and the Studio row', JSON.stringify(side.projects?.map((p) => p.id)));
   browser = withSession(await chromium.launch({ headless: true }), base);

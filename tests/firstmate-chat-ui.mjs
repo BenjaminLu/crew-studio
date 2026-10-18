@@ -59,7 +59,8 @@ try {
     ok(await fm.locator("table.md-table thead th").count() === 3 && await fm.locator("table.md-table tbody tr").count() === 3, `${tag}: header and body rows are kept`);
     ok((await fm.locator("table.md-table tbody tr").nth(1).locator("td").nth(1).innerText()) === "轉角書店社群主視覺（方形）", `${tag}: a CJK cell keeps its full text`);
     ok(await fm.locator("table.md-table tbody tr").first().locator("td b").innerText() === "R-080" && await fm.locator("table.md-table tbody tr").first().locator("td code").count() === 1, `${tag}: a cell's bold and code still render`);
-    ok(await fm.locator("table.md-table th").nth(2).evaluate((e) => getComputedStyle(e).textAlign) === "right", `${tag}: a column's alignment from the separator row applies`);
+    // Chat refresh replaces rows: resolve and measure the same DOM revision atomically.
+    ok(await p.evaluate(() => {const row=[...document.querySelectorAll('#chatLog [data-main="firstmate"]')].find(e=>e.textContent.includes("轉角書店單頁網站"));const cell=row?.querySelectorAll('table.md-table th')[2];return cell?getComputedStyle(cell).textAlign:null;}) === "right", `${tag}: a column's alignment from the separator row applies`);
     ok(/其他還在等你的卡片/.test(bub) && /請到收件匣核准/.test(bub), `${tag}: the text before and after the table stays`);
     const fits = await p.evaluate(() => { const w = document.querySelector("#chatLog .md-table-wrap"); return !!w && w.getBoundingClientRect().right <= document.querySelector("#chatLog").getBoundingClientRect().right + 1 && document.documentElement.scrollWidth <= innerWidth; });
     ok(fits, `${tag}: the table stays inside the chat panel; nothing scrolls the page sideways`);

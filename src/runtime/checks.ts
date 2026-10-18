@@ -1,3 +1,5 @@
+import { openScopedProxy } from "../egress-client";
+import { BROKER_PORTS, DEFAULT_STUDIO_PORT } from "../loopback-ports";
 import {localUnrestricted} from "../local-execution";
 // The check runtime (docs/check-contract.md). Every script that judges a step's
 // output is a check: a manifest (check.yaml) plus an executable, a native
@@ -11,12 +13,13 @@ import {localUnrestricted} from "../local-execution";
 //   data/evidence/<R-id>/ledger.jsonl                  one signed line per check result, verdict, plan acceptance and card answer
 //   data/evidence/<R-id>/<seq>-<id>/out/               what a check wrote (its evidence)
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { spawn as spawnChild } from "node:child_process";
 import { bundledBytes, bundledList, bundledText, parseYaml } from "../bundled";
 import { withLock } from "../ids";
+import { runtimeDir } from "../instance";
 import type { AgentTool } from "../agent";
 import { parseFinding, type Finding } from "./locator";
 
@@ -25,7 +28,7 @@ export type Schema = { type?: string; properties?: Record<string, Schema & { def
 export type CheckManifest = {
   id: string; pack: string; ref: string; version: string; title: { en: string; "zh-TW"?: string }; description?: string;
   applies_to: string[]; kind: "deterministic" | "judged" | "hook"; blocking: boolean; needs: string[];
-  params: Schema; policy_bind: Record<string, string>; timeout_s: number; network: boolean;
+  params: Schema; policy_bind: Record<string, string>; timeout_s: number; network: boolean; /** the check runs the project's tests: a test run's loopback (architecture §10) */ test_run: boolean;
   adapter?: { command: string[]; optional?: boolean; pass_on?: number[]; findings_from?: { regex: string; class?: string; severity?: string } } | null;
   native?: string | null; run?: string | null; at?: string | null; proves?: number[] | null;
   /** role: the workflow role the judge works as (its skill is the judge's role skill); none: the role of the node the check sits on */
@@ -158,7 +161,7 @@ export class CheckRegistry {
       if (!y || y.id !== id) continue;
       const man: CheckManifest = { id, pack, ref: `${pack}/${id}`, version: String(y.version ?? "1.0.0"), title: typeof y.title === "string" ? { en: y.title } : (y.title ?? { en: id }), description: y.description ?? "",
         applies_to: y.applies_to ?? [], kind: y.kind === "judged" ? "judged" : y.kind === "hook" ? "hook" : "deterministic", blocking: y.blocking !== false && y.kind !== "hook", needs: y.needs ?? [],
-        params: y.params ?? { type: "object", properties: {} }, policy_bind: y.policy_bind ?? {}, timeout_s: Number(y.timeout_s ?? 120), network: y.network === true,
+        params: y.params ?? { type: "object", properties: {} }, policy_bind: y.policy_bind ?? {}, timeout_s: Number(y.timeout_s ?? 120), network: y.network === true, test_run: y.test_run === true,
         adapter: y.adapter ?? null, native: y.native ?? null, run: y.native || y.adapter ? null : (y.run ?? "run"), at: y.at ?? null, proves: Array.isArray(y.proves) ? y.proves : null, judge: y.judge ?? null, sample: y.sample ?? null,
         dir: disk ?? f.slice(0, -"/check.yaml".length), runtime: y.runtime === "studio" ? "studio" : null };
       m.set(man.ref, man);
@@ -184,20 +187,39 @@ export class CheckRegistry {
 // A check (and a legacy `run` gate) runs under macOS sandbox-exec with a profile that
 // starts from (deny default) and allows only: reading the system, the interpreters on
 // PATH, the check's own directory and the paths its input names; writing out/ and its
-// tmp/; no network (unless the manifest asks), no unix sockets, no LaunchServices or
-// AppleEvents. Studio's data (ledger.key, keys, policies) and the user's secret folders
+// tmp/; no network (unless the manifest asks; a test run gets loopback, see below), no unix sockets, no LaunchServices or
+// AppleEvents. Studio's data (ledger.key, keys, policies, session token), its launch token folder and the user's secret folders
 // are denied last, so even an input inside them is not readable. Off macOS there is no
 // equivalent sandbox: a check is refused, and the Doctor says so.
-export function sandboxInfo() {
-  const sbx = process.platform === "darwin" && existsSync("/usr/bin/sandbox-exec") && process.env.CREW_FORCE_NO_SANDBOX !== "1";
-  return { kind: sbx ? "sandbox-exec" : "none", ok: sbx, detail: sbx ? "macOS sandbox (default deny): checks read only their inputs and the system, write only out/, no network"
-    : "no OS sandbox on this platform: checks are refused (they need read-only inputs, out/ only and no network)" };
+/** macOS seatbelt, present and not forced off: the sandbox every check and round runs under. */
+const seatbeltAvailable = () => process.platform === "darwin" && existsSync("/usr/bin/sandbox-exec") && process.env.CREW_FORCE_NO_SANDBOX !== "1";
+/** Linux bwrap, present: a test run (not a round) can run under it (v1's layout, a private loopback). */
+const bwrapAvailable = () => process.platform === "linux" && process.env.CREW_FORCE_NO_SANDBOX !== "1" && !!Bun.which("bwrap");
+export function sandboxInfo(testRun = false) {
+  if (seatbeltAvailable()) return { kind: "sandbox-exec" as const, ok: true, detail: "macOS sandbox (default deny): checks read only their inputs and the system, write only out/, no network" };
+  if (testRun && bwrapAvailable()) return { kind: "bwrap" as const, ok: true, detail: "Linux bwrap: a test run gets its own pid/net namespaces (a private loopback) with read-only reads; agent rounds are not yet wired to bwrap, so they are refused here" };
+  const linux = process.platform === "linux";
+  return { kind: "none" as const, ok: false, detail: linux
+    ? (testRun ? "no OS sandbox: Linux test runs need bwrap on PATH (install bubblewrap); without it a test run is refused" : "no OS sandbox: Linux agent rounds are not wired to bwrap yet and are refused (macOS runs them under seatbelt)")
+    : "no OS sandbox on this platform: checks and rounds are refused (they need read-only inputs, out/ only and no network)" };
 }
 const q = (p: string) => JSON.stringify(p);
+// Named sysctl allowlist for runtime OS/CPU facts. This is defense in depth only:
+// macOS KERN_PROCARGS2 (MIB 1.49.<pid>) bypasses Seatbelt's named sysctl filter,
+// even with deny sysctl-read, and exposes another same-uid process's argv/env.
+// No secret may rely on this filter for confidentiality; see docs/w29-local-sandbox.md.
+const SYSCTL_READ = `(allow sysctl-read
+  (sysctl-name-prefix "hw.")
+  (sysctl-name "kern.ostype") (sysctl-name "kern.osrelease") (sysctl-name "kern.osrevision") (sysctl-name "kern.version") (sysctl-name "kern.osversion") (sysctl-name "kern.osproductversion") (sysctl-name "kern.iossupportversion")
+  (sysctl-name "kern.hostname") (sysctl-name "kern.maxfilesperproc") (sysctl-name "kern.maxproc") (sysctl-name "kern.argmax") (sysctl-name "kern.tcsm_available") (sysctl-name "kern.tcsm_enable")
+  (sysctl-name "kern.osvariant_status") (sysctl-name "kern.secure_kernel") (sysctl-name "kern.safeboot") (sysctl-name "kern.boottime") (sysctl-name "kern.clockrate") (sysctl-name "kern.usrstack64") (sysctl-name "kern.saved_ids")
+  (sysctl-name "security.mac.sandbox.sentinel")
+  (sysctl-name "vm.overcommit") (sysctl-name "vm.footprint_interval_reset")
+  (sysctl-name "user.cs_path"))`;
 const SYSTEM_READ = ["/usr", "/bin", "/sbin", "/System", "/Library", "/opt", "/private/etc", "/etc", "/dev", "/private/var/db/timezone", "/private/var/db/dyld", "/var/db/timezone", "/Applications/Xcode.app", "/private/var/select"];
 /** Folders whose files must never reach a check, even as an input. */
 const HOME_SECRETS = [".ssh", ".aws", ".gnupg", ".netrc", ".config", ".claude", ".claude.json", ".codex", ".docker", ".kube", ".npmrc", ".git-credentials", "Library/Keychains"];
-export const SECRET_DIRS = (dataDir?: string | null) => { const h = homedir(); return [...(dataDir ? [join(dataDir, "ledger.key"), join(dataDir, "keys.json"), join(dataDir, "github-token"), join(dataDir, "policies"), join(dataDir, "remote-devices.json")] : []),
+export const SECRET_DIRS = (dataDir?: string | null) => { const h = homedir(); return [...(dataDir ? [join(dataDir, "ledger.key"), join(dataDir, "keys.json"), join(dataDir, "github-token"), join(dataDir, "policies"), join(dataDir, "remote-devices.json"), join(dataDir, "session-token")] : []), runtimeDir(),
   ...HOME_SECRETS.map((x) => join(h, x))]; };
 /** The deny list a profile ends with: SECRET_DIRS, and the same folders of the account's own home when Studio runs with another
  *  HOME (the acceptance harness, a launcher that sets HOME): those hold the real logins. */
@@ -217,12 +239,87 @@ function interpreterDirs(): string[] {
 let acctHome: string | null = null;
 export function accountHomeDir(): string {
   if (acctHome) return acctHome;
-  try { const user = Bun.spawnSync(["/usr/bin/id", "-un"], { stdout: "pipe" }).stdout.toString().trim();
-    const r = Bun.spawnSync(["/usr/bin/dscl", ".", "-read", `/Users/${user}`, "NFSHomeDirectory"], { stdout: "pipe", stderr: "ignore" });
+  try { const user = Bun.spawnSync(["/usr/bin/id", "-un"], { env: {PATH:"/usr/bin:/bin"}, stdout: "pipe" }).stdout.toString().trim();
+    const r = Bun.spawnSync(["/usr/bin/dscl", ".", "-read", `/Users/${user}`, "NFSHomeDirectory"], { env: {PATH:"/usr/bin:/bin"}, stdout: "pipe", stderr: "ignore" });
     const m = /NFSHomeDirectory:\s*(\S+)/.exec(r.stdout.toString()); if (m) return (acctHome = m[1]); } catch {}
   return (acctHome = homedir());
 }
-export function profileFor(o: { out: string; tmp: string; reads: string[]; network: boolean; dataDir?: string | null; cwd?: string | null }) {
+// ---------- loopback for test runs ----------
+// Test servers can bind ephemeral local ports. Explicit denies carve out existing
+// listeners, the Studio port and the entire reserved capability-listener range.
+// The snapshot is not isolation against unrelated host applications started later.
+export const LOCAL_BINDING_RULES = `(allow network-bind (local ip "localhost:*"))
+(allow network-inbound (local ip "localhost:*"))
+(allow network-outbound (remote ip "localhost:*"))`;
+export function parseListeningPorts(output: string): number[] {
+  if (!/^Proto\s+Recv-Q\s+Send-Q\s+Local Address\s+Foreign Address\s+\(state\)/m.test(output)) throw new Error("listener inspection returned an unrecognized netstat header");
+  const ports = new Set<number>();
+  for (const line of output.split("\n")) {
+    if (!/\bLISTEN\s*$/.test(line)) continue;
+    const fields = line.trim().split(/\s+/), m = /\.(\d+)$/.exec(fields[3] ?? "");
+    if (!/^tcp(?:4|6|46)?$/.test(fields[0] ?? "") || !m || +m[1] < 1 || +m[1] > 65535) throw new Error("listener inspection could not parse a listening address");
+    ports.add(+m[1]);
+  }
+  return [...ports].sort((a,b)=>a-b);
+}
+export function inspectListeningPorts(): number[] {
+  const r = Bun.spawnSync(["/usr/sbin/netstat", "-an", "-p", "tcp"], { stdout:"pipe", stderr:"pipe", env:{PATH:"/usr/bin:/bin:/usr/sbin"} });
+  if (!r.success) throw new Error(`listener inspection unavailable (netstat exit ${r.exitCode})`);
+  return parseListeningPorts(r.stdout.toString());
+}
+function closedTestPorts(snapshot: number[]): number[] {
+  const configured = Number(process.env.CREW_PORT ?? DEFAULT_STUDIO_PORT);
+  if (!Number.isInteger(configured) || configured < 1 || configured > 65535) throw new Error("invalid Studio listener port");
+  if (snapshot.some(n=>!Number.isInteger(n)||n<1||n>65535)) throw new Error("invalid listener snapshot port");
+  return [...new Set([...snapshot, DEFAULT_STUDIO_PORT, configured, ...BROKER_PORTS])].sort((a,b)=>a-b);
+}
+function closedPortRules(snapshot: number[]) {
+  return closedTestPorts(snapshot).map(n=>`(deny network-outbound (remote ip "localhost:${n}"))\n(deny network-bind network-inbound (local ip "localhost:${n}"))`).join("\n");
+}
+/** The env a test run gets on top of its own: bind dev servers to loopback, and keep Java on IPv4 (sandbox-runtime does the
+ *  same: an IPv4-mapped ::ffff:127.0.0.1 connect does not match "localhost"). */
+export const LOCAL_BINDING_ENV: Record<string, string> = { HOST: "127.0.0.1", JAVA_TOOL_OPTIONS: "-Djava.net.preferIPv4Stack=true" };
+/** Linux: no Seatbelt. A test command runs under bwrap with v1's linux() layout (firstmate fm_sandbox_policy.py): its own
+ *  pid, ipc, uts and network namespaces (a private loopback: its own servers answer, nothing of the host's does), the
+ *  reads bound read-only, the writes bound read-write, every denied path under them covered (a folder by an empty tmpfs, a
+ *  file by /dev/null), a fresh /tmp; a round's proxy socket, when given, bound in. null: bwrap is not installed. */
+export function linuxBwrapArgv(argv: string[], o: { cwd: string; reads: string[]; writes: string[]; deny: string[]; sock?: string | null },
+  which: (cmd: string) => string | null = (c) => Bun.which(c), exists: (p: string) => "dir" | "file" | null = (p) => { try { return statSync(p).isDirectory() ? "dir" : "file"; } catch { return null; } }): string[] | null {
+  const bwrap = which("bwrap"); if (!bwrap) return null;
+  const a = ["--die-with-parent", "--new-session", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-net", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"];
+  for (const r of o.reads) if (!["/dev", "/proc"].some((m) => r === m || r.startsWith(m + "/"))) a.push("--ro-bind-try", r, r);
+  for (const w of o.writes) a.push("--bind", w, w);
+  const bound = [...o.reads, ...o.writes], under = (x: string) => bound.some((b) => x === b || x.startsWith(b.replace(/\/$/, "") + "/"));
+  for (const n of o.deny.filter(under)) { const k = exists(n); if (k === "dir") a.push("--tmpfs", n); else if (k === "file") a.push("--ro-bind", "/dev/null", n); }
+  if (o.sock) a.push("--bind", o.sock, o.sock);
+  return [bwrap, ...a, "--chdir", o.cwd, "--", ...argv];
+}
+/** What a sandboxed test run's profile is checked to enforce before the run (the self-probe), and what it does not. */
+export const TEST_RUN_ENFORCES = "Studio's data keys, session token and launch token folder are unreadable; no connection leaves this machine; Studio, existing listeners and reserved broker ports are inaccessible";
+export const TEST_RUN_DOES_NOT = "unrelated host services started after the listener snapshot may be reachable; a test server bound to every interface is reachable from the LAN while it runs; and another same-uid process's argv and environment are readable via KERN_PROCARGS2, which the OS sandbox cannot block (so no secret is ever placed on a round's argv or in its env)";
+/**
+ * v1's self-probe: before a test run, try the profile on itself. Under the same profile a shell tries to read each existing
+ * protected path (the deny list, Studio's runtime folder among them) and to open a connection off this machine (1.1.1.1:443,
+ * by IP: no DNS). Anything that gets through means the profile does not enforce what Studio claims: the run is refused with
+ * the reason, never run on a weaker sandbox. null: the profile holds.
+ */
+export function selfProbe(profile: string, protectedPaths: string[], blockedPorts: number[] = []): string | null {
+  if (process.env.CREW_TEST_SELF_PROBE_LEAK === "1") return "the sandbox self-probe failed (test): the profile let the probe read a protected path";
+  const paths = protectedPaths.filter((p) => existsSync(p)).slice(0, 40);
+  const script = `echo PROBE_STARTED; for p in "$@"; do if [ -d "$p" ]; then /bin/ls "$p" >/dev/null 2>&1 && echo "READ $p"; else /bin/cat "$p" >/dev/null 2>&1 && echo "READ $p"; fi; done
+/usr/bin/nc -z -G 2 1.1.1.1 443 >/dev/null 2>&1 && echo "EGRESS 1.1.1.1:443";\n${closedTestPorts(blockedPorts).filter(n=>n!==DEFAULT_STUDIO_PORT).map(n=>`/usr/bin/nc -z -G 1 127.0.0.1 ${n} >/dev/null 2>&1 && echo "EGRESS 127.0.0.1:${n}"`).join("\n")}\nexit 0`;
+  const r = Bun.spawnSync(["/usr/bin/sandbox-exec", "-f", profile, "/bin/sh", "-c", script, "probe", ...paths], { stdout: "pipe", stderr: "pipe", env: { PATH: "/usr/bin:/bin" } });
+  const leaks = r.stdout.toString().split("\n").filter((l) => /^(READ|EGRESS) /.test(l));
+  if ((!r.success || !r.stdout.toString().includes("PROBE_STARTED")) && !leaks.length) return `the sandbox self-probe could not run (exit ${r.exitCode}: ${r.stderr.toString().trim().slice(0, 200)})`;
+  if (leaks.length) return `the sandbox self-probe failed: the profile let a test run ${leaks.map((l) => l.startsWith("READ") ? `read ${l.slice(5)}` : `connect to ${l.slice(7)}`).join(", ")}`;
+  // A sandbox that never starts (or denies all networking) is not a successful
+  // negative probe. Require real HTTP request/response inside the same profile.
+  const positive = `const http=require('node:http');(async()=>{for(const host of ['127.0.0.1','::1']){const s=http.createServer((q,r)=>r.end('loopback-ok'));await new Promise((r,j)=>{s.once('error',j);s.listen(0,host,r)});const url='http://'+(host.includes(':')?'['+host+']':host)+':'+s.address().port;const body=await new Promise((r,j)=>http.get(url,x=>{let b='';x.on('data',c=>b+=c);x.on('end',()=>r(b))}).on('error',j));await new Promise(r=>s.close(r));if(body!=='loopback-ok')throw Error('bad response')}console.log('LOOPBACK_POSITIVE_OK')})().catch(e=>{console.error(e);process.exit(1)});setTimeout(()=>process.exit(2),5000).unref();`;
+  const control = Bun.spawnSync(["/usr/bin/sandbox-exec", "-f", profile, process.execPath, "-e", positive], {stdout:"pipe",stderr:"pipe",env:{PATH:"/usr/bin:/bin"}, cwd:"/", timeout:7000});
+  return control.success && control.stdout.toString().includes("LOOPBACK_POSITIVE_OK") ? null : `the sandbox self-probe positive loopback control failed (exit ${control.exitCode}: ${control.stderr.toString().slice(0,200)})`;
+}
+export function profileFor(o: { out: string; tmp: string; reads: string[]; network: boolean; dataDir?: string | null; cwd?: string | null; localBinding?: boolean; blockedPorts?: number[] | null }) {
+  const ports = o.localBinding ? (o.blockedPorts === null ? (()=>{throw new Error("listener inspection unavailable");})() : o.blockedPorts ?? inspectListeningPorts()) : [];
   const reads = [...SYSTEM_READ, ...interpreterDirs(), ...o.reads].map((p) => realIf(p) ?? p);
   // the listings (not the files) of the folders above the working folder: bun reads them while it loads its environment
   const ancestors: string[] = []; { let d = o.cwd ? realIf(o.cwd) ?? o.cwd : null; while (d && d !== "/") { d = dirname(d); ancestors.push(d); } }
@@ -232,7 +329,7 @@ export function profileFor(o: { out: string; tmp: string; reads: string[]; netwo
 (allow process-fork)
 (allow process-exec)
 (allow signal (target same-sandbox))
-(allow sysctl-read)
+${SYSCTL_READ}
 (allow process-info* (target self))
 (allow ipc-posix-shm-read-data ipc-posix-shm-write-data)
 (allow file-read-metadata)
@@ -240,6 +337,7 @@ export function profileFor(o: { out: string; tmp: string; reads: string[]; netwo
 ${ancestors.length ? `(allow file-read-data ${ancestors.map((p) => `(literal ${q(p)})`).join(" ")})` : ""}
 (allow file-write* (subpath ${q(o.out)}) (subpath ${q(o.tmp)}) (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (literal "/dev/dtracehelper") (regex #"^/dev/fd/"))
 ${o.network ? '(allow network-outbound (remote ip))\n(allow network-inbound (local ip))\n(allow system-socket)' : "(deny network*)"}
+${o.localBinding ? LOCAL_BINDING_RULES + "\n" + closedPortRules(ports) : ""}
 (deny appleevent-send)
 (deny file-read* ${denyList(o.dataDir).map((p) => `(subpath ${q(realIf(p) ?? p)})`).join(" ")})
 `;
@@ -273,7 +371,7 @@ export function roundProfile(o: { cwd: string; tmp: string; writes: string[]; re
 (allow process-fork)
 (allow process-exec)
 (allow signal (target same-sandbox))
-(allow sysctl-read)
+${SYSCTL_READ}
 (allow process-info* (target self))
 (allow ipc-posix-shm-read-data ipc-posix-shm-write-data)
 (allow file-read-metadata)
@@ -308,23 +406,59 @@ export function inputPaths(v: any, out: Set<string> = new Set(), depth = 0): str
  * killed and the call returns, even if a grandchild still holds a pipe open; when the
  * process ends, any child it left behind is killed too.
  */
+// The marker env var that tags every process a sandboxed run starts (its descendants inherit it). killGroup kills the
+// process group, but a child that calls setsid() makes its own group and escapes it (esc.ts). So when a run ends, Studio —
+// unsandboxed, so it can still read other same-uid processes' env — finds every process still carrying this run's marker and
+// kills it. This is best-effort cleanup, not a security boundary: an escapee can re-exec without the marker.
+// macOS KERN_PROCARGS2 also exposes argv/env despite the seatbelt sysctl rule; credentials must never be placed there.
+export function reapMarked(marker: string) {
+  if (!marker || process.platform !== "darwin") return;
+  try {
+    const r = Bun.spawnSync(["/bin/ps", "-Aww", "-E", "-o", "pid=", "-o", "command="], { env: {PATH:"/usr/bin:/bin"}, stdout: "pipe", stderr: "ignore" });
+    for (const line of r.stdout.toString().split("\n")) {
+      const m = /^\s*(\d+)\s+(.*)$/.exec(line); if (!m || !m[2].includes(`CREW_RUN_KILL=${marker}`)) continue;
+      const pid = Number(m[1]); if (pid > 1 && pid !== process.pid) { try { process.kill(pid, "SIGKILL"); } catch {} }
+    }
+  } catch {}
+}
 export async function sandboxed(argv: string[], o: { cwd: string; out: string; tmp: string; stdin?: string; timeoutS: number; network: boolean; env?: Record<string, string>; reads?: string[]; dataDir?: string | null; signal?: AbortSignal;
   /** false: argv is untrusted (a reviewer's command), so its program's folder is never added to the reads; the caller resolved it on a fixed PATH */
-  argvRead?: boolean }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; ms: number; refused?: string; aborted?: boolean }> {
+  argvRead?: boolean;
+  /** a run of the project's tests: loopback with sandbox-runtime's allowLocalBinding rules, HOST=127.0.0.1, and the self-probe first */
+  testRun?: boolean }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; ms: number; refused?: string; aborted?: boolean;
+  /** a test run's sandbox, as the self-probe checked it: what it enforces and what it does not */
+  sandbox?: { enforced: string; notEnforced: string } }> {
   const t0 = Date.now();
-  const info = sandboxInfo();
-  if (!info.ok && !localUnrestricted()) return { code: null, stdout: "", stderr: "", timedOut: false, ms: 0, refused: info.detail };
+  const unrestricted = localUnrestricted();           // CREW_LOCAL_UNRESTRICTED: no OS sandbox at all, on any platform
+  const seatbelt = !unrestricted && seatbeltAvailable();
+  const bwrap = !unrestricted && !seatbelt && !!o.testRun && !o.network && bwrapAvailable();
+  if (!unrestricted && !seatbelt && !bwrap) return { code: null, stdout: "", stderr: "", timedOut: false, ms: 0, refused: sandboxInfo(!!o.testRun).detail };
   mkdirSync(o.out, { recursive: true }); mkdirSync(o.tmp, { recursive: true });
   const out = realpathSync(o.out), tmp = realpathSync(o.tmp);
-  const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: tmp, TMPDIR: tmp, LANG: "C.UTF-8", CI: "1", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", PYTHONDONTWRITEBYTECODE: "1", ...(o.env ?? {}) };
+  const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: tmp, TMPDIR: tmp, LANG: "C.UTF-8", CI: "1", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", PYTHONDONTWRITEBYTECODE: "1", ...(o.testRun ? LOCAL_BINDING_ENV : {}), ...(o.env ?? {}) };
   const prof = join(tmp, "..", "profile.sb");
-  writeFileSync(prof, profileFor({ out, tmp, reads: [o.cwd, ...(o.reads ?? []), ...(o.argvRead !== false && argv[0]?.startsWith("/") ? [dirname(argv[0])] : [])], network: o.network, dataDir: o.dataDir ?? null, cwd: o.cwd }));
-  const full = localUnrestricted()?argv:["/usr/bin/sandbox-exec", "-f", prof, ...argv];
+  const reads = [o.cwd, ...(o.reads ?? []), ...(o.argvRead !== false && argv[0]?.startsWith("/") ? [dirname(argv[0])] : [])];
+  let full = argv;
+  if (seatbelt) {
+    let ports: number[] = [];
+    try {
+      ports = o.testRun ? inspectListeningPorts() : [];
+      writeFileSync(prof, profileFor({ out, tmp, reads, network: o.network, dataDir: o.dataDir ?? null, cwd: o.cwd, localBinding: !!o.testRun, blockedPorts: ports }));
+    } catch (e) { return { code: null, stdout:"", stderr:"", timedOut:false, ms:Date.now()-t0, refused:`test sandbox listener inspection failed: ${String(e)}` }; }
+    // a test run is checked first: the profile must hold what Studio claims for it, or the run is refused with the reason
+    if (o.testRun) { const leak = selfProbe(prof, denyList(o.dataDir).map((p) => realIf(p) ?? p), ports); if (leak) return { code: null, stdout: "", stderr: "", timedOut: false, ms: Date.now() - t0, refused: leak }; }
+    full = ["/usr/bin/sandbox-exec", "-f", prof, ...argv];
+  } else if (bwrap) {
+    // Linux has no Seatbelt: a test run without network runs under bwrap (v1's layout: private pid/net namespaces, read-only reads)
+    full = linuxBwrapArgv(argv, { cwd: o.cwd, reads: [...SYSTEM_READ, ...interpreterDirs(), ...reads], writes: [out, tmp], deny: denyList(o.dataDir) }) ?? argv;
+  }
+  const sandbox = (seatbelt || bwrap) && o.testRun ? { enforced: TEST_RUN_ENFORCES, notEnforced: bwrap ? "another same-uid process's argv and environment are readable via /proc, so no secret is on a round's argv or in its env (the loopback itself is private under bwrap)" : TEST_RUN_DOES_NOT } : undefined;
+  const marker = randomBytes(12).toString("hex"); env.CREW_RUN_KILL = marker; // best effort only: descendants can re-exec without this marker
   return await new Promise((resolveP) => {
     let stdout = "", stderr = "", done = false, timedOut = false, aborted = false;
     const p = spawnChild(full[0], full.slice(1), { cwd: o.cwd, env, detached: true, stdio: [o.stdin != null ? "pipe" : "ignore", "pipe", "pipe"] });
-    const killGroup = () => { try { if (p.pid) process.kill(-p.pid, "SIGKILL"); } catch {} };
-    const finish = (code: number | null) => { if (done) return; done = true; clearTimeout(timer); killGroup(); try { p.stdout?.destroy(); p.stderr?.destroy(); } catch {} resolveP({ code: timedOut ? null : code, stdout, stderr, timedOut, ms: Date.now() - t0, aborted }); };
+    const killGroup = () => { try { if (p.pid) process.kill(-p.pid, "SIGKILL"); } catch {} reapMarked(marker); };
+    const finish = (code: number | null) => { if (done) return; done = true; clearTimeout(timer); killGroup(); try { p.stdout?.destroy(); p.stderr?.destroy(); } catch {} resolveP({ code: timedOut ? null : code, stdout, stderr, timedOut, ms: Date.now() - t0, aborted, ...(sandbox ? { sandbox } : {}) }); };
     const timer = setTimeout(() => { timedOut = true; finish(null); }, o.timeoutS * 1000);
     if (o.signal) { if (o.signal.aborted) { timedOut = true; setTimeout(() => finish(null), 0); } else o.signal.addEventListener("abort", () => { aborted = true; timedOut = true; finish(null); }, { once: true }); }
     p.stdout?.on("data", (d) => { if (stdout.length < 4_000_000) stdout += d; });
@@ -347,24 +481,25 @@ export async function roundExec(argv: string[], o: { cwd: string; writes: string
   egress?: { port: number; open(t: string, h: string[]): void; close(t: string): void } | null; hosts?: string[]; env?: Record<string, string> }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; refused?: string }> {
   const info = sandboxInfo(); if (!info.ok && !localUnrestricted()) return { code: null, stdout: "", stderr: "", timedOut: false, refused: info.detail };
   mkdirSync(join(o.tmp, "home"), { recursive: true }); const tmp = realpathSync(o.tmp);
-  const net = !localUnrestricted() && !!o.egress && !!o.hosts?.length; const token = net ? randomBytes(18).toString("hex") : null;
-  if (net) o.egress!.open(token!, o.hosts!);
-  const proxy = net ? `http://round:${token}@127.0.0.1:${o.egress!.port}` : null;
+  const net = !localUnrestricted() && !!o.egress && !!o.hosts?.length;
+  const lease = net ? await openScopedProxy(o.egress!, o.hosts!) : null;
+  try {
+  const proxy = lease?.url ?? null;
   const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: join(tmp, "home"), TMPDIR: tmp, LANG: "C.UTF-8", CI: "1", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null",
     ...(proxy ? { HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy, NO_PROXY: "localhost,127.0.0.1,::1", NODE_USE_ENV_PROXY: "1" } : {}), ...(o.env ?? {}) };
   const prof = join(tmp, "round.sb");
-  writeFileSync(prof, roundProfile({ cwd: o.cwd, tmp, writes: o.writes, reads: [o.cwd, ...(argv[0]?.startsWith("/") ? [dirname(argv[0])] : [])], proxyPort: net ? o.egress!.port : 1, toolPort: 1, dataDir: o.dataDir ?? null, protect: o.protect ?? [] }));
-  try {
+  writeFileSync(prof, roundProfile({ cwd: o.cwd, tmp, writes: o.writes, reads: [o.cwd, ...(argv[0]?.startsWith("/") ? [dirname(argv[0])] : [])], proxyPort: lease?.port ?? 1, toolPort: 1, dataDir: o.dataDir ?? null, protect: o.protect ?? [] }));
     return await new Promise((resolveP) => {
       let stdout = "", stderr = "", done = false, timedOut = false;
       const full=localUnrestricted()?argv:["/usr/bin/sandbox-exec","-f",prof,...argv];
+      const marker = randomBytes(12).toString("hex"); env.CREW_RUN_KILL = marker;
       const p = spawnChild(full[0],full.slice(1), { cwd: o.cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
-      const finish = (code: number | null) => { if (done) return; done = true; clearTimeout(timer); try { if (p.pid) process.kill(-p.pid, "SIGKILL"); } catch {} resolveP({ code: timedOut ? null : code, stdout, stderr, timedOut }); };
+      const finish = (code: number | null) => { if (done) return; done = true; clearTimeout(timer); try { if (p.pid) process.kill(-p.pid, "SIGKILL"); } catch {} reapMarked(marker); resolveP({ code: timedOut ? null : code, stdout, stderr, timedOut }); };
       const timer = setTimeout(() => { timedOut = true; finish(null); }, o.timeoutS * 1000);
       p.stdout?.on("data", (d) => { if (stdout.length < 1_000_000) stdout += d; }); p.stderr?.on("data", (d) => { if (stderr.length < 1_000_000) stderr += d; });
       p.on("error", (e) => { stderr += String(e); finish(127); }); p.on("exit", (code) => { setTimeout(() => finish(code), 50); });
     });
-  } finally { if (net) o.egress!.close(token!); }
+  } finally { lease?.close(); }
 }
 
 /**
@@ -373,8 +508,8 @@ export async function roundExec(argv: string[], o: { cwd: string; writes: string
  * The one executor for adapter checks and for a workflow's or project's `run` gates.
  */
 export async function execAdapter(argv: string[], o: { cwd: string; out: string; tmp: string; timeoutS: number; network?: boolean; passOn?: number[]; regex?: string | null; cls?: string; severity?: string;
-  ref: string; env?: Record<string, string>; reads?: string[]; dataDir?: string | null; stdin?: string; signal?: AbortSignal }): Promise<CheckOutput & { log: string }> {
-  const r = await sandboxed(argv, { cwd: o.cwd, out: o.out, tmp: o.tmp, timeoutS: o.timeoutS, network: !!o.network, env: o.env, reads: o.reads, dataDir: o.dataDir, stdin: o.stdin, signal: o.signal });
+  ref: string; env?: Record<string, string>; reads?: string[]; dataDir?: string | null; stdin?: string; signal?: AbortSignal; testRun?: boolean }): Promise<CheckOutput & { log: string }> {
+  const r = await sandboxed(argv, { cwd: o.cwd, out: o.out, tmp: o.tmp, timeoutS: o.timeoutS, network: !!o.network, env: o.env, reads: o.reads, dataDir: o.dataDir, stdin: o.stdin, signal: o.signal, testRun: o.testRun });
   if (r.aborted) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: "stopped: the run ended", log: r.stdout + r.stderr };
   const log = r.stdout + r.stderr;
   if (r.refused) return { verdict: "error", score: null, findings: [], evidence: [], proves: [], error: `refused: ${r.refused}`, log };

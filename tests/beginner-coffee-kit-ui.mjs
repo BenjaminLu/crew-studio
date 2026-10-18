@@ -22,7 +22,7 @@ if(process.argv.includes('--fixture-server')){
  const header=Buffer.alloc(13);header.writeUInt32BE(1);header.writeUInt32BE(1,4);header[8]=8;header[9]=6;
  const png=Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',header),chunk('IDAT',deflateSync(Buffer.from([0,161,90,28,255]))),chunk('IEND',Buffer.alloc(0))]);
  const provider={id:'codex',model:'fixture-model',reasoningEffort:'low',sandboxFree:true,start(_s,tools,ctx){if(tools.some(t=>t.name==='judge_report'))return{interrupt(){},async *send(){const args={verdict:'pass',findings:[]};yield{type:'toolStart',id:'offline-judge',name:'judge_report',args};const result=await fetch(base+'/api/tools/judge_report',{method:'POST',headers:{'content-type':'application/json','x-crew-tool-token':ctx.token},body:JSON.stringify(args)}).then(r=>r.json());if(result.error)throw new Error(result.error);yield{type:'toolEnd',id:'offline-judge',result:JSON.stringify(result)};yield{type:'turnEnd',status:'ok'};}};if(tools.some(t=>!t.name.startsWith('work_')))throw new Error('Unexpected fixture authority');return{interrupt(){},async *send(){const args={path:'index.html',content:'<!doctype html><html><head><meta charset="utf-8"></head><body><main><h1>A quieter coffee moment</h1><p>Warm light, coffee and croissants.</p><img src="assets/coffee.png" alt="Offline image fixture"><video controls src="assets/coffee.mp4"></video></main></body></html>'};yield{type:'toolStart',id:'page',name:'work_write',args};const result=await fetch(base+'/api/tools/work_write',{method:'POST',headers:{'content-type':'application/json','x-crew-tool-token':ctx.token},body:JSON.stringify(args)}).then(r=>r.json());if(result.error)throw new Error(result.error);yield{type:'toolEnd',id:'page',result:JSON.stringify(result)};yield{type:'message',text:'Offline page fixture created.'};yield{type:'turnEnd',status:'ok'};}};}};
- const m3=createM3({dataDir:data,fileAllow:[data],studioUrl:()=>base,provider:()=>provider,send,allowDrive:()=>true});
+ const m3=createM3({dataDir:data,fileAllow:[data],studioUrl:()=>base,provider:()=>provider,send,allowDrive:()=>true,session:()=>'coffee-ui-fixture'});
  const coffeeAdapters={choice:()=>({provider:'codex',model:'fixture-model',effort:'low'}),artifacts,image:async o=>{o.authorize();return{bytes:png,mime:'image/png',width:1,height:1,sha256:'offline-fixture',provider:'codex',model:'fixture-model',effort:'low'};},video:async o=>{o.authorize();const bytes=Buffer.from(fixtureFilm);return{poster:fixturePoster,bytes,codec:'h264',duration:12,width:960,height:540,renderer:'hyperframes@0.8.159'};}};
  const verifiedFixtureRender=coffeeAdapters.video,filmStatus={ready:true,reason:null};let discussion=null;
  const rt=createRuntime({staffingFacts:async()=>[{provider:'codex',support:'supported',auth:'verified',quota:'available',expires:Date.now()+30000,models:[{id:'fixture-model',efforts:['low']}]}],dataDir:data,agents,provider:()=>provider,defaultProvider:()=>({provider:'codex',model:'fixture-model'}),log,send,fmRoot:join(data,'protected'),studioUrl:()=>base,coffeeChoice:()=>({provider:'codex',model:'fixture-model',effort:'low'}),coffeeFilmStatus:filmStatus,install:[engine=>{const coffee=installCoffeeKit(engine,coffeeAdapters);m3.useArtifactReviewPolicy(coffee.artifactReview);} ]});
@@ -74,6 +74,7 @@ if(process.argv.includes('--fixture-server')){
    const card=page.locator('[data-scard][data-card-status="open"]').first();
    ok(await card.evaluate(el=>[...el.querySelectorAll('button,a.btn,input,textarea')].filter(e=>e.getBoundingClientRect().width>0).every(e=>e.getBoundingClientRect().height>=44)),`human controls and feedback targets >=44px ${tag}`);
    const first=card.locator('button,a.btn,input,textarea').first();await first.focus();await page.keyboard.press('Tab');
+   if(tag.endsWith(' capability'))await page.evaluate(()=>render());
    ok(await card.evaluate(el=>el.contains(document.activeElement)&&document.activeElement.matches(':focus-visible')&&getComputedStyle(document.activeElement).outlineStyle!=='none'),`keyboard focus remains visible on actual captain controls ${tag}`);
   };
   const actionsCapture=async(page,tag)=>{
@@ -131,7 +132,22 @@ if(process.argv.includes('--fixture-server')){
    const holdId=new URL(page.url()).hash.split('/').at(-1);
    let held,heldCard;const deadline=Date.now()+30000;while(Date.now()<deadline){held=await ctx.request.get(base+'/api/wruns/'+holdId).then(r=>r.json());heldCard=held.cards.find(c=>c.node==='capability'&&c.status==='open');if(heldCard)break;await new Promise(resolve=>setTimeout(resolve,50));}if(!heldCard)throw new Error('Missing actual capability card: '+JSON.stringify(held));await page.waitForSelector(`[data-scard="${heldCard.id}"]`);
    ok(heldCard.links.length===2&&heldCard.options.every(o=>o.id==='close')&&!held.ctx.library,`real missing renderer card keeps previews and refuses whole-site approval ${tag}`);
-   await page.locator(`[data-scard="${heldCard.id}"]`).evaluate(el=>el.scrollIntoView({block:'start'}));await controls(page,tag+' capability');await page.screenshot({path:join(shots,tag+'-capability.png'),fullPage:true});await actionsCapture(page,tag+'-capability-actions');await page.locator('[data-option="close"]').click();
+   await page.locator(`[data-scard="${heldCard.id}"]`).evaluate(el=>el.scrollIntoView({block:'start'}));await controls(page,tag+' capability');
+   if(tag==='320-en-light'){
+    const safe=await page.evaluate(()=>{
+     const priorHash=location.hash,priorRoute=S.route,name=S.route.name,original=routes[name],getAction=()=>document.querySelector('[data-scard][data-card-status="open"] a.btn, [data-scard][data-card-status="open"] button:not([disabled])');
+     const probe=(change,restore=()=>{})=>{const a=getAction();a.focus();routes[name]=arg=>{const view=original(arg);change(a);return view;};try{render();return document.activeElement!==a;}finally{routes[name]=original;restore(a);}};
+     const disabled=probe(a=>a.setAttribute('aria-disabled','true'),a=>a.removeAttribute('aria-disabled'));
+     let oldHref;const changedAction=probe(a=>{oldHref=a.getAttribute('href');a.setAttribute('href','#changed-action');},a=>oldHref===null?a.removeAttribute('href'):a.setAttribute('href',oldHref));
+     const otherFocus=probe(()=>document.querySelector('#main').focus())&&document.activeElement===document.querySelector('#main');
+     let card,parent,next;const removed=probe(a=>{card=a.closest('[data-scard]');parent=card.parentNode;next=card.nextSibling;card.remove();},()=>parent.insertBefore(card,next));
+     const changedHash=probe(()=>history.replaceState(null,'','#/run/another-task'),()=>history.replaceState(null,'',priorHash));
+     const changedPage=probe(()=>S.route={...S.route,arg:'another-task'},()=>S.route=priorRoute);render();
+     return{disabled,changedAction,otherFocus,removed,changedHash,changedPage};
+    });
+    for(const [name,passed]of Object.entries(safe))ok(passed,'refresh never restores invalid or superseded focus: '+name);
+   }
+   await page.screenshot({path:join(shots,tag+'-capability.png'),fullPage:true});await actionsCapture(page,tag+'-capability-actions');await page.locator('[data-option="close"]').click();
    await ctx.request.post(base+'/api/fixture/render',{data:{available:true}});
    await ctx.close();
   }

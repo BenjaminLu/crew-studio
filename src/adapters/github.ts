@@ -2,7 +2,7 @@ import {AsyncLocalStorage} from 'node:async_hooks';
 import {GitHubPoller,readAuthority,grantReadScope} from '../github-poller';
 // Local review remains the default. GitHub publication requires a trusted,
 // exact project grant; this interface exposes no review/comment/merge endpoint.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -190,20 +190,26 @@ export class GitHubPrAdapter implements PrAdapter {
     const t = this.token()?.trim(); if (!t || /[\r\n]/.test(t)) throw new Error("GitHub authentication is required");
     this.tokenValue = t; return t;
   }
-  /**
-   * Studio's one way to authenticate git against the granted repository: the grant's token as an
-   * http extraHeader for github.com, credential helpers off. It lives only in a git subprocess's
-   * environment (GIT_CONFIG_COUNT), never in a config file or argv, and is never logged.
-   */
+  /** Only a private config path crosses the process boundary; KERN_PROCARGS2 exposes argv and env. */
   private gitAuth(): Record<string, string> {
-    return this.grant.mode === "github" ? { GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "http.https://github.com/.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${this.credential()}`).toString("base64")}`, GIT_CONFIG_KEY_1: "credential.helper", GIT_CONFIG_VALUE_1: "" } : {};
+    if (this.grant.mode !== "github") return {};
+    const token = this.credential();
+    const dir = join(this.operationStore(), "private-git-auth");
+    mkdirSync(dir, { recursive: true, mode: 0o700 }); chmodSync(dir, 0o700);
+    const path = join(dir, `${createHash("sha256").update(this.grantIdentity()).digest("hex")}.config`);
+    const tmp = `${path}.${crypto.randomUUID()}.tmp`;
+    try {
+      writeFileSync(tmp, `[http "https://github.com/"]\n\textraHeader = Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}\n[credential]\n\thelper =\n`, { mode: 0o600 });
+      renameSync(tmp, path);
+    } finally { rmSync(tmp, { force: true }); }
+    return { GIT_CONFIG_GLOBAL: path };
   }
   /** Remote git reads of the granted repository from outside the adapter (a round's durable head):
    * only the grant's pushUrl, never what the project's origin says, with the same authentication. */
   remoteGit(): RemoteGit {
     validateGitHubGrant(this.grant);
     const env = publicationEnv(this.gitAuth());
-    return { url: this.grant.pushUrl, repo: this.grant.localPath, env, fileProtocol: this.grant.mode === "simulator", secrets: this.tokenValue && this.grant.mode === "github" ? [this.tokenValue, env.GIT_CONFIG_VALUE_0] : [] };
+    return { url: this.grant.pushUrl, repo: this.grant.localPath, env, fileProtocol: this.grant.mode === "simulator", secrets: this.tokenValue && this.grant.mode === "github" ? [this.tokenValue, Buffer.from(`x-access-token:${this.tokenValue}`).toString("base64")] : [] };
   }
   /** The complete allowlist; arbitrary URLs and generic request methods are not exposed. */
   private async api(method: "GET" | "POST" | "PATCH", suffix: string, body?: Record<string, any>, signal?: AbortSignal, assertOwner?: () => void) {

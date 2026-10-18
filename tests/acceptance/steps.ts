@@ -38,7 +38,8 @@ const staffed: Record<string, Promise<void>> = {};
 async function approveCode(h: Ctx) { const id = await approveStaffing(h, h.vars.project, "code-firstmate"); const d = await drive(h.s, id, approveOnly, { timeoutMs: 30_000 }); const bad = await verify(h.s, d, { status: "succeeded", visited: ["confirm", "activate", "done"] }); if (bad.length) throw new Error(`staffing: ${bad.join("; ")}`); }
 
 /** The sandbox probe's arguments ({probe} in the topic, read by tests/acceptance/agent.mjs): the provider's API host, a loopback
- *  sink the harness listens on (no round may connect to it), files a round must not read and folders it must not write. */
+ *  sink the harness listens on and Studio's own port (no round may connect to either), files a round must not read and folders it
+ *  must not write. */
 async function probeSetup(h: Ctx, host: string) {
   let hits = 0; const sink = createServer((c) => { hits++; c.destroy(); }); await new Promise<void>((r) => sink.listen(0, "127.0.0.1", () => r()));
   const closeStudio = h.s.close; h.s.close = async () => { sink.close(); await closeStudio(); };
@@ -50,7 +51,7 @@ async function probeSetup(h: Ctx, host: string) {
   const own = [".ssh/known_hosts", ".ssh/config", ".gitconfig", ".zshrc", ".zsh_history"].map((f) => join(acct, f)).filter(existsSync);
   const deny = [join(home, ".codex", "auth.json"), join(h.s.data, "ledger.key"), join(h.s.data, "projects.json"), ...own, ...beside];
   const nowrite = [h.s.data, home]; // never the account home: a probe that could write there would leave a file behind
-  h.vars.probe = `ACCEPT_PROBE host=${host} sink=${(sink.address() as any).port} deny=${deny.join(",")} nowrite=${nowrite.join(",")}`;
+  h.vars.probe = `ACCEPT_PROBE host=${host} sink=${(sink.address() as any).port} studio=${new URL(h.s.base).port} deny=${deny.join(",")} nowrite=${nowrite.join(",")}`;
 }
 
 /** The GitHub simulator of each project a github-sim step connected (tests/lib/github-simulator.ts, in this process). */

@@ -17,11 +17,13 @@ const leaked = (env: Record<string, string> | undefined, allow: string[] = []) =
   Object.assign(process.env, SECRETS);
   const { Agents } = await import("../src/agent");
   const seen: any[] = [];
-  const recorder = (id: string, envKeys?: string[]) => ({ id, model: "rec", envKeys, start: (_s: string, _t: any, ctx: any) => { seen.push({ id, env: ctx.env }); return { interrupt() {}, async *send() { yield { type: "turnEnd", status: "ok" } as any; } }; } });
+  const recorder = (id: string, envKeys?: string[]) => ({ id, model: "rec", envKeys, start: (_s: string, _t: any, ctx: any) => { seen.push({ id, env: ctx.env, tokenFile: ctx.tokenFile, token: ctx.tokenFile ? readFileSync(ctx.tokenFile, "utf8") : null }); return { interrupt() {}, async *send() { yield { type: "turnEnd", status: "ok" } as any; } }; } });
   const agents = new Agents(join(tmp, "a1"), () => "http://127.0.0.1:1");
   await agents.run({ kind: "t", title: "t", system: "s", text: "x", tools: [], provider: recorder("plain") as any });
   await agents.run({ kind: "t", title: "t", system: "s", text: "x", tools: [], provider: recorder("claude-like", ["ANTHROPIC_API_KEY"]) as any });
-  ok(leaked(seen[0].env).length === 0 && seen[0].env.PATH && seen[0].env.CREW_TOOL_TOKEN, "an agent round's environment carries no credential (only the login basics and its tool token)", leaked(seen[0].env).join(","));
+  ok(leaked(seen[0].env).length === 0 && seen[0].env.PATH && seen[0].env.CREW_TOOL_TOKEN_FILE && !seen[0].env.CREW_TOOL_TOKEN, "an agent round's environment carries only a file path for its tool credential", leaked(seen[0].env).join(","));
+  ok(typeof seen[0].token === "string" && seen[0].token.length > 20 && !JSON.stringify(seen[0].env).includes(seen[0].token), "a non-sandboxed agent also keeps its tool token out of exec environment");
+  ok(!existsSync(seen[0].tokenFile) && !existsSync(seen[1].tokenFile), "agent credential files are removed when their jobs end");
   ok(leaked(seen[1].env, ["ANTHROPIC_API_KEY"]).length === 0 && seen[1].env.ANTHROPIC_API_KEY === "sk-ant-x", "a provider gets only the key it declares for itself");
   const { runChat } = await import("../src/chat");
   await runChat({ provider: recorder("chat") as any, message: "hi", history: [], lang: "en", studioUrl: "http://127.0.0.1:1", token: "t", dataDir: join(tmp, "a1"), onEvent: () => {} });
@@ -35,6 +37,47 @@ const leaked = (env: Record<string, string> | undefined, allow: string[] = []) =
   ok((claudeProvider() as any).envKeys?.includes("ANTHROPIC_API_KEY") && !(claudeProvider() as any).envKeys?.includes("OPENAI_API_KEY") && (codexProvider() as any).envKeys?.includes("OPENAI_API_KEY"), "each CLI provider declares only its own key");
   const { scrubEnv } = await import("../src/secure");
   ok(leaked(scrubEnv()).length === 0 && scrubEnv().PATH, "child tools (git, the renderer) get the environment without credentials");
+  const proxySecret = "dummy-proxy-credential";
+  const proxyBase = { PATH: "/bin", HTTPS_PROXY: `http://round:${proxySecret}@127.0.0.1:1234`, http_proxy: `http://${proxySecret}@127.0.0.1:1234`, ALL_PROXY: `socks5://round:${proxySecret}@127.0.0.1:1234`, FTP_PROXY: `ftp://round:${proxySecret}@127.0.0.1:1234`, HTTP_PROXY: "http://127.0.0.1:1234", NO_PROXY: "localhost" };
+  const childEnv = scrubEnv(proxyBase);
+  ok(!JSON.stringify(childEnv).includes(proxySecret) && !("HTTPS_PROXY" in childEnv) && !("http_proxy" in childEnv) && !("ALL_PROXY" in childEnv), "child tools never inherit credential-bearing proxy URLs");
+  ok(childEnv.HTTP_PROXY === proxyBase.HTTP_PROXY && childEnv.NO_PROXY === "localhost", "child tools retain noncredential proxy configuration");
+  const keychainEnv = join(tmp, "keychain-env.txt"), keychainTool = join(tmp, "keychain-fixture.sh");
+  writeFileSync(keychainTool, `#!/bin/sh\nenv >> "${keychainEnv}"\nexit 44\n`, { mode: 0o755 });
+  const loginModule = join(import.meta.dir, "../src/providers/login.ts");
+  const keychainProbe = Bun.spawnSync([process.execPath, "--no-env-file", "-e", `const m = await import(${JSON.stringify(loginModule)}); m.claudeLogin(); m.claudeLoginStatus(); await m.claudeLoginPresenceAsync();`], { env: { PATH: process.env.PATH ?? "/bin", HOME: join(tmp, "empty-home"), CREW_KEYCHAIN_TOOL: keychainTool, GITHUB_TOKEN: "dummy-keychain-child-secret", HTTPS_PROXY: `http://round:${proxySecret}@127.0.0.1:1234` }, stdout: "pipe", stderr: "pipe" });
+  const keychainOutput = existsSync(keychainEnv) ? readFileSync(keychainEnv, "utf8") : "";
+  ok(keychainProbe.success && keychainOutput.includes("PATH=") && !keychainOutput.includes("dummy-keychain-child-secret") && !keychainOutput.includes(proxySecret), "sync and async keychain helpers receive an explicit credential-free environment");
+  const { codexLogin } = await import("../src/providers/login");
+  const codexKey = "sk-" + "dummy-credential".repeat(3), codexHome = join(tmp, "codex-key-home");
+  process.env.CODEX_API_KEY = codexKey;
+  const codexAuth = codexLogin(codexHome);
+  delete process.env.CODEX_API_KEY;
+  const codexAuthFile = join(codexHome, "auth.json");
+  ok(codexAuth.ok && !JSON.stringify(codexAuth.env).includes(codexKey) && codexAuth.env.CODEX_HOME === codexHome && existsSync(codexAuthFile), "Codex API-key login hands child processes only a private auth-file directory");
+  const { statSync } = await import("node:fs");
+  ok(existsSync(codexAuthFile) && (statSync(codexAuthFile).mode & 0o777) === 0o600 && JSON.parse(readFileSync(codexAuthFile, "utf8")).OPENAI_API_KEY === codexKey, "Codex API-key auth.json has the existing native schema and mode 0600");
+  const { spawnJsonl } = await import("../src/host/jsonl");
+  const hostRecord = join(tmp, "host-argv.json"), hostSecret = "dummy-host-oauth-secret";
+  const hostChild = spawnJsonl([process.execPath, join(import.meta.dir, "fixture/argv-recorder.mjs")], tmp, { PATH: process.env.PATH ?? "/bin", CREW_ARGV_REC: hostRecord, TMPDIR: tmp, CLAUDE_CODE_OAUTH_TOKEN: hostSecret }, () => {});
+  await hostChild.exited;
+  const hostExec = existsSync(hostRecord) ? JSON.parse(readFileSync(hostRecord, "utf8")) : null;
+  ok(hostExec && !JSON.stringify([hostExec.argv, hostExec.env]).includes(hostSecret) && hostExec.credentials.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR === hostSecret, "primary host JSONL CLI receives OAuth through FD rather than argv/env");
+  const { claudeCredentialFds } = await import("../src/providers/credential-fds");
+  let legacyRefused = false;
+  try { const auth = claudeCredentialFds({ ANTHROPIC_AUTH_TOKEN: "dummy-legacy-token" }); auth.close(); } catch { legacyRefused = true; }
+  ok(legacyRefused, "unsupported legacy Claude auth-token transport refuses before exec");
+  for (const [id, cli] of [["claude", claudeProvider()], ["codex", codexProvider()]] as const) {
+    let refused = false;
+    try { cli.start("s", [], { studioUrl: "http://127.0.0.1:1", token: "dummy-raw-tool-token", cwd: tmp, env: {}, mcpCommand: ["/usr/bin/true"] } as any); } catch { refused = true; }
+    ok(refused, `${id} provider refuses a missing tool-token file instead of putting the token in CLI argv`);
+  }
+  const { codexCredentialFiles } = await import("../src/providers/credential-fds");
+  const directKey = "sk-" + "dummy-direct-openai-key".repeat(2);
+  const directAuth = codexCredentialFiles({ OPENAI_API_KEY: directKey, PATH: "/bin" }, tmp);
+  try {
+    ok(!JSON.stringify(directAuth.env).includes(directKey) && JSON.parse(readFileSync(join(directAuth.env.CODEX_HOME, "auth.json"), "utf8")).OPENAI_API_KEY === directKey, "direct Codex provider API-key env is converted to a private auth file before exec");
+  } finally { directAuth.close(); }
   // a check sees no credential either
   const { sandboxed } = await import("../src/runtime/checks");
   const r = await sandboxed(["/bin/sh", "-c", "env"], { cwd: tmp, out: join(tmp, "a1c", "out"), tmp: join(tmp, "a1c", "tmp"), timeoutS: 10, network: false });

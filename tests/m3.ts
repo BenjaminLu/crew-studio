@@ -83,6 +83,23 @@ const PNG_B = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQ
   ok(String(call("work_list", {}).error).includes("tool limit"), "the per-run tool limit is enforced");
 }
 
+// Concurrent work runs must never expose or overwrite each other's tool credentials.
+{
+  const { ArtifactStore } = await import("../src/artifacts"); const { WorkRuns } = await import("../src/work");
+  const data = checkedTempDir("crew-work-credentials-"); const work = new WorkRuns(new ArtifactStore(data), data);
+  const captured: any[] = []; let release: () => void = () => {}; const waiting = new Promise<void>(r => release = r);
+  const provider: any = { id: "stub", model: "offline", envKeys: [], start(_system: string, _tools: any, ctx: any) {
+    captured.push({ env: ctx.env, path: ctx.tokenFile, token: readFileSync(ctx.tokenFile, "utf8") });
+    return { interrupt() {}, async *send() { await waiting; yield { type: "turnEnd", status: "error", message: "offline fixture complete" }; } };
+  } };
+  const runs = [1, 2].map(n => ({ id: `W${n}`, status: "running", log: [], said: "" }));
+  const pending = runs.map((run, n) => (work as any).drive(run, `dummy-work-token-${n}`, data, "brief", "system", provider, 1000, "http://127.0.0.1:1"));
+  ok(captured.length === 2 && captured.every(c => !JSON.stringify(c.env).includes("dummy-work-token") && c.env.CREW_TOOL_TOKEN_FILE === c.path), "work runs pass the tool token through a file path, never through exec environment");
+  ok(captured[0].path !== captured[1].path && captured.every((c, n) => c.token === `dummy-work-token-${n}` && readFileSync(c.path, "utf8") === c.token), "concurrent work runs retain separate credential files");
+  release(); await Promise.all(pending);
+  ok(captured.every(c => !existsSync(c.path)), "a completed work run removes its credential file");
+}
+
 // ---------- 3. the trivial lane: checks, unit level ----------
 const gseen: { method: string; path: string; body: any; auth: string | null }[] = [];
 let ciMode: "success" | "failure" | "pending" = "success";
@@ -187,6 +204,28 @@ try {
   ok(readFileSync(new URL("../public/m3.js", import.meta.url), "utf8").includes(`const PREVIEW_SANDBOX_FLAGS = "${PREVIEW_SANDBOX.replace(/^sandbox /, "")}";`), "the interactive dialog's iframe sandbox carries the same flags as the preview CSP's sandbox (the browser applies their intersection)");
   ok(interactive.ok && interactiveCsp.includes("sandbox allow-scripts allow-forms;") && !interactiveCsp.includes("allow-same-origin") && interactiveCsp.includes("connect-src 'none'") && interactiveCsp.includes("script-src 'unsafe-inline'") && !interactiveCsp.includes("script-src 'self'"), "interactive preview executes inline scripts in an opaque sandbox blocking fetch, external scripts and same-origin access");
   ok((await fetch(`${base}/af/landing/1/..%2F..%2F..%2Fartifacts.json`)).status === 404, "artifact file serving cannot leave the version folder");
+  // a deliverable needs Studio's session or a per-version capability (architecture §10): the ids are guessable, so /af/ is not open
+  const noSess = await fetch(`${base}/af/landing/1/index.html`, { headers: { "x-crew-session": "" } });
+  ok(noSess.status === 401, "GET /af/ without the session or a capability is refused (401)", String(noSess.status));
+  const capRes = await fetch(`${base}/af-cap/landing/1`); const cap = (await capRes.json()).cap;
+  const withCap = await fetch(`${base}/af/landing/1/index.html?cap=${encodeURIComponent(cap)}`, { headers: { "x-crew-session": "" } });
+  ok(capRes.ok && typeof cap === "string" && withCap.ok, "a session-authenticated page mints a per-version capability that serves /af/ without the cookie (the sandboxed preview iframe)", JSON.stringify([capRes.status, withCap.status]));
+  const wrongCap = await fetch(`${base}/af/landing/1/index.html?cap=${encodeURIComponent(cap)}x`, { headers: { "x-crew-session": "" } });
+  const otherVer = await fetch(`${base}/af/landing/2/index.html?cap=${encodeURIComponent(cap)}`, { headers: { "x-crew-session": "" } });
+  ok(wrongCap.status === 401 && otherVer.status === 401, "a tampered capability, or one minted for another version, is refused", JSON.stringify([wrongCap.status, otherVer.status]));
+  ok((await fetch(`${base}/af-cap/landing/1`, { headers: { "x-crew-session": "" } })).status === 401, "minting a capability itself requires the session", "");
+  const pairing = await post("/api/remote/pair/start");
+  const paired = await post("/api/remote/pair", { code: pairing.body.code, name: "artifact-test-phone" });
+  const phoneHeaders = { "x-crew-session": "" };
+  const phoneToken = paired.body.token;
+  const phoneFile = await fetch(`${base}/af/landing/1/index.html?token=${encodeURIComponent(phoneToken)}`, { headers: phoneHeaders });
+  const phoneCap = await fetch(`${base}/af-cap/landing/1?token=${encodeURIComponent(phoneToken)}`, { headers: phoneHeaders });
+  const phoneCapability = (await phoneCap.json()).cap;
+  const phonePreview = await fetch(`${base}/af/landing/1/index.html?cap=${encodeURIComponent(phoneCapability)}`, { headers: phoneHeaders });
+  ok(phoneFile.ok && phoneCap.ok && phonePreview.ok, "a paired read-only phone can open an artifact and mint a preview capability without a desktop session");
+  ok([401, 404].includes((await fetch(`${base}/af/landing/1/index.html?token=invalid`, { headers: phoneHeaders })).status) && !((await fetch(`${base}/af-cap/landing/1?token=invalid`, { headers: phoneHeaders })).ok), "an invalid phone token cannot read an artifact or mint its capability");
+  await post("/api/remote/revoke", { id: paired.body.device.id });
+  ok(!(await fetch(`${base}/af-cap/landing/1?token=${encodeURIComponent(phoneToken)}`, { headers: phoneHeaders })).ok, "a revoked phone cannot mint more artifact capabilities");
   const pin = await post("/api/artifacts/landing/v/1/notes", { kind: "pin", selector: "#hero", bbox: { x: 8, y: 21, w: 300, h: 37 }, comment: "Make the title larger and add a tagline" });
   const pin2 = await post("/api/artifacts/landing/v/1/notes", { kind: "pin", selector: "a.cta", bbox: { x: 8, y: 120, w: 40, h: 18 }, comment: "Make the button stand out" });
   ok(pin.body.id === "P1" && pin2.body.id === "P2", "pins recorded with selector and box");
