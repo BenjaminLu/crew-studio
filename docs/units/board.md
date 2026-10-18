@@ -107,6 +107,7 @@ What the Board shows:
 - **Overlap badge** "↻ will rebase" / "↻ 會 rebase": another open Task's `ctx.spec.scope` meets this one's (one path holds the other, a glob by its static prefix, test paths never count; the same reading as src/runtime/queue.ts scopesOverlap). Its title names the other Tasks.
 - **Detail panel** for the selected row, and nothing else: this Task's visited path from its steps (vertical; a revisit reads "round N ↺"; a step retried within one visit is one stop; bookkeeping hooks without a role are left out unless they failed or are current), every current node ringed (parallel branches each ringed; Firstmate when it is deciding an escalation), the four latest events in the Task page's own words (runtime.js `crewTimeline`), and **Full graph** (`#/run/<id>?graph=1`, the Task page scrolls its graph into view) and **Open task**.
 - No card body and no workflow graph on the Board. A footnote says so.
+- While the operator's .env sets CREW_LOCAL_UNRESTRICTED=1 (`/api/policies` `execution: "local-unrestricted"`), the Sandbox off notice (ootb.js `crewUnrestrictedNotice`) sits under the header, above the filters and the rows. — board-overview-ui "the Sandbox off notice shows at the top of the Board …", "no Sandbox off notice while the sandbox is on".
 
 Milestones (board.js `milestones(def)`, deterministic per definition):
 1. the definition's stages when it has any (`crewLayout.stagesFor`: the nodes' own `stage`, else the built-in grouping, e.g. code-firstmate's seven stages);

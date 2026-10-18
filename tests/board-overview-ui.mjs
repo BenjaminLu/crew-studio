@@ -42,14 +42,15 @@ const summary = await fetch(`${base}/api/summary`).then((r) => r.json());
 const fmShown = summary.tasks.filter((t) => t.status !== "idle" && t.status !== "done");
 const fmGroup = (t) => (t.status === "needs-you" ? "you" : t.status === "failed" ? "stuck" : "run");
 const PIN = (() => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(12, 0, 0, 0); return d.getTime(); })();
-async function open(width, { chat = false, lang = "en" } = {}) {
+async function open(width, { chat = false, lang = "en", execution = null } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height: width < 600 ? 844 : 960 } });
   await ctx.clock.setFixedTime(PIN); await ctx.addInitScript((t) => { window.crewClock = () => t; }, PIN);
   // a captain past onboarding: the first-project guide hidden, as Hide guide leaves it (as workflow-overview-ui does)
   await ctx.addInitScript(([l, chat]) => { try { localStorage.setItem("crew.lang", l); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} if (!chat) addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed")); }, [lang, chat]);
   await ctx.addInitScript(() => { const ES = window.EventSource; window.EventSource = class extends ES { constructor(...a) { super(...a); window.__es = this; } }; });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
-  const fx = boardFixture(PIN); await routeBoardFixture(ctx, fx);
+  // `execution`: what /api/policies says of the Studio's execution mode (the server says local-unrestricted under CREW_LOCAL_UNRESTRICTED=1)
+  const fx = boardFixture(PIN); if (execution) fx.policies.execution = execution; await routeBoardFixture(ctx, fx);
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width}: ${e}`));
   await p.goto(`${base}/#/board`); await p.waitForSelector('[data-task="R-101"] .tb-track i', { timeout: 10000 });
   await p.waitForFunction(() => document.querySelectorAll("[data-task]").length >= 5 && [...document.querySelectorAll('[data-task^="R-"]')].every((r) => r.querySelector(".tb-track i")), null, { timeout: 10000 }).catch(() => {});
@@ -83,6 +84,7 @@ try {
   // ---------- 1440, Firstmate panel closed: the table with the detail panel beside it ----------
   { const { ctx, p, fx } = await open(1440);
     ok(await p.locator(".bd-page.tb-wide").count() === 1, "1440 closed: the wide layout (a table and the panel beside it)");
+    ok(await p.locator("[data-execution]").count() === 0, "no Sandbox off notice while the sandbox is on");
     const ids = await rowIds(p), gs = await groups(p);
     const want = ["R-101", "R-102", "R-103", "R-104", "R-105", "R-106", "R-107", "R-091", ...fmShown.map((t) => t.id)];
     ok(want.every((id) => ids.includes(id)) && ids.length === want.length && !ids.includes("R-090"), "one row per Task: every Studio run in flight, the one done today, the firstmate tasks; not an old finished run", JSON.stringify({ ids, want }));
@@ -225,6 +227,13 @@ try {
     await shot(p, "board-390.png");
     await p.click('[data-task="R-101"] .tb-title'); await p.waitForTimeout(150);
     ok(await p.locator("[data-task-detail]").count() === 0, "390: tapping the chosen card again folds its panel");
+    await ctx.close(); }
+  // ---------- the Sandbox off notice (CREW_LOCAL_UNRESTRICTED=1): at the top of the Board, under its header, above the filters ----------
+  for (const width of [1440, 390]) { const { ctx, p } = await open(width, { execution: "local-unrestricted" });
+    const at = await p.evaluate(() => { const n = document.querySelector('#view [data-execution="local-unrestricted"]'), head = document.querySelector(".bd-page .phead"), tabs = document.querySelector(".tb-tabs");
+      return { shown: !!n && n.getClientRects().length > 0, alert: n?.getAttribute("role"), text: n?.textContent || "", afterHead: !!n && !!(head.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING), beforeTabs: !!n && !!(n.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING) }; });
+    ok(at.shown && at.alert === "alert" && /Sandbox off/.test(at.text) && at.afterHead && at.beforeTabs && await p.locator("[data-task]").count() > 0, `${width}: the Sandbox off notice shows at the top of the Board, above the filters and the rows`, JSON.stringify(at));
+    ok(await noSideways(p), `${width}: the notice adds no sideways scroll`);
     await ctx.close(); }
   ok(!errors.length, "no page errors", errors.join(" | "));
 } finally {
