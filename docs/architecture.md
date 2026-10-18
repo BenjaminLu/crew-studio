@@ -185,25 +185,46 @@ Covered by the same graph plus a generated conventions pack: GitHub adapter, con
     - in Seatbelt `localhost` means every address of this machine (127.0.0.1, ::1, its LAN and VPN addresses), and it
       checks neither the bind address nor an accepted peer, so a test server bound to every interface is reachable from
       the LAN while it runs, as far as the macOS firewall lets it: a residual risk on macOS (`HOST=127.0.0.1` keeps most
-      dev servers on loopback). On Linux a test run runs under bwrap with v1's layout (its own pid, ipc, uts and network
-      namespaces, reads bound read-only, denied paths covered, a fresh /tmp): its loopback is private;
+      dev servers on loopback). On Linux, when bwrap is on PATH, a test run runs under it with v1's layout (its own pid,
+      ipc, uts and network namespaces, reads bound read-only, denied paths covered, a fresh /tmp): its loopback is
+      private and `CREW_LOCAL_UNRESTRICTED` turns the sandbox off entirely, as on macOS. Agent rounds are not yet wired to
+      bwrap, so on Linux a round is refused (it runs under seatbelt on macOS); without bwrap a Linux test run is refused
+      too, never run unsandboxed;
     - nothing leaves the machine: a test run has no proxy and no remote rule;
+    - another same-uid process's argv AND environment are readable through `KERN_PROCARGS2`, and the OS sandbox cannot
+      block it — a named `sysctl-read` allowlist does not cover it, nor does `(deny sysctl-read)` (measured on macOS 15).
+      So no secret is ever placed on a round's argv or in its env: a round's tool token lives only in a 0600 file inside
+      its own tmp (`CREW_TOOL_TOKEN_FILE`), which every other round's and test run's sandbox denies, and the CLI carries
+      only the path. This closes the round-to-round and worker-to-reviewer token theft that existed on main;
     - every other check, and every agent round, keeps loopback closed.
     Before each test run the self-probe (v1) tries the profile on itself: a shell under it tries to read every existing
     path of the deny list (Studio's keys, session token and launch token folder among them) and to connect to
     1.1.1.1:443. If anything gets through, the run is refused with the reason ("the sandbox self-probe failed: …"), never
     run on a weaker sandbox. The run's result carries what was enforced and what was not.
+    `sysctl-read` is an allowlist of the CPU/memory/OS names node, bun, python, git and npm read, never the blanket allow.
+    When a run ends, Studio (unsandboxed, so it can read other same-uid processes' env) kills every process still carrying
+    the run's `CREW_RUN_KILL` marker, so a child that calls `setsid` to escape the process group is reaped too.
   - Studio protects itself in its server (v1's board trust boundary), since a test run reaches its ports:
     - main port: every write needs Studio's session (the HttpOnly SameSite=Strict cookie, or `x-crew-session` from
       `data/session-token`, 0600, denied to every sandbox), an Origin equal to Studio's own and a JSON body; every `/api`
       and `/files` read needs the session too; only `/api/instance` (the launch challenge, whose proof needs the token)
-      answers without one. The cookie is sent to every port of 127.0.0.1, so the Origin check is what stops a page served
-      by a test server: its Origin is another port;
+      and `/api/session` (which only reports whether the caller is authenticated) answer without one. The cookie is sent
+      to every port of 127.0.0.1, so the Origin check is what stops a page served by a test server: its Origin is another
+      port;
+    - deliverables (`/af/<id>/<n>/<file>`, guessable ids): a top-level open, an `<img>`/`<video>`/`<audio>` or an
+      `allow-same-origin` preview frame carries the session cookie and is served. A sandboxed preview iframe (`sandbox`
+      without `allow-same-origin`) has an opaque origin whose site-for-cookies is null, so no cookie is sent; the
+      session-authenticated page mints a short-lived per-version capability (`GET /af-cap/<id>/<n>`, signed with the
+      session token, ten minutes) and puts it on the iframe's `?cap=`. `/af/` with neither the session nor a valid
+      capability is 401;
     - LAN board: a paired phone's device token (pairing needs the code shown on the Mac), Origin and JSON on writes;
     - tools-only listener: each round's own tool token, `/api/tools` only;
     - egress proxy: each round's own credential (407 without), its host list, and the resolved-address guard ported from
       sandbox-runtime (`src/egress-guard.ts`): an allowed name that resolves to loopback, this host's own addresses,
-      link-local, multicast or a cloud metadata endpoint is refused, in every IPv6 spelling of the address;
+      link-local, multicast, a cloud metadata endpoint, a private range (RFC 1918 / ULA) or the carrier-grade-NAT /
+      tailnet range (`100.64.0.0/10`, where Studio's board and remote devices live) is refused, in every IPv6 spelling of
+      the address (IPv4-mapped, NAT64, 6to4); client bytes that arrive while the name is being resolved are buffered, not
+      dropped;
     - the renderer's static origin and the HyperFrames preview serve read-only files of the page being captured, without
       a token, while a capture runs: reachable from a test run running at the same time (a follow-up).
     A project test that still cannot run inside (it needs Docker, whose socket is never reachable) is never dropped

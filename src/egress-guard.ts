@@ -20,6 +20,11 @@ const DENIED: [string, string[]][] = [
   ["a multicast address", ["224.0.0.0/4", "ff00::/8"]],
   ["the broadcast address", ["255.255.255.255"]],
   ["a cloud metadata address", CLOUD_METADATA],
+  // Crew Studio, unlike sandbox-runtime (which leaves these opt-in), refuses the private ranges outright: a round's egress is
+  // the public internet by its host list, never this machine's LAN, its tailnet (100.64.0.0/10 CGNAT, where Studio's own
+  // board and remote devices live) or any RFC 1918 / ULA network it sits on.
+  ["a carrier-grade NAT / tailnet address", ["100.64.0.0/10"]],
+  ["a private-network address", ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"]],
 ];
 const stripZone = (a: string) => { const i = a.indexOf("%"); return i < 0 ? a : a.slice(0, i); };
 const family = (a: string) => (isIP(a) === 4 ? "ipv4" : isIP(a) === 6 ? "ipv6" : undefined);

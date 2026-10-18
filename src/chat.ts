@@ -6,7 +6,7 @@
 import { withSafetyRules } from "./skills";
 import { OperatingRules, withOperatingRules, type RulesSection } from "./operating-rules";
 import { roundEnv } from "./secure";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { NEvent, Provider } from "./providers";
 import { TOOLS } from "./tools";
@@ -65,8 +65,10 @@ export async function runChat(o: { provider: Provider; message: string; history:
   onEvent: (e: ChatEvent) => void; signal?: AbortSignal }) {
   const cwd = join(o.dataDir, "chat-cwd"); mkdirSync(cwd, { recursive: true }); // empty: no project instructions or settings
   // nothing from firstmate, the board or the crew reaches the model's process
-  const env = roundEnv(o.provider.envKeys ?? [], { CREW_STUDIO_URL: o.studioUrl, CREW_TOOL_TOKEN: o.token }); // the test stubs read these; real CLIs hand them to the MCP server
-  const ctx = { studioUrl: o.studioUrl, token: o.token, cwd, env, mcpCommand: helperCommand("mcp") };
+  // the token in a 0600 file, so a real CLI never carries it on its argv or env, where KERN_PROCARGS2 would expose it (src/mcp.ts prefers the file)
+  const tokenFile = join(cwd, ".crew-tool-token"); writeFileSync(tokenFile, o.token, { mode: 0o600 });
+  const env = roundEnv(o.provider.envKeys ?? [], { CREW_STUDIO_URL: o.studioUrl, CREW_TOOL_TOKEN_FILE: tokenFile });
+  const ctx = { studioUrl: o.studioUrl, token: o.token, tokenFile, cwd, env, mcpCommand: helperCommand("mcp") };
   const timeoutMs = Number(process.env.CREW_CHAT_TIMEOUT_MS ?? 120_000);
   const started = Date.now();
   let text = "", tools = 0;

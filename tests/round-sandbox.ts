@@ -72,8 +72,9 @@ ok(r.proxyRefused === 403 && /evil\.example/.test(log), "the egress proxy refuse
 ok(r.proxyNoCred === 407 && /no round credential/.test(log), "a request without a round credential is refused (another local process cannot use the proxy)", `${r.proxyNoCred}`);
 { const { isCredentialName } = await import("../src/secure");
   const creds = (r.envKeys ?? []).filter((k: string) => isCredentialName(k) || /KEY$|TOKEN|SECRET/.test(k)).sort();
-  ok(JSON.stringify(creds) === JSON.stringify(["CLAUDE_CODE_OAUTH_TOKEN", "CREW_TOOL_TOKEN"]) && r.oauth === CREW_TOKEN && /^http:\/\/127\.0\.0\.1:\d+$/.test(r.proxyEnv ?? ""),
-    "the round's env holds exactly its vendor token (CLAUDE_CODE_OAUTH_TOKEN, the crew token Studio read) and its own tool token: no GitHub token, no API key from Studio's environment; its traffic goes to the proxy", JSON.stringify([creds, r.oauth === CREW_TOKEN])); }
+  ok(JSON.stringify(creds) === JSON.stringify(["CLAUDE_CODE_OAUTH_TOKEN", "CREW_TOOL_TOKEN_FILE"]) && r.oauth === CREW_TOKEN && /^http:\/\/127\.0\.0\.1:\d+$/.test(r.proxyEnv ?? ""),
+    "the round's env holds its vendor token (CLAUDE_CODE_OAUTH_TOKEN, the crew token Studio read) and only a PATH to its tool token (CREW_TOOL_TOKEN_FILE, never the token itself, which KERN_PROCARGS2 would expose): no GitHub token, no API key from Studio's environment; its traffic goes to the proxy", JSON.stringify([creds, r.oauth === CREW_TOKEN]));
+  ok(!(r.envKeys ?? []).includes("CREW_TOOL_TOKEN") && r.toolTokenEnv == null && r.toolTokenFileIsPath === true, "the tool token is not anywhere in the round's environment; CREW_TOOL_TOKEN_FILE names a 0600 file, and the token lives only there", JSON.stringify([r.toolTokenEnv, r.toolTokenFileIsPath])); }
 ok(r.claudeTmp === r.tmpdir && /\/rounds\/J\w+\/tmp$/.test(r.tmpdir ?? ""), "the CLI's own temporary folder is the round's tmp, never a shared /tmp folder", `${r.claudeTmp} ${r.tmpdir}`);
 ok(!existsSync(join(data, "rounds", job.id, "home")) && egress.status().rounds === 0, "after the round its throwaway home and its proxy credential are gone");
 // the host list belongs to one round

@@ -19,7 +19,8 @@ export function codexProvider(model = process.env.CREW_CODEX_MODEL ?? "", bin = 
     id: "codex", model: model || "codex default", reasoningEffort: approved?.effort ?? null, envKeys: ["OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_HOME"],
     sandboxNeeds: () => codexNeeds(bin, ["api.openai.com", "chatgpt.com", "auth.openai.com"], approved),
     start(systemPrompt: string, tools: ToolSpec[], ctx: ProviderCtx) {
-      const env = Object.entries({ CREW_STUDIO_URL: ctx.studioUrl, CREW_TOOL_TOKEN: ctx.token }).map(([k, v]) => `${k}=${toml(v)}`).join(",");
+      // the token reaches the MCP server through a 0600 file, never this -c value (which is on the CLI's argv): see ProviderCtx.tokenFile
+      const env = Object.entries({ CREW_STUDIO_URL: ctx.studioUrl, ...(ctx.tokenFile ? { CREW_TOOL_TOKEN_FILE: ctx.tokenFile } : { CREW_TOOL_TOKEN: ctx.token }) }).map(([k, v]) => `${k}=${toml(v)}`).join(",");
       const args = ["exec", "--json", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "--ignore-rules", "-s", localUnrestricted()?"danger-full-access":"read-only",
         "--disable", "shell_tool", "--disable", "image_generation", "-c", `web_search=${toml("disabled")}`, "-c", `approval_policy=${toml("never")}`,
         "-c", `developer_instructions=${toml(systemPrompt)}`,

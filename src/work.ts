@@ -239,8 +239,9 @@ export class WorkRuns {
   private async drive(run: WorkRun, token: string, dir: string, text: string, system: string, provider: Provider, timeoutMs: number, studioUrl: string) {
     const env = roundEnv(provider.envKeys ?? [], { CREW_STUDIO_URL: studioUrl, CREW_TOOL_TOKEN: token, CREW_HTTP_MAX_ROUNDS: "40" });
     const cwd = join(this.dataDir, "work-cwd"); mkdirSync(cwd, { recursive: true }); // empty: the agent reaches files only through the work tools
+    const tokenFile = join(cwd, ".crew-tool-token"); writeFileSync(tokenFile, token, { mode: 0o600 }); // never on the CLI's argv (CREW_TOOL_TOKEN_FILE)
     const rules = new OperatingRules(this.dataDir).section(null); run.operatingRules = rules.hash; // a library artifact belongs to no project: the Studio-wide rules
-    const session = provider.start(withOperatingRules(withSafetyRules(system), rules), WORK_TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.schema })), { studioUrl, token, cwd, env, mcpCommand: helperCommand("mcp") });
+    const session = provider.start(withOperatingRules(withSafetyRules(system), rules), WORK_TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.schema })), { studioUrl, token, tokenFile, cwd, env, mcpCommand: helperCommand("mcp") });
     let why: string | null = null;
     const stop = (reason: string) => { if (!why) { why = reason; session.interrupt(); } };
     this.live.set(run.id, () => stop("cancelled"));

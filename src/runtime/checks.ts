@@ -189,12 +189,32 @@ export class CheckRegistry {
 // AppleEvents. Studio's data (ledger.key, keys, policies, session token), its launch token folder and the user's secret folders
 // are denied last, so even an input inside them is not readable. Off macOS there is no
 // equivalent sandbox: a check is refused, and the Doctor says so.
-export function sandboxInfo() {
-  const sbx = process.platform === "darwin" && existsSync("/usr/bin/sandbox-exec") && process.env.CREW_FORCE_NO_SANDBOX !== "1";
-  return { kind: sbx ? "sandbox-exec" : "none", ok: sbx, detail: sbx ? "macOS sandbox (default deny): checks read only their inputs and the system, write only out/, no network"
-    : "no OS sandbox on this platform: checks are refused (they need read-only inputs, out/ only and no network)" };
+/** macOS seatbelt, present and not forced off: the sandbox every check and round runs under. */
+const seatbeltAvailable = () => process.platform === "darwin" && existsSync("/usr/bin/sandbox-exec") && process.env.CREW_FORCE_NO_SANDBOX !== "1";
+/** Linux bwrap, present: a test run (not a round) can run under it (v1's layout, a private loopback). */
+const bwrapAvailable = () => process.platform === "linux" && process.env.CREW_FORCE_NO_SANDBOX !== "1" && !!Bun.which("bwrap");
+export function sandboxInfo(testRun = false) {
+  if (seatbeltAvailable()) return { kind: "sandbox-exec" as const, ok: true, detail: "macOS sandbox (default deny): checks read only their inputs and the system, write only out/, no network" };
+  if (testRun && bwrapAvailable()) return { kind: "bwrap" as const, ok: true, detail: "Linux bwrap: a test run gets its own pid/net namespaces (a private loopback) with read-only reads; agent rounds are not yet wired to bwrap, so they are refused here" };
+  const linux = process.platform === "linux";
+  return { kind: "none" as const, ok: false, detail: linux
+    ? (testRun ? "no OS sandbox: Linux test runs need bwrap on PATH (install bubblewrap); without it a test run is refused" : "no OS sandbox: Linux agent rounds are not wired to bwrap yet and are refused (macOS runs them under seatbelt)")
+    : "no OS sandbox on this platform: checks and rounds are refused (they need read-only inputs, out/ only and no network)" };
 }
 const q = (p: string) => JSON.stringify(p);
+// sysctl a sandboxed process may read: an allowlist, never the blanket (allow sysctl-read). The blanket let a process read
+// kern.procargs2 of any same-uid pid (KERN_PROCARGS2, MIB 1.49.<pid>), which exposed another round's or the reviewer CLI's
+// argv and environment — and a round's tool token was on that argv, so a worker test could steal it and act as the
+// reviewer. These names are what node, bun, python, git and npm read for CPU, memory and OS facts (measured by running each
+// under this list); none names another process. KERN_PROCARGS* and kern.proc.* have no name here, so they are denied.
+const SYSCTL_READ = `(allow sysctl-read
+  (sysctl-name-prefix "hw.")
+  (sysctl-name "kern.ostype") (sysctl-name "kern.osrelease") (sysctl-name "kern.osrevision") (sysctl-name "kern.version") (sysctl-name "kern.osversion") (sysctl-name "kern.osproductversion") (sysctl-name "kern.iossupportversion")
+  (sysctl-name "kern.hostname") (sysctl-name "kern.maxfilesperproc") (sysctl-name "kern.maxproc") (sysctl-name "kern.argmax") (sysctl-name "kern.tcsm_available") (sysctl-name "kern.tcsm_enable")
+  (sysctl-name "kern.osvariant_status") (sysctl-name "kern.secure_kernel") (sysctl-name "kern.safeboot") (sysctl-name "kern.boottime") (sysctl-name "kern.clockrate") (sysctl-name "kern.usrstack64") (sysctl-name "kern.saved_ids")
+  (sysctl-name "security.mac.sandbox.sentinel")
+  (sysctl-name "vm.overcommit") (sysctl-name "vm.footprint_interval_reset")
+  (sysctl-name "user.cs_path"))`;
 const SYSTEM_READ = ["/usr", "/bin", "/sbin", "/System", "/Library", "/opt", "/private/etc", "/etc", "/dev", "/private/var/db/timezone", "/private/var/db/dyld", "/var/db/timezone", "/Applications/Xcode.app", "/private/var/select"];
 /** Folders whose files must never reach a check, even as an input. */
 const HOME_SECRETS = [".ssh", ".aws", ".gnupg", ".netrc", ".config", ".claude", ".claude.json", ".codex", ".docker", ".kube", ".npmrc", ".git-credentials", "Library/Keychains"];
@@ -258,7 +278,7 @@ export function linuxBwrapArgv(argv: string[], o: { cwd: string; reads: string[]
 }
 /** What a sandboxed test run's profile is checked to enforce before the run (the self-probe), and what it does not. */
 export const TEST_RUN_ENFORCES = "Studio's data keys, session token and launch token folder are unreadable; no connection leaves this machine";
-export const TEST_RUN_DOES_NOT = "every local service on this machine is reachable on loopback (Studio's own server refuses a request without its token); a test server bound to every interface is reachable from the LAN while it runs";
+export const TEST_RUN_DOES_NOT = "every local service on this machine is reachable on loopback (Studio's own server refuses a request without its token); a test server bound to every interface is reachable from the LAN while it runs; and another same-uid process's argv and environment are readable via KERN_PROCARGS2, which the OS sandbox cannot block (so no secret is ever placed on a round's argv or in its env)";
 /**
  * v1's self-probe: before a test run, try the profile on itself. Under the same profile a shell tries to read each existing
  * protected path (the deny list, Studio's runtime folder among them) and to open a connection off this machine (1.1.1.1:443,
@@ -285,7 +305,7 @@ export function profileFor(o: { out: string; tmp: string; reads: string[]; netwo
 (allow process-fork)
 (allow process-exec)
 (allow signal (target same-sandbox))
-(allow sysctl-read)
+${SYSCTL_READ}
 (allow process-info* (target self))
 (allow ipc-posix-shm-read-data ipc-posix-shm-write-data)
 (allow file-read-metadata)
@@ -327,7 +347,7 @@ export function roundProfile(o: { cwd: string; tmp: string; writes: string[]; re
 (allow process-fork)
 (allow process-exec)
 (allow signal (target same-sandbox))
-(allow sysctl-read)
+${SYSCTL_READ}
 (allow process-info* (target self))
 (allow ipc-posix-shm-read-data ipc-posix-shm-write-data)
 (allow file-read-metadata)
@@ -362,6 +382,21 @@ export function inputPaths(v: any, out: Set<string> = new Set(), depth = 0): str
  * killed and the call returns, even if a grandchild still holds a pipe open; when the
  * process ends, any child it left behind is killed too.
  */
+// The marker env var that tags every process a sandboxed run starts (its descendants inherit it). killGroup kills the
+// process group, but a child that calls setsid() makes its own group and escapes it (esc.ts). So when a run ends, Studio —
+// unsandboxed, so it can still read other same-uid processes' env — finds every process still carrying this run's marker and
+// kills it. The marker is fresh per run, so only that run's descendants match. Inside the sandbox KERN_PROCARGS2 is denied,
+// so a round cannot use the marker to find anything.
+export function reapMarked(marker: string) {
+  if (!marker || process.platform !== "darwin") return;
+  try {
+    const r = Bun.spawnSync(["/bin/ps", "-Aww", "-E", "-o", "pid=", "-o", "command="], { stdout: "pipe", stderr: "ignore" });
+    for (const line of r.stdout.toString().split("\n")) {
+      const m = /^\s*(\d+)\s+(.*)$/.exec(line); if (!m || !m[2].includes(`CREW_RUN_KILL=${marker}`)) continue;
+      const pid = Number(m[1]); if (pid > 1 && pid !== process.pid) { try { process.kill(pid, "SIGKILL"); } catch {} }
+    }
+  } catch {}
+}
 export async function sandboxed(argv: string[], o: { cwd: string; out: string; tmp: string; stdin?: string; timeoutS: number; network: boolean; env?: Record<string, string>; reads?: string[]; dataDir?: string | null; signal?: AbortSignal;
   /** false: argv is untrusted (a reviewer's command), so its program's folder is never added to the reads; the caller resolved it on a fixed PATH */
   argvRead?: boolean;
@@ -370,24 +405,31 @@ export async function sandboxed(argv: string[], o: { cwd: string; out: string; t
   /** a test run's sandbox, as the self-probe checked it: what it enforces and what it does not */
   sandbox?: { enforced: string; notEnforced: string } }> {
   const t0 = Date.now();
-  const info = sandboxInfo();
-  if (!info.ok && !localUnrestricted()) return { code: null, stdout: "", stderr: "", timedOut: false, ms: 0, refused: info.detail };
+  const unrestricted = localUnrestricted();           // CREW_LOCAL_UNRESTRICTED: no OS sandbox at all, on any platform
+  const seatbelt = !unrestricted && seatbeltAvailable();
+  const bwrap = !unrestricted && !seatbelt && !!o.testRun && !o.network && bwrapAvailable();
+  if (!unrestricted && !seatbelt && !bwrap) return { code: null, stdout: "", stderr: "", timedOut: false, ms: 0, refused: sandboxInfo(!!o.testRun).detail };
   mkdirSync(o.out, { recursive: true }); mkdirSync(o.tmp, { recursive: true });
   const out = realpathSync(o.out), tmp = realpathSync(o.tmp);
   const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: tmp, TMPDIR: tmp, LANG: "C.UTF-8", CI: "1", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", PYTHONDONTWRITEBYTECODE: "1", ...(o.testRun ? LOCAL_BINDING_ENV : {}), ...(o.env ?? {}) };
   const prof = join(tmp, "..", "profile.sb");
-  const seat = !localUnrestricted(), reads = [o.cwd, ...(o.reads ?? []), ...(o.argvRead !== false && argv[0]?.startsWith("/") ? [dirname(argv[0])] : [])];
-  writeFileSync(prof, profileFor({ out, tmp, reads, network: o.network, dataDir: o.dataDir ?? null, cwd: o.cwd, localBinding: !!o.testRun }));
-  // a test run is checked first: the profile must hold what Studio claims for it, or the run is refused with the reason
-  if (seat && o.testRun) { const leak = selfProbe(prof, denyList(o.dataDir).map((p) => realIf(p) ?? p)); if (leak) return { code: null, stdout: "", stderr: "", timedOut: false, ms: Date.now() - t0, refused: leak }; }
-  // Linux has no Seatbelt: a test run without network runs under bwrap (v1's layout: a private loopback, read-only reads)
-  const full = seat ? ["/usr/bin/sandbox-exec", "-f", prof, ...argv]
-    : process.platform === "linux" && o.testRun && !o.network ? linuxBwrapArgv(argv, { cwd: o.cwd, reads: [...SYSTEM_READ, ...interpreterDirs(), ...reads], writes: [out, tmp], deny: denyList(o.dataDir) }) ?? argv : argv;
-  const sandbox = seat && o.testRun ? { enforced: TEST_RUN_ENFORCES, notEnforced: TEST_RUN_DOES_NOT } : undefined;
+  const reads = [o.cwd, ...(o.reads ?? []), ...(o.argvRead !== false && argv[0]?.startsWith("/") ? [dirname(argv[0])] : [])];
+  let full = argv;
+  if (seatbelt) {
+    writeFileSync(prof, profileFor({ out, tmp, reads, network: o.network, dataDir: o.dataDir ?? null, cwd: o.cwd, localBinding: !!o.testRun }));
+    // a test run is checked first: the profile must hold what Studio claims for it, or the run is refused with the reason
+    if (o.testRun) { const leak = selfProbe(prof, denyList(o.dataDir).map((p) => realIf(p) ?? p)); if (leak) return { code: null, stdout: "", stderr: "", timedOut: false, ms: Date.now() - t0, refused: leak }; }
+    full = ["/usr/bin/sandbox-exec", "-f", prof, ...argv];
+  } else if (bwrap) {
+    // Linux has no Seatbelt: a test run without network runs under bwrap (v1's layout: private pid/net namespaces, read-only reads)
+    full = linuxBwrapArgv(argv, { cwd: o.cwd, reads: [...SYSTEM_READ, ...interpreterDirs(), ...reads], writes: [out, tmp], deny: denyList(o.dataDir) }) ?? argv;
+  }
+  const sandbox = (seatbelt || bwrap) && o.testRun ? { enforced: TEST_RUN_ENFORCES, notEnforced: bwrap ? "another same-uid process's argv and environment are readable via /proc, so no secret is on a round's argv or in its env (the loopback itself is private under bwrap)" : TEST_RUN_DOES_NOT } : undefined;
+  const marker = randomBytes(12).toString("hex"); env.CREW_RUN_KILL = marker; // every process this run starts carries it, so a setsid escapee is reaped at the end
   return await new Promise((resolveP) => {
     let stdout = "", stderr = "", done = false, timedOut = false, aborted = false;
     const p = spawnChild(full[0], full.slice(1), { cwd: o.cwd, env, detached: true, stdio: [o.stdin != null ? "pipe" : "ignore", "pipe", "pipe"] });
-    const killGroup = () => { try { if (p.pid) process.kill(-p.pid, "SIGKILL"); } catch {} };
+    const killGroup = () => { try { if (p.pid) process.kill(-p.pid, "SIGKILL"); } catch {} reapMarked(marker); };
     const finish = (code: number | null) => { if (done) return; done = true; clearTimeout(timer); killGroup(); try { p.stdout?.destroy(); p.stderr?.destroy(); } catch {} resolveP({ code: timedOut ? null : code, stdout, stderr, timedOut, ms: Date.now() - t0, aborted, ...(sandbox ? { sandbox } : {}) }); };
     const timer = setTimeout(() => { timedOut = true; finish(null); }, o.timeoutS * 1000);
     if (o.signal) { if (o.signal.aborted) { timedOut = true; setTimeout(() => finish(null), 0); } else o.signal.addEventListener("abort", () => { aborted = true; timedOut = true; finish(null); }, { once: true }); }
@@ -422,8 +464,9 @@ export async function roundExec(argv: string[], o: { cwd: string; writes: string
     return await new Promise((resolveP) => {
       let stdout = "", stderr = "", done = false, timedOut = false;
       const full=localUnrestricted()?argv:["/usr/bin/sandbox-exec","-f",prof,...argv];
+      const marker = randomBytes(12).toString("hex"); env.CREW_RUN_KILL = marker;
       const p = spawnChild(full[0],full.slice(1), { cwd: o.cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
-      const finish = (code: number | null) => { if (done) return; done = true; clearTimeout(timer); try { if (p.pid) process.kill(-p.pid, "SIGKILL"); } catch {} resolveP({ code: timedOut ? null : code, stdout, stderr, timedOut }); };
+      const finish = (code: number | null) => { if (done) return; done = true; clearTimeout(timer); try { if (p.pid) process.kill(-p.pid, "SIGKILL"); } catch {} reapMarked(marker); resolveP({ code: timedOut ? null : code, stdout, stderr, timedOut }); };
       const timer = setTimeout(() => { timedOut = true; finish(null); }, o.timeoutS * 1000);
       p.stdout?.on("data", (d) => { if (stdout.length < 1_000_000) stdout += d; }); p.stderr?.on("data", (d) => { if (stderr.length < 1_000_000) stderr += d; });
       p.on("error", (e) => { stderr += String(e); finish(127); }); p.on("exit", (code) => { setTimeout(() => finish(code), 50); });

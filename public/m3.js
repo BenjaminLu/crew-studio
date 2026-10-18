@@ -5,6 +5,15 @@
 (() => {
 const A = { list: null, render: null, detail: new Map(), lane: null, chat: null, thumbs: new Map() };
 const get = (u) => fetch(u).then((r) => r.json());
+// A sandboxed preview iframe has an opaque origin, so Studio's session cookie is not sent with its /af/ request. This page
+// has the session, so it mints a short-lived per-version capability (GET /af-cap/<id>/<n>) and puts it on the iframe's src.
+// Same-origin uses (img/video/audio, allow-same-origin frames, opening in a tab) keep sending the cookie and need none.
+async function afCapFor(href) {
+  const m = /^\/af\/([^/]+)\/(\d+)\//.exec(href); if (!m) return href;
+  try { const r = await fetch(`/af-cap/${m[1]}/${m[2]}`); if (r.ok) { const cap = (await r.json()).cap; if (cap) return href + (href.includes("?") ? "&" : "?") + "cap=" + encodeURIComponent(cap); } } catch {}
+  return href;
+}
+const setAfSrc = (iframe, href) => { afCapFor(href).then((s) => { iframe.src = s; }); };
 const api = (u, b) => postJ(u, b);
 const fmtT = (t) => (t == null ? "?" : `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`);
 const short = (s) => (s ? s.slice(0, 10) : "—");
@@ -73,7 +82,7 @@ function artPreview(a, v, big) {
   if (a.type === "audio") return h("div",{class:"lprev media-audio"},h("audio",{controls:true,preload:"metadata",src:`/af/${a.id}/${v.n}/${v.primary||a.entry||"audio.wav"}`,"aria-label":a.title}));
   if (a.type === "video") { const path=(v.files?.some(f=>f.path==="render.mp4")||v.render?.state==="done")?"render.mp4":(/\.mp4$/i.test(v.primary||"")?v.primary:null);return path?h("video",{class:"lprev",src:`/af/${a.id}/${v.n}/${path}#t=0.5`,controls:!!big,preload:"metadata",muted:true,playsinline:true,style:"width:100%;aspect-ratio:16/9;background:#000;display:block"}):h("div",{class:"lprev a3-ph"},T("No render yet","尚未算圖")); }
   if (a.type === "image") return h("div", { class: "lprev a3-img", style: st }, h("img", { src: `/af/${a.id}/${v.n}/${a.entry || "image.png"}`, alt: "" }));
-  if (a.type === "web" || a.source === "md") { const w = h("div", { class: "lprev a3-thumb", style: st }, h("iframe", { src: `/af/${a.id}/${v.n}/${a.source === "md" ? "doc.html" : a.entry || "index.html"}`, sandbox: "", tabindex: "-1", "aria-hidden": "true", loading: "lazy" }));
+  if (a.type === "web" || a.source === "md") { const thumb = h("iframe", { sandbox: "", tabindex: "-1", "aria-hidden": "true", loading: "lazy" }); setAfSrc(thumb, `/af/${a.id}/${v.n}/${a.source === "md" ? "doc.html" : a.entry || "index.html"}`); const w = h("div", { class: "lprev a3-thumb", style: st }, thumb);
     new ResizeObserver(() => w.style.setProperty("--k", String((w.clientWidth || 300) / 1280))).observe(w); return w; }
   return h("div", { class: "lprev a3-ph", style: st }, icon(typeIc(a.type), "ic lg"));
 }
@@ -221,7 +230,8 @@ window.crewInteractivePreview = (href, trigger) => /^\/af\/[^?#]+$/.test(href) ?
 function previewDialog(href, trigger) {
   activePreview?.close();
   const frame = h("iframe", { title: T("Interactive prototype", "互動原型"), sandbox: PREVIEW_SANDBOX_FLAGS, referrerpolicy: "no-referrer",
-    src: `${href}?interactive=1`, style: "display:block;width:100%;height:72vh;border:0;background:white;margin:auto" });
+    style: "display:block;width:100%;height:72vh;border:0;background:white;margin:auto" });
+  setAfSrc(frame, `${href}?interactive=1`); // sandboxed (opaque origin): the session cookie is not sent, so a per-version capability carries it
   const dialog = h("dialog", { "aria-label": T("Interactive preview", "互動預覽"), style: "width:min(1280px,96vw);max-width:96vw;border:1px solid var(--border);border-radius:12px;padding:16px;background:var(--bg);color:var(--text)" },
     h("div", { class: "actions", style: "margin-bottom:12px" },
       h("b", {}, T("Interactive preview", "互動預覽")),

@@ -5,6 +5,8 @@
 // the context carries a sandbox profile, the process runs under it (an agent round:
 // architecture §10).
 import { spawn,spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { reapMarked } from "../runtime/checks";
 import { LOGIN_RE, type NEvent, type Session } from "./types";
 
 export type LineParser = { line(o: any): NEvent[]; exit(code: number, stderr: string): NEvent | null };
@@ -13,7 +15,8 @@ export function processSession(cmd: () => string[], cwd: string, env: Record<str
   let pid: number | null = null;
   let interrupted = false;
   let wake: (() => void) | null = null;
-  const killGroup = () => { try { if (pid) process.kill(-pid, "SIGKILL"); } catch {} };
+  const marker = randomBytes(12).toString("hex"); // tags the round's processes; a setsid escapee is reaped when the turn ends
+  const killGroup = () => { try { if (pid) process.kill(-pid, "SIGKILL"); } catch {} reapMarked(marker); };
   return {
     interrupt() { interrupted = true; killGroup(); wake?.(); },
     async *send(text: string): AsyncIterable<NEvent> {
@@ -25,7 +28,7 @@ export function processSession(cmd: () => string[], cwd: string, env: Record<str
       const inner = cmd().map((a) => (a === "{TEXT}" ? text : a));
       const argv = sandbox ? ["/usr/bin/sandbox-exec", "-f", sandbox.profile, ...inner] : inner;
       let p: ReturnType<typeof spawn>;
-      try { p = spawn(argv[0], argv.slice(1), { cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] }); pid = p.pid ?? null; }
+      try { p = spawn(argv[0], argv.slice(1), { cwd, env: { ...env, CREW_RUN_KILL: marker }, detached: true, stdio: ["ignore", "pipe", "pipe"] }); pid = p.pid ?? null; }
       catch (e: any) { yield { type: "turnEnd", status: "error", code: "cliUnavailable", message: `${inner[0]} could not start: ${e?.message ?? e}` }; return; }
       if(interrupted)killGroup();
       let buf = "";

@@ -12,16 +12,33 @@ import { WorkRuns, filmScenes } from "./work";
 import { renderEnv, runRender } from "./render";
 import { CSP, INTERACTIVE_CSP, TAB_CSP } from "./preview-csp";
 import type { Provider } from "./providers";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { hasSession } from "./csrf";
 
 type Who = { kind: "desktop" } | { kind: "phone"; device: { id: string; name: string } } | { kind: string };
 export type M3Deps = { dataDir: string; fileAllow: string[]; studioUrl: () => string; provider: (id?: string, model?: string) => Provider; send: (type: string, data: unknown) => void;
-  allowDrive: () => boolean };
+  allowDrive: () => boolean;
+  /** Studio's session token (0600, denied to every sandbox): a request carrying it may read a deliverable directly, and it signs the per-version capabilities a session-authenticated page hands to its sandboxed preview iframes */
+  session: () => string };
 
 const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
   ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".mp4": "video/mp4", ".json": "application/json",
   ".wav":"audio/wav", ".mp3":"audio/mpeg", ".m4a":"audio/mp4", ".ogg":"audio/ogg", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8" };
 const framedByStudio = (req: Request) => ["iframe", "frame"].includes(req.headers.get("sec-fetch-dest") ?? "");
+// A capability for /af/<id>/<n>/…: a session-authenticated page mints one (GET /af-cap/<id>/<n>) and puts it on the src of
+// its sandboxed preview iframe, whose opaque origin has a null site-for-cookies, so Studio's session cookie is never sent
+// with it. The capability is signed with Studio's session token (so a sandbox, which cannot read that token, cannot forge
+// one), scoped to one artifact version, and short-lived (ten minutes). `exp.sig`.
+const AF_CAP_TTL_MS = 10 * 60 * 1000;
+const afCapSig = (session: string, id: string, n: number, exp: number) => createHmac("sha256", session).update(`af-cap\0${id}\0${n}\0${exp}`).digest("hex").slice(0, 32);
+const mintAfCap = (session: string, id: string, n: number) => { const exp = Date.now() + AF_CAP_TTL_MS; return `${exp}.${afCapSig(session, id, n, exp)}`; };
+function afCapOk(session: string, id: string, n: number, cap: string | null): boolean {
+  const [expStr, sig] = (cap ?? "").split("."); const exp = Number(expStr);
+  if (!sig || !Number.isFinite(exp) || exp <= Date.now() || exp > Date.now() + AF_CAP_TTL_MS + 1000) return false;
+  const want = afCapSig(session, id, n, exp); const a = Buffer.from(sig), b = Buffer.from(want);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 export type ArtifactReviewPolicy = {readOnly:true; taskHref:string|null; reason:string; reasonZh?:string};
 export function createM3(d: M3Deps) {
@@ -61,7 +78,14 @@ export function createM3(d: M3Deps) {
 
   async function handle(req: Request, url: URL, who: Who, writing: boolean): Promise<Response | null> {
     const p = url.pathname;
-    if (!p.startsWith("/api/artifacts") && !p.startsWith("/api/runs") && !p.startsWith("/api/lane") && !p.startsWith("/af/") && p !== "/api/render") return null;
+    if (!p.startsWith("/api/artifacts") && !p.startsWith("/api/runs") && !p.startsWith("/api/lane") && !p.startsWith("/af/") && !p.startsWith("/af-cap/") && p !== "/api/render") return null;
+    // a session-authenticated page mints a short-lived capability for one artifact version, to hand to its sandboxed preview iframe
+    if (p.startsWith("/af-cap/") && !writing) {
+      if (!hasSession(req, d.session())) return json({ error: "Studio session required" }, 401);
+      const [, , idRaw, nRaw] = p.split("/"); const id = decodeURIComponent(idRaw ?? ""), n = Number(nRaw);
+      if (!id || !Number.isInteger(n) || !store.version(id, n)) return json({ error: "no such artifact version" }, 404);
+      return json({ cap: mintAfCap(d.session(), id, n) });
+    }
     if (writing && who.kind === "phone") {
       if (p === "/api/lane/repos") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
       if (!d.allowDrive()) return json({ error: "this phone may read only; allow phone driving on the Mac first", code: "noDrive" }, 403);
@@ -77,6 +101,10 @@ export function createM3(d: M3Deps) {
       // --- version files, served with no network and Studio-only framing ---
       if (p.startsWith("/af/")) {
         const [, , id, nStr, ...rest] = p.split("/");
+        // a deliverable is served only to a request carrying Studio's session (a same-origin page, top-level open, img/video/audio)
+        // or a valid per-version capability (a sandboxed preview iframe, which sends no cookie); the ids are guessable, so neither is optional
+        if (!hasSession(req, d.session()) && !afCapOk(d.session(), decodeURIComponent(id), Number(nStr), url.searchParams.get("cap")))
+          return new Response("Studio session or capability required", { status: 401 });
         const file = store.file(decodeURIComponent(id), Number(nStr), decodeURIComponent(rest.join("/")));
         // a document version written without its rendered page (the startup competition's first versions hold only
         // competition.md, sha-pinned): render doc.html from its Markdown on the fly, read only, never stored

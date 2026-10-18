@@ -301,7 +301,7 @@ const MAX_CHATS = 2;
 // --- M3: artifacts, review loops, agent work runs, the trivial lane ---
 const m3 = createM3({ dataDir: DATA, fileAllow: store.fileAllow, studioUrl: () => `http://127.0.0.1:${PORT}`, send,
   provider: (id, model) => { const s = chatSettings(); if (id && !(choices as readonly string[]).includes(id)) throw new Error(`unknown provider identity: ${id}`); const pid = id || s.provider; return makeProvider(pid, model || s.models[pid] || undefined); },
-  allowDrive: () => remote.allowDrive });
+  allowDrive: () => remote.allowDrive, session: () => SESSION });
 
 // --- M6+: one agent runner, the raw event logs, every workflow, self-improvement ---
 const agents = new Agents(DATA, () => `http://127.0.0.1:${PORT}`);
@@ -497,7 +497,7 @@ const SESSION = sessionToken(DATA);
 // the sidebar's Projects section and each project's page: read only (src/project-overview.ts)
 const projectOverview = createProjectOverview({ dataDir: DATA, projects: new Projects(DATA), engine: runtime.engine, session: SESSION, worktrees, artifacts: m3.store, protectedRoots: PROTECTED });
 /** The only reads that answer without Studio's session: the launch challenge (its proof needs the token anyway). */
-const PUBLIC_READS = new Set(["/api/instance"]);
+const PUBLIC_READS = new Set(["/api/instance", "/api/session"]);
 async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> {
     const url = new URL(req.url);
     // /api/tasks is the new name of /api/wruns: a path the run routes serve is handed to them under its old name

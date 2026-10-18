@@ -187,6 +187,16 @@ try {
   ok(readFileSync(new URL("../public/m3.js", import.meta.url), "utf8").includes(`const PREVIEW_SANDBOX_FLAGS = "${PREVIEW_SANDBOX.replace(/^sandbox /, "")}";`), "the interactive dialog's iframe sandbox carries the same flags as the preview CSP's sandbox (the browser applies their intersection)");
   ok(interactive.ok && interactiveCsp.includes("sandbox allow-scripts allow-forms;") && !interactiveCsp.includes("allow-same-origin") && interactiveCsp.includes("connect-src 'none'") && interactiveCsp.includes("script-src 'unsafe-inline'") && !interactiveCsp.includes("script-src 'self'"), "interactive preview executes inline scripts in an opaque sandbox blocking fetch, external scripts and same-origin access");
   ok((await fetch(`${base}/af/landing/1/..%2F..%2F..%2Fartifacts.json`)).status === 404, "artifact file serving cannot leave the version folder");
+  // a deliverable needs Studio's session or a per-version capability (architecture §10): the ids are guessable, so /af/ is not open
+  const noSess = await fetch(`${base}/af/landing/1/index.html`, { headers: { "x-crew-session": "" } });
+  ok(noSess.status === 401, "GET /af/ without the session or a capability is refused (401)", String(noSess.status));
+  const capRes = await fetch(`${base}/af-cap/landing/1`); const cap = (await capRes.json()).cap;
+  const withCap = await fetch(`${base}/af/landing/1/index.html?cap=${encodeURIComponent(cap)}`, { headers: { "x-crew-session": "" } });
+  ok(capRes.ok && typeof cap === "string" && withCap.ok, "a session-authenticated page mints a per-version capability that serves /af/ without the cookie (the sandboxed preview iframe)", JSON.stringify([capRes.status, withCap.status]));
+  const wrongCap = await fetch(`${base}/af/landing/1/index.html?cap=${encodeURIComponent(cap)}x`, { headers: { "x-crew-session": "" } });
+  const otherVer = await fetch(`${base}/af/landing/2/index.html?cap=${encodeURIComponent(cap)}`, { headers: { "x-crew-session": "" } });
+  ok(wrongCap.status === 401 && otherVer.status === 401, "a tampered capability, or one minted for another version, is refused", JSON.stringify([wrongCap.status, otherVer.status]));
+  ok((await fetch(`${base}/af-cap/landing/1`, { headers: { "x-crew-session": "" } })).status === 401, "minting a capability itself requires the session", "");
   const pin = await post("/api/artifacts/landing/v/1/notes", { kind: "pin", selector: "#hero", bbox: { x: 8, y: 21, w: 300, h: 37 }, comment: "Make the title larger and add a tagline" });
   const pin2 = await post("/api/artifacts/landing/v/1/notes", { kind: "pin", selector: "a.cta", bbox: { x: 8, y: 120, w: 40, h: 18 }, comment: "Make the button stand out" });
   ok(pin.body.id === "P1" && pin2.body.id === "P2", "pins recorded with selector and box");

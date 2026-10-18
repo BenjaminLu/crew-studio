@@ -44,6 +44,8 @@ export class Egress {
         head = Buffer.concat([head, d]);
         const end = head.indexOf("\r\n\r\n"); if (end < 0) { if (head.length > 16384) client.destroy(); return; }
         client.off("data", onData);
+        // bytes the client sends while the host is being resolved must not be dropped: buffer them until the upstream connects
+        let pending = Buffer.alloc(0); const buffer = (d: Buffer) => { pending = Buffer.concat([pending, d]); }; client.on("data", buffer);
         const lines = head.slice(0, end).toString("latin1").split("\r\n"); const [method, target] = lines[0].split(" ");
         let host = "", port = 80;
         if (method === "CONNECT") { const m = /^\[?([^\]]+?)\]?:(\d+)$/.exec(target ?? ""); host = m?.[1] ?? ""; port = Number(m?.[2] ?? 443); }
@@ -68,6 +70,7 @@ export class Egress {
             const u = new URL(target); lines[0] = `${method} ${u.pathname}${u.search} ${lines[0].split(" ")[2] ?? "HTTP/1.1"}`;
             up.write(Buffer.concat([Buffer.from(lines.filter((l) => !/^proxy-/i.test(l)).join("\r\n") + "\r\n\r\n", "latin1"), head.slice(end + 4)]));
           }
+          client.off("data", buffer); if (pending.length) up.write(pending); // whatever arrived during the lookup, in order
           client.pipe(up); up.pipe(client);
         });
         up.on("error", () => { try { client.end("HTTP/1.1 502 Bad Gateway\r\n\r\n"); } catch {} });
