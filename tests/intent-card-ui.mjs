@@ -107,8 +107,9 @@ try {
     // the Inbox: the server's refusal shows inline
     await p.goto(`${base}/#/inbox/${mc.id}`); await p.waitForSelector(`[data-inbox-studio] [data-align="${mc.id}"]`, { timeout: 15000 });
     await p.click(`[data-inbox-studio] [data-scard="${mc.id}"] [data-option="merge"]`);
-    ok(await p.waitForFunction((id) => /tick every intent line as met \(0 of 2\)/.test(document.querySelector(`[data-inbox-studio] [data-scard="${id}"] [role=status]`)?.textContent ?? ""), mc.id, { timeout: 10000 }).then(() => true, () => false),
-      "Inbox: Merge with no tick is refused by the server, and the refusal shows on the card");
+    ok(await p.waitForFunction((id) => /Tick every intent line \(0 of 2\) or write a note/.test(document.querySelector(`[data-inbox-studio] [data-scard="${id}"] [data-card-msg]`)?.textContent ?? ""), mc.id, { timeout: 10000 }).then(() => true, () => false)
+      && (await call(`/api/scards/${mc.id}`)).j.status === "open",
+      "Inbox: Merge with no tick is not sent; the card says to tick every line (the server refuses it too, below)");
     const direct = await call(`/api/scards/${mc.id}/answer`, { choice: "merge", aligned: [0] });
     ok(direct.status === 400 && /1 of 2/.test(direct.j.error), "the answer route itself refuses a merge with one of two lines ticked", JSON.stringify(direct));
     // the run page: tick both lines, merge, the run reaches merged

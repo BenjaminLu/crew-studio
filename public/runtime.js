@@ -898,14 +898,18 @@ addEventListener("hashchange", () => { if (!/^#\/(runs|tasks)(\/|$)/.test(locati
 // Board through the page's one stream; after the stream reconnects (a server restart, a laptop that slept) the cards
 // are read again, so an event missed meanwhile is never lost. A card that arrives while the page is open shows one
 // non-blocking cue (a status line outside the page view, never a dialog).
-const SCX = { open: [], loaded: false, t: null, seen: null, fresh: [], cueT: null };
+const SCX = { open: [], loaded: false, t: null, seen: null, fresh: [], cueT: null, asked: 0, got: 0 };
 async function loadOpenCards() {
-  try { SCX.open = (await api("/api/scards?open=1")).cards || []; SCX.loaded = true; } catch { return; }
+  // reads overlap (a live event, the stream reconnecting, coming to the Inbox): an older answer that lands last is dropped
+  const n = ++SCX.asked; let cards;
+  try { cards = (await api("/api/scards?open=1")).cards || []; } catch { return; }
+  if (n < SCX.got) return; SCX.got = n; SCX.open = cards; SCX.loaded = true;
   const ids = SCX.open.map((c) => c.id);
   if (SCX.seen) { const add = ids.filter((id) => !SCX.seen.has(id)); if (add.length) cueNew(add); for (const id of add) SCX.seen.add(id); }
   else SCX.seen = new Set(ids); // the cards already waiting when the page opened are not news
   SCX.fresh = SCX.fresh.filter((id) => ids.includes(id)); if (!SCX.fresh.length) dropCue();
-  updateNav(); if (S.route?.name === "board") soft(); else if (S.route?.name === "inbox") render(); else updateCue();
+  // the Inbox redraws after a press in progress, never under it: a redraw between the press and its release loses the click
+  updateNav(); if (S.route?.name === "board") soft(); else if (S.route?.name === "inbox") afterPress(() => { if (S.route?.name === "inbox") render(); }); else updateCue();
 }
 function cueNew(ids) { SCX.fresh = [...new Set([...SCX.fresh, ...ids])]; updateCue(); clearTimeout(SCX.cueT); SCX.cueT = setTimeout(dropCue, 30000); }
 function dropCue() { SCX.fresh = []; document.querySelector("[data-new-card-cue]")?.remove(); }

@@ -419,9 +419,8 @@ function mountCard(el, card, opts = {}) {
       sec("proved", T("Proved by checks", "由檢查證明"), lines(true).length ? lines(true) : h("p", {}, T("No check proves a condition yet.", "目前尚無完成條件通過檢查。"))),
       sec("needs-eye", T("Needs your eye", "需要你看"), lines(false)), linksView(c)];
   }
-  function render() {
-    if(composing){pendingRender=true;return;}
-    const focused=document.activeElement;const keep=focused&&el.contains(focused)&&focused instanceof HTMLTextAreaElement?{key:focused.hasAttribute('data-card-note')?'data-card-note':focused.hasAttribute('data-interview')?'data-interview':null,value:focused.getAttribute('data-interview'),noteFor:focused.getAttribute('data-note-for'),start:focused.selectionStart,end:focused.selectionEnd,direction:focused.selectionDirection}:null;
+  // what the card's buttons need, from the card and the captain's ticks and notes (no DOM): render, sync and answer share it
+  function needs() {
     const c = st.card; const d = detailOk(c.detail) ? c.detail : null; const open = c.status === "open";
     const n = d?.intents?.length || 0; const one = c.confirmDoor && c.door === "one-way";
     // an acknowledgement the captain ticks for one option (the observed-policy merge): its id goes with that answer only
@@ -431,32 +430,65 @@ function mountCard(el, card, opts = {}) {
     const hasNote = !expectsInterview && n > 0;
     const noteLabel = (o) => o.noteLabel ? T(o.noteLabel, o.noteLabelZh || o.noteLabel) : o.select?.length ? T("Pick one", "請選一個") : T("What to change", "要改什麼");
     const noteOf = (o) => String(((o.note || o.select?.length) && st.notes[o.id]) || st.note || "").trim();
-    const missing = (o) => { if (!expectsInterview && (o.note || o.select?.length) && !noteOf(o)) return T(`${o.label}: ${o.noteLabel || (o.select?.length ? "pick one first" : "write it first")}`, `${o.labelZh || o.label}：${o.noteLabelZh || o.noteLabel || (o.select?.length ? "請先選一個" : "請先寫下來")}`);
-      if (o.hold) return null;if(expectsInterview&&!draft)return T("This interview version is unavailable. Reload the card; no answer was submitted.","這個訪談版本無法使用。請重新載入卡片；尚未送出回答。");if(draft&&form.questions.some(q=>!String(draft.answers[q.key]||" ").trim()))return T("Answer every question below", "請回答下方每個問題"); if (n && st.ticks.size < n && !st.note.trim()) return T(`Tick every intent line (${st.ticks.size} of ${n}) or write a note`, `請勾完每一條意圖（${st.ticks.size}/${n}），或寫備註`);
-      if (one && !st.confirm) return T("Confirm the door first", "請先確認門");
-      if (ackOk && c.acknowledge.option === o.id && !st.ack) return T("Tick the acknowledgement first", "請先勾選確認"); return null; };
-    const answer = async (o) => {
-      if (st.busy || composing) return; // one answer in flight; never submit an unfinished composition
-      const why=missing(o);if(expectsInterview&&why){st.msg=why;st.interviewAttempted=true;render();el.querySelector('[aria-invalid="true"]')?.focus();return;}
-      // an option that needs text says so on the card, before anything is sent
-      if(!expectsInterview&&(o.note||o.select?.length)&&!noteOf(o)){st.msg=why;render();el.querySelector(`[data-note-for="${CSS.escape(o.id)}"],[data-card-pick="${CSS.escape(o.id)}"]`)?.focus();return;}
-      st.busy = true; st.msg = ""; render();
-      const took = (got) => { st.card = got && got.id ? got : { ...c, status: "answered", answer: { choice: o.id } }; st.ok = true; st.msg = ""; try { opts.onAnswered && opts.onAnswered(st.card); } catch {} };
-      try {
-        if(draft&&!o.hold)await saveDraft();else if(draft)clearTimeout(draft.timer);
-        const note=draft&&!o.hold?JSON.stringify({schema:1,card:c.id,visit:c.visit,batchHash:draft.hash,answers:draft.answers}):noteOf(o)||null;
-        took(await post(`/api/scards/${encodeURIComponent(c.id)}/answer`, { choice: o.id, note, confirm: st.confirm ? "one-way" : null, ...(ackOk && st.ack && c.acknowledge.option === o.id ? { ack: c.acknowledge.id } : {}), aligned: n ? [...st.ticks].sort((a, b) => a - b) : undefined, ...(o.id === "rescope" && c.localRescope ? {localRescope:c.localRescope} : {}), ...(c.crew && !o.hold && st.crew && Object.keys(st.crew).length ? { crew: { ...st.crew } } : {}) }));
-      } catch (e) {
-        // answered already with this very choice: that is the answer, not a refusal
-        let same = null; if (/answered exactly once/.test(e.message || "")) { try { const now = await get(`/api/scards/${encodeURIComponent(c.id)}`); if (now?.answer?.choice === o.id) same = now; } catch {} }
-        if (same) took(same); else { st.ok = false; const message=e.message || String(e);
-          const alignment=/tick every intent line as met \((\d+) of (\d+)\), or write a note/.exec(message);
-          st.msg=alignment?T(message,`尚未送出核准：請勾完每一條意圖（${alignment[1]}/${alignment[2]}），或填寫備註說明。`):e.refusal&&e.refusal["zh-TW"]?T(e.refusal.en||message,e.refusal["zh-TW"]):message;
-        }
+    // why option o cannot be sent yet, and the field the captain fills to fix it (null when it can be sent)
+    const lack = (o) => { const why = (text, field) => ({ text, field }); if (!expectsInterview && (o.note || o.select?.length) && !noteOf(o)) return why(T(`${o.label}: ${o.noteLabel || (o.select?.length ? "pick one first" : "write it first")}`, `${o.labelZh || o.label}：${o.noteLabelZh || o.noteLabel || (o.select?.length ? "請先選一個" : "請先寫下來")}`), `[data-note-for="${CSS.escape(o.id)}"],[data-card-pick="${CSS.escape(o.id)}"]`);
+      if (o.hold) return null;if(expectsInterview&&!draft)return why(T("This interview version is unavailable. Reload the card; no answer was submitted.","這個訪談版本無法使用。請重新載入卡片；尚未送出回答。"));if(draft&&form.questions.some(q=>!String(draft.answers[q.key]||" ").trim()))return why(T("Answer every question below", "請回答下方每個問題"),'[data-interview][aria-invalid="true"]'); if (n && st.ticks.size < n && !st.note.trim()) return why(T(`Tick every intent line (${st.ticks.size} of ${n}) or write a note`, `請勾完每一條意圖（${st.ticks.size}/${n}），或寫備註`), "[data-intent-tick]:not(:checked)");
+      if (one && !st.confirm) return why(T("Confirm the door first", "請先確認門"), "[data-confirm-door]");
+      if (ackOk && c.acknowledge.option === o.id && !st.ack) return why(T("Tick the acknowledgement first", "請先勾選確認"), "[data-acknowledge]"); return null; };
+    const missing = (o) => lack(o)?.text || null;
+    const tickCount = () => d?.artifactAcceptance ? T(`${st.ticks.size} of ${n} ticked. Approval needs every line, or a note that says why not.`, `已勾 ${st.ticks.size}/${n}。核准需要每一條都勾，或寫備註說明原因。`) : T(`${st.ticks.size} of ${n} ticked. A merge needs every line, or a note that says why not.`, `已勾 ${st.ticks.size}/${n}。合併需要每一條都勾，或寫備註說明原因。`);
+    return { c, d, open, n, one, ackOk, noteOpts, hasNote, noteLabel, noteOf, lack, missing, tickCount };
+  }
+  // Typing a note, ticking a line and confirming the door update the card in place: the fields and buttons the captain is
+  // using stay the same elements. A rebuild here replaced every button under the captain's hand (a press that spans it
+  // ends on a new element and makes no click) and left a reference held to the old button acting on nothing, so a
+  // click went nowhere and said nothing.
+  function sync() {
+    if (composing) { pendingRender = true; return; }
+    const root = el.querySelector("[data-card-root]"); if (!root || root.getAttribute("data-card-root") !== st.card.id) return render();
+    const { c, missing, tickCount } = needs();
+    for (const b of root.querySelectorAll(".cc-actions [data-option]")) { const o = c.options.find((x) => x.id === b.dataset.option); const why = o ? missing(o) : null;
+      b.dataset.ready = why ? "false" : "true"; if (why) b.title = why; else b.removeAttribute("title"); }
+    const count = root.querySelector("[data-tick-count]"); if (count) count.textContent = tickCount();
+    const hint = root.querySelector("[data-card-hint]"); if (hint) { hint.textContent = st.msg ? "" : c.options.map(missing).find(Boolean) || ""; hint.hidden = !hint.textContent; }
+    const msg = root.querySelector("[data-card-msg]"); if (msg) msg.textContent = st.msg;
+  }
+  // One answer, for this card only: the note is read from this card's own fields when the button is pressed (what the
+  // captain sees in the box is what is sent, even a value put there without an input event), and a click that cannot
+  // send says why beside the buttons and moves the focus to what is missing. Nothing is queued: a refused or blocked
+  // click is over, and only a later click on this card's own button sends anything.
+  const answer = async (o) => {
+    if (composing) return; // never submit an unfinished composition
+    if (st.busy) { el.querySelector("[data-card-sending]")?.focus({ preventScroll: true }); return; } // one answer in flight: "Sending…" shows
+    if (!expectsInterview) for (const f of el.querySelectorAll("textarea[data-card-note]")) { if (f.dataset.noteFor) st.notes[f.dataset.noteFor] = f.value; else st.note = f.value; }
+    for (const f of el.querySelectorAll("select[data-card-pick]")) st.notes[f.dataset.cardPick] = f.value;
+    const { c, n, ackOk, lack, noteOf } = needs();
+    if (c.status !== "open" || !el.isConnected) return;
+    const block = lack(o);
+    if (block) { st.msg = block.text; if (expectsInterview) { st.interviewAttempted = true; render(); } else sync();
+      const msg = el.querySelector("[data-card-msg]"); msg?.scrollIntoView({ block: "nearest" });
+      ((block.field && el.querySelector(block.field)) || msg)?.focus(); return; }
+    st.busy = true; st.msg = ""; render();
+    const took = (got) => { st.card = got && got.id ? got : { ...c, status: "answered", answer: { choice: o.id } }; st.ok = true; st.msg = ""; try { opts.onAnswered && opts.onAnswered(st.card); } catch {} };
+    try {
+      if(draft&&!o.hold)await saveDraft();else if(draft)clearTimeout(draft.timer);
+      const note=draft&&!o.hold?JSON.stringify({schema:1,card:c.id,visit:c.visit,batchHash:draft.hash,answers:draft.answers}):noteOf(o)||null;
+      took(await post(`/api/scards/${encodeURIComponent(c.id)}/answer`, { choice: o.id, note, confirm: st.confirm ? "one-way" : null, ...(ackOk && st.ack && c.acknowledge.option === o.id ? { ack: c.acknowledge.id } : {}), aligned: n ? [...st.ticks].sort((a, b) => a - b) : undefined, ...(o.id === "rescope" && c.localRescope ? {localRescope:c.localRescope} : {}), ...(c.crew && !o.hold && st.crew && Object.keys(st.crew).length ? { crew: { ...st.crew } } : {}) }));
+    } catch (e) {
+      // answered already with this very choice: that is the answer, not a refusal
+      let same = null; if (/answered exactly once/.test(e.message || "")) { try { const now = await get(`/api/scards/${encodeURIComponent(c.id)}`); if (now?.answer?.choice === o.id) same = now; } catch {} }
+      if (same) took(same); else { st.ok = false; const message=e.message || String(e);
+        const alignment=/tick every intent line as met \((\d+) of (\d+)\), or write a note/.exec(message);
+        st.msg=alignment?T(message,`尚未送出核准：請勾完每一條意圖（${alignment[1]}/${alignment[2]}），或填寫備註說明。`):e.refusal&&e.refusal["zh-TW"]?T(e.refusal.en||message,e.refusal["zh-TW"]):message;
       }
-      st.busy = false; st.draw();
-      if(st.msg){const feedback=el.querySelector('[data-card-msg]');feedback?.scrollIntoView({block:'nearest'});feedback?.focus({preventScroll:true});}
-    };
+    }
+    st.busy = false; st.draw();
+    if(st.msg){const feedback=el.querySelector('[data-card-msg]');feedback?.scrollIntoView({block:'nearest'});feedback?.focus({preventScroll:true});}
+  };
+  function render() {
+    if(composing){pendingRender=true;return;}
+    const focused=document.activeElement;const keep=focused&&el.contains(focused)&&focused instanceof HTMLTextAreaElement?{key:focused.hasAttribute('data-card-note')?'data-card-note':focused.hasAttribute('data-interview')?'data-interview':null,value:focused.getAttribute('data-interview'),noteFor:focused.getAttribute('data-note-for'),start:focused.selectionStart,end:focused.selectionEnd,direction:focused.selectionDirection}:null;
+    const { c, d, open, n, one, ackOk, noteOpts, hasNote, noteLabel, missing, tickCount } = needs();
     const lang = h("div", { class: "cc-lang", role: "group", "aria-label": "Language" }, cardI18n().cardLangs(st.lang !== "en" ? st.lang : pageLang() !== "en" ? pageLang() : lastCardZh).map(([k, lab]) =>
       h("button", { type: "button", "data-card-lang": k, "aria-pressed": String(st.lang === k), onclick: () => { st.lang = k; if (k !== "en") lastCardZh = k; render(); } }, lab)));
     const zhWhy = zh() && c.sections?.["zh-TW"]?.why ? cardI18n().deep(st.lang, c.sections)?.why : null;
@@ -474,18 +506,18 @@ function mountCard(el, card, opts = {}) {
     if (open) {
       if (n) kids.push(h("section", { class: "cc-align", "data-align": c.id },
         h("b", {}, T("Does the change meet each intent line? Tick each one.", "改動有做到每一條意圖嗎？逐條勾選。")),
-        d.intents.map((t, i) => h("label", { class: "cc-tick" }, h("input", { type: "checkbox", "data-intent-tick": i, checked: st.ticks.has(i), onchange: (e) => { e.target.checked ? st.ticks.add(i) : st.ticks.delete(i); st.msg=""; render(); } }), h("span", {}, `${i + 1}. `, LL(t)))),
-        h("span", { class: "cc-count", "data-tick-count": "" }, d?.artifactAcceptance ? T(`${st.ticks.size} of ${n} ticked. Approval needs every line, or a note that says why not.`, `已勾 ${st.ticks.size}/${n}。核准需要每一條都勾，或寫備註說明原因。`) : T(`${st.ticks.size} of ${n} ticked. A merge needs every line, or a note that says why not.`, `已勾 ${st.ticks.size}/${n}。合併需要每一條都勾，或寫備註說明原因。`))));
+        d.intents.map((t, i) => h("label", { class: "cc-tick" }, h("input", { type: "checkbox", "data-intent-tick": i, checked: st.ticks.has(i), onchange: (e) => { e.target.checked ? st.ticks.add(i) : st.ticks.delete(i); st.msg=""; sync(); } }), h("span", {}, `${i + 1}. `, LL(t)))),
+        h("span", { class: "cc-count", "data-tick-count": "" }, tickCount())));
       if(expectsInterview&&!draft)kids.push(h("p",{class:"cc-msg",role:"alert"},T("The current interview questions could not be verified. Reload this card before answering.","目前訪談問題尚未驗證。請重新載入這張卡片後再回答。")));
       if(draft)kids.push(h("section",{class:"cc-interview",'data-interview-batch':draft.hash},h("h3",{},T("Answer this interview batch","回答這批訪談問題")),h("p",{class:"cc-count"},T("All six answers are required. Drafts are saved on this Mac; saving a draft does not answer the card.","六題都需要回答。草稿會儲存在這台 Mac；儲存草稿不會回覆卡片。")),form.questions.map((q,i)=>{const invalid=st.interviewAttempted&&!String(draft.answers[q.key]||'').trim(),id=`interview-${c.id}-${q.key}`;return h("div",{class:"cc-interview-field"},h("label",{for:id},`${i+1}. ${T(q.en,q.zh)}`),h("textarea",{id,rows:3,maxLength:500,'data-interview':q.key,'aria-required':'true','aria-invalid':String(!!invalid),'aria-describedby':id+'-error',oninput:e=>{draft.answers[q.key]=e.target.value;draft.dirty=true;clearTimeout(draft.timer);draft.timer=setTimeout(()=>saveDraft().catch(error=>{st.msg=error.message;st.draw();}),250);if(e.target.value.trim()){e.target.setAttribute('aria-invalid','false');const error=el.querySelector('#'+id+'-error');if(error)error.textContent='';}},onblur:()=>saveDraft().catch(error=>{st.msg=error.message;st.draw();})},draft.answers[q.key]||''),h("span",{id:id+'-error',class:'cc-field-error',role:invalid?'alert':null},invalid?T("Please answer this question.","請回答這個問題。"):''));})));
       if (hasNote) kids.push(h("textarea", { class: "input", rows: 2, "data-card-note": c.id, placeholder: T("Note (what to change, or why a line is not met)", "備註（要改什麼，或哪一條沒做到、為什麼）"), "aria-label": T("Note", "備註"),
-        oninput: (e) => { const had = !!st.note.trim(); st.note = e.target.value; if (had !== !!st.note.trim()) { const pos = e.target.selectionStart; render(); const t = el.querySelector("[data-card-note]:not([data-note-for])"); if (t) { t.focus(); t.setSelectionRange(pos, pos); } } } }, st.note));
+        oninput: (e) => { st.note = e.target.value; st.msg = ""; sync(); } }, st.note));
       for (const o of noteOpts) { const label = `${T(o.label, o.labelZh || o.label)}: ${noteLabel(o)}`;
         kids.push(h("label", { class: "cc-note", "data-note-box": o.id }, h("span", { class: "cc-count" }, label),
-          o.select?.length ? h("select", { class: "input", "data-card-pick": o.id, "aria-label": label, onchange: (e) => { st.notes[o.id] = e.target.value; st.msg = ""; render(); } },
+          o.select?.length ? h("select", { class: "input", "data-card-pick": o.id, "aria-label": label, onchange: (e) => { st.notes[o.id] = e.target.value; st.msg = ""; sync(); } },
               h("option", { value: "" }, T("Pick one…", "請選一個…")), o.select.map((x) => h("option", { value: x.value, selected: st.notes[o.id] === x.value }, x.label)))
             : h("textarea", { class: "input", rows: 2, "data-card-note": c.id, "data-note-for": o.id, placeholder: noteLabel(o), "aria-label": label,
-              oninput: (e) => { const had = !!String(st.notes[o.id] || "").trim(); st.notes[o.id] = e.target.value; if (had !== !!e.target.value.trim()) { const pos = e.target.selectionStart; render(); const t = el.querySelector(`[data-note-for="${CSS.escape(o.id)}"]`); if (t) { t.focus(); t.setSelectionRange(pos, pos); } } } }, st.notes[o.id] || ""))); }
+              oninput: (e) => { st.notes[o.id] = e.target.value; st.msg = ""; sync(); } }, st.notes[o.id] || ""))); }
       // a dispatch card's crew (docs/design/crew-seats.md): one line; "adjust this run" opens each node's effort, for this run only
       if (c.crew && Array.isArray(c.crew.nodes)) { st.crew = st.crew || {}; const changed = Object.keys(st.crew).length;
         const tunable = c.crew.nodes.some((r) => Array.isArray(r.efforts) && r.efforts.length);
@@ -498,14 +530,15 @@ function mountCard(el, card, opts = {}) {
             r.efforts.length ? h("select", { class: "input", "aria-label": T(`${r.label} effort for this run`, `${r.label} 這次的 effort`), onchange: (e) => { const v = e.target.value === "default" ? null : e.target.value; if (v === r.effort) delete st.crew[r.node]; else st.crew[r.node] = v; render(); } },
               r.efforts.map((x) => h("option", { value: x ?? "default", selected: (Object.hasOwn(st.crew, r.node) ? st.crew[r.node] : r.effort) === x }, x ?? T("default", "預設")))) : h("span", { class: "cc-count" }, r.effort ?? T("default", "預設"))))
             .concat(h("p", { class: "cc-count" }, T("Changes here apply to this run only. To change it every time, customise the workflow on the Crew page.", "這裡改的只用在這一次。要每次都這樣，到船員頁自訂這個 workflow。")))) : null)); }
-      if (one) kids.push(h("label", { class: "cc-tick rt-row", for: `conf-${c.id}` }, h("input", { type: "checkbox", id: `conf-${c.id}`, "data-confirm-door": c.id, checked: st.confirm, onchange: (e) => { st.confirm = e.target.checked; render(); } }),
+      if (one) kids.push(h("label", { class: "cc-tick rt-row", for: `conf-${c.id}` }, h("input", { type: "checkbox", id: `conf-${c.id}`, "data-confirm-door": c.id, checked: st.confirm, onchange: (e) => { st.confirm = e.target.checked; st.msg = ""; sync(); } }),
         h("span", {}, T("I confirm: this is one-way, a revert will not undo it", "我確認：這是單向門，revert 無法還原"))));
-      if (ackOk) kids.push(h("label", { class: "cc-tick rt-row", for: `ack-${c.id}` }, h("input", { type: "checkbox", id: `ack-${c.id}`, "data-acknowledge": c.id, checked: st.ack, onchange: (e) => { st.ack = e.target.checked; render(); } }),
+      if (ackOk) kids.push(h("label", { class: "cc-tick rt-row", for: `ack-${c.id}` }, h("input", { type: "checkbox", id: `ack-${c.id}`, "data-acknowledge": c.id, checked: st.ack, onchange: (e) => { st.ack = e.target.checked; st.msg = ""; sync(); } }),
         h("span", {}, T(c.acknowledge.en, c.acknowledge.zh || c.acknowledge.en))));
       kids.push(h("div", { class: "cc-actions actions" }, c.options.map((o) => { const why = missing(o);
         return h("button", { class: `btn ${o.primary ? "primary" : ""}`, type: "button", "data-option": o.id, ...(draft&&o.id==="continue"?{"data-save-interview":""}:{}), "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy, onclick: () => answer(o) }, targetLabel(c, o)); })));
-      const hint = c.options.map(missing).find(Boolean);
-      if (hint && !st.msg) kids.push(h("p", { class: "cc-count", "data-card-hint": "" }, hint));
+      const hint = st.msg ? "" : c.options.map(missing).find(Boolean) || "";
+      kids.push(h("p", { class: "cc-count", "data-card-hint": "", hidden: !hint }, hint));
+      if (st.busy) kids.push(h("p", { class: "cc-count", role: "status", tabindex: "-1", "data-card-sending": "" }, T("Sending…", "送出中…")));
     } else if (c.answer) {
       const byFirstmate = c.decidedBy === "firstmate" || c.answer.by === "firstmate";
       if (byFirstmate) kids.push(h("p", { class: "cc-count", "data-decided-by": "firstmate" }, T("Decided by Firstmate within the spec, not by the captain.", "由 Firstmate 在 spec 內決定，不是船長的決定。")));

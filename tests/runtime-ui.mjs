@@ -174,9 +174,11 @@ try {
     // (the card is re-saved once its STE check finishes raising it: rewrite until the change holds)
     for (let i = 0; i < 20; i++) { const card = JSON.parse(readFileSync(cf, "utf8")); if (card.door === "one-way" && card.ste) break; if (card.ste) writeFileSync(cf, JSON.stringify({ ...card, door: "one-way", confirmDoor: true })); await p.waitForTimeout(500); }
     await p.goto(`${base}/#/inbox/${mc}`); await p.waitForSelector(`[data-inbox-studio] [data-confirm-door="${mc}"]`, { timeout: 15000 });
-    await p.click('[data-inbox-studio] [data-option="merge"]'); await p.waitForFunction(() => /confirm the door first/.test(document.querySelector("[data-inbox-studio] .rt-card [role=status]")?.textContent ?? ""), null, { timeout: 10000 });
-    // (unit intent-merge-card) a merge also needs every intent line ticked: tick them, then merge
-    await p.check(`[data-confirm-door="${mc}"]`); const nt = await p.locator('[data-inbox-studio] [data-intent-tick]').count(); for (let i = 0; i < nt; i++) await p.check(`[data-inbox-studio] [data-intent-tick="${i}"]`);
+    // (unit intent-merge-card) a merge also needs every intent line ticked: with the lines ticked and the door not, the card
+    // says to confirm the door (beside its buttons, before anything is sent); with the tick, it merges
+    const nt = await p.locator('[data-inbox-studio] [data-intent-tick]').count(); for (let i = 0; i < nt; i++) await p.check(`[data-inbox-studio] [data-intent-tick="${i}"]`);
+    await p.click('[data-inbox-studio] [data-option="merge"]'); await p.waitForFunction(() => /confirm the door first/i.test(document.querySelector("[data-inbox-studio] .rt-card [data-card-msg]")?.textContent ?? ""), null, { timeout: 10000 });
+    await p.check(`[data-confirm-door="${mc}"]`);
     await p.click('[data-inbox-studio] [data-option="merge"]');
     await p.goto(`${base}/#/run/${runId}`);
     await p.waitForSelector('[data-run-status="succeeded"]', { timeout: 120000 });
