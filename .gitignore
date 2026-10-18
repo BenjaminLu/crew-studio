@@ -13,6 +13,7 @@ node_modules/
 # Test artifacts and browser reports; committed tests/fixture/ stays available.
 /tests/out/
 /test-results/
+/ci-results/
 /playwright-report/
 /coverage/
 
