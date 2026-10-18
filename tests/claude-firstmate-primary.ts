@@ -79,16 +79,19 @@ const stop = async () => { if (app.exitCode === null && app.signalCode === null)
 const api = async (path: string, body?: any) => { const r = await fetch(base + path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", "x-crew-session": token }, body: body === undefined ? undefined : JSON.stringify(body) }); return { status: r.status, body: await r.json() as any }; };
 const view = async () => (await api("/api/main")).body;
 const idle = () => until(async () => { const v = await view(); return v.state === "attached" && !v.busy && v.queue.length === 0; });
-// a captain turn and the lines it added: picked by identity, not by index (the view is sorted by time and capped, so a line
-// written for an earlier turn can land after `before`), waiting long enough for a loaded machine; a turn that never finished fails
+// a captain turn and the lines it added, from the captain's own line on. Lines are picked by identity, not by index (the view is
+// sorted by time and capped), and the turn is done only when a reply follows that captain line: a turn Studio sends by itself
+// in between (the readiness gate's GATE-REPAIR after a workflow draft) replies too, and its reply is not this turn's (the
+// flake at "a refused native call is a typed tool error": say() returned on the GATE-REPAIR echo, before this turn's reply)
 const lineKey = (l: any) => `${l.at}|${l.kind}|${l.source ?? ""}|${String(l.text ?? "").slice(0, 200)}`;
 const say = async (text: string) => {
   const seen = new Set(((await view()).log as any[]).map(lineKey));
   await api("/api/main/send", { text });
-  const fresh = (v: any) => (v.log as any[]).filter((l) => !seen.has(lineKey(l)));
-  const done = await until(async () => { const v = await view(); return !v.busy && v.queue.length === 0 && fresh(v).some((l: any) => l.kind === "firstmate" || l.status === "failed"); }, 1000);
+  const mine = (v: any) => { const fresh = (v.log as any[]).filter((l) => !seen.has(lineKey(l))), i = fresh.findIndex((l) => l.kind === "captain" && String(l.text ?? "").startsWith(text.slice(0, 200)));
+    return i < 0 ? [] : fresh.slice(i); };
+  const done = await until(async () => { const v = await view(); return !v.busy && v.queue.length === 0 && mine(v).slice(1).some((l: any) => l.kind === "firstmate" || l.status === "failed"); }, 1000);
   if (!done) console.log(`note: the turn "${text.slice(0, 40)}" did not finish within 30 s`);
-  return fresh(await view());
+  return mine(await view());
 };
 
 try {
