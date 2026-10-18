@@ -55,7 +55,7 @@ try{
  ok(pin.heldScope.join()==='old.txt,new.txt'&&readFileSync(join(F.H.data,'evidence',r.id,'ledger.jsonl'),'utf8').startsWith(history),'new epoch preserves old scope and signed history bytes');
  ok(trusted.entries.filter(e=>e.record==='local-rescope-request').length===1&&trusted.entries.filter(e=>e.record==='local-rescope-applied').length===1,'one captain decision produces one request and one applied record');
  // Competing native tasks with the retired or current scope build alongside it: scope never holds.
- for(const scope of ['old.txt','new.txt']){const other=await F.start(false);scopes.set(other.id,scope);if(scope!=='old.txt'){await E.answer((await card(other.id,'dispatch')).id,{choice:'rescope',by:'fixture captain'});await card(other.id,'dispatch');}
+ for(const scope of ['old.txt','new.txt']){const other=await F.start(false);scopes.set(other.id,scope);if(scope!=='old.txt'){await E.answer((await card(other.id,'dispatch')).id,{choice:'rescope',note:'Take over this scope',by:'fixture captain'});await card(other.id,'dispatch');}
   await E.answer((await card(other.id,'dispatch')).id,{choice:'dispatch',by:'fixture captain'});await until(()=>starts.has(other.id),5000);
   ok(starts.has(other.id),'competing '+scope+' is not held by the recovered task');await E.cancel(other.id);
  }
@@ -68,7 +68,7 @@ try{
  }
  // A corrupt tail on another Task's ledger does not block an overlapping Task: scope never holds.
  E.record(x,'fixture-tail',{data:{fixture:true}});const corrupted=readFileSync(ledger,'utf8').trim().split('\n'),tail=JSON.parse(corrupted.at(-1)!);tail.sig='0'.repeat(64);corrupted[corrupted.length-1]=JSON.stringify(tail);writeFileSync(ledger,corrupted.join('\n')+'\n');
- const contender=await F.start(false);scopes.set(contender.id,'new.txt');await E.answer((await card(contender.id,'dispatch')).id,{choice:'rescope',by:'fixture captain'});await E.answer((await card(contender.id,'dispatch')).id,{choice:'dispatch',by:'fixture captain'});await until(()=>starts.has(contender.id),5000);
+ const contender=await F.start(false);scopes.set(contender.id,'new.txt');await E.answer((await card(contender.id,'dispatch')).id,{choice:'rescope',note:'Take over this scope',by:'fixture captain'});await E.answer((await card(contender.id,'dispatch')).id,{choice:'dispatch',by:'fixture captain'});await until(()=>starts.has(contender.id),5000);
  ok(starts.has(contender.id),'another Task\'s corrupt ledger tail does not block an overlapping Task');writeFileSync(ledger,before);writeFileSync(eventsFile,eventsBefore);await E.cancel(contender.id);
  // Restart from the persisted real run/card/evidence without rebinding admission.
  const restored=new Engine({...E.deps},F.H.defs);installCode(restored,{dataDir:F.H.data,projects:new Projects(F.H.data)});restored.load();
