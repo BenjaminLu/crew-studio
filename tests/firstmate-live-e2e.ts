@@ -4,6 +4,8 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //      deliverable, the captain turn carries the route, and writing a deliverable file anyway is shown and reminded.
 //  S5  Firstmate described the old Board ("cards + crew on duty") and could not find the Crew team page: the manual
 //      (studio_manual studio/pages) describes today's Board, Inbox and Crew page, and the seed sends it there.
+//  S7  One message naming three deliverables yielded one card and "say 繼續" twice: one proposal per separate part
+//      of the captain's message, each quoting it and each with its own card; invented or duplicate work is refused.
 // No model is called: a fake in-process host stands in for the CLI, and the tools run on the real engine.
 //      bun tests/firstmate-live-e2e.ts
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -108,6 +110,35 @@ await section("S5 manual pages", async () => {
   ok(/\*\*Inbox\*\* \(`#\/inbox`\)[^\n]*one card at a time/.test(brief), "the Inbox shows one card at a time");
   ok(/\*\*Crew\*\* \(`#\/team`\): the Studio team/.test(brief) && /only this workflow/.test(brief), "the Crew team page is #/team, where the captain edits the team");
   ok(!!page.text && /never from memory/.test(page.text) && /never from memory/.test(manualPage("studio/firstmate") ?? "") && /studio_manual section studio\/pages, never from memory/.test(nativeFreshText("/ws")), "Firstmate is told to describe pages from the manual, not memory");
+});
+
+// ---------- S7: one captain message naming several deliverables yields one card each ----------
+const THREE = "再派三個工作：1) 網頁原型：一間叫「轉角書店」的單頁網站，有營業時間、本週選書三本。2) 圖片：轉角書店的社群貼文主視覺，方形，安靜溫暖的書店角落。3) 短片：轉角書店 15 秒宣傳短片，橫式。三個都直接提出派工卡，不用再問我。";
+const fixture = { id: "turn-fixture", name: "Turn fixture", version: 1, roles: [], nodes: [{ id: "wait", kind: "card", label: "Wait", x: 1, y: 1, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, options: [{ id: "done", label: "Done", labelZh: "Done" }] } }, { id: "done", kind: "hook", label: "Done", x: 2, y: 1 }], edges: [{ from: "wait", to: "done", when: "done" }] };
+const refusedWith = async (f: () => Promise<unknown>, re: RegExp) => { try { await f(); return false; } catch (e: any) { return re.test(String(e?.message ?? e)); } };
+await section("S7 several proposals per turn", async () => {
+  const H = await harness([bundledText("workflows/v2/firstmate-proposal.wf.yaml")!, JSON.stringify(fixture)]); const E = H.engine;
+  try {
+    const tools = installFirstmate(E, new Projects(H.data));
+    const owner = (key: string, text: string) => ({ key, captain: true, text, live: () => true });
+    const propose = (text: string, title: string, key = "three") => tools.call("studio_propose_work", { workflow: "turn-fixture", version: 1, title, text }, owner(key, THREE)) as Promise<any>;
+    const web = await propose("網頁原型：一間叫「轉角書店」的單頁網站，有營業時間、本週選書三本。", "轉角書店網站");
+    const image = await propose("圖片：轉角書店的社群貼文主視覺，方形，安靜溫暖的書店角落。", "轉角書店主視覺");
+    const film = await propose("短片：轉角書店 15 秒宣傳短片，橫式。", "轉角書店短片");
+    ok(new Set([web.proposal, image.proposal, film.proposal]).size === 3, "one message naming three deliverables yields three proposals", JSON.stringify([web, image, film]));
+    await until(() => [web, image, film].every((p) => E.cards.list({ run: p.proposal }).some((c) => c.node === "dispatch")), 5000);
+    ok([web, image, film].every((p) => E.cards.list({ run: p.proposal }).filter((c) => c.node === "dispatch").length === 1), "each still has its own dispatch card for the captain");
+    const again = await propose("圖片：轉角書店的社群貼文主視覺，方形，安靜溫暖的書店角落。", "轉角書店主視覺");
+    ok(again.proposal === image.proposal, "a retried call finds its own proposal");
+    ok(await refusedWith(() => propose("A coffee shop logo with a cup and beans", "Logo"), /separate part of the captain|already has 3 proposals/), "work the captain did not name is refused");
+    const two = "再派兩個：1) 網頁原型：轉角書店單頁網站，有營業時間。2) 圖片：轉角書店社群主視覺，方形。";
+    const p1 = await tools.call("studio_propose_work", { workflow: "turn-fixture", version: 1, title: "網站", text: "網頁原型：轉角書店單頁網站，有營業時間。" }, owner("two", two)) as any;
+    ok(await refusedWith(() => tools.call("studio_propose_work", { workflow: "turn-fixture", version: 1, title: "Logo", text: "A coffee shop logo with a cup and beans" }, owner("two", two)), /separate part of the captain/), "a further proposal that quotes no part of the message is refused");
+    ok(!!p1.proposal && await refusedWith(() => tools.call("studio_propose_work", { workflow: "turn-fixture", version: 1, title: "網站二", text: "網頁原型：轉角書店單頁網站，有營業時間和地圖。" }, owner("two", two)), /already has a proposal for this part/), "a second proposal for the same part is refused");
+    const one = "Add euro formatting to the price labels";
+    await tools.call("studio_propose_work", { workflow: "turn-fixture", version: 1, title: "EUR", text: one }, owner("one", one));
+    ok(await refusedWith(() => tools.call("studio_propose_work", { workflow: "turn-fixture", version: 1, title: "EUR 2", text: "Add euro formatting to the totals" }, owner("one", one)), /already has another pinned proposal/), "a message with one deliverable still yields one proposal");
+  } finally { for (const r of E.list()) if (!["succeeded", "cancelled", "failed"].includes(r.status)) await E.cancel(r.id, "fixture cleanup"); H.stop(); rmSync(H.data, { recursive: true, force: true }); }
 });
 
 console.log(`firstmate-live-e2e: ${pass} passed, ${fail} failed`);
