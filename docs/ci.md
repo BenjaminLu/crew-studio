@@ -47,7 +47,8 @@ All commands run in a filtered environment: basic operating-system paths/locale,
 Playwright configuration, `CI=true`, and `BUN_OPTIONS=--no-env-file`. GitHub tokens,
 Actions runtime credentials, and operator Studio settings are not inherited by
 tests. Tests retain their own `isolated-env.mjs` guard and real-provider CLI
-sentinels. Git checkout does not persist credentials. The workflow has only
+sentinels. Git checkout keeps the history required by historical contract tests, and does
+not persist credentials. The workflow has only
 `contents: read`, uses immutable action SHAs, and never uses `pull_request_target`,
 repository secrets, self-hosted runners, or production data.
 
