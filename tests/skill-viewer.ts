@@ -44,8 +44,8 @@ try {
   ok(files["ref/notes.md"]?.viewable === true && files["LICENSE"]?.viewable === true && files["img/logo.png"]?.viewable === false && files["big.txt"]?.viewable === false && files["big.txt"].bytes > SKILL_VIEW_FILE_CAP,
     "the supporting files, each marked openable or not (a binary name, over the cap)", JSON.stringify(one.j.files));
   ok(JSON.stringify(one.j.usedBy) === JSON.stringify([{ workflow: "wf", version: 3, node: "write", v: 1 }]), "the workflow nodes pinning it (usedBy)", JSON.stringify(one.j.usedBy));
-  ok(JSON.stringify(one.j.usedBySeats) === JSON.stringify([{ seat: "maker", v: 1 }, { project: "shop", seat: "reviewer", v: 1 }, { workflow: "documents", node: "draft", v: 2 }]),
-    "the team's seats, project seats and node additions using it, each with its version", JSON.stringify(one.j.usedBySeats));
+  ok(JSON.stringify(one.j.usedBySeats) === JSON.stringify([{ seat: "maker", label: { en: "Maker", zh: "產出" }, v: 1 }, { project: "shop", seat: "reviewer", label: { en: "Reviewer", zh: "審查" }, v: 1 }, { workflow: "documents", node: "draft", v: 2 }]),
+    "the team's seats (with their display names), project seats and node additions using it, each with its version", JSON.stringify(one.j.usedBySeats));
   ok((await get("/api/skills/alpha?version=9")).status === 404 && (await get("/api/skills/alpha?version=abc")).status === 400 && (await get("/api/skills/alpha?version=-1")).status === 400 && (await get("/api/skills/nope")).status === 404,
     "a version or skill that does not exist is 404; a version that is not a whole number is 400");
   ok((await get("/api/skills/alpha", true)).status === 404 && (await get("/api/skills/alpha/files/ref/notes.md", true)).status === 404, "the viewer routes only read: a write to them is not a route");
@@ -64,6 +64,15 @@ try {
   const answers = await Promise.all(tries.map((t) => get(t)));
   ok(answers.every((a) => a.status !== 200 && !JSON.stringify(a.j ?? {}).includes('"filesSha256"') && !a.j?.text), "traversal is refused: no path outside the version's recorded files is served", JSON.stringify(answers.map((a, i) => [tries[i], a.status])));
   ok(answers[1].status === 400 && answers[4].status === 400 && answers[6].status === 404, "an encoded .. or an absolute path is 400; a file the version never recorded is 404", JSON.stringify(answers.map((a) => a.status)));
+  // a supporting file changed on disk since the version was recorded is refused (the version's files no longer hash to filesSha256),
+  // and so is any other file of that version while one of them is changed
+  const notesAt = join(data, "skills", "_library", "alpha", "v1", "files", "ref", "notes.md"), notesWas = readFileSync(notesAt);
+  writeFileSync(notesAt, "TAMPERED-NOTES\n");
+  const changed = await get("/api/skills/alpha/files/ref/notes.md?version=1"), sibling = await get("/api/skills/alpha/files/LICENSE?version=1");
+  ok(changed.status === 409 && /changed on disk since it was recorded/.test(changed.j?.error) && !JSON.stringify(changed.j).includes("TAMPERED"), "a tampered supporting file is refused (409), its text never served", JSON.stringify(changed));
+  ok(sibling.status === 409, "another file of a tampered version is refused too", JSON.stringify(sibling));
+  writeFileSync(notesAt, notesWas);
+  ok((await get("/api/skills/alpha/files/ref/notes.md?version=1")).status === 200, "put back byte for byte, it is served again");
   // a stored file replaced on disk by a link (to a file outside, or one inside) is never followed
   const outside = join(tmp, "secret.txt"); writeFileSync(outside, "SECRET-OUTSIDE");
   const notes = join(data, "skills", "_library", "alpha", "v1", "files", "ref", "notes.md"); unlinkSync(notes); symlinkSync(outside, notes);

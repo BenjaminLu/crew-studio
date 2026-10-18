@@ -14,7 +14,7 @@
 // a pinned node loads. They never write, and never follow a link inside a skill's folder.
 import { hasSessionCookie } from "./csrf";
 import { SKILL_CAPS, SKILL_VIEW_FILE_CAP, SkillImportError, SkillViewError, splitFrontmatter, type Skills } from "./skills";
-import type { Team } from "./domain/crew";
+import { seatLabel, type Team } from "./domain/crew";
 import type { WorkflowDefs } from "./runtime/defs";
 import type { StudioLog } from "./rawlog";
 
@@ -30,10 +30,10 @@ export function createSkillRoutes(o: { skills: Skills; defs: () => WorkflowDefs 
   };
   /** where the team pins a library skill (the Crew page): a member's own skills, a project's seat, a workflow node's added skill */
   const seatsUsing = (id: string) => {
-    const out: { seat?: string; project?: string; workflow?: string; node?: string; v: number }[] = [];
+    const out: { seat?: string; label?: { en: string; zh: string }; project?: string; workflow?: string; node?: string; v: number }[] = [];
     let t: Team | null = null; try { t = o.team?.() ?? null; } catch {} if (!t) return out;
-    for (const [seat, m] of Object.entries(t.members ?? {})) for (const p of m.skills ?? []) if (p.id === id) out.push({ seat, v: p.v });
-    for (const [project, pr] of Object.entries(t.projects ?? {})) for (const [seat, s] of Object.entries(pr.seats ?? {})) for (const p of s.skills ?? []) if (p.id === id) out.push({ project, seat, v: p.v });
+    for (const [seat, m] of Object.entries(t.members ?? {})) for (const p of m.skills ?? []) if (p.id === id) out.push({ seat, label: seatLabel(t, seat), v: p.v });
+    for (const [project, pr] of Object.entries(t.projects ?? {})) for (const [seat, s] of Object.entries(pr.seats ?? {})) for (const p of s.skills ?? []) if (p.id === id) out.push({ project, seat, label: seatLabel(t, seat), v: p.v });
     for (const [workflow, w] of Object.entries(t.workflows ?? {})) for (const [node, n] of Object.entries(w.nodes ?? {})) for (const p of n.add ?? []) if (p.id === id) out.push({ workflow, node, v: p.v });
     return out;
   };

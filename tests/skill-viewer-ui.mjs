@@ -79,8 +79,8 @@ try {
     await dialog(p).waitFor(); ok(await waitShown(p, "1"), `Enter opens the viewer at v1, the version this seat pins ${tag}`, await shownVersion(p));
     ok(await dialog(p).getAttribute("aria-modal") === "true" && (await p.locator("#skvTitle").innerText()).trim() === "alpha" && await focusIn(p), `the viewer is a modal dialog named by the skill, with the focus inside ${tag}`);
     const meta = await dialog(p).innerText();
-    ok(meta.includes(zh ? "這個位置用的是 v1（舊版）。最新是 v2。" : "This seat uses v1, an older version. The latest is v2.") && await dialog(p).locator("[data-skv-used-here]").count() === 1, `an older pin says so: this seat uses v1, the latest is v2 ${tag}`, meta.slice(0, 400));
-    ok(meta.includes(zh ? "匯入 · 資料夾" : "Imported · Folder") && meta.includes(zh ? "適用" : "Fits") && (meta.includes("seat maker") || meta.includes("位置 maker")), `source (imported, folder), what it fits and the seat using it ${tag}`);
+    ok(meta.includes(zh ? "這個位置用的是 v1（舊版）。最新是 v2。" : "This seat uses v1, an older version. The latest is v2.") && (await dialog(p).locator("select[data-skv-version] option:checked").innerText()).includes(zh ? "這裡用的" : "used here"), `an older pin says so: this seat uses v1, the latest is v2 ${tag}`, meta.slice(0, 400));
+    ok(meta.includes(zh ? "匯入 · 資料夾" : "Imported · Folder") && meta.includes(zh ? "適用" : "Fits") && meta.includes(zh ? "產出 · v1" : "Maker · v1") && !/seat maker|位置 maker/.test(meta), `source (imported, folder), what it fits and the seat using it, by its member's name ${tag}`);
     // rendered: text nodes only; nothing ran
     const r = await p.evaluate(() => { const d = document.querySelector("[data-skv-rendered]"); return { scripts: d.querySelectorAll("script, img, iframe, object").length, links: [...d.querySelectorAll("a")].map((a) => a.getAttribute("href")), text: d.textContent, xss: window.__xss ?? null, heading: d.querySelector('[role="heading"]')?.textContent, bold: d.querySelector("b")?.textContent, pre: d.querySelector("pre")?.textContent }; });
     ok(r.scripts === 0 && r.xss === null && r.text.includes("<script>window.__xss=1</script>") && r.text.includes('<img src=x onerror="window.__xss=2">'), `a skill holding <script> and <img onerror> shows them as text and runs nothing ${tag}`, JSON.stringify({ s: r.scripts, x: r.xss }));
@@ -105,6 +105,13 @@ try {
     const fileText = p.locator('[data-skv-file-text="ref/notes.md"]'); await fileText.waitFor();
     ok(await fileText.evaluate((e) => e.textContent) === NOTES && await p.evaluate(() => window.__xss ?? null) === null, `a supporting file opens inline as its exact text, nothing in it runs ${tag}`);
     ok(await dialog(p).locator('[data-skv-file="img/logo.png"]').isDisabled(), `a binary supporting file is not openable ${tag}`);
+    // a supporting file changed on disk since v1 was recorded: refused, with the notice SKILL.md's mismatch shows, then put back
+    { const at = join(data, "skills", "_library", "alpha", "v1", "files", "ref", "notes.md"), was = readFileSync(at);
+      await dialog(p).locator('[data-skv-file="ref/notes.md"]').click(); writeFileSync(at, "TAMPERED-NOTES\n");
+      await dialog(p).locator('[data-skv-file="ref/notes.md"]').click();
+      const err = dialog(p).locator('[data-skv-file-error="ref/notes.md"]'); await err.waitFor({ timeout: 8000 }).catch(() => {});
+      ok(/changed on disk since it was recorded/.test(await err.textContent().catch(() => "")) && await err.getAttribute("role") === "alert" && !(await dialog(p).innerText()).includes("TAMPERED-NOTES"), `a tampered supporting file shows the mismatch notice, never its text ${tag}`);
+      writeFileSync(at, was); await dialog(p).locator('[data-skv-file="ref/notes.md"]').click(); await dialog(p).locator('[data-skv-file="ref/notes.md"]').click(); await fileText.waitFor(); }
     await p.screenshot({ path: join(shots, `viewer-team-${lang}-${width}.png`) });
     if (width === 390) ok(await noSideways(p), `no sideways scroll with the viewer open ${tag}`);
     // Tab stays inside the dialog
@@ -114,6 +121,7 @@ try {
     // Esc closes; the focus returns to the chip; the page's selection and its member editor are as they were
     await p.keyboard.press("Escape");
     ok(await dialog(p).count() === 0, `Esc closes the viewer ${tag}`);
+    ok(await p.evaluate(() => window.pageDirty.why()) === null, `after switching versions and closing, nothing on the page counts as unsent (a release reload stays quiet) ${tag}`, await p.evaluate(() => window.pageDirty.why()));
     ok(await p.evaluate(() => document.activeElement?.getAttribute("data-skill-view") === "alpha" && !!document.activeElement.closest('[data-team-row="design-a"]')), `the focus returns to the chip that opened it ${tag}`);
     ok(JSON.stringify(await pageState()) === JSON.stringify(before), `opening the viewer changed nothing on the page: same workflow, member editor still open, same hash ${tag}`, JSON.stringify([before, await pageState()]));
     // the seat editor's chip, closed with its close button
@@ -138,7 +146,8 @@ try {
     // ---------- the Library row ----------
     await p.goto(`${base}/#/library/skills`); await p.locator('[data-skill="alpha"]').waitFor();
     const read = p.locator('[data-skill="alpha"] [data-skill-view="alpha"]');
-    ok(await read.getAttribute("aria-label") === name("alpha"), `a Library row has a Read button named “${name("alpha")}” ${tag}`);
+    const readName = zh ? "查看內容：alpha" : "Read: alpha";
+    ok(await read.getAttribute("aria-label") === readName && readName.startsWith((await read.innerText()).trim()), `a Library row's Read button is named “${readName}”, starting with its visible label ${tag}`);
     await read.click(); await dialog(p).waitFor(); ok(await waitShown(p, "2") && await dialog(p).locator("[data-skv-pinned]").count() === 0, `from the Library it opens on the latest version, with no pin note ${tag}`);
     await dialog(p).locator("[data-skv-raw]").click();
     ok(await p.locator("[data-skv-raw-text]").evaluate((e) => e.textContent) === stored(2), `the Library's viewer shows v2's exact text ${tag}`);
@@ -152,6 +161,14 @@ try {
     await p.keyboard.press("Escape");
     await p.waitForFunction(() => location.hash === "#/library/skills").catch(() => {});
     ok(await dialog(p).count() === 0 && await p.evaluate(() => location.hash) === "#/library/skills", `closing the deep link leaves the Library's Skills page ${tag}`, await p.evaluate(() => location.hash));
+    // a Studio link in the skill's text leaves the dialog for that page; Back opens the deep link's viewer again
+    await p.goto(`${base}/#/skills/alpha@1`); await dialog(p).waitFor(); await waitShown(p, "1");
+    await dialog(p).locator("[data-skv-rendered] a[href='#/library']").click();
+    await p.waitForFunction(() => location.hash === "#/library").catch(() => {});
+    ok(await dialog(p).count() === 0 && await p.evaluate(() => location.hash) === "#/library", `a link in the skill's text closes the viewer and opens that page ${tag}`);
+    await p.goBack(); await dialog(p).waitFor({ timeout: 8000 }).catch(() => {});
+    ok(await p.evaluate(() => location.hash) === "#/skills/alpha@1" && await waitShown(p, "1"), `Back returns to the deep link with its viewer open again ${tag}`, await p.evaluate(() => location.hash));
+    await p.keyboard.press("Escape");
     ok(errors.length === 0, `no browser errors ${tag}`, errors.join(" | "));
     await ctx.close();
   }

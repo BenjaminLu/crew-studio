@@ -106,7 +106,7 @@ function skillRow(s) {
   return h("article", { class: "sk-row", "data-skill": s.id },
     h("div", { class: "sk-row-h" }, h("b", { class: "sk-name" }, s.name), h("span", { class: "vbadge", "data-skill-version": "1" }, `v${s.current}`),
       h("span", { class: `badge ${s.sourceKind === "builtin" ? "run" : ""}`, "data-skill-source": "1" }, kindLabel(s.sourceKind)),
-      skillButton({ kind: "lib", id: s.id, v: null, pinned: null, name: s.name }, s.name, { class: "btn sm sk-read" }, icon("eye", "ic sm"), T("Read", "查看內容"))),
+      skillButton({ kind: "lib", id: s.id, v: null, pinned: null, name: s.name }, s.name, { class: "btn sm sk-read", verb: ["Read", "查看內容"] }, icon("eye", "ic sm"), T("Read", "查看內容"))),
     s.description ? h("p", { class: "sk-desc" }, s.description) : null,
     h("dl", { class: "sk-meta" },
       h("dt", {}, T("Fits", "適用")), h("dd", { "data-skill-fits": "1" }, fitText(s.fits)),
@@ -120,7 +120,7 @@ function roleRow(r) {
   return h("div", { class: "sk-role", "data-role-skill": r.id },
     h("div", { class: "sk-row-h" }, h("b", {}, r.name),
       h("span", { class: "sk-role-id" }, h("span", { class: "faint mono" }, r.id), r.current ? h("span", { class: "vbadge" }, `v${r.current}`) : h("span", { class: "faint sk-plain", "data-role-unversioned": "1" }, T("not versioned", "沒有版本"))),
-      r.current ? skillButton({ kind: "role", workflow: r.workflow, role: r.role, v: null, pinned: null, name: r.name }, r.name, { class: "btn sm sk-read" }, icon("eye", "ic sm"), T("Read", "查看內容")) : null),
+      r.current ? skillButton({ kind: "role", workflow: r.workflow, role: r.role, v: null, pinned: null, name: r.name }, r.name, { class: "btn sm sk-read", verb: ["Read", "查看內容"] }, icon("eye", "ic sm"), T("Read", "查看內容")) : null),
     h("div", { class: "sk-role-m" }, h("span", { class: "mono" }, r.source), r.sha256 ? h("span", { class: "mono faint", title: r.sha256 }, short(r.sha256)) : h("span", { class: "faint" }, T("its source is not on this Mac", "這台 Mac 上沒有它的來源"))));
 }
 function viewSkills() {
@@ -183,7 +183,8 @@ function skillMarkdown(text) {
   end(); return out;
 }
 const fmValue = (v) => (v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
-const useText = (u) => (u.workflow && u.node ? `${u.workflow} · ${u.node}` : u.project ? T(`${u.project} · seat ${u.seat}`, `${u.project} · 位置 ${u.seat}`) : T(`seat ${u.seat}`, `位置 ${u.seat}`));
+// a seat by its member's display name (Maker / 產出), as the Crew page names it
+const useText = (u) => { if (u.workflow && u.node) return `${u.workflow} · ${u.node}`; const seat = u.label ? T(u.label.en, u.label.zh) : u.seat; return u.project ? `${u.project} · ${seat}` : seat; };
 function skvFiles(d) {
   if (!d.files?.length) return null;
   return h("section", { class: "skv-files", "data-skv-files": "" }, h("h3", {}, T("Supporting files", "附加檔案")),
@@ -216,7 +217,7 @@ function skvBody() {
   const body = d.text.replace(FM, "");
   return [
     h("dl", { class: "sk-meta skv-meta" },
-      h("dt", {}, T("Version", "版本")), h("dd", {}, ver, d.version === pinned ? h("span", { class: "badge", "data-skv-used-here": "" }, T("used here", "這裡用的")) : null, d.version === d.latest ? h("span", { class: "faint" }, T("latest", "最新")) : null),
+      h("dt", {}, T("Version", "版本")), h("dd", {}, ver, ver.tagName !== "SELECT" && d.version === pinned ? h("span", { class: "faint" }, T("used here", "這裡用的")) : null, ver.tagName !== "SELECT" && d.version === d.latest ? h("span", { class: "faint" }, T("latest", "最新")) : null),
       h("dt", {}, T("Source", "來源")), h("dd", {}, h("span", { class: `badge ${d.sourceKind === "builtin" ? "run" : ""}`, "data-skv-source": d.sourceKind }, d.sourceKind === "role" || d.sourceKind === "builtin" ? kindLabel(d.sourceKind) : T(`Imported · ${kindLabel(d.sourceKind)}`, `匯入 · ${kindLabel(d.sourceKind)}`)), h("span", { class: "mono" }, d.source)),
       r.kind === "lib" ? [h("dt", {}, T("Fits", "適用")), h("dd", { "data-skv-fits": "" }, fitText(d.fits))] : null,
       h("dt", {}, "sha256"), h("dd", { class: "mono", title: d.sha256 || "", "data-skv-sha": d.sha256 || "" }, short(d.sha256)),
@@ -263,7 +264,8 @@ function skvOpen(ref, opener) {
   const root = document.getElementById("modalRoot");
   const dlg = h("div", { class: "modal wide skv", role: "dialog", "aria-modal": "true", "aria-labelledby": "skvTitle", "data-skill-viewer": refKey(ref) });
   // a link in the skill's text (a Studio page) leaves the dialog for that page
-  const back = h("div", { class: "modal-back", "data-skv-back-drop": "", onclick: (e) => { if (e.target === back) skvClose(); else if (e.target.closest?.("a[href^='#/']")) skvClose(false); } }, dlg);
+  // data-no-unsent: the viewer only reads; its version switcher is never unsent input that would hold a release reload
+  const back = h("div", { class: "modal-back", "data-skv-back-drop": "", "data-no-unsent": "", onclick: (e) => { if (e.target === back) skvClose(); else if (e.target.closest?.("a[href^='#/']")) skvClose(false); } }, dlg);
   back.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); return skvClose(); }
     if (e.key !== "Tab") return;
@@ -277,15 +279,18 @@ function skvOpen(ref, opener) {
 }
 function skvClose(restore = true) {
   const back = SKV.back; if (!back) return; SKV.back = null; SKV.seq++; back.remove();
+  // however it closes, a deep link that opened it is done: Back to the same #/skills link opens it again
+  const fromRoute = SKV.route; SKV.route = null;
   if (!restore) return;
-  const o = SKV.opener, fromRoute = SKV.route; SKV.route = null;
+  const o = SKV.opener;
   if (fromRoute && /^#\/skills\//.test(location.hash)) { location.hash = "#/library/skills"; requestAnimationFrame(() => document.querySelector(`[data-skill-view="${CSS.escape(refKey(SKV.ref))}"]`)?.focus()); return; }
   const el = o?.el?.isConnected ? o.el : o?.sel ? document.querySelector(o.sel) : null; el?.focus();
 }
 /** A skill chip as a button that opens the viewer (the chip's own look stays its class). Clicking it changes nothing on the page. */
-function skillButton(ref, label, attrs = {}, ...kids) {
+// verb: [en, zh] when the button shows a word of its own (Read / 查看內容): its accessible name starts with that word (WCAG 2.5.3)
+function skillButton(ref, label, { verb = null, ...attrs } = {}, ...kids) {
   return h("button", { type: "button", ...attrs, class: `skv-open ${attrs.class || ""}`.trim(), "data-skill-view": refKey(ref), "data-skill-pinned": ref.pinned ?? null,
-    "aria-label": T(`View skill: ${label}`, `查看技能：${label}`), "aria-haspopup": "dialog", onclick: (e) => { e.stopPropagation(); skvOpen(ref, e.currentTarget); } }, ...kids);
+    "aria-label": verb ? T(`${verb[0]}: ${label}`, `${verb[1]}：${label}`) : T(`View skill: ${label}`, `查看技能：${label}`), "aria-haspopup": "dialog", onclick: (e) => { e.stopPropagation(); skvOpen(ref, e.currentTarget); } }, ...kids);
 }
 window.crewSkillView = { open: skvOpen, button: skillButton, close: skvClose, hash: refHash };
 // a hash that leaves the viewer's deep link (Back) closes it; the Crew page never changes the hash, so its dialog stays

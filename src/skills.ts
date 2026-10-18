@@ -20,7 +20,7 @@ import {localExecutionNotice} from "./local-execution";
 // no hooks and no credentials. A skill is text for the agent's prompt: its frontmatter never
 // changes a node's tools, sandbox, network or credentials (keys asking for them are recorded as ignored).
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, constants as fsc, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import type { Workflows } from "./workflows";
 import { unified } from "./diff";
@@ -172,21 +172,23 @@ export class Skills {
       const bytes = st?.isFile() ? st.size : 0; return { path, bytes, viewable: !!st?.isFile() && bytes <= SKILL_VIEW_FILE_CAP && textName(path) }; });
   }
   /** One supporting file as text for the viewer: only a file the version recorded, a regular file with no link anywhere on its
-   *  path, a text name, under the cap, UTF-8 with no NUL. Anything else is refused with the reason. */
+   *  path (the file itself opened with O_NOFOLLOW and read from that descriptor), a text name, under the cap, UTF-8 with no NUL,
+   *  and only while the version's files still hash to the recorded filesSha256. Anything else is refused with the reason. */
   libFile(id: string, v: number, rel: string): { path: string; bytes: number; sha256: string; text: string } {
     if (!SAFE.test(String(id))) throw new SkillViewError("no such skill", 404);
     const rec = this.libIndex(id).find((x) => x.n === Number(v)); if (!rec) throw new SkillViewError(`skill ${id} has no version ${v}`, 404);
     const parts = String(rel).split("/");
     if (!rel || rel.length > 400 || parts.some((x) => !x || x === "." || x === ".." || !/^[^\0\\]+$/.test(x))) throw new SkillViewError("a supporting file is a relative path inside the skill, with no ..", 400);
     if (!rec.files.includes(rel)) throw new SkillViewError(`skill ${id} v${rec.n} has no supporting file ${rel}`, 404);
-    let at = join(this.libDir(id), `v${rec.n}`, "files");
-    for (const x of parts) { at = join(at, x); const st = lstatSync(at, { throwIfNoEntry: false });
-      if (!st) throw new SkillViewError(`${rel} is missing on disk`, 404);
-      if (st.isSymbolicLink()) throw new SkillViewError(`${rel} is a link; links are never opened`, 403); }
-    const st = lstatSync(at)!; if (!st.isFile()) throw new SkillViewError(`${rel} is not a regular file`, 403);
+    const files = join(this.libDir(id), `v${rec.n}`, "files");
+    const st = lstatSync(storedPath(files, rel))!;
     if (!textName(rel)) throw new SkillViewError(`${rel} is not a text file Studio shows`, 415);
     if (st.size > SKILL_VIEW_FILE_CAP) throw new SkillViewError(`${rel} is ${fmtSize(st.size)}; the viewer shows files up to ${fmtSize(SKILL_VIEW_FILE_CAP)}`, 413);
-    const b = readFileSync(at); let text: string;
+    const b = readStored(files, rel, SKILL_VIEW_FILE_CAP);
+    // the version's files as recorded: every one hashed again (a folder is at most SKILL_CAPS.folder), the same sum the import wrote
+    const sum = (() => { try { return sha([...rec.files].sort().map((f) => `${f}\0${sha(f === rel ? b : readStored(files, f, SKILL_CAPS.folder))}`).join("\n")); } catch { return null; } })();
+    if (sum !== rec.filesSha256) throw new SkillViewError(`skill ${id} v${rec.n} changed on disk since it was recorded`, 409);
+    let text: string;
     try { if (b.includes(0)) throw new Error(); text = new TextDecoder("utf-8", { fatal: true }).decode(b); } catch { throw new SkillViewError(`${rel} is not UTF-8 text`, 415); }
     return { path: rel, bytes: b.length, sha256: sha(b), text };
   }
@@ -329,6 +331,22 @@ export class SkillViewError extends Error { constructor(message: string, readonl
 export const SKILL_VIEW_FILE_CAP = 256 * 1024;
 const TEXT_EXT = new Set(["md", "markdown", "txt", "text", "rst", "adoc", "json", "jsonl", "yaml", "yml", "toml", "ini", "cfg", "conf", "csv", "tsv", "xml", "html", "htm", "css", "svg",
   "js", "mjs", "cjs", "ts", "tsx", "jsx", "py", "rb", "go", "rs", "java", "kt", "swift", "c", "h", "cc", "cpp", "hpp", "cs", "php", "pl", "lua", "r", "sql", "sh", "bash", "zsh", "fish", "ps1", "tex", "diff", "patch"]);
+/** A stored supporting file's path, checked: every part exists and none is a link (a link is refused, never followed). */
+function storedPath(files: string, rel: string): string {
+  let at = files;
+  for (const x of rel.split("/")) { at = join(at, x); const st = lstatSync(at, { throwIfNoEntry: false });
+    if (!st) throw new SkillViewError(`${rel} is missing on disk`, 404);
+    if (st.isSymbolicLink()) throw new SkillViewError(`${rel} is a link; links are never opened`, 403); }
+  return at;
+}
+/** A stored supporting file's bytes: the path checked, the file opened with O_NOFOLLOW, and its type and size read from that
+ *  same descriptor, so nothing can swap a link in between the check and the read. */
+function readStored(files: string, rel: string, cap: number): Buffer {
+  const at = storedPath(files, rel); let fd: number;
+  try { fd = openSync(at, fsc.O_RDONLY | fsc.O_NOFOLLOW); } catch (e: any) { throw new SkillViewError(e?.code === "ELOOP" ? `${rel} is a link; links are never opened` : `${rel} cannot be opened`, 403); }
+  try { const st = fstatSync(fd); if (!st.isFile()) throw new SkillViewError(`${rel} is not a regular file`, 403); if (st.size > cap) throw new SkillViewError(`${rel} is over the cap`, 413); return readFileSync(fd); }
+  finally { closeSync(fd); }
+}
 /** A supporting file the viewer opens as text: a known text extension, or a plain name like LICENSE or Makefile. */
 const textName = (rel: string) => { const n = rel.split("/").pop() ?? ""; const i = n.lastIndexOf("."); return i <= 0 ? /^[A-Za-z][\w-]{0,40}$/.test(n) : TEXT_EXT.has(n.slice(i + 1).toLowerCase()); };
 /**
