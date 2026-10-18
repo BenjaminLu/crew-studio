@@ -53,8 +53,11 @@ try {
     const p = await browser.newPage({ viewport: { width, height } }); const errors = []; p.on("pageerror", (e) => errors.push(String(e)));
     const tag = `${lang} ${width}`;
     await p.goto(`${base}/#/crew`); await p.evaluate((l) => setLang(l), lang);
-    const readsBefore = claudeReads();
+    // the page first shows the facts the server already holds (an earlier read of the CLI's list), then detects again:
+    // wait for that detection's answer, not for the first "detected" state, which can be the earlier read's
+    const readsBefore = claudeReads(), detected = p.waitForResponse((r) => /\/api\/team\?(.*&)?facts=1\b/.test(r.url()), { timeout: 30000 });
     await p.locator("[data-team-link]").click();
+    await detected;
     await p.locator("[data-team-page]").waitFor();
     ok(/#\/team$/.test(p.url()), `the Crew page links to who runs each workflow ${tag}`);
     // ---------- detected models ----------
