@@ -1,9 +1,11 @@
 // One-time seeding of the Studio team from the staffing the captain already approved (docs/design/crew-seats.md):
 // the most recent approved code-firstmate staffing gives the members; another workflow's approved picks that differ from
-// what that team would give become that workflow's overrides. Idempotent: a Studio that has a team is never touched.
+// what that team would give become that workflow's overrides. The image-maker seat takes the image pick Studio used before the
+// team existed (the Codex image adapter's configured model), when that model can generate images. Idempotent: a Studio that
+// has a team is only ever given that image maker, once, as the next signed version when it has none.
 import {existsSync,readdirSync,readFileSync,statSync} from 'node:fs';
 import {join} from 'node:path';
-import {CrewStore,resolveCrew,slotsOf,declaredSeats,type Team,type Member,type NodeOverride} from './domain/crew';
+import {CrewStore,resolveCrew,slotsOf,declaredSeats,teamBody,capabilitiesOf,IMAGE_SEAT,IMAGE_CAP,type Team,type Member,type NodeOverride,type SeatDecl} from './domain/crew';
 import {StaffingStore,type StaffingConfig} from './domain/staffing';
 
 /** Which seat each staffed role seeds (code-firstmate and coffee-kit role ids). */
@@ -17,9 +19,24 @@ export function approvedStaffings(dataDir:string):{config:StaffingConfig;at:numb
  const runNo=(c:StaffingConfig)=>Number(/^R-(\d+)$/.exec(c.approval.run)?.[1]??0);
  return out.sort((a,b)=>b.at-a.at||runNo(b.config)-runNo(a.config));
 }
-export type CrewMigration={status:'exists'|'nothing'|'seeded';version?:number;from?:{project:string;workflow:string;version:number};overrides?:string[]};
-export function migrateCrew(dataDir:string,defs:{get(id:string,v?:number):any}):CrewMigration{
- const crew=new CrewStore(dataDir);if(crew.exists())return{status:'exists'};
+/** The image pick Studio used before the team existed: the Codex image adapter's configured model and effort (null: none configured). */
+export type ImagePick=()=>{provider:'codex'|'claude';model:string;effort:string|null}|null;
+/** image: what happened to the image-maker seat. seeded: filled from the image pick; unfilled: no pick can generate images, so the
+ *  seat stays empty and Studio raises its seat card; absent: the seat already had a member (or no workflow needs one). */
+export type CrewMigration={status:'exists'|'nothing'|'seeded';version?:number;from?:{project:string;workflow:string;version:number};overrides?:string[];image?:'seeded'|'unfilled'};
+/** The image-maker seat (as a workflow declares it) and its member from the pre-team image pick, when that model can generate images. */
+function imageSeat(defs:{get(id:string,v?:number):any},pick?:ImagePick):{seat:SeatDecl;member:Member|null}{
+ const seat=structuredClone(declaredSeats(defs.get('images')).find(s=>s.id===IMAGE_SEAT.id)??declaredSeats(defs.get('coffee-kit')).find(s=>s.id===IMAGE_SEAT.id)??IMAGE_SEAT);
+ let p:ReturnType<ImagePick>=null;try{p=pick?.()??null;}catch{p=null;}
+ if(!p?.model||!(p.provider==='codex'||p.provider==='claude')||!capabilitiesOf(p.provider,p.model).includes(IMAGE_CAP))return{seat,member:null};
+ return{seat,member:pickOf(p)};
+}
+export function migrateCrew(dataDir:string,defs:{get(id:string,v?:number):any},o:{imagePick?:ImagePick}={}):CrewMigration{
+ const crew=new CrewStore(dataDir);
+ // a team seeded before the image maker was: given it once, as the next signed version (a team that has one is never touched)
+ if(crew.exists()){const cur=crew.current()!;if(cur.members[IMAGE_SEAT.id])return{status:'exists'};const img=imageSeat(defs,o.imagePick);if(!img.member)return{status:'exists',image:'unfilled'};
+  const team=teamBody(cur);team.seats={...team.seats,[IMAGE_SEAT.id]:cur.seats[IMAGE_SEAT.id]??img.seat};team.members={...team.members,[IMAGE_SEAT.id]:img.member};
+  const written=crew.write(team,cur.hash,{by:'migration',via:'migration'});return{status:'exists',version:written.version,image:'seeded'};}
  const all=approvedStaffings(dataDir),seed=all.find(a=>a.config.workflow.id==='code-firstmate')??all[0];if(!seed)return{status:'nothing'};
  const c=seed.config,members:Record<string,Member>={};
  for(const[role,r]of Object.entries(c.roles)){const seat=ROLE_SEAT[role];if(seat&&!members[seat])members[seat]=pickOf(r);}
@@ -30,6 +47,8 @@ export function migrateCrew(dataDir:string,defs:{get(id:string,v?:number):any}):
  for(const{config}of all){const def=defs.get(config.workflow.id,config.workflow.version);if(!def)continue;
   for(const role of def.roles??[]){const seat=role.seat,decl=declaredSeats(def).find(s=>s.id===seat),pick=config.roles[role.id];if(!seat||!decl||!pick||team.members[seat])continue;
    team.seats[seat]=structuredClone(decl);team.members[seat]=pickOf(pick);}}
+ // no approved image worker: the image pick Studio already used before the team (the Codex image adapter's configured model)
+ let image:CrewMigration['image'];if(!team.members[IMAGE_SEAT.id]){const img=imageSeat(defs,o.imagePick);if(img.member){team.seats[IMAGE_SEAT.id]=img.seat;team.members[IMAGE_SEAT.id]=img.member;image='seeded';}else image='unfilled';}
  // other approved workflows (newest first; one per workflow): a role pick the team would not give becomes an override on that role's nodes
  const seen=new Set<string>([`${c.workflow.id}`]);
  for(const{config}of all){if(seen.has(config.workflow.id))continue;seen.add(config.workflow.id);const def=defs.get(config.workflow.id,config.workflow.version);if(!def)continue;
@@ -40,5 +59,5 @@ export function migrateCrew(dataDir:string,defs:{get(id:string,v?:number):any}):
   if(Object.keys(nodes).length)team.workflows[def.id]={nodes};}
  // the seed record is the team version itself (by migration); it never cites a project's staffing card as its own approval
  const written=crew.write(team,null,{by:'migration',via:'migration'});
- return{status:'seeded',version:written.version,from:{project:c.project.id,workflow:c.workflow.id,version:c.workflow.version},overrides};
+ return{status:'seeded',version:written.version,from:{project:c.project.id,workflow:c.workflow.id,version:c.workflow.version},overrides,...(image?{image}:{})};
 }

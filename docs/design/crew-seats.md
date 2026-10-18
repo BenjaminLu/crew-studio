@@ -104,5 +104,8 @@ project: `{kind:"project",project,seat,set}`, `{kind:"project-restore",project,s
 ## Migration
 
 The most recent approved code-firstmate staffing seeds the team; other approved workflows whose picks differ become
-workflow overrides. Idempotent (a Studio that has a team is never touched); tested on fixture copies only.
+workflow overrides. The image-maker seat, when no approved image worker fills it, takes the image pick Studio used before
+the team (the Codex image adapter's configured model and effort) if that model can generate images; a team seeded without
+an image maker gets it once, as the next signed version by migration. With no such pick the seat stays empty and Studio
+raises its seat card at startup. Idempotent (a team that has an image maker is never touched); tested on fixture copies only.
 `CREW_TEAM_SEED=0` skips the seeding: per-project staffing stays as it was until the captain sets up a team.

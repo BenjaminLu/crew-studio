@@ -147,12 +147,17 @@ export function createRuntime(d: RuntimeDeps) {
   const crewStore=new CrewStore(d.dataDir);
   // a Studio that already approved staffing gets its team seeded from it once (idempotent; src/crew-migrate.ts)
   // CREW_TEAM_SEED=0 keeps per-project staffing only: no team is seeded (a Studio that has a team keeps it)
-  if(process.env.CREW_TEAM_SEED!=='0')try{const m=migrateCrew(d.dataDir,defs);if(m.status==='seeded')d.log.emit({type:'crew_seeded',summary:`team seeded from ${m.from!.workflow} v${m.from!.version} (${m.from!.project}); ${m.overrides!.length} workflow overrides`});}catch(e:any){console.warn(`crew-studio: team seeding: ${e?.message??e}`);}
+  // the image maker is seeded from the image pick Studio used before the team (the Codex image adapter's configured model)
+  let imageSeatUnfilled=false;
+  if(process.env.CREW_TEAM_SEED!=='0')try{const m=migrateCrew(d.dataDir,defs,{imagePick:d.coffeeChoice});if(m.status==='seeded')d.log.emit({type:'crew_seeded',summary:`team seeded from ${m.from!.workflow} v${m.from!.version} (${m.from!.project}); ${m.overrides!.length} workflow overrides`});
+   if(m.image==='seeded'&&m.status==='exists')d.log.emit({type:'crew_seeded',summary:`team v${m.version}: the image maker seeded from Studio's configured image model`});imageSeatUnfilled=m.image==='unfilled';}catch(e:any){console.warn(`crew-studio: team seeding: ${e?.message??e}`);}
   const {crewStaffing,guard:staffingGuard}=installTeamStaffingGuard(engine,staffing,crewStore,staffingProject,staffingCapability);
   const crewGuard=installCrewGuard(engine,crewStore);
   // a captain's own workflow confirms at Run exactly the crew its Task will record (the guard's own resolution, judges included)
   defs.ownCrew=(def:any)=>{const t=crewStore.current();return t?resolveCrew(teamBody(t),withJudges(def,judgeSlots(engine,def)),{},t.hash):null;};
   const crewTools=installCrewTools(engine,crewStore,{facts:staffingFacts as any,cached:()=>staffingCapabilities as any,send:d.send});
+  // no image pick to seed the image maker from: raise the seat card now, so the captain sees why image work waits (never a silent block)
+  if(imageSeatUnfilled){const def=engine.defs.get('images');if(def)void crewTools.seatGate(def,{key:'crew-migration'}).catch(()=>{});}
   const crewApi=crewRoutes({judges:def=>judgeSlots(engine,def),roleSkill:(def,role)=>engine.roleSkillUse(def,role) as any,defs,store:crewStore,projects:()=>projects.list().map(p=>({id:p.id,name:p.name})),facts:()=>staffingCapabilities,refreshFacts:()=>staffingFacts({fresh:true}),...process.env.CREW_DETECT_FORCE_MIN_MS!==undefined?{forceMinMs:Number(process.env.CREW_DETECT_FORCE_MIN_MS)}:{}, // tests: 0 lets 重新偵測 run back to back
   library:()=>engine.skillLibrary().library()});
   /** The project's staffing from the team, when the team covers this workflow (null: the per-project staffing flow applies). */

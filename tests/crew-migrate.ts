@@ -5,10 +5,13 @@ import { checkedTempDir } from "./lib/git-hygiene.mjs"; // temp folders only thr
 //   - the second maker takes an approved pick on another model than the maker's
 //   - another workflow whose approved picks differ becomes that workflow's overrides; a declared specialist seat takes its role's pick
 //   - running it again changes nothing (idempotent); an approval that does not verify seeds nothing; the fixture itself is never written
+//   - the image-maker seat takes the image pick Studio used before the team (the Codex image adapter's configured model) when no
+//     approved image worker fills it; a team seeded without one gets it once as the next signed version (shaped like the live team);
+//     a pick that cannot generate images, or none, fills nothing and Studio raises the seat card at startup
 //      bun tests/crew-migrate.ts
 import { cpSync, existsSync, readFileSync, writeFileSync, readdirSync, utimesSync } from "node:fs";
 import { join } from "node:path";
-import { suite } from "./rt-harness";
+import { suite, until } from "./rt-harness";
 const { ok, end } = suite("crew-migrate");
 const { StaffingStore, staffingHash } = await import("../src/domain/staffing");
 const { WorkflowDefs } = await import("../src/runtime/defs");
@@ -51,5 +54,48 @@ try {
   for (const d of readdirSync(join(tampered, "projects"))) { const f = join(tampered, "projects", d, "staffing", "v1.json"); const c = JSON.parse(readFileSync(f, "utf8")); c.roles.worker.model = "tampered"; writeFileSync(f, JSON.stringify(c)); }
   ok(migrateCrew(tampered, defs).status === "nothing" && !new CrewStore(tampered).exists(), "approvals that do not verify seed nothing");
   ok(migrateCrew(checkedTempDir("crew-migrate-empty-"), defs).status === "nothing", "a Studio with no approved staffing gets no team");
+  // ---------- the image maker from the pre-team image pick (a Studio shaped like the live one: code-firstmate staffing only) ----------
+  const liveFixture = checkedTempDir("crew-migrate-live-");
+  {
+    const ls = new StaffingStore(liveFixture), ldefs = new WorkflowDefs(liveFixture, () => [bundledText("packs/firstmate/workflows/code-firstmate.wf.yaml")!, bundledText("workflows/v2/images.wf.yaml")!]);
+    const def = ldefs.get("code-firstmate")!, p = { namespace: "git" as const, id: "hello", identity: "local-hello" };
+    const picks: Record<string, [string, string | null]> = { coordinator: ["gpt-6.1-sol", "low"], worker: ["gpt-6.1-sol", "low"], reviewer: ["gpt-6-astra", "medium"], designer: ["gpt-6-astra", "medium"] };
+    const roles = Object.fromEntries(def.roles.map((r: any) => [r.id, { provider: "codex", model: picks[r.id][0], effort: picks[r.id][1], skill: ls.remember({ ref: r.skill, version: 1, text: `# ${r.skill}\n` }) }]));
+    ls.approve({ schema: 1, algorithm: "sha256-canonical-v1", project: p, workflow: { id: def.id, version: def.version, sha256: staffingHash(def) }, roles, review: { freshContexts: 3, distinctProviders: false } } as any, null, { run: "R-2", card: "SC-1", answerSeq: 1 });
+    const pick = () => ({ provider: "codex" as const, model: "gpt-6.1-sol", effort: null });
+    const copy = (tag: string) => { const d = checkedTempDir(`crew-migrate-live-${tag}-`); cpSync(liveFixture, d, { recursive: true }); return d; };
+    const fresh = copy("fresh"), f1 = migrateCrew(fresh, ldefs, { imagePick: pick }), ft = new CrewStore(fresh).current()!;
+    ok(f1.status === "seeded" && f1.image === "seeded" && ft.version === 1 && ft.members["image-maker"]?.model === "gpt-6.1-sol" && ft.members["image-maker"].effort === "medium" && ft.seats["image-maker"]?.needs?.includes("image-generation") && ft.approval.by === "migration",
+      "a fresh team's image maker is Studio's configured image model (no approved image worker), in the same signed migration version", JSON.stringify({ f1, m: ft.members["image-maker"] }));
+    ok(resolveCrew(teamBody(ft), ldefs.get("images")).missing.length === 0, "Images Tasks are no longer refused for a missing seat");
+    // the live shape: a team seeded before the image maker was (five members, no image-maker)
+    const old = copy("old"); migrateCrew(old, ldefs); const v1 = new CrewStore(old).current()!;
+    ok(v1.version === 1 && !v1.members["image-maker"] && Object.keys(v1.members).sort().join() === "alt-maker,coordinator,design-reviewer,maker,reviewer", "the fixture team is shaped like the live one (no image maker)", Object.keys(v1.members).join());
+    const o1 = migrateCrew(old, ldefs, { imagePick: pick }), v2 = new CrewStore(old).current()!;
+    ok(o1.image === "seeded" && v2.version === 2 && v2.previous === v1.hash && v2.approval.by === "migration" && v2.approval.via === "migration" && v2.members["image-maker"]?.model === "gpt-6.1-sol" && v2.members.maker.model === v1.members.maker.model,
+      "an existing team without an image maker gets it once as the next signed version (team v+1, by migration)", JSON.stringify(o1));
+    const o2 = migrateCrew(old, ldefs, { imagePick: () => ({ provider: "codex", model: "gpt-other", effort: "high" }) });
+    ok(o2.status === "exists" && !o2.image && new CrewStore(old).current()!.version === 2, "running it again changes nothing (idempotent)");
+    for (const [name, p2] of [["none", () => null], ["claude", () => ({ provider: "claude" as const, model: "opus-5.5", effort: null })]] as const) {
+      const d = copy(name); migrateCrew(d, ldefs); const r = migrateCrew(d, ldefs, { imagePick: p2 as any }), t = new CrewStore(d).current()!;
+      ok(r.image === "unfilled" && t.version === 1 && !t.members["image-maker"], `no pick that can generate images (${name}) fills nothing and reports the seat unfilled`, JSON.stringify(r));
+    }
+    ok(!existsSync(join(liveFixture, "crew")), "the live-shaped fixture itself is never written");
+    // at startup: an unfilled image seat raises its seat card (never a silent block); a configured image model fills it
+    process.env.CREW_TEST_IN_PROCESS = "1";
+    const { createRuntime } = await import("../src/runtime"), { Agents } = await import("../src/agent"), { ArtifactStore } = await import("../src/artifacts"), { StudioLog } = await import("../src/rawlog");
+    const boot = (data: string, coffeeChoice?: any): any => createRuntime({ dataDir: data, agents: new Agents(data, () => ""), provider: () => { throw new Error("No language provider in migrate fixture"); }, defaultProvider: () => ({ provider: "stub", model: null }),
+      log: new StudioLog(join(data, "events")), send() {}, fmRoot: join(data, "fm"), protectedRoots: [], m3: { store: new ArtifactStore(data), lane: {} } as any, fileorg: {} as any, docs: {} as any, readiness: false, coffeeChoice } as any);
+    const cancelAll = async (E: any) => { for (const x of E.list()) if (!["failed", "cancelled", "succeeded"].includes(x.status)) { try { await E.cancel(x.id); } catch {} } };
+    const unf = copy("card"); migrateCrew(unf, ldefs);
+    const E = boot(unf).engine, seatRun = () => E.list().find((x: any) => x.workflow === "crew-change" && /^seat/.test(x.params.reason));
+    await until(() => !!seatRun());
+    ok(JSON.parse(seatRun()?.params.context ?? "{}").seat?.id === "image-maker", "an unfilled image seat raises its seat card at startup", JSON.stringify(seatRun()?.params ?? null));
+    await cancelAll(E);
+    const seeded = copy("boot"); migrateCrew(seeded, ldefs);
+    const E2 = boot(seeded, () => ({ provider: "codex", model: "gpt-6.1-sol", effort: "medium" })).engine;
+    ok(new CrewStore(seeded).current()!.members["image-maker"]?.model === "gpt-6.1-sol" && !E2.list().some((x: any) => x.workflow === "crew-change"), "at startup the image maker is seeded from Studio's configured image model, with no card");
+    await cancelAll(E2);
+  }
 } catch (e: any) { ok(false, "crew-migrate threw", e?.stack ?? String(e)); }
 end();
