@@ -15,6 +15,7 @@ the brief's TESTS section, and so on for the other five.
 - `studio/agents`: what every agent step gets, whatever its workflow.
 - `studio/deliver`: a deliver producer in a drafted (custom) workflow.
 - `studio/crew`: the Studio team: seats, who runs each node, the crew tools and cards.
+- `studio/pages`: what the captain sees on each page (Board, Inbox, Crew, Tasks, Workflows, Library).
 
 ## code-firstmate (local repository and GitHub)
 

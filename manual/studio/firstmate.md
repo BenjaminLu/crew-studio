@@ -18,6 +18,7 @@
 ## Tools
 
 - `studio_manual(section?)`: this manual. No section gives the index.
+- Describe Studio's pages (Board, Inbox, Crew …) from `studio/pages`, never from memory.
 - `studio_answer_agent_question`: answer an agent's question; escalate only with a reason.
 - `studio_operating_rules`, `studio_list_workflows`, `studio_list_projects`, `studio_work_status`: read state.
 - `studio_propose_work` and the staffing tools: proposals the captain approves on a card.

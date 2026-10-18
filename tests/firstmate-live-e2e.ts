@@ -2,6 +2,8 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The live E2E's Firstmate findings (scratchpad e2e-sandbox.md), each with what the captain wants to see:
 //  S3  "幫我寫一份文件…" is a Documents proposal, not a file Firstmate writes itself: studio_list_workflows routes each
 //      deliverable, the captain turn carries the route, and writing a deliverable file anyway is shown and reminded.
+//  S5  Firstmate described the old Board ("cards + crew on duty") and could not find the Crew team page: the manual
+//      (studio_manual studio/pages) describes today's Board, Inbox and Crew page, and the seed sends it there.
 // No model is called: a fake in-process host stands in for the CLI, and the tools run on the real engine.
 //      bun tests/firstmate-live-e2e.ts
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -13,6 +15,7 @@ import { installFirstmate } from "../src/firstmate";
 import { Projects } from "../src/doors";
 import { deliverableKinds, routeRequest } from "../src/deliverables";
 import { routingNote } from "../src/firstmate-turn";
+import { studioManual, manualSection, manualPage } from "../src/manual";
 import { MainSession, nativeFreshText, type TurnNote } from "../src/host/main";
 process.env.CREW_TEST_IN_PROCESS = "1";
 let pass = 0, fail = 0;
@@ -94,6 +97,17 @@ await section("S3 routing", async () => {
     const sent = await own.say("你自己幫我寫一份文件，存在你的工作區");
     ok(!/\[Studio note: this message asks for/.test(sent) && !own.m.view().log.some((l) => l.kind === "system" && /itself, but you asked/.test(l.text)), "a hands-on request gets no route and no flag");
   } finally { own.done(); }
+});
+
+// ---------- S5: Studio's pages come from the manual ----------
+await section("S5 manual pages", async () => {
+  const idx: any = studioManual(), page: any = studioManual("studio/pages");
+  ok(/studio\/pages/.test(idx.text) && idx.sections.includes("studio/pages"), "the manual index lists studio/pages");
+  const brief = manualSection("studio/pages", "Briefing") ?? "";
+  ok(/\*\*Board\*\* \(`#\/board`[^)]*\): a task overview/.test(brief) && /no decision card, no crew on duty/.test(brief), "the Board is a task overview with no cards and no crew on duty", brief.slice(0, 300));
+  ok(/\*\*Inbox\*\* \(`#\/inbox`\)[^\n]*one card at a time/.test(brief), "the Inbox shows one card at a time");
+  ok(/\*\*Crew\*\* \(`#\/team`\): the Studio team/.test(brief) && /only this workflow/.test(brief), "the Crew team page is #/team, where the captain edits the team");
+  ok(!!page.text && /never from memory/.test(page.text) && /never from memory/.test(manualPage("studio/firstmate") ?? "") && /studio_manual section studio\/pages, never from memory/.test(nativeFreshText("/ws")), "Firstmate is told to describe pages from the manual, not memory");
 });
 
 console.log(`firstmate-live-e2e: ${pass} passed, ${fail} failed`);
