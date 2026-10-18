@@ -78,8 +78,15 @@ if(process.argv.includes('--fixture-server')){
   };
   const actionsCapture=async(page,tag)=>{
    const dismiss=page.locator('[data-new-card-dismiss]');if(await dismiss.count())await dismiss.click();
-   const card=page.locator('[data-scard][data-card-status="open"]').first();await card.locator('[data-option]').last().scrollIntoViewIfNeeded();
-   ok(await card.locator('[data-option]').evaluateAll(es=>es.every(e=>{const r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&r.left>=0&&r.right<=innerWidth;})),`actual captain action region fits viewport ${tag}`);
+   const cardId=await page.locator('[data-scard][data-card-status="open"]').first().getAttribute('data-scard');
+   // Live run updates replace cards. Resolve, scroll and measure the same DOM revision.
+   await page.waitForFunction(id=>{
+    const card=[...document.querySelectorAll('[data-scard][data-card-status="open"]')].find(el=>el.dataset.scard===id),actions=card?[...card.querySelectorAll('[data-option]')]:[];
+    if(!actions.length)return false;
+    actions.at(-1).scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
+    return actions.every(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&r.top>=0&&r.bottom<=innerHeight&&r.left>=0&&r.right<=innerWidth;});
+   },cardId);
+   ok(true,`actual captain action region fits viewport ${tag}`);
    await page.screenshot({path:join(shots,tag+'.png'),fullPage:true});
   };
   await waitUp(base,app);
