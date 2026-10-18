@@ -261,6 +261,8 @@ function viewBoard() {
   return h("div", { class: "page bd-page", "data-board": "1" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Board", "看板")), h("p", { id: "boardSub" }, BD.list === null ? T("Loading tasks…", "載入中…") : subtitle(c))),
       h("div", { class: "actions" }, ghBar(), h("a", { class: "btn", href: "#/crew" }, icon("crew"), T("Crew", "船員")), h("a", { class: "btn primary", href: "#/runs" }, icon("plus"), T("New task", "新任務")))),
+    // the operator turned the OS sandbox and egress proxy off (CREW_LOCAL_UNRESTRICTED=1): said above everything else
+    BD.pol?.execution === "local-unrestricted" && window.crewUnrestrictedNotice ? window.crewUnrestrictedNotice() : null,
     h("section", { "aria-labelledby": "needsH" },
       h("div", { class: "sec-head" }, h("h2", { id: "needsH" }, T("Needs you", "等你處理")), h("span", { class: "badge human", id: "needsCount" }, String(ds.length))),
       h("div", { class: "card needs", id: "needs" }, ds.length ? ds.flatMap(needRow) : h("div", { class: "empty" }, icon("inbox"), h("b", {}, T("Nothing needs you", "沒有等你的事")), T("Decisions and reviews land here the moment they are raised.", "一有決定或審查就會出現在這裡。")), ans)),

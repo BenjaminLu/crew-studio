@@ -23,6 +23,17 @@ function actionButton(it) {
   return null;
 }
 
+// The notice the Doctor and the Board show while the operator's .env sets CREW_LOCAL_UNRESTRICTED=1 (src/local-execution.ts):
+// every agent round, check and test then runs as the captain with no OS sandbox and no egress proxy
+function unrestrictedNotice() {
+  return h("div", { class: "rich", role: "alert", "data-execution": "local-unrestricted", style: "border-color:var(--warn);background:var(--warn-soft)" },
+    h("div", { class: "rt" }, icon("alert", "ic sm"), " ", T("Sandbox off: local unrestricted mode", "沙箱已關閉：本機無限制模式")),
+    h("div", {}, T("CREW_LOCAL_UNRESTRICTED=1 is set for this Studio. Agent rounds, checks and tests run as you, with no OS sandbox and no egress proxy; captain approvals, task scope and the signed ledger still hold.",
+      "這個 Studio 設定了 CREW_LOCAL_UNRESTRICTED=1。代理回合、檢查與測試都以你的身分執行，沒有 OS 沙箱，也沒有對外網路代理；船長核准、任務範圍與簽章帳本照樣有效。")),
+    h("div", { class: "rk" }, T("Unset it in the operator .env and restart Studio to turn the sandbox back on.", "在 operator .env 移除這個設定並重新啟動 Studio，沙箱就會回來。")));
+}
+window.crewUnrestrictedNotice = unrestrictedNotice;
+
 function viewDoctor() {
   if (!DOC.data) { loadDoctor(); return h("div", { class: "page" }, h("div", { class: "skel", style: "height:240px" })); }
   const items = DOC.data.items;
@@ -32,6 +43,7 @@ function viewDoctor() {
       h("p", {}, T("Basic Studio web pages use only Studio’s own data. Coding, checks and optional integrations list their additional requirements below.",
         "Studio 基本網頁只使用自己的資料。程式碼、檢查與選用整合的額外需求列在下方。"))),
       h("div", { class: "actions" }, h("button", { class: "btn", id: "docRecheck", onclick: () => { DOC.data = null; render(); loadDoctor(); } }, icon("refresh", "ic sm"), T("Check again", "重新檢查")))),
+    DOC.data.execution === "local-unrestricted" ? unrestrictedNotice() : null,
     DOC.data.installer === "mock" ? h("div", { class: "rich", "data-installer": "mock" }, h("div", { class: "rk" }, icon("alert", "ic sm"), T("Test mode: installs are recorded, never run.", "測試模式：只記錄安裝，不會真的執行。"))) : null,
     DOC.job ? jobBox(DOC.job) : null,
     window.crewCodexAccountPanel?.(),

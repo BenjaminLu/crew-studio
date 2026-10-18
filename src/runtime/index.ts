@@ -1,3 +1,4 @@
+import {executionMode} from '../local-execution';
 import {hashInput} from './checks';
 import {installOwnClaudeGrants,ownClaudePlan} from '../providers/own-workflow-claude-refresh';
 import {installHelloWeb} from "../domain/hello-web";
@@ -296,7 +297,7 @@ export function createRuntime(d: RuntimeDeps) {
         const res = await engine.exec({} as any, man, { use: man.ref }, input, dir);
         return json({ input: { ...input, out: "out/" }, result: res });
       }
-      if (p === "/api/policies" && !writing) return json({ org: engine.policies.org(), projects: projects.list().map((x) => ({ id: x.id, name: x.name, policy: engine.policies.project(x.id) })) });
+      if (p === "/api/policies" && !writing) return json({ execution: executionMode(), org: engine.policies.org(), projects: projects.list().map((x) => ({ id: x.id, name: x.name, policy: engine.policies.project(x.id) })) });
       // opening a window takes a fresh confirmation: the page fetches a one-time code (same origin only) and the captain confirms with it
       if (p === "/api/policies/auth-window/confirm" && !writing) {
         if (who.kind !== "desktop") return json({ error: "open an authorization window on the Mac", code: "desktopOnly" }, 403);

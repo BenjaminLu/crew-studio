@@ -1,7 +1,7 @@
 import {refreshOwnWorkflowClaude} from './providers/own-workflow-claude-refresh';
 import {refreshStartupClaude} from './providers/startup-claude-refresh';
 import {imageOutcomeProof} from "./domain/image-proof";
-import {localExecutionNotice} from "./local-execution";
+import {localExecutionNotice, executionMode} from "./local-execution";
 import {staffingApprovedTurn} from "./firstmate-staffing";
 import {NativeOutcomes} from "./host/native-outcomes";
 import {coffeeJourneyProof} from "./domain/coffee-kit";
@@ -589,7 +589,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     // --- Doctor ---
     // which process answers (tests check they reach the server they started)
     if (p === "/api/instance" && !writing) return json(launchAuthority.respond(url.searchParams.get("challenge")));
-    if (p === "/api/doctor") return json({ items: doctor(), os: process.platform, compiled: COMPILED, installer: installs.runner.real ? "real" : "mock",
+    if (p === "/api/doctor") return json({ items: doctor(), os: process.platform, compiled: COMPILED, installer: installs.runner.real ? "real" : "mock", execution: executionMode(),
       jobs: [...installs.jobs.values()].slice(-5) });
     if (p === "/api/doctor/methods") { const item = url.searchParams.get("item") ?? ""; return json({ item, methods: methodsFor(item), login: LOGINS[item] ?? null }); }
     if (p.startsWith("/api/doctor/job/")) { const j = installs.jobs.get(p.slice("/api/doctor/job/".length)); return j ? json(j) : json({ error: "no such job" }, 404); }
