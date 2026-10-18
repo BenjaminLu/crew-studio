@@ -2,6 +2,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // Real native callers, signed captain answers, temporary repositories and owned
 // provider sessions. No projection, vendor call or hand-written merge evidence.
+import { createHash } from "node:crypto";
 import { cpSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,7 +33,7 @@ const { ok, end } = suite("native-queue");
  ok(q.snapshot().active[0]?.key==="waiting","I/O can release capacity and admit the waiting round");releaseNext();
 }
 const binaryCommands=JSON.parse(readFileSync(join(import.meta.dir,"../package.json"),"utf8")).scripts["test:binary"].split(" && ");
-const parentBinaryCommands=[...new Set(["dd8276f86da48df60e341b118e3a92bdffffbf8e","1aef6ea8030011032e7f3a8019bb31a1ea7a8bc8"].flatMap(sha=>{const r=Bun.spawnSync(["git","show",sha+":package.json"],{cwd:join(import.meta.dir,".."),stdout:"pipe",stderr:"pipe"});if(r.exitCode)throw new Error("approved parent binary contract unavailable");return JSON.parse(r.stdout.toString()).scripts["test:binary"].split(" && ");}))];
+const parentBinaryCommands=[...new Set((JSON.parse(readFileSync(join(import.meta.dir,"fixture/approved-binary-contracts.json"),"utf8")).parents as {commit:string;testBinary:string}[]).flatMap(parent=>parent.testBinary.split(" && ")))];
 ok(parentBinaryCommands.every(command=>binaryCommands.filter(c=>c===command).length===1)&&binaryCommands.length===parentBinaryCommands.length,"aggregate binary alias retains both approved parents' suites exactly once");
 const data = checkedTempDir("crew-native-queue-");
 let port=0; const agents = new Agents(data,()=>`http://127.0.0.1:${port}`);
@@ -127,9 +128,15 @@ await until(()=>[...agents.jobs.values()].every(j=>j.status!=="running"));
 const replayId="R-900";mkdirSync(E.rdir(replayId),{recursive:true});writeFileSync(join(E.rdir(replayId),"events.jsonl"),waitingEvents.map(e=>JSON.stringify({...e,run:replayId,...(e.type==="run_created"?{run:{...e.run,id:replayId}}:{})})).join("\n")+"\n");
 E=new Engine(deps,defs);install();E.load();const replayCard=await card(replayId,"work");
 ok(!!replayCard&&E.get(replayId)!.nodes.work.data.nativeQueue?.deadline===deadline&&!started.includes(replayId),"actual Engine.load replays waiting events and refuses expired original deadline without renewing it or starting provider",JSON.stringify({card:replayCard?.kind,data:E.get(replayId)?.nodes.work.data,status:E.get(replayId)?.status,original:deadline,started:started.includes(replayId)}));E.cancel(replayId);await Bun.sleep(50);ok(!controls.has(replayId)&&E.get(replayId)!.status==="cancelled","cancel after persisted recovery owns no late provider continuation");
-// Execute the actual approved old runtime, with its own hash implementation,
-// then crash its owned process before loading the resulting signed queued Task.
-const legacySource=checkedTempDir("queue-approved-dd-");const archived=Bun.spawnSync(["git","archive","dd8276f86da48df60e341b118e3a92bdffffbf8e"],{cwd:join(import.meta.dir,".."),stdout:"pipe",stderr:"pipe"});if(archived.exitCode!==0)throw new Error("approved queue ancestor is unavailable for actual upgrade fixture");const extracted=Bun.spawnSync(["tar","-x","-C",legacySource],{stdin:archived.stdout,stdout:"pipe",stderr:"pipe"});if(extracted.exitCode!==0)throw new Error("approved queue fixture archive could not be extracted");
+// Run the approved historical import closure without depending on local Git
+// objects. Its unmodified runtime creates each signed checkpoint on this run's
+// temporary paths; signatures and the migration assertions below stay real.
+const historical=JSON.parse(readFileSync(join(import.meta.dir,"fixture/queue-approved-dd.json"),"utf8"));
+const historicalArchive=readFileSync(join(import.meta.dir,"fixture/queue-approved-dd.tar.gz"));
+if(createHash("sha256").update(historicalArchive).digest("hex")!==historical.archiveSha256)throw new Error("approved queue runtime archive changed");
+const legacySource=checkedTempDir("queue-approved-dd-");
+const extracted=Bun.spawnSync(["tar","-xz","-C",legacySource],{stdin:historicalArchive,stdout:"pipe",stderr:"pipe"});if(extracted.exitCode!==0)throw new Error("approved queue fixture archive could not be extracted");
+for(const file of historical.files)if(createHash("sha256").update(readFileSync(join(legacySource,file.path))).digest("hex")!==file.sha256)throw new Error("approved historical runtime file changed");
 const upgradeFlow={...code,id:"queue-upgrade",nodes:code.nodes.map(n=>n.id==="merge-card"?{...n,card:{ body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, ...n.card,options:[...(n.card?.options??[]),{id:"again",label:"Continue same task", labelZh: "Continue same task",hold:true}]}}:n),edges:[...code.edges,{from:"merge-card",to:"build",when:"again"}]};const oldDriver=join(legacySource,"legacy-driver.ts");
 writeFileSync(oldDriver,`import{Engine}from'./src/runtime/engine';import{Agents}from'./src/agent';import{WorkflowDefs}from'./src/runtime/defs';import{installCode}from'./src/domain/code';import{Projects}from'./src/doors';import{StudioLog}from'./src/rawlog';import{mkdirSync,writeFileSync,readFileSync}from'node:fs';import{join}from'node:path';
 const data=${JSON.stringify(data)},repo=join(data,'legacy-repo'),flows=${JSON.stringify([Y(plain),Y(upgradeFlow)])};const git=(args)=>{const p=Bun.spawnSync(['git',...args],{stdout:'pipe',stderr:'pipe'});if(p.exitCode)throw new Error('legacy fixture git refused');};git(['clone','--quiet',${JSON.stringify(repo)},repo]);git(['-C',repo,'config','user.name','Fixture']);git(['-C',repo,'config','user.email','fixture@example.invalid']);const projects=new Projects(data);projects.add({id:'legacy-upgrade',path:repo});let port=0,held=false;const agents=new Agents(data,()=>\`http://127.0.0.1:\${port}\`);const server=Bun.serve({port:0,hostname:'127.0.0.1',fetch:async req=>{const u=new URL(req.url),token=req.headers.get('x-crew-tool-token')??'';return Response.json(u.pathname==='/api/tools'?agents.toolList(token):await agents.callTool(token,u.pathname.slice('/api/tools/'.length),await req.json()));}});port=server.port;
