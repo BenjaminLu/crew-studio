@@ -129,6 +129,8 @@ registerSecretValues(() => { let gh: string | null = null; try { gh = readFileSy
   return [gh, lk, st]; });
 // the egress proxy (architecture §10): provider API hosts plus policy egress.allow; everything else refused and logged in data/egress.log
 const egress = new Egress(join(DATA, "egress.log"));
+// a skill's connections (and a prepare's) are logged per Task too: host, skill@version, allowed or refused (src/skillpkg)
+egress.taskLog = (run) => existsSync(join(DATA, "runs", run)) ? join(DATA, "runs", run, "egress.jsonl") : null;
 await egress.start().catch((e) => console.warn(`crew-studio: egress proxy: ${e?.message ?? e}`));
 const store = new Store(DATA, (process.env.CREW_FILE_ALLOW ?? startup.project).split(":").filter(Boolean));
 // the repository firstmate's PRs live in: CREW_GH_REPO, else the firstmate checkout's own GitHub origin (read-only)
