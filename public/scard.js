@@ -368,6 +368,9 @@ function mountCard(el, card, opts = {}) {
   }
   function plainView(c) {
     const s = cardI18n().deep(st.lang, c.sections); const out = [];
+    // a spec card (code-firstmate's dispatch): what the captain approves is the done lines, so they come first
+    if (c.kind === "dispatch" && c.node === "dispatch" && Array.isArray(s?.done) && s.done.length && c.workflow !== "firstmate-proposal")
+      out.push(sec("done", T("Done when", "完成條件"), h("ol", { "data-spec-done": "" }, s.done.map((x) => h("li", {}, x)))));
     if (s?.intent) out.push(sec("intent", T("Intent", "意圖"), h("p", { class: "cc-quote" }, s.intent)));
     if (s?.why) out.push(sec("why", T("Why", "為什麼"), h("p", {}, s.why)));
     if (s?.how) out.push(sec("how", T("How", "怎麼做"), h("p", {}, s.how)));

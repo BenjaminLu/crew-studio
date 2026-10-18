@@ -62,9 +62,9 @@ ok(!ste([{ section: "zh-TW.why", text: "請看 `format()` 和 src/money.ts 的 a
   const xOf = (spec: any) => ({ ctx: { spec }, run: { id: "R-9", title: spec.title, text: spec.what, nodes: {} }, rn: { visits: 1 }, node: { id: "dispatch" } } as any);
   const old = { title: "Show totals", what: "Show order totals", why: ["captains asked"], done: [], scope: ["src/price.js"], door: { kind: "two-way" }, explain: { en: "Totals include tax.", "zh-TW": "總額會含稅。" } };
   const b = await H0.engine.cardBodies.dispatch(xOf(old)) as any;
-  ok(b.zhTitle === "派工：總額會含稅。" && b.zh.why === "總額會含稅。", "a spec without zh (stored before zh existed): the dispatch card's zh-TW title is 派工： + the zh explain, and its why is the zh explain", JSON.stringify([b.zhTitle, b.zh.why]));
+  ok(b.zhTitle === "核准規格：總額會含稅。" && b.zh.why === "總額會含稅。", "a spec without zh (stored before zh existed): the spec card's zh-TW title is 核准規格： + the zh explain, and its why is the zh explain", JSON.stringify([b.zhTitle, b.zh.why]));
   const none = await H0.engine.cardBodies.dispatch(xOf({ ...old, explain: { en: "Totals include tax." } })) as any;
-  ok(none.zhTitle === "派工：Show totals（未翻譯）", "with neither zh nor a zh explain the English title is marked untranslated, never shown as a translation", JSON.stringify(none.zhTitle));
+  ok(none.zhTitle === "核准規格：Show totals（未翻譯）", "with neither zh nor a zh explain the English title is marked untranslated, never shown as a translation", JSON.stringify(none.zhTitle));
   H0.stop(); }
 
 // ---------- the spec carries the zh title and why; spec-schema asks for them ----------
@@ -89,7 +89,9 @@ ok(steSpec.length >= 2 && steSpec[0].verdict === "fail" && steSpec[0].findings.s
   "the coordinator's first draft with an English zh-TW title and a placeholder why fails the spec's STE check; the refined draft passes", JSON.stringify(steSpec.map((e) => [e.verdict, e.findings.map((f: any) => f.locator?.section)])));
 await until(() => !!E.cards.get(d?.id ?? "")?.ste, 20000);
 const dc = d ? E.cards.get(d.id)! : null;
-ok(!!dc && dc.title["zh-TW"] === "派工：依照意圖修改程式碼並補上測試" && /船長在意圖裡寫了要的結果/.test(dc.sections["zh-TW"].why) && !/船長要求的變更/.test(JSON.stringify(dc.sections["zh-TW"])) && dc.ste?.verdict === "pass",
+ok(!!dc && dc.title["zh-TW"] === "核准規格：依照意圖修改程式碼並補上測試" && /船長在意圖裡寫了要的結果/.test(dc.sections["zh-TW"].why) && !/船長要求的變更/.test(JSON.stringify(dc.sections["zh-TW"])) && dc.ste?.verdict === "pass",
   "the dispatch card's zh-TW title and why are the coordinator's translation, and the card's STE check passes", JSON.stringify([dc?.title, dc?.sections["zh-TW"].why, dc?.ste]));
+ok(!!dc && dc.title.en.startsWith("Approve the spec: ") && dc.options.map((o) => o.label).join() === "Approve the spec and start,Adjust the scope,Drop" && dc.options.map((o) => o.labelZh).join() === "核准規格並開工,調整範圍,放棄" && dc.options.map((o) => o.id).join() === "dispatch,rescope,drop",
+  "S13: the spec card is titled as approving the spec and its options have plain names (the ids are unchanged)", JSON.stringify([dc?.title, dc?.options]));
 E.cancel(r.id, "captain"); H.stop();
 end();

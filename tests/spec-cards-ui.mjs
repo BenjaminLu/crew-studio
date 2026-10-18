@@ -38,7 +38,14 @@ const accept = base("SC-959", "R-082", "acceptance", "accept", "web-prototype", 
     artifactAcceptance: { kind: "artifact", offered, review: { node: "accept", round: 1, attempt: 1 }, refinements: [] } },
   links: [{ label: "Open website in new tab", href: "/af/shop-a/1/index.html", for: "shop-a@1" }, { label: "Open website in new tab", href: "/af/shop-b/1/index.html", for: "shop-b@1" }, { label: "design-a v1", href: "/#/review/shop-a/1", for: "shop-a@1" }, { label: "design-b v1", href: "/#/review/shop-b/1", for: "shop-b@1" }],
   options: [{ id: "approve-design-a", label: "Approve direction A v1", labelZh: "核准方向 A 版本 1", primary: true }, { id: "approve-design-b", label: "Approve direction B v1", labelZh: "核准方向 B 版本 1" }, { id: "changes", label: "Request changes", labelZh: "要求修改", note: true }, { id: "reject", label: "Reject", labelZh: "不採用", hold: true }] });
-const cards = [accept];
+// the spec card code-firstmate raises after its spec round (src/domain/code.ts cardBodies.dispatch)
+const DONE = ["test/percent.test.ts: percent(1999, 15) returns 300 (planned fail-first: percent is not exported on base)", "test/percent.test.ts: percent(-1, 50) rounds half away from zero (planned fail-first)", "The Corner Shop page shows the discount line"];
+const spec = base("SC-960", "R-087", "dispatch", "dispatch", "code-firstmate", "Approve the spec: Add percent()", "核准規格：新增 percent()",
+  { intent: "Add percent(amount, pct) rounded to integer cents.", why: "Shops need discounts.", how: "A worker builds it on its own branch. Checks and a fresh reviewer judge each round.", done: DONE, scope: { in: ["src/money.ts", "test/percent.test.ts"], out: [] } },
+  { intent: "新增 percent(amount, pct)，四捨五入到整數分。", why: "商店需要折扣。", how: "worker 在自己的 branch 上做；每一輪由檢查和全新的 reviewer 判定。", done: DONE, scope: { in: ["src/money.ts", "test/percent.test.ts"], out: [] } },
+  { body: "# Add percent()\n\nWhat: percent helper\n\nDone when:\n1. ...\nRepository: /tmp/money-kit (main) · branch crew/R-087",
+    options: [{ id: "dispatch", label: "Approve the spec and start", labelZh: "核准規格並開工", primary: true }, { id: "rescope", label: "Adjust the scope", labelZh: "調整範圍", note: true, noteLabel: "What the new scope adds or removes", noteLabelZh: "新範圍要加入或移除什麼" }, { id: "drop", label: "Drop", labelZh: "放棄" }] });
+const cards = [accept, spec];
 for (const c of cards) writeFileSync(join(data, "cards", `${c.id}.json`), JSON.stringify(c, null, 1));
 
 const port = await freePort(), url = `http://127.0.0.1:${port}`, token = "spec-cards-fixture";
@@ -79,6 +86,15 @@ try {
     await p.locator(`${at("SC-959")} [data-directions]`).scrollIntoViewIfNeeded(); await p.waitForTimeout(400);
     ok(await fits(), `S11 no horizontal scroll ${tag}`);
     await p.screenshot({ path: join(shots, `s11-directions-${lang}-${width}.png`) });
+    // ---------- S13: the spec card: approving the spec, its done lines first ----------
+    await p.goto(`${url}/#/inbox/SC-960`); await p.waitForSelector(`${at("SC-960")} [data-spec-done]`, { timeout: 15000 });
+    const secs = await p.$$eval(`${at("SC-960")} [data-sec]`, (es) => es.map((e) => e.dataset.sec));
+    ok(secs[0] === "done" && secs.indexOf("intent") > 0, `S13 the spec card shows its done lines first ${tag}`, secs.join());
+    ok(await p.locator(`${at("SC-960")} [data-spec-done] li`).count() === 3 && (await p.locator(`${at("SC-960")} [data-sec="done"] h4`).innerText()).toLowerCase() === L("Done when", "完成條件").toLowerCase(), `S13 one numbered line per done line, headed Done when ${tag}`);
+    ok((await p.locator(`${at("SC-960")} .cc-h b`).innerText()).startsWith(L("Approve the spec: ", "核准規格：")) && (await p.locator(`${at("SC-960")} [data-option]`).allInnerTexts()).map((t) => t.split(" · ")[0]).join("|") === L("Approve the spec and start|Adjust the scope|Drop", "核准規格並開工|調整範圍|放棄"),
+      `S13 titled as approving the spec, options in plain names ${tag}`, (await p.locator(`${at("SC-960")} [data-option]`).allInnerTexts()).join("|"));
+    ok(await fits(), `S13 no horizontal scroll ${tag}`);
+    await p.screenshot({ path: join(shots, `s13-spec-${lang}-${width}.png`) });
     await ctx.close();
   }
   ok(!errors.length, "no page errors", errors.join(" | "));

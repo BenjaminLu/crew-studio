@@ -53,7 +53,9 @@ ok(/text is only the captain's request/.test(seed) && /Never put staffing/.test(
 
 // ---- the real proposal path ----
 const flow = { id: "title-fixture", name: "Title fixture", version: 1, roles: [], params: { mode: { label: "Mode" } }, nodes: [{ id: "done", kind: "hook", label: "Done" }], edges: [] };
-const H = await harness([readFileSync(new URL("../workflows/v2/firstmate-proposal.wf.yaml", import.meta.url), "utf8"), JSON.stringify(flow)]); const E = H.engine;
+// a workflow that drafts a spec first (code-firstmate's shape): its proposal card starts the spec draft, not the work
+const specFlow = { id: "spec-fixture", name: "Spec fixture", version: 1, roles: [{ id: "worker", label: "Worker", skill: "x" }], nodes: [{ id: "spec", kind: "agent", label: "Spec", role: "worker", mode: "spec" }, { id: "done", kind: "hook", label: "Done" }], edges: [["spec", "done"]] };
+const H = await harness([readFileSync(new URL("../workflows/v2/firstmate-proposal.wf.yaml", import.meta.url), "utf8"), JSON.stringify(flow), JSON.stringify(specFlow)]); const E = H.engine;
 const tools = installFirstmate(E, new Projects(H.data));
 const owner = (key: string) => ({ key, captain: true, text: REQUEST, live: () => true });
 const refusal = async (f: () => Promise<unknown>) => { try { await f(); return null; } catch (e: any) { return e; } };
@@ -89,6 +91,13 @@ try {
   const head = pc.body.split("Internal pins / 內部鎖定:")[0];
   ok(!!pc && !head.includes(pin) && !head.includes("_staffing") && pc.body.endsWith(`Internal pins / 內部鎖定:\n  _staffing: ${pin}`), "F9: an internal _ pin stays out of the parameters and sits last under Internal pins", pc?.body);
   ok(!pc.sections.en.scope.in.some((s: string) => s.startsWith("_")) && pc.sections.en.scope.in.includes("mode: fast"), "F9: the card's scope lists the declared params only", JSON.stringify(pc.sections.en.scope.in));
+  ok(pc.title.en === "Start this work?" && pc.options[0].label === "Approve and start", "S13: a workflow that drafts no spec keeps Start this work?", JSON.stringify(pc.title));
+  const drafting = E.start({ workflow: "firstmate-proposal", version: E.defs.get("firstmate-proposal")!.version, text: REQUEST, by: "fixture", params: { source: "pinned", definition: hash(E.defs.get("spec-fixture", 1)), project: hash(null),
+    target: JSON.stringify({ workflow: "spec-fixture", version: 1, text: REQUEST, params: {} }) } });
+  await until(() => E.cards.list({ run: drafting.id }).some((c) => c.node === "dispatch"));
+  const dc = E.cards.list({ run: drafting.id }).find((c) => c.node === "dispatch")!;
+  ok(dc.title.en === "Start drafting the spec?" && dc.title["zh-TW"] === "開始起草規格嗎？" && dc.options[0].label === "Start drafting the spec" && dc.options[0].labelZh === "開始起草規格"
+    && /only the spec draft/.test(dc.sections.en.why) && /起草規格/.test(dc.sections["zh-TW"].how), "S13: a workflow that drafts a spec first: its proposal card starts the spec draft, and says the spec is approved before any code", JSON.stringify([dc.title, dc.options[0], dc.sections.en.why]));
 } finally { for (const r of E.list()) if (!["failed", "cancelled", "succeeded"].includes(r.status)) await E.cancel(r.id); H.stop(); }
 console.log(`\nfirstmate-intent-title: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
