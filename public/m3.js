@@ -215,10 +215,13 @@ addEventListener("hashchange", () => activePreview?.close());
 // equal): the browser applies the intersection, so a flag missing here (allow-forms: a prototype's own submit
 // handler never fires without it, R-071) is missing in the dialog whatever the header allows.
 const PREVIEW_SANDBOX_FLAGS = "allow-scripts allow-forms";
-function interactivePreview(a, v, trigger) {
+function interactivePreview(a, v, trigger) { return previewDialog(`/af/${a.id}/${v.n}/${v.primary || a.entry || "index.html"}`, trigger); }
+// a card's direction tiles open the same dialog on a website link the server built (/af/<id>/<n>/<entry>)
+window.crewInteractivePreview = (href, trigger) => /^\/af\/[^?#]+$/.test(href) ? previewDialog(href, trigger) : null;
+function previewDialog(href, trigger) {
   activePreview?.close();
   const frame = h("iframe", { title: T("Interactive prototype", "互動原型"), sandbox: PREVIEW_SANDBOX_FLAGS, referrerpolicy: "no-referrer",
-    src: `/af/${a.id}/${v.n}/${v.primary || a.entry || "index.html"}?interactive=1`, style: "display:block;width:100%;height:72vh;border:0;background:white;margin:auto" });
+    src: `${href}?interactive=1`, style: "display:block;width:100%;height:72vh;border:0;background:white;margin:auto" });
   const dialog = h("dialog", { "aria-label": T("Interactive preview", "互動預覽"), style: "width:min(1280px,96vw);max-width:96vw;border:1px solid var(--border);border-radius:12px;padding:16px;background:var(--bg);color:var(--text)" },
     h("div", { class: "actions", style: "margin-bottom:12px" },
       h("b", {}, T("Interactive preview", "互動預覽")),

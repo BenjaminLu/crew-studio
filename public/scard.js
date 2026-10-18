@@ -96,6 +96,14 @@ const SCARD_CSS = `
 .cc-tick input { margin-top: 3px; flex: none; width: 16px; height: 16px; }
 .cc-count { font-size: 12px; color: var(--text-2); }
 .cc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.cc-dirs { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.cc-dir { margin: 0; display: grid; gap: 8px; align-content: start; border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
+.cc-dir figcaption { font-weight: 600; font-size: 14px; }
+.cc-dir-thumb { position: relative; aspect-ratio: 16 / 10; overflow: hidden; border-radius: 6px; border: 1px solid var(--border); background: #fff; }
+.cc-dir-thumb iframe { position: absolute; inset: 0 auto auto 0; width: 1280px; height: 800px; border: 0; transform-origin: 0 0; transform: scale(var(--k, .2)); pointer-events: none; }
+.cc-dir-none { display: grid; place-items: center; background: var(--surface-2); }
+.cc-dir-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.cc-dir-actions .btn { white-space: normal; text-align: center; }
 .cc-actions .btn { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: center; } /* "Save all answers · <Task>" wraps inside a phone-wide card instead of pushing the page sideways */
 .cc-actions [data-ready="false"] { opacity: .55; }
 .cc-msg:empty { display: none; }
@@ -286,9 +294,9 @@ function mountCard(el, card, opts = {}) {
         ? h("p", { class: "cc-cap-diff", "data-capture-changed": "" }, h("span", { class: "cc-count" }, T("Text that changed: ", "畫面上改變的文字：")), h("s", {}, (k.changed.removed || []).slice(0, 4).join(" · ") || "—"), " → ", h("b", {}, (k.changed.added || []).slice(0, 4).join(" · ") || "—"))
         : h("p", { class: "cc-count" }, T("No visible text changed.", "畫面上的文字沒有改變。")))));
   }
-  function linksView(c) {
+  function linksView(c, shown = new Set()) {
     const same = (a, b) => { try { return decodeURIComponent(a) === decodeURIComponent(b); } catch { return a === b; } }, pinned = c.competition?.artifact?.href;
-    const ls = (Array.isArray(c.links) ? c.links : []).filter((l) => l && typeof l.href === "string" && /^(\/|https?:|#\/)/.test(l.href) && !(pinned && same(l.href, pinned))); if (!ls.length) return null;
+    const ls = (Array.isArray(c.links) ? c.links : []).filter((l) => l && typeof l.href === "string" && /^(\/|https?:|#\/)/.test(l.href) && !(pinned && same(l.href, pinned)) && !shown.has(l.href)); if (!ls.length) return null;
     const inApp = (href) => href.startsWith("#/");
     return h("div", { class: "cc-actions" }, ls.map((l) => h("a", { class: "btn", href: l.href, target: inApp(l.href) ? null : "_blank", rel: inApp(l.href) ? null : "noopener", "data-card-link": l.label }, l.label === "Open website in new tab"?T("Open website in new tab","在新分頁開啟網站"):l.label === "Open the full text" || l.label === "檢視完整文字紀錄" ? T("Open the full text", "檢視完整文字") : l.label === "Open the app" ? T("Open the app", "打開 app") : l.label)));
   }
@@ -416,17 +424,40 @@ function mountCard(el, card, opts = {}) {
       && (!d.review || (arr(d.review.verdicts, v => v && typeof v.by === "string" && typeof v.verdict === "string") && arr(d.review.followups, locOk) && (!d.review.notes || strings(d.review.notes))))
       && (!d.cost || d.cost.usd == null || typeof d.cost.usd === "number");
   }
+  // two or more website directions side by side: each its label, a still thumbnail (scripts off), its interactive
+  // preview, the website in a new tab, and the approve button for that direction (the card's own option, so its
+  // ticks and note rules apply). The card's links these tiles already carry are not repeated under them.
+  function directionsView(c, offered, shown) {
+    const links = Array.isArray(c.links) ? c.links.filter((l) => l && typeof l.href === "string") : [];
+    const sites = links.filter((l) => l.label === "Open website in new tab" && /^\//.test(l.href));
+    // a link names the version it opens (for: "<artifact>@<n>"); an older card's links are in offer order, one per version
+    const site = (r, i) => sites.find((l) => l.for === `${r.id}@${r.n}`)?.href ?? (!sites.some((l) => l.for) && sites.length === offered.length ? sites[i].href : null);
+    return sec("artifact-versions", T("Directions to choose from", "可選的方向"), h("div", { class: "cc-dirs", "data-directions": "" }, offered.map((r, i) => {
+      const href = site(r, i), own = `#/review/${encodeURIComponent(r.id)}/${r.n}`, review = links.find((l) => l.href === `/${own}`)?.href ?? own, opt = c.options.find((o) => o.id === `approve-${r.producer}`);
+      if (href) shown.add(href);
+      for (const l of links) if (l.for === `${r.id}@${r.n}` || l.href === review) shown.add(l.href);
+      const thumb = href ? h("div", { class: "cc-dir-thumb", "aria-hidden": "true" }, h("iframe", { src: href, sandbox: "", tabindex: "-1", loading: "lazy", title: "" })) : h("div", { class: "cc-dir-thumb cc-dir-none" }, h("span", { class: "cc-count" }, T("No preview", "沒有預覽")));
+      if (href && typeof ResizeObserver === "function") new ResizeObserver(() => thumb.style.setProperty("--k", String((thumb.clientWidth || 256) / 1280))).observe(thumb);
+      return h("figure", { class: "cc-dir", "data-direction": r.producer },
+        h("figcaption", {}, h("a", { href: review, "data-offered-version": r.n }, artifactVersionLabel(r, true, T))), thumb,
+        h("div", { class: "cc-dir-actions" },
+          href ? h("button", { class: "btn", type: "button", "data-direction-preview": r.producer, onclick: (e) => window.crewInteractivePreview ? window.crewInteractivePreview(href, e.currentTarget) : (location.hash = own) }, T("Interactive preview", "互動預覽")) : h("a", { class: "btn", href: review, "data-direction-preview": r.producer }, T("Review", "審閱")),
+          href ? h("a", { class: "btn", href, target: "_blank", rel: "noopener", "data-direction-open": r.producer }, T("Open in new tab", "新分頁開啟")) : null,
+          opt && c.status === "open" ? h("button", { class: "btn primary", type: "button", "data-direction-approve": r.producer, onclick: () => el.querySelector(`[data-option="${CSS.escape(opt.id)}"]`)?.click() }, artifactOptionLabel(c, opt, T)) : null));
+    })));
+  }
   function artifactDetailView(d, c) {
     const m = d.artifactAcceptance;
     const offered = arr(m?.offered, r => r && typeof r.id === "string" && Number.isInteger(r.n) && r.n > 0 && typeof r.producer === "string") ? m.offered : [];
     const lines = proved => d.done.filter(x => x.proved === proved).map(x => h("div", { class: "cc-done", "data-artifact-proved": String(proved) },
       h("p", {}, h("span", { class: `cc-chip ${proved ? "ok" : "warn"}` }, proved ? T("proved", "已證明") : T("needs your eye", "需要你看")), LL(x.text)),
       x.proofs.map(p => h("div", { class: "cc-proof" }, h("span", { class: "cc-mono" }, p.check), h("span", {}, `ledger #${p.seq}`)))));
+    const shown = new Set(), web = offered.length > 1 && offered.every((r) => r.format === "web");
     return [sec("intent", T("Intent (the captain's words)", "意圖（船長的原話）"), h("p", { class: "cc-quote" }, d.intent.en)),
-      offered.length ? sec("artifact-versions", T("Versions to review", "待審閱版本"), offered.map(r => h("a", { href: `#/review/${encodeURIComponent(r.id)}/${r.n}`, "data-offered-version": r.n }, artifactVersionLabel(r, offered.length > 1, T)))) : null,
+      web ? directionsView(c, offered, shown) : offered.length ? sec("artifact-versions", T("Versions to review", "待審閱版本"), offered.map(r => h("a", { href: `#/review/${encodeURIComponent(r.id)}/${r.n}`, "data-offered-version": r.n }, artifactVersionLabel(r, offered.length > 1, T)))) : null,
       ...(Array.isArray(m?.refinements)?m.refinements:offered.filter(r=>r.format==="image").map(r=>({snapshot:null}))).map(r=>window.crewImageRefinementSnapshot(r.snapshot,{lang:st.lang,review:m?.review})),
       sec("proved", T("Proved by checks", "由檢查證明"), lines(true).length ? lines(true) : h("p", {}, T("No check proves a condition yet.", "目前尚無完成條件通過檢查。"))),
-      sec("needs-eye", T("Needs your eye", "需要你看"), lines(false)), linksView(c)];
+      sec("needs-eye", T("Needs your eye", "需要你看"), lines(false)), linksView(c, shown)];
   }
   // what the card's buttons need, from the card and the captain's ticks and notes (no DOM): render, sync and answer share it
   function needs() {

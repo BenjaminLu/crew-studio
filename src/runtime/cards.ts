@@ -25,7 +25,7 @@ export type SCard = {
   /** hold: an option that does not go through the door (close, request changes); every other option needs the door confirmation when the card's door is one-way */
   /** note: the option opens its own note box (noteLabel says what to write there); select: a picker whose value becomes the note */
   options: CardOption[];
-  confirmDoor: boolean; door: string | null; links: { label: string; href: string }[]; ledger?: any; ste?: { verdict: string; findings: number; seq: number | null } | null;
+  confirmDoor: boolean; door: string | null; links: { label: string; href: string; for?: string }[]; ledger?: any; ste?: { verdict: string; findings: number; seq: number | null } | null;
   /** a statement the captain ticks before answering with `option` (the observed-policy merge: GitHub does not enforce the
    *  required checks, Studio verified them at the head); the answer carries its id, bound to what the card shows */
   acknowledge?: Acknowledge | null;

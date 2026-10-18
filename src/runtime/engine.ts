@@ -112,7 +112,7 @@ export type AgentMode = {
   /** after the round, however it ended (done, timeout, failed, cancelled): release what begin took, keep what the round left */
   end?(x: X, how: "done" | "timeout" | "failed" | "cancelled"): Promise<void> | void;
 };
-export type Body = { crew?: import("./cards").CardCrew | null; title: string; zhTitle?: string; en: Partial<Sections>; zh?: Partial<Sections>; body?: string; links?: { label: string; href: string }[]; door?: string | null; options?: SCard["options"]; ledger?: any;
+export type Body = { crew?: import("./cards").CardCrew | null; title: string; zhTitle?: string; en: Partial<Sections>; zh?: Partial<Sections>; body?: string; links?: { label: string; href: string; for?: string }[]; door?: string | null; options?: SCard["options"]; ledger?: any;
   /** optional structured detail of an intent-aligned card (cards.ts CardDetail; unit intent-merge-card) */
   detail?: import("./cards").CardDetail | null;
   /** an authorization window never answers this card: only the captain does */
