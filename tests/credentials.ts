@@ -57,6 +57,27 @@ const leaked = (env: Record<string, string> | undefined, allow: string[] = []) =
   ok(codexAuth.ok && !JSON.stringify(codexAuth.env).includes(codexKey) && codexAuth.env.CODEX_HOME === codexHome && existsSync(codexAuthFile), "Codex API-key login hands child processes only a private auth-file directory");
   const { statSync } = await import("node:fs");
   ok(existsSync(codexAuthFile) && (statSync(codexAuthFile).mode & 0o777) === 0o600 && JSON.parse(readFileSync(codexAuthFile, "utf8")).OPENAI_API_KEY === codexKey, "Codex API-key auth.json has the existing native schema and mode 0600");
+  const { spawnJsonl } = await import("../src/host/jsonl");
+  const hostRecord = join(tmp, "host-argv.json"), hostSecret = "dummy-host-oauth-secret";
+  const hostChild = spawnJsonl([process.execPath, join(import.meta.dir, "fixture/argv-recorder.mjs")], tmp, { PATH: process.env.PATH ?? "/bin", CREW_ARGV_REC: hostRecord, TMPDIR: tmp, CLAUDE_CODE_OAUTH_TOKEN: hostSecret }, () => {});
+  await hostChild.exited;
+  const hostExec = existsSync(hostRecord) ? JSON.parse(readFileSync(hostRecord, "utf8")) : null;
+  ok(hostExec && !JSON.stringify([hostExec.argv, hostExec.env]).includes(hostSecret) && hostExec.credentials.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR === hostSecret, "primary host JSONL CLI receives OAuth through FD rather than argv/env");
+  const { claudeCredentialFds } = await import("../src/providers/credential-fds");
+  let legacyRefused = false;
+  try { const auth = claudeCredentialFds({ ANTHROPIC_AUTH_TOKEN: "dummy-legacy-token" }); auth.close(); } catch { legacyRefused = true; }
+  ok(legacyRefused, "unsupported legacy Claude auth-token transport refuses before exec");
+  for (const [id, cli] of [["claude", claudeProvider()], ["codex", codexProvider()]] as const) {
+    let refused = false;
+    try { cli.start("s", [], { studioUrl: "http://127.0.0.1:1", token: "dummy-raw-tool-token", cwd: tmp, env: {}, mcpCommand: ["/usr/bin/true"] } as any); } catch { refused = true; }
+    ok(refused, `${id} provider refuses a missing tool-token file instead of putting the token in CLI argv`);
+  }
+  const { codexCredentialFiles } = await import("../src/providers/credential-fds");
+  const directKey = "sk-" + "dummy-direct-openai-key".repeat(2);
+  const directAuth = codexCredentialFiles({ OPENAI_API_KEY: directKey, PATH: "/bin" }, tmp);
+  try {
+    ok(!JSON.stringify(directAuth.env).includes(directKey) && JSON.parse(readFileSync(join(directAuth.env.CODEX_HOME, "auth.json"), "utf8")).OPENAI_API_KEY === directKey, "direct Codex provider API-key env is converted to a private auth file before exec");
+  } finally { directAuth.close(); }
   // a check sees no credential either
   const { sandboxed } = await import("../src/runtime/checks");
   const r = await sandboxed(["/bin/sh", "-c", "env"], { cwd: tmp, out: join(tmp, "a1c", "out"), tmp: join(tmp, "a1c", "tmp"), timeoutS: 10, network: false });

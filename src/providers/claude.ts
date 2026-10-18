@@ -13,10 +13,11 @@ export function claudeProvider(model = process.env.CREW_CLAUDE_MODEL ?? "claude-
     id: "claude", model, reasoningEffort:approved?.effort,envKeys: ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CONFIG_DIR"],
     sandboxNeeds: () => claudeNeeds(bin, ["api.anthropic.com", "console.anthropic.com", "claude.ai", "statsig.anthropic.com", "mcp-proxy.anthropic.com"],approved),
     start(systemPrompt: string, tools: ToolSpec[], ctx: ProviderCtx) {
+      if (!ctx.tokenFile) throw new Error("Claude provider requires a private tool-token file");
       if(approved&&!approved.live())throw new Error('Claude native verification expired or was revoked');
       // the token goes to the MCP server through a 0600 file (never this JSON, which is on the CLI's argv): see ProviderCtx.tokenFile
       const mcp = { mcpServers: { studio: { type: "stdio", command: ctx.mcpCommand[0], args: ctx.mcpCommand.slice(1),
-        env: { CREW_STUDIO_URL: ctx.studioUrl, ...(ctx.tokenFile ? { CREW_TOOL_TOKEN_FILE: ctx.tokenFile } : { CREW_TOOL_TOKEN: ctx.token }) } } } };
+        env: { CREW_STUDIO_URL: ctx.studioUrl, CREW_TOOL_TOKEN_FILE: ctx.tokenFile } } } };
       const args = ["-p", "{TEXT}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--model", model,
         "--tools", "", "--strict-mcp-config", "--mcp-config", JSON.stringify(mcp), "--allowedTools", tools.map((t) => `mcp__studio__${t.name}`).join(","),
         "--system-prompt", systemPrompt, "--disable-slash-commands", "--no-session-persistence", "--restricted"];

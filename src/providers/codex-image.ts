@@ -1,3 +1,4 @@
+import { openScopedProxy } from "../egress-client";
 import {localUnrestricted} from "../local-execution";
 // Dedicated source-owned image job. The ordinary Codex provider remains tool-restricted.
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, realpathSync, lstatSync } from 'node:fs';
@@ -84,7 +85,7 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'crew-codex-image-'))), home = join(root,'home'), work = join(root,'work'), temp = join(root,'tmp');
   for (const d of [home,work,temp]) mkdirSync(d);
   const needs = codexNeeds(bin, ['api.openai.com','chatgpt.com','auth.openai.com'], o.approved);
-  const egress = new Egress(), token = randomBytes(24).toString('hex');
+  const egress = new Egress(); let lease: Awaited<ReturnType<typeof openScopedProxy>> | null = null;
   let proc: ReturnType<typeof probeProcess> | undefined; let clean = true, timer: ReturnType<typeof setTimeout> | undefined;
   let failure: Error | null = null;
   let failTurn: (e: Error) => void = () => {}; const pending = new Map<number,{resolve(v:any):void;reject(e:Error):void}>();
@@ -92,9 +93,9 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
   const abort = () => stop(new Error('Codex image cancelled'));
   try {
     const login = needs.login(home); if (!login.ok) throw new Error('Codex image login unavailable'); guard();
-    if(!localUnrestricted()){await egress.start(); guard(); egress.open(token, needs.hosts);}
-    const profile = join(root,'image.sb'); writeFileSync(profile, roundProfile({ cwd:work,tmp:temp,writes:[home,work],reads:needs.reads,proxyPort:egress.port,toolPort:egress.port }));
-    const proxy = `http://round:${token}@127.0.0.1:${egress.port}`;
+    if(!localUnrestricted()){await egress.start(); guard(); lease = await openScopedProxy(egress, needs.hosts);}
+    const profile = join(root,'image.sb'); writeFileSync(profile, roundProfile({ cwd:work,tmp:temp,writes:[home,work],reads:needs.reads,proxyPort:lease?.port??1,toolPort:1 }));
+    const proxy = lease?.url ?? "";
     const env:Record<string,string> = { PATH:process.env.PATH ?? '/usr/bin:/bin', HOME:home,TMPDIR:temp,LANG:'en_US.UTF-8',...login.env,CODEX_HOME:join(home,'.codex'),HTTPS_PROXY:proxy,HTTP_PROXY:proxy,https_proxy:proxy,http_proxy:proxy,ALL_PROXY:proxy,all_proxy:proxy,NO_PROXY:'',no_proxy:'',XDG_CACHE_HOME:join(home,'.cache'),XDG_CONFIG_HOME:join(home,'.config'),XDG_DATA_HOME:join(home,'.local/share') };
     if(localUnrestricted())for(const key of ['HTTPS_PROXY','HTTP_PROXY','https_proxy','http_proxy','ALL_PROXY','all_proxy'])delete env[key];
     let id = 0, thread = '', turn = '', item: any = null, terminal = false;
@@ -147,7 +148,7 @@ async function runCodexImage(input: CodexImageOptions): Promise<CodexImage> {
     clearTimeout(timer);o.signal?.removeEventListener('abort',abort);
     for(const w of pending.values())w.reject(new Error('Codex image owner closed'));pending.clear();
     try {if(proc)await proc.stop();}catch{clean=false;}
-    egress.close(token);egress.stop();
+    lease?.close();egress.stop();
     if(clean)rmSync(root,{recursive:true,force:true});else throw new CodexImageFailure('Codex image teardown unverified; private home retained',false);
   }
 }

@@ -1,3 +1,4 @@
+import { openScopedProxy } from "./egress-client";
 import {localUnrestricted} from "./local-execution";
 // One agent job runner for every M6+ feature: skill edits, replay evals, pack
 // genesis, gate fix/review cycles and document drafting. A job runs one turn on
@@ -53,7 +54,7 @@ export class Agents {
   cancel(id: string) { const s = this.live.get(id); if (!s) return false; s(); return true; }
 
   /** Studio's egress proxy: a sandboxed round reaches the network only through it, with a credential of its own and its own host list */
-  egress: { port: number; open(token: string, hosts: string[]): void; close(token: string): void } | null = null;
+  egress: { port: number; open(token: string, hosts: string[], options?: {localOrigins?: string[]; blockedPorts?: number[]}): void; close(token: string): void } | null = null;
   /** the tools-only listener a sandboxed round reaches Studio through (never Studio's main port, its page or its API) */
   toolUrl: (() => string) | null = null;
   /** roots a round never reads or writes (firstmate's checkout); one source, set by the server */
@@ -116,7 +117,7 @@ export class Agents {
       if (needs.inProcess) {
         // a provider in Studio's own process (direct HTTP): nothing to spawn; its requests go through the proxy with this round's credential, to its API host (and what policy grants) only
         studioUrl = this.toolUrl();
-        if(!localUnrestricted()){const ptok = randomBytes(18).toString("hex"); const eg = this.egress; eg.open(ptok, [...needs.hosts, ...(o.sandbox.allow ?? [])]); cleanup = () => eg.close(ptok); proxyUrl = `http://round:${ptok}@127.0.0.1:${eg.port}`;}
+        if(!localUnrestricted()){const ptok = randomBytes(18).toString("hex"); const eg = this.egress; eg.open(ptok, [...needs.hosts, ...(o.sandbox.allow ?? [])], {localOrigins: needs.localOrigins, blockedPorts: [4210, Number(new URL(this.studioUrl()).port), Number(new URL(this.toolUrl!()).port)]}); cleanup = () => eg.close(ptok); proxyUrl = `http://round:${ptok}@127.0.0.1:${eg.port}`;}
       } else {
       const box = join(this.dataDir, "rounds", id); const tmp = join(box, "tmp"), home = join(box, "home");
       cleanup = () => { try { rmSync(home, { recursive: true, force: true }); rmSync(tmp, { recursive: true, force: true }); } catch {} };
@@ -128,21 +129,20 @@ export class Agents {
       const login = needs.login(home); if (!login.ok) { cleanup(); return refuse(`${o.provider.id} has no login for a round: ${login.error}`); }
       if (login.warn) this.log(job, "start", `${o.provider.id} signs in with ${login.source}: ${login.warn}`);
       Object.assign(roundEnvAdd, login.env); envKeys = [];
-      const ptok = randomBytes(18).toString("hex");
+      const lease = localUnrestricted() ? null : await openScopedProxy(this.egress!, [...needs.hosts, ...(o.sandbox.allow ?? [])]);
+      if (lease) { const rmBox = cleanup; cleanup = () => { lease.close(); rmBox(); }; }
       studioUrl = this.toolUrl();
       cwd = o.sandbox.cwd ?? tmp;
       const prof = join(box, "round.sb");
-      writeFileSync(prof, roundProfile({ cwd, tmp, writes: [...o.sandbox.writes, home], reads: [...needs.reads, ...helperReads(), ...(o.sandbox.reads ?? [])], proxyPort: this.egress?.port??1, toolPort: Number(new URL(studioUrl).port),
+      writeFileSync(prof, roundProfile({ cwd, tmp, writes: [...o.sandbox.writes, home], reads: [...needs.reads, ...helperReads(), ...(o.sandbox.reads ?? [])], proxyPort: lease?.port??1, toolPort: Number(new URL(studioUrl).port),
         dataDir: this.dataDir, protect: this.protect() }));
-      const proxy = `http://round:${ptok}@127.0.0.1:${this.egress?.port??1}`;
+      const proxy = lease?.url ?? "";
       if(!localUnrestricted())Object.assign(roundEnvAdd, { HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy, ALL_PROXY: proxy, all_proxy: proxy, NO_PROXY: "localhost,127.0.0.1,::1", no_proxy: "localhost,127.0.0.1,::1", NODE_USE_ENV_PROXY: "1", TMPDIR: tmp });
       // the tool token in a 0600 file inside the round's tmp (readable only in this round's sandbox), never on the CLI's argv
       tokenFile = join(tmp, "tool-token"); writeFileSync(tokenFile, token, { mode: 0o600 });
       roundEnvAdd.TMPDIR=tmp;
       for (const k of needs.tmpEnv) roundEnvAdd[k] = tmp; // the CLI's own temporary folder is the round's tmp, never a shared one
       sandbox = localUnrestricted()?null:{ profile: prof };
-      // the credential opens last, and closes with everything else, however the round ends
-      if(!localUnrestricted()){const eg = this.egress!; eg.open(ptok, [...needs.hosts, ...(o.sandbox.allow ?? [])]); const rmBox = cleanup; cleanup = () => { eg.close(ptok); rmBox(); };}
       } catch (e: any) { cleanup(); return refuse(`the round's sandbox could not be set up: ${e?.message ?? e}`); }
       }
     }

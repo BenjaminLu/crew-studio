@@ -37,7 +37,7 @@ if(!canary&&mode==='worker-tool'){
  const mcp=JSON.parse(get('--mcp-config')).mcpServers.studio;
  if(get('--allowedTools')!=='mcp__studio__worker_report'||get('--tools')!=='')throw Error('worker tool authority widened');
  put({type:'assistant',message:{model:actual,content:[{type:'tool_use',id:'owned-tool',name:'mcp__studio__worker_report',input:{summary:'offline worker'}}]}});
- const response=await fetch(mcp.env.CREW_STUDIO_URL+'/api/tools/worker_report',{method:'POST',headers:{'content-type':'application/json','x-crew-tool-token':mcp.env.CREW_TOOL_TOKEN},body:'{"summary":"offline worker"}'});
+ const response=await fetch(mcp.env.CREW_STUDIO_URL+'/api/tools/worker_report',{method:'POST',headers:{'content-type':'application/json','x-crew-tool-token':readFileSync(mcp.env.CREW_TOOL_TOKEN_FILE,'utf8').trim()},body:'{"summary":"offline worker"}'});
  if(!response.ok)throw Error('source tool endpoint refused');
  put({type:'user',message:{content:[{type:'tool_result',tool_use_id:'owned-tool',content:await response.text()}]}});
 }

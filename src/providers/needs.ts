@@ -16,6 +16,8 @@ export type SandboxNeeds = {
   reads: string[]; hosts: string[]; tmpEnv: string[];
   /** a provider that runs in Studio's own process (direct HTTP): nothing to spawn or confine; its requests go through the egress proxy with the round's credential, to its hosts only */
   inProcess?: boolean;
+  /** Trusted provider configuration only; never a workflow egress grant. */
+  localOrigins?: string[];
   /** make the round's throwaway home in `dir`; returns the variables that point the CLI at it */
   home(dir: string): Record<string, string>;
   /** the vendor's own login for the round, read by Studio outside the sandbox (src/providers/login.ts) */
@@ -49,5 +51,5 @@ export function codexNeeds(bin: string, hosts: string[], approved?: ApprovedCode
 }
 /** A direct-HTTP provider: in Studio's process, its egress the API host of its base URL only (through the proxy). */
 export function httpNeeds(baseUrl: () => string): SandboxNeeds {
-  return { reads: [], tmpEnv: [], inProcess: true, get hosts() { try { return [new URL(baseUrl()).hostname]; } catch { return []; } }, home: () => ({}), login: () => ({ ok: true, env: {}, source: "Studio's key store (the request leaves from Studio's process)", warn: null }) };
+  return { reads: [], tmpEnv: [], inProcess: true, get localOrigins() { try { const u = new URL(baseUrl()); return [u.origin]; } catch { return []; } }, get hosts() { try { return [new URL(baseUrl()).hostname]; } catch { return []; } }, home: () => ({}), login: () => ({ ok: true, env: {}, source: "Studio's key store (the request leaves from Studio's process)", warn: null }) };
 }

@@ -1,6 +1,6 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // `crew-studio open` picks the browser: --browser / CREW_BROWSER (open -a), else LaunchServices' default http handler (open -b), else a plain open
-import { mkdtempSync, readFileSync, writeFileSync, chmodSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, chmodSync, existsSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 let pass = 0, fail = 0;
@@ -31,18 +31,22 @@ const openStub = join(tmp, "open"), defStub = join(tmp, "defaults");
 const stub = (failOn: string | null) => { writeFileSync(openStub, `#!/bin/sh\nprintf '%s\\0' "$@" >> "${log}"\nprintf '\\036' >> "${log}"\n${failOn ? `case "$*" in *${failOn}*) exit 1;; esac\n` : ""}exit 0\n`); chmodSync(openStub, 0o755); };
 const defaults = (body: string | null) => { writeFileSync(defStub, body === null ? "#!/bin/sh\nexit 1\n" : `#!/bin/sh\ncat <<'X'\n${body}\nX\n`); chmodSync(defStub, 0o755); };
 let livePort="";
-const env = (extra: Record<string, string> = {}) => { const e: any = { ...process.env, CREW_DATA: join(tmp, "data"), CREW_PORT: livePort, CREW_RUNTIME_DIR:join(tmp,"runtime"), CREW_OPEN_TOOL: openStub, CREW_DEFAULTS_TOOL: defStub, CREW_SESSION_TOKEN: "sessfixture0123", ...extra }; if (!extra.CREW_BROWSER) delete e.CREW_BROWSER; return e; };
+const env = (extra: Record<string, string> = {}) => { const e: any = { ...process.env, CREW_DATA: join(tmp, "data"), CREW_PORT: livePort, CREW_RUNTIME_DIR:join(tmp,"runtime"), CREW_OPEN_TOOL: openStub, CREW_DEFAULTS_TOOL: defStub, CREW_SESSION_TOKEN: "sessfixture0123", GITHUB_TOKEN: "dummy-open-inherited-token", ...extra }; if (!extra.CREW_BROWSER) delete e.CREW_BROWSER; return e; };
 const fixture=Bun.spawn(["bun","tests/lib/launch-fixture.ts"],{cwd:join(import.meta.dir,".."),env:env(),stdout:"pipe",stderr:"pipe"});
 const reader=fixture.stdout.getReader();livePort=new TextDecoder().decode((await reader.read()).value).trim();reader.releaseLock();
 const go = async (args: string[], extra: Record<string, string> = {}) => { rmSync(log, { force: true }); const r = Bun.spawn(["bun", "src/main.ts", "open", ...args], { cwd: join(import.meta.dir, ".."), env: env(extra), stdout: "pipe", stderr: "pipe" });
   const output=new Response(r.stdout).text();await r.exited;
   const calls = existsSync(log) ? readFileSync(log, "utf8").split("\x1e").filter(Boolean).map((c) => c.split("\0").slice(0, -1)) : [];
-  return { out: await output + await new Response(r.stderr).text(), calls }; };
+  const rawCalls = calls;
+  const redirects = rawCalls.map(c => c.at(-1)).filter((path): path is string => !!path && path.endsWith(".html"));
+  const protectedFiles = redirects.length > 0 && redirects.every(path => (statSync(path).mode & 0o777) === 0o600 && path.startsWith(join(tmp,"runtime")+"/"));
+  return { out: await output + await new Response(r.stderr).text(), rawCalls, protectedFiles, calls: calls.map(c => c.map((arg,i) => { if(i!==c.length-1||!arg.endsWith(".html"))return arg; const html=readFileSync(arg,"utf8"),match=/location\.replace\((".*?")\)/.exec(html);return match?JSON.parse(match[1]):arg; })) }; };
 const same = (a: string[] | undefined, b: string[]) => JSON.stringify(a) === JSON.stringify(b);
 const URL = `http://127.0.0.1:${livePort}/session?t=sessfixture0123`;
 stub(null); defaults(LISTING);
 const a = await go(["--browser", "Google Chrome"]);
 ok(a.calls.length === 1 && same(a.calls[0], ["-a", "Google Chrome", URL]) && /Requested Studio's authenticated Board in Google Chrome/.test(a.out) && !a.out.includes("sessfixture0123"), "--browser <app> opens with open -a <app>, says so, and does not print the link", JSON.stringify(a));
+ok(a.protectedFiles && a.rawCalls[0]?.at(-1)?.endsWith(".html") === true && !JSON.stringify(a.rawCalls).includes("sessfixture0123"), "browser opener argv contains only a protected redirect file path, never session token");
 const b = await go([], { CREW_BROWSER: "Firefox" });
 ok(same(b.calls[0], ["-a", "Firefox", URL]) && /in Firefox/.test(b.out), "CREW_BROWSER does the same", JSON.stringify(b));
 const c = await go([]);

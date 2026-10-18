@@ -57,14 +57,14 @@ await recorded(codexProvider("m", join(import.meta.dir, "fixture", "argv-recorde
   ok(read.success && read.stdout.toString().trim() === `Authorization: Basic ${encoded}`, "git consumes the credential file without receiving its contents through argv/env");
   const attacker = join(root, "git-attacker"); mkdirSync(attacker);
   const denied = await sandboxed(["/bin/cat", config], { cwd: attacker, out: join(attacker, "out"), tmp: join(attacker, "tmp"), timeoutS: 10, network: false, dataDir: data, testRun: true });
-  ok(denied.code !== 0 && !denied.stdout.includes(encoded), "a sandboxed test cannot read the GitHub credential-config file");
+  ok(denied.refused === undefined && denied.code !== 0 && !denied.stdout.includes(encoded), "a sandboxed test cannot read the GitHub credential-config file");
   const { codexLogin } = await import("../src/providers/login");
   const codexKey = "sk-" + "dummy-codex-key".repeat(3), codexHome = join(data, "rounds", "codex", "home", ".codex");
   const oldKey = process.env.CODEX_API_KEY;
   process.env.CODEX_API_KEY = codexKey;
   try { codexLogin(codexHome); } finally { if (oldKey === undefined) delete process.env.CODEX_API_KEY; else process.env.CODEX_API_KEY = oldKey; }
   const codexDenied = await sandboxed(["/bin/cat", join(codexHome, "auth.json")], { cwd: attacker, out: join(attacker, "codex-out"), tmp: join(attacker, "codex-tmp"), timeoutS: 10, network: false, dataDir: data, testRun: true });
-  ok(codexDenied.code !== 0 && !codexDenied.stdout.includes(codexKey), "a sandboxed test cannot read another round's Codex API-key auth.json");
+  ok(codexDenied.refused === undefined && codexDenied.code !== 0 && !codexDenied.stdout.includes(codexKey), "a sandboxed test cannot read another round's Codex API-key auth.json");
 }
 
 // ---- 2. the sandbox cannot block KERN_PROCARGS2 (documented limitation), so a victim with a token in argv/env WOULD leak ----
@@ -105,7 +105,7 @@ const data = mkdtempSync(join(tmpdir(), "crew-theft-data-")); const otherRoundTm
 const victimFile = join(otherRoundTmp, "tool-token"); writeFileSync(victimFile, TOKEN, { mode: 0o600 });
 const attackerCwd = join(root, "attacker-wt"); mkdirSync(attackerCwd, { recursive: true });
 const r3 = await sandboxed(["/bin/cat", victimFile], { cwd: attackerCwd, out: join(attackerCwd, "o3"), tmp: join(attackerCwd, "t3"), timeoutS: 20, network: false, dataDir: data, testRun: true });
-ok(r3.code !== 0 && !r3.stdout.includes(TOKEN), "a test run cannot read another round's 0600 token file (it is under Studio's data dir, which the sandbox denies)", JSON.stringify([r3.code, r3.stdout.slice(0, 40)]));
+ok(r3.refused === undefined && r3.code !== 0 && !r3.stdout.includes(TOKEN), "a test run cannot read another round's 0600 token file (it is under Studio's data dir, which the sandbox denies)", JSON.stringify([r3.code, r3.stdout.slice(0, 40)]));
 
 // ---- 4. the self-probe names the argv/env read as something the sandbox does NOT prevent ----
 const { TEST_RUN_DOES_NOT } = await import("../src/runtime/checks");

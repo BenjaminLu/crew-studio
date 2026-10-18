@@ -11,7 +11,9 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { createServer, connect, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
-import { guardedLookup } from "./egress-guard";
+import { lookup } from "node:dns/promises";
+import { BROKER_PORTS } from "./egress-client";
+import { guardedLookup, isLoopbackAddress, localAddresses } from "./egress-guard";
 
 export type EgressEvent = { at: string; host: string; port: number; allowed: boolean; method: string; round: string | null; why?: string };
 export class Egress {
@@ -20,10 +22,16 @@ export class Egress {
   port = 0;
   /** credential → that round's hosts */
   private rounds = new Map<string, Set<string>>();
+  private localPolicies = new Map<string, {origins: Set<string>; blocked: Set<number>}>();
+  private connections = new Map<Socket, {token: string | null; upstream: Socket | null}>();
   onEvent: (e: EgressEvent) => void = () => {};
-  constructor(readonly logFile: string | null = null) {}
-  open(token: string, hosts: string[]) { this.rounds.set(token, new Set(hosts.filter(Boolean).map((h) => String(h).toLowerCase()))); }
-  close(token: string) { this.rounds.delete(token); }
+  constructor(readonly logFile: string | null = null, private readonly dial: (port: number, address: string) => Socket = (port, address) => connect(port, address)) {}
+  open(token: string, hosts: string[], options: {localOrigins?: string[]; blockedPorts?: number[]} = {}) {
+    this.rounds.set(token, new Set(hosts.filter(Boolean).map((h) => String(h).toLowerCase())));
+    const origins = new Set<string>(); for (const origin of options.localOrigins ?? []) { try { const u = new URL(origin); if (/^https?:$/.test(u.protocol) && !u.username && !u.password) origins.add(u.origin); } catch {} }
+    this.localPolicies.set(token, {origins, blocked: new Set([4210, this.port, ...BROKER_PORTS, ...(options.blockedPorts ?? [])])});
+  }
+  close(token: string) { this.rounds.delete(token); this.localPolicies.delete(token); for (const [client, state] of this.connections) if (state.token === token) { client.destroy(); state.upstream?.destroy(); } }
   /** A host is allowed for a round when it is on that round's list, or a subdomain of a "*.domain" entry. */
   allowed(host: string, token: string | null): boolean {
     const list = token ? this.rounds.get(token) : null; if (!list) return false;
@@ -39,40 +47,61 @@ export class Egress {
     if (this.starting) return this.starting;
     if (this.server) return this.port;
     this.server = createServer((client: Socket) => {
+      if (this.connections.size >= 256) { client.destroy(); return; }
+      const state = {token: null as string | null, upstream: null as Socket | null}; this.connections.set(client, state);
+      client.once("close", () => { state.upstream?.destroy(); this.connections.delete(client); });
+      client.setTimeout(10000, () => client.destroy());
       let head = Buffer.alloc(0);
       const onData = (d: Buffer) => {
         head = Buffer.concat([head, d]);
         const end = head.indexOf("\r\n\r\n"); if (end < 0) { if (head.length > 16384) client.destroy(); return; }
+        if (end > 16384) { client.destroy(); return; }
         client.off("data", onData);
-        // bytes the client sends while the host is being resolved must not be dropped: buffer them until the upstream connects
-        let pending = Buffer.alloc(0); const buffer = (d: Buffer) => { pending = Buffer.concat([pending, d]); }; client.on("data", buffer);
+        // Backpressure while DNS/connect is pending; no unbounded JS pending buffer.
+        client.pause();
         const lines = head.slice(0, end).toString("latin1").split("\r\n"); const [method, target] = lines[0].split(" ");
-        let host = "", port = 80;
+        let host = "", port = 80, protocol = method === "CONNECT" ? "https:" : "http:";
         if (method === "CONNECT") { const m = /^\[?([^\]]+?)\]?:(\d+)$/.exec(target ?? ""); host = m?.[1] ?? ""; port = Number(m?.[2] ?? 443); }
-        else { try { const u = new URL(target); host = u.hostname; port = Number(u.port || 80); } catch { client.end("HTTP/1.1 400 Bad Request\r\n\r\n"); return; } }
+        else { try { const u = new URL(target); host = u.hostname; protocol = u.protocol; port = Number(u.port || (protocol === "https:" ? 443 : 80)); } catch { client.end("HTTP/1.1 400 Bad Request\r\n\r\n"); return; } }
         // the round's credential: Proxy-Authorization: Basic base64("round:<token>")
         const auth = lines.find((l) => /^proxy-authorization:/i.test(l))?.split(":").slice(1).join(":").trim() ?? "";
         let token: string | null = null; const m2 = /^Basic\s+(.+)$/i.exec(auth); if (m2) { try { token = Buffer.from(m2[1], "base64").toString("utf8").split(":").slice(1).join(":") || null; } catch {} }
-        const known = !!token && this.rounds.has(token);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) { client.end("HTTP/1.1 400 Bad Request\r\n\r\n"); return; }
+        const known = !!token && this.rounds.has(token); state.token = known ? token : null;
         const round = known ? token!.slice(0, 6) : null;
         if (!known) { this.record(host, port, false, method, null, token ? "unknown round credential" : "no round credential");
           client.end(`HTTP/1.1 407 Proxy Authentication Required\r\nproxy-authenticate: Basic realm="crew-studio"\r\ncontent-type: text/plain\r\nconnection: close\r\n\r\nStudio's egress proxy serves only agent rounds, each with its own credential\n`); return; }
         const ok = !!host && this.allowed(host, token);
         this.record(host, port, ok, method, round, ok ? undefined : "not on the round's list");
         if (!ok) { client.end(`HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\nconnection: close\r\n\r\nStudio's egress proxy refuses ${host}: not on this round's list (its provider's hosts and policy egress.allow)\n`); return; }
-        void guardedLookup(host).then((to) => {
+        const resolve = async () => {
+          const checked = await guardedLookup(host);
+          if (!("refused" in checked) || !token) return checked;
+          const policy = this.localPolicies.get(token); let origin = "";
+          try { origin = new URL(`${protocol}//${host.includes(":") && !host.startsWith("[") ? `[${host}]` : host}:${port}`).origin; } catch { return checked; }
+          if (!policy?.origins.has(origin) || policy.blocked.has(port)) return checked;
+          try {
+            const addresses = await lookup(host, {all: true}), mine = localAddresses();
+            const to = addresses.find(a => isLoopbackAddress(a.address) || mine.includes(a.address));
+            return to ? {address: to.address, family: to.family} : checked;
+          } catch { return checked; }
+        };
+        void resolve().then((to) => {
+        if (client.destroyed || !token || !this.rounds.has(token)) { client.destroy(); return; }
         if ("unresolved" in to) { try { client.end("HTTP/1.1 502 Bad Gateway\r\n\r\n"); } catch {} return; }
         if ("refused" in to) { this.record(host, port, false, method, round, to.refused);
           client.end(`HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\nconnection: close\r\n\r\nStudio's egress proxy refuses ${host}: ${to.refused}\n`); return; }
-        const up = connect(port, to.address, () => {
+        const up = this.dial(port, to.address); up.once("connect", () => {
+          if (client.destroyed || !token || !this.rounds.has(token)) { up.destroy(); return; }
+          client.setTimeout(120000, () => { client.destroy(); up.destroy(); }); up.setTimeout(120000, () => { client.destroy(); up.destroy(); });
           if (method === "CONNECT") { client.write("HTTP/1.1 200 Connection Established\r\n\r\n"); const rest = head.slice(end + 4); if (rest.length) up.write(rest); }
           else { // a plain request: send it on as origin-form
             const u = new URL(target); lines[0] = `${method} ${u.pathname}${u.search} ${lines[0].split(" ")[2] ?? "HTTP/1.1"}`;
             up.write(Buffer.concat([Buffer.from(lines.filter((l) => !/^proxy-/i.test(l)).join("\r\n") + "\r\n\r\n", "latin1"), head.slice(end + 4)]));
           }
-          client.off("data", buffer); if (pending.length) up.write(pending); // whatever arrived during the lookup, in order
-          client.pipe(up); up.pipe(client);
+          client.pipe(up); up.pipe(client); client.resume();
         });
+        state.upstream = up; up.setTimeout(10000, () => up.destroy()); up.once("close", () => client.destroy());
         up.on("error", () => { try { client.end("HTTP/1.1 502 Bad Gateway\r\n\r\n"); } catch {} });
         client.on("error", () => up.destroy());
         });
@@ -88,5 +117,5 @@ export class Egress {
     });
     try { return await this.starting; } finally { this.starting = null; }
   }
-  stop() { this.server?.close(); this.server = null; }
+  stop() { for (const [client, state] of this.connections) { client.destroy(); state.upstream?.destroy(); } this.connections.clear(); this.rounds.clear(); this.localPolicies.clear(); this.server?.close(); this.server = null; this.port = 0; }
 }

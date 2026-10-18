@@ -1,3 +1,4 @@
+import { openScopedProxy } from "../egress-client";
 import {localUnrestricted} from "../local-execution";
 // The check runtime (docs/check-contract.md). Every script that judges a step's
 // output is a check: a manifest (check.yaml) plus an executable, a native
@@ -452,14 +453,14 @@ export async function roundExec(argv: string[], o: { cwd: string; writes: string
   egress?: { port: number; open(t: string, h: string[]): void; close(t: string): void } | null; hosts?: string[]; env?: Record<string, string> }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; refused?: string }> {
   const info = sandboxInfo(); if (!info.ok && !localUnrestricted()) return { code: null, stdout: "", stderr: "", timedOut: false, refused: info.detail };
   mkdirSync(join(o.tmp, "home"), { recursive: true }); const tmp = realpathSync(o.tmp);
-  const net = !localUnrestricted() && !!o.egress && !!o.hosts?.length; const token = net ? randomBytes(18).toString("hex") : null;
-  if (net) o.egress!.open(token!, o.hosts!);
-  const proxy = net ? `http://round:${token}@127.0.0.1:${o.egress!.port}` : null;
+  const net = !localUnrestricted() && !!o.egress && !!o.hosts?.length;
+  const lease = net ? await openScopedProxy(o.egress!, o.hosts!) : null;
+  try {
+  const proxy = lease?.url ?? null;
   const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: join(tmp, "home"), TMPDIR: tmp, LANG: "C.UTF-8", CI: "1", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null",
     ...(proxy ? { HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy, NO_PROXY: "localhost,127.0.0.1,::1", NODE_USE_ENV_PROXY: "1" } : {}), ...(o.env ?? {}) };
   const prof = join(tmp, "round.sb");
-  writeFileSync(prof, roundProfile({ cwd: o.cwd, tmp, writes: o.writes, reads: [o.cwd, ...(argv[0]?.startsWith("/") ? [dirname(argv[0])] : [])], proxyPort: net ? o.egress!.port : 1, toolPort: 1, dataDir: o.dataDir ?? null, protect: o.protect ?? [] }));
-  try {
+  writeFileSync(prof, roundProfile({ cwd: o.cwd, tmp, writes: o.writes, reads: [o.cwd, ...(argv[0]?.startsWith("/") ? [dirname(argv[0])] : [])], proxyPort: lease?.port ?? 1, toolPort: 1, dataDir: o.dataDir ?? null, protect: o.protect ?? [] }));
     return await new Promise((resolveP) => {
       let stdout = "", stderr = "", done = false, timedOut = false;
       const full=localUnrestricted()?argv:["/usr/bin/sandbox-exec","-f",prof,...argv];
@@ -470,7 +471,7 @@ export async function roundExec(argv: string[], o: { cwd: string; writes: string
       p.stdout?.on("data", (d) => { if (stdout.length < 1_000_000) stdout += d; }); p.stderr?.on("data", (d) => { if (stderr.length < 1_000_000) stderr += d; });
       p.on("error", (e) => { stderr += String(e); finish(127); }); p.on("exit", (code) => { setTimeout(() => finish(code), 50); });
     });
-  } finally { if (net) o.egress!.close(token!); }
+  } finally { lease?.close(); }
 }
 
 /**

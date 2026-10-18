@@ -30,6 +30,7 @@ import { closeSync, chmodSync, existsSync, lstatSync, mkdirSync, openSync, readF
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { discoverInstance } from "../src/instance";
+import { scrubEnv } from "../src/secure";
 
 const SHA = /^[0-9a-f]{40}$/;
 const argv = process.argv.slice(2);
@@ -90,7 +91,7 @@ function settings(): Settings {
 // the operator's .env sets (Bun may have loaded the dev checkout's .env into this
 // script), so the release reads its own <release>/.env and nothing else.
 function baseEnv(s?: Settings): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...process.env };
+  const env: Record<string, string | undefined> = scrubEnv();
   for (const k of Object.keys(env)) if (k.startsWith("CREW_") || s?.operator.has(k)) delete env[k];
   delete env.GIT_DIR; delete env.GIT_WORK_TREE; delete env.GIT_INDEX_FILE;
   // an inherited --no-env-file or --env-file (a test run, an operator's BUN_OPTIONS) would stop Bun loading <release>/.env

@@ -30,7 +30,7 @@ if(sub==="open"){mkdirSync(data,{recursive:true});writeFileSync(join(data,"opene
 mkdirSync(data,{recursive:true});
 if(existsSync(join(data,"fail-start-"+VERSION))){console.error("stub "+VERSION+" refuses to start");process.exit(3);}
 if(existsSync(join(data,"slow-start-"+VERSION)))await Bun.sleep(60000);
-writeFileSync(join(data,"seen-"+VERSION+".json"),JSON.stringify({cwd:process.cwd(),secret:createHash("sha256").update(process.env.STUB_SECRET||"").digest("hex"),dep:process.env.CREW_LOCAL_DEPENDENCY_ROOT||null}));
+writeFileSync(join(data,"seen-"+VERSION+".json"),JSON.stringify({cwd:process.cwd(),secret:createHash("sha256").update(process.env.STUB_SECRET||"").digest("hex"),dep:process.env.CREW_LOCAL_DEPENDENCY_ROOT||null,inheritedSecret:process.env.GITHUB_TOKEN||null}));
 const boot=randomBytes(24).toString("hex"),token=randomBytes(32).toString("hex");const port=Number(process.env.CREW_PORT||4210);
 const server=Bun.serve({port,hostname:"127.0.0.1",fetch(req){const u=new URL(req.url);if(u.pathname==="/api/instance"){const c=u.searchParams.get("challenge");return Response.json({pid:process.pid,boot,version:VERSION,...(c&&/^[a-f0-9]{48}$/.test(c)?{proof:createHmac("sha256",token).update("crew-launch-v1\\0"+boot+"\\0"+c).digest("hex")}:{})});}return new Response("ok "+VERSION);}});
 const rt=process.env.CREW_RUNTIME_DIR;let rec=null;if(rt){mkdirSync(rt,{recursive:true,mode:0o700});chmodSync(rt,0o700);rec=join(rt,boot+".json");writeFileSync(rec,JSON.stringify({schema:1,boot,pid:process.pid,origin:"http://127.0.0.1:"+server.port,data}),{mode:0o600});writeFileSync(join(rt,boot+".key"),token,{mode:0o600});}
@@ -57,7 +57,7 @@ const children: number[] = [];
 const handles: ReturnType<typeof Bun.spawn>[] = [];
 const outputs: string[] = [];
 const run = (...args: string[]) => {
-  const r = Bun.spawnSync(["bun", SCRIPT, ...args, "--repo", dev, "--root", root, "--timeout", "20"], { cwd: tmp, stdout: "pipe", stderr: "pipe", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } });
+  const r = Bun.spawnSync(["bun", SCRIPT, ...args, "--repo", dev, "--root", root, "--timeout", "20"], { cwd: tmp, stdout: "pipe", stderr: "pipe", env: { ...process.env, GITHUB_TOKEN: "dummy-release-inherited-token", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } });
   const out = r.stdout.toString() + r.stderr.toString(); outputs.push(out); return { code: r.exitCode, out };
 };
 const live = () => { try { return JSON.parse(readFileSync(join(root, "live.json"), "utf8")); } catch { return null; } };
@@ -100,6 +100,7 @@ try {
   ok(existsSync(envA) && (statSync(envA).mode & 0o777) === 0o600, "release env file exists with mode 0600", existsSync(envA) ? (statSync(envA).mode & 0o777).toString(8) : "missing");
   ok(readFileSync(envA, "utf8").includes(SECRET), "release env file carries the operator's settings");
   const seenA = JSON.parse(readFileSync(join(data, "seen-A.json"), "utf8"));
+  ok(seenA.inheritedSecret === null, "release startup omits inherited credential env while its private .env remains the configuration source");
   ok(seenA.secret === createHash("sha256").update(SECRET).digest("hex") && seenA.cwd.endsWith(A), "release A read its settings from the release-local env file");
   ok(seenA.dep === dev, "CREW_LOCAL_DEPENDENCY_ROOT keeps the operator's dev checkout, never the release", String(seenA.dep));
   ok(existsSync(join(data, "opened-A")), "deploy ran `open` for the captain's browser session");
@@ -196,7 +197,7 @@ try {
 
   // 5c. Ctrl-C after the old release stopped and before the new one answers: the old one is started again
   writeFileSync(join(data, "slow-start-D"), "1");
-  const bg = Bun.spawn(["bun", SCRIPT, "deploy", "--ref", D, "--no-fetch", "--repo", dev, "--root", root, "--timeout", "40"], { cwd: tmp, stdout: "pipe", stderr: "pipe", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } });
+  const bg = Bun.spawn(["bun", SCRIPT, "deploy", "--ref", D, "--no-fetch", "--repo", dev, "--root", root, "--timeout", "40"], { cwd: tmp, stdout: "pipe", stderr: "pipe", env: { ...process.env, GITHUB_TOKEN: "dummy-release-inherited-token", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } });
   const cStopped = await wait(async () => !(await serving(port)), 30000);
   await Bun.sleep(500);
   bg.kill("SIGINT");

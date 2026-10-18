@@ -1,3 +1,4 @@
+import { scrubEnv } from "../secure";
 // The host interface: how Studio drives the firstmate MAIN session, whatever
 // vendor runs it. A host finds a project's sessions, attaches to one by id,
 // sends one captain turn at a time, and turns the vendor's own output into
@@ -110,7 +111,7 @@ export interface Host {
 /** The environment a host CLI runs with: the user's PATH and login, nothing of firstmate or Studio. */
 export function cleanEnv(base: Record<string, string | undefined> = process.env): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(base)) {
+  for (const [k, v] of Object.entries(scrubEnv(base))) {
     if (v === undefined) continue;
     if (/^(CODEX_SESSION_ID|CODEX_THREAD_ID|CODEX_SANDBOX|CODEX_SANDBOX_NETWORK_DISABLED|CODEX_PERMISSION_PROFILE|CODEX_CI)$/.test(k)) continue;
     if (/^(FM_|HERDR|CREW_|CLAUDECODE|CLAUDE_CODE_)/.test(k)) continue;

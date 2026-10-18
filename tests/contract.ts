@@ -3,7 +3,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // does not depend on any one vendor. Claude and Codex run against stub CLIs that
 // print each vendor's real output format and call a tool server for real; the
 // in-process stub provider runs as is.   bun tests/contract.ts
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { guardedTurn } from "../src/chat";
@@ -29,8 +29,9 @@ const tools = Bun.serve({
   },
 });
 const url = `http://127.0.0.1:${tools.port}`;
-const ctx = { studioUrl: url, token: TOKEN, cwd: mkdtempSync(join(tmpdir(), "crew-contract-")), mcpCommand: [process.execPath, join(here, "../src/mcp.ts")],
-  env: { ...process.env, CREW_STUDIO_URL: url, CREW_TOOL_TOKEN: TOKEN } as Record<string, string> };
+const tokenFile = join(mkdtempSync(join(tmpdir(), "crew-contract-auth-")), "tool-token"); writeFileSync(tokenFile, TOKEN, {mode:0o600});
+const ctx = { tokenFile, studioUrl: url, token: TOKEN, cwd: mkdtempSync(join(tmpdir(), "crew-contract-")), mcpCommand: [process.execPath, join(here, "../src/mcp.ts")],
+  env: { ...process.env, CREW_STUDIO_URL: url, CREW_TOOL_TOKEN_FILE: tokenFile } as Record<string, string> };
 // mock vendor APIs for the direct-HTTP providers: the same scripted behaviour as the stub CLIs
 const scenario = (text: string) => /STUB_INTENT/.test(text) ? "intent" : /STUB_TIMEOUT/.test(text) ? "timeout" : /STUB_MANY/.test(text) ? "many" : /STUB_LOGIN/.test(text) ? "login" : "normal";
 const answer = "T-1 is done [T-1](#/task/T-1); see [event](#/event/7).";

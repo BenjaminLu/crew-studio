@@ -5,8 +5,8 @@
 // A hostname may connect only to an address that is none of: loopback, unspecified, link-local, multicast, broadcast, a
 // cloud metadata endpoint, or one of this host's own interface addresses; an IPv6 form carrying an IPv4 address
 // (IPv4-mapped, IPv4-compatible, NAT64 64:ff9b::/96, 6to4 2002::/16) is judged by that IPv4 address too. The loopback
-// names (localhost, *.localhost) resolve to loopback and nothing else. An IP literal on a round's list is an explicit
-// choice and is not judged here (as in sandbox-runtime). The address that passed is the address dialed.
+// names and IP literals receive the same private-address rejection: an allowlisted spelling
+// cannot bypass the Studio boundary. The address that passed is the address dialed.
 import { lookup as dnsLookup } from "node:dns";
 import { BlockList, isIP } from "node:net";
 import { networkInterfaces } from "node:os";
@@ -55,21 +55,21 @@ function set(ranges: string[]): BlockList {
 }
 const inSet = (l: BlockList, a: string) => { const x = stripZone(a), f = family(x); return !!f && l.check(x, f); };
 const deniedSets = DENIED.map(([why, r]) => [why, set(r)] as const), loopbackSet = set(LOOPBACK);
+export const isLoopbackAddress = (address: string) => inSet(loopbackSet, address) || !!embeddedIPv4(address) && inSet(loopbackSet, embeddedIPv4(address)!);
 export const isLoopbackName = (h: string) => { const n = h.toLowerCase().replace(/\.$/, ""); return n === "localhost" || n.endsWith(".localhost"); };
 export const localAddresses = () => { try { return Object.values(networkInterfaces()).flat().flatMap((i) => (i ? [i.address] : [])); } catch { return []; } };
 /** Why `hostname` may not connect to `address` (the class, never the address), or null. */
 export function denial(hostname: string, address: string, local: string[] = localAddresses()): string | null {
-  if (isIP(hostname)) return null;
   if (!isIP(stripZone(address))) return "an unparsable address";
   const v4 = embeddedIPv4(address), hits = (l: BlockList) => inSet(l, address) || (v4 !== undefined && inSet(l, v4));
-  if (isLoopbackName(hostname)) return inSet(loopbackSet, address) ? null : "a non-loopback address";
+  if (isLoopbackName(hostname)) return "a loopback name";
   const why = deniedSets.find(([, l]) => hits(l))?.[0]; if (why) return why;
   const mine = set(local); if (hits(mine)) return "one of this host's addresses";
   return null;
 }
 /** Resolve a hostname once and keep the addresses the guard allows: the one to dial, or the reason none may be. */
 export function guardedLookup(hostname: string, resolve: typeof dnsLookup = dnsLookup): Promise<{ address: string; family: number } | { refused: string } | { unresolved: string }> {
-  if (isIP(hostname)) return Promise.resolve({ address: hostname, family: isIP(hostname) });
+  if (isIP(hostname)) { const why = denial(hostname, hostname); return Promise.resolve(why ? { refused: why } : { address: hostname, family: isIP(hostname) }); }
   return new Promise((res) => resolve(hostname, { all: true }, (err: any, addresses: any) => {
     if (err) return res({ unresolved: `${hostname} does not resolve (${err.code ?? err.message})` }); // not a refusal: the dial fails as it would have
     const local = localAddresses(), whys = new Set<string>(); let kept: { address: string; family: number } | null = null;

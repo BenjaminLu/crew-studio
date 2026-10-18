@@ -31,7 +31,7 @@ const viaProxy = (host, withCred = true) => new Promise((res) => { const u = new
   r.envKeys = Object.keys(process.env);
   r.toolTokenEnv = process.env.CREW_TOOL_TOKEN ?? null; // must be absent: the token is never in the round's env
   r.toolTokenFileIsPath = !!process.env.CREW_TOOL_TOKEN_FILE && process.env.CREW_TOOL_TOKEN_FILE !== TOOL_TOKEN && /\//.test(process.env.CREW_TOOL_TOKEN_FILE);
-  r.proxyEnv = process.env.HTTPS_PROXY ? process.env.HTTPS_PROXY.replace(/\/\/[^@]*@/, "//") : null;
+  r.proxyEnv = process.env.HTTPS_PROXY ? process.env.HTTPS_PROXY : null;
   r.oauth = process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR ? fs.readFileSync(Number(process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR), "utf8").trim() : process.env.CLAUDE_CODE_OAUTH_TOKEN || null;
   r.claudeTmp = process.env.CLAUDE_CODE_TMPDIR || null; r.tmpdir = process.env.TMPDIR || null; r.home = process.env.HOME || null;
   out(r);

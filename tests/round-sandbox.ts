@@ -69,7 +69,11 @@ ok(r.tools === 200 && r.toolsOther === 404, "a round reaches Studio only through
 ok(r.direct === false, "a round cannot open a connection of its own (only the proxy is reachable)");
 const log = existsSync(join(data, "egress.log")) ? readFileSync(join(data, "egress.log"), "utf8") : "";
 ok(r.proxyRefused === 403 && /evil\.example/.test(log), "the egress proxy refuses a host off the round's list, and logs it", `${r.proxyRefused}`);
-ok(r.proxyNoCred === 407 && /no round credential/.test(log), "a request without a round credential is refused (another local process cannot use the proxy)", `${r.proxyNoCred}`);
+ok(r.proxyNoCred !== undefined && r.proxyNoCred !== 407, "the admitted round's scoped proxy needs no credential in its environment", `${r.proxyNoCred}`);
+{ const { connect } = await import("node:net");
+  const reply = await new Promise<string>((resolve, reject) => { let out = ""; const socket = connect(egress.port, "127.0.0.1", () => socket.write("CONNECT example.test:443 HTTP/1.1\r\nHost: example.test\r\n\r\n")); socket.on("data", b => out += b); socket.on("end", () => resolve(out)); socket.on("error", reject); });
+  ok(/^HTTP\/1.1 407/.test(reply), "the central trusted proxy still rejects a request without its upstream credential");
+}
 { const { isCredentialName } = await import("../src/secure");
   const creds = (r.envKeys ?? []).filter((k: string) => isCredentialName(k) || /KEY$|TOKEN|SECRET/.test(k)).sort();
   ok(JSON.stringify(creds) === JSON.stringify(["CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CREW_TOOL_TOKEN_FILE"]) && r.oauth === CREW_TOKEN && /^http:\/\/127\.0\.0\.1:\d+$/.test(r.proxyEnv ?? ""),
