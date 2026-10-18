@@ -13,7 +13,7 @@ import {installGitHubReviewWorkflow} from '../domain/github-review-workflow';
 import {Onboarding} from '../onboarding';
 import {ArtifactStore,websiteHref} from '../artifacts';
 import {StaffingStore,staffingHash,installStaffingGuard,coffeeStaffingProject,staffingApplies,staffedCapability,type StaffingProject} from '../domain/staffing';
-import {CrewStore,resolveCrew,teamBody,withJudges} from '../domain/crew';
+import {CrewStore,resolveCrew,teamBody,withJudges,seatLabel} from '../domain/crew';
 import {installCrewGuard,judgeSlots} from '../crew-guard';
 import {installCrewStaffing} from '../crew-staffing';
 import {migrateCrew} from '../crew-migrate';
@@ -203,6 +203,14 @@ export function createRuntime(d: RuntimeDeps) {
     if (ok) intactSites.set(k, fp); else intactSites.delete(k);
     return ok;
   };
+  // the crew a Task started with, from its signed crew-resolved record (src/crew-guard.ts): each staffed node's seat, named as the
+  // team that resolved it names it (a workflow-node override's seat included), and its pick. Null when no record exists (a staffed
+  // code workflow, a Task started before the team) or the ledger does not verify: the Board then names no seat.
+  const crewOf = (r: any, t: { ok: boolean; entries: any[] }) => {
+    const d = t.ok ? t.entries.filter((e) => e.record === "crew-resolved").at(-1)?.data : null; if (!d?.nodes) return null;
+    const team = crewStore.byHash(d.team);
+    return { team: d.team, nodes: Object.fromEntries(Object.entries(d.nodes as Record<string, any>).map(([n, v]) => [n, { seat: v.seat, label: seatLabel(team ? teamBody(team) : null, v.seat, r.def), provider: v.provider, model: v.model }])) };
+  };
   const runView = (id: string, who?: { kind: string }) => {
     const r = engine.get(id); if (!r) return null;
     const ledger = engine.ledger(id);
@@ -213,7 +221,7 @@ export function createRuntime(d: RuntimeDeps) {
     if(t.ok)for(const e of t.entries.filter(e=>e.record==='startup-artifact')){const p=e.data,v=d.m3?.store.version(p?.artifact,p?.version);if(v&&v.sha256===p.sha256&&siteIntact(p.artifact,p.version,v))outputMap.set(p.artifact,{artifact:p.artifact,version:p.version,href:`#/review/${encodeURIComponent(p.artifact)}/${p.version}`,kind:'doc',label:'competition'});}
     // the run page offers "Continue original task…" only to the desktop captain, and only when the engine would make an offer
     const continuable = who?.kind === "desktop" && engine.continuable(id);
-    return { ...r, title: taskTitle(r), request: r.text, claudeVerificationAvailable:ownClaude.available(id), nodes: readinessNodes(r, id=>engine.cards.get(id)), outputs:[...outputMap.values()], continuable, walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };
+    return { ...r, title: taskTitle(r), request: r.text, claudeVerificationAvailable:ownClaude.available(id), nodes: readinessNodes(r, id=>engine.cards.get(id)), outputs:[...outputMap.values()], continuable, walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, crew: crewOf(r, t), roundCap: engine.policy(r, "round_cap", 3), ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };
   };
   const checkView = (m: any) => { const p = engine.params(m, null, {}); return { ref: m.ref, id: m.id, pack: m.pack, version: m.version, title: m.title, description: m.description, applies_to: m.applies_to, kind: m.kind, blocking: m.blocking, needs: m.needs,
     params: m.params, policy_bind: m.policy_bind, effective: p.params, from: p.from, timeout_s: m.timeout_s, network: m.network, impl: m.native ? "native" : m.adapter ? "adapter" : m.kind === "judged" ? "judge" : "executable", quorum: m.judge?.quorum ?? null, hasSample: !!m.sample, at: m.at }; };

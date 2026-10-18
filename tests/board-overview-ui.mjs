@@ -73,6 +73,10 @@ async function shot(p, name) {
   await p.screenshot({ path: join(shots, name), fullPage: true });
   if (tall > vp.height) { await p.setViewportSize(vp); await p.waitForTimeout(150); }
 }
+// exactly one row of the list is in the tab order (its id), and the list is a list of list items with no option or listbox
+const tabRows = (p) => p.$$eval("[data-task]", (rs) => rs.filter((r) => r.tabIndex === 0).map((r) => r.dataset.task));
+const ariaOk = (p) => p.evaluate(() => { const l = document.querySelector("#tasks [role=list]"); return !!l && !document.querySelector("#view [role=listbox], #view [role=option]")
+  && [...l.children].every((c) => c.getAttribute("role") === "listitem") && [...document.querySelectorAll("#view [data-task-detail]")].every((d) => !d.parentElement.closest("[role=list]") || d.parentElement.matches("[role=listitem]")); });
 const sorted = (gs) =>gs.every((g, i) => !i || ORDER[gs[i - 1]] <= ORDER[g]);
 
 try {
@@ -80,12 +84,15 @@ try {
   { const { ctx, p, fx } = await open(1440);
     ok(await p.locator(".bd-page.tb-wide").count() === 1, "1440 closed: the wide layout (a table and the panel beside it)");
     const ids = await rowIds(p), gs = await groups(p);
-    const want = ["R-101", "R-102", "R-103", "R-104", "R-105", "R-091", ...fmShown.map((t) => t.id)];
+    const want = ["R-101", "R-102", "R-103", "R-104", "R-105", "R-106", "R-107", "R-091", ...fmShown.map((t) => t.id)];
     ok(want.every((id) => ids.includes(id)) && ids.length === want.length && !ids.includes("R-090"), "one row per Task: every Studio run in flight, the one done today, the firstmate tasks; not an old finished run", JSON.stringify({ ids, want }));
     ok(new Set(ids).size === ids.length, "no Task has two rows");
     ok(sorted(gs), "rows are ordered Waiting for you, Stuck, Running, Done", JSON.stringify(gs));
     const g = Object.fromEntries(ids.map((id, i) => [id, gs[i]]));
     ok(g["R-102"] === "you" && g["R-104"] === "you" && g["R-103"] === "stuck" && g["R-105"] === "stuck" && g["R-101"] === "run" && g["R-091"] === "done", "each Studio run in its group: cards waiting → Waiting for you; failed and Firstmate-first escalation → Stuck; building → Running; merged today → Done", JSON.stringify(g));
+    // the round cap: stuck while the cap is the latest thing that happened (its round-budget card open); waiting for you once the
+    // Task moved on after it (a rescope ran the spec again and raised the dispatch card), although fix still holds outcome "cap"
+    ok(g["R-107"] === "stuck" && g["R-106"] === "you", "a round cap is stuck until the Task moves on: rescoped after the cap, it waits for you on its dispatch card", JSON.stringify([g["R-106"], g["R-107"]]));
     ok(fmShown.every((t) => g[t.id] === fmGroup(t)), "each firstmate task in its group", JSON.stringify(fmShown.map((t) => [t.id, t.status, g[t.id]])));
     ok(await noCards(p), "1440 closed: no card body on the Board (cards live in the Inbox)");
     ok(await noGraphs(p), "1440 closed: no workflow graph on the Board");
@@ -98,21 +105,38 @@ try {
     ok(await st("R-101") === "Build loop · round 2/3 · 4/7" && await st("R-102") === "Gates · 5/7" && await st("R-103") === "Build loop · round 1/3 · 4/7", "the stage label names the milestone, its round and the position", JSON.stringify([await st("R-101"), await st("R-102"), await st("R-103")]));
     // Now: who works (node, seat, model), or which card waits with its Inbox link
     const nowT = (id) => p.textContent(`[data-task="${id}"] .tb-now-t`).then((t) => t.trim());
-    ok(await nowT("R-101") === "Build round · Maker · codex gpt-5.5", "Now names who works on a running Task: node, seat, provider and model", await nowT("R-101"));
+    ok(await nowT("R-101") === "Build round · Copy editor · codex gpt-5.5", "Now names who works on a running Task: node, the seat its crew resolution gave it (a workflow-node override), provider and model", await nowT("R-101"));
+    // no crew resolution (a staffed code workflow, a Task from before the team): no seat is guessed
+    ok(await p.evaluate(async () => { const r = await fetch("/api/wruns/R-101").then((x) => x.json()); r.crew = null; return window.crewBoard.task(r, []).now; }) === "Build round · codex gpt-5.5", "without a crew resolution Now names no seat");
+    ok(await p.evaluate(async () => { const r = await fetch("/api/wruns/R-101").then((x) => x.json()); r.roundCap = 5; return window.crewBoard.task(r, []).round?.cap; }) === 5, "the round's cap is the run's effective policy (roundCap), not only the org's");
+    ok(/^Waiting for you: Dispatch: the rescoped spec/.test(await nowT("R-106")) && await p.getAttribute('[data-task="R-106"] [data-inbox-link]', "href") === "#/inbox/SC-203", "the Task rescoped after its cap names its dispatch card and links to it", await nowT("R-106"));
+    ok(await nowT("R-107") === "Fix (refine loop): round cap reached" && await p.getAttribute('[data-task="R-107"] [data-inbox-link]', "href") === "#/inbox/SC-204", "a Task at its round cap says so and links to its round-budget card", await nowT("R-107"));
     ok(await nowT("R-102") === "Waiting for you: Merge: format() supports JPY, a currency without cents" && await p.getAttribute('[data-task="R-102"] [data-inbox-link]', "href") === "#/inbox/SC-201", "Now on a waiting Task names its card and links to it in the Inbox", await nowT("R-102"));
     ok(/Firstmate is deciding first/.test(await nowT("R-105")) && /CI failed: 2 of 14 tests fail/.test(await nowT("R-103")), "Now on a stuck Task says why: Firstmate deciding, or the failure", JSON.stringify([await nowT("R-105"), await nowT("R-103")]));
     // overlap: R-101 and R-104 both change src/money.ts
     ok(await p.getAttribute('[data-task="R-101"] [data-overlap]', "data-overlap") === "R-104" && await p.getAttribute('[data-task="R-104"] [data-overlap]', "data-overlap") === "R-101" && await p.locator('[data-task="R-102"] [data-overlap], [data-task="R-103"] [data-overlap]').count() === 0
       && (await p.textContent('[data-task="R-101"] [data-overlap]')).trim() === "↻ will rebase", "the overlap badge marks the two open Tasks whose scopes meet (test paths aside), and no other");
     ok(/^\d+m$|^\dh$/.test((await p.textContent('[data-task="R-101"] .tb-el')).trim()), "elapsed reads compactly", await p.textContent('[data-task="R-101"] .tb-el'));
-    // the filters, with their counts
+    ok(await p.getAttribute("[data-task-detail]", "data-task-detail") === ids[0] && await p.getAttribute(`[data-task="${ids[0]}"]`, "aria-current") === "true" && JSON.stringify(await tabRows(p)) === JSON.stringify([ids[0]]), "the first row is selected, its panel open, and it is the one row in the tab order");
+    ok(await ariaOk(p), "1440 closed: the rows are a list of list items (no listbox, no option holding links)");
+    // the filters, with their counts; a filter that hides the selected Task moves the selection (and the panel) to its first row
+    await p.click('[data-task="R-101"] .tb-title');
     for (const k of ["you", "stuck", "run", "done", "all"]) {
       await p.click(`[data-tb-tab="${k}"]`); await p.waitForTimeout(80);
-      const n = Number((await p.textContent(`[data-tb-tab="${k}"] .tb-count`)).trim()), gk = await groups(p);
+      const n = Number((await p.textContent(`[data-tb-tab="${k}"] .tb-count`)).trim()), gk = await groups(p), shown = await rowIds(p), panel = await p.getAttribute("[data-task-detail]", "data-task-detail"), tabs = await tabRows(p);
       ok(gk.length === (k === "all" ? ids.length : gs.filter((x) => x === k).length) && n === gk.length && (k === "all" || gk.every((x) => x === k)) && await p.getAttribute(`[data-tb-tab="${k}"]`, "aria-selected") === "true", `the ${k} filter shows its rows and its count (${n})`, JSON.stringify(gk));
+      ok(shown.includes(panel) && tabs.length === 1 && tabs[0] === panel && (k !== "you" || panel === shown[0]), `under the ${k} filter the panel shows a row of the list, and that row is the one in the tab order`, JSON.stringify({ panel, tabs, first: shown[0] }));
     }
+    // the keyboard enters the list from the filter tabs (Tab), and ←/→ switch the filter
+    await p.click('[data-tb-tab="done"]'); await p.focus('[data-tb-tab="done"]'); await p.keyboard.press("Tab");
+    ok(await p.evaluate(() => document.activeElement?.dataset.task) === "R-091", "Tab from the filter tabs reaches the selected row");
+    await p.focus('[data-tb-tab="done"]'); await p.keyboard.press("ArrowLeft"); await p.waitForTimeout(80);
+    ok(await p.getAttribute('[data-tb-tab="stuck"]', "aria-selected") === "true" && await p.evaluate(() => document.activeElement?.dataset.tbTab) === "stuck" && (await groups(p)).every((x) => x === "stuck")
+      && await p.$$eval("[data-tb-tab]", (ts) => ts.filter((t) => t.tabIndex === 0).map((t) => t.dataset.tbTab).join()) === "stuck", "← moves to the previous filter tab, shows its rows, and only that tab is in the tab order");
+    await p.keyboard.press("End"); await p.waitForTimeout(80); await p.keyboard.press("ArrowRight"); await p.waitForTimeout(80);
+    ok(await p.getAttribute('[data-tb-tab="all"]', "aria-selected") === "true", "→ past the last filter wraps to All");
+    await p.click('[data-task="' + ids[0] + '"] .tb-title');
     // the detail panel: only the selected Task's visited path
-    ok(await p.getAttribute("[data-task-detail]", "data-task-detail") === ids[0] && await p.getAttribute(`[data-task="${ids[0]}"]`, "aria-selected") === "true", "the first row is selected and its panel open");
     await p.click('[data-task="R-101"] .tb-title');
     const path = await p.$$eval('[data-task-path="R-101"] li', (ls) => ls.map((l) => `${l.dataset.pathNode}:${l.dataset.visit}${l.classList.contains("cur") ? "*" : ""}`));
     ok(JSON.stringify(path) === JSON.stringify(["spec:1", "build:1", "review:1", "build:2*"]), "the panel shows only this Task's visited path, the current node ringed", JSON.stringify(path));
@@ -124,7 +148,7 @@ try {
     ok(await p.locator('[data-task-path="R-105"] li.cur').count() === 1 && await p.getAttribute('[data-task-path="R-105"] li.cur', "data-path-node") === "firstmate", "a Firstmate-first escalation rings Firstmate on the path");
     await shot(p, "board-1440-closed.png");
     // keyboard: ↑/↓ move the selection along the rows, Enter opens the Task
-    await p.click('[data-tb-tab="all"]'); await p.focus(`[data-task="${ids[0]}"]`);
+    await p.click('[data-tb-tab="all"]'); await p.click(`[data-task="${ids[0]}"] .tb-title`); await p.focus(`[data-task="${ids[0]}"]`);
     await p.keyboard.press("ArrowDown"); await p.waitForTimeout(80);
     ok(await p.evaluate(() => document.activeElement?.dataset.task) === ids[1] && await p.getAttribute("[data-task-detail]", "data-task-detail") === ids[1], "↓ selects and focuses the next row, and the panel follows");
     await p.keyboard.press("ArrowUp"); await p.waitForTimeout(80);
@@ -164,6 +188,10 @@ try {
     await p.click('[data-task="R-101"] .tb-title');
     const box = await p.evaluate(() => { const l = document.querySelector(".tb-list").getBoundingClientRect(), d = document.querySelector("[data-task-detail]").getBoundingClientRect(); return { beside: d.left >= l.right - 1, path: document.querySelectorAll('[data-task-path="R-101"] li').length }; });
     ok(box.beside && box.path === 4, "1440 open: the detail panel sits on the right with the Task's path", JSON.stringify(box));
+    ok(await ariaOk(p) && (await tabRows(p)).length === 1, "1440 open: a list of list items, one row in the tab order");
+    await p.click('[data-tb-tab="done"]');
+    ok(await p.getAttribute("[data-task-detail]", "data-task-detail") === "R-091" && JSON.stringify(await tabRows(p)) === JSON.stringify(["R-091"]), "1440 open: a filter that hides the selected Task moves the selection and the panel to its first row");
+    await p.click('[data-tb-tab="all"]');
     ok(await p.getAttribute('[data-task="R-102"] [data-inbox-link]', "href") === "#/inbox/SC-201", "1440 open: the waiting Task links to its card in the Inbox");
     ok(await noSideways(p), "1440 open: no sideways scroll");
     await shot(p, "board-1440-firstmate-open.png");
@@ -176,10 +204,23 @@ try {
     const bar = (await p.textContent("[data-tb-waitbar]").catch(() => "")).trim();
     ok(bar === `${you} 個任務在等你去收件匣 →` && await p.getAttribute("[data-tb-waitbar]", "href") === "#/inbox", "390: the top bar says how many Tasks wait and links to the Inbox", bar);
     ok(await p.locator("[data-task-detail]").count() === 0, "390: no panel until a card is chosen");
+    const ids390 = await rowIds(p);
+    ok(JSON.stringify(await tabRows(p)) === JSON.stringify([ids390[0]]) && await ariaOk(p), "390: with nothing chosen the first card is the one in the tab order, in a list of list items");
+    // the keyboard: Tab from the filter tabs enters the cards, ↓ moves the focus (no panel opens), Space opens the panel
+    await p.focus('[data-tb-tab="all"]'); await p.keyboard.press("Tab");
+    ok(await p.evaluate(() => document.activeElement?.dataset.task) === ids390[0], "390: Tab from the filter tabs reaches the first card");
+    await p.keyboard.press("ArrowDown"); await p.waitForTimeout(80);
+    ok(await p.evaluate(() => document.activeElement?.dataset.task) === ids390[1] && await p.locator("[data-task-detail]").count() === 0 && JSON.stringify(await tabRows(p)) === JSON.stringify([ids390[1]]), "390: ↓ moves the focus to the next card without opening a panel");
+    await p.keyboard.press(" "); await p.waitForTimeout(80);
+    ok(await p.locator(`[data-task="${ids390[1]}"] > [data-task-detail="${ids390[1]}"]`).count() === 1, "390: Space opens the focused card's panel inside it");
+    await p.keyboard.press(" "); await p.waitForTimeout(80);
     ok(sorted(await groups(p)) && await noCards(p) && await noGraphs(p), "390: ordered rows, no card body, no workflow graph");
     ok((await p.textContent('[data-tb-tab="stuck"]')).includes("卡住") && (await p.textContent('[data-tb-tab="done"]')).includes("今天完成") && /會 rebase/.test(await p.textContent('[data-task="R-101"]')), "390: zh-TW copy (tabs, overlap badge)");
     await p.click('[data-task="R-101"] .tb-title'); await p.waitForTimeout(150);
-    ok(await p.evaluate(() => document.querySelector('[data-task="R-101"]').nextElementSibling?.dataset.taskDetail === "R-101") && /第 2 輪 ↺/.test(await p.textContent('[data-task-path="R-101"]')), "390: the panel opens under the chosen card, with its path and loops in zh-TW");
+    ok(await p.locator('[data-task="R-101"] > [data-task-detail="R-101"]').count() === 1 && /第 2 輪 ↺/.test(await p.textContent('[data-task-path="R-101"]')) && await ariaOk(p), "390: the panel opens inside the chosen card (a list item), with its path and loops in zh-TW");
+    await p.click('[data-tb-tab="done"]');
+    ok(await p.locator("[data-task-detail]").count() === 0 && JSON.stringify(await tabRows(p)) === JSON.stringify(["R-091"]), "390: a filter that hides the chosen card closes its panel and puts its first card in the tab order");
+    await p.click('[data-tb-tab="all"]'); await p.click('[data-task="R-101"] .tb-title'); await p.waitForTimeout(150);
     ok(await noSideways(p), "390: no sideways scroll");
     await shot(p, "board-390.png");
     await p.click('[data-task="R-101"] .tb-title'); await p.waitForTimeout(150);

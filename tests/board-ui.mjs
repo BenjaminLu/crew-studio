@@ -100,7 +100,7 @@ try {
 
     // every Task, Studio and firstmate, one row each, with its milestones
     const rows = await p.$$eval("[data-task]", (rs) => rs.map((r) => r.dataset.task));
-    const want = ["R-101", "R-102", "R-103", "R-104", "R-105", "R-091", ...fmTasks.map((t) => t.id)];
+    const want = ["R-101", "R-102", "R-103", "R-104", "R-105", "R-106", "R-107", "R-091", ...fmTasks.map((t) => t.id)];
     ok(want.every((id) => rows.includes(id)) && rows.length === want.length && !rows.includes("R-090"), "the Board lists every parallel run (Studio runs in flight, the one done today, the firstmate tasks in flight; not an old finished run)", JSON.stringify({ rows, want }));
     const s1 = await segs(p, "R-101"), s2 = await segs(p, "R-102"), s3 = await segs(p, "R-103");
     ok(JSON.stringify(s1) === JSON.stringify(["done", "done", "done", "running", "", "", ""]) && JSON.stringify(s2) === JSON.stringify(["done", "done", "done", "done", "human", "", ""])
@@ -127,7 +127,7 @@ try {
     const lk = await links(p);
     // (a firstmate card whose task firstmate does not list, D-board-oneway's T-306, has no row to link from: the Inbox holds it)
     const pendingShown = summary.pending.filter((c) => rows.includes(c.task));
-    ok(lk["R-102"] === "SC-201" && lk["R-104"] === "SC-202" && pendingShown.length > 0 && pendingShown.every((c) => summary.pending.some((d) => d.id === lk[c.task] && d.task === c.task)) && Object.keys(lk).length === new Set(["R-102", "R-104", ...pendingShown.map((c) => c.task)]).size,
+    ok(lk["R-102"] === "SC-201" && lk["R-104"] === "SC-202" && lk["R-106"] === "SC-203" && lk["R-107"] === "SC-204" && pendingShown.length > 0 && pendingShown.every((c) => summary.pending.some((d) => d.id === lk[c.task] && d.task === c.task)) && Object.keys(lk).length === new Set(["R-102", "R-104", "R-106", "R-107", ...pendingShown.map((c) => c.task)]).size,
       "every waiting decision's Task links to it in the Inbox, and only those", JSON.stringify(lk));
     ok(await p.locator("#view [data-scard], #view [data-need-card], #view [data-card], #view [data-option]").count() === 0 && !/no minor unit/.test(await p.textContent("#view")), "the Board shows no card body");
     // (1440 with the Firstmate panel open is the compact layout: the row's status already says Waiting for you, Now names the card)

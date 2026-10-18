@@ -9,7 +9,7 @@
 // Rows follow the page's one stream (window.liveListen); a live redraw keeps the selected row, the focus and the scroll.
 // It also shows a firstmate card's answer on the card itself (the Inbox).
 (() => {
-const BD = { members: new Set(), life: 0, refresh: 0, refreshPending: false, revisions: new Map(), sequences: new Map(), detailLife: new Map(), requests: new Map(), cardRevision: 0, cardRequest: 0, ended: [], live: false, list: null, det: new Map(), cards: null, pol: null, loading: false, hidden: new Set(), answered: [], t: new Map(), tab: "all", sel: null, picked: false, mode: null };
+const BD = { members: new Set(), life: 0, refresh: 0, refreshPending: false, revisions: new Map(), sequences: new Map(), detailLife: new Map(), requests: new Map(), cardRevision: 0, cardRequest: 0, ended: [], live: false, list: null, det: new Map(), cards: null, pol: null, loading: false, hidden: new Set(), answered: [], t: new Map(), tab: "all", sel: null, focus: null, mode: null };
 const api = async (u, signal) => { const r = await fetch(u, { signal }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; };
 const DAY = 86400000;
 const ranToday = (r) => today(r.updatedAt) || today(r.endedAt);
@@ -128,7 +128,10 @@ function roundOf(r, m) {
   if (!m || !r.def) return null;
   const loops = r.def.nodes.filter((n) => n.kind === "loop" && n.args?.producer && m.nodes.includes(n.args.producer));
   for (const lp of loops) { const v = r.nodes?.[lp.args.producer]?.visits || 0; if (!v) continue;
-    const cap = (lp.args.round_cap != null ? Number(lp.args.round_cap) : Number(BD.pol?.org?.round_cap ?? 3)) + Number(r.ctx?.policyAdds?.round_cap ?? 0) + Number(r.nodes?.[lp.id]?.extra ?? 0);
+    // as src/runtime/refine.ts counts it: the loop's own round_cap plus the run's added rounds, else the run's effective policy
+    // (project and workflow over org, added rounds included: /api/wruns/<id> roundCap), plus the rounds a budget card extended
+    const policy = r.roundCap != null ? Number(r.roundCap) : Number(BD.pol?.org?.round_cap ?? 3) + Number(r.ctx?.policyAdds?.round_cap ?? 0);
+    const cap = (lp.args.round_cap != null ? Number(lp.args.round_cap) + Number(r.ctx?.policyAdds?.round_cap ?? 0) : policy) + Number(r.nodes?.[lp.id]?.extra ?? 0);
     return { n: v, cap }; }
   const v = Math.max(0, ...m.nodes.map((id) => r.nodes?.[id]?.visits || 0));
   return v > 1 ? { n: v, cap: null } : null;
@@ -144,37 +147,38 @@ function fmTrack(t) {
 }
 
 // ---------- one Task, as the Board shows it ----------
-// Stuck, from the run's own state: the run failed (the round cap ending a run is a failure too: result "cap"), or a
-// node hit its round cap and nothing has run since (the cap's own route, a card or an end), or Firstmate is deciding
-// an escalation first (ctx.firstmateQuestion: an agent's question or a card Firstmate diagnoses before the captain).
+// Stuck, from the run's own state: the run failed (the round cap ending a run is a failure too: result "cap"), or its
+// latest step is a round cap (outcome "cap") with nothing run since but the one card the cap raised, still open (the
+// round-budget card); or Firstmate is deciding an escalation first (ctx.firstmateQuestion: an agent's question or a card
+// Firstmate diagnoses before the captain). A node keeps outcome "cap" after the Task moved on (a rescope to the spec):
+// only the steps say whether anything ran after the cap.
 // Waiting for you: not stuck, and a card of the run waits on the captain. Done today: it ended today, not failed.
 const GROUPS = { you: ["Waiting for you", "等你"], stuck: ["Stuck", "卡住"], run: ["Running", "進行中"], done: ["Done today", "今天完成"] };
 const ORDER = { you: 0, stuck: 1, run: 2, done: 3 };
-const capped = (r) => Object.entries(r.nodes || {}).some(([, n]) => n?.outcome === "cap") && !Object.values(r.nodes || {}).some((n) => n?.state === "running" && !n.waiting);
+function capStep(r) {
+  const steps = r.steps || [], i = steps.findLastIndex((s) => s.outcome === "cap"); if (i < 0) return null;
+  const after = steps.slice(i + 1), kind = (s) => s.kind || r.def?.nodes?.find((n) => n.id === s.node)?.kind;
+  return !after.length || (after.length === 1 && kind(after[0]) === "card" && ["running", "waiting"].includes(after[0].state)) ? steps[i] : null;
+}
 function stuckWhy(r) {
   const q = r.ctx?.firstmateQuestion;
   if (q) return T(`Firstmate is deciding first: ${oneLine(q.question, 90)}`, `已交給 Firstmate 判斷：${oneLine(q.question, 60)}`);
-  const cap = Object.entries(r.nodes || {}).find(([, n]) => n?.outcome === "cap");
-  if (cap) { const label = loc(r.def?.nodes?.find((n) => n.id === cap[0])?.label) || cap[0]; return T(`${label}: round cap reached`, `${label}：達到回合上限`); }
+  const cap = r.status !== "succeeded" ? capStep(r) : null;
+  if (cap) { const label = loc(r.def?.nodes?.find((n) => n.id === cap.node)?.label) || cap.node; return T(`${label}: round cap reached`, `${label}：達到回合上限`); }
   if (r.status === "failed") return oneLine(r.error || loc(r.failure?.title) || T("Failed", "失敗"), 120);
   return null;
 }
-// a node's crew seat: its own seat, else its role's; named as the workflow declares it, else as the built-in seats are
-// (src/domain/crew.ts SEAT_LABELS), else by the role's label
-const SEATS = { coordinator: ["Coordinator", "協調"], maker: ["Maker", "產出"], "alt-maker": ["Second maker", "第二產出"], reviewer: ["Reviewer", "審查"], "design-reviewer": ["Design reviewer", "設計審查"] };
-function seatOf(def, node) {
-  const role = def?.roles?.find((x) => x.id === node?.role), id = node?.seat || role?.seat, seat = id && def?.seats?.find((s) => s.id === id);
-  if (seat) return (zh() ? seat.labelZh || seat.label : seat.label) || seat.id;
-  if (SEATS[id]) return T(...SEATS[id]);
-  return role ? loc(role.label) || role.id : id || null;
-}
-// who works now: the running agent rounds, each "node · seat · provider model", from the run's own crew resolution
+// who works now: the running agent rounds, each "node · seat · provider model". The seat is the run's own crew resolution
+// (/api/wruns/<id> `crew`, from its signed crew-resolved record), named as the team named it; a run without one (a staffed
+// code workflow, a Task started before the team) names no seat. The model is the round's own (the captain's pick for the
+// node, else its latest step), else the resolution's.
 function workers(r) {
   const out = []; if (!r.def) return out;
   for (const n of r.def.nodes) { const rn = r.nodes?.[n.id]; if (rn?.state !== "running" || rn.waiting) continue;
-    const st = (r.steps || []).filter((s) => s.node === n.id).at(-1);
-    const model = [rn.agent?.provider || st?.provider, rn.agent?.model || st?.model].filter(Boolean).join(" ");
-    out.push([loc(n.label) || n.id, n.kind === "agent" ? seatOf(r.def, n) : null, n.kind === "agent" ? model || null : null].filter(Boolean).join(" · ")); }
+    const st = (r.steps || []).filter((s) => s.node === n.id).at(-1), crew = n.kind === "agent" ? r.crew?.nodes?.[n.id] : null;
+    const seat = crew ? (zh() ? crew.label?.zh : crew.label?.en) || crew.seat : null;
+    const model = [rn.agent?.provider || st?.provider || crew?.provider, rn.agent?.model || st?.model || crew?.model].filter(Boolean).join(" ");
+    out.push([loc(n.label) || n.id, seat, n.kind === "agent" ? model || null : null].filter(Boolean).join(" · ")); }
   return out;
 }
 const cardTitle = (c) => oneLine(String(loc(c.title) || c.kind || "").replace(/^[A-Z][A-Z ]+ — /, ""), 60);
@@ -184,7 +188,7 @@ const currentCard = (r, cards) => cards.filter((c) => c.status === "open" && c.r
   .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))[0] || null;
 function studioView(r, cards, group) {
   const id = r.id, card = currentCard(r, cards);
-  if (!group) group = r.status === "failed" || r.ctx?.firstmateQuestion || (r.status !== "succeeded" && capped(r)) ? "stuck" : card || Object.values(r.nodes || {}).some((n) => n?.waiting === "card") ? "you" : "run";
+  if (!group) group = r.status === "failed" || r.ctx?.firstmateQuestion || (r.status !== "succeeded" && !!capStep(r)) ? "stuck" : card || Object.values(r.nodes || {}).some((n) => n?.waiting === "card") ? "you" : "run";
   const tr = track(r), m = tr.ms[tr.cur];
   const workers0 = workers(r);
   const now = group === "done" ? null : group === "stuck" ? stuckWhy(r)
@@ -233,15 +237,18 @@ const inboxLink = (x) => h("a", { class: "tb-inbox", href: `#/inbox/${encodeURIC
 const nowText = (x) => x.group === "you" ? (x.card ? T(`Waiting for you: ${x.card.title}`, `等你：${x.card.title}`) : T("Waiting for you", "等你")) : x.group === "done" ? T(x.state.en, x.state.tw) : x.now || "—";
 const overlapEl = (x) => x.overlap.length ? h("span", { class: "tb-overlap", "data-overlap": x.overlap.join(" "), title: T(`Changes the same files as ${x.overlap.join(", ")}: it rebases onto the current base each round`, `和 ${x.overlap.join("、")} 改到同一個檔案：每輪都會 rebase 到最新的 base`) }, T("↻ will rebase", "↻ 會 rebase")) : null;
 const elapsed = (x) => x.since ? fmtEl((x.until ? Date.parse(x.until) : clock()) - Date.parse(x.since)) : "—";
-function row(x, on) {
-  return h("div", { class: `tb-row g-${x.group}${on ? " on" : ""}`, role: "option", "aria-selected": String(on), tabindex: on ? 0 : -1, id: `tb-${x.id}`,
+// a row is a list item: the selected one carries aria-current, exactly one row of the list is in the tab order (the
+// selected one, else the one the keys last moved to, else the first), and its links stay ordinary links. On a phone the
+// selected row holds its own detail panel.
+function row(x, on, tab, panel) {
+  return h("div", { class: `tb-row g-${x.group}${on ? " on" : ""}`, role: "listitem", "aria-current": on ? "true" : null, tabindex: tab ? 0 : -1, id: `tb-${x.id}`,
     "data-task": x.id, "data-kind": x.kind, "data-group": x.group, "aria-label": `${groupWord(x.group)}, ${x.id} ${x.title}`,
-    onclick: (e) => { if (e.target.closest("a")) return; pick(x.id, true); } },
+    onclick: (e) => { if (e.target.closest("a, button, .tb-detail")) return; pick(x.id, true); } },
     h("span", { class: `tb-st${x.group === "done" ? ` tone-${x.state.tone}` : ""}`, "data-run-state": x.state.key }, h("i", { class: "tb-dot" }), x.group === "done" ? T(x.state.en, x.state.tw) : groupWord(x.group)),
     h("span", { class: "tb-task" }, h("b", { class: "tb-title", title: x.title, "data-task-title": x.id }, x.title), h("span", { class: "tb-meta" }, [x.id, x.workflow, x.project || "—"].join(" · "))),
     h("span", { class: "tb-prog" }, trackEl(x), h("span", { class: "tb-stage" }, stageText(x))),
     h("span", { class: "tb-now" }, x.card && x.group !== "done" ? inboxLink(x) : null, h("span", { class: "tb-now-t", title: nowText(x) }, BD.mode !== "wide" && x.group === "you" && x.card ? x.card.title : nowText(x)), overlapEl(x)),
-    h("span", { class: "tb-el num", "data-since": x.since || "", "data-until": x.until || "" }, elapsed(x)));
+    h("span", { class: "tb-el num", "data-since": x.since || "", "data-until": x.until || "" }, elapsed(x)), panel);
 }
 
 // ---------- the detail panel: this Task's own path ----------
@@ -296,18 +303,29 @@ function detail(x) {
 const modeFor = (w) => (w >= 1080 ? "wide" : w >= 640 ? "mid" : "narrow");
 const mainWidth = () => { const m = document.getElementById("main"); if (!m) return innerWidth; const cs = getComputedStyle(m); return m.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight); };
 const TABS = [["all", "All", "全部"], ["you", "Waiting for you", "等你"], ["run", "Running", "進行中"], ["stuck", "Stuck", "卡住"], ["done", "Done today", "今天完成"]];
+// beside the list (wide, mid) the selection follows a click or the keys; on a phone a tap opens (or folds) the row's panel and
+// the keys only move the focus
 function pick(id, open = false) {
-  BD.sel = id; BD.picked = true;
-  if (BD.mode === "narrow" && open) { const was = document.querySelector("[data-task-detail]")?.dataset.taskDetail; if (was === id) BD.sel = null; }
+  BD.focus = id;
+  if (BD.mode !== "narrow") BD.sel = id;
+  else if (open) BD.sel = BD.sel === id ? null : id;
   render(); document.getElementById(`tb-${id}`)?.focus({ preventScroll: true });
 }
 function onKeys(e, list) {
-  const at = e.target.closest?.("[data-task]"); if (!at || e.target.closest("a") || e.metaKey || e.ctrlKey || e.altKey) return;
+  const at = e.target.closest?.("[data-task]"); if (!at || e.target !== at || e.metaKey || e.ctrlKey || e.altKey) return; // keys inside a link or the panel are theirs
   const ids = list.map((x) => x.id), i = ids.indexOf(at.dataset.task);
   if (e.key === "Enter") { e.preventDefault(); location.hash = list[i].href; return; }
-  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-  e.preventDefault(); const to = ids[Math.max(0, Math.min(ids.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))]; if (!to || to === ids[i]) return;
+  if (e.key === " ") { e.preventDefault(); pick(ids[i], true); return; }
+  const to = { ArrowDown: ids[i + 1], ArrowUp: ids[i - 1], Home: ids[0], End: ids.at(-1) }[e.key];
+  if (!(e.key in { ArrowDown: 1, ArrowUp: 1, Home: 1, End: 1 })) return;
+  e.preventDefault(); if (!to || to === ids[i]) return;
   pick(to); document.getElementById(`tb-${to}`)?.scrollIntoView({ block: "nearest" });
+}
+// the filter tabs: one tablist, ←/→ (Home/End) move to a tab and show its rows
+function onTabKeys(e) {
+  const i = TABS.findIndex(([k]) => k === BD.tab), n = TABS.length;
+  const j = { ArrowRight: (i + 1) % n, ArrowLeft: (i - 1 + n) % n, Home: 0, End: n - 1 }[e.key]; if (j === undefined) return;
+  e.preventDefault(); BD.tab = TABS[j][0]; render(); document.querySelector(`[data-tb-tab="${BD.tab}"]`)?.focus();
 }
 function counts(all) {
   const crew = [...(window.studioAgents?.members() || []), ...S.crew.filter((c) => c.alive)];
@@ -327,29 +345,33 @@ function viewBoard() {
   const all = BD.list === null ? [] : items(), c = counts(all);
   const n = (k) => (k === "all" ? all.length : all.filter((x) => x.group === k).length);
   const list = all.filter((x) => BD.tab === "all" || x.group === BD.tab);
-  // the selection stays on its Task through live updates; on a wide page the first row is selected until the captain picks one
-  if (BD.sel && !all.some((x) => x.id === BD.sel)) BD.sel = null;
-  if (!BD.sel && !BD.picked && BD.mode !== "narrow" && list.length) BD.sel = list[0].id;
-  const sel = all.find((x) => x.id === BD.sel) || null;
+  // the selection stays on its Task through live updates while its row shows; beside the list, a selection the filter hides
+  // (or none) moves to the first row shown, so the panel always shows a row of the list. On a phone a hidden selection closes.
+  const shown = (id) => list.some((x) => x.id === id);
+  if (BD.sel && !shown(BD.sel)) BD.sel = null;
+  if (!BD.sel && BD.mode !== "narrow" && list.length) BD.sel = list[0].id;
+  const sel = list.find((x) => x.id === BD.sel) || null;
+  // exactly one row is in the tab order: the selected one, else the one the keys last reached, else the first
+  const tabbable = list.length ? (BD.sel && shown(BD.sel) ? BD.sel : BD.focus && shown(BD.focus) ? BD.focus : list[0].id) : null;
   BD.sig = boardSig();
   const waiting = n("you");
-  const rows = BD.list === null ? [1, 2, 3].map(() => h("div", { class: "tb-row tb-skel" }, h("div", { class: "skel", style: "height:12px;width:70%" }), h("div", { class: "skel", style: "height:8px" })))
-    : !all.length ? h("div", { class: "empty" }, icon("workflow"), h("b", {}, T("No task yet", "還沒有任務")), h("a", { href: "#/runs" }, T("Start one", "開始一個")))
-    : !list.length ? h("div", { class: "empty", "data-tb-empty": BD.tab }, h("b", {}, T("No task under this filter", "這個篩選下沒有任務")))
-    : list.flatMap((x) => [row(x, x.id === BD.sel), BD.mode === "narrow" && x.id === BD.sel ? detail(x) : null]);
+  const rows = BD.list === null ? [1, 2, 3].map(() => h("div", { class: "tb-row tb-skel", role: "listitem" }, h("div", { class: "skel", style: "height:12px;width:70%" }), h("div", { class: "skel", style: "height:8px" })))
+    : !all.length ? h("div", { class: "empty", role: "listitem" }, icon("workflow"), h("b", {}, T("No task yet", "還沒有任務")), h("a", { href: "#/runs" }, T("Start one", "開始一個")))
+    : !list.length ? h("div", { class: "empty", role: "listitem", "data-tb-empty": BD.tab }, h("b", {}, T("No task under this filter", "這個篩選下沒有任務")))
+    : list.map((x) => row(x, x.id === BD.sel, x.id === tabbable, BD.mode === "narrow" && x.id === BD.sel ? detail(x) : null));
   return h("div", { class: `page bd-page tb-${BD.mode}`, "data-board": "1" },
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Board", "看板")), h("p", { id: "boardSub" }, BD.list === null ? T("Loading tasks…", "載入中…") : subtitle(c))),
       h("div", { class: "actions" }, ghBar(), h("a", { class: "btn", href: "#/crew" }, icon("crew"), T("Crew", "船員")), h("a", { class: "btn primary", href: "#/runs" }, icon("plus"), T("New task", "新任務")))),
     // the operator turned the OS sandbox and egress proxy off (CREW_LOCAL_UNRESTRICTED=1): said above everything else
     BD.pol?.execution === "local-unrestricted" && window.crewUnrestrictedNotice ? window.crewUnrestrictedNotice() : null,
     BD.mode === "narrow" && waiting ? h("a", { class: "tb-waitbar", href: "#/inbox", "data-tb-waitbar": String(waiting) }, h("span", {}, T(`${waiting} task${waiting === 1 ? "" : "s"} waiting for you`, `${waiting} 個任務在等你`)), h("span", {}, T("Go to Inbox →", "去收件匣 →"))) : null,
-    h("div", { class: "tb-tabs", role: "tablist", "aria-label": T("Filter", "篩選") }, TABS.map(([k, en, tw]) => h("button", { type: "button", role: "tab", class: `tb-tab t-${k}`, "aria-selected": String(BD.tab === k), "data-tb-tab": k,
+    h("div", { class: "tb-tabs", role: "tablist", "aria-label": T("Filter", "篩選"), onkeydown: onTabKeys }, TABS.map(([k, en, tw]) => h("button", { type: "button", role: "tab", class: `tb-tab t-${k}`, "aria-selected": String(BD.tab === k), tabindex: BD.tab === k ? 0 : -1, "aria-controls": "tasks", "data-tb-tab": k,
       onclick: () => { BD.tab = k; render(); } }, h("i", { class: "tb-dot" }), T(en, tw), h("span", { class: "tb-count num" }, String(n(k)))))),
     h("div", { class: "tb-body" },
       h("div", { class: "tb-listwrap" },
-        h("div", { class: "card tb-list", id: "tasks" },
+        h("div", { class: "card tb-list", id: "tasks", role: "tabpanel", "aria-label": T("Tasks", "任務") },
           BD.mode === "wide" ? h("div", { class: "tb-head", "aria-hidden": "true" }, h("span", {}, T("Status", "狀態")), h("span", {}, T("Task", "任務")), h("span", {}, T("Progress", "進度")), h("span", {}, T("Now", "現在")), h("span", { class: "r" }, T("Elapsed", "經過"))) : null,
-          h("div", { role: "listbox", "aria-label": T("Tasks", "任務"), class: "tb-rows", onkeydown: (e) => onKeys(e, list) }, rows)),
+          h("div", { role: "list", "aria-label": T("Tasks", "任務"), class: "tb-rows", onkeydown: (e) => onKeys(e, list) }, rows)),
         h("p", { class: "tb-foot faint" }, T("Decision cards live in the Inbox only: the Board tells you which Task is waiting, without a second copy of the card.", "要你做決定的卡片只放在收件匣；看板只告訴你「哪個任務在等你」，不再重複一份卡。"))),
       BD.mode !== "narrow" ? detail(sel) : null));
 }
@@ -363,7 +385,7 @@ window.crewBoard = { items: () => items().map(({ r, t, ...x }) => x), task: (r, 
 // and a live update that changes nothing the Board shows does not redraw it (the crew's log tails move every few seconds;
 // a redraw between a mouse-down and its mouse-up would swallow the captain's click). A redraw keeps the focused row
 // focused and the detail panel's own scroll.
-const boardSig = () => JSON.stringify([lang, BD.tab, BD.sel, BD.mode, window.studioAgents?.ready(), window.studioAgents?.status(), window.studioAgents?.members(), window.crewFirstmateWelcomeSignature?.(), S.tasks.filter((t) => t.status !== "idle").map((t) => [t.id, t.status, t.node, t.round, t.title, t.lastTs, t.failure?.type]),
+const boardSig = () => JSON.stringify([lang, BD.tab, BD.sel, BD.focus, BD.mode, window.studioAgents?.ready(), window.studioAgents?.status(), window.studioAgents?.members(), window.crewFirstmateWelcomeSignature?.(), S.tasks.filter((t) => t.status !== "idle").map((t) => [t.id, t.status, t.node, t.round, t.title, t.lastTs, t.failure?.type]),
   S.pending.map((c) => [c.id, c.ts, c.task]), S.crew.filter((c) => c.alive).map((c) => [c.actor, c.task, c.vendor, c.model]), BD.list, BD.ended, (BD.cards || []).map((c) => [c.id, c.status, c.run]), [...BD.det.values()].map((r) => [r.id, r.status, r.updatedAt, r.nodes, (r.steps || []).length, (r.events || []).length, !!r.def])]);
 { const baseSoft = soft; soft = function () {
     if (S.route?.name !== "board") return baseSoft();

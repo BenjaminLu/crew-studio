@@ -8,9 +8,6 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 const def = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "code-firstmate.def.json"), "utf8"));
-// the agent rounds' roles and seats, as packs/firstmate/workflows/code-firstmate.wf.yaml declares them (the Board names the seat)
-def.roles ??= [{ id: "worker", label: "Worker", seat: "maker" }, { id: "reviewer", label: "Reviewer", seat: "reviewer" }];
-for (const n of def.nodes) if (["build", "fix"].includes(n.id)) n.role ??= "worker"; else if (n.id === "review") n.role ??= "reviewer";
 
 export function boardFixture(now = Date.now()) {
   const at = (min) => new Date(now - min * 60000).toISOString();
@@ -52,6 +49,22 @@ export function boardFixture(now = Date.now()) {
   Object.assign(n5.review, { state: "running", visits: 1, waiting: "firstmate", startedAt: at(3) });
   const s5 = [step(1, "build", "agent", "passed", 15), step(2, "review", "agent", "waiting", 3)];
 
+  // R-106: the fix loop hit its round cap, the captain chose rescope on the round-budget card, and the spec ran again:
+  // the Task now waits on its dispatch card (fix still holds outcome "cap": the engine does not clear it on another path)
+  const lite = () => { const n = blank(); for (const id of ["intake", "prepare", "door"]) pass(n, id); return n; };
+  const n6 = lite();
+  pass(n6, "build"); Object.assign(n6.fix, { state: "failed", visits: 3, outcome: "cap", cause: "cap" });
+  pass(n6, "budget", { outcome: "rescope" }); pass(n6, "spec", { visits: 2 }); pass(n6, "spec-fix", { visits: 2 });
+  Object.assign(n6.dispatch, { state: "running", visits: 2, waiting: "card", card: "SC-203", startedAt: at(25) });
+  const s6 = [step(1, "build", "agent", "passed", 50), step(2, "fix", "loop", "failed", 40, { visit: 3, outcome: "cap" }), step(3, "budget", "card", "passed", 35, { outcome: "rescope" }),
+    step(4, "spec", "agent", "passed", 30, { visit: 2 }), step(5, "spec-fix", "loop", "passed", 28, { visit: 2 }), step(6, "dispatch", "card", "waiting", 25, { visit: 2 })];
+
+  // R-107: the fix loop hit its round cap just now; its round-budget card waits on the captain (stuck, with the card to answer)
+  const n7 = lite();
+  pass(n7, "spec"); pass(n7, "spec-fix"); pass(n7, "dispatch"); pass(n7, "build"); Object.assign(n7.fix, { state: "failed", visits: 3, outcome: "cap", cause: "cap" });
+  Object.assign(n7.budget, { state: "running", visits: 1, waiting: "card", card: "SC-204", startedAt: at(9) });
+  const s7 = [step(1, "build", "agent", "passed", 20), step(2, "fix", "loop", "failed", 10, { visit: 3, outcome: "cap" }), step(3, "budget", "card", "waiting", 9)];
+
   const card = (id, run, node, kind, title, why, options, o = {}) => ({ id, run, node, visit: 1, kind, title: { en: title, "zh-TW": title }, sections: { en: { intent: title, why }, "zh-TW": { intent: title, why } },
     body: `Intent: ${title}\n\n${why}`, options, confirmDoor: true, door: "two-way", links: [], workflow: "code-firstmate", runTitle: o.runTitle, status: "open", createdAt: at(12), answer: null, ...o });
   const SC201 = card("SC-201", "R-102", "merge-card", "merge", "Merge: format() supports JPY, a currency without cents",
@@ -61,16 +74,25 @@ export function boardFixture(now = Date.now()) {
   const SC202 = card("SC-202", "R-104", "door-pick", "question", "Door: the price table migration is one-way",
     "It renames a column that other services read. A revert will not bring their reads back.",
     [{ id: "approve", label: "Go one-way", primary: true }, { id: "changes", label: "Request changes", note: true, hold: true }], { door: "one-way", runTitle: "Migrate the price table", createdAt: at(4) });
+  const SC203 = card("SC-203", "R-106", "dispatch", "dispatch", "Dispatch: the rescoped spec", "The spec was narrowed after the fix loop's round cap.",
+    [{ id: "dispatch", label: "Dispatch", primary: true }], { visit: 2, runTitle: "Rescoped after the round cap", createdAt: at(25) });
+  const SC204 = card("SC-204", "R-107", "budget", "question", "Round budget: the fix loop used its three rounds", "Extend the budget, rescope, or park the Task.",
+    [{ id: "extend", label: "Extend" }, { id: "rescope", label: "Rescope", note: true }, { id: "park", label: "Park" }], { runTitle: "Capped at the fix loop", createdAt: at(9) });
 
   const run = (id, title, status, nodes, steps, min, o = {}) => ({ id, workflow: "code-firstmate", version: 2, def, title, text: title, params: {}, by: "captain", status, result: null, createdAt: at(min), updatedAt: o.endedAt ?? at(1),
-    endedAt: o.endedAt ?? null, error: o.error ?? null, nodes, queue: [], steps, ctx: o.ctx ?? {}, classifier: null, events: o.events ?? [], recovered: 0, cards: o.cards ?? [], ledger: [], ledgerOk: true, done: [] });
+    endedAt: o.endedAt ?? null, error: o.error ?? null, nodes, queue: [], steps, ctx: o.ctx ?? {}, classifier: null, events: o.events ?? [], recovered: 0, cards: o.cards ?? [], ledger: [], ledgerOk: true, crew: o.crew ?? null, done: [] });
   const details = {
+    // its crew as the runtime resolved it (the signed crew-resolved record; /api/wruns/<id> `crew`): build sits on the team's
+    // "Copy editor" seat through a workflow-node override, a seat the definition does not declare
     "R-101": run("R-101", "Add a percent function to money-kit", "running", n1, s1, 45, { ctx: { project: "money-kit", spec: { scope: ["src/money.ts", "tests/money.test.ts"] } },
+      crew: { team: "f".repeat(64), nodes: { build: { seat: "copy-editor", label: { en: "Copy editor", zh: "文字編輯" }, provider: "codex", model: "gpt-5.5" } } },
       events: [{ seq: 1, ts: at(30), type: "node_started", node: "build", visit: 1 }, { seq: 2, ts: at(20), type: "node_done", node: "review", outcome: "again" }, { seq: 3, ts: at(6), type: "node_started", node: "build", visit: 2 }] }),
     "R-102": run("R-102", "Format zero-decimal currencies", "waiting", n2, s2, 52, { cards: [SC201] }),
     "R-103": run("R-103", "Round half to even in format()", "failed", n3, s3, 30, { endedAt: at(21), error: "CI failed: 2 of 14 tests fail (test/round.test.ts)" }),
     "R-104": run("R-104", "Migrate the price table", "waiting", n4, s4, 8, { cards: [SC202], ctx: { project: "money-kit", spec: { scope: ["src/money.ts", "src/price/"] } } }),
     "R-105": run("R-105", "Explain the rounding rule", "waiting", n5, s5, 16, { ctx: { firstmateQuestion: { node: "review", visit: 1, question: "Should the review accept a docs-only change?", at: at(3), card: true } } }),
+    "R-106": run("R-106", "Rescoped after the round cap", "waiting", n6, s6, 55, { cards: [SC203] }),
+    "R-107": run("R-107", "Capped at the fix loop", "waiting", n7, s7, 22, { cards: [SC204] }),
     // finished today: not in flight, off the Board, but its spend is today's
     "R-091": (() => { const n = base(blank()); for (const k of ["build", "ci", "review", "merge-card", "merge", "after-merge", "cleanup", "done"]) pass(n, k);
       n.build.data = { jobs: [job("J-b9", 1, "claude", "claude-opus-5-5", 1.0)] }; n.spec.data = { jobs: [] };
@@ -78,7 +100,7 @@ export function boardFixture(now = Date.now()) {
     // finished long ago: not in flight, never on the Board
     "R-090": (() => { const n = base(blank()); Object.assign(n.spec, { startedAt: at(60 * 50), endedAt: at(60 * 50 - 2) }); return run("R-090", "Old merged change", "succeeded", n, [], 60 * 50, { endedAt: at(60 * 49) }); })(),
   };
-  const open = [SC201, SC202]; let answerCalls = 0;
+  const open = [SC201, SC202, SC203, SC204]; let answerCalls = 0;
   const list = () => ({ runs: Object.values(details).map((r) => ({ id: r.id, workflow: r.workflow, version: r.version, title: r.title, status: r.status, result: r.result, createdAt: r.createdAt, updatedAt: r.updatedAt, endedAt: r.endedAt, error: r.error,
     current: Object.entries(r.nodes).filter(([, n]) => ["running", "waiting"].includes(n.state)).map(([k, n]) => ({ node: k, state: n.state })), door: "two-way", recovered: 0 })), cards: open.filter((c) => c.status === "open") });
   // the runtime's own answer rules (src/runtime/cards.ts): a note when the option asks for one; the door when one-way

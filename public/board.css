@@ -57,6 +57,8 @@
 .tb-detail{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
 .tb-wide .tb-detail,.tb-mid .tb-detail{position:sticky;top:0;max-height:calc(100dvh - 48px);overflow:auto}
 .tb-narrow .tb-detail{border-radius:0;border-width:1px 0 0;background:var(--surface-2);padding:16px 14px}
+/* on a phone the panel sits inside its card, full width, below the card's own lines */
+.tb-narrow .tb-row>.tb-detail{grid-column:1/-1;margin:6px -14px -12px;cursor:default}
 .tb-detail.empty{justify-content:center;min-height:200px;text-align:center}
 .tb-d-head{display:flex;flex-direction:column;gap:4px;align-items:flex-start}
 .tb-d-head h2{margin:0;font-size:18px;line-height:1.35;overflow-wrap:anywhere}
