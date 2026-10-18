@@ -9,8 +9,10 @@ for(const producers of [['brand','menu','social'],['design-one','design-three','
 const flow={id:'accept-label-fixture',version:1,name:'Three deliverables',roles:[{id:'writer',label:'Writer',skill:'fixture'}],nodes:[
  {id:'intake',kind:'hook',do:'deliver.intake',label:'Start',x:0,y:0},
  ...producers.map(id=>({id,kind:'agent',role:'writer',mode:'deliver',args:{format:'document'},label:id,x:0,y:0})),
+ // an acceptance card needs a readiness check before it (workflow validation): one check over all three producers
+ {id:'checks',kind:'check',label:'Artifact readiness',checks:[{use:'core/artifact-ready'}],args:{producer:'all'},x:0,y:0},
  ...producers.map(id=>({id:'accept-'+id,kind:'card',args:{mode:'deliver-accept',card_kind:'acceptance'},label:'Accept '+id,x:0,y:0})),
- {id:'done',kind:'hook',label:'Done',x:0,y:0}],edges:[['intake',producers[0]],[producers[0],producers[1]],[producers[1],producers[2]],[producers[2],'accept-'+producers[0]],['accept-'+producers[0],'accept-'+producers[1],'approved'],['accept-'+producers[1],'accept-'+producers[2],'approved'],['accept-social','done','approved'],['accept-'+producers[0],producers[0],'changes']]};
+ {id:'done',kind:'hook',label:'Done',x:0,y:0}],edges:[['intake',producers[0]],[producers[0],producers[1]],[producers[1],producers[2]],[producers[2],'checks'],['checks','accept-'+producers[0],'pass'],['accept-'+producers[0],'accept-'+producers[1],'approved'],['accept-'+producers[1],'accept-'+producers[2],'approved'],['accept-social','done','approved'],['accept-'+producers[0],producers[0],'changes']]};
 const H=await harness([Y(flow)]),E=H.engine,store=new ArtifactStore(H.data);
 installDeliver(E,{dataDir:H.data,artifacts:store,lane:null,fileorg:null,docs:null});
 const provider=dryStubProvider((name,args,token)=>H.agents.callTool(token,name,args));E.deps.provider=()=>provider;
