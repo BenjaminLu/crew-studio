@@ -167,9 +167,9 @@ Covered by the same graph plus a generated conventions pack: GitHub adapter, con
   - the provider CLI's own install (the real path of its binary and the folder above), read-only;
   - the round's worktree (read and write, except the worktree's `.git` link: Studio commits outside the sandbox), its
     `tmp` (also `TMPDIR` and the CLI's own temp variable) and a throwaway home where the CLI keeps its config, sessions
-    and caches. Its login is a copy Studio made outside the sandbox: the vendor's token in the env (Claude) or a login
+    and caches. Its login is a copy Studio made outside the sandbox: an inherited descriptor (Claude) or a login
     file without its refresh token in the throwaway home (Codex). No keychain, no source login file;
-  - the network: only `localhost:<egress proxy>` (with the round's own credential and host list: its provider's API
+  - the network: only `localhost:<scoped relay>` (Studio retains the round's proxy credential and host list: its provider's API
     hosts plus what policy `egress.allow` grants) and `localhost:<tool listener>`; `NO_PROXY` is loopback only. Every
     other address, the rest of loopback included, is refused by the OS;
   - loopback for test runs only (`run_tests`, and the checks that run the project's tests: CI, fail-first, main CI; a
@@ -177,11 +177,8 @@ Covered by the same graph plus a generated conventions pack: GitHub adapter, con
     (R-088: money-kit's `test/shop.test.ts` spawns `app/server.ts`). The rules are Anthropic sandbox-runtime's
     `allowLocalBinding`, verbatim (0.0.78, Apache-2.0, THIRD_PARTY_NOTICES.md): bind and inbound on `*:*`, outbound to
     `localhost:*`; the test env adds `HOST=127.0.0.1` and an IPv4-only Java option. What that means, stated as it is:
-    - every local service on this machine is reachable from a test run, Studio's own ports included. Seatbelt cannot
-      keep "all of loopback except port N": a per-port deny after a `localhost` allow holds or not depending on
-      undocumented profile shape (measured on macOS 15: it held in Studio's profiles, which import `system.sb`, and did
-      not in the same rules without that import; v1 measured it failing in 2026-09 and moved the protection into its
-      server). Studio does the same (next item);
+    - production profiles deny existing host listeners, Studio ports and the reserved scoped-relay range, including
+      listeners opened later in that range. Each test run retains ephemeral ports for its own HTTP server;
     - in Seatbelt `localhost` means every address of this machine (127.0.0.1, ::1, its LAN and VPN addresses), and it
       checks neither the bind address nor an accepted peer, so a test server bound to every interface is reachable from
       the LAN while it runs, as far as the macOS firewall lets it: a residual risk on macOS (`HOST=127.0.0.1` keeps most
@@ -197,14 +194,14 @@ Covered by the same graph plus a generated conventions pack: GitHub adapter, con
       its own tmp (`CREW_TOOL_TOKEN_FILE`), which every other round's and test run's sandbox denies, and the CLI carries
       only the path. This closes the round-to-round and worker-to-reviewer token theft that existed on main;
     - every other check, and every agent round, keeps loopback closed.
-    Before each test run the self-probe (v1) tries the profile on itself: a shell under it tries to read every existing
+    Before each test run the self-probe verifies its own HTTP server works and protected listener connections fail. It also tries the profile on itself: a shell under it tries to read every existing
     path of the deny list (Studio's keys, session token and launch token folder among them) and to connect to
     1.1.1.1:443. If anything gets through, the run is refused with the reason ("the sandbox self-probe failed: …"), never
     run on a weaker sandbox. The run's result carries what was enforced and what was not.
     `sysctl-read` is an allowlist of the CPU/memory/OS names node, bun, python, git and npm read, never the blanket allow.
     When a run ends, Studio (unsandboxed, so it can read other same-uid processes' env) kills every process still carrying
-    the run's `CREW_RUN_KILL` marker, so a child that calls `setsid` to escape the process group is reaped too.
-  - Studio protects itself in its server (v1's board trust boundary), since a test run reaches its ports:
+    the run's `CREW_RUN_KILL` marker. Deliberately clearing that marker after setsid escapes this best-effort cleanup.
+  - Studio also protects itself in its server (v1's board trust boundary):
     - main port: every write needs Studio's session (the HttpOnly SameSite=Strict cookie, or `x-crew-session` from
       `data/session-token`, 0600, denied to every sandbox), an Origin equal to Studio's own and a JSON body; every `/api`
       and `/files` read needs the session too; only `/api/instance` (the launch challenge, whose proof needs the token)
@@ -227,10 +224,10 @@ Covered by the same graph plus a generated conventions pack: GitHub adapter, con
       sandbox-runtime (`src/egress-guard.ts`): an allowed name that resolves to loopback, this host's own addresses,
       link-local, multicast, a cloud metadata endpoint, a private range (RFC 1918 / ULA) or the carrier-grade-NAT /
       tailnet range (`100.64.0.0/10`, where Studio's board and remote devices live) is refused, in every IPv6 spelling of
-      the address (IPv4-mapped, NAT64, 6to4); client bytes that arrive while the name is being resolved are buffered, not
-      dropped;
+      the address (IPv4-mapped, NAT64, 6to4); clients are paused while DNS resolves, with bounded headers, timeouts and backpressure;
     - the renderer's static origin and the HyperFrames preview serve read-only files of the page being captured, without
-      a token, while a capture runs: reachable from a test run running at the same time (a follow-up).
+      a token, while a capture runs. Existing listeners are denied to test profiles; an unrelated later listener outside
+      the reserved range remains a local-contract limitation.
     A project test that still cannot run inside (it needs Docker, whose socket is never reachable) is never dropped
     silently, and there is no gate exemption and no global unrestricted fallback: Studio's CI and fail-first run the
     same command in the same sandbox, so it blocks the gate. `run_tests` marks it `needs-outside-sandbox` ("couldn't run

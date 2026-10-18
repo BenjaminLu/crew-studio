@@ -207,7 +207,7 @@ const q = (p: string) => JSON.stringify(p);
 // Named sysctl allowlist for runtime OS/CPU facts. This is defense in depth only:
 // macOS KERN_PROCARGS2 (MIB 1.49.<pid>) bypasses Seatbelt's named sysctl filter,
 // even with deny sysctl-read, and exposes another same-uid process's argv/env.
-// No secret may rely on this filter for confidentiality; see worker-isolation.md.
+// No secret may rely on this filter for confidentiality; see docs/w29-local-sandbox.md.
 const SYSCTL_READ = `(allow sysctl-read
   (sysctl-name-prefix "hw.")
   (sysctl-name "kern.ostype") (sysctl-name "kern.osrelease") (sysctl-name "kern.osrevision") (sysctl-name "kern.version") (sysctl-name "kern.osversion") (sysctl-name "kern.osproductversion") (sysctl-name "kern.iossupportversion")
