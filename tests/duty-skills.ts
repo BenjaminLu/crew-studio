@@ -174,6 +174,18 @@ ok(workflows >= 12 && agents >= 20 && judges >= 8, "the sweep covered the built-
     const c1b = staffing.approve(draft(v1, "other-model"), c2.hash, { run: "R-again", card: "SC-again", answerSeq: 3 });
     const c1c = staffing.approve(draft(v1, "third-model"), c1b.hash, { run: "R-third", card: "SC-third", answerSeq: 4 });
     ok(/Staffing approval missing or changed/.test(startOk(v1, c1b.hash)) && startOk(v1, c1c.hash) === "", "on the same definition only the current approval staffs a Task", startOk(v1, c1b.hash));
+    // (its own guard is installed last: it wraps the engine hooks above)
+    // a superseded v1 approval never staffs again after the upgrade: v1 approval A replaced by A', then v2 regenerated
+    {
+      const p2 = { ...project, identity: "duty-skills-superseded" }, s2 = new StaffingStore(h.data);
+      const guard = installStaffingGuard(e, s2, () => p2), d2 = (def: any, model: string) => ({ ...draft(def, model), project: p2 });
+      const a = s2.approve(d2(v1, "a-model"), null, { run: "R-a", card: "SC-a", answerSeq: 1 });
+      const a2 = s2.approve(d2(v1, "a2-model"), a.hash, { run: "R-a2", card: "SC-a2", answerSeq: 2 });
+      s2.approve(d2(v2, "v2-model"), a2.hash, { run: "R-v2", card: "SC-v2", answerSeq: 3 });
+      const check = (binding: string) => { try { guard.verified(v1, { project: "p", _staffing: binding }); return ""; } catch (err: any) { return String(err?.message ?? err); } };
+      ok(/Staffing approval missing or changed/.test(check(a.hash)), "a Task on v1 bound to the superseded approval A is refused after the upgrade", check(a.hash));
+      ok(check(a2.hash) === "", "a Task on v1 bound to A', the last v1 approval, continues", check(a2.hash));
+    }
   } finally { for (const r of e.list()) if (!["succeeded", "failed", "cancelled"].includes(r.status)) await e.cancel(r.id, "cleanup"); h.stop(); }
 }
 end();

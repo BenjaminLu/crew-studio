@@ -187,6 +187,14 @@ export class StaffingStore{
    return c as StaffingConfig;}
   return null;
  }
+ /** The last approval recorded for exactly this definition, walking the signed chain back from the current version
+  *  (each step verified by hash, as byHash does); null when no approval in the chain is for it. */
+ latestFor(project:StaffingProject,workflow:{id:string;version:number;sha256:string}):StaffingConfig|null{
+  const seen=new Set<string>();
+  for(let c:StaffingConfig|null=this.current(project);c&&!seen.has(c.hash);c=c.previous?this.byHash(project,c.previous):null){seen.add(c.hash);
+   if(c.workflow.id===workflow.id&&c.workflow.version===workflow.version&&c.workflow.sha256===workflow.sha256)return c;}
+  return null;
+ }
  current(project:StaffingProject):StaffingConfig{
  const dir=this.dir(project),pointer=JSON.parse(this.read(join(dir,'current.json')));keys(pointer,['schema','version','hash','signature']);if(pointer.schema!==1)throw new Error('Unknown staffing pointer schema');integer(pointer.version);digest(pointer.hash);digest(pointer.signature);const pointerSignature=createHmac('sha256',ledgerKey(this.dataDir)).update(staffingHash({project:this.key(project),version:pointer.version,hash:pointer.hash})).digest('hex');if(pointer.signature!==pointerSignature||readdirSync(dir).some(file=>/^v[1-9][0-9]*\.json$/.test(file)&&Number(file.slice(1,-5))>pointer.version))throw new Error('Staffing activation pointer changed or rolled back');const c=JSON.parse(this.read(join(dir,`v${pointer.version}.json`))) as StaffingConfig;
  withNodes(c,['schema','algorithm','project','workflow','roles','review','version','previous','approval','hash','signature']);const{version,previous,approval,hash,signature,...draft}=c;validateStaffingDraft(draft);integer(version);if(previous!==null)digest(previous);keys(approval,['run','card','answerSeq']);text(approval.run);text(approval.card);integer(approval.answerSeq);digest(hash);digest(signature);
@@ -243,11 +251,11 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
  function verifyStored(def:any,params:Record<string,string>){
   const project=def.kind==='coffee-kit'?coffeeStaffingProject(params.project):resolveProject(params.project);let config=store.current(project);
   // a Task bound to an earlier crew-derived version keeps it when the team changed since (each version re-derives from its own signed team)
-  // and a Task on an earlier definition (the workflow moved to a new version since) keeps the signed approval it is bound to, the
-  // project's own or crew-derived, when that approval is for exactly the Task's definition; on the same definition only the current staffs
-  if(params._staffing&&params._staffing!==config.hash&&/^[a-f0-9]{64}$/.test(params._staffing)){const earlier=store.byHash(project,params._staffing);
-   const forDef=(c:StaffingConfig)=>c.workflow.id===def.id&&c.workflow.version===def.version&&c.workflow.sha256===staffingHash(def);
-   if(earlier&&((verifyCrew&&earlier.crew&&config.crew)||(forDef(earlier)&&!forDef(config))))config=earlier;}
+  if(verifyCrew&&params._staffing&&params._staffing!==config.hash&&/^[a-f0-9]{64}$/.test(params._staffing)){const earlier=store.byHash(project,params._staffing);if(earlier?.crew&&config.crew)config=earlier;}
+  // and a Task on an earlier definition (the workflow moved to a new version since) keeps its approval, the project's own or
+  // crew-derived, only while it is the last one the signed chain records for exactly that definition: a superseded one never staffs again
+  else if(params._staffing&&params._staffing!==config.hash&&/^[a-f0-9]{64}$/.test(params._staffing)&&(config.workflow.id!==def.id||config.workflow.version!==def.version||config.workflow.sha256!==staffingHash(def))){
+   const last=store.latestFor(project,{id:def.id,version:def.version,sha256:staffingHash(def)});if(last?.hash===params._staffing)config=last;}
   // a newer approval that only re-pinned role skills (another task approved the new text): this task's own skill is what changed
   if(params._staffing&&params._staffing!==config.hash){const d=(()=>{try{return skillDrift(def,params)}catch{return null}})();if(d){const id=d.changed[0];throw new SkillChanged(id,d.bound.roles[id].skill.sha256,sha(d.live[id].text));}}
   if(params._staffing!==config.hash||config.workflow.id!==def.id||config.workflow.version!==def.version||config.workflow.sha256!==staffingHash(def))throw new Error('Staffing approval missing or changed; confirm project role configuration / 派工配置尚未核准或已變更，請確認各角色配置');
