@@ -64,6 +64,11 @@ try {
       await row.locator(".tm-skill", { hasText: "add-skill" }).waitFor();
       ok((await st("add-skill")).state === "text-only", `answered "Text only": the change is saved and the chip says text only ${tag}`, JSON.stringify(await st("add-skill")));
     }
+    // the skill viewer, opened from the chip, says the same
+    await row.locator(".tm-skill", { hasText: "miss-skill" }).locator("[data-skill-view]").first().click();
+    const sv = p.locator("[data-skv-scripts]"); await sv.waitFor();
+    ok(await sv.getAttribute("data-skv-scripts") === "not-ready" && (zh ? /還不能用：缺 no-such-program-xyz/ : /not ready: no-such-program-xyz missing/).test(await sv.innerText()), `the skill viewer shows the version's scripts and readiness ${tag}`, await sv.innerText());
+    await p.keyboard.press("Escape");
     ok(await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), `no horizontal scroll ${tag}`);
     ok(!errors.length, `no browser errors ${tag}`, errors.join(" | "));
     await p.close();

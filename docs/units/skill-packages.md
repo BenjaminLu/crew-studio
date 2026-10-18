@@ -168,7 +168,7 @@ env, runtimes and tools being read-only is done (§5).
   (「含 2 個 script · 會連 api.x.com · 還不能用：缺 soffice」); the one decision panel for a change that brings an undecided one.
 - `GET /api/team` carries `skillStatus` ("<id>@v<N>" → badge) and the library's `filesSha256` (so new pins carry it).
 - Firstmate's `studio_work_status`: `skills` (each script skill in use: state, line, reasons) and per Task `skillRefusals`.
-- The skill viewer (feat/skill-viewer) can show the same badge from the same status; not wired in this branch.
+- The skill viewer (opened from any skill chip) shows the same line for the version it shows (`scripts` on `GET /api/skills/<id>`).
 
 ## 10. Phases
 
@@ -177,7 +177,7 @@ env, runtimes and tools being read-only is done (§5).
   skill_files/read/run; per-call strict credentials; resolved-address guard incl. private ranges; per-Task egress log;
   readiness on the Crew page and in Firstmate's status; provenance.
 - Remaining: pin the LibreOffice image's sha256 (needs a reviewed download); a recipe for a portable Node when the host has
-  none; the skill viewer badge; P3 reads (§7); an upgrade card with a script/host diff and "seat keeps the last approved
+  none; P3 reads (§7); an upgrade card with a script/host diff and "seat keeps the last approved
   version" (today a new version blocks until decided); native CLI skill loading behind a flag.
 
 ## 11. Risks
