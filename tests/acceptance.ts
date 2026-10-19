@@ -25,7 +25,6 @@ import { drive, verify, type Expect } from "./acceptance/drive";
 import { stubRuns, stubDecision, verdictOf, type StubRun } from "./acceptance/stub";
 import { STEPS, approveStaffing, type Ctx } from "./acceptance/steps";
 import { fileOrgNegativeControls, prove, RENDERER_PROVES } from "./acceptance/proves";
-
 const t0 = Date.now(), problems: string[] = [];
 // what the runtime seeds (workflows/v2 and packs/ *.wf.yaml, retired ones included), and the packs' legacy v1 flow files
 const files = [...bundledList("workflows/v2/"), ...bundledList("packs/")].filter((f) => f.endsWith(".wf.yaml") || (f.startsWith("packs/") && f.endsWith(".flow.yaml")));

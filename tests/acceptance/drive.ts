@@ -1,5 +1,6 @@
 // Drive one Task to its end the way the captain does on the board, and check what it left behind.
 import { TERMINAL, type Studio } from "./studio";
+import { Ledger, type LedgerEntry } from "../../src/runtime/checks";
 
 export type Choice = { choice: string; note?: string | null };
 /** What the captain does with one open card: answer it, or stop (the card was not scripted). */
@@ -44,8 +45,10 @@ export async function drive(s: Studio, rid: string, decide: Decide, o: { timeout
   while (Date.now() - t0 < timeout) {
     const r = await s.api(`/api/wruns/${rid}`); if (r.status !== 200) { problems.push(`GET /api/wruns/${rid}: ${r.status} ${JSON.stringify(r.body).slice(0, 300)}`); return { view, answered, problems }; }
     view = r.body;
-    if ((TERMINAL.includes(view.status) && !view.ctx?.firstmateQuestion && !(view.cards ?? []).some((c: any) => c.status === "open" && c.failure?.code === "ask.escalated")) || o.until?.(view)) return { view, answered, problems };
-    for (const c of (view.cards ?? []).filter((c: any) => c.status === "open" && !seen.has(c.id))) {
+    const pendingCards = (view.cards ?? []).some((c: any) => c.status === "open" && !c.decidedBy && c.ste == null && !synchronousAskCard(c));
+    if (o.until?.(view)) { if (pendingCards) { await sleep(50); continue; } return { view, answered, problems }; }
+    if ((TERMINAL.includes(view.status) && !view.ctx?.firstmateQuestion && !(view.cards ?? []).some((c: any) => c.status === "open" && c.failure?.code === "ask.escalated"))) return { view, answered, problems };
+    for (const c of (view.cards ?? []).filter((c: any) => c.status === "open" && (c.ste != null || synchronousAskCard(c)) && !seen.has(c.id))) {
       seen.add(c.id); const i = visits.get(c.node) ?? 0; visits.set(c.node, i + 1);
       const a = await decide(c, view, i);
       if ("stop" in a) { problems.push(`unscripted captain card at node ${c.node}: ${titleOf(c)} (options ${(c.options ?? []).map((x: any) => x.id).join("|")}) ${noteOf(view, c.node)} [${a.stop}]`.trim()); return { view, answered, problems }; }
@@ -70,9 +73,44 @@ export function where(v: any): string {
   return `status ${v.status}${v.error ? `: ${String(v.error).slice(0, 400)}` : ""}${live.length ? `; at ${live.join(", ")}` : ""}`;
 }
 
+/** raiseFailure presents this typed question synchronously, without the normal card STE pipeline. */
+export function synchronousAskCard(c: any): boolean {
+  const f=c.failure;
+  return c.kind==="failure" && c.ste==null && c.captainOnly===true && f?.schema===1 && f.class==="ask" && f.code==="ask.escalated" && f.source==="agent"
+    && f.run===c.run && f.node===c.node && f.visit===c.visit && f.escalation?.by==="firstmate" && typeof f.escalation?.reason==="string" && f.escalation.reason.trim().length>0;
+}
+
+/** Every presented card needs its own authenticated wording result, not an unrelated passing check. */
+export function cardWordingProblems(v: any, entries: LedgerEntry[]): string[] {
+  const cards = (v.cards ?? []).filter((c: any) => !c.decidedBy);
+  const out = entries.filter(e => e.check === "core/ste-wording" && e.verdict !== "pass")
+    .map(e => `wording ${e.verdict} at ${e.node} #${e.seq}: ${(e.findings ?? []).map(f => f.message).join("; ")}`);
+  if (cards.length && !(v.def?.card_checks ?? ["core/ste-wording"]).includes("core/ste-wording")) out.push("wording policy unexpectedly disables core/ste-wording");
+  for (const c of cards) {
+    if(synchronousAskCard(c)) {
+      const answer=entries.find(e=>e.run===v.id && e.run===c.run && e.node===c.node && e.round===c.visit && e.record==="failure-answer" && /^captain\b/.test(e.actor??"") && e.data?.card===c.id && e.data?.class==="ask" && e.data?.code==="ask.escalated" && e.data?.choice==="answer" && e.data?.note===c.answer?.note);
+      if(c.status!=="answered" || c.answer?.choice!=="answer" || !/^captain\b/.test(c.answer?.by??"") || !c.answer?.note?.trim() || !answer) out.push(`unchecked ask card ${c.id} has no authenticated captain answer`);
+      else if(!entries.some(e=>e.run===v.id && e.node===c.node && e.round>c.visit && e.seq>answer.seq)) out.push(`unchecked ask card ${c.id} has no authenticated continuation`);
+      continue;
+    }
+    if (c.ste?.verdict !== "pass" || !Number.isInteger(c.ste?.seq)) { out.push(`card ${c.id} has no passing wording check state`); continue; }
+    const receipt = entries.find(e => e.seq === c.ste.seq && e.run === v.id && e.run === c.run && e.node === c.node && e.round === c.visit && e.edge === `card:${c.id}` && e.check === "core/ste-wording" && e.verdict === "pass");
+    if (!receipt) out.push(`card ${c.id} has no matching authenticated passing wording receipt`);
+  }
+  return out;
+}
+
 /** Everything the Task left behind, against what the scenario expects. */
 export async function verify(s: Studio, d: Drive, e: Expect): Promise<string[]> {
   const v = d.view, out = [...d.problems]; if (!v) return out.length ? out : ["no Task view"];
+  if ((v.cards ?? []).some((c: any) => !c.decidedBy)) {
+    const auth = new Ledger(s.data, v.id).authenticatedPrefix();
+    if (auth.bad.length || auth.malformed) out.push("wording check evidence does not authenticate");
+    else {
+      const wording=cardWordingProblems(v, auth.prefix);out.push(...wording);
+      if(!wording.length) for(const c of (v.cards??[]).filter(synchronousAskCard)) console.log(`WORDING NOT CHECKED ${v.id}/${c.id}: synchronous ask.escalated failure card; signed captain answer and continuation verified`);
+    }
+  }
   if (e.status !== "waiting" && v.status !== e.status) out.push(`status ${v.status}, expected ${e.status} (${where(v)})`);
   if (e.waitingOn && TERMINAL.includes(v.status)) out.push(`ended ${v.status} instead of waiting on ${e.waitingOn} (${where(v)})`);
   else if (e.waitingOn && !(v.cards ?? []).some((c: any) => c.status === "open" && c.node === e.waitingOn)) out.push(`not waiting on a card at ${e.waitingOn} (${where(v)})`);

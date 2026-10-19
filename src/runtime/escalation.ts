@@ -28,7 +28,7 @@ export function diagnosedBody(b: Body, d: { by: "firstmate" | "studio"; why: str
   return {
     ...b,
     en: { ...b.en, why: [stuck, `${who}: ${d.why}`].filter(Boolean).join("\n\n"), how: rec ? `Recommended: ${rec}` : b.en?.how },
-    zh: { ...(b.zh ?? {}), why: [zhStuck, `${zhWho}：${d.zhWhy ?? d.why}`].filter(Boolean).join("\n\n"), how: rec ? `建議：${rec}` : b.zh?.how },
+    zh: { ...(b.zh ?? {}), why: [zhStuck, `${zhWho}：${d.zhWhy ?? d.why}`].filter(Boolean).join("\n\n"), how: rec ? `建議原文：「${rec.replaceAll("「", "﹁").replaceAll("」", "﹂")}」` : b.zh?.how },
     body: [`What is stuck: ${stuck || b.title}`, `${who}: ${d.why}`, rec ? `Recommended: ${rec}` : b.en?.how ? `What you can do: ${b.en.how}` : ""].filter(Boolean).join("\n\n"),
   };
 }

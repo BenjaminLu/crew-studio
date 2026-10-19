@@ -19,10 +19,12 @@ let pass = 0, fail = 0;
 const ok = (c, name, extra = "") => { if (c) { pass++; console.log(`  ok    ${name}`); } else { fail++; console.log(`  FAIL  ${name} ${extra}`); } };
 
 // ---------- the runs: closed, done, waiting at a card (two), failed (two) ----------
+// Deliberately untranslated zh-TW body gives the timeline one real failed wording finding.
+// Original captain intent is labeled source text and must not be used as a translation-failure fixture.
 const H = await harness([
   Y({ id: "cardy", name: "cardy", roles: [], nodes: [
     { id: "s", kind: "hook", label: "Start", do: "set", args: { key: "s", value: 1 }, x: 0, y: 0 },
-    { id: "q", kind: "card", label: "Ship?", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: { en: "Ship it", "zh-TW": "出貨" }, options: [{ id: "ship", label: "Ship", labelZh: "Ship" }, { id: "close", label: "Close without merging", labelZh: "Close without merging", hold: true }] }, x: 1, y: 0 },
+    { id: "q", kind: "card", label: "Ship?", card: { body: { en: "A fixture card: pick an option.", "zh-TW": "An untranslated fixture card." }, title: { en: "Ship it", "zh-TW": "出貨" }, options: [{ id: "ship", label: "Ship", labelZh: "Ship" }, { id: "close", label: "Close without merging", labelZh: "Close without merging", hold: true }] }, x: 1, y: 0 },
     { id: "done", kind: "hook", label: "Done", x: 2, y: 0 }, { id: "closed", kind: "hook", label: "Closed", args: { result: "closed", summary: "closed without merging" }, x: 2, y: 1 }],
     edges: [["s", "q"], ["q", "done", "ship"], ["q", "closed", "close"]] }),
   Y({ id: "faily", name: "faily", roles: [], nodes: [{ id: "b", kind: "hook", label: "Boom", do: "boom", x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["b", "e"]] }),
@@ -150,8 +152,13 @@ try {
   await p.fill("[data-cancel-reason]", "the captain changed course"); await p.click("[data-cancel-confirm]");
   ok(await p.waitForFunction(() => document.querySelector("[data-runview] [data-run-state]")?.textContent?.trim() === "Cancelled", null, { timeout: 8000 }).then(() => true, () => false)
     && /the captain changed course/.test(await text(p, "[data-runview] .phead")), "Cancel on a run waiting at its card ends it Cancelled, with the reason shown");
-  { const m = await p.$eval('[data-runview] [data-run-state="cancelled"] .d', (d) => getComputedStyle(d, "::before").content).catch(() => "none");
-    ok(m && m !== "none" && m !== "normal", "Cancelled has its own mark", m); }
+  // Live refresh can replace the badge between selecting it and reading its computed style.
+  { const marked = await p.waitForFunction(() => {
+      const d = document.querySelector('[data-runview] [data-run-state="cancelled"] .d');
+      const m = d && getComputedStyle(d, "::before").content;
+      return !!m && m !== "none" && m !== "normal";
+    }, null, { timeout: 8000 }).then(() => true, () => false);
+    ok(marked, "Cancelled has its own mark"); }
   await p.goto(`${base}/#/board`); await p.waitForTimeout(800);
   ok(await p.locator(`[data-inbox-link="${wcard}"]`).count() === 0 && await p.getAttribute(`[data-task="${WAIT}"]`, "data-group") === "done" && await text(p, `[data-task="${WAIT}"] [data-run-state]`) === "Cancelled", "its card left the Board: the run is under Done today, Cancelled");
   await p.goto(`${base}/#/inbox`); await p.waitForTimeout(800);

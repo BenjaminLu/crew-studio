@@ -303,6 +303,26 @@ export const TEST_RUN_DOES_NOT = "unrelated host services started after the list
  * by IP: no DNS). Anything that gets through means the profile does not enforce what Studio claims: the run is refused with
  * the reason, never run on a weaker sandbox. null: the profile holds.
  */
+/** A positive control must not choose a port the same immutable profile explicitly denies. */
+export function loopbackPositiveScript(blockedPorts: number[]): string {
+  return `const http=require('node:http');const blocked=new Set(${JSON.stringify(blockedPorts)});
+const loopbackProbe=(async()=>{for(const host of ['127.0.0.1','::1']){
+  let proved=false;
+  for(let attempt=0;attempt<32;attempt++){
+    const s=http.createServer((q,r)=>r.end('loopback-ok'));
+    await new Promise((r,j)=>{s.once('error',j);s.listen(0,host,r)});
+    const port=s.address().port;
+    if(blocked.has(port)){await new Promise(r=>s.close(r));continue;}
+    const url='http://'+(host.includes(':')?'['+host+']':host)+':'+port;
+    let body;try{body=await new Promise((r,j)=>http.get(url,x=>{let b='';x.on('data',c=>b+=c);x.on('end',()=>r(b))}).on('error',j));}
+    finally{await new Promise(r=>s.close(r));}
+    if(body!=='loopback-ok')throw Error('bad response');
+    proved=true;break;
+  }
+  if(!proved)throw Error('no unblocked loopback control port after 32 attempts');
+}console.log('LOOPBACK_POSITIVE_OK')})();
+loopbackProbe.catch(e=>{console.error(e);process.exit(1)});setTimeout(()=>process.exit(2),5000).unref();`;
+}
 export function selfProbe(profile: string, protectedPaths: string[], blockedPorts: number[] = []): string | null {
   if (process.env.CREW_TEST_SELF_PROBE_LEAK === "1") return "the sandbox self-probe failed (test): the profile let the probe read a protected path";
   const paths = protectedPaths.filter((p) => existsSync(p)).slice(0, 40);
@@ -314,7 +334,7 @@ export function selfProbe(profile: string, protectedPaths: string[], blockedPort
   if (leaks.length) return `the sandbox self-probe failed: the profile let a test run ${leaks.map((l) => l.startsWith("READ") ? `read ${l.slice(5)}` : `connect to ${l.slice(7)}`).join(", ")}`;
   // A sandbox that never starts (or denies all networking) is not a successful
   // negative probe. Require real HTTP request/response inside the same profile.
-  const positive = `const http=require('node:http');(async()=>{for(const host of ['127.0.0.1','::1']){const s=http.createServer((q,r)=>r.end('loopback-ok'));await new Promise((r,j)=>{s.once('error',j);s.listen(0,host,r)});const url='http://'+(host.includes(':')?'['+host+']':host)+':'+s.address().port;const body=await new Promise((r,j)=>http.get(url,x=>{let b='';x.on('data',c=>b+=c);x.on('end',()=>r(b))}).on('error',j));await new Promise(r=>s.close(r));if(body!=='loopback-ok')throw Error('bad response')}console.log('LOOPBACK_POSITIVE_OK')})().catch(e=>{console.error(e);process.exit(1)});setTimeout(()=>process.exit(2),5000).unref();`;
+  const positive = loopbackPositiveScript(closedTestPorts(blockedPorts));
   const control = Bun.spawnSync(["/usr/bin/sandbox-exec", "-f", profile, process.execPath, "-e", positive], {stdout:"pipe",stderr:"pipe",env:{PATH:"/usr/bin:/bin"}, cwd:"/", timeout:7000});
   return control.success && control.stdout.toString().includes("LOOPBACK_POSITIVE_OK") ? null : `the sandbox self-probe positive loopback control failed (exit ${control.exitCode}: ${control.stderr.toString().slice(0,200)})`;
 }
