@@ -121,8 +121,10 @@ try {
   await p.goto(base + "/#/firstmate"); await seen(p, '[data-section="start-claude"][data-claude-ready="true"]');
   await shot(p, "firstmate-choice-signed-in");
   // both hosts ready: the chat offers a neutral choice, no default host
-  codexAuth(true); await api("/api/codex/account/verify", {});
-  await p.goto(base + "/#/board"); await p.evaluate(() => openChat(true));
+  codexAuth(true); const readyAccount = await api("/api/codex/account/verify", {});
+  ok(readyAccount.state === "ready", `fixture: Codex verification is ready before loading the two-host view (state=${readyAccount.state})`);
+  // The fixture changed account state outside the UI; load a fresh view instead of racing its cached account state.
+  await p.goto(base + "/#/board"); await p.reload(); await p.evaluate(() => openChat(true));
   ok(await seen(p, '#chatLog [data-chat-start-host="codex"]') && await seen(p, '#chatLog [data-chat-start-host="claude"]') && !(await p.locator('#chatLog [data-chat-start-host]').evaluateAll((b) => b.some((x) => x.classList.contains("primary")))), "both ready: the chat offers Codex and Claude as equals");
   await shot(p, "chat-neutral-choice");
   // a Codex Firstmate already runs: the card says so and offers an explicit switch, never a silent replace
@@ -130,7 +132,8 @@ try {
   ok(cs.ok === true && (await api("/api/main")).host === "codex", "fixture: a Codex Firstmate is running");
   await p.goto(base + "/#/firstmate");
   ok(await seen(p, '[data-claude-next="switch"]') && /running on Codex/.test(await p.locator('[data-claude-next="switch"]').innerText()) && await p.locator("[data-claude-start]").count() === 0, "with Codex running, the Claude card says so and offers only an explicit switch");
-  await p.locator('[data-claude-next="switch"]').scrollIntoViewIfNeeded(); await shot(p, "claude-card-switch");
+  // A live account refresh can replace the card; trial action retries detachment without switching hosts.
+  await p.locator('[data-claude-switch]').click({ trial: true }); await shot(p, "claude-card-switch");
   await p.waitForTimeout(500); ok((await api("/api/main")).host === "codex", "nothing replaced Codex silently");
   // the crew token disappears after the page last checked: Switch asks the preflight first and keeps Codex
   setKeychain("none");

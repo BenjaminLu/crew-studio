@@ -19,6 +19,9 @@ const root = join(import.meta.dir, "..");
 const card = (o: any = {}) => ({ title: { en: "Merge this change?", "zh-TW": "合併這個改動？" }, sections: { en: { why: "Checks passed.", how: "Merge or close." }, "zh-TW": { why: "檢查通過。", how: "合併或關閉。" } },
   body: "", options: [{ id: "merge", label: "Merge", labelZh: "合併" }], ...o });
 
+const originalRecommendation = diagnosedBody({ title: "Choose a scope?", en: { why: "One file is outside scope." }, zh: { why: "有一個檔案不在範圍內。" } }, { by: "firstmate", why: "Permission needed.", zhWhy: "需要權限。", recommendation: "Rescope to include it, or park the Task." });
+ok(originalRecommendation.zh?.how?.startsWith("建議原文：") === true && originalRecommendation.zh.how.includes("Rescope to include it"), "an untranslated recommendation is explicitly labeled as original text");
+
 // ---------- the contract itself: each rule refuses the card that broke it ----------
 ok(!cardContract(card() as any).length, "a card with a question title, a why, and localized options keeps the contract", JSON.stringify(cardContract(card() as any)));
 const old045 = card({ title: { en: "Round is not ready", "zh-TW": "回合尚未就緒" }, sections: { en: { why: "queue.wait_timeout_s must be an explicit integer from 1 to 604800", how: "" }, "zh-TW": { why: "", how: "" } } });
@@ -131,6 +134,8 @@ HB.stop();
   const r = H.engine.start({ workflow: "accept-close", text: "a memo" }); await until(() => H.engine.cards.list({ run: r.id, open: true }).length === 1 && !H.engine.busy(r.id));
   const c = H.engine.cards.list({ run: r.id, open: true })[0];
   ok(!!c && !/Proved by checks:\nNone/.test(c.body) && /Proved by checks:\n✓ Every delivered source/.test(c.body) && /core\/artifact-ready ran/.test(c.sections.en.why), "the acceptance card names the readiness check that ran and what it proved", JSON.stringify([c?.body, c?.sections.en.why]));
+  ok(c.ste?.verdict === "pass", "an English captain intent is displayed as original text and does not masquerade as a zh-TW translation", JSON.stringify(c.ste));
+  ok(c.sections.en.intent === "a memo" && c.sections["zh-TW"].intent.includes("a memo") && /原文/.test(c.sections["zh-TW"].intent), "the original intent remains intact and is labeled as original text in the Chinese card");
   await H.engine.answer(c.id, { choice: "reject", by: "captain" }); await until(() => H.engine.get(r.id)!.status === "succeeded");
   ok(H.engine.get(r.id)!.result === "closed", "a rejected acceptance ends the run closed, not done, although the end hook names no result", String(H.engine.get(r.id)!.result));
   H.stop(); }

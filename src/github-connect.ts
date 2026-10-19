@@ -83,7 +83,7 @@ export function installGitHubConnect(engine: Engine, projects: Projects, o: { st
   };
   engine.actions["github.connect-card"] = async (x) => {
     const p = checked(x), g = p.grant;
-    await engine.card(x, "permission", { captainOnly: true, title: `Connect ${p.project} to GitHub ${g.repository}?`, zhTitle: `把 ${p.project} 連到 GitHub ${g.repository} 嗎？`,
+    await engine.card(x, "permission", { captainOnly: true, title: `Connect ${p.project} to GitHub ${g.repository}?`, zhTitle: `把專案「${p.project}」連到 GitHub 儲存庫「${g.repository}」嗎？`,
       en: { why: `Studio then pushes this project's Task branches to ${g.repository} and opens pull requests there. Each pull request still waits for your approval of its exact text.`, how: "Approve to write the signed grant, or close without connecting.",
         scope: { in: [`Push Task branches ${g.branchPrefix}<task> (force-with-lease, each on its own branch)`, `Open pull requests into ${g.base}`], out: [`Merging on GitHub (stays off)`, `Pushing ${g.base} or any branch outside ${g.branchPrefix}`, "Reviews, comments or any other repository"] } },
       zh: { why: `之後 Studio 會把這個專案的任務分支推到 ${g.repository}，並在那裡開 pull request。每個 pull request 的文字仍要你核准。`, how: "核准就寫入簽章授權，或關閉、不連線。",

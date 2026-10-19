@@ -1,7 +1,7 @@
 import "./lib/isolated-env.mjs";
 // The acceptance gate must validate the exact artifact version a Task approved.
 import assert from "node:assert/strict";
-import { verify } from "./acceptance/drive";
+import { drive, verify, cardWordingProblems } from "./acceptance/drive";
 
 const cases = [
   { name: "missing v2 is rejected even when v1 is approved", version: 2, versions: [{ n: 1, status: "approved" }], error: /v2/ },
@@ -20,3 +20,56 @@ for (const c of cases) {
   console.log(`  ok    ${c.name}`);
 }
 console.log(`acceptance-drive: ${cases.length} passed, 0 failed`);
+
+const card = {id:"SC-001",run:"R-fixture",node:"accept",visit:2,ste:{verdict:"pass",seq:7}};
+const view = {id:"R-fixture",def:{card_checks:["core/ste-wording"]},cards:[card]};
+const receipt:any = {run:"R-fixture",node:"accept",round:2,edge:"card:SC-001",check:"core/ste-wording",seq:7,verdict:"pass"};
+assert.deepEqual(cardWordingProblems(view,[receipt]),[]);
+for (const [name,v,entries] of [
+  ["missing receipt",view,[]],
+  ["missing card check state",{...view,cards:[{...card,ste:null}]},[receipt]],
+  ["check exception",{...view,cards:[{...card,ste:{verdict:"error",seq:null}}]},[receipt]],
+  ["wrong card",view,[{...receipt,edge:"card:SC-other"}]],
+  ["wrong visit",view,[{...receipt,round:1}]],
+  ["wrong node",view,[{...receipt,node:"other"}]],
+  ["wrong Task",view,[{...receipt,run:"R-other"}]],
+  ["wrong sequence",view,[{...receipt,seq:6}]],
+  ["failed check",view,[{...receipt,verdict:"fail"}]],
+  ["disabled wording policy",{...view,def:{card_checks:[]}},[receipt]],
+] as const) { assert(cardWordingProblems(v,entries as any).length>0,name);console.log(`  ok    wording: ${name} is rejected`); }
+console.log("acceptance wording: 11 passed, 0 failed");
+
+for (const settled of ["pass","error"]) {
+  let polls=0,decisions=0;
+  const api:any={api:async()=>({status:200,body:{...view,status:"waiting",cards:[{...card,status:"open",ste:++polls===1?null:{verdict:settled,seq:settled==="pass"?7:null}}]}})};
+  const result=await drive(api,"R-fixture",async()=>{decisions++;throw Error("checkpoint must not answer");},{timeoutMs:1000,until:()=>true});
+  assert.equal(polls,2,`wait for pending check before ${settled} checkpoint`);assert.equal(decisions,0);
+  assert.equal(result.view.cards[0].ste.verdict,settled);
+  if(settled==="error")assert(cardWordingProblems(result.view,[receipt]).length>0);
+  console.log(`  ok    driver waits for pending then ${settled}; error remains gate failure`);
+}
+let pendingDecisions=0;
+const pending=await drive({api:async()=>({status:200,body:{...view,status:"waiting",cards:[{...card,status:"open",ste:null}]}})} as any,"R-fixture",async()=>{pendingDecisions++;throw Error("must not answer pending card");},{timeoutMs:30,until:()=>true});
+assert(pending.problems.some(p=>/within/.test(p)));assert.equal(pendingDecisions,0);
+const pendingAnswer=await drive({api:async()=>({status:200,body:{...view,status:"waiting",cards:[{...card,status:"open",ste:null}]}})} as any,"R-fixture",async()=>{pendingDecisions++;throw Error("must not answer pending card");},{timeoutMs:30});
+assert(pendingAnswer.problems.some(p=>/within/.test(p)));assert.equal(pendingDecisions,0);
+console.log("acceptance driver synchronization: 4 passed, 0 failed");
+
+// The sole synchronous failure-card exception is explicit and requires signed captain authority and a later continuation.
+const askCard:any={id:"SC-ask",run:"R-fixture",node:"build",visit:1,kind:"failure",captainOnly:true,status:"answered",ste:null,
+  answer:{choice:"answer",by:"captain",note:"Use 10%."},failure:{schema:1,class:"ask",code:"ask.escalated",source:"agent",run:"R-fixture",node:"build",visit:1,escalation:{by:"firstmate",reason:"Captain preference."}}};
+const askView:any={id:"R-fixture",cards:[askCard]};
+const askEntries:any[]=[{run:"R-fixture",node:"build",round:1,record:"failure-answer",actor:"captain",seq:10,data:{card:"SC-ask",class:"ask",code:"ask.escalated",choice:"answer",note:"Use 10%."}},
+ {run:"R-fixture",node:"build",round:2,record:"agent-round",seq:11}];
+assert.deepEqual(cardWordingProblems(askView,askEntries),[]);
+for(const [name,override,entries] of [
+ ["missing signed answer",{},askEntries.slice(1)],
+ ["missing continuation",{},askEntries.slice(0,1)],
+ ["wrong actor",{},[{...askEntries[0],actor:"firstmate"},askEntries[1]]],
+ ["wrong answer note",{},[{...askEntries[0],data:{...askEntries[0].data,note:"Use 15%."}},askEntries[1]]],
+ ["recorded wording error",{ste:{verdict:"error",seq:null}},askEntries],
+ ["nonstring escalation reason",{failure:{...askCard.failure,escalation:{by:"firstmate",reason:{text:"not a string"}}}},askEntries],
+ ["other failure code",{failure:{...askCard.failure,code:"internal.unmapped"}},askEntries],
+ ["malformed failure card",{failure:null},askEntries],
+] as const)assert(cardWordingProblems({...askView,cards:[{...askCard,...override}]},entries as any).length>0,name);
+console.log("explicit unchecked ask-card coverage: 9 passed, 0 failed");

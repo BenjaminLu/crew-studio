@@ -60,6 +60,8 @@ ok(!readme.serves.done.length && readme.serves.intents.includes(1), "the README 
 ok(d.done.every((_, i) => d.walk.some((w) => w.file.startsWith("test/") && w.serves.done.includes(i))), "every done line has a test hunk in the walk");
 ok(d.walk.every((w) => w.note.en && CJK.test(w.note["zh-TW"]) && w.lines.length > 0), "every walk item has a note in en and zh-TW and its lines");
 const fb = mergeDetail(mi, null);
+const specZhWhy = mergeDetail({ ...mi, spec: { ...mi.spec, zh: { ...mi.spec.zh, why: ["支援日圓金額，避免小數顯示。"] } } }, null);
+ok(specZhWhy.why[0]["zh-TW"] === "支援日圓金額，避免小數顯示。" && !specZhWhy.why[0].untranslated, "the merge card reuses the approved spec reason translation when no coordinator translation exists");
 ok(fb.walk.map((w) => w.serves.done.join("+")).join("|") === d.walk.map((w) => w.serves.done.join("+")).join("|") && /proves done line 1 /.test(fb.walk[2].note.en) && /證明完成條件第 1 條/.test(fb.walk[2].note["zh-TW"]),
   "without the coordinator the walk keeps the same mapping and a deterministic note in both languages");
 

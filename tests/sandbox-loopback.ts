@@ -10,7 +10,30 @@ import { freePort, waitUp } from "./boot.mjs";
 let pass = 0, fail = 0;
 const ok = (c: boolean, name: string, extra = "") => { if (c) { pass++; console.log(`  ok    ${name}`); } else { fail++; console.log(`  FAIL  ${name} ${extra}`); } };
 delete process.env.CREW_LOCAL_UNRESTRICTED;
-const { sandboxed, roundExec, roundProfile, profileFor, selfProbe, linuxBwrapArgv, SECRET_DIRS } = await import("../src/runtime/checks");
+const { sandboxed, roundExec, roundProfile, profileFor, selfProbe, loopbackPositiveScript, linuxBwrapArgv, SECRET_DIRS } = await import("../src/runtime/checks");
+// Deterministic reproduction of a positive IPv6 listener choosing a snapshotted denied port.
+// Only port selection is retried; a real connect error or bad response still refuses admission.
+{
+  const { runInNewContext } = await import("node:vm");
+  async function control(ports: number[], error = false, body = "loopback-ok", avoided = [51704]) {
+    let opened=0,closed=0;const requests:string[]=[],logs:string[]=[],exits:number[]=[];
+    const http={createServer:()=>{let port=0;const s={once:()=>s,listen:(_p:number,_h:string,cb:()=>void)=>{port=ports[Math.min(opened++,ports.length-1)];queueMicrotask(cb);},address:()=>({port}),close:(cb:()=>void)=>{closed++;queueMicrotask(cb);}};return s;},
+      get:(url:string,cb:(x:any)=>void)=>{requests.push(url);let onError:(e:Error)=>void=()=>{};queueMicrotask(()=>{if(error || url.includes(":51704")){onError(new Error("control connect denied"));return;}const handlers:any={};cb({on:(name:string,f:Function)=>{handlers[name]=f;}});handlers.data(body);handlers.end();});return{on:(_name:string,f:(e:Error)=>void)=>{onError=f;}};}};
+    const script=loopbackPositiveScript(avoided);let failure="";
+    try{await runInNewContext(script+"\nloopbackProbe;",{require:()=>http,console:{log:(s:string)=>logs.push(s),error:()=>{}},process:{exit:(n:number)=>exits.push(n)},setTimeout:()=>({unref:()=>{}})});}catch(e:any){failure=e.message;}
+    return{opened,closed,requests,logs,exits,failure};
+  }
+  const withoutAvoidance=await control([51704,51001],false,"loopback-ok",[]);
+  ok(withoutAvoidance.requests[0]?.includes(":51704") === true && !withoutAvoidance.logs.length && /connect denied/.test(withoutAvoidance.failure),"positive probe regression: selecting the blocked snapshot port reproduces the original admission failure",JSON.stringify(withoutAvoidance));
+  const collision=await control([51704,51001,51704,51002]);
+  ok(collision.opened===4 && collision.closed===4 && collision.requests.length===2 && collision.requests.every(url=>!url.includes(":51704")) && collision.logs.includes("LOOPBACK_POSITIVE_OK"),"positive probe: blocked snapshot port collisions on IPv4 and IPv6 select fresh ports before HTTP",JSON.stringify(collision));
+  const exhausted=await control([51704]);
+  ok(exhausted.opened===32 && exhausted.closed===32 && !exhausted.requests.length && !exhausted.logs.length && /32 attempts/.test(exhausted.failure),"positive probe: repeated blocked-port selection fails closed after a bounded 32 attempts",JSON.stringify(exhausted));
+  const denied=await control([51001],true);
+  ok(denied.opened===1 && denied.closed===1 && denied.requests.length===1 && !denied.logs.length && /connect denied/.test(denied.failure),"positive probe: an actual HTTP connection failure is never retried into success",JSON.stringify(denied));
+  const wrongBody=await control([51001],false,"unexpected");
+  ok(wrongBody.opened===1 && wrongBody.closed===1 && !wrongBody.logs.length && /bad response/.test(wrongBody.failure),"positive probe: an incorrect HTTP response fails closed",JSON.stringify(wrongBody));
+}
 const root = mkdtempSync(join(tmpdir(), "crew-loopback-")), data = join(root, "data"), work = join(root, "work"); mkdirSync(data); mkdirSync(work);
 copyFileSync(join(import.meta.dir, "fixture", "loopback-probe.ts"), join(work, "probe.ts"));
 copyFileSync(join(import.meta.dir, "fixture", "studio-probe.ts"), join(work, "studio-probe.ts"));
