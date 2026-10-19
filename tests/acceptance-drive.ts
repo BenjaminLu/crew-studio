@@ -54,3 +54,22 @@ assert(pending.problems.some(p=>/within/.test(p)));assert.equal(pendingDecisions
 const pendingAnswer=await drive({api:async()=>({status:200,body:{...view,status:"waiting",cards:[{...card,status:"open",ste:null}]}})} as any,"R-fixture",async()=>{pendingDecisions++;throw Error("must not answer pending card");},{timeoutMs:30});
 assert(pendingAnswer.problems.some(p=>/within/.test(p)));assert.equal(pendingDecisions,0);
 console.log("acceptance driver synchronization: 4 passed, 0 failed");
+
+// The sole synchronous failure-card exception is explicit and requires signed captain authority and a later continuation.
+const askCard:any={id:"SC-ask",run:"R-fixture",node:"build",visit:1,kind:"failure",captainOnly:true,status:"answered",ste:null,
+  answer:{choice:"answer",by:"captain",note:"Use 10%."},failure:{schema:1,class:"ask",code:"ask.escalated",source:"agent",run:"R-fixture",node:"build",visit:1,escalation:{by:"firstmate",reason:"Captain preference."}}};
+const askView:any={id:"R-fixture",cards:[askCard]};
+const askEntries:any[]=[{run:"R-fixture",node:"build",round:1,record:"failure-answer",actor:"captain",seq:10,data:{card:"SC-ask",class:"ask",code:"ask.escalated",choice:"answer",note:"Use 10%."}},
+ {run:"R-fixture",node:"build",round:2,record:"agent-round",seq:11}];
+assert.deepEqual(cardWordingProblems(askView,askEntries),[]);
+for(const [name,override,entries] of [
+ ["missing signed answer",{},askEntries.slice(1)],
+ ["missing continuation",{},askEntries.slice(0,1)],
+ ["wrong actor",{},[{...askEntries[0],actor:"firstmate"},askEntries[1]]],
+ ["wrong answer note",{},[{...askEntries[0],data:{...askEntries[0].data,note:"Use 15%."}},askEntries[1]]],
+ ["recorded wording error",{ste:{verdict:"error",seq:null}},askEntries],
+ ["nonstring escalation reason",{failure:{...askCard.failure,escalation:{by:"firstmate",reason:{text:"not a string"}}}},askEntries],
+ ["other failure code",{failure:{...askCard.failure,code:"internal.unmapped"}},askEntries],
+ ["malformed failure card",{failure:null},askEntries],
+] as const)assert(cardWordingProblems({...askView,cards:[{...askCard,...override}]},entries as any).length>0,name);
+console.log("explicit unchecked ask-card coverage: 9 passed, 0 failed");
