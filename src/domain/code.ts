@@ -167,12 +167,13 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const priorCardView = engine.cards.view;
   const evidenceFor = (card: any) => {
     const run = engine.get(card.run), detail = card.detail;
-    if (card.kind !== "merge" || !detail || !run) return null;
+    if (card.kind !== "merge" || !run) return null;
     const trusted = engine.trusted(card.run);
     const receipt=trusted.entries.filter(e=>e.record==="code-card-evidence-offer"&&e.data?.card===card.id).at(-1);
-    const offer=receipt?.data?.offer ?? detail.codeEvidenceOffer;
-    const authenticated=detail.codeEvidenceOffer&&!receipt?{...trusted,ok:false}:trusted;
-    return projectCodeEvidence({run:card.run,offered:offer ?? {head:detail.head,base:detail.base},
+    if(!detail&&!receipt&&trusted.ok)return null;
+    const offer=receipt?.data?.offer ?? detail?.codeEvidenceOffer ?? (!trusted.ok?{version:1,head:null,base:null,requiredEvidence:[],identities:[]}:null);
+    const authenticated=detail?.codeEvidenceOffer&&!receipt?{...trusted,ok:false}:trusted;
+    return projectCodeEvidence({run:card.run,offered:offer ?? {head:detail?.head??null,base:detail?.base??null},
       current:{head:run.ctx.pr?.head ?? run.ctx.head ?? null,base:run.ctx.baseCommit ?? null},trusted:authenticated,
       filePresent:(entry,file)=>{try{if(!entry.dir||!entry.evidence.includes(file))return false;const root=realpathSync(entry.dir),f=normalize(join(root,file));return f.startsWith(root+"/")&&realpathSync(f).startsWith(root+"/")&&statSync(f).isFile();}catch{return false;}}});
   };

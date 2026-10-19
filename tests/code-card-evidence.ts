@@ -6,6 +6,7 @@ const head='a'.repeat(40),base='b'.repeat(40);
 const gates=['branch','rebase','scope','failfirst','ci','approval','design'];
 const entries:any[]=gates.map((name,i)=>({seq:i+1,run:'R-1',check:`firstmate/gate-${name}`,head,verdict:'pass',data:{},evidence:[],node:'gates',round:1,attempt:1}));
 entries.push({seq:8,run:'R-1',check:'firstmate/ci',head,verdict:'pass',evidence:['out/shard-1.log'],data:{shards:[{shard:1,code:0}]},node:'ci',round:1,attempt:1});
+entries.push({seq:9,run:'R-1',check:'firstmate/fail-first',head,verdict:'pass',evidence:[],data:{applicable:false,why:'no behavior file changed'},node:'failfirst',round:1,attempt:1});
 const issued=snapshotCodeEvidence({head,base},entries);
 const input:any={run:'R-1',offered:issued,current:{head,base},trusted:{ok:true,entries},filePresent:()=>true};
 ok(projectCodeEvidence(input).state==='success','current signed gates and required raw log are ready');
@@ -26,4 +27,8 @@ ok(projectCodeEvidence({...input,trusted:{ok:true,entries:[...entries,cap]}}).me
 ok(projectCodeEvidence({...input,trusted:{ok:true,entries:[...entries,{...cap,data:{...cap.data,base:undefined}}]}}).media.length===0,'historical no-base capture is not promoted to pinned media');
 ok(projectCodeEvidence({...input,trusted:{ok:true,entries:[...entries,{...cap,head:null}]}}).media.length===0,'no-head media is not presented as evidence of this target');
 ok(projectCodeEvidence({...input,trusted:{ok:false,entries}}).execution.every(e=>e.status==='unknown'),'untrusted pass prose is never displayed as executed evidence');
+const crossNode=[...entries,{...entries[7],seq:12,verdict:'fail'},{...entries[7],seq:13,node:'unrelated-probe',verdict:'pass'}];
+ok(projectCodeEvidence({...input,trusted:{ok:true,entries:crossNode}}).state==='fail','unrelated node pass cannot mask the issued check identity failure');
+ok(projectCodeEvidence({...input,trusted:{ok:true,entries:[...entries,{...entries[7],seq:14,head:null}]}}).state==='missing','latest same-identity unbound check cannot reuse old green execution');
+ok(projectCodeEvidence({...input,trusted:{ok:true,entries:[...crossNode,{...entries[7],seq:15,edge:'unrelated-edge',verdict:'pass'}]}}).state==='fail','unrelated edge pass cannot cover the issued node failure');
 end();

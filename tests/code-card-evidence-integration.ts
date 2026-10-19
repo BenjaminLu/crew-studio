@@ -61,19 +61,25 @@ ok(evidence().state==='missing'&&evidence().blocked,'withheld actual raw command
 const tampered=E.cards.get(merge.id)!;delete tampered.detail!.codeEvidenceOffer;E.cards.save(tampered);
 ok(evidence().state==='missing'&&evidence().blocked,'removing stored schema cannot downgrade a signed new card to legacy');
 E.cards.save(merge);
+const removedDetail=E.cards.get(merge.id)!;delete removedDetail.detail;E.cards.save(removedDetail);
+let wholeDetailRefusal='';try{await E.answer(merge.id,{choice:'merge',by:'captain',note:'negative control: entire detail removed'});}catch(e:any){wholeDetailRefusal=e.message;}
+ok(/evidence/.test(wholeDetailRefusal)&&E.cards.get(merge.id)!.status==='open','removing entire detail cannot bypass signed evidence contract');
+E.cards.save(merge);
 let refused='';try{await E.answer(merge.id,{choice:'merge',by:'captain',note:'direct forged approval'});}catch(e:any){refused=e.message;}
 ok(/evidence/.test(refused)&&E.cards.get(merge.id)!.status==='open','missing backing rejects direct approval before answer persistence',refused);
 renameSync(gone,file);
 ok(evidence().state==='success','restoring retained backing recovers availability (rerun recovery tested separately)');
 const run=E.get(r.id)!; const node=run.def.nodes.find(n=>n.id===merge.node)!; const x=E.x(run,node,run.nodes[node.id]);
+const ciReceipt=E.trusted(r.id).entries.filter(e=>e.check==='firstmate/ci'&&e.head===run.ctx.head).at(-1)!;
+const ciNode=run.def.nodes.find(n=>n.id===ciReceipt.node)!;const ciX=E.x(run,ciNode,run.nodes[ciNode.id]);
 // A real failing check subprocess, not a fabricated passing/failing card object.
 const wt=run.ctx.worktree;const test=join(wt,'test/percent.test.ts');const original=readFileSync(test,'utf8');
 chmodSync(test,0o644);await Bun.write(test,original+'\nthrow new Error("actual evidence failure control");\n');
-await E.runChecks(x,[{use:'firstmate/ci'}],null);
+await E.runChecks(ciX,[{use:'firstmate/ci'}],ciReceipt.edge??null);
 ok(evidence().state==='fail'&&evidence().blocked,'actual failing CI subprocess supersedes earlier ready receipt');
 refused='';try{await E.answer(merge.id,{choice:'merge',by:'captain',note:'approve despite failed evidence'});}catch(e:any){refused=e.message;}
 ok(!!refused&&E.cards.get(merge.id)!.status==='open','failed execution cannot persist an affirmative answer');
-await Bun.write(test,original);await E.runChecks(x,[{use:'firstmate/ci'}],null);
+await Bun.write(test,original);await E.runChecks(ciX,[{use:'firstmate/ci'}],ciReceipt.edge??null);
 ok(evidence().state==='success','actual rerun restores successful execution evidence');
 // A real new commit changes the recorded target; the action path independently rechecks Git.
 const change=Bun.spawnSync(['git','commit','--allow-empty','-m','test: move acceptance target'],{cwd:wt,stdout:'pipe',stderr:'pipe'});
