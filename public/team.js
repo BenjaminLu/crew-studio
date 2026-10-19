@@ -90,9 +90,9 @@ function staleNote() {
 const pinOf = ({ id, v, sha256, filesSha256 }) => ({ id, v, sha256, ...(filesSha256 ? { filesSha256 } : {}) });
 // a script skill's readiness after its chip (src/skillpkg: approved and prepared, text only, not approved, or what is missing)
 const READY_WORD = { ready: ["Ready", "可以用"], "text-only": ["Text only", "只當文字"], preparing: ["Preparing", "準備中"], "needs-approval": ["Needs approval", "待核准"], "not-ready": ["Missing prerequisite", "缺少執行條件"] };
-async function openSkillStatus(p) {
+async function openSkillStatus(p, upgrade = false) {
   TM.skill = { pin: p, loading: true }; render();
-  try { const facts = await getJson(`/api/team/skill?id=${encodeURIComponent(p.id)}&v=${p.v}`); TM.skill = { pin: p, ...facts }; }
+  try { const facts = await getJson(`/api/team/skill?id=${encodeURIComponent(p.id)}&v=${p.v}`); TM.skill = { pin: p, ...facts, upgrade: upgrade && facts.status?.state === "text-only" }; }
   catch (e) { TM.skill = { pin: p, error: e.message || String(e) }; }
   render(); requestAnimationFrame(() => document.querySelector('[data-skill-status] button')?.focus());
 }
@@ -103,7 +103,7 @@ function closeSkillStatus() {
 async function skillAction(action) {
   const d=TM.skill;if(!d?.facts||d.busy)return;d.busy=true;d.error=null;render();
   try {
-    const r=await fetch('/api/team/skill',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...pinOf(d.facts),action})});
+    const r=await fetch('/api/team/skill',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...pinOf(d.facts),action,...(action==='enable-scripts'?{previousDecision:d.decisionRevision}:{})})});
     const j=await r.json();if(!r.ok)throw new Error(T(j.error||'Not saved',j.tw||'沒有儲存'));
     TM.skill={pin:d.pin,...j};await load();
   }catch(e){d.busy=false;d.error=e.message||String(e);TM.skill=d;}
@@ -138,7 +138,13 @@ function skillStatusPanel() {
     h('button',{type:'button',class:'btn primary','data-status-action':'retry',disabled:d.busy,onclick:()=>skillAction('retry')},d.busy?T('Checking…','檢查中…'):T('Recheck and retry preparation','重新檢查並重試準備'))
    ]:null,
    b?.state==='ready'?h('p',{},T('This version is approved and its recorded prerequisites are ready. Scripts run only inside the workflow sandbox.','這個版本已核准，記錄中的執行條件已就緒。Script 只會在 workflow sandbox 裡執行。')):null,
-   b?.state==='text-only'?h('p',{},T('Agents receive the skill text; its scripts will not run.','Agent 會收到 skill 文字，script 不會執行。')):null,
+   b?.state==='text-only'?[
+    h('p',{},T('Agents receive the skill text; its scripts will not run.','Agent 會收到 skill 文字，script 不會執行。')),
+    d.upgrade?[
+     h('p',{'data-status-upgrade-review':''},T('Review the exact script files and network destinations above. Enabling replaces text-only for this version across Studio, and retains the earlier decision in the audit history. No other version is approved.','請重新查看上方實際 script 檔案與連線網站。啟用會把全 Studio 這個版本改為可跑 script，原本只當文字的決定仍保留在紀錄中；不會核准其他版本。')),
+     h('div',{class:'actions'},h('button',{type:'button',class:'btn primary','data-status-action':'enable-scripts',disabled:d.busy,onclick:()=>skillAction('enable-scripts')},T('Approve and enable scripts for this version','核准並啟用這個版本的 script')),h('button',{type:'button',class:'btn ghost','data-status-upgrade-cancel':'',disabled:d.busy,onclick:closeSkillStatus},T('Keep text only','維持只當文字')))
+    ]:h('button',{type:'button',class:'btn','data-status-review-upgrade':'',disabled:d.busy,onclick:()=>openSkillStatus(p,true)},T('Review permissions to enable scripts','重新審閱權限以啟用 script'))
+   ]:null,
    h('button',{type:'button',class:'btn ghost','data-status-refresh':'',disabled:d.busy,onclick:()=>openSkillStatus(p)},T('Refresh recorded status','重新讀取狀態'))
   ]:null].flat(Infinity));
 }

@@ -101,7 +101,7 @@ export function crewRoutes(d:CrewViewDeps&{refreshFacts?:()=>Promise<unknown>;re
    const id=writing?b?.id:url.searchParams.get('id'),v=writing?b?.v:Number(url.searchParams.get('v'));
    if(typeof id!=='string'||!Number.isInteger(v)||v<1)return json({error:'A skill version is required'},400);
    const facts=pk.cardFacts(id,v);if(!facts)return json({error:'Skill version not found'},404);
-   const view=()=>({facts,status:pk.badge(id,v)});
+   const view=()=>({facts,status:pk.badge(id,v),decisionRevision:pk.decision(id,v)?.sig??null});
    if(!writing)return json(view());
    if(method!=='POST')return json({error:'POST required'},405);
    if(who.kind!=='desktop')return json({error:'Manage script skills on the desktop',code:'desktopOnly'},403);
@@ -110,6 +110,10 @@ export function crewRoutes(d:CrewViewDeps&{refreshFacts?:()=>Promise<unknown>;re
    if(b.action==='retry'){
     if(decided?.scripts!=='approved')return json({error:'Only an approved script version can be prepared',tw:'只有已核准的 script 版本可以重新準備。'},409);
     await pk.ensure(id,v,undefined,true);return json(view());
+   }
+   if(b.action==='enable-scripts'){
+    if(decided?.scripts!=='text-only'||b.previousDecision!==decided.sig)return json({error:'This decision changed; inspect the script permissions again before enabling',tw:'原決定已變更；請重新查看 script 權限後再啟用。',code:'decisionChanged'},409);
+    pk.decide(id,v,'approved','captain','page-script-upgrade');return json(view());
    }
    if(!['scripts','text-only'].includes(b.action))return json({error:'Choose scripts, text-only, or retry'},400);
    if(decided)return json({error:'This version already has a decision; reload its status',tw:'這個版本已有決定；請重新查看狀態。',code:'alreadyDecided'},409);

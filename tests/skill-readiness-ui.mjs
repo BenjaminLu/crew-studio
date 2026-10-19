@@ -50,7 +50,7 @@ try {
     ok(a.state === "ready" && (zh ? /含 1 個 script · 可以用/ : /1 script · ready/).test(a.title ?? ""), `a prepared, approved script skill shows ready ${tag}`, JSON.stringify(a));
     ok(b.state === "not-ready" && (zh ? /還不能用：缺 no-such-program-xyz/ : /not ready: no-such-program-xyz missing/).test(b.title ?? ""), `a script skill missing a program shows not ready, naming the program ${tag}`, JSON.stringify(b));
     // decided on the en pass: the change that added add-skill listed the undecided script skills the team would load
-    ok(zh ? c.state === "text-only" && /只當文字/.test(c.title ?? "") : c.state === "needs-approval" && /not approved/.test(c.title ?? ""), `an undecided script skill shows not approved (en), and after the captain's answer, text only (zh-TW) ${tag}`, JSON.stringify(c));
+    ok(zh ? c.state === "ready" && /可以用/.test(c.title ?? "") : c.state === "needs-approval" && /not approved/.test(c.title ?? ""), `an undecided script skill shows not approved (en), and after explicit upgrade, ready (zh-TW) ${tag}`, JSON.stringify(c));
     ok((await mark("ok-skill").innerText()) === (zh ? "可以用" : "Ready") && (await mark("miss-skill").innerText()) === (zh ? "缺少執行條件" : "Missing prerequisite") && await mark("new-skill").evaluate(e=>e.tagName)==="BUTTON", `readiness is visible localized text on a keyboard-accessible button ${tag}`);
     await mark("miss-skill").focus(); await p.keyboard.press("Enter");
     let status=p.locator('[data-skill-status]');await status.waitFor();await p.waitForFunction(()=>document.querySelector('[data-status-label],[data-status-error]'));
@@ -74,6 +74,21 @@ try {
       await status.locator('[data-status-action="text-only"]').click();await p.waitForFunction(()=>document.querySelector('[data-status-label]')?.dataset.statusLabel==='text-only');
       await status.locator('[data-status-close]').click();
       ok((await st('new-skill')).state==='text-only', `text-only approval directly updates the assigned skill without re-adding it ${tag}`);
+      await mark('new-skill').click();await status.locator('[data-status-review-upgrade]').waitFor();
+      ok(await status.locator('[data-status-action="enable-scripts"]').count()===0, `text-only does not expose a one-click permission upgrade ${tag}`);
+      await status.locator('[data-status-review-upgrade]').focus();await p.keyboard.press('Enter');await status.locator('[data-status-upgrade-review]').waitFor();
+      ok((await status.innerText()).includes('scripts/run.sh')&&(await status.innerText()).includes('Allowed network destinations: none'), `upgrade freshly shows exact source files, hosts and Studio-wide version scope ${tag}`);
+      await status.locator('[data-status-upgrade-cancel]').click();
+      ok((await api()).skillStatus['new-skill@v1'].state==='text-only', `cancel upgrade retains text-only without a new approval ${tag}`);
+      await mark('new-skill').click();await status.locator('[data-status-review-upgrade]').click();await status.locator('[data-status-upgrade-review]').waitFor();
+      ap.record('new-skill',{v:1,sha256:vNew.sha256,filesSha256:vNew.filesSha256,scripts:'text-only',hosts:[],by:'captain',via:'concurrent-test'});
+      await status.locator('[data-status-action="enable-scripts"]').click();await status.locator('[data-status-error]').waitFor();
+      ok((await api()).skillStatus['new-skill@v1'].state==='text-only', `an intervening signed decision refuses a stale upgrade screen ${tag}`);
+      await status.locator('[data-status-close]').click();await mark('new-skill').click();await status.locator('[data-status-review-upgrade]').click();await status.locator('[data-status-upgrade-review]').waitFor();
+      await status.locator('[data-status-action="enable-scripts"]').click();await p.waitForFunction(()=>!document.querySelector('[data-status-action="enable-scripts"]'));
+      for(let i=0;i<30&&(await status.locator('[data-status-label]').getAttribute('data-status-label'))!=='ready';i++){await status.locator('[data-status-refresh]').click();await p.waitForTimeout(100);}
+      ok((await status.locator('[data-status-label]').getAttribute('data-status-label'))==='ready'&&ap.all('new-skill').some(x=>x.scripts==='text-only')&&ap.all('new-skill').at(-1)?.via==='page-script-upgrade', `explicit upgrade reaches actual ready while retaining signed text-only history ${tag}`);
+      await status.locator('[data-status-close]').click();
       await mark('approve-skill').click();await status.waitFor();await status.locator('[data-status-action="scripts"]').click();
       await p.waitForFunction(()=>!document.querySelector('[data-status-action="scripts"]'));await status.locator('[data-status-refresh]').click();
       for(let i=0;i<30&&(await status.locator('[data-status-label]').getAttribute('data-status-label'))!=='ready';i++){await status.locator('[data-status-refresh]').click();await p.waitForTimeout(100);}

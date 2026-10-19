@@ -170,5 +170,20 @@ const cardOf = async (run: string) => { await until(() => E.cards.list({ run, op
  ok(again.status===409&&pk.decision(pin.id,1)?.scripts==="text-only","status action never silently broadens an existing decision");
  const retry=await call({...pin,action:"retry"});
  ok(retry.status===409,"retry cannot run a text-only version's scripts");
+ const inspect=await handle('/api/team/skill',new URL('http://x/api/team/skill?id=status-action&v=1'),'GET',false,null,{kind:'desktop'});const shown=await inspect!.json() as any;
+ const history=pk.approvals.all(pin.id).length;
+ const noConsent=await call({...pin,action:'enable-scripts'});
+ ok(noConsent.status===409&&pk.decision(pin.id,1)?.scripts==='text-only','script upgrade requires the exact prior decision just reviewed');
+ const staleUpgrade=await call({...pin,sha256:'stale',action:'enable-scripts',previousDecision:shown.decisionRevision});
+ ok(staleUpgrade.status===409&&pk.decision(pin.id,1)?.scripts==='text-only'&&pk.approvals.all(pin.id).length===history,'stale upgrade preserves the previous text-only decision and its history');
+ const file=join(lib.libVersion(pin.id,1)!.dir,'files','scripts/go.sh'),source=readFileSync(file,'utf8');writeFileSync(file,source+'# changed\n');
+ const changedUpgrade=await call({...pin,action:'enable-scripts',previousDecision:shown.decisionRevision});writeFileSync(file,source);
+ ok(changedUpgrade.status===409&&pk.decision(pin.id,1)?.scripts==='text-only','changed actual script bytes cannot be enabled');
+ const upgrade=await call({...pin,action:'enable-scripts',previousDecision:shown.decisionRevision});
+ const records=pk.approvals.all(pin.id);
+ ok(upgrade.status===200&&pk.decision(pin.id,1)?.scripts==='approved'&&records.length===history+1&&records.at(-2)?.scripts==='text-only'&&records.at(-1)?.via==='page-script-upgrade','explicit exact-version upgrade appends a signed approval and retains text-only audit history');
+ const repeated=await call({...pin,action:'enable-scripts',previousDecision:shown.decisionRevision});
+ ok(repeated.status===409&&pk.approvals.all(pin.id).length===history+1,'a stale upgrade screen cannot overwrite the newer approval');
+
 }
 H.stop(); end();
