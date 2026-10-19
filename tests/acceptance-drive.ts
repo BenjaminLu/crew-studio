@@ -1,7 +1,7 @@
 import "./lib/isolated-env.mjs";
 // The acceptance gate must validate the exact artifact version a Task approved.
 import assert from "node:assert/strict";
-import { verify, cardWordingProblems } from "./acceptance/drive";
+import { drive, verify, cardWordingProblems } from "./acceptance/drive";
 
 const cases = [
   { name: "missing v2 is rejected even when v1 is approved", version: 2, versions: [{ n: 1, status: "approved" }], error: /v2/ },
@@ -38,3 +38,19 @@ for (const [name,v,entries] of [
   ["disabled wording policy",{...view,def:{card_checks:[]}},[receipt]],
 ] as const) { assert(cardWordingProblems(v,entries as any).length>0,name);console.log(`  ok    wording: ${name} is rejected`); }
 console.log("acceptance wording: 11 passed, 0 failed");
+
+for (const settled of ["pass","error"]) {
+  let polls=0,decisions=0;
+  const api:any={api:async()=>({status:200,body:{...view,status:"waiting",cards:[{...card,status:"open",ste:++polls===1?null:{verdict:settled,seq:settled==="pass"?7:null}}]}})};
+  const result=await drive(api,"R-fixture",async()=>{decisions++;throw Error("checkpoint must not answer");},{timeoutMs:1000,until:()=>true});
+  assert.equal(polls,2,`wait for pending check before ${settled} checkpoint`);assert.equal(decisions,0);
+  assert.equal(result.view.cards[0].ste.verdict,settled);
+  if(settled==="error")assert(cardWordingProblems(result.view,[receipt]).length>0);
+  console.log(`  ok    driver waits for pending then ${settled}; error remains gate failure`);
+}
+let pendingDecisions=0;
+const pending=await drive({api:async()=>({status:200,body:{...view,status:"waiting",cards:[{...card,status:"open",ste:null}]}})} as any,"R-fixture",async()=>{pendingDecisions++;throw Error("must not answer pending card");},{timeoutMs:30,until:()=>true});
+assert(pending.problems.some(p=>/within/.test(p)));assert.equal(pendingDecisions,0);
+const pendingAnswer=await drive({api:async()=>({status:200,body:{...view,status:"waiting",cards:[{...card,status:"open",ste:null}]}})} as any,"R-fixture",async()=>{pendingDecisions++;throw Error("must not answer pending card");},{timeoutMs:30});
+assert(pendingAnswer.problems.some(p=>/within/.test(p)));assert.equal(pendingDecisions,0);
+console.log("acceptance driver synchronization: 4 passed, 0 failed");

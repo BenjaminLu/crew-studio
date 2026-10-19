@@ -45,8 +45,10 @@ export async function drive(s: Studio, rid: string, decide: Decide, o: { timeout
   while (Date.now() - t0 < timeout) {
     const r = await s.api(`/api/wruns/${rid}`); if (r.status !== 200) { problems.push(`GET /api/wruns/${rid}: ${r.status} ${JSON.stringify(r.body).slice(0, 300)}`); return { view, answered, problems }; }
     view = r.body;
-    if ((TERMINAL.includes(view.status) && !view.ctx?.firstmateQuestion && !(view.cards ?? []).some((c: any) => c.status === "open" && c.failure?.code === "ask.escalated")) || o.until?.(view)) return { view, answered, problems };
-    for (const c of (view.cards ?? []).filter((c: any) => c.status === "open" && !seen.has(c.id))) {
+    const pendingCards = (view.cards ?? []).some((c: any) => c.status === "open" && !c.decidedBy && c.ste == null);
+    if (o.until?.(view)) { if (pendingCards) { await sleep(50); continue; } return { view, answered, problems }; }
+    if ((TERMINAL.includes(view.status) && !view.ctx?.firstmateQuestion && !(view.cards ?? []).some((c: any) => c.status === "open" && c.failure?.code === "ask.escalated"))) return { view, answered, problems };
+    for (const c of (view.cards ?? []).filter((c: any) => c.status === "open" && c.ste != null && !seen.has(c.id))) {
       seen.add(c.id); const i = visits.get(c.node) ?? 0; visits.set(c.node, i + 1);
       const a = await decide(c, view, i);
       if ("stop" in a) { problems.push(`unscripted captain card at node ${c.node}: ${titleOf(c)} (options ${(c.options ?? []).map((x: any) => x.id).join("|")}) ${noteOf(view, c.node)} [${a.stop}]`.trim()); return { view, answered, problems }; }
