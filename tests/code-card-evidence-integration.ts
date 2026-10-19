@@ -80,4 +80,8 @@ run.ctx.head=newHead;run.ctx.pr.head=newHead;E.save(run);
 ok(evidence().state==='stale'&&evidence().blocked,'new actual commit makes retained offer stale');
 refused='';try{await E.answer(merge.id,{choice:'merge',by:'captain',note:'approve old head'});}catch(e:any){refused=e.message;}
 ok(!!refused&&E.cards.get(merge.id)!.status==='open','old target rejected before answer persistence');
+await E.answer(merge.id,{choice:'changes',by:'captain',note:'Recheck the current change and issue fresh evidence.'});
+const fresh=await waitCard('merge');
+ok(!!fresh&&fresh.id!==merge.id,'request changes follows supported runtime path to a fresh merge card',E.get(r.id)!.error??'');
+if(fresh){await until(()=>E.get(r.id)!.nodes[fresh.node].waiting==='card',10000);const current=E.cards.view(E.cards.get(fresh.id)!);ok(current.detail?.codeEvidence?.state==='success','fresh verification and issuance recover the evidence hold');}
 await E.cancel(r.id,'captain');H.stop();end();
