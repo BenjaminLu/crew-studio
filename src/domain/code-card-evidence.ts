@@ -15,7 +15,7 @@ export function snapshotCodeEvidence(subject:Subject,entries:LedgerEntry[]):Code
 }
 /** Pure projection. Callers authenticate the ledger and supply path-contained file availability; no model output is consumed. */
 export function projectCodeEvidence(i:Input){
-  const entries=i.trusted.entries.filter(e=>e.run===i.run);
+  const entries=i.trusted.ok?i.trusted.entries.filter(e=>e.run===i.run):[];
   const reasons:string[]=[];let state:'success'|'fail'|'missing'|'stale'='success';
   const gates=CODE_GATES.map(name=>{const e=latest(entries,`firstmate/gate-${name}`);return {name,seq:e?.seq??null,head:e?.head??null,verdict:e?.verdict??'unknown',detail:e?.findings?.map(f=>f.message).join('; ')??''};});
   if(!i.trusted.ok){state='fail';reasons.push('ledger-integrity');}

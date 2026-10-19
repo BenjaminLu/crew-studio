@@ -15,7 +15,7 @@ ok(projectCodeEvidence({...input,current:{head:'c'.repeat(40),base}}).state==='s
 ok(projectCodeEvidence({...input,trusted:{ok:false,entries}}).state==='fail','untrusted ledger never presents success');
 const failed=[...entries,{...entries[4],seq:9,verdict:'fail'}];
 ok(projectCodeEvidence({...input,trusted:{ok:true,entries:failed}}).state==='fail','latest signed failure defeats older pass');
-ok(projectCodeEvidence({...input,trusted:{ok:true,entries:entries.filter(e=>e.run!=='R-1')}}).state==='missing','other run cannot supply gates');
+ok(projectCodeEvidence({...input,trusted:{ok:true,entries:entries.map(e=>({...e,run:'R-2'}))}}).state==='missing','other run cannot supply gates');
 const skipped=entries.map(e=>e.seq===8?{...e,evidence:[],data:{status:'not-run',reason:'no declared command'}}:e);
 const skip=projectCodeEvidence({...input,offered:snapshotCodeEvidence({head,base},skipped),trusted:{ok:true,entries:skipped}});
 ok(skip.state==='success'&&skip.execution.some((e:any)=>e.status==='not-run'),'policy-permitted not-run stays ready without claiming execution');
@@ -25,4 +25,5 @@ const cap:any={seq:11,run:'R-1',check:'firstmate/ui-captures',head,verdict:'pass
 ok(projectCodeEvidence({...input,trusted:{ok:true,entries:[...entries,cap]}}).media.length===1,'signed capture identity must name both base and head');
 ok(projectCodeEvidence({...input,trusted:{ok:true,entries:[...entries,{...cap,data:{...cap.data,base:undefined}}]}}).media.length===0,'historical no-base capture is not promoted to pinned media');
 ok(projectCodeEvidence({...input,trusted:{ok:true,entries:[...entries,{...cap,head:null}]}}).media.length===0,'no-head media is not presented as evidence of this target');
+ok(projectCodeEvidence({...input,trusted:{ok:false,entries}}).execution.every(e=>e.status==='unknown'),'untrusted pass prose is never displayed as executed evidence');
 end();

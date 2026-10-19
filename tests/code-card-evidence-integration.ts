@@ -58,6 +58,9 @@ ok(readFileSync(join(E.cards.dir,merge.id+'.json'),'utf8')===before,'view does n
 const source=E.trusted(r.id).entries.find(e=>e.seq===merge.detail!.codeEvidenceOffer!.requiredEvidence[0].seq)!;
 const file=join(source.dir!,source.evidence[0]),gone=file+'.withheld';renameSync(file,gone);
 ok(evidence().state==='missing'&&evidence().blocked,'withheld actual raw command log produces missing state');
+const tampered=E.cards.get(merge.id)!;delete tampered.detail!.codeEvidenceOffer;E.cards.save(tampered);
+ok(evidence().state==='missing'&&evidence().blocked,'removing stored schema cannot downgrade a signed new card to legacy');
+E.cards.save(merge);
 let refused='';try{await E.answer(merge.id,{choice:'merge',by:'captain',note:'direct forged approval'});}catch(e:any){refused=e.message;}
 ok(/evidence/.test(refused)&&E.cards.get(merge.id)!.status==='open','missing backing rejects direct approval before answer persistence',refused);
 renameSync(gone,file);
