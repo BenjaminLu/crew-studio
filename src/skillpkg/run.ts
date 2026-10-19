@@ -26,7 +26,7 @@ const TAIL = 64 * 1024;
 const MANAGERS = ["npm", "npx", "pnpm", "yarn", "bun", "pip", "pip3", "uv", "uvx", "pipx", "brew", "apt-get", "apt", "gem", "cargo", "go"];
 
 export function skillTools(o: { skills: RoundSkill[]; packages: SkillPackages; round: { cwd: string; writes: string[]; tmp: string; dataDir: string; protect: string[]; egress: Egress | null; run: string; node: string; visit: number; signal?: AbortSignal };
-  record: (r: SkillRunRecord) => void; max?: number }) {
+  record: (r: SkillRunRecord) => void; max?: number; budget?: {calls: number} }) {
   const by = (id: unknown) => { const s = o.skills.find((x) => x.id === String(id ?? "")); if (!s) throw new Error(`no skill ${String(id)} on this step (pinned: ${o.skills.map((x) => x.id).join(", ") || "none"})`); return s; };
   const inside = (s: RoundSkill, rel: unknown) => {
     const r = String(rel ?? ""); if (!r || r.length > 400 || r.startsWith("/") || r.includes("\\") || r.split("/").some((x) => !x || x === "." || x === "..")) throw new Error("a path inside the skill, relative, with no ..");
@@ -36,7 +36,7 @@ export function skillTools(o: { skills: RoundSkill[]; packages: SkillPackages; r
   // the shims: a package manager on PATH before any real one, failing with the reason
   const shims = join(o.round.tmp, "skill-shims"); mkdirSync(shims, { recursive: true });
   for (const m of MANAGERS) writeFileSync(join(shims, m), `#!/bin/sh\necho "Studio: ${m} is not available when a skill runs. A skill's dependencies come from the lockfiles inside it (package-lock.json, uv.lock, requirements with hashes) and Studio installs them before the round; nothing is installed at run time. Use what is already installed, or ask for a new skill version whose lockfile has the package." >&2\nexit 127\n`, { mode: 0o755 });
-  let calls = 0;
+  const budget = o.budget ?? {calls: 0};
   const list = (s: RoundSkill) => { const out: { path: string; bytes: number }[] = []; const walk = (rel: string) => { for (const e of readdirSync(join(s.dir, rel), { withFileTypes: true })) { const r = rel ? `${rel}/${e.name}` : e.name; if (e.isDirectory()) walk(r); else if (e.isFile()) out.push({ path: r, bytes: lstatSync(join(s.dir, r)).size }); } }; walk(""); return out.sort((a, b) => a.path.localeCompare(b.path)); };
   const tools = [
     { name: "skill_files", description: "List the files of a skill this step pins (its read-only copy). Paths are relative to the skill's folder.",
@@ -58,13 +58,13 @@ export function skillTools(o: { skills: RoundSkill[]; packages: SkillPackages; r
       const pkg = o.packages.pkg(s.id, s.v)!; const script = pkg.scripts.find((x) => x.path === String(a?.script ?? "").replace(/^\.\//, ""));
       if (!script) throw new Error(`${a?.script} is not a script of ${s.id}@v${s.v} (scripts: ${pkg.scripts.map((x) => x.path).slice(0, 20).join(", ")})`);
       const args = a?.args ?? []; if (!Array.isArray(args) || args.length > 64 || args.some((x: unknown) => typeof x !== "string" || x.length > 4096 || x.includes("\0"))) throw new Error("args: up to 64 strings, each under 4096 characters");
-      if (++calls > (o.max ?? SKILL_RUN_MAX)) throw new Error(`skill_run limit reached (${o.max ?? SKILL_RUN_MAX} per round)`);
+      if (++budget.calls > (o.max ?? SKILL_RUN_MAX)) throw new Error(`skill_run limit reached (${o.max ?? SKILL_RUN_MAX} per round)`);
       const st = s.status, env = st.envKey ? envDir(o.round.dataDir, st.envKey) : null;
       const venv = env && st.env?.python ? join(env, "py", "venv") : null, nodeModules = env && st.env?.npm ? join(env, "node", "node_modules") : null;
       const path = join(s.dir, script.path);
       // Node ESM ignores NODE_PATH. A trusted read-only hook resolves bare imports from the
       // pinned env without adding node_modules to (or changing) the approved skill copy.
-      const loader = nodeModules && script.lang === "node" ? join(shims, `esm-${calls}.mjs`) : null;
+      const loader = nodeModules && script.lang === "node" ? join(shims, `esm-${budget.calls}.mjs`) : null;
       if (loader) writeFileSync(loader, `const skill = ${JSON.stringify(pathToFileURL(realpathSync(s.dir) + "/").href)};
 const parentURL = ${JSON.stringify(pathToFileURL(join(realpathSync(join(nodeModules!, "..")), "package.json")).href)};
 export async function resolve(specifier, context, nextResolve) {
@@ -78,7 +78,7 @@ export async function resolve(specifier, context, nextResolve) {
       if (!argv[0]) throw new Error(`${script.path}: Studio runs Python, Node and shell scripts; this one is ${script.lang}${script.lang !== "other" ? " and its runtime is missing" : ""}`);
       const binDirs = [...new Set(st.bins.filter((b) => b.path && b.state !== "missing").map((b) => dirname(b.path!)))];
       const PATH = [shims, venv ? join(venv, "bin") : null, nodeModules ? join(nodeModules, ".bin") : null, st.runtimes.node ? dirname(st.runtimes.node.bin) : null, st.runtimes.python ? dirname(st.runtimes.python.bin) : null, ...binDirs, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].filter(Boolean).join(":");
-      const tmp = join(o.round.tmp, `skill-run-${calls}`); mkdirSync(tmp, { recursive: true });
+      const tmp = join(o.round.tmp, `skill-run-${budget.calls}`); mkdirSync(tmp, { recursive: true });
       const heard: EgressEvent[] = []; const tag = `${s.id}@v${s.v}`;
       const stop = o.round.egress?.listen?.((e) => { if (e.skill === tag && e.script === script.path && e.run === o.round.run) heard.push(e); }) ?? (() => {});
       const t0 = Date.now();

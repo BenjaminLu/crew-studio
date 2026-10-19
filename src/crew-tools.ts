@@ -110,8 +110,8 @@ export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Prom
   // the script skills the card listed: decided by this answer (with scripts, or text only), each bound to both hashes it showed
   const pend:any[]=Array.isArray(x.run.ctx.skillPending)?x.run.ctx.skillPending:[],how=String(answer.data?.note??'').trim(),pk=engine.deps.skillPackages;
   if(pend.length&&pk){if(how!=='scripts'&&how!=='text-only')throw new NativeToolFailure('captain_confirmation_required','The card lists script skills: the captain picks “Approve with scripts” or “Text only”','卡片上有 script skill：船長要選「核准（含 script）」或「只當文字」。','captain_review');
-   for(const p of pend){const lv=pk.o.skills.libVersion(p.id,p.v);if(!lv||lv.rec.sha256!==p.sha256||lv.rec.filesSha256!==p.filesSha256)throw new NativeToolFailure('target_changed',`Skill ${p.id}@v${p.v} is not the version the card showed`,`skill ${p.id}@v${p.v} 不是卡片上顯示的版本。`,'read_current_state');
-    if(!pk.decision(p.id,p.v))pk.decide(p.id,p.v,how==='text-only'?'text-only':'approved','captain (card)','card',{card:card.id,run:x.run.id});}}
+   for(const p of pend)try{pk.assertDecidable(p.id,p.v,p);}catch{throw new NativeToolFailure('target_changed',`Skill ${p.id}@v${p.v} is not the intact version the card showed`,`skill ${p.id}@v${p.v} 已不是卡片顯示的完整版本。`,'read_current_state');}
+   for(const p of pend)if(!pk.decision(p.id,p.v))pk.decide(p.id,p.v,how==='text-only'?'text-only':'approved','captain (card)','card',{card:card.id,run:x.run.id});}
   const written=store.write(next,cfg?.hash??null,{by:'captain (card)',via:'card',card:card.id,run:x.run.id,answerSeq:answer.seq});
   engine.record(x,'crew-approved',{data:{schema:1,team:written.hash,version:written.version,card:card.id}});try{o.send?.('team',{version:written.version});}catch{}try{o.onApproved?.(x.run.id);}catch{}return'ok';};
  /** A workflow that needs a seat the team does not fill: raise its card (once) and refuse the proposal, naming the seat and the card.

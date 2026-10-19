@@ -112,6 +112,25 @@ ok((r1.ctx.skillRefusals ?? []).some((x: any) => x.host === "other.fixture.test"
 { const tok = "round-token-probe"; egress.open(tok, ["api.provider.test"]);
   ok(!egress.allowed("api.fixture.test", tok) && egress.status().rounds === 1, "a round's own credential (its provider's hosts) does not carry the skill's hosts, and no skill credential outlives its call"); egress.close(tok); }
 
+// The per-round quota survives an actual provider hot swap in the same visit.
+{ const provider0=h.engine.deps.provider; let ready=false,release:()=>void=()=>{};
+  const results:string[]=[];
+  h.engine.deps.provider=(id?:string,model?:string)=>id!=="quota"?provider0(id,model):({id:"quota",model:model??"before",sandboxFree:true,
+    start:(_s:any,_t:any,ctx:any)=>({interrupt(){release();},async *send(){
+      for(let i=0;i<(model==="after"?11:20);i++)results.push(JSON.stringify(await h.agents.callTool(ctx.token,"skill_run",{skill:"pkg-run",script:"scripts/use-dep.js",args:["quota"]})));
+      if(model!=="after"){ready=true;await new Promise<void>(r=>{release=r;});}
+      yield {type:"turnEnd",status:"ok"} as any;
+    }})} as any);
+  const r=h.engine.start({workflow:"sr",version:h.defs.get("sr")!.version,text:"quota",params:{provider:"quota"},by:"t"} as any);
+  await until(()=>ready,20000);if(!ready)throw new Error("quota provider never reached swap checkpoint");
+  h.engine.setAgent(r.id,"make",{provider:"quota",model:"after"});
+  await until(()=>["succeeded","failed","cancelled"].includes(h.engine.get(r.id)!.status),20000);
+  const final=h.engine.get(r.id)!,jobs=final.nodes.make.data.jobs??[],executed=final.nodes.make.data.skillRuns??[];
+  ok(final.status==="succeeded"&&jobs.length===2&&jobs[0].status==="cancelled"&&jobs[1].status==="done"&&executed.length===30&&results.length===31&&/skill_run limit reached/.test(results[30]),
+    "hot swap continues the same round: 30 executions total and call 31 is refused",JSON.stringify({status:final.status,jobs:jobs.length,runs:executed.length,last:results.at(-1)}));
+  h.engine.deps.provider=provider0;
+}
+
 // ---------- text only; a changed script is a new version with no approval; a wrong files pin ----------
 { const d2 = skillFolder(src, fx, { name: "pkg-text", python: false }); lib.importFolder(d2, "captain"); pk.decide("pkg-text", 1, "text-only", "captain", "test");
   const t = lib.libVersion("pkg-text", 1)!.rec; withPins([{ id: "pkg-text", v: 1, sha256: t.sha256, filesSha256: t.filesSha256 }]);

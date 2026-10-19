@@ -11,13 +11,13 @@ import { RoundBlocked } from "../round-blocked";
 import { skillFooter, skillTools, type RoundSkill, type SkillRunRecord } from "./run";
 import type { SkillPackages } from "./index";
 
-export type SkillRound = { skills: RoundSkill[]; textOnly: { id: string; v: number }[]; root: string | null };
+export type SkillRound = { skills: RoundSkill[]; textOnly: { id: string; v: number }[]; root: string | null; budget: {calls: number} };
 type Pin = { id: string; v: number; sha256: string; filesSha256?: string };
 
 export async function skillGate(engine: any, x: any): Promise<SkillRound | null> {
   const pk: SkillPackages | null = engine.deps.skillPackages ?? null; if (!pk) return null;
   const pins: Pin[] = engine.nodePins(x.run, x.node) ?? [];
-  const out: SkillRound = { skills: [], textOnly: [], root: null };
+  const out: SkillRound = { skills: [], textOnly: [], root: null, budget: {calls: 0} };
   for (const p of pins) {
     const lv = engine.skillLibrary().libVersion(p.id, p.v); if (!lv) continue; // an unknown pin fails where the text is read
     if (p.filesSha256 !== undefined && p.filesSha256 !== lv.rec.filesSha256) throw new RoundBlocked(`skill ${p.id}@v${p.v}: the pinned files hash does not match the library; the round was not started`);
@@ -49,7 +49,7 @@ export function skillProvenance(sr: SkillRound | null | undefined, pk: SkillPack
 export function roundSkillTools(engine: any, x: any, sr: SkillRound | null | undefined, sb: { writes: string[]; cwd?: string }) {
   if (!sr?.skills.length) return [];
   const pk: SkillPackages = engine.deps.skillPackages;
-  return skillTools({ skills: sr.skills, packages: pk,
+  return skillTools({ skills: sr.skills, packages: pk, budget: sr.budget,
     round: { cwd: sb.cwd ?? sb.writes[0], writes: sb.writes, tmp: `${sr.root}/.tmp`, dataDir: engine.deps.dataDir, protect: engine.deps.protectedRoots ?? [], egress: engine.deps.agents?.egress ?? null,
       run: x.run.id, node: x.node.id, visit: x.visit, signal: engine.abortOf?.(x.run)?.signal },
     record: (r: SkillRunRecord) => {

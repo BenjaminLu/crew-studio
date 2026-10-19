@@ -110,6 +110,26 @@ const cardOf = async (run: string) => { await until(() => E.cards.list({ run, op
     "a stale team-change card fails before recording any Studio-wide script approval");
 }
 
+// Refusing one stale package must not leave an earlier package globally approved.
+{ const pins = ["batch-a", "batch-b"].map(id => {
+    const v=lib.importFolder(mk(join(tmp,id),{"SKILL.md":md(id),"scripts/go.sh":"#!/bin/sh\necho hi\n"}),"captain").version;
+    return {id,v:1,sha256:v.sha256,filesSha256:v.filesSha256}; });
+  const p:any=await crew.call("studio_propose_crew_change",{change:{kind:"member",seat:"reviewer",set:{skills:pins}}},captain("batch"));
+  const card=await cardOf(p.proposal), before=store.current()!.hash;
+  writeFileSync(join(lib.libVersion("batch-b",1)!.dir,"files/scripts/go.sh"),"changed bytes\n");
+  await E.answer(card.id,{choice:"approve",note:"scripts",by:"captain"});await done(p.proposal);
+  ok(E.get(p.proposal)!.status==="failed" && store.current()!.hash===before && pins.every(p=>!pk.decision(p.id,p.v)),
+    "a two-skill card with stale second package writes no approval and no team change");
+}
+{ const v=lib.importFolder(mk(join(tmp,"page-stale"),{"SKILL.md":md("page-stale"),"scripts/go.sh":"#!/bin/sh\necho hi\n"}),"captain").version;
+  const pin={id:"page-stale",v:1,sha256:v.sha256,filesSha256:v.filesSha256};
+  const handle=crewRoutes({defs:H.defs,store,facts:()=>facts as any,library:()=>lib.library(),skillPackages:()=>pk});
+  const before=store.current()!.hash; writeFileSync(join(lib.libVersion(pin.id,1)!.dir,"files/scripts/go.sh"),"changed bytes\n");
+  let rejected=false;try { const response=await handle("/api/team/change",new URL("http://x/api/team/change"),"POST",true,
+    {expected:before,change:{kind:"member",seat:"reviewer",set:{skills:[pin]}},skillDecisions:{"page-stale@v1":"scripts"}},{kind:"desktop"});rejected=!!response&&!response.ok; } catch { rejected=true; }
+  ok(rejected&&store.current()!.hash===before&&!pk.decision(pin.id,1),"a stale package on the Crew page writes neither the team nor a signed decision");
+}
+
 // ---------- the Crew page asks the same before it saves ----------
 { const pg = lib.importFolder(mk(join(tmp, "pg"), { "SKILL.md": md("pg"), "scripts/a.py": "print('a')\n" }), "captain").version;
   const ppin = { id: "pg", v: 1, sha256: pg.sha256, filesSha256: pg.filesSha256 };

@@ -22,7 +22,7 @@ export type SkillStatus = { id: string; v: number; state: SkillState; scripts: n
 type Egress = { port: number; open(t: string, h: string[], meta?: any): void; close(t: string): void };
 export type PackagesOpts = { dataDir: string; skills: Skills; egress?: () => Egress | null; protect?: () => string[]; path?: string;
   /** Homebrew and uv: false never (tests, the manual smoke); a path; undefined to look for them */ brew?: false | string; uv?: false | string; clt?: () => boolean; recipes?: ToolRecipe[];
-  /** "<id>@v<N>" of every library version the team or a workflow pins now (gc keeps their envs) */ inUse?: () => Set<string>; log?: (line: string) => void };
+  /** "<id>@v<N>" of every library version the team or a workflow pins now (gc keeps their envs) */ inUse?: () => Set<string>; retryAfterMs?: number; log?: (line: string) => void };
 const ref = (id: string, v: number) => `${id}@v${v}`;
 /** A reason's head ("soffice missing", "preparing its dependencies failed"): the badge's few words; the full reason stays beside it. */
 const short = (t: string, sep: string) => { const p = t.split(sep); return (/@v\d+$/.test(p[0]) ? p[1] ?? p[0] : p[0]).trim(); };
@@ -39,10 +39,16 @@ export class SkillPackages {
     const lv = this.o.skills.libVersion(id, v); if (!lv) return null;
     return this.approvals.current(id, v, lv.rec.sha256, lv.rec.filesSha256);
   }
+  /** Validate the whole approval batch before any signed decision or team write. */
+  assertDecidable(id: string, v: number, expected?: {sha256: string; filesSha256: string}) {
+    const lv = this.o.skills.libVersion(id, v);
+    if (!lv || expected && (lv.rec.sha256 !== expected.sha256 || lv.rec.filesSha256 !== expected.filesSha256)) throw new Error(`skill ${id}@v${v} is not the version shown`);
+    if (!this.o.skills.filesIntact(id, v)) throw new Error(`skill ${id}@v${v} changed on disk since it was recorded; nothing approved`);
+  }
   /** Record the captain's decision for a version: its proposed hosts are exactly what an approval allows. Then prepare it. */
   decide(id: string, v: number, scripts: ScriptDecision, by: string, via: string, extra: { card?: string; run?: string; installScripts?: string[] } = {}): Approval {
     const lv = this.o.skills.libVersion(id, v); if (!lv) throw new Error(`skill ${id} v${v} is not in the library`);
-    if (!this.o.skills.filesIntact(id, v)) throw new Error(`skill ${id} v${v} changed on disk since it was recorded; nothing approved`);
+    this.assertDecidable(id, v);
     const pkg = this.pkg(id, v)!;
     const a = this.approvals.record(id, { v, sha256: lv.rec.sha256, filesSha256: lv.rec.filesSha256, scripts, hosts: scripts === "approved" ? proposedHosts(pkg) : [], installScripts: extra.installScripts ?? [], by, via, card: extra.card, run: extra.run });
     if (scripts === "approved") this.prepareSoon(id, v);
@@ -72,8 +78,11 @@ export class SkillPackages {
   /** Prepare in the background (after an approval, at startup); the result lands in the status file. */
   prepareSoon(id: string, v: number) { void this.ensure(id, v).catch((e) => this.o.log?.(`skill ${ref(id, v)}: prepare: ${e?.message ?? e}`)); }
   /** The status once prepared: waits for a prepare in flight, starts one when the version is approved and was never prepared. */
-  async ensure(id: string, v: number, signal?: AbortSignal): Promise<SkillStatus> {
-    const now = this.status(id, v); if (now.state !== "preparing") return now;
+  async ensure(id: string, v: number, signal?: AbortSignal, startup = false): Promise<SkillStatus> {
+    const now = this.status(id, v), last = Date.parse(now.at ?? "");
+    const retry = now.state === "not-ready" && now.decision?.scripts === "approved" &&
+      (startup || !Number.isFinite(last) || Date.now() - last >= Math.max(0, this.o.retryAfterMs ?? 30_000));
+    if (now.state !== "preparing" && !retry) return now;
     const k = ref(id, v); let p = this.running.get(k);
     if (!p) { p = this.prepare(id, v, signal).finally(() => this.running.delete(k)); this.running.set(k, p); }
     return p;
@@ -103,7 +112,7 @@ export class SkillPackages {
   /** Prepare every approved script version in use (Studio's start), then remove envs nothing in use names. */
   async prepareInUse(): Promise<void> {
     const used = this.o.inUse?.() ?? new Set<string>();
-    for (const r of used) { const m = /^(.+)@v(\d+)$/.exec(r); if (m && this.isScript(m[1], Number(m[2])) && this.decision(m[1], Number(m[2]))?.scripts === "approved") await this.ensure(m[1], Number(m[2])).catch(() => {}); }
+    for (const r of used) { const m = /^(.+)@v(\d+)$/.exec(r); if (m && this.isScript(m[1], Number(m[2])) && this.decision(m[1], Number(m[2]))?.scripts === "approved") await this.ensure(m[1], Number(m[2]), undefined, true).catch(() => {}); }
     this.gc();
   }
   gc(keepNewerThanMs = 0) { return gcEnvs(this.o.dataDir, this.o.inUse?.() ?? new Set(), keepNewerThanMs); }

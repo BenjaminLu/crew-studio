@@ -106,6 +106,7 @@ export function crewRoutes(d:CrewViewDeps&{refreshFacts?:()=>Promise<unknown>;re
    const pk=(()=>{try{return d.skillPackages?.()??null;}catch{return null;}})(),pending=pendingScripts(pk,[...teamPins(next),...(def?defPins(def):[])]);
    const said=b?.skillDecisions&&typeof b.skillDecisions==='object'?b.skillDecisions:{};
    if(pending.some(p=>!['scripts','text-only'].includes(said[`${p.id}@v${p.v}`])))return json({error:'This change brings a script skill: approve it with its scripts or as text only',tw:'這個變更帶來有 script 的 skill：請選「核准（含 script）」或「只當文字」',code:'skillDecision',skills:pending},409);
+   try{for(const p of pending)pk!.assertDecidable(p.id,p.v,p);}catch(e:any){return json({error:String(e?.message??e),tw:'Skill 檔案已變更；請重新匯入並確認版本。',code:'targetChanged'},409);}
    const written=d.store.write(next,cfg?.hash??null,{by:'captain',via:'page'});
    for(const p of pending)if(!pk!.decision(p.id,p.v))pk!.decide(p.id,p.v,said[`${p.id}@v${p.v}`]==='text-only'?'text-only':'approved','captain','page');
    // the page reads the project it shows; a project change is measured in its own project

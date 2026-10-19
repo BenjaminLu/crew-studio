@@ -74,7 +74,7 @@ A later line for the same hashes supersedes; an edited or forged line is ignored
 ## 4. Prepare, runtimes, programs (captain)
 
 After a version is approved with scripts, Studio prepares it by itself (src/skillpkg/index.ts `decide` → `prepareSoon`;
-again at start for every approved version in use; a round waits for one in flight). No human in the loop, no card.
+again at start for every approved version in use; a round waits for one in flight). A persisted not-ready result is refreshed at startup and retried at dispatch after a 30-second cooldown; repeated dispatches share the in-flight preparation. No human in the loop, no card.
 
 - **Env**: `data/envs/<key>/`, key = sha256(lockfile bytes + platform + arch + runtime versions + approved install-script names). Content-addressed:
   two skills with the same locks, runtimes and install-script approval share one env; `env.json` is written last (a folder without it is a
@@ -119,7 +119,7 @@ hashed again; the prompt gets a footer naming the folder and the three tools.
 - `skill_run(skill, script, args)`: `script` must be one of the version's detected scripts; Python runs in the prepared venv
   (else the resolved python), JavaScript on the resolved node with `NODE_PATH` = the env's node_modules for CommonJS
   and a trusted read-only Node loader resolving ESM bare imports from the same pinned env, shell with
-  /bin/bash. Args: up to 64 strings. Timeout ≤ 300 s, output cut to its last 64 KiB, 30 calls a round. It runs under the
+  /bin/bash. Args: up to 64 strings. Timeout ≤ 300 s, output cut to its last 64 KiB, 30 calls a round, shared across provider hot swaps. It runs under the
   round profile with the round's own cwd and writes (nothing more); the copy, the env, the runtimes' installs and Studio's
   tools are read and executed but **write-denied** (`roundProfile` `readOnly`). PATH starts with shims for npm, npx, pnpm,
   yarn, pip, pip3, uv, brew, gem … that fail with Studio's reason ("dependencies come from the lockfiles … nothing is
