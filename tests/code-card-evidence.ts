@@ -31,4 +31,6 @@ const crossNode=[...entries,{...entries[7],seq:12,verdict:'fail'},{...entries[7]
 ok(projectCodeEvidence({...input,trusted:{ok:true,entries:crossNode}}).state==='fail','unrelated node pass cannot mask the issued check identity failure');
 ok(projectCodeEvidence({...input,trusted:{ok:true,entries:[...entries,{...entries[7],seq:14,head:null}]}}).state==='missing','latest same-identity unbound check cannot reuse old green execution');
 ok(projectCodeEvidence({...input,trusted:{ok:true,entries:[...crossNode,{...entries[7],seq:15,edge:'unrelated-edge',verdict:'pass'}]}}).state==='fail','unrelated edge pass cannot cover the issued node failure');
+const ambiguousIssue=snapshotCodeEvidence({head,base},crossNode);
+ok(projectCodeEvidence({...input,offered:ambiguousIssue,trusted:{ok:true,entries:crossNode}}).state==='missing','pre-issuance cross-node ambiguity cannot select an unrelated green source');
 end();

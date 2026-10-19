@@ -6,13 +6,17 @@ type CheckIdentity={check:string;node:string;edge:string|null};
 export type CodeEvidenceOffer=Subject & {version:1;requiredEvidence:RequiredCodeEvidence[];identities:CheckIdentity[]};
 type Input={run:string;offered:Subject & Partial<CodeEvidenceOffer>;current:Subject;trusted:{ok:boolean;entries:LedgerEntry[]};filePresent:(entry:LedgerEntry,file:string)=>boolean};
 const executionChecks=new Set(['firstmate/ci','firstmate/fail-first']);
-const latest=(entries:LedgerEntry[],check:string)=>entries.filter(e=>e.check===check).at(-1);
 /** Only the issuer supplies mandatory evidence. Optional media and unrecorded provenance are never mandatory. */
 export function snapshotCodeEvidence(subject:Subject,entries:LedgerEntry[]):CodeEvidenceOffer {
   const requiredEvidence:RequiredCodeEvidence[]=[];
-  for(const check of executionChecks){const e=latest(entries,check);if(e?.head===subject.head&&e.head&&e.data?.status!=='not-run'&&e.evidence?.length)
+  const source=(check:string)=>{
+    const candidates=entries.filter(e=>e.check===check&&e.head===subject.head);
+    if(new Set(candidates.map(e=>JSON.stringify([e.node,e.edge??null]))).size!==1)return undefined;
+    return [...candidates].sort((a,b)=>(a.round??0)-(b.round??0)||(a.attempt??0)-(b.attempt??0)||a.seq-b.seq).at(-1);
+  };
+  for(const check of executionChecks){const e=source(check);if(e?.head&&e.data?.status!=='not-run'&&e.evidence?.length)
     requiredEvidence.push({seq:e.seq,check:e.check,head:e.head,files:[...e.evidence]});}
-  const identities=[...CODE_GATES.map(name=>`firstmate/gate-${name}`),...executionChecks,'firstmate/ui-captures'].flatMap(check=>{const e=latest(entries,check);return e?[{check,node:e.node,edge:e.edge??null}]:[];});
+  const identities=[...CODE_GATES.map(name=>`firstmate/gate-${name}`),...executionChecks,'firstmate/ui-captures'].flatMap(check=>{const e=source(check);return e?[{check,node:e.node,edge:e.edge??null}]:[];});
   return {...subject,version:1,requiredEvidence,identities};
 }
 /** Pure projection. Callers authenticate the ledger and supply path-contained file availability; no model output is consumed. */
