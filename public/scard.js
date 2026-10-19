@@ -238,7 +238,36 @@ function mountCard(el, card, opts = {}) {
   const LL = (l) => (zh() && l && l.untranslated ? [l.en, h("span", { class: "cc-untr", "data-untranslated": "" }, T("untranslated", "未翻譯"))] : L(l));
   const sec = (key, title, ...kids) => h("section", { class: "cc-sec", "data-sec": key }, h("h4", {}, title), ...kids);
 
+  function codeEvidenceView(d,c) {
+    const e=d.codeEvidence;
+    const state={success:T("Required merge conditions met","已達目前合併條件"),fail:T("Verification failed","驗證失敗"),missing:T("Required evidence missing","缺少必要證據"),stale:T("This approval target is outdated","這個核准版本已過期")}[e.state];
+    const status=x=>({recorded:T("Execution receipt recorded","有實跑紀錄"),"not-run":T("Not run · allowed by policy","未執行・目前政策允許"),"not-applicable":T("Not applicable","不適用"),unknown:T("Execution unknown","無法確認是否執行")}[x]||x);
+    const refs=e.execution.flatMap(x=>x.files||[]);
+    return [sec("human-question",T("Does this exact change do what you intended?","這個版本的改動，符合你要的行為嗎？"),
+      h("p",{class:"cc-quote","data-intent-text":""},d.intent.en),
+      h("p",{"data-code-evidence-state":e.state},h("span",{class:`cc-chip ${e.state==="success"?"ok":"bad"}`},state)),
+      h("p",{class:"cc-count"},T("Checks support your decision; they do not prove every intended behavior.","檢查協助你判斷，並不代表每個需求都已被證明。")),
+      h("details",{},h("summary",{},T("Approval target and receipt identity","核准版本與紀錄來源")),h("pre",{class:"cc-pre"},JSON.stringify({offered:e.offered,current:e.current,reasons:e.reasons},null,2)))),
+      sec("actual-change",T("Read the actual change","直接看改了什麼"),
+        d.walk.length?d.walk.map(w=>h("details",{class:"cc-walk","data-walk":w.id,open:true},h("summary",{class:"cc-mono"},`${w.file}:${w.start}`),h("div",{class:"cc-diff"},w.lines.map(l=>h("div",{class:l[0]==="+"?"a":l[0]==="-"?"d":""},l))))):h("p",{},T("No diff was recorded; inspect the repository before accepting.","沒有保留 diff；驗收前請檢查儲存庫。")),
+        (e.media||[]).length?h("div",{class:"cc-imgs"},e.media.map(p=>h("figure",{},h("figcaption",{},p.label," · ",T("Pinned capture receipt; file bytes have no digest","已釘選截圖紀錄；檔案內容沒有 digest")),h("img",{src:p.before,alt:T("Before","改動前"),loading:"lazy"}),h("img",{src:p.after,alt:T("After","改動後"),loading:"lazy"})))):h("p",{class:"cc-count"},T("No screenshots bound to both base and head. Use the linked app to inspect behavior.","沒有同時釘選 base 與 head 的截圖；請開啟連結中的 app 檢查行為。")),linksView(c)),
+      sec("execution",T("What actually ran?","實際跑了什麼？"),e.execution.map(x=>h("details",{"data-code-execution":x.check,open:x.verdict!=="pass"},
+        h("summary",{},h("span",{class:`cc-chip ${x.verdict==="pass"?"ok":"warn"}`},status(x.status))," ",x.check),
+        h("p",{},x.reason||T("No applicability reason recorded.","沒有保留適用性說明。")),
+        h("pre",{class:"cc-pre"},JSON.stringify({seq:x.seq,head:x.head,verdict:x.verdict,command:x.command,shards:x.shards},null,2)),
+        (x.files||[]).map(f=>f.present?h("a",{href:f.href,target:"_blank",rel:"noopener","data-evidence":f.file},f.file):h("p",{class:"cc-chip bad"},T(`Missing: ${f.file}`,`檔案遺失：${f.file}`))))),
+      sec("review-gaps",T("What still needs your judgment?","還有哪些要你判斷？"),
+        h("p",{},T("Review and design verdicts are agent judgments. Original file bytes lack producer digests; sandbox and service provenance are unknown here. No recording.","Review 與設計結論是 agent 的判斷。檔案原始內容沒有產出時的 digest；這裡也無法確認歷史 sandbox 與服務來源。沒有錄影。")),
+        e.legacy?h("p",{},T("Legacy card: evidence labels do not add a new approval restriction.","舊版卡片：證據標示不會新增核准限制。")):null,
+        d.remoteTarget?h("details",{},h("summary",{},T("Exact remote merge target","遠端合併的確切目標")),h("pre",{class:"cc-pre"},JSON.stringify(d.remoteTarget,null,2))):null,
+        d.door?h("details",{},h("summary",{},T("Door and rollback","門與回滾")),h("p",{},d.door.kind),h("p",{},LL(d.door.reason)),h("p",{},LL(d.door.rollback))):null,
+        d.review?h("details",{},h("summary",{},T("Reviewer judgments and coverage gaps","Reviewer 判斷與未涵蓋範圍")),h("pre",{class:"cc-pre"},JSON.stringify({verdicts:d.review.verdicts,mode:d.review.mode,notes:d.review.notes},null,2)),d.review.followups.map(x=>h("p",{},LL(x)))):null,
+        d.design?h("details",{},h("summary",{},T("Design judgment and findings","設計判斷與 findings")),h("pre",{class:"cc-pre"},JSON.stringify(d.design,null,2))):null,
+        h("details",{},h("summary",{},T("Seven existing policy gates","七項既有政策 gate")),e.gates.map(g=>h("p",{},`${g.name}: ${g.verdict} · #${g.seq??"?"}`))),
+        h("details",{},h("summary",{},T("Reported explanation · inspect against the diff","回報的說明・請與 diff 對照")),d.how.map(x=>h("p",{},LL(x))))))];
+  }
   function detailView(d, c) {
+    if(d.codeEvidence?.version===1)return codeEvidenceView(d,c);
     const out = [];
     if(d.remoteTarget){const r=d.remoteTarget;out.push(sec("remote-target",T("Remote merge target","遠端合併目標"),
       h("dl",{class:"cc-kv"},...[["repository",T("Repository / PR","儲存庫 / PR"),`${r.repository} #${r.pr}`],["branch",T("Branch","分支"),r.branch],["head",T("Exact head","確切版本"),r.head],["base",T("Base branch","目標分支"),r.base],["base-head",T("Verified base head","已驗證的目標版本"),r.baseHead],["method",T("Merge method","合併方式"),r.method],["grant",T("Authorization fingerprint","授權指紋"),r.grant]].flatMap(([key,label,value])=>[h("dt",{},label),h("dd",{class:"cc-mono","data-remote-target":key},value)])),
@@ -562,7 +591,7 @@ function mountCard(el, card, opts = {}) {
     const noteOf = (o) => String(((o.note || o.select?.length) && st.notes[o.id]) || st.note || "").trim();
     // why option o cannot be sent yet, and the field the captain fills to fix it (null when it can be sent)
     const lack = (o) => { const why = (text, field) => ({ text, field }); if (!expectsInterview && (o.note || o.select?.length) && !noteOf(o)) return why(T(`${o.label}: ${o.noteLabel || (o.select?.length ? "pick one first" : "write it first")}`, `${o.labelZh || o.label}：${o.noteLabelZh || o.noteLabel || (o.select?.length ? "請先選一個" : "請先寫下來")}`), `[data-note-for="${CSS.escape(o.id)}"],[data-card-pick="${CSS.escape(o.id)}"]`);
-      if (o.hold) return null;if(expectsInterview&&!draft)return why(T("This interview version is unavailable. Reload the card; no answer was submitted.","這個訪談版本無法使用。請重新載入卡片；尚未送出回答。"));if(draft&&form.questions.some(q=>!String(draft.answers[q.key]||" ").trim()))return why(T("Answer every question below", "請回答下方每個問題"),'[data-interview][aria-invalid="true"]'); if (n && st.ticks.size < n && !st.note.trim()) return why(T(`Tick every intent line (${st.ticks.size} of ${n}) or write a note`, `請勾完每一條意圖（${st.ticks.size}/${n}），或寫備註`), "[data-intent-tick]:not(:checked)");
+      if (o.hold) return null;if(d?.codeEvidence?.blocked)return why(T("Evidence is missing, failed or stale. Request fresh verification before approval.","證據缺失、失敗或已過期。請重新驗證並取得新卡片再核准。"),"[data-code-evidence-state]");if(expectsInterview&&!draft)return why(T("This interview version is unavailable. Reload the card; no answer was submitted.","這個訪談版本無法使用。請重新載入卡片；尚未送出回答。"));if(draft&&form.questions.some(q=>!String(draft.answers[q.key]||" ").trim()))return why(T("Answer every question below", "請回答下方每個問題"),'[data-interview][aria-invalid="true"]'); if (n && st.ticks.size < n && !st.note.trim()) return why(T(`Tick every intent line (${st.ticks.size} of ${n}) or write a note`, `請勾完每一條意圖（${st.ticks.size}/${n}），或寫備註`), "[data-intent-tick]:not(:checked)");
       // answers on a spec card go with "Adjust the scope": approving the unchanged spec would drop them without a word
       if (o.id === "dispatch" && answeredCount(c)) { const k = answeredCount(c); return why(T(`You answered ${k} question${k === 1 ? "" : "s"}: press "Adjust the scope" so the spec takes your answers, or clear the answers and then approve.`, `你回答了 ${k} 題：按「調整範圍」讓規格帶入回答；或清除回答後再核准`), null); }
       if (one && !st.confirm) return why(T("Confirm the door first", "請先確認門"), "[data-confirm-door]");

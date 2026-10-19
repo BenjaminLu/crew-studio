@@ -1,3 +1,4 @@
+import { projectCodeEvidence, snapshotCodeEvidence } from "./code-card-evidence";
 import {OperatingRules,jobInstructions} from "../operating-rules";
 import {selectTestCommand,packageTestCommand,prepareTestBase,testEnvironment,testRunner,selectionEnv,ranNoTests,testTail,needsOutsideSandbox,treeState} from "../test-command";
 import {localUnrestricted} from "../local-execution";
@@ -164,8 +165,32 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   seams?: { afterBuildExit?: (rawDir: string, side: "before" | "after") => void | Promise<void> } }) {
   installCodeQueue(engine);
   const priorCardView = engine.cards.view;
-  engine.cards.view = card => codeHandoffView(priorCardView(card));
+  const evidenceFor = (card: any) => {
+    const run = engine.get(card.run), detail = card.detail;
+    if (card.kind !== "merge" || !detail || !run) return null;
+    const trusted = engine.trusted(card.run);
+    const receipt=trusted.entries.filter(e=>e.record==="code-card-evidence-offer"&&e.data?.card===card.id).at(-1);
+    const offer=receipt?.data?.offer ?? detail.codeEvidenceOffer;
+    const authenticated=detail.codeEvidenceOffer&&!receipt?{...trusted,ok:false}:trusted;
+    return projectCodeEvidence({run:card.run,offered:offer ?? {head:detail.head,base:detail.base},
+      current:{head:run.ctx.pr?.head ?? run.ctx.head ?? null,base:run.ctx.baseCommit ?? null},trusted:authenticated,
+      filePresent:(entry,file)=>{try{if(!entry.dir||!entry.evidence.includes(file))return false;const root=realpathSync(entry.dir),f=normalize(join(root,file));return f.startsWith(root+"/")&&realpathSync(f).startsWith(root+"/")&&statSync(f).isFile();}catch{return false;}}});
+  };
+  engine.cards.view = card => {
+    const viewed=codeHandoffView(priorCardView(card)), evidence=evidenceFor(viewed);
+    return evidence ? {...viewed,detail:{...viewed.detail!,codeEvidence:evidence}} : viewed;
+  };
+  const evidenceAnswerGuard=engine.deps.authorizeAnswer;
+  engine.deps.authorizeAnswer=(run,card,answer)=>{
+    evidenceAnswerGuard?.(run,card,answer);
+    const option=card.options.find((o:any)=>o.id===answer.choice);
+    if(option&&!option.hold&&evidenceFor(card)?.blocked)throw new Error("Merge evidence is unavailable or stale; rerun verification and request a fresh card");
+  };
   engine.beforeNodeChecks ??= {}; engine.cardPrepared ??= {}; engine.beforeStart ??= {}; engine.externalHandlers ??= {}; engine.externalValidators ??= {};
+  engine.cardPrepared["code-evidence-offer"]=(x,card)=>{
+    if(card.kind!=="merge"||!card.detail?.codeEvidenceOffer)return;
+    engine.record(x,"code-card-evidence-offer",{head:card.detail.codeEvidenceOffer.head,data:{card:card.id,offer:card.detail.codeEvidenceOffer}} as any);
+  };
   // A worker asking the captain for scope/door authority has not completed a build.
   // Preserve the escalation; do not fabricate passing check entries or enter CI.
   engine.beforeNodeChecks["worker-escalation"] = (x, result) => {
@@ -547,7 +572,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     for (const f of (c.refusedFiles ?? []).slice(0, 5)) findings.push({ locator: { type: "file", path: ".crew/app.json" }, message: `the app build's output was refused: ${f}`, expected: "the build writes regular files only", class: "app-output-refused", severity: "minor" });
     if (!c.rendered) findings.push({ locator: { type: "file", path: ".crew/app.json" }, message: "the pages were built but not shot: the headless browser is not installed (Doctor → Headless browser); the card shows the text that changed", expected: "a before / after picture of each page", class: "renderer-missing", severity: "minor" });
     return { verdict: findings.length ? "warn" : "pass", score: findings.length ? 0.5 : 1, findings,
-      data: { captures: c.pages.map((p) => ({ label: p.label, before: p.before, after: p.after, changed: p.changed })), app: c.app, rendered: c.rendered, head: c.head, refusedFiles: c.refusedFiles ?? [], refusedRequests: c.refusedRequests ?? [], frames: c.frames ?? [] } } as any;
+      data: { captures: c.pages.map((p) => ({ label: p.label, before: p.before, after: p.after, changed: p.changed })), app: c.app, rendered: c.rendered, base: x.ctx.baseCommit, head: c.head, refusedFiles: c.refusedFiles ?? [], refusedRequests: c.refusedRequests ?? [], frames: c.frames ?? [] } } as any;
   };
   /** the changed paths that are UI as the repository classifies them: the policy's ui_paths, plus the paths its app declares */
   const uiPathsOf = (x: X, wt: string): string[] => { const globs = [...((x.policy("ui_paths") ?? []) as string[]), ...(appCfg(wt)?.paths ?? [])];
@@ -1868,7 +1893,7 @@ ${said}`, options: rescopeOpts }; }
   async function mergeCardDetail(x: X, stat: string) {
     const wt = x.ctx.worktree; const diff = wt && existsSync(wt) ? git(wt, ["diff", "-U3", `${x.ctx.baseCommit}..HEAD`]).out : "";
     const jobs = Object.values(x.run.nodes).flatMap((n: any) => n?.data?.jobs ?? []); const usd = jobs.reduce((a: number, j: any) => a + (Number(j?.cost?.usd) || 0), 0);
-    const input: MergeInput = { run: x.run.id, intent: x.run.text, spec: x.ctx.spec, ctx: x.ctx, ledger: engine.ledger(x.run.id), doneMap: engine.doneLines(x.run), diff, stat,
+    const input: MergeInput = { run: x.run.id, intent: x.run.text, spec: x.ctx.spec, ctx: x.ctx, ledger: engine.trusted(x.run.id).entries, doneMap: engine.doneLines(x.run), diff, stat,
       cost: { usd: jobs.some((j: any) => j?.cost?.usd != null) ? usd : null, rounds: (x.ctx.rounds ?? []).length, minutes: Math.round((Date.now() - Date.parse(x.run.createdAt)) / 60000) } };
     const fallback = mergeDetail(input);
     let detail: CardDetail = fallback;
@@ -1891,6 +1916,8 @@ ${said}`, options: rescopeOpts }; }
       const { rejected, ...d } = coordinatorDetail(input, got); if (rejected) x.log(`merge card: the coordinator's answer was malformed (${rejected}); zh-TW stays marked untranslated`);
       detail = d;
     } catch (e: any) { x.log(`merge card: the coordinator could not write the detail (${String(e?.message ?? e).slice(0, 200)}); zh-TW stays marked untranslated`); }
+    const trusted=engine.trusted(x.run.id);
+    detail.codeEvidenceOffer=snapshotCodeEvidence({head:x.ctx.pr?.head ?? x.ctx.head ?? null,base:x.ctx.baseCommit ?? null},trusted.entries.filter(e=>e.run===x.run.id));
     return detail;
   }
   return { adapter };
