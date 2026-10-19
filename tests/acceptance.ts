@@ -25,15 +25,6 @@ import { drive, verify, type Expect } from "./acceptance/drive";
 import { stubRuns, stubDecision, verdictOf, type StubRun } from "./acceptance/stub";
 import { STEPS, approveStaffing, type Ctx } from "./acceptance/steps";
 import { fileOrgNegativeControls, prove, RENDERER_PROVES } from "./acceptance/proves";
-import { Ledger } from "../src/runtime/checks";
-
-function wordingProblems(s: Studio, task: string): string[] {
-  const ledger = new Ledger(s.data, task).authenticatedPrefix();
-  if (ledger.bad.length || ledger.malformed) return ["wording check evidence does not authenticate"];
-  return ledger.prefix.filter(e => e.check === "core/ste-wording" && e.verdict !== "pass")
-    .map(e => `wording ${e.verdict} at ${e.node} #${e.seq}: ${(e.findings ?? []).map(f => f.message).join("; ")}`);
-}
-
 const t0 = Date.now(), problems: string[] = [];
 // what the runtime seeds (workflows/v2 and packs/ *.wf.yaml, retired ones included), and the packs' legacy v1 flow files
 const files = [...bundledList("workflows/v2/"), ...bundledList("packs/")].filter((f) => f.endsWith(".wf.yaml") || (f.startsWith("packs/") && f.endsWith(".flow.yaml")));
@@ -134,15 +125,13 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
     else {
       // the captain approves Firstmate's proposal on its dispatch card; the launched child is the Task under test
       const pd = await drive(s, own.id, async (c) => c.node === "dispatch" ? { choice: "approve" } : { stop: "only the proposal's dispatch card is answered here" }, { timeoutMs: 60_000 });
-      const pbad = [...await verify(s, pd, { status: "succeeded", visited: ["dispatch", "launch", "done"] }), ...wordingProblems(s, own.id)]; if (pbad.length) return { failures: [...failures, ...pbad.map((x) => `proposal ${own.id}: ${x}`)], task: own.id };
+      const pbad = await verify(s, pd, { status: "succeeded", visited: ["dispatch", "launch", "done"] }); if (pbad.length) return { failures: [...failures, ...pbad.map((x) => `proposal ${own.id}: ${x}`)], task: own.id };
       task = pd.view.ctx?.childRun; if (!task) return { failures: [...failures, `proposal ${own.id} launched no Task`], task: own.id };
     }
   }
   const exp = expectFor(r);
   const d = await drive(s, task, decide, { timeoutMs: r.timeout_s * 1000, until: exp.status === "waiting" ? (v) => (v.cards ?? []).some((c: any) => c.status === "open" && c.node === exp.waitingOn) : undefined });
   failures.push(...await verify(s, d, exp));
-  // A successful terminal cannot hide failed card wording checks behind a nonblocking policy.
-  failures.push(...wordingProblems(s, task));
   if ((["crew", "grant-merge"].includes(r.how) || r.workflow === "file-organization") && defHash(d.view?.def) !== r.shared.pin.sha256) failures.push("the approval Task definition differs from the reviewed scenario pin");
   // the real side effects: a proof that needs the real renderer only where the renderer is real (the e2e profile)
   for (const p of r.proves) if (SANDBOXED_E2E || !RENDERER_PROVES.includes(p)) {

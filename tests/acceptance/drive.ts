@@ -1,5 +1,6 @@
 // Drive one Task to its end the way the captain does on the board, and check what it left behind.
 import { TERMINAL, type Studio } from "./studio";
+import { Ledger, type LedgerEntry } from "../../src/runtime/checks";
 
 export type Choice = { choice: string; note?: string | null };
 /** What the captain does with one open card: answer it, or stop (the card was not scripted). */
@@ -70,9 +71,28 @@ export function where(v: any): string {
   return `status ${v.status}${v.error ? `: ${String(v.error).slice(0, 400)}` : ""}${live.length ? `; at ${live.join(", ")}` : ""}`;
 }
 
+/** Every presented card needs its own authenticated wording result, not an unrelated passing check. */
+export function cardWordingProblems(v: any, entries: LedgerEntry[]): string[] {
+  const cards = (v.cards ?? []).filter((c: any) => !c.decidedBy);
+  const out = entries.filter(e => e.check === "core/ste-wording" && e.verdict !== "pass")
+    .map(e => `wording ${e.verdict} at ${e.node} #${e.seq}: ${(e.findings ?? []).map(f => f.message).join("; ")}`);
+  if (cards.length && !(v.def?.card_checks ?? ["core/ste-wording"]).includes("core/ste-wording")) out.push("wording policy unexpectedly disables core/ste-wording");
+  for (const c of cards) {
+    if (c.ste?.verdict !== "pass" || !Number.isInteger(c.ste?.seq)) { out.push(`card ${c.id} has no passing wording check state`); continue; }
+    const receipt = entries.find(e => e.seq === c.ste.seq && e.run === v.id && e.run === c.run && e.node === c.node && e.round === c.visit && e.edge === `card:${c.id}` && e.check === "core/ste-wording" && e.verdict === "pass");
+    if (!receipt) out.push(`card ${c.id} has no matching authenticated passing wording receipt`);
+  }
+  return out;
+}
+
 /** Everything the Task left behind, against what the scenario expects. */
 export async function verify(s: Studio, d: Drive, e: Expect): Promise<string[]> {
   const v = d.view, out = [...d.problems]; if (!v) return out.length ? out : ["no Task view"];
+  if ((v.cards ?? []).some((c: any) => !c.decidedBy)) {
+    const auth = new Ledger(s.data, v.id).authenticatedPrefix();
+    if (auth.bad.length || auth.malformed) out.push("wording check evidence does not authenticate");
+    else out.push(...cardWordingProblems(v, auth.prefix));
+  }
   if (e.status !== "waiting" && v.status !== e.status) out.push(`status ${v.status}, expected ${e.status} (${where(v)})`);
   if (e.waitingOn && TERMINAL.includes(v.status)) out.push(`ended ${v.status} instead of waiting on ${e.waitingOn} (${where(v)})`);
   else if (e.waitingOn && !(v.cards ?? []).some((c: any) => c.status === "open" && c.node === e.waitingOn)) out.push(`not waiting on a card at ${e.waitingOn} (${where(v)})`);
