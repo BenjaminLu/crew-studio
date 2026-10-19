@@ -11,9 +11,9 @@
 | Workflow | Class | Existing YAML paths/scenarios (coverage declarations) | This batch |
 |---|---|---|---|
 | code-firstmate | public | dispatch wait; local merge; blocked/park; question/answer; two simulated GitHub merge paths | NOT RUN |
-| documents | public | approve; changes then approve; Claude adapter | NOT RUN |
+| documents | public | approve; changes then approve; Claude adapter | PASSED API / STUB VENDOR twice: revised path only; other paths NOT RUN |
 | web-prototype | public | approve A; real interaction smoke; reject | NOT RUN |
-| images | public | approve; changes then approve | NOT RUN |
+| images | public | approve; changes then approve | PASSED API / STUB VENDOR twice: revised path only; other paths NOT RUN |
 | video | public | approve | NOT RUN |
 | file-organization | public | board/sample folder; Firstmate apply/discard; batch 3 checks actual apply/discard effects | PASSED API / LOCAL EFFECTS twice (target paths) |
 | coffee-kit | public | board; unavailable-film handling; sandboxed-e2e film approval | NOT RUN |
@@ -109,3 +109,20 @@ Independent review rejected the initial batch because the negative controls were
 Mutation verification: temporarily disabling the test-only byte comparison made the registered board scenario fail with `negative control mutated bytes`; disabling the undo-source match made it fail with `negative control mismatched undo`. Logs: `/private/tmp/watchbill-fileorg-weakened-bytes.log`, `/private/tmp/watchbill-fileorg-weakened-undo.log`. Both verifier edits were restored before final runs; production was never changed.
 
 Corrected final two fresh runs: **2/0/0 skipped** for board/discard and **4/0/0 skipped** for all existing fileorg scenarios, in `/private/tmp/watchbill-fileorg-persistent-final1.log` and `...final2.log`. Retained roots `crew-acceptance-sandbox-KrCytW` and `crew-acceptance-sandbox-5rK8zB`. These runs include the committed negative controls. The previous 121/0 related-suite result remains valid; that broader suite was not rerun for this test-helper-only correction. Same-reviewer recheck is required.
+
+
+## Batch 4: exact Library version validation
+
+Parent: `7b1fea1f` (fileorg corrected batch, independently approved by the same reviewer). Fixes only the acceptance verifier: an artifact existing with approved v1 must not satisfy a Task referencing absent v2. The missing-version diagnostic names the referenced artifact/version. This is a demonstrated test false pass, not a claim of production data loss. No runtime, Library storage or artifact production code changes.
+
+Committed `tests/acceptance-drive.ts` starts with isolated-env and uses deterministic response objects through the existing `verify()` interface. Six cases cover absent exact v2 despite approved v1, empty versions, referenced draft despite another approval, exact approved v1, exact approved v2 despite draft v1, and absent artifact. Registered first in `test:acceptance`; the real CI command expander confirms registration in both core and full modes. The new regression first failed against the original checker (`missing v2 ... []`), `/private/tmp/watchbill-library-red.log`; after the bounded fix it passes **6/0**, `/private/tmp/watchbill-library-green.log`.
+
+Actual repeated workflow command, two separate processes/fresh stores:
+
+```sh
+ACCEPTANCE_ONLY=documents:changes-then-approve,images:changes-then-approve ACCEPTANCE_KEEP=1 bun scripts/acceptance-sandboxed.ts --e2e
+```
+
+Both runs: **2 pass, 0 known-fail, 0 fail, 0 skipped**. Logs `/private/tmp/watchbill-library-e2e1.log`, `...e2e2.log`; roots `crew-acceptance-sandbox-pVFteD` and `crew-acceptance-sandbox-IzuLeT`. Each run's documents `R-001` and images `R-002` reached succeeded with the exact referenced artifact **v2 approved**. A separate retained-output audit verified every manifest file SHA-256 via ArtifactStore.verify, equality of the approved reference digest and manifest digest, and the exact Library version/status (`/private/tmp/watchbill-library-artifacts.log`, adjacent `.ts` audit script). Documents primary SHA-256: `a1247cb28ee25c35b1541e0a42b32854c4a70b6a617ca7ccb7a82588ef671d21`; images: `90460de046bfcb72820d463c89cea82d3f0e3c4b7c3427906c184097532f1a68` in both fresh runs.
+
+The artifact audit is supplementary local evidence; the committed CI regression guards the checker false pass. These remain automated/API journeys with stub vendors and actual local effects, not root's personal browser acceptance. Only the recorded revised paths moved out of NOT RUN. Other scenario/denominator gaps, whole-inventory repetition against newer main, skill sandbox and Watchbill work remain separate. Independent review is required before continuing.
