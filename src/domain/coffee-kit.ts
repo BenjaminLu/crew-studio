@@ -183,7 +183,7 @@ export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; 
       const warning=d.video?'':'\n\nFilm rendering is not configured. Continuing creates page/image previews; final website approval stays blocked until a verified film is available.';
       const warningZh=d.video?'':'\n\n尚未設定影片渲染。繼續後可製作網頁與圖片預覽；在取得已驗證的影片前，無法驗收整個網站。';
       const body=`${coffeeDesignSummary(design)}${warning}\n\nModel: ${pick.provider} / ${pick.model}`;
-      const bodyZh=`請檢視與 Firstmate 討論後的完整網站、圖片與影片分鏡計畫；尚未開始製作。\n\n${coffeeDesignSummary(design)}${warningZh}\n\n模型：${pick.provider} / ${pick.model}`;
+      const bodyZh=`請檢視與 Firstmate 討論後的完整網站、圖片與影片分鏡計畫；尚未開始製作。\n\n計畫原文與分鏡列在下方；請逐項確認品牌、網站、圖片、影片與整合安排。${warningZh}\n\n模型：${pick.provider} / ${pick.model}`;
       const card = await engine.card(x,'plan',{captainOnly:true,title:'Confirm your coffee-shop direction',zhTitle:'確認咖啡店的創作方向',en:{why:body,how:'Confirm the direction to begin bounded preview creation.'},zh:{why:bodyZh,how:'確認方向後，才會開始製作預覽。'},body,options:[{id:'confirm',label:'Create previews',labelZh:'開始製作預覽',primary:true},{id:'close',label:'Close',labelZh:'關閉',hold:true}]});
       requireOwner(x); if(!engine.record(x,'coffee-direction-offer-v1',{data:{version:1,card:card.id,visit:x.visit,presentation:presentationHash(card),direction}}))throw new Error('Direction offer was not persisted'); x.rn.data.coffeeDirection = direction; x.rn.data.coffeeCard = card.id; x.save();
       return {wait:true};

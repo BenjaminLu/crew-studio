@@ -194,7 +194,7 @@ export function mergeDetail(i: MergeInput, co: Coordinator | null = null): CardD
   return {
     intent: loc(String(i.intent ?? "").split("\n")[0], co?.intents ? co.intents.join(" ") : null),
     intents: intents.map((t, k) => loc(t, co?.intents?.[k])),
-    why: (spec.why ?? []).map((w: string, k: number) => loc(w, co?.why?.[k])),
+    why: (spec.why ?? []).map((w: string, k: number) => loc(w, co?.why?.[k] ?? spec.zh?.why?.[k])),
     how: lastReport ? [loc(lastReport, co?.how)] : [],
     scope: { in: spec.scope ?? [], out: spec.out_of_scope ?? spec.scopeOut ?? [] },
     done: doneOut,

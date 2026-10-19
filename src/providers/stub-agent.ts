@@ -22,7 +22,7 @@ export async function* stubAgent(text: string, call: Call, say: Say): AsyncGener
   const done = async function* (s: string): AsyncGenerator<NEvent | "interrupted"> { if (!(yield* say(s))) yield "interrupted"; };
   // Native genesis offline fixture: actual agent tools, artifacts and executable checks.
   if (text.startsWith("NATIVE PACK INTERVIEW")) {
-    const rows = [["inputs", "What inputs will the workflow receive?", "流程會收到哪些輸入？"], ["outputs", "What outputs should it create?", "應產生哪些輸出？"], ["tools", "Which tools are available?", "有哪些可用工具？"], ["quality", "What makes the result good?", "怎樣的結果算好？"], ["dealbreakers", "Which faults must be rejected?", "哪些缺失一定要拒絕？"], ["signoff", "Who gives final acceptance?", "誰做最後核准？"]];
+    const rows = [["inputs", "Which inputs does the workflow receive?", "流程會收到哪些輸入？"], ["outputs", "Which outputs does it create?", "應產生哪些輸出？"], ["tools", "Which tools are available?", "有哪些可用工具？"], ["quality", "What makes the result good?", "怎樣的結果算好？"], ["dealbreakers", "Which faults must be rejected?", "哪些缺失一定要拒絕？"], ["signoff", "Who gives final acceptance?", "誰做最後核准？"]];
     yield* call("interview_batch", { questions: rows.map(([key, en, zh]) => ({ key, en, zh })) }); yield* done("All interview questions are in one batch."); return;
   }
   if (text.startsWith("NATIVE PACK SAMPLES")) {
