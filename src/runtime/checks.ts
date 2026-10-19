@@ -349,7 +349,9 @@ ${o.localBinding ? LOCAL_BINDING_RULES + "\n" + closedPortRules(ports) : ""}
  * Studio's egress proxy (and Studio's own tool route); never Studio's data or the
  * user's other secret folders.
  */
-export function roundProfile(o: { cwd: string; tmp: string; writes: string[]; reads: string[]; proxyPort: number; toolPort: number; dataDir?: string | null; protect?: string[] }) {
+export function roundProfile(o: { cwd: string; tmp: string; writes: string[]; reads: string[]; proxyPort: number; toolPort: number; dataDir?: string | null; protect?: string[];
+  /** folders the round reads and executes but never writes (a skill's round copy, its prepared env, Studio's runtimes and tools), even inside Studio's data */
+  readOnly?: string[] }) {
   // Studio's data folder is closed to the round, its file metadata included, except what the runtime materialized for it
   // (its worktree, its tmp, its throwaway home); a protected root (firstmate's checkout) is closed entirely; the user's
   // secret folders are denied last, the login keychain among them
@@ -357,9 +359,10 @@ export function roundProfile(o: { cwd: string; tmp: string; writes: string[]; re
   const data = o.dataDir ? R(o.dataDir) : null;
   const protect = (o.protect ?? []).map(R);
   const writes = [...o.writes.map(R), R(o.tmp)];
-  const reads = [...SYSTEM_READ, ...interpreterDirs(), ...o.reads, ...o.writes, o.cwd].map(R);
+  const readOnly = (o.readOnly ?? []).map(R);
+  const reads = [...SYSTEM_READ, ...interpreterDirs(), ...o.reads, ...o.writes, o.cwd, ...readOnly].map(R);
   const opened = [...writes, R(o.cwd)];
-  const ancestors = new Set<string>(); for (const p of opened) { let d = p; while (d && d !== "/") { d = dirname(d); ancestors.add(d); } }
+  const ancestors = new Set<string>(); for (const p of [...opened, ...readOnly]) { let d = p; while (d && d !== "/") { d = dirname(d); ancestors.add(d); } }
   const deny = denyList(o.dataDir).map(R); // the login keychain included: a round never reaches it (v1 option A)
   // a worktree's .git (a file naming its git folder) is never the round's: Studio's own git reads it outside the sandbox
   const gitLinks = o.writes.map((p) => join(R(p), ".git"));
@@ -384,11 +387,12 @@ ${SYSCTL_READ}
 (allow mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc") (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.trustd.agent"))
 (deny appleevent-send)
 ${data ? `(deny file-read* file-read-metadata file-write* (subpath ${q(data)}))
-(allow file-read* file-read-metadata ${sub(opened)})
+(allow file-read* file-read-metadata ${sub(opened)})${readOnly.length ? `\n(allow file-read* file-read-metadata ${sub(readOnly)})` : ""}
 (allow file-write* ${sub(writes)})
 (allow file-read-metadata ${lit([...ancestors].filter((p) => p === data || p.startsWith(data + "/")))})` : ""}
 ${protect.length ? `(deny file-read* file-read-metadata file-write* ${sub(protect)})` : ""}
 (deny file-write* ${lit(gitLinks)} ${gitLinks.map((g) => `(subpath ${q(g)})`).join(" ")})
+${readOnly.length ? `(deny file-write* ${sub(readOnly)})` : ""}
 ${deny.length ? `(deny file-read* file-write* ${sub(deny)})` : ""}
 `;
 }
@@ -478,17 +482,21 @@ export async function sandboxed(argv: string[], o: { cwd: string; out: string; t
  * whatever a round's tree executes).
  */
 export async function roundExec(argv: string[], o: { cwd: string; writes: string[]; tmp: string; dataDir?: string | null; protect?: string[]; timeoutS: number;
-  egress?: { port: number; open(t: string, h: string[]): void; close(t: string): void } | null; hosts?: string[]; env?: Record<string, string> }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; refused?: string }> {
+  egress?: { port: number; open(t: string, h: string[], meta?: any): void; close(t: string): void } | null; hosts?: string[]; env?: Record<string, string>;
+  /** more folders to read, and folders to read and execute but never write (src/skillpkg: a skill's copy, its env, Studio's runtimes and tools) */
+  reads?: string[]; readOnly?: string[];
+  /** what the credential is for (a skill_run call, a prepare): the proxy logs it, a strict one reaches names only and no private address */
+  egressMeta?: Record<string, unknown>; signal?: AbortSignal; stdoutCap?: number }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; refused?: string }> {
   const info = sandboxInfo(); if (!info.ok && !localUnrestricted()) return { code: null, stdout: "", stderr: "", timedOut: false, refused: info.detail };
   mkdirSync(join(o.tmp, "home"), { recursive: true }); const tmp = realpathSync(o.tmp);
   const net = !localUnrestricted() && !!o.egress && !!o.hosts?.length;
-  const lease = net ? await openScopedProxy(o.egress!, o.hosts!) : null;
+  const lease = net ? await openScopedProxy(o.egress!, o.hosts!, o.egressMeta) : null;
   try {
   const proxy = lease?.url ?? null;
   const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: join(tmp, "home"), TMPDIR: tmp, LANG: "C.UTF-8", CI: "1", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null",
     ...(proxy ? { HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy, NO_PROXY: "localhost,127.0.0.1,::1", NODE_USE_ENV_PROXY: "1" } : {}), ...(o.env ?? {}) };
   const prof = join(tmp, "round.sb");
-  writeFileSync(prof, roundProfile({ cwd: o.cwd, tmp, writes: o.writes, reads: [o.cwd, ...(argv[0]?.startsWith("/") ? [dirname(argv[0])] : [])], proxyPort: lease?.port ?? 1, toolPort: 1, dataDir: o.dataDir ?? null, protect: o.protect ?? [] }));
+  writeFileSync(prof, roundProfile({ cwd: o.cwd, tmp, writes: o.writes, reads: [o.cwd, ...(argv[0]?.startsWith("/") ? [dirname(argv[0])] : []), ...(o.reads ?? [])], readOnly: o.readOnly ?? [], proxyPort: lease?.port ?? 1, toolPort: 1, dataDir: o.dataDir ?? null, protect: o.protect ?? [] }));
     return await new Promise((resolveP) => {
       let stdout = "", stderr = "", done = false, timedOut = false;
       const full=localUnrestricted()?argv:["/usr/bin/sandbox-exec","-f",prof,...argv];
@@ -496,7 +504,11 @@ export async function roundExec(argv: string[], o: { cwd: string; writes: string
       const p = spawnChild(full[0],full.slice(1), { cwd: o.cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
       const finish = (code: number | null) => { if (done) return; done = true; clearTimeout(timer); try { if (p.pid) process.kill(-p.pid, "SIGKILL"); } catch {} reapMarked(marker); resolveP({ code: timedOut ? null : code, stdout, stderr, timedOut }); };
       const timer = setTimeout(() => { timedOut = true; finish(null); }, o.timeoutS * 1000);
-      p.stdout?.on("data", (d) => { if (stdout.length < 1_000_000) stdout += d; }); p.stderr?.on("data", (d) => { if (stderr.length < 1_000_000) stderr += d; });
+      if (o.signal) { if (o.signal.aborted) setTimeout(() => { timedOut = true; finish(null); }, 0); else o.signal.addEventListener("abort", () => { timedOut = true; finish(null); }, { once: true }); }
+      // stdoutCap: keep the tail (a skill_run's last lines); otherwise the first megabyte, as before
+      const cap = o.stdoutCap;
+      if (cap) { p.stdout?.on("data", (d) => { stdout += d; if (stdout.length > cap * 2) stdout = stdout.slice(-cap); }); p.stderr?.on("data", (d) => { stderr += d; if (stderr.length > cap * 2) stderr = stderr.slice(-cap); }); }
+      else { p.stdout?.on("data", (d) => { if (stdout.length < 1_000_000) stdout += d; }); p.stderr?.on("data", (d) => { if (stderr.length < 1_000_000) stderr += d; }); }
       p.on("error", (e) => { stderr += String(e); finish(127); }); p.on("exit", (code) => { setTimeout(() => finish(code), 50); });
     });
   } finally { lease?.close(); }

@@ -310,22 +310,23 @@ import b306 from "../docs/units/secrets-v1-model.md" with { type: "file" };
 import b307 from "../docs/units/shared-github-poller.md" with { type: "file" };
 import b308 from "../docs/units/shared-media-library.md" with { type: "file" };
 import b309 from "../docs/units/sidebar-workflow-create.md" with { type: "file" };
-import b310 from "../docs/units/spec-scope-bootstrap.md" with { type: "file" };
-import b311 from "../docs/units/startup-firstmate.md" with { type: "file" };
-import b312 from "../docs/units/startup-recursion.md" with { type: "file" };
-import b313 from "../docs/units/takeover-codex.md" with { type: "file" };
-import b314 from "../docs/units/takeover.md" with { type: "file" };
-import b315 from "../docs/units/task-round.md" with { type: "file" };
-import b316 from "../docs/units/transcripts-attempts-followups.md" with { type: "file" };
-import b317 from "../docs/units/transcripts-attempts.md" with { type: "file" };
-import b318 from "../docs/units/transcripts.md" with { type: "file" };
-import b319 from "../docs/units/ui-test-waits.md" with { type: "file" };
-import b320 from "../docs/units/visual-sandbox.md" with { type: "file" };
-import b321 from "../docs/units/web-open-task-reopen.md" with { type: "file" };
-import b322 from "../docs/units/workflow-overview.md" with { type: "file" };
-import b323 from "../docs/units/worktrees.md" with { type: "file" };
-import b324 from "../docs/v2-spec.md" with { type: "file" };
-import b325 from "../docs/w29-local-sandbox.md" with { type: "file" };
+import b310 from "../docs/units/skill-packages.md" with { type: "file" };
+import b311 from "../docs/units/spec-scope-bootstrap.md" with { type: "file" };
+import b312 from "../docs/units/startup-firstmate.md" with { type: "file" };
+import b313 from "../docs/units/startup-recursion.md" with { type: "file" };
+import b314 from "../docs/units/takeover-codex.md" with { type: "file" };
+import b315 from "../docs/units/takeover.md" with { type: "file" };
+import b316 from "../docs/units/task-round.md" with { type: "file" };
+import b317 from "../docs/units/transcripts-attempts-followups.md" with { type: "file" };
+import b318 from "../docs/units/transcripts-attempts.md" with { type: "file" };
+import b319 from "../docs/units/transcripts.md" with { type: "file" };
+import b320 from "../docs/units/ui-test-waits.md" with { type: "file" };
+import b321 from "../docs/units/visual-sandbox.md" with { type: "file" };
+import b322 from "../docs/units/web-open-task-reopen.md" with { type: "file" };
+import b323 from "../docs/units/workflow-overview.md" with { type: "file" };
+import b324 from "../docs/units/worktrees.md" with { type: "file" };
+import b325 from "../docs/v2-spec.md" with { type: "file" };
+import b326 from "../docs/w29-local-sandbox.md" with { type: "file" };
 
 export const BUNDLED: Record<string, string> = {
   "workflows/change.flow.yaml": b0,
@@ -638,20 +639,21 @@ export const BUNDLED: Record<string, string> = {
   "docs/units/shared-github-poller.md": b307,
   "docs/units/shared-media-library.md": b308,
   "docs/units/sidebar-workflow-create.md": b309,
-  "docs/units/spec-scope-bootstrap.md": b310,
-  "docs/units/startup-firstmate.md": b311,
-  "docs/units/startup-recursion.md": b312,
-  "docs/units/takeover-codex.md": b313,
-  "docs/units/takeover.md": b314,
-  "docs/units/task-round.md": b315,
-  "docs/units/transcripts-attempts-followups.md": b316,
-  "docs/units/transcripts-attempts.md": b317,
-  "docs/units/transcripts.md": b318,
-  "docs/units/ui-test-waits.md": b319,
-  "docs/units/visual-sandbox.md": b320,
-  "docs/units/web-open-task-reopen.md": b321,
-  "docs/units/workflow-overview.md": b322,
-  "docs/units/worktrees.md": b323,
-  "docs/v2-spec.md": b324,
-  "docs/w29-local-sandbox.md": b325,
+  "docs/units/skill-packages.md": b310,
+  "docs/units/spec-scope-bootstrap.md": b311,
+  "docs/units/startup-firstmate.md": b312,
+  "docs/units/startup-recursion.md": b313,
+  "docs/units/takeover-codex.md": b314,
+  "docs/units/takeover.md": b315,
+  "docs/units/task-round.md": b316,
+  "docs/units/transcripts-attempts-followups.md": b317,
+  "docs/units/transcripts-attempts.md": b318,
+  "docs/units/transcripts.md": b319,
+  "docs/units/ui-test-waits.md": b320,
+  "docs/units/visual-sandbox.md": b321,
+  "docs/units/web-open-task-reopen.md": b322,
+  "docs/units/workflow-overview.md": b323,
+  "docs/units/worktrees.md": b324,
+  "docs/v2-spec.md": b325,
+  "docs/w29-local-sandbox.md": b326,
 };

@@ -5,11 +5,11 @@ import { randomBytes } from 'node:crypto';
 import { createServer, connect, type Socket } from 'node:net';
 import { BROKER_PORTS } from "./loopback-ports";
 export { BROKER_PORTS } from "./loopback-ports";
-export type ProxyAuthority={port:number;open(t:string,hosts:string[]):void;close(t:string):void};
-export async function openScopedProxy(egress:ProxyAuthority,hosts:string[]) {
+export type ProxyAuthority={port:number;open(t:string,hosts:string[],options?:Record<string,unknown>):void;close(t:string):void};
+export async function openScopedProxy(egress:ProxyAuthority,hosts:string[],options?:Record<string,unknown>) {
   if(!Number.isInteger(egress.port)||egress.port<1)throw new Error('egress upstream is unavailable');
   const token=randomBytes(24).toString('hex'),sockets=new Set<Socket>();let closed=false;
-  egress.open(token,hosts);
+  egress.open(token,hosts,options);
   const server=createServer(client=>{
     if(closed||sockets.size>=64){client.destroy();return;}
     const own=(s:Socket)=>{sockets.add(s);s.once('close',()=>sockets.delete(s));s.on('error',()=>s.destroy());};own(client);
