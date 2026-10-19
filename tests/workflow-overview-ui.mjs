@@ -97,7 +97,11 @@ const nativeNotice=async(v,label)=>{
  let cardId;await pollUI(async()=>{const task=await v.p.evaluate(async id=>(await(await fetch('/api/tasks/'+id)).json()),r.data.id);cardId=task.cards?.find(c=>c.run===r.data.id)?.id;return !!cardId;},'new Task did not raise its card');
  await pollUI(()=>noticeBound(v.p,cardId),'new Task card did not enter the visible cue');return cardId;
 };
-const captures=async(state)=>{for(const source of live){
+// CI invokes both bounded groups; default local invocation still covers every capture state.
+const captureGroup=process.env.OVERVIEW_CAPTURE_GROUP||'all';
+if(!['all','1','2'].includes(captureGroup))throw new Error('OVERVIEW_CAPTURE_GROUP must be all, 1 or 2');
+const captureStates=new Set(captureGroup==='1'?['moved','archived']:captureGroup==='2'?['unarchived','removed']:['moved','archived','unarchived','removed']);
+const captures=async(state)=>{if(!captureStates.has(state))return;for(const source of live){
  // Keep the original 12 documents for SSE assertions; each notice UX capture starts with no old fresh-card queue.
  const ctx=await browser.newContext({viewport:{width:source.width,height:900}}),page=await ctx.newPage();await page.clock.install();await page.goto(base+'/#/board');
  await page.waitForFunction(()=>window.studioCards?.ready());await page.waitForSelector(`[data-task="${a.id}"]`);
