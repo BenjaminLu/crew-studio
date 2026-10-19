@@ -152,8 +152,13 @@ try {
   await p.fill("[data-cancel-reason]", "the captain changed course"); await p.click("[data-cancel-confirm]");
   ok(await p.waitForFunction(() => document.querySelector("[data-runview] [data-run-state]")?.textContent?.trim() === "Cancelled", null, { timeout: 8000 }).then(() => true, () => false)
     && /the captain changed course/.test(await text(p, "[data-runview] .phead")), "Cancel on a run waiting at its card ends it Cancelled, with the reason shown");
-  { const m = await p.$eval('[data-runview] [data-run-state="cancelled"] .d', (d) => getComputedStyle(d, "::before").content).catch(() => "none");
-    ok(m && m !== "none" && m !== "normal", "Cancelled has its own mark", m); }
+  // Live refresh can replace the badge between selecting it and reading its computed style.
+  { const marked = await p.waitForFunction(() => {
+      const d = document.querySelector('[data-runview] [data-run-state="cancelled"] .d');
+      const m = d && getComputedStyle(d, "::before").content;
+      return !!m && m !== "none" && m !== "normal";
+    }, null, { timeout: 8000 }).then(() => true, () => false);
+    ok(marked, "Cancelled has its own mark"); }
   await p.goto(`${base}/#/board`); await p.waitForTimeout(800);
   ok(await p.locator(`[data-inbox-link="${wcard}"]`).count() === 0 && await p.getAttribute(`[data-task="${WAIT}"]`, "data-group") === "done" && await text(p, `[data-task="${WAIT}"] [data-run-state]`) === "Cancelled", "its card left the Board: the run is under Done today, Cancelled");
   await p.goto(`${base}/#/inbox`); await p.waitForTimeout(800);
