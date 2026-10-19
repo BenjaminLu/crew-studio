@@ -24,7 +24,7 @@ import { installsFor, type Install } from "../scripts/acceptance/installs";
 import { drive, verify, type Expect } from "./acceptance/drive";
 import { stubRuns, stubDecision, verdictOf, type StubRun } from "./acceptance/stub";
 import { STEPS, approveStaffing, type Ctx } from "./acceptance/steps";
-import { prove, RENDERER_PROVES } from "./acceptance/proves";
+import { fileOrgNegativeControls, prove, RENDERER_PROVES } from "./acceptance/proves";
 
 const t0 = Date.now(), problems: string[] = [];
 // what the runtime seeds (workflows/v2 and packs/ *.wf.yaml, retired ones included), and the packs' legacy v1 flow files
@@ -135,7 +135,11 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
   failures.push(...await verify(s, d, exp));
   if ((["crew", "grant-merge"].includes(r.how) || r.workflow === "file-organization") && defHash(d.view?.def) !== r.shared.pin.sha256) failures.push("the approval Task definition differs from the reviewed scenario pin");
   // the real side effects: a proof that needs the real renderer only where the renderer is real (the e2e profile)
-  for (const p of r.proves) if (SANDBOXED_E2E || !RENDERER_PROVES.includes(p)) failures.push(...(await prove(s, d.view, p, { sinkHits: h.sinkHits, github: h.github, fileorg: h.fileorg })).map((x) => `proves ${p}: ${x}`));
+  for (const p of r.proves) if (SANDBOXED_E2E || !RENDERER_PROVES.includes(p)) {
+    const context = { sinkHits: h.sinkHits, github: h.github, fileorg: h.fileorg }, proof = await prove(s, d.view, p, context);
+    failures.push(...proof.map(x => `proves ${p}: ${x}`));
+    if (p === "files-applied" && !proof.length) failures.push(...await fileOrgNegativeControls(s, d.view, context));
+  }
   // a run checked while it waits on a card (stopped by design) is cancelled afterwards: left open, it would still hold its
   // project, and a later run on the same project would meet it as overlapping work (a scope card) instead of its own path
   if (exp.status === "waiting") { const c = await s.api(`/api/wruns/${task}/cancel`, {}); if (c.status !== 200) failures.push(`could not cancel the waiting Task ${task} after its check: ${c.status} ${JSON.stringify(c.body).slice(0, 200)}`); }

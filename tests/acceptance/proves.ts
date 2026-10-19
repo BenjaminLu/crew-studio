@@ -9,7 +9,7 @@
 //   fail-first     the worker's test failed on the base and passed on the head (firstmate/fail-first passed), and CI passed
 //   sandbox-probe  every round that ran the probe (ACCEPT_PROBE in the intent) reached the network only through the egress
 //                  proxy and only its provider's host, read its own login and none of the denied paths, wrote nothing outside
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, renameSync, writeFileSync, realpathSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import type { Studio } from "./studio";
 import { CrewStore } from "../../src/domain/crew";
@@ -164,4 +164,25 @@ export async function prove(s: Studio, view: any, what: string, o: { sinkHits?: 
     return bad;
   }
   return [`no proof named ${what}`];
+}
+
+/** Persistent verifier regression: corrupt only this run's generated fixture, then restore it. */
+export async function fileOrgNegativeControls(s: Studio, view: any, o: Parameters<typeof prove>[3]): Promise<string[]> {
+  const bad: string[] = [], fixture = o?.fileorg;
+  if (!fixture?.plan?.moves?.length || !fixture.root.startsWith(realpathSync(s.root) + "/")) return ["negative controls require this Studio's generated folder fixture"];
+  const dest = fixture.plan.moves[0].to, undo = join(s.data, "fileorg", fixture.plan.id, "undo.jsonl");
+  const check = async (name: string, mutate: () => void, restore: () => void, expected: RegExp) => {
+    try { mutate(); const failures = await prove(s, view, "files-applied", o);
+      if (!failures.some(f => expected.test(f))) bad.push(`negative control ${name}: corrupted effects were not rejected`);
+    } finally { restore(); }
+  };
+  const bytes = readFileSync(dest), log = readFileSync(undo), hidden = `${dest}.acceptance-negative`;
+  await check("mutated bytes", () => writeFileSync(dest, "corrupted acceptance fixture"), () => writeFileSync(dest, bytes), /applied bytes differ/);
+  await check("missing destination", () => renameSync(dest, hidden), () => renameSync(hidden, dest), /applied bytes differ/);
+  const hiddenUndo = `${undo}.acceptance-negative`;
+  await check("missing undo", () => renameSync(undo, hiddenUndo), () => renameSync(hiddenUndo, undo), /undo (log|evidence)/);
+  const rows = log.toString().trim().split("\n").map(l => JSON.parse(l)); rows[0].from += "-wrong";
+  await check("mismatched undo", () => writeFileSync(undo, rows.map(r => JSON.stringify(r)).join("\n") + "\n"), () => writeFileSync(undo, log), /undo evidence differs/);
+  if ((await prove(s, view, "files-applied", o)).length) bad.push("negative controls did not restore valid effects");
+  return bad;
 }
