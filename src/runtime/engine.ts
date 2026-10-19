@@ -1771,6 +1771,8 @@ export class Engine {
     }
     // an authorization window: only a signed grant the captain opened in Studio; never for a one-way door
     if (!this.owns(x)) throw new Error("card owner ended before authorization");
+    // Preparation hooks may save the card: start from the persisted post-check state.
+    Object.assign(c, this.cards.get(c.id));
     try { for (const prepared of Object.values(this.cardPrepared)) { if (!this.owns(x)) throw new Error("card owner ended during preparation"); prepared(x,c,b); if (!this.owns(x)) throw new Error("card owner ended during preparation"); } }
     catch (error) { this.cards.cancel(c.id); throw error; }
     const g = this.grants.open(kind, x.ctx.project ?? x.run.params.project ?? null);

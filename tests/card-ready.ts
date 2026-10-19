@@ -7,11 +7,18 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import { harness, suite, until, Y } from "./rt-harness";
 const { ok, end } = suite("card-ready");
 const flow = (id: string, extra: any = {}) => Y({ id, name: id, roles: [], nodes: [{ id: "c", kind: "card", label: "Q", ...extra, card: { body: { en: "A fixture card: pick an option.", "zh-TW": "測試用卡片：請選一個選項。" }, title: "Ship it?", options: [{ id: "go", label: "Go", labelZh: "Go" }] }, x: 0, y: 0 }, { id: "e", kind: "hook", label: "E", x: 1, y: 0 }], edges: [["c", "e", "go"]] });
-const H = await harness([flow("q"), flow("qr", { retries: 1 })]);
+const H = await harness([flow("q"), flow("qr", { retries: 1 }), Y({ ...JSON.parse(flow("qsave")), card_checks: ["t/nat"] })]);
 const E = H.engine as any;
 // the card's STE check takes a while
 let delay = 800; const orig = E.runCheck.bind(E);
 E.runCheck = async (x: any, ref: any, at: string, input: any) => { if (String(at).startsWith("card:")) await new Promise((r) => setTimeout(r, delay)); return orig(x, ref, at, input); };
+// A preparation hook may persist its card; it must receive the post-check state, not the initial ste:null object.
+{ const savedDelay=delay;delay=0;E.cardPrepared["save-fixture"]=(_x:any,c:any)=>{c.body+=" prepared";E.cards.save(c);};
+  const r=E.start({workflow:"qsave",text:"preserve check state"});await until(()=>E.get(r.id).nodes.c.waiting==="card",5000);
+  const c=E.cards.list({run:r.id})[0],entry=E.ledger(r.id).find((e:any)=>e.check==="t/nat");
+  ok(c.ste?.verdict==="pass"&&c.ste.seq===entry?.seq,"a preparation hook saving the card preserves the signed post-check result",JSON.stringify(c.ste));
+  await E.answer(c.id,{choice:"go",by:"captain"});await until(()=>E.get(r.id).status==="succeeded",5000);
+  delete E.cardPrepared["save-fixture"];delay=savedDelay; }
 { const r = E.start({ workflow: "q", text: "x" }); await until(() => E.cards.list({ run: r.id }).length > 0, 5000);
   const c = E.cards.list({ run: r.id })[0]; const t0 = Date.now(); let err = "";
   await E.answer(c.id, { choice: "go", by: "captain" }).catch((e: any) => (err = e.message));
