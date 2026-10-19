@@ -19,12 +19,27 @@ const root = mkdtempSync(join(tmpdir(), "acceptance-known-"));
 try {
   const same = join(root, "same"), broken = join(root, "broken");
   cpSync(SCENARIO_DIR, same, { recursive: true }); cpSync(SCENARIO_DIR, broken, { recursive: true });
-  const board = '    setup: [folder]\n    params: { folder: "{folder}" }\n    cards: [{ node: card, answer: apply }]\n';
-  const known = (setup: string) => `    setup: [${setup}]\n    params: { folder: "not-an-absolute-path" }\n    known_failure:\n      observed: "the board refuses a start with a relative folder"\n      match: "^the board start route refused: 400 Invalid workflow input / 流程輸入格式不正確: folder"\n      root_cause: "fixture: the board run sends a relative folder"\n      covered_by: "tests/acceptance-known.ts"\n    cards: [{ node: card, answer: apply }]\n`;
-  const text = readFileSync(join(same, "file-organization.yaml"), "utf8");
-  ok(text.includes(board), "the board run of file-organization.yaml is where this test expects it");
-  writeFileSync(join(same, "file-organization.yaml"), text.replace(board, known("folder")));
-  writeFileSync(join(broken, "file-organization.yaml"), text.replace(board, known("folder, no-such-step")));
+  // Select the scenario by its parsed identity. A text fragment can match a different
+  // scenario after the board gains additional proof/card fields.
+  const fixture = (Bun as any).YAML.parse(readFileSync(join(same, "file-organization.yaml"), "utf8"));
+  const boards = fixture.stub.filter((scenario: any) => scenario.name === "board");
+  if (boards.length !== 1) throw new Error(`expected one board scenario, found ${boards.length}`);
+  const known = (setup: string[]) => {
+    const copy = structuredClone(fixture);
+    const board = copy.stub.find((scenario: any) => scenario.name === "board");
+    board.setup = setup;
+    board.params = { ...board.params, folder: "not-an-absolute-path" };
+    board.known_failure = {
+      observed: "the board refuses a start with a relative folder",
+      match: "^the board start route refused: 400 Invalid workflow input / 流程輸入格式不正確: folder",
+      root_cause: "fixture: the board run sends a relative folder",
+      covered_by: "tests/acceptance-known.ts",
+    };
+    // JSON is a YAML subset accepted by the same real scenario loader.
+    return JSON.stringify(copy, null, 2);
+  };
+  writeFileSync(join(same, "file-organization.yaml"), known(["folder"]));
+  writeFileSync(join(broken, "file-organization.yaml"), known(["folder", "no-such-step"]));
 
   const a = run(same);
   ok(a.code === 0 && /KNOWN-FAIL\s+file-organization:board/.test(a.out), "the matching failure stays a known failure (exit 0)", a.out);

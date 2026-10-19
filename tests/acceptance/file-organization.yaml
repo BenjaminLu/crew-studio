@@ -18,7 +18,8 @@ stub:
     covers: "the board's Start form supplies the declared folder → plan → gates → captain applies the moves"
     setup: [folder]
     params: { folder: "{folder}" }
-    cards: [{ node: card, answer: apply }]
+    proves: [files-applied]
+    cards: [{ node: card, answer: apply, before: fileorg-unmoved }]
     expect: { status: succeeded, result: done, visited: [intake, plan, gates, card, apply, done] }
   - name: sample-folder
     covers: "a first run with the folder left blank: Studio makes a sample folder in its own data → plan → gates → captain applies the moves there"
@@ -36,5 +37,6 @@ stub:
     how: firstmate
     setup: [folder]
     params: { folder: "{folder}" }
-    cards: [{ node: card, answer: discard }]
+    proves: [files-discarded]
+    cards: [{ node: card, answer: discard, before: fileorg-unmoved }]
     expect: { status: succeeded, visited: [plan, card, discard, discarded], not_visited: [apply] }

@@ -90,7 +90,7 @@ export async function verify(s: Studio, d: Drive, e: Expect): Promise<string[]> 
   if (e.library) {
     const lib = v.ctx?.library; if (!lib?.artifact) out.push("no Library entry (ctx.library)");
     else { const l = await s.api("/api/library"); const a = (l.body.artifacts ?? []).find((x: any) => x.id === lib.artifact); const ver = a?.versions?.find?.((x: any) => x.n === lib.version) ?? null;
-      if (!a) out.push(`Library does not list ${lib.artifact}`); else if (ver && ver.status !== "approved") out.push(`Library lists ${lib.artifact} v${lib.version} as ${ver.status}, not approved`); }
+      if (!a) out.push(`Library does not list ${lib.artifact}`); else if (!ver) out.push(`Library does not list ${lib.artifact} v${lib.version}`); else if (ver.status !== "approved") out.push(`Library lists ${lib.artifact} v${lib.version} as ${ver.status}, not approved`); }
   }
   return out;
 }

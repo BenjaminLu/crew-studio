@@ -11,11 +11,17 @@ budget: { wall_minutes: 5, max_rounds: 1 }
 live: false
 expect: { status: succeeded, artifacts: [] }
 stub:
-  # the scenarios share one Studio: approving would give every later scenario a team, so this one closes the card
-  # (approving is covered by tests/crew-cards.ts)
+  # Each crew scenario gets its own Studio; approval cannot change another scenario's team.
   - name: close
     covers: "Firstmate proposes filling the maker seat → captain-only card showing what it reaches → Not now changes nothing; the board cannot start it"
     how: crew
     board_refusal: { status: 409, error: "internal or retired" }
     cards: [{ node: confirm, answer: close }]
     expect: { status: succeeded, visited: [confirm, closed], not_visited: [apply, done] }
+  - name: approve
+    covers: "Firstmate proposes filling the maker seat → captain approves → apply → done; signed team and approval receipt match the card"
+    how: crew
+    proves: [crew-applied]
+    board_refusal: { status: 409, error: "internal or retired" }
+    cards: [{ node: confirm, answer: approve }]
+    expect: { status: succeeded, visited: [confirm, apply, done], not_visited: [closed] }
