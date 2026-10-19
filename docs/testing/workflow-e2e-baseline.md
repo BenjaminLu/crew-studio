@@ -15,7 +15,7 @@
 | web-prototype | public | approve A; real interaction smoke; reject | NOT RUN |
 | images | public | approve; changes then approve | NOT RUN |
 | video | public | approve | NOT RUN |
-| file-organization | public | board/sample folder; Firstmate apply/discard | NOT RUN |
+| file-organization | public | board/sample folder; Firstmate apply/discard; batch 3 checks actual apply/discard effects | PASSED API / LOCAL EFFECTS twice (target paths) |
 | coffee-kit | public | board; unavailable-film handling; sandboxed-e2e film approval | NOT RUN |
 | pack-genesis | public | publish; close at interview | NOT RUN |
 | hello-crew-studio | public | preview wait; approve to done | NOT RUN |
@@ -79,3 +79,24 @@ ACCEPTANCE_ONLY=firstmate-grant-merge,crew-change ACCEPTANCE_KEEP=1 bun scripts/
 - Existing `bun tests/merge-grant.ts`: **32 passed, 0 failed**, `/private/tmp/watchbill-merge-grant-related.log`.
 
 Still API-driven with stub vendor identity, not root's visible-browser acceptance. Revoke, stale registry, forged grants and merge execution are covered separately in `merge-grant.ts`; they are not newly claimed as complete acceptance paths here. Independent review of this second batch is required before integration or another gap.
+
+
+## Batch 3: file-organization effects
+
+Parent: `8ff764a6` (merge-grant batch, independently approved by root's reviewer). Strengthens the existing board apply and Firstmate discard scenarios without changing runtime behavior. The folder fixture snapshots all four original file contents; immediately before answering the real card, it checks that the whole original directory is unchanged and captures the exact reviewed dry-run plan. Final checks compare the persisted plan to that snapshot, require the signed captain answer and preceding passing gate receipt at the same plan hash, and enforce the scenario definition pin.
+
+Apply must move every reviewed file, preserve every byte at its planned destination, remove all original sources, match the moved count, leave exactly the planned output files, and produce one matching undo row per move. Discard must preserve the complete original directory/bytes and produce neither apply state nor an undo log. This batch does not claim equivalent filesystem proofs for the sample-folder or Firstmate apply scenario; those are neighboring terminal-path regressions only. It does not test undo execution or restart recovery through this HTTP harness.
+
+Final repeated commands:
+
+```sh
+ACCEPTANCE_ONLY=file-organization:board,file-organization:firstmate-discard ACCEPTANCE_KEEP=1 bun scripts/acceptance-sandboxed.ts --e2e
+ACCEPTANCE_ONLY=file-organization ACCEPTANCE_KEEP=1 bun scripts/acceptance-sandboxed.ts --e2e
+```
+
+- First fresh run: **2 pass, 0 fail, 0 known-fail, 0 skipped**, `/private/tmp/watchbill-fileorg-approved1.log`; board `R-001`, discard child `R-003`, retained Studio root `crew-acceptance-sandbox-BiTRuU` under the macOS temporary directory.
+- Second fresh run: **4 pass, 0 fail, 0 known-fail, 0 skipped**, `/private/tmp/watchbill-fileorg-approved2.log`; board `R-002`, discard child `R-006`, retained root `crew-acceptance-sandbox-3y32d1`.
+- Negative controls against retained actual applied fixture data: corrupt destination bytes, remove destination, remove undo log, and corrupt an undo source. All four are rejected; restoration passes again. `/private/tmp/watchbill-fileorg-negative.log` and its adjacent `.ts` reproduction script record these ad hoc checks; the script is not a new CI test or a standalone portable test fixture.
+- Related existing regression `bun tests/non-code-workflows.ts`: in progress at this ledger update, `/private/tmp/watchbill-fileorg-related.log`; no passing claim yet. It includes the existing fileorg move/undo/replay/stale-plan assertions along with other non-code workflows.
+
+All filesystem mutations were confined to generated test folders. No user files, real providers, live Task/store, remote effects or deployment were used. Library missing-version validation remains a separate known audit gap. Root's visible-browser acceptance and baseline repetition against newly merged main remain outstanding; these results use the recorded production baseline `19dc426f` plus test-only patches. Independent review is required before another batch.

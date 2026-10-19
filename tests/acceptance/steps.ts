@@ -11,7 +11,8 @@ import type { Studio } from "./studio";
 export type Ctx = { s: Studio; vars: Record<string, string>; firstmate(marker: "NATIVE-PROPOSE " | "NATIVE-PROJECT " | "NATIVE-TOOL ", args: unknown): Promise<any[]>;
   /** connections the probe's sink port took (setup step probe): any is a round that went around the proxy */
   sinkHits?: () => number;
-  github?: { origin: string; calls: { method: string; path: string }[] } };
+  github?: { origin: string; calls: { method: string; path: string }[] };
+  fileorg?: { root: string; files: Record<string, string>; plan?: any } };
 type Step = (h: Ctx, card?: any, view?: any) => Promise<void | { note?: string; choice?: string }>;
 const git = (cwd: string, ...a: string[]) => { const r = Bun.spawnSync(["git", "-c", "user.name=Acceptance", "-c", "user.email=acceptance@example.invalid", ...a], { cwd, stdout: "pipe", stderr: "pipe" }); if (r.exitCode) throw new Error(`git ${a.join(" ")}: ${r.stderr}`); };
 /** Captain-side folders live under the Studio's own temp root (outside its CREW_DATA), so close() removes them. */
@@ -109,7 +110,7 @@ export const STEPS: Record<string, Step> = {
   /** the Claude account card's Verify (one bounded request on the exact configured model); its receipt admits Claude rounds for 30 s */
   async "verify-claude"(h) { const r = await h.s.api("/api/claude/native/verify", { model: "claude-sonnet-5-5", effort: null, confirm: true }); if (r.status !== 200 || r.body.admission !== "verified-execution") throw new Error(`Claude verify: ${r.status} ${JSON.stringify(r.body).slice(0, 300)}`); },
   /** a throwaway folder with a few files to tidy: {folder} */
-  async folder(h) { const d = realpathSync(mkdtempSync(join(scratch(h), "folder-"))); for (const f of ["report.pdf", "photo.jpg", "notes.txt", "song.mp3"]) writeFileSync(join(d, f), `acceptance ${f}\n`); h.vars.folder = d; },
+  async folder(h) { const d = realpathSync(mkdtempSync(join(scratch(h), "folder-"))); for (const f of ["report.pdf", "photo.jpg", "notes.txt", "song.mp3"]) writeFileSync(join(d, f), `acceptance ${f}\n`); h.vars.folder = d; h.fileorg = { root: d, files: Object.fromEntries(readdirSync(d).map(f => [f, readFileSync(join(d, f), "utf8")])) }; },
   /** a throwaway local git repository: {repo} */
   async repo(h) { const d = realpathSync(mkdtempSync(join(scratch(h), "repo-"))); assertTempRepo(d); git(d, "init", "-q", "-b", "main"); writeFileSync(join(d, "README.md"), "# Acceptance repo\n"); git(d, "add", "."); git(d, "commit", "-qm", "Initial"); h.vars.repo = d; },
   /** {repo}'s origin is a github.com repository (nothing is fetched or pushed) */
@@ -124,6 +125,15 @@ export const STEPS: Record<string, Step> = {
     const projects = (await h.s.api("/api/policies")).body.projects ?? [];
     const raw = JSON.parse(readFileSync(join(h.s.data, "projects.json"), "utf8")); const p = raw.find((x: any) => x.path && realpathSync(x.path) === h.vars.repo);
     if (!p || !projects.some((x: any) => x.id === p.id)) throw new Error("the registered project is not listed"); h.vars.project = p.id;
+  },
+  /** The exact reviewed dry-run plan, before the captain allows or discards any moves. */
+  async "fileorg-unmoved"(h, _card, view) {
+    if (!h.fileorg) throw new Error("fileorg-unmoved needs the folder fixture");
+    const { root, files } = h.fileorg;
+    if (JSON.stringify(readdirSync(root).sort()) !== JSON.stringify(Object.keys(files).sort()) || Object.entries(files).some(([f, text]) => readFileSync(join(root, f), "utf8") !== text)) throw new Error("files changed before the captain answered");
+    const plan = JSON.parse(readFileSync(join(h.s.data, "fileorg", view.ctx.plan.id, "plan.json"), "utf8"));
+    if (plan.root !== root || plan.status !== "planned") throw new Error("the reviewed file plan is not the fixture's unmodified dry run");
+    h.fileorg.plan = plan;
   },
   /** connect {project} to its GitHub origin through Firstmate (studio_connect_github) and approve the connect card (nothing is pushed) */
   async connect(h) {
