@@ -96,6 +96,25 @@ export function crewRoutes(d:CrewViewDeps&{refreshFacts?:()=>Promise<unknown>;re
  return async function handle(p:string,url:URL,method:string,writing:boolean,b:any,who:{kind:string}):Promise<Response|null>{
   const projectOf=(v:unknown)=>typeof v==='string'&&PROJECT.test(v)?v:null;
   if(p==='/api/team'&&!writing){if(url.searchParams.get('facts')==='1')await detect(url.searchParams.get('force')==='1');return json({...crewView(d,projectOf(url.searchParams.get('project'))),detection:{at:detectedAt||null}});}
+  if(p==='/api/team/skill'){
+   const pk=d.skillPackages?.();if(!pk)return json({error:'Script skills unavailable'},503);
+   const id=writing?b?.id:url.searchParams.get('id'),v=writing?b?.v:Number(url.searchParams.get('v'));
+   if(typeof id!=='string'||!Number.isInteger(v)||v<1)return json({error:'A skill version is required'},400);
+   const facts=pk.cardFacts(id,v);if(!facts)return json({error:'Skill version not found'},404);
+   const view=()=>({facts,status:pk.badge(id,v)});
+   if(!writing)return json(view());
+   if(method!=='POST')return json({error:'POST required'},405);
+   if(who.kind!=='desktop')return json({error:'Manage script skills on the desktop',code:'desktopOnly'},403);
+   try{pk.assertDecidable(id,v,b);}catch(e:any){return json({error:String(e?.message??e),tw:'Skill 版本或檔案已變更；請重新查看。',code:'targetChanged'},409);}
+   const decided=pk.decision(id,v);
+   if(b.action==='retry'){
+    if(decided?.scripts!=='approved')return json({error:'Only an approved script version can be prepared',tw:'只有已核准的 script 版本可以重新準備。'},409);
+    await pk.ensure(id,v,undefined,true);return json(view());
+   }
+   if(!['scripts','text-only'].includes(b.action))return json({error:'Choose scripts, text-only, or retry'},400);
+   if(decided)return json({error:'This version already has a decision; reload its status',tw:'這個版本已有決定；請重新查看狀態。',code:'alreadyDecided'},409);
+   pk.decide(id,v,b.action==='scripts'?'approved':'text-only','captain','page');return json(view());
+  }
   if(p==='/api/team/change'){
    if(!writing||method!=='POST')return json({error:'POST required'},405);if(who.kind!=='desktop')return json({error:'Change the team on the desktop',code:'desktopOnly'},403);
    const cfg=d.store.current(),before:Team=cfg?teamBody(cfg):emptyTeam();

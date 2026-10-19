@@ -56,8 +56,8 @@ export class SkillPackages {
   }
   /** What the approval card shows for one version: its scripts, flags, the hosts approving it allows, the programs and locks. */
   cardFacts(id: string, v: number) {
-    const pkg = this.pkg(id, v); if (!pkg) return null;
-    return { id, v, scripts: pkg.scripts.map((s) => ({ path: s.path, lang: s.lang, bytes: s.bytes, flags: s.flags })), hosts: proposedHosts(pkg), refusedHosts: pkg.hosts.refused,
+    const pkg = this.pkg(id, v), lv = this.o.skills.libVersion(id, v); if (!pkg || !lv) return null;
+    return { id, v, sha256: lv.rec.sha256, filesSha256: lv.rec.filesSha256, scripts: pkg.scripts.map((s) => ({ path: s.path, lang: s.lang, bytes: s.bytes, flags: s.flags })), hosts: proposedHosts(pkg), refusedHosts: pkg.hosts.refused,
       locks: [pkg.npm ? `npm (${pkg.npm.files[1]})` : null, pkg.python ? `python (${pkg.python.files[0]})` : null].filter(Boolean) as string[], bins: pkg.bins, warnings: pkg.warnings };
   }
   /** The last recorded status, refreshed for what may have changed since (a decision, a new version's files). */

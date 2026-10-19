@@ -89,10 +89,58 @@ function staleNote() {
 // a pin as the team keeps it: version and both hashes (filesSha256 when the library gave it)
 const pinOf = ({ id, v, sha256, filesSha256 }) => ({ id, v, sha256, ...(filesSha256 ? { filesSha256 } : {}) });
 // a script skill's readiness after its chip (src/skillpkg: approved and prepared, text only, not approved, or what is missing)
-const READY_MARK = { ready: "✓", "text-only": "T", preparing: "…", "needs-approval": "?", "not-ready": "!" };
+const READY_WORD = { ready: ["Ready", "可以用"], "text-only": ["Text only", "只當文字"], preparing: ["Preparing", "準備中"], "needs-approval": ["Needs approval", "待核准"], "not-ready": ["Missing prerequisite", "缺少執行條件"] };
+async function openSkillStatus(p) {
+  TM.skill = { pin: p, loading: true }; render();
+  try { const facts = await getJson(`/api/team/skill?id=${encodeURIComponent(p.id)}&v=${p.v}`); TM.skill = { pin: p, ...facts }; }
+  catch (e) { TM.skill = { pin: p, error: e.message || String(e) }; }
+  render(); requestAnimationFrame(() => document.querySelector('[data-skill-status] button')?.focus());
+}
+function closeSkillStatus() {
+  const p=TM.skill?.pin; TM.skill=null; render();
+  requestAnimationFrame(()=>[...document.querySelectorAll('[data-skill-status-open]')].find(x=>x.dataset.skillStatusOpen===`${p?.id}@v${p?.v}`)?.focus());
+}
+async function skillAction(action) {
+  const d=TM.skill;if(!d?.facts||d.busy)return;d.busy=true;d.error=null;render();
+  try {
+    const r=await fetch('/api/team/skill',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...pinOf(d.facts),action})});
+    const j=await r.json();if(!r.ok)throw new Error(T(j.error||'Not saved',j.tw||'沒有儲存'));
+    TM.skill={pin:d.pin,...j};await load();
+  }catch(e){d.busy=false;d.error=e.message||String(e);TM.skill=d;}
+  render();requestAnimationFrame(()=>document.querySelector('[data-skill-status] button')?.focus());
+}
 function readyMark(p) {
   const b = TM.data?.skillStatus?.[`${p.id}@v${p.v}`]; if (!b) return null;
-  return h("span", { class: `tm-ready ${b.state}`, "data-skill-ready": b.state, title: T(b.en, b.zh), "aria-label": T(b.en, b.zh) }, READY_MARK[b.state] || "");
+  const words=READY_WORD[b.state]||[b.en,b.zh];
+  return h("button", {type:"button",class:`tm-ready ${b.state}`,"data-skill-ready":b.state,"data-skill-status-open":`${p.id}@v${p.v}`,title:T(b.en,b.zh),"aria-label":T(`${p.id}: ${words[0]}; view status and next steps`,`${p.id}：${words[1]}；查看原因與下一步`),onclick:()=>openSkillStatus(p)}, T(...words));
+}
+function skillStatusPanel() {
+ const d=TM.skill;if(!d)return null;const f=d.facts,b=d.status,p=d.pin,words=READY_WORD[b?.state];
+ return h('section',{class:'card tm-decide',role:'region','aria-label':T('Skill status and next steps','Skill 狀態與下一步'),'data-skill-status':`${p.id}@v${p.v}`},...[
+  h('div',{class:'actions'},h('h2',{},`${p.id}@v${p.v}`),h('button',{type:'button',class:'btn ghost','data-status-close':'',disabled:d.busy,onclick:closeSkillStatus},T('Close','關閉'))),
+  d.loading?h('p',{},T('Loading recorded status…','讀取實際狀態中…')):null,
+  d.error?h('p',{role:'alert','data-status-error':'',class:'bad'},d.error):null,
+  b?h('p',{'data-status-label':b.state},words?T(...words):T(b.en,b.zh)):null,
+  b?.reasons?.map(r=>h('p',{'data-status-reason':''},T(r.en,r.zh))),
+  f?[
+   h('p',{class:'mono'},`${f.sha256.slice(0,12)} / ${f.filesSha256.slice(0,12)}`),
+   h('p',{},T('Scripts this version runs:','這個版本會執行的 script：')),
+   h('ul',{},f.scripts.map(x=>h('li',{class:'mono'},x.path,x.flags.length?` · ${x.flags.join(', ')}`:''))),
+   h('p',{},T('Allowed network destinations: ','允許連線的網站：'),f.hosts.length?f.hosts.join(', '):T('none','不連網')),
+   f.bins.length?h('p',{},T('Required programs: ','需要的程式：'),f.bins.join(', ')):null,
+   h('button',{type:'button',class:'btn','data-status-source':'',onclick:(e)=>window.crewSkillView?.open({kind:'lib',id:p.id,v:p.v,pinned:p.v,name:p.id},e.currentTarget)},T('Inspect SKILL.md and exact script files','查看 SKILL.md 和實際 script 檔案')),
+   b?.state==='needs-approval'?[
+    h('p',{},T('Choose once for exactly this version, Studio-wide. Text only never runs scripts. Cancel leaves the current assignment unchanged.','只決定這個版本，全 Studio 生效。只當文字不會跑 script；取消會保留目前配置。')),
+    h('div',{class:'actions'},h('button',{class:'btn primary','data-status-action':'scripts',disabled:d.busy,onclick:()=>skillAction('scripts')},T('Approve with scripts','核准（含 script）')),h('button',{class:'btn','data-status-action':'text-only',disabled:d.busy,onclick:()=>skillAction('text-only')},T('Text only','只當文字')),h('button',{class:'btn ghost','data-status-cancel':'',disabled:d.busy,onclick:closeSkillStatus},T('Cancel','取消')))
+   ]:null,
+   ['not-ready','preparing'].includes(b?.state)?[
+    h('p',{'data-status-guidance':''},T('For a missing program, install the named prerequisite using its trusted instructions, then recheck. Studio retries only its supported preparation recipes under the existing approval; it cannot install every program. If no recipe exists, ask the skill author or choose another skill.','缺程式時，先依該程式的可信指引安裝，再重新檢查。Studio 只會依既有核准重試支援的準備方式，無法安裝所有程式；沒有支援方式時，請找 skill 作者或換用其他 skill。')),
+    h('button',{type:'button',class:'btn primary','data-status-action':'retry',disabled:d.busy,onclick:()=>skillAction('retry')},d.busy?T('Checking…','檢查中…'):T('Recheck and retry preparation','重新檢查並重試準備'))
+   ]:null,
+   b?.state==='ready'?h('p',{},T('This version is approved and its recorded prerequisites are ready. Scripts run only inside the workflow sandbox.','這個版本已核准，記錄中的執行條件已就緒。Script 只會在 workflow sandbox 裡執行。')):null,
+   b?.state==='text-only'?h('p',{},T('Agents receive the skill text; its scripts will not run.','Agent 會收到 skill 文字，script 不會執行。')):null,
+   h('button',{type:'button',class:'btn ghost','data-status-refresh':'',disabled:d.busy,onclick:()=>openSkillStatus(p)},T('Refresh recorded status','重新讀取狀態'))
+  ]:null].flat(Infinity));
 }
 // the captain's decision on a script skill a change brings: its scripts (with flags) and the hosts approving it allows
 function decidePanel() {
@@ -249,7 +297,7 @@ function view() {
     h("div", { class: "phead" }, h("div", {}, h("span", { class: "tm-eyebrow" }, T("Crew · one team for every workflow", "船員 · 一個團隊負責所有 workflow")), h("h1", {}, T("Who runs each workflow", "每個 workflow 由誰在做")),
       h("p", {}, T("Pick a card, then change the model, effort or skills right in the table. Each change asks: only here, or the whole member.", "點一張卡，在下面直接改模型、effort、skills。每次改都會問：只改這裡，還是改整個成員。"))), h("div", { class: "tm-tools" }, projectPicker(), legend())),
     !TM.data.team ? h("div", { class: "card x-pad tm-empty", "data-team-empty": "" }, T("No team yet: every workflow uses Studio's default model. Fill the seats in the member editor.", "還沒有團隊：每個 workflow 都用 Studio 的預設模型。請在成員編輯裡補上各個位置。")) : null,
-    detection(), staleNote(), decidePanel(),
+    detection(), staleNote(), skillStatusPanel(), decidePanel(),
     TM.editing ? memberEditor() : null,
     h("div", { class: "tm-cards" }, TM.data.workflows.map(card)),
     wf ? h("section", { class: "card tm-detail", "data-team-detail": wf.id, "aria-label": T(`${wf.name}: final crew`, `${wf.name}：最後的人員配置`) },

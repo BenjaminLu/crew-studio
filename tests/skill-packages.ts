@@ -154,4 +154,21 @@ const cardOf = async (run: string) => { await until(() => E.cards.list({ run, op
   const s = ws.skills?.find((x: any) => x.skill === "deck@v1");
   ok(s?.state === "not-ready" && !s.ready && s.reasons.some((r: string) => /no-such-program-xyz missing/.test(r)), "Firstmate's work status lists each script skill in use and why one is not ready (no card, no question)", JSON.stringify(ws.skills)); }
 
+// A status action targets the already assigned version, independently of a team edit.
+{ const v=lib.importFolder(mk(join(tmp,"status-action"),{"SKILL.md":md("status-action"),"scripts/go.sh":"#!/bin/sh\necho hi\n"}),"captain").version;
+ const handle=crewRoutes({defs:H.defs,store,facts:()=>facts as any,library:()=>lib.library(),skillPackages:()=>pk});
+ const call=async(body:any,kind="desktop")=>{const r=await handle("/api/team/skill",new URL("http://x/api/team/skill"),"POST",true,body,{kind});return {status:r?.status,body:r?await r.json():null};};
+ const pin={id:"status-action",v:1,sha256:v.sha256,filesSha256:v.filesSha256};
+ const before=store.current()!.hash;
+ const bad=await call({...pin,sha256:"stale",action:"scripts"});
+ ok(bad.status===409&&!pk.decision(pin.id,1)&&store.current()!.hash===before,"status approval refuses stale hashes without changing team or approval");
+ const phone=await call({...pin,action:"scripts"},"phone");
+ ok(phone.status===403&&!pk.decision(pin.id,1),"status approval remains desktop-only");
+ const yes=await call({...pin,action:"text-only"});
+ ok(yes.status===200&&pk.decision(pin.id,1)?.scripts==="text-only"&&store.current()!.hash===before,"status approval can choose text-only for an assigned version without a team change");
+ const again=await call({...pin,action:"scripts"});
+ ok(again.status===409&&pk.decision(pin.id,1)?.scripts==="text-only","status action never silently broadens an existing decision");
+ const retry=await call({...pin,action:"retry"});
+ ok(retry.status===409,"retry cannot run a text-only version's scripts");
+}
 H.stop(); end();
