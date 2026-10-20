@@ -481,6 +481,6 @@ export function createRuntime(d: RuntimeDeps) {
       return json({ error: "not found" }, 404);
     } catch (e: any) { return json({ error: String(e?.message ?? e), problems: e?.problems ?? undefined, refusal: e?.refusal ?? undefined, failure: e?.refusal ? undefined : fromError(e, { source: "params" }) }, 400); }
   }
-  return { handle, engine, defs, projects, firstmate, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
+  return { handle, engine, defs, projects, firstmate, prepareLocalProject:originalFirstmate.prepareLocalProject, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
 }
 export { schemaDefaults };

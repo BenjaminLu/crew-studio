@@ -47,4 +47,28 @@ try {
     if (pids.length === 3 && (info(pids[0]).running || info(pids[1]).running)) await wait(4_100);
   }
 } finally { process.env.PATH = originalPath; sim.stop(); rmSync(temp, { recursive: true, force: true }); }
-console.log(`${passed} passed / ${failed} failed`); process.exitCode = failed ? 1 : 0;
+// Darwin can return EPERM for a zombie-only process group until its reaper
+// finishes. Inject that kernel race at the signal boundary of a real child;
+// a lasting permission failure must still reject rather than report success.
+{
+  const { ownedGit } = await import('../src/adapters/github');
+  const realKill = process.kill;
+  for (const persistent of [false, true]) {
+    let denied = 0, message = '', output = '', retained = false;
+    const start = performance.now();
+    process.kill = ((pid: number, signal?: any) => {
+      if (pid < 0 && ((signal === 'SIGKILL' && (persistent || denied === 0)) || (persistent && signal === 0))) {
+        if (signal === 'SIGKILL') denied++;
+        throw Object.assign(new Error('fixture kernel EPERM'), { code: 'EPERM' });
+      }
+      return realKill(pid, signal);
+    }) as typeof process.kill;
+    try { output = await ownedGit(['/bin/echo', 'owned-fixture'], tmpdir(), { PATH: '/usr/bin:/bin' }, 1000); }
+    catch (e: any) { message = e.message; retained = e.retainClient === true; }
+    finally { process.kill = realKill; }
+    ok(persistent ? denied > 1 && retained && performance.now() - start < 1200 && /cleanup failed/.test(message) : denied === 1 && !message && output === 'owned-fixture', persistent
+      ? 'persistent group permission denial still fails closed after bounded retries'
+      : 'transient zombie-group permission denial waits for reaping before success');
+  }
+}
+console.log(`final: ${passed} passed / ${failed} failed`); process.exitCode = failed ? 1 : 0;

@@ -19,12 +19,29 @@ const temp = checkedTempDir("remote-ci-"), repo = join(temp, "repo"), bare = joi
 must(repo, ["init", "-qb", "main"]); writeFileSync(join(repo, "file"), "one"); must(repo, ["add", "."]); must(repo, ["commit", "-qm", "one"]); const base = must(repo, ["rev-parse", "HEAD"]);
 must(temp, ["clone", "--bare", "-q", repo, bare]); must(repo, ["checkout", "-qb", "crew/task"]); writeFileSync(join(repo, "file"), "two"); must(repo, ["commit", "-qam", "two"]); const head = must(repo, ["rev-parse", "HEAD"]);
 const sim = githubSimulator(bare), grant = { mode: "simulator" as const, repository: "fixture/project", localPath: repo, pushUrl: bare, apiOrigin: sim.origin, base: "main", branchPrefix: "crew/", approvedAt: "2026-10-15T00:00:00Z", approvalId: "local-fixture" };
-const adapter = new GitHubPrAdapter(grant, () => "fake-token", 150);
+// Reconciliation tests real Git and cancellation, not a sub-150ms process SLA.
+// A small wrapper delay models ordinary process scheduling latency and keeps
+// the fixture budget from silently becoming a Git timeout assertion. Hooks are
+// intentionally disabled by Studio, so the delay belongs in the fixture CLI.
+const realGit = Bun.which("git")!, originalPath = process.env.PATH, bin = join(temp, "bin"); mkdirSync(bin);
+writeFileSync(join(bin, "git"), `#!/bin/sh\ncase " $* " in *" push "*) /bin/sleep 0.25;; esac\nexec "${realGit}" "$@"\n`, { mode: 0o700 });
+process.env.PATH = bin + ":" + originalPath;
+const fixtureTimeoutMs = 2000;
+const adapter = new GitHubPrAdapter(grant, () => "fake-token", fixtureTimeoutMs);
 let watcher: any, engines: Engine[] = [];
 try {
   ok(typeof adapter.remoteRead === "function", "typed grant-bound remote reads exist");
   const module = await import("../src/domain/remote-ci"); const { requiredPolicy, inspectRemote, reconcile, RemoteWatchers, grantIdentity, registerRemoteWait } = module;
+  // Keep the actual command timeout negative control separate from the normal
+  // fixture budget. The delayed fixture CLI must be killed before publishing.
+  const shortDir = join(temp, "short-record"); mkdirSync(shortDir);
+  const short = new GitHubPrAdapter(grant, () => "fake-token", 100);
+  let timedOut = false;
+  try { await short.open({ repo, base: "main", branch: "crew/timeout-probe", head, title: "Fixture", body: "Timeout probe" }, shortDir); }
+  catch (e: any) { timedOut = /push or lease check failed/.test(e.message) && !e.message.includes("fake-token"); }
+  ok(timedOut && !sim.head("crew/timeout-probe") && !sim.calls.some(c => c.method === "POST"), "explicit short command budget still refuses a delayed push before branch or PR publication");
   const runDir = join(temp, "record"); mkdirSync(runDir); const pr = await adapter.open({ repo, base: "main", branch: "crew/task", head, title: "Fixture", body: "Approved spec" }, runDir);
+  ok(sim.head("crew/task") === head, "normal fixture budget permits a real push with scheduling latency");
   const policyRaw = { strict: true, contexts: ["build", "legacy"], checks: [{ context: "build", app_id: 7 }] };
   const policyRoute = "/branches/main/protection/required_status_checks", checksRoute = `/commits/${head}/check-runs?filter=all&per_page=100&page=`, statusRoute = `/commits/${head}/status?per_page=100&page=`;
   const rows = (checks: any[], statuses: any[] = [{ id: 3, context: "legacy", state: "success" }]) => { sim.expect("GET", checksRoute + "1", { total_count: checks.length, check_runs: checks }); sim.expect("GET", statusRoute + "1", { sha: head, total_count: statuses.length, statuses }); };
@@ -73,7 +90,7 @@ try {
   rows([]); watcher = new RemoteWatchers(15); const wait = () => ({ version: 1 as const, handler: "github-ci" as const, grant: grantIdentity(adapter), repository: grant.repository, pr, policy, startedAt: Date.now(), deadline: Date.now() + 2000, lastDigest: null });
   const w1 = wait(), w2 = wait(), events1: any[] = [], events2: any[] = [];
   const cancel1 = watcher.subscribe(adapter, "one", w1, (e: any) => events1.push(e)), cancel2 = watcher.subscribe(adapter, "two", w2, (e: any) => events2.push(e));
-  const conflicting = new GitHubPrAdapter({ ...grant, approvalId: "other-grant" }, () => "fake-token", 150);
+  const conflicting = new GitHubPrAdapter({ ...grant, approvalId: "other-grant" }, () => "fake-token", fixtureTimeoutMs);
   await rejects(() => watcher.subscribe(conflicting, "other", { ...wait(), grant: grantIdentity(conflicting) }, () => {}), "same repository with conflicting grant cannot spawn a second authority poller");
   await until(() => events1.length > 0 && events2.length > 0); ok(watcher.size === 1, "two tasks share exactly one repository poller"); const count1 = events1.length, count2 = events2.length; await sleep(55);
   ok(events1.length === count1 && events2.length === count2, "unchanged remote events are idempotent across both tasks"); rows([good]); await until(() => events1.some(e => e.state === "pass") && events2.some(e => e.state === "pass")); ok(events1.some(e => e.state === "pass") && events2.some(e => e.state === "pass"), "one changed remote result wakes both tasks"); cancel1(); cancel2(); ok(watcher.size === 0, "last subscriber unregister aborts and removes repository poller");
@@ -99,5 +116,5 @@ try {
   await until(() => e.cards.list({ run: unsupported.id, open: true }).length > 0);
   ok(e.cards.list({ run: unsupported.id, open: true })[0]?.title["zh-TW"] === "遠端驗證已停止：要關閉這個任務嗎？" && watcher.size === 0, "unsupported persisted wait schema stops bilingually on actual restart without a poller"); e.cancel(unsupported.id); await until(() => !e.busy(unsupported.id));
 } catch (e: any) { console.error(e.stack); fail++; }
-finally { for (const e of engines) e.disposeExternal?.(); watcher?.stop(); sim.stop(); rmSync(temp, { recursive: true, force: true }); }
+finally { process.env.PATH = originalPath; for (const e of engines) e.disposeExternal?.(); watcher?.stop(); sim.stop(); rmSync(temp, { recursive: true, force: true }); }
 console.log(`${pass} passed / ${fail} failed`); process.exitCode = fail ? 1 : 0;

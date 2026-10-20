@@ -123,12 +123,25 @@ export async function ownedGit(argv: string[], cwd: string, env: Record<string, 
   p.stderr?.on("data", () => {}); // drain without retaining private Git error output
   const onAbort = () => end({ code: null, failed: true }); signal?.addEventListener("abort", onAbort, { once: true }); if (signal?.aborted) onAbort();
   const timer = setTimeout(() => end({ code: null, failed: true }), timeoutMs);
-  const groupSignal = (sig: NodeJS.Signals) => { if (pid) try { process.kill(-pid, sig); } catch (e: any) { if (e.code !== "ESRCH") throw new Error("GitHub owned process cleanup failed"); } };
+  const groupSignal = async (sig: NodeJS.Signals) => {
+    if (!pid) return;
+    // Darwin reports EPERM for a zombie-only group until its reaper finishes.
+    // Retry only that transient state; a lasting denial still fails closed.
+    const deadline = Date.now() + 300;
+    for (;;) {
+      try { process.kill(-pid, sig); return; }
+      catch (e: any) {
+        if (e.code === "ESRCH") return;
+        if (e.code !== "EPERM" || Date.now() >= deadline) throw new Error("GitHub owned process cleanup failed");
+        await delay(5);
+      }
+    }
+  };
   const alive = () => { if (!pid) return false; try { process.kill(-pid, 0); return true; } catch (e: any) { return e.code !== "ESRCH"; } };
   const result = await ended; clearTimeout(timer); signal?.removeEventListener("abort", onAbort);
   try {
-    if (result.failed) { groupSignal("SIGTERM"); await delay(25); }
-    groupSignal("SIGKILL");
+    if (result.failed) { await groupSignal("SIGTERM"); await delay(25); }
+    await groupSignal("SIGKILL");
     // Pipes are not a lifetime signal: helpers inherit them. Bound the buffered
     // drain after killing the owned group, then close our endpoints explicitly.
     await delay(10); p.stdout?.destroy(); p.stderr?.destroy();

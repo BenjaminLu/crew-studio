@@ -33,6 +33,7 @@ export type OverviewDeps = {
   artifacts?: { list(): any[]; versions(id: string): any[] } | null;
   protectedRoots?: string[];
   now?: () => number;
+  prepareLocalProject?: (args:unknown,owner:any)=>Promise<unknown>;
 };
 
 const TERMINAL = new Set(["succeeded", "failed", "cancelled"]);
@@ -363,6 +364,16 @@ export function createProjectOverview(d: OverviewDeps) {
 
   async function handle(req: Request, url: URL, who: Who, writing: boolean): Promise<Response | null> {
     const p = url.pathname;
+    if(p==='/api/projects/local-registration'){
+      if(req.method!=='POST')return json({error:'use POST'},405);
+      if(who.kind!=='desktop')return json({error:'do this on the Mac',code:'desktopOnly'},403);
+      if(!hasSession(req,d.session))return json({error:'Studio session required'},401);
+      try{
+        const text=await req.text();if(text.length>4096)return json({error:'Request too large',tw:'請求過大',code:'invalid_params'},413);
+        const args=JSON.parse(text);if(!d.prepareLocalProject)return json({error:'Registration unavailable',tw:'註冊流程無法使用',code:'unavailable'},503);
+        return json(await d.prepareLocalProject(args,{key:'projects-page',captain:true,text:'Register a local project only',signal:req.signal,live:()=>!req.signal.aborted}));
+      }catch(e:any){const f=e?.publicFailure;return json({error:f?.reason?.en||'Local project could not be prepared.',tw:f?.reason?.['zh-TW']||'無法準備本機專案，請檢查路徑後重試。',code:f?.code||'invalid_params'},409);}
+    }
     const connect = /^\/api\/projects\/([A-Za-z0-9][A-Za-z0-9_.-]{0,199})\/github\/connect$/.exec(p);
     if (connect) {
       if (!writing) return json({ error: "use POST" }, 405);

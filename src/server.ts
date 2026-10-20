@@ -497,7 +497,7 @@ const serveStatic = (path: string) => {
 
 const SESSION = sessionToken(DATA);
 // the sidebar's Projects section and each project's page: read only (src/project-overview.ts)
-const projectOverview = createProjectOverview({ dataDir: DATA, projects: new Projects(DATA), engine: runtime.engine, session: SESSION, worktrees, artifacts: m3.store, protectedRoots: PROTECTED });
+const projectOverview = createProjectOverview({ dataDir: DATA, projects: new Projects(DATA), engine: runtime.engine, session: SESSION, worktrees, artifacts: m3.store, protectedRoots: PROTECTED, prepareLocalProject: runtime.prepareLocalProject });
 /** The only reads that answer without Studio's session: the launch challenge (its proof needs the token anyway). */
 const PUBLIC_READS = new Set(["/api/instance", "/api/session"]);
 async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> {

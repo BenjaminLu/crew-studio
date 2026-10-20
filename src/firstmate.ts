@@ -167,5 +167,5 @@ export function installFirstmate(engine:Engine,projects:Projects,options:{protec
  async function resumePending():Promise<{seatRun:string;done:Awaited<ReturnType<typeof resumeHeld>>}[]>{const out=[];for(const run of held.pending())out.push({seatRun:run,done:await resumeHeld(run)});return out;}
  // the startup competition is an example (src/runtime/defs.ts EXAMPLE_DEFAULTS): Firstmate hears of it only where it is installed
  if(!startupInstalled())tools.specs=tools.specs.filter(s=>s.name!=='studio_startup_workflow_contract').map(s=>s.name==='studio_propose_work'?{...s,description:s.description.replace(/For startup-recursion,[^]*?generic generated workflow\. /,'')}:s.name==='studio_list_workflows'?{...s,description:s.description.replace('; startup-recursion makes only competition pitch text','')}:s);
- return{...tools,resumeHeld,resumePending};
+ return{...tools,resumeHeld,resumePending,prepareLocalProject:registration.prepareLocal};
 }
