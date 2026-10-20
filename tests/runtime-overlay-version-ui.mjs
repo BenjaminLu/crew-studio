@@ -1,4 +1,4 @@
-import './lib/isolated-env.mjs';
+import "./lib/isolated-env.mjs";
 // Real temporary Studio and actual completed card→hook runs. Only negative
 // identity corruption and response timing are intercepted at the HTTP boundary.
 import {spawn} from 'node:child_process';
