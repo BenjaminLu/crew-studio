@@ -17,7 +17,7 @@ export const NODE_KINDS = ["agent", "check", "card", "loop", "hook"] as const; /
 export type NodeKind = (typeof NODE_KINDS)[number];
 export type CheckRef = { use: string; params?: Record<string, any>; blocking?: boolean; quorum?: { n: number; of: number }; proves?: number[]; prompt?: string; model?: string; provider?: string;
   /** a judged check's duty skills, pinned like a node's: its judge turns load them after the role skill */
-  skills?: { id: string; v: number; sha256: string }[] };
+  skills?: { id: string; v: number; sha256: string; filesSha256?: string }[] };
 /** Hook actions that run a model turn of their own (the pull request text, the image request): such a hook may pin skills too. */
 export const MODEL_HOOK_ACTIONS = ["pr.open", "image.generate"] as const;
 export const pinsSkills = (n: Pick<WNode, "kind" | "do">) => n.kind === "agent" || n.kind === "loop" || (n.kind === "hook" && (MODEL_HOOK_ACTIONS as readonly string[]).includes(String(n.do)));
@@ -34,8 +34,9 @@ export type WNode = {
   lifecycle?: string[];
   /** the captain's intent lines (numbers) this node serves (readiness gate stage 1) */
   serves?: number[];
-  /** an agent or loop node's enabled skills, in order, each pinned by version and hash (unit agent-skills); text only, never tools or sandbox */
-  skills?: { id: string; v: number; sha256: string }[];
+  /** an agent or loop node's enabled skills, in order, each pinned by version and hash (unit agent-skills); filesSha256 pins the version's
+   *  other files too (a pin without it takes the library's). A skill's scripts run only through Studio's skill_run, once approved */
+  skills?: { id: string; v: number; sha256: string; filesSha256?: string }[];
   /** the team seat this node runs as when it is not its role's (web-prototype design-b: alt-maker; docs/design/crew-seats.md) */
   seat?: string;
 };
@@ -82,7 +83,7 @@ export type DefDiff = {
   skills?: { node: string; before: string[]; after: string[] }[];
 };
 /** What a skill pin is checked against: the library's record of that version (null when it has none). */
-export type SkillInfo = (id: string, v: number) => { sha256: string; bytes: number } | null;
+export type SkillInfo = (id: string, v: number) => { sha256: string; filesSha256?: string; bytes: number } | null;
 /** The skill library as Firstmate chooses from it: each skill's current version, what it is for and where it fits. */
 export type SkillCatalogue = () => { id: string; current: number; sha256: string; description: string; fits: { kinds?: string[]; roles?: string[]; formats?: string[] } | null }[];
 export const SKILL_NODE_CAP = 96 * 1024; // the enabled skills' text on one agent node (src/skills.ts SKILL_CAPS.node)
@@ -132,6 +133,7 @@ function checkPins(out: Problem[], node: string, label: string, pins: unknown, s
     const info = skillInfo(p.id, Number(p.v));
     if (!info) out.push({ level: "error", node, text: `${label}: no skill ${p.id} v${p.v} in the library` });
     else if (info.sha256 !== p.sha256) out.push({ level: "error", node, text: `${label}: ${p.id} v${p.v}: the hash does not match the stored version` });
+    else if (p.filesSha256 !== undefined && p.filesSha256 !== info.filesSha256) out.push({ level: "error", node, text: `${label}: ${p.id} v${p.v}: the files hash does not match the stored version` });
     else total += info.bytes;
   }
   if (total > SKILL_NODE_CAP) out.push({ level: "error", node, text: `${node}: the enabled skills total ${fmtSize(total)}; the cap is ${fmtSize(SKILL_NODE_CAP)}` });

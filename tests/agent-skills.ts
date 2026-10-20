@@ -142,15 +142,17 @@ const D = await import("../src/runtime/defs");
   const lib5 = S.Skills ? new S.Skills(d5, { list: () => [], get: () => null, sourceSkill: () => null }) : null;
   if (lib5) { (H.engine.deps as any).library = lib5; H.defs.skillInfo = (id: string, v: number) => lib5.pinInfo(id, v); }
   installCode(H.engine, { dataDir: d5, projects: new Projects(d5) });
-  const caught: { kind: string; system: string }[] = []; const run5 = H.agents.run.bind(H.agents);
-  (H.agents as any).run = (o: any) => { caught.push({ kind: o.kind, system: o.system }); return run5(o); };
+  // This checks the instructions the provider actually receives, after Agents adds safety rules.
+  // Keep the Task paused (live owner) rather than cancelled; ended owners cannot acquire queue slots.
+  (H.engine.deps as any).provider = () => ({ ...recorder("merge"), sandboxFree: true });
   let msys = "";
-  try { const r = H.engine.start({ workflow: "code-firstmate", text: "Add a percent function", params: {} } as any); H.engine.cancel(r.id, "t");
+  try { const r = H.engine.start({ workflow: "code-firstmate", text: "Add a percent function", params: {} } as any); H.engine.pause(r.id);
     const run = H.engine.get(r.id)!; const node = run.def.nodes.find((n: any) => n.id === "merge-card")!;
     await H.engine.cardBodies.merge(H.engine.x(run, node, run.nodes["merge-card"]));
-    msys = caught.find((c) => c.kind === "card:merge")?.system ?? ""; } catch (e: any) { console.log(`  (merge card: ${e?.message})`); }
+    msys = first("merge"); } catch (e: any) { console.log(`  (merge card: ${e?.message})`); }
   const mo = [msys.search(/^# Studio safety rules/m), msys.indexOf("# Test skill"), msys.search(/^# Skill: plain-writing \(v1\)$/m), msys.indexOf("You are the coordinator (firstmate)")];
   ok(mo[0] === 0 && mo.every((v, i) => v >= 0 && (i === 0 || v > mo[i - 1])), "the merge card's coordinator gets the safety rules, the role skill, then plain-writing", JSON.stringify(mo));
+  for (const run of H.engine.list()) if (!["succeeded", "failed", "cancelled"].includes(run.status)) H.engine.cancel(run.id, "t");
   H.stop(); }
 
 // ---------- the server: the import route, the homes, the built-in skill, a real code-firstmate run ----------

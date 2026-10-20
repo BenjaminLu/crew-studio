@@ -26,7 +26,7 @@ const ok = (v, n, extra = "") => { if (v) { pass++; console.log("ok " + n); } el
 const seen = async (p, sel, timeout = 10000) => { try { await p.locator(sel).first().waitFor({ timeout }); return true; } catch { return false; } };
 
 // ---- the fixture: no job reported a cost; three Firstmate proposals ----
-const now = Date.now(), at = (min) => new Date(now - min * 60000).toISOString(), HASH = "74234e98afe" + "0123456789abcdef".repeat(3) + "01234";
+const now = Date.parse("2026-10-20T12:00:00Z"), at = (min) => new Date(now - min * 60000).toISOString(), HASH = "74234e98afe" + "0123456789abcdef".repeat(3) + "01234";
 const fx = boardFixture(now);
 for (const r of Object.values(fx.details)) for (const n of Object.values(r.nodes)) for (const j of n?.data?.jobs || []) j.cost = null;
 const PDEF = { id: "firstmate-proposal", name: "Firstmate proposal", kind: "firstmate-proposal", version: 1, params: {}, roles: [],
@@ -57,7 +57,8 @@ try {
   browser = withSession(await chromium.launch({ headless: true }), base, TOKEN);
   for (const [width, lang] of [[1440, "en"], [1440, "zh-TW"], [390, "en"], [390, "zh-TW"]]) {
     const tag = `${width}-${lang}`, en = lang === "en", wide = width > 500;
-    const ctx = await browser.newContext({ viewport: { width, height: wide ? 900 : 844 } });
+    const ctx = await browser.newContext({ timezoneId: "UTC", viewport: { width, height: wide ? 900 : 844 } });
+    await ctx.clock.setFixedTime(now); await ctx.addInitScript(t=>{window.crewClock=()=>t;},now);
     await ctx.addInitScript(({ lang, open }) => { try { localStorage.setItem("crew.lang", lang); localStorage.setItem("crew.chatOpen", open); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} }, { lang, open: wide ? "1" : "0" });
     await routeBoardFixture(ctx, fx);
     let connected = true;
@@ -96,6 +97,17 @@ try {
       await p.waitForTimeout(600);
       ok(await p.locator(".ghbar").count() === 0 && !/GitHub off|GitHub 未啟用/.test(await p.locator("body").innerText()), `${tag}: with no project connected the chip is not shown (never "GitHub off")`);
     }
+    await ctx.close();
+  }
+  // Today is a calendar boundary, not "the last 24 hours": retain the true midnight behavior.
+  {
+    const midnight=Date.parse('2026-10-20T00:05:00Z'), boundary=boardFixture(midnight);
+    boundary.details['R-123']={...structuredClone(fx.details['R-123']),endedAt:new Date(midnight-15*60000).toISOString()};
+    boundary.details['R-124']={...structuredClone(fx.details['R-123']),id:'R-124',endedAt:new Date(midnight-60000).toISOString()};
+    const ctx=await browser.newContext({timezoneId:'UTC',viewport:{width:1440,height:900}});
+    await ctx.clock.setFixedTime(midnight);await ctx.addInitScript(t=>{window.crewClock=()=>t;},midnight);await routeBoardFixture(ctx,boundary);
+    const p=await ctx.newPage();await p.goto(base+'/#/board');await p.locator('#tb-R-124').waitFor();
+    ok(await p.locator('#tb-R-123').count()===0&&await p.locator('#tb-R-124').count()===1,'UTC midnight excludes yesterday closed proposals and retains ones closed today');
     await ctx.close();
   }
   ok(!errors.length, "no page errors", errors.join(" | "));

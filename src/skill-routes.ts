@@ -20,7 +20,9 @@ import type { StudioLog } from "./rawlog";
 
 const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 
-export function createSkillRoutes(o: { skills: Skills; defs: () => WorkflowDefs | null; session: string; log: StudioLog; team?: () => Team | null }) {
+export function createSkillRoutes(o: { skills: Skills; defs: () => WorkflowDefs | null; session: string; log: StudioLog; team?: () => Team | null;
+  /** a script skill version's readiness for the viewer (src/skillpkg): scripts, hosts, approved or not, ready or what is missing */
+  scripts?: (id: string, v: number) => unknown }) {
   /** where each library skill is pinned: the latest version of every workflow, node by node */
   const usedBy = () => {
     const out: Record<string, { workflow: string; version: number; node: string; v: number }[]> = {};
@@ -47,7 +49,7 @@ export function createSkillRoutes(o: { skills: Skills; defs: () => WorkflowDefs 
     const { rec, text } = got;
     return { id, name: rec.name, description: rec.description, fits: lib.fits, source: rec.source, sourceKind: rec.sourceKind, version: rec.n, latest: lib.current,
       versions: lib.versions, sha256: rec.sha256, bytes: rec.bytes, createdAt: rec.createdAt, by: rec.by, text, frontmatter: splitFrontmatter(text).fm, ignored: rec.ignored,
-      files: o.skills.libFiles(id, rec.n), skipped: rec.skipped, fileCap: SKILL_VIEW_FILE_CAP, usedBy: usedBy()[id] ?? [], usedBySeats: seatsUsing(id) };
+      files: o.skills.libFiles(id, rec.n), skipped: rec.skipped, fileCap: SKILL_VIEW_FILE_CAP, usedBy: usedBy()[id] ?? [], usedBySeats: seatsUsing(id), scripts: (() => { try { return o.scripts?.(id, rec.n) ?? null; } catch { return null; } })() };
   };
   /** one supporting file: the path as the page sent it, each segment decoded once (an encoded "/" or ".." is refused, never resolved) */
   const file = (id: string, rawPath: string, asked: string | null) => {

@@ -1,0 +1,41 @@
+import "./lib/isolated-env.mjs";
+import {existsSync,mkdirSync,symlinkSync,writeFileSync} from "node:fs";
+import {join} from "node:path";
+import {checkedTempDir} from "./lib/git-hygiene.mjs";
+import {suite} from "./rt-harness";
+import {Skills} from "../src/skills";
+import {SkillPackages} from "../src/skillpkg/index";
+import {fixtureEgress,REGISTRY,skillFolder,startRegistry} from "./lib/skill-fixtures";
+const {ok,end}=suite("skill-recovery"),root=checkedTempDir("skill-recovery-"),data=join(root,"data"),bin=join(root,"bin");mkdirSync(bin);
+const src=join(root,"tool-skill");mkdirSync(join(src,"scripts"),{recursive:true});
+writeFileSync(join(src,"SKILL.md"),"---\nname: recovery-tool\ndescription: fixture\nmetadata:\n  requires:\n    bins: [recovery-tool-bin]\n---\nUse scripts.\n");
+writeFileSync(join(src,"scripts/go.sh"),"#!/bin/sh\necho ready\n");
+const skills=new Skills(data,{list:()=>[],get:()=>null,sourceSkill:()=>null} as any);skills.importFolder(src,"captain");
+const options={dataDir:data,skills,path:bin,brew:false as const,uv:false as const,inUse:()=>new Set(["recovery-tool@v1"]),retryAfterMs:0};
+const pk=new SkillPackages(options);pk.decide("recovery-tool",1,"approved","captain","test");
+ok((await pk.ensure("recovery-tool",1)).state==="not-ready","missing program initially reports not-ready");
+writeFileSync(join(bin,"recovery-tool-bin"),"#!/bin/sh\necho ready\n",{mode:0o755});
+ok((await pk.ensure("recovery-tool",1)).state==="ready","dispatch preparation notices a previously missing program was installed");
+const restartSrc=join(root,"restart-skill");mkdirSync(join(restartSrc,"scripts"),{recursive:true});
+writeFileSync(join(restartSrc,"SKILL.md"),"---\nname: recovery-restart\ndescription: fixture\nmetadata:\n  requires:\n    bins: [restart-tool-bin]\n---\nUse scripts.\n");writeFileSync(join(restartSrc,"scripts/go.sh"),"#!/bin/sh\necho ready\n");skills.importFolder(restartSrc,"captain");
+pk.decide("recovery-restart",1,"approved","captain","test");await pk.ensure("recovery-restart",1);
+writeFileSync(join(bin,"restart-tool-bin"),"#!/bin/sh\necho ready\n",{mode:0o755});
+const restarted=new SkillPackages({...options,inUse:()=>new Set(["recovery-restart@v1"])});await restarted.prepareInUse();
+ok(restarted.status("recovery-restart",1).state==="ready","startup refreshes a persisted missing-program result");
+// A real npm failure must recover into an actual prepared dependency; no fabricated env.json.
+const node=Bun.which("node"),npm=Bun.which("npm");if(!node||!npm)throw new Error("fixture requires host node/npm");
+symlinkSync(node,join(bin,"node"));const ready=join(bin,"retry-ready");
+writeFileSync(join(bin,"npm"),`#!/bin/sh\nif [ "$1" = "-v" ] || [ -f '${ready}' ]; then exec '${npm}' "$@"; fi\necho fixture-transient-npm-failure >&2\nexit 42\n`,{mode:0o755});
+const fx=startRegistry(),egress=fixtureEgress(join(data,"egress.log"));await egress.start();egress.testUpstreams.set(REGISTRY,{address:"127.0.0.1",port:fx.port});
+try {
+ skills.importFolder(skillFolder(root,fx,{name:"recovery-npm",python:false}),"captain");
+ const transient=new SkillPackages({...options,egress:()=>egress});transient.decide("recovery-npm",1,"approved","captain","test");
+ const failed=await transient.ensure("recovery-npm",1);
+ ok(failed.state==="not-ready"&&failed.reasons.some(r=>/fixture-transient-npm-failure/.test(r.en)),"a real dependency preparation failure is recorded");
+ const bounded=new SkillPackages({...options,egress:()=>egress,retryAfterMs:60_000});
+ const unchanged=await bounded.ensure("recovery-npm",1);
+ ok(unchanged.state==="not-ready"&&unchanged.at===failed.at,"repeated dispatches within cooldown reuse the failed result instead of retrying installation");
+ writeFileSync(ready,"ready");const recovered=await transient.ensure("recovery-npm",1);
+ ok(recovered.state==="ready"&&!!recovered.envKey&&existsSync(join(data,"envs",recovered.envKey!,"node/node_modules/fixture-dep/index.js")),"a later retry performs the real pinned install and becomes ready");
+} finally {egress.stop();fx.stop();}
+end();
