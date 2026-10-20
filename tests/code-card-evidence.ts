@@ -33,4 +33,9 @@ ok(projectCodeEvidence({...input,trusted:{ok:true,entries:[...entries,{...entrie
 ok(projectCodeEvidence({...input,trusted:{ok:true,entries:[...crossNode,{...entries[7],seq:15,edge:'unrelated-edge',verdict:'pass'}]}}).state==='fail','unrelated edge pass cannot cover the issued node failure');
 const ambiguousIssue=snapshotCodeEvidence({head,base},crossNode);
 ok(projectCodeEvidence({...input,offered:ambiguousIssue,trusted:{ok:true,entries:crossNode}}).state==='missing','pre-issuance cross-node ambiguity cannot select an unrelated green source');
+const policyOnly=entries.filter(e=>e.check.startsWith('firstmate/gate-'));
+const optional=projectCodeEvidence({...input,offered:snapshotCodeEvidence({head,base},policyOnly),trusted:{ok:true,entries:policyOnly}});
+ok(optional.state==='success'&&optional.execution.every(e=>e.status==='unknown'),'policy gates without declared execution remain ready with unknown execution');
+const historical=[...policyOnly,{...entries[7],head:'c'.repeat(40)}];
+ok(projectCodeEvidence({...input,offered:snapshotCodeEvidence({head,base},historical),trusted:{ok:true,entries:historical}}).state==='success','unrelated historical execution is not new required backing');
 end();

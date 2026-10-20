@@ -39,7 +39,7 @@ export function projectCodeEvidence(i:Input){
     const status=!bound?'unknown':e.data?.status==='not-run'?'not-run':e.data?.applicable===false||e.data?.status==='not-applicable'?'not-applicable':e.evidence?.length?'recorded':'unknown';
     return {check,bound,seq:e?.seq??null,head:e?.head??null,verdict:bound?e.verdict:'unknown',status,command:bound&&Array.isArray(e.data?.command)?e.data.command:null,reason:bound?String(e.data?.reason??e.data?.why??''):'No exact-head receipt',shards:bound&&Array.isArray(e.data?.shards)?e.data.shards:[],files:bound?(e.evidence??[]).map(file=>({file,href:`/api/wruns/${encodeURIComponent(i.run)}/evidence?seq=${e.seq}&file=${encodeURIComponent(file)}`,present:i.filePresent(e,file)})):[]};
   });
-  if(state==='success'&&execution.some(e=>!e.bound)){state='missing';reasons.push('execution-unbound');}
+  if(state==='success'&&execution.some(e=>!e.bound&&(i.offered.identities?.some(k=>k.check===e.check)||entries.some(k=>k.check===e.check&&k.head===i.offered.head)))){state='missing';reasons.push('execution-unbound');}
   if(execution.some(e=>e.head===i.offered.head&&['fail','error'].includes(e.verdict))){state='fail';reasons.push('execution-failed');}
   if(i.offered.version===1){for(const required of i.offered.requiredEvidence??[]){const e=entries.find(e=>e.seq===required.seq&&e.check===required.check&&e.head===required.head&&e.head===i.offered.head);
     if(!e||required.files.some(file=>!e.evidence?.includes(file)||!i.filePresent(e,file))){if(state==='success')state='missing';reasons.push('required-evidence-missing');}}
@@ -47,7 +47,7 @@ export function projectCodeEvidence(i:Input){
   if(i.offered.head!==i.current.head||i.offered.base!==i.current.base){state='stale';reasons.unshift('recorded-target-changed');}
   const capture=relevant('firstmate/ui-captures');
   const media=capture?.head===i.offered.head&&capture.data?.head===i.offered.head&&capture.data?.base===i.offered.base&&capture.data?.rendered===true&&Array.isArray(capture.data?.captures)
-    ?capture.data.captures.filter((p:any)=>[p.before,p.after].every(h=>typeof h==='string'&&h.startsWith('/api/')&&!h.startsWith('//'))).map((p:any)=>({label:String(p.label??'Page'),before:p.before,after:p.after,seq:capture.seq})):[];
+    ?capture.data.captures.filter((p:any)=>[p.before,p.after].every(h=>typeof h==='string'&&h.startsWith('/api/')&&!h.startsWith('//'))).map((p:any)=>({label:String(p.label??'Page'),before:p.before,after:p.after,changed:p.changed,seq:capture.seq})):[];
   return {version:1 as const,media,state,blocked:i.offered.version===1&&state!=='success',legacy:i.offered.version!==1,offered:{head:i.offered.head,base:i.offered.base},current:i.current,gates,execution,reasons,
     limitations:['Recorded target only; live Git identity is rechecked by the merge action.','Signed receipts reference files; original file bytes have no producer digest.','Sandbox and service provenance are unknown unless explicitly recorded.','No recording.','Intent-to-diff mappings are suggestions, not proof of behavior.']};
 }
