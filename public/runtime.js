@@ -328,6 +328,15 @@ function workflowChanges(before,after){
   for(const k of ["name","description","roles","params","policies","hooks","intents","sample","compare"])if(JSON.stringify(before[k])!==JSON.stringify(after[k]))rows.push({label:k,before:JSON.stringify(before[k]??null,null,2),after:JSON.stringify(after[k]??null,null,2)});
   return rows;
 }
+// Execution identity ignores layout and version-record metadata, never node,
+// edge, check, role or workflow execution content. Object key order is not identity.
+function overlayDefinitionBody(def){
+  if(!def||!Array.isArray(def.nodes)||!Array.isArray(def.edges))return null;
+  const {version,parent,createdAt,by,note,diff,seed,...body}=def;
+  body.nodes=def.nodes.map(({x,y,...node})=>node);
+  const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
+  return JSON.stringify(canonical(body));
+}
 function workflowBriefKey(ed){return ed.workspaceScope?`crew.workflow.startBrief.v1:${ed.workspaceScope}:${ed.id}`:null;}
 function workflowBrief(ed){if(ed.startBrief===undefined){const key=workflowBriefKey(ed);ed.startBrief=(key?store.get(key):null)??ed.def.origin?.brief?.goal??ed.def.sample?.text??"";}return ed.startBrief;}
 function saveWorkflowBrief(ed,value){ed.startBrief=value;const key=workflowBriefKey(ed);if(key)store.set(key,value);}
@@ -349,8 +358,12 @@ function buildEditor(ed) {
   const probs = h("div", { class: "rt-problems" });
   const say = (t) => { status.textContent = t; };
   let view = null, vtimer = null, validationGeneration = 0, validationAbort = null, disposed = false, draftRevision = 0, savePending = false;
+  let overlayGeneration=0, overlayPin=null;
+  const overlayStatus=h("div",{class:"faint rt-overlay-status","data-overlay-status":"",role:"status","aria-live":"polite"});
+  const invalidateOverlay=()=>{overlayGeneration++;overlayPin=null;ed.states=null;ed.walked=null;overlayStatus.replaceChildren();};
+  const overlayDirty=()=>overlayStatus.replaceChildren(T("Execution colors are hidden for unsaved edits. Save a new version or reload the saved version before choosing a Task.","未儲存的修改不顯示執行狀態。請存成新版本，或重新載入已儲存版本，再選擇任務。"));
   const checkMan = (ref) => ed.checks.find((c) => c.ref === ref);
-  const dirty = () => { draftRevision++; ed.dirty = true; validateSoon(); draw(); };
+  const dirty = () => { draftRevision++; ed.dirty = true; invalidateOverlay(); if(ed.overlay)overlayDirty(); validateSoon(); draw(); };
   const validateSoon = () => {
     clearTimeout(vtimer); validationAbort?.abort(); const generation = ++validationGeneration;
     vtimer = setTimeout(async () => {
@@ -589,12 +602,35 @@ function buildEditor(ed) {
   const saveButton = h("button", { disabled:ed.trash?.deleted||null, class: "btn primary sm", "data-save": "1", onclick: save }, T("Save as new version", "存成新版本"));
   const runPick = h("select", { class: "select", "aria-label": T("Show a task on the graph", "在流程圖上顯示一個任務"), "data-overlay": "1", onchange: (e) => setOverlay(e.target.value || null) },
     h("option", { value: "" }, T("No task overlay", "不疊加任務")), (ed.runs || []).slice().reverse().map((r) => h("option", { value: r.id, "data-overlay-run": r.id }, `${r.id} · v${r.version} · ${stateWord(r)}`)));
-  const setOverlay = async (rid) => { ed.overlay = rid; ed.states = null; ed.walked = null; if (rid) { try { const r = await api(`/api/wruns/${rid}`); ed.states = Object.fromEntries(Object.entries(r.nodes).map(([k, n]) => [k, n.state])); ed.walked = new Set(r.walked || []); } catch {} } draw(); };
-  const onLive = (t, d) => { if (t === "wrun" && ed.overlay === d.id && d.event?.type === "edge_taken") (ed.walked ||= new Set()).add(d.event.edge);
-    if (t === "wrun" && ed.overlay === d.id && d.nodes) { ed.states = Object.fromEntries(Object.entries(d.nodes).map(([k, n]) => [k, n.state ?? n])); if (WF.ed === ed) draw(); } };
+  const ownsOverlay=(rid,generation)=>!disposed&&WF.ed===ed&&root.isConnected&&ed.overlay===rid&&overlayGeneration===generation;
+  const cleanOverlay=()=>!ed.dirty&&ed.def.version===ed.saved.version&&overlayDefinitionBody(ed.def)===overlayDefinitionBody(ed.saved);
+  const setOverlay = async (rid) => {
+    invalidateOverlay();ed.overlay=rid;draw();if(!rid)return;
+    if(!cleanOverlay()){overlayDirty();return;}
+    const generation=overlayGeneration;
+    try{
+      const r=await api(`/api/wruns/${rid}`);if(!ownsOverlay(rid,generation))return;
+      if(!cleanOverlay()){overlayDirty();return;}
+      const known=Number.isSafeInteger(r.version)&&r.version>0&&r.workflow===ed.id&&r.id===rid&&r.def?.id===ed.id&&r.def.version===r.version;
+      if(!known||r.version!==ed.saved.version||overlayDefinitionBody(r.def)!==overlayDefinitionBody(ed.saved)){
+        overlayStatus.replaceChildren(T("Execution colors are hidden: this Task does not match the displayed saved definition.","執行狀態已隱藏：此任務與目前顯示的已儲存流程不同。"));
+        if(known)overlayStatus.append(" ",h("a",{href:`#/workflows/${ed.id}/v${r.version}`,"data-overlay-version-link":""},T(`Open the Task's saved v${r.version}`,`開啟此任務的已儲存 v${r.version}`)));
+        return;
+      }
+      overlayPin={rid,generation,version:r.version};ed.states=Object.fromEntries(Object.entries(r.nodes).map(([k,n])=>[k,n.state]));ed.walked=new Set(r.walked||[]);
+      overlayStatus.textContent=T(`Showing ${rid} on its saved v${r.version}.`,`正在已儲存 v${r.version} 顯示 ${rid}。`);draw();
+    }catch(e){if(ownsOverlay(rid,generation))overlayStatus.textContent=T("Could not verify this Task's definition; execution colors remain hidden.","無法確認此任務的流程版本，執行狀態維持隱藏。");}
+  };
+  const onLive = (t, d) => {
+    const pin=overlayPin;if(t!=="wrun"||!pin||d.id!==pin.rid||!ownsOverlay(pin.rid,pin.generation)||!cleanOverlay())return;
+    if(d.workflow!==undefined&&d.workflow!==ed.id||d.version!==undefined&&d.version!==pin.version)return;
+    if(d.event?.type==="edge_taken")(ed.walked||=new Set()).add(d.event.edge);
+    if(d.nodes)ed.states=Object.fromEntries(Object.entries(d.nodes).map(([k,n])=>[k,n.state??n]));
+    if(d.nodes||d.event?.type==="edge_taken")draw();
+  };
   live.listeners.add(onLive);
   ed.dispose = () => {
-    if (disposed) return; disposed = true; drawPending = false;
+    if (disposed) return; disposed = true; drawPending = false; invalidateOverlay();
     clearTimeout(vtimer); validationGeneration++; validationAbort?.abort(); validationAbort = null;
     canvas.querySelector("svg.rt-graph")?.cancelInteraction?.();
     live.listeners.delete(onLive);
@@ -623,7 +659,7 @@ function buildEditor(ed) {
         h("span", { class: "keep" }, k === "simple" ? T("Simple", "簡易") : T("Detail", "詳細"))))),
       h("button", { class: "btn sm", "data-tidy": "1", title: T("Lay the graph out again automatically", "自動重新排版"), onclick: async () => { await setMode("auto"); view = null; draw(); say(T("Tidy layout", "已自動排版")); } }, T("Tidy layout", "整理排版")),
       h("button", { class: "btn sm", "data-fit": "1", onclick: () => { const g = canvas.querySelector("svg.rt-graph"); if (g) fit(g, "all"); } }, T("Fit to view", "全部顯示")),
-      runPick, note, saveButton, status),
+      runPick, note, saveButton, status, overlayStatus),
     ...(ed.trash?.deleted?[h("p",{class:"card x-pad","data-workflow-in-trash":""},T("This workflow is in Trash. Restore it before editing or starting a Task.","此流程在垃圾桶中。請先復原，再編輯或開始任務。"))]:[]),
     ...(ed.def.origin && !ed.trash?.deleted ? [gateHost] : []),
     h("div", { "data-diff-host": "1" }, WF.lastDiff || diffBox),
