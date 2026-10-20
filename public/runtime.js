@@ -359,7 +359,7 @@ function buildEditor(ed) {
   const say = (t) => { status.textContent = t; };
   let view = null, vtimer = null, validationGeneration = 0, validationAbort = null, disposed = false, draftRevision = 0, savePending = false;
   let overlayGeneration=0, overlayPin=null;
-  const overlayStatus=h("div",{class:"faint","data-overlay-status":"",role:"status","aria-live":"polite"});
+  const overlayStatus=h("div",{class:"faint rt-overlay-status","data-overlay-status":"",role:"status","aria-live":"polite"});
   const invalidateOverlay=()=>{overlayGeneration++;overlayPin=null;ed.states=null;ed.walked=null;overlayStatus.replaceChildren();};
   const overlayDirty=()=>overlayStatus.replaceChildren(T("Execution colors are hidden for unsaved edits. Save a new version or reload the saved version before choosing a Task.","未儲存的修改不顯示執行狀態。請存成新版本，或重新載入已儲存版本，再選擇任務。"));
   const checkMan = (ref) => ed.checks.find((c) => c.ref === ref);
@@ -659,7 +659,7 @@ function buildEditor(ed) {
         h("span", { class: "keep" }, k === "simple" ? T("Simple", "簡易") : T("Detail", "詳細"))))),
       h("button", { class: "btn sm", "data-tidy": "1", title: T("Lay the graph out again automatically", "自動重新排版"), onclick: async () => { await setMode("auto"); view = null; draw(); say(T("Tidy layout", "已自動排版")); } }, T("Tidy layout", "整理排版")),
       h("button", { class: "btn sm", "data-fit": "1", onclick: () => { const g = canvas.querySelector("svg.rt-graph"); if (g) fit(g, "all"); } }, T("Fit to view", "全部顯示")),
-      runPick, note, saveButton, status), overlayStatus,
+      runPick, note, saveButton, status, overlayStatus),
     ...(ed.trash?.deleted?[h("p",{class:"card x-pad","data-workflow-in-trash":""},T("This workflow is in Trash. Restore it before editing or starting a Task.","此流程在垃圾桶中。請先復原，再編輯或開始任務。"))]:[]),
     ...(ed.def.origin && !ed.trash?.deleted ? [gateHost] : []),
     h("div", { "data-diff-host": "1" }, WF.lastDiff || diffBox),

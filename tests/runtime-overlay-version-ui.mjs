@@ -22,11 +22,12 @@ try{
  const v1=await run(1),v1Waiting=await run(1,false);
  const open=async(version)=>{await p.goto(`${base}/#/workflows/overlay-proof${version?'/v'+version:''}`);await p.reload();await p.locator('[data-overlay]').waitFor();await p.locator('[data-view-toggle="detail"]').click();};
  const colored=async()=>p.locator('[data-node="start"][data-state="passed"],[data-node="done"][data-state="passed"]').count();
+ const adjacentNotice=async()=>{await p.locator('[data-overlay]').scrollIntoViewIfNeeded();return p.evaluate(()=>{const a=document.querySelector('[data-overlay]').getBoundingClientRect(),b=document.querySelector('[data-overlay-status]').getBoundingClientRect();return b.height>0&&a.top>=0&&b.top>=a.bottom&&b.top-a.bottom<=180&&b.bottom<=innerHeight;});};
  const choose=async(id)=>{await p.selectOption('[data-overlay]',id);await p.waitForTimeout(100);};
  await open(1);await choose(v1.id);ok(await colored()===2,'same-version completed real run colors both actual visited nodes');
  // Same IDs, new execution content: the old pass must never be painted on v2.
  await p.click('[data-edit-step="start"]');await p.locator('[data-field="label"]').fill('Changed v2 approval');await p.locator('[data-field="label"]').dispatchEvent('change');await p.click('[data-save]');await p.waitForFunction(()=>document.querySelector('select[aria-label="Version"]')?.value==='2');
- await choose(v1.id);ok(await colored()===0,'v1 completion cannot color changed v2 graph with the same node IDs');
+ await choose(v1.id);ok(await colored()===0,'v1 completion cannot color changed v2 graph with the same node IDs');ok(await adjacentNotice(),'desktop refusal is visible next to the Task selector');
  ok(await p.locator('[data-overlay-status]').count()===1 && /v1/.test(await p.locator('[data-overlay-status]').innerText()),'mismatch names the actual executed version');
  const pin=p.locator('[data-overlay-version-link]');ok(await pin.count()===1&&(await pin.getAttribute('href'))==='#/workflows/overlay-proof/v1','mismatch offers explicit pinned-version link without automatic navigation');
  const v2=await run(2);await open(2);await choose(v2.id);ok(await colored()===2,'new v2 real completion still overlays its own graph');
@@ -43,7 +44,7 @@ try{
  await open(1);let held=await hold(v1.id);await p.selectOption('[data-overlay]',v1.id);await held.started;await choose(v1Waiting.id);held.release();await p.waitForTimeout(150);ok(await colored()===0&&(await p.locator('[data-overlay]').inputValue())===v1Waiting.id,'late completed A cannot replace selected waiting B');await held.close();
  await choose('');held=await hold(v1.id);await p.selectOption('[data-overlay]',v1.id);await held.started;await choose('');held.release();await p.waitForTimeout(150);ok(await colored()===0,'clear selection invalidates pending overlay');await held.close();
  held=await hold(v1.id);await p.selectOption('[data-overlay]',v1.id);await held.started;await open(2);held.release();await p.waitForTimeout(150);ok(await colored()===0&&await p.locator('select[aria-label="Version"]').inputValue()==='2','version navigation invalidates pending response from disposed editor');await held.close();
- await p.setViewportSize({width:390,height:844});await choose(v1.id);ok(await colored()===0&&await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile mismatch remains readable without false colors or horizontal overflow');mkdirSync(join(root,'tests/out/runtime-overlay-version'),{recursive:true});await p.screenshot({path:join(root,'tests/out/runtime-overlay-version/version-mismatch-mobile.png'),fullPage:true});
+ await p.setViewportSize({width:390,height:844});await choose(v1.id);ok(await adjacentNotice(),'mobile refusal is visible next to the Task selector');ok(await colored()===0&&await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile mismatch remains readable without false colors or horizontal overflow');mkdirSync(join(root,'tests/out/runtime-overlay-version'),{recursive:true});await p.screenshot({path:join(root,'tests/out/runtime-overlay-version/version-mismatch-mobile.png'),fullPage:true});
  await post('/api/wruns/'+v1Waiting.id+'/cancel',{});await ctx.close();
 }finally{await browser?.close();app.kill('SIGTERM');rmSync(temp,{recursive:true,force:true});}
 console.log(`runtime-overlay-version-ui: ${passed} passed, ${failed} failed`);process.exitCode=failed?1:0;
