@@ -16,7 +16,7 @@ import { CrewStore } from "../../src/domain/crew";
 import { Ledger } from "../../src/runtime/checks";
 import { verifyGitHubGrant } from "../../src/github-grant";
 
-export const PROVES = ["pdf-chromium", "captures", "film", "web-smoke", "fail-first", "sandbox-probe", "crew-applied", "merge-granted", "merge-closed", "files-applied", "files-discarded"];
+export const PROVES = ["pdf-chromium", "captures", "film", "web-smoke", "fail-first", "sandbox-probe", "crew-applied", "merge-granted", "merge-closed", "files-applied", "files-discarded", "project-registered", "project-not-registered"];
 /** the proofs only a real renderer can give */
 export const RENDERER_PROVES = ["pdf-chromium", "captures", "film", "web-smoke"];
 
@@ -59,6 +59,18 @@ export function probeProblems(r: any): string[] {
 }
 
 export async function prove(s: Studio, view: any, what: string, o: { sinkHits?: () => number; github?: { origin: string; calls: { method: string; path: string }[] }; fileorg?: { root: string; files: Record<string, string>; plan?: any } } = {}): Promise<string[]> {
+  if(what === "project-registered" || what === "project-not-registered") {
+    const path=JSON.parse(view.params.identity).path,raw=JSON.parse(readFileSync(join(s.data,"projects.json"),"utf8"));
+    const matches=raw.filter((p:any)=>p.path===path),auth=new Ledger(s.data,view.id).authenticatedPrefix();
+    const records=auth.prefix.filter((e:any)=>e.record==='local-project-registered');
+    const out:string[]=[];
+    if(auth.bad.length||auth.malformed)out.push('registration ledger does not authenticate');
+    if(what==='project-registered'&&(matches.length!==1||records.length!==1||records[0].data.project!==matches[0].id))out.push('exactly one matching registered project and signed mutation receipt required');
+    if(what==='project-not-registered'&&(matches.length||records.length))out.push('cancelled registration wrote a project or receipt');
+    const runs=(await s.api('/api/wruns')).body.runs;
+    if(runs.some((r:any)=>['code-firstmate','firstmate-proposal','firstmate-staffing'].includes(r.workflow)))out.push('registration unexpectedly launched coding, staffing or dispatch');
+    return out;
+  }
   const task = String(view?.id ?? ""), run = join(s.data, "runs", task), lower = task.toLowerCase();
   if (what === "files-applied" || what === "files-discarded") {
     const fixture = o.fileorg, bad: string[] = [];

@@ -1,0 +1,7 @@
+{
+ "id":"local-project-register","name":"Add local project","kind":"local-project-register","version":1,
+ "description":"Captain-confirmed local registration only; no work or remote authority.",
+ "params":{"identity":{"label":"Pinned repository identity"}},"roles":[],
+ "nodes":[{"id":"register","kind":"hook","label":"Confirm local project","do":"project.local-card","x":160,"y":140},{"id":"add","kind":"hook","label":"Register local project","do":"project.local-register","x":440,"y":140},{"id":"done","kind":"hook","label":"Project added","x":720,"y":140},{"id":"closed","kind":"hook","label":"Cancelled","args":{"result":"closed"},"x":440,"y":280}],
+ "edges":[["register","add","approve"],["register","closed","close"],["add","done","ok"]]
+}

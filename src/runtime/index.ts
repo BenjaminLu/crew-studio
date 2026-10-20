@@ -11,6 +11,7 @@ import { deliverableOf, DELIVERABLE_WORKFLOW } from "../deliverables";
 import {installReadinessViews,readinessNodes} from './readiness-view';
 import {installGitHubReviewWorkflow} from '../domain/github-review-workflow';
 import {Onboarding} from '../onboarding';
+import {OnboardingTeam,type TeamPick,type TeamProbe} from '../onboarding-team';
 import {ArtifactStore,websiteHref} from '../artifacts';
 import {StaffingStore,staffingHash,coffeeStaffingProject,staffingApplies,staffedCapability,type StaffingProject} from '../domain/staffing';
 import {CrewStore,resolveCrew,teamBody,withJudges,seatLabel} from '../domain/crew';
@@ -80,6 +81,9 @@ export type RuntimeDeps = {
   /** fresh: read every model list again now (the Crew page's detection), not a reading the provider reuses */
   staffingFacts?: (o?:{fresh?:boolean}) => Promise<StaffingFacts[]>;
   staffingAdmission?: StaffingAdmission;
+  onboardingProvider?:()=>string|null;
+  onboardingTeamVerify?:(pick:TeamPick,signal?:AbortSignal)=>Promise<TeamProbe>;
+  onboardingTeamContext?:(pick:TeamPick)=>string;
   staffingProject?: (id:string) => StaffingProject;
   staffingPending?: (intent:any) => void;
   /** the captain approved a crew Firstmate proposed: tell Firstmate, so it proposes the work (still captain-approved) */
@@ -171,7 +175,8 @@ export function createRuntime(d: RuntimeDeps) {
   const crewTools=installCrewTools(engine,crewStore,{facts:staffingFacts as any,cached:()=>staffingCapabilities as any,send:d.send,onApproved:run=>seatFilled(run)});
   // no image pick to seed the image maker from: raise the seat card now, so the captain sees why image work waits (never a silent block)
   if(imageSeatUnfilled){const def=engine.defs.get('images');if(def)void crewTools.seatGate(def,{key:'crew-migration'}).catch(()=>{});}
-  const crewApi=crewRoutes({judges:def=>judgeSlots(engine,def),roleSkill:(def,role)=>engine.roleSkillUse(def,role) as any,defs,store:crewStore,projects:()=>projects.list().map(p=>({id:p.id,name:p.name})),facts:()=>staffingCapabilities,refreshFacts:()=>staffingFacts({fresh:true}),...process.env.CREW_DETECT_FORCE_MIN_MS!==undefined?{forceMinMs:Number(process.env.CREW_DETECT_FORCE_MIN_MS)}:{}, // tests: 0 lets 重新偵測 run back to back
+  const onboardingTeam=new OnboardingTeam({store:crewStore,admission:d.staffingAdmission,facts:fresh=>staffingFacts({fresh:!!fresh}),preferred:d.onboardingProvider??(()=>null),context:d.onboardingTeamContext??(()=>''),verify:d.onboardingTeamVerify??(async()=>{throw new Error('Native verification is unavailable');})});
+  const crewApi=crewRoutes({onboarding:onboardingTeam,judges:def=>judgeSlots(engine,def),roleSkill:(def,role)=>engine.roleSkillUse(def,role) as any,defs,store:crewStore,projects:()=>projects.list().map(p=>({id:p.id,name:p.name})),facts:()=>staffingCapabilities,refreshFacts:()=>staffingFacts({fresh:true}),...process.env.CREW_DETECT_FORCE_MIN_MS!==undefined?{forceMinMs:Number(process.env.CREW_DETECT_FORCE_MIN_MS)}:{}, // tests: 0 lets 重新偵測 run back to back
   library:()=>engine.skillLibrary().library(),skillPackages:()=>skillPackages});
   /** The project's staffing from the team, when the team covers this workflow (null: the per-project staffing flow applies). */
   const teamStaffing=(def:any,projectId:string)=>{if(!staffingApplies(def))return null;const project=def.kind==='coffee-kit'?coffeeStaffingProject(projectId):staffingProject(projectId);return crewStaffing.ensure(def,project);};
@@ -259,7 +264,7 @@ export function createRuntime(d: RuntimeDeps) {
     if(p==='/api/github-review/scan'||p==='/api/github-review/template'||p==='/api/github-review/community'){if(req.method!=='POST'||!writing)return json({error:'Authenticated POST required'},405);if(who.kind!=='desktop')return json({error:'Confirm GitHub reviewer configuration on desktop'},403);try{return json(p.endsWith('/community')?await githubReview.community(b.project,req.signal):p.endsWith('/scan')?await githubReview.scan(b.project,b.url,req.signal):await githubReview.save(b,req.signal));}catch{return json({error:'GitHub review discovery/configuration could not be verified. Check registered project grant, PR URL and current access; no GitHub write was performed.',code:'github_review_unverified'},409);}}
     if (writing && who.kind === "phone" && !/^\/api\/scards\//.test(p)) return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
     try {
-      {const r=await crewApi(p,url,req.method,writing,b,who);if(r)return r;}
+      {const r=await crewApi(p,url,req.method,writing,b,who,req.signal);if(r)return r;}
       if(p==='/api/onboarding'){
         if(who.kind!=='desktop')return json({error:'Use onboarding on the authenticated desktop'},403);
         if(!writing)return json(onboarding.view());
@@ -481,6 +486,6 @@ export function createRuntime(d: RuntimeDeps) {
       return json({ error: "not found" }, 404);
     } catch (e: any) { return json({ error: String(e?.message ?? e), problems: e?.problems ?? undefined, refusal: e?.refusal ?? undefined, failure: e?.refusal ? undefined : fromError(e, { source: "params" }) }, 400); }
   }
-  return { handle, engine, defs, projects, firstmate, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
+  return { handle, engine, defs, projects, firstmate, prepareLocalProject:originalFirstmate.prepareLocalProject, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
 }
 export { schemaDefaults };

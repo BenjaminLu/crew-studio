@@ -19,3 +19,7 @@
 @media(max-width:899px){
  body:has([data-onboarding-journey]):not(.chat-closed) #chat{bottom:var(--ob-journey-reserve,0px);height:calc(100% - var(--ob-journey-reserve,0px))}
 }
+[data-onboarding-team]{min-width:0;max-width:100%;overflow-wrap:anywhere}
+[data-onboarding-team] table{width:100%;table-layout:fixed}
+[data-onboarding-team] th,[data-onboarding-team] td{white-space:normal;overflow-wrap:anywhere;padding:6px;text-align:left}
+[data-onboarding-team] .actions{flex-wrap:wrap}

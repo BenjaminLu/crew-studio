@@ -330,7 +330,7 @@ function staffingSection() {
     h("summary", {}, h("b", {}, T("A project's own approved crew", "專案自己核准的人員")), " ",
       h("span", { class: "faint" }, T("code-firstmate and coffee-kit run on a crew you approve for each project.", "code-firstmate 和 coffee-kit 用你按專案核准的人員。"))), panel);
 }
-routes.team = () => { const v = view(); v.prepend(crewTabs("team")); if (v.hasAttribute("data-team-page")) v.append(staffingSection() ?? ""); return v; };
+routes.team = () => { const v = view(); v.prepend(crewTabs("team")); if(window.crewTeamSetup)v.prepend(window.crewTeamSetup(null,()=>{TM.data=null;void load();})); if (v.hasAttribute("data-team-page")) v.append(staffingSection() ?? ""); return v; };
 { const base = routes.crew; routes.crew = (arg) => { const v = base(arg);
   if (!arg && v?.prepend && !v.querySelector?.("[data-crew-tabs]")) v.prepend(crewTabs("rounds")); return v; }; }
 // a team change elsewhere (a captain card answer) refreshes an open page

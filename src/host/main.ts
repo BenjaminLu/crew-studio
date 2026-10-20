@@ -390,7 +390,7 @@ export class MainSession {
   }
 
   /** "Start firstmate on <host>": a NEW session in the firstmate repo, following its AGENTS.md, whose first message is the newest state/HANDOFF-*.md. */
-  async startFresh(host: HostId, validate?: (identity:{model:string;effort:string|null})=>boolean, extra?: { locale?: "en"|"zh-TW"|"zh-CN"; env?: Record<string, string>; model?: string | null; effort?: string | null; permissionMode?: "auto" | "default"; autoMode?: { state: string; summary: string; summaryZh?: string } }): Promise<{ ok: true; handoff: string; id: string; seededFrom: string | null } | { ok: false; reason: string; code: string }> {
+  async startFresh(host: HostId, validate?: (identity:{model:string;effort:string|null})=>boolean, extra?: { codexDefaultEffort?: string; locale?: "en"|"zh-TW"|"zh-CN"; env?: Record<string, string>; model?: string | null; effort?: string | null; permissionMode?: "auto" | "default"; autoMode?: { state: string; summary: string; summaryZh?: string } }): Promise<{ ok: true; handoff: string; id: string; seededFrom: string | null } | { ok: false; reason: string; code: string }> {
     if (this.state !== "detached") return { ok: false, code: "attached", reason: "Studio already holds a session; release it first" };
     if (host !== "codex" && !(host === "claude" && this.o.nativeWorkspace)) return { ok: false, code: "host", reason: "a fresh start runs on Codex, or on Claude in Studio's own workspace" };
     const priorDriver = this.driver();
@@ -399,6 +399,7 @@ export class MainSession {
     const cwd = this.o.projectDir, newest = this.o.nativeWorkspace ? null : newestHandoffFile(this.o.stateDir);
     try {
       this.session = await this.hosts[host].attach("", { cwd, fresh: true, onGeneratedImage:this.generatedImageCapability(), onEvent: (e) => this.hostEvent(e), onPermission: (r) => this.bridge.ask(r), permissionMcp: this.o.permissionMcp(this.bridge), nativeTools:this.nativeCapability(),
+        ...(host === "codex" && extra?.codexDefaultEffort ? {codexDefaultEffort:extra.codexDefaultEffort} : {}),
         ...(host === "claude" ? { env: extra?.env, model: extra?.model ?? null, permissionMode: extra?.permissionMode ?? "default", denyEdits: claudeDenyEdits(extra?.env?.CLAUDE_CONFIG_DIR), studioMcp: this.o.studioMcp ? { command: this.o.studioMcp() } : undefined } : {}) });
     } catch (e: any) {
       this.state = "detached"; this.changed();
