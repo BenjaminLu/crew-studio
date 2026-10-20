@@ -5,6 +5,8 @@
 .rt-wf:hover, .rt-wf:focus-visible { border-color: var(--accent); }
 .rt-wf-h { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
 .rt-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 10px; }
+.rt-overlay-status { flex: 1 0 100%; min-width: 0; overflow-wrap: anywhere; }
+.rt-overlay-status:empty { display: none; }
 .rt-toolbar .input { min-width: 180px; flex: 1 1 180px; }
 .rt-status { color: var(--text-2); font-size: 13px; flex: 1 1 100%; }
 .rt-status:empty { display: none; }

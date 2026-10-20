@@ -1,3 +1,4 @@
+import {workflowDefinitionExport} from '../workflow-definition-export';
 import {executionMode} from '../local-execution';
 import {hashInput} from './checks';
 import {installOwnClaudeGrants,ownClaudePlan} from '../providers/own-workflow-claude-refresh';
@@ -283,6 +284,15 @@ export function createRuntime(d: RuntimeDeps) {
       }
       // ---------- definitions ----------
       if(p==="/api/coffee/design"&&writing){if(req.method!=="POST")return json({error:"POST required"},405);if(who.kind!=="desktop")return json({error:"Review coffee design on the desktop"},403);return json({plan:validateCoffeeDesign(b?.plan),canonical:coffeeDesignJSON(b?.plan)});}
+      {const exported=/^\/api\/wf\/([a-z0-9-]+)\/export$/.exec(p);if(exported){
+        if(req.method!=='GET')return json({error:'GET required'},405);
+        if(who.kind!=='desktop')return json({error:'Export definitions on the authenticated desktop'},403);
+        const versions=url.searchParams.getAll('v'),value=versions[0];
+        if(versions.length!==1||!value||!/^[1-9][0-9]*$/.test(value)||!Number.isSafeInteger(Number(value)))return json({error:'Choose one explicit positive saved version'},400);
+        const stored=defs.versions(exported[1]).find(d=>d.version===Number(value));
+        if(!stored)return json({error:'No such saved workflow version'},404);
+        return json(workflowDefinitionExport(stored));
+      }}
       if (p === "/api/wf" && !writing) return json({ workflows: defs.catalog(), held: defs.heldCatalog(), trash:defs.trashCatalog(), checks: engine.registry.all().map(checkView) });
       if(readiness){const gated=await readiness.route(p,url,req.method,writing,b,by,who);if(gated)return gated;}
       const drafted=await draftRoute(drafts,p,req.method,writing,b,by);if(drafted)return drafted;
