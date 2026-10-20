@@ -100,8 +100,10 @@ try {
     await p.goto(`${base}/#/workflows/video`); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="make"]');
     const saved = globalThis.legacyPos; const at = await nodePos(p);
     ok(await p.getAttribute("svg.rt-graph", "data-layout") === "manual" && Object.entries(saved).every(([k, v]) => at[k] && at[k][0] === v.x && at[k][1] === v.y), "a version with a layout saved before this change opens in manual mode with its positions", JSON.stringify(at));
+    // Reload only after this actual drag's layout write is acknowledged.
+    const layoutSaved = p.waitForResponse(r => r.url() === `${base}/api/wf/video/layout` && r.request().method() === "POST" && r.request().postDataJSON()?.version === 1 && !!r.request().postDataJSON()?.positions?.render);
     const box = await p.locator('[data-node="render"] .rt-box').boundingBox();
-    await p.mouse.move(box.x + 20, box.y + 20); await p.mouse.down(); await p.mouse.move(box.x + 50, box.y + 70, { steps: 6 }); await p.mouse.up(); await p.waitForTimeout(500);
+    await p.mouse.move(box.x + 20, box.y + 20); await p.mouse.down(); await p.mouse.move(box.x + 50, box.y + 70, { steps: 6 }); await p.mouse.up(); const persisted = await layoutSaved; ok(persisted.ok(), "the first drag is acknowledged before reload", `HTTP ${persisted.status()}`);
     await p.reload(); await p.waitForSelector('[data-node="make"]'); const after = await nodePos(p);
     ok(Object.entries(saved).filter(([k]) => k !== "render").every(([k, v]) => after[k][0] === v.x && after[k][1] === v.y) && (after.render[0] !== saved.render.x || after.render[1] !== saved.render.y), "the first drag keeps every other saved position", JSON.stringify(after));
     await p.context().close();
