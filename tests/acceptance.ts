@@ -76,7 +76,7 @@ function expectFor(r: StubRun): Expect {
 
 async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }> {
   // Team approvals and merge-grant token fixtures must not change another scenario's Studio.
-  const s = await serverFor(r.server, ["crew", "grant-merge"].includes(r.how) ? `${r.workflow}-${r.name}` : ""), h: Ctx = { s, vars: {}, firstmate: firstmate(s) }, failures: string[] = [];
+  const s = await serverFor(r.server, ["crew", "grant-merge", "local-register"].includes(r.how) ? `${r.workflow}-${r.name}` : ""), h: Ctx = { s, vars: {}, firstmate: firstmate(s) }, failures: string[] = [];
   for (const step of r.setup) { const f = STEPS[step]; if (!f) return { failures: [`no setup step ${step} (tests/acceptance/steps.ts)`] }; await f(h); }
   const params: Record<string, string> = { ...Object.fromEntries(Object.entries(r.shared.start.params).map(([k, v]) => [k, fill(v, h.vars)])), ...(r.provider ? { provider: r.provider } : {}), ...Object.fromEntries(Object.entries(r.params).map(([k, v]) => [k, fill(v, h.vars)])) };
   // the sandbox probe's arguments (setup step probe) go into the intent, where the scripted agent reads them
@@ -107,6 +107,11 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
     const st = await s.api("/api/wruns", body);
     if (st.status !== 200) return { failures: [...failures, `the board start route refused: ${st.status} ${String(st.body?.error ?? JSON.stringify(st.body)).slice(0, 400)}`] };
     task = st.body.id;
+  } else if(r.how === "local-register") {
+    if(!h.vars.repo)await STEPS.repo(h);
+    const st=await s.api("/api/projects/local-registration",{path:h.vars.repo,name:"Acceptance local project"});
+    if(st.status!==200||!st.body.task)return{failures:[...failures,`local registration refused: ${st.status} ${String(st.body.error??"no task")}`]};
+    task=st.body.task;
   } else {
     const target = r.target ?? { workflow: r.workflow, params: {} };
     const tparams: Record<string, string> = { ...params, ...Object.fromEntries(Object.entries(target.params).map(([k, v]) => [k, fill(v, h.vars)])) }; delete tparams.provider;
@@ -132,7 +137,7 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
   const exp = expectFor(r);
   const d = await drive(s, task, decide, { timeoutMs: r.timeout_s * 1000, until: exp.status === "waiting" ? (v) => (v.cards ?? []).some((c: any) => c.status === "open" && c.node === exp.waitingOn) : undefined });
   failures.push(...await verify(s, d, exp));
-  if ((["crew", "grant-merge"].includes(r.how) || r.workflow === "file-organization") && defHash(d.view?.def) !== r.shared.pin.sha256) failures.push("the approval Task definition differs from the reviewed scenario pin");
+  if ((["crew", "grant-merge", "local-register"].includes(r.how) || r.workflow === "file-organization") && defHash(d.view?.def) !== r.shared.pin.sha256) failures.push("the approval Task definition differs from the reviewed scenario pin");
   // the real side effects: a proof that needs the real renderer only where the renderer is real (the e2e profile)
   for (const p of r.proves) if (SANDBOXED_E2E || !RENDERER_PROVES.includes(p)) {
     const context = { sinkHits: h.sinkHits, github: h.github, fileorg: h.fileorg }, proof = await prove(s, d.view, p, context);

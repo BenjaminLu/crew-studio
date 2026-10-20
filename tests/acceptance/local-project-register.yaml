@@ -1,0 +1,27 @@
+# Registration-only normal Projects route, isolated fixture data only.
+schema: 2
+workflow: local-project-register
+pin: { version: 1, sha256: "7ebec97943a76228b3159356f73b8fca42b5c3a7138e65d9b034e3159217832e" }
+topic: "Acceptance: add a local project without starting work"
+start: { provider: null, params: {} }
+providers: []
+approvals: { staffing: false }
+cards: []
+budget: { wall_minutes: 5, max_rounds: 1 }
+live: false
+expect: { status: succeeded, artifacts: [] }
+stub:
+  - name: approve
+    covers: "Projects route → actual captain confirmation → exactly one signed registration; no coding or staffing starts"
+    how: local-register
+    board_refusal: { status: 409, error: "internal or retired" }
+    cards: [{ node: register, answer: approve }]
+    proves: [project-registered]
+    expect: { status: succeeded, visited: [register, add, done], not_visited: [closed] }
+  - name: cancel
+    covers: "Projects route → actual captain cancels → no registered project or mutation receipt"
+    how: local-register
+    board_refusal: { status: 409, error: "internal or retired" }
+    cards: [{ node: register, answer: close }]
+    proves: [project-not-registered]
+    expect: { status: succeeded, visited: [register, closed], not_visited: [add, done] }
