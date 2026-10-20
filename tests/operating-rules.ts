@@ -195,7 +195,8 @@ const sectionOf = (s: string) => { const i = s.indexOf(OPERATING_RULES_HEADING);
   const files: string[] = []; const walk = (d: string) => { for (const n of readdirSync(d, { withFileTypes: true })) { const p = join(d, n.name); if (n.isDirectory()) walk(p); else if (/\.(ts|mjs)$/.test(n.name)) files.push(p); } }; walk(join(root, "src"));
   const src = (f: string) => readFileSync(f, "utf8"); const rel = (f: string) => f.slice(root.length + 1);
   const runSites = files.flatMap((f) => [...src(f).matchAll(/agents\.run\(/g)].map(() => rel(f))).sort();
-  const KNOWN_RUN = ["src/changes.ts", "src/changes.ts", "src/docs.ts", "src/domain/code-publish.ts", "src/domain/code.ts", "src/evals.ts", "src/improve.ts", "src/packs.ts", "src/runtime/engine.ts", "src/runtime/engine.ts"];
+  // onboarding-team-ui.ts checks the actual probe system, rules hash and completed tool receipt.
+  const KNOWN_RUN = ["src/changes.ts", "src/changes.ts", "src/docs.ts", "src/domain/code-publish.ts", "src/domain/code.ts", "src/evals.ts", "src/improve.ts", "src/onboarding-team-probe.ts", "src/packs.ts", "src/runtime/engine.ts", "src/runtime/engine.ts"];
   ok(JSON.stringify(runSites) === JSON.stringify(KNOWN_RUN), "every Agents.run call site is a known prompt builder (a new one must be added here and checked)", JSON.stringify(runSites));
   const startSites = files.filter((f) => /\.start\((withSafetyRules|withOperatingRules|system|o\.rules)/.test(src(f))).map(rel).sort();
   ok(JSON.stringify(startSites) === JSON.stringify(["src/agent.ts", "src/chat.ts", "src/work.ts"]) && startSites.every((f) => /withOperatingRules\(|jobInstructions\(/.test(src(join(root, f)))), "every direct provider.start composes the operating rules (agent, chat, work)", JSON.stringify(startSites));
