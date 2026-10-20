@@ -562,7 +562,7 @@ function mountCard(el, card, opts = {}) {
           href ? h("button", { class: "btn", type: "button", "data-direction-preview": r.producer, onclick: (e) => window.crewInteractivePreview ? window.crewInteractivePreview(href, e.currentTarget) : (location.hash = own) }, T("Interactive preview", "互動預覽")) : h("a", { class: "btn", href: review, "data-direction-preview": r.producer }, T("Review", "審閱")),
           href ? h("a", { class: "btn", href, target: "_blank", rel: "noopener", "data-direction-open": r.producer }, T("Open in new tab", "新分頁開啟")) : null,
           // this direction's approve is the card's own option, here only (the buttons below leave it out); sync() keeps its readiness
-          opt && c.status === "open" ? (() => { const why = needs().missing(opt); return h("button", { class: "btn primary", type: "button", "data-option": opt.id, "data-direction-approve": r.producer, "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy, onclick: () => answer(opt) }, artifactOptionLabel(c, opt, T)); })() : null));
+          opt && c.status === "open" ? (() => { const why = needs().missing(opt); return h("button", { class: "btn primary", type: "button", "data-option": opt.id, "data-direction-approve": r.producer, "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy || (!!c.detail?.codeEvidence?.blocked && !opt.hold), "aria-describedby": c.detail?.codeEvidence?.blocked && !opt.hold ? `evidence-hold-${c.id}` : null, onclick: () => answer(opt) }, artifactOptionLabel(c, opt, T)); })() : null));
     })));
   }
   function artifactDetailView(d, c) {
@@ -579,6 +579,7 @@ function mountCard(el, card, opts = {}) {
       sec("needs-eye", T("Needs your eye", "需要你看"), lines(false)), linksView(c, shown)];
   }
   // what the card's buttons need, from the card and the captain's ticks and notes (no DOM): render, sync and answer share it
+  const evidenceHoldReason = () => T("Evidence is missing, failed or stale. Request fresh verification before approval.","證據缺失、失敗或已過期。請重新驗證並取得新卡片再核准。");
   function needs() {
     const c = st.card; const d = detailOk(c.detail) ? c.detail : null; const open = c.status === "open";
     const n = d?.intents?.length || 0; const one = c.confirmDoor && c.door === "one-way";
@@ -591,7 +592,7 @@ function mountCard(el, card, opts = {}) {
     const noteOf = (o) => String(((o.note || o.select?.length) && st.notes[o.id]) || st.note || "").trim();
     // why option o cannot be sent yet, and the field the captain fills to fix it (null when it can be sent)
     const lack = (o) => { const why = (text, field) => ({ text, field }); if (!expectsInterview && (o.note || o.select?.length) && !noteOf(o)) return why(T(`${o.label}: ${o.noteLabel || (o.select?.length ? "pick one first" : "write it first")}`, `${o.labelZh || o.label}：${o.noteLabelZh || o.noteLabel || (o.select?.length ? "請先選一個" : "請先寫下來")}`), `[data-note-for="${CSS.escape(o.id)}"],[data-card-pick="${CSS.escape(o.id)}"]`);
-      if (o.hold) return null;if(c.detail?.codeEvidence?.blocked)return why(T("Evidence is missing, failed or stale. Request fresh verification before approval.","證據缺失、失敗或已過期。請重新驗證並取得新卡片再核准。"),"[data-code-evidence-state]");if(expectsInterview&&!draft)return why(T("This interview version is unavailable. Reload the card; no answer was submitted.","這個訪談版本無法使用。請重新載入卡片；尚未送出回答。"));if(draft&&form.questions.some(q=>!String(draft.answers[q.key]||" ").trim()))return why(T("Answer every question below", "請回答下方每個問題"),'[data-interview][aria-invalid="true"]'); if (n && st.ticks.size < n && !st.note.trim()) return why(T(`Tick every intent line (${st.ticks.size} of ${n}) or write a note`, `請勾完每一條意圖（${st.ticks.size}/${n}），或寫備註`), "[data-intent-tick]:not(:checked)");
+      if (o.hold) return null;if(c.detail?.codeEvidence?.blocked)return why(evidenceHoldReason(),"[data-code-evidence-state]");if(expectsInterview&&!draft)return why(T("This interview version is unavailable. Reload the card; no answer was submitted.","這個訪談版本無法使用。請重新載入卡片；尚未送出回答。"));if(draft&&form.questions.some(q=>!String(draft.answers[q.key]||" ").trim()))return why(T("Answer every question below", "請回答下方每個問題"),'[data-interview][aria-invalid="true"]'); if (n && st.ticks.size < n && !st.note.trim()) return why(T(`Tick every intent line (${st.ticks.size} of ${n}) or write a note`, `請勾完每一條意圖（${st.ticks.size}/${n}），或寫備註`), "[data-intent-tick]:not(:checked)");
       // answers on a spec card go with "Adjust the scope": approving the unchanged spec would drop them without a word
       if (o.id === "dispatch" && answeredCount(c)) { const k = answeredCount(c); return why(T(`You answered ${k} question${k === 1 ? "" : "s"}: press "Adjust the scope" so the spec takes your answers, or clear the answers and then approve.`, `你回答了 ${k} 題：按「調整範圍」讓規格帶入回答；或清除回答後再核准`), null); }
       if (one && !st.confirm) return why(T("Confirm the door first", "請先確認門"), "[data-confirm-door]");
@@ -609,9 +610,10 @@ function mountCard(el, card, opts = {}) {
     const root = el.querySelector("[data-card-root]"); if (!root || root.getAttribute("data-card-root") !== st.card.id) return render();
     const { c, missing, tickCount } = needs();
     for (const b of root.querySelectorAll(".cc-actions [data-option], [data-direction-approve]")) { const o = c.options.find((x) => x.id === b.dataset.option); const why = o ? missing(o) : null;
+      const held = !!c.detail?.codeEvidence?.blocked && !!o && !o.hold; b.disabled = st.busy || held; if (held) b.setAttribute("aria-describedby", `evidence-hold-${c.id}`); else b.removeAttribute("aria-describedby");
       b.dataset.ready = why ? "false" : "true"; if (why) b.title = why; else b.removeAttribute("title"); }
     const count = root.querySelector("[data-tick-count]"); if (count) count.textContent = tickCount();
-    const hint = root.querySelector("[data-card-hint]"); if (hint) { hint.textContent = st.msg ? "" : c.options.map(missing).find(Boolean) || ""; hint.hidden = !hint.textContent; }
+    const hint = root.querySelector("[data-card-hint]"); if (hint) { hint.textContent = c.detail?.codeEvidence?.blocked ? evidenceHoldReason() : st.msg ? "" : c.options.map(missing).find(Boolean) || ""; hint.hidden = !hint.textContent; }
     const msg = root.querySelector("[data-card-msg]"); if (msg) msg.textContent = st.msg;
     if (specCard(c)) specSync(c);
   }
@@ -705,9 +707,9 @@ function mountCard(el, card, opts = {}) {
         h("span", {}, T(c.acknowledge.en, c.acknowledge.zh || c.acknowledge.en))));
       const onTiles = new Set(directionOptions(c, d));
       kids.push(h("div", { class: "cc-actions actions" }, c.options.filter((o) => !onTiles.has(o.id)).map((o) => { const why = missing(o);
-        return h("button", { class: `btn ${o.primary ? "primary" : ""}`, type: "button", "data-option": o.id, ...(draft&&o.id==="continue"?{"data-save-interview":""}:{}), "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy, onclick: () => answer(o) }, targetLabel(c, o)); })));
-      const hint = st.msg ? "" : c.options.map(missing).find(Boolean) || "";
-      kids.push(h("p", { class: "cc-count", "data-card-hint": "", hidden: !hint }, hint));
+        return h("button", { class: `btn ${o.primary ? "primary" : ""}`, type: "button", "data-option": o.id, ...(draft&&o.id==="continue"?{"data-save-interview":""}:{}), "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy || (!!c.detail?.codeEvidence?.blocked && !o.hold), "aria-describedby": c.detail?.codeEvidence?.blocked && !o.hold ? `evidence-hold-${c.id}` : null, onclick: () => answer(o) }, targetLabel(c, o)); })));
+      const hint = c.detail?.codeEvidence?.blocked ? evidenceHoldReason() : st.msg ? "" : c.options.map(missing).find(Boolean) || "";
+      kids.push(h("p", { class: "cc-count", "data-card-hint": "", id: c.detail?.codeEvidence?.blocked ? `evidence-hold-${c.id}` : null, role: c.detail?.codeEvidence?.blocked ? "status" : null, hidden: !hint }, hint));
       kids.push(h("p", { class: "cc-count cc-sending", role: "status", "aria-live": "polite", tabindex: "-1", "data-card-sending": "" }, st.busy ? T("Sending…", "送出中…") : ""));
     } else if (c.answer) {
       const byFirstmate = c.decidedBy === "firstmate" || c.answer.by === "firstmate";
