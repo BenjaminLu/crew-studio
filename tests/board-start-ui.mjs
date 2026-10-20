@@ -39,7 +39,10 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
    ok(starts===0&&await p.locator('[data-run-text]').inputValue()==='coffee-kit','recognized workflow shows declared inputs before allocating a Task');p.off('request',listener);
   }
   await p.locator('[data-run-wf]').selectOption('code-firstmate');await p.locator('[data-run-project="code-firstmate"]').waitFor();
-  const values=await p.locator('[data-run-project="code-firstmate"] option').evaluateAll(o=>o.map(x=>x.value));
+  // Live Task updates may recreate the async picker between waitFor and evaluateAll.
+  // Return one complete DOM snapshot; truly missing projects still fail at the default timeout.
+  const listed=await p.waitForFunction(()=>{const values=[...document.querySelectorAll('[data-run-project="code-firstmate"] option')].map(x=>x.value);return ['fixture','unstaffed','stale'].every(id=>values.includes(id))?values:false;});
+  const values=await listed.jsonValue();await listed.dispose();
   ok(['fixture','unstaffed','stale'].every(id=>values.includes(id)),'the picker lists every registered project '+tag);
   ok(await p.locator('[data-run-start]').isDisabled(),'Start waits for a project '+tag);
   await p.locator('[data-run-project="code-firstmate"]').selectOption('unstaffed');await p.locator('[data-run-crew="missing"]').waitFor();
