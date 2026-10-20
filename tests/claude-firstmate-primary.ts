@@ -313,8 +313,9 @@ try {
   ok(await until(() => !alive(pid2)), "the Studio restart leaves no Claude process of the old Studio behind");
   // a live release restarts Studio: the primary that was running starts again on its own, same host, model and mode
   ok(await until(async () => { const v = await view(); return v.state === "attached" && v.host === "claude"; }), "after a Studio restart the running Claude primary starts again without the captain pressing Start");
+  await idle(); // Verify the model reported by init, not the pre-init requested fallback.
   let rv = await view();
-  ok(rv.sessionId !== run2.argv[run2.argv.indexOf("--session-id") + 1] && rv.drive?.permissionMode === "auto" && rv.drive?.model === "claude-sonnet-5-5" && !rv.driver.resume, "the restarted primary is a new session on the same model and permission mode");
+  ok(rv.sessionId !== run2.argv[run2.argv.indexOf("--session-id") + 1] && rv.drive?.permissionMode === "auto" && rv.drive?.model === "claude-sonnet-5-5" && !rv.driver.resume, "the restarted primary is a new session on the same model and permission mode", JSON.stringify({sessionId:rv.sessionId,model:rv.drive?.model,permissionMode:rv.drive?.permissionMode,resume:rv.driver.resume}));
   ok(rv.log.some((l: any) => /Firstmate was running before Studio restarted; Studio started it again on Claude/.test(l.text)), "a notice says Firstmate was started again after the restart");
   await idle();
   const restartSeed = seedOf(claudeRuns().at(-1).pid);

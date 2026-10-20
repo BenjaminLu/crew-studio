@@ -654,6 +654,9 @@ function mountCard(el, card, opts = {}) {
   function render() {
     if(composing){pendingRender=true;return;}
     const focused=document.activeElement;const keep=focused&&el.contains(focused)&&focused instanceof HTMLTextAreaElement?{key:focused.hasAttribute('data-card-note')?'data-card-note':focused.hasAttribute('data-interview')?'data-interview':null,value:focused.getAttribute('data-interview'),noteFor:focused.getAttribute('data-note-for'),start:focused.selectionStart,end:focused.selectionEnd,direction:focused.selectionDirection}:null;
+    // An authenticated card refresh rebuilds controls; retain only the same still-valid action.
+    const actionKey=focused&&el.contains(focused)&&focused.matches('button,a[href]')&&!focused.matches(':disabled,[aria-disabled="true"]')&&focused.getClientRects().length&&getComputedStyle(focused).visibility!=='hidden'?['data-card-lang','data-option','data-card-link'].find(k=>focused.hasAttribute(k)):null;
+    const action=actionKey?{key:actionKey,value:focused.getAttribute(actionKey),href:focused.getAttribute('href'),card:el.dataset.scard,status:el.dataset.cardStatus,hash:location.hash}:null;
     const { c, d, open, n, one, ackOk, noteOpts, hasNote, noteLabel, missing, tickCount } = needs();
     const lang = h("div", { class: "cc-lang", role: "group", "aria-label": "Language" }, cardI18n().cardLangs(st.lang !== "en" ? st.lang : pageLang() !== "en" ? pageLang() : lastCardZh).map(([k, lab]) =>
       h("button", { type: "button", "data-card-lang": k, "aria-pressed": String(st.lang === k), onclick: () => { st.lang = k; if (k !== "en") lastCardZh = k; render(); } }, lab)));
@@ -715,6 +718,11 @@ function mountCard(el, card, opts = {}) {
     kids.push(h("div", { class: "cc-msg", role: "status", "aria-live": "polite", "data-card-msg": "", tabindex: "-1" }, st.msg));
     el.replaceChildren(h("div", { class: "cc", "data-card-root": c.id }, kids));
     if(keep?.key){const field=[...el.querySelectorAll(`[${keep.key}]`)].find(t=>keep.key==='data-interview'?t.getAttribute(keep.key)===keep.value:(t.getAttribute('data-note-for')||null)===(keep.noteFor||null));if(field){field.focus({preventScroll:true});field.setSelectionRange(keep.start,keep.end,keep.direction);}}
+    if(action&&action.status==='open'&&open&&action.card===c.id&&action.hash===location.hash&&document.activeElement===document.body){
+      const matches=[...el.querySelectorAll(`[${action.key}]`)].filter(a=>a.getAttribute(action.key)===action.value&&a.getAttribute('href')===action.href);
+      const next=matches.length===1?matches[0]:null;
+      if(next&&!next.matches(':disabled,[aria-disabled="true"]')&&next.getClientRects().length&&getComputedStyle(next).visibility!=='hidden')next.focus({preventScroll:true});
+    }
     el.classList.add("rt-card"); el.setAttribute("data-scard", c.id); el.setAttribute("data-card-status", c.status);
   }
   render();
