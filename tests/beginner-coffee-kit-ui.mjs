@@ -74,8 +74,33 @@ if(process.argv.includes('--fixture-server')){
    const card=page.locator('[data-scard][data-card-status="open"]').first();
    ok(await card.evaluate(el=>[...el.querySelectorAll('button,a.btn,input,textarea')].filter(e=>e.getBoundingClientRect().width>0).every(e=>e.getBoundingClientRect().height>=44)),`human controls and feedback targets >=44px ${tag}`);
    const first=card.locator('button,a.btn,input,textarea').first();await first.focus();await page.keyboard.press('Tab');
+   // Refresh the actual authenticated card while keyboard focus is inside it.
+   await card.evaluate(async el=>{const c=await (await fetch('/api/scards/'+encodeURIComponent(el.dataset.scard))).json(),ctl=window.fixtureCardControllers.get(el);ctl.update(c);
+    // A live card update can arrive while the route rebuilds the retained card.
+    const route=S.route.name,previous=routes[route];routes[route]=(...args)=>{ctl.update(c);return previous(...args);};try{render();}finally{routes[route]=previous;}});
    if(tag.endsWith(' capability'))await page.evaluate(()=>render());
    ok(await card.evaluate(el=>el.contains(document.activeElement)&&document.activeElement.matches(':focus-visible')&&getComputedStyle(document.activeElement).outlineStyle!=='none'),`keyboard focus remains visible on actual captain controls ${tag}`);
+  };
+  const cardRefreshGuards=async page=>{
+   const results=await page.locator('[data-scard][data-card-status="open"]').first().evaluate(async el=>{
+    const card=await(await fetch('/api/scards/'+encodeURIComponent(el.dataset.scard))).json(),ctl=window.fixtureCardControllers.get(el),out={};
+    const probe=(change,next=card)=>{const a=el.querySelector('[data-option]');a.focus();change(a);ctl.update(next);const refused=!el.contains(document.activeElement);ctl.update(card);return refused;};
+    out.disabled=probe(a=>a.setAttribute('aria-disabled','true'));
+    out.removed=probe(()=>{}, {...card,options:[]});
+    out.replaced=probe(()=>{}, {...card,id:card.id+'-replacement'});
+    out.closed=probe(()=>{}, {...card,status:'cancelled'});
+    out.ambiguous=probe(()=>{}, {...card,options:[...card.options,card.options[0]]});
+    const main=document.querySelector('#main');main.focus();ctl.update(card);out.otherFocus=document.activeElement===main;
+    const nested=(next,change=()=>{})=>{ctl.update(card);el.querySelector('[data-option]').focus();const name=S.route.name,previous=routes[name];routes[name]=(...args)=>{ctl.update(next);change();return previous(...args);};try{render();}finally{routes[name]=previous;}const refused=!el.contains(document.activeElement);ctl.update(card);return refused;};
+    out.nestedRemoved=nested({...card,options:[]});
+    out.nestedReplaced=nested({...card,id:card.id+'-replacement'});
+    out.nestedClosed=nested({...card,status:'cancelled'});
+    out.nestedAmbiguous=nested({...card,options:[...card.options,card.options[0]]});
+    out.nestedDisabled=nested(card,()=>el.querySelector('[data-option]').setAttribute('aria-disabled','true'));
+    out.nestedOtherFocus=nested(card,()=>main.focus())&&document.activeElement===main;
+    return out;
+   });
+   for(const[name,passed]of Object.entries(results))ok(passed,'card refresh refuses invalid or superseded action focus: '+name);
   };
   const actionsCapture=async(page,tag)=>{
    const dismiss=page.locator('[data-new-card-dismiss]');if(await dismiss.count())await dismiss.click();
@@ -96,6 +121,7 @@ if(process.argv.includes('--fixture-server')){
   for(const width of[320,390,1440])for(const language of['en','zh-TW','zh-CN'])for(const theme of['light','dark']){
    const tag=`${width}-${language}-${theme}`,ctx=await browser.newContext({viewport:{width,height:960},colorScheme:theme});
    await ctx.addInitScript(({language,theme})=>{localStorage.setItem('crew.lang',language);localStorage.setItem('crew.theme',theme);},{language,theme});
+   await ctx.addInitScript(()=>{let api;window.fixtureCardControllers=new WeakMap();Object.defineProperty(window,'crewCard',{configurable:true,get:()=>api,set:value=>{api=value;const mount=value.mountCard;value.mountCard=(el,...args)=>{const ctl=mount(el,...args);window.fixtureCardControllers.set(el,ctl);return ctl;};}});});
    await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/,route=>route.abort());
    const page=await ctx.newPage();page.on('pageerror',e=>errors.push(tag+': '+e.stack));
    await page.goto(base+'/#/workflows/coffee-kit');await page.waitForSelector('[data-coffee-guide]');
@@ -105,7 +131,7 @@ if(process.argv.includes('--fixture-server')){
    await page.screenshot({path:join(shots,tag+'-guide.png'),fullPage:true});
    const beforeDiscuss=(await ctx.request.get(base+'/api/wruns').then(r=>r.json())).runs.length;await page.locator('[data-coffee-discuss]').click();await page.waitForURL(u=>new URL(u).hash==='#/firstmate?workflow=coffee-kit&staffing=ui-coffee-project');/* d46c26b: the discussion opens with the workflow and project it is about, so staffing defaults are offered without asking again */const discussion=(await ctx.request.get(base+'/api/fixture/discussion').then(r=>r.json())).discussion;ok(['website','image','three-beat twelve-second video','responsive playback'].every(d=>discussion.text.includes(d))&&discussion.text.includes('before generating any assets')&&(await ctx.request.get(base+'/api/wruns').then(r=>r.json())).runs.length===beforeDiscuss,`conversation-first action discusses all disciplines without creating paid work ${tag}`);await page.goto(base+'/#/workflows/coffee-kit');await page.waitForSelector('[data-coffee-guide]');
    await page.locator('[data-coffee-project]').fill('ui-coffee-project');await page.locator('[data-coffee-guide] input:not([data-coffee-project])').fill(`Coffee ${tag}`);await page.locator('[data-coffee-guide] textarea').first().fill('A warm coffee-shop introduction. Do not invent opening hours.');await page.locator('[data-coffee-plan-editor]').evaluate(el=>el.open=true);await page.locator('[data-coffee-design]').fill(JSON.stringify(fixtureDesignPlan));const beforeMissing=(await ctx.request.get(base+'/api/wruns').then(r=>r.json())).runs.length;await page.locator('[data-coffee-project]').fill('unconfirmed-project');await page.locator('[data-coffee-guide] button[type=submit]').click();await page.waitForFunction(()=>{const status=document.querySelector('[data-coffee-guide] [role=status]');return status&&/Firstmate/.test(status.textContent)&&!document.querySelector('[data-coffee-guide] button[type=submit]').disabled;});ok((await ctx.request.get(base+'/api/wruns').then(r=>r.json())).runs.length===beforeMissing&&JSON.parse(await page.locator('[data-coffee-design]').inputValue()).name===fixtureDesignPlan.name,`missing staffing has actionable recovery, preserved plan and zero Task ${tag}`);await page.locator('[data-coffee-project]').fill('ui-coffee-project');await page.locator('[data-coffee-guide] button[type=submit]').click();await page.waitForURL('**/#/run/*').catch(async e=>{throw new Error(e.message+'; guide status: '+await page.locator('[data-coffee-guide] [role=status]').allTextContents());});
-   await page.waitForSelector('[data-option="confirm"]');await page.locator('[data-scard]').first().evaluate(el=>el.scrollIntoView({block:'start'}));await controls(page,tag+' direction');await page.screenshot({path:join(shots,tag+'-direction.png'),fullPage:true});
+   await page.waitForSelector('[data-option="confirm"]');await page.locator('[data-scard]').first().evaluate(el=>el.scrollIntoView({block:'start'}));await controls(page,tag+' direction');if(tag==='320-en-light')await cardRefreshGuards(page);await page.screenshot({path:join(shots,tag+'-direction.png'),fullPage:true});
    await actionsCapture(page,tag+'-direction-actions');await page.locator('[data-option="confirm"]').click();await page.waitForSelector('[data-option="image"]');
    await page.locator('[data-scard]').first().evaluate(el=>el.scrollIntoView({block:'start'}));await controls(page,tag+' review');await page.screenshot({path:join(shots,tag+'-review.png'),fullPage:true});
    const previewPromise=ctx.waitForEvent('page');await page.locator('[data-card-link]').first().click();const preview=await previewPromise;

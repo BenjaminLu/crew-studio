@@ -13,6 +13,7 @@ import { join } from "node:path";
 
 const oauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR ? readFileSync(Number(process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR), "utf8").trim() : process.env.CLAUDE_CODE_OAUTH_TOKEN;
 const argv = process.argv.slice(2);
+const model = argv.includes("--model") ? argv[argv.indexOf("--model") + 1] : "stub-opus";
 // a fresh session names its own id (--session-id); otherwise the one to resume
 const want = argv.includes("--session-id") ? argv[argv.indexOf("--session-id") + 1] : argv[argv.indexOf("--resume") + 1];
 if (argv.includes("--dangerously-skip-permissions") || argv.includes("bypassPermissions")) { console.error("stub: refuses bypass"); process.exit(9); }
@@ -65,7 +66,7 @@ const effectiveMode = () => knobMode || requestedMode;
 
 async function turn(text, files = []) {
   if (!inited && process.env.STUB_SEED_FILE) appendFileSync(process.env.STUB_SEED_FILE, JSON.stringify({ seed: text, pid: process.pid }) + "\n");
-  if (!inited) { inited = true; out({ type: "system", subtype: "init", session_id: id, model: "stub-opus", tools: [], permissionMode: effectiveMode() }); }
+  if (!inited) { inited = true; out({ type: "system", subtype: "init", session_id: id, model, tools: [], permissionMode: effectiveMode() }); }
   touch({ type: "user", message: { role: "user", content: text } });
   // Studio's one-line notes after the captain's words (language, routing, live status): the model reads them, they are not the message
   text = text.replace(/(?:\n\n\[Studio note: [^\n]*\])+$/, "");
@@ -122,7 +123,7 @@ async function turn(text, files = []) {
   }
   touch({ type: "assistant", message: { role: "assistant", content: "done" } });
   if (text.includes("STUB_LATER")) setTimeout(() => { // as an asyncRewake Stop hook does: a turn nobody sent
-    out({ type: "system", subtype: "init", session_id: id, model: "stub-opus", tools: [], permissionMode: effectiveMode() });
+    out({ type: "system", subtype: "init", session_id: id, model, tools: [], permissionMode: effectiveMode() });
     out({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "woken by the hook" }] } });
     out({ type: "result", subtype: "success", is_error: false, result: "woken by the hook" });
   }, 300);

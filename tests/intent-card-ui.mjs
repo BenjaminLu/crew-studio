@@ -7,7 +7,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Inbox and on the run page, and takes it with them. Screenshots 1440 and 390, light
 // and dark.      node tests/intent-card-ui.mjs
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -90,7 +90,9 @@ try {
   const cs = await new Promise((res, rej) => { let buf = ""; staffed.stdout.on("data", (d) => { buf += d; const line = buf.split("\n").find((l) => l.startsWith("{")); if (line) res(JSON.parse(line)); }); staffed.once("exit", (c) => rej(new Error(`the staffed Studio stopped (${c}): ${staffedOut.slice(-2000)}`))); });
   const browser2 = withSession(await chromium.launch(), cs.base, cs.token);
   try { const base = cs.base, data = cs.data, browser = browser2;
-  { const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, colorScheme: "light" }); const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
+  { const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, colorScheme: "light" });
+    await ctx.addInitScript(()=>{let api;window.fixtureEvidenceControllers=new WeakMap();Object.defineProperty(window,'crewCard',{configurable:true,get:()=>api,set:value=>{api=value;const mount=value.mountCard;value.mountCard=(el,...args)=>{const ctl=mount(el,...args);window.fixtureEvidenceControllers.set(el,ctl);return ctl;};}});});
+    const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
     await p.goto(`${base}/#/runs`);
     const INTENT = ["Add a percent function to money-kit, and keep the existing money functions unchanged",
       "STUB_FILE src/percent.ts :: // A percent of an amount in cents, rounded to the cent.\\nexport function percent(amount: number, pct: number): number {\\n  return Math.round((amount * pct) / 100);\\n}\\n",
@@ -114,17 +116,34 @@ try {
     ok(direct.status === 400 && /1 of 2/.test(direct.j.error), "the answer route itself refuses a merge with one of two lines ticked", JSON.stringify(direct));
     // the run page: tick both lines, merge, the run reaches merged
     await p.goto(`${base}/#/run/${rid}`); await p.waitForSelector(`[data-runview] [data-align="${mc.id}"]`, { timeout: 15000 });
-    // the app's before / after captures sit inside the before/after section: pictures side by side, the changed text, Open the app
-    await p.waitForSelector(`[data-scard="${mc.id}"] [data-sec="before-after"] [data-captures] img`, { timeout: 15000 }).catch(() => {});
-    const capInfo = await p.$eval(`[data-scard="${mc.id}"] [data-sec="before-after"]`, (sec) => ({ figs: sec.querySelectorAll("[data-capture]").length, imgs: [...sec.querySelectorAll("[data-captures] img")].map((i) => i.complete && i.naturalWidth > 0),
+    // Source-bound captures accompany the real diff: paired images, changed text, and Open the app.
+    await p.waitForSelector(`[data-scard="${mc.id}"] [data-sec="actual-change"] [data-captures] img`, { timeout: 15000 }).catch(() => {});
+    const capInfo = await p.$eval(`[data-scard="${mc.id}"] [data-sec="actual-change"]`, (sec) => ({ figs: sec.querySelectorAll("[data-capture]").length, imgs: [...sec.querySelectorAll("[data-captures] img")].map((i) => i.complete && i.naturalWidth > 0),
       pairs: [...sec.querySelectorAll(".cc-cap-pair")].map((pr) => { const [a, b] = pr.querySelectorAll("[data-capture-side]"); const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect(); return Math.abs(ra.top - rb.top) < 2 && rb.left > ra.left; }),
       text: sec.querySelectorAll("[data-capture-changed], .cc-cap p").length, app: sec.querySelector('[data-card-link="Open the app"]')?.getAttribute("href") ?? null }));
     ok(mc.captures?.length === 2 && capInfo.figs === 2 && capInfo.imgs.length === 4 && capInfo.imgs.every(Boolean) && capInfo.pairs.every(Boolean) && capInfo.text === 2 && /\/after\/index\.html$/.test(capInfo.app ?? ""),
-      "the merge card's before/after section holds the app captures side by side (they load), the changed text under each, and Open the app", JSON.stringify([mc.captures?.length, capInfo]));
-    await p.locator(`[data-scard="${mc.id}"] [data-sec="before-after"]`).scrollIntoViewIfNeeded(); await p.screenshot({ path: join(shots, "intent-card-captures-1440-light.png") });
+      "the merge card's actual-change section holds pinned app captures side by side (they load), the changed text under each, and Open the app", JSON.stringify([mc.captures?.length, capInfo]));
+    ok(mc.detail.codeEvidence.media.length === 2 && (await p.locator(`[data-scard="${mc.id}"] [data-sec="actual-change"] .cc-diff`).count()) > 0, "the real diff and source-bound media remain visible together");
+    await p.locator(`[data-scard="${mc.id}"] [data-sec="actual-change"]`).scrollIntoViewIfNeeded(); await p.screenshot({ path: join(shots, "intent-card-captures-1440-light.png") });
     await p.check(`[data-scard="${mc.id}"] [data-intent-tick="0"]`); await p.check(`[data-scard="${mc.id}"] [data-intent-tick="1"]`);
     await p.waitForTimeout(1200); // live updates re-render the run page: the ticks must survive them
     ok((await p.locator(`[data-scard="${mc.id}"] [data-intent-tick]:checked`).count()) === 2, "run page: the ticks survive the page's live re-renders");
+    const heldDir = readdirSync(join(data,"evidence",rid)).map(n=>join(data,"evidence",rid,n)).find(n=>n.endsWith("-ci")&&existsSync(join(n,"out/shard-1.log")));
+    const heldLog=join(heldDir,"out/shard-1.log"),withheld=heldLog+".withheld";
+    const refreshEvidence=()=>p.evaluate(async id=>{const card=await(await fetch('/api/scards/'+id)).json(),el=document.querySelector(`[data-scard="${id}"]`);window.fixtureEvidenceControllers.get(el).update(card);return card.detail.codeEvidence.state;},mc.id);
+    ok(!await p.locator(`[data-scard="${mc.id}"] [data-option="merge"]`).isDisabled(),"ready evidence leaves Merge enabled after intent ticks");
+    renameSync(heldLog,withheld);
+    try{
+      ok(await refreshEvidence()==='missing',"withholding a real signed command log reaches the UI as missing evidence");
+      const button=p.locator(`[data-scard="${mc.id}"] [data-option="merge"]`);
+      ok(await button.isDisabled(),"missing evidence disables the affirmative Merge action");
+      const described=await button.getAttribute('aria-describedby');
+      ok(!!described&&await p.locator(`[id="${described}"]`).isVisible()&&/evidence.*missing|missing.*evidence/i.test(await p.locator(`[id="${described}"]`).innerText()),"disabled Merge has a visible accessible evidence reason beyond its tooltip");
+      ok(!await p.locator(`[data-scard="${mc.id}"] [data-option="changes"]`).isDisabled()&&!await p.locator(`[data-scard="${mc.id}"] [data-option="close"]`).isDisabled(),"evidence hold keeps Request changes and Close available");
+      await p.uncheck(`[data-scard="${mc.id}"] [data-intent-tick="0"]`);await p.check(`[data-scard="${mc.id}"] [data-intent-tick="0"]`);
+      ok(await button.isDisabled(),"intent synchronization cannot re-enable Merge while evidence is held");
+    }finally{renameSync(withheld,heldLog);}
+    ok(await refreshEvidence()==='success'&&!await p.locator(`[data-scard="${mc.id}"] [data-option="merge"]`).isDisabled(),"live evidence recovery re-enables Merge without discarding intent ticks");
     await p.screenshot({ path: join(shots, "intent-card-run-1440-light.png") });
     await p.click(`[data-scard="${mc.id}"] [data-option="merge"]`);
     await p.waitForSelector('[data-run-status="succeeded"]', { timeout: 120000 }).catch(() => {});

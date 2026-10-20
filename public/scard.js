@@ -238,7 +238,36 @@ function mountCard(el, card, opts = {}) {
   const LL = (l) => (zh() && l && l.untranslated ? [l.en, h("span", { class: "cc-untr", "data-untranslated": "" }, T("untranslated", "未翻譯"))] : L(l));
   const sec = (key, title, ...kids) => h("section", { class: "cc-sec", "data-sec": key }, h("h4", {}, title), ...kids);
 
+  function codeEvidenceView(d,c) {
+    const e=d.codeEvidence;
+    const state={success:T("Required merge conditions met","已達目前合併條件"),fail:T("Verification failed","驗證失敗"),missing:T("Required evidence missing","缺少必要證據"),stale:T("This approval target is outdated","這個核准版本已過期")}[e.state];
+    const status=x=>({recorded:T("Execution receipt recorded","有實跑紀錄"),"not-run":T("Not run · allowed by policy","未執行・目前政策允許"),"not-applicable":T("Not applicable","不適用"),unknown:T("Execution unknown","無法確認是否執行")}[x]||x);
+    const refs=e.execution.flatMap(x=>x.files||[]);
+    return [sec("human-question",T("Does this exact change do what you intended?","這個版本的改動，符合你要的行為嗎？"),
+      h("p",{class:"cc-quote","data-intent-text":""},d.intent.en),
+      h("p",{"data-code-evidence-state":e.state},h("span",{class:`cc-chip ${e.state==="success"?"ok":"bad"}`},state)),
+      h("p",{class:"cc-count"},T("Checks support your decision; they do not prove every intended behavior.","檢查協助你判斷，並不代表每個需求都已被證明。")),
+      h("details",{},h("summary",{},T("Approval target and receipt identity","核准版本與紀錄來源")),h("pre",{class:"cc-pre"},JSON.stringify({offered:e.offered,current:e.current,reasons:e.reasons},null,2)))),
+      sec("actual-change",T("Read the actual change","直接看改了什麼"),
+        d.walk.length?d.walk.map(w=>h("details",{class:"cc-walk","data-walk":w.id,open:true},h("summary",{class:"cc-mono"},`${w.file}:${w.start}`),h("div",{class:"cc-diff"},w.lines.map(l=>h("div",{class:l[0]==="+"?"a":l[0]==="-"?"d":""},l))))):h("p",{},T("No diff was recorded; inspect the repository before accepting.","沒有保留 diff；驗收前請檢查儲存庫。")),
+        (e.media||[]).length?h("div",{},h("p",{class:"cc-count"},T("Pinned capture receipt; file bytes have no digest","已釘選截圖紀錄；檔案內容沒有 digest")),capturesView({...c,captures:e.media})):h("p",{class:"cc-count"},T("No screenshots bound to both base and head. Use the linked app to inspect behavior.","沒有同時釘選 base 與 head 的截圖；請開啟連結中的 app 檢查行為。")),linksView(c)),
+      sec("execution",T("What actually ran?","實際跑了什麼？"),e.execution.map(x=>h("details",{"data-code-execution":x.check,open:x.verdict!=="pass"},
+        h("summary",{},h("span",{class:`cc-chip ${x.verdict==="pass"?"ok":"warn"}`},status(x.status))," ",x.check),
+        h("p",{},x.reason||T("No applicability reason recorded.","沒有保留適用性說明。")),
+        h("pre",{class:"cc-pre"},JSON.stringify({seq:x.seq,head:x.head,verdict:x.verdict,command:x.command,shards:x.shards},null,2)),
+        (x.files||[]).map(f=>f.present?h("a",{href:f.href,target:"_blank",rel:"noopener","data-evidence":f.file},f.file):h("p",{class:"cc-chip bad"},T(`Missing: ${f.file}`,`檔案遺失：${f.file}`))))),
+      sec("review-gaps",T("What still needs your judgment?","還有哪些要你判斷？"),
+        h("p",{},T("Review and design verdicts are agent judgments. Original file bytes lack producer digests; sandbox and service provenance are unknown here. No recording.","Review 與設計結論是 agent 的判斷。檔案原始內容沒有產出時的 digest；這裡也無法確認歷史 sandbox 與服務來源。沒有錄影。")),
+        e.legacy?h("p",{},T("Legacy card: evidence labels do not add a new approval restriction.","舊版卡片：證據標示不會新增核准限制。")):null,
+        d.remoteTarget?h("details",{},h("summary",{},T("Exact remote merge target","遠端合併的確切目標")),h("pre",{class:"cc-pre"},JSON.stringify(d.remoteTarget,null,2))):null,
+        d.door?h("details",{},h("summary",{},T("Door and rollback","門與回滾")),h("p",{},d.door.kind),h("p",{},LL(d.door.reason)),h("p",{},LL(d.door.rollback))):null,
+        d.review?h("details",{},h("summary",{},T("Reviewer judgments and coverage gaps","Reviewer 判斷與未涵蓋範圍")),h("pre",{class:"cc-pre"},JSON.stringify({verdicts:d.review.verdicts,mode:d.review.mode,notes:d.review.notes},null,2)),d.review.followups.map(x=>h("p",{},LL(x)))):null,
+        d.design?h("details",{},h("summary",{},T("Design judgment and findings","設計判斷與 findings")),h("pre",{class:"cc-pre"},JSON.stringify(d.design,null,2))):null,
+        h("details",{},h("summary",{},T("Seven existing policy gates","七項既有政策 gate")),e.gates.map(g=>h("p",{},`${g.name}: ${g.verdict} · #${g.seq??"?"}`))),
+        h("details",{},h("summary",{},T("Reported explanation · inspect against the diff","回報的說明・請與 diff 對照")),d.how.map(x=>h("p",{},LL(x))))))];
+  }
   function detailView(d, c) {
+    if(d.codeEvidence?.version===1)return codeEvidenceView(d,c);
     const out = [];
     if(d.remoteTarget){const r=d.remoteTarget;out.push(sec("remote-target",T("Remote merge target","遠端合併目標"),
       h("dl",{class:"cc-kv"},...[["repository",T("Repository / PR","儲存庫 / PR"),`${r.repository} #${r.pr}`],["branch",T("Branch","分支"),r.branch],["head",T("Exact head","確切版本"),r.head],["base",T("Base branch","目標分支"),r.base],["base-head",T("Verified base head","已驗證的目標版本"),r.baseHead],["method",T("Merge method","合併方式"),r.method],["grant",T("Authorization fingerprint","授權指紋"),r.grant]].flatMap(([key,label,value])=>[h("dt",{},label),h("dd",{class:"cc-mono","data-remote-target":key},value)])),
@@ -533,7 +562,7 @@ function mountCard(el, card, opts = {}) {
           href ? h("button", { class: "btn", type: "button", "data-direction-preview": r.producer, onclick: (e) => window.crewInteractivePreview ? window.crewInteractivePreview(href, e.currentTarget) : (location.hash = own) }, T("Interactive preview", "互動預覽")) : h("a", { class: "btn", href: review, "data-direction-preview": r.producer }, T("Review", "審閱")),
           href ? h("a", { class: "btn", href, target: "_blank", rel: "noopener", "data-direction-open": r.producer }, T("Open in new tab", "新分頁開啟")) : null,
           // this direction's approve is the card's own option, here only (the buttons below leave it out); sync() keeps its readiness
-          opt && c.status === "open" ? (() => { const why = needs().missing(opt); return h("button", { class: "btn primary", type: "button", "data-option": opt.id, "data-direction-approve": r.producer, "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy, onclick: () => answer(opt) }, artifactOptionLabel(c, opt, T)); })() : null));
+          opt && c.status === "open" ? (() => { const why = needs().missing(opt); return h("button", { class: "btn primary", type: "button", "data-option": opt.id, "data-direction-approve": r.producer, "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy || (!!c.detail?.codeEvidence?.blocked && !opt.hold), "aria-describedby": c.detail?.codeEvidence?.blocked && !opt.hold ? `evidence-hold-${c.id}` : null, onclick: () => answer(opt) }, artifactOptionLabel(c, opt, T)); })() : null));
     })));
   }
   function artifactDetailView(d, c) {
@@ -550,6 +579,7 @@ function mountCard(el, card, opts = {}) {
       sec("needs-eye", T("Needs your eye", "需要你看"), lines(false)), linksView(c, shown)];
   }
   // what the card's buttons need, from the card and the captain's ticks and notes (no DOM): render, sync and answer share it
+  const evidenceHoldReason = () => T("Evidence is missing, failed or stale. Request fresh verification before approval.","證據缺失、失敗或已過期。請重新驗證並取得新卡片再核准。");
   function needs() {
     const c = st.card; const d = detailOk(c.detail) ? c.detail : null; const open = c.status === "open";
     const n = d?.intents?.length || 0; const one = c.confirmDoor && c.door === "one-way";
@@ -562,7 +592,7 @@ function mountCard(el, card, opts = {}) {
     const noteOf = (o) => String(((o.note || o.select?.length) && st.notes[o.id]) || st.note || "").trim();
     // why option o cannot be sent yet, and the field the captain fills to fix it (null when it can be sent)
     const lack = (o) => { const why = (text, field) => ({ text, field }); if (!expectsInterview && (o.note || o.select?.length) && !noteOf(o)) return why(T(`${o.label}: ${o.noteLabel || (o.select?.length ? "pick one first" : "write it first")}`, `${o.labelZh || o.label}：${o.noteLabelZh || o.noteLabel || (o.select?.length ? "請先選一個" : "請先寫下來")}`), `[data-note-for="${CSS.escape(o.id)}"],[data-card-pick="${CSS.escape(o.id)}"]`);
-      if (o.hold) return null;if(expectsInterview&&!draft)return why(T("This interview version is unavailable. Reload the card; no answer was submitted.","這個訪談版本無法使用。請重新載入卡片；尚未送出回答。"));if(draft&&form.questions.some(q=>!String(draft.answers[q.key]||" ").trim()))return why(T("Answer every question below", "請回答下方每個問題"),'[data-interview][aria-invalid="true"]'); if (n && st.ticks.size < n && !st.note.trim()) return why(T(`Tick every intent line (${st.ticks.size} of ${n}) or write a note`, `請勾完每一條意圖（${st.ticks.size}/${n}），或寫備註`), "[data-intent-tick]:not(:checked)");
+      if (o.hold) return null;if(c.detail?.codeEvidence?.blocked)return why(evidenceHoldReason(),"[data-code-evidence-state]");if(expectsInterview&&!draft)return why(T("This interview version is unavailable. Reload the card; no answer was submitted.","這個訪談版本無法使用。請重新載入卡片；尚未送出回答。"));if(draft&&form.questions.some(q=>!String(draft.answers[q.key]||" ").trim()))return why(T("Answer every question below", "請回答下方每個問題"),'[data-interview][aria-invalid="true"]'); if (n && st.ticks.size < n && !st.note.trim()) return why(T(`Tick every intent line (${st.ticks.size} of ${n}) or write a note`, `請勾完每一條意圖（${st.ticks.size}/${n}），或寫備註`), "[data-intent-tick]:not(:checked)");
       // answers on a spec card go with "Adjust the scope": approving the unchanged spec would drop them without a word
       if (o.id === "dispatch" && answeredCount(c)) { const k = answeredCount(c); return why(T(`You answered ${k} question${k === 1 ? "" : "s"}: press "Adjust the scope" so the spec takes your answers, or clear the answers and then approve.`, `你回答了 ${k} 題：按「調整範圍」讓規格帶入回答；或清除回答後再核准`), null); }
       if (one && !st.confirm) return why(T("Confirm the door first", "請先確認門"), "[data-confirm-door]");
@@ -580,9 +610,10 @@ function mountCard(el, card, opts = {}) {
     const root = el.querySelector("[data-card-root]"); if (!root || root.getAttribute("data-card-root") !== st.card.id) return render();
     const { c, missing, tickCount } = needs();
     for (const b of root.querySelectorAll(".cc-actions [data-option], [data-direction-approve]")) { const o = c.options.find((x) => x.id === b.dataset.option); const why = o ? missing(o) : null;
+      const held = !!c.detail?.codeEvidence?.blocked && !!o && !o.hold; b.disabled = st.busy || held; if (held) b.setAttribute("aria-describedby", `evidence-hold-${c.id}`); else b.removeAttribute("aria-describedby");
       b.dataset.ready = why ? "false" : "true"; if (why) b.title = why; else b.removeAttribute("title"); }
     const count = root.querySelector("[data-tick-count]"); if (count) count.textContent = tickCount();
-    const hint = root.querySelector("[data-card-hint]"); if (hint) { hint.textContent = st.msg ? "" : c.options.map(missing).find(Boolean) || ""; hint.hidden = !hint.textContent; }
+    const hint = root.querySelector("[data-card-hint]"); if (hint) { hint.textContent = c.detail?.codeEvidence?.blocked ? evidenceHoldReason() : st.msg ? "" : c.options.map(missing).find(Boolean) || ""; hint.hidden = !hint.textContent; }
     const msg = root.querySelector("[data-card-msg]"); if (msg) msg.textContent = st.msg;
     if (specCard(c)) specSync(c);
   }
@@ -625,6 +656,9 @@ function mountCard(el, card, opts = {}) {
   function render() {
     if(composing){pendingRender=true;return;}
     const focused=document.activeElement;const keep=focused&&el.contains(focused)&&focused instanceof HTMLTextAreaElement?{key:focused.hasAttribute('data-card-note')?'data-card-note':focused.hasAttribute('data-interview')?'data-interview':null,value:focused.getAttribute('data-interview'),noteFor:focused.getAttribute('data-note-for'),start:focused.selectionStart,end:focused.selectionEnd,direction:focused.selectionDirection}:null;
+    // An authenticated card refresh rebuilds controls; retain only the same still-valid action.
+    const actionKey=focused&&el.contains(focused)&&focused.matches('button,a[href]')&&!focused.matches(':disabled,[aria-disabled="true"]')&&focused.getClientRects().length&&getComputedStyle(focused).visibility!=='hidden'?['data-card-lang','data-option','data-card-link'].find(k=>focused.hasAttribute(k)):null;
+    const action=actionKey?{key:actionKey,value:focused.getAttribute(actionKey),href:focused.getAttribute('href'),card:el.dataset.scard,status:el.dataset.cardStatus,hash:location.hash}:null;
     const { c, d, open, n, one, ackOk, noteOpts, hasNote, noteLabel, missing, tickCount } = needs();
     const lang = h("div", { class: "cc-lang", role: "group", "aria-label": "Language" }, cardI18n().cardLangs(st.lang !== "en" ? st.lang : pageLang() !== "en" ? pageLang() : lastCardZh).map(([k, lab]) =>
       h("button", { type: "button", "data-card-lang": k, "aria-pressed": String(st.lang === k), onclick: () => { st.lang = k; if (k !== "en") lastCardZh = k; render(); } }, lab)));
@@ -673,9 +707,9 @@ function mountCard(el, card, opts = {}) {
         h("span", {}, T(c.acknowledge.en, c.acknowledge.zh || c.acknowledge.en))));
       const onTiles = new Set(directionOptions(c, d));
       kids.push(h("div", { class: "cc-actions actions" }, c.options.filter((o) => !onTiles.has(o.id)).map((o) => { const why = missing(o);
-        return h("button", { class: `btn ${o.primary ? "primary" : ""}`, type: "button", "data-option": o.id, ...(draft&&o.id==="continue"?{"data-save-interview":""}:{}), "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy, onclick: () => answer(o) }, targetLabel(c, o)); })));
-      const hint = st.msg ? "" : c.options.map(missing).find(Boolean) || "";
-      kids.push(h("p", { class: "cc-count", "data-card-hint": "", hidden: !hint }, hint));
+        return h("button", { class: `btn ${o.primary ? "primary" : ""}`, type: "button", "data-option": o.id, ...(draft&&o.id==="continue"?{"data-save-interview":""}:{}), "data-ready": why ? "false" : "true", title: why || null, disabled: st.busy || (!!c.detail?.codeEvidence?.blocked && !o.hold), "aria-describedby": c.detail?.codeEvidence?.blocked && !o.hold ? `evidence-hold-${c.id}` : null, onclick: () => answer(o) }, targetLabel(c, o)); })));
+      const hint = c.detail?.codeEvidence?.blocked ? evidenceHoldReason() : st.msg ? "" : c.options.map(missing).find(Boolean) || "";
+      kids.push(h("p", { class: "cc-count", "data-card-hint": "", id: c.detail?.codeEvidence?.blocked ? `evidence-hold-${c.id}` : null, role: c.detail?.codeEvidence?.blocked ? "status" : null, hidden: !hint }, hint));
       kids.push(h("p", { class: "cc-count cc-sending", role: "status", "aria-live": "polite", tabindex: "-1", "data-card-sending": "" }, st.busy ? T("Sending…", "送出中…") : ""));
     } else if (c.answer) {
       const byFirstmate = c.decidedBy === "firstmate" || c.answer.by === "firstmate";
@@ -686,6 +720,11 @@ function mountCard(el, card, opts = {}) {
     kids.push(h("div", { class: "cc-msg", role: "status", "aria-live": "polite", "data-card-msg": "", tabindex: "-1" }, st.msg));
     el.replaceChildren(h("div", { class: "cc", "data-card-root": c.id }, kids));
     if(keep?.key){const field=[...el.querySelectorAll(`[${keep.key}]`)].find(t=>keep.key==='data-interview'?t.getAttribute(keep.key)===keep.value:(t.getAttribute('data-note-for')||null)===(keep.noteFor||null));if(field){field.focus({preventScroll:true});field.setSelectionRange(keep.start,keep.end,keep.direction);}}
+    if(action&&action.status==='open'&&open&&action.card===c.id&&action.hash===location.hash&&document.activeElement===document.body){
+      const matches=[...el.querySelectorAll(`[${action.key}]`)].filter(a=>a.getAttribute(action.key)===action.value&&a.getAttribute('href')===action.href);
+      const next=matches.length===1?matches[0]:null;
+      if(next&&!next.matches(':disabled,[aria-disabled="true"]')&&next.getClientRects().length&&getComputedStyle(next).visibility!=='hidden')next.focus({preventScroll:true});
+    }
     el.classList.add("rt-card"); el.setAttribute("data-scard", c.id); el.setAttribute("data-card-status", c.status);
   }
   render();

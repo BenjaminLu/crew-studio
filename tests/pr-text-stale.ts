@@ -111,6 +111,8 @@ const install = async (data?: string, with_: GitHubPrAdapter = adapter, olderRel
   };
   // what the older release left on the live Task: the text opened from the template, its mangled table, at this head
   E.actions["fixture.r069"] = (x) => {
+    // This PR-text fixture assumes policy readiness; record that assumption explicitly.
+    for (const gate of ["branch", "rebase", "scope", "failfirst", "ci", "approval", "design"]) E.record(x, "check", { check: `firstmate/gate-${gate}`, verdict: "pass", kind: "deterministic", head: x.ctx.head, data: { fixture: "PR-text policy prerequisite" } } as any);
     sim.community.set(TEMPLATE.path, TEMPLATE_TEXT); evidenceAt(x);
     // params.forged: a well-formed marker naming this head with the sha256 of its text, written by someone other than Studio
     const h = x.ctx.head, body = x.run.params.forged ? `${wrapStudioText("## Summary\n\nLooks current.\n", h)}\n` : mangled(h);

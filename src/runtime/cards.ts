@@ -63,6 +63,8 @@ export type PullRequestPreview = { repository: string; branch: string; base: str
  */
 export type L10n = { en: string; "zh-TW": string; untranslated?: boolean };
 export type CardDetail = {
+  codeEvidenceOffer?: import("../domain/code-card-evidence").CodeEvidenceOffer;
+  codeEvidence?: import("../domain/code-card-evidence").CodeCardEvidence;
   /** Additive non-code acceptance metadata; old records remain unchanged. Missing pins require a fresh acceptance card. */
   artifactAcceptance?: { kind: "artifact" | "file-plan" | "lane"; offered: { id: string; n: number; sha256: string | null; format: string; producer: string }[] };
   /** Verified remote merge identity, copied only from the signed request target. */
