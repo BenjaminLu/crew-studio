@@ -79,7 +79,9 @@ try {
     const ownCard = own.approval.card;
     { const viaSeed = (await import("../src/crew-staffing")).crewApproval(seeded);
       ok(viaSeed.card !== ownCard && viaSeed.run === "crew-migration" && viaSeed.card.startsWith(`crew-team-v${seeded.version}-`), "a seeded team's derived staffing cites the seed record, never another project's card", JSON.stringify(viaSeed)); }
-    crew.write(C.teamBody(seeded), seeded.hash, { by: "captain", via: "page" });
+    const onboarded=crew.write(C.teamBody(seeded),seeded.hash,{by:'captain onboarding verified J-fixture',via:'page'});
+    ok(cs.ensure(def2,legacy)!.hash===own.hash,'onboarding fills defaults without replacing a project explicit staffing approval');
+    crew.write(C.teamBody(onboarded), onboarded.hash, { by: "captain", via: "page" });
     ok(cs.ensure(def2, legacy)!.crew?.team === crew.current()!.hash, "once the captain changes the team, that project's staffing comes from the team"); }
   // a team change approved on a crew card: the derived staffing cites that card and its run
   { const viaCard = crew.write(C.teamBody(crew.current()!), crew.current()!.hash, { by: "captain (card)", via: "card", card: "SC-77", run: "R-77", answerSeq: 5 });

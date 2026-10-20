@@ -41,7 +41,7 @@ export const filmSample: { path: string | null; reason: string | null } = (() =>
 })();
 
 /** examples: seed the example workflows (CREW_EXAMPLE_WORKFLOWS, default on: the startup competition has its own scenario) */
-export async function bootStudio(name: string, o: { localUnrestricted?: boolean; examples?: boolean; beforeStart?: (data:string)=>Promise<void> } = {}): Promise<Studio> {
+export async function bootStudio(name: string, o: { localUnrestricted?: boolean; examples?: boolean; codexBin?:string; beforeStart?: (data:string)=>Promise<void> } = {}): Promise<Studio> {
   const root = mkdtempSync(join(tmpdir(), `crew-acceptance-${name}-`)), home = join(root, "home"), data = join(root, "data"), deps = join(root, "deps");
   for (const d of [join(home, ".codex"), data, deps]) mkdirSync(d, { recursive: true });
   writeFileSync(join(home, ".codex", "config.toml"), 'model="fixture-model"\nmodel_reasoning_effort="low"\n');
@@ -50,8 +50,8 @@ export async function bootStudio(name: string, o: { localUnrestricted?: boolean;
   const port = await freePort(), base = `http://127.0.0.1:${port}`, token = `acceptance-${name}-session`;
   const env: Record<string, string> = { ...(process.env as Record<string, string>), HOME: home, CODEX_HOME: join(home, ".codex"), CREW_DATA: data, CREW_RUNTIME_DIR: join(root, "runtime"), CREW_PORT: String(port),
     CREW_SESSION_TOKEN: token, CREW_GH: "0", CREW_GH_NO_CLI: "1", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1",
-    CREW_CODEX_BIN: join(REPO, "tests/fixture/codex-account.mjs"), CREW_CLAUDE_BIN: join(REPO, "tests/fixture/claude-native.mjs"),
-    CREW_HOST_CODEX_BIN: join(REPO, "tests/fixture/codex-account.mjs"), CREW_HOST_CLAUDE_BIN: "/nonexistent/claude",
+    CREW_CODEX_BIN: o.codexBin??join(REPO, "tests/fixture/codex-account.mjs"), CREW_CLAUDE_BIN: join(REPO, "tests/fixture/claude-native.mjs"),
+    CREW_HOST_CODEX_BIN: o.codexBin??join(REPO, "tests/fixture/codex-account.mjs"), CREW_HOST_CLAUDE_BIN: "/nonexistent/claude",
     CLAUDE_CODE_OAUTH_TOKEN: CLAUDE_TOKEN,
     // the film renderer is a local tool, not a provider: its existing stub (src/render.ts) stands in for Playwright + ffmpeg
     CREW_RENDER_STUB: "1", ...(filmSample.path ? { CREW_RENDER_STUB_MP4: filmSample.path } : {}),

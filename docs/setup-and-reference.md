@@ -66,6 +66,27 @@ If port 4210 is already occupied, use the same `CREW_PORT` for **both** commands
 Source and compiled runs default to `~/.crew-studio/data`. Existing checkout-local stores are not migrated or read automatically. To explicitly select another store, set the same absolute `CREW_DATA` on both
 server and `open` commands. Run only one server against that store.
 
+### First-use model and team settings
+
+After connecting the chosen subscription account and starting Firstmate, the
+first-use guide offers **Prepare your team**. The same controls are on **Crew**.
+Detection alone does not execute an agent or prove tool health. **Check and
+prepare team** runs one native worker request (up to 60 seconds, one harmless
+Studio tool) inside the OS sandbox. Review the displayed roles and click **Save
+team settings**; this writes settings directly, without a staffing Task/card.
+Cancel leaves settings unchanged. Existing explicit role and project choices
+are preserved. The check uses the selected provider only; it does not switch
+accounts, vendors or billing routes when unavailable.
+
+Basic roles use the checked default model at medium effort when available, the next supported review-strength effort otherwise, or
+Claude's verified configured native default effort. Same-model reviewers receive
+separate fresh contexts; this does not imply model diversity. Image, audio and
+other specialist capabilities still need their own adapter checks. The receipt
+records the requested isolated-profile model/effort and observed tool execution;
+it does not claim a vendor-resolved model identity that the CLI did not expose.
+Project registration, GitHub grants, workflow specs and release approvals retain
+their normal human confirmation gates.
+
 ### Dependencies by capability
 
 | Capability | Required before use | Installation / setup |

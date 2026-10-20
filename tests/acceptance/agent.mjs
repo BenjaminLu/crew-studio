@@ -29,6 +29,8 @@ const textOf = (content) => (Array.isArray(content) ? content.map((c) => c?.text
 // ---------- scripted modes the shared stub agent does not cover ----------
 const png1x1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 async function* acceptanceScript(text, call, say) {
+  const onboarding=/^Call onboarding_read with nonce ([a-f0-9]+)\./.exec(text);
+  if(onboarding){const result=yield* call('onboarding_read',{nonce:onboarding[1]});if(typeof result?.challenge!=='string')throw new Error('No onboarding challenge');yield* say(result.challenge);return true;}
   if (text.startsWith("DELIVER ")) {
     const kind = /^DELIVER (\w+)/.exec(text)[1], intent = (/^Intent: (.*)$/m.exec(text)?.[1] ?? "Acceptance").slice(0, 80);
     const variant = /^Variant: (.*)$/m.exec(text)?.[1] ?? "A";

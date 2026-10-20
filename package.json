@@ -65,7 +65,7 @@
     "test:native-backbone": "bun tests/native-backbone-integration.ts",
     "test:workflow-create": "bun tests/native-workflow-create.ts && node tests/sidebar-workflow-create-ui.mjs",
     "test:codex-image": "bun tests/egress-start.ts && bun tests/codex-image.ts",
-    "test:codex-independent-login": "bun tests/codex-independent-login.ts && node tests/codex-independent-login-ui.mjs",
+    "test:codex-independent-login": "bun tests/codex-independent-login.ts && bun tests/codex-default-account.ts && node tests/codex-independent-login-ui.mjs",
     "launch": "bun src/main.ts launch",
     "test:launch": "bun tests/launch.ts",
     "test:firstmate-native": "bun tests/firstmate-native.ts",
@@ -88,7 +88,7 @@
     "test:native-coffee-design": "bun tests/native-coffee-design.ts",
     "test:native-coffee-staffing": "bun tests/native-coffee-staffing.ts",
     "test:skins-native": "bun tests/skins-native.ts",
-    "test:onboarding": "node tests/onboarding-ui.mjs",
+    "test:onboarding": "node tests/onboarding-ui.mjs && bun run test:onboarding-team",
     "test:voyage-layout": "node tests/voyage-layout.mjs",
     "test:image-refine-context": "bun tests/image-refine-context.ts && IMAGE_REFINE_ADAPTER_FIXTURE=1 bun tests/image-refine-context.ts && node tests/image-refine-context-ui.mjs",
     "test:firstmate-generated-media": "bun tests/firstmate-generated-media.ts",
@@ -134,7 +134,8 @@
     "test:crew-visibility": "bun tests/crew-visibility.ts && node tests/crew-visibility-ui.mjs",
     "test:firstmate-card-ux": "bun tests/firstmate-intent-title.ts && bun tests/staffing-judge-defaults.ts && node tests/firstmate-card-ux-ui.mjs",
     "test:ci:portable": "bun tests/env-isolation.ts && bun tests/git-config-guard.ts && bun tests/ci-runner.ts && bun run build",
-    "test:workflow-overview-ui": "OVERVIEW_CAPTURE_GROUP=1 bun tests/workflow-overview-ui.mjs && OVERVIEW_CAPTURE_GROUP=2 bun tests/workflow-overview-ui.mjs"
+    "test:workflow-overview-ui": "OVERVIEW_CAPTURE_GROUP=1 bun tests/workflow-overview-ui.mjs && OVERVIEW_CAPTURE_GROUP=2 bun tests/workflow-overview-ui.mjs",
+    "test:onboarding-team": "bun tests/onboarding-team.ts && bun tests/onboarding-team-probe.ts && bun tests/onboarding-team-ui.ts"
   },
   "devDependencies": {
     "gsap": "3.14.2",

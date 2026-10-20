@@ -90,6 +90,8 @@ export type AttachOpts = {
   fork?: boolean;
   /** start a NEW session in cwd (the id is ignored): "Start firstmate" */
   fresh?: boolean;
+  /** Verified official default, pinned only when the vendor effort setting is absent. */
+  codexDefaultEffort?: string;
   nativeTools?: {onDiagnostic?:(record:import("./native-errors").NativeDiagnostic)=>boolean;specs:NativeMainTools["specs"];call(name:string,args:unknown,identity:{thread:string;turn:string;call:string;live:()=>boolean}):Promise<unknown>};
   /** keep the session's own settings: model and permission mode */
   model?: string | null; permissionMode?: string | null;

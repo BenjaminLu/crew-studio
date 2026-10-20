@@ -33,8 +33,8 @@ function codexAccountParts(begin=false){
   pending:pending?(ACCOUNT.url?h("a",{class:"btn primary",href:ACCOUNT.url,target:"_blank",rel:"noopener noreferrer","data-codex-browser":"1"},T("Open official sign-in page","開啟官方登入頁")):h("p",{class:"muted"},T("Continue in the browser window you opened, or cancel and connect again.","請在已開啟的瀏覽器視窗繼續，或取消後重新連接。"))):null,
   owned:owned?h("p",{class:"note"},T("Studio already owns a firstmate session. Release it here before changing the account or starting another.","Studio 已在操作 firstmate session；請先在這裡交還，再變更帳號或開新工作。")):null,
   // signed in (ready): the card's main action is Start, so connecting again is a quiet button
-  buttons:[pending||checking?h("button",{class:"btn","data-codex-cancel":"1",disabled:phone||ACCOUNT.busy||null,onclick:()=>accountAction("cancel")},T("Cancel sign-in","取消登入")):h("button",{class:a.state==="ready"?"btn":"btn primary","data-codex-connect":"1",disabled:phone||owned||null,onclick:()=>accountAction("login",begin)},a.state==="ready"?T("Connect again…","重新連接…"):T("Connect Codex…","連接 Codex…")),
-   !pending&&!checking?h("button",{class:"btn","data-codex-verify":"1",disabled:phone||owned||null,onclick:()=>accountAction("verify")},T("Verify account","驗證帳號")):null]};
+  buttons:[pending||checking?h("button",{class:"btn","data-codex-cancel":"1",disabled:phone||ACCOUNT.busy||null,onclick:()=>accountAction("cancel")},T("Cancel sign-in","取消登入")):h("button",{class:a.authenticated?"btn":"btn primary","data-codex-connect":"1",disabled:phone||owned||null,onclick:()=>accountAction("login",begin)},a.authenticated?T("Use another account…","改用其他帳號…"):T("Connect Codex…","連接 Codex…")),
+   !pending&&!checking?h("button",{class:a.authenticated?"btn primary":"btn","data-codex-verify":"1",disabled:phone||owned||null,onclick:()=>accountAction("verify")},a.authenticated?T("Refresh readiness","重新檢查可用性"):T("Verify account","驗證帳號")):null]};
 }
 function accountPanel(begin=false){
  const x=codexAccountParts(begin),a=x.a;
