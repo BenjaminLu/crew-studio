@@ -94,3 +94,13 @@
 .tm-staffing{margin-top:12px;padding:12px 16px;min-width:0}
 .tm-staffing summary{cursor:pointer;min-height:32px;line-height:1.5}
 .tm-staffing .tk-staffing{border:0;box-shadow:none;background:none;padding:8px 0 0}
+/* a script skill's readiness after its chip, and the captain's decision on one a change brings (src/skillpkg) */
+.tm-ready{display:inline-flex;align-items:center;min-height:24px;border:0;border-radius:6px;padding:3px 6px;font:inherit;font-size:11px;font-weight:600;margin-left:3px;background:var(--surface-3);color:var(--text-2);cursor:pointer;white-space:normal;text-align:left}.tm-ready:focus-visible{outline:2px solid var(--accent);outline-offset:2px}[data-skill-status] .mono{overflow-wrap:anywhere}[data-skill-status] .actions{flex-wrap:wrap}
+.tm-ready.ready{background:var(--ok-soft);color:var(--ok)}
+.tm-ready.not-ready,.tm-ready.needs-approval{background:var(--bad-soft);color:var(--bad)}
+.tm-ready.preparing,.tm-ready.text-only{background:var(--warn-soft);color:var(--text)}
+.tm-decide{margin:12px 0;padding:14px 16px;border:1px solid var(--warn);min-width:0}
+.tm-decide h2{font-size:15px;margin:0 0 8px}
+.tm-decide-skill{margin:8px 0;overflow-wrap:anywhere}
+.tm-decide-skill ul{margin:4px 0 4px 18px;padding:0;font-size:12px}
+.tm-decide .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}

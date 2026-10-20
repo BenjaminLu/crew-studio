@@ -18,6 +18,12 @@ changes. Design: `docs/design/crew-seats.md`.
   role and kind), the node's own definition, the project's override, the team member. Skills = the member's skills,
   then the node's own; the agent receives its role skill before both. A judge turn receives its role skill, then the
   skills pinned on its check, never the member's.
+- **Script skills** (docs/units/skill-packages.md). A library skill with scripts runs only once the captain decided that
+  exact version (both hashes) on the team-change card or the Crew page: with its scripts, or as text only. The card shows
+  its scripts and the hosts approving it allows; never ask the captain separately. Studio then prepares it by itself
+  (dependencies from the lockfiles inside the skill). An undecided one blocks its round; studio_work_status `skills` says
+  which are not ready and why (a program missing), and a Task's `skillRefusals` names hosts a skill tried that its approval
+  does not allow. Fix those with a new skill version or a team change, never by asking during a run.
 - **Projects.** A project can change a seat's member (model, effort, skills) for its own work only ("只改這個專案").
   A Task's project is its `project` parameter; a staffed workflow's derived staffing carries its project's layer.
 - **Rules, never silent.** A reviewing seat never runs on the model of the seat it reviews; `alt-maker` never runs

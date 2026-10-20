@@ -116,10 +116,24 @@ try {
     const eb = await p.locator('[data-edge="build→pr-open[ok]"] .rt-hit').boundingBox(); const drop = { x: eb.x + eb.width / 2, y: eb.y + eb.height / 2 };
     drop.hit = await p.evaluate(([x, y]) => { const el = document.elementFromPoint(x, y); return el?.closest("[data-edge]")?.getAttribute("data-edge") ?? el?.getAttribute("class") ?? null; }, [drop.x, drop.y]);
     ok(drop.hit === "build→pr-open[ok]", "the middle of the forward edge build→pr-open hits that edge (no back edge covers it)", String(drop.hit));
+    // Hold a real validation response until a keyboard user has focused another node.
+    // A background SVG redraw must preserve that focus before the next Enter.
+    let releaseValidation, validationArrived;
+    const validationGate=new Promise(r=>releaseValidation=r), validationSeen=new Promise(r=>validationArrived=r);
+    let holdValidation=true;
+    await p.route('**/api/wf/validate',async route=>{
+      if(!holdValidation)return route.continue();holdValidation=false;
+      const response=await route.fetch();validationArrived();await validationGate;await route.fulfill({response});
+    });
     let dragErr = null; await p.locator('[data-pal-check="firstmate/scope"]').dragTo(p.locator('[data-edge="build→pr-open[ok]"] .rt-hit'), { targetPosition: { x: eb.width / 2, y: eb.height / 2 }, force: true, timeout: 8000 }).catch((e) => { dragErr = String(e.message).split("\n")[0]; }); await p.waitForTimeout(300);
     ok(await p.locator('[data-edge="build→pr-open[ok]"]').getAttribute("data-edge-checks") === "1", "dragging a check onto an edge attaches it to the edge (a real pointer drag dropped at that point, no synthetic drop)", String(dragErr));
     // the side panel: a params form from the check's schema, and Try on sample
-    await p.focus('[data-node="spec"]'); await p.keyboard.press("Enter"); await p.waitForTimeout(200);
+    await validationSeen;
+    await p.focus('[data-node="spec"]');
+    const oldGraph=await p.locator('.rt-canvas svg.rt-graph').elementHandle();releaseValidation();
+    await p.waitForFunction(old=>!old.isConnected,oldGraph);
+    ok(await p.evaluate(()=>document.activeElement?.dataset.node==='spec'),"a real asynchronous validation redraw preserves keyboard focus before Enter");
+    await p.keyboard.press("Enter"); await p.waitForTimeout(200);
     const det = p.locator('[data-check="core/ste-wording"]'); if (!(await det.getAttribute("open"))) await det.locator("summary").click();
     ok(await det.locator(".rt-params .rt-field").count() > 0, "the side panel shows a params form generated from the check's schema");
     await det.locator('[data-try="core/ste-wording"]').click(); await p.waitForFunction(() => document.querySelector('[data-try-out="core/ste-wording"]')?.dataset.verdict, null, { timeout: 30000 }).catch(() => {});

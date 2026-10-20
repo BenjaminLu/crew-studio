@@ -1,12 +1,16 @@
 // The Crew page's API (#/team, public/team.js; docs/design/crew-seats.md):
 //   GET  /api/team          the team, every workflow's resolved crew, the seats, the models and skills to choose from;
 //                           ?project=<id> resolves every workflow in that project (its project layer applied)
-//   POST /api/team/change   {change, expected}: the captain's change from the page (desktop only); compare-and-swap on expected
+//   POST /api/team/change   {change, expected, skillDecisions?}: the captain's change from the page (desktop only); compare-and-swap on expected.
+//                           A change that brings a script skill the captain never decided is answered 409 {code:"skillDecision", skills}
+//                           (its scripts, flags and hosts); the page asks and sends it again with {"<id>@v<N>": "scripts"|"text-only"}.
 // Firstmate never calls these: it proposes a change on a captain card (src/crew-tools.ts).
 import {withJudges,type JudgeSlot,CrewStore,resolveCrew,crewBadge,changeImpact,applyChange,teamBody,emptyTeam,slotsOf,declaredSeats,seatLabel,seatUses,projectUses,IMAGE_SEAT,BUILTIN_SEATS,PRESETS,EFFORTS,type Team} from './domain/crew';
 import {staffingApplies} from './domain/staffing';
 import {withRoleNodes} from './crew-staffing';
 import type {WorkflowDefs} from './runtime/defs';
+import type {SkillPackages} from './skillpkg/index';
+import {defPins,pendingScripts,teamPins} from './skillpkg/crew';
 
 export type CrewViewDeps={defs:WorkflowDefs;store:CrewStore;
  /** the judged checks of a definition, on their reviewing seats (src/crew-guard.ts judgeSlots): shown and counted like nodes */
@@ -14,7 +18,9 @@ export type CrewViewDeps={defs:WorkflowDefs;store:CrewStore;
  /** a role's skill as agents receive it (src/runtime/engine.ts roleSkillUse): ref, Studio's version, sha256 of the exact text */
  roleSkill?:(def:any,role:string|null)=>RoleSkillView|null;facts:()=>CrewFacts[];library:()=>{id:string;name:string;description?:string;current:number;sha256:string}[];
  /** the registered projects the page can choose ("only this project") */
- projects?:()=>{id:string;name:string}[]};
+ projects?:()=>{id:string;name:string}[];
+ /** script skills (src/skillpkg): readiness on the page, the captain's decision on a change that brings one */
+ skillPackages?:()=>SkillPackages|null};
 const PROJECT=/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,199}$/;
 export type RoleSkillView={role?:string|null;ref:string|null;version:number|null;sha256:string;parts?:{ref:string;sha256:string|null}[]};
 /** A role skill's short name: the file of its ref (worker.md), each part's for a role of several named skills. */
@@ -68,7 +74,13 @@ export function crewView(d:CrewViewDeps,project:string|null=null){
  const projects:{id:string;name:string;custom:boolean}[]=[];for(const p of (()=>{try{return d.projects?.()??[];}catch{return [];}})())projects.push({id:p.id,name:p.name,custom:!!team.projects?.[p.id]});
  for(const id of Object.keys(team.projects??{}))if(!projects.some(p=>p.id===id))projects.push({id,name:id,custom:true});
  const {models,providers}=crewModels(d.facts(),team);
- return{team:cfg?{version:cfg.version,hash:cfg.hash,approval:cfg.approval}:null,project,projects,workflows,seats,models,providers,efforts:EFFORTS.slice(2,6),library:lib.map(s=>({id:s.id,name:s.name,v:s.current,sha256:s.sha256,description:s.description??''})),presets:Object.entries(PRESETS).map(([id,p])=>({id,en:p.en,zh:p.zh}))};
+ return{team:cfg?{version:cfg.version,hash:cfg.hash,approval:cfg.approval}:null,project,projects,workflows,seats,models,providers,efforts:EFFORTS.slice(2,6),library:lib.map(s=>({id:s.id,name:s.name,v:s.current,sha256:s.sha256,...((s as any).filesSha256?{filesSha256:(s as any).filesSha256}:{}),description:s.description??''})),skillStatus:skillStatus(d,team,lib),presets:Object.entries(PRESETS).map(([id,p])=>({id,en:p.en,zh:p.zh}))};
+}
+/** Each script skill version the page shows (the team's pins, the library's current versions): its readiness line, en and zh-TW. */
+function skillStatus(d:CrewViewDeps,team:Team,lib:{id:string;current:number;sha256:string}[]){
+ const pk=(()=>{try{return d.skillPackages?.()??null;}catch{return null;}})();if(!pk)return{};const out:Record<string,unknown>={};
+ for(const p of [...teamPins(team),...lib.map(s=>({id:s.id,v:s.current}))]){const k=`${p.id}@v${p.v}`;if(k in out)continue;try{const b=pk.badge(p.id,p.v);if(b)out[k]=b;}catch{}}
+ return out;
 }
 /** How long a model detection is reused when the page opens again (the 重新偵測 button always detects afresh). */
 export const DETECT_REUSE_MS=60_000;
@@ -84,13 +96,42 @@ export function crewRoutes(d:CrewViewDeps&{refreshFacts?:()=>Promise<unknown>;re
  return async function handle(p:string,url:URL,method:string,writing:boolean,b:any,who:{kind:string}):Promise<Response|null>{
   const projectOf=(v:unknown)=>typeof v==='string'&&PROJECT.test(v)?v:null;
   if(p==='/api/team'&&!writing){if(url.searchParams.get('facts')==='1')await detect(url.searchParams.get('force')==='1');return json({...crewView(d,projectOf(url.searchParams.get('project'))),detection:{at:detectedAt||null}});}
+  if(p==='/api/team/skill'){
+   const pk=d.skillPackages?.();if(!pk)return json({error:'Script skills unavailable'},503);
+   const id=writing?b?.id:url.searchParams.get('id'),v=writing?b?.v:Number(url.searchParams.get('v'));
+   if(typeof id!=='string'||!Number.isInteger(v)||v<1)return json({error:'A skill version is required'},400);
+   const facts=pk.cardFacts(id,v);if(!facts)return json({error:'Skill version not found'},404);
+   const view=()=>({facts,status:pk.badge(id,v),decisionRevision:pk.decision(id,v)?.sig??null});
+   if(!writing)return json(view());
+   if(method!=='POST')return json({error:'POST required'},405);
+   if(who.kind!=='desktop')return json({error:'Manage script skills on the desktop',code:'desktopOnly'},403);
+   try{pk.assertDecidable(id,v,b);}catch(e:any){return json({error:String(e?.message??e),tw:'Skill 版本或檔案已變更；請重新查看。',code:'targetChanged'},409);}
+   const decided=pk.decision(id,v);
+   if(b.action==='retry'){
+    if(decided?.scripts!=='approved')return json({error:'Only an approved script version can be prepared',tw:'只有已核准的 script 版本可以重新準備。'},409);
+    await pk.ensure(id,v,undefined,true);return json(view());
+   }
+   if(b.action==='enable-scripts'){
+    if(decided?.scripts!=='text-only'||b.previousDecision!==decided.sig)return json({error:'This decision changed; inspect the script permissions again before enabling',tw:'原決定已變更；請重新查看 script 權限後再啟用。',code:'decisionChanged'},409);
+    pk.decide(id,v,'approved','captain','page-script-upgrade');return json(view());
+   }
+   if(!['scripts','text-only'].includes(b.action))return json({error:'Choose scripts, text-only, or retry'},400);
+   if(decided)return json({error:'This version already has a decision; reload its status',tw:'這個版本已有決定；請重新查看狀態。',code:'alreadyDecided'},409);
+   pk.decide(id,v,b.action==='scripts'?'approved':'text-only','captain','page');return json(view());
+  }
   if(p==='/api/team/change'){
    if(!writing||method!=='POST')return json({error:'POST required'},405);if(who.kind!=='desktop')return json({error:'Change the team on the desktop',code:'desktopOnly'},403);
    const cfg=d.store.current(),before:Team=cfg?teamBody(cfg):emptyTeam();
    if((b?.expected??null)!==(cfg?.hash??null))return json({error:'The team changed since you looked; reload and choose again',tw:'團隊在你看過之後改了；請重新整理再選一次'},409);
    const c=b?.change,def=c?.kind==='node'?d.defs.get(c.workflow):undefined;
    let next:Team;try{next=applyChange(before,c,def);}catch(e:any){return json({error:String(e?.message??e)},400);}
+   // a script skill the captain never decided: the page asks (its scripts and the hosts approving it allows), then sends the answer
+   const pk=(()=>{try{return d.skillPackages?.()??null;}catch{return null;}})(),pending=pendingScripts(pk,[...teamPins(next),...(def?defPins(def):[])]);
+   const said=b?.skillDecisions&&typeof b.skillDecisions==='object'?b.skillDecisions:{};
+   if(pending.some(p=>!['scripts','text-only'].includes(said[`${p.id}@v${p.v}`])))return json({error:'This change brings a script skill: approve it with its scripts or as text only',tw:'這個變更帶來有 script 的 skill：請選「核准（含 script）」或「只當文字」',code:'skillDecision',skills:pending},409);
+   try{for(const p of pending)pk!.assertDecidable(p.id,p.v,p);}catch(e:any){return json({error:String(e?.message??e),tw:'Skill 檔案已變更；請重新匯入並確認版本。',code:'targetChanged'},409);}
    const written=d.store.write(next,cfg?.hash??null,{by:'captain',via:'page'});
+   for(const p of pending)if(!pk!.decision(p.id,p.v))pk!.decide(p.id,p.v,said[`${p.id}@v${p.v}`]==='text-only'?'text-only':'approved','captain','page');
    // the page reads the project it shows; a project change is measured in its own project
    const project=c?.kind==='project'||c?.kind==='project-restore'?projectOf(c.project):projectOf(b?.project);
    const wfs=crewWorkflows(d.defs).map(def=>withJudges(def,d.judges?.(def)??[]));const impact=changeImpact(before,next,wfs,project);

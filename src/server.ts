@@ -129,6 +129,8 @@ registerSecretValues(() => { let gh: string | null = null; try { gh = readFileSy
   return [gh, lk, st]; });
 // the egress proxy (architecture §10): provider API hosts plus policy egress.allow; everything else refused and logged in data/egress.log
 const egress = new Egress(join(DATA, "egress.log"));
+// a skill's connections (and a prepare's) are logged per Task too: host, skill@version, allowed or refused (src/skillpkg)
+egress.taskLog = (run) => existsSync(join(DATA, "runs", run)) ? join(DATA, "runs", run, "egress.jsonl") : null;
 await egress.start().catch((e) => console.warn(`crew-studio: egress proxy: ${e?.message ?? e}`));
 const store = new Store(DATA, (process.env.CREW_FILE_ALLOW ?? startup.project).split(":").filter(Boolean));
 // the repository firstmate's PRs live in: CREW_GH_REPO, else the firstmate checkout's own GitHub origin (read-only)
@@ -463,7 +465,7 @@ runtime.engine.deps.roleSkill = (wf, role, ref) => {
   return { text: cur.text, version: cur.n };
 };
 const viewerCrew = new CrewStore(DATA);
-const skillRoutes = createSkillRoutes({ skills: improve.skills, defs: () => runtime.defs, session: sessionToken(DATA), log: studioLog, team: () => { const t = viewerCrew.exists() ? viewerCrew.current() : null; return t ? teamBody(t) : null; } });
+const skillRoutes = createSkillRoutes({ skills: improve.skills, defs: () => runtime.defs, session: sessionToken(DATA), log: studioLog, team: () => { const t = viewerCrew.exists() ? viewerCrew.current() : null; return t ? teamBody(t) : null; }, scripts: (id, v) => runtime.engine.deps.skillPackages?.badge(id, v) ?? null });
 // the built-in skill library (packs/*/skills) is in data/skills/_library from startup, on a new data folder and an existing one
 try { improve.skills.library(); } catch (e: any) { console.warn(`crew-studio: the built-in skill library could not be seeded: ${e?.message ?? e}`); }
 m7.packs.nativePublished = () => packGenesis.pg.publishedSources();

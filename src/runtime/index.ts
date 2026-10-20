@@ -61,6 +61,8 @@ import { Engine, type AgentPick } from "./engine";
 import {COFFEE_DESIGN_FIELDS,validateCoffeeDesign,coffeeDesignJSON} from "../domain/coffee-design";
 import { installCoffeeKit } from "../domain/coffee-kit";
 import { installDeliver } from "../domain/deliver";
+import { SkillPackages } from "../skillpkg/index";
+import { defPins, teamPins } from "../skillpkg/crew";
 
 export type RuntimeDeps = {
   dataDir: string; agents: Agents; provider: (id?: string, model?: string) => Provider; defaultProvider: () => AgentPick; log: StudioLog; send: (t: string, d: unknown) => void;
@@ -145,6 +147,16 @@ export function createRuntime(d: RuntimeDeps) {
   // the Studio-wide team (docs/design/crew-seats.md): a staffed workflow's project staffing is derived from it when it covers the
   // workflow; every other workflow's Task records the crew it started with
   const crewStore=new CrewStore(d.dataDir);
+  // script skills (docs/units/skill-packages.md): approval, prepare (by itself, once approved), readiness and skill_run.
+  // In use: every library version the team or a workflow's latest version pins (gc keeps their envs). A test run never uses
+  // Homebrew or uv to fetch anything (CREW_TEST_ENV_ISOLATED, the mark the test guard sets); CREW_SKILL_BREW=0 / CREW_SKILL_UV=0 turn them off.
+  const skillsInUse=()=>{const out=new Set<string>();try{const t=crewStore.current();if(t)for(const p of teamPins(teamBody(t)))out.add(`${p.id}@v${p.v}`);}catch{}
+   try{for(const w of defs.list())for(const p of defPins(defs.get(w.id)))out.add(`${p.id}@v${p.v}`);}catch{}return out;};
+  const testRun=!!process.env.CREW_TEST_ENV_ISOLATED;
+  const skillPackages=d.skills?new SkillPackages({dataDir:d.dataDir,skills:d.skills,egress:()=>(d.agents as any).egress??null,protect:()=>d.protectedRoots??[d.fmRoot],inUse:skillsInUse,
+   brew:process.env.CREW_SKILL_BREW==='0'||testRun?false:undefined,uv:process.env.CREW_SKILL_UV==='0'||testRun?false:undefined,log:(line)=>d.log.emit({type:'skill_prepare',summary:line})}):null;
+  engine.deps.skillPackages=skillPackages;
+  if(skillPackages)setTimeout(()=>{void skillPackages.prepareInUse().catch(()=>{});},0);
   // a Studio that already approved staffing gets its team seeded from it once (idempotent; src/crew-migrate.ts)
   // CREW_TEAM_SEED=0 keeps per-project staffing only: no team is seeded (a Studio that has a team keeps it)
   // the image maker is seeded from the image pick Studio used before the team (the Codex image adapter's configured model)
@@ -160,7 +172,7 @@ export function createRuntime(d: RuntimeDeps) {
   // no image pick to seed the image maker from: raise the seat card now, so the captain sees why image work waits (never a silent block)
   if(imageSeatUnfilled){const def=engine.defs.get('images');if(def)void crewTools.seatGate(def,{key:'crew-migration'}).catch(()=>{});}
   const crewApi=crewRoutes({judges:def=>judgeSlots(engine,def),roleSkill:(def,role)=>engine.roleSkillUse(def,role) as any,defs,store:crewStore,projects:()=>projects.list().map(p=>({id:p.id,name:p.name})),facts:()=>staffingCapabilities,refreshFacts:()=>staffingFacts({fresh:true}),...process.env.CREW_DETECT_FORCE_MIN_MS!==undefined?{forceMinMs:Number(process.env.CREW_DETECT_FORCE_MIN_MS)}:{}, // tests: 0 lets 重新偵測 run back to back
-  library:()=>engine.skillLibrary().library()});
+  library:()=>engine.skillLibrary().library(),skillPackages:()=>skillPackages});
   /** The project's staffing from the team, when the team covers this workflow (null: the per-project staffing flow applies). */
   const teamStaffing=(def:any,projectId:string)=>{if(!staffingApplies(def))return null;const project=def.kind==='coffee-kit'?coffeeStaffingProject(projectId):staffingProject(projectId);return crewStaffing.ensure(def,project);};
   /** The Start form's readiness of an approved crew, from free probes only (the Codex probe, Claude auth status).
