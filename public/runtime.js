@@ -619,7 +619,7 @@ function buildEditor(ed) {
         h("h3",{},T("Dependencies · not verified","依賴項目 · 尚未驗證")),
         h("p",{},T("References only; no skill, script or asset files were read or included. Stored hashes do not prove destination compatibility.","僅列出參照，未讀取或包含 skill、script、素材檔案。儲存的 hash 不能證明目標環境相容。")),
         ...artifact.dependencies.map(d=>h("p",{style:"overflow-wrap:anywhere"},`${d.kind} · ${d.ref} · ${d.status}${d.sha256?` · ${d.sha256}`:""}`)),
-        artifact.compatibility.unsupportedFields.length?h("p",{},T(`Unsupported fields preserved: ${artifact.compatibility.unsupportedFields.join(', ')}`,`保留的未支援欄位：${artifact.compatibility.unsupportedFields.join(', ')}`)):null,
+        artifact.compatibility.unsupportedFields.length?h("p",{},T(`Unsupported fields preserved: ${artifact.compatibility.unsupportedFields.join(', ')}`,`保留的未支援欄位：${artifact.compatibility.unsupportedFields.join(', ')}`)):"",
         h("details",{},h("summary",{},T("Inspect complete JSON","檢查完整 JSON")),h("pre",{"data-workflow-export-json":"",style:"white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto"},text)),
         h("div",{class:"actions"},h("button",{class:"btn","data-workflow-export-close":"",onclick:close},T("Cancel","取消")),h("button",{class:"btn primary","data-workflow-export-download":"",onclick:()=>{
           if(disposed||ed.dirty||revision!==draftRevision||version!==ed.saved.version){close();say(T("The editor changed. Review the saved version again before export.","編輯內容已變更，請重新檢視已儲存版本再匯出。"));return;}
