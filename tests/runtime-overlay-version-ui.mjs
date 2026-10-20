@@ -23,7 +23,8 @@ try{
  const open=async(version)=>{await p.goto(`${base}/#/workflows/overlay-proof${version?'/v'+version:''}`);await p.reload();await p.locator('[data-overlay]').waitFor();await p.locator('[data-view-toggle="detail"]').click();};
  const colored=async()=>p.locator('[data-node="start"][data-state="passed"],[data-node="done"][data-state="passed"]').count();
  const adjacentNotice=async()=>{await p.locator('[data-overlay]').scrollIntoViewIfNeeded();return p.evaluate(()=>{const a=document.querySelector('[data-overlay]').getBoundingClientRect(),b=document.querySelector('[data-overlay-status]').getBoundingClientRect();return b.height>0&&a.top>=0&&b.top>=a.bottom&&b.top-a.bottom<=180&&b.bottom<=innerHeight;});};
- const choose=async(id)=>{await p.selectOption('[data-overlay]',id);await p.waitForTimeout(100);};
+ // Observe the actual completed verification/refusal, rather than assuming HTTP finishes in 100ms.
+ const choose=async(id)=>{await p.selectOption('[data-overlay]',id);await p.waitForFunction(selected=>document.querySelector('[data-overlay]')?.value===selected&&Boolean(document.querySelector('[data-overlay-status]')?.textContent.trim())===Boolean(selected),id);};
  await open(1);await choose(v1.id);ok(await colored()===2,'same-version completed real run colors both actual visited nodes');
  // Same IDs, new execution content: the old pass must never be painted on v2.
  await p.click('[data-edit-step="start"]');await p.locator('[data-field="label"]').fill('Changed v2 approval');await p.locator('[data-field="label"]').dispatchEvent('change');await p.click('[data-save]');await p.waitForFunction(()=>document.querySelector('select[aria-label="Version"]')?.value==='2');
