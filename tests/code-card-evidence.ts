@@ -38,4 +38,14 @@ const optional=projectCodeEvidence({...input,offered:snapshotCodeEvidence({head,
 ok(optional.state==='success'&&optional.execution.every(e=>e.status==='unknown'),'policy gates without declared execution remain ready with unknown execution');
 const historical=[...policyOnly,{...entries[7],head:'c'.repeat(40)}];
 ok(projectCodeEvidence({...input,offered:snapshotCodeEvidence({head,base},historical),trusted:{ok:true,entries:historical}}).state==='success','unrelated historical execution is not new required backing');
+const afterRetry=[...entries,{...entries[7],seq:10,attempt:0,verdict:'fail',evidence:['out/new-failure.log']}];
+const refreshed=projectCodeEvidence({...input,trusted:{ok:true,entries:afterRetry}});
+ok(refreshed.state==='fail'&&refreshed.blocked&&refreshed.execution[0].seq===10,'a later fresh failure supersedes an earlier retry pass in the same visit');
+const retryIssue=snapshotCodeEvidence({head,base},afterRetry);
+ok(retryIssue.requiredEvidence.some(e=>e.check==='firstmate/ci'&&e.seq===10&&e.files[0]==='out/new-failure.log'),'issuance selects the later fresh receipt rather than an earlier retry');
+ok(projectCodeEvidence({...input,offered:retryIssue,trusted:{ok:true,entries:afterRetry}}).state==='fail','pre-issuance fresh failure cannot be hidden by a retry pass');
+const gateRetry=[...entries,{...entries[4],seq:10,attempt:0,verdict:'fail'}];
+ok(projectCodeEvidence({...input,trusted:{ok:true,entries:gateRetry}}).state==='fail','later policy gate failure also supersedes an earlier retry pass');
+const newerVisit=[...entries,{...entries[7],seq:10,round:2,attempt:0,verdict:'fail'},{...entries[7],seq:11,round:1,attempt:1}];
+ok(projectCodeEvidence({...input,trusted:{ok:true,entries:newerVisit}}).state==='fail','latest visit remains authoritative even if an older visit receipt is appended later');
 end();

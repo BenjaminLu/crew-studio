@@ -72,11 +72,17 @@ ok(evidence().state==='success','restoring retained backing recovers availabilit
 const run=E.get(r.id)!; const node=run.def.nodes.find(n=>n.id===merge.node)!; const x=E.x(run,node,run.nodes[node.id]);
 const ciReceipt=E.trusted(r.id).entries.filter(e=>e.check==='firstmate/ci'&&e.head===run.ctx.head).at(-1)!;
 const ciNode=run.def.nodes.find(n=>n.id===ciReceipt.node)!;const ciX=E.x(run,ciNode,run.nodes[ciNode.id]);
+// Inject one transient runner fault, then execute the real command on its runtime retry.
+const originalExec=E.exec;let transient=true;
+E.exec=async function(...args){if(transient&&args[1].ref==='firstmate/ci'){transient=false;return {verdict:'error',score:0,findings:[],evidence:[],error:'tool error: fixture transient runner fault'} as any;}return originalExec.apply(this,args);};
+try{await E.runChecks(ciX,[{use:'firstmate/ci'}],ciReceipt.edge??null);}finally{E.exec=originalExec;}
+const retried=E.trusted(r.id).entries.filter(e=>e.check==='firstmate/ci').at(-1)!;
+ok(retried.attempt===1&&retried.verdict==='pass'&&evidence().state==='success','real command passes after runtime retry records attempt one');
 // A real failing check subprocess, not a fabricated passing/failing card object.
 const wt=run.ctx.worktree;const test=join(wt,'test/percent.test.ts');const original=readFileSync(test,'utf8');
 chmodSync(test,0o644);await Bun.write(test,original+'\nthrow new Error("actual evidence failure control");\n');
 await E.runChecks(ciX,[{use:'firstmate/ci'}],ciReceipt.edge??null);
-ok(evidence().state==='fail'&&evidence().blocked,'actual failing CI subprocess supersedes earlier ready receipt');
+ok(evidence().state==='fail'&&evidence().blocked&&E.trusted(r.id).entries.filter(e=>e.check==='firstmate/ci').at(-1)!.attempt===0,'actual fresh failure at attempt zero supersedes earlier retry pass');
 refused='';try{await E.answer(merge.id,{choice:'merge',by:'captain',note:'approve despite failed evidence'});}catch(e:any){refused=e.message;}
 ok(!!refused&&E.cards.get(merge.id)!.status==='open','failed execution cannot persist an affirmative answer');
 await Bun.write(test,original);await E.runChecks(ciX,[{use:'firstmate/ci'}],ciReceipt.edge??null);

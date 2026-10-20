@@ -5,6 +5,7 @@ export type RequiredCodeEvidence={seq:number;check:string;head:string;files:stri
 type CheckIdentity={check:string;node:string;edge:string|null};
 export type CodeEvidenceOffer=Subject & {version:1;requiredEvidence:RequiredCodeEvidence[];identities:CheckIdentity[]};
 type Input={run:string;offered:Subject & Partial<CodeEvidenceOffer>;current:Subject;trusted:{ok:boolean;entries:LedgerEntry[]};filePresent:(entry:LedgerEntry,file:string)=>boolean};
+// Check attempt is a retry bit within one invocation; seq orders receipts within a visit.
 const executionChecks=new Set(['firstmate/ci','firstmate/fail-first']);
 /** Only the issuer supplies mandatory evidence. Optional media and unrecorded provenance are never mandatory. */
 export function snapshotCodeEvidence(subject:Subject,entries:LedgerEntry[]):CodeEvidenceOffer {
@@ -12,7 +13,7 @@ export function snapshotCodeEvidence(subject:Subject,entries:LedgerEntry[]):Code
   const source=(check:string)=>{
     const candidates=entries.filter(e=>e.check===check&&e.head===subject.head);
     if(new Set(candidates.map(e=>JSON.stringify([e.node,e.edge??null]))).size!==1)return undefined;
-    return [...candidates].sort((a,b)=>(a.round??0)-(b.round??0)||(a.attempt??0)-(b.attempt??0)||a.seq-b.seq).at(-1);
+    return [...candidates].sort((a,b)=>(a.round??0)-(b.round??0)||a.seq-b.seq).at(-1);
   };
   for(const check of executionChecks){const e=source(check);if(e?.head&&e.data?.status!=='not-run'&&e.evidence?.length)
     requiredEvidence.push({seq:e.seq,check:e.check,head:e.head,files:[...e.evidence]});}
@@ -27,7 +28,7 @@ export function projectCodeEvidence(i:Input){
     const candidates=entries.filter(e=>e.check===check&&(!identity||(e.node===identity.node&&(e.edge??null)===identity.edge)));
     // Historical cards without a source-owned selector must not combine distinct check contexts.
     if(!identity&&new Set(candidates.map(e=>JSON.stringify([e.node,e.edge??null]))).size>1)return undefined;
-    return [...candidates].sort((a,b)=>(a.round??0)-(b.round??0)||(a.attempt??0)-(b.attempt??0)||a.seq-b.seq).at(-1);
+    return [...candidates].sort((a,b)=>(a.round??0)-(b.round??0)||a.seq-b.seq).at(-1);
   };
   const reasons:string[]=[];let state:'success'|'fail'|'missing'|'stale'='success';
   const gates=CODE_GATES.map(name=>{const e=relevant(`firstmate/gate-${name}`);return {name,seq:e?.seq??null,head:e?.head??null,verdict:e?.verdict??'unknown',detail:e?.findings?.map(f=>f.message).join('; ')??''};});
