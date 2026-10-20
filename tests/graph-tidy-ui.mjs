@@ -102,6 +102,8 @@ try {
     ok(await p.getAttribute("svg.rt-graph", "data-layout") === "manual" && Object.entries(saved).every(([k, v]) => at[k] && at[k][0] === v.x && at[k][1] === v.y), "a version with a layout saved before this change opens in manual mode with its positions", JSON.stringify(at));
     // Reload only after this actual drag's layout write is acknowledged.
     const layoutSaved = p.waitForResponse(r => r.url() === `${base}/api/wf/video/layout` && r.request().method() === "POST" && r.request().postDataJSON()?.version === 1 && !!r.request().postDataJSON()?.positions?.render);
+    // Let the real pointer target settle after the editor's deferred initial fit.
+    await p.locator('[data-node="render"] .rt-box').hover({ position: { x: 20, y: 20 } });
     const box = await p.locator('[data-node="render"] .rt-box').boundingBox();
     await p.mouse.move(box.x + 20, box.y + 20); await p.mouse.down(); await p.mouse.move(box.x + 50, box.y + 70, { steps: 6 }); await p.mouse.up(); const persisted = await layoutSaved; ok(persisted.ok(), "the first drag is acknowledged before reload", `HTTP ${persisted.status()}`);
     await p.reload(); await p.waitForSelector('[data-node="make"]'); const after = await nodePos(p);
