@@ -325,7 +325,7 @@ function workflowChanges(before,after){
   for(const n of after.nodes){const old=byId.get(n.id);byId.delete(n.id);if(!old)rows.push({label:n.label,before:T("Absent","无"),after:JSON.stringify(clean(n),null,2)});else if(JSON.stringify(clean(old))!==JSON.stringify(clean(n))){const keys=[...new Set([...Object.keys(old),...Object.keys(n)])].filter(k=>!["x","y"].includes(k)&&JSON.stringify(old[k])!==JSON.stringify(n[k]));rows.push({label:n.label,before:keys.map(k=>`${k}: ${JSON.stringify(old[k]??null)}`).join("\n"),after:keys.map(k=>`${k}: ${JSON.stringify(n[k]??null)}`).join("\n")});}}
   for(const n of byId.values())rows.push({label:n.label,before:JSON.stringify(clean(n),null,2),after:T("Removed","已删除")});
   if(JSON.stringify(before.edges)!==JSON.stringify(after.edges))rows.push({label:T("Connections and edge checks","连线与连线检查"),before:JSON.stringify(before.edges,null,2),after:JSON.stringify(after.edges,null,2)});
-  for(const k of ["name","description","roles","params","policies","hooks","intents","sample","compare"])if(JSON.stringify(before[k])!==JSON.stringify(after[k]))rows.push({label:k,before:JSON.stringify(before[k]??null,null,2),after:JSON.stringify(after[k]??null,null,2)});
+  for(const k of ["name","description","kind","roles","seats","params","intent","intents","sample","policies","hooks","card_checks","compare"])if(JSON.stringify(before[k])!==JSON.stringify(after[k]))rows.push({label:k,before:JSON.stringify(before[k]??null,null,2),after:JSON.stringify(after[k]??null,null,2)});
   return rows;
 }
 function workflowBriefKey(ed){return ed.workspaceScope?`crew.workflow.startBrief.v1:${ed.workspaceScope}:${ed.id}`:null;}

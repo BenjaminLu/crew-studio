@@ -220,7 +220,7 @@ export function diff(a: WDef, b: WDef): DefDiff {
     if (Math.round(o.x) !== Math.round(n.x) || Math.round(o.y) !== Math.round(n.y)) moved.push(id); }
   const ac = new Map(a.edges.map((e) => [ekey(e), JSON.stringify(e.checks ?? [])]));
   const edgesChanged = b.edges.filter((e) => ac.has(ekey(e)) && ac.get(ekey(e)) !== JSON.stringify(e.checks ?? [])).map(ekey);
-  const meta = (["name", "description", "roles", "seats", "params", "intent", "intents", "sample", "policies", "hooks", "card_checks"] as const).filter((k) => JSON.stringify((a as any)[k] ?? null) !== JSON.stringify((b as any)[k] ?? null));
+  const meta = (["name", "description", "kind", "roles", "seats", "params", "intent", "intents", "sample", "policies", "hooks", "card_checks", "compare"] as const).filter((k) => JSON.stringify((a as any)[k] ?? null) !== JSON.stringify((b as any)[k] ?? null));
   const skills: { node: string; before: string[]; after: string[] }[] = [];
   for (const [id, n] of bn) { const before = (an.get(id)?.skills ?? []).map(pinName), after = (n.skills ?? []).map(pinName);
     if (JSON.stringify(before) !== JSON.stringify(after)) skills.push({ node: id, before, after }); }
