@@ -33,4 +33,12 @@ for(const step of ['facts','probe','save']){
  const race=new OnboardingTeam({store:rs,preferred:()=>preferred,context:()=>context,now:()=>now,facts:async()=>{if(defer&&step!=='probe'){waiting();await gate;}return caps;},verify:async(p:any)=>{ran++;if(defer&&step==='probe'){waiting();await gate;}return{id:'race-check',requested:p,toolVerified:true,executionMode:'sandboxed',context};}});
  let rp:any;if(step==='save')rp=await race.verify({expected:null,confirm:true});defer=true;const result=(step==='save'?race.save({plan:rp.id,expected:null}):race.verify({expected:null,confirm:true})).then(()=>false,()=>true);await ready;preferred='claude';release();ok(await result&&!rs.current()&&(step!=='facts'||ran===0),'provider switch during '+step+' rejects without saving or launching stale preflight');
 }
+
+for(const [efforts,expected]of [[['low','high'],'high'],[['low','xhigh'],'xhigh'],[['medium','high'],'medium'],[['low'],null]]as const){
+ const hs=new CrewStore(mkdtempSync(join(tmpdir(),'crew-onboarding-supported-effort-')));let executed:any=null;
+ const high=new OnboardingTeam({store:hs,facts:async()=>[{provider:'codex',support:'supported',auth:'verified',quota:'available',expires:now+30000,models:[{id:'supported-default',efforts:[...efforts]}],default:{model:'supported-default',effort:'low'}}],preferred:()=> 'codex',now:()=>now,context:()=>context,verify:async(p:any)=>{executed=p;return{id:'supported-check',requested:p,toolVerified:true,executionMode:'sandboxed',context};}});
+ const hv=await high.view();ok(expected?hv.capabilities[0].setupReady&&hv.capabilities[0].setupPick?.effort===expected:!hv.capabilities[0].setupReady,'supported review effort selection '+efforts.join('/')+' -> '+expected);
+ if(expected&&hv.capabilities[0].setupReady){const hp=await high.verify({expected:null,confirm:true});await high.save({plan:hp.id,expected:null});ok(executed?.effort===expected&&Object.values(hs.current()!.members).every(m=>m.effort===expected),'saved five-seat plan exactly matches executed supported '+expected);}
+ else if(!expected)ok(executed===null&&!hs.current(),'low-only model cannot weaken reviewer defaults or launch a probe');
+}
 end();

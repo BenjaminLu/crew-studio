@@ -78,7 +78,7 @@ Cancel leaves settings unchanged. Existing explicit role and project choices
 are preserved. The check uses the selected provider only; it does not switch
 accounts, vendors or billing routes when unavailable.
 
-Basic roles use the checked default model at medium effort when available, or
+Basic roles use the checked default model at medium effort when available, the next supported review-strength effort otherwise, or
 Claude's verified configured native default effort. Same-model reviewers receive
 separate fresh contexts; this does not imply model diversity. Image, audio and
 other specialist capabilities still need their own adapter checks. The receipt

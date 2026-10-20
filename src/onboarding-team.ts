@@ -2,7 +2,7 @@
 import {randomBytes} from 'node:crypto';
 import {CrewStore,BUILTIN_SEATS,emptyTeam,teamBody,type Team} from './domain/crew';
 import {staffingHash} from './domain/staffing';
-import {staffingQuotaReady,type StaffingFacts,type StaffingAdmission} from './firstmate-staffing';
+import {staffingQuotaReady,judgeEffort,type StaffingFacts,type StaffingAdmission} from './firstmate-staffing';
 export type TeamPick={provider:'codex'|'claude';model:string;effort:string|null};
 export type TeamProbe={id:string;requested:TeamPick;toolVerified:boolean;executionMode:string;context:string};
 type Plan={id:string;expected:string|null;team:Team;hash:string;pick:TeamPick;receipt:TeamProbe;expires:number};
@@ -13,7 +13,7 @@ export class OnboardingTeam{
  private current(){const c=this.d.store.current();return{expected:c?.hash??null,team:c?teamBody(c):emptyTeam()};}
  private rows(team:Team){return BUILTIN_SEATS.map(seat=>({seat,...team.members[seat],assigned:!!team.members[seat]}));}
  async view(){const c=this.current(),facts=await this.d.facts();return{expected:c.expected,complete:BUILTIN_SEATS.every(s=>!!c.team.members[s]),roles:this.rows(c.team),provider:this.d.preferred(),capabilities:facts.map(f=>({provider:f.provider,support:f.support,auth:f.auth,quota:f.quota,expires:f.expires,reason:f.reason,models:f.models,default:f.default,setupPick:this.pick(f),setupReady:this.available(f,this.pick(f)??undefined)&&!!this.pick(f)})),review:'same-model-fresh-context',specialists:'Separate capabilities remain unverified until their adapters check them.'};}
- private pick(f:StaffingFacts){const model=f.models.find(m=>m.id===f.default?.model);if(!model)return null;const effort=model.efforts.includes('medium')?'medium':f.provider==='claude'&&f.default?.effort===null&&!model.efforts.length?null:undefined;return effort===undefined?null:{provider:f.provider as TeamPick['provider'],model:model.id,effort};}
+ private pick(f:StaffingFacts){const model=f.models.find(m=>m.id===f.default?.model);if(!model)return null;const reviewed=judgeEffort('low',model.efforts);const effort=reviewed!==null&&['medium','high','xhigh'].includes(reviewed)&&model.efforts.includes(reviewed)?reviewed:f.provider==='claude'&&f.default?.effort===null&&!model.efforts.length?null:undefined;return effort===undefined?null:{provider:f.provider as TeamPick['provider'],model:model.id,effort};}
  private available(f:StaffingFacts|undefined,pick?:TeamPick){return !!f&&f.support==='supported'&&f.auth==='verified'&&(f.quota==='available'||!!pick&&staffingQuotaReady(pick,f,this.d.admission))&&Number.isFinite(f.expires)&&f.expires>this.now()&&f.expires<=this.now()+300000&&(!pick||f.models.some(m=>m.id===pick.model&&(pick.effort===null?f.provider==='claude':m.efforts.includes(pick.effort))));}
  async verify(body:any,signal?:AbortSignal){
   if(!body||Object.keys(body).some(k=>!['expected','confirm'].includes(k))||body.confirm!==true)throw new Error('Confirm the bounded team check first');
