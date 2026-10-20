@@ -11,8 +11,11 @@ const here=dirname(fileURLToPath(import.meta.url)),root=process.env.FIRST_WORKFL
 mkdirSync(data);mkdirSync(join(home,'.codex'),{recursive:true});mkdirSync(shots,{recursive:true});
 writeFileSync(join(home,'.codex','config.toml'),'model="fixture-model"\nmodel_reasoning_effort="low"\n');writeFileSync(join(home,'.codex','.fixture-account.json'),'{"authenticated":true}');
 const port=await freePort(),base=`http://127.0.0.1:${port}`,token='first-draft-ui-session',env={...process.env};for(const key of Object.keys(env))if(/TOKEN|API_KEY/.test(key))delete env[key];delete env.CREW_MAIN_PROJECT;delete env.CREW_FM_STATE;
-const fixture=join(here,'fixture/codex-account.mjs');
-const app=spawn('bun',['src/server.ts'],{cwd:root,stdio:['ignore','pipe','pipe'],env:{...env,HOME:home,CODEX_HOME:join(home,'.codex'),CREW_DATA:data,CREW_RUNTIME_DIR:join(dir,'runtime'),CREW_PORT:String(port),CREW_SESSION_TOKEN:token,CREW_GH:'0',CREW_GH_NO_CLI:'1',CREW_CHAT_PROVIDER:'stub',CREW_RETRO_AUTO:'0',CREW_INSTALL_RUNNER:'mock',CREW_NO_REAL_INSTALL:'1',CREW_CLAUDE_BIN:'/nonexistent/claude',CREW_CODEX_BIN:'/nonexistent/codex',CREW_HOST_CODEX_BIN:fixture,CREW_HOST_CLAUDE_BIN:'/nonexistent/claude',ACCOUNT_FIXTURE_DRAFT:join(here,'fixture/first-workflow-draft.json')}});
+const fixture=join(here,'fixture','.first-workflow-team-'+Date.now()+'.mjs');
+writeFileSync(fixture,`process.env.ACCOUNT_FIXTURE_MODELS='[["fixture-model",["low","medium"]]]';await import(${JSON.stringify(join(here,'fixture/codex-account.mjs'))});`);
+// Dummy fixture credentials only; the real sandbox broker still mediates the worker.
+writeFileSync(join(home,'.codex/auth.json'),JSON.stringify({auth_mode:'chatgpt',last_refresh:'2020-02-29T12:34:56.123+08:00',tokens:{access_token:'abcdefgh.abcdefgh.abcdefgh',id_token:'fixture-id-token',account_id:'fixture-acceptance',refresh_token:'acceptance-refresh-must-not-copy'}}),{mode:0o600});
+const app=spawn('bun',['src/server.ts'],{cwd:root,stdio:['ignore','pipe','pipe'],env:{...env,HOME:home,CODEX_HOME:join(home,'.codex'),CREW_DATA:data,CREW_RUNTIME_DIR:join(dir,'runtime'),CREW_PORT:String(port),CREW_SESSION_TOKEN:token,CREW_GH:'0',CREW_GH_NO_CLI:'1',CREW_CHAT_PROVIDER:'stub',CREW_RETRO_AUTO:'0',CREW_INSTALL_RUNNER:'mock',CREW_NO_REAL_INSTALL:'1',CREW_CLAUDE_BIN:'/nonexistent/claude',CREW_CODEX_BIN:fixture,CREW_HOST_CODEX_BIN:fixture,CREW_HOST_CLAUDE_BIN:'/nonexistent/claude',ACCOUNT_FIXTURE_DRAFT:join(here,'fixture/first-workflow-draft.json')}});
 let appLog='';app.stdout.on('data',b=>appLog+=b);app.stderr.on('data',b=>appLog+=b);let browser,pass=0,fail=0;
 const ok=(value,name,detail='')=>{if(value){pass++;console.log('  ok    '+name);}else{fail++;console.log('  FAIL  '+name+' '+detail);}};
 try{
@@ -26,6 +29,13 @@ try{
   const ctx=await browser.newContext({viewport:{width,height:900},colorScheme:theme});await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/,r=>r.abort());const p=await ctx.newPage();
   const posts=[];p.on('request',r=>{if(r.method()==='POST')posts.push(new URL(r.url()).pathname);});const runPosts=()=>posts.filter(x=>x==='/api/wruns').length;
   await p.goto(base+'/#/');await p.evaluate(({theme,lang})=>{setTheme(theme);setLang(lang);},{theme,lang});
+  if(tag==='desktop'){
+   const guide=p.locator('[data-onboarding-journey]');await guide.locator('[data-team-setup-verify]').waitFor();await guide.locator('[data-team-setup-verify]').click();
+   await guide.locator('[data-team-setup-save]').waitFor({timeout:70000});await guide.locator('[data-team-setup-save]').click();
+   await p.locator('[data-ob-own-workflow]').waitFor();
+   const setup=await p.evaluate(async()=>({team:await(await fetch('/api/team')).json(),work:await(await fetch('/api/wruns')).json()}));
+   ok(setup.team.team?.version===1&&setup.work.runs.length===0&&!setup.work.cards.some(c=>c.status==='open'),'B2 actual native fixture check saves the team without a Task or approval card');
+  }
   // B2 the first-use journey's "Build my first workflow" closes the journey (without skipping onboarding)
   const entry=p.locator('[data-ob-own-workflow]');let viaJourney=false;try{await entry.waitFor({timeout:8000});viaJourney=true;}catch{}
   if(viaJourney)await entry.click();else await p.goto(base+'/#/first-workflow');
@@ -120,5 +130,5 @@ try{
  const phone=await browser.newContext({viewport:{width:390,height:900}});const q=await phone.newPage();await q.goto(base+'/#/first-workflow/'+draftId);await q.waitForSelector('[data-first-workflow-source="model"]',{timeout:8000});
  ok(await q.locator('[data-first-workflow-open-saved]').count()===1,'a saved draft links to its workflow instead of saving twice');await phone.close();
 }catch(e){fail++;console.log('  FAIL  exception',e?.stack||e);console.log(appLog.slice(-1500));}
-finally{await browser?.close();app.kill('SIGTERM');try{rmSync(dir,{recursive:true,force:true});}catch{}}
+finally{await browser?.close();app.kill('SIGTERM');rmSync(fixture,{force:true});try{rmSync(dir,{recursive:true,force:true});}catch{}}
 console.log(`first-workflow-draft-ui: ${pass} passed, ${fail} failed`);process.exitCode=fail?1:0;
