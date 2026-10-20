@@ -18,13 +18,13 @@ function fixture(auto=false){
  const off=(type,fn)=>listeners.set(type,(listeners.get(type)||[]).filter(f=>f!==fn));
  const doc={body,activeElement:new Node('trigger'),querySelector:q=>q==='#view'?view:q==='#main'?main:q.includes('modal-back')?null:target,addEventListener:on,removeEventListener:off};
  const ctx={T:en=>en,h:(tag,a,...c)=>new Node(tag,a,c),store:{get:(k,d)=>saved.get(k)||d,set:(k,v)=>saved.set(k,v)},routes:{settings:()=>new Node('settings')},S:{route:{name:auto?'board':'settings'}},render(){},document:doc,location:{hash:auto?'#/board':'#/settings'},innerWidth:1200,innerHeight:800,addEventListener:on,removeEventListener:off,setTimeout(fn){timers.push(fn)},requestAnimationFrame:fn=>{frames.set(++serial,fn);return serial},cancelAnimationFrame:id=>frames.delete(id),MutationObserver:class{observe(){}disconnect(){}},getJ:async url=>{reads.push(url);if(url==='/api/session')return {session:true};if(url==='/api/remote/me')return {kind:'desktop'};return new Promise(resolve=>{capabilityResolve=resolve})}};
- ctx.window=ctx;
+ ctx.window=ctx;ctx.liveListen=on;
  const runtime=readFileSync(new URL('../public/runtime.js',import.meta.url),'utf8');ctx.rerender=()=>{};
  runInNewContext(runtime.slice(runtime.indexOf('const RN ='),runtime.indexOf('function viewRuns()'))+';globalThis.draftState=RN;',ctx);
  runInNewContext(source,ctx);
  const all=n=>[n,...n.children.flatMap(x=>x instanceof Node?all(x):[])];
  const button=attr=>all(body).find(n=>Object.hasOwn(n.attrs,attr));
- return {ctx,body,reads,timers,saved,target,main,emit,button,focus:()=>focus,flush:()=>{const callbacks=[...frames.values()];frames.clear();callbacks.forEach(fn=>fn())},resolve:()=>capabilityResolve({state:'ready',model:'fixture'})};
+ return {ctx,body,all,reads,timers,saved,target,main,emit,button,focus:()=>focus,flush:()=>{const callbacks=[...frames.values()];frames.clear();callbacks.forEach(fn=>fn())},resolve:()=>capabilityResolve({state:'ready',model:'fixture'})};
 }
 const f=fixture();await f.ctx.crewOpenOnboarding();f.emit('hashchange');f.flush();
 assert.equal(f.ctx.location.hash,'#/doctor');assert(f.button('data-ob-next').disabled);
@@ -50,3 +50,16 @@ assert.equal(board.body.children.length,0,'the legacy quick tour opens only by e
 board.emit('crew:codex-account');board.emit('hashchange');for(const timer of board.timers.splice(0))timer();await new Promise(setImmediate);
 assert.equal(board.ctx.location.hash,'#/board','cancel/account and route events cannot steal Board navigation');
 console.log('onboarding: passive Board and account events preserve login route PASS');
+
+// A real Firstmate emits main updates while the worker check is running.
+const team=fixture();let finishProbe,probeCalls=0;
+const setup={expected:null,complete:false,provider:'codex',roles:[],capabilities:[{provider:'codex',auth:'verified',quota:'available',setupReady:true,setupPick:{model:'checked',effort:'medium'},models:[{id:'checked',efforts:['medium']}],default:{model:'checked'}}]};
+team.ctx.getJ=async url=>url==='/api/session'?{session:true}:url==='/api/remote/me'?{kind:'desktop'}:url==='/api/main'?{context:'studio',state:'attached',driver:{holder:'studio'},log:[{kind:'firstmate',text:'Hello'}]}:url==='/api/team/setup'?setup:{};
+team.ctx.postJ=async url=>{assert.equal(url,'/api/team/setup/verify');probeCalls++;return new Promise(resolve=>{finishProbe=resolve});};
+await team.ctx.crewOpenFirstUse();const widget=team.button('data-onboarding-team');assert(widget);
+const checking=team.button('data-team-setup-verify').onclick();await new Promise(setImmediate);
+team.emit('main');await new Promise(setImmediate);assert.equal(team.button('data-onboarding-team'),widget,'SSE retains the checking widget');assert(team.button('data-team-setup-cancel'),'running check remains cancellable after SSE');
+finishProbe({id:'source-plan',expected:null,roles:[],execution:{job:'actual-job'}});await checking;
+team.emit('scard');team.emit('wrun');await new Promise(setImmediate);await new Promise(setImmediate);
+assert.equal(team.button('data-onboarding-team'),widget,'SSE retains the checked source plan');assert(team.button('data-team-setup-save'),'checked settings remain saveable after SSE');assert.equal(probeCalls,1,'SSE never starts another paid check');
+console.log('onboarding: pending and checked inline settings survive Firstmate SSE PASS');

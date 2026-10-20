@@ -6,6 +6,7 @@
 //                           (its scripts, flags and hosts); the page asks and sends it again with {"<id>@v<N>": "scripts"|"text-only"}.
 // Firstmate never calls these: it proposes a change on a captain card (src/crew-tools.ts).
 import {withJudges,type JudgeSlot,CrewStore,resolveCrew,crewBadge,changeImpact,applyChange,teamBody,emptyTeam,slotsOf,declaredSeats,seatLabel,seatUses,projectUses,IMAGE_SEAT,BUILTIN_SEATS,PRESETS,EFFORTS,type Team} from './domain/crew';
+import type {OnboardingTeam} from './onboarding-team';
 import {staffingApplies} from './domain/staffing';
 import {withRoleNodes} from './crew-staffing';
 import type {WorkflowDefs} from './runtime/defs';
@@ -86,14 +87,25 @@ function skillStatus(d:CrewViewDeps,team:Team,lib:{id:string;current:number;sha2
 export const DETECT_REUSE_MS=60_000;
 /** 重新偵測 within this long of the last detection reuses it: repeated clicks never stack probes. */
 export const DETECT_FORCE_MIN_MS=10_000;
-export function crewRoutes(d:CrewViewDeps&{refreshFacts?:()=>Promise<unknown>;reuseMs?:number;forceMinMs?:number}){
+export function crewRoutes(d:CrewViewDeps&{refreshFacts?:()=>Promise<unknown>;reuseMs?:number;forceMinMs?:number;onboarding?:OnboardingTeam}){
  const json=(v:unknown,status=200)=>new Response(JSON.stringify(v),{status,headers:{'content-type':'application/json','cache-control':'no-store'}});
  // GET /api/team?facts=1 (the page opening) detects the models again unless a detection finished within reuseMs;
  // &force=1 (重新偵測) does unless one finished within forceMinMs. Concurrent requests share one detection: the probes are free but not instant.
  let detectedAt=0,detecting:Promise<unknown>|null=null;
  const detect=(force:boolean)=>{if(!d.refreshFacts)return null;if(detecting)return detecting;if(Date.now()-detectedAt<(force?d.forceMinMs??DETECT_FORCE_MIN_MS:d.reuseMs??DETECT_REUSE_MS))return null;
   const run=detecting=d.refreshFacts().catch(()=>{}).finally(()=>{detectedAt=Date.now();if(detecting===run)detecting=null;});return run;};
- return async function handle(p:string,url:URL,method:string,writing:boolean,b:any,who:{kind:string}):Promise<Response|null>{
+ return async function handle(p:string,url:URL,method:string,writing:boolean,b:any,who:{kind:string},signal?:AbortSignal):Promise<Response|null>{
+  if(p==='/api/team/setup'||p.startsWith('/api/team/setup/')){
+   if(who.kind!=='desktop')return json({error:'Configure the team on the desktop'},403);
+   if(!d.onboarding)return json({error:'Team setup is unavailable'},409);
+   try{if(p==='/api/team/setup'&&!writing)return json(await d.onboarding.view());
+    if(!writing||method!=='POST')return json({error:'Authenticated POST required'},405);
+    if(p==='/api/team/setup/verify')return json(await d.onboarding.verify(b,signal));
+    if(p==='/api/team/setup/save')return json(await d.onboarding.save(b));
+    if(p==='/api/team/setup/cancel')return json(d.onboarding.cancel());
+    return json({error:'Unknown team setup action'},404);
+   }catch(e:any){return json({error:String(e?.message??e)},409);}
+  }
   const projectOf=(v:unknown)=>typeof v==='string'&&PROJECT.test(v)?v:null;
   if(p==='/api/team'&&!writing){if(url.searchParams.get('facts')==='1')await detect(url.searchParams.get('force')==='1');return json({...crewView(d,projectOf(url.searchParams.get('project'))),detection:{at:detectedAt||null}});}
   if(p==='/api/team/skill'){

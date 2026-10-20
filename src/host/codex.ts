@@ -214,7 +214,7 @@ export function codexHost(bin = process.env.CREW_HOST_CODEX_BIN ?? "codex"): Hos
         await init(c,!!opts.nativeTools);
         if (first && opts.fresh) {
           // a fresh firstmate: a new thread in the firstmate repo, with the captain's own settings
-          const res = await c.call("thread/start", { cwd: opts.cwd, ...(localUnrestricted()?{sandbox:"danger-full-access"}:{}), ...(opts.nativeTools?{dynamicTools:opts.nativeTools.specs}:{}) });
+          const res = await c.call("thread/start", { cwd: opts.cwd, ...(opts.codexDefaultEffort?{config:{model_reasoning_effort:opts.codexDefaultEffort}}:{}), ...(localUnrestricted()?{sandbox:"danger-full-access"}:{}), ...(opts.nativeTools?{dynamicTools:opts.nativeTools.specs}:{}) });
           path = "fresh"; opened(res); id = String(res?.thread?.id ?? ""); if (!id) throw new Error("thread/start returned no thread id");
         } else if (first && opts.fork) {
           // never thread/resume the original: fork it, or start a new thread seeded from its recent turns

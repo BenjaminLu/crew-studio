@@ -147,10 +147,10 @@ export function createTakeover(d: Deps) {
       let verified:Awaited<ReturnType<NonNullable<Deps["codexAccount"]>["ensureReady"]>>;
       try{verified=await d.codexAccount.ensureReady();}catch{return json({error:"Connect Codex and verify the vendor-configured model/quota before starting / 請先連接 Codex 並驗證廠商設定的模型與配額"},409);}
       const r = await d.main.startFresh("codex",opened=>{
-        const current=codexConfig(d.main.view().project);
-        if(verified.state!=="ready"||!verified.authenticated||verified.quota!=="available"||!verified.expires||verified.expires<=Date.now()||typeof verified.model!=="string"||!verified.model||typeof verified.effort!=="string"||!verified.effort||current.model!==verified.model||current.effort!==verified.effort||opened.model!==verified.model||opened.effort!==verified.effort)throw new Error("Codex main model/effort changed or is unverified. Recheck the vendor configuration before retrying / Codex 主對話模型或推理強度已變更或尚未驗證；請重新檢查廠商設定後再試");
+        const current=codexConfig(d.main.view().project), expected=verified.configuration??verified;
+        if(verified.state!=="ready"||!verified.authenticated||verified.quota!=="available"||!verified.expires||verified.expires<=Date.now()||typeof verified.model!=="string"||!verified.model||typeof verified.effort!=="string"||!verified.effort||current.model!==expected.model||current.effort!==expected.effort||opened.model!==verified.model||opened.effort!==verified.effort)throw new Error(`Codex startup identity mismatch: expected ${verified.model}/${verified.effort}, received ${opened.model}/${opened.effort??"unknown"}. Refresh readiness before retrying. / Codex 啟動身分不符：預期 ${verified.model}/${verified.effort}，收到 ${opened.model}/${opened.effort??"未提供"}；請重新檢查可用性。`);
         return true;
-      },{locale:boardLocale()});
+      },{locale:boardLocale(),...(verified.configuration?.effort===null?{codexDefaultEffort:verified.effort!}:{})});
       return json(r, r.ok ? 200 : 409);
     }
     if (p === "/api/main/question") {
@@ -215,10 +215,10 @@ export function createTakeover(d: Deps) {
         const locale = await greetingLocale();
         if (d.main.view().state !== "detached") return { resumed: false };
         const r = await d.main.startFresh("codex", (opened) => {
-          const current = codexConfig(d.main.view().project);
-          if (verified.state !== "ready" || !verified.authenticated || verified.quota !== "available" || !verified.expires || verified.expires <= Date.now() || current.model !== verified.model || current.effort !== verified.effort || opened.model !== verified.model || opened.effort !== verified.effort) throw new Error("Codex main model/effort changed or is unverified");
+          const current = codexConfig(d.main.view().project), expected = verified.configuration ?? verified;
+          if (verified.state !== "ready" || !verified.authenticated || verified.quota !== "available" || !verified.expires || verified.expires <= Date.now() || current.model !== expected.model || current.effort !== expected.effort || opened.model !== verified.model || opened.effort !== verified.effort) throw new Error("Codex main model/effort changed or is unverified");
           return true;
-        }, { locale });
+        }, { locale, ...(verified.configuration?.effort===null?{codexDefaultEffort:verified.effort}:{}) });
         if (!r.ok) return stay(`Firstmate could not be restarted on Codex after Studio restarted: ${r.reason}. Press Start to try again.`, `Studio 重啟後無法在 Codex 上重開 Firstmate：${r.reason}。請按 Start 再試一次。`);
       }
     } catch (e: any) { return stay(`Firstmate could not be restarted on ${vendor} after Studio restarted: ${String(e?.message ?? e).slice(0, 200)}. Press Start to try again.`, `Studio 重啟後無法在 ${vendor} 上重開 Firstmate。請按 Start 再試一次。`); }
