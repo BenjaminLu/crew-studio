@@ -634,8 +634,36 @@ function buildEditor(ed) {
     clearTimeout(vtimer); validationGeneration++; validationAbort?.abort(); validationAbort = null;
     canvas.querySelector("svg.rt-graph")?.cancelInteraction?.();
     live.listeners.delete(onLive);
+    exportDialog?.remove(); exportDialog=null;
   };
   const verSel = h("select", { class: "select", "aria-label": T("Version", "版本"), onchange: (e) => { location.hash = `#/workflows/${ed.id}/v${e.target.value}`; } }, ed.versions.map((x) => h("option", { value: x.version, selected: x.version === ed.def.version || null }, `v${x.version}${x.note ? ` · ${/^Saved from Firstmate draft /.test(x.note) ? T("Saved from a Firstmate draft", "由 Firstmate 草稿儲存") : x.note}` : ""}`)));
+  let exportDialog = null;
+  const exportButton = h("button", {class:"btn sm","data-workflow-export":"",onclick:async()=>{
+    if(ed.dirty){say(T("Save your edits, or reload to discard them, before exporting a saved version.","匯出已儲存版本前，請先儲存修改，或重新載入以捨棄修改。"));return;}
+    const version=ed.saved.version,revision=draftRevision;exportButton.disabled=true;
+    try{
+      const artifact=await api(`/api/wf/${ed.id}/export?v=${version}`);
+      if(disposed||WF.ed!==ed)return;
+      if(ed.dirty||revision!==draftRevision||version!==ed.saved.version){say(T("The editor changed. Review the saved version again before export.","編輯內容已變更，請重新檢視已儲存版本再匯出。"));return;}
+      const dlg=exportDialog=h("dialog",{class:"fw-dialog","data-workflow-export-preview":"","aria-label":T("Review definition export","檢視流程定義匯出"),style:"width:min(760px,calc(100vw - 32px));max-height:85vh;overflow:auto"});
+      const close=()=>{dlg.close();dlg.remove();if(exportDialog===dlg)exportDialog=null;if(!disposed&&exportButton.isConnected)exportButton.focus();};
+      const filename=`${ed.id}-v${version}-definition.json`,text=JSON.stringify(artifact,null,2)+"\n";
+      dlg.append(h("h2",{},T(`Definition snapshot · v${version}`,`流程定義快照 · v${version}`)),
+        h("p",{},T("Review before sharing: author-entered text may contain private or sensitive information. This is a definition artifact, not an executable package or verified import.","分享前請先檢查：作者填入的文字可能含私人或敏感資訊。這是流程定義檔，並非可執行套件，也未驗證可匯入。")),
+        h("p",{},T("Interviews, origin and version-record metadata are omitted. Origin affects admission/readiness; future imports need fresh local context and approvals.","已排除訪談、來源脈絡與版本紀錄。來源脈絡會影響執行資格與就緒檢查；未來匯入仍需重新建立本機脈絡與核准。")),
+        h("p",{style:"overflow-wrap:anywhere"},`SHA256 · ${artifact.definitionSha256}`),
+        h("h3",{},T("Dependencies · not verified","依賴項目 · 尚未驗證")),
+        h("p",{},T("References only; no skill, script or asset files were read or included. Stored hashes do not prove destination compatibility.","僅列出參照，未讀取或包含 skill、script、素材檔案。儲存的 hash 不能證明目標環境相容。")),
+        ...artifact.dependencies.map(d=>h("p",{style:"overflow-wrap:anywhere"},`${d.kind} · ${d.ref} · ${d.status}${d.sha256?` · ${d.sha256}`:""}`)),
+        artifact.compatibility.unsupportedFields.length?h("p",{},T(`Unsupported fields preserved: ${artifact.compatibility.unsupportedFields.join(', ')}`,`保留的未支援欄位：${artifact.compatibility.unsupportedFields.join(', ')}`)):"",
+        h("details",{},h("summary",{},T("Inspect complete JSON","檢查完整 JSON")),h("pre",{"data-workflow-export-json":"",style:"white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto"},text)),
+        h("div",{class:"actions"},h("button",{class:"btn","data-workflow-export-close":"",onclick:close},T("Cancel","取消")),h("button",{class:"btn primary","data-workflow-export-download":"",onclick:()=>{
+          if(disposed||ed.dirty||revision!==draftRevision||version!==ed.saved.version){close();say(T("The editor changed. Review the saved version again before export.","編輯內容已變更，請重新檢視已儲存版本再匯出。"));return;}
+          const url=URL.createObjectURL(new Blob([text],{type:"application/json"})),link=h("a",{href:url,download:filename});document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+        }},T("Download JSON","下載 JSON"))));
+      dlg.addEventListener("cancel",e=>{e.preventDefault();close();});document.body.append(dlg);dlg.showModal();
+    }catch(err){if(!disposed)say(err.message);}finally{if(!disposed)exportButton.disabled=false;}
+  }},T("Export definition…","匯出流程定義…"));
   const svgZoom = (k) => canvas.querySelector("svg.rt-graph")?.zoom(k);
   // the readiness gate for this exact version: Run stays the captain's choice, verified or not
   const gateHost = h("details", { class: "gate-host", "data-gate-host": ed.id, open: true, onclick: (e) => { if (e.target.closest("summary")?.parentElement === gateHost) gateHost.dataset.toggled = "1"; } }, h("summary", {}, T("Readiness", "就緒檢查"), " ", h("span", { class: "faint", "data-gate-summary": "" }, T("checking…", "檢查中…"))));
@@ -654,7 +682,7 @@ function buildEditor(ed) {
   root.append(
     h("div", { class: "phead" }, h("div", {}, h("h1", {}, ed.def.name), h("p", {}, (ed.def.description || "").slice(0, 300))),
       h("div", { class: "actions" }, h("a", { class: "btn ghost", href: "#/workflows" }, T("All workflows", "全部流程")),ed.personal?workflowTrashButton({id:ed.id,name:ed.saved.name,version:ed.saved.version,trashRevision:ed.trash?.revision??0},ed.trash?.deleted===true):null, ed.held?h("span",{class:"faint","data-workflow-held":"1"},T(ed.held.en,ed.held.zh)):ed.selectable===false?h("span",{class:"faint","data-workflow-unavailable":"1"},T("Historical or internal workflow · unavailable for new tasks","歷史或內部流程 · 不提供新任務使用")):ed.def.origin?h("button",{class:"btn primary","data-ed-run":ed.id,onclick:async(e)=>{if(ed.dirty){say(T("Save your edits as a new version before Run.","執行前請先把修改存成新版本。"));return;}e.target.disabled=true;try{const input=await startInputs(ed.def,workflowBrief(ed),value=>{saveWorkflowBrief(ed,value);direction.value=value;});if(input===null)return;const r=await startOwnRun({workflow:ed.id,version:ed.saved.version,title:ed.def.name,text:input.text,params:input.params});if(r){RN.list=null;location.hash=`#/run/${r.id}`;}}catch(err){say(err.message);}finally{e.target.disabled=false;}}},T("Run…","執行…")):h("a", { class: "btn", href: "#/runs", "data-start-run": ed.id, onclick: () => { RN.prefill = ed.id; } }, T("Start a task", "開始一個任務")))),
-    h("div", { class: "rt-toolbar" }, verSel, h("button", { class: "btn sm", "aria-label": T("Zoom in", "放大"), onclick: () => svgZoom(1 / 1.2) }, "+"), h("button", { class: "btn sm", "aria-label": T("Zoom out", "縮小"), onclick: () => svgZoom(1.2) }, "−"),
+    h("div", { class: "rt-toolbar" }, verSel, exportButton, h("button", { class: "btn sm", "aria-label": T("Zoom in", "放大"), onclick: () => svgZoom(1 / 1.2) }, "+"), h("button", { class: "btn sm", "aria-label": T("Zoom out", "縮小"), onclick: () => svgZoom(1.2) }, "−"),
       h("div", { class: "seg rt-viewseg", role: "group", "aria-label": T("Graph view", "流程圖檢視") }, ["simple", "detail"].map((k) => h("button", { type: "button", "data-view-toggle": k, "aria-pressed": String(gview === k), onclick: () => setView(k) },
         h("span", { class: "keep" }, k === "simple" ? T("Simple", "簡易") : T("Detail", "詳細"))))),
       h("button", { class: "btn sm", "data-tidy": "1", title: T("Lay the graph out again automatically", "自動重新排版"), onclick: async () => { await setMode("auto"); view = null; draw(); say(T("Tidy layout", "已自動排版")); } }, T("Tidy layout", "整理排版")),
