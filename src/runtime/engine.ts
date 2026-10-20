@@ -37,6 +37,7 @@ import { entryOf, MODEL_HOOK_ACTIONS, pinsSkills, roleSkillParts, validate, type
 import { locatorText, parseFinding, type Finding } from "./locator";
 import { materializeRoundDir, roundWorkPath } from "./round-paths";
 import { composeInstructions, Skills } from "../skills";
+import { roundSkillTools, skillFooters, skillGate, skillProvenance, type SkillRound } from "../skillpkg/round";
 import { OperatingRules, jobInstructions } from "../operating-rules";
 import { composeSkeleton, type SkeletonFacts } from "./brief-skeleton";
 import { clampTitle, deriveTitle } from "../task-title";
@@ -603,7 +604,7 @@ export class Engine {
       skillUse: () => self.instructionsUse(r, node.role ?? node.args?.role, self.nodePins(r, node), node.kind === "agent" ? node.skill : undefined) };
   }
   /** The skills a node's agent turns load: an agent node's own pins; a loop node's own, else those its role's agent nodes pin (its coordinator turns keep them). */
-  nodePins(r: Run, node: WNode): { id: string; v: number; sha256: string }[] {
+  nodePins(r: Run, node: WNode): { id: string; v: number; sha256: string; filesSha256?: string }[] {
     // a staffed workflow's node loads the skills its approved configuration names for it (src/domain/staffing.ts)
     const approved = this.deps.approvedNodePins?.(r, node); if (approved !== undefined) return approved;
     if (Array.isArray(node.skills)) return pinsSkills(node) ? node.skills : [];
@@ -637,7 +638,7 @@ export class Engine {
     if (approved === undefined) { try { src = this.roleSkillText(r.def, roleId, nodeSkill); roleText = src?.text ?? ""; } catch {} }
     else { try { src = this.roleSkillText(r.def, roleId); } catch {} }
     const roleSkill = this.roleSkillOf(roleId, src, approved ?? src?.text ?? "");
-    return { text: composeInstructions(roleText, pins.map((p) => ({ id: p.id, v: p.v, body: this.skillLibrary().body(p.id, p.v, p.sha256) }))), roleSkill, skills: pins.map((p) => `${p.id}@v${p.v}`) };
+    return { text: composeInstructions(roleText, pins.map((p) => ({ id: p.id, v: p.v, body: this.skillLibrary().body(p.id, p.v, p.sha256, (p as any).filesSha256) }))), roleSkill, skills: pins.map((p) => `${p.id}@v${p.v}`) };
   }
   /** Which role skill a text is (ref, Studio version, sha256 of the exact text, and its parts' hashes for a role of several named skills). */
   private roleSkillOf(roleId: string | undefined | null, src: { ref: string; version: number | null } | null, text: string): RoleSkillUse | null {
@@ -1899,6 +1900,8 @@ export class Engine {
   roundScratch(x: X, label = "agent") { const d = this.roundDir(x, "round-scratch", { label }); return { writes: [d], cwd: d }; }
   /** Each round's skeleton, computed once (its preflight facts read git and the repository configuration) and reused by its turns. */
   private skeletons = new WeakMap<X, { key: string; text: string }>();
+  /** each round's script skills, decided before its agent starts (src/skillpkg/round.ts) */
+  private skillRounds = new WeakMap<X, SkillRound | null>();
   /** The brief's six fixed sections for this round: the graph's facts, the mode's preflight facts and the operating manual page. */
   briefSkeleton(x: X, modeName = x.node.mode ?? ""): string {
     const mode = this.modes[modeName]; if (!mode) return "";
@@ -1922,6 +1925,8 @@ export class Engine {
       const preparedPick = hashInput(x.pick());
       const preparedProvider: Provider | undefined = this.deps.selectProvider ? await this.deps.selectProvider(x, x.pick()) : undefined;
       if (!this.owns(x) || hashInput(x.pick()) !== preparedPick) throw new QueueRefusal("round owner or provider choice changed before provider preparation");
+      // the node's script skills before anything else (src/skillpkg/round.ts): unapproved or unready stops the round as blocked
+      try { this.skillRounds.set(x, await skillGate(this, x)); } catch (e: any) { if (typeof e?.outcome === "string") { x.rn.data.stoppedBeforeAgent = true; x.rn.note = `stopped before the agent: ${e.message}`; this.emit(x.run, "round_blocked", `${x.node.label}: ${e.message}`, { node: x.node.id }); return e.outcome; } throw e; }
       try { await mode.begin?.(x); begun = true; } catch (e: any) { if (typeof e?.outcome === "string") { x.rn.data.stoppedBeforeAgent = true; x.rn.note = `stopped before the agent: ${e.message}`; this.emit(x.run, "round_blocked", `${x.node.label}: ${e.message}`, { node: x.node.id }); return e.outcome; } throw e; }
       if (!this.owns(x) || hashInput(x.pick()) !== preparedPick) throw new QueueRefusal("round owner or provider choice changed before provider launch");
       const out = await this.agentTurns(x, mode, modeName!, preparedProvider, preparedPick); how = out === "timeout" ? "timeout" : "done"; return out;
@@ -1933,14 +1938,17 @@ export class Engine {
     for (let hop = 0; hop < 5; hop++) {
       const pickIdentity = !hop && initialPick ? initialPick : hashInput(x.pick());
       const prov = !hop && initialProvider ? initialProvider : this.deps.selectProvider ? await this.deps.selectProvider(x, x.pick()) : x.provider();
-      const use = x.skillUse ? x.skillUse() : { text: x.skill(), roleSkill: null, skills: [] }; const skill = use.text;
+      const use = x.skillUse ? x.skillUse() : { text: x.skill(), roleSkill: null, skills: [] };
+      // a script skill's files and tools follow the skills (or the captain's text-only note): src/skillpkg/round.ts
+      const sr = this.skillRounds.get(x) ?? null, skill = use.text + skillFooters(sr), skillPackages = skillProvenance(sr, this.deps.skillPackages ?? null);
       // the step (and the round record's header) names the role skill and the node skills this turn received
       { const loaded = use.skills;
         const step = [...x.run.steps].reverse().find((s) => s.node === x.node.id && s.state === "running");
-        if (step) { step.skills = loaded; step.roleSkill = use.roleSkill; x.save(); }
+        if (step) { step.skills = loaded; step.roleSkill = use.roleSkill; if (skillPackages.length) (step as any).skillPackages = skillPackages; x.save(); }
         if (!hop && (loaded.length || use.roleSkill)) x.log(`skills loaded: ${[use.roleSkill ? roleSkillName(use.roleSkill) : null, ...loaded].filter(Boolean).join(", ")}`); }
       const prompt = mode.prompt(x), answer = this.failureBrief(x);
-      const tools = mode.tools(x), maxTools = typeof mode.maxTools === "function" ? mode.maxTools(x) : mode.maxTools;
+      const roundBox = this.roundSandbox(x, mode.sandbox?.(x) ?? null);
+      const tools = [...mode.tools(x), ...roundSkillTools(this, x, sr, roundBox ?? mode.sandbox?.(x) ?? this.roundScratch(x))], maxTools = typeof mode.maxTools === "function" ? mode.maxTools(x) : mode.maxTools;
       // every brief ends with the same six sections (a mode that keeps a durable brief, like build, puts them in it itself)
       const skeleton = this.briefSkeleton(x, modeName), withAnswer = prompt + (answer && !prompt.endsWith(answer) ? answer : "");
       const base = mode.embedsSkeleton ? withAnswer : `${withAnswer}\n${skeleton}`;
@@ -1953,8 +1961,8 @@ export class Engine {
       const job = await this.deps.agents.run({ kind: `run:${modeName}`, title: `${x.run.id} ${x.node.label}${x.visit > 1 ? ` (visit ${x.visit})` : ""}`, system, text, admissionReceipt, tools, provider: prov,
         ref: x.run.id, project: x.run.params?.project || null, rules, receiptFor: (r: any) => this.deps.instructionReceipt?.(x, x.node.role ?? x.node.args?.role, jobInstructions(system, r), prov), queueLease: true, signal: this.abortOf(x.run).signal, owns: () => this.owns(x) && hashInput(x.pick()) === pickIdentity, maxTools: maxTools ?? 60, timeoutMs: tl * 1000,
         // a sandboxed round reaches its provider's API, plus the hosts policy egress.allow grants (e.g. a package registry)
-        record: (() => { const b = briefFor(x); return { dir: join(this.root, x.run.id, "nodes", x.node.id, String(x.visit)), header: { run: x.run.id, node: x.node.id, round: x.visit, attempt: (x.rn.data.jobs ?? []).filter((j: any) => j.round === x.visit && !j.hop).length + (x.rn.data.interrupted ?? []).filter((j: any) => j.round === x.visit).length + (hop ? 0 : 1), head: x.ctx.head ?? null, brief: b?.id ?? null, ledger: b?.ledger ?? [], hop, mode: modeName, roleSkill: use.roleSkill, skills: use.skills } }; })(),
-        sandbox: this.roundSandbox(x, mode.sandbox?.(x) ?? null), onStart: (jid: string) => { x.rn.job = jid; x.save(); this.emit(x.run, "agent_started", `${x.node.label}: ${prov.id} · ${prov.model}`, { node: x.node.id, job: jid, provider: prov.id, model: prov.model }); } } as any);
+        record: (() => { const b = briefFor(x); return { dir: join(this.root, x.run.id, "nodes", x.node.id, String(x.visit)), header: { run: x.run.id, node: x.node.id, round: x.visit, attempt: (x.rn.data.jobs ?? []).filter((j: any) => j.round === x.visit && !j.hop).length + (x.rn.data.interrupted ?? []).filter((j: any) => j.round === x.visit).length + (hop ? 0 : 1), head: x.ctx.head ?? null, brief: b?.id ?? null, ledger: b?.ledger ?? [], hop, mode: modeName, roleSkill: use.roleSkill, skills: use.skills, ...(skillPackages.length ? { skillPackages } : {}) } }; })(),
+        sandbox: roundBox, onStart: (jid: string) => { x.rn.job = jid; x.save(); this.emit(x.run, "agent_started", `${x.node.label}: ${prov.id} · ${prov.model}`, { node: x.node.id, job: jid, provider: prov.id, model: prov.model }); } } as any);
       x.rn.data = { ...x.rn.data, jobs: [...(x.rn.data.jobs ?? []), { id: job.id, round: x.visit, hop, provider: job.provider, model: job.model, status: job.status, cost: job.cost, tools: job.tools, error: job.error, operatingRules: job.operatingRules?.hash ?? null }] };
       if (x.cancelled()) throw new Error("cancelled");
       if (job.status === "cancelled" && x.rn.swap) {

@@ -17,16 +17,20 @@ import {localExecutionNotice} from "./local-execution";
 // A skill comes from a local folder, a skills home (~/.claude/skills, ~/.codex/skills) or a
 // public https git URL, or is built in (packs/<pack>/skills/<id>/SKILL.md). Import never runs
 // anything from the skill: files are copied by descriptor, no link is followed, a git clone has
-// no hooks and no credentials. A skill is text for the agent's prompt: its frontmatter never
-// changes a node's tools, sandbox, network or credentials (keys asking for them are recorded as ignored).
+// no hooks and no credentials. A skill's frontmatter never changes a node's tools, sandbox, network or credentials
+// (keys asking for them are recorded as ignored). A skill with scripts (docs/units/skill-packages.md) is a package:
+// a larger cap, caches (__pycache__, *.pyc, .DS_Store) skipped, native binaries refused, and what it needs read at
+// import (pkg: scripts, lockfiles, programs, hosts). Its scripts run only through Studio's skill_run, only once the
+// captain approved that exact version (both hashes), from a read-only copy, in the round's sandbox.
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, constants as fsc, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, constants as fsc, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import type { Workflows } from "./workflows";
 import { unified } from "./diff";
 import { bundledBytes, bundledList } from "./bundled";
 import { copyUntrusted, realInside, scrubEnv } from "./secure";
 import { fmtSize, SKILL_NODE_CAP } from "./runtime/defs";
+import { analyzePackage, type PackageInfo } from "./skillpkg/analyze";
 
 /** source256: the hash of the source text this version derives from (an import: its own text; an edit: its parent's source).
  *  sourceRef: the source it was imported from (an import), so a refresh only follows that same source. */
@@ -142,18 +146,35 @@ export class Skills {
   library(): LibSkill[] {
     this.seed(); const r = this.libRoot(); if (!existsSync(r)) return [];
     return readdirSync(r).filter((d) => SAFE.test(d)).sort().flatMap((id) => { const idx = this.libIndex(id); const cur = idx.at(-1); if (!cur) return [];
-      return [{ id, name: cur.name, description: cur.description, fits: cur.fits ?? BUILTIN_FITS[id] ?? null, source: cur.source, sourceKind: cur.sourceKind, current: cur.n, sha256: cur.sha256, bytes: cur.bytes, files: cur.files, skipped: cur.skipped, ignored: cur.ignored,
+      return [{ id, name: cur.name, description: cur.description, fits: cur.fits ?? BUILTIN_FITS[id] ?? null, source: cur.source, sourceKind: cur.sourceKind, current: cur.n, sha256: cur.sha256, filesSha256: cur.filesSha256, bytes: cur.bytes, files: cur.files, skipped: cur.skipped, ignored: cur.ignored,
         versions: idx.map((v) => ({ n: v.n, sha256: v.sha256, bytes: v.bytes, ignored: v.ignored, createdAt: v.createdAt, by: v.by })) }]; });
   }
   /** What a pin needs to be checked: the version's hash and the size of the text it adds to a prompt. */
-  pinInfo(id: string, v: number): { sha256: string; bytes: number; ignored: string[]; latest: number } | null {
+  pinInfo(id: string, v: number): { sha256: string; filesSha256: string; bytes: number; ignored: string[]; latest: number } | null {
     if (!SAFE.test(String(id))) return null; const idx = this.libIndex(id); const rec = idx.find((x) => x.n === Number(v));
-    return rec ? { sha256: rec.sha256, bytes: rec.bytes, ignored: rec.ignored, latest: idx.at(-1)!.n } : null;
+    return rec ? { sha256: rec.sha256, filesSha256: rec.filesSha256, bytes: rec.bytes, ignored: rec.ignored, latest: idx.at(-1)!.n } : null;
+  }
+  /** A version's folder in the library (SKILL.md beside files/), and its record. */
+  libVersion(id: string, v: number): { rec: LibVersion; dir: string } | null {
+    if (!SAFE.test(String(id))) return null; const rec = this.libIndex(id).find((x) => x.n === Number(v)); return rec ? { rec, dir: join(this.libDir(id), `v${rec.n}`) } : null;
+  }
+  private pkgs = new Map<string, PackageInfo>();
+  /** What a version needs to run (recorded at import; a version imported before that is read once from its stored files). */
+  pkg(id: string, v: number): PackageInfo | null {
+    const lv = this.libVersion(id, v); if (!lv) return null; if (lv.rec.pkg) return lv.rec.pkg;
+    const k = `${id}@${v}`; let p = this.pkgs.get(k); if (!p) { p = analyzePackage(lv.dir, lv.rec.files); this.pkgs.set(k, p); } return p;
+  }
+  /** The version's files hashed again, as the import hashed them: true only while they are exactly what was recorded. */
+  filesIntact(id: string, v: number): boolean {
+    const lv = this.libVersion(id, v); if (!lv) return false;
+    try { return filesHash(join(lv.dir, "files"), lv.rec.files) === lv.rec.filesSha256 && sha(readFileSync(join(lv.dir, "SKILL.md"), "utf8")) === lv.rec.sha256; } catch { return false; }
   }
   /** The text a pinned version adds to a prompt (its body, without frontmatter); refused unless the stored text still has the pinned hash. */
-  body(id: string, v: number, pinned: string): string {
+  body(id: string, v: number, pinned: string, pinnedFiles?: string): string {
     const rec = this.pinInfo(id, v); if (!rec) throw new Error(`skill ${id} v${v} is not in the library`);
     if (rec.sha256 !== pinned) throw new Error(`skill ${id} v${v}: the pinned hash does not match the library`);
+    // a pin made since pins name the files too: the version's other files must be the ones pinned (an older pin takes the library's)
+    if (pinnedFiles !== undefined && rec.filesSha256 !== pinnedFiles) throw new Error(`skill ${id} v${v}: the pinned files hash does not match the library`);
     const t = readFileSync(join(this.libDir(id), `v${v}`, "SKILL.md"), "utf8");
     if (sha(t) !== pinned) throw new Error(`skill ${id} v${v} changed on disk since it was pinned`);
     return splitFrontmatter(t).body.trim();
@@ -235,17 +256,23 @@ export class Skills {
     const scan = scanFolder(root);
     if (scan.leaving.length) throw new SkillImportError(`${scan.leaving[0]} is a symlink that leaves the folder; nothing was imported`);
     if (!scan.hasSkill) throw new SkillImportError("the folder has no SKILL.md (a regular file at its top)");
+    if (scan.native.length) throw new SkillImportError(`${scan.native[0]} is a native binary; a skill carries source only (its dependencies come from its lockfiles), so nothing was imported`);
+    // a skill with scripts is a package: the larger cap (its lockfiles, schemas, references); a text skill keeps the small one
+    const caps = scan.scripts ? SCRIPT_CAPS : SKILL_CAPS;
     if (scan.skillBytes > SKILL_CAPS.skillMd) throw new SkillImportError(`SKILL.md is ${fmtSize(scan.skillBytes)}; the cap is ${fmtSize(SKILL_CAPS.skillMd)}`);
-    if (scan.bytes > SKILL_CAPS.folder) throw new SkillImportError(`the folder is over the ${fmtSize(SKILL_CAPS.folder)} cap (${fmtSize(scan.bytes)})`);
-    if (scan.files > SKILL_CAPS.files) throw new SkillImportError(`the folder has ${scan.files} files; the cap is ${SKILL_CAPS.files}`);
+    if (scan.bytes > caps.folder) throw new SkillImportError(`the folder is over the ${fmtSize(caps.folder)} cap (${fmtSize(scan.bytes)})`);
+    if (scan.files > caps.files) throw new SkillImportError(`the folder has ${scan.files} files; the cap is ${caps.files}`);
     const stage = join(this.libRoot(), `.stage-${randomBytes(6).toString("hex")}`);
     try {
-      const copy = copyUntrusted(root, join(stage, "files"), { maxFiles: SKILL_CAPS.files + 1, maxBytes: SKILL_CAPS.folder, maxDepth: SKILL_CAPS.depth, skipTop: [".git"] });
+      const copy = copyUntrusted(root, join(stage, "files"), { maxFiles: caps.files + scan.skippedFiles + 1, maxBytes: caps.folder + scan.skippedBytes, maxDepth: caps.depth, skipTop: [".git"] });
       const capHit = copy.refused.find((r) => /too (large|deep)|too many files/.test(r)); if (capHit) throw new SkillImportError(`the folder is over a size cap: ${capHit}`);
       if (!copy.copied.includes("SKILL.md")) throw new SkillImportError(`SKILL.md could not be copied safely (${copy.refused.find((r) => r.startsWith("SKILL.md")) ?? "not a regular file"})`);
+      // caches and Finder files are never part of a version: removed from the copy, named in skipped
+      const skipped = copy.copied.filter(skippedName);
+      for (const f of skipped) { const parts = f.split("/"), i = parts.indexOf("__pycache__"); rmSync(join(stage, "files", ...(i >= 0 ? parts.slice(0, i + 1) : parts)), { recursive: true, force: true }); }
       renameSync(join(stage, "files", "SKILL.md"), join(stage, "SKILL.md"));
       const text = readFileSync(join(stage, "SKILL.md"), "utf8");
-      return this.commit(stage, text, copy.copied.filter((f) => f !== "SKILL.md"), copy.refused, basename(root), meta);
+      return this.commit(stage, text, copy.copied.filter((f) => f !== "SKILL.md" && !skippedName(f)), [...copy.refused, ...(skipped.length ? [`${skipped.length} cache file${skipped.length === 1 ? "" : "s"} skipped (__pycache__, *.pyc, .DS_Store)`] : [])], basename(root), meta);
     } finally { rmSync(stage, { recursive: true, force: true }); }
   }
   private commit(stage: string, text: string, files: string[], skipped: string[], folderName: string, meta: { source: string; sourceKind: LibVersion["sourceKind"]; by: string }) {
@@ -255,10 +282,12 @@ export class Skills {
     if (!SAFE.test(id)) throw new SkillImportError(`the skill's name "${name.slice(0, 60)}" gives no usable id (letters, digits and dashes)`);
     const description = typeof fm.description === "string" ? fm.description.trim().slice(0, 1000) : "";
     const ignored = Object.keys(fm).filter((k) => !INFO_KEYS.has(k));
-    const fileHashes = files.sort().map((f) => `${f}\0${sha(readFileSync(join(stage, "files", f)))}`);
+    files.sort();
     const fits = readFits(fm.metadata);
-    const rec: LibVersion = { n: 0, sha256: sha(text), filesSha256: sha(fileHashes.join("\n")), bytes: Buffer.byteLength(sp.body.trim()), files, skipped: skipped.filter((r) => !/^SKILL\.md:/.test(r)), ignored, name: id, description,
-      ...(fits ? { fits } : {}), source: meta.source, sourceKind: meta.sourceKind, createdAt: new Date().toISOString(), by: meta.by };
+    // what the version needs to run, read once from the staged copy (never run): scripts, lockfiles, programs, hosts
+    const pkg = analyzePackage(stage, files);
+    const rec: LibVersion = { n: 0, sha256: sha(text), filesSha256: filesHash(join(stage, "files"), files), bytes: Buffer.byteLength(sp.body.trim()), files, skipped: skipped.filter((r) => !/^SKILL\.md:/.test(r)), ignored, name: id, description,
+      ...(fits ? { fits } : {}), ...(pkg.scripts.length ? { pkg } : {}), source: meta.source, sourceKind: meta.sourceKind, createdAt: new Date().toISOString(), by: meta.by };
     const idx = this.libIndex(id); const last = idx.at(-1);
     // the captain's own copy of a built-in skill (imported under the same name) is the captain's edit: its next version.
     // From then on the built-in never adds a version over it (seed skips it), so a pack update never overwrites the captain's text.
@@ -318,12 +347,17 @@ export function insertRule(text: string, section: string | undefined, rule: stri
 
 
 // ---------- the skill library: types, caps, frontmatter, the import's checks ----------
-export type LibVersion = { n: number; sha256: string; filesSha256: string; bytes: number; files: string[]; skipped: string[]; ignored: string[]; name: string; description: string; fits?: SkillFits;
+export type LibVersion = { n: number; sha256: string; filesSha256: string; bytes: number; files: string[]; skipped: string[]; ignored: string[]; name: string; description: string; fits?: SkillFits; pkg?: PackageInfo;
   source: string; sourceKind: "folder" | "home" | "git" | "builtin"; createdAt: string; by: string };
-export type LibSkill = { id: string; name: string; description: string; fits: SkillFits | null; source: string; sourceKind: LibVersion["sourceKind"]; current: number; sha256: string; bytes: number; files: string[]; skipped: string[]; ignored: string[];
+export type LibSkill = { id: string; name: string; description: string; fits: SkillFits | null; source: string; sourceKind: LibVersion["sourceKind"]; current: number; sha256: string; filesSha256: string; bytes: number; files: string[]; skipped: string[]; ignored: string[];
   versions: { n: number; sha256: string; bytes: number; ignored: string[]; createdAt: string; by: string }[] };
-/** An agent node's enabled skill: pinned by version and hash. */
-export type SkillPin = { id: string; v: number; sha256: string };
+/** An agent node's enabled skill: pinned by version and both hashes (SKILL.md, and every other file of the version).
+ *  A pin made before files were pinned has no filesSha256: it takes the library's, which is written once per version. */
+export type SkillPin = { id: string; v: number; sha256: string; filesSha256?: string };
+/** The hash of a version's other files, as the import records it: each path and its content's sha256, sorted. */
+export function filesHash(dir: string, files: string[]): string {
+  return sha([...files].sort().map((f) => { const p = join(dir, f); if (!lstatSync(p).isFile()) throw new Error(`${f} is not a regular file`); return `${f}\0${createHash("sha256").update(readFileSync(p)).digest("hex")}`; }).join("\n"));
+}
 export class SkillImportError extends Error {}
 /** A refusal of the read-only viewer (src/skill-routes.ts), with the HTTP status it answers. */
 export class SkillViewError extends Error { constructor(message: string, readonly status: number) { super(message); } }
@@ -375,6 +409,11 @@ export function skillFit(fits: SkillFits | null | undefined, n: { kind: string; 
 }
 /** skillMd: one SKILL.md; folder/files/depth: everything an import copies; node: the enabled skills' text on one agent node. */
 export const SKILL_CAPS = { skillMd: 64 * 1024, folder: 1024 * 1024, files: 100, depth: 4, node: SKILL_NODE_CAP };
+/** a skill with scripts: the folder carries its lockfiles, schemas and references (never its node_modules: those come from the lock) */
+export const SCRIPT_CAPS = { folder: 8 * 1024 * 1024, files: 400, depth: 8, file: 2 * 1024 * 1024 };
+/** never part of a version: interpreter caches and Finder's files */
+const skippedName = (rel: string) => { const parts = rel.split("/"); const n = parts.at(-1)!; return parts.includes("__pycache__") || n.endsWith(".pyc") || n === ".DS_Store"; };
+const SCRIPT_EXTS = /\.(py|sh|bash|zsh|js|mjs|cjs|ts|rb|pl|php|lua)$/i;
 export const SKILL_HOMES = [{ id: "claude", label: "~/.claude/skills", rel: ".claude/skills" }, { id: "codex", label: "~/.codex/skills", rel: ".codex/skills" }];
 const HOME_NAME = /^[A-Za-z0-9._-]{1,80}$/;
 /** frontmatter keys that only describe a skill; any other key (allowed-tools, network, model …) is recorded as ignored */
@@ -413,7 +452,7 @@ export function splitFrontmatter(text: string): { fm: Record<string, any> | null
 
 /** Walk a folder without following any link: every symlink must resolve inside it (else the import is refused); sizes of regular files. */
 function scanFolder(root: string) {
-  const out = { leaving: [] as string[], hasSkill: false, skillBytes: 0, bytes: 0, files: 0 };
+  const out = { leaving: [] as string[], hasSkill: false, skillBytes: 0, bytes: 0, files: 0, scripts: false, native: [] as string[], skippedFiles: 0, skippedBytes: 0 };
   const walk = (rel: string, depth: number) => {
     let names: string[] = []; try { names = readdirSync(join(root, rel)).sort(); } catch { return; }
     for (const n of names) {
@@ -421,16 +460,24 @@ function scanFolder(root: string) {
       const r = rel ? `${rel}/${n}` : n; const p = join(root, r);
       let st; try { st = lstatSync(p); } catch { continue; }
       if (st.isSymbolicLink()) { let t = ""; try { t = realpathSync(p); } catch {} if (!t || !realInside(root, t, true)) out.leaving.push(r); continue; }
-      if (st.isDirectory()) { if (depth < SKILL_CAPS.depth + 1) walk(r, depth + 1); continue; }
+      if (st.isDirectory()) { if (depth < SCRIPT_CAPS.depth + 1) walk(r, depth + 1); continue; }
       if (!st.isFile()) continue;
+      if (skippedName(r)) { out.skippedFiles++; out.skippedBytes += st.size; continue; }
       out.files++; out.bytes += st.size;
       if (r === "SKILL.md") { out.hasSkill = true; out.skillBytes = st.size; }
+      if (SCRIPT_EXTS.test(n) || r.startsWith("scripts/")) out.scripts = true;
+      // a native binary (Mach-O, ELF, a shared library or a Node addon) is code no review can read: refused
+      if (/\.(so|dylib|node|dll|exe)$/i.test(n) || nativeMagic(p)) out.native.push(r);
     }
   };
   walk("", 0);
   return out;
 }
 
+function nativeMagic(p: string): boolean {
+  try { const fd = openSync(p, "r"); try { const b = Buffer.alloc(4); readSync(fd, b, 0, 4, 0); const m = b.readUInt32BE(0);
+    return m === 0x7f454c46 || m === 0xfeedface || m === 0xfeedfacf || m === 0xcefaedfe || m === 0xcffaedfe || m === 0xcafebabe && !p.endsWith(".class"); } finally { closeSync(fd); } } catch { return false; }
+}
 /** A git URL Studio may clone: https, a host, no user name, password or token, no query. Returns the URL; throws the reason (never echoing a credential). */
 export function checkGitUrl(url: string): string {
   const s = String(url ?? "").trim();

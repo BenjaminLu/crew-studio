@@ -418,7 +418,12 @@ function buildEditor(ed) {
     // Fit must honor both axes: a new stage/node may add another band. Grow
     // the scrollable page canvas instead of shrinking its titles below 11 px.
     canvas.style.minHeight = simple ? `${Math.ceil(g.lay.bbox.h * 11.1 / 15) + 2}px` : "";
+    // Validation may complete between a keyboard focus and Enter. Replacing the
+    // SVG must keep that node/edge focused, without stealing focus from the panel.
+    const active=document.activeElement, focused=canvas.contains(active)?active?.closest?.('[data-node],[data-edge]'):null;
+    const focusAttr=focused?.hasAttribute('data-node')?'data-node':'data-edge', focusValue=focused?.getAttribute(focusAttr);
     canvas.replaceChildren(g);
+    if(focusValue&&document.activeElement===document.body)g.querySelector(`[${focusAttr}="${CSS.escape(focusValue)}"]`)?.focus({preventScroll:true});
     if (!view) { fit(g, simple ? "all" : "start"); } view = g.view;
     // the minimap, on a desktop, docked under the canvas
     mm = null; dock.replaceChildren();

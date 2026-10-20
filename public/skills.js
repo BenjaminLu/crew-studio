@@ -221,6 +221,8 @@ function skvBody() {
       h("dt", {}, T("Source", "來源")), h("dd", {}, h("span", { class: `badge ${d.sourceKind === "builtin" ? "run" : ""}`, "data-skv-source": d.sourceKind }, d.sourceKind === "role" || d.sourceKind === "builtin" ? kindLabel(d.sourceKind) : T(`Imported · ${kindLabel(d.sourceKind)}`, `匯入 · ${kindLabel(d.sourceKind)}`)), h("span", { class: "mono" }, d.source)),
       r.kind === "lib" ? [h("dt", {}, T("Fits", "適用")), h("dd", { "data-skv-fits": "" }, fitText(d.fits))] : null,
       h("dt", {}, "sha256"), h("dd", { class: "mono", title: d.sha256 || "", "data-skv-sha": d.sha256 || "" }, short(d.sha256)),
+      // a script skill: its scripts, the hosts approving it allows, and whether it is approved and ready here (src/skillpkg)
+      r.kind === "lib" && d.scripts ? [h("dt", {}, T("Scripts", "Script")), h("dd", { "data-skv-scripts": d.scripts.state, title: (d.scripts.reasons || []).map((x) => T(x.en, x.zh)).join("\n") }, T(d.scripts.en, d.scripts.zh))] : null,
       r.kind === "lib" ? [h("dt", {}, T("Used by", "使用中")), h("dd", { "data-skv-used": String(used.length) }, used.length ? used.map((u) => h("span", { class: "vbadge" }, `${useText(u)} · v${u.v}`)) : h("span", { class: "faint" }, T("no node or seat yet", "還沒有節點或位置")))] : null),
     older ? h("p", { class: "skv-pinned", role: "note", "data-skv-pinned": String(pinned) },
       d.version === pinned ? T(`This seat uses v${pinned}, an older version. The latest is v${d.latest}.`, `這個位置用的是 v${pinned}（舊版）。最新是 v${d.latest}。`) : T(`Showing v${d.version}. This seat uses v${pinned}.`, `正在看 v${d.version}。這個位置用的是 v${pinned}。`),

@@ -45,7 +45,7 @@ export function nodeSkillPins(ids:unknown,node:{id:string;kind:string;skills?:Sk
  const lib=defs.skillLibrary?.()??[];
  return ids.map((id:string)=>{const s=lib.find(x=>x.id===id);if(!s)throw new DraftError(`node ${node.id}: ${id} is not in the skill library (${lib.map(x=>x.id).join(', ')||'empty'})`);
   if(!skillFit(s.fits,{kind:node.kind}))throw new DraftError(`node ${node.id}: the ${id} skill fits ${s.fits!.kinds!.join(' or ')} nodes, not a ${node.kind} node`);
-  const kept=node.skills?.find(p=>p.id===id);return kept?{id,v:kept.v,sha256:kept.sha256}:{id,v:s.current,sha256:s.sha256};});
+  const kept=node.skills?.find(p=>p.id===id);return kept?{id,v:kept.v,sha256:kept.sha256,...(kept.filesSha256?{filesSha256:kept.filesSha256}:{})}:{id,v:s.current,sha256:s.sha256,...((s as any).filesSha256?{filesSha256:(s as any).filesSha256}:{})};});
 }
 export const DRAFT_PROVIDERS=['codex','claude'] as const;
 export const DRAFT_EFFORTS=['minimal','low','medium','high','xhigh'] as const;
