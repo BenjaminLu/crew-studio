@@ -48,7 +48,7 @@
     "test:github-foundation": "bun tests/github-foundation.ts && bun tests/github-pr-flow.ts && bun tests/pr-text-stale.ts && bun tests/remote-policy-observed.ts && bun tests/remote-stop-recover.ts && bun tests/remote-stop-readonly.ts && bun tests/remote-merge-board.ts && bun tests/merge-grant.ts && bun tests/github-foundation-process.ts && node tests/github-foundation-ui.mjs",
     "test:review-depth": "bun tests/review-depth.ts",
     "test:designer-round": "bun tests/designer-round.ts",
-    "test:runtime-ui": "node tests/runtime-ui.mjs && node tests/runtime-gesture-ui.mjs && node tests/runtime-editor-ownership-ui.mjs",
+    "test:runtime-ui": "node tests/runtime-ui.mjs && node tests/runtime-gesture-ui.mjs && node tests/runtime-editor-ownership-ui.mjs && node tests/runtime-overlay-version-ui.mjs",
     "test:workflow-overview": "bun run test:workflow-overview-ui && bun tests/workflow-overview-races.mjs && bun tests/workflow-overview-fold-ui.mjs",
     "test:remote-ci": "bun tests/remote-ci-waits.ts && bun tests/remote-ci-reconcile.ts && bun tests/remote-ci-lifecycle.ts",
     "test:non-code": "bun tests/non-code-workflows.ts",

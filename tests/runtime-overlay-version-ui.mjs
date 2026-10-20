@@ -1,0 +1,49 @@
+import './lib/isolated-env.mjs';
+// Real temporary Studio and actual completed card→hook runs. Only negative
+// identity corruption and response timing are intercepted at the HTTP boundary.
+import {spawn} from 'node:child_process';
+import {mkdtempSync,mkdirSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import assert from 'node:assert/strict';
+import {freePort,waitUp,withSession} from './boot.mjs';
+const root=join(import.meta.dirname,'..'),temp=mkdtempSync(join(tmpdir(),'overlay-version-')),port=await freePort(),base=`http://127.0.0.1:${port}`;
+const env={...process.env}; for(const key of Object.keys(env))if(/TOKEN|API_KEY/.test(key))delete env[key];
+const app=spawn('bun',['src/server.ts'],{cwd:root,env:{...env,CREW_PORT:String(port),CREW_DATA:join(temp,'data'),CREW_SESSION_TOKEN:'overlay-fixture',CREW_CHAT_PROVIDER:'stub',CREW_GH:'0',CREW_GH_NO_CLI:'1',CREW_RETRO_AUTO:'0',CREW_INSTALL_RUNNER:'mock',CREW_NO_REAL_INSTALL:'1',CREW_KEYCHAIN_TOOL:'none',CREW_CODEX_BIN:'/none',CREW_CLAUDE_BIN:'/none',HOME:join(temp,'home'),CREW_MAIN_PROJECT:join(temp,'project')},stdio:['ignore','pipe','pipe']});app.stdout.resume();app.stderr.resume();
+const {chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright');let browser,passed=0,failed=0;
+const ok=(v,label)=>{console.log(`${v?'PASS':'FAIL'} ${label}`);v?passed++:failed++;};
+try{
+ await waitUp(base,app);browser=withSession(await chromium.launch(),base,'overlay-fixture');const ctx=await browser.newContext({viewport:{width:1440,height:1000}}),p=await ctx.newPage();
+ await ctx.addInitScript(()=>{localStorage.setItem('crew.lang','en');localStorage.setItem('crew.chatOpen','0');});
+ const post=async(path,data)=>{const res=await ctx.request.post(base+path,{data});assert(res.ok(),`${path}: ${res.status()} ${await res.text()}`);return res.json();};
+ const get=async(path)=>(await ctx.request.get(base+path)).json();
+ await post('/api/wf',{id:'overlay-proof',name:'Overlay proof',origin:'starter'});
+ const run=async(version,complete=true)=>{const r=await post('/api/wruns',{workflow:'overlay-proof',version,text:'Check the actual saved graph'});let current;for(let i=0;i<100;i++){current=await get('/api/wruns/'+r.id);if(current.cards?.some(c=>!c.answer)&&current.nodes.start.waiting==='card')break;await new Promise(r=>setTimeout(r,30));}assert.equal(current.version,version);assert(current.cards?.length);if(complete){await post('/api/scards/'+current.cards.find(c=>!c.answer).id+'/answer',{choice:'continue'});for(let i=0;i<100;i++){current=await get('/api/wruns/'+r.id);if(current.status==='succeeded')break;await new Promise(r=>setTimeout(r,30));}assert.equal(current.status,'succeeded');assert.equal(current.nodes.start.state,'passed');assert.equal(current.nodes.done.state,'passed');}return current;};
+ const v1=await run(1),v1Waiting=await run(1,false);
+ const open=async(version)=>{await p.goto(`${base}/#/workflows/overlay-proof${version?'/v'+version:''}`);await p.reload();await p.locator('[data-overlay]').waitFor();await p.locator('[data-view-toggle="detail"]').click();};
+ const colored=async()=>p.locator('[data-node="start"][data-state="passed"],[data-node="done"][data-state="passed"]').count();
+ const choose=async(id)=>{await p.selectOption('[data-overlay]',id);await p.waitForTimeout(100);};
+ await open(1);await choose(v1.id);ok(await colored()===2,'same-version completed real run colors both actual visited nodes');
+ // Same IDs, new execution content: the old pass must never be painted on v2.
+ await p.click('[data-edit-step="start"]');await p.locator('[data-field="label"]').fill('Changed v2 approval');await p.locator('[data-field="label"]').dispatchEvent('change');await p.click('[data-save]');await p.waitForFunction(()=>document.querySelector('select[aria-label="Version"]')?.value==='2');
+ await choose(v1.id);ok(await colored()===0,'v1 completion cannot color changed v2 graph with the same node IDs');
+ ok(await p.locator('[data-overlay-status]').count()===1 && /v1/.test(await p.locator('[data-overlay-status]').innerText()),'mismatch names the actual executed version');
+ const pin=p.locator('[data-overlay-version-link]');ok(await pin.count()===1&&(await pin.getAttribute('href'))==='#/workflows/overlay-proof/v1','mismatch offers explicit pinned-version link without automatic navigation');
+ const v2=await run(2);await open(2);await choose(v2.id);ok(await colored()===2,'new v2 real completion still overlays its own graph');
+ await post('/api/wf/overlay-proof/layout',{version:2,positions:{start:{x:450,y:210}}});await open(2);await choose(v2.id);ok(await colored()===2,'layout-only changes preserve valid same-version execution overlay');
+ await p.click('[data-edit-step="start"]');await p.locator('[data-field="label"]').fill('Unsaved graph');await p.locator('[data-field="label"]').dispatchEvent('change');ok(await colored()===0,'editing immediately clears loaded historical success colors');await choose(v2.id);ok(await colored()===0,'dirty graph cannot reacquire success colors under its old version number');ok((await p.locator('[data-field="label"]').inputValue())==='Unsaved graph','overlay refusal preserves unsaved edits');
+ await open(2);
+ for(const [name,mutate] of [['unknown version',j=>{delete j.version;}],['wrong workflow',j=>{j.workflow='another-flow';}],['mismatched definition',j=>{j.def.nodes[0].card.options[0].label='Not what ran';}]]){
+  const handler=async route=>{const res=await route.fetch(),j=await res.json();mutate(j);await route.fulfill({response:res,json:j});};await p.route('**/api/wruns/'+v2.id,handler);await choose(v2.id);ok(await colored()===0,name+' response cannot color graph');await p.unroute('**/api/wruns/'+v2.id,handler);await choose('');
+ }
+ const hold=async(id)=>{let release,ready;const gate=new Promise(r=>release=r),started=new Promise(r=>ready=r);const handler=async route=>{const response=await route.fetch();ready();await gate;try{await route.fulfill({response});}catch{}};await p.route('**/api/wruns/'+id,handler);return{started,release,close:()=>p.unroute('**/api/wruns/'+id,handler)};};
+ const live=await run(2,false);assert.equal(live.nodes.start.state,'running');assert.equal(live.nodes.start.waiting,'card');await open(2);await choose(live.id);await p.waitForFunction(()=>document.querySelector('[data-node="start"]')?.getAttribute('data-state')==='running');ok(await p.locator('[data-node="start"][data-state="running"]').count()===1,'same-version captain hold shows its actual running node state');await post('/api/scards/'+live.cards.find(c=>!c.answer).id+'/answer',{choice:'continue'});await p.waitForFunction(()=>document.querySelectorAll('[data-node][data-state="passed"]').length===2);ok(await colored()===2,'verified same-version live events update the overlay to completion');
+ const dirtyLive=await run(2,false);await open(2);await choose(dirtyLive.id);await p.click('[data-edit-step="start"]');await p.locator('[data-field="label"]').fill('Live unsaved graph');await p.locator('[data-field="label"]').dispatchEvent('change');await post('/api/scards/'+dirtyLive.cards.find(c=>!c.answer).id+'/answer',{choice:'continue'});await p.waitForTimeout(200);ok(await colored()===0,'actual completion events cannot recolor a dirty editor');
+ await open(2);let dirtyHeld=await hold(v2.id);await p.selectOption('[data-overlay]',v2.id);await dirtyHeld.started;await p.click('[data-edit-step="start"]');await p.locator('[data-field="label"]').fill('Changed while loading');await p.locator('[data-field="label"]').dispatchEvent('change');dirtyHeld.release();await p.waitForTimeout(150);ok(await colored()===0,'edits invalidate an in-flight overlay response before it paints');await dirtyHeld.close();
+ await open(1);let held=await hold(v1.id);await p.selectOption('[data-overlay]',v1.id);await held.started;await choose(v1Waiting.id);held.release();await p.waitForTimeout(150);ok(await colored()===0&&(await p.locator('[data-overlay]').inputValue())===v1Waiting.id,'late completed A cannot replace selected waiting B');await held.close();
+ await choose('');held=await hold(v1.id);await p.selectOption('[data-overlay]',v1.id);await held.started;await choose('');held.release();await p.waitForTimeout(150);ok(await colored()===0,'clear selection invalidates pending overlay');await held.close();
+ held=await hold(v1.id);await p.selectOption('[data-overlay]',v1.id);await held.started;await open(2);held.release();await p.waitForTimeout(150);ok(await colored()===0&&await p.locator('select[aria-label="Version"]').inputValue()==='2','version navigation invalidates pending response from disposed editor');await held.close();
+ await p.setViewportSize({width:390,height:844});await choose(v1.id);ok(await colored()===0&&await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile mismatch remains readable without false colors or horizontal overflow');mkdirSync(join(root,'tests/out/runtime-overlay-version'),{recursive:true});await p.screenshot({path:join(root,'tests/out/runtime-overlay-version/version-mismatch-mobile.png'),fullPage:true});
+ await post('/api/wruns/'+v1Waiting.id+'/cancel',{});await ctx.close();
+}finally{await browser?.close();app.kill('SIGTERM');rmSync(temp,{recursive:true,force:true});}
+console.log(`runtime-overlay-version-ui: ${passed} passed, ${failed} failed`);process.exitCode=failed?1:0;
