@@ -86,12 +86,18 @@ function render() {
   // Live refresh detaches even reused cards. Keep only the exact still-valid card action;
   // never transfer focus to a replacement, a different page, or over another focus target.
   const card = a?.closest('[data-scard][data-card-status="open"]');
-  const action = a && root.contains(a) && card && a.matches('button,a[href]') && fieldKey(a) ? { card, id: card.dataset.scard, key: fieldKey(a), hash: location.hash, option: a.getAttribute('data-option'), href: a.getAttribute('href'), page: `${S.route.name}/${S.route.arg ?? ""}` } : null;
+  const action = a && root.contains(a) && card && a.matches('button,a[href]') && !a.matches(':disabled,[aria-disabled="true"]') && a.getClientRects().length && getComputedStyle(a).visibility !== 'hidden' && fieldKey(a) ? { card, id: card.dataset.scard, key: fieldKey(a), hash: location.hash, option: a.getAttribute('data-option'), href: a.getAttribute('href'), page: `${S.route.name}/${S.route.arg ?? ""}` } : null;
   root.replaceChildren(...[routes[S.route.name](S.route.arg)].flat().filter(Boolean));
   render.at = `${S.route.name}/${S.route.arg ?? ""}`;
   const again = keep && (keep.a.isConnected ? keep.a : keep.key && keep.at === render.at ? (() => { const m = root.querySelectorAll(keep.key); return m.length === 1 && m[0].tagName === keep.a.tagName ? m[0] : null; })() : null);
   if (again && document.activeElement !== again) { try { again.focus({ preventScroll: true }); const n = again.value.length; again.setSelectionRange(Math.min(keep.s ?? n, n), Math.min(keep.e ?? n, n)); } catch {} }
-  if (action && action.page === render.at && action.hash === location.hash && root.contains(a) && a.closest('[data-scard][data-card-status="open"]') === action.card && action.card.dataset.scard === action.id && fieldKey(a) === action.key && a.getAttribute('data-option') === action.option && a.getAttribute('href') === action.href && !a.matches(':disabled,[aria-disabled="true"]') && a.getClientRects().length && getComputedStyle(a).visibility !== 'hidden' && document.activeElement === document.body) a.focus({ preventScroll: true });
+  // A retained card may rebuild its controls while the route renders. Bind to
+  // that same card element and unique action, rather than the detached old button.
+  if (action && action.page === render.at && action.hash === location.hash && root.contains(action.card) && action.card.matches('[data-card-status="open"]') && action.card.dataset.scard === action.id && document.activeElement === document.body) {
+    const matches = [...action.card.querySelectorAll(action.key)].filter(next => next.closest('[data-scard][data-card-status="open"]') === action.card && next.getAttribute('data-option') === action.option && next.getAttribute('href') === action.href);
+    const next = matches.length === 1 ? matches[0] : null;
+    if (next && !next.matches(':disabled,[aria-disabled="true"]') && next.getClientRects().length && getComputedStyle(next).visibility !== 'hidden') next.focus({ preventScroll: true });
+  }
   hydrateIcons(root);
   $("#main").scrollTop = scroll;
   updateNav();

@@ -139,12 +139,16 @@ ok(observed.newCards.length===2&&observed.showHref==='#/inbox','multiple real fr
 {const ctx=await browser.newContext({viewport:{width:1440,height:900}}),q=await ctx.newPage();await q.clock.install();
  const initial=q.waitForResponse(r=>r.url().includes('/api/scards?open=1'));await q.goto(base+'/#/board');await(await initial).finished();await q.evaluate(()=>document.readyState);
  await q.clock.pauseAt(await q.evaluate(()=>Date.now()+100));
+ // Observe the actual expiry timer's clock origin, not the later polling time.
+ await q.evaluate(()=>{const original=setTimeout;window.fixtureCueDeadline=null;window.setTimeout=(fn,ms,...args)=>{if(typeof fn==='function'&&fn.name==='dropCue'&&ms===30000)window.fixtureCueDeadline=Date.now()+ms;return original(fn,ms,...args);};});
  const r=await q.evaluate(async()=>{const response=await fetch('/api/tasks',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({workflow:'cue-notice',version:1,text:'Cue expiry control',title:'Cue expiry control'})});return {status:response.status,data:await response.json()};});if(r.status!==200)throw new Error('Expiry fixture creation failed');
  let cardId;await pollUI(async()=>{const task=await q.evaluate(async id=>(await(await fetch('/api/tasks/'+id)).json()),r.data.id);cardId=task.cards?.find(c=>c.run===r.data.id)?.id;return !!cardId;},'expiry Task did not raise its card');
  // Advance the actual 150 ms scard debounce while network promises settle on the paused clock.
  for(let n=0;n<20&&!await noticeBound(q,cardId);n++){await q.clock.runFor(150);await new Promise(r=>setTimeout(r,40));}
  if(!await noticeBound(q,cardId))throw new Error('expiry cue was not bound to its actual new Task card');
- await q.clock.runFor(29999);ok(await noticeBound(q,cardId),'actual new-card cue remains before its 30-second expiry');
+ await q.clock.runFor(150); // deterministic observation delay after the timer began
+ const remaining=await q.evaluate(()=>window.fixtureCueDeadline-Date.now());if(!Number.isFinite(remaining)||remaining<=1)throw new Error('Actual cue expiry timer was not observed before its deadline');
+ await q.clock.runFor(remaining-1);ok(await noticeBound(q,cardId),'actual new-card cue remains before its 30-second expiry');
  await q.clock.runFor(1);ok(await q.locator('.rt-cue').count()===0,'actual new-card cue expires at 30 seconds');await ctx.close();}
 }finally{await browser?.close();app.kill();await new Promise(r=>app.exitCode!==null?r():app.once('exit',r));}
 console.log(`workflow-overview-ui: ${pass} passed, ${fail} failed`);process.exit(fail?1:0);

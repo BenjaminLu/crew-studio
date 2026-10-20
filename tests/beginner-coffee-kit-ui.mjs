@@ -75,7 +75,9 @@ if(process.argv.includes('--fixture-server')){
    ok(await card.evaluate(el=>[...el.querySelectorAll('button,a.btn,input,textarea')].filter(e=>e.getBoundingClientRect().width>0).every(e=>e.getBoundingClientRect().height>=44)),`human controls and feedback targets >=44px ${tag}`);
    const first=card.locator('button,a.btn,input,textarea').first();await first.focus();await page.keyboard.press('Tab');
    // Refresh the actual authenticated card while keyboard focus is inside it.
-   await card.evaluate(async el=>{const c=await (await fetch('/api/scards/'+encodeURIComponent(el.dataset.scard))).json();window.fixtureCardControllers.get(el).update(c);});
+   await card.evaluate(async el=>{const c=await (await fetch('/api/scards/'+encodeURIComponent(el.dataset.scard))).json(),ctl=window.fixtureCardControllers.get(el);ctl.update(c);
+    // A live card update can arrive while the route rebuilds the retained card.
+    const route=S.route.name,previous=routes[route];routes[route]=(...args)=>{ctl.update(c);return previous(...args);};try{render();}finally{routes[route]=previous;}});
    if(tag.endsWith(' capability'))await page.evaluate(()=>render());
    ok(await card.evaluate(el=>el.contains(document.activeElement)&&document.activeElement.matches(':focus-visible')&&getComputedStyle(document.activeElement).outlineStyle!=='none'),`keyboard focus remains visible on actual captain controls ${tag}`);
   };
@@ -89,6 +91,13 @@ if(process.argv.includes('--fixture-server')){
     out.closed=probe(()=>{}, {...card,status:'cancelled'});
     out.ambiguous=probe(()=>{}, {...card,options:[...card.options,card.options[0]]});
     const main=document.querySelector('#main');main.focus();ctl.update(card);out.otherFocus=document.activeElement===main;
+    const nested=(next,change=()=>{})=>{ctl.update(card);el.querySelector('[data-option]').focus();const name=S.route.name,previous=routes[name];routes[name]=(...args)=>{ctl.update(next);change();return previous(...args);};try{render();}finally{routes[name]=previous;}const refused=!el.contains(document.activeElement);ctl.update(card);return refused;};
+    out.nestedRemoved=nested({...card,options:[]});
+    out.nestedReplaced=nested({...card,id:card.id+'-replacement'});
+    out.nestedClosed=nested({...card,status:'cancelled'});
+    out.nestedAmbiguous=nested({...card,options:[...card.options,card.options[0]]});
+    out.nestedDisabled=nested(card,()=>el.querySelector('[data-option]').setAttribute('aria-disabled','true'));
+    out.nestedOtherFocus=nested(card,()=>main.focus())&&document.activeElement===main;
     return out;
    });
    for(const[name,passed]of Object.entries(results))ok(passed,'card refresh refuses invalid or superseded action focus: '+name);

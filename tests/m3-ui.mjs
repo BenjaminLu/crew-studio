@@ -110,6 +110,9 @@ try {
   // ---- the video timeline loop in the browser ----
   {
     const p = await page(1440, "dark");
+    let holdMedia = false, releaseMedia;
+    const mediaReady = new Promise(resolve => { releaseMedia = resolve; });
+    await p.route('**/af/film/1/render.mp4', async route => { if (holdMedia) await mediaReady; await route.continue(); });
     await p.goto(`${base}/#/review/film/1`);
     await p.locator("video.a3-video").waitFor();
     await p.waitForFunction(() => document.querySelector("video.a3-video")?.duration > 0);
@@ -122,10 +125,16 @@ try {
     const vb = await p.locator(".a3-draw").boundingBox();
     await p.mouse.move(vb.x + vb.width * 0.2, vb.y + vb.height * 0.2); await p.mouse.down(); await p.mouse.move(vb.x + vb.width * 0.6, vb.y + vb.height * 0.5, { steps: 4 }); await p.mouse.up();
     await p.locator(".a3-composer textarea").fill("hold the final tagline 0.5 s longer");
+    holdMedia = true;
     await p.locator(".a3-composer button", { hasText: "Add note" }).click();
     await p.locator('.a3-note[data-note="R1"]').waitFor({ timeout: 5000 });
     const notes = await (await fetch(`${base}/api/artifacts/film/v/1/notes`)).json();
     ok(notes[0].kind === "range" && notes[0].box && notes[0].box.w > 0.3 && notes[0].t0 >= 2.9, "the note keeps the range and the frame box", JSON.stringify(notes[0]));
+    // Saving a note rebuilds the video. Its sidebar can render before that
+    // video's metadata (which draws the timeline markers) has arrived.
+    ok(await p.locator("video.a3-video").evaluate(v => v.readyState === 0) && await p.locator(".a3-mark").count() === 0, "note remains readable while the new timeline waits for media metadata");
+    holdMedia = false; releaseMedia();
+    await p.waitForFunction(() => document.querySelector("video.a3-video")?.duration > 0);
     ok(await p.locator(".a3-mark").count() === 1, "a marker shows on the timeline");
     await p.screenshot({ path: join(shots, "m3-video-1440-dark.png") });
     await p.locator("button", { hasText: "Request changes" }).click();
