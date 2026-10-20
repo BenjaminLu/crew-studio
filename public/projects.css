@@ -131,3 +131,5 @@ a.btn,a.chip,.sec-head a{text-decoration:none}
   .pj-h-sum{display:grid}
   .pj-h-sum .ic{color:var(--ok)}
 }
+
+.pj-add{max-width:720px}.pj-add input{width:100%;min-height:42px;box-sizing:border-box}.pj-add label{font-weight:500}.pj-add p{margin:0;line-height:1.6}.pj-add h2{margin:0;font-size:17px}

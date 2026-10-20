@@ -1,4 +1,4 @@
-// Projects, phase 1 (read only; projects design §2): the sidebar's Projects section, the projects index
+// Projects: overview and captain-confirmed local registration. the sidebar's Projects section, the projects index
 // (#/projects) and one project's page (#/project/<id>), ported from the approved prototype. Data comes from
 // GET /api/projects/overview and GET /api/projects/<id>/overview. The only writes are the existing sensitive-path
 // routes (propose, approve, decline); answering a card, changing the crew and the Tasks list are links.
@@ -6,11 +6,11 @@
 // the sidebar refetches at most every 2 s; health (no event) refetches on (re)connect, on focus, after the page's
 // own writes and every 60 s while visible. Loaded before backbone.js.
 (() => {
-const PJ = { side: null, sideErr: null, sideAt: 0, sideBusy: false, sideNext: null, pages: new Map(), pageTimer: null, proposing: null };
+const PJ = { side: null, sideErr: null, sideAt: 0, sideBusy: false, sideNext: null, pages: new Map(), pageTimer: null, proposing: null, adding: null };
 const MARK_CLASS = { local: "", external: "p2", builtin: "p6", studio: "p3" };
 const LX = (o) => (o ? T(o.en ?? "", o.tw ?? o["zh-TW"] ?? o.en ?? "") : "");
 const getJ = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) { const e = new Error(T(j.error || `HTTP ${r.status}`, j.tw || j.error || `HTTP ${r.status}`)); e.status = r.status; throw e; } return j; };
-const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw new Error(j.error || `HTTP ${r.status}`); return j; };
+const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw new Error(T(j.error || `HTTP ${r.status}`, j.tw || j.error || `HTTP ${r.status}`)); return j; };
 const markOf = (p) => h("span", { class: `pmark ${MARK_CLASS[p.kind] ?? ""}`.trim(), "aria-hidden": p.kind === "studio" ? "true" : null }, p.kind === "studio" ? "·" : (nameOf(p) || "?").slice(0, 1).toUpperCase());
 const nameOf = (p) => (p.kind === "builtin" && p.id === "sandbox" ? T("Sandbox", "沙箱") : p.name || p.id);
 const hrefOf = (p) => (p.kind === "studio" ? "#/runs?project=studio" : `#/project/${encodeURIComponent(p.id)}`);
@@ -78,9 +78,24 @@ async function loadSide(force = false) {
 
 // ---------- the projects index ----------
 function pipe(segs, cls = "pipe") { return h("div", { class: cls }, (segs || []).map((s) => h("i", { class: s || null }))); }
+function localProjectForm() {
+  const a=PJ.adding;if(!a)return null;
+  const path=h("input",{id:"project-local-path",name:"path",type:"text",required:true,maxlength:1000,autocomplete:"off",placeholder:"/Users/you/projects/repository",value:a.path,oninput:e=>{a.path=e.target.value;}});
+  const name=h("input",{id:"project-local-name",name:"name",type:"text",maxlength:100,autocomplete:"off",value:a.name,oninput:e=>{a.name=e.target.value;}});
+  return h("form",{class:"card x-pad x-stack pj-add", "data-local-project-form":"1",onsubmit:async e=>{
+    e.preventDefault();if(a.busy)return;a.busy=true;a.error=null;soft();
+    try{const result=await postJ("/api/projects/local-registration",{path:a.path.trim(),...(a.name.trim()?{name:a.name.trim()}:{})});if(PJ.adding!==a)return;PJ.adding=null;location.hash=result.href;if(result.existing)toast(T("Already registered. Opened the existing project.","已註冊，已開啟既有專案。"));}
+    catch(err){a.error=err.message;}finally{a.busy=false;if(PJ.adding===a)soft();}
+  }},h("h2",{},T("Add local project","新增本機專案")),
+    h("label",{for:"project-local-path"},T("Local Git repository path","本機 Git 儲存庫路徑")),path,
+    h("label",{for:"project-local-name"},T("Project name (optional)","專案名稱（選填）")),name,
+    h("p",{class:"faint"},T("Use an existing Git repository with a named branch. Studio checks its real root and base, then asks you to confirm. It does not modify files or start tasks. GitHub access and crew are configured separately.","請選擇已有具名分支的 Git 儲存庫。Studio 會檢查實際根目錄與基準分支，再請你確認。不會修改檔案或啟動任務；GitHub 權限與船員配置另外設定。")),
+    a.error?h("div",{class:"err",role:"alert"},a.error):null,
+    h("div",{class:"actions"},h("button",{class:"btn primary",type:"submit",disabled:a.busy},a.busy?T("Checking…","檢查中…"):T("Review project","檢查並確認")),h("button",{class:"btn",type:"button",disabled:a.busy,onclick:()=>{PJ.adding=null;soft();}},T("Cancel","取消"))));
+}
 function viewIndex() {
   if (PJ.side === null && !PJ.sideErr) { loadSide(true); }
-  const head = h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Projects", "專案")), h("p", {}, T("Every project Studio can work in, and what each one is doing now.", "Studio 能工作的每個專案，以及它們現在在做什麼。"))));
+  const head = h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Projects", "專案")), h("p", {}, T("Every project Studio can work in, and what each one is doing now.", "Studio 能工作的每個專案，以及它們現在在做什麼。"))), h("button", {class:"btn primary", "data-add-local-project":"1", onclick:()=>{PJ.adding=PJ.adding||{path:"",name:"",busy:false,error:null};soft();setTimeout(()=>document.getElementById("project-local-path")?.focus(),0);}},T("Add local project","新增本機專案")));
   if (PJ.side === null && !PJ.sideErr) return h("div", { class: "page", "data-projects-index": "1" }, head, h("div", { class: "pj-states" }, [0, 1, 2].map(() => h("div", { class: "card x-pad x-stack" }, h("div", { class: "skel", style: "height:22px;width:60%" }), h("div", { class: "skel", style: "height:14px" }), h("div", { class: "skel", style: "height:14px;width:80%" })))));
   if (PJ.sideErr && !PJ.side) return h("div", { class: "page", "data-projects-index": "1" }, head, h("div", { class: "card x-pad x-stack" }, h("div", { class: "err" }, icon("alert", "ic sm"), h("span", {}, T("The project registry cannot be read. Nothing was changed.", "無法讀取專案登錄資料。沒有任何變更。"))), h("div", {}, h("button", { class: "btn", onclick: () => loadSide(true) }, T("Try again", "重試")))));
   const list = PJ.side.projects || [];
@@ -111,9 +126,9 @@ function viewIndex() {
       h("div", { class: "x-row" }, markOf(p), h("b", {}, nameOf(p)), h("span", { class: "x-grow" }), badge),
       h("div", { class: "faint", style: "font-size:13px" }, line), (p.mini || []).length ? pipe(p.mini) : null);
   };
-  return h("div", { class: "page", "data-projects-index": "1" }, head,
+  return h("div", { class: "page", "data-projects-index": "1" }, head, localProjectForm(),
     PJ.side.error ? h("div", { class: "err" }, icon("alert", "ic sm"), h("span", {}, T("The project registry cannot be read. Nothing was changed.", "無法讀取專案登錄資料。沒有任何變更。"))) : null,
-    !real.length && !PJ.side.error ? h("div", { class: "card" }, h("div", { class: "empty", "data-projects-empty": "1" }, icon("folder"), h("b", {}, T("No project yet", "還沒有專案")), h("span", {}, T("Register a folder you already have, or make an empty one.", "登錄你已有的資料夾，或建立一個空專案。")))) : null,
+    !real.length && !PJ.side.error ? h("div", { class: "card" }, h("div", { class: "empty", "data-projects-empty": "1" }, icon("folder"), h("b", {}, T("No project yet", "還沒有專案")), h("span", {}, T("Add an existing local Git repository to get started.", "新增已有的本機 Git 儲存庫即可開始。")))) : null,
     h("div", { class: "pj-states" }, list.map(cardOf)));
 }
 
