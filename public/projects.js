@@ -80,8 +80,8 @@ async function loadSide(force = false) {
 function pipe(segs, cls = "pipe") { return h("div", { class: cls }, (segs || []).map((s) => h("i", { class: s || null }))); }
 function localProjectForm() {
   const a=PJ.adding;if(!a)return null;
-  const path=h("input",{id:"project-local-path",name:"path",type:"text",required:true,maxlength:1000,autocomplete:"off",placeholder:"/Users/you/projects/repository",value:a.path,oninput:e=>{a.path=e.target.value;}});
-  const name=h("input",{id:"project-local-name",name:"name",type:"text",maxlength:100,autocomplete:"off",value:a.name,oninput:e=>{a.name=e.target.value;}});
+  const path=h("input",{class:"input",id:"project-local-path",name:"path",type:"text",required:true,maxlength:1000,autocomplete:"off",placeholder:"/Users/you/projects/repository",value:a.path,oninput:e=>{a.path=e.target.value;}});
+  const name=h("input",{class:"input",id:"project-local-name",name:"name",type:"text",maxlength:100,autocomplete:"off",value:a.name,oninput:e=>{a.name=e.target.value;}});
   return h("form",{class:"card x-pad x-stack pj-add", "data-local-project-form":"1",onsubmit:async e=>{
     e.preventDefault();if(a.busy)return;a.busy=true;a.error=null;soft();
     try{const result=await postJ("/api/projects/local-registration",{path:a.path.trim(),...(a.name.trim()?{name:a.name.trim()}:{})});if(PJ.adding!==a)return;PJ.adding=null;location.hash=result.href;if(result.existing)toast(T("Already registered. Opened the existing project.","已註冊，已開啟既有專案。"));}

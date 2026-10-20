@@ -1,4 +1,4 @@
-import './lib/isolated-env.mjs';
+import "./lib/isolated-env.mjs";
 import {readFileSync,readdirSync,mkdirSync,realpathSync} from 'node:fs';
 import {join} from 'node:path';
 import {chromium} from 'playwright';

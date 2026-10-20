@@ -1,6 +1,7 @@
 import "./lib/isolated-env.mjs";
 import {existsSync,readFileSync,mkdirSync,symlinkSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {assertTempRepo} from './lib/git-hygiene.mjs';
 import {createProjectOverview} from '../src/project-overview';
 import {Projects} from '../src/doors';
 import {projectFixture} from './lib/firstmate-project-fixture';
@@ -26,7 +27,7 @@ try{
  const r=await f.api('/api/projects/local-registration',{path});ok(r.status===409&&r.body.code&&r.body.tw,label+' returns safe actionable error');
  }
 
- const make=(name:string)=>{const path=join(f.root,name);mkdirSync(path);for(const args of [['init','-b','main'],['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture']])if(Bun.spawnSync(['git',...args],{cwd:path,stdout:'pipe',stderr:'pipe'}).exitCode)throw new Error('fixture git setup');return path;};
+ const make=(name:string)=>{const path=assertTempRepo(join(f.root,name));mkdirSync(path);for(const args of [['init','-b','main'],['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture']])if(Bun.spawnSync(['git',...args],{cwd:path,stdout:'pipe',stderr:'pipe'}).exitCode)throw new Error('fixture git setup');return path;};
  const alias=join(f.root,'alias');symlinkSync(f.repo,alias);
  ok((await f.api('/api/projects/local-registration',{path:alias})).body.existing,'symlink alias opens existing canonical project');
  const prepare=async(path:string)=>{const r=await f.api('/api/projects/local-registration',{path});if(!r.body.task)throw new Error(JSON.stringify(r));await f.until(async()=>(await f.api('/api/wruns/'+r.body.task)).body.nodes?.register?.waiting==='card');const c=(await f.api('/api/scards')).body.cards.find((c:any)=>c.run===r.body.task&&c.status==='open');return{...r.body,card:c};};
