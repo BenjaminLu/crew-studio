@@ -1,7 +1,7 @@
-// Library → Skills (unit agent-skills): the skill library and the role skills, and the
+// Skills (unit agent-skills): the skill library and the role skills, and the
 // import form (a local folder, a skills home, a public https git URL). Routes:
-// #/library (Artifacts, the existing page, with the tabs above it), #/library/skills and
-// #/skills/<id>[@v] (the read-only skill viewer over the Library). A row shows a skill's name,
+// #/skills (primary page), #/library/skills (compatible alias), and
+// #/skills/<id>[@v] (the read-only skill viewer over Skills). A row shows a skill's name,
 // description, source, version and hash; Read opens the viewer with its exact text.
 (() => {
 const SK = { data: null, homes: null, kind: "folder", msg: null, busy: false, path: "", url: "", sub: "" };
@@ -9,7 +9,7 @@ window.crewSkills = SK; // the workflow editor reads the same library
 const getJ = (u) => fetch(u).then((r) => r.json());
 async function load() {
   try { const [d, hm] = await Promise.all([getJ("/api/skills"), getJ("/api/skills/homes")]); SK.data = d; SK.homes = hm.homes || []; } catch { SK.data = { skills: [], roles: [] }; SK.homes = []; }
-  if (S.route?.name === "library" && S.route.arg === "skills") soft();
+  if (S.route?.name === "skills" || (S.route?.name === "library" && S.route.arg === "skills")) soft();
 }
 const KIND = { builtin: ["Built in", "內建"], folder: ["Folder", "資料夾"], home: ["Skills home", "技能目錄"], git: ["Git", "Git"], role: ["Role skill", "角色技能"] };
 const kindLabel = (k) => T(...(KIND[k] || [k, k]));
@@ -52,12 +52,6 @@ window.crewSkillImport = (onImported, opener) => {
   // the homes are read again on every open: a skill the captain just added to ~/.claude/skills is listed
   getJ("/api/skills/homes").then((hm) => { SK.homes = hm.homes || []; if (back.isConnected) redraw(); }).catch(() => {});
 };
-
-function tabs(cur) {
-  return h("div", { class: "seg sk-tabs", role: "group", "aria-label": T("Library section", "成品庫分區") },
-    [["artifacts", "Artifacts", "成品", "#/library"], ["skills", "Skills", "技能", "#/library/skills"]].map(([k, en, tw, href]) =>
-      h("button", { type: "button", "aria-pressed": String(cur === k), "data-lib-tab": k, onclick: () => { location.hash = href; } }, h("span", { class: "keep" }, T(en, tw)))));
-}
 
 async function doImport(body, redraw = soft) {
   SK.busy = true; SK.msg = { state: "busy", text: T("Importing…", "匯入中…") }; redraw();
@@ -125,12 +119,12 @@ function roleRow(r) {
 }
 function viewSkills() {
   if (!SK.data) load();
-  const head = h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Library", "成品庫")),
+  const head = h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Skills", "技能")),
     h("p", {}, T("Skills agents can use: a role's own skill, plus library skills any agent node can turn on. Each version is pinned by its hash.", "agent 可用的技能：每個角色自己的技能，加上任何 agent 節點都能開啟的技能庫。每個版本以雜湊固定。"))),
     h("div", { class: "actions" }, h("button", { class: "btn ghost", onclick: () => { SK.data = null; render(); } }, icon("refresh", "ic sm"), T("Refresh", "重新整理"))));
-  if (!SK.data) return h("div", { class: "page sk-page" }, head, tabs("skills"), h("div", { class: "skel", style: "height:240px" }));
+  if (!SK.data) return h("div", { class: "page sk-page" }, head, h("div", { class: "skel", style: "height:240px" }));
   const lib = SK.data.skills || [], roles = SK.data.roles || [];
-  return h("div", { class: "page sk-page", "data-skills-page": "1" }, head, tabs("skills"), importCard(),
+  return h("div", { class: "page sk-page", "data-skills-page": "1" }, head, importCard(),
     h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Skill library", "技能庫")), h("span", { class: "faint" }, String(lib.length))),
       lib.length ? h("div", { class: "card sk-list" }, lib.map(skillRow)) : h("div", { class: "card" }, h("div", { class: "empty" }, icon("library"), h("b", {}, T("No skills yet", "還沒有技能")), T("Import one above.", "從上面匯入一個。")))),
     h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Role skills", "角色技能")), h("span", { class: "faint" }, String(roles.length))),
@@ -285,7 +279,7 @@ function skvClose(restore = true) {
   const fromRoute = SKV.route; SKV.route = null;
   if (!restore) return;
   const o = SKV.opener;
-  if (fromRoute && /^#\/skills\//.test(location.hash)) { location.hash = "#/library/skills"; requestAnimationFrame(() => document.querySelector(`[data-skill-view="${CSS.escape(refKey(SKV.ref))}"]`)?.focus()); return; }
+  if (fromRoute && /^#\/skills\//.test(location.hash)) { location.hash = "#/skills"; requestAnimationFrame(() => document.querySelector(`[data-skill-view="${CSS.escape(refKey(SKV.ref))}"]`)?.focus()); return; }
   const el = o?.el?.isConnected ? o.el : o?.sel ? document.querySelector(o.sel) : null; el?.focus();
 }
 /** A skill chip as a button that opens the viewer (the chip's own look stays its class). Clicking it changes nothing on the page. */
@@ -307,10 +301,8 @@ const base = routes.library;
 routes.library = (arg) => {
   if (arg === "skills") return viewSkills();
   const page = base(arg);
-  const el = Array.isArray(page) ? page[0] : page;
-  const ph = el?.querySelector?.(":scope > .phead");
-  if (ph) ph.after(tabs("artifacts"));
+  // Skills now has its own primary navigation entry; legacy deep links still resolve.
   return page;
 };
-addEventListener("hashchange", () => { if (S.route?.name === "library" && S.route.arg === "skills" && SK.data && Date.now() - (SK.t || 0) > 30_000) { SK.t = Date.now(); load(); } });
+addEventListener("hashchange", () => { if ((S.route?.name === "skills" || (S.route?.name === "library" && S.route.arg === "skills")) && SK.data && Date.now() - (SK.t || 0) > 30_000) { SK.t = Date.now(); load(); } });
 })();

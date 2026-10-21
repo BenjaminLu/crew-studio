@@ -72,10 +72,14 @@ try {
   { const ctx = await browser.newContext({ viewport: { width: 1440, height: 1200 }, colorScheme: "light" }); const p = safe(await ctx.newPage());
     p.on("pageerror", (e) => errors.push(e.message));
     await p.goto(`${base}/#/library`); await p.evaluate(() => document.body.classList.add("chat-closed"));
-    ok(await wait(p, '[data-lib-tab="skills"]'), "Library has a Skills tab");
-    await p.click('[data-lib-tab="skills"]');
+    ok(await wait(p, '.nav-item[data-view="skills"]'), "Skills has its own primary navigation entry");
+    ok(await p.locator('[data-lib-tab="skills"]').count() === 0, "Library does not duplicate Skills as a nested category");
+    await p.click('.nav-item[data-view="skills"]');
+    ok(await wait(p, '[data-skills-page]') && p.url().endsWith("#/skills"), "primary Skills opens its existing list");
+    await p.goto(`${base}/#/library/skills`);
+    ok(await wait(p, '[data-skills-page]') && await p.getAttribute('.nav-item[data-view="skills"]', "aria-current") === "page", "legacy Skills alias stays functional and highlights Skills");
     ok(await wait(p, '[data-skill="plain-writing"]') && /built in/i.test(await p.textContent('[data-skill="plain-writing"] [data-skill-source]')) && (await p.textContent('[data-skill="plain-writing"] [data-skill-version]')).trim() === "v1",
-      "Library → Skills lists the built-in plain-writing skill (core pack, v1)");
+      "Skills lists the built-in plain-writing skill (core pack, v1)");
     ok(await wait(p, '[data-role-skill="code-firstmate/coordinator"]'), "the role skills already there are listed too");
     // done 1: a folder, then a skills home
     await importFolder(p, alpha);
