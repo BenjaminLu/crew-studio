@@ -222,7 +222,7 @@ try {
       await p.screenshot({ path: join(shots, `runtime-${name}-${width}-${scheme}.png`) });
     }
     if (width === 390) { await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector("[data-node]");
-      const c = await p.locator(".rt-canvas").boundingBox(); ok(c.width > 300 && c.width <= 390, "on a phone the canvas takes the width, palette and panel stack under it", JSON.stringify(c)); }
+      const c = await p.locator(".rt-canvas").boundingBox(); ok(c.width > 300 && c.width <= 390 && await p.$eval("#main",el=>el.scrollWidth<=el.clientWidth+1), "on a phone the canvas takes the width without clipped main content", JSON.stringify(c)); }
     await ctx.close();
   }
   ok(!errors.length, "no page errors", errors.slice(0, 5).join(" | "));
