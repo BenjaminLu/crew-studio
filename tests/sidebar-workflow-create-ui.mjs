@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { revealEditorControl } from "./lib/reveal-editor-control.mjs";
 // Actual native Studio, isolated fake-provider data. No live records or remote calls.
 import{spawn}from'node:child_process';import{mkdtempSync,mkdirSync,readFileSync,writeFileSync}from'node:fs';import{tmpdir}from'node:os';import{join,dirname}from'node:path';import{fileURLToPath}from'node:url';
 import{freePort,waitUp,withSession}from'./boot.mjs';
@@ -29,7 +30,7 @@ for(const width of[320,390,1440])for(const lang of['en','zh-TW'])for(const theme
   await p.locator('[data-wf-create-submit]').click();await p.waitForURL('**/#/workflows/'+id);await p.waitForSelector('[data-node="start"]');
   const created=await ctx.request.get(base+'/api/wf/'+id).then(r=>r.json());ok(created.def.version===1&&created.def.nodes.length===2,`actual create opens saved starter graph ${tag}`);
   ok((await ctx.request.get(base+'/api/wruns').then(r=>r.json())).runs.length===before,`create never auto-starts Task ${tag}`);
-  await p.locator('[data-view-toggle="detail"]').click();await p.locator('[data-node="start"]').focus();await p.keyboard.press('Enter');await p.locator('[data-field="label"]').fill('Captain review');await p.locator('[data-field="label"]').press('Tab');await p.locator('[data-save]').click();
+  await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.locator('[data-view-toggle="detail"]').click();await p.locator('[data-node="start"]').focus();await p.keyboard.press('Enter');await p.locator('[data-field="label"]').fill('Captain review');await p.locator('[data-field="label"]').press('Tab');await p.locator('[data-save]').click();
   await p.waitForFunction(async id=>(await fetch('/api/wf/'+id).then(r=>r.json())).def.version===2,id);
   const old=await ctx.request.get(base+'/api/wf/'+id+'?v=1').then(r=>r.json());ok(old.def.nodes[0].label===(lang==='en'?'Start':'開始'),`actual editor save creates v2 and preserves v1 ${tag}`);
   await p.screenshot({path:join(shots,tag+'-editor.png'),fullPage:true});

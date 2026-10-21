@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { revealEditorControl } from "./lib/reveal-editor-control.mjs";
 // The tidy workflow graph in the pages: the auto layout on a newly loaded built-in
 // workflow, no drawn edge through a node (sampled on the drawn paths), dashed arcs,
 // stages that collapse and expand (collapsed on a phone, with their state in the
@@ -65,7 +66,7 @@ try {
     const p = await page(width, scheme); await p.evaluate(() => localStorage.setItem("crew.graphView", "detail"));
     for (const w of wfs0) { const legacy = w.id === "video"; if (!legacy) await post(`/api/graph-layout/${w.id}/v${w.version}`, { mode: "manual" });
       await p.goto(`${base}/#/workflows/${w.id}${w.id==="coffee-kit"?"/advanced":""}`); await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed")); await p.waitForSelector("svg.rt-graph [data-node]", { timeout: 15000 }).catch(() => {});
-      await p.click("[data-fit]").catch(() => {}); await p.waitForTimeout(150);
+      await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]").catch(() => {}); await p.waitForTimeout(150);
       await p.screenshot({ path: join(before, `${w.id}-${width}-${scheme}.png`), fullPage: true });
       if (!legacy) await post(`/api/graph-layout/${w.id}/v${w.version}`, { mode: "auto" }); }
     await p.context().close();
@@ -88,10 +89,10 @@ try {
     ok(minFont >= 11, "node titles render at 11 px or more in the simple view at Fit (1440)", `${minFont.toFixed(1)} px`);
     ok(await p.locator("[data-minimap]").count() === 0, "the simple view fits whole and needs no minimap");
     await p.screenshot({ path: join(shots, "editor-simple-1440-light.png") });
-    await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="spec-fix"]');
+    await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="spec-fix"]');
     const detailIds = await p.$$eval("svg.rt-graph [data-node]", (gs) => gs.length);
     ok(detailIds === 32 && await p.locator("svg.rt-graph .rt-edge[data-back]").count() >= 10 && await p.locator("[data-port]").count() === 32 && await p.locator('svg.rt-graph [data-node="pr-open"]').count() === 1, "toggling to Detail view restores every node, back edge and port", String(detailIds));
-    await p.click('[data-view-toggle="simple"]'); await p.waitForSelector('svg.rt-graph[data-view="simple"]');
+    await revealEditorControl(p, '[data-view-toggle="simple"]'); await p.click('[data-view-toggle="simple"]'); await p.waitForSelector('svg.rt-graph[data-view="simple"]');
     ok(await p.locator("svg.rt-graph [data-node]").count() === 19 && await p.locator("[data-port]").count() === 0 && await p.isVisible("[data-palette-note]"), "back in the simple view: the main path again, editing points to Detail view");
     await p.context().close();
   }
@@ -135,26 +136,26 @@ try {
     ok(collapsedOk && await p.locator('[data-stage-node="build"]').count() === 0 && await p.locator('[data-stage="build"]').count() === 1, "a stage collapses into one box and expands again");
     await p.screenshot({ path: join(shots, "editor-start-1440-light.png") });
     // Fit to view shows every node
-    await p.click("[data-fit]"); await p.waitForTimeout(200);
+    await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]"); await p.waitForTimeout(200);
     const fits = await p.evaluate(() => { const svg = document.querySelector("svg.rt-graph"); const [x, y, w, h] = svg.getAttribute("viewBox").split(" ").map(Number); const b = svg.lay.bbox; return b.x >= x - 1 && b.y >= y - 1 && b.x + b.w <= x + w + 1 && b.y + b.h <= y + h + 1; });
     ok(fits, "Fit to view shows the whole graph");
     await p.screenshot({ path: join(shots, "editor-fit-1440-light.png") });
     // the minimap moves the view
-    await p.click("[data-fit]"); await p.waitForTimeout(100); await p.click("[data-tidy]"); await p.waitForTimeout(300);
+    await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]"); await p.waitForTimeout(100); await revealEditorControl(p, "[data-tidy]"); await p.click("[data-tidy]"); await p.waitForTimeout(300);
     const vx0 = Number((await p.getAttribute("svg.rt-graph", "viewBox")).split(" ")[0]);
     await p.evaluate(() => document.body.classList.add("chat-closed")); await p.waitForTimeout(200);
     await p.locator("[data-minimap]").scrollIntoViewIfNeeded(); const mm = await p.locator("[data-minimap]").boundingBox(); await p.mouse.click(mm.x + mm.width - 10, mm.y + mm.height / 2); await p.waitForTimeout(150);
     const vx1 = Number((await p.getAttribute("svg.rt-graph", "viewBox")).split(" ")[0]);
     ok(mm && vx1 > vx0 + 200, "the minimap moves the view", `${vx0} → ${vx1}`);
     // a drag turns the version manual and is kept; Tidy layout goes back
-    await p.click("[data-tidy]"); await p.waitForTimeout(300);
+    await revealEditorControl(p, "[data-tidy]"); await p.click("[data-tidy]"); await p.waitForTimeout(300);
     const box = await p.locator('[data-node="prepare"] .rt-box').boundingBox();
     await p.mouse.move(box.x + 30, box.y + 20); await p.mouse.down(); await p.mouse.move(box.x + 60, box.y + 120, { steps: 8 }); await p.mouse.up(); await p.waitForTimeout(600);
     const moved = (await nodePos(p)).prepare;
     await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed")); await p.waitForSelector('[data-node="prepare"]');
     const kept = (await nodePos(p)).prepare;
     ok(await p.getAttribute("svg.rt-graph", "data-layout") === "manual" && kept[0] === moved[0] && kept[1] === moved[1], "a dragged node keeps its place after a reload (manual mode)", JSON.stringify({ moved, kept }));
-    await p.click("[data-tidy]"); await p.waitForTimeout(400);
+    await revealEditorControl(p, "[data-tidy]"); await p.click("[data-tidy]"); await p.waitForTimeout(400);
     await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed")); await p.waitForSelector('[data-node="prepare"]');
     ok(await p.getAttribute("svg.rt-graph", "data-layout") === "auto" && same(await nodePos(p), await autoPos(p, "code-firstmate")), "Tidy layout returns to the auto layout");
     await p.context().close();
@@ -168,7 +169,7 @@ try {
     const shown = (await p.$$eval("[data-runview] [data-node]", (gs) => gs.map((g) => g.dataset.node))).sort();
     ok(runId && JSON.stringify(shown) === JSON.stringify(simpleIds) && await p.locator("[data-runview] [data-state]").count() > 0, "the run view shows the same simple view, with node states", shown.join(","));
     ok(/round \d\/3/.test(await p.textContent('[data-badge="loop:spec"]').catch(() => "")), "in the live view the loop badge shows the current round", await p.textContent('[data-badge="loop:spec"]').catch(() => "none"));
-    await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('[data-runview] svg.rt-graph[data-view="detail"]');
+    await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('[data-runview] svg.rt-graph[data-view="detail"]');
     const detailStates = await p.$$eval("[data-runview] svg.rt-graph[data-view=detail] [data-node][data-state]", (gs) => Object.fromEntries(gs.map((g) => [g.dataset.node, g.dataset.state])));
     const apiStates = await (await fetch(`${base}/api/wruns/${runId}`)).json().then((r) => Object.fromEntries(Object.entries(r.nodes).filter(([, n]) => n.state && n.state !== "pending").map(([k, n]) => [k, n.state])));
     ok(same(await nodePos(p), await autoPos(p, "code-firstmate")) && Object.keys(detailStates).length > 0 && Object.entries(detailStates).every(([k, v]) => !apiStates[k] || apiStates[k] === v),
@@ -203,7 +204,7 @@ try {
       await p.waitForTimeout(200);
       ok(okSel && !(await through(p)).length && await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${id} renders at ${width} ${scheme} (${view})`);
       await p.screenshot({ path: join(shots, `${id}-${view}-${width}-${scheme}.png`), fullPage: true });
-      if (view === "simple") { await p.click("[data-fit]"); await p.waitForTimeout(150); await p.screenshot({ path: join(shots, `${id}-simple-fit-${width}-${scheme}.png`), fullPage: true }); }
+      if (view === "simple") { await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]"); await p.waitForTimeout(150); await p.screenshot({ path: join(shots, `${id}-simple-fit-${width}-${scheme}.png`), fullPage: true }); }
     }
     await p.context().close();
   }

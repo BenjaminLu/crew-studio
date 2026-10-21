@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { revealEditorControl } from "./lib/reveal-editor-control.mjs";
 // How a run ends, and removing runs, in the pages (docs/units/run-end-and-remove.md):
 // one word per run state on Runs, the Board and the run page (en and zh-TW), "Closed without
 // merging" never in the success style; Cancel with a reason from a run waiting at its card
@@ -97,9 +98,9 @@ try {
   await p.goto(`${base}/#/run/${CLOSED}`); await seen(p, "[data-run-state]");
   { const tl = await text(p, "[data-timeline]");
     ok(/Task: \S.* → Closed without merging/.test(tl) && !/succeeded|running→|pending→|→running|ended at/.test(tl), "the timeline says the run's states in the same words (no raw status), Simple view", tl.slice(0, 300));
-    await p.click('[data-view-toggle="detail"]'); await p.waitForTimeout(200);
+    await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await p.waitForTimeout(200);
     ok(/running→succeeded/.test(await text(p, "[data-timeline]")), "Detail view shows the raw transitions");
-    await p.click('[data-view-toggle="simple"]'); await p.waitForTimeout(200); }
+    await revealEditorControl(p, '[data-view-toggle="simple"]'); await p.click('[data-view-toggle="simple"]'); await p.waitForTimeout(200); }
   ok(await p.locator('[data-node="closed"][data-state="passed"], [data-node="closed"].st-passed').count() === 1, "the run graph shows the end node the run reached (closed), in Simple view");
   { const e = await edgesRight(p); ok(e.ok, "the run graph colours only the edges the run took (Ship? → Done stays neutral on the closed run)", JSON.stringify(e.got)); }
   // the Simple timeline never says a thing twice, and a result reads as a word

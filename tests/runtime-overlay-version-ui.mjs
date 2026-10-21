@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs";
+import { revealEditorControl } from "./lib/reveal-editor-control.mjs";
 // Real temporary Studio and actual completed card→hook runs. Only negative
 // identity corruption and response timing are intercepted at the HTTP boundary.
 import {spawn} from 'node:child_process';
@@ -20,7 +21,7 @@ try{
  await post('/api/wf',{id:'overlay-proof',name:'Overlay proof',origin:'starter'});
  const run=async(version,complete=true)=>{const r=await post('/api/wruns',{workflow:'overlay-proof',version,text:'Check the actual saved graph'});let current;for(let i=0;i<100;i++){current=await get('/api/wruns/'+r.id);if(current.cards?.some(c=>!c.answer)&&current.nodes.start.waiting==='card')break;await new Promise(r=>setTimeout(r,30));}assert.equal(current.version,version);assert(current.cards?.length);if(complete){await post('/api/scards/'+current.cards.find(c=>!c.answer).id+'/answer',{choice:'continue'});for(let i=0;i<100;i++){current=await get('/api/wruns/'+r.id);if(current.status==='succeeded')break;await new Promise(r=>setTimeout(r,30));}assert.equal(current.status,'succeeded');assert.equal(current.nodes.start.state,'passed');assert.equal(current.nodes.done.state,'passed');}return current;};
  const v1=await run(1),v1Waiting=await run(1,false);
- const open=async(version)=>{await p.goto(`${base}/#/workflows/overlay-proof${version?'/v'+version:''}`);await p.reload();await p.locator('[data-overlay]').waitFor();await p.locator('[data-view-toggle="detail"]').click();};
+ const open=async(version)=>{await p.goto(`${base}/#/workflows/overlay-proof${version?'/v'+version:''}`);await p.reload();await p.locator('[data-overlay]').waitFor();await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.locator('[data-view-toggle="detail"]').click();};
  const colored=async()=>p.locator('[data-node="start"][data-state="passed"],[data-node="done"][data-state="passed"]').count();
  const adjacentNotice=async()=>{await p.locator('[data-overlay]').scrollIntoViewIfNeeded();return p.evaluate(()=>{const a=document.querySelector('[data-overlay]').getBoundingClientRect(),b=document.querySelector('[data-overlay-status]').getBoundingClientRect();return b.height>0&&a.top>=0&&b.top>=a.bottom&&b.top-a.bottom<=180&&b.bottom<=innerHeight;});};
  // Observe the actual completed verification/refusal, rather than assuming HTTP finishes in 100ms.

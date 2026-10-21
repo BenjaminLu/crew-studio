@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { revealEditorControl } from "./lib/reveal-editor-control.mjs";
 // Genuine local save responses held after commit, and native Chrome pointer
 // input. Never synthesize a drop, verdict or successful server response.
 import { spawn } from "node:child_process";
@@ -18,8 +19,8 @@ const app = spawn("bun", ["src/server.ts"], { cwd: root, env: { ...env, CREW_DAT
 let browser, passed = 0, failed = 0;
 const ok = (v, name) => { console.log(`${v ? "PASS" : "FAIL"} ${name}`); v ? passed++ : failed++; };
 const shots = join(root, "tests/out/runtime-editor-ownership"); mkdirSync(shots, { recursive: true });
-const open = async (context, id) => { const p = await context.newPage(); await p.goto(`${base}/#/workflows/${id}`); await p.waitForSelector('[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await p.evaluate(() => document.body.classList.add("chat-closed")); await p.click("[data-fit]"); return p; };
-const field = async (p, id, value) => { await p.locator(`[data-node="${id}"]`).focus(); await p.keyboard.press("Enter"); await p.locator('[data-field="label"]').fill(value); await p.click("[data-fit]"); };
+const open = async (context, id) => { const p = await context.newPage(); await p.goto(`${base}/#/workflows/${id}`); await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.waitForSelector('[data-view-toggle="detail"]'); await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await p.evaluate(() => document.body.classList.add("chat-closed")); await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]"); return p; };
+const field = async (p, id, value) => { await p.locator(`[data-node="${id}"]`).focus(); await p.keyboard.press("Enter"); await p.locator('[data-field="label"]').fill(value); await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]"); };
 const holdSave = async (p, id) => { let release, ready; const gate = new Promise(r => release = r), started = new Promise(r => ready = r); let first = true;
   const handler = async route => { if (route.request().method() !== "POST" || !first) return route.continue(); first = false; const response = await route.fetch(); ready(response.status()); await gate; try { await route.fulfill({ response }); } catch {} };
   await p.route(`**/api/wf/${id}`, handler); return { started, release, async close() { release(); await p.unroute(`**/api/wf/${id}`, handler); } }; };
