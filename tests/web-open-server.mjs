@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { sessionCookie } from "../src/csrf.ts";
 // Website new tab and same-Task continuation through the real src/server.ts (no fixture router):
 // the opened site runs in an opaque-origin sandbox (no Studio storage, no same-origin window, no /api),
 // its CSS, image, poster and MP4 still load and play, and the continuation routes keep CSRF, session
@@ -123,7 +124,7 @@ try {
   const before = await offers(closed);
   const cross = await raw("POST", `/api/wruns/${closed}/continuation/offer`, { headers: { ...desk, origin: "http://evil.example" }, body: {} });
   ok(cross.status === 403 && cross.body?.code === "crossSite", "a cross-site offer request is refused (CSRF)", JSON.stringify(cross.body));
-  const crossFetch = await raw("POST", `/api/wruns/${closed}/continuation/confirm`, { headers: { cookie: `crew_session=${token}`, "sec-fetch-site": "cross-site" }, body: { token: "0".repeat(32), confirm: closed } });
+  const crossFetch = await raw("POST", `/api/wruns/${closed}/continuation/confirm`, { headers: { cookie: sessionCookie(token).split(";")[0], "sec-fetch-site": "cross-site" }, body: { token: "0".repeat(32), confirm: closed } });
   ok(crossFetch.status === 403 && crossFetch.body?.code === "crossSite", "a cross-site confirm carrying the session cookie is refused (CSRF)", JSON.stringify(crossFetch.body));
   const noSession = await raw("POST", `/api/wruns/${closed}/continuation/offer`, { body: {} });
   ok(noSession.status === 403 && noSession.body?.code === "session", "an offer without Studio's session is refused", JSON.stringify(noSession.body));

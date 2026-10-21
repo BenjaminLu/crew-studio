@@ -58,7 +58,7 @@ try {
       ok((await p.inputValue("#rulesText")) === "" && /None set/.test(await p.textContent("#rulesState")), `${key}: a project with no rules says None set`);
       await p.fill("#rulesText", "- Port 4210 is the live board: never touch it.\n- Known red: privacy suite (1 known).");
       await p.click("#rulesSave"); await p.waitForFunction(() => /Saved\./.test(document.querySelector("#rulesState").textContent), null, { timeout: 10000 });
-      const r = await fetch(`${base}/api/operating-rules`, { headers: { cookie: `crew_session=${TOKEN}` } }).then((x) => x.json());
+      const r = await fetch(`${base}/api/operating-rules`, { headers: { cookie: (await fetch(`${base}/session?t=${encodeURIComponent(TOKEN)}`, { redirect: "manual" })).headers.get("set-cookie").split(";")[0] } }).then((x) => x.json());
       ok(r.projects.find((x) => x.id === "sandbox")?.text.startsWith("- Port 4210") && r.projects.find((x) => x.id === "sandbox")?.by === "captain", `${key}: Save stores the project's rules as the captain's`);
       await p.selectOption("#rulesScope", "");
     }

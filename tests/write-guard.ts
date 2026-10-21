@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { sessionCookie } from "../src/csrf.ts";
 // The one write guard (fix-runtime-r2, check-runtime#16, legacy A5): every mutating
 // route Studio's router knows refuses a request from another site, a request with
 // no Studio session, and a body that is not JSON. The routes are read from the
@@ -48,8 +49,8 @@ ok(!bad.json.length, "every mutating route refuses a body that is not JSON (415)
 { const r = await fetch(base + "/api/intake", { method: "POST", headers: { "content-type": "application/json", "x-crew-session": TOKEN, origin: base }, body: JSON.stringify({ text: "fix a typo in the readme" }) });
   ok(r.status === 200, "a same-origin JSON request with the session passes", String(r.status)); }
 { const page = await fetch(base + "/"); const link = await fetch(`${base}/session?t=${TOKEN}`, { redirect: "manual" }); const ck = link.headers.get("set-cookie") ?? "";
-  ok(!page.headers.get("set-cookie") && link.status === 303 && new RegExp(`crew_session=${TOKEN};.*HttpOnly.*SameSite=Strict`).test(ck), "the page sets no session; the session link sets it as an HttpOnly, SameSite=Strict cookie", ck);
-  const r = await fetch(base + "/api/intake", { method: "POST", headers: { "content-type": "application/json", cookie: `crew_session=${TOKEN}`, "sec-fetch-site": "same-origin" }, body: "{}" });
+  ok(!page.headers.get("set-cookie") && link.status === 303 && ck === sessionCookie(TOKEN), "the page sets no session; the session link sets it as an HttpOnly, SameSite=Strict cookie", ck);
+  const r = await fetch(base + "/api/intake", { method: "POST", headers: { "content-type": "application/json", cookie: sessionCookie(TOKEN).split(";")[0], "sec-fetch-site": "same-origin" }, body: "{}" });
   ok(r.status === 200, "the link's cookie is a session", String(r.status)); }
 // a grant needs the captain's fresh confirmation in the UI
 { const r = await fetch(base + "/api/policies/auth-window", { method: "POST", headers: { "content-type": "application/json", "x-crew-session": TOKEN }, body: JSON.stringify({ kinds: ["merge"], until: "2099-01-01T00:00:00Z" }) });

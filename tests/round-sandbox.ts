@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { sessionCookie } from "../src/csrf.ts";
 // The round sandbox (units round-sandbox, fix-round-sandbox-r1; architecture §10):
 // every agent round runs under the OS sandbox with a round profile. It writes only
 // its worktree, its tmp and a throwaway home (never the provider's real config, never
@@ -205,7 +206,7 @@ egress.stop(); main.stop(); tools.stop();
   const calls = readFileSync(kcCalls, "utf8").trim().split("\n").filter(Boolean);
   ok(calls.length > 0 && calls.every((c) => !/(^| )-w( |$)/.test(c)), "the Doctor's status never decrypts a login: it asks the keychain whether the item exists (no -w)", JSON.stringify(calls));
   ok(kc?.title === "Vendor token handed to rounds; keychain not reachable" && kc.status === "degraded" && /crew-studio-claude-token/.test(kc.detail) && /checked when a round starts/.test(kc.detail), "the Doctor says rounds get the vendor token Studio hands them, and no keychain; an untried crew keychain item is a warn", JSON.stringify(kc));
-  ok(page.status === 200 && !page.headers.get("set-cookie") && bad.status === 403 && !bad.headers.get("set-cookie") && good.status === 303 && /crew_session=boot-session; .*HttpOnly.*SameSite=Strict/.test(good.headers.get("set-cookie") ?? ""),
+  ok(page.status === 200 && !page.headers.get("set-cookie") && bad.status === 403 && !bad.headers.get("set-cookie") && good.status === 303 && good.headers.get("set-cookie") === sessionCookie("boot-session"),
     "Studio's page hands out no session; only its session link (`crew-studio open`) starts one", JSON.stringify([page.headers.get("set-cookie"), bad.status, good.status]));
   ok(answer.status === 403, "Studio refuses a card answer without its session (POST /api/scards/x/answer → 403), so a local process that reached its port still could not answer for the captain", String(answer.status)); }
 // a captain who chose API billing with the earlier switch keeps it

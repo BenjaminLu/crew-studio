@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { sessionCookie } from "../src/csrf.ts";
 // The read-only projects overview (projects design §3.1, phase 1): GET /api/projects/overview (the sidebar) and
 // GET /api/projects/<id>/overview (one page), on temporary data: a busy local project, an external project, the
 // built-in sandbox and a run with no project.          bun tests/project-overview.ts
@@ -91,7 +92,7 @@ const before = tree(DATA) + "\n" + tree(repos);
 // ---- auth ----
 ok((await get("/api/projects/overview", { kind: "desktop" }, {}))?.status === 401, "a desktop request without a session: 401");
 ok((await get("/api/projects/harbor-api/overview", { kind: "desktop" }, {}))?.status === 401, "the page without a session: 401");
-ok((await get("/api/projects/overview", { kind: "desktop" }, { cookie: "crew_session=s3cret" }))?.status === 200, "the page's session cookie reads");
+ok((await get("/api/projects/overview", { kind: "desktop" }, { cookie: sessionCookie("s3cret").split(";")[0] }))?.status === 200, "the page's session cookie reads");
 ok((await get("/api/projects/overview"))?.status === 200, "x-crew-session reads");
 ok((await get("/api/projects/overview", { kind: "phone", device: { id: "d" } }, {}))?.status === 200, "a paired phone reads, as it reads Tasks");
 ok((await get("/api/projects/harbor-api/overview", { kind: "phone", device: { id: "d" } }, {}))?.status === 200, "a paired phone reads a project page");
