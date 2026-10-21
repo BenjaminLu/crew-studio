@@ -29,6 +29,20 @@ try {
   for (const width of [1440, 390]) for (const theme of ["light", "dark"]) for (const lang of ["en", "zh-TW"]) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, colorScheme: theme }); await context.addInitScript(({ lang }) => { localStorage.setItem("crew.lang", lang); localStorage.setItem("crew.chatOpen", "0"); }, { lang });
     const id = `save-${width}-${theme}-${lang.toLowerCase()}`, p = await open(context, id); const held = await holdSave(p, id);
+    if(width===390){
+      const originalSave=await p.$('[data-save]'),originalNote=await p.$('[data-save-note]');
+      await p.locator('[data-node="a"]').focus();await p.keyboard.press('Enter');
+      await p.waitForFunction(()=>document.querySelector('[data-inspector-savebar] [data-save]'));
+      ok(await p.evaluate(({button,note})=>button===document.querySelector('[data-inspector-savebar] [data-save]')&&note===document.querySelector('[data-inspector-savebar] [data-save-note]'),{button:originalSave,note:originalNote}),`${width}/${theme}/${lang}: mobile inspector reuses the original real Save and note`);
+      await p.locator('[data-inspector-savebar] [data-save-note]').fill('retain caret');await p.locator('[data-inspector-savebar] [data-save-note]').focus();
+      await originalNote.evaluate(el=>el.setSelectionRange(2,5));await p.setViewportSize({width:390,height:980});await p.waitForTimeout(40);
+      ok(await p.evaluate(note=>document.activeElement===note&&note.selectionStart===2&&note.selectionEnd===5,originalNote),'same-parent resize preserves the active note and caret');
+      await p.setViewportSize({width:1440,height:1000});await p.waitForFunction(()=>document.querySelector('.wf-editor-save-home [data-save]'));
+      ok(await p.evaluate(button=>button===document.querySelector('.wf-editor-save-home [data-save]'),originalSave),'resizing restores the same Save to the header');
+      await p.setViewportSize({width:390,height:1000});await p.waitForFunction(()=>document.querySelector('[data-inspector-savebar] [data-save]'));
+      await p.locator('[data-inspector-close]').click();
+      ok(await p.evaluate(button=>button===document.querySelector('.wf-editor-save-home [data-save]')&&document.querySelectorAll('[data-save]').length===1,originalSave),'closing restores one original Save without cloning its authority');
+    }
     await field(p, "a", "submitted snapshot"); await p.click("[data-save]"); ok(await held.started === 200, `${width}/${theme}/${lang}: genuine save committed before its response is released`);
     ok(await p.locator("[data-save]").isDisabled() && /Saving|儲存中/.test(await p.locator("[data-save]").textContent()), `${width}/${theme}/${lang}: pending save state is visible and duplicate save is held`);
     await field(p, "a", "later draft retained"); await p.locator("[data-save]").scrollIntoViewIfNeeded();
