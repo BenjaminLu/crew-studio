@@ -36,7 +36,8 @@ try {
       ok(await p.evaluate(({button,note})=>button===document.querySelector('[data-inspector-savebar] [data-save]')&&note===document.querySelector('[data-inspector-savebar] [data-save-note]'),{button:originalSave,note:originalNote}),`${width}/${theme}/${lang}: mobile inspector reuses the original real Save and note`);
       await p.locator('[data-inspector-savebar] [data-save-note]').fill('retain caret');await p.locator('[data-inspector-savebar] [data-save-note]').focus();
       await originalNote.evaluate(el=>el.setSelectionRange(2,5));await p.setViewportSize({width:390,height:980});await p.waitForTimeout(40);
-      ok(await p.evaluate(note=>document.activeElement===note&&note.selectionStart===2&&note.selectionEnd===5,originalNote),'same-parent resize preserves the active note and caret');
+      const caret=await p.evaluate(note=>({focused:document.activeElement===note,start:note.selectionStart,end:note.selectionEnd,active:document.activeElement?.outerHTML?.slice(0,180),parent:note.parentElement?.className}),originalNote);
+      ok(caret.focused&&caret.start===2&&caret.end===5,'same-parent resize preserves the active note and caret '+JSON.stringify(caret));
       await p.setViewportSize({width:1440,height:1000});await p.waitForFunction(()=>document.querySelector('.wf-editor-save-home [data-save]'));
       ok(await p.evaluate(button=>button===document.querySelector('.wf-editor-save-home [data-save]'),originalSave),'resizing restores the same Save to the header');
       await p.setViewportSize({width:390,height:1000});await p.waitForFunction(()=>document.querySelector('[data-inspector-savebar] [data-save]'));

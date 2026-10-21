@@ -398,7 +398,7 @@ function buildEditor(ed) {
   const delEdge = (i) => { const e = ed.def.edges[i]; ed.def.edges.splice(i, 1); ed.sel = null; dirty(); say(T(`disconnected ${e.from} → ${e.to}`, `已斷開 ${e.from} → ${e.to}`)); };
   const connect = (from, to, when) => { if (ed.def.edges.some((e) => e.from === from && e.to === to && (e.when || "") === (when || ""))) return; const e = { from, to }; if (when) e.when = when; ed.def.edges.push(e); ed.sel = { edge: ed.def.edges.length - 1 }; dirty(); say(T(`connected ${from} → ${to}`, `已連接 ${from} → ${to}`)); };
   const dropCheck = (target, ref) => { const t = target.node ? ed.def.nodes.find((n) => n.id === target.node) : ed.def.edges[target.edge]; t.checks = [...(t.checks || []), { use: ref }]; ed.sel = target; dirty(); say(T(`${ref} attached to ${target.node ?? `edge ${t.from} → ${t.to}`}`, `${ref} 已掛到 ${target.node ?? `邊 ${t.from} → ${t.to}`}`)); };
-  const focusNode = (nid) => { const f = () => canvas.querySelector(`[data-node="${CSS.escape(nid)}"]`)?.focus({ preventScroll: true }); f(); setTimeout(f, 0); };
+  const focusNode = (nid) => { const f = () => canvas.querySelector(`[data-node="${CSS.escape(nid)}"]`)?.focus({ preventScroll: true }); f(); setTimeout(() => { if (!disposed && (document.activeElement === document.body || canvas.contains(document.activeElement))) f(); }, 0); };
   // the layout: auto until a node is dragged (then this version keeps its positions), "Tidy layout" goes back
   const setMode = async (mode) => { ed.mode = mode; try { await api(`/api/graph-layout/${ed.id}/v${ed.def.version}`, { mode }); } catch (e) { say(e.message); } };
   const toManual = async () => {
