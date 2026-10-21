@@ -41,7 +41,7 @@ function graph(def, o = {}) {
   // o: { states, walked (the edge keys the run's events record as taken), editable, sel, manual, collapsed, onToggleStage, onSelect, onMove, onMoved, onDragStart, onConnect, onDropCheck, problems, view, onView }
   const L = window.crewLayout;
   const reached = o.states ? Object.keys(o.states).filter((k) => o.states[k] && o.states[k] !== "pending") : [];
-  const lay = o.simple ? L.layoutSimple(def, { collapsed: o.collapsed || [], wrap: o.wrap, offsets: o.offsets, reached, keepDisconnected: !!o.editable }) : o.manual ? L.place(def, { collapsed: o.collapsed || [] }) : L.layout(def, { collapsed: o.collapsed || [] });
+  const lay = o.simple ? L.layoutSimple(def, { collapsed: o.collapsed || [], wrap: o.wrap, offsets: o.offsets, reached, actualGraph: !!o.editable }) : o.manual ? L.place(def, { collapsed: o.collapsed || [], actualGraph: !!o.editable }) : L.layout(def, { collapsed: o.collapsed || [], actualGraph: !!o.editable });
   const byId = Object.fromEntries(lay.nodes.map((n) => [n.id, n]));
   const view = o.view || { ...lay.bbox };
   const svg = s("svg", { class: `rt-graph${o.simple ? " simple" : ""}`, "data-view": o.simple ? "simple" : "detail", viewBox: `${view.x} ${view.y} ${view.w} ${view.h}`, role: "group", "data-layout": o.manual ? "manual" : "auto",
@@ -653,7 +653,7 @@ function buildEditor(ed) {
   };
   // palette: node kinds (click or drag onto the canvas) and checks (drag onto a node or an edge)
   const paletteNote = h("aside", { class: "rt-palette card", "data-palette-note": "1" }, h("h4", {}, T("Simple view", "簡易檢視")),
-    h("p", { class: "faint" }, T("The main path through the stages. Loops, the door question and escalations are badges on their node or stage. Add or remove nodes and edges in Detail view.", "主要路徑。迴圈、門的提問和升級處理都是節點或階段上的徽章。要新增或移除節點與邊，請到詳細檢視。")),
+    h("p", { class: "faint" }, T("All existing steps and connections in a compact layout. Removing a step only removes that step and its connections. Use Edit graph for connection ports, adding steps and checks.", "以緊湊排列顯示所有既有步驟與連線。移除步驟只會移除它與直接相連的線。要使用連線端點、新增步驟或檢查，請切換完整編輯。")),
     h("button", { class: "btn sm", "data-edit-detail": "1", onclick: () => setView("detail") }, T("Edit in Detail view", "到詳細檢視編輯")));
   const palette = h("aside", { class: "rt-palette card", "aria-label": T("Palette", "調色盤") }, h("h4", {}, T("Add a node", "加節點")),
     ...KINDS.map(([k, en, tw]) => h("button", { class: `btn sm rt-pal k-${k}`, draggable: "true", "data-add": k, onclick: () => { addNode(k); drawPanel(); }, ondragstart: (e) => { e.dataTransfer.setData("text/x-kind", k); } }, T(en, tw))),

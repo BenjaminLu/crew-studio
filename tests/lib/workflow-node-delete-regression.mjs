@@ -34,3 +34,20 @@ export async function verifyNodeDeletion(p, {ok,lang,tag}) {
   ok(same(await p.locator('[data-node]').evaluateAll(xs=>xs.map(x=>x.dataset.node).sort()),ids(baseline.nodes)),`Undo restores every node after emptying ${view} ${tag}`);
  }
 }
+
+// Existing close/closed branches must be visible before deletion, not suddenly
+// promoted from the run-summary projection after an unrelated step disappears.
+export async function verifyCloseBranchDeletion(p, base, ok) {
+ await p.goto(`${base}/#/workflows/trivial-lane`);await p.locator('svg.rt-graph').waitFor();await p.locator('[data-view-toggle="simple"]').click();
+ const before=(await (await p.request.get(`${base}/api/wf/trivial-lane`)).json()).def,sorted=xs=>[...xs].sort(),same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+ const shown=()=>p.locator('svg.rt-graph [data-node]').evaluateAll(xs=>xs.map(x=>x.dataset.node));
+ const initial=await shown();ok(same(sorted(initial),sorted(before.nodes.map(n=>n.id)))&&initial.includes('close')&&initial.includes('closed'),'editor Overview shows actual close branches before any deletion',JSON.stringify(initial));
+ const next=()=>p.waitForRequest(r=>r.url().endsWith('/api/wf/validate')&&r.method()==='POST').then(r=>r.postDataJSON().def),modifier=process.platform==='darwin'?'Meta':'Control';
+ for(const target of ['done','merge','recipe','approve']){
+  if(await p.locator('[data-inspector-close]').isVisible())await p.locator('[data-inspector-close]').click();await revealEditorControl(p,'[data-fit]');await p.locator('[data-fit]').click();
+  const visibleBefore=await shown();await p.locator(`[data-node="${target}"]`).click();const pending=next();await p.locator(`[data-del-node="${target}"]`).click();const after=await pending,expectedNodes=before.nodes.filter(n=>n.id!==target),expectedEdges=before.edges.filter(e=>e.from!==target&&e.to!==target);
+  ok(same(after.nodes,expectedNodes)&&same(after.edges,expectedEdges)&&same(after.roles,before.roles),`deleting ${target} changes only its exact object and incident edges; no node or reconnection added`);
+  const visibleAfter=await shown();ok(same(sorted(visibleAfter),sorted(visibleBefore.filter(id=>id!==target)))&&same(sorted(visibleAfter),sorted(expectedNodes.map(n=>n.id))),`deleting ${target} neither introduces close nor removes any other visual node`,JSON.stringify({visibleBefore,visibleAfter}));
+  const undo=next();await p.keyboard.press(modifier+'+z');const restored=await undo;ok(same(restored.nodes,before.nodes)&&same(restored.edges,before.edges)&&same(sorted(await shown()),sorted(initial)),`Undo ${target} restores exact data and original visible IDs`);
+ }
+}

@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import {verifyCloseBranchDeletion} from "./lib/workflow-node-delete-regression.mjs";
 import { revealEditorControl } from "./lib/reveal-editor-control.mjs";
 // The tidy workflow graph in the pages: the auto layout on a newly loaded built-in
 // workflow, no drawn edge through a node (sampled on the drawn paths), dashed arcs,
@@ -6,7 +7,7 @@ import { revealEditorControl } from "./lib/reveal-editor-control.mjs";
 // live view), count badges that open their lists, Tidy / Fit to view / minimap, the
 // manual mode a drag starts, and screenshots of every built-in workflow at 1440
 // and 390 px, light and dark.      node tests/graph-tidy-ui.mjs
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -19,14 +20,17 @@ const tmp = mkdtempSync(join(tmpdir(), "crew-gtidy-"));
 const state = join(tmp, "fm", "state"), data = join(tmp, "data");
 mkdirSync(join(state, "pending"), { recursive: true }); mkdirSync(data);
 // the pack workflows a live Studio holds, as fixtures (the bundled ones seed themselves)
-for (const f of readdirSync(join(here, "fixture/workflows"))) { const d = JSON.parse(readFileSync(join(here, "fixture/workflows", f), "utf8")); mkdirSync(join(data, "workflows", d.id), { recursive: true });
+for (const f of readdirSync(join(here, "fixture/workflows"))) { const raw = readFileSync(join(here, "fixture/workflows", f), "utf8");
+  // Stored definitions use normalize(), not the YAML/fixture array-edge shorthand.
+  const normalized = spawnSync("bun", ["-e", "import {normalize} from './src/runtime/defs';console.log(JSON.stringify(normalize(JSON.parse(await Bun.stdin.text()))));"], { cwd: root, input: raw, encoding: "utf8" });
+  if (normalized.status !== 0) throw new Error(`Fixture normalization failed: ${f}: ${normalized.stderr}`);
+  const d = JSON.parse(normalized.stdout); mkdirSync(join(data, "workflows", d.id), { recursive: true });
   writeFileSync(join(data, "workflows", d.id, "v1.json"), JSON.stringify({ ...d, version: 1, parent: null, createdAt: new Date().toISOString(), by: "test fixture", note: "fixture", diff: null, seed: null })); }
 // a version dragged before graph-tidy: its layout file exists, with no layout-mode entry
 { const v = JSON.parse(readFileSync(join(here, "fixture/workflows/video.json"), "utf8")); const pos = Object.fromEntries(v.nodes.map((n, i) => [n.id, { x: 40 + i * 200, y: 60 + (i % 2) * 140 }]));
   writeFileSync(join(data, "workflows", "video", "layout-v1.json"), JSON.stringify(pos)); globalThis.legacyPos = pos; }
 // a real code-firstmate Task for the live view, seeded before the server starts: since a6fd64f one started through the
 // server needs a signed captain staffing approval naming a real provider (tests/lib/code-firstmate-run-seed.ts)
-const { spawnSync } = await import("node:child_process");
 const seeded = spawnSync("bun", ["tests/lib/code-firstmate-run-seed.ts", data, "Add a percent function"], { cwd: root, encoding: "utf8" });
 const seededRun = (() => { try { return JSON.parse(seeded.stdout.trim().split("\n").at(-1)).id; } catch { return null; } })();
 if (!seededRun) { console.error(`graph-tidy-ui: the code-firstmate Task could not be seeded\n${seeded.stdout}\n${seeded.stderr}`); process.exit(1); }
@@ -50,7 +54,7 @@ const post = (path, body) => fetch(`${base}${path}`, { method: "POST", headers: 
 const page = async (width, scheme) => { const ctx = await browser.newContext({ viewport: { width, height: 1000 }, colorScheme: scheme }); const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width}/${scheme}: ${e.message}`));
   await p.goto(`${base}/#/workflows`); await p.evaluate(() => { localStorage.setItem("crew.chatOpen", "0"); document.body.classList.add("chat-closed"); }); return p; };
 const nodePos = (p) => p.$$eval("[data-node]", (gs) => Object.fromEntries(gs.map((g) => { const m = /translate\(([-\d.]+),([-\d.]+)\)/.exec(g.getAttribute("transform")); return [g.dataset.node, [Number(m[1]), Number(m[2])]]; })));
-const autoPos = (p, id, collapsed = []) => p.evaluate(async ([id, collapsed]) => { const j = await (await fetch(`/api/wf/${id}`)).json(); const g = window.crewLayout.layout(j.def, { collapsed }); return Object.fromEntries(g.nodes.filter((n) => n.kind === "node").map((n) => [n.id, [n.x, n.y]])); }, [id, collapsed]);
+const autoPos = (p, id, collapsed = []) => p.evaluate(async ([id, collapsed]) => { const j = await (await fetch(`/api/wf/${id}`)).json(); const g = window.crewLayout.layout(j.def, { collapsed, actualGraph: true }); return Object.fromEntries(g.nodes.filter((n) => n.kind === "node").map((n) => [n.id, [n.x, n.y]])); }, [id, collapsed]);
 const same = (a, b) => Object.keys(b).length > 0 && Object.entries(b).every(([k, v]) => a[k] && a[k][0] === v[0] && a[k][1] === v[1]);
 // every drawn edge, sampled along its path, against every drawn node box
 const through = (p) => p.evaluate(() => {
@@ -61,12 +65,13 @@ const through = (p) => p.evaluate(() => {
   return bad; });
 try {
   const wfs0 = (await (await fetch(`${base}/api/wf`)).json()).workflows;
+  {const p=await page(1440,"light");await verifyCloseBranchDeletion(p,base,ok);await p.context().close();}
   // ---------- before: every built-in workflow in its hand layout (manual mode, Detail view), then back to auto ----------
   for (const width of [1440, 390]) for (const scheme of ["light", "dark"]) {
     const p = await page(width, scheme); await p.evaluate(() => localStorage.setItem("crew.graphView", "detail"));
     for (const w of wfs0) { const legacy = w.id === "video"; if (!legacy) await post(`/api/graph-layout/${w.id}/v${w.version}`, { mode: "manual" });
       await p.goto(`${base}/#/workflows/${w.id}${w.id==="coffee-kit"?"/advanced":""}`); await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed")); await p.waitForSelector("svg.rt-graph [data-node]", { timeout: 15000 }).catch(() => {});
-      await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]").catch(() => {}); await p.waitForTimeout(150);
+      await revealEditorControl(p, "[data-fit]").catch(error=>{console.error("Graph fixture failed before Fit",JSON.stringify({workflow:w.id,width,scheme,url:p.url(),errors}));throw error;}); await p.click("[data-fit]").catch(() => {}); await p.waitForTimeout(150);
       await p.screenshot({ path: join(before, `${w.id}-${width}-${scheme}.png`), fullPage: true });
       if (!legacy) await post(`/api/graph-layout/${w.id}/v${w.version}`, { mode: "auto" }); }
     await p.context().close();
@@ -76,15 +81,10 @@ try {
   { const p = await page(1440, "light");
     await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('svg.rt-graph[data-view="simple"] [data-node="spec"]'); await p.waitForTimeout(300);
     const ids = await p.$$eval("svg.rt-graph [data-node]", (gs) => gs.map((g) => g.dataset.node));
-    ok(ids.length === 19 && ids.includes("pr-open") && !ids.some((x) => ["spec-fix", "fix", "plan-fix", "door-pick", "step-back", "stalled", "budget", "scope-card", "parked", "closed", "dropped"].includes(x)), "the simple view is the default and shows the main path with publication and the designer round (19 nodes)", ids.join(","));
-    ok(await p.locator("svg.rt-graph .rt-edge[data-back]").count() === 0 && await p.locator('svg.rt-graph .rt-edge[data-edge*="step-back"], svg.rt-graph .rt-edge[data-edge*="scope-card"], svg.rt-graph .rt-edge[data-edge*="→spec["]').count() === 0, "no back edges and no escalation edges in simple view");
-    const bt = async (k) => (await p.textContent(`[data-badge="${k}"]`).catch(() => "")) || "";
-    ok(await bt("loop:spec") === "↻ refine ≤3" && await bt("loop:build") === "↻ fix ≤3" && await bt("ask:door") === "? asks you if unsure" && await bt("s:build:escalations") === "⚑ 8 escalations" && await bt("s:intake:escalations") === "⚑ 3 escalations",
-      "the badges show the loops (with their cap), the door question and the escalation counts", [await bt("loop:spec"), await bt("loop:build"), await bt("ask:door"), await bt("s:build:escalations")].join(" | "));
-    await p.locator('[data-badge="s:build:escalations"]').dispatchEvent("click"); await p.waitForTimeout(150);
-    const esc = await p.$$eval('[data-badge-list="s:build:escalations"] .rt-badge-item', (xs) => xs.map((x) => x.textContent));
-    ok(esc.length === 8 && esc.includes("Step-back card"), "an escalation badge lists its escalations", esc.join(","));
-    await p.locator('[data-badge="s:build:escalations"]').dispatchEvent("click");
+    const actualDef=(await (await p.request.get(`${base}/api/wf/code-firstmate`)).json()).def;
+    ok(JSON.stringify([...ids].sort())===JSON.stringify(actualDef.nodes.map(n=>n.id).sort()), "editor Overview initially shows every actual node, including existing close and loop branches", ids.join(","));
+    const edgeIndexes=await p.evaluate(()=>document.querySelector('svg.rt-graph').lay.edges.flatMap(e=>e.index).sort((a,b)=>a-b));
+    ok(JSON.stringify(edgeIndexes)===JSON.stringify(actualDef.edges.map((_,i)=>i))&&await p.locator('svg.rt-graph .rt-edge[data-back]').count()>=10,"editor Overview represents every original edge identity, including back/escalation edges");
     const minFont = await p.evaluate(() => { const svg = document.querySelector("svg.rt-graph"); const k = svg.getScreenCTM().a; return Math.min(...[...svg.querySelectorAll("[data-node] .rt-label")].map((t) => parseFloat(getComputedStyle(t).fontSize) * k)); });
     ok(minFont >= 11, "node titles render at 11 px or more in the simple view at Fit (1440)", `${minFont.toFixed(1)} px`);
     ok(await p.locator("[data-minimap]").count() === 0, "the simple view fits whole and needs no minimap");
@@ -93,7 +93,7 @@ try {
     const detailIds = await p.$$eval("svg.rt-graph [data-node]", (gs) => gs.length);
     ok(detailIds === 32 && await p.locator("svg.rt-graph .rt-edge[data-back]").count() >= 10 && await p.locator("[data-port]").count() === 32 && await p.locator('svg.rt-graph [data-node="pr-open"]').count() === 1, "toggling to Detail view restores every node, back edge and port", String(detailIds));
     await revealEditorControl(p, '[data-view-toggle="simple"]'); await p.click('[data-view-toggle="simple"]'); await p.waitForSelector('svg.rt-graph[data-view="simple"]');
-    ok(await p.locator("svg.rt-graph [data-node]").count() === 19 && await p.locator("[data-port]").count() === 0 && await p.isVisible("[data-palette-note]"), "back in the simple view: the main path again, editing points to Detail view");
+    ok(JSON.stringify((await p.locator("svg.rt-graph [data-node]").evaluateAll(xs=>xs.map(x=>x.dataset.node))).sort())===JSON.stringify(actualDef.nodes.map(n=>n.id).sort()) && await p.locator("[data-port]").count() === 0 && await p.isVisible("[data-palette-note]"), "back in editor Overview: every actual node remains, connection ports stay in Edit graph");
     await p.context().close();
   }
   // ---------- a version dragged before graph-tidy opens in manual mode, and a drag keeps its other positions ----------
@@ -168,6 +168,13 @@ try {
     const simpleIds = await p.evaluate(async () => { const j = await (await fetch("/api/wf/code-firstmate")).json(); return window.crewLayout.layoutSimple(j.def, { wrap: 6 }).nodes.map((n) => n.id).sort(); });
     const shown = (await p.$$eval("[data-runview] [data-node]", (gs) => gs.map((g) => g.dataset.node))).sort();
     ok(runId && JSON.stringify(shown) === JSON.stringify(simpleIds) && await p.locator("[data-runview] [data-state]").count() > 0, "the run view shows the same simple view, with node states", shown.join(","));
+    const bt = async (k) => (await p.textContent(`[data-badge="${k}"]`).catch(() => "")) || "";
+    ok(/^↻ refine(?: ≤3| · round \d\/3)$/.test(await bt("loop:spec")) && await bt("loop:build") === "↻ fix ≤3" && await bt("ask:door") === "? asks you if unsure" && await bt("s:build:escalations") === "⚑ 8 escalations" && await bt("s:intake:escalations") === "⚑ 3 escalations",
+      "run Overview preserves loop caps, the door question and escalation counts", [await bt("loop:spec"), await bt("loop:build"), await bt("ask:door"), await bt("s:build:escalations")].join(" | "));
+    await p.locator('[data-badge="s:build:escalations"]').dispatchEvent("click"); await p.waitForTimeout(150);
+    const esc = await p.$$eval('[data-badge-list="s:build:escalations"] .rt-badge-item', (xs) => xs.map((x) => x.textContent));
+    ok(esc.length === 8 && esc.includes("Step-back card"), "an escalation badge lists its escalations", esc.join(","));
+    await p.locator('[data-badge="s:build:escalations"]').dispatchEvent("click");
     ok(/round \d\/3/.test(await p.textContent('[data-badge="loop:spec"]').catch(() => "")), "in the live view the loop badge shows the current round", await p.textContent('[data-badge="loop:spec"]').catch(() => "none"));
     await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('[data-runview] svg.rt-graph[data-view="detail"]');
     const detailStates = await p.$$eval("[data-runview] svg.rt-graph[data-view=detail] [data-node][data-state]", (gs) => Object.fromEntries(gs.map((g) => [g.dataset.node, g.dataset.state])));
@@ -202,7 +209,8 @@ try {
       await p.goto(`${base}/#/workflows/${id}${id==="coffee-kit"?"/advanced":""}`); await p.reload(); await p.evaluate(() => document.body.classList.add("chat-closed"));
       const okSel = await p.waitForSelector(`svg.rt-graph[data-view="${view}"] [data-node], svg.rt-graph[data-view="${view}"] [data-stage-node]`, { timeout: 15000 }).then(() => true).catch(() => false);
       await p.waitForTimeout(200);
-      ok(okSel && !(await through(p)).length && await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${id} renders at ${width} ${scheme} (${view})`);
+      const crossings=await through(p),noOverflow=await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1);
+      ok(okSel && !crossings.length && noOverflow, `${id} renders at ${width} ${scheme} (${view})`,JSON.stringify({okSel,crossings,noOverflow}));
       await p.screenshot({ path: join(shots, `${id}-${view}-${width}-${scheme}.png`), fullPage: true });
       if (view === "simple") { await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]"); await p.waitForTimeout(150); await p.screenshot({ path: join(shots, `${id}-simple-fit-${width}-${scheme}.png`), fullPage: true }); }
     }
