@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import {verifyNodeDeletion} from "./lib/workflow-node-delete-regression.mjs";
 import { revealEditorControl } from "./lib/reveal-editor-control.mjs";
 // Actual native Studio, isolated fake-provider data. No live records or remote calls.
 import{spawn}from'node:child_process';import{mkdtempSync,mkdirSync,readFileSync,writeFileSync}from'node:fs';import{tmpdir}from'node:os';import{join,dirname}from'node:path';import{fileURLToPath}from'node:url';
@@ -68,6 +69,7 @@ for(const width of[320,390,1440])for(const lang of['en','zh-TW'])for(const theme
    await p.reload();await p.locator('[data-node="hook"]').waitFor();await p.locator('[data-view-toggle="detail"]').click();await p.locator('[data-add="hook"]').click();ok(await p.locator('[data-node="hook-2"]').count()===1,`history fixture adds its next node through the palette ${tag}`);await p.locator('[data-editor-undo]').click();ok(await p.locator('[data-node="hook-2"]').count()===0&&await p.locator('[data-editor-undo]').isDisabled(),`one Undo reverses node addition ${tag}`);await p.locator('[data-editor-redo]').click();ok(await p.locator('[data-node="hook-2"]').count()===1,`Redo restores node addition ${tag}`);await p.goto(base+'/#/library');await p.locator('.media-library h1').waitFor();await p.keyboard.press(modifier+'+z');ok(await p.locator('[data-editor]').count()===0,`shortcut outside the disposed editor never changes another page ${tag}`);await p.goto(base+'/#/workflows/'+id);await p.locator('[data-node="hook"]').waitFor();ok(await p.locator('[data-editor-undo]').isDisabled()&&await p.locator('[data-node="hook-2"]').count()===0,`navigation resets draft history without persisting temporary additions ${tag}`);
   }
 
+  if((width===1440||width===390)&&lang==='en')await verifyNodeDeletion(p,{ok,lang,tag});
   await p.screenshot({path:join(shots,tag+'-editor.png'),fullPage:true});
  }else{
   const before=(await ctx.request.get(base+'/api/wf').then(r=>r.json())).workflows.length;

@@ -36,6 +36,7 @@
 
   // ---------- the auto layout ----------
   function layout(def, opts = {}) {
+    if (!def.nodes.length) return { def: def.id, nodes: [], edges: [], stages: [], stageList: [], collapsed: [], bbox: { x: 0, y: 0, w: 400, h: 200 }, NW, NH };
     const stages = stagesFor(def);
     const collapsed = new Set((opts.collapsed || []).filter((c) => stages.some((s) => s.id === c)));
     const stageOfNode = new Map(); stages.forEach((s) => s.nodes.forEach((n) => stageOfNode.set(n, s.id)));
@@ -340,7 +341,8 @@
   // a node whose only way on is back to the node it came from (Pick the door) folds into that node's badge;
   // every other node off the way from the entry to the end (step-back, stalled, budget, scope, parked, closed,
   // dropped) becomes one "⚑ N escalations" badge on the stage (or node) it leaves from. Back edges are not drawn.
-  function simplify(def, reached = []) {
+  function simplify(def, reached = [], keepDisconnected = false) {
+    if (!def.nodes.length) return { def: { ...def, nodes: [], edges: [] }, edgeIndex: [], badges: {}, hidden: [], disconnected: [] };
     const full = layout(def, { noFlip: true });
     const back = new Set(full.edges.filter((e) => e.back).flatMap((e) => e.index));
     const byId = new Map(def.nodes.map((n) => [n.id, n]));
@@ -360,10 +362,15 @@
     const end = sinks.includes(mainEnd) ? mainEnd : sinks.sort((a, b) => (rk.get(b) ?? 0) - (rk.get(a) ?? 0))[0] ?? entry;
     const toEnd = reach(end, -1);
     const keep = new Set(def.nodes.filter((n) => fromEntry.has(n.id) && toEnd.has(n.id) && !isLoop.has(n.id)).map((n) => n.id));
+    // Editing must keep disconnected components visible for repair; run summaries retain their projection.
+    const connected = new Set([entry]), pending = [entry];
+    while (keepDisconnected && pending.length) { const id = pending.shift(); for (const edge of def.edges) if (edge.from === id && !connected.has(edge.to)) { connected.add(edge.to); pending.push(edge.to); } }
+    const disconnected = keepDisconnected ? new Set(def.nodes.filter(n => !connected.has(n.id)).map(n => n.id)) : new Set();
+    for (const id of disconnected) keep.add(id);
     // a run's view also keeps the end node the run actually reached (a "closed" end beside the main lane's end)
     for (const id of reached) if (byId.has(id) && !isLoop.has(id) && !def.edges.some((e) => e.from === id)) keep.add(id);
     const badges = {}; const add = (k, b) => (badges[k] = badges[k] || []).push(b);
-    for (const L of loops) add(`node:${L.args.producer}`, { kind: "loop", loop: L.id, text: `↻ ${(/^(fix|refine)/i.exec(L.label) || ["refine"])[0].toLowerCase()}`, cap: Number(L.args?.round_cap ?? 3) });
+    for (const L of loops) if (!keep.has(L.id)) add(`node:${L.args.producer}`, { kind: "loop", loop: L.id, text: `↻ ${(/^(fix|refine)/i.exec(L.label) || ["refine"])[0].toLowerCase()}`, cap: Number(L.args?.round_cap ?? 3) });
     const stageOf = new Map(); stagesFor(def).forEach((st) => st.nodes.forEach((n) => stageOf.set(n, st.id)));
     const folded = new Set();
     for (const n of def.nodes) { if (keep.has(n.id) || isLoop.has(n.id)) continue;
@@ -382,18 +389,21 @@
     for (const [k, set] of holders) add(k, { kind: "escalations", nodes: [...set], text: `⚑ ${set.size} escalation${set.size > 1 ? "s" : ""}`, labels: [...set].map((x) => byId.get(x).label) });
     const nodes = def.nodes.filter((n) => keep.has(n.id));
     const edges = []; for (const e of fwd) if (keep.has(e.from) && keep.has(e.to) && !edges.some((x) => x.from === e.from && x.to === e.to)) edges.push({ from: e.from, to: e.to, when: e.when, checks: def.edges[e.i]?.checks, i: e.i });
-    return { def: { ...def, nodes, edges: edges.map(({ i, ...x }) => x) }, edgeIndex: edges.map((e) => e.i), badges, hidden: def.nodes.filter((n) => !keep.has(n.id)).map((n) => n.id) };
+    // Preserve exact original edge identities/conditions/checks inside disconnected components, including loops/back edges.
+    for (const [i, e] of def.edges.entries()) if ((disconnected.has(e.from) || disconnected.has(e.to)) && keep.has(e.from) && keep.has(e.to) && !edges.some(x => x.i === i)) edges.push({ ...e, i });
+    return { def: { ...def, nodes, edges: edges.map(({ i, ...x }) => x) }, edgeIndex: edges.map((e) => e.i), badges, disconnected: [...disconnected], hidden: def.nodes.filter((n) => !keep.has(n.id)).map((n) => n.id) };
   }
   function layoutSimple(def, opts = {}) {
-    const sim = simplify(def, opts.reached || []);
+    const sim = simplify(def, opts.reached || [], !!opts.keepDisconnected);
     const g = layout(sim.def, { collapsed: opts.collapsed, wrap: opts.wrap ?? 6, noFlip: true, offsets: opts.offsets, row: 128, foot: 28 });
     for (const e of g.edges) e.index = e.index.map((i) => sim.edgeIndex[i]); // back to the full definition's edge numbers
-    g.badges = sim.badges; g.hidden = sim.hidden; g.simple = true;
+    g.badges = sim.badges; g.hidden = sim.hidden; g.disconnected = sim.disconnected; g.simple = true;
     return g;
   }
 
   // ---------- the definition's own positions (a dragged layout), same shapes ----------
   function place(def, opts = {}) {
+    if (!def.nodes.length) return layout(def, opts);
     const stages = stagesFor(def); const collapsed = new Set(opts.collapsed || []);
     const stageOf = new Map(); stages.forEach((s) => s.nodes.forEach((n) => stageOf.set(n, s.id)));
     const vis = []; const repOf = (id) => (stageOf.get(id) && collapsed.has(stageOf.get(id)) ? `stage:${stageOf.get(id)}` : id);

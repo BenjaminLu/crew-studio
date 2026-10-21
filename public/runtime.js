@@ -41,7 +41,7 @@ function graph(def, o = {}) {
   // o: { states, walked (the edge keys the run's events record as taken), editable, sel, manual, collapsed, onToggleStage, onSelect, onMove, onMoved, onDragStart, onConnect, onDropCheck, problems, view, onView }
   const L = window.crewLayout;
   const reached = o.states ? Object.keys(o.states).filter((k) => o.states[k] && o.states[k] !== "pending") : [];
-  const lay = o.simple ? L.layoutSimple(def, { collapsed: o.collapsed || [], wrap: o.wrap, offsets: o.offsets, reached }) : o.manual ? L.place(def, { collapsed: o.collapsed || [] }) : L.layout(def, { collapsed: o.collapsed || [] });
+  const lay = o.simple ? L.layoutSimple(def, { collapsed: o.collapsed || [], wrap: o.wrap, offsets: o.offsets, reached, keepDisconnected: !!o.editable }) : o.manual ? L.place(def, { collapsed: o.collapsed || [] }) : L.layout(def, { collapsed: o.collapsed || [] });
   const byId = Object.fromEntries(lay.nodes.map((n) => [n.id, n]));
   const view = o.view || { ...lay.bbox };
   const svg = s("svg", { class: `rt-graph${o.simple ? " simple" : ""}`, "data-view": o.simple ? "simple" : "detail", viewBox: `${view.x} ${view.y} ${view.w} ${view.h}`, role: "group", "data-layout": o.manual ? "manual" : "auto",
@@ -473,7 +473,7 @@ function buildEditor(ed) {
     if (kind === "agent") { n.role = ed.def.roles[0]?.id; n.mode = "test"; } if (kind === "hook") { n.do = "note"; n.args = { text: "" }; } if (kind === "card") n.card = { options: [{ id: "ok", label: "OK" }] }; if (kind === "loop") n.args = { producer: ed.def.nodes.find((x) => x.kind === "agent")?.id ?? "" };
     ed.def.nodes.push(n); ed.sel = { node: idv }; dirty(); say(T(`added ${kind} node ${idv}`, `已加入 ${kind} 節點 ${idv}`)); focusNode(idv);
   };
-  const delNode = (nid) => { ed.def.nodes = ed.def.nodes.filter((n) => n.id !== nid); ed.def.edges = ed.def.edges.filter((e) => e.from !== nid && e.to !== nid); ed.sel = null; dirty(); say(T(`removed ${nid} and its edges`, `已移除 ${nid} 與它的邊`)); };
+  const delNode = (nid) => { ed.def.nodes = ed.def.nodes.filter((n) => n.id !== nid); ed.def.edges = ed.def.edges.filter((e) => e.from !== nid && e.to !== nid); ed.sel = null; dirty(); say(T(`Removed ${nid} and its connections; ${ed.def.nodes.length} other nodes remain. Disconnected steps stay available to reconnect.`, `已移除 ${nid} 與其連線；其餘 ${ed.def.nodes.length} 個節點仍保留，斷線步驟可重新接回。`)); };
   const delEdge = (i) => { const e = ed.def.edges[i]; ed.def.edges.splice(i, 1); ed.sel = null; dirty(); say(T(`disconnected ${e.from} → ${e.to}`, `已斷開 ${e.from} → ${e.to}`)); drawPanel(); };
   const connect = (from, to, when) => { if (ed.def.edges.some((e) => e.from === from && e.to === to && (e.when || "") === (when || ""))) return; const e = { from, to }; if (when) e.when = when; ed.def.edges.push(e); ed.sel = { edge: ed.def.edges.length - 1 }; dirty(); say(T(`connected ${from} → ${to}`, `已連接 ${from} → ${to}`)); };
   const dropCheck = (target, ref) => { const t = target.node ? ed.def.nodes.find((n) => n.id === target.node) : ed.def.edges[target.edge]; t.checks = [...(t.checks || []), { use: ref }]; ed.sel = target; dirty(); say(T(`${ref} attached to ${target.node ?? `edge ${t.from} → ${t.to}`}`, `${ref} 已掛到 ${target.node ?? `邊 ${t.from} → ${t.to}`}`)); };

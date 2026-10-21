@@ -152,5 +152,39 @@ await section("layout modes", async () => {
 // the file itself: each section once (a fail-first branch must not carry a second copy that reads names declared later)
 { const src = readFileSync(join(here, "graph-tidy.ts"), "utf8"); const needle = "await sec" + "tion(\"the simple view lays every built-in workflow out\"";
   ok(src.split(needle).length - 1 === 1 && /^if \(!L\) \{ console\.log\(/m.test(src), "tests/graph-tidy.ts holds each section once, and its no-module branch only reports and exits"); }
+// Editor-only repair projection retains disconnected components without changing run summaries.
+{
+  const def: any = {id:"delete-projection",nodes:["start","middle","tail","done"].map(id=>({id,kind:"hook",do:"note",label:"Repeated label"})),edges:[{from:"start",to:"middle"},{from:"middle",to:"tail"},{from:"tail",to:"done",when:"ok",checks:[{use:"fixture-check"}]}],roles:[]};
+  for(const removed of ["start","middle","done"]){const after={...def,nodes:def.nodes.filter((n:any)=>n.id!==removed),edges:def.edges.filter((e:any)=>e.from!==removed&&e.to!==removed)};const rendered=L.layoutSimple(after,{keepDisconnected:true});
+    ok(JSON.stringify(rendered.nodes.flatMap((n:any)=>n.members).sort())===JSON.stringify(after.nodes.map((n:any)=>n.id).sort()),`editor keeps exact surviving IDs after deleting ${removed}`);
+    ok(rendered.edges.flatMap((e:any)=>e.index).every((index:number)=>after.edges[index]),`editor edges retain original identities after deleting ${removed}`);
+  }
+  const disconnected:any={...def,nodes:[{id:"start",kind:"hook",do:"note",label:"Entry"},{id:"cycle-a",kind:"hook",do:"note",label:"Same",stage:"repair"},{id:"cycle-b",kind:"hook",do:"note",label:"Same",stage:"repair"},{id:"refine",kind:"loop",label:"Refine",args:{producer:"cycle-a"}}],edges:[{from:"cycle-a",to:"cycle-b",when:"ok"},{from:"cycle-a",to:"cycle-b",when:"fail",checks:[{use:"fixture-check"}]},{from:"cycle-b",to:"cycle-a"},{from:"cycle-a",to:"refine"},{from:"refine",to:"cycle-a",when:"retry"}]};
+  const normalLoop={...def,nodes:[{id:"start",kind:"hook",do:"note",label:"Start"},{id:"producer",kind:"agent",label:"Build"},{id:"refine",kind:"loop",label:"Refine",args:{producer:"producer"}},{id:"done",kind:"hook",do:"note",label:"Done"}],edges:[{from:"start",to:"producer"},{from:"producer",to:"refine"},{from:"refine",to:"producer",when:"retry"},{from:"refine",to:"done",when:"pass"}]};
+  ok(JSON.stringify(L.layoutSimple(normalLoop))===JSON.stringify(L.layoutSimple(normalLoop,{keepDisconnected:true})),"normal connected loop preserves its existing folded Overview exactly");
+  const summary=L.layoutSimple(disconnected),editor=L.layoutSimple(disconnected,{keepDisconnected:true});
+  ok(summary.nodes.length===1&&summary.nodes[0].id==="start", "run Overview preserves its existing entry-path summary");
+  ok(JSON.stringify(editor.nodes.flatMap((n:any)=>n.members).sort())===JSON.stringify(disconnected.nodes.map((n:any)=>n.id).sort()),"editor retains all disconnected cyclic/loop component IDs");
+  ok(JSON.stringify(editor.edges.flatMap((e:any)=>e.index).sort())===JSON.stringify(disconnected.edges.map((_:any,i:number)=>i)),"disconnected parallel conditions, checks, back/loop edges retain every original index");
+  ok(!Object.values(editor.badges).flat().some((b:any)=>b.loop==="refine"),"visible disconnected loop is not also folded into a duplicate badge");
+  const folded=L.layoutSimple(disconnected,{keepDisconnected:true,collapsed:["repair"]});
+  ok(folded.nodes.some((n:any)=>n.kind==="stage"&&n.members.includes("cycle-a")&&n.members.includes("cycle-b")),"collapsed disconnected members retain an explicit expandable stage representation");
+  ok(L.layoutSimple({...def,nodes:[],edges:[]},{keepDisconnected:true}).nodes.length===0,"deleting the last node leaves a truthful empty editor");
+  ok([L.layout,L.layoutSimple,L.place].every(fn=>{const g=fn({...def,nodes:[],edges:[]},{keepDisconnected:true});return g.nodes.length===0&&Object.values(g.bbox).every(Number.isFinite);}),"all empty graph layouts have finite bounds");
+  const fork={...def,nodes:[...def.nodes,{id:"branch",kind:"hook",do:"note",label:"Branch"}],edges:[...def.edges,{from:"start",to:"branch"},{from:"branch",to:"done"}]};
+  const forkAfter={...fork,nodes:fork.nodes.filter(n=>n.id!=="middle"),edges:fork.edges.filter(e=>e.from!=="middle"&&e.to!=="middle")};
+  const forkView=L.layoutSimple(forkAfter,{keepDisconnected:true});
+  ok(forkView.nodes.some((n:any)=>n.id==="tail")&&forkView.nodes.some((n:any)=>n.id==="branch"),"fork deletion preserves both the still-connected branch and isolated downstream tail");
+  for(const rawSource of defs){const source=normalize(rawSource);const golden=JSON.stringify(L.layoutSimple(source));
+    ok(JSON.stringify(L.layoutSimple(source,{keepDisconnected:true}))===golden,`${source.id}: fully connected editor Overview preserves the normal folded projection`);
+    for(const index of source.nodes.keys()){const removed=source.nodes[index].id;const after={...source,nodes:source.nodes.filter((n:any)=>n.id!==removed),edges:source.edges.filter((e:any)=>e.from!==removed&&e.to!==removed)};if(!after.nodes.length)continue;
+      const entry=after.nodes.find((n:any)=>!after.edges.some((e:any)=>e.to===n.id))?.id??after.nodes[0].id,reachable=new Set([entry]),queue=[entry];while(queue.length){const id=queue.shift();for(const e of after.edges)if(e.from===id&&!reachable.has(e.to)){reachable.add(e.to);queue.push(e.to);}}
+      const view=L.layoutSimple(after,{keepDisconnected:true}),represented=new Set(view.nodes.flatMap((n:any)=>n.members));
+      ok(after.nodes.filter((n:any)=>!reachable.has(n.id)).every((n:any)=>represented.has(n.id)),`${source.id}: all disconnected components remain represented after deleting ${removed}`);
+    }
+    ok(JSON.stringify(L.layoutSimple(source))===golden,`${source.id}: editing repair projections do not mutate the existing run Overview`);
+  }
+
+}
 console.log(`\ngraph-tidy: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
