@@ -10,7 +10,7 @@ import { freePort, waitUp, withSession } from "./boot.mjs";
 const root = join(import.meta.dirname, ".."), temp = mkdtempSync(join(tmpdir(), "editor-owner-")), data = join(temp, "data");
 const fixture = id => { const dir = join(data, "workflows", id); mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "v1.json"), JSON.stringify({ id, name: "Editor ownership fixture", version: 1, roles: [], nodes: ["a", "b", "c"].map((id, i) => ({ id, kind: "hook", do: "note", label: id, x: 100 + i * 220, y: 100 })), edges: [{ from: "a", to: "b" }, { from: "b", to: "c" }], by: "fixture" })); };
 for (const width of [1440, 390]) for (const theme of ["light", "dark"]) for (const lang of ["en", "zh-TW"]) fixture(`save-${width}-${theme}-${lang.toLowerCase()}`);
-fixture("layout-save"); fixture("pointers"); fixture("dispose-save");
+fixture("history-cancel"); fixture("history-failure"); fixture("history-layout-save"); fixture("layout-save"); fixture("pointers"); fixture("dispose-save");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
 const port = await freePort(), base = `http://127.0.0.1:${port}`;
 const env = { ...process.env }; for (const k of ["CREW_FM_STATE", "GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) delete env[k];
@@ -89,6 +89,48 @@ try {
     held.release(); await p.waitForTimeout(300);
     ok(await p.locator('[data-node="b"]').getAttribute("transform") === moved && await p.locator('select[aria-label="Version"]').inputValue() === "2", "layout-only edit survives successful save and advances its base revision");
     await held.close(); await context.close(); }
+  // Two genuine layout writes straddle a Save. Neither a late v1 position ACK
+  // nor the acknowledged v2 snapshot may overwrite the newer draft.
+  { const id = "history-layout-save", context = await browser.newContext({ viewport: { width: 1440, height: 1000 } }), p = await open(context, id);
+    let releaseA, releaseB, readyA, readyB, count = 0;
+    const gateA = new Promise(r => releaseA = r), gateB = new Promise(r => releaseB = r), startedA = new Promise(r => readyA = r), startedB = new Promise(r => readyB = r);
+    const handler = async route => { if (route.request().method() !== "POST") return route.continue(); const n = ++count; if (n > 2) return route.continue(); const body = route.request().postDataJSON(); (n === 1 ? readyA : readyB)(body); await (n === 1 ? gateA : gateB); await route.continue(); };
+    await p.route(`**/api/wf/${id}/layout`, handler); const held = await holdSave(p, id);
+    const drag = async dx => { const b = await p.locator('[data-node="b"] rect').first().boundingBox(); await p.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await p.mouse.down(); await p.mouse.move(b.x + b.width / 2 + dx, b.y + b.height / 2 + 15, { steps: 12 }); await p.mouse.up(); };
+    await field(p, "a", "history layout snapshot"); await drag(35); const a = await startedA;
+    await p.click('[data-save]'); ok(await p.locator('[data-editor-undo]').isDisabled(), 'Save waiting for layout blocks history controls');
+    await drag(45); const draftB = await p.locator('[data-node="b"]').getAttribute('transform'); releaseA(); const b = await startedB;
+    ok(await held.started === 200, 'Save commits captured A while later layout B remains held');
+    const savedA = (await (await p.request.get(`${base}/api/wf/${id}`)).json()).def;
+    ok(savedA.version === 2 && savedA.nodes.find(n => n.id === 'b').x === a.positions.b.x && b.positions.b.x !== a.positions.b.x, 'v2 contains captured layout A, not later draft B');
+    held.release(); await p.waitForFunction(() => /later edits remain unsaved/.test(document.querySelector('.rt-status').textContent));
+    ok(await p.locator('[data-node="b"]').getAttribute('transform') === draftB && await p.locator('[data-editor-undo]').isDisabled(), 'Save ACK retains later layout B and resets the history checkpoint');
+    const late = p.waitForResponse(r => r.url().endsWith(`/api/wf/${id}/layout`) && r.request().postDataJSON()?.positions?.b?.x === b.positions.b.x); releaseB(); await late;
+    const afterB = (await (await p.request.get(`${base}/api/wf/${id}`)).json()).def;
+    ok(afterB.version === 2 && afterB.nodes.find(n => n.id === 'b').x === a.positions.b.x && await p.locator('[data-node="b"]').getAttribute('transform') === draftB && /later edits remain unsaved/.test(await p.locator('.rt-status').textContent()), 'late v1 B ACK changes neither saved v2 nor newer draft/status');
+    await held.close(); await p.unroute(`**/api/wf/${id}/layout`, handler); await p.click('[data-save]'); await p.waitForFunction(() => /Saved as v3/.test(document.querySelector('[data-diff]')?.textContent || ''));
+    await p.reload(); await p.waitForSelector('[data-node="b"]'); const final = (await (await p.request.get(`${base}/api/wf/${id}`)).json()).def;
+    ok(final.version === 3 && final.nodes.find(n => n.id === 'b').x === b.positions.b.x, 'subsequent Save and reload persist the retained B layout');
+    await context.close();
+  }
+  { const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, hasTouch: true }), p = await open(context, 'history-cancel'), client = await context.newCDPSession(p); let writes = 0;
+    p.on('request', r => { if (r.method() === 'POST' && /\/(layout|graph-layout\/)/.test(r.url())) writes++; });
+    const before = await p.locator('[data-node="b"]').getAttribute('transform'), box = await p.locator('[data-node="b"] rect').first().boundingBox(), x = box.x + box.width / 2, y = box.y + box.height / 2;
+    await client.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ id: 1, x, y }] }); await client.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ id: 1, x: x + 35, y: y + 20 }] }); await client.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
+    await p.waitForFunction(before => document.querySelector('[data-node="b"]').getAttribute('transform') === before, before);
+    ok(writes === 0 && await p.locator('[data-editor-undo]').isDisabled(), 'cancelled native drag restores position with zero layout writes and no history entry'); await client.detach(); await context.close();
+  }
+  { const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } }), p = await open(context, 'history-failure'); let modeWrites = 0, failedPositions, retryPositions;
+    const beforeMove = await p.locator('[data-node="b"]').evaluate(el => { const m = el.transform.baseVal.consolidate().matrix; return {x:m.e,y:m.f}; });
+    p.on('response', r => { if (r.request().method() === 'POST' && r.url().includes('/api/graph-layout/') && r.ok()) modeWrites++; });
+    await p.route('**/api/wf/history-failure/layout', route => { if(route.request().method() !== 'POST') return route.continue(); failedPositions = route.request().postDataJSON().positions; return route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error:'controlled layout refusal'})}); });
+    await p.locator('[data-node="b"]').focus(); await p.keyboard.press('Shift+ArrowRight'); await p.waitForFunction(() => /Position change could not be saved/.test(document.querySelector('.rt-status').textContent));
+    const unchanged = (await (await p.request.get(`${base}/api/wf/history-failure`)).json()).def;
+    ok(modeWrites === 1 && unchanged.nodes.find(n => n.id === 'b').x === 320 && failedPositions.b.x === beforeMove.x + 50 && failedPositions.b.y === beforeMove.y, 'successful mode ACK plus failed position write reports failure and leaves saved coordinates unchanged');
+    await p.unroute('**/api/wf/history-failure/layout'); await p.route('**/api/wf/history-failure/layout', route => { if(route.request().method() === 'POST') retryPositions = route.request().postDataJSON().positions; return route.continue(); }); await field(p, 'a', 'retry position'); await p.click('[data-save]'); await p.waitForFunction(() => /Saved as v2/.test(document.querySelector('[data-diff]')?.textContent || ''));
+    const retried = (await (await p.request.get(`${base}/api/wf/history-failure`)).json()).def;
+    ok(retried.version === 2 && JSON.stringify(retryPositions) === JSON.stringify(failedPositions) && retried.nodes.every(n => n.x === failedPositions[n.id].x && n.y === failedPositions[n.id].y), 'Save retries the real failed layout before creating a version ' + JSON.stringify(retried.nodes)); await context.close();
+  }
   // Mouse owner plus a native touch pointer can end/cancel the secondary touch
   // independently (CDP touchEnd/touchCancel empty arrays affect touches only).
   for (const theme of ["light", "dark"]) {
