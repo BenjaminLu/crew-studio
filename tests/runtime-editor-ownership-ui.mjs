@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { revealEditorControl } from "./lib/reveal-editor-control.mjs";
 // Genuine local save responses held after commit, and native Chrome pointer
 // input. Never synthesize a drop, verdict or successful server response.
 import { spawn } from "node:child_process";
@@ -18,8 +19,8 @@ const app = spawn("bun", ["src/server.ts"], { cwd: root, env: { ...env, CREW_DAT
 let browser, passed = 0, failed = 0;
 const ok = (v, name) => { console.log(`${v ? "PASS" : "FAIL"} ${name}`); v ? passed++ : failed++; };
 const shots = join(root, "tests/out/runtime-editor-ownership"); mkdirSync(shots, { recursive: true });
-const open = async (context, id) => { const p = await context.newPage(); await p.goto(`${base}/#/workflows/${id}`); await p.waitForSelector('[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await p.evaluate(() => document.body.classList.add("chat-closed")); await p.click("[data-fit]"); return p; };
-const field = async (p, id, value) => { await p.locator(`[data-node="${id}"]`).focus(); await p.keyboard.press("Enter"); await p.locator('[data-field="label"]').fill(value); await p.click("[data-fit]"); };
+const open = async (context, id) => { const p = await context.newPage(); await p.goto(`${base}/#/workflows/${id}`); await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.waitForSelector('[data-view-toggle="detail"]'); await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await p.evaluate(() => document.body.classList.add("chat-closed")); await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]"); return p; };
+const field = async (p, id, value) => { await p.locator(`[data-node="${id}"]`).focus(); await p.keyboard.press("Enter"); await p.locator('[data-field="label"]').fill(value); await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]"); };
 const holdSave = async (p, id) => { let release, ready; const gate = new Promise(r => release = r), started = new Promise(r => ready = r); let first = true;
   const handler = async route => { if (route.request().method() !== "POST" || !first) return route.continue(); first = false; const response = await route.fetch(); ready(response.status()); await gate; try { await route.fulfill({ response }); } catch {} };
   await p.route(`**/api/wf/${id}`, handler); return { started, release, async close() { release(); await p.unroute(`**/api/wf/${id}`, handler); } }; };
@@ -28,6 +29,21 @@ try {
   for (const width of [1440, 390]) for (const theme of ["light", "dark"]) for (const lang of ["en", "zh-TW"]) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, colorScheme: theme }); await context.addInitScript(({ lang }) => { localStorage.setItem("crew.lang", lang); localStorage.setItem("crew.chatOpen", "0"); }, { lang });
     const id = `save-${width}-${theme}-${lang.toLowerCase()}`, p = await open(context, id); const held = await holdSave(p, id);
+    if(width===390){
+      const originalSave=await p.$('[data-save]'),originalNote=await p.$('[data-save-note]');
+      await p.locator('[data-node="a"]').focus();await p.keyboard.press('Enter');
+      await p.waitForFunction(()=>document.querySelector('[data-inspector-savebar] [data-save]'));
+      ok(await p.evaluate(({button,note})=>button===document.querySelector('[data-inspector-savebar] [data-save]')&&note===document.querySelector('[data-inspector-savebar] [data-save-note]'),{button:originalSave,note:originalNote}),`${width}/${theme}/${lang}: mobile inspector reuses the original real Save and note`);
+      await p.locator('[data-inspector-savebar] [data-save-note]').fill('retain caret');await p.locator('[data-inspector-savebar] [data-save-note]').focus();
+      await originalNote.evaluate(el=>el.setSelectionRange(2,5));await p.setViewportSize({width:390,height:980});await p.waitForTimeout(40);
+      const caret=await p.evaluate(note=>({focused:document.activeElement===note,start:note.selectionStart,end:note.selectionEnd,active:document.activeElement?.outerHTML?.slice(0,180),parent:note.parentElement?.className}),originalNote);
+      ok(caret.focused&&caret.start===2&&caret.end===5,'same-parent resize preserves the active note and caret '+JSON.stringify(caret));
+      await p.setViewportSize({width:1440,height:1000});await p.waitForFunction(()=>document.querySelector('.wf-editor-save-home [data-save]'));
+      ok(await p.evaluate(button=>button===document.querySelector('.wf-editor-save-home [data-save]'),originalSave),'resizing restores the same Save to the header');
+      await p.setViewportSize({width:390,height:1000});await p.waitForFunction(()=>document.querySelector('[data-inspector-savebar] [data-save]'));
+      await p.locator('[data-inspector-close]').click();
+      ok(await p.evaluate(button=>button===document.querySelector('.wf-editor-save-home [data-save]')&&document.querySelectorAll('[data-save]').length===1,originalSave),'closing restores one original Save without cloning its authority');
+    }
     await field(p, "a", "submitted snapshot"); await p.click("[data-save]"); ok(await held.started === 200, `${width}/${theme}/${lang}: genuine save committed before its response is released`);
     ok(await p.locator("[data-save]").isDisabled() && /Saving|儲存中/.test(await p.locator("[data-save]").textContent()), `${width}/${theme}/${lang}: pending save state is visible and duplicate save is held`);
     await field(p, "a", "later draft retained"); await p.locator("[data-save]").scrollIntoViewIfNeeded();

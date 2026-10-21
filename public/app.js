@@ -82,7 +82,7 @@ function render() {
   // a field the captain is typing in that the new view keeps (a mounted card is reused, unit inbox-live) keeps its focus and caret
   // a field the view draws anew (the Start form's request field) is found again by its stable key (id, else its first data-
   // attribute) on the same page, and takes the focus and caret, so the next keys land in it
-  const a = document.activeElement; const keep = a && root.contains(a) && /^(INPUT|TEXTAREA)$/.test(a.tagName) ? { a, s: a.selectionStart, e: a.selectionEnd, key: fieldKey(a), at: render.at } : null;
+  const a = document.activeElement; const inboxFocus = S.route.name === "inbox" && a && root.contains(a) && a.matches("[data-inbox-row]") ? a.dataset.inboxRow : null; const keep = a && root.contains(a) && /^(INPUT|TEXTAREA)$/.test(a.tagName) ? { a, s: a.selectionStart, e: a.selectionEnd, key: fieldKey(a), at: render.at } : null;
   // Live refresh detaches even reused cards. Keep only the exact still-valid card action;
   // never transfer focus to a replacement, a different page, or over another focus target.
   const card = a?.closest('[data-scard][data-card-status="open"]');
@@ -97,6 +97,12 @@ function render() {
     const matches = [...action.card.querySelectorAll(action.key)].filter(next => next.closest('[data-scard][data-card-status="open"]') === action.card && next.getAttribute('data-option') === action.option && next.getAttribute('href') === action.href);
     const next = matches.length === 1 ? matches[0] : null;
     if (next && !next.matches(':disabled,[aria-disabled="true"]') && next.getClientRects().length && getComputedStyle(next).visibility !== 'hidden') next.focus({ preventScroll: true });
+  }
+  // List rows are rebuilt on live refresh. Restore their exact current owner synchronously:
+  // leaving this to rAF briefly loses focus and lets a later refresh lose the owner entirely.
+  if (inboxFocus && S.route.name === "inbox" && IB.sel === inboxFocus && document.activeElement === document.body) {
+    const rows = root.querySelectorAll(`[data-inbox-row="${CSS.escape(inboxFocus)}"]`), row = rows.length === 1 ? rows[0] : null;
+    if (row?.getClientRects().length && getComputedStyle(row).visibility !== "hidden") row.focus({ preventScroll: true });
   }
   hydrateIcons(root);
   $("#main").scrollTop = scroll;
@@ -250,14 +256,13 @@ function viewInbox(id) {
   const mode = id && cur && cur.id === id ? "card" : "list";
   const rec = IB.recorded && Date.now() - IB.recorded.at < 8000 ? IB.recorded : null;
   const said = rec && cur ? T(`Recorded for ${rec.task}. Next: ${cur.task}.`, `已記錄「${rec.task}」的回答。下一張：${cur.task}。`) : rec ? T(`Recorded for ${rec.task}. Nothing else is waiting.`, `已記錄「${rec.task}」的回答。沒有其他等你的卡。`) : "";
-  const rowFocused = !!document.activeElement?.closest?.("[data-inbox-row]");
   requestAnimationFrame(() => {
     // another card selected: its top shows, not the middle the previous card was scrolled to
     const m = $("#main"), box = document.querySelector("[data-inbox-studio]");
     if (moved && m && box) { const top = box.getBoundingClientRect().top - m.getBoundingClientRect().top + m.scrollTop - 12; if (m.scrollTop > top) m.scrollTop = Math.max(0, top); }
     if (left && rec?.id === left) { // the captain's answer took the card away: focus goes to the next card's header (or the page title) and the answer is announced
       (document.querySelector("[data-inbox-head]") || document.querySelector(".ib-page h1"))?.focus({ preventScroll: true }); inboxAnnounce(said);
-    } else if (rowFocused) document.querySelector(`[data-inbox-row="${CSS.escape(IB.sel || "")}"]`)?.focus({ preventScroll: true }); // a row opened by click or keys keeps the keyboard
+    }
   });
   return h("div", { class: "page ib-page" },
     h("div", { class: "phead" }, h("div", {}, h("h1", { tabindex: "-1" }, T("Inbox", "收件匣")),

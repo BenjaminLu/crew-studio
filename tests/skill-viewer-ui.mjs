@@ -63,12 +63,11 @@ try {
     await p.goto(`${base}/#/team`); await p.evaluate((l) => setLang(l), lang);
     await p.locator("[data-team-page]").waitFor({ timeout: 30000 });
     if (width === 1440) ok(await p.evaluate(() => !document.body.classList.contains("chat-closed")), `the Firstmate panel is open beside the page ${tag}`);
-    await p.locator('[data-team-card="web-prototype"]').click();
+    await p.locator('[data-crew-section="workflows"]').click();await p.locator('[data-crew-workflow-picker]').selectOption('web-prototype');await p.locator('[data-crew-node="design-a"]').click();await p.locator('[data-crew-fold="node-skills:web-prototype:design-a"] > summary').click();
     const rowA = p.locator('[data-team-row="design-a"]'); await rowA.waitFor();
-    // the member editor open, so its chips are on the page and its state can be checked after the viewer
-    await p.locator("[data-open-members]").click(); await p.locator("[data-member-editor]").waitFor();
-    const pageState = () => p.evaluate(() => ({ card: document.querySelector('[data-team-card][aria-pressed="true"]')?.dataset.teamCard, editor: !!document.querySelector("[data-member-editor]"), hash: location.hash }));
-    const before = await pageState();
+    // One inspector remains open while its child skill viewer is inspected.
+    const pageState = () => p.evaluate(() => ({ card: document.querySelector('[data-team-card][aria-pressed="true"]')?.dataset.teamCard, inspector: document.querySelector("[data-team-row]")?.dataset.teamRow, hash: location.hash }));
+    const before = await pageState(), dirtyBefore = await p.evaluate(() => window.pageDirty.why());
     await rowA.scrollIntoViewIfNeeded(); await p.screenshot({ path: join(shots, `team-chips-${lang}-${width}.png`) });
     // ---------- a seat's chip: Enter opens, at the pinned (older) version ----------
     const chip = rowA.locator('[data-skill-view="alpha"]');
@@ -121,15 +120,19 @@ try {
     // Esc closes; the focus returns to the chip; the page's selection and its member editor are as they were
     await p.keyboard.press("Escape");
     ok(await dialog(p).count() === 0, `Esc closes the viewer ${tag}`);
-    ok(await p.evaluate(() => window.pageDirty.why()) === null, `after switching versions and closing, nothing on the page counts as unsent (a release reload stays quiet) ${tag}`, await p.evaluate(() => window.pageDirty.why()));
+    ok(dirtyBefore === "dialog" && await p.evaluate(() => window.pageDirty.why()) === dirtyBefore, `read-only version viewing adds no unsent input beyond the unchanged node inspector ${tag}`, await p.evaluate(() => window.pageDirty.why()));
     ok(await p.evaluate(() => document.activeElement?.getAttribute("data-skill-view") === "alpha" && !!document.activeElement.closest('[data-team-row="design-a"]')), `the focus returns to the chip that opened it ${tag}`);
-    ok(JSON.stringify(await pageState()) === JSON.stringify(before), `opening the viewer changed nothing on the page: same workflow, member editor still open, same hash ${tag}`, JSON.stringify([before, await pageState()]));
+    ok(JSON.stringify(await pageState()) === JSON.stringify(before), `opening the viewer changed nothing on the page: same workflow, node inspector still open, same hash ${tag}`, JSON.stringify([before, await pageState()]));
     // the seat editor's chip, closed with its close button
+    await p.locator('[data-crew-drawer-close]').click();await p.locator('[data-crew-section="team"]').click();await p.locator('[data-crew-person="maker"]').click();
+    const memberSkills=p.locator('[data-crew-fold="member-skills:maker"]');if(!await memberSkills.evaluate(el=>el.open))await memberSkills.locator(':scope > summary').click();
     const seatChip = p.locator('[data-seat-editor="maker"] [data-skill-view="alpha"]');
     await seatChip.click(); await dialog(p).waitFor(); ok(await waitShown(p, "1"), `the seat editor's chip opens the viewer at the seat's v1 ${tag}`);
     await dialog(p).locator("[data-skv-close]").click();
     ok(await dialog(p).count() === 0 && await p.evaluate(() => !!document.activeElement?.closest('[data-seat-editor="maker"]')), `the close button closes it and the focus returns to the seat editor's chip ${tag}`);
     // the role skill chip: Studio's versioned role text, the version this node receives
+    await p.locator('[data-crew-drawer-close]').click();await p.locator('[data-crew-section="workflows"]').click();await p.locator('[data-crew-node="design-a"]').click();
+    const nodeSkills=p.locator('[data-crew-fold="node-skills:web-prototype:design-a"]');if(!await nodeSkills.evaluate(el=>el.open))await nodeSkills.locator(':scope > summary').click();
     const roleChip = rowA.locator('[data-skill-view^="role:"]');
     const roleKey = await roleChip.getAttribute("data-skill-view"), roleV = await roleChip.getAttribute("data-skill-pinned");
     await roleChip.click(); await dialog(p).waitFor(); await waitShown(p, roleV);
@@ -159,8 +162,8 @@ try {
     await p.goto(`${base}/#/skills/alpha@1`); await dialog(p).waitFor();
     ok(await waitShown(p, "1"), `#/skills/alpha@1 opens the viewer at v1 over the Library ${tag}`);
     await p.keyboard.press("Escape");
-    await p.waitForFunction(() => location.hash === "#/library/skills").catch(() => {});
-    ok(await dialog(p).count() === 0 && await p.evaluate(() => location.hash) === "#/library/skills", `closing the deep link leaves the Library's Skills page ${tag}`, await p.evaluate(() => location.hash));
+    await p.waitForFunction(() => location.hash === "#/skills").catch(() => {});
+    ok(await dialog(p).count() === 0 && await p.evaluate(() => location.hash) === "#/skills", `closing the deep link leaves the Skills page ${tag}`, await p.evaluate(() => location.hash));
     // a Studio link in the skill's text leaves the dialog for that page; Back opens the deep link's viewer again
     await p.goto(`${base}/#/skills/alpha@1`); await dialog(p).waitFor(); await waitShown(p, "1");
     await dialog(p).locator("[data-skv-rendered] a[href='#/library']").click();

@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { revealEditorControl } from "./lib/reveal-editor-control.mjs";
 // Capture the added publication node and graph routes, all viewport/themes/languages.
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
@@ -25,12 +26,12 @@ try {
     await p.goto(base + "/#/workflows/code-firstmate");
     await p.waitForSelector('svg.rt-graph');
     await p.evaluate(() => document.body.classList.add("chat-closed"));
-    await p.click("[data-fit]");
+    await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]");
     const buildStage = p.locator('[data-stage-node="build"]');
     if (await buildStage.count()) { await buildStage.focus(); await buildStage.press("Enter"); }
     await p.waitForSelector('svg.rt-graph [data-node="pr-open"]');
     await p.evaluate(() => document.body.classList.add("chat-closed"));
-    await p.click("[data-fit]"); await p.waitForTimeout(150);
+    await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]"); await p.waitForTimeout(150);
     const geometry = await p.locator('[data-node="pr-open"]').evaluate(el => { const r = el.getBoundingClientRect(), svg = el.closest("svg").getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, visible: r.width > 0 && r.height > 0 && r.x >= svg.x - 1 && r.y >= svg.y - 1 && r.right <= svg.right + 1 && r.bottom <= svg.bottom + 1 }; });
     ok(geometry.visible, `${width}/${theme}/${language} publication node fits graph viewport`);
     const labels = await p.locator('[data-node="pr-open"]').textContent();

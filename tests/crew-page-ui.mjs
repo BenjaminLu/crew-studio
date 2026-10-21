@@ -48,6 +48,12 @@ const api = async () => (await fetch(`${base}/api/team`, { headers: { cookie: `c
 try {
   await waitUp(base, app); browser = withSession(await chromium.launch(), base, token);
   const view = async (p) => p.evaluate(async () => (await fetch("/api/team")).json());
+  const closeSettings=async p=>{if(await p.locator('[data-crew-drawer]').count())await p.locator('[data-crew-drawer-close]').click();};
+  const section=async(p,name)=>{await closeSettings(p);await p.locator(`[data-crew-section="${name}"]`).click();};
+  const expand=async(p,key)=>{const fold=p.locator(`[data-crew-fold="${key}"]`);if(!await fold.evaluate(el=>el.open))await fold.locator(':scope > summary').click();};
+  const workflow=async(p,id)=>{await section(p,'workflows');await p.locator('[data-crew-workflow-picker]').selectOption(id);await expand(p,'workflow-overview');};
+  const inspect=async(p,node)=>{if(!await p.locator(`[data-team-row="${node}"]`).count()){await closeSettings(p);await p.locator(`[data-crew-node="${node}"]`).click();}const fold=p.locator('[data-crew-drawer] [data-crew-fold^="node-skills:"]');if(await fold.count()&&!await fold.evaluate(el=>el.open))await fold.locator(':scope > summary').click();};
+
   for (const [lang, width, height] of [["en", 1440, 940], ["zh-TW", 390, 844]]) {
     seed();
     const p = await browser.newPage({ viewport: { width, height } }); const errors = []; p.on("pageerror", (e) => errors.push(String(e)));
@@ -60,6 +66,7 @@ try {
     await detected;
     await p.locator("[data-team-page]").waitFor();
     ok(/#\/team$/.test(p.url()), `the Crew page links to who runs each workflow ${tag}`);
+    await section(p,"team");await expand(p,"model-detection");
     // ---------- detected models ----------
     const claudeStatus = p.locator('[data-provider-status="claude"]'), codexStatus = p.locator('[data-provider-status="codex"]');
     await p.waitForFunction(() => document.querySelector('[data-provider-status="claude"]')?.dataset.state === "detected" && document.querySelector('[data-provider-status="codex"]')?.dataset.state === "detected", null, { timeout: 30000 });
@@ -68,13 +75,16 @@ try {
     ok(await claudeStatus.getAttribute("data-login") === "logged-in" && (await claudeStatus.innerText()).includes(lang === "en" ? "signed in" : "已登入"), `each provider shows its login ${tag}`, await claudeStatus.innerText());
     ok(Number(await claudeStatus.locator("[data-detected-at]").getAttribute("data-detected-at")) > 0 && (await claudeStatus.innerText()).includes(lang === "en" ? "detected at" : "偵測時間"), `each provider shows when it was detected ${tag}`);
     const opts = async (row) => row.locator("select").nth(1).evaluate((s) => [...s.querySelectorAll("optgroup")].map((g) => ({ group: g.dataset.providerGroup, options: [...g.querySelectorAll("option")].map((o) => ({ value: o.value, text: o.textContent, stale: o.hasAttribute("data-unavailable"), efforts: o.dataset.efforts })) })));
+    const note = p.locator("[data-models-note]");
+    ok(await note.count() === 1 && /sonnet-5\.5/.test(await note.innerText()) && (await note.innerText()).includes(lang === "en" ? "not detected on this machine" : "沒有偵測到"), `the note names the unavailable models and explains ${tag}`, await note.innerText().catch(() => ""));
+    await workflow(p,'web-prototype');
     const card = p.locator('[data-team-card="web-prototype"]');
     ok(await card.count() === 1 && await p.locator('[data-team-card="documents"]').count() === 1 && await p.locator('[data-team-card="code-firstmate"]').count() === 1, `one card per workflow with agents ${tag}`);
     ok((await card.innerText()).includes(lang === "en" ? "Follows team" : "跟團隊"), `a workflow that follows the team says so ${tag}`, await card.innerText());
-    await card.click();
+    await workflow(p,"web-prototype");await inspect(p,"design-a");
     const rowA = p.locator('[data-team-row="design-a"]'), rowB = p.locator('[data-team-row="design-b"]');
     await rowA.waitFor();
-    const modelOf = async (row) => row.locator("select").nth(1).inputValue();
+    const modelOf = async (row) => {await inspect(p,row===rowA?"design-a":"design-b");return row.locator("select").nth(1).inputValue();};
     ok(await modelOf(rowA) === "codex/gpt-6.1-sol" && await modelOf(rowB) === "claude/sonnet-5.5", `design A and B show different members' models ${tag}`);
     const groupsB = await opts(rowB);
     ok(JSON.stringify(groupsB.map((g) => g.group)) === '["codex","claude"]' && JSON.stringify(groupsB[0].options.map((o) => o.value)) === JSON.stringify(CODEX_MODELS.map(([m]) => `codex/${m}`)),
@@ -83,9 +93,8 @@ try {
     ok(claudeOpts.length === 3 && claudeOpts[0].value === "claude/sonnet-5.5" && claudeOpts[0].stale && claudeOpts[0].text.includes(lang === "en" ? "unavailable now" : "目前不可用") && claudeOpts.slice(1).map((o) => o.value).join() === "claude/claude-opus-4-8,claude/claude-haiku-4-5-20251001" && !claudeOpts.some((o) => /opus-5-5|opus-5\.5/.test(o.value)),
       `the current model no longer detected stays, marked unavailable; Claude's choices are its CLI's list ${tag}`, JSON.stringify(claudeOpts));
     ok(claudeOpts[1].efforts === "low medium high xhigh max" && claudeOpts[2].efforts === "" && groupsB[0].options[2].efforts === "medium high", `each model carries its own efforts ${tag}`);
+    await inspect(p,"design-a");
     ok(JSON.stringify(await rowA.locator("select").nth(2).evaluate((s) => [...s.options].map((o) => o.value))) === '["low","medium","high","xhigh"]', `the effort select offers the model's own efforts ${tag}`);
-    const note = p.locator("[data-models-note]");
-    ok(await note.count() === 1 && /sonnet-5\.5/.test(await note.innerText()) && (await note.innerText()).includes(lang === "en" ? "not detected on this machine" : "沒有偵測到"), `the note names the unavailable models and explains ${tag}`, await note.innerText().catch(() => ""));
     ok(await rowA.locator(".tm-skill.base").innerText() === "plain-writing", `the member's skill shows grey on the node ${tag}`);
     { const role = await rowA.locator("[data-role-skill]").textContent().catch(() => "") ?? "";
       ok(role.includes(lang === "en" ? "Role" : "角色") && role.includes("designer.md") && /· [0-9a-f]{8}/.test(role) && await rowA.locator(".tm-skill.own", { hasText: "web-interaction" }).count() === 1,
@@ -112,9 +121,9 @@ try {
     ok(node("web-prototype", "design-b").model === "sonnet-5.5", `the second maker is not touched ${tag}`);
     // coffee's empty image seat is named on its card; code-firstmate's judged checks show who reviews
     ok(/Image maker|圖像產出/.test(await p.locator('[data-missing-roles="coffee-kit"]').innerText()), `a missing seat says which seat and role ${tag}`);
-    await p.locator('[data-team-card="code-firstmate"]').click(); await p.locator('[data-team-detail="code-firstmate"]').waitFor();
+    await workflow(p,'code-firstmate');const judged=(await view(p)).workflows.find(w=>w.id==='code-firstmate').nodes.find(n=>n.judge);await inspect(p,judged.node);await p.locator('[data-team-detail="code-firstmate"]').waitFor();
     ok(await p.locator('[data-team-judge]').count() > 0 && (await p.locator('[data-team-card="code-firstmate"] .tm-step.judge').count()) > 0, `judged checks show on the card and in the table, on their reviewing seat ${tag}`);
-    await card.click(); await rowB.waitFor();
+    await workflow(p,"web-prototype");await inspect(p,"design-b"); await rowB.waitFor();
     // skills: add one, remove it (design-b already pins web-interaction and accessible-ui by duty)
     await rowB.locator(".tm-add").selectOption("data-viz");
     await p.waitForFunction(() => [...document.querySelectorAll('[data-team-row="design-b"] .tm-skill.own')].some((e) => e.textContent.includes("data-viz")));
@@ -123,27 +132,28 @@ try {
     await p.waitForFunction(() => ![...document.querySelectorAll('[data-team-row="design-b"] .tm-skill.own')].some((e) => e.textContent.includes("data-viz")));
     ok(true, `and removed again ${tag}`);
     // restore
-    await p.locator('[data-restore="web-prototype"]').click();
+    await closeSettings(p);await expand(p,"restore:web-prototype");await p.locator('[data-restore="web-prototype"]').click();
     await p.waitForFunction(() => document.querySelector('[data-team-card="web-prototype"] .tm-badge')?.classList.contains("team"));
     ok(node("web-prototype", "design-a").effort === "high" && (await view(p)).workflows.find((w) => w.id === "web-prototype").nodes.find((x) => x.node === "design-a").effort === "medium", `restore to team drops this workflow's customisation ${tag}`);
     // the member editor: a preset, and the rule's note when the second maker takes the maker's model
-    await p.locator('[data-legend="reviewer"]').click();
+    await section(p,"team");await expand(p,"team-advanced");await p.locator("[data-crew-manage]").click();
     await p.locator("[data-member-editor]").waitFor();
     await p.locator('[data-preset="quality"]').click();
     await p.waitForFunction(() => document.querySelector('[data-seat-editor="maker"] select:nth-of-type(2)')?.value === "high");
     v = await view(p);
     ok(v.seats.filter((s) => s.member).every((s) => s.member.effort === "high"), `the quality preset sets every member's effort ${tag}`);
     await p.locator('[data-seat-editor="alt-maker"] select').first().selectOption("codex/gpt-6-astra");
-    await p.waitForFunction(() => document.querySelector('[data-team-row="design-b"] .tm-notes'));
+    await workflow(p,"web-prototype");await inspect(p,"design-b");await p.waitForFunction(() => document.querySelector('[data-team-row="design-b"] .tm-notes'));
     ok(/same model as Maker|同一個模型/.test(await rowB.locator(".tm-notes").innerText()) && await modelOf(rowB) !== "codex/gpt-6-astra", `the rule moves B off the maker's model and says so ${tag}`, await rowB.locator(".tm-notes").innerText());
     // 重新偵測 reads the lists again; a provider without a login says so
+    await section(p,"team");await expand(p,"model-detection");
     const readsNow = claudeReads(); rmSync(join(home, ".claude-models-login"));
     const redetect = async (login) => { await p.locator("[data-redetect]:not([disabled])").click(); await p.waitForFunction((l) => document.querySelector('[data-provider-status="claude"]')?.dataset.login === l && document.querySelector("[data-model-detection]")?.getAttribute("aria-busy") === "false", login, { timeout: 30000 }); };
     await redetect("not-logged-in");
     ok(claudeReads() > readsNow && (await claudeStatus.innerText()).includes(lang === "en" ? "not signed in" : "未登入"), `重新偵測 detects again, and a provider without a login says so ${tag}`, await claudeStatus.innerText());
     writeFileSync(join(home, ".claude-models-login"), "1"); await redetect("logged-in");
     if (width === 390) ok(await p.evaluate(() => document.scrollingElement.scrollWidth <= innerWidth + 1), `no horizontal scroll at 390 ${tag}`, String(await p.evaluate(() => document.scrollingElement.scrollWidth)));
-    if (process.env.CREW_UI_SHOTS) { await p.screenshot({ path: join(process.env.CREW_UI_SHOTS, `team-${width}.png`) }); await p.locator("[data-team-detail]").screenshot({ path: join(process.env.CREW_UI_SHOTS, `team-detail-${width}.png`) }); }
+    if (process.env.CREW_UI_SHOTS) { await p.screenshot({ path: join(process.env.CREW_UI_SHOTS, `team-${width}.png`) }); await workflow(p,"web-prototype");await p.locator("[data-team-detail]").screenshot({ path: join(process.env.CREW_UI_SHOTS, `team-detail-${width}.png`) }); }
     // last, so its page visits do not overlap the detection checks above: the sidebar's Crew opens the team page; the rounds and activity are its second tab, and #/crew deep links still open them
     await p.goto(`${base}/#/board`); await p.evaluate(() => document.querySelector('.nav-item[data-view="crew"]').click());
     await p.locator("[data-team-page]").waitFor();
@@ -162,9 +172,10 @@ try {
     const p = await browser.newPage({ viewport: { width: 1440, height: 940 } }); const errors = []; p.on("pageerror", (e) => errors.push(String(e)));
     await p.goto(`${base}/#/team`); await p.evaluate(() => setLang("en")); await p.locator("[data-team-page]").waitFor();
     const read = async (q) => p.evaluate(async (u) => (await fetch(u)).json(), `/api/team${q}`);
-    await p.locator("[data-team-project]").selectOption("shop");
-    await p.waitForFunction(() => document.querySelector("[data-team-project]")?.value === "shop" && document.querySelector('[data-team-card="web-prototype"]'));
-    await p.locator('[data-team-card="web-prototype"]').click();
+    const projectLoaded=p.waitForResponse(r=>new URL(r.url()).pathname==="/api/team"&&new URL(r.url()).searchParams.get("project")==="shop");
+    await p.locator("[data-team-project]").selectOption("shop");await projectLoaded;
+    await p.waitForFunction(() => document.querySelector("[data-team-project]")?.value === "shop" && document.querySelector("[data-crew-person]"));
+    await workflow(p,"web-prototype");await inspect(p,"design-a");
     const rowA = p.locator('[data-team-row="design-a"]'); await rowA.waitFor();
     await rowA.locator("select").nth(2).selectOption("xhigh");
     const ask = p.locator('[data-scope-ask="design-a"]'); await ask.waitFor();
@@ -177,12 +188,66 @@ try {
     ok(at(shop, "web-prototype", "design-a").effort === "xhigh" && at(shop, "documents", "draft").effort === "xhigh" && at(wide, "web-prototype", "design-a").effort === "medium" && at(wide, "documents", "draft").effort === "medium",
       "only this project: the seat's nodes change in that project, the Studio-wide team does not", JSON.stringify({ shop: at(shop, "web-prototype", "design-a").effort, wide: at(wide, "web-prototype", "design-a").effort }));
     ok(shop.projects.find((x) => x.id === "shop")?.custom === true && /◆/.test(await p.locator("[data-team-project] option[value=shop]").innerText()), "the selector marks a project with its own crew");
-    await p.locator('[data-restore-project="shop"]').click();
+    await closeSettings(p);await expand(p,"restore:web-prototype");await p.locator('[data-restore-project="shop"]').click();await inspect(p,"design-a");
     await p.waitForFunction(() => document.querySelector('[data-team-row="design-a"] [data-source]')?.dataset.source === "team");
     ok(!(await read("?project=shop")).projects.find((x) => x.id === "shop").custom, "restore puts the project back on the team");
     ok(errors.length === 0, "no browser errors (project)", errors.join(" | "));
     await p.close();
   }
+  // Real-save lifecycle: no prototype routes, no fabricated availability or success.
+  {
+    seed();const p=await browser.newPage({viewport:{width:1440,height:940}});await p.goto(`${base}/#/team`);await p.evaluate(()=>setLang('en'));await p.locator('[data-crew-person="maker"]').waitFor();await section(p,'team');await p.locator('[data-crew-person="maker"]').click();
+    await p.waitForFunction(()=>document.querySelector('[data-crew-edit-model] option[value="codex/gpt-6.2-nova"]'));
+    let writes=0;p.on('request',r=>{if(r.method()==='POST'&&r.url()===`${base}/api/team/change`)writes++;});
+    const current=await api();await p.locator('[data-crew-edit-model]').selectOption('codex/gpt-6.2-nova');ok(await p.evaluate(()=>window.pageDirty.why())==='crew-member-draft','an unsaved role draft owns the release guard');
+    await p.getByRole('button',{name:'Cancel changes',exact:true}).click();ok(await p.evaluate(()=>window.pageDirty.why())==='dialog','cancel removes the unsaved role guard while retaining the inspector');ok(writes===0&&(await api()).team.hash===current.team.hash,'cancel discards a role draft without any write');
+    await p.locator('[data-crew-edit-model]').selectOption('codex/gpt-6.2-nova');await p.locator('[data-crew-edit-effort]').selectOption('high');
+    const saved=p.waitForResponse(r=>r.url()===`${base}/api/team/change`&&r.request().method()==='POST');await p.locator('[data-crew-save]').click();ok((await saved).status()===200,'role Save receives a real successful server acknowledgement');await p.waitForFunction(()=>!document.querySelector('[data-crew-save]'));
+    const persisted=await api();ok(persisted.seats.find(s=>s.id==='maker').member.model==='gpt-6.2-nova'&&persisted.seats.find(s=>s.id==='maker').member.effort==='high','acknowledged role model and effort are persisted');
+    await p.reload();await p.locator('[data-crew-person="maker"]').click();ok(await p.locator('[data-crew-edit-model]').inputValue()==='codex/gpt-6.2-nova'&&await p.locator('[data-crew-edit-effort]').inputValue()==='high','saved role model and effort survive a real reload');
+    for(const kind of ['403','network']){
+      const before=await api();await p.locator('[data-crew-edit-model]').selectOption('codex/gpt-6.1-sol');
+      const handler=route=>kind==='403'?route.fulfill({status:403,contentType:'application/json',body:JSON.stringify({error:'Fixture permission denied'})}):route.abort('failed');await p.route('**/api/team/change',handler);
+      await p.locator('[data-crew-save]').click();await p.waitForFunction(()=>{const b=document.querySelector('[data-crew-save]'),s=document.querySelector('[data-crew-save-status]');return b&&!b.disabled&&s?.textContent.trim()&&!s.textContent.includes('Unsaved changes');});
+      ok(await p.locator('[data-crew-edit-model]').inputValue()==='codex/gpt-6.1-sol'&&(await api()).team.hash===before.team.hash,`${kind} failure retains the exact draft without persisting it`);await p.unroute('**/api/team/change',handler);await p.getByRole('button',{name:'Cancel changes',exact:true}).click();
+    }
+    const beforeConflict=await api();await p.locator('[data-crew-edit-model]').selectOption('codex/gpt-6-astra');
+    const concurrent=await p.evaluate(async expected=>{const r=await fetch('/api/team/change',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({change:{kind:'preset',preset:'save'},expected,project:null})});return {status:r.status,body:await r.json()};},beforeConflict.team.hash);ok(concurrent.status===200,'a concurrent actual team change establishes a newer CAS head');
+    const conflicted=p.waitForResponse(r=>r.url()===`${base}/api/team/change`&&r.request().method()==='POST');await p.locator('[data-crew-save]').click();const conflict=await conflicted;await p.waitForFunction(()=>document.querySelector('[data-crew-save-status]')?.textContent.includes('team changed'));
+    ok(conflict.status()===409&&conflict.request().postDataJSON().expected===beforeConflict.team.hash&&await p.locator('[data-crew-edit-model]').inputValue()==='codex/gpt-6-astra','stale role Save retains its draft and original CAS token instead of silently rebasing');
+    ok((await api()).team.hash===concurrent.body.team.hash,'CAS rejection does not overwrite the concurrent team');await p.getByRole('button',{name:'Cancel changes',exact:true}).click();
+    // Permission retry must retain the original CAS token, not silently rebase.
+    for(const stale of [true,false]){
+      const before=await api(),target=before.seats.find(s=>s.id==='maker').member.model==='gpt-6.1-sol'?'codex/gpt-6-astra':'codex/gpt-6.1-sol';await p.locator('[data-crew-edit-model]').selectOption(target);
+      const decision=route=>route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({code:'skillDecision',skills:[]})});await p.route('**/api/team/change',decision);await p.locator('[data-crew-save]').click();await p.locator('[data-skill-decide]').waitFor();await p.unroute('**/api/team/change',decision);
+      if(stale)await p.evaluate(async expected=>{const r=await fetch('/api/team/change',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({change:{kind:'preset',preset:'quality'},expected,project:null})});if(!r.ok)throw new Error('Concurrent fixture update failed');},before.team.hash);
+      const retried=p.waitForResponse(r=>r.url()===`${base}/api/team/change`&&r.request().method()==='POST');await p.locator('[data-decide="scripts"]').click();const response=await retried;
+      ok(response.request().postDataJSON().expected===before.team.hash,`permission retry retains its original CAS token (stale=${stale})`);
+      if(stale){await p.waitForFunction(()=>document.querySelector('[data-crew-save-status]')?.textContent.includes('team changed'));ok(response.status()===409&&await p.locator('[data-crew-edit-model]').inputValue()===target,'permission retry cannot overwrite a concurrent team and retains its draft');await p.getByRole('button',{name:'Cancel changes',exact:true}).click();}
+      else{await p.waitForFunction(()=>!document.querySelector('[data-crew-save]'));ok(response.status()===200&&(await api()).seats.find(s=>s.id==='maker').member.model===target.split('/')[1],'confirmed permission retry persists and clears its own draft');}
+    }
+    await closeSettings(p);
+    // A delayed acknowledgement for Studio defaults cannot replace a newer project view.
+    const beforeProject=await api();await p.evaluate(async expected=>{const r=await fetch('/api/team/change',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({change:{kind:'project',project:'shop',seat:'maker',set:{effort:'xhigh'}},expected,project:null})});if(!r.ok)throw new Error('Project fixture setup failed');},beforeProject.team.hash);
+    await p.reload();await p.locator('[data-crew-person="maker"]').click();await p.waitForFunction(()=>document.querySelector('[data-crew-edit-model] option[value="codex/gpt-6.2-nova"]'));const beforeDelayed=await api(),target=beforeDelayed.seats.find(s=>s.id==='maker').member.model==='gpt-6.2-nova'?'codex/gpt-6.1-sol':'codex/gpt-6.2-nova';await p.locator('[data-crew-edit-model]').selectOption(target);
+    let release,ready;const gate=new Promise(r=>release=r),started=new Promise(r=>ready=r);const delayed=async route=>{const response=await route.fetch();ready();await gate;await route.fulfill({response});};await p.route('**/api/team/change',delayed);const acknowledged=p.waitForResponse(r=>r.url()===`${base}/api/team/change`&&r.request().method()==='POST');await p.locator('[data-crew-save]').click();await started;await closeSettings(p);
+    const projectResponse=p.waitForResponse(r=>new URL(r.url()).pathname==='/api/team'&&new URL(r.url()).searchParams.get('project')==='shop');await p.locator('[data-team-project]').selectOption('shop');await projectResponse;await workflow(p,'web-prototype');await inspect(p,'design-a');
+    const refreshedProject=p.waitForResponse(r=>new URL(r.url()).pathname==='/api/team'&&new URL(r.url()).searchParams.get('project')==='shop');release();await acknowledged;await refreshedProject;await p.unroute('**/api/team/change',delayed);await p.waitForFunction(()=>document.querySelector('[data-team-row="design-a"] select:nth-of-type(3)')?.value==='xhigh'||document.querySelector('[data-team-row="design-a"] [aria-label$="effort"]')?.value==='xhigh');
+    ok(await p.locator('[data-team-project]').inputValue()==='shop'&&await p.locator('[data-team-row="design-a"] select').nth(2).inputValue()==='xhigh','late Studio save acknowledgement preserves the current project scope and effective effort');await closeSettings(p);
+    // Returning to the same seat must not make an obsolete permission response current again.
+    await section(p,'team');await p.locator('[data-crew-person="maker"]').click();const abaBefore=await api(),abaTarget=abaBefore.seats.find(s=>s.id==='maker').member.model==='gpt-6-astra'?'codex/gpt-6.1-sol':'codex/gpt-6-astra';await p.locator('[data-crew-edit-model]').selectOption(abaTarget);
+    let releaseAba,startAba;const abaGate=new Promise(r=>releaseAba=r),abaReady=new Promise(r=>startAba=r);const abaHandler=async route=>{startAba();await abaGate;await route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({code:'skillDecision',skills:[]})});};await p.route('**/api/team/change',abaHandler);const abaResponse=p.waitForResponse(r=>r.url()===`${base}/api/team/change`&&r.request().method()==='POST');await p.locator('[data-crew-save]').click();await abaReady;await closeSettings(p);await p.locator('[data-crew-person="maker"]').click();releaseAba();await abaResponse;await p.evaluate(()=>new Promise(requestAnimationFrame));await p.unroute('**/api/team/change',abaHandler);ok(await p.locator('[data-skill-decide]').count()===0&&await p.locator('[data-crew-drawer]').count()===1,'late permission response cannot resurrect an obsolete decision after reopening the same seat');await closeSettings(p);
+    // A delayed permission response must not reopen a drawer after its owner closes.
+    await section(p,'team');await p.locator('[data-crew-person="maker"]').click();const beforeLatePermission=await api(),permissionTarget=beforeLatePermission.seats.find(s=>s.id==='maker').member.model==='gpt-6-astra'?'codex/gpt-6.1-sol':'codex/gpt-6-astra';await p.locator('[data-crew-edit-model]').selectOption(permissionTarget);
+    let releasePermission,permissionStarted;const permissionGate=new Promise(r=>releasePermission=r),permissionReady=new Promise(r=>permissionStarted=r);const latePermission=async route=>{permissionStarted();await permissionGate;await route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({code:'skillDecision',skills:[]})});};await p.route('**/api/team/change',latePermission);const permissionResponse=p.waitForResponse(r=>r.url()===`${base}/api/team/change`&&r.request().method()==='POST');await p.locator('[data-crew-save]').click();await permissionReady;await closeSettings(p);
+    const switched=p.waitForResponse(r=>new URL(r.url()).pathname==='/api/team'&&!new URL(r.url()).searchParams.has('project'));await p.locator('[data-team-project]').selectOption('');await switched;releasePermission();await permissionResponse;await p.evaluate(()=>new Promise(requestAnimationFrame));await p.unroute('**/api/team/change',latePermission);ok(await p.locator('[data-skill-decide],[data-crew-drawer]').count()===0,'late permission response cannot reopen a closed owner in another project view');
+    await workflow(p,'code-firstmate');const last=p.locator('[data-crew-node]').last(),nodeId=await last.getAttribute('data-crew-node');
+    for(const close of ['button','Escape','outside']){await last.hover();const before=await p.evaluate(()=>({main:document.querySelector('#main').scrollTop,doc:document.scrollingElement.scrollTop}));await last.click();await p.locator('[data-crew-drawer]').waitFor();if(close==='button')await p.locator('[data-crew-drawer-close]').click();else if(close==='Escape')await p.keyboard.press('Escape');else await p.locator('.tm-crew-backdrop').click({position:{x:2,y:2}});await p.waitForFunction(id=>document.activeElement?.dataset.crewNode===id,nodeId);ok(await p.evaluate(v=>document.querySelector('#main').scrollTop===v.main&&document.scrollingElement.scrollTop===v.doc,before),`${close} returns exact node focus without changing the viewport`);}
+    for(let i=0;i<8;i++){await last.hover();const before=await p.evaluate(()=>document.querySelector('#main').scrollTop);await p.evaluate(id=>{document.querySelector(`[data-crew-node="${CSS.escape(id)}"]`).click();document.querySelector('.tm-crew-backdrop').click();},nodeId);await p.waitForFunction(id=>document.activeElement?.dataset.crewNode===id,nodeId);ok(await p.locator('#main').evaluate(el=>el.scrollTop)===before,`rapid open/outside-close cancels stale focus work ${i+1}`);}
+    await section(p,'team');await section(p,'workflows');ok(await p.locator('[data-crew-workflow-picker]').inputValue()==='code-firstmate','local view switches retain the selected workflow');
+    await p.goto(`${base}/#/team?staffing=shop&workflow=code-firstmate`);await p.locator('[data-team-staffing][open]').waitFor();ok(await p.locator('[data-crew-section="workflows"]').getAttribute('aria-pressed')==='true','staffing deep links enter the workflow view with the original panel open');await section(p,'team');await p.locator('[data-crew-person="maker"]').click();await closeSettings(p);ok(await p.locator('[data-crew-section="team"]').getAttribute('aria-pressed')==='true','ordinary rerenders do not hijack an explicitly selected view');await p.close();
+  }
+
   // a stale page never overwrites a newer team
   const r = await fetch(`${base}/api/team/change`, { method: "POST", headers: { "content-type": "application/json", cookie: `crew_session=${token}`, origin: base, "x-crew-csrf": "1" }, body: JSON.stringify({ change: { kind: "preset", preset: "save" }, expected: "0".repeat(64) }) });
   ok([403, 409].includes(r.status), "a change from a stale view (or without the page's session) is refused", String(r.status));

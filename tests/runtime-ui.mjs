@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { revealEditorControl } from "./lib/reveal-editor-control.mjs";
 // The runtime pages (unit code-firstmate-smoke): the code-firstmate workflow in the
 // graph editor, edited and saved as v2 with its diff, then run end to end on the
 // sandbox repository from the Runs page with the stub provider (dispatch card →
@@ -50,7 +51,7 @@ try {
     ok(await p.locator('[data-wf="code-firstmate"]').isVisible(), "Workflows lists code-firstmate");
     await p.evaluate(() => document.body.classList.add("chat-closed")); // the chat panel closed: the editor gets the room
     await p.click('[data-wf="code-firstmate"]'); await p.waitForSelector('[data-editor="code-firstmate"] [data-node="spec"]');
-    await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="spec-fix"]'); // editing happens in Detail view
+    await revealEditorControl(p, '[data-view-toggle="detail"]'); await p.click('[data-view-toggle="detail"]'); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="spec-fix"]'); // editing happens in Detail view
     // spec carries eight checks since 21b3fe5 added firstmate/env-preflight (the round contract's environment preflight)
     ok(await p.getAttribute('[data-node="spec"]', "data-checks") === "8" && await p.locator('[data-edge="remote-ready→merge-card[ok]"]').getAttribute("data-edge-checks") === "7" && (await p.locator("[data-node]").count()) >= 25,
       "the editor loads code-firstmate's graph with check badges on nodes (spec ✓8) and edges (seven gates on review → merge card: the six and gate-design)");
@@ -65,12 +66,20 @@ try {
     await p.focus('[data-node="intake"]'); const k0 = await pos(p, "intake"); await p.keyboard.press("ArrowDown"); await p.keyboard.press("Shift+ArrowRight"); await p.waitForTimeout(200);
     const k1 = await pos(p, "intake"); await p.focus('[data-node="intake"]'); await p.keyboard.press("Enter"); await p.waitForTimeout(150);
     ok(k1.y === k0.y + 10 && k1.x === k0.x + 50 && (await p.textContent(".rt-panel h3")) === "Capture intent", "keyboard: arrows move the focused node, Enter opens it in the side panel", JSON.stringify({ k0, k1 }));
+    await p.keyboard.press("Escape");
+    ok(await p.locator(".rt-panel").isHidden() && await p.evaluate(() => document.activeElement?.dataset.node === "intake"), "Escape closes the local inspector and returns focus to its node");
+    await p.focus('[data-node="spec"]'); await p.keyboard.press("Enter");
+    const geometry=await p.evaluate(()=>{const panel=document.querySelector('.rt-panel').getBoundingClientRect(),canvas=document.querySelector('.rt-canvas-wrap').getBoundingClientRect(),model=document.querySelector('[data-node-model-config]')?.getBoundingClientRect();return {width:panel.width,beside:panel.left>=canvas.right-1,modelFirst:model&&model.top<document.querySelector('.rt-panel [data-field="label"]').getBoundingClientRect().top};});
+    ok(geometry.width===384 && geometry.beside && geometry.modelFirst, "model controls open first in a local 384px inspector beside the graph", JSON.stringify(geometry));
     // disconnect an edge, add a node from the palette, reconnect through it by dragging from the ports
     await p.focus('[data-edge="cleanup→done"]'); await p.keyboard.press("Enter"); await p.waitForTimeout(100);
     ok((await p.textContent(".rt-panel h3")) === "cleanup → done", "an edge is selected from the keyboard (Tab to it, Enter)");
+    await p.keyboard.press("Escape");
+    ok(await p.locator(".rt-panel").isHidden() && await p.evaluate(() => document.activeElement?.dataset.edge === "cleanup→done"), "Escape returns focus to the selected edge after graph rerender");
+    await p.focus('[data-edge="cleanup→done"]'); await p.keyboard.press("Enter");
     await p.click('[data-del-edge="cleanup→done"]'); await p.waitForTimeout(500);
     ok(!(await p.locator('[data-edge="cleanup→done"]').count()) && (await p.getAttribute("[data-valid]", "data-valid")) === "errors", "disconnecting an edge: the graph no longer validates (done is cut off)", await p.textContent(".rt-problems"));
-    await p.click('[data-add="hook"]'); await p.waitForTimeout(300);
+    await revealEditorControl(p, '[data-add="hook"]'); await p.click('[data-add="hook"]'); await p.waitForTimeout(300);
     const added = await p.$eval(".rt-node.sel", (g) => g.dataset.node);
     // move the new node next to cleanup, then wire cleanup → new → done by dragging from the ports
     const cl = await pos(p, "cleanup"); const ad = await pos(p, added); await p.focus(`[data-node="${added}"]`);
@@ -82,7 +91,7 @@ try {
       // Focus/Fit may pan the SVG, and every connection rerenders it. Resolve
       // ports from the current DOM, including after pointerdown; never retain
       // coordinates from the prior render or from before a focus-induced pan.
-      await p.focus(`[data-node="${from}"]`); await p.click("[data-fit]");
+      await p.focus(`[data-node="${from}"]`); await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]");
       await p.locator(".rt-canvas").scrollIntoViewIfNeeded();
       const port = p.locator(`[data-port="${from}"]`); const a = await port.boundingBox();
       const start = { x: a.x + a.width / 2, y: a.y + a.height / 2 };
@@ -106,7 +115,7 @@ try {
     ok(await p.locator(`[data-edge="cleanup→${added}"]`).count() === 1 && await p.locator(`[data-edge="${added}→done"]`).count() === 1 && (await p.getAttribute("[data-valid]", "data-valid")) === "ok",
       "reconnecting by dragging from a node's port: cleanup → new hook → done, and the graph validates again", await p.textContent(".rt-problems"));
     // drop a check from the palette onto the new node, then onto an edge
-    await p.locator('[data-pal-check="core/ste-wording"]').dragTo(p.locator(`[data-node="${added}"] .rt-box`)); await p.waitForTimeout(300);
+    await revealEditorControl(p, '[data-pal-check="core/ste-wording"]'); await p.locator('[data-pal-check="core/ste-wording"]').dragTo(p.locator(`[data-node="${added}"] .rt-box`)); await p.waitForTimeout(300);
     ok(await p.getAttribute(`[data-node="${added}"]`, "data-checks") === "1", "dragging a check from the palette onto a node attaches it (badge ✓1)");
     await p.focus('[data-node="build"]'); await p.waitForTimeout(150);
     // a real pointer drag (mouse down, move, up; force only skips the visibility wait for a transparent hit path), dropped at the
@@ -125,7 +134,7 @@ try {
       if(!holdValidation)return route.continue();holdValidation=false;
       const response=await route.fetch();validationArrived();await validationGate;await route.fulfill({response});
     });
-    let dragErr = null; await p.locator('[data-pal-check="firstmate/scope"]').dragTo(p.locator('[data-edge="build→pr-open[ok]"] .rt-hit'), { targetPosition: { x: eb.width / 2, y: eb.height / 2 }, force: true, timeout: 8000 }).catch((e) => { dragErr = String(e.message).split("\n")[0]; }); await p.waitForTimeout(300);
+    let dragErr = null; await revealEditorControl(p, '[data-pal-check="firstmate/scope"]'); await p.locator('[data-pal-check="firstmate/scope"]').dragTo(p.locator('[data-edge="build→pr-open[ok]"] .rt-hit'), { targetPosition: { x: eb.width / 2, y: eb.height / 2 }, force: true, timeout: 8000 }).catch((e) => { dragErr = String(e.message).split("\n")[0]; }); await p.waitForTimeout(300);
     ok(await p.locator('[data-edge="build→pr-open[ok]"]').getAttribute("data-edge-checks") === "1", "dragging a check onto an edge attaches it to the edge (a real pointer drag dropped at that point, no synthetic drop)", String(dragErr));
     // the side panel: a params form from the check's schema, and Try on sample
     await validationSeen;
@@ -213,7 +222,7 @@ try {
       await p.screenshot({ path: join(shots, `runtime-${name}-${width}-${scheme}.png`) });
     }
     if (width === 390) { await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector("[data-node]");
-      const c = await p.locator(".rt-canvas").boundingBox(); ok(c.width > 300 && c.width <= 390, "on a phone the canvas takes the width, palette and panel stack under it", JSON.stringify(c)); }
+      const c = await p.locator(".rt-canvas").boundingBox(); ok(c.width > 300 && c.width <= 390 && await p.$eval("#main",el=>el.scrollWidth<=el.clientWidth+1), "on a phone the canvas takes the width without clipped main content", JSON.stringify(c)); }
     await ctx.close();
   }
   ok(!errors.length, "no page errors", errors.slice(0, 5).join(" | "));

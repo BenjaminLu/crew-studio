@@ -42,7 +42,7 @@ try {
     const tag = `${lang} ${width}`, zh = lang !== "en";
     const p = await browser.newPage({ viewport: { width, height } }); const errors = []; p.on("pageerror", (e) => errors.push(String(e)));
     await p.goto(`${base}/#/team`); await p.evaluate((l) => setLang(l), lang);
-    await p.locator("[data-team-page]").waitFor(); await p.locator('[data-team-card="web-prototype"]').click();
+    await p.locator("[data-team-page]").waitFor();await p.locator('[data-crew-section="workflows"]').click();await p.locator("[data-crew-workflow-picker]").selectOption("web-prototype");await p.locator('[data-crew-node="design-a"]').click();await p.locator('[data-crew-fold="node-skills:web-prototype:design-a"] > summary').click();
     const row = p.locator('[data-team-row="design-a"]'); await row.waitFor();
     const mark = (name) => row.locator(".tm-skill", { hasText: name }).locator("[data-skill-ready]");
     const st = async (name) => ({ state: await mark(name).getAttribute("data-skill-ready"), title: await mark(name).getAttribute("title") });

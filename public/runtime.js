@@ -342,6 +342,9 @@ function workflowBrief(ed){if(ed.startBrief===undefined){const key=workflowBrief
 function saveWorkflowBrief(ed,value){ed.startBrief=value;const key=workflowBriefKey(ed);if(key)store.set(key,value);}
 function buildEditor(ed) {
   const root = h("div", { class: "page rt-editor", "data-editor": ed.id });
+  if(!document.getElementById('workflow-inspector-style'))document.head.append(h('style',{id:'workflow-inspector-style'},`
+.wf-editor-more{position:relative}.wf-editor-more>summary{list-style:none;cursor:pointer}.wf-editor-menu{position:fixed;width:min(520px,85vw);max-height:75vh;overflow:auto;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:8px;z-index:45;display:flex;gap:8px;flex-wrap:wrap}.wf-editor-menu>details,.wf-editor-menu>.card{width:100%}.rt-editor{gap:8px;grid-template-columns:minmax(0,1fr)}.rt-editor>.phead,.rt-editor .phead>.actions,.rt-editor .phead .rt-toolbar{min-width:0;max-width:100%}.rt-editor .phead .rt-toolbar{flex-wrap:wrap}.rt-editor .phead{align-items:start}.rt-editor .phead>div:first-child{min-width:0;max-width:100%;flex:1}.rt-editor .phead p{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rt-editor .phead .rt-toolbar{margin:0;padding:0}.rt-editor .phead .actions{align-items:center}.rt-editor [data-save-note]{max-width:160px}.rt-editor>[data-diff-host]:has(>.rt-diff[hidden]){display:none}.rt-editor .phead{margin-bottom:8px}.rt-editor .phead p{max-width:72ch}.rt-editor .rt-work{grid-template-columns:minmax(0,1fr);grid-template-areas:'canvas' 'pal';gap:16px}.rt-editor.wf-inspecting .rt-work{grid-template-columns:minmax(0,1fr) 384px;grid-template-areas:'canvas panel' 'pal pal'}.rt-editor .rt-panel{position:sticky;top:16px;max-height:calc(100dvh - 96px);min-width:0;padding:16px 16px 80px}.rt-editor .rt-panel[hidden]{display:none}.rt-editor .rt-panel h3{font-size:18px;margin:0 48px 8px 0}.rt-editor .rt-panel .fw-node-config{border:0;padding:0;background:none}.wf-inspector-close{float:right;position:sticky;top:0;z-index:2}.wf-editor-save-home{display:flex;gap:8px;flex-wrap:wrap;min-width:0}.wf-inspector-savebar{position:sticky;bottom:0;display:flex;gap:8px;flex-wrap:wrap;background:var(--surface);padding:12px 0 4px;border-top:1px solid var(--border);z-index:2}.wf-inspector-savebar input{min-width:0;max-width:100%}.rt-editor .rt-panel details{padding:12px 0;border-top:1px solid var(--border)}@media(max-width:900px){.rt-editor.wf-inspecting .rt-work{grid-template-columns:minmax(0,1fr);grid-template-areas:'canvas' 'pal'}.rt-editor.wf-inspecting .rt-panel{position:fixed;top:64px;right:8px;bottom:8px;width:min(384px,calc(100vw - 16px));max-height:none;z-index:65;box-shadow:0 12px 48px #0005}}
+`));
   const status = h("div", { class: "rt-status", role: "status", "aria-live": "polite" });
   const direction=h("textarea",{class:"input",rows:4,maxlength:2000,"data-workflow-brief":"",placeholder:T("Describe the website, audience, style and outcome you want.","描述你想做的網頁、使用對象、風格與預期成果。"),oninput:e=>saveWorkflowBrief(ed,e.target.value)});direction.value=workflowBrief(ed);
   const briefPanel=h("section",{class:"card x-pad","data-workflow-start-brief":""},h("h2",{},T("What would you like this workflow to make?","這次希望流程幫你做什麼？")),h("label",{class:"rt-field"},h("span",{},T("Task requirements and website direction","任務需求與網頁方向")),direction),h("p",{class:"faint"},T("Saved in this browser for this workflow. Discuss first, or review these requirements when you click Run. Nothing starts automatically.","內容會保留在這個瀏覽器的此流程草稿。你可以先討論，或按下執行時再確認需求；不會自動開始任務。")),h("button",{class:"btn","data-workflow-discuss":"",onclick:()=>{const message=T(`Discuss the direction before running workflow ${ed.id} v${ed.saved.version} (${ed.saved.name}). Ask one short question at a time and help refine my task brief. Do not start a Task or change the workflow until I explicitly confirm. My current requirements: `,`執行流程 ${ed.id} v${ed.saved.version}（${ed.saved.name}）之前，先和我討論方向，一次問一個簡短問題，幫我完善任務需求。在我明確確認之前，不要啟動任務或修改流程。我的目前需求： `)+direction.value;chatMode="main";store.set("crew.chatMode","main");openChat(true);const input=document.querySelector("#chatIn");if(input){if(!input.value.includes(message))input.value+=(input.value.trim()?"\n\n":"")+message;input.dispatchEvent(new Event("input",{bubbles:true}));input.focus();}}},T("Discuss with Firstmate first","先和 Firstmate 討論")));
@@ -395,7 +398,7 @@ function buildEditor(ed) {
   const delEdge = (i) => { const e = ed.def.edges[i]; ed.def.edges.splice(i, 1); ed.sel = null; dirty(); say(T(`disconnected ${e.from} → ${e.to}`, `已斷開 ${e.from} → ${e.to}`)); };
   const connect = (from, to, when) => { if (ed.def.edges.some((e) => e.from === from && e.to === to && (e.when || "") === (when || ""))) return; const e = { from, to }; if (when) e.when = when; ed.def.edges.push(e); ed.sel = { edge: ed.def.edges.length - 1 }; dirty(); say(T(`connected ${from} → ${to}`, `已連接 ${from} → ${to}`)); };
   const dropCheck = (target, ref) => { const t = target.node ? ed.def.nodes.find((n) => n.id === target.node) : ed.def.edges[target.edge]; t.checks = [...(t.checks || []), { use: ref }]; ed.sel = target; dirty(); say(T(`${ref} attached to ${target.node ?? `edge ${t.from} → ${t.to}`}`, `${ref} 已掛到 ${target.node ?? `邊 ${t.from} → ${t.to}`}`)); };
-  const focusNode = (nid) => { const f = () => canvas.querySelector(`[data-node="${CSS.escape(nid)}"]`)?.focus({ preventScroll: true }); f(); setTimeout(f, 0); };
+  const focusNode = (nid) => { const f = () => canvas.querySelector(`[data-node="${CSS.escape(nid)}"]`)?.focus({ preventScroll: true }); f(); setTimeout(() => { if (!disposed && (document.activeElement === document.body || canvas.contains(document.activeElement))) f(); }, 0); };
   // the layout: auto until a node is dragged (then this version keeps its positions), "Tidy layout" goes back
   const setMode = async (mode) => { ed.mode = mode; try { await api(`/api/graph-layout/${ed.id}/v${ed.def.version}`, { mode }); } catch (e) { say(e.message); } };
   const toManual = async () => {
@@ -417,7 +420,7 @@ function buildEditor(ed) {
     // capture. Keep the gesture intact, then render the newest state once.
     if (canvas.querySelector("svg.rt-graph")?.interactionActive) { drawPending = true; return; }
     drawPending = false;
-    stepList.replaceChildren(h("h2",{},T("Edit workflow steps","编辑流程步骤")),h("p",{},T("Choose a step to edit its settings, skills and checks. Choose a connection to edit its condition or checks.","选择步骤来编辑设置、技能与检查；选择连线来修改条件与检查。")),h("div",{class:"actions"},...KINDS.map(([k,en,zh])=>h("button",{class:"btn sm","data-guided-add":k,onclick:()=>{addNode(k);drawPanel();}},T("Add "+en,"添加"+zh)))),h("div",{class:"actions"},...ed.def.nodes.map(n=>h("button",{class:"btn sm","data-edit-step":n.id,onclick:()=>{ed.sel={node:n.id};draw();drawPanel();panel.scrollIntoView({block:"nearest",behavior:"smooth"});}},n.label))),h("div",{class:"actions"},...ed.def.edges.map((e,i)=>h("button",{class:"btn sm","data-edit-connection":String(i),onclick:()=>{ed.sel={edge:i};draw();drawPanel();panel.scrollIntoView({block:"nearest",behavior:"smooth"});}},`${e.from} → ${e.to}${e.when?` [${e.when}]`:""}`))));
+    stepList.replaceChildren(h("h2",{},T("Edit workflow steps","编辑流程步骤")),h("p",{},T("Choose a step to edit its settings, skills and checks. Choose a connection to edit its condition or checks.","选择步骤来编辑设置、技能与检查；选择连线来修改条件与检查。")),h("div",{class:"actions"},...KINDS.map(([k,en,zh])=>h("button",{class:"btn sm","data-guided-add":k,onclick:()=>{addNode(k);drawPanel();}},T("Add "+en,"添加"+zh)))),h("div",{class:"actions"},...ed.def.nodes.map(n=>h("button",{class:"btn sm","data-edit-step":n.id,onclick:()=>{ed.sel={node:n.id};draw();drawPanel();}},n.label))),h("div",{class:"actions"},...ed.def.edges.map((e,i)=>h("button",{class:"btn sm","data-edit-connection":String(i),onclick:()=>{ed.sel={edge:i};draw();drawPanel();}},`${e.from} → ${e.to}${e.when?` [${e.when}]`:""}`))));
     const simple = gview === "simple";
     root.dataset.view = gview; palette.hidden = simple; paletteNote.hidden = !simple;
     const g = graph(ed.def, { editable: true, simple, wrap: wrapFor(), offsets: simple ? ed.offsets : null, sel: ed.sel, problems: ed.problems, states: ed.states, walked: ed.walked, view, manual: !simple && ed.mode === "manual", collapsed: ed.collapsed, redraw: () => draw(),
@@ -531,9 +534,19 @@ function buildEditor(ed) {
       list.length ? h("div", { class: `faint rt-skill-size${ed.skillCap && total > ed.skillCap ? " over" : ""}`, "data-skill-size": "1" },
         T(`Skill text on this node: ${window.crewSkillsSize(total)} of ${window.crewSkillsSize(ed.skillCap || 0)}`, `這個節點的技能文字：${window.crewSkillsSize(total)} / ${window.crewSkillsSize(ed.skillCap || 0)}`)) : null);
   };
+  let inspectorFocus=null,inspectorFrame=0,saveHome=null;
+  const placeSaveControls=()=>{if(!saveHome)return;if(innerWidth<=900&&ed.sel&&!panel.hidden){let footer=panel.querySelector("[data-inspector-savebar]");if(!footer){footer=h("div",{"data-inspector-savebar":"",class:"wf-inspector-savebar"});panel.append(footer);}if(note.parentElement!==footer||saveButton.parentElement!==footer)footer.append(note,saveButton);}else if(note.parentElement!==saveHome||saveButton.parentElement!==saveHome)saveHome.append(note,saveButton);};
+  const sizeInspector=()=>{cancelAnimationFrame(inspectorFrame);inspectorFrame=requestAnimationFrame(()=>{if(!panel.isConnected)return;placeSaveControls();if(panel.hidden)return;panel.style.maxHeight=innerWidth>900?Math.max(160,innerHeight-Math.max(16,panel.getBoundingClientRect().top)-80)+'px':'';});};
+  const inspectorScroller=document.querySelector('#main');window.addEventListener('resize',sizeInspector);inspectorScroller?.addEventListener('scroll',sizeInspector,{passive:true});
+  const closeInspector=()=>{const id=ed.sel?.node,edge=ed.sel?.edge;ed.sel=null;draw();drawPanel();const target=inspectorFocus?.isConnected?inspectorFocus:id?canvas.querySelector(`[data-node="${CSS.escape(id)}"]`):edge!=null?canvas.querySelector(`[data-edge-i="${edge}"]`):null;target?.focus({preventScroll:true});};
+  const inspectorKey=e=>{if(e.key==='Escape'&&!panel.hidden&&!document.querySelector('dialog[open],[data-skill-viewer]')){e.preventDefault();closeInspector();}};
+  document.addEventListener('keydown',inspectorKey);
   const drawPanel = () => {
     const sel = ed.sel;
-    if (!sel) { panel.replaceChildren(h("h3", {}, T("Nothing selected", "未選取")), h("p", { class: "faint" }, T("Select a node or an edge (click, or Tab to it and press Enter). Drag a node to move it, drag from its right port to another node to connect them, drop a check from the palette on a node or an edge.", "選一個節點或一條邊（點它，或用 Tab 移到它再按 Enter）。拖動節點可移動；從節點右側的接點拖到另一個節點可連線；把調色盤上的檢查拖到節點或邊上即可掛上。")), probs); return; }
+    panel.hidden=!sel;root.classList.toggle('wf-inspecting',!!sel);
+    if(!sel){placeSaveControls();panel.replaceChildren();const work=root.querySelector(".rt-work");if(work)work.before(probs);return;}
+    if(!panel.contains(document.activeElement))inspectorFocus=document.activeElement;
+    openChat(false);sizeInspector();
     if (sel.node) {
       const n = ed.def.nodes.find((x) => x.id === sel.node); if (!n) { ed.sel = null; return drawPanel(); }
       const txt = (k, label) => field(label, h("input", { class: "input", value: n[k] ?? "", "data-field": k, onchange: (e) => { const val = e.target.value; if (val === "") delete n[k]; else n[k] = ["timeout_s", "retries", "max_visits"].includes(k) ? Number(val) : val; dirty(); } }));
@@ -556,6 +569,10 @@ function buildEditor(ed) {
       panel.replaceChildren(h("h3", {}, `${e.from} → ${e.to}`), field(T("When (outcome)", "條件（結果）"), h("input", { class: "input", value: e.when ?? "", "data-field": "when", onchange: (ev) => { if (ev.target.value.trim()) e.when = ev.target.value.trim(); else delete e.when; dirty(); } })),
         checksBlock(e), h("div", { class: "actions" }, h("button", { class: "btn sm danger", "data-del-edge": `${e.from}→${e.to}`, onclick: () => { delEdge(sel.edge); drawPanel(); } }, T("Disconnect", "斷開"))), probs);
     }
+    const close=h('button',{class:'btn sm wf-inspector-close',type:'button','data-inspector-close':'',onclick:closeInspector},T('Close','關閉'));panel.prepend(close);
+    placeSaveControls();
+    const model=panel.querySelector('[data-node-model-config]');if(model){panel.querySelector('h3')?.after(model);const note=model.querySelector('[data-node-config-note]');if(note){const details=h('details',{open:true},h('summary',{},T('Inheritance and approval','繼承與核准方式')));note.replaceWith(details);details.append(note);}}
+
   };
   // palette: node kinds (click or drag onto the canvas) and checks (drag onto a node or an edge)
   const paletteNote = h("aside", { class: "rt-palette card", "data-palette-note": "1" }, h("h4", {}, T("Simple view", "簡易檢視")),
@@ -634,6 +651,8 @@ function buildEditor(ed) {
     clearTimeout(vtimer); validationGeneration++; validationAbort?.abort(); validationAbort = null;
     canvas.querySelector("svg.rt-graph")?.cancelInteraction?.();
     live.listeners.delete(onLive);
+    document.removeEventListener("keydown",inspectorKey);
+    cancelAnimationFrame(inspectorFrame);window.removeEventListener("resize",sizeInspector);inspectorScroller?.removeEventListener("scroll",sizeInspector);
     exportDialog?.remove(); exportDialog=null;
   };
   const verSel = h("select", { class: "select", "aria-label": T("Version", "版本"), onchange: (e) => { location.hash = `#/workflows/${ed.id}/v${e.target.value}`; } }, ed.versions.map((x) => h("option", { value: x.version, selected: x.version === ed.def.version || null }, `v${x.version}${x.note ? ` · ${/^Saved from Firstmate draft /.test(x.note) ? T("Saved from a Firstmate draft", "由 Firstmate 草稿儲存") : x.note}` : ""}`)));
@@ -695,6 +714,16 @@ function buildEditor(ed) {
   if(ed.def.origin)root.querySelector(".rt-toolbar").after(briefPanel,stepList,compareVersions,...(ed.trash?.deleted?[]:[reuse]));
   WF.lastDiff = null;
   drawProblems(); draw(); drawPanel();
+  const toolbar=root.querySelector('.rt-toolbar'),headingActions=root.querySelector('.phead .actions');
+  const more=h('details',{class:'wf-editor-more','data-editor-more':''},h('summary',{class:'btn sm'},T('More ···','更多 ···'))),menu=h('div',{class:'wf-editor-menu'});
+  more.append(menu);
+  more.addEventListener('toggle',()=>{if(!more.open)return;const rect=more.getBoundingClientRect(),width=Math.min(520,innerWidth*.85);menu.style.left=Math.max(8,Math.min(rect.left,innerWidth-width-16))+'px';menu.style.top=Math.min(rect.bottom+8,innerHeight-200)+'px';});
+  for(const child of [...toolbar.children])if(![verSel,note,saveButton,status,runPick,overlayStatus].includes(child))menu.append(child);
+  const trash=headingActions.querySelector('[data-workflow-trash],[data-workflow-restore]');if(trash)menu.append(trash);
+  if(ed.def.origin){menu.append(briefPanel,stepList,compareVersions);if(!ed.trash?.deleted)menu.append(reuse);}
+  const paletteTools=h('button',{class:'btn sm',type:'button','data-editor-add-tools':'',onclick:()=>{more.open=false;(gview==='detail'?palette:paletteNote).scrollIntoView({block:'nearest'});}},T('Add steps and checks','新增節點與檢查'));menu.append(paletteTools);
+  menu.addEventListener('click',event=>{if(event.target.closest('button')&&!event.target.closest('[data-workflow-compare],[data-workflow-reuse]'))more.open=false;});
+  saveHome=h('div',{class:'wf-editor-save-home'},note,saveButton);toolbar.replaceChildren(verSel,more,saveHome,status,runPick,overlayStatus);headingActions.prepend(toolbar);placeSaveControls();
   return root;
 }
 

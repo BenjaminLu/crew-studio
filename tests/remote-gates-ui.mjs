@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { revealEditorControl } from "./lib/reveal-editor-control.mjs";
 // Capture the added readiness node and graph routes, all viewport/themes/languages.
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
@@ -36,12 +37,12 @@ try {
     await p.goto(base + "/#/workflows/code-firstmate");
     await p.waitForSelector('svg.rt-graph');
     await p.evaluate(() => document.body.classList.add("chat-closed"));
-    await p.click("[data-fit]");
+    await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]");
     const buildStage = p.locator('[data-stage-node="build"]');
     if (await buildStage.count()) { await buildStage.focus(); await buildStage.press("Enter"); }
     await p.waitForSelector('svg.rt-graph [data-node="remote-ready"]');
     await p.evaluate(() => document.body.classList.add("chat-closed"));
-    await p.click("[data-fit]"); await p.waitForTimeout(150);
+    await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]"); await p.waitForTimeout(150);
     const geometry = await p.locator('[data-node="remote-ready"]').evaluate(el => { const r = el.getBoundingClientRect(), svg = el.closest("svg").getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, visible: r.width > 0 && r.height > 0 && r.x >= svg.x - 1 && r.y >= svg.y - 1 && r.right <= svg.right + 1 && r.bottom <= svg.bottom + 1 }; });
     ok(geometry.visible, `${width}/${theme}/${language} readiness node fits graph viewport`);
     const labels = await p.locator('[data-node="remote-ready"]').textContent();
@@ -51,14 +52,14 @@ try {
     const node = p.locator('[data-node="remote-ready"]'); await node.focus(); await node.press("Enter");
     await p.locator('.rt-panel h3').waitFor(); await p.locator('.rt-panel').scrollIntoViewIfNeeded();
     ok(await p.locator('.rt-panel [data-field="do"]').inputValue() === "remote.ready", `${width}/${theme}/${language} readiness action is reachable through node selection`);
-    await p.screenshot({ path: join(shots, `readiness-selection-${width}-${theme}-${language}.png`), fullPage: true }); await p.goto(base + "/#/workflows/code-firstmate");await p.locator('[data-view-toggle="simple"]').click();await p.waitForSelector('svg.rt-graph[data-view="simple"]');await p.click('[data-fit]');await p.waitForTimeout(100);
+    await p.screenshot({ path: join(shots, `readiness-selection-${width}-${theme}-${language}.png`), fullPage: true }); await p.goto(base + "/#/workflows/code-firstmate");await revealEditorControl(p, '[data-view-toggle="simple"]'); await p.locator('[data-view-toggle="simple"]').click();await p.waitForSelector('svg.rt-graph[data-view="simple"]');await revealEditorControl(p, '[data-fit]'); await p.click('[data-fit]');await p.waitForTimeout(100);
     const simpleFont=await p.evaluate(()=>{const svg=document.querySelector('svg.rt-graph'),k=svg.getScreenCTM().a;return Math.min(...[...svg.querySelectorAll('[data-node] .rt-label')].map(t=>parseFloat(getComputedStyle(t).fontSize)*k));});
     ok(simpleFont>=11,`${width}/${theme}/${language} Simple Fit titles remain at least11px`);await p.screenshot({path:join(shots,`readable-simple-fit-${width}-${theme}-${language}.png`),fullPage:true});
     if(width===390){
       for(const id of ["gates","merge","after"]){const target=p.locator(`svg [data-stage-node="${id}"]`);ok(await target.count()===1,`${width}/${theme}/${language} default lower ${id} stage exists`);if(await target.count())await frame(p,target,`simple-default-group-${id}-${width}-${theme}-${language}`);}
       for(const route of ["remote-ready→merge-card[ok]","merge-card→merge[merge]","merge→after-merge"]){const target=p.locator(`svg [data-edge="${route}"] path`).first();ok(await target.count()===1,`${width}/${theme}/${language} default lower ${route} route exists`);if(await target.count())await frame(p,target,`simple-default-arrow-${route.replaceAll(/[^a-z]/g,"-")}-${width}-${theme}-${language}`);}
       for(const id of ["gates","merge","after"]){const stage=p.locator(`svg [data-stage-node="${id}"]`);await stage.focus();await stage.press("Enter");}
-      await p.click('[data-fit]');await p.waitForTimeout(100);
+      await revealEditorControl(p, '[data-fit]'); await p.click('[data-fit]');await p.waitForTimeout(100);
       for(const id of ["remote-ready","merge-card","merge","after-merge","cleanup","done"]){const target=p.locator(`svg [data-node="${id}"]`);ok(await target.count()===1,`${width}/${theme}/${language} lower Simple ${id} exists`);if(await target.count())await frame(p,target,`simple-lower-${id}-${width}-${theme}-${language}`);}
       for(const id of ["gates","merge","after"]){const target=p.locator(`svg [data-stage-toggle="${id}"],svg [data-stage-node="${id}"]`).first();ok(await target.count()===1,`${width}/${theme}/${language} lower Simple ${id} grouping exists`);if(await target.count())await frame(p,target,`simple-group-${id}-${width}-${theme}-${language}`);}
       for(const route of ["remote-ready→merge-card[ok]","merge-card→merge[merge]","merge→after-merge","after-merge→cleanup","cleanup→done"]){const edge=p.locator(`svg [data-edge="${route}"] path`).first();ok(await edge.count()===1,`${width}/${theme}/${language} lower Simple ${route} arrow exists`);if(await edge.count())await frame(p,edge,`simple-arrow-${route.replaceAll(/[^a-z]/g,"-")}-${width}-${theme}-${language}`);}

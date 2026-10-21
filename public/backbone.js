@@ -1,12 +1,12 @@
 // The backbone sidebar (docs/architecture.md §2): exactly Board, Firstmate, Inbox,
-// Crew, Runs, Workflows, Library, plus a gear for Settings. Everything else is a
+// Crew, Runs, Workflows, Skills, Library, plus a gear for Settings. Everything else is a
 // lab: hidden from the sidebar and the home page unless "Show labs" is on
 // (Settings, or ?labs=1). A labs link without the flag shows a small roadmap
 // panel instead of a 404. Loaded last, so every module has registered its routes.
 (() => {
 const BACKBONE = [
   ["board", "board", "Board", "看板"], ["firstmate", "message", "Firstmate", "Firstmate"], ["inbox", "inbox", "Inbox", "收件匣"], ["crew", "crew", "Crew", "船員"],
-  ["runs", "play", "Tasks", "任務"], ["workflows", "workflow", "Workflows", "流程"], ["library", "library", "Library", "成品庫"],
+  ["runs", "play", "Tasks", "任務"], ["workflows", "workflow", "Workflows", "流程"], ["skills", "library", "Skills", "技能"], ["library", "library", "Library", "成品庫"],
   // Projects: on a desktop the sidebar's own Projects section (public/projects.js); this item shows only in the phone's top bar
   ["projects", "folder", "Projects", "專案"],
 ];
@@ -62,7 +62,7 @@ relabel();
 
 // sub-pages light their section
 const mark = () => {
-  const n = S.route?.name; const o = OWNED[n] ?? (LABS.has(n) ? null : n);
+  const n = S.route?.name; const o = n === "library" && S.route?.arg === "skills" ? "skills" : OWNED[n] ?? (LABS.has(n) ? null : n);
   $$(".nav-item").forEach((b) => (b.dataset.view === o ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current")));
   n === "settings" || o === "settings" ? gear.setAttribute("aria-current", "page") : gear.removeAttribute("aria-current");
 };

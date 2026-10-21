@@ -13,7 +13,7 @@ try{
  const cross=await fetch(studio.base+'/api/team/setup/verify',{method:'POST',headers:{'content-type':'application/json','x-crew-session':'acceptance-onboarding-team-ui-session',origin:'https://untrusted.invalid'},body:JSON.stringify({expected:null,confirm:true})});ok(cross.status===403,'cross-site request cannot trigger a paid check');
  const before=await studio.api('/api/wruns');const {chromium}=await import('playwright');browser=withSession(await chromium.launch({headless:true}),studio.base,'acceptance-onboarding-team-ui-session');
  const page=await browser.newPage({viewport:{width:1280,height:900}});const errors:string[]=[];page.on('pageerror',(e:Error)=>errors.push(e.message));await page.goto(studio.base+'/#/team');
- const box=page.locator('[data-onboarding-team]');await box.locator('[data-team-setup-verify]').waitFor();await box.locator('[data-team-setup-verify]').click();
+ await page.locator('[data-crew-setup-fold] > summary').click();const box=page.locator('[data-onboarding-team]');await box.locator('[data-team-setup-verify]').waitFor();await box.locator('[data-team-setup-verify]').click();
  await box.locator('[data-team-setup-save]').waitFor({timeout:70000});ok((await box.innerText()).includes('Native tool check passed'),'inline check executes real sandbox/MCP path and shows success');
  await box.locator('button').filter({hasText:'Cancel',exact:true}).click();ok((await studio.api('/api/team')).body.team===null,'cancel checked plan leaves team unset');
  await box.locator('[data-team-setup-verify]').click();await box.locator('[data-team-setup-save]').waitFor({timeout:70000});await box.locator('[data-team-setup-save]').click();
@@ -24,7 +24,7 @@ try{
  ok(receipts.length===2&&receipts.every(r=>r.system.includes(section.text)&&r.system.includes('ONBOARDING-PROBE-RULE:')&&r.prompt.includes(section.hash)&&r.report.operatingRules?.hash===section.hash&&r.report.operatingRules?.project===null&&r.report.status==='done'&&r.report.tools===1),'both actual native sandbox probes receive the captain rules and bind their hash to completed one-tool receipts');
  const after=await studio.api('/api/wruns');ok(after.body.runs.length===before.body.runs.length&&!after.body.cards.some((c:any)=>c.status==='open'),'configuration creates no approval Task or captain card');
  mkdirSync(join(import.meta.dir,'out/onboarding-team'),{recursive:true});await page.screenshot({path:join(import.meta.dir,'out/onboarding-team/desktop-saved.png'),fullPage:true});
- await page.setViewportSize({width:390,height:844});await page.evaluate(()=>{localStorage.setItem('crew.lang','zh-TW');});await page.reload();await page.locator('[data-onboarding-team] table').waitFor();await page.getByText('團隊設定已儲存；每個流程執行前仍會檢查確切能力。',{exact:true}).waitFor();
+ await page.setViewportSize({width:390,height:844});await page.evaluate(()=>{localStorage.setItem('crew.lang','zh-TW');});await page.reload();await page.locator('[data-crew-setup-fold] > summary').click();await page.locator('[data-onboarding-team] table').waitFor();await page.getByText('團隊設定已儲存；每個流程執行前仍會檢查確切能力。',{exact:true}).waitFor();
  ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'inline setup has no horizontal overflow on mobile');
  mkdirSync(join(import.meta.dir,'out/onboarding-team'),{recursive:true});await page.screenshot({path:join(import.meta.dir,'out/onboarding-team/mobile.png'),fullPage:true});ok(errors.length===0,'browser has no uncaught errors '+errors.join(';'));
 }finally{await browser?.close();await studio.close();rmSync(wrapper,{force:true});}

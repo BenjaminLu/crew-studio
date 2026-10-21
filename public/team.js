@@ -19,28 +19,31 @@ const SOURCE = { team: ["Team", "跟團隊"], project: ["◆ This project", "◆
 // "force" detects again (重新偵測)
 async function load(facts) {
   if (TM.loading) return; TM.loading = true; TM.detecting = !!facts; if (facts && TM.data) soft();
+  const requestedProject=TM.project;let retry=false;
   const q = new URLSearchParams(); if (facts) q.set("facts", "1"); if (facts === "force") q.set("force", "1"); if (TM.project) q.set("project", TM.project);
-  try { TM.data = await getJson(`/api/team${q.size ? `?${q}` : ""}`); TM.err = null; if (!TM.sel || !TM.data.workflows.some((w) => w.id === TM.sel)) TM.sel = TM.data.workflows.find((w) => w.badge.state !== "team")?.id ?? TM.data.workflows[0]?.id ?? null; }
-  catch (e) { TM.err = String(e.message || e); }
+  try { const data = await getJson(`/api/team${q.size ? `?${q}` : ""}`);if(requestedProject!==TM.project)retry=true;else{TM.data=data; TM.err = null; if (!TM.sel || !TM.data.workflows.some((w) => w.id === TM.sel)) TM.sel = TM.data.workflows.find((w) => w.badge.state !== "team")?.id ?? TM.data.workflows[0]?.id ?? null;} }
+  catch (e) { if(requestedProject!==TM.project)retry=true;else TM.err = String(e.message || e); }
   finally { TM.loading = false; TM.detecting = false; }
+  if(retry)return load();
   if (S.route?.name === "team") soft();
 }
 // opening the page detects the models again (leaving it re-arms that)
 window.addEventListener("hashchange", () => { if (!/^#\/team\b/.test(location.hash)) TM.opened = false; });
-async function change(c, skillDecisions) {
-  if (TM.busy) return; TM.busy = true;
+async function change(c, skillDecisions, expected = TM.data?.team?.hash ?? null, requestedProject = TM.project) {
+  if (TM.busy) return {ok:false,message:T("Another change is being saved.","另一個變更正在儲存。")}; TM.busy = true; let responseStatus = null;const owner={seat:crewSeat,node:crewNode,workflow:TM.sel,generation:crewFocusGeneration};
   try {
-    const r = await fetch("/api/team/change", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ change: c, expected: TM.data?.team?.hash ?? null, project: TM.project || null, ...(skillDecisions ? { skillDecisions } : {}) }) });
-    const j = await r.json().catch(() => ({}));
+    const r = await fetch("/api/team/change", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ change: c, expected, project: requestedProject || null, ...(skillDecisions ? { skillDecisions } : {}) }) });
+    responseStatus=r.status;const j = await r.json().catch(() => ({}));
     // a script skill the captain never decided: nothing saved yet; the page shows its scripts and hosts and asks (decidePanel)
-    if (r.status === 409 && j.code === "skillDecision") { TM.decide = { change: c, skills: j.skills || [] }; TM.busy = false; return render(); }
+    if (r.status === 409 && j.code === "skillDecision") { if(owner.generation!==crewFocusGeneration||requestedProject!==TM.project||owner.seat!==crewSeat||owner.node!==crewNode||owner.workflow!==TM.sel||S.route?.name!=="team")return {ok:false,status:409,message:T("The view changed; reopen the settings to review permissions.","畫面已變更，請重新開啟設定以檢視權限。")}; TM.decide = { change: c, skills: j.skills || [], expected, project:requestedProject }; TM.busy = false; render(); return {ok:false,code:"skillDecision",status:r.status,message:T("Review the skill permissions before saving.","請先檢視 skill 權限再儲存。")}; }
     TM.decide = null;
-    if (r.status === 409) { toast(T(j.error || "The team changed; reloaded.", j.tw || "團隊已經改了；已重新整理。")); TM.ask = null; TM.busy = false; return load(); }
+    if (r.status === 409) { toast(T(j.error || "The team changed; reloaded.", j.tw || "團隊已經改了；已重新整理。")); TM.ask = null; TM.busy = false; await load(); return {ok:false,status:409,message:T("The team changed. Cancel your edits to review the latest settings, then apply them again.","團隊已更新。請取消修改以檢視最新設定，再重新調整。")}; }
     if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-    TM.data = j; TM.ask = null; TM.notes = j.changed?.notes ?? [];
+    if(requestedProject===TM.project)TM.data=j;else await load(); TM.ask = null; TM.notes = j.changed?.notes ?? [];
     const n = j.changed?.impact?.length ?? 0;
     toast(T(`Saved: ${n} node${n === 1 ? "" : "s"} changed.`, `已儲存：${n} 個節點有變動。`));
-  } catch (e) { toast(T(`Not saved: ${e.message || e}`, `沒有儲存：${e.message || e}`)); }
+    return {ok:true,data:j};
+  } catch (e) { toast(T(`Not saved: ${e.message || e}`, `沒有儲存：${e.message || e}`)); return {ok:false,status:responseStatus,message:String(e.message||e)}; }
   finally { TM.busy = false; if (S.route?.name === "team") render(); }
 }
 const modelKey = (p, m) => (p && m ? `${p}/${m}` : "");
@@ -161,8 +164,8 @@ function decidePanel() {
       x.bins?.length ? h("div", { class: "faint" }, T(`Programs: ${x.bins.join(", ")}`, `會用到的程式：${x.bins.join("、")}`)) : null)),
     h("p", { class: "faint" }, T("Approving covers exactly these versions, Studio-wide. Text only: agents get the skill's text and never run its scripts.", "核准只適用於這些版本（全 Studio）。只當文字：agent 只拿到文字，不跑 script。")),
     h("div", { class: "actions" },
-      h("button", { class: "btn primary", "data-decide": "scripts", disabled: TM.busy, onclick: () => change(d.change, all("scripts")) }, T("Approve with scripts", "核准（含 script）")),
-      h("button", { class: "btn", "data-decide": "text-only", disabled: TM.busy, onclick: () => change(d.change, all("text-only")) }, T("Text only", "只當文字")),
+      h("button", { class: "btn primary", "data-decide": "scripts", disabled: TM.busy, onclick: () => submitSkillDecision(d, all("scripts")) }, T("Approve with scripts", "核准（含 script）")),
+      h("button", { class: "btn", "data-decide": "text-only", disabled: TM.busy, onclick: () => submitSkillDecision(d, all("text-only")) }, T("Text only", "只當文字")),
       h("button", { class: "btn ghost", "data-decide": "cancel", onclick: () => { TM.decide = null; render(); } }, T("Don't add", "不搭載"))));
 }
 function skillAdd(label, have, onpick) {
@@ -282,7 +285,7 @@ const projectName = () => TM.data?.projects?.find((p) => p.id === TM.project)?.n
 function projectPicker() {
   const list = TM.data?.projects ?? [];
   if (!list.length) return null;
-  const sel = h("select", { class: "tm-sel", "data-team-project": "", "aria-label": T("Show the crew of", "顯示哪裡的人員"), onchange: (e) => { TM.project = e.target.value; TM.ask = null; TM.notes = []; TM.data = null; load(); } },
+  const sel = h("select", { class: "tm-sel", "data-team-project": "", "data-no-unsent":"", "aria-label": T("Show the crew of", "顯示哪裡的人員"), onchange: (e) => { TM.project = e.target.value; TM.ask = null; TM.notes = []; TM.data = null; load(); } },
     h("option", { value: "" }, T("Studio-wide team", "整個 Studio 的團隊")), list.map((p) => h("option", { value: p.id }, `${p.name}${p.custom ? " ◆" : ""}`)));
   sel.value = TM.project; return h("label", { class: "tm-project" }, h("span", { class: "tm-k" }, T("Project", "專案")), sel);
 }
@@ -316,6 +319,93 @@ function view() {
       wf.nodes.map((n) => nodeRow(wf, n)),
       TM.notes.length ? h("div", { class: "tm-adjust", role: "status", "data-team-notes": "" }, h("b", {}, T("Adjusted by the team rules:", "團隊規則自動調整：")), h("ul", {}, TM.notes.map((n) => h("li", {}, `${n.workflow} · ${n.node}: ${L(n)}`)))) : null) : null);
 }
+// Crew workspace keeps role defaults separate from workflow-specific assignments.
+let crewSeat = null, crewNode = null, crewDraft = null, crewSection = 'team', crewReturnFocus = null, crewViewport = null, crewEntryQuery = null, crewFocusGeneration = 0;
+const crewUses = id => (TM.data?.workflows || []).flatMap(w => w.nodes.filter(n => n.seat === id).map(n => ({workflow:w.name, ...n})));
+const crewSource = row => T(...(SOURCE[row.source] || [row.source,row.source]));
+window.pageDirty?.provide('crew-member-draft',()=>!!crewDraft);
+const crewFoldState = new Map();
+const crewFoldKey = key => JSON.stringify([TM.project || null,key]);
+function foldCrew(key,label,...kids){
+ const stateKey=crewFoldKey(key);
+ return h('details',{class:'tm-simple-fold','data-crew-fold':key,open:crewFoldState.get(stateKey)||null,ontoggle:e=>{if(e.currentTarget.isConnected)crewFoldState.set(stateKey,e.currentTarget.open);}},h('summary',{onclick:e=>{if(!e.defaultPrevented)crewFoldState.set(stateKey,!e.currentTarget.parentElement.open);}},label),...kids);
+}
+function crewScrollSnapshot(){const main=document.querySelector('#main'),doc=document.scrollingElement;return {mainTop:main?.scrollTop||0,mainLeft:main?.scrollLeft||0,docTop:doc?.scrollTop||0,docLeft:doc?.scrollLeft||0};}
+function crewRestoreViewport(view){if(!view||S.route?.name!=='team')return;const main=document.querySelector('#main'),doc=document.scrollingElement;if(main){main.scrollTop=view.mainTop;main.scrollLeft=view.mainLeft;}if(doc){doc.scrollTop=view.docTop;doc.scrollLeft=view.docLeft;}}
+function crewAfterRender(callback){const generation=++crewFocusGeneration;requestAnimationFrame(()=>{if(generation===crewFocusGeneration&&S.route?.name==='team')callback();});}
+function crewClose(){const viewport=crewViewport,selector=crewReturnFocus;crewDraft=null;crewSeat=null;crewNode=null;TM.ask=null;TM.skill=null;TM.decide=null;render();crewAfterRender(()=>{crewRestoreViewport(viewport);const target=selector?document.querySelector(selector):null;target?.focus({preventScroll:true});crewRestoreViewport(viewport);});}
+const crewSectionScroll=new Map();
+function crewSelectSection(section){crewSectionScroll.set(crewSection,crewScrollSnapshot());crewSection=section;render();crewAfterRender(()=>{crewRestoreViewport(crewSectionScroll.get(section)||{mainTop:0,mainLeft:0,docTop:0,docLeft:0});document.querySelector(`[data-crew-section="${section}"]`)?.focus({preventScroll:true});});}
+window.addEventListener('keydown',e=>{if(S.route?.name!=='team'||!(crewSeat||crewNode)||document.querySelector('[data-skill-viewer], dialog[open]'))return;if(e.key==='Escape'){e.preventDefault();crewClose();}if(e.key==='Tab'){const drawer=document.querySelector('[data-crew-drawer]');const items=[...(drawer?.querySelectorAll('button,select,input,textarea,summary,a[href]')||[])].filter(x=>!x.disabled&&x.getClientRects().length);const first=items[0],last=items.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}}});
+function crewOpen(seat,node=null){crewViewport=crewScrollSnapshot();const viewport=crewViewport;crewReturnFocus=node?`[data-crew-node="${CSS.escape(node)}"]`:seat==='*'?'[data-crew-manage]':`[data-crew-person="${CSS.escape(seat)}"]`;crewDraft=null;crewSeat=seat;crewNode=node;render();crewAfterRender(()=>{crewRestoreViewport(viewport);document.querySelector('[data-crew-drawer] select, [data-crew-drawer] button')?.focus({preventScroll:true});});}
+function settleMemberDraft(draft,result){
+ if(crewDraft!==draft)return;
+ draft.saving=false;
+ if(result?.ok)crewDraft=null;
+ else{draft.error=result?.message||T('No save was confirmed. Your edits are retained.','未確認儲存成功，修改已保留。');if(result?.code==='skillDecision'&&TM.decide)TM.decide.draft=draft;}
+ if(S.route?.name==='team')render();
+}
+async function submitSkillDecision(decision,choices){
+ const draft=decision.draft;if(draft&&crewDraft===draft){draft.saving=true;render();}
+ const result=await change(decision.change,choices,decision.expected,decision.project);
+ if(draft)settleMemberDraft(draft,result);
+}
+async function saveMemberDraft(seat){
+ const draft=crewDraft;if(!draft||draft.saving||!draft.model)return;
+ draft.saving=true;draft.error=null;render();
+ const [provider,...parts]=draft.model.split('/'),set={provider,model:parts.join('/'),effort:draft.effort??(provider==='codex'?'medium':null)};
+ const result=await change(!seat?.builtin&&!seat?.member?{kind:'seat',seat:seat.declared,member:{...set,skills:[]}}:{kind:'member',seat:draft.seat,set},undefined,draft.expected);
+ settleMemberDraft(draft,result);
+}
+function workspaceView(){
+ const v=view();if(!v.hasAttribute('data-team-page'))return v;v.classList.add('tm-simple');
+ const head=v.querySelector('.phead');head.replaceChildren(h('div',{},h('h1',{},T('Crew','船員')),h('p',{},T('People, models, and what needs attention.','誰負責、用什麼模型、有哪些事需要處理。'))),projectPicker()||'');
+ v.querySelector('.tm-members')?.remove();
+ const people=h('section',{class:'tm-people','aria-label':T('People and models','船員與模型')},TM.data.seats.filter(s=>s.builtin||s.member||s.declared).map(s=>{
+  const used=crewUses(s.id),custom=used.filter(n=>n.custom||Object.values(n.fields||{}).some(source=>source==='workflow'||source==='project')).length;
+  const pending=(s.member?.skills||[]).filter(p=>{const x=TM.data.skillStatus?.[`${p.id}@v${p.v}`];return x&&!['ready','text-only'].includes(x.state);}).length;
+  const models=[...new Set(used.filter(n=>n.model).map(n=>n.model))],effective=s.member?.model||(models.length===1?models[0]:models.length?T('Varies by workflow','依流程個別設定'):null);
+  const efforts=[...new Set(used.filter(n=>n.model).map(n=>n.effort||T('default','預設')))],shownEffort=s.member?(s.member.effort||T('default','預設')):efforts.length===1?efforts[0]:efforts.length?T('varies by workflow','依流程個別設定'):null;
+  return h('button',{type:'button',class:'tm-person','data-crew-person':s.id,onclick:()=>crewOpen(s.id)},
+   h('span',{class:'tm-person-role'},h('b',{},h('i',{class:'tm-dot',style:`background:${seatColor(s.id)}`}),L(s.label)),h('small',{},T(`${used.length} nodes${s.builtin?'':' · specialist'}`,`${used.length} 個節點${s.builtin?'':' · 專家位置'}`))),
+   h('span',{class:'tm-person-effective'},h('span',{},effective||T('No team default yet','尚無團隊預設')),h('small',{},shownEffort?`Effort ${shownEffort}`:T('Choose once for this role','為這個角色設定預設'))),
+   h('span',{class:'tm-person-scope'},s.member?T('Team default','團隊預設'):effective?T('Workflow assignments only','僅個別流程配置'):T(s.builtin?'Required role':'Optional specialist',s.builtin?'必要角色':'選用專家'),h('small',{},s.project?T('This project has additional overrides','此專案另有自訂設定'):custom?T(`${custom} workflow/project overrides`,`${custom} 個流程／專案自訂`):T('No workflow overrides','沒有流程自訂'))),
+   h('span',{class:pending?'tm-attention':'tm-person-action'},pending?T(`${pending} skill(s) need attention`,`${pending} 個 skill 待處理`):T('Configure','設定')));
+ }));if(crewSection==='team')head.after(people);
+ const detect=v.querySelector('.tm-detect');if(detect&&crewSection!=='team')detect.remove();else if(detect){const mark=h('span');detect.before(mark);mark.replaceWith(foldCrew('model-detection',T('Model availability and detection','模型可用狀態與偵測'),detect));}
+ const cards=v.querySelector('.tm-cards'),detail=v.querySelector('[data-team-detail]');
+ if(cards&&detail){const wf=TM.data.workflows.find(w=>w.id===TM.sel);const rows=h('div',{class:'tm-workflow-people'},wf.nodes.map(n=>h('button',{type:'button',class:'tm-workflow-person','data-crew-node':n.node,onclick:()=>crewOpen(n.seat,n.node)},h('b',{},n.label),h('span',{},seatName(n.seat)),h('span',{class:'tm-node-effective'},n.model||T('No effective model','尚無生效模型'),h('small',{},`Effort ${n.effort||T('default','預設')} · ${crewSource(n)}`)),T('Settings','設定'))));const restore=[...detail.querySelectorAll('[data-restore],[data-restore-project]')];detail.replaceChildren(h('h2',{},wf.name),missingLine(wf),rows,restore.length?foldCrew(`restore:${TM.sel}`,T('Restore assignment defaults','恢復配置預設'),...restore):'');const holder=h('div');cards.before(holder);if(crewSection==='workflows'){const picker=h('select',{class:'tm-sel','data-crew-workflow-picker':'','data-no-unsent':'','aria-label':T('Workflow','流程'),onchange:e=>{TM.sel=e.target.value;TM.ask=null;render();}},TM.data.workflows.map(w=>h('option',{value:w.id},w.name)));picker.value=TM.sel;holder.append(h('section',{'data-crew-workflow-view':'','aria-label':T('Workflow assignments','流程個別配置')},h('label',{class:'tm-edit-field'},h('span',{},T('Workflow','流程')),picker),detail,foldCrew('workflow-overview',T('All workflow assignment summaries','所有流程配置摘要'),cards)));}else{cards.remove();detail.remove();}}
+ if(crewSection==='team')v.append(foldCrew('team-advanced',T('Team presets and advanced settings','團隊預設組合與進階設定'),h('button',{class:'btn','data-crew-manage':'',onclick:()=>crewOpen('*')},T('Manage all members and presets','管理全部船員與預設組合'))));
+ if(crewSection==='workflows'){v.querySelector('[data-team-empty]')?.remove();v.querySelector('[data-models-note]')?.remove();}
+ const sectionTabs=h('nav',{class:'tm-section-tabs','aria-label':T('Crew settings areas','船員設定分頁')},...['team','workflows'].map(section=>h('button',{type:'button',class:crewSection===section?'on':'','data-crew-section':section,'aria-pressed':String(crewSection===section),onclick:()=>crewSelectSection(section)},section==='team'?T('Team defaults','團隊預設'):T('Workflow assignments','流程個別配置'))));head.after(sectionTabs);
+ const skill=v.querySelector('[data-skill-status]'),decision=v.querySelector('[data-skill-decide]');
+ if(crewSeat||crewNode||skill||decision){const wf=TM.data.workflows.find(w=>w.id===TM.sel),row=wf?.nodes.find(n=>n.node===crewNode),seat=seatOf(crewSeat);let editor;
+  if(row){editor=nodeRow(wf,row);const grid=editor.querySelector('.tm-grid');if(grid){const cells=[...grid.children];grid.append(foldCrew(`node-skills:${TM.sel}:${crewNode}`,T('Skills and configuration source','Skills 與設定來源'),...cells.slice(4)));}}
+  else{editor=memberEditor();if(crewSeat!=='*'){
+   editor.querySelectorAll('[data-seat-editor]').forEach(el=>{if(el.dataset.seatEditor!==crewSeat)el.remove();});
+   const member=editor.querySelector('.tm-member');
+   if(member){
+    const m=seat?.member,modelValue=crewDraft?.seat===crewSeat?crewDraft.model:modelKey(m?.provider,m?.model),effortValue=crewDraft?.seat===crewSeat?crewDraft.effort:m?.effort;
+    const edit=(key,value)=>{crewDraft??={seat:crewSeat,expected:TM.data?.team?.hash??null,model:modelKey(m?.provider,m?.model),effort:m?.effort??null};crewDraft[key]=value;if(key==='model'&&value.startsWith('codex/')&&!crewDraft.effort)crewDraft.effort='medium';crewDraft.error=null;render();crewAfterRender(()=>document.querySelector(`[data-crew-edit-${key}]`)?.focus({preventScroll:true}));};
+    const [provider,...rest]=modelValue.split('/');
+    const model=modelSelect(T('Default model','預設模型'),{provider,model:rest.join('/')},value=>edit('model',value),{'data-crew-edit-model':'','data-no-unsent':''});
+    const effort=effortSelect(T('Default effort','預設 effort'),effortValue,provider,value=>edit('effort',value),{'data-crew-edit-effort':'','data-no-unsent':''},rest.join('/'));
+    const originalSkills=member.querySelector('.tm-skills');
+    const uses=crewUses(crewSeat),usedBy=h('section',{class:'tm-used-by'},h('h3',{},T('Used by','套用到哪裡')),uses.length?h('ul',{},uses.map(n=>h('li',{},h('b',{},`${n.workflow} · ${n.label}`),h('small',{},`${n.model||T('no model','尚無模型')} · Effort ${n.effort||T('default','預設')} · ${crewSource(n)}`)))):h('p',{class:'faint'},T('No workflow currently uses this role.','目前沒有流程使用這個角色。')));
+    const advanced=foldCrew(`member-skills:${crewSeat}`,T('Skills and script permissions','Skills 與 script 權限'),originalSkills||h('p',{class:'faint'},T('Choose a model to configure this member’s skills.','先選擇模型，再設定這位船員的 skills。')));
+    if(!crewFoldState.has(crewFoldKey(`member-skills:${crewSeat}`)))advanced.open=(m?.skills||[]).some(p=>{const x=TM.data.skillStatus?.[`${p.id}@v${p.v}`];return x&&!['ready','text-only'].includes(x.state);});
+    member.replaceChildren(h('label',{class:'tm-edit-field'},h('span',{},T('Default model','預設模型')),model),h('label',{class:'tm-edit-field'},h('span',{},T('Effort','推理強度')),effort),!m?h('p',{class:'tm-empty-guidance'},T('Set one default for this role. Workflow-specific choices remain unchanged.','為這個角色設定一次預設；流程已自訂的配置會保留。')):'',usedBy,advanced);
+    if(!(TM.data.models||[]).some(x=>x.available)){model.disabled=!m?.model;member.prepend(h('section',{class:'tm-empty-guidance'},h('p',{},T('No available model was detected. Inspect the account before choosing a role default.','尚未偵測到可用模型，先確認帳號，再選擇這個角色的預設。')),h('button',{type:'button',class:'btn primary',onclick:()=>{crewClose();crewAfterRender(()=>{const target=document.querySelector('[data-model-detection]');const fold=target?.closest('details');if(fold)fold.open=true;target?.scrollIntoView({block:'nearest'});target?.querySelector('button')?.focus();});}},T('Inspect model availability','查看模型來源'))));}
+   }
+   const presets=editor.querySelector('.tm-presets');if(presets){const mark=h('span');presets.before(mark);mark.replaceWith(foldCrew(`member-presets:${crewSeat}`,T('Apply a team preset','套用團隊預設組合'),presets));}
+  }editor.querySelector('.tm-mhead > button')?.remove();}
+  let footer='';
+  if(crewDraft&&crewSeat!=='*'&&!row){footer=h('footer',{class:'tm-crew-footer'},h('p',{role:'status','data-crew-save-status':''},crewDraft.error||T('Unsaved changes to the Studio-wide role default.','尚未儲存的 Studio 全域角色預設。')),h('div',{class:'actions'},h('button',{class:'btn',disabled:crewDraft.saving,onclick:()=>{if(TM.decide?.draft===crewDraft)TM.decide=null;crewDraft=null;render();}},T('Cancel changes','取消修改')),h('button',{class:'btn primary','data-crew-save':'',disabled:!crewDraft.model||crewDraft.saving||TM.busy,onclick:()=>saveMemberDraft(seat)},crewDraft.saving?T('Saving…','儲存中…'):T('Save changes','儲存修改'))));}
+
+
+  v.append(h('div',{class:'tm-crew-backdrop',onclick:e=>{if(e.target===e.currentTarget)crewClose();}},h('section',{class:'tm-crew-drawer',role:'dialog','aria-modal':'true','aria-label':T('Crew settings','船員設定'),'data-crew-drawer':''},h('header',{},h('div',{},h('h2',{},row?.label||(seat?L(seat.label):T('Team settings','團隊設定'))),h('p',{class:'faint'},row?T('Keep the original workflow, project and member scope choices.','修改時可選流程、專案或整個成員的套用範圍。'):T('Studio-wide default. Workflow and project overrides keep their own settings.','Studio 全域預設；流程與專案自訂的配置會保留。'))),h('button',{type:'button',class:'btn','data-crew-drawer-close':'',onclick:crewClose},T('Close','關閉'))),h('div',{class:'tm-crew-drawer-body'},skill||'',decision||'',editor),footer)));
+ }return v;
+}
 // Crew (the sidebar item) is two tabs: the team (#/team, where the sidebar opens) and its rounds and activity (#/crew,
 // whose deep links #/crew/<actor> keep working)
 const crewTabs = (on) => h("nav", { class: "tm-tabs", "aria-label": T("Crew", "船員"), "data-crew-tabs": on },
@@ -330,7 +420,18 @@ function staffingSection() {
     h("summary", {}, h("b", {}, T("A project's own approved crew", "專案自己核准的人員")), " ",
       h("span", { class: "faint" }, T("code-firstmate and coffee-kit run on a crew you approve for each project.", "code-firstmate 和 coffee-kit 用你按專案核准的人員。"))), panel);
 }
-routes.team = () => { const v = view(); v.prepend(crewTabs("team")); if(window.crewTeamSetup)v.prepend(window.crewTeamSetup(null,()=>{TM.data=null;void load();})); if (v.hasAttribute("data-team-page")) v.append(staffingSection() ?? ""); return v; };
+routes.team = () => {
+  if(!TM.opened)crewEntryQuery=null;
+  const q=S.route?.query,entry=JSON.stringify([q?.get('staffing')||null,q?.get('workflow')||null]);
+  if(entry!==crewEntryQuery){crewEntryQuery=entry;if(q?.get('staffing')||q?.get('workflow'))crewSection='workflows';}
+  const v=workspaceView();v.prepend(crewTabs('team'));
+  if(window.crewTeamSetup&&crewSection==='team'){
+    const setup=window.crewTeamSetup(null,()=>{TM.data=null;void load();}),missing=(TM.data?.seats||[]).filter(s=>s.builtin&&!s.member).length;
+    const setupFold=foldCrew('onboarding',TM.data?missing?T(`${missing} required roles need defaults · set up crew`,`${missing} 個必要角色尚無團隊預設 · 設定船員`):T('Crew assigned · review account and setup','船員已配置 · 查看帳號與準備設定'):T('Crew setup · review configuration','船員設定 · 查看配置'),setup);
+    setupFold.classList.add('tm-setup-fold');setupFold.dataset.crewSetupFold='';v.prepend(setupFold);
+  }
+  if(v.hasAttribute('data-team-page')&&crewSection==='workflows')v.append(staffingSection()??'');return v;
+};
 { const base = routes.crew; routes.crew = (arg) => { const v = base(arg);
   if (!arg && v?.prepend && !v.querySelector?.("[data-crew-tabs]")) v.prepend(crewTabs("rounds")); return v; }; }
 // a team change elsewhere (a captain card answer) refreshes an open page
