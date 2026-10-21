@@ -41,3 +41,13 @@ Final implementation evidence collected:
 Preserved failed controls: old real create API404/no record EXIT1 `/tmp/sidebar-create-058-control.log/.exit`; original stable expanded footer overflow in `/tmp/sidebar-baseline-058-settled.json` with fresh 8 desktop screenshots. Original 24-cell screenshots remain separately retained. UI fixture7/1 attempts used pointer selection without the edit panel; the test now uses the editor's established documented keyboard Enter selection. UI160/4 measured the existing180ms column transition; it now awaits actual animation completion with unchanged64px threshold. No timeout inflation or geometry threshold weakening.
 
 Staged privacy includes every new file and passes 4/0 EXIT0 (`/tmp/sidebar-workflow-create-privacy-final.log/.exit`); staged whitespace checks pass. The implementation is ready for clean freeze and independent code/designer review. Root owns full suite and integration; no live deployment or user record changes occurred. LLM planning and C4 self-update remain separate unfinished work.
+
+## Blank-workflow connection editing follow-up
+
+A real native pointer click on the starter's horizontal connection did not select it. The SVG captured every non-node/port press as a pan; only node pointerup explicitly restored selection. Existing tests used focus+Enter and therefore missed that pointer path. The horizontal SVG group's zero-height geometric box also prevented ordinary locator clicks.
+
+The pan owner now remembers the pressed edge and selects it only on a non-drag owner release; dragging still pans. A bounded20-unit transparent midpoint target gives the same single accessible edge owner finite geometry without covering its full route. This is not a44px touch-target claim. The newly drawn edge receives focus, so immediate Delete works; deleting centrally clears its old inspector. Text editing does not dispatch graph deletion.
+
+The existing view segment is visible beside the upper version/save controls as Overview/Edit graph. It is moved out of More rather than duplicated. The adjacent inspector names the connected steps and places a sticky Delete connection action before advanced fields. Existing keyboard selection, node/wire gestures, versions, saved Task semantics, validation and authorizations remain unchanged.
+
+The existing sidebar UI command now follows actual creation→node addition→connection→native pointer selection→text-key safety→selected deletion→back-edge deletion→pan→keyboard selection/deletion→reconnection→save/reload, across320/390/1440 and English/Chinese. It preserves v2 while storing v3, checks that no Task starts, and asserts keyboard deletion removes its stale inspector. No API graph seeding, force click or synthetic pointer/drop replaces the user journey.

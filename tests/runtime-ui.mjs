@@ -73,7 +73,8 @@ try {
     ok(geometry.width===384 && geometry.beside && geometry.modelFirst, "model controls open first in a local 384px inspector beside the graph", JSON.stringify(geometry));
     // disconnect an edge, add a node from the palette, reconnect through it by dragging from the ports
     await p.focus('[data-edge="cleanup→done"]'); await p.keyboard.press("Enter"); await p.waitForTimeout(100);
-    ok((await p.textContent(".rt-panel h3")) === "cleanup → done", "an edge is selected from the keyboard (Tab to it, Enter)");
+    const selectedDef=(await api('/api/wf/code-firstmate')).body.def,edgeLabel=id=>selectedDef.nodes.find(n=>n.id===id).label;
+    ok((await p.textContent(".rt-panel h3")) === `${edgeLabel('cleanup')} → ${edgeLabel('done')}` && await p.locator('[data-del-edge="cleanup→done"]').isVisible(), "keyboard selection identifies the exact edge and names its actual steps");
     await p.keyboard.press("Escape");
     ok(await p.locator(".rt-panel").isHidden() && await p.evaluate(() => document.activeElement?.dataset.edge === "cleanup→done"), "Escape returns focus to the selected edge after graph rerender");
     await p.focus('[data-edge="cleanup→done"]'); await p.keyboard.press("Enter");

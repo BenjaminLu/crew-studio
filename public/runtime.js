@@ -89,6 +89,10 @@ function graph(def, o = {}) {
       "data-edge": key, "data-edge-i": i, "data-back": e.back ? e.side : null, tabindex: o.editable ? 0 : null, role: o.editable ? "button" : null,
       "aria-label": `${e.from} → ${e.to}${e.when ? ` when ${e.when}` : ""}${e.back ? T(", goes back", "，往回") : ""}${e.checks ? `, ${e.checks} gates` : ""}` });
     const d = L.pathD(e);
+    // A straight SVG path has a zero-height/width geometric box. Give its
+    // existing focus owner a small finite target without masking the whole route.
+    const points = L.sample(e, 16), middle = points[Math.floor(points.length / 2)];
+    if (o.editable && middle) g.append(s("rect", { x: middle[0] - 10, y: middle[1] - 10, width: 20, height: 20, fill: "transparent", "data-edge-hit": i }));
     g.append(s("path", { d, class: "rt-hit" }), s("path", { d, class: "rt-line", "marker-end": `url(#arr-${def.id})` }));
     if (e.label) { const lb = s("g", { class: `rt-elabel${e.back ? " back" : ""}`, "data-label": key }, s("rect", { x: e.label.x, y: e.label.y, width: e.label.w, height: e.label.h, rx: 4, class: "rt-when-bg" }),
       s("text", { x: e.label.x + 4, y: e.label.y + 10.5, class: "rt-when" }, e.label.text)); if (e.label.full !== e.label.text) lb.append(s("title", {}, e.label.full)); lg.append(lb); }
@@ -162,20 +166,21 @@ function graph(def, o = {}) {
       const p = pt(ev);
       if (port) { drag = { kind: "wire", from: port.dataset.port, line: s("path", { class: "rt-wire", d: "" }) }; svg.append(drag.line); }
       else if (node) { const n = byId[node.dataset.node]; drag = { kind: "node", id: n.id, g: node, dx: p.x - n.x, dy: p.y - n.y, x0: n.x, y0: n.y, moved: false }; }
-      else drag = { kind: "pan", sx: ev.clientX, sy: ev.clientY, vb: { ...view } };
+      else drag = { kind: "pan", edge: ev.target.closest?.("[data-edge-i]")?.getAttribute("data-edge-i") ?? null, moved: false, sx: ev.clientX, sy: ev.clientY, vb: { ...view } };
       drag.pointerId = ev.pointerId; svg.setPointerCapture(ev.pointerId);
     });
     svg.addEventListener("pointermove", (ev) => {
       if (!drag || ev.pointerId !== drag.pointerId) return; const p = pt(ev);
       if (drag.kind === "node") { if (!drag.moved && !o.simple) o.onDragStart?.(lay); const n = byId[drag.id]; n.x = Math.round(p.x - drag.dx); n.y = Math.round(p.y - drag.dy); drag.moved = true; drag.g.setAttribute("transform", `translate(${n.x},${n.y})`); o.onDragging?.(drag.id, n.x, n.y); }
       else if (drag.kind === "wire") { const a = byId[drag.from]; drag.line.setAttribute("d", `M${a.x + a.w},${a.y + a.h / 2} L${p.x},${p.y}`); }
-      else { const r = svg.getBoundingClientRect(); const k = view.w / r.width; view.x = drag.vb.x - (ev.clientX - drag.sx) * k; view.y = drag.vb.y - (ev.clientY - drag.sy) * k * (view.h / view.w) / (r.height / r.width); setView(); }
+      else { if (Math.hypot(ev.clientX - drag.sx, ev.clientY - drag.sy) > 4) drag.moved = true; const r = svg.getBoundingClientRect(); const k = view.w / r.width; view.x = drag.vb.x - (ev.clientX - drag.sx) * k; view.y = drag.vb.y - (ev.clientY - drag.sy) * k * (view.h / view.w) / (r.height / r.width); setView(); }
     });
     svg.addEventListener("pointerup", (ev) => {
       if (!drag || ev.pointerId !== drag.pointerId) return; const d = drag; drag = null; svg.interactionActive = false;
       if (d.kind === "node" && d.moved) { d.g.dataset.dragged = "1"; const n = byId[d.id]; if (o.simple) o.onNudge?.(d.id, n.x - d.x0, n.y - d.y0); else { o.onMove?.(d.id, n.x, n.y, false); o.onMoved?.(d.id); } }
       // a press and release without moving selects the node here: the svg holds the pointer capture, so the click that follows lands on the svg, not the node
       if (d.kind === "node" && !d.moved && o.onSelect) { svg.selectedOnUp = true; setTimeout(() => delete svg.selectedOnUp, 0); o.onSelect({ node: d.id }); }
+      if (d.kind === "pan" && d.edge !== null && !d.moved && o.onSelect) { svg.selectedOnUp = true; setTimeout(() => delete svg.selectedOnUp, 0); o.onSelect({ edge: Number(d.edge) }); }
       if (d.kind === "wire") { d.line.remove(); const el = document.elementFromPoint(ev.clientX, ev.clientY); const to = el?.closest?.("[data-node]")?.dataset.node; if (to && to !== d.from) o.onConnect?.(d.from, to); }
       o.onInteractionEnd?.();
     });
@@ -343,7 +348,7 @@ function saveWorkflowBrief(ed,value){ed.startBrief=value;const key=workflowBrief
 function buildEditor(ed) {
   const root = h("div", { class: "page rt-editor", "data-editor": ed.id });
   if(!document.getElementById('workflow-inspector-style'))document.head.append(h('style',{id:'workflow-inspector-style'},`
-.wf-editor-more{position:relative}.wf-editor-more>summary{list-style:none;cursor:pointer}.wf-editor-menu{position:fixed;width:min(520px,85vw);max-height:75vh;overflow:auto;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:8px;z-index:45;display:flex;gap:8px;flex-wrap:wrap}.wf-editor-menu>details,.wf-editor-menu>.card{width:100%}.rt-editor{gap:8px;grid-template-columns:minmax(0,1fr)}.rt-editor>.phead,.rt-editor .phead>.actions,.rt-editor .phead .rt-toolbar{min-width:0;max-width:100%}.rt-editor .phead .rt-toolbar{flex-wrap:wrap}.rt-editor .phead{align-items:start}.rt-editor .phead>div:first-child{min-width:0;max-width:100%;flex:1}.rt-editor .phead p{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rt-editor .phead .rt-toolbar{margin:0;padding:0}.rt-editor .phead .actions{align-items:center}.rt-editor [data-save-note]{max-width:160px}.rt-editor>[data-diff-host]:has(>.rt-diff[hidden]){display:none}.rt-editor .phead{margin-bottom:8px}.rt-editor .phead p{max-width:72ch}.rt-editor .rt-work{grid-template-columns:minmax(0,1fr);grid-template-areas:'canvas' 'pal';gap:16px}.rt-editor.wf-inspecting .rt-work{grid-template-columns:minmax(0,1fr) 384px;grid-template-areas:'canvas panel' 'pal pal'}.rt-editor .rt-panel{position:sticky;top:16px;max-height:calc(100dvh - 96px);min-width:0;padding:16px 16px 80px}.rt-editor .rt-panel[hidden]{display:none}.rt-editor .rt-panel h3{font-size:18px;margin:0 48px 8px 0}.rt-editor .rt-panel .fw-node-config{border:0;padding:0;background:none}.wf-inspector-close{float:right;position:sticky;top:0;z-index:2}.wf-editor-save-home{display:flex;gap:8px;flex-wrap:wrap;min-width:0}.wf-inspector-savebar{position:sticky;bottom:0;display:flex;gap:8px;flex-wrap:wrap;background:var(--surface);padding:12px 0 4px;border-top:1px solid var(--border);z-index:2}.wf-inspector-savebar input{min-width:0;max-width:100%}.rt-editor .rt-panel details{padding:12px 0;border-top:1px solid var(--border)}@media(max-width:900px){.rt-editor.wf-inspecting .rt-work{grid-template-columns:minmax(0,1fr);grid-template-areas:'canvas' 'pal'}.rt-editor.wf-inspecting .rt-panel{position:fixed;top:64px;right:8px;bottom:8px;width:min(384px,calc(100vw - 16px));max-height:none;z-index:65;box-shadow:0 12px 48px #0005}}
+.wf-editor-more{position:relative}.wf-editor-more>summary{list-style:none;cursor:pointer}.wf-editor-menu{position:fixed;width:min(520px,85vw);max-height:75vh;overflow:auto;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:8px;z-index:45;display:flex;gap:8px;flex-wrap:wrap}.wf-editor-menu>details,.wf-editor-menu>.card{width:100%}.rt-editor{gap:8px;grid-template-columns:minmax(0,1fr)}.rt-editor>.phead,.rt-editor .phead>.actions,.rt-editor .phead .rt-toolbar{min-width:0;max-width:100%}.rt-editor .phead .rt-toolbar{flex-wrap:wrap}.rt-editor .phead{align-items:start}.rt-editor .phead>div:first-child{min-width:0;max-width:100%;flex:1}.rt-editor .phead p{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rt-editor .phead .rt-toolbar{margin:0;padding:0}.rt-editor .phead .actions{align-items:center}.rt-editor [data-save-note]{max-width:160px}.rt-editor>[data-diff-host]:has(>.rt-diff[hidden]){display:none}.rt-editor .phead{margin-bottom:8px}.rt-editor .phead p{max-width:72ch}.rt-editor .rt-work{grid-template-columns:minmax(0,1fr);grid-template-areas:'canvas' 'pal';gap:16px}.rt-editor.wf-inspecting .rt-work{grid-template-columns:minmax(0,1fr) 384px;grid-template-areas:'canvas panel' 'pal pal'}.rt-editor .rt-panel{position:sticky;top:16px;max-height:calc(100dvh - 96px);min-width:0;padding:16px 16px 80px}.rt-editor .rt-panel[hidden]{display:none}.rt-editor .rt-panel h3{font-size:18px;margin:0 48px 8px 0}.rt-editor .rt-panel .fw-node-config{border:0;padding:0;background:none}.wf-edge-actions{position:sticky;top:36px;z-index:2;background:var(--surface);padding:8px 0}.wf-inspector-close{float:right;position:sticky;top:0;z-index:2}.wf-editor-save-home{display:flex;gap:8px;flex-wrap:wrap;min-width:0}.wf-inspector-savebar{position:sticky;bottom:0;display:flex;gap:8px;flex-wrap:wrap;background:var(--surface);padding:12px 0 4px;border-top:1px solid var(--border);z-index:2}.wf-inspector-savebar input{min-width:0;max-width:100%}.rt-editor .rt-panel details{padding:12px 0;border-top:1px solid var(--border)}@media(max-width:900px){.rt-editor.wf-inspecting .rt-work{grid-template-columns:minmax(0,1fr);grid-template-areas:'canvas' 'pal'}.rt-editor.wf-inspecting .rt-panel{position:fixed;top:64px;right:8px;bottom:8px;width:min(384px,calc(100vw - 16px));max-height:none;z-index:65;box-shadow:0 12px 48px #0005}}
 `));
   const status = h("div", { class: "rt-status", role: "status", "aria-live": "polite" });
   const direction=h("textarea",{class:"input",rows:4,maxlength:2000,"data-workflow-brief":"",placeholder:T("Describe the website, audience, style and outcome you want.","描述你想做的網頁、使用對象、風格與預期成果。"),oninput:e=>saveWorkflowBrief(ed,e.target.value)});direction.value=workflowBrief(ed);
@@ -395,7 +400,7 @@ function buildEditor(ed) {
     ed.def.nodes.push(n); ed.sel = { node: idv }; dirty(); say(T(`added ${kind} node ${idv}`, `已加入 ${kind} 節點 ${idv}`)); focusNode(idv);
   };
   const delNode = (nid) => { ed.def.nodes = ed.def.nodes.filter((n) => n.id !== nid); ed.def.edges = ed.def.edges.filter((e) => e.from !== nid && e.to !== nid); ed.sel = null; dirty(); say(T(`removed ${nid} and its edges`, `已移除 ${nid} 與它的邊`)); };
-  const delEdge = (i) => { const e = ed.def.edges[i]; ed.def.edges.splice(i, 1); ed.sel = null; dirty(); say(T(`disconnected ${e.from} → ${e.to}`, `已斷開 ${e.from} → ${e.to}`)); };
+  const delEdge = (i) => { const e = ed.def.edges[i]; ed.def.edges.splice(i, 1); ed.sel = null; dirty(); say(T(`disconnected ${e.from} → ${e.to}`, `已斷開 ${e.from} → ${e.to}`)); drawPanel(); };
   const connect = (from, to, when) => { if (ed.def.edges.some((e) => e.from === from && e.to === to && (e.when || "") === (when || ""))) return; const e = { from, to }; if (when) e.when = when; ed.def.edges.push(e); ed.sel = { edge: ed.def.edges.length - 1 }; dirty(); say(T(`connected ${from} → ${to}`, `已連接 ${from} → ${to}`)); };
   const dropCheck = (target, ref) => { const t = target.node ? ed.def.nodes.find((n) => n.id === target.node) : ed.def.edges[target.edge]; t.checks = [...(t.checks || []), { use: ref }]; ed.sel = target; dirty(); say(T(`${ref} attached to ${target.node ?? `edge ${t.from} → ${t.to}`}`, `${ref} 已掛到 ${target.node ?? `邊 ${t.from} → ${t.to}`}`)); };
   const focusNode = (nid) => { const f = () => canvas.querySelector(`[data-node="${CSS.escape(nid)}"]`)?.focus({ preventScroll: true }); f(); setTimeout(() => { if (!disposed && (document.activeElement === document.body || canvas.contains(document.activeElement))) f(); }, 0); };
@@ -427,7 +432,7 @@ function buildEditor(ed) {
       onNudge: (nid, dx, dy) => { const o = ed.offsets[nid] || { dx: 0, dy: 0 }; ed.offsets[nid] = { dx: o.dx + dx, dy: o.dy + dy }; draw(); say(T("Moved in the simple view (not kept; arrange in Detail view)", "在簡易檢視中移動（不保存；請在詳細檢視排版）")); },
       onToggleStage: toggleStage, onDragStart: () => { if (ed.mode !== "manual") ed.manualP = toManual(); },
       onInteractionEnd: () => { if (!disposed && drawPending) draw(); },
-      onSelect: (sel) => { ed.sel = sel; draw(); drawPanel(); if (sel?.node) focusNode(sel.node); },
+      onSelect: (sel) => { ed.sel = sel; draw(); drawPanel(); if (sel?.node) focusNode(sel.node); else if (sel?.edge != null) canvas.querySelector(`[data-edge-i="${sel.edge}"]`)?.focus({preventScroll:true}); },
       onMove: (nid, x, y) => { draftRevision++; const n = ed.def.nodes.find((q) => q.id === nid); n.x = x; n.y = y; draw(); focusNode(nid); persistLayout(nid); },
       onMoved: () => {}, onConnect: (a, b) => { connect(a, b); drawPanel(); }, onDropCheck: (t, c) => { dropCheck(t, c); drawPanel(); },
       onDeleteNode: delNode, onDeleteEdge: delEdge, onView: (vw) => { view = vw; fitted = false; mm?.sync(); } });
@@ -566,8 +571,9 @@ function buildEditor(ed) {
         h("div", { class: "actions" }, h("button", { class: "btn sm danger", "data-del-node": n.id, onclick: () => { delNode(n.id); drawPanel(); } }, T("Remove node", "移除節點"))), probs].filter((c) => c != null));
     } else {
       const e = ed.def.edges[sel.edge]; if (!e) { ed.sel = null; return drawPanel(); }
-      panel.replaceChildren(h("h3", {}, `${e.from} → ${e.to}`), field(T("When (outcome)", "條件（結果）"), h("input", { class: "input", value: e.when ?? "", "data-field": "when", onchange: (ev) => { if (ev.target.value.trim()) e.when = ev.target.value.trim(); else delete e.when; dirty(); } })),
-        checksBlock(e), h("div", { class: "actions" }, h("button", { class: "btn sm danger", "data-del-edge": `${e.from}→${e.to}`, onclick: () => { delEdge(sel.edge); drawPanel(); } }, T("Disconnect", "斷開"))), probs);
+      const label = id => ed.def.nodes.find(n => n.id === id)?.label || id;
+      panel.replaceChildren(h("h3", {}, `${label(e.from)} → ${label(e.to)}`), h("div", { class: "actions wf-edge-actions" }, h("button", { class: "btn sm danger", "data-del-edge": `${e.from}→${e.to}`, onclick: () => delEdge(sel.edge) }, T("Delete connection", "刪除連線"))), field(T("When (outcome)", "條件（結果）"), h("input", { class: "input", value: e.when ?? "", "data-field": "when", onchange: (ev) => { if (ev.target.value.trim()) e.when = ev.target.value.trim(); else delete e.when; dirty(); } })),
+        checksBlock(e), probs);
     }
     const close=h('button',{class:'btn sm wf-inspector-close',type:'button','data-inspector-close':'',onclick:closeInspector},T('Close','關閉'));panel.prepend(close);
     placeSaveControls();
@@ -703,7 +709,7 @@ function buildEditor(ed) {
       h("div", { class: "actions" }, h("a", { class: "btn ghost", href: "#/workflows" }, T("All workflows", "全部流程")),ed.personal?workflowTrashButton({id:ed.id,name:ed.saved.name,version:ed.saved.version,trashRevision:ed.trash?.revision??0},ed.trash?.deleted===true):null, ed.held?h("span",{class:"faint","data-workflow-held":"1"},T(ed.held.en,ed.held.zh)):ed.selectable===false?h("span",{class:"faint","data-workflow-unavailable":"1"},T("Historical or internal workflow · unavailable for new tasks","歷史或內部流程 · 不提供新任務使用")):ed.def.origin?h("button",{class:"btn primary","data-ed-run":ed.id,onclick:async(e)=>{if(ed.dirty){say(T("Save your edits as a new version before Run.","執行前請先把修改存成新版本。"));return;}e.target.disabled=true;try{const input=await startInputs(ed.def,workflowBrief(ed),value=>{saveWorkflowBrief(ed,value);direction.value=value;});if(input===null)return;const r=await startOwnRun({workflow:ed.id,version:ed.saved.version,title:ed.def.name,text:input.text,params:input.params});if(r){RN.list=null;location.hash=`#/run/${r.id}`;}}catch(err){say(err.message);}finally{e.target.disabled=false;}}},T("Run…","執行…")):h("a", { class: "btn", href: "#/runs", "data-start-run": ed.id, onclick: () => { RN.prefill = ed.id; } }, T("Start a task", "開始一個任務")))),
     h("div", { class: "rt-toolbar" }, verSel, exportButton, h("button", { class: "btn sm", "aria-label": T("Zoom in", "放大"), onclick: () => svgZoom(1 / 1.2) }, "+"), h("button", { class: "btn sm", "aria-label": T("Zoom out", "縮小"), onclick: () => svgZoom(1.2) }, "−"),
       h("div", { class: "seg rt-viewseg", role: "group", "aria-label": T("Graph view", "流程圖檢視") }, ["simple", "detail"].map((k) => h("button", { type: "button", "data-view-toggle": k, "aria-pressed": String(gview === k), onclick: () => setView(k) },
-        h("span", { class: "keep" }, k === "simple" ? T("Simple", "簡易") : T("Detail", "詳細"))))),
+        h("span", { class: "keep" }, k === "simple" ? T("Overview", "總覽") : T("Edit graph", "編輯流程"))))),
       h("button", { class: "btn sm", "data-tidy": "1", title: T("Lay the graph out again automatically", "自動重新排版"), onclick: async () => { await setMode("auto"); view = null; draw(); say(T("Tidy layout", "已自動排版")); } }, T("Tidy layout", "整理排版")),
       h("button", { class: "btn sm", "data-fit": "1", onclick: () => { const g = canvas.querySelector("svg.rt-graph"); if (g) fit(g, "all"); } }, T("Fit to view", "全部顯示")),
       runPick, note, saveButton, status, overlayStatus),
@@ -718,12 +724,13 @@ function buildEditor(ed) {
   const more=h('details',{class:'wf-editor-more','data-editor-more':''},h('summary',{class:'btn sm'},T('More ···','更多 ···'))),menu=h('div',{class:'wf-editor-menu'});
   more.append(menu);
   more.addEventListener('toggle',()=>{if(!more.open)return;const rect=more.getBoundingClientRect(),width=Math.min(520,innerWidth*.85);menu.style.left=Math.max(8,Math.min(rect.left,innerWidth-width-16))+'px';menu.style.top=Math.min(rect.bottom+8,innerHeight-200)+'px';});
-  for(const child of [...toolbar.children])if(![verSel,note,saveButton,status,runPick,overlayStatus].includes(child))menu.append(child);
+  const viewControls=toolbar.querySelector('.rt-viewseg');
+  for(const child of [...toolbar.children])if(![verSel,viewControls,note,saveButton,status,runPick,overlayStatus].includes(child))menu.append(child);
   const trash=headingActions.querySelector('[data-workflow-trash],[data-workflow-restore]');if(trash)menu.append(trash);
   if(ed.def.origin){menu.append(briefPanel,stepList,compareVersions);if(!ed.trash?.deleted)menu.append(reuse);}
   const paletteTools=h('button',{class:'btn sm',type:'button','data-editor-add-tools':'',onclick:()=>{more.open=false;(gview==='detail'?palette:paletteNote).scrollIntoView({block:'nearest'});}},T('Add steps and checks','新增節點與檢查'));menu.append(paletteTools);
   menu.addEventListener('click',event=>{if(event.target.closest('button')&&!event.target.closest('[data-workflow-compare],[data-workflow-reuse]'))more.open=false;});
-  saveHome=h('div',{class:'wf-editor-save-home'},note,saveButton);toolbar.replaceChildren(verSel,more,saveHome,status,runPick,overlayStatus);headingActions.prepend(toolbar);placeSaveControls();
+  saveHome=h('div',{class:'wf-editor-save-home'},note,saveButton);toolbar.replaceChildren(verSel,viewControls,more,saveHome,status,runPick,overlayStatus);headingActions.prepend(toolbar);placeSaveControls();
   return root;
 }
 
