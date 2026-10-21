@@ -65,6 +65,11 @@ try {
     await p.focus('[data-node="intake"]'); const k0 = await pos(p, "intake"); await p.keyboard.press("ArrowDown"); await p.keyboard.press("Shift+ArrowRight"); await p.waitForTimeout(200);
     const k1 = await pos(p, "intake"); await p.focus('[data-node="intake"]'); await p.keyboard.press("Enter"); await p.waitForTimeout(150);
     ok(k1.y === k0.y + 10 && k1.x === k0.x + 50 && (await p.textContent(".rt-panel h3")) === "Capture intent", "keyboard: arrows move the focused node, Enter opens it in the side panel", JSON.stringify({ k0, k1 }));
+    await p.keyboard.press("Escape");
+    ok(await p.locator(".rt-panel").isHidden() && await p.evaluate(() => document.activeElement?.dataset.node === "intake"), "Escape closes the local inspector and returns focus to its node");
+    await p.focus('[data-node="spec"]'); await p.keyboard.press("Enter");
+    const geometry=await p.evaluate(()=>{const panel=document.querySelector('.rt-panel').getBoundingClientRect(),canvas=document.querySelector('.rt-canvas-wrap').getBoundingClientRect(),model=document.querySelector('[data-node-model-config]')?.getBoundingClientRect();return {width:panel.width,beside:panel.left>=canvas.right-1,modelFirst:model&&model.top<document.querySelector('.rt-panel [data-field="label"]').getBoundingClientRect().top};});
+    ok(geometry.width===384 && geometry.beside && geometry.modelFirst, "model controls open first in a local 384px inspector beside the graph", JSON.stringify(geometry));
     // disconnect an edge, add a node from the palette, reconnect through it by dragging from the ports
     await p.focus('[data-edge="cleanup→done"]'); await p.keyboard.press("Enter"); await p.waitForTimeout(100);
     ok((await p.textContent(".rt-panel h3")) === "cleanup → done", "an edge is selected from the keyboard (Tab to it, Enter)");
