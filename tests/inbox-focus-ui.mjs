@@ -99,9 +99,9 @@ try {
     ok(await p.getAttribute("[data-scard]", "data-scard") === "SC-701", "j, k and ↓ on one of the card's buttons do not switch the card");
     await p.evaluate(() => { document.querySelector("#main").scrollTop = 0; });
     // keyboard on the list
-    await p.click('[data-inbox-row="SC-701"]'); await p.waitForTimeout(150);
+    await p.click('[data-inbox-row="SC-701"]'); await p.waitForFunction(()=>document.activeElement?.dataset?.inboxRow==="SC-701");
     ok(await p.evaluate(() => document.activeElement?.dataset?.inboxRow) === "SC-701", "a clicked row keeps the keyboard focus");
-    await p.keyboard.press("ArrowDown"); await p.waitForTimeout(150);
+    await p.keyboard.press("ArrowDown"); await p.waitForFunction(()=>document.activeElement?.dataset?.inboxRow==="SC-702");
     ok(await p.getAttribute("[data-scard]", "data-scard") === "SC-702" && (await p.evaluate(() => location.hash)) === "#/inbox/SC-702" && await p.getAttribute('[data-inbox-row="SC-702"]', "aria-selected") === "true", "↓ on a row selects the next card");
     ok(await p.evaluate(() => document.activeElement?.dataset?.inboxRow) === "SC-702", "the focus follows to the newly selected row");
     await p.keyboard.press("j"); await p.waitForTimeout(150);
