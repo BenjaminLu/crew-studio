@@ -1,4 +1,4 @@
-import './lib/isolated-env.mjs';
+import "./lib/isolated-env.mjs";
 // A browser cookie jar is host-scoped, not port-scoped. Two independent local
 // Studios must remain authenticated after both official session links are opened.
 import {sessionCookie, hasSession, hasSessionCookie, guardWrite} from '../src/csrf';
