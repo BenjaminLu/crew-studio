@@ -89,6 +89,10 @@ function graph(def, o = {}) {
       "data-edge": key, "data-edge-i": i, "data-back": e.back ? e.side : null, tabindex: o.editable ? 0 : null, role: o.editable ? "button" : null,
       "aria-label": `${e.from} → ${e.to}${e.when ? ` when ${e.when}` : ""}${e.back ? T(", goes back", "，往回") : ""}${e.checks ? `, ${e.checks} gates` : ""}` });
     const d = L.pathD(e);
+    // A straight SVG path has a zero-height/width geometric box. Give its
+    // existing focus owner a small finite target without masking the whole route.
+    const points = L.sample(e, 16), middle = points[Math.floor(points.length / 2)];
+    if (o.editable && middle) g.append(s("rect", { x: middle[0] - 10, y: middle[1] - 10, width: 20, height: 20, fill: "transparent", "data-edge-hit": i }));
     g.append(s("path", { d, class: "rt-hit" }), s("path", { d, class: "rt-line", "marker-end": `url(#arr-${def.id})` }));
     if (e.label) { const lb = s("g", { class: `rt-elabel${e.back ? " back" : ""}`, "data-label": key }, s("rect", { x: e.label.x, y: e.label.y, width: e.label.w, height: e.label.h, rx: 4, class: "rt-when-bg" }),
       s("text", { x: e.label.x + 4, y: e.label.y + 10.5, class: "rt-when" }, e.label.text)); if (e.label.full !== e.label.text) lb.append(s("title", {}, e.label.full)); lg.append(lb); }
@@ -162,20 +166,21 @@ function graph(def, o = {}) {
       const p = pt(ev);
       if (port) { drag = { kind: "wire", from: port.dataset.port, line: s("path", { class: "rt-wire", d: "" }) }; svg.append(drag.line); }
       else if (node) { const n = byId[node.dataset.node]; drag = { kind: "node", id: n.id, g: node, dx: p.x - n.x, dy: p.y - n.y, x0: n.x, y0: n.y, moved: false }; }
-      else drag = { kind: "pan", sx: ev.clientX, sy: ev.clientY, vb: { ...view } };
+      else drag = { kind: "pan", edge: ev.target.closest?.("[data-edge-i]")?.getAttribute("data-edge-i") ?? null, moved: false, sx: ev.clientX, sy: ev.clientY, vb: { ...view } };
       drag.pointerId = ev.pointerId; svg.setPointerCapture(ev.pointerId);
     });
     svg.addEventListener("pointermove", (ev) => {
       if (!drag || ev.pointerId !== drag.pointerId) return; const p = pt(ev);
       if (drag.kind === "node") { if (!drag.moved && !o.simple) o.onDragStart?.(lay); const n = byId[drag.id]; n.x = Math.round(p.x - drag.dx); n.y = Math.round(p.y - drag.dy); drag.moved = true; drag.g.setAttribute("transform", `translate(${n.x},${n.y})`); o.onDragging?.(drag.id, n.x, n.y); }
       else if (drag.kind === "wire") { const a = byId[drag.from]; drag.line.setAttribute("d", `M${a.x + a.w},${a.y + a.h / 2} L${p.x},${p.y}`); }
-      else { const r = svg.getBoundingClientRect(); const k = view.w / r.width; view.x = drag.vb.x - (ev.clientX - drag.sx) * k; view.y = drag.vb.y - (ev.clientY - drag.sy) * k * (view.h / view.w) / (r.height / r.width); setView(); }
+      else { if (Math.hypot(ev.clientX - drag.sx, ev.clientY - drag.sy) > 4) drag.moved = true; const r = svg.getBoundingClientRect(); const k = view.w / r.width; view.x = drag.vb.x - (ev.clientX - drag.sx) * k; view.y = drag.vb.y - (ev.clientY - drag.sy) * k * (view.h / view.w) / (r.height / r.width); setView(); }
     });
     svg.addEventListener("pointerup", (ev) => {
       if (!drag || ev.pointerId !== drag.pointerId) return; const d = drag; drag = null; svg.interactionActive = false;
       if (d.kind === "node" && d.moved) { d.g.dataset.dragged = "1"; const n = byId[d.id]; if (o.simple) o.onNudge?.(d.id, n.x - d.x0, n.y - d.y0); else { o.onMove?.(d.id, n.x, n.y, false); o.onMoved?.(d.id); } }
       // a press and release without moving selects the node here: the svg holds the pointer capture, so the click that follows lands on the svg, not the node
       if (d.kind === "node" && !d.moved && o.onSelect) { svg.selectedOnUp = true; setTimeout(() => delete svg.selectedOnUp, 0); o.onSelect({ node: d.id }); }
+      if (d.kind === "pan" && d.edge !== null && !d.moved && o.onSelect) { svg.selectedOnUp = true; setTimeout(() => delete svg.selectedOnUp, 0); o.onSelect({ edge: Number(d.edge) }); }
       if (d.kind === "wire") { d.line.remove(); const el = document.elementFromPoint(ev.clientX, ev.clientY); const to = el?.closest?.("[data-node]")?.dataset.node; if (to && to !== d.from) o.onConnect?.(d.from, to); }
       o.onInteractionEnd?.();
     });
@@ -184,7 +189,7 @@ function graph(def, o = {}) {
       if (d.kind === "wire") d.line.remove();
       if (d.kind === "node" && d.moved) { const n = byId[d.id]; n.x = d.x0; n.y = d.y0; d.g.setAttribute("transform", `translate(${n.x},${n.y})`); }
       try { if (svg.hasPointerCapture(d.pointerId)) svg.releasePointerCapture(d.pointerId); } catch {}
-      o.onInteractionEnd?.();
+      o.onInteractionCancel?.(); o.onInteractionEnd?.();
     };
     svg.cancelInteraction = () => cancelInteraction();
     svg.addEventListener("pointercancel", cancelInteraction);
@@ -343,7 +348,7 @@ function saveWorkflowBrief(ed,value){ed.startBrief=value;const key=workflowBrief
 function buildEditor(ed) {
   const root = h("div", { class: "page rt-editor", "data-editor": ed.id });
   if(!document.getElementById('workflow-inspector-style'))document.head.append(h('style',{id:'workflow-inspector-style'},`
-.wf-editor-more{position:relative}.wf-editor-more>summary{list-style:none;cursor:pointer}.wf-editor-menu{position:fixed;width:min(520px,85vw);max-height:75vh;overflow:auto;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:8px;z-index:45;display:flex;gap:8px;flex-wrap:wrap}.wf-editor-menu>details,.wf-editor-menu>.card{width:100%}.rt-editor{gap:8px;grid-template-columns:minmax(0,1fr)}.rt-editor>.phead,.rt-editor .phead>.actions,.rt-editor .phead .rt-toolbar{min-width:0;max-width:100%}.rt-editor .phead .rt-toolbar{flex-wrap:wrap}.rt-editor .phead{align-items:start}.rt-editor .phead>div:first-child{min-width:0;max-width:100%;flex:1}.rt-editor .phead p{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rt-editor .phead .rt-toolbar{margin:0;padding:0}.rt-editor .phead .actions{align-items:center}.rt-editor [data-save-note]{max-width:160px}.rt-editor>[data-diff-host]:has(>.rt-diff[hidden]){display:none}.rt-editor .phead{margin-bottom:8px}.rt-editor .phead p{max-width:72ch}.rt-editor .rt-work{grid-template-columns:minmax(0,1fr);grid-template-areas:'canvas' 'pal';gap:16px}.rt-editor.wf-inspecting .rt-work{grid-template-columns:minmax(0,1fr) 384px;grid-template-areas:'canvas panel' 'pal pal'}.rt-editor .rt-panel{position:sticky;top:16px;max-height:calc(100dvh - 96px);min-width:0;padding:16px 16px 80px}.rt-editor .rt-panel[hidden]{display:none}.rt-editor .rt-panel h3{font-size:18px;margin:0 48px 8px 0}.rt-editor .rt-panel .fw-node-config{border:0;padding:0;background:none}.wf-inspector-close{float:right;position:sticky;top:0;z-index:2}.wf-editor-save-home{display:flex;gap:8px;flex-wrap:wrap;min-width:0}.wf-inspector-savebar{position:sticky;bottom:0;display:flex;gap:8px;flex-wrap:wrap;background:var(--surface);padding:12px 0 4px;border-top:1px solid var(--border);z-index:2}.wf-inspector-savebar input{min-width:0;max-width:100%}.rt-editor .rt-panel details{padding:12px 0;border-top:1px solid var(--border)}@media(max-width:900px){.rt-editor.wf-inspecting .rt-work{grid-template-columns:minmax(0,1fr);grid-template-areas:'canvas' 'pal'}.rt-editor.wf-inspecting .rt-panel{position:fixed;top:64px;right:8px;bottom:8px;width:min(384px,calc(100vw - 16px));max-height:none;z-index:65;box-shadow:0 12px 48px #0005}}
+.wf-editor-more{position:relative}.wf-editor-more>summary{list-style:none;cursor:pointer}.wf-editor-menu{position:fixed;width:min(520px,85vw);max-height:75vh;overflow:auto;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:8px;z-index:45;display:flex;gap:8px;flex-wrap:wrap}.wf-editor-menu>details,.wf-editor-menu>.card{width:100%}.rt-editor{gap:8px;grid-template-columns:minmax(0,1fr)}.rt-editor>.phead,.rt-editor .phead>.actions,.rt-editor .phead .rt-toolbar{min-width:0;max-width:100%}.rt-editor .phead .rt-toolbar{flex-wrap:wrap}.rt-editor .phead{align-items:start}.rt-editor .phead>div:first-child{min-width:0;max-width:100%;flex:1}.rt-editor .phead p{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rt-editor .phead .rt-toolbar{margin:0;padding:0}.rt-editor .phead .actions{align-items:center}.rt-editor [data-save-note]{max-width:160px}.rt-editor>[data-diff-host]:has(>.rt-diff[hidden]){display:none}.rt-editor .phead{margin-bottom:8px}.rt-editor .phead p{max-width:72ch}.rt-editor .rt-work{grid-template-columns:minmax(0,1fr);grid-template-areas:'canvas' 'pal';gap:16px}.rt-editor.wf-inspecting .rt-work{grid-template-columns:minmax(0,1fr) 384px;grid-template-areas:'canvas panel' 'pal pal'}.rt-editor .rt-panel{position:sticky;top:16px;max-height:calc(100dvh - 96px);min-width:0;padding:16px 16px 80px}.rt-editor .rt-panel[hidden]{display:none}.rt-editor .rt-panel h3{font-size:18px;margin:0 48px 8px 0}.rt-editor .rt-panel .fw-node-config{border:0;padding:0;background:none}.wf-edge-actions{position:sticky;top:36px;z-index:2;background:var(--surface);padding:8px 0}.wf-inspector-close{float:right;position:sticky;top:0;z-index:2}.wf-editor-save-home{display:flex;gap:8px;flex-wrap:wrap;min-width:0}.wf-inspector-savebar{position:sticky;bottom:0;display:flex;gap:8px;flex-wrap:wrap;background:var(--surface);padding:12px 0 4px;border-top:1px solid var(--border);z-index:2}.wf-inspector-savebar input{min-width:0;max-width:100%}.rt-editor .rt-panel details{padding:12px 0;border-top:1px solid var(--border)}@media(max-width:900px){.rt-editor.wf-inspecting .rt-work{grid-template-columns:minmax(0,1fr);grid-template-areas:'canvas' 'pal'}.rt-editor.wf-inspecting .rt-panel{position:fixed;top:64px;right:8px;bottom:8px;width:min(384px,calc(100vw - 16px));max-height:none;z-index:65;box-shadow:0 12px 48px #0005}}
 `));
   const status = h("div", { class: "rt-status", role: "status", "aria-live": "polite" });
   const direction=h("textarea",{class:"input",rows:4,maxlength:2000,"data-workflow-brief":"",placeholder:T("Describe the website, audience, style and outcome you want.","描述你想做的網頁、使用對象、風格與預期成果。"),oninput:e=>saveWorkflowBrief(ed,e.target.value)});direction.value=workflowBrief(ed);
@@ -366,7 +371,64 @@ function buildEditor(ed) {
   const invalidateOverlay=()=>{overlayGeneration++;overlayPin=null;ed.states=null;ed.walked=null;overlayStatus.replaceChildren();};
   const overlayDirty=()=>overlayStatus.replaceChildren(T("Execution colors are hidden for unsaved edits. Save a new version or reload the saved version before choosing a Task.","未儲存的修改不顯示執行狀態。請存成新版本，或重新載入已儲存版本，再選擇任務。"));
   const checkMan = (ref) => ed.checks.find((c) => c.ref === ref);
-  const dirty = () => { draftRevision++; ed.dirty = true; invalidateOverlay(); if(ed.overlay)overlayDirty(); validateSoon(); draw(); };
+  // Draft operations are local to this editor session, never saved-version or Task identity.
+  const snapshot = () => clone({ content: { nodes: ed.def.nodes, edges: ed.def.edges, roles: ed.def.roles }, mode: ed.mode, offsets: ed.offsets });
+  const contentKey = def => JSON.stringify({ nodes: def.nodes.map(({ x, y, ...n }) => n), edges: def.edges, roles: def.roles });
+  let current = snapshot(), undo = [], redo = [], lastTextGroup = null, textOwner = null, textGroup = 0, dragBefore = null;
+  let layoutTail = Promise.resolve(), layoutError = null;
+  const textTarget = target => target instanceof Element && !!target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]');
+  const historyButtons = h('div', { class: 'seg', role: 'group', 'aria-label': T('Edit history', '編輯操作紀錄') });
+  const undoButton = h('button', { type: 'button', 'data-editor-undo': '', 'aria-keyshortcuts': 'Meta+Z Control+Z', title: T('Undo (⌘Z / Ctrl+Z)', '還原（⌘Z / Ctrl+Z）'), onclick: () => travel(false) }, T('Undo', '還原'));
+  const redoButton = h('button', { type: 'button', 'data-editor-redo': '', 'aria-keyshortcuts': 'Meta+Shift+Z Control+Shift+Z', title: T('Redo (⌘⇧Z / Ctrl+Shift+Z)', '重做（⌘⇧Z / Ctrl+Shift+Z）'), onclick: () => travel(true) }, T('Redo', '重做'));
+  historyButtons.append(undoButton, redoButton);
+  const historyHome = h('span', { class: 'wf-editor-history-home' }, historyButtons);
+  const updateHistory = () => { undoButton.disabled = !undo.length || savePending || !!ed.trash?.deleted; redoButton.disabled = !redo.length || savePending || !!ed.trash?.deleted; };
+  const resetHistory = () => { current = snapshot(); undo = []; redo = []; lastTextGroup = null; updateHistory(); };
+  const recordHistory = () => {
+    const next = snapshot(); if (JSON.stringify(next) === JSON.stringify(current)) return;
+    const active = document.activeElement, group = active === textOwner && active?.matches('input:not([type="checkbox"]):not([type="radio"]),textarea') ? textGroup : null;
+    if (group === null || group !== lastTextGroup || !undo.length) { undo.push(current); if (undo.length > 100) undo.shift(); }
+    current = next; redo = []; lastTextGroup = group; updateHistory();
+  };
+  root.addEventListener('focusin', e => { textOwner = textTarget(e.target) ? e.target : null; textGroup++; lastTextGroup = null; });
+  root.addEventListener('focusout', () => { textOwner = null; lastTextGroup = null; });
+  const positionsOf = frame => {
+    const fallback = Object.fromEntries(window.crewLayout.layout({ ...ed.def, ...frame.content }, { collapsed: [] }).nodes.map(n => [n.id, n]));
+    const savedIds = new Set(ed.saved.nodes.map(n => n.id));
+    return Object.fromEntries(frame.content.nodes.filter(n => savedIds.has(n.id)).map(n => [n.id, { x: Number.isFinite(n.x) ? n.x : fallback[n.id].x, y: Number.isFinite(n.y) ? n.y : fallback[n.id].y }]));
+  };
+  const queueLayout = (frame, message) => {
+    const version = ed.def.version, positions = positionsOf(frame), mode = frame.mode, revision = draftRevision;
+    layoutTail = layoutTail.then(async () => {
+      if (disposed || WF.ed !== ed) return;
+      try {
+        await api(`/api/graph-layout/${ed.id}/v${version}`, { mode });
+        await api(`/api/wf/${ed.id}/layout`, { version, positions });
+        if (disposed || WF.ed !== ed) return;
+        if (ed.saved.version === version) for (const n of ed.saved.nodes) if (positions[n.id]) Object.assign(n, positions[n.id]);
+        layoutError = null; if (message && draftRevision === revision && ed.def.version === version) say(message);
+      } catch (error) { if (!disposed && WF.ed === ed) { layoutError = error; say(T('Position change could not be saved: ', '位置變更未儲存：') + error.message); } }
+    });
+    return layoutTail;
+  };
+  const travel = forward => {
+    if (disposed || WF.ed !== ed || !root.isConnected || savePending || ed.trash?.deleted || canvas.querySelector('svg')?.interactionActive) return;
+    const source = forward ? redo : undo, target = forward ? undo : redo; if (!source.length) return;
+    target.push(current); const next = source.pop(), previous = current; current = clone(next); lastTextGroup = null;
+    Object.assign(ed.def, clone(next.content)); ed.mode = next.mode; ed.offsets = clone(next.offsets); ed.sel = null; draftRevision++;
+    ed.dirty = contentKey(ed.def) !== contentKey(ed.saved); invalidateOverlay(); ed.overlay = null; runPick.value = ''; view = null;
+    if (previous.mode !== next.mode || JSON.stringify(previous.content.nodes.map(n => [n.id,n.x,n.y])) !== JSON.stringify(next.content.nodes.map(n => [n.id,n.x,n.y]))) queueLayout(next);
+    validateSoon(); draw(); drawPanel(); updateHistory(); say(forward ? T('Redone. Save to keep content changes.', '已重做；內容修改需儲存。') : T('Undone. Save to keep content changes.', '已還原；內容修改需儲存。'));
+    if (document.activeElement === document.body) (forward ? redoButton : undoButton).focus({ preventScroll: true });
+  };
+  const historyKey = event => {
+    if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== 'z' || event.isComposing || textTarget(event.target) || [...document.querySelectorAll('dialog[open],[data-skill-viewer],[role="dialog"][aria-modal="true"]')].some(el=>el.getClientRects().length) || disposed || WF.ed !== ed || !root.isConnected || !(root.contains(event.target) || event.target === document.body)) return;
+    event.preventDefault(); travel(event.shiftKey);
+  };
+  document.addEventListener('keydown', historyKey);
+  updateHistory();
+  const dirty = () => { recordHistory(); draftRevision++; ed.dirty = contentKey(ed.def) !== contentKey(ed.saved); invalidateOverlay(); if(ed.overlay)overlayDirty(); validateSoon(); draw(); };
+
   const validateSoon = () => {
     clearTimeout(vtimer); validationAbort?.abort(); const generation = ++validationGeneration;
     vtimer = setTimeout(async () => {
@@ -381,12 +443,7 @@ function buildEditor(ed) {
   const drawProblems = () => { const errs = (ed.problems || []).filter((p) => p.level === "error"); const warns = (ed.problems || []).filter((p) => p.level !== "error");
     probs.replaceChildren(h("div", { class: `rt-valid ${errs.length ? "bad" : "ok"}`, "data-valid": errs.length ? "errors" : "ok" }, errs.length ? T(`${errs.length} problem${errs.length > 1 ? "s" : ""}: it cannot be saved or run`, `${errs.length} 個問題：無法儲存或執行`) : T("Valid: every node is reachable, an end is reachable, checks are attached", "有效：每個節點都走得到、終點走得到、檢查都掛好了")),
       ...[...errs, ...warns].slice(0, 12).map((p) => h("div", { class: `rt-prob ${p.level}`, "data-problem": p.node || p.edge || "" }, `${p.level === "error" ? "✗" : "!"} ${p.text}`))); };
-  const persistLayout = async (nid) => { // dragging keeps positions per version (no new version) for nodes the saved version has
-    await ed.manualP; // the switch from the auto layout saves every position first
-    const savedIds = new Set(ed.saved.nodes.map((n) => n.id)); if (!savedIds.has(nid)) return;
-    const n = ed.def.nodes.find((x) => x.id === nid); const sv = ed.saved.nodes.find((x) => x.id === nid); if (sv) { sv.x = n.x; sv.y = n.y; }
-    try { await api(`/api/wf/${ed.id}/layout`, { version: ed.def.version, positions: { [nid]: { x: n.x, y: n.y } } }); say(T(`${n.label} moved (position kept for v${ed.def.version})`, `${n.label} 已移動（位置保存在 v${ed.def.version}）`)); } catch (e) { say(e.message); }
-  };
+  const persistLayout = nid => queueLayout(snapshot(), T(`Position saved for v${ed.def.version}`, `位置已儲存於 v${ed.def.version}`));
   const uniq = (base) => { let i = 1, idv = base; while (ed.def.nodes.some((n) => n.id === idv)) idv = `${base}-${++i}`; return idv; };
   const addNode = (kind, at) => {
     const c = at || (view ? { x: view.x + view.w / 2 - NW / 2, y: view.y + view.h / 2 - NH / 2 } : { x: 40, y: 40 });
@@ -395,21 +452,17 @@ function buildEditor(ed) {
     ed.def.nodes.push(n); ed.sel = { node: idv }; dirty(); say(T(`added ${kind} node ${idv}`, `已加入 ${kind} 節點 ${idv}`)); focusNode(idv);
   };
   const delNode = (nid) => { ed.def.nodes = ed.def.nodes.filter((n) => n.id !== nid); ed.def.edges = ed.def.edges.filter((e) => e.from !== nid && e.to !== nid); ed.sel = null; dirty(); say(T(`removed ${nid} and its edges`, `已移除 ${nid} 與它的邊`)); };
-  const delEdge = (i) => { const e = ed.def.edges[i]; ed.def.edges.splice(i, 1); ed.sel = null; dirty(); say(T(`disconnected ${e.from} → ${e.to}`, `已斷開 ${e.from} → ${e.to}`)); };
+  const delEdge = (i) => { const e = ed.def.edges[i]; ed.def.edges.splice(i, 1); ed.sel = null; dirty(); say(T(`disconnected ${e.from} → ${e.to}`, `已斷開 ${e.from} → ${e.to}`)); drawPanel(); };
   const connect = (from, to, when) => { if (ed.def.edges.some((e) => e.from === from && e.to === to && (e.when || "") === (when || ""))) return; const e = { from, to }; if (when) e.when = when; ed.def.edges.push(e); ed.sel = { edge: ed.def.edges.length - 1 }; dirty(); say(T(`connected ${from} → ${to}`, `已連接 ${from} → ${to}`)); };
   const dropCheck = (target, ref) => { const t = target.node ? ed.def.nodes.find((n) => n.id === target.node) : ed.def.edges[target.edge]; t.checks = [...(t.checks || []), { use: ref }]; ed.sel = target; dirty(); say(T(`${ref} attached to ${target.node ?? `edge ${t.from} → ${t.to}`}`, `${ref} 已掛到 ${target.node ?? `邊 ${t.from} → ${t.to}`}`)); };
   const focusNode = (nid) => { const f = () => canvas.querySelector(`[data-node="${CSS.escape(nid)}"]`)?.focus({ preventScroll: true }); f(); setTimeout(() => { if (!disposed && (document.activeElement === document.body || canvas.contains(document.activeElement))) f(); }, 0); };
   // the layout: auto until a node is dragged (then this version keeps its positions), "Tidy layout" goes back
-  const setMode = async (mode) => { ed.mode = mode; try { await api(`/api/graph-layout/${ed.id}/v${ed.def.version}`, { mode }); } catch (e) { say(e.message); } };
-  const toManual = async () => {
-    if (ed.mode === "manual") return;
-    const full = window.crewLayout.layout(ed.def, { collapsed: [] }); const at = Object.fromEntries(full.nodes.map((n) => [n.id, n]));
-    const positions = {}; draftRevision++;
-    for (const n of ed.def.nodes) if (at[n.id]) { n.x = at[n.id].x; n.y = at[n.id].y; positions[n.id] = { x: n.x, y: n.y }; const sv = ed.saved.nodes.find((x) => x.id === n.id); if (sv) { sv.x = n.x; sv.y = n.y; } }
-    ed.mode = "manual";
-    await setMode("manual");
-    const savedIds = new Set(ed.saved.nodes.map((n) => n.id)); const keep = Object.fromEntries(Object.entries(positions).filter(([k]) => savedIds.has(k)));
-    try { await api(`/api/wf/${ed.id}/layout`, { version: ed.def.version, positions: keep }); } catch {}
+  const setMode = mode => { ed.mode = mode; recordHistory(); draftRevision++; return queueLayout(snapshot()); };
+  const toManual = () => {
+    if (ed.mode === 'manual') return;
+    const full = window.crewLayout.layout(ed.def, { collapsed: [] }), at = Object.fromEntries(full.nodes.map(n => [n.id,n]));
+    for (const n of ed.def.nodes) if (at[n.id]) { n.x = at[n.id].x; n.y = at[n.id].y; }
+    ed.mode = 'manual'; draftRevision++;
   };
   const setView = (k) => { gview = k; try { localStorage.setItem("crew.graphView", k); } catch {} view = null; root.querySelectorAll("[data-view-toggle]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.viewToggle === k))); draw(); drawPanel(); say(k === "simple" ? T("Simple view", "簡易檢視") : T("Detail view: every node and edge", "詳細檢視：所有節點與邊")); };
   const toggleStage = (sid) => { const c = new Set(ed.collapsed); c.has(sid) ? c.delete(sid) : c.add(sid); ed.collapsed = [...c]; draw(); say(c.has(sid) ? T(`${sid} collapsed`, `${sid} 已收合`) : T(`${sid} expanded`, `${sid} 已展開`)); };
@@ -424,11 +477,12 @@ function buildEditor(ed) {
     const simple = gview === "simple";
     root.dataset.view = gview; palette.hidden = simple; paletteNote.hidden = !simple;
     const g = graph(ed.def, { editable: true, simple, wrap: wrapFor(), offsets: simple ? ed.offsets : null, sel: ed.sel, problems: ed.problems, states: ed.states, walked: ed.walked, view, manual: !simple && ed.mode === "manual", collapsed: ed.collapsed, redraw: () => draw(),
-      onNudge: (nid, dx, dy) => { const o = ed.offsets[nid] || { dx: 0, dy: 0 }; ed.offsets[nid] = { dx: o.dx + dx, dy: o.dy + dy }; draw(); say(T("Moved in the simple view (not kept; arrange in Detail view)", "在簡易檢視中移動（不保存；請在詳細檢視排版）")); },
-      onToggleStage: toggleStage, onDragStart: () => { if (ed.mode !== "manual") ed.manualP = toManual(); },
+      onNudge: (nid, dx, dy) => { const o = ed.offsets[nid] || { dx: 0, dy: 0 }; ed.offsets[nid] = { dx: o.dx + dx, dy: o.dy + dy }; recordHistory(); draftRevision++; draw(); say(T("Moved in the simple view (not kept; arrange in Detail view)", "在簡易檢視中移動（不保存；請在詳細檢視排版）")); },
+      onToggleStage: toggleStage, onDragStart: () => { dragBefore = snapshot(); lastTextGroup = null; if (ed.mode !== "manual") toManual(); },
+      onInteractionCancel: () => { if (dragBefore) { Object.assign(ed.def, clone(dragBefore.content)); ed.mode = dragBefore.mode; ed.offsets = clone(dragBefore.offsets); dragBefore = null; drawPending = true; } },
       onInteractionEnd: () => { if (!disposed && drawPending) draw(); },
-      onSelect: (sel) => { ed.sel = sel; draw(); drawPanel(); if (sel?.node) focusNode(sel.node); },
-      onMove: (nid, x, y) => { draftRevision++; const n = ed.def.nodes.find((q) => q.id === nid); n.x = x; n.y = y; draw(); focusNode(nid); persistLayout(nid); },
+      onSelect: (sel) => { ed.sel = sel; draw(); drawPanel(); if (sel?.node) focusNode(sel.node); else if (sel?.edge != null) canvas.querySelector(`[data-edge-i="${sel.edge}"]`)?.focus({preventScroll:true}); },
+      onMove: (nid, x, y) => { draftRevision++; const n = ed.def.nodes.find((q) => q.id === nid); n.x = x; n.y = y; recordHistory(); dragBefore = null; draw(); focusNode(nid); persistLayout(nid); },
       onMoved: () => {}, onConnect: (a, b) => { connect(a, b); drawPanel(); }, onDropCheck: (t, c) => { dropCheck(t, c); drawPanel(); },
       onDeleteNode: delNode, onDeleteEdge: delEdge, onView: (vw) => { view = vw; fitted = false; mm?.sync(); } });
     // Fit must honor both axes: a new stage/node may add another band. Grow
@@ -535,7 +589,7 @@ function buildEditor(ed) {
         T(`Skill text on this node: ${window.crewSkillsSize(total)} of ${window.crewSkillsSize(ed.skillCap || 0)}`, `這個節點的技能文字：${window.crewSkillsSize(total)} / ${window.crewSkillsSize(ed.skillCap || 0)}`)) : null);
   };
   let inspectorFocus=null,inspectorFrame=0,saveHome=null;
-  const placeSaveControls=()=>{if(!saveHome)return;if(innerWidth<=900&&ed.sel&&!panel.hidden){let footer=panel.querySelector("[data-inspector-savebar]");if(!footer){footer=h("div",{"data-inspector-savebar":"",class:"wf-inspector-savebar"});panel.append(footer);}if(note.parentElement!==footer||saveButton.parentElement!==footer)footer.append(note,saveButton);}else if(note.parentElement!==saveHome||saveButton.parentElement!==saveHome)saveHome.append(note,saveButton);};
+  const placeSaveControls=()=>{if(!saveHome)return;if(innerWidth<=900&&ed.sel&&!panel.hidden){let footer=panel.querySelector("[data-inspector-savebar]");if(!footer){footer=h("div",{"data-inspector-savebar":"",class:"wf-inspector-savebar"});panel.append(footer);}if(historyButtons.parentElement!==footer)footer.append(historyButtons);if(note.parentElement!==footer||saveButton.parentElement!==footer)footer.append(note,saveButton);}else {if(historyButtons.parentElement!==historyHome)historyHome.append(historyButtons);if(note.parentElement!==saveHome||saveButton.parentElement!==saveHome)saveHome.append(note,saveButton);}};
   const sizeInspector=()=>{cancelAnimationFrame(inspectorFrame);inspectorFrame=requestAnimationFrame(()=>{if(!panel.isConnected)return;placeSaveControls();if(panel.hidden)return;panel.style.maxHeight=innerWidth>900?Math.max(160,innerHeight-Math.max(16,panel.getBoundingClientRect().top)-80)+'px':'';});};
   const inspectorScroller=document.querySelector('#main');window.addEventListener('resize',sizeInspector);inspectorScroller?.addEventListener('scroll',sizeInspector,{passive:true});
   const closeInspector=()=>{const id=ed.sel?.node,edge=ed.sel?.edge;ed.sel=null;draw();drawPanel();const target=inspectorFocus?.isConnected?inspectorFocus:id?canvas.querySelector(`[data-node="${CSS.escape(id)}"]`):edge!=null?canvas.querySelector(`[data-edge-i="${edge}"]`):null;target?.focus({preventScroll:true});};
@@ -566,8 +620,9 @@ function buildEditor(ed) {
         h("div", { class: "actions" }, h("button", { class: "btn sm danger", "data-del-node": n.id, onclick: () => { delNode(n.id); drawPanel(); } }, T("Remove node", "移除節點"))), probs].filter((c) => c != null));
     } else {
       const e = ed.def.edges[sel.edge]; if (!e) { ed.sel = null; return drawPanel(); }
-      panel.replaceChildren(h("h3", {}, `${e.from} → ${e.to}`), field(T("When (outcome)", "條件（結果）"), h("input", { class: "input", value: e.when ?? "", "data-field": "when", onchange: (ev) => { if (ev.target.value.trim()) e.when = ev.target.value.trim(); else delete e.when; dirty(); } })),
-        checksBlock(e), h("div", { class: "actions" }, h("button", { class: "btn sm danger", "data-del-edge": `${e.from}→${e.to}`, onclick: () => { delEdge(sel.edge); drawPanel(); } }, T("Disconnect", "斷開"))), probs);
+      const label = id => ed.def.nodes.find(n => n.id === id)?.label || id;
+      panel.replaceChildren(h("h3", {}, `${label(e.from)} → ${label(e.to)}`), h("div", { class: "actions wf-edge-actions" }, h("button", { class: "btn sm danger", "data-del-edge": `${e.from}→${e.to}`, onclick: () => delEdge(sel.edge) }, T("Delete connection", "刪除連線"))), field(T("When (outcome)", "條件（結果）"), h("input", { class: "input", value: e.when ?? "", "data-field": "when", onchange: (ev) => { if (ev.target.value.trim()) e.when = ev.target.value.trim(); else delete e.when; dirty(); } })),
+        checksBlock(e), probs);
     }
     const close=h('button',{class:'btn sm wf-inspector-close',type:'button','data-inspector-close':'',onclick:closeInspector},T('Close','關閉'));panel.prepend(close);
     placeSaveControls();
@@ -590,8 +645,10 @@ function buildEditor(ed) {
   const save = async () => {
     if (disposed || WF.ed !== ed || savePending) return;
     const revision = draftRevision, generation = validationGeneration;
-    savePending = true; saveButton.disabled = true; saveButton.textContent = T("Saving…", "儲存中…");
+    savePending = true; updateHistory(); saveButton.disabled = true; saveButton.textContent = T("Saving…", "儲存中…");
     try { const body = clone({ base: ed.saved.version, nodes: ed.def.nodes, edges: ed.def.edges, roles: ed.def.roles, note: note.value.trim() || null });
+      await layoutTail; if (layoutError) { await queueLayout(snapshot()); if (layoutError) throw layoutError; }
+      if (disposed || WF.ed !== ed) return;
       const r = await api(`/api/wf/${ed.id}`, body);
       if (disposed || WF.ed !== ed) return;
       const d = r.diff;
@@ -606,7 +663,7 @@ function buildEditor(ed) {
         // Later content/layout edits keep their object and gesture ownership.
         ed.saved = clone(r.def); ed.def.version = r.def.version; ed.def.parent = r.def.parent;
         ed.versions = [...ed.versions.filter(v => v.version !== r.def.version), r.def];
-        ed.dirty = true;
+        ed.dirty = true; resetHistory();
         verSel.replaceChildren(...ed.versions.map(v => h("option", { value: v.version, selected: v.version === r.def.version || null }, `v${v.version}${v.note ? ` · ${v.note}` : ""}`)));
         say(T(`Saved v${r.def.version}; later edits remain unsaved`, `已存成 v${r.def.version}；後續修改尚未儲存`));
         return;
@@ -614,7 +671,7 @@ function buildEditor(ed) {
       WF.lastDiff = diffBox; ed.dispose?.(); WF.ed = null;
       if (location.hash === `#/workflows/${ed.id}`) rerender(); else location.hash = `#/workflows/${ed.id}`;
     } catch (e) { if (disposed || WF.ed !== ed) return; if (generation === validationGeneration) { ed.problems = e.problems || ed.problems; drawProblems(); } say(e.message); }
-    finally { savePending = false; if (!disposed) { saveButton.disabled = false; saveButton.textContent = T("Save as new version", "存成新版本"); } }
+    finally { savePending = false; if (!disposed) { updateHistory(); saveButton.disabled = false; saveButton.textContent = T("Save as new version", "存成新版本"); } }
   };
   const saveButton = h("button", { disabled:ed.trash?.deleted||null, class: "btn primary sm", "data-save": "1", onclick: save }, T("Save as new version", "存成新版本"));
   const runPick = h("select", { class: "select", "aria-label": T("Show a task on the graph", "在流程圖上顯示一個任務"), "data-overlay": "1", onchange: (e) => setOverlay(e.target.value || null) },
@@ -651,7 +708,7 @@ function buildEditor(ed) {
     clearTimeout(vtimer); validationGeneration++; validationAbort?.abort(); validationAbort = null;
     canvas.querySelector("svg.rt-graph")?.cancelInteraction?.();
     live.listeners.delete(onLive);
-    document.removeEventListener("keydown",inspectorKey);
+    document.removeEventListener("keydown",inspectorKey);document.removeEventListener('keydown',historyKey);
     cancelAnimationFrame(inspectorFrame);window.removeEventListener("resize",sizeInspector);inspectorScroller?.removeEventListener("scroll",sizeInspector);
     exportDialog?.remove(); exportDialog=null;
   };
@@ -703,7 +760,7 @@ function buildEditor(ed) {
       h("div", { class: "actions" }, h("a", { class: "btn ghost", href: "#/workflows" }, T("All workflows", "全部流程")),ed.personal?workflowTrashButton({id:ed.id,name:ed.saved.name,version:ed.saved.version,trashRevision:ed.trash?.revision??0},ed.trash?.deleted===true):null, ed.held?h("span",{class:"faint","data-workflow-held":"1"},T(ed.held.en,ed.held.zh)):ed.selectable===false?h("span",{class:"faint","data-workflow-unavailable":"1"},T("Historical or internal workflow · unavailable for new tasks","歷史或內部流程 · 不提供新任務使用")):ed.def.origin?h("button",{class:"btn primary","data-ed-run":ed.id,onclick:async(e)=>{if(ed.dirty){say(T("Save your edits as a new version before Run.","執行前請先把修改存成新版本。"));return;}e.target.disabled=true;try{const input=await startInputs(ed.def,workflowBrief(ed),value=>{saveWorkflowBrief(ed,value);direction.value=value;});if(input===null)return;const r=await startOwnRun({workflow:ed.id,version:ed.saved.version,title:ed.def.name,text:input.text,params:input.params});if(r){RN.list=null;location.hash=`#/run/${r.id}`;}}catch(err){say(err.message);}finally{e.target.disabled=false;}}},T("Run…","執行…")):h("a", { class: "btn", href: "#/runs", "data-start-run": ed.id, onclick: () => { RN.prefill = ed.id; } }, T("Start a task", "開始一個任務")))),
     h("div", { class: "rt-toolbar" }, verSel, exportButton, h("button", { class: "btn sm", "aria-label": T("Zoom in", "放大"), onclick: () => svgZoom(1 / 1.2) }, "+"), h("button", { class: "btn sm", "aria-label": T("Zoom out", "縮小"), onclick: () => svgZoom(1.2) }, "−"),
       h("div", { class: "seg rt-viewseg", role: "group", "aria-label": T("Graph view", "流程圖檢視") }, ["simple", "detail"].map((k) => h("button", { type: "button", "data-view-toggle": k, "aria-pressed": String(gview === k), onclick: () => setView(k) },
-        h("span", { class: "keep" }, k === "simple" ? T("Simple", "簡易") : T("Detail", "詳細"))))),
+        h("span", { class: "keep" }, k === "simple" ? T("Overview", "總覽") : T("Edit graph", "編輯流程"))))),
       h("button", { class: "btn sm", "data-tidy": "1", title: T("Lay the graph out again automatically", "自動重新排版"), onclick: async () => { await setMode("auto"); view = null; draw(); say(T("Tidy layout", "已自動排版")); } }, T("Tidy layout", "整理排版")),
       h("button", { class: "btn sm", "data-fit": "1", onclick: () => { const g = canvas.querySelector("svg.rt-graph"); if (g) fit(g, "all"); } }, T("Fit to view", "全部顯示")),
       runPick, note, saveButton, status, overlayStatus),
@@ -718,12 +775,13 @@ function buildEditor(ed) {
   const more=h('details',{class:'wf-editor-more','data-editor-more':''},h('summary',{class:'btn sm'},T('More ···','更多 ···'))),menu=h('div',{class:'wf-editor-menu'});
   more.append(menu);
   more.addEventListener('toggle',()=>{if(!more.open)return;const rect=more.getBoundingClientRect(),width=Math.min(520,innerWidth*.85);menu.style.left=Math.max(8,Math.min(rect.left,innerWidth-width-16))+'px';menu.style.top=Math.min(rect.bottom+8,innerHeight-200)+'px';});
-  for(const child of [...toolbar.children])if(![verSel,note,saveButton,status,runPick,overlayStatus].includes(child))menu.append(child);
+  const viewControls=toolbar.querySelector('.rt-viewseg');
+  for(const child of [...toolbar.children])if(![verSel,viewControls,note,saveButton,status,runPick,overlayStatus].includes(child))menu.append(child);
   const trash=headingActions.querySelector('[data-workflow-trash],[data-workflow-restore]');if(trash)menu.append(trash);
   if(ed.def.origin){menu.append(briefPanel,stepList,compareVersions);if(!ed.trash?.deleted)menu.append(reuse);}
   const paletteTools=h('button',{class:'btn sm',type:'button','data-editor-add-tools':'',onclick:()=>{more.open=false;(gview==='detail'?palette:paletteNote).scrollIntoView({block:'nearest'});}},T('Add steps and checks','新增節點與檢查'));menu.append(paletteTools);
   menu.addEventListener('click',event=>{if(event.target.closest('button')&&!event.target.closest('[data-workflow-compare],[data-workflow-reuse]'))more.open=false;});
-  saveHome=h('div',{class:'wf-editor-save-home'},note,saveButton);toolbar.replaceChildren(verSel,more,saveHome,status,runPick,overlayStatus);headingActions.prepend(toolbar);placeSaveControls();
+  saveHome=h('div',{class:'wf-editor-save-home'},note,saveButton);toolbar.replaceChildren(verSel,viewControls,historyHome,more,saveHome,status,runPick,overlayStatus);headingActions.prepend(toolbar);toolbar.after(h('p',{class:'faint','data-editor-history-help':''},T('Undo/Redo applies to this editing session. Saving or opening another version starts a new history.', '還原／重做只適用這次編輯；儲存或開啟其他版本後會重新開始。')));placeSaveControls();
   return root;
 }
 
