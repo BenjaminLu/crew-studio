@@ -72,6 +72,12 @@ if (process.env.INBOX_FOCUS_SHOTS_ONLY) { // the screenshots alone (taken before
   for (const w of [1440, 390]) { const { ctx, p } = await open(w); await p.evaluate(() => { document.querySelector("#main").scrollTop = 0; }); await shot(p, String(w)); await p.screenshot({ path: join(shotDir, `${phase}-${w}-full.png`), fullPage: true }); await ctx.close(); }
   await browser.close(); app.kill(); process.exit(0); }
 try {
+  // Refresh must preserve only an actual row owner, never steal the captain's input focus.
+  { const {ctx,p}=await open(1440);
+    await p.focus('[data-inbox-row="SC-701"]');const rowFocus=await p.evaluate(()=>{render();render();return document.activeElement?.dataset?.inboxRow});ok(rowFocus==='SC-701','two consecutive real refreshes synchronously preserve the exact focused row',String(rowFocus));
+    const note=p.locator('[data-card-note]').first();await note.fill('Captain input retained');const inputFocus=await note.evaluate(el=>{el.setSelectionRange(3,8);el.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true,data:'captain'}));render();render();return {note:document.activeElement?.getAttribute('data-card-note'),value:document.activeElement?.value,start:document.activeElement?.selectionStart,end:document.activeElement?.selectionEnd}});ok(inputFocus.note==='SC-701'&&inputFocus.value==='Captain input retained'&&inputFocus.start===3&&inputFocus.end===8,'real card textarea and composing caret keep focus through consecutive refreshes');await note.dispatchEvent('compositionend',{data:'captain'});
+    await p.focus('[data-inbox-row="SC-701"]');await p.evaluate(()=>{render();location.hash='#/library'});await p.locator('.media-library h1').waitFor();await p.evaluate(()=>new Promise(requestAnimationFrame));ok(await p.evaluate(()=>!document.activeElement?.matches('[data-inbox-row]')),'navigation outside Inbox invalidates pending row autofocus');await ctx.close();
+  }
   // ---------- wide: the list and the one selected card ----------
   { const { ctx, p, answers } = await open(1440);
     await shot(p, "1440");
@@ -104,6 +110,7 @@ try {
     await p.keyboard.press("ArrowDown"); await p.waitForFunction(()=>document.activeElement?.dataset?.inboxRow==="SC-702");
     ok(await p.getAttribute("[data-scard]", "data-scard") === "SC-702" && (await p.evaluate(() => location.hash)) === "#/inbox/SC-702" && await p.getAttribute('[data-inbox-row="SC-702"]', "aria-selected") === "true", "↓ on a row selects the next card");
     ok(await p.evaluate(() => document.activeElement?.dataset?.inboxRow) === "SC-702", "the focus follows to the newly selected row");
+    const refreshedFocus=await p.evaluate(()=>{render();render();return document.activeElement?.dataset?.inboxRow});ok(refreshedFocus==="SC-702","consecutive real refreshes retain the exact focused row without an animation-frame gap",String(refreshedFocus));
     await p.keyboard.press("j"); await p.waitForTimeout(150);
     ok(await p.getAttribute("[data-scard]", "data-scard") === "SC-703", "j selects the next card");
     await p.keyboard.press("k"); await p.keyboard.press("ArrowUp"); await p.waitForTimeout(150);
