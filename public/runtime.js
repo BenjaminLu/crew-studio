@@ -534,7 +534,9 @@ function buildEditor(ed) {
       list.length ? h("div", { class: `faint rt-skill-size${ed.skillCap && total > ed.skillCap ? " over" : ""}`, "data-skill-size": "1" },
         T(`Skill text on this node: ${window.crewSkillsSize(total)} of ${window.crewSkillsSize(ed.skillCap || 0)}`, `這個節點的技能文字：${window.crewSkillsSize(total)} / ${window.crewSkillsSize(ed.skillCap || 0)}`)) : null);
   };
-  let inspectorFocus=null;
+  let inspectorFocus=null,inspectorFrame=0;
+  const sizeInspector=()=>{cancelAnimationFrame(inspectorFrame);inspectorFrame=requestAnimationFrame(()=>{if(!panel.isConnected||panel.hidden)return;panel.style.maxHeight=innerWidth>900?Math.max(160,innerHeight-Math.max(16,panel.getBoundingClientRect().top)-80)+'px':'';});};
+  const inspectorScroller=document.querySelector('#main');window.addEventListener('resize',sizeInspector);inspectorScroller?.addEventListener('scroll',sizeInspector,{passive:true});
   const closeInspector=()=>{const id=ed.sel?.node,edge=ed.sel?.edge;ed.sel=null;draw();drawPanel();const target=inspectorFocus?.isConnected?inspectorFocus:id?canvas.querySelector(`[data-node="${CSS.escape(id)}"]`):edge!=null?canvas.querySelector(`[data-edge-i="${edge}"]`):null;target?.focus({preventScroll:true});};
   const inspectorKey=e=>{if(e.key==='Escape'&&!panel.hidden&&!document.querySelector('dialog[open],[data-skill-viewer]')){e.preventDefault();closeInspector();}};
   document.addEventListener('keydown',inspectorKey);
@@ -543,7 +545,7 @@ function buildEditor(ed) {
     panel.hidden=!sel;root.classList.toggle('wf-inspecting',!!sel);
     if(!sel){panel.replaceChildren();const work=root.querySelector(".rt-work");if(work)work.before(probs);return;}
     if(!panel.contains(document.activeElement))inspectorFocus=document.activeElement;
-    openChat(false);
+    openChat(false);sizeInspector();
     if (sel.node) {
       const n = ed.def.nodes.find((x) => x.id === sel.node); if (!n) { ed.sel = null; return drawPanel(); }
       const txt = (k, label) => field(label, h("input", { class: "input", value: n[k] ?? "", "data-field": k, onchange: (e) => { const val = e.target.value; if (val === "") delete n[k]; else n[k] = ["timeout_s", "retries", "max_visits"].includes(k) ? Number(val) : val; dirty(); } }));
@@ -648,6 +650,7 @@ function buildEditor(ed) {
     canvas.querySelector("svg.rt-graph")?.cancelInteraction?.();
     live.listeners.delete(onLive);
     document.removeEventListener("keydown",inspectorKey);
+    cancelAnimationFrame(inspectorFrame);window.removeEventListener("resize",sizeInspector);inspectorScroller?.removeEventListener("scroll",sizeInspector);
     exportDialog?.remove(); exportDialog=null;
   };
   const verSel = h("select", { class: "select", "aria-label": T("Version", "版本"), onchange: (e) => { location.hash = `#/workflows/${ed.id}/v${e.target.value}`; } }, ed.versions.map((x) => h("option", { value: x.version, selected: x.version === ed.def.version || null }, `v${x.version}${x.note ? ` · ${/^Saved from Firstmate draft /.test(x.note) ? T("Saved from a Firstmate draft", "由 Firstmate 草稿儲存") : x.note}` : ""}`)));
