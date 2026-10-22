@@ -496,8 +496,8 @@ function buildEditor(ed) {
     if (canvas.querySelector("svg.rt-graph")?.interactionActive) { drawPending = true; return; }
     drawPending = false;
     stepList.replaceChildren(h("h2",{},T("Edit workflow steps","编辑流程步骤")),h("p",{},T("Choose a step to edit its settings, skills and checks. Choose a connection to edit its condition or checks.","选择步骤来编辑设置、技能与检查；选择连线来修改条件与检查。")),h("div",{class:"actions"},...KINDS.map(([k,en,zh])=>h("button",{class:"btn sm","data-guided-add":k,onclick:()=>{addNode(k);drawPanel();}},T("Add "+en,"添加"+zh)))),h("div",{class:"actions"},...ed.def.nodes.map(n=>h("button",{class:"btn sm","data-edit-step":n.id,onclick:()=>{ed.sel={node:n.id};draw();drawPanel();}},n.label))),h("div",{class:"actions"},...ed.def.edges.map((e,i)=>h("button",{class:"btn sm","data-edit-connection":String(i),onclick:()=>{ed.sel={edge:i};draw();drawPanel();}},`${e.from} → ${e.to}${e.when?` [${e.when}]`:""}`))));
-    const simple = gview === "simple", wrap = wrapFor();
-    if (simple && renderedWrap !== null && wrap !== renderedWrap) view = null;
+    const simple = gview === "simple", wrap = wrapFor(), reflow = simple && renderedWrap !== null && wrap !== renderedWrap;
+    if (reflow && fitted) view = null;
     root.dataset.view = gview; palette.hidden = simple; paletteNote.hidden = !simple;
     const g = graph(ed.def, { editable: true, simple, wrap, offsets: simple ? ed.offsets : null, sel: ed.sel, problems: ed.problems, states: ed.states, walked: ed.walked, view, manual: !simple && ed.mode === "manual", collapsed: ed.collapsed, redraw: () => draw(),
       onNudge: (nid, dx, dy) => { const o = ed.offsets[nid] || { dx: 0, dy: 0 }; ed.offsets[nid] = { dx: o.dx + dx, dy: o.dy + dy }; recordHistory(); draftRevision++; draw(); say(T("Moved in the simple view (not kept; arrange in Detail view)", "在簡易檢視中移動（不保存；請在詳細檢視排版）")); },
@@ -517,6 +517,8 @@ function buildEditor(ed) {
     const focusAttr=focused?.hasAttribute('data-node')?'data-node':'data-edge', focusValue=focused?.getAttribute(focusAttr);
     canvas.replaceChildren(g); renderedWrap = wrap;
     if(focusValue&&document.activeElement===document.body)g.querySelector(`[${focusAttr}="${CSS.escape(focusValue)}"]`)?.focus({preventScroll:true});
+    // A reflowed projection moves the nodes; an unfitted view keeps its scale but its centre stays on the graph.
+    if (reflow && view) { const v = g.view, b = g.lay.bbox, cx = Math.min(b.x + b.w, Math.max(b.x, v.x + v.w / 2)), cy = Math.min(b.y + b.h, Math.max(b.y, v.y + v.h / 2)); g.setView({ x: cx - v.w / 2, y: cy - v.h / 2 }); }
     if (!view) { fit(g, simple ? "all" : "start"); } view = g.view;
     // the minimap, on a desktop, docked under the canvas
     mm = null; dock.replaceChildren();
@@ -536,7 +538,7 @@ function buildEditor(ed) {
   const graphResize = new ResizeObserver(() => { if (disposed) return; const g = canvas.querySelector("svg.rt-graph"); const r = canvas.getBoundingClientRect(); if (!g || !r.width) return;
     // A new width bucket needs a new projection, not a shrunken desktop SVG.
     // draw() defers while an active pointer owns the graph.
-    if (gview === "simple" && wrapFor() !== renderedWrap) { draw(); return; }
+    if (gview === "simple" && wrapFor() !== renderedWrap) { if (!fitted && view && lastSize) { const k = view.w / lastSize[0]; view.w = r.width * k; view.h = r.height * k; lastSize = [r.width, r.height]; } draw(); return; }
     if (!lastSize || (r.width === lastSize[0] && r.height === lastSize[1])) return;
     if (fitted) fit(g, "all"); else { const v = g.view, k = v.w / lastSize[0]; v.w = r.width * k; v.h = r.height * k; g.setAttribute("viewBox", `${v.x} ${v.y} ${v.w} ${v.h}`); view = v; lastSize = [r.width, r.height]; mm?.sync(); } }); graphResize.observe(canvas);
   const field = (label, input) => h("label", { class: "rt-field" }, h("span", {}, label), input);

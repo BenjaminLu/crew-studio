@@ -96,6 +96,25 @@ try {
     ok(JSON.stringify((await p.locator("svg.rt-graph [data-node]").evaluateAll(xs=>xs.map(x=>x.dataset.node))).sort())===JSON.stringify(actualDef.nodes.map(n=>n.id).sort()) && await p.locator("[data-port]").count() === 0 && await p.isVisible("[data-palette-note]"), "back in editor Overview: every actual node remains, connection ports stay in Edit graph");
     await p.context().close();
   }
+  // ---------- a column reflow keeps an unfitted Overview's scale; a fitted Overview fits again ----------
+  { const p = await page(1440, "light");
+    await p.goto(`${base}/#/workflows/code-firstmate`); await p.waitForSelector('svg.rt-graph[data-view="simple"] [data-node="spec"]'); await p.waitForTimeout(300);
+    const look = () => p.evaluate(() => { const g = document.querySelector("svg.rt-graph"), [x, y, w, h] = g.getAttribute("viewBox").split(" ").map(Number), b = g.lay.bbox;
+      return { scale: g.getScreenCTM().a, bbox: [b.w, b.h], centred: x + w / 2 >= b.x && x + w / 2 <= b.x + b.w && y + h / 2 >= b.y && y + h / 2 <= b.y + b.h,
+        fits: x <= b.x + .5 && y <= b.y + .5 && x + w >= b.x + b.w - .5 && y + h >= b.y + b.h - .5 && (Math.abs(w - b.w) < 1 || Math.abs(h - b.h) < 1) }; });
+    const box = await p.locator("svg.rt-graph").boundingBox(); await p.mouse.move(box.x + box.width / 2, box.y + Math.min(box.height, 600) / 2);
+    for (let i = 0; i < 3; i++) { await p.mouse.wheel(0, -100); await p.waitForTimeout(60); }
+    const zoomed = await look();
+    await p.setViewportSize({ width: 900, height: 1000 }); await p.waitForTimeout(400);
+    const narrow = await look();
+    ok(JSON.stringify(narrow.bbox) !== JSON.stringify(zoomed.bbox), "narrowing the window reflows the Overview into a different column count", JSON.stringify({ zoomed, narrow }));
+    ok(Math.abs(narrow.scale / zoomed.scale - 1) < 0.01 && narrow.centred, "an unfitted, zoomed Overview keeps its scale across the reflow and stays on the graph", JSON.stringify({ zoomed, narrow }));
+    await revealEditorControl(p, "[data-fit]"); await p.click("[data-fit]"); await p.waitForTimeout(150);
+    await p.setViewportSize({ width: 1440, height: 1000 }); await p.waitForTimeout(400);
+    const wide = await look();
+    ok(JSON.stringify(wide.bbox) !== JSON.stringify(narrow.bbox) && wide.fits, "a fitted Overview fits the reflowed graph again", JSON.stringify({ narrow, wide }));
+    await p.context().close();
+  }
   // ---------- a version dragged before graph-tidy opens in manual mode, and a drag keeps its other positions ----------
   { const p = await page(1440, "light"); await p.evaluate(() => localStorage.setItem("crew.graphView", "detail"));
     await p.goto(`${base}/#/workflows/video`); await p.waitForSelector('svg.rt-graph[data-view="detail"] [data-node="make"]');
