@@ -26,10 +26,10 @@
 //    mark, or something that put them back) exits 1: removing them from process.env would not reach its
 //    children.
 // 6. No test reaches the real Claude or Codex CLI (2026-10-18: discovery and auth reads ran the dev machine's
-//    `claude` with its keychain login). The outermost entry puts a sentinel folder first on PATH whose `claude`
-//    and `codex` record the call and fail (exit 97), and defaults CREW_CLAUDE_BIN, CREW_CODEX_BIN,
-//    CREW_HOST_CLAUDE_BIN and CREW_HOST_CODEX_BIN to a path that does not exist (no CLI installed); a test that
-//    needs a CLI points them at its stub. When the run ends, any recorded call fails it (exit 1) and names it.
+//    `claude` with its keychain login). The outermost entry puts a sentinel folder first on PATH whose `claude`,
+//    `codex`, `cursor-agent` and `agent` record the call and fail (exit 97), and defaults CREW_CLAUDE_BIN, CREW_CODEX_BIN,
+//    CREW_CURSOR_BIN, CREW_HOST_CLAUDE_BIN, CREW_HOST_CODEX_BIN and CREW_HOST_CURSOR_BIN to a path that does not exist
+//    (no CLI installed); a test that needs a CLI points them at its stub. When the run ends, any recorded call fails it (exit 1) and names it.
 // 7. Studio's session for the test's own reads: see below.
 // Production (bun src/main.ts, bun run start) never imports this file.
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -136,15 +136,15 @@ if (sentinelOn) env[SENTINEL] = firstOnPath;
 const ownSentinel = !sentinelOn && !restarted ? mkdtempSync(join(tmpdir(), "crew-test-cli-sentinel-")) : null;
 if (ownSentinel) {
   writeFileSync(join(ownSentinel, "calls.log"), "");
-  for (const bin of ["claude", "codex"]) {
-    const f = join(ownSentinel, bin);
-    writeFileSync(f, `#!/bin/sh\nprintf '%s\\n' "${bin} $* (cwd $PWD)" >> '${join(ownSentinel, "calls.log")}'\necho "isolated-env: a test ran the real ${bin} CLI from PATH; point CREW_${bin.toUpperCase()}_BIN or CREW_HOST_${bin.toUpperCase()}_BIN at a stub" >&2\nexit 97\n`);
+  for (const bin of ["claude", "codex", "cursor-agent", "agent"]) {
+    const f = join(ownSentinel, bin), vendor = bin === "claude" || bin === "codex" ? bin.toUpperCase() : "CURSOR";
+    writeFileSync(f, `#!/bin/sh\nprintf '%s\\n' "${bin} $* (cwd $PWD)" >> '${join(ownSentinel, "calls.log")}'\necho "isolated-env: a test ran the real ${bin} CLI from PATH; point CREW_${vendor}_BIN or CREW_HOST_${vendor}_BIN at a stub" >&2\nexit 97\n`);
     chmodSync(f, 0o755);
   }
   env.PATH = `${ownSentinel}:${env.PATH || "/usr/bin:/bin"}`; env[SENTINEL] = ownSentinel;
 }
-for (const k of ["CREW_CLAUDE_BIN", "CREW_CODEX_BIN", "CREW_HOST_CLAUDE_BIN", "CREW_HOST_CODEX_BIN"])
-  if (env[k] === undefined) env[k] = `/nonexistent/crew-test-cli/${k.includes("CLAUDE") ? "claude" : "codex"}`;
+for (const k of ["CREW_CLAUDE_BIN", "CREW_CODEX_BIN", "CREW_CURSOR_BIN", "CREW_HOST_CLAUDE_BIN", "CREW_HOST_CODEX_BIN", "CREW_HOST_CURSOR_BIN"])
+  if (env[k] === undefined) env[k] = `/nonexistent/crew-test-cli/${k.includes("CLAUDE") ? "claude" : k.includes("CURSOR") ? "cursor-agent" : "codex"}`;
 /** The calls the sentinel recorded: each one is a test that ran a real CLI. */
 export const sentinelCalls = (dir = env[SENTINEL]) => { try { return readFileSync(join(dir, "calls.log"), "utf8").split("\n").filter(Boolean); } catch { return []; } };
 const sentinelVerdict = (code) => {

@@ -15,6 +15,7 @@ import type { Studio } from "./studio";
 import { CrewStore } from "../../src/domain/crew";
 import { Ledger } from "../../src/runtime/checks";
 import { verifyGitHubGrant } from "../../src/github-grant";
+import { CURSOR_MODEL, ON_CURSOR } from "./provider";
 
 export const PROVES = ["pdf-chromium", "captures", "film", "web-smoke", "fail-first", "sandbox-probe", "crew-applied", "merge-granted", "merge-closed", "files-applied", "files-discarded", "project-registered", "project-not-registered"];
 /** the proofs only a real renderer can give */
@@ -126,7 +127,8 @@ export async function prove(s: Studio, view: any, what: string, o: { sinkHits?: 
     const bad: string[] = [], team = new CrewStore(s.data).current();
     if (!team) return ["no approved team was persisted"];
     const member = team.members.maker;
-    if (member?.provider !== "codex" || member.model !== "acceptance-model" || member.effort !== "medium") bad.push("the approved maker assignment was not persisted");
+    const want = ON_CURSOR ? { provider: "cursor", model: CURSOR_MODEL, effort: null } : { provider: "codex", model: "acceptance-model", effort: "medium" };
+    if (member?.provider !== want.provider || member.model !== want.model || (member.effort ?? null) !== want.effort) bad.push("the approved maker assignment was not persisted");
     const card = view.cards?.find((c: any) => c.node === "confirm" && c.status === "answered" && c.answer?.choice === "approve" && c.captainOnly);
     const ledger = new Ledger(s.data, task).authenticatedPrefix();
     if (ledger.bad.length || ledger.malformed) bad.push("the approval evidence does not authenticate");

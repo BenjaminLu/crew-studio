@@ -1,5 +1,5 @@
 // The scripted agent behind the acceptance harness's stub CLIs (tests/fixture/codex-account.mjs
-// `codex exec`, tests/fixture/claude-native.mjs `claude -p`). No model is called. It is reached only
+// `codex exec`, tests/fixture/claude-native.mjs `claude -p`, tests/fixture/cursor-agent.mjs `cursor-agent -p`). No model is called. It is reached only
 // through a real CLI invocation that Studio's Agents.execute started: the real sandbox profile,
 // round env, login copy and egress apply to it. It talks to Studio the way the vendor CLI does:
 // it starts the MCP server named on its command line (src/mcp.ts), lists the tools the round was
@@ -17,7 +17,7 @@ import { openSync, readFileSync, closeSync, writeFileSync, rmSync } from "node:f
 import { join as joinPath } from "node:path";
 
 /** One stdio MCP session with the server the CLI was told to start. */
-function mcpSession(server) {
+export function mcpSession(server) {
   const p = spawn(server.command, server.args ?? [], { env: { ...process.env, ...(server.env ?? {}) }, stdio: ["pipe", "pipe", "inherit"] });
   const waiting = new Map(); let n = 0;
   createInterface({ input: p.stdout }).on("line", (l) => { let m; try { m = JSON.parse(l); } catch { return; } const w = waiting.get(m.id); if (w) { waiting.delete(m.id); w(m); } });
@@ -124,9 +124,10 @@ async function sandboxProbe(prompt) {
     otherViaProxy: await viaProxy("example.com:443"),
     noCredentialViaProxy: await viaProxy(`${host || "example.com"}:443`, false),
     // its own login (what Studio handed the round), and nothing else
-    ownLogin: process.env.CLAUDE_CODE_OAUTH_TOKEN ? "env:CLAUDE_CODE_OAUTH_TOKEN" : readable(joinPath(process.env.HOME ?? "/nonexistent", ".codex", "auth.json")) ? "file:$HOME/.codex/auth.json" : null,
+    ownLogin: process.env.CLAUDE_CODE_OAUTH_TOKEN ? "env:CLAUDE_CODE_OAUTH_TOKEN" : readable(joinPath(process.env.HOME ?? "/nonexistent", ".codex", "auth.json")) ? "file:$HOME/.codex/auth.json" : process.env.CURSOR_API_KEY ? "env:CURSOR_API_KEY" : null,
     ownLoginRefresh: (() => { try { return JSON.parse(readFileSync(joinPath(process.env.HOME, ".codex", "auth.json"), "utf8")).tokens?.refresh_token ?? null; } catch { return null; } })(),
-    otherCredentials: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN"].filter((k) => process.env[k]),
+    // a Cursor round's own key is its login; in any other round it is someone else's credential
+    otherCredentials: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "CURSOR_API_KEY"].filter((k) => process.env[k] && !(k === "CURSOR_API_KEY" && !process.env.CLAUDE_CODE_OAUTH_TOKEN && !readable(joinPath(process.env.HOME ?? "/nonexistent", ".codex", "auth.json")))),
     denied: Object.fromEntries(list("deny").map((p) => [p, readable(p)])),
     tmpWritable: writable(process.env.TMPDIR ?? "/nonexistent"),
     nowrite: Object.fromEntries(list("nowrite").map((p) => [p, writable(p)])),
@@ -204,4 +205,21 @@ export async function claudePrint(args) {
     } });
     out({ type: "result", subtype: "success", is_error: false, result: said || "done", modelUsage: { [model]: { inputTokens: 1, outputTokens: 1 } }, usage: { input_tokens: 1, output_tokens: 1 } });
   } catch (err) { out({ type: "result", subtype: "error_during_execution", is_error: true, result: `acceptance agent: ${err?.message ?? err}`, modelUsage: { [model]: { inputTokens: 1, outputTokens: 1 } } }); process.exitCode = 1; }
+}
+/** `cursor-agent -p --output-format stream-json --workspace W … <prompt>`: the Studio server from W/.cursor/mcp.json, cursor-agent's stream-json. */
+export async function cursorPrint(argv) {
+  const get = (k) => argv[argv.indexOf(k) + 1], model = argv.includes("--model") ? get("--model") : "auto";
+  const server = JSON.parse(readFileSync(joinPath(get("--workspace"), ".cursor", "mcp.json"), "utf8")).mcpServers.studio;
+  const out = (o) => process.stdout.write(JSON.stringify(o) + "\n"), session_id = "acceptance-cursor-chat";
+  out({ type: "system", subtype: "init", apiKeySource: "env", cwd: get("--workspace"), session_id, model, permissionMode: "default" });
+  const mcp = (id, name, args, result) => ({ type: "tool_call", subtype: result ? "completed" : "started", call_id: id, tool_call: { mcpToolCall: { args: { name: `studio-${name}`, args, toolName: name, providerIdentifier: "studio" }, ...(result ? { result } : {}) } }, session_id });
+  let said = "";
+  try {
+    await runTurn({ prompt: argv.at(-1), server, emit: (e) => {
+      if (e.tool) out(mcp(e.tool.id, e.tool.name, e.tool.args));
+      else if (e.toolResult) out(mcp(e.toolResult.id, e.toolResult.name, e.toolResult.args, { success: { content: [{ text: { text: e.toolResult.text } }], isError: e.toolResult.error } }));
+      else if (e.text) { said += e.text; out({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: e.text }] }, session_id }); }
+    } });
+    out({ type: "result", subtype: "success", is_error: false, result: said || "done", session_id, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 } });
+  } catch (err) { out({ type: "result", subtype: "error", is_error: true, result: `acceptance agent: ${err?.message ?? err}`, session_id }); process.exitCode = 1; }
 }

@@ -7,6 +7,7 @@ import { accountHomeDir } from "../../src/runtime/checks";
 import { assertTempRepo } from "../lib/git-hygiene.mjs"; // repositories only in checked temp folders
 import { drive, verify, answerCard, type Decide } from "./drive";
 import type { Studio } from "./studio";
+import { ON_CURSOR, STAFFING_ANSWER } from "./provider";
 
 export type Ctx = { s: Studio; vars: Record<string, string>; firstmate(marker: "NATIVE-PROPOSE " | "NATIVE-PROJECT " | "NATIVE-TOOL ", args: unknown): Promise<any[]>;
   /** connections the probe's sink port took (setup step probe): any is a round that went around the proxy */
@@ -25,7 +26,7 @@ export async function approveStaffing(h: Ctx, project: string, workflow: string)
   let r = (await h.s.api(`/api/intake/staffing?project=${encodeURIComponent(project)}&workflow=${workflow}&version=${version}`)).body;
   if (r.error) throw new Error(`staffing interview refused: ${r.error}`);
   const roles = [...new Set<string>((r.frontier ?? []).map((q: any) => q.role))];
-  for (const [field, value] of [["provider", "codex"], ["model", "fixture-model"], ["effort", "low"]]) {
+  for (const [field, value] of Object.entries(STAFFING_ANSWER)) {
     const res = await h.s.api("/api/intake/staffing", { ...base, answers: Object.fromEntries(roles.map((id) => [id, { [field]: value }])) });
     if (res.status !== 200 || res.body.error) throw new Error(`staffing ${field} answer refused: ${res.status} ${res.body.error ?? ""}`); r = res.body;
   }
@@ -107,6 +108,8 @@ export const STEPS: Record<string, Step> = {
   async probe(h) { await probeSetup(h, "api.openai.com"); },
   /** the sandbox probe for a Claude round: {probe} (its API host api.anthropic.com) */
   async "probe-claude"(h) { await probeSetup(h, "api.anthropic.com"); },
+  /** the sandbox probe for a Cursor round: {probe} (its API host api2.cursor.sh) */
+  async "probe-cursor"(h) { await probeSetup(h, "api2.cursor.sh"); },
   /** the Claude account card's Verify (one bounded request on the exact configured model); its receipt admits Claude rounds for 30 s */
   async "verify-claude"(h) { const r = await h.s.api("/api/claude/native/verify", { model: "claude-sonnet-5-5", effort: null, confirm: true }); if (r.status !== 200 || r.body.admission !== "verified-execution") throw new Error(`Claude verify: ${r.status} ${JSON.stringify(r.body).slice(0, 300)}`); },
   /** a throwaway folder with a few files to tidy: {folder} */
@@ -168,8 +171,9 @@ export const STEPS: Record<string, Step> = {
   async "pack-proposals"(h, card) { const g = (await h.s.api(`/api/pack-genesis/${card.run}`)).body; for (const p of (g.proposals ?? []).filter((p: any) => p.status === "offered")) { const r = await h.s.api(`/api/pack-genesis/${card.run}/proposals/${p.id}`, { choice: "reject" }); if (r.status !== 200) throw new Error(`proposal decision refused: ${JSON.stringify(r.body).slice(0, 200)}`); } },
   /** one real shadow Task on the pinned candidate, accepted by the captain */
   async "pack-shadow"(h, card) {
-    // the shadow Task runs the published-pack producer on Studio's default provider (Claude): the captain verifies Claude first
-    await STEPS["verify-claude"](h);
+    // the shadow Task runs the published-pack producer on Studio's default provider (Claude): the captain verifies Claude first;
+    // on Cursor the default provider is Cursor, which has no verification step
+    if (!ON_CURSOR) await STEPS["verify-claude"](h);
     const r = await h.s.api(`/api/pack-genesis/${card.run}/shadow`, { text: "Create a good accessible page" }); if (r.status !== 200) throw new Error(`shadow start refused: ${JSON.stringify(r.body).slice(0, 300)}`);
     const d = await drive(h.s, r.body.task.id, async (c) => c.node === "accept" ? { choice: "accept" } : { stop: "the shadow Task's only captain card is its acceptance" }, { timeoutMs: 60_000 });
     const bad = await verify(h.s, d, { status: "succeeded", visited: ["accept"] }); if (bad.length) throw new Error(`shadow Task ${r.body.task.id}: ${bad.join("; ")}`);

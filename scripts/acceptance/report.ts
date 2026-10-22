@@ -6,7 +6,13 @@
 export type NodeRecord = { node: string; label: string; kind: string; do: string | null; status: string; outcome: string; provider: string | null; model: string | null; source: "round" | "artifact" | null; rounds: number; durationSeconds: number | null; log: string; firstError: string | null };
 /** hook actions that call a model on their own (not through an agent Round) */
 export const MODEL_HOOKS = new Set(["image.generate", "coffee.image"]);
-export const REAL = new Set(["claude", "codex"]);
+export const REAL = new Set(["claude", "codex", "cursor"]);
+/** the vendor's name in a stop message */
+export const vendorName = (p: string) => (p === "claude" ? "Claude" : p === "cursor" ? "Cursor" : "Codex");
+/** The vendors Studio's policy may pick for a call no node, role or Start form names (src/providers/policy.ts): a Studio
+ *  whose chat vendor is Cursor picks Codex or Claude only when they are ready, else Cursor, so Cursor is the one it needs. */
+export const policyVendors = (chatProvider: string | null | undefined, offline: boolean): string[] =>
+  offline && chatProvider === "stub" ? ["stub"] : chatProvider === "cursor" ? ["cursor"] : ["claude", "codex"];
 
 export function outcomeClass(roundOutcome: string | null, nodeState: string): string {
   const o = nodeState === "error" ? "error" : roundOutcome ?? nodeState;
