@@ -1,3 +1,4 @@
+import {WorkflowPackages,snapshotPackage,packageSha} from '../workflow-package';
 import {workflowDefinitionExport} from '../workflow-definition-export';
 import {executionMode} from '../local-execution';
 import {hashInput} from './checks';
@@ -126,6 +127,7 @@ export function classifyIntent(defs: WorkflowDefs, text: string, sensitive: { gl
 }
 
 export function createRuntime(d: RuntimeDeps) {
+  const packages=new WorkflowPackages(d.dataDir);
   const defs = new WorkflowDefs(d.dataDir);
   if (d.skills) defs.skillInfo = (id, v) => d.skills!.pinInfo(id, v);
   if (d.skills) defs.skillLibrary = () => d.skills!.library();
@@ -259,8 +261,14 @@ export function createRuntime(d: RuntimeDeps) {
   const grantNonces = new Map<string, number>();
   async function handle(req: Request, url: URL, who: { kind: string }, writing: boolean): Promise<Response | null> {
     const p = url.pathname;
-    if (!/^\/api\/(wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review|team)(\/|$)/.test(p)) return null;
-    let b: any = {}; if (writing) { try { b = await req.json(); } catch {} }
+    if (!/^\/api\/(workflow-packages|wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review|team)(\/|$)/.test(p)) return null;
+    let b: any = {}; if (writing) {
+      if(p.startsWith('/api/workflow-packages')){
+        const cap=12*1024*1024,reader=req.body?.getReader();let size=0;const chunks:Uint8Array[]=[];
+        if(reader){while(true){const r=await reader.read();if(r.done)break;size+=r.value.length;if(size>cap){await reader.cancel();return json({error:'Package request exceeds 12 MiB'},413);}chunks.push(r.value);}}
+        try{b=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{return json({error:'Invalid package request JSON'},400);}
+      }else{try { b = await req.json(); } catch {}}
+    }
     const by = who.kind === "phone" ? "captain (phone)" : "captain";
     if(p==='/api/github-review/scan'||p==='/api/github-review/template'||p==='/api/github-review/community'){if(req.method!=='POST'||!writing)return json({error:'Authenticated POST required'},405);if(who.kind!=='desktop')return json({error:'Confirm GitHub reviewer configuration on desktop'},403);try{return json(p.endsWith('/community')?await githubReview.community(b.project,req.signal):p.endsWith('/scan')?await githubReview.scan(b.project,b.url,req.signal):await githubReview.save(b,req.signal));}catch{return json({error:'GitHub review discovery/configuration could not be verified. Check registered project grant, PR URL and current access; no GitHub write was performed.',code:'github_review_unverified'},409);}}
     if (writing && who.kind === "phone" && !/^\/api\/scards\//.test(p)) return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
@@ -282,6 +290,26 @@ export function createRuntime(d: RuntimeDeps) {
         if(writing&&Object.hasOwn(args,'confirm')){delete args.confirm;}
         return json(await staffingTools.call(operation,args,{key:`desktop:${randomBytes(16).toString('hex')}`,captain:true,text:args.defaults==='reset'?'Captain explicitly requested reset to available staffing defaults':args.defaults==='use'?'Captain explicitly requested available staffing defaults':'Captain staffing configuration request',live:()=>!req.signal.aborted}));
       }
+      if(p.startsWith('/api/workflow-packages')){
+        if(who.kind!=='desktop')return json({error:'Use package transfer on the authenticated desktop'},403);
+        const owner=packageSha((req.headers.get('cookie')??'')+'|'+(req.headers.get('x-crew-session')??''));
+        if(p==='/api/workflow-packages'&&req.method==='GET')return json({packages:packages.list()});
+        const saved=/^\/api\/workflow-packages\/(pkg-[a-f0-9]{24})\/download$/.exec(p);if(saved&&req.method==='GET'){const value=packages.read(saved[1]);return new Response(value.bytes,{headers:{'content-type':'application/zip','content-disposition':`attachment; filename="${saved[1]}.crew.zip"`,'cache-control':'no-store'}});}
+        if(req.method!=='POST'||!writing)return json({error:'Authenticated POST required'},405);
+        if(p==='/api/workflow-packages/preview')return json(packages.preview(owner,b?.archive));
+        if(p==='/api/workflow-packages/file')return json(packages.file(owner,b?.token,b?.path));
+        if(p==='/api/workflow-packages/cancel')return json(packages.cancel(owner,b?.token));
+        if(p==='/api/workflow-packages/commit')return json(packages.commit(owner,b?.token),201);
+        if(p==='/api/workflow-packages/reopen')return json(packages.reopen(owner,b?.id));
+        if(p==='/api/workflow-packages/delete')return json(packages.remove(b?.id));
+        return json({error:'Unknown package operation'},404);
+      }
+      {const packaged=/^\/api\/wf\/([a-z0-9-]+)\/package$/.exec(p);if(packaged){
+        if(req.method!=='GET')return json({error:'GET required'},405);if(who.kind!=='desktop')return json({error:'Export packages on desktop'},403);
+        const versions=url.searchParams.getAll('v'),value=versions[0];if(versions.length!==1||!value||!/^[1-9][0-9]*$/.test(value)||!Number.isSafeInteger(Number(value)))return json({error:'Choose one explicit saved version'},400);
+        const stored=defs.versions(packaged[1]).find(v=>v.version===Number(value));if(!stored)return json({error:'No such saved workflow version'},404);
+        return new Response(snapshotPackage(stored,d.dataDir),{headers:{'content-type':'application/zip','content-disposition':`attachment; filename="${stored.id}-v${stored.version}.crew.zip"`,'cache-control':'no-store'}});
+      }}
       // ---------- definitions ----------
       if(p==="/api/coffee/design"&&writing){if(req.method!=="POST")return json({error:"POST required"},405);if(who.kind!=="desktop")return json({error:"Review coffee design on the desktop"},403);return json({plan:validateCoffeeDesign(b?.plan),canonical:coffeeDesignJSON(b?.plan)});}
       {const exported=/^\/api\/wf\/([a-z0-9-]+)\/export$/.exec(p);if(exported){
