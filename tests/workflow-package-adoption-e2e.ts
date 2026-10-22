@@ -1,6 +1,6 @@
 import "./lib/isolated-env.mjs";
 import {strict as a} from 'node:assert';
-import {rmSync,readFileSync,mkdirSync,writeFileSync} from 'node:fs';
+import {rmSync,readFileSync,mkdirSync,writeFileSync,chmodSync} from 'node:fs';
 import {gateHarness,until} from './gate-harness';
 import {WorkflowDefs} from '../src/runtime/defs';
 import {WorkflowDrafts} from '../src/workflow-drafts';
@@ -16,6 +16,8 @@ try{
  const bytes=snapshotPackage(source,join(h.data,'source'));
  const preview=await h.api('/api/workflow-packages/preview',{archive:bytes.toString('base64')});a.equal(preview.status,200,JSON.stringify(preview.body));
  const stored=await h.api('/api/workflow-packages/commit',{token:preview.body.token});a.equal(stored.status,201,JSON.stringify(stored.body));
+ const wfRoot=join(h.data,'workflows');mkdirSync(wfRoot,{recursive:true});chmodSync(wfRoot,0o500);let blocked:any;try{blocked=await h.api('/api/workflow-packages/adopt',{id:stored.body.id,sha256:stored.body.sha256});}finally{chmodSync(wfRoot,0o700);}
+ a.equal(blocked.status,409);a(/EACCES/.test(blocked.body.error)&&!blocked.body.error.includes(h.data),blocked.body.error); // route error names the cause without the absolute data path
  const adopted=await h.api('/api/workflow-packages/adopt',{id:stored.body.id,sha256:stored.body.sha256});a.equal(adopted.status,201,JSON.stringify(adopted.body));
  const def=h.rt.defs.get(adopted.body.workflow);a.deepEqual(def.nodes,source.nodes);a.deepEqual(def.edges,source.edges);a.equal(def.origin.source,'package-import');const deleted=await h.api('/api/workflow-packages/delete',{id:stored.body.id});a.equal(deleted.status,200);a(readFileSync(join(h.data,'workflow-adoptions',def.origin.transaction,'source.zip')).equals(bytes));a.equal(h.seen.length,0);a.equal(h.rt.engine.list().length,0);
  const bigUrl=new URL('http://t.local/api/workflow-packages/preview'),big=await h.rt.handle(new Request(bigUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({archive:'A'.repeat(12*1024*1024)})}),bigUrl,{kind:'desktop'},true);a.equal(big?.status,413);

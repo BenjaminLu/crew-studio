@@ -303,7 +303,7 @@ export function createRuntime(d: RuntimeDeps) {
         if(p==='/api/workflow-packages/cancel')return json(packages.cancel(owner,b?.token));
         if(p==='/api/workflow-packages/commit')return json(packages.commit(owner,b?.token),201);
         if(p==='/api/workflow-packages/reopen')return json(packages.reopen(owner,b?.id));
-        if(p==='/api/workflow-packages/adopt'){const value=packages.read(b?.id);if(b?.sha256!==value.sha256)return json({error:'Package changed; inspect again'},409);try{return json(adoption.adopt(value.bytes,b.id,defs,{ready:typeof engine.natives['artifact-ready']==='function',accept:typeof engine.cardModes['deliver-accept']?.start==='function'}),201);}catch(e:any){return json({error:'Package remains held: '+String(e?.message??e),code:'workflow_package_held'},409);}}
+        if(p==='/api/workflow-packages/adopt'){const value=packages.read(b?.id);if(b?.sha256!==value.sha256)return json({error:'Package changed; inspect again'},409);try{return json(adoption.adopt(value.bytes,b.id,defs,{ready:typeof engine.natives['artifact-ready']==='function',accept:typeof engine.cardModes['deliver-accept']?.start==='function'}),201);}catch(e:any){return json({error:'Package remains held: '+adoption.text(e),code:'workflow_package_held'},409);}}
         if(p==='/api/workflow-packages/delete')return json(packages.remove(b?.id));
         return json({error:'Unknown package operation'},404);
       }

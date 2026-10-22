@@ -1,6 +1,6 @@
 import "./lib/isolated-env.mjs";
 import {strict as a} from 'node:assert';
-import {mkdtempSync,rmSync,readFileSync,existsSync,writeFileSync,readdirSync,mkdirSync,statSync,chmodSync,symlinkSync} from 'node:fs';
+import {mkdtempSync,rmSync,readFileSync,existsSync,writeFileSync,readdirSync,mkdirSync,statSync,chmodSync,symlinkSync,utimesSync} from 'node:fs';
 import {createHmac} from 'node:crypto';
 import {ledgerKey} from '../src/runtime/checks';
 import {installReadiness} from '../src/readiness';
@@ -16,6 +16,8 @@ const dir=mkdtempSync(join(tmpdir(),'crew-adopt-profile-'));let count=0;const ch
 const d:any={id:'original',name:'A normal saved draft',version:3,roles:[{id:'writer',label:'Writer',skill:'bundled:workflows/skills/v2/writer.md',provider:'codex'}],nodes:[{id:'write',kind:'agent',label:'Write',x:0,y:0,role:'writer',mode:'deliver',args:{format:'document'}},{id:'ready',kind:'check',label:'Ready',x:1,y:0,checks:[{use:'core/artifact-ready',proves:[0]}],args:{producer:'all'}},{id:'accept',kind:'card',label:'Accept',x:2,y:0,args:{mode:'deliver-accept',card_kind:'acceptance'}},{id:'end',kind:'hook',label:'End',x:3,y:0}],edges:[{from:'write',to:'ready'},{from:'ready',to:'accept',when:'pass'},{from:'ready',to:'accept',when:'fail'},{from:'accept',to:'end',when:'approved'}]};
 function fixture(def=d,mutate?:(v:any)=>void){const v=verifyPackage(snapshotPackage(def,dir));v.files.delete('manifest.json');v.files.set(READY_PACKAGE,Buffer.from(bundledBytes(READY_MANIFEST)!));if(mutate)mutate(v);v.manifest.files=[...v.files].map(([path,b])=>({path,size:b.length,sha256:packageSha(b)}));return encodePackage(v.files,v.manifest);}
 const caps={ready:true,accept:true};
+// a killed process leaves its adoption lock; withLock breaks a lock older than 10 s, so age it instead of waiting
+const expireLock=(at:string)=>{try{utimesSync(join(at,'workflow-adoptions','.lock-adopt'),0,0);}catch{}};
 try{
  check(()=>a.deepEqual(adoptionProfile(fixture(),caps).definition,d));
  check(()=>a.throws(()=>adoptionProfile(fixture(),{ready:false,accept:true}),/capability registration/));
@@ -83,14 +85,14 @@ try{
  const filesUnder=(p:string)=>(readdirSync(p,{recursive:true}) as string[]).filter(f=>statSync(join(p,f)).isFile());
  const wholeOrAbsent=(at:string)=>{const txn=readdirSync(join(at,'workflow-adoptions')).find(x=>x.startsWith('import-'))!,plan=JSON.parse(readFileSync(join(at,'workflow-adoptions',txn,'journal.json'),'utf8')).plan;return plan.roots.every((root:string)=>{if(!existsSync(join(at,root)))return true;const want=plan.files.filter((f:any)=>f.path.startsWith(root+'/'));return filesUnder(join(at,root)).length===want.length&&want.every((f:any)=>existsSync(join(at,f.path))&&packageSha(readFileSync(join(at,f.path)))===f.sha256);});};
  for(let i=0;i<points.length;i++){
-  const at=join(dir,'killed-'+i),child=Bun.spawnSync(['bun','--no-env-file','-e',childCode,at,archivePath,String(i)],{stdout:'pipe',stderr:'pipe'});
+  const at=join(dir,'killed-'+i),child=Bun.spawnSync(['bun','--no-env-file','-e',childCode,at,archivePath,String(i)],{stdout:'pipe',stderr:'pipe'});expireLock(at);
   check(()=>a.equal(child.exitCode,73,child.stderr.toString()));
   // before any recovery: every target folder is absent or whole, and the catalog still lists
   check(()=>a(wholeOrAbsent(at),points[i]));check(()=>a.doesNotThrow(()=>new WorkflowDefs(at,()=>[]).list()));
   new WorkflowAdoption(at);const first=new WorkflowDefs(at,()=>[]).ids();new WorkflowAdoption(at);check(()=>a.deepEqual(new WorkflowDefs(at,()=>[]).ids(),first));
  }
 
- const partial=(name:string)=>{const at=join(dir,name),stop=points.findIndex(p=>p.startsWith('publish:')),child=Bun.spawnSync(['bun','--no-env-file','-e',childCode,at,archivePath,String(stop)],{stdout:'pipe',stderr:'pipe'});a.equal(child.exitCode,73,child.stderr.toString());const txn=readdirSync(join(at,'workflow-adoptions'))[0],journal=join(at,'workflow-adoptions',txn,'journal.json'),plan=JSON.parse(readFileSync(journal,'utf8')).plan;return {at,txn,journal,plan,skillRoot:join(at,plan.roots[0])};};
+ const partial=(name:string)=>{const at=join(dir,name),stop=points.findIndex(p=>p.startsWith('publish:')),child=Bun.spawnSync(['bun','--no-env-file','-e',childCode,at,archivePath,String(stop)],{stdout:'pipe',stderr:'pipe'});a.equal(child.exitCode,73,child.stderr.toString());expireLock(at);const txn=readdirSync(join(at,'workflow-adoptions')).filter(n=>n.startsWith('import-'))[0],journal=join(at,'workflow-adoptions',txn,'journal.json'),plan=JSON.parse(readFileSync(journal,'utf8')).plan;return {at,txn,journal,plan,skillRoot:join(at,plan.roots[0])};};
  const clean=partial('clean-partial');check(()=>a(existsSync(join(clean.skillRoot,'v1','SKILL.md'))));new WorkflowAdoption(clean.at);
  check(()=>a(!existsSync(clean.skillRoot)));check(()=>a(existsSync(join(clean.at,'workflow-adoptions',clean.txn,'rolled-back'))));
 
@@ -145,9 +147,9 @@ try{
  check(()=>a.equal(importedCopy.origin?.transaction,imported.origin!.transaction));
  // published, but the complete marker and staging cleanup cannot be written: adoption reports success, nothing is held, a later recovery finishes the marker
  const markAt=join(dir,'marker-fail'),markDefs=new WorkflowDefs(markAt,()=>[]);let markStage='',marked:any=null;
- try{marked=new WorkflowAdoption(markAt,p=>{if(p==='published'){markStage=join(markAt,'workflow-adoptions',readdirSync(join(markAt,'workflow-adoptions'))[0]);chmodSync(markStage,0o500);}}).adopt(fixture(),'pkg-'+'e'.repeat(24),markDefs,caps);check(()=>a.deepEqual(new WorkflowAdoption(markAt).holds(),[]));}finally{if(markStage)chmodSync(markStage,0o700);}
+ try{marked=new WorkflowAdoption(markAt,p=>{if(p==='published'){markStage=join(markAt,'workflow-adoptions',readdirSync(join(markAt,'workflow-adoptions')).filter(n=>n.startsWith('import-'))[0]);chmodSync(markStage,0o500);}}).adopt(fixture(),'pkg-'+'e'.repeat(24),markDefs,caps);check(()=>a.deepEqual(new WorkflowAdoption(markAt).holds(),[]));}finally{if(markStage)chmodSync(markStage,0o700);}
  check(()=>a.equal(markDefs.versions(marked.workflow).length,1));new WorkflowAdoption(markAt);check(()=>a.deepEqual(readdirSync(markStage).sort(),['complete','journal.json','source.zip']));
- const skillStage=join(skillDest,'workflow-adoptions',readdirSync(join(skillDest,'workflow-adoptions'))[0]);check(()=>a.deepEqual(readdirSync(skillStage).sort(),['complete','journal.json','source.zip'])); // skill-* and out staging removed after completion
+ const skillStage=join(skillDest,'workflow-adoptions',readdirSync(join(skillDest,'workflow-adoptions')).filter(n=>n.startsWith('import-'))[0]);check(()=>a.deepEqual(readdirSync(skillStage).sort(),['complete','journal.json','source.zip'])); // skill-* and out staging removed after completion
  const stale=join(markAt,'workflow-adoptions','import-'+'f'.repeat(24));mkdirSync(join(stale,'skill-0'),{recursive:true});writeFileSync(join(stale,'skill-0','SKILL.md'),'x');new WorkflowAdoption(markAt);check(()=>a(!existsSync(stale))); // journal-less staging is cleaned
  const xd=join(dir,'exdev');check(()=>a.throws(()=>new WorkflowAdoption(xd,p=>{if(p.startsWith('rename:'))throw Object.assign(Error('cross-device link not permitted'),{code:'EXDEV'});}).adopt(fixture(),'pkg-'+'f'.repeat(24),new WorkflowDefs(xd,()=>[]),caps),/same filesystem as the data folder/));check(()=>a.deepEqual(new WorkflowDefs(xd,()=>[]).ids(),[]));
  check(()=>a.deepEqual(new WorkflowAdoption(ro.at).holds().map(x=>[x.txn,x.reason]),[[ro.txn,'Unreadable recovery hold record']])); // a dangling hold symlink is still a hold
@@ -155,6 +157,16 @@ try{
  const lockedReason=new WorkflowAdoption(locked.at).holds()[0]?.reason??'';check(()=>a(/EACCES/.test(lockedReason)&&!lockedReason.includes(locked.at),lockedReason)); // hold text names the cause without the absolute data path
  const dc=join(dir,'draft-corrupt'),dcDefs=new WorkflowDefs(dc,()=>[]),dcDrafts=new WorkflowDrafts(dc,dcDefs),bad=join(dc,'workflows','imp-'+'9'.repeat(24));mkdirSync(bad,{recursive:true});writeFileSync(join(bad,'v1.json'),'{"id":');
  const dcDraft=dcDrafts.draft(structuredClone(WORKFLOW_DRAFT_EXAMPLE),'test-turn',[]);check(()=>a.equal(dcDefs.versions(dcDrafts.save(dcDraft.id,'captain',dcDraft.revision).workflow).length,1)); // one unreadable imp-* folder does not block saving a draft
+ // the complete marker could not be written; later recoveries must never delete a finished adoption or hold it over local edits
+ const finished=(name:string)=>{const at=join(dir,name),fdefs=new WorkflowDefs(at,()=>[]);let stage='';const out=new WorkflowAdoption(at,p=>{if(p==='published'){stage=join(at,'workflow-adoptions',readdirSync(join(at,'workflow-adoptions')).filter(n=>n.startsWith('import-'))[0]);chmodSync(stage,0o500);}}).adopt(withSkill,'pkg-'+'e'.repeat(24),fdefs,caps);chmodSync(stage,0o700);check(()=>a(!existsSync(join(stage,'complete'))));return {at,stage,out,skill:join(at,JSON.parse(readFileSync(join(stage,'journal.json'),'utf8')).plan.roots[0]),workflow:join(at,'workflows',out.workflow,'v1.json')};};
+ const edited=finished('finished-edited');writeFileSync(join(edited.skill,'index.json'),'[]');new WorkflowAdoption(edited.at);
+ check(()=>a.deepEqual(new WorkflowAdoption(edited.at).holds(),[]));check(()=>a(existsSync(join(edited.skill,'v1','SKILL.md'))&&existsSync(edited.workflow)));check(()=>a(existsSync(join(edited.stage,'complete'))));
+ const handRemoved=finished('finished-hand-removed');rmSync(handRemoved.skill,{recursive:true});new WorkflowAdoption(handRemoved.at);
+ check(()=>a(existsSync(handRemoved.workflow)));check(()=>a.deepEqual(new WorkflowAdoption(handRemoved.at).holds(),[]));check(()=>a(!existsSync(join(handRemoved.stage,'rolled-back'))));
+ const trashed=join(dc,'workflows',dcDefs.ids().find(w=>!w.startsWith('imp-'))!);writeFileSync(join(trashed,'trash.json'),'{"schema":9}');
+ const dcDraft2=dcDrafts.draft(structuredClone(WORKFLOW_DRAFT_EXAMPLE),'test-turn-2',[]);check(()=>a.equal(dcDefs.versions(dcDrafts.save(dcDraft2.id,'captain',dcDraft2.revision).workflow).length,1)); // an invalid trash.json in an unrelated workflow does not block saving a draft
+ const lockAt=join(dir,'lock-held'),lockDir=join(lockAt,'workflow-adoptions','.lock-adopt');let lockedDuring=false;new WorkflowAdoption(lockAt,p=>{if(p==='journal')lockedDuring=existsSync(lockDir);}).adopt(fixture(),'pkg-'+'e'.repeat(24),new WorkflowDefs(lockAt,()=>[]),caps);
+ check(()=>a(lockedDuring&&!existsSync(lockDir))); // adoption runs under the per-data-folder adoption lock and releases it
  const draftCopy=sourceDefs.copyTemplate(persisted.workflow,1,'draft-copy','Draft copy',false,'captain');
  check(()=>a.equal(draftCopy.origin?.source,'firstmate-draft'));
  check(()=>a.equal(draftCopy.origin?.draft,undefined));

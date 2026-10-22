@@ -232,7 +232,7 @@ export class WorkflowDrafts{
    const d=this.get(id);
    // intent lines first: every line served by a node, every node serving a line (en / zh-TW)
    const intent=intentStage(d.def);
-   const existing=d.saved?.workflow??this.defs.list().map(w=>w.id).find(w=>(this.defs.versions(w)[0] as any)?.origin?.draft===id);
+   const existing=d.saved?.workflow??this.defs.ids().find(w=>{try{return (this.defs.versions(w)[0] as any)?.origin?.draft===id;}catch(e){if(w.startsWith('imp-'))return false;throw e;}});
    if(existing&&d.saved&&d.revision>(d.saved.revision??0)){
     // a gate repair revised the saved draft: saving again writes the next version of the same workflow
     if(revision!==undefined&&revision!==d.revision)throw new DraftError(`the draft changed to revision ${d.revision} after you looked; reload to see it before saving`,409);

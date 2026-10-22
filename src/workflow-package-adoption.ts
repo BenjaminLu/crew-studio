@@ -7,6 +7,7 @@ import {packageSha,packageStoredBytes} from './workflow-package';
 import {inspectAdoptionSkill} from './skills';
 import {validate,type WorkflowDefs,type WDef} from './runtime/defs';
 import {ledgerKey} from './runtime/checks';
+import {withLock} from './ids';
 const txnPattern=/^import-[a-f0-9]{24}$/;
 /** The ledger key signs other records too; the purpose prefix keeps an adoption journal signature from being valid anywhere else. */
 const SIGN_PURPOSE='crew-workflow-adoption-v1\0';
@@ -24,12 +25,14 @@ export class WorkflowAdoption{
  private sign(plan:Plan){return createHmac('sha256',ledgerKey(this.data)).update(SIGN_PURPOSE+JSON.stringify(plan)).digest('hex');}
  private journal(id:string){const v=JSON.parse(packageStoredBytes(this.data,`workflow-adoptions/${id}/journal.json`).toString('utf8'));if(!txnPattern.test(id)||v.plan?.txn!==id||typeof v.sig!=='string'||!/^([a-f0-9]{64})$/.test(v.sig)||!timingSafeEqual(Buffer.from(v.sig,'hex'),Buffer.from(this.sign(v.plan),'hex')))throw Error('Adoption journal signature mismatch');return v.plan as Plan;}
  /** Error text for logs, holds and the UI without the absolute data folder path. */
- private text(e:any){return String(e?.message??e).split(this.data+'/').join('').split(this.data).join('<data>');}
+ text(e:any){return String(e?.message??e).split(this.data+'/').join('').split(this.data).join('<data>');}
  /** Best effort: staging copies are not needed once a transaction is settled; journal, source ZIP and markers stay. */
  private tidy(dir:string){try{for(const n of readdirSync(dir))if(n==='out'||/^skill-[0-9]+$/.test(n))rmSync(join(dir,n),{recursive:true,force:true});}catch(e:any){console.error(`workflow adoption: could not tidy staging: ${this.text(e)}`);}}
+ private published(plan:Plan){const marker=`workflows/${plan.workflow}/${OWNER}`,want=plan.files.find(f=>f.path===marker)?.sha256;try{return !!want&&packageSha(packageStoredBytes(this.data,marker))===want;}catch{return false;}}
  private complete(plan:Plan){return plan.files.every(f=>{try{return packageSha(packageStoredBytes(this.data,f.path))===f.sha256;}catch{return false;}});}
  /** Runs before WorkflowDefs/catalog creation and never throws: a transaction it cannot settle is held and logged, and Studio still starts. */
- recover(){let ids:string[];try{if(!existsSync(this.root))return;ids=readdirSync(this.root).filter(x=>txnPattern.test(x));}catch(e:any){console.error(`workflow adoption: cannot list transactions: ${e?.message??e}`);return;}for(const id of ids)this.settle(id);}
+ recover(){try{if(!existsSync(this.root))return;withLock(this.root,'adopt',()=>this.recoverAll());}catch(e:any){console.error(`workflow adoption: recovery skipped: ${this.text(e)}`);}}
+ private recoverAll(){let ids:string[];try{ids=readdirSync(this.root).filter(x=>txnPattern.test(x));}catch(e:any){console.error(`workflow adoption: cannot list transactions: ${this.text(e)}`);return;}for(const id of ids)this.settle(id);}
  private settle(id:string):State{
   const dir=join(this.root,id);
   try{
@@ -50,7 +53,8 @@ export class WorkflowAdoption{
  }
  private recoverOne(id:string,dir:string):State{const p=this.journal(id);if(p.schema!==1||!/^imp-[a-f0-9]{24}$/.test(p.workflow)||p.roots.some(r=>!safe(r)||!(r===`workflows/${p.workflow}`||/^skills\/_library\/imp-[a-f0-9]{12}-s[0-9]+$/.test(r)))||p.files.some(f=>!safe(f.path)||!p.roots.some(r=>f.path.startsWith(r+'/'))))throw Error('Invalid adoption journal ownership');
   // everything is published and intact: the workflow exists, so a failed marker or cleanup write must not turn it into a hold
-  if(this.complete(p)){try{writeFileSync(join(dir,'complete'),p.archiveSha256,{flag:'wx',mode:0o600});}catch(e:any){if(e?.code!=='EEXIST')console.error(`workflow adoption ${id}: published, but the complete marker could not be written: ${this.text(e)}`);}this.tidy(dir);return 'complete';}
+  // the workflow folder is published last, whole, by rename: if it is present with our owner file, publication finished and nothing may be deleted, even after later local edits or a hand-removed skill folder
+  if(this.complete(p)||this.published(p)){try{writeFileSync(join(dir,'complete'),p.archiveSha256,{flag:'wx',mode:0o600});}catch(e:any){if(e?.code!=='EEXIST')console.error(`workflow adoption ${id}: published, but the complete marker could not be written: ${this.text(e)}`);}this.tidy(dir);return 'complete';}
   const expected=new Map(p.files.map(f=>[f.path,f.sha256])),owned:[string,string[]][]=[];
   for(const root of p.roots){const target=join(this.data,root);if(!present(target))continue;const st=lstatSync(target);if(!st.isDirectory()||st.isSymbolicLink())throw Error('Changed adoption target; manual recovery required');const marker=root+'/'+OWNER;if(!existsSync(join(this.data,marker))||packageSha(packageStoredBytes(this.data,marker))!==expected.get(marker))throw Error('Unowned adoption target; manual recovery required');const files=walk(target);for(const file of files){const rel=root+'/'+file;if(expected.get(rel)!==packageSha(packageStoredBytes(this.data,rel)))throw Error('Changed adoption bytes; manual recovery required');}owned.push([root,files]);}
   for(const [root,files]of owned.reverse())this.removeOwned(root,files);
@@ -62,8 +66,10 @@ export class WorkflowAdoption{
   for(const d of [...dirs].sort((a,b)=>b.split('/').length-a.split('/').length))rmdirSync(join(base,d));
   if(files.includes(OWNER))unlinkSync(join(base,OWNER));rmdirSync(base);
  }
- adopt(bytes:Buffer,sourceId:string,defs:WorkflowDefs,capabilities:{ready:boolean;accept:boolean}){
- this.recover();if(!/^pkg-[a-f0-9]{24}$/.test(sourceId))throw Error('Save the package before adoption');
+ /** One adoption or recovery at a time per data folder, across processes. */
+ adopt(bytes:Buffer,sourceId:string,defs:WorkflowDefs,capabilities:{ready:boolean;accept:boolean}){mkdirSync(this.root,{recursive:true,mode:0o700});return withLock(this.root,'adopt',()=>this.adoptLocked(bytes,sourceId,defs,capabilities));}
+ private adoptLocked(bytes:Buffer,sourceId:string,defs:WorkflowDefs,capabilities:{ready:boolean;accept:boolean}){
+ this.recoverAll();if(!/^pkg-[a-f0-9]{24}$/.test(sourceId))throw Error('Save the package before adoption');
  const parsed=adoptionProfile(bytes,capabilities),txn='import-'+randomBytes(12).toString('hex'),suffix=txn.slice(7),id='imp-'+suffix,stage=join(this.root,txn),out=join(stage,'out'),namespace=suffix.slice(0,12);
  const result={workflow:id,version:1,href:`#/workflows/${id}`,status:'saved-no-task',profile:parsed.profile};
  mkdirSync(this.root,{recursive:true,mode:0o700});mkdirSync(stage,{mode:0o700});
