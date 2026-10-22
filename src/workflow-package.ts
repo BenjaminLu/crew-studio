@@ -1,5 +1,5 @@
 /** Inert transfer packages. No package byte is installed in a runnable registry. */
-import AdmZip from 'adm-zip';
+import {zip,unzip} from './zip';
 import {createHash,randomBytes} from 'node:crypto';
 import {closeSync,fstatSync,lstatSync,readdirSync,mkdirSync,writeFileSync,renameSync,rmSync,readSync} from 'node:fs';
 import {join} from 'node:path';
@@ -29,35 +29,15 @@ export function packageStoredBytes(root:string,rel:string,cap=PACKAGE_CAPS.file)
  const fd=openStoredDescriptor(root,rel.split('/'));try{const s=fstatSync(fd);if(!s.isFile()||s.nlink!==1||s.size>cap)fail('Package source must be a bounded regular file');return boundedDescriptorBytes(fd,s.size,cap);}finally{closeSync(fd);}
 }
 function objectKeys(v:any,keys:string[]){if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).some(k=>!keys.includes(k)))fail('Unknown or invalid manifest fields');}
-/** Reject unsupported structures BEFORE invoking the ZIP library. STORE means no decompressor can allocate an attacker-chosen output. */
-function preflight(b:Buffer){
- if(b.length<22||b.length>PACKAGE_CAPS.archive)fail('Package ZIP exceeds size limit or is truncated');
- const e=b.length-22;if(b.readUInt32LE(e)!==0x06054b50||b.readUInt16LE(e+20)!==0)fail('ZIP comments/trailing data are unsupported');
- const count=b.readUInt16LE(e+10),size=b.readUInt32LE(e+12),offset=b.readUInt32LE(e+16);
- if(b.readUInt16LE(e+4)||b.readUInt16LE(e+6)||b.readUInt16LE(e+8)!==count||!count||count>PACKAGE_CAPS.count||offset+size!==e)fail('Unsupported ZIP directory, ZIP64 or file count');
- let pos=offset,next=0,total=0;const seen=new Set<string>();
- for(let i=0;i<count;i++){
-  if(pos+46>e||b.readUInt32LE(pos)!==0x02014b50)fail('Invalid ZIP central entry');
-  if(b.readUInt16LE(pos+6)>20)fail('Unsupported ZIP version');
-  const flags=b.readUInt16LE(pos+8),method=b.readUInt16LE(pos+10),crc=b.readUInt32LE(pos+16),compressed=b.readUInt32LE(pos+20),expanded=b.readUInt32LE(pos+24),n=b.readUInt16LE(pos+28),extra=b.readUInt16LE(pos+30),comment=b.readUInt16LE(pos+32),attrs=b.readUInt32LE(pos+38),local=b.readUInt32LE(pos+42);
-  if(flags!==0&&flags!==0x800)fail('Encrypted or descriptor ZIP entries are unsupported');
-  if(method!==0)fail('Unsupported compression: use an original Crew package ZIP (STORE profile)');
-  if(extra||comment||b.readUInt16LE(pos+34)||compressed!==expanded||expanded>PACKAGE_CAPS.file||pos+46+n>e)fail('Unsupported ZIP entry metadata or file size');
-  const path=b.subarray(pos+46,pos+46+n).toString('utf8'),mode=(attrs>>>16)&0xf000;
-  if(!safe(path)||seen.has(path.toLowerCase())||mode&&mode!==0x8000||(attrs&0x10))fail('ZIP path collision, link, directory or nonregular entry');seen.add(path.toLowerCase());
-  if(local!==next||local+30>offset||b.readUInt32LE(local)!==0x04034b50||b.readUInt16LE(local+4)>20||b.readUInt16LE(local+6)!==flags||b.readUInt16LE(local+8)!==method||b.readUInt32LE(local+14)!==crc||b.readUInt32LE(local+18)!==compressed||b.readUInt32LE(local+22)!==expanded||b.readUInt16LE(local+26)!==n||b.readUInt16LE(local+28)!==0||!b.subarray(local+30,local+30+n).equals(b.subarray(pos+46,pos+46+n)))fail('ZIP local/central headers differ or entries overlap');
-  next=local+30+n+compressed;if(next>offset)fail('ZIP data overlaps directory');total+=expanded;if(total>PACKAGE_CAPS.archive)fail('Expanded package exceeds limit');pos+=46+n;
- }
- if(pos!==e||next!==offset)fail('ZIP contains unlisted bytes or entries');
-}
+/** Every entry is checked against both ZIP headers, its CRC and these limits. Exports are stored; imports also accept deflate, capped at each declared size. */
+const unzipPackage=(b:Buffer)=>unzip(b,{archive:PACKAGE_CAPS.archive,entry:PACKAGE_CAPS.file,total:PACKAGE_CAPS.archive,count:PACKAGE_CAPS.count,name:safe});
 export function encodePackage(files:Map<string,Buffer>,manifest:PackageManifest):Buffer{
  const manifestBytes=Buffer.from(JSON.stringify(manifest,null,2));let total=manifestBytes.length;if(manifestBytes.length>PACKAGE_CAPS.file||files.size+1>PACKAGE_CAPS.count)fail('Package inventory exceeds limits');for(const [path,b]of files){if(!safe(path)||b.length>PACKAGE_CAPS.file)fail('Package source file exceeds profile limits');total+=b.length;if(total>PACKAGE_CAPS.archive-65536)fail('Package source exceeds total size limit');}
- const zip=new AdmZip();for(const [path,bytes]of [...files].sort(([a],[b])=>a.localeCompare(b))){zip.addFile(path,bytes,'',0o100600);zip.getEntry(path)!.header.method=0;}
- zip.addFile('manifest.json',manifestBytes,'',0o100600);zip.getEntry('manifest.json')!.header.method=0;
- const bytes=zip.toBuffer();preflight(bytes);return bytes;
+ const entries=[...files].sort(([a],[b])=>a<b?-1:a>b?1:0).map(([name,data])=>({name,data}));
+ const bytes=zip([...entries,{name:'manifest.json',data:manifestBytes}],{store:true,mode:0o100600});unzipPackage(bytes);return bytes;
 }
 export function verifyPackage(bytes:Buffer):Verified{
- preflight(bytes);const zip=new AdmZip(bytes),files=new Map<string,Buffer>();for(const entry of zip.getEntries()){const b=entry.getData();if(b.length!==entry.header.size)fail('ZIP data length mismatch');files.set(entry.entryName,b);}
+ const files=unzipPackage(bytes);
  let m:any;try{m=JSON.parse(files.get('manifest.json')?.toString('utf8')??'');}catch{fail('Missing or malformed manifest');}
  objectKeys(m,['format','schema','profile','source','files','dependencies','holds']);if(m.format!=='crew-workflow-package'||m.schema!==1||m.profile!=='crew-store-v1')fail('Unsupported Crew package format');
  objectKeys(m.source,['workflow','version','recordSha256']);if(!ident(m.source.workflow)||!Number.isSafeInteger(m.source.version)||m.source.version<1||!/^[a-f0-9]{64}$/.test(m.source.recordSha256)||!Array.isArray(m.files)||m.files.length>PACKAGE_CAPS.count-1||!Array.isArray(m.dependencies)||m.dependencies.length>400||!Array.isArray(m.holds)||m.holds.length>200||m.holds.some((x:any)=>typeof x!=='string'||x.length>1000))fail('Invalid package manifest');

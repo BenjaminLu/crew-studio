@@ -4,7 +4,8 @@
 // (Latin fonts: the fallback docpdf.ts uses without a page renderer) and the
 // PDF text reader that checks an exported PDF shows the document's words.
 import { createHash } from "node:crypto";
-import { deflateRawSync, inflateSync } from "node:zlib";
+import { inflateSync } from "node:zlib";
+import { zip } from "./zip";
 
 export type Inline = { text: string; b?: boolean; i?: boolean; code?: boolean; href?: string };
 export type Block = { kind: "h" | "p" | "ul" | "ol" | "quote" | "code" | "hr" | "table"; level?: number; line: number; text: string; items?: string[]; rows?: string[][] };
@@ -93,23 +94,7 @@ export function blockAt(html: string, md: string, selector: string | null | unde
 }
 
 // ---------- DOCX ----------
-const crcTable = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
-const crc32 = (b: Buffer) => { let c = 0xffffffff; for (const x of b) c = crcTable[(c ^ x) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
-/** A zip of the given files (deflate), as a Buffer. */
-export function zip(files: { name: string; data: Buffer | string }[]): Buffer {
-  const parts: Buffer[] = [], central: Buffer[] = []; let off = 0;
-  for (const f of files) {
-    const raw = Buffer.isBuffer(f.data) ? f.data : Buffer.from(f.data, "utf8"); const comp = deflateRawSync(raw); const name = Buffer.from(f.name, "utf8"); const crc = crc32(raw);
-    const lh = Buffer.alloc(30); lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(0x0800, 6); lh.writeUInt16LE(8, 8); lh.writeUInt16LE(0, 10); lh.writeUInt16LE(0x21, 12);
-    lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(comp.length, 18); lh.writeUInt32LE(raw.length, 22); lh.writeUInt16LE(name.length, 26); lh.writeUInt16LE(0, 28);
-    parts.push(lh, name, comp);
-    const ch = Buffer.alloc(46); ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(0x0800, 8); ch.writeUInt16LE(8, 10); ch.writeUInt16LE(0, 12); ch.writeUInt16LE(0x21, 14);
-    ch.writeUInt32LE(crc, 16); ch.writeUInt32LE(comp.length, 20); ch.writeUInt32LE(raw.length, 24); ch.writeUInt16LE(name.length, 28); ch.writeUInt32LE(off, 42);
-    central.push(ch, name); off += 30 + name.length + comp.length;
-  }
-  const cd = Buffer.concat(central); const end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10); end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(off, 16);
-  return Buffer.concat([...parts, cd, end]);
-}
+export { zip };
 const x = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!)).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "");
 // Word picks a run's East Asian font from w:eastAsia (and the docDefaults' lang); a run with CJK text is hinted so
 // shared punctuation follows it too

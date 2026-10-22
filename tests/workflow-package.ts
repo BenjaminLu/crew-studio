@@ -1,5 +1,5 @@
 import "./lib/isolated-env.mjs";
-import AdmZip from 'adm-zip';
+import {zip as writeZip} from '../src/zip';
 import {strict as a} from 'node:assert';
 import {mkdtempSync,readFileSync,writeFileSync,existsSync,rmSync,mkdirSync,symlinkSync,openSync,closeSync} from 'node:fs';
 import {tmpdir} from 'node:os';import {join} from 'node:path';import {spawnSync} from 'node:child_process';
@@ -26,7 +26,15 @@ try{
  bad(b=>b.writeUInt32LE(3*1024*1024,central+24)); // size bomb
  bad(b=>b.writeUInt16LE(65535,b.length-12)); // ZIP64 sentinel count
  bad(b=>b[30]=46); // local/central name mismatch
- const makeZip=(entries)=>{const z=new AdmZip();for(const [name,value]of entries){z.addFile(name,Buffer.from(value));z.getEntry(name).header.method=0;}return z.toBuffer();};
+ const makeZip=(entries,opts={store:true})=>writeZip(entries.map(([name,value])=>({name,data:Buffer.from(value)})),opts);
+ const both=(b,local,centralAt,write)=>{write(b,local);write(b,b.indexOf(Buffer.from([0x50,0x4b,0x01,0x02]))+centralAt);return b;};
+ check(()=>a.throws(()=>verifyPackage(both(Buffer.from(bytes),14,16,(b,at)=>b.writeUInt32LE(b.readUInt32LE(at)^1,at))),/CRC mismatch/));
+ check(()=>a.throws(()=>verifyPackage((b=>{b.writeUInt32LE(b.readUInt32LE(18)+1,18);b.writeUInt32LE(b.readUInt32LE(22)+1,22);return b;})(Buffer.from(bytes))),/headers differ/));
+ check(()=>a.throws(()=>verifyPackage(makeZip([['same','x'],['same','y']])),/duplicate/));
+ check(()=>a.throws(()=>verifyPackage(both(makeZip([['bomb',Buffer.alloc(4*1024*1024)]],{}),22,24,(b,at)=>b.writeUInt32LE(1024,at))),/larger than declared/));
+ check(()=>a.throws(()=>verifyPackage(both(Buffer.from(bytes),8,10,(b,at)=>b.writeUInt16LE(12,at))),/compression method/));
+ check(()=>a.throws(()=>verifyPackage(both(Buffer.from(bytes),6,8,(b,at)=>b.writeUInt16LE(0x808,at))),/data-descriptor/));
+ check(()=>a.deepEqual([...verifyPackage(makeZip([...v.files].map(([p,b])=>[p,b]),{mode:0o100600})).files.keys()].sort(),[...v.files.keys()].sort()));
  check(()=>a.throws(()=>verifyPackage(makeZip([['../evil','x']]))));
  check(()=>a.throws(()=>verifyPackage(makeZip([['UPPER','x'],['upper','x']]))));
  check(()=>a.throws(()=>verifyPackage(makeZip([['manifest.json',JSON.stringify(v.manifest)],['workflow/definition.json','{}'],['unlisted','x']]))));
