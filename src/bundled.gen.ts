@@ -325,11 +325,13 @@ import b321 from "../docs/units/transcripts.md" with { type: "file" };
 import b322 from "../docs/units/ui-test-waits.md" with { type: "file" };
 import b323 from "../docs/units/visual-sandbox.md" with { type: "file" };
 import b324 from "../docs/units/web-open-task-reopen.md" with { type: "file" };
-import b325 from "../docs/units/workflow-overview.md" with { type: "file" };
-import b326 from "../docs/units/workflow-semantic-comparison.md" with { type: "file" };
-import b327 from "../docs/units/worktrees.md" with { type: "file" };
-import b328 from "../docs/v2-spec.md" with { type: "file" };
-import b329 from "../docs/w29-local-sandbox.md" with { type: "file" };
+import b325 from "../docs/units/workflow-definition-export.md" with { type: "file" };
+import b326 from "../docs/units/workflow-overview.md" with { type: "file" };
+import b327 from "../docs/units/workflow-packages.md" with { type: "file" };
+import b328 from "../docs/units/workflow-semantic-comparison.md" with { type: "file" };
+import b329 from "../docs/units/worktrees.md" with { type: "file" };
+import b330 from "../docs/v2-spec.md" with { type: "file" };
+import b331 from "../docs/w29-local-sandbox.md" with { type: "file" };
 
 export const BUNDLED: Record<string, string> = {
   "workflows/change.flow.yaml": b0,
@@ -657,9 +659,11 @@ export const BUNDLED: Record<string, string> = {
   "docs/units/ui-test-waits.md": b322,
   "docs/units/visual-sandbox.md": b323,
   "docs/units/web-open-task-reopen.md": b324,
-  "docs/units/workflow-overview.md": b325,
-  "docs/units/workflow-semantic-comparison.md": b326,
-  "docs/units/worktrees.md": b327,
-  "docs/v2-spec.md": b328,
-  "docs/w29-local-sandbox.md": b329,
+  "docs/units/workflow-definition-export.md": b325,
+  "docs/units/workflow-overview.md": b326,
+  "docs/units/workflow-packages.md": b327,
+  "docs/units/workflow-semantic-comparison.md": b328,
+  "docs/units/worktrees.md": b329,
+  "docs/v2-spec.md": b330,
+  "docs/w29-local-sandbox.md": b331,
 };

@@ -232,7 +232,7 @@ export class WorkflowDrafts{
    const d=this.get(id);
    // intent lines first: every line served by a node, every node serving a line (en / zh-TW)
    const intent=intentStage(d.def);
-   const existing=d.saved?.workflow??this.defs.ids().find(w=>(this.defs.versions(w)[0] as any)?.origin?.draft===id);
+   const existing=d.saved?.workflow??this.defs.ids().find(w=>{try{return (this.defs.versions(w)[0] as any)?.origin?.draft===id;}catch(e){if(w.startsWith('imp-'))return false;throw e;}});
    if(existing&&d.saved&&d.revision>(d.saved.revision??0)){
     // a gate repair revised the saved draft: saving again writes the next version of the same workflow
     if(revision!==undefined&&revision!==d.revision)throw new DraftError(`the draft changed to revision ${d.revision} after you looked; reload to see it before saving`,409);
@@ -288,7 +288,7 @@ export function ownBrief(def:any,text:string,params:Record<string,string>={}){
  const room=Math.max(0,3800-fixed.length-(fixed&&free?1:0));
  return [free.length>room?free.slice(0,Math.max(0,room-1))+'…':free,fixed].filter(Boolean).join('\n');}
 /** Only the captain's own workflows (a draft or the free starter) take the Run-time staffing gate. */
-export const ownWorkflow=(def:any)=>plain(def?.origin)&&['firstmate-draft','starter'].includes(def.origin.source);
+export const ownWorkflow=(def:any)=>plain(def?.origin)&&['firstmate-draft','starter','package-import'].includes(def.origin.source);
 
 export type DraftGateTools={repairAuthorized(draft:string,ref:{draft?:unknown;nonce?:unknown}|null|undefined):boolean;view(args:{draft?:string;workflow?:string;version?:number}):unknown};
 export function installWorkflowDraftTools(drafts:WorkflowDrafts,gate?:DraftGateTools,onSaved?:(def:WDef)=>void):NativeMainTools{

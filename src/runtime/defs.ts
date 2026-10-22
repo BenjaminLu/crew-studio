@@ -74,7 +74,7 @@ export type WDef = {
   policies?: Record<string, any>; card_checks?: string[]; hooks?: { at: string; use: string; params?: Record<string, any> }[];
   parent?: number | null; createdAt?: string; by?: string; note?: string | null; diff?: DefDiff | null; seed?: string | null;
   /** the captain's own workflow: where v1 came from (a Firstmate draft or the free starter); kept by every later version, never set by an edit */
-  origin?: { schema: 1; source: "firstmate-draft" | "starter"; draft?: string; revision?: number; definition?: string; brief?: { goal: string; interview: { question: string; answer: string }[] } };
+  origin?: { schema: 1; source: "firstmate-draft" | "starter" | "package-import"; package?: {id:string;archiveSha256:string;sourceWorkflow:string;sourceVersion:number;declarationSha256:string}; transaction?:string; draft?: string; revision?: number; definition?: string; brief?: { goal: string; interview: { question: string; answer: string }[] } };
 };
 export type DefDiff = {
   nodesAdded: string[]; nodesRemoved: string[]; nodesChanged: { id: string; fields: string[] }[]; nodesMoved: string[];
@@ -303,7 +303,7 @@ export class WorkflowDefs {
     if(state.schema!==1||state.workflow!==id||!Number.isSafeInteger(state.revision)||state.revision<1||!Number.isSafeInteger(state.version)||typeof state.deleted!=='boolean')throw new Error('Workflow trash state is invalid');
     return state;
   }
-  personal(id:string){const d=this.get(id);return !!d&&!INTERNAL_WORKFLOWS.has(id)&&!!d.origin&&['starter','firstmate-draft'].includes(d.origin.source);}
+  personal(id:string){const d=this.get(id);return !!d&&!INTERNAL_WORKFLOWS.has(id)&&!!d.origin&&['starter','firstmate-draft','package-import'].includes(d.origin.source);}
   trashed(id:string){return this.trashState(id)?.deleted===true;}
   setTrash(id:string,base:unknown,revision:unknown,deleted:boolean,by:string){
     return withLock(this.dir,'create-'+id,()=>{
@@ -323,7 +323,9 @@ export class WorkflowDefs {
   catalog(){return this.list().filter(w=>this.selectable(w.id,w.version));}
   /** Workflows kept in the catalog for editing that the Start form and start routes do not offer. */
   heldCatalog(){return this.list().filter(w=>!INTERNAL_WORKFLOWS.has(w.id)&&!this.trashed(w.id)&&!!this.held(w.id)).map(w=>({...w,held:this.held(w.id)!}));}
-  list() { return this.ids().map((id) => { const vs = this.versions(id); const l = vs.at(-1)!; return { id, name: l.name, description: l.description ?? "", kind: l.kind ?? null, isTemplate: l.isTemplate === true, version: l.version, versions: vs.length, nodes: l.nodes.length, intent: l.intent ?? null, params: l.params ?? null, personal:this.personal(id), trashRevision:this.trashState(id)?.revision??0 }; }); }
+  /** An empty folder, or a package-import (imp-*) folder that cannot be read, is left out instead of breaking the whole catalog. */
+  private listable(id: string): WDef[] { try { return this.versions(id); } catch (e) { if (id.startsWith("imp-")) { console.error(`workflow ${id}: unreadable, left out of the catalog: ${(e as Error).message}`); return []; } throw e; } }
+  list() { return this.ids().flatMap((id) => { const vs = this.listable(id); const l = vs.at(-1); if (!l) return []; return [{ id, name: l.name, description: l.description ?? "", kind: l.kind ?? null, isTemplate: l.isTemplate === true, version: l.version, versions: vs.length, nodes: l.nodes.length, intent: l.intent ?? null, params: l.params ?? null, personal:this.personal(id), trashRevision:this.trashState(id)?.revision??0 }]; }); }
   layout(id: string, v: number): Record<string, { x: number; y: number }> { try { return JSON.parse(readFileSync(join(this.wdir(id), `layout-v${v}.json`), "utf8")); } catch { return {}; } }
   /** Dragging nodes: positions are kept per version without making a new one. */
   setLayout(id: string, v: number, pos: Record<string, { x: number; y: number }>) {
@@ -376,7 +378,7 @@ export class WorkflowDefs {
       if(existsSync(this.wdir(id)))throw new Error('A workflow with this id already exists');
       const saved=this.get(source,version);if(!saved?.origin||this.previewOnly(source)||!this.selectable(source,version))throw new Error('Choose an available personal workflow');
       const canonical=this.versions(source).find(v=>v.version===version)!;
-      const def:WDef={...structuredClone(saved),id,name:name.trim(),version:1,parent:null,createdAt:now(),by,note:`Copied from ${source} v${version}`,diff:null,seed:null,origin:{schema:1,source:saved.origin.source,...(saved.origin.brief?{brief:structuredClone(saved.origin.brief)}:{})},isTemplate:asTemplate,templateSource:{workflow:source,version,sha256:createHash('sha256').update(JSON.stringify(canonical)).digest('hex')}};
+      const def:WDef={...structuredClone(saved),id,name:name.trim(),version:1,parent:null,createdAt:now(),by,note:`Copied from ${source} v${version}`,diff:null,seed:null,origin:{schema:1,source:saved.origin.source,...(saved.origin.brief?{brief:structuredClone(saved.origin.brief)}:{}),...(saved.origin.source==='package-import'&&saved.origin.package?{package:structuredClone(saved.origin.package),transaction:saved.origin.transaction}:{})},isTemplate:asTemplate,templateSource:{workflow:source,version,sha256:createHash('sha256').update(JSON.stringify(canonical)).digest('hex')}};
       const errors=validate(def,this.known,this.runners?.(),this.skillInfo??undefined).filter(p=>p.level==='error');if(errors.length)throw new Error(errors[0].text);
       this.write(def);return def;
     });

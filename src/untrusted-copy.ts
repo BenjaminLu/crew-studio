@@ -4,6 +4,7 @@
 // followed; a directory swapped for a link while the copy runs is refused too, since nothing is looked up by
 // path after the root. macOS on arm64 (libc through bun:ffi, built in); elsewhere the caller falls back.
 import { dlopen, FFIType, ptr, read, CString } from "bun:ffi";
+import * as descriptorFs from "node:fs";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -72,4 +73,20 @@ export function copyByDescriptor(src: string, dst: string, o: { maxFiles: number
   mkdirSync(dst, { recursive: true });
   try { walk(root, "", 0); } finally { L.close(root); }
   return out;
+}
+
+/** A single stored file opened relative to held directory descriptors, never by a checked-then-reused relative path.
+ * The configured absolute root's ancestors belong to Studio, not to package authors. */
+export function openStoredDescriptor(root:string,parts:string[]):number{
+ if(!parts.length||parts.some(p=>!p||p==='.'||p==='..'||p.includes('/')||p.includes('\\')||p.includes('\0')))throw new Error('Invalid descriptor path');
+ if(canCopyByDescriptor()){
+  const L=libc();let fd=L.open(cstr(root),O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);if(fd<0)throw new Error('Stored root cannot be opened safely');
+  try{for(let i=0;i<parts.length;i++){const next=L.openat(fd,cstr(parts[i]),O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC|(i<parts.length-1?O_DIRECTORY:0));if(next<0)throw new Error('Stored component is missing or a link');L.close(fd);fd=next;}const result=fd;fd=-1;return result;}finally{if(fd>=0)L.close(fd);}
+ }
+ // Linux procfs resolves this one held fd, so an ancestor pathname replacement cannot redirect the traversal.
+ if(process.platform==='linux'){
+  const fs=descriptorFs;let fd=fs.openSync(root,fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);
+  try{for(let i=0;i<parts.length;i++){const next=fs.openSync(`/proc/self/fd/${fd}/${parts[i]}`,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK|(i<parts.length-1?fs.constants.O_DIRECTORY:0));fs.closeSync(fd);fd=next;}const result=fd;fd=-1;return result;}finally{if(fd>=0)fs.closeSync(fd);}
+ }
+ throw new Error('Safe package storage currently requires macOS arm64 or Linux procfs');
 }
