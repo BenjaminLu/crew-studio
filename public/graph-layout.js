@@ -34,9 +34,13 @@
     return list.filter((s) => s.nodes.length);
   }
 
+  // A visible edge needs both ends drawn. One whose ends collapse into the same box is dropped,
+  // except a real self-edge in the editable graph (its own node, not a stage).
+  const keepEdge = (a, b, e, opts, has) => has(a) && has(b) && (a !== b || (!!opts.actualGraph && typeof a === "string" && a === e.from && e.from === e.to));
+
   // ---------- the auto layout ----------
   function layout(def, opts = {}) {
-    if (!def.nodes.length) return { def: def.id, nodes: [], edges: [], stages: [], stageList: [], collapsed: [], bbox: { x: 0, y: 0, w: 400, h: 200 }, NW, NH };
+    if (!def.nodes.length) return { def: def.id, nodes: [], edges: [], stages: [], stageList: [], collapsed: [], bbox: { x: 0, y: 0, w: COL * 2, h: ROW * 2 }, NW, NH };
     const stages = stagesFor(def);
     const collapsed = new Set((opts.collapsed || []).filter((c) => stages.some((s) => s.id === c)));
     const stageOfNode = new Map(); stages.forEach((s) => s.nodes.forEach((n) => stageOfNode.set(n, s.id)));
@@ -49,7 +53,7 @@
     const ids = [...vn.keys()];
     // visible edges: the definition's, between visible nodes, duplicates merged
     const ve = [];
-    def.edges.forEach((e, i) => { const a = rep(e.from), b = rep(e.to); if ((a === b && !(opts.actualGraph && typeof a === "string" && a === e.from && e.from === e.to)) || !vn.has(a) || !vn.has(b)) return;
+    def.edges.forEach((e, i) => { const a = rep(e.from), b = rep(e.to); if (!keepEdge(a, b, e, opts, (x) => vn.has(x))) return;
       const same = ve.find((x) => x.from === a && x.to === b);
       if (same) { same.index.push(i); if (e.when) same.whens.push(e.when); same.checks += e.checks?.length || 0; return; }
       ve.push({ from: a, to: b, index: [i], whens: e.when ? [e.when] : [], checks: e.checks?.length || 0 }); });
@@ -425,7 +429,7 @@
     const at = new Map(vis.map((n) => [n.id, n]));
     const mid = (Math.min(...vis.map((n) => n.y)) + Math.max(...vis.map((n) => n.y + n.h))) / 2;
     vis.forEach((n) => { n.row = n.y + n.h / 2 < mid ? -1 : 1; });
-    const ve = []; def.edges.forEach((e, i) => { const a = repOf(e.from), b = repOf(e.to); if (!at.has(a) || !at.has(b) || (a === b && !(opts.actualGraph && typeof a === "string" && a === e.from && e.from === e.to))) return; const same = ve.find((x) => x.from === a && x.to === b); if (same) { same.index.push(i); if (e.when) same.whens.push(e.when); same.checks += e.checks?.length || 0; return; }
+    const ve = []; def.edges.forEach((e, i) => { const a = repOf(e.from), b = repOf(e.to); if (!keepEdge(a, b, e, opts, (x) => at.has(x))) return; const same = ve.find((x) => x.from === a && x.to === b); if (same) { same.index.push(i); if (e.when) same.whens.push(e.when); same.checks += e.checks?.length || 0; return; }
       ve.push({ from: a, to: b, index: [i], whens: e.when ? [e.when] : [], checks: e.checks?.length || 0, back: !(at.get(b).x >= at.get(a).x + NW + 24) }); });
     const boxes = stages.filter((s) => !collapsed.has(s.id)).map((s) => { const mem = vis.filter((n) => n.stage === s.id); if (!mem.length) return null;
       const x0 = Math.min(...mem.map((n) => n.x)) - PAD, y0 = Math.min(...mem.map((n) => n.y)) - PAD - TITLE, x1 = Math.max(...mem.map((n) => n.x + n.w)) + PAD, y1 = Math.max(...mem.map((n) => n.y + n.h)) + PAD;

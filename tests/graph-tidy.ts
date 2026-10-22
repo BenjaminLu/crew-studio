@@ -182,6 +182,7 @@ await section("layout modes", async () => {
   ok(folded.nodes.some((n:any)=>n.kind==="stage"&&n.members.includes("cycle-a")&&n.members.includes("cycle-b")),"collapsed disconnected members retain an explicit expandable stage representation");
   ok(L.layoutSimple({...def,nodes:[],edges:[]},{actualGraph:true}).nodes.length===0,"deleting the last node leaves a truthful empty editor");
   ok([L.layout,L.layoutSimple,L.place].every(fn=>{const g=fn({...def,nodes:[],edges:[]},{actualGraph:true});return g.nodes.length===0&&Object.values(g.bbox).every(Number.isFinite);}),"all empty graph layouts have finite bounds");
+  ok([L.layout,L.layoutSimple,L.place].every(fn=>JSON.stringify(fn({...def,nodes:[],edges:[]},{actualGraph:true}).bbox)===JSON.stringify({x:0,y:0,w:L.COL*2,h:L.ROW*2})),"an empty graph is framed as two layout columns by two rows, from the shared layout constants");
   const fork={...def,nodes:[...def.nodes,{id:"branch",kind:"hook",do:"note",label:"Branch"}],edges:[...def.edges,{from:"start",to:"branch"},{from:"branch",to:"done"}]};
   const forkAfter={...fork,nodes:fork.nodes.filter(n=>n.id!=="middle"),edges:fork.edges.filter(e=>e.from!=="middle"&&e.to!=="middle")};
   const forkView=L.layoutSimple(forkAfter,{actualGraph:true});
