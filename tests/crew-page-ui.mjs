@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { sessionCookie } from "../src/csrf.ts";
 // The Crew page, option C (#/team; docs/design/crew-seats.md) in a real isolated Studio and Chromium, at 1440 and 390:
 //   - one card per workflow with its agent nodes as dots in the member's colour and a badge (Follows team / N custom / Missing)
 //   - the selected workflow's table: member, model, effort, skills (member's grey, node's removable, "+ skill"), source
@@ -44,7 +45,7 @@ const env = { ...process.env, HOME: home, CODEX_HOME: join(home, ".codex"), CREW
   USER: process.env.USER || "fixture-user", LOGNAME: process.env.LOGNAME || "fixture-user", CREW_CODEX_BIN: join(dir, "codex.mjs"), CREW_CLAUDE_BIN: join(root, "tests/fixture/claude-models.mjs"), CREW_DETECT_FORCE_MIN_MS: "0" };
 delete env.CREW_MAIN_PROJECT; delete env.CREW_FM_STATE; delete env.CODEX_API_KEY;
 const app = spawn("bun", ["src/server.ts"], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] }); let browser;
-const api = async () => (await fetch(`${base}/api/team`, { headers: { cookie: `crew_session=${token}` } })).json();
+const api = async () => (await fetch(`${base}/api/team`, { headers: { cookie: sessionCookie(token).split(";")[0] } })).json();
 try {
   await waitUp(base, app); browser = withSession(await chromium.launch(), base, token);
   const view = async (p) => p.evaluate(async () => (await fetch("/api/team")).json());
@@ -249,7 +250,7 @@ try {
   }
 
   // a stale page never overwrites a newer team
-  const r = await fetch(`${base}/api/team/change`, { method: "POST", headers: { "content-type": "application/json", cookie: `crew_session=${token}`, origin: base, "x-crew-csrf": "1" }, body: JSON.stringify({ change: { kind: "preset", preset: "save" }, expected: "0".repeat(64) }) });
+  const r = await fetch(`${base}/api/team/change`, { method: "POST", headers: { "content-type": "application/json", cookie: sessionCookie(token).split(";")[0], origin: base, "x-crew-csrf": "1" }, body: JSON.stringify({ change: { kind: "preset", preset: "save" }, expected: "0".repeat(64) }) });
   ok([403, 409].includes(r.status), "a change from a stale view (or without the page's session) is refused", String(r.status));
 } catch (e) { ok(false, "crew-page-ui threw", e?.stack ?? String(e)); }
 finally { await browser?.close(); if (app.exitCode === null) { const stopped = new Promise((r) => app.once("exit", r)); app.kill("SIGTERM"); await stopped; } rmSync(dir, { recursive: true, force: true }); }

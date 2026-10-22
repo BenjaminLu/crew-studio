@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { sessionCookie } from "../src/csrf.ts";
 import { checkedTempDir } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // Agent skills (docs/units/agent-skills.md): a skill library in Studio's versioned
 // skill store, imports from a folder, a skills home or a public https git URL, an
@@ -169,7 +170,7 @@ let appLog = ""; app.stdout!.on("data", (d) => (appLog += d)); app.stderr!.on("d
 try {
   await waitUp(base, app);
   const get = async (p: string) => { const r = await fetch(base + p, { headers: { "x-crew-session": TOKEN } }); try { return await r.json(); } catch { return { status: r.status }; } };
-  const imp = async (body: any, headers: Record<string, string> = { cookie: `crew_session=${TOKEN}`, origin: base }) => {
+  const imp = async (body: any, headers: Record<string, string> = { cookie: sessionCookie(TOKEN).split(";")[0], origin: base }) => {
     const r = await fetch(`${base}/api/skills/import`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
     let j: any = {}; try { j = await r.json(); } catch {} return { status: r.status, ...j };
   };
@@ -212,10 +213,10 @@ try {
     ok(rs.every((r) => r.status === 400 && /credentials/.test(r.error ?? "") && !JSON.stringify(r).includes("SECRETVALUE")) && hits === 0 && await unchanged(), "import refuses a git URL that carries credentials, and never echoes them", JSON.stringify(rs)); }
   lis.close();
   { const d = mk(join(tmp, "sess"), { "SKILL.md": skillMd("sess", "s", "ok") });
-    const rs = [await imp({ kind: "folder", path: d }, { origin: base }), await imp({ kind: "folder", path: d }, { origin: base, "x-crew-session": TOKEN }), await imp({ kind: "folder", path: d }, { cookie: `crew_session=wrong`, origin: base })];
+    const rs = [await imp({ kind: "folder", path: d }, { origin: base }), await imp({ kind: "folder", path: d }, { origin: base, "x-crew-session": TOKEN }), await imp({ kind: "folder", path: d }, { cookie: sessionCookie("wrong").split(";")[0], origin: base })];
     ok(rs.every((r) => r.status === 403 && /session/.test(r.error ?? "")) && await unchanged(), "import refuses a request without a session (no cookie, a script header, a wrong cookie)", JSON.stringify(rs)); }
   { const d = mk(join(tmp, "orig"), { "SKILL.md": skillMd("orig", "o", "ok") });
-    const rs = [await imp({ kind: "folder", path: d }, { cookie: `crew_session=${TOKEN}`, origin: "http://evil.example" }), await imp({ kind: "folder", path: d }, { cookie: `crew_session=${TOKEN}` })];
+    const rs = [await imp({ kind: "folder", path: d }, { cookie: sessionCookie(TOKEN).split(";")[0], origin: "http://evil.example" }), await imp({ kind: "folder", path: d }, { cookie: sessionCookie(TOKEN).split(";")[0] })];
     ok(rs[0].status === 403 && /another site/.test(rs[0].error ?? "") && rs[1].status === 403 && /Origin/.test(rs[1].error ?? "") && await unchanged(), "import refuses a foreign Origin (and a request with no Origin)", JSON.stringify(rs)); }
   { const r = await imp({ kind: "home", home: "claude", name: "../../outside-secret" });
     ok(r.status === 400 && await unchanged(), "a skills home pick is one folder name inside the home", JSON.stringify(r)); }

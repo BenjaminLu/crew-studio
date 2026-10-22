@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { sessionCookie } from "../src/csrf.ts";
 // Script skills on the Crew page (#/team; docs/units/skill-packages.md §9) in a real isolated Studio and Chromium, en at 1440
 // and 繁體中文 at 390: each script skill chip carries its readiness (ready, not ready with the missing program, not approved,
 // text only), its full line in the title; adding an undecided script skill shows its scripts and hosts and asks once
@@ -36,7 +37,7 @@ const app = spawn("bun", ["src/server.ts"], { cwd: root, env, stdio: ["ignore", 
 try {
   await waitUp(base, app); browser = withSession(await chromium.launch(), base, token);
   // Studio prepares the approved versions by itself at start: wait until the page's view says so
-  const api = async () => (await fetch(`${base}/api/team`, { headers: { cookie: `crew_session=${token}` } })).json();
+  const api = async () => (await fetch(`${base}/api/team`, { headers: { cookie: sessionCookie(token).split(";")[0] } })).json();
   for (let i = 0; i < 100; i++) { const v = await api(); if (v.skillStatus?.["ok-skill@v1"]?.state === "ready" && v.skillStatus?.["miss-skill@v1"]?.state === "not-ready") break; await new Promise((r) => setTimeout(r, 100)); }
   for (const [lang, width, height] of [["en", 1440, 940], ["zh-TW", 390, 844]]) {
     const tag = `${lang} ${width}`, zh = lang !== "en";

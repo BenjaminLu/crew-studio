@@ -1,4 +1,5 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+import { sessionCookie } from "../src/csrf.ts";
 // The captain's operating rules reach every model job Studio starts (captain request 2026-10-16).
 // One Studio-wide text and one per registered project, kept in Studio's policy store
 // (data/policies/org.yaml, data/policies/project-<id>.yaml), set only by the captain's page.
@@ -327,20 +328,20 @@ const sectionOf = (s: string) => { const i = s.indexOf(OPERATING_RULES_HEADING);
   let appLog = ""; app.stdout!.on("data", (d) => (appLog += d)); app.stderr!.on("data", (d) => (appLog += d));
   try {
     await waitUp(base, app);
-    const page = { cookie: `crew_session=${TOKEN}`, origin: base, "sec-fetch-site": "same-origin" };
+    const page = { cookie: sessionCookie(TOKEN).split(";")[0], origin: base, "sec-fetch-site": "same-origin" };
     const call = async (method: string, p: string, body: any, headers: Record<string, string>) => { const r = await fetch(base + p, { method, headers: { "content-type": "application/json", ...headers }, body: method === "GET" ? undefined : JSON.stringify(body) }); let j: any = {}; try { j = await r.json(); } catch {} return { status: r.status, ...j }; };
-    const view = await call("GET", "/api/operating-rules", null, { cookie: `crew_session=${TOKEN}` });
+    const view = await call("GET", "/api/operating-rules", null, { cookie: sessionCookie(TOKEN).split(";")[0] });
     ok(view.status === 200 && view.studio?.text === DEFAULT_OPERATING_RULES && view.studio?.by === "studio-default" && view.projects?.some((p: any) => p.id === "sandbox"),
       "first run: the Studio-wide default is seeded and the built-in sandbox project is listed", JSON.stringify(view).slice(0, 300));
     ok(existsSync(join(data, "policies", "org.yaml")) && /operating_rules/.test(readFileSync(join(data, "policies", "org.yaml"), "utf8")), "the rules live in Studio's data dir (policies/org.yaml), not in a repository");
     const script = await call("POST", "/api/operating-rules", { text: "SCRIPT" }, { "x-crew-session": TOKEN });
-    const noOrigin = await call("POST", "/api/operating-rules", { text: "NO-ORIGIN" }, { cookie: `crew_session=${TOKEN}` });
-    const cross = await call("POST", "/api/operating-rules", { text: "CROSS" }, { cookie: `crew_session=${TOKEN}`, origin: "http://evil.example", "sec-fetch-site": "cross-site" });
+    const noOrigin = await call("POST", "/api/operating-rules", { text: "NO-ORIGIN" }, { cookie: sessionCookie(TOKEN).split(";")[0] });
+    const cross = await call("POST", "/api/operating-rules", { text: "CROSS" }, { cookie: sessionCookie(TOKEN).split(";")[0], origin: "http://evil.example", "sec-fetch-site": "cross-site" });
     const policy = await call("POST", "/api/policies", { level: "org", patch: { operating_rules: { text: "POLICY-API" } } }, page);
     const policyProj = await call("POST", "/api/policies", { level: "project", project: "sandbox", patch: { operating_rules: { text: "POLICY-API" } } }, page);
     const pc = await call("POST", "/api/remote/pair/start", {}, page); const pr = await call("POST", "/api/remote/pair", { code: pc.code, name: "test-phone" }, { origin: base });
     const phone = await call("POST", "/api/operating-rules", { text: "PHONE" }, { authorization: `Bearer ${pr.token}` });
-    const after = await call("GET", "/api/operating-rules", null, { cookie: `crew_session=${TOKEN}` });
+    const after = await call("GET", "/api/operating-rules", null, { cookie: sessionCookie(TOKEN).split(";")[0] });
     ok(script.status === 403 && script.code === "captainOnly" && noOrigin.status === 403 && cross.status === 403 && policy.status === 403 && policyProj.status === 403 && !!pr.token && phone.status === 403
       && after.studio.text === DEFAULT_OPERATING_RULES && !(after.projects.find((p: any) => p.id === "sandbox")?.text),
       "a script (x-crew-session), a request without the page's origin, a cross-site request, the policy API and a paired phone cannot write the rules", JSON.stringify([script.status, noOrigin.status, cross.status, policy.status, policyProj.status, !!pr.token, phone.status]));
@@ -353,14 +354,14 @@ const sectionOf = (s: string) => { const i = s.indexOf(OPERATING_RULES_HEADING);
     const proto = '{"level":"project","project":"sandbox","patch":{"__proto__":{"operating_rules":{"text":"INJECTED"}}}}';
     const raw = async (headers: Record<string, string>) => (await fetch(`${base}/api/policies`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: proto })).status;
     const protoScript = await raw({ "x-crew-session": TOKEN }), protoPhone = await raw({ authorization: `Bearer ${pr.token}` }), protoPage = await raw(page);
-    const afterProto = await call("GET", "/api/operating-rules", null, { cookie: `crew_session=${TOKEN}` });
+    const afterProto = await call("GET", "/api/operating-rules", null, { cookie: sessionCookie(TOKEN).split(";")[0] });
     const fresh = await call("POST", "/api/operating-rules", { project: "nope-2", text: "x" }, page); // a project with no policy file must not inherit anything either
     ok(protoScript === 403 && protoPhone === 403 && protoPage === 403 && afterProto.projects.find((p: any) => p.id === "sandbox")?.text === "SANDBOX-RULE: leave port 4210 alone" && !JSON.stringify(afterProto).includes("INJECTED") && fresh.status === 404,
       "a __proto__ policy patch is refused from a script, a phone and the page, and nothing reads INJECTED", JSON.stringify([protoScript, protoPhone, protoPage]));
     const garbage = "operating_rules: [unclosed\n  : : :\n"; writeFileSync(join(data, "policies", "org.yaml"), garbage);
-    const unread = await call("GET", "/api/operating-rules", null, { cookie: `crew_session=${TOKEN}` });
+    const unread = await call("GET", "/api/operating-rules", null, { cookie: sessionCookie(TOKEN).split(";")[0] });
     const write = await call("POST", "/api/operating-rules", { text: "OVERWRITE" }, page);
-    const doc = await call("GET", "/api/doctor", null, { cookie: `crew_session=${TOKEN}` });
+    const doc = await call("GET", "/api/doctor", null, { cookie: sessionCookie(TOKEN).split(";")[0] });
     const item = (doc.items ?? []).find((i: any) => i.id === "operating-rules");
     const polWrite = await call("POST", "/api/policies", { level: "org", patch: { round_cap: 4 } }, page);
     ok(polWrite.status === 409 && polWrite.code === "policyUnreadable" && readFileSync(join(data, "policies", "org.yaml"), "utf8") === garbage, "the policy API refuses to replace an unreadable org.yaml (409 policyUnreadable)", JSON.stringify(polWrite));
