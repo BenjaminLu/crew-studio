@@ -48,19 +48,22 @@ for(const width of[320,390,1440])for(const lang of['en','zh-TW'])for(const theme
   await p.locator('[data-view-toggle="detail"]').click();await p.locator('[data-add="hook"]').click();ok(await p.locator('[data-node="hook"]').count()===1,`captain adds a real hook node ${tag}`);
   await connectNode('hook','done');await connectNode('start','hook','continue');ok(await p.locator('[data-edge]').count()===2,`captain connects the new step through original controls ${tag}`);
   await connectNode('hook','start');await closeInspector();await p.locator('[data-edge="hook→start"] [data-edge-hit]').click();ok(await p.locator('[data-del-edge="hook→start"]').isVisible(),`native pointer selects a back connection ${tag}`);await p.locator('[data-del-edge="hook→start"]').click();ok(await p.locator('[data-edge="hook→done"]').count()===1&&await p.locator('[data-edge="hook→start"]').count()===0,`deleting back connection preserves neighboring edge ${tag}`);
+  let panDetails;
   const panConnection=async()=>{
    // Native actionability scrolls the real connection into view before sampling
    // SVG coordinates; a raw offscreen midpoint cannot start a pointer gesture.
    await p.locator('[data-edge="start→hook[continue]"] [data-edge-hit]').hover();
-   await p.evaluate(()=>{delete window.fixturePanDown;document.addEventListener('pointerdown',e=>{window.fixturePanDown={node:e.target.closest?.('[data-node]')?.dataset.node||null,edge:e.target.closest?.('[data-edge]')?.dataset.edge||null};},{once:true,capture:true});});
+   await p.evaluate(()=>{window.fixturePanCleanup?.();delete window.fixturePanDown;window.fixturePanOwner=document.querySelector('[data-graph]');window.fixturePanEvents=[];const types=['pointerdown','pointermove','pointerup','gotpointercapture','lostpointercapture','click'];const record=e=>{const owner=window.fixturePanOwner,current=document.querySelector('[data-graph]'),entry={type:e.type,target:e.target.tagName,edge:e.target.closest?.('[data-edge]')?.dataset.edge||null,node:e.target.closest?.('[data-node]')?.dataset.node||null,x:e.clientX,y:e.clientY,ownerSame:owner===current,ownerConnected:owner?.isConnected??false,active:!!owner?.interactionActive,viewBox:owner?.getAttribute('viewBox')??null};if(e.type==='pointerdown')window.fixturePanDown={...entry,pointerId:e.pointerId};window.fixturePanEvents.push(entry);if(window.fixturePanEvents.length>24)window.fixturePanEvents.shift();};for(const type of types)document.addEventListener(type,record,true);window.fixturePanCleanup=()=>{for(const type of types)document.removeEventListener(type,record,true);};});
    const point=await p.locator('[data-edge="start→hook[continue]"] .rt-hit').evaluate(path=>{const at=path.getPointAtLength(path.getTotalLength()/2),point=path.ownerSVGElement.createSVGPoint();point.x=at.x;point.y=at.y;const client=point.matrixTransform(path.getScreenCTM());return{x:client.x,y:client.y};}),before=await p.locator('[data-graph]').getAttribute('viewBox');
-   await p.mouse.move(point.x,point.y);await p.mouse.down();await p.mouse.move(point.x+24,point.y+12,{steps:4});await p.mouse.up();
-   return await p.evaluate(()=>window.fixturePanDown?.edge==='start→hook[continue]'&&!window.fixturePanDown?.node)&&await p.locator('[data-graph]').getAttribute('viewBox')!==before&&await p.locator('[data-edge]').count()===2&&!await p.locator('[data-del-edge]').isVisible();
+   await p.mouse.move(point.x,point.y);await p.mouse.down();const held=await p.evaluate(()=>{const owner=window.fixturePanOwner;return{ownerSame:owner===document.querySelector('[data-graph]'),connected:owner?.isConnected??false,active:!!owner?.interactionActive,captured:owner?.hasPointerCapture(window.fixturePanDown?.pointerId??-1)??false};});await p.mouse.move(point.x+24,point.y+12,{steps:4});await p.mouse.up();
+   const state=await p.evaluate(()=>{const owner=window.fixturePanOwner;window.fixturePanCleanup?.();return{down:window.fixturePanDown,events:window.fixturePanEvents,ownerSame:owner===document.querySelector('[data-graph]'),ownerConnected:owner?.isConnected??false};}),after=await p.locator('[data-graph]').getAttribute('viewBox'),edges=await p.locator('[data-edge]').count(),inspector=await p.locator('[data-del-edge]').isVisible();
+   panDetails={point,before,after,edges,inspector,held,...state};
+   return state.down?.edge==='start→hook[continue]'&&!state.down?.node&&after!==before&&edges===2&&!inspector;
   };
-  ok(await panConnection(),`dragging a connection still pans without selecting or deleting it ${tag}`);
+  ok(await panConnection(),`dragging a connection still pans without selecting or deleting it ${tag}`,JSON.stringify(panDetails));
   if(width===1440&&lang==='en'&&theme==='light'&&side==='open'){
    await p.setViewportSize({width,height:500});
-   ok(await panConnection(),'native connection pan remains reachable after a shorter viewport scroll');
+   ok(await panConnection(),'native connection pan remains reachable after a shorter viewport scroll',JSON.stringify(panDetails));
    await p.setViewportSize({width,height:900});
   }
   await p.locator('[data-edge="start→hook[continue]"] [data-edge-hit]').click();await p.keyboard.press('Delete');ok(await p.locator('[data-edge]').count()===1&&await p.locator('[data-edge="hook→done"]').count()===1,`pointer selection immediately supports keyboard Delete without manual focus ${tag}`);ok(await p.locator(".rt-panel").isHidden()&&await p.locator("[data-del-edge]").count()===0,`keyboard deletion clears the old connection inspector ${tag}`);await connectNode('start','hook','continue');await closeInspector();
