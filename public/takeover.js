@@ -103,6 +103,16 @@ async function switchToClaude(){
   async(close,btn)=>{btn.disabled=true;const r=await postJ("/api/main/switch",{to:"claude",confirm:true,locale:lang}).catch(()=>null);close();if(!r?.ok){if(r?.code?.startsWith("claude")){CLAUDE.refused=r;void claudeRefresh();}await loadMain();render();return toast(r?T(r.en||r.reason||r.error,r.zh||r.reason||r.error):T("Switch failed; check Firstmate.","切換失敗，請確認 Firstmate。"));}CLAUDE.refused=null;await openNativeConversation();loadTakeover();});
  const ok=document.querySelector("#modalRoot .modal .btn.primary");if(ok){ok.textContent=T("Switch to Claude","換成 Claude");ok.setAttribute("data-claude-switch-confirm","1");}
 }
+// The chat panel offers whichever primary host is ready; each button starts only that host.
+window.crewHostReady=()=>{if(!CLAUDE.loaded&&!CLAUDE.loading)void claudeRefresh();if(!CURSOR.loaded&&!CURSOR.loading)void cursorRefresh();if(!ACCOUNT.view&&!ACCOUNT.loading){ACCOUNT.loading=true;refreshAccount().finally(()=>{ACCOUNT.loading=false;});}return{codex:ACCOUNT.view?.state==="ready",claude:claudeReady(),cursor:cursorReady(),starting:ACCOUNT.starting};};
+window.crewStartFirstmate=host=>MS.view?.context==="studio"?continueNative({project:MS.view.project},host):null;
+window.crewClaudeAccountPanel=claudeAccountPanel;window.crewConnectClaude=()=>claudeAction("login");
+// a reconnect may have missed live events (a sign-in finished or was cancelled meanwhile): read the state again.
+// Before the first read lands there is nothing stale; that read already covers it.
+addEventListener("crew:live",()=>{if(CLAUDE.loaded)void claudeRefresh();});
+window.liveListen("claude-account",m=>claudeChanged(JSON.parse(m.data)));
+window.crewCodexAccountPanel=accountPanel;window.crewConnectCodex=()=>accountAction("login");
+window.liveListen("codex-account",m=>accountChanged(JSON.parse(m.data),"live"));
 // Cursor: the CLI on disk and whether the crew's Cursor API key is present (the key itself is never read here or shown);
 // `ready` is the server's dry start check in Studio's own workspace. Neither makes a model request.
 const CURSOR={view:null,ready:null,refused:null,loading:false,loaded:false,read:0};
@@ -136,16 +146,6 @@ function cursorConnect(){modal(T("Add a Cursor API key","加入 Cursor API key")
 window.crewCursorAccountPanel=cursorAccountPanel;window.crewConnectCursor=cursorConnect;
 window.liveListen("cursor-account",m=>{CURSOR.view=JSON.parse(m.data);void cursorRefresh();});
 addEventListener("crew:live",()=>{if(CURSOR.loaded)void cursorRefresh();});
-// The chat panel offers whichever primary host is ready; each button starts only that host.
-window.crewHostReady=()=>{if(!CLAUDE.loaded&&!CLAUDE.loading)void claudeRefresh();if(!CURSOR.loaded&&!CURSOR.loading)void cursorRefresh();if(!ACCOUNT.view&&!ACCOUNT.loading){ACCOUNT.loading=true;refreshAccount().finally(()=>{ACCOUNT.loading=false;});}return{codex:ACCOUNT.view?.state==="ready",claude:claudeReady(),cursor:cursorReady(),starting:ACCOUNT.starting};};
-window.crewStartFirstmate=host=>MS.view?.context==="studio"?continueNative({project:MS.view.project},host):null;
-window.crewClaudeAccountPanel=claudeAccountPanel;window.crewConnectClaude=()=>claudeAction("login");
-// a reconnect may have missed live events (a sign-in finished or was cancelled meanwhile): read the state again.
-// Before the first read lands there is nothing stale; that read already covers it.
-addEventListener("crew:live",()=>{if(CLAUDE.loaded)void claudeRefresh();});
-window.liveListen("claude-account",m=>claudeChanged(JSON.parse(m.data)));
-window.crewCodexAccountPanel=accountPanel;window.crewConnectCodex=()=>accountAction("login");
-window.liveListen("codex-account",m=>accountChanged(JSON.parse(m.data),"live"));
 
 
 window.crewFirstmateWelcome=()=>{

@@ -55,10 +55,7 @@ export const INSTALLERS: Record<string, Record<string, Method[]>> = {
         location: "npm's global folder", needs: ["npm"], admin: false },
       { id: "brew", label: "Homebrew", argv: ["brew", "install", "--cask", "codex"], source: "https://formulae.brew.sh/cask/codex", location: "Homebrew's prefix", needs: ["brew"], admin: false },
     ],
-    cursor: [
-      { id: "native", label: "Official installer (no admin rights)", argv: ["/bin/bash", "-c", "curl https://cursor.com/install -fsS | bash"],
-        source: "https://cursor.com/install — documented at https://docs.cursor.com/en/cli/installation", location: "~/.local/bin/cursor-agent", needs: ["curl"], admin: false },
-    ],
+    cursor: [{ id: "download", label: "Official install page", argv: [], kind: "open", url: "https://cursor.com/docs/cli/installation", source: "https://cursor.com/docs/cli/installation", location: "~/.local/bin/cursor-agent (you install it)", needs: [], admin: false }],
     tailscale: [
       { id: "brew", label: "Homebrew cask (macOS may ask for your password)", argv: ["brew", "install", "--cask", "tailscale"], source: "https://formulae.brew.sh/cask/tailscale",
         location: "/Applications/Tailscale.app", needs: ["brew"], admin: true },
@@ -83,8 +80,7 @@ export const INSTALLERS: Record<string, Record<string, Method[]>> = {
     claude: [{ id: "native", label: "Official installer (no admin rights)", argv: ["/bin/bash", "-c", "curl -fsSL https://claude.ai/install.sh | bash"],
       source: "https://claude.ai/install.sh", location: "~/.local/bin/claude", needs: ["curl"], admin: false }],
     codex: [{ id: "npm", label: "npm (official package)", argv: ["npm", "install", "-g", "@openai/codex"], source: "https://www.npmjs.com/package/@openai/codex", location: "npm's global folder", needs: ["npm"], admin: false }],
-    cursor: [{ id: "native", label: "Official installer (no admin rights)", argv: ["/bin/bash", "-c", "curl https://cursor.com/install -fsS | bash"],
-      source: "https://cursor.com/install", location: "~/.local/bin/cursor-agent", needs: ["curl"], admin: false }],
+    cursor: [{ id: "download", label: "Official install page", argv: [], kind: "open", url: "https://cursor.com/docs/cli/installation", source: "https://cursor.com/docs/cli/installation", location: "~/.local/bin/cursor-agent (you install it)", needs: [], admin: false }],
     tailscale: [{ id: "download", label: "Official download page", argv: [], kind: "open", url: "https://tailscale.com/download/linux", source: "https://tailscale.com/download/linux", location: "system packages (you install it)", needs: [], admin: true }],
     ffmpeg: [{ id: "download", label: "Official download page", argv: [], kind: "open", url: "https://ffmpeg.org/download.html#build-linux", source: "https://ffmpeg.org/download.html", location: "system packages (you install it)", needs: [], admin: true }],
     node: [{ id: "download", label: "Official download page", argv: [], kind: "open", url: "https://nodejs.org/en/download", source: "https://nodejs.org/en/download", location: "you choose", needs: [], admin: true }],

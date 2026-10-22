@@ -66,6 +66,17 @@ console.log("secrets, attachments, processes");
   ok(/^cursor-agent process 4242/.test(driving({ list: () => [{ pid: 4242, command: "cursor-agent --resume chat-123456", cwd: null }] }, { host: "cursor", id: "chat-123456", cwd: "/x", file: null, newestInDir: false }, new Set()) ?? ""), "a terminal's cursor-agent on the same chat is named as cursor-agent");
 }
 
+console.log("the Crew page's model list");
+{
+  const { crewModels } = await import("../src/crew-routes");
+  const team: any = { members: {}, workflows: {}, projects: {} };
+  const codex = { provider: "codex", models: [{ id: "gpt-x", efforts: ["low"] }], auth: "verified" } as any, cursor = { provider: "cursor", models: [{ id: "composer-2.5", efforts: [] }], auth: "verified" } as any;
+  ok(crewModels([codex], team).providers.map((p: any) => p.provider).join() === "codex,claude", "a crew Studio never read Cursor for lists Codex and Claude only");
+  const both = crewModels([codex, cursor], team);
+  ok(both.providers.map((p: any) => p.provider).join() === "codex,claude,cursor" && both.models.some((m: any) => m.provider === "cursor" && m.model === "composer-2.5" && m.efforts.length === 0), "once Cursor is read, its models are listed without effort levels");
+  ok(crewModels([codex], { ...team, members: { maker: { provider: "cursor", model: "composer-2.5", effort: null, skills: [] } } }).providers.some((p: any) => p.provider === "cursor"), "a team member on Cursor keeps Cursor listed");
+}
+
 console.log("the host: fresh only");
 {
   const host = cursorHost(FIXTURE);
