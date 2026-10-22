@@ -71,11 +71,16 @@ try {
       for(let remaining=20;remaining && await p.locator('svg [data-stage-node]').count();remaining--) { const stage=p.locator('svg [data-stage-node]').first();await stage.focus();await stage.press("Enter"); }
       if(await p.locator('.rt-panel:not([hidden])').count())await p.locator('[data-inspector-close]').click();
       const identity=await p.evaluate(()=>{const g=document.querySelector('svg.rt-graph');return{nodes:g.lay.nodes.map(n=>n.id).sort(),edges:g.lay.edges.flatMap(e=>e.index).sort((a,b)=>a-b)};});
-      const owner=await p.locator('svg.rt-graph').elementHandle(), bounds=await p.locator('svg.rt-graph').boundingBox();
-      await p.mouse.move(bounds.x+4,Math.max(100,bounds.y+10));await p.mouse.down();await p.mouse.move(bounds.x+12,Math.max(100,bounds.y+10));
-      ok(await owner.evaluate(el=>el.interactionActive===true),`resized all-expanded ${theme}: native pan owns the graph`);
+      // Native actionability establishes a visible hit target; validation may
+      // replace the SVG before pointerdown, so inspect the actual gesture owner.
+      const panTarget=p.locator('svg [data-edge="remote-ready→merge-card[ok]"] [data-edge-hit]');
+      await panTarget.hover();const bounds=await panTarget.boundingBox();
+      await p.evaluate(()=>{window.fixtureResizeOwner=null;window.fixtureResizeOnNode=false;document.addEventListener('pointerdown',event=>{window.fixtureResizeOwner=event.target.closest?.('svg.rt-graph')||null;window.fixtureResizeOnNode=!!event.target.closest?.('[data-node]');},{once:true,capture:true});});
+      await p.mouse.move(bounds.x+bounds.width/2,bounds.y+bounds.height/2);await p.mouse.down();await p.mouse.move(bounds.x+bounds.width/2+8,bounds.y+bounds.height/2);
+      const owner=await p.evaluateHandle(()=>window.fixtureResizeOwner);
+      ok(await owner.evaluate(el=>!!el&&el.interactionActive===true&&!window.fixtureResizeOnNode),`resized all-expanded ${theme}: native pan owns the graph`);
       await p.setViewportSize({width:390,height:1000});await p.waitForTimeout(300);
-      ok(await owner.evaluate(el=>el.isConnected&&el.interactionActive===true),`resized all-expanded ${theme}: resize defers projection while pointer is captured`);
+      ok(await owner.evaluate(el=>!!el&&el.isConnected&&el.interactionActive===true),`resized all-expanded ${theme}: resize defers projection while pointer is captured`);
       await p.mouse.up();await p.waitForTimeout(300);
       // Check before any inspector/menu action could incidentally redraw the graph.
       const beforeFitFont=await p.evaluate(()=>{const g=document.querySelector('svg.rt-graph');return Math.min(...[...g.querySelectorAll('[data-node] .rt-label')].map(t=>parseFloat(getComputedStyle(t).fontSize)*g.getScreenCTM().a));});
