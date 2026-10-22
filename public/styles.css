@@ -14,7 +14,7 @@
   --shadow-1:0 1px 2px rgba(16,24,40,.06); --shadow-2:0 8px 24px rgba(16,24,40,.12),0 2px 6px rgba(16,24,40,.06);
   --scrim:rgba(16,20,28,.42);
   --f-sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif; --f-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
-  --chat-w:460px;
+  --chat-w:400px;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#0f1116; --surface:#161920; --surface-2:#1c2029; --surface-3:#242a35;
@@ -286,7 +286,7 @@ pre.json{margin:0;background:var(--surface-2);border:1px solid var(--border);bor
 /* chat panel */
 .chat{position:relative;width:var(--chat-w);background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;min-height:0;height:100%}
 body.chat-closed .chat{display:none}
-body.chat-wide{--chat-w:min(960px,calc(100vw - 420px))}
+@media(min-width:1101px){body.chat-wide .chat{width:min(680px,calc(100vw - 712px));min-width:360px}}
 .grip{position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:col-resize;z-index:3;touch-action:none}
 .grip::after{content:"";position:absolute;left:3px;top:50%;height:40px;margin-top:-20px;width:2px;border-radius:2px;background:var(--border-strong);opacity:0;transition:opacity .15s}
 .grip:hover::after,.grip.drag::after{opacity:1}
@@ -611,3 +611,13 @@ pre.code{margin:0;padding:12px 14px;font:12px/1.6 var(--f-mono);color:var(--text
 body.chat-closed .main{padding-bottom:120px}
 
 .cc-interview{display:grid;gap:16px;min-width:0}.cc-interview-field{display:grid;gap:6px;min-width:0}.cc-interview-field label{font-weight:600;overflow-wrap:anywhere}.cc-interview-field textarea{box-sizing:border-box;width:100%;min-height:80px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;font:inherit;resize:vertical}.cc-interview-field textarea[aria-invalid=true]{border-color:var(--bad)}.cc-field-error{color:var(--bad);font-size:13px;min-height:1em}
+
+/* Keep the workspace readable even when the chat was widened on a larger display. */
+@media (min-width:1101px){.chat{max-width:max(360px,calc(100vw - 712px))}.nav{min-height:0;overflow-y:auto;flex:0 1 auto}.side-foot{flex-shrink:0}.nav-proj{min-height:44px;flex-shrink:0;max-height:24vh}.nav-proj-list{max-height:16vh}}
+.tool-group{border:1px solid var(--border);border-radius:6px;font-size:12.5px;margin:4px 0;background:var(--surface-2)}
+.tool-group>summary{cursor:pointer;padding:8px;display:list-item;line-height:1.5;color:var(--text-2)}
+.tool-group-last{display:block;padding-left:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tool-group-items{padding:4px 8px;border-top:1px solid var(--border);background:var(--surface)}
+.chat .bub{line-height:1.65;overflow-wrap:anywhere}
+
+@media(min-width:761px){.nav{min-height:0;min-width:0;overflow-y:auto;overflow-x:hidden;flex:0 1 auto}.nav-labs,.nav-labs-body{min-width:0;max-width:100%}.nav-item{flex-shrink:0}.nav-item .nl{min-width:0;overflow:hidden;text-overflow:ellipsis}.side-foot{flex-shrink:0}.nav-proj{min-height:44px;flex-shrink:0;max-height:24vh}.nav-proj-list{max-height:16vh}}

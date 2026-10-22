@@ -160,9 +160,16 @@ function openChat(open) {
   if (!isPhone()) store.set("crew.chatOpen", open ? "1" : "0");
   if (open) { renderChat(); setTimeout(() => $("#chatIn")?.focus({ preventScroll: true }), 0); }
 }
-function setChatW(w) { const v = Math.max(360, Math.min(820, Math.round(w))); document.documentElement.style.setProperty("--chat-w", v + "px"); store.set("crew.chatW", String(v)); }
+function setChatW(w, persist = true) {
+  const side = $(".side")?.getBoundingClientRect().width || 232;
+  const max = Math.max(360, Math.min(680, innerWidth - side - 480));
+  const v = Math.max(360, Math.min(max, Number.isFinite(w) ? Math.round(w) : 400));
+  document.documentElement.style.setProperty("--chat-w", v + "px");
+  $("#chatGrip")?.setAttribute("aria-valuenow", String(v));
+  if (persist) store.set("crew.chatW", String(v));
+}
 (function initChat() {
-  const w = Number(store.get("crew.chatW", "460")); if (w) setChatW(w);
+  const w = Number(store.get("crew.chatW", "400")); if (w) setChatW(w);
   if (!isPhone() && store.get("crew.chatOpen", "1") === "1") document.body.classList.remove("chat-closed");
   $("#chatFab").addEventListener("click", () => openChat(true));
   $("#chatClose").addEventListener("click", () => openChat(false));
@@ -172,14 +179,17 @@ function setChatW(w) { const v = Math.max(360, Math.min(820, Math.round(w))); do
   const autosize = () => { const t = $("#chatIn"); t.style.height = "auto"; t.style.height = Math.min(160, t.scrollHeight) + "px"; };
   $("#chatIn").addEventListener("input", autosize);
   $("#chatIn").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("#chatForm").requestSubmit(); } });
+  addEventListener("resize", () => { if (!isPhone()) setChatW(Number(store.get("crew.chatW", "400")), false); });
   const grip = $("#chatGrip");
   grip.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    document.body.classList.remove("chat-wide");
     grip.setPointerCapture(e.pointerId); grip.classList.add("drag");
     const move = (ev) => setChatW(innerWidth - ev.clientX);
-    const up = () => { grip.classList.remove("drag"); grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up); };
-    grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up);
+    const up = () => { grip.classList.remove("drag"); grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up); grip.removeEventListener("pointercancel", up); grip.removeEventListener("lostpointercapture", up); };
+    grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up); grip.addEventListener("pointercancel", up); grip.addEventListener("lostpointercapture", up);
   });
-  grip.addEventListener("keydown", (e) => { const cur = $("#chat").offsetWidth; if (e.key === "ArrowLeft") setChatW(cur + 20); if (e.key === "ArrowRight") setChatW(cur - 20); });
+  grip.addEventListener("keydown", (e) => { const cur = $("#chat").offsetWidth; if (["ArrowLeft", "ArrowRight"].includes(e.key)) { e.preventDefault(); document.body.classList.remove("chat-wide"); } if (e.key === "ArrowLeft") setChatW(cur + 20); if (e.key === "ArrowRight") setChatW(cur - 20); });
   // a citation inside the chat closes the sheet on a phone so the page it opens is visible
   $("#chatLog").addEventListener("click", (e) => { const a = e.target.closest("a.cite"); if (a && a.getAttribute("href").startsWith("#/") && isPhone()) openChat(false); });
   renderChat();

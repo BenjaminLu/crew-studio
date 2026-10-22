@@ -35,14 +35,25 @@ const item = (view, ic, en, tw) => {
   else { b.dataset.tip = T(en, tw); const nl = b.querySelector(".nl"); if (nl) nl.textContent = T(en, tw); }
   b.dataset.backbone = "1"; return b;
 };
-const labsGroup = h("div", { class: "nav-labs", "data-labs": "1", hidden: true }, h("div", { class: "nav-labs-h" }, T("Labs", "實驗中")));
+const labsBody = h("div", { id: "navLabsBody", class: "nav-labs-body" });
+const labsToggle = h("button", { type: "button", class: "nav-labs-h", "aria-controls": "navLabsBody", onclick: () => {
+  store.set("crew.labsExpanded", labsToggle.getAttribute("aria-expanded") === "true" ? "0" : "1"); showLabs(false);
+} }, T("Labs", "實驗中"));
+const labsGroup = h("div", { class: "nav-labs", "data-labs": "1", hidden: true }, labsToggle, labsBody);
+function showLabs(deepLink = true) {
+  const active = LABS.has(S.route?.name);
+  // Opening a deep link reveals its navigation, but never enables the Labs feature flag.
+  labsGroup.hidden = !labsOn() && !active;
+  const expanded = (deepLink && active) || store.get("crew.labsExpanded") === "1";
+  labsToggle.setAttribute("aria-expanded", String(expanded)); labsBody.hidden = !expanded;
+}
 const gear = h("button", { class: "btn ghost icon side-gear", id: "navSettings", "data-view": "settings", onclick: () => { location.hash = "#/settings"; } }, icon("tool"));
 function arrange() {
   const keep = BACKBONE.map(([v, ic, en, tw]) => item(v, ic, en, tw));
   const others = [...nav.querySelectorAll(".nav-item")].filter((b) => !b.dataset.backbone);
   nav.replaceChildren(...keep, labsGroup);
-  for (const b of others) { if (["activity", "intents", "workflow", "doctor"].includes(b.dataset.view)) { b.hidden = true; labsGroup.after(b); continue; } b.dataset.lab = "1"; labsGroup.append(b); }
-  labsGroup.hidden = !labsOn();
+  for (const b of others) { if (["activity", "intents", "workflow", "doctor"].includes(b.dataset.view)) { b.hidden = true; labsGroup.after(b); continue; } b.dataset.lab = "1"; labsBody.append(b); }
+  showLabs();
   // attention counts live on backbone items: Board and Inbox carry the decisions (the Inbox is decisions only), the gear the Doctor's
   const doc = document.getElementById("navDoctor"); if (doc && doc.parentElement !== gear) gear.append(doc);
 }
@@ -56,13 +67,14 @@ navObs.observe(nav, { childList: true, subtree: true });
 $(".side-foot").prepend(gear);
 // every label follows the language switch: nothing is computed once at load
 const relabel = () => { for (const [v, ic, en, tw] of BACKBONE) item(v, ic, en, tw); gear.setAttribute("aria-label", T("Settings", "設定")); gear.title = T("Settings", "設定");
-  labsGroup.querySelector(".nav-labs-h").textContent = T("Labs", "實驗中"); const ints = document.getElementById("navIntents"); if (ints) ints.title = T("Open intents", "進行中的意圖"); };
+  labsToggle.textContent = T("Labs", "實驗中"); const ints = document.getElementById("navIntents"); if (ints) ints.title = T("Open intents", "進行中的意圖"); };
 relabel();
 { const prev = window.onLang; window.onLang = () => { prev?.(); relabel(); }; }
 
 // sub-pages light their section
 const mark = () => {
-  const n = S.route?.name; const o = n === "library" && S.route?.arg === "skills" ? "skills" : OWNED[n] ?? (LABS.has(n) ? null : n);
+  showLabs();
+  const n = S.route?.name; const o = n === "library" && S.route?.arg === "skills" ? "skills" : OWNED[n] ?? (LABS.get(n)?.id || n);
   $$(".nav-item").forEach((b) => (b.dataset.view === o ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current")));
   n === "settings" || o === "settings" ? gear.setAttribute("aria-current", "page") : gear.removeAttribute("aria-current");
 };
@@ -93,7 +105,7 @@ routes.settings = () => page(T("Settings", "設定"), T("Language, Doctor, keys 
     h("a", { class: "bb-set", href: "#/doctor" }, icon("tool"), h("span", {}, h("b", {}, T("Doctor", "健康檢查")), h("span", { class: "faint" }, T("What works, what is missing, one-click installs, API keys.", "哪些可用、缺什麼、一鍵安裝、API 金鑰。")))),
     h("a", { class: "bb-set", href: "#/remote" }, icon("monitor"), h("span", {}, h("b", {}, T("Phone pairing", "手機配對")), h("span", { class: "faint" }, T("Planned (labs).", "規劃中（實驗功能）。")))),
     h("a", { class: "bb-set", href: "#/roadmap" }, icon("target"), h("span", {}, h("b", {}, T("Roadmap", "路線圖")), h("span", { class: "faint" }, T("What is planned next, by milestone.", "接下來的規劃，依里程碑。")))),
-    h("label", { class: "bb-set" }, h("input", { type: "checkbox", id: "labsToggle", checked: labsOn(), onchange: (e) => { store.set("crew.labs", e.target.checked ? "1" : null); labsGroup.hidden = !e.target.checked; } }),
+    h("label", { class: "bb-set" }, h("input", { type: "checkbox", id: "labsToggle", checked: labsOn(), onchange: (e) => { store.set("crew.labs", e.target.checked ? "1" : null); showLabs(); } }),
       h("span", {}, h("b", {}, T("Show labs", "顯示實驗功能")), h("span", { class: "faint" }, T("Adds the planned pages to the sidebar. They work, but they are not the backbone.", "把規劃中的頁面加回側邊欄；可以用，但不是主幹功能。"))))),
   rulesEditor());
 // The captain's operating rules: one Studio-wide text and one per project, sent to every

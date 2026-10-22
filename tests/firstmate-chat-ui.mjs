@@ -72,6 +72,9 @@ try {
     ok(!/studio_answer_agent_question|\{task:|Handle each event/.test(await p.locator("#chatLog").innerText()), `${tag}: the raw escalation prompt is not shown`);
     ok(await seen(p, '#chatLog [data-main="wake"]:has-text("fm: task T-12 finished")'), `${tag}: a wake firstmate wrote itself still shows its line`);
     // S27: each tool call is one short activity line in the page language; the raw call is folded under it; ToolSearch is not shown
+    const group = p.locator('#chatLog [data-tool-group]');
+    ok(await group.count() === 1 && !(await group.evaluate(e => e.open)), `${tag}: adjacent tool activities start in one collapsed group`);
+    await group.locator(':scope > summary').click();
     const acts = await p.locator('#chatLog [data-main="tool"] [data-tool-activity]').allInnerTexts();
     const want = lang === "zh-TW" ? ["查看工作流程清單", "提出派工：轉角書店方形社群海報 → R-093", "使用工具：studio_manual"] : ["Looking at the workflow list", "Proposing work: 轉角書店方形社群海報 → R-093", "Using a tool: studio_manual"];
     ok(JSON.stringify(acts) === JSON.stringify(want), `${tag}: tool calls show as activity lines in the page language (a line from before them names the tool only)`, JSON.stringify(acts));

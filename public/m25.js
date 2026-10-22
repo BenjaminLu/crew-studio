@@ -143,10 +143,21 @@ const openTools = new Set();
 function toolLine(it) {
   const a = toolActivity(it); if (!a) return null;
   const key = `${it.at}|${it.text.slice(0, 80)}`;
-  return h("details", { class: "toolrow", "data-main": "tool", "data-tool": a.short, style: "padding:2px 6px;font-size:12.5px", open: openTools.has(key) || null,
-    ontoggle: (ev) => { if (ev.currentTarget.open) openTools.add(key); else openTools.delete(key); } },
+  return h("details", { class: "toolrow", "data-main": "tool", "data-tool": a.short, "data-tool-key": key, style: "padding:2px 6px;font-size:12.5px", open: openTools.has(key) || null,
+    ontoggle: (ev) => { if (!ev.currentTarget.isConnected) return; if (ev.currentTarget.open) openTools.add(key); else openTools.delete(key); } },
     h("summary", { class: "faint", "data-tool-activity": "" }, a.label),
     h("code", { "data-tool-raw": "", style: "display:block;font-size:11.5px;white-space:pre-wrap;word-break:break-all;margin-top:2px" }, it.text.slice(0, 600)));
+}
+// Historical tool records have no reliable success flag. Summarize activity, never invent completion.
+const openToolGroups = new Set();
+function toolGroup(items) {
+  const visible = items.filter(toolActivity); if (!visible.length) return null;
+  const first = visible[0], key = `${first.at}|${first.text.slice(0, 80)}`;
+  return h("details", { class: "tool-group", "data-tool-group": visible.length, "data-tool-group-key": key, open: openToolGroups.has(key) || null,
+    ontoggle: ev => { if (!ev.currentTarget.isConnected) return; if (ev.currentTarget.open) openToolGroups.add(key); else openToolGroups.delete(key); } },
+    h("summary", {}, h("span", {}, T(`${visible.length} tool activities`, `${visible.length} 筆工具活動`)),
+      h("span", { class: "faint tool-group-last" }, toolActivity(visible.at(-1)).label)),
+    h("div", { class: "tool-group-items" }, visible.map(toolLine)));
 }
 function logItem(it, i) {
   if(it.source === "studio:native-outcome")return h("div",{class:"card x-pad","data-native-outcome":it.id},h("p",{},it.text),...(it.links||[]).filter(l=>/^#\/(run|review)\//.test(l.href)).map(l=>h("a",{class:"btn",href:l.href},l.label)));
@@ -163,19 +174,31 @@ function logItem(it, i) {
 renderChat = function (stick = true) {
   if (!isMain()) return renderStatus(stick);
   const log = $("#chatLog"), v = MS.view;
+  // Native details toggles are queued. Capture live open state before an SSE repaint can replace it.
+  for (const el of log.querySelectorAll("[data-tool-group-key]")) { if (el.open) openToolGroups.add(el.dataset.toolGroupKey); else openToolGroups.delete(el.dataset.toolGroupKey); }
+  for (const el of log.querySelectorAll("[data-tool-key]")) { if (el.open) openTools.add(el.dataset.toolKey); else openTools.delete(el.dataset.toolKey); }
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
   const kids = [];
   if (!v) kids.push(h("div", { class: "skel", style: "height:80px" }));
   else {
     kids.push(driverBanner(v));
     v.approvals.forEach((a) => kids.push(approvalCard(a)));
-    v.log.filter((x) => !(v.context==="studio"&&x.source==="studio:handoff") && (x.kind !== "status" || x.attachmentRefusal || x.external || /Paused|Handed|Attached|re-identified|Turn (failed|interrupted)/.test(x.text))).slice(-80).forEach((x, i, all) => { const sep = sessionSep(x, all[i - 1], all, v); if (sep) kids.push(sep); const el = logItem(x, i); if (el) kids.push(el); });
+    const history = v.log.filter((x) => !(v.context==="studio"&&x.source==="studio:handoff") && (x.kind !== "status" || x.attachmentRefusal || x.external || /Paused|Handed|Attached|re-identified|Turn (failed|interrupted)/.test(x.text))).slice(-200);
+    let tools = [];
+    const flushTools = () => { const group = toolGroup(tools); if (group) kids.push(group); tools = []; };
+    history.forEach((x, i, all) => {
+      const sep = sessionSep(x, all[i - 1], all, v); if (sep) { flushTools(); kids.push(sep); }
+      // Error and refusal cards are always outside a collapsed activity group.
+      if (x.kind === "tool" && !x.external && !x.attachmentRefusal) tools.push(x);
+      else { flushTools(); const el = logItem(x, i); if (el) kids.push(el); }
+    }); flushTools();
     if (v.busy) kids.push(h("div", { class: "msg fm", "data-main": "live" }, h("div", { class: "meta" }, "Firstmate", h("span", { class: "faint" }, T("working…", "處理中…"))),
       MS.liveTools.length ? h("div", { class: "faint", style: "font-size:12px" }, MS.liveTools.slice(-3).join(" · ")) : null,
       MS.live ? h("div", { class: "bub", id: "mainLive" }, liveText()) : h("div", { class: "typing" }, h("i"), h("i"), h("i"))));
     (MS.notices || []).forEach((n) => kids.push(externalView(n)));
     const q = queueView(v); if (q) kids.push(q);
   }
+  const savedScroll = log.scrollTop;
   log.replaceChildren(...kids);
   hydrateIcons(log);
   $("#chatSug").replaceChildren();
@@ -184,7 +207,7 @@ renderChat = function (stick = true) {
   renderAtt();
   $("#chatIn").placeholder = attached ? T("Tell Firstmate what you want done", "告訴 Firstmate 要做什麼") : T("Connect your account to begin", "連接帳號即可開始");
   $("#chatInLabel").textContent = T("Message Firstmate", "傳訊息給 Firstmate");
-  if (stick || atBottom) log.scrollTop = log.scrollHeight;
+  if (stick || atBottom) log.scrollTop = log.scrollHeight; else log.scrollTop = savedScroll;
 };
 ask = async function (text) {
   if (!isMain()) return askStatus(text);
