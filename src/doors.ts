@@ -10,7 +10,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { join, resolve, relative, isAbsolute } from "node:path";
 import {homedir} from "node:os";
 import { bundledText, parseYaml } from "./bundled";
-import { Policies, unreadableRule } from "./runtime/checks";
+import { Policies, cursorSecretPaths, unreadableRule } from "./runtime/checks";
 import { grantSignature, verifyGitHubGrant } from "./github-grant";
 
 /**
@@ -158,7 +158,7 @@ export class Projects {
     stage='missing_or_disabled';
     if(!project?.path||(!o.includeDisabled&&project.enabled!==undefined&&project.enabled!==true))throw new Error("Registered project is missing or disabled");
     const inside=(a:string,b:string)=>{const r=relative(a,b);return !r||r!=='..'&&!r.startsWith('../')&&!isAbsolute(r);};
-    const privateRoots=[this.dataDir,...protectedRoots,process.env.CODEX_HOME||join(homedir(),'.codex'),join(homedir(),'.claude'),process.env.CREW_RUNTIME_DIR||join(homedir(),'.crew-studio/runtime')].map(p=>{try{return realpathSync(p)}catch{return resolve(p)}});
+    const privateRoots=[this.dataDir,...protectedRoots,process.env.CODEX_HOME||join(homedir(),'.codex'),join(homedir(),'.claude'),...cursorSecretPaths(),process.env.CREW_RUNTIME_DIR||join(homedir(),'.crew-studio/runtime')].map(p=>{try{return realpathSync(p)}catch{return resolve(p)}});
     // The built-in sandbox is the only repository allowed below the data root; other protected roots still apply to it.
     // Index 0 is the data root itself: an explicit protected root that equals it still refuses.
     const sandbox=builtInSandboxRoot(this.dataDir,id,project.path);

@@ -93,6 +93,7 @@ export function isCredentialName(name: string): boolean {
 export const SECRET_VALUE: RegExp[] = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
   /\bsk-ant-[A-Za-z0-9_-]{8,}/g, /\bsk-(proj-)?[A-Za-z0-9_-]{16,}/g,
+  /\bcrsr_[A-Za-z0-9]{32,}/g,
   /\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g, /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
   /\bxox[abposr]-[A-Za-z0-9-]{10,}/g, /\bAKIA[0-9A-Z]{16}\b/g,
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
