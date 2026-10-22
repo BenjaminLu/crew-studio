@@ -41,7 +41,7 @@ function graph(def, o = {}) {
   // o: { states, walked (the edge keys the run's events record as taken), editable, sel, manual, collapsed, onToggleStage, onSelect, onMove, onMoved, onDragStart, onConnect, onDropCheck, problems, view, onView }
   const L = window.crewLayout;
   const reached = o.states ? Object.keys(o.states).filter((k) => o.states[k] && o.states[k] !== "pending") : [];
-  const lay = o.simple ? L.layoutSimple(def, { collapsed: o.collapsed || [], wrap: o.wrap, offsets: o.offsets, reached }) : o.manual ? L.place(def, { collapsed: o.collapsed || [] }) : L.layout(def, { collapsed: o.collapsed || [] });
+  const lay = o.simple ? L.layoutSimple(def, { collapsed: o.collapsed || [], wrap: o.wrap, offsets: o.offsets, reached, actualGraph: !!o.editable }) : o.manual ? L.place(def, { collapsed: o.collapsed || [], actualGraph: !!o.editable }) : L.layout(def, { collapsed: o.collapsed || [], actualGraph: !!o.editable });
   const byId = Object.fromEntries(lay.nodes.map((n) => [n.id, n]));
   const view = o.view || { ...lay.bbox };
   const svg = s("svg", { class: `rt-graph${o.simple ? " simple" : ""}`, "data-view": o.simple ? "simple" : "detail", viewBox: `${view.x} ${view.y} ${view.w} ${view.h}`, role: "group", "data-layout": o.manual ? "manual" : "auto",
@@ -473,7 +473,7 @@ function buildEditor(ed) {
     if (kind === "agent") { n.role = ed.def.roles[0]?.id; n.mode = "test"; } if (kind === "hook") { n.do = "note"; n.args = { text: "" }; } if (kind === "card") n.card = { options: [{ id: "ok", label: "OK" }] }; if (kind === "loop") n.args = { producer: ed.def.nodes.find((x) => x.kind === "agent")?.id ?? "" };
     ed.def.nodes.push(n); ed.sel = { node: idv }; dirty(); say(T(`added ${kind} node ${idv}`, `已加入 ${kind} 節點 ${idv}`)); focusNode(idv);
   };
-  const delNode = (nid) => { ed.def.nodes = ed.def.nodes.filter((n) => n.id !== nid); ed.def.edges = ed.def.edges.filter((e) => e.from !== nid && e.to !== nid); ed.sel = null; dirty(); say(T(`removed ${nid} and its edges`, `已移除 ${nid} 與它的邊`)); };
+  const delNode = (nid) => { ed.def.nodes = ed.def.nodes.filter((n) => n.id !== nid); ed.def.edges = ed.def.edges.filter((e) => e.from !== nid && e.to !== nid); ed.sel = null; dirty(); say(T(`Removed ${nid} and its connections; ${ed.def.nodes.length} other nodes remain. Disconnected steps stay available to reconnect.`, `已移除 ${nid} 與其連線；其餘 ${ed.def.nodes.length} 個節點仍保留，斷線步驟可重新接回。`)); };
   const delEdge = (i) => { const e = ed.def.edges[i]; ed.def.edges.splice(i, 1); ed.sel = null; dirty(); say(T(`disconnected ${e.from} → ${e.to}`, `已斷開 ${e.from} → ${e.to}`)); drawPanel(); };
   const connect = (from, to, when) => { if (ed.def.edges.some((e) => e.from === from && e.to === to && (e.when || "") === (when || ""))) return; const e = { from, to }; if (when) e.when = when; ed.def.edges.push(e); ed.sel = { edge: ed.def.edges.length - 1 }; dirty(); say(T(`connected ${from} → ${to}`, `已連接 ${from} → ${to}`)); };
   const dropCheck = (target, ref) => { const t = target.node ? ed.def.nodes.find((n) => n.id === target.node) : ed.def.edges[target.edge]; t.checks = [...(t.checks || []), { use: ref }]; ed.sel = target; dirty(); say(T(`${ref} attached to ${target.node ?? `edge ${t.from} → ${t.to}`}`, `${ref} 已掛到 ${target.node ?? `邊 ${t.from} → ${t.to}`}`)); };
@@ -488,7 +488,7 @@ function buildEditor(ed) {
   };
   const setView = (k) => { gview = k; try { localStorage.setItem("crew.graphView", k); } catch {} view = null; root.querySelectorAll("[data-view-toggle]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.viewToggle === k))); draw(); drawPanel(); say(k === "simple" ? T("Simple view", "簡易檢視") : T("Detail view: every node and edge", "詳細檢視：所有節點與邊")); };
   const toggleStage = (sid) => { const c = new Set(ed.collapsed); c.has(sid) ? c.delete(sid) : c.add(sid); ed.collapsed = [...c]; draw(); say(c.has(sid) ? T(`${sid} collapsed`, `${sid} 已收合`) : T(`${sid} expanded`, `${sid} 已展開`)); };
-  let mm = null, drawPending = false;
+  let mm = null, drawPending = false, renderedWrap = null;
   const draw = () => {
     if (disposed) return;
     // Validation/live updates must not replace the SVG that owns pointer
@@ -496,9 +496,10 @@ function buildEditor(ed) {
     if (canvas.querySelector("svg.rt-graph")?.interactionActive) { drawPending = true; return; }
     drawPending = false;
     stepList.replaceChildren(h("h2",{},T("Edit workflow steps","编辑流程步骤")),h("p",{},T("Choose a step to edit its settings, skills and checks. Choose a connection to edit its condition or checks.","选择步骤来编辑设置、技能与检查；选择连线来修改条件与检查。")),h("div",{class:"actions"},...KINDS.map(([k,en,zh])=>h("button",{class:"btn sm","data-guided-add":k,onclick:()=>{addNode(k);drawPanel();}},T("Add "+en,"添加"+zh)))),h("div",{class:"actions"},...ed.def.nodes.map(n=>h("button",{class:"btn sm","data-edit-step":n.id,onclick:()=>{ed.sel={node:n.id};draw();drawPanel();}},n.label))),h("div",{class:"actions"},...ed.def.edges.map((e,i)=>h("button",{class:"btn sm","data-edit-connection":String(i),onclick:()=>{ed.sel={edge:i};draw();drawPanel();}},`${e.from} → ${e.to}${e.when?` [${e.when}]`:""}`))));
-    const simple = gview === "simple";
+    const simple = gview === "simple", wrap = wrapFor(), reflow = simple && renderedWrap !== null && wrap !== renderedWrap;
+    if (reflow && fitted) view = null;
     root.dataset.view = gview; palette.hidden = simple; paletteNote.hidden = !simple;
-    const g = graph(ed.def, { editable: true, simple, wrap: wrapFor(), offsets: simple ? ed.offsets : null, sel: ed.sel, problems: ed.problems, states: ed.states, walked: ed.walked, view, manual: !simple && ed.mode === "manual", collapsed: ed.collapsed, redraw: () => draw(),
+    const g = graph(ed.def, { editable: true, simple, wrap, offsets: simple ? ed.offsets : null, sel: ed.sel, problems: ed.problems, states: ed.states, walked: ed.walked, view, manual: !simple && ed.mode === "manual", collapsed: ed.collapsed, redraw: () => draw(),
       onNudge: (nid, dx, dy) => { const o = ed.offsets[nid] || { dx: 0, dy: 0 }; ed.offsets[nid] = { dx: o.dx + dx, dy: o.dy + dy }; recordHistory(); draftRevision++; draw(); say(T("Moved in the simple view (not kept; arrange in Detail view)", "在簡易檢視中移動（不保存；請在詳細檢視排版）")); },
       onToggleStage: toggleStage, onDragStart: () => { dragBefore = snapshot(); lastTextGroup = null; if (ed.mode !== "manual") toManual(); },
       onInteractionCancel: () => { if (dragBefore) { Object.assign(ed.def, clone(dragBefore.content)); ed.mode = dragBefore.mode; ed.offsets = clone(dragBefore.offsets); dragBefore = null; drawPending = true; } },
@@ -514,8 +515,10 @@ function buildEditor(ed) {
     // SVG must keep that node/edge focused, without stealing focus from the panel.
     const active=document.activeElement, focused=canvas.contains(active)?active?.closest?.('[data-node],[data-edge]'):null;
     const focusAttr=focused?.hasAttribute('data-node')?'data-node':'data-edge', focusValue=focused?.getAttribute(focusAttr);
-    canvas.replaceChildren(g);
+    canvas.replaceChildren(g); renderedWrap = wrap;
     if(focusValue&&document.activeElement===document.body)g.querySelector(`[${focusAttr}="${CSS.escape(focusValue)}"]`)?.focus({preventScroll:true});
+    // A reflowed projection moves the nodes; an unfitted view keeps its scale but its centre stays on the graph.
+    if (reflow && view) { const v = g.view, b = g.lay.bbox, cx = Math.min(b.x + b.w, Math.max(b.x, v.x + v.w / 2)), cy = Math.min(b.y + b.h, Math.max(b.y, v.y + v.h / 2)); g.setView({ x: cx - v.w / 2, y: cy - v.h / 2 }); }
     if (!view) { fit(g, simple ? "all" : "start"); } view = g.view;
     // the minimap, on a desktop, docked under the canvas
     mm = null; dock.replaceChildren();
@@ -532,8 +535,12 @@ function buildEditor(ed) {
     g.setAttribute("viewBox", `${v.x} ${v.y} ${v.w} ${v.h}`); view = v; fitted = how === "all"; lastSize = [r.width, r.height]; mm?.sync(); };
   // the canvas changes size (the chat opens or closes, the window resizes): a fitted graph fits again, any other keeps its scale
   let fitted = false, lastSize = null;
-  new ResizeObserver(() => { const g = canvas.querySelector("svg.rt-graph"); const r = canvas.getBoundingClientRect(); if (!g || !r.width || !lastSize || (r.width === lastSize[0] && r.height === lastSize[1])) return;
-    if (fitted) fit(g, "all"); else { const v = g.view, k = v.w / lastSize[0]; v.w = r.width * k; v.h = r.height * k; g.setAttribute("viewBox", `${v.x} ${v.y} ${v.w} ${v.h}`); view = v; lastSize = [r.width, r.height]; mm?.sync(); } }).observe(canvas);
+  const graphResize = new ResizeObserver(() => { if (disposed) return; const g = canvas.querySelector("svg.rt-graph"); const r = canvas.getBoundingClientRect(); if (!g || !r.width) return;
+    // A new width bucket needs a new projection, not a shrunken desktop SVG.
+    // draw() defers while an active pointer owns the graph.
+    if (gview === "simple" && wrapFor() !== renderedWrap) { if (!fitted && view && lastSize) { const k = view.w / lastSize[0]; view.w = r.width * k; view.h = r.height * k; lastSize = [r.width, r.height]; } draw(); return; }
+    if (!lastSize || (r.width === lastSize[0] && r.height === lastSize[1])) return;
+    if (fitted) fit(g, "all"); else { const v = g.view, k = v.w / lastSize[0]; v.w = r.width * k; v.h = r.height * k; g.setAttribute("viewBox", `${v.x} ${v.y} ${v.w} ${v.h}`); view = v; lastSize = [r.width, r.height]; mm?.sync(); } }); graphResize.observe(canvas);
   const field = (label, input) => h("label", { class: "rt-field" }, h("span", {}, label), input);
   const paramsForm = (ref, holder) => {
     const man = checkMan(ref.use); const props = man?.params?.properties || {};
@@ -653,7 +660,7 @@ function buildEditor(ed) {
   };
   // palette: node kinds (click or drag onto the canvas) and checks (drag onto a node or an edge)
   const paletteNote = h("aside", { class: "rt-palette card", "data-palette-note": "1" }, h("h4", {}, T("Simple view", "簡易檢視")),
-    h("p", { class: "faint" }, T("The main path through the stages. Loops, the door question and escalations are badges on their node or stage. Add or remove nodes and edges in Detail view.", "主要路徑。迴圈、門的提問和升級處理都是節點或階段上的徽章。要新增或移除節點與邊，請到詳細檢視。")),
+    h("p", { class: "faint" }, T("All existing steps and connections in a compact layout. Removing a step only removes that step and its connections. Use Edit graph for connection ports, adding steps and checks.", "以緊湊排列顯示所有既有步驟與連線。移除步驟只會移除它與直接相連的線。要使用連線端點、新增步驟或檢查，請切換完整編輯。")),
     h("button", { class: "btn sm", "data-edit-detail": "1", onclick: () => setView("detail") }, T("Edit in Detail view", "到詳細檢視編輯")));
   const palette = h("aside", { class: "rt-palette card", "aria-label": T("Palette", "調色盤") }, h("h4", {}, T("Add a node", "加節點")),
     ...KINDS.map(([k, en, tw]) => h("button", { class: `btn sm rt-pal k-${k}`, draggable: "true", "data-add": k, onclick: () => { addNode(k); drawPanel(); }, ondragstart: (e) => { e.dataTransfer.setData("text/x-kind", k); } }, T(en, tw))),
@@ -726,7 +733,7 @@ function buildEditor(ed) {
   };
   live.listeners.add(onLive);
   ed.dispose = () => {
-    if (disposed) return; disposed = true; drawPending = false; invalidateOverlay();
+    if (disposed) return; disposed = true; drawPending = false; graphResize.disconnect(); invalidateOverlay();
     clearTimeout(vtimer); validationGeneration++; validationAbort?.abort(); validationAbort = null;
     canvas.querySelector("svg.rt-graph")?.cancelInteraction?.();
     live.listeners.delete(onLive);
@@ -1319,7 +1326,7 @@ function firstWorkflow(arg){
   const goal=h("textarea",{class:"input",rows:3,"data-first-workflow-goal":"",placeholder:T("What should your workflow help you do?","你希望流程幫你完成什麼？")});goal.value=draft.goal||"";
   const status=h("p",{role:"status","data-first-workflow-status":""}),preview=h("section",{class:"card x-pad fw-preview","data-first-workflow-preview":"",hidden:true});
   const remember=()=>{draft.goal=goal.value;save();};goal.addEventListener("input",remember);
-  let model=null,showStarter=false,openNode=null,seen="";
+  let model=null,showStarter=draft.starterPreview===true,openNode=null,seen="";
   const graph=(def,onNode)=>{const byId=Object.fromEntries(def.nodes.map(n=>[n.id,n]));const ins=new Set(def.edges.map(e=>e.to));const order=[];const q=def.nodes.filter(n=>!ins.has(n.id)).map(n=>n.id);const seenN=new Set();while(q.length){const id=q.shift();if(seenN.has(id))continue;seenN.add(id);order.push(id);for(const e of def.edges)if(e.from===id)q.push(e.to);}for(const n of def.nodes)if(!seenN.has(n.id))order.push(n.id);
     return h("div",{class:"fw-graph"},h("ol",{class:"fw-nodes"},order.map(id=>{const n=byId[id],role=def.roles.find(r=>r.id===n.role);return h("li",{},h("button",{type:"button",class:`fw-node k-${n.kind}${openNode===n.id?" open":""}`,"data-draft-node":n.id,"aria-expanded":n.kind==="agent"?String(openNode===n.id):null,onclick:()=>onNode?.(n)},h("b",{},n.label),h("span",{class:"faint"},n.kind==="agent"?[role?.label||n.role,n.provider?`${n.provider}${n.model?" · "+n.model:""}${n.effort?" · "+n.effort:""}`:T("not staffed yet","尚未配置")].filter(Boolean).join(" · "):n.kind==="card"?T("your decision","你的決定"):T("end","結束")),n.kind==="agent"&&n.skill&&n.skill!==role?.skill?h("span",{class:"fw-skill","data-node-skill":n.skill},T(`skill: ${skillName(n.skill)}`,`技能：${skillName(n.skill)}`)):null));})),
       h("ul",{class:"fw-edges faint"},def.edges.map(e=>h("li",{},`${byId[e.from]?.label||e.from} → ${byId[e.to]?.label||e.to}${e.when?` (${e.when})`:""}`))));};
@@ -1347,17 +1354,19 @@ function firstWorkflow(arg){
     preview.hidden=false;preview.dataset.firstWorkflowSource="starter";
     preview.replaceChildren(h("div",{class:"fw-head"},h("span",{class:"badge fw-badge starter","data-first-workflow-badge":"starter"},T("Free starter · not AI generated","免費起始範本 · 並非 AI 生成"))),h("h2",{},T("Free starter preview · not AI generated","免費起始範本預覽 · 並非 AI 生成")),h("p",{},draft.goal),h("p",{},T("Captain confirmation → Done","船長確認 → 完成")),h("pre",{class:"fw-json"},JSON.stringify({nodes:[{id:"start",kind:"card"},{id:"done",kind:"hook"}],edges:[{from:"start",to:"done",when:"continue"}]},null,2)),create);
   };
-  const refresh=async()=>{if(!root.isConnected&&seen)return;try{const j=await api("/api/wf/drafts");if(!j.scope)throw new Error("Missing workspace scope");if(j.scope!==scope){const first=!scope;scope=j.scope;store.set(SCOPE_KEY,scope);draft=first?{...load(scope),...load("pending"),...draft}:load(scope);if(first)try{localStorage.removeItem(keyOf("pending"));}catch{}if(!first){goal.value=draft.goal||"";model=null;seen="";showStarter=false;openNode=null;draw();}save();}if(root.dataset.ready!=="1")root.dataset.ready="1";const want=arg||draft.draftId;let d=null;if(want){try{d=(await api(`/api/wf/drafts/${want}`)).draft;}catch{}}const list=j.drafts||[];const newest=list.find(x=>!x.saved&&(!draft.askedAt||x.updatedAt>=draft.askedAt));if(!arg&&newest&&(!d||d.saved||newest.updatedAt>d.updatedAt))d=(await api(`/api/wf/drafts/${newest.id}`)).draft;if(!d)return;const sig=`${d.id}@${d.revision}`;if(sig===seen)return;seen=sig;model=d;showStarter=false;if(!arg){draft.draftId=d.id;save();}draw();}catch{}};
+  const refresh=async()=>{if(!root.isConnected&&seen)return;try{const j=await api("/api/wf/drafts");if(!j.scope)throw new Error("Missing workspace scope");if(j.scope!==scope){const first=!scope;scope=j.scope;store.set(SCOPE_KEY,scope);draft=first?{...load(scope),...load("pending"),...draft}:load(scope);if(first)try{localStorage.removeItem(keyOf("pending"));}catch{}advanced.open=draft.customOpen===true;if(!first){goal.value=draft.goal||"";model=null;seen="";showStarter=draft.starterPreview===true;openNode=null;draw();}save();}if(root.dataset.ready!=="1")root.dataset.ready="1";const want=arg||draft.draftId;let d=null;if(want){try{d=(await api(`/api/wf/drafts/${want}`)).draft;}catch{}}const list=j.drafts||[];const newest=list.find(x=>!x.saved&&(!draft.askedAt||x.updatedAt>=draft.askedAt));if(!arg&&newest&&(!d||d.saved||newest.updatedAt>d.updatedAt))d=(await api(`/api/wf/drafts/${newest.id}`)).draft;if(!d)return;const sig=`${d.id}@${d.revision}`;if(sig===seen)return;seen=sig;model=d;showStarter=false;delete draft.starterPreview;save();if(!arg){draft.draftId=d.id;save();}draw();}catch{}};
   let pending=false;const create=h("button",{class:"btn","data-first-workflow-create":"",onclick:async()=>{if(pending)return;remember();if(!draft.goal?.trim()){status.textContent=T("Describe your goal first.","請先寫下目標。");return;}if(draft.workflow){location.hash="#/workflows/"+draft.workflow;return;}if(draft.uncertain){status.textContent=T("Creation is uncertain. Check Workflows for the saved ID before retrying: ","建立結果尚未確認。請先到流程列表查找代號，避免重複建立：")+draft.id;return;}draft.id||="my-workflow-"+crypto.randomUUID().slice(0,8);draft.uncertain=true;save();pending=true;create.disabled=true;try{const result=await api("/api/wf",{id:draft.id,name:draft.goal.trim().slice(0,120),locale:window.crewI18n.modelLang(lang),origin:"starter"});draft.workflow=result.def.id;draft.uncertain=false;save();WF.list=null;WF.listGeneration++;location.hash="#/workflows/"+draft.workflow;}catch(e){status.textContent=T("Could not confirm creation. Inspect Workflows for ","無法確認建立結果，請到流程列表查看 ")+draft.id;}finally{pending=false;create.disabled=false;}}},T("Save starter and edit nodes","儲存起始範本並編輯節點"));
   const ask=(ensure=false)=>{remember();draft.askedAt=new Date(Date.now()-5000).toISOString();save();chatMode="main";store.set("crew.chatMode","main");openChat(true);const input=document.querySelector("#chatIn");if(input){if(!input.value||ensure===true){const message=T("Help me design my own workflow. Interview me briefly (two or three short questions, one at a time: who does the work, who reviews it, when I decide), then draft the graph so this page previews it. This is free drafting: nothing runs and no Task starts. My goal: ","請幫我設計我自己的流程。先簡短訪談我（兩三個問題，一次一題：誰做、誰審、我何時決定），再起草流程圖讓這個頁面預覽。這是免費起草：不會執行，也不會開始任何任務。我的目標：")+draft.goal;if(input.value.trim()&&ensure===true){if(!input.value.includes(message))input.value+="\n\n"+message;}else input.value=message;}input.dispatchEvent(new Event("input",{bubbles:true}));input.focus();}};
   const root=h("div",{class:"page fw-page","data-first-workflow":""},h("h1",{},T("Your first workflow","建立你的第一個流程")),
     h("ol",{class:"fw-steps"},[[T("Interview","訪談"),T("free","免費")],[T("Generated graph and preview","生成流程图与预览"),T("no Task","不启动任务")],[T("Edit each node's model","設定節點模型"),T("free","免費")],[T("Confirm staffing at Run","執行時確認配置"),T("starts the Task","開始任務")],[T("Compare and refine","比较与修改"),T("compare versions and save edits","比较版本并保存修改")],[T("Save as template","保存为模板"),T("reuse from the workflow editor","在流程编辑器中保存并复用")]].map(([a,b])=>b?h("li",{},h("b",{},a),h("span",{class:"faint"},b)):h("li",{class:"fw-roadmap","data-roadmap":""},h("b",{},a),h("span",{class:"badge"},T("Roadmap · coming later","規劃中 · 尚未提供"))))),
     h("label",{class:"rt-field"},h("span",{},T("Your goal (saved in this browser)","你的目標（儲存在此瀏覽器）")),goal),
-    h("div",{class:"actions"},h("button",{class:"btn primary","data-first-workflow-chat":"",onclick:ask},T("Interview with Firstmate (you send it)","和 Firstmate 訪談（由你送出）")),h("button",{class:"btn","data-first-workflow-preview-button":"",onclick:()=>{remember();showStarter=true;draw();}},T("Preview free starter instead","改用免費起始範本"))),
+    h("div",{class:"actions"},h("button",{class:"btn primary","data-first-workflow-chat":"",onclick:ask},T("Interview with Firstmate (you send it)","和 Firstmate 訪談（由你送出）")),h("button",{class:"btn","data-first-workflow-preview-button":"",onclick:()=>{remember();showStarter=true;draft.starterPreview=true;save();draw();}},T("Preview free starter instead","改用免費起始範本"))),
     preview,status,
     h("p",{class:"faint"},T("Drafting, previewing, editing nodes and saving are free: no Task, no staffing. Firstmate's graph is labeled as AI model output; the starter is labeled as not AI generated. Staffing is confirmed only when you click Run. The coffee shop is the advanced example.","起草、預覽、設定節點與儲存都免費：不建立任務、不派工。Firstmate 的流程圖標示為 AI 模型產出；起始範本標示為非 AI 生成。只有按下執行時才確認人員配置。咖啡店是進階範例。")),
     h("div",{class:"actions"},h("a",{class:"btn",href:"#/workflows"},T("Saved workflows","已儲存的流程")),h("a",{class:"btn ghost",href:"#/workflows/coffee-kit"},T("Advanced example: coffee shop","進階範例：咖啡店"))));
   const advanced=h("details",{class:"card x-pad","data-custom-workflow":""},h("summary",{},T("Design a custom workflow with Firstmate","進階：和 Firstmate 設計自己的流程")));
+  advanced.open=draft.customOpen===true;
+  advanced.addEventListener("toggle",()=>{if(!advanced.isConnected)return;draft.customOpen=advanced.open;save();});
   while(root.children.length>1)advanced.append(root.children[1]);
   const helloStatus=h("p",{role:"status","data-hello-status":""});let helloBusy=false;
   const helloButton=h("button",{class:"btn primary","data-hello-create":"",onclick:async()=>{if(helloBusy)return;helloBusy=true;helloButton.disabled=true;try{
@@ -1378,7 +1387,7 @@ function firstWorkflow(arg){
   helloButton.textContent=T("Try the ready-made website example","直接试用现成网页示例");
   root.append(h("section",{class:"card x-pad","data-hello-starter":""},h("h2",{},"Hello Crew Studio"),h("p",{},T("Discuss your website with Firstmate, review the workflow together, then decide when it runs.","先和 Firstmate 讨论网页需求，一起确认流程，再决定何时执行。")),h("ol",{class:"fw-steps"},[T("Discuss your goal","讨论需求"),T("Review the workflow draft","确认流程草稿"),T("Confirm and run","确认后执行")].map(t=>h("li",{},t))),helloInterview,helloStatus,h("details",{"data-hello-quick":""},h("summary",{},T("Skip discussion: try a ready-made example","跳过讨论：试用现成示例")),h("p",{},T("Uses a built-in template, without an AI model. Starts a Task immediately.","使用内建模板，不调用 AI 模型；点击后立即启动任务。")),helloButton)),advanced);
 
-  DRAFT_LIVE.fn=refresh;draftOpts().catch(()=>{});refresh();const timer=setInterval(()=>{if(!root.isConnected){clearInterval(timer);if(DRAFT_LIVE.fn===refresh)DRAFT_LIVE.fn=null;return;}refresh();},2000);
+  draw();DRAFT_LIVE.fn=refresh;draftOpts().catch(()=>{});refresh();const timer=setInterval(()=>{if(!root.isConnected){clearInterval(timer);if(DRAFT_LIVE.fn===refresh)DRAFT_LIVE.fn=null;return;}refresh();},2000);
   return root;
 }
 routes["first-workflow"]=firstWorkflow;

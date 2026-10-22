@@ -15,26 +15,64 @@ const home = join(tmp, "home"), data = join(tmp, "data"), state = join(tmp, "sta
 for (const d of [home, data, state, proj, join(home, ".codex")]) mkdirSync(d, { recursive: true });
 const TOKEN = "page-release-ui";
 const env = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CREW_PAGE_RELEASE"]) delete env[k];
-let pass = 0, fail = 0, browser, app; const errors = [];
+let pass = 0, fail = 0, browser, app, serverPhase = "initial"; const errors = [];
 const ok = (v, n, extra = "") => { if (v) { pass++; console.log("ok " + n); } else { fail++; console.log(("FAIL " + n + " " + extra).trimEnd()); } };
 const port = await freePort(), base = `http://127.0.0.1:${port}`;
 const start = async (release) => {
+  serverPhase = `starting-${release}`;
   app = spawn("bun", ["src/server.ts"], { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...env, HOME: home, CODEX_HOME: join(home, ".codex"), CREW_SESSION_TOKEN: TOKEN, CREW_PORT: String(port), CREW_DATA: data,
     CREW_FM_STATE: state, CREW_MAIN_PROJECT: proj, CREW_GH: "0", CREW_GH_NO_CLI: "1", CREW_CHAT_PROVIDER: "stub", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_SANDBOX: "0", CREW_LOCAL_UNRESTRICTED: "0",
     CREW_HOST_CODEX_BIN: join(here, "stub-host-codex.mjs"), CREW_HOST_CLAUDE_BIN: join(here, "stub-host-claude.mjs"), CREW_PAGE_RELEASE: release } });
-  app.stdout.resume(); app.stderr.resume(); await waitUp(base, app);
+  app.stdout.resume(); app.stderr.resume(); await waitUp(base, app); serverPhase = `running-${release}`;
 };
-const stop = async () => { if (app && app.exitCode === null && app.signalCode === null) { const done = new Promise((r) => app.once("exit", r)); app.kill("SIGTERM"); await done; } };
+const stop = async () => { if (app && app.exitCode === null && app.signalCode === null) { const done = new Promise((r) => app.once("exit", r)); serverPhase = "stopping"; app.kill("SIGTERM"); await done; serverPhase = "stopped"; } };
 const until = async (f, ms = 20000) => { const end = Date.now() + ms; while (Date.now() < end) { try { if (await f()) return true; } catch {} await new Promise((r) => setTimeout(r, 100)); } return false; };
 try {
   await start("v1");
   const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
   browser = withSession(await chromium.launch({ headless: true }), base, TOKEN);
+  // A genuine bootstrap request is held before hitting the real server, then
+  // released while that server is stopped. This identifies the request/phase
+  // behind a restart rejection without suppressing the final pageerror gate.
+  { const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await ctx.newPage(); let phase = "holding-types", releaseTypes;
+    const failures = [], pageErrors = [], otherRequests = new Set(); let lastOtherRequest = Date.now();
+    const other = r => new URL(r.url()).pathname.startsWith("/api/") && !["/api/types", "/api/stream", "/api/main/locale"].includes(new URL(r.url()).pathname);
+    p.on("request", r => { if (other(r)) { otherRequests.add(r); lastOtherRequest = Date.now(); } });
+    const finished = r => { if (other(r)) { otherRequests.delete(r); lastOtherRequest = Date.now(); } };
+    p.on("requestfinished", finished); p.on("requestfailed", finished);
+    p.on("requestfailed", r => { if (new URL(r.url()).pathname === "/api/types") failures.push({ path: new URL(r.url()).pathname, method: r.method(), failure: r.failure()?.errorText, phase }); });
+    p.on("pageerror", e => { const detail = { message: e.message, stack: e.stack, phase }; pageErrors.push(detail); errors.push(`controlled-types: ${JSON.stringify(detail)}`); });
+    let held = false;
+    const resume = new Promise(resolve => { releaseTypes = resolve; });
+    await p.route("**/api/types", async route => { held = true; await resume; await route.continue(); });
+    await p.goto(base + "/#/board");
+    if (!await until(() => held)) throw new Error("the real types request was not held");
+    if (!await until(() => otherRequests.size === 0 && Date.now() - lastOtherRequest >= 300)) throw new Error("other bootstrap requests did not settle: " + JSON.stringify([...otherRequests].map(r => ({path:new URL(r.url()).pathname,method:r.method(),type:r.resourceType()}))));
+    phase = "server-stopped"; await stop(); releaseTypes();
+    ok(await until(() => failures.length === 1), "controlled bootstrap failure identifies the real types request", JSON.stringify(failures));
+    ok(await until(() => p.getByText("Crew Studio could not load", { exact: true }).count()), "failed bootstrap metadata reaches the existing visible load error boundary", JSON.stringify({ failures, pageErrors }));
+    await p.unroute("**/api/types"); await start("v1"); phase = "recovered"; await p.reload();
+    ok(await until(async () => (await p.locator("#conn.ok").count()) === 1), "reload after the server returns reconnects normally");
+    ok(await p.evaluate(async () => JSON.stringify(S.types) === JSON.stringify(await fetch("/api/types").then(r => r.json()))), "recovered bootstrap loads the actual types metadata");
+    await ctx.close();
+  }
+  // Bootstrap reads its summary and metadata together: a held summary must not delay the types request.
+  { const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } }); const p = await ctx.newPage();
+    let releaseSummary, summaryHeld = false, typesRequested = false; const resume = new Promise(resolve => { releaseSummary = resolve; });
+    p.on("request", r => { if (new URL(r.url()).pathname === "/api/types") typesRequested = true; });
+    await p.route("**/api/summary", async route => { summaryHeld = true; await resume; await route.continue(); });
+    await p.goto(base + "/#/board");
+    const together = await until(() => summaryHeld && typesRequested, 5000); releaseSummary();
+    ok(together, "bootstrap requests the summary and types metadata together", JSON.stringify({ summaryHeld, typesRequested }));
+    ok(await until(async () => (await p.locator("#conn.ok").count()) === 1), "bootstrap completes once the held summary returns");
+    await ctx.close();
+  }
   let n = 1;
   for (const [width, lang] of [[1440, "en"], [390, "zh-TW"]]) {
     const ctx = await browser.newContext({ viewport: { width, height: width < 500 ? 844 : 900 } });
     await ctx.addInitScript((lang) => { try { localStorage.setItem("crew.lang", lang); localStorage.setItem("crew.chatOpen", "1"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} }, lang);
-    const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width}: ${e}`));
+    const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width} ${serverPhase}: ${e.stack || e}`));
     const tag = `${width}-${lang}`, mine = () => p.evaluate(() => document.querySelector('meta[name="crew-release"]')?.content);
     await p.goto(base + "/#/board");
     await until(async () => (await p.locator("#conn.ok").count()) === 1);
@@ -72,7 +110,7 @@ try {
   // event, the way a redraw or a programmatic stage leaves it, so the modules' own checks decide, not the keystroke net
   { const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await ctx.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.chatOpen", "1"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} });
-    const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`cases: ${e}`));
+    const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`cases ${serverPhase}: ${e.stack || e}`));
     const mine = () => p.evaluate(() => document.querySelector('meta[name="crew-release"]')?.content);
     const card = { id: "SC-990", run: "R-990", node: "ask", visit: 1, kind: "question", status: "open", workflow: "fixture", title: { en: "Pick one", "zh-TW": "選一個" },
       body: "Pick one", options: [{ id: "a", label: "A", primary: true }, { id: "b", label: "B", note: true }], createdAt: new Date().toISOString(), answer: null };

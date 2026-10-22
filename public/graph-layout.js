@@ -34,8 +34,13 @@
     return list.filter((s) => s.nodes.length);
   }
 
+  // A visible edge needs both ends drawn. One whose ends collapse into the same box is dropped,
+  // except a real self-edge in the editable graph (its own node, not a stage).
+  const keepEdge = (a, b, e, opts, has) => has(a) && has(b) && (a !== b || (!!opts.actualGraph && typeof a === "string" && a === e.from && e.from === e.to));
+
   // ---------- the auto layout ----------
   function layout(def, opts = {}) {
+    if (!def.nodes.length) return { def: def.id, nodes: [], edges: [], stages: [], stageList: [], collapsed: [], bbox: { x: 0, y: 0, w: COL * 2, h: ROW * 2 }, NW, NH };
     const stages = stagesFor(def);
     const collapsed = new Set((opts.collapsed || []).filter((c) => stages.some((s) => s.id === c)));
     const stageOfNode = new Map(); stages.forEach((s) => s.nodes.forEach((n) => stageOfNode.set(n, s.id)));
@@ -48,7 +53,7 @@
     const ids = [...vn.keys()];
     // visible edges: the definition's, between visible nodes, duplicates merged
     const ve = [];
-    def.edges.forEach((e, i) => { const a = rep(e.from), b = rep(e.to); if (a === b || !vn.has(a) || !vn.has(b)) return;
+    def.edges.forEach((e, i) => { const a = rep(e.from), b = rep(e.to); if (!keepEdge(a, b, e, opts, (x) => vn.has(x))) return;
       const same = ve.find((x) => x.from === a && x.to === b);
       if (same) { same.index.push(i); if (e.when) same.whens.push(e.when); same.checks += e.checks?.length || 0; return; }
       ve.push({ from: a, to: b, index: [i], whens: e.when ? [e.when] : [], checks: e.checks?.length || 0 }); });
@@ -152,7 +157,7 @@
     //    unless it alone is wider than a band (the simple view, so a whole workflow fits readably)
     const RW = opts.row ?? ROW, FOOT = opts.foot ?? 0; // the simple view gives each node a row of badges under it
     const minRow = Math.min(0, ...all.map((x) => row.get(x)));
-    const bandOf = new Map(), bandStart = [], bandTop = [], bandRow0 = [], bandBottom = [];
+    const bandOf = new Map(), bandStart = [], bandTop = [], bandRow0 = [], bandBottom = [], bandRows = [];
     if (opts.wrap) {
       const stageAt = (r) => { const ls = layers[r] || []; const m = ls.find((x) => main.has(x) && vn.has(x)) ?? ls.find((x) => vn.has(x) && stageOfV(x)); return m ? stageOfV(m) : null; };
       const segs = []; for (let r = 0; r <= R; r++) { const st = stageAt(r); const last = segs[segs.length - 1]; if (last && st && last.st === st) last.n++; else segs.push({ st, r, n: 1 }); }
@@ -161,10 +166,24 @@
         for (let k = 0; k < sg.n; k++) { if (width >= opts.wrap) { b++; bandStart[b] = sg.r + k; width = 0; } bandOf.set(sg.r + k, b); width++; } }
       let y = 0;
       for (let i = 0; i <= b; i++) { const rows = all.filter((x) => bandOf.get(rank.get(x)) === i).map((x) => row.get(x)); const lo = Math.min(...rows), hi = Math.max(...rows);
-        bandRow0[i] = lo; bandTop[i] = y + TITLE + PAD; bandBottom[i] = bandTop[i] + (hi - lo) * RW + SH + PAD + FOOT; y = bandBottom[i] + BAND_GAP; }
+        bandRow0[i] = lo;
+        let height = (hi - lo) * RW;
+        if (opts.actualGraph) {
+          // Routing-only placeholders need lane clearance, not a full node/badge row.
+          const levels = [...new Set(rows)].sort((a, b) => a - b);
+          const real = new Map();
+          for (const x of ids.filter((x) => bandOf.get(rank.get(x)) === i)) real.set(row.get(x), Math.max(real.get(row.get(x)) || 0, vn.get(x).h));
+          const offsets = new Map(); let offset = 0;
+          for (let j = 0; j < levels.length; j++) {
+            if (j) offset += real.has(levels[j - 1]) ? (real.has(levels[j]) ? (real.get(levels[j - 1]) + real.get(levels[j])) / 2 + FOOT + PAD : real.get(levels[j - 1]) / 2 + NH / 2 + FOOT + LANE * 2) : (real.has(levels[j]) ? real.get(levels[j]) / 2 + LANE : LANE * 2);
+            offsets.set(levels[j], offset);
+          }
+          bandRows[i] = offsets; height = offset;
+        }
+        bandTop[i] = y + TITLE + PAD; bandBottom[i] = bandTop[i] + height + SH + PAD + FOOT; y = bandBottom[i] + BAND_GAP; }
     }
     const xy = (x, h) => { const r = rank.get(x); if (!opts.wrap) return [r * COL, (row.get(x) - minRow) * RW + (NH - h) / 2, 0];
-      const b = bandOf.get(r); return [(r - bandStart[b]) * COL, bandTop[b] + (row.get(x) - bandRow0[b]) * RW + (NH - h) / 2, b]; };
+      const b = bandOf.get(r); return [(r - bandStart[b]) * COL, bandTop[b] + (bandRows[b]?.get(row.get(x)) ?? (row.get(x) - bandRow0[b]) * RW) + (NH - h) / 2, b]; };
     const nodes = ids.map((x) => { const v = vn.get(x); const [px, py, band] = xy(x, v.h); return { id: x, kind: v.kind, stage: v.stage, label: v.label ?? v.ref?.label, ref: v.ref, members: v.members,
       x: px, y: py, w: v.w, h: v.h, row: row.get(x), rank: rank.get(x), main: main.has(x), band, bandBottom: opts.wrap ? bandBottom[band] : null }; });
     const at = new Map(nodes.map((n) => [n.id, n]));
@@ -227,7 +246,7 @@
     // and outside the arcs already placed over that span (a label widens its span)
     const solids = [...nodes, ...boxes];
     for (const s of [-1, 1]) {
-      const list = [...groups.values()].filter((g) => g[0].side === s).map((g) => { const lo0 = Math.min(...g.map((e) => e.xin)), hi0 = Math.max(...g.map((e) => e.xout)); const w = text(g[0]) ? text(g[0]).length * CH + 10 : 0; const mid = (lo0 + hi0) / 2;
+      const list = [...groups.values()].filter((g) => g[0].side === s).map((g) => { const lo0 = Math.min(...g.flatMap((e) => [e.xin, e.xout])), hi0 = Math.max(...g.flatMap((e) => [e.xin, e.xout])); const w = text(g[0]) ? text(g[0]).length * CH + 10 : 0; const mid = (lo0 + hi0) / 2;
         return { g, lo: Math.min(lo0, mid - w / 2) - 8, hi: Math.max(hi0, mid + w / 2) + 8 }; }).sort((x, y) => (x.hi - x.lo) - (y.hi - y.lo));
       const done = [];
       for (const it of list) {
@@ -385,6 +404,12 @@
     return { def: { ...def, nodes, edges: edges.map(({ i, ...x }) => x) }, edgeIndex: edges.map((e) => e.i), badges, hidden: def.nodes.filter((n) => !keep.has(n.id)).map((n) => n.id) };
   }
   function layoutSimple(def, opts = {}) {
+    // Editing represents the actual graph from the outset. Run summaries keep
+    // the main-path projection below; removing a step must not promote a hidden branch.
+    if (opts.actualGraph || !def.nodes.length) {
+      const g = layout(def, { collapsed: opts.collapsed, wrap: opts.wrap ?? 6, noFlip: true, offsets: opts.offsets, row: 128, foot: 28, actualGraph: !!opts.actualGraph });
+      g.badges = {}; g.hidden = []; g.simple = true; return g;
+    }
     const sim = simplify(def, opts.reached || []);
     const g = layout(sim.def, { collapsed: opts.collapsed, wrap: opts.wrap ?? 6, noFlip: true, offsets: opts.offsets, row: 128, foot: 28 });
     for (const e of g.edges) e.index = e.index.map((i) => sim.edgeIndex[i]); // back to the full definition's edge numbers
@@ -394,6 +419,7 @@
 
   // ---------- the definition's own positions (a dragged layout), same shapes ----------
   function place(def, opts = {}) {
+    if (!def.nodes.length) return layout(def, opts);
     const stages = stagesFor(def); const collapsed = new Set(opts.collapsed || []);
     const stageOf = new Map(); stages.forEach((s) => s.nodes.forEach((n) => stageOf.set(n, s.id)));
     const vis = []; const repOf = (id) => (stageOf.get(id) && collapsed.has(stageOf.get(id)) ? `stage:${stageOf.get(id)}` : id);
@@ -403,7 +429,7 @@
     const at = new Map(vis.map((n) => [n.id, n]));
     const mid = (Math.min(...vis.map((n) => n.y)) + Math.max(...vis.map((n) => n.y + n.h))) / 2;
     vis.forEach((n) => { n.row = n.y + n.h / 2 < mid ? -1 : 1; });
-    const ve = []; def.edges.forEach((e, i) => { const a = repOf(e.from), b = repOf(e.to); if (a === b) return; const same = ve.find((x) => x.from === a && x.to === b); if (same) { same.index.push(i); if (e.when) same.whens.push(e.when); same.checks += e.checks?.length || 0; return; }
+    const ve = []; def.edges.forEach((e, i) => { const a = repOf(e.from), b = repOf(e.to); if (!keepEdge(a, b, e, opts, (x) => at.has(x))) return; const same = ve.find((x) => x.from === a && x.to === b); if (same) { same.index.push(i); if (e.when) same.whens.push(e.when); same.checks += e.checks?.length || 0; return; }
       ve.push({ from: a, to: b, index: [i], whens: e.when ? [e.when] : [], checks: e.checks?.length || 0, back: !(at.get(b).x >= at.get(a).x + NW + 24) }); });
     const boxes = stages.filter((s) => !collapsed.has(s.id)).map((s) => { const mem = vis.filter((n) => n.stage === s.id); if (!mem.length) return null;
       const x0 = Math.min(...mem.map((n) => n.x)) - PAD, y0 = Math.min(...mem.map((n) => n.y)) - PAD - TITLE, x1 = Math.max(...mem.map((n) => n.x + n.w)) + PAD, y1 = Math.max(...mem.map((n) => n.y + n.h)) + PAD;
