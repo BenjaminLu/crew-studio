@@ -37,4 +37,5 @@ queue:
 vendor_policy:
   worker: opposite-of-host
   reviewer: claude
-  fallback: [codex, claude]
+  # the reviewer falls back along this chain only when Claude is not installed or not signed in
+  fallback: [codex, claude, cursor]

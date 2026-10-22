@@ -186,10 +186,12 @@ export function cursorLogin(options: { probe?: boolean } = {}): Login {
   const k = process.env.CURSOR_API_KEY?.trim();
   if (k) { const r = shaped(k, "CURSOR_API_KEY in Studio's environment"); if (r) return r; }
   for (const service of ["crew-studio-cursor-api-key", "firstmate-cursor-api-key"]) {
-    if (probe) { if (keychainHas(service, user())) return ok("", `the crew's Cursor API key (keychain item ${service})`); continue; }
-    const r = keychainRead(service, user());
-    if (r.found) { const got = shaped(r.found.trim(), `the crew's Cursor API key (keychain item ${service})`); if (got) return got; }
-    else if (r.error) failed.push(r.error);
+    if (probe) { if (keychainHas(service, user())) return ok("", `the crew's Cursor API key (keychain item ${service})`); }
+    else {
+      const r = keychainRead(service, user());
+      if (r.found) { const got = shaped(r.found.trim(), `the crew's Cursor API key (keychain item ${service})`); if (got) return got; }
+      else if (r.error) failed.push(r.error);
+    }
     if (service === "crew-studio-cursor-api-key") {
       const f = privateFile(join(home(), ".config", "crew-studio", "cursor-api-key"));
       if (f.found) { const got = probe ? ok("", "the crew's Cursor API key (~/.config/crew-studio/cursor-api-key)") : shaped(f.found, "the crew's Cursor API key (~/.config/crew-studio/cursor-api-key)"); if (got) return got; }

@@ -1,4 +1,4 @@
-import { rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 // Cursor provider: `cursor-agent -p --output-format stream-json` in a private root of its own (needs.ts cursorRoot):
 // HOME, workspace and CURSOR_DATA_DIR are throwaway folders, so neither the user's ~/.cursor nor a repository's .cursor/
@@ -13,9 +13,23 @@ import { blocksText } from "../tool-content";
 import { cursorLogin } from "./login";
 import { cursorNeeds, cursorRoot } from "./needs";
 import { processSession, type LineParser } from "./proc";
+import type { ProviderCapability } from "./policy";
 import { LOGIN_RE, errorOf, rowsOf, type NEvent, type Provider, type ProviderCtx, type ToolSpec } from "./types";
 
 export const CURSOR_HOSTS = ["api2.cursor.sh", "agentn.global.api5.cursor.sh"];
+
+/** The model Studio runs Cursor on: the captain's saved choice, else CREW_CURSOR_MODEL, else Composer. */
+export const cursorModel = (saved?: string | null) => saved || process.env.CREW_CURSOR_MODEL || "composer-2.5";
+
+/** Native capability for the provider policy without a model request: the CLI is on disk and an API key is present
+ *  (existence only: the keychain is asked whether the item exists, never for the secret). Cursor reports no quota or
+ *  reasoning-effort levels, so a present key counts as available and every model runs with effort null. */
+export function probeCursor(models: string[], bin = process.env.CREW_CURSOR_BIN ?? "cursor-agent"): ProviderCapability {
+  const at = Date.now(), base = { provider: "cursor", at, expires: at + 30_000 };
+  if (!(bin.includes("/") ? existsSync(bin) : Bun.which(bin))) return { ...base, available: false, auth: "unverified", quota: "unknown", models: [], refusal: "unavailable", reason: "the Cursor CLI (cursor-agent) is not installed" };
+  if (!cursorLogin({ probe: true }).ok) return { ...base, available: true, auth: "missing", quota: "unknown", models: [], refusal: "missing-login", reason: "no Cursor API key (keychain item crew-studio-cursor-api-key or CURSOR_API_KEY)" };
+  return { ...base, available: true, auth: "verified", quota: "available", models: [...new Set(models.filter(Boolean))].map((id) => ({ id, efforts: [] })) };
+}
 
 /** The per-turn configuration cursor-agent reads from its private root. */
 export function writeCursorConfig(root: string, systemPrompt: string, tools: ToolSpec[], ctx: ProviderCtx) {
