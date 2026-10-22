@@ -323,7 +323,9 @@ export class WorkflowDefs {
   catalog(){return this.list().filter(w=>this.selectable(w.id,w.version));}
   /** Workflows kept in the catalog for editing that the Start form and start routes do not offer. */
   heldCatalog(){return this.list().filter(w=>!INTERNAL_WORKFLOWS.has(w.id)&&!this.trashed(w.id)&&!!this.held(w.id)).map(w=>({...w,held:this.held(w.id)!}));}
-  list() { return this.ids().map((id) => { const vs = this.versions(id); const l = vs.at(-1)!; return { id, name: l.name, description: l.description ?? "", kind: l.kind ?? null, isTemplate: l.isTemplate === true, version: l.version, versions: vs.length, nodes: l.nodes.length, intent: l.intent ?? null, params: l.params ?? null, personal:this.personal(id), trashRevision:this.trashState(id)?.revision??0 }; }); }
+  /** An empty folder, or a package-import (imp-*) folder that cannot be read, is left out instead of breaking the whole catalog. */
+  private listable(id: string): WDef[] { try { return this.versions(id); } catch (e) { if (id.startsWith("imp-")) { console.error(`workflow ${id}: unreadable, left out of the catalog: ${(e as Error).message}`); return []; } throw e; } }
+  list() { return this.ids().flatMap((id) => { const vs = this.listable(id); const l = vs.at(-1); if (!l) return []; return [{ id, name: l.name, description: l.description ?? "", kind: l.kind ?? null, isTemplate: l.isTemplate === true, version: l.version, versions: vs.length, nodes: l.nodes.length, intent: l.intent ?? null, params: l.params ?? null, personal:this.personal(id), trashRevision:this.trashState(id)?.revision??0 }]; }); }
   layout(id: string, v: number): Record<string, { x: number; y: number }> { try { return JSON.parse(readFileSync(join(this.wdir(id), `layout-v${v}.json`), "utf8")); } catch { return {}; } }
   /** Dragging nodes: positions are kept per version without making a new one. */
   setLayout(id: string, v: number, pos: Record<string, { x: number; y: number }>) {

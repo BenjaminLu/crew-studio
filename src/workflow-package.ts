@@ -1,7 +1,7 @@
 /** Inert transfer packages. No package byte is installed in a runnable registry. */
 import {zip,unzip} from './zip';
 import {createHash,randomBytes} from 'node:crypto';
-import {closeSync,fstatSync,lstatSync,readdirSync,mkdirSync,writeFileSync,renameSync,rmSync,readSync} from 'node:fs';
+import {closeSync,fstatSync,lstatSync,readdirSync,mkdirSync,writeFileSync,renameSync,rmSync,readSync,unlinkSync,rmdirSync} from 'node:fs';
 import {join} from 'node:path';
 import {bundledBytes,parseYaml} from './bundled';
 import {BUNDLED} from './bundled.gen';
@@ -29,7 +29,7 @@ export function packageStoredBytes(root:string,rel:string,cap=PACKAGE_CAPS.file)
  const fd=openStoredDescriptor(root,rel.split('/'));try{const s=fstatSync(fd);if(!s.isFile()||s.nlink!==1||s.size>cap)fail('Package source must be a bounded regular file');return boundedDescriptorBytes(fd,s.size,cap);}finally{closeSync(fd);}
 }
 function objectKeys(v:any,keys:string[]){if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).some(k=>!keys.includes(k)))fail('Unknown or invalid manifest fields');}
-/** Every entry is checked against both ZIP headers, its CRC and these limits. Exports are stored; imports also accept deflate, capped at each declared size. */
+/** Packages are stored-only both ways: every entry is checked against both ZIP headers, its CRC and these limits; compressed entries are refused. */
 const unzipPackage=(b:Buffer)=>unzip(b,{archive:PACKAGE_CAPS.archive,entry:PACKAGE_CAPS.file,total:PACKAGE_CAPS.archive,count:PACKAGE_CAPS.count,name:safe});
 export function encodePackage(files:Map<string,Buffer>,manifest:PackageManifest):Buffer{
  const manifestBytes=Buffer.from(JSON.stringify(manifest,null,2));let total=manifestBytes.length;if(manifestBytes.length>PACKAGE_CAPS.file||files.size+1>PACKAGE_CAPS.count)fail('Package inventory exceeds limits');for(const [path,b]of files){if(!safe(path)||b.length>PACKAGE_CAPS.file)fail('Package source file exceeds profile limits');total+=b.length;if(total>PACKAGE_CAPS.archive-65536)fail('Package source exceeds total size limit');}
@@ -86,14 +86,17 @@ export class WorkflowPackages{
  readonly root:string;
  constructor(readonly data:string,private now=()=>Date.now()){this.root=join(data,'workflow-packages');}
  private prune(){for(const [k,p]of this.previews)if(this.now()-p.at>=PACKAGE_CAPS.ttl)this.previews.delete(k);}
- private view(v:Verified){return {storageAvailable:canCopyByDescriptor()||process.platform==='linux',sha256:v.sha256,manifest:v.manifest,files:v.manifest.files,status:'held',notice:'Inert package draft; local workflow adoption is not implemented. No script, check or asset is executed.'};}
+ private view(v:Verified){return {storageAvailable:canCopyByDescriptor()||process.platform==='linux',sha256:v.sha256,manifest:v.manifest,files:v.manifest.files,status:'held',notice:'Inert package draft. No script, check or asset is executed; creating a local workflow is a separate explicit step.'};}
  preview(owner:string,base64:string){this.prune();if(typeof base64!=='string'||base64.length>Math.ceil(PACKAGE_CAPS.archive/3)*4||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(base64))fail('Invalid or oversized ZIP upload');const bytes=Buffer.from(base64,'base64');if(this.previews.size>=PACKAGE_CAPS.previews||[...this.previews.values()].filter(p=>p.owner===owner).length>=PACKAGE_CAPS.owner||[...this.previews.values()].reduce((n,p)=>n+p.value.bytes.length*2,bytes.length*2)>PACKAGE_CAPS.memory)fail('Too many package previews; cancel an earlier preview');const value=verifyPackage(bytes),token=randomBytes(24).toString('hex');this.previews.set(token,{owner,at:this.now(),value});return {token,...this.view(value)};}
  private pending(owner:string,token:string){this.prune();const p=this.previews.get(token);if(!p||p.owner!==owner)fail('Package preview expired or belongs to another session; preview again');return p;}
  cancel(owner:string,token:string){this.pending(owner,token);this.previews.delete(token);return {cancelled:true};}
  file(owner:string,token:string,path:string){const v=this.pending(owner,token).value,b=v.files.get(path);if(!b)fail('No such package file');if(b.length>256*1024||b.includes(0))return {path,viewable:false,reason:'Binary or large file; source preview is unavailable'};let text:string;try{text=new TextDecoder('utf8',{fatal:true}).decode(b);}catch{return {path,viewable:false,reason:'Not UTF-8 text'};}return {path,viewable:true,text,sha256:packageSha(b)};}
  commit(owner:string,token:string){if(!canCopyByDescriptor()&&process.platform!=='linux')fail('Safe package storage currently requires macOS arm64 or Linux procfs');const p=this.pending(owner,token);this.previews.delete(token);const id='pkg-'+randomBytes(12).toString('hex');mkdirSync(this.root,{recursive:true,mode:0o700});const stage=join(this.root,'.stage-'+id),out=join(this.root,id);mkdirSync(stage,{mode:0o700});try{writeFileSync(join(stage,'package.zip'),p.value.bytes,{flag:'wx',mode:0o600});writeFileSync(join(stage,'receipt.json'),JSON.stringify({id,sha256:p.value.sha256,savedAt:new Date(this.now()).toISOString(),status:'held'}),{flag:'wx',mode:0o600});renameSync(stage,out);}catch(e){rmSync(stage,{recursive:true,force:true});throw e;}return {id,...this.view(p.value)};}
- list(){let names:string[];try{names=readdirSync(this.root);}catch{return [];}return names.filter(n=>/^pkg-[a-f0-9]{24}$/.test(n)).map(id=>{const v=this.read(id);return {id,...this.view(v)};});}
+ private verified=new Map<string,{key:string;view:ReturnType<WorkflowPackages['view']>}>();
+ /** One damaged entry is reported as damaged (still deletable) instead of failing the list. Verification is cached by archive/receipt mtime and size. */
+ list(){let names:string[];try{names=readdirSync(this.root);}catch{return [];}return names.filter(n=>/^pkg-[a-f0-9]{24}$/.test(n)).map(id=>{try{const key=['package.zip','receipt.json'].map(f=>{const st=lstatSync(join(this.root,id,f));return `${st.mtimeMs}:${st.size}`;}).join('|'),hit=this.verified.get(id);if(hit?.key===key)return {id,...hit.view};const view=this.view(this.read(id));this.verified.set(id,{key,view});return {id,...view};}catch(e:any){this.verified.delete(id);return {id,damaged:true as const,error:String(e?.message??e).slice(0,300)};}});}
  read(id:string){if(!/^pkg-[a-f0-9]{24}$/.test(id))fail('Invalid saved package identity');const value=verifyPackage(packageStoredBytes(this.data,`workflow-packages/${id}/package.zip`,PACKAGE_CAPS.archive));const receipt=JSON.parse(packageStoredBytes(this.data,`workflow-packages/${id}/receipt.json`).toString('utf8'));if(receipt.id!==id||receipt.sha256!==value.sha256||receipt.status!=='held')fail('Saved package receipt does not match archive');return value;}
  reopen(owner:string,id:string){return this.preview(owner,this.read(id).bytes.toString('base64'));}
- remove(id:string){this.read(id);rmSync(join(this.root,id),{recursive:true});return {deleted:id};}
+ /** Also removes a damaged package: only its two known files, then the folder (fails if anything else is inside). */
+ remove(id:string){if(!/^pkg-[a-f0-9]{24}$/.test(id))fail('Invalid saved package identity');const dir=join(this.root,id),st=lstatSync(dir);if(!st.isDirectory()||st.isSymbolicLink())fail('Saved package is not a folder');for(const f of ['package.zip','receipt.json']){try{unlinkSync(join(dir,f));}catch(e:any){if(e?.code!=='ENOENT')throw e;}}rmdirSync(dir);this.verified.delete(id);return {deleted:id};}
 }

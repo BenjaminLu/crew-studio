@@ -1,6 +1,6 @@
 import "./lib/isolated-env.mjs";
 import {strict as a} from 'node:assert';
-import {rmSync,readFileSync} from 'node:fs';
+import {rmSync,readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {gateHarness,until} from './gate-harness';
 import {WorkflowDefs} from '../src/runtime/defs';
 import {WorkflowDrafts} from '../src/workflow-drafts';
@@ -18,6 +18,11 @@ try{
  const stored=await h.api('/api/workflow-packages/commit',{token:preview.body.token});a.equal(stored.status,201,JSON.stringify(stored.body));
  const adopted=await h.api('/api/workflow-packages/adopt',{id:stored.body.id,sha256:stored.body.sha256});a.equal(adopted.status,201,JSON.stringify(adopted.body));
  const def=h.rt.defs.get(adopted.body.workflow);a.deepEqual(def.nodes,source.nodes);a.deepEqual(def.edges,source.edges);a.equal(def.origin.source,'package-import');const deleted=await h.api('/api/workflow-packages/delete',{id:stored.body.id});a.equal(deleted.status,200);a(readFileSync(join(h.data,'workflow-adoptions',def.origin.transaction,'source.zip')).equals(bytes));a.equal(h.seen.length,0);a.equal(h.rt.engine.list().length,0);
+ const bigUrl=new URL('http://t.local/api/workflow-packages/preview'),big=await h.rt.handle(new Request(bigUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({archive:'A'.repeat(12*1024*1024)})}),bigUrl,{kind:'desktop'},true);a.equal(big?.status,413);
+ const holdTxn=join(h.data,'workflow-adoptions','import-'+'c'.repeat(24));mkdirSync(holdTxn);writeFileSync(join(holdTxn,'recovery-hold.json'),JSON.stringify({txn:'import-'+'c'.repeat(24),reason:'fixture hold',at:'2026-01-01T00:00:00Z'}));
+ const listedHolds=await h.api('/api/workflow-packages');a.equal(listedHolds.status,200);a.deepEqual(listedHolds.body.adoptionHolds.map((x:any)=>x.reason),['fixture hold']);
+ mkdirSync(join(h.data,'workflows','imp-'+'d'.repeat(24)));writeFileSync(join(h.data,'workflows','imp-'+'e'.repeat(24)+'.tmp'),'');mkdirSync(join(h.data,'workflows','imp-'+'f'.repeat(24)));writeFileSync(join(h.data,'workflows','imp-'+'f'.repeat(24),'v1.json'),'{"id":');
+ const catalog=await h.api('/api/wf');a.equal(catalog.status,200,JSON.stringify(catalog.body));a(catalog.body.workflows.some((w:any)=>w.id===def.id));
  const gate=await h.api(`/api/wf/${def.id}/gate`);a.equal(gate.body.gate,null);a.equal(h.seen.length,0);
  const refused=await h.api('/api/wruns',{workflow:def.id,text:'Write a short document.'});a.equal(refused.status,409);a.equal(refused.body.code,'staffing_confirmation_required');
  const run=await h.api('/api/wruns',{workflow:def.id,text:'Write a short document.',staffingConfirm:refused.body.staffing.hash});a.equal(run.status,200,JSON.stringify(run.body));

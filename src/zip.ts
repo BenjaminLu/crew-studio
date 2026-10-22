@@ -1,5 +1,5 @@
-/** ZIP on node:zlib only: a deterministic writer and a strict bounded reader (no ZIP64, encryption, data descriptors, extras or comments). */
-import {deflateRawSync,inflateRawSync} from 'node:zlib';
+/** ZIP with Node built-ins only: a deterministic writer (stored or deflate) and a strict bounded STORED-only reader (no compression, ZIP64, encryption, data descriptors, extras or comments). */
+import {deflateRawSync} from 'node:zlib';
 
 const crcTable=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xedb88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
 export const crc32=(b:Uint8Array)=>{let c=0xffffffff;for(const x of b)c=crcTable[(c^x)&0xff]^(c>>>8);return (c^0xffffffff)>>>0;};
@@ -24,8 +24,7 @@ export function zip(files:{name:string;data:Buffer|string}[],opts:{store?:boolea
 export type ZipLimits={archive:number;entry:number;total:number;count:number;name:(path:string)=>boolean};
 export class ZipError extends Error{}
 const fail=(s:string):never=>{throw new ZipError(s);};
-/** Every entry must agree in its local and central headers, sit contiguously before the directory, match its CRC and stay inside the limits.
- * Deflate output is capped at the declared size, so a bomb fails inside zlib instead of allocating. */
+/** Every entry must be stored (no decompressor runs), agree in its local and central headers, sit contiguously before the directory, match its CRC and stay inside the limits. */
 export function unzip(b:Buffer,lim:ZipLimits):Map<string,Buffer>{
  if(b.length<22||b.length>lim.archive)fail('ZIP exceeds size limit or is truncated');
  const e=b.length-22;if(b.readUInt32LE(e)!==END||b.readUInt16LE(e+20)!==0)fail('ZIP comments/trailing data are unsupported');
@@ -36,16 +35,15 @@ export function unzip(b:Buffer,lim:ZipLimits):Map<string,Buffer>{
   if(pos+46>e||b.readUInt32LE(pos)!==CENTRAL)fail('Invalid ZIP central entry');
   const needed=b.readUInt16LE(pos+6),flags=b.readUInt16LE(pos+8),method=b.readUInt16LE(pos+10),crc=b.readUInt32LE(pos+16),compressed=b.readUInt32LE(pos+20),expanded=b.readUInt32LE(pos+24),n=b.readUInt16LE(pos+28),attrs=b.readUInt32LE(pos+38),local=b.readUInt32LE(pos+42);
   if(needed>20)fail('Unsupported ZIP version (ZIP64 or newer features)');
-  if(method!==0&&method!==8)fail('Unsupported ZIP compression method');
-  if(flags&~(UTF8|(method===8?6:0)))fail('Encrypted or data-descriptor ZIP entries are unsupported');
-  if(b.readUInt16LE(pos+30)||b.readUInt16LE(pos+32)||b.readUInt16LE(pos+34)||method===0&&compressed!==expanded||expanded>lim.entry||pos+46+n>e)fail('Unsupported ZIP entry metadata or file size');
+  if(method!==0)fail('Unsupported ZIP compression method: only stored entries are accepted');
+  if(flags&~UTF8)fail('Encrypted or data-descriptor ZIP entries are unsupported');
+  if(b.readUInt16LE(pos+30)||b.readUInt16LE(pos+32)||b.readUInt16LE(pos+34)||compressed!==expanded||expanded>lim.entry||pos+46+n>e)fail('Unsupported ZIP entry metadata or file size');
   const name=b.subarray(pos+46,pos+46+n),path=name.toString('utf8'),mode=(attrs>>>16)&0xf000;
   if(!lim.name(path)||seen.has(path.toLowerCase()))fail('ZIP entry name is duplicate, colliding or unsafe');seen.add(path.toLowerCase());
   if(mode&&mode!==0x8000||attrs&0x10)fail('ZIP link, directory or nonregular entry');
   if(local!==next||local+30+n>offset||b.readUInt32LE(local)!==LOCAL||b.readUInt16LE(local+4)>20||b.readUInt16LE(local+6)!==flags||b.readUInt16LE(local+8)!==method||b.readUInt32LE(local+14)!==crc||b.readUInt32LE(local+18)!==compressed||b.readUInt32LE(local+22)!==expanded||b.readUInt16LE(local+26)!==n||b.readUInt16LE(local+28)!==0||!b.subarray(local+30,local+30+n).equals(name))fail('ZIP local/central headers differ or entries overlap');
   const start=local+30+n;next=start+compressed;if(next>offset)fail('ZIP data overlaps directory');total+=expanded;if(total>lim.total)fail('Expanded ZIP exceeds limit');
-  let data:Buffer;if(method===0)data=Buffer.from(b.subarray(start,next));else try{data=inflateRawSync(b.subarray(start,next),{maxOutputLength:Math.max(1,expanded)});}catch{return fail('ZIP deflate data is invalid or larger than declared');}
-  if(data.length!==expanded)fail('ZIP data length mismatch');if(crc32(data)!==crc)fail('ZIP CRC mismatch');
+  const data=Buffer.from(b.subarray(start,next));if(crc32(data)!==crc)fail('ZIP CRC mismatch');
   files.set(path,data);pos+=46+n;
  }
  if(pos!==e||next!==offset)fail('ZIP contains unlisted bytes or entries');

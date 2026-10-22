@@ -31,10 +31,11 @@ try{
  check(()=>a.throws(()=>verifyPackage(both(Buffer.from(bytes),14,16,(b,at)=>b.writeUInt32LE(b.readUInt32LE(at)^1,at))),/CRC mismatch/));
  check(()=>a.throws(()=>verifyPackage((b=>{b.writeUInt32LE(b.readUInt32LE(18)+1,18);b.writeUInt32LE(b.readUInt32LE(22)+1,22);return b;})(Buffer.from(bytes))),/headers differ/));
  check(()=>a.throws(()=>verifyPackage(makeZip([['same','x'],['same','y']])),/duplicate/));
- check(()=>a.throws(()=>verifyPackage(both(makeZip([['bomb',Buffer.alloc(4*1024*1024)]],{}),22,24,(b,at)=>b.writeUInt32LE(1024,at))),/larger than declared/));
+ check(()=>a.throws(()=>verifyPackage(both(makeZip([['bomb',Buffer.alloc(4*1024*1024)]],{}),22,24,(b,at)=>b.writeUInt32LE(1024,at))),/only stored entries/)); // deflate bomb: refused before any decompression
  check(()=>a.throws(()=>verifyPackage(both(Buffer.from(bytes),8,10,(b,at)=>b.writeUInt16LE(12,at))),/compression method/));
  check(()=>a.throws(()=>verifyPackage(both(Buffer.from(bytes),6,8,(b,at)=>b.writeUInt16LE(0x808,at))),/data-descriptor/));
- check(()=>a.deepEqual([...verifyPackage(makeZip([...v.files].map(([p,b])=>[p,b]),{mode:0o100600})).files.keys()].sort(),[...v.files.keys()].sort()));
+ check(()=>a.throws(()=>verifyPackage(makeZip([...v.files].map(([p,b])=>[p,b]),{mode:0o100600})),/only stored entries/)); // a valid package re-zipped with deflate is refused
+ check(()=>a.deepEqual([...verifyPackage(makeZip([...v.files].map(([p,b])=>[p,b]),{store:true,mode:0o100600})).files.keys()].sort(),[...v.files.keys()].sort()));
  check(()=>a.throws(()=>verifyPackage(makeZip([['../evil','x']]))));
  check(()=>a.throws(()=>verifyPackage(makeZip([['UPPER','x'],['upper','x']]))));
  check(()=>a.throws(()=>verifyPackage(makeZip([['manifest.json',JSON.stringify(v.manifest)],['workflow/definition.json','{}'],['unlisted','x']]))));
@@ -50,5 +51,9 @@ try{
  writeFileSync(join(folder,'index.json'),JSON.stringify([{...rec,files:Array.from({length:199},(_,i)=>'absent-'+i)}]));check(()=>a.throws(()=>snapshotPackage(pinned,data),/count limit/));writeFileSync(join(folder,'index.json'),JSON.stringify([rec]));
  const largeNames=['large0','large1','large2','large3','absent-after-cap'];for(const name of largeNames.slice(0,4))writeFileSync(join(folder,'v1','files',name),Buffer.alloc(2*1024*1024));writeFileSync(join(folder,'index.json'),JSON.stringify([{...rec,files:largeNames}]));check(()=>a.throws(()=>snapshotPackage(pinned,data),/bounded regular file/));writeFileSync(join(folder,'index.json'),JSON.stringify([rec]));
  writeFileSync(join(folder,'v1','files','scripts','run.sh'),'changed');check(()=>a.throws(()=>snapshotPackage(pinned,data),/supporting files changed/));rmSync(join(folder,'v1','files','scripts','run.sh'));symlinkSync(join(data,'standard.zip'),join(folder,'v1','files','scripts','run.sh'));check(()=>a.throws(()=>snapshotPackage(pinned,data),/link/));
+ const listing=new WorkflowPackages(join(data,'listing')),good=listing.commit('alice',listing.preview('alice',bytes.toString('base64')).token),damaged=listing.commit('alice',listing.preview('alice',bytes.toString('base64')).token);
+ check(()=>a.equal(listing.list().length,2));const damagedZip=join(listing.root,damaged.id,'package.zip'),cut=readFileSync(damagedZip);cut[40]^=1;writeFileSync(damagedZip,cut);
+ const rows:any[]=listing.list();check(()=>a.equal(rows.length,2));check(()=>a.equal(rows.find(x=>x.id===damaged.id)?.damaged,true));check(()=>a.equal(rows.find(x=>x.id===good.id)?.status,'held'));
+ listing.remove(damaged.id);check(()=>a.deepEqual(listing.list().map(x=>x.id),[good.id]));check(()=>a(!existsSync(join(listing.root,damaged.id))));
  console.log(`${assertions} assertions passed`);
 }finally{rmSync(data,{recursive:true,force:true});}

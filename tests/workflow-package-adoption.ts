@@ -1,6 +1,6 @@
 import "./lib/isolated-env.mjs";
 import {strict as a} from 'node:assert';
-import {mkdtempSync,rmSync,readFileSync,existsSync,writeFileSync,readdirSync,mkdirSync} from 'node:fs';
+import {mkdtempSync,rmSync,readFileSync,existsSync,writeFileSync,readdirSync,mkdirSync,statSync,chmodSync,symlinkSync} from 'node:fs';
 import {createHmac} from 'node:crypto';
 import {ledgerKey} from '../src/runtime/checks';
 import {installReadiness} from '../src/readiness';
@@ -37,7 +37,7 @@ try{
  check(()=>a.deepEqual(saved.nodes,d.nodes));
  check(()=>a.deepEqual(saved.edges,d.edges));
  check(()=>a.equal(new WorkflowAdoption(destination).data,destination));
- const failed=join(dir,'interrupted'),broken=new WorkflowAdoption(failed,p=>{if(p.startsWith('reserve:'))throw Error('injected crash');});
+ const failed=join(dir,'interrupted'),broken=new WorkflowAdoption(failed,p=>{if(p.startsWith('stage:'))throw Error('injected crash');});
  check(()=>a.throws(()=>broken.adopt(fixture(),'pkg-'+'a'.repeat(24),new WorkflowDefs(failed,()=>[]),caps),/injected/));
  new WorkflowAdoption(failed);check(()=>a.equal(new WorkflowDefs(failed,()=>[]).ids().length,0));
 
@@ -57,9 +57,12 @@ try{
  check(()=>a.throws(()=>new WorkflowAdoption(join(dir,'cache')).adopt(cache,'pkg-'+'b'.repeat(24),new WorkflowDefs(join(dir,'cache'),()=>[]),caps),/P1 admission/));
 
  const points:string[]=[],capture=join(dir,'capture'),captured=new WorkflowAdoption(capture,p=>points.push(p));captured.adopt(withSkill,'pkg-'+'c'.repeat(24),new WorkflowDefs(capture,()=>[]),caps);
+ const lastPublish=points.findLastIndex(p=>p.startsWith('publish:'));check(()=>a(lastPublish>0&&points.at(-1)==='published'));
  for(const [i,point]of points.entries()){
   let visited=0;const at=join(dir,'crash-'+i),crash=new WorkflowAdoption(at,p=>{if(visited++===i)throw Error('crash-boundary');});
-  a.throws(()=>crash.adopt(withSkill,'pkg-'+'c'.repeat(24),new WorkflowDefs(at,()=>[]),caps),/crash-boundary/);
+  let done:any=null;try{done=crash.adopt(withSkill,'pkg-'+'c'.repeat(24),new WorkflowDefs(at,()=>[]),caps);}catch(e:any){a.match(e.message,/crash-boundary/);}
+  // once the last folder is published, a late failure still reports the created workflow instead of inviting a duplicate retry
+  check(()=>a.equal(!!done,i>=lastPublish,point));if(done)check(()=>a.deepEqual(new WorkflowDefs(at,()=>[]).ids(),[done.workflow]));
   new WorkflowAdoption(at);const remaining=new WorkflowDefs(at,()=>[]).ids();
   check(()=>a(remaining.length===0||remaining.length===1&&remaining[0].startsWith('imp-')));
   new WorkflowAdoption(at);check(()=>a.deepEqual(new WorkflowDefs(at,()=>[]).ids(),remaining));
@@ -77,12 +80,17 @@ try{
 
  const archivePath=join(dir,'kill-fixture.zip');writeFileSync(archivePath,withSkill);
  const childCode=`import {readFileSync} from 'node:fs';import {WorkflowAdoption} from ${JSON.stringify(join(import.meta.dir,'../src/workflow-package-adoption.ts'))};import {WorkflowDefs} from ${JSON.stringify(join(import.meta.dir,'../src/runtime/defs.ts'))};let step=0;const data=process.argv[1],bytes=readFileSync(process.argv[2]),stop=Number(process.argv[3]);new WorkflowAdoption(data,()=>{if(step++===stop)process.exit(73);}).adopt(bytes,'pkg-'+'d'.repeat(24),new WorkflowDefs(data,()=>[]),{ready:true,accept:true});process.exit(74);`;
+ const filesUnder=(p:string)=>(readdirSync(p,{recursive:true}) as string[]).filter(f=>statSync(join(p,f)).isFile());
+ const wholeOrAbsent=(at:string)=>{const txn=readdirSync(join(at,'workflow-adoptions')).find(x=>x.startsWith('import-'))!,plan=JSON.parse(readFileSync(join(at,'workflow-adoptions',txn,'journal.json'),'utf8')).plan;return plan.roots.every((root:string)=>{if(!existsSync(join(at,root)))return true;const want=plan.files.filter((f:any)=>f.path.startsWith(root+'/'));return filesUnder(join(at,root)).length===want.length&&want.every((f:any)=>existsSync(join(at,f.path))&&packageSha(readFileSync(join(at,f.path)))===f.sha256);});};
  for(let i=0;i<points.length;i++){
   const at=join(dir,'killed-'+i),child=Bun.spawnSync(['bun','--no-env-file','-e',childCode,at,archivePath,String(i)],{stdout:'pipe',stderr:'pipe'});
-  check(()=>a.equal(child.exitCode,73,child.stderr.toString()));new WorkflowAdoption(at);const first=new WorkflowDefs(at,()=>[]).ids();new WorkflowAdoption(at);check(()=>a.deepEqual(new WorkflowDefs(at,()=>[]).ids(),first));
+  check(()=>a.equal(child.exitCode,73,child.stderr.toString()));
+  // before any recovery: every target folder is absent or whole, and the catalog still lists
+  check(()=>a(wholeOrAbsent(at),points[i]));check(()=>a.doesNotThrow(()=>new WorkflowDefs(at,()=>[]).list()));
+  new WorkflowAdoption(at);const first=new WorkflowDefs(at,()=>[]).ids();new WorkflowAdoption(at);check(()=>a.deepEqual(new WorkflowDefs(at,()=>[]).ids(),first));
  }
 
- const partial=(name:string)=>{const at=join(dir,name),stop=points.findIndex(p=>p.startsWith('file:')),child=Bun.spawnSync(['bun','--no-env-file','-e',childCode,at,archivePath,String(stop)],{stdout:'pipe',stderr:'pipe'});a.equal(child.exitCode,73,child.stderr.toString());const txn=readdirSync(join(at,'workflow-adoptions'))[0],journal=join(at,'workflow-adoptions',txn,'journal.json'),plan=JSON.parse(readFileSync(journal,'utf8')).plan;return {at,txn,journal,plan,skillRoot:join(at,plan.roots[0])};};
+ const partial=(name:string)=>{const at=join(dir,name),stop=points.findIndex(p=>p.startsWith('publish:')),child=Bun.spawnSync(['bun','--no-env-file','-e',childCode,at,archivePath,String(stop)],{stdout:'pipe',stderr:'pipe'});a.equal(child.exitCode,73,child.stderr.toString());const txn=readdirSync(join(at,'workflow-adoptions'))[0],journal=join(at,'workflow-adoptions',txn,'journal.json'),plan=JSON.parse(readFileSync(journal,'utf8')).plan;return {at,txn,journal,plan,skillRoot:join(at,plan.roots[0])};};
  const clean=partial('clean-partial');check(()=>a(existsSync(join(clean.skillRoot,'v1','SKILL.md'))));new WorkflowAdoption(clean.at);
  check(()=>a(!existsSync(clean.skillRoot)));check(()=>a(existsSync(join(clean.at,'workflow-adoptions',clean.txn,'rolled-back'))));
 
@@ -95,11 +103,28 @@ try{
  check(()=>a.equal(new WorkflowAdoption(hostile.at).holds().length,1));
 
  const sourceTxn=saved.origin!.transaction!,forgedTxn='import-'+'f'.repeat(24),forgedPlan={schema:1,txn:forgedTxn,workflow:saved.id,archiveSha256:'0'.repeat(64),files:[{path:`workflows/${saved.id}/v1.json`,sha256:'0'.repeat(64)}],roots:[`workflows/${saved.id}`]};
- mkdirSync(join(destination,'workflow-adoptions',forgedTxn));writeFileSync(join(destination,'workflow-adoptions',forgedTxn,'journal.json'),JSON.stringify({plan:forgedPlan,sig:createHmac('sha256',ledgerKey(destination)).update(JSON.stringify(forgedPlan)).digest('hex')}));
+ mkdirSync(join(destination,'workflow-adoptions',forgedTxn));writeFileSync(join(destination,'workflow-adoptions',forgedTxn,'journal.json'),JSON.stringify({plan:forgedPlan,sig:createHmac('sha256',ledgerKey(destination)).update('crew-workflow-adoption-v1\0'+JSON.stringify(forgedPlan)).digest('hex')}));
  const forged=new WorkflowAdoption(destination);
  check(()=>a.deepEqual(new WorkflowDefs(destination,()=>[]).versions(saved.id)[0].nodes,d.nodes));
  check(()=>a.match(forged.holds().find(x=>x.txn===forgedTxn)?.reason??'',/Unowned adoption target/));
  check(()=>a(existsSync(join(destination,'workflow-adoptions',sourceTxn,'complete'))));
+ const bareTxn='import-'+'e'.repeat(24),barePlan={...forgedPlan,txn:bareTxn};mkdirSync(join(destination,'workflow-adoptions',bareTxn));writeFileSync(join(destination,'workflow-adoptions',bareTxn,'journal.json'),JSON.stringify({plan:barePlan,sig:createHmac('sha256',ledgerKey(destination)).update(JSON.stringify(barePlan)).digest('hex')}));
+ check(()=>a.match(new WorkflowAdoption(destination).holds().find(x=>x.txn===bareTxn)?.reason??'',/signature/)); // a ledger-key HMAC without the adoption purpose prefix is not a journal signature
+
+ const brokenEmpty=join(destination,'workflows','imp-'+'a'.repeat(24)),brokenCut=join(destination,'workflows','imp-'+'b'.repeat(24));mkdirSync(brokenEmpty);mkdirSync(brokenCut);writeFileSync(join(brokenCut,'v1.json'),'{"id":');
+ const listed=new WorkflowDefs(destination,()=>[]).list().map(w=>w.id);
+ check(()=>a(listed.includes(saved.id)&&!listed.some(x=>x.endsWith('a'.repeat(24))||x.endsWith('b'.repeat(24)))));
+ rmSync(brokenEmpty,{recursive:true});rmSync(brokenCut,{recursive:true});
+
+ const ro=partial('readonly-txn'),roDir=join(ro.at,'workflow-adoptions',ro.txn),roJournal=JSON.parse(readFileSync(ro.journal,'utf8'));roJournal.sig='0'.repeat(64);writeFileSync(ro.journal,JSON.stringify(roJournal));chmodSync(roDir,0o500);
+ try{check(()=>a.doesNotThrow(()=>new WorkflowAdoption(ro.at)));check(()=>a.deepEqual(new WorkflowAdoption(ro.at).holds(),[]));}finally{chmodSync(roDir,0o700);}
+ check(()=>a(existsSync(join(ro.skillRoot,'v1','SKILL.md'))));
+ symlinkSync(join(ro.at,'absent-hold-target'),join(roDir,'recovery-hold.json'));check(()=>a.doesNotThrow(()=>new WorkflowAdoption(ro.at))); // stale hold entry: the marker write hits EEXIST
+ const unlisted=join(ro.at,'workflow-adoptions');chmodSync(unlisted,0o000);try{check(()=>a.doesNotThrow(()=>new WorkflowAdoption(ro.at)));check(()=>a.deepEqual(new WorkflowAdoption(ro.at).holds(),[]));}finally{chmodSync(unlisted,0o700);}
+ writeFileSync(join(hostile.at,'workflow-adoptions',hostile.txn,'recovery-hold.json'),'not json');check(()=>a.deepEqual(new WorkflowAdoption(hostile.at).holds().map(x=>x.reason),['Unreadable recovery hold record']));
+
+ const extra=partial('extra-dir');mkdirSync(join(extra.skillRoot,'v1','extra-empty'));const extraRecovery=new WorkflowAdoption(extra.at);
+ check(()=>a(existsSync(join(extra.skillRoot,'v1','extra-empty'))));check(()=>a.equal(extraRecovery.holds().length,1)); // only verified files are unlinked; rmdir refuses what remains
 
  const changed=partial('changed-target'),changedFile=join(changed.skillRoot,'v1','SKILL.md');writeFileSync(changedFile,readFileSync(changedFile,'utf8')+'\nlocal edit\n');
  const changedRecovery=new WorkflowAdoption(changed.at);

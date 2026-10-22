@@ -295,7 +295,7 @@ export function createRuntime(d: RuntimeDeps) {
       if(p.startsWith('/api/workflow-packages')){
         if(who.kind!=='desktop')return json({error:'Use package transfer on the authenticated desktop'},403);
         const owner=packageSha((req.headers.get('cookie')??'')+'|'+(req.headers.get('x-crew-session')??''));
-        if(p==='/api/workflow-packages'&&req.method==='GET')return json({packages:packages.list()});
+        if(p==='/api/workflow-packages'&&req.method==='GET')return json({packages:packages.list(),adoptionHolds:adoption.holds()});
         const saved=/^\/api\/workflow-packages\/(pkg-[a-f0-9]{24})\/download$/.exec(p);if(saved&&req.method==='GET'){const value=packages.read(saved[1]);return new Response(value.bytes,{headers:{'content-type':'application/zip','content-disposition':`attachment; filename="${saved[1]}.crew.zip"`,'cache-control':'no-store'}});}
         if(req.method!=='POST'||!writing)return json({error:'Authenticated POST required'},405);
         if(p==='/api/workflow-packages/preview')return json(packages.preview(owner,b?.archive));
