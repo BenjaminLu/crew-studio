@@ -125,6 +125,7 @@ export class Agents {
       mkdirSync(tmp, { recursive: true });
       // the round's home and XDG folders are its own (v1 bin/fm-sandbox.sh, T-128): ordinary tools take their ordinary paths, inside the round
       Object.assign(roundEnvAdd, { XDG_CACHE_HOME: join(home, ".cache"), XDG_CONFIG_HOME: join(home, ".config"), XDG_DATA_HOME: join(home, ".local", "share") }, needs.home(home));
+      if (needs.writes?.length) { const rmHome = cleanup, extra = [...needs.writes]; cleanup = () => { rmHome(); for (const d of extra) try { rmSync(d, { recursive: true, force: true }); } catch {} }; }
       // its vendor's own login, read here, outside the sandbox (v1 option A, T-117): the round gets that token and nothing else
       const login = needs.login(home); if (!login.ok) { cleanup(); return refuse(`${o.provider.id} has no login for a round: ${login.error}`); }
       if (login.warn) this.log(job, "start", `${o.provider.id} signs in with ${login.source}: ${login.warn}`);
@@ -135,7 +136,7 @@ export class Agents {
       studioUrl = this.toolUrl();
       cwd = o.sandbox.cwd ?? tmp;
       const prof = join(box, "round.sb");
-      writeFileSync(prof, roundProfile({ cwd, tmp, writes: [...o.sandbox.writes, home], reads: [...needs.reads, ...helperReads(), ...(o.sandbox.reads ?? [])], proxyPort: lease?.port??1, toolPort: Number(new URL(studioUrl).port),
+      writeFileSync(prof, roundProfile({ cwd, tmp, writes: [...o.sandbox.writes, home, ...(needs.writes ?? [])], reads: [...needs.reads, ...helperReads(), ...(o.sandbox.reads ?? [])], proxyPort: lease?.port??1, toolPort: Number(new URL(studioUrl).port),
         dataDir: this.dataDir, protect: this.protect() }));
       const proxy = lease?.url ?? "";
       if(!localUnrestricted())Object.assign(roundEnvAdd, { HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy, ALL_PROXY: proxy, all_proxy: proxy, NO_PROXY: "localhost,127.0.0.1,::1", no_proxy: "localhost,127.0.0.1,::1", NODE_USE_ENV_PROXY: "1", TMPDIR: tmp });

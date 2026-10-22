@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { guardedTurn } from "../src/chat";
 import { claudeProvider } from "../src/providers/claude";
 import { codexProvider } from "../src/providers/codex";
+import { cursorProvider } from "../src/providers/cursor";
 import { stubProvider } from "../src/providers/stub";
 import { anthropicProvider, compatProvider, openaiProvider } from "../src/providers/http";
 import type { NEvent, Provider } from "../src/providers/types";
@@ -30,8 +31,9 @@ const tools = Bun.serve({
 });
 const url = `http://127.0.0.1:${tools.port}`;
 const tokenFile = join(mkdtempSync(join(tmpdir(), "crew-contract-auth-")), "tool-token"); writeFileSync(tokenFile, TOKEN, {mode:0o600});
+process.env.CREW_KEYCHAIN_TOOL = "none"; // the cursor provider resolves its key here; never the operator's keychain
 const ctx = { tokenFile, studioUrl: url, token: TOKEN, cwd: mkdtempSync(join(tmpdir(), "crew-contract-")), mcpCommand: [process.execPath, join(here, "../src/mcp.ts")],
-  env: { ...process.env, CREW_STUDIO_URL: url, CREW_TOOL_TOKEN_FILE: tokenFile } as Record<string, string> };
+  env: { ...process.env, CREW_STUDIO_URL: url, CREW_TOOL_TOKEN_FILE: tokenFile, CURSOR_API_KEY: `crsr_${"0".repeat(64)}` } as Record<string, string> };
 // mock vendor APIs for the direct-HTTP providers: the same scripted behaviour as the stub CLIs
 const scenario = (text: string) => /STUB_INTENT/.test(text) ? "intent" : /STUB_TIMEOUT/.test(text) ? "timeout" : /STUB_MANY/.test(text) ? "many" : /STUB_LOGIN/.test(text) ? "login" : "normal";
 const answer = "T-1 is done [T-1](#/task/T-1); see [event](#/event/7).";
@@ -55,7 +57,7 @@ const api = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
 } });
 const apiUrl = `http://127.0.0.1:${api.port}`;
 Object.assign(process.env, { CREW_ANTHROPIC_BASE: apiUrl, CREW_OPENAI_BASE: apiUrl, ANTHROPIC_API_KEY: "test-key", OPENAI_API_KEY: "test-key", CREW_COMPAT_BASE_URL: `${apiUrl}/compat/v1` });
-const providers: Provider[] = [claudeProvider("stub-model", join(here, "stub-claude.mjs")), codexProvider("stub-model", join(here, "stub-codex.mjs")), stubProvider(),
+const providers: Provider[] = [claudeProvider("stub-model", join(here, "stub-claude.mjs")), codexProvider("stub-model", join(here, "stub-codex.mjs")), cursorProvider("stub-model", join(here, "stub-cursor.mjs")), stubProvider(),
   anthropicProvider("mock-model"), openaiProvider("mock-model"), compatProvider("mock-model")];
 
 let pass = 0, fail = 0;
