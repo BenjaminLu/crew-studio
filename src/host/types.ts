@@ -6,7 +6,7 @@ import { scrubEnv } from "../secure";
 //   discover(projectDir) -> SessionInfo[]
 //   attach(id) -> AttachedSession;  send(text) -> resolves when the turn ends
 //   events come through onEvent; interrupt() stops the turn; detach() returns the resume command
-export type HostId = "claude" | "codex";
+export type HostId = "claude" | "codex" | "cursor";
 
 export type SessionInfo = {
   host: HostId; id: string; title: string; cwd: string; updated: number;

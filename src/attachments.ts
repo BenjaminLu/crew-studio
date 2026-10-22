@@ -7,6 +7,7 @@
 //   codex   images as localImage turn input (the app-server reads the file); a PDF has no
 //           input item in the app-server protocol, so Codex gets the stored file's path in the
 //           turn text and is told it has not seen the contents unless it reads the file itself
+//   cursor  none: refused with cursorNoAttachments (cursor-agent -p takes no image input and its Read tool is denied)
 // Retention: a file that was never sent goes after ATTACH_UNSENT_TTL_MS (an upload that was removed,
 // refused by the host, or abandoned); a sent file stays, because the chat history shows it. Stray
 // temporary files go after ATTACH_TMP_TTL_MS. Studio sweeps at start and every hour (sweep()).
@@ -39,7 +40,7 @@ export type AttachmentRef = { id: string; mime: AttachmentMime; kind: Attachment
 export type AttachmentFile = AttachmentRef & { path: string };
 
 export type AttachmentRefusalCode = "attachmentType" | "attachmentEmpty" | "attachmentTooLarge" | "attachmentCount" | "attachmentMissing"
-  | "attachmentNoHost" | "attachmentChanged" | "claudeImageTooLarge" | "claudeMessageTooLarge" | "claudeImageDimensions" | "claudePdfPages";
+  | "attachmentNoHost" | "attachmentChanged" | "claudeImageTooLarge" | "claudeMessageTooLarge" | "claudeImageDimensions" | "claudePdfPages" | "cursorNoAttachments";
 export type AttachmentRefusal = { ok: false; code: AttachmentRefusalCode; reason: { en: string; "zh-TW": string } };
 /** A new file through a fresh temporary one (O_EXCL, no symlink followed), renamed into place: rename replaces a link, never writes through it. */
 function writeNew(dir: string, file: string, bytes: Uint8Array) {
@@ -246,7 +247,7 @@ export function unknownNote(f: AttachmentRef): { en: string; "zh-TW": string; wa
 }
 /** How a host gets each file, or the typed reason it cannot. Never a silent drop. */
 export type Delivery = { id: string; mode: "native" | "file"; note: { en: string; "zh-TW": string; warn?: true } | null };
-export function deliveryFor(host: "claude" | "codex" | null, files: AttachmentRef[]): { ok: true; deliveries: Delivery[] } | AttachmentRefusal {
+export function deliveryFor(host: "claude" | "codex" | "cursor" | null, files: AttachmentRef[]): { ok: true; deliveries: Delivery[] } | AttachmentRefusal {
   if (!files.length) return { ok: true, deliveries: [] };
   if (files.length > ATTACH_MAX_PER_MESSAGE) return no("attachmentCount", `At most ${ATTACH_MAX_PER_MESSAGE} files per message.`, `每則訊息最多 ${ATTACH_MAX_PER_MESSAGE} 個檔案。`);
   if (host === "claude") {
@@ -261,6 +262,8 @@ export function deliveryFor(host: "claude" | "codex" | null, files: AttachmentRe
   }
   if (host === "codex") return { ok: true, deliveries: files.map((f) => f.kind === "image" ? { id: f.id, mode: "native" as const, note: null }
     : { id: f.id, mode: "file" as const, note: { en: "Codex cannot read PDFs directly; it opens the file itself.", "zh-TW": "Codex 不能直接讀 PDF，會自己開檔。" } }) };
+  // a Cursor Firstmate's built-in Read is denied and cursor-agent -p takes no image input: refused, never sent as a path it cannot open
+  if (host === "cursor") return no("cursorNoAttachments", "Firstmate on Cursor cannot take images or PDFs. Describe the file in words, or start Firstmate on Codex or Claude to send it.", "Cursor 上的 Firstmate 不能接收圖片或 PDF。請用文字描述檔案，或改用 Codex 或 Claude 啟動 Firstmate 再傳送。");
   return no("attachmentNoHost", "Start Firstmate before sending files.", "請先啟動 Firstmate 再傳檔案。");
 }
 

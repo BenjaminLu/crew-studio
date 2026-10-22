@@ -5,6 +5,8 @@
 //   POST /api/main/start {host: "codex", confirm}  start a fresh firstmate on Codex in the firstmate repo, the newest state/HANDOFF-*.md first
 //   POST /api/main/start {host: "claude", confirm} Studio's own workspace only: a fresh Firstmate on Claude; a typed refusal
 //                                     (claudeNotSignedIn, claudeQuotaExhausted, claudeCrewTokenMissing, ...) never falls back to Codex
+//   POST /api/main/start {host: "cursor", confirm} Studio's own workspace only: a fresh Firstmate on Cursor (the CLI and the crew's
+//                                     Cursor API key); a refusal never falls back to another vendor. A Cursor session is never taken over
 //   POST /api/main/question {id, answers}  answer a question the session asked (AskUserQuestion) through the permission bridge
 //   POST /api/main/dispatch {text}    the captain's intent, sent to firstmate to draft a spec and raise the dispatch card
 //   GET  /api/crew/live               every worker and reviewer round: task, title, role, vendor/model, round, phase, elapsed, activity, PR, CI, report
@@ -19,7 +21,8 @@ import { newestHandoffFile, type MainSession } from "./host/main";
 import { redactText } from "./secure";
 
 type Who = { kind: string; device?: { name: string } };
-type Deps = { claudePreflight?: () => Promise<{ ready: import("./host/claude-primary").ClaudePrimaryReady; status: unknown }>; claudePair?: () => { model: string; effort: string | null }; claudePrimary?: () => Promise<import("./host/claude-primary").ClaudePrimaryReady>; codexAccount?:Pick<import("./host/codex-account").CodexAccount,"view"|"ensureReady"|"blocking">; main: MainSession; fm: FmState; gh: GitHub; board: Board; stateDir: string; pending: () => Card[]; tasks: () => Task[]; crew: () => Actor[] };
+export type CursorPrimaryReady = { ok: true; env: Record<string, string>; model: string } | { ok: false; code: string; reason: string; en: string; zh: string };
+type Deps = { cursorPrimary?: (o?: { dry?: boolean }) => Promise<CursorPrimaryReady>; cursorAccount?: () => unknown; claudePreflight?: () => Promise<{ ready: import("./host/claude-primary").ClaudePrimaryReady; status: unknown }>; claudePair?: () => { model: string; effort: string | null }; claudePrimary?: () => Promise<import("./host/claude-primary").ClaudePrimaryReady>; codexAccount?:Pick<import("./host/codex-account").CodexAccount,"view"|"ensureReady"|"blocking">; main: MainSession; fm: FmState; gh: GitHub; board: Board; stateDir: string; pending: () => Card[]; tasks: () => Task[]; crew: () => Actor[] };
 
 export const DISPATCH_PREFIX = "Captain's intent for new work, sent from Crew Studio:";
 export const dispatchText = (intent: string) => `${DISPATCH_PREFIX}\n\n${intent}\n\n` +
@@ -70,7 +73,7 @@ export function createTakeover(d: Deps) {
       const project = d.main.view().project, newest = d.main.view().context === "studio" ? null : newestHandoffFile(d.stateDir);
       return json({ project, firstmate, sessions, discoveryUnavailable, view: d.main.view(), handoffs: d.main.handoffs(), board: d.board.status(),
         codex: { account:d.codexAccount?.view()??null, config: codexConfig(project), handoffFile: newest ? `state/${newest.name}` : null },
-        claude: d.claudePair?.() ?? null });
+        claude: d.claudePair?.() ?? null, cursor: d.cursorAccount?.() ?? null });
     }
     if (p.startsWith("/api/crew/report/") && !writing) {
       const actor = decodeURIComponent(p.slice("/api/crew/report/".length));
@@ -81,6 +84,11 @@ export function createTakeover(d: Deps) {
     // may a fresh Claude Firstmate start now? No config folder, no keychain decrypt, no model call (the sign-in status read runs
     // `claude auth status` in its own temporary folder). It also returns that status read, so the page reads it once.
     // Presence only: a crew item that exists but is empty or malformed passes here; Start and Switch decide with the full read.
+    if (p === "/api/main/start/cursor-ready" && !writing) {
+      if (!d.cursorPrimary) return json({ ok: false, code: "cursorUnavailable", reason: "Cursor is not available to Studio / Studio 無法使用 Cursor" });
+      const r = await d.cursorPrimary({ dry: true });
+      return json(r.ok ? { ok: true, model: r.model } : r);
+    }
     if (p === "/api/main/start/claude-ready" && !writing) {
       if (!d.claudePreflight) return json({ ok: false, code: "claudeUnavailable", reason: "Claude is not available to Studio / Studio 無法使用 Claude" });
       const { ready: r, status } = await d.claudePreflight();
@@ -108,6 +116,7 @@ export function createTakeover(d: Deps) {
       if(d.codexAccount?.blocking)return json({error:"Complete or cancel Codex account action first / 請先完成或取消 Codex 帳號操作"},409);
       const mode = b?.mode === "rehearsal" ? "rehearsal" : "takeover";
       if (b?.confirm !== true) return json({ error: "confirm first: the terminal session must stay idle while Studio drives", code: "confirm" }, 400);
+      if (b?.host === "cursor") return json({ ok: false, code: "cursorTakeover", error: "Studio does not take over a Cursor session from a terminal; start Firstmate on Cursor here instead / Studio 不接管終端機裡的 Cursor session；請在這裡用 Cursor 啟動 Firstmate" }, 409);
       const r = await d.main.takeover(b?.host === "codex" ? "codex" : "claude", String(b?.id ?? ""), mode);
       return json(r, r.ok ? 200 : 409);
     }
@@ -139,8 +148,18 @@ export function createTakeover(d: Deps) {
       const r = await d.main.startFresh("claude", undefined, { locale:boardLocale(), env: ready.env, model: ready.model, effort: ready.effort, permissionMode: ready.permissionMode, autoMode: ready.autoMode });
       return json(r, r.ok ? 200 : 409);
     }
+    if (p === "/api/main/start" && b?.host === "cursor") {
+      if (b?.confirm !== true) return json({ error: "confirm first: no other firstmate may run on the same state", code: "confirm" }, 400);
+      if (d.main.view().context !== "studio") return json({ error: "Cursor starts a fresh Firstmate only in Studio's own workspace / Cursor 只能在 Studio 自己的工作空間開新的 Firstmate", code: "host" }, 400);
+      if (d.main.view().state !== "detached") return json({ error: "Studio already owns firstmate; release it first / Studio 已在操作 firstmate，請先交還" }, 409);
+      if (!d.cursorPrimary) return json({ ok: false, code: "cursorUnavailable", reason: "Cursor is not available to Studio / Studio 無法使用 Cursor" }, 409);
+      const ready = await d.cursorPrimary();
+      if (!ready.ok) return json(ready, 409);
+      const r = await d.main.startFresh("cursor", undefined, { locale: boardLocale(), env: ready.env, model: ready.model, effort: null });
+      return json(r, r.ok ? 200 : 409);
+    }
     if (p === "/api/main/start") {
-      if (b?.host !== "codex") return json({ error: "a fresh start runs on Codex or Claude", code: "host" }, 400);
+      if (b?.host !== "codex") return json({ error: "a fresh start runs on Codex, Claude or Cursor", code: "host" }, 400);
       if (b?.confirm !== true) return json({ error: "confirm first: no other firstmate may run on the same state", code: "confirm" }, 400);
       if(d.main.view().state!=="detached")return json({error:"Studio already owns firstmate; release it first / Studio 已在操作 firstmate，請先交還"},409);
       if(!d.codexAccount)return json({error:"Codex account verification unavailable / 無法驗證 Codex 帳號"},409);
@@ -194,9 +213,18 @@ export function createTakeover(d: Deps) {
     const v = d.main.view();
     const stay = (en: string, zh: string) => { d.main.note({ kind: "status", text: `${en} / ${zh}`, i18n: { en, "zh-TW": zh } }); return { resumed: false, reason: en }; };
     if (v.context !== "studio" || v.state !== "detached") return { resumed: false };
-    const vendor = p.host === "claude" ? "Claude" : "Codex";
+    const vendor = p.host === "claude" ? "Claude" : p.host === "cursor" ? "Cursor" : "Codex";
     try {
-      if (p.host === "claude") {
+      if (p.host === "cursor") {
+        if (!d.cursorPrimary) return stay("Firstmate was running on Cursor before Studio restarted, but Cursor is not available now. Press Start to begin again.", "Studio 重啟前 Firstmate 在 Cursor 上執行，但現在無法使用 Cursor。請按 Start 重新開始。");
+        const ready = await d.cursorPrimary();
+        if (!ready.ok) return stay(`Firstmate was running on Cursor before Studio restarted and was not restarted: ${ready.en} Press Start once that is fixed.`, `Studio 重啟前 Firstmate 在 Cursor 上執行，這次沒有自動重開：${ready.zh}處理好後請按 Start。`);
+        if (ready.model !== p.model) return stay(`Firstmate was running on Cursor ${p.model ?? "(default)"} before Studio restarted; the configuration is now ${ready.model}, so it was not restarted. Press Start to begin with the new configuration.`, `Studio 重啟前 Firstmate 在 Cursor ${p.model ?? "（預設）"} 上執行；設定已改成 ${ready.model}，所以沒有自動重開。請按 Start 用新設定開始。`);
+        const locale = await greetingLocale();
+        if (d.main.view().state !== "detached") return { resumed: false };
+        const r = await d.main.startFresh("cursor", undefined, { locale, env: ready.env, model: ready.model, effort: null });
+        if (!r.ok) return stay(`Firstmate could not be restarted on Cursor after Studio restarted: ${r.reason}. Press Start to try again.`, `Studio 重啟後無法在 Cursor 上重開 Firstmate：${r.reason}。請按 Start 再試一次。`);
+      } else if (p.host === "claude") {
         if (!d.claudePrimary) return stay("Firstmate was running on Claude before Studio restarted, but Claude is not available now. Press Start to begin again.", "Studio 重啟前 Firstmate 在 Claude 上執行，但現在無法使用 Claude。請按 Start 重新開始。");
         const ready = await d.claudePrimary();
         if (!ready.ok) return stay(`Firstmate was running on Claude before Studio restarted and was not restarted: ${ready.en} Press Start once that is fixed.`, `Studio 重啟前 Firstmate 在 Claude 上執行，這次沒有自動重開：${ready.zh}處理好後請按 Start。`);

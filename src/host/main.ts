@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { localExecutionNotice } from "../local-execution";
 import { claudeHost } from "./claude";
 import { codexHost } from "./codex";
+import { cursorHost } from "./cursor";
 import { PermissionBridge } from "./permission";
 import { driving, mtimeOf, systemProbe, type ProcProbe } from "./probe";
 import { InputQueue, lastArrival, type QItem, type QKind } from "./queue";
@@ -133,7 +134,7 @@ export class MainSession {
   constructor(readonly o: MainOpts) {
     if (o.chatLog) { this.log = o.chatLog.load(400); this.lastLabel = [...this.log].reverse().find((x) => x.session)?.session ?? null; }
     this.probe = o.probe ?? systemProbe;
-    this.hosts = o.hosts ?? { claude: claudeHost(), codex: codexHost() };
+    this.hosts = o.hosts ?? { claude: claudeHost(), codex: codexHost(), cursor: cursorHost() };
     this.queue.onChange = () => this.changed();
     this.bridge.onChange = () => this.changed();
   }
@@ -153,7 +154,7 @@ export class MainSession {
       this.note({ kind: "status", text: `${en} / ${zh}`, i18n: { en, "zh-TW": zh } });
     }
     if (d.holder === "studio" || d.restartOnBoot) this.writeDriver({ holder: "none", host: d.host, sessionId: d.sessionId, pid: null, since: d.holder === "studio" ? new Date().toISOString() : d.since,
-      resume: d.sessionId && !own ? this.hosts[d.host ?? "claude"].resumeCommand(d.sessionId) : d.holder === "studio" ? undefined : d.resume, forkedFrom: d.forkedFrom ?? null, mode: d.mode ?? null, handoff: d.handoff ?? null, path: d.path ?? null, primary: d.primary ?? null });
+      resume: d.sessionId && !own ? this.hosts[d.host ?? "claude"]?.resumeCommand(d.sessionId) : d.holder === "studio" ? undefined : d.resume, forkedFrom: d.forkedFrom ?? null, mode: d.mode ?? null, handoff: d.handoff ?? null, path: d.path ?? null, primary: d.primary ?? null });
   }
   private bootPrimary: PrimarySettings | null = null;
   /** The primary that was running when Studio stopped (once): boot starts it again with the same settings, or says why not. */
@@ -392,7 +393,8 @@ export class MainSession {
   /** "Start firstmate on <host>": a NEW session in the firstmate repo, following its AGENTS.md, whose first message is the newest state/HANDOFF-*.md. */
   async startFresh(host: HostId, validate?: (identity:{model:string;effort:string|null})=>boolean, extra?: { codexDefaultEffort?: string; locale?: "en"|"zh-TW"|"zh-CN"; env?: Record<string, string>; model?: string | null; effort?: string | null; permissionMode?: "auto" | "default"; autoMode?: { state: string; summary: string; summaryZh?: string } }): Promise<{ ok: true; handoff: string; id: string; seededFrom: string | null } | { ok: false; reason: string; code: string }> {
     if (this.state !== "detached") return { ok: false, code: "attached", reason: "Studio already holds a session; release it first" };
-    if (host !== "codex" && !(host === "claude" && this.o.nativeWorkspace)) return { ok: false, code: "host", reason: "a fresh start runs on Codex, or on Claude in Studio's own workspace" };
+    if (host !== "codex" && !((host === "claude" || host === "cursor") && this.o.nativeWorkspace)) return { ok: false, code: "host", reason: "a fresh start runs on Codex, or on Claude or Cursor in Studio's own workspace" };
+    if (!this.hosts[host]) return { ok: false, code: "host", reason: `no ${host} host is available to Studio` };
     const priorDriver = this.driver();
     this.state = "attaching"; this.changed();
     try {
@@ -400,7 +402,8 @@ export class MainSession {
     try {
       this.session = await this.hosts[host].attach("", { cwd, fresh: true, onGeneratedImage:this.generatedImageCapability(), onEvent: (e) => this.hostEvent(e), onPermission: (r) => this.bridge.ask(r), permissionMcp: this.o.permissionMcp(this.bridge), nativeTools:this.nativeCapability(),
         ...(host === "codex" && extra?.codexDefaultEffort ? {codexDefaultEffort:extra.codexDefaultEffort} : {}),
-        ...(host === "claude" ? { env: extra?.env, model: extra?.model ?? null, permissionMode: extra?.permissionMode ?? "default", denyEdits: claudeDenyEdits(extra?.env?.CLAUDE_CONFIG_DIR), studioMcp: this.o.studioMcp ? { command: this.o.studioMcp() } : undefined } : {}) });
+        ...(host === "claude" ? { env: extra?.env, model: extra?.model ?? null, permissionMode: extra?.permissionMode ?? "default", denyEdits: claudeDenyEdits(extra?.env?.CLAUDE_CONFIG_DIR), studioMcp: this.o.studioMcp ? { command: this.o.studioMcp() } : undefined } : {}),
+        ...(host === "cursor" ? { env: extra?.env, model: extra?.model ?? null, studioMcp: this.o.studioMcp ? { command: this.o.studioMcp() } : undefined } : {}) });
     } catch (e: any) {
       this.state = "detached"; this.changed();
       return { ok: false, code: "attachFailed", reason: String(e?.message ?? e) };
@@ -410,14 +413,18 @@ export class MainSession {
     if(validate&&validate({model:this.session.model,effort:this.session.effort??null})!==true)throw new Error("Fresh host identity unverified / 新主對話身分尚未驗證");
     if (this.session.pid) this.own.add(this.session.pid);
     const se = this.session, at = new Date().toISOString();
-    const vendor = host === "claude" ? "Claude Code" : "Codex";
-    const statement = `Studio started a new firstmate ${host === "claude" ? "session" : "thread"} on ${vendor} in ${cwd}${newest ? `, first message: state/${newest.name}` : this.o.nativeWorkspace ? " (Studio-owned workspace)" : " (no state/HANDOFF-*.md found)"}`;
+    const vendor = host === "claude" ? "Claude Code" : host === "cursor" ? "Cursor" : "Codex";
+    const statement = `Studio started a new firstmate ${host === "codex" ? "thread" : host === "cursor" ? "chat" : "session"} on ${vendor} in ${cwd}${newest ? `, first message: state/${newest.name}` : this.o.nativeWorkspace ? " (Studio-owned workspace)" : " (no state/HANDOFF-*.md found)"}`;
     const handoff = this.writeHandoff(`${at.replace(/[:.]/g, "-")}-fresh-${se.id.slice(0, 8)}.md`, [
       `# Handoff: fresh firstmate on ${host}`, "", `- When: ${at}`, `- Host: ${host}`, `- The copy Studio drives is ${se.id}`, `- cwd: ${cwd} (${this.o.nativeWorkspace ? "Studio-owned workspace" : "explicit project; AGENTS.md applies"})`,
       ...(host === "claude" ? [
         `- model: ${extra?.model ?? "(the CLI default)"}; effort: ${extra?.effort ?? "(the CLI default)"} (the pair the Claude account card checks)`,
         `- config: Studio's own Claude config folder; signs in with the crew token, never the captain's interactive login`,
         `- permission mode: ${extra?.permissionMode ?? "default"}; Studio's native tools are allowed by name, ${extra?.permissionMode === "auto" ? "Claude's auto-mode classifier decides the rest and whatever it escalates goes" : "every other prompt goes"} to Studio's permission bridge, and any failure denies`,
+      ] : host === "cursor" ? [
+        `- model: ${extra?.model ?? se.model}; effort: none (Cursor sets no reasoning effort)`,
+        `- config: a private Cursor folder of Studio's own; signs in with the crew's Cursor API key, never the captain's ~/.cursor`,
+        `- tools: Studio's native tools only, allowed by name; every built-in Shell, Read and Write is denied`,
       ] : [
       `- model: ${se.model}; reasoning effort: ${se.effort ?? "(config default)"} (from the captain's Codex config; Studio sets neither)`,
       `- approval policy: ${se.approvalPolicy ?? "(config)"}; sandbox: ${se.sandbox ?? "(config)"}; every approval request goes to Studio's permission bridge, and any failure declines`]),
@@ -425,11 +432,11 @@ export class MainSession {
       `## Roll back`, "", this.o.nativeWorkspace ? "Stop Firstmate in Studio. This closes the owned primary; dispatched native Tasks keep their own lifecycle. Start a new primary explicitly when ready." : `Release in Studio, then continue the thread in a terminal: \`cd ${cwd} && ${this.hosts[host].resumeCommand(se.id)}\``, "",
     ]);
     this.origin = null;
-    this.drive = { host, path: "fresh", statement, noFork: null, model: host === "claude" ? extra?.model ?? null : se.model, effort: host === "claude" ? extra?.effort ?? null : se.effort ?? null, approvalPolicy: se.approvalPolicy ?? null, sandbox: se.sandbox ?? null, permissionMode: host === "claude" ? extra?.permissionMode ?? "default" : null, effectivePermissionMode: null, autoMode: host === "claude" ? extra?.autoMode ?? null : null, executionMode: host === "claude" ? (localExecutionNotice() ? "local-unrestricted" : "default") : null,
+    this.drive = { host, path: "fresh", statement, noFork: null, model: host === "claude" ? extra?.model ?? null : host === "cursor" ? extra?.model ?? se.model : se.model, effort: host === "claude" ? extra?.effort ?? null : host === "cursor" ? null : se.effort ?? null, approvalPolicy: se.approvalPolicy ?? null, sandbox: se.sandbox ?? null, permissionMode: host === "claude" ? extra?.permissionMode ?? "default" : null, effectivePermissionMode: null, autoMode: host === "claude" ? extra?.autoMode ?? null : null, executionMode: host === "claude" ? (localExecutionNotice() ? "local-unrestricted" : "default") : null,
       seededFrom: newest ? `state/${newest.name}` : null, handoff };
     this.sessionFile = se.file ?? null; this.lastSeenMtime = mtimeOf(this.sessionFile);
     this.writeDriver({ holder: "studio", host, sessionId: se.id, pid: process.pid, since: at, forkedFrom: null, mode: null, handoff, path: "fresh",
-      primary: this.o.nativeWorkspace ? { host, model: host === "claude" ? extra?.model ?? null : se.model ?? null, effort: host === "claude" ? extra?.effort ?? null : se.effort ?? null, permissionMode: host === "claude" ? extra?.permissionMode ?? "default" : null, locale: extra?.locale ?? "en" } : null });
+      primary: this.o.nativeWorkspace ? { host, model: host === "claude" || host === "cursor" ? extra?.model ?? null : se.model ?? null, effort: host === "claude" ? extra?.effort ?? null : host === "cursor" ? null : se.effort ?? null, permissionMode: host === "claude" ? extra?.permissionMode ?? "default" : null, locale: extra?.locale ?? "en" } : null });
     this.state = "attached"; this.pausedReason = null; this.lastResume = null;
     this.wakes = new WakeReader(this.o.stateDir);
     this.seenWakes.clear();

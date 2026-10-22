@@ -44,12 +44,13 @@ export const PRIVATE_PREFIX = "crew-native-";
 const liveDirs = new Set<string>();
 let exitHook = false;
 /** Every private folder goes when Studio exits, whatever the session (fresh, takeover or attach) and however it ends. */
-function privateDir() {
+export function privateDir() {
   const dir = mkdtempSync(join(tmpdir(), `${PRIVATE_PREFIX}${process.pid}-`)); chmodSync(dir, 0o700); liveDirs.add(dir);
   if (!exitHook) { exitHook = true; process.once("exit", () => { for (const d of liveDirs) try { rmSync(d, { recursive: true, force: true }); } catch {} }); }
   return dir;
 }
-const secretFile = (dir: string, name: string, text: string) => { const f = join(dir, name); writeFileSync(f, text, { mode: 0o600 }); chmodSync(f, 0o600); return f; };
+export const dropPrivateDir = (dir: string) => { try { rmSync(dir, { recursive: true, force: true }); } catch {} liveDirs.delete(dir); };
+export const secretFile = (dir: string, name: string, text: string) => { const f = join(dir, name); writeFileSync(f, text, { mode: 0o600 }); chmodSync(f, 0o600); return f; };
 /** Remove private folders a Studio that is no longer running left behind (its pid is gone). */
 export function sweepPrivateDirs(root = tmpdir()) {
   let n = 0;
@@ -63,7 +64,7 @@ export function sweepPrivateDirs(root = tmpdir()) {
 }
 
 /** The private endpoint the studio MCP helper calls for one session's native tools: a 0600 unix socket in the private folder, a random token in a 0600 file. */
-function nativeEndpoint(dir: string, handle: (name: string | null, args: unknown) => Promise<unknown>) {
+export function nativeEndpoint(dir: string, handle: (name: string | null, args: unknown) => Promise<unknown>) {
   const socket = join(dir, "tools.sock"), token = randomBytes(32).toString("hex"), tok = Buffer.from(token);
   const tokenFile = secretFile(dir, "tool.token", token);
   const reply = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json" } });
@@ -158,7 +159,7 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
       // native tools: only a fresh primary with Studio's MCP helper; calls run inside the turn that asked
       const native = fresh && opts.nativeTools && opts.studioMcp ? opts.nativeTools : null;
       const priv = privateDir();
-      const dropPrivate = () => { endpoint?.close(); try { rmSync(priv, { recursive: true, force: true }); } catch {} liveDirs.delete(priv); };
+      const dropPrivate = () => { endpoint?.close(); dropPrivateDir(priv); };
       const endpoint = native ? nativeEndpoint(priv, async (name, args) => {
         if (name === null) return native.specs.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
         const t = turn, seq = turnSeq, p = proc;
