@@ -47,7 +47,7 @@ export function nodeSkillPins(ids:unknown,node:{id:string;kind:string;skills?:Sk
   if(!skillFit(s.fits,{kind:node.kind}))throw new DraftError(`node ${node.id}: the ${id} skill fits ${s.fits!.kinds!.join(' or ')} nodes, not a ${node.kind} node`);
   const kept=node.skills?.find(p=>p.id===id);return kept?{id,v:kept.v,sha256:kept.sha256,...(kept.filesSha256?{filesSha256:kept.filesSha256}:{})}:{id,v:s.current,sha256:s.sha256,...((s as any).filesSha256?{filesSha256:(s as any).filesSha256}:{})};});
 }
-export const DRAFT_PROVIDERS=['codex','claude'] as const;
+export const DRAFT_PROVIDERS=['codex','claude','cursor'] as const;
 export const DRAFT_EFFORTS=['minimal','low','medium','high','xhigh'] as const;
 const DRAFT_MODES=new Set(['deliver']);
 const FORMATS=new Set(['document','web']);
@@ -72,7 +72,7 @@ export class DraftError extends Error{constructor(msg:string,readonly status=400
 /** A node effort, wherever it is saved (bundled workflows included). */
 export function checkEffort(n:any,label=n?.id){if(n?.effort!==undefined&&!(DRAFT_EFFORTS as readonly string[]).includes(n.effort))throw new DraftError(`${label}: effort must be one of ${DRAFT_EFFORTS.join(', ')}`);}
 export function checkNodeStaffing(n:any,label=n?.id){
- if(n.provider!==undefined&&!(DRAFT_PROVIDERS as readonly string[]).includes(n.provider))throw new DraftError(`${label}: provider must be codex or claude`);
+ if(n.provider!==undefined&&!(DRAFT_PROVIDERS as readonly string[]).includes(n.provider))throw new DraftError(`${label}: provider must be codex, claude or cursor`);
  if(n.model!==undefined&&!(typeof n.model==='string'&&MODEL.test(n.model)))throw new DraftError(`${label}: model must be a short model id`);
  if(n.effort!==undefined&&!(DRAFT_EFFORTS as readonly string[]).includes(n.effort))throw new DraftError(`${label}: effort must be one of ${DRAFT_EFFORTS.join(', ')}`);
  if(n.skill!==undefined&&!Object.hasOwn(DRAFT_SKILLS,n.skill))throw new DraftError(`${label}: skill must be a bundled Studio role skill`);

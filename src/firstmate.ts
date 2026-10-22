@@ -28,7 +28,7 @@ function shortTitle(v:unknown):string{const t=typeof v==='string'?clampTitle(v):
 // writer reads it as scope and asks about it. Staffing is pinned separately (_staffing), so such a proposal is refused
 // with the sentence to remove. The captain's own words are never refused: a sentence found in their message passes.
 const STAFFING_WORD=/staffing|crew configuration|人員配置|人员配置|角色配置|配置卡|四角色/i;
-const STAFFING_PIN=/\b(?:codex|claude)\s*\/\s*[\w.-]+|\b(?:gpt-|claude-|opus|sonnet|haiku)[\w.-]*\s*[\/,·:]?\s*(?:minimal|low|medium|high|xhigh)\b|\bR-\d+\s*(?:的\s*)?(?:人員配置|人员配置|staffing configuration)|(?:人員配置|人员配置|staffing configuration)\s*(?:卡\s*)?R-\d+/i;
+const STAFFING_PIN=/\b(?:codex|claude|cursor)\s*\/\s*[\w.-]+|\b(?:gpt-|claude-|opus|sonnet|haiku)[\w.-]*\s*[\/,·:]?\s*(?:minimal|low|medium|high|xhigh)\b|\bR-\d+\s*(?:的\s*)?(?:人員配置|人员配置|staffing configuration)|(?:人員配置|人员配置|staffing configuration)\s*(?:卡\s*)?R-\d+/i;
 const squash=(s:string)=>s.replace(/\s+/g,' ').trim();
 export function staffingInIntent(text:string,captain=''):string|null{const own=squash(captain);return text.split(/(?<=[。．！？!?；;\n])|(?<=\.)\s+/).map(x=>x.trim()).find(x=>x&&STAFFING_WORD.test(x)&&STAFFING_PIN.test(x)&&!own.includes(squash(x)))??null;}
 function refuseStaffedIntent(text:string,captain:string){const staffed=staffingInIntent(text,captain);if(staffed)throw new NativeToolFailure('invalid_params',`text is the captain's request only; staffing is pinned separately and never goes into it. Remove this sentence and propose again: ${staffed.slice(0,200)}`,`text 只放船長的需求；人員配置另外鎖定，不寫進需求。請刪掉這句後重新提出：${staffed.slice(0,200)}`,'list_workflows');}

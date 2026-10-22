@@ -16,21 +16,21 @@ export const SEAT_LABELS:Record<string,{en:string;zh:string}>={coordinator:{en:'
 const BUILTIN_REVIEWS:Record<string,string>={reviewer:'maker','design-reviewer':'maker','alt-maker':'maker'};
 const BUILTIN_REVIEWING=new Set(['reviewer','design-reviewer']);
 export const EFFORTS=['none','minimal','low','medium','high','xhigh'];
-export const PROVIDERS=['codex','claude'] as const;
+export const PROVIDERS=['codex','claude','cursor'] as const;
 /** What a model can do, by provider (a fact's model may name its own tags). A specialist seat lists the tags it needs. */
-export const PROVIDER_CAPS:Record<string,string[]>={codex:['code','tools','long-context','vision','image-generation'],claude:['code','tools','long-context','vision']};
+export const PROVIDER_CAPS:Record<string,string[]>={codex:['code','tools','long-context','vision','image-generation'],claude:['code','tools','long-context','vision'],cursor:['code','tools','long-context']};
 export const CAP_LABELS:Record<string,{en:string;zh:string}>={'image-generation':{en:'generate images',zh:'產生圖片'},audio:{en:'listen to audio',zh:'聽音訊'},'long-context':{en:'long context',zh:'長上下文'},vision:{en:'read images',zh:'看圖片'},code:{en:'write code',zh:'寫程式'},tools:{en:'use tools',zh:'使用工具'}};
 
 /** A library skill on a member or node: version and both hashes (filesSha256: every file but SKILL.md; a pin made before it takes the library's). */
 export type Pin={id:string;v:number;sha256:string;filesSha256?:string};
-export type Member={provider:'codex'|'claude';model:string;effort:string|null;skills:Pin[]};
+export type Member={provider:'codex'|'claude'|'cursor';model:string;effort:string|null;skills:Pin[]};
 /** A specialist seat a workflow or pack declares (a built-in seat needs no declaration). */
-export type SeatDecl={id:string;label:string;labelZh:string;reviews?:string;needs?:string[];suggest?:{provider?:'codex'|'claude';model?:string;effort?:string|null}};
+export type SeatDecl={id:string;label:string;labelZh:string;reviews?:string;needs?:string[];suggest?:{provider?:'codex'|'claude'|'cursor';model?:string;effort?:string|null}};
 /** One node's workflow override: what the captain changed "only in this workflow". at: the node's role and kind when it was
  *  set, so the override carries to a later version only while that node is still the same role and kind. */
-export type NodeOverride={at:{role:string|null;kind:string};seat?:string;provider?:'codex'|'claude';model?:string;effort?:string|null;add?:Pin[];remove?:string[]};
+export type NodeOverride={at:{role:string|null;kind:string};seat?:string;provider?:'codex'|'claude'|'cursor';model?:string;effort?:string|null;add?:Pin[];remove?:string[]};
 /** One project's change to a seat's member, on top of the team ("only this project"): any of provider, model, effort, skills. */
-export type ProjectSeat={provider?:'codex'|'claude';model?:string;effort?:string|null;skills?:Pin[]};
+export type ProjectSeat={provider?:'codex'|'claude'|'cursor';model?:string;effort?:string|null;skills?:Pin[]};
 /** projects: absent while no project overrides anything, so a team written before project overrides keeps its hash. */
 export type Team={schema:1;members:Record<string,Member>;seats:Record<string,SeatDecl>;workflows:Record<string,{nodes:Record<string,NodeOverride>}>;projects?:Record<string,{seats:Record<string,ProjectSeat>}>};
 export type TeamApproval={by:string;via:'page'|'card'|'migration';card?:string;run?:string;answerSeq?:number};
@@ -178,10 +178,10 @@ export function crewBadge(res:Resolution):{state:'missing'|'custom'|'team';count
 /** A change to the team. member: the whole seat (every node that follows the team); node: only this workflow's node;
  *  restore: drop a workflow's (or one node's) overrides; seat: declare and fill a specialist seat; preset: every member's effort. */
 export type CrewChange=
- |{kind:'member';seat:string;set:{provider?:'codex'|'claude';model?:string;effort?:string|null;skills?:Pin[]}}
- |{kind:'node';workflow:string;node:string;set:{seat?:string;provider?:'codex'|'claude';model?:string;effort?:string|null};addSkill?:Pin;removeSkill?:string}
+ |{kind:'member';seat:string;set:{provider?:'codex'|'claude'|'cursor';model?:string;effort?:string|null;skills?:Pin[]}}
+ |{kind:'node';workflow:string;node:string;set:{seat?:string;provider?:'codex'|'claude'|'cursor';model?:string;effort?:string|null};addSkill?:Pin;removeSkill?:string}
  |{kind:'restore';workflow:string;node?:string}
- |{kind:'project';project:string;seat:string;set:{provider?:'codex'|'claude';model?:string;effort?:string|null;skills?:Pin[]}}
+ |{kind:'project';project:string;seat:string;set:{provider?:'codex'|'claude'|'cursor';model?:string;effort?:string|null;skills?:Pin[]}}
  |{kind:'project-restore';project:string;seat?:string}
  |{kind:'seat';seat:SeatDecl;member:Member}
  |{kind:'preset';preset:'save'|'balanced'|'quality'};

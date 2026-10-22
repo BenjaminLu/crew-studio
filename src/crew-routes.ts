@@ -41,7 +41,7 @@ export function crewModels(facts:CrewFacts[],team:Team){
  for(const m of Object.values(team.members))add({provider:m.provider,model:m.model,efforts:[],available:false});
  for(const w of Object.values(team.workflows))for(const o of Object.values(w.nodes))if(o.model)add({provider:o.provider??'codex',model:o.model,efforts:[],available:false});
  for(const pr of Object.values(team.projects??{}))for(const [seat,o] of Object.entries(pr.seats))if(o.model)add({provider:o.provider??team.members[seat]?.provider??'codex',model:o.model,efforts:[],available:false});
- const providers=(['codex','claude'] as const).map(id=>{const f=facts.find(x=>x.provider===id),count=models.filter(m=>m.provider===id&&m.available).length;
+ const providers=(['codex','claude','cursor'] as const).map(id=>{const f=facts.find(x=>x.provider===id),count=models.filter(m=>m.provider===id&&m.available).length;
   if(!f)return{provider:id,state:'unread' as const,login:'unknown' as const,count,detectedAt:null,reason:null};
   const state=f.inventory??(count?'detected':'unavailable');
   return{provider:id,state,login:f.login??(f.auth==='verified'?'logged-in' as const:'unknown' as const),count,detectedAt:f.detectedAt??null,reason:f.inventoryReason??(state==='detected'?null:f.reason??null)};});
