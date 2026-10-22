@@ -185,7 +185,7 @@ export function contractStage(def: WDef, env: ContractEnv): GateProblem[] {
     const role = def.roles.find((r) => r.id === n.role);
     const pick = n.provider ? { provider: n.provider, model: n.model ?? null } : role?.provider ? { provider: role.provider, model: role.model ?? null } : env.startInputs.provider ? { provider: env.startInputs.provider, model: env.startInputs.model || null } : env.defaultPick();
     if (!env.knownProviders.includes(pick.provider)) { add("provider-unknown", n, { en: `${n.label}: unknown provider "${pick.provider}".`, zh: `「${n.label}」：未知的供應商「${pick.provider}」。` }, { en: `Use one of ${env.knownProviders.join(", ")}.`, zh: `改用 ${env.knownProviders.join("、")} 之一。` }); continue; }
-    const own = ["firstmate-draft", "starter"].includes(String(def.origin?.source ?? ""));
+    const own = ["firstmate-draft", "starter", "package-import"].includes(String(def.origin?.source ?? ""));
     if (!pick.model || own && (!n.provider || !n.model || n.provider === "codex" && !n.effort)) add("staffing-missing", n, { en: `${n.label}: no model${pick.provider === "codex" ? " or effort" : ""} chosen yet; the captain confirms staffing at Run.`, zh: `「${n.label}」：尚未選擇模型${pick.provider === "codex" ? "或推理強度" : ""}；船長在執行時確認配置。` }, { en: "The captain picks the model when clicking Run.", zh: "船長按下執行時選擇模型。" }, { owner: "captain", need: "staffing", level: "notice",
       note: { en: `When you click Run, you choose who works on “${n.label}”.`, zh: `按下執行時，由你選擇「${n.label}」由誰負責。` } });
     const st = env.login(pick.provider);

@@ -516,3 +516,14 @@ export function composeInstructions(roleText: string, skills: { id: string; v: n
 export function skillLead(roleText: string, skills: { id: string; v: number; body: string }[]): string {
   return [roleText.trim() ? roleText.trim() : null, ...skills.map((s) => `# Skill: ${s.id} (v${s.v})\n\n${s.body}`)].filter((x) => x != null).join("\n\n");
 }
+
+/** Package adoption only: inspect an exclusively staged version without publishing or approving it.
+ * Byte preservation is mandatory: the ordinary importer may skip caches; this seam refuses them. */
+export function inspectAdoptionSkill(stage:string,id:string,files:string[],source:string):LibVersion {
+  if(!SAFE.test(id))throw new SkillImportError('Invalid fresh package skill identity');
+  const scan=scanFolder(stage),caps=scan.scripts?SCRIPT_CAPS:SKILL_CAPS;
+  if(!scan.hasSkill||scan.leaving.length||scan.native.length||scan.skippedFiles||scan.files!==files.length+1||scan.skillBytes>SKILL_CAPS.skillMd||scan.bytes>caps.folder||scan.files>caps.files)throw new SkillImportError('Package skill cannot be preserved exactly under Skill P1 admission');
+  if(files.some(f=>f.split('/').length>(scan.scripts?8:SKILL_CAPS.depth)||skippedName(f)))throw new SkillImportError('Package skill supporting path exceeds P1 profile');
+  const text=readFileSync(join(stage,'SKILL.md'),'utf8'),sp=splitFrontmatter(text),fm=sp.fm??{},fits=readFits(fm.metadata),pkg=analyzePackage(stage,files);
+  return {n:1,sha256:sha(text),filesSha256:filesHash(join(stage,'files'),files),bytes:Buffer.byteLength(sp.body.trim()),files:[...files].sort(),skipped:[],ignored:Object.keys(fm).filter(k=>!INFO_KEYS.has(k)),name:id,description:typeof fm.description==='string'?fm.description.trim().slice(0,1000):'',...(fits?{fits}:{}),...(pkg.scripts.length?{pkg}:{}),source,sourceKind:'folder',createdAt:new Date().toISOString(),by:'captain (package adoption)'};
+}

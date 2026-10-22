@@ -62,7 +62,7 @@ export function installReadiness(d: ReadinessDeps) {
     const def = d.defs.get(id, v); if (!def) return null; const key = gateKeyForWorkflow(id, def.version);
     const own = ownWorkflow(def);
     // the gate runs by itself on the captain's own workflows; any other workflow is checked on request (POST)
-    const r = gate.read(key, def); if (!r && start && own) gate.run(key, def).catch(() => {});
+    const r = gate.read(key, def); if (!r && start && own && def.origin?.source!=='package-import') gate.run(key, def).catch(() => {});
     return { workflow: id, version: def.version, own, key, gate: r, status: gate.status(r), intents: intentMap(def), passed: gatePassed(r), repair: def.origin?.draft ? gate.repairView(def.origin.draft) : null };
   };
   const draftView = (id: string, start = true) => {
@@ -128,7 +128,7 @@ export function installReadiness(d: ReadinessDeps) {
     const ps = intentStage(next); if (!ps.length) return null;
     return { error: `Cannot save yet: ${ps.map((x) => x.reason.en).join(" ")} / 還不能儲存：${ps.map((x) => x.reason.zh).join("")}`, problems: ps.map((x) => ({ level: "error", node: x.node ?? undefined, text: x.reason.en, zh: x.reason.zh, fix: x.fix })) };
   };
-  const versionSaved = (def: WDef) => { try { if (ownWorkflow(def)) gate.run(gateKeyForWorkflow(def.id, def.version), d.defs.get(def.id, def.version)!).catch(() => {}); } catch {} };
+  const versionSaved = (def: WDef) => { try { if (ownWorkflow(def) && def.origin?.source!=='package-import') gate.run(gateKeyForWorkflow(def.id, def.version), d.defs.get(def.id, def.version)!).catch(() => {}); } catch {} };
   const tools = {
     repairAuthorized: (draft: string, ref: any) => { try { return gate.repairAuthorized(draft, ref); } catch { return false; } },
     view: (a: { draft?: string; workflow?: string; version?: number }) => {

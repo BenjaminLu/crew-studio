@@ -288,7 +288,7 @@ export function ownBrief(def:any,text:string,params:Record<string,string>={}){
  const room=Math.max(0,3800-fixed.length-(fixed&&free?1:0));
  return [free.length>room?free.slice(0,Math.max(0,room-1))+'…':free,fixed].filter(Boolean).join('\n');}
 /** Only the captain's own workflows (a draft or the free starter) take the Run-time staffing gate. */
-export const ownWorkflow=(def:any)=>plain(def?.origin)&&['firstmate-draft','starter'].includes(def.origin.source);
+export const ownWorkflow=(def:any)=>plain(def?.origin)&&['firstmate-draft','starter','package-import'].includes(def.origin.source);
 
 export type DraftGateTools={repairAuthorized(draft:string,ref:{draft?:unknown;nonce?:unknown}|null|undefined):boolean;view(args:{draft?:string;workflow?:string;version?:number}):unknown};
 export function installWorkflowDraftTools(drafts:WorkflowDrafts,gate?:DraftGateTools,onSaved?:(def:WDef)=>void):NativeMainTools{
