@@ -200,7 +200,7 @@ await section("layout modes", async () => {
 // Long forward routes must remain phone-sized without hiding actual graph data.
 {
   const def = defs[0], stages = L.stagesFor(def).map((s:any) => s.id), snapshot = JSON.stringify(def);
-  for (const expanded of [["build"], ["build", "gates", "merge", "after"]]) {
+  for (const expanded of [["build"], ["build", "gates", "merge", "after"], stages]) {
     const g = L.layoutSimple(def, {actualGraph:true, wrap:1, collapsed:stages.filter((id:string) => !expanded.includes(id))});
     for (const [from,to] of [["remote-ready","merge-card"],["merge-card","merge"]]) {
       const index = def.edges.findIndex((e:any) => e.from===from && e.to===to);

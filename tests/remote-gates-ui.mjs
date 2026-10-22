@@ -65,6 +65,28 @@ try {
       for(const route of ["remote-ready→merge-card[ok]","merge-card→merge[merge]","merge→after-merge","after-merge→cleanup","cleanup→done"]){const edge=p.locator(`svg [data-edge="${route}"] path`).first();ok(await edge.count()===1,`${width}/${theme}/${language} lower Simple ${route} arrow exists`);if(await edge.count())await frame(p,edge,`simple-arrow-${route.replaceAll(/[^a-z]/g,"-")}-${width}-${theme}-${language}`);}
       ok((await p.evaluate(()=>{const svg=document.querySelector('svg.rt-graph'),k=svg.getScreenCTM().a;return Math.min(...[...svg.querySelectorAll('[data-node] .rt-label')].map(t=>parseFloat(getComputedStyle(t).fontSize)*k));}))>=11,`${width}/${theme}/${language} lower scrolling preserves11px title threshold`);
     }
+    if(width===1440 && language==="en") {
+      // A real desktop-to-phone resize must reproject the same expanded draft,
+      // rather than merely shrink the old desktop columns into an unreadable SVG.
+      for(let remaining=20;remaining && await p.locator('svg [data-stage-node]').count();remaining--) { const stage=p.locator('svg [data-stage-node]').first();await stage.focus();await stage.press("Enter"); }
+      if(await p.locator('.rt-panel:not([hidden])').count())await p.locator('[data-inspector-close]').click();
+      const identity=await p.evaluate(()=>{const g=document.querySelector('svg.rt-graph');return{nodes:g.lay.nodes.map(n=>n.id).sort(),edges:g.lay.edges.flatMap(e=>e.index).sort((a,b)=>a-b)};});
+      const owner=await p.locator('svg.rt-graph').elementHandle(), bounds=await p.locator('svg.rt-graph').boundingBox();
+      await p.mouse.move(bounds.x+4,Math.max(100,bounds.y+10));await p.mouse.down();await p.mouse.move(bounds.x+12,Math.max(100,bounds.y+10));
+      ok(await owner.evaluate(el=>el.interactionActive===true),`resized all-expanded ${theme}: native pan owns the graph`);
+      await p.setViewportSize({width:390,height:1000});await p.waitForTimeout(300);
+      ok(await owner.evaluate(el=>el.isConnected&&el.interactionActive===true),`resized all-expanded ${theme}: resize defers projection while pointer is captured`);
+      await p.mouse.up();await p.waitForTimeout(300);
+      // Check before any inspector/menu action could incidentally redraw the graph.
+      const beforeFitFont=await p.evaluate(()=>{const g=document.querySelector('svg.rt-graph');return Math.min(...[...g.querySelectorAll('[data-node] .rt-label')].map(t=>parseFloat(getComputedStyle(t).fontSize)*g.getScreenCTM().a));});
+      ok(beforeFitFont>=11,`resized all-expanded ${theme}: resize itself retains11px titles`);
+      await revealEditorControl(p,'[data-fit]');await p.locator('[data-fit]').click();await p.waitForTimeout(200);
+      const resized=await p.evaluate(()=>{const svg=document.querySelector('svg.rt-graph'),k=svg.getScreenCTM().a;return{font:Math.min(...[...svg.querySelectorAll('[data-node] .rt-label')].map(t=>parseFloat(getComputedStyle(t).fontSize)*k)),nodes:svg.lay.nodes.map(n=>n.id).sort(),edges:svg.lay.edges.flatMap(e=>e.index).sort((a,b)=>a-b)};});
+      ok(resized.font>=11,`resized all-expanded ${theme}: Overview Fit retains11px titles`);
+      ok(JSON.stringify(resized.nodes)===JSON.stringify(identity.nodes)&&JSON.stringify(resized.edges)===JSON.stringify(identity.edges),`resized all-expanded ${theme}: exact actual node and edge identities survive`);
+      await frame(p,p.locator('svg [data-edge="remote-ready→merge-card[ok]"] path').first(),`resized-all-expanded-arrow-${theme}`);
+      await p.setViewportSize({width:1440,height:1000});
+    }
     await p.goto(base + "/#/inbox/SC-990");
     const card = p.locator('[data-inbox-studio] [data-scard="SC-990"]'); await card.waitFor();
     if (language === "zh-TW") { const toggle = card.locator('[data-card-lang="zh-TW"]'); if (await toggle.count()) await toggle.click(); }

@@ -167,10 +167,11 @@
         if (opts.actualGraph) {
           // Routing-only placeholders need lane clearance, not a full node/badge row.
           const levels = [...new Set(rows)].sort((a, b) => a - b);
-          const real = new Set(ids.filter((x) => bandOf.get(rank.get(x)) === i).map((x) => row.get(x)));
+          const real = new Map();
+          for (const x of ids.filter((x) => bandOf.get(rank.get(x)) === i)) real.set(row.get(x), Math.max(real.get(row.get(x)) || 0, vn.get(x).h));
           const offsets = new Map(); let offset = 0;
           for (let j = 0; j < levels.length; j++) {
-            if (j) offset += real.has(levels[j - 1]) ? (real.has(levels[j]) ? SH + FOOT + PAD : NH + FOOT + LANE * 2) : (real.has(levels[j]) ? NH / 2 + LANE + 2 : LANE * 2);
+            if (j) offset += real.has(levels[j - 1]) ? (real.has(levels[j]) ? (real.get(levels[j - 1]) + real.get(levels[j])) / 2 + FOOT + PAD : real.get(levels[j - 1]) / 2 + NH / 2 + FOOT + LANE * 2) : (real.has(levels[j]) ? real.get(levels[j]) / 2 + LANE : LANE * 2);
             offsets.set(levels[j], offset);
           }
           bandRows[i] = offsets; height = offset;
