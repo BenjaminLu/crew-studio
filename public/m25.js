@@ -71,7 +71,7 @@ function driverBanner(v) {
       v.busy ? h("button", { class: "btn", onclick: () => postJ("/api/main/interrupt") }, icon("stop", "ic sm"), T("Interrupt", "中斷")) : null,
       h("button", { class: "btn", onclick: handBack }, v.context==="studio" ? T("Stop Firstmate","停止 Firstmate") : T("Hand back to terminal", "交回終端機"))));
 }
-for (const ev of ["crew:claude-status", "crew:codex-account"]) addEventListener(ev, () => { if (isMain() && MS.view?.state === "detached") try { renderChat(); } catch {} });
+for (const ev of ["crew:claude-status", "crew:codex-account", "crew:cursor-account"]) addEventListener(ev, () => { if (isMain() && MS.view?.state === "detached") try { renderChat(); } catch {} });
 /** Studio's own workspace: start Firstmate on whichever signed-in host the captain picks, here in the chat. */
 function startChoices() {
   const r = window.crewHostReady?.() || {}, phone = MS.me?.kind === "phone" && !MS.me?.allowDrive;
@@ -80,7 +80,8 @@ function startChoices() {
     // both ready: a neutral choice, neither host is the default
     r.codex ? h("button", { class: r.claude ? "btn" : "btn primary", "data-chat-start-host": "codex", disabled: phone || r.starting || null, onclick: start("codex") }, T("Start on Codex", "在 Codex 上開始")) : null,
     r.claude ? h("button", { class: r.codex ? "btn" : "btn primary", "data-chat-start-host": "claude", disabled: phone || r.starting || null, onclick: start("claude") }, T("Start on Claude", "在 Claude 上開始")) : null,
-    h("a", { class: r.codex || r.claude ? "btn ghost" : "btn primary", href: "#/firstmate", onclick: () => openChat(false) }, r.codex || r.claude ? T("Accounts…", "帳號…") : T("Connect and begin…", "連接並開始…")));
+    r.cursor ? h("button", { class: r.codex || r.claude ? "btn" : "btn primary", "data-chat-start-host": "cursor", disabled: phone || r.starting || null, onclick: start("cursor") }, T("Start on Cursor", "在 Cursor 上開始")) : null,
+    h("a", { class: r.codex || r.claude || r.cursor ? "btn ghost" : "btn primary", href: "#/firstmate", onclick: () => openChat(false) }, r.codex || r.claude || r.cursor ? T("Accounts…", "帳號…") : T("Connect and begin…", "連接並開始…")));
 }
 function queueView(v) {
   if (!v.queue.length) return null;
@@ -102,7 +103,7 @@ function approvalCard(a) {
 /** A typed error from outside Studio: its class, its code, Studio's reason, and the exact external message. */
 const EXT_CLASS = { quota: ["Quota or rate limit", "額度或頻率限制"], auth: ["Sign-in refused", "登入被拒"], timeout: ["Timed out", "逾時"], network: ["Network", "網路"], exit: ["Process stopped", "程序停止"], attachment: ["Attachment not sent", "附件沒有送出"], upload: ["Upload failed", "上傳失敗"], api: ["Vendor error", "供應商錯誤"] };
 function externalView(x) {
-  const who = { claude: "Claude", codex: "Codex", studio: "Studio" }[x.source] || x.source, cls = EXT_CLASS[x.class] || EXT_CLASS.api;
+  const who = { claude: "Claude", codex: "Codex", cursor: "Cursor", studio: "Studio" }[x.source] || x.source, cls = EXT_CLASS[x.class] || EXT_CLASS.api;
   return h("div", { class: "rich chat-err ext-err", role: "alert", "data-external-error": x.code, "data-error-class": x.class, "data-error-source": x.source },
     h("div", { class: "rk", style: "color:var(--bad)" }, icon("alert", "ic sm"), `${who} · ${T(cls[0], cls[1])}`, h("span", { class: "vbadge" }, x.code)),
     h("div", { style: "font-size:13px" }, L(x.reason)),
@@ -221,7 +222,7 @@ ask = async function (text) {
   openChat(true);
   let r; try { r = await postJ("/api/main/send", { text, ...(att.length ? { attachments: att.map((a) => ({ id: a.ref.id, name: a.ref.name })) } : {}) }); }
   catch (e) { r = { status: 0, error: String(e?.message || e), code: "studio_network" }; }
-  if (r.error) { restoreDraft(text); localNotice({ source: "studio", class: r.status === 0 ? "network" : /^(attachment|claude)/.test(r.code || "") ? "attachment" : "api", code: r.code || `http_${r.status}`, message: r.reason ? `${r.reason.en}${r.reason["zh-TW"] ? ` / ${r.reason["zh-TW"]}` : ""}` : r.error, reason: { en: "The message was not sent.", "zh-TW": "訊息沒有送出。" } }); return; }
+  if (r.error) { restoreDraft(text); localNotice({ source: "studio", class: r.status === 0 ? "network" : /^(attachment|claude|cursor)/.test(r.code || "") ? "attachment" : "api", code: r.code || `http_${r.status}`, message: r.reason ? `${r.reason.en}${r.reason["zh-TW"] ? ` / ${r.reason["zh-TW"]}` : ""}` : r.error, reason: { en: "The message was not sent.", "zh-TW": "訊息沒有送出。" } }); return; }
   MS.notices = [];
   if (att.length) clearAtt();
   window.pageDirty?.clean(); // the draft went out
@@ -242,6 +243,7 @@ const fmtSize = (n) => n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` :
 function attNote(a) {
   const host = MS.view?.state !== "detached" ? MS.view?.host : null, ref = a.ref;
   if (!ref) return null;
+  if (host === "cursor") return { refused: true, text: T("Firstmate on Cursor cannot take images or PDFs. Remove it, or describe the file in words.", "Cursor 上的 Firstmate 不能接收圖片或 PDF。請移除，或用文字描述檔案。") };
   if (host === "codex" && ref.kind === "pdf") return { refused: false, text: T("Codex cannot read PDFs directly; it opens the file itself.", "Codex 不能直接讀 PDF，會自己開檔。") };
   if (host === "claude" && ref.kind === "image" && ref.size > ATT.claudeImage) return { refused: true, text: T("Claude takes images up to 3.75 MB. Remove it or send a smaller one.", "Claude 只收 3.75 MB 以內的圖片，請移除或換小一點的。") };
   if (host === "claude" && ref.kind === "image" && Math.max(ref.width || 0, ref.height || 0) > ATT.claudeSide) return { refused: true, text: T(`Claude takes images up to ${ATT.claudeSide} px on a side (this one is ${ref.width}×${ref.height}).`, `Claude 只收每邊 ${ATT.claudeSide} px 以內的圖片（這張 ${ref.width}×${ref.height}）。`) };

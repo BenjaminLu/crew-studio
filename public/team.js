@@ -47,7 +47,7 @@ async function change(c, skillDecisions, expected = TM.data?.team?.hash ?? null,
   finally { TM.busy = false; if (S.route?.name === "team") render(); }
 }
 const modelKey = (p, m) => (p && m ? `${p}/${m}` : "");
-const PROVIDER_NAME = { codex: "Codex", claude: "Claude" };
+const PROVIDER_NAME = { codex: "Codex", claude: "Claude", cursor: "Cursor" };
 const modelOf = (provider, model) => TM.data?.models?.find((m) => m.provider === provider && m.model === model);
 // only the models detected on this machine, grouped by provider; the current model, when no longer detected, stays marked
 function modelSelect(label, cur, onchange, extra = {}) {

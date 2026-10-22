@@ -103,8 +103,41 @@ async function switchToClaude(){
   async(close,btn)=>{btn.disabled=true;const r=await postJ("/api/main/switch",{to:"claude",confirm:true,locale:lang}).catch(()=>null);close();if(!r?.ok){if(r?.code?.startsWith("claude")){CLAUDE.refused=r;void claudeRefresh();}await loadMain();render();return toast(r?T(r.en||r.reason||r.error,r.zh||r.reason||r.error):T("Switch failed; check Firstmate.","切換失敗，請確認 Firstmate。"));}CLAUDE.refused=null;await openNativeConversation();loadTakeover();});
  const ok=document.querySelector("#modalRoot .modal .btn.primary");if(ok){ok.textContent=T("Switch to Claude","換成 Claude");ok.setAttribute("data-claude-switch-confirm","1");}
 }
+// Cursor: the CLI on disk and whether the crew's Cursor API key is present (the key itself is never read here or shown);
+// `ready` is the server's dry start check in Studio's own workspace. Neither makes a model request.
+const CURSOR={view:null,ready:null,refused:null,loading:false,loaded:false,read:0};
+const cursorReady=()=>CURSOR.ready?.ok===true;
+function cursorRefresh(){const read=++CURSOR.read,before=JSON.stringify([CURSOR.view,CURSOR.ready]);CURSOR.loading=true;const studio=MS.view?.context==="studio"||TK.data?.view?.context==="studio";
+ return Promise.all([getJ("/api/cursor/account").catch(()=>null),studio?getJ("/api/main/start/cursor-ready").catch(()=>null):null]).then(([v,ready])=>{if(read!==CURSOR.read)return;if(v&&!v.error)CURSOR.view=v;CURSOR.ready=ready&&typeof ready.ok==="boolean"?ready:null;})
+  .finally(()=>{if(read!==CURSOR.read)return;CURSOR.loading=false;const first=!CURSOR.loaded;CURSOR.loaded=true;if(first||JSON.stringify([CURSOR.view,CURSOR.ready])!==before){render();dispatchEvent(new Event("crew:cursor-account"));}});}
+const CURSOR_KEY_STEP=()=>h("pre",{class:"mono","data-cursor-key-step":"1",style:"white-space:pre-wrap;margin:0"},'security add-generic-password -s crew-studio-cursor-api-key -a "$USER" -w');
+/** The Cursor account's state and how to add a key: one source for the Firstmate page's Cursor card and Doctor's login action. */
+function cursorAccountParts(){
+ if(!CURSOR.loaded&&!CURSOR.loading)void cursorRefresh();
+ const v=CURSOR.view,state=!v?"unknown":!v.installed?"not-installed":v.key==="present"?"key-present":"key-missing";
+ const label={"unknown":T("Checking Cursor…","正在確認 Cursor…"),"not-installed":T("The Cursor CLI (cursor-agent) is not installed on this Mac. Install it from the Doctor first.","這台 Mac 沒有安裝 Cursor CLI（cursor-agent）。請先在 Doctor 安裝。"),"key-present":T("A Cursor API key for the crew is present. Studio never shows or reads it here.","已有給 crew 用的 Cursor API key。Studio 不會在這裡顯示或讀取它。"),"key-missing":T("No Cursor API key for the crew yet. Create one in the Cursor dashboard (Integrations), then keep it in the keychain:","還沒有給 crew 用的 Cursor API key。請在 Cursor dashboard（Integrations）建立一把，再存進鑰匙圈：")}[state];
+ return {state,attrs:{"data-cursor-account":state},status:h("p",{"data-cursor-status":"1",style:"margin:0"},label),
+  how:state==="key-missing"?h("div",{"data-cursor-how":"1"},CURSOR_KEY_STEP(),h("p",{class:"faint",style:"margin:4px 0 0"},T("Paste the key when the Terminal asks for it, then press Check again. Or set CURSOR_API_KEY in Studio's environment.","在終端機要求時貼上 key，再按「重新檢查」。也可以在 Studio 的環境設定 CURSOR_API_KEY。"))):null,
+  buttons:[h("button",{class:"btn ghost","data-cursor-refresh":"1",onclick:()=>void cursorRefresh()},T("Check again","重新檢查"))]};
+}
+function cursorAccountPanel(){const x=cursorAccountParts();return h("section",{class:"card tk-drive tk-account",...x.attrs},h("h2",{},T("Cursor account","Cursor 帳號")),x.status,x.how,h("div",{class:"actions"},...x.buttons));}
+function cursorWhy(){const r=CURSOR.ready?.ok===false?CURSOR.ready:CURSOR.refused;if(!r||r.ok)return null;return h("p",{class:"note","data-cursor-start-why":r.code},T(r.en||r.reason,r.zh||r.reason));}
+function startCursorCard(d,phone){
+ if(!CURSOR.loading&&(!CURSOR.loaded||(CURSOR.ready===null&&!CURSOR.readyAsked))){CURSOR.readyAsked=true;void cursorRefresh();}
+ const ready=cursorReady(),others=(ACCOUNT.view||d.codex?.account||{}).state==="ready"||claudeReady(),acc=cursorAccountParts(),c=d.cursor||CURSOR.view||{};
+ return h("section",{class:"card tk-drive","data-section":"start-cursor","data-cursor-ready":String(ready),...acc.attrs},h("h2",{},T("Firstmate on Cursor","Cursor 上的 Firstmate")),
+  h("p",{class:"muted",style:"margin:0"},T("A fresh Firstmate in Studio’s own workspace. It works through Studio’s own tools only; it cannot take images or PDFs.","在 Studio 自己的工作空間開啟全新的 Firstmate。它只透過 Studio 自己的工具工作，不能接收圖片或 PDF。")),
+  h("div",{class:"tk-kv"},kvRow(T("Folder","資料夾"),h("span",{class:"mono"},d.project)),kvRow(T("Model · effort","模型 · 推理強度"),h("span",{"data-cursor-config":"1"},`${c.model||T("Cursor default","Cursor 預設")} · ${T("none","無")} `,h("span",{class:"faint"},T("(signs in with the crew’s Cursor API key)","（用 crew 的 Cursor API key 登入）")))),kvRow(T("Account","帳號"),acc.status)),
+  acc.how,cursorWhy(),
+  h("div",{class:"actions"},h("button",{class:ready&&!others?"btn primary":"btn",id:"startCursorBtn","data-cursor-start":"1",disabled:phone||!ready||ACCOUNT.starting||(MS.view||d.view)?.state!=="detached"||null,onclick:()=>continueNative({project:d.project},"cursor")},T("Start on Cursor","在 Cursor 上開始")),...acc.buttons));
+}
+// Doctor's login action for Cursor: how to add the key, then check again (Studio never takes the key through the page)
+function cursorConnect(){modal(T("Add a Cursor API key","加入 Cursor API key"),h("div",{style:"display:grid;gap:8px;max-width:560px"},h("p",{style:"margin:0"},T("Create an API key in the Cursor dashboard (Integrations), then keep it in the keychain from Terminal:","請在 Cursor dashboard（Integrations）建立 API key，再從終端機存進鑰匙圈：")),CURSOR_KEY_STEP(),h("p",{class:"faint",style:"margin:0"},T("Studio reads the key only when a Cursor round or Firstmate starts. It is never shown here.","Studio 只在 Cursor 回合或 Firstmate 啟動時讀取這把 key，不會在這裡顯示。"))),async close=>{close();await cursorRefresh();});const ok=document.querySelector("#modalRoot .modal .btn.primary");if(ok)ok.textContent=T("Check again","重新檢查");}
+window.crewCursorAccountPanel=cursorAccountPanel;window.crewConnectCursor=cursorConnect;
+window.liveListen("cursor-account",m=>{CURSOR.view=JSON.parse(m.data);void cursorRefresh();});
+addEventListener("crew:live",()=>{if(CURSOR.loaded)void cursorRefresh();});
 // The chat panel offers whichever primary host is ready; each button starts only that host.
-window.crewHostReady=()=>{if(!CLAUDE.loaded&&!CLAUDE.loading)void claudeRefresh();if(!ACCOUNT.view&&!ACCOUNT.loading){ACCOUNT.loading=true;refreshAccount().finally(()=>{ACCOUNT.loading=false;});}return{codex:ACCOUNT.view?.state==="ready",claude:claudeReady(),starting:ACCOUNT.starting};};
+window.crewHostReady=()=>{if(!CLAUDE.loaded&&!CLAUDE.loading)void claudeRefresh();if(!CURSOR.loaded&&!CURSOR.loading)void cursorRefresh();if(!ACCOUNT.view&&!ACCOUNT.loading){ACCOUNT.loading=true;refreshAccount().finally(()=>{ACCOUNT.loading=false;});}return{codex:ACCOUNT.view?.state==="ready",claude:claudeReady(),cursor:cursorReady(),starting:ACCOUNT.starting};};
 window.crewStartFirstmate=host=>MS.view?.context==="studio"?continueNative({project:MS.view.project},host):null;
 window.crewClaudeAccountPanel=claudeAccountPanel;window.crewConnectClaude=()=>claudeAction("login");
 // a reconnect may have missed live events (a sign-in finished or was cancelled meanwhile): read the state again.
@@ -225,7 +258,7 @@ function viewTakeover() {
     d.handoffs.slice(0, 5).map((n, i) => h("details", { open: i === 0 && driving || null }, h("summary", { class: "mono" }, n.name), h("div", { class: "md tk-md" }, md(n.text))))));
   return h("div", { class: "page" }, ...kids);
 }
-const HOSTS = { claude: "Claude Code", codex: "Codex" };
+const HOSTS = { claude: "Claude Code", codex: "Codex", cursor: "Cursor" };
 const hostBadge = (host) => h("span", { class: `badge tk-host tk-host-${host}`, "data-host": host }, HOSTS[host] || host);
 const resumeCmd = (host, cwd, id) => `cd ${cwd} && ${host === "codex" ? `codex resume ${id}` : `claude --resume ${id}`}`;
 const kvRow = (k, v) => h("div", { class: "kv" }, h("span", { class: "faint" }, k), h("span", {}, v));
@@ -264,11 +297,11 @@ function startCodexCard(d, phone, begin = false) {
     h("div", { class: "actions" }, ...(account.state === "ready" ? [] : acc.buttons), h("button", { class: native && account.state==="ready" && !claudeReady() ? "btn primary" : "btn", id: "startCodexBtn", disabled: phone || account.state!=="ready" || ACCOUNT.busy || (MS.view||d.view)?.state!=="detached" || null, onclick: () => native ? continueNative({project:d.project}) : startCodexFlow(d) }, native ? T("Start on Codex","在 Codex 上開始") : T("Start Firstmate on Codex…", "在 Codex 上啟動 Firstmate…")), ...(account.state === "ready" ? acc.buttons : [])));
 }
 
-// Studio's own workspace: Codex and Claude side by side; each starts only from its own button, never the other.
+// Studio's own workspace: Codex, Claude and Cursor side by side; each starts only from its own button, never the other.
 function startCards(d, phone, begin = false) {
   // an explicit project starts only on Codex: Claude keeps its own account card there, still one card per host
   if (d.view?.context !== "studio") return h("div", { class: "tk-hosts" }, startCodexCard(d, phone, begin), claudeAccountPanel({ next: false }));
-  return h("div", { class: "tk-hosts", "data-section": "start-firstmate" }, startCodexCard(d, phone, begin), startClaudeCard(d, phone));
+  return h("div", { class: "tk-hosts", "data-section": "start-firstmate" }, startCodexCard(d, phone, begin), startClaudeCard(d, phone), startCursorCard(d, phone));
 }
 function startClaudeCard(d, phone) {
   // this card is Studio's workspace: read the preflight even when the first read ran before the workspace was known
@@ -298,7 +331,7 @@ async function openNativeConversation(){chatMode="main";store.set("crew.chatMode
 // Only an explicit captain Connect/Continue may create the primary, never page load.
 async function continueNative(expected,host="codex"){
  if(ACCOUNT.starting)return;ACCOUNT.starting=true;ACCOUNT.begin=null;
- try{const d=await getJ("/api/takeover?independent=1");if(d.view?.context!=="studio"||d.project!==expected.project)return toast(T("Workspace changed; review it before continuing.","工作空間已變更，請先確認後再繼續。"));if(d.view.state!=="detached"){if(d.view.state==="attached"&&d.view.drive?.path==="fresh"&&!d.view.origin){await openNativeConversation();return;}return toast(T("Review the existing Firstmate before continuing.","請先確認現有 Firstmate 的狀態再繼續。"));}const r=await postJ("/api/main/start",{host,confirm:true,locale:lang});if(!r.ok){if(host==="claude"&&r.code){CLAUDE.refused=r;void claudeRefresh();return toast(r.en?T(r.en,r.zh):r.reason||r.error);}await loadMain();if(MS.view?.state==="attached"&&MS.view.context==="studio"&&MS.view.project===expected.project&&MS.view.drive?.path==="fresh"&&!MS.view.origin){await openNativeConversation();return;}return toast(r.reason||r.error);}if(host==="claude")CLAUDE.refused=null;await openNativeConversation();loadTakeover();}catch{return toast(T("Could not connect Firstmate. Check the account and try again.","無法連接 Firstmate，請確認帳號後重試。"));}finally{ACCOUNT.starting=false;}
+ try{const d=await getJ("/api/takeover?independent=1");if(d.view?.context!=="studio"||d.project!==expected.project)return toast(T("Workspace changed; review it before continuing.","工作空間已變更，請先確認後再繼續。"));if(d.view.state!=="detached"){if(d.view.state==="attached"&&d.view.drive?.path==="fresh"&&!d.view.origin){await openNativeConversation();return;}return toast(T("Review the existing Firstmate before continuing.","請先確認現有 Firstmate 的狀態再繼續。"));}const r=await postJ("/api/main/start",{host,confirm:true,locale:lang});if(!r.ok){if(host==="claude"&&r.code){CLAUDE.refused=r;void claudeRefresh();return toast(r.en?T(r.en,r.zh):r.reason||r.error);}if(host==="cursor"&&r.code){CURSOR.refused=r;void cursorRefresh();return toast(r.en?T(r.en,r.zh):r.reason||r.error);}await loadMain();if(MS.view?.state==="attached"&&MS.view.context==="studio"&&MS.view.project===expected.project&&MS.view.drive?.path==="fresh"&&!MS.view.origin){await openNativeConversation();return;}return toast(r.reason||r.error);}if(host==="claude")CLAUDE.refused=null;if(host==="cursor")CURSOR.refused=null;await openNativeConversation();loadTakeover();}catch{return toast(T("Could not connect Firstmate. Check the account and try again.","無法連接 Firstmate，請確認帳號後重試。"));}finally{ACCOUNT.starting=false;}
 }
 
 function startCodexFlow(d) {
