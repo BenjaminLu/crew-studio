@@ -25,7 +25,7 @@ const env = { ...process.env, USER: process.env.USER || "fixture-user", LOGNAME:
   CREW_CLAUDE_BIN: join(here, "fixture/claude-login.mjs"), CREW_HOST_CLAUDE_BIN: join(here, "stub-host-claude.mjs"), CREW_KEYCHAIN_TOOL: keychain, CREW_HOST_CODEX_BIN: join(here, "fixture/codex-account.mjs"), STUB_EFFECTIVE_MODE_FILE: join(tmp, "effective-mode") };
 for (const k of ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "CREW_FM_STATE", "CREW_MAIN_PROJECT", "CREW_CLAUDE_PERMISSION_MODE", "CREW_LOCAL_UNRESTRICTED", "STUB_EFFECTIVE_MODE"]) delete env[k];
 const app = spawn("bun", ["src/server.ts"], { cwd: join(here, ".."), env, stdio: ["ignore", "pipe", "pipe"] }); app.stdout.resume(); app.stderr.resume();
-let browser, pass = 0, fail = 0; const errors = [];
+let browser, pass = 0, fail = 0; let releaseBootstrap = () => {}; const errors = [];
 const ok = (v, n) => { if (v) { console.log("ok " + n); pass++; } else { console.log("FAIL " + n); fail++; } };
 const api = async (path, body) => { const r = await fetch(base + path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", "x-crew-session": token }, body: body === undefined ? undefined : JSON.stringify(body) }); return r.json(); };
 const seen = async (p, sel, timeout = 8000) => { try { await p.locator(sel).first().waitFor({ timeout }); return true; } catch { return false; } };
@@ -39,14 +39,30 @@ try {
   browser = withSession(await chromium.launch({ headless: true }), base, token);
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   await ctx.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.chatOpen", "0"); } catch {} });
+  // Hold genuine bootstrap metadata, not a fabricated response. Locale can be
+  // written before this request completes, while the page has no stream yet.
+  let metadataReady; const heldMetadata = new Promise(r => metadataReady = r);
+  const metadataGate = new Promise(r => releaseBootstrap = r); let firstMetadata = true;
+  await ctx.route("**/api/types", async route => {
+    if (!firstMetadata) return route.continue(); firstMetadata = false;
+    const response = await route.fetch(); metadataReady(); await metadataGate;
+    await route.fulfill({ response });
+  });
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(String(e)));
 
   // signed out: Claude is shown beside Codex, but cannot start
   await p.goto(base + "/#/firstmate");
+  let metadataTimer;
+  try { await Promise.race([heldMetadata, new Promise((_, reject) => { metadataTimer = setTimeout(() => reject(Error("Genuine bootstrap metadata request missing")), 10000); })]); }
+  finally { clearTimeout(metadataTimer); }
   // live S26: a Board already open when Studio restarts says its language again on the stream's hello, so the restart's
   // greeting (which waits for it when Studio never heard one) uses the Board's language, not driver.json's
   { const bl = join(data, "board-language.json");
     for (let i = 0; i < 100 && !existsSync(bl); i++) await p.waitForTimeout(50);
+    ok(existsSync(bl) && await p.evaluate(() => LIVE.es === null), "genuine pending metadata leaves locale recorded before the stream opens");
+    releaseBootstrap();
+    // A locale POST is not proof that the actual EventSource is open.
+    await p.waitForFunction(() => LIVE.es && LIVE.es.readyState === LIVE.es.OPEN);
     rmSync(bl, { force: true });
     await p.evaluate(() => LIVE.es.dispatchEvent(new Event("hello")));
     for (let i = 0; i < 100 && !existsSync(bl); i++) await p.waitForTimeout(50);
@@ -193,5 +209,5 @@ try {
     }
   }
   ok(!errors.length, "no page errors: " + errors.join(" | "));
-} finally { await browser?.close(); if (app.exitCode === null && app.signalCode === null) { const done = new Promise((r) => app.once("exit", r)); app.kill("SIGTERM"); await done; } rmSync(tmp, { recursive: true, force: true }); }
+} finally { releaseBootstrap(); await browser?.close(); if (app.exitCode === null && app.signalCode === null) { const done = new Promise((r) => app.once("exit", r)); app.kill("SIGTERM"); await done; } rmSync(tmp, { recursive: true, force: true }); }
 console.log(`claude-firstmate-primary-ui: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
