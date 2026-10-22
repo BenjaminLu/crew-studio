@@ -34,8 +34,8 @@ export class WorkflowAdoption{
  /** Best effort: staging copies are not needed once a transaction is settled; journal, source ZIP and markers stay. */
  private tidy(dir:string){try{for(const n of readdirSync(dir))if(n==='out'||/^skill-[0-9]+$/.test(n))rmSync(join(dir,n),{recursive:true,force:true});}catch(e:any){console.error(`workflow adoption: could not tidy staging: ${this.text(e)}`);}}
  private published(plan:Plan){return [OWNER,'v1.json'].every(name=>{const path=`workflows/${plan.workflow}/${name}`,want=plan.files.find(f=>f.path===path)?.sha256;try{return !!want&&packageSha(packageStoredBytes(this.data,path))===want;}catch{return false;}});}
- /** A template copy keeps origin.transaction and pins the imported skills, so a workflow carrying it means the skills must stay. Read-only: a wrong answer can only keep files. */
- private pinnedBy(txn:string){let ids:string[];try{ids=readdirSync(join(this.data,'workflows'));}catch{return false;}return ids.some(w=>{try{return readdirSync(join(this.data,'workflows',w)).some(f=>/^v[0-9]+\.json$/.test(f)&&JSON.parse(readFileSync(join(this.data,'workflows',w,f),'utf8'))?.origin?.transaction===txn);}catch{return false;}});}
+ /** A template copy keeps origin.transaction and pins the imported skills, so a workflow carrying it means the skills must stay. Read-only: a wrong answer can only keep files. The adopted workflow itself carries it too, so it is proven by published() instead. */
+ private pinnedBy(plan:Plan){let ids:string[];try{ids=readdirSync(join(this.data,'workflows'));}catch{return false;}return ids.some(w=>{if(w===plan.workflow)return false;try{return readdirSync(join(this.data,'workflows',w)).some(f=>/^v[0-9]+\.json$/.test(f)&&JSON.parse(readFileSync(join(this.data,'workflows',w,f),'utf8'))?.origin?.transaction===plan.txn);}catch{return false;}});}
  private complete(plan:Plan){return plan.files.every(f=>{try{return packageSha(packageStoredBytes(this.data,f.path))===f.sha256;}catch{return false;}});}
  /** Runs before WorkflowDefs/catalog creation and never throws: a transaction it cannot settle is held and logged, and Studio still starts. */
  /** Boot never waits for the lock: if another process holds it, recovery runs at the next adoption instead. */
@@ -62,7 +62,7 @@ export class WorkflowAdoption{
  private recoverOne(id:string,dir:string):State{const p=this.journal(id);if(p.schema!==1||!/^imp-[a-f0-9]{24}$/.test(p.workflow)||p.roots.some(r=>!safe(r)||!(r===`workflows/${p.workflow}`||/^skills\/_library\/imp-[a-f0-9]{12}-s[0-9]+$/.test(r)))||p.files.some(f=>!safe(f.path)||!p.roots.some(r=>f.path.startsWith(r+'/'))))throw Error('Invalid adoption journal ownership');
   // everything is published and intact: the workflow exists, so a failed marker or cleanup write must not turn it into a hold
   // the workflow folder is published last, whole, by rename: if it is present with our owner file, publication finished and nothing may be deleted, even after later local edits or a hand-removed skill folder
-  if(this.complete(p)||this.published(p)||this.pinnedBy(id)){try{writeFileSync(join(dir,'complete'),p.archiveSha256,{flag:'wx',mode:0o600});}catch(e:any){if(e?.code!=='EEXIST')console.error(`workflow adoption ${id}: published, but the complete marker could not be written: ${this.text(e)}`);}this.tidy(dir);return 'complete';}
+  if(this.complete(p)||this.published(p)||this.pinnedBy(p)){try{writeFileSync(join(dir,'complete'),p.archiveSha256,{flag:'wx',mode:0o600});}catch(e:any){if(e?.code!=='EEXIST')console.error(`workflow adoption ${id}: published, but the complete marker could not be written: ${this.text(e)}`);}this.tidy(dir);return 'complete';}
   const expected=new Map(p.files.map(f=>[f.path,f.sha256])),owned:[string,string[]][]=[];
   for(const root of p.roots){const target=join(this.data,root);if(!present(target))continue;const st=lstatSync(target);if(!st.isDirectory()||st.isSymbolicLink())throw Error('Changed adoption target; manual recovery required');const marker=root+'/'+OWNER;if(!existsSync(join(this.data,marker))||packageSha(packageStoredBytes(this.data,marker))!==expected.get(marker))throw Error('Unowned adoption target; manual recovery required');const files=walk(target);for(const file of files){const rel=root+'/'+file;if(expected.get(rel)!==packageSha(packageStoredBytes(this.data,rel)))throw Error('Changed adoption bytes; manual recovery required');}owned.push([root,files]);}
   for(const [root,files]of owned.reverse())this.removeOwned(root,files);
@@ -108,6 +108,8 @@ export class WorkflowAdoption{
  }catch(e){
   if(e instanceof LockLost)throw e;
   if(!journaled){rmSync(stage,{recursive:true,force:true});throw e;}
+  // settling can delete published skills, so only while the lock is still ours
+  try{this.held?.refresh();}catch{throw e;}
   // Settle only this transaction: everything published and intact means the workflow exists, so report success instead of inviting a duplicate retry.
   if(this.settle(txn)==='complete')return result;
   throw e;

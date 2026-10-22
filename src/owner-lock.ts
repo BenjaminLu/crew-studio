@@ -1,18 +1,20 @@
 // A cross-process lock that records its owner, for long critical sections such as package adoption.
-//   <dir>/.lock-<name>/owner.json   {pid, boot, token}   (the lock is a directory: mkdir is atomic)
+//   <dir>/.lock-<name>/owner.json   {pid, host, boot, token}   (the lock is a directory: mkdir is atomic)
 // Unlike withLock (src/ids.ts), age alone never breaks it: a contender takes it over only when the owner process
 // is gone, or when the owner has not refreshed it for staleMs. The owner refreshes it while it works and removes
-// it only while the recorded token is still its own.
+// it only while the recorded token is still its own. The lock is advisory and has no fencing.
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, rmdirSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { withLock } from "./ids";
 
 const BOOT = randomBytes(12).toString("hex");
+const HOST = hostname();
 const OWNER = "owner.json";
 /** A lock directory without an owner record (crash between mkdir and the write, or an older Studio) is broken after this. */
 const UNOWNED_MS = 10_000;
-type Owner = { pid: number; boot: string; token: string };
+type Owner = { pid: number; host: string; boot: string; token: string };
 
 export class LockLost extends Error {}
 export type HeldLock = { refresh(): void; release(): void };
@@ -20,12 +22,14 @@ export type HeldLock = { refresh(): void; release(): void };
 function readOwner(lock: string): Owner | null {
   try {
     const v = JSON.parse(readFileSync(join(lock, OWNER), "utf8"));
-    if (Number.isSafeInteger(v?.pid) && v.pid > 0 && typeof v.boot === "string" && typeof v.token === "string") return v;
+    if (Number.isSafeInteger(v?.pid) && v.pid > 0 && typeof v.host === "string" && typeof v.boot === "string" && typeof v.token === "string") return v;
   } catch {}
   return null;
 }
 
+/** A pid means nothing on another host (a shared data folder), so there only the stale rule applies. */
 function ownerGone(o: Owner): boolean {
+  if (o.host !== HOST) return false;
   if (o.pid === process.pid) return o.boot !== BOOT;
   try { process.kill(o.pid, 0); return false; } catch (e: any) { return e?.code === "ESRCH"; }
 }
@@ -64,12 +68,13 @@ export function takeOwnerLock(dir: string, name: string, o: { waitMs: number; st
       Bun.sleepSync(20);
       continue;
     }
-    try { writeFileSync(join(lock, OWNER), JSON.stringify({ pid: process.pid, boot: BOOT, token }), { flag: "wx", mode: 0o600 }); break; }
+    try { writeFileSync(join(lock, OWNER), JSON.stringify({ pid: process.pid, host: HOST, boot: BOOT, token }), { flag: "wx", mode: 0o600 }); break; }
     catch (e: any) { if (e?.code !== "ENOENT" && e?.code !== "EEXIST") { try { rmdirSync(lock); } catch {} throw e; } }
   }
   const mine = () => readOwner(lock)?.token === token;
   return {
-    refresh() { if (!mine()) throw new LockLost(`lost the lock ${name}`); const now = new Date(); utimesSync(lock, now, now); },
+    // a breaker can remove the lock between the token check and utimes
+    refresh() { if (!mine()) throw new LockLost(`lost the lock ${name}`); const now = new Date(); try { utimesSync(lock, now, now); } catch { throw new LockLost(`lost the lock ${name}`); } },
     release() { if (!mine()) return; try { unlinkSync(join(lock, OWNER)); rmdirSync(lock); } catch {} },
   };
 }
