@@ -28,6 +28,16 @@ const context = async (width, theme, lang) => { const c = await browser.newConte
 const noHScroll = (p) => p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1);
 const text = (p, sel) => p.locator(sel).innerText();
 const box = (p, sel) => p.locator(sel).boundingBox();
+// Each side fetches independently; a loaded left transcript does not make the right ready.
+const waitPair = (p, round) => p.waitForFunction((round) => {
+  return ["left", "right"].every((side, i) => {
+    const head = document.querySelector(`[data-cmp-head="${side}"]`);
+    const body = document.querySelector(`[data-cmp-body="${side}"]`);
+    return head?.dataset.cmpNode === `${i ? "judge" : "pitch"}${round}` && head.dataset.cmpVisit === "1"
+      && (body?.innerText || "").includes(`${i ? "評審" : "創業提案"}第 ${round} 輪`);
+  });
+}, round, { timeout: 8000 }).then(() => true).catch(() => false);
+
 try {
   await waitUp(base, app);
   browser = withSession(await chromium.launch({ headless: true }), base);
@@ -64,12 +74,12 @@ try {
     await p.screenshot({ path: join(shots, "compare-1280-light-en.png"), fullPage: true });
     // the round selector switches the content
     await p.click('[data-cmp-pick="2"]');
-    await p.waitForFunction(() => /創業提案第 2 輪/.test(document.querySelector('[data-cmp-body="left"]')?.innerText || ""), null, { timeout: 8000 }).catch(() => {});
+    const pair2Ready = await waitPair(p, 2);
     const l2 = await text(p, '[data-cmp-body="left"]'), r2 = await text(p, '[data-cmp-body="right"]');
-    ok(/創業提案第 2 輪/.test(l2) && !/創業提案第 1 輪/.test(l2) && /回應第 1 輪評審/.test(l2) && /評審第 2 輪/.test(r2) && /score: 70/.test(r2), "Round 2 shows pitch 2 next to judge 2", l2.slice(0, 200));
+    ok(pair2Ready && /創業提案第 2 輪/.test(l2) && !/創業提案第 1 輪/.test(l2) && /回應第 1 輪評審/.test(l2) && /評審第 2 輪/.test(r2) && /score: 70/.test(r2), "Round 2 shows pitch 2 next to judge 2", l2.slice(0, 200));
     ok(await p.locator('[data-cmp-head="left"]').getAttribute("data-cmp-node") === "pitch2" && await p.locator('[data-cmp-head="right"]').getAttribute("data-cmp-node") === "judge2", "the headers follow the selected round");
-    await p.click('[data-cmp-pick="3"]'); await p.waitForFunction(() => /創業提案第 3 輪/.test(document.querySelector('[data-cmp-body="left"]')?.innerText || ""), null, { timeout: 8000 }).catch(() => {});
-    ok(/評審第 3 輪/.test(await text(p, '[data-cmp-body="right"]')), "Round 3 shows judge 3");
+    await p.click('[data-cmp-pick="3"]'); const pair3Ready = await waitPair(p, 3);
+    ok(pair3Ready && /評審第 3 輪/.test(await text(p, '[data-cmp-body="right"]')), "Round 3 shows judge 3");
     await p.screenshot({ path: join(shots, "compare-1280-light-en-round3.png"), fullPage: true });
     // a workflow without a hint: pick any two
     await p.goto(`${base}/#/tasks/${plain}/compare`); await p.waitForSelector("[data-cmp-undeclared]");
