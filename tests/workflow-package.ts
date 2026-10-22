@@ -1,7 +1,7 @@
 import "./lib/isolated-env.mjs";
 import {zip as writeZip} from '../src/zip';
 import {strict as a} from 'node:assert';
-import {mkdtempSync,readFileSync,writeFileSync,existsSync,rmSync,mkdirSync,symlinkSync,openSync,closeSync} from 'node:fs';
+import {mkdtempSync,readFileSync,writeFileSync,existsSync,rmSync,mkdirSync,symlinkSync,openSync,closeSync,utimesSync,renameSync} from 'node:fs';
 import {tmpdir} from 'node:os';import {join} from 'node:path';import {spawnSync} from 'node:child_process';
 import {WorkflowPackages,encodePackage,verifyPackage,snapshotPackage,packageSha,boundedDescriptorBytes} from '../src/workflow-package';
 const data=mkdtempSync(join(tmpdir(),'crew-package-'));let assertions=0;const check=(f:()=>void)=>{f();assertions++;};
@@ -55,5 +55,13 @@ try{
  check(()=>a.equal(listing.list().length,2));const damagedZip=join(listing.root,damaged.id,'package.zip'),cut=readFileSync(damagedZip);cut[40]^=1;writeFileSync(damagedZip,cut);
  const rows:any[]=listing.list();check(()=>a.equal(rows.length,2));check(()=>a.equal(rows.find(x=>x.id===damaged.id)?.damaged,true));check(()=>a.equal(rows.find(x=>x.id===good.id)?.status,'held'));
  listing.remove(damaged.id);check(()=>a.deepEqual(listing.list().map(x=>x.id),[good.id]));check(()=>a(!existsSync(join(listing.root,damaged.id))));
+ check(()=>a.throws(()=>verifyPackage((b=>{b.writeUInt16LE(1,central+36);return b;})(Buffer.from(bytes))),/entry metadata/)); // central internal attributes must be zero
+ check(()=>a.throws(()=>verifyPackage((b=>{b.writeUInt16LE(10,4);return b;})(Buffer.from(bytes))),/headers differ/)); // local and central version-needed must agree
+ check(()=>a.throws(()=>verifyPackage(makeZip([['x','a'],['x/y','b']])),/colliding/));check(()=>a.throws(()=>verifyPackage(makeZip([['X/y','b'],['x','a']])),/colliding/)); // a file may not also be a folder, in either order or case
+ const goodZip=join(listing.root,good.id,'package.zip');utimesSync(goodZip,1700000000,1700000000);check(()=>a.equal(listing.list()[0].status,'held'));
+ const swapped=readFileSync(goodZip);swapped[40]^=1;writeFileSync(goodZip+'.new',swapped);renameSync(goodZip+'.new',goodZip);utimesSync(goodZip,1700000000,1700000000);check(()=>a.equal((listing.list()[0] as any).damaged,true)); // same size and mtime, different file: not served from the cache
+ const third=listing.commit('alice',listing.preview('alice',bytes.toString('base64')).token);listing.list();rmSync(join(listing.root,third.id),{recursive:true});listing.list();check(()=>a(!(listing as any).verified.has(third.id))); // cache drops packages no longer on disk
+ rmSync(join(listing.root,good.id,'receipt.json'));const noReceipt:any=listing.list()[0];check(()=>a(noReceipt.damaged&&/ENOENT/.test(noReceipt.error)&&!noReceipt.error.includes(data),noReceipt.error)); // damaged text without the absolute data path
+ writeFileSync(join(listing.root,good.id,'.DS_Store'),'x');check(()=>a.throws(()=>listing.remove(good.id),e=>/contains other files \(for example \.DS_Store\)/.test(e.message)&&!e.message.includes(data)));
  console.log(`${assertions} assertions passed`);
 }finally{rmSync(data,{recursive:true,force:true});}

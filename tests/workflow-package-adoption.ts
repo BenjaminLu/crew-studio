@@ -143,6 +143,18 @@ try{
  check(()=>a.equal(importedCopy.origin?.source,'package-import'));
  check(()=>a.deepEqual(importedCopy.origin?.package,imported.origin!.package));
  check(()=>a.equal(importedCopy.origin?.transaction,imported.origin!.transaction));
+ // published, but the complete marker and staging cleanup cannot be written: adoption reports success, nothing is held, a later recovery finishes the marker
+ const markAt=join(dir,'marker-fail'),markDefs=new WorkflowDefs(markAt,()=>[]);let markStage='',marked:any=null;
+ try{marked=new WorkflowAdoption(markAt,p=>{if(p==='published'){markStage=join(markAt,'workflow-adoptions',readdirSync(join(markAt,'workflow-adoptions'))[0]);chmodSync(markStage,0o500);}}).adopt(fixture(),'pkg-'+'e'.repeat(24),markDefs,caps);check(()=>a.deepEqual(new WorkflowAdoption(markAt).holds(),[]));}finally{if(markStage)chmodSync(markStage,0o700);}
+ check(()=>a.equal(markDefs.versions(marked.workflow).length,1));new WorkflowAdoption(markAt);check(()=>a.deepEqual(readdirSync(markStage).sort(),['complete','journal.json','source.zip']));
+ const skillStage=join(skillDest,'workflow-adoptions',readdirSync(join(skillDest,'workflow-adoptions'))[0]);check(()=>a.deepEqual(readdirSync(skillStage).sort(),['complete','journal.json','source.zip'])); // skill-* and out staging removed after completion
+ const stale=join(markAt,'workflow-adoptions','import-'+'f'.repeat(24));mkdirSync(join(stale,'skill-0'),{recursive:true});writeFileSync(join(stale,'skill-0','SKILL.md'),'x');new WorkflowAdoption(markAt);check(()=>a(!existsSync(stale))); // journal-less staging is cleaned
+ const xd=join(dir,'exdev');check(()=>a.throws(()=>new WorkflowAdoption(xd,p=>{if(p.startsWith('rename:'))throw Object.assign(Error('cross-device link not permitted'),{code:'EXDEV'});}).adopt(fixture(),'pkg-'+'f'.repeat(24),new WorkflowDefs(xd,()=>[]),caps),/same filesystem as the data folder/));check(()=>a.deepEqual(new WorkflowDefs(xd,()=>[]).ids(),[]));
+ check(()=>a.deepEqual(new WorkflowAdoption(ro.at).holds().map(x=>[x.txn,x.reason]),[[ro.txn,'Unreadable recovery hold record']])); // a dangling hold symlink is still a hold
+ const locked=partial('locked-target'),lockedDir=join(locked.skillRoot,'v1');chmodSync(lockedDir,0o000);try{new WorkflowAdoption(locked.at);}finally{chmodSync(lockedDir,0o700);}
+ const lockedReason=new WorkflowAdoption(locked.at).holds()[0]?.reason??'';check(()=>a(/EACCES/.test(lockedReason)&&!lockedReason.includes(locked.at),lockedReason)); // hold text names the cause without the absolute data path
+ const dc=join(dir,'draft-corrupt'),dcDefs=new WorkflowDefs(dc,()=>[]),dcDrafts=new WorkflowDrafts(dc,dcDefs),bad=join(dc,'workflows','imp-'+'9'.repeat(24));mkdirSync(bad,{recursive:true});writeFileSync(join(bad,'v1.json'),'{"id":');
+ const dcDraft=dcDrafts.draft(structuredClone(WORKFLOW_DRAFT_EXAMPLE),'test-turn',[]);check(()=>a.equal(dcDefs.versions(dcDrafts.save(dcDraft.id,'captain',dcDraft.revision).workflow).length,1)); // one unreadable imp-* folder does not block saving a draft
  const draftCopy=sourceDefs.copyTemplate(persisted.workflow,1,'draft-copy','Draft copy',false,'captain');
  check(()=>a.equal(draftCopy.origin?.source,'firstmate-draft'));
  check(()=>a.equal(draftCopy.origin?.draft,undefined));

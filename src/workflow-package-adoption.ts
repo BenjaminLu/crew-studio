@@ -23,32 +23,38 @@ export class WorkflowAdoption{
  constructor(readonly data:string,private fault:(point:string)=>void=()=>{}){this.root=join(data,'workflow-adoptions');this.recover();}
  private sign(plan:Plan){return createHmac('sha256',ledgerKey(this.data)).update(SIGN_PURPOSE+JSON.stringify(plan)).digest('hex');}
  private journal(id:string){const v=JSON.parse(packageStoredBytes(this.data,`workflow-adoptions/${id}/journal.json`).toString('utf8'));if(!txnPattern.test(id)||v.plan?.txn!==id||typeof v.sig!=='string'||!/^([a-f0-9]{64})$/.test(v.sig)||!timingSafeEqual(Buffer.from(v.sig,'hex'),Buffer.from(this.sign(v.plan),'hex')))throw Error('Adoption journal signature mismatch');return v.plan as Plan;}
+ /** Error text for logs, holds and the UI without the absolute data folder path. */
+ private text(e:any){return String(e?.message??e).split(this.data+'/').join('').split(this.data).join('<data>');}
+ /** Best effort: staging copies are not needed once a transaction is settled; journal, source ZIP and markers stay. */
+ private tidy(dir:string){try{for(const n of readdirSync(dir))if(n==='out'||/^skill-[0-9]+$/.test(n))rmSync(join(dir,n),{recursive:true,force:true});}catch(e:any){console.error(`workflow adoption: could not tidy staging: ${this.text(e)}`);}}
  private complete(plan:Plan){return plan.files.every(f=>{try{return packageSha(packageStoredBytes(this.data,f.path))===f.sha256;}catch{return false;}});}
  /** Runs before WorkflowDefs/catalog creation and never throws: a transaction it cannot settle is held and logged, and Studio still starts. */
  recover(){let ids:string[];try{if(!existsSync(this.root))return;ids=readdirSync(this.root).filter(x=>txnPattern.test(x));}catch(e:any){console.error(`workflow adoption: cannot list transactions: ${e?.message??e}`);return;}for(const id of ids)this.settle(id);}
  private settle(id:string):State{
   const dir=join(this.root,id);
   try{
-   if(existsSync(join(dir,'complete')))return 'complete';if(existsSync(join(dir,'rolled-back')))return 'rolled-back';if(existsSync(join(dir,'recovery-hold.json')))return 'held';
-   if(!existsSync(join(dir,'journal.json')))return 'staging';
+   if(existsSync(join(dir,'complete')))return 'complete';if(existsSync(join(dir,'rolled-back')))return 'rolled-back';if(present(join(dir,'recovery-hold.json')))return 'held';
+   // no journal means nothing was published yet: the folder is an interrupted staging area
+   if(!existsSync(join(dir,'journal.json'))){rmSync(dir,{recursive:true,force:true});return 'rolled-back';}
    return this.recoverOne(id,dir);
   }catch(e:any){
-   const reason=String(e?.message??e);console.error(`workflow adoption ${id}: recovery held: ${reason}`);
-   try{writeFileSync(join(dir,'recovery-hold.json'),JSON.stringify({txn:id,reason,at:new Date().toISOString()}),{flag:'wx',mode:0o600});}catch(w:any){console.error(`workflow adoption ${id}: could not record the hold: ${w?.message??w}`);}
+   const reason=this.text(e);console.error(`workflow adoption ${id}: recovery held: ${reason}`);
+   try{writeFileSync(join(dir,'recovery-hold.json'),JSON.stringify({txn:id,reason,at:new Date().toISOString()}),{flag:'wx',mode:0o600});}catch(w:any){console.error(`workflow adoption ${id}: could not record the hold: ${this.text(w)}`);}
    return 'held';
   }
  }
  /** Held transactions for the saved-packages view. A missing or malformed record never throws. */
  holds():AdoptionHold[]{
   let ids:string[];try{ids=readdirSync(this.root).filter(x=>txnPattern.test(x));}catch{return [];}
-  return ids.flatMap(txn=>{if(!existsSync(join(this.root,txn,'recovery-hold.json')))return [];try{const v=JSON.parse(packageStoredBytes(this.data,`workflow-adoptions/${txn}/recovery-hold.json`,65536).toString('utf8'));return [{txn,reason:typeof v?.reason==='string'?v.reason.slice(0,500):'Unreadable recovery hold record',at:typeof v?.at==='string'?v.at.slice(0,40):null}];}catch{return [{txn,reason:'Unreadable recovery hold record',at:null}];}});
+  return ids.flatMap(txn=>{try{if(!present(join(this.root,txn,'recovery-hold.json')))return [];}catch{}try{const v=JSON.parse(packageStoredBytes(this.data,`workflow-adoptions/${txn}/recovery-hold.json`,65536).toString('utf8'));return [{txn,reason:typeof v?.reason==='string'?v.reason.slice(0,500):'Unreadable recovery hold record',at:typeof v?.at==='string'?v.at.slice(0,40):null}];}catch{return [{txn,reason:'Unreadable recovery hold record',at:null}];}});
  }
  private recoverOne(id:string,dir:string):State{const p=this.journal(id);if(p.schema!==1||!/^imp-[a-f0-9]{24}$/.test(p.workflow)||p.roots.some(r=>!safe(r)||!(r===`workflows/${p.workflow}`||/^skills\/_library\/imp-[a-f0-9]{12}-s[0-9]+$/.test(r)))||p.files.some(f=>!safe(f.path)||!p.roots.some(r=>f.path.startsWith(r+'/'))))throw Error('Invalid adoption journal ownership');
-  if(this.complete(p)){writeFileSync(join(dir,'complete'),p.archiveSha256,{flag:'wx',mode:0o600});rmSync(join(dir,'out'),{recursive:true,force:true});return 'complete';}
+  // everything is published and intact: the workflow exists, so a failed marker or cleanup write must not turn it into a hold
+  if(this.complete(p)){try{writeFileSync(join(dir,'complete'),p.archiveSha256,{flag:'wx',mode:0o600});}catch(e:any){if(e?.code!=='EEXIST')console.error(`workflow adoption ${id}: published, but the complete marker could not be written: ${this.text(e)}`);}this.tidy(dir);return 'complete';}
   const expected=new Map(p.files.map(f=>[f.path,f.sha256])),owned:[string,string[]][]=[];
   for(const root of p.roots){const target=join(this.data,root);if(!present(target))continue;const st=lstatSync(target);if(!st.isDirectory()||st.isSymbolicLink())throw Error('Changed adoption target; manual recovery required');const marker=root+'/'+OWNER;if(!existsSync(join(this.data,marker))||packageSha(packageStoredBytes(this.data,marker))!==expected.get(marker))throw Error('Unowned adoption target; manual recovery required');const files=walk(target);for(const file of files){const rel=root+'/'+file;if(expected.get(rel)!==packageSha(packageStoredBytes(this.data,rel)))throw Error('Changed adoption bytes; manual recovery required');}owned.push([root,files]);}
   for(const [root,files]of owned.reverse())this.removeOwned(root,files);
-  rmSync(join(dir,'out'),{recursive:true,force:true});writeFileSync(join(dir,'rolled-back'),p.archiveSha256,{flag:'wx',mode:0o600});return 'rolled-back';
+  rmSync(join(dir,'out'),{recursive:true,force:true});this.tidy(dir);writeFileSync(join(dir,'rolled-back'),p.archiveSha256,{flag:'wx',mode:0o600});return 'rolled-back';
  }
  /** Unlink only verified files, then their folders deepest first; the owner marker goes last so an interrupted removal is still recognised. rmdir fails, holding the transaction, if anything unexpected remains. */
  private removeOwned(root:string,files:string[]){
@@ -82,9 +88,9 @@ export class WorkflowAdoption{
  // Each folder is built whole inside this transaction's staging (same data filesystem), then published by one rename: a crash leaves no folder or a complete one, never a partial file.
  mkdirSync(out,{mode:0o700});
  for(const [i,root]of roots.entries())for(const [p,b]of outputs)if(p.startsWith(root+'/')){const file=join(out,String(i),p.slice(root.length+1));mkdirSync(dirname(file),{recursive:true,mode:0o700});writeFileSync(file,b,{flag:'wx',mode:0o600});this.fault('stage:'+p);}
- for(const [i,root]of roots.entries()){const target=join(this.data,root);mkdirSync(dirname(target),{recursive:true,mode:0o700});if(present(target))throw Error('Fresh adoption namespace already exists');renameSync(join(out,String(i)),target);this.fault('publish:'+root);}
+ for(const [i,root]of roots.entries()){const target=join(this.data,root);mkdirSync(dirname(target),{recursive:true,mode:0o700});if(present(target))throw Error('Fresh adoption namespace already exists');try{this.fault('rename:'+root);renameSync(join(out,String(i)),target);}catch(e:any){if(e?.code==='EXDEV')throw Error('Cannot publish: the workflows and skills folders must be on the same filesystem as the data folder');throw e;}this.fault('publish:'+root);}
  this.fault('published');
- writeFileSync(join(stage,'complete'),parsed.value.sha256,{flag:'wx',mode:0o600});rmSync(out,{recursive:true,force:true});return result;
+ writeFileSync(join(stage,'complete'),parsed.value.sha256,{flag:'wx',mode:0o600});this.tidy(stage);return result;
  }catch(e){
   if(!journaled){rmSync(stage,{recursive:true,force:true});throw e;}
   // Settle only this transaction: everything published and intact means the workflow exists, so report success instead of inviting a duplicate retry.

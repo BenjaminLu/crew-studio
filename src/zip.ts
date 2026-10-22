@@ -30,18 +30,20 @@ export function unzip(b:Buffer,lim:ZipLimits):Map<string,Buffer>{
  const e=b.length-22;if(b.readUInt32LE(e)!==END||b.readUInt16LE(e+20)!==0)fail('ZIP comments/trailing data are unsupported');
  const count=b.readUInt16LE(e+10),size=b.readUInt32LE(e+12),offset=b.readUInt32LE(e+16);
  if(b.readUInt16LE(e+4)||b.readUInt16LE(e+6)||b.readUInt16LE(e+8)!==count||!count||count===0xffff||count>lim.count||offset+size!==e)fail('Unsupported ZIP directory, ZIP64 or entry count');
- const files=new Map<string,Buffer>(),seen=new Set<string>();let pos=offset,next=0,total=0;
+ const files=new Map<string,Buffer>(),seen=new Set<string>(),dirs=new Set<string>();let pos=offset,next=0,total=0;
  for(let i=0;i<count;i++){
   if(pos+46>e||b.readUInt32LE(pos)!==CENTRAL)fail('Invalid ZIP central entry');
   const needed=b.readUInt16LE(pos+6),flags=b.readUInt16LE(pos+8),method=b.readUInt16LE(pos+10),crc=b.readUInt32LE(pos+16),compressed=b.readUInt32LE(pos+20),expanded=b.readUInt32LE(pos+24),n=b.readUInt16LE(pos+28),attrs=b.readUInt32LE(pos+38),local=b.readUInt32LE(pos+42);
   if(needed>20)fail('Unsupported ZIP version (ZIP64 or newer features)');
   if(method!==0)fail('Unsupported ZIP compression method: only stored entries are accepted');
   if(flags&~UTF8)fail('Encrypted or data-descriptor ZIP entries are unsupported');
-  if(b.readUInt16LE(pos+30)||b.readUInt16LE(pos+32)||b.readUInt16LE(pos+34)||compressed!==expanded||expanded>lim.entry||pos+46+n>e)fail('Unsupported ZIP entry metadata or file size');
+  if(b.readUInt16LE(pos+30)||b.readUInt16LE(pos+32)||b.readUInt16LE(pos+34)||b.readUInt16LE(pos+36)||compressed!==expanded||expanded>lim.entry||pos+46+n>e)fail('Unsupported ZIP entry metadata or file size');
   const name=b.subarray(pos+46,pos+46+n),path=name.toString('utf8'),mode=(attrs>>>16)&0xf000;
-  if(!lim.name(path)||seen.has(path.toLowerCase()))fail('ZIP entry name is duplicate, colliding or unsafe');seen.add(path.toLowerCase());
+  const lower=path.toLowerCase(),parents=lower.split('/').slice(0,-1).map((_,j,a)=>a.slice(0,j+1).join('/'));
+  // a file may not share a name with another file or with a folder of another entry, in any letter case
+  if(!lim.name(path)||seen.has(lower)||dirs.has(lower)||parents.some(p=>seen.has(p)))fail('ZIP entry name is duplicate, colliding or unsafe');seen.add(lower);for(const p of parents)dirs.add(p);
   if(mode&&mode!==0x8000||attrs&0x10)fail('ZIP link, directory or nonregular entry');
-  if(local!==next||local+30+n>offset||b.readUInt32LE(local)!==LOCAL||b.readUInt16LE(local+4)>20||b.readUInt16LE(local+6)!==flags||b.readUInt16LE(local+8)!==method||b.readUInt32LE(local+14)!==crc||b.readUInt32LE(local+18)!==compressed||b.readUInt32LE(local+22)!==expanded||b.readUInt16LE(local+26)!==n||b.readUInt16LE(local+28)!==0||!b.subarray(local+30,local+30+n).equals(name))fail('ZIP local/central headers differ or entries overlap');
+  if(local!==next||local+30+n>offset||b.readUInt32LE(local)!==LOCAL||b.readUInt16LE(local+4)!==needed||b.readUInt16LE(local+6)!==flags||b.readUInt16LE(local+8)!==method||b.readUInt32LE(local+14)!==crc||b.readUInt32LE(local+18)!==compressed||b.readUInt32LE(local+22)!==expanded||b.readUInt16LE(local+26)!==n||b.readUInt16LE(local+28)!==0||!b.subarray(local+30,local+30+n).equals(name))fail('ZIP local/central headers differ or entries overlap');
   const start=local+30+n;next=start+compressed;if(next>offset)fail('ZIP data overlaps directory');total+=expanded;if(total>lim.total)fail('Expanded ZIP exceeds limit');
   const data=Buffer.from(b.subarray(start,next));if(crc32(data)!==crc)fail('ZIP CRC mismatch');
   files.set(path,data);pos+=46+n;
