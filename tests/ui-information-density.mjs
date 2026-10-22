@@ -32,8 +32,10 @@ log.push({at:at+10000,kind:"firstmate",text:"檢查結果已整理。請確認�
 Object.assign(main,{state:"attached",host:"codex",model:"fixture-model",sessionId:session.id,busy:true,log,queue:[],approvals:[{id:"fixture-approval",tool:"fixture_read",summary:"Read fixture evidence only",expires:Date.now()+3600000}]});
 // The proxy never issues a Studio cookie: it cannot overwrite another local Studio's session.
 // Mutations are refused; UI state is local and API/media responses are fixtures.
+const delayedRequests=[];
 const proxy=createServer(async(req,res)=>{try{
  const u=new URL(req.url,"http://fixture.local"), path=u.pathname;
+ if(/^\/afc\/[^/]+\/loading-delayed\/1\/latest\.html$/.test(path)&&!u.search)delayedRequests.push(req.headers["sec-fetch-dest"]);
  if(/^\/(af|afc|af-cap)\//.test(path)){const started=Date.now();writeFileSync(join(tmp,"preview-requests.log"),JSON.stringify({event:"request",path,query:u.search,at:started,dest:req.headers["sec-fetch-dest"],ua:req.headers["user-agent"],range:req.headers.range})+"\n",{flag:"a"});res.once("finish",()=>writeFileSync(join(tmp,"preview-requests.log"),JSON.stringify({event:"finish",path,at:Date.now(),ms:Date.now()-started,status:res.statusCode})+"\n",{flag:"a"}));res.once("close",()=>{if(!res.writableFinished)writeFileSync(join(tmp,"preview-requests.log"),JSON.stringify({event:"aborted",path,at:Date.now()})+"\n",{flag:"a"});});}
  if(path==="/fixture-studio-probe.js"){
   res.writeHead(200,{"content-type":"application/javascript","cache-control":"no-store"});
@@ -99,6 +101,13 @@ try{
   ok(await page.locator('[data-artifact=script-only] iframe').count()===0,"script-only app never executes in thumbnail");
   const heights=await page.locator('.a3-card>.lprev').evaluateAll(es=>es.map(e=>e.getBoundingClientRect().height));ok(heights.every(h=>h===170),"all media and fallback preview slots share height");
  }
- await page.screenshot({path:join(shots,'desktop-library.png'),fullPage:true});await page.setViewportSize({width:390,height:844});await page.screenshot({path:join(shots,'narrow-library.png'),fullPage:true});if(!baseline)ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),"narrow Library has no horizontal overflow");ok(!errors.length,"no browser JavaScript errors");
+ await page.screenshot({path:join(shots,'desktop-library.png'),fullPage:true});await page.setViewportSize({width:390,height:844});await page.screenshot({path:join(shots,'narrow-library.png'),fullPage:true});if(!baseline)ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),"narrow Library has no horizontal overflow");
+ if(!baseline){
+  // Opening the Library directly renders it several times while its lists load; Chrome queues identical GETs one behind another.
+  delayedRequests.length=0;const fresh=await ctx.newPage();fresh.on("pageerror",e=>errors.push(String(e)));await fresh.goto(base+'/?labs=1#/library');
+  await fresh.frameLocator('[data-artifact=loading-delayed] iframe').getByText('Verified static latest version').waitFor({timeout:15000});
+  ok(delayedRequests.filter(d=>d==="empty").length===1&&delayedRequests.length<=2,`direct Library load fetches the delayed preview once (requests: ${delayedRequests.join(",")})`);await fresh.close();
+ }
+ ok(!errors.length,"no browser JavaScript errors");
  console.log(`ui-information-density: ${passed} passed; baseline=${baseline}; captures ${shots}`);
 }finally{await browser?.close();proxy.closeAllConnections();await new Promise(r=>proxy.close(r));app.kill('SIGTERM');writeFileSync(join(tmp,'server.log'),serverLog);writeFileSync(join(tmp,'evidence.json'),JSON.stringify({passed,errors,baseline,shots},null,2));}

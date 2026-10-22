@@ -1,8 +1,8 @@
 # UI information density — draft evidence
 
-**Not ready for merge.** The root agent's native Chrome acceptance still fails for the automatic delayed HTML thumbnail. Clean installed Chrome and bundled Chromium tests pass; the difference remains unexplained. No merge or deployment was performed.
+**Draft pending independent review.** The delayed HTML thumbnail failure seen in native Chrome is explained and fixed (see "Delayed thumbnail timeout" below). No merge or deployment was performed.
 
-All images use synthetic conversations, permission prompts and local media fixtures. They contain no customer conversation or real account. Before: original `96b1098e` frontend against the same fixture. After: candidate frontend (`m25.js` SHA256 `748a51f6049aa63f075001e54283429c83c9f39a41063a3fae87aa685af8db70`; `m3.js` SHA256 `da2089b8d5940bddf390af05b5b03355eb05218e0439422990c2c2499f517778`). Browser screenshots are automated test evidence, separate from the root agent's native acceptance.
+All images use synthetic conversations, permission prompts and local media fixtures. They contain no customer conversation or real account. Before: original `96b1098e` frontend against the same fixture. After: candidate frontend (`m25.js` SHA256 `748a51f6049aa63f075001e54283429c83c9f39a41063a3fae87aa685af8db70`; `m3.js` SHA256 `60d1d2964d108d98c0bafa4939e93354879813b583ded54aeea1e830129b7c96`). Browser screenshots are automated test evidence, separate from the root agent's native acceptance.
 
 | Area | Before | Candidate |
 | --- | --- | --- |
@@ -21,12 +21,14 @@ All images use synthetic conversations, permission prompts and local media fixtu
 
 ## Validation and limits
 
-- `node tests/ui-information-density.mjs`: 34 assertions pass in bundled Chromium / installed Chrome (channel `chrome`), including a 96-tool burst, immediate repaint, narrow/short layouts, all preview states, and actual delayed iframe heading. The same new assertions fail against the original frontend (no activity groups).
+- `node tests/ui-information-density.mjs`: 35 assertions pass in bundled Chromium / installed Chrome (channel `chrome`), including a 96-tool burst, immediate repaint, narrow/short layouts, all preview states, actual delayed iframe heading, and a direct Library load that fetches the delayed preview exactly once. The same new assertions fail against the original frontend (no activity groups).
 - Existing suites: Firstmate chat 35/0, backbone navigation 51/0, real media Library UI 122/0. Privacy/OpenCC checks pass in the managed worktree. These are fixtures, not paid-agent or external-service tests.
 - Required core is run separately from full CI. The managed worktree under the operator's protected configuration directory cannot run an unchanged staffing fixture CLI inside its sandbox. An exact-byte snapshot under the OS temporary directory, with normal Git metadata and locked dependencies, is used for core verification. Final result is reported in the PR; a green snapshot is not a claim that the original worktree command passed.
 
-## Open native acceptance blocker
+## Delayed thumbnail timeout
 
-The root agent personally verified chat grouping, resize, Labs, short-height reachability, static/image/video previews and named fallbacks. Its native automatic delayed thumbnail issues serial parent HTML requests about every 1600 ms, each HTTP 200, until the 10-second abort. `Sec-Fetch-Dest` is `empty`; the iframe is not created. No repeated capability/static-card requests establish a whole-page repaint cause.
+The root agent personally verified chat grouping, resize, Labs, short-height reachability, static/image/video previews and named fallbacks. Its native automatic delayed thumbnail issued serial parent HTML requests about every 1600 ms, each HTTP 200, until the 10-second abort, and no iframe was created.
 
-Two one-click controls succeeded: a plain page's native fetch, and a Studio-shell tagged manual fetch, each exactly one request, HTTP 200 and the expected 90-byte body. Automatic requests were untagged, so URL/cache/coalescing/lifecycle differences remain confounded. The application fetch wrappers contain no retry, but the cause is **not established**. Testing stopped at this bounded checkpoint; no speculative retry or longer timeout was added.
+Cause: opening `#/library` directly renders the Library seven times in about 40 ms while the artifact and library lists load (four renders from `loadList`, three from `loadLibrary`, confirmed by render stack traces). Every render rebuilt every card, and each card started its own capability request and parent `fetch`, so seven identical fetches left the page within milliseconds. The same recorded trace shows seven capability requests per card. Chrome's HTTP cache lets only one request per identical URL proceed at a time, so the server saw them one after another, each taking the fixture's 1600 ms. The visible card belongs to the last render; its fetch queued behind six discarded ones and reached its 10-second timeout before running. The tagged manual control used a different URL, so it never queued.
+
+Fix: renders share one in-flight load (capability, fetch and analysis) per preview URL (`staticPreview` in `public/m3.js`). In headed installed Chrome, the same seven renders now make one capability request, one parent fetch (1601 ms) and one iframe navigation, and the card reaches `ready`.

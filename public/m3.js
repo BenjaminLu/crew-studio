@@ -85,6 +85,27 @@ function previewBox(state, label, child) {
   box.previewState = (next, text) => { if (next !== "loading") clearTimeout(timeout); box.dataset.previewState = next; notice.lastChild.textContent = text || ""; notice.hidden = next === "ready"; };
   return box;
 }
+// Every Library render builds new cards, and Chrome lets only one request per identical URL through at a time, so a
+// render that started its own fetch would queue behind each discarded card's. Renders share one in-flight load.
+const staticLoads = new Map();
+function staticPreview(href) {
+  if (staticLoads.has(href)) return staticLoads.get(href);
+  const load = (async () => {
+    const src = await afCapFor(href);
+    if (src === href) throw new Error("Static preview capability unavailable");
+    const response = await fetch(src, { signal: AbortSignal.timeout(10000) });
+    if (!response.ok) throw new Error(`Preview HTTP ${response.status}`);
+    const html = await response.text();
+    const template = document.createElement("template"); template.innerHTML = html;
+    const doc = template.content;
+    const styledSurface = [...doc.querySelectorAll("style")].some(el => /background(?:-image)?\s*:[^;}]+|content\s*:\s*["']/i.test(el.textContent));
+    doc.querySelectorAll("script,style,template,noscript,head,title,meta,link").forEach(el => el.remove());
+    const staticContent = doc.textContent.trim() || doc.querySelector("svg:not(:empty),input,button") || [...doc.querySelectorAll("img,video,iframe")].some(el => String(el.getAttribute("src") || el.getAttribute("srcdoc") || "").trim()) || (styledSurface && doc.querySelector("body>*,div,section,main"));
+    return { src, visible: !!staticContent };
+  })().finally(() => staticLoads.delete(href));
+  staticLoads.set(href, load);
+  return load;
+}
 function artPreview(a, v, big) {
   if (!v) return previewBox("missing", T("No version to preview", "尚無版本可預覽"));
   if (a.source === "url") return previewBox("missing", T("External link · open to view", "外部連結・開啟查看內容"));
@@ -107,17 +128,8 @@ function artPreview(a, v, big) {
     const href = `/af/${a.id}/${v.n}/${a.source === "md" ? "doc.html" : v.primary || a.entry || "index.html"}`;
     (async () => {
       try {
-        const src = await afCapFor(href);
-        if (src === href) throw new Error("Static preview capability unavailable");
-        const response = await fetch(src, { signal: AbortSignal.timeout(10000) });
-        if (!response.ok) throw new Error(`Preview HTTP ${response.status}`);
-        const html = await response.text();
-        const template = document.createElement("template"); template.innerHTML = html;
-        const doc = template.content;
-        const styledSurface = [...doc.querySelectorAll("style")].some(el => /background(?:-image)?\s*:[^;}]+|content\s*:\s*["']/i.test(el.textContent));
-        doc.querySelectorAll("script,style,template,noscript,head,title,meta,link").forEach(el => el.remove());
-        const staticContent = doc.textContent.trim() || doc.querySelector("svg:not(:empty),input,button") || [...doc.querySelectorAll("img,video,iframe")].some(el => String(el.getAttribute("src") || el.getAttribute("srcdoc") || "").trim()) || (styledSurface && doc.querySelector("body>*,div,section,main"));
-        if (!staticContent) { box.previewState("missing", T("No static preview · open to inspect", "沒有靜態預覽・開啟查看內容")); return; }
+        const { src, visible } = await staticPreview(href);
+        if (!visible) { box.previewState("missing", T("No static preview · open to inspect", "沒有靜態預覽・開啟查看內容")); return; }
         // Never enable scripts in a Library thumbnail, even for script-rendered apps.
         const thumb = h("iframe", { sandbox: "", tabindex: "-1", "aria-hidden": "true", title: T("Static preview", "靜態預覽") });
         box.classList.add("a3-thumb");
