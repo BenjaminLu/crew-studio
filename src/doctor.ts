@@ -55,6 +55,10 @@ export const INSTALLERS: Record<string, Record<string, Method[]>> = {
         location: "npm's global folder", needs: ["npm"], admin: false },
       { id: "brew", label: "Homebrew", argv: ["brew", "install", "--cask", "codex"], source: "https://formulae.brew.sh/cask/codex", location: "Homebrew's prefix", needs: ["brew"], admin: false },
     ],
+    cursor: [
+      { id: "native", label: "Official installer (no admin rights)", argv: ["/bin/bash", "-c", "curl https://cursor.com/install -fsS | bash"],
+        source: "https://cursor.com/install — documented at https://docs.cursor.com/en/cli/installation", location: "~/.local/bin/cursor-agent", needs: ["curl"], admin: false },
+    ],
     tailscale: [
       { id: "brew", label: "Homebrew cask (macOS may ask for your password)", argv: ["brew", "install", "--cask", "tailscale"], source: "https://formulae.brew.sh/cask/tailscale",
         location: "/Applications/Tailscale.app", needs: ["brew"], admin: true },
@@ -79,6 +83,8 @@ export const INSTALLERS: Record<string, Record<string, Method[]>> = {
     claude: [{ id: "native", label: "Official installer (no admin rights)", argv: ["/bin/bash", "-c", "curl -fsSL https://claude.ai/install.sh | bash"],
       source: "https://claude.ai/install.sh", location: "~/.local/bin/claude", needs: ["curl"], admin: false }],
     codex: [{ id: "npm", label: "npm (official package)", argv: ["npm", "install", "-g", "@openai/codex"], source: "https://www.npmjs.com/package/@openai/codex", location: "npm's global folder", needs: ["npm"], admin: false }],
+    cursor: [{ id: "native", label: "Official installer (no admin rights)", argv: ["/bin/bash", "-c", "curl https://cursor.com/install -fsS | bash"],
+      source: "https://cursor.com/install", location: "~/.local/bin/cursor-agent", needs: ["curl"], admin: false }],
     tailscale: [{ id: "download", label: "Official download page", argv: [], kind: "open", url: "https://tailscale.com/download/linux", source: "https://tailscale.com/download/linux", location: "system packages (you install it)", needs: [], admin: true }],
     ffmpeg: [{ id: "download", label: "Official download page", argv: [], kind: "open", url: "https://ffmpeg.org/download.html#build-linux", source: "https://ffmpeg.org/download.html", location: "system packages (you install it)", needs: [], admin: true }],
     node: [{ id: "download", label: "Official download page", argv: [], kind: "open", url: "https://nodejs.org/en/download", source: "https://nodejs.org/en/download", location: "you choose", needs: [], admin: true }],
@@ -96,6 +102,7 @@ export const INSTALLERS: Record<string, Record<string, Method[]>> = {
 export const LOGINS: Record<string, { label: string; argv?: string[]; url?: string; note: string }> = {
   claude: { label: "Sign in to Claude", url: "https://claude.ai/login", note: "Studio runs the official `claude auth login`, which opens your browser. Studio never sees the credentials." },
   codex: { label: "Log in to Codex", argv: ["codex", "login"], url: "https://chatgpt.com/auth/login", note: "Studio owns the official Codex browser sign-in; no terminal session is required." },
+  cursor: { label: "Add a Cursor API key", url: "https://cursor.com/dashboard?tab=integrations", note: "Create an API key in the Cursor dashboard (Integrations), then keep it for the crew in the keychain: security add-generic-password -s crew-studio-cursor-api-key -a \"$USER\" -w (or ~/.config/crew-studio/cursor-api-key, mode 600). Studio never shows the key; cursor-agent's own browser login is not used by rounds." },
   tailscale: { label: "Sign in to Tailscale", argv: ["open", "-a", "Tailscale"], url: "https://login.tailscale.com", note: "Opens the Tailscale app; sign in there." },
 };
 
@@ -110,7 +117,9 @@ export type DoctorInput = {
   codexAccount?:import("./host/codex-account").CodexAccountView;
   state: string; legacy?: boolean; board: { writable: boolean; readonlyReason?: string | null }; gh: { connected: boolean; tokenSource: string | null; enabled: boolean };
   keys: { anthropic: string | null; openai: string | null; compatBaseUrl: string | null }; chatProvider: string; lanIp: string | null;
-  tailscale: { installed: boolean; running: boolean; dnsName: string | null }; claudeBin?: string; codexBin?: string; compiled: boolean;
+  tailscale: { installed: boolean; running: boolean; dnsName: string | null }; claudeBin?: string; codexBin?: string; cursorBin?: string; compiled: boolean;
+  /** how cursor-agent rounds sign in: a Cursor API key Studio hands them (src/providers/login.ts cursorLogin, presence only) */
+  cursorLogin?: { ok: boolean; source?: string; error?: string };
   render?: { node: string | null; ffmpeg: string | null; ffprobe?: string | null; playwright: string | null };
   /** the pinned HyperFrames film tools (src/render/coffee-film.ts discovery): ready, or why not */
   film?: { ready: boolean; reason?: string | null };
@@ -127,8 +136,9 @@ export type DoctorInput = {
 export function diagnose(i: DoctorInput): Item[] {
   const claudeV = version(i.claudeBin ?? process.env.CREW_CLAUDE_BIN ?? "claude");
   const codexV = version(i.codexBin ?? process.env.CREW_CODEX_BIN ?? "codex");
+  const cursorV = version(i.cursorBin ?? process.env.CREW_CURSOR_BIN ?? "cursor-agent");
   const anyKey = !!(i.keys.anthropic || i.keys.openai || i.keys.compatBaseUrl);
-  const statusChatOk = !!claudeV || !!codexV || anyKey;
+  const statusChatOk = !!claudeV || !!codexV || !!cursorV || anyKey;
   const items: Item[] = [];
   const legacy=i.legacy !== false;
   if (i.operatingRules) { const bad = [...(i.operatingRules.studio.unreadable ? [`Studio-wide: ${i.operatingRules.studio.unreadable}`] : []), ...i.operatingRules.projects.filter((p) => p.unreadable).map((p) => `${p.id}: ${p.unreadable}`)];
@@ -154,8 +164,10 @@ export function diagnose(i: DoctorInput): Item[] {
   for (const [id, title, bin, v] of [
     ["claude", "Claude Code CLI", i.claudeBin ?? process.env.CREW_CLAUDE_BIN ?? "claude", claudeV],
     ["codex", "Codex CLI", i.codexBin ?? process.env.CREW_CODEX_BIN ?? "codex", codexV],
+    ["cursor", "Cursor CLI (cursor-agent)", i.cursorBin ?? process.env.CREW_CURSOR_BIN ?? "cursor-agent", cursorV],
   ] as const) {
-    const found = present(bin), auth = v ? authenticated(id, bin) : null;
+    // cursor-agent's rounds sign in with a Cursor API key only: its presence is the login (never cursor-agent's own status, which reads the keychain)
+    const found = present(bin), auth = v ? (id === "cursor" ? (i.cursorLogin ? i.cursorLogin.ok : null) : authenticated(id, bin)) : null;
     // a CLI that reports it is signed out is not ready: it cannot run a round until the captain signs in
     items.push({ id, title, status: v ? (auth === false ? "degraded" : "ok") : found ? "degraded" : "missing", availability: v ? "available" : found ? "unusable" : "missing", authenticated: auth, version: v,
       detail: v ? `${v}; ${auth === true ? "CLI reports logged in" : auth === false ? "not logged in" : "login status unverified"}. Workflow execution is not verified.` : found ? "CLI found, but --version could not complete successfully." : "CLI not found at the configured path or on PATH.",
@@ -172,8 +184,9 @@ export function diagnose(i: DoctorInput): Item[] {
     adds: "The status chat without any CLI: Anthropic API, OpenAI API, or a local OpenAI-compatible server (LM Studio, Ollama).", fix: anyKey ? "" : "Add a key or an endpoint.", action: { kind: "keys" } });
   items.push({ id: "chat", title: "Status chat", status: statusChatOk ? "ok" : "degraded", detail: statusChatOk ? `answering with ${i.chatProvider}` : "no provider can answer yet",
     adds: "Asking firstmate how things stand, with cited sources.", fix: statusChatOk ? "" : "Install a CLI or add an API key.", action: statusChatOk ? { kind: "none" } : { kind: "keys" } });
-  items.push({ id: "main", title: "firstmate main session", status: claudeV || codexV ? "info" : "degraded", detail: claudeV || codexV ? "CLI available; verify login and an actual native repository read before firstmate work." : "needs the Claude Code or Codex CLI", detailZh: claudeV || codexV ? "CLI 可用；開始 firstmate 工作前，請確認登入並完成一次實際的原生工具讀檔。" : "需要 Claude Code 或 Codex CLI",
-    adds: "Driving the real firstmate from Studio and your phone. It resumes that CLI's own session, so it needs the CLI.", fix: claudeV || codexV ? "" : "Install Claude Code or Codex.", action: claudeV || codexV ? { kind: "none" } : { kind: "install", item: "claude" } });
+  const anyCli = !!(claudeV || codexV || cursorV);
+  items.push({ id: "main", title: "firstmate main session", status: anyCli ? "info" : "degraded", detail: anyCli ? "CLI available; verify login and an actual native repository read before firstmate work." : "needs the Claude Code, Codex or Cursor CLI", detailZh: anyCli ? "CLI 可用；開始 firstmate 工作前，請確認登入並完成一次實際的原生工具讀檔。" : "需要 Claude Code、Codex 或 Cursor CLI",
+    adds: "Driving the real firstmate from Studio and your phone. It resumes that CLI's own session, so it needs the CLI.", fix: anyCli ? "" : "Install Claude Code, Codex or Cursor.", action: anyCli ? { kind: "none" } : { kind: "install", item: "claude" } });
   items.push({ id: "github", title: "GitHub", status: !i.gh.enabled ? "info" : i.gh.connected ? "ok" : "degraded", detail: !i.gh.enabled ? (process.env.CREW_GH === "0" ? "off (CREW_GH=0)" : "off: no GitHub repository is set up (register a project with GitHub, or set CREW_GH_REPO)") : i.gh.connected ? `connected (token from ${i.gh.tokenSource})` : "not connected",
     adds: "PR and CI columns, merged work in the Library.", fix: i.gh.connected || !i.gh.enabled ? "" : "Paste a GitHub token (read access to the repository).", action: { kind: "github" } });
   items.push({ id: "lan", title: "Phone on the same Wi-Fi (built in)", status: i.lanIp ? "info" : "degraded", detail: i.lanIp ? `this Mac is ${i.lanIp}; LAN mode is off until you turn it on` : "no local network address found",
@@ -233,6 +246,15 @@ export function diagnose(i: DoctorInput): Item[] {
     detail: rl.ok ? `Claude rounds get ${rl.source} as their one credential (CLAUDE_CODE_OAUTH_TOKEN); no keychain, no GitHub token and no other credential reaches a round.${rl.warn ? ` Note: ${rl.warn}.` : ""}` : `Claude rounds are refused: ${rl.error}`,
     adds: "How agent rounds sign in: Studio reads the vendor's own login outside the sandbox and hands the round only its token.",
     fix: rl.ok ? (rl.warn ? "Make a crew token once: claude setup-token, then security add-generic-password -s crew-studio-claude-token -a \"$USER\" -w (or ~/.config/crew-studio/claude-token, mode 600)." : "") : "Make a crew token once: claude setup-token, then security add-generic-password -s crew-studio-claude-token -a \"$USER\" -w (or ~/.config/crew-studio/claude-token, mode 600).", action: { kind: "none" } });
+  const cl = i.cursorLogin;
+  if (cl && cursorV) items.push({ id: "round-login-cursor", title: "Cursor API key handed to rounds", titleZh: "交給回合的 Cursor API 金鑰", status: cl.ok ? "ok" : "missing",
+    detail: cl.ok ? `Cursor rounds get ${cl.source} as their one credential (CURSOR_API_KEY); cursor-agent's own keychain login is never used.` : `Cursor rounds are refused: ${cl.error}`,
+    detailZh: cl.ok ? "Cursor 回合只拿到這把 API 金鑰（CURSOR_API_KEY）；不使用 cursor-agent 自己的鑰匙圈登入。" : "Cursor 回合會被拒絕：找不到可用的 Cursor API 金鑰。",
+    adds: "How Cursor rounds sign in: Studio reads the crew's Cursor API key outside the sandbox and hands the round only that key.",
+    addsZh: "Cursor 回合如何登入：Studio 在沙箱外讀取船員的 Cursor API 金鑰，只把這把金鑰交給回合。",
+    fix: cl.ok ? "" : "Create a Cursor API key in the Cursor dashboard, then: security add-generic-password -s crew-studio-cursor-api-key -a \"$USER\" -w (or ~/.config/crew-studio/cursor-api-key, mode 600).",
+    fixZh: cl.ok ? "" : "在 Cursor 後台建立 API 金鑰，再執行：security add-generic-password -s crew-studio-cursor-api-key -a \"$USER\" -w（或 ~/.config/crew-studio/cursor-api-key，權限 600）。",
+    action: cl.ok ? { kind: "none" } : { kind: "login", item: "cursor" } } as any);
   // the fresh Claude Firstmate's configured permission mode (auto unless the operator sets CREW_CLAUDE_PERMISSION_MODE in env or .env),
   // the captain's autoMode rules Studio copies into it, and whether it runs in local unrestricted mode
   const pm = claudePermissionMode(process.env.CREW_CLAUDE_PERMISSION_MODE), am = captainAutoMode();
