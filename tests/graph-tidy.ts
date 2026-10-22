@@ -197,5 +197,21 @@ await section("layout modes", async () => {
   }
 
 }
+// Long forward routes must remain phone-sized without hiding actual graph data.
+{
+  const def = defs[0], stages = L.stagesFor(def).map((s:any) => s.id), snapshot = JSON.stringify(def);
+  for (const expanded of [["build"], ["build", "gates", "merge", "after"]]) {
+    const g = L.layoutSimple(def, {actualGraph:true, wrap:1, collapsed:stages.filter((id:string) => !expanded.includes(id))});
+    for (const [from,to] of [["remote-ready","merge-card"],["merge-card","merge"]]) {
+      const index = def.edges.findIndex((e:any) => e.from===from && e.to===to);
+      const edge = g.edges.find((e:any) => e.index.includes(index));
+      const ys = edge.segs.flatMap((seg:any) => [seg.a[1],seg.b[1]]);
+      ok(Math.max(...ys)-Math.min(...ys)<1200, `mobile ${expanded.join("+")}: ${from} → ${to} retains a compact full route`);
+    }
+    ok(g.edges.every((e:any) => !g.nodes.some((n:any) => L.sample(e,3).some((p:any) => p[0]>n.x+2 && p[0]<n.x+n.w-2 && p[1]>n.y+2 && p[1]<n.y+n.h-2))), `mobile ${expanded.join("+")}: compact routes do not cross actual nodes`);
+    ok(JSON.stringify(def)===snapshot, `mobile ${expanded.join("+")}: compaction leaves the actual definition unchanged`);
+  }
+}
+
 console.log(`\ngraph-tidy: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

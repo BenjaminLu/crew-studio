@@ -525,7 +525,8 @@ async function load() {
   Object.assign(S, { tasks: s.tasks, pending: s.pending, crew: s.crew, github: s.github, board: s.board, flow: s.flow, events: s.events });
   // the legacy firstmate checkout's name, when Studio reads one; a native Studio names no checkout
   $("#wsSub").textContent = s.legacy ? s.state.split("/").slice(-2, -1)[0] || "" : "";
-  fetch("/api/types").then((r) => r.json()).then((t) => { S.types = t; });
+  // Bootstrap metadata belongs to this load/error boundary, before live-ready.
+  await fetch("/api/types").then((r) => r.json()).then((t) => { S.types = t; });
   route();
 }
 // the page's one event stream: every module listens on it (window.liveListen), none opens its own;

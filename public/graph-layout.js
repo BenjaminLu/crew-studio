@@ -153,7 +153,7 @@
     //    unless it alone is wider than a band (the simple view, so a whole workflow fits readably)
     const RW = opts.row ?? ROW, FOOT = opts.foot ?? 0; // the simple view gives each node a row of badges under it
     const minRow = Math.min(0, ...all.map((x) => row.get(x)));
-    const bandOf = new Map(), bandStart = [], bandTop = [], bandRow0 = [], bandBottom = [];
+    const bandOf = new Map(), bandStart = [], bandTop = [], bandRow0 = [], bandBottom = [], bandRows = [];
     if (opts.wrap) {
       const stageAt = (r) => { const ls = layers[r] || []; const m = ls.find((x) => main.has(x) && vn.has(x)) ?? ls.find((x) => vn.has(x) && stageOfV(x)); return m ? stageOfV(m) : null; };
       const segs = []; for (let r = 0; r <= R; r++) { const st = stageAt(r); const last = segs[segs.length - 1]; if (last && st && last.st === st) last.n++; else segs.push({ st, r, n: 1 }); }
@@ -162,10 +162,23 @@
         for (let k = 0; k < sg.n; k++) { if (width >= opts.wrap) { b++; bandStart[b] = sg.r + k; width = 0; } bandOf.set(sg.r + k, b); width++; } }
       let y = 0;
       for (let i = 0; i <= b; i++) { const rows = all.filter((x) => bandOf.get(rank.get(x)) === i).map((x) => row.get(x)); const lo = Math.min(...rows), hi = Math.max(...rows);
-        bandRow0[i] = lo; bandTop[i] = y + TITLE + PAD; bandBottom[i] = bandTop[i] + (hi - lo) * RW + SH + PAD + FOOT; y = bandBottom[i] + BAND_GAP; }
+        bandRow0[i] = lo;
+        let height = (hi - lo) * RW;
+        if (opts.actualGraph) {
+          // Routing-only placeholders need lane clearance, not a full node/badge row.
+          const levels = [...new Set(rows)].sort((a, b) => a - b);
+          const real = new Set(ids.filter((x) => bandOf.get(rank.get(x)) === i).map((x) => row.get(x)));
+          const offsets = new Map(); let offset = 0;
+          for (let j = 0; j < levels.length; j++) {
+            if (j) offset += real.has(levels[j - 1]) ? (real.has(levels[j]) ? SH + FOOT + PAD : NH + FOOT + LANE * 2) : (real.has(levels[j]) ? NH / 2 + LANE + 2 : LANE * 2);
+            offsets.set(levels[j], offset);
+          }
+          bandRows[i] = offsets; height = offset;
+        }
+        bandTop[i] = y + TITLE + PAD; bandBottom[i] = bandTop[i] + height + SH + PAD + FOOT; y = bandBottom[i] + BAND_GAP; }
     }
     const xy = (x, h) => { const r = rank.get(x); if (!opts.wrap) return [r * COL, (row.get(x) - minRow) * RW + (NH - h) / 2, 0];
-      const b = bandOf.get(r); return [(r - bandStart[b]) * COL, bandTop[b] + (row.get(x) - bandRow0[b]) * RW + (NH - h) / 2, b]; };
+      const b = bandOf.get(r); return [(r - bandStart[b]) * COL, bandTop[b] + (bandRows[b]?.get(row.get(x)) ?? (row.get(x) - bandRow0[b]) * RW) + (NH - h) / 2, b]; };
     const nodes = ids.map((x) => { const v = vn.get(x); const [px, py, band] = xy(x, v.h); return { id: x, kind: v.kind, stage: v.stage, label: v.label ?? v.ref?.label, ref: v.ref, members: v.members,
       x: px, y: py, w: v.w, h: v.h, row: row.get(x), rank: rank.get(x), main: main.has(x), band, bandBottom: opts.wrap ? bandBottom[band] : null }; });
     const at = new Map(nodes.map((n) => [n.id, n]));
