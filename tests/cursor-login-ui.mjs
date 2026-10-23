@@ -29,7 +29,8 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
  await p.evaluate(()=>setLang('zh-TW'));await p.waitForFunction(()=>/尚未設定/.test(document.querySelector('[data-cursor-start-why]')?.textContent||''));
  ok(/Cursor API key/.test(await p.locator(`${card} [data-cursor-start-why]`).textContent()),'the card says why it cannot start (zh-TW)');
  await p.evaluate(()=>setLang('en'));
- await p.goto(base+'/#/doctor');await p.locator('[data-item="round-login-cursor"][data-status="missing"] [data-login="cursor"]').waitFor({timeout:15000});
+ await p.goto(base+'/#/doctor');await p.locator('[data-item="round-login-cursor"][data-status="info"] [data-login="cursor"]').waitFor({timeout:15000});
+ ok(await p.locator('[data-item="cursor"][data-status="info"] .badge.warn, [data-item="cursor"] .badge.bad, [data-item="round-login-cursor"] .badge.bad').count()===0,'Doctor: with Cursor not in use its rows are optional, not attention items');
  ok(/Not signed in/.test(await p.locator('[data-item="cursor"]').textContent()),'Doctor: the Cursor CLI is found and not signed in');
  ok(await p.locator('.tk-account[data-cursor-account="key-missing"]').count()===1&&await p.locator('[data-item="codex"]').count()===1&&await p.locator('[data-item="claude"]').count()===1,'Doctor: a Cursor account panel beside the unchanged Codex and Claude rows');
  await p.locator('[data-item="round-login-cursor"] [data-login="cursor"]').click();await p.locator('#modalRoot .modal [data-cursor-key-step]').waitFor();

@@ -361,7 +361,12 @@ try {
 
   const n = await boot("keyless", {});
   const nd = (await n.api("/api/doctor")).body?.items ?? [], nl = nd.find((i: any) => i.id === "round-login-cursor");
-  ok(nd.find((i: any) => i.id === "cursor")?.authenticated === false && nl?.status === "missing" && nl?.action?.item === "cursor", "Doctor without a key: not signed in, and the fix is adding the key", String(JSON.stringify(nl)).slice(0, 300));
+  ok(nd.find((i: any) => i.id === "cursor")?.authenticated === false && nl?.action?.item === "cursor", "Doctor without a key: not signed in, and the fix is adding the key", String(JSON.stringify(nl)).slice(0, 300));
+  ok(nd.find((i: any) => i.id === "cursor")?.status === "info" && nl?.status === "info" && /^Optional: needed only to run work or Firstmate on Cursor/.test(nl?.adds ?? "") && /^選用/.test(nl?.addsZh ?? ""),
+    "with Cursor not in use, its CLI and key rows are optional information, not attention items (English and zh-TW)", JSON.stringify(nd.filter((i: any) => /cursor/.test(i.id)).map((i: any) => [i.id, i.status])));
+  const u = await boot("keyless-in-use", { CREW_CHAT_PROVIDER: "cursor" });
+  const ud = (await u.api("/api/doctor")).body?.items ?? [];
+  ok(ud.find((i: any) => i.id === "cursor")?.status === "degraded" && ud.find((i: any) => i.id === "round-login-cursor")?.status === "missing", "with Cursor as the chat vendor, a missing key is an attention item", JSON.stringify(ud.filter((i: any) => /cursor/.test(i.id)).map((i: any) => [i.id, i.status])));
   const ns = await n.api("/api/main/start", { host: "cursor", confirm: true });
   ok(ns.status === 409 && ns.body?.code === "cursorKeyMissing" && (await n.api("/api/main")).body?.state === "detached" && n.calls().length === 0, "starting on Cursor without a key is refused and never falls back to another vendor", `${ns.status} ${ns.text.slice(0, 300)}`);
 
@@ -370,6 +375,8 @@ try {
   for (const [name, extra, listed] of [["plain", {}, false], ["cursor-chat", { CREW_CHAT_PROVIDER: "cursor" }, true]] as const) {
     const c = await boot(name, { CREW_CURSOR_BIN: NONE, CREW_HOST_CURSOR_BIN: NONE, ...extra });
     const t = await c.api("/api/team?facts=1"), ids = (t.body?.providers ?? []).map((p: any) => p.provider);
+    const cr = ((await c.api("/api/doctor")).body?.items ?? []).find((i: any) => i.id === "cursor");
+    ok(cr?.status === (listed ? "missing" : "info"), listed ? "Doctor: cursor-agent missing while Cursor is the chat vendor is an attention item" : "Doctor: cursor-agent not installed on a Codex/Claude Studio is optional information", JSON.stringify(cr).slice(0, 200));
     ok(t.status === 200 && ids.includes("codex") && ids.includes("claude") && ids.includes("cursor") === listed && (!listed || t.body.providers.find((p: any) => p.provider === "cursor")?.state === "unavailable"),
       listed ? "Cursor as the chat vendor keeps it listed on the Crew page (unavailable: not installed)" : "without cursor-agent and with Cursor not in use, the Crew page lists Codex and Claude only", JSON.stringify(t.body?.providers ?? t.text.slice(0, 200)));
   }

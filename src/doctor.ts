@@ -98,6 +98,8 @@ export const INSTALLERS: Record<string, Record<string, Method[]>> = {
 /** Where a Cursor round's key comes from (src/providers/login.ts cursorLogin), keychain first. */
 const CURSOR_KEY_ORDER = "Studio looks for the key in this order: the keychain item crew-studio-cursor-api-key, the keychain item firstmate-cursor-api-key, ~/.config/crew-studio/cursor-api-key, and only then CURSOR_API_KEY in Studio's environment.";
 const CURSOR_KEY_ORDER_ZH = "Studio 依序尋找金鑰：鑰匙圈項目 crew-studio-cursor-api-key、鑰匙圈項目 firstmate-cursor-api-key、~/.config/crew-studio/cursor-api-key，最後才使用 Studio 環境中的 CURSOR_API_KEY。";
+const CURSOR_OPTIONAL = "Optional: needed only to run work or Firstmate on Cursor. ";
+const CURSOR_OPTIONAL_ZH = "選用：只有在 Cursor 上執行工作或 Firstmate 時才需要。";
 /** The Doctor's zh-TW name for a cursorLogin source (the source names where the key is, never the key). */
 const cursorSourceZh = (s = "") => s.replace(/^the crew's Cursor API key \(keychain item ([\w-]+)\)$/, "船員的 Cursor API 金鑰（鑰匙圈項目 $1）")
   .replace(/^the crew's Cursor API key \((~\/[^)]+)\)$/, "船員的 Cursor API 金鑰（$1）").replace(/^CURSOR_API_KEY in Studio's environment$/, "Studio 環境中的 CURSOR_API_KEY");
@@ -122,6 +124,8 @@ export type DoctorInput = {
   tailscale: { installed: boolean; running: boolean; dnsName: string | null }; claudeBin?: string; codexBin?: string; cursorBin?: string; compiled: boolean;
   /** how cursor-agent rounds sign in: a Cursor API key Studio hands them (src/providers/login.ts cursorLogin, presence only) */
   cursorLogin?: { ok: boolean; source?: string; error?: string };
+  /** Cursor is in use (the chat vendor, a running Firstmate on Cursor, or a crew seat on Cursor): only then are its rows attention items */
+  cursorInUse?: boolean;
   render?: { node: string | null; ffmpeg: string | null; ffprobe?: string | null; playwright: string | null };
   /** the pinned HyperFrames film tools (src/render/coffee-film.ts discovery): ready, or why not */
   film?: { ready: boolean; reason?: string | null };
@@ -170,12 +174,13 @@ export function diagnose(i: DoctorInput): Item[] {
   ] as const) {
     // cursor-agent's rounds sign in with a Cursor API key only: its presence is the login (never cursor-agent's own status, which reads the keychain)
     const found = present(bin), auth = v ? (id === "cursor" ? (i.cursorLogin ? i.cursorLogin.ok : null) : authenticated(id, bin)) : null;
-    // a CLI that reports it is signed out is not ready: it cannot run a round until the captain signs in
-    items.push({ id, title, status: v ? (auth === false ? "degraded" : "ok") : found ? "degraded" : "missing", availability: v ? "available" : found ? "unusable" : "missing", authenticated: auth, version: v,
+    // a CLI that reports it is signed out is not ready: it cannot run a round until the captain signs in; Cursor not in use is optional
+    const status = v ? (auth === false ? "degraded" : "ok") : found ? "degraded" : "missing", optional = id === "cursor" && !i.cursorInUse;
+    items.push({ id, title, status: optional && status !== "ok" ? "info" : status, availability: v ? "available" : found ? "unusable" : "missing", authenticated: auth, version: v,
       detail: v ? `${v}; ${auth === true ? "CLI reports logged in" : auth === false ? "not logged in" : "login status unverified"}. Workflow execution is not verified.` : found ? "CLI found, but --version could not complete successfully." : "CLI not found at the configured path or on PATH.",
       detailZh: v ? `${v}；${auth === true ? "CLI 回報已登入" : auth === false ? "尚未登入" : "登入狀態未確認"}。工作流程執行能力尚未驗證。` : found ? "找到 CLI，但 --version 無法成功完成。" : "在指定路徑或 PATH 中找不到 CLI。",
-      adds: "CLI availability and login status only; model access, quota and workflow execution require separate checks.",
-      addsZh: "只檢查 CLI 與登入狀態；模型權限、配額與工作流程執行需另外驗證。",
+      adds: `${optional ? CURSOR_OPTIONAL : ""}CLI availability and login status only; model access, quota and workflow execution require separate checks.`,
+      addsZh: `${optional ? CURSOR_OPTIONAL_ZH : ""}只檢查 CLI 與登入狀態；模型權限、配額與工作流程執行需另外驗證。`,
       fix: v ? "" : found ? "Check executable permissions and dependencies, then run --version again." : "Install the CLI using its official installer.",
       fixZh: v ? "" : found ? "檢查執行權限與依賴，再執行 --version。" : "使用官方安裝方式安裝 CLI。",
       action: v && auth !== true ? { kind: "login", item: id } : found || v ? { kind: "none" } : { kind: "install", item: id } });
@@ -249,11 +254,11 @@ export function diagnose(i: DoctorInput): Item[] {
     adds: "How agent rounds sign in: Studio reads the vendor's own login outside the sandbox and hands the round only its token.",
     fix: rl.ok ? (rl.warn ? "Make a crew token once: claude setup-token, then security add-generic-password -s crew-studio-claude-token -a \"$USER\" -w (or ~/.config/crew-studio/claude-token, mode 600)." : "") : "Make a crew token once: claude setup-token, then security add-generic-password -s crew-studio-claude-token -a \"$USER\" -w (or ~/.config/crew-studio/claude-token, mode 600).", action: { kind: "none" } });
   const cl = i.cursorLogin;
-  if (cl && cursorV) items.push({ id: "round-login-cursor", title: "Cursor API key handed to rounds", titleZh: "交給回合的 Cursor API 金鑰", status: cl.ok ? "ok" : "missing",
+  if (cl && cursorV) items.push({ id: "round-login-cursor", title: "Cursor API key handed to rounds", titleZh: "交給回合的 Cursor API 金鑰", status: cl.ok ? "ok" : i.cursorInUse ? "missing" : "info",
     detail: cl.ok ? `Cursor rounds get ${cl.source} as their one credential (CURSOR_API_KEY); cursor-agent's own keychain login is never used.` : `Cursor rounds are refused: ${cl.error}`,
     detailZh: cl.ok ? `Cursor 回合只拿到這把 API 金鑰（CURSOR_API_KEY），來源：${cursorSourceZh(cl.source)}；不使用 cursor-agent 自己的鑰匙圈登入。` : "Cursor 回合會被拒絕：找不到可用的 Cursor API 金鑰。",
-    adds: `How Cursor rounds sign in: Studio reads the crew's Cursor API key outside the sandbox and hands the round only that key. ${CURSOR_KEY_ORDER}`,
-    addsZh: `Cursor 回合如何登入：Studio 在沙箱外讀取船員的 Cursor API 金鑰，只把這把金鑰交給回合。${CURSOR_KEY_ORDER_ZH}`,
+    adds: `${i.cursorInUse ? "" : CURSOR_OPTIONAL}How Cursor rounds sign in: Studio reads the crew's Cursor API key outside the sandbox and hands the round only that key. ${CURSOR_KEY_ORDER}`,
+    addsZh: `${i.cursorInUse ? "" : CURSOR_OPTIONAL_ZH}Cursor 回合如何登入：Studio 在沙箱外讀取船員的 Cursor API 金鑰，只把這把金鑰交給回合。${CURSOR_KEY_ORDER_ZH}`,
     fix: cl.ok ? "" : `Create a Cursor API key in the Cursor dashboard, then: security add-generic-password -s crew-studio-cursor-api-key -a "$USER" -w (or ~/.config/crew-studio/cursor-api-key, mode 600). ${CURSOR_KEY_ORDER}`,
     fixZh: cl.ok ? "" : `在 Cursor 後台建立 API 金鑰，再執行：security add-generic-password -s crew-studio-cursor-api-key -a "$USER" -w（或 ~/.config/crew-studio/cursor-api-key，權限 600）。${CURSOR_KEY_ORDER_ZH}`,
     action: cl.ok ? { kind: "none" } : { kind: "login", item: "cursor" } } as any);

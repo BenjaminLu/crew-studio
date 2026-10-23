@@ -57,9 +57,10 @@ function viewDoctor() {
       const executableStatus = it.availability === "available" && it.authenticated === true ? ["ok", "Logged in", "已登入"] : it.availability === "available" && it.authenticated === false ? ["warn", "Not signed in", "尚未登入"] : cliStatus[it.availability];
       const detectedStatus = ["codex", "claude", "cursor"].includes(it.id) && it.status === "ok" ? ["", "Detected", "已偵測"] : null;
       const [cls, en, zh] = executableStatus || detectedStatus || STATUS[it.status] || STATUS.info;
+      // an optional row (Cursor while it is not in use) says its state without a warning colour
       return h("div", { class: "doc-row", "data-item": it.id, "data-status": it.status },
         h("div", { class: "doc-main" },
-          h("div", { class: "doc-t" }, h("b", {}, T(it.title,it.titleZh||it.title)), h("span", { class: `badge ${cls}` }, T(en, zh))),
+          h("div", { class: "doc-t" }, h("b", {}, T(it.title,it.titleZh||it.title)), h("span", { class: `badge ${it.status === "info" ? "" : cls}` }, T(en, zh))),
           h("div", { class: "doc-d mono" }, T(it.detail, it.detailZh || it.detail)),
           h("div", { class: "doc-a" }, T(it.adds,it.addsZh||it.adds)),
           it.fix ? h("div", { class: "doc-f" }, icon("arrow", "ic sm"), T(it.fix,it.fixZh||it.fix)) : null),
