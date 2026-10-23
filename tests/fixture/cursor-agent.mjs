@@ -11,23 +11,24 @@
 //     scripted agent (tests/acceptance/agent.mjs cursorPrint). A Firstmate turn's `--image <path>` files must be images
 //     on disk; it answers FIXTURE-SAW-IMAGES with their SHA-256 prefixes.
 // Every -p run refuses a cli-config.json that does not deny the built-in Shell, Read and Write tools, except an image
-// run (its allow list names GenerateImage(*)), which must deny Shell and Read and allow nothing but GenerateImage(*) (and
-// Read(reference.png)); as the real CLI does, a Write(**) deny then refuses saving the image. Its turn lists the image
+// run (its allow list names GenerateImage(*)), which must deny Shell (and every Read, unless it has a reference.png, which
+// it reads under the rules below) and allow nothing but GenerateImage(*) (and a Read of its reference.png); as the real CLI
+// does, a Write(**) deny then refuses saving the image. Its turn lists the image
 // tool, saves tests/fixture/jpeg/cursor-image.jpg under $CURSOR_DATA_DIR/projects/<workspace>/assets/ and returns it as
 // imageData. The prompt's CURSOR-IMAGE:<mode> picks a failure: refused, duplicate, edit (a successful file edit), denied
 // (a denied shell call, then the image), fail (the turn fails), escape (writes its workspace, the private root above it
 // and /private/tmp; the turn fails naming any write that succeeded, else makes the image).
-// The other exception is an explicit project's Firstmate (no Studio MCP server in the workspace): that run must be
-// --sandbox enabled, never --force or --approve-mcps, with no Shell allow rule and no Write rule outside the workspace. Its
-// turns model cursor-agent's own tools under those rules: FIXTURE-WRITE ["path", …] writes only what cli-config.json allows,
-// an attached PDF is read only when allowed, and FIXTURE-SHELL runs `printenv CURSOR_API_KEY` unless Shell(*) is denied (with
-// its sandbox on cursor-agent auto-runs an unlisted command there, in its own environment).
-// Every -p run first runs the hooks cursor-agent would load (the user's under $HOME; the workspace's .cursor/hooks.json and
+// The other exception is an explicit project's Firstmate (no Studio MCP server in the workspace): that run is never --force
+// or --approve-mcps, and its Shell is denied. Its turns model cursor-agent's own tools under the real rules (the permission
+// engine below): FIXTURE-WRITE ["path", …] and FIXTURE-READ ["path", …] write and read what those rules let through (and an
+// OS sandbox around the process, if any, does not refuse), an attached PDF likewise, and FIXTURE-SHELL runs
+// `printenv CURSOR_API_KEY` unless Shell(*) is denied.
+// Every -p run first runs the hooks cursor-agent would load (the user's under $HOME; the git root's .cursor/hooks.json and
 // .claude/settings*.json) with its own environment, key included, and says each one's output as FIXTURE-HOOK-OUTPUT.
 //   CURSOR_FIXTURE_LOG  a file each run appends its argv (without the prompt) and chat id to (tests/cursor-vendor.ts); a
 //                       Firstmate turn also its home, images and the first 12 hex of its key's SHA-256
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { cursorPrint, mcpSession } from "../acceptance/agent.mjs";
@@ -38,7 +39,8 @@ const get = (k) => argv.includes(k) ? argv[argv.indexOf(k) + 1] : undefined;
 const fail = (text, code = 1) => { out({ type: "result", subtype: "error", is_error: true, result: text }); process.exit(code); };
 if (argv.length === 1 && argv[0] === "--version") { console.log("2026.10.01-fixture"); process.exit(0); }
 if (!/^crsr_acceptance[A-Za-z0-9]+$/.test(key)) fail("Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY.");
-const log = (o) => { if (process.env.CURSOR_FIXTURE_LOG) appendFileSync(process.env.CURSOR_FIXTURE_LOG, JSON.stringify(o) + "\n"); };
+// best effort: under an OS sandbox only a log inside the writable folders is written
+const log = (o) => { if (process.env.CURSOR_FIXTURE_LOG) try { appendFileSync(process.env.CURSOR_FIXTURE_LOG, JSON.stringify(o) + "\n"); } catch {} };
 if (argv[0] === "models") {
   log({ argv, home: process.env.HOME, key: createHash("sha256").update(key).digest("hex").slice(0, 12) });
   if (process.env.CURSOR_FIXTURE_MODELS_HANG === "1") await new Promise(() => setInterval(() => {}, 1000));
@@ -48,15 +50,55 @@ if (argv[0] === "models") {
 }
 if (argv[0] === "create-chat") { const id = randomUUID(); log({ argv, chat: id }); console.log(id); process.exit(0); }
 if (argv[0] !== "-p" || get("--output-format") !== "stream-json" || !get("--workspace") || !argv.includes("--trust")) fail(`cursor-agent fixture: unexpected argv ${JSON.stringify(argv.slice(0, -1))}`, 2);
-let perms = null;
-try { perms = JSON.parse(readFileSync(join(process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "/nonexistent", ".config"), "cursor", "cli-config.json"), "utf8")).permissions; } catch {}
-// hooks, as cursor-agent loads them: the user's ~/.cursor/hooks.json and ~/.claude/settings.json (under $HOME) and, in a
-// --trust'ed workspace, its .cursor/hooks.json, .claude/settings.json and .claude/settings.local.json. Every command runs in
-// cursor-agent's own environment, CURSOR_API_KEY included, whatever cli-config.json says about Shell.
+// ---------- cursor-agent's configuration and permission engine, as the installed 2026.10.19-6bbf2c4 bundle (index.js) has them ----------
+// FileBasedConfigProvider.loadFromDefaults: the user's cli-config.json, then every .cursor/cli.json from the git root (utils/git.ts
+//   p(): the nearest folder above the workspace holding .git, else the workspace) down to the workspace, merged in (permissions and
+//   approvalMode included), unless --disable-project-configs (ft() scans the raw argv; the first match wins).
+// matchesPathEntry (fe/pe): a Read(…)/Write(…) rule's pattern as an anchored, case-sensitive regex, `*` → `.*`.
+// InteractivePermissionsService.shouldBlockWrite, in order: the realpath (df); an explicit Write deny refuses; a .cursorignore
+//   basename refuses; an explicit Write allow ALLOWS, skipping every check below; approvalMode "unrestricted" allows;
+//   checkCursorFileProtection (any .cursor or .vscode segment, any case, but *.md/*.mdc) refuses; outside the workspace
+//   needsApproval; the protected list L (J.OK, ignore-lib with ignoreCase: .cursor/**/*.json, .claude/**/*.json, .vscode/**,
+//   .idea/**, *.code-workspace, .cursorignore, .git/hooks/**, .git/config …) needsApproval; anything else is allowed. Print mode
+//   without --force answers every needsApproval with always-deny-decision-provider: refused.
+// shouldBlockReadInternal: an explicit Read deny refuses, matched against the path as asked (not its realpath); every other read
+//   is allowed (readBoundary "workspace" is behind the sandbox_read_control_portal gate, off by default; not modelled).
+// matchesMcpEntry / shouldBlockMcp: an explicit Mcp(server:tool) deny refuses first.
+const PROTECTED = [/(^|\/)\.cursor\/(?!(rules|commands|worktrees|skills|agents)(\/|$))(.*\/)?[^/]*\.json$/i, /(^|\/)\.cursor\/\.workspace-trusted$/i, /(^|\/)\.workspace-trusted$/i,
+  /(^|\/)\.claude\/(.*\/)?[^/]*\.json$/i, /(^|\/)\.vscode\//i, /(^|\/)\.idea\//i, /\.code-workspace$/i, /(^|\/)\.cursorignore$/i,
+  /(^|\/)\.git\/hooks\//i, /(^|\/)\.git\/(config|config\.worktree|info\/attributes|commondir)$/i, /(^|\/)\.git\/worktrees\/[^/]+\/commondir$/i, /(^|\/)\.git$/i];
+const gitRoot = (ws) => { for (let d = ws; ; d = dirname(d)) { if (existsSync(join(d, ".git"))) return d; if (dirname(d) === d) return ws; } };
+const chain = (ws) => { const root = gitRoot(ws), out = []; for (let d = ws; ; d = dirname(d)) { out.unshift(d); if (d === root || dirname(d) === d) return out; } };
+const projectConfigs = (process.argv.slice(2).find((a) => /^--disable-project-configs(=true|=false)?$/.test(a)) ?? "--disable-project-configs=false").endsWith("=false");
+let perms = null, approvalMode = "allowlist";
+try { const c = JSON.parse(readFileSync(join(process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "/nonexistent", ".config"), "cursor", "cli-config.json"), "utf8")); perms = c.permissions; if (c.approvalMode) approvalMode = c.approvalMode; } catch {}
+if (perms && get("--workspace") && projectConfigs) for (const d of chain(resolve(get("--workspace")))) {
+  let c = null; try { c = JSON.parse(readFileSync(join(d, ".cursor", "cli.json"), "utf8")); } catch {}
+  if (c?.permissions) perms = { allow: [...(perms.allow ?? []), ...(c.permissions.allow ?? [])], deny: [...(perms.deny ?? []), ...(c.permissions.deny ?? [])] };
+  if (c?.approvalMode) approvalMode = c.approvalMode;
+}
+const pattern = (list, kind) => (list ?? []).flatMap((r) => { const m = new RegExp(`^\\s*${kind}\\s*\\((.*)\\)\\s*$`).exec(r); return m ? [new RegExp(`^${m[1].trim().replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`)] : []; });
+const real = (p) => { const abs = resolve(p); try { return realpathSync(abs); } catch { return dirname(abs) === abs ? abs : join(real(dirname(abs)), basename(abs)); } };
+function mayWrite(p, ws) {
+  const f = real(p);
+  if (pattern(perms.deny, "Write").some((r) => r.test(f))) return false;
+  if ([basename(resolve(p)), basename(f)].some((b) => b.toLowerCase() === ".cursorignore")) return false;
+  if (pattern(perms.allow, "Write").some((r) => r.test(f))) return true;
+  if (approvalMode === "unrestricted") return true;
+  if (f !== ws && !f.startsWith(ws + "/")) return false;
+  const rel = relative(ws, f), segs = rel.split("/");
+  if (segs.some((s) => [".cursor", ".vscode"].includes(s.toLowerCase())) && !/\.(md|mdc)$|^\.cursorrules$/i.test(segs.at(-1))) return false;
+  return !PROTECTED.some((r) => r.test(rel));
+}
+const mayRead = (p) => !pattern(perms.deny, "Read").some((r) => r.test(resolve(p)));
+// hooks, as cursor-agent loads them (hooks-exec A(), 6121.index.js): the user's ~/.cursor/hooks.json and ~/.claude/settings.json
+// (under $HOME) and the project's .cursor/hooks.json, .claude/settings.json and .claude/settings.local.json, the project being the
+// git root above the workspace (7629.index.js Ae(): ky(cwd)). Every command runs in cursor-agent's own environment,
+// CURSOR_API_KEY included, outside its sandbox (insecure_none), whatever cli-config.json says about Shell.
 const hookOutput = [];
 {
-  const ws = get("--workspace"), home = process.env.HOME ?? "/nonexistent";
-  const files = [join(home, ".cursor", "hooks.json"), join(home, ".claude", "settings.json"), join(ws, ".cursor", "hooks.json"), join(ws, ".claude", "settings.json"), join(ws, ".claude", "settings.local.json")];
+  const ws = get("--workspace"), home = process.env.HOME ?? "/nonexistent", root = gitRoot(resolve(ws));
+  const files = [join(home, ".cursor", "hooks.json"), join(home, ".claude", "settings.json"), join(root, ".cursor", "hooks.json"), join(root, ".claude", "settings.json"), join(root, ".claude", "settings.local.json")];
   const commands = (h) => Array.isArray(h) ? h.flatMap((x) => typeof x?.command === "string" ? [x.command] : commands(x?.hooks)) : [];
   for (const f of files) {
     let hooks = null; try { hooks = JSON.parse(readFileSync(f, "utf8")).hooks; } catch {}
@@ -77,16 +119,10 @@ if (!project) {
   if (!server) fail("cursor-agent fixture: no studio MCP server in the workspace's .cursor/mcp.json", 2);
   if (!server.env?.CREW_STUDIO_SOCKET) { await cursorPrint(argv); process.exit(process.exitCode ?? 0); }
 }
-// cursor-agent's rules as this fixture models them: a write applies only when an allow rule matches and no deny rule does
-// (print mode without --force); a read outside the workspace only when allowed. `dir/**` matches below dir; anything else exactly.
-const real = (p) => { const abs = resolve(p); try { return realpathSync(abs); } catch { return dirname(abs) === abs ? abs : join(real(dirname(abs)), basename(abs)); } };
-const rule = (list, kind, p) => (list ?? []).some((r) => { const m = new RegExp(`^${kind}\\((.*)\\)$`).exec(r); if (!m) return false; const g = m[1]; return g.endsWith("/**") ? p.startsWith(g.slice(0, -2)) : p === g; });
 const ws = project ? realpathSync(get("--workspace")) : "";
-const mayWrite = (p) => { const f = real(p); return rule(perms.allow, "Write", f) && !rule(perms.deny, "Write", f); };
-const mayRead = (p) => { const f = real(p); return rule(perms.allow, "Read", f) && !rule(perms.deny, "Read", f); };
 if (project) {
-  if (get("--sandbox") !== "enabled" || ["--force", "--yolo", "-f", "--approve-mcps"].some((f) => argv.includes(f))) fail(`cursor-agent fixture: a project Firstmate runs sandboxed, never forced or auto-approving MCP servers ${JSON.stringify(argv.slice(0, -1))}`, 2);
-  if ((perms?.allow ?? []).some((r) => /^Shell\(/.test(r) || /^Write\(/.test(r) && !rule([r], "Write", join(ws, "x")))) fail("cursor-agent fixture: cli-config.json allows more than the project folder", 2);
+  if (["--force", "--yolo", "-f", "--approve-mcps"].some((f) => argv.includes(f))) fail(`cursor-agent fixture: a project Firstmate is never forced or auto-approving MCP servers ${JSON.stringify(argv.slice(0, -1))}`, 2);
+  if (!(perms?.deny ?? []).includes("Shell(*)") || (perms?.allow ?? []).some((r) => /^\s*Shell\s*\(/.test(r))) fail("cursor-agent fixture: a project Firstmate's shell is not denied", 2);
 }
 
 // ---------- Firstmate (host) turn ----------
@@ -109,13 +145,24 @@ if (project) {
   if (text.includes("FIXTURE-WRITE ")) {
     const wrote = {};
     for (const [i, p] of JSON.parse(text.slice(text.indexOf("FIXTURE-WRITE ") + 14).split("\n")[0]).entries()) {
-      const call_id = `fixture-write-${i}`, ok = mayWrite(p);
+      const call_id = `fixture-write-${i}`;
+      let ok = mayWrite(p, ws);
       out({ type: "tool_call", subtype: "started", call_id, tool_call: { editToolCall: { args: { path: p } } }, session_id });
-      if (ok) { mkdirSync(dirname(resolve(p)), { recursive: true }); writeFileSync(p, "written by the fixture\n"); }
+      // the process's own writes: an OS sandbox around it may still refuse them
+      if (ok) try { mkdirSync(dirname(resolve(p)), { recursive: true }); writeFileSync(p, "written by the fixture\n"); } catch { ok = false; }
       out({ type: "tool_call", subtype: "completed", call_id, tool_call: { editToolCall: { args: { path: p }, result: ok ? { success: { content: [{ text: "ok" }] } } : { permissionDenied: { error: `Write(${p}) is not allowed` } } } }, session_id });
       wrote[p] = ok;
     }
     say(`FIXTURE-WROTE ${JSON.stringify(wrote)}`);
+  }
+  // FIXTURE-READ ["path", ...]: the model reads each file with its Read tool; says the first 12 hex of the SHA-256 of what it got
+  if (text.includes("FIXTURE-READ ")) {
+    const got = {};
+    for (const p of JSON.parse(text.slice(text.indexOf("FIXTURE-READ ") + 13).split("\n")[0])) {
+      let b = null; if (mayRead(p)) try { b = readFileSync(p); } catch {}
+      got[p] = b ? createHash("sha256").update(b).digest("hex").slice(0, 12) : false;
+    }
+    say(`FIXTURE-GOT ${JSON.stringify(got)}`);
   }
   if (text.includes("FIXTURE-SHELL")) {
     const call_id = "fixture-shell", args = { command: "printenv CURSOR_API_KEY" }, blocked = !!perms?.deny?.includes("Shell(*)");
@@ -162,11 +209,13 @@ out({ type: "result", subtype: "success", is_error: false, result: "", session_i
 // ---------- an image job (src/providers/cursor-image.ts) ----------
 async function imageTurn() {
   const ws = get("--workspace"), text = argv.at(-1), mode = /CURSOR-IMAGE:([a-z]+)/.exec(text)?.[1] ?? "success", session_id = randomUUID();
-  if (!["Shell(*)", "Read(**)"].every((d) => perms.deny?.includes(d)) || perms.allow.some((a) => a !== "GenerateImage(*)" && a !== "Read(reference.png)")) fail("cursor-agent fixture: an image run must deny Shell and Read and allow only the image tool", 2);
+  const reference = text.includes("reference.png");
+  if (!perms.deny?.includes("Shell(*)") || !reference && !perms.deny.includes("Read(**)") || perms.allow.some((a) => a !== "GenerateImage(*)" && !/^Read\((.*\/)?reference\.png\)$/.test(a))) fail("cursor-agent fixture: an image run must deny Shell (and every Read without a reference) and allow only the image tool", 2);
   let servers = null; try { servers = JSON.parse(readFileSync(join(ws, ".cursor", "mcp.json"), "utf8")).mcpServers; } catch {}
   if (!servers || Object.keys(servers).length) fail("cursor-agent fixture: an image run registers no MCP server", 2);
   if (!existsSync(join(ws, "AGENTS.md")) || !readFileSync(join(ws, "AGENTS.md"), "utf8").includes("# Operating rules (set by the captain)")) fail("cursor-agent fixture: the image run's AGENTS.md carries no operating rules", 2);
-  if (text.includes("reference.png") && (!perms.allow.includes("Read(reference.png)") || readFileSync(join(ws, "reference.png")).subarray(1, 4).toString() !== "PNG")) fail("cursor-agent fixture: the reference image is not readable", 2);
+  // the reference is read as any file is: a Read deny that matches it wins over every allow (deny first)
+  if (reference && (!mayRead(join(ws, "reference.png")) || readFileSync(join(ws, "reference.png")).subarray(1, 4).toString() !== "PNG")) fail("cursor-agent fixture: the reference image is not readable", 2);
   out({ type: "system", subtype: "init", apiKeySource: "env", cwd: ws, session_id, model: get("--model") ?? "composer-2.5", permissionMode: "default" });
   if (mode === "fail") fail("the model run failed");
   const call = (n, kind, args, result) => { const id = `fixture-image-${n}`; out({ type: "tool_call", subtype: "started", call_id: id, tool_call: { [kind]: { args } }, session_id }); out({ type: "tool_call", subtype: "completed", call_id: id, tool_call: { [kind]: { args, result } }, session_id }); };

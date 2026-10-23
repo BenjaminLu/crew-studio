@@ -164,6 +164,33 @@ console.log("the host: fresh only");
   ok(/native tools/.test(await err(host.attach("", { ...base, fresh: true, env: { CURSOR_API_KEY: KEY } }))), "a fresh start without Studio's tools is refused");
 }
 
+console.log("the fixture keeps cursor-agent's real rules (2026.10.19: deny first, reads open, an explicit Write allow skips the protected files)");
+{
+  const fx = join(TMP, "fidelity"), h = join(fx, "h"), cfg = join(h, ".config", "cursor"); mkdirSync(cfg, { recursive: true }); mkdirSync(join(fx, "w"), { recursive: true });
+  const ws = realpathSync(join(fx, "w")), secret = join(fx, "auth.json"); writeFileSync(secret, "not a credential\n");
+  const turn = (permissions: unknown, text: string, extra: string[] = []) => {
+    writeFileSync(join(cfg, "cli-config.json"), JSON.stringify({ version: 1, permissions }));
+    const r = Bun.spawnSync(["bun", FIXTURE, "-p", "--output-format", "stream-json", "--trust", ...extra, "--workspace", ws, text], { cwd: ws, env: { ...process.env, HOME: h, XDG_CONFIG_HOME: join(h, ".config"), CURSOR_API_KEY: KEY, CURSOR_FIXTURE_LOG: "" } });
+    return r.stdout.toString().split("\n").filter(Boolean).flatMap((l) => { try { return (JSON.parse(l).message?.content ?? []).map((c: any) => String(c.text)); } catch { return []; } }).join("\n");
+  };
+  const t = (n: string) => join(ws, n), wrote = (s: string) => JSON.parse(/FIXTURE-WROTE (.*)/.exec(s)?.[1] ?? "{}");
+  const targets = [t("a.txt"), t(".CURSOR/cli.json"), t(".claude/settings.json"), t(".git/hooks/x"), t(".vscode/settings.json"), t("app.code-workspace"), join(fx, "sibling.txt")];
+  const plain = wrote(turn({ allow: [], deny: ["Shell(*)"] }, `FIXTURE-WRITE ${JSON.stringify(targets)}`));
+  ok(plain[targets[0]] === true && targets.slice(1).every((p) => plain[p] === false), "with no Write rule a write in the workspace applies; protected files (any case) and outside paths are refused", JSON.stringify(plain));
+  for (const p of targets) rmSync(p, { force: true });
+  const allowed = wrote(turn({ allow: [`Write(${ws}/**)`], deny: ["Shell(*)", `Write(${ws}/.cursor/**)`] }, `FIXTURE-WRITE ${JSON.stringify(targets.slice(1, 3))}`));
+  ok(allowed[targets[1]] === true && allowed[targets[2]] === true, "an explicit Write allow skips the protected list, and a case-sensitive deny misses .CURSOR/", JSON.stringify(allowed));
+  rmSync(t(".CURSOR"), { recursive: true, force: true }); rmSync(t(".claude"), { recursive: true, force: true });
+  ok(new RegExp(`FIXTURE-GOT .*"${secret}":"[0-9a-f]{12}"`).test(turn({ allow: [], deny: ["Shell(*)"] }, `FIXTURE-READ ${JSON.stringify([secret])}`)), "a read outside the workspace is allowed when no Read deny names it");
+  ok(/FIXTURE-GOT .*:false/.test(turn({ allow: [`Read(${secret})`], deny: ["Shell(*)", "Read(**)"] }, `FIXTURE-READ ${JSON.stringify([secret])}`)), "a Read deny wins over a Read allow (deny first)");
+  mkdirSync(t(".cursor"), { recursive: true }); writeFileSync(t(".cursor/cli.json"), JSON.stringify({ permissions: { allow: ["Write(**)"] } }));
+  const merged = wrote(turn({ allow: [], deny: ["Shell(*)"] }, `FIXTURE-WRITE ${JSON.stringify([t(".claude/settings.json")])}`)), off = wrote(turn({ allow: [], deny: ["Shell(*)"] }, `FIXTURE-WRITE ${JSON.stringify([t(".claude/x.json")])}`, ["--disable-project-configs"]));
+  ok(merged[t(".claude/settings.json")] === true && off[t(".claude/x.json")] === false, "a project .cursor/cli.json merges into the config unless --disable-project-configs", JSON.stringify({ merged, off }));
+  rmSync(t(".cursor"), { recursive: true, force: true }); rmSync(t(".claude"), { recursive: true, force: true });
+  mkdirSync(join(fx, ".git")); mkdirSync(join(fx, ".cursor")); writeFileSync(join(fx, ".cursor", "hooks.json"), JSON.stringify({ version: 1, hooks: { sessionStart: [{ command: "echo git-root-hook" }] } }));
+  ok(turn({ allow: [], deny: ["Shell(*)"] }, "hello").includes("FIXTURE-HOOK-OUTPUT git-root-hook"), "hooks load from the git root above the workspace");
+}
+
 console.log("the host in an explicit project: the project folder only");
 {
   const proj = join(TMP, "host-project"), outside = join(TMP, "host-outside"); mkdirSync(proj, { recursive: true }); mkdirSync(outside, { recursive: true });

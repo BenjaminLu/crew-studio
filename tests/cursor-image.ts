@@ -52,6 +52,9 @@ process.env.CURSOR_API_KEY = KEY;
 try {
   const perms = cursorImagePermissions(false);
   ok(JSON.stringify(perms) === JSON.stringify({ allow: ["GenerateImage(*)"], deny: ["Shell(*)", "Read(**)"] }), "the image turn allows only GenerateImage and denies every Shell and Read (no Write deny: it refuses saving the image)", JSON.stringify(perms));
+  const refPerms = cursorImagePermissions(true), home = (await import("node:os")).homedir();
+  ok(refPerms.deny.includes("Shell(*)") && !refPerms.deny.includes("Read(**)") && [".codex", ".ssh", ".config"].every((d) => refPerms.deny.includes(`Read(${join(home, d)}/**)`)),
+    "with a reference.png no Read(**) deny hides it (cursor-agent checks denies first); the secret folders are denied by name", JSON.stringify(refPerms).slice(0, 300));
   const image = await generateCursorImage({ ...base, prompt: "a red coffee cup on white" });
   const want = jpegToPng(readFileSync(join(JPEG, "cursor-image.jpg"))).png;
   ok(image.provider === "cursor" && image.model === "composer-2.5" && image.effort === null && image.mime === "image/png" && image.width === 64 && image.height === 64, "the job returns a 64x64 PNG from Cursor on the approved model", JSON.stringify({ ...image, bytes: image.bytes.length }));

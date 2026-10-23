@@ -2,7 +2,8 @@ import { openScopedProxy } from "../egress-client";
 import { localUnrestricted } from "../local-execution";
 // Dedicated image job on Cursor, the counterpart of the Codex image app-server (codex-image.ts), chosen only when the
 // image step's member is on Cursor. One `cursor-agent -p` turn in a private root of its own (needs.ts cursorRoot):
-// cli-config.json allows only the GenerateImage tool and denies every Shell and Read; Write is not denied, because a
+// cli-config.json allows only the GenerateImage tool and denies every Shell and Read (a redraw's reference.png aside:
+// cursorImagePermissions); Write is not denied, because a
 // Write deny also refuses cursor-agent's own save of the generated asset (probed live), so the OS sandbox scopes writes
 // instead: the process writes only its private HOME, data dir and tmp, never its workspace or anything else. No MCP
 // server is registered. The picture is taken from the tool call's imageData in the stream (never from a file path the
@@ -12,7 +13,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { binArgv } from "../host/jsonl";
 import { Egress } from "../egress";
-import { roundProfile, sandboxInfo } from "../runtime/checks";
+import { roundProfile, sandboxInfo, SECRET_DIRS } from "../runtime/checks";
 import { OPERATING_RULES_HEADING, rulesHash, type RulesSection } from "../operating-rules";
 import { verifyImagePng, type CodexImage, type CodexImageReference } from "./codex-image";
 import { CURSOR_HOSTS, probeCursorChecked } from "./cursor";
@@ -37,8 +38,11 @@ export type CursorImageOptions = {
   /** Source-owned dependency injection; never populated from a browser request. */
   probe?: (models: string[], bin: string) => ProviderCapability;
 };
-/** The cli-config.json permissions of a Cursor image job. */
-export const cursorImagePermissions = (reference: boolean) => ({ allow: ["GenerateImage(*)", ...(reference ? ["Read(reference.png)"] : [])], deny: ["Shell(*)", "Read(**)"] });
+/** The cli-config.json permissions of a Cursor image job. cursor-agent checks a Read deny before any allow
+ *  (shouldBlockReadInternal), so with a reference.png to read there is no Read(**) deny: the OS sandbox confines its reads to
+ *  the job's own root and its install, and the user's and Studio's secrets are denied by name as well. */
+export const cursorImagePermissions = (reference: boolean) => ({ allow: ["GenerateImage(*)", ...(reference ? ["Read(reference.png)"] : [])],
+  deny: ["Shell(*)", ...(reference ? SECRET_DIRS().flatMap((p) => [`Read(${p})`, `Read(${p}/**)`]) : ["Read(**)"])] });
 /** The tool kinds an image turn may complete: listing the image tool and generating once. */
 const EXPECTED = new Set(["getMcpToolsToolCall", "generateImageToolCall"]);
 
