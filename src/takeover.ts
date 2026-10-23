@@ -5,8 +5,9 @@
 //   POST /api/main/start {host: "codex", confirm}  start a fresh firstmate on Codex in the firstmate repo, the newest state/HANDOFF-*.md first
 //   POST /api/main/start {host: "claude", confirm} Studio's own workspace only: a fresh Firstmate on Claude; a typed refusal
 //                                     (claudeNotSignedIn, claudeQuotaExhausted, claudeCrewTokenMissing, ...) never falls back to Codex
-//   POST /api/main/start {host: "cursor", confirm} Studio's own workspace only: a fresh Firstmate on Cursor (the CLI and the crew's
-//                                     Cursor API key); a refusal never falls back to another vendor. A Cursor session is never taken over
+//   POST /api/main/start {host: "cursor", confirm} a fresh Firstmate on Cursor (the CLI and the crew's Cursor API key): in Studio's
+//                                     own workspace, or in an explicit project as Codex starts there (its folder, its AGENTS.md, the
+//                                     newest state/HANDOFF-*.md); a refusal never falls back to another vendor. A Cursor session is never taken over
 //   POST /api/main/question {id, answers}  answer a question the session asked (AskUserQuestion) through the permission bridge
 //   POST /api/main/dispatch {text}    the captain's intent, sent to firstmate to draft a spec and raise the dispatch card
 //   GET  /api/crew/live               every worker and reviewer round: task, title, role, vendor/model, round, phase, elapsed, activity, PR, CI, report
@@ -150,7 +151,6 @@ export function createTakeover(d: Deps) {
     }
     if (p === "/api/main/start" && b?.host === "cursor") {
       if (b?.confirm !== true) return json({ error: "confirm first: no other firstmate may run on the same state", code: "confirm" }, 400);
-      if (d.main.view().context !== "studio") return json({ error: "Cursor starts a fresh Firstmate only in Studio's own workspace / Cursor 只能在 Studio 自己的工作空間開新的 Firstmate", code: "host" }, 400);
       if (d.main.view().state !== "detached") return json({ error: "Studio already owns firstmate; release it first / Studio 已在操作 firstmate，請先交還" }, 409);
       if (!d.cursorPrimary) return json({ ok: false, code: "cursorUnavailable", reason: "Cursor is not available to Studio / Studio 無法使用 Cursor" }, 409);
       const ready = await d.cursorPrimary();

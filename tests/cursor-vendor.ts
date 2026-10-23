@@ -4,7 +4,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // takeover) and a real Studio (src/server.ts) on the strict offline fixture tests/fixture/cursor-agent.mjs: Doctor, the
 // account route, the takeover refusals, a fresh Firstmate on Cursor whose turns carry on one chat and reach Studio's tools.
 //   bun tests/cursor-vendor.ts
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -23,7 +23,7 @@ const { cursorLogin } = await import("../src/providers/login");
 const { SECRET_DIRS, cursorSecretPaths } = await import("../src/runtime/checks");
 const { deliveryFor } = await import("../src/attachments");
 const { isVendorProcess, driving } = await import("../src/host/probe");
-const { cursorHost, CURSOR_TAKEOVER_REFUSED } = await import("../src/host/cursor");
+const { cursorHost, cursorProjectPermissions, CURSOR_TAKEOVER_REFUSED } = await import("../src/host/cursor");
 
 let pass = 0, fail = 0;
 const ok = (c: unknown, name: string, extra = "") => { if (c) { pass++; console.log(`  ok    ${name}`); } else { fail++; console.log(`  FAIL  ${name} ${extra}`); } };
@@ -102,6 +102,27 @@ console.log("the host: fresh only");
   ok(/native tools/.test(await err(host.attach("", { ...base, fresh: true, env: { CURSOR_API_KEY: KEY } }))), "a fresh start without Studio's tools is refused");
 }
 
+console.log("the host in an explicit project: the project folder only");
+{
+  const proj = join(TMP, "host-project"), outside = join(TMP, "host-outside"); mkdirSync(proj, { recursive: true }); mkdirSync(outside, { recursive: true });
+  const ws = realpathSync(proj);
+  ok(JSON.stringify(cursorProjectPermissions(ws, ["/data/a.pdf"])) === JSON.stringify({ allow: [`Read(${ws}/**)`, `Write(${ws}/**)`, "Read(/data/a.pdf)"], deny: [`Write(${ws}/.cursor/**)`] }),
+    "cli-config.json allows reads and writes in the project folder only (and this turn's PDFs), with no Shell rule");
+  const log = join(TMP, "host-project.jsonl"); process.env.CURSOR_FIXTURE_LOG = log;
+  const said: string[] = [];
+  const s = await cursorHost(FIXTURE).attach("", { cwd: proj, fresh: true, cursorProject: true, env: { CURSOR_API_KEY: KEY }, model: "composer-2.5", onEvent: (e: any) => { if (e.type === "message") said.push(e.text); }, onPermission: async () => ({ allow: false }) } as any);
+  const targets = [join(proj, "notes", "inside.txt"), join(outside, "escape.txt"), join(proj, "..", "host-outside", "dotdot.txt"), join(proj, ".cursor", "mcp.json"), join(process.env.HOME!, "home-escape.txt")];
+  const r = await s.send(`FIXTURE-WRITE ${JSON.stringify(targets)}`);
+  const runs = readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((c) => c.argv[0] === "-p");
+  ok(r.status === "completed" && existsSync(targets[0]) && !targets.slice(1).some((t) => existsSync(t)) && !existsSync(join(proj, ".cursor")),
+    "it writes inside the project folder and cannot write outside it (a sibling folder, a ../ path, the home folder) nor the project's .cursor/", JSON.stringify({ r, said, exists: targets.map((t) => existsSync(t)) }));
+  ok(/"[^"]*inside\.txt":true/.test(said.join(" ")) && /escape\.txt":false/.test(said.join(" ")), "the write tool reports each refusal");
+  ok(runs.length === 1 && runs[0].argv[runs[0].argv.indexOf("--workspace") + 1] === ws && runs[0].argv[runs[0].argv.indexOf("--sandbox") + 1] === "enabled" && !runs[0].argv.includes("--approve-mcps") && !runs[0].argv.includes("--force") && runs[0].home !== process.env.HOME,
+    "the project is the workspace, cursor-agent's sandbox is on, never --force, no MCP server auto-approved, a private home", JSON.stringify(runs[0]?.argv));
+  await s.detach(); delete process.env.CURSOR_FIXTURE_LOG;
+  ok(!existsSync(join(proj, ".cursor")), "Studio wrote nothing into the project's .cursor/");
+}
+
 console.log("a real Studio on the Cursor fixture");
 const apps: ChildProcess[] = [];
 async function boot(name: string, extra: Record<string, string | undefined>) {
@@ -169,6 +190,46 @@ try {
   ok(s.calls().filter((c) => c.argv[0] === "-p").length === turnsBefore + 1 && at > 0 && imgTurn.argv[at + 1].endsWith(`${sha}.png`) && imgTurn.images?.[0]?.sha256 === sha && imgTurn.argv[imgTurn.argv.indexOf("--resume") + 1] === chat,
     "the image turn gives cursor-agent the stored file with --image, on the same chat", JSON.stringify(imgTurn).slice(0, 500));
   ok(await until(said(new RegExp(`FIXTURE-SAW-IMAGES ${sha.slice(0, 12)}`))), "cursor-agent saw exactly the captain's image");
+
+  await s.api("/api/main/detach", {});
+
+  // an explicit project: Cursor starts there as Codex does (its folder, its AGENTS.md, the newest handoff); Claude still does not
+  const proj = join(TMP, "explicit-project"), state = join(TMP, "explicit-state"), elsewhere = join(TMP, "explicit-elsewhere");
+  for (const d of [proj, state, elsewhere]) mkdirSync(d, { recursive: true });
+  writeFileSync(join(proj, "AGENTS.md"), "# firstmate\n"); writeFileSync(join(state, "HANDOFF-2026-10-23.md"), "# Handoff\nnext: ship it\n");
+  const e = await boot("explicit", { CURSOR_API_KEY: KEY, CREW_MAIN_PROJECT: proj, CREW_FM_STATE: state });
+  const ev = async () => (await e.api("/api/main")).body;
+  ok((await ev())?.context === "explicit-project", "the second Studio runs in an explicit project");
+  const claude = await e.api("/api/main/start", { host: "claude", confirm: true });
+  ok(claude.status === 400 && claude.body?.code === "host" && (await ev()).state === "detached", "Claude still starts only in Studio's own workspace (unchanged)", `${claude.status} ${claude.text.slice(0, 200)}`);
+  const er = await e.api("/api/main/start/cursor-ready");
+  ok(er.body?.ok === true && !er.text.includes(KEY), "the Cursor start check answers in an explicit project too", er.text);
+  const es = await e.api("/api/main/start", { host: "cursor", confirm: true });
+  ok(es.status === 200 && es.body?.seededFrom === "state/HANDOFF-2026-10-23.md", "a fresh Firstmate starts on Cursor in the explicit project, first message the newest handoff", `${es.status} ${es.text.slice(0, 300)}`);
+  const eSaid = (re: RegExp) => async () => ((await ev())?.log ?? []).some((x: any) => re.test(String(x.text ?? "")));
+  ok(await until(eSaid(new RegExp(`Ready as firstmate in ${realpathSync(proj)}; first message: state/HANDOFF-2026-10-23\\.md`))), "its first turn runs in the project folder and reads the handoff", JSON.stringify((await ev())?.log?.slice(-3)).slice(0, 400));
+  const hv = await ev();
+  ok(hv.host === "cursor" && hv.drive?.path === "fresh" && !hv.origin && hv.drive?.seededFrom === "state/HANDOFF-2026-10-23.md", "Studio drives a fresh Cursor chat, no takeover", JSON.stringify(hv.drive).slice(0, 300));
+  const note = (await e.api("/api/takeover?independent=1")).body?.handoffs?.[0]?.text ?? "";
+  ok(/explicit project; AGENTS\.md applies/.test(note) && /its sandbox is on \(never --force\)/.test(note) && /inside this folder alone/.test(note) && /never hands a Cursor chat to a terminal/.test(note), "the handoff note says it follows the project and its sandbox", note.slice(0, 600));
+  ok(!existsSync(join(proj, ".cursor")), "nothing was written into the project's .cursor/");
+  await until(async () => !(await ev()).busy);
+  const out1 = join(elsewhere, "escape.txt"), in1 = join(proj, "draft.md");
+  await e.api("/api/main/send", { text: `FIXTURE-WRITE ${JSON.stringify([in1, out1])}` });
+  ok(await until(eSaid(/FIXTURE-WROTE/)) && existsSync(in1) && !existsSync(out1), "through Studio too, Firstmate on Cursor writes in the project and cannot write outside it");
+  await until(async () => !(await ev()).busy);
+  // attachments in the project: the image as --image, the PDF read with its Read tool (allowed for that file only)
+  const PNG2 = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+  const PDF2 = Buffer.from("%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n", "latin1");
+  const ui = await e.api("/api/main/attachments", { name: "shot.png", data: PNG2.toString("base64") }), up = await e.api("/api/main/attachments", { name: "brief.pdf", data: PDF2.toString("base64") });
+  ok(ui.body?.delivery?.mode === "native" && up.body?.delivery?.mode === "file" && !up.body?.hostRefusal, "in an explicit project Cursor takes the image and the PDF", up.text.slice(0, 300));
+  const both = await e.api("/api/main/send", { text: "look at both", attachments: [ui.body.attachment.id, up.body.attachment.id] });
+  ok(both.status === 200, "the message with both files is queued", both.text.slice(0, 200));
+  ok(await until(eSaid(new RegExp(`FIXTURE-READ-PDF ${up.body.attachment.id.slice(0, 12)}`))) && await until(eSaid(new RegExp(`FIXTURE-SAW-IMAGES ${ui.body.attachment.id.slice(0, 12)}`))), "cursor-agent saw the image and read the PDF itself", JSON.stringify((await ev())?.log?.slice(-4).map((l: any) => l.text)).slice(0, 800));
+  await until(async () => !(await ev()).busy);
+  const stop = await e.api("/api/main/detach", {}), after = await ev();
+  ok(stop.status === 200 && stop.body?.stopped === true && !stop.body?.resume && after.state === "detached" && after.driver?.holder === "none" && !after.driver?.resume,
+    "Stop ends it: never handed to a terminal with a resume command Cursor could not honour", JSON.stringify({ stop: stop.body, driver: after.driver }).slice(0, 400));
 
   const n = await boot("keyless", {});
   const nd = (await n.api("/api/doctor")).body?.items ?? [], nl = nd.find((i: any) => i.id === "round-login-cursor");

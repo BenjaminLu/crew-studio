@@ -99,6 +99,8 @@ export type AttachOpts = {
   studioMcp?: { command: string[] };
   /** extra environment for the CLI (after cleanEnv), e.g. FM_IN_ROUND=1 for a rehearsal */
   env?: Record<string, string>;
+  /** cursor fresh primary in an explicit project: cwd is its workspace and its own tools work there, under cursor-agent's sandbox */
+  cursorProject?: boolean;
   /** claude fresh primary: absolute paths (globs allowed) the model's edit tools may never write, passed as Edit(//path) deny rules */
   denyEdits?: string[];
 };

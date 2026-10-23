@@ -44,7 +44,7 @@ showChatInfo = function () {
   const v = MS.view, sub = $("#chatSub");
   if (!v) { sub.textContent = "…"; return; }
   if (v.state === "detached") sub.textContent = T("Connect your account to begin", "連接帳號即可開始");
-  else if (v.state === "attaching" || v.state === "detaching") { const stopping=v.context==="studio"&&!v.origin&&v.drive?.path==="fresh";sub.textContent = T(v.state === "attaching" ? "Connecting main session…" : stopping ? "Stopping Firstmate…" : "Releasing main session…", v.state === "attaching" ? "正在連接主 session…" : stopping ? "正在停止 Firstmate…" : "正在交還主 session…"); }
+  else if (v.state === "attaching" || v.state === "detaching") { const stopping=(v.context==="studio"||v.host==="cursor")&&!v.origin&&v.drive?.path==="fresh";sub.textContent = T(v.state === "attaching" ? "Connecting main session…" : stopping ? "Stopping Firstmate…" : "Releasing main session…", v.state === "attaching" ? "正在連接主 session…" : stopping ? "正在停止 Firstmate…" : "正在交還主 session…"); }
   else sub.textContent = `${T("main session", "主 session")} · ${v.host} · ${v.model || "…"} · ${v.state === "paused" ? T("paused", "已暫停") : T("Studio driving", "Studio 駕駛中")}`;
   sub.title = v.sessionId ? `${v.host} ${v.sessionId}` : "";
 };
@@ -52,13 +52,13 @@ showChatInfo = function () {
 const KLABEL = { captain: null, card: () => T("Card notice", "卡片通知"), wake: () => T("firstmate wake", "firstmate 喚醒"), status: () => T("Studio", "Studio"), tool: null };
 function driverBanner(v) {
   const d = v.driver || {};
-  const nativePrimary=v.context==="studio"&&!v.origin&&(v.drive?.path==="fresh"||d.path==="fresh")&&!d.forkedFrom;
+  const nativePrimary=(v.context==="studio"||(v.host||d.host)==="cursor")&&!v.origin&&(v.drive?.path==="fresh"||d.path==="fresh")&&!d.forkedFrom;
   if (v?.state === "attaching" || v?.state === "detaching") return h("div", { class: "rich", "data-banner": v.state }, T(v.state === "attaching" ? "Connecting main session…" : nativePrimary ? "Stopping Firstmate…" : "Releasing main session…", v.state === "attaching" ? "正在連接主 session…" : nativePrimary ? "正在停止 Firstmate…" : "正在交還主 session…"));
   if (v.state === "paused") return h("div", { class: "rich chat-err", role: "alert", "data-banner": "paused" },
     h("div", { class: "rk", style: "color:var(--bad)" }, icon("alert", "ic sm"), T("Paused: a terminal may be writing this session", "已暫停：可能有終端機在寫這個 session")),
     h("div", { style: "font-size:13px;color:var(--text-2)" }, v.pausedReason),
     h("div", { class: "actions" }, h("button", { class: "btn", onclick: () => postJ("/api/main/resume").then((r) => r.error && toast(r.error)) }, T("Resume here", "在這裡繼續")),
-      h("button", { class: "btn", onclick: handBack }, v.context==="studio" ? T("Stop Firstmate","停止 Firstmate") : T("Hand back to terminal", "交回終端機"))));
+      h("button", { class: "btn", onclick: handBack }, v.context==="studio"||nativePrimary ? T("Stop Firstmate","停止 Firstmate") : T("Hand back to terminal", "交回終端機"))));
   if (v.state === "detached") return h("div", { class: "rich", "data-banner": "detached" },
     h("div", { class: "rk" }, icon("lock", "ic sm"), nativePrimary ? T("Firstmate stopped", "Firstmate 已停止") : d.holder === "terminal" ? T("The terminal is driving", "終端機駕駛中") : T("No session attached", "還沒接上 session")),
     !nativePrimary && d.holder === "terminal" && d.resume ? h("div", { style: "font-size:13px" }, T("Handed back. In a terminal: ", "已交回。在終端機執行："), h("code", {}, d.resume),
@@ -69,7 +69,7 @@ function driverBanner(v) {
     h("div", { class: "rk", style: "color:var(--accent-text)" }, icon("agent", "ic sm"), T("Studio is driving", "Studio 駕駛中"), h("span", { class: "vbadge" }, `${v.host} · ${String(v.sessionId).slice(0, 8)}`), v.busy ? h("span", { class: "badge run" }, h("span", { class: "d" }), T("turn running", "回合進行中")) : null),
     h("div", { class: "actions" },
       v.busy ? h("button", { class: "btn", onclick: () => postJ("/api/main/interrupt") }, icon("stop", "ic sm"), T("Interrupt", "中斷")) : null,
-      h("button", { class: "btn", onclick: handBack }, v.context==="studio" ? T("Stop Firstmate","停止 Firstmate") : T("Hand back to terminal", "交回終端機"))));
+      h("button", { class: "btn", onclick: handBack }, v.context==="studio"||nativePrimary ? T("Stop Firstmate","停止 Firstmate") : T("Hand back to terminal", "交回終端機"))));
 }
 for (const ev of ["crew:claude-status", "crew:codex-account", "crew:cursor-account"]) addEventListener(ev, () => { if (isMain() && MS.view?.state === "detached") try { renderChat(); } catch {} });
 /** Studio's own workspace: start Firstmate on whichever signed-in host the captain picks, here in the chat. */
@@ -332,7 +332,7 @@ function attView(list) {
   hydrateIcons?.(chat);
 })();
 async function handBack() {
-  const native=MS.view?.context==="studio";
+  const v=MS.view,native=v?.context==="studio"||(v?.host==="cursor"&&!v?.origin&&v?.drive?.path==="fresh");
   const r = await postJ("/api/main/detach");
   if (r.error) return toast(r.error);
   if(native){await loadMain();return toast(T("Firstmate stopped","Firstmate 已停止"));}

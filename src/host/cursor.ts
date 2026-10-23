@@ -1,4 +1,4 @@
-// Cursor as a host: a FRESH Firstmate primary in Studio's own workspace only. Studio never takes over a Cursor session
+// Cursor as a host: a FRESH Firstmate primary only. Studio never takes over a Cursor session
 // from a terminal (discover finds none; attach refuses anything but fresh). cursor-agent -p runs one process per turn:
 // the first turn uses a chat Studio made with `cursor-agent create-chat` (else the id the CLI reports in its init event),
 // later turns `--resume <chatId>`, so the conversation carries on.
@@ -7,10 +7,14 @@
 // The workspace's .cursor/mcp.json registers only Studio's MCP helper (src/mcp.ts), which reaches this session's
 // native tools over a private unix socket (random token in a 0600 file); cli-config.json allows exactly those tools
 // and denies every built-in Shell, Read and Write, so Firstmate on Cursor works through Studio alone.
+// In an explicit project (opts.cursorProject) it is a fresh Firstmate in that project's folder instead, as Codex's is: the
+// folder is the workspace, so cursor-agent follows its AGENTS.md; its own tools work there under cursor-agent's sandbox
+// (--sandbox enabled, never --force) and cli-config.json allows reads and writes inside the folder only
+// (cursorProjectPermissions). No Studio tool, no MCP server auto-approved, and nothing is written into the project's .cursor/.
 // cleanEnv drops every *_API_KEY: the caller hands the Cursor API key back explicitly in opts.env.CURSOR_API_KEY.
 //   CREW_HOST_CURSOR_BIN  executable (default "cursor-agent"; a .mjs path runs under bun: test stub)
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { dropPrivateDir, nativeEndpoint, privateDir } from "./claude";
@@ -34,6 +38,12 @@ const resultOf = (r: any): { ok: boolean; text?: string } => {
   return { ok: false, text: String(r?.rejected?.reason ?? r?.permissionDenied?.error ?? r?.error?.errorMessage ?? "").slice(0, 2000) || undefined };
 };
 
+/** An explicit project's cli-config.json permissions: read and write inside the project folder only (its own .cursor/ stays
+ *  read-only), plus reading this turn's attached PDFs. No Shell rule: an allow-listed command would run outside the sandbox. */
+export function cursorProjectPermissions(ws: string, reads: string[] = []): { allow: string[]; deny: string[] } {
+  return { allow: [`Read(${ws}/**)`, `Write(${ws}/**)`, ...reads.map((f) => `Read(${f})`)], deny: [`Write(${ws}/.cursor/**)`] };
+}
+
 export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-agent"): Host {
   return {
     id: "cursor",
@@ -43,17 +53,21 @@ export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-age
       if (!opts.fresh) throw new Error(CURSOR_TAKEOVER_REFUSED);
       const key = opts.env?.CURSOR_API_KEY;
       if (!key) throw new Error("Firstmate on Cursor needs a Cursor API key (keychain item crew-studio-cursor-api-key or CURSOR_API_KEY)");
-      const native = opts.nativeTools && opts.studioMcp ? opts.nativeTools : null;
-      if (!native) throw new Error("Firstmate on Cursor runs only with Studio's native tools");
+      const project = opts.cursorProject === true;
+      const native = !project && opts.nativeTools && opts.studioMcp ? opts.nativeTools : null;
+      if (!project && !native) throw new Error("Firstmate on Cursor runs only with Studio's native tools");
+      let projectDir = "";
+      if (project) { try { projectDir = realpathSync(opts.cwd); } catch {} if (!projectDir || !statSync(projectDir).isDirectory()) throw new Error("Firstmate on Cursor needs the explicit project's folder"); }
       const model = opts.model && MODEL.test(opts.model) ? opts.model : null;
       let chatId: string | null = null, shownModel = model ?? "cursor", turnSeq = 0, busy = false, interrupting = false;
       let proc: ChildProcess | null = null;
       let turn: { resolve: (r: { status: "completed" | "interrupted" | "failed"; message?: string }) => void } | null = null;
       const emit = (e: HostEvent) => { try { opts.onEvent(e); } catch {} };
       const priv = privateDir();
-      for (const d of ["h/.config/cursor", "w/.cursor", "d"]) mkdirSync(join(priv, d), { recursive: true, mode: 0o700 });
-      const ws = join(priv, "w");
-      const endpoint = nativeEndpoint(priv, async (name, args) => {
+      for (const d of ["h/.config/cursor", "d", ...(project ? [] : ["w/.cursor"])]) mkdirSync(join(priv, d), { recursive: true, mode: 0o700 });
+      const ws = project ? projectDir : join(priv, "w");
+      const cliConfig = join(priv, "h", ".config", "cursor", "cli-config.json");
+      const endpoint = !native ? null : nativeEndpoint(priv, async (name, args) => {
         if (name === null) return native.specs.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
         const t = turn, seq = turnSeq, p = proc;
         const live = () => !!t && turn === t && turnSeq === seq && !interrupting && !!p && proc === p;
@@ -69,11 +83,13 @@ export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-age
           return { error: failure.reason.en, failure };
         }
       });
-      const drop = () => { endpoint.close(); dropPrivateDir(priv); };
+      const drop = () => { endpoint?.close(); dropPrivateDir(priv); };
+      const resolved = (f: string) => { try { const r = realpathSync(f); return r === f ? [f] : [f, r]; } catch { return [f]; } };
+      const writeConfig = (reads: string[] = []) => writeFileSync(cliConfig, JSON.stringify({ version: 1, permissions: project ? cursorProjectPermissions(ws, reads.flatMap(resolved)) : { allow: native!.specs.map((t) => `Mcp(studio:${t.name})`), deny: ["Shell(*)", "Read(**)", "Write(**)"] } }), { mode: 0o600 });
       try {
-        writeFileSync(join(ws, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: { studio: { command: opts.studioMcp!.command[0], args: opts.studioMcp!.command.slice(1), env: { CREW_STUDIO_SOCKET: endpoint.socket, CREW_TOOL_TOKEN_FILE: endpoint.tokenFile } } } }), { mode: 0o600 });
-        const permissions = { allow: native.specs.map((t) => `Mcp(studio:${t.name})`), deny: ["Shell(*)", "Read(**)", "Write(**)"] };
-        writeFileSync(join(priv, "h", ".config", "cursor", "cli-config.json"), JSON.stringify({ version: 1, permissions }), { mode: 0o600 });
+        // an explicit project's own .cursor/ is never written: Studio's MCP helper is registered only in its private workspace
+        if (endpoint) writeFileSync(join(ws, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: { studio: { command: opts.studioMcp!.command[0], args: opts.studioMcp!.command.slice(1), env: { CREW_STUDIO_SOCKET: endpoint.socket, CREW_TOOL_TOKEN_FILE: endpoint.tokenFile } } } }), { mode: 0o600 });
+        writeConfig();
       } catch (e) { drop(); throw e; }
       const env: Record<string, string> = { ...cleanEnv(), ...(opts.env ?? {}), CURSOR_API_KEY: key, HOME: join(priv, "h"), XDG_CONFIG_HOME: join(priv, "h", ".config"), CURSOR_DATA_DIR: join(priv, "d"), AGENT_CLI_CREDENTIAL_STORE: "memory" };
       const run = (args: string[], onLine: (m: any) => void) => {
@@ -110,12 +126,14 @@ export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-age
           if (busy) return Promise.reject(new Error("BUSY"));
           // attachments: images as --image (cursor-agent reads the file itself); a PDF only where its Read tool works (src/attachments.ts)
           let input: ReturnType<typeof cursorInput>;
-          try { input = cursorInput(text, files, { cursorReads: false }); } catch (e) { return Promise.reject(e); }
+          try { input = cursorInput(text, files, { cursorReads: project }); if (project) writeConfig(input.reads); } catch (e) { return Promise.reject(e); }
           busy = true; turnSeq++;
           return new Promise((resolve) => {
             turn = { resolve };
             let reply = "", ended = false;
-            const args = ["-p", "--output-format", "stream-json", "--trust", "--approve-mcps", "--sandbox", "disabled", "--workspace", ws, ...(model ? ["--model", model] : []), ...(chatId ? ["--resume", chatId] : []), ...input.args, input.text];
+            // an explicit project: cursor-agent's own sandbox on, never --force, and the project's MCP servers are not auto-approved
+            const mode = project ? ["--sandbox", "enabled"] : ["--approve-mcps", "--sandbox", "disabled"];
+            const args = ["-p", "--output-format", "stream-json", "--trust", ...mode, "--workspace", ws, ...(model ? ["--model", model] : []), ...(chatId ? ["--resume", chatId] : []), ...input.args, input.text];
             let r: ReturnType<typeof run>;
             try {
               r = run(args, (m) => {

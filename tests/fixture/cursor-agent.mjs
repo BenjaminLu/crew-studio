@@ -15,9 +15,13 @@
 // imageData. The prompt's CURSOR-IMAGE:<mode> picks a failure: refused, duplicate, edit (a successful file edit), denied
 // (a denied shell call, then the image), fail (the turn fails), escape (writes its workspace, the private root above it
 // and /private/tmp; the turn fails naming any write that succeeded, else makes the image).
+// The other exception is an explicit project's Firstmate (no Studio MCP server in the workspace): that run must be
+// --sandbox enabled, never --force or --approve-mcps, with no Shell rule and no Write rule outside the workspace. Its turns
+// model cursor-agent's own tools under those rules: FIXTURE-WRITE ["path", …] writes only what cli-config.json allows, an
+// attached PDF is read only when allowed.
 //   CURSOR_FIXTURE_LOG  a file each run appends its argv (without the prompt) and chat id to (tests/cursor-vendor.ts)
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { cursorPrint, mcpSession } from "../acceptance/agent.mjs";
 
@@ -33,11 +37,27 @@ if (argv[0] !== "-p" || get("--output-format") !== "stream-json" || !get("--work
 let perms = null;
 try { perms = JSON.parse(readFileSync(join(process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "/nonexistent", ".config"), "cursor", "cli-config.json"), "utf8")).permissions; } catch {}
 if (perms?.allow?.includes("GenerateImage(*)")) { await imageTurn(); process.exit(0); }
-if (!["Shell(*)", "Read(**)", "Write(**)"].every((d) => perms?.deny?.includes(d))) fail("cursor-agent fixture: cli-config.json does not deny the built-in tools", 2);
+const denied = ["Shell(*)", "Read(**)", "Write(**)"].every((d) => perms?.deny?.includes(d));
 let server = null;
 try { server = JSON.parse(readFileSync(join(get("--workspace"), ".cursor", "mcp.json"), "utf8")).mcpServers.studio; } catch {}
-if (!server) fail("cursor-agent fixture: no studio MCP server in the workspace's .cursor/mcp.json", 2);
-if (!server.env?.CREW_STUDIO_SOCKET) { await cursorPrint(argv); process.exit(process.exitCode ?? 0); }
+// an explicit project's Firstmate: its own tools, no Studio MCP server, and a config that keeps every write inside the workspace
+const project = !denied && !server;
+if (!project) {
+  if (!denied) fail("cursor-agent fixture: cli-config.json does not deny the built-in tools", 2);
+  if (!server) fail("cursor-agent fixture: no studio MCP server in the workspace's .cursor/mcp.json", 2);
+  if (!server.env?.CREW_STUDIO_SOCKET) { await cursorPrint(argv); process.exit(process.exitCode ?? 0); }
+}
+// cursor-agent's rules as this fixture models them: a write applies only when an allow rule matches and no deny rule does
+// (print mode without --force); a read outside the workspace only when allowed. `dir/**` matches below dir; anything else exactly.
+const real = (p) => { const abs = resolve(p); try { return realpathSync(abs); } catch { return dirname(abs) === abs ? abs : join(real(dirname(abs)), basename(abs)); } };
+const rule = (list, kind, p) => (list ?? []).some((r) => { const m = new RegExp(`^${kind}\\((.*)\\)$`).exec(r); if (!m) return false; const g = m[1]; return g.endsWith("/**") ? p.startsWith(g.slice(0, -2)) : p === g; });
+const ws = project ? realpathSync(get("--workspace")) : "";
+const mayWrite = (p) => { const f = real(p); return rule(perms.allow, "Write", f) && !rule(perms.deny, "Write", f); };
+const mayRead = (p) => { const f = real(p); return rule(perms.allow, "Read", f) && !rule(perms.deny, "Read", f); };
+if (project) {
+  if (get("--sandbox") !== "enabled" || ["--force", "--yolo", "-f", "--approve-mcps"].some((f) => argv.includes(f))) fail(`cursor-agent fixture: a project Firstmate runs sandboxed, never forced or auto-approving MCP servers ${JSON.stringify(argv.slice(0, -1))}`, 2);
+  if ((perms?.allow ?? []).some((r) => /^Shell\(/.test(r) || /^Write\(/.test(r) && !rule([r], "Write", join(ws, "x")))) fail("cursor-agent fixture: cli-config.json allows more than the project folder", 2);
+}
 
 // ---------- Firstmate (host) turn ----------
 const session_id = get("--resume") ?? randomUUID(), model = get("--model") ?? "composer-2.5";
@@ -52,6 +72,28 @@ const text = argv.at(-1).replace(/(?:\n\n\[Studio note: [^\n]*\])+$/, "");
 out({ type: "system", subtype: "init", apiKeySource: "env", cwd: get("--workspace"), session_id, model, permissionMode: "default" });
 const say = (t) => out({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: t }] }, session_id });
 if (images.length) say(`FIXTURE-SAW-IMAGES ${images.map((i) => i.sha256.slice(0, 12)).join(",")}`);
+if (project) {
+  if (text.includes("Crew Studio started you as firstmate in")) say(`Ready as firstmate in ${ws}; first message: ${/## (state\/HANDOFF-[\w.-]+\.md)/.exec(text)?.[1] ?? "none"}`);
+  // FIXTURE-WRITE ["path", ...]: the model tries to write each file with its Write tool
+  if (text.includes("FIXTURE-WRITE ")) {
+    const wrote = {};
+    for (const [i, p] of JSON.parse(text.slice(text.indexOf("FIXTURE-WRITE ") + 14).split("\n")[0]).entries()) {
+      const call_id = `fixture-write-${i}`, ok = mayWrite(p);
+      out({ type: "tool_call", subtype: "started", call_id, tool_call: { editToolCall: { args: { path: p } } }, session_id });
+      if (ok) { mkdirSync(dirname(resolve(p)), { recursive: true }); writeFileSync(p, "written by the fixture\n"); }
+      out({ type: "tool_call", subtype: "completed", call_id, tool_call: { editToolCall: { args: { path: p }, result: ok ? { success: { content: [{ text: "ok" }] } } : { permissionDenied: { error: `Write(${p}) is not allowed` } } } }, session_id });
+      wrote[p] = ok;
+    }
+    say(`FIXTURE-WROTE ${JSON.stringify(wrote)}`);
+  }
+  // an attached PDF: read with the Read tool, when the config allows that file
+  for (const m of text.matchAll(/The file is at (\S+) \(Studio's copy\)/g)) {
+    let b = null; if (mayRead(m[1])) try { b = readFileSync(m[1]); } catch {}
+    say(b && b.subarray(0, 5).toString() === "%PDF-" ? `FIXTURE-READ-PDF ${createHash("sha256").update(b).digest("hex").slice(0, 12)}` : "FIXTURE-READ-DENIED");
+  }
+  out({ type: "result", subtype: "success", is_error: false, result: "", session_id, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 } });
+  process.exit(0);
+}
 const ask = (q, escalate, extra = {}) => ({ name: "studio_answer_agent_question", args: { task: q[1], node: q[2], visit: Number(/visit:(\d+)/.exec(text)?.[1]), escalate, ...extra } });
 let tool = null;
 try {

@@ -16,7 +16,7 @@
     "test:acceptance": "bun tests/acceptance-drive.ts && bun tests/acceptance.ts && bun tests/acceptance-known.ts && bun tests/acceptance-sandboxed.ts",
     "acceptance:sandboxed": "bun scripts/acceptance-sandboxed.ts",
     "test:acceptance-cursor": "ACCEPTANCE_PROVIDER=cursor bun scripts/acceptance-sandboxed.ts",
-    "test:cursor-login-ui": "node tests/cursor-login-ui.mjs",
+    "test:cursor-login-ui": "node tests/cursor-login-ui.mjs && node tests/cursor-project-ui.mjs",
     "test:sandboxed-e2e": "bun scripts/acceptance-sandboxed.ts --e2e",
     "test:sandboxed-e2e:fast": "ACCEPTANCE_ONLY=documents:approve,documents:claude,web-prototype:smoke,video:approve,code-firstmate:firstmate-merge bun scripts/acceptance-sandboxed.ts --e2e",
     "live-acceptance": "bun scripts/live-acceptance.ts",

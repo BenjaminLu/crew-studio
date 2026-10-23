@@ -144,7 +144,7 @@ export class MainSession {
     await this.bridge.listen();
     const d = this.driver();
     // Studio restarted while it held a session: its CLI died with it; keep the way back
-    const own = !!(this.o.nativeWorkspace && d.path === "fresh" && !d.forkedFrom && !d.mode);
+    const own = !!((this.o.nativeWorkspace || d.host === "cursor") && d.path === "fresh" && !d.forkedFrom && !d.mode);
     // Studio's own shutdown stopped its primary (detach({shutdown}) wrote restartOnBoot): remember how, once, so boot starts it
     // again (takeover's resumeOnBoot) instead of waiting for the captain's Start. A crash (the lock still says studio) never
     // restarts it: a primary that brought Studio down would bring it down again on every boot, so it stays stopped with a notice
@@ -393,7 +393,7 @@ export class MainSession {
   /** "Start firstmate on <host>": a NEW session in the firstmate repo, following its AGENTS.md, whose first message is the newest state/HANDOFF-*.md. */
   async startFresh(host: HostId, validate?: (identity:{model:string;effort:string|null})=>boolean, extra?: { codexDefaultEffort?: string; locale?: "en"|"zh-TW"|"zh-CN"; env?: Record<string, string>; model?: string | null; effort?: string | null; permissionMode?: "auto" | "default"; autoMode?: { state: string; summary: string; summaryZh?: string } }): Promise<{ ok: true; handoff: string; id: string; seededFrom: string | null } | { ok: false; reason: string; code: string }> {
     if (this.state !== "detached") return { ok: false, code: "attached", reason: "Studio already holds a session; release it first" };
-    if (host !== "codex" && !((host === "claude" || host === "cursor") && this.o.nativeWorkspace)) return { ok: false, code: "host", reason: "a fresh start runs on Codex, or on Claude or Cursor in Studio's own workspace" };
+    if (host === "claude" && !this.o.nativeWorkspace) return { ok: false, code: "host", reason: "a fresh start runs on Codex or Cursor, or on Claude in Studio's own workspace" };
     if (!this.hosts[host]) return { ok: false, code: "host", reason: `no ${host} host is available to Studio` };
     const priorDriver = this.driver();
     this.state = "attaching"; this.changed();
@@ -403,7 +403,7 @@ export class MainSession {
       this.session = await this.hosts[host].attach("", { cwd, fresh: true, onGeneratedImage:this.generatedImageCapability(), onEvent: (e) => this.hostEvent(e), onPermission: (r) => this.bridge.ask(r), permissionMcp: this.o.permissionMcp(this.bridge), nativeTools:this.nativeCapability(),
         ...(host === "codex" && extra?.codexDefaultEffort ? {codexDefaultEffort:extra.codexDefaultEffort} : {}),
         ...(host === "claude" ? { env: extra?.env, model: extra?.model ?? null, permissionMode: extra?.permissionMode ?? "default", denyEdits: claudeDenyEdits(extra?.env?.CLAUDE_CONFIG_DIR), studioMcp: this.o.studioMcp ? { command: this.o.studioMcp() } : undefined } : {}),
-        ...(host === "cursor" ? { env: extra?.env, model: extra?.model ?? null, studioMcp: this.o.studioMcp ? { command: this.o.studioMcp() } : undefined } : {}) });
+        ...(host === "cursor" ? { env: extra?.env, model: extra?.model ?? null, ...(this.o.nativeWorkspace ? { studioMcp: this.o.studioMcp ? { command: this.o.studioMcp() } : undefined } : { cursorProject: true }) } : {}) });
     } catch (e: any) {
       this.state = "detached"; this.changed();
       return { ok: false, code: "attachFailed", reason: String(e?.message ?? e) };
@@ -424,12 +424,13 @@ export class MainSession {
       ] : host === "cursor" ? [
         `- model: ${extra?.model ?? se.model}; effort: none (Cursor sets no reasoning effort)`,
         `- config: a private Cursor folder of Studio's own; signs in with the crew's Cursor API key, never the captain's ~/.cursor`,
-        `- tools: Studio's native tools only, allowed by name; every built-in Shell, Read and Write is denied`,
+        this.o.nativeWorkspace ? `- tools: Studio's native tools only, allowed by name; every built-in Shell, Read and Write is denied`
+          : `- tools: cursor-agent's own, in ${cwd} only: its sandbox is on (never --force), cli-config.json allows reads and writes inside this folder alone, and no MCP server is auto-approved`,
       ] : [
       `- model: ${se.model}; reasoning effort: ${se.effort ?? "(config default)"} (from the captain's Codex config; Studio sets neither)`,
       `- approval policy: ${se.approvalPolicy ?? "(config)"}; sandbox: ${se.sandbox ?? "(config)"}; every approval request goes to Studio's permission bridge, and any failure declines`]),
       `- First message: ${newest ? `state/${newest.name}` : this.o.nativeWorkspace ? "Studio-owned native Firstmate introduction" : "no state/HANDOFF-*.md found"}`, "",
-      `## Roll back`, "", this.o.nativeWorkspace ? "Stop Firstmate in Studio. This closes the owned primary; dispatched native Tasks keep their own lifecycle. Start a new primary explicitly when ready." : `Release in Studio, then continue the thread in a terminal: \`cd ${cwd} && ${this.hosts[host].resumeCommand(se.id)}\``, "",
+      `## Roll back`, "", host === "cursor" && !this.o.nativeWorkspace ? "Stop Firstmate in Studio. Studio never hands a Cursor chat to a terminal (its folder is Studio's own and goes with it); start Firstmate again when ready." : this.o.nativeWorkspace ? "Stop Firstmate in Studio. This closes the owned primary; dispatched native Tasks keep their own lifecycle. Start a new primary explicitly when ready." : `Release in Studio, then continue the thread in a terminal: \`cd ${cwd} && ${this.hosts[host].resumeCommand(se.id)}\``, "",
     ]);
     this.origin = null;
     this.drive = { host, path: "fresh", statement, noFork: null, model: host === "claude" ? extra?.model ?? null : host === "cursor" ? extra?.model ?? se.model : se.model, effort: host === "claude" ? extra?.effort ?? null : host === "cursor" ? null : se.effort ?? null, approvalPolicy: se.approvalPolicy ?? null, sandbox: se.sandbox ?? null, permissionMode: host === "claude" ? extra?.permissionMode ?? "default" : null, effectivePermissionMode: null, autoMode: host === "claude" ? extra?.autoMode ?? null : null, executionMode: host === "claude" ? (localExecutionNotice() ? "local-unrestricted" : "default") : null,
@@ -702,7 +703,8 @@ export class MainSession {
     this.state = "detaching"; this.changed();
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
     this.bridge.denyAll();
-    const nativePrimary = this.o.nativeWorkspace && !this.origin && this.drive?.path === "fresh";
+    // a fresh Cursor primary is Studio's own in an explicit project too: stopped, never handed to a terminal
+    const nativePrimary = (this.o.nativeWorkspace || s.host === "cursor") && !this.origin && this.drive?.path === "fresh";
     const raw = await s.detach();
     const o = this.origin;
     if (nativePrimary) {
@@ -711,7 +713,7 @@ export class MainSession {
       this.session = null; this.state = "detached"; this.pausedReason = null; this.wakes = null; this.lastResume = null; this.sessionFile = null;
       // Studio itself is stopping (a live release): the next boot starts this primary again; the captain's Stop leaves it stopped
       this.writeDriver({ holder: "none", host: s.host, sessionId: s.id, pid: null, since: new Date().toISOString(), forkedFrom: null, mode: null, handoff: dr?.handoff ?? null, path: "fresh",
-        primary: how.shutdown ? this.driver().primary ?? null : null, restartOnBoot: how.shutdown ? true : undefined });
+        primary: how.shutdown ? this.driver().primary ?? null : null, restartOnBoot: how.shutdown && this.o.nativeWorkspace ? true : undefined });
       if (dr?.handoff) { try { appendFileSync(join(this.handoffDir(), dr.handoff), `\n## Stopped ${new Date().toISOString()}\n\nStudio closed its own primary. No terminal owns it. Dispatched native Tasks remain independent.\n`); } catch {} }
       this.drive = null; this.origin = null;
       this.note({ kind: "status", text: "Firstmate stopped. Dispatched native Tasks keep their own lifecycle. / Firstmate 已停止；已派出的原生任務保持各自的生命週期。", i18n: { en: "Firstmate stopped. Dispatched native Tasks keep their own lifecycle.", "zh-TW": "Firstmate 已停止；已派出的原生任務保持各自的生命週期。" } });
