@@ -38,10 +38,10 @@ const stageState = (members, states) => { const st = members.map((m) => states?.
   return st.every((x) => x === "passed" || x === "skipped" || x === "superseded") ? "passed" : "pending"; };
 const fitText = (t, n) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
 function graph(def, o = {}) {
-  // o: { states, walked (the edge keys the run's events record as taken), editable, sel, manual, collapsed, onToggleStage, onSelect, onMove, onMoved, onDragStart, onConnect, onDropCheck, problems, view, onView }
+  // o: { states, walked (the edge keys the run's events record as taken), editable, allEdges, sel, manual, collapsed, onToggleStage, onSelect, onMove, onMoved, onDragStart, onConnect, onDropCheck, problems, view, onView }
   const L = window.crewLayout;
   const reached = o.states ? Object.keys(o.states).filter((k) => o.states[k] && o.states[k] !== "pending") : [];
-  const lay = o.simple ? L.layoutSimple(def, { collapsed: o.collapsed || [], wrap: o.wrap, offsets: o.offsets, reached, actualGraph: !!o.editable }) : o.manual ? L.place(def, { collapsed: o.collapsed || [], actualGraph: !!o.editable }) : L.layout(def, { collapsed: o.collapsed || [], actualGraph: !!o.editable });
+  const lay = o.simple ? L.layoutSimple(def, { collapsed: o.collapsed || [], wrap: o.wrap, offsets: o.offsets, reached, actualGraph: !!(o.editable && o.allEdges), keepDisconnected: !!o.editable }) : o.manual ? L.place(def, { collapsed: o.collapsed || [], actualGraph: !!o.editable }) : L.layout(def, { collapsed: o.collapsed || [], actualGraph: !!o.editable });
   const byId = Object.fromEntries(lay.nodes.map((n) => [n.id, n]));
   const view = o.view || { ...lay.bbox };
   const svg = s("svg", { class: `rt-graph${o.simple ? " simple" : ""}`, "data-view": o.simple ? "simple" : "detail", viewBox: `${view.x} ${view.y} ${view.w} ${view.h}`, role: "group", "data-layout": o.manual ? "manual" : "auto",
@@ -381,6 +381,7 @@ function buildEditor(ed) {
   const dock = h("div", { class: "rt-mm-dock" }); // the minimap sits here, outside the canvas: it never covers the graph
   const canvasWrap = h("div", { class: "rt-canvas-wrap" }, canvas, dock);
   let gview = (() => { try { return localStorage.getItem("crew.graphView") === "detail" ? "detail" : "simple"; } catch { return "simple"; } })();
+  let allEdges = (() => { try { return localStorage.getItem("crew.graphAllEdges") === "1"; } catch { return false; } })();
   ed.offsets = ed.offsets || {};
   // the simple view wraps the main path into bands narrow enough to read at Fit (node titles 15 units → at least 11 px)
   const wrapFor = () => { const w = canvas.getBoundingClientRect().width || Math.min(innerWidth - 40, 1100); return Math.max(1, Math.min(8, Math.floor((w * 15 / 11 - 80) / window.crewLayout.COL))); };
@@ -487,6 +488,9 @@ function buildEditor(ed) {
     ed.mode = 'manual'; draftRevision++;
   };
   const setView = (k) => { gview = k; try { localStorage.setItem("crew.graphView", k); } catch {} view = null; root.querySelectorAll("[data-view-toggle]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.viewToggle === k))); draw(); drawPanel(); say(k === "simple" ? T("Simple view", "簡易檢視") : T("Detail view: every node and edge", "詳細檢視：所有節點與邊")); };
+  const allEdgesButton = h("button", { class: "btn sm", type: "button", "data-graph-all-edges": "", "aria-pressed": String(allEdges), onclick: () => {
+    allEdges = !allEdges; try { localStorage.setItem("crew.graphAllEdges", allEdges ? "1" : "0"); } catch {} view = null; draw();
+    say(allEdges ? T("Overview shows every step and connection", "總覽顯示所有步驟與連線") : T("Overview shows the main path", "總覽顯示主要路徑")); } }, T("Show all connections", "顯示所有連線"));
   const toggleStage = (sid) => { const c = new Set(ed.collapsed); c.has(sid) ? c.delete(sid) : c.add(sid); ed.collapsed = [...c]; draw(); say(c.has(sid) ? T(`${sid} collapsed`, `${sid} 已收合`) : T(`${sid} expanded`, `${sid} 已展開`)); };
   let mm = null, drawPending = false, renderedWrap = null;
   const draw = () => {
@@ -499,7 +503,8 @@ function buildEditor(ed) {
     const simple = gview === "simple", wrap = wrapFor(), reflow = simple && renderedWrap !== null && wrap !== renderedWrap;
     if (reflow && fitted) view = null;
     root.dataset.view = gview; palette.hidden = simple; paletteNote.hidden = !simple;
-    const g = graph(ed.def, { editable: true, simple, wrap, offsets: simple ? ed.offsets : null, sel: ed.sel, problems: ed.problems, states: ed.states, walked: ed.walked, view, manual: !simple && ed.mode === "manual", collapsed: ed.collapsed, redraw: () => draw(),
+    allEdgesButton.hidden = !simple; allEdgesButton.setAttribute("aria-pressed", String(allEdges));
+    const g = graph(ed.def, { editable: true, simple, allEdges, wrap, offsets: simple ? ed.offsets : null, sel: ed.sel, problems: ed.problems, states: ed.states, walked: ed.walked, view, manual: !simple && ed.mode === "manual", collapsed: ed.collapsed, redraw: () => draw(),
       onNudge: (nid, dx, dy) => { const o = ed.offsets[nid] || { dx: 0, dy: 0 }; ed.offsets[nid] = { dx: o.dx + dx, dy: o.dy + dy }; recordHistory(); draftRevision++; draw(); say(T("Moved in the simple view (not kept; arrange in Detail view)", "在簡易檢視中移動（不保存；請在詳細檢視排版）")); },
       onToggleStage: toggleStage, onDragStart: () => { dragBefore = snapshot(); lastTextGroup = null; if (ed.mode !== "manual") toManual(); },
       onInteractionCancel: () => { if (dragBefore) { Object.assign(ed.def, clone(dragBefore.content)); ed.mode = dragBefore.mode; ed.offsets = clone(dragBefore.offsets); dragBefore = null; drawPending = true; } },
@@ -660,7 +665,7 @@ function buildEditor(ed) {
   };
   // palette: node kinds (click or drag onto the canvas) and checks (drag onto a node or an edge)
   const paletteNote = h("aside", { class: "rt-palette card", "data-palette-note": "1" }, h("h4", {}, T("Simple view", "簡易檢視")),
-    h("p", { class: "faint" }, T("All existing steps and connections in a compact layout. Removing a step only removes that step and its connections. Use Edit graph for connection ports, adding steps and checks.", "以緊湊排列顯示所有既有步驟與連線。移除步驟只會移除它與直接相連的線。要使用連線端點、新增步驟或檢查，請切換完整編輯。")),
+    h("p", { class: "faint", "data-palette-note-text": "" }, T("The main path through the stages. Loops, the door question and escalations are badges on their node or stage. Removing a step only removes that step and its connections; steps it disconnects stay visible to reconnect. Show all connections draws every step and connection. Use Edit graph for connection ports, adding steps and checks.", "各階段的主要路徑。迴圈、門的提問和升級處理都是節點或階段上的徽章。移除步驟只會移除它與直接相連的線；因此斷開的步驟仍會顯示，方便重新接回。「顯示所有連線」會畫出所有步驟與連線。要使用連線端點、新增步驟或檢查，請切換完整編輯。")),
     h("button", { class: "btn sm", "data-edit-detail": "1", onclick: () => setView("detail") }, T("Edit in Detail view", "到詳細檢視編輯")));
   const palette = h("aside", { class: "rt-palette card", "aria-label": T("Palette", "調色盤") }, h("h4", {}, T("Add a node", "加節點")),
     ...KINDS.map(([k, en, tw]) => h("button", { class: `btn sm rt-pal k-${k}`, draggable: "true", "data-add": k, onclick: () => { addNode(k); drawPanel(); }, ondragstart: (e) => { e.dataTransfer.setData("text/x-kind", k); } }, T(en, tw))),
@@ -793,7 +798,7 @@ function buildEditor(ed) {
       h("div", { class: "actions" }, h("a", { class: "btn ghost", href: "#/workflows" }, T("All workflows", "全部流程")),ed.personal?workflowTrashButton({id:ed.id,name:ed.saved.name,version:ed.saved.version,trashRevision:ed.trash?.revision??0},ed.trash?.deleted===true):null, ed.held?h("span",{class:"faint","data-workflow-held":"1"},T(ed.held.en,ed.held.zh)):ed.selectable===false?h("span",{class:"faint","data-workflow-unavailable":"1"},T("Historical or internal workflow · unavailable for new tasks","歷史或內部流程 · 不提供新任務使用")):ed.def.origin?h("button",{class:"btn primary","data-ed-run":ed.id,onclick:async(e)=>{if(ed.dirty){say(T("Save your edits as a new version before Run.","執行前請先把修改存成新版本。"));return;}e.target.disabled=true;try{const input=await startInputs(ed.def,workflowBrief(ed),value=>{saveWorkflowBrief(ed,value);direction.value=value;});if(input===null)return;const r=await startOwnRun({workflow:ed.id,version:ed.saved.version,title:ed.def.name,text:input.text,params:input.params});if(r){RN.list=null;location.hash=`#/run/${r.id}`;}}catch(err){say(err.message);}finally{e.target.disabled=false;}}},T("Run…","執行…")):h("a", { class: "btn", href: "#/runs", "data-start-run": ed.id, onclick: () => { RN.prefill = ed.id; } }, T("Start a task", "開始一個任務")))),
     h("div", { class: "rt-toolbar" }, verSel, exportButton, h("button", { class: "btn sm", "aria-label": T("Zoom in", "放大"), onclick: () => svgZoom(1 / 1.2) }, "+"), h("button", { class: "btn sm", "aria-label": T("Zoom out", "縮小"), onclick: () => svgZoom(1.2) }, "−"),
       h("div", { class: "seg rt-viewseg", role: "group", "aria-label": T("Graph view", "流程圖檢視") }, ["simple", "detail"].map((k) => h("button", { type: "button", "data-view-toggle": k, "aria-pressed": String(gview === k), onclick: () => setView(k) },
-        h("span", { class: "keep" }, k === "simple" ? T("Overview", "總覽") : T("Edit graph", "編輯流程"))))),
+        h("span", { class: "keep" }, k === "simple" ? T("Overview", "總覽") : T("Edit graph", "編輯流程"))))), allEdgesButton,
       h("button", { class: "btn sm", "data-tidy": "1", title: T("Lay the graph out again automatically", "自動重新排版"), onclick: async () => { await setMode("auto"); view = null; draw(); say(T("Tidy layout", "已自動排版")); } }, T("Tidy layout", "整理排版")),
       h("button", { class: "btn sm", "data-fit": "1", onclick: () => { const g = canvas.querySelector("svg.rt-graph"); if (g) fit(g, "all"); } }, T("Fit to view", "全部顯示")),
       runPick, note, saveButton, status, overlayStatus),
@@ -809,12 +814,12 @@ function buildEditor(ed) {
   more.append(menu);
   more.addEventListener('toggle',()=>{if(!more.open)return;const rect=more.getBoundingClientRect(),width=Math.min(520,innerWidth*.85);menu.style.left=Math.max(8,Math.min(rect.left,innerWidth-width-16))+'px';menu.style.top=Math.min(rect.bottom+8,innerHeight-200)+'px';});
   const viewControls=toolbar.querySelector('.rt-viewseg');
-  for(const child of [...toolbar.children])if(![verSel,viewControls,note,saveButton,status,runPick,overlayStatus].includes(child))menu.append(child);
+  for(const child of [...toolbar.children])if(![verSel,viewControls,allEdgesButton,note,saveButton,status,runPick,overlayStatus].includes(child))menu.append(child);
   const trash=headingActions.querySelector('[data-workflow-trash],[data-workflow-restore]');if(trash)menu.append(trash);
   if(ed.def.origin){menu.append(briefPanel,stepList,compareVersions);if(!ed.trash?.deleted)menu.append(reuse);}
   const paletteTools=h('button',{class:'btn sm',type:'button','data-editor-add-tools':'',onclick:()=>{more.open=false;(gview==='detail'?palette:paletteNote).scrollIntoView({block:'nearest'});}},T('Add steps and checks','新增節點與檢查'));menu.append(paletteTools);
   menu.addEventListener('click',event=>{if(event.target.closest('button')&&!event.target.closest('[data-workflow-compare],[data-workflow-reuse]'))more.open=false;});
-  saveHome=h('div',{class:'wf-editor-save-home'},note,saveButton);toolbar.replaceChildren(verSel,viewControls,historyHome,more,saveHome,status,runPick,overlayStatus);headingActions.prepend(toolbar);toolbar.after(h('p',{class:'faint','data-editor-history-help':''},T('Undo/Redo applies to this editing session. Saving or opening another version starts a new history.', '還原／重做只適用這次編輯；儲存或開啟其他版本後會重新開始。')));placeSaveControls();
+  saveHome=h('div',{class:'wf-editor-save-home'},note,saveButton);toolbar.replaceChildren(verSel,viewControls,allEdgesButton,historyHome,more,saveHome,status,runPick,overlayStatus);headingActions.prepend(toolbar);toolbar.after(h('p',{class:'faint','data-editor-history-help':''},T('Undo/Redo applies to this editing session. Saving or opening another version starts a new history.', '還原／重做只適用這次編輯；儲存或開啟其他版本後會重新開始。')));placeSaveControls();
   return root;
 }
 
