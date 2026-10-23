@@ -50,4 +50,8 @@ export const binArgv = (bin: string, args: string[]) => (isScript(bin) ? [proces
  *  some flags (--statsig-overrides, --disable-project-configs), so the operand never starts with "-" either; and a lone word
  *  operand naming one of its subcommands (worker, update, logout, about …) runs that subcommand even after `--`, so a prompt
  *  with no whitespace in it never stands alone either. */
+/** A cursor-agent child's environment without the variables that tie it to a terminal's persistent session: Studio started inside
+ *  one (CURSOR_AGENT_PERSIST_SESSION, tmux's TMUX*) would make cursor-agent ignore SIGINT and SIGTERM (its y1()), and rebind
+ *  chats in the user's /tmp/cursor-agent-persist-<uid>. */
+export const cursorEnv = (env: Record<string, string>): Record<string, string> => Object.fromEntries(Object.entries(env).filter(([k]) => !/^(TMUX(_|$)|CURSOR_AGENT_(PERSIST|TMUX))/.test(k)));
 export const cursorPrompt = (text: string) => (/^-|^\S+$/.test(text) ? ` ${text}` : text);
