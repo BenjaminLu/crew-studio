@@ -80,5 +80,29 @@ console.log("scan count and decoding work");
   refused("9 full AC passes over a 2048x2048 frame", ac(9), /too much decoding work/);
 }
 
+console.log("frame size");
+{
+  const baseline = (w: number, h: number, sampling: number[], data: number[]) => jpeg(SOI, DQT, DHT_SLOW, sof(0xc0, w, h, sampling), sos(range(sampling.length).map((i) => i + 1), 0, 63), data, EOI);
+  refused("a 4096x4096 3-component 4x4-sampled baseline frame with no data", baseline(4096, 4096, [0x44, 0x44, 0x44], []), /dimensions/, 2000, 50);
+  refused("a 2048x2560 frame (5.2 MP) with no data", baseline(2048, 2560, [0x11], []), /dimensions/, 2000, 50);
+  // what Cursor's GenerateImage returns, 4:2:0 as its JPEGs are; zero blocks with the EOB-first table
+  const zero = (w: number, h: number) => { const mcus = Math.ceil(w / 16) * Math.ceil(h / 16); return zeroBlocks(mcus * 6); };
+  const color = (w: number, h: number) => jpeg(SOI, DQT, DHT, sof(0xc0, w, h, [0x22, 0x11, 0x11]), sos([1, 2, 3], 0, 63), zero(w, h), EOI);
+  for (const [w, h] of [[1024, 1024], [1536, 1024], [1024, 1536], [1376, 768], [3168, 1344]]) {
+    const t = performance.now(), got = decodeJpeg(color(w, h)), took = performance.now() - t;
+    ok(got.width === w && got.height === h && got.rgb.length === w * h * 3 && took < 2000, `a ${w}x${h} color JPEG decodes`, `${took.toFixed(0)} ms`);
+  }
+  refused("a 2048x2560 color JPEG with all its data", color(2048, 2560), /dimensions/);
+  // the largest frame allowed (3 components, 4:4:4, 2048x2304) and the most work: DC, then 7 AC refinement passes of band
+  // 1..63 that each read no bit, every block's coefficients being zero
+  const w = 2048, h = 2304, blocks = (w / 8) * (h / 8);
+  const refine = eobRuns(blocks), first = new Bits(); for (let i = 0; i < blocks * 3; i++) first.put(0, 4);
+  const worst = jpeg(SOI, DQT, DHT, sof(0xc2, w, h, [0x11, 0x11, 0x11]), sos([1, 2, 3], 0, 0), first.done(), range(21).flatMap((i) => [...sos([1 + (i % 3)], 1, 63, 0x10), ...refine]), EOI);
+  Bun.gc(true);
+  const rss = process.memoryUsage().rss, t = performance.now(), got = decodeJpeg(worst), took = performance.now() - t, grew = (process.memoryUsage().rss - rss) / 1048576;
+  ok(got.width === w && took < 2000 && grew < 400, `the most decoding work a ${w}x${h} 3-component frame may ask for decodes within 2000 ms and 400 MB`, `${took.toFixed(0)} ms, +${grew.toFixed(0)} MB`);
+  console.log(`  the most work allowed: ${took.toFixed(1)} ms, RSS +${grew.toFixed(0)} MB`);
+}
+
 console.log(`jpeg-hostile: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

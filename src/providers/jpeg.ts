@@ -2,9 +2,14 @@
 // image consumer (the image artifact, the coffee kit's media, verifyImagePng) takes a PNG. Baseline, extended-Huffman and
 // progressive 8-bit JPEGs with one (gray) or three (YCbCr, or RGB under Adobe transform 0) components; arithmetic coding,
 // lossless, 12-bit and CMYK are refused. Chroma is upsampled by replication.
+// It runs synchronously in Studio's server process: a Worker would need a second entrypoint in the compiled binary. Instead
+// every scan must carry the data of all its blocks, and the frame size, scan count and decoding work are capped, so any
+// input decodes or is refused within about half a second (tests/jpeg-hostile.ts times the most work allowed).
 import { deflateSync } from "node:zlib";
 
-const MAX_BYTES = 16 * 1024 * 1024, MAX_SIDE = 4096, MAX_PIXELS = 16_777_216, MAX_SCANS = 64;
+// Cursor's GenerateImage returns 1024x1024, 1536x1024, 1024x1536 or 1376x768; the pixel cap keeps headroom for Gemini's 2K
+// sizes (at most 3168x1344, 4.26 MP), and the side cap is verifyImagePng's
+const MAX_BYTES = 16 * 1024 * 1024, MAX_SIDE = 4096, MAX_PIXELS = 4_718_592, MAX_SCANS = 64;
 // decoding work, counted as blocks a scan visits times the coefficients of its band, may reach this many full passes over
 // every coefficient: a baseline image is one, libjpeg's and mozjpeg's progressive scripts stay under four
 const MAX_PASSES = 8;
@@ -109,13 +114,18 @@ export function decodeJpeg(input: Uint8Array): { width: number; height: number; 
     return { plane, w, c };
   });
   const rgb = new Uint8Array(f.width * f.height * 3), sx = planes.map((p) => p.c.h / f.maxH), sy = planes.map((p) => p.c.v / f.maxV);
-  const rgbSpace = planes.length === 3 && adobeTransform === 0;
-  for (let y = 0; y < f.height; y++) for (let x = 0; x < f.width; x++) {
-    const at = (y * f.width + x) * 3, s = planes.map((p, i) => p.plane[Math.floor(y * sy[i]) * p.w + Math.floor(x * sx[i])]);
-    if (s.length === 1) { rgb[at] = rgb[at + 1] = rgb[at + 2] = s[0]; continue; }
-    if (rgbSpace) { rgb[at] = s[0]; rgb[at + 1] = s[1]; rgb[at + 2] = s[2]; continue; }
-    const [Y, cb, cr] = [s[0], s[1] - 128, s[2] - 128];
-    rgb[at] = clamp(Y + 1.402 * cr); rgb[at + 1] = clamp(Y - 0.344136 * cb - 0.714136 * cr); rgb[at + 2] = clamp(Y + 1.772 * cb);
+  const rgbSpace = planes.length === 3 && adobeTransform === 0, [p0, p1, p2] = planes.map((p) => p.plane);
+  const cols = planes.map((_, i) => Int32Array.from({ length: f.width }, (_, x) => Math.floor(x * sx[i])));
+  for (let y = 0; y < f.height; y++) {
+    const [r0, r1, r2] = planes.map((p, i) => Math.floor(y * sy[i]) * p.w);
+    for (let x = 0, at = y * f.width * 3; x < f.width; x++, at += 3) {
+      const Y = p0[r0 + cols[0][x]];
+      if (!p1) { rgb[at] = rgb[at + 1] = rgb[at + 2] = Y; continue; }
+      const s1 = p1[r1 + cols[1][x]], s2 = p2[r2 + cols[2][x]];
+      if (rgbSpace) { rgb[at] = Y; rgb[at + 1] = s1; rgb[at + 2] = s2; continue; }
+      const cb = s1 - 128, cr = s2 - 128;
+      rgb[at] = clamp(Y + 1.402 * cr); rgb[at + 1] = clamp(Y - 0.344136 * cb - 0.714136 * cr); rgb[at + 2] = clamp(Y + 1.772 * cb);
+    }
   }
   return { width: f.width, height: f.height, rgb };
 }
