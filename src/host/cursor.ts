@@ -15,9 +15,9 @@
 // cleanEnv drops every *_API_KEY: the caller hands the Cursor API key back explicitly in opts.env.CURSOR_API_KEY.
 //   CREW_HOST_CURSOR_BIN  executable (default "cursor-agent"; a .mjs path runs under bun: test stub)
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { dropPrivateDir, nativeEndpoint, privateDir } from "./claude";
 import { cursorInput } from "../attachments";
 import { binArgv, cursorPrompt } from "./jsonl";
@@ -39,33 +39,61 @@ const resultOf = (r: any): { ok: boolean; text?: string } => {
   return { ok: false, text: String(r?.rejected?.reason ?? r?.permissionDenied?.error ?? r?.error?.errorMessage ?? "").slice(0, 2000) || undefined };
 };
 
-/** An explicit project's cli-config.json permissions: read and write inside the project folder only, plus reading this turn's
- *  attached PDFs. Shell is denied: with --sandbox enabled cursor-agent auto-runs an unlisted command in its sandbox, and that
- *  command inherits cursor-agent's environment, CURSOR_API_KEY included (an allow-listed one would even run outside the sandbox).
- *  .cursor/, .claude/ and .git/ stay read-only: a hook or git hook written there would run a command with that environment. */
+/** An explicit project's cli-config.json permissions. cursor-agent (InteractivePermissionsService) checks a deny first and then an
+ *  explicit allow, which skips its own protection of config files (.cursor/, .claude/*.json, .vscode/, .idea/, *.code-workspace,
+ *  .git/hooks/, .git/config …, matched in any case), so there is no Write allow at all: a write inside the folder is allowed by
+ *  default and those files stay protected. The denies repeat them for nested folders too; they are matched case-sensitively, so
+ *  they back the protection up rather than replace it. Shell is denied: a command inherits cursor-agent's environment,
+ *  CURSOR_API_KEY included. Every MCP tool is denied. The Read allow names this turn's attached PDFs only. */
 export function cursorProjectPermissions(ws: string, reads: string[] = []): { allow: string[]; deny: string[] } {
-  return { allow: [`Read(${ws}/**)`, `Write(${ws}/**)`, ...reads.map((f) => `Read(${f})`)], deny: ["Shell(*)", `Write(${ws}/.cursor/**)`, `Write(${ws}/.claude/**)`, `Write(${ws}/.git/**)`] };
+  return { allow: reads.map((f) => `Read(${f})`),
+    deny: ["Shell(*)", "Mcp(*:*)", ...[".cursor", ".claude", ".git", ".vscode", ".idea"].map((d) => `Write(${ws}*/${d}/**)`), `Write(${ws}*.code-workspace)`, `Write(${ws}*/.cursorignore)`] };
 }
 
-/** The project files whose hooks cursor-agent runs (sessionStart, stop, afterFileEdit, postToolUse …) in its own environment,
- *  CURSOR_API_KEY included; Shell(*) does not stop a hook. It reads .cursor/hooks.json in a --trust'ed workspace and merges
- *  Claude Code's .claude/settings.json and settings.local.json. The user-level files (~/.cursor/hooks.json, team hooks,
- *  plugins, ~/.claude/settings.json) come from os.homedir(), which is this host's private HOME, so none exists there; the Mac's
- *  enterprise file (/Library/Application Support/Cursor/hooks.json) is its administrator's, not the project's. */
-export const CURSOR_HOOK_FILES = [".cursor/hooks.json", ".claude/settings.json", ".claude/settings.local.json"];
-/** The hook files present in a project folder; one that cannot be read or parsed counts as having hooks. */
-export function cursorProjectHooks(ws: string): string[] {
-  return CURSOR_HOOK_FILES.filter((f) => {
-    let text: string;
-    try { text = readFileSync(join(ws, f), "utf8"); } catch (e: any) { return e?.code !== "ENOENT" && e?.code !== "ENOTDIR"; }
-    try { const h = JSON.parse(text)?.hooks; return h !== undefined && h !== null && !(typeof h === "object" && !Array.isArray(h) && Object.keys(h).length === 0); } catch { return true; }
-  });
+/** The folders cursor-agent takes project settings from: the workspace and each one above it up to the git root, the nearest
+ *  holding .git (utils/git.ts p()), else the workspace alone. */
+function projectChain(ws: string): string[] {
+  let root = ws;
+  for (let d = ws; ; d = dirname(d)) { if (existsSync(join(d, ".git"))) { root = d; break; } if (dirname(d) === d) break; }
+  const out: string[] = [];
+  for (let d = ws; ; d = dirname(d)) { out.push(d); if (d === root || dirname(d) === d) return out; }
+}
+const hasHooks = (f: string) => {
+  let text: string;
+  try { text = readFileSync(f, "utf8"); } catch (e: any) { return e?.code !== "ENOENT" && e?.code !== "ENOTDIR"; }
+  try { const h = JSON.parse(text)?.hooks; return h !== undefined && h !== null && !(typeof h === "object" && !Array.isArray(h) && Object.keys(h).length === 0); } catch { return true; }
+};
+const entries = (dir: string): string[] | null => { try { return readdirSync(dir); } catch (e: any) { return e?.code === "ENOENT" || e?.code === "ENOTDIR" ? [] : null; } };
+/** The project files cursor-agent would act on, in the workspace or any folder above it up to the git root, their names in any
+ *  case (the Mac's disk ignores case): .cursor/hooks.json and Claude Code's .claude/settings.json and settings.local.json with
+ *  hooks (hooks-exec runs them in cursor-agent's own environment, CURSOR_API_KEY included, outside its sandbox; Shell(*) does not
+ *  stop a hook), any .cursor/cli.json (merged into its config, permissions and approval mode included) and .cursor/sandbox.json
+ *  (widens its sandbox). One that cannot be read or parsed counts. The user-level files (~/.cursor/hooks.json, team hooks,
+ *  plugins, ~/.claude/settings.json) come from os.homedir(), this host's private HOME, so none exists there. */
+export function cursorProjectHooks(folder: string): string[] {
+  let ws = folder; try { ws = realpathSync(folder); } catch {}
+  const found: string[] = [], rel = (p: string) => relative(ws, p) || ".";
+  for (const dir of projectChain(ws)) {
+    const top = entries(dir);
+    if (!top) { found.push(rel(dir)); continue; }
+    for (const name of top) {
+      const kind = name.toLowerCase();
+      if (kind !== ".cursor" && kind !== ".claude") continue;
+      const files = entries(join(dir, name));
+      if (!files) { found.push(rel(join(dir, name))); continue; }
+      for (const f of files) {
+        const l = f.toLowerCase(), p = join(dir, name, f);
+        if (kind === ".cursor" ? l === "cli.json" || l === "sandbox.json" || l === "hooks.json" && hasHooks(p) : (l === "settings.json" || l === "settings.local.json") && hasHooks(p)) found.push(rel(p));
+      }
+    }
+  }
+  return found;
 }
 export const cursorHooksRefusal = (files: string[], turn = false) => turn
-  ? { en: `Not sent: ${files.join(", ")} in this project now defines hooks, and cursor-agent would run them with the Cursor API key in their environment. Remove the hooks, or stop Firstmate on Cursor here.`,
-      "zh-TW": `未送出：這個專案的 ${files.join("、")} 現在定義了 hooks，cursor-agent 會在帶有 Cursor API key 的環境中執行它們。請移除這些 hooks，或停止這裡的 Cursor Firstmate。` }
-  : { en: `Firstmate on Cursor does not start in this project: ${files.join(", ")} defines hooks, and cursor-agent would run them with the Cursor API key in their environment. Remove the hooks, or start Firstmate on Codex here.`,
-      "zh-TW": `Cursor 上的 Firstmate 不在這個專案啟動：${files.join("、")} 定義了 hooks，cursor-agent 會在帶有 Cursor API key 的環境中執行它們。請移除這些 hooks，或在這裡改用 Codex 啟動 Firstmate。` };
+  ? { en: `Not sent: ${files.join(", ")} in this project now defines hooks or cursor-agent settings; cursor-agent would run those hooks with the Cursor API key in their environment, or take its permissions from those settings. Remove them, or stop Firstmate on Cursor here.`,
+      "zh-TW": `未送出：這個專案的 ${files.join("、")} 現在定義了 hooks 或 cursor-agent 設定；cursor-agent 會在帶有 Cursor API key 的環境中執行這些 hooks，或依這些設定決定它的權限。請移除它們，或停止這裡的 Cursor Firstmate。` }
+  : { en: `Firstmate on Cursor does not start in this project: ${files.join(", ")} defines hooks or cursor-agent settings; cursor-agent would run those hooks with the Cursor API key in their environment, or take its permissions from those settings. Remove them, or start Firstmate on Codex here.`,
+      "zh-TW": `Cursor 上的 Firstmate 不在這個專案啟動：${files.join("、")} 定義了 hooks 或 cursor-agent 設定；cursor-agent 會在帶有 Cursor API key 的環境中執行這些 hooks，或依這些設定決定它的權限。請移除它們，或在這裡改用 Codex 啟動 Firstmate。` };
 
 export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-agent"): Host {
   return {
@@ -159,8 +187,9 @@ export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-age
           return new Promise((resolve) => {
             turn = { resolve };
             let reply = "", ended = false;
-            // an explicit project: cursor-agent's own sandbox on, never --force, and the project's MCP servers are not auto-approved
-            const mode = project ? ["--sandbox", "enabled"] : ["--approve-mcps", "--sandbox", "disabled"];
+            // an explicit project: cursor-agent's own sandbox on, never --force, the project's MCP servers not auto-approved and its
+            // .cursor/cli.json files not merged into the config
+            const mode = project ? ["--sandbox", "enabled", "--disable-project-configs"] : ["--approve-mcps", "--sandbox", "disabled"];
             const args = ["-p", "--output-format", "stream-json", "--trust", ...mode, "--workspace", ws, ...(model ? ["--model", model] : []), ...(chatId ? ["--resume", chatId] : []), ...input.args, "--", cursorPrompt(input.text)];
             let r: ReturnType<typeof run>;
             try {
