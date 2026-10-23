@@ -90,14 +90,18 @@ function previewBox(state, label, child) {
 }
 // Every Library render builds new cards, and Chrome lets only one request per identical URL through at a time, so a
 // render that started its own fetch would queue behind each discarded card's. Renders share one in-flight load, and a
-// version file never changes, so a success is kept; it is reused only well inside its ten-minute capability.
-const staticLoads = new Map();
+// version file never changes, so only the analysis is kept. A capability can stop working at any time (Studio restarts
+// with a new session), and the iframe load event also fires for its error page, so every render gets a fresh one.
+const staticLoads = new Map(), staticVisible = new Map(), capLoads = new Map();
+function freshCap(href) {
+  if (!capLoads.has(href)) capLoads.set(href, afCapFor(href).then((src) => { if (src === href) throw new Error("Static preview capability unavailable"); return src; }).finally(() => capLoads.delete(href)));
+  return capLoads.get(href);
+}
 function staticPreview(href) {
-  const hit = staticLoads.get(href);
-  if (hit && (!hit.at || Date.now() - hit.at < 5 * 60e3)) return hit.load;
+  if (staticVisible.has(href)) return freshCap(href).then((src) => ({ src, visible: staticVisible.get(href) }));
+  if (staticLoads.has(href)) return staticLoads.get(href);
   const load = (async () => {
-    const src = await afCapFor(href);
-    if (src === href) throw new Error("Static preview capability unavailable");
+    const src = await freshCap(href);
     const response = await fetch(src, { signal: AbortSignal.timeout(10000) });
     if (!response.ok) throw new Error(`Preview HTTP ${response.status}`);
     const html = await response.text();
@@ -106,10 +110,10 @@ function staticPreview(href) {
     const styledSurface = [...doc.querySelectorAll("style")].some(el => /background(?:-image)?\s*:[^;}]+|content\s*:\s*["']/i.test(el.textContent));
     doc.querySelectorAll("script,style,template,noscript,head,title,meta,link").forEach(el => el.remove());
     const staticContent = doc.textContent.trim() || doc.querySelector("svg:not(:empty),input,button") || [...doc.querySelectorAll("img,video,iframe")].some(el => String(el.getAttribute("src") || el.getAttribute("srcdoc") || "").trim()) || (styledSurface && doc.querySelector("body>*,div,section,main"));
+    staticVisible.set(href, !!staticContent);
     return { src, visible: !!staticContent };
-  })();
-  const entry = { load, at: 0 }; staticLoads.set(href, entry);
-  load.then(() => { entry.at = Date.now(); }, () => { if (staticLoads.get(href) === entry) staticLoads.delete(href); });
+  })().finally(() => staticLoads.delete(href));
+  staticLoads.set(href, load);
   return load;
 }
 function artPreview(a, v, big) {

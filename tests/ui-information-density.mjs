@@ -33,7 +33,8 @@ log.push({at:at+11000,kind:"tool",text:"fixture_single_tool",tool:"fixture_singl
 Object.assign(main,{state:"attached",host:"codex",model:"fixture-model",sessionId:session.id,busy:true,log,queue:[],approvals:[{id:"fixture-approval",tool:"fixture_read",summary:"Read fixture evidence only",expires:Date.now()+3600000}]});
 // The proxy never issues a Studio cookie: it cannot overwrite another local Studio's session.
 // Mutations are refused; UI state is local and API/media responses are fixtures.
-const delayedRequests=[];
+// Each capability is distinct, and those up to revokedCaps are refused like a capability from a previous Studio session.
+const delayedRequests=[];let capSeq=0,revokedCaps=0;
 const proxy=createServer(async(req,res)=>{try{
  const u=new URL(req.url,"http://fixture.local"), path=u.pathname;
  if(/^\/afc\/[^/]+\/loading-delayed\/1\/latest\.html$/.test(path))delayedRequests.push(req.headers["sec-fetch-dest"]);
@@ -43,9 +44,10 @@ const proxy=createServer(async(req,res)=>{try{
  if(path==="/api/main")return json(main);
  if(path==="/api/artifacts")return json({artifacts,render:{},runs:[]});
  if(path.startsWith("/af-cap/capability-denied/")){res.writeHead(403);res.end("Fixture capability refused");return;}
- if(path.startsWith("/af-cap/"))return json({cap:"fixture"});
+ if(path.startsWith("/af-cap/"))return json({cap:`fixture-${++capSeq}`});
  if(/^\/(af|afc)\//.test(path)){
   const parts=path.split("/"), offset=parts[1]==="afc"?1:0,id=decodeURIComponent(parts[2+offset]),file=parts.slice(4+offset).join("/");
+  if(offset&&Number(parts[2].split("-")[1])<=revokedCaps){res.writeHead(403,{"content-type":"text/html"});res.end("<h1>invalid or expired capability</h1>");return;}
   if(id==="missing-file"||id==="broken-image"){res.writeHead(404);res.end("Missing fixture file");return;}
   if(id==="loading-delayed")await new Promise(r=>setTimeout(r,1600));
   if(file==="movie.mp4"||file==="tone.wav"){res.writeHead(200,{"content-type":file.endsWith("mp4")?"video/mp4":"audio/wav"});res.end(readFileSync(join(tmp,file)));return;}
@@ -79,7 +81,7 @@ try{
  await page.locator('#chatWide').click();await page.setViewportSize({width:390,height:844});ok(near(await page.locator('#chat').evaluate(e=>e.getBoundingClientRect().width),390),"wide desktop chat becomes full-width phone sheet");await page.locator('#chatClose').click();
  await page.setViewportSize({width:1100,height:560});await page.goto(base+'/#/board');ok(await page.locator('.nav-labs-h').getAttribute('aria-expanded')==='false',"Labs initially collapsed");
  ok(await page.getByRole('button',{name:'實驗中',exact:true}).count()===1,"Labs disclosure arrow is not part of its accessible name");
- await page.locator('.nav-labs-h').click();ok(await page.locator('.nav').evaluate(e=>e.scrollWidth<=e.clientWidth+1&&getComputedStyle(e).overflowX==='hidden'),"expanded desktop Labs has no horizontal scrollbar or clipped labels");await page.reload();ok(await page.locator('.nav-labs-h').getAttribute('aria-expanded')==='true',"Labs expansion persisted");await page.locator('.nav-labs-h').click();await page.goto(base+'/#/doc/fixture');await page.waitForTimeout(100);ok(await page.locator('.nav-labs-h').getAttribute('aria-expanded')==='true'&&await page.locator('.nav-item[data-view=docs]').getAttribute('aria-current')==='page',"deep-linked Labs subpage expands and marks parent");
+ await page.locator('.nav-labs-h').click();ok(await page.locator('.nav').evaluate(e=>e.scrollWidth<=e.clientWidth+1&&getComputedStyle(e).overflowX==='hidden'),"expanded desktop Labs has no horizontal scrollbar or clipped labels");await page.reload();ok(await page.locator('.nav-labs-h').getAttribute('aria-expanded')==='true',"Labs expansion persisted");await page.locator('.nav-labs-h').click();await page.goto(base+'/#/doc/fixture');await page.waitForFunction(()=>document.querySelector('.nav-labs-h')?.getAttribute('aria-expanded')==='true'&&document.querySelector('.nav-item[data-view=docs]')?.getAttribute('aria-current')==='page');ok(await page.locator('.nav-labs-h').getAttribute('aria-expanded')==='true'&&await page.locator('.nav-item[data-view=docs]').getAttribute('aria-current')==='page',"deep-linked Labs subpage expands and marks parent");
  ok(await page.locator('#projH').isVisible()&&await page.locator('#navSettings').isVisible(),"Projects and Settings are visible rather than zero-size hidden links");ok(await page.locator('#navSettings').evaluate(e=>e.getBoundingClientRect().bottom<=innerHeight)&&await page.locator('#projH').evaluate(e=>e.getBoundingClientRect().bottom<=innerHeight),"Projects and Settings remain in viewport with expanded Labs at1100x560");await page.locator('#navSettings').click();ok(page.url().endsWith('#/settings'),"Settings reachable at short height");await page.locator('#projH').click();ok(page.url().endsWith('#/projects'),"Projects reachable at short height");await page.screenshot({path:join(shots,"short-navigation.png")});
  {
   // The chat cap follows the window; opening Studio in a narrow window must not overwrite the captain's saved width.
@@ -92,6 +94,9 @@ try{
   ok(c1200<820&&near(await p.locator('#chat').evaluate(e=>e.getBoundingClientRect().width),c1200)&&await saved()==='820',`1200px start clamps chat to ${c1200}px without overwriting saved width`);
   await p.setViewportSize({width:1600,height:900});await p.waitForFunction(()=>Math.abs(document.querySelector('#chat').getBoundingClientRect().width-680)<1);
   ok(await saved()==='820',"widening the window restores the saved wide chat up to the cap");await narrow.close();
+  const bad=await browser.newContext({viewport:{width:1440,height:900}});await bad.addInitScript(seed);await bad.addInitScript(()=>{if(window===top)localStorage.setItem("crew.chatW","wide");});
+  const q=await bad.newPage();q.on("pageerror",e=>errors.push(String(e)));await q.goto(base+"/#/board");await q.waitForSelector('#chatGrip',{state:'attached'});
+  ok(await q.locator('#chatGrip').evaluate(e=>e.getAttribute('aria-valuenow')==='400'&&e.getAttribute('aria-valuemin')==='360'&&!!e.getAttribute('aria-valuemax')),"an unreadable saved chat width starts at the default and still exposes the separator range");await bad.close();
  }
  await page.setViewportSize({width:1440,height:1000});await page.goto(base+'/#/library');await page.waitForSelector('[data-artifact=loading-delayed]');
  ok(await page.locator('[data-artifact=loading-delayed] [data-preview-state=loading]').count()===1,"delayed preview has named loading state");
@@ -112,9 +117,13 @@ try{
   await fresh.frameLocator('[data-artifact=loading-delayed] iframe').getByText('Verified static latest version').waitFor({timeout:15000});
   const count=k=>delayedRequests.filter(d=>d===k).length;
   ok(count("cap")===1&&count("empty")===1,`direct Library load fetches the delayed preview once (requests: ${delayedRequests.join(",")})`);
-  // Version files are immutable: a Library refresh reuses the analysed preview instead of fetching and parsing it again.
-  await fresh.getByRole('button',{name:'重新整理'}).click();await fresh.locator('[data-artifact=loading-delayed] [data-preview-state=ready]').waitFor({timeout:15000});
-  ok(count("cap")===1&&count("empty")===1,`Library refresh does not refetch a loaded preview (requests: ${delayedRequests.join(",")})`);await fresh.close();
+  // Version files are immutable: a Library refresh reuses the analysed preview instead of fetching and parsing it again,
+  // but the capability it was loaded with may no longer work (Studio restarted with a new session).
+  revokedCaps=capSeq;await fresh.getByRole('button',{name:'重新整理'}).click();
+  await fresh.waitForFunction(()=>{const s=document.querySelector('[data-artifact=loading-delayed] [data-preview-state]')?.dataset.previewState;return s&&s!=="loading";},null,{timeout:15000});
+  const frame=fresh.frameLocator('[data-artifact=loading-delayed] iframe');
+  ok(await fresh.locator('[data-artifact=loading-delayed] [data-preview-state=ready]').count()===1&&await frame.getByText('Verified static latest version').count()===1&&await frame.getByText('invalid or expired capability').count()===0,"Library refresh shows a revoked-capability preview with a new capability, never an error page as ready");
+  ok(count("cap")>1&&count("empty")===1,`Library refresh does not refetch or reparse a loaded preview (requests: ${delayedRequests.join(",")})`);await fresh.close();
  }
  ok(!errors.length,"no browser JavaScript errors");
  console.log(`ui-information-density: ${passed} passed; captures ${shots}`);

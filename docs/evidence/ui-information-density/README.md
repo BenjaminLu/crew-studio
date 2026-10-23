@@ -2,7 +2,7 @@
 
 **Draft pending independent review.** The delayed HTML thumbnail failure seen in native Chrome is explained and fixed (see "Delayed thumbnail timeout" below). No merge or deployment was performed.
 
-All images use synthetic conversations, permission prompts and local media fixtures. They contain no customer conversation or real account. Before: original `96b1098e` frontend against the same fixture. After: candidate frontend (`m25.js` SHA256 `748a51f6049aa63f075001e54283429c83c9f39a41063a3fae87aa685af8db70`; `m3.js` SHA256 `60d1d2964d108d98c0bafa4939e93354879813b583ded54aeea1e830129b7c96`). Browser screenshots are automated test evidence, separate from the root agent's native acceptance.
+All images use synthetic conversations, permission prompts and local media fixtures. They contain no customer conversation or real account. Before: original `96b1098e` frontend against the same fixture. After: candidate frontend (`m25.js` SHA256 `5ff3c2f92353f497b0f7bd5c1ddccd77b8c246a88603cdae1cd77bae8f82fadd`; `m3.js` SHA256 `a31915f1b79d2d64e989669998250d088b24f37f420ac421d9b91437087f994c`). Browser screenshots are automated test evidence, separate from the root agent's native acceptance.
 
 | Area | Before | Candidate |
 | --- | --- | --- |
@@ -21,7 +21,7 @@ All images use synthetic conversations, permission prompts and local media fixtu
 
 ## Validation and limits
 
-- `node tests/ui-information-density.mjs`: 35 assertions pass in bundled Chromium / installed Chrome (channel `chrome`), including a 96-tool burst, immediate repaint, narrow/short layouts, all preview states, actual delayed iframe heading, and a direct Library load that fetches the delayed preview exactly once. The same new assertions fail against the original frontend (no activity groups).
+- `node tests/ui-information-density.mjs`: 46 assertions pass in bundled Chromium, including a 96-tool burst, immediate repaint, narrow/short layouts, all preview states, actual delayed iframe heading, a direct Library load that fetches the delayed preview exactly once, and a Library refresh that reuses the analysis but takes a new capability when the old one is refused. The same new assertions fail against the original frontend (no activity groups).
 - Existing suites: Firstmate chat 35/0, backbone navigation 51/0, real media Library UI 122/0. Privacy/OpenCC checks pass in the managed worktree. These are fixtures, not paid-agent or external-service tests.
 - Required core is run separately from full CI. The managed worktree under the operator's protected configuration directory cannot run an unchanged staffing fixture CLI inside its sandbox. An exact-byte snapshot under the OS temporary directory, with normal Git metadata and locked dependencies, is used for core verification. Final result is reported in the PR; a green snapshot is not a claim that the original worktree command passed.
 

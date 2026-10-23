@@ -170,7 +170,7 @@ function setChatW(w, persist = true) {
 }
 (function initChat() {
   // The cap follows the current window, so startup only clamps on screen: a narrow window must not overwrite the saved width.
-  const w = Number(store.get("crew.chatW", "400")); if (w) setChatW(w, false);
+  setChatW(Number(store.get("crew.chatW", "400")) || 400, false);
   if (!isPhone() && store.get("crew.chatOpen", "1") === "1") document.body.classList.remove("chat-closed");
   $("#chatFab").addEventListener("click", () => openChat(true));
   $("#chatClose").addEventListener("click", () => openChat(false));
