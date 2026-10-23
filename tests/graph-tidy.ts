@@ -152,47 +152,74 @@ await section("layout modes", async () => {
 // the file itself: each section once (a fail-first branch must not carry a second copy that reads names declared later)
 { const src = readFileSync(join(here, "graph-tidy.ts"), "utf8"); const needle = "await sec" + "tion(\"the simple view lays every built-in workflow out\"";
   ok(src.split(needle).length - 1 === 1 && /^if \(!L\) \{ console\.log\(/m.test(src), "tests/graph-tidy.ts holds each section once, and its no-module branch only reports and exits"); }
-// Editable Overview represents the complete actual graph; run summaries stay projected.
+// Editable Overview: the main-path projection by default (deletion keeps disconnected steps for repair);
+// "Show all connections" (actualGraph) draws the complete actual graph; run summaries stay projected.
 {
   const compactDef=normalize(defs.find(d=>d.id==="code-firstmate")),compactBytes=JSON.stringify(compactDef),compact=L.layoutSimple(compactDef,{actualGraph:true,wrap:6});
   const compactCrossings=compact.edges.flatMap((e:any)=>compact.nodes.filter((n:any)=>L.sample(e,3).some((point:any)=>inside(point,n))).map((n:any)=>`${e.from}→${e.to} in ${n.id}`));
-  ok(compactCrossings.length===0,"compact full editor bus arcs avoid every actual node at six-column wrap",compactCrossings.join("; "));
+  ok(compactCrossings.length===0,"Show all connections: compact full editor bus arcs avoid every actual node at six-column wrap",compactCrossings.join("; "));
   const directions=new Set(compact.edges.filter((e:any)=>e.back).map((e:any)=>Math.sign(e.segs[2].b[0]-e.segs[2].a[0])));
-  ok(directions.has(-1)&&directions.has(1),"compact routing regression covers buses in both horizontal directions");
-  ok(JSON.stringify(compactDef)===compactBytes&&JSON.stringify(compact.edges.flatMap((e:any)=>e.index).sort((a:number,b:number)=>a-b))===JSON.stringify(compactDef.edges.map((_:any,i:number)=>i)),"bus routing preserves every original node, endpoint, condition/check object and edge identity");
+  ok(directions.has(-1)&&directions.has(1),"Show all connections: compact routing regression covers buses in both horizontal directions");
+  ok(JSON.stringify(compactDef)===compactBytes&&JSON.stringify(compact.edges.flatMap((e:any)=>e.index).sort((a:number,b:number)=>a-b))===JSON.stringify(compactDef.edges.map((_:any,i:number)=>i)),"Show all connections: bus routing preserves every original node, endpoint, condition/check object and edge identity");
+  ok(compact.nodes.length===32&&compact.edges.flatMap((e:any)=>e.index).length===75&&compact.edges.some((e:any)=>e.back),"Show all connections: code-firstmate draws all 32 steps and 75 connections, back edges included");
+  const editorDefault=L.layoutSimple(compactDef,{keepDisconnected:true,wrap:6}),edBadge=(k:string,kind:string)=>(editorDefault.badges[k]||[]).find((b:any)=>b.kind===kind);
+  ok(editorDefault.nodes.length===19&&editorDefault.edges.length===20&&!editorDefault.edges.some((e:any)=>e.back)&&(editorDefault.disconnected||[]).length===0,"editable Overview default: code-firstmate is the 19-node / 20-edge main path with no back edges",`${editorDefault.nodes.length}/${editorDefault.edges.length}`);
+  ok(edBadge("node:spec","loop")?.text==="↻ refine"&&edBadge("node:build","loop")?.text==="↻ fix"&&edBadge("node:door","ask")&&edBadge("stage:build","escalations")?.nodes.length===8,"editable Overview default: loops, the door question and escalations are badges");
   const def: any = {id:"delete-projection",nodes:["start","middle","tail","done"].map(id=>({id,kind:"hook",do:"note",label:"Repeated label"})),edges:[{from:"start",to:"middle"},{from:"middle",to:"tail"},{from:"tail",to:"done",when:"ok",checks:[{use:"fixture-check"}]}],roles:[]};
-  for(const removed of ["start","middle","done"]){const after={...def,nodes:def.nodes.filter((n:any)=>n.id!==removed),edges:def.edges.filter((e:any)=>e.from!==removed&&e.to!==removed)};const rendered=L.layoutSimple(after,{actualGraph:true});
-    ok(JSON.stringify(rendered.nodes.flatMap((n:any)=>n.members).sort())===JSON.stringify(after.nodes.map((n:any)=>n.id).sort()),`editor keeps exact surviving IDs after deleting ${removed}`);
-    ok(rendered.edges.flatMap((e:any)=>e.index).every((index:number)=>after.edges[index]),`editor edges retain original identities after deleting ${removed}`);
+  for(const removed of ["start","middle","done"]){const after={...def,nodes:def.nodes.filter((n:any)=>n.id!==removed),edges:def.edges.filter((e:any)=>e.from!==removed&&e.to!==removed)};
+    for(const [mode,opts] of [["Overview",{keepDisconnected:true}],["Show all connections",{actualGraph:true}]] as [string,any][]){const rendered=L.layoutSimple(after,opts);
+      ok(JSON.stringify(rendered.nodes.flatMap((n:any)=>n.members).sort())===JSON.stringify(after.nodes.map((n:any)=>n.id).sort()),`editor ${mode} keeps exact surviving IDs after deleting ${removed}`);
+      ok(JSON.stringify(rendered.edges.flatMap((e:any)=>e.index).sort())===JSON.stringify(after.edges.map((_:any,i:number)=>i)),`editor ${mode} edges retain original identities after deleting ${removed}`);
+    }
   }
   const disconnected:any={...def,nodes:[{id:"start",kind:"hook",do:"note",label:"Entry"},{id:"cycle-a",kind:"hook",do:"note",label:"Same",stage:"repair"},{id:"cycle-b",kind:"hook",do:"note",label:"Same",stage:"repair"},{id:"refine",kind:"loop",label:"Refine",args:{producer:"cycle-a"}}],edges:[{from:"cycle-a",to:"cycle-b",when:"ok"},{from:"cycle-a",to:"cycle-b",when:"fail",checks:[{use:"fixture-check"}]},{from:"cycle-b",to:"cycle-a"},{from:"cycle-a",to:"refine"},{from:"refine",to:"cycle-a",when:"retry"}]};
   const missingEndpoint={...def,nodes:[{id:"start",kind:"hook",do:"note",label:"Start",x:0,y:0}],edges:[{},{from:"start"},{to:"start"},{from:"missing",to:"start"},{from:"ghost",to:"ghost"},["start","start"]]};
   ok(L.place(missingEndpoint,{actualGraph:true}).edges.length===0&&L.layout(missingEndpoint,{actualGraph:true}).edges.length===0,"missing edge IDs cannot be mistaken for a real self-edge");
   const validSelf={...missingEndpoint,edges:[{from:"start",to:"start",when:"retry",checks:[{use:"fixture-self-check",params:{strict:true}}]}]};
   const selfPayload=JSON.stringify(validSelf.edges);
-  ok([L.layout,L.place,L.layoutSimple].every(fn=>{const g=fn(validSelf,{actualGraph:true});return JSON.stringify(g.edges.flatMap((e:any)=>e.index))==="[0]"&&g.edges[0].when==="retry"&&g.edges[0].checks===1&&JSON.stringify(validSelf.edges)===selfPayload;}),"every editable layout preserves the known self-edge index, condition and check payload");
+  ok([L.layout,L.place,L.layoutSimple].every(fn=>{const g=fn(validSelf,{actualGraph:true});return JSON.stringify(g.edges.flatMap((e:any)=>e.index))==="[0]"&&g.edges[0].when==="retry"&&g.edges[0].checks===1&&JSON.stringify(validSelf.edges)===selfPayload;}),"Edit graph and Show all connections preserve the known self-edge index, condition and check payload");
+  const selfOverview=L.layoutSimple(validSelf,{keepDisconnected:true});
+  ok(JSON.stringify(selfOverview.nodes.map((n:any)=>n.id))==='["start"]'&&selfOverview.edges.length===0&&JSON.stringify(validSelf.edges)===selfPayload,"editable Overview keeps a self-edge's node and, like other back edges, does not draw the self-edge");
   const normalLoop={...def,nodes:[{id:"start",kind:"hook",do:"note",label:"Start"},{id:"producer",kind:"agent",label:"Build"},{id:"refine",kind:"loop",label:"Refine",args:{producer:"producer"}},{id:"done",kind:"hook",do:"note",label:"Done"}],edges:[{from:"start",to:"producer"},{from:"producer",to:"refine"},{from:"refine",to:"producer",when:"retry"},{from:"refine",to:"done",when:"pass"}]};
-  ok(JSON.stringify(L.layoutSimple(normalLoop,{actualGraph:true}).nodes.map((n:any)=>n.id).sort())===JSON.stringify(normalLoop.nodes.map(n=>n.id).sort()),"editable Overview shows the actual connected loop from the outset");
-  const summary=L.layoutSimple(disconnected),editor=L.layoutSimple(disconnected,{actualGraph:true});
+  ok(JSON.stringify(L.layoutSimple(normalLoop))===JSON.stringify(L.layoutSimple(normalLoop,{keepDisconnected:true}))&&L.layoutSimple(normalLoop,{keepDisconnected:true}).badges["node:producer"]?.[0]?.kind==="loop","editable Overview folds a normal connected loop into its badge exactly like the run Overview");
+  ok(JSON.stringify(L.layoutSimple(normalLoop,{actualGraph:true}).nodes.map((n:any)=>n.id).sort())===JSON.stringify(normalLoop.nodes.map(n=>n.id).sort()),"Show all connections draws the actual connected loop");
+  const summary=L.layoutSimple(disconnected),editor=L.layoutSimple(disconnected,{keepDisconnected:true});
   ok(summary.nodes.length===1&&summary.nodes[0].id==="start", "run Overview preserves its existing entry-path summary");
-  ok(JSON.stringify(editor.nodes.flatMap((n:any)=>n.members).sort())===JSON.stringify(disconnected.nodes.map((n:any)=>n.id).sort()),"editor retains all disconnected cyclic/loop component IDs");
-  ok(JSON.stringify(editor.edges.flatMap((e:any)=>e.index).sort())===JSON.stringify(disconnected.edges.map((_:any,i:number)=>i)),"disconnected parallel conditions, checks, back/loop edges retain every original index");
+  ok(JSON.stringify(editor.nodes.flatMap((n:any)=>n.members).sort())===JSON.stringify(disconnected.nodes.map((n:any)=>n.id).sort())&&JSON.stringify([...(editor.disconnected||[])].sort())==='["cycle-a","cycle-b","refine"]',"editable Overview retains all disconnected cyclic/loop component IDs");
+  ok(JSON.stringify(editor.edges.flatMap((e:any)=>e.index).sort())===JSON.stringify(disconnected.edges.map((_:any,i:number)=>i)),"editable Overview: disconnected parallel conditions, checks, back/loop edges retain every original index");
   ok(!Object.values(editor.badges).flat().some((b:any)=>b.loop==="refine"),"visible disconnected loop is not also folded into a duplicate badge");
-  const folded=L.layoutSimple(disconnected,{actualGraph:true,collapsed:["repair"]});
+  const passLoop:any={id:"pass-loop",nodes:[{id:"start",kind:"hook",do:"note",label:"Entry"},{id:"prod",kind:"hook",do:"note",label:"Produce"},{id:"fix",kind:"loop",label:"Fix",args:{producer:"prod"}},{id:"done",kind:"hook",do:"note",label:"Done"}],edges:[{from:"start",to:"prod"},{from:"fix",to:"prod",when:"retry"},{from:"fix",to:"done",when:"pass"}]};
+  const passView=L.layoutSimple(passLoop,{keepDisconnected:true}),passEdge=passView.edges.find((e:any)=>e.index.includes(2));
+  ok(passEdge?.from==="fix"&&passEdge?.to==="done"&&!passView.edges.some((e:any)=>e.from==="prod"&&e.to==="done"),"a drawn disconnected loop's pass edge is drawn from the loop, not from its producer",JSON.stringify(passView.edges.map((e:any)=>[e.from,e.to,e.index])));
+  const folded=L.layoutSimple(disconnected,{keepDisconnected:true,collapsed:["repair"]});
   ok(folded.nodes.some((n:any)=>n.kind==="stage"&&n.members.includes("cycle-a")&&n.members.includes("cycle-b")),"collapsed disconnected members retain an explicit expandable stage representation");
-  ok(L.layoutSimple({...def,nodes:[],edges:[]},{actualGraph:true}).nodes.length===0,"deleting the last node leaves a truthful empty editor");
-  ok([L.layout,L.layoutSimple,L.place].every(fn=>{const g=fn({...def,nodes:[],edges:[]},{actualGraph:true});return g.nodes.length===0&&Object.values(g.bbox).every(Number.isFinite);}),"all empty graph layouts have finite bounds");
-  ok([L.layout,L.layoutSimple,L.place].every(fn=>JSON.stringify(fn({...def,nodes:[],edges:[]},{actualGraph:true}).bbox)===JSON.stringify({x:0,y:0,w:L.COL*2,h:L.ROW*2})),"an empty graph is framed as two layout columns by two rows, from the shared layout constants");
+  for(const [mode,opts] of [["Overview",{keepDisconnected:true}],["Show all connections",{actualGraph:true}],["run Overview",{}]] as [string,any][]){
+    ok(L.layoutSimple({...def,nodes:[],edges:[]},opts).nodes.length===0,`deleting the last node leaves a truthful empty ${mode}`);
+    ok([L.layout,L.layoutSimple,L.place].every(fn=>{const g=fn({...def,nodes:[],edges:[]},opts);return g.nodes.length===0&&Object.values(g.bbox).every(Number.isFinite);}),`all empty graph layouts have finite bounds (${mode})`);
+    ok([L.layout,L.layoutSimple,L.place].every(fn=>JSON.stringify(fn({...def,nodes:[],edges:[]},opts).bbox)===JSON.stringify({x:0,y:0,w:L.COL*2,h:L.ROW*2})),`an empty graph is framed as two layout columns by two rows, from the shared layout constants (${mode})`);
+  }
   const fork={...def,nodes:[...def.nodes,{id:"branch",kind:"hook",do:"note",label:"Branch"}],edges:[...def.edges,{from:"start",to:"branch"},{from:"branch",to:"done"}]};
   const forkAfter={...fork,nodes:fork.nodes.filter(n=>n.id!=="middle"),edges:fork.edges.filter(e=>e.from!=="middle"&&e.to!=="middle")};
-  const forkView=L.layoutSimple(forkAfter,{actualGraph:true});
+  const forkView=L.layoutSimple(forkAfter,{keepDisconnected:true});
   ok(forkView.nodes.some((n:any)=>n.id==="tail")&&forkView.nodes.some((n:any)=>n.id==="branch"),"fork deletion preserves both the still-connected branch and isolated downstream tail");
+  // What the Overview lets a captain reach: drawn steps, plus steps carried by a badge drawn on a drawn node or stage.
+  const reachable=(v:any)=>{const drawn=new Set(v.nodes.filter((n:any)=>n.kind==="node").map((n:any)=>n.id)),stages=new Set([...v.stages.map((s:any)=>s.id),...v.nodes.filter((n:any)=>n.kind==="stage").map((n:any)=>n.stage)]),out=new Set(v.nodes.flatMap((n:any)=>n.members));
+    for(const [k,bs] of Object.entries(v.badges) as [string,any[]][]){const at=k.indexOf(":"),kind=k.slice(0,at),id=k.slice(at+1);if(kind==="node"?!drawn.has(id):!stages.has(id))continue;
+      for(const b of bs)for(const x of b.kind==="loop"?[b.loop]:b.kind==="ask"?[b.node]:b.nodes)out.add(x);}
+    return out;};
   for(const rawSource of defs){const source=normalize(rawSource);const golden=JSON.stringify(L.layoutSimple(source));
-    ok(JSON.stringify(L.layoutSimple(source,{actualGraph:true}).nodes.flatMap((n:any)=>n.members).sort())===JSON.stringify(source.nodes.map((n:any)=>n.id).sort()),`${source.id}: editor Overview initially represents every actual node`);
+    ok(JSON.stringify(L.layoutSimple(source,{keepDisconnected:true}))===golden,`${source.id}: fully connected editable Overview is exactly the folded main-path projection`);
+    ok(JSON.stringify(L.layoutSimple(source,{actualGraph:true}).nodes.flatMap((n:any)=>n.members).sort())===JSON.stringify(source.nodes.map((n:any)=>n.id).sort()),`${source.id}: Show all connections represents every actual node`);
     for(const index of source.nodes.keys()){const removed=source.nodes[index].id;const after={...source,nodes:source.nodes.filter((n:any)=>n.id!==removed),edges:source.edges.filter((e:any)=>e.from!==removed&&e.to!==removed)};if(!after.nodes.length)continue;
-      const view=L.layoutSimple(after,{actualGraph:true}),represented=new Set(view.nodes.flatMap((n:any)=>n.members));
-      ok(JSON.stringify([...represented].sort())===JSON.stringify(after.nodes.map((n:any)=>n.id).sort()),`${source.id}: deleting ${removed} changes only the selected visible ID`);
-      ok(JSON.stringify(view.edges.flatMap((e:any)=>e.index).sort((a:number,b:number)=>a-b))===JSON.stringify(after.edges.map((_:any,i:number)=>i)),`${source.id}: deleting ${removed} retains exact original remaining edge identities`);
+      const entry=after.nodes.find((n:any)=>!after.edges.some((e:any)=>e.to===n.id))?.id??after.nodes[0].id,connected=new Set([entry]),queue=[entry];while(queue.length){const id=queue.shift();for(const e of after.edges)if(e.from===id&&!connected.has(e.to)){connected.add(e.to);queue.push(e.to);}}
+      const view=L.layoutSimple(after,{keepDisconnected:true}),drawn=new Set(view.nodes.flatMap((n:any)=>n.members)),indexes=new Set(view.edges.flatMap((e:any)=>e.index));
+      const cut=after.nodes.filter((n:any)=>!connected.has(n.id)).map((n:any)=>n.id),cutSet=new Set(cut);
+      const undrawnEdges=after.edges.flatMap((e:any,i:number)=>(cutSet.has(e.from)||cutSet.has(e.to))&&drawn.has(e.from)&&drawn.has(e.to)&&e.from!==e.to&&!indexes.has(i)?[`${i}:${e.from}→${e.to}`]:[]);
+      ok(cut.every((id:string)=>drawn.has(id))&&!undrawnEdges.length,`${source.id}: deleting ${removed} keeps disconnected steps drawn with their original edge indices`,`${cut.join(",")} ${undrawnEdges.join(",")}`);
+      const lost=after.nodes.filter((n:any)=>!reachable(view).has(n.id)).map((n:any)=>n.id);
+      ok(!lost.length,`${source.id}: deleting ${removed} never hides another step (each is drawn or in a drawn badge)`,lost.join(","));
+      const full=L.layoutSimple(after,{actualGraph:true});
+      ok(JSON.stringify(full.nodes.flatMap((n:any)=>n.members).sort())===JSON.stringify(after.nodes.map((n:any)=>n.id).sort())&&JSON.stringify(full.edges.flatMap((e:any)=>e.index).sort((a:number,b:number)=>a-b))===JSON.stringify(after.edges.map((_:any,i:number)=>i)),`${source.id}: Show all connections after deleting ${removed} keeps exact remaining IDs and edge identities`);
     }
     ok(JSON.stringify(L.layoutSimple(source))===golden,`${source.id}: editing repair projections do not mutate the existing run Overview`);
   }
