@@ -4,7 +4,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // takeover) and a real Studio (src/server.ts) on the strict offline fixture tests/fixture/cursor-agent.mjs: Doctor, the
 // account route, the takeover refusals, a fresh Firstmate on Cursor whose turns carry on one chat and reach Studio's tools.
 //   bun tests/cursor-vendor.ts
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -205,21 +205,38 @@ console.log("a prompt that looks like an option stays the prompt");
   }
 }
 
+console.log("an explicit project's OS sandbox profile");
+{
+  const { cursorProjectProfile } = await import("../src/host/cursor");
+  const base = join(TMP, "profile"), w = join(base, "w"), priv = join(base, "p"), data = join(w, "data"); // Studio's data inside the project, as in a checkout of Studio
+  for (const d of [w, join(priv, "h"), join(priv, "d"), join(priv, "t"), data]) mkdirSync(d, { recursive: true });
+  writeFileSync(join(data, "board.json"), "{}"); writeFileSync(join(base, "outside.txt"), "x");
+  const sb = join(base, "p.sb"); writeFileSync(sb, cursorProjectProfile({ ws: realpathSync(w), priv: realpathSync(priv), reads: [], readOnly: [], proxyPort: 1, dataDir: data }));
+  const sh = (cmd: string) => Bun.spawnSync(["/usr/bin/sandbox-exec", "-f", sb, "/bin/sh", "-c", cmd], { cwd: w, env: { PATH: "/usr/bin:/bin", TMPDIR: join(priv, "t") } }).exitCode === 0;
+  ok(sh(`echo ok > "${w}/notes.txt" && mkdir -p "${w}/src" && echo ok > "${w}/src/a.ts"`), "the profile lets the folder be written");
+  const refused = [".CURSOR/cli.json", ".Cursor/hooks.json", ".claude/settings.json", ".CLAUDE/settings.local.json", ".git/hooks/pre-commit", ".GIT/config", "sub/.cursor/hooks.json", ".VSCode/tasks.json", ".idea/x.xml", "app.Code-Workspace", ".CursorIgnore"].filter((f) => sh(`mkdir -p "$(dirname "${w}/${f}")" && echo x > "${w}/${f}"`));
+  ok(refused.length === 0, "its config folders and files are unwritable at any depth and in any case", JSON.stringify(refused));
+  ok(!sh(`cat "${data}/board.json"`) && !sh(`echo x > "${data}/x.json"`) && !sh(`cat "${base}/outside.txt"`), "Studio's data folder stays closed even inside the project, and nothing outside it is read");
+}
+
 console.log("the host in an explicit project: the project folder only");
 {
-  const proj = join(TMP, "host-project"), outside = join(TMP, "host-outside"); mkdirSync(proj, { recursive: true }); mkdirSync(outside, { recursive: true });
+  const proj = join(TMP, "host-project"), outside = join(TMP, "host-outside"), hostData = join(TMP, "host-data"); for (const d of [proj, outside, hostData]) mkdirSync(d, { recursive: true });
   // a fresh start in folder `cwd` and one turn: the refusal, or "" once the turn ran (its events go to `heard`)
   var host_attach = async (cwd: string, heard: any[]) => {
     try {
-      const x = await cursorHost(FIXTURE).attach("", { cwd, fresh: true, cursorProject: true, env: { CURSOR_API_KEY: KEY }, model: "composer-2.5", onEvent: (e: any) => heard.push(e), onPermission: async () => ({ allow: false }) } as any);
+      const x = await cursorHost(FIXTURE).attach("", { cwd, fresh: true, cursorProject: true, dataDir: hostData, env: { CURSOR_API_KEY: KEY }, model: "composer-2.5", onEvent: (e: any) => heard.push(e), onPermission: async () => ({ allow: false }) } as any);
       await x.send("hello"); await x.detach(); return "";
     } catch (e: any) { return String(e?.message ?? e); }
   };
   const ws = realpathSync(proj);
-  const pp = cursorProjectPermissions(ws, ["/data/a.pdf"]);
+  const pp = cursorProjectPermissions(ws, ["/data/a.pdf"]), sp = cursorProjectPermissions(ws, [], hostData);
+  ok([join(homedir(), ".codex"), join(homedir(), ".ssh"), join(hostData, "session-token"), join(hostData, "keys.json")].every((p) => sp.deny.includes(`Read(${p}/**)`) && sp.deny.includes(`Read(${p})`) && sp.deny.includes(`Write(${p})`)),
+    "cli-config.json also denies reading and writing Studio's and the user's secrets by name", JSON.stringify(sp.deny.slice(-8)));
   ok(JSON.stringify(pp.allow) === '["Read(/data/a.pdf)"]' && ["Shell(*)", "Mcp(*:*)", `Write(${ws}*/.cursor/**)`, `Write(${ws}*/.claude/**)`, `Write(${ws}*/.git/**)`, `Write(${ws}*/.vscode/**)`, `Write(${ws}*/.idea/**)`, `Write(${ws}*.code-workspace)`, `Write(${ws}*/.cursorignore)`].every((d) => pp.deny.includes(d)),
     "cli-config.json has no Write allow (an explicit allow would skip cursor-agent's protected files), denies Shell, every MCP tool and the config folders at any depth, and allows reading this turn's PDFs", JSON.stringify(pp));
-  const log = join(TMP, "host-project.jsonl"); process.env.CURSOR_FIXTURE_LOG = log;
+  // the fixture's log lives in the project: under the OS sandbox that is all it may write besides its private folders
+  const log = join(proj, ".fixture-cursor.jsonl"); process.env.CURSOR_FIXTURE_LOG = log;
   const pruns = () => existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((c) => c.argv[0] === "-p") : [];
   // hooks: cursor-agent runs a trusted project's .cursor/hooks.json and Claude Code's .claude/settings*.json hooks in its own
   // environment, CURSOR_API_KEY included, whatever cli-config.json denies; the user-level ones come from the host's private HOME
@@ -251,7 +268,7 @@ console.log("the host in an explicit project: the project folder only");
     ok(await host_attach(hp, []) === "", "a .claude/settings.json without hooks does not stop it");
   }
   const said: string[] = [], events: any[] = [];
-  const s = await cursorHost(FIXTURE).attach("", { cwd: proj, fresh: true, cursorProject: true, env: { CURSOR_API_KEY: KEY }, model: "composer-2.5", onEvent: (e: any) => { events.push(e); if (e.type === "message") said.push(e.text); }, onPermission: async () => ({ allow: false }) } as any);
+  const s = await cursorHost(FIXTURE).attach("", { cwd: proj, fresh: true, cursorProject: true, dataDir: hostData, env: { CURSOR_API_KEY: KEY }, model: "composer-2.5", onEvent: (e: any) => { events.push(e); if (e.type === "message") said.push(e.text); }, onPermission: async () => ({ allow: false }) } as any);
   const targets = [join(proj, "notes", "inside.txt"), join(outside, "escape.txt"), join(proj, "..", "host-outside", "dotdot.txt"), join(proj, ".cursor", "mcp.json"), join(process.env.HOME!, "home-escape.txt"), join(proj, ".claude", "settings.json"), join(proj, ".git", "hooks", "pre-commit"),
     join(proj, ".CURSOR", "cli.json"), join(proj, ".Claude", "settings.local.json"), join(proj, ".vscode", "tasks.json"), join(proj, ".idea", "workspace.xml"), join(proj, "app.code-workspace"), join(proj, "sub", ".cursor", "hooks.json")];
   const r = await s.send(`FIXTURE-WRITE ${JSON.stringify(targets)}`);
@@ -263,6 +280,16 @@ console.log("the host in an explicit project: the project folder only");
   // cursor-agent holds CURSOR_API_KEY in its environment; a shell command it ran (auto-run in its sandbox) would see it
   const sh = await s.send("FIXTURE-SHELL");
   ok(sh.status === "completed" && said.includes("FIXTURE-SHELL-DENIED") && !said.some((t) => t.includes("FIXTURE-SHELL-SAW-KEY") || t.includes(KEY)), "its shell is denied, so no command it runs can read the Cursor API key", JSON.stringify(said.slice(-2)));
+  // reads: cursor-agent's rules let any read through that no Read deny names as asked; the OS sandbox closes the rest
+  const codexAuth = join(process.env.HOME!, ".codex", "auth.json"), sessionToken = join(hostData, "session-token"), board = join(hostData, "board.json"), sibling = join(outside, "notes.txt"), link = join(proj, "linked-auth.json");
+  mkdirSync(join(process.env.HOME!, ".codex"), { recursive: true });
+  for (const f of [codexAuth, sessionToken, board, sibling]) writeFileSync(f, `canary ${f}\n`);
+  symlinkSync(codexAuth, link); writeFileSync(join(proj, "readme.txt"), "inside\n");
+  const rd = await s.send(`FIXTURE-READ ${JSON.stringify([join(proj, "readme.txt"), codexAuth, sessionToken, board, sibling, link])}`);
+  const got = JSON.parse(/FIXTURE-GOT (.*)/.exec(said.filter((t) => t.startsWith("FIXTURE-GOT")).at(-1) ?? "")?.[1] ?? "{}");
+  ok(rd.status === "completed" && typeof got[join(proj, "readme.txt")] === "string" && [codexAuth, sessionToken, board, sibling, link].every((f) => got[f] === false),
+    "it reads the project, never ~/.codex/auth.json, Studio's data (a secret or not), a sibling folder, nor a secret through a symlink in the project", JSON.stringify(got));
+  rmSync(link);
   for (const text of ["--force", "--sandbox=disabled", "--statsig-overrides={}"]) {
     const r = await s.send(text);
     ok(r.status === "completed", `the captain's message ${text} is the prompt, never an option`, JSON.stringify(r));
@@ -275,8 +302,8 @@ console.log("the host in an explicit project: the project folder only");
   ok(hooked.status === "failed" && refusal?.code === "cursorProjectHooks" && /\.claude\/settings\.local\.json/.test(refusal.reason.en) && /hooks/.test(refusal.reason["zh-TW"]) && pruns().length === before
     && !said.some((t) => t.includes(KEY)) && !JSON.stringify(events).includes(KEY), "hooks that appear later refuse the next turn (typed, English and zh-TW) and cursor-agent does not run", JSON.stringify({ hooked, refusal, runs: pruns().length - before }));
   rmSync(join(proj, ".claude"), { recursive: true, force: true });
-  ok(runs.length === 1 && runs[0].argv[runs[0].argv.indexOf("--workspace") + 1] === ws && runs[0].argv[runs[0].argv.indexOf("--sandbox") + 1] === "enabled" && runs[0].argv.includes("--disable-project-configs") && !runs[0].argv.includes("--approve-mcps") && !runs[0].argv.includes("--force") && runs[0].home !== process.env.HOME,
-    "the project is the workspace, cursor-agent's sandbox is on, never --force, no MCP server auto-approved, a private home", JSON.stringify(runs[0]?.argv));
+  ok(runs.length === 1 && runs[0].argv[runs[0].argv.indexOf("--workspace") + 1] === ws && runs[0].argv[runs[0].argv.indexOf("--sandbox") + 1] === "disabled" && runs[0].argv.includes("--disable-project-configs") && !runs[0].argv.includes("--approve-mcps") && !runs[0].argv.includes("--force") && runs[0].home !== process.env.HOME,
+    "the project is the workspace, under the OS sandbox (cursor-agent's own off inside it), never --force, no MCP server auto-approved, project cli.json off, a private home", JSON.stringify(runs[0]?.argv));
   const resume = await s.detach(); delete process.env.CURSOR_FIXTURE_LOG;
   ok(resume === "", "stopping it hands back no resume command", JSON.stringify(resume));
   ok(!existsSync(join(proj, ".cursor")), "Studio wrote nothing into the project's .cursor/");
@@ -285,7 +312,7 @@ console.log("the host in an explicit project: the project folder only");
 console.log("a real Studio on the Cursor fixture");
 const apps: ChildProcess[] = [];
 async function boot(name: string, extra: Record<string, string | undefined>) {
-  const home = join(TMP, `${name}-home`), data = join(TMP, `${name}-data`), log = join(TMP, `${name}-cursor.jsonl`); mkdirSync(home, { recursive: true }); mkdirSync(data, { recursive: true });
+  const home = join(TMP, `${name}-home`), data = join(TMP, `${name}-data`), log = extra.CURSOR_FIXTURE_LOG ?? join(TMP, `${name}-cursor.jsonl`); mkdirSync(home, { recursive: true }); mkdirSync(data, { recursive: true });
   const port = await freePort(), base = `http://127.0.0.1:${port}`, token = `cursor-vendor-${name}-session`;
   const env: Record<string, string> = { ...(process.env as Record<string, string>), HOME: home, CREW_DATA: data, CREW_RUNTIME_DIR: join(TMP, `${name}-runtime`), CREW_PORT: String(port), CREW_SESSION_TOKEN: token,
     CREW_GH: "0", CREW_GH_NO_CLI: "1", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_LOCAL_UNRESTRICTED: "0", CREW_KEYCHAIN_TOOL: "none",
@@ -366,7 +393,7 @@ try {
   const proj = join(TMP, "explicit-project"), state = join(TMP, "explicit-state"), elsewhere = join(TMP, "explicit-elsewhere");
   for (const d of [proj, state, elsewhere]) mkdirSync(d, { recursive: true });
   writeFileSync(join(proj, "AGENTS.md"), "# firstmate\n"); writeFileSync(join(state, "HANDOFF-2026-10-23.md"), "# Handoff\nnext: ship it\n");
-  const e = await boot("explicit", { CURSOR_API_KEY: KEY, CREW_MAIN_PROJECT: proj, CREW_FM_STATE: state });
+  const e = await boot("explicit", { CURSOR_API_KEY: KEY, CREW_MAIN_PROJECT: proj, CREW_FM_STATE: state, CURSOR_FIXTURE_LOG: join(proj, ".fixture-cursor.jsonl") });
   const ev = async () => (await e.api("/api/main")).body;
   ok((await ev())?.context === "explicit-project", "the second Studio runs in an explicit project");
   const claude = await e.api("/api/main/start", { host: "claude", confirm: true });
@@ -380,7 +407,7 @@ try {
   const hv = await ev();
   ok(hv.host === "cursor" && hv.drive?.path === "fresh" && !hv.origin && hv.drive?.seededFrom === "state/HANDOFF-2026-10-23.md", "Studio drives a fresh Cursor chat, no takeover", JSON.stringify(hv.drive).slice(0, 300));
   const note = (await e.api("/api/takeover?independent=1")).body?.handoffs?.[0]?.text ?? "";
-  ok(/explicit project; AGENTS\.md applies/.test(note) && /its sandbox is on \(never --force\)/.test(note) && /inside this folder alone/.test(note) && /never hands a Cursor chat to a terminal/.test(note), "the handoff note says it follows the project and its sandbox", note.slice(0, 600));
+  ok(/explicit project; AGENTS\.md applies/.test(note) && /under the OS sandbox: it reads only this folder/.test(note) && /never --force/.test(note) && /never hands a Cursor chat to a terminal/.test(note), "the handoff note says it follows the project and its sandbox", note.slice(0, 600));
   ok(!existsSync(join(proj, ".cursor")), "nothing was written into the project's .cursor/");
   await until(async () => !(await ev()).busy);
   const out1 = join(elsewhere, "escape.txt"), in1 = join(proj, "draft.md");

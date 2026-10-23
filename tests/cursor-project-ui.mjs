@@ -2,10 +2,10 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Firstmate on Cursor in an explicit project, in a real Studio on the offline cursor-agent fixture and the Codex stub: the
 // Firstmate page keeps the Codex start card and Claude's account panel (no Claude start) and adds one Cursor start card that
 // says it follows the project and its handoff (English and zh-TW); only its own button, after the project-availability
-// confirmation, starts a fresh Cursor chat in the project with cursor-agent's sandbox on; Stop Firstmate stops it with no
+// confirmation, starts a fresh Cursor chat in the project under the OS sandbox (the fixture's log lives in the project, all it may write); Stop Firstmate stops it with no
 // terminal command. No real vendor, keychain or network.
 import{spawn}from'node:child_process';import{cpSync,mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync,realpathSync}from'node:fs';import{tmpdir}from'node:os';import{join,dirname}from'node:path';import{fileURLToPath}from'node:url';import{freePort,waitUp,withSession}from'./boot.mjs';
-const here=dirname(fileURLToPath(import.meta.url)),root=join(here,'..'),FIXTURE=join(here,'fixture/cursor-agent.mjs'),tmp=mkdtempSync(join(tmpdir(),'crew-cursor-project-')),home=join(tmp,'home'),data=join(tmp,'data'),calls=join(tmp,'cursor.jsonl'),codexLog=join(tmp,'codex.log');
+const here=dirname(fileURLToPath(import.meta.url)),root=join(here,'..'),FIXTURE=join(here,'fixture/cursor-agent.mjs'),tmp=mkdtempSync(join(tmpdir(),'crew-cursor-project-')),home=join(tmp,'home'),data=join(tmp,'data'),calls=join(tmp,'proj','.fixture-cursor.jsonl'),codexLog=join(tmp,'codex.log');
 const proj=join(tmp,'proj'),state=join(tmp,'state');mkdirSync(join(home,'.codex'),{recursive:true});mkdirSync(data);mkdirSync(proj);
 cpSync(join(here,'fixture/state'),state,{recursive:true});writeFileSync(join(state,'HANDOFF-2026-10-23.md'),'# Firstmate handoff\nCURSOR-PROJECT-UI-HANDOFF\n');writeFileSync(codexLog,'');
 const cli=join(tmp,'cursor-agent');writeFileSync(cli,`#!/bin/sh\nexec bun "${FIXTURE}" "$@"\n`,{mode:0o755});
@@ -26,22 +26,23 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
  await p.locator(`${card}[data-cursor-ready="true"]`).waitFor({timeout:15000});
  ok(await p.locator('[data-section="start-codex"]').count()===1&&await p.locator('[data-section="start-claude"]').count()===0&&await p.locator('.tk-account[data-claude-account]').count()===1&&await p.locator('[data-section="start-cursor"]').count()===1,
   'an explicit project keeps the Codex start card and Claude\'s account panel (no Claude start) and adds one Cursor start card');
- ok(/follows the shown project’s authority and handoff/.test(await p.locator(card).textContent())&&/write only inside this folder/.test(await p.locator(card).textContent()),'the Cursor card says it follows the project and writes only inside it (English)');
+ ok(/follows the shown project’s authority and handoff/.test(await p.locator(card).textContent())&&/read and write only inside this folder/.test(await p.locator(card).textContent()),'the Cursor card says it follows the project and reads and writes only inside it, under the OS sandbox (English)');
  ok(await p.locator(`${card} [data-handoff-file]`).textContent()===await p.locator('[data-section="start-codex"] [data-handoff-file]').textContent()&&/HANDOFF-2026-10-23\.md/.test(await p.locator(`${card} [data-handoff-file]`).textContent()),'its first message is the same project handoff as Codex\'s');
  ok(/Start Firstmate on Cursor/.test(await p.locator(`${card} #startCursorBtn`).textContent()),'its button says Start Firstmate on Cursor');
- await p.evaluate(()=>setLang('zh-TW'));await p.waitForFunction(s=>/Cursor 的沙盒只允許它寫入這個資料夾/.test(document.querySelector(s)?.textContent||''),card);ok(true,'the Cursor card says so in zh-TW');
+ await p.evaluate(()=>setLang('zh-TW'));await p.waitForFunction(s=>/作業系統沙盒只允許它讀寫這個資料夾/.test(document.querySelector(s)?.textContent||''),card);ok(true,'the Cursor card says so in zh-TW');
  await p.evaluate(()=>setLang('en'));
  ok(runs().filter(r=>r.argv[0]==='-p'||r.argv[0]==='create-chat').length===0,'no page read ran a Cursor chat or turn');
  await p.locator(`${card} #startCursorBtn`).click();await p.locator('#modalRoot .modal #tkStartCursorAck').waitFor();
  await p.locator('#modalRoot .modal [data-cursor-start-confirm]').click();await p.waitForTimeout(400);
  ok(await p.locator('#modalRoot .modal #tkStartCursorAck').count()===1&&runs().length===0,'without the project-availability confirmation nothing starts');
+ ok(/under the OS sandbox: it reads and writes only inside this folder/.test(await p.locator('#modalRoot .modal').textContent()),'the confirmation says cursor-agent runs under the OS sandbox, reading and writing only the folder');
  await p.check('#tkStartCursorAck');await p.locator('#modalRoot .modal [data-cursor-start-confirm]').click();
  await p.waitForFunction(()=>MS.view?.state==='attached'&&MS.view?.host==='cursor'&&MS.view?.drive?.path==='fresh'&&!MS.view?.origin,null,{timeout:15000});
  const ws=realpathSync(proj);
  await p.waitForFunction(w=>(document.querySelector('#chatLog')?.textContent||'').includes(`Ready as firstmate in ${w}; first message: state/HANDOFF-2026-10-23.md`),ws,{timeout:15000});
  ok(true,'Start Firstmate on Cursor opens a fresh Cursor chat in the project, seeded with its handoff');
  const turns=runs().filter(r=>r.argv[0]==='-p');
- ok(runs().filter(r=>r.argv[0]==='create-chat').length===1&&turns.length===1&&turns[0].argv[turns[0].argv.indexOf('--workspace')+1]===ws&&turns[0].argv[turns[0].argv.indexOf('--sandbox')+1]==='enabled'&&!turns[0].argv.includes('--force'),'one chat and one greeting turn, in the project with cursor-agent\'s sandbox on');
+ ok(runs().filter(r=>r.argv[0]==='create-chat').length===1&&turns.length===1&&turns[0].argv[turns[0].argv.indexOf('--workspace')+1]===ws&&turns[0].argv[turns[0].argv.indexOf('--sandbox')+1]==='disabled'&&!turns[0].argv.includes('--force'),'one chat and one greeting turn, in the project under the OS sandbox');
  ok(!/thread\/start/.test(readFileSync(codexLog,'utf8')),'the Cursor button never starts Codex');
  await p.evaluate(()=>openChat(false));await p.goto(base+'/#/firstmate');await p.locator('#releaseBtn').waitFor({timeout:15000});
  ok(/Stop Firstmate/.test(await p.locator('#releaseBtn').textContent()),'the page offers Stop Firstmate, not a hand-back to a terminal');

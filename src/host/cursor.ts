@@ -8,10 +8,20 @@
 // native tools over a private unix socket (random token in a 0600 file); cli-config.json allows exactly those tools
 // and denies every built-in Shell, Read and Write, so Firstmate on Cursor works through Studio alone.
 // In an explicit project (opts.cursorProject) it is a fresh Firstmate in that project's folder instead, as Codex's is: the
-// folder is the workspace, so cursor-agent follows its AGENTS.md; its own tools work there under cursor-agent's sandbox
-// (--sandbox enabled, never --force) and cli-config.json allows reads and writes inside the folder only and denies Shell
-// (cursorProjectPermissions). No Studio tool, no MCP server auto-approved, and nothing is written into the project's .cursor/.
-// A project with hooks (cursorProjectHooks) is refused at the start and before every turn: a hook runs with the key.
+// folder is the workspace, so cursor-agent follows its AGENTS.md and its own tools work there. cursor-agent's permission rules
+// alone do not confine it (reads are allowed anywhere unless a Read deny names the path as asked, and a symlink defeats that),
+// so every cursor-agent process runs under the OS sandbox a round uses (cursorProjectProfile: reads only the folder, its own
+// install, the system and this turn's attachments; writes only the folder, never its .cursor/, .claude/, .git/, .vscode/ or
+// .idea/ in any case, plus its private HOME, data and tmp; Studio's data folder and the user's secret folders closed; network
+// only to Cursor's API through a scoped proxy), with --sandbox disabled inside it as an image job has. cli-config.json
+// (cursorProjectPermissions) denies Shell, every MCP tool and the secrets by name, and never allows a write. A project whose
+// hooks or cursor-agent settings would apply (cursorProjectHooks) is refused at the start and before every turn. No Studio
+// tool, and nothing is written into the project's .cursor/. Without the OS sandbox (local unrestricted execution) only
+// cursor-agent's own rules stand.
+// Residual risk: hooks that are not the project's still run, with the key in their environment: the Mac's enterprise
+// /Library/Application Support/Cursor/hooks.json (its administrator's) and team hooks Cursor syncs for a team account (into the
+// private HOME's .cursor/managed/). Studio cannot see or refuse those. In Studio's own workspace nothing sandboxes them; in an
+// explicit project they inherit the OS sandbox (and its Cursor-only network).
 // cleanEnv drops every *_API_KEY: the caller hands the Cursor API key back explicitly in opts.env.CURSOR_API_KEY.
 //   CREW_HOST_CURSOR_BIN  executable (default "cursor-agent"; a .mjs path runs under bun: test stub)
 import { spawn, type ChildProcess } from "node:child_process";
@@ -23,9 +33,17 @@ import { cursorInput } from "../attachments";
 import { binArgv, cursorPrompt } from "./jsonl";
 import { nativeToolError } from "./native-errors";
 import { NativeToolFailure, cleanEnv, shortSummary, type AttachedSession, type Host, type HostEvent } from "./types";
+import { Egress } from "../egress";
+import { openScopedProxy } from "../egress-client";
+import { localUnrestricted } from "../local-execution";
+import { CURSOR_HOSTS } from "../providers/cursor";
+import { cursorNeeds } from "../providers/needs";
+import { roundProfile, sandboxInfo, SECRET_DIRS } from "../runtime/checks";
 
 const CHAT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{5,127}$/;
 const MODEL = /^[\w.:\[\]=,-]{1,120}$/;
+export const CURSOR_PROJECT_NO_SANDBOX = { en: "Firstmate on Cursor starts in an explicit project only under the OS sandbox, and this computer has none (macOS sandbox-exec); start Firstmate on Codex here.",
+  "zh-TW": "Cursor 上的 Firstmate 只在作業系統沙盒中於明確專案啟動，而這台電腦沒有（macOS sandbox-exec）；請在這裡改用 Codex 啟動 Firstmate。" };
 export const CURSOR_TAKEOVER_REFUSED = "Studio does not take over a Cursor session from a terminal; start Firstmate on Cursor in Studio instead";
 
 /** The tool call's own name and arguments in a cursor-agent tool_call event (an MCP call names its tool; a built-in its kind). */
@@ -44,10 +62,29 @@ const resultOf = (r: any): { ok: boolean; text?: string } => {
  *  .git/hooks/, .git/config …, matched in any case), so there is no Write allow at all: a write inside the folder is allowed by
  *  default and those files stay protected. The denies repeat them for nested folders too; they are matched case-sensitively, so
  *  they back the protection up rather than replace it. Shell is denied: a command inherits cursor-agent's environment,
- *  CURSOR_API_KEY included. Every MCP tool is denied. The Read allow names this turn's attached PDFs only. */
-export function cursorProjectPermissions(ws: string, reads: string[] = []): { allow: string[]; deny: string[] } {
+ *  CURSOR_API_KEY included. Every MCP tool is denied, and so is every read and write of Studio's and the user's secrets (SECRET_DIRS;
+ *  the OS sandbox is what holds there, as a Read deny is matched against the path as asked, never its realpath). The Read allow
+ *  names this turn's attached PDFs only. */
+export function cursorProjectPermissions(ws: string, reads: string[] = [], dataDir?: string | null): { allow: string[]; deny: string[] } {
   return { allow: reads.map((f) => `Read(${f})`),
-    deny: ["Shell(*)", "Mcp(*:*)", ...[".cursor", ".claude", ".git", ".vscode", ".idea"].map((d) => `Write(${ws}*/${d}/**)`), `Write(${ws}*.code-workspace)`, `Write(${ws}*/.cursorignore)`] };
+    deny: ["Shell(*)", "Mcp(*:*)", ...[".cursor", ".claude", ".git", ".vscode", ".idea"].map((d) => `Write(${ws}*/${d}/**)`), `Write(${ws}*.code-workspace)`, `Write(${ws}*/.cursorignore)`,
+      ...SECRET_DIRS(dataDir).flatMap((p) => [`Read(${p})`, `Read(${p}/**)`, `Write(${p})`, `Write(${p}/**)`])] };
+}
+
+const sbRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const anyCase = (s: string) => sbRegex(s).replace(/[a-z]/gi, (c) => `[${c.toLowerCase()}${c.toUpperCase()}]`);
+/** The OS sandbox of an explicit project's cursor-agent: a round's profile (roundProfile) with the folder as its cwd and writable,
+ *  its private HOME, data and tmp writable, its install and this turn's attachments readable; then Studio's data folder closed
+ *  even when the project holds it, and the folder's config folders and files (.cursor, .claude, .git, .vscode, .idea,
+ *  *.code-workspace, .cursorignore) unwritable at any depth and in any case. */
+export function cursorProjectProfile(o: { ws: string; priv: string; reads: string[]; readOnly: string[]; proxyPort: number; dataDir?: string | null }): string {
+  if (/["\n]/.test(o.ws)) throw new Error("Firstmate on Cursor cannot sandbox a project folder whose path holds a quote or a line break");
+  const real = (p: string) => { try { return realpathSync(p); } catch { return p; } };
+  const ws = real(o.ws), data = o.dataDir ? real(o.dataDir) : null, readOnly = o.readOnly.map(real);
+  const base = roundProfile({ cwd: ws, tmp: join(o.priv, "t"), writes: [ws, join(o.priv, "h"), join(o.priv, "d")], reads: o.reads, readOnly, proxyPort: o.proxyPort, toolPort: 1, dataDir: data });
+  const root = `^${sbRegex(ws)}/(.*/)?`;
+  return `${base}${data && ws !== data && !ws.startsWith(data + "/") ? `(deny file-read* file-read-metadata file-write* (subpath ${JSON.stringify(data)}))\n` : ""}${readOnly.length ? `(allow file-read* file-read-metadata ${readOnly.map((p) => `(literal ${JSON.stringify(p)})`).join(" ")})\n` : ""}(deny file-write* (regex #"${root}(${[".cursor", ".claude", ".git", ".vscode", ".idea"].map(anyCase).join("|")})(/.*)?$") (regex #"${root}[^/]*${anyCase(".code-workspace")}$") (regex #"${root}${anyCase(".cursorignore")}$"))
+`;
 }
 
 /** The folders cursor-agent takes project settings from: the workspace and each one above it up to the git root, the nearest
@@ -111,13 +148,15 @@ export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-age
       if (project) { try { projectDir = realpathSync(opts.cwd); } catch {} if (!projectDir || !statSync(projectDir).isDirectory()) throw new Error("Firstmate on Cursor needs the explicit project's folder"); }
       const hooks = project ? cursorProjectHooks(projectDir) : [];
       if (hooks.length) { const r = cursorHooksRefusal(hooks); throw new Error(`${r.en} / ${r["zh-TW"]}`); }
+      const confined = project && !localUnrestricted();
+      if (confined && !sandboxInfo().ok) throw new Error(`${CURSOR_PROJECT_NO_SANDBOX.en} / ${CURSOR_PROJECT_NO_SANDBOX["zh-TW"]}`);
       const model = opts.model && MODEL.test(opts.model) ? opts.model : null;
       let chatId: string | null = null, shownModel = model ?? "cursor", turnSeq = 0, busy = false, interrupting = false;
       let proc: ChildProcess | null = null;
       let turn: { resolve: (r: { status: "completed" | "interrupted" | "failed"; message?: string }) => void } | null = null;
       const emit = (e: HostEvent) => { try { opts.onEvent(e); } catch {} };
       const priv = privateDir();
-      for (const d of ["h/.config/cursor", "d", ...(project ? [] : ["w/.cursor"])]) mkdirSync(join(priv, d), { recursive: true, mode: 0o700 });
+      for (const d of ["h/.config/cursor", "d", ...(project ? ["t"] : ["w/.cursor"])]) mkdirSync(join(priv, d), { recursive: true, mode: 0o700 });
       const ws = project ? projectDir : join(priv, "w");
       const cliConfig = join(priv, "h", ".config", "cursor", "cli-config.json");
       const endpoint = !native ? null : nativeEndpoint(priv, async (name, args) => {
@@ -136,17 +175,27 @@ export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-age
           return { error: failure.reason.en, failure };
         }
       });
-      const drop = () => { endpoint?.close(); dropPrivateDir(priv); };
+      // an explicit project's network: Cursor's API only, through a proxy scoped to its hosts
+      const egress = confined ? new Egress() : null;
+      let lease: Awaited<ReturnType<typeof openScopedProxy>> | null = null;
+      const drop = () => { endpoint?.close(); lease?.close(); egress?.stop(); dropPrivateDir(priv); };
+      if (egress) try { await egress.start(); lease = await openScopedProxy(egress, CURSOR_HOSTS); } catch (e) { drop(); throw e; }
       const resolved = (f: string) => { try { const r = realpathSync(f); return r === f ? [f] : [f, r]; } catch { return [f]; } };
-      const writeConfig = (reads: string[] = []) => writeFileSync(cliConfig, JSON.stringify({ version: 1, permissions: project ? cursorProjectPermissions(ws, reads.flatMap(resolved)) : { allow: native!.specs.map((t) => `Mcp(studio:${t.name})`), deny: ["Shell(*)", "Read(**)", "Write(**)"] } }), { mode: 0o600 });
+      // readBoundary "workspace" applies only where Cursor turns its read control on for the account; harmless elsewhere
+      const writeConfig = (reads: string[] = []) => writeFileSync(cliConfig, JSON.stringify({ version: 1, permissions: project ? cursorProjectPermissions(ws, reads.flatMap(resolved), opts.dataDir) : { allow: native!.specs.map((t) => `Mcp(studio:${t.name})`), deny: ["Shell(*)", "Read(**)", "Write(**)"] },
+        ...(project ? { sandbox: { readBoundary: "workspace" } } : {}) }), { mode: 0o600 });
+      // the OS sandbox profile every cursor-agent process of an explicit project runs under (rewritten with each turn's attachments)
+      const profile = join(priv, "project.sb"), installReads = confined ? cursorNeeds(bin, []).reads : [];
+      const confine = (readOnly: string[]) => { if (confined) writeFileSync(profile, cursorProjectProfile({ ws, priv, reads: installReads, readOnly: readOnly.flatMap(resolved), proxyPort: lease!.port, dataDir: opts.dataDir }), { mode: 0o600 }); };
       try {
         // an explicit project's own .cursor/ is never written: Studio's MCP helper is registered only in its private workspace
         if (endpoint) writeFileSync(join(ws, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: { studio: { command: opts.studioMcp!.command[0], args: opts.studioMcp!.command.slice(1), env: { CREW_STUDIO_SOCKET: endpoint.socket, CREW_TOOL_TOKEN_FILE: endpoint.tokenFile } } } }), { mode: 0o600 });
-        writeConfig();
+        writeConfig(); confine([]);
       } catch (e) { drop(); throw e; }
       const env: Record<string, string> = { ...cleanEnv(), ...(opts.env ?? {}), CURSOR_API_KEY: key, HOME: join(priv, "h"), XDG_CONFIG_HOME: join(priv, "h", ".config"), CURSOR_DATA_DIR: join(priv, "d"), AGENT_CLI_CREDENTIAL_STORE: "memory" };
+      if (lease) Object.assign(env, { TMPDIR: join(priv, "t"), HTTPS_PROXY: lease.url, HTTP_PROXY: lease.url, https_proxy: lease.url, http_proxy: lease.url, ALL_PROXY: lease.url, all_proxy: lease.url, NO_PROXY: "", no_proxy: "" });
       const run = (args: string[], onLine: (m: any) => void) => {
-        const argv = binArgv(bin, args);
+        const argv = confined ? ["/usr/bin/sandbox-exec", "-f", profile, ...binArgv(bin, args)] : binArgv(bin, args);
         const p = spawn(argv[0], argv.slice(1), { cwd: ws, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
         let buf = "", err = "";
         p.stdout!.on("data", (d: Buffer) => { buf += d.toString("utf8"); let i; while ((i = buf.indexOf("\n")) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); if (!l.trim()) continue; let o: any; try { o = JSON.parse(l); } catch { o = { type: "_text", text: l }; } try { onLine(o); } catch {} } });
@@ -182,14 +231,14 @@ export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-age
           if (added.length) { const reason = cursorHooksRefusal(added, true); emit({ type: "hostRefusal", code: "cursorProjectHooks", reason }); return Promise.resolve({ status: "failed" as const, message: reason.en }); }
           // attachments: images as --image (cursor-agent reads the file itself); a PDF only where its Read tool works (src/attachments.ts)
           let input: ReturnType<typeof cursorInput>;
-          try { input = cursorInput(text, files, { cursorReads: project }); if (project) writeConfig(input.reads); } catch (e) { return Promise.reject(e); }
+          try { input = cursorInput(text, files, { cursorReads: project }); if (project) { writeConfig(input.reads); confine(files.map((f) => f.path)); } } catch (e) { return Promise.reject(e); }
           busy = true; turnSeq++;
           return new Promise((resolve) => {
             turn = { resolve };
             let reply = "", ended = false;
-            // an explicit project: cursor-agent's own sandbox on, never --force, the project's MCP servers not auto-approved and its
-            // .cursor/cli.json files not merged into the config
-            const mode = project ? ["--sandbox", "enabled", "--disable-project-configs"] : ["--approve-mcps", "--sandbox", "disabled"];
+            // an explicit project: never --force, the project's MCP servers not auto-approved and its .cursor/cli.json files not
+            // merged into the config; cursor-agent's own sandbox cannot nest in the OS sandbox, so it is on only without one
+            const mode = project ? ["--sandbox", confined ? "disabled" : "enabled", "--disable-project-configs"] : ["--approve-mcps", "--sandbox", "disabled"];
             const args = ["-p", "--output-format", "stream-json", "--trust", ...mode, "--workspace", ws, ...(model ? ["--model", model] : []), ...(chatId ? ["--resume", chatId] : []), ...input.args, "--", cursorPrompt(input.text)];
             let r: ReturnType<typeof run>;
             try {

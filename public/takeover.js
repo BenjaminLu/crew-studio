@@ -137,7 +137,7 @@ function startCursorCard(d,phone){
  const native=d.view?.context==="studio",ready=cursorReady(),others=(ACCOUNT.view||d.codex?.account||{}).state==="ready"||(native&&claudeReady()),acc=cursorAccountParts(),c=d.cursor||CURSOR.view||{},handoff=d.codex?.handoffFile;
  return h("section",{class:"card tk-drive","data-section":"start-cursor","data-cursor-ready":String(ready),"data-cursor-context":native?"studio":"explicit-project",...acc.attrs},h("h2",{},T("Firstmate on Cursor","Cursor 上的 Firstmate")),
   h("p",{class:"muted",style:"margin:0"},native?T("A fresh Firstmate in Studio’s own workspace. It works through Studio’s own tools only; it takes images, not PDFs.","在 Studio 自己的工作空間開啟全新的 Firstmate。它只透過 Studio 自己的工具工作；可以接收圖片，但不能接收 PDF。")
-   :T("Explicit project override: this fresh chat follows the shown project’s authority and handoff. Cursor’s sandbox lets it write only inside this folder; it takes images and PDFs.","明確指定的專案：新對話會遵循下方專案的授權與交接內容。Cursor 的沙盒只允許它寫入這個資料夾；可以接收圖片和 PDF。")),
+   :T("Explicit project override: this fresh chat follows the shown project’s authority and handoff. The OS sandbox lets it read and write only inside this folder; it takes images and PDFs.","明確指定的專案：新對話會遵循下方專案的授權與交接內容。作業系統沙盒只允許它讀寫這個資料夾；可以接收圖片和 PDF。")),
   h("div",{class:"tk-kv"},kvRow(T("Folder","資料夾"),h("span",{class:"mono"},d.project)),
    native?null:kvRow(T("First message","第一則訊息"),handoff?h("span",{class:"mono","data-handoff-file":handoff},handoff):T("No explicit project handoff","沒有明確指定的專案交接檔")),
    kvRow(T("Model · effort","模型 · 推理強度"),h("span",{"data-cursor-config":"1"},`${c.model||T("Cursor default","Cursor 預設")} · ${T("none","無")} `,h("span",{class:"faint"},T("(signs in with the crew’s Cursor API key)","（用 crew 的 Cursor API key 登入）")))),kvRow(T("Account","帳號"),acc.status)),
@@ -148,7 +148,7 @@ function startCursorCard(d,phone){
 function startCursorFlow(d){
  const ack=h("input",{type:"checkbox",id:"tkStartCursorAck"});
  modal(T("Start Firstmate on Cursor","在 Cursor 上啟動 Firstmate"),h("div",{class:"tk-start-dialog",style:"display:grid;gap:10px;max-width:560px"},
-  h("p",{class:"muted",style:"margin:0"},T(`Studio runs cursor-agent in ${d.project} with its sandbox on: it may write only inside this folder, it runs no shell commands, and the project’s MCP servers are not approved for it. It signs in with the crew’s Cursor API key.`,`Studio 會在 ${d.project} 執行 cursor-agent 並開啟它的沙盒：它只能寫入這個資料夾、不執行任何 shell 指令，也不會替它核准專案的 MCP server。它用 crew 的 Cursor API key 登入。`)),
+  h("p",{class:"muted",style:"margin:0"},T(`Studio runs cursor-agent in ${d.project} under the OS sandbox: it reads and writes only inside this folder (never its .cursor, .claude or .git settings), runs no shell commands, reaches only Cursor’s API, and no MCP server is approved for it. It signs in with the crew’s Cursor API key.`,`Studio 會在作業系統沙盒中於 ${d.project} 執行 cursor-agent：它只能讀寫這個資料夾（不含其中的 .cursor、.claude 或 .git 設定）、不執行任何 shell 指令、只連到 Cursor 的 API，也不會替它核准任何 MCP server。它用 crew 的 Cursor API key 登入。`)),
   h("div",{class:"banner"},icon("alert","ic sm"),T("Use the shown project and its existing authority/coordination rules. This does not release another agent’s project lock.","請使用顯示的專案並遵守既有授權與協作規則；這不會解除其他 agent 的專案鎖。")),
   h("label",{class:"tk-row",style:"font-size:13px"},ack,T("This project is available for the new firstmate work.","這個專案目前可以開始新的 firstmate 工作。"))),
   async(close,btn)=>{
