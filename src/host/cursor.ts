@@ -9,7 +9,7 @@
 // and denies every built-in Shell, Read and Write, so Firstmate on Cursor works through Studio alone.
 // In an explicit project (opts.cursorProject) it is a fresh Firstmate in that project's folder instead, as Codex's is: the
 // folder is the workspace, so cursor-agent follows its AGENTS.md; its own tools work there under cursor-agent's sandbox
-// (--sandbox enabled, never --force) and cli-config.json allows reads and writes inside the folder only
+// (--sandbox enabled, never --force) and cli-config.json allows reads and writes inside the folder only and denies Shell
 // (cursorProjectPermissions). No Studio tool, no MCP server auto-approved, and nothing is written into the project's .cursor/.
 // cleanEnv drops every *_API_KEY: the caller hands the Cursor API key back explicitly in opts.env.CURSOR_API_KEY.
 //   CREW_HOST_CURSOR_BIN  executable (default "cursor-agent"; a .mjs path runs under bun: test stub)
@@ -39,9 +39,11 @@ const resultOf = (r: any): { ok: boolean; text?: string } => {
 };
 
 /** An explicit project's cli-config.json permissions: read and write inside the project folder only (its own .cursor/ stays
- *  read-only), plus reading this turn's attached PDFs. No Shell rule: an allow-listed command would run outside the sandbox. */
+ *  read-only), plus reading this turn's attached PDFs. Shell is denied: with --sandbox enabled cursor-agent auto-runs an unlisted
+ *  command in its sandbox, and that command inherits cursor-agent's environment, CURSOR_API_KEY included (an allow-listed one
+ *  would even run outside the sandbox). */
 export function cursorProjectPermissions(ws: string, reads: string[] = []): { allow: string[]; deny: string[] } {
-  return { allow: [`Read(${ws}/**)`, `Write(${ws}/**)`, ...reads.map((f) => `Read(${f})`)], deny: [`Write(${ws}/.cursor/**)`] };
+  return { allow: [`Read(${ws}/**)`, `Write(${ws}/**)`, ...reads.map((f) => `Read(${f})`)], deny: ["Shell(*)", `Write(${ws}/.cursor/**)`] };
 }
 
 export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-agent"): Host {

@@ -146,8 +146,8 @@ console.log("the host in an explicit project: the project folder only");
 {
   const proj = join(TMP, "host-project"), outside = join(TMP, "host-outside"); mkdirSync(proj, { recursive: true }); mkdirSync(outside, { recursive: true });
   const ws = realpathSync(proj);
-  ok(JSON.stringify(cursorProjectPermissions(ws, ["/data/a.pdf"])) === JSON.stringify({ allow: [`Read(${ws}/**)`, `Write(${ws}/**)`, "Read(/data/a.pdf)"], deny: [`Write(${ws}/.cursor/**)`] }),
-    "cli-config.json allows reads and writes in the project folder only (and this turn's PDFs), with no Shell rule");
+  ok(JSON.stringify(cursorProjectPermissions(ws, ["/data/a.pdf"])) === JSON.stringify({ allow: [`Read(${ws}/**)`, `Write(${ws}/**)`, "Read(/data/a.pdf)"], deny: ["Shell(*)", `Write(${ws}/.cursor/**)`] }),
+    "cli-config.json allows reads and writes in the project folder only (and this turn's PDFs), and denies Shell");
   const log = join(TMP, "host-project.jsonl"); process.env.CURSOR_FIXTURE_LOG = log;
   const said: string[] = [];
   const s = await cursorHost(FIXTURE).attach("", { cwd: proj, fresh: true, cursorProject: true, env: { CURSOR_API_KEY: KEY }, model: "composer-2.5", onEvent: (e: any) => { if (e.type === "message") said.push(e.text); }, onPermission: async () => ({ allow: false }) } as any);
@@ -157,6 +157,9 @@ console.log("the host in an explicit project: the project folder only");
   ok(r.status === "completed" && existsSync(targets[0]) && !targets.slice(1).some((t) => existsSync(t)) && !existsSync(join(proj, ".cursor")),
     "it writes inside the project folder and cannot write outside it (a sibling folder, a ../ path, the home folder) nor the project's .cursor/", JSON.stringify({ r, said, exists: targets.map((t) => existsSync(t)) }));
   ok(/"[^"]*inside\.txt":true/.test(said.join(" ")) && /escape\.txt":false/.test(said.join(" ")), "the write tool reports each refusal");
+  // cursor-agent holds CURSOR_API_KEY in its environment; a shell command it ran (auto-run in its sandbox) would see it
+  const sh = await s.send("FIXTURE-SHELL");
+  ok(sh.status === "completed" && said.includes("FIXTURE-SHELL-DENIED") && !said.some((t) => t.includes("FIXTURE-SHELL-SAW-KEY") || t.includes(KEY)), "its shell is denied, so no command it runs can read the Cursor API key", JSON.stringify(said.slice(-2)));
   ok(runs.length === 1 && runs[0].argv[runs[0].argv.indexOf("--workspace") + 1] === ws && runs[0].argv[runs[0].argv.indexOf("--sandbox") + 1] === "enabled" && !runs[0].argv.includes("--approve-mcps") && !runs[0].argv.includes("--force") && runs[0].home !== process.env.HOME,
     "the project is the workspace, cursor-agent's sandbox is on, never --force, no MCP server auto-approved, a private home", JSON.stringify(runs[0]?.argv));
   await s.detach(); delete process.env.CURSOR_FIXTURE_LOG;

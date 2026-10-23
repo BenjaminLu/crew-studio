@@ -16,9 +16,10 @@
 // (a denied shell call, then the image), fail (the turn fails), escape (writes its workspace, the private root above it
 // and /private/tmp; the turn fails naming any write that succeeded, else makes the image).
 // The other exception is an explicit project's Firstmate (no Studio MCP server in the workspace): that run must be
-// --sandbox enabled, never --force or --approve-mcps, with no Shell rule and no Write rule outside the workspace. Its turns
-// model cursor-agent's own tools under those rules: FIXTURE-WRITE ["path", …] writes only what cli-config.json allows, an
-// attached PDF is read only when allowed.
+// --sandbox enabled, never --force or --approve-mcps, with no Shell allow rule and no Write rule outside the workspace. Its
+// turns model cursor-agent's own tools under those rules: FIXTURE-WRITE ["path", …] writes only what cli-config.json allows,
+// an attached PDF is read only when allowed, and FIXTURE-SHELL runs `printenv CURSOR_API_KEY` unless Shell(*) is denied (with
+// its sandbox on cursor-agent auto-runs an unlisted command there, in its own environment).
 //   CURSOR_FIXTURE_LOG  a file each run appends its argv (without the prompt) and chat id to (tests/cursor-vendor.ts); a
 //                       Firstmate turn also its home, images and the first 12 hex of its key's SHA-256
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -86,6 +87,12 @@ if (project) {
       wrote[p] = ok;
     }
     say(`FIXTURE-WROTE ${JSON.stringify(wrote)}`);
+  }
+  if (text.includes("FIXTURE-SHELL")) {
+    const call_id = "fixture-shell", args = { command: "printenv CURSOR_API_KEY" }, blocked = !!perms?.deny?.includes("Shell(*)");
+    out({ type: "tool_call", subtype: "started", call_id, tool_call: { shellToolCall: { args } }, session_id });
+    out({ type: "tool_call", subtype: "completed", call_id, tool_call: { shellToolCall: { args, result: blocked ? { permissionDenied: { error: "Shell(printenv) is denied" } } : { success: { stdout: key, exitCode: 0 } } } }, session_id });
+    say(blocked ? "FIXTURE-SHELL-DENIED" : `FIXTURE-SHELL-SAW-KEY ${createHash("sha256").update(key).digest("hex").slice(0, 12)}`);
   }
   // an attached PDF: read with the Read tool, when the config allows that file
   for (const m of text.matchAll(/The file is at (\S+) \(Studio's copy\)/g)) {

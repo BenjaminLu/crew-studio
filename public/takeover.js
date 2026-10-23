@@ -148,7 +148,7 @@ function startCursorCard(d,phone){
 function startCursorFlow(d){
  const ack=h("input",{type:"checkbox",id:"tkStartCursorAck"});
  modal(T("Start Firstmate on Cursor","在 Cursor 上啟動 Firstmate"),h("div",{class:"tk-start-dialog",style:"display:grid;gap:10px;max-width:560px"},
-  h("p",{class:"muted",style:"margin:0"},T(`Studio runs cursor-agent in ${d.project} with its sandbox on: it may write only inside this folder, and the project’s MCP servers are not approved for it. It signs in with the crew’s Cursor API key.`,`Studio 會在 ${d.project} 執行 cursor-agent 並開啟它的沙盒：它只能寫入這個資料夾，也不會替它核准專案的 MCP server。它用 crew 的 Cursor API key 登入。`)),
+  h("p",{class:"muted",style:"margin:0"},T(`Studio runs cursor-agent in ${d.project} with its sandbox on: it may write only inside this folder, it runs no shell commands, and the project’s MCP servers are not approved for it. It signs in with the crew’s Cursor API key.`,`Studio 會在 ${d.project} 執行 cursor-agent 並開啟它的沙盒：它只能寫入這個資料夾、不執行任何 shell 指令，也不會替它核准專案的 MCP server。它用 crew 的 Cursor API key 登入。`)),
   h("div",{class:"banner"},icon("alert","ic sm"),T("Use the shown project and its existing authority/coordination rules. This does not release another agent’s project lock.","請使用顯示的專案並遵守既有授權與協作規則；這不會解除其他 agent 的專案鎖。")),
   h("label",{class:"tk-row",style:"font-size:13px"},ack,T("This project is available for the new firstmate work.","這個專案目前可以開始新的 firstmate 工作。"))),
   async(close,btn)=>{
