@@ -1,6 +1,6 @@
 import "./lib/isolated-env.mjs";
 import {strict as a} from 'node:assert';
-import {mkdtempSync,rmSync,readFileSync,existsSync,writeFileSync,readdirSync,mkdirSync,statSync,chmodSync,symlinkSync,utimesSync} from 'node:fs';
+import {mkdtempSync,rmSync,readFileSync,existsSync,writeFileSync,readdirSync,mkdirSync,statSync,chmodSync,symlinkSync,utimesSync,unlinkSync} from 'node:fs';
 import {createHmac} from 'node:crypto';
 import {ledgerKey} from '../src/runtime/checks';
 import {installReadiness} from '../src/readiness';
@@ -8,7 +8,7 @@ import {WorkflowAdoption} from '../src/workflow-package-adoption';
 import {WorkflowDrafts} from '../src/workflow-drafts';
 import {WORKFLOW_DRAFT_EXAMPLE} from '../src/workflow-draft-contract';
 import {WorkflowDefs} from '../src/runtime/defs';
-import {tmpdir} from 'node:os';import {join} from 'node:path';
+import {tmpdir,hostname} from 'node:os';import {join,basename} from 'node:path';
 import {snapshotPackage,verifyPackage,encodePackage,packageSha} from '../src/workflow-package';
 import {adoptionProfile,READY_PACKAGE,READY_MANIFEST} from '../src/workflow-package-profile';
 import {bundledBytes} from '../src/bundled';
@@ -16,7 +16,7 @@ const dir=mkdtempSync(join(tmpdir(),'crew-adopt-profile-'));let count=0;const ch
 const d:any={id:'original',name:'A normal saved draft',version:3,roles:[{id:'writer',label:'Writer',skill:'bundled:workflows/skills/v2/writer.md',provider:'codex'}],nodes:[{id:'write',kind:'agent',label:'Write',x:0,y:0,role:'writer',mode:'deliver',args:{format:'document'}},{id:'ready',kind:'check',label:'Ready',x:1,y:0,checks:[{use:'core/artifact-ready',proves:[0]}],args:{producer:'all'}},{id:'accept',kind:'card',label:'Accept',x:2,y:0,args:{mode:'deliver-accept',card_kind:'acceptance'}},{id:'end',kind:'hook',label:'End',x:3,y:0}],edges:[{from:'write',to:'ready'},{from:'ready',to:'accept',when:'pass'},{from:'ready',to:'accept',when:'fail'},{from:'accept',to:'end',when:'approved'}]};
 function fixture(def=d,mutate?:(v:any)=>void){const v=verifyPackage(snapshotPackage(def,dir));v.files.delete('manifest.json');v.files.set(READY_PACKAGE,Buffer.from(bundledBytes(READY_MANIFEST)!));if(mutate)mutate(v);v.manifest.files=[...v.files].map(([path,b])=>({path,size:b.length,sha256:packageSha(b)}));return encodePackage(v.files,v.manifest);}
 const caps={ready:true,accept:true};
-// a killed process leaves its adoption lock; withLock breaks a lock older than 10 s, so age it instead of waiting
+// a killed process leaves its adoption lock; its owner pid is gone, and aging it also covers a lock left without an owner record
 const expireLock=(at:string)=>{try{utimesSync(join(at,'workflow-adoptions','.lock-adopt'),0,0);}catch{}};
 try{
  check(()=>a.deepEqual(adoptionProfile(fixture(),caps).definition,d));
@@ -170,5 +170,68 @@ try{
  const draftCopy=sourceDefs.copyTemplate(persisted.workflow,1,'draft-copy','Draft copy',false,'captain');
  check(()=>a.equal(draftCopy.origin?.source,'firstmate-draft'));
  check(()=>a.equal(draftCopy.origin?.draft,undefined));
+
+ // a second process on the same data folder: the adoption lock belongs to a live process, not to whoever finds it older than 10 s
+ const until=async(f:()=>boolean,what:string)=>{const t=Date.now();while(!f()){if(Date.now()-t>30_000)throw Error('timed out waiting for '+what);await Bun.sleep(20);}};
+ const holdCode=`import {readFileSync,writeFileSync,existsSync} from 'node:fs';import {WorkflowAdoption} from ${JSON.stringify(join(import.meta.dir,'../src/workflow-package-adoption.ts'))};import {WorkflowDefs} from ${JSON.stringify(join(import.meta.dir,'../src/runtime/defs.ts'))};const [data,archive,ready,go,again]=process.argv.slice(1);let paused=0;const wait=(r,g)=>{writeFileSync(r,'');while(!existsSync(g))Bun.sleepSync(20);};const out=new WorkflowAdoption(data,p=>{if(!paused&&p.startsWith('publish:skills/')){paused=1;wait(ready,go);}else if(paused===1&&again){paused=2;wait(again+'.ready',again+'.go');}}).adopt(readFileSync(archive),'pkg-'+'1'.repeat(24),new WorkflowDefs(data,()=>[]),{ready:true,accept:true});console.log(JSON.stringify(out));`;
+ const hold=async(name:string,pauseAgain=false)=>{const at=join(dir,name),ready=join(dir,name+'.ready'),go=join(dir,name+'.go'),again=join(dir,name+'.again'),child=Bun.spawn(['bun','--no-env-file','-e',holdCode,at,archivePath,ready,go,...pauseAgain?[again]:[]],{stdout:'pipe',stderr:'pipe'});await until(()=>existsSync(ready),name+' to pause after publishing its skill');const adoptions=join(at,'workflow-adoptions'),txn=readdirSync(adoptions).find(n=>n.startsWith('import-'))!;return {at,go,again,child,lock:join(adoptions,'.lock-adopt'),stage:join(adoptions,txn),skill:join(at,JSON.parse(readFileSync(join(adoptions,txn,'journal.json'),'utf8')).plan.roots[0],'v1','SKILL.md')};};
+ const finish=async(h:{go:string,child:any})=>{writeFileSync(h.go,'');const code=await h.child.exited;return {code,stdout:await new Response(h.child.stdout).text(),stderr:await new Response(h.child.stderr).text()};};
+ const pinsPresent=(at:string)=>new WorkflowDefs(at,()=>[]).ids().filter(w=>w.startsWith('imp-')).every(w=>new WorkflowDefs(at,()=>[]).versions(w)[0].nodes.flatMap(n=>n.skills??[]).every(s=>existsSync(join(at,'skills','_library',s.id,'v1','SKILL.md'))));
+ const minuteAgo=()=>new Date(Date.now()-60_000);
+ const live=await hold('live-recover');utimesSync(live.lock,minuteAgo(),minuteAgo());
+ const bootAt=Date.now();new WorkflowAdoption(live.at);const bootMs=Date.now()-bootAt;
+ check(()=>a(existsSync(live.skill)&&existsSync(live.lock)&&!existsSync(join(live.stage,'rolled-back')))); // recovery in another process leaves the live transaction alone
+ check(()=>a(bootMs<2000,`boot waited ${bootMs} ms`));
+ const liveDone=await finish(live);check(()=>a.equal(liveDone.code,0,liveDone.stderr));check(()=>a(new WorkflowDefs(live.at,()=>[]).ids().length===1&&pinsPresent(live.at)));check(()=>a(!existsSync(live.lock)));
+
+ const busy=await hold('boot-busy'),leftover=join(busy.at,'workflow-adoptions','import-'+'0'.repeat(24));mkdirSync(leftover);
+ const busyAt=Date.now();new WorkflowAdoption(busy.at);const busyMs=Date.now()-busyAt;
+ check(()=>a(busyMs<2000,`boot waited ${busyMs} ms for a live lock`));check(()=>a(existsSync(leftover))); // boot tries the lock once and leaves recovery for later
+ const busyDone=await finish(busy);check(()=>a.equal(busyDone.code,0,busyDone.stderr));
+ const busyDefs=new WorkflowDefs(busy.at,()=>[]);new WorkflowAdoption(busy.at).adopt(fixture(),'pkg-'+'2'.repeat(24),busyDefs,caps);check(()=>a(!existsSync(leftover))); // the next adoption runs the deferred recovery
+
+ const contended=await hold('contender-adopt'),plainPath=join(dir,'plain-fixture.zip');writeFileSync(plainPath,fixture());utimesSync(contended.lock,minuteAgo(),minuteAgo());
+ const contenderCode=`import {readFileSync} from 'node:fs';import {WorkflowAdoption} from ${JSON.stringify(join(import.meta.dir,'../src/workflow-package-adoption.ts'))};import {WorkflowDefs} from ${JSON.stringify(join(import.meta.dir,'../src/runtime/defs.ts'))};const [data,archive]=process.argv.slice(1);console.log(JSON.stringify(new WorkflowAdoption(data).adopt(readFileSync(archive),'pkg-'+'3'.repeat(24),new WorkflowDefs(data,()=>[]),{ready:true,accept:true})));`;
+ const contender=Bun.spawn(['bun','--no-env-file','-e',contenderCode,contended.at,plainPath],{stdout:'pipe',stderr:'pipe'});await Bun.sleep(1500);
+ check(()=>a(existsSync(contended.skill)&&!existsSync(join(contended.stage,'rolled-back'))));check(()=>a.equal(JSON.parse(readFileSync(join(contended.lock,'owner.json'),'utf8')).pid,contended.child.pid));
+ const heldDone=await finish(contended),contenderCodeExit=await contender.exited,contenderErr=await new Response(contender.stderr).text();
+ check(()=>a.equal(heldDone.code,0,heldDone.stderr));check(()=>a.equal(contenderCodeExit,0,contenderErr));
+ check(()=>a(new WorkflowDefs(contended.at,()=>[]).ids().length===2&&pinsPresent(contended.at))); // the contender waited, then adopted its own package
+
+ const stolen=await hold('stolen-lock');unlinkSync(join(stolen.lock,'owner.json'));writeFileSync(join(stolen.lock,'owner.json'),JSON.stringify({pid:process.pid,host:hostname(),boot:'another-boot',token:'another-owner'}));
+ const stolenDone=await finish(stolen);check(()=>a(stolenDone.code!==0&&/lost the lock/.test(stolenDone.stderr),stolenDone.stderr));
+ check(()=>a.equal(JSON.parse(readFileSync(join(stolen.lock,'owner.json'),'utf8')).token,'another-owner')); // the old owner's finally leaves a lock it no longer owns
+ check(()=>a.deepEqual(new WorkflowDefs(stolen.at,()=>[]).ids(),[])); // and it stops before publishing the workflow
+ check(()=>a(existsSync(stolen.skill)&&!existsSync(join(stolen.stage,'rolled-back')))); // without the lock it does not settle its own transaction either
+ new WorkflowAdoption(stolen.at);check(()=>a(!existsSync(stolen.lock)&&existsSync(join(stolen.stage,'rolled-back'))&&!existsSync(stolen.skill))); // same pid, another boot: that owner is gone
+
+ const abandonedLock=await hold('stale-owner');utimesSync(abandonedLock.lock,0,0);new WorkflowAdoption(abandonedLock.at); // a live owner silent far past the refresh window is broken as a last resort
+ const abandonedDone=await finish(abandonedLock);check(()=>a(abandonedDone.code!==0&&/lost the lock/.test(abandonedDone.stderr),abandonedDone.stderr));
+ check(()=>a.deepEqual(new WorkflowDefs(abandonedLock.at,()=>[]).ids(),[]));check(()=>a(existsSync(join(abandonedLock.stage,'rolled-back'))));
+
+ const deadAt=join(dir,'dead-owner'),dead=Bun.spawnSync(['bun','--no-env-file','-e',childCode,deadAt,archivePath,String(points.findIndex(p=>p.startsWith('publish:')))],{stdout:'pipe',stderr:'pipe'});check(()=>a.equal(dead.exitCode,73));
+ const deadTxn=readdirSync(join(deadAt,'workflow-adoptions')).find(n=>n.startsWith('import-'))!;new WorkflowAdoption(deadAt);check(()=>a(existsSync(join(deadAt,'workflow-adoptions',deadTxn,'rolled-back')))); // a fresh lock whose owner process exited is taken at once
+
+ const refreshed=await hold('refreshed-lock',true);utimesSync(refreshed.lock,0,0);writeFileSync(refreshed.go,'');await until(()=>existsSync(refreshed.again+'.ready'),'refreshed-lock to take one more step');
+ check(()=>a(Date.now()-statSync(refreshed.lock).mtimeMs<60_000,'the owner step did not refresh the lock'));new WorkflowAdoption(refreshed.at);
+ check(()=>a(existsSync(refreshed.lock)&&existsSync(refreshed.skill)&&!existsSync(join(refreshed.stage,'rolled-back')))); // each step refreshes the lock, so it never looks stale to a contender
+ writeFileSync(refreshed.again+'.go','');const refreshedCode=await refreshed.child.exited,refreshedErr=await new Response(refreshed.child.stderr).text();check(()=>a.equal(refreshedCode,0,refreshedErr));
+
+ const foreignAt=join(dir,'foreign-host'),foreignRun=Bun.spawnSync(['bun','--no-env-file','-e',childCode,foreignAt,archivePath,String(points.findIndex(p=>p.startsWith('publish:')))],{stdout:'pipe',stderr:'pipe'});check(()=>a.equal(foreignRun.exitCode,73));
+ const foreignLock=join(foreignAt,'workflow-adoptions','.lock-adopt'),foreignStage=join(foreignAt,'workflow-adoptions',readdirSync(join(foreignAt,'workflow-adoptions')).find(n=>n.startsWith('import-'))!);
+ writeFileSync(join(foreignLock,'owner.json'),JSON.stringify({...JSON.parse(readFileSync(join(foreignLock,'owner.json'),'utf8')),host:'another-host'}));utimesSync(foreignLock,minuteAgo(),minuteAgo());new WorkflowAdoption(foreignAt);
+ check(()=>a(existsSync(foreignLock)&&!existsSync(join(foreignStage,'rolled-back')))); // a pid recorded on another host proves nothing here, even when no such local process exists
+ utimesSync(foreignLock,0,0);new WorkflowAdoption(foreignAt);check(()=>a(!existsSync(foreignLock)&&existsSync(join(foreignStage,'rolled-back')))); // only the stale rule breaks it
+
+ const lostAt=join(dir,'lost-then-failed'),lostLock=join(lostAt,'workflow-adoptions','.lock-adopt');
+ check(()=>a.throws(()=>new WorkflowAdoption(lostAt,p=>{if(p.startsWith('publish:skills/')){rmSync(lostLock,{recursive:true});throw Error('injected failure');}}).adopt(withSkill,'pkg-'+'f'.repeat(24),new WorkflowDefs(lostAt,()=>[]),caps),/injected failure/));
+ const lostStage=join(lostAt,'workflow-adoptions',readdirSync(join(lostAt,'workflow-adoptions')).find(n=>n.startsWith('import-'))!);
+ check(()=>a(existsSync(join(lostAt,JSON.parse(readFileSync(join(lostStage,'journal.json'),'utf8')).plan.roots[0],'v1','SKILL.md'))&&!existsSync(join(lostStage,'rolled-back')))); // a failure after the lock was broken does not settle: the breaker owns recovery now
+
+ const v1Changed=finished('finished-v1-changed'),v1Def=JSON.parse(readFileSync(v1Changed.workflow,'utf8'));check(()=>a.equal(v1Def.origin?.transaction,basename(v1Changed.stage)));writeFileSync(v1Changed.workflow,JSON.stringify({...v1Def,name:'Tampered'},null,1));const v1Recovery=new WorkflowAdoption(v1Changed.at); // the tampered v1.json still names the transaction
+ check(()=>a(!existsSync(join(v1Changed.stage,'complete'))));check(()=>a.match(v1Recovery.holds()[0]?.reason??'',/Changed adoption bytes/));check(()=>a(existsSync(join(v1Changed.skill,'v1','SKILL.md')))); // the owner file alone does not prove publication
+
+ const copied=finished('finished-copied');new WorkflowDefs(copied.at,()=>[]).copyTemplate(copied.out.workflow,1,'copied-import','Copied import',false,'captain');rmSync(join(copied.at,'workflows',copied.out.workflow),{recursive:true});new WorkflowAdoption(copied.at);
+ check(()=>a(existsSync(join(copied.skill,'v1','SKILL.md'))&&!existsSync(join(copied.stage,'rolled-back'))));check(()=>a.deepEqual(new WorkflowAdoption(copied.at).holds(),[])); // a template copy still pins the imported skills
  console.log(`${count} profile assertions passed`);
 }finally{rmSync(dir,{recursive:true,force:true});}
