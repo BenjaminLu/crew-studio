@@ -22,12 +22,15 @@
 // or --approve-mcps, and its Shell is denied. Its turns model cursor-agent's own tools under the real rules (the permission
 // engine below): FIXTURE-WRITE ["path", …] and FIXTURE-READ ["path", …] write and read what those rules let through (and an
 // OS sandbox around the process, if any, does not refuse), an attached PDF likewise, and FIXTURE-SHELL runs
-// `printenv CURSOR_API_KEY` unless Shell(*) is denied.
+// `printenv CURSOR_API_KEY` unless Shell(*) is denied. A turn that carries the conversation so far (everything before
+// "[Studio: the captain's new message]") answers FIXTURE-RECALL <word> with whether that word is in it.
+// As the real CLI: --resume of a UUID chat (or --continue) fails when /tmp cannot be written, and a lone prompt naming a
+// subcommand runs that subcommand.
 // Every -p run first runs the hooks cursor-agent would load (the user's under $HOME; the git root's .cursor/hooks.json and
 // .claude/settings*.json) with its own environment, key included, and says each one's output as FIXTURE-HOOK-OUTPUT.
 //   CURSOR_FIXTURE_LOG  a file each run appends its argv (without the prompt) and chat id to (tests/cursor-vendor.ts); a
 //                       Firstmate turn also its home, images and the first 12 hex of its key's SHA-256
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -41,6 +44,17 @@ const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const get = (k) => flags.includes(k) ? flags[flags.indexOf(k) + 1] : undefined;
 const fail = (text, code = 1) => { out({ type: "result", subtype: "error", is_error: true, result: text }); process.exit(code); };
 if (argv.length === 1 && argv[0] === "--version") { console.log("2026.10.01-fixture"); process.exit(0); }
+// --resume <chat> / --continue (544.index.js J → index.js K, before the key is even looked at): a chat id shaped as a UUID (and
+// --continue's latest chat) is first checked against cursor-agent's persistent sessions, which mkdirs a claim lock under the
+// hard-coded /tmp/cursor-agent-persist-<uid> (k()); an OS sandbox that keeps /tmp closed fails every such turn. Modelled with a
+// folder of the fixture's own under /tmp, made and removed at once.
+{
+  const chat = flags.includes("--continue") ? "-1" : flags.includes("--resume") ? flags[flags.indexOf("--resume") + 1] : undefined;
+  if (chat === "-1" || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(chat ?? "")) {
+    const lock = join("/tmp", `crew-fixture-persist-${process.pid}-${randomUUID()}`);
+    try { mkdirSync(lock, { mode: 0o700 }); rmdirSync(lock); } catch (e) { fail(`Chat ${chat} may still be running, but Cursor could not verify its persistent session: ${e?.code}: ${e?.message}`); }
+  }
+}
 if (!/^crsr_acceptance[A-Za-z0-9]+$/.test(key)) fail("Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY.");
 // best effort: under an OS sandbox only a log inside the writable folders is written
 const log = (o) => { if (process.env.CURSOR_FIXTURE_LOG) try { appendFileSync(process.env.CURSOR_FIXTURE_LOG, JSON.stringify(o) + "\n"); } catch {} };
@@ -55,6 +69,9 @@ if (argv[0] === "create-chat") { const id = randomUUID(); log({ argv, chat: id }
 if (argv[0] !== "-p" || get("--output-format") !== "stream-json" || !get("--workspace") || !argv.includes("--trust")) fail(`cursor-agent fixture: unexpected argv ${JSON.stringify(argv.slice(0, -1))}`, 2);
 if (end < 0 && argv.at(-1).startsWith("-")) fail("cursor-agent fixture: the prompt was parsed as an option", 2);
 if (raw.some((a) => a.startsWith("--statsig-overrides"))) fail("cursor-agent fixture: --statsig-overrides read from the raw argv", 2);
+// a lone operand naming one of cursor-agent's subcommands runs that subcommand, `--` or not (index.js .command(…))
+const SUBCOMMANDS = ["about", "acp", "agent", "create-chat", "generate-rule", "install-shell-integration", "login", "logout", "ls", "mcp", "models", "persist", "resume", "sandbox", "status", "uninstall-shell-integration", "update", "upgrade", "worker", "worker-server"];
+if (SUBCOMMANDS.includes(argv.at(-1))) fail(`cursor-agent fixture: the prompt ran the ${argv.at(-1)} subcommand`, 2);
 // ---------- cursor-agent's configuration and permission engine, as the installed 2026.10.19-6bbf2c4 bundle (index.js) has them ----------
 // FileBasedConfigProvider.loadFromDefaults: the user's cli-config.json, then every .cursor/cli.json from the git root (utils/git.ts
 //   p(): the nearest folder above the workspace holding .git, else the workspace) down to the workspace, merged in (permissions and
@@ -62,8 +79,8 @@ if (raw.some((a) => a.startsWith("--statsig-overrides"))) fail("cursor-agent fix
 // matchesPathEntry (fe/pe): a Read(…)/Write(…) rule's pattern as an anchored, case-sensitive regex, `*` → `.*`.
 // InteractivePermissionsService.shouldBlockWrite, in order: the realpath (df); an explicit Write deny refuses; a .cursorignore
 //   basename refuses; an explicit Write allow ALLOWS, skipping every check below; approvalMode "unrestricted" allows;
-//   checkCursorFileProtection (any .cursor or .vscode segment, any case, but *.md/*.mdc) refuses; outside the workspace
-//   needsApproval; the protected list L (J.OK, ignore-lib with ignoreCase: .cursor/**/*.json, .claude/**/*.json, .vscode/**,
+//   checkCursorFileProtection (any .cursor or .vscode segment, any case, but *.md/*.mdc) refuses; outside the workspace a path
+//   under /private/tmp/ or /private/var/folders/ but not under $HOME is allowed ($f), any other needsApproval; the protected list L (J.OK, ignore-lib with ignoreCase: .cursor/**/*.json, .claude/**/*.json, .vscode/**,
 //   .idea/**, *.code-workspace, .cursorignore, .git/hooks/**, .git/config …) needsApproval; anything else is allowed. Print mode
 //   without --force answers every needsApproval with always-deny-decision-provider: refused.
 // shouldBlockReadInternal: an explicit Read deny refuses, matched against the path as asked (not its realpath); every other read
@@ -90,7 +107,7 @@ function mayWrite(p, ws) {
   if ([basename(resolve(p)), basename(f)].some((b) => b.toLowerCase() === ".cursorignore")) return false;
   if (pattern(perms.allow, "Write").some((r) => r.test(f))) return true;
   if (approvalMode === "unrestricted") return true;
-  if (f !== ws && !f.startsWith(ws + "/")) return false;
+  if (f !== ws && !f.startsWith(ws + "/")) { const home = real(process.env.HOME ?? "/nonexistent"); return f !== home && !f.startsWith(home + "/") && ["/private/tmp/", "/private/var/folders/"].some((t) => f.startsWith(t)); }
   const rel = relative(ws, f), segs = rel.split("/");
   if (segs.some((s) => [".cursor", ".vscode"].includes(s.toLowerCase())) && !/\.(md|mdc)$|^\.cursorrules$/i.test(segs.at(-1))) return false;
   return !PROTECTED.some((r) => r.test(rel));
@@ -139,12 +156,16 @@ const images = argv.flatMap((a, i) => a === "--image" ? [argv[i + 1]] : []).map(
   return { path: p, sha256: createHash("sha256").update(b).digest("hex") };
 });
 log({ argv: argv.slice(0, -1), chat: session_id, home: process.env.HOME, images, key: createHash("sha256").update(key).digest("hex").slice(0, 12) });
-const text = argv.at(-1).replace(/(?:\n\n\[Studio note: [^\n]*\])+$/, "");
+// an explicit project's turn carries the conversation so far before the captain's new message (src/host/cursor.ts carried())
+const NEW = "[Studio: the captain's new message]\n", whole = argv.at(-1), earlier = whole.includes(NEW) ? whole.slice(0, whole.lastIndexOf(NEW)) : "";
+const text = (earlier ? whole.slice(earlier.length + NEW.length) : whole).replace(/(?:\n\n\[Studio note: [^\n]*\])+$/, "");
 out({ type: "system", subtype: "init", apiKeySource: "env", cwd: get("--workspace"), session_id, model, permissionMode: "default" });
 const say = (t) => out({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: t }] }, session_id });
 if (images.length) say(`FIXTURE-SAW-IMAGES ${images.map((i) => i.sha256.slice(0, 12)).join(",")}`);
 for (const o of hookOutput) say(`FIXTURE-HOOK-OUTPUT ${o}`);
 if (project) {
+  // FIXTURE-RECALL <word>: whether the conversation carried into this turn holds that word
+  if (text.includes("FIXTURE-RECALL ")) { const w = text.slice(text.indexOf("FIXTURE-RECALL ") + 15).split(/\s/)[0]; say(`FIXTURE-RECALLED ${w} ${earlier.includes(w)}`); }
   if (text.includes("Crew Studio started you as firstmate in")) say(`Ready as firstmate in ${ws}; first message: ${/## (state\/HANDOFF-[\w.-]+\.md)/.exec(text)?.[1] ?? "none"}`);
   // FIXTURE-WRITE ["path", ...]: the model tries to write each file with its Write tool
   if (text.includes("FIXTURE-WRITE ")) {

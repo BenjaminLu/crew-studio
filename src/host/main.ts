@@ -13,7 +13,7 @@ import { fromError, fromExternal } from '../runtime/failures';
 // pauses and alerts the captain instead of forking the conversation.
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { localExecutionNotice, localUnrestricted } from "../local-execution";
+import { localExecutionNotice } from "../local-execution";
 import { claudeHost } from "./claude";
 import { codexHost } from "./codex";
 import { cursorHost } from "./cursor";
@@ -425,8 +425,7 @@ export class MainSession {
         `- model: ${extra?.model ?? se.model}; effort: none (Cursor sets no reasoning effort)`,
         `- config: a private Cursor folder of Studio's own; signs in with the crew's Cursor API key, never the captain's ~/.cursor`,
         this.o.nativeWorkspace ? `- tools: Studio's native tools only, allowed by name; every built-in Shell, Read and Write is denied`
-          : localUnrestricted() ? `- tools: cursor-agent's own, in ${cwd}, with no OS sandbox (local unrestricted execution): only cursor-agent's own rules stand (no Shell, no MCP tool, never --force; its config folders protected and Studio's secrets denied by name)`
-          : `- tools: cursor-agent's own, in ${cwd} only, under the OS sandbox: it reads only this folder, its own install and the system, writes only this folder (never its .cursor/, .claude/, .git/, .vscode/ or .idea/) and reaches only Cursor's API through Studio's proxy; no Shell, no MCP tool, never --force`,
+          : `- tools: cursor-agent's own, in ${cwd} only, under the OS sandbox: it reads only this folder, its own install and the system, writes only this folder (never its .cursor/, .claude/, .git/, .vscode/ or .idea/) and reaches only Cursor's API through Studio's proxy; no Shell, no MCP tool, never --force; each turn is a new cursor-agent chat that Studio gives the conversation so far`,
       ] : [
       `- model: ${se.model}; reasoning effort: ${se.effort ?? "(config default)"} (from the captain's Codex config; Studio sets neither)`,
       `- approval policy: ${se.approvalPolicy ?? "(config)"}; sandbox: ${se.sandbox ?? "(config)"}; every approval request goes to Studio's permission bridge, and any failure declines`]),

@@ -47,5 +47,7 @@ export function spawnJsonl(argv: string[], cwd: string, env: Record<string, stri
 export const isScript = (bin: string) => /\.(mjs|js|ts)$/.test(bin);
 export const binArgv = (bin: string, args: string[]) => (isScript(bin) ? [process.execPath, bin, ...args] : [bin, ...args]);
 /** cursor-agent's prompt operand, placed after `--`: its option parser stops there, but cursor-agent also scans the raw argv for
- *  some flags (--statsig-overrides, --disable-project-configs), so the operand never starts with "-" either. */
-export const cursorPrompt = (text: string) => (text.startsWith("-") ? ` ${text}` : text);
+ *  some flags (--statsig-overrides, --disable-project-configs), so the operand never starts with "-" either; and a lone word
+ *  operand naming one of its subcommands (worker, update, logout, about …) runs that subcommand even after `--`, so a prompt
+ *  with no whitespace in it never stands alone either. */
+export const cursorPrompt = (text: string) => (/^-|^\S+$/.test(text) ? ` ${text}` : text);

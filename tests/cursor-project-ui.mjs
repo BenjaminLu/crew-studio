@@ -42,7 +42,7 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
  await p.waitForFunction(w=>(document.querySelector('#chatLog')?.textContent||'').includes(`Ready as firstmate in ${w}; first message: state/HANDOFF-2026-10-23.md`),ws,{timeout:15000});
  ok(true,'Start Firstmate on Cursor opens a fresh Cursor chat in the project, seeded with its handoff');
  const turns=runs().filter(r=>r.argv[0]==='-p');
- ok(runs().filter(r=>r.argv[0]==='create-chat').length===1&&turns.length===1&&turns[0].argv[turns[0].argv.indexOf('--workspace')+1]===ws&&turns[0].argv[turns[0].argv.indexOf('--sandbox')+1]==='disabled'&&!turns[0].argv.includes('--force'),'one chat and one greeting turn, in the project under the OS sandbox');
+ ok(runs().filter(r=>r.argv[0]==='create-chat').length===0&&turns.length===1&&turns[0].argv[turns[0].argv.indexOf('--workspace')+1]===ws&&turns[0].argv[turns[0].argv.indexOf('--sandbox')+1]==='disabled'&&!turns[0].argv.includes('--force')&&!turns[0].argv.includes('--resume'),'one greeting turn, a new chat in the project under the OS sandbox');
  ok(!/thread\/start/.test(readFileSync(codexLog,'utf8')),'the Cursor button never starts Codex');
  await p.evaluate(()=>openChat(false));await p.goto(base+'/#/firstmate');await p.locator('#releaseBtn').waitFor({timeout:15000});
  ok(/Stop Firstmate/.test(await p.locator('#releaseBtn').textContent()),'the page offers Stop Firstmate, not a hand-back to a terminal');

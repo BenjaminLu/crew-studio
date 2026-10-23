@@ -105,7 +105,7 @@ import { encodeCwd } from "./host/claude";
 
 import { codexProvider } from "./providers/codex";
 import { codexConfig } from "./host/codex";
-import { cursorHooksRefusal, cursorProjectHooks } from "./host/cursor";
+import { cursorHooksRefusal, cursorProjectHooks, cursorProjectSandboxRefusal } from "./host/cursor";
 import { CodexAccount } from "./host/codex-account";
 import { generateCodexImage } from "./providers/codex-image";
 import { generateCursorImage } from "./providers/cursor-image";
@@ -239,7 +239,9 @@ const cursorPrimary = async (o?: { dry?: boolean }): Promise<import("./takeover"
   const model = cursorModel(chatSettings().models.cursor), cap = probeCursor([model]);
   if (!cap.available) return no("cursorUnavailable", "The Cursor CLI (cursor-agent) is not installed. Install it from the Doctor, then add a Cursor API key.", "找不到 Cursor CLI（cursor-agent）。請在 Doctor 安裝，再加入 Cursor API key。");
   if (cap.auth === "missing") return no("cursorKeyMissing", ...CURSOR_KEY_MISSING);
-  // an explicit project with hooks: cursor-agent would run them with the key in their environment
+  // an explicit project: only under the OS sandbox, and never with hooks (cursor-agent would run them with the key in their environment)
+  const unsafe = main.view().context === "studio" ? null : cursorProjectSandboxRefusal();
+  if (unsafe) return no("cursorProjectNoSandbox", unsafe.en, unsafe["zh-TW"]);
   const hooks = main.view().context === "studio" ? [] : cursorProjectHooks(PROJECT);
   if (hooks.length) { const r = cursorHooksRefusal(hooks); return no("cursorProjectHooks", r.en, r["zh-TW"]); }
   // the key itself: the dry check reports the last bounded check only; a start runs it (cursor-agent models, no model request)
