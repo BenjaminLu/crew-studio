@@ -17,7 +17,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { discoverInstance } from "../src/instance";
 import { decideCard, defHash, heldStop, loadScenario, openWindowIds, scenarioFiles, SCENARIO_DIR, type Scenario } from "./acceptance/scenarios";
-import { modelCalls, modelProblems, nodeRecords, providersToCheck, REAL } from "./acceptance/report";
+import { modelCalls, modelProblems, nodeRecords, policyVendors, providersToCheck, REAL, vendorName } from "./acceptance/report";
 import { redactJSON, redactText } from "../src/secure";
 
 const REPO = resolve(import.meta.dir, "..");
@@ -90,18 +90,18 @@ async function providersReady(st: Studio, s: Scenario, def: any, offline: boolea
   // provider, then the Start form's provider, then Studio's policy (opposite of the host, then a
   // fallback; src/providers/policy.ts). Every vendor that pick can land on must be signed in.
   const judged = new Set<string>(((await st.get("/api/checks")).body?.checks ?? []).filter((c: any) => c.kind === "judged").map((c: any) => c.ref));
-  const policy = offline && (await st.get("/api/settings")).body?.provider === "stub" ? ["stub"] : ["claude", "codex"];
+  const policy = policyVendors((await st.get("/api/settings")).body?.provider, offline);
   const needs = [...s.providers.map((p) => ({ provider: p, why: "the scenario lists it" })), ...providersToCheck(def, s.start.provider, judged, policy), ...extra];
   const required = new Map<string, string[]>(); for (const n of needs) required.set(n.provider, [...(required.get(n.provider) ?? []), n.why]);
   const checked: { provider: string; state: string }[] = []; const missing: string[] = [];
   let items: any[] | null = null;
   for (const p of required.keys()) {
-    if (p === "stub") { if (offline) { checked.push({ provider: p, state: "offline fixture", why: required.get(p) }); continue; } checked.push({ provider: p, state: "not a real model", why: required.get(p) }); missing.push("stub is not a real model; live acceptance needs Claude or Codex"); continue; }
+    if (p === "stub") { if (offline) { checked.push({ provider: p, state: "offline fixture", why: required.get(p) }); continue; } checked.push({ provider: p, state: "not a real model", why: required.get(p) }); missing.push("stub is not a real model; live acceptance needs Claude, Codex or Cursor"); continue; }
     if (!REAL.has(p)) { checked.push({ provider: p, state: "not a vendor CLI" }); missing.push(`${p} is not a vendor CLI whose login this script can read`); continue; }
     items ??= (await st.get("/api/doctor")).body?.items ?? [];
     const it = items!.find((x: any) => x.id === p);
     const state = !it ? "not reported" : it.authenticated === true ? "signed in" : it.authenticated === false ? "not signed in" : !it.version ? "CLI unavailable" : "login status unverified";
-    const name = p === "claude" ? "Claude" : "Codex";
+    const name = vendorName(p);
     // what the Doctor reported, verbatim: an unreadable login is treated as not signed in, and says exactly why
     const doctor = it ? `Doctor item ${p}: authenticated=${JSON.stringify(it.authenticated ?? null)}, version=${JSON.stringify(it.version ?? null)}, detail=${JSON.stringify(String(it.detail ?? "").slice(0, 300))}` : `Doctor reported no ${p} item`;
     checked.push({ provider: p, state, why: required.get(p), ...(state !== "signed in" ? { doctor } : {}) });

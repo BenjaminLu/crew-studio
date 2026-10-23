@@ -17,6 +17,8 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // not fail the suite. If it passes, the suite fails, so the list stays true when the fix lands.
 // See docs/acceptance.md.   ACCEPTANCE_ONLY=<workflow|workflow:run>[,…]   ACCEPTANCE_KEEP=1 keeps temp data
 // ACCEPTANCE_SCENARIO_DIR=<dir> reads the scenario files from another folder (tests/acceptance-known.ts)
+// ACCEPTANCE_PROVIDER=cursor runs every run on the Cursor stub CLI with no Codex or Claude at all (tests/acceptance/provider.ts);
+// a workflow only another vendor can run is BLOCKED-BY-DESIGN there, with its reason, and neither passes nor fails the suite
 import { bundledList, bundledText, parseYaml } from "../src/bundled";
 import { defHash, loadScenario, openWindowIds, scenarioFiles, type Scenario } from "../scripts/acceptance/scenarios";
 import { bootStudio, filmSample, SANDBOXED, SANDBOXED_E2E, type Studio } from "./acceptance/studio";
@@ -25,6 +27,7 @@ import { drive, verify, type Expect } from "./acceptance/drive";
 import { stubRuns, stubDecision, verdictOf, type StubRun } from "./acceptance/stub";
 import { STEPS, approveStaffing, type Ctx } from "./acceptance/steps";
 import { fileOrgNegativeControls, prove, RENDERER_PROVES } from "./acceptance/proves";
+import { blockedReason, CURSOR_MODEL, ON_CURSOR, runParams, runProvider, setupSteps } from "./acceptance/provider";
 const t0 = Date.now(), problems: string[] = [];
 // what the runtime seeds (workflows/v2 and packs/ *.wf.yaml, retired ones included), and the packs' legacy v1 flow files
 const files = [...bundledList("workflows/v2/"), ...bundledList("packs/")].filter((f) => f.endsWith(".wf.yaml") || (f.startsWith("packs/") && f.endsWith(".flow.yaml")));
@@ -32,7 +35,7 @@ const bundled = [...new Set(files.map((f) => String((parseYaml(bundledText(f) ??
 const scenarios: Scenario[] = [];
 for (const f of scenarioFiles(process.env.ACCEPTANCE_SCENARIO_DIR || undefined)) { try { scenarios.push(loadScenario(f)); } catch (e: any) { problems.push(e.message); } }
 const runs: StubRun[] = [];
-for (const s of scenarios) { try { runs.push(...stubRuns(s)); } catch (e: any) { problems.push(e.message); } }
+for (const s of scenarios) { try { runs.push(...stubRuns(s).map((r) => ({ ...r, provider: runProvider(r.provider), params: runParams(r.workflow, r.params), setup: setupSteps(r.setup) }))); } catch (e: any) { problems.push(e.message); } }
 for (const id of bundled) {
   const s = scenarios.find((x) => x.workflow === id);
   if (!s) problems.push(`no acceptance scenario for workflow ${id} (add tests/acceptance/${id}.yaml)`);
@@ -47,9 +50,9 @@ const picked = (only.length ? runs.filter((r) => only.includes(r.workflow) || on
 const servers: Record<string, Promise<Studio>> = {};
 const serverFor = (kind: StubRun["server"], scope = "") => servers[`${kind}:${scope}`] ??= bootStudio(scope || kind, { localUnrestricted: kind === "local-unrestricted" });
 const primaries = new Map<Studio, Promise<void>>();
-/** Firstmate's own chat on the codex primary (the stub app-server): one native tool call, as the model would make it. Returns the Tasks it created. */
+/** Firstmate's own chat on the codex primary (the stub app-server; on Cursor the stub cursor-agent): one native tool call, as the model would make it. Returns the Tasks it created. */
 const firstmate = (s: Studio) => async (marker: "NATIVE-PROPOSE " | "NATIVE-PROJECT " | "NATIVE-TOOL ", args: unknown) => {
-  if (!primaries.has(s)) primaries.set(s, (async () => { const r = await s.api("/api/main/start", { host: "codex", confirm: true }); if (r.status !== 200) throw new Error(`Firstmate primary did not start: ${r.status} ${JSON.stringify(r.body).slice(0, 300)}`); for (let i = 0; i < 300 && (await s.api("/api/main")).body.busy; i++) await Bun.sleep(50); })());
+  if (!primaries.has(s)) primaries.set(s, (async () => { const r = await s.api("/api/main/start", { host: ON_CURSOR ? "cursor" : "codex", confirm: true }); if (r.status !== 200) throw new Error(`Firstmate primary did not start: ${r.status} ${JSON.stringify(r.body).slice(0, 300)}`); for (let i = 0; i < 300 && (await s.api("/api/main")).body.busy; i++) await Bun.sleep(50); })());
   await primaries.get(s);
   const before = new Set(((await s.api("/api/wruns")).body.runs ?? []).map((r: any) => r.id));
   const sent = await s.api("/api/main/send", { text: marker + JSON.stringify(args) }); if (sent.status !== 200) throw new Error(`Firstmate send refused: ${sent.status} ${JSON.stringify(sent.body).slice(0, 300)}`);
@@ -120,7 +123,7 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
     if (r.how === "register") { if (!h.vars.repo) await STEPS.repo(h); created = await h.firstmate("NATIVE-PROJECT ", { path: h.vars.repo, name: "Acceptance repo", workflow: target.workflow, version, text: r.topic, params: {} }); }
     else if (r.how === "connect") created = await h.firstmate("NATIVE-TOOL ", { name: "studio_connect_github", args: { project: h.vars.project } });
     else if (r.how === "grant-merge") created = await h.firstmate("NATIVE-TOOL ", { name: "studio_connect_github", args: { project: h.vars.project, merge: true } });
-    else if (r.how === "crew") created = await h.firstmate("NATIVE-TOOL ", { name: "studio_propose_crew_change", args: { change: { kind: "member", seat: "maker", set: { provider: "codex", model: "acceptance-model", effort: "medium" } } } });
+    else if (r.how === "crew") created = await h.firstmate("NATIVE-TOOL ", { name: "studio_propose_crew_change", args: { change: { kind: "member", seat: "maker", set: ON_CURSOR ? { provider: "cursor", model: CURSOR_MODEL, effort: null } : { provider: "codex", model: "acceptance-model", effort: "medium" } } } });
     else if (r.how === "staffing") { const id = await approveStaffing(h, tparams.project ?? "sandbox", target.workflow); created = [{ id, workflow: "firstmate-staffing" }]; }
     else created = await h.firstmate("NATIVE-PROPOSE ", { workflow: target.workflow, version, text: body.text, params: tparams });
     const want = r.how === "firstmate" || r.how === "proposal" ? "firstmate-proposal" : r.how === "register" ? "firstmate-register-project" : r.how === "connect" ? "firstmate-connect-github" : r.how === "grant-merge" ? "firstmate-grant-merge" : r.how === "crew" ? "crew-change" : "firstmate-staffing";
@@ -150,7 +153,7 @@ async function runOne(r: StubRun): Promise<{ failures: string[]; task?: string }
   return { failures, task };
 }
 
-type Row = { r: StubRun; verdict: "pass" | "FAIL" | "known-fail" | "UNEXPECTED PASS" | "SKIPPED"; ms: number; task?: string; detail: string };
+type Row = { r: StubRun; verdict: "pass" | "FAIL" | "known-fail" | "UNEXPECTED PASS" | "SKIPPED" | "BLOCKED-BY-DESIGN"; ms: number; task?: string; detail: string };
 /** Why a run cannot run here (a local tool it needs is missing), or null. */
 // The sandboxed profile (ACCEPTANCE_PROFILE=sandboxed, scripts/acceptance-sandboxed.ts) asks the sandbox Studio's own Doctor what
 // is installed, and skips (never passes) a run whose workflow needs an install this Mac lacks, naming it.
@@ -172,6 +175,8 @@ async function missing(r: StubRun): Promise<string | null> {
 const rows: Row[] = [];
 async function record(r: StubRun) {
   const t = Date.now(); let out: { failures: string[]; task?: string };
+  const blocked = blockedReason(r.workflow) ?? (r.target ? blockedReason(r.target.workflow) : null);
+  if (blocked) { rows.push({ r, verdict: "BLOCKED-BY-DESIGN", ms: 0, detail: blocked }); console.log(`${"BLOCKED-BY-DESIGN".padEnd(15)} ${r.workflow}:${r.name}\n    ${blocked}`); return; }
   const skip = await missing(r);
   // the e2e profile is the pre-deploy gate: a run that cannot run with the sandbox on is a failure, never a skip
   if (skip && SANDBOXED_E2E && r.server !== "local-unrestricted") { rows.push({ r, verdict: "FAIL", ms: 0, detail: skip }); console.log(`${"FAIL".padEnd(15)} ${r.workflow}:${r.name}\n    ${skip}`); return; }
@@ -199,6 +204,7 @@ if (known.length) {
 for (const x of rows.filter((x) => x.verdict === "UNEXPECTED PASS")) console.log(`\nUNEXPECTED PASS: ${x.r.workflow}:${x.r.name} now passes; remove its known_failure in ${x.r.shared.file} and its row in docs/acceptance.md.`);
 const bad = rows.filter((x) => x.verdict === "FAIL" || x.verdict === "UNEXPECTED PASS");
 const skipped = rows.filter((x) => x.verdict === "SKIPPED");
+const blocked = rows.filter((x) => x.verdict === "BLOCKED-BY-DESIGN");
 if (SANDBOXED) {
   // which workflow needs which install, and whether this Mac has it (the Doctor of the sandboxed Studio)
   const by: Record<string, any> = doctorItems ? await doctorItems.catch(() => ({})) : {}; // read while the servers ran; never boot one now
@@ -210,5 +216,5 @@ if (SANDBOXED) {
     console.log(`  ${id.padEnd(28)} ${need.length || some.length ? [...need.map((n) => say(n)), ...some.map((n) => say(n, " (some runs: UI captures)"))].join(", ") : "nothing beyond Studio"}`);
   }
 }
-console.log(`\nacceptance: ${rows.filter((x) => x.verdict === "pass").length} pass, ${known.length} known-fail, ${bad.length} fail, ${skipped.length} skipped (not passed), ${problems.length} coverage problem(s) · ${bundled.length} bundled workflows · ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+console.log(`\nacceptance${ON_CURSOR ? " (cursor)" : ""}: ${rows.filter((x) => x.verdict === "pass").length} pass, ${known.length} known-fail, ${bad.length} fail, ${skipped.length} skipped (not passed), ${ON_CURSOR ? `${blocked.length} blocked by design (not passed), ` : ""}${problems.length} coverage problem(s) · ${bundled.length} bundled workflows · ${((Date.now() - t0) / 1000).toFixed(0)} s`);
 process.exit(bad.length || problems.length ? 1 : 0);

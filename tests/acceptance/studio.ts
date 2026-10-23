@@ -1,6 +1,7 @@
 // A real Studio server for the acceptance harness: `bun src/server.ts` on a free port, a temporary
 // CREW_DATA and HOME, and the providers bound to the stub CLIs through the existing overrides
-// (CREW_CODEX_BIN, CREW_CLAUDE_BIN, CREW_HOST_CODEX_BIN). Nothing in Studio is replaced in process:
+// (CREW_CODEX_BIN, CREW_CLAUDE_BIN, CREW_HOST_CODEX_BIN; on ACCEPTANCE_PROVIDER=cursor only CREW_CURSOR_BIN and
+// CREW_HOST_CURSOR_BIN, with no Codex or Claude CLI or login at all). Nothing in Studio is replaced in process:
 // rounds go through Agents.execute, the sandbox profile, the egress proxy, the path check, the
 // round env and login copy, staffing admission and the signed ledger exactly as on the live board.
 // The harness acts as the captain through the same HTTP routes the board uses (session header).
@@ -9,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { freePort, waitUp } from "../boot.mjs";
+import { CURSOR_KEY, ON_CURSOR } from "./provider";
 
 const REPO = join(import.meta.dir, "../..");
 export const TERMINAL = ["succeeded", "failed", "cancelled"];
@@ -44,9 +46,11 @@ export const filmSample: { path: string | null; reason: string | null } = (() =>
 export async function bootStudio(name: string, o: { localUnrestricted?: boolean; examples?: boolean; codexBin?:string; beforeStart?: (data:string)=>Promise<void> } = {}): Promise<Studio> {
   const root = mkdtempSync(join(tmpdir(), `crew-acceptance-${name}-`)), home = join(root, "home"), data = join(root, "data"), deps = join(root, "deps");
   for (const d of [join(home, ".codex"), data, deps]) mkdirSync(d, { recursive: true });
-  writeFileSync(join(home, ".codex", "config.toml"), 'model="fixture-model"\nmodel_reasoning_effort="low"\n');
-  writeFileSync(join(home, ".codex", ".fixture-account.json"), '{"authenticated":true}');
-  writeFileSync(join(home, ".codex", "auth.json"), JSON.stringify(CODEX_AUTH), { mode: 0o600 });
+  if (!ON_CURSOR) {
+    writeFileSync(join(home, ".codex", "config.toml"), 'model="fixture-model"\nmodel_reasoning_effort="low"\n');
+    writeFileSync(join(home, ".codex", ".fixture-account.json"), '{"authenticated":true}');
+    writeFileSync(join(home, ".codex", "auth.json"), JSON.stringify(CODEX_AUTH), { mode: 0o600 });
+  }
   const port = await freePort(), base = `http://127.0.0.1:${port}`, token = `acceptance-${name}-session`;
   const env: Record<string, string> = { ...(process.env as Record<string, string>), HOME: home, CODEX_HOME: join(home, ".codex"), CREW_DATA: data, CREW_RUNTIME_DIR: join(root, "runtime"), CREW_PORT: String(port),
     CREW_SESSION_TOKEN: token, CREW_GH: "0", CREW_GH_NO_CLI: "1", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1",
@@ -67,6 +71,15 @@ export async function bootStudio(name: string, o: { localUnrestricted?: boolean;
   }
   for (const k of [...(filmSample.path ? [] : ["CREW_RENDER_STUB_MP4"]), "CREW_MAIN_PROJECT", "CREW_FM_STATE", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CODEX_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "CREW_CHAT_PROVIDER", "CLAUDE_CONFIG_DIR", "CREW_CODEX_MODEL", "CREW_CLAUDE_MODEL", "CREW_CLAUDE_BILLING", "CREW_TEST_IN_PROCESS"]) delete env[k];
   if (!o.localUnrestricted) delete env.CREW_LOCAL_DEPENDENCY_ROOT;
+  for (const k of ["CURSOR_API_KEY", "CREW_CURSOR_MODEL", "CREW_CURSOR_ROOT"]) delete env[k];
+  // on Cursor: the Cursor stub and its fixture key only; the Codex and Claude CLIs do not exist and neither login is there
+  if (ON_CURSOR) {
+    const none = "/nonexistent/crew-acceptance-cli";
+    Object.assign(env, { CREW_CODEX_BIN: `${none}/codex`, CREW_HOST_CODEX_BIN: `${none}/codex`, CREW_CLAUDE_BIN: `${none}/claude`, CREW_HOST_CLAUDE_BIN: `${none}/claude`,
+      CREW_CURSOR_BIN: join(REPO, "tests/fixture/cursor-agent.mjs"), CREW_HOST_CURSOR_BIN: join(REPO, "tests/fixture/cursor-agent.mjs"),
+      CURSOR_API_KEY: CURSOR_KEY, CREW_KEYCHAIN_TOOL: "none", CREW_CHAT_PROVIDER: "cursor" });
+    delete env.CLAUDE_CODE_OAUTH_TOKEN;
+  }
   await o.beforeStart?.(data);
   let out = "";
   const app: ChildProcess = spawn("bun", ["src/server.ts"], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });

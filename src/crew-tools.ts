@@ -42,12 +42,12 @@ export function describeChange(c:CrewChange,team:Team,def?:any):{en:string;zh:st
 }
 /** The verified models that can do everything a seat needs (its suggestion first). */
 export function seatCandidates(seat:Pick<SeatDecl,'needs'|'suggest'>,facts:Facts){
- const out:{provider:'codex'|'claude';model:string;efforts:string[]}[]=[];
- for(const f of facts){if(f.support&&f.support!=='supported'||f.auth&&f.auth!=='verified')continue;if(f.provider!=='codex'&&f.provider!=='claude')continue;for(const m of offered(f))if((seat.needs??[]).every(t=>capabilitiesOf(f.provider,m.id,facts as any).includes(t)))out.push({provider:f.provider,model:m.id,efforts:m.efforts});}
+ const out:{provider:'codex'|'claude'|'cursor';model:string;efforts:string[]}[]=[];
+ for(const f of facts){if(f.support&&f.support!=='supported'||f.auth&&f.auth!=='verified')continue;if(f.provider!=='codex'&&f.provider!=='claude'&&f.provider!=='cursor')continue;for(const m of offered(f))if((seat.needs??[]).every(t=>capabilitiesOf(f.provider,m.id,facts as any).includes(t)))out.push({provider:f.provider,model:m.id,efforts:m.efforts});}
  const s=seat.suggest;return out.sort((a,b)=>Number(!!s&&(b.provider===s.provider)&&(!s.model||b.model===s.model))-Number(!!s&&(a.provider===s.provider)&&(!s.model||a.model===s.model)));
 }
 /** What a seat needs that no verified model has. */
-export function unmetCapabilities(seat:Pick<SeatDecl,'needs'>,facts:Facts){return(seat.needs??[]).filter(t=>!facts.some(f=>(f.provider==='codex'||f.provider==='claude')&&(!f.auth||f.auth==='verified')&&offered(f).some(m=>capabilitiesOf(f.provider,m.id,facts as any).includes(t))));}
+export function unmetCapabilities(seat:Pick<SeatDecl,'needs'>,facts:Facts){return(seat.needs??[]).filter(t=>!facts.some(f=>(f.provider==='codex'||f.provider==='claude'||f.provider==='cursor')&&(!f.auth||f.auth==='verified')&&offered(f).some(m=>capabilitiesOf(f.provider,m.id,facts as any).includes(t))));}
 
 export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Promise<Facts>;cached?:()=>Facts;send?:(t:string,d:unknown)=>void;
  /** the captain approved a team card and the team was written (a seat card resumes the proposal it held: src/firstmate.ts) */
@@ -127,7 +127,7 @@ export function installCrewTools(engine:Engine,store:CrewStore,o:{facts:()=>Prom
   const ctx:any={workflow:def.id,seat:need,unmet,others:cands.slice(1,4).map(c=>`${c.provider} ${c.model}`),...(added?{from:prev!.version,to:def.version,label:added.label}:{})};
   let run;
   if(!cands.length)run=propose({kind:'restore',workflow:def.id},'seat-unmet',owner.key,{...ctx,unmet:unmet.length?unmet:(need.needs?.length?need.needs:['tools'])});
-  else{const c=cands[0],effort=need.suggest?.effort!==undefined&&need.suggest.effort!==null&&c.efforts.includes(need.suggest.effort)?need.suggest.effort:c.efforts.includes('medium')?'medium':c.provider==='claude'?null:c.efforts[0]??'medium';
+  else{const c=cands[0],effort=need.suggest?.effort!==undefined&&need.suggest.effort!==null&&c.efforts.includes(need.suggest.effort)?need.suggest.effort:c.efforts.includes('medium')?'medium':c.provider==='claude'||c.provider==='cursor'?null:c.efforts[0]??'medium';
    const member:Member={provider:c.provider,model:c.model,effort,skills:[]};
    run=propose(decl&&!(BUILTIN_SEATS as readonly string[]).includes(id)?{kind:'seat',seat:structuredClone(decl),member}:{kind:'member',seat:id,set:{provider:c.provider,model:c.model,effort}},added?'new-role':'seat',owner.key,ctx);}
   throw Object.assign(new NativeToolFailure('crew_seat_missing',`${def.name} needs the team seat “${lab.en}”, which nobody fills yet. Studio raised card ${run.id} for the captain${cands.length?` (suggesting ${cands[0].provider} ${cands[0].model})`:' (no verified model can do it; it says which account to add)'}; once the captain approves it, Studio proposes this work again by itself and tells you. Do not propose staffing.`,`${def.name} 需要團隊的「${lab.zh}」位置，目前沒有人。Studio 已開卡 ${run.id} 給船長${cands.length?`（建議 ${cands[0].provider} ${cands[0].model}）`:'（目前沒有模型做得到，卡上會說要加哪個帳號）'}；船長核准後 Studio 會自動重新提出這項工作。`,'captain_review'),{seatRun:run.id});

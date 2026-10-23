@@ -10,7 +10,7 @@ import {StaffingStore,type StaffingConfig} from './domain/staffing';
 
 /** Which seat each staffed role seeds (code-firstmate and coffee-kit role ids). */
 const ROLE_SEAT:Record<string,string>={coordinator:'coordinator',worker:'maker',reviewer:'reviewer',designer:'design-reviewer'};
-const pickOf=(r:{provider:'codex'|'claude';model:string;effort:string|null}):Member=>({provider:r.provider,model:r.model,effort:r.provider==='codex'&&r.effort===null?'medium':r.effort,skills:[]});
+const pickOf=(r:{provider:'codex'|'claude'|'cursor';model:string;effort:string|null}):Member=>({provider:r.provider,model:r.model,effort:r.provider==='codex'&&r.effort===null?'medium':r.effort,skills:[]});
 /** Every approved staffing that still verifies, newest first (by the time its pointer was written, then its approval's Task number). */
 export function approvedStaffings(dataDir:string):{config:StaffingConfig;at:number}[]{
  const root=join(dataDir,'projects'),store=new StaffingStore(dataDir),out:{config:StaffingConfig;at:number}[]=[];if(!existsSync(root))return out;
@@ -20,7 +20,7 @@ export function approvedStaffings(dataDir:string):{config:StaffingConfig;at:numb
  return out.sort((a,b)=>b.at-a.at||runNo(b.config)-runNo(a.config));
 }
 /** The image pick Studio used before the team existed: the Codex image adapter's configured model and effort (null: none configured). */
-export type ImagePick=()=>{provider:'codex'|'claude';model:string;effort:string|null}|null;
+export type ImagePick=()=>{provider:'codex'|'claude'|'cursor';model:string;effort:string|null}|null;
 /** image: what happened to the image-maker seat. seeded: filled from the image pick; unfilled: no pick can generate images, so the
  *  seat stays empty and Studio raises its seat card; absent: the seat already had a member (or no workflow needs one). */
 export type CrewMigration={status:'exists'|'nothing'|'seeded';version?:number;from?:{project:string;workflow:string;version:number};overrides?:string[];image?:'seeded'|'unfilled'};
@@ -28,7 +28,7 @@ export type CrewMigration={status:'exists'|'nothing'|'seeded';version?:number;fr
 function imageSeat(defs:{get(id:string,v?:number):any},pick?:ImagePick):{seat:SeatDecl;member:Member|null}{
  const seat=structuredClone(declaredSeats(defs.get('images')).find(s=>s.id===IMAGE_SEAT.id)??declaredSeats(defs.get('coffee-kit')).find(s=>s.id===IMAGE_SEAT.id)??IMAGE_SEAT);
  let p:ReturnType<ImagePick>=null;try{p=pick?.()??null;}catch{p=null;}
- if(!p?.model||!(p.provider==='codex'||p.provider==='claude')||!capabilitiesOf(p.provider,p.model).includes(IMAGE_CAP))return{seat,member:null};
+ if(!p?.model||!(p.provider==='codex'||p.provider==='claude'||p.provider==='cursor')||!capabilitiesOf(p.provider,p.model).includes(IMAGE_CAP))return{seat,member:null};
  return{seat,member:pickOf(p)};
 }
 export function migrateCrew(dataDir:string,defs:{get(id:string,v?:number):any},o:{imagePick?:ImagePick}={}):CrewMigration{

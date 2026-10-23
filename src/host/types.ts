@@ -6,7 +6,7 @@ import { scrubEnv } from "../secure";
 //   discover(projectDir) -> SessionInfo[]
 //   attach(id) -> AttachedSession;  send(text) -> resolves when the turn ends
 //   events come through onEvent; interrupt() stops the turn; detach() returns the resume command
-export type HostId = "claude" | "codex";
+export type HostId = "claude" | "codex" | "cursor";
 
 export type SessionInfo = {
   host: HostId; id: string; title: string; cwd: string; updated: number;
@@ -45,7 +45,7 @@ export type HostEvent =
   | { type: "hostRefusal"; code: HostRefusalCode; reason: { en: string; "zh-TW": string }; raw?: unknown };
 
 /** Typed reasons a host refuses to start or run: never a silent switch to another vendor. */
-export type HostRefusalCode = "claudeNotSignedIn" | "claudeQuotaExhausted" | "claudeCrewTokenMissing" | "claudeSignInPending" | "claudeUnavailable";
+export type HostRefusalCode = "claudeNotSignedIn" | "claudeQuotaExhausted" | "claudeCrewTokenMissing" | "claudeSignInPending" | "claudeUnavailable" | "cursorProjectHooks";
 
 export interface AttachedSession {
   readonly host: HostId;
@@ -99,6 +99,10 @@ export type AttachOpts = {
   studioMcp?: { command: string[] };
   /** extra environment for the CLI (after cleanEnv), e.g. FM_IN_ROUND=1 for a rehearsal */
   env?: Record<string, string>;
+  /** cursor fresh primary in an explicit project: cwd is its workspace and its own tools work there, under the OS sandbox */
+  cursorProject?: boolean;
+  /** Studio's data folder: closed to a cursor fresh primary in an explicit project (its secrets by name as well) */
+  dataDir?: string;
   /** claude fresh primary: absolute paths (globs allowed) the model's edit tools may never write, passed as Edit(//path) deny rules */
   denyEdits?: string[];
 };

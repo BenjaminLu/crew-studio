@@ -9,7 +9,7 @@ import { refusesRulesPatch } from "../operating-rules";
 import { taskTitle } from "../task-title";
 import { PolicyUnreadable } from "./checks";
 import { failure, fromError, type FailureCode } from "./failures";
-import {installStartupRecursion} from '../domain/startup-recursion';
+import {installStartupRecursion,startupCursorAdvice} from '../domain/startup-recursion';
 import { deliverableOf, DELIVERABLE_WORKFLOW } from "../deliverables";
 import {installReadinessViews,readinessNodes} from './readiness-view';
 import {installGitHubReviewWorkflow} from '../domain/github-review-workflow';
@@ -79,12 +79,14 @@ export type RuntimeDeps = {
   coffeeFilmStatus?:{ready:boolean;reason:string|null};
   coffeeChoice?:()=>{provider:"codex";model:string;effort:string|null}|null;
   /** Studio's configured model per provider (chat settings, env, Codex config): the startup workflow's default when no exact model param was given. */
-  startupModel?:(provider:"claude"|"codex")=>string|null|undefined;
-  generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference, rules?: import("../operating-rules").RulesSection, crew?: { model: string; effort: string | null }) => Promise<import("../providers/codex-image").CodexImage>;
+  startupModel?:(provider:"claude"|"codex"|"cursor")=>string|null|undefined;
+  generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference, rules?: import("../operating-rules").RulesSection, crew?: { model: string; effort: string | null; provider?: "cursor" }) => Promise<import("../providers/cursor-image").StudioImage>;
   /** fresh: read every model list again now (the Crew page's detection), not a reading the provider reuses */
   staffingFacts?: (o?:{fresh?:boolean}) => Promise<StaffingFacts[]>;
   staffingAdmission?: StaffingAdmission;
   onboardingProvider?:()=>string|null;
+  /** each vendor's sign-in presence (claude, codex, cursor), free to read: the startup competition's Start form and Firstmate contract say which role to move to Cursor */
+  providerLogins?:()=>Promise<Record<string,string>>;
   onboardingTeamVerify?:(pick:TeamPick,signal?:AbortSignal)=>Promise<TeamProbe>;
   onboardingTeamContext?:(pick:TeamPick)=>string;
   staffingProject?: (id:string) => StaffingProject;
@@ -139,7 +141,7 @@ export function createRuntime(d: RuntimeDeps) {
   if (d.m3?.store && d.m3?.lane && d.fileorg && d.docs) installDeliver(engine, { dataDir: d.dataDir, artifacts: d.m3.store, lane: d.m3.lane, fileorg: d.fileorg, docs: d.docs, generateImage: d.generateImage });
   const startup=d.m3?.store?installStartupRecursion(engine,{artifacts:d.m3.store,configuredModel:d.startupModel}):undefined;
   let coffee:ReturnType<typeof installCoffeeKit>|undefined;
-  if(d.m3?.store){coffee=installCoffeeKit(engine,{artifacts:d.m3.store,choice:d.coffeeChoice,reviewStaffing:(def,params)=>{const c=staffingGuard.verified(def,params);return{hash:c.hash,workflow:c.workflow,roles:c.roles,approval:c.approval};},staffing:(def,params)=>{const config=staffingGuard.verified(def,params),role=config.roles['image-worker'];if(!role||role.provider!=='codex')throw new Error('The dedicated image adapter requires an explicitly approved available Codex image-worker; no vendor fallback');return {provider:'codex',model:role.model,effort:role.effort};},video:d.coffeeVideo});d.m3.useArtifactReviewPolicy?.(id=>coffee!.artifactReview(id)??startup?.artifactReview(id)??null);}
+  if(d.m3?.store){coffee=installCoffeeKit(engine,{artifacts:d.m3.store,choice:d.coffeeChoice,reviewStaffing:(def,params)=>{const c=staffingGuard.verified(def,params);return{hash:c.hash,workflow:c.workflow,roles:c.roles,approval:c.approval};},staffing:(def,params)=>{const config=staffingGuard.verified(def,params),role=config.roles['image-worker'];if(!role||role.provider!=='codex'&&role.provider!=='cursor')throw new Error('The dedicated image adapter requires an explicitly approved available Codex image-worker; no vendor fallback');return {provider:role.provider,model:role.model,effort:role.effort};},video:d.coffeeVideo});d.m3.useArtifactReviewPolicy?.(id=>coffee!.artifactReview(id)??startup?.artifactReview(id)??null);}
   engine.deps.continuationEvidence=(r:any)=>{const refs=Object.values(r.ctx.deliver??{})as any[];if(refs.length&&!d.m3?.store)throw new Error('Artifact storage unavailable for continuation');
     const notes=(id:string,n:number)=>{const store=d.m3!.store,file=join(store.vdir(id,n),'notes.json');try{if(existsSync(file)){const raw=JSON.parse(readFileSync(file,'utf8'));if(!Array.isArray(raw)||raw.some(v=>!v||typeof v.id!=='string'||typeof v.comment!=='string'||!['open','resolved'].includes(v.status)))throw new Error('Invalid annotations');}return store.notes(id,n);}catch{throw new Error('Artifact annotations cannot be verified; continuation is held');}};
     const coffeePins=coffee?.continuationEvidence(r.id)??[];return{artifacts:refs.map(ref=>{const v=d.m3!.store.version(ref.id,ref.n);if(!v||v.sha256!==ref.sha256||d.m3!.store.verify(ref.id,ref.n).length)throw new Error('Pinned artifact changed; continuation is held');return{ref,version:v,notes:notes(ref.id,ref.n)};}),coffee:coffeePins.map(e=>({...e,notes:notes(e.receipt.artifact,e.receipt.n)}))};};
@@ -204,7 +206,7 @@ export function createRuntime(d: RuntimeDeps) {
    return{state:'approved',hash:config.hash,version:config.version,roles:Object.fromEntries(Object.entries(config.roles).map(([id,r])=>[id,{provider:r.provider,model:r.model,effort:r.effort}]))};
   };
   const onboarding=new Onboarding(engine,d.m3?.store??new ArtifactStore(d.dataDir));
-  const originalFirstmate=installFirstmate(engine,projects,{prepareDispatch:async(workflow,version)=>{const def=engine.defs.get(workflow,version);if(staffingApplies(def))await staffingFacts();},onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending,teamStaffing,crewSeatGate:(def,owner,project)=>crewTools.seatGate(def,owner,project),dispatchCrew:(def,project)=>crewTools.dispatchCrew(def,project)});
+  const originalFirstmate=installFirstmate(engine,projects,{prepareDispatch:async(workflow,version)=>{const def=engine.defs.get(workflow,version);if(staffingApplies(def))await staffingFacts();},onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending,teamStaffing,startupAdvice:d.providerLogins?async()=>startupCursorAdvice(await d.providerLogins!().catch(()=>({}))):undefined,crewSeatGate:(def,owner,project)=>crewTools.seatGate(def,owner,project),dispatchCrew:(def,project)=>crewTools.dispatchCrew(def,project)});
   seatFilled=run=>{void originalFirstmate.resumeHeld(run).then(done=>{const n=heldNotice(run,done);if(n)engine.notifyFirstmate?.(n.text,n.summary);}).catch(()=>{});};
   // free drafting: its own store and tools, separate from proposals, staffing and execution
   const drafts=new WorkflowDrafts(d.dataDir,defs,(id,revision)=>{try{d.send('wfdraft',{id,revision});}catch{}});
@@ -405,7 +407,8 @@ export function createRuntime(d: RuntimeDeps) {
         const wf=String(url.searchParams.get("workflow")??""),def=defs.get(wf);if(!def||!defs.selectable(wf))return json({error:"This workflow is not available for new tasks",code:"workflow_unavailable"},409);
         const projectScoped=def.kind==="code",staffed=boardStaffed(def);if(staffed)try{await staffingFacts();}catch{staffingCapabilities=[];} // free probes only (Codex probe, Claude auth status)
         const crewOf=(id:string)=>{const crew=boardStaffing(def,id);if(crew.state!=='approved')return crew;const ready=crewReadiness(crew.roles);return ready.state==='blocked'?{state:'blocked' as const,code:'staffing_not_ready',role:ready.role,reason:ready.reason}:{...crew,readiness:ready};};
-        return json({workflow:wf,version:def.version,projectScoped,staffing:staffed,crewHref:staffed?"#/team":null,projects:projectScoped?projects.list().filter(x=>!!x.path).map(x=>({id:x.id,name:x.name,base:x.base,staffing:staffed?crewOf(x.id):null})):[]});
+        const providerAdvice=def.kind==="startup-recursion"&&d.providerLogins?startupCursorAdvice(await d.providerLogins().catch(()=>({}))):null;
+        return json({workflow:wf,version:def.version,projectScoped,staffing:staffed,crewHref:staffed?"#/team":null,...providerAdvice?{providerAdvice}:{},projects:projectScoped?projects.list().filter(x=>!!x.path).map(x=>({id:x.id,name:x.name,base:x.base,staffing:staffed?crewOf(x.id):null})):[]});
       }
       if (p === "/api/wruns" && !writing) return json({ runs: engine.list().filter((r) => url.searchParams.get("archived") === "1" || !r.archived).map((r) => ({ id: r.id, workflow: r.workflow, version: r.version, title: taskTitle(r), request: r.text, status: r.status, result: r.result, createdAt: r.createdAt, updatedAt: r.updatedAt, endedAt: r.endedAt, error: r.error,
         childRun: (() => { const child = engine.get(r.ctx?.childRun); return child?.params?._firstmateProposal === r.id ? child.id : null; })(),
@@ -448,7 +451,7 @@ export function createRuntime(d: RuntimeDeps) {
         }
         if(chosenDef?.kind==="coffee-kit") {
           let config;try{config=staffing.current(coffeeStaffingProject(params.project));}catch{return refuse({error:'Discuss and approve each coffee role before starting',code:'coffee-staffing-required'},409,"env.staffing");}const image=config.roles['image-worker'];
-          if(!image||image.provider!=='codex')return refuse({error:"Confirm an available dedicated Codex image role; no vendor fallback",code:"coffee-staffing-required"},409,"env.staffing");
+          if(!image||image.provider!=='codex'&&image.provider!=='cursor')return refuse({error:"Confirm an available dedicated Codex image role; no vendor fallback",code:"coffee-staffing-required"},409,"env.staffing");
           params={...params,_staffing:config.hash};
         }
         let r;try{r = ownClaude.start({ workflow: wf, version: b?.version ? Number(b.version) : undefined, title: b?.title, text: ownWorkflow(chosenDef) ? ownBrief(chosenDef, text, params) : text, params, by, classifier: cls },b?.claudeVerification);}

@@ -29,7 +29,7 @@ export const draftDef = (d: DraftRecord): WDef => ({ ...d.def, origin: { schema:
 
 export function installReadiness(d: ReadinessDeps) {
   const env = engineEnv({ engine: d.engine, dataDir: d.dataDir, protectedRoots: d.protectedRoots, repoRoot: d.repoRoot ?? null,
-    knownProviders: d.knownProviders ?? (() => ["claude", "codex"]) });
+    knownProviders: d.knownProviders ?? (() => ["claude", "codex", "cursor"]) });
   const gate = new Gate({ dataDir: d.dataDir, contract: env.contract, briefs: env.briefs, logins: d.logins,
     dry: (def, sample) => dryRun(def, { sample, protectedRoots: d.protectedRoots, createRuntime: d.createRuntime, timeoutMs: d.dryTimeoutMs }),
     ask: d.ask, maxRounds: () => { const v = Number(d.engine.policies.get("readiness.repair_rounds").value ?? 6); return Number.isInteger(v) ? Math.min(6, Math.max(1, v)) : 6; },

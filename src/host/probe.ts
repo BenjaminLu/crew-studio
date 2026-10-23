@@ -1,5 +1,5 @@
 import { scrubEnv } from "../secure";
-// Who else may be driving a session: running claude/codex processes, their
+// Who else may be driving a session: running claude/codex/cursor-agent processes, their
 // working directories, and how recently a session file was written. Studio
 // uses it twice: to mark sessions "possibly open" and to hold the driver lock.
 import { readlinkSync, statSync } from "node:fs";
@@ -9,7 +9,7 @@ export interface ProcProbe { list(): Proc[] }
 
 /** Match the launched CLI, not a shell/read command which merely mentions its path. */
 export function isVendorProcess(command:string):boolean {
-  if (/^(?:\S*\/)?(?:claude|codex)(?:\s|$)/.test(command)) return true;
+  if (/^(?:\S*\/)?(?:claude|codex|cursor-agent)(?:\s|$)/.test(command)) return true;
   const args = command.trim().split(/\s+/);
   if (!/^(?:\S*\/)?node$/.test(args.shift() ?? '')) return false;
   // Only skip known standalone flags; never mistake an eval payload for a CLI.
@@ -52,7 +52,7 @@ export const mtimeOf = (file: string | null): number => { if (!file) return 0; t
 /** Is a terminal (any process but ours) driving this session? */
 export function driving(probe: ProcProbe, s: { host: string; id: string; cwd: string; file: string | null; newestInDir: boolean }, own: Set<number>, now = Date.now()): string | null {
   const procs = probe.list().filter((p) => !own.has(p.pid) && p.pid !== process.pid);
-  const tool = s.host === "codex" ? "codex" : "claude";
+  const tool = s.host === "codex" ? "codex" : s.host === "cursor" ? "cursor-agent" : "claude";
   const named = procs.find((p) => p.command.includes(s.id));
   if (named) return `${tool} process ${named.pid} names this session`;
   if (s.newestInDir) {

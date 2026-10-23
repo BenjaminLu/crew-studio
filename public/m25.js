@@ -44,7 +44,7 @@ showChatInfo = function () {
   const v = MS.view, sub = $("#chatSub");
   if (!v) { sub.textContent = "…"; return; }
   if (v.state === "detached") sub.textContent = T("Connect your account to begin", "連接帳號即可開始");
-  else if (v.state === "attaching" || v.state === "detaching") { const stopping=v.context==="studio"&&!v.origin&&v.drive?.path==="fresh";sub.textContent = T(v.state === "attaching" ? "Connecting main session…" : stopping ? "Stopping Firstmate…" : "Releasing main session…", v.state === "attaching" ? "正在連接主 session…" : stopping ? "正在停止 Firstmate…" : "正在交還主 session…"); }
+  else if (v.state === "attaching" || v.state === "detaching") { const stopping=(v.context==="studio"||v.host==="cursor")&&!v.origin&&v.drive?.path==="fresh";sub.textContent = T(v.state === "attaching" ? "Connecting main session…" : stopping ? "Stopping Firstmate…" : "Releasing main session…", v.state === "attaching" ? "正在連接主 session…" : stopping ? "正在停止 Firstmate…" : "正在交還主 session…"); }
   else sub.textContent = `${T("main session", "主 session")} · ${v.host} · ${v.model || "…"} · ${v.state === "paused" ? T("paused", "已暫停") : T("Studio driving", "Studio 駕駛中")}`;
   sub.title = v.sessionId ? `${v.host} ${v.sessionId}` : "";
 };
@@ -52,13 +52,13 @@ showChatInfo = function () {
 const KLABEL = { captain: null, card: () => T("Card notice", "卡片通知"), wake: () => T("firstmate wake", "firstmate 喚醒"), status: () => T("Studio", "Studio"), tool: null };
 function driverBanner(v) {
   const d = v.driver || {};
-  const nativePrimary=v.context==="studio"&&!v.origin&&(v.drive?.path==="fresh"||d.path==="fresh")&&!d.forkedFrom;
+  const nativePrimary=(v.context==="studio"||(v.host||d.host)==="cursor")&&!v.origin&&(v.drive?.path==="fresh"||d.path==="fresh")&&!d.forkedFrom;
   if (v?.state === "attaching" || v?.state === "detaching") return h("div", { class: "rich", "data-banner": v.state }, T(v.state === "attaching" ? "Connecting main session…" : nativePrimary ? "Stopping Firstmate…" : "Releasing main session…", v.state === "attaching" ? "正在連接主 session…" : nativePrimary ? "正在停止 Firstmate…" : "正在交還主 session…"));
   if (v.state === "paused") return h("div", { class: "rich chat-err", role: "alert", "data-banner": "paused" },
     h("div", { class: "rk", style: "color:var(--bad)" }, icon("alert", "ic sm"), T("Paused: a terminal may be writing this session", "已暫停：可能有終端機在寫這個 session")),
     h("div", { style: "font-size:13px;color:var(--text-2)" }, v.pausedReason),
     h("div", { class: "actions" }, h("button", { class: "btn", onclick: () => postJ("/api/main/resume").then((r) => r.error && toast(r.error)) }, T("Resume here", "在這裡繼續")),
-      h("button", { class: "btn", onclick: handBack }, v.context==="studio" ? T("Stop Firstmate","停止 Firstmate") : T("Hand back to terminal", "交回終端機"))));
+      h("button", { class: "btn", onclick: handBack }, v.context==="studio"||nativePrimary ? T("Stop Firstmate","停止 Firstmate") : T("Hand back to terminal", "交回終端機"))));
   if (v.state === "detached") return h("div", { class: "rich", "data-banner": "detached" },
     h("div", { class: "rk" }, icon("lock", "ic sm"), nativePrimary ? T("Firstmate stopped", "Firstmate 已停止") : d.holder === "terminal" ? T("The terminal is driving", "終端機駕駛中") : T("No session attached", "還沒接上 session")),
     !nativePrimary && d.holder === "terminal" && d.resume ? h("div", { style: "font-size:13px" }, T("Handed back. In a terminal: ", "已交回。在終端機執行："), h("code", {}, d.resume),
@@ -69,9 +69,9 @@ function driverBanner(v) {
     h("div", { class: "rk", style: "color:var(--accent-text)" }, icon("agent", "ic sm"), T("Studio is driving", "Studio 駕駛中"), h("span", { class: "vbadge" }, `${v.host} · ${String(v.sessionId).slice(0, 8)}`), v.busy ? h("span", { class: "badge run" }, h("span", { class: "d" }), T("turn running", "回合進行中")) : null),
     h("div", { class: "actions" },
       v.busy ? h("button", { class: "btn", onclick: () => postJ("/api/main/interrupt") }, icon("stop", "ic sm"), T("Interrupt", "中斷")) : null,
-      h("button", { class: "btn", onclick: handBack }, v.context==="studio" ? T("Stop Firstmate","停止 Firstmate") : T("Hand back to terminal", "交回終端機"))));
+      h("button", { class: "btn", onclick: handBack }, v.context==="studio"||nativePrimary ? T("Stop Firstmate","停止 Firstmate") : T("Hand back to terminal", "交回終端機"))));
 }
-for (const ev of ["crew:claude-status", "crew:codex-account"]) addEventListener(ev, () => { if (isMain() && MS.view?.state === "detached") try { renderChat(); } catch {} });
+for (const ev of ["crew:claude-status", "crew:codex-account", "crew:cursor-account"]) addEventListener(ev, () => { if (isMain() && MS.view?.state === "detached") try { renderChat(); } catch {} });
 /** Studio's own workspace: start Firstmate on whichever signed-in host the captain picks, here in the chat. */
 function startChoices() {
   const r = window.crewHostReady?.() || {}, phone = MS.me?.kind === "phone" && !MS.me?.allowDrive;
@@ -80,7 +80,8 @@ function startChoices() {
     // both ready: a neutral choice, neither host is the default
     r.codex ? h("button", { class: r.claude ? "btn" : "btn primary", "data-chat-start-host": "codex", disabled: phone || r.starting || null, onclick: start("codex") }, T("Start on Codex", "在 Codex 上開始")) : null,
     r.claude ? h("button", { class: r.codex ? "btn" : "btn primary", "data-chat-start-host": "claude", disabled: phone || r.starting || null, onclick: start("claude") }, T("Start on Claude", "在 Claude 上開始")) : null,
-    h("a", { class: r.codex || r.claude ? "btn ghost" : "btn primary", href: "#/firstmate", onclick: () => openChat(false) }, r.codex || r.claude ? T("Accounts…", "帳號…") : T("Connect and begin…", "連接並開始…")));
+    r.cursor ? h("button", { class: r.codex || r.claude ? "btn" : "btn primary", "data-chat-start-host": "cursor", disabled: phone || r.starting || null, onclick: start("cursor") }, T("Start on Cursor", "在 Cursor 上開始")) : null,
+    h("a", { class: r.codex || r.claude || r.cursor ? "btn ghost" : "btn primary", href: "#/firstmate", onclick: () => openChat(false) }, r.codex || r.claude || r.cursor ? T("Accounts…", "帳號…") : T("Connect and begin…", "連接並開始…")));
 }
 function queueView(v) {
   if (!v.queue.length) return null;
@@ -102,7 +103,7 @@ function approvalCard(a) {
 /** A typed error from outside Studio: its class, its code, Studio's reason, and the exact external message. */
 const EXT_CLASS = { quota: ["Quota or rate limit", "額度或頻率限制"], auth: ["Sign-in refused", "登入被拒"], timeout: ["Timed out", "逾時"], network: ["Network", "網路"], exit: ["Process stopped", "程序停止"], attachment: ["Attachment not sent", "附件沒有送出"], upload: ["Upload failed", "上傳失敗"], api: ["Vendor error", "供應商錯誤"] };
 function externalView(x) {
-  const who = { claude: "Claude", codex: "Codex", studio: "Studio" }[x.source] || x.source, cls = EXT_CLASS[x.class] || EXT_CLASS.api;
+  const who = { claude: "Claude", codex: "Codex", cursor: "Cursor", studio: "Studio" }[x.source] || x.source, cls = EXT_CLASS[x.class] || EXT_CLASS.api;
   return h("div", { class: "rich chat-err ext-err", role: "alert", "data-external-error": x.code, "data-error-class": x.class, "data-error-source": x.source },
     h("div", { class: "rk", style: "color:var(--bad)" }, icon("alert", "ic sm"), `${who} · ${T(cls[0], cls[1])}`, h("span", { class: "vbadge" }, x.code)),
     h("div", { style: "font-size:13px" }, L(x.reason)),
@@ -221,7 +222,7 @@ ask = async function (text) {
   openChat(true);
   let r; try { r = await postJ("/api/main/send", { text, ...(att.length ? { attachments: att.map((a) => ({ id: a.ref.id, name: a.ref.name })) } : {}) }); }
   catch (e) { r = { status: 0, error: String(e?.message || e), code: "studio_network" }; }
-  if (r.error) { restoreDraft(text); localNotice({ source: "studio", class: r.status === 0 ? "network" : /^(attachment|claude)/.test(r.code || "") ? "attachment" : "api", code: r.code || `http_${r.status}`, message: r.reason ? `${r.reason.en}${r.reason["zh-TW"] ? ` / ${r.reason["zh-TW"]}` : ""}` : r.error, reason: { en: "The message was not sent.", "zh-TW": "訊息沒有送出。" } }); return; }
+  if (r.error) { restoreDraft(text); localNotice({ source: "studio", class: r.status === 0 ? "network" : /^(attachment|claude|cursor)/.test(r.code || "") ? "attachment" : "api", code: r.code || `http_${r.status}`, message: r.reason ? `${r.reason.en}${r.reason["zh-TW"] ? ` / ${r.reason["zh-TW"]}` : ""}` : r.error, reason: { en: "The message was not sent.", "zh-TW": "訊息沒有送出。" } }); return; }
   MS.notices = [];
   if (att.length) clearAtt();
   window.pageDirty?.clean(); // the draft went out
@@ -242,6 +243,10 @@ const fmtSize = (n) => n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` :
 function attNote(a) {
   const host = MS.view?.state !== "detached" ? MS.view?.host : null, ref = a.ref;
   if (!ref) return null;
+  // Cursor takes images; a PDF only where its Read tool works (an explicit project), mirroring src/attachments.ts deliveryFor
+  if (host === "cursor" && ref.kind === "pdf") return MS.view?.context === "studio" ? { refused: true, text: T("Firstmate on Cursor in Studio’s own workspace takes images but not PDFs. Remove the PDF, or describe it in words.", "在 Studio 自己的工作空間裡，Cursor 上的 Firstmate 可以接收圖片，但不能接收 PDF。請移除 PDF，或用文字描述。") }
+    : { refused: false, text: T("Cursor opens the PDF itself with its Read tool.", "Cursor 會用自己的 Read 工具開啟 PDF。") };
+  if (host === "cursor") return null;
   if (host === "codex" && ref.kind === "pdf") return { refused: false, text: T("Codex cannot read PDFs directly; it opens the file itself.", "Codex 不能直接讀 PDF，會自己開檔。") };
   if (host === "claude" && ref.kind === "image" && ref.size > ATT.claudeImage) return { refused: true, text: T("Claude takes images up to 3.75 MB. Remove it or send a smaller one.", "Claude 只收 3.75 MB 以內的圖片，請移除或換小一點的。") };
   if (host === "claude" && ref.kind === "image" && Math.max(ref.width || 0, ref.height || 0) > ATT.claudeSide) return { refused: true, text: T(`Claude takes images up to ${ATT.claudeSide} px on a side (this one is ${ref.width}×${ref.height}).`, `Claude 只收每邊 ${ATT.claudeSide} px 以內的圖片（這張 ${ref.width}×${ref.height}）。`) };
@@ -327,7 +332,7 @@ function attView(list) {
   hydrateIcons?.(chat);
 })();
 async function handBack() {
-  const native=MS.view?.context==="studio";
+  const v=MS.view,native=v?.context==="studio"||(v?.host==="cursor"&&!v?.origin&&v?.drive?.path==="fresh");
   const r = await postJ("/api/main/detach");
   if (r.error) return toast(r.error);
   if(native){await loadMain();return toast(T("Firstmate stopped","Firstmate 已停止"));}

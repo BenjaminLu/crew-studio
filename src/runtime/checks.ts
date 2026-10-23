@@ -217,8 +217,12 @@ const SYSCTL_READ = `(allow sysctl-read
   (sysctl-name "vm.overcommit") (sysctl-name "vm.footprint_interval_reset")
   (sysctl-name "user.cs_path"))`;
 const SYSTEM_READ = ["/usr", "/bin", "/sbin", "/System", "/Library", "/opt", "/private/etc", "/etc", "/dev", "/private/var/db/timezone", "/private/var/db/dyld", "/var/db/timezone", "/Applications/Xcode.app", "/private/var/select"];
-/** Folders whose files must never reach a check, even as an input. */
-const HOME_SECRETS = [".ssh", ".aws", ".gnupg", ".netrc", ".config", ".claude", ".claude.json", ".codex", ".docker", ".kube", ".npmrc", ".git-credentials", "Library/Keychains"];
+/** Folders whose files must never reach a check, even as an input. Cursor's: its login, settings, MCP servers, chats and
+ *  transcripts, never the whole ~/.cursor, whose worktrees/ holds checkouts (Studio's own may run from one). */
+const CURSOR_SECRETS = ["auth.json", "cli-config.json", "mcp.json", "chats", "projects", "prompt_history.json", "agent-cli-state.json"].map((x) => `.cursor/${x}`);
+/** Cursor's private files in a home (the project and data-root checks refuse them too). */
+export const cursorSecretPaths = (h = homedir()) => CURSOR_SECRETS.map((x) => join(h, x));
+const HOME_SECRETS = [".ssh", ".aws", ".gnupg", ".netrc", ".config", ".claude", ".claude.json", ".codex", ...CURSOR_SECRETS, ".docker", ".kube", ".npmrc", ".git-credentials", "Library/Keychains"];
 export const SECRET_DIRS = (dataDir?: string | null) => { const h = homedir(); return [...(dataDir ? [join(dataDir, "ledger.key"), join(dataDir, "keys.json"), join(dataDir, "github-token"), join(dataDir, "policies"), join(dataDir, "remote-devices.json"), join(dataDir, "session-token")] : []), runtimeDir(),
   ...HOME_SECRETS.map((x) => join(h, x))]; };
 /** The deny list a profile ends with: SECRET_DIRS, and the same folders of the account's own home when Studio runs with another

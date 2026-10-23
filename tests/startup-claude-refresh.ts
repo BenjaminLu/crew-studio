@@ -10,8 +10,8 @@ const pair={model:'claude-sonnet-5-5',effort:null};
 const input:any={role:'founder',host:null,explicit:true,provider:'claude',model:pair.model,effort:null,configured:{claude:{model:pair.model,effort:'high'}},fallback:[],known:['claude']};
 const cap:any={provider:'claude',available:true,auth:'verified',quota:'unknown',models:[],at:Date.now(),expires:Date.now()+30000};
 const flow={id:'startup-recursion',kind:'startup-recursion',name:'Refresh fixture',version:1,params:{founderModel:{label:'Model'}},roles:[{id:'founder',label:'Founder',skill:'fixture'}],nodes:[{id:'choose',kind:'card',args:{mode:'startup-choice'},label:'Approve',x:0,y:0},...[1,2,3].map(round=>({id:`pitch${round}`,kind:'agent',role:'founder',mode:'startup-pitch',args:{round},label:'Pitch',x:round,y:0})),{id:'done',kind:'hook',label:'Done',x:4,y:0}],edges:[['choose','pitch1','template'],['pitch1','pitch2'],['pitch2','pitch3'],['pitch3','done']]};
-async function fixture(o:{resolved?:string}={}){
- const H=await harness([Y(flow)]),E=H.engine;let current:any;let release=()=>{};let calls=0;
+async function fixture(o:{resolved?:string;defs?:string[];data?:string}={}){
+ const H=await harness(o.defs??[Y(flow)],o.data?{data:o.data}:{}),E=H.engine;let current:any;let release=()=>{};let calls=0;
  E.cardModes['startup-choice']={async start(x){if(o.resolved)E.record(x,'startup-models-resolved',{data:{schema:1,founder:{provider:'claude',model:o.resolved,source:'configured'},judge:{provider:'codex',model:'fixture-codex',source:'configured'}}});await E.card(x,'question',{captainOnly:true,title:'Approve probes',zhTitle:'同意驗證',en:{why:'At most three USD0.05/one-turn probes'},zh:{why:'最多三次、每次 US$0.05、1 turn 的驗證'},options:[{id:'template',label:'Approve',labelZh:'同意'}]});return{wait:true};},async answer(x,c){E.record(x,'startup-contract-approved',{data:{schema:1,card:c.id,definitionHash:hashInput(x.run.def),candidateHash:null,execution:'fixed-template',founder:{provider:'claude',...pair},claudeVerification:{provider:'claude',...pair,maxProbes:3,maxBudgetUSD:0.05,maxTurns:1}}});return{outcome:'template'};}};
  E.modes['startup-pitch']={system:()=>'',prompt:()=>'',tools:()=>[],after:()=> 'ok'};
  E.deps.selectProvider=async x=>{current=x;await new Promise<void>(r=>release=r);return H.engine.deps.provider();};
@@ -76,6 +76,20 @@ for(const mode of ['failed','concurrent','replay','owner-ended','wrong-model','w
   ok(isClaudeExecutionAdmission(a,pair)&&isClaudeExecutionAdmission(b,pair)&&probes===1,'two startup Tasks verifying the same pair together both become ready from one bounded request');
   ok([A,B].every(F=>F.E.trusted(F.r.id).entries.filter(e=>e.record==='startup-claude-verification-attempt').length===1),'each Task still spends exactly one approved probe attempt');
  }finally{await A.stop();await B.stop();rmSync(dir,{recursive:true,force:true});}
+}
+// The bundled template installed as a later version (Studio stores a changed built-in as a new version) still verifies;
+// a later version that is not the bundled template does not.
+{
+ const {readFileSync}=await import('node:fs');const {join}=await import('node:path');
+ const text=readFileSync(join(import.meta.dir,'../workflows/v2/startup-recursion.wf.yaml'),'utf8'),older=text.replace('"Claude pitches and revises;','"Claude pitches, then revises;');
+ for(const edited of [false,true]){
+  const H0=await harness([older]),data=H0.data;H0.stop();
+  const F=await fixture({defs:[edited?text.replace('"label": "船長驗收"','"label": "Captain signoff"'):text],data});try{
+   ok(F.r.def.version===2,'the changed built-in is installed as v2');
+   let denied=false;try{await refreshStartupClaude(F.x,input,pair,cap,F.deps)}catch{denied=true;}
+   ok(edited?denied&&F.calls===0:!denied&&F.calls===1,edited?'a later version that is not the bundled template is refused':'the bundled template at v2 still runs its approved Claude verification');
+  }finally{await F.stop();}
+ }
 }
 for(const mode of ['resolved-drift','param-after-resolution']){
  const F=await fixture({resolved:mode==='resolved-drift'?'claude-opus-5-5':pair.model});try{

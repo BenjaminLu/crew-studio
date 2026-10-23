@@ -34,7 +34,9 @@ writeFileSync(join(data, "ledger.key"), "SECRET-LEDGER-KEY");
 const { SECRET_DIRS } = await import("../src/runtime/checks");
 const FILEISH = /(\.netrc|\.json|\.npmrc|\.git-credentials|\.key|github-token)$/;
 const SECRET_FILES = [...SECRET_DIRS(data).filter((p) => !p.endsWith("Library/Keychains")).map((p) => (FILEISH.test(p) ? p : join(p, "probe-secret"))), join(realHome, ".config", "gh", "hosts.yml")]; // gh's own login, named
-for (const f of SECRET_FILES) if (!existsSync(f)) { mkdirSync(join(f, ".."), { recursive: true }); writeFileSync(f, "SECRET"); }
+// a probe file is made only in this test's own folders: an entry of the account's real home is probed as it is, never written
+const ownTmp = (f: string) => [realHome, data].some((d) => f.startsWith(d + "/"));
+for (const f of SECRET_FILES) if (!existsSync(f) && ownTmp(f)) { mkdirSync(join(f, ".."), { recursive: true }); writeFileSync(f, "SECRET"); }
 const wt = join(data, "work", "sandbox", "R-1"); mkdirSync(wt, { recursive: true }); writeFileSync(join(wt, ".git"), "gitdir: /somewhere/.git/worktrees/R-1\n");
 const outside = join(data, "outside.txt");
 const egress = new Egress(join(data, "egress.log")); await egress.start();

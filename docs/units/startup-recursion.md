@@ -2,8 +2,9 @@
 
 - An example, not a default: a fresh data folder does not seed it (it is not in a new captain's catalog and cannot catch a website request); `CREW_EXAMPLE_WORKFLOWS=1` seeds it. An install that already has it keeps it unchanged and startable, and its Tasks keep running (src/runtime/defs.ts `EXAMPLE_DEFAULTS`).
 - Native workflow: `startup-recursion` v1; no Git repository, install, PR, image or video needed.
-- Claude is the founder: complete proposal, then explicit responses to previous feedback.
-- Codex is the judge: constructive critique, score 0–100, `ready` or `revise`.
+- Claude is the founder by default: complete proposal, then explicit responses to previous feedback.
+- Codex is the judge by default: constructive critique, score 0–100, `ready` or `revise`.
+- Either role can run on another provider: `founderProvider` / `judgeProvider` (`claude`, `codex` or `cursor`; empty keeps the default) are choices on the board's start form and optional Firstmate params. The selection card names a moved role with its role ("Cursor founder: …"); the default card is unchanged. When a role's default vendor is not signed in on this Studio and Cursor is, the start form (`providerAdvice` from `/api/wruns/start-options`, with a "Use Cursor" button) and Firstmate's startup contract say which of those params to set to `cursor`; the defaults themselves stay Claude founder, Codex judge.
 - At most three proposal/critique rounds. `ready` can reach captain acceptance earlier. At round three, unresolved critique remains visible to the captain; it never becomes an automatic pass.
 - Outputs: a pinned document artifact (doc.md + doc.html) retaining every proposal, critique and revision response, with actual job/provider/model provenance in the signed ledger. It is review-only outside the accept card: its review page has no Approve / Request changes, the artifact and docs approve routes refuse it (403 / 409, en/zh-TW reason), export stays open. Early versions hold only competition.md; their page is rendered on the fly, never rewritten.
 - The captain must select execution, then separately accept or reject the exact artifact. Rejection closes without approval; modification after presentation blocks approval.
@@ -20,13 +21,13 @@
 
 ## Provider capability
 
-- Exact Claude/Codex models are required. No vendor fallback or role substitution.
+- Exact models for the chosen providers are required. No vendor fallback or role substitution.
 - An explicit `founderModel` / `judgeModel` param wins. When one is omitted (the board's Tasks start offers neither), Studio binds its configured model for that exact provider: Settings → Chat model for that provider, else `CREW_CLAUDE_MODEL` / `CREW_CODEX_MODEL`, else Studio's Claude default or the `model` in Codex `config.toml`. The binding is a signed `startup-models-resolved` record written before the selection card; the card shows those exact models and the captain approves them.
-- A later param change cannot replace the bound model: approval, every round and the Claude verification probe refuse it.
+- A later param change cannot replace the bound model or provider: approval, every round and the Claude verification probe refuse it. An unknown provider refuses the start (`startup_provider_invalid`).
 - No configured model for a provider refuses the start with a typed bilingual reason (`startup_model_unconfigured`, or `startup_model_invalid` for a malformed explicit id) naming the provider and where to set it. Nothing falls back to the other vendor.
 - Login is not execution proof. Native provider policy remains authoritative; unavailable Claude blocks the task.
-- The selection card explicitly authorizes up to one bounded Claude verification probe per founder round, maximum three probes, each at most one turn and US$0.05. Proposal/review model inference is separate.
-- Signed `startup-contract-approved` binds definition hash, candidate hash, captain card, exact roles/models/effort, and probe limits. A provider-layer verifier must enforce that authority and charge failed attempts; the workflow itself does not fabricate an execution receipt or claim quota availability.
+- With the founder on Claude, the selection card explicitly authorizes up to one bounded Claude verification probe per founder round, maximum three probes, each at most one turn and US$0.05. Proposal/review model inference is separate.
+- Signed `startup-contract-approved` binds definition hash, candidate hash, captain card, exact roles/providers/models/effort, and (founder on Claude) probe limits. The probe accepts the bundled template at any installed version (Studio stores a changed built-in as a new version). A provider-layer verifier must enforce that authority and charge failed attempts; the workflow itself does not fabricate an execution receipt or claim quota availability.
 
 ## Verification
 

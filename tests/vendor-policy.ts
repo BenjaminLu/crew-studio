@@ -2,7 +2,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Typed capability facts are strict fake-provider evidence; native callers below
 // prove the policy is actually used before any session starts.
 import { makeProvider } from "../src/providers";
-import { selectNativeProvider, ProviderRefusal, type ProviderCapability, type ProviderSelection } from "../src/providers/policy";
+import { nativeChain, selectNativeProvider, ProviderRefusal, type ProviderCapability, type ProviderSelection } from "../src/providers/policy";
 import { harness, suite, Y, until } from "./rt-harness";
 const { ok, end }=suite("vendor-policy");
 let made:string[]=[],probes:string[]=[];
@@ -26,6 +26,37 @@ reset();ok(await refused(()=>selectNativeProvider({...input,fallback:["unknown-v
 reset();ok(await refused(()=>selectNativeProvider(input,async id=>facts(id,{expires:Date.now()-1}),make))&&!made.length,"stale capability evidence cannot launch a round");
 reset();ok(await refused(()=>selectNativeProvider(input,async()=>{throw new Error("probe unavailable");},make))&&!made.length,"probe error is unverified rather than a fallback or successful launch");
 reset();ok(await refused(()=>selectNativeProvider(input,probe,(id,model)=>make("codex",model,null)))&&!made.includes("claude"),"actual resolved provider identity must match verified vendor");
+// Cursor: a Cursor host's opposite is the first ready of Codex and Claude, else Cursor; the reviewer stands in only when Claude is absent
+{ const cfacts=(id:string,patch:Partial<ProviderCapability>={})=>id==="cursor"?facts(id,{models:[{id:"approved-cursor",efforts:[]}],...patch}):facts(id,patch);
+  const ci:ProviderSelection={...input,host:"cursor",configured:{...input.configured,cursor:{model:"approved-cursor",effort:null}},fallback:["codex","claude","cursor"],known:["claude","codex","cursor"]};
+  const gone={available:false,auth:"unverified" as const,quota:"unknown" as const,models:[],refusal:"unavailable" as const,reason:"not installed"},unverified={available:false,auth:"unverified" as const,quota:"unknown" as const,models:[],refusal:"unverified" as const,reason:"no verified native Codex login"};
+  reset();r=await selectNativeProvider(ci,async id=>{probes.push(id);return cfacts(id);},make);ok(r.provider.id==="codex"&&made.join()==="codex"&&r.evidence.rule==="opposite-of-host","Cursor host: a ready Codex is the opposite vendor");
+  reset();r=await selectNativeProvider(ci,async id=>cfacts(id,id==="codex"?unverified:{}),make);ok(r.provider.id==="claude"&&made.join()==="claude"&&r.evidence.unavailable[0]?.provider==="codex","Cursor host: an unverified Codex is passed over (not a hold) and a ready Claude is the opposite vendor");
+  reset();r=await selectNativeProvider(ci,async id=>cfacts(id,id==="codex"?unverified:id==="claude"?gone:{}),make);ok(r.provider.id==="cursor"&&r.provider.model==="approved-cursor"&&r.evidence.effort===null&&made.join()==="cursor"&&r.evidence.unavailable.length===2,"Cursor host on a Cursor-only machine: neither Codex nor Claude ready, so the round runs on Cursor with effort null");
+  reset();ok(await refused(()=>selectNativeProvider(ci,async id=>cfacts(id,id==="cursor"?{auth:"unverified"}:gone),make))&&!made.length,"Cursor host: when Cursor itself is unverified the round holds");
+  reset();ok(await refused(()=>selectNativeProvider({...ci,configured:{...ci.configured,codex:{model:null}}},async id=>cfacts(id,id==="claude"?gone:{auth:"unverified"}),make))&&!made.length,"Cursor host: a Codex seat with no configured model is passed over, the chain still holds on an unverified Cursor");
+  const rev:ProviderSelection={...ci,role:"reviewer",host:null,explicit:true,provider:"claude",model:"approved-claude",alternates:["codex","claude","cursor"]};
+  reset();r=await selectNativeProvider(rev,async id=>cfacts(id,id==="claude"?gone:id==="codex"?unverified:{}),make);ok(r.provider.id==="cursor"&&made.join()==="cursor"&&/stand-in/.test(r.evidence.rule),"reviewer: Claude not installed and Codex unverified, so the configured stand-in Cursor reviews");
+  reset();r=await selectNativeProvider(rev,async id=>cfacts(id,id==="claude"?{auth:"missing",refusal:"missing-login",models:[]}:{}),make);ok(r.provider.id==="codex"&&r.provider.model==="approved-codex","reviewer: Claude not signed in, the first ready stand-in (Codex) reviews with its own configured model");
+  reset();r=await selectNativeProvider(rev,async id=>{probes.push(id);return cfacts(id);},make);ok(r.provider.id==="claude"&&probes.join()==="claude","reviewer: a ready Claude reviews and no stand-in is probed");
+  reset();ok(await refused(()=>selectNativeProvider(rev,async id=>cfacts(id,id==="claude"?{quota:"exhausted",refusal:"exhausted"}:{}),make))&&!made.length,"reviewer: an exhausted Claude holds, never a stand-in");
+  reset();ok(await refused(()=>selectNativeProvider(rev,async id=>cfacts(id,id==="claude"?{auth:"unverified"}:{}),make))&&!made.length,"reviewer: an unverified Claude holds, never a stand-in");
+  reset();ok(await refused(()=>selectNativeProvider({...rev,alternates:undefined},async id=>cfacts(id,id==="claude"?gone:{}),make))&&!made.length,"reviewer without stand-ins: an unavailable Claude still refuses");
+  reset();ok(await refused(()=>selectNativeProvider(rev,async id=>cfacts(id,id==="claude"?gone:unverified),make))&&!made.length,"reviewer: no ready stand-in refuses");
+  // the server's chain (src/server.ts nativePick): stand-ins under Cursor only; a chat vendor alone never makes the chain Cursor
+  const fb=["codex","claude"],all={codex:"logged-in",claude:"logged-in",cursor:"logged-in"},rv={role:"reviewer",explicit:false,fixture:false,fallback:fb};
+  for(const host of ["codex","claude"]){
+    const c=nativeChain({...rv,host,logins:all});
+    reset();ok(c.chain===host&&c.alternates===undefined&&await refused(()=>selectNativeProvider({...rev,host:c.chain,alternates:c.alternates},async id=>cfacts(id,id==="claude"?gone:{}),make))&&!made.length,`under a ${host} host an unavailable policy reviewer still holds (no stand-in)`);
+  }
+  ok(JSON.stringify(nativeChain({...rv,host:"cursor",logins:all}).alternates)==='["codex","claude","cursor"]',"under a Cursor host the reviewer's stand-ins are the fallback, then Cursor");
+  ok(nativeChain({...rv,host:"cursor",logins:all,explicit:true}).alternates===undefined&&nativeChain({...rv,host:"cursor",logins:all,fixture:true}).alternates===undefined&&nativeChain({...rv,role:"worker",host:"cursor",logins:all}).alternates===undefined,"an explicit pick, the offline fixture and a worker get no stand-ins");
+  ok(nativeChain({...rv,role:"worker",host:null,logins:{codex:"logged-in",claude:"not-logged-in",cursor:"logged-in"}}).chain===null&&nativeChain({...rv,role:"worker",host:null,logins:{codex:"not-logged-in",claude:"logged-in",cursor:"logged-in"}}).chain===null,
+    "no attached host and Codex or Claude signed in: workers select as before, even with Cursor ready (and whatever the chat vendor)");
+  ok(nativeChain({...rv,role:"worker",host:null,logins:{codex:"not-logged-in",claude:"unknown",cursor:"logged-in"}}).chain==="cursor"&&nativeChain({...rv,role:"worker",host:null,logins:{codex:"not-logged-in",claude:"not-logged-in",cursor:"not-logged-in"}}).chain===null,
+    "no attached host: Cursor's rules only when Cursor is the one vendor signed in");
+  reset();r=await selectNativeProvider({...ci,host:nativeChain({...rv,role:"worker",host:null,logins:{codex:"logged-in",claude:"not-logged-in",cursor:"logged-in"}}).chain,fallback:fb},async id=>cfacts(id,id==="claude"?gone:{}),make);
+  ok(r.provider.id==="codex"&&r.evidence.rule.includes("unknown host"),"with Codex signed in and no host, a worker takes the configured fallback, never the Cursor chain"); }
 let unknown=false;try{makeProvider("unknown-provider");}catch{unknown=true;}ok(unknown,"public provider factory refuses unknown identities rather than silently choosing Claude");
 // Real native Engine selection seam: strict fake capabilities are consumed by
 // the actual caller; no synthetic card JSON or callback result is asserted alone.

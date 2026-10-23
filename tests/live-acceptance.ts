@@ -12,7 +12,7 @@ import { loadScenario, decideCard, validateScenario, defHash, externalEffect, LO
 // no authorization window is open unless a case says so
 const decide = (s: any, c: any, d: any, w: string[] = []) => decideCard(s, c, d, { openAuthWindows: w });
 import { normalize } from "../src/runtime/defs";
-import { modelCalls, modelProblems, nodeRecords, providersToCheck } from "../scripts/acceptance/report";
+import { modelCalls, modelProblems, nodeRecords, policyVendors, providersToCheck, REAL, vendorName } from "../scripts/acceptance/report";
 
 let pass = 0, fail = 0;
 const ok = (c: unknown, name: string, extra = "") => { if (c) { pass++; console.log(`  ok    ${name}`); } else { fail++; console.log(`  FAIL  ${name} ${extra}`); } };
@@ -201,6 +201,14 @@ try {
   ok(gh6.every((n) => n.provider === "codex") && gh6.some((n) => /loop .* coordinator/.test(n.why)) && jd6.filter((n) => /core\/j/.test(n.why)).map((n) => n.provider).join() === "claude,codex" && jd6.some((n) => n.provider === "claude" && /core\/k/.test(n.why))
     && nd6[0].provider === "claude" && /node provider/.test(nd6[0].why) && nd6[1].provider === "codex" && /role w/.test(nd6[1].why),
     "F6: node provider, then role, then Start form, then policy; loop coordinators and judged checks are included", JSON.stringify({ gh6: gh6.slice(0, 2), jd6, nd6 }));
+  // F8: Cursor is a real vendor; a Studio whose chat vendor is Cursor needs Cursor signed in, not Claude and Codex
+  const cp7 = providersToCheck({ nodes: [N("a", "agent")], edges: [] }, null, new Set(), policyVendors("cursor", false));
+  ok(REAL.has("cursor") && vendorName("cursor") === "Cursor" && vendorName("claude") === "Claude" && vendorName("codex") === "Codex"
+    && cp7.map((n) => n.provider).join() === "cursor" && policyVendors("claude", false).join() === "claude,codex" && policyVendors(undefined, false).join() === "claude,codex"
+    && policyVendors("stub", true).join() === "stub" && policyVendors("stub", false).join() === "claude,codex",
+    "F8: Cursor is a real vendor named Cursor; Studio's policy needs Cursor only when Cursor is the chat vendor", JSON.stringify(cp7));
+  ok(modelProblems([{ node: "a", label: "a", kind: "agent", do: null, status: "passed", outcome: "pass", provider: "cursor", model: "composer-2.5", source: "round", rounds: 1, durationSeconds: 1 } as any], false, [{ call: "cursor/composer-2.5", from: "round a" } as any]).length === 0,
+    "F8: a round on Cursor is a real model call");
 
   // --- hook nodes that call a model: provider/model from the artifact they made, and required ---
   const imagesDef = await defOf("images");

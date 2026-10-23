@@ -1,6 +1,6 @@
 // Source-only local registration. A model can propose; only signed captain cards can mutate.
 import {realpathSync,statSync,readFileSync,existsSync} from 'node:fs';import {homedir} from 'node:os';import {join,resolve,relative,isAbsolute} from 'node:path';import {createHash} from 'node:crypto';
-import {probeProcess} from './providers/probe-process';import {builtInSandboxRoot} from './doors';import {NativeToolFailure,type NativeMainTools} from './host/types';import {bundledText} from './bundled';import {normalize,defBody,installedSource,type WDef} from './runtime/defs';import type {Engine,X} from './runtime/engine';import type {Projects} from './doors';
+import {probeProcess} from './providers/probe-process';import {builtInSandboxRoot} from './doors';import {NativeToolFailure,type NativeMainTools} from './host/types';import {bundledText} from './bundled';import {normalize,defBody,installedSource,type WDef} from './runtime/defs';import type {Engine,X} from './runtime/engine';import type {Projects} from './doors';import {cursorSecretPaths} from './runtime/checks';
 type Owner=Parameters<NativeMainTools['call']>[2];type Work={workflow:string;version:number;title?:string;text:string;params:Record<string,string>};
 const ID='firstmate-register-project';export const registrationWorkflow=ID;
 export const canonical=(v:any):string=>v&&typeof v==='object'?Array.isArray(v)?'['+v.map(canonical).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
@@ -12,7 +12,7 @@ export function installProjectRegistration(engine:Engine,projects:Projects,o:{pr
  const source=normalize(JSON.parse(bundledText('workflows/v2/firstmate-register-project.wf.yaml')||'null'));
  const body=defBody;
  const bound=(d:WDef)=>{if(d.id!==ID||pin(body(d))!==pin(body(source)))fail('target_changed','Installed registration workflow changed.','隨附的註冊流程已變更。');};
- const roots=[engine.deps.dataDir,...o.protectedRoots??[],process.env.CODEX_HOME||join(homedir(),'.codex'),join(homedir(),'.claude'),process.env.CREW_RUNTIME_DIR||join(homedir(),'.crew-studio/runtime')].map(p=>resolve(p));
+ const roots=[engine.deps.dataDir,...o.protectedRoots??[],process.env.CODEX_HOME||join(homedir(),'.codex'),join(homedir(),'.claude'),...cursorSecretPaths(),process.env.CREW_RUNTIME_DIR||join(homedir(),'.crew-studio/runtime')].map(p=>resolve(p));
   // Only the registered built-in sandbox (exact id and literal path) may sit below the data root; new registrations never may.
  const allowed=(path:string,sandbox:string|null=null)=>{for(const [i,r] of roots.entries()){let root=r;try{root=realpathSync(r);}catch{}if(sandbox&&i===0&&within(sandbox,path))continue;if(within(root,path)||within(path,root))fail('invalid_params','Choose a repository outside Studio private data, credentials and runtime.','請選擇 Studio 私人資料、憑證與執行目錄以外的儲存庫。','prepare_project_work');}};
  async function inspect(path:unknown,owner:Owner,project:string|null=null){

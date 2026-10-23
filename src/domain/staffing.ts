@@ -47,10 +47,10 @@ export function coffeeStaffingProject(id:string):StaffingProject{
 export type StaffingProject={namespace:'git'|'artifact';id:string;identity:string};
 export type SkillPin={ref:string;version:number;sha256:string;snapshotSha256:string};
 /** skill pins the role's joined text; skills (a role with several named skills only) pins each named skill, in the same SkillPin list a node override's skills use. */
-export type StaffingRole={provider:'codex'|'claude';model:string;effort:string|null;skill:SkillPin;skills?:SkillPin[]};
+export type StaffingRole={provider:'codex'|'claude'|'cursor';model:string;effort:string|null;skill:SkillPin;skills?:SkillPin[]};
 /** One node's override of its role's staffing (an agent or loop node): any of provider, model, effort, plus the named skills it loads.
  *  A library skill pin's ref is skill:<id>; its version and sha256 are the library version's. */
-export type StaffingNode={provider?:'codex'|'claude';model?:string;effort?:string|null;skills?:SkillPin[]};
+export type StaffingNode={provider?:'codex'|'claude'|'cursor';model?:string;effort?:string|null;skills?:SkillPin[]};
 export type StaffingDraft={schema:1;algorithm:'sha256-canonical-v1';project:StaffingProject;workflow:{id:string;version:number;sha256:string};roles:Record<string,StaffingRole>;review:{freshContexts:number;distinctProviders:boolean};
  /** per-node overrides (absent in approvals made before node overrides existed: those cover a workflow with no node provider, model or effort) */
  nodes?:Record<string,StaffingNode>;
@@ -86,7 +86,7 @@ function validateNodes(nodes:any){
  for(const[id,n]of Object.entries<any>(nodes)){
   if(!/^[a-z0-9][a-z0-9-]{0,40}$/.test(id))throw new Error('Malformed node override');
   if(!plain(n)||!Object.keys(n).length||Object.keys(n).some(k=>!['provider','model','effort','skills'].includes(k)))throw new Error('Staffing node override keys differ');
-  if(n.provider!==undefined&&!['codex','claude'].includes(n.provider))throw new Error('Unsupported staffing provider');if(n.model!==undefined)text(n.model);if(n.effort!==undefined&&n.effort!==null)text(n.effort,40);
+  if(n.provider!==undefined&&!['codex','claude','cursor'].includes(n.provider))throw new Error('Unsupported staffing provider');if(n.model!==undefined)text(n.model);if(n.effort!==undefined&&n.effort!==null)text(n.effort,40);
   if(n.skills!==undefined)validateSkillList(n.skills,0,p=>LIBRARY_REF.test(p.ref));
  }
 }
@@ -105,14 +105,14 @@ const pickOverride=(o:StaffingNode|undefined)=>!!o&&(o.provider!==undefined||o.m
 export function nodeRole(def:any,node:any):string|undefined{if(node?.kind==='loop'){const has=(r:unknown)=>!!r&&def?.roles?.some((x:any)=>x.id===r);return node.role??(has(node.args?.coordinator)?node.args.coordinator:has('coordinator')?'coordinator':undefined);}return node?.role??node?.args?.role;}
 /** What a node runs on: its role's approved provider, model and effort, with the node's approved override on top.
  *  The override applies to the node's own role only (a judge turn on an agent node keeps the reviewer's staffing). */
-export function effectivePick(config:Pick<StaffingDraft,'roles'|'nodes'>,def:any,node:any,roleId:string|undefined):{provider:'codex'|'claude';model:string;effort:string|null}|null{
+export function effectivePick(config:Pick<StaffingDraft,'roles'|'nodes'>,def:any,node:any,roleId:string|undefined):{provider:'codex'|'claude'|'cursor';model:string;effort:string|null}|null{
  const role=roleId?config.roles[roleId]:undefined;if(!role)return null;const o=node?.id?config.nodes?.[node.id]:undefined;
  if(!pickOverride(o)||roleId!==nodeRole(def,node))return{provider:role.provider,model:role.model,effort:role.effort};
  const provider=o!.provider??role.provider;
  return{provider,model:o!.model??role.model,effort:o!.effort!==undefined?o!.effort:role.effort};
 }
 /** Every pick a configuration runs: each role's, then each node override's effective pick (each must be verified available like a role). */
-export function staffedPicks(config:Pick<StaffingDraft,'roles'|'nodes'>,def:any):{provider:'codex'|'claude';model:string;effort:string|null}[]{
+export function staffedPicks(config:Pick<StaffingDraft,'roles'|'nodes'>,def:any):{provider:'codex'|'claude'|'cursor';model:string;effort:string|null}[]{
  const out=Object.values(config.roles).map(r=>({provider:r.provider,model:r.model,effort:r.effort}));
  for(const[id,o]of Object.entries(config.nodes??{})){if(!pickOverride(o))continue;const node=def?.nodes?.find((n:any)=>n.id===id);const p=node&&effectivePick(config,def,node,nodeRole(def,node));if(!p)throw new Error(`Node override ${id} has no staffed role`);out.push(p);}
  return out;
@@ -135,7 +135,7 @@ export function validateStaffingDraft(x:StaffingDraft):void{
  withNodes(x,['schema','algorithm','project','workflow','roles','review']);if(Object.hasOwn(x,'nodes'))validateNodes(x.nodes);if(Object.hasOwn(x,'crew')){keys(x.crew,['team']);digest(x.crew.team);}if(x.schema!==1||x.algorithm!=='sha256-canonical-v1')throw new Error('Unsupported staffing schema');validateProject(x.project);
  keys(x.workflow,['id','version','sha256']);text(x.workflow.id);integer(x.workflow.version);digest(x.workflow.sha256);
  if(!plain(x.roles)||!Object.keys(x.roles).length||Object.keys(x.roles).length>12)throw new Error('Staffing roles are missing or excessive');
- for(const[id,r]of Object.entries(x.roles)){if(!/^[a-z][a-z0-9-]{0,39}$/.test(id))throw new Error('Malformed role');keys(r,Object.hasOwn(r,'skills')?['provider','model','effort','skill','skills']:['provider','model','effort','skill']);if(!['codex','claude'].includes(r.provider))throw new Error('Unsupported staffing provider');text(r.model);if(r.effort!==null)text(r.effort,40);if(r.provider==='codex'&&!r.effort)throw new Error('Choose Codex effort explicitly');keys(r.skill,['ref','version','sha256','snapshotSha256']);text(r.skill.ref,400);integer(r.skill.version);digest(r.skill.sha256);digest(r.skill.snapshotSha256);if(r.skill.sha256!==r.skill.snapshotSha256)throw new Error('Skill snapshot differs');
+ for(const[id,r]of Object.entries(x.roles)){if(!/^[a-z][a-z0-9-]{0,39}$/.test(id))throw new Error('Malformed role');keys(r,Object.hasOwn(r,'skills')?['provider','model','effort','skill','skills']:['provider','model','effort','skill']);if(!['codex','claude','cursor'].includes(r.provider))throw new Error('Unsupported staffing provider');text(r.model);if(r.effort!==null)text(r.effort,40);if(r.provider==='codex'&&!r.effort)throw new Error('Choose Codex effort explicitly');keys(r.skill,['ref','version','sha256','snapshotSha256']);text(r.skill.ref,400);integer(r.skill.version);digest(r.skill.sha256);digest(r.skill.snapshotSha256);if(r.skill.sha256!==r.skill.snapshotSha256)throw new Error('Skill snapshot differs');
   if(Object.hasOwn(r,'skills'))validateSkillList(r.skills,2,p=>!p.ref.startsWith('skill:'),r.skill.ref);}
  keys(x.review,['freshContexts','distinctProviders']);if(x.review.freshContexts!==3||typeof x.review.distinctProviders!=='boolean')throw new Error('Three fresh review contexts are required');
 }

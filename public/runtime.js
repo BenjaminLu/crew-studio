@@ -853,7 +853,7 @@ function viewRuns() {
   text.value = RN.draft || "";
   const wf = h("select", { class: "select", "aria-label": T("Workflow", "流程"), "data-run-wf": "1", onchange: (e) => { RN.prefill = e.target.value; RN.startError = ""; rerender(); } }, h("option", { value: "" }, T("Let Studio pick", "讓 Studio 選")), (RN.wfs || []).map((w) => h("option", { value: w.id, selected: RN.prefill === w.id || null }, w.name)));
   const provider = h("select", { class: "select", "aria-label": T("Provider", "模型供應商"), "data-run-provider": "1", onchange: (e) => { RN.provider = e.target.value; } },
-    [["", T("Default provider", "預設模型供應商")], ["codex", "Codex"], ["claude", "Claude"]].map(([value, label]) => h("option", { value, selected: (RN.provider || "") === value || null }, label)));
+    [["", T("Default provider", "預設模型供應商")], ["codex", "Codex"], ["claude", "Claude"], ["cursor", "Cursor"]].map(([value, label]) => h("option", { value, selected: (RN.provider || "") === value || null }, label)));
   const msg = h("div", { class: "faint", role: "status" }, RN.startError || "");
   return h("div", { class: "page" }, h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Tasks", "任務")), h("p", {}, T("Studio's workflow tasks, each with its live graph.", "Studio 的流程任務，每個都有即時流程圖。")))),
     h("div", { class: "card x-pad rt-start" }, h("h3", {}, T("Start a task", "開始一個任務")), text, h("div", { class: "rt-row" }, wf, provider, h("button", { class: "btn primary", "data-run-start": "1", disabled: startBlocked(wf.value) || null, onclick: async () => {
@@ -1179,11 +1179,12 @@ window.studioAgents = { members: () => [...SA.list.map(a=>({name:a.label||a.prov
 // Free authoring is separate from model execution and staffing admission.
 // Choices a node may take (the server's closed sets, read once): providers, efforts, bundled role skills.
 const DRAFT_OPTS={value:null,pending:null};
+const DRAFT_PROVIDER_LABEL={codex:"Codex",claude:"Claude",cursor:"Cursor"};
 const draftOpts=()=>DRAFT_OPTS.value?Promise.resolve(DRAFT_OPTS.value):(DRAFT_OPTS.pending||=api("/api/wf/drafts").then(j=>(DRAFT_OPTS.value={providers:j.providers||[],efforts:j.efforts||[],skills:j.skills||[]})).finally(()=>{DRAFT_OPTS.pending=null;}));
 /** One agent node's worker/reviewer model settings: provider, model, effort and role skill.
  *  live: each change applies at once (the editor's next saved version); otherwise a Save button posts it. */
 function nodeModelControls(n,roleSkill,{onChange,onSave,attr,note="run",roleSkillPick=true}){
-  const opts=DRAFT_OPTS.value||{providers:["codex","claude"],efforts:["minimal","low","medium","high","xhigh"],skills:[]};
+  const opts=DRAFT_OPTS.value||{providers:["codex","claude","cursor"],efforts:["minimal","low","medium","high","xhigh"],skills:[]};
   const sel=(k,list,label,cur)=>h("label",{class:"rt-field"},h("span",{},label),h("select",{class:"select",[`data-node-config-${k}`]:"",onchange:e=>onChange?.(k,e.target.value)},h("option",{value:""},k==="skill"?T("Role default","角色預設"):T("Not chosen","尚未選擇")),list.map(([v,l])=>h("option",{value:v,selected:v===cur||null},l))));
   let catalog=null,chosenProvider=n.provider||"",chosenModel=n.model||"";
   const model=h("select",{class:"select","data-node-config-model":"",onchange:e=>{const custom=e.target.value==="__custom__";customModel.hidden=!custom;if(custom){customModel.focus();return;}chosenModel=e.target.value;onChange?.("model",chosenModel);}});
@@ -1193,7 +1194,7 @@ function nodeModelControls(n,roleSkill,{onChange,onSave,attr,note="run",roleSkil
   const status=h("span",{class:"faint",role:"status","data-node-config-status":""});
   const box=h("div",{class:"fw-node-config",[attr]:n.id},
     h("h4",{},T("Who does this node","這個節點由誰做")),h("p",{class:"faint"},T("Select a model now; availability is checked before running.","先選模型；執行前會檢查實際可用性。")),
-    sel("provider",opts.providers.map(v=>[v,v==="codex"?"Codex":"Claude"]),T("Provider","供應商"),n.provider),
+    sel("provider",opts.providers.map(v=>[v,DRAFT_PROVIDER_LABEL[v]||v]),T("Provider","供應商"),n.provider),
     h("label",{class:"rt-field"},h("span",{},T("Model","模型")),model,customModel),
     sel("effort",opts.efforts.map(v=>[v,v]),T("Reasoning effort","推理強度"),n.effort),
     roleSkillPick?sel("skill",opts.skills.map(x=>[x.ref,T(x.en,x.zh)]),T("Role skill","角色技能"),n.skill):null,
@@ -1204,7 +1205,7 @@ function nodeModelControls(n,roleSkill,{onChange,onSave,attr,note="run",roleSkil
     onSave?h("div",{class:"rt-row"},h("button",{class:"btn sm primary",type:"button","data-node-config-save":"",onclick:async()=>{const val=k=>k==="model"?chosenModel:box.querySelector(`[data-node-config-${k}]`).value;status.textContent=T("Saving…","儲存中…");try{const r=await onSave({provider:val("provider"),model:val("model").trim(),effort:val("effort"),skill:val("skill")});status.textContent=T(`Saved · revision ${r.revision}`,`已儲存 · 第 ${r.revision} 版`);}catch(e){status.textContent=e.message;}}},T("Save node settings","儲存節點設定")),status):null);
   box.querySelector('[data-node-config-provider]').addEventListener('change',e=>{chosenProvider=e.target.value;chosenModel="";customModel.hidden=true;customModel.value="";onChange?.("model","");fillModels();});
   // choices that arrive late fill the selects in place: never replace the box under the captain's typing or click
-  if(!DRAFT_OPTS.value)draftOpts().then(o=>{const fill=(k,list)=>{const el=box.querySelector(`[data-node-config-${k}]`);if(!el)return;const cur=el.value;el.replaceChildren(el.firstChild,...list.map(([v,l])=>h("option",{value:v,selected:v===cur||null},l)));el.value=cur;};fill("provider",o.providers.map(v=>[v,v==="codex"?"Codex":"Claude"]));fill("effort",o.efforts.map(v=>[v,v]));if(roleSkillPick)fill("skill",o.skills.map(x=>[x.ref,T(x.en,x.zh)]));}).catch(()=>{});
+  if(!DRAFT_OPTS.value)draftOpts().then(o=>{const fill=(k,list)=>{const el=box.querySelector(`[data-node-config-${k}]`);if(!el)return;const cur=el.value;el.replaceChildren(el.firstChild,...list.map(([v,l])=>h("option",{value:v,selected:v===cur||null},l)));el.value=cur;};fill("provider",o.providers.map(v=>[v,DRAFT_PROVIDER_LABEL[v]||v]));fill("effort",o.efforts.map(v=>[v,v]));if(roleSkillPick)fill("skill",o.skills.map(x=>[x.ref,T(x.en,x.zh)]));}).catch(()=>{});
   return box;
 }
 /** Run of the captain's own workflow: the staffing confirmation appears only now. Resolves true when confirmed. */
@@ -1225,7 +1226,7 @@ function staffingConfirm(staffing,missing){
       h("p",{},missing?T("These agent nodes still need a provider, model and (for Codex) effort. Select the node in the editor to choose.","這些代理節點還需要供應商、模型與（Codex）推理強度；請在編輯器選取節點設定。"):T("Only your confirmation starts the Task. Each node below runs with exactly this provider, model, effort and skill.","只有你的確認會開始任務；以下每個節點將完全依照這些供應商、模型、推理強度與技能執行。")),
       // with a Studio team each row is what will run: the member, the final pick, every skill with its version, where it comes from and any team rule note
       h("table",{class:"fw-staffing"},h("thead",{},h("tr",{},[T("Node","節點"),T("Provider","供應商"),T("Model","模型"),T("Effort","推理強度"),T("Skill","技能"),...(staffing.team!==undefined?[T("Source","來源")]:[])].map(x=>h("th",{},x)))),
-        h("tbody",{},staffing.plan.flatMap(r=>[h("tr",{"data-staffing-row":r.node,class:staffing.missing.includes(r.node)?"missing":null},h("td",{},r.label,r.seat?h("div",{class:"faint","data-staffing-seat":r.seat},r.judge?T(`check · ${r.seat}`,`檢查 · ${r.seat}`):r.seat):null),h("td",{},r.provider||"—"),h("td",{},r.model||"—"),h("td",{},r.effort||(r.provider==="claude"?T("default","預設"):"—")),
+        h("tbody",{},staffing.plan.flatMap(r=>[h("tr",{"data-staffing-row":r.node,class:staffing.missing.includes(r.node)?"missing":null},h("td",{},r.label,r.seat?h("div",{class:"faint","data-staffing-seat":r.seat},r.judge?T(`check · ${r.seat}`,`檢查 · ${r.seat}`):r.seat):null),h("td",{},r.provider||"—"),h("td",{},r.model||"—"),h("td",{},r.effort||(r.provider==="claude"?T("default","預設"):r.provider==="cursor"?T("none","無"):"—")),
           h("td",{"data-staffing-skills":r.node},[r.skill?skillName(r.skill):null,...(r.skills||[]).map(p=>`${p.id}@v${p.v}${p.from==="member"?T(" (member)","（成員）"):""}`)].filter(Boolean).join(", ")||"—"),
           ...(staffing.team!==undefined?[h("td",{"data-staffing-source":r.source},{team:T("Team","跟團隊"),workflow:T("Custom here","這裡自訂"),definition:T("Workflow sets it","流程設定"),run:T("This run","這次"),missing:T("Missing","缺人")}[r.source]||r.source)]:[])),
           ...(r.notes||[]).map(n=>h("tr",{class:"fw-staffing-note","data-staffing-note":r.node},h("td",{colspan:6},T(n.en,n.zh))))]))),
@@ -1265,9 +1266,12 @@ function startBlocked(id) { const o = (RN.startOptions || {})[id]; if (!o || o =
 function startParamSchema(id){return (RN.wfs||[]).find(w=>w.id===id)?.params||{};}
 function startParamOwned(id,key){return key==="provider"||(key==="project"&&RN.startOptions?.[id]?.projectScoped);}
 function startParamInputs(id){
-  const values=((RN.params||={})[id]||={});
-  return h("div",{"data-run-params":id},Object.entries(startParamSchema(id)).filter(([key])=>!startParamOwned(id,key)).map(([key,p])=>{
-    const input=h("input",{class:"input","data-run-param":key,"aria-label":T(p.label,p.labelZh||p.label),required:p.required||null,placeholder:p.default??"",oninput:e=>{values[key]=e.target.value;RN.startError="";}});input.value=values[key]??"";
+  const values=((RN.params||={})[id]||={}),advice=startOptions(id)?.providerAdvice;
+  // a role whose default vendor is not signed in while Cursor is would hold at dispatch: say so and offer the switch
+  const notice=advice&&advice.params.some(k=>values[k]!=="cursor")?h("div",{class:"rt-crew",role:"status","data-run-provider-advice":advice.code},T(advice.en,advice.zh)," ",h("button",{class:"btn sm",type:"button","data-run-provider-cursor":"",onclick:()=>{for(const k of advice.params)values[k]="cursor";RN.startError="";rerender();}},T("Use Cursor","改用 Cursor"))):null;
+  return h("div",{"data-run-params":id},notice,Object.entries(startParamSchema(id)).filter(([key])=>!startParamOwned(id,key)).map(([key,p])=>{
+    // a param with options is a choice: empty keeps the definition's default
+    const input=Array.isArray(p.options)&&p.options.length?h("select",{class:"input","data-run-param":key,"aria-label":T(p.label,p.labelZh||p.label),required:p.required||null,onchange:e=>{values[key]=e.target.value;RN.startError="";}},h("option",{value:""},T("Default","預設")),...p.options.map(o=>h("option",{value:o},o))):h("input",{class:"input","data-run-param":key,"aria-label":T(p.label,p.labelZh||p.label),required:p.required||null,placeholder:p.default??"",oninput:e=>{values[key]=e.target.value;RN.startError="";}});input.value=values[key]??"";
     return h("label",{class:"rt-field"},h("span",{},T(p.label,p.labelZh||p.label),p.required?" *":""),input);
   }));
 }

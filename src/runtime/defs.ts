@@ -49,7 +49,7 @@ export type WRole = { id: string; label: string; skill: string; skills?: string[
   seat?: string };
 /** The team's built-in seats; a workflow declares any specialist seat it needs in seats (src/domain/crew.ts). */
 export const TEAM_SEATS = ["coordinator", "maker", "alt-maker", "reviewer", "design-reviewer"] as const;
-export type SeatDecl = { id: string; label: string; labelZh: string; reviews?: string; needs?: string[]; suggest?: { provider?: "codex" | "claude"; model?: string; effort?: string | null } };
+export type SeatDecl = { id: string; label: string; labelZh: string; reviews?: string; needs?: string[]; suggest?: { provider?: "codex" | "claude" | "cursor"; model?: string; effort?: string | null } };
 /** The separator of a role's joined skill ref. */
 export const ROLE_SKILL_JOIN = "+";
 /** A role skill ref's named parts, in order (one part for a plain ref). */

@@ -7,8 +7,8 @@
 //    dropped when its value equals the one a .env file in the working directory or the repository root
 //    gives it, BUN_OPTIONS and the mark included (a .env-sourced BUN_OPTIONS or mark is never trusted).
 //    It also clears the operator keys (CREW_LOCAL_UNRESTRICTED, CREW_LOCAL_DEPENDENCY_ROOT, CREW_DATA,
-//    CREW_PORT, CREW_GH) even when the shell exported them: a test that needs one sets it itself, in the
-//    env it passes its child.
+//    CREW_PORT, CREW_GH) and the real Cursor key (CURSOR_API_KEY) even when the shell exported them: a test
+//    that needs one sets it itself, in the env it passes its child.
 // 2. BUN_OPTIONS (what is left of it) loses every --env-file flag and gains --no-env-file, so every bun
 //    child (bun src/server.ts, bun src/main.ts, helpers) inherits "do not load .env" with the rest of the env.
 // 3. CREW_TEST_ENV_ISOLATED (a per-run token the guard sets) tells a child test entry that its parent
@@ -26,10 +26,10 @@
 //    mark, or something that put them back) exits 1: removing them from process.env would not reach its
 //    children.
 // 6. No test reaches the real Claude or Codex CLI (2026-10-18: discovery and auth reads ran the dev machine's
-//    `claude` with its keychain login). The outermost entry puts a sentinel folder first on PATH whose `claude`
-//    and `codex` record the call and fail (exit 97), and defaults CREW_CLAUDE_BIN, CREW_CODEX_BIN,
-//    CREW_HOST_CLAUDE_BIN and CREW_HOST_CODEX_BIN to a path that does not exist (no CLI installed); a test that
-//    needs a CLI points them at its stub. When the run ends, any recorded call fails it (exit 1) and names it.
+//    `claude` with its keychain login). The outermost entry puts a sentinel folder first on PATH whose `claude`,
+//    `codex`, `cursor-agent` and `agent` record the call and fail (exit 97), and defaults CREW_CLAUDE_BIN, CREW_CODEX_BIN,
+//    CREW_CURSOR_BIN, CREW_HOST_CLAUDE_BIN, CREW_HOST_CODEX_BIN and CREW_HOST_CURSOR_BIN to a path that does not exist
+//    (no CLI installed); a test that needs a CLI points them at its stub. When the run ends, any recorded call fails it (exit 1) and names it.
 // 7. Studio's session for the test's own reads: see below.
 // Production (bun src/main.ts, bun run start) never imports this file.
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -83,6 +83,8 @@ export function dotenvValues(dirs = [process.cwd(), repo]) {
 }
 
 const OPERATOR = ["CREW_LOCAL_UNRESTRICTED", "CREW_LOCAL_DEPENDENCY_ROOT", "CREW_DATA", "CREW_PORT", "CREW_GH"];
+// a vendor key the operator's shell exports (a real Cursor account): a test that needs a key passes its fixture key itself
+const VENDOR_KEYS = ["CURSOR_API_KEY"];
 const RESTART = "CREW_TEST_RESTARTED_BY";
 const env = process.env;
 const isBun = typeof globalThis.Bun !== "undefined";
@@ -111,7 +113,7 @@ const loaded = isBun && !launchOpts.includes(NO_ENV) && (found.size > 0 || launc
 let dropped = 0;
 const drop = (k) => { if (env[k] !== undefined) { delete env[k]; dropped++; } };
 if (!trusted || loaded) for (const k of found.keys()) if (!KEEP.has(k) && fromDotenv(k)) drop(k);
-if (!trusted) for (const k of OPERATOR) drop(k);
+if (!trusted) for (const k of [...OPERATOR, ...VENDOR_KEYS]) drop(k);
 // recomputed after the drop: what is left of BUN_OPTIONS, without any --env-file, plus --no-env-file
 const kept = []; const rest = flags(env.BUN_OPTIONS); let strippedEnvFile = false;
 for (let i = 0; i < rest.length; i++) { if (isEnvFileFlag(rest[i])) { strippedEnvFile = true; if (rest[i] === "--env-file") i++; continue; } if (rest[i] !== NO_ENV) kept.push(rest[i]); }
@@ -136,15 +138,15 @@ if (sentinelOn) env[SENTINEL] = firstOnPath;
 const ownSentinel = !sentinelOn && !restarted ? mkdtempSync(join(tmpdir(), "crew-test-cli-sentinel-")) : null;
 if (ownSentinel) {
   writeFileSync(join(ownSentinel, "calls.log"), "");
-  for (const bin of ["claude", "codex"]) {
-    const f = join(ownSentinel, bin);
-    writeFileSync(f, `#!/bin/sh\nprintf '%s\\n' "${bin} $* (cwd $PWD)" >> '${join(ownSentinel, "calls.log")}'\necho "isolated-env: a test ran the real ${bin} CLI from PATH; point CREW_${bin.toUpperCase()}_BIN or CREW_HOST_${bin.toUpperCase()}_BIN at a stub" >&2\nexit 97\n`);
+  for (const bin of ["claude", "codex", "cursor-agent", "agent"]) {
+    const f = join(ownSentinel, bin), vendor = bin === "claude" || bin === "codex" ? bin.toUpperCase() : "CURSOR";
+    writeFileSync(f, `#!/bin/sh\nprintf '%s\\n' "${bin} $* (cwd $PWD)" >> '${join(ownSentinel, "calls.log")}'\necho "isolated-env: a test ran the real ${bin} CLI from PATH; point CREW_${vendor}_BIN or CREW_HOST_${vendor}_BIN at a stub" >&2\nexit 97\n`);
     chmodSync(f, 0o755);
   }
   env.PATH = `${ownSentinel}:${env.PATH || "/usr/bin:/bin"}`; env[SENTINEL] = ownSentinel;
 }
-for (const k of ["CREW_CLAUDE_BIN", "CREW_CODEX_BIN", "CREW_HOST_CLAUDE_BIN", "CREW_HOST_CODEX_BIN"])
-  if (env[k] === undefined) env[k] = `/nonexistent/crew-test-cli/${k.includes("CLAUDE") ? "claude" : "codex"}`;
+for (const k of ["CREW_CLAUDE_BIN", "CREW_CODEX_BIN", "CREW_CURSOR_BIN", "CREW_HOST_CLAUDE_BIN", "CREW_HOST_CODEX_BIN", "CREW_HOST_CURSOR_BIN"])
+  if (env[k] === undefined) env[k] = `/nonexistent/crew-test-cli/${k.includes("CLAUDE") ? "claude" : k.includes("CURSOR") ? "cursor-agent" : "codex"}`;
 /** The calls the sentinel recorded: each one is a test that ran a real CLI. */
 export const sentinelCalls = (dir = env[SENTINEL]) => { try { return readFileSync(join(dir, "calls.log"), "utf8").split("\n").filter(Boolean); } catch { return []; } };
 const sentinelVerdict = (code) => {

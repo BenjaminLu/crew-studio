@@ -73,3 +73,24 @@ try {
  }finally{for(const r of h.engine.list())if(!['succeeded','failed','cancelled'].includes(r.status))await h.engine.cancel(r.id,'fixture cleanup');h.stop();rmSync(h.data,{recursive:true,force:true});}
  console.log(`${count}/0 coffee profile/admission/native interview assertions`);
 }
+// The image-worker runs the Codex image job, or the Cursor one: Codex stays its default whenever Codex is verified.
+{
+ const {harness}=await import('./rt-harness');const {bundledText}=await import('../src/bundled');
+ const {installFirstmateStaffing}=await import('../src/firstmate-staffing');const {skillTextFor}=await import('../src/runtime');
+ const h=await harness([bundledText('workflows/v2/coffee-kit.wf.yaml')!,bundledText('workflows/v2/firstmate-staffing.wf.yaml')!]);
+ try {
+  h.engine.deps.skillText=skillTextFor(join(h.data,'protected'));const store=new StaffingStore(h.data),def=h.defs.get('coffee-kit')!;
+  const codex={provider:'codex',support:'supported',auth:'verified',quota:'available',expires:Date.now()+60000,models:[{id:'fixture-model',efforts:['low']}]},cursor={provider:'cursor',support:'supported',auth:'verified',quota:'available',expires:Date.now()+60000,models:[{id:'composer-2.5',efforts:[]}]};
+  const owner=(key:string)=>({key,captain:true,text:'Explicit offline captain answer '+key,live:()=>true,signal:new AbortController().signal});
+  const plan=async(facts:any[],project:string,answers?:any)=>{const tools=installFirstmateStaffing(h.engine,store,()=>{throw new Error('Artifact staffing must not infer a Git project');},async()=>structuredClone(facts));return (await tools.call('studio_staffing_interview',{project,workflow:def.id,version:def.version,...(answers?{answers}:{})},owner(project)) as any).defaults;};
+  const both=await plan([codex,cursor],'both-vendors');
+  ok('with Codex verified the coffee image-worker default stays Codex',()=>assert.deepEqual(both.roles['image-worker'],{provider:'codex',model:'fixture-model',effort:'low'}));
+  const only=await plan([cursor],'cursor-only');
+  ok('with only Cursor verified the coffee image-worker defaults to Cursor',()=>assert.deepEqual(only.roles['image-worker'],{provider:'cursor',model:'composer-2.5',effort:null}));
+  const saved=await plan([codex,cursor],'saved-cursor',{'image-worker':{provider:'cursor'}});
+  ok('a saved Cursor image-worker choice is kept, not blocked',()=>{assert.deepEqual(saved.roles['image-worker'],{provider:'cursor',model:'composer-2.5',effort:null});assert(!saved.blocked.some((b:any)=>b.role==='image-worker'));});
+  const claude=await plan([codex,cursor,{...cursor,provider:'claude',models:[{id:'opus',efforts:[]}]}],'saved-claude',{'image-worker':{provider:'claude'}});
+  ok('a saved Claude image-worker choice is still blocked',()=>assert(claude.blocked.some((b:any)=>b.role==='image-worker'&&/dedicated image adapter/.test(b.reason))));
+ }finally{h.stop();rmSync(h.data,{recursive:true,force:true});}
+ console.log(`${count}/0 coffee image-worker vendor assertions`);
+}

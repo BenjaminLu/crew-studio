@@ -87,13 +87,17 @@ function msgView(m, i) {
     toolChips(m.tools),
     m.text ? h("div", { class: "bub" }, md(m.role === "firstmate" ? I18N.chatText(lang, m.text) : m.text)) : m.error ? null : h("div", { class: "typing", "aria-label": T("firstmate is answering", "firstmate 回答中") }, h("i"), h("i"), h("i")),
     m.intent ? intentCard(m.intent) : null,
-    m.error ? h("div", { class: "rich chat-err", role: "alert" }, h("div", { class: "rk", style: "color:var(--bad)" }, icon("alert", "ic sm"), errTitle(m.error.code)),
+    m.error ? h("div", { class: "rich chat-err", role: "alert" }, h("div", { class: "rk", style: "color:var(--bad)" }, icon("alert", "ic sm"), errTitle(m.error.code, m.provider)),
       h("div", { style: "font-size:13px;color:var(--text-2)" }, m.error.message),
       m.error.code === "notLoggedIn" || m.error.code === "cliUnavailable" ? h("div", { class: "faint", style: "font-size:12px" },
-        T("Run `claude` once in a terminal and log in, then ask again.", "請在終端機執行一次 `claude` 並登入，再問一次。")) : null) : null);
+        loginHint(m.provider)) : null) : null);
 }
-const errTitle = (c) => ({ timeout: T("No answer in time", "逾時沒有回答"), notLoggedIn: T("The claude CLI is not logged in", "claude CLI 尚未登入"),
-  cliUnavailable: T("The claude CLI is not available", "找不到 claude CLI"), tooManyTools: T("Stopped: too many lookups", "已停止：查詢次數太多"),
+// what fixes a CLI that is missing or not signed in: Cursor's own wording when Cursor answered, else the claude wording
+const loginHint = (p) => p === "cursor" ? T("Install the Cursor CLI and add a Cursor API key (Doctor → Cursor CLI), then ask again.", "請安裝 Cursor CLI 並加入 Cursor API key（健康檢查 → Cursor CLI），再問一次。")
+  : T("Run `claude` once in a terminal and log in, then ask again.", "請在終端機執行一次 `claude` 並登入，再問一次。");
+const CLI_NAME = { cursor: "cursor-agent" };
+const errTitle = (c, p) => ({ timeout: T("No answer in time", "逾時沒有回答"), notLoggedIn: p === "cursor" ? T("Cursor has no API key for Studio", "Cursor 沒有給 Studio 用的 API key") : T(`The ${CLI_NAME[p] || "claude"} CLI is not logged in`, `${CLI_NAME[p] || "claude"} CLI 尚未登入`),
+  cliUnavailable: T(`The ${CLI_NAME[p] || "claude"} CLI is not available`, `找不到 ${CLI_NAME[p] || "claude"} CLI`), tooManyTools: T("Stopped: too many lookups", "已停止：查詢次數太多"),
   busy: T("firstmate is busy", "firstmate 忙線中"), cancelled: T("Cancelled", "已取消") }[c] || T("The answer failed", "回答失敗"));
 
 function renderChat(stick = true) {
@@ -207,7 +211,7 @@ function showChatInfo() {
 window.onChatInfo = (i) => { CI.info = i; showChatInfo(); };
 fetch("/api/settings").then((r) => r.json()).then(window.onChatInfo).catch(() => {});
 $("#chatProv").addEventListener("click", () => {
-  const i = CI.info || { provider: "claude", model: "", choices: ["claude", "codex"] };
+  const i = CI.info || { provider: "claude", model: "", choices: ["claude", "codex", "cursor"] };
   const sel = h("select", { class: "select", id: "provSel", "aria-label": T("Provider", "提供者") }, i.choices.map((c) => h("option", { value: c, selected: c === i.provider || null }, c)));
   const model = h("input", { class: "input", id: "provModel", placeholder: T("default model", "預設模型"), value: i.provider === sel.value ? (i.model.includes("default") || i.model === "no model" ? "" : i.model) : "" });
   sel.addEventListener("change", () => { model.value = ""; });

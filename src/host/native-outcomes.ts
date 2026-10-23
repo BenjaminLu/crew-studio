@@ -7,7 +7,7 @@ export type NativeOrigin={host:string;thread:string;turn:string};
 type Binding=NativeOrigin&{schema:1;proposal:string;source:string};
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 const sourceOf=(o:NativeOrigin)=>sha(JSON.stringify({schema:1,source:`${o.thread}:${o.turn}`}));
-const validOrigin=(o:any)=>o&&['claude','codex'].includes(o.host)&&[o.thread,o.turn].every(v=>typeof v==='string'&&v.length>0&&v.length<=256&&!/[\x00-\x1f]/.test(v));
+const validOrigin=(o:any)=>o&&['claude','codex','cursor'].includes(o.host)&&[o.thread,o.turn].every(v=>typeof v==='string'&&v.length>0&&v.length<=256&&!/[\x00-\x1f]/.test(v));
 const validBinding=(b:any,id:string)=>validOrigin(b)&&b.schema===1&&b.proposal===id&&/^R-\d+$/.test(id)&&Object.keys(b).sort().join(',')==='host,proposal,schema,source,thread,turn'&&b.source===sourceOf(b);
 function readOwned(file:string){const fd=openSync(file,constants.O_RDONLY|constants.O_NOFOLLOW);try{const st=fstatSync(fd);if(!st.isFile()||st.nlink!==1||st.size>32768)throw Error('Invalid outcome file');const bytes=Buffer.alloc(32769);let total=0,n=0;while(total<bytes.length&&(n=readSync(fd,bytes,total,bytes.length-total,null))>0)total+=n;if(total>32768)throw Error('Oversized outcome file');return bytes.subarray(0,total).toString('utf8');}finally{closeSync(fd);}}
 function createOwned(file:string,value:unknown){const text=JSON.stringify(value);if(Buffer.byteLength(text)>32768)throw Error('Oversized outcome record');const fd=openSync(file,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);try{writeFileSync(fd,text);}finally{closeSync(fd);}}

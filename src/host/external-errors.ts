@@ -1,4 +1,4 @@
-// Errors from outside Studio (the Claude or Codex CLI, the vendor API, the network, a process exit, an
+// Errors from outside Studio (the Claude, Codex or Cursor CLI, the vendor API, the network, a process exit, an
 // upload or attachment the host cannot take) shown to the captain as typed chat notices: a class, a code,
 // a plain reason, and the exact external message (credentials removed, control characters stripped,
 // bounded). Like native tool failures (native-errors.ts) the reason is Studio's own words; unlike them the
@@ -6,7 +6,7 @@
 import { redactText } from "../secure";
 
 export type ExternalClass = "quota" | "auth" | "timeout" | "network" | "exit" | "attachment" | "upload" | "api";
-export type ExternalSource = "claude" | "codex" | "studio";
+export type ExternalSource = "claude" | "codex" | "cursor" | "studio";
 export type ExternalError = { schema: 1; source: ExternalSource; class: ExternalClass; code: string; message: string; reason: { en: string; "zh-TW": string } };
 
 export const EXTERNAL_MESSAGE_MAX = 600;
@@ -39,7 +39,7 @@ const REASONS: Record<ExternalClass, (who: string) => { en: string; "zh-TW": str
   upload: () => ({ en: "The upload failed.", "zh-TW": "上傳失敗。" }),
   api: (who) => ({ en: `${who} returned an error.`, "zh-TW": `${who} 回傳錯誤。` }),
 };
-const WHO: Record<ExternalSource, string> = { claude: "Claude", codex: "Codex", studio: "Studio" };
+const WHO: Record<ExternalSource, string> = { claude: "Claude", codex: "Codex", cursor: "Cursor", studio: "Studio" };
 
 /** A typed external error; the class comes from the message unless the caller knows it. */
 export function externalError(source: ExternalSource, raw: unknown, o: { cls?: ExternalClass; code?: string } = {}): ExternalError {

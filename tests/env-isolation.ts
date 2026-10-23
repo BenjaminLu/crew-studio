@@ -81,6 +81,17 @@ const OPERATOR = ["CREW_LOCAL_UNRESTRICTED", "CREW_LOCAL_DEPENDENCY_ROOT", "CREW
   ok(set.child?.CREW_DATA === own.CREW_DATA && set.child?.CREW_LOCAL_UNRESTRICTED === "0" && set.child?.CREW_PORT === null, "a value a test sets itself after the import reaches its children; the .env still fills nothing in", JSON.stringify(set));
   const nested = run("bun", "guarded.ts", { CREW_TEST_ENV_ISOLATED: process.env.CREW_TEST_ENV_ISOLATED!, BUN_OPTIONS: process.env.BUN_OPTIONS!, ...hostile });
   ok(nested.self?.CREW_LOCAL_UNRESTRICTED === "1" && nested.child?.CREW_LOCAL_UNRESTRICTED === "1", "a test that deliberately opts a child test into unrestricted mode keeps it (tests/local-execution.ts style)", JSON.stringify(nested));
+  // a real Cursor key exported by the operator's shell never reaches a test or a child it starts
+  const key = "crsr_" + "e".repeat(64), showKey = `JSON.stringify(process.env.CURSOR_API_KEY??null)`;
+  writeFileSync(join(dir, "key-child.ts"), `console.log(${showKey});\n`);
+  const keyProbe = (head: string) => `${head}\nimport { spawnSync } from "node:child_process";\nconst child = spawnSync("bun", ["key-child.ts"], { cwd: ${JSON.stringify(dir)}, encoding: "utf8" });\nconsole.log(JSON.stringify({ self: process.env.CURSOR_API_KEY ?? null, child: JSON.parse(child.stdout || "\\"none\\"") }));\n`;
+  writeFileSync(join(dir, "key-plain.ts"), keyProbe("")); writeFileSync(join(dir, "key-guarded.ts"), keyProbe(`import ${JSON.stringify(guard)};`)); writeFileSync(join(dir, "key-guarded.mjs"), keyProbe(`import ${JSON.stringify(guard)};`));
+  const keyPlain = run("bun", "key-plain.ts", { CURSOR_API_KEY: key });
+  ok(keyPlain.self === key && keyPlain.child === key, "control: without the guard an exported CURSOR_API_KEY reaches the entry and its child", JSON.stringify(keyPlain).replaceAll(key, "<key>"));
+  const keyBun = run("bun", "key-guarded.ts", { CURSOR_API_KEY: key }), keyNode = run("node", "key-guarded.mjs", { CURSOR_API_KEY: key });
+  ok(keyBun.self === null && keyBun.child === null && keyNode.self === null && keyNode.child === null, "a top-level test entry (bun or node) drops an exported CURSOR_API_KEY, for itself and its children", JSON.stringify([keyBun, keyNode]).replaceAll(key, "<key>"));
+  const keyNested = run("bun", "key-guarded.ts", { CREW_TEST_ENV_ISOLATED: process.env.CREW_TEST_ENV_ISOLATED!, BUN_OPTIONS: process.env.BUN_OPTIONS!, CURSOR_API_KEY: key });
+  ok(keyNested.self === key && keyNested.child === key, "a key a parent test hands its child test on purpose (its fixture key) is kept", JSON.stringify(keyNested).replaceAll(key, "<key>"));
 }
 
 // ---------- a hostile .env that also sets BUN_OPTIONS, the mark or GIT_* ----------

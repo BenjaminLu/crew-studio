@@ -8,8 +8,8 @@
 //   token, or a login file without its refresh token (src/providers/login.ts, v1 option A);
 //   no keychain is reachable from a round;
 // - the variables that name the CLI's own temporary folder (set to the round's tmp).
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { claudeLogin, codexLogin, type Login } from "./login";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { claudeLogin, codexLogin, cursorLogin, type Login } from "./login";
 import { dirname, join } from "node:path";
 
 export type SandboxNeeds = {
@@ -20,6 +20,8 @@ export type SandboxNeeds = {
   localOrigins?: string[];
   /** make the round's throwaway home in `dir`; returns the variables that point the CLI at it */
   home(dir: string): Record<string, string>;
+  /** folders home() made outside `dir` that the round also writes (and Studio removes with the round) */
+  writes?: string[];
   /** the vendor's own login for the round, read by Studio outside the sandbox (src/providers/login.ts) */
   login(dir: string): Login;
 };
@@ -48,6 +50,21 @@ export function codexNeeds(bin: string, hosts: string[], approved?: ApprovedCode
       if (login.ok && approved) { mkdirSync(cfg, { recursive: true }); writeFileSync(join(cfg, "crew-native.config.toml"), `model = ${JSON.stringify(approved.model)}\n${approved.effort ? `model_reasoning_effort = ${JSON.stringify(approved.effort)}\n` : ""}`, { mode: 0o600 }); }
       return login;
     } };
+}
+/** A private root for one cursor-agent turn, short enough for its data folder: past 84 characters cursor-agent falls back to a
+ *  shared /tmp/.cursor (v1 bin/adapters/cursor-agent.sh). h/ is its HOME (h/.config its XDG_CONFIG_HOME), w/ its workspace,
+ *  d/ its CURSOR_DATA_DIR. */
+export function cursorRoot(): string {
+  const root = realpathSync(mkdtempSync("/tmp/crc."));
+  if (root.length > 60) throw new Error("cannot make a short private folder for cursor-agent");
+  for (const d of ["h/.config/cursor", "w/.cursor", "d"]) mkdirSync(join(root, d), { recursive: true, mode: 0o700 });
+  return root;
+}
+export function cursorNeeds(bin: string, hosts: string[]): SandboxNeeds {
+  const writes: string[] = [];
+  return { reads: installOf(bin), hosts, tmpEnv: [], writes,
+    home(dir) { mkdirSync(dir, { recursive: true }); const root = cursorRoot(); writes.push(root); return { CREW_CURSOR_ROOT: root }; },
+    login: () => cursorLogin() };
 }
 /** A direct-HTTP provider: in Studio's process, its egress the API host of its base URL only (through the proxy). */
 export function httpNeeds(baseUrl: () => string): SandboxNeeds {

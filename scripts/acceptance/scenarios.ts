@@ -68,8 +68,8 @@ export const CAPTAIN_ONLY_ALLOW: { workflow: string; sha256: string; node: strin
   { workflow: "web-prototype", sha256: "6a6a532393a166f189e246acafc489119582aa2fec86cd579e7f3870cfe2ba5c", node: "accept", kind: "acceptance", option: "approve-design-a" },
   { workflow: "web-prototype", sha256: "6a6a532393a166f189e246acafc489119582aa2fec86cd579e7f3870cfe2ba5c", node: "accept", kind: "acceptance", option: "approve-design-b" },
   // startup competition (src/domain/startup-recursion.ts): run the bundled template; accept the text result
-  { workflow: "startup-recursion", sha256: "e5da7d4bcaf2b5865e12e04b8b7e73ab5421472e1bb03f523f4c0bd84183b92e", node: "choose", kind: "question", option: "template" },
-  { workflow: "startup-recursion", sha256: "e5da7d4bcaf2b5865e12e04b8b7e73ab5421472e1bb03f523f4c0bd84183b92e", node: "accept", kind: "acceptance", option: "accept" },
+  { workflow: "startup-recursion", sha256: "bcd48b6f8d8cbf9c59fd18d6729556d67ba4856a5b59db2a597afa739fa811b6", node: "choose", kind: "question", option: "template" },
+  { workflow: "startup-recursion", sha256: "bcd48b6f8d8cbf9c59fd18d6729556d67ba4856a5b59db2a597afa739fa811b6", node: "accept", kind: "acceptance", option: "accept" },
 ];
 
 export type CardRule = { node: string; kind?: string; action: "answer" | "wait" | "stop"; answer?: string; note?: string | null };
@@ -117,7 +117,7 @@ export function defHash(def: any): string {
 
 function fail(where: string, msg: string): never { throw new Error(`${where}: ${msg}`); }
 const isObj = (v: unknown): v is Record<string, any> => !!v && typeof v === "object" && !Array.isArray(v);
-const PROVIDERS = new Set(["claude", "codex", "stub"]);
+const PROVIDERS = new Set(["claude", "codex", "cursor", "stub"]);
 
 export function validateScenario(raw: unknown, where = "scenario"): Scenario {
   if (!isObj(raw)) fail(where, "not a mapping");
@@ -130,10 +130,10 @@ export function validateScenario(raw: unknown, where = "scenario"): Scenario {
     fail(where, "pin needs the workflow definition's sha256 (bun scripts/acceptance/pin.ts <id>)");
   if (typeof s.topic !== "string" || !s.topic.trim() || s.topic.length > 2000) fail(where, "topic must be a short brief");
   if (!isObj(s.start)) fail(where, "start must be a mapping");
-  if (s.start.provider !== null && !PROVIDERS.has(s.start.provider)) fail(where, "start.provider must be null, claude, codex or stub");
+  if (s.start.provider !== null && !PROVIDERS.has(s.start.provider)) fail(where, "start.provider must be null, claude, codex, cursor or stub");
   if (!isObj(s.start.params) || Object.values(s.start.params).some((v) => typeof v !== "string")) fail(where, "start.params must map names to strings");
   if (s.start.required_params !== undefined && (!Array.isArray(s.start.required_params) || s.start.required_params.some((p: unknown) => typeof p !== "string"))) fail(where, "start.required_params must list param names");
-  if (!Array.isArray(s.providers) || s.providers.some((p: unknown) => !PROVIDERS.has(p as string))) fail(where, "providers must list claude, codex or stub");
+  if (!Array.isArray(s.providers) || s.providers.some((p: unknown) => !PROVIDERS.has(p as string))) fail(where, "providers must list claude, codex, cursor or stub");
   if (!isObj(s.approvals) || typeof s.approvals.staffing !== "boolean" || Object.keys(s.approvals).some((k) => k !== "staffing"))
     fail(where, "approvals has only staffing (true or false); dispatch and other approvals are the captain's");
   if (!Array.isArray(s.cards)) fail(where, "cards must be a list");

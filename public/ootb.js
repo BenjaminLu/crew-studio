@@ -48,17 +48,19 @@ function viewDoctor() {
     DOC.job ? jobBox(DOC.job) : null,
     window.crewCodexAccountPanel?.(),
     window.crewClaudeAccountPanel?.(),
+    window.crewCursorAccountPanel?.(),
     h("div", { class: "faint", style: "font-size:13px" }, bad ? T(`${bad} item(s) need attention.`, `${bad} 項需要處理。`) : T("Listed dependencies are detected. Logins and actual tool execution need separate verification.", "已偵測到列出的依賴；登入與實際工具執行仍需分別驗證。")),
     ["basic","coding","optional"].map(group=>h("section", { "data-doc-group":group },
       h("h2", {}, group==="basic"?T("Basic web readiness","基本網頁功能"):group==="coding"?T("Coding and checks","程式碼與檢查"):T("Optional integrations","選用整合")),
       h("div", { class: "card", style: "padding:0" }, items.filter(it=>(it.group||"coding")===group).map((it) => {
       const cliStatus = { available: ["ok", "Available", "可用"], missing: ["bad", "Not installed", "未安裝"], unusable: ["warn", "Cannot run", "無法執行"] };
       const executableStatus = it.availability === "available" && it.authenticated === true ? ["ok", "Logged in", "已登入"] : it.availability === "available" && it.authenticated === false ? ["warn", "Not signed in", "尚未登入"] : cliStatus[it.availability];
-      const detectedStatus = ["codex", "claude"].includes(it.id) && it.status === "ok" ? ["", "Detected", "已偵測"] : null;
+      const detectedStatus = ["codex", "claude", "cursor"].includes(it.id) && it.status === "ok" ? ["", "Detected", "已偵測"] : null;
       const [cls, en, zh] = executableStatus || detectedStatus || STATUS[it.status] || STATUS.info;
+      // an optional row (Cursor while it is not in use) says its state without a warning colour
       return h("div", { class: "doc-row", "data-item": it.id, "data-status": it.status },
         h("div", { class: "doc-main" },
-          h("div", { class: "doc-t" }, h("b", {}, T(it.title,it.titleZh||it.title)), h("span", { class: `badge ${cls}` }, T(en, zh))),
+          h("div", { class: "doc-t" }, h("b", {}, T(it.title,it.titleZh||it.title)), h("span", { class: `badge ${it.status === "info" ? "" : cls}` }, T(en, zh))),
           h("div", { class: "doc-d mono" }, T(it.detail, it.detailZh || it.detail)),
           h("div", { class: "doc-a" }, T(it.adds,it.addsZh||it.adds)),
           it.fix ? h("div", { class: "doc-f" }, icon("arrow", "ic sm"), T(it.fix,it.fixZh||it.fix)) : null),
@@ -122,6 +124,7 @@ async function openInstall(item) {
 async function startLogin(item) {
   if(item==="codex")return window.crewConnectCodex?.();
   if(item==="claude")return window.crewConnectClaude?.();
+  if(item==="cursor"&&window.crewConnectCursor)return window.crewConnectCursor();
   const res = await postJ("/api/doctor/login", { item });
   if (res.error) return toast(res.error);
   if (res.open) { window.open(res.open, "_blank", "noopener"); toast(res.note || T("Opened the sign-in page", "已打開登入頁")); return; }
@@ -188,10 +191,10 @@ ghBar = function () {
 const _driverBanner = driverBanner;
 driverBanner = function (v) {
   const el = _driverBanner(v);
-  const noCli = DOC.data && !DOC.data.items.some((i) => (i.id === "claude" || i.id === "codex") && i.availability === "available");
+  const noCli = DOC.data && !DOC.data.items.some((i) => (i.id === "claude" || i.id === "codex" || i.id === "cursor") && i.availability === "available");
   if (v.state === "detached" && noCli) el.append(h("div", { class: "chat-err", "data-nocli": "1", style: "font-size:13px" },
-    T("No Claude Code or Codex CLI on this Mac. The main session resumes that CLI's own session, so it needs one. The status chat works with any provider (API key or local model).",
-      "這台 Mac 沒有 Claude Code 或 Codex CLI。主 session 要接續該 CLI 自己的 session，所以一定要有其中一個。狀態對話用任何提供者都可以（API 金鑰或本地模型）。"),
+    T("No Claude Code, Codex or Cursor CLI on this Mac. Firstmate runs on one of them, so it needs one. The status chat works with any provider (API key or local model).",
+      "這台 Mac 沒有 Claude Code、Codex 或 Cursor CLI。Firstmate 要在其中一個上執行，所以一定要有其中一個。狀態對話用任何提供者都可以（API 金鑰或本地模型）。"),
     " ", h("a", { href: "#/doctor" }, T("Install one in Doctor", "到健康檢查安裝"))));
   return el;
 };

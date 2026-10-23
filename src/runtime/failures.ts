@@ -30,7 +30,7 @@ export const FAILURE_CODES = {
   "ask.escalated": { class: "ask", title: t("Escalated by Firstmate", "Firstmate 轉交給你"), meaning: t("An agent asked a question. Firstmate answers agent questions itself; it passed this one to you, for the reason below.", "agent 提了一個問題。agent 的問題由 Firstmate 自己回答；這一題它轉交給你，理由如下。") },
   "ask.one-way": { class: "ask", title: t("A one-way choice is needed", "需要一個單向的選擇"), meaning: t("Two versions of the work diverged. Keeping one discards the other, so only you can pick.", "工作的兩個版本分岔了。保留一個就會捨棄另一個，所以只能由你決定。") },
   "env.login": { class: "environment", title: t("Sign-in is missing", "缺少登入"), meaning: t("The provider refused the sign-in, or no account is signed in.", "供應商拒絕登入，或沒有帳號登入。"),
-    fix: t("Sign in again on the provider's account card.", "請在供應商的帳號卡片重新登入。"), where: t("Board → Accounts (the Codex or Claude card)", "Board → 帳號（Codex 或 Claude 卡片）") },
+    fix: t("Sign in again on the provider's account card.", "請在供應商的帳號卡片重新登入。"), where: t("Board → Accounts (the Codex, Claude or Cursor card)", "Board → 帳號（Codex、Claude 或 Cursor 卡片）") },
   "env.quota": { class: "environment", title: t("Usage quota is used up", "用量額度已用完"), meaning: t("The provider account has no quota left for this round.", "供應商帳號沒有剩餘額度可跑這一輪。"),
     fix: t("Wait for the quota reset, or raise the limit on the vendor account.", "請等額度重設，或在供應商帳號提高上限。"), where: t("The vendor account of the provider named in the message", "訊息中供應商的帳號") },
   "env.tool-missing": { class: "environment", title: t("A tool is missing", "缺少工具"), meaning: t("A program this step needs is not installed or did not start.", "這一步需要的程式沒有安裝或無法啟動。"),
@@ -207,7 +207,7 @@ export const TEXT_RULES: { re: RegExp; code: FailureCode }[] = [
   { re: /owner ended|\bcancell?ed\b|was stopped|process death/i, code: "transient.interrupted" },
   { re: /\bchanged\b|\bstale\b|reload|differs\b|moved since|no longer|already (owned|attempted|running)/i, code: "transient.stale" },
   { re: /captain|approv|confirm|explicit (recovery|request|choice)|proposal|requires? a new .*card/i, code: "deterministic.prepare-again" },
-  { re: /\bunavailable\b|not installed|requires codex|needs (the )?(OS|codex|claude)|not configured/i, code: "env.tool-missing" },
+  { re: /\bunavailable\b|not installed|requires codex|needs (the )?(OS|codex|claude|cursor)|not configured/i, code: "env.tool-missing" },
   { re: /\binvalid\b|must (be|name|have)|is required|\brequired\b|\bunknown\b|unsupported|exceeds?|too (large|long|many)|no such/i, code: "invalid-input.config" },
 ];
 /** Codes whose only way on is a new task (the same request, prepared again). */
