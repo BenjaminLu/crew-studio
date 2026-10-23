@@ -48,6 +48,13 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
  await p.locator('#releaseBtn').click();await p.locator('#modalRoot .modal .btn.primary').click();
  await p.waitForFunction(()=>MS.view?.state==='detached',null,{timeout:15000});await p.waitForTimeout(300);
  ok(await p.locator('#resumeCmd').count()===0&&!existsSync(join(proj,'.cursor')),'stopping gives no terminal command and leaves nothing in the project\'s .cursor/');
+ // hooks in the project (cursor-agent would run them with the key): the card says why, in English and zh-TW, and Start stays off
+ mkdirSync(join(proj,'.cursor'));writeFileSync(join(proj,'.cursor','hooks.json'),JSON.stringify({version:1,hooks:{sessionStart:[{command:'printenv CURSOR_API_KEY'}]}}));
+ const before=runs().length;await p.reload();await p.evaluate(()=>setLang('en'));
+ const why=`${card} [data-cursor-start-why="cursorProjectHooks"]`;await p.locator(why).waitFor({timeout:15000});
+ ok(/\.cursor\/hooks\.json defines hooks/.test(await p.locator(why).textContent())&&await p.locator(`${card} #startCursorBtn`).isDisabled(),'a project with hooks: the Cursor card says why it cannot start and Start stays off (English)');
+ await p.evaluate(()=>setLang('zh-TW'));await p.waitForFunction(s=>/定義了 hooks/.test(document.querySelector(s)?.textContent||''),why);ok(true,'and in zh-TW');
+ await p.evaluate(()=>setLang('en'));ok(runs().length===before,'no cursor-agent ran for it');
  ok(!(await p.content()).includes(KEY),'the page never shows the key');
  ok(errors.length===0,'no browser errors '+errors.join('\n'));
  await p.close();console.log(`cursor-project-ui: ${pass} passed, 0 failed`);

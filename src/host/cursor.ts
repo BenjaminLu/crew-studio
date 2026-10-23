@@ -11,10 +11,11 @@
 // folder is the workspace, so cursor-agent follows its AGENTS.md; its own tools work there under cursor-agent's sandbox
 // (--sandbox enabled, never --force) and cli-config.json allows reads and writes inside the folder only and denies Shell
 // (cursorProjectPermissions). No Studio tool, no MCP server auto-approved, and nothing is written into the project's .cursor/.
+// A project with hooks (cursorProjectHooks) is refused at the start and before every turn: a hook runs with the key.
 // cleanEnv drops every *_API_KEY: the caller hands the Cursor API key back explicitly in opts.env.CURSOR_API_KEY.
 //   CREW_HOST_CURSOR_BIN  executable (default "cursor-agent"; a .mjs path runs under bun: test stub)
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { dropPrivateDir, nativeEndpoint, privateDir } from "./claude";
@@ -38,13 +39,33 @@ const resultOf = (r: any): { ok: boolean; text?: string } => {
   return { ok: false, text: String(r?.rejected?.reason ?? r?.permissionDenied?.error ?? r?.error?.errorMessage ?? "").slice(0, 2000) || undefined };
 };
 
-/** An explicit project's cli-config.json permissions: read and write inside the project folder only (its own .cursor/ stays
- *  read-only), plus reading this turn's attached PDFs. Shell is denied: with --sandbox enabled cursor-agent auto-runs an unlisted
- *  command in its sandbox, and that command inherits cursor-agent's environment, CURSOR_API_KEY included (an allow-listed one
- *  would even run outside the sandbox). */
+/** An explicit project's cli-config.json permissions: read and write inside the project folder only, plus reading this turn's
+ *  attached PDFs. Shell is denied: with --sandbox enabled cursor-agent auto-runs an unlisted command in its sandbox, and that
+ *  command inherits cursor-agent's environment, CURSOR_API_KEY included (an allow-listed one would even run outside the sandbox).
+ *  .cursor/, .claude/ and .git/ stay read-only: a hook or git hook written there would run a command with that environment. */
 export function cursorProjectPermissions(ws: string, reads: string[] = []): { allow: string[]; deny: string[] } {
-  return { allow: [`Read(${ws}/**)`, `Write(${ws}/**)`, ...reads.map((f) => `Read(${f})`)], deny: ["Shell(*)", `Write(${ws}/.cursor/**)`] };
+  return { allow: [`Read(${ws}/**)`, `Write(${ws}/**)`, ...reads.map((f) => `Read(${f})`)], deny: ["Shell(*)", `Write(${ws}/.cursor/**)`, `Write(${ws}/.claude/**)`, `Write(${ws}/.git/**)`] };
 }
+
+/** The project files whose hooks cursor-agent runs (sessionStart, stop, afterFileEdit, postToolUse …) in its own environment,
+ *  CURSOR_API_KEY included; Shell(*) does not stop a hook. It reads .cursor/hooks.json in a --trust'ed workspace and merges
+ *  Claude Code's .claude/settings.json and settings.local.json. The user-level files (~/.cursor/hooks.json, team hooks,
+ *  plugins, ~/.claude/settings.json) come from os.homedir(), which is this host's private HOME, so none exists there; the Mac's
+ *  enterprise file (/Library/Application Support/Cursor/hooks.json) is its administrator's, not the project's. */
+export const CURSOR_HOOK_FILES = [".cursor/hooks.json", ".claude/settings.json", ".claude/settings.local.json"];
+/** The hook files present in a project folder; one that cannot be read or parsed counts as having hooks. */
+export function cursorProjectHooks(ws: string): string[] {
+  return CURSOR_HOOK_FILES.filter((f) => {
+    let text: string;
+    try { text = readFileSync(join(ws, f), "utf8"); } catch (e: any) { return e?.code !== "ENOENT" && e?.code !== "ENOTDIR"; }
+    try { const h = JSON.parse(text)?.hooks; return h !== undefined && h !== null && !(typeof h === "object" && !Array.isArray(h) && Object.keys(h).length === 0); } catch { return true; }
+  });
+}
+export const cursorHooksRefusal = (files: string[], turn = false) => turn
+  ? { en: `Not sent: ${files.join(", ")} in this project now defines hooks, and cursor-agent would run them with the Cursor API key in their environment. Remove the hooks, or stop Firstmate on Cursor here.`,
+      "zh-TW": `未送出：這個專案的 ${files.join("、")} 現在定義了 hooks，cursor-agent 會在帶有 Cursor API key 的環境中執行它們。請移除這些 hooks，或停止這裡的 Cursor Firstmate。` }
+  : { en: `Firstmate on Cursor does not start in this project: ${files.join(", ")} defines hooks, and cursor-agent would run them with the Cursor API key in their environment. Remove the hooks, or start Firstmate on Codex here.`,
+      "zh-TW": `Cursor 上的 Firstmate 不在這個專案啟動：${files.join("、")} 定義了 hooks，cursor-agent 會在帶有 Cursor API key 的環境中執行它們。請移除這些 hooks，或在這裡改用 Codex 啟動 Firstmate。` };
 
 export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-agent"): Host {
   return {
@@ -60,6 +81,8 @@ export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-age
       if (!project && !native) throw new Error("Firstmate on Cursor runs only with Studio's native tools");
       let projectDir = "";
       if (project) { try { projectDir = realpathSync(opts.cwd); } catch {} if (!projectDir || !statSync(projectDir).isDirectory()) throw new Error("Firstmate on Cursor needs the explicit project's folder"); }
+      const hooks = project ? cursorProjectHooks(projectDir) : [];
+      if (hooks.length) { const r = cursorHooksRefusal(hooks); throw new Error(`${r.en} / ${r["zh-TW"]}`); }
       const model = opts.model && MODEL.test(opts.model) ? opts.model : null;
       let chatId: string | null = null, shownModel = model ?? "cursor", turnSeq = 0, busy = false, interrupting = false;
       let proc: ChildProcess | null = null;
@@ -126,6 +149,9 @@ export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-age
         get file() { return null; },
         send(text, files = []) {
           if (busy) return Promise.reject(new Error("BUSY"));
+          // hooks added since the start (by the captain or another tool) would run in this turn's process: refused, never run
+          const added = project ? cursorProjectHooks(ws) : [];
+          if (added.length) { const reason = cursorHooksRefusal(added, true); emit({ type: "hostRefusal", code: "cursorProjectHooks", reason }); return Promise.resolve({ status: "failed" as const, message: reason.en }); }
           // attachments: images as --image (cursor-agent reads the file itself); a PDF only where its Read tool works (src/attachments.ts)
           let input: ReturnType<typeof cursorInput>;
           try { input = cursorInput(text, files, { cursorReads: project }); if (project) writeConfig(input.reads); } catch (e) { return Promise.reject(e); }

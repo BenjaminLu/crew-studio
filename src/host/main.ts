@@ -590,7 +590,7 @@ export class MainSession {
     if(e.type==="nativeToolFailure")this.note({kind:"system",text:e.failure.reason.en,nativeFailure:e.failure,failure:fromError(Object.assign(new Error(e.failure.reason.en),{publicFailure:e.failure}),{source:"host"})});
     if (e.type === "turnStart") this.refusedThisTurn = false; // a turn Studio did not send starts clean
     if (e.type === "hostRefusal") { this.refusedThisTurn = true; this.note({ kind: "status", text: `${e.reason.en} / ${e.reason["zh-TW"]}`, i18n: e.reason, status: "failed", refusal: e.code,
-      external: { ...externalError("claude", claudeVendorMessage(e.raw) || e.reason.en, { cls: e.code === "claudeQuotaExhausted" ? "quota" : e.code === "claudeNotSignedIn" ? "auth" : undefined, code: e.code }), reason: e.reason } }); }
+      external: { ...externalError(this.session?.host ?? "claude", claudeVendorMessage(e.raw) || e.reason.en, { cls: e.code === "claudeQuotaExhausted" ? "quota" : e.code === "claudeNotSignedIn" ? "auth" : undefined, code: e.code }), reason: e.reason } }); }
     if (e.type === "exit" || e.type === "turnEnd") this.writeTools(); // a call that never answered keeps its line on disk as it was
     if (e.type === "exit") {
       this.lastExit = { code: e.code, stderr: e.stderr ?? "" };

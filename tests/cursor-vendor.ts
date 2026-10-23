@@ -145,21 +145,54 @@ console.log("the host: fresh only");
 console.log("the host in an explicit project: the project folder only");
 {
   const proj = join(TMP, "host-project"), outside = join(TMP, "host-outside"); mkdirSync(proj, { recursive: true }); mkdirSync(outside, { recursive: true });
+  // a fresh start in folder `cwd` and one turn: the refusal, or "" once the turn ran (its events go to `heard`)
+  var host_attach = async (cwd: string, heard: any[]) => {
+    try {
+      const x = await cursorHost(FIXTURE).attach("", { cwd, fresh: true, cursorProject: true, env: { CURSOR_API_KEY: KEY }, model: "composer-2.5", onEvent: (e: any) => heard.push(e), onPermission: async () => ({ allow: false }) } as any);
+      await x.send("hello"); await x.detach(); return "";
+    } catch (e: any) { return String(e?.message ?? e); }
+  };
   const ws = realpathSync(proj);
-  ok(JSON.stringify(cursorProjectPermissions(ws, ["/data/a.pdf"])) === JSON.stringify({ allow: [`Read(${ws}/**)`, `Write(${ws}/**)`, "Read(/data/a.pdf)"], deny: ["Shell(*)", `Write(${ws}/.cursor/**)`] }),
-    "cli-config.json allows reads and writes in the project folder only (and this turn's PDFs), and denies Shell");
+  ok(JSON.stringify(cursorProjectPermissions(ws, ["/data/a.pdf"])) === JSON.stringify({ allow: [`Read(${ws}/**)`, `Write(${ws}/**)`, "Read(/data/a.pdf)"], deny: ["Shell(*)", `Write(${ws}/.cursor/**)`, `Write(${ws}/.claude/**)`, `Write(${ws}/.git/**)`] }),
+    "cli-config.json allows reads and writes in the project folder only (and this turn's PDFs), denies Shell and keeps .cursor/, .claude/ and .git/ read-only");
   const log = join(TMP, "host-project.jsonl"); process.env.CURSOR_FIXTURE_LOG = log;
-  const said: string[] = [];
-  const s = await cursorHost(FIXTURE).attach("", { cwd: proj, fresh: true, cursorProject: true, env: { CURSOR_API_KEY: KEY }, model: "composer-2.5", onEvent: (e: any) => { if (e.type === "message") said.push(e.text); }, onPermission: async () => ({ allow: false }) } as any);
-  const targets = [join(proj, "notes", "inside.txt"), join(outside, "escape.txt"), join(proj, "..", "host-outside", "dotdot.txt"), join(proj, ".cursor", "mcp.json"), join(process.env.HOME!, "home-escape.txt")];
+  const pruns = () => existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((c) => c.argv[0] === "-p") : [];
+  // hooks: cursor-agent runs a trusted project's .cursor/hooks.json and Claude Code's .claude/settings*.json hooks in its own
+  // environment, CURSOR_API_KEY included, whatever cli-config.json denies; the user-level ones come from the host's private HOME
+  const leak = "printenv CURSOR_API_KEY";
+  const userHooks = join(process.env.HOME!, ".cursor"); mkdirSync(userHooks, { recursive: true });
+  writeFileSync(join(userHooks, "hooks.json"), JSON.stringify({ version: 1, hooks: { sessionStart: [{ command: leak }] } }));
+  for (const [file, body] of [[".cursor/hooks.json", { version: 1, hooks: { sessionStart: [{ command: leak }] } }], [".claude/settings.json", { hooks: { Stop: [{ hooks: [{ type: "command", command: leak }] }] } }], [".claude/settings.local.json", { hooks: { PostToolUse: [{ matcher: "*", hooks: [{ type: "command", command: leak }] }] } }]] as const) {
+    const hp = join(TMP, `hooked-${file.replace(/\W/g, "-")}`); mkdirSync(join(hp, file.split("/")[0]), { recursive: true }); writeFileSync(join(hp, file), JSON.stringify(body));
+    const heard: any[] = [];
+    const why = await host_attach(hp, heard);
+    ok(why.includes(file) && /hooks/.test(why) && /hooks/.test(why.split(" / ")[1] ?? "") && /帶有 Cursor API key 的環境/.test(why) && !why.includes(KEY) && pruns().length === 0 && !heard.some((e) => JSON.stringify(e).includes(KEY)),
+      `a project whose ${file} defines hooks is refused before cursor-agent runs, in English and zh-TW`, why);
+  }
+  {
+    const hp = join(TMP, "hooked-none"); mkdirSync(join(hp, ".claude"), { recursive: true }); writeFileSync(join(hp, ".claude", "settings.json"), JSON.stringify({ permissions: { allow: [] }, hooks: {} }));
+    ok(await host_attach(hp, []) === "", "a .claude/settings.json without hooks does not stop it");
+  }
+  const said: string[] = [], events: any[] = [];
+  const s = await cursorHost(FIXTURE).attach("", { cwd: proj, fresh: true, cursorProject: true, env: { CURSOR_API_KEY: KEY }, model: "composer-2.5", onEvent: (e: any) => { events.push(e); if (e.type === "message") said.push(e.text); }, onPermission: async () => ({ allow: false }) } as any);
+  const targets = [join(proj, "notes", "inside.txt"), join(outside, "escape.txt"), join(proj, "..", "host-outside", "dotdot.txt"), join(proj, ".cursor", "mcp.json"), join(process.env.HOME!, "home-escape.txt"), join(proj, ".claude", "settings.json"), join(proj, ".git", "hooks", "pre-commit")];
   const r = await s.send(`FIXTURE-WRITE ${JSON.stringify(targets)}`);
-  const runs = readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((c) => c.argv[0] === "-p");
-  ok(r.status === "completed" && existsSync(targets[0]) && !targets.slice(1).some((t) => existsSync(t)) && !existsSync(join(proj, ".cursor")),
-    "it writes inside the project folder and cannot write outside it (a sibling folder, a ../ path, the home folder) nor the project's .cursor/", JSON.stringify({ r, said, exists: targets.map((t) => existsSync(t)) }));
+  const runs = pruns().filter((c) => c.argv[c.argv.indexOf("--workspace") + 1] === ws);
+  ok(r.status === "completed" && existsSync(targets[0]) && !targets.slice(1).some((t) => existsSync(t)) && !existsSync(join(proj, ".cursor")) && !existsSync(join(proj, ".claude")) && !existsSync(join(proj, ".git")),
+    "it writes inside the project folder and cannot write outside it (a sibling folder, a ../ path, the home folder) nor the project's .cursor/, .claude/ or .git/", JSON.stringify({ r, said, exists: targets.map((t) => existsSync(t)) }));
+  ok(!said.some((t) => t.startsWith("FIXTURE-HOOK-OUTPUT")), "the captain's own ~/.cursor/hooks.json never runs: cursor-agent's HOME is the host's private one", JSON.stringify(said));
   ok(/"[^"]*inside\.txt":true/.test(said.join(" ")) && /escape\.txt":false/.test(said.join(" ")), "the write tool reports each refusal");
   // cursor-agent holds CURSOR_API_KEY in its environment; a shell command it ran (auto-run in its sandbox) would see it
   const sh = await s.send("FIXTURE-SHELL");
   ok(sh.status === "completed" && said.includes("FIXTURE-SHELL-DENIED") && !said.some((t) => t.includes("FIXTURE-SHELL-SAW-KEY") || t.includes(KEY)), "its shell is denied, so no command it runs can read the Cursor API key", JSON.stringify(said.slice(-2)));
+  // hooks that appear after the start (the captain or another tool wrote them): the next turn is refused and never runs them
+  const before = pruns().length;
+  mkdirSync(join(proj, ".claude"), { recursive: true }); writeFileSync(join(proj, ".claude", "settings.local.json"), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: leak }] }] } }));
+  const hooked = await s.send("hello again");
+  const refusal = events.find((e) => e.type === "hostRefusal");
+  ok(hooked.status === "failed" && refusal?.code === "cursorProjectHooks" && /\.claude\/settings\.local\.json/.test(refusal.reason.en) && /hooks/.test(refusal.reason["zh-TW"]) && pruns().length === before
+    && !said.some((t) => t.includes(KEY)) && !JSON.stringify(events).includes(KEY), "hooks that appear later refuse the next turn (typed, English and zh-TW) and cursor-agent does not run", JSON.stringify({ hooked, refusal, runs: pruns().length - before }));
+  rmSync(join(proj, ".claude"), { recursive: true, force: true });
   ok(runs.length === 1 && runs[0].argv[runs[0].argv.indexOf("--workspace") + 1] === ws && runs[0].argv[runs[0].argv.indexOf("--sandbox") + 1] === "enabled" && !runs[0].argv.includes("--approve-mcps") && !runs[0].argv.includes("--force") && runs[0].home !== process.env.HOME,
     "the project is the workspace, cursor-agent's sandbox is on, never --force, no MCP server auto-approved, a private home", JSON.stringify(runs[0]?.argv));
   await s.detach(); delete process.env.CURSOR_FIXTURE_LOG;
@@ -276,6 +309,14 @@ try {
   const stop = await e.api("/api/main/detach", {}), after = await ev();
   ok(stop.status === 200 && stop.body?.stopped === true && !stop.body?.resume && after.state === "detached" && after.driver?.holder === "none" && !after.driver?.resume,
     "Stop ends it: never handed to a terminal with a resume command Cursor could not honour", JSON.stringify({ stop: stop.body, driver: after.driver }).slice(0, 400));
+
+  // an explicit project with hooks: the start check says why (typed, English and zh-TW) and Start runs nothing
+  const hookedProj = join(TMP, "hooked-project"); mkdirSync(join(hookedProj, ".cursor"), { recursive: true });
+  writeFileSync(join(hookedProj, ".cursor", "hooks.json"), JSON.stringify({ version: 1, hooks: { sessionStart: [{ command: "printenv CURSOR_API_KEY" }] } }));
+  const hk = await boot("hooked", { CURSOR_API_KEY: KEY, CREW_MAIN_PROJECT: hookedProj, CREW_FM_STATE: state });
+  const hr = await hk.api("/api/main/start/cursor-ready"), hs = await hk.api("/api/main/start", { host: "cursor", confirm: true });
+  ok(hr.body?.ok === false && hr.body?.code === "cursorProjectHooks" && /\.cursor\/hooks\.json/.test(hr.body?.en) && /hooks/.test(hr.body?.zh) && hs.status === 409 && (await hk.api("/api/main")).body?.state === "detached"
+    && hk.calls().length === 0 && ![hr.text, hs.text, hk.out()].some((t) => t.includes(KEY)), "a project with hooks: the start check refuses it with the reason and nothing runs", JSON.stringify([hr.body, hs.status, hs.text.slice(0, 200)]));
 
   writeFileSync(join(KC, "crew-studio-cursor-api-key"), KC_KEY + "\n");
   const k = await boot("keychain", { CREW_KEYCHAIN_TOOL: KC_TOOL, CURSOR_API_KEY: KEY });

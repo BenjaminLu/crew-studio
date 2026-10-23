@@ -20,11 +20,14 @@
 // turns model cursor-agent's own tools under those rules: FIXTURE-WRITE ["path", …] writes only what cli-config.json allows,
 // an attached PDF is read only when allowed, and FIXTURE-SHELL runs `printenv CURSOR_API_KEY` unless Shell(*) is denied (with
 // its sandbox on cursor-agent auto-runs an unlisted command there, in its own environment).
+// Every -p run first runs the hooks cursor-agent would load (the user's under $HOME; the workspace's .cursor/hooks.json and
+// .claude/settings*.json) with its own environment, key included, and says each one's output as FIXTURE-HOOK-OUTPUT.
 //   CURSOR_FIXTURE_LOG  a file each run appends its argv (without the prompt) and chat id to (tests/cursor-vendor.ts); a
 //                       Firstmate turn also its home, images and the first 12 hex of its key's SHA-256
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { cursorPrint, mcpSession } from "../acceptance/agent.mjs";
 
 const argv = process.argv.slice(2), key = process.env.CURSOR_API_KEY ?? "";
@@ -38,6 +41,22 @@ if (argv[0] === "create-chat") { const id = randomUUID(); log({ argv, chat: id }
 if (argv[0] !== "-p" || get("--output-format") !== "stream-json" || !get("--workspace") || !argv.includes("--trust")) fail(`cursor-agent fixture: unexpected argv ${JSON.stringify(argv.slice(0, -1))}`, 2);
 let perms = null;
 try { perms = JSON.parse(readFileSync(join(process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "/nonexistent", ".config"), "cursor", "cli-config.json"), "utf8")).permissions; } catch {}
+// hooks, as cursor-agent loads them: the user's ~/.cursor/hooks.json and ~/.claude/settings.json (under $HOME) and, in a
+// --trust'ed workspace, its .cursor/hooks.json, .claude/settings.json and .claude/settings.local.json. Every command runs in
+// cursor-agent's own environment, CURSOR_API_KEY included, whatever cli-config.json says about Shell.
+const hookOutput = [];
+{
+  const ws = get("--workspace"), home = process.env.HOME ?? "/nonexistent";
+  const files = [join(home, ".cursor", "hooks.json"), join(home, ".claude", "settings.json"), join(ws, ".cursor", "hooks.json"), join(ws, ".claude", "settings.json"), join(ws, ".claude", "settings.local.json")];
+  const commands = (h) => Array.isArray(h) ? h.flatMap((x) => typeof x?.command === "string" ? [x.command] : commands(x?.hooks)) : [];
+  for (const f of files) {
+    let hooks = null; try { hooks = JSON.parse(readFileSync(f, "utf8")).hooks; } catch {}
+    for (const cmd of Object.values(hooks ?? {}).flatMap(commands)) {
+      const r = spawnSync("/bin/sh", ["-c", cmd], { cwd: ws, env: process.env, encoding: "utf8", timeout: 5000 });
+      hookOutput.push(String(r.stdout ?? "").trim());
+    }
+  }
+}
 if (perms?.allow?.includes("GenerateImage(*)")) { await imageTurn(); process.exit(0); }
 const denied = ["Shell(*)", "Read(**)", "Write(**)"].every((d) => perms?.deny?.includes(d));
 let server = null;
@@ -74,6 +93,7 @@ const text = argv.at(-1).replace(/(?:\n\n\[Studio note: [^\n]*\])+$/, "");
 out({ type: "system", subtype: "init", apiKeySource: "env", cwd: get("--workspace"), session_id, model, permissionMode: "default" });
 const say = (t) => out({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: t }] }, session_id });
 if (images.length) say(`FIXTURE-SAW-IMAGES ${images.map((i) => i.sha256.slice(0, 12)).join(",")}`);
+for (const o of hookOutput) say(`FIXTURE-HOOK-OUTPUT ${o}`);
 if (project) {
   if (text.includes("Crew Studio started you as firstmate in")) say(`Ready as firstmate in ${ws}; first message: ${/## (state\/HANDOFF-[\w.-]+\.md)/.exec(text)?.[1] ?? "none"}`);
   // FIXTURE-WRITE ["path", ...]: the model tries to write each file with its Write tool

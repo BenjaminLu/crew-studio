@@ -45,7 +45,7 @@ export type HostEvent =
   | { type: "hostRefusal"; code: HostRefusalCode; reason: { en: string; "zh-TW": string }; raw?: unknown };
 
 /** Typed reasons a host refuses to start or run: never a silent switch to another vendor. */
-export type HostRefusalCode = "claudeNotSignedIn" | "claudeQuotaExhausted" | "claudeCrewTokenMissing" | "claudeSignInPending" | "claudeUnavailable";
+export type HostRefusalCode = "claudeNotSignedIn" | "claudeQuotaExhausted" | "claudeCrewTokenMissing" | "claudeSignInPending" | "claudeUnavailable" | "cursorProjectHooks";
 
 export interface AttachedSession {
   readonly host: HostId;
