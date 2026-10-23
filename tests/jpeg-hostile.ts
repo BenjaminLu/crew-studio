@@ -67,5 +67,18 @@ console.log("scans whose data ends before their last block");
   refused("a 2048x2048 restart scan of 65536 empty intervals", jpeg(big, sos([1], 0, 63), intervals(65536, (i) => (i ? [] : one)), EOI), /data ends/);
 }
 
+console.log("scan count and decoding work");
+{
+  // 8x8 gray, one block: a DC scan, one AC scan for each coefficient 1..63, then DC refinement scans
+  const frame = [...SOI, ...DQT, ...DHT, ...sof(0xc2, 8, 8, [0x11]), ...sos([1], 0, 0), ...zeroBlocks(0), ...new Bits().put(0, 4).done()];
+  const scans = (n: number) => jpeg(frame, range(63).flatMap((k) => [...sos([1], k + 1, k + 1), ...eobRuns(1)]), range(n - 64).flatMap(() => [...sos([1], 0, 0, 0x10), ...new Bits().put(0, 1).done()]), EOI);
+  ok(decodeJpeg(scans(64)).width === 8, "a progressive JPEG of 64 scans decodes");
+  refused("a progressive JPEG of 65 scans", scans(65), /too many scans/);
+  // 2048x2048 gray: a DC scan, then AC scans over band 1..63 of all 65536 blocks, each a few bytes of EOB runs
+  const ac = (n: number) => jpeg(SOI, DQT, DHT, sof(0xc2, 2048, 2048, [0x11]), sos([1], 0, 0), new Bits().put(0, 4 * 65536).done(), range(n).flatMap(() => [...sos([1], 1, 63), ...eobRuns(65536)]), EOI);
+  ok(decodeJpeg(ac(8)).width === 2048, "8 full AC passes over a 2048x2048 frame decode");
+  refused("9 full AC passes over a 2048x2048 frame", ac(9), /too much decoding work/);
+}
+
 console.log(`jpeg-hostile: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
