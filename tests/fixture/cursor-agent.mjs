@@ -7,10 +7,16 @@
 //     Firstmate (W/.cursor/mcp.json's studio server reaches a native socket): the scripted Firstmate turns of
 //     tests/fixture/codex-account.mjs, its tools over that MCP server; otherwise a worker or reviewer round, the shared
 //     scripted agent (tests/acceptance/agent.mjs cursorPrint).
-// Every -p run refuses a cli-config.json that does not deny the built-in Shell, Read and Write tools.
+// Every -p run refuses a cli-config.json that does not deny the built-in Shell, Read and Write tools, except an image
+// run (its allow list names GenerateImage(*)), which must deny Shell and Read and allow nothing but GenerateImage(*) (and
+// Read(reference.png)); as the real CLI does, a Write(**) deny then refuses saving the image. Its turn lists the image
+// tool, saves tests/fixture/jpeg/cursor-image.jpg under $CURSOR_DATA_DIR/projects/<workspace>/assets/ and returns it as
+// imageData. The prompt's CURSOR-IMAGE:<mode> picks a failure: refused, duplicate, edit (a successful file edit), denied
+// (a denied shell call, then the image), fail (the turn fails), escape (writes its workspace, the private root above it
+// and /private/tmp; the turn fails naming any write that succeeded, else makes the image).
 //   CURSOR_FIXTURE_LOG  a file each run appends its argv (without the prompt) and chat id to (tests/cursor-vendor.ts)
-import { appendFileSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { cursorPrint, mcpSession } from "../acceptance/agent.mjs";
 
@@ -25,6 +31,7 @@ if (argv[0] === "create-chat") { const id = randomUUID(); log({ argv, chat: id }
 if (argv[0] !== "-p" || get("--output-format") !== "stream-json" || !get("--workspace") || !argv.includes("--trust")) fail(`cursor-agent fixture: unexpected argv ${JSON.stringify(argv.slice(0, -1))}`, 2);
 let perms = null;
 try { perms = JSON.parse(readFileSync(join(process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "/nonexistent", ".config"), "cursor", "cli-config.json"), "utf8")).permissions; } catch {}
+if (perms?.allow?.includes("GenerateImage(*)")) { await imageTurn(); process.exit(0); }
 if (!["Shell(*)", "Read(**)", "Write(**)"].every((d) => perms?.deny?.includes(d))) fail("cursor-agent fixture: cli-config.json does not deny the built-in tools", 2);
 let server = null;
 try { server = JSON.parse(readFileSync(join(get("--workspace"), ".cursor", "mcp.json"), "utf8")).mcpServers.studio; } catch {}
@@ -64,3 +71,35 @@ if (tool) {
   }
 }
 out({ type: "result", subtype: "success", is_error: false, result: "", session_id, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 } });
+
+// ---------- an image job (src/providers/cursor-image.ts) ----------
+async function imageTurn() {
+  const ws = get("--workspace"), text = argv.at(-1), mode = /CURSOR-IMAGE:([a-z]+)/.exec(text)?.[1] ?? "success", session_id = randomUUID();
+  if (!["Shell(*)", "Read(**)"].every((d) => perms.deny?.includes(d)) || perms.allow.some((a) => a !== "GenerateImage(*)" && a !== "Read(reference.png)")) fail("cursor-agent fixture: an image run must deny Shell and Read and allow only the image tool", 2);
+  let servers = null; try { servers = JSON.parse(readFileSync(join(ws, ".cursor", "mcp.json"), "utf8")).mcpServers; } catch {}
+  if (!servers || Object.keys(servers).length) fail("cursor-agent fixture: an image run registers no MCP server", 2);
+  if (!existsSync(join(ws, "AGENTS.md")) || !readFileSync(join(ws, "AGENTS.md"), "utf8").includes("# Operating rules (set by the captain)")) fail("cursor-agent fixture: the image run's AGENTS.md carries no operating rules", 2);
+  if (text.includes("reference.png") && (!perms.allow.includes("Read(reference.png)") || readFileSync(join(ws, "reference.png")).subarray(1, 4).toString() !== "PNG")) fail("cursor-agent fixture: the reference image is not readable", 2);
+  out({ type: "system", subtype: "init", apiKeySource: "env", cwd: ws, session_id, model: get("--model") ?? "composer-2.5", permissionMode: "default" });
+  if (mode === "fail") fail("the model run failed");
+  const call = (n, kind, args, result) => { const id = `fixture-image-${n}`; out({ type: "tool_call", subtype: "started", call_id: id, tool_call: { [kind]: { args } }, session_id }); out({ type: "tool_call", subtype: "completed", call_id: id, tool_call: { [kind]: { args, result } }, session_id }); };
+  if (mode === "escape") {
+    const wrote = [join(ws, "escape.txt"), join(ws, "..", "escape.txt"), `/private/tmp/crew-cursor-image-escape-${process.pid}`].filter((f) => { try { writeFileSync(f, "escaped"); return true; } catch { return false; } });
+    if (wrote.length) fail(`ESCAPED: ${wrote.join(", ")}`);
+  }
+  call(1, "getMcpToolsToolCall", { server: "cursor", toolName: "GenerateImage" }, { success: { tools: [{ name: "GenerateImage" }] } });
+  if (mode === "denied") call(2, "shellToolCall", { command: "ls" }, { permissionDenied: { error: "Command blocked by permissions configuration" } });
+  if (mode === "edit") call(2, "editToolCall", { path: join(ws, "x.txt") }, { success: { path: join(ws, "x.txt") } });
+  const args = { description: text.slice(0, 200), referenceImagePaths: text.includes("reference.png") ? ["reference.png"] : [], aspectRatio: "1:1" };
+  if (mode === "refused") call(3, "generateImageToolCall", args, { rejected: { reason: "Image generation is not allowed" } });
+  else {
+    const jpeg = readFileSync(join(import.meta.dir, "jpeg", "cursor-image.jpg")), assets = join(process.env.CURSOR_DATA_DIR ?? "/nonexistent", "projects", basename(ws), "assets"), filePath = join(assets, "image.jpg");
+    let saved = !perms.deny.includes("Write(**)");
+    if (saved) try { mkdirSync(assets, { recursive: true }); writeFileSync(filePath, jpeg); } catch { saved = false; }
+    const result = saved ? { success: { filePath, imageData: jpeg.toString("base64") } } : { error: { error: "Failed to save generated image: permission denied (Blocked by permissions configuration)" } };
+    call(3, "generateImageToolCall", args, result);
+    if (mode === "duplicate") call(4, "generateImageToolCall", args, result);
+  }
+  out({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "The image is ready." }] }, session_id });
+  out({ type: "result", subtype: "success", is_error: false, result: "The image is ready.", session_id, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 } });
+}
