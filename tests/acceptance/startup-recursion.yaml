@@ -1,8 +1,8 @@
-# Live acceptance: Startup competition. Claude founder and Codex judge, up to three rounds each.
+# Live acceptance: Startup competition. Claude founder and Codex judge (both Cursor on Cursor acceptance), up to three rounds each.
 # Both cards are captain-only; CAPTAIN_ONLY_ALLOW in scripts/acceptance/scenarios.ts lists them at this pin.
 schema: 2
 workflow: startup-recursion
-pin: { version: 1, sha256: "e5da7d4bcaf2b5865e12e04b8b7e73ab5421472e1bb03f523f4c0bd84183b92e" }   # bun scripts/acceptance/pin.ts startup-recursion
+pin: { version: 1, sha256: "bcd48b6f8d8cbf9c59fd18d6729556d67ba4856a5b59db2a597afa739fa811b6" }   # bun scripts/acceptance/pin.ts startup-recursion
 topic: "A service that turns a team's meeting notes into a weekly risk list."
 start: { provider: null, params: {} }
 providers: [claude, codex]

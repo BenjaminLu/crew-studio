@@ -68,8 +68,8 @@ export const CAPTAIN_ONLY_ALLOW: { workflow: string; sha256: string; node: strin
   { workflow: "web-prototype", sha256: "6a6a532393a166f189e246acafc489119582aa2fec86cd579e7f3870cfe2ba5c", node: "accept", kind: "acceptance", option: "approve-design-a" },
   { workflow: "web-prototype", sha256: "6a6a532393a166f189e246acafc489119582aa2fec86cd579e7f3870cfe2ba5c", node: "accept", kind: "acceptance", option: "approve-design-b" },
   // startup competition (src/domain/startup-recursion.ts): run the bundled template; accept the text result
-  { workflow: "startup-recursion", sha256: "e5da7d4bcaf2b5865e12e04b8b7e73ab5421472e1bb03f523f4c0bd84183b92e", node: "choose", kind: "question", option: "template" },
-  { workflow: "startup-recursion", sha256: "e5da7d4bcaf2b5865e12e04b8b7e73ab5421472e1bb03f523f4c0bd84183b92e", node: "accept", kind: "acceptance", option: "accept" },
+  { workflow: "startup-recursion", sha256: "bcd48b6f8d8cbf9c59fd18d6729556d67ba4856a5b59db2a597afa739fa811b6", node: "choose", kind: "question", option: "template" },
+  { workflow: "startup-recursion", sha256: "bcd48b6f8d8cbf9c59fd18d6729556d67ba4856a5b59db2a597afa739fa811b6", node: "accept", kind: "acceptance", option: "accept" },
 ];
 
 export type CardRule = { node: string; kind?: string; action: "answer" | "wait" | "stop"; answer?: string; note?: string | null };

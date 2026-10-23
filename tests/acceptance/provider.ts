@@ -15,7 +15,6 @@ export const CURSOR_MODEL = "composer-2.5";
 
 /** The workflows Cursor cannot run, by design, and why (scenario names, and the workflow a run's name starts with). */
 export const BLOCKED_ON_CURSOR: Record<string, string> = {
-  "startup-recursion": "the startup competition's founder is a verified Claude seat and its judge a Codex seat (providers: [claude, codex]); neither seat runs on Cursor",
 };
 /** why this scenario or run is blocked on the current vendor (null: it runs) */
 export function blockedReason(name: string): string | null {
@@ -27,5 +26,7 @@ export function blockedReason(name: string): string | null {
 export const runProvider = (p: string | null | undefined): string | null => (ON_CURSOR && (p === "codex" || p === "claude") ? "cursor" : p ?? null);
 /** the run's setup steps on the current vendor: probes reach Cursor's API host, and there is no Claude login to verify */
 export const setupSteps = (steps: string[]): string[] => ON_CURSOR ? [...new Set(steps.filter((s) => s !== "verify-claude").map((s) => (s === "probe" || s === "probe-claude" ? "probe-cursor" : s)))] : steps;
+/** the run's params on the current vendor: on Cursor the startup competition seats its founder and judge on Cursor */
+export const runParams = (workflow: string, params: Record<string, string>): Record<string, string> => ON_CURSOR && workflow === "startup-recursion" ? { ...params, founderProvider: "cursor", judgeProvider: "cursor" } : params;
 /** the staffing answer the harness gives as the captain */
 export const STAFFING_ANSWER = ON_CURSOR ? { provider: "cursor", model: CURSOR_MODEL, effort: null } : { provider: "codex", model: "fixture-model", effort: "low" };

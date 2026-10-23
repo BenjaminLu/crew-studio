@@ -2,11 +2,14 @@
 import {createHash} from 'node:crypto';
 import {hashInput} from '../runtime/checks';
 import {ProviderRefusal,type ProviderCapability,type ProviderSelection} from './policy';
-import {startupBoundModel} from '../domain/startup-recursion';
+import {startupBoundModel,startupTemplate} from '../domain/startup-recursion';
+import {defBody,normalize} from '../runtime/defs';
 import {nativeClaude,isClaudeExecutionAdmission,validClaudePair,type ClaudePair} from './claude-native';
 const ATTEMPT='startup-claude-verification-attempt';
 const refuse=(reason:string):never=>{throw new ProviderRefusal(`Startup Claude verification: ${reason}; hold without fallback`);};
 const candidateHash=(raw:unknown)=>raw===undefined||raw===''?null:createHash('sha256').update(JSON.stringify(raw)).digest('hex');
+// the bundled template at any installed version: Studio stores a changed built-in as a new version
+const builtInTemplate=(def:any)=>hashInput({value:defBody(def)})===hashInput({value:defBody(normalize(startupTemplate()))});
 type Dependencies={verify:typeof nativeClaude.verify;admitted:typeof isClaudeExecutionAdmission};
 const defaults:Dependencies={verify:(p,o)=>nativeClaude.verify(p,o),admitted:isClaudeExecutionAdmission};
 export async function refreshStartupClaude(x:any,input:ProviderSelection,pair:ClaudePair,cap:ProviderCapability,d:Dependencies=defaults):Promise<ProviderCapability>{
@@ -15,7 +18,7 @@ export async function refreshStartupClaude(x:any,input:ProviderSelection,pair:Cl
  const own=()=>{if(engine.get(run.id)!==run||!engine.owns(x)||engine.abortOf(run).signal.aborted||x.rn.visits!==visit||x.rn.attempt!==attempt||(x.ctx?.head??null)!==head)refuse('task owner ended');};
  const authority=()=>{
   own();
-  if(run.def.id!=='startup-recursion'||run.def.kind!=='startup-recursion'||run.def.version!==1||x.node.id!==`pitch${round}`||
+  if(run.def.id!=='startup-recursion'||run.def.kind!=='startup-recursion'||run.def.version!==1&&!builtInTemplate(run.def)||x.node.id!==`pitch${round}`||
     ![1,2,3].includes(round)||x.node.kind!=='agent'||x.node.mode!=='startup-pitch'||x.node.role!=='founder'||input.role!=='founder'||
     !input.explicit||input.provider!=='claude'||input.model!==pair.model||input.effort!==null||pair.effort!==null||!validClaudePair(pair))refuse('exact founder role/model binding changed');
   const trusted=engine.trusted(run.id);if(!trusted.ok)refuse('task ledger is untrusted');

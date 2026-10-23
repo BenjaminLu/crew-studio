@@ -27,7 +27,7 @@ import { drive, verify, type Expect } from "./acceptance/drive";
 import { stubRuns, stubDecision, verdictOf, type StubRun } from "./acceptance/stub";
 import { STEPS, approveStaffing, type Ctx } from "./acceptance/steps";
 import { fileOrgNegativeControls, prove, RENDERER_PROVES } from "./acceptance/proves";
-import { blockedReason, CURSOR_MODEL, ON_CURSOR, runProvider, setupSteps } from "./acceptance/provider";
+import { blockedReason, CURSOR_MODEL, ON_CURSOR, runParams, runProvider, setupSteps } from "./acceptance/provider";
 const t0 = Date.now(), problems: string[] = [];
 // what the runtime seeds (workflows/v2 and packs/ *.wf.yaml, retired ones included), and the packs' legacy v1 flow files
 const files = [...bundledList("workflows/v2/"), ...bundledList("packs/")].filter((f) => f.endsWith(".wf.yaml") || (f.startsWith("packs/") && f.endsWith(".flow.yaml")));
@@ -35,7 +35,7 @@ const bundled = [...new Set(files.map((f) => String((parseYaml(bundledText(f) ??
 const scenarios: Scenario[] = [];
 for (const f of scenarioFiles(process.env.ACCEPTANCE_SCENARIO_DIR || undefined)) { try { scenarios.push(loadScenario(f)); } catch (e: any) { problems.push(e.message); } }
 const runs: StubRun[] = [];
-for (const s of scenarios) { try { runs.push(...stubRuns(s).map((r) => ({ ...r, provider: runProvider(r.provider), setup: setupSteps(r.setup) }))); } catch (e: any) { problems.push(e.message); } }
+for (const s of scenarios) { try { runs.push(...stubRuns(s).map((r) => ({ ...r, provider: runProvider(r.provider), params: runParams(r.workflow, r.params), setup: setupSteps(r.setup) }))); } catch (e: any) { problems.push(e.message); } }
 for (const id of bundled) {
   const s = scenarios.find((x) => x.workflow === id);
   if (!s) problems.push(`no acceptance scenario for workflow ${id} (add tests/acceptance/${id}.yaml)`);

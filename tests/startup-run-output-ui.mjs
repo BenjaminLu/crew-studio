@@ -42,6 +42,20 @@ try{
   await page.screenshot({path:join(out,`run-${tag}.png`),fullPage:true});
   ok(errors.length===0,`${tag}: no page errors`,errors.join('; '));await ctx.close();
  }
+ // the board start form: the founder and judge providers are choices (empty keeps Claude founder, Codex judge)
+ for(const language of ['en','zh-TW']){
+  const ctx=await browser.newContext({viewport:{width:1280,height:900}});await ctx.addInitScript(language=>localStorage.setItem('crew.lang',language),language);
+  const page=await ctx.newPage(),errors=[],posts=[];page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/api/wruns'))posts.push(r.postDataJSON());});
+  await page.goto(`http://127.0.0.1:${port}/#/runs`);await page.locator('[data-run-wf] option[value="startup-recursion"]').waitFor({state:'attached'});await page.selectOption('[data-run-wf]','startup-recursion');
+  const founder=page.locator('[data-run-param="founderProvider"]'),judge=page.locator('[data-run-param="judgeProvider"]');await founder.waitFor();
+  const options=async l=>l.locator('option').evaluateAll(os=>os.map(o=>`${o.value}=${o.textContent}`).join(','));const zh=language==='zh-TW',dflt=zh?'預設':'Default';
+  ok(await founder.evaluate(e=>e.tagName)==='SELECT'&&await options(founder)===`=${dflt},claude=claude,codex=codex,cursor=cursor`&&await options(judge)===`=${dflt},claude=claude,codex=codex,cursor=cursor`&&await founder.inputValue()===''&&await judge.inputValue()==='',`${language}: the start form offers the founder and judge provider as choices, empty by default`,await options(founder));
+  const form=await page.locator('.rt-start').innerText();ok(zh?form.includes('創業者使用的廠商（預設 Claude）')&&form.includes('評審使用的廠商（預設 Codex）'):form.includes('Founder provider (default Claude)')&&form.includes('Judge provider (default Codex)'),`${language}: the choices are labelled in the captain's language`,form.slice(0,400));
+  await page.selectOption('[data-run-param="founderProvider"]','cursor');await page.selectOption('[data-run-param="judgeProvider"]','cursor');await page.fill('[data-run-text]','Fixture only: startup competition on Cursor.');await page.click('[data-run-start]');
+  for(let i=0;i<100&&!posts.length;i++)await page.waitForTimeout(50);
+  ok(posts[0]?.params?.founderProvider==='cursor'&&posts[0]?.params?.judgeProvider==='cursor',`${language}: the chosen providers go with the start request`,JSON.stringify(posts));
+  ok(errors.length===0,`${language}: no page errors on the start form`,errors.join('; '));await ctx.close();
+ }
  // the review page the card and the run page open: the write-up is shown (not blank), the header names the Task, and
  // export works; a legacy version holding only competition.md (sha-pinned) renders on the fly and is left byte-identical
  const legacyDir=join(data,'legacy-src');mkdirSync(legacyDir,{recursive:true});writeFileSync(join(legacyDir,'competition.md'),'# 創業比賽：提案、銳評與修訂\n\nLEGACY-COMPETITION text from an older run.\n');

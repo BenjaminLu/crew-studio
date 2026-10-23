@@ -79,7 +79,7 @@ export type RuntimeDeps = {
   coffeeFilmStatus?:{ready:boolean;reason:string|null};
   coffeeChoice?:()=>{provider:"codex";model:string;effort:string|null}|null;
   /** Studio's configured model per provider (chat settings, env, Codex config): the startup workflow's default when no exact model param was given. */
-  startupModel?:(provider:"claude"|"codex")=>string|null|undefined;
+  startupModel?:(provider:"claude"|"codex"|"cursor")=>string|null|undefined;
   generateImage?: (prompt: string, authorize: () => void, signal: AbortSignal, reference?:import("../providers/codex-image").CodexImageReference, rules?: import("../operating-rules").RulesSection, crew?: { model: string; effort: string | null; provider?: "cursor" }) => Promise<import("../providers/cursor-image").StudioImage>;
   /** fresh: read every model list again now (the Crew page's detection), not a reading the provider reuses */
   staffingFacts?: (o?:{fresh?:boolean}) => Promise<StaffingFacts[]>;

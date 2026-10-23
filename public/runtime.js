@@ -1260,7 +1260,8 @@ function startParamOwned(id,key){return key==="provider"||(key==="project"&&RN.s
 function startParamInputs(id){
   const values=((RN.params||={})[id]||={});
   return h("div",{"data-run-params":id},Object.entries(startParamSchema(id)).filter(([key])=>!startParamOwned(id,key)).map(([key,p])=>{
-    const input=h("input",{class:"input","data-run-param":key,"aria-label":T(p.label,p.labelZh||p.label),required:p.required||null,placeholder:p.default??"",oninput:e=>{values[key]=e.target.value;RN.startError="";}});input.value=values[key]??"";
+    // a param with options is a choice: empty keeps the definition's default
+    const input=Array.isArray(p.options)&&p.options.length?h("select",{class:"input","data-run-param":key,"aria-label":T(p.label,p.labelZh||p.label),required:p.required||null,onchange:e=>{values[key]=e.target.value;RN.startError="";}},h("option",{value:""},T("Default","預設")),...p.options.map(o=>h("option",{value:o},o))):h("input",{class:"input","data-run-param":key,"aria-label":T(p.label,p.labelZh||p.label),required:p.required||null,placeholder:p.default??"",oninput:e=>{values[key]=e.target.value;RN.startError="";}});input.value=values[key]??"";
     return h("label",{class:"rt-field"},h("span",{},T(p.label,p.labelZh||p.label),p.required?" *":""),input);
   }));
 }

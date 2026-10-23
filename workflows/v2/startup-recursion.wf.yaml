@@ -3,7 +3,7 @@
   "name": "創業 recursion",
   "kind": "startup-recursion",
   "version": 1,
-  "description": "Claude pitches and revises; Codex critiques. Up to three rounds, then captain acceptance. Text only.",
+  "description": "Claude pitches and revises; Codex critiques (either role can run on Claude, Codex or Cursor). Up to three rounds, then captain acceptance. Text only.",
   "intent": {
     "keywords": [
       "創業",
@@ -16,10 +16,30 @@
       "label": "Optional Firstmate generated candidate manifest JSON"
     },
     "founderModel": {
-      "label": "Exact Claude model (optional, otherwise configured model)"
+      "label": "Exact founder model (optional, otherwise the configured model of its provider)",
+      "labelZh": "創業者的確切模型（選填，否則用該廠商已設定的模型）"
     },
     "judgeModel": {
-      "label": "Exact Codex model (optional, otherwise configured model)"
+      "label": "Exact judge model (optional, otherwise the configured model of its provider)",
+      "labelZh": "評審的確切模型（選填，否則用該廠商已設定的模型）"
+    },
+    "founderProvider": {
+      "label": "Founder provider (default Claude)",
+      "labelZh": "創業者使用的廠商（預設 Claude）",
+      "options": [
+        "claude",
+        "codex",
+        "cursor"
+      ]
+    },
+    "judgeProvider": {
+      "label": "Judge provider (default Codex)",
+      "labelZh": "評審使用的廠商（預設 Codex）",
+      "options": [
+        "claude",
+        "codex",
+        "cursor"
+      ]
     }
   },
   "roles": [
