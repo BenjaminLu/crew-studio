@@ -75,10 +75,11 @@ ok(typeof sec.isCredentialName === "function" && sec.SECRET_KEY === undefined &&
   "the name rule is one plain function (no RegExp that matches anything): env *_KEY, *_CREDENTIAL(S) and PRIVATE names count; prefix-only and ordinary names do not");
 
 // ---------- rule 4: known formats anywhere ----------
-{ const F = ["sk-ant-api03-AbCdEfGh_IjKl", "sk-proj-AbCdEfGhIjKlMnOpQr12", "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2", "github_pat_" + "11AAAAAAA0abcdefghijklmn", "xoxb-1234567890-abcdefghij", "AKIAABCDEFGHIJKLMNOP", "crsr_" + "0123456789abcdefABCDEF".repeat(3), "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N", "-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----"];
+{ const F = ["sk-ant-api03-AbCdEfGh_IjKl", "sk-proj-AbCdEfGhIjKlMnOpQr12", "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2", "github_pat_" + "11AAAAAAA0abcdefghijklmn", "xoxb-1234567890-abcdefghij", "AKIAABCDEFGHIJKLMNOP", "crsr_" + "0123456789abcdefABCDEF".repeat(3), "key_" + "0123456789abcdef".repeat(4), "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N", "-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----"];
   const left = F.filter((f) => sec.redactText(`see ${f} here`).includes(f));
   ok(!left.length, "a known credential format is removed anywhere in a text, with no name around it", JSON.stringify(left)); }
 ok(sec.redactText("the crsr_prefix and crsr_short stay") === "the crsr_prefix and crsr_short stay", "a word that only starts like a Cursor key (crsr_ under 32 characters) stays");
+ok(sec.redactText("api_key_" + "a".repeat(40) + " and key_short stay") === "api_key_" + "a".repeat(40) + " and key_short stay", "a name ending in key_ and a short key_ word stay (only a whole older key_… Cursor key is removed)");
 
 // ---------- rule 1: known values ----------
 { process.env.CREW_GITHUB_TOKEN = "aGVsbG8v/d29ybGQ+Zm9vYmFy=="; process.env.BOARD_SECRET = "board secret with spaces 42"; process.env.SHORT_TOKEN = "abc1234";
