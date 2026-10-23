@@ -15,6 +15,7 @@ import { blocksText } from "../tool-content";
 import { cursorLogin } from "./login";
 import { cursorNeeds, cursorRoot } from "./needs";
 import { processSession, type LineParser } from "./proc";
+import { cursorPrompt } from "../host/jsonl";
 import type { ProviderCapability } from "./policy";
 import { LOGIN_RE, errorOf, rowsOf, type NEvent, type Provider, type ProviderCtx, type ToolSpec } from "./types";
 
@@ -129,10 +130,10 @@ export function cursorProvider(model = process.env.CREW_CURSOR_MODEL ?? "", bin 
       try { writeCursorConfig(root, systemPrompt, tools, ctx); } catch (e) { drop(); throw e; }
       const env: Record<string, string> = { ...ctx.env, HOME: join(root, "h"), XDG_CONFIG_HOME: join(root, "h", ".config"), CURSOR_DATA_DIR: join(root, "d"), AGENT_CLI_CREDENTIAL_STORE: "memory" };
       if (!env.CURSOR_API_KEY) { const login = cursorLogin(); if (login.ok) Object.assign(env, login.env); }
-      const args = ["-p", "--output-format", "stream-json", "--trust", "--approve-mcps", "--sandbox", "disabled", "--workspace", join(root, "w"), ...(model ? ["--model", model] : []), "{TEXT}"];
+      const args = ["-p", "--output-format", "stream-json", "--trust", "--approve-mcps", "--sandbox", "disabled", "--workspace", join(root, "w"), ...(model ? ["--model", model] : []), "--", "{TEXT}"];
       const cmd = () => (/\.(mjs|js|ts)$/.test(bin) ? [process.execPath, bin, ...args] : [bin, ...args]);
       const session = processSession(cmd, join(root, "w"), env, parser, ctx.sandbox);
-      return { interrupt() { session.interrupt(); drop(); }, async *send(text: string) { try { yield* session.send(text); } finally { drop(); } } };
+      return { interrupt() { session.interrupt(); drop(); }, async *send(text: string) { try { yield* session.send(cursorPrompt(text)); } finally { drop(); } } };
     },
   };
 }

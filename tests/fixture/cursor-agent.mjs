@@ -33,9 +33,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { cursorPrint, mcpSession } from "../acceptance/agent.mjs";
 
-const argv = process.argv.slice(2), key = process.env.CURSOR_API_KEY ?? "";
+// commander (index.js) reads options up to `--` and operands after it, so without `--` a prompt starting with "-" is an option
+// (--force, --sandbox=disabled, --workspace=/ …); a few flags are read from the raw argv whatever `--` says (ft() for
+// --disable-project-configs, ht() for --statsig-overrides): a prompt operand starting with one of them would set it.
+const raw = process.argv.slice(2), end = raw.indexOf("--"), argv = end < 0 ? raw : [...raw.slice(0, end), ...raw.slice(end + 1)], flags = end < 0 ? raw : raw.slice(0, end), key = process.env.CURSOR_API_KEY ?? "";
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
-const get = (k) => argv.includes(k) ? argv[argv.indexOf(k) + 1] : undefined;
+const get = (k) => flags.includes(k) ? flags[flags.indexOf(k) + 1] : undefined;
 const fail = (text, code = 1) => { out({ type: "result", subtype: "error", is_error: true, result: text }); process.exit(code); };
 if (argv.length === 1 && argv[0] === "--version") { console.log("2026.10.01-fixture"); process.exit(0); }
 if (!/^crsr_acceptance[A-Za-z0-9]+$/.test(key)) fail("Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY.");
@@ -50,6 +53,8 @@ if (argv[0] === "models") {
 }
 if (argv[0] === "create-chat") { const id = randomUUID(); log({ argv, chat: id }); console.log(id); process.exit(0); }
 if (argv[0] !== "-p" || get("--output-format") !== "stream-json" || !get("--workspace") || !argv.includes("--trust")) fail(`cursor-agent fixture: unexpected argv ${JSON.stringify(argv.slice(0, -1))}`, 2);
+if (end < 0 && argv.at(-1).startsWith("-")) fail("cursor-agent fixture: the prompt was parsed as an option", 2);
+if (raw.some((a) => a.startsWith("--statsig-overrides"))) fail("cursor-agent fixture: --statsig-overrides read from the raw argv", 2);
 // ---------- cursor-agent's configuration and permission engine, as the installed 2026.10.19-6bbf2c4 bundle (index.js) has them ----------
 // FileBasedConfigProvider.loadFromDefaults: the user's cli-config.json, then every .cursor/cli.json from the git root (utils/git.ts
 //   p(): the nearest folder above the workspace holding .git, else the workspace) down to the workspace, merged in (permissions and
@@ -121,7 +126,7 @@ if (!project) {
 }
 const ws = project ? realpathSync(get("--workspace")) : "";
 if (project) {
-  if (["--force", "--yolo", "-f", "--approve-mcps"].some((f) => argv.includes(f))) fail(`cursor-agent fixture: a project Firstmate is never forced or auto-approving MCP servers ${JSON.stringify(argv.slice(0, -1))}`, 2);
+  if (["--force", "--yolo", "-f", "--approve-mcps"].some((f) => flags.includes(f))) fail(`cursor-agent fixture: a project Firstmate is never forced or auto-approving MCP servers ${JSON.stringify(argv.slice(0, -1))}`, 2);
   if (!(perms?.deny ?? []).includes("Shell(*)") || (perms?.allow ?? []).some((r) => /^\s*Shell\s*\(/.test(r))) fail("cursor-agent fixture: a project Firstmate's shell is not denied", 2);
 }
 

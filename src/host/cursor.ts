@@ -20,7 +20,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { dropPrivateDir, nativeEndpoint, privateDir } from "./claude";
 import { cursorInput } from "../attachments";
-import { binArgv } from "./jsonl";
+import { binArgv, cursorPrompt } from "./jsonl";
 import { nativeToolError } from "./native-errors";
 import { NativeToolFailure, cleanEnv, shortSummary, type AttachedSession, type Host, type HostEvent } from "./types";
 
@@ -161,7 +161,7 @@ export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-age
             let reply = "", ended = false;
             // an explicit project: cursor-agent's own sandbox on, never --force, and the project's MCP servers are not auto-approved
             const mode = project ? ["--sandbox", "enabled"] : ["--approve-mcps", "--sandbox", "disabled"];
-            const args = ["-p", "--output-format", "stream-json", "--trust", ...mode, "--workspace", ws, ...(model ? ["--model", model] : []), ...(chatId ? ["--resume", chatId] : []), ...input.args, input.text];
+            const args = ["-p", "--output-format", "stream-json", "--trust", ...mode, "--workspace", ws, ...(model ? ["--model", model] : []), ...(chatId ? ["--resume", chatId] : []), ...input.args, "--", cursorPrompt(input.text)];
             let r: ReturnType<typeof run>;
             try {
               r = run(args, (m) => {

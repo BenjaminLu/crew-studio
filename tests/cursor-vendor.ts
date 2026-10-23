@@ -191,6 +191,20 @@ console.log("the fixture keeps cursor-agent's real rules (2026.10.19: deny first
   ok(turn({ allow: [], deny: ["Shell(*)"] }, "hello").includes("FIXTURE-HOOK-OUTPUT git-root-hook"), "hooks load from the git root above the workspace");
 }
 
+console.log("a prompt that looks like an option stays the prompt");
+{
+  const { cursorProvider } = await import("../src/providers/cursor");
+  const tok = join(TMP, "provider-token"); writeFileSync(tok, "t".repeat(32), { mode: 0o600 });
+  // an MCP server with no tools: every request is answered with an empty result
+  const mcp = join(TMP, "mcp-empty.mjs"); writeFileSync(mcp, `import { createInterface } from "node:readline";\ncreateInterface({ input: process.stdin }).on("line", (l) => { const m = JSON.parse(l); process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { tools: [] } }) + "\\n"); });\n`);
+  for (const text of ["--force", "--statsig-overrides={}"]) {
+    const s = cursorProvider("composer-2.5", FIXTURE).start("You are a worker.", [], { tokenFile: tok, mcpCommand: [process.execPath, mcp], studioUrl: "http://127.0.0.1:9", env: { CURSOR_API_KEY: KEY, PATH: process.env.PATH! }, sandbox: null } as any);
+    const events: any[] = []; for await (const e of s.send(text)) events.push(e);
+    const seen = JSON.stringify(events);
+    ok(!/parsed as an option|statsig-overrides read from the raw argv|unexpected argv/.test(seen), `a round's prompt ${text} reaches cursor-agent as the prompt, after --`, seen.slice(0, 300));
+  }
+}
+
 console.log("the host in an explicit project: the project folder only");
 {
   const proj = join(TMP, "host-project"), outside = join(TMP, "host-outside"); mkdirSync(proj, { recursive: true }); mkdirSync(outside, { recursive: true });
@@ -234,6 +248,10 @@ console.log("the host in an explicit project: the project folder only");
   // cursor-agent holds CURSOR_API_KEY in its environment; a shell command it ran (auto-run in its sandbox) would see it
   const sh = await s.send("FIXTURE-SHELL");
   ok(sh.status === "completed" && said.includes("FIXTURE-SHELL-DENIED") && !said.some((t) => t.includes("FIXTURE-SHELL-SAW-KEY") || t.includes(KEY)), "its shell is denied, so no command it runs can read the Cursor API key", JSON.stringify(said.slice(-2)));
+  for (const text of ["--force", "--sandbox=disabled", "--statsig-overrides={}"]) {
+    const r = await s.send(text);
+    ok(r.status === "completed", `the captain's message ${text} is the prompt, never an option`, JSON.stringify(r));
+  }
   // hooks that appear after the start (the captain or another tool wrote them): the next turn is refused and never runs them
   const before = pruns().length;
   mkdirSync(join(proj, ".claude"), { recursive: true }); writeFileSync(join(proj, ".claude", "settings.local.json"), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: leak }] }] } }));
