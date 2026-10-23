@@ -107,6 +107,7 @@ import { codexProvider } from "./providers/codex";
 import { codexConfig } from "./host/codex";
 import { CodexAccount } from "./host/codex-account";
 import { generateCodexImage } from "./providers/codex-image";
+import { generateCursorImage } from "./providers/cursor-image";
 import { probeCodex } from "./providers/codex-probe";
 import { cursorModel, probeCursor } from "./providers/cursor";
 import {nativeClaude,probeClaudeNative,makeNativeClaudeProvider,validClaudePair,claudeEfforts,configuredClaudeEffort,isClaudeExecutionAdmission} from './providers/claude-native';
@@ -455,6 +456,7 @@ const runtime = createRuntime({onboardingProvider:()=>main.view().host??(codexAc
   log: studioLog, send, fmRoot: dirname(STATE), protectedRoots: PROTECTED, store, m3: { store: m3.store, runs: m3.runs, lane: m3.lane,useArtifactReviewPolicy:m3.useArtifactReviewPolicy }, fileorg: m7.fileorg, docs, improve, studioUrl: () => `http://127.0.0.1:${PORT}`,
   // the crew's pick for the image step when the Studio team staffs it; else Studio's configured Codex model
   generateImage: (prompt, authorize, signal, reference, rules, crew) => {
+    if (crew?.provider === "cursor") return generateCursorImage({ prompt, authorize, signal, reference, rules: rules ?? new OperatingRules(DATA).section(null), approved: { model: crew.model || cursorModel(chatSettings().models.cursor) } });
     const config = runtimeCodexConfig(), model = crew?.model || chatSettings().models.codex || process.env.CREW_CODEX_MODEL || config.model;
     if (!model) throw new Error("Configure a Codex model before generating images");
     return generateCodexImage({ prompt, authorize, signal, reference, rules: rules ?? new OperatingRules(DATA).section(null), approved: { model, effort: crew ? crew.effort : config.effort } });

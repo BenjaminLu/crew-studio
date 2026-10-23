@@ -18,7 +18,7 @@ const { Agents } = await import("../src/agent");
 const { ArtifactStore } = await import("../src/artifacts");
 const { StudioLog } = await import("../src/rawlog");
 const { installCrewTools } = await import("../src/crew-tools");
-const member = (provider: "codex" | "claude", model: string, effort: string | null) => ({ provider, model, effort, skills: [] });
+const member = (provider: "codex" | "claude" | "cursor", model: string, effort: string | null) => ({ provider, model, effort, skills: [] });
 const IMAGE_SEAT = { id: "image-maker", label: "Image maker", labelZh: "圖像產出", needs: ["image-generation"], suggest: { provider: "codex" as const } };
 const base = (): any => ({ schema: 1, members: { coordinator: member("claude", "opus-5.5", "high"), maker: member("claude", "sonnet-5.5", "medium"), "alt-maker": member("codex", "gpt-6.1-sol", "medium"),
   reviewer: member("codex", "gpt-6-astra", "medium"), "design-reviewer": member("codex", "gpt-6-astra", "medium") }, seats: {}, workflows: {} });
@@ -57,8 +57,8 @@ try {
     const rt: any = createRuntime({ dataDir: data, agents: new Agents(data, () => ""), provider: () => { throw new Error("No language provider in image fixture"); }, defaultProvider: () => ({ provider: "stub", model: null }),
       log: new StudioLog(join(data, "events")), send() {}, fmRoot: join(data, "fm"), protectedRoots: [], m3: { store, lane: {} } as any, fileorg: {} as any, docs: {} as any, readiness: false,
       generateImage: async (_prompt: string, authorize: () => void, _signal: AbortSignal, _reference?: any, _rules?: any, crew?: any) => { authorize(); calls.push(crew ?? null);
-        return { bytes: png, mime: "image/png", width: 1, height: 1, sha256: createHash("sha256").update(png).digest("hex"), provider: "codex", model: crew?.model ?? "configured-model", effort: crew?.effort ?? "medium" }; } } as any);
-    return { rt, E: rt.engine, calls };
+        return { bytes: png, mime: "image/png", width: 1, height: 1, sha256: createHash("sha256").update(png).digest("hex"), provider: crew?.provider ?? "codex", model: crew?.model ?? "configured-model", effort: crew?.effort ?? "medium" }; } } as any);
+    return { rt, E: rt.engine, calls, store };
   };
   {
     const t = base(); t.seats["image-maker"] = IMAGE_SEAT; t.members["image-maker"] = member("codex", "gpt-image-2", "low");
@@ -68,6 +68,34 @@ try {
     const rec = E.trusted(run.id).entries.find((x: any) => x.record === "crew-resolved")?.data as any;
     ok(rec?.nodes?.draft?.provider === "codex" && rec.nodes.draft.model === "gpt-image-2" && rec.nodes.draft.effort === "low" && rec.nodes.draft.seat === "image-maker", "the Task's signed ledger records the image step's pick like an agent node", JSON.stringify(rec?.nodes));
     ok(calls.length === 1 && calls[0]?.model === "gpt-image-2" && calls[0]?.effort === "low", "the image adapter runs the crew's model and effort", JSON.stringify(calls) + (E.get(run.id)!.error ?? ""));
+    ok(JSON.stringify(calls[0]) === '{"model":"gpt-image-2","effort":"low"}', "a Codex image maker gets exactly the Codex adapter's model and effort, never a provider switch", JSON.stringify(calls));
+    for (const x of E.list()) if (!["failed", "cancelled", "succeeded"].includes(x.status)) { try { await E.cancel(x.id); } catch {} }
+  }
+  {
+    const t = base(); t.seats["image-maker"] = IMAGE_SEAT; t.members["image-maker"] = member("cursor", "composer-2.5", null);
+    const { E, calls, store } = boot(t);
+    const r = C.resolveCrew(t, E.defs.get("images")).nodes.find((n) => n.node === "draft")!;
+    ok(r?.provider === "cursor" && r.model === "composer-2.5" && r.effort === null, "a Cursor member can sit on the image maker seat: Cursor generates images", JSON.stringify(r));
+    const run = E.start({ workflow: "images", text: "A red balloon", params: { provider: "codex" } });
+    await until(() => calls.length > 0 || ["failed", "cancelled"].includes(E.get(run.id)!.status));
+    await until(() => E.cards.list({ run: run.id, open: true }).some((c: any) => c.node === "accept") || ["failed", "cancelled"].includes(E.get(run.id)!.status));
+    ok(JSON.stringify(calls) === '[{"model":"composer-2.5","effort":null,"provider":"cursor"}]', "an image maker on Cursor runs the Cursor image producer with its model", JSON.stringify(calls) + (E.get(run.id)!.error ?? ""));
+    const draft = E.get(run.id)!.ctx?.deliver?.draft, v = draft && store.version(draft.id, draft.n);
+    ok(v?.createdBy?.provider === "cursor" && v.createdBy.model === "composer-2.5", "the image version names Cursor as its maker", JSON.stringify(v?.createdBy));
+    for (const x of E.list()) if (!["failed", "cancelled", "succeeded"].includes(x.status)) { try { await E.cancel(x.id); } catch {} }
+  }
+  {
+    const { E, calls } = boot(null);
+    const run = E.start({ workflow: "images", text: "A red balloon", params: { provider: "cursor", model: "composer-2.5" } });
+    await until(() => calls.length > 0 || ["failed", "cancelled"].includes(E.get(run.id)!.status));
+    ok(JSON.stringify(calls) === '[{"model":"composer-2.5","effort":null,"provider":"cursor"}]', "with no team a Task started on Cursor runs the Cursor image producer", JSON.stringify(calls) + (E.get(run.id)!.error ?? ""));
+    for (const x of E.list()) if (!["failed", "cancelled", "succeeded"].includes(x.status)) { try { await E.cancel(x.id); } catch {} }
+  }
+  {
+    const { E, calls } = boot(null);
+    const run = E.start({ workflow: "images", text: "A red balloon", params: { provider: "claude" } });
+    await until(() => ["failed", "cancelled"].includes(E.get(run.id)!.status) || calls.length > 0);
+    ok(calls.length === 0 && /image generation requires Codex/.test(E.get(run.id)!.error ?? ""), "a Task started on Claude still refuses image generation", JSON.stringify(calls) + (E.get(run.id)!.error ?? ""));
     for (const x of E.list()) if (!["failed", "cancelled", "succeeded"].includes(x.status)) { try { await E.cancel(x.id); } catch {} }
   }
   {

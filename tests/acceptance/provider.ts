@@ -15,8 +15,6 @@ export const CURSOR_MODEL = "composer-2.5";
 
 /** The workflows Cursor cannot run, by design, and why (scenario names, and the workflow a run's name starts with). */
 export const BLOCKED_ON_CURSOR: Record<string, string> = {
-  images: "image generation runs only on Codex's dedicated image app-server (src/providers/codex-image.ts); Cursor has no image tool",
-  "coffee-kit": "the coffee kit's photos come from Codex's dedicated image app-server; Cursor has no image tool",
   "startup-recursion": "the startup competition's founder is a verified Claude seat and its judge a Codex seat (providers: [claude, codex]); neither seat runs on Cursor",
 };
 /** why this scenario or run is blocked on the current vendor (null: it runs) */

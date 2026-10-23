@@ -51,7 +51,8 @@ export function reviseCoffeeGenerations(old: CoffeeGenerations, target: CoffeePa
 }
 
 import { folderTools } from '../agent';
-import { generateCodexImage, CodexImageFailure, verifyImagePng, type CodexImage } from '../providers/codex-image';
+import { generateCodexImage, CodexImageFailure, verifyImagePng } from '../providers/codex-image';
+import { CursorImageFailure, type StudioImage } from '../providers/cursor-image';
 import type { Engine, X } from '../runtime/engine';
 import { websiteHref, type ArtifactStore } from '../artifacts';
 import type { SCard } from '../runtime/cards';
@@ -139,15 +140,15 @@ export function coffeeFilmFailureNote(diagnostic:HyperframesDiagnostic|null,prev
  lines.push('No verified film was offered.');
  return lines.join('\n');
 }
-export type CoffeeChoice = {provider:'codex';model:string;effort:string|null};
+export type CoffeeChoice = {provider:'codex'|'cursor';model:string;effort:string|null};
 export type CoffeeFilm = {poster?:Buffer;bytes:Buffer;codec:'h264';duration:number;width:number;height:number;renderer:string};
-export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; choice?:()=>CoffeeChoice|null; staffing?:(def:any,params:Record<string,string>)=>CoffeeChoice; reviewStaffing?:(def:any,params:Record<string,string>)=>unknown; video?: (o:{direction:CoffeeDirection;image:string;page:string;revision:CoffeePlan['revision'];context?:ReturnType<typeof coffeeConstraintContext>;signal:AbortSignal;authorize():void;onProgress?:(stage:'snapshot'|'check'|'render'|'verify')=>void;failedInputDigest?:string|null})=>Promise<CoffeeFilm>; image?: (o:{direction:CoffeeDirection;context?:ReturnType<typeof coffeeConstraintContext>;rules?:import('../operating-rules').RulesSection;signal:AbortSignal;authorize():void})=>Promise<CodexImage> }) {
+export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; choice?:()=>CoffeeChoice|null; staffing?:(def:any,params:Record<string,string>)=>CoffeeChoice; reviewStaffing?:(def:any,params:Record<string,string>)=>unknown; video?: (o:{direction:CoffeeDirection;image:string;page:string;revision:CoffeePlan['revision'];context?:ReturnType<typeof coffeeConstraintContext>;signal:AbortSignal;authorize():void;onProgress?:(stage:'snapshot'|'check'|'render'|'verify')=>void;failedInputDigest?:string|null})=>Promise<CoffeeFilm>; image?: (o:{direction:CoffeeDirection;context?:ReturnType<typeof coffeeConstraintContext>;rules?:import('../operating-rules').RulesSection;signal:AbortSignal;authorize():void})=>Promise<StudioImage> }) {
   type LocalJob={id:string;task:string;node:string;label:string;provider:string;phase:string;startedAt:string;lastProgressAt:string;endedAt:string|null;outcome:'running'|'succeeded'|'failed'|'cancelled';cleanup:'pending'|'verified'|'unverified'};
   const renderJobs=new Map<string,LocalJob>();
   const publishJob=(job:LocalJob)=>{renderJobs.set(job.id,job);engine.deps.send('coffee-local-job',{task:job.task,id:job.id});};
   const trimJobs=()=>{const terminal=[...renderJobs.values()].filter(j=>j.outcome!=='running'&&j.cleanup==='verified');for(const j of terminal.slice(0,Math.max(0,terminal.length-32)))renderJobs.delete(j.id);};
   const media=new MediaLibrary(engine.deps.dataDir,d.artifacts),jobs=mediaJobs(media);
-  const choice = () => {const pick=d.choice?.();if(!pick || pick.provider!=='codex' || typeof pick.model!=='string' || !pick.model.trim() || pick.effort!==null && !['none','minimal','low','medium','high','xhigh','max','ultra'].includes(pick.effort))throw new Error('Configured native coffee model unavailable');return structuredClone(pick);};
+  const choice = () => {const pick=d.choice?.();if(!pick || pick.provider!=='codex' && (pick.provider!=='cursor' || pick.effort!==null) || typeof pick.model!=='string' || !pick.model.trim() || pick.effort!==null && !['none','minimal','low','medium','high','xhigh','max','ultra'].includes(pick.effort))throw new Error('Configured native coffee model unavailable');return structuredClone(pick);};
   const requireChoice = (x:X) => {const selected=d.staffing?d.staffing(x.run.def,x.run.params):choice();if(x.run.params.provider!==selected.provider || x.run.params.model!==selected.model || (x.run.params.effort??'')!==(selected.effort??''))throw new Error('Coffee approved image staffing changed; confirm a fresh configuration');return selected;};
   const originalStart=engine.start.bind(engine);
   engine.start = options => {
@@ -227,7 +228,7 @@ export function installCoffeeKit(engine: Engine, d: { artifacts: ArtifactStore; 
       const spec={schema:1 as const,task:x.run.id,project:x.run.params.project||`coffee:${x.run.workflow}`,role:'image-worker',generation,type:'image' as const,title:`${x.run.title} — image`,provider:p.direction.provider,model:p.direction.model,dependencies:{design:p.direction.designHash!},origin:'generated' as const};
       let published:Awaited<ReturnType<MediaLibrary['run']>>;
       try{published=d.image?await media.run(spec,owner,async()=>{const image=await d.image!({direction:structuredClone(p.direction),context:coffeeConstraintContext(x),rules:imageRules,signal:owner.signal,authorize:owner.authorize});if(image.provider!==p.direction.provider||image.model!==p.direction.model||image.effort!==(p.direction.effort||null))throw new Error('Image effective identity differs');return{bytes:image.bytes,mime:image.mime};}):await jobs.image(spec,owner,{contextProfile:"coffee-kit",prompt:imagePrompt,rules:imageRules,approved:{model:p.direction.model,effort:p.direction.effort||null},authorize:owner.authorize,signal:owner.signal});}
-      catch(error){cleanupSafe=error instanceof CodexImageFailure||error instanceof MediaPublicationFailure?error.cleanupSafe:false;throw error;}
+      catch(error){cleanupSafe=error instanceof CodexImageFailure||error instanceof CursorImageFailure||error instanceof MediaPublicationFailure?error.cleanupSafe:false;throw error;}
       owner.authorize();const id=published.artifact,v=published.manifest,manifest=coffeeManifest(d.artifacts.filesDir(id,v.n));
       if(!engine.record(x,outputRecord,{data:{version:1,part:'image',generation,direction:digest(JSON.stringify(p.direction)),artifact:id,n:v.n,manifest,primary:v.primary!,metadata:coffeeMetadata(d.artifacts,id,v.n),dependencies:{}}}))throw new Error('Image receipt was not persisted');return'ok';
 

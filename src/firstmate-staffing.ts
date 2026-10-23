@@ -55,8 +55,8 @@ export function installFirstmateStaffing(engine:Engine,store:StaffingStore,resol
   // the worker is staffed first, so a reviewer or designer can be staffed apart from it
   for(const role of [...def.roles].sort((a:any,b:any)=>Number(b.id==='worker')-Number(a.id==='worker'))){
    const saved=reset?{}:choices[role.id]??{},prior=approved?.[role.id]??{},compatible=(!saved.provider||saved.provider===prior.provider)&&(!saved.model||saved.model===prior.model),existing={...(compatible?prior:{}),...saved};
-   if(role.id==='image-worker'&&existing.provider&&existing.provider!=='codex'){blocked.push({role:role.id,reason:'The saved image-worker provider is not supported by the dedicated image adapter; it was preserved.'});continue;}
-   const judge=REVIEW_ROLES.has(role.id),providers=existing.provider?[existing.provider]:role.id==='image-worker'?['codex']:['codex','claude','cursor'],picks:{provider:string;model:string;effort:string|null}[]=[];
+   if(role.id==='image-worker'&&existing.provider&&existing.provider!=='codex'&&existing.provider!=='cursor'){blocked.push({role:role.id,reason:'The saved image-worker provider is not supported by the dedicated image adapter; it was preserved.'});continue;}
+   const judge=REVIEW_ROLES.has(role.id),providers=existing.provider?[existing.provider]:role.id==='image-worker'?['codex','cursor']:['codex','claude','cursor'],picks:{provider:string;model:string;effort:string|null}[]=[];
    for(const provider of providers){
     const cap=caps.find(c=>c.provider===provider);if(!cap||cap.support!=='supported'||cap.auth!=='verified'||!Number.isFinite(cap.expires)||cap.expires<=Date.now()||cap.expires>Date.now()+300000)continue;
     const models=existing.model?cap.models.filter(m=>m.id===existing.model):[...cap.models].sort((a,b)=>Number(b.id===cap.default?.model)-Number(a.id===cap.default?.model));

@@ -18,7 +18,7 @@ const BUILTIN_REVIEWING=new Set(['reviewer','design-reviewer']);
 export const EFFORTS=['none','minimal','low','medium','high','xhigh'];
 export const PROVIDERS=['codex','claude','cursor'] as const;
 /** What a model can do, by provider (a fact's model may name its own tags). A specialist seat lists the tags it needs. */
-export const PROVIDER_CAPS:Record<string,string[]>={codex:['code','tools','long-context','vision','image-generation'],claude:['code','tools','long-context','vision'],cursor:['code','tools','long-context']};
+export const PROVIDER_CAPS:Record<string,string[]>={codex:['code','tools','long-context','vision','image-generation'],claude:['code','tools','long-context','vision'],cursor:['code','tools','long-context','image-generation']};
 export const CAP_LABELS:Record<string,{en:string;zh:string}>={'image-generation':{en:'generate images',zh:'產生圖片'},audio:{en:'listen to audio',zh:'聽音訊'},'long-context':{en:'long context',zh:'長上下文'},vision:{en:'read images',zh:'看圖片'},code:{en:'write code',zh:'寫程式'},tools:{en:'use tools',zh:'使用工具'}};
 
 /** A library skill on a member or node: version and both hashes (filesSha256: every file but SKILL.md; a pin made before it takes the library's). */
