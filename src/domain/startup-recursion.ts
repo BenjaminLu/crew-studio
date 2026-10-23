@@ -55,6 +55,16 @@ export function startupProvider(params:Record<string,unknown>,role:StartupRole):
  const r=ROLE[role],chosen=params[r.providerParam];if(chosen===undefined||chosen==='')return r.provider;
  if(!STARTUP_PROVIDERS.includes(chosen as StartupProvider))throw new StartupModelRefusal(role,'provider');return chosen as StartupProvider;
 }
+/** On a Studio where a role's template provider (Claude founder, Codex judge) is not signed in and Cursor is, which provider
+ *  params the captain should set to cursor, said bilingually; the defaults themselves never change. Null when nothing would hold. */
+export function startupCursorAdvice(logins:Record<string,string>){
+ if(logins.cursor!=='logged-in')return null;
+ const roles=(['founder','judge'] as const).filter(role=>logins[ROLE[role].provider]!=='logged-in');if(!roles.length)return null;
+ const params=roles.map(role=>ROLE[role].providerParam),names=roles.map(role=>ROLE[role].name),both=roles.length===2;
+ const en=`${names.join(' and ')} ${both?'are':'is'} not signed in on this Studio, and Cursor is. Set ${params.join(' and ')} to cursor; otherwise the ${both?'founder and judge steps hold':`${roles[0]} step holds`} at dispatch until ${both?'they sign':'it signs'} in.`;
+ const zh=`此 Studio 尚未登入 ${names.join(' 與 ')}，但 Cursor 已登入。請把 ${params.join(' 與 ')} 設為 cursor；否則${roles.map(role=>ROLE[role].zhRole).join('與')}步驟會在派工時停住，直到登入為止。`;
+ return{code:'startup_use_cursor' as const,params,en,zh};
+}
 /** Explicit params win; otherwise Studio's configured model for that exact provider. Never another vendor. */
 export function resolveStartupModels(params:Record<string,unknown>,configured?:StartupConfiguredModel){
  const one=(role:StartupRole)=>{const r=ROLE[role],provider=startupProvider(params,role),explicit=params[r.param];

@@ -1258,8 +1258,10 @@ function startBlocked(id) { const o = (RN.startOptions || {})[id]; if (!o || o =
 function startParamSchema(id){return (RN.wfs||[]).find(w=>w.id===id)?.params||{};}
 function startParamOwned(id,key){return key==="provider"||(key==="project"&&RN.startOptions?.[id]?.projectScoped);}
 function startParamInputs(id){
-  const values=((RN.params||={})[id]||={});
-  return h("div",{"data-run-params":id},Object.entries(startParamSchema(id)).filter(([key])=>!startParamOwned(id,key)).map(([key,p])=>{
+  const values=((RN.params||={})[id]||={}),advice=startOptions(id)?.providerAdvice;
+  // a role whose default vendor is not signed in while Cursor is would hold at dispatch: say so and offer the switch
+  const notice=advice&&advice.params.some(k=>values[k]!=="cursor")?h("div",{class:"rt-crew",role:"status","data-run-provider-advice":advice.code},T(advice.en,advice.zh)," ",h("button",{class:"btn sm",type:"button","data-run-provider-cursor":"",onclick:()=>{for(const k of advice.params)values[k]="cursor";RN.startError="";rerender();}},T("Use Cursor","改用 Cursor"))):null;
+  return h("div",{"data-run-params":id},notice,Object.entries(startParamSchema(id)).filter(([key])=>!startParamOwned(id,key)).map(([key,p])=>{
     // a param with options is a choice: empty keeps the definition's default
     const input=Array.isArray(p.options)&&p.options.length?h("select",{class:"input","data-run-param":key,"aria-label":T(p.label,p.labelZh||p.label),required:p.required||null,onchange:e=>{values[key]=e.target.value;RN.startError="";}},h("option",{value:""},T("Default","預設")),...p.options.map(o=>h("option",{value:o},o))):h("input",{class:"input","data-run-param":key,"aria-label":T(p.label,p.labelZh||p.label),required:p.required||null,placeholder:p.default??"",oninput:e=>{values[key]=e.target.value;RN.startError="";}});input.value=values[key]??"";
     return h("label",{class:"rt-field"},h("span",{},T(p.label,p.labelZh||p.label),p.required?" *":""),input);

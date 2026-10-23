@@ -172,7 +172,10 @@ for(const scenario of ['sandboxed-three-rounds','sandboxed-no-submission']){
 }
 // Selectable providers: founderProvider / judgeProvider (claude, codex or cursor); empty keeps Claude founder, Codex judge.
 {
- const {resolveStartupModels,startupProvider,StartupModelRefusal}=await import('../src/domain/startup-recursion');
+ const {resolveStartupModels,startupProvider,StartupModelRefusal,startupCursorAdvice}=await import('../src/domain/startup-recursion');
+ check('with Claude and Codex signed in, or Cursor not signed in, nothing is advised and the defaults stand',()=>{a.equal(startupCursorAdvice({claude:'logged-in',codex:'logged-in',cursor:'logged-in'}),null);a.equal(startupCursorAdvice({claude:'not-logged-in',codex:'not-logged-in',cursor:'not-logged-in'}),null);a.equal(startupCursorAdvice({}),null);});
+ check('Claude and Codex not signed in while Cursor is: both provider params should be cursor, said in English and zh-TW',()=>{const v=startupCursorAdvice({claude:'not-logged-in',codex:'unknown',cursor:'logged-in'})!;a.equal(v.code,'startup_use_cursor');a.deepEqual(v.params,['founderProvider','judgeProvider']);a(v.en.includes('Claude and Codex are not signed in')&&v.en.includes('Set founderProvider and judgeProvider to cursor')&&v.en.includes('hold at dispatch'),v.en);a(v.zh.includes('尚未登入 Claude 與 Codex')&&v.zh.includes('founderProvider 與 judgeProvider 設為 cursor')&&v.zh.includes('派工時停住'),v.zh);});
+ check('only Codex not signed in: only the judge moves to Cursor',()=>{const v=startupCursorAdvice({claude:'logged-in',codex:'not-logged-in',cursor:'logged-in'})!;a.deepEqual(v.params,['judgeProvider']);a(v.en.startsWith('Codex is not signed in')&&v.en.includes('judge step holds')&&!v.en.includes('founderProvider'),v.en);a(v.zh.includes('評審步驟')&&!v.zh.includes('founderProvider'),v.zh);});
  const cfg=(p:string)=>`cfg-${p}-model`;
  check('defaults: the founder runs on Claude and the judge on Codex',()=>{a.equal(startupProvider({},'founder'),'claude');a.equal(startupProvider({},'judge'),'codex');a.deepEqual(resolveStartupModels({},cfg),{founder:{provider:'claude',model:'cfg-claude-model',source:'configured'},judge:{provider:'codex',model:'cfg-codex-model',source:'configured'}});a.deepEqual(resolveStartupModels({founderProvider:'',judgeProvider:''},cfg),resolveStartupModels({},cfg));});
  check('a chosen provider binds that provider\'s configured model',()=>a.deepEqual(resolveStartupModels({founderProvider:'cursor',judgeProvider:'claude'},cfg),{founder:{provider:'cursor',model:'cfg-cursor-model',source:'configured'},judge:{provider:'claude',model:'cfg-claude-model',source:'configured'}}));
@@ -206,8 +209,20 @@ for(const scenario of ['sandboxed-three-rounds','sandboxed-no-submission']){
    const result:any=await tools.call('studio_propose_work',{workflow:'startup-recursion',version:1,text:'Startup competition on Cursor.',params:{founderProvider:'cursor',judgeProvider:'cursor'}},owner);
    a(await until(()=>H.engine.cards.list({run:result.proposal,open:true}).length===1));await H.engine.answer(H.engine.cards.list({run:result.proposal,open:true})[0].id,{choice:'approve',by:'fixture captain'});a(await until(()=>!!H.engine.get(result.proposal)?.ctx.childRun));
    const child=H.engine.get(H.engine.get(result.proposal)!.ctx.childRun)!;a(await until(()=>H.engine.cards.list({run:child.id,open:true}).length===1));
+   check('without sign-in facts the contract carries no providerAdvice',()=>a(!('providerAdvice' in contract)));
+   check('Firstmate start guidance says to move a role to Cursor when its default vendor is not signed in and Cursor is',()=>{const spec=tools.specs.find((s:any)=>s.name==='studio_propose_work')!;a(/providerAdvice says Claude or Codex is not signed in and Cursor is, set that role to cursor/.test(spec.description),spec.description.slice(0,300));a(/providerAdvice says a default provider is not signed in here and Cursor is: then propose that role on cursor/.test(contract.models));});
    check('a Firstmate proposal carries the provider choice to the selection card',()=>{const body=H.engine.cards.list({run:child.id,open:true})[0].body;a(body.includes('Cursor founder: cfg-cursor-model')&&body.includes('Cursor judge: cfg-cursor-model'),body);});
    H.engine.cancel(child.id,'fixture complete');
+  }finally{H.stop();}
+ }
+ {
+  const {installFirstmate}=await import('../src/firstmate');const {Projects}=await import('../src/doors');
+  const H=await harness([flow,readFileSync(join(import.meta.dir,'../workflows/v2/firstmate-proposal.wf.yaml'),'utf8')]);
+  try{installStartupRecursion(H.engine,{artifacts:new ArtifactStore(H.data),configuredModel:cfg as any});const owner={key:'fixture:startup-advice',captain:true,text:'Run a startup competition',live:()=>true};
+   const cursorOnly=await installFirstmate(H.engine,new Projects(H.data),{startupAdvice:async()=>startupCursorAdvice({claude:'not-logged-in',codex:'not-logged-in',cursor:'logged-in'})}).call('studio_startup_workflow_contract',{},owner) as any;
+   check('on a Cursor-only Studio the Firstmate contract says, bilingually, to set both provider params to cursor',()=>{a.deepEqual(cursorOnly.providerAdvice?.params,['founderProvider','judgeProvider']);a(cursorOnly.providerAdvice.en.includes('Set founderProvider and judgeProvider to cursor')&&cursorOnly.providerAdvice.zh.includes('設為 cursor'));});
+   const signedIn=await installFirstmate(H.engine,new Projects(H.data),{startupAdvice:async()=>startupCursorAdvice({claude:'logged-in',codex:'logged-in',cursor:'logged-in'})}).call('studio_startup_workflow_contract',{},owner) as any;
+   check('with Claude and Codex signed in the contract carries no providerAdvice (defaults unchanged)',()=>a(!('providerAdvice' in signedIn)));
   }finally{H.stop();}
  }
 }

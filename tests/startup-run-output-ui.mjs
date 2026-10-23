@@ -11,7 +11,8 @@ process.env.CREW_EXAMPLE_WORKFLOWS='1'; // the startup competition is an example
 const data=mkdtempSync(join(tmpdir(),'startup-run-output-ui-'));let port=0;
 const m3=createM3({dataDir:data,fileAllow:[data],studioUrl:()=>`http://127.0.0.1:${port}`,provider:()=>{throw new Error('No provider calls')},send(){},allowDrive:()=>true,session:()=>'fixture-session'});
 const agents=new Agents(data,()=>'');
-const runtime=createRuntime({dataDir:data,agents,provider:()=>{throw new Error('No paid model')},defaultProvider:()=>({provider:'stub',model:null}),log:new StudioLog(join(data,'events')),send(){},fmRoot:data,m3,fileorg:{},docs:{}});const E=runtime.engine;
+let logins={};
+const runtime=createRuntime({providerLogins:async()=>logins,dataDir:data,agents,provider:()=>{throw new Error('No paid model')},defaultProvider:()=>({provider:'stub',model:null}),log:new StudioLog(join(data,'events')),send(){},fmRoot:data,m3,fileorg:{},docs:{}});const E=runtime.engine;
 const EVIL='<img src=x onerror="window.__x=1"> [click](javascript:window.__x=2) https://evil.example/ #/settings';
 const proposal=(n)=>`## Round ${n} proposal\n\n**Harbor Insights** is a research service for independent coffee shops.\n\n- Five **paid** pilots before any growth spend\n- Monthly report at \`US$49\`\n\n| Metric | Target |\n|---|---|\n| Pilots | 5 |\n| Churn | < 10% |\n\n${EVIL}`;
 E.deps.provider=(id='codex',model='fixture-model')=>({id,model,sandboxFree:true,start(_s,_t,ctx){return{interrupt(){},async *send(text){const judge=text.includes('Role: judge'),round=Number(/round: (\d)/.exec(text)[1]);
@@ -56,6 +57,21 @@ try{
   ok(posts[0]?.params?.founderProvider==='cursor'&&posts[0]?.params?.judgeProvider==='cursor',`${language}: the chosen providers go with the start request`,JSON.stringify(posts));
   ok(errors.length===0,`${language}: no page errors on the start form`,errors.join('; '));await ctx.close();
  }
+ // Claude and Codex not signed in while Cursor is: the start form says to move both roles to Cursor and offers it
+ const startOptions=async()=>(await runtime.handle(new Request('http://fixture/api/wruns/start-options?workflow=startup-recursion'),new URL('http://fixture/api/wruns/start-options?workflow=startup-recursion'),{kind:'desktop'},false)).json();
+ ok(!('providerAdvice' in await startOptions()),'start options carry no Cursor advice while no vendor is signed in');
+ logins={claude:'not-logged-in',codex:'not-logged-in',cursor:'logged-in'};
+ ok(JSON.stringify((await startOptions()).providerAdvice?.params)==='["founderProvider","judgeProvider"]','start options name both provider params when only Cursor is signed in');
+ for(const language of ['en','zh-TW']){
+  const ctx=await browser.newContext({viewport:{width:1280,height:900}});await ctx.addInitScript(language=>localStorage.setItem('crew.lang',language),language);
+  const page=await ctx.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));const zh=language==='zh-TW';
+  await page.goto(`http://127.0.0.1:${port}/#/runs`);await page.locator('[data-run-wf] option[value="startup-recursion"]').waitFor({state:'attached'});await page.selectOption('[data-run-wf]','startup-recursion');
+  const notice=page.locator('[data-run-provider-advice="startup_use_cursor"]');await notice.waitFor({timeout:8000}).catch(()=>{});const text=await notice.count()?await notice.innerText():'';
+  ok(zh?text.includes('尚未登入 Claude 與 Codex')&&text.includes('改用 Cursor'):text.includes('Claude and Codex are not signed in')&&text.includes('Set founderProvider and judgeProvider to cursor')&&text.includes('Use Cursor'),`${language}: the start form says to set both providers to Cursor`,text);
+  if(text){await page.click('[data-run-provider-cursor]');ok(await page.locator('[data-run-param="founderProvider"]').inputValue()==='cursor'&&await page.locator('[data-run-param="judgeProvider"]').inputValue()==='cursor'&&await notice.count()===0,`${language}: Use Cursor sets both choices and the notice goes away`);}
+  ok(errors.length===0,`${language}: no page errors with the Cursor advice`,errors.join('; '));await ctx.close();
+ }
+ logins={};
  // the review page the card and the run page open: the write-up is shown (not blank), the header names the Task, and
  // export works; a legacy version holding only competition.md (sha-pinned) renders on the fly and is left byte-identical
  const legacyDir=join(data,'legacy-src');mkdirSync(legacyDir,{recursive:true});writeFileSync(join(legacyDir,'competition.md'),'# 創業比賽：提案、銳評與修訂\n\nLEGACY-COMPETITION text from an older run.\n');

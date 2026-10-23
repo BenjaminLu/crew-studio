@@ -364,8 +364,13 @@ try {
   ok(nd.find((i: any) => i.id === "cursor")?.authenticated === false && nl?.action?.item === "cursor", "Doctor without a key: not signed in, and the fix is adding the key", String(JSON.stringify(nl)).slice(0, 300));
   ok(nd.find((i: any) => i.id === "cursor")?.status === "info" && nl?.status === "info" && /^Optional: needed only to run work or Firstmate on Cursor/.test(nl?.adds ?? "") && /^選用/.test(nl?.addsZh ?? ""),
     "with Cursor not in use, its CLI and key rows are optional information, not attention items (English and zh-TW)", JSON.stringify(nd.filter((i: any) => /cursor/.test(i.id)).map((i: any) => [i.id, i.status])));
-  const u = await boot("keyless-in-use", { CREW_CHAT_PROVIDER: "cursor" });
+  const u = await boot("keyless-in-use", { CREW_CHAT_PROVIDER: "cursor", CREW_EXAMPLE_WORKFLOWS: "1" });
   const ud = (await u.api("/api/doctor")).body?.items ?? [];
+  const uo = await u.api("/api/wruns/start-options?workflow=startup-recursion");
+  ok(uo.status === 200 && !("providerAdvice" in uo.body), "startup competition: no Cursor advice while Cursor is not signed in either", uo.text.slice(0, 300));
+  const so = await (await boot("cursor-only-startup", { CURSOR_API_KEY: KEY, CREW_EXAMPLE_WORKFLOWS: "1" })).api("/api/wruns/start-options?workflow=startup-recursion");
+  ok(JSON.stringify(so.body?.providerAdvice?.params) === '["founderProvider","judgeProvider"]' && /Set founderProvider and judgeProvider to cursor/.test(so.body.providerAdvice.en) && /設為 cursor/.test(so.body.providerAdvice.zh),
+    "startup competition on a Cursor-only Studio: the Start form is told, in English and zh-TW, to set both providers to Cursor", so.text.slice(0, 400));
   ok(ud.find((i: any) => i.id === "cursor")?.status === "degraded" && ud.find((i: any) => i.id === "round-login-cursor")?.status === "missing", "with Cursor as the chat vendor, a missing key is an attention item", JSON.stringify(ud.filter((i: any) => /cursor/.test(i.id)).map((i: any) => [i.id, i.status])));
   const ns = await n.api("/api/main/start", { host: "cursor", confirm: true });
   ok(ns.status === 409 && ns.body?.code === "cursorKeyMissing" && (await n.api("/api/main")).body?.state === "detached" && n.calls().length === 0, "starting on Cursor without a key is refused and never falls back to another vendor", `${ns.status} ${ns.text.slice(0, 300)}`);

@@ -9,7 +9,7 @@ import { refusesRulesPatch } from "../operating-rules";
 import { taskTitle } from "../task-title";
 import { PolicyUnreadable } from "./checks";
 import { failure, fromError, type FailureCode } from "./failures";
-import {installStartupRecursion} from '../domain/startup-recursion';
+import {installStartupRecursion,startupCursorAdvice} from '../domain/startup-recursion';
 import { deliverableOf, DELIVERABLE_WORKFLOW } from "../deliverables";
 import {installReadinessViews,readinessNodes} from './readiness-view';
 import {installGitHubReviewWorkflow} from '../domain/github-review-workflow';
@@ -85,6 +85,8 @@ export type RuntimeDeps = {
   staffingFacts?: (o?:{fresh?:boolean}) => Promise<StaffingFacts[]>;
   staffingAdmission?: StaffingAdmission;
   onboardingProvider?:()=>string|null;
+  /** each vendor's sign-in presence (claude, codex, cursor), free to read: the startup competition's Start form and Firstmate contract say which role to move to Cursor */
+  providerLogins?:()=>Promise<Record<string,string>>;
   onboardingTeamVerify?:(pick:TeamPick,signal?:AbortSignal)=>Promise<TeamProbe>;
   onboardingTeamContext?:(pick:TeamPick)=>string;
   staffingProject?: (id:string) => StaffingProject;
@@ -204,7 +206,7 @@ export function createRuntime(d: RuntimeDeps) {
    return{state:'approved',hash:config.hash,version:config.version,roles:Object.fromEntries(Object.entries(config.roles).map(([id,r])=>[id,{provider:r.provider,model:r.model,effort:r.effort}]))};
   };
   const onboarding=new Onboarding(engine,d.m3?.store??new ArtifactStore(d.dataDir));
-  const originalFirstmate=installFirstmate(engine,projects,{prepareDispatch:async(workflow,version)=>{const def=engine.defs.get(workflow,version);if(staffingApplies(def))await staffingFacts();},onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending,teamStaffing,crewSeatGate:(def,owner,project)=>crewTools.seatGate(def,owner,project),dispatchCrew:(def,project)=>crewTools.dispatchCrew(def,project)});
+  const originalFirstmate=installFirstmate(engine,projects,{prepareDispatch:async(workflow,version)=>{const def=engine.defs.get(workflow,version);if(staffingApplies(def))await staffingFacts();},onCoffeeProposal:id=>{try{onboarding.proposal(id);}catch{}},onCoffeeDispatch:(proposal,task)=>{try{onboarding.dispatch(proposal,task);}catch{}},protectedRoots:d.protectedRoots??[],staffingProject,staffingPending:d.staffingPending,teamStaffing,startupAdvice:d.providerLogins?async()=>startupCursorAdvice(await d.providerLogins!().catch(()=>({}))):undefined,crewSeatGate:(def,owner,project)=>crewTools.seatGate(def,owner,project),dispatchCrew:(def,project)=>crewTools.dispatchCrew(def,project)});
   seatFilled=run=>{void originalFirstmate.resumeHeld(run).then(done=>{const n=heldNotice(run,done);if(n)engine.notifyFirstmate?.(n.text,n.summary);}).catch(()=>{});};
   // free drafting: its own store and tools, separate from proposals, staffing and execution
   const drafts=new WorkflowDrafts(d.dataDir,defs,(id,revision)=>{try{d.send('wfdraft',{id,revision});}catch{}});
@@ -405,7 +407,8 @@ export function createRuntime(d: RuntimeDeps) {
         const wf=String(url.searchParams.get("workflow")??""),def=defs.get(wf);if(!def||!defs.selectable(wf))return json({error:"This workflow is not available for new tasks",code:"workflow_unavailable"},409);
         const projectScoped=def.kind==="code",staffed=boardStaffed(def);if(staffed)try{await staffingFacts();}catch{staffingCapabilities=[];} // free probes only (Codex probe, Claude auth status)
         const crewOf=(id:string)=>{const crew=boardStaffing(def,id);if(crew.state!=='approved')return crew;const ready=crewReadiness(crew.roles);return ready.state==='blocked'?{state:'blocked' as const,code:'staffing_not_ready',role:ready.role,reason:ready.reason}:{...crew,readiness:ready};};
-        return json({workflow:wf,version:def.version,projectScoped,staffing:staffed,crewHref:staffed?"#/team":null,projects:projectScoped?projects.list().filter(x=>!!x.path).map(x=>({id:x.id,name:x.name,base:x.base,staffing:staffed?crewOf(x.id):null})):[]});
+        const providerAdvice=def.kind==="startup-recursion"&&d.providerLogins?startupCursorAdvice(await d.providerLogins().catch(()=>({}))):null;
+        return json({workflow:wf,version:def.version,projectScoped,staffing:staffed,crewHref:staffed?"#/team":null,...providerAdvice?{providerAdvice}:{},projects:projectScoped?projects.list().filter(x=>!!x.path).map(x=>({id:x.id,name:x.name,base:x.base,staffing:staffed?crewOf(x.id):null})):[]});
       }
       if (p === "/api/wruns" && !writing) return json({ runs: engine.list().filter((r) => url.searchParams.get("archived") === "1" || !r.archived).map((r) => ({ id: r.id, workflow: r.workflow, version: r.version, title: taskTitle(r), request: r.text, status: r.status, result: r.result, createdAt: r.createdAt, updatedAt: r.updatedAt, endedAt: r.endedAt, error: r.error,
         childRun: (() => { const child = engine.get(r.ctx?.childRun); return child?.params?._firstmateProposal === r.id ? child.id : null; })(),
