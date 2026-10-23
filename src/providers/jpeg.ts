@@ -4,7 +4,8 @@
 // lossless, 12-bit and CMYK are refused. Chroma is upsampled by replication.
 // It runs synchronously in Studio's server process: a Worker would need a second entrypoint in the compiled binary. Instead
 // every scan must carry the data of all its blocks, and the frame size, scan count and decoding work are capped, so any
-// input decodes or is refused within about half a second (tests/jpeg-hostile.ts times the most work allowed).
+// input decodes or is refused in bounded time: the most work allowed took about 0.8 s on an Apple-silicon Mac, and
+// tests/jpeg-hostile.ts holds it under 2 s.
 import { deflateSync } from "node:zlib";
 
 // Cursor's GenerateImage returns 1024x1024, 1536x1024, 1024x1536 or 1376x768; the pixel cap keeps headroom for Gemini's 2K
