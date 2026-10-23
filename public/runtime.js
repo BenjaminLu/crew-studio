@@ -97,8 +97,11 @@ function graph(def, o = {}) {
     if (e.label) { const lb = s("g", { class: `rt-elabel${e.back ? " back" : ""}`, "data-label": key }, s("rect", { x: e.label.x, y: e.label.y, width: e.label.w, height: e.label.h, rx: 4, class: "rt-when-bg" }),
       s("text", { x: e.label.x + 4, y: e.label.y + 10.5, class: "rt-when" }, e.label.text)); if (e.label.full !== e.label.text) lb.append(s("title", {}, e.label.full)); lg.append(lb); }
     if (e.checks) { g.setAttribute("data-edge-checks", e.checks);
-      const p = e.label ? [e.label.x, e.label.y + e.label.h + 2] : (() => { const pts = L.sample(e, 8); const m = pts[Math.floor(pts.length / 2)]; return [m[0] - 24, m[1] + 4]; })();
-      badge(`e:${key}`, p[0], p[1], T(`${e.checks} gate${e.checks > 1 ? "s" : ""}`, `${e.checks} 個關卡`), (orig.checks || []).map((c) => c.use), lg); }
+      // never over the edge's own 20px hit target (a short edge's label sits on its middle)
+      const text = T(`${e.checks} gate${e.checks > 1 ? "s" : ""}`, `${e.checks} 個關卡`), bw = text.length * 6.4 + 14;
+      const p = e.label ? [e.label.x, e.label.y + e.label.h + 2] : [middle[0] - 24, middle[1] + 12];
+      if (middle && p[1] < middle[1] + 10 && p[1] + 16 > middle[1] - 10 && p[0] < middle[0] + 10 && p[0] + bw > middle[0] - 10) p[1] = middle[1] + 12;
+      badge(`e:${key}`, p[0], p[1], text, (orig.checks || []).map((c) => c.use), lg); }
     if (o.onSelect) { g.addEventListener("click", (ev) => { if (svg.interactionActive) return; ev.stopPropagation(); o.onSelect({ edge: i }); }); g.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); o.onSelect({ edge: i }); } if (ev.key === "Delete" || ev.key === "Backspace") { ev.preventDefault(); o.onDeleteEdge?.(i); } }); }
     if (o.onDropCheck) { g.addEventListener("dragover", (ev) => { if (ev.dataTransfer.types.includes("text/x-check")) { ev.preventDefault(); g.classList.add("drop"); } }); g.addEventListener("dragleave", () => g.classList.remove("drop"));
       g.addEventListener("drop", (ev) => { ev.preventDefault(); g.classList.remove("drop"); const c = ev.dataTransfer.getData("text/x-check"); if (c) o.onDropCheck({ edge: i }, c); }); }
