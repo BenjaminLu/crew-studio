@@ -2,6 +2,8 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The JPEG decoder of the Cursor image job (src/providers/jpeg.ts) against hostile inputs built here byte by byte: scans
 // with no data, huge frames with a tiny payload, data cut off mid-scan. Each is refused quickly, with bounded memory.
 //   bun tests/jpeg-hostile.ts
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 const { decodeJpeg } = await import("../src/providers/jpeg");
 
 let passed = 0, failed = 0;
@@ -102,6 +104,36 @@ console.log("frame size");
   const rss = process.memoryUsage().rss, t = performance.now(), got = decodeJpeg(worst), took = performance.now() - t, grew = (process.memoryUsage().rss - rss) / 1048576;
   ok(got.width === w && took < 2000 && grew < 400, `the most decoding work a ${w}x${h} 3-component frame may ask for decodes within 2000 ms and 400 MB`, `${took.toFixed(0)} ms, +${grew.toFixed(0)} MB`);
   console.log(`  the most work allowed: ${took.toFixed(1)} ms, RSS +${grew.toFixed(0)} MB`);
+}
+
+console.log("a deterministic fuzz of the fixtures");
+{
+  let seed = 0x5eed1e55;
+  const rand = (n: number) => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return (((t ^ (t >>> 14)) >>> 0) % n); };
+  const dir = join(import.meta.dir, "fixture", "jpeg");
+  const seeds = readdirSync(dir).filter((n) => n.endsWith(".jpg")).sort().map((n) => new Uint8Array(readFileSync(join(dir, n))));
+  seeds.push(jpeg(SOI, DQT, DHT, sof(0xc2, 64, 64, [0x22, 0x11, 0x11]), sos([1, 2, 3], 0, 0), new Bits().put(0, 4 * 96).done(), sos([1], 1, 63), eobRuns(64), EOI));
+  let worst = 0, odd = "", runs = 0;
+  const t0 = performance.now();
+  for (let i = 0; i < 20000; i++) {
+    const b = Array.from(seeds[rand(seeds.length)]);
+    for (let m = 1 + rand(4); m--;) {
+      const at = rand(b.length), op = rand(6);
+      if (op === 0) b[at] ^= 1 << rand(8);
+      else if (op === 1) b[at] = rand(256);
+      else if (op === 2) b.splice(at, 0, ...[0xff, rand(256)]);
+      else if (op === 3) b.splice(at, 1 + rand(16));
+      else if (op === 4) b.length = Math.max(2, at);
+      else b[at] = [0x00, 0xff, 0x10, 0x40, 0x80][rand(5)];
+    }
+    const t = performance.now();
+    try { const got = decodeJpeg(Uint8Array.from(b)); if (got.rgb.length !== got.width * got.height * 3) odd ||= `#${i}: ${got.width}x${got.height}, ${got.rgb.length} bytes`; }
+    catch (e: any) { if (!/^JPEG /.test(String(e?.message))) odd ||= `#${i}: ${e?.name}: ${e?.message}`; }
+    worst = Math.max(worst, performance.now() - t); runs++;
+  }
+  ok(!odd, `${runs} mutated JPEGs each decode or are refused with a JPEG error`, odd);
+  ok(worst < 2000, "each within 2000 ms", `${worst.toFixed(0)} ms`);
+  console.log(`  ${runs} inputs in ${(performance.now() - t0).toFixed(0)} ms, slowest ${worst.toFixed(1)} ms`);
 }
 
 console.log(`jpeg-hostile: ${passed} passed, ${failed} failed`);
