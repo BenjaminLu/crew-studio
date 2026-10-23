@@ -165,11 +165,12 @@ function setChatW(w, persist = true) {
   const max = Math.max(360, Math.min(680, innerWidth - side - 480));
   const v = Math.max(360, Math.min(max, Number.isFinite(w) ? Math.round(w) : 400));
   document.documentElement.style.setProperty("--chat-w", v + "px");
-  $("#chatGrip")?.setAttribute("aria-valuenow", String(v));
+  const grip = $("#chatGrip"); grip?.setAttribute("aria-valuemin", "360"); grip?.setAttribute("aria-valuemax", String(max)); grip?.setAttribute("aria-valuenow", String(v));
   if (persist) store.set("crew.chatW", String(v));
 }
 (function initChat() {
-  const w = Number(store.get("crew.chatW", "400")); if (w) setChatW(w);
+  // The cap follows the current window, so startup only clamps on screen: a narrow window must not overwrite the saved width.
+  const w = Number(store.get("crew.chatW", "400")); if (w) setChatW(w, false);
   if (!isPhone() && store.get("crew.chatOpen", "1") === "1") document.body.classList.remove("chat-closed");
   $("#chatFab").addEventListener("click", () => openChat(true));
   $("#chatClose").addEventListener("click", () => openChat(false));

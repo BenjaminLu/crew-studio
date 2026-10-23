@@ -71,25 +71,30 @@ function viewLibrary3() {
       seg([["all", "All", "全部"], ["code", "Code", "程式碼"], ["video", "Video", "影片"], ["audio", "Audio", "音訊"], ["web", "Web & images", "網頁與圖片"]], kind, (v) => { LB.kind = v; store.set("crew.libKind", v); render(); }),
       seg([["7", "7 days", "7 天"], ["30", "30 days", "30 天"], ["all", "All time", "全部"]], LB.range, (v) => { LB.range = v; store.set("crew.libRange", v); render(); })),
     arts.length ? h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Artifacts", "成品")), h("span", { class: "faint" }, String(arts.length))),
-      h("div", { class: "libgrid" }, arts.map(artCard))) : null,
+      libGrid(arts.map(artCard))) : null,
     code.length ? h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Merged code", "已合併的程式碼")), h("span", { class: "faint" }, String(code.length))),
       h("div", { class: "card", style: "display:grid" }, code.map(codeRow))) : null,
     !arts.length && !code.length ? h("div", { class: "card" }, h("div", { class: "empty" }, icon("library"), h("b", {}, T("Nothing matches", "沒有符合的成品")), T("Try another type or a longer time range.", "換個類型或拉長時間範圍。"))) : null);
 }
 // List previews are read-only, scripts-off. A successful iframe load alone does not mean
 // the source exists (browsers also fire load for error documents), so check the actual response.
+// One busy flag on the grid rather than a live region per card, which would announce every preview.
+const gridBusy = (grid) => grid?.setAttribute("aria-busy", String(!!grid.querySelector("[data-preview-state=loading]")));
+function libGrid(cards) { const grid = h("div", { class: "libgrid" }, cards); gridBusy(grid); return grid; }
 function previewBox(state, label, child) {
-  const notice = h("div", { class: "a3-preview-notice", role: "status" }, icon("monitor", "ic lg"), h("span", {}, label));
+  const notice = h("div", { class: "a3-preview-notice" }, icon("monitor", "ic lg"), h("span", {}, label));
   const box = h("div", { class: "lprev a3-preview", "data-preview-state": state }, child || null, notice);
   const timeout = state === "loading" ? setTimeout(() => box.previewState("error", T("Preview timed out · open the artifact to inspect", "預覽載入逾時・開啟成品查看")), 10000) : null;
-  box.previewState = (next, text) => { if (next !== "loading") clearTimeout(timeout); box.dataset.previewState = next; notice.lastChild.textContent = text || ""; notice.hidden = next === "ready"; };
+  box.previewState = (next, text) => { if (next !== "loading") clearTimeout(timeout); box.dataset.previewState = next; notice.lastChild.textContent = text || ""; notice.hidden = next === "ready"; gridBusy(box.closest(".libgrid")); };
   return box;
 }
 // Every Library render builds new cards, and Chrome lets only one request per identical URL through at a time, so a
-// render that started its own fetch would queue behind each discarded card's. Renders share one in-flight load.
+// render that started its own fetch would queue behind each discarded card's. Renders share one in-flight load, and a
+// version file never changes, so a success is kept; it is reused only well inside its ten-minute capability.
 const staticLoads = new Map();
 function staticPreview(href) {
-  if (staticLoads.has(href)) return staticLoads.get(href);
+  const hit = staticLoads.get(href);
+  if (hit && (!hit.at || Date.now() - hit.at < 5 * 60e3)) return hit.load;
   const load = (async () => {
     const src = await afCapFor(href);
     if (src === href) throw new Error("Static preview capability unavailable");
@@ -102,8 +107,9 @@ function staticPreview(href) {
     doc.querySelectorAll("script,style,template,noscript,head,title,meta,link").forEach(el => el.remove());
     const staticContent = doc.textContent.trim() || doc.querySelector("svg:not(:empty),input,button") || [...doc.querySelectorAll("img,video,iframe")].some(el => String(el.getAttribute("src") || el.getAttribute("srcdoc") || "").trim()) || (styledSurface && doc.querySelector("body>*,div,section,main"));
     return { src, visible: !!staticContent };
-  })().finally(() => staticLoads.delete(href));
-  staticLoads.set(href, load);
+  })();
+  const entry = { load, at: 0 }; staticLoads.set(href, entry);
+  load.then(() => { entry.at = Date.now(); }, () => { if (staticLoads.get(href) === entry) staticLoads.delete(href); });
   return load;
 }
 function artPreview(a, v, big) {

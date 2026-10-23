@@ -151,7 +151,7 @@ function toolLine(it) {
 // Historical tool records have no reliable success flag. Summarize activity, never invent completion.
 const openToolGroups = new Set();
 function toolGroup(items) {
-  const visible = items.filter(toolActivity); if (!visible.length) return null;
+  const visible = items.filter(toolActivity); if (!visible.length) return null; if (visible.length === 1) return toolLine(visible[0]);
   const first = visible[0], key = `${first.at}|${first.text.slice(0, 80)}`;
   return h("details", { class: "tool-group", "data-tool-group": visible.length, "data-tool-group-key": key, open: openToolGroups.has(key) || null,
     ontoggle: ev => { if (!ev.currentTarget.isConnected) return; if (ev.currentTarget.open) openToolGroups.add(key); else openToolGroups.delete(key); } },

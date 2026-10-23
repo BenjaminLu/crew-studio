@@ -39,7 +39,7 @@
 .bb-lang .seg button{min-height:36px}
 
 .nav-labs-h{display:flex;align-items:center;justify-content:space-between;border:0;background:none;color:var(--text-3);font:inherit;font-size:12px;letter-spacing:0;text-transform:none;text-align:left;padding:8px 10px;cursor:pointer;border-radius:6px;min-height:36px;width:100%}
-.nav-labs-h::after{content:"›";font-size:18px;transform:rotate(0deg)}
+.nav-labs-h::after{content:"›"/"";font-size:18px;transform:rotate(0deg)}
 .nav-labs-h[aria-expanded=true]::after{transform:rotate(90deg)}
 .nav-labs-h:hover{background:var(--surface-2);color:var(--text)}
 .nav-labs-body{display:flex;flex-direction:column;gap:2px}
