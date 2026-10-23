@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { strict as assert } from 'node:assert';
 import {HyperframesFailure} from '../src/render/hyperframes';
 import {CodexImageFailure} from '../src/providers/codex-image';
+import {CursorImageFailure} from '../src/providers/cursor-image';
 import { coffeeManifest, verifyCoffeeManifest, reviseCoffeeGenerations, installCoffeeKit } from '../src/domain/coffee-kit';
 const fixtureDesignPlan=JSON.parse(readFileSync(join(import.meta.dir,'fixture/coffee-design.json'),'utf8'));
 const fixturePoster=execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','color=c=tan:s=16x16','-frames:v','1','-vcodec','png','-f','image2pipe','pipe:1'],{timeout:10000});
@@ -252,6 +253,20 @@ try {
       uncertain.engine.cancel(run.id,'fixture teardown; capacity authority must remain held');
       check('Task cancellation cannot fabricate verified process cleanup',()=>assert.equal(uncertain.agents.queue.snapshot().active.length,1));
     }finally{uncertain.stop();rmSync(uncertain.data,{recursive:true,force:true});}
+    // the Cursor image job reports its cleanup like the Codex one: a verified refusal releases capacity, an unverified one holds it
+    for(const safe of [true,false]){
+      const onCursor=await harness([coffeeDefinition]);
+      try {
+        onCursor.engine.deps.provider=H.engine.deps.provider;
+        installCoffeeKit(onCursor.engine,{choice:()=>({provider:'cursor',model:'composer-2.5',effort:null}),artifacts:new ArtifactStore(onCursor.data),image:async()=>{throw new CursorImageFailure('Fixture Cursor image refusal',safe);}});
+        const run=onCursor.engine.start({workflow:'coffee-kit',title:'Cursor image cleanup fixture',text:'Coffee preview',params:{coffeeDesignPlan:JSON.stringify(fixtureDesignPlan),provider:'cursor',model:'composer-2.5',effort:''}});
+        assert(await until(()=>onCursor.engine.cards.list({run:run.id,open:true}).length===1));
+        await onCursor.engine.answer(onCursor.engine.cards.list({run:run.id,open:true})[0].id,{choice:'confirm',by:'fixture captain'});
+        assert(await until(()=>onCursor.engine.cards.list({run:run.id,open:true}).some(c=>c.node==='capability')&&onCursor.engine.get(run.id)!.nodes.page.state==='passed'));
+        check(safe?'a coffee image on Cursor that the job refused with verified cleanup releases capacity':'a coffee image on Cursor with unverified cleanup keeps capacity held',()=>assert.equal(onCursor.agents.queue.snapshot().active.length,safe?0:1));
+        onCursor.engine.cancel(run.id,'fixture teardown');
+      }finally{onCursor.stop();rmSync(onCursor.data,{recursive:true,force:true});}
+    }
     // Copy a real interrupted paid page round, then load it with fresh owners.
     const crash=await harness([coffeeDefinition]);let releaseCrash=()=>{},pageStarted=false;
     const originalProvider=H.engine.deps.provider;
