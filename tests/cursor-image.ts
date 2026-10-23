@@ -8,8 +8,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 process.env.CREW_KEYCHAIN_TOOL = "none";
 // as if Studio ran in a terminal inside a cursor-agent persistent session, or another cursor-agent's shell: an image job's
-// cursor-agent must not inherit either (the
-// fixture refuses a run that does)
+// cursor-agent must not inherit either (the fixture refuses a run that does)
 Object.assign(process.env, { CURSOR_AGENT_PERSIST_SESSION: "crew-test-session", TMUX: "/private/tmp/tmux-0/default,1,0", TMUX_PANE: "%1", CURSOR_AGENT_SOCKET: "/private/tmp/crew-test-agent.sock", CURSOR_CONVERSATION_ID: "crew-test-conversation", CURSOR_REQUEST_ID: "crew-test-request" });
 const { decodeJpeg, jpegToPng } = await import("../src/providers/jpeg");
 const { generateCursorImage, cursorImagePermissions, CursorImageFailure } = await import("../src/providers/cursor-image");

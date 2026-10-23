@@ -237,7 +237,15 @@ export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-age
       // there, which the OS sandbox refuses (EPERM) and must: that folder is the user's own sessions'. Each turn is a new chat
       // instead, the conversation so far carried in its prompt (carried(), fenced afresh each turn).
       const history: string[] = [];
-      const clip = (t: string, n: number) => t.length > n ? `${t.slice(0, n)} …` : t;
+      const clip = (t: string, n: number) => { const c = Array.from(t); return c.length > n ? `${c.slice(0, n).join("")} …` : t; };
+      // escaping can make a line ~6x its text: each is clipped until it fits 8k, so no single turn drops the whole history;
+      // U+2028/2029/0085 (left raw by JSON.stringify) escaped so a turn stays one visual line
+      const turnLine = (captain: string, you: string) => {
+        for (let n = 4000; ; n = Math.floor(n / 2)) {
+          const s = JSON.stringify({ captain: clip(captain, n), you: clip(you, n) }).replace(/[\u2028\u2029\u0085]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+          if (s.length <= 8000 || n < 64) return s;
+        }
+      };
       const carried = (text: string) => {
         if (!history.length) return text;
         const kept: string[] = []; let size = 0;
@@ -301,7 +309,7 @@ export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-age
                   if (m.is_error || m.subtype !== "success") { endTurn(interrupting ? "interrupted" : "failed", interrupting ? undefined : said.slice(0, 400) || "Cursor reported an error"); return; }
                   if (said || reply) emit({ type: "message", text: said || reply });
                   // one JSON line per turn: no text of either side (a reply's "\n\nCaptain: …" included) can start another turn
-                  if (project) history.push(JSON.stringify({ captain: clip(input.text, 4000), you: clip(said || reply || "(no reply)", 4000) }));
+                  if (project) history.push(turnLine(input.text, said || reply || "(no reply)"));
                   endTurn("completed");
                 }
               });

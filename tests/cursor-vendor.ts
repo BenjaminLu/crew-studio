@@ -297,7 +297,7 @@ console.log("the host in an explicit project: the project folder only");
   {
     // what Studio sets for a cursor-agent child on purpose passes; another session's or agent's variables never do
     const own = { CURSOR_API_KEY: KEY, CURSOR_DATA_DIR: "/d", AGENT_CLI_CREDENTIAL_STORE: "memory", CREW_CURSOR_ROOT: "/r", HOME: "/h", XDG_CONFIG_HOME: "/h/.config", TMPDIR: "/t", PATH: "/usr/bin", HTTPS_PROXY: "http://127.0.0.1:9", TMUXINATOR_CONFIG: "/c" };
-    const got = cursorEnv({ ...own, ...TIED, TMUX_TMPDIR: "/private/tmp", CURSOR_AGENT_STORE_DIR: "/s", CURSOR_AGENT_WORKER_ID: "w" });
+    const got = cursorEnv({ ...own, ...TIED, TMUX_TMPDIR: "/private/tmp", CURSOR_AGENT_STORE_DIR: "/s", CURSOR_AGENT_WORKER_ID: "w", CURSOR_AGENT: "1" });
     ok(JSON.stringify(got) === JSON.stringify(own), "a cursor-agent child keeps Studio's own variables (CURSOR_API_KEY, CURSOR_DATA_DIR, AGENT_CLI_CREDENTIAL_STORE …) and loses every CURSOR_AGENT_*, TMUX*, CURSOR_CONVERSATION_ID and CURSOR_REQUEST_ID", JSON.stringify(got));
   }
   {
@@ -362,6 +362,12 @@ console.log("the host in an explicit project: the project folder only");
     const r = await s.send(w);
     ok(r.status === "completed", `the captain's one-word message ${w} is the prompt, never a cursor-agent subcommand`, JSON.stringify(r));
   }
+  // a reply of control characters escapes to ~6x its length: that turn still fits the carried history, on one line
+  const huge = await s.send(`FIXTURE-SAY "HUGE\\u2028TURN\\u2029\\u0085${"\\u0001".repeat(4000)}"`);
+  await s.send("FIXTURE-HISTORY");
+  const shape = JSON.parse(said.findLast((t) => t.startsWith("FIXTURE-HISTORY "))?.slice(16) ?? "{}");
+  ok(huge.status === "completed" && shape.huge === true && shape.raw === false && shape.lines?.length > 1 && shape.lines.every((n: number) => n <= 8000),
+    "a turn whose reply escapes to many times its length is clipped to fit, not dropped with every older turn, and U+2028/2029/0085 come escaped", JSON.stringify({ huge, shape }));
   ok(/"[^"]*inside\.txt":true/.test(said.join(" ")) && /escape\.txt":false/.test(said.join(" ")), "the write tool reports each refusal");
   // cursor-agent holds CURSOR_API_KEY in its environment; a shell command it ran (auto-run in its sandbox) would see it
   const sh = await s.send("FIXTURE-SHELL");

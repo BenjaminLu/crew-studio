@@ -184,6 +184,8 @@ if (project) {
   if (text.includes("FIXTURE-CAPTAIN-ASKED ")) { const w = text.slice(text.indexOf("FIXTURE-CAPTAIN-ASKED ") + 22).split(/\s/)[0]; say(`FIXTURE-CAPTAIN-ASKED ${w} ${captainSaid.some((c) => c.includes(w))}`); }
   // FIXTURE-RECALL <word>: whether the conversation carried into this turn holds that word
   if (text.includes("FIXTURE-RECALL ")) { const w = text.slice(text.indexOf("FIXTURE-RECALL ") + 15).split(/\s/)[0]; say(`FIXTURE-RECALLED ${w} ${earlier.includes(w)}`); }
+  // FIXTURE-HISTORY: the carried conversation's shape: its JSON lines' lengths, and whether it holds a raw U+2028/2029/0085
+  if (text.includes("FIXTURE-HISTORY")) say(`FIXTURE-HISTORY ${JSON.stringify({ lines: earlier.split("\n").filter((l) => l.startsWith("{")).map((l) => l.length), raw: /[\u2028\u2029\u0085]/.test(earlier), huge: earlier.includes("HUGE\\u2028TURN\\u2029\\u0085") })}`);
   if (text.includes("Crew Studio started you as firstmate in")) say(`Ready as firstmate in ${ws}; first message: ${/## (state\/HANDOFF-[\w.-]+\.md)/.exec(text)?.[1] ?? "none"}`);
   // FIXTURE-WRITE ["path", ...]: the model tries to write each file with its Write tool
   if (text.includes("FIXTURE-WRITE ")) {
