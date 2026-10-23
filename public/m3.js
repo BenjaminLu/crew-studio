@@ -71,22 +71,87 @@ function viewLibrary3() {
       seg([["all", "All", "全部"], ["code", "Code", "程式碼"], ["video", "Video", "影片"], ["audio", "Audio", "音訊"], ["web", "Web & images", "網頁與圖片"]], kind, (v) => { LB.kind = v; store.set("crew.libKind", v); render(); }),
       seg([["7", "7 days", "7 天"], ["30", "30 days", "30 天"], ["all", "All time", "全部"]], LB.range, (v) => { LB.range = v; store.set("crew.libRange", v); render(); })),
     arts.length ? h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Artifacts", "成品")), h("span", { class: "faint" }, String(arts.length))),
-      h("div", { class: "libgrid" }, arts.map(artCard))) : null,
+      libGrid(arts.map(artCard))) : null,
     code.length ? h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Merged code", "已合併的程式碼")), h("span", { class: "faint" }, String(code.length))),
       h("div", { class: "card", style: "display:grid" }, code.map(codeRow))) : null,
     !arts.length && !code.length ? h("div", { class: "card" }, h("div", { class: "empty" }, icon("library"), h("b", {}, T("Nothing matches", "沒有符合的成品")), T("Try another type or a longer time range.", "換個類型或拉長時間範圍。"))) : null);
 }
+// List previews are read-only, scripts-off. A successful iframe load alone does not mean
+// the source exists (browsers also fire load for error documents), so check the actual response.
+// One busy flag on the grid rather than a live region per card, which would announce every preview.
+const gridBusy = (grid) => grid?.setAttribute("aria-busy", String(!!grid.querySelector("[data-preview-state=loading]")));
+function libGrid(cards) { const grid = h("div", { class: "libgrid" }, cards); gridBusy(grid); return grid; }
+function previewBox(state, label, child) {
+  const notice = h("div", { class: "a3-preview-notice" }, icon("monitor", "ic lg"), h("span", {}, label));
+  const box = h("div", { class: "lprev a3-preview", "data-preview-state": state }, child || null, notice);
+  const timeout = state === "loading" ? setTimeout(() => box.previewState("error", T("Preview timed out · open the artifact to inspect", "預覽載入逾時・開啟成品查看")), 10000) : null;
+  box.previewState = (next, text) => { if (next !== "loading") clearTimeout(timeout); box.dataset.previewState = next; notice.lastChild.textContent = text || ""; notice.hidden = next === "ready"; gridBusy(box.closest(".libgrid")); };
+  return box;
+}
+// Every Library render builds new cards, and Chrome lets only one request per identical URL through at a time, so a
+// render that started its own fetch would queue behind each discarded card's. Renders share one in-flight load, and a
+// version file never changes, so only the analysis is kept. A capability can stop working at any time (Studio restarts
+// with a new session), and the iframe load event also fires for its error page, so every render gets a fresh one.
+const staticLoads = new Map(), staticVisible = new Map(), capLoads = new Map();
+function freshCap(href) {
+  if (!capLoads.has(href)) capLoads.set(href, afCapFor(href).then((src) => { if (src === href) throw new Error("Static preview capability unavailable"); return src; }).finally(() => capLoads.delete(href)));
+  return capLoads.get(href);
+}
+function staticPreview(href) {
+  if (staticVisible.has(href)) return freshCap(href).then((src) => ({ src, visible: staticVisible.get(href) }));
+  if (staticLoads.has(href)) return staticLoads.get(href);
+  const load = (async () => {
+    const src = await freshCap(href);
+    const response = await fetch(src, { signal: AbortSignal.timeout(10000) });
+    if (!response.ok) throw new Error(`Preview HTTP ${response.status}`);
+    const html = await response.text();
+    const template = document.createElement("template"); template.innerHTML = html;
+    const doc = template.content;
+    const styledSurface = [...doc.querySelectorAll("style")].some(el => /background(?:-image)?\s*:[^;}]+|content\s*:\s*["']/i.test(el.textContent));
+    doc.querySelectorAll("script,style,template,noscript,head,title,meta,link").forEach(el => el.remove());
+    const staticContent = doc.textContent.trim() || doc.querySelector("svg:not(:empty),input,button") || [...doc.querySelectorAll("img,video,iframe")].some(el => String(el.getAttribute("src") || el.getAttribute("srcdoc") || "").trim()) || (styledSurface && doc.querySelector("body>*,div,section,main"));
+    staticVisible.set(href, !!staticContent);
+    return { src, visible: !!staticContent };
+  })().finally(() => staticLoads.delete(href));
+  staticLoads.set(href, load);
+  return load;
+}
 function artPreview(a, v, big) {
-  const st = big ? "" : "height:170px";
-  if (!v) return h("div", { class: "lprev", style: st });
-  if (a.source === "url") return h("div", { class: "lprev a3-ph", style: st }, icon("link", "ic lg"), h("span", {}, T("External link", "外部連結")));
-  if (!v.url && (v.fileCount === 0 || (v.files && !v.files.length))) return h("div", { class: "lprev a3-ph", style: st }, icon("alert", "ic lg"), h("span", { style: "text-align:center;padding:0 12px" }, v.summary || T("No file", "沒有檔案")));
+  if (!v) return previewBox("missing", T("No version to preview", "尚無版本可預覽"));
+  if (a.source === "url") return previewBox("missing", T("External link · open to view", "外部連結・開啟查看內容"));
+  if (!v.url && (v.fileCount === 0 || (v.files && !v.files.length))) return previewBox("missing", T("No preview file", "尚無預覽檔案"));
   if (a.type === "audio") return h("div",{class:"lprev media-audio"},h("audio",{controls:true,preload:"metadata",src:`/af/${a.id}/${v.n}/${v.primary||a.entry||"audio.wav"}`,"aria-label":a.title}));
-  if (a.type === "video") { const path=(v.files?.some(f=>f.path==="render.mp4")||v.render?.state==="done")?"render.mp4":(/\.mp4$/i.test(v.primary||"")?v.primary:null);return path?h("video",{class:"lprev",src:`/af/${a.id}/${v.n}/${path}#t=0.5`,controls:!!big,preload:"metadata",muted:true,playsinline:true,style:"width:100%;aspect-ratio:16/9;background:#000;display:block"}):h("div",{class:"lprev a3-ph"},T("No render yet","尚未算圖")); }
-  if (a.type === "image") return h("div", { class: "lprev a3-img", style: st }, h("img", { src: `/af/${a.id}/${v.n}/${a.entry || "image.png"}`, alt: "" }));
-  if (a.type === "web" || a.source === "md") { const thumb = h("iframe", { sandbox: "", tabindex: "-1", "aria-hidden": "true", loading: "lazy" }); setAfSrc(thumb, `/af/${a.id}/${v.n}/${a.source === "md" ? "doc.html" : a.entry || "index.html"}`); const w = h("div", { class: "lprev a3-thumb", style: st }, thumb);
-    new ResizeObserver(() => w.style.setProperty("--k", String((w.clientWidth || 300) / 1280))).observe(w); return w; }
-  return h("div", { class: "lprev a3-ph", style: st }, icon(typeIc(a.type), "ic lg"));
+  if (a.type === "video" || a.type === "image") {
+    const video = a.type === "video";
+    const path = video ? ((v.files?.some(f=>f.path==="render.mp4")||v.render?.state==="done") ? "render.mp4" : (/\.mp4$/i.test(v.primary||"") ? v.primary : null)) : v.primary || a.entry || "image.png";
+    if (!path) return previewBox("missing", T("No render yet", "尚未算圖"));
+    const media = h(video ? "video" : "img", video ? { controls: !!big, preload: "metadata", muted: true, playsinline: true, "aria-label": a.title } : { alt: a.title });
+    const box = previewBox("loading", T("Loading preview…", "正在載入預覽…"), media);
+    if (big && video) box.classList.add("a3-preview-large");
+    media.addEventListener(video ? "loadedmetadata" : "load", () => box.previewState("ready"));
+    media.addEventListener("error", () => box.previewState("error", T("Preview failed · open the artifact to inspect", "預覽載入失敗・開啟成品查看")));
+    media.src = `/af/${a.id}/${v.n}/${path}${video ? "#t=0.5" : ""}`;
+    return box;
+  }
+  if (a.type === "web" || a.source === "md") {
+    const box = previewBox("loading", T("Loading preview…", "正在載入預覽…"));
+    const href = `/af/${a.id}/${v.n}/${a.source === "md" ? "doc.html" : v.primary || a.entry || "index.html"}`;
+    (async () => {
+      try {
+        const { src, visible } = await staticPreview(href);
+        if (!visible) { box.previewState("missing", T("No static preview · open to inspect", "沒有靜態預覽・開啟查看內容")); return; }
+        // Never enable scripts in a Library thumbnail, even for script-rendered apps.
+        const thumb = h("iframe", { sandbox: "", tabindex: "-1", "aria-hidden": "true", title: T("Static preview", "靜態預覽") });
+        box.classList.add("a3-thumb");
+        thumb.addEventListener("load", () => box.previewState("ready"), { once: true });
+        thumb.addEventListener("error", () => box.previewState("error", T("Preview failed · open the artifact to inspect", "預覽載入失敗・開啟成品查看")), { once: true });
+        thumb.src = src; box.prepend(thumb);
+        new ResizeObserver(() => box.style.setProperty("--k", String((box.clientWidth || 300) / 1280))).observe(box);
+      } catch { box.previewState("error", T("Preview failed · open the artifact to inspect", "預覽載入失敗・開啟成品查看")); }
+    })();
+    return box;
+  }
+  return previewBox("missing", T("Open artifact to view this file", "開啟成品查看此類檔案"));
 }
 function artCard(a) {
   const last = a.versions.at(-1);

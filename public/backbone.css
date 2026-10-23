@@ -37,3 +37,10 @@
 .bb-nosession code { font: 12px var(--f-mono); background: var(--surface); padding: 1px 4px; border-radius: 4px; }
 .bb-lang .seg{margin-top:6px;flex-wrap:wrap;max-width:100%;box-sizing:border-box;justify-self:start}
 .bb-lang .seg button{min-height:36px}
+
+.nav-labs-h{display:flex;align-items:center;justify-content:space-between;border:0;background:none;color:var(--text-3);font:inherit;font-size:12px;letter-spacing:0;text-transform:none;text-align:left;padding:8px 10px;cursor:pointer;border-radius:6px;min-height:36px;width:100%}
+.nav-labs-h::after{content:"›"/"";font-size:18px;transform:rotate(0deg)}
+.nav-labs-h[aria-expanded=true]::after{transform:rotate(90deg)}
+.nav-labs-h:hover{background:var(--surface-2);color:var(--text)}
+.nav-labs-body{display:flex;flex-direction:column;gap:2px}
+@media(max-width:760px){.nav-labs{align-items:flex-start}.nav-labs-h{display:flex;white-space:nowrap}.nav-labs-body{flex-direction:row}}
