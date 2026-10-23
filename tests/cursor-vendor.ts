@@ -18,7 +18,7 @@ const KEY = "crsr_acceptance" + "0".repeat(49); // the fixture's key shape; not 
 process.env.HOME = join(TMP, "home"); mkdirSync(process.env.HOME, { recursive: true });
 process.env.CREW_KEYCHAIN_TOOL = "none";
 delete process.env.CURSOR_API_KEY;
-const { probeCursor } = await import("../src/providers/cursor");
+const { probeCursor, probeCursorChecked, verifyCursor, parseCursorModels, cursorKeyCheck } = await import("../src/providers/cursor");
 const { cursorLogin } = await import("../src/providers/login");
 const { SECRET_DIRS, cursorSecretPaths } = await import("../src/runtime/checks");
 const { deliveryFor } = await import("../src/attachments");
@@ -35,9 +35,31 @@ console.log("capability and the crew's key");
   ok(!gone.available && gone.refusal === "unavailable" && gone.models.length === 0 && /not installed/.test(gone.reason ?? ""), "no CLI: Cursor is unavailable, with the reason", JSON.stringify(gone));
   const noKey = probeCursor(["composer-2.5"], FIXTURE);
   ok(noKey.available && noKey.auth === "missing" && noKey.refusal === "missing-login" && noKey.models.length === 0, "the CLI without a key: missing login, no model offered", JSON.stringify(noKey));
+  // a key that is present is unverified until the bounded `cursor-agent models` check with it succeeds (as Claude until Verify)
+  process.env.CURSOR_API_KEY = "crsr_" + "9".repeat(40); // a key's shape the fixture refuses; not a credential
+  const unchecked = probeCursor(["composer-2.5"], FIXTURE);
+  ok(unchecked.available && unchecked.auth === "unverified" && unchecked.quota === "unknown" && unchecked.refusal === "unverified" && unchecked.models.length === 0 && cursorKeyCheck(FIXTURE).state === "unchecked",
+    "the CLI and a key not checked yet: unverified, no model offered", JSON.stringify(unchecked));
+  const rejected = await probeCursorChecked(["composer-2.5"], FIXTURE);
+  ok(rejected.auth === "unverified" && rejected.refusal === "unverified" && rejected.models.length === 0 && /did not accept/.test(rejected.reason ?? "") && cursorKeyCheck(FIXTURE).state === "failed" && !(rejected.reason ?? "").includes("9".repeat(40)),
+    "a key cursor-agent refuses stays unverified with the reason (never the key)", JSON.stringify(rejected));
   process.env.CURSOR_API_KEY = KEY;
-  const ready = probeCursor(["composer-2.5", "composer-2.5", ""], FIXTURE);
-  ok(ready.available && ready.auth === "verified" && ready.quota === "available" && JSON.stringify(ready.models) === JSON.stringify([{ id: "composer-2.5", efforts: [] }]), "the CLI and a key: verified, the configured model once, no effort levels", JSON.stringify(ready));
+  const stale = await probeCursorChecked(["composer-2.5"], FIXTURE);
+  ok(stale.auth === "unverified" && cursorKeyCheck(FIXTURE).state === "failed", "a refused check is not retried at once for the same key source (Check again does)", JSON.stringify(stale));
+  await verifyCursor({ bin: FIXTURE, fresh: true });
+  const ready = await probeCursorChecked(["composer-2.5", "composer-2.5", ""], FIXTURE);
+  ok(ready.available && ready.auth === "verified" && ready.quota === "available" && JSON.stringify(ready.models) === JSON.stringify(["composer-2.5", "composer-2.5-fast", "gpt-5.5"].map((id) => ({ id, efforts: [] }))),
+    "after `cursor-agent models` accepted the key: verified, the account's models from the CLI, no effort levels", JSON.stringify(ready));
+  ok(probeCursor(["composer-2.5"], FIXTURE).auth === "verified", "a passed check is reused (no second run)");
+  // the models the CLI lists; a hung check ends at its deadline
+  const listing = (name: string, extra: string) => { const f = join(TMP, name); writeFileSync(f, `#!/bin/sh\n${extra} exec bun "${FIXTURE}" "$@"\n`, { mode: 0o755 }); return f; };
+  const own = await verifyCursor({ bin: listing("cursor-agent-own", "CURSOR_FIXTURE_MODELS=composer-9,gpt-x.1"), fresh: true });
+  ok(own?.ok === true && JSON.stringify(probeCursor(["composer-2.5"], join(TMP, "cursor-agent-own")).models.map((m) => m.id)) === '["composer-9","gpt-x.1"]', "the models are what this CLI lists for the account", JSON.stringify(own));
+  const hungAt = Date.now(), hung = await verifyCursor({ bin: listing("cursor-agent-hung", "CURSOR_FIXTURE_MODELS_HANG=1"), fresh: true, timeoutMs: 1500 });
+  ok(hung?.ok === false && /deadline/.test(hung.reason ?? "") && Date.now() - hungAt < 10_000 && probeCursor(["composer-2.5"], join(TMP, "cursor-agent-hung")).auth === "unverified", "a check that never answers ends at its deadline and leaves the key unverified", JSON.stringify(hung));
+  ok(JSON.stringify(parseCursorModels("\x1b[2mAvailable models\x1b[22m\n\n\x1b[32mcomposer-2.5\x1b[39m \x1b[2m- Composer 2.5\x1b[22m \x1b[2m(current, default)\x1b[22m\nclaude-opus-4-8 - Opus 4.8\ngpt-5.5\n\nTip: use --model <id> (or /model <id> in interactive mode) to switch.\n")) === '["composer-2.5","claude-opus-4-8","gpt-5.5"]'
+    && parseCursorModels("No models available for this account.").length === 0, "the CLI's model list is parsed from its own output (colours, heading and tip aside)");
+  await verifyCursor({ bin: FIXTURE, fresh: true });
   const env = cursorLogin();
   ok(env.ok && env.env?.CURSOR_API_KEY === KEY && cursorLogin({ probe: true }).ok && cursorLogin({ probe: true }).env?.CURSOR_API_KEY === "", "the key from Studio's environment; a probe never carries it");
   process.env.CURSOR_API_KEY = "crsr_short";
@@ -49,7 +71,7 @@ console.log("capability and the crew's key");
   const probed = cursorLogin({ probe: true }), read = cursorLogin();
   ok(probed.ok && /cursor-api-key/.test(probed.source ?? ""), "a presence probe finds the crew's private key file (no keychain)", JSON.stringify(probed));
   ok(read.ok && read.env?.CURSOR_API_KEY === KEY, "a round's login reads the crew's private key file");
-  ok(probeCursor(["composer-2.5"], FIXTURE).auth === "verified", "the private key file makes Cursor ready");
+  ok((await probeCursorChecked(["composer-2.5"], FIXTURE)).auth === "verified", "the private key file, once checked, makes Cursor ready");
   rmSync(join(dir, "cursor-api-key"));
 }
 
@@ -230,6 +252,13 @@ try {
   const take = await s.api("/api/main/takeover", { host: "cursor", confirm: true }), list = await s.api("/api/main/sessions?host=cursor"), att = await s.api("/api/main/attach", { host: "cursor", id: "chat-123456" });
   ok(take.status === 409 && take.body?.code === "cursorTakeover" && list.status === 400 && list.body?.code === "cursorTakeover" && att.status === 409 && att.body?.code === "cursorTakeover", "Studio never takes over, lists or attaches a Cursor session", JSON.stringify([take.status, take.body, list.status, att.status]).slice(0, 400));
   ok(s.calls().length === 0, "no refusal ran cursor-agent");
+  // the key checked with `cursor-agent models`: staffing and the model picker offer the models the CLI lists for the account
+  const team = await s.api("/api/team?facts=1"), tc = team.body?.providers?.find((p: any) => p.provider === "cursor");
+  ok(tc?.state === "detected" && tc?.login === "logged-in" && ["composer-2.5", "composer-2.5-fast", "gpt-5.5"].every((id) => team.body.models.some((m: any) => m.provider === "cursor" && m.model === id && m.available && !m.unverified)),
+    "staffing: a checked key offers the models cursor-agent lists, verified", JSON.stringify({ tc, models: team.body?.models?.filter((m: any) => m.provider === "cursor") }).slice(0, 500));
+  const listed = (await s.api("/api/models")).body?.providers?.find((p: any) => p.id === "cursor");
+  ok(listed?.source === "cli" && JSON.stringify(listed.models.map((m: any) => m.id)) === '["composer-2.5","composer-2.5-fast","gpt-5.5"]', "the model picker lists Cursor's models from the CLI", JSON.stringify(listed));
+  ok((await s.api("/api/cursor/native/status")).body?.state === "ready", "Cursor's native status is ready once the key passed the check");
   const ready = await s.api("/api/main/start/cursor-ready");
   ok(ready.body?.ok === true && ready.body?.model === "composer-2.5" && !ready.text.includes(KEY), "the start check names the model and never the key", ready.text);
   const st = await s.api("/api/main/start", { host: "cursor", confirm: true });
@@ -335,6 +364,19 @@ try {
   ok(nd.find((i: any) => i.id === "cursor")?.authenticated === false && nl?.status === "missing" && nl?.action?.item === "cursor", "Doctor without a key: not signed in, and the fix is adding the key", String(JSON.stringify(nl)).slice(0, 300));
   const ns = await n.api("/api/main/start", { host: "cursor", confirm: true });
   ok(ns.status === 409 && ns.body?.code === "cursorKeyMissing" && (await n.api("/api/main")).body?.state === "detached" && n.calls().length === 0, "starting on Cursor without a key is refused and never falls back to another vendor", `${ns.status} ${ns.text.slice(0, 300)}`);
+
+  // a key cursor-agent refuses: unverified everywhere, as an unverified Claude is, and Firstmate on Cursor does not start
+  const BAD = "crsr_" + "9".repeat(40); // a key's shape the fixture refuses; not a credential
+  const b = await boot("refused", { CURSOR_API_KEY: BAD });
+  const bt = await b.api("/api/team?facts=1"), bc = bt.body?.providers?.find((p: any) => p.provider === "cursor"), bm = (bt.body?.models ?? []).filter((m: any) => m.provider === "cursor");
+  ok(bc?.state === "unverified-fallback" && bc?.login === "unknown" && bm.length === 1 && bm[0].model === "composer-2.5" && bm[0].unverified === true, "staffing: a refused key offers only the configured model, marked unverified (as Claude's)", JSON.stringify({ bc, bm }));
+  const bl = (await b.api("/api/models")).body?.providers?.find((p: any) => p.id === "cursor");
+  ok(bl?.source === "unverified-fallback" && JSON.stringify(bl.models.map((m: any) => m.id)) === '["composer-2.5"]' && /did not accept/.test(bl.reason ?? ""), "the model picker falls back to the configured model, saying why", JSON.stringify(bl));
+  const bst = await b.api("/api/cursor/native/status");
+  ok(bst.body?.state === "hold" && /unverified/.test(bst.body?.reason ?? ""), "Cursor's native status holds", bst.text.slice(0, 300));
+  const bs = await b.api("/api/main/start", { host: "cursor", confirm: true }), br = await b.api("/api/main/start/cursor-ready");
+  ok(bs.status === 409 && bs.body?.code === "cursorKeyRefused" && /did not accept/.test(bs.body?.en ?? "") && /不接受/.test(bs.body?.zh ?? "") && br.body?.ok === false && br.body?.code === "cursorKeyRefused" && b.calls().length === 0
+    && ![bt.text, bs.text, br.text].some((t) => t.includes(BAD)), "Start on Cursor is refused with why (English and zh-TW), and the start check says so after", JSON.stringify([bs.status, bs.body, br.body]).slice(0, 500));
 } finally {
   for (const a of apps) try { a.kill(); } catch {}
   await Bun.sleep(200);

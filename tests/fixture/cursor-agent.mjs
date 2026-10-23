@@ -2,6 +2,8 @@
 // No real vendor, login, network or config access. It answers only to the acceptance key (CURSOR_API_KEY starting
 // crsr_acceptance); anything else is "not logged in", as the real CLI says without a key.
 //   --version                   a fixture version (no key needed, as with the real CLI)
+//   models                      the account's models as the real CLI lists them (CURSOR_FIXTURE_MODELS, comma-separated, else
+//                               composer-2.5, composer-2.5-fast, gpt-5.5); CURSOR_FIXTURE_MODELS_HANG=1 never answers
 //   create-chat                 prints a new chat id
 //   -p --output-format stream-json --workspace W … <text>
 //     Firstmate (W/.cursor/mcp.json's studio server reaches a native socket): the scripted Firstmate turns of
@@ -37,6 +39,13 @@ const fail = (text, code = 1) => { out({ type: "result", subtype: "error", is_er
 if (argv.length === 1 && argv[0] === "--version") { console.log("2026.10.01-fixture"); process.exit(0); }
 if (!/^crsr_acceptance[A-Za-z0-9]+$/.test(key)) fail("Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY.");
 const log = (o) => { if (process.env.CURSOR_FIXTURE_LOG) appendFileSync(process.env.CURSOR_FIXTURE_LOG, JSON.stringify(o) + "\n"); };
+if (argv[0] === "models") {
+  log({ argv, home: process.env.HOME, key: createHash("sha256").update(key).digest("hex").slice(0, 12) });
+  if (process.env.CURSOR_FIXTURE_MODELS_HANG === "1") await new Promise(() => setInterval(() => {}, 1000));
+  const ids = (process.env.CURSOR_FIXTURE_MODELS ?? "composer-2.5,composer-2.5-fast,gpt-5.5").split(",").filter(Boolean);
+  console.log(["Available models", "", ...ids.map((id, i) => `${id} - ${id.toUpperCase()}${i === 0 ? " (current, default)" : ""}`), "", "Tip: use --model <id> (or /model <id> in interactive mode) to switch."].join("\n"));
+  process.exit(0);
+}
 if (argv[0] === "create-chat") { const id = randomUUID(); log({ argv, chat: id }); console.log(id); process.exit(0); }
 if (argv[0] !== "-p" || get("--output-format") !== "stream-json" || !get("--workspace") || !argv.includes("--trust")) fail(`cursor-agent fixture: unexpected argv ${JSON.stringify(argv.slice(0, -1))}`, 2);
 let perms = null;

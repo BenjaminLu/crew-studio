@@ -110,7 +110,7 @@ import { CodexAccount } from "./host/codex-account";
 import { generateCodexImage } from "./providers/codex-image";
 import { generateCursorImage } from "./providers/cursor-image";
 import { probeCodex } from "./providers/codex-probe";
-import { cursorModel, probeCursor } from "./providers/cursor";
+import { cursorKeyCheck, cursorModel, probeCursor, probeCursorChecked, verifyCursor } from "./providers/cursor";
 import {nativeClaude,probeClaudeNative,makeNativeClaudeProvider,validClaudePair,claudeEfforts,configuredClaudeEffort,isClaudeExecutionAdmission} from './providers/claude-native';
 import { ProviderRefusal, nativeChain, selectNativeProvider, type ProviderSelection, type ProviderCapability } from "./providers/policy";
 
@@ -238,11 +238,15 @@ const cursorPrimary = async (o?: { dry?: boolean }): Promise<import("./takeover"
   const no = (code: string, en: string, zh: string) => ({ ok: false as const, code, reason: `${en} / ${zh}`, en, zh });
   const model = cursorModel(chatSettings().models.cursor), cap = probeCursor([model]);
   if (!cap.available) return no("cursorUnavailable", "The Cursor CLI (cursor-agent) is not installed. Install it from the Doctor, then add a Cursor API key.", "找不到 Cursor CLI（cursor-agent）。請在 Doctor 安裝，再加入 Cursor API key。");
-  if (cap.auth !== "verified") return no("cursorKeyMissing", ...CURSOR_KEY_MISSING);
+  if (cap.auth === "missing") return no("cursorKeyMissing", ...CURSOR_KEY_MISSING);
   // an explicit project with hooks: cursor-agent would run them with the key in their environment
   const hooks = main.view().context === "studio" ? [] : cursorProjectHooks(PROJECT);
   if (hooks.length) { const r = cursorHooksRefusal(hooks); return no("cursorProjectHooks", r.en, r["zh-TW"]); }
-  if (o?.dry) return { ok: true, env: {}, model };
+  // the key itself: the dry check reports the last bounded check only; a start runs it (cursor-agent models, no model request)
+  const refused = (why: string | null) => no("cursorKeyRefused", `Cursor did not accept the crew's API key (${why ?? "the check could not run"}). Replace the key in the keychain item crew-studio-cursor-api-key (Doctor shows how), then check again.`, `Cursor 不接受 crew 的 API key（${why ?? "無法執行檢查"}）。請更新鑰匙圈項目 crew-studio-cursor-api-key 裡的 key（Doctor 有說明），再重新檢查。`);
+  if (o?.dry) { const c = cursorKeyCheck(); return c.state === "failed" ? refused(c.reason) : { ok: true, env: {}, model }; }
+  const check = await verifyCursor();
+  if (!check?.ok) return refused(check?.reason ?? null);
   const login = cursorLogin();
   return login.ok ? { ok: true, env: login.env, model } : no("cursorKeyMissing", ...CURSOR_KEY_MISSING);
 };
@@ -292,13 +296,14 @@ function setLan(on: boolean): { ok: boolean; error?: string } {
 // --- Doctor: what works, what is degraded, one-click official installs (never during tests) ---
 /** Cursor for rounds and Firstmate: the CLI on disk and whether an API key is present (existence only: the key is never
  *  read, shown or sent here; the keychain is asked only when the CLI is installed). Kept 30 s; a change is pushed as "cursor-account". */
-let cursorCache: { at: number; v: { installed: boolean; key: "present" | "missing"; source: string | null; model: string; how: string } } | null = null;
+let cursorCache: { at: number; v: { installed: boolean; key: "present" | "missing"; source: string | null; model: string; check: "passed" | "failed" | "unchecked" | null; checkReason: string | null; how: string } } | null = null;
 const cursorAccount = (fresh = false) => {
   if (!fresh && cursorCache && Date.now() - cursorCache.at < 30_000) return cursorCache.v;
   const model = cursorModel(chatSettings().models.cursor), cap = probeCursor([model]);
-  const found = cap.auth === "verified" ? cursorLogin({ probe: true }) : null;
-  const v = { installed: cap.available, key: cap.auth === "verified" ? "present" as const : "missing" as const, source: found ? (found.ok ? found.source : "a Cursor API key") : null, model,
-    how: !cap.available ? "Install the Cursor CLI (Doctor → Cursor CLI), then add a Cursor API key" : cap.auth === "verified" ? "" : `Add a Cursor API key: ${LOGINS.cursor.note}` };
+  const present = cap.available && cap.auth !== "missing", found = present ? cursorLogin({ probe: true }) : null;
+  const check = present ? cursorKeyCheck() : null;
+  const v = { installed: cap.available, key: present ? "present" as const : "missing" as const, source: found ? (found.ok ? found.source : "a Cursor API key") : null, model, check: check?.state ?? null, checkReason: check?.reason ?? null,
+    how: !cap.available ? "Install the Cursor CLI (Doctor → Cursor CLI), then add a Cursor API key" : present ? "" : `Add a Cursor API key: ${LOGINS.cursor.note}` };
   const changed = cursorCache && JSON.stringify(cursorCache.v) !== JSON.stringify(v);
   cursorCache = { at: Date.now(), v }; if (changed) send("cursor-account", v); return v;
 };
@@ -375,7 +380,7 @@ async function nativeSelection(input: ProviderSelection, x?: any): Promise<Provi
   const capabilities = new Map<string, ProviderCapability>();
   const selected = await selectNativeProvider(input, async (id,pair) => {
     const at = Date.now();
-    let cap = id === "codex" ? await probeCodex(undefined, signal) : id==='claude'?await probeClaudeNative(pair,signal): id === "cursor" ? probeCursor([cursorModel(chatSettings().models.cursor)]) : id === "stub" && allowStub ? { provider: id, available: true, auth: "verified" as const, quota: "available" as const, models: [{ id: "no model" }], at, expires: at + 30_000 } : { provider: id, available: false, auth: "unverified" as const, quota: "unknown" as const, models: [], at, expires: at + 30_000, reason: "native auth/model/quota capability adapter is unavailable" };
+    let cap = id === "codex" ? await probeCodex(undefined, signal) : id==='claude'?await probeClaudeNative(pair,signal): id === "cursor" ? await probeCursorChecked([cursorModel(chatSettings().models.cursor)]) : id === "stub" && allowStub ? { provider: id, available: true, auth: "verified" as const, quota: "available" as const, models: [{ id: "no model" }], at, expires: at + 30_000 } : { provider: id, available: false, auth: "unverified" as const, quota: "unknown" as const, models: [], at, expires: at + 30_000, reason: "native auth/model/quota capability adapter is unavailable" };
     if(id==='claude')cap=await refreshStartupClaude(x,input,pair,cap);if(id==='claude')cap=await refreshOwnWorkflowClaude(x,input,pair,cap);
     capabilities.set(id, cap); return cap;
   }, (id, model, effort) => id === "codex" ? codexProvider(model, undefined, { model, effort }) : id==='claude'?makeNativeClaudeProvider(capabilities.get(id)!,{model,effort}):makeProvider(id, model));
@@ -440,7 +445,7 @@ const gateLogins = () => {
     const out: Record<string, "logged-in" | "not-logged-in" | "unknown"> = {};
     try { out.claude = (await claudeLoginPresenceAsync()).ok ? "logged-in" : "not-logged-in"; } catch { out.claude = "unknown"; }
     try { const k = process.env.CODEX_API_KEY?.trim(); if (k && /^sk-[A-Za-z0-9_-]{20,}$/.test(k)) out.codex = "logged-in"; else { const f = join(process.env.CODEX_HOME || join(homedir(), ".codex"), "auth.json"); if (!existsSync(f)) out.codex = "not-logged-in"; else { const j = JSON.parse(await Bun.file(f).text()); out.codex = j?.tokens?.access_token || j?.OPENAI_API_KEY ? "logged-in" : "not-logged-in"; } } } catch { out.codex = "unknown"; }
-    try { out.cursor = probeCursor([]).auth === "verified" ? "logged-in" : "not-logged-in"; } catch { out.cursor = "unknown"; }
+    try { const c = probeCursor([]); out.cursor = c.available && c.auth !== "missing" ? "logged-in" : "not-logged-in"; } catch { out.cursor = "unknown"; }
     out.stub = allowStub ? "logged-in" : "not-logged-in";
     return out;
   })();
@@ -448,10 +453,11 @@ const gateLogins = () => {
 };
 
 const verifyOnboardingTeam=teamVerifier({dataDir:DATA,agents,select:pick=>nativeSelection({role:'worker',host:null,explicit:true,provider:pick.provider,model:pick.model,effort:pick.effort,configured:{[pick.provider]:{model:pick.model,effort:pick.effort}},fallback:[],known:[pick.provider]})});
-const runtime = createRuntime({onboardingProvider:()=>main.view().host??(codexAccount.view().authenticated?'codex':cursorAccount().key==='present'?'cursor':null),onboardingTeamVerify:verifyOnboardingTeam,onboardingTeamContext:teamProbeContext,coffeeVideo:coffeeTools.ready?(request=>renderCoffeeFilm(request,coffeeTools)):undefined,coffeeFilmStatus:{ready:coffeeTools.ready,reason:coffeeTools.ready?null:coffeeTools.reason},startupModel:provider=>{const settings=chatSettings();return provider==="claude"?claudePrimaryPair().model:provider==="cursor"?cursorModel(settings.models.cursor):settings.models.codex||process.env.CREW_CODEX_MODEL||runtimeCodexConfig().model;},coffeeChoice:()=>{const config=runtimeCodexConfig(),model=chatSettings().models.codex||process.env.CREW_CODEX_MODEL||config.model;return model?{provider:"codex",model,effort:config.effort}:null;}, staffingApproved:a=>{if(main.view().context==='studio'&&main.view().state!=='detached')main.enqueue('card',staffingApprovedTurn(a),'studio-native');},staffingPending:intent=>{if(main.view().context==="studio"&&main.view().state!=="detached")main.enqueue("card",`Project registered for: ${intent.work.text}. No workflow work has started. Offer one complete available default staffing plan and optional advanced customization. If the captain requests defaults, adopt them in one turn, then show the real configuration approval card before dispatch. / 專案已註冊，工作尚未開始。請提供一組可用預設配置；船長選擇採用時一次記錄整組，再顯示真正的配置核准卡。進階自訂可選，不必逐角色訪談。`,"studio-native");},staffingAdmission:role=>role.provider==='claude'&&staffingClaudeCapabilities.some(cap=>isClaudeExecutionAdmission(cap,{model:role.model,effort:role.effort})),staffingFacts:async(o)=>{const settings=chatSettings(),model=settings.models.claude||process.env.CREW_CLAUDE_MODEL||'claude-sonnet-5-5',pair={model,effort:configuredClaudeEffort(model)};const cursorPick=cursorModel(settings.models.cursor),cursor=probeCursor([cursorPick]);const [cap,claude,inventory]=await Promise.all([probeCodex(),probeClaudeNative(pair),nativeClaude.models({fresh:o?.fresh})]);staffingClaudeCapabilities=nativeClaude.verifiedCapabilities();const verified=new Map<string,Set<string>>();for(const cap of staffingClaudeCapabilities)for(const m of cap.models){let efforts=verified.get(m.id);if(!efforts)verified.set(m.id,efforts=new Set());for(const effort of claudeEfforts(m.id))if(isClaudeExecutionAdmission(cap,{model:m.id,effort}))efforts.add(effort);}
+const runtime = createRuntime({onboardingProvider:()=>main.view().host??(codexAccount.view().authenticated?'codex':cursorAccount().key==='present'?'cursor':null),onboardingTeamVerify:verifyOnboardingTeam,onboardingTeamContext:teamProbeContext,coffeeVideo:coffeeTools.ready?(request=>renderCoffeeFilm(request,coffeeTools)):undefined,coffeeFilmStatus:{ready:coffeeTools.ready,reason:coffeeTools.ready?null:coffeeTools.reason},startupModel:provider=>{const settings=chatSettings();return provider==="claude"?claudePrimaryPair().model:provider==="cursor"?cursorModel(settings.models.cursor):settings.models.codex||process.env.CREW_CODEX_MODEL||runtimeCodexConfig().model;},coffeeChoice:()=>{const config=runtimeCodexConfig(),model=chatSettings().models.codex||process.env.CREW_CODEX_MODEL||config.model;return model?{provider:"codex",model,effort:config.effort}:null;}, staffingApproved:a=>{if(main.view().context==='studio'&&main.view().state!=='detached')main.enqueue('card',staffingApprovedTurn(a),'studio-native');},staffingPending:intent=>{if(main.view().context==="studio"&&main.view().state!=="detached")main.enqueue("card",`Project registered for: ${intent.work.text}. No workflow work has started. Offer one complete available default staffing plan and optional advanced customization. If the captain requests defaults, adopt them in one turn, then show the real configuration approval card before dispatch. / 專案已註冊，工作尚未開始。請提供一組可用預設配置；船長選擇採用時一次記錄整組，再顯示真正的配置核准卡。進階自訂可選，不必逐角色訪談。`,"studio-native");},staffingAdmission:role=>role.provider==='claude'&&staffingClaudeCapabilities.some(cap=>isClaudeExecutionAdmission(cap,{model:role.model,effort:role.effort})),staffingFacts:async(o)=>{const settings=chatSettings(),model=settings.models.claude||process.env.CREW_CLAUDE_MODEL||'claude-sonnet-5-5',pair={model,effort:configuredClaudeEffort(model)};const cursorPick=cursorModel(settings.models.cursor);const [cap,claude,inventory,cursor]=await Promise.all([probeCodex(),probeClaudeNative(pair),nativeClaude.models({fresh:o?.fresh}),probeCursorChecked([cursorPick])]);staffingClaudeCapabilities=nativeClaude.verifiedCapabilities();const verified=new Map<string,Set<string>>();for(const cap of staffingClaudeCapabilities)for(const m of cap.models){let efforts=verified.get(m.id);if(!efforts)verified.set(m.id,efforts=new Set());for(const effort of claudeEfforts(m.id))if(isClaudeExecutionAdmission(cap,{model:m.id,effort}))efforts.add(effort);}
   // models: what passed exact execution (readiness); candidates: every model the installed CLI offers (the choices)
   return[{provider:'codex',support:'supported' as const,auth:cap.auth,quota:cap.quota,expires:cap.expires,models:cap.models.map(m=>({id:m.id,efforts:m.efforts??[]})),default:{model:settings.models.codex||process.env.CREW_CODEX_MODEL||runtimeCodexConfig().model||'',effort:runtimeCodexConfig().effort},detectedAt:cap.at,inventory:cap.available?'detected' as const:'unavailable' as const,login:cap.auth==='verified'?'logged-in' as const:/no verified native Codex login|auth verification failed/.test(cap.reason??'')?'not-logged-in' as const:'unknown' as const,...cap.reason?{reason:cap.reason}:{}},{provider:'claude',default:pair,support:'supported' as const,auth:claude.auth,quota:claude.quota,expires:claude.expires,models:[...verified].map(([id,efforts])=>({id,efforts:[...efforts]})),candidates:inventory.models.map(m=>({id:m.id,efforts:m.efforts})),reason:claude.reason,detectedAt:inventory.at,inventory:inventory.source==='cli'?'detected' as const:'unverified-fallback' as const,...inventory.reason?{inventoryReason:inventory.reason}:{},login:claude.loginState},
-    {provider:'cursor',support:'supported' as const,auth:cursor.auth,quota:cursor.quota,expires:cursor.expires,models:cursor.models.map(m=>({id:m.id,efforts:[]})),default:{model:cursorPick,effort:null},detectedAt:cursor.at,inventory:cursor.available?'detected' as const:'unavailable' as const,login:cursor.auth==='verified'?'logged-in' as const:cursor.refusal==='missing-login'?'not-logged-in' as const:'unknown' as const,...cursor.reason?{reason:cursor.reason}:{}}];},dataDir: DATA, agents, provider: pickProvider, defaultProvider: () => { const s = chatSettings(); return { provider: s.provider, model: s.models[s.provider] || null }; }, selectProvider: nativePick,
+    // Cursor: as Claude, only a key the bounded check accepted offers its models; an unchecked or refused key offers the configured one as a candidate
+    {provider:'cursor',support:'supported' as const,auth:cursor.auth,quota:cursor.quota,expires:cursor.expires,models:cursor.auth==='verified'?cursor.models.map(m=>({id:m.id,efforts:[]})):[],...cursor.auth==='unverified'&&cursor.available?{candidates:[{id:cursorPick,efforts:[]}]}:{},default:{model:cursorPick,effort:null},detectedAt:cursor.at,inventory:!cursor.available?'unavailable' as const:cursor.auth==='verified'?'detected' as const:'unverified-fallback' as const,login:cursor.auth==='verified'?'logged-in' as const:cursor.refusal==='missing-login'?'not-logged-in' as const:'unknown' as const,...cursor.reason?{reason:cursor.reason}:{}}];},dataDir: DATA, agents, provider: pickProvider, defaultProvider: () => { const s = chatSettings(); return { provider: s.provider, model: s.models[s.provider] || null }; }, selectProvider: nativePick,
   // the readiness gate: login state is read from what is on disk (never a probe that could start a sign-in); repair turns go to Firstmate's queue
   // repair turns go only to Studio's own Firstmate conversation (like staffingPending), never a takeover terminal session
   readiness: { logins: gateLogins, knownProviders: () => [...choices], repoRoot: ROOT, ...(Number(process.env.CREW_GATE_REPAIR_WAIT_MS) > 0 ? { repairWaitMs: Number(process.env.CREW_GATE_REPAIR_WAIT_MS) } : {}), ask: (text: string, repair: { draft: string; nonce: string }) => { const v = main.view(); if (v.context !== "studio" || v.state === "detached") return false; main.enqueue("card", text, "studio-gate", undefined, repair); return true; } },
@@ -580,7 +586,9 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       // the installed CLI's own list (src/providers/claude-native.ts models()); a verified model it no longer lists stays
       const inventory=await nativeClaude.models({signal:req.signal}),claude=[...inventory.models.map(m=>({id:m.id,efforts:m.efforts}))];
       for(const id of nativeClaude.verifiedCapabilities().flatMap(c=>c.models.map(m=>m.id)))if(!claude.some(m=>m.id===id)&&validClaudePair({model:id,effort:null}))claude.push({id,efforts:claudeEfforts(id)});
-      return json({providers:[{id:'codex',models:codex},{id:'claude',models:claude,source:inventory.source,detectedAt:inventory.at,...inventory.reason?{reason:inventory.reason}:{}},{id:'cursor',models:[{id:cursorModel(settings.models.cursor),efforts:[]}]}],configured,executionVerified:false});
+      // Cursor: the models `cursor-agent models` listed for the crew's key; Studio's configured one until that check passes
+      const cursorPick=cursorModel(settings.models.cursor),cursor=await probeCursorChecked([cursorPick]),cursorListed=cursor.auth==='verified';
+      return json({providers:[{id:'codex',models:codex},{id:'claude',models:claude,source:inventory.source,detectedAt:inventory.at,...inventory.reason?{reason:inventory.reason}:{}},{id:'cursor',models:cursorListed?cursor.models.map(m=>({id:m.id,efforts:[]})):[{id:cursorPick,efforts:[]}],source:cursorListed?'cli':'unverified-fallback',detectedAt:cursor.at,...cursor.reason?{reason:cursor.reason}:{}}],configured,executionVerified:false});
     }
     if(p==='/api/codex/native/status'&&!writing){
       if(who.kind!=='desktop')return json({error:'Desktop session required'},403);
@@ -594,13 +602,14 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       }catch(e){return json({state:'hold',model,effort,reason:e instanceof Error?e.message:'Capability verification unavailable'});}
     }
     if(p==='/api/claude/native/status'&&!writing){if(who.kind==='desktop'&&!hasSession(req,SESSION))return json({error:'Studio session required'},401);const s=chatSettings(),model=url.searchParams.get('model')||s.models.claude||process.env.CREW_CLAUDE_MODEL||'claude-sonnet-5-5',effort=url.searchParams.get('effort')||configuredClaudeEffort(model);return json(await probeClaudeNative({model,effort},req.signal));}
-    if(p==='/api/cursor/account'&&!writing){if(who.kind==='desktop'&&!hasSession(req,SESSION))return json({error:'Studio session required'},401);return json(cursorAccount(url.searchParams.has('fresh')));}
+    // Check again (fresh): the bounded key check runs again too (cursor-agent models, no model request)
+    if(p==='/api/cursor/account'&&!writing){if(who.kind==='desktop'&&!hasSession(req,SESSION))return json({error:'Studio session required'},401);const fresh=url.searchParams.has('fresh');if(fresh&&cursorAccount(true).key==='present')await verifyCursor({fresh:true});return json(cursorAccount(fresh));}
     if(p==='/api/cursor/native/status'&&!writing){
       if(who.kind!=='desktop')return json({error:'Desktop session required'},403);
       if(!hasSession(req,SESSION))return json({error:'Studio session required'},401);
       const model=cursorModel(chatSettings().models.cursor);
-      // capability only (CLI on disk, key present); never a model request
-      try{await selectNativeProvider({role:'worker',host:null,explicit:true,provider:'cursor',model,effort:null,configured:{cursor:{model,effort:null}},fallback:[],known:['cursor']},async()=>probeCursor([model]),(_id,m)=>makeProvider('cursor',m));return json({state:'ready',model,effort:null});}
+      // the CLI on disk and the key checked with `cursor-agent models` (bounded, reused for minutes); never a model request
+      try{await selectNativeProvider({role:'worker',host:null,explicit:true,provider:'cursor',model,effort:null,configured:{cursor:{model,effort:null}},fallback:[],known:['cursor']},()=>probeCursorChecked([model]),(_id,m)=>makeProvider('cursor',m));return json({state:'ready',model,effort:null});}
       catch(e){return json({state:'hold',model,effort:null,reason:e instanceof Error?e.message:'Capability verification unavailable'});}
     }
     if(p==='/api/claude/account'&&!writing){if(who.kind==='desktop'&&!hasSession(req,SESSION))return json({error:'Studio session required'},401);return json(claudeLogin.view());}

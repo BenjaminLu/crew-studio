@@ -15,7 +15,7 @@ import { Egress } from "../egress";
 import { roundProfile, sandboxInfo } from "../runtime/checks";
 import { OPERATING_RULES_HEADING, rulesHash, type RulesSection } from "../operating-rules";
 import { verifyImagePng, type CodexImage, type CodexImageReference } from "./codex-image";
-import { CURSOR_HOSTS, probeCursor } from "./cursor";
+import { CURSOR_HOSTS, probeCursorChecked } from "./cursor";
 import { jpegToPng } from "./jpeg";
 import { cursorLogin } from "./login";
 import { cursorNeeds, cursorRoot } from "./needs";
@@ -66,7 +66,7 @@ async function runCursorImage(input: CursorImageOptions): Promise<CursorImage> {
   if (!Number.isInteger(timeout) || timeout < 100 || timeout > 240000) throw new Error("Cursor image deadline invalid");
   if (!sandboxInfo().ok && !localUnrestricted()) throw new Error("Cursor image needs the OS sandbox");
   const bin = o.bin ?? process.env.CREW_CURSOR_BIN ?? "cursor-agent", model = o.approved.model;
-  approvedCapability((o.probe ?? probeCursor)([model], bin), model); guard();
+  approvedCapability(o.probe ? o.probe([model], bin) : await probeCursorChecked([model], bin), model); guard();
   const root = cursorRoot(), home = join(root, "h"), work = join(root, "w"), data = join(root, "d"), temp = join(root, "t");
   mkdirSync(temp, { mode: 0o700 });
   const needs = cursorNeeds(bin, CURSOR_HOSTS);
