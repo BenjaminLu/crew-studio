@@ -92,11 +92,10 @@ function msgView(m, i) {
       m.error.code === "notLoggedIn" || m.error.code === "cliUnavailable" ? h("div", { class: "faint", style: "font-size:12px" },
         loginHint(m.provider)) : null) : null);
 }
-// what fixes a CLI that is missing or not signed in, for the vendor that answered (claude when the message does not say)
+// what fixes a CLI that is missing or not signed in: Cursor's own wording when Cursor answered, else the claude wording
 const loginHint = (p) => p === "cursor" ? T("Install the Cursor CLI and add a Cursor API key (Doctor → Cursor CLI), then ask again.", "請安裝 Cursor CLI 並加入 Cursor API key（健康檢查 → Cursor CLI），再問一次。")
-  : p === "codex" ? T("Run `codex login` once in a terminal, then ask again.", "請在終端機執行一次 `codex login`，再問一次。")
   : T("Run `claude` once in a terminal and log in, then ask again.", "請在終端機執行一次 `claude` 並登入，再問一次。");
-const CLI_NAME = { cursor: "cursor-agent", codex: "codex" };
+const CLI_NAME = { cursor: "cursor-agent" };
 const errTitle = (c, p) => ({ timeout: T("No answer in time", "逾時沒有回答"), notLoggedIn: p === "cursor" ? T("Cursor has no API key for Studio", "Cursor 沒有給 Studio 用的 API key") : T(`The ${CLI_NAME[p] || "claude"} CLI is not logged in`, `${CLI_NAME[p] || "claude"} CLI 尚未登入`),
   cliUnavailable: T(`The ${CLI_NAME[p] || "claude"} CLI is not available`, `找不到 ${CLI_NAME[p] || "claude"} CLI`), tooManyTools: T("Stopped: too many lookups", "已停止：查詢次數太多"),
   busy: T("firstmate is busy", "firstmate 忙線中"), cancelled: T("Cancelled", "已取消") }[c] || T("The answer failed", "回答失敗"));

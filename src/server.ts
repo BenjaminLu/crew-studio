@@ -396,8 +396,9 @@ const nativePick = async (x: any, pick: any, context?: { role: string; explicit:
   const provider = fixture ? "stub" : !explicit && role === "reviewer" ? String(x.engine.policies.get("vendor_policy.reviewer", { project: x.engine.queueProject(x.run), workflow: x.run.def.policies }).value) : !explicit && role === "coordinator" && host ? host : pick.provider;
   // a captain whose chat vendor is Cursor (settings or CREW_CHAT_PROVIDER) and no attached host: workers pick as under a Cursor host
   const chain = host ?? (settings.provider === "cursor" ? "cursor" : null);
-  // the policy reviewer (Claude) stands in along the configured fallback only when it is not installed or not signed in
-  const alternates = !explicit && !fixture && role === "reviewer" ? fallback : undefined;
+  // under Cursor only: the policy reviewer (Claude) stands in along the configured fallback, then Cursor, only when it is not
+  // installed or not signed in; under Codex or Claude an unavailable reviewer still holds
+  const alternates = !explicit && !fixture && role === "reviewer" && chain === "cursor" ? [...fallback, "cursor"] : undefined;
   return nativeSelection({ role, host: chain, explicit: explicit || fixture || role === "reviewer", provider, alternates, model: explicit ? pick.model : configured[provider]?.model ?? null, roleModel: !explicit ? x.node.model ?? roleDef?.model ?? null : null, effort: explicit&&Object.hasOwn(pick,"effort")?pick.effort??null:configured[provider]?.effort??null, configured, fallback, known: [...choices] }, x);
 
 };
