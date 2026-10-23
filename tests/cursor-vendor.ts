@@ -365,6 +365,15 @@ try {
   const ns = await n.api("/api/main/start", { host: "cursor", confirm: true });
   ok(ns.status === 409 && ns.body?.code === "cursorKeyMissing" && (await n.api("/api/main")).body?.state === "detached" && n.calls().length === 0, "starting on Cursor without a key is refused and never falls back to another vendor", `${ns.status} ${ns.text.slice(0, 300)}`);
 
+  // no cursor-agent on this Mac and Cursor not in use: the Crew page lists Codex and Claude only; Cursor once it is in use
+  const NONE = join(TMP, "no-cursor-agent");
+  for (const [name, extra, listed] of [["plain", {}, false], ["cursor-chat", { CREW_CHAT_PROVIDER: "cursor" }, true]] as const) {
+    const c = await boot(name, { CREW_CURSOR_BIN: NONE, CREW_HOST_CURSOR_BIN: NONE, ...extra });
+    const t = await c.api("/api/team?facts=1"), ids = (t.body?.providers ?? []).map((p: any) => p.provider);
+    ok(t.status === 200 && ids.includes("codex") && ids.includes("claude") && ids.includes("cursor") === listed && (!listed || t.body.providers.find((p: any) => p.provider === "cursor")?.state === "unavailable"),
+      listed ? "Cursor as the chat vendor keeps it listed on the Crew page (unavailable: not installed)" : "without cursor-agent and with Cursor not in use, the Crew page lists Codex and Claude only", JSON.stringify(t.body?.providers ?? t.text.slice(0, 200)));
+  }
+
   // a key cursor-agent refuses: unverified everywhere, as an unverified Claude is, and Firstmate on Cursor does not start
   const BAD = "crsr_" + "9".repeat(40); // a key's shape the fixture refuses; not a credential
   const b = await boot("refused", { CURSOR_API_KEY: BAD });
