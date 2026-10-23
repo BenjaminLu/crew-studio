@@ -49,6 +49,22 @@ try{await waitUp(base,app);const{chromium}=await import(process.env.PLAYWRIGHT_M
  await p.locator('#chatLog').getByText('Hello! I am your Studio Firstmate. What would you like to make?').waitFor({timeout:15000});
  ok(true,'Start on Cursor opens Studio\'s own Firstmate on Cursor and its greeting shows in the chat');
  ok(runs().filter(r=>r.argv[0]==='create-chat').length===1&&runs().filter(r=>r.argv[0]==='-p').length===1,'one Cursor chat and one greeting turn');
+ // attachments in the chat: an image is a ready chip with no refusal; a PDF says why it cannot go (English and zh-TW) and blocks the send
+ const PNG=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==','base64'),PDF=Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n','latin1');
+ await p.setInputFiles('#chatFile',{name:'shot.png',mimeType:'image/png',buffer:PNG});
+ await p.locator('#chatAtt .att-chip[data-att="ready"][data-att-name="shot.png"]').waitFor({timeout:15000});
+ ok(await p.locator('#chatAtt [data-att-name="shot.png"] [data-att-note]').count()===0&&await p.locator('#chatAtt [data-att-name="shot.png"].is-bad').count()===0,'an image for Firstmate on Cursor is a ready chip, not refused');
+ await p.setInputFiles('#chatFile',{name:'brief.pdf',mimeType:'application/pdf',buffer:PDF});
+ const pdfNote='#chatAtt .att-chip.is-bad[data-att-name="brief.pdf"] [data-att-note="refused"]';await p.locator(pdfNote).waitFor({timeout:15000});
+ ok(/takes images but not PDFs/.test(await p.locator(pdfNote).textContent()),'a PDF chip says Firstmate on Cursor here takes images, not PDFs (English)');
+ await p.evaluate(()=>setLang('zh-TW'));await p.waitForFunction(s=>/可以接收圖片，但不能接收 PDF/.test(document.querySelector(s)?.textContent||''),pdfNote);ok(true,'the PDF chip says so in zh-TW');
+ await p.evaluate(()=>setLang('en'));
+ const turns=runs().filter(r=>r.argv[0]==='-p').length;await p.locator('#chatIn').fill('look');await p.locator('#chatIn').press('Enter');await p.waitForTimeout(600);
+ ok(runs().filter(r=>r.argv[0]==='-p').length===turns&&await p.locator('#chatAtt .att-chip').count()===2,'with the PDF staged nothing is sent and nothing is dropped');
+ await p.locator('#chatAtt [data-att-name="brief.pdf"] .att-x').click();await p.locator('#chatIn').press('Enter');
+ await p.locator('#chatLog [data-main="captain"] [data-att-sent="image"] img[alt="shot.png"]').waitFor({timeout:15000});
+ await p.waitForFunction(()=>/FIXTURE-SAW-IMAGES/.test(document.querySelector('#chatLog')?.textContent||''),null,{timeout:15000});
+ ok(runs().filter(r=>r.argv[0]==='-p').length===turns+1&&runs().at(-1).argv.includes('--image'),'without the PDF the image goes to cursor-agent and its answer shows in the chat');
  ok(!(await p.content()).includes(KEY),'the page never shows the key');
  ok(errors.length===0,'no browser errors '+errors.join('\n'));
  await api('/api/main/detach',{});await p.close();console.log(`cursor-login-ui: ${pass} passed, 0 failed`);

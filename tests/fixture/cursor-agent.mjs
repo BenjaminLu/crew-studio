@@ -6,7 +6,8 @@
 //   -p --output-format stream-json --workspace W … <text>
 //     Firstmate (W/.cursor/mcp.json's studio server reaches a native socket): the scripted Firstmate turns of
 //     tests/fixture/codex-account.mjs, its tools over that MCP server; otherwise a worker or reviewer round, the shared
-//     scripted agent (tests/acceptance/agent.mjs cursorPrint).
+//     scripted agent (tests/acceptance/agent.mjs cursorPrint). A Firstmate turn's `--image <path>` files must be images
+//     on disk; it answers FIXTURE-SAW-IMAGES with their SHA-256 prefixes.
 // Every -p run refuses a cli-config.json that does not deny the built-in Shell, Read and Write tools, except an image
 // run (its allow list names GenerateImage(*)), which must deny Shell and Read and allow nothing but GenerateImage(*) (and
 // Read(reference.png)); as the real CLI does, a Write(**) deny then refuses saving the image. Its turn lists the image
@@ -17,7 +18,7 @@
 //   CURSOR_FIXTURE_LOG  a file each run appends its argv (without the prompt) and chat id to (tests/cursor-vendor.ts)
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { cursorPrint, mcpSession } from "../acceptance/agent.mjs";
 
 const argv = process.argv.slice(2), key = process.env.CURSOR_API_KEY ?? "";
@@ -40,10 +41,17 @@ if (!server.env?.CREW_STUDIO_SOCKET) { await cursorPrint(argv); process.exit(pro
 
 // ---------- Firstmate (host) turn ----------
 const session_id = get("--resume") ?? randomUUID(), model = get("--model") ?? "composer-2.5";
-log({ argv: argv.slice(0, -1), chat: session_id, home: process.env.HOME });
+// --image <path> (repeatable): the headless prompt's images, read from disk as cursor-agent does; anything not an image fails the run
+const images = argv.flatMap((a, i) => a === "--image" ? [argv[i + 1]] : []).map((p) => {
+  let b; try { b = readFileSync(p); } catch { fail(`cursor-agent fixture: --image ${p} cannot be read`, 2); }
+  if (!(b[0] === 0x89 && b[1] === 0x50 || b[0] === 0xff && b[1] === 0xd8 || b.subarray(0, 3).toString() === "GIF" || b.subarray(8, 12).toString() === "WEBP")) fail("cursor-agent fixture: --image is not an image", 2);
+  return { path: p, sha256: createHash("sha256").update(b).digest("hex") };
+});
+log({ argv: argv.slice(0, -1), chat: session_id, home: process.env.HOME, images });
 const text = argv.at(-1).replace(/(?:\n\n\[Studio note: [^\n]*\])+$/, "");
 out({ type: "system", subtype: "init", apiKeySource: "env", cwd: get("--workspace"), session_id, model, permissionMode: "default" });
 const say = (t) => out({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: t }] }, session_id });
+if (images.length) say(`FIXTURE-SAW-IMAGES ${images.map((i) => i.sha256.slice(0, 12)).join(",")}`);
 const ask = (q, escalate, extra = {}) => ({ name: "studio_answer_agent_question", args: { task: q[1], node: q[2], visit: Number(/visit:(\d+)/.exec(text)?.[1]), escalate, ...extra } });
 let tool = null;
 try {

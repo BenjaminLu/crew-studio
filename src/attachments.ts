@@ -7,7 +7,10 @@
 //   codex   images as localImage turn input (the app-server reads the file); a PDF has no
 //           input item in the app-server protocol, so Codex gets the stored file's path in the
 //           turn text and is told it has not seen the contents unless it reads the file itself
-//   cursor  none: refused with cursorNoAttachments (cursor-agent -p takes no image input and its Read tool is denied)
+//   cursor  images as `--image <path>` on the headless prompt (cursor-agent reads the file itself, as Codex does with
+//           localImage). A PDF: in an explicit project the stored file's path in the turn text, read with cursor-agent's own
+//           Read tool (cli-config.json allows exactly that file); in Studio's own workspace its Read tool is denied, so a
+//           PDF is refused with cursorNoPdf instead of being sent as a path it cannot open
 // Retention: a file that was never sent goes after ATTACH_UNSENT_TTL_MS (an upload that was removed,
 // refused by the host, or abandoned); a sent file stays, because the chat history shows it. Stray
 // temporary files go after ATTACH_TMP_TTL_MS. Studio sweeps at start and every hour (sweep()).
@@ -40,7 +43,7 @@ export type AttachmentRef = { id: string; mime: AttachmentMime; kind: Attachment
 export type AttachmentFile = AttachmentRef & { path: string };
 
 export type AttachmentRefusalCode = "attachmentType" | "attachmentEmpty" | "attachmentTooLarge" | "attachmentCount" | "attachmentMissing"
-  | "attachmentNoHost" | "attachmentChanged" | "claudeImageTooLarge" | "claudeMessageTooLarge" | "claudeImageDimensions" | "claudePdfPages" | "cursorNoAttachments";
+  | "attachmentNoHost" | "attachmentChanged" | "claudeImageTooLarge" | "claudeMessageTooLarge" | "claudeImageDimensions" | "claudePdfPages" | "cursorNoPdf";
 export type AttachmentRefusal = { ok: false; code: AttachmentRefusalCode; reason: { en: string; "zh-TW": string } };
 /** A new file through a fresh temporary one (O_EXCL, no symlink followed), renamed into place: rename replaces a link, never writes through it. */
 function writeNew(dir: string, file: string, bytes: Uint8Array) {
@@ -247,7 +250,8 @@ export function unknownNote(f: AttachmentRef): { en: string; "zh-TW": string; wa
 }
 /** How a host gets each file, or the typed reason it cannot. Never a silent drop. */
 export type Delivery = { id: string; mode: "native" | "file"; note: { en: string; "zh-TW": string; warn?: true } | null };
-export function deliveryFor(host: "claude" | "codex" | "cursor" | null, files: AttachmentRef[]): { ok: true; deliveries: Delivery[] } | AttachmentRefusal {
+/** `cursorReads`: a Cursor Firstmate that has its own Read tool (an explicit project), so it can open a PDF itself. */
+export function deliveryFor(host: "claude" | "codex" | "cursor" | null, files: AttachmentRef[], o: { cursorReads?: boolean } = {}): { ok: true; deliveries: Delivery[] } | AttachmentRefusal {
   if (!files.length) return { ok: true, deliveries: [] };
   if (files.length > ATTACH_MAX_PER_MESSAGE) return no("attachmentCount", `At most ${ATTACH_MAX_PER_MESSAGE} files per message.`, `每則訊息最多 ${ATTACH_MAX_PER_MESSAGE} 個檔案。`);
   if (host === "claude") {
@@ -262,8 +266,11 @@ export function deliveryFor(host: "claude" | "codex" | "cursor" | null, files: A
   }
   if (host === "codex") return { ok: true, deliveries: files.map((f) => f.kind === "image" ? { id: f.id, mode: "native" as const, note: null }
     : { id: f.id, mode: "file" as const, note: { en: "Codex cannot read PDFs directly; it opens the file itself.", "zh-TW": "Codex 不能直接讀 PDF，會自己開檔。" } }) };
-  // a Cursor Firstmate's built-in Read is denied and cursor-agent -p takes no image input: refused, never sent as a path it cannot open
-  if (host === "cursor") return no("cursorNoAttachments", "Firstmate on Cursor cannot take images or PDFs. Describe the file in words, or start Firstmate on Codex or Claude to send it.", "Cursor 上的 Firstmate 不能接收圖片或 PDF。請用文字描述檔案，或改用 Codex 或 Claude 啟動 Firstmate 再傳送。");
+  if (host === "cursor") {
+    if (!o.cursorReads && files.some((f) => f.kind === "pdf")) return no("cursorNoPdf", "Firstmate on Cursor in Studio’s own workspace takes images but not PDFs: its file tools are off there. Remove the PDF or describe it in words, or start Firstmate on Codex or Claude to send it.", "在 Studio 自己的工作空間裡，Cursor 上的 Firstmate 可以接收圖片，但不能接收 PDF：它在那裡的檔案工具是關閉的。請移除 PDF 或用文字描述，或改用 Codex 或 Claude 啟動 Firstmate 再傳送。");
+    return { ok: true, deliveries: files.map((f) => f.kind === "image" ? { id: f.id, mode: "native" as const, note: null }
+      : { id: f.id, mode: "file" as const, note: { en: "Cursor opens the PDF itself with its Read tool.", "zh-TW": "Cursor 會用自己的 Read 工具開啟 PDF。" } }) };
+  }
   return no("attachmentNoHost", "Start Firstmate before sending files.", "請先啟動 Firstmate 再傳檔案。");
 }
 
@@ -289,6 +296,17 @@ export function codexInput(text: string, files: AttachmentFile[], prefix = ""): 
   return [{ type: "text", text: body, text_elements: [] }, ...images.map((f) => ({ type: "localImage", path: f.path }))];
 }
 
+/** A cursor-agent turn for one captain message: `--image <path>` per image (cursor-agent reads it itself), the text (or the
+ *  files line), a line per PDF naming the stored file, and the PDFs its Read tool must be allowed to open. Re-checks every file. */
+export function cursorInput(text: string, files: AttachmentFile[], o: { cursorReads: boolean }): { args: string[]; text: string; reads: string[] } {
+  const d = deliveryFor("cursor", files, o);
+  if (!d.ok) throw Object.assign(new Error(d.reason.en), { refusal: d });
+  for (const f of files) verifyAttachment(f);
+  const pdfs = files.filter((f) => f.kind === "pdf"), images = files.filter((f) => f.kind === "image");
+  const notes = pdfs.map((f) => `[Attached PDF "${f.name}" (${f.size} bytes): you have NOT seen its contents. The file is at ${f.path} (Studio's copy). Open it with your Read tool if you need its contents, and say so if you cannot.]`);
+  return { args: images.flatMap((f) => ["--image", f.path]), text: [text || (files.length ? filesLine(files) : ""), ...notes].filter(Boolean).join("\n\n"), reads: pdfs.map((f) => f.path) };
+}
+
 /** What a message with files but no text says, to the model and to captain-only tools. */
 export const filesLine = (files: AttachmentRef[]) => `(The captain sent ${files.length === 1 ? "a file" : `${files.length} files`} without text.)`;
 
@@ -310,7 +328,7 @@ export async function readCapped(req: Request, max: number): Promise<{ ok: true;
 }
 
 /** Upload one file: JSON {name, data: base64}. The store checks the type by magic bytes and the size cap. */
-export async function uploadAttachment(req: Request, store: AttachmentStore, host: "claude" | "codex" | null):
+export async function uploadAttachment(req: Request, store: AttachmentStore, host: "claude" | "codex" | "cursor" | null, o: { cursorReads?: boolean } = {}):
   Promise<{ status: number; body: { ok: true; attachment: AttachmentRef; delivery: Delivery | null } | (AttachmentRefusal & { error: string }) }> {
   const refuse = (status: number, r: AttachmentRefusal) => ({ status, body: { ...r, error: `${r.reason.en} / ${r.reason["zh-TW"]}` } });
   const got = await readCapped(req, ATTACH_MAX_BODY);
@@ -320,6 +338,6 @@ export async function uploadAttachment(req: Request, store: AttachmentStore, hos
   if (data === null || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) return refuse(400, no("attachmentType", "Send the file as base64 in `data`.", "請把檔案以 base64 放在 data。"));
   const put = store.put(Buffer.from(data, "base64"), b?.name);
   if (!put.ok) return refuse(put.code === "attachmentTooLarge" ? 413 : 415, put);
-  const d = host ? deliveryFor(host, [put.ref]) : null;
+  const d = host ? deliveryFor(host, [put.ref], o) : null;
   return { status: 200, body: { ok: true, attachment: put.ref, delivery: d?.ok ? d.deliveries[0] : null, ...(d && !d.ok ? { hostRefusal: { code: d.code, reason: d.reason } } : {}) } as any };
 }

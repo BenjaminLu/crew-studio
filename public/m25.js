@@ -243,7 +243,10 @@ const fmtSize = (n) => n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` :
 function attNote(a) {
   const host = MS.view?.state !== "detached" ? MS.view?.host : null, ref = a.ref;
   if (!ref) return null;
-  if (host === "cursor") return { refused: true, text: T("Firstmate on Cursor cannot take images or PDFs. Remove it, or describe the file in words.", "Cursor 上的 Firstmate 不能接收圖片或 PDF。請移除，或用文字描述檔案。") };
+  // Cursor takes images; a PDF only where its Read tool works (an explicit project), mirroring src/attachments.ts deliveryFor
+  if (host === "cursor" && ref.kind === "pdf") return MS.view?.context === "studio" ? { refused: true, text: T("Firstmate on Cursor in Studio’s own workspace takes images but not PDFs. Remove the PDF, or describe it in words.", "在 Studio 自己的工作空間裡，Cursor 上的 Firstmate 可以接收圖片，但不能接收 PDF。請移除 PDF，或用文字描述。") }
+    : { refused: false, text: T("Cursor opens the PDF itself with its Read tool.", "Cursor 會用自己的 Read 工具開啟 PDF。") };
+  if (host === "cursor") return null;
   if (host === "codex" && ref.kind === "pdf") return { refused: false, text: T("Codex cannot read PDFs directly; it opens the file itself.", "Codex 不能直接讀 PDF，會自己開檔。") };
   if (host === "claude" && ref.kind === "image" && ref.size > ATT.claudeImage) return { refused: true, text: T("Claude takes images up to 3.75 MB. Remove it or send a smaller one.", "Claude 只收 3.75 MB 以內的圖片，請移除或換小一點的。") };
   if (host === "claude" && ref.kind === "image" && Math.max(ref.width || 0, ref.height || 0) > ATT.claudeSide) return { refused: true, text: T(`Claude takes images up to ${ATT.claudeSide} px on a side (this one is ${ref.width}×${ref.height}).`, `Claude 只收每邊 ${ATT.claudeSide} px 以內的圖片（這張 ${ref.width}×${ref.height}）。`) };

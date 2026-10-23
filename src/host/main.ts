@@ -527,7 +527,7 @@ export class MainSession {
         let files: import("../attachments").AttachmentFile[] = [];
         if (item.attachments?.length) {
           const got = this.o.attachmentFiles ? this.o.attachmentFiles(item.attachments.map((a) => a.id)) : null;
-          const fit = got?.ok ? deliveryFor(this.session.host, got.files) : got;
+          const fit = got?.ok ? deliveryFor(this.session.host, got.files, { cursorReads: !this.o.nativeWorkspace }) : got;
           if (!got || !got.ok || !fit || !fit.ok) {
             const why = fit && !fit.ok ? fit : { code: "attachmentMissing" as const, reason: { en: "Studio cannot read the attached files.", "zh-TW": "Studio 讀不到附件。" } };
             this.note({ kind: "status", text: `Not sent: ${why.reason.en} / ${why.reason["zh-TW"]}`, status: "failed", attachmentRefusal: why.code, external: { ...externalError("studio", why.reason.en, { cls: "attachment", code: why.code }), reason: why.reason } });

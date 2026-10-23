@@ -59,9 +59,23 @@ console.log("secrets, attachments, processes");
   ok(["auth.json", "cli-config.json", "mcp.json", "chats", "projects"].every((f) => dirs.includes(join(h, ".cursor", f))) && cursorSecretPaths(h).every((p) => dirs.includes(p)), "Cursor's login, settings, MCP servers and chats are never readable by a check");
   ok(!dirs.includes(join(h, ".cursor")) && !dirs.some((d) => d.startsWith(join(h, ".cursor", "worktrees"))), "~/.cursor itself is not denied: a checkout under ~/.cursor/worktrees keeps working");
   const ref = (kind: "image" | "pdf") => ({ id: kind, kind, mime: kind === "image" ? "image/png" : "application/pdf", name: `a.${kind === "image" ? "png" : "pdf"}`, bytes: 10, sha256: "x" } as any);
-  const refused: any = deliveryFor("cursor", [ref("image")]), pdf: any = deliveryFor("cursor", [ref("pdf")]);
-  ok(refused.ok === false && refused.code === "cursorNoAttachments" && pdf.code === "cursorNoAttachments" && /Cursor/.test(refused.reason.en) && /Cursor/.test(refused.reason["zh-TW"]), "a file to a Cursor Firstmate is refused, in both languages");
-  ok((deliveryFor("cursor", []) as any).ok === true && (deliveryFor("codex", [ref("image")]) as any).ok === true, "no file is fine on Cursor; Codex still takes the image");
+  const image: any = deliveryFor("cursor", [ref("image")]), pdf: any = deliveryFor("cursor", [ref("pdf")]), mixed: any = deliveryFor("cursor", [ref("image"), ref("pdf")]);
+  ok(image.ok === true && JSON.stringify(image.deliveries) === JSON.stringify([{ id: "image", mode: "native", note: null }]), "an image goes to a Cursor Firstmate as its own image input", JSON.stringify(image));
+  ok(pdf.ok === false && pdf.code === "cursorNoPdf" && mixed.code === "cursorNoPdf" && /Cursor/.test(pdf.reason.en) && /PDF/.test(pdf.reason.en) && /PDF/.test(pdf.reason["zh-TW"]) && /工作空間/.test(pdf.reason["zh-TW"]),
+    "in Studio's own workspace a PDF (alone or beside an image) is refused, never dropped, in both languages", JSON.stringify(pdf));
+  const read: any = deliveryFor("cursor", [ref("image"), ref("pdf")], { cursorReads: true });
+  ok(read.ok === true && read.deliveries[0].mode === "native" && read.deliveries[1].mode === "file" && /Read/.test(read.deliveries[1].note.en) && /Read/.test(read.deliveries[1].note["zh-TW"]), "a Cursor Firstmate with its own Read tool gets a PDF as a file it opens", JSON.stringify(read));
+  ok((deliveryFor("cursor", []) as any).ok === true, "no file is fine on Cursor");
+  // Codex and Claude take files exactly as before Cursor took any (the cursorReads option is Cursor's only)
+  const big = { ...ref("image"), size: 4_000_000 };
+  const before = JSON.stringify([deliveryFor("codex", [ref("image"), ref("pdf")]), deliveryFor("claude", [ref("image"), ref("pdf")]), deliveryFor("claude", [big]), deliveryFor(null, [ref("image")])]);
+  const withOpt = JSON.stringify([deliveryFor("codex", [ref("image"), ref("pdf")], { cursorReads: true }), deliveryFor("claude", [ref("image"), ref("pdf")], { cursorReads: true }), deliveryFor("claude", [big], { cursorReads: true }), deliveryFor(null, [ref("image")], { cursorReads: true })]);
+  ok(before === withOpt && before === JSON.stringify([
+    { ok: true, deliveries: [{ id: "image", mode: "native", note: null }, { id: "pdf", mode: "file", note: { en: "Codex cannot read PDFs directly; it opens the file itself.", "zh-TW": "Codex 不能直接讀 PDF，會自己開檔。" } }] },
+    { ok: true, deliveries: [{ id: "image", mode: "native", note: { en: "Image size unknown — Claude refuses images over 8000 px on a side.", "zh-TW": "讀不出圖片尺寸——Claude 會拒收每邊超過 8000 px 的圖片。", warn: true } }, { id: "pdf", mode: "native", note: { en: "Page count unknown — Claude refuses PDFs over 100 pages.", "zh-TW": "讀不出頁數——Claude 會拒收超過 100 頁的 PDF。", warn: true } }] },
+    { ok: false, code: "claudeImageTooLarge", reason: { en: "Claude takes images up to 3.75 MB; a.png is larger. Studio does not shrink or drop it.", "zh-TW": "Claude 只收 3.75 MB 以內的圖片；a.png 太大。Studio 不會縮小或略過它。" } },
+    { ok: false, code: "attachmentNoHost", reason: { en: "Start Firstmate before sending files.", "zh-TW": "請先啟動 Firstmate 再傳檔案。" } },
+  ]), "Codex and Claude attachments are unchanged", before);
   ok(isVendorProcess("cursor-agent -p --resume abc") && isVendorProcess("/opt/tools/bin/cursor-agent --resume abc") && !isVendorProcess("cat cursor-agent.log"), "a running cursor-agent is a vendor process");
   ok(/^cursor-agent process 4242/.test(driving({ list: () => [{ pid: 4242, command: "cursor-agent --resume chat-123456", cwd: null }] }, { host: "cursor", id: "chat-123456", cwd: "/x", file: null, newestInDir: false }, new Set()) ?? ""), "a terminal's cursor-agent on the same chat is named as cursor-agent");
 }
@@ -136,6 +150,25 @@ try {
   ok(/studio_staffing_facts/.test(log) && /cursor/.test(log) && !/studio_staffing_facts[^]*?(unknown_tool|is not allowed)/.test(log), "the turn reached Studio's native tool through the private MCP server", log.slice(-600));
   const lines = (await view()).log ?? [];
   ok(lines.filter((e: any) => e.kind === "firstmate").length === 1 && lines.every((e: any) => e.kind !== "firstmate" || String(e.text ?? "").trim()), "a turn that only calls a tool adds no empty Firstmate line", JSON.stringify(lines.filter((e: any) => e.kind === "firstmate")).slice(0, 300));
+
+  // attachments: an image reaches cursor-agent as --image <Studio's stored file>; a PDF is refused in Studio's own workspace
+  const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+  const PDF = Buffer.from("%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 1 >>\nendobj\ntrailer\n<< /Root 1 0 R >>\nstartxref\n0\n%%EOF\n", "latin1");
+  const upImg = await s.api("/api/main/attachments", { name: "shot.png", data: PNG.toString("base64") });
+  ok(upImg.status === 200 && upImg.body?.delivery?.mode === "native" && !upImg.body?.hostRefusal, "uploading an image to a Cursor Firstmate is accepted as image input", upImg.text.slice(0, 300));
+  const upPdf = await s.api("/api/main/attachments", { name: "brief.pdf", data: PDF.toString("base64") });
+  ok(upPdf.status === 200 && upPdf.body?.hostRefusal?.code === "cursorNoPdf", "uploading a PDF says at once that this Cursor Firstmate cannot take it", upPdf.text.slice(0, 300));
+  const turnsBefore = s.calls().filter((c) => c.argv[0] === "-p").length;
+  const pdfSend = await s.api("/api/main/send", { text: "read this", attachments: [upImg.body.attachment.id, upPdf.body.attachment.id] });
+  ok(pdfSend.status === 409 && pdfSend.body?.code === "cursorNoPdf" && /PDF/.test(pdfSend.body?.reason?.["zh-TW"] ?? ""), "a message with a PDF is not queued: a typed refusal, never a silent drop", pdfSend.text.slice(0, 300));
+  const imgSend = await s.api("/api/main/send", { text: "what is in this picture?", attachments: [upImg.body.attachment.id] });
+  ok(imgSend.status === 200 && imgSend.body?.deliveries?.[0]?.mode === "native", "a message with an image is queued", imgSend.text.slice(0, 300));
+  await until(async () => s.calls().filter((c) => c.argv[0] === "-p").length > turnsBefore && !(await view()).busy);
+  const imgTurn = s.calls().filter((c) => c.argv[0] === "-p").at(-1);
+  const sha = upImg.body.attachment.id, at = imgTurn?.argv.indexOf("--image");
+  ok(s.calls().filter((c) => c.argv[0] === "-p").length === turnsBefore + 1 && at > 0 && imgTurn.argv[at + 1].endsWith(`${sha}.png`) && imgTurn.images?.[0]?.sha256 === sha && imgTurn.argv[imgTurn.argv.indexOf("--resume") + 1] === chat,
+    "the image turn gives cursor-agent the stored file with --image, on the same chat", JSON.stringify(imgTurn).slice(0, 500));
+  ok(await until(said(new RegExp(`FIXTURE-SAW-IMAGES ${sha.slice(0, 12)}`))), "cursor-agent saw exactly the captain's image");
 
   const n = await boot("keyless", {});
   const nd = (await n.api("/api/doctor")).body?.items ?? [], nl = nd.find((i: any) => i.id === "round-login-cursor");

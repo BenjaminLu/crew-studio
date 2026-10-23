@@ -14,6 +14,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { dropPrivateDir, nativeEndpoint, privateDir } from "./claude";
+import { cursorInput } from "../attachments";
 import { binArgv } from "./jsonl";
 import { nativeToolError } from "./native-errors";
 import { NativeToolFailure, cleanEnv, shortSummary, type AttachedSession, type Host, type HostEvent } from "./types";
@@ -107,12 +108,14 @@ export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-age
         get file() { return null; },
         send(text, files = []) {
           if (busy) return Promise.reject(new Error("BUSY"));
-          if (files.length) return Promise.reject(Object.assign(new Error("Firstmate on Cursor cannot take images or PDFs."), { refusal: { ok: false, code: "cursorNoAttachments", reason: { en: "Firstmate on Cursor cannot take images or PDFs.", "zh-TW": "Cursor 上的 Firstmate 不能接收圖片或 PDF。" } } }));
+          // attachments: images as --image (cursor-agent reads the file itself); a PDF only where its Read tool works (src/attachments.ts)
+          let input: ReturnType<typeof cursorInput>;
+          try { input = cursorInput(text, files, { cursorReads: false }); } catch (e) { return Promise.reject(e); }
           busy = true; turnSeq++;
           return new Promise((resolve) => {
             turn = { resolve };
             let reply = "", ended = false;
-            const args = ["-p", "--output-format", "stream-json", "--trust", "--approve-mcps", "--sandbox", "disabled", "--workspace", ws, ...(model ? ["--model", model] : []), ...(chatId ? ["--resume", chatId] : []), text];
+            const args = ["-p", "--output-format", "stream-json", "--trust", "--approve-mcps", "--sandbox", "disabled", "--workspace", ws, ...(model ? ["--model", model] : []), ...(chatId ? ["--resume", chatId] : []), ...input.args, input.text];
             let r: ReturnType<typeof run>;
             try {
               r = run(args, (m) => {

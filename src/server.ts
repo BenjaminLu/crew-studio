@@ -731,7 +731,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       try { return json({ host, project: PROJECT, sessions: await main.discover(host) }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 500); }
     }
     // chat attachments: one file per upload (JSON, base64), read capped; the bytes come back only to this Mac's session or a paired phone
-    if (p === "/api/main/attachments" && writing) { const r = await uploadAttachment(req, chatFiles, main.view().state === "detached" ? null : main.view().host); return json(r.body, r.status); }
+    if (p === "/api/main/attachments" && writing) { const v = main.view(), r = await uploadAttachment(req, chatFiles, v.state === "detached" ? null : v.host, { cursorReads: v.context !== "studio" }); return json(r.body, r.status); }
     { const am = /^\/api\/main\/attachments\/([a-f0-9]{64})$/.exec(p);
       if (am && !writing) {
         if (who.kind === "desktop" && !hasSession(req, SESSION)) return json({ error: "Studio session required" }, 401);
@@ -751,7 +751,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
         const v = main.view();
         if (v.state === "detached") return json({ error: "no main session is attached", code: "detached" }, 409);
         // the host that runs the turn must take every file, or nothing is queued: a typed refusal the chat shows
-        const fit = deliveryFor(v.host, files.files);
+        const fit = deliveryFor(v.host, files.files, { cursorReads: v.context !== "studio" });
         if (!fit.ok) return json({ ...fit, error: `${fit.reason.en} / ${fit.reason["zh-TW"]}` }, 409);
         chatFiles.markSent(files.files.map((f) => f.id));
         return json({ queued: main.enqueue("chat", text, who.kind === "phone" ? `phone:${who.device.name}` : "desktop", files.files.map(({ path, ...ref }) => ref)), deliveries: fit.deliveries });

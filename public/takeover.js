@@ -136,7 +136,7 @@ function startCursorCard(d,phone){
  if(!CURSOR.loading&&(!CURSOR.loaded||(CURSOR.ready===null&&!CURSOR.readyAsked))){CURSOR.readyAsked=true;void cursorRefresh();}
  const ready=cursorReady(),others=(ACCOUNT.view||d.codex?.account||{}).state==="ready"||claudeReady(),acc=cursorAccountParts(),c=d.cursor||CURSOR.view||{};
  return h("section",{class:"card tk-drive","data-section":"start-cursor","data-cursor-ready":String(ready),...acc.attrs},h("h2",{},T("Firstmate on Cursor","Cursor 上的 Firstmate")),
-  h("p",{class:"muted",style:"margin:0"},T("A fresh Firstmate in Studio’s own workspace. It works through Studio’s own tools only; it cannot take images or PDFs.","在 Studio 自己的工作空間開啟全新的 Firstmate。它只透過 Studio 自己的工具工作，不能接收圖片或 PDF。")),
+  h("p",{class:"muted",style:"margin:0"},T("A fresh Firstmate in Studio’s own workspace. It works through Studio’s own tools only; it takes images, not PDFs.","在 Studio 自己的工作空間開啟全新的 Firstmate。它只透過 Studio 自己的工具工作；可以接收圖片，但不能接收 PDF。")),
   h("div",{class:"tk-kv"},kvRow(T("Folder","資料夾"),h("span",{class:"mono"},d.project)),kvRow(T("Model · effort","模型 · 推理強度"),h("span",{"data-cursor-config":"1"},`${c.model||T("Cursor default","Cursor 預設")} · ${T("none","無")} `,h("span",{class:"faint"},T("(signs in with the crew’s Cursor API key)","（用 crew 的 Cursor API key 登入）")))),kvRow(T("Account","帳號"),acc.status)),
   acc.how,cursorWhy(),
   h("div",{class:"actions"},h("button",{class:ready&&!others?"btn primary":"btn",id:"startCursorBtn","data-cursor-start":"1",disabled:phone||!ready||ACCOUNT.starting||(MS.view||d.view)?.state!=="detached"||null,onclick:()=>continueNative({project:d.project},"cursor")},T("Start on Cursor","在 Cursor 上開始")),...acc.buttons));
