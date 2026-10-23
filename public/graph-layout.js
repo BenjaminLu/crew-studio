@@ -415,7 +415,7 @@
       for (const n of lost) extra.add(n.id);
     }
     const nodes = def.nodes.filter((n) => keep.has(n.id));
-    const edges = []; for (const e of fwd) if (keep.has(e.from) && keep.has(e.to) && !edges.some((x) => x.from === e.from && x.to === e.to)) edges.push({ from: e.from, to: e.to, when: e.when, checks: def.edges[e.i]?.checks, i: e.i });
+    const edges = []; for (const e of fwd) if (keep.has(e.from) && keep.has(e.to) && !(def.edges[e.i].from !== e.from && keep.has(def.edges[e.i].from)) && !edges.some((x) => x.from === e.from && x.to === e.to)) edges.push({ from: e.from, to: e.to, when: e.when, checks: def.edges[e.i]?.checks, i: e.i });
     // Preserve exact original edge identities/conditions/checks around those steps, including loops/back edges.
     for (const [i, e] of def.edges.entries()) if ((extra.has(e.from) || extra.has(e.to)) && keep.has(e.from) && keep.has(e.to) && !edges.some((x) => x.i === i)) edges.push({ ...e, i });
     return { def: { ...def, nodes, edges: edges.map(({ i, ...x }) => x) }, edgeIndex: edges.map((e) => e.i), badges, disconnected: [...disconnected], hidden: def.nodes.filter((n) => !keep.has(n.id)).map((n) => n.id) };

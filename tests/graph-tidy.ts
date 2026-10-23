@@ -188,6 +188,9 @@ await section("layout modes", async () => {
   ok(JSON.stringify(editor.nodes.flatMap((n:any)=>n.members).sort())===JSON.stringify(disconnected.nodes.map((n:any)=>n.id).sort())&&JSON.stringify([...(editor.disconnected||[])].sort())==='["cycle-a","cycle-b","refine"]',"editable Overview retains all disconnected cyclic/loop component IDs");
   ok(JSON.stringify(editor.edges.flatMap((e:any)=>e.index).sort())===JSON.stringify(disconnected.edges.map((_:any,i:number)=>i)),"editable Overview: disconnected parallel conditions, checks, back/loop edges retain every original index");
   ok(!Object.values(editor.badges).flat().some((b:any)=>b.loop==="refine"),"visible disconnected loop is not also folded into a duplicate badge");
+  const passLoop:any={id:"pass-loop",nodes:[{id:"start",kind:"hook",do:"note",label:"Entry"},{id:"prod",kind:"hook",do:"note",label:"Produce"},{id:"fix",kind:"loop",label:"Fix",args:{producer:"prod"}},{id:"done",kind:"hook",do:"note",label:"Done"}],edges:[{from:"start",to:"prod"},{from:"fix",to:"prod",when:"retry"},{from:"fix",to:"done",when:"pass"}]};
+  const passView=L.layoutSimple(passLoop,{keepDisconnected:true}),passEdge=passView.edges.find((e:any)=>e.index.includes(2));
+  ok(passEdge?.from==="fix"&&passEdge?.to==="done"&&!passView.edges.some((e:any)=>e.from==="prod"&&e.to==="done"),"a drawn disconnected loop's pass edge is drawn from the loop, not from its producer",JSON.stringify(passView.edges.map((e:any)=>[e.from,e.to,e.index])));
   const folded=L.layoutSimple(disconnected,{keepDisconnected:true,collapsed:["repair"]});
   ok(folded.nodes.some((n:any)=>n.kind==="stage"&&n.members.includes("cycle-a")&&n.members.includes("cycle-b")),"collapsed disconnected members retain an explicit expandable stage representation");
   for(const [mode,opts] of [["Overview",{keepDisconnected:true}],["Show all connections",{actualGraph:true}],["run Overview",{}]] as [string,any][]){
