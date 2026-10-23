@@ -46,12 +46,14 @@ export function spawnJsonl(argv: string[], cwd: string, env: Record<string, stri
 
 export const isScript = (bin: string) => /\.(mjs|js|ts)$/.test(bin);
 export const binArgv = (bin: string, args: string[]) => (isScript(bin) ? [process.execPath, bin, ...args] : [bin, ...args]);
+/** A cursor-agent child's environment without what ties it to another cursor-agent or terminal session: Studio started inside a
+ *  persistent session (CURSOR_AGENT_PERSIST_SESSION, tmux's TMUX*) would make cursor-agent ignore SIGINT and SIGTERM (its y1())
+ *  and rebind chats in the user's /tmp/cursor-agent-persist-<uid>; started by a cursor-agent, its CURSOR_AGENT_* (socket, chat,
+ *  worker, store …), CURSOR_CONVERSATION_ID and CURSOR_REQUEST_ID belong to that agent's chat. Studio sets none of these; the
+ *  variables it does set (CURSOR_API_KEY, CURSOR_DATA_DIR, AGENT_CLI_CREDENTIAL_STORE …) pass. */
+export const cursorEnv = (env: Record<string, string>): Record<string, string> => Object.fromEntries(Object.entries(env).filter(([k]) => !/^(TMUX(_|$)|CURSOR_AGENT_|CURSOR_(CONVERSATION|REQUEST)_ID$)/.test(k)));
 /** cursor-agent's prompt operand, placed after `--`: its option parser stops there, but cursor-agent also scans the raw argv for
  *  some flags (--statsig-overrides, --disable-project-configs), so the operand never starts with "-" either; and a lone word
  *  operand naming one of its subcommands (worker, update, logout, about …) runs that subcommand even after `--`, so a prompt
  *  with no whitespace in it never stands alone either. */
-/** A cursor-agent child's environment without the variables that tie it to a terminal's persistent session: Studio started inside
- *  one (CURSOR_AGENT_PERSIST_SESSION, tmux's TMUX*) would make cursor-agent ignore SIGINT and SIGTERM (its y1()), and rebind
- *  chats in the user's /tmp/cursor-agent-persist-<uid>. */
-export const cursorEnv = (env: Record<string, string>): Record<string, string> => Object.fromEntries(Object.entries(env).filter(([k]) => !/^(TMUX(_|$)|CURSOR_AGENT_(PERSIST|TMUX))/.test(k)));
 export const cursorPrompt = (text: string) => (/^-|^\S+$/.test(text) ? ` ${text}` : text);
