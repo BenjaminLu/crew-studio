@@ -68,7 +68,7 @@
     "test:native-backbone": "bun tests/native-backbone-integration.ts",
     "test:workflow-create": "bun tests/native-workflow-create.ts && node tests/sidebar-workflow-create-ui.mjs",
     "test:codex-image": "bun tests/egress-start.ts && bun tests/codex-image.ts",
-    "test:cursor-image": "bun tests/cursor-image.ts",
+    "test:cursor-image": "bun tests/cursor-image.ts && bun tests/jpeg-hostile.ts",
     "test:codex-independent-login": "bun tests/codex-independent-login.ts && bun tests/codex-default-account.ts && node tests/codex-independent-login-ui.mjs",
     "launch": "bun src/main.ts launch",
     "test:launch": "bun tests/launch.ts",

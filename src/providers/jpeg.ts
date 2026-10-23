@@ -124,12 +124,12 @@ function idct(b: Float64Array, t: Float64Array) {
 
 /** One scan's entropy-coded data, from `start` to its next non-restart marker; returns that marker's position. */
 function decodeScan(d: Uint8Array, start: number, f: { mcusPerLine: number; mcusPerColumn: number; progressive: boolean }, comps: Component[], resetInterval: number, ss: number, se: number, ah: number, al: number): number {
-  let pos = start, bits = 0, count = 0, atMarker = false, eobrun = 0, acState = 0, acNext = 0;
+  let pos = start, bits = 0, count = 0, eobrun = 0, acState = 0, acNext = 0, rst = 0;
+  // a scan's (or restart interval's) data holds every one of its blocks: reading on into a marker or the end is refused
   const bit = (): number => {
     if (count) return (bits >> --count) & 1;
-    if (atMarker || pos >= d.length) { atMarker = true; return 0; }
-    bits = d[pos];
-    if (bits === 0xff) { if (d[pos + 1] === 0) pos += 2; else { atMarker = true; return 0; } } else pos++;
+    if (pos >= d.length || (d[pos] === 0xff && d[pos + 1] !== 0)) bad("scan data ends before its last block");
+    bits = d[pos]; pos += bits === 0xff ? 2 : 1;
     count = 7; return (bits >> 7) & 1;
   };
   const receive = (n: number) => { let v = 0; while (n--) v = (v << 1) | bit(); return v; };
@@ -180,11 +180,11 @@ function decodeScan(d: Uint8Array, start: number, f: { mcusPerLine: number; mcus
       const mr = Math.floor(mcu / f.mcusPerLine), mc = mcu % f.mcusPerLine;
       for (const c of comps) for (let v = 0; v < c.v; v++) for (let h = 0; h < c.h; h++) block(c, ((mr * c.v + v) * c.stride + mc * c.h + h) * 64);
     }
-    // the bit reader stops at a marker: a restart marker continues the scan, any other ends it
-    count = 0; atMarker = false;
+    // past the interval's padding: blocks left means the next restart marker in sequence, none left means the scan ends
+    count = 0;
     while (pos + 1 < d.length && !(d[pos] === 0xff && d[pos + 1] !== 0 && d[pos + 1] !== 0xff)) pos++;
     if (pos + 1 >= d.length) bad("scan is truncated");
-    if (d[pos + 1] >= 0xd0 && d[pos + 1] <= 0xd7 && mcu < total) { pos += 2; continue; }
+    if (mcu < total) { if (d[pos + 1] !== 0xd0 + (rst++ & 7)) bad("restart marker is missing or out of order"); pos += 2; continue; }
     return pos;
   }
 }
