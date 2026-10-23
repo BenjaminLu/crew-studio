@@ -204,7 +204,8 @@ export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-age
           if (proc) { const p = proc; proc = null; kill(p); await Promise.race([new Promise((r) => p.once("exit", r)), Bun.sleep(3000)]); kill(p, "SIGKILL"); }
           drop();
           endTurn("interrupted");
-          return CURSOR_TAKEOVER_REFUSED;
+          // no terminal can resume a Studio-made Cursor chat: there is no resume command to hand back
+          return "";
         },
       };
       return session;

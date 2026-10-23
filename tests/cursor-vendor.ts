@@ -195,7 +195,8 @@ console.log("the host in an explicit project: the project folder only");
   rmSync(join(proj, ".claude"), { recursive: true, force: true });
   ok(runs.length === 1 && runs[0].argv[runs[0].argv.indexOf("--workspace") + 1] === ws && runs[0].argv[runs[0].argv.indexOf("--sandbox") + 1] === "enabled" && !runs[0].argv.includes("--approve-mcps") && !runs[0].argv.includes("--force") && runs[0].home !== process.env.HOME,
     "the project is the workspace, cursor-agent's sandbox is on, never --force, no MCP server auto-approved, a private home", JSON.stringify(runs[0]?.argv));
-  await s.detach(); delete process.env.CURSOR_FIXTURE_LOG;
+  const resume = await s.detach(); delete process.env.CURSOR_FIXTURE_LOG;
+  ok(resume === "", "stopping it hands back no resume command", JSON.stringify(resume));
   ok(!existsSync(join(proj, ".cursor")), "Studio wrote nothing into the project's .cursor/");
 }
 
