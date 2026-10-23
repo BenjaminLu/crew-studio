@@ -7,8 +7,8 @@
 //    dropped when its value equals the one a .env file in the working directory or the repository root
 //    gives it, BUN_OPTIONS and the mark included (a .env-sourced BUN_OPTIONS or mark is never trusted).
 //    It also clears the operator keys (CREW_LOCAL_UNRESTRICTED, CREW_LOCAL_DEPENDENCY_ROOT, CREW_DATA,
-//    CREW_PORT, CREW_GH) even when the shell exported them: a test that needs one sets it itself, in the
-//    env it passes its child.
+//    CREW_PORT, CREW_GH) and the real Cursor key (CURSOR_API_KEY) even when the shell exported them: a test
+//    that needs one sets it itself, in the env it passes its child.
 // 2. BUN_OPTIONS (what is left of it) loses every --env-file flag and gains --no-env-file, so every bun
 //    child (bun src/server.ts, bun src/main.ts, helpers) inherits "do not load .env" with the rest of the env.
 // 3. CREW_TEST_ENV_ISOLATED (a per-run token the guard sets) tells a child test entry that its parent
@@ -83,6 +83,8 @@ export function dotenvValues(dirs = [process.cwd(), repo]) {
 }
 
 const OPERATOR = ["CREW_LOCAL_UNRESTRICTED", "CREW_LOCAL_DEPENDENCY_ROOT", "CREW_DATA", "CREW_PORT", "CREW_GH"];
+// a vendor key the operator's shell exports (a real Cursor account): a test that needs a key passes its fixture key itself
+const VENDOR_KEYS = ["CURSOR_API_KEY"];
 const RESTART = "CREW_TEST_RESTARTED_BY";
 const env = process.env;
 const isBun = typeof globalThis.Bun !== "undefined";
@@ -111,7 +113,7 @@ const loaded = isBun && !launchOpts.includes(NO_ENV) && (found.size > 0 || launc
 let dropped = 0;
 const drop = (k) => { if (env[k] !== undefined) { delete env[k]; dropped++; } };
 if (!trusted || loaded) for (const k of found.keys()) if (!KEEP.has(k) && fromDotenv(k)) drop(k);
-if (!trusted) for (const k of OPERATOR) drop(k);
+if (!trusted) for (const k of [...OPERATOR, ...VENDOR_KEYS]) drop(k);
 // recomputed after the drop: what is left of BUN_OPTIONS, without any --env-file, plus --no-env-file
 const kept = []; const rest = flags(env.BUN_OPTIONS); let strippedEnvFile = false;
 for (let i = 0; i < rest.length; i++) { if (isEnvFileFlag(rest[i])) { strippedEnvFile = true; if (rest[i] === "--env-file") i++; continue; } if (rest[i] !== NO_ENV) kept.push(rest[i]); }
