@@ -95,10 +95,16 @@ export const INSTALLERS: Record<string, Record<string, Method[]>> = {
 };
 
 /** Vendor login flows: Studio starts or links them, never sees the credentials. */
+/** Where a Cursor round's key comes from (src/providers/login.ts cursorLogin), keychain first. */
+const CURSOR_KEY_ORDER = "Studio looks for the key in this order: the keychain item crew-studio-cursor-api-key, the keychain item firstmate-cursor-api-key, ~/.config/crew-studio/cursor-api-key, and only then CURSOR_API_KEY in Studio's environment.";
+const CURSOR_KEY_ORDER_ZH = "Studio 依序尋找金鑰：鑰匙圈項目 crew-studio-cursor-api-key、鑰匙圈項目 firstmate-cursor-api-key、~/.config/crew-studio/cursor-api-key，最後才使用 Studio 環境中的 CURSOR_API_KEY。";
+/** The Doctor's zh-TW name for a cursorLogin source (the source names where the key is, never the key). */
+const cursorSourceZh = (s = "") => s.replace(/^the crew's Cursor API key \(keychain item ([\w-]+)\)$/, "船員的 Cursor API 金鑰（鑰匙圈項目 $1）")
+  .replace(/^the crew's Cursor API key \((~\/[^)]+)\)$/, "船員的 Cursor API 金鑰（$1）").replace(/^CURSOR_API_KEY in Studio's environment$/, "Studio 環境中的 CURSOR_API_KEY");
 export const LOGINS: Record<string, { label: string; argv?: string[]; url?: string; note: string }> = {
   claude: { label: "Sign in to Claude", url: "https://claude.ai/login", note: "Studio runs the official `claude auth login`, which opens your browser. Studio never sees the credentials." },
   codex: { label: "Log in to Codex", argv: ["codex", "login"], url: "https://chatgpt.com/auth/login", note: "Studio owns the official Codex browser sign-in; no terminal session is required." },
-  cursor: { label: "Add a Cursor API key", url: "https://cursor.com/dashboard?tab=integrations", note: "Create an API key in the Cursor dashboard (Integrations), then keep it for the crew in the keychain: security add-generic-password -s crew-studio-cursor-api-key -a \"$USER\" -w (or ~/.config/crew-studio/cursor-api-key, mode 600). Studio never shows the key; cursor-agent's own browser login is not used by rounds." },
+  cursor: { label: "Add a Cursor API key", url: "https://cursor.com/dashboard?tab=integrations", note: "Create an API key in the Cursor dashboard (Integrations), then keep it for the crew in the keychain: security add-generic-password -s crew-studio-cursor-api-key -a \"$USER\" -w (or ~/.config/crew-studio/cursor-api-key, mode 600). Studio reads the keychain first; CURSOR_API_KEY in Studio's environment is used only when no keychain item or key file is found. Studio never shows the key; cursor-agent's own browser login is not used by rounds." },
   tailscale: { label: "Sign in to Tailscale", argv: ["open", "-a", "Tailscale"], url: "https://login.tailscale.com", note: "Opens the Tailscale app; sign in there." },
 };
 
@@ -245,11 +251,11 @@ export function diagnose(i: DoctorInput): Item[] {
   const cl = i.cursorLogin;
   if (cl && cursorV) items.push({ id: "round-login-cursor", title: "Cursor API key handed to rounds", titleZh: "交給回合的 Cursor API 金鑰", status: cl.ok ? "ok" : "missing",
     detail: cl.ok ? `Cursor rounds get ${cl.source} as their one credential (CURSOR_API_KEY); cursor-agent's own keychain login is never used.` : `Cursor rounds are refused: ${cl.error}`,
-    detailZh: cl.ok ? "Cursor 回合只拿到這把 API 金鑰（CURSOR_API_KEY）；不使用 cursor-agent 自己的鑰匙圈登入。" : "Cursor 回合會被拒絕：找不到可用的 Cursor API 金鑰。",
-    adds: "How Cursor rounds sign in: Studio reads the crew's Cursor API key outside the sandbox and hands the round only that key.",
-    addsZh: "Cursor 回合如何登入：Studio 在沙箱外讀取船員的 Cursor API 金鑰，只把這把金鑰交給回合。",
-    fix: cl.ok ? "" : "Create a Cursor API key in the Cursor dashboard, then: security add-generic-password -s crew-studio-cursor-api-key -a \"$USER\" -w (or ~/.config/crew-studio/cursor-api-key, mode 600).",
-    fixZh: cl.ok ? "" : "在 Cursor 後台建立 API 金鑰，再執行：security add-generic-password -s crew-studio-cursor-api-key -a \"$USER\" -w（或 ~/.config/crew-studio/cursor-api-key，權限 600）。",
+    detailZh: cl.ok ? `Cursor 回合只拿到這把 API 金鑰（CURSOR_API_KEY），來源：${cursorSourceZh(cl.source)}；不使用 cursor-agent 自己的鑰匙圈登入。` : "Cursor 回合會被拒絕：找不到可用的 Cursor API 金鑰。",
+    adds: `How Cursor rounds sign in: Studio reads the crew's Cursor API key outside the sandbox and hands the round only that key. ${CURSOR_KEY_ORDER}`,
+    addsZh: `Cursor 回合如何登入：Studio 在沙箱外讀取船員的 Cursor API 金鑰，只把這把金鑰交給回合。${CURSOR_KEY_ORDER_ZH}`,
+    fix: cl.ok ? "" : `Create a Cursor API key in the Cursor dashboard, then: security add-generic-password -s crew-studio-cursor-api-key -a "$USER" -w (or ~/.config/crew-studio/cursor-api-key, mode 600). ${CURSOR_KEY_ORDER}`,
+    fixZh: cl.ok ? "" : `在 Cursor 後台建立 API 金鑰，再執行：security add-generic-password -s crew-studio-cursor-api-key -a "$USER" -w（或 ~/.config/crew-studio/cursor-api-key，權限 600）。${CURSOR_KEY_ORDER_ZH}`,
     action: cl.ok ? { kind: "none" } : { kind: "login", item: "cursor" } } as any);
   // the fresh Claude Firstmate's configured permission mode (auto unless the operator sets CREW_CLAUDE_PERMISSION_MODE in env or .env),
   // the captain's autoMode rules Studio copies into it, and whether it runs in local unrestricted mode

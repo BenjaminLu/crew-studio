@@ -53,6 +53,46 @@ console.log("capability and the crew's key");
   rmSync(join(dir, "cursor-api-key"));
 }
 
+console.log("the key's source: the keychain first, CURSOR_API_KEY in Studio's environment last");
+// a stand-in security(1) answering from files (never the operator's keychain); the keys are fixture-shaped, not credentials
+const KC = join(TMP, "keychain"), KC_TOOL = join(TMP, "security"); mkdirSync(KC);
+writeFileSync(KC_TOOL, `#!/bin/sh\nsvc=; prev=; for a in "$@"; do [ "$prev" = -s ] && svc="$a"; prev="$a"; done\n[ -f "${KC}/$svc" ] && { cat "${KC}/$svc"; exit 0; }\nexit 44\n`, { mode: 0o755 });
+const KC_KEY = "crsr_acceptance" + "1".repeat(49), V1_KEY = "crsr_acceptance" + "2".repeat(49), FILE_KEY = "crsr_acceptance" + "3".repeat(49);
+const sha12 = (v: string) => new Bun.CryptoHasher("sha256").update(v).digest("hex").slice(0, 12);
+{
+  const dir = join(process.env.HOME!, ".config", "crew-studio"), file = join(dir, "cursor-api-key"); mkdirSync(dir, { recursive: true });
+  process.env.CREW_KEYCHAIN_TOOL = KC_TOOL; process.env.CURSOR_API_KEY = KEY;
+  writeFileSync(join(KC, "crew-studio-cursor-api-key"), KC_KEY + "\n"); writeFileSync(join(KC, "firstmate-cursor-api-key"), V1_KEY + "\n");
+  writeFileSync(file, FILE_KEY + "\n", { mode: 0o600 }); chmodSync(file, 0o600);
+  const pick = () => { const r = cursorLogin(), p = cursorLogin({ probe: true }); return { key: r.ok ? r.env.CURSOR_API_KEY : null, source: r.ok ? r.source : r.error, probe: p.ok ? p.source : p.error, warn: r.ok ? r.warn : null }; };
+  const shown = (g: ReturnType<typeof pick>) => JSON.stringify({ key: g.key ? sha12(g.key) : null, source: g.source, probe: g.probe });
+  let got = pick();
+  ok(got.key === KC_KEY && got.source === "the crew's Cursor API key (keychain item crew-studio-cursor-api-key)" && got.probe === got.source,
+    "the keychain item crew-studio-cursor-api-key wins over firstmate's item, the key file and a different CURSOR_API_KEY in Studio's environment", shown(got));
+  rmSync(join(KC, "crew-studio-cursor-api-key")); got = pick();
+  ok(got.key === V1_KEY && got.source === "the crew's Cursor API key (keychain item firstmate-cursor-api-key)" && got.probe === got.source, "then firstmate v1's keychain item, still before the key file and the environment", shown(got));
+  rmSync(join(KC, "firstmate-cursor-api-key")); got = pick();
+  ok(got.key === FILE_KEY && got.source === "the crew's Cursor API key (~/.config/crew-studio/cursor-api-key)" && got.probe === got.source, "then ~/.config/crew-studio/cursor-api-key, still before the environment", shown(got));
+  rmSync(file); got = pick();
+  ok(got.key === KEY && got.source === "CURSOR_API_KEY in Studio's environment" && got.probe === got.source, "CURSOR_API_KEY in Studio's environment only when no keychain item and no key file is there", shown(got));
+  writeFileSync(join(KC, "crew-studio-cursor-api-key"), "crsr_short\n"); got = pick();
+  ok(got.key === KEY && /keychain item crew-studio-cursor-api-key\): it is not a Cursor API key/.test(got.warn ?? "") && !(got.warn ?? "").includes("crsr_short"), "a keychain key of the wrong shape falls through to the next source, said without echoing it", shown(got));
+  writeFileSync(join(KC, "crew-studio-cursor-api-key"), KC_KEY + "\n");
+
+  // a chat or work turn (chat.ts, work.ts: roundEnv(provider.envKeys)) gets its key the same way, never straight from Studio's environment
+  const { roundEnv } = await import("../src/secure"), { cursorProvider } = await import("../src/providers/cursor");
+  const rec = join(TMP, "rec-cursor.mjs"), seenKey = join(TMP, "rec-cursor.out");
+  writeFileSync(rec, `import { writeFileSync } from "node:fs"; import { createHash } from "node:crypto";\nwriteFileSync(${JSON.stringify(seenKey)}, createHash("sha256").update(process.env.CURSOR_API_KEY ?? "").digest("hex").slice(0, 12));\nprocess.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "ok" }) + "\\n");\n`);
+  const tokenFile = join(TMP, "rec-token"); writeFileSync(tokenFile, "fixture-token", { mode: 0o600 });
+  const p = cursorProvider("composer-2.5", rec);
+  const ctx = { studioUrl: "http://127.0.0.1:9", token: "fixture-token", tokenFile, cwd: TMP, mcpCommand: ["true"], env: roundEnv(p.envKeys ?? [], { CREW_STUDIO_URL: "http://127.0.0.1:9", CREW_TOOL_TOKEN_FILE: tokenFile }) };
+  for await (const _ of p.start("system", [], ctx).send("hi")) {}
+  ok(!("CURSOR_API_KEY" in ctx.env) && existsSync(seenKey) && readFileSync(seenKey, "utf8") === sha12(KC_KEY), "a Cursor chat turn signs in with the keychain key, not CURSOR_API_KEY from Studio's environment",
+    existsSync(seenKey) ? `saw ${readFileSync(seenKey, "utf8")}` : "no run");
+  rmSync(join(KC, "crew-studio-cursor-api-key"));
+  process.env.CREW_KEYCHAIN_TOOL = "none"; delete process.env.CURSOR_API_KEY;
+}
+
 console.log("secrets, attachments, processes");
 {
   const h = homedir(), dirs = SECRET_DIRS(null);
@@ -145,6 +185,9 @@ try {
   const doc = await s.api("/api/doctor"), items = doc.body?.items ?? [];
   const row = items.find((i: any) => i.id === "cursor"), login = items.find((i: any) => i.id === "round-login-cursor");
   ok(row?.authenticated === true && row?.status === "ok" && login?.status === "ok", "Doctor: the Cursor CLI is signed in with the crew's key", JSON.stringify({ row, login }).slice(0, 400));
+  ok(login?.detail?.includes("CURSOR_API_KEY in Studio's environment") && login?.detailZh?.includes("Studio 環境中的 CURSOR_API_KEY")
+    && login?.adds?.includes("the keychain item crew-studio-cursor-api-key, the keychain item firstmate-cursor-api-key, ~/.config/crew-studio/cursor-api-key, and only then CURSOR_API_KEY")
+    && login?.addsZh?.includes("最後才使用 Studio 環境中的 CURSOR_API_KEY"), "Doctor names the source in use and the order, in English and zh-TW", JSON.stringify(login).slice(0, 600));
   const acct = await s.api("/api/cursor/account");
   ok(acct.status === 200 && acct.body?.installed === true && acct.body?.key === "present" && !acct.text.includes(KEY) && !doc.text.includes(KEY), "the account route says the key is there and never shows it", acct.text.slice(0, 300));
   const take = await s.api("/api/main/takeover", { host: "cursor", confirm: true }), list = await s.api("/api/main/sessions?host=cursor"), att = await s.api("/api/main/attach", { host: "cursor", id: "chat-123456" });
@@ -230,6 +273,17 @@ try {
   const stop = await e.api("/api/main/detach", {}), after = await ev();
   ok(stop.status === 200 && stop.body?.stopped === true && !stop.body?.resume && after.state === "detached" && after.driver?.holder === "none" && !after.driver?.resume,
     "Stop ends it: never handed to a terminal with a resume command Cursor could not honour", JSON.stringify({ stop: stop.body, driver: after.driver }).slice(0, 400));
+
+  writeFileSync(join(KC, "crew-studio-cursor-api-key"), KC_KEY + "\n");
+  const k = await boot("keychain", { CREW_KEYCHAIN_TOOL: KC_TOOL, CURSOR_API_KEY: KEY });
+  const kd = await k.api("/api/doctor"), kl = (kd.body?.items ?? []).find((i: any) => i.id === "round-login-cursor");
+  ok(kl?.status === "ok" && kl.detail.includes("the crew's Cursor API key (keychain item crew-studio-cursor-api-key)") && kl.detailZh.includes("鑰匙圈項目 crew-studio-cursor-api-key") && !kl.detail.includes("CURSOR_API_KEY in Studio's environment")
+    && ![KEY, KC_KEY].some((v) => kd.text.includes(v)), "Doctor: with a keychain key and a different CURSOR_API_KEY, the keychain item is the source shown (never a key)", JSON.stringify(kl).slice(0, 500));
+  const kst = await k.api("/api/main/start", { host: "cursor", confirm: true });
+  ok(kst.status === 200 && await until(() => k.calls().some((c) => c.argv[0] === "-p")), "a fresh Firstmate on Cursor starts", `${kst.status} ${kst.text.slice(0, 200)}`);
+  const kturn = k.calls().find((c) => c.argv[0] === "-p");
+  ok(kturn?.key === sha12(KC_KEY), "Firstmate on Cursor signs in with the keychain key, not CURSOR_API_KEY from Studio's environment", `saw ${kturn?.key}`);
+  await k.api("/api/main/detach", {}); rmSync(join(KC, "crew-studio-cursor-api-key"));
 
   const n = await boot("keyless", {});
   const nd = (await n.api("/api/doctor")).body?.items ?? [], nl = nd.find((i: any) => i.id === "round-login-cursor");

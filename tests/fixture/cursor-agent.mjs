@@ -19,7 +19,8 @@
 // --sandbox enabled, never --force or --approve-mcps, with no Shell rule and no Write rule outside the workspace. Its turns
 // model cursor-agent's own tools under those rules: FIXTURE-WRITE ["path", …] writes only what cli-config.json allows, an
 // attached PDF is read only when allowed.
-//   CURSOR_FIXTURE_LOG  a file each run appends its argv (without the prompt) and chat id to (tests/cursor-vendor.ts)
+//   CURSOR_FIXTURE_LOG  a file each run appends its argv (without the prompt) and chat id to (tests/cursor-vendor.ts); a
+//                       Firstmate turn also its home, images and the first 12 hex of its key's SHA-256
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -67,7 +68,7 @@ const images = argv.flatMap((a, i) => a === "--image" ? [argv[i + 1]] : []).map(
   if (!(b[0] === 0x89 && b[1] === 0x50 || b[0] === 0xff && b[1] === 0xd8 || b.subarray(0, 3).toString() === "GIF" || b.subarray(8, 12).toString() === "WEBP")) fail("cursor-agent fixture: --image is not an image", 2);
   return { path: p, sha256: createHash("sha256").update(b).digest("hex") };
 });
-log({ argv: argv.slice(0, -1), chat: session_id, home: process.env.HOME, images });
+log({ argv: argv.slice(0, -1), chat: session_id, home: process.env.HOME, images, key: createHash("sha256").update(key).digest("hex").slice(0, 12) });
 const text = argv.at(-1).replace(/(?:\n\n\[Studio note: [^\n]*\])+$/, "");
 out({ type: "system", subtype: "init", apiKeySource: "env", cwd: get("--workspace"), session_id, model, permissionMode: "default" });
 const say = (t) => out({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: t }] }, session_id });

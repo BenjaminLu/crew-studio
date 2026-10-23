@@ -27,7 +27,7 @@ export const cursorModel = (saved?: string | null) => saved || process.env.CREW_
 export function probeCursor(models: string[], bin = process.env.CREW_CURSOR_BIN ?? "cursor-agent"): ProviderCapability {
   const at = Date.now(), base = { provider: "cursor", at, expires: at + 30_000 };
   if (!(bin.includes("/") ? existsSync(bin) : Bun.which(bin))) return { ...base, available: false, auth: "unverified", quota: "unknown", models: [], refusal: "unavailable", reason: "the Cursor CLI (cursor-agent) is not installed" };
-  if (!cursorLogin({ probe: true }).ok) return { ...base, available: true, auth: "missing", quota: "unknown", models: [], refusal: "missing-login", reason: "no Cursor API key (keychain item crew-studio-cursor-api-key or CURSOR_API_KEY)" };
+  if (!cursorLogin({ probe: true }).ok) return { ...base, available: true, auth: "missing", quota: "unknown", models: [], refusal: "missing-login", reason: "no Cursor API key (keychain item crew-studio-cursor-api-key or firstmate-cursor-api-key, ~/.config/crew-studio/cursor-api-key, then CURSOR_API_KEY in Studio's environment)" };
   return { ...base, available: true, auth: "verified", quota: "available", models: [...new Set(models.filter(Boolean))].map((id) => ({ id, efforts: [] })) };
 }
 
@@ -43,7 +43,8 @@ export function writeCursorConfig(root: string, systemPrompt: string, tools: Too
 
 export function cursorProvider(model = process.env.CREW_CURSOR_MODEL ?? "", bin = process.env.CREW_CURSOR_BIN ?? "cursor-agent"): Provider {
   return {
-    id: "cursor", model: model || "cursor default", envKeys: ["CURSOR_API_KEY"],
+    // no envKeys: a turn never takes CURSOR_API_KEY straight from Studio's environment; cursorLogin picks the key, keychain first
+    id: "cursor", model: model || "cursor default", envKeys: [],
     sandboxNeeds: () => cursorNeeds(bin, CURSOR_HOSTS),
     start(systemPrompt: string, tools: ToolSpec[], ctx: ProviderCtx) {
       if (!ctx.tokenFile) throw new Error("Cursor provider requires a private tool-token file");

@@ -177,28 +177,26 @@ export function claudeLoginStatus(): { ok: boolean; verified?: boolean; source?:
 /** The shape of a Cursor API key (never printed): a user or service-account key, crsr_… or the older key_…. */
 export const CURSOR_KEY_SHAPE = /^(crsr|key)_[A-Za-z0-9]{32,}$/;
 /** cursor-agent's own sign-in (`agent login`) lives in the macOS keychain, which no round reaches (v1 T-117), so a round signs in
- *  with a Cursor API key only, in order: CURSOR_API_KEY in Studio's environment; the crew's key in a keychain item of Studio's own
- *  (crew-studio-cursor-api-key) or ~/.config/crew-studio/cursor-api-key (mode 600); firstmate v1's item firstmate-cursor-api-key. */
+ *  with a Cursor API key only, keychain first, in order: the keychain item crew-studio-cursor-api-key; firstmate v1's keychain
+ *  item firstmate-cursor-api-key; ~/.config/crew-studio/cursor-api-key (mode 600); last, CURSOR_API_KEY in Studio's environment. */
 export function cursorLogin(options: { probe?: boolean } = {}): Login {
   const probe = !!options.probe, failed: string[] = [];
   const ok = (v: string, source: string): Login => ({ ok: true, env: { CURSOR_API_KEY: probe ? "" : seen(v) }, source, warn: failed.length ? `tried first and failed: ${failed.join("; ")}` : null, kind: "api-key" });
   const shaped = (v: string, name: string): Login | null => { if (CURSOR_KEY_SHAPE.test(v)) return ok(v, name); failed.push(`${name}: it is not a Cursor API key (expected crsr_…)`); return null; };
+  for (const service of ["crew-studio-cursor-api-key", "firstmate-cursor-api-key"]) {
+    const name = `the crew's Cursor API key (keychain item ${service})`;
+    if (probe) { if (keychainHas(service, user())) return ok("", name); continue; }
+    const r = keychainRead(service, user());
+    if (r.found) { const got = shaped(r.found.trim(), name); if (got) return got; }
+    else if (r.error) failed.push(r.error);
+  }
+  const fileName = "the crew's Cursor API key (~/.config/crew-studio/cursor-api-key)";
+  const f = privateFile(join(home(), ".config", "crew-studio", "cursor-api-key"));
+  if (f.found) { const got = probe ? ok("", fileName) : shaped(f.found, fileName); if (got) return got; }
+  else if (f.error) failed.push(f.error);
   const k = process.env.CURSOR_API_KEY?.trim();
   if (k) { const r = shaped(k, "CURSOR_API_KEY in Studio's environment"); if (r) return r; }
-  for (const service of ["crew-studio-cursor-api-key", "firstmate-cursor-api-key"]) {
-    if (probe) { if (keychainHas(service, user())) return ok("", `the crew's Cursor API key (keychain item ${service})`); }
-    else {
-      const r = keychainRead(service, user());
-      if (r.found) { const got = shaped(r.found.trim(), `the crew's Cursor API key (keychain item ${service})`); if (got) return got; }
-      else if (r.error) failed.push(r.error);
-    }
-    if (service === "crew-studio-cursor-api-key") {
-      const f = privateFile(join(home(), ".config", "crew-studio", "cursor-api-key"));
-      if (f.found) { const got = probe ? ok("", "the crew's Cursor API key (~/.config/crew-studio/cursor-api-key)") : shaped(f.found, "the crew's Cursor API key (~/.config/crew-studio/cursor-api-key)"); if (got) return got; }
-      else if (f.error) failed.push(f.error);
-    }
-  }
-  const hint = "keep a Cursor API key for the crew once (security add-generic-password -s crew-studio-cursor-api-key -a \"$USER\" -w), or set CURSOR_API_KEY";
+  const hint = "keep a Cursor API key for the crew once in the keychain (security add-generic-password -s crew-studio-cursor-api-key -a \"$USER\" -w); CURSOR_API_KEY in Studio's environment is used only when no keychain item or key file is found";
   return { ok: false, error: failed.length ? `no Cursor API key for rounds works (${failed.join("; ")}); ${hint}` : `no Cursor API key for rounds: ${hint}` };
 }
 

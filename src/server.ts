@@ -292,7 +292,8 @@ let cursorCache: { at: number; v: { installed: boolean; key: "present" | "missin
 const cursorAccount = (fresh = false) => {
   if (!fresh && cursorCache && Date.now() - cursorCache.at < 30_000) return cursorCache.v;
   const model = cursorModel(chatSettings().models.cursor), cap = probeCursor([model]);
-  const v = { installed: cap.available, key: cap.auth === "verified" ? "present" as const : "missing" as const, source: cap.auth === "verified" ? "a Cursor API key" : null, model,
+  const found = cap.auth === "verified" ? cursorLogin({ probe: true }) : null;
+  const v = { installed: cap.available, key: cap.auth === "verified" ? "present" as const : "missing" as const, source: found ? (found.ok ? found.source : "a Cursor API key") : null, model,
     how: !cap.available ? "Install the Cursor CLI (Doctor → Cursor CLI), then add a Cursor API key" : cap.auth === "verified" ? "" : `Add a Cursor API key: ${LOGINS.cursor.note}` };
   const changed = cursorCache && JSON.stringify(cursorCache.v) !== JSON.stringify(v);
   cursorCache = { at: Date.now(), v }; if (changed) send("cursor-account", v); return v;

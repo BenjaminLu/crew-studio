@@ -52,7 +52,7 @@ export function cursorHost(bin = process.env.CREW_HOST_CURSOR_BIN ?? "cursor-age
     async attach(_requested, opts) {
       if (!opts.fresh) throw new Error(CURSOR_TAKEOVER_REFUSED);
       const key = opts.env?.CURSOR_API_KEY;
-      if (!key) throw new Error("Firstmate on Cursor needs a Cursor API key (keychain item crew-studio-cursor-api-key or CURSOR_API_KEY)");
+      if (!key) throw new Error("Firstmate on Cursor needs a Cursor API key (keychain item crew-studio-cursor-api-key first; CURSOR_API_KEY in Studio's environment only as the last fallback)");
       const project = opts.cursorProject === true;
       const native = !project && opts.nativeTools && opts.studioMcp ? opts.nativeTools : null;
       if (!project && !native) throw new Error("Firstmate on Cursor runs only with Studio's native tools");
