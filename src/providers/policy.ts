@@ -6,6 +6,15 @@ export type ProviderCapability = { provider: string; available: boolean; auth: "
 export type ProviderSelection = { role: string; host: string | null; explicit: boolean; provider: string; model: string | null; effort?: string | null; configured: Record<string, { model: string | null; effort?: string | null }>; fallback: string[]; roleModel?: string | null; known: string[];
   /** an explicit provider's stand-ins, tried in order only when it is not installed or not signed in (the reviewer's policy vendor) */
   alternates?: string[] };
+/** The host whose rules a native step selects under, and the policy reviewer's stand-ins. The chain is the attached Firstmate's
+ *  host; with none attached it is Cursor only when Cursor is the one vendor signed in (Codex and Claude are not), so a Codex or
+ *  Claude Studio selects as it always did, whatever its chat vendor. Only under Cursor does the policy reviewer stand in along
+ *  the configured fallback, then Cursor, when it is not installed or not signed in; under Codex or Claude it still holds. */
+export function nativeChain(o: { host: string | null; logins: Record<string, string>; role: string; explicit: boolean; fixture: boolean; fallback: string[] }): { chain: string | null; alternates?: string[] } {
+  const cursorOnly = o.logins.cursor === "logged-in" && o.logins.codex !== "logged-in" && o.logins.claude !== "logged-in";
+  const chain = o.host ?? (cursorOnly ? "cursor" : null);
+  return { chain, alternates: !o.explicit && !o.fixture && o.role === "reviewer" && chain === "cursor" ? [...o.fallback, "cursor"] : undefined };
+}
 export type SelectedProvider = { provider: Provider; evidence: { role: string; rule: string; provider: string; model: string; effort: string | null; unavailable: { provider: string; reason: string }[] } };
 export async function selectNativeProvider(i: ProviderSelection, probe: (id: string,pair:{model:string;effort:string|null}) => Promise<ProviderCapability>, make: (id: string, model: string, effort: string | null) => Provider): Promise<SelectedProvider> {
   if (!Array.isArray(i.known) || !i.known.every(x => typeof x === "string") || !Array.isArray(i.fallback) || !i.fallback.every(x => typeof x === "string") || !i.configured || typeof i.configured !== "object") throw new ProviderRefusal("provider policy configuration is invalid");

@@ -112,7 +112,7 @@ import { generateCursorImage } from "./providers/cursor-image";
 import { probeCodex } from "./providers/codex-probe";
 import { cursorModel, probeCursor } from "./providers/cursor";
 import {nativeClaude,probeClaudeNative,makeNativeClaudeProvider,validClaudePair,claudeEfforts,configuredClaudeEffort,isClaudeExecutionAdmission} from './providers/claude-native';
-import { ProviderRefusal, selectNativeProvider, type ProviderSelection, type ProviderCapability } from "./providers/policy";
+import { ProviderRefusal, nativeChain, selectNativeProvider, type ProviderSelection, type ProviderCapability } from "./providers/policy";
 
 const ROOT = SRC_ROOT;
 const DATA = process.env.CREW_DATA ?? DEFAULT_DATA;
@@ -400,11 +400,8 @@ const nativePick = async (x: any, pick: any, context?: { role: string; explicit:
   // Offline fixture provider is an explicit setting, never a real-vendor fallback.
   const fixture = allowStub && settings.provider === "stub" && !explicit;
   const provider = fixture ? "stub" : !explicit && role === "reviewer" ? String(x.engine.policies.get("vendor_policy.reviewer", { project: x.engine.queueProject(x.run), workflow: x.run.def.policies }).value) : !explicit && role === "coordinator" && host ? host : pick.provider;
-  // a captain whose chat vendor is Cursor (settings or CREW_CHAT_PROVIDER) and no attached host: workers pick as under a Cursor host
-  const chain = host ?? (settings.provider === "cursor" ? "cursor" : null);
-  // under Cursor only: the policy reviewer (Claude) stands in along the configured fallback, then Cursor, only when it is not
-  // installed or not signed in; under Codex or Claude an unavailable reviewer still holds
-  const alternates = !explicit && !fixture && role === "reviewer" && chain === "cursor" ? [...fallback, "cursor"] : undefined;
+  // no attached host: Cursor's rules only when Cursor is the one vendor signed in; the reviewer's stand-ins only under Cursor
+  const { chain, alternates } = nativeChain({ host, logins: host ? {} : await gateLogins(), role, explicit, fixture, fallback });
   return nativeSelection({ role, host: chain, explicit: explicit || fixture || role === "reviewer", provider, alternates, model: explicit ? pick.model : configured[provider]?.model ?? null, roleModel: !explicit ? x.node.model ?? roleDef?.model ?? null : null, effort: explicit&&Object.hasOwn(pick,"effort")?pick.effort??null:configured[provider]?.effort??null, configured, fallback, known: [...choices] }, x);
 
 };
